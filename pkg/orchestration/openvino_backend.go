@@ -145,6 +145,12 @@ func NewOpenVINOBackend(config OpenVINOBackendConfig) *OpenVINOBackend {
 // SetContainerRuntime installs the runtime tool calls execute in.
 func (b *OpenVINOBackend) SetContainerRuntime(r ContainerRuntime) { b.containerRuntime = r }
 
+// HasContainerRuntime reports whether this backend can run a sandboxed
+// session. It exists so the daemon's wiring can be PROVEN rather than assumed:
+// a backend missing its runtime is indistinguishable from a working one until
+// the first spawn, and on a required-policy daemon that is every spawn.
+func (b *OpenVINOBackend) HasContainerRuntime() bool { return b.containerRuntime != nil }
+
 // SetLogger installs an optional logger.
 func (b *OpenVINOBackend) SetLogger(l interfaces0Logger) { b.logger = l }
 

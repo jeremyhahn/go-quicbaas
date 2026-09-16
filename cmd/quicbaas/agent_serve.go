@@ -316,6 +316,25 @@ func buildAgentRuntime(cfg *agent.Config, backends map[string]orchestration.Agen
 	if rtErr != nil {
 		return nil, rtErr
 	}
+	// A BACKEND THAT RUNS ITS OWN CONTAINERS NEEDS THE RUNTIME TOO, and this
+	// is the only place it exists. The CLI backends are handed one by
+	// agent.Runtime when it spawns them; the openvino backend is not a CLI --
+	// it drives a remote model over HTTP and reaches the repository through a
+	// tool it execs INSIDE a container of its own -- so it holds the runtime
+	// directly. Without it every sandboxed spawn is refused with "a sandboxed
+	// openvino session needs a container runtime and none is installed", which
+	// on a daemon running --sandbox-policy required is every spawn there is.
+	// Measured on the burn-in node 2026-09-16: every triage job failed at
+	// spawn the moment triage was pointed at the NPU.
+	//
+	// A LOOP RATHER THAN A CALL AT THE REGISTRATION, matching how SetLogger is
+	// applied: the backends are constructed before the runtime is resolved, so
+	// this is where the two meet.
+	for _, backend := range backends {
+		if ov, ok := backend.(*orchestration.OpenVINOBackend); ok {
+			ov.SetContainerRuntime(containerRuntime)
+		}
+	}
 	return agent.NewRuntime(agent.RuntimeConfig{
 		Backends:         backends,
 		ContainerRuntime: containerRuntime,

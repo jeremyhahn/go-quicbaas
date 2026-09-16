@@ -17,10 +17,10 @@ package main
 import (
 	"testing"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/agent"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/jeremyhahn/go-quicbaas/pkg/agent"
 )
 
 func TestBuildAgentBackends_NoneEmpty(t *testing.T) {
@@ -66,5 +66,36 @@ func TestStripURLScheme_AllCases(t *testing.T) {
 	for _, tc := range cases {
 		got := stripURLScheme(tc.in)
 		assert.Equal(t, tc.want, got, "stripURLScheme(%q)", tc.in)
+	}
+}
+
+// TestBuildAgentRuntime_OpenVINOBackendReceivesTheContainerRuntime is the
+// regression that took the NPU off the fleet the moment triage was pointed at
+// it.
+//
+// The openvino backend is not a CLI: it drives a remote model over HTTP and
+// reaches the repository through a tool it execs INSIDE a container of its
+// own, so it holds the container runtime directly rather than being handed one
+// at spawn like the ACP backends. Constructed without it, every sandboxed
+// spawn is refused with "a sandboxed openvino session needs a container
+// runtime and none is installed" — which on a daemon running
+// --sandbox-policy required is every spawn there is. Measured on the burn-in
+// node 2026-09-16: every triage job failed at spawn.
+func TestBuildAgentRuntime_OpenVINOBackendReceivesTheContainerRuntime(t *testing.T) {
+	t.Parallel()
+
+	ov := orchestration.NewOpenVINOBackend(orchestration.OpenVINOBackendConfig{
+		BaseURL:      "http://gpu-host.invalid:9000",
+		DefaultModel: "qwen3-8b",
+	})
+	backends := map[string]orchestration.AgentBackend{"openvino": ov}
+	logger := newCaptureLogger()
+	cfg := serveRuntimeConfig(agent.ContainerRuntimeDocker, orchestration.SandboxPolicyOptIn, t.TempDir())
+
+	if _, err := buildAgentRuntime(cfg, backends, logger); err != nil {
+		t.Fatalf("buildAgentRuntime: %v", err)
+	}
+	if !ov.HasContainerRuntime() {
+		t.Fatal("the openvino backend was left without a container runtime; every sandboxed spawn would be refused")
 	}
 }
