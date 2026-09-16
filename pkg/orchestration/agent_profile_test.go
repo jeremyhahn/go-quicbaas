@@ -175,3 +175,170 @@ func TestAgentProfile_ValidateRefusesAnEndpointWithNoDialect(t *testing.T) {
 		t.Fatalf("a hosted profile needs no endpoint: %v", err)
 	}
 }
+
+// stubDemand answers what each role has queued.
+type stubDemand struct {
+	queued map[Role]int
+	err    error
+}
+
+func (s stubDemand) QueuedForRole(_ context.Context, _ string, role Role) (int, error) {
+	if s.err != nil {
+		return 0, s.err
+	}
+	return s.queued[role], nil
+}
+
+// bigCard is the scarce accelerator: held for review, shared when review is
+// idle. small is the always-available fallback.
+func rolePolicyCatalogue() ProfileCatalogue {
+	return ProfileCatalogue{
+		Profiles: map[string]AgentProfile{
+			"bigcard": {
+				Name: "bigcard", Runtime: "ollama", Model: "review-q4", MaxConcurrent: 2,
+				Roles: RolePolicy{Prefer: RoleReview},
+			},
+			"small": {Name: "small", Runtime: "openvino", Model: "qwen3-8b", MaxConcurrent: 1},
+		},
+		Pools: map[string]AgentPool{
+			"any": {Name: "any", Profiles: []string{"bigcard", "small"}},
+		},
+	}
+}
+
+// TestResolveForRole_IdleCapacityIsSharedNotReserved is the behaviour the
+// owner asked for in so many words: prefer one role, but help out when that
+// role's queue is empty. Reserving unconditionally would trade one starvation
+// for another and idle the hardware.
+func TestResolveForRole_IdleCapacityIsSharedNotReserved(t *testing.T) {
+	resolver := NewProfileResolver(rolePolicyCatalogue(), nil).
+		WithRoleDemand(stubDemand{queued: map[Role]int{RoleReview: 0}})
+
+	got, err := resolver.ResolveForRole(context.Background(), "t", "any", RoleTriage)
+	if err != nil {
+		t.Fatalf("ResolveForRole: %v", err)
+	}
+	if got.Name != "bigcard" {
+		t.Fatalf("profile = %q, want triage to use the idle preferred card", got.Name)
+	}
+}
+
+// TestResolveForRole_AQueuedPreferredRoleTakesItsCardBack: the moment review
+// has work waiting, triage must spill to the next profile rather than occupy
+// the card the operator set aside.
+func TestResolveForRole_AQueuedPreferredRoleTakesItsCardBack(t *testing.T) {
+	resolver := NewProfileResolver(rolePolicyCatalogue(), nil).
+		WithRoleDemand(stubDemand{queued: map[Role]int{RoleReview: 3}})
+
+	got, err := resolver.ResolveForRole(context.Background(), "t", "any", RoleTriage)
+	if err != nil {
+		t.Fatalf("ResolveForRole: %v", err)
+	}
+	if got.Name != "small" {
+		t.Fatalf("profile = %q, want triage to spill off the contended card", got.Name)
+	}
+	// The preferred role itself is never yielded to anybody.
+	got, err = resolver.ResolveForRole(context.Background(), "t", "any", RoleReview)
+	if err != nil {
+		t.Fatalf("ResolveForRole(review): %v", err)
+	}
+	if got.Name != "bigcard" {
+		t.Fatalf("profile = %q, want review on the card held for it", got.Name)
+	}
+}
+
+// TestResolveForRole_ExclusiveRefusesEvenAnEmptyQueue: the escape hatch for a
+// profile that genuinely cannot share, and it must not consult demand at all.
+func TestResolveForRole_ExclusiveRefusesEvenAnEmptyQueue(t *testing.T) {
+	catalogue := rolePolicyCatalogue()
+	big := catalogue.Profiles["bigcard"]
+	big.Roles = RolePolicy{Prefer: RoleReview, Exclusive: true}
+	catalogue.Profiles["bigcard"] = big
+
+	resolver := NewProfileResolver(catalogue, nil).
+		WithRoleDemand(stubDemand{queued: map[Role]int{RoleReview: 0}})
+
+	got, err := resolver.ResolveForRole(context.Background(), "t", "any", RoleTriage)
+	if err != nil {
+		t.Fatalf("ResolveForRole: %v", err)
+	}
+	if got.Name != "small" {
+		t.Fatalf("profile = %q, want an exclusive card refused even when idle", got.Name)
+	}
+}
+
+// TestResolveForRole_ReserveHoldsSlotsForLatency: a reservation is about
+// RESPONSE TIME, so it holds slots empty whatever the queue says.
+func TestResolveForRole_ReserveHoldsSlotsForLatency(t *testing.T) {
+	catalogue := rolePolicyCatalogue()
+	big := catalogue.Profiles["bigcard"]
+	big.Roles = RolePolicy{Prefer: RoleReview, Reserve: 1} // 2 slots, 1 held
+	catalogue.Profiles["bigcard"] = big
+
+	// One job already running: the only free slot is the reserved one.
+	resolver := NewProfileResolver(catalogue, fixedLoad{live: map[string]int{"ollama": 1}}).
+		WithRoleDemand(stubDemand{queued: map[Role]int{RoleReview: 0}})
+
+	got, err := resolver.ResolveForRole(context.Background(), "t", "any", RoleTriage)
+	if err != nil {
+		t.Fatalf("ResolveForRole: %v", err)
+	}
+	if got.Name != "small" {
+		t.Fatalf("profile = %q, want the reserved slot withheld from triage", got.Name)
+	}
+}
+
+// TestResolveForRole_AnUnreadableQueueAdmitsTheWork: refusing on a failed read
+// would stop the fleet on a storage blip, and the concurrency cap still bounds
+// what actually starts.
+func TestResolveForRole_AnUnreadableQueueAdmitsTheWork(t *testing.T) {
+	resolver := NewProfileResolver(rolePolicyCatalogue(), nil).
+		WithRoleDemand(stubDemand{err: errors.New("store unavailable")})
+
+	got, err := resolver.ResolveForRole(context.Background(), "t", "any", RoleTriage)
+	if err != nil {
+		t.Fatalf("ResolveForRole: %v", err)
+	}
+	if got.Name != "bigcard" {
+		t.Fatalf("profile = %q, want an unreadable queue to admit rather than idle the fleet", got.Name)
+	}
+}
+
+// TestResolveForRole_NoPolicyBehavesExactlyAsBefore pins the compatibility
+// claim: a catalogue with no role policy must not change who gets what.
+func TestResolveForRole_NoPolicyBehavesExactlyAsBefore(t *testing.T) {
+	catalogue := rolePolicyCatalogue()
+	big := catalogue.Profiles["bigcard"]
+	big.Roles = RolePolicy{}
+	catalogue.Profiles["bigcard"] = big
+
+	resolver := NewProfileResolver(catalogue, nil).
+		WithRoleDemand(stubDemand{queued: map[Role]int{RoleReview: 99}})
+
+	for _, role := range []Role{RoleTriage, RoleReview, RoleDelivery, ""} {
+		got, err := resolver.ResolveForRole(context.Background(), "t", "any", role)
+		if err != nil {
+			t.Fatalf("ResolveForRole(%q): %v", role, err)
+		}
+		if got.Name != "bigcard" {
+			t.Fatalf("role %q got %q, want the first profile regardless of role", role, got.Name)
+		}
+	}
+}
+
+// TestRolePolicy_ValidateRefusesTermsWithNoSubject: reserving or excluding
+// without naming a role is a policy that cannot mean anything.
+func TestRolePolicy_ValidateRefusesTermsWithNoSubject(t *testing.T) {
+	if err := (RolePolicy{Reserve: 2}).Validate(); err == nil {
+		t.Fatal("a reservation with no preferred role was accepted")
+	}
+	if err := (RolePolicy{Exclusive: true}).Validate(); err == nil {
+		t.Fatal("exclusivity with no preferred role was accepted")
+	}
+	if err := (RolePolicy{Prefer: RoleReview, Reserve: -1}).Validate(); err == nil {
+		t.Fatal("a negative reservation was accepted")
+	}
+	if err := (RolePolicy{}).Validate(); err != nil {
+		t.Fatalf("the zero value must be valid: %v", err)
+	}
+}

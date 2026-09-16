@@ -51,6 +51,7 @@ func (c ProfileCatalogue) Profile(name string) (AgentProfile, bool) {
 type ProfileResolver struct {
 	catalogue ProfileCatalogue
 	load      ProfileLoadReader
+	demand    RoleDemandReader
 }
 
 // NewProfileResolver builds a resolver. A nil load reader is allowed and makes
@@ -61,11 +62,40 @@ func NewProfileResolver(catalogue ProfileCatalogue, load ProfileLoadReader) *Pro
 	return &ProfileResolver{catalogue: catalogue, load: load}
 }
 
+// WithRoleDemand returns a resolver that can also see what each role has
+// QUEUED, which is what lets a profile yield capacity its preferred role is
+// not asking for. Without one, every non-exclusive profile is shareable — the
+// correct degradation, since a deployment that cannot measure its queues
+// should not have its accelerators idled by a policy it cannot evaluate.
+func (r *ProfileResolver) WithRoleDemand(demand RoleDemandReader) *ProfileResolver {
+	if r == nil {
+		return nil
+	}
+	clone := *r
+	clone.demand = demand
+	return &clone
+}
+
 // Resolve picks the first profile in the pool with capacity.
 //
 // A DIRECT PROFILE NAME IS ALSO A POOL OF ONE, so a caller that wants exactly
 // one profile says so by naming it and needs no second mechanism.
 func (r *ProfileResolver) Resolve(ctx context.Context, tenantID, poolOrProfile string) (AgentProfile, error) {
+	return r.ResolveForRole(ctx, tenantID, poolOrProfile, "")
+}
+
+// ResolveForRole picks the first profile in the pool that has capacity AND
+// will take work of this role.
+//
+// THE TWO TESTS ARE SEPARATE AND BOTH MUST PASS. Capacity is arithmetic about
+// what is running; the role policy is a statement about what the profile is
+// FOR. A profile with a free slot can still decline — it is being held for
+// review, and the triage job in front of it should spill to the next profile
+// rather than take the slot the operator set aside.
+//
+// An empty role names no policy subject and is admitted everywhere, which is
+// what a caller that does not know its own role gets.
+func (r *ProfileResolver) ResolveForRole(ctx context.Context, tenantID, poolOrProfile string, role Role) (AgentProfile, error) {
 	name := strings.TrimSpace(poolOrProfile)
 	if name == "" {
 		return AgentProfile{}, &InputValidationError{Field: "pool", Message: "no pool or profile named"}
@@ -82,17 +112,23 @@ func (r *ProfileResolver) Resolve(ctx context.Context, tenantID, poolOrProfile s
 		if !ok {
 			return AgentProfile{}, &ProfileNotFoundError{Name: candidate, Pool: name}
 		}
-		if profile.MaxConcurrent <= 0 {
-			return profile, nil
+		live := 0
+		if profile.MaxConcurrent > 0 {
+			var err error
+			live, err = r.liveFor(ctx, tenantID, profile.Runtime)
+			if err != nil {
+				return AgentProfile{}, err
+			}
+			if live >= profile.MaxConcurrent {
+				full = append(full, candidate+" ("+strconv.Itoa(live)+"/"+strconv.Itoa(profile.MaxConcurrent)+")")
+				continue
+			}
 		}
-		live, err := r.liveFor(ctx, tenantID, profile.Runtime)
-		if err != nil {
-			return AgentProfile{}, err
+		if admitted, why := profile.Roles.admits(ctx, r.demand, tenantID, role, profile.MaxConcurrent, live); !admitted {
+			full = append(full, candidate+" ("+why+")")
+			continue
 		}
-		if live < profile.MaxConcurrent {
-			return profile, nil
-		}
-		full = append(full, candidate+" ("+strconv.Itoa(live)+"/"+strconv.Itoa(profile.MaxConcurrent)+")")
+		return profile, nil
 	}
 
 	// EVERY PROFILE FULL IS A TYPED REFUSAL NAMING WHAT WAS FULL, not a
@@ -137,31 +173,4 @@ func (p AgentProfile) SpawnArgs() []string {
 	default:
 		return nil
 	}
-}
-
-// ProfileNotFoundError reports a pool referring to a profile nobody defined.
-type ProfileNotFoundError struct {
-	Name string
-	Pool string
-}
-
-// Error implements the error interface.
-func (e *ProfileNotFoundError) Error() string {
-	msg := "orchestration: agent profile " + strconv.Quote(e.Name) + " is not defined"
-	if e.Pool != "" && e.Pool != e.Name {
-		msg += " (referred to by pool " + strconv.Quote(e.Pool) + ")"
-	}
-	return msg
-}
-
-// ProfilePoolExhaustedError reports every profile in a pool at its limit.
-type ProfilePoolExhaustedError struct {
-	Pool string
-	Full []string
-}
-
-// Error implements the error interface.
-func (e *ProfilePoolExhaustedError) Error() string {
-	return "orchestration: every profile in pool " + strconv.Quote(e.Pool) +
-		" is at its concurrency limit: " + strings.Join(e.Full, ", ")
 }

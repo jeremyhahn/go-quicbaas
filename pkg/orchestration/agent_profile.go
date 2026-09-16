@@ -112,6 +112,11 @@ type AgentProfile struct {
 	// first request — see context_limit.go for the ladder.
 	ContextTokens int `json:"context_tokens,omitempty"`
 
+	// Roles says who this profile is FOR and on what terms it helps other
+	// roles. The zero value prefers nobody, which is how every profile
+	// behaved before the policy existed. See role_policy.go.
+	Roles RolePolicy `json:"roles,omitempty"`
+
 	// MaxConcurrent bounds how many jobs may run on this profile at once.
 	// Zero means unbounded.
 	//
@@ -135,6 +140,9 @@ func (p AgentProfile) Validate() error {
 	}
 	if p.ContextTokens < 0 {
 		return &InputValidationError{Field: "profile.context_tokens", Message: "use zero for undeclared, not a negative"}
+	}
+	if err := p.Roles.Validate(); err != nil {
+		return err
 	}
 	// A provider that names a server must say which dialect it speaks: the
 	// runtime cannot probe for it, and guessing produces a failure that reads
