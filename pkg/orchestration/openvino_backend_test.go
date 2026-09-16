@@ -294,3 +294,48 @@ func TestOpenVINOBackend_AnUnsandboxedSpawnReportsNoContainer(t *testing.T) {
 		t.Fatalf("container runs = %d, want none for an unsandboxed spawn", len(runtime.runCalls))
 	}
 }
+
+// TestOpenVINOBackend_TheKeepAliveCommandSurvivesTheRuntimeMapping is the
+// regression for a container that started, returned an id, and was gone a
+// second later.
+//
+// The runtime maps only Entrypoint[0] onto `--entrypoint` and drops the rest,
+// so {"tail","-f","/dev/null"} in Entrypoint launched a BARE `tail`. With no
+// stdin it read EOF and exited immediately, and AutoRemove took the container
+// away — while the spawn had already returned an id, so the session looked
+// healthy until the first exec failed with "container: not found". Measured on
+// both bound projects 2026-09-16.
+func TestOpenVINOBackend_TheKeepAliveCommandSurvivesTheRuntimeMapping(t *testing.T) {
+	runtime := &mockContainerRuntime{available: true, runID: "ctr-keepalive"}
+	backend := NewOpenVINOBackend(OpenVINOBackendConfig{
+		BaseURL:      "http://gpu-host.invalid:9000",
+		DefaultModel: "qwen3-8b",
+	})
+	backend.SetContainerRuntime(runtime)
+
+	if _, err := backend.Spawn(context.Background(), &SpawnRequest{
+		Model:          "qwen3-8b",
+		SandboxMode:    SandboxModeRequired,
+		ContainerImage: "worker:test",
+	}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if len(runtime.runCalls) != 1 {
+		t.Fatalf("container runs = %d, want exactly one", len(runtime.runCalls))
+	}
+	spec := runtime.runCalls[0].Spec
+
+	// Every argument of the keep-alive must survive into Command, because
+	// that is the only field the runtime passes through whole.
+	if got := strings.Join(spec.Command, " "); got != "tail -f /dev/null" {
+		t.Fatalf("spec.Command = %q, want the whole keep-alive; a bare tail exits on EOF", got)
+	}
+	// A non-empty Entrypoint would put argv[0] behind --entrypoint and drop
+	// the arguments again.
+	if len(spec.Entrypoint) != 0 {
+		t.Fatalf("spec.Entrypoint = %v, want cleared so Command is used verbatim", spec.Entrypoint)
+	}
+	if spec.User == "" {
+		t.Fatal("spec.User is empty; the container must run as the uid that owns the bind-mounted checkout")
+	}
+}

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -218,13 +219,29 @@ func (b *OpenVINOBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Sessio
 		spec := &ContainerSpec{
 			Image:   image,
 			WorkDir: WorkspaceCheckoutRoot,
-			// The container exists to be exec'd into, so its entrypoint is a
-			// process that does nothing and stays alive; the CLI backends run
-			// an agent here instead.
-			Entrypoint: []string{"tail", "-f", "/dev/null"},
+			// The container exists to be exec'd into, so it runs a process
+			// that does nothing and stays alive; the CLI backends run an agent
+			// here instead.
+			//
+			// THE ARGUMENTS GO IN Command, NOT IN Entrypoint. The runtime maps
+			// only Entrypoint[0] onto `--entrypoint` and drops the rest
+			// (container_runtime.go), so `{"tail","-f","/dev/null"}` launched
+			// a BARE `tail`, which read EOF from a container with no stdin and
+			// exited at once -- and AutoRemove then took the container away.
+			// The spawn still returned an id, so the session looked healthy
+			// for about a second and every later exec failed with
+			// "container: not found". Measured on both bound projects,
+			// 2026-09-16. This mirrors the ACP backend, which clears the
+			// entrypoint and passes the whole command.
+			Entrypoint: []string{},
+			Command:    []string{"tail", "-f", "/dev/null"},
 			AutoRemove: true,
 			Network:    string(SandboxNetworkDefault),
-			Mounts:     append([]ContainerMount(nil), req.ExtraMounts...),
+			// The daemon's own uid, for the same reason the ACP backend uses
+			// it: the checkout is a bind-mounted host directory owned by that
+			// user, and a container running as anybody else cannot write it.
+			User:   fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
+			Mounts: append([]ContainerMount(nil), req.ExtraMounts...),
 		}
 		if wd := strings.TrimSpace(req.WorkDir); wd != "" {
 			spec.Mounts = append(spec.Mounts, ContainerMount{Source: wd, Target: WorkspaceCheckoutRoot})
