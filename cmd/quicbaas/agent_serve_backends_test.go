@@ -17,10 +17,11 @@ package main
 import (
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/agent"
-	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/agent"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 func TestBuildAgentBackends_NoneEmpty(t *testing.T) {
