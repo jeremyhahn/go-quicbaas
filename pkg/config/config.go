@@ -859,6 +859,34 @@ type SDLCConfig struct {
 	// whose worker image lays its filesystem out differently names it here.
 	CheckoutRoot string `mapstructure:"checkout_root"`
 
+	// TriageBackend and TriageModel are the NODE's default triage agent: the
+	// agent every bound project triages with unless its own binding names one.
+	//
+	// TRIAGE IS A READING TASK AND IT IS THE HIGHEST-VOLUME ONE. Every open
+	// issue on every bound project is re-read on every sweep, and nothing
+	// triage does writes code — it decides whether an issue is already
+	// satisfied, duplicated or moot. Before this default existed the fallback
+	// was the project's WORKER, so a fleet that wrote its code with a
+	// frontier model also re-read its entire backlog with one, every sweep,
+	// forever. That is the single largest avoidable cost the factory has.
+	//
+	// SET AT THE NODE, NOT PER PROJECT, because the reason to run triage
+	// somewhere cheap is a property of the hardware the node can reach — a
+	// locally served model on an NPU or a GPU host — and repeating it in
+	// every binding means a new project silently costs frontier money until
+	// somebody remembers. A binding that genuinely needs a different triage
+	// agent still overrides it.
+	//
+	// Default: empty, which falls back to the project's worker exactly as
+	// before. It is empty rather than a backend name because a default naming
+	// a backend this node never registered would fail at the spawn, and an
+	// install with no local model must keep working.
+	TriageBackend string `mapstructure:"triage_backend"`
+
+	// TriageModel is the model TriageBackend thinks with. Empty takes the
+	// backend's own default.
+	TriageModel string `mapstructure:"triage_model"`
+
 	// RepoHosts is the allowlist of forge hosts a bound project's repository
 	// may live on, matched by hostname or host:port. A project whose
 	// repository is elsewhere is refused at bind time.
@@ -1016,6 +1044,8 @@ var SDLCKeys = []string{
 	"sdlc.enabled",
 	"sdlc.issue_page_limit",
 	"sdlc.checkout_root",
+	"sdlc.triage_backend",
+	"sdlc.triage_model",
 	"sdlc.allow_local_repos",
 	"sdlc.merge_attempts",
 	"sdlc.triage_sweep_interval",

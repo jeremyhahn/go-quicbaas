@@ -1451,3 +1451,65 @@ func TestApplyNotActionable_AFailedCloseIsReported(t *testing.T) {
 		t.Fatalf("the refusal must name the issue, got %d", verdictErr.Issue)
 	}
 }
+
+// =============================================================================
+// Which agent triage runs on
+// =============================================================================
+
+// TestTriageAgent_TheNodeDefaultOutranksTheWorker is the regression that cost
+// real money: with no node default, every project fell straight through to its
+// worker, so a fleet writing code with a frontier model also re-read its whole
+// backlog with that model on every sweep.
+func TestTriageAgent_TheNodeDefaultOutranksTheWorker(t *testing.T) {
+	run := &triageRun{
+		runner:  &TriageRunner{defaultAgent: WorkerConfig{Backend: "openvino", Model: "qwen3-8b"}},
+		binding: &ProjectBinding{Worker: WorkerConfig{Backend: "claude", Model: "claude-opus-5"}},
+	}
+	agent := run.triageAgent()
+	if agent.Backend != "openvino" || agent.Model != "qwen3-8b" {
+		t.Fatalf("triage took the worker over the node default: backend=%q model=%q", agent.Backend, agent.Model)
+	}
+}
+
+// TestTriageAgent_TheBindingOutranksTheNodeDefault keeps the node default a
+// DEFAULT: a project that names its own triage agent still gets it.
+func TestTriageAgent_TheBindingOutranksTheNodeDefault(t *testing.T) {
+	run := &triageRun{
+		runner:  &TriageRunner{defaultAgent: WorkerConfig{Backend: "openvino", Model: "qwen3-8b"}},
+		binding: &ProjectBinding{
+			Triage: WorkerConfig{Backend: "codex", Model: "gpt-5.5"},
+			Worker: WorkerConfig{Backend: "claude", Model: "claude-opus-5"},
+		},
+	}
+	if agent := run.triageAgent(); agent.Backend != "codex" || agent.Model != "gpt-5.5" {
+		t.Fatalf("the binding's own triage agent was ignored: backend=%q model=%q", agent.Backend, agent.Model)
+	}
+}
+
+// TestTriageAgent_NoDefaultStillFallsBackToTheWorker pins the behaviour an
+// install with no locally served model keeps: empty config changes nothing.
+func TestTriageAgent_NoDefaultStillFallsBackToTheWorker(t *testing.T) {
+	run := &triageRun{
+		runner:  &TriageRunner{},
+		binding: &ProjectBinding{Worker: WorkerConfig{Backend: "claude", Model: "claude-opus-5"}},
+	}
+	if agent := run.triageAgent(); agent.Backend != "claude" || agent.Model != "claude-opus-5" {
+		t.Fatalf("an unset node default broke the worker fallback: backend=%q model=%q", agent.Backend, agent.Model)
+	}
+}
+
+// TestTriageAgent_AModelWithNoBackendIsNotASelection guards the rung rule: a
+// half-filled default must not win, or the spawn gets the wrong runtime
+// carrying the right model name.
+func TestTriageAgent_AModelWithNoBackendIsNotASelection(t *testing.T) {
+	run := &triageRun{
+		runner:  &TriageRunner{defaultAgent: WorkerConfig{Model: "qwen3-8b"}},
+		binding: &ProjectBinding{
+			Triage: WorkerConfig{Model: "gpt-5.5"},
+			Worker: WorkerConfig{Backend: "claude", Model: "claude-opus-5"},
+		},
+	}
+	if agent := run.triageAgent(); agent.Backend != "claude" {
+		t.Fatalf("a model with no backend was treated as a selection: backend=%q", agent.Backend)
+	}
+}

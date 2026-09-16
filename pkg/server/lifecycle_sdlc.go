@@ -526,6 +526,7 @@ func (s *Server) startSDLC() error {
 	triage, err := sdlc.NewTriageRunner(sdlc.TriageRunnerConfig{
 		Bindings: sdlcService, Forges: sdlcService, Tokens: sdlcService, Signing: signing,
 		CheckoutRoot: cfg.CheckoutRoot, SocketsRoot: socketsRoot, IssueLimit: cfg.IssuePageLimit,
+		DefaultAgent: sdlc.WorkerConfig{Backend: cfg.TriageBackend, Model: cfg.TriageModel},
 	})
 	if err != nil {
 		return &SDLCInitError{Component: "triage runner", Cause: err}

@@ -405,6 +405,24 @@ func buildAgentBackends(cfg *agent.Config, logger interfaces.Logger) (map[string
 				SandboxNetwork:    sandboxNetwork,
 				MCPPresetResolver: mcpResolver,
 			})
+			// A MODEL THIS FLEET SERVES ITSELF. Registered only when the
+			// deployment names a server: there is no default endpoint, and a
+			// backend registered against a guess fails on first use rather
+			// than at startup where an operator would see it.
+			//
+			// It is NOT another provider config on the ACP exec backend, and
+			// that was tried first. OVMS answers "Only function tools are
+			// supported" to codex, which advertises its shell and patch tools
+			// as custom types with no switch to change them — so the vendor
+			// CLI cannot drive an OVMS-served model at any endpoint.
+			if base := strings.TrimSpace(cfg.OpenVINOBaseURL); base != "" {
+				ov := orchestration.NewOpenVINOBackend(orchestration.OpenVINOBackendConfig{
+					BaseURL:      base,
+					DefaultModel: cfg.OpenVINOModel,
+				})
+				ov.SetLogger(logger)
+				backends["openvino"] = ov
+			}
 			backends["opencode"] = orchestration.NewACPBackend(orchestration.ACPBackendConfig{
 				Command:           "opencode",
 				Args:              []string{"acp"},

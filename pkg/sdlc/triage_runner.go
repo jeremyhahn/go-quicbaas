@@ -122,6 +122,19 @@ type TriageRunnerConfig struct {
 
 	// IssueLimit bounds one job's issue listing; zero takes the default.
 	IssueLimit int
+
+	// DefaultAgent is the NODE's triage agent — what every project triages
+	// with unless its own binding names one.
+	//
+	// IT SITS BETWEEN THE BINDING AND THE WORKER, and the order is the whole
+	// point. Before it existed the only fallback was the project's worker, so
+	// a fleet that wrote its code with a frontier model also re-read its
+	// entire backlog with one on every sweep. Triage writes no code; it is the
+	// task most worth running on a model the node serves itself.
+	//
+	// Empty keeps the old behaviour exactly — fall back to the worker — so an
+	// install with no local model is unaffected.
+	DefaultAgent WorkerConfig
 }
 
 // TriageRunner is the module's triage orchestration.JobRunner.
@@ -135,6 +148,9 @@ type TriageRunner struct {
 	access forgeAccess
 
 	issueLimit int
+
+	// defaultAgent is the node's triage agent; see TriageRunnerConfig.
+	defaultAgent WorkerConfig
 }
 
 var (
@@ -158,7 +174,13 @@ func NewTriageRunner(cfg TriageRunnerConfig) (*TriageRunner, error) {
 	if limit <= 0 {
 		limit = DefaultTriageIssueLimit
 	}
-	return &TriageRunner{bindings: cfg.Bindings, forges: cfg.Forges, access: access, issueLimit: limit}, nil
+	return &TriageRunner{
+		bindings:     cfg.Bindings,
+		forges:       cfg.Forges,
+		access:       access,
+		issueLimit:   limit,
+		defaultAgent: cfg.DefaultAgent,
+	}, nil
 }
 
 // Name implements orchestration.JobRunner.
@@ -629,12 +651,7 @@ func (s *triageRun) spawnRequest(ctx context.Context, mount string) (*orchestrat
 			Message: "triage reads the repository at its default branch and the project names none",
 		}
 	}
-	// TRIAGE RUNS ON ITS OWN AGENT WHEN THE BINDING NAMES ONE. It reads and
-	// judges; it writes no code. See ProjectBinding.Triage.
-	agent := s.binding.Triage
-	if strings.TrimSpace(agent.Backend) == "" {
-		agent = s.binding.Worker
-	}
+	agent := s.triageAgent()
 	req := &orchestration.SpawnSessionRequest{
 		Backend:      agent.Backend,
 		Model:        agent.Model,
@@ -897,4 +914,28 @@ func issueHasLabel(issue ForgeIssue, label string) bool {
 func (s *triageRun) cleanup(ctx context.Context) (orchestration.JobState, error) {
 	s.teardownSession(ctx)
 	return "", nil
+}
+
+// triageAgent picks the agent this project triages with, most specific first:
+// the project's own Triage, then the NODE's default, then the project's
+// worker.
+//
+// THE NODE DEFAULT IS THE RUNG THAT WAS MISSING, and its absence had one
+// consequence: every project fell straight through to its worker, so a fleet
+// that writes code with a frontier model also re-read every open issue on
+// every sweep with that model. Triage writes nothing — it decides whether an
+// issue is already satisfied, duplicated or moot — and it is by volume the
+// most-run job the factory has.
+//
+// A RUNG IS TAKEN ONLY IF IT NAMES A BACKEND. A model with no backend is not a
+// selection, and treating it as one would spawn the wrong runtime with the
+// right model name.
+func (s *triageRun) triageAgent() WorkerConfig {
+	if strings.TrimSpace(s.binding.Triage.Backend) != "" {
+		return s.binding.Triage
+	}
+	if s.runner != nil && strings.TrimSpace(s.runner.defaultAgent.Backend) != "" {
+		return s.runner.defaultAgent
+	}
+	return s.binding.Worker
 }
