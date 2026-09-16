@@ -616,22 +616,6 @@ func (s *runnerRun) resumeReview(ctx context.Context) (orchestration.JobState, e
 	if s.delivery == nil || !s.delivery.RequiresPullRequest {
 		return "", nil
 	}
-	// AND SO DOES A REFUSAL THE DELIVERY ALREADY RECORDS. roundRequested is
-	// this JOB's memory of a rejected head and dies with it; the delivery is
-	// the durable one. A task readmitted after its job ended -- or restarted,
-	// or resumed on another node -- arrives here with the flag clear and a
-	// pull request whose current head a reviewer has already refused, and
-	// resuming into Reviewing then asks for the identical verdict on the
-	// identical tree while no worker is running to address it. The refusal
-	// surfaces as "there is no worker session to prompt", one attempt at a
-	// time, until the budget is gone.
-	//
-	// Measured on go-truststrap 2026-09-16: task 61e3aa53 readmitted, three
-	// attempts spent in 91 seconds, PR #66 left open carrying an unaddressed
-	// request_changes at its current head. #64 and #65 are the same shape.
-	if s.delivery.HeadRefused() {
-		return "", nil
-	}
 	// A TASK THAT HOLDS NO PULL REQUEST MAY STILL BE ABOUT ONE. See
 	// adoptBranchPullRequest: an issue re-adopted after its first task ended
 	// gets a FRESH delivery, and cutting a rival branch over the one the old
@@ -648,6 +632,24 @@ func (s *runnerRun) resumeReview(ctx context.Context) (orchestration.JobState, e
 	// this runs, so firing on an empty head would bounce the job between the
 	// two states for as long as its budget lasts.
 	if strings.TrimSpace(s.delivery.HeadSHA) == "" {
+		return "", nil
+	}
+	// A REFUSAL THE DELIVERY RECORDS OUTRANKS THE RESUME TOO, and this check
+	// must sit AFTER the adoption above rather than before it. roundRequested
+	// is this JOB's memory of a rejected head and dies with it; the delivery
+	// is the durable one. But a RE-ADOPTED issue starts with an empty delivery
+	// and learns its pull request, its head and its reviews from the forge in
+	// adoptBranchPullRequest — so asking before that runs reads a blank
+	// delivery, finds no refusal, and resumes into Reviewing anyway. Measured
+	// both ways on go-truststrap 2026-09-16: task 61e3aa53 readmitted (three
+	// attempts in 91 seconds), then task c4f558a8 re-adopted from issue #44
+	// and refused identically with the check in the wrong place.
+	//
+	// Resuming a refused head asks for the identical verdict on the identical
+	// tree while no worker is running to address it, which surfaces as "there
+	// is no worker session to prompt", one attempt at a time, until the budget
+	// is gone. PRs #64, #65 and #66 have all sat in that state.
+	if s.delivery.HeadRefused() {
 		return "", nil
 	}
 	pr, err := s.attempt.forge.GetPullRequest(ctx, s.attempt.repo, s.delivery.PullRequest.Number)
