@@ -1475,7 +1475,7 @@ func TestTriageAgent_TheNodeDefaultOutranksTheWorker(t *testing.T) {
 // DEFAULT: a project that names its own triage agent still gets it.
 func TestTriageAgent_TheBindingOutranksTheNodeDefault(t *testing.T) {
 	run := &triageRun{
-		runner:  &TriageRunner{defaultAgent: WorkerConfig{Backend: "openvino", Model: "qwen3-8b"}},
+		runner: &TriageRunner{defaultAgent: WorkerConfig{Backend: "openvino", Model: "qwen3-8b"}},
 		binding: &ProjectBinding{
 			Triage: WorkerConfig{Backend: "codex", Model: "gpt-5.5"},
 			Worker: WorkerConfig{Backend: "claude", Model: "claude-opus-5"},
@@ -1503,7 +1503,7 @@ func TestTriageAgent_NoDefaultStillFallsBackToTheWorker(t *testing.T) {
 // carrying the right model name.
 func TestTriageAgent_AModelWithNoBackendIsNotASelection(t *testing.T) {
 	run := &triageRun{
-		runner:  &TriageRunner{defaultAgent: WorkerConfig{Model: "qwen3-8b"}},
+		runner: &TriageRunner{defaultAgent: WorkerConfig{Model: "qwen3-8b"}},
 		binding: &ProjectBinding{
 			Triage: WorkerConfig{Model: "gpt-5.5"},
 			Worker: WorkerConfig{Backend: "claude", Model: "claude-opus-5"},
@@ -1511,5 +1511,110 @@ func TestTriageAgent_AModelWithNoBackendIsNotASelection(t *testing.T) {
 	}
 	if agent := run.triageAgent(); agent.Backend != "claude" {
 		t.Fatalf("a model with no backend was treated as a selection: backend=%q", agent.Backend)
+	}
+}
+
+// TestApplyNotActionable_AnOpenIssueNeverLeavesWithoutAState is the regression
+// that idled the fleet.
+//
+// A not-actionable verdict used to comment and stop, leaving the issue open
+// carrying NO factory label. Because the newest comment was then triage's own,
+// spokenToSinceTriage ruled it not a candidate on every later pass: invisible
+// to the factory and unmarked for a person. Measured on go-luks2 2026-09-16 —
+// five issues in that state and 34 hours of a fleet triaging nothing.
+func TestApplyNotActionable_AnOpenIssueNeverLeavesWithoutAState(t *testing.T) {
+	forge := newFakeForge()
+	binding := testBinding()
+	binding.Forge.Labels[LabelEscalated] = "factory:escalated"
+	binding.TriageMayClose = true
+	issue := ForgeIssue{Number: 42, Title: "needs a ruling before a worker touches it"}
+	forge.issues[42] = &issue
+
+	run := triageRunFor(forge, binding)
+	// Not closable: the verdict did not say the work is already done.
+	verdict := TriageVerdict{
+		Outcome:  TriageOutcomeNotActionable,
+		Comments: true,
+		Headline: "No worker will be spawned for this issue.",
+	}
+	if err := run.applyNotActionable(context.Background(), issue, verdict, "ext2 support is an owner call"); err != nil {
+		t.Fatalf("applyNotActionable: %v", err)
+	}
+	if len(forge.closed) != 0 {
+		t.Fatalf("closed %v, want the issue left open", forge.closed)
+	}
+	want := binding.Forge.Label(LabelEscalated)
+	if want == "" {
+		t.Fatal("the test binding displays no escalated label; the fixture no longer exercises this")
+	}
+	if len(forge.labelAdds) != 1 || forge.labelAdds[0] != want {
+		t.Fatalf("labels added = %v, want exactly [%s] so a person can find it", forge.labelAdds, want)
+	}
+}
+
+// TestApplyNotActionable_AClosedIssueIsNotAlsoEscalated keeps the two
+// terminal states from both being applied: a closed issue carrying "a person
+// must look" is a contradiction that puts it back in somebody's queue.
+func TestApplyNotActionable_AClosedIssueIsNotAlsoEscalated(t *testing.T) {
+	forge := newFakeForge()
+	binding := testBinding()
+	binding.TriageMayClose = true
+	issue := ForgeIssue{Number: 7, Title: "already fixed on main"}
+	forge.issues[7] = &issue
+
+	run := triageRunFor(forge, binding)
+	verdict := TriageVerdict{
+		Outcome: TriageOutcomeNotActionable, Comments: true,
+		Headline:            "No worker will be spawned for this issue.",
+		ClosesAsAlreadyDone: true,
+	}
+	if err := run.applyNotActionable(context.Background(), issue, verdict, "fixed at foo.go:12"); err != nil {
+		t.Fatalf("applyNotActionable: %v", err)
+	}
+	if len(forge.closed) != 1 || forge.closed[0] != 7 {
+		t.Fatalf("closed = %v, want [7]", forge.closed)
+	}
+	if len(forge.labelAdds) != 0 {
+		t.Fatalf("labels added = %v, want none on a closed issue", forge.labelAdds)
+	}
+}
+
+// TestIsCandidate_EscalatedIsAskingAndComesBackWhenAnswered pins the other
+// half: escalating a not-actionable verdict is only safe because an escalated
+// issue is re-read once somebody replies. Without the exemption the new label
+// would trade an issue nothing looks at for an issue nothing CAN look at.
+func TestIsCandidate_EscalatedIsAskingAndComesBackWhenAnswered(t *testing.T) {
+	forge := newFakeForge()
+	binding := testBinding()
+	binding.Forge.Labels[LabelEscalated] = "factory:escalated"
+	escalated := binding.Forge.Label(LabelEscalated)
+	issue := &ForgeIssue{Number: 9, Title: "needs a ruling", Labels: []string{escalated}}
+	forge.issues[9] = issue
+
+	run := triageRunFor(forge, binding)
+	run.discussions = map[int][]ForgeComment{}
+	owned := binding.Forge.OwnedLabels()
+
+	// Triage spoke last: nothing new to judge.
+	forge.comments[9] = []ForgeComment{
+		{Created: time.Now().Add(-time.Hour), Body: "a person's report"},
+		{Created: time.Now().Add(-time.Minute), Body: "the verdict\n<!-- " + triageCommentMarker + " -->"},
+	}
+	got, err := run.isCandidate(context.Background(), issue, owned)
+	if err != nil {
+		t.Fatalf("isCandidate: %v", err)
+	}
+	if got {
+		t.Fatal("an escalated issue triage spoke last on is a candidate; it would re-judge itself every sweep")
+	}
+
+	// The owner answered: the request was the point, so judge it again.
+	forge.comments[9] = append(forge.comments[9], ForgeComment{Created: time.Now(), Body: "ruling: ext2 is out of scope"})
+	got, err = run.isCandidate(context.Background(), issue, owned)
+	if err != nil {
+		t.Fatalf("isCandidate: %v", err)
+	}
+	if !got {
+		t.Fatal("an escalated issue somebody answered is not a candidate; the ruling would never be acted on")
 	}
 }

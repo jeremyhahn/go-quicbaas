@@ -465,12 +465,25 @@ func (s *triageRun) isCandidate(ctx context.Context, issue *ForgeIssue, owned ma
 	if issueTriggered(s.binding, issue) {
 		return false, nil
 	}
-	needsInfo := s.binding.Forge.Label(LabelNeedsInfo)
+	// needs-info and escalated do NOT settle the question. Both verdicts are
+	// REQUESTS -- one for a missing fact, one for a ruling -- and the whole
+	// point of making them is that somebody answers; the answer arrives as a
+	// comment, which is what spokenToSinceTriage looks for. Every other owned
+	// label marks work the engine itself is carrying, and re-judging that
+	// would race the runner that owns it.
+	//
+	// ESCALATED WAS NOT EXEMPT AND HAD TO BECOME SO. applyNotActionable now
+	// escalates rather than leaving the issue unlabelled; without this, the
+	// label it applies would make the issue permanently invisible instead of
+	// permanently unmarked, which trades one silent limbo for another.
+	asking := map[string]bool{}
+	for _, key := range []string{LabelNeedsInfo, LabelEscalated} {
+		if label := s.binding.Forge.Label(key); label != "" {
+			asking[label] = true
+		}
+	}
 	for _, label := range issue.Labels {
-		if needsInfo != "" && label == needsInfo {
-			// needs-info does NOT settle the question. That verdict is a
-			// request, and the whole point of making it is that somebody
-			// answers; the answer is what spokenToSinceTriage looks for.
+		if asking[label] {
 			continue
 		}
 		if owned[strings.ToLower(label)] {
@@ -840,11 +853,25 @@ func (s *triageRun) applyNeedsInfo(ctx context.Context, issue ForgeIssue, verdic
 	return nil
 }
 
-// applyNotActionable writes the evidence, and closes the issue when BOTH the
-// verdict said the work is already done and the binding allows it.
+// applyNotActionable writes the evidence, and then leaves the issue in a state
+// somebody can find: closed when the work is already done and the binding
+// allows it, escalated otherwise.
 //
-// NO LABEL EITHER WAY. Not-actionable is not a state a worker waits on, and a
-// label that means "a person should look" is what the needs-info path is for.
+// LEAVING NO LABEL WAS THE DEFECT THAT IDLED THE FLEET. A not-actionable
+// verdict used to comment and stop, so the issue stayed open carrying no
+// factory label at all -- and because the newest comment was then triage's
+// own, spokenToSinceTriage ruled it not a candidate on every later pass. The
+// issue was invisible to the factory and unmarked for a person: nobody was
+// waiting on it and nothing would look at it again. Measured on go-luks2,
+// 2026-09-16: five issues in exactly that state, and a fleet that had
+// triaged nothing for 34 hours because every judgeable issue had reached it.
+//
+// ESCALATED IS THE HONEST NAME FOR WHAT THIS VERDICT IS. "Not actionable by a
+// worker" and "a person must decide" are the same sentence from two ends; the
+// verdicts say so themselves ("needs one ruling before a worker should touch
+// it"). Escalated is exempted from the owned-label skip alongside needs-info
+// for the same reason it is: the label records a REQUEST, and the answer
+// arrives as a comment, which is what makes the issue a candidate again.
 //
 // BOTH CONDITIONS ARE REQUIRED. A not-actionable that named no reason is never
 // closed however permissive the binding, and a binding that has not opted in
@@ -860,11 +887,22 @@ func (s *triageRun) applyNotActionable(ctx context.Context, issue ForgeIssue, ve
 	// that crashes between the two leaves an open issue carrying the evidence
 	// — which the next pass can act on — where closing first would leave a
 	// closed issue saying nothing about why.
-	if !verdict.ClosesAsAlreadyDone || !s.binding.TriageMayClose {
+	if verdict.ClosesAsAlreadyDone && s.binding.TriageMayClose {
+		if err := s.forge.CloseIssue(ctx, s.repo, issue.Number); err != nil {
+			return &TriageVerdictError{Issue: issue.Number, Reason: "the issue could not be closed", Cause: err}
+		}
 		return nil
 	}
-	if err := s.forge.CloseIssue(ctx, s.repo, issue.Number); err != nil {
-		return &TriageVerdictError{Issue: issue.Number, Reason: "the issue could not be closed", Cause: err}
+	// The issue stays open, so it must carry the one label that says a person
+	// is the next step. A binding that displays no escalated label keeps the
+	// old behaviour: the comment is the record, which is the part a person
+	// acts on.
+	label := s.binding.Forge.Label(LabelEscalated)
+	if label == "" || issueHasLabel(issue, label) {
+		return nil
+	}
+	if err := s.forge.AddIssueLabels(ctx, s.repo, issue.Number, []string{label}); err != nil {
+		return &TriageVerdictError{Issue: issue.Number, Reason: "the escalated label could not be applied", Cause: err}
 	}
 	return nil
 }
