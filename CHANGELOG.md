@@ -7,6 +7,206 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0-alpha] - 2026-09-16
+
+MINOR rather than PATCH because this span adds a capability — agent profiles
+and pools, a working `openvino` backend, and a node-level triage agent — rather
+than only correcting behaviour.
+
+THE THEME IS A LOOP THAT COMPLETES. The previous release could triage, deliver
+and review, and in practice it stopped: a not-actionable verdict left an issue
+unlabelled and invisible, a readmitted task resumed into a review nobody could
+satisfy, and the local-model backend could not spawn a session at all. Each of
+those is fixed here with the measurement that found it.
+
+### Added
+
+- **Agent profiles and pools.** `AgentProfile` names one combination of
+  *runtime* (claude / codex / opencode / openvino), *model* and *provider
+  endpoint* — three independent facts that were previously fused into a single
+  backend name. `AgentPool` is an ordered preference list of profiles, and
+  `ProfileResolver` picks the first with capacity, so "prefer the local model,
+  spill to the metered one" is data rather than a hardcoded fallback. Load
+  comes from the same live-lease count the concurrency cap enforces, so
+  placement and admission cannot disagree about what "busy" means.
+
+
+- **A project may name its own triage agent** (`binding.triage`), falling back
+  to `worker` when unset. Triage reads and judges and writes no code, so it can
+  run on a cheaper or locally hosted model without changing who writes the
+  code. The binding table says plainly when it is falling back.
+
+- **An `openvino` agent backend, and a container that can drive an Intel NPU.**
+  `pkg/orchestration/openvino_backend.go` runs a real agent loop against an
+  OpenVINO Model Server — completion, tool calls executed in the session's
+  container, results fed back — offering exactly one tool, `run_command`.
+  `deployments/inference/openvino-npu/Dockerfile` adds the Intel NPU user-mode
+  driver to `openvino/model_server`, which ships the NPU plugin but no
+  level-zero and therefore cannot enumerate the device at all. Measured on the
+  burn-in fleet with `Qwen3-8B-int4-cw-ov`: 98% NPU utilisation with the GPU at
+  0%, so reading work stops competing with reviews for the card. The agent
+  daemon registers it from `--openvino-url` / `--openvino-model`; unset leaves
+  it unregistered rather than pointing at a guess.
+
+  It is a backend rather than another provider config on the ACP exec path
+  because that was tried first and cannot work: OVMS answers *"Only function
+  tools are supported"* to codex, which advertises its shell and patch tools as
+  custom types and offers no switch to change them.
+
+- **Triage can close an issue whose work is already on the default branch,
+  when the project allows it.** `ProjectBinding.TriageMayClose` is off by
+  default and the charter still tells the agent not to ask unless the project
+  has enabled it — a label is reversible and carries no social weight, and
+  closing somebody's issue does. Closing requires BOTH the binding's consent
+  and an explicit `SDLC-TRIAGE-CLOSE: already-done` marker on the verdict, so
+  enabling the feature cannot retroactively close what an earlier pass judged,
+  and a not-actionable that named no reason is never closed. Only that one
+  reason closes: a model inventing its own justification cannot act on it. The
+  evidence comment is posted first, so a crash between the two leaves an open
+  issue carrying the reasoning rather than a closed one saying nothing.
+
+- **A node-level default triage agent**, `sdlc.triage_backend` /
+  `sdlc.triage_model`. Triage re-reads every open issue on every bound project
+  on every sweep and writes no code, so it is both the highest-volume job the
+  factory runs and the one least in need of a frontier model. Its only fallback
+  was the project's WORKER, so a fleet that wrote its code with a frontier model
+  also re-read its entire backlog with one. The fallback is now three rungs,
+  most specific first: the binding's own `triage`, the node's default, the
+  project's worker. A rung is taken only if it names a BACKEND — a model with no
+  backend is not a selection, and treating it as one spawns the wrong runtime
+  carrying the right model name. Both keys ship EMPTY, which keeps the previous
+  behaviour exactly for an install with no locally served model.
+
+### Fixed
+
+- **A triaged issue always leaves in a state somebody can find.** A
+  `not_actionable` verdict commented and stopped, leaving the issue open with no
+  factory label at all — and because the newest comment was then triage's own,
+  the candidate rule skipped it on every later pass. The issue was invisible to
+  the factory and unmarked for a person: nobody was waiting on it and nothing
+  would look at it again. Measured on a burn-in project: five issues in exactly
+  that state, zero issues carrying the trigger label anywhere in the fleet, and
+  34 hours during which the backstop ran every 15 minutes, found no candidate
+  and reported a clean pass every time.
+
+  Not-actionable now escalates when it does not close, and `escalated` joins
+  `needs-info` as a label triage re-reads once somebody replies. Both verdicts
+  are REQUESTS — one for a missing fact, one for a ruling — and the answer
+  arrives as a comment. A closed issue is not also escalated.
+
+- **A re-adopted issue no longer races a rival branch against its own open pull
+  request.** A delivery is keyed by task and a task is terminal, so an issue
+  whose first task ended is adopted again as a new task with a fresh delivery
+  that knows nothing of the pull request the old one opened. The branch name is
+  planned from the issue, so it is the same name; the remote branch still
+  carries the old commits; and the new attempt cut its branch from the base
+  instead. Every push was then refused — `! [rejected] (non-fast-forward)` —
+  and each refusal was charged to the *work*, so the task spent its whole
+  attempt budget failing at something the work had nothing to do with. That
+  made re-labelling an orphaned issue not merely useless but harmful. A
+  delivery holding no pull request now adopts one already open on its branch,
+  takes that pull request's head as its own, and goes to review instead of
+  working again.
+
+- **A spawn whose credential directory did not mount is refused instead of
+  started blind.** A pooled account's files must be keyed under
+  `CredentialDirSpec.Rel` — `materializeAccountFiles` writes each relative path
+  verbatim and the backend mounts `<account-home>/<Rel>`. Files stored at the
+  root produced no mount, yet the backend still set the CLI's `HomeEnv`,
+  pointing it at a container path nothing had mounted. codex answered
+  `CODEX_HOME points to "/home/agent/.codex", but that path does not exist`,
+  produced no turn, and the runner reported only `(9882 bytes of stderr
+  withheld)`. Every review on the burn-in fleet failed that way for hours while
+  the account read `active` and the credential resolved.
+- **Agent-daemon backends log again.** `ACPBackend.SetLogger` was never called
+  in `agent serve`, so every backend's logger was nil and its diagnostics — the
+  evidence withheld from the error string — were discarded. That is why the
+  fault above took hours to see rather than minutes.
+
+
+- **A task no longer abandons the pull request it opened.** A delivery is keyed
+  by task, so it outlives the attempt that created it — but every attempt ran
+  the worker regardless. When an attempt ended for a reason that was not the
+  work's fault *after* its pull request was opened, the next attempt was handed
+  a workspace with that branch checked out; the worker read the tree, found the
+  change already present and reported `satisfied`, exactly as its contract
+  says; and the conclusion seam completed the task as `already_satisfied` on
+  the premise that "the work was already present, so there is nothing to
+  merge". That premise holds for a stale issue and is false here — the pull
+  request was still open, and completing the task left it with nobody to merge
+  it, ever. Three of the burn-in fleet's nine open pull requests were stranded
+  that way, two carrying review verdicts nobody would act on and one approved
+  and gate-cleared. An attempt whose task already has an open, unmerged pull
+  request now resumes it — straight to the review state, worker not re-run —
+  and the forge is asked rather than the delivery record, so a pull request
+  merged or closed by a person since is not reviewed again.
+
+- **The `openvino` backend can actually run a session.** Five faults stood
+  between naming the backend and a working turn, each visible only once the one
+  before it was fixed:
+
+  - The registration was deleted alongside the model-named backend it replaced,
+    while `--openvino-url` and `--openvino-model` kept populating the config —
+    flags accepted, backend constructed from nothing.
+  - It was handed no container runtime. It is not a CLI: it drives a remote
+    model over HTTP and execs its tool INSIDE a container of its own, so it
+    holds the runtime directly rather than being given one at spawn. Without it
+    every sandboxed spawn was refused, which on a required-policy daemon is
+    every spawn.
+  - `Spawn` returned a session with no `ContainerID`, so the control plane saw
+    an uncontainerized session and refused it while the container ran on the
+    host. Empty stays a real answer for an unsandboxed session.
+  - The keep-alive lost its arguments: the runtime maps only `Entrypoint[0]`
+    onto `--entrypoint`, so a bare `tail` read EOF, exited, and auto-remove took
+    the container away — about a second after the spawn reported an id.
+  - The spawn's environment did not travel, so the container had no agent socket
+    and no pinned host key and cloned nothing.
+
+  `HasContainerRuntime` makes the wiring provable: a backend missing its runtime
+  is indistinguishable from a working one until the first spawn.
+
+- **A served model needs a usable prompt length.** OVMS generates a default
+  graph when the model directory has none, and that default takes the NPU
+  plugin's 1024-token limit — smaller than the triage charter alone, so every
+  turn failed before an issue was attached. `deployments/inference/openvino-npu/`
+  now carries the graph, with the measured result that the key is
+  `MAX_PROMPT_LEN` (unprefixed) in `plugin_config`: the field spelling is
+  refused at load, and the `NPUW_LLM_`-prefixed spelling loads and changes
+  nothing. 20,009 prompt tokens accepted where 1,109 previously failed.
+
+- **A task readmitted onto a refused head gets a worker, not a second review.**
+  The runner's "a round was requested" flag lives for one job. A task readmitted
+  after its job ended arrived with the flag clear and a pull request whose
+  CURRENT head a reviewer had already refused, so the run resumed into review —
+  asking for the identical verdict on the identical tree with no worker running
+  to address it. It surfaced as "there is no worker session to prompt", one
+  attempt at a time, until the budget was gone, leaving the pull request open,
+  refused and unattended. Reproduced by readmitting a real task: three attempts
+  spent in 91 seconds.
+
+  `Delivery.HeadRefusal` is the durable form of the flag — it reads the newest
+  review BINDING to the current head, so a second reviewer's later approval
+  still wins — and the question is asked AFTER the pull request is adopted,
+  because a re-adopted issue learns its head and its reviews during that
+  adoption.
+
+- **The reviewer's objection survives the job that received it.** Round findings
+  came from the job's memory and this run's feedback, and a readmitted task has
+  neither. The worker was handed the bare issue contract, read a branch that
+  already held the work, correctly answered that the implementation was already
+  there, and was charged a failure for producing no changes — while the
+  reviewer's objection reached nobody. The delivery is now the third and durable
+  source, and the round is numbered from the refusal.
+
+### Removed
+
+- **The `qwen` backend.** It was the codex runtime driving a qwen model at an
+  ollama endpoint, registered under the model's name with the endpoint baked
+  into its argv — so one codex registration could reach exactly one provider
+  and a second provider needed a second "backend". It is now expressible as
+  profiles over the runtimes that already exist. `QwenProviderName` and
+  `QwenProviderConfigArgs` are superseded by `AgentProfile.SpawnArgs`.
+
 ## [0.8.0-alpha] - 2026-09-14
 
 MINOR rather than PATCH because this span adds a capability rather than
