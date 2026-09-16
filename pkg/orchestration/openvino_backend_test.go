@@ -339,3 +339,30 @@ func TestOpenVINOBackend_TheKeepAliveCommandSurvivesTheRuntimeMapping(t *testing
 		t.Fatal("spec.User is empty; the container must run as the uid that owns the bind-mounted checkout")
 	}
 }
+
+// TestOpenVINOBackend_TheSpawnEnvironmentReachesTheContainer: the environment
+// carries how the checkout authenticates and whom it trusts — the ssh agent
+// socket and the project's pinned host key among them. A container started
+// without it clones nothing, measured as "Host key verification failed" on
+// `git fetch origin main`, on both bound projects 2026-09-16.
+func TestOpenVINOBackend_TheSpawnEnvironmentReachesTheContainer(t *testing.T) {
+	runtime := &mockContainerRuntime{available: true, runID: "ctr-env"}
+	backend := NewOpenVINOBackend(OpenVINOBackendConfig{
+		BaseURL:      "http://gpu-host.invalid:9000",
+		DefaultModel: "qwen3-8b",
+	})
+	backend.SetContainerRuntime(runtime)
+
+	if _, err := backend.Spawn(context.Background(), &SpawnRequest{
+		Model:          "qwen3-8b",
+		SandboxMode:    SandboxModeRequired,
+		ContainerImage: "worker:test",
+		Env:            map[string]string{"SSH_AUTH_SOCK": "/run/agent.sock"},
+	}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	spec := runtime.runCalls[0].Spec
+	if spec.Env["SSH_AUTH_SOCK"] != "/run/agent.sock" {
+		t.Fatalf("spec.Env = %v, want the spawn's environment carried through", spec.Env)
+	}
+}

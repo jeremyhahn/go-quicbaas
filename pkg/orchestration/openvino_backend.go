@@ -235,6 +235,13 @@ func (b *OpenVINOBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Sessio
 			// entrypoint and passes the whole command.
 			Entrypoint: []string{},
 			Command:    []string{"tail", "-f", "/dev/null"},
+			// THE SPAWN'S ENVIRONMENT TRAVELS, exactly as it does for the ACP
+			// backends. It carries how the checkout authenticates and whom it
+			// trusts -- the ssh agent socket and the project's pinned host key
+			// among them -- so a container started without it clones nothing:
+			// measured as "Host key verification failed" on `git fetch origin
+			// main`, on both bound projects, 2026-09-16.
+			Env:        req.Env,
 			AutoRemove: true,
 			Network:    string(SandboxNetworkDefault),
 			// The daemon's own uid, for the same reason the ACP backend uses
