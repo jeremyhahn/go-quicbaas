@@ -1,0 +1,66 @@
+# OVMS mediapipe graph for Qwen3-8B-int4-cw-ov on an Intel NPU.
+#
+# Copy this to the served model directory as graph.pbtxt (beside
+# openvino_model.xml) and restart the OVMS container. OVMS generates a default
+# graph when none is present, and that default caps the prompt at the NPU
+# plugin's 1024-token default -- which is smaller than the SDLC triage charter
+# alone, so every triage turn failed with:
+#
+#   Mediapipe execution failed ... "Input length exceeds the maximum allowed
+#   length"
+#
+# THE KEY IS MAX_PROMPT_LEN, UNPREFIXED, AND IT GOES IN plugin_config.
+# Three spellings were measured on OVMS 2026.3.1 (2026-09-16):
+#   - `max_prompt_len` as a node_options FIELD: refused at load,
+#     "Message type mediapipe.LLMCalculatorOptions has no field named
+#     max_prompt_len" -- the server exits 1 and serves nothing.
+#   - `NPUW_LLM_MAX_PROMPT_LEN` alone in plugin_config: loads, recompiles for
+#     several minutes, and the limit does NOT move. It is a real NPU plugin
+#     property and it is not the one this pipeline reads.
+#   - `MAX_PROMPT_LEN` in plugin_config: works. Measured 20,009 prompt tokens
+#     accepted where 1,109 previously failed.
+# Both are set below; the NPUW_ pair is harmless and documents the mapping.
+#
+# COST: the NPU compiles a STATIC shape for MAX_PROMPT_LEN, so raising it makes
+# model load slower (~7 minutes here, against seconds at 1024) and costs
+# memory. 32768 is the model's native context. gpu-host has 93G with ~61G free.
+
+# File created with: OpenVINO Model Server 2026.3.1.3a28d490b
+# OVMS_GRAPH_QUEUE_MAX_SIZE: AUTO
+
+    input_stream: "HTTP_REQUEST_PAYLOAD:input"
+    output_stream: "HTTP_RESPONSE_PAYLOAD:output"
+    node: {
+    name: "LLMExecutor"
+    calculator: "HttpLLMCalculator"
+    input_stream: "LOOPBACK:loopback"
+    input_stream: "HTTP_REQUEST_PAYLOAD:input"
+    input_side_packet: "LLM_NODE_RESOURCES:llm"
+    input_side_packet: "LLM_NODE_EXECUTION_CONTEXTS:llm_ctx"
+    output_stream: "LOOPBACK:loopback"
+    output_stream: "HTTP_RESPONSE_PAYLOAD:output"
+    input_stream_info: {
+        tag_index: 'LOOPBACK:0',
+        back_edge: true
+    }
+    node_options: {
+        [type.googleapis.com / mediapipe.LLMCalculatorOptions]: {
+            device: "NPU",
+              max_num_seqs:1,
+            plugin_config: "{\"MAX_PROMPT_LEN\": 32768, \"MIN_RESPONSE_LEN\": 1024, \"NPUW_LLM_MAX_PROMPT_LEN\": 32768, \"NPUW_LLM_MIN_RESPONSE_LEN\": 1024}",
+            models_path: "./",
+            enable_prefix_caching: false,
+            cache_size: 0,
+        }
+    }
+    input_stream_handler {
+        input_stream_handler: "SyncSetInputStreamHandler",
+        options {
+        [mediapipe.SyncSetInputStreamHandlerOptions.ext] {
+            sync_set {
+            tag_index: "LOOPBACK:0"
+            }
+        }
+        }
+    }
+    }
