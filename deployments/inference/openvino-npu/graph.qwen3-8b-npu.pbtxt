@@ -23,19 +23,46 @@
 # Both are set below; the NPUW_ pair is harmless and documents the mapping.
 #
 # COST: THE NPU RESERVES FOR THE MAXIMUM, USED OR NOT. The plugin compiles a
-# STATIC shape, so this is a memory decision as much as a correctness one.
-# Measured on one host with this 8B int4 model:
+# STATIC shape, so this is a memory decision as much as a correctness one, and
+# the reservation is SHARED memory -- invisible to `ps` and to every
+# top-by-RSS reading of the machine. Read it with `free -h` (shared column),
+# `grep Shmem /proc/meminfo`, or `docker stats`.
 #
-#     MAX_PROMPT_LEN      reserved      load time
-#         1024             ~2 GiB        seconds
-#         8192            14.2 GiB       45 seconds
-#        8192            63.7 GiB       ~7 minutes
+# THE CURVE IS SUPERLINEAR -- roughly a doubling per 8K step, NOT the straight
+# line a first reading of two points suggests:
 #
-# That is roughly 1.8 GiB per 1k tokens, and it is reserved at load whether or
-# not a prompt ever uses it. 8192 drove a 93 GiB host into swap and made the
-# desktop unresponsive; the value below is sized for the WORK (a triage charter
-# is ~1,400 tokens, and a charter plus an issue and its discussion has measured
-# under 8k) rather than for the model's 40,960-token maximum.
+#     MAX_PROMPT_LEN   reserved (Shmem)   load      memory pressure
+#          8192           11.8 GiB         45 s      none
+#         16384           17.9 GiB         79 s      PSI full avg60 0.15%
+#         24576           31.4 GiB        191 s      PSI full avg60 9.22%, free <1 GiB
+#         32768           63.7 GiB         ~7 min    host swapped, desktop unusable
+#
+# 24576 is where it visibly turns: for 9% of that minute EVERY task on the box
+# was stalled on memory. Keep the reservation at or under ~20 GiB.
+#
+# A LARGER SHAPE IS FREE IN LATENCY, WHICH IS WHY 16384 RATHER THAN 8192.
+# Prefill tracks the ACTUAL prompt length, not the compiled shape: the same
+# 5,886-token prompt took 35.4 s at 8192, 35.5 s at 16384 and 35.8 s at 24576.
+# The larger shape costs memory and one-time load, and nothing per request --
+# and 8192 leaves no room for a 7,500-token prompt once the system message and
+# the answer budget are added.
+#
+# THIS MODEL IS THE CEILING ON THIS NPU. Only seven `-int4-cw-ov` models exist
+# and Qwen3-8B is the largest. The plain `-int4-ov` builds (which include 14B
+# models) store weights as asymmetric `u4` with per-group zero points, and the
+# NPU37XX compiler cannot lower that dequantize -- measured, both a 1.7B and a
+# 14B failed identically with "Unsupported DequantizeOp configuration ...
+# quant.uniform<u4:f16>". It is structural, not a tuning problem. The `-cw`
+# builds store symmetric channel-wise `i4`, which compiles.
+#
+# WHETHER TO USE THE NPU AT ALL: for interactive triage, no. One 5,886-token
+# turn costs ~72 s here (35 s prefill at 166 tok/s, 37 s decode at 6 tok/s)
+# against ~4 s for a 27B on a discrete GPU -- about 18x slower for a model a
+# third the size, with no way to buy back quality because the toolchain rejects
+# everything larger. What it does buy is power: ~14 W package against ~106 W on
+# the GPU, at ~100% NPU residency. That is the case for it, and it is the only
+# one. The verdicts it gives ARE correct; `/no_think` is required, or Qwen3
+# spends the whole answer budget reasoning and returns nothing.
 #
 # An iGPU is NOT automatically the cheaper answer: integrated graphics have no
 # dedicated VRAM and draw on the same system memory. What differs is that the
@@ -67,7 +94,7 @@
         [type.googleapis.com / mediapipe.LLMCalculatorOptions]: {
             device: "NPU",
               max_num_seqs:1,
-            plugin_config: "{\"MAX_PROMPT_LEN\": 8192, \"MIN_RESPONSE_LEN\": 512, \"NPUW_LLM_MAX_PROMPT_LEN\": 8192, \"NPUW_LLM_MIN_RESPONSE_LEN\": 512}",
+            plugin_config: "{\"MAX_PROMPT_LEN\": 16384, \"MIN_RESPONSE_LEN\": 512, \"NPUW_LLM_MAX_PROMPT_LEN\": 16384, \"NPUW_LLM_MIN_RESPONSE_LEN\": 512}",
             models_path: "./",
             enable_prefix_caching: false,
             cache_size: 0,
