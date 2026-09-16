@@ -85,6 +85,11 @@ type OpenVINOBackendConfig struct {
 	// schedule rather than a deadline.
 	Thinking bool
 
+	// ContextTokens is what the operator says this endpoint's model accepts.
+	// Zero declares nothing, and the limit is then learned from refusals. See
+	// context_limit.go for why this is a declaration rather than a probe.
+	ContextTokens int
+
 	// RequestTimeout bounds a single completion. Zero takes the default.
 	RequestTimeout time.Duration
 
@@ -105,7 +110,10 @@ const (
 type OpenVINOBackend struct {
 	config           OpenVINOBackendConfig
 	containerRuntime ContainerRuntime
-	logger           interfaces0Logger
+
+	// contextLimit is what this endpoint will accept, declared and learned.
+	contextLimit *ContextLimit
+	logger       interfaces0Logger
 
 	mu       sync.Mutex
 	sessions map[string]*openVINOSession
@@ -140,7 +148,11 @@ func NewOpenVINOBackend(config OpenVINOBackendConfig) *OpenVINOBackend {
 	if config.HTTPClient == nil {
 		config.HTTPClient = &http.Client{Timeout: config.RequestTimeout}
 	}
-	return &OpenVINOBackend{config: config, sessions: map[string]*openVINOSession{}}
+	return &OpenVINOBackend{
+		config:       config,
+		sessions:     map[string]*openVINOSession{},
+		contextLimit: NewContextLimit(config.ContextTokens),
+	}
 }
 
 // SetContainerRuntime installs the runtime tool calls execute in.
@@ -351,6 +363,28 @@ type ovRequest struct {
 	ChatTemplateKwargs map[string]any `json:"chat_template_kwargs,omitempty"`
 }
 
+// estimateTokens sizes what the MODEL will read, not what the wire carries.
+//
+// THE ENVELOPE IS NOT PROMPT. Estimating over the marshalled payload counts the
+// JSON keys, the model name and the tool schemas, which the tokenizer also sees
+// but which do not scale with the conversation — so on a short prompt the
+// overhead dominated and the calibrated ratio came out at 0.4 against a real
+// count of 10. Measured against a live server 2026-09-16. Summing the message
+// content and the tool descriptions tracks the thing that actually grows.
+func (r ovRequest) estimateTokens() int {
+	total := EstimateTokens(r.Model)
+	for _, message := range r.Messages {
+		total += EstimateTokens(message.Content)
+		for _, call := range message.ToolCalls {
+			total += EstimateTokens(call.Function.Arguments)
+		}
+	}
+	for _, tool := range r.Tools {
+		total += EstimateTokens(tool.Function.Description)
+	}
+	return total
+}
+
 // ovTool is a FUNCTION tool and nothing else. OVMS answers
 // "Only function tools are supported" to anything other than this shape, which
 // is exactly why the vendor CLI cannot drive it.
@@ -490,6 +524,19 @@ func (b *OpenVINOBackend) complete(ctx context.Context, body ovRequest) (*ovResp
 	if err != nil {
 		return nil, err
 	}
+	// REFUSED BEFORE THE ROUND TRIP WHEN THE CEILING IS ALREADY KNOWN. Sending
+	// a prompt the endpoint has already refused at this size buys nothing but
+	// latency, and on a slow local model that is minutes per attempt.
+	estimate := body.estimateTokens()
+	if !b.contextLimit.Allows(estimate) {
+		return nil, &PromptTooLongError{
+			Backend:   b.Type(),
+			Model:     body.Model,
+			Estimated: estimate,
+			Bound:     b.contextLimit.Bound(),
+			URL:       strings.TrimRight(b.config.BaseURL, "/") + "/v3/chat/completions",
+		}
+	}
 	url := strings.TrimRight(b.config.BaseURL, "/") + "/v3/chat/completions"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
@@ -506,12 +553,36 @@ func (b *OpenVINOBackend) complete(ctx context.Context, body ovRequest) (*ovResp
 		return nil, err
 	}
 	if httpResp.StatusCode < 200 || httpResp.StatusCode > 299 {
-		return nil, &OpenVINOServerError{URL: url, Status: httpResp.StatusCode, Body: truncateForLog(string(raw), 600)}
+		// A REFUSAL FOR LENGTH TEACHES THE CEILING AND IS REPORTED AS ITSELF.
+		// Left as a bare server error it reached the operator as "triage
+		// produced no usable verdict" wrapped around a mediapipe stack trace,
+		// which named neither the size that was sent nor the size that would
+		// fit. Measured on the burn-in fleet: every triage turn failed that way
+		// for a day before anybody read the raw body.
+		errBody := string(raw)
+		if IsLengthRefusal(httpResp.StatusCode, errBody) {
+			b.contextLimit.Refused(estimate)
+			return nil, &PromptTooLongError{
+				Backend:   b.Type(),
+				Model:     body.Model,
+				Estimated: estimate,
+				Bound:     b.contextLimit.Bound(),
+				URL:       url,
+				Status:    httpResp.StatusCode,
+				Detail:    truncateForLog(errBody, 400),
+			}
+		}
+		return nil, &OpenVINOServerError{URL: url, Status: httpResp.StatusCode, Body: truncateForLog(errBody, 600)}
 	}
 	var parsed ovResponse
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		return nil, &OpenVINOServerError{URL: url, Status: httpResp.StatusCode, Body: truncateForLog(string(raw), 600), Cause: err}
 	}
+	// A SUCCESSFUL RESPONSE CARRIES THE SERVER'S OWN TOKEN COUNT, which is the
+	// one piece of metadata every OpenAI-compatible server agrees on. It is
+	// what relates this package's estimate to real tokens, so an operator's
+	// declared bound and a learned one can be compared in the same unit.
+	b.contextLimit.Calibrate(estimate, parsed.Usage.PromptTokens)
 	return &parsed, nil
 }
 

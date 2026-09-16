@@ -100,6 +100,18 @@ type AgentProfile struct {
 	// Empty takes the caller's.
 	Image string `json:"image,omitempty"`
 
+	// ContextTokens is what this profile's model accepts, as the operator
+	// knows it. Zero declares nothing and the backend learns the limit from
+	// the first refusal.
+	//
+	// IT IS ON THE PROFILE BECAUSE THE LIMIT IS A PROPERTY OF THE COMBINATION,
+	// not of the runtime or the model alone: the same model served with a
+	// larger compiled context on one endpoint and a smaller one on another has
+	// two different limits, and a fleet routing between them needs to know
+	// both. Declaring it is also the only rung that can be right BEFORE the
+	// first request — see context_limit.go for the ladder.
+	ContextTokens int `json:"context_tokens,omitempty"`
+
 	// MaxConcurrent bounds how many jobs may run on this profile at once.
 	// Zero means unbounded.
 	//
@@ -120,6 +132,9 @@ func (p AgentProfile) Validate() error {
 	}
 	if p.MaxConcurrent < 0 {
 		return &InputValidationError{Field: "profile.max_concurrent", Message: "use zero for unbounded, not a negative"}
+	}
+	if p.ContextTokens < 0 {
+		return &InputValidationError{Field: "profile.context_tokens", Message: "use zero for undeclared, not a negative"}
 	}
 	// A provider that names a server must say which dialect it speaks: the
 	// runtime cannot probe for it, and guessing produces a failure that reads
