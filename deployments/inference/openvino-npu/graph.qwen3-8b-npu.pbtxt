@@ -23,7 +23,8 @@
 #
 # COST: the NPU compiles a STATIC shape for MAX_PROMPT_LEN, so raising it makes
 # model load slower (~7 minutes here, against seconds at 1024) and costs
-# memory. 32768 is the model's native context. gpu-host has 93G with ~61G free.
+# memory. 32768 is the model's native context; size it against the inference
+# host's free memory (measured fine on a 93G host with ~61G free).
 
 # File created with: OpenVINO Model Server 2026.3.1.3a28d490b
 # OVMS_GRAPH_QUEUE_MAX_SIZE: AUTO

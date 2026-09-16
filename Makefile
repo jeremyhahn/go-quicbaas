@@ -1094,10 +1094,19 @@ LINT_BUILD_TAGS := $(filter-out !integration,$(TEST_TAGS))
 #                               one-time prekey consumption single-use, so this
 #                               needs a qrdb SDK addition -- the package is
 #                               currently unbuildable, not merely untested.
+# openvino_live drives a REAL OpenVINO Model Server on a REAL NPU
+# (pkg/orchestration/openvino_backend_live_test.go). It is exempt for the
+# reason gpu and swtpm are: no CI runner in this fleet has the accelerator, and
+# a pass that compiled it could not run it. Drive it by hand against a served
+# model:
+#
+#   OPENVINO_BASE_URL=http://gpu-host:9000 OPENVINO_MODEL=qwen3-8b \
+#     go test -tags openvino_live -run TestOpenVINOBackend_Live ./pkg/orchestration/
 TAG_GATE_EXEMPT := linux darwin windows unix ignore integration coverage production \
 	pkcs11 swtpm tpm_simulator \
 	awskms gcpkms azurekv vault awss3 gcpstorage azureblob minio \
-	gpu quicbaas_signal
+	gpu quicbaas_signal \
+	openvino_live
 
 # IAM_TEST_TAGS: retained alias for TEST_TAGS. IAM is now always compiled
 # (the 'iam' build tag was removed in phase C1-G), so no extra tag is needed
