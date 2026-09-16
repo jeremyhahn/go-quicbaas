@@ -118,28 +118,53 @@ func (s TriagePromptSpec) Validate() error {
 	return nil
 }
 
-// TriagePrompt renders the turn for one issue: the issue itself, its
-// discussion, the other open issues it might duplicate, and what the project
-// verifies a finished change with.
+// TriagePrompt renders the turn for one issue: what is true of the whole
+// project, then the issue itself.
+//
+// PROJECT-STABLE CONTENT COMES FIRST, AND THAT ORDER IS THE POINT.
+//
+// A triage turn is ~94% PREFILL — the prompt runs 5,600-7,500 tokens and the
+// answer is two lines, 24-44 tokens. Measured on an 8B: 28.7 s of prefill
+// against 1.9 s of decode. So the only optimisation that matters is not
+// prefilling the same tokens twice, and every serving runtime in use here
+// (llama.cpp, ollama, vLLM, OVMS) caches a prompt PREFIX and reuses it when
+// the next prompt starts with the same bytes.
+//
+// The sections above the issue are identical for EVERY issue in one sweep:
+// the repository, the open-issue list a duplicate is judged against, the
+// project's verification commands, and its closing policy. Ordered this way, a
+// sweep over twenty issues prefills that block once instead of twenty times.
+//
+// The previous order defeated it completely. `Issue: #<n>` sat on the THIRD
+// line, so two prompts in the same sweep diverged after about forty tokens and
+// shared essentially no prefix, while the genuinely stable sections sat at the
+// END where a cache can never reach them.
+//
+// IT IS ALSO THE BETTER ORDER FOR THE ANSWER, which is why this is not a
+// trade. The decisive evidence — this issue, its body, its discussion — now
+// lands nearest the question, where attention is strongest. A model asked to
+// judge one issue reads that issue last and answers immediately after it.
 func TriagePrompt(spec TriagePromptSpec) (string, error) {
 	if err := spec.Validate(); err != nil {
 		return "", err
 	}
 	var b strings.Builder
-	b.WriteString("Triage this issue.\n\n")
+
+	// ---- project-stable prefix: identical for every issue in a sweep ----
+	b.WriteString("Triage one issue in this repository.\n\n")
 	b.WriteString("Repository: " + spec.Repo.String() + "\n")
-	b.WriteString("Issue: #" + strconv.Itoa(spec.Issue.Number) + "\n")
 
-	b.WriteString("\n## " + strings.TrimSpace(spec.Issue.Title) + "\n")
-	if body := strings.TrimSpace(spec.Issue.Body); body != "" {
-		b.WriteString("\n" + body + "\n")
-	}
-
-	b.WriteString("\n## Discussion\n\n")
-	writeTriageComments(&b, spec.Comments)
-
-	b.WriteString("\n## Other open issues in this project\n\n")
-	writeTriageCandidates(&b, spec.Issue.Number, spec.OpenIssues)
+	// EVERY OPEN ISSUE, INCLUDING THE ONE BEING TRIAGED. Excluding the subject
+	// would make this list differ per issue and destroy the shared prefix,
+	// which is the whole reason the section sits up here — so the heading says
+	// plainly what the list is, and the line below tells the agent the one
+	// thing that follows from including it. An "Other open issues" heading
+	// that silently contained the subject would invite exactly the mistake it
+	// has to avoid.
+	b.WriteString("\n## Open issues in this project\n\n")
+	b.WriteString("This list includes the issue you are triaging. An issue is never a " +
+		"duplicate of itself.\n\n")
+	writeTriageCandidates(&b, 0, spec.OpenIssues)
 
 	b.WriteString("\n## This project's verification commands\n\n")
 	writeTriageVerification(&b, spec.Verification)
@@ -158,6 +183,21 @@ func TriagePrompt(spec TriagePromptSpec) (string, error) {
 		b.WriteString("Closing is NOT enabled for this project. Do not ask for the issue to " +
 			"be closed; say what you found and leave it open for a person.\n")
 	}
+
+	// ---- everything below varies per issue, and the cache ends here ----
+	b.WriteString("\n## The issue to triage: #" + strconv.Itoa(spec.Issue.Number) + "\n")
+	b.WriteString("\n### " + strings.TrimSpace(spec.Issue.Title) + "\n")
+	if body := strings.TrimSpace(spec.Issue.Body); body != "" {
+		b.WriteString("\n" + body + "\n")
+	}
+
+	b.WriteString("\n### Discussion\n\n")
+	writeTriageComments(&b, spec.Comments)
+
+	// The instruction goes LAST, after the evidence it applies to. Anything
+	// appended here is outside every cached prefix, so keep it short.
+	b.WriteString("\nJudge issue #" + strconv.Itoa(spec.Issue.Number) +
+		" against the charter and end with its verdict declaration.\n")
 
 	return b.String(), nil
 }

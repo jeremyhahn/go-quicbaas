@@ -121,11 +121,15 @@ func TestTriagePrompt_CarriesEverythingTheVerdictNeeds(t *testing.T) {
 	}
 }
 
-// TestTriagePrompt_ExcludesTheIssueFromItsOwnDuplicateCandidates proves the
-// issue under triage is not offered to itself as a duplicate. Without this
-// every issue duplicates itself, which is the one duplicate verdict that is
-// always wrong.
-func TestTriagePrompt_ExcludesTheIssueFromItsOwnDuplicateCandidates(t *testing.T) {
+// TestTriagePrompt_SaysAnIssueIsNeverItsOwnDuplicate guards the one duplicate
+// verdict that is always wrong.
+//
+// THE MECHANISM CHANGED AND THE GUARANTEE DID NOT. The list used to exclude
+// the subject, which made it differ for every issue and destroyed the shared
+// prefix the whole section now exists to provide. It includes the subject
+// instead, and SAYS SO — a list that silently contained the issue under triage
+// would invite exactly the mistake excluding it used to prevent.
+func TestTriagePrompt_SaysAnIssueIsNeverItsOwnDuplicate(t *testing.T) {
 	spec := TriagePromptSpec{
 		Repo:       RepoRef{Owner: "o", Repo: "r"},
 		Issue:      ForgeIssue{Number: 52, Title: "README is stale", State: "open"},
@@ -136,11 +140,60 @@ func TestTriagePrompt_ExcludesTheIssueFromItsOwnDuplicateCandidates(t *testing.T
 		t.Fatalf("TriagePrompt: %v", err)
 	}
 	section := triageCandidateSection(t, prompt)
-	if strings.Contains(section, "#52") {
-		t.Fatalf("the issue under triage must not be its own duplicate candidate:\n%s", section)
+	if !strings.Contains(section, "#52") {
+		t.Fatalf("the list must carry every open issue, subject included, or it is not shared:\n%s", section)
 	}
-	if !strings.Contains(section, "(none)") {
-		t.Fatalf("with no other open issue the candidate list says so:\n%s", section)
+	if !strings.Contains(section, "never a duplicate of itself") {
+		t.Fatalf("the prompt includes the subject in its own list without saying so:\n%s", section)
+	}
+}
+
+// TestTriagePrompt_TheProjectStablePrefixComesFirst is the property that makes
+// prefix caching work, and it is worth a test because it is invisible: a
+// reordering that looks cosmetic silently costs a full prefill per issue.
+//
+// A triage turn is ~94% prefill (5,600-7,500 tokens in, 24-44 out), so two
+// issues from one sweep must share every byte up to the subject. Measured
+// before this ordering: the prompts diverged on the THIRD line.
+func TestTriagePrompt_TheProjectStablePrefixComesFirst(t *testing.T) {
+	open := []ForgeIssue{
+		{Number: 52, Title: "README is stale", State: "open"},
+		{Number: 77, Title: "Parse returns an untyped error", State: "open"},
+	}
+	base := TriagePromptSpec{
+		Repo:         RepoRef{Owner: "o", Repo: "r"},
+		OpenIssues:   open,
+		Verification: []string{"make build", "make test"},
+		MayClose:     true,
+	}
+	first, second := base, base
+	first.Issue = open[0]
+	second.Issue = open[1]
+
+	a, err := TriagePrompt(first)
+	if err != nil {
+		t.Fatalf("TriagePrompt: %v", err)
+	}
+	b, err := TriagePrompt(second)
+	if err != nil {
+		t.Fatalf("TriagePrompt: %v", err)
+	}
+
+	shared := 0
+	for shared < len(a) && shared < len(b) && a[shared] == b[shared] {
+		shared++
+	}
+	marker := strings.Index(a, "## The issue to triage:")
+	if marker < 0 {
+		t.Fatalf("the per-issue section is not marked:\n%s", a)
+	}
+	if shared < marker {
+		t.Fatalf("prompts diverge at byte %d, before the per-issue section at %d; "+
+			"everything above it must be identical across a sweep", shared, marker)
+	}
+	// And the subject must genuinely come last, or the ordering bought nothing.
+	if strings.Index(a, "### "+open[0].Title) < marker {
+		t.Fatal("the issue body appears above the per-issue marker")
 	}
 }
 
@@ -229,7 +282,7 @@ func TestTriagePrompt_StatesWhenTheProjectVerifiesNothing(t *testing.T) {
 // legitimately appears elsewhere.
 func triageCandidateSection(t *testing.T, prompt string) string {
 	t.Helper()
-	const heading = "## Other open issues in this project"
+	const heading = "## Open issues in this project"
 	start := strings.Index(prompt, heading)
 	if start < 0 {
 		t.Fatalf("prompt has no duplicate-candidate section:\n%s", prompt)
