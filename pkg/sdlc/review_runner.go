@@ -280,6 +280,31 @@ type reviewRun struct {
 	headSHA  string
 	reviewer ReviewerConfig
 
+	// issue is the issue this change claims to close, and discussion is its
+	// comments. Both are read on the control plane and RENDERED INTO THE
+	// PROMPT rather than left for the reviewer to fetch.
+	//
+	// THE REVIEWER IS ASKED TO VERIFY ACCEPTANCE CRITERIA AND WAS NEVER GIVEN
+	// THEM. Its charter says to check the change against the issue, the
+	// container holds no forge credential, and every attempt to fetch one came
+	// back 404 — so a reviewer that had read the whole diff and found nothing
+	// wrong still refused to approve, saying it could not confirm the change
+	// closes the issue. That is a missing input reported as an unresolved
+	// question, and it blocked merges on changes with no defect in them.
+	//
+	// ABSENT IS A VALID STATE. A change opened on a branch this module did not
+	// name has no issue to render, and the prompt says so rather than
+	// pretending the criteria were checked.
+	issue      *ForgeIssue
+	discussion []ForgeComment
+
+	// issueUnavailable says why the issue is absent, empty when it is not.
+	// It is RENDERED INTO THE PROMPT: a reviewer that knows the criteria could
+	// not be fetched can say its conformance verdict is unverified and still
+	// judge the code, where one left to guess reports the gap as an open
+	// question and declines to judge at all.
+	issueUnavailable string
+
 	sessionID    string
 	containerDir string
 
@@ -431,6 +456,7 @@ func (s *reviewRun) initialize(ctx context.Context) (orchestration.JobState, err
 		return "", err
 	}
 	s.files = files
+	s.loadIssue(ctx)
 
 	if err := s.spawnReviewer(ctx); err != nil {
 		return "", err
@@ -833,6 +859,49 @@ func (s *reviewRun) describeTurn(turn AgentTurn, parseErr error) string {
 // change rather than the part it thought to look for — and the checkout is
 // where it reads the code. Which is why the listing must be complete: a
 // reviewer handed a prefix reviews the prefix and approves the change.
+// loadIssue reads the issue this change claims to close, and its discussion,
+// so the prompt can carry the acceptance criteria the reviewer is told to
+// check.
+//
+// IT NEVER FAILS THE REVIEW. A change on a branch this module did not name has
+// no issue to find, and a forge that will not serve one is a degraded review
+// rather than no review — the code is still there to be read, and a reviewer
+// that reports a real defect is worth more than a refused job. What the
+// reviewer must not do is silently assume the criteria were met, so the prompt
+// says plainly when they are missing.
+func (s *reviewRun) loadIssue(ctx context.Context) {
+	if s.pr == nil {
+		return
+	}
+	number, ok := issueNumberFromBranch("issue/", s.pr.HeadRef)
+	if !ok {
+		s.issueUnavailable = "the branch " + strconv.Quote(s.pr.HeadRef) +
+			" was not named by this module, so the issue it closes is not recoverable from it"
+		return
+	}
+	label := "#" + strconv.Itoa(number)
+	issue, err := s.forge.GetIssue(ctx, s.repo(), number)
+	if err != nil {
+		s.issueUnavailable = "issue " + label + " could not be read from the forge: " + err.Error()
+		return
+	}
+	if issue == nil {
+		s.issueUnavailable = "the forge reports no issue " + label
+		return
+	}
+	s.issue = issue
+	// THE DISCUSSION CARRIES THE RULINGS. An owner's answer to a question the
+	// worker raised lives in a comment, not the body, and a reviewer judging
+	// the change against the body alone contradicts decisions already made.
+	comments, err := s.forge.ListIssueComments(ctx, s.repo(), number)
+	if err != nil {
+		s.issueUnavailable = "issue " + label +
+			" was read but its discussion was not, so any ruling recorded in a comment is missing: " + err.Error()
+		return
+	}
+	s.discussion = comments
+}
+
 func (s *reviewRun) reviewPrompt() string {
 	var b strings.Builder
 	b.WriteString("Review " + s.repo().String() + "#" + strconv.Itoa(s.pr.Number) + ".\n\n")
@@ -844,6 +913,8 @@ func (s *reviewRun) reviewPrompt() string {
 	}
 	b.WriteString("Checkout: " + s.containerDir + ", already on the head under review.\n")
 	b.WriteString("Its diff against the base is `git diff " + gitRemote + "/" + s.pr.BaseRef + "...HEAD`.\n")
+
+	b.WriteString(s.issueSection())
 
 	b.WriteString("\n## What the author wrote\n\n")
 	if body := strings.TrimSpace(s.pr.Body); body != "" {
@@ -868,6 +939,90 @@ func (s *reviewRun) reviewPrompt() string {
 	}
 	b.WriteString("\nThat list is the whole change. Review all of it, then declare your verdict.\n")
 	return b.String()
+}
+
+// maxIssueBodyBytes and maxCommentBytes bound what one issue may contribute to
+// the prompt. An issue's discussion is unbounded and a long one would crowd out
+// the diff, which is the thing actually being reviewed.
+const (
+	maxIssueBodyBytes = 8000
+	maxCommentBytes   = 2000
+	maxIssueComments  = 20
+)
+
+// issueSection renders the issue the change claims to close, so the reviewer
+// can check the change against it rather than asking for it.
+func (s *reviewRun) issueSection() string {
+	var b strings.Builder
+	b.WriteString("\n## The issue this change must satisfy\n\n")
+	if s.issue == nil {
+		b.WriteString("NOT AVAILABLE: " + s.issueUnavailableReason() + "\n\n")
+		// SAID PLAINLY, BECAUSE THE ALTERNATIVE IS A REFUSED REVIEW. A reviewer
+		// left to infer that the criteria are missing reports it as an open
+		// question and declines to judge, which satisfies no gate and blocks a
+		// change that may have nothing wrong with it.
+		b.WriteString("Review the CODE on its own merits and declare a verdict on it. " +
+			"Do not withhold a verdict for want of this record, and do not ask for it: " +
+			"it was not fetchable on this run. Say in your review that conformance to " +
+			"the issue is unverified, and judge what you can see.\n")
+		return b.String()
+	}
+	b.WriteString("#" + strconv.Itoa(s.issue.Number) + " " + strings.TrimSpace(s.issue.Title) + "\n\n")
+	if body := strings.TrimSpace(s.issue.Body); body != "" {
+		b.WriteString(truncateForPrompt(body, maxIssueBodyBytes) + "\n")
+	} else {
+		b.WriteString("(the issue has no description)\n")
+	}
+	b.WriteString(s.discussionSection())
+	return b.String()
+}
+
+// discussionSection renders the issue's comments, where the rulings live.
+func (s *reviewRun) discussionSection() string {
+	if len(s.discussion) == 0 {
+		if s.issueUnavailable != "" {
+			return "\n### Discussion\n\nNOT AVAILABLE: " + s.issueUnavailable + "\n"
+		}
+		return "\n### Discussion\n\n(none)\n"
+	}
+	var b strings.Builder
+	b.WriteString("\n### Discussion\n\n")
+	// THE NEWEST COMMENTS ARE THE ONES THAT DECIDE. A ruling supersedes the
+	// question it answers, so when the bound cuts, it keeps the tail.
+	comments := s.discussion
+	if len(comments) > maxIssueComments {
+		b.WriteString("(" + strconv.Itoa(len(comments)-maxIssueComments) +
+			" earlier comment(s) omitted; the most recent follow)\n\n")
+		comments = comments[len(comments)-maxIssueComments:]
+	}
+	for _, comment := range comments {
+		author := strings.TrimSpace(comment.Author)
+		if author == "" {
+			author = "(unknown)"
+		}
+		b.WriteString("- **" + author + "**: " +
+			truncateForPrompt(strings.TrimSpace(comment.Body), maxCommentBytes) + "\n")
+	}
+	return b.String()
+}
+
+// issueUnavailableReason is why the issue is absent, in words, always naming
+// something rather than leaving the reviewer to guess.
+func (s *reviewRun) issueUnavailableReason() string {
+	if reason := strings.TrimSpace(s.issueUnavailable); reason != "" {
+		return reason
+	}
+	return "the issue was not read on this run"
+}
+
+// truncateForPrompt bounds one field and says it cut, so a reviewer never
+// mistakes a truncated record for a complete one.
+func truncateForPrompt(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	cut := strings.ToValidUTF8(text[:limit], "")
+	return cut + "\n\n[…truncated at " + strconv.Itoa(limit) + " bytes]"
 }
 
 // =============================================================================
@@ -961,6 +1116,9 @@ func (s *reviewRun) resetForNextRound(ctx context.Context) {
 	s.pr = nil
 	s.files = nil
 	s.reviews = nil
+	s.issue = nil
+	s.discussion = nil
+	s.issueUnavailable = ""
 	s.headSHA = ""
 	s.outcome = ReviewOutcome{}
 	s.produced = false

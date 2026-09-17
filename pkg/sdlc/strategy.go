@@ -579,6 +579,28 @@ func issueBranch(prefix string, issue IssueRef) (string, error) {
 	return prefix + strconv.Itoa(issue.Number) + "-" + Slugify(issue.Title), nil
 }
 
+// issueNumberFromBranch reads back the issue number issueBranch wrote into a
+// branch name, and false for a branch this module did not name.
+//
+// IT IS PARSING THIS MODULE'S OWN OUTPUT, not guessing at a convention. The
+// delivery path names every branch "issue/<number>-<slug>" a few lines above,
+// so the number is recoverable from the one field a pull request always
+// carries. That matters because the REVIEWER needs the issue a change claims
+// to close, and nothing else on a ForgePullRequest names it: a body may say
+// "closes #12" or may say nothing, and neither is this module's word.
+func issueNumberFromBranch(prefix, ref string) (int, bool) {
+	rest, found := strings.CutPrefix(strings.TrimSpace(ref), prefix)
+	if !found {
+		return 0, false
+	}
+	digits, _, _ := strings.Cut(rest, "-")
+	number, err := strconv.Atoi(digits)
+	if err != nil || number <= 0 {
+		return 0, false
+	}
+	return number, true
+}
+
 // checkPullRequest refuses a pull request a merge could not be composed for.
 func checkPullRequest(pr PullRequestRef) error {
 	if pr.Number <= 0 {

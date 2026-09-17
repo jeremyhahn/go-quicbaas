@@ -1837,3 +1837,132 @@ func TestReviewRunner_ClonesAnSSHHeadItCanAuthenticateAndSignsNothing(t *testing
 		t.Fatalf("agents stopped before the first prompt = %d, want 1", stoppedAtFirstPrompt)
 	}
 }
+
+// TestIssueNumberFromBranch reads back what issueBranch wrote.
+func TestIssueNumberFromBranch(t *testing.T) {
+	for name, tc := range map[string]struct {
+		ref  string
+		want int
+		ok   bool
+	}{
+		"a branch this module named":      {"issue/101-addkey-discards-the-keyslot", 101, true},
+		"whitespace is trimmed":           {"  issue/7-x  ", 7, true},
+		"a branch with no slug":           {"issue/42-", 42, true},
+		"someone else's branch":           {"feature/add-a-thing", 0, false},
+		"the prefix with no number":       {"issue/addkey-thing", 0, false},
+		"a zero issue is not an issue":    {"issue/0-nothing", 0, false},
+		"a negative number is not parsed": {"issue/-3-x", 0, false},
+		"empty":                           {"", 0, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, ok := issueNumberFromBranch("issue/", tc.ref)
+			if ok != tc.ok || got != tc.want {
+				t.Fatalf("issueNumberFromBranch(%q) = %d,%v want %d,%v", tc.ref, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+// TestReviewPrompt_CarriesTheIssueItMustJudgeAgainst pins the input whose
+// absence blocked merges on changes that had nothing wrong with them.
+//
+// The reviewer's charter tells it to check the change against the issue. The
+// container holds no forge credential, so every attempt to fetch one returned
+// 404 — and a reviewer that had read all 21 files and found no defect still
+// refused to approve, because it could not confirm the change closed the
+// issue. The criteria now travel in the prompt.
+func TestReviewPrompt_CarriesTheIssueItMustJudgeAgainst(t *testing.T) {
+	run := &reviewRun{
+		binding: &ProjectBinding{Forge: ForgeConfig{Owner: "jeremyhahn", Repo: "go-luks2"}},
+		pr: &ForgePullRequest{
+			Number: 200, Title: "widen AddKey", HeadRef: "issue/101-addkey", BaseRef: "main",
+			Body: "closes #101",
+		},
+		headSHA: "abc123",
+		issue: &ForgeIssue{
+			Number: 101, Title: "AddKey discards the keyslot it chose",
+			Body: "ACCEPTANCE: AddKey returns (int, error) and the slot is the one written.",
+		},
+		discussion: []ForgeComment{
+			{Author: "owner", Body: "Ruling: widen the signature, do not add a second method."},
+		},
+	}
+	prompt := run.reviewPrompt()
+	for _, want := range []string{
+		"The issue this change must satisfy",
+		"#101 AddKey discards the keyslot it chose",
+		"ACCEPTANCE: AddKey returns (int, error)",
+		// The ruling lives in a comment, not the body.
+		"Ruling: widen the signature",
+		"owner",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("the review prompt does not carry %q:\n%s", want, prompt)
+		}
+	}
+}
+
+// TestReviewPrompt_SaysWhenTheIssueIsMissingAndStillDemandsAVerdict keeps a
+// missing input from becoming a refused review.
+//
+// A reviewer left to infer that the criteria are absent reports it as an
+// unresolved question and declines to judge, which satisfies no gate and
+// strands a finished change. Told plainly, it judges the code and marks
+// conformance unverified.
+func TestReviewPrompt_SaysWhenTheIssueIsMissingAndStillDemandsAVerdict(t *testing.T) {
+	run := &reviewRun{
+		binding: &ProjectBinding{Forge: ForgeConfig{Owner: "jeremyhahn", Repo: "go-luks2"}},
+		pr: &ForgePullRequest{
+			Number: 9, Title: "a change", HeadRef: "feature/no-issue", BaseRef: "main",
+		},
+		headSHA:          "deadbee",
+		issueUnavailable: `the branch "feature/no-issue" was not named by this module`,
+	}
+	prompt := run.reviewPrompt()
+	if !strings.Contains(prompt, "NOT AVAILABLE") {
+		t.Fatalf("the prompt must say the issue is absent:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, `"feature/no-issue"`) {
+		t.Fatalf("the prompt must name WHY it is absent:\n%s", prompt)
+	}
+	for _, want := range []string{
+		"Do not withhold a verdict",
+		"conformance to the issue is unverified",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("the prompt must still demand a verdict (%q):\n%s", want, prompt)
+		}
+	}
+}
+
+// TestDiscussionSection_KeepsTheNewestComments proves the bound drops the
+// oldest, because a ruling supersedes the question it answers.
+func TestDiscussionSection_KeepsTheNewestComments(t *testing.T) {
+	comments := make([]ForgeComment, 0, maxIssueComments+5)
+	for i := range maxIssueComments + 5 {
+		comments = append(comments, ForgeComment{Author: "a", Body: "comment-" + strconv.Itoa(i)})
+	}
+	run := &reviewRun{issue: &ForgeIssue{Number: 1, Title: "t", Body: "b"}, discussion: comments}
+	got := run.discussionSection()
+	if !strings.Contains(got, "comment-"+strconv.Itoa(maxIssueComments+4)) {
+		t.Fatal("the newest comment must survive the bound")
+	}
+	if strings.Contains(got, "comment-0\n") {
+		t.Fatal("the oldest comment must be dropped, not the newest")
+	}
+	if !strings.Contains(got, "earlier comment(s) omitted") {
+		t.Fatalf("a cut discussion must say it cut:\n%s", got)
+	}
+}
+
+// TestTruncateForPrompt_SaysItCut keeps a truncated record from reading as a
+// complete one.
+func TestTruncateForPrompt_SaysItCut(t *testing.T) {
+	if got := truncateForPrompt("short", 100); got != "short" {
+		t.Fatalf("an unbounded value must pass through unchanged, got %q", got)
+	}
+	got := truncateForPrompt(strings.Repeat("x", 200), 50)
+	if !strings.Contains(got, "truncated at 50 bytes") {
+		t.Fatalf("a cut value must say so, got %q", got)
+	}
+}
