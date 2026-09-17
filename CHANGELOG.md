@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2-alpha] - 2026-09-16
+
+PATCH: a dependency migration and a second inference backend. No consumer's
+code has to change to take either.
+
+THE REASON TO TAKE THIS ONE IS go-xkms v0.13.0-alpha, which carries the xKey
+unlock-convergence fix that downstream projects are waiting on.
+
+### Added
+
+- **A `vllm` backend, registered alongside `ollama` rather than instead of it.**
+  Both stay available, so moving a project between runtimes is an edit to its
+  binding — and moving back is the same edit.
+
+  vLLM is preferred for throughput because ollama does not batch: measured on
+  one fleet at a flat 21 triage turns/min at concurrency 1, 4, 8 and 16 alike,
+  with time-to-first-token degrading linearly to 45 s, while vLLM reached 268.7
+  turns/min at concurrency 16 with a 1.3 s TTFT. Most of that gap is the
+  cross-request prefix cache: with project-stable content first, vLLM gained
+  4.5× at concurrency 16 against ollama's 1.06×.
+
+  The three OpenAI-compatible agent endpoints — OVMS, ollama and vLLM — are now
+  registered by one loop over their data rather than three near-identical
+  blocks. They differ only in route and address.
+
+  Unquantised weights are deliberately NOT recommended: a 4-bit 27B scored
+  16/16 on the triage cases at both 6k and 20k tokens, which BF16 cannot beat,
+  and BF16 costs an entire 96 GB card.
+
+### Changed
+
+- **go-xkms bumped to v0.13.0-alpha**, which unblocks consumers waiting on the
+  xKey unlock-convergence fix.
+
+  It is not a mechanical bump. v0.13 deleted the SDK's re-export of the storage
+  layer's database surface — key-value stores, engines, watches, leases,
+  indexes, time series — on the grounds that go-xkms does not ship that layer
+  and must not expose it. The types are now imported from go-qrdb's own SDK
+  directly, which is what this project's SDK-boundary rule said to do anyway.
+
+  `BackendTypeThreshold` is gone and deliberately not replaced by a local
+  constant: upstream removed it because the threshold backend did not do
+  threshold cryptography, and re-adding the name here would restore exactly
+  that misrepresentation. A configuration naming it is now refused as an
+  unknown backend. `BackendTypePhone` is added, matching upstream.
+
 ## [0.9.1-alpha] - 2026-09-16
 
 PATCH rather than MINOR: the capabilities this adds are internal seams — a
