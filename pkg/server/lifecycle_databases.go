@@ -17,7 +17,7 @@ import (
 	"log/slog"
 	"path/filepath"
 
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -56,7 +56,7 @@ func (s *Server) startDatabases() error {
 	// Create the qrdb database.Manager that manages tenant database
 	// lifecycle (create, open, drop, list). The Manager persists metadata
 	// in meta.json files within each database directory.
-	dbManager := xkmssdk.QRDBNewManager(
+	dbManager := qrdbsdk.NewManager(
 		slog.Default(),
 		dataDir,
 	)
@@ -76,7 +76,7 @@ func (s *Server) startDatabases() error {
 
 	// Create the qrdb DatabaseServicer that provides tenant-scoped
 	// database CRUD operations.
-	qrdbDBSvc := xkmssdk.QRDBNewDatabaseService(dbManager)
+	qrdbDBSvc := qrdbsdk.NewDatabaseService(dbManager)
 
 	// Create the QuicBaaS DatabaseService that wraps qrdb's
 	// DatabaseServicer with BaaS-level type conversions.

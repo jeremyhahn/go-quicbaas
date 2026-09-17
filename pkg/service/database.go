@@ -16,21 +16,21 @@ package service
 import (
 	"context"
 
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // databaseService implements DatabaseService by delegating to the qrdb
 // DatabaseServicer tenant-scoped methods. Tenant enforcement is handled
 // by qrdb using the tenant ID embedded in the request context.
 type databaseService struct {
-	qrdb xkmssdk.QRDBDatabaseServicer
+	qrdb qrdbsdk.DatabaseServicer
 }
 
 // Compile-time interface check.
 var _ DatabaseService = (*databaseService)(nil)
 
 // NewDatabaseService creates a new DatabaseService backed by a qrdb DatabaseServicer.
-func NewDatabaseService(qrdb xkmssdk.QRDBDatabaseServicer) DatabaseService {
+func NewDatabaseService(qrdb qrdbsdk.DatabaseServicer) DatabaseService {
 	return &databaseService{qrdb: qrdb}
 }
 
@@ -42,10 +42,10 @@ func (s *databaseService) CreateDatabase(ctx context.Context, req *CreateDatabas
 			Err:  &InvalidRequestError{Detail: "create database request is nil"},
 		}
 	}
-	cfg := xkmssdk.QRDBDatabaseConfig{
+	cfg := qrdbsdk.DatabaseConfig{
 		Name:    req.Name,
-		Engine:  xkmssdk.QRDBEngineType(req.Engine),
-		Backend: xkmssdk.QRDBBackendType(req.Backend),
+		Engine:  qrdbsdk.EngineType(req.Engine),
+		Backend: qrdbsdk.BackendType(req.Backend),
 	}
 	info, err := s.qrdb.CreateForTenant(ctx, cfg)
 	if err != nil {
@@ -86,12 +86,12 @@ func (s *databaseService) DropDatabase(ctx context.Context, name string) error {
 
 // UpdateDatabaseProtocol updates wire protocol configuration for a database.
 func (s *databaseService) UpdateDatabaseProtocol(ctx context.Context, name string, protocol DatabaseProtocolConfig) (*DatabaseInfo, error) {
-	qrdbProto := xkmssdk.QRDBProtocolConfig{
+	qrdbProto := qrdbsdk.ProtocolConfig{
 		MySQL:      protocol.MySQL,
 		PostgreSQL: protocol.PostgreSQL,
 	}
 	if protocol.Etcd != nil {
-		qrdbProto.Etcd = &xkmssdk.QRDBEtcdConfig{
+		qrdbProto.Etcd = &qrdbsdk.EtcdConfig{
 			Enabled:    protocol.Etcd.Enabled,
 			ListenAddr: protocol.Etcd.ListenAddr,
 		}
@@ -105,9 +105,9 @@ func (s *databaseService) UpdateDatabaseProtocol(ctx context.Context, name strin
 
 // UpdateDatabaseEtcd updates etcd wire protocol configuration for a database.
 func (s *databaseService) UpdateDatabaseEtcd(ctx context.Context, name string, etcd *DatabaseEtcdConfig) (*DatabaseInfo, error) {
-	var qrdbEtcd *xkmssdk.QRDBEtcdConfig
+	var qrdbEtcd *qrdbsdk.EtcdConfig
 	if etcd != nil {
-		qrdbEtcd = &xkmssdk.QRDBEtcdConfig{
+		qrdbEtcd = &qrdbsdk.EtcdConfig{
 			Enabled:    etcd.Enabled,
 			ListenAddr: etcd.ListenAddr,
 		}
@@ -121,10 +121,10 @@ func (s *databaseService) UpdateDatabaseEtcd(ctx context.Context, name string, e
 
 // UpdateDatabaseRaft updates Raft consensus configuration for a database.
 func (s *databaseService) UpdateDatabaseRaft(ctx context.Context, name string, raft *DatabaseRaftConfig) (*DatabaseInfo, error) {
-	var qrdbRaft *xkmssdk.QRDBDatabaseRaftConfig
+	var qrdbRaft *qrdbsdk.DatabaseRaftConfig
 	if raft != nil {
-		qrdbRaft = &xkmssdk.QRDBDatabaseRaftConfig{
-			ClusterMode: xkmssdk.QRDBRaftClusterMode(raft.ClusterMode),
+		qrdbRaft = &qrdbsdk.DatabaseRaftConfig{
+			ClusterMode: qrdbsdk.RaftClusterMode(raft.ClusterMode),
 			ShardID:     raft.ShardID,
 		}
 	}
@@ -137,9 +137,9 @@ func (s *databaseService) UpdateDatabaseRaft(ctx context.Context, name string, r
 
 // UpdateDatabaseBarrier updates encryption barrier configuration for a database.
 func (s *databaseService) UpdateDatabaseBarrier(ctx context.Context, name string, barrier *DatabaseBarrierConfig) (*DatabaseInfo, error) {
-	var qrdbBarrier *xkmssdk.QRDBDatabaseBarrierConfig
+	var qrdbBarrier *qrdbsdk.DatabaseBarrierConfig
 	if barrier != nil {
-		qrdbBarrier = &xkmssdk.QRDBDatabaseBarrierConfig{
+		qrdbBarrier = &qrdbsdk.DatabaseBarrierConfig{
 			Enabled:        barrier.Enabled,
 			Mode:           barrier.Mode,
 			SharesRequired: barrier.SharesRequired,
@@ -155,9 +155,9 @@ func (s *databaseService) UpdateDatabaseBarrier(ctx context.Context, name string
 
 // UpdateDatabaseConnection updates remote connection configuration for a database.
 func (s *databaseService) UpdateDatabaseConnection(ctx context.Context, name string, conn *DatabaseConnectionConfig) (*DatabaseInfo, error) {
-	var qrdbConn *xkmssdk.QRDBDatabaseConnectionConfig
+	var qrdbConn *qrdbsdk.DatabaseConnectionConfig
 	if conn != nil {
-		qrdbConn = &xkmssdk.QRDBDatabaseConnectionConfig{
+		qrdbConn = &qrdbsdk.DatabaseConnectionConfig{
 			Transport: conn.Transport,
 			Address:   conn.Address,
 		}
@@ -170,7 +170,7 @@ func (s *databaseService) UpdateDatabaseConnection(ctx context.Context, name str
 }
 
 // convertDatabaseInfo converts a qrdb DatabaseInfo to a BaaS DatabaseInfo.
-func convertDatabaseInfo(info *xkmssdk.QRDBDatabaseInfo) *DatabaseInfo {
+func convertDatabaseInfo(info *qrdbsdk.DatabaseInfo) *DatabaseInfo {
 	di := &DatabaseInfo{
 		TenantID: info.TenantID,
 		Name:     info.Name,

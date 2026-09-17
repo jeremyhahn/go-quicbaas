@@ -28,7 +28,6 @@ import (
 	qrdbquic "github.com/jeremyhahn/go-qrdb/sdk/go/transport/quic"
 	qrdbrest "github.com/jeremyhahn/go-qrdb/sdk/go/transport/rest"
 	qrdbunix "github.com/jeremyhahn/go-qrdb/sdk/go/transport/unix"
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	qbtransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
@@ -395,34 +394,34 @@ type QRDBSignCSRInitResponse = qrdbtransport.SignCSRInitResponse
 // =============================================================================
 
 // QRDBKVStore is a re-export of the qrdb KVStore interface.
-type QRDBKVStore = xkmssdk.QRDBKVStore
+type QRDBKVStore = qrdbsdk.KVStore
 
 // =============================================================================
 // QRDB DAO Re-exports
 // =============================================================================
 
 // QRDBEntity is a re-export of the qrdb Entity interface.
-type QRDBEntity = xkmssdk.QRDBEntity
+type QRDBEntity = qrdbsdk.Entity
 
 // QRDBGenericDAO is a re-export of the qrdb GenericDAO interface.
-type QRDBGenericDAO[E xkmssdk.QRDBEntity] = xkmssdk.QRDBGenericDAO[E]
+type QRDBGenericDAO[E qrdbsdk.Entity] = qrdbsdk.GenericDAO[E]
 
 // QRDBDAOOption is a re-export of the qrdb DAO Option type.
-type QRDBDAOOption = xkmssdk.QRDBDAOOption
+type QRDBDAOOption = qrdbsdk.DAOOption
 
 // QRDBPageQuery is a re-export of the qrdb PageQuery type.
-type QRDBPageQuery = xkmssdk.QRDBPageQuery
+type QRDBPageQuery = qrdbsdk.PageQuery
 
 // QRDBPageResult is a re-export of the qrdb PageResult type.
-type QRDBPageResult[E any] = xkmssdk.QRDBPageResult[E]
+type QRDBPageResult[E any] = qrdbsdk.PageResult[E]
 
 // NewDAO creates a new GenericDAO backed by the given KVStore.
-func NewDAO[E xkmssdk.QRDBEntity](store QRDBKVStore, entityType string, newEntity func() E, opts ...QRDBDAOOption) (QRDBGenericDAO[E], error) {
-	return xkmssdk.QRDBNewDAO(store, entityType, newEntity, opts...)
+func NewDAO[E qrdbsdk.Entity](store QRDBKVStore, entityType string, newEntity func() E, opts ...QRDBDAOOption) (QRDBGenericDAO[E], error) {
+	return qrdbsdk.NewDAO(store, entityType, newEntity, opts...)
 }
 
 // IsDAONotFound returns true if the error indicates an entity was not found.
-var IsDAONotFound = xkmssdk.QRDBIsDAONotFound
+var IsDAONotFound = qrdbsdk.IsDAONotFound
 
 // =============================================================================
 // Database Error Re-exports
@@ -433,33 +432,33 @@ var IsDAONotFound = xkmssdk.QRDBIsDAONotFound
 
 // DatabaseError is a structured database error with error code, operation
 // context, and optional retry semantics.
-type DatabaseError = xkmssdk.QRDBError
+type DatabaseError = qrdbsdk.DatabaseError
 
 // DatabaseErrorCode represents a database error classification.
-type DatabaseErrorCode = xkmssdk.QRDBErrorCode
+type DatabaseErrorCode = qrdbsdk.ErrorCode
 
 // Database error code constants.
 const (
-	ErrNotFound    = xkmssdk.QRDBErrCodeNotFound
-	ErrInternal    = xkmssdk.QRDBErrCodeInternal
-	ErrConflict    = xkmssdk.QRDBErrCodeConflict
-	ErrTimeout     = xkmssdk.QRDBErrCodeTimeout
-	ErrUnavailable = xkmssdk.QRDBErrCodeUnavailable
+	ErrNotFound    = qrdbsdk.ErrCodeNotFound
+	ErrInternal    = qrdbsdk.ErrCodeInternal
+	ErrConflict    = qrdbsdk.ErrCodeConflict
+	ErrTimeout     = qrdbsdk.ErrCodeTimeout
+	ErrUnavailable = qrdbsdk.ErrCodeUnavailable
 )
 
 // NewDatabaseError creates a new DatabaseError with the given code and operation.
 func NewDatabaseError(code DatabaseErrorCode, op string, message string) *DatabaseError {
-	return xkmssdk.QRDBNewError(code, op, message)
+	return qrdbsdk.NewError(code, op, message)
 }
 
 // IsDatabaseError extracts a DatabaseError from the error chain if present.
 func IsDatabaseError(err error, target **DatabaseError) bool {
-	return xkmssdk.QRDBAsError(err, target)
+	return qrdbsdk.AsError(err, target)
 }
 
 // IsDatabaseErrorCode checks if the error matches the given database error code.
 func IsDatabaseErrorCode(err error, code DatabaseErrorCode) bool {
-	return xkmssdk.QRDBIsErrorCode(err, code)
+	return qrdbsdk.IsErrorCode(err, code)
 }
 
 // qrdbState holds the lazily-initialized qrdb client and any init error.

@@ -45,11 +45,19 @@ var (
 	BackendTypeVault = kctypes.BackendTypeVault
 	// BackendTypeQuantum uses quantum-safe cryptography (ML-DSA, ML-KEM).
 	BackendTypeQuantum = kctypes.BackendTypeQuantum
-	// BackendTypeThreshold uses threshold cryptography (Shamir, threshold ECDSA).
-	BackendTypeThreshold = kctypes.BackendTypeThreshold
 	// BackendTypeSymmetric uses symmetric encryption (AES-GCM, ChaCha20-Poly1305).
 	BackendTypeSymmetric = kctypes.BackendTypeSymmetric
+	// BackendTypePhone uses a paired phone as the key custodian.
+	BackendTypePhone = kctypes.BackendTypePhone
 )
+
+// BackendTypeThreshold IS DELIBERATELY ABSENT. go-xkms deleted it in
+// v0.13.0-alpha under "delete implementations that misrepresented what they
+// did" -- the threshold backend did not do threshold cryptography. Re-adding a
+// local constant for it would restore exactly the misrepresentation upstream
+// removed, and a configuration naming it must be REFUSED rather than silently
+// accepted and served by something else. Validation below rejects it as an
+// unknown backend, which is the honest answer.
 
 // validBackendTypes is a set of all valid backend types for O(1) validation.
 var validBackendTypes = map[BackendType]struct{}{
@@ -61,8 +69,8 @@ var validBackendTypes = map[BackendType]struct{}{
 	BackendTypeAzureKV:   {},
 	BackendTypeVault:     {},
 	BackendTypeQuantum:   {},
-	BackendTypeThreshold: {},
 	BackendTypeSymmetric: {},
+	BackendTypePhone:     {},
 }
 
 // backendValidator is a function that validates backend-specific configuration.
