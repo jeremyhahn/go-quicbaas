@@ -68,6 +68,19 @@ const DefaultTriageIssueLimit = 100
 // prose.
 const triageCommentMarker = "quicbaas-sdlc:triage"
 
+// triageHeadMarker prefixes the commit a verdict was formed against, inside
+// the same HTML comment.
+//
+// A VERDICT IS A JUDGEMENT ABOUT A MOVING REPOSITORY, and recording nothing
+// about what it saw made it permanent. "Not actionable yet", "blocked on
+// another change", "the prerequisite has not landed" are all answers about a
+// tree, and they stop being true the moment that tree moves — which is
+// precisely what a merge is. Without this, the only thing that could reopen a
+// parked issue was a person commenting on it, so a backlog the factory parked
+// stayed parked however much the repository changed underneath it. Thirteen
+// go-luks2 issues sat that way while the factory merged a change to main.
+const triageHeadMarker = "head="
+
 // stateLabels for the triage runner's own states.
 const (
 	labelTriageInitializing = "Initializing"
@@ -274,6 +287,14 @@ type triageRun struct {
 	repo      RepoRef
 	sessionID string
 
+	// headSHA is the tip of the project's default branch when this pass
+	// started. It is stamped into every verdict this run posts, so a later
+	// pass can tell whether the tree the verdict judged is still the tree
+	// that is there. Empty when the branch could not be read, which makes
+	// this run's verdicts unstamped and therefore always re-examinable —
+	// the safe direction.
+	headSHA string
+
 	// spec is the workspace spec that was MATERIALIZED for the spawn, which
 	// is the one description the checkout is then driven from: the container
 	// reads the same bytes, so neither side invents a sibling file.
@@ -399,7 +420,27 @@ func (s *triageRun) resolve(ctx context.Context) error {
 		return NewForgeNotRegisteredError(binding.Forge.Type)
 	}
 	s.binding, s.forge, s.repo = binding, forge, binding.Repo()
+	s.readHead(ctx)
 	return nil
+}
+
+// readHead records the tip of the project's default branch, which every
+// verdict this run posts is stamped with.
+//
+// IT NEVER FAILS THE RUN. A branch that cannot be read costs this pass its
+// stamps, and an unstamped verdict is re-examinable rather than permanent —
+// so the failure mode is one extra judgement later, not a triage pass that
+// refuses to judge anything.
+func (s *triageRun) readHead(ctx context.Context) {
+	base := strings.TrimSpace(s.job.Project.Git.DefaultBranch)
+	if base == "" {
+		base = FallbackDefaultBranch
+	}
+	branch, err := s.forge.GetBranch(ctx, s.repo, base)
+	if err != nil || branch == nil {
+		return
+	}
+	s.headSHA = strings.TrimSpace(branch.SHA)
 }
 
 // triageBindingError turns an absent binding into the runner's own refusal
@@ -534,7 +575,52 @@ func (s *triageRun) spokenToSinceTriage(ctx context.Context, issue *ForgeIssue) 
 	if newest.Created.IsZero() {
 		return true, nil
 	}
-	return !strings.Contains(newest.Body, triageCommentMarker), nil
+	if !strings.Contains(newest.Body, triageCommentMarker) {
+		// Somebody else spoke last: new information, whatever it says.
+		return true, nil
+	}
+	// Triage spoke last. Its verdict stands only while the tree it judged is
+	// still the tree that is there.
+	return s.headMovedSince(newest), nil
+}
+
+// headMovedSince reports whether the project's default branch has moved since
+// the verdict in this comment was formed.
+//
+// THIS IS WHAT REOPENS A PARKED BACKLOG, and nothing else did. A verdict of
+// "blocked on another change" or "the prerequisite has not landed" is an answer
+// about a tree, and a merge is exactly the event that makes it wrong — yet the
+// only thing that could reopen an issue was a person commenting on it. Thirteen
+// go-luks2 issues stayed parked through the factory merging a change to main,
+// and the whole fleet quietly converged on having nothing to do.
+//
+// AN UNSTAMPED VERDICT IS ALWAYS RE-EXAMINABLE. Comments written before the
+// head was recorded carry no marker, and a verdict whose tree cannot be
+// identified is not evidence that the tree has not moved. They are re-judged
+// once, which is also how a backlog parked by an older build gets a second
+// reading.
+//
+// A HEAD THIS RUN COULD NOT READ REOPENS NOTHING EXTRA: an empty headSHA
+// compares unequal to every stamp, so the pass errs toward re-judging rather
+// than toward silence.
+func (s *triageRun) headMovedSince(verdict ForgeComment) bool {
+	stamped := triageVerdictHead(verdict.Body)
+	if stamped == "" {
+		return true
+	}
+	return !strings.EqualFold(stamped, strings.TrimSpace(s.headSHA))
+}
+
+// triageVerdictHead reads the commit a verdict recorded, and "" when it
+// recorded none.
+func triageVerdictHead(body string) string {
+	_, rest, found := strings.Cut(body, triageHeadMarker)
+	if !found {
+		return ""
+	}
+	sha, _, _ := strings.Cut(rest, " ")
+	sha, _, _ = strings.Cut(sha, "-->")
+	return strings.TrimSpace(sha)
 }
 
 // =============================================================================
@@ -914,7 +1000,7 @@ func (s *triageRun) comment(ctx context.Context, issue ForgeIssue, verdict Triag
 	if strings.TrimSpace(body) == "" {
 		return nil
 	}
-	body += "\n<!-- " + triageCommentMarker + " -->\n"
+	body += "\n<!-- " + triageCommentMarker + " " + triageHeadMarker + s.headSHA + " -->\n"
 	if _, err := s.forge.CommentOnIssue(ctx, s.repo, issue.Number, body); err != nil {
 		return &TriageVerdictError{Issue: issue.Number, Reason: "the verdict could not be posted", Cause: err}
 	}

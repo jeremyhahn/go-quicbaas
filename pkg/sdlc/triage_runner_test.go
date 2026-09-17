@@ -747,7 +747,7 @@ func TestTriageRunner_RetriagesANeedsInfoIssueThatWasAnswered(t *testing.T) {
 	issue := rig.forge.putIssue(701, "Fix the encoder", needsInfo)
 
 	asked := time.Now().Add(-time.Hour)
-	rig.forge.putComment(701, "Which overload?\n<!-- "+triageCommentMarker+" -->", asked)
+	rig.forge.putComment(701, "Which overload?\n<!-- "+triageCommentMarker+" "+triageHeadMarker+fakeForgeHeadSHA+" -->", asked)
 	// The reporter answered, in the thread, after the question. The answer is
 	// a COMMENT and not a bumped timestamp on purpose: triage's own
 	// needs-info label write advances the issue's Updated past its own
@@ -776,7 +776,7 @@ func TestTriageRunner_LeavesAnUnansweredNeedsInfoIssueAlone(t *testing.T) {
 	issue := rig.forge.putIssue(702, "Fix the encoder", needsInfo)
 
 	asked := time.Now()
-	rig.forge.putComment(702, "Which overload?\n<!-- "+triageCommentMarker+" -->", asked)
+	rig.forge.putComment(702, "Which overload?\n<!-- "+triageCommentMarker+" "+triageHeadMarker+fakeForgeHeadSHA+" -->", asked)
 	// Nothing happened since the question was asked.
 	issue.Updated = asked.Add(-time.Minute)
 
@@ -1595,10 +1595,14 @@ func TestIsCandidate_EscalatedIsAskingAndComesBackWhenAnswered(t *testing.T) {
 	run.discussions = map[int][]ForgeComment{}
 	owned := binding.Forge.OwnedLabels()
 
-	// Triage spoke last: nothing new to judge.
+	// Triage spoke last AGAINST THE TREE THAT IS STILL THERE: nothing new to
+	// judge. The stamp is what makes that decidable — an unstamped verdict is
+	// re-examinable, because a verdict whose tree cannot be identified is not
+	// evidence that the tree has not moved.
+	run.headSHA = "aaaa1111"
 	forge.comments[9] = []ForgeComment{
 		{Created: time.Now().Add(-time.Hour), Body: "a person's report"},
-		{Created: time.Now().Add(-time.Minute), Body: "the verdict\n<!-- " + triageCommentMarker + " -->"},
+		{Created: time.Now().Add(-time.Minute), Body: "the verdict\n<!-- " + triageCommentMarker + " " + triageHeadMarker + "aaaa1111 -->"},
 	}
 	got, err := run.isCandidate(context.Background(), issue, owned)
 	if err != nil {
@@ -1616,5 +1620,107 @@ func TestIsCandidate_EscalatedIsAskingAndComesBackWhenAnswered(t *testing.T) {
 	}
 	if !got {
 		t.Fatal("an escalated issue somebody answered is not a candidate; the ruling would never be acted on")
+	}
+}
+
+// TestTriageVerdictHead reads back the commit a verdict recorded.
+func TestTriageVerdictHead(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body string
+		want string
+	}{
+		"a stamped verdict": {
+			"text\n<!-- " + triageCommentMarker + " " + triageHeadMarker + "abc123 -->\n", "abc123",
+		},
+		"no trailing space before the close": {
+			"<!-- " + triageCommentMarker + " " + triageHeadMarker + "deadbeef-->", "deadbeef",
+		},
+		// Every verdict written before the head was recorded.
+		"an unstamped verdict":  {"text\n<!-- " + triageCommentMarker + " -->\n", ""},
+		"somebody else's words": {"I disagree with this", ""},
+		"empty":                 {"", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := triageVerdictHead(tc.body); got != tc.want {
+				t.Fatalf("triageVerdictHead = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestHeadMovedSince_ReopensAParkedBacklog pins the rule that stopped the
+// fleet converging on having nothing to do.
+//
+// A verdict of "blocked on another change" or "the prerequisite has not
+// landed" is an answer about a TREE, and a merge is exactly the event that
+// makes it wrong. Until this existed the only thing that could reopen a
+// parked issue was a person commenting on it, so thirteen go-luks2 issues
+// stayed parked while the factory merged a change to main and triage spun
+// every fifteen minutes finding nothing.
+func TestHeadMovedSince_ReopensAParkedBacklog(t *testing.T) {
+	stamped := func(sha string) ForgeComment {
+		return ForgeComment{Body: "verdict\n<!-- " + triageCommentMarker + " " + triageHeadMarker + sha + " -->"}
+	}
+	for name, tc := range map[string]struct {
+		head    string
+		verdict ForgeComment
+		want    bool
+	}{
+		"the tree has not moved":         {"aaaa", stamped("aaaa"), false},
+		"case does not decide it":        {"AAAA", stamped("aaaa"), false},
+		"the tree moved":                 {"bbbb", stamped("aaaa"), true},
+		"an unstamped verdict":           {"aaaa", ForgeComment{Body: "v\n<!-- " + triageCommentMarker + " -->"}, true},
+		"a head this run could not read": {"", stamped("aaaa"), true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			run := &triageRun{headSHA: tc.head}
+			if got := run.headMovedSince(tc.verdict); got != tc.want {
+				t.Fatalf("headMovedSince = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestTriageRunner_AMergeReopensAParkedIssue is the fleet-level defect this
+// rule exists for.
+//
+// A parked issue is an answer about a TREE — "blocked on another change",
+// "the prerequisite has not landed" — and a merge is exactly the event that
+// makes it wrong. Before this, the only thing that could reopen one was a
+// person commenting, so thirteen go-luks2 issues stayed parked while the
+// factory merged to main, every project ran out of work, and triage spun
+// every fifteen minutes finding nothing to do.
+func TestTriageRunner_AMergeReopensAParkedIssue(t *testing.T) {
+	rig := newTriageRig(t)
+	escalated := rig.binding.Forge.Label(LabelEscalated)
+	issue := rig.forge.putIssue(703, "blocked on the dependency", escalated)
+
+	asked := time.Now().Add(-time.Hour)
+	rig.forge.putComment(703,
+		"Blocked: the prerequisite has not landed.\n<!-- "+triageCommentMarker+" "+triageHeadMarker+fakeForgeHeadSHA+" -->",
+		asked)
+	issue.Updated = asked
+
+	// While main is where the verdict left it, the verdict stands.
+	rig.answers("SDLC-TRIAGE: ready")
+	if err := rig.run(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if prompts := rig.agents.promptTexts(); len(prompts) != 0 {
+		t.Fatalf("an unchanged tree re-judges nothing, got %d prompts", len(prompts))
+	}
+
+	// The prerequisite merges: main moves, and the verdict is about a tree
+	// that is no longer there.
+	rig.forge.mu.Lock()
+	rig.forge.branchSHA = "1111222233334444555566667777888899990000"
+	rig.forge.mu.Unlock()
+
+	rig.answers("SDLC-TRIAGE: ready")
+	if err := rig.run(); err != nil {
+		t.Fatalf("run after the merge: %v", err)
+	}
+	if prompts := rig.agents.promptTexts(); len(prompts) == 0 {
+		t.Fatal("a merge must reopen a parked issue; the backlog stayed parked and the fleet ran dry")
 	}
 }

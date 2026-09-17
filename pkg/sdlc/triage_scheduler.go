@@ -126,11 +126,22 @@ func (s *TriageScheduler) TriageProject(ctx context.Context, tenantID, projectID
 	if binding == nil {
 		return nil
 	}
+	// THE JOB SAYS WHAT IT WILL RUN ON. Without these the job record carries
+	// no backend and no model at all, so an operator watching the queue sees a
+	// row that cannot tell them whether it is about to spend a local GPU turn
+	// or a frontier-model one — which is the difference between a triage sweep
+	// that costs nothing and one that costs real money.
+	agent := binding.Triage
+	if strings.TrimSpace(agent.Backend) == "" {
+		agent = binding.Worker
+	}
 	_, err = s.jobs.StartJob(ctx, &orchestration.StartJobRequest{
 		TenantID:    tenantID,
 		ProjectID:   projectID,
 		Runner:      TriageRunnerName,
 		Description: "Triage the open issues of " + binding.Repo().String(),
+		LeadBackend: strings.TrimSpace(agent.Backend),
+		LeadModel:   strings.TrimSpace(agent.Model),
 	})
 	if err == nil {
 		return nil

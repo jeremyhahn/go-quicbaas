@@ -188,6 +188,10 @@ type fakeForge struct {
 	forgeType ForgeType
 	caps      ForgeCapabilities
 
+	// branchSHA is the tip GetBranch reports; empty takes fakeForgeHeadSHA.
+	// A test moves it to model a merge landing on the default branch.
+	branchSHA string
+
 	issues        map[int]*ForgeIssue
 	comments      map[int][]ForgeComment
 	prs           map[int]*ForgePullRequest
@@ -610,8 +614,23 @@ func (f *fakeForge) GetTag(_ context.Context, repo RepoRef, tag string) (*ForgeT
 func (f *fakeForge) CreateBranch(_ context.Context, _ RepoRef, name, _ string) (*ForgeBranch, error) {
 	return &ForgeBranch{Name: name}, nil
 }
+
+// fakeForgeHeadSHA is the tip every branch of the double reports.
+//
+// A REAL FORGE'S BRANCH ALWAYS HAS A COMMIT, and a double that reported none
+// made every triage verdict unstamped — which reads as "the tree cannot be
+// identified", so every parked issue is re-judged on every pass. The double
+// has to have a head for the stamping to be exercised at all.
+const fakeForgeHeadSHA = "f00dcafe00000000000000000000000000000000"
+
 func (f *fakeForge) GetBranch(_ context.Context, _ RepoRef, name string) (*ForgeBranch, error) {
-	return &ForgeBranch{Name: name}, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	sha := f.branchSHA
+	if sha == "" {
+		sha = fakeForgeHeadSHA
+	}
+	return &ForgeBranch{Name: name, SHA: sha}, nil
 }
 func (f *fakeForge) DeleteBranch(context.Context, RepoRef, string) error { return nil }
 
