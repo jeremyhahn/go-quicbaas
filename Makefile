@@ -3121,6 +3121,33 @@ test-worker-image: build-worker-image ## Build the worker image and check it car
 				| head -c 2000 | grep -q "\"name\":\"Serena\"" \
 				|| { echo "serena did not answer an MCP initialize request"; exit 1; }'
 	@echo "$(GREEN)✓ the worker image starts serena (MCP initialize answered) with gopls $(GOPLS_VERSION)$(NC)"
+	@# AND IT MUST RESOLVE A GO SYMBOL, not merely answer a handshake.
+	@#
+	@# The handshake above passed for weeks while serena could not read Go at
+	@# all. It starts the MCP server against a project root holding no code, so
+	@# no language server is ever resolved -- and resolving one is where the
+	@# failure was: solidlsp cannot detect musl, computed the platform id
+	@# "linux--x64", and raised before gopls was reached. Every review lost
+	@# symbol and reference lookup and returned a verdict that decided nothing.
+	@#
+	@# A GO MODULE IS THEREFORE BUILT AND A SYMBOL LOOKED UP. --network none
+	@# because a spawned agent's egress is the operator's to decide, and
+	@# because the point is that this image already carries everything the
+	@# lookup needs.
+	@echo "$(BLUE)Checking the worker image can resolve a Go symbol with serena...$(NC)"
+	@$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp --network none \
+		$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
+		sh -lec 'mkdir -p /tmp/goprobe; cd /tmp/goprobe; \
+			printf "module example.com/probe\n\ngo 1.26\n" > go.mod; \
+			printf "package probe\n\nfunc ProbeSymbol() string { return \"found\" }\n" > probe.go; \
+			python3 -c "import sys; sys.path.insert(0, \"/opt/uv/tools/serena-agent/lib/python3.12/site-packages\"); \
+from solidlsp.ls_config import LanguageServerConfig, LanguageServerId; \
+from solidlsp import SolidLanguageServer; \
+from solidlsp.settings import SolidLSPSettings; \
+ls = SolidLanguageServer.create(LanguageServerConfig(ls_id=LanguageServerId.GO), \"/tmp/goprobe\", solidlsp_settings=SolidLSPSettings()); \
+print(\"go language server:\", type(ls).__name__)"' \
+		|| { echo "serena cannot resolve Go in this image; the reviewer would lose symbol lookup"; exit 1; }
+	@echo "$(GREEN)✓ serena resolves Go in the worker image$(NC)"
 	@# The verification half (#772). A worker that cannot run `make lint` fails
 	@# every review round on a clean tree, so the tools are checked the way a
 	@# project's Makefile finds them -- at $$(go env GOPATH)/bin, not merely on

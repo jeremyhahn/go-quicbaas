@@ -211,6 +211,38 @@ RUN set -eux; \
     chmod -R a+rX /opt/uv; \
     serena --version
 
+# SERENA CANNOT DETECT MUSL, AND ON THIS IMAGE THAT BREAKS EVERY LANGUAGE.
+#
+# solidlsp builds its platform id as "<os>-<libc>-<arch>" whenever the libc is
+# not glibc, reading the libc from Python's platform.libc_ver(). That function
+# only ever detects glibc -- it scans the executable for a glibc version string
+# -- so on musl it returns "" and the id comes out "linux--x64", which is not a
+# member of the PlatformId enum and raises ValueError. "linux-musl-x64" IS a
+# member; nothing is missing but the detection.
+#
+# IT BREAKS GO EVEN THOUGH NOTHING ABOUT GO ASKS FOR A PLATFORM. Resolving any
+# language server calls LanguageServerId.from_ls_class, which walks every enum
+# member and IMPORTS every language-server module to compare classes, and
+# typescript_language_server.py evaluates get_platform_id() at import time. So
+# starting the GO server imports the TypeScript module and dies there:
+#   go: 'linux--x64' is not a valid PlatformId
+# The reviewer then loses symbol and reference lookup and says it cannot
+# complete the review -- a verdict that decides nothing.
+#
+# The patch fills in the libc only when Python found none, so a glibc base
+# image is unaffected, and the build asserts the result rather than trusting
+# the substitution: if a serena upgrade rewrites this line the replacement
+# silently matches nothing, and the assertion is what turns that into a failed
+# build instead of a reviewer that cannot read code.
+ARG SOLIDLSP_UTILS=/opt/uv/tools/serena-agent/lib/python3.12/site-packages/solidlsp/ls_utils.py
+RUN set -eux; \
+    sed -i 's|libc = platform\.libc_ver()\[0\]$|libc = platform.libc_ver()[0] or ("musl" if __import__("glob").glob("/lib/ld-musl-*.so.1") else "")|' "$SOLIDLSP_UTILS"; \
+    grep -q 'ld-musl' "$SOLIDLSP_UTILS" \
+      || { echo "solidlsp libc detection line not found; serena changed it -- re-check the musl patch" >&2; exit 1; }; \
+    find /opt/uv -name '__pycache__' -type d -exec rm -rf {} +; \
+    chmod -R a+rX /opt/uv; \
+    python3 -c "import sys; sys.path.insert(0, '/opt/uv/tools/serena-agent/lib/python3.12/site-packages'); from solidlsp.ls_utils import PlatformUtils; got = PlatformUtils.get_platform_id().value; print('serena platform id:', got); sys.exit(0 if got == 'linux-musl-x64' else 'expected linux-musl-x64, got ' + got)"
+
 # THE MCP REGISTRATION IS NOT IN THIS IMAGE, and that is deliberate. Claude Code
 # takes `--mcp-config` as "JSON files or strings" and codex takes
 # `-c mcp_servers.serena.*`, so both are built in Go from the one constant that
