@@ -32,11 +32,23 @@ import (
 type captureLogger struct {
 	mu    sync.Mutex
 	lines []string
+	// warned holds only the lines emitted at WARN, so a test can assert what
+	// an operator is actually shown rather than merely that a string exists
+	// somewhere in the diagnostics.
+	warned []string
 }
 
 func (l *captureLogger) record(format string, args ...interface{}) {
 	l.mu.Lock()
 	l.lines = append(l.lines, fmt.Sprintf(format, args...))
+	l.mu.Unlock()
+}
+
+func (l *captureLogger) recordWarn(format string, args ...interface{}) {
+	line := fmt.Sprintf(format, args...)
+	l.mu.Lock()
+	l.lines = append(l.lines, line)
+	l.warned = append(l.warned, line)
 	l.mu.Unlock()
 }
 
@@ -46,12 +58,18 @@ func (l *captureLogger) joined() string {
 	return strings.Join(l.lines, "\n")
 }
 
+func (l *captureLogger) joinedWarnings() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return strings.Join(l.warned, "\n")
+}
+
 func (l *captureLogger) Debug(string, ...any)                                {}
 func (l *captureLogger) Debugf(f string, a ...interface{})                   { l.record(f, a...) }
 func (l *captureLogger) Info(string, ...any)                                 {}
 func (l *captureLogger) Infof(string, ...interface{})                        {}
 func (l *captureLogger) Warn(string, ...any)                                 {}
-func (l *captureLogger) Warnf(f string, a ...interface{})                    { l.record(f, a...) }
+func (l *captureLogger) Warnf(f string, a ...interface{})                    { l.recordWarn(f, a...) }
 func (l *captureLogger) Error(string, ...any)                                {}
 func (l *captureLogger) Errorf(string, ...interface{})                       {}
 func (l *captureLogger) Fatal(string)                                        {}
@@ -204,6 +222,15 @@ func TestACPBackend_Diagnostics_CreateKeyAndLookupMiss(t *testing.T) {
 	got := cl.joined()
 	if !strings.Contains(got, "session miss") {
 		t.Errorf("missing lookup-miss diagnostic; got:\n%s", got)
+	}
+	// AND IT IS NOT A WARNING. The spawn server finds the backend that owns a
+	// session by asking each one in turn, so every backend that does not hold
+	// it misses on every call — six of them on a daemon serving seven backends,
+	// for a lookup that then succeeds. Warning on that buried real faults under
+	// routine traffic.
+	if warnings := cl.joinedWarnings(); strings.Contains(warnings, "session miss") {
+		t.Errorf("a lookup miss must not warn; it is the ordinary result of the "+
+			"spawn server's backend probe:\n%s", warnings)
 	}
 	// The real session id should still be queryable (sanity: it wasn't evicted).
 	if _, ok := b.sessions.Load(sess.ID); !ok {

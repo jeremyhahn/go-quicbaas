@@ -305,6 +305,16 @@ func (b *ACPBackend) sessionMode(sess *acpSession) string {
 // logLookupMiss emits a lookup-key diagnostic listing the keys actually present
 // in the registry, so a "session not found" can be diagnosed as a key mismatch
 // (lookup_key absent but other keys present) vs an empty registry.
+//
+// AT DEBUG, BECAUSE A MISS HERE IS THE ORDINARY CASE. The spawn server resolves
+// which backend owns a session by ASKING EACH ONE IN TURN until one answers
+// (GRPCSpawnServer.Status and .Close), so every backend that does not hold the
+// session reports a miss on every call — six of them on a daemon serving seven
+// backends, for a lookup that succeeded. At WARN that buried real faults in
+// routine traffic: an operator reading agent.out saw a wall of "session miss"
+// for every healthy openvino and vllm turn. The miss is only interesting once
+// EVERY backend has missed, and the server says so itself by returning
+// NotFound.
 func (b *ACPBackend) logLookupMiss(op, lookupKey string) {
 	if b.logger == nil {
 		return
@@ -316,7 +326,7 @@ func (b *ACPBackend) logLookupMiss(op, lookupKey string) {
 		}
 		return true
 	})
-	b.logger.Warnf("acp_backend: %s session miss: lookup_key=%s present_keys=%v",
+	b.logger.Debugf("acp_backend: %s session miss: lookup_key=%s present_keys=%v",
 		op, lookupKey, present)
 }
 
