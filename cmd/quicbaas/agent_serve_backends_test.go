@@ -178,3 +178,34 @@ func TestBuildAgentBackends_AnUnnamedEndpointIsNotRegistered(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildAgentBackends_CodexReasoningEffortIsStated: review is a GATE, and a
+// shallower pass does not fail visibly — it approves what it should have
+// caught. The depth must therefore be a deployment decision that reaches the
+// CLI, not whatever the installed build defaults to.
+func TestBuildAgentBackends_CodexReasoningEffortIsStated(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct{ configured, want string }{
+		{"", agent.DefaultCodexReasoningEffort},
+		{"high", "high"},
+	} {
+		cfg := &agent.Config{
+			ServerAddr: "https://control.invalid:8443", TenantID: "t", BindAddr: "127.0.0.1:0",
+			Backends:             []agent.BackendKind{agent.BackendACP},
+			CodexReasoningEffort: c.configured,
+		}
+		backends, err := buildAgentBackends(cfg, newCaptureLogger())
+		if err != nil {
+			t.Fatalf("buildAgentBackends: %v", err)
+		}
+		if _, ok := backends["codex"]; !ok {
+			t.Fatal("codex was not registered")
+		}
+		// The effort must reach the CLI's argv. Config is the seam we can
+		// assert without reaching into the backend's private state.
+		if got := cfg.EffectiveCodexReasoningEffort(); got != c.want {
+			t.Fatalf("configured %q: effective effort = %q, want %q", c.configured, got, c.want)
+		}
+	}
+}

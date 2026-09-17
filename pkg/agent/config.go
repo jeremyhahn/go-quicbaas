@@ -224,6 +224,15 @@ type Config struct {
 	// from the first refusal.
 	VLLMContextTokens int `json:"vllm_context_tokens,omitempty" yaml:"vllm_context_tokens,omitempty"`
 
+	// CodexReasoningEffort is the depth the codex backend reasons at:
+	// minimal, low, medium or high. Empty takes DefaultCodexReasoningEffort.
+	//
+	// IT IS STATED RATHER THAN INHERITED because code review is a GATE. A
+	// shallower pass does not fail visibly — it approves what it should have
+	// caught — so the depth reviews run at must be a deployment decision an
+	// operator can read, not whatever the installed CLI defaults to.
+	CodexReasoningEffort string `json:"codex_reasoning_effort,omitempty" yaml:"codex_reasoning_effort,omitempty"`
+
 	// AllowedMountRoots is the operator's allowlist of absolute host
 	// directories a spawn request may bind-mount into a sandbox container on
 	// this daemon. It is the daemon-side counterpart of the control plane's
@@ -350,6 +359,20 @@ func (c *Config) EffectiveSandboxNetwork() orchestration.SandboxNetwork {
 // DefaultOllamaBaseURL is the ollama server a daemon uses when none is
 // configured: the local one.
 const DefaultOllamaBaseURL = "http://127.0.0.1:11434"
+
+// DefaultCodexReasoningEffort is the depth codex reviews run at when the
+// deployment states none. Medium is the deliberate middle: minimal and low
+// skim, and high costs materially more for a gate that already reads whole
+// files through serena.
+const DefaultCodexReasoningEffort = "medium"
+
+// EffectiveCodexReasoningEffort returns the configured effort, or the default.
+func (c *Config) EffectiveCodexReasoningEffort() string {
+	if effort := strings.TrimSpace(c.CodexReasoningEffort); effort != "" {
+		return effort
+	}
+	return DefaultCodexReasoningEffort
+}
 
 // EffectiveOllamaBaseURL returns the configured ollama base URL, or the
 // local default. The trailing slash is trimmed so callers can append a path

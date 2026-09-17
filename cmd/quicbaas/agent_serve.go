@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -59,6 +60,7 @@ var (
 	serveVLLMBaseURL      string
 	serveVLLMModel        string
 	serveVLLMCtx          int
+	serveCodexEffort      string
 	serveAllowedMounts    []string
 	serveContainerRT      string
 	serveImageMapCSV      string
@@ -115,6 +117,7 @@ Examples:
 	cmd.Flags().StringVar(&serveOpenVINOURL, "openvino-url", "", "OpenVINO Model Server base URL, without /v3 (e.g. http://gpu-host:9000). Registers the \"openvino\" backend; empty leaves it unregistered.")
 	cmd.Flags().StringVar(&serveOpenVINOModel, "openvino-model", "", "Model the OpenVINO server serves, e.g. qwen3-8b.")
 	cmd.Flags().StringVar(&serveOllamaAgentModel, "ollama-agent-model", "", "Model the \"ollama-agent\" backend uses: the container-and-tools agent loop against the ollama endpoint, for roles that must read a repository. Empty leaves the backend registered with no default model.")
+	cmd.Flags().StringVar(&serveCodexEffort, "codex-reasoning-effort", "", "Reasoning effort the codex backend runs at: minimal, low, medium or high (default medium). Review is a gate, so a shallower pass approves what it should have caught rather than failing visibly.")
 	cmd.Flags().StringVar(&serveVLLMBaseURL, "vllm-url", "", "Base URL of a vLLM server, without /v1 (e.g. http://gpu-host:11435). Registers the \"vllm\" backend alongside ollama so a project switches between them by naming a different backend; empty leaves it unregistered.")
 	cmd.Flags().StringVar(&serveVLLMModel, "vllm-model", "", "The served-model name vLLM answers to (its --served-model-name), not a file path.")
 	cmd.Flags().IntVar(&serveVLLMCtx, "vllm-context-tokens", 0, "How much prompt that vLLM model accepts. Zero learns the ceiling from the first refusal.")
@@ -411,10 +414,19 @@ func buildAgentBackends(cfg *agent.Config, logger interfaces.Logger) (map[string
 				// `-c <dotted.key>=<TOML>` — so its registration is stated on
 				// argv. It is built in pkg/orchestration beside Claude Code's so
 				// both CLIs get the same server argv and the same checkout root.
+				//
+				// REASONING EFFORT IS STATED, NOT LEFT TO THE CLI'S DEFAULT.
+				// Code review is the one role whose output is a gate: a
+				// shallower pass does not fail visibly, it approves things it
+				// should have caught. Naming the effort here means the depth a
+				// review runs at is a deployment decision an operator can read
+				// and change, rather than whatever the installed codex build
+				// happens to default to that week.
 				ExecArgs: append([]string{
 					"exec", "--json",
 					"--sandbox", "danger-full-access",
 					"--skip-git-repo-check",
+					"-c", "model_reasoning_effort=" + strconv.Quote(cfg.EffectiveCodexReasoningEffort()),
 				}, orchestration.SerenaCodexConfigArgs()...),
 				ExecModelFlag: "--model",
 				ExecStdinArg:  "-",
@@ -756,6 +768,7 @@ func buildServeConfig() (*agent.Config, error) {
 		VLLMBaseURL:              serveVLLMBaseURL,
 		VLLMModel:                serveVLLMModel,
 		VLLMContextTokens:        serveVLLMCtx,
+		CodexReasoningEffort:     serveCodexEffort,
 		AllowedMountRoots:        serveAllowedMounts,
 		ContainerRuntime:         agent.ContainerRuntimeSelector(serveContainerRT),
 		ImageMap:                 imageMap,
