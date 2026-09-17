@@ -12,15 +12,16 @@
   finding, CI went green, and it then waited indefinitely on a review no code
   path could dispatch.
 
-  Two changes close it. A `comment` now publishes `failure`, which is what
-  `error` already published and what both mean to any reader: the reviewer
-  finished and produced nothing that satisfies the gate. And the floor now
-  treats a `pending` reviewer status older than the job stall bound as
-  abandoned rather than in flight, so a reviewer killed mid-run no longer
-  strands its head — the bound is shared with the engine's own "the agent is
-  presumed gone" answer rather than being a second, independently drifting
-  number. An undated pending status is never stale, so a forge that reports no
-  timestamp does not cause a re-dispatch on every pass.
+  The fix is in the floor, not the mapping. `pending` is the only status that
+  means "no verdict yet", which is exactly what a comment leaves behind — it
+  binds onto no review record, so the gate correctly still wants a review and
+  the floor must still be able to dispatch one. The floor now treats a
+  `pending` reviewer status older than the job stall bound as abandoned rather
+  than in flight, sharing the engine's own "the agent is presumed gone" answer
+  rather than being a second, independently drifting number. An undated pending
+  status is never stale, so a forge that reports no timestamp does not cause a
+  re-dispatch on every pass. `error` is mapped alongside `comment` for the same
+  reason: a review that produced no verdict is owed another attempt.
 
 - **The reviewer's own commit status decided whether the head was reviewable.**
   Both dispatch paths ask "is this head green enough to review" by evaluating

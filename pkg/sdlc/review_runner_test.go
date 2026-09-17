@@ -734,19 +734,9 @@ func TestReviewRunner_AVerdictThatDecidesNothingIsNotGreen(t *testing.T) {
 	rig.mustRun(41)
 
 	status, ok := rig.forge.lastStatus()
-	if !ok || status.Status == CheckSuccess {
-		t.Fatalf("a comment published %+v; a review that declined to judge must not satisfy the check", status)
-	}
-	// AND IT MUST NOT PUBLISH PENDING EITHER, which it used to. Pending is the
-	// shape of a review still running, and the review floor skips any head
-	// carrying a reviewer status so an in-flight review is never given a
-	// duplicate reviewer — so a FINISHED review that left pending behind
-	// blocked the gate and the backstop that recovers the gate, and the head
-	// could never be re-reviewed. See
-	// TestReviewStatuses_NoFinishedVerdictPublishesPending.
-	if status.Status == CheckPending {
-		t.Fatalf("a comment published pending; the review has finished, and pending "+
-			"deadlocks the head against both the gate and the review floor (%+v)", status)
+	if !ok || status.Status != CheckPending {
+		t.Fatalf("a comment published %+v; a review that declined to judge must leave the "+
+			"head unjudged and retriable, which only pending says", status)
 	}
 	if got := rig.forge.submissions(); len(got) != 1 || got[0].Verdict != VerdictComment {
 		t.Fatalf("submissions = %+v", got)
@@ -767,33 +757,37 @@ func TestReviewStatuses_EveryVerdictMapsAndNoneDefaultsToGreen(t *testing.T) {
 	}
 }
 
-// TestReviewStatuses_NoFinishedVerdictPublishesPending pins the fix for a
-// deadlock that could not be recovered from.
+// TestReviewStatuses_AVerdictlessReviewStaysRetriable pins the shape of the
+// deadlock that stranded three finished changes.
 //
-// A `comment` used to publish PENDING on the honest reasoning that it decides
-// nothing and so must not go green. But pending is the shape of a review still
-// RUNNING, and the review floor skips any head carrying a reviewer status so
-// that an in-flight review never gets a duplicate reviewer. A finished review
-// that left pending behind therefore blocked the merge gate and the backstop
-// that exists to recover the gate — nothing could re-review that head, ever.
-// go-luks2 #202 sat green and unreviewable that way.
+// A verdict that records NO REVIEW leaves the head genuinely unjudged, so the
+// gate still wants a review for it and the floor must still be able to
+// dispatch one. Only `pending` says that. A terminal status would claim a
+// decision nobody made and leave no way to get one — which is what happened
+// when these were mapped to failure: the deadlock moved rather than closing,
+// because a terminal status cannot be retried either.
 //
-// Every verdict here is a review that FINISHED, so none of them may publish
-// the status that means "still going".
-func TestReviewStatuses_NoFinishedVerdictPublishesPending(t *testing.T) {
-	for verdict, status := range reviewStatuses {
-		if status == CheckPending {
-			t.Fatalf("verdict %s publishes pending; a finished review must not "+
-				"leave the status that blocks both the gate and the review floor", verdict)
+// What makes pending safe is the floor's staleness bound, which is why these
+// two tests are a pair: see TestCheckRunPresent_StalePendingIsNotInFlight.
+func TestReviewStatuses_AVerdictlessReviewStaysRetriable(t *testing.T) {
+	run := &reviewRun{reviewer: ReviewerConfig{}}
+	for _, verdict := range []ReviewVerdict{VerdictComment, VerdictError} {
+		got := run.statusForVerdict(verdict, "read it")
+		if got.Status != CheckPending {
+			t.Fatalf("verdict %s published %s; a review that recorded no verdict must stay "+
+				"retriable, or the head can never be judged", verdict, got.Status)
+		}
+		if got.Status == CheckSuccess {
+			t.Fatalf("verdict %s must never satisfy the check", verdict)
 		}
 	}
-	run := &reviewRun{reviewer: ReviewerConfig{}}
-	// A comment still must not go green: it declined to judge.
-	got := run.statusForVerdict(VerdictComment, "read it")
-	if got.Status != CheckFailure {
-		t.Fatalf("a comment published %s, want failure", got.Status)
+	// And a decision IS terminal: nothing about it is owed another attempt.
+	for _, verdict := range []ReviewVerdict{VerdictApprove, VerdictRequestChanges} {
+		if got := run.statusForVerdict(verdict, "x"); got.Status == CheckPending {
+			t.Fatalf("verdict %s published pending; a real decision is terminal", verdict)
+		}
 	}
-	if !strings.Contains(got.Description, "without a verdict") {
+	if got := run.statusForVerdict(VerdictComment, "read it"); !strings.Contains(got.Description, "without a verdict") {
 		t.Fatalf("the status must say the reviewer declined to judge, got %q", got.Description)
 	}
 }

@@ -1213,29 +1213,33 @@ func (s *reviewRun) publishUnreadable(ctx context.Context, cause error) error {
 // code. Here the status is derived from the verdict this run produced, in the
 // same step that produced it.
 //
-// A COMMENT IS NEITHER GREEN NOR PENDING. It decides nothing, so publishing
-// green would let a required check pass on a review that explicitly declined
-// to judge — but publishing PENDING was worse, because pending is the shape of
-// a review still running, and this one has finished.
+// A COMMENT IS PENDING, NOT GREEN, AND PENDING IS THE POINT. It decides
+// nothing, so publishing green would let a required check pass on a review that
+// declined to judge — and publishing a TERMINAL status is worse, because the
+// head then carries a decision nobody made and no path to getting one.
 //
-// PENDING DEADLOCKED THE PULL REQUEST PERMANENTLY. The review floor skips any
-// head already carrying a status under the reviewer's context, deliberately
-// and by presence rather than state, so that a review in flight is never given
-// a duplicate reviewer (see checkRunPresent). A finished review that left
-// `pending` behind therefore blocked the gate AND the backstop that exists to
-// recover the gate: nothing could ever re-review that head. Measured on
-// go-luks2 #202, whose round-2 commit answered the round-1 finding, went green
-// in CI, and then waited on a re-review that could not be dispatched.
+// PENDING IS THE ONLY STATUS THAT MEANS "NO VERDICT YET", which is exactly what
+// a comment leaves behind: it binds onto no review record at all, so the gate
+// correctly still wants a review for this head and the floor must still be able
+// to dispatch one. The floor treats a pending reviewer status older than the
+// stall bound as abandoned rather than in flight (checkRunPresent), so a head
+// left this way recovers on its own.
 //
-// CheckFailure is what VerdictError already publishes, and the two mean the
-// same thing to every reader: the reviewer finished and produced nothing that
-// satisfies the gate. It fails closed, and it is terminal, so the head's state
-// is honest about being done.
+// THAT BOUND IS WHAT MAKES PENDING SAFE, and without it this mapping WAS a
+// permanent deadlock: a finished review left pending, the floor read it as a
+// review in flight and skipped the head forever, and the change waited on a
+// re-review no code path could dispatch. Measured on go-luks2 #202 and #200.
+// The defect was the floor's reading of pending, not the mapping — mapping
+// these to failure instead only moved the deadlock, because a terminal status
+// cannot be retried either.
+//
+// VerdictError is the same case: the reviewer produced no verdict, so no
+// decision exists to record, and the head is owed another attempt.
 var reviewStatuses = map[ReviewVerdict]CheckStatus{
 	VerdictApprove:        CheckSuccess,
 	VerdictRequestChanges: CheckFailure,
-	VerdictComment:        CheckFailure,
-	VerdictError:          CheckFailure,
+	VerdictComment:        CheckPending,
+	VerdictError:          CheckPending,
 }
 
 // reviewStatusDescriptions is the one-line summary each verdict publishes.
