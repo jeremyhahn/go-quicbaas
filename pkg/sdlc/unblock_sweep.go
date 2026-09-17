@@ -86,6 +86,16 @@ func isEngineTaskStore(tasks BlockedTaskService) bool {
 	return isStore
 }
 
+// DefaultUnblockSweepInterval is how often blocked tasks are re-examined.
+//
+// SLOWER THAN THE REVIEW FLOOR BECAUSE THE LATENCY IT BOUNDS IS CHEAPER. A
+// finished change waiting to merge is the most expensive kind of waiting; a
+// task whose blocker cleared a few minutes ago is merely idle. The pass is
+// also pure reads against the store plus at most one forge resolution per
+// project, so the cost is small either way — this interval is chosen for the
+// forge's sake, not the store's.
+const DefaultUnblockSweepInterval = 10 * time.Minute
+
 // UnblockSweeperConfig wires the sweeper.
 type UnblockSweeperConfig struct {
 	// Tasks lists blocked tasks and readmits them through the engine's
@@ -110,6 +120,11 @@ type UnblockSweeper struct {
 	bindings BindingReader
 	forges   ForgeResolver
 	now      func() time.Time
+
+	// failures are the per-tenant and per-project failures a pass deferred,
+	// drained by SweepFailures. Only the sweep goroutine touches them, and
+	// there is exactly one.
+	failures []error
 }
 
 // NewUnblockSweeper builds the sweeper; every collaborator is required.
@@ -239,6 +254,72 @@ func (r UnblockReport) Count(v UnblockVerdict) int {
 // =============================================================================
 // The pass
 // =============================================================================
+
+// Sweep visits every bound project of every tenant and reports how many tasks
+// it returned to the queue.
+//
+// THIS SWEEP EXISTED AND WAS NEVER RUN. It was written, documented and tested,
+// and nothing anywhere constructed it — so a task that blocked on a checkable
+// condition stayed blocked however completely that condition cleared, and the
+// only thing that ever moved one was a person. A fleet accumulates blocked
+// tasks faster than a person clears them, which is how every project ends up
+// with nothing runnable. It had no tenant-wide entry point either, which is
+// the mechanical reason it could not be mounted beside the other backstops.
+//
+// THE ONE FAILURE THAT STOPS IT is not being able to enumerate the tenants:
+// the pass then does not know what it was meant to visit, and reporting a
+// clean pass would be a lie. Everything narrower costs that one tenant or
+// project a pass and nothing else, exactly as the review floor does.
+func (s *UnblockSweeper) Sweep(ctx context.Context, tenants orchestration.TenantLister) (int, error) {
+	if tenants == nil {
+		return 0, &InvalidInputError{
+			Field:   "tenants",
+			Message: "a pass that enumerates no tenant visits nothing while claiming a clean pass",
+		}
+	}
+	tenantIDs, err := tenants.ListTenantIDs(ctx)
+	if err != nil {
+		return 0, backendError("ListTenantIDs", err)
+	}
+	released := 0
+	for _, tenantID := range tenantIDs {
+		if err := ctx.Err(); err != nil {
+			return released, err
+		}
+		// The tenant travels on the CONTEXT as well as the argument: the
+		// engine guards its verbs on the bound tenant, so a sweep passing
+		// only the argument readmits nothing while reporting itself healthy.
+		tenantCtx := orchestration.ContextWithTenant(ctx, tenantID)
+		bindings, listErr := s.bindings.ListBindings(tenantCtx, tenantID)
+		if listErr != nil {
+			s.failures = append(s.failures, listErr)
+			continue
+		}
+		for _, binding := range bindings {
+			if binding == nil {
+				continue
+			}
+			if err := ctx.Err(); err != nil {
+				return released, err
+			}
+			report, sweepErr := s.SweepProject(tenantCtx, tenantID, binding.ProjectID)
+			if sweepErr != nil {
+				s.failures = append(s.failures, sweepErr)
+				continue
+			}
+			released += len(report.Released())
+		}
+	}
+	return released, nil
+}
+
+// SweepFailures drains the per-tenant and per-project failures the last pass
+// deferred, so the caller logs them where it logs everything else.
+func (s *UnblockSweeper) SweepFailures() []error {
+	failures := s.failures
+	s.failures = nil
+	return failures
+}
 
 // SweepProject re-examines every blocked task in one project and readmits
 // the ones whose condition has cleared.

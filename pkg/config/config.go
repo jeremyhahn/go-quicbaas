@@ -942,6 +942,12 @@ type SDLCConfig struct {
 	//
 	// Default: sdlc.DefaultReviewSweepInterval (5m). Zero takes the default.
 	ReviewSweepInterval time.Duration `mapstructure:"review_sweep_interval"`
+
+	// UnblockSweepInterval is how often blocked tasks are re-examined and the
+	// ones whose condition has cleared returned to the queue.
+	//
+	// Default: sdlc.DefaultUnblockSweepInterval (10m). Zero takes the default.
+	UnblockSweepInterval time.Duration `mapstructure:"unblock_sweep_interval"`
 }
 
 // SDLCWebhook bounds the forge webhook ingress.
@@ -1050,6 +1056,7 @@ var SDLCKeys = []string{
 	"sdlc.merge_attempts",
 	"sdlc.triage_sweep_interval",
 	"sdlc.review_sweep_interval",
+	"sdlc.unblock_sweep_interval",
 	"sdlc.webhook.max_body",
 	"sdlc.webhook.public_url",
 }

@@ -85,6 +85,10 @@ func reviewFloorBackstop(sweeper sdlcBackstopSweeper, interval time.Duration) sd
 	return sdlcBackstop{what: "review floor", counted: "started a review for", interval: interval, sweeper: sweeper}
 }
 
+func unblockBackstop(sweeper sdlcBackstopSweeper, interval time.Duration) sdlcBackstop {
+	return sdlcBackstop{what: "unblock sweep", counted: "returned to the queue", interval: interval, sweeper: sweeper}
+}
+
 // TestRunSDLCBackstops_SweepBothAtBootAndOnTheirOwnTicks proves the boot pass
 // happens for EACH backstop — the deliveries a node missed are exactly the
 // ones that arrived while it was down, and that is as true of a pull request
@@ -97,6 +101,7 @@ func TestRunSDLCBackstops_SweepBothAtBootAndOnTheirOwnTicks(t *testing.T) {
 	s.runSDLCBackstops(
 		triageBackstop(triage, 10*time.Millisecond),
 		reviewFloorBackstop(review, 10*time.Millisecond),
+		unblockBackstop(nil, time.Hour),
 		&staticTenantLister{ids: []string{"t1"}})
 	t.Cleanup(s.stopSDLCBackstops)
 
@@ -120,6 +125,7 @@ func TestRunSDLCBackstops_ABackstopWithNoSweeperIsLeftOut(t *testing.T) {
 	s.runSDLCBackstops(
 		triageBackstop(nil, 10*time.Millisecond),
 		reviewFloorBackstop(review, 10*time.Millisecond),
+		unblockBackstop(nil, time.Hour),
 		&staticTenantLister{ids: []string{"t1"}})
 	t.Cleanup(s.stopSDLCBackstops)
 
@@ -136,6 +142,7 @@ func TestRunSDLCBackstops_ANonPositiveIntervalTakesTheDefault(t *testing.T) {
 	s.runSDLCBackstops(
 		triageBackstop(triage, 0),
 		reviewFloorBackstop(review, -time.Second),
+		unblockBackstop(nil, time.Hour),
 		&staticTenantLister{ids: []string{"t1"}})
 	t.Cleanup(s.stopSDLCBackstops)
 
@@ -174,6 +181,7 @@ func TestStopSDLCBackstops_EndsTheLoopAndIsIdempotent(t *testing.T) {
 	s.runSDLCBackstops(
 		triageBackstop(triage, time.Hour),
 		reviewFloorBackstop(review, time.Hour),
+		unblockBackstop(nil, time.Hour),
 		&staticTenantLister{ids: []string{"t1"}})
 	awaitBackstopSweep(t, "triage backstop", triage)
 	awaitBackstopSweep(t, "review floor", review)
@@ -248,7 +256,7 @@ func TestStartSDLCBackstops_RefusesQuietlyWithoutItsCollaborators(t *testing.T) 
 			s.config.SDLC.TriageSweepInterval = time.Hour
 			s.config.SDLC.ReviewSweepInterval = time.Hour
 
-			s.startSDLCBackstops(tc.triage, tc.review)
+			s.startSDLCBackstops(tc.triage, tc.review, nil)
 			if s.sdlcBackstops != nil {
 				s.stopSDLCBackstops()
 				t.Fatal("a node missing a collaborator started a backstop")

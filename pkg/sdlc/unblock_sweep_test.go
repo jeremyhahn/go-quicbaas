@@ -1227,3 +1227,22 @@ func TestUnblockReleaseTag_ValidationRequiresBothFields(t *testing.T) {
 		}
 	}
 }
+
+// TestUnblockSweeper_SweepVisitsEveryBoundProject proves the sweep has a
+// tenant-wide entry point at all.
+//
+// It had none, which is the mechanical reason it could never be mounted beside
+// the other backstops — so a task that parked on a checkable condition stayed
+// parked however completely that condition cleared, and the only thing that
+// ever returned one to the queue was a person.
+func TestUnblockSweeper_SweepVisitsEveryBoundProject(t *testing.T) {
+	var sweeper *UnblockSweeper
+	var _ interface {
+		Sweep(ctx context.Context, tenants orchestration.TenantLister) (int, error)
+		SweepFailures() []error
+	} = sweeper
+
+	if _, err := (&UnblockSweeper{}).Sweep(context.Background(), nil); err == nil {
+		t.Fatal("a pass that enumerates no tenant must refuse rather than report a clean sweep")
+	}
+}

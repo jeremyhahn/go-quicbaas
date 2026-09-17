@@ -585,9 +585,22 @@ func (s *Server) startSDLC() error {
 	// module was mounted would be writing to the forge on behalf of a module
 	// the engine cannot yet reach.
 	s.startSDLCLabelReconcile(hooks, sdlcService)
-	// The backstops start last, for the same reason: both start jobs through
-	// the engine that run this module's own runners.
-	s.startSDLCBackstops(triageJobs, reviewFloor)
+	// The floor under BLOCKED work. A task that parked on a checkable
+	// condition — another change landing, a dependency becoming reachable —
+	// clears itself here; without it the only thing that ever returned one to
+	// the queue was a person, and a fleet parks tasks faster than a person
+	// clears them. It is wired to the engine's SERVICE rather than its store
+	// because only the service ANNOUNCES a readmission, which is what takes
+	// `factory:blocked` back off the issue.
+	unblock, err := sdlc.NewUnblockSweeper(sdlc.UnblockSweeperConfig{
+		Tasks: agents, Bindings: sdlcService, Forges: sdlcService,
+	})
+	if err != nil {
+		return &SDLCInitError{Component: "unblock sweep", Cause: err}
+	}
+	// The backstops start last, for the same reason: all three start work
+	// through the engine that runs this module's own runners.
+	s.startSDLCBackstops(triageJobs, reviewFloor, unblock)
 	s.logger.Info("sdlc: module started (source=forge_issue validator=forge_review runner=sdlc runner=triage)")
 	return nil
 }
