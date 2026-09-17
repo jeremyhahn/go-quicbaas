@@ -397,3 +397,76 @@ func TestOpenVINOBackend_TheChatPathIsConfigurable(t *testing.T) {
 		})
 	}
 }
+
+// TestOpenVINOBackend_LastRoundIsAskedToAnswer proves the loop spends its
+// final round asking for a conclusion rather than reporting a dead end.
+//
+// The case is a real one: a triage turn read the CI workflow, go.mod, the
+// upstream module versions and the implementation — every call on point — and
+// then failed with nothing to show because the budget ended mid-investigation.
+func TestOpenVINOBackend_LastRoundIsAskedToAnswer(t *testing.T) {
+	srv := &ovServer{t: t, responses: []string{
+		toolCallJSON("call-1", "ls"),
+		toolCallJSON("call-2", "cat go.mod"),
+		answerJSON("VERDICT: ACTIONABLE"),
+	}}
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	b := NewOpenVINOBackend(OpenVINOBackendConfig{BaseURL: ts.URL, DefaultModel: "m", MaxToolRounds: 2})
+	b.SetContainerRuntime(&execRecorder{result: ExecResult{Stdout: "."}})
+	b.mu.Lock()
+	b.sessions["s"] = &openVINOSession{id: "s", model: "m", containerID: "c"}
+	b.mu.Unlock()
+
+	resp, err := b.Prompt(context.Background(), &PromptRequest{SessionID: "s", Prompt: "go"})
+	if err != nil {
+		t.Fatalf("a spent budget must still produce the model's conclusion: %v", err)
+	}
+	if len(resp.Content) == 0 || !strings.Contains(resp.Content[0].Text, "VERDICT: ACTIONABLE") {
+		t.Fatalf("want the final answer, got %+v", resp.Content)
+	}
+
+	// The final request must WITHDRAW the tools, or the model can keep asking.
+	final := srv.seen[len(srv.seen)-1]
+	if len(final.Tools) != 0 {
+		t.Fatalf("the final round must offer no tools, got %d", len(final.Tools))
+	}
+	last := final.Messages[len(final.Messages)-1]
+	if last.Role != "user" || !strings.Contains(last.Content, "budget") {
+		t.Fatalf("the final round must say the budget is spent, got %+v", last)
+	}
+	// Every earlier round still offered them.
+	for i, seen := range srv.seen[:len(srv.seen)-1] {
+		if len(seen.Tools) == 0 {
+			t.Fatalf("round %d offered no tools; only the final round withdraws them", i)
+		}
+	}
+}
+
+// TestOpenVINOBackend_SilentOnLastRoundIsReported keeps the bound meaningful:
+// asked point blank for a conclusion and producing nothing is the failure the
+// bound exists to report, not an empty answer to hand back.
+func TestOpenVINOBackend_SilentOnLastRoundIsReported(t *testing.T) {
+	srv := &ovServer{t: t, responses: []string{
+		toolCallJSON("call-1", "ls"),
+		answerJSON("   "),
+	}}
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+
+	b := NewOpenVINOBackend(OpenVINOBackendConfig{BaseURL: ts.URL, DefaultModel: "m", MaxToolRounds: 1})
+	b.SetContainerRuntime(&execRecorder{result: ExecResult{Stdout: "."}})
+	b.mu.Lock()
+	b.sessions["s"] = &openVINOSession{id: "s", model: "m", containerID: "c"}
+	b.mu.Unlock()
+
+	_, err := b.Prompt(context.Background(), &PromptRequest{SessionID: "s", Prompt: "go"})
+	var bound *OpenVINOToolRoundsExceededError
+	if !errors.As(err, &bound) {
+		t.Fatalf("want OpenVINOToolRoundsExceededError, got %T: %v", err, err)
+	}
+	if bound.Rounds != 1 {
+		t.Fatalf("the refusal must name the bound it hit, got %d", bound.Rounds)
+	}
+}

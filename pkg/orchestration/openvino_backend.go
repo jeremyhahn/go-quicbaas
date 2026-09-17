@@ -113,6 +113,17 @@ const (
 	// DefaultOpenVINOToolRounds bounds one turn's tool calls.
 	DefaultOpenVINOToolRounds = 12
 
+	// toolBudgetSpentPrompt is what the loop says when it withdraws the
+	// tools for the final round. It states the budget is gone, forbids
+	// asking for more, and requires the answer in the format the caller's
+	// own charter already asked for — naming no specific format here, because
+	// this backend serves every role and only the charter knows which.
+	toolBudgetSpentPrompt = "Your tool-call budget for this turn is spent and no further " +
+		"commands can be run. Answer now, in full, using only what you have " +
+		"already gathered, in exactly the format your instructions require. " +
+		"If the evidence is incomplete, say so inside that format rather than " +
+		"asking to investigate further."
+
 	// DefaultOpenVINORequestTimeout bounds one completion. An NPU is slower
 	// than a datacentre GPU and a long read is normal, so this is generous.
 	DefaultOpenVINORequestTimeout = 10 * time.Minute
@@ -503,18 +514,26 @@ func (b *OpenVINOBackend) Prompt(ctx context.Context, req *PromptRequest) (*Prom
 	}
 	messages = append(messages, ovMessage{Role: "user", Content: req.Prompt})
 
-	tools := []ovTool{runCommandTool()}
 	var usage TokenUsage
 
-	for round := 0; ; round++ {
-		if round >= b.config.MaxToolRounds {
-			// THE BOUND IS REPORTED, NOT SILENTLY TRUNCATED. A turn that ran
-			// out of tool rounds has not answered, and returning its last
-			// partial text as though it had would be a turn that looks
-			// finished and is not.
-			return nil, &OpenVINOToolRoundsExceededError{
-				SessionID: req.SessionID, Model: model, Rounds: b.config.MaxToolRounds,
-			}
+	// THE LAST ROUND IS ASKED FOR AN ANSWER, NOT FOR MORE EVIDENCE. A model
+	// that investigates well will spend every round it is given — one
+	// measured triage turn read the CI workflow, go.mod, the upstream module
+	// versions and the implementation, all of it on point, and then failed
+	// because the budget ended mid-investigation. Withdrawing the tools and
+	// saying so converts that into the judgement a human triager makes when
+	// their time box expires: conclude from what you have. It is NOT the
+	// silent truncation this loop has always refused — no partial text is
+	// promoted to an answer, the model is asked for a real one.
+	for round := 0; round <= b.config.MaxToolRounds; round++ {
+		final := round == b.config.MaxToolRounds
+		tools := []ovTool{runCommandTool()}
+		if final {
+			tools = nil
+			messages = append(messages, ovMessage{
+				Role:    "user",
+				Content: toolBudgetSpentPrompt,
+			})
 		}
 		resp, err := b.complete(ctx, ovRequest{
 			Model: model, Messages: messages, Tools: tools, Stream: false,
@@ -532,6 +551,13 @@ func (b *OpenVINOBackend) Prompt(ctx context.Context, req *PromptRequest) (*Prom
 		choice := resp.Choices[0]
 		if len(choice.Message.ToolCalls) == 0 {
 			answer := stripThinking(choice.Message.Content)
+			if final && strings.TrimSpace(answer) == "" {
+				// Asked point blank for a conclusion and produced nothing.
+				// That is the failure the bound exists to report.
+				return nil, &OpenVINOToolRoundsExceededError{
+					SessionID: req.SessionID, Model: model, Rounds: b.config.MaxToolRounds,
+				}
+			}
 			return &PromptResponse{
 				SessionID:  req.SessionID,
 				Content:    []ContentBlock{{Type: "text", Text: answer}},
@@ -539,6 +565,13 @@ func (b *OpenVINOBackend) Prompt(ctx context.Context, req *PromptRequest) (*Prom
 				StopReason: StopReasonEndTurn,
 				Usage:      &usage,
 			}, nil
+		}
+		if final {
+			// Tools were not offered, so a tool call is the model ignoring
+			// the instruction rather than needing more evidence.
+			return nil, &OpenVINOToolRoundsExceededError{
+				SessionID: req.SessionID, Model: model, Rounds: b.config.MaxToolRounds,
+			}
 		}
 
 		// The assistant's tool-call message must be replayed before its
@@ -550,6 +583,11 @@ func (b *OpenVINOBackend) Prompt(ctx context.Context, req *PromptRequest) (*Prom
 				Role: "tool", ToolCallID: call.ID, Content: out,
 			})
 		}
+	}
+	// Unreachable: the final round either answers or returns above. Stated so
+	// the bound has one meaning if the loop condition is ever edited.
+	return nil, &OpenVINOToolRoundsExceededError{
+		SessionID: req.SessionID, Model: model, Rounds: b.config.MaxToolRounds,
 	}
 }
 
