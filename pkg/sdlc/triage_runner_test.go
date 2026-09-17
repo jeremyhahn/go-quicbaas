@@ -1666,6 +1666,14 @@ func TestHeadMovedSince_ReopensAParkedBacklog(t *testing.T) {
 		verdict ForgeComment
 		want    bool
 	}{
+		// A needs-info verdict names something only a person can supply, so a
+		// merge says nothing about it and must not re-ask the question.
+		"a needs-info question is not reopened by a merge": {"bbbb", ForgeComment{
+			Body: "v\n<!-- " + triageCommentMarker + " " + triageHeadMarker + "aaaa " +
+				triageVerdictMarker + string(TriageOutcomeNeedsInfo) + " -->"}, false},
+		"a not-actionable verdict IS reopened by a merge": {"bbbb", ForgeComment{
+			Body: "v\n<!-- " + triageCommentMarker + " " + triageHeadMarker + "aaaa " +
+				triageVerdictMarker + string(TriageOutcomeNotActionable) + " -->"}, true},
 		"the tree has not moved":         {"aaaa", stamped("aaaa"), false},
 		"case does not decide it":        {"AAAA", stamped("aaaa"), false},
 		"the tree moved":                 {"bbbb", stamped("aaaa"), true},
@@ -1722,5 +1730,46 @@ func TestTriageRunner_AMergeReopensAParkedIssue(t *testing.T) {
 	}
 	if prompts := rig.agents.promptTexts(); len(prompts) == 0 {
 		t.Fatal("a merge must reopen a parked issue; the backlog stayed parked and the fleet ran dry")
+	}
+}
+
+// TestTriageRunner_AVerdictReplacesThePreviousDisposition proves an issue
+// carries one answer, not a pile of them.
+//
+// Each disposition only ever ADDED its label, so an issue judged needs-info
+// after being escalated ended up carrying both — two contradictory answers,
+// and an operator scanning the queue cannot tell which is current. Six of
+// eleven open go-luks2 issues were in that state after one re-triage pass.
+func TestTriageRunner_AVerdictReplacesThePreviousDisposition(t *testing.T) {
+	rig := newTriageRig(t)
+	// The default fixture declares no escalated label; this test is about two
+	// dispositions colliding, so it needs both declared — and the runner
+	// reloads the binding from the STORE, so the store is what must change.
+	rig.binding.Forge.Labels[LabelEscalated] = "factory:escalated"
+	if err := rig.store.PutBinding(context.Background(), testTenant, rig.binding); err != nil {
+		t.Fatalf("put binding: %v", err)
+	}
+	escalated := rig.binding.Forge.Label(LabelEscalated)
+	needsInfo := rig.binding.Forge.Label(LabelNeedsInfo)
+	if escalated == "" || needsInfo == "" {
+		t.Fatal("both disposition labels must be declared for this test to mean anything")
+	}
+	issue := rig.forge.putIssue(704, "already escalated", escalated)
+	issue.Updated = time.Now()
+
+	rig.answers("the body does not say which cipher\n\nSDLC-TRIAGE: needs-info")
+	if err := rig.run(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	labels := rig.forge.issues[704].Labels
+	got := map[string]bool{}
+	for _, l := range labels {
+		got[l] = true
+	}
+	if !got[needsInfo] {
+		t.Fatalf("the new verdict's label was not applied: %v", labels)
+	}
+	if got[escalated] {
+		t.Fatalf("the superseded disposition still stands: %v", labels)
 	}
 }

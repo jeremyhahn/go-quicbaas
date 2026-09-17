@@ -81,6 +81,19 @@ const triageCommentMarker = "quicbaas-sdlc:triage"
 // go-luks2 issues sat that way while the factory merged a change to main.
 const triageHeadMarker = "head="
 
+// triageVerdictMarker prefixes the verdict a comment recorded, so a later pass
+// can tell WHAT the issue is waiting on.
+//
+// A MERGE CANNOT SUPPLY A FACT A PERSON OWES. needs-info names a specific thing
+// only a person can give — which of three overloads, what the threshold should
+// be — and no amount of movement in the repository answers it. Reopening those
+// on every merge spends a model turn per issue to re-reach the same verdict,
+// which on a parked backlog is most of the fleet's triage cost and buys
+// nothing. not-actionable and escalated are the opposite: "blocked on another
+// change", "the prerequisite has not landed" are answers about a tree, and a
+// merge is exactly what makes them wrong.
+const triageVerdictMarker = "verdict="
+
 // stateLabels for the triage runner's own states.
 const (
 	labelTriageInitializing = "Initializing"
@@ -604,11 +617,30 @@ func (s *triageRun) spokenToSinceTriage(ctx context.Context, issue *ForgeIssue) 
 // compares unequal to every stamp, so the pass errs toward re-judging rather
 // than toward silence.
 func (s *triageRun) headMovedSince(verdict ForgeComment) bool {
+	// A QUESTION FOR A PERSON IS NOT REOPENED BY A MERGE. needs-info names
+	// something only a person can supply, so the tree moving says nothing
+	// about it; reopening it would re-ask the same question every time
+	// anything landed.
+	if triageVerdictCode(verdict.Body) == string(TriageOutcomeNeedsInfo) {
+		return false
+	}
 	stamped := triageVerdictHead(verdict.Body)
 	if stamped == "" {
 		return true
 	}
 	return !strings.EqualFold(stamped, strings.TrimSpace(s.headSHA))
+}
+
+// triageVerdictCode reads the verdict a comment recorded, and "" when it
+// recorded none.
+func triageVerdictCode(body string) string {
+	_, rest, found := strings.Cut(body, triageVerdictMarker)
+	if !found {
+		return ""
+	}
+	code, _, _ := strings.Cut(rest, " ")
+	code, _, _ = strings.Cut(code, "-->")
+	return strings.TrimSpace(code)
 }
 
 // triageVerdictHead reads the commit a verdict recorded, and "" when it
@@ -933,10 +965,48 @@ func (s *triageRun) applyNeedsInfo(ctx context.Context, issue ForgeIssue, verdic
 		// question, which is the part a person acts on.
 		return nil
 	}
+	s.clearOtherDispositions(ctx, issue, LabelNeedsInfo)
 	if err := s.forge.AddIssueLabels(ctx, s.repo, issue.Number, []string{label}); err != nil {
 		return &TriageVerdictError{Issue: issue.Number, Reason: "the needs-info label could not be applied", Cause: err}
 	}
 	return nil
+}
+
+// triageDispositionLabels are the label keys one verdict can leave behind.
+// Exactly one of them may stand at a time: they are alternative answers to the
+// same question, not facts that accumulate.
+var triageDispositionLabels = []string{LabelNeedsInfo, LabelEscalated}
+
+// clearOtherDispositions removes the disposition labels this verdict is NOT,
+// so an issue carries one answer rather than a pile of them.
+//
+// A VERDICT REPLACES THE ONE BEFORE IT. Each disposition only ever ADDED its
+// label, so an issue judged needs-info after being escalated ended up carrying
+// both — two contradictory answers, and an operator scanning the queue cannot
+// tell which is current. Measured on go-luks2 after one re-triage pass: six of
+// eleven open issues carried `factory:escalated` and `factory:needs-info` at
+// once.
+//
+// A REMOVAL THAT FAILS IS NOT A FAILED VERDICT. The comment carries the
+// reasoning and the new label is applied regardless; a stale second label is a
+// display defect, and refusing the verdict over it would trade a confusing
+// issue for an unjudged one.
+func (s *triageRun) clearOtherDispositions(ctx context.Context, issue ForgeIssue, keep string) {
+	held := map[string]bool{}
+	for _, label := range issue.Labels {
+		held[strings.ToLower(strings.TrimSpace(label))] = true
+	}
+	for _, key := range triageDispositionLabels {
+		if key == keep {
+			continue
+		}
+		label := s.binding.Forge.Label(key)
+		if label == "" || !held[strings.ToLower(label)] {
+			continue
+		}
+		//nolint:errcheck // a stale display label is not worth failing a verdict over
+		_ = s.forge.RemoveIssueLabel(ctx, s.repo, issue.Number, label)
+	}
 }
 
 // applyNotActionable writes the evidence, and then leaves the issue in a state
@@ -984,7 +1054,11 @@ func (s *triageRun) applyNotActionable(ctx context.Context, issue ForgeIssue, ve
 	// old behaviour: the comment is the record, which is the part a person
 	// acts on.
 	label := s.binding.Forge.Label(LabelEscalated)
-	if label == "" || issueHasLabel(issue, label) {
+	if label == "" {
+		return nil
+	}
+	s.clearOtherDispositions(ctx, issue, LabelEscalated)
+	if issueHasLabel(issue, label) {
 		return nil
 	}
 	if err := s.forge.AddIssueLabels(ctx, s.repo, issue.Number, []string{label}); err != nil {
@@ -1000,7 +1074,9 @@ func (s *triageRun) comment(ctx context.Context, issue ForgeIssue, verdict Triag
 	if strings.TrimSpace(body) == "" {
 		return nil
 	}
-	body += "\n<!-- " + triageCommentMarker + " " + triageHeadMarker + s.headSHA + " -->\n"
+	body += "\n<!-- " + triageCommentMarker +
+		" " + triageHeadMarker + s.headSHA +
+		" " + triageVerdictMarker + string(verdict.Outcome) + " -->\n"
 	if _, err := s.forge.CommentOnIssue(ctx, s.repo, issue.Number, body); err != nil {
 		return &TriageVerdictError{Issue: issue.Number, Reason: "the verdict could not be posted", Cause: err}
 	}

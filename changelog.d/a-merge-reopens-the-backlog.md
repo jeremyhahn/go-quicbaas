@@ -20,3 +20,16 @@
   showed rows that could not tell an operator whether a sweep was about to
   spend a local GPU turn or a frontier-model one. Both are now set when the
   job is started.
+
+- **A merge no longer re-asks a question a person owes.** `needs-info` names a
+  specific thing only a person can supply, so movement in the repository says
+  nothing about it; reopening those on every merge spent a model turn per
+  parked issue to reach the same verdict again, which on a parked backlog is
+  most of the fleet's triage cost. Only `not-actionable` and escalated
+  verdicts — the ones that are answers about a tree — are reopened by a merge.
+
+- **A verdict now replaces the previous disposition instead of stacking on
+  it.** Each disposition only ever added its label, so an issue judged
+  needs-info after being escalated carried both: two contradictory answers,
+  with no way for an operator to tell which was current. Six of eleven open
+  go-luks2 issues were in that state after a single re-triage pass.
