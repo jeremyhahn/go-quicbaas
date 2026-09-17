@@ -311,10 +311,11 @@ func (s *ReviewSweeper) needsReview(
 	if err != nil {
 		return false, err
 	}
-	if checkRunPresent(runs, binding.Reviewer.Context()) {
+	now := s.now()
+	if checkRunPresent(runs, binding.Reviewer.Context(), now) {
 		return false, nil
 	}
-	reason, _ := ChecksGreenForReview(binding.Review, head, runs, s.now())
+	reason, _ := ChecksGreenForReview(binding.Review, head, runs, now)
 	return reason.Clear(), nil
 }
 
@@ -323,26 +324,69 @@ func (s *ReviewSweeper) sweepError(tenantID string, binding *ProjectBinding, op 
 	return &ReviewSweepError{TenantID: tenantID, ProjectID: binding.ProjectID, Op: op, Cause: cause}
 }
 
-// checkRunPresent reports whether any run on the head was published under
-// context, whatever it says.
+// StaleReviewStatusAfter is how long a PENDING reviewer status may stand
+// before this sweep stops believing a review is still running behind it.
 //
-// PRESENCE AND NOT STATE, because all four states mean the same thing to this
-// sweep: a verdict has been given, a standing one re-asserted, a draft
-// declined, or a review is in flight — and in every one of those cases a
-// review has already been started for this head. Reading the state would turn
-// a pending status into "start another one", which is precisely the duplicate
-// reviewer the pull request's lease exists to prevent.
-func checkRunPresent(runs []ForgeCheckRun, statusContext string) bool {
+// IT MATCHES THE JOB STALL BOUND ON PURPOSE. That bound is the engine's own
+// answer to "how long may a review take before the agent is presumed gone",
+// and a floor that gave up sooner would dispatch a second reviewer onto a head
+// the first is still working — the duplicate this sweep is careful to avoid.
+// Deriving it from a second, independent number would let the two disagree.
+const StaleReviewStatusAfter = 30 * time.Minute
+
+// checkRunPresent reports whether a review has already been started for this
+// head and may still be running behind the status it left.
+//
+// PRESENCE AND NOT STATE, ALMOST. A finished verdict, a standing one
+// re-asserted and a declined draft all mean a review has been given, and
+// reading their state would turn a judged head into "start another one".
+// Pending is the one that is ambiguous: it is the shape of a review in flight
+// AND the shape of one that finished without deciding.
+//
+// A PENDING STATUS THAT OUTLIVED THE STALL BOUND IS ABANDONED, NOT IN FLIGHT.
+// Treating it as in flight made this sweep useless in exactly the case it
+// exists for. The floor's whole purpose is that a green pull request is
+// reviewed even when the delivery path broke — and a review that left pending
+// behind blocked the gate AND this backstop, so nothing could ever re-review
+// that head. Measured on go-luks2 #202: the round-2 commit answered the
+// round-1 finding, CI went green, and it then waited indefinitely on a review
+// no code path could dispatch. The reviewer's own verdict mapping no longer
+// publishes pending for a finished review, but a reviewer killed mid-run still
+// leaves one, and that is the case this bound recovers.
+func checkRunPresent(runs []ForgeCheckRun, statusContext string, now time.Time) bool {
 	wanted := strings.TrimSpace(statusContext)
 	if wanted == "" {
 		return false
 	}
 	for _, run := range runs {
-		if strings.EqualFold(strings.TrimSpace(run.Name), wanted) {
+		if !strings.EqualFold(strings.TrimSpace(run.Name), wanted) {
+			continue
+		}
+		if !reviewStatusStale(run, now) {
 			return true
 		}
 	}
 	return false
+}
+
+// reviewStatusStale reports whether one reviewer status has stood pending long
+// enough that the review behind it is presumed gone.
+//
+// ONLY PENDING CAN GO STALE. Every other state is a finished review, and a
+// finished review does not become undone by age.
+//
+// AN UNDATED PENDING STATUS IS NOT STALE. Some forges report no timestamp, and
+// "no date" must not read as "infinitely old" — that would re-dispatch a
+// reviewer onto every head on every pass.
+func reviewStatusStale(run ForgeCheckRun, now time.Time) bool {
+	if CheckStatus(strings.TrimSpace(run.Status)) != CheckPending {
+		return false
+	}
+	started := run.Started
+	if started.IsZero() {
+		return false
+	}
+	return now.Sub(started) > StaleReviewStatusAfter
 }
 
 // ReviewSweepError reports a project the review floor could not sweep.

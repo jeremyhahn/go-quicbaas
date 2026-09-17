@@ -606,7 +606,65 @@ func TestCheckRunPresent(t *testing.T) {
 		"a run with no name":               {[]ForgeCheckRun{{Name: "  "}}, DefaultReviewStatusContext, false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := checkRunPresent(tc.runs, tc.context); got != tc.want {
+			if got := checkRunPresent(tc.runs, tc.context, time.Now().UTC()); got != tc.want {
+				t.Fatalf("checkRunPresent = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCheckRunPresent_StalePendingIsNotInFlight pins the recovery that makes
+// the floor a floor.
+//
+// A finished review that left a PENDING status behind used to block the gate
+// AND this backstop, so nothing could re-review that head ever again — the
+// exact failure the sweep exists to prevent, caused by the sweep. Measured on
+// go-luks2 #202.
+func TestCheckRunPresent_StalePendingIsNotInFlight(t *testing.T) {
+	now := time.Now().UTC()
+	pendingAt := func(age time.Duration) []ForgeCheckRun {
+		return []ForgeCheckRun{{
+			Name:    DefaultReviewStatusContext,
+			Status:  string(CheckPending),
+			Started: now.Add(-age),
+		}}
+	}
+	for name, tc := range map[string]struct {
+		runs []ForgeCheckRun
+		want bool
+	}{
+		// A review that started moments ago IS in flight; dispatching a second
+		// one is the duplicate reviewer this helper exists to prevent.
+		"a fresh pending review is in flight": {pendingAt(time.Minute), true},
+		"pending right at the bound is still in flight": {
+			pendingAt(StaleReviewStatusAfter), true,
+		},
+		"pending past the bound is abandoned": {
+			pendingAt(StaleReviewStatusAfter + time.Minute), false,
+		},
+		// No date must not read as infinitely old, or every head would be
+		// re-dispatched on every pass.
+		"an undated pending status is not stale": {
+			[]ForgeCheckRun{{Name: DefaultReviewStatusContext, Status: string(CheckPending)}}, true,
+		},
+		// Age does not undo a decision.
+		"an ancient failure is still a verdict": {
+			[]ForgeCheckRun{{
+				Name:    DefaultReviewStatusContext,
+				Status:  string(CheckFailure),
+				Started: now.Add(-30 * 24 * time.Hour),
+			}}, true,
+		},
+		"an ancient approval is still a verdict": {
+			[]ForgeCheckRun{{
+				Name:    DefaultReviewStatusContext,
+				Status:  string(CheckSuccess),
+				Started: now.Add(-30 * 24 * time.Hour),
+			}}, true,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := checkRunPresent(tc.runs, DefaultReviewStatusContext, now); got != tc.want {
 				t.Fatalf("checkRunPresent = %v, want %v", got, tc.want)
 			}
 		})

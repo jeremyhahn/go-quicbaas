@@ -734,8 +734,19 @@ func TestReviewRunner_AVerdictThatDecidesNothingIsNotGreen(t *testing.T) {
 	rig.mustRun(41)
 
 	status, ok := rig.forge.lastStatus()
-	if !ok || status.Status != CheckPending {
+	if !ok || status.Status == CheckSuccess {
 		t.Fatalf("a comment published %+v; a review that declined to judge must not satisfy the check", status)
+	}
+	// AND IT MUST NOT PUBLISH PENDING EITHER, which it used to. Pending is the
+	// shape of a review still running, and the review floor skips any head
+	// carrying a reviewer status so an in-flight review is never given a
+	// duplicate reviewer — so a FINISHED review that left pending behind
+	// blocked the gate and the backstop that recovers the gate, and the head
+	// could never be re-reviewed. See
+	// TestReviewStatuses_NoFinishedVerdictPublishesPending.
+	if status.Status == CheckPending {
+		t.Fatalf("a comment published pending; the review has finished, and pending "+
+			"deadlocks the head against both the gate and the review floor (%+v)", status)
 	}
 	if got := rig.forge.submissions(); len(got) != 1 || got[0].Verdict != VerdictComment {
 		t.Fatalf("submissions = %+v", got)
@@ -753,6 +764,37 @@ func TestReviewStatuses_EveryVerdictMapsAndNoneDefaultsToGreen(t *testing.T) {
 	run := &reviewRun{reviewer: ReviewerConfig{}}
 	if got := run.statusForVerdict("a-verdict-from-the-future", "body"); got.Status != CheckFailure {
 		t.Fatalf("an unmapped verdict published %s, want failure", got.Status)
+	}
+}
+
+// TestReviewStatuses_NoFinishedVerdictPublishesPending pins the fix for a
+// deadlock that could not be recovered from.
+//
+// A `comment` used to publish PENDING on the honest reasoning that it decides
+// nothing and so must not go green. But pending is the shape of a review still
+// RUNNING, and the review floor skips any head carrying a reviewer status so
+// that an in-flight review never gets a duplicate reviewer. A finished review
+// that left pending behind therefore blocked the merge gate and the backstop
+// that exists to recover the gate — nothing could re-review that head, ever.
+// go-luks2 #202 sat green and unreviewable that way.
+//
+// Every verdict here is a review that FINISHED, so none of them may publish
+// the status that means "still going".
+func TestReviewStatuses_NoFinishedVerdictPublishesPending(t *testing.T) {
+	for verdict, status := range reviewStatuses {
+		if status == CheckPending {
+			t.Fatalf("verdict %s publishes pending; a finished review must not "+
+				"leave the status that blocks both the gate and the review floor", verdict)
+		}
+	}
+	run := &reviewRun{reviewer: ReviewerConfig{}}
+	// A comment still must not go green: it declined to judge.
+	got := run.statusForVerdict(VerdictComment, "read it")
+	if got.Status != CheckFailure {
+		t.Fatalf("a comment published %s, want failure", got.Status)
+	}
+	if !strings.Contains(got.Description, "without a verdict") {
+		t.Fatalf("the status must say the reviewer declined to judge, got %q", got.Description)
 	}
 }
 

@@ -1055,13 +1055,28 @@ func (s *reviewRun) publishUnreadable(ctx context.Context, cause error) error {
 // code. Here the status is derived from the verdict this run produced, in the
 // same step that produced it.
 //
-// A COMMENT IS PENDING, NOT GREEN. It decides nothing, so the check has not
-// been satisfied; publishing green would let a required check pass on a
-// review that explicitly declined to judge.
+// A COMMENT IS NEITHER GREEN NOR PENDING. It decides nothing, so publishing
+// green would let a required check pass on a review that explicitly declined
+// to judge — but publishing PENDING was worse, because pending is the shape of
+// a review still running, and this one has finished.
+//
+// PENDING DEADLOCKED THE PULL REQUEST PERMANENTLY. The review floor skips any
+// head already carrying a status under the reviewer's context, deliberately
+// and by presence rather than state, so that a review in flight is never given
+// a duplicate reviewer (see checkRunPresent). A finished review that left
+// `pending` behind therefore blocked the gate AND the backstop that exists to
+// recover the gate: nothing could ever re-review that head. Measured on
+// go-luks2 #202, whose round-2 commit answered the round-1 finding, went green
+// in CI, and then waited on a re-review that could not be dispatched.
+//
+// CheckFailure is what VerdictError already publishes, and the two mean the
+// same thing to every reader: the reviewer finished and produced nothing that
+// satisfies the gate. It fails closed, and it is terminal, so the head's state
+// is honest about being done.
 var reviewStatuses = map[ReviewVerdict]CheckStatus{
 	VerdictApprove:        CheckSuccess,
 	VerdictRequestChanges: CheckFailure,
-	VerdictComment:        CheckPending,
+	VerdictComment:        CheckFailure,
 	VerdictError:          CheckFailure,
 }
 
