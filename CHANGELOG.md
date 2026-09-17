@@ -7,6 +7,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1-alpha] - 2026-09-16
+
+PATCH rather than MINOR: the capabilities this adds are internal seams — a
+context limit, a role policy, a second backend shape — that no consumer's code
+has to change to take.
+
+WHAT THIS SPAN IS ABOUT IS THROUGHPUT. The factory now runs 30+ repositories
+against a fleet of unlike accelerators, and every piece here answers the same
+question: how do you keep scarce hardware busy without letting one role starve
+another, one endpoint's limits surprise you, or one prompt be prefilled twice.
+
+### Added
+
+- **A portable context limit for served models.** Every model has a prompt
+  limit and almost no server will tell you what it is: measured against one
+  OpenAI-compatible server, the model endpoints return `id`, `object`,
+  `created` and `owned_by`, and the metadata endpoint answers 500. Others
+  expose *something* — a `max_model_len`, an `n_ctx`, a `max_input_length` —
+  but they do not agree on where or what it is called, so a client that reads
+  any one of them works against one server.
+
+  `ContextLimit` establishes the limit by a ladder instead, every rung
+  optional: **declared** (`AgentProfile.ContextTokens`, the only rung that can
+  be right before the first request), **learned** (a refusal narrows it, which
+  costs nothing until something overruns), and **unbounded** (send it and let
+  the server decide). The learned bound wins when it is tighter, because the
+  server is the authority on its own configuration.
+
+  Deliberately absent: model geometry, KV-cache arithmetic and `config.json`
+  parsing — layer and head counts are a transformer-family convention, not a
+  universal one — and per-vendor metadata probes, which would each be a guess
+  about one server wearing the costume of a general mechanism.
+
+
+- **A runtime-tunable role policy for scarce accelerators.** A pool answers
+  "which profile", which is only half the question: it cannot decide who goes
+  FIRST when one place is worth more to one kind of work than another. On a
+  fleet with one large accelerator and several small ones, that is the question
+  that matters — the large card is where review belongs, and triage would
+  happily fill it and starve the thing it was bought for.
+
+  `AgentProfile.Roles` states who a profile is for and on what terms it helps
+  everybody else: `prefer` names the role it is held for, `reserve` keeps slots
+  empty for that role's *latency*, and `exclusive` refuses everyone else
+  outright. Selection is `ProfileResolver.ResolveForRole`, and the two tests are
+  separate: capacity is arithmetic about what is running, the policy is a
+  statement about what the profile is FOR, and a profile with a free slot can
+  still decline so the work spills to the next profile in the pool.
+
+  **Idle capacity is shared, not reserved.** A profile preferred by review does
+  not sit empty while triage queues — it yields whatever review is not asking
+  for, measured as queued jobs rather than running ones. Reserving
+  unconditionally would trade one starvation for another. The policy rides on
+  the stored profile record, so retuning the split is an edit rather than a
+  redeploy, which matters because the right split depends on a queue that
+  changes hourly.
+
+  An unreadable queue admits the work: refusing on a failed read would stop the
+  fleet on a storage blip, and the concurrency cap still bounds what starts. A
+  profile with no policy behaves exactly as before.
+
+### Changed
+
+- **The triage prompt puts project-stable content first, so a sweep prefills it
+  once.** A triage turn is ~94% prefill — 5,600-7,500 tokens in, 24-44 out;
+  measured on an 8B, 28.7 s of prefill against 1.9 s of decode — so the only
+  optimisation that matters is not prefilling the same tokens twice, and every
+  serving runtime in use (llama.cpp, ollama, vLLM, OVMS) caches a prompt PREFIX.
+
+  The previous order defeated that completely: `Issue: #<n>` sat on the third
+  line, so two prompts from the same sweep diverged after about forty tokens,
+  while the genuinely stable sections — the open-issue list, the verification
+  commands, the closing policy — sat at the END where a cache can never reach
+  them. They now come first and the issue comes last.
+
+  It is also the better order for the answer, which is why it is not a trade:
+  the decisive evidence lands nearest the question, where attention is
+  strongest.
+
+  The open-issue list now includes the issue being triaged, because excluding
+  it made the list differ per issue. The prompt says so explicitly — a list
+  that silently contained the subject would invite the one duplicate verdict
+  that is always wrong.
+
+### Fixed
+
+- **A prompt that exceeds the model's context is reported as itself.**
+  `PromptTooLongError` names the size sent and the ceiling in force, unwraps to
+  its own sentinel so a caller can tell it from a transient fault, and is
+  raised locally — without a round trip — once the ceiling is known. It
+  previously surfaced as an opaque server error wrapped in whatever the agent
+  said next; on one fleet every triage turn failed that way for a day before
+  anyone read the raw response body.
+
 ## [0.9.0-alpha] - 2026-09-16
 
 MINOR rather than PATCH because this span adds a capability — agent profiles
