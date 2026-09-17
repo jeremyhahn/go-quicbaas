@@ -265,6 +265,36 @@ func ChecksGreenForReview(policy ReviewPolicy, headSHA string, runs []ForgeCheck
 	return evaluateChecks(checkRecordsFor(runs, head, now), head)
 }
 
+// runsExcludingContext drops one check context from a run listing.
+//
+// THE REVIEWER'S OWN STATUS IS THE OUTPUT OF A REVIEW, NEVER AN INPUT TO
+// WHETHER ONE MAY START. Both paths that decide "is this head green enough to
+// review" read every status on the head, and the reviewer publishes a status
+// on that same head — so leaving it in asks the review to be green before the
+// review has run. It is circular in every state the reviewer can publish:
+// pending reads as a pipeline still running, and failure — which is what a
+// comment and an error publish — reads as a pipeline that went red. Either
+// way the head can never be reviewed again.
+//
+// The MERGE gate is the opposite case and must keep it: there, a review that
+// failed is exactly what should hold the change back. So the exclusion lives
+// at the two dispatch call sites and not inside ChecksGreenForReview, which
+// both gates share.
+func runsExcludingContext(runs []ForgeCheckRun, context string) []ForgeCheckRun {
+	excluded := strings.TrimSpace(context)
+	if excluded == "" {
+		return runs
+	}
+	kept := make([]ForgeCheckRun, 0, len(runs))
+	for _, run := range runs {
+		if strings.EqualFold(strings.TrimSpace(run.Name), excluded) {
+			continue
+		}
+		kept = append(kept, run)
+	}
+	return kept
+}
+
 // countIndependentApprovals counts approvals satisfying the independence
 // policy and how many it excluded, so the caller names the right refusal.
 func countIndependentApprovals(verdicts []ReviewRecord, policy ReviewPolicy, authorFamily string) (independent, excluded int) {

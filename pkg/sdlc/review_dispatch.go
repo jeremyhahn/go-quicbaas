@@ -314,7 +314,13 @@ func (d *ReviewDispatcher) pipelineGreen(
 	if err != nil {
 		return false, err
 	}
-	reason, _ := ChecksGreenForReview(binding.Review, head, runs, time.Now().UTC())
+	// The reviewer's own status is excluded: it is the result of a review, not
+	// a precondition for one. See runsExcludingContext.
+	reason, _ := ChecksGreenForReview(
+		binding.Review, head,
+		runsExcludingContext(runs, binding.Reviewer.Context()),
+		time.Now().UTC(),
+	)
 	return reason.Clear(), nil
 }
 

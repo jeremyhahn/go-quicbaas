@@ -729,3 +729,67 @@ func (f *failingBindings) GetBinding(ctx context.Context, tenantID, projectID st
 	}
 	return f.BindingReader.GetBinding(ctx, tenantID, projectID)
 }
+
+// TestNeedsReview_TheReviewersOwnStatusDoesNotDecideGreen pins the circularity
+// that made the stale-pending recovery inert.
+//
+// Both dispatch paths ask "is this head green enough to review", and the
+// reviewer publishes its own status on that same head. Counting it asks the
+// review to be green before it has run: pending reads as a pipeline still
+// going, and failure — what a comment and an error publish — reads as one that
+// went red. Either way a head that has been reviewed once can never be
+// reviewed again, which is the deadlock the stale-pending rule exists to break.
+func TestNeedsReview_TheReviewersOwnStatusDoesNotDecideGreen(t *testing.T) {
+	now := time.Now().UTC()
+	green := ForgeCheckRun{
+		Name: "CI / Build", Status: "completed", Conclusion: "success",
+		Started: now.Add(-2 * time.Hour), Completed: now.Add(-2 * time.Hour),
+	}
+	for name, reviewerStatus := range map[string]ForgeCheckRun{
+		// The state a killed reviewer leaves behind.
+		"a stale pending reviewer status": {
+			Name:    DefaultReviewStatusContext,
+			Status:  string(CheckPending),
+			Started: now.Add(-2 * time.Hour),
+		},
+		// The state a comment or an error now publishes.
+		"a failed reviewer status": {
+			Name: DefaultReviewStatusContext, Status: "completed", Conclusion: "failure",
+			Started: now.Add(-2 * time.Hour), Completed: now.Add(-2 * time.Hour),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			runs := []ForgeCheckRun{green, reviewerStatus}
+			kept := runsExcludingContext(runs, DefaultReviewStatusContext)
+			if len(kept) != 1 || kept[0].Name != "CI / Build" {
+				t.Fatalf("the reviewer's own status must be excluded, kept %+v", kept)
+			}
+			reason, _ := ChecksGreenForReview(
+				ReviewPolicy{RequireGreenChecks: true}, "h",
+				append(kept, ForgeCheckRun{
+					Name: "CI / Build", HeadSHA: "h", Status: "completed", Conclusion: "success",
+					Started: now.Add(-2 * time.Hour), Completed: now.Add(-2 * time.Hour),
+				}),
+				now,
+			)
+			if !reason.Clear() {
+				t.Fatalf("a head whose only non-green status is the reviewer's own must be reviewable, got %v", reason)
+			}
+			// And the merge gate keeps it: a failed review must still block.
+			withReviewer, _ := ChecksGreenForReview(
+				ReviewPolicy{RequireGreenChecks: true}, "h",
+				[]ForgeCheckRun{
+					{Name: "CI / Build", HeadSHA: "h", Status: "completed", Conclusion: "success",
+						Started: now.Add(-2 * time.Hour), Completed: now.Add(-2 * time.Hour)},
+					{Name: DefaultReviewStatusContext, HeadSHA: "h", Status: "completed", Conclusion: "failure",
+						Started: now.Add(-2 * time.Hour), Completed: now.Add(-2 * time.Hour)},
+				},
+				now,
+			)
+			if withReviewer.Clear() {
+				t.Fatal("ChecksGreenForReview itself must still count a failed review; " +
+					"only the two dispatch call sites exclude it")
+			}
+		})
+	}
+}

@@ -21,3 +21,16 @@
   presumed gone" answer rather than being a second, independently drifting
   number. An undated pending status is never stale, so a forge that reports no
   timestamp does not cause a re-dispatch on every pass.
+
+- **The reviewer's own commit status decided whether the head was reviewable.**
+  Both dispatch paths ask "is this head green enough to review" by evaluating
+  every status on the head — including the one the reviewer itself publishes
+  there. That is circular: it asks a review to be green before it has run.
+  While the floor short-circuited on status presence the question never
+  arose, so the fault was latent; making a stale pending status reviewable
+  exposed it immediately, and mapping a comment to `failure` would have
+  re-created the same deadlock in a different colour. The two dispatch sites
+  now exclude the reviewer's context, which is what the sweep's own
+  documentation already promised ("every *other* check"). The merge gate still
+  counts it, because there a failed review is exactly what should hold a
+  change back.

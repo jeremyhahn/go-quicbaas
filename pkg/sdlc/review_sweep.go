@@ -312,10 +312,14 @@ func (s *ReviewSweeper) needsReview(
 		return false, err
 	}
 	now := s.now()
-	if checkRunPresent(runs, binding.Reviewer.Context(), now) {
+	reviewerContext := binding.Reviewer.Context()
+	if checkRunPresent(runs, reviewerContext, now) {
 		return false, nil
 	}
-	reason, _ := ChecksGreenForReview(binding.Review, head, runs, now)
+	// "EVERY OTHER CHECK", which is what this function has always promised:
+	// the reviewer's own status is excluded, or a head that carries one can
+	// never be green enough to review again. See runsExcludingContext.
+	reason, _ := ChecksGreenForReview(binding.Review, head, runsExcludingContext(runs, reviewerContext), now)
 	return reason.Clear(), nil
 }
 
