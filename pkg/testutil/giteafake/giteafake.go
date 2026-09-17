@@ -96,6 +96,25 @@ type PullRequest struct {
 	URL    string `json:"html_url"`
 }
 
+// Review is one review on a pull request, in Gitea's own wire shape.
+//
+// CommitID is the field that matters: a verdict applies to the tree it was
+// given, and the review gate binds an approval to that SHA so a verdict cannot
+// be carried onto a later commit nobody read.
+type Review struct {
+	ID          int64     `json:"id"`
+	User        *User     `json:"user"`
+	State       string    `json:"state"`
+	Body        string    `json:"body"`
+	CommitID    string    `json:"commit_id"`
+	SubmittedAt time.Time `json:"submitted_at"`
+}
+
+// User is the author of a review.
+type User struct {
+	Login string `json:"login"`
+}
+
 // Commit is the head or base end of a pull request.
 type Commit struct {
 	Ref string `json:"ref"`
@@ -174,6 +193,7 @@ type Server struct {
 	protection map[string]BranchProtection
 	pulls      []PullRequest
 	statuses   map[string][]CommitStatus
+	reviews    map[int][]Review
 
 	nextLabelID  int64
 	nextHookID   int64
@@ -202,6 +222,7 @@ func New(t *testing.T, owner, repo string) *Server {
 		contents:   map[string][]Content{},
 		protection: map[string]BranchProtection{},
 		statuses:   map[string][]CommitStatus{},
+		reviews:    map[int][]Review{},
 		calls:      map[string]int{},
 		failNext:   map[string]bool{},
 		forced:     map[string]forcedStatus{},
@@ -272,6 +293,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.deleteHook(w, strings.TrimPrefix(suffix, "/hooks/"))
 	case suffix == "/pulls" && r.Method == http.MethodGet:
 		s.listPulls(w, r)
+	case strings.HasPrefix(suffix, "/pulls/") && strings.HasSuffix(suffix, "/reviews") && r.Method == http.MethodGet:
+		s.listReviews(w, strings.TrimSuffix(strings.TrimPrefix(suffix, "/pulls/"), "/reviews"))
 	case strings.HasPrefix(suffix, "/pulls/") && r.Method == http.MethodGet:
 		s.getPull(w, strings.TrimPrefix(suffix, "/pulls/"))
 	case strings.HasPrefix(suffix, "/commits/") && strings.HasSuffix(suffix, "/statuses") && r.Method == http.MethodGet:
@@ -441,6 +464,35 @@ func (s *Server) getPull(w http.ResponseWriter, rawNumber string) {
 		}
 	}
 	s.fail(w, http.StatusNotFound, "no such pull request")
+}
+
+// listReviews answers a pull request's reviews, oldest first, which is the
+// order the forge reports them in and the order the gate reduces them in.
+func (s *Server) listReviews(w http.ResponseWriter, rawNumber string) {
+	number, err := strconv.Atoi(strings.TrimSpace(rawNumber))
+	if err != nil {
+		s.fail(w, http.StatusBadRequest, "a pull request is addressed by number")
+		return
+	}
+	// No locking: serve() already holds s.mu for the whole request, as every
+	// other handler here assumes.
+	s.writeJSON(w, http.StatusOK, append([]Review{}, s.reviews[number]...))
+}
+
+// PutReview seeds one review on a pull request. It is what the review runner
+// does at the end of a run, and the half a test that only sets a commit status
+// leaves out — a status is a PROJECTION of a verdict, and the review floor
+// asks for the verdict.
+func (s *Server) PutReview(number int, login, state, commitID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.reviews == nil {
+		s.reviews = map[int][]Review{}
+	}
+	s.reviews[number] = append(s.reviews[number], Review{
+		ID: int64(len(s.reviews[number]) + 1), User: &User{Login: login},
+		State: state, CommitID: commitID, SubmittedAt: time.Now().UTC(),
+	})
 }
 
 // listStatuses answers a commit's statuses, oldest first, which is how a

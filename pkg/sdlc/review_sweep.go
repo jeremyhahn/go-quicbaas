@@ -74,9 +74,16 @@ import (
 // SHORTER THAN THE TRIAGE BACKSTOP'S, AND THE DIFFERENCE IS WHAT EACH PASS
 // COSTS. A triage pass starts a JOB per bound project; this one makes forge
 // READS and starts work only for a pull request that is genuinely unjudged, so
-// a quiet fleet costs one listing plus one status read per open pull request.
-// The latency it bounds is a finished change waiting to merge, which is the
-// most expensive kind of waiting there is.
+// a quiet fleet costs one listing plus a status read and a review read per open
+// pull request. The latency it bounds is a finished change waiting to merge,
+// which is the most expensive kind of waiting there is.
+//
+// THE REVIEW READ IS THE PRICE OF A CORRECT ANSWER. Deciding "has this head
+// been judged" from the commit status alone is one read cheaper and wrong: a
+// status is a projection of a verdict, and the two disagree whenever a review
+// declines to judge — leaving a head that reads as reviewed forever and that no
+// code path can ever judge. Three finished, green changes were stranded that
+// way before this read existed.
 const DefaultReviewSweepInterval = 5 * time.Minute
 
 // ReviewSweeperConfig wires the sweeper.
@@ -313,7 +320,22 @@ func (s *ReviewSweeper) needsReview(
 	}
 	now := s.now()
 	reviewerContext := binding.Reviewer.Context()
-	if checkRunPresent(runs, reviewerContext, now) {
+	// A review that is RUNNING must not be given a second reviewer.
+	if reviewInFlight(runs, reviewerContext, now) {
+		return false, nil
+	}
+	// A head that already carries a verdict has been judged and is not swept
+	// again. THE VERDICT IS ASKED FOR DIRECTLY rather than inferred from the
+	// commit status, because a status is a projection of a verdict and the two
+	// can disagree: a review that declined to judge, or one that was posted by
+	// anything else holding status-write on the repository, leaves a status
+	// behind that no verdict backs. Reading the status alone, such a head is
+	// "reviewed" forever and no code path can ever judge it.
+	judged, judgedErr := headJudged(ctx, forge, binding.Repo(), pull.Number, head)
+	if judgedErr != nil {
+		return false, judgedErr
+	}
+	if judged {
 		return false, nil
 	}
 	// "EVERY OTHER CHECK", which is what this function has always promised:
@@ -328,6 +350,30 @@ func (s *ReviewSweeper) sweepError(tenantID string, binding *ProjectBinding, op 
 	return &ReviewSweepError{TenantID: tenantID, ProjectID: binding.ProjectID, Op: op, Cause: cause}
 }
 
+// headJudged reports whether the forge already holds a BINDING verdict for
+// this head — an approval or a request for changes.
+//
+// A COMMENT IS NOT A JUDGEMENT, and that is the whole reason this asks the
+// forge for reviews instead of reading the commit status. forgeReviewVerdicts
+// is the same map the gate reduces reviews with, so "judged" means here
+// exactly what it means there; a second definition would eventually sweep a
+// head the gate considers decided, or hold back one it does not.
+func headJudged(ctx context.Context, forge ForgeBackend, repo RepoRef, number int, head string) (bool, error) {
+	reviews, err := forge.ListReviews(ctx, repo, number)
+	if err != nil {
+		return false, err
+	}
+	for _, review := range reviews {
+		if !strings.EqualFold(strings.TrimSpace(review.HeadSHA), head) {
+			continue
+		}
+		if _, binds := forgeReviewVerdicts[strings.ToUpper(strings.TrimSpace(review.State))]; binds {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // StaleReviewStatusAfter is how long a PENDING reviewer status may stand
 // before this sweep stops believing a review is still running behind it.
 //
@@ -338,32 +384,32 @@ func (s *ReviewSweeper) sweepError(tenantID string, binding *ProjectBinding, op 
 // Deriving it from a second, independent number would let the two disagree.
 const StaleReviewStatusAfter = 30 * time.Minute
 
-// checkRunPresent reports whether a review has already been started for this
-// head and may still be running behind the status it left.
+// reviewInFlight reports whether a review is RUNNING against this head right
+// now, which is the one reason to pass a green pull request over.
 //
-// PRESENCE AND NOT STATE, ALMOST. A finished verdict, a standing one
-// re-asserted and a declined draft all mean a review has been given, and
-// reading their state would turn a judged head into "start another one".
-// Pending is the one that is ambiguous: it is the shape of a review in flight
-// AND the shape of one that finished without deciding.
+// IT ASKS ONLY ABOUT PENDING, because only pending can mean "still going".
+// Whether a head has been JUDGED is a different question with a different
+// answer — headJudged asks the forge for the verdict — and conflating the two
+// is what made this sweep useless in the case it exists for. A finished review
+// that left a status behind blocked the gate AND this backstop, so nothing
+// could ever re-review that head. Measured on go-luks2 #200 and #202: a
+// round-2 commit answered its round-1 finding, CI went green, and it then
+// waited indefinitely on a review no code path could dispatch.
 //
 // A PENDING STATUS THAT OUTLIVED THE STALL BOUND IS ABANDONED, NOT IN FLIGHT.
-// Treating it as in flight made this sweep useless in exactly the case it
-// exists for. The floor's whole purpose is that a green pull request is
-// reviewed even when the delivery path broke — and a review that left pending
-// behind blocked the gate AND this backstop, so nothing could ever re-review
-// that head. Measured on go-luks2 #202: the round-2 commit answered the
-// round-1 finding, CI went green, and it then waited indefinitely on a review
-// no code path could dispatch. The reviewer's own verdict mapping no longer
-// publishes pending for a finished review, but a reviewer killed mid-run still
-// leaves one, and that is the case this bound recovers.
-func checkRunPresent(runs []ForgeCheckRun, statusContext string, now time.Time) bool {
+// That is how a reviewer killed mid-run stops stranding its head.
+func reviewInFlight(runs []ForgeCheckRun, statusContext string, now time.Time) bool {
 	wanted := strings.TrimSpace(statusContext)
 	if wanted == "" {
 		return false
 	}
 	for _, run := range runs {
 		if !strings.EqualFold(strings.TrimSpace(run.Name), wanted) {
+			continue
+		}
+		// A FINISHED STATUS IS NOT A REVIEWER AT WORK, whatever it concluded.
+		// Whether its conclusion judged the head is headJudged's question.
+		if CheckStatus(strings.TrimSpace(run.Status)) != CheckPending {
 			continue
 		}
 		if !reviewStatusStale(run, now) {
@@ -373,11 +419,8 @@ func checkRunPresent(runs []ForgeCheckRun, statusContext string, now time.Time) 
 	return false
 }
 
-// reviewStatusStale reports whether one reviewer status has stood pending long
+// reviewStatusStale reports whether one PENDING reviewer status has stood long
 // enough that the review behind it is presumed gone.
-//
-// ONLY PENDING CAN GO STALE. Every other state is a finished review, and a
-// finished review does not become undone by age.
 //
 // AN UNDATED PENDING STATUS IS NOT STALE. Some forges report no timestamp, and
 // "no date" must not read as "infinitely old" — that would re-dispatch a

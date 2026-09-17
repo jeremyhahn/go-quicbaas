@@ -15,6 +15,7 @@ package sdlc
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -150,8 +151,12 @@ func TestReviewFloor_StopsOnceTheVerdictIsOnTheHead(t *testing.T) {
 		t.Fatalf("first pass: started=%d err=%v", started, err)
 	}
 
-	// What the review job does at the end of its run, through the same
-	// adapter, verified by the adapter's own read-back.
+	// WHAT THE REVIEW JOB DOES AT THE END OF ITS RUN, BOTH HALVES. It submits
+	// the verdict and THEN publishes the status (reviewRun.publish), and the
+	// floor asks for the verdict — a status is only a projection of one, and a
+	// test that set the status alone was modelling a review that never
+	// happened.
+	rig.gitea.PutReview(64, fakeReviewerLogin, "APPROVED", head)
 	if err := rig.backend.SetCommitStatus(ctx, rig.repo, head, CommitStatus{
 		Context: DefaultReviewStatusContext, Status: CheckSuccess, Description: "approved",
 	}); err != nil {
@@ -198,10 +203,18 @@ func TestReviewFloor_LeavesAlonePullRequestsThePipelineHasNotFinished(t *testing
 	}
 }
 
-// TestReviewFloor_CostsOneListingAndOneStatusReadPerOpenPullRequest pins the
-// budget against the REAL adapter, where the paging and the routes are what
-// they are in production rather than what a double was told to do.
-func TestReviewFloor_CostsOneListingAndOneStatusReadPerOpenPullRequest(t *testing.T) {
+// TestReviewFloor_CostsOneListingAndTwoReadsPerOpenPullRequest pins the budget
+// against the REAL adapter, where the paging and the routes are what they are
+// in production rather than what a double was told to do.
+//
+// THE BUDGET GREW BY ONE READ PER PULL REQUEST, deliberately. The pass used to
+// decide "has this head been judged" from the commit status alone, which is
+// cheaper and wrong: a status is a projection of a verdict and the two
+// disagree whenever a review declines to judge, leaving a head that reads as
+// reviewed forever and can never be judged. One review listing per open pull
+// request buys the correct answer, and it is still nothing beside the model
+// run it gates.
+func TestReviewFloor_CostsOneListingAndTwoReadsPerOpenPullRequest(t *testing.T) {
 	rig := newFloorRig(t)
 	heads := []string{"1111aaaa", "2222aaaa", "3333aaaa"}
 	for i, head := range heads {
@@ -211,6 +224,7 @@ func TestReviewFloor_CostsOneListingAndOneStatusReadPerOpenPullRequest(t *testin
 		// candidate — and the judged ones must still cost exactly one read.
 		if i > 0 {
 			rig.gitea.PutStatus(head, DefaultReviewStatusContext, "success")
+			rig.gitea.PutReview(80+i, fakeReviewerLogin, "APPROVED", head)
 		}
 	}
 
@@ -228,6 +242,14 @@ func TestReviewFloor_CostsOneListingAndOneStatusReadPerOpenPullRequest(t *testin
 	for _, judged := range []string{"GET /pulls/81", "GET /pulls/82"} {
 		if got := rig.gitea.Calls(judged); got != 0 {
 			t.Fatalf("%s cost %d reads, want none", judged, got)
+		}
+	}
+	// Every open pull request costs exactly one review listing, judged or not:
+	// it is how "judged" is decided, so it is paid before the answer is known.
+	for i := range heads {
+		key := "GET /pulls/" + strconv.Itoa(80+i) + "/reviews"
+		if got := rig.gitea.Calls(key); got != 1 {
+			t.Fatalf("%s cost %d reads, want exactly 1", key, got)
 		}
 	}
 	for _, head := range heads {

@@ -82,13 +82,34 @@ func (r *sweepRig) setChecks(runs ...ForgeCheckRun) {
 	r.forge.checks[sweepHead] = append([]ForgeCheckRun(nil), runs...)
 }
 
-// reviewStatus is the status the review runner publishes under the
-// reviewer's own context, in the state given.
+// reviewStatus is the FINISHED status the review runner publishes under the
+// reviewer's own context, with the conclusion given.
 func reviewStatus(state CheckStatus) ForgeCheckRun {
 	return ForgeCheckRun{
 		ID: "9001", Name: DefaultReviewStatusContext, HeadSHA: sweepHead, Status: "completed",
 		Conclusion: string(state), Completed: time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC),
 	}
+}
+
+// reviewRunning is the status a reviewer leaves while it is WORKING: pending,
+// and recent enough that the staleness bound has not expired.
+func reviewRunning() ForgeCheckRun {
+	return ForgeCheckRun{
+		ID: "9002", Name: DefaultReviewStatusContext, HeadSHA: sweepHead,
+		Status: string(CheckPending), Started: time.Now().UTC().Add(-time.Minute),
+	}
+}
+
+// judgedBy is a forge review bound to the swept head.
+func judgedBy(state string) ForgeReview {
+	return ForgeReview{ID: 7, Reviewer: fakeReviewerLogin, State: state, HeadSHA: sweepHead}
+}
+
+// setReviews puts the forge reviews the sweep will read for pull request 41.
+func (r *sweepRig) setReviews(reviews ...ForgeReview) {
+	r.forge.mu.Lock()
+	defer r.forge.mu.Unlock()
+	r.forge.reviews[41] = append([]ForgeReview(nil), reviews...)
 }
 
 // TestReviewSweeper_SweepsWhatTheDeliveryPathNeverSaw is the defect this file
@@ -120,24 +141,41 @@ func TestReviewSweeper_SweepsWhatTheDeliveryPathNeverSaw(t *testing.T) {
 // pipeline that has not finished green is not ready for a reviewer.
 func TestReviewSweeper_TheHeadDecides(t *testing.T) {
 	for name, tc := range map[string]struct {
-		runs []ForgeCheckRun
-		want int
+		runs    []ForgeCheckRun
+		reviews []ForgeReview
+		want    int
 	}{
 		"green and unjudged is the candidate": {
 			runs: []ForgeCheckRun{greenRun("ci", sweepHead)}, want: 1,
 		},
 		"a verdict already stands": {
-			runs: []ForgeCheckRun{greenRun("ci", sweepHead), reviewStatus(CheckSuccess)}, want: 0,
+			runs:    []ForgeCheckRun{greenRun("ci", sweepHead), reviewStatus(CheckSuccess)},
+			reviews: []ForgeReview{judgedBy("APPROVED")}, want: 0,
 		},
 		"a rejection already stands": {
-			runs: []ForgeCheckRun{greenRun("ci", sweepHead), reviewStatus(CheckFailure)}, want: 0,
+			runs:    []ForgeCheckRun{greenRun("ci", sweepHead), reviewStatus(CheckFailure)},
+			reviews: []ForgeReview{judgedBy("REQUEST_CHANGES")}, want: 0,
 		},
-		// A pending status under the reviewer's context is a review that has
-		// been started — a draft declined, a head left for a later round, or
-		// one in flight. Reading its STATE rather than its presence would
-		// start a second reviewer on the same pull request.
+		// A PENDING status under the reviewer's context is a reviewer AT WORK,
+		// and a second one must not be started on the same head.
 		"a review is already in flight": {
-			runs: []ForgeCheckRun{greenRun("ci", sweepHead), reviewStatus(CheckPending)}, want: 0,
+			runs: []ForgeCheckRun{greenRun("ci", sweepHead), reviewRunning()}, want: 0,
+		},
+		// THE REGRESSION THIS SPLIT EXISTS FOR. A review that declined to
+		// judge leaves a status no verdict backs. Read from the status alone
+		// the head is "reviewed" forever; read from the verdict it is what it
+		// is — unjudged, and owed a review. go-luks2 #200 sat green and
+		// unreviewable exactly this way.
+		"a comment left a status but no verdict": {
+			runs:    []ForgeCheckRun{greenRun("ci", sweepHead), reviewStatus(CheckFailure)},
+			reviews: []ForgeReview{judgedBy("COMMENT")}, want: 1,
+		},
+		// A verdict on an EARLIER head says nothing about this one.
+		"a verdict on a superseded head": {
+			runs: []ForgeCheckRun{greenRun("ci", sweepHead), reviewStatus(CheckSuccess)},
+			reviews: []ForgeReview{
+				{ID: 6, Reviewer: fakeReviewerLogin, State: "APPROVED", HeadSHA: "0123456789abcdef"},
+			}, want: 1,
 		},
 		"the pipeline is still running": {
 			runs: []ForgeCheckRun{pendingRun("ci", sweepHead)}, want: 0,
@@ -156,6 +194,7 @@ func TestReviewSweeper_TheHeadDecides(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			rig := newSweepRig(t)
 			rig.setChecks(tc.runs...)
+			rig.setReviews(tc.reviews...)
 
 			started, err := rig.sweeper.SweepProject(context.Background(), testTenant, testProject)
 			if err != nil {
@@ -185,7 +224,10 @@ func TestReviewSweeper_AnUngatedProjectIsSweptOnTheVerdictAlone(t *testing.T) {
 		t.Fatalf("SweepProject: started=%d err=%v", started, err)
 	}
 
+	// Both halves of what the review job publishes: the verdict, and the
+	// status that projects it. The floor asks for the verdict.
 	rig.setChecks(redRun("ci", sweepHead), reviewStatus(CheckFailure))
+	rig.setReviews(judgedBy("REQUEST_CHANGES"))
 	started, err = rig.sweeper.SweepProject(context.Background(), testTenant, testProject)
 	if err != nil || started != 0 {
 		t.Fatalf("a judged head was swept again: started=%d err=%v", started, err)
@@ -200,6 +242,7 @@ func TestReviewSweeper_CostsOneListingAndOneStatusReadPerPullRequest(t *testing.
 	rig := newSweepRig(t)
 	rig.forge.prs[42] = &ForgePullRequest{Number: 42, State: "open", HeadSHA: "3333", BaseRef: "main"}
 	rig.forge.checks["3333"] = []ForgeCheckRun{greenRun("ci", "3333"), reviewStatus(CheckSuccess)}
+	rig.forge.reviews[42] = []ForgeReview{{ID: 8, Reviewer: fakeReviewerLogin, State: "APPROVED", HeadSHA: "3333"}}
 	rig.forge.prs[43] = &ForgePullRequest{Number: 43, State: "closed", HeadSHA: "4444", BaseRef: "main"}
 
 	if _, err := rig.sweeper.SweepProject(context.Background(), testTenant, testProject); err != nil {
@@ -584,43 +627,103 @@ func TestNewReviewSweeper_RefusesAnIncompleteWiring(t *testing.T) {
 	}
 }
 
-// TestCheckRunPresent walks the helper that decides "has this head been
-// through review", including the inputs that must NOT read as a verdict.
-func TestCheckRunPresent(t *testing.T) {
+// TestReviewInFlight walks the helper that decides "is a reviewer running
+// against this head right now", which is the only reason to pass a green pull
+// request over. Whether the head was JUDGED is headJudged's question.
+func TestReviewInFlight(t *testing.T) {
+	now := time.Now().UTC()
+	pending := func(name string) ForgeCheckRun {
+		return ForgeCheckRun{Name: name, Status: string(CheckPending), Started: now.Add(-time.Minute)}
+	}
 	runs := []ForgeCheckRun{
-		{Name: "CI / CI Gate (pull_request)"},
-		{Name: "  " + DefaultReviewStatusContext + " "},
+		{Name: "CI / CI Gate (pull_request)", Status: string(CheckPending), Started: now},
+		pending("  " + DefaultReviewStatusContext + " "),
 	}
 	for name, tc := range map[string]struct {
 		runs    []ForgeCheckRun
 		context string
 		want    bool
 	}{
-		"the reviewer's context, whitespace and all": {runs, DefaultReviewStatusContext, true},
-		"case does not decide it":                    {runs, "QuicBaaS/Review", true},
-		"another project's context":                  {runs, "other/review", false},
-		"no runs at all":                             {nil, DefaultReviewStatusContext, false},
+		"a running review, whitespace and all": {runs, DefaultReviewStatusContext, true},
+		"case does not decide it":              {runs, "QuicBaaS/Review", true},
+		// Another project's context is not this reviewer, whatever it says.
+		"another project's context": {runs, "other/review", false},
+		"no runs at all":            {nil, DefaultReviewStatusContext, false},
+		// A FINISHED review is not in flight. It may or may not have judged
+		// the head, and that is headJudged's question — reading it here is
+		// what made a comment strand its pull request forever.
+		"a finished approval is not in flight": {
+			[]ForgeCheckRun{{Name: DefaultReviewStatusContext, Status: "completed", Conclusion: "success"}},
+			DefaultReviewStatusContext, false,
+		},
+		"a finished failure is not in flight": {
+			[]ForgeCheckRun{{Name: DefaultReviewStatusContext, Status: "completed", Conclusion: "failure"}},
+			DefaultReviewStatusContext, false,
+		},
 		// An empty context would match the unnamed runs some forges return,
-		// and every head would read as already reviewed.
-		"an empty context matches nothing": {[]ForgeCheckRun{{Name: ""}}, "", false},
-		"a run with no name":               {[]ForgeCheckRun{{Name: "  "}}, DefaultReviewStatusContext, false},
+		// and every head would read as having a reviewer on it.
+		"an empty context matches nothing": {[]ForgeCheckRun{pending("")}, "", false},
+		"a run with no name":               {[]ForgeCheckRun{pending("  ")}, DefaultReviewStatusContext, false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := checkRunPresent(tc.runs, tc.context, time.Now().UTC()); got != tc.want {
-				t.Fatalf("checkRunPresent = %v, want %v", got, tc.want)
+			if got := reviewInFlight(tc.runs, tc.context, now); got != tc.want {
+				t.Fatalf("reviewInFlight = %v, want %v", got, tc.want)
 			}
 		})
 	}
 }
 
-// TestCheckRunPresent_StalePendingIsNotInFlight pins the recovery that makes
+// TestHeadJudged_OnlyABindingVerdictCounts pins the question the commit status
+// could not answer.
+//
+// A status is a projection of a verdict, and the two can disagree: a review
+// that declined to judge leaves a status no verdict backs, and so does
+// anything else on the repository holding status-write. Read from the status
+// alone, such a head is "reviewed" forever and nothing can ever judge it —
+// which is how three finished, green changes were stranded.
+func TestHeadJudged_OnlyABindingVerdictCounts(t *testing.T) {
+	const head = "d168478827756d419e87712fa008f2e3fe3e2c1b"
+	repo := RepoRef{Owner: "jeremyhahn", Repo: "go-luks2"}
+	for name, tc := range map[string]struct {
+		reviews []ForgeReview
+		want    bool
+	}{
+		"an approval on this head":        {[]ForgeReview{{State: "APPROVED", HeadSHA: head}}, true},
+		"a refusal on this head":          {[]ForgeReview{{State: "REQUEST_CHANGES", HeadSHA: head}}, true},
+		"case and padding do not decide":  {[]ForgeReview{{State: " approved ", HeadSHA: strings.ToUpper(head)}}, true},
+		"a comment is not a judgement":    {[]ForgeReview{{State: "COMMENT", HeadSHA: head}}, false},
+		"a pending review is not one yet": {[]ForgeReview{{State: "PENDING", HeadSHA: head}}, false},
+		"a verdict on an earlier head":    {[]ForgeReview{{State: "APPROVED", HeadSHA: "0000000000000000000000000000000000000000"}}, false},
+		"no reviews at all":               {nil, false},
+		// The case that stranded go-luks2 #200: a comment on this head and a
+		// real refusal on the head before it.
+		"a comment here and a verdict there": {[]ForgeReview{
+			{State: "REQUEST_CHANGES", HeadSHA: "309cb5c4a1829336e1d8413fb36c77c83be23cd6"},
+			{State: "COMMENT", HeadSHA: head},
+		}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			forge := newFakeForge()
+			forge.reviews[200] = tc.reviews
+			got, err := headJudged(context.Background(), forge, repo, 200, head)
+			if err != nil {
+				t.Fatalf("headJudged: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("headJudged = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestReviewInFlight_StalePendingIsNotInFlight pins the recovery that makes
 // the floor a floor.
 //
 // A finished review that left a PENDING status behind used to block the gate
 // AND this backstop, so nothing could re-review that head ever again — the
 // exact failure the sweep exists to prevent, caused by the sweep. Measured on
 // go-luks2 #202.
-func TestCheckRunPresent_StalePendingIsNotInFlight(t *testing.T) {
+func TestReviewInFlight_StalePendingIsNotInFlight(t *testing.T) {
 	now := time.Now().UTC()
 	pendingAt := func(age time.Duration) []ForgeCheckRun {
 		return []ForgeCheckRun{{
@@ -647,25 +750,28 @@ func TestCheckRunPresent_StalePendingIsNotInFlight(t *testing.T) {
 		"an undated pending status is not stale": {
 			[]ForgeCheckRun{{Name: DefaultReviewStatusContext, Status: string(CheckPending)}}, true,
 		},
-		// Age does not undo a decision.
-		"an ancient failure is still a verdict": {
+		// A FINISHED STATUS IS NOT A REVIEWER AT WORK, however recent, and
+		// whether its conclusion judged the head is headJudged's question.
+		// Answering it here — "a status exists, so the head is done" — is
+		// precisely what stranded three green pull requests.
+		"a finished failure is not a reviewer at work": {
 			[]ForgeCheckRun{{
 				Name:    DefaultReviewStatusContext,
 				Status:  string(CheckFailure),
-				Started: now.Add(-30 * 24 * time.Hour),
-			}}, true,
+				Started: now.Add(-time.Minute),
+			}}, false,
 		},
-		"an ancient approval is still a verdict": {
+		"a finished approval is not a reviewer at work": {
 			[]ForgeCheckRun{{
 				Name:    DefaultReviewStatusContext,
 				Status:  string(CheckSuccess),
 				Started: now.Add(-30 * 24 * time.Hour),
-			}}, true,
+			}}, false,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := checkRunPresent(tc.runs, DefaultReviewStatusContext, now); got != tc.want {
-				t.Fatalf("checkRunPresent = %v, want %v", got, tc.want)
+			if got := reviewInFlight(tc.runs, DefaultReviewStatusContext, now); got != tc.want {
+				t.Fatalf("reviewInFlight = %v, want %v", got, tc.want)
 			}
 		})
 	}
