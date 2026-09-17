@@ -204,6 +204,26 @@ type Config struct {
 	// learns the ceiling from the first refusal.
 	OllamaAgentContextTokens int `json:"ollama_agent_context_tokens,omitempty" yaml:"ollama_agent_context_tokens,omitempty"`
 
+	// VLLMBaseURL, VLLMModel and VLLMContextTokens configure the "vllm"
+	// backend: the same container-and-tools agent loop against a vLLM server.
+	//
+	// IT IS REGISTERED ALONGSIDE ollama RATHER THAN INSTEAD OF IT. Both stay
+	// available, so moving a project between them is an edit to its binding
+	// rather than a redeploy — and moving BACK is the same edit. vLLM is
+	// preferred for throughput: it batches continuously and keeps a
+	// cross-request prefix cache, neither of which ollama does. Measured on
+	// one fleet at 268.7 triage turns/min against ollama's 21.0 at the same
+	// concurrency, with ollama flat across every concurrency tested.
+	VLLMBaseURL string `json:"vllm_base_url,omitempty" yaml:"vllm_base_url,omitempty"`
+
+	// VLLMModel is the served-model name vLLM answers to (its
+	// --served-model-name), not a file path.
+	VLLMModel string `json:"vllm_model,omitempty" yaml:"vllm_model,omitempty"`
+
+	// VLLMContextTokens is what that model accepts; zero learns the ceiling
+	// from the first refusal.
+	VLLMContextTokens int `json:"vllm_context_tokens,omitempty" yaml:"vllm_context_tokens,omitempty"`
+
 	// AllowedMountRoots is the operator's allowlist of absolute host
 	// directories a spawn request may bind-mount into a sandbox container on
 	// this daemon. It is the daemon-side counterpart of the control plane's

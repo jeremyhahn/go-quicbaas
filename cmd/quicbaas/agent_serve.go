@@ -56,6 +56,9 @@ var (
 	serveOpenVINOCtx      int
 	serveOllamaAgentModel string
 	serveOllamaAgentCtx   int
+	serveVLLMBaseURL      string
+	serveVLLMModel        string
+	serveVLLMCtx          int
 	serveAllowedMounts    []string
 	serveContainerRT      string
 	serveImageMapCSV      string
@@ -112,6 +115,9 @@ Examples:
 	cmd.Flags().StringVar(&serveOpenVINOURL, "openvino-url", "", "OpenVINO Model Server base URL, without /v3 (e.g. http://gpu-host:9000). Registers the \"openvino\" backend; empty leaves it unregistered.")
 	cmd.Flags().StringVar(&serveOpenVINOModel, "openvino-model", "", "Model the OpenVINO server serves, e.g. qwen3-8b.")
 	cmd.Flags().StringVar(&serveOllamaAgentModel, "ollama-agent-model", "", "Model the \"ollama-agent\" backend uses: the container-and-tools agent loop against the ollama endpoint, for roles that must read a repository. Empty leaves the backend registered with no default model.")
+	cmd.Flags().StringVar(&serveVLLMBaseURL, "vllm-url", "", "Base URL of a vLLM server, without /v1 (e.g. http://gpu-host:11435). Registers the \"vllm\" backend alongside ollama so a project switches between them by naming a different backend; empty leaves it unregistered.")
+	cmd.Flags().StringVar(&serveVLLMModel, "vllm-model", "", "The served-model name vLLM answers to (its --served-model-name), not a file path.")
+	cmd.Flags().IntVar(&serveVLLMCtx, "vllm-context-tokens", 0, "How much prompt that vLLM model accepts. Zero learns the ceiling from the first refusal.")
 	cmd.Flags().IntVar(&serveOllamaAgentCtx, "ollama-agent-context-tokens", 0, "How much prompt that ollama model accepts. Zero learns the ceiling from the first refusal.")
 	cmd.Flags().IntVar(&serveOpenVINOCtx, "openvino-context-tokens", 0, "How much prompt that server accepts. Zero learns the ceiling from the first refusal. On an NPU the server reserves a static shape for this many tokens, so it is a memory decision too.")
 	cmd.Flags().StringVar(&serveImageMapCSV, "image-map", "", "Comma-separated backend=image mappings (e.g., claude-code=quicbaas/claude-code:v1)")
@@ -430,46 +436,63 @@ func buildAgentBackends(cfg *agent.Config, logger interfaces.Logger) (map[string
 				SandboxNetwork:    sandboxNetwork,
 				MCPPresetResolver: mcpResolver,
 			})
-			// A MODEL THIS FLEET SERVES ITSELF. Registered only when the
-			// deployment names a server: there is no default endpoint, and a
-			// backend registered against a guess fails on first use rather
-			// than at startup where an operator would see it.
+			// EVERY OPENAI-COMPATIBLE AGENT ENDPOINT, REGISTERED THE SAME WAY.
 			//
-			// It is NOT another provider config on the ACP exec backend, and
-			// that was tried first. OVMS answers "Only function tools are
-			// supported" to codex, which advertises its shell and patch tools
-			// as custom types with no switch to change them — so the vendor
-			// CLI cannot drive an OVMS-served model at any endpoint.
-			if base := strings.TrimSpace(cfg.OpenVINOBaseURL); base != "" {
-				ov := orchestration.NewOpenVINOBackend(orchestration.OpenVINOBackendConfig{
-					BaseURL:       base,
-					DefaultModel:  cfg.OpenVINOModel,
-					ContextTokens: cfg.OpenVINOContextTokens,
-				})
-				ov.SetLogger(logger)
-				backends["openvino"] = ov
-			}
-			// THE SAME BACKEND AGAINST AN OLLAMA ENDPOINT, REGISTERED AS
-			// "ollama-agent". The plain "ollama" backend is a model server: no
-			// container, no tools, file_access false. Triage must READ THE
-			// REPOSITORY, so it cannot use that one -- measured as
-			// "PermissionDenied: mount not allowed (extra_mounts)" when triage
-			// was pointed at it, which is the mount policy correctly refusing a
-			// workspace to a backend that has nowhere to put it.
+			// What this backend is: an OpenAI-compatible HTTP client that runs
+			// its tool calls INSIDE a container. That shape is what a role
+			// needing a workspace requires — triage judges an issue against
+			// the code, so it must read the repository. The plain "ollama"
+			// backend cannot: it is a model server with no container and
+			// file_access false, and pointing triage at it was measured as
+			// "PermissionDenied: mount not allowed (extra_mounts)" — the mount
+			// policy correctly refusing a workspace to a backend with nowhere
+			// to put it.
 			//
-			// What this backend actually is: an OpenAI-compatible HTTP client
-			// that runs its tool calls inside a container. ollama serves that
-			// API at /v1/chat/completions, so the only difference from the OVMS
-			// registration above is the route and the endpoint.
-			if base := strings.TrimSpace(cfg.EffectiveOllamaBaseURL()); base != "" {
+			// The endpoints differ only in route and address, so they differ
+			// only in data. Each is registered ONLY when the deployment names
+			// a server: there is no default endpoint, and a backend registered
+			// against a guess fails on first use rather than at startup where
+			// an operator would see it.
+			//
+			// ALL OF THEM STAY REGISTERED AT ONCE, which is what makes
+			// switching runtimes a binding edit instead of a redeploy: a
+			// project moves between them by naming a different backend.
+			for _, endpoint := range []openAIAgentEndpoint{
+				{
+					// OVMS serves /v3, alone among these. It is also the one
+					// that cannot be driven by a vendor CLI instead: OVMS
+					// answers "Only function tools are supported" to codex,
+					// which advertises its shell and patch tools as custom
+					// types with no switch to change them.
+					name: "openvino", base: cfg.OpenVINOBaseURL, chatPath: "",
+					model: cfg.OpenVINOModel, context: cfg.OpenVINOContextTokens,
+				},
+				{
+					name: "ollama-agent", base: cfg.EffectiveOllamaBaseURL(),
+					chatPath: openAIChatPath,
+					model:    cfg.OllamaAgentModel, context: cfg.OllamaAgentContextTokens,
+				},
+				{
+					// vLLM: continuous batching and a cross-request prefix
+					// cache, which ollama has neither of. Measured on one
+					// fleet at 268.7 triage turns/min against ollama's 21.0 at
+					// the same concurrency.
+					name: "vllm", base: cfg.VLLMBaseURL, chatPath: openAIChatPath,
+					model: cfg.VLLMModel, context: cfg.VLLMContextTokens,
+				},
+			} {
+				base := strings.TrimSpace(endpoint.base)
+				if base == "" {
+					continue
+				}
 				agentic := orchestration.NewOpenVINOBackend(orchestration.OpenVINOBackendConfig{
 					BaseURL:       base,
-					ChatPath:      "/v1/chat/completions",
-					DefaultModel:  cfg.OllamaAgentModel,
-					ContextTokens: cfg.OllamaAgentContextTokens,
+					ChatPath:      endpoint.chatPath,
+					DefaultModel:  endpoint.model,
+					ContextTokens: endpoint.context,
 				})
 				agentic.SetLogger(logger)
-				backends["ollama-agent"] = agentic
+				backends[endpoint.name] = agentic
 			}
 			backends["opencode"] = orchestration.NewACPBackend(orchestration.ACPBackendConfig{
 				Command:           "opencode",
@@ -515,6 +538,22 @@ func buildAgentBackends(cfg *agent.Config, logger interfaces.Logger) (map[string
 	}
 	logger.Debugf("agent daemon backends constructed: %d", len(backends))
 	return backends, nil
+}
+
+// openAIChatPath is the completions route every OpenAI-compatible server
+// serves except OVMS, which uses /v3 (DefaultOVMSChatPath, the backend's own
+// default when this is empty).
+const openAIChatPath = "/v1/chat/completions"
+
+// openAIAgentEndpoint is one served model this daemon can run an agent loop
+// against: where it is, which route it speaks, what it serves, and how much
+// prompt it takes.
+type openAIAgentEndpoint struct {
+	name     string
+	base     string
+	chatPath string
+	model    string
+	context  int
 }
 
 // buildAgentServeMCPResolver constructs the QuicBaaS MCP preset resolver for a
@@ -714,6 +753,9 @@ func buildServeConfig() (*agent.Config, error) {
 		OpenVINOContextTokens:    serveOpenVINOCtx,
 		OllamaAgentModel:         serveOllamaAgentModel,
 		OllamaAgentContextTokens: serveOllamaAgentCtx,
+		VLLMBaseURL:              serveVLLMBaseURL,
+		VLLMModel:                serveVLLMModel,
+		VLLMContextTokens:        serveVLLMCtx,
 		AllowedMountRoots:        serveAllowedMounts,
 		ContainerRuntime:         agent.ContainerRuntimeSelector(serveContainerRT),
 		ImageMap:                 imageMap,

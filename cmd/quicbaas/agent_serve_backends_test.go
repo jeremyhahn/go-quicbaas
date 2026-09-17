@@ -124,3 +124,57 @@ func TestBuildAgentRuntime_OpenVINOContextDeclarationReachesTheBackend(t *testin
 		t.Fatalf("ContextBound() = %d, want 0 when nothing is declared or learned", got)
 	}
 }
+
+// TestBuildAgentBackends_EveryNamedAgentEndpointIsRegistered pins the property
+// that makes switching runtimes a binding edit rather than a redeploy: all of
+// them are registered at once, each only when the deployment names a server.
+func TestBuildAgentBackends_EveryNamedAgentEndpointIsRegistered(t *testing.T) {
+	t.Parallel()
+
+	cfg := &agent.Config{
+		ServerAddr: "https://control.invalid:8443", TenantID: "t", BindAddr: "127.0.0.1:0",
+		Backends:          []agent.BackendKind{agent.BackendACP},
+		OpenVINOBaseURL:   "http://npu-host.invalid:9000",
+		OpenVINOModel:     "qwen3-8b",
+		OllamaBaseURL:     "http://gpu-host.invalid:11434",
+		OllamaAgentModel:  "qwen3.8:27b-q4_K_M",
+		VLLMBaseURL:       "http://gpu-host.invalid:11435",
+		VLLMModel:         "review",
+		VLLMContextTokens: 65536,
+	}
+	backends, err := buildAgentBackends(cfg, newCaptureLogger())
+	if err != nil {
+		t.Fatalf("buildAgentBackends: %v", err)
+	}
+	for _, name := range []string{"openvino", "ollama-agent", "vllm"} {
+		if _, ok := backends[name]; !ok {
+			t.Fatalf("%q was not registered; a project cannot switch onto a backend the daemon does not serve", name)
+		}
+	}
+	// The declared context must reach the backend, or the first oversized
+	// prompt is a wasted round trip instead of an immediate refusal.
+	if ov, ok := backends["vllm"].(*orchestration.OpenVINOBackend); !ok || ov.ContextBound() != 65536 {
+		t.Fatalf("vllm context bound not carried through")
+	}
+}
+
+// TestBuildAgentBackends_AnUnnamedEndpointIsNotRegistered: a backend built
+// against a guessed address fails on first use, where an operator is not
+// looking, instead of at startup where they are.
+func TestBuildAgentBackends_AnUnnamedEndpointIsNotRegistered(t *testing.T) {
+	t.Parallel()
+
+	cfg := &agent.Config{
+		ServerAddr: "https://control.invalid:8443", TenantID: "t", BindAddr: "127.0.0.1:0",
+		Backends: []agent.BackendKind{agent.BackendACP},
+	}
+	backends, err := buildAgentBackends(cfg, newCaptureLogger())
+	if err != nil {
+		t.Fatalf("buildAgentBackends: %v", err)
+	}
+	for _, name := range []string{"openvino", "vllm"} {
+		if _, ok := backends[name]; ok {
+			t.Fatalf("%q was registered without an endpoint", name)
+		}
+	}
+}
