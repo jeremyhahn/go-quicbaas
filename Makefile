@@ -3066,10 +3066,20 @@ build-worker-image: ## Build the Software Factory worker image (quicbaas-softwar
 
 .PHONY: test-worker-image
 test-worker-image: build-worker-image ## Build the worker image and check it carries every tool the sdlc runner needs
+	@# EVERY PROBE BELOW RUNS `sh -lec`, AND THE -l IS LOad-BEARING.
+	@#
+	@# The agent execs tools in this image as `sh -lc <command>`. A LOGIN shell
+	@# sources /etc/profile, whose first line on this base image unconditionally
+	@# overwrites PATH -- discarding the Dockerfile's ENV PATH and with it the
+	@# Go toolchain. These probes used `sh -euc`, which is NOT a login shell, so
+	@# they asserted a PATH that production never saw: the gate reported the
+	@# toolchain present while `go` was unreachable to every real invocation.
+	@# Five delivery jobs stalled on that before it was found. Probe the shell
+	@# the spawn uses, or the gate certifies an image that does not work.
 	@echo "$(BLUE)Checking the worker image as the uid the spawn runs it with...$(NC)"
 	@$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp \
 		$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
-		sh -euc 'git --version; ssh -V; go version; make --version | head -1; \
+		sh -lec 'git --version; ssh -V; go version; make --version | head -1; \
 			claude --version; codex --version; \
 			ssh-keygen -t ed25519 -N "" -f /tmp/signing-key -q; \
 			git init -q /tmp/probe; cd /tmp/probe; \
@@ -3102,7 +3112,7 @@ test-worker-image: build-worker-image ## Build the worker image and check it car
 	@echo "$(BLUE)Checking the worker image can start serena and register it...$(NC)"
 	@$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp --network none \
 		$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
-		sh -euc 'serena --version; gopls version | head -1; \
+		sh -lec 'serena --version; gopls version | head -1; \
 			gopls version | grep -q "$(GOPLS_VERSION)" \
 				|| { echo "gopls is not the pinned $(GOPLS_VERSION); serena cannot read Go at the version CI lints"; exit 1; }; \
 			mkdir -p /tmp/wsroot/a-repo /tmp/wsroot/a-context-repo; \
@@ -3121,7 +3131,7 @@ test-worker-image: build-worker-image ## Build the worker image and check it car
 	@echo "$(BLUE)Checking the worker image can lint and scan a Go module...$(NC)"
 	@$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp --network none \
 		$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
-		sh -euc 'golangci-lint --version; gosec -version; govulncheck -version; \
+		sh -lec 'golangci-lint --version; gosec -version; govulncheck -version; \
 			test -x "$$(go env GOPATH)/bin/golangci-lint" \
 				|| { echo "golangci-lint is not where a project Makefile looks for it"; exit 1; }; \
 			golangci-lint --version | grep -q "version $(GOLANGCI_VERSION:v%=%) " \
@@ -3145,7 +3155,7 @@ test-worker-image: build-worker-image ## Build the worker image and check it car
 	@echo "$(BLUE)Checking the worker has full control of its container...$(NC)"
 	@$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp \
 		$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
-		sh -euc 'sudo -n true; \
+		sh -lec 'sudo -n true; \
 			test "$$(sudo -n id -u)" = "0" \
 				|| { echo "sudo did not reach root"; exit 1; }; \
 			sudo -n apk add --no-cache jq; jq --version; \
@@ -3162,7 +3172,7 @@ test-worker-image: build-worker-image ## Build the worker image and check it car
 	@probe="$$(mktemp -d)"; \
 	$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp \
 		-v "$$probe:/workspace" $(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
-		sh -euc 'echo work > /workspace/written-by-the-agent; sudo -n true' >/dev/null; \
+		sh -lec 'echo work > /workspace/written-by-the-agent; sudo -n true' >/dev/null; \
 	owner="$$(stat -c %u "$$probe/written-by-the-agent")"; \
 	rm -rf "$$probe"; \
 	test "$$owner" = "$(WORKER_IMAGE_UID)" \

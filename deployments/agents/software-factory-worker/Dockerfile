@@ -240,6 +240,38 @@ ENV PATH="/usr/local/go/bin:${GOPATH}/bin:${PATH}" \
     GOTOOLCHAIN=local \
     NODE_ENV=production
 
+# ENV PATH IS NOT ENOUGH, BECAUSE THE AGENT EXECS THROUGH A LOGIN SHELL.
+#
+# Every tool the factory runs in this container arrives as `sh -lc <command>`.
+# The -l makes it a LOGIN shell, which sources /etc/profile, whose first line
+# on this base image is an unconditional
+#     export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# — so the PATH declared above is discarded before the command runs. Measured
+# on this image: `sh -c "command -v go"` finds /usr/local/go/bin/go and
+# `sh -lc "command -v go"` finds nothing.
+#
+# THE FAILURE IS SILENT AND IT IS NOT THE ONE YOU WOULD PREDICT. Nothing
+# reports a missing toolchain: Serena's Go language server simply fails to
+# start, the reviewer loses symbol and reference lookup, and it returns a
+# "comment" verdict saying it could not complete the review. A comment is
+# neither approve nor request-changes, so the review gate stays at
+# insufficient_approvals, the delivery job waits in `reviewing` for a verdict
+# that will never change, and the stall detector ends it 30 minutes later.
+# Five jobs died that way before the cause was found; the symptom logged is
+# "job stalled", which points at the agent rather than at PATH.
+#
+# Restoring it from /etc/profile.d is what survives the reset: the directory is
+# sourced by /etc/profile AFTER that assignment.
+RUN printf '%s\n' \
+      '# Restores the toolchain PATH that /etc/profile unconditionally clears.' \
+      '# The agent runs every command as `sh -lc`, so this file is what makes' \
+      '# go, gofmt and the GOPATH/bin tools resolvable to it.' \
+      'export PATH="/usr/local/go/bin:/home/agent/go/bin:$PATH"' \
+      > /etc/profile.d/10-go-toolchain.sh \
+    && chmod 0644 /etc/profile.d/10-go-toolchain.sh \
+    && sh -lc 'command -v go >/dev/null' \
+    && sh -lc 'command -v gofmt >/dev/null'
+
 # Into GOPATH/bin, which is both what `go install` would have written and what
 # the projects' Makefiles probe. The runtime stage shares musl with the builder
 # and the binaries are static, so they run here unchanged.
