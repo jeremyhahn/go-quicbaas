@@ -184,8 +184,18 @@ days. So a dependency-blocked issue is adopted **as a parked Task** — created
 blocked in one write (`TaskSourceSpec.Park` → `CreateTaskRequest.Park`), holding
 no session, no container and no lease — and resumes through the machinery that
 already exists: a typed `UnblockCondition`, re-examined by `UnblockSweeper` on
-every pass and readmitted when it clears. The `AutoSpawn` bit survives the park
-deliberately: it is what makes readmission dispatch the Task.
+every pass of the unblock sweep — at boot and every
+`sdlc.unblock_sweep_interval` (default `10m`), on the same backstop goroutine
+as the triage backstop and the review floor — and readmitted through the
+engine's readmission verb when it clears, so the issue's `factory:blocked`
+label comes off with it. The `AutoSpawn` bit survives the park deliberately: it
+is what makes readmission dispatch the Task.
+
+A park whose reason carries **no** `unblock[kind=…]` condition — an operator
+repair, an owner ruling, a needs-info question — is never readmitted by the
+sweep, and a condition the sweep cannot decide (an owner ruling) is left where
+it is. Those return to the queue only through a person's `readmit`; the sweep
+keeps the checkable ones from needing one.
 
 One write, not two. Create-then-block leaves the Task pending and auto-spawning
 for exactly long enough for a sweep to start the job the park exists to prevent.

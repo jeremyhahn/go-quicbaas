@@ -245,10 +245,12 @@ restarting through the delivery. It runs **at boot as well as on the tick**,
 because the deliveries a node missed are exactly the ones that arrived while it
 was down.
 
-It shares one goroutine with the **review floor**, the same backstop for the
-back half of the loop (`pkg/server/lifecycle_sdlc_backstop.go`,
-`docs/software-factory/review.md`); each keeps its own ticker, because a triage
-pass starts a job per bound project where a review pass only reads the forge.
+It shares one goroutine with the **review floor** and the **unblock sweep**,
+the backstops for the back half of the loop
+(`pkg/server/lifecycle_sdlc_backstop.go`, `docs/software-factory/review.md`,
+`docs/software-factory/admission-and-readiness.md`); each keeps its own
+ticker, because a triage pass starts a job per bound project where a review
+pass only reads the forge and an unblock pass only re-examines parked tasks.
 
 It is cheap by construction rather than by rate limiting: a triage job for a
 project with nothing to judge lists its issues, finds no candidate, and
@@ -309,6 +311,7 @@ no inheritance mechanism of its own to unpick.
 |---|---|---|
 | `sdlc.triage_sweep_interval` | `15m` | how often the backstop visits every bound project |
 | `sdlc.review_sweep_interval` | `5m` | how often the REVIEW floor visits every bound project — the same goroutine, its own ticker (see `docs/software-factory/review.md`) |
+| `sdlc.unblock_sweep_interval` | `10m` | how often the UNBLOCK sweep re-examines every blocked task — the same goroutine, its own ticker (see `docs/software-factory/admission-and-readiness.md`) |
 | `sdlc.issue_page_limit` | `50` | also bounds one triage job's issue listing |
 | `sdlc.checkout_root` | `/workspace` | where the read-only checkout is mounted in the container |
 

@@ -564,7 +564,10 @@ Node-level, in `sdlc:`:
 |---|---|---|
 | `review_sweep_interval` | `5m` | how often the review floor visits every bound project |
 | `triage_sweep_interval` | `15m` | how often the triage backstop visits every bound project |
+| `unblock_sweep_interval` | `10m` | how often the unblock sweep re-examines every blocked task and returns the ones whose condition has cleared |
 
-The two share one goroutine and keep separate intervals: a triage pass starts a
-job per bound project, where a review pass makes forge reads and starts work
-only for a pull request that is genuinely unjudged.
+The three share one goroutine and keep separate intervals: a triage pass starts
+a job per bound project, a review pass makes forge reads and starts work only
+for a pull request that is genuinely unjudged, and an unblock pass reads the
+blocked tasks and readmits only those whose typed condition a forge check can
+decide (see [admission-and-readiness.md](admission-and-readiness.md)).
