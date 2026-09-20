@@ -2,7 +2,7 @@
 # Multi-stage build for minimal final image with static binary
 
 # Build arguments
-ARG GO_VERSION=1.26
+ARG GO_VERSION=1.27
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG DATE=unknown

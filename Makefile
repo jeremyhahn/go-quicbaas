@@ -12,7 +12,7 @@ APP_NAME := quicbaas
 VERSION := $(shell cat VERSION 2>/dev/null | tr -d '\n' || git describe --tags --always --dirty 2>/dev/null || echo "0.1.0-dev")
 BUILD_TIME := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-GO_VERSION := 1.26.7
+GO_VERSION := 1.27.0
 
 # Directories
 BIN_DIR := bin
@@ -53,7 +53,7 @@ GOLINT := $(shell go env GOPATH)/bin/golangci-lint
 # image as build arguments. A worker that linted with a different version than
 # CI would produce review verdicts a merge then contradicts (go-quicbaas#772),
 # so there is one place to change and three consumers that read it.
-GOLANGCI_VERSION := v2.12.2
+GOLANGCI_VERSION := v2.13.2
 # Pinned by the fleet ruling of 2026-08-26: an unpinned gosec self-updated
 # mid-day and turned unrelated branches red, so nobody could say which commit
 # owned the new findings.

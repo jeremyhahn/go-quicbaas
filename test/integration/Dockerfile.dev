@@ -15,7 +15,7 @@ ARG BUILD_TAGS="iam raft rest rag"
 # ============================================================================
 # Stage 1: Build binaries inside a Go workspace mirroring the host layout.
 # ============================================================================
-FROM golang:1.26.7-alpine AS builder
+FROM golang:1.27.0-alpine AS builder
 
 ARG BUILD_TAGS
 
@@ -50,7 +50,7 @@ COPY . ./go-quicbaas
 # entries from the host file. Keeping go.work as the single source of truth
 # means individual go.mod files do not need any Docker-specific shimming.
 RUN { \
-        echo 'go 1.26.5'; \
+        echo 'go 1.27.0'; \
         echo ''; \
         echo 'use ('; \
         echo '	./go-libsignal'; \

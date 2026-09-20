@@ -21,7 +21,7 @@ on:
 # credentials there and skip every push -- so off github.com REGISTRY only
 # prefixes the local tag the Trivy gate scans.
 env:
-  GO_VERSION: '1.26.7'
+  GO_VERSION: '1.27.0'
   REGISTRY: ${{ vars.REGISTRY || 'ghcr.io' }}
   IMAGE_NAME_DAEMON: jeremyhahn/quicbaasd
   IMAGE_NAME_CLI: jeremyhahn/quicbaas
@@ -289,7 +289,7 @@ jobs:
             -e GIT_CONFIG_COUNT="${GIT_CONFIG_COUNT:-}" \
             -e GIT_CONFIG_KEY_0="${GIT_CONFIG_KEY_0:-}" \
             -e GIT_CONFIG_VALUE_0="${GIT_CONFIG_VALUE_0:-}" \
-            golang:1.26-bookworm \
+            golang:1.27-bookworm \
             bash /src/build.sh)
           docker cp . "$CID":/src
           docker start -a "$CID"

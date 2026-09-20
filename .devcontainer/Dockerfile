@@ -5,7 +5,7 @@
 # Hardware crypto emulators (swtpm TPM 2.0 simulator + SoftHSM2 PKCS#11) are
 # built from source in dedicated alpine:3.22.1 builder stages — reusing the
 # EXACT recipes from test/integration/docker/{swtpm,softhsm}/Dockerfile — and
-# their artifacts are copied into the final golang:1.26-alpine image so that
+# their artifacts are copied into the final golang:1.27-alpine image so that
 # `go test -tags 'integration tpm2 pkcs11'` can run IN the devcontainer against
 # real swtpm + SoftHSM2 (parity with the go-xkms devcontainer). The SoftHSM2
 # library is ABI-compatible with the Alpine pkcs11 CGO binary because both are
@@ -82,7 +82,7 @@ RUN git clone https://github.com/opendnssec/SoftHSMv2.git && \
 # ============================================================================
 # Final stage: the development container
 # ============================================================================
-FROM golang:1.26.7-alpine
+FROM golang:1.27.0-alpine
 
 LABEL maintainer="QuicBaaS Team"
 LABEL description="QuicBaaS development container with all dependencies"

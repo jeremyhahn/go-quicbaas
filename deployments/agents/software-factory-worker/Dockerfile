@@ -75,7 +75,7 @@
 # The Go toolchain the projects this factory builds pin in their go.mod. It is
 # passed by `make build-worker-image` from the Makefile's own GO_VERSION, so
 # the image and the repository never disagree about it.
-ARG GO_VERSION=1.26.7
+ARG GO_VERSION=1.27.0
 
 # The verification toolchain's pins. THEY HAVE NO DEFAULT ON PURPOSE.
 #
