@@ -8,6 +8,15 @@
 # most of that work. The ollama backend stays registered; this is the default,
 # not a replacement.
 #
+# THE CARD MUST BE THIS SERVICE'S ALONE. --gpu-memory-utilization=0.92 asks
+# for 92% of the device at startup, and BF16 Qwen3.8-27B is 52 GiB of weights
+# before any KV cache. A host that also keeps a resident ollama model on the
+# same card (gpu-host's ollama-preload holds review-q8 at ~45 GiB, keep-alive
+# forever) cannot start this: the engine refuses at the free-memory check and
+# `restart: unless-stopped` turns that into a crash loop -- 1,554 restarts were
+# measured on 2026-09-20. Either stop the ollama residency or do not start
+# this service; there is no utilisation value that fits both.
+#
 # WHY BF16 RATHER THAN A QUANTISED BUILD. Every quantisation of the previous
 # model returned a wrong verdict on the reference triage case, and so did BF16
 # of that model — the fault was the MODEL, not the precision. Qwen3.8-27B in

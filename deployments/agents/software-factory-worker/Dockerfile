@@ -120,7 +120,11 @@ RUN set -eux; \
         exit 1; \
     fi; \
     go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_VERSION}"; \
-    go install "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}"; \
+    # gosec stamps its version only through main.Version; a bare install
+    # reports "Version: dev", which makes every scan unreproducible (the
+    # fleet learned this on go-luks2#21) and is what the ci-runner image
+    # avoids the same way.
+    go install -ldflags "-X main.Version=${GOSEC_VERSION}" "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}"; \
     go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"; \
     go install "golang.org/x/tools/gopls@${GOPLS_VERSION}"
 
