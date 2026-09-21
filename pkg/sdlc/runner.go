@@ -1646,6 +1646,17 @@ func (s *runnerRun) validate(ctx context.Context) (orchestration.JobState, error
 		return orchestration.JobStateReviewing, nil
 	}
 	results, passed, err := s.job.Verify(ctx, criteria)
+	// EVERY COMMAND'S ANSWER IS ON THE RECORD, whether the pipeline went on
+	// or not. The one line an operator greps for when an attempt dies at
+	// verification is "what did make say", and until this was written the
+	// job carried the turn, the checkout and the teardown but not that.
+	// Measured on go-quicbaas PR #970 (2026-09-21): a failed `make build`
+	// was misread as a vanished container, and nothing on the job said the
+	// build had run at all.
+	for _, result := range results {
+		s.job.Audit(auditVerification, "command="+result.Name+" passed="+strconv.FormatBool(result.Passed)+
+			" output_bytes="+strconv.Itoa(len(result.Details))+" "+firstLine(result.Message))
+	}
 	if err != nil {
 		return "", err
 	}
@@ -2020,6 +2031,11 @@ const auditAgentTurn = "sdlc:agent_turn"
 // auditVerificationSkipped records that the binding's verification commands
 // were not run because the worker changed no file.
 const auditVerificationSkipped = "sdlc:verification_skipped"
+
+// auditVerification records one verification command's answer: its name,
+// whether it passed, how much output it produced, and its first line of
+// stderr.
+const auditVerification = "sdlc:verification"
 
 // auditSessionRolled records that a worker session whose context was full
 // was replaced by a fresh one on the same branch, within the same attempt.

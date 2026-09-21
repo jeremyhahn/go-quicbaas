@@ -975,7 +975,9 @@ the session:
    context small.
 
 The audit event is `sdlc:session_rolled` with `class=`, `round=`, `session=`
-and `elapsed=`. The most common way a round-1 prompt used to overflow was the
+and `elapsed=`. Every verification command also leaves `sdlc:verification`
+(`command=`, `passed=`, `output_bytes=`, first line of stderr) on the job,
+whether or not the pipeline went on. The most common way a round-1 prompt used to overflow was the
 verification feedback itself: the whole `make test` output went into the
 prompt. It is now the lines that name the failure (`--- FAIL`, `FAIL`,
 `panic:`, a compiler's `# pkg` header and `file.go:line:col:` diagnostics,

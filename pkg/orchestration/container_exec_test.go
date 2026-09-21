@@ -288,6 +288,27 @@ func TestExecContainerRuntime_Exec_ReportsExitStatus(t *testing.T) {
 // that IS classified: a container the runtime cannot find is a
 // ContainerNotFoundError, not an exit status, because there was no command
 // run to have a status.
+// TestExecContainerRuntime_Exec_AFailedBuildIsAnExitStatus: a command that
+// fails and mentions "not found" in its own output is the command's answer —
+// an exit status with its output — not a container that vanished.
+func TestExecContainerRuntime_Exec_AFailedBuildIsAnExitStatus(t *testing.T) {
+	t.Parallel()
+
+	rt := execStubRuntime(t,
+		"echo 'pkg/server/server.go:1091:9: undefined: kmsCache (symbol not found)' >&2\nexit 2\n")
+
+	result, err := rt.Exec(t.Context(), "ctr-alive", &ExecSpec{Cmd: []string{"sh", "-c", "make build"}})
+	if err != nil {
+		t.Fatalf("Exec() error = %v, want the command's exit status, not an error", err)
+	}
+	if result == nil || result.ExitCode != 2 {
+		t.Fatalf("Exec() result = %+v, want exit code 2", result)
+	}
+	if !strings.Contains(result.Stderr, "undefined: kmsCache") {
+		t.Errorf("the command's stderr was not carried: %q", result.Stderr)
+	}
+}
+
 func TestExecContainerRuntime_Exec_MissingContainer(t *testing.T) {
 	t.Parallel()
 

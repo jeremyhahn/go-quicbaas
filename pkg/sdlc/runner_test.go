@@ -2614,6 +2614,18 @@ func TestRunner_AFailedVerificationSendsTheContainersOutputBackAsARound(t *testi
 	if rig.agents.sessionCount() != WorkerSessionCount {
 		t.Errorf("a round spawned a second session: %d", rig.agents.sessionCount())
 	}
+	// EVERY COMMAND'S ANSWER IS ON THE RECORD: the failed run and the
+	// passing one, each naming the command and its verdict.
+	audits := rig.auditDetails(auditVerification)
+	if len(audits) != 2 {
+		t.Fatalf("verification audits = %v, want one per command run", audits)
+	}
+	if !strings.Contains(audits[0], "command=make test passed=false") || !strings.Contains(audits[0], "make: *** [test] Error 1") {
+		t.Errorf("the failed command's audit = %q", audits[0])
+	}
+	if !strings.Contains(audits[1], "command=make test passed=true") {
+		t.Errorf("the passing command's audit = %q", audits[1])
+	}
 }
 
 // =============================================================================

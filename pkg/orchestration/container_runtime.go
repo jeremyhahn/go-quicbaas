@@ -571,9 +571,19 @@ func detectRuntime(command string) bool {
 // isNotFoundOutput checks stderr output for container-not-found indicators.
 func isNotFoundOutput(stderr string) bool {
 	lower := strings.ToLower(stderr)
+	// THE RUNTIME'S OWN WORDS, NOT THE COMMAND'S. The stderr an exec returns
+	// is mostly the COMMAND's — a compiler, a test runner, make — and "not
+	// found" is what half of them say about a symbol, a file or a module.
+	// Matched loosely, a failed `make build` whose diagnostics said "not
+	// found" was reported as the container having vanished, and the job
+	// that had just fixed a review finding was failed and charged for it
+	// (go-quicbaas PR #970, 2026-09-21). Docker and podman announce a
+	// missing container in exactly these shapes; nothing else is one.
 	return strings.Contains(lower, "no such container") ||
 		strings.Contains(lower, "no such object") ||
-		strings.Contains(lower, "not found")
+		strings.Contains(lower, "error response from daemon: not found") ||
+		strings.Contains(lower, "error: not found") ||
+		strings.Contains(lower, "error: no such")
 }
 
 // truncateID shortens a container ID for log output.

@@ -1094,6 +1094,33 @@ func TestIsNotFoundOutput(t *testing.T) {
 			t.Error("expected false for 'permission denied'")
 		}
 	})
+	// THE COMMAND'S OWN WORDS ARE NOT THE RUNTIME'S. A compiler, a module
+	// resolver and make all say "not found" about the code; read as the
+	// container being gone, a failed `make build` failed the job that had
+	// just fixed a review finding (go-quicbaas PR #970, 2026-09-21).
+	t.Run("CommandDiagnosticsAreNotTheRuntime", func(t *testing.T) {
+		for _, stderr := range []string{
+			"pkg/server/server.go:1091:9: undefined: kmsCache (symbol not found)",
+			"go: github.com/example/missing@v1.2.3: module not found",
+			"make: *** No rule to make target 'web', needed by 'build'.  Stop.\nsh: 1: npm: not found",
+			"error: pathspec 'origin/nope' did not match any file(s) known to git\nfatal: ref not found",
+		} {
+			if isNotFoundOutput(stderr) {
+				t.Errorf("a command's diagnostics were read as a missing container: %q", stderr)
+			}
+		}
+	})
+	t.Run("DaemonPhrasing", func(t *testing.T) {
+		for _, stderr := range []string{
+			"Error response from daemon: No such container: ctr-gone",
+			"Error: No such container: ctr-gone",
+			"Error: no such object: ctr-gone",
+		} {
+			if !isNotFoundOutput(stderr) {
+				t.Errorf("the runtime's own not-found phrasing was not recognised: %q", stderr)
+			}
+		}
+	})
 
 	t.Run("EmptyString", func(t *testing.T) {
 		if isNotFoundOutput("") {
