@@ -118,6 +118,16 @@ const (
 	// asking for more, and requires the answer in the format the caller's
 	// own charter already asked for — naming no specific format here, because
 	// this backend serves every role and only the charter knows which.
+	// StopReasonToolBudgetSpent is reported for an answer given on the final,
+	// tool-less round: the model was told its budget was spent and concluded
+	// from what it had. A caller reading a thin answer under this stop reason
+	// is looking at a give-up, not a judgement.
+	StopReasonToolBudgetSpent = "tool_budget_spent"
+
+	// contentBlockToolUse is the block type reported once per command the
+	// loop ran, before the answer block.
+	contentBlockToolUse = "tool_use"
+
 	toolBudgetSpentPrompt = "Your tool-call budget for this turn is spent and no further " +
 		"commands can be run. Answer now, in full, using only what you have " +
 		"already gathered, in exactly the format your instructions require. " +
@@ -525,6 +535,13 @@ func (b *OpenVINOBackend) Prompt(ctx context.Context, req *PromptRequest) (*Prom
 	// their time box expires: conclude from what you have. It is NOT the
 	// silent truncation this loop has always refused — no partial text is
 	// promoted to an answer, the model is asked for a real one.
+	// EVERY TOOL CALL IS REPORTED AS A BLOCK, so the turn a caller audits says
+	// how many commands were run and whether the answer came on the final,
+	// tool-less round. Without this a triage turn that ran twelve commands
+	// and then gave a 27-byte answer looked identical to one that answered
+	// from the prompt alone -- which is how the NPU's give-ups on go-luks2
+	// (2026-09-21) could not be told from its judgements.
+	var toolBlocks []ContentBlock
 	for round := 0; round <= b.config.MaxToolRounds; round++ {
 		final := round == b.config.MaxToolRounds
 		tools := []ovTool{runCommandTool()}
@@ -558,11 +575,15 @@ func (b *OpenVINOBackend) Prompt(ctx context.Context, req *PromptRequest) (*Prom
 					SessionID: req.SessionID, Model: model, Rounds: b.config.MaxToolRounds,
 				}
 			}
+			stop := StopReasonEndTurn
+			if final {
+				stop = StopReasonToolBudgetSpent
+			}
 			return &PromptResponse{
 				SessionID:  req.SessionID,
-				Content:    []ContentBlock{{Type: "text", Text: answer}},
+				Content:    append(toolBlocks, ContentBlock{Type: "text", Text: answer}),
 				Model:      model,
-				StopReason: StopReasonEndTurn,
+				StopReason: stop,
 				Usage:      &usage,
 			}, nil
 		}
@@ -578,6 +599,10 @@ func (b *OpenVINOBackend) Prompt(ctx context.Context, req *PromptRequest) (*Prom
 		// results, or the server cannot match result to call.
 		messages = append(messages, choice.Message)
 		for _, call := range choice.Message.ToolCalls {
+			toolBlocks = append(toolBlocks, ContentBlock{
+				Type: contentBlockToolUse,
+				Text: call.Function.Name + " " + truncateForLog(call.Function.Arguments, 200),
+			})
 			out := b.runTool(ctx, containerID, workDir, call)
 			messages = append(messages, ovMessage{
 				Role: "tool", ToolCallID: call.ID, Content: out,

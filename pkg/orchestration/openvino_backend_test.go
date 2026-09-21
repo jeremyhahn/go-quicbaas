@@ -85,6 +85,17 @@ func (e *execRecorder) Exec(_ context.Context, _ string, spec *ExecSpec) (*ExecR
 	return &r, nil
 }
 
+// answerOf is the text block a response ends with, or "" when it has none:
+// tool_use blocks precede it, so the answer is no longer Content[0].
+func answerOf(resp *PromptResponse) string {
+	for i := len(resp.Content) - 1; i >= 0; i-- {
+		if resp.Content[i].Type == "text" {
+			return resp.Content[i].Text
+		}
+	}
+	return ""
+}
+
 // TestOpenVINOBackend_ToolLoopFeedsResultsBack is the property that makes this
 // a backend rather than a chat client: the model asks to run something, the
 // backend runs it in the session's container, and the OUTPUT goes back so the
@@ -111,7 +122,7 @@ func TestOpenVINOBackend_ToolLoopFeedsResultsBack(t *testing.T) {
 	if len(runtime.ran) != 1 || !strings.Contains(runtime.ran[0], "git log") {
 		t.Fatalf("the tool call did not reach the container: %v", runtime.ran)
 	}
-	if len(resp.Content) == 0 || !strings.Contains(resp.Content[0].Text, "already on main") {
+	if !strings.Contains(answerOf(resp), "already on main") {
 		t.Fatalf("the final answer did not come back: %+v", resp.Content)
 	}
 	// THE RESULT MUST BE IN THE SECOND REQUEST, matched to its call id — a
@@ -130,6 +141,79 @@ func TestOpenVINOBackend_ToolLoopFeedsResultsBack(t *testing.T) {
 	// Usage accumulates across BOTH completions, not just the last.
 	if resp.Usage == nil || resp.Usage.InputTokens != 20 {
 		t.Fatalf("usage must accumulate across rounds, got %+v", resp.Usage)
+	}
+}
+
+// TestOpenVINOBackend_ReportsEveryToolCallAsABlock proves a turn's audit can
+// tell a judgement from a give-up: each command the loop ran is a tool_use
+// block before the answer, and an answer forced on the final round carries
+// StopReasonToolBudgetSpent rather than end_turn.
+func TestOpenVINOBackend_ReportsEveryToolCallAsABlock(t *testing.T) {
+	srv := &ovServer{t: t, responses: []string{
+		toolCallJSON("call-1", "git log --oneline -1"),
+		toolCallJSON("call-2", "cat go.mod"),
+		answerJSON("Judged from two reads."),
+	}}
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+	runtime := &execRecorder{result: ExecResult{ExitCode: 0, Stdout: "ok"}}
+	b := NewOpenVINOBackend(OpenVINOBackendConfig{BaseURL: ts.URL, DefaultModel: "qwen3-8b"})
+	b.SetContainerRuntime(runtime)
+	b.mu.Lock()
+	b.sessions["s1"] = &openVINOSession{id: "s1", model: "qwen3-8b", containerID: "c1", workDir: "/workspace"}
+	b.mu.Unlock()
+
+	resp, err := b.Prompt(context.Background(), &PromptRequest{SessionID: "s1", Prompt: "judge"})
+	if err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	var tools, texts int
+	for _, block := range resp.Content {
+		switch block.Type {
+		case contentBlockToolUse:
+			tools++
+			if !strings.Contains(block.Text, "run_command") {
+				t.Fatalf("a tool_use block names the tool, got %q", block.Text)
+			}
+		case "text":
+			texts++
+		}
+	}
+	if tools != 2 || texts != 1 {
+		t.Fatalf("want 2 tool_use blocks and 1 text block, got %+v", resp.Content)
+	}
+	if resp.StopReason != StopReasonEndTurn {
+		t.Fatalf("an answer given with rounds to spare is end_turn, got %q", resp.StopReason)
+	}
+}
+
+// TestOpenVINOBackend_AForcedAnswerSaysSo proves the stop reason distinguishes
+// the final-round answer: the model spent every round on tools and was then
+// told to conclude.
+func TestOpenVINOBackend_AForcedAnswerSaysSo(t *testing.T) {
+	srv := &ovServer{t: t, responses: []string{
+		toolCallJSON("call-1", "ls"),
+		toolCallJSON("call-2", "ls"),
+		answerJSON("SDLC-TRIAGE: not-actionable"),
+	}}
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+	runtime := &execRecorder{result: ExecResult{ExitCode: 0, Stdout: "ok"}}
+	b := NewOpenVINOBackend(OpenVINOBackendConfig{BaseURL: ts.URL, DefaultModel: "qwen3-8b", MaxToolRounds: 2})
+	b.SetContainerRuntime(runtime)
+	b.mu.Lock()
+	b.sessions["s1"] = &openVINOSession{id: "s1", model: "qwen3-8b", containerID: "c1", workDir: "/workspace"}
+	b.mu.Unlock()
+
+	resp, err := b.Prompt(context.Background(), &PromptRequest{SessionID: "s1", Prompt: "judge"})
+	if err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	if resp.StopReason != StopReasonToolBudgetSpent {
+		t.Fatalf("an answer forced on the final round reports tool_budget_spent, got %q", resp.StopReason)
+	}
+	if len(resp.Content) != 3 {
+		t.Fatalf("two tool_use blocks then the answer, got %+v", resp.Content)
 	}
 }
 
@@ -206,7 +290,7 @@ func TestOpenVINOBackend_ToolFailureIsEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a failed command must not fail the turn: %v", err)
 	}
-	if len(resp.Content) == 0 || !strings.Contains(resp.Content[0].Text, "does not exist") {
+	if len(resp.Content) == 0 || !strings.Contains(answerOf(resp), "does not exist") {
 		t.Fatalf("the turn did not continue past the failure: %+v", resp.Content)
 	}
 	var sawFailure bool
@@ -423,7 +507,7 @@ func TestOpenVINOBackend_LastRoundIsAskedToAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a spent budget must still produce the model's conclusion: %v", err)
 	}
-	if len(resp.Content) == 0 || !strings.Contains(resp.Content[0].Text, "VERDICT: ACTIONABLE") {
+	if len(resp.Content) == 0 || !strings.Contains(answerOf(resp), "VERDICT: ACTIONABLE") {
 		t.Fatalf("want the final answer, got %+v", resp.Content)
 	}
 
