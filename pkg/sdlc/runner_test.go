@@ -109,6 +109,11 @@ type fakeAgents struct {
 	spawnErr  error
 	promptErr error
 
+	// promptErrFn fails a prompt by turn number starting at one, so a test
+	// can make one turn fail the way a CLI reports it and let the next
+	// succeed. Consulted when promptErr is nil.
+	promptErrFn func(turn int) error
+
 	// container is the worker's container. A spawn reports its id, and an
 	// exec is dispatched into it: the runner reaches git only this way.
 	container *fakeContainer
@@ -177,6 +182,9 @@ func (f *fakeAgents) PromptSession(_ context.Context, req *orchestration.PromptS
 	f.prompts = append(f.prompts, req)
 	turn := len(f.prompts)
 	err := f.promptErr
+	if err == nil && f.promptErrFn != nil {
+		err = f.promptErrFn(turn)
+	}
 	f.mu.Unlock()
 	if err != nil {
 		return nil, err
@@ -1078,6 +1086,96 @@ func TestRunner_TheBindingsModulePolicyReachesTheWorkersGo(t *testing.T) {
 		if v, ok := plain.agents.spawns[0].Env[k]; ok {
 			t.Errorf("a binding naming no modules set %s=%q", k, v)
 		}
+	}
+}
+
+// contextExhausted is a prompt failure the way the remote agent reports one
+// whose session has run out of context.
+func contextExhausted(reason string) error {
+	return &orchestration.RemoteTurnFailureError{
+		Op:                  "Prompt",
+		TurnFailureEvidence: orchestration.TurnFailureEvidence{TerminalReason: reason},
+		Err:                 errors.New("acp: stream-json error"),
+	}
+}
+
+// TestRunner_AFullContextRollsTheSessionNotTheAttempt: a session the CLI ends
+// because its context is full is replaced by a fresh one on the same branch,
+// told why it is fresh, and the attempt goes on to deliver.
+func TestRunner_AFullContextRollsTheSessionNotTheAttempt(t *testing.T) {
+	rig := newRunnerRig(t)
+	rig.rebindVerification(t, "true")
+	rig.workerWrote()
+	rig.verdictOnPublish("APPROVED", "lgtm")
+	rig.agents.promptErrFn = func(turn int) error {
+		if turn == 1 {
+			return contextExhausted(orchestration.TerminalReasonBlockingLimit)
+		}
+		return nil
+	}
+	// The rollover commits and pushes what the dead session left, which
+	// consumes the pending change; the fresh session then does its own work.
+	rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) { rig.workerWrote() }
+	if err := rig.runner.Run(context.Background(), rig.job(t)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(rig.agents.spawns) != 2 {
+		t.Fatalf("spawns = %d, want the dead session replaced by one fresh one", len(rig.agents.spawns))
+	}
+	if len(rig.agents.prompts) < 2 {
+		t.Fatalf("prompts = %d, want the fresh session prompted", len(rig.agents.prompts))
+	}
+	first := rig.agents.prompts[0].SessionID
+	if !slices.Contains(rig.agents.closed, first) {
+		t.Errorf("the full session %s was not closed", first)
+	}
+	if second := rig.agents.prompts[1]; second.SessionID == first || !strings.Contains(second.Prompt, "ran out of context") {
+		t.Errorf("the fresh session was not told why it is fresh: session=%s prompt=%q", second.SessionID, second.Prompt)
+	}
+	rolled := rig.auditDetails(auditSessionRolled)
+	if len(rolled) != 1 || !strings.Contains(rolled[0], "class=blocking_limit") || !strings.Contains(rolled[0], "round=0") {
+		t.Errorf("session_rolled audit = %v", rolled)
+	}
+}
+
+// TestRunner_ASessionRollsOnceARound: a fresh session that fills again on
+// the same prompt is a prompt the work cannot take, and the run fails with
+// the CLI's reason rather than spawning forever.
+func TestRunner_ASessionRollsOnceARound(t *testing.T) {
+	rig := newRunnerRig(t)
+	rig.rebindVerification(t, "true")
+	rig.workerWrote()
+	rig.agents.promptErrFn = func(int) error { return contextExhausted(orchestration.TerminalReasonPromptTooLong) }
+	err := rig.runner.Run(context.Background(), rig.job(t))
+	if err == nil {
+		t.Fatal("the run completed although every session ran out of context")
+	}
+	if class, ok := orchestration.ContextExhaustionOf(err); !ok || class != orchestration.TerminalReasonPromptTooLong {
+		t.Errorf("run error = %v, want the CLI's own reason carried through", err)
+	}
+	if len(rig.agents.spawns) != 2 {
+		t.Errorf("spawns = %d, want exactly one rollover", len(rig.agents.spawns))
+	}
+	if rolled := rig.auditDetails(auditSessionRolled); len(rolled) != 1 {
+		t.Errorf("session_rolled audits = %v, want one", rolled)
+	}
+}
+
+// TestRunner_AnOrdinaryPromptFailureDoesNotRoll: a reason outside the CLI's
+// context_limit group is what it always was — the run fails, one session.
+func TestRunner_AnOrdinaryPromptFailureDoesNotRoll(t *testing.T) {
+	rig := newRunnerRig(t)
+	rig.rebindVerification(t, "true")
+	rig.workerWrote()
+	rig.agents.promptErrFn = func(int) error { return contextExhausted(orchestration.TerminalReasonAPIError) }
+	if err := rig.runner.Run(context.Background(), rig.job(t)); err == nil {
+		t.Fatal("the run completed although the worker could not be prompted")
+	}
+	if len(rig.agents.spawns) != 1 {
+		t.Errorf("spawns = %d, want one", len(rig.agents.spawns))
+	}
+	if rolled := rig.auditDetails(auditSessionRolled); len(rolled) != 0 {
+		t.Errorf("session_rolled audits = %v, want none", rolled)
 	}
 }
 

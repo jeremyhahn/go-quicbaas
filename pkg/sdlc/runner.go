@@ -366,6 +366,13 @@ type runnerRun struct {
 	// tornDown records that teardownWorker has run, so the exit path does
 	// not run it a second time behind a state that already did.
 	tornDown bool
+
+	// rolled and rolledRound record that this run has already replaced a
+	// worker session whose context was full, and in which round. One
+	// rollover per round: a fresh session that fills again on the same
+	// prompt is the work's own doing and is charged, not rolled forever.
+	rolled      bool
+	rolledRound int
 }
 
 // handler drives one state and answers the next.
@@ -959,7 +966,7 @@ func (s *runnerRun) publishPlan() publishPlan {
 // round the findings are appended — the contract stays first and whole.
 func (s *runnerRun) execute(ctx context.Context) (orchestration.JobState, error) {
 	if s.sessionID == "" {
-		if s.job.Resumed == nil {
+		if s.job.Resumed == nil && !s.rolled {
 			return "", &WorkerSessionError{TaskID: s.taskID(), Message: "there is no worker session to prompt"}
 		}
 		// A run resumed at reviewing holds no container, and a round the
@@ -986,7 +993,99 @@ func (s *runnerRun) execute(ctx context.Context) (orchestration.JobState, error)
 	if repeated != "" {
 		return s.park(orchestration.TaskBlockKindEscalated, repeated, ""), nil
 	}
-	return s.runTurn(ctx, prompt)
+	state, err := s.runTurn(ctx, prompt)
+	if err != nil {
+		if class, exhausted := orchestration.ContextExhaustionOf(err); exhausted && s.canRollSession() {
+			return s.rollSession(ctx, class)
+		}
+		return "", err
+	}
+	return state, nil
+}
+
+// canRollSession reports whether a session whose context is full may be
+// replaced in this round: once per round, never twice.
+func (s *runnerRun) canRollSession() bool {
+	return !s.rolled || s.rolledRound != s.job.Iteration()
+}
+
+// rollSession replaces the worker's session with a fresh one on the same
+// branch, because the old one's context is full.
+//
+// THE BRANCH IS THE MEMORY; THE CONVERSATION IS NOT. A delivery turn of
+// twenty minutes reads and runs enough that the session's context fills, and
+// in print mode the CLI cannot compact it: the next prompt — the round's
+// verification findings, a few hundred bytes — is refused after minutes with
+// no text and no usage (`blocking_limit`, which the CLI files under
+// context_limit). Measured twice on the burn-in fleet on 2026-09-21
+// (go-quicbaas #51 and #965): both had passed build and test, both were
+// failed as attempts, and both redispatches began the same twenty-minute turn
+// over in a session that would fill the same way.
+//
+// What the situation calls for is what a person does at that point: keep the
+// branch, open a new session. Whatever the dead session committed and did not
+// commit is committed and pushed first, so nothing it did is lost and the
+// fresh container checks out exactly that head; the round, its findings and
+// the job's memory are untouched, because they live on the run and the job,
+// not in the conversation; and the fresh session is told, once, why it is
+// fresh, so it reads the branch before it writes. The attempt is not charged:
+// the work was never judged.
+//
+// ONCE PER ROUND. A fresh session that fills again on the same prompt has a
+// prompt the work cannot take, which is `prompt_too_long`'s class and is
+// charged like it.
+func (s *runnerRun) rollSession(ctx context.Context, class string) (orchestration.JobState, error) {
+	round := s.job.Iteration()
+	elapsed := s.lastTurn.Elapsed.Round(time.Second)
+	s.rolled, s.rolledRound = true, round
+	s.job.Audit(auditSessionRolled, "class="+class+" round="+strconv.Itoa(round)+
+		" session="+s.sessionID+" elapsed="+elapsed.String())
+	if err := s.pushTurnWork(ctx); err != nil {
+		return "", err
+	}
+	endCtx := context.WithoutCancel(ctx)
+	closeCtx, cancel := context.WithTimeout(endCtx, s.job.Policy().StageTimeouts.For(orchestration.JobStageDiscard))
+	s.job.Close(closeCtx, s.sessionID)
+	cancel()
+	s.sessionID = ""
+	s.workspace = nil
+	s.release()
+	s.turnNote = sessionRolledNote(elapsed, round)
+	s.job.Emit(orchestration.JobStateInitializing,
+		"the worker's session ran out of context ("+class+") in round "+strconv.Itoa(round)+
+			"; a fresh session is spawned on the same branch")
+	return orchestration.JobStateInitializing, nil
+}
+
+// pushTurnWork commits whatever the worker's checkout holds and pushes the
+// attempt's branch, recording the head on the delivery so a container spawned
+// after this one checks that head out rather than cutting the branch again
+// from its base. A checkout with nothing new to publish is not an error.
+func (s *runnerRun) pushTurnWork(ctx context.Context) error {
+	if s.delivery == nil || s.sessionID == "" || s.containerDir == "" || s.attempt == nil {
+		// The engine only calls this after a turn taken in a live container,
+		// which cannot be reached without all four. Refusing — rather than
+		// returning nil — is deliberate: on this tier a skipped push is
+		// silent data loss, so the impossible case must be loud.
+		return &WorkerSessionError{
+			TaskID:  s.taskID(),
+			Message: "the turn's work cannot be published: this run holds no delivery, session or checkout",
+		}
+	}
+	plan := s.publishPlan()
+	plan.RemoteBranch = ""
+	plan.Force = true
+	head, err := s.publisher(ctx).Publish(plan)
+	if err != nil {
+		var nothing *NoChangesError
+		if errors.As(err, &nothing) {
+			return nil
+		}
+		return err
+	}
+	return s.runner.hooks.updateDelivery(ctx, s.job.Context(), s.delivery, func(d *Delivery) {
+		d.HeadSHA = head
+	})
 }
 
 // turnPrompt is the whole text one turn is handed: the issue contract, the
@@ -1139,6 +1238,16 @@ func (s *runnerRun) repeatedPrompt(prompt string) (string, error) {
 func silentTurnNote(elapsed time.Duration) string {
 	return sdlcPrompts.MustRender("silent_turn_note", prompts.Vars{
 		"elapsed": elapsed.Round(time.Second).String(),
+	})
+}
+
+// sessionRolledNote is what the first prompt of a fresh session says about
+// the session it replaced: how long the turn that filled its context took,
+// and in which round.
+func sessionRolledNote(elapsed time.Duration, round int) string {
+	return sdlcPrompts.MustRender("session_rolled_note", prompts.Vars{
+		"elapsed": elapsed.Round(time.Second).String(),
+		"round":   strconv.Itoa(round),
 	})
 }
 
@@ -1912,6 +2021,10 @@ const auditAgentTurn = "sdlc:agent_turn"
 // were not run because the worker changed no file.
 const auditVerificationSkipped = "sdlc:verification_skipped"
 
+// auditSessionRolled records that a worker session whose context was full
+// was replaced by a fresh one on the same branch, within the same attempt.
+const auditSessionRolled = "sdlc:session_rolled"
+
 // escalate parks the task for a person: the reason is posted to the issue and
 // the issue is labelled for it, the branch is published and the container is
 // removed.
@@ -2220,27 +2333,7 @@ func (s *runnerRun) PushTurn(ctx context.Context) error {
 	if !s.ephemeralWorkspace() {
 		return nil
 	}
-	if s.delivery == nil || s.sessionID == "" || s.containerDir == "" || s.attempt == nil {
-		// The engine only calls this after a turn taken in a live container,
-		// which cannot be reached without all four. Refusing — rather than
-		// returning nil — is deliberate: on this tier a skipped push is
-		// silent data loss, so the impossible case must be loud.
-		return &WorkerSessionError{
-			TaskID:  s.taskID(),
-			Message: "the turn's work cannot be published: this run holds no delivery, session or checkout",
-		}
-	}
-	plan := s.publishPlan()
-	plan.RemoteBranch = ""
-	plan.Force = true
-	if _, err := s.publisher(ctx).Publish(plan); err != nil {
-		var nothing *NoChangesError
-		if errors.As(err, &nothing) {
-			return nil
-		}
-		return err
-	}
-	return nil
+	return s.pushTurnWork(ctx)
 }
 
 // The run IS the job's TurnPusher. Stated at compile time so a signature drift

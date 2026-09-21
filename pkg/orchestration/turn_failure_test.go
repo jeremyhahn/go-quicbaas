@@ -544,11 +544,13 @@ func TestPreFirstTurn_OnlyEnvironmentalReasonsAreRefunded(t *testing.T) {
 		// Environmental: a different environment would have changed the answer.
 		{"api_error", true, "the request never reached the API — #235's measured credential-less case"},
 		{"turn_setup_failed", true, "the CLI could not set the turn up at all"},
-		{"blocking_limit", true, "the provider refused the request outright"},
-		{"rapid_refill_breaker", true, "the provider's own breaker tripped"},
 
 		// Work-derived: the same work will fail the same way on every retry.
-		{"prompt_too_long", false, "the prompt the SDLC module built from this item is too long"},
+		// The first three are the CLI's own context_limit group; the SDLC
+		// runner rolls the SESSION on them, and nothing refunds them.
+		{"prompt_too_long", false, "the session's context is full"},
+		{"blocking_limit", false, "the session's context is full; the CLI files it under context_limit"},
+		{"rapid_refill_breaker", false, "the session's context is full; the CLI files it under context_limit"},
 		{"image_error", false, "an image in this item's input"},
 		{"stop_hook_prevented", false, "a hook stopped it; policy, not environment"},
 		{"hook_stopped", false, "same"},
@@ -614,5 +616,38 @@ func TestPreFirstTurn_AnEnvironmentalReasonStillNeedsZeroUsage(t *testing.T) {
 	}
 	if (TurnFailureEvidence{TerminalReason: "api_error"}).PreFirstTurn() {
 		t.Error("a turn that reported no accounting at all was refunded")
+	}
+}
+
+// TestContextExhaustionOf_NamesTheThreeContextReasons pins the set the SDLC
+// runner rolls a session on: exactly the reasons the measured CLI routes to
+// context_limit, carried on any of the three evidence types, and nothing else.
+func TestContextExhaustionOf_NamesTheThreeContextReasons(t *testing.T) {
+	for _, reason := range []string{"blocking_limit", "prompt_too_long", "rapid_refill_breaker"} {
+		err := &RemoteTurnFailureError{Op: "Prompt", TurnFailureEvidence: TurnFailureEvidence{TerminalReason: reason}, Err: errors.New("x")}
+		class, ok := ContextExhaustionOf(err)
+		if !ok || class != reason {
+			t.Errorf("%s: ContextExhaustionOf = (%q, %v), want (%q, true)", reason, class, ok, reason)
+		}
+		if !IsContextExhaustedTerminalReason(reason) {
+			t.Errorf("%s: not reported as context exhaustion", reason)
+		}
+		if IsEnvironmentalTerminalReason(reason) {
+			t.Errorf("%s: a full context is the session's, not the environment's; it must not refund", reason)
+		}
+	}
+	for _, reason := range []string{"api_error", "max_turns", "completed", "quota_wedged", ""} {
+		err := &StreamJSONError{Command: "claude", TurnFailureEvidence: TurnFailureEvidence{TerminalReason: reason}}
+		if class, ok := ContextExhaustionOf(err); ok {
+			t.Errorf("%q: reported as context exhaustion (%q)", reason, class)
+		}
+	}
+	if _, ok := ContextExhaustionOf(errors.New("no evidence at all")); ok {
+		t.Error("an error carrying no evidence was reported as context exhaustion")
+	}
+	for reason := range contextExhaustedTerminalReasons {
+		if _, declared := knownTerminalReasons[reason]; !declared {
+			t.Errorf("%q rolls a session but is not a reason the measured CLI enum declares", reason)
+		}
 	}
 }

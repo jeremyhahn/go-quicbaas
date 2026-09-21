@@ -294,6 +294,15 @@ func sdlcSetSpec() prompts.SetSpec {
 				},
 			},
 			{
+				Name:        "session_rolled_note",
+				Description: "what is added to the first prompt of a fresh session that replaced one whose context was full",
+				Default:     sdlcDefaults["session_rolled_note"],
+				Variables: []prompts.Variable{
+					{Name: "elapsed", Description: "how long the turn that filled the old session's context took", Required: true},
+					{Name: "round", Description: "the round the old session ran out of context in", Required: true},
+				},
+			},
+			{
 				Name:        "repeated_prompt",
 				Description: "why a task is parked rather than handed a prompt it already answered",
 				Default:     sdlcDefaults["repeated_prompt"],

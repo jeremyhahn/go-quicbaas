@@ -946,6 +946,41 @@ project whose `git.repo_url` carries no owner segment to derive the target
 from is refused at spawn, before a worker is charged. An empty policy injects
 nothing, so a project with no private modules gets the image's Go untouched.
 
+## A full context rolls the session, not the attempt
+
+A worker's session is a Claude Code process in print mode, and in print mode
+the CLI cannot compact its conversation. A delivery turn of twenty minutes
+reads and runs enough to fill the model's context, and the next prompt — the
+round's verification findings, a few hundred bytes — is refused after minutes
+with no text and no usage. The CLI reports it as `blocking_limit`, which its
+own dispatch files, with `prompt_too_long` and `rapid_refill_breaker`, under
+`context_limit`. Measured twice on the burn-in fleet on 2026-09-21
+(go-quicbaas #51 and #965): both had passed build and test, both were failed
+as attempts, and both redispatches began the same twenty-minute turn again in
+a session that would fill the same way.
+
+**The branch is the memory; the conversation is not.** When a prompt fails
+with one of those three reasons, the runner keeps the attempt and replaces
+the session:
+
+1. whatever the dead session's checkout holds is committed and pushed, and
+   the delivery records that head, so the next container checks it out
+   rather than cutting the branch again from its base;
+2. the session is closed and its container released;
+3. a fresh worker is spawned on the same branch (the `initializing` state,
+   as for a resumed run); the round, its findings and the job's memory are
+   untouched, because they live on the run and the job;
+4. the fresh session's first prompt carries the `session_rolled_note`
+   template, so it reads the branch before it writes and keeps its own
+   context small.
+
+The audit event is `sdlc:session_rolled` with `class=`, `round=`, `session=`
+and `elapsed=`. **Once per round**: a fresh session that fills again on the
+same prompt has a prompt the work cannot take, and the run fails with the
+CLI's reason, charged like `prompt_too_long`. Nothing in this group refunds
+an attempt — see [accounts.md](accounts.md) for the refunded set, which is
+now `api_error` and `turn_setup_failed` only.
+
 ## Onboarding a repository
 
 Binding a project does not only record a policy — it **onboards** the

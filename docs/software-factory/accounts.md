@@ -992,7 +992,7 @@ environment would have changed that.
 
 | refunded (environmental) | charged (work-derived) |
 |---|---|
-| `api_error`, `turn_setup_failed`, `blocking_limit`, `rapid_refill_breaker` | `prompt_too_long`, `image_error`, `model_error`, `max_turns`, `budget_exhausted`, `stop_hook_prevented`, `hook_stopped`, and every other declared reason |
+| `api_error`, `turn_setup_failed` | `blocking_limit`, `prompt_too_long`, `rapid_refill_breaker` (the session's context is full — the runner rolls the session, see [sdlc.md](sdlc.md#a-full-context-rolls-the-session-not-the-attempt)), `image_error`, `model_error`, `max_turns`, `budget_exhausted`, `stop_hook_prevented`, `hook_stopped`, and every other declared reason |
 
 `prompt_too_long` also consumes no input tokens, and it is a deterministic
 consequence of the prompt built from the work item — refunding it would let a

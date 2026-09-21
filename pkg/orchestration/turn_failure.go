@@ -129,17 +129,14 @@ const (
 // the attempt budget, which exists precisely to stop that loop, bypassed.
 //
 // So the question is not "did a turn run" alone but "would a different
-// environment have changed the answer". These four say yes:
+// environment have changed the answer". These two say yes:
 //
 //	api_error             the request never reached the API — no credential,
 //	                      no network, a transport refusal. #235's measured case.
 //	turn_setup_failed     the CLI could not set the turn up at all.
-//	blocking_limit        the provider refused the request outright.
-//	rapid_refill_breaker  the provider's own breaker tripped.
 //
-// The last two are provider-side capacity rather than misconfiguration, and
-// they are here for the same reason as the first two: nothing about this work
-// item was attempted, so charging it teaches the budget something false.
+// `blocking_limit` and `rapid_refill_breaker` were listed here too, read as
+// provider-side capacity. They are not; see contextExhaustedTerminalReasons.
 //
 // EVERYTHING ELSE IS CHARGED, including reasons this build does not recognise.
 // A new reason from a newer CLI is charged and its class surfaced, so an
@@ -147,10 +144,62 @@ const (
 // direction that cannot silently defeat the wall. The work-derived members are
 // listed in the test that pins this set, with why each one is charged.
 var environmentalTerminalReasons = map[string]bool{
-	TerminalReasonAPIError:           true,
-	TerminalReasonTurnSetupFailed:    true,
+	TerminalReasonAPIError:        true,
+	TerminalReasonTurnSetupFailed: true,
+}
+
+// contextExhaustedTerminalReasons are the reasons that mean the SESSION'S
+// CONTEXT WINDOW IS FULL: the conversation can no longer take another prompt,
+// whatever the prompt says.
+//
+// MEASURED, NOT GUESSED. `blocking_limit` and `rapid_refill_breaker` were
+// first judged environmental — "the provider refused the request outright",
+// "the provider's own breaker tripped" — on the strength of their names. The
+// 2.1.278 CLI's own dispatch says otherwise: it routes all three of
+// `blocking_limit`, `prompt_too_long` and `rapid_refill_breaker` to one
+// outcome, `{kind: "stop", cause: "context_limit"}`, and emits
+// `blocking_limit` from the same code path that surfaces "prompt too long"
+// when the auto-compact window reports `blocked`. On the burn-in fleet
+// (go-quicbaas #51 and #965, 2026-09-21) both arrived exactly there: a
+// 20–25 minute delivery turn, verification, and then the round-1 re-prompt
+// refused after three minutes with no text and no usage.
+//
+// Refunding them was wrong twice over. The attempt WAS spent — the turn ran
+// and its work was pushed — and a redispatch re-runs the whole turn into a
+// fresh session that fills the same way. What a full context calls for is a
+// fresh SESSION on the same branch, which is the SDLC runner's decision to
+// make (see its session rollover); what this package says is only that the
+// reason is the session's, not the environment's, so nothing refunds it.
+var contextExhaustedTerminalReasons = map[string]bool{
 	TerminalReasonBlockingLimit:      true,
+	TerminalReasonPromptTooLong:      true,
 	TerminalReasonRapidRefillBreaker: true,
+}
+
+// IsContextExhaustedTerminalReason reports whether class says the session's
+// context window is full. Exported for the same reason as
+// IsEnvironmentalTerminalReason: the SDLC module asks this package rather
+// than keeping a copy of the set.
+func IsContextExhaustedTerminalReason(class string) bool {
+	return contextExhaustedTerminalReasons[class]
+}
+
+// ContextExhaustionOf reports whether err is a turn the CLI ended because the
+// session's context was full, and names the reason class it gave.
+//
+// THE SINGLE SEAM, like PreFirstTurnFault: the SDLC runner decides on this
+// answer whether to roll the session, and asks one question rather than
+// type-switching over every carrier of turn-failure evidence.
+func ContextExhaustionOf(err error) (string, bool) {
+	evidence, carried := EvidenceOf(err)
+	if !carried {
+		return "", false
+	}
+	class := evidence.ReasonClass()
+	if !contextExhaustedTerminalReasons[class] {
+		return "", false
+	}
+	return class, true
 }
 
 // IsEnvironmentalTerminalReason reports whether class is one of the CLI reasons
