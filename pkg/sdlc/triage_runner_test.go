@@ -478,10 +478,74 @@ func TestTriageRunner_AnUnreadableReplyIsNeverReady(t *testing.T) {
 			if rig.hasLabel(301, rig.binding.Forge.TriggerLabel) {
 				t.Fatalf("an unreadable verdict must never be read as ready, got %v", rig.labels(301))
 			}
-			if len(rig.comments(301)) != 1 {
-				t.Fatalf("the issue is left for a person, with a comment saying why; got %v", rig.comments(301))
+			if got := rig.comments(301); len(got) != 0 {
+				t.Fatalf("a reply that is not a verdict writes nothing to the issue, got %v", got)
+			}
+			if got := rig.labels(301); len(got) != 0 {
+				t.Fatalf("a reply that is not a verdict labels nothing, got %v", got)
+			}
+			if !rig.audited("sdlc:triage_unusable") {
+				t.Fatal("setting a reply aside is recorded on the audit trail")
 			}
 		})
+	}
+}
+
+// TestTriageRunner_AVerdictWithoutEvidenceIsNotAVerdict proves the charter's
+// demand for evidence is enforced: a declaration with no prose, a duplicate
+// of the issue itself, and a duplicate of an issue the pass never listed are
+// all set aside unposted. Each is a shape the NPU model produced on go-luks2
+// on 2026-09-21 and a person then had to undo.
+func TestTriageRunner_AVerdictWithoutEvidenceIsNotAVerdict(t *testing.T) {
+	tests := map[string]string{
+		"a bare not-actionable":            "SDLC-TRIAGE: not-actionable",
+		"a bare needs-info":                "SDLC-TRIAGE: needs-info",
+		"a duplicate of itself":            "Same thing.\n\nSDLC-TRIAGE-DUPLICATE: #301\nSDLC-TRIAGE: duplicate",
+		"a duplicate of an unlisted issue": "Same thing.\n\nSDLC-TRIAGE-DUPLICATE: #999\nSDLC-TRIAGE: duplicate",
+	}
+	for name, reply := range tests {
+		t.Run(name, func(t *testing.T) {
+			rig := newTriageRig(t)
+			rig.forge.putIssue(301, "some issue")
+			rig.answers(reply)
+			if err := rig.run(); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if got := rig.comments(301); len(got) != 0 {
+				t.Fatalf("nothing is posted for a reply without evidence, got %v", got)
+			}
+			if got := rig.labels(301); len(got) != 0 {
+				t.Fatalf("nothing is labelled for a reply without evidence, got %v", got)
+			}
+			details, ok := rig.auditDetails("sdlc:triage_unusable")
+			if !ok || !strings.Contains(details, "issue=301") {
+				t.Fatalf("the audit trail names the issue set aside, got %q", details)
+			}
+		})
+	}
+}
+
+// TestTriageRunner_AnUnusableReplyLeavesTheIssueForTheNextPass proves the
+// point of not posting: the issue carries no word from triage, so the next
+// pass judges it again -- and a usable reply then lands normally.
+func TestTriageRunner_AnUnusableReplyLeavesTheIssueForTheNextPass(t *testing.T) {
+	first := newTriageRig(t)
+	first.forge.putIssue(302, "some issue")
+	first.answers("SDLC-TRIAGE: not-actionable")
+	if err := first.run(); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	if got := first.comments(302); len(got) != 0 {
+		t.Fatalf("the first pass must post nothing, got %v", got)
+	}
+
+	second := newTriageRigOver(t, first)
+	second.answers("The change is out of scope for this repository.\n\nSDLC-TRIAGE: not-actionable")
+	if err := second.run(); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if got := second.comments(302); len(got) != 1 || !strings.Contains(got[0], "out of scope") {
+		t.Fatalf("the second pass judges the issue again and posts its verdict, got %v", got)
 	}
 }
 
@@ -843,7 +907,7 @@ func TestTriageRunner_ReportsAForgeWriteItCouldNotMake(t *testing.T) {
 		},
 		{
 			name:        "the needs-info label is refused after the comment landed",
-			reply:       "SDLC-TRIAGE: needs-info",
+			reply:       "The issue names no version.\n\nSDLC-TRIAGE: needs-info",
 			addLabelErr: errors.New("forge refused the label"),
 			wantTrigger: false,
 		},

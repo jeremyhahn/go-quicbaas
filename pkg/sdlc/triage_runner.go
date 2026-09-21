@@ -886,7 +886,76 @@ func (s *triageRun) judgeIssue(ctx context.Context, issue ForgeIssue) error {
 	turn := ReadAgentTurn(resp)
 	verdict := ClassifyTriage(ParseTriageDeclaration(turn.Reply))
 	s.recordVerdict(issue, verdict, turn)
+	if reason := s.unusable(issue, verdict, turn.Reply); reason != "" {
+		s.recordUnusable(issue, verdict, turn, reason)
+		return nil
+	}
 	return s.apply(ctx, issue, verdict, turn.Reply)
+}
+
+// unusable says why a reply is not a verdict at all, or "" when it is one.
+//
+// A REPLY THE BINARY CANNOT READ IS THE MODEL'S FAILURE, NOT A FINDING ABOUT
+// THE ISSUE. It used to be posted as one: "triage declared a verdict this
+// binary cannot act on" went on the issue with the escalated label, and the
+// comment then became triage's last word, so the issue was never judged again
+// until a person spoke. Measured on go-luks2 on the NPU, 2026-09-21: one pass
+// posted a self-referencing duplicate with a misspelt marker (#167), a
+// not-actionable carrying no evidence at all (#106, a 27-byte reply), and a
+// duplicate of an unrelated issue -- three verdicts a person now has to undo,
+// none of which said anything about the work. Every one of them is a model
+// that ran out of rounds or lost the marker vocabulary, and the right answer
+// to that is to say nothing on the forge and ask again next pass.
+//
+// The charter demands evidence for every verdict that is not ready, so a
+// reply whose prose is only the declaration fails the same test: a person
+// reading "the evidence:" followed by nothing has been told nothing. A
+// duplicate must name another OPEN issue -- itself, a closed one, or a number
+// the pass never listed is a reference a person cannot follow.
+func (s *triageRun) unusable(issue ForgeIssue, verdict TriageVerdict, reply string) string {
+	switch verdict.Outcome {
+	case TriageOutcomeUndeclared:
+		return "the reply declared no verdict"
+	case TriageOutcomeUnreadable:
+		return "the reply's declaration could not be read"
+	case TriageOutcomeReady:
+		return ""
+	case TriageOutcomeDuplicate:
+		if verdict.DuplicateOf == issue.Number {
+			return "the reply names the issue as a duplicate of itself"
+		}
+		if !s.isOpenCandidate(verdict.DuplicateOf) {
+			return "the reply names #" + strconv.Itoa(verdict.DuplicateOf) +
+				" as the duplicate, which is not an open issue of this project"
+		}
+	}
+	if triageEvidence(reply) == "" {
+		return "the reply gives no evidence for its verdict"
+	}
+	return ""
+}
+
+// isOpenCandidate reports whether number is among the open issues this pass
+// listed: the set the prompt offered as duplicate candidates.
+func (s *triageRun) isOpenCandidate(number int) bool {
+	for i := range s.open {
+		if s.open[i].Number == number && !issueClosed(&s.open[i]) {
+			return true
+		}
+	}
+	return false
+}
+
+// recordUnusable writes why a reply was set aside, so the audit trail says
+// the pass judged the issue and got nothing it could act on -- which is what
+// distinguishes a model that keeps failing from a pass that never ran.
+func (s *triageRun) recordUnusable(issue ForgeIssue, verdict TriageVerdict, turn AgentTurn, reason string) {
+	s.job.Audit("sdlc:triage_unusable", "issue="+strconv.Itoa(issue.Number)+
+		" outcome="+verdict.Outcome.String()+" reply_bytes="+strconv.Itoa(turn.ReplyBytes)+
+		" reason="+reason)
+	s.job.Emit(orchestration.JobStateExecuting,
+		"issue #"+strconv.Itoa(issue.Number)+": the reply was not a verdict ("+reason+
+			"); nothing was written to the issue and the next pass judges it again")
 }
 
 // recordVerdict writes the verdict to the job's audit trail and its event
