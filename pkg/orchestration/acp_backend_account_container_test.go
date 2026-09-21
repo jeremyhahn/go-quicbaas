@@ -18,6 +18,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -137,9 +138,19 @@ func TestACPBackend_SpawnContainer_FileBasedAccount_MountsIsolatedDir(t *testing
 		t.Fatalf("no mount found at /home/agent/.config/opencode; mounts = %+v", runtime.gotSpec.Mounts)
 	}
 	// The mounted source must be the per-session materialized directory,
-	// never a path under the real operator home directory.
-	if home, _ := os.UserHomeDir(); home != "" && strings.HasPrefix(source, home) {
-		t.Fatalf("mount source = %s, leaked the operator's real home directory instead of an isolated one", source)
+	// never the operator's own credential directory. THE LEAK THIS NAMES IS
+	// THE CREDENTIAL DIRECTORY, not the home directory around it: the
+	// materialized directory lives under os.TempDir, and in the factory's
+	// worker image HOME=/tmp, so "not under $HOME" refused a correct isolated
+	// mount and made this test trunk-red there (go-quicbaas#62, 2026-09-21).
+	if home, _ := os.UserHomeDir(); home != "" {
+		operators := filepath.Join(home, ".config", "opencode")
+		if source == operators || strings.HasPrefix(source, operators+string(filepath.Separator)) {
+			t.Fatalf("mount source = %s, leaked the operator's own credential directory instead of an isolated one", source)
+		}
+	}
+	if !strings.HasPrefix(filepath.Clean(source), filepath.Clean(os.TempDir())) {
+		t.Fatalf("mount source = %s, want a per-session directory materialized under the temp dir", source)
 	}
 
 	content, readErr := os.ReadFile(source + "/auth.json")

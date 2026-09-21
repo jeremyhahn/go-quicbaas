@@ -133,9 +133,72 @@ func verificationEvidence(result *orchestration.ExecResult) string {
 	if stdout == "" {
 		return evidence
 	}
-	if truncated {
-		evidence += "\n\n(the first " + strconv.Itoa(len(result.Stdout)-len(stdout)) +
-			" bytes of output are omitted; this is its last " + strconv.Itoa(VerificationEvidenceBytes) + " bytes)"
+	if !truncated {
+		return evidence + "\n\n" + stdout
 	}
+	// THE LINES THAT NAME THE FAILURE COME FIRST, gathered from the whole
+	// output, because the tail alone loses them: `go test -v` on this
+	// repository prints tens of thousands of PASS lines after the failing
+	// package, and three rounds on go-quicbaas#62 showed the worker a bare
+	// trailing `FAIL` with no package name behind it.
+	if salient := salientFailureLines(result.Stdout, VerificationSalientLines); salient != "" {
+		evidence += "\n\nlines naming the failure, from the whole output:\n\n" + salient
+	}
+	evidence += "\n\n(the first " + strconv.Itoa(len(result.Stdout)-len(stdout)) +
+		" bytes of output are omitted; this is its last " + strconv.Itoa(VerificationEvidenceBytes) + " bytes)"
 	return evidence + "\n\n" + stdout
+}
+
+// VerificationSalientLines bounds how many failure-naming lines are gathered
+// from a failed command's whole output ahead of its tail.
+const VerificationSalientLines = 200
+
+// salientFailurePrefixes are the line starts that name a failure in the tools
+// this factory verifies with: Go's test and build reporters and make. A line
+// is kept for the prefix alone; nothing is parsed out of it.
+var salientFailurePrefixes = []string{"--- FAIL", "FAIL", "panic:", "# ", "make: ***", "ok  \t"}
+
+// salientFailureLines returns, in order, the lines of output that name a
+// failure — a failed test, a failed package, a panic, a compiler's package
+// header, make's own error — up to limit lines. Passing packages (`ok`) are
+// excluded again here: their prefix is listed above only so the check reads
+// as the reporter's vocabulary, and they are what the tail already drowns in.
+func salientFailureLines(output string, limit int) string {
+	var b strings.Builder
+	kept := 0
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimRight(line, "\r")
+		if !salientFailureLine(trimmed) {
+			continue
+		}
+		if kept == limit {
+			b.WriteString("… (more lines omitted)\n")
+			break
+		}
+		b.WriteString(trimmed + "\n")
+		kept++
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// salientFailureLine reports whether one line names a failure.
+func salientFailureLine(line string) bool {
+	if strings.HasPrefix(line, "ok  \t") {
+		return false
+	}
+	for _, prefix := range salientFailurePrefixes {
+		if strings.HasPrefix(line, prefix) {
+			return true
+		}
+	}
+	// A compiler diagnostic: path.go:line:col: message.
+	if i := strings.Index(line, ".go:"); i > 0 {
+		rest := line[i+len(".go:"):]
+		if j := strings.IndexByte(rest, ':'); j > 0 {
+			if _, err := strconv.Atoi(rest[:j]); err == nil {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -117,14 +117,19 @@ func TestValidateInContainer_AFailureCarriesBothStreamsAsEvidence(t *testing.T) 
 
 // TestValidateInContainer_TheEvidenceIsBoundedToTheOutputsTail: megabytes of
 // test output do not go back to the worker; its last VerificationEvidenceBytes
-// do, whole lines, with the omission stated — the failure is at the end.
+// do, whole lines, with the omission stated — and the lines that NAME the
+// failure are gathered from the whole output first, because `go test -v`
+// prints tens of thousands of PASS lines after the failing package and the
+// tail alone showed the worker a bare `FAIL` (go-quicbaas#62, 2026-09-21).
 func TestValidateInContainer_TheEvidenceIsBoundedToTheOutputsTail(t *testing.T) {
 	rig := newVerifyRig(t, "/workspace/api", "make test")
 	var out strings.Builder
+	out.WriteString("# pkg/broken\npkg/broken/x.go:12:5: undefined: Thing\n")
+	out.WriteString("--- FAIL: TestThing\nFAIL\tpkg/last\t1.2s\n")
 	for i := 0; i < 20000; i++ {
 		out.WriteString("ok  \tpkg/thing" + strconv.Itoa(i) + "\t0.01s\n")
 	}
-	out.WriteString("--- FAIL: TestThing\nFAIL\tpkg/last\t1.2s\n")
+	out.WriteString("FAIL\nmake: *** [test] Error 1\n")
 	rig.result = &orchestration.ExecResult{ExitCode: 2, Stdout: out.String(), Stderr: "make: *** [test] Error 1\n"}
 
 	result, err := ValidateInContainer(context.Background(), rig.job,
@@ -135,13 +140,17 @@ func TestValidateInContainer_TheEvidenceIsBoundedToTheOutputsTail(t *testing.T) 
 	if len(result.Details) > VerificationEvidenceBytes+512 {
 		t.Errorf("details = %d bytes, want at most the bound plus its header", len(result.Details))
 	}
-	for _, want := range []string{"exit code: 2", "--- FAIL: TestThing", "FAIL\tpkg/last", "bytes of output are omitted"} {
+	for _, want := range []string{"exit code: 2", "--- FAIL: TestThing", "FAIL\tpkg/last", "# pkg/broken",
+		"pkg/broken/x.go:12:5: undefined: Thing", "make: *** [test] Error 1", "lines naming the failure", "bytes of output are omitted"} {
 		if !strings.Contains(result.Details, want) {
 			t.Errorf("details lack %q", want)
 		}
 	}
 	if strings.Contains(result.Details, "pkg/thing0\t") {
 		t.Error("the head of the output was kept; the tail is what carries the failure")
+	}
+	if salient := result.Details[:strings.Index(result.Details, "bytes of output are omitted")]; strings.Contains(salient, "ok  \t") {
+		t.Error("passing packages were gathered as failure lines")
 	}
 	// The window opens on a whole line.
 	body := strings.TrimSpace(result.Details[strings.Index(result.Details, "bytes)")+len("bytes)"):])

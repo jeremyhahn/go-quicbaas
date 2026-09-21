@@ -15,6 +15,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -83,7 +85,17 @@ func TestStripURLScheme_AllCases(t *testing.T) {
 // --sandbox-policy required is every spawn there is. Measured on the burn-in
 // node 2026-09-16: every triage job failed at spawn.
 func TestBuildAgentRuntime_OpenVINOBackendReceivesTheContainerRuntime(t *testing.T) {
-	t.Parallel()
+	// NOT PARALLEL: the engine this test resolves is a shim it puts on PATH.
+	// The resolver proves an engine by running `<command> version`; on a host
+	// with none — the factory's own worker image — the runtime came back nil
+	// and this test was trunk-red there (go-quicbaas#62, 2026-09-21). The
+	// test supplies the engine it needs rather than requiring one installed.
+	engineDir := t.TempDir()
+	shim := filepath.Join(engineDir, "docker")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write the engine shim: %v", err)
+	}
+	t.Setenv("PATH", engineDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	ov := orchestration.NewOpenVINOBackend(orchestration.OpenVINOBackendConfig{
 		BaseURL:      "http://gpu-host.invalid:9000",
