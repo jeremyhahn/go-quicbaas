@@ -1443,6 +1443,26 @@ func (s *runnerRun) concludeTurn(ctx context.Context, _ TurnVerdict, turn AgentT
 	if err := s.rememberNoChangeTurn(ctx, turn); err != nil {
 		return "", err
 	}
+	// THE BRANCH MAY BE THE WORK. A worker that reads its checkout and finds
+	// the change present is right about the CHECKOUT — and on a resumed
+	// attempt the checkout is the attempt's own branch, carrying what an
+	// earlier attempt wrote and pushed but never got to publish (its
+	// verification failed, its session died, the daemon restarted). "Already
+	// satisfied" then completed the task with the code sitting unmerged on a
+	// branch no pull request names and the issue told nothing will happen.
+	// Measured on go-quicbaas#51 (2026-09-21): three attempts of work, pushed
+	// at every turn, closed as satisfied by the fourth. The question the
+	// verdict must answer is whether the BASE has the work; when the branch
+	// is ahead of it and no pull request is open, the branch is verified and
+	// published like any other turn's work.
+	if ahead, err := s.unpublishedBranchAhead(ctx); err != nil {
+		return "", err
+	} else if ahead {
+		s.job.Audit(auditSatisfiedOnBranch, "the worker found the work already on "+s.delivery.Branch+
+			", which is ahead of "+s.delivery.Base+" with no pull request open; it is verified and published rather than concluded")
+		s.job.Emit(orchestration.JobStateValidating, "the attempt's branch already carries the work; verifying and publishing it")
+		return orchestration.JobStateValidating, nil
+	}
 	s.job.Audit(auditVerificationSkipped, "the worker reported the task's work already present and "+
 		"changed no file, so there was nothing to verify and nothing to review")
 	// The judgement goes on the run, which puts it on the persisted status:
@@ -1450,6 +1470,19 @@ func (s *runnerRun) concludeTurn(ctx context.Context, _ TurnVerdict, turn AgentT
 	// and the conclusion exactly as a park does.
 	s.job.Satisfy()
 	return orchestration.JobStateCompleted, nil
+}
+
+// unpublishedBranchAhead reports whether this attempt's branch carries commits
+// its base does not and no pull request has been opened for it — work that
+// exists and that nobody has been asked to merge.
+func (s *runnerRun) unpublishedBranchAhead(ctx context.Context) (bool, error) {
+	if s.delivery == nil || !s.delivery.RequiresPullRequest || s.delivery.PullRequest.Opened() {
+		return false, nil
+	}
+	if s.sessionID == "" || s.containerDir == "" || s.attempt == nil {
+		return false, nil
+	}
+	return s.publisher(ctx).AheadOfBase(s.publishPlan())
 }
 
 // silentEscalation is how an attempt ends when the worker answered with
@@ -1481,14 +1514,21 @@ var silentEscalation = TurnVerdict{
 // event is written from it first — one classification per turn, and the
 // record and the routing cannot disagree about what it was.
 func (s *runnerRun) noChangeTurn(ctx context.Context, turn AgentTurn, verdict TurnVerdict) (orchestration.JobState, error) {
-	s.job.Audit(auditVerificationSkipped, "the worker changed no file in "+s.containerDir+
-		", so the binding's verification commands were not run: there is nothing to build, "+
-		"test or review. outcome="+string(verdict.Outcome)+" action="+string(verdict.Action))
 	action, ok := turnActions[verdict.Action]
 	if !ok {
 		return "", &UnknownTurnActionError{Action: string(verdict.Action), Outcome: string(verdict.Outcome)}
 	}
-	return action(s, ctx, verdict, turn)
+	state, err := action(s, ctx, verdict, turn)
+	// THE SKIP IS RECORDED ONLY WHEN IT HAPPENED. A satisfied verdict answered
+	// by the attempt's own unpublished branch goes to verification instead
+	// (concludeTurn), and an audit saying the commands were not run would
+	// then be false on a job whose next events are exactly those commands.
+	if err == nil && state != orchestration.JobStateValidating {
+		s.job.Audit(auditVerificationSkipped, "the worker changed no file in "+s.containerDir+
+			", so the binding's verification commands were not run: there is nothing to build, "+
+			"test or review. outcome="+string(verdict.Outcome)+" action="+string(verdict.Action))
+	}
+	return state, err
 }
 
 // retryTurn prompts the same session once more, telling it what just
@@ -2047,6 +2087,11 @@ const auditAgentTurn = "sdlc:agent_turn"
 // auditVerificationSkipped records that the binding's verification commands
 // were not run because the worker changed no file.
 const auditVerificationSkipped = "sdlc:verification_skipped"
+
+// auditSatisfiedOnBranch records a satisfied verdict that was answered by
+// the attempt's own unpublished branch rather than by the base, and was
+// therefore verified and published instead of concluded.
+const auditSatisfiedOnBranch = "sdlc:satisfied_on_branch"
 
 // auditVerification records one verification command's answer: its name,
 // whether it passed, how much output it produced, and its first line of

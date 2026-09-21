@@ -946,6 +946,20 @@ project whose `git.repo_url` carries no owner segment to derive the target
 from is refused at spawn, before a worker is charged. An empty policy injects
 nothing, so a project with no private modules gets the image's Go untouched.
 
+## A satisfied verdict is answered by the base, not the branch
+
+A worker that changes nothing and reports the work already present is
+believed — but the question is whether the **base** has the work. On a
+resumed attempt the checkout is the attempt's own branch, carrying what an
+earlier attempt wrote and pushed and never got to publish (its verification
+failed, its session died, the daemon restarted). Until 2026-09-21 that
+verdict completed the task as `already_satisfied` with the code unmerged on
+a branch no pull request named (go-quicbaas#51). Now, when the attempt's
+branch is ahead of its base and no pull request is open, the run records
+`sdlc:satisfied_on_branch` and sends the branch through verification and
+publication like any other turn's work. Only a branch with nothing the base
+lacks concludes the task.
+
 ## A full context rolls the session, not the attempt
 
 A worker's session is a Claude Code process in print mode, and in print mode

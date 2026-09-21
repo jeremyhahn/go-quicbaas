@@ -1179,6 +1179,55 @@ func TestRunner_AnOrdinaryPromptFailureDoesNotRoll(t *testing.T) {
 	}
 }
 
+// TestRunner_SatisfiedOnAnUnpublishedBranchIsPublishedNotConcluded: a worker
+// that finds the work already on the attempt's branch — pushed by an earlier
+// attempt, never published — has answered for the branch, not the base. The
+// branch is verified and published like any other turn's work, and the task
+// is not completed as satisfied with its code stranded (go-quicbaas#51).
+func TestRunner_SatisfiedOnAnUnpublishedBranchIsPublishedNotConcluded(t *testing.T) {
+	rig := newRunnerRig(t)
+	rig.rebindVerification(t, "true")
+	rig.verdictOnPublish("APPROVED", "lgtm")
+	rig.container.ahead = true // an earlier attempt's commits, ahead of main
+	rig.agents.answers("The branch already carries the whole change.\n\n" + TurnStopMarker + " " + TurnStopSatisfied)
+
+	job := rig.job(t)
+	if err := rig.runner.Run(context.Background(), job); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if job.Satisfied() {
+		t.Fatal("the task was concluded as satisfied although its work sits unpublished on the branch")
+	}
+	if len(rig.forge.prs) != 1 {
+		t.Fatalf("pull requests = %d, want the branch published for review", len(rig.forge.prs))
+	}
+	if audits := rig.auditDetails(auditSatisfiedOnBranch); len(audits) != 1 {
+		t.Errorf("satisfied_on_branch audits = %v, want one", audits)
+	}
+	if audits := rig.auditDetails(auditVerificationSkipped); len(audits) != 0 {
+		t.Errorf("verification was skipped although the branch was to be verified: %v", audits)
+	}
+}
+
+// TestRunner_SatisfiedWithNothingAheadConcludes: the same verdict on a branch
+// with nothing the base lacks is the stale issue it looks like, and concludes.
+func TestRunner_SatisfiedWithNothingAheadConcludes(t *testing.T) {
+	rig := newRunnerRig(t)
+	rig.rebindVerification(t, "true")
+	rig.agents.answers("Main already has this.\n\n" + TurnStopMarker + " " + TurnStopSatisfied)
+
+	job := rig.job(t)
+	if err := rig.runner.Run(context.Background(), job); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !job.Satisfied() {
+		t.Fatal("a satisfied verdict with nothing on the branch did not conclude the task")
+	}
+	if len(rig.forge.prs) != 0 {
+		t.Fatalf("pull requests = %d, want none for a stale issue", len(rig.forge.prs))
+	}
+}
+
 // TestRunner_TheBindingsImageSandboxesTheWorker: naming an image requires the
 // sandbox, because the container is where the checkout is made, verified and
 // published.
