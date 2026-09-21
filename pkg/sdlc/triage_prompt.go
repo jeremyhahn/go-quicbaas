@@ -163,7 +163,9 @@ func TriagePrompt(spec TriagePromptSpec) (string, error) {
 	// has to avoid.
 	b.WriteString("\n## Open issues in this project\n\n")
 	b.WriteString("This list includes the issue you are triaging. An issue is never a " +
-		"duplicate of itself.\n\n")
+		"duplicate of itself. Each entry is a number and a title only: you have " +
+		"not read these issues, so a duplicate verdict must rest on the titles " +
+		"describing the same defect or change, not on a shared area.\n\n")
 	writeTriageCandidates(&b, 0, spec.OpenIssues)
 
 	b.WriteString("\n## This project's verification commands\n\n")

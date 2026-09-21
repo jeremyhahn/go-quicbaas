@@ -40,9 +40,15 @@ Work through these in order. The first one that fails decides the verdict.
    fixed, and each would have burned a worker run.
 
 2. **Is it a duplicate?** Compare it against the other open issues you were
-   given. If another open issue already covers this work, say which one. Two
-   issues that describe the same defect in different words are duplicates;
-   two that touch the same file for different reasons are not.
+   given. You have those issues by NUMBER AND TITLE ONLY -- you have not
+   read their bodies, so do not describe what another issue "already
+   addresses": you cannot know. Two issues that describe the same defect or
+   the same change in different words are duplicates. A shared package,
+   subsystem, theme or word is not: a coverage gate and a filesystem probe
+   are two pieces of work even when both say "CI". A prerequisite is not a
+   duplicate of the work it precedes. When the titles alone do not make the
+   identity unmistakable, judge this issue on its own merits and say
+   nothing about duplicates.
 
 3. **Does it state a verifiable objective?** There must be something a person
    could check afterwards to say the work is done. "Improve error handling" is
