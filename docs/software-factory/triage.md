@@ -115,6 +115,38 @@ table prices them accordingly, and
 `TestClassifyTriage_OnlyReadyIsEverReady` asserts the property over the whole
 table rather than case by case.
 
+### A reply that is not a verdict is not posted
+
+The table says what a reply *classifies as*; it does not say every reply is
+acted on. The runner sets a reply aside — audited as `sdlc:triage_unusable`,
+written nowhere on the forge, and judged again on a later pass — when it is:
+
+- `undeclared` or `unreadable`;
+- any verdict other than `ready` whose prose, with the marker lines removed,
+  is empty — the charter demands evidence, and "the evidence:" followed by
+  nothing tells a person nothing;
+- a `duplicate` naming the issue itself, or an issue that is not among the
+  open issues the pass listed.
+
+These are a model failing — out of rounds, or lost the marker vocabulary —
+not findings about the work. Posting them used to make each one triage's last
+word on the issue, which froze re-triage until a person spoke. Measured on
+go-luks2 on the NPU (2026-09-21): one pass posted a misspelt self-duplicate, two
+27-byte not-actionables with no evidence, and a duplicate of an unrelated issue.
+
+**The retry is bounded.** A set-aside reply leaves the issue a candidate, so a
+model that fails it the same way every pass would be asked every fifteen
+minutes. The runner counts set-asides per issue and default-branch head,
+skips the issue after two (`sdlc:triage_skipped`), and asks again only when the
+head moves or somebody comments — the two things that change what the model is
+shown. The count is per node process; a restart asks again.
+
+What this cannot catch is a duplicate that names a real open issue for a
+wrong reason. The charter now tells the model it holds the other issues by
+number and title only and that a shared area is not the same work; if that
+class keeps recurring on a small model, the answer is a larger one, not more
+parsing.
+
 ## The two checks that earn their keep
 
 **Already done.** The agent is given a read-only checkout of the project's
@@ -272,8 +304,12 @@ job the engine refuses, is a deferred failure drained by `SweepFailures` and
 logged once.
 
 Every verdict is written to the job's audit trail as `sdlc:triage_verdict` with
-the issue, outcome, disposition, duplicate reference and reply size, so an
-operator can say what triage concluded without re-reading the forge.
+the issue, outcome, disposition, duplicate reference, reply size, the number
+of tool calls the turn made and its stop reason, so an operator can say what
+triage concluded without re-reading the forge. The last two are what tell a
+judgement from a give-up: an OpenVINO turn reports each command it ran as a
+`tool_use` block, and an answer forced on its final, tool-less round carries
+`stop_reason=tool_budget_spent` rather than `end_turn`.
 
 ## Where the prompt lives
 
