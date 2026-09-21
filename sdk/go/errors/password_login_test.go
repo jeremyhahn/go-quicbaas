@@ -70,7 +70,9 @@ func TestIsPasswordLoginUnsupported_Negatives(t *testing.T) {
 // TestPasswordLoginUnsupported_Wrapped verifies the predicate sees through
 // error wrapping, so callers that decorate the error still classify it.
 func TestPasswordLoginUnsupported_Wrapped(t *testing.T) {
-	base := NewPasswordLoginUnsupported("auth.Login")
+	// Held as an error, the way every caller holds it: Go 1.27's vet reads
+	// %w's operand statically and objects to the concrete pointer type.
+	var base error = NewPasswordLoginUnsupported("auth.Login")
 	wrapped := fmt.Errorf("login failed: %w", base)
 	if !IsPasswordLoginUnsupported(wrapped) {
 		t.Error("IsPasswordLoginUnsupported did not see through wrapping")
