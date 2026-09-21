@@ -525,6 +525,42 @@ func TestTriageRunner_AVerdictWithoutEvidenceIsNotAVerdict(t *testing.T) {
 	}
 }
 
+// TestTriageRunner_StopsAskingAfterTwoUnusableRepliesAtOneHead proves the
+// bound: the same runner sets an issue aside twice at one head and then skips
+// it, audited, until the head moves or somebody speaks.
+func TestTriageRunner_StopsAskingAfterTwoUnusableRepliesAtOneHead(t *testing.T) {
+	first := newTriageRig(t)
+	first.forge.putIssue(303, "some issue")
+	first.answers("SDLC-TRIAGE: not-actionable")
+	if err := first.run(); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	second := newTriageRigOver(t, first)
+	second.runner = first.runner
+	second.answers("SDLC-TRIAGE: not-actionable")
+	if err := second.run(); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if !second.audited("sdlc:triage_unusable") {
+		t.Fatal("the second pass still asks, and sets the reply aside")
+	}
+	third := newTriageRigOver(t, first)
+	third.runner = first.runner
+	third.answers("This would have been a fine verdict.\n\nSDLC-TRIAGE: not-actionable")
+	if err := third.run(); err != nil {
+		t.Fatalf("third run: %v", err)
+	}
+	if third.audited("sdlc:triage_verdict") {
+		t.Fatal("the third pass must not ask again at the same head")
+	}
+	if details, ok := third.auditDetails("sdlc:triage_skipped"); !ok || !strings.Contains(details, "issue=303") {
+		t.Fatalf("the skip is audited with the issue, got %q", details)
+	}
+	if got := third.comments(303); len(got) != 0 {
+		t.Fatalf("a skipped issue is not written to, got %v", got)
+	}
+}
+
 // TestTriageRunner_AnUnusableReplyLeavesTheIssueForTheNextPass proves the
 // point of not posting: the issue carries no word from triage, so the next
 // pass judges it again -- and a usable reply then lands normally.

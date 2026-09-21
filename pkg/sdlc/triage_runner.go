@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -174,6 +175,12 @@ type TriageRunner struct {
 	access forgeAccess
 
 	issueLimit int
+
+	// unusable counts, per issue at a given default-branch head, the replies
+	// this runner has set aside as not being verdicts. See judge for why it
+	// is consulted and triageUnusableRetries for the bound.
+	unusable   map[string]int
+	unusableMu sync.Mutex
 
 	// defaultAgent is the node's triage agent; see TriageRunnerConfig.
 	defaultAgent WorkerConfig
@@ -850,12 +857,51 @@ func (s *triageRun) teardownSession(ctx context.Context) {
 // the run moves on: the sweep is the only path the other issues have, and
 // losing all of them to one bad record is the failure mode this job exists to
 // remove, not to reproduce.
+// triageUnusableRetries is how many replies the runner sets aside for one
+// issue at one head before it stops asking until something changes.
+//
+// AN UNUSABLE REPLY LEAVES NO MARK ON THE ISSUE, which is the point of it --
+// and also means the issue is a candidate again on every pass. A model that
+// fails an issue the same way each time would then be asked every fifteen
+// minutes for as long as the head stands: measured on go-luks2#106 and #79,
+// 27- and 54-byte replies on three passes running. Two tries is the bound;
+// after that the issue waits for the head to move or for somebody to speak,
+// both of which change what the model is shown.
+const triageUnusableRetries = 2
+
+// unusableKey names one issue at one head.
+func (s *triageRun) unusableKey(issue ForgeIssue) string {
+	return s.repo.String() + "#" + strconv.Itoa(issue.Number) + "@" + s.headSHA
+}
+
+func (r *TriageRunner) unusableCount(key string) int {
+	r.unusableMu.Lock()
+	defer r.unusableMu.Unlock()
+	return r.unusable[key]
+}
+
+func (r *TriageRunner) noteUnusable(key string) int {
+	r.unusableMu.Lock()
+	defer r.unusableMu.Unlock()
+	if r.unusable == nil {
+		r.unusable = map[string]int{}
+	}
+	r.unusable[key]++
+	return r.unusable[key]
+}
+
 func (s *triageRun) judge(ctx context.Context) (orchestration.JobState, error) {
 	for i := range s.candidates {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
 		issue := s.candidates[i]
+		if s.runner != nil && s.runner.unusableCount(s.unusableKey(issue)) >= triageUnusableRetries {
+			s.job.Audit("sdlc:triage_skipped", "issue="+strconv.Itoa(issue.Number)+
+				" reason=the model gave no usable verdict on "+strconv.Itoa(triageUnusableRetries)+
+				" passes at head "+s.headSHA+"; waiting for the head to move or a comment")
+			continue
+		}
 		if err := s.judgeIssue(ctx, issue); err != nil {
 			s.job.Audit("sdlc:triage_failed", "issue="+strconv.Itoa(issue.Number)+" error="+err.Error())
 			s.job.Emit(orchestration.JobStateExecuting,
@@ -950,9 +996,13 @@ func (s *triageRun) isOpenCandidate(number int) bool {
 // the pass judged the issue and got nothing it could act on -- which is what
 // distinguishes a model that keeps failing from a pass that never ran.
 func (s *triageRun) recordUnusable(issue ForgeIssue, verdict TriageVerdict, turn AgentTurn, reason string) {
+	tries := 0
+	if s.runner != nil {
+		tries = s.runner.noteUnusable(s.unusableKey(issue))
+	}
 	s.job.Audit("sdlc:triage_unusable", "issue="+strconv.Itoa(issue.Number)+
 		" outcome="+verdict.Outcome.String()+" reply_bytes="+strconv.Itoa(turn.ReplyBytes)+
-		" reason="+reason)
+		" tries="+strconv.Itoa(tries)+" reason="+reason)
 	s.job.Emit(orchestration.JobStateExecuting,
 		"issue #"+strconv.Itoa(issue.Number)+": the reply was not a verdict ("+reason+
 			"); nothing was written to the issue and the next pass judges it again")
