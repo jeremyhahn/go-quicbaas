@@ -974,15 +974,23 @@ func (s *runnerRun) publishPlan() publishPlan {
 // round the findings are appended — the contract stays first and whole.
 func (s *runnerRun) execute(ctx context.Context) (orchestration.JobState, error) {
 	if s.sessionID == "" {
-		if s.job.Resumed == nil && !s.rolled {
+		// THREE RUNS LEGITIMATELY REACH A TURN WITH NO SESSION: one resumed
+		// at reviewing, one whose full session was rolled, and one that never
+		// spawned because its task already had an open pull request
+		// (resumeReview sent it straight to the gate) and the gate has now
+		// asked for a round. The last was refused here as a run that skipped
+		// initialization — measured on go-quicbaas#53 the moment the gate
+		// began reporting a red pipeline ahead of a missing approval
+		// (2026-09-21): the CI-red round it had waited an hour for died on
+		// this line. A run with NO round asked for and no session is the
+		// programming error the refusal is for.
+		if s.job.Resumed == nil && !s.rolled && !s.roundRequested {
 			return "", &WorkerSessionError{TaskID: s.taskID(), Message: "there is no worker session to prompt"}
 		}
-		// A run resumed at reviewing holds no container, and a round the
-		// gate asked for needs one. Initializing is the only state that
-		// spawns a worker; the round and its findings are already restored
-		// from the persisted iteration and job memory.
+		// Initializing is the only state that spawns a worker; the round
+		// and its findings are already on the job's iteration and memory.
 		s.job.Emit(orchestration.JobStateInitializing,
-			"another round needs a worker the resumed run does not hold; the attempt's container is spawned again")
+			"another round needs a worker this run does not hold; the attempt's container is spawned")
 		return orchestration.JobStateInitializing, nil
 	}
 	if s.attempt == nil {

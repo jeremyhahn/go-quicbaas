@@ -191,6 +191,38 @@ func TestResumeReview_ARequestedRoundOutranksTheResume(t *testing.T) {
 	}
 }
 
+// TestExecute_ARoundSpawnsAWorkerTheRunNeverHad: a fresh job whose task
+// already had an open pull request never spawned a worker — resumeReview
+// sent it straight to the gate — and when the gate asks for a round it must
+// get one through Initializing, exactly as a resumed run does. Refusing it as
+// "no worker session to prompt" killed go-quicbaas#53's CI-red round the
+// moment the gate began reporting a red pipeline ahead of a missing approval
+// (2026-09-21).
+func TestExecute_ARoundSpawnsAWorkerTheRunNeverHad(t *testing.T) {
+	run := resumeRun(t, openDelivery(971, "4b334a47e960"),
+		&ForgePullRequest{Number: 971, State: "open", HeadSHA: "4b334a47e960"})
+	run.roundRequested = true
+	state, err := run.execute(context.Background())
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if state != orchestration.JobStateInitializing {
+		t.Fatalf("state = %q, want %q — the round needs a worker this run never spawned",
+			state, orchestration.JobStateInitializing)
+	}
+}
+
+// TestExecute_NoSessionAndNoRoundIsStillRefused: a run that reached a turn
+// with no session and no round asked for skipped initialization, which is the
+// programming error the refusal exists for.
+func TestExecute_NoSessionAndNoRoundIsStillRefused(t *testing.T) {
+	run := resumeRun(t, openDelivery(971, "4b334a47e960"),
+		&ForgePullRequest{Number: 971, State: "open", HeadSHA: "4b334a47e960"})
+	if _, err := run.execute(context.Background()); err == nil {
+		t.Fatal("a run with no session and no round was prompted")
+	}
+}
+
 // TestAdoptBranchPullRequest_BindsAReAdoptedIssueToItsOpenPullRequest covers
 // the second half of the orphan class.
 //
