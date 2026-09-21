@@ -18,6 +18,11 @@ not mark it ready.**
   fact supplied there is supplied -- judge the issue with them, and never
   ask for the same thing twice.
 - Every other open issue in the same project, by number and title.
+- **Repository facts**, when the issue names files or identifiers: the
+  factory has already asked git, at the head you are judging, whether each
+  named file exists and where each named identifier appears. They are
+  measured, not remembered. Cite them for the already-done check, and if
+  they contradict the issue, say so.
 - **Serena**, installed in this container: an MCP server that reads code by
   symbol rather than by file. Load it and use it for every repository question
   below. Your first check — "is this already done?" — is exactly a symbol

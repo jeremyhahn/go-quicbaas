@@ -103,6 +103,11 @@ type TriagePromptSpec struct {
 	// Verification is the binding's verification commands, so the agent can
 	// judge whether they apply to this issue at all.
 	Verification []string
+
+	// Facts is the rendered repository-facts section, or "" when none were
+	// measured. See triage_facts.go for what it is and why the runner, not
+	// the model, measures it.
+	Facts string
 }
 
 // Validate checks the spec names an issue that can be triaged.
@@ -196,6 +201,10 @@ func TriagePrompt(spec TriagePromptSpec) (string, error) {
 	b.WriteString("\n### Discussion\n\n")
 	writeTriageComments(&b, spec.Comments)
 
+	if facts := strings.TrimSpace(spec.Facts); facts != "" {
+		b.WriteString("\n" + facts + "\n")
+	}
+
 	// The instruction goes LAST, after the evidence it applies to. Anything
 	// appended here is outside every cached prefix, so keep it short.
 	b.WriteString("\nJudge issue #" + strconv.Itoa(spec.Issue.Number) +
@@ -216,6 +225,11 @@ func TriagePrompt(spec TriagePromptSpec) (string, error) {
 // the comments after triage's last verdict are marked as the answer, and the
 // discussion opens by saying which verdict they answer.
 func writeTriageComments(b *strings.Builder, comments []ForgeComment) {
+	comments, omitted := budgetTriageComments(comments, triageDiscussionBudget)
+	if omitted > 0 {
+		b.WriteString("(" + strconv.Itoa(omitted) + " earlier comment(s) omitted to fit the model's context; " +
+			"the newest are kept in full)\n\n")
+	}
 	lastVerdict := lastTriageVerdictIndex(comments)
 	if lastVerdict >= 0 && spokenAfter(comments, lastVerdict) {
 		b.WriteString("Triage has judged this issue before; its last verdict is the comment " +
@@ -242,6 +256,34 @@ func writeTriageComments(b *strings.Builder, comments []ForgeComment) {
 	if rendered == 0 {
 		b.WriteString("(none)\n")
 	}
+}
+
+// triageDiscussionBudget bounds the discussion's bytes in one prompt.
+//
+// THE PROMPT MUST FIT THE SMALLEST MODEL THAT JUDGES. go-truststrap#23
+// carried a discussion that rendered to ~19,500 tokens against an NPU that
+// accepts 15,444, and was refused before every prompt -- never judged, on
+// every pass, with an audit line nobody reads. The charter is ~1,500 tokens,
+// the candidate list and body a few thousand, the measured facts at most
+// ~1,000; 20,000 bytes of discussion (~5,000 tokens) keeps the whole prompt
+// near 10,000 tokens. The NEWEST comments are what a re-triage needs --
+// triage's last verdict and whatever answered it -- so the oldest go first.
+const triageDiscussionBudget = 20000
+
+// budgetTriageComments drops the oldest comments until the rest fit, and
+// says how many it dropped. A single comment larger than the whole budget is
+// kept anyway: the newest comment is never omitted.
+func budgetTriageComments(comments []ForgeComment, budget int) ([]ForgeComment, int) {
+	total := 0
+	for _, c := range comments {
+		total += len(c.Body)
+	}
+	start := 0
+	for start < len(comments)-1 && total > budget {
+		total -= len(comments[start].Body)
+		start++
+	}
+	return comments[start:], start
 }
 
 // lastTriageVerdictIndex is the index of the newest comment triage itself

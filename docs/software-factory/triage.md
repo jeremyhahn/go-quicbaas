@@ -154,6 +154,24 @@ default branch and is told to read it before anything else. An issue whose work
 is already present is `not-actionable` with file-and-line evidence — the
 six-duplicate case above, caught for the cost of a read.
 
+The deterministic half of that check is done by the **runner**, not the model.
+Before each issue is prompted, `ExtractTriageProbes` reads the file paths and
+backticked identifiers the issue names (bounded: ten paths, eight identifiers),
+`MeasureTriageFacts` asks git in the session's container whether each path is
+tracked (`git ls-files`) and where each identifier appears (`git grep`, three
+matches), and the answers are rendered as a **Repository facts** section of the
+prompt, measured at the head being judged. The charter tells the agent they are
+measured, not remembered, and to cite them.
+
+Why: a frontier model runs those commands itself; a small one does not.
+Measured on the NPU (2026-09-21), qwen3-8b called the tool on a short prompt
+and never once on the real ~7k-token triage prompt — `tool_uses=0` on every
+turn — while writing "I have examined the code". Its verdicts were ungrounded
+by construction, and no amount of asking changes that; measuring in Go does.
+The facts stop at facts (this file exists, this symbol appears here); whether
+the work is *done* remains the judgement. A measurement that fails is audited
+(`sdlc:triage_facts_failed`) and the prompt goes out without the section.
+
 **Duplicate.** The prompt carries every **other open** issue in the project by
 number and title. The issue under triage is excluded from its own candidate
 list (an issue offered to itself is the one duplicate verdict that is always

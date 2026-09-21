@@ -1160,6 +1160,11 @@ type fakeContainer struct {
 	// it, which is what makes a resumed attempt skip the clone.
 	repos map[string]bool
 
+	// tree is the checkout's files by path, for the probes triage measures
+	// (git ls-files, git grep). Nil means the container does not model them,
+	// and a probe is refused the way any unmodelled git subcommand is.
+	tree map[string]string
+
 	// origins is what "git remote get-url origin" answers, per directory. A
 	// clone records the URL it cloned from; a TEST overwrites one to model
 	// the fault the pre-flight exists for — an attempt directory a dead
@@ -1405,6 +1410,32 @@ func (c *fakeContainer) exec(containerID string, spec *orchestration.ExecSpec) (
 		}
 		c.pushes = append(c.pushes, pushedRef{Branch: branch, RemoteBranch: remote, Force: force})
 		return &orchestration.ExecResult{}, nil
+	case "ls-files":
+		if c.tree == nil {
+			return nil, &InvalidInputError{Field: "cmd", Message: "this container does not model git ls-files"}
+		}
+		want := args[len(args)-1]
+		if _, ok := c.tree[want]; ok {
+			return &orchestration.ExecResult{Stdout: want + "\n"}, nil
+		}
+		return &orchestration.ExecResult{}, nil
+	case "grep":
+		if c.tree == nil {
+			return nil, &InvalidInputError{Field: "cmd", Message: "this container does not model git grep"}
+		}
+		needle := args[len(args)-1]
+		var out strings.Builder
+		for file, content := range c.tree {
+			for n, line := range strings.Split(content, "\n") {
+				if strings.Contains(line, needle) {
+					out.WriteString(file + ":" + strconv.Itoa(n+1) + ":" + line + "\n")
+				}
+			}
+		}
+		if out.Len() == 0 {
+			return &orchestration.ExecResult{ExitCode: 1}, nil
+		}
+		return &orchestration.ExecResult{Stdout: out.String()}, nil
 	case "rev-parse":
 		if len(args) > 1 && args[1] == "--git-dir" {
 			if c.repos[dir] {
@@ -1628,6 +1659,16 @@ func (c *fakeContainer) clonesMade() []clonedRepo {
 
 // seedRepo makes dir look like a repository already cloned from url: the mount
 // a dead predecessor left behind, which the clone's idempotence adopts.
+// seedFile puts one file in the checkout the probes see.
+func (c *fakeContainer) seedFile(path, content string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.tree == nil {
+		c.tree = map[string]string{}
+	}
+	c.tree[path] = content
+}
+
 func (c *fakeContainer) seedRepo(dir, url string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

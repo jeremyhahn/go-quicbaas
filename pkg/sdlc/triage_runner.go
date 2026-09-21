@@ -921,6 +921,7 @@ func (s *triageRun) judgeIssue(ctx context.Context, issue ForgeIssue) error {
 		OpenIssues:   s.open,
 		Verification: s.binding.Verification,
 		MayClose:     s.binding.TriageMayClose,
+		Facts:        s.measureFacts(ctx, issue),
 	})
 	if err != nil {
 		return err
@@ -1006,6 +1007,29 @@ func (s *triageRun) recordUnusable(issue ForgeIssue, verdict TriageVerdict, turn
 	s.job.Emit(orchestration.JobStateExecuting,
 		"issue #"+strconv.Itoa(issue.Number)+": the reply was not a verdict ("+reason+
 			"); nothing was written to the issue and the next pass judges it again")
+}
+
+// measureFacts asks the checkout about what the issue names and renders the
+// answer for the prompt, or renders nothing when the measurement failed.
+//
+// FAIL-SOFT, AND AUDITED. The facts are evidence the model would otherwise
+// have to fetch; a checkout that will not answer leaves the model where it
+// was, which is worse than before only if the failure is silent. So the
+// failure is written to the audit trail and the prompt goes out without the
+// section, rather than the issue going unjudged.
+func (s *triageRun) measureFacts(ctx context.Context, issue ForgeIssue) string {
+	probes := ExtractTriageProbes(issue.Title, issue.Body)
+	if len(probes.Paths) == 0 && len(probes.Identifiers) == 0 {
+		return ""
+	}
+	facts, err := MeasureTriageFacts(sessionExec(ctx, s.job, s.sessionID), s.containerDir, s.headSHA, probes)
+	if err != nil {
+		s.job.Audit("sdlc:triage_facts_failed", "issue="+strconv.Itoa(issue.Number)+" error="+err.Error())
+		return ""
+	}
+	s.job.Audit("sdlc:triage_facts", "issue="+strconv.Itoa(issue.Number)+
+		" paths="+strconv.Itoa(len(facts.Paths))+" identifiers="+strconv.Itoa(len(facts.Identifiers)))
+	return facts.Render()
 }
 
 // recordVerdict writes the verdict to the job's audit trail and its event

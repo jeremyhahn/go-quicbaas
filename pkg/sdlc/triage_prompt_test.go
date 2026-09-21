@@ -155,6 +155,43 @@ func TestTriagePrompt_MarksTheAnswerToTriagesLastVerdict(t *testing.T) {
 	}
 }
 
+// TestTriagePrompt_ALongDiscussionKeepsItsNewestComments proves the budget:
+// the oldest comments are dropped with a count, the newest -- triage's last
+// verdict and the answer to it -- survive whole, and a thread that fits is
+// untouched.
+func TestTriagePrompt_ALongDiscussionKeepsItsNewestComments(t *testing.T) {
+	big := strings.Repeat("x", triageDiscussionBudget/2)
+	comments := []ForgeComment{
+		{Body: "first " + big, Author: "a"},
+		{Body: "second " + big, Author: "b"},
+		{Body: "third " + big, Author: "c"},
+		{Body: "verdict <!-- " + triageCommentMarker + " -->", Author: "agent-go-luks2"},
+		{Body: "the answer", Author: "jeremyhahn"},
+	}
+	prompt, err := TriagePrompt(TriagePromptSpec{
+		Repo: RepoRef{Owner: "o", Repo: "r"}, Issue: ForgeIssue{Number: 23, Title: "t", State: "open"}, Comments: comments,
+	})
+	if err != nil {
+		t.Fatalf("TriagePrompt: %v", err)
+	}
+	if strings.Contains(prompt, "first ") || strings.Contains(prompt, "second ") {
+		t.Fatal("the oldest comments must be dropped")
+	}
+	for _, want := range []string{"2 earlier comment(s) omitted", "third ", "the answer", "THIS IS THE ANSWER TO IT"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt must carry %q", want)
+		}
+	}
+	kept, omitted := budgetTriageComments(comments[3:], triageDiscussionBudget)
+	if omitted != 0 || len(kept) != 2 {
+		t.Fatalf("a thread that fits is untouched, got kept=%d omitted=%d", len(kept), omitted)
+	}
+	one, omitted := budgetTriageComments([]ForgeComment{{Body: strings.Repeat("y", triageDiscussionBudget*2)}}, triageDiscussionBudget)
+	if omitted != 0 || len(one) != 1 {
+		t.Fatal("the newest comment is never omitted, however large")
+	}
+}
+
 // TestTriagePrompt_AFirstTriageMarksNothing proves the marks and the opening
 // line appear only on a re-triage: a thread triage has never judged, and a
 // thread whose newest comment IS triage's verdict, both render flat.

@@ -561,6 +561,65 @@ func TestTriageRunner_StopsAskingAfterTwoUnusableRepliesAtOneHead(t *testing.T) 
 	}
 }
 
+// TestTriageRunner_MeasuredFactsReachThePrompt proves the deterministic half
+// of the already-done check is done by the runner: the files and identifiers
+// the issue names are probed in the session's checkout and the answers are in
+// the prompt the model reads, audited.
+func TestTriageRunner_MeasuredFactsReachThePrompt(t *testing.T) {
+	rig := newTriageRig(t)
+	rig.container.seedFile("pkg/luks2/kdf.go", "package luks2\nfunc DeriveKey() {}")
+	rig.forge.putIssue(401, "kdf: `DeriveKey` in pkg/luks2/kdf.go leaks; see pkg/luks2/gone.go and `Vanished`")
+	rig.answers("Grounded.\n\nSDLC-TRIAGE: not-actionable")
+	if err := rig.run(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	rig.agents.mu.Lock()
+	prompts := rig.agents.prompts
+	rig.agents.mu.Unlock()
+	if len(prompts) == 0 {
+		t.Fatal("the issue was never prompted")
+	}
+	prompt := prompts[len(prompts)-1].Prompt
+	for _, want := range []string{
+		"## Repository facts, measured by the factory",
+		"`pkg/luks2/kdf.go` — present",
+		"`pkg/luks2/gone.go` — ABSENT",
+		"`DeriveKey` — found",
+		"`Vanished` — no match",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("the prompt must carry %q:\n%s", want, prompt)
+		}
+	}
+	if details, ok := rig.auditDetails("sdlc:triage_facts"); !ok || !strings.Contains(details, "paths=2") {
+		t.Fatalf("the measurement is audited, got %q", details)
+	}
+}
+
+// TestTriageRunner_AFailedMeasurementIsAuditedNotFatal proves a checkout that
+// will not answer the probes leaves the issue judged without the section and
+// says so on the audit trail.
+func TestTriageRunner_AFailedMeasurementIsAuditedNotFatal(t *testing.T) {
+	rig := newTriageRig(t) // no tree: ls-files and grep are refused
+	rig.forge.putIssue(402, "fix pkg/luks2/kdf.go")
+	rig.answers("Out of scope.\n\nSDLC-TRIAGE: not-actionable")
+	if err := rig.run(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !rig.audited("sdlc:triage_facts_failed") {
+		t.Fatal("a failed measurement is audited")
+	}
+	if got := rig.comments(402); len(got) != 1 {
+		t.Fatalf("the issue is still judged, got %v", got)
+	}
+	rig.agents.mu.Lock()
+	prompt := rig.agents.prompts[len(rig.agents.prompts)-1].Prompt
+	rig.agents.mu.Unlock()
+	if strings.Contains(prompt, "Repository facts") {
+		t.Fatal("no facts section is rendered when the measurement failed")
+	}
+}
+
 // TestTriageRunner_AnUnusableReplyLeavesTheIssueForTheNextPass proves the
 // point of not posting: the issue carries no word from triage, so the next
 // pass judges it again -- and a usable reply then lands normally.
