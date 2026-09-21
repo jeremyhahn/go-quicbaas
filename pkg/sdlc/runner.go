@@ -856,6 +856,21 @@ func (s *runnerRun) spawnRequest(ctx context.Context, mount string) (*orchestrat
 		req.ContainerImage = image
 		req.SandboxMode = orchestration.SandboxModeRequired
 	}
+	// THE WORKER'S GO MUST REACH THE PROJECT'S PRIVATE MODULES, or its
+	// verification fails before its change compiles and the failure is
+	// charged to the work. See ModulePolicy.
+	moduleEnv, err := ModuleEnv(s.attempt.binding.Modules, s.job.Project.Git.RepoURL)
+	if err != nil {
+		return nil, err
+	}
+	if len(moduleEnv) > 0 {
+		if req.Env == nil {
+			req.Env = make(map[string]string, len(moduleEnv))
+		}
+		for k, v := range moduleEnv {
+			req.Env[k] = v
+		}
+	}
 	// SigningScopeDelivery, which is the whole of what makes this container
 	// different from the reviewer's and triage's: its agent serves the commit
 	// signing key as well as the access key, because this worker commits,

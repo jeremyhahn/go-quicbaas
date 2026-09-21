@@ -1037,6 +1037,50 @@ func TestRunner_WorkspaceSpecNamesTheProjectAndItsContextRepos(t *testing.T) {
 	}
 }
 
+// TestRunner_TheBindingsModulePolicyReachesTheWorkersGo: a binding naming a
+// private-module prefix puts GOPRIVATE and the forge rewrite in the worker's
+// environment, derived from the project's own remote; one naming none leaves
+// the environment as the image ships it.
+func TestRunner_TheBindingsModulePolicyReachesTheWorkersGo(t *testing.T) {
+	rig := newRunnerRig(t)
+	rig.repoURL = sshForgeRepoURL
+	if err := rig.rebind(context.Background(), func(b *ProjectBinding) {
+		b.Verification = []string{"true"}
+		b.Forge.SSHHostKey = testSSHHostKey
+		b.Modules.RewritePrefix = "https://github.com/acme/"
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rig.workerWrote()
+	rig.verdictOnPublish("APPROVED", "lgtm")
+	if err := rig.runner.Run(context.Background(), rig.job(t)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	spawn := rig.agents.spawns[0]
+	if got := spawn.Env["GOPRIVATE"]; got != "github.com/acme/*" {
+		t.Errorf("GOPRIVATE = %q", got)
+	}
+	if got := spawn.Env["GIT_CONFIG_KEY_0"]; got != "url.ssh://git@forge.test:2222/acme/.insteadOf" {
+		t.Errorf("GIT_CONFIG_KEY_0 = %q", got)
+	}
+	if got := spawn.Env["GIT_CONFIG_VALUE_0"]; got != "https://github.com/acme/" {
+		t.Errorf("GIT_CONFIG_VALUE_0 = %q", got)
+	}
+
+	plain := newRunnerRig(t)
+	plain.rebindVerification(t, "true")
+	plain.workerWrote()
+	plain.verdictOnPublish("APPROVED", "lgtm")
+	if err := plain.runner.Run(context.Background(), plain.job(t)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, k := range []string{"GOPRIVATE", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"} {
+		if v, ok := plain.agents.spawns[0].Env[k]; ok {
+			t.Errorf("a binding naming no modules set %s=%q", k, v)
+		}
+	}
+}
+
 // TestRunner_TheBindingsImageSandboxesTheWorker: naming an image requires the
 // sandbox, because the container is where the checkout is made, verified and
 // published.

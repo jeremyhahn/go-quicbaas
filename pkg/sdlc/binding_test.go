@@ -67,6 +67,20 @@ func TestProjectBinding_ValidateRefusesEachMissingPart(t *testing.T) {
 		},
 		"host key pinned is fine":  {func(b *ProjectBinding) { b.Forge.SSHHostKey = testSSHHostKey }, nil, ""},
 		"no host key is fine here": {func(b *ProjectBinding) { b.Forge.SSHHostKey = "" }, nil, ""},
+		"module prefix not https": {
+			func(b *ProjectBinding) { b.Modules.RewritePrefix = "http://github.com/acme/" },
+			ErrInvalidInput, "modules.rewrite_prefix",
+		},
+		"module prefix names a repo": {
+			func(b *ProjectBinding) { b.Modules.RewritePrefix = "https://github.com/acme/api/" },
+			ErrInvalidInput, "modules.rewrite_prefix",
+		},
+		"module prefix no trailing slash": {
+			func(b *ProjectBinding) { b.Modules.RewritePrefix = "https://github.com/acme" },
+			ErrInvalidInput, "modules.rewrite_prefix",
+		},
+		"module prefix is fine":    {func(b *ProjectBinding) { b.Modules.RewritePrefix = "https://github.com/acme/" }, nil, ""},
+		"no module prefix is fine": {func(b *ProjectBinding) { b.Modules.RewritePrefix = "" }, nil, ""},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

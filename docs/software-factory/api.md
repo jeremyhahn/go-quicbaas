@@ -262,6 +262,7 @@ the path. Every `forge:` field is described in [the project binding](sdlc.md#the
   "worker": {"backend": "claude", "model": "claude-opus-5",
              "image": "quicbaas/sdlc-worker:latest"},
   "verification": ["make build", "make test", "make lint"],
+  "modules": {"rewrite_prefix": "https://github.com/jeremyhahn/"},
   "review": {"required_approvals": 1, "require_independent_reviewer": true,
              "require_green_checks": true, "reviewers": {"codex": "openai"}},
   "max_review_rounds": 3,
@@ -273,6 +274,9 @@ the path. Every `forge:` field is described in [the project binding](sdlc.md#the
 
 The `onboarding` block is optional and every field of it defaults; see
 [onboarding](sdlc.md#onboarding-a-repository).
+The `modules` block is optional: set `rewrite_prefix` when the project
+depends on private Go modules the forge hosts under its owner; see
+[private modules](sdlc.md#modulesrewrite_prefix--private-go-modules-resolve-at-the-forge).
 
 #### `POST /api/v1/sdlc/projects/{projectID}/onboarding`
 

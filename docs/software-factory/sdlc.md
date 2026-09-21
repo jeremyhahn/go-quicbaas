@@ -906,6 +906,46 @@ RUN set -eux; git --version; ssh -V
 `make test-worker-image` re-checks the same tools on the built image. No host
 key and no forge address is ever baked into the image.
 
+### `modules.rewrite_prefix` — private Go modules resolve at the forge
+
+A Go module is named by its import path (`github.com/<owner>/<repo>`); a
+private one is fetched by git from wherever the code lives — here, the forge.
+`go build` in a fresh container asks the public proxy for that path, is told
+it does not exist, and the verification fails before one line of the change
+compiles. Measured on go-quicbaas#53 (2026-09-21): three review rounds of an
+identical dependency-resolution failure, then an escalation, for work that
+was never at fault. The first two factory projects never hit it because
+neither depends on a private module.
+
+`modules.rewrite_prefix` names the import-path prefix whose modules the forge
+hosts under the project's own owner, as an https URL with a trailing slash:
+
+```json
+"modules": {"rewrite_prefix": "https://github.com/jeremyhahn/"}
+```
+
+From it the runner puts four variables in the **worker's** container
+environment, and nothing anywhere else:
+
+| Variable | Value | Why |
+| --- | --- | --- |
+| `GOPRIVATE` | `github.com/jeremyhahn/*` | the proxy and the checksum database are bypassed for the owner's modules |
+| `GIT_CONFIG_COUNT` | `1` | git reads the rewrite below without a config file being written |
+| `GIT_CONFIG_KEY_0` | `url.ssh://git@forge:2222/jeremyhahn/.insteadOf` | the rewrite target: the project's own `git.repo_url` with the repository dropped — same scheme, user, host, port and owner |
+| `GIT_CONFIG_VALUE_0` | `https://github.com/jeremyhahn/` | the prefix being rewritten |
+
+This is the mechanism the handbook's dependency-resolution convention
+prescribes for containers, and nothing secret travels in it: the rewrite is
+to the same ssh remote the project itself is cloned from, so the access key
+already in the container's ssh-agent and the host key already pinned in its
+`known_hosts` reach the sibling modules exactly as they reach the project.
+`GOFLAGS`, `GONOSUMDB` and `GOINSECURE` are never set.
+
+A prefix that is not `https://<host>/<owner>/` is refused at bind time. A
+project whose `git.repo_url` carries no owner segment to derive the target
+from is refused at spawn, before a worker is charged. An empty policy injects
+nothing, so a project with no private modules gets the image's Go untouched.
+
 ## Onboarding a repository
 
 Binding a project does not only record a policy — it **onboards** the

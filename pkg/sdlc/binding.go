@@ -357,6 +357,10 @@ type ProjectBinding struct {
 	// ReviewerConfig.
 	Reviewer ReviewerConfig `json:"reviewer,omitempty"`
 
+	// Modules says how the worker reaches this project's private Go modules.
+	// Empty for a project with none. See ModulePolicy.
+	Modules ModulePolicy `json:"modules,omitempty"`
+
 	// MaxReviewRounds bounds how many times review may send the work back
 	// before the task is escalated to a person. Zero takes
 	// DefaultMaxReviewRounds.
@@ -446,6 +450,9 @@ func (b *ProjectBinding) Validate() error {
 	}
 	if b.MaxReviewRounds < 0 {
 		return &InvalidInputError{Field: "max_review_rounds", Message: "must not be negative"}
+	}
+	if err := b.Modules.Validate(); err != nil {
+		return err
 	}
 	if err := b.Discovery.Validate(); err != nil {
 		return err
