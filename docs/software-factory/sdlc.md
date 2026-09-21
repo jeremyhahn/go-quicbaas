@@ -1754,3 +1754,16 @@ script's second rule is the `Seal*` deprecation alias surface — see
 [../barrier/engineering.md](../barrier/engineering.md). It fails closed when
 it cannot establish a git work tree, and it runs before golangci-lint so a
 regression reports in milliseconds rather than after the long linter.
+
+## The worker's contract is re-read on every attempt after the first
+
+The task's `Description` is the issue contract rendered at adoption (title,
+body, discussion). The first attempt is handed exactly that, rendered moments
+before dispatch. Every later attempt — a readmission after a park, a resumed
+run — renders the contract again from the forge at each turn
+(`runnerRun.freshContract`), because the comment that unparked the task is
+what the worker most needs to read: the answer to a needs-info, the operator
+repair, the owner's ruling. A forge that will not answer leaves the adopted
+contract in place and audits `sdlc:contract_stale`, so a worker that later
+claims it was not told can be checked against the trail.
+

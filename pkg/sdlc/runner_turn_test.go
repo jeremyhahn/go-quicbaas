@@ -281,6 +281,61 @@ func TestRunner_TheNextAttemptIsToldWhatTheLastOneSaid(t *testing.T) {
 // TestRunner_AnIdenticalPromptAfterANoChangeTurnIsRefused: the guard behind
 // rule three. If the note that makes the prompt different is ever lost, the
 // run parks with a stated reason rather than spending the attempt.
+// TestRunner_ANextAttemptSeesWhatWasSaidSinceAdoption proves the contract is
+// read from the forge at every turn: a comment posted after the task was
+// adopted -- the answer, the repair, the ruling -- reaches the next attempt's
+// prompt. Measured need: go-truststrap#24's attempt 3 spent three review
+// rounds insisting a file it had been handed on the issue did not exist.
+func TestRunner_ANextAttemptSeesWhatWasSaidSinceAdoption(t *testing.T) {
+	rig := newRunnerRig(t)
+	rig.forge.putIssue(25, "Fix the thing")
+	rig.agents.answers("Implemented it all.")
+	if err := rig.runner.Run(context.Background(), rig.job(t)); err == nil {
+		t.Fatal("the first attempt reported success")
+	}
+	first := rig.agents.promptTexts()
+	if strings.Contains(first[0], "Here is the template you asked for") {
+		t.Fatal("the comment was not posted yet and must not be in the first prompt")
+	}
+	if _, err := rig.forge.CommentOnIssue(context.Background(), RepoRef{Owner: "acme", Repo: "api"}, 25,
+		"Here is the template you asked for: release-alpha.mk v2.3.5"); err != nil {
+		t.Fatal(err)
+	}
+	second := rig.job(t)
+	second.Config.Attempt = 2
+	if err := rig.runner.Run(context.Background(), second); err == nil {
+		t.Fatal("the second attempt reported success")
+	}
+	prompts := rig.agents.promptTexts()
+	if len(prompts) != 2 {
+		t.Fatalf("prompts = %d, want one per attempt", len(prompts))
+	}
+	if !strings.Contains(prompts[1], "Here is the template you asked for") {
+		t.Fatalf("the second attempt must be handed the comment posted since adoption:\n%s", prompts[1])
+	}
+}
+
+// TestRunner_AContractTheForgeWillNotRefreshIsTheAdoptedOne proves the
+// fallback: when the forge cannot be read the worker still gets the contract
+// the task was adopted with, and the audit trail says so.
+func TestRunner_AContractTheForgeWillNotRefreshIsTheAdoptedOne(t *testing.T) {
+	rig := newRunnerRig(t)
+	rig.forge.listCommentsErr = errors.New("forge unreachable") // the refresh cannot read the discussion
+	rig.agents.answers("Implemented it all.")
+	second := rig.job(t)
+	second.Config.Attempt = 2
+	if err := rig.runner.Run(context.Background(), second); err == nil {
+		t.Fatal("the attempt reported success")
+	}
+	prompts := rig.agents.promptTexts()
+	if len(prompts) != 1 || !strings.Contains(prompts[0], "The thing is broken in a specific and load-bearing way.") {
+		t.Fatalf("the adopted contract must be handed over when the forge fails, got %v", prompts)
+	}
+	if got := rig.auditDetails("sdlc:contract_stale"); len(got) == 0 || !strings.Contains(got[0], "issue=25") {
+		t.Fatalf("the stale contract is audited with the issue, got %v", got)
+	}
+}
+
 func TestRunner_AnIdenticalPromptAfterANoChangeTurnIsRefused(t *testing.T) {
 	rig := newRunnerRig(t)
 	run := newRunnerRun(t, rig)
@@ -289,7 +344,7 @@ func TestRunner_AnIdenticalPromptAfterANoChangeTurnIsRefused(t *testing.T) {
 	// A previous attempt that answered this exact prompt — the one this run
 	// is about to compose, note and all — and changed nothing.
 	run.delivery.LastTurn = &AgentTurn{Attempt: 1, Reply: "did it", Outcome: TurnOutcomeClaimedWork}
-	prompt, err := run.turnPrompt()
+	prompt, err := run.turnPrompt(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

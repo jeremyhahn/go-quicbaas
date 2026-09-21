@@ -960,7 +960,7 @@ func (s *runnerRun) execute(ctx context.Context) (orchestration.JobState, error)
 			return "", err
 		}
 	}
-	prompt, err := s.turnPrompt()
+	prompt, err := s.turnPrompt(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -976,8 +976,8 @@ func (s *runnerRun) execute(ctx context.Context) (orchestration.JobState, error)
 
 // turnPrompt is the whole text one turn is handed: the issue contract, the
 // round's findings, and whatever the last no-change turn added.
-func (s *runnerRun) turnPrompt() (string, error) {
-	prompt := s.attempt.task.Description
+func (s *runnerRun) turnPrompt(ctx context.Context) (string, error) {
+	prompt := s.freshContract(ctx)
 	if strings.TrimSpace(prompt) == "" {
 		return "", &InvalidInputError{
 			Field:   "task.description",
@@ -991,6 +991,62 @@ func (s *runnerRun) turnPrompt() (string, error) {
 		prompt += "\n\n" + note
 	}
 	return prompt, nil
+}
+
+// freshContract is the issue contract as the forge holds it NOW, or the one
+// the task was adopted with when the forge will not answer.
+//
+// THE CONTRACT USED TO BE RENDERED ONCE, AT ADOPTION. Task.Description was
+// written by the issue source when the task was created and read back by
+// every attempt after, so a worker readmitted after a park was handed the
+// discussion as it stood the day the task was adopted -- and never saw the
+// comment that unparked it. That comment is the whole mechanism: a needs-info
+// is answered on the issue, an operator repair is posted on the issue, a
+// ruling is given on the issue, and then the task is readmitted. Measured on
+// go-truststrap#24 (2026-09-21): the template the worker had asked for was
+// posted verbatim, the task readmitted, and attempt 3 spent three review
+// rounds insisting the file "cannot be found", because its prompt predated
+// the post. The forge is therefore asked at every turn; two reads, against
+// a worker turn that costs minutes.
+//
+// FAIL-SOFT, AUDITED. A forge that cannot be read leaves the worker the
+// adopted contract rather than nothing -- the attempt is not failed for the
+// forge's outage -- and the audit trail says the prompt may be stale, which
+// is what an operator needs when a worker later claims it was not told.
+func (s *runnerRun) freshContract(ctx context.Context) string {
+	stored := s.attempt.task.Description
+	// THE FIRST ATTEMPT KEEPS THE ADOPTED CONTRACT. It was rendered from the
+	// same forge moments before this job was dispatched, so re-reading it
+	// buys nothing; and a task adopted with no contract at all is refused
+	// below rather than papered over by a fresh read. Every later attempt --
+	// a readmission, a resume -- is the one whose issue has been spoken to
+	// since, and is what this exists for.
+	if s.attemptNumber() <= 1 && s.job.Resumed == nil {
+		return stored
+	}
+	if strings.TrimSpace(stored) == "" || s.attempt.forge == nil || s.attempt.issue <= 0 {
+		return stored
+	}
+	issue, err := s.attempt.forge.GetIssue(ctx, s.attempt.repo, s.attempt.issue)
+	if err == nil && issue == nil {
+		err = &NotFoundError{Entity: "issue", TenantID: s.job.Context().TenantID, ID: IssueRefString(s.attempt.repo, s.attempt.issue)}
+	}
+	var comments []ForgeComment
+	if err == nil {
+		comments, err = s.attempt.forge.ListIssueComments(ctx, s.attempt.repo, s.attempt.issue)
+	}
+	var contract string
+	if err == nil {
+		contract, err = IssueContract(IssueContractSpec{
+			Repo: s.attempt.repo, IssueNumber: issue.Number, Title: issue.Title, Body: issue.Body, Comments: comments,
+		})
+	}
+	if err != nil {
+		s.job.Audit("sdlc:contract_stale", "issue="+strconv.Itoa(s.attempt.issue)+
+			" error="+err.Error()+"; the worker is handed the contract the task was adopted with")
+		return stored
+	}
+	return contract
 }
 
 // priorTurnNote is what this prompt says that the last one did not: the
