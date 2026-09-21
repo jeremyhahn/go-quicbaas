@@ -108,8 +108,6 @@ func (u *UnixTransportCredentials) ServerHandshake(conn net.Conn) (net.Conn, cre
 func (u *UnixTransportCredentials) Info() credentials.ProtocolInfo {
 	return credentials.ProtocolInfo{
 		SecurityProtocol: "unix_peercred",
-		SecurityVersion:  "1.0",
-		ServerName:       "",
 	}
 }
 

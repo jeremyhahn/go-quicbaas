@@ -1007,7 +1007,7 @@ func (h *AMQPHandler) handleQueueBind(ctx context.Context, frame *AMQPFrame, arg
 	if len(args) < offset+queueNameLen {
 		return nil, &ErrAMQPProtocolError{Message: "invalid queue name"}
 	}
-	queueName := string(args[offset : offset+queueNameLen])
+	queueName := args[offset : offset+queueNameLen]
 	offset += queueNameLen
 
 	// Exchange name (shortstring)
@@ -1045,7 +1045,7 @@ func (h *AMQPHandler) handleQueueBind(ctx context.Context, frame *AMQPFrame, arg
 	state.mu.Lock()
 	ch := state.channels[frame.Channel]
 	if ch != nil {
-		queue := ch.queues[queueName]
+		queue := ch.queues[string(queueName)]
 		if queue != nil {
 			queue.bindings = append(queue.bindings, amqpBinding{
 				exchange:   exchangeName,
@@ -1077,7 +1077,7 @@ func (h *AMQPHandler) handleQueueUnbind(ctx context.Context, frame *AMQPFrame, a
 	if len(args) < offset+queueNameLen {
 		return nil, &ErrAMQPProtocolError{Message: "invalid queue name"}
 	}
-	queueName := string(args[offset : offset+queueNameLen])
+	queueName := args[offset : offset+queueNameLen]
 	offset += queueNameLen
 
 	// Exchange name (shortstring)
@@ -1107,7 +1107,7 @@ func (h *AMQPHandler) handleQueueUnbind(ctx context.Context, frame *AMQPFrame, a
 	state.mu.Lock()
 	ch := state.channels[frame.Channel]
 	if ch != nil {
-		queue := ch.queues[queueName]
+		queue := ch.queues[string(queueName)]
 		if queue != nil {
 			newBindings := make([]amqpBinding, 0, len(queue.bindings))
 			for _, b := range queue.bindings {
@@ -1139,7 +1139,7 @@ func (h *AMQPHandler) handleQueuePurge(ctx context.Context, frame *AMQPFrame, ar
 	if len(args) < offset+queueNameLen {
 		return nil, &ErrAMQPProtocolError{Message: "invalid queue name"}
 	}
-	queueName := string(args[offset : offset+queueNameLen])
+	queueName := args[offset : offset+queueNameLen]
 	offset += queueNameLen
 
 	// Flags (1 byte): no-wait
@@ -1154,7 +1154,7 @@ func (h *AMQPHandler) handleQueuePurge(ctx context.Context, frame *AMQPFrame, ar
 	state.mu.Lock()
 	ch := state.channels[frame.Channel]
 	if ch != nil {
-		queue := ch.queues[queueName]
+		queue := ch.queues[string(queueName)]
 		if queue != nil {
 			messageCount = uint32(len(queue.messages))
 			queue.messages = make([][]byte, 0)

@@ -159,7 +159,7 @@ func (s *IAMServer) CreateTenant(ctx context.Context, req *iampb.CreateTenantReq
 	if req.Settings != nil {
 		settings := iam.TenantSettings{
 			MaxUsers:      int(req.Settings.MaxUsers),
-			MFARequired:   req.Settings.MfaRequired,
+			MFAPolicy:     &iam.MFAPolicy{Required: req.Settings.MfaRequired},
 			NamedNetworks: make(map[string][]string),
 		}
 
@@ -209,7 +209,7 @@ func (s *IAMServer) UpdateTenant(ctx context.Context, req *iampb.UpdateTenantReq
 	if req.Settings != nil {
 		tenant.Settings = iam.TenantSettings{
 			MaxUsers:      int(req.Settings.MaxUsers),
-			MFARequired:   req.Settings.MfaRequired,
+			MFAPolicy:     &iam.MFAPolicy{Required: req.Settings.MfaRequired},
 			NamedNetworks: make(map[string][]string),
 		}
 

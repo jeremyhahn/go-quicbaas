@@ -72,7 +72,8 @@ func TestConvertProtoToTenant(t *testing.T) {
 				assert.Equal(t, "tenant-1", result.ID)
 				assert.Equal(t, "Test Tenant", result.Name)
 				assert.Equal(t, 100, result.Settings.MaxUsers)
-				assert.True(t, result.Settings.MFARequired)
+				require.NotNil(t, result.Settings.MFAPolicy)
+				assert.True(t, result.Settings.MFAPolicy.Required)
 				assert.Contains(t, result.Settings.NamedNetworks, "office")
 				assert.Equal(t, []string{"10.0.0.0/8"}, result.Settings.NamedNetworks["office"])
 			},
@@ -118,8 +119,8 @@ func TestConvertTenantToProto(t *testing.T) {
 				ID:   "tenant-1",
 				Name: "Test Tenant",
 				Settings: iam.TenantSettings{
-					MaxUsers:    100,
-					MFARequired: true,
+					MaxUsers:  100,
+					MFAPolicy: &iam.MFAPolicy{Required: true},
 					NamedNetworks: map[string][]string{
 						"office": {"10.0.0.0/8", "192.168.0.0/16"},
 					},
@@ -955,7 +956,8 @@ func TestConvertProtoToTenant_Full(t *testing.T) {
 	assert.Equal(t, "tenant-1", result.ID)
 	assert.Equal(t, "Test Tenant", result.Name)
 	assert.Equal(t, 100, result.Settings.MaxUsers)
-	assert.True(t, result.Settings.MFARequired)
+	require.NotNil(t, result.Settings.MFAPolicy)
+	assert.True(t, result.Settings.MFAPolicy.Required)
 	assert.Contains(t, result.Settings.NamedNetworks, "office")
 }
 
@@ -969,7 +971,7 @@ func TestConvertTenantToProto_Full(t *testing.T) {
 		Name: "Test Tenant",
 		Settings: iam.TenantSettings{
 			MaxUsers:      50,
-			MFARequired:   true,
+			MFAPolicy:     &iam.MFAPolicy{Required: true},
 			NamedNetworks: map[string][]string{"office": {"10.0.0.0/8"}},
 		},
 		Created: time.Now(),
