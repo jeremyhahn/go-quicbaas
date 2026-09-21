@@ -289,6 +289,41 @@ func TestNewAdmissionController_DefaultsTheClock(t *testing.T) {
 // Five projects, each permitted three concurrent jobs — fifteen in aggregate —
 // against a fleet of four slots. The sum of what admission hands out must be at
 // most four, and no project may be given more than its own quota.
+// TestPlan_AnOffBudgetLeaseHoldsNoSlot proves the plan counts leases through
+// the lease's own budget rule: a live lease a triage or review job holds
+// (OffBudget, see JobLeasePolicy) consumes neither a project slot nor a
+// fleet slot. Measured need: a freshly onboarded project ran one worker
+// beside a 50-issue NPU triage pass and the dispatcher reported
+// "inflight=2 slots=0" against a quota of 2 for the whole pass.
+func TestPlan_AnOffBudgetLeaseHoldsNoSlot(t *testing.T) {
+	t.Parallel()
+	rig := newAdmissionRig(t)
+	rig.project(t, admissionTenant, "p0", 2)
+	rig.queued(admissionTenant, "p0", 3)
+	rig.running(t, admissionTenant, "p0", 1)
+	rig.leases.records = append(rig.leases.records, &JobLease{
+		TenantID: admissionTenant, ProjectID: "p0", Workflow: "triage",
+		Ref: "triage:p0", JobID: "p0-triage", Generation: 1,
+		AcquiredAt: admissionClock.UnixNano(), HeartbeatAt: admissionClock.UnixNano(),
+		OffBudget: true,
+	})
+
+	plan, err := rig.controller(t, 2).Plan(context.Background())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	decision := plan.For(admissionTenant, "p0")
+	if decision.ProjectInflight != 1 {
+		t.Fatalf("project inflight = %d, want 1: the triage lease is off the project budget", decision.ProjectInflight)
+	}
+	if decision.DispatchSlots() != 1 {
+		t.Fatalf("dispatch slots = %d, want 1 of a quota of 2 with one worker running", decision.DispatchSlots())
+	}
+	if plan.FleetInflight != 1 {
+		t.Fatalf("fleet inflight = %d, want 1: the triage lease is off the fleet budget too", plan.FleetInflight)
+	}
+}
+
 func TestPlan_ProjectsWithinTheirOwnQuotaCannotExceedFleetCapacity(t *testing.T) {
 	t.Parallel()
 	const (

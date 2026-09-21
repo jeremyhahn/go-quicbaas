@@ -484,7 +484,9 @@ func (c *AdmissionController) countFleetInflight(ctx context.Context, now time.T
 	}
 	live := 0
 	for _, lease := range held {
-		if lease != nil && lease.Live(now, c.ttl) {
+		// The fleet budget is the sum of what the projects may spend, so the
+		// same off-budget rule applies: see countProjectInflight.
+		if lease != nil && lease.CountsAgainstBudget(now, c.ttl) {
 			live++
 		}
 	}
@@ -631,7 +633,15 @@ func (c *AdmissionController) countProjectInflight(ctx context.Context, project 
 		if lease.AcquiredAt > lastStart {
 			lastStart = lease.AcquiredAt
 		}
-		if lease.Live(now, c.ttl) {
+		// THROUGH CountsAgainstBudget, NOT Live. A triage or review job holds
+		// a live lease that is OFF the project budget (JobLeasePolicy), and
+		// counting it here halved every project's worker throughput for as
+		// long as its backlog was being triaged: measured 2026-09-21 on a
+		// freshly onboarded project, "inflight=2 slots=0" with one worker
+		// running and a 50-issue NPU triage pass beside it. The lease store,
+		// CountLiveJobLeases and this plan must agree, and the lease's own
+		// method is the one place the rule lives.
+		if lease.CountsAgainstBudget(now, c.ttl) {
 			live++
 		}
 	}
