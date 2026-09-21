@@ -203,19 +203,65 @@ func TriagePrompt(spec TriagePromptSpec) (string, error) {
 }
 
 // writeTriageComments renders the issue's discussion, or says there is none.
+//
+// A RE-TRIAGE SAYS WHY IT IS ONE. An issue triage has already judged is
+// re-judged only because somebody spoke after that verdict (spokenToSinceTriage),
+// and what they said is the answer to it: the fact needs-info asked for, or the
+// ruling an escalation waited on. Rendered flat, that answer is one comment
+// among many, and a small model reads the old verdict's "blocked on an owner
+// ruling" over the ruling posted right under it -- measured on go-luks2#12
+// (2026-09-21): the NPU re-asked for a ruling the thread already carried. So
+// the comments after triage's last verdict are marked as the answer, and the
+// discussion opens by saying which verdict they answer.
 func writeTriageComments(b *strings.Builder, comments []ForgeComment) {
+	lastVerdict := lastTriageVerdictIndex(comments)
+	if lastVerdict >= 0 && spokenAfter(comments, lastVerdict) {
+		b.WriteString("Triage has judged this issue before; its last verdict is the comment " +
+			"marked below. It is being judged AGAIN because somebody spoke after that " +
+			"verdict, and what they said is the answer to it: a ruling given there is " +
+			"settled, a fact supplied there is supplied. Do not ask for either again.\n\n")
+	}
 	rendered := 0
-	for _, comment := range comments {
+	for i, comment := range comments {
 		if strings.TrimSpace(comment.Body) == "" {
 			continue
 		}
 		rendered++
-		b.WriteString("### Comment " + strconv.Itoa(rendered) + commentAttribution(comment) + "\n\n")
+		heading := "### Comment " + strconv.Itoa(rendered) + commentAttribution(comment)
+		switch {
+		case lastVerdict >= 0 && i == lastVerdict:
+			heading += " -- TRIAGE'S LAST VERDICT"
+		case lastVerdict >= 0 && i > lastVerdict:
+			heading += " -- POSTED AFTER TRIAGE'S LAST VERDICT: THIS IS THE ANSWER TO IT"
+		}
+		b.WriteString(heading + "\n\n")
 		b.WriteString(strings.TrimSpace(comment.Body) + "\n\n")
 	}
 	if rendered == 0 {
 		b.WriteString("(none)\n")
 	}
+}
+
+// lastTriageVerdictIndex is the index of the newest comment triage itself
+// posted, or -1 when triage has never spoken on this issue.
+func lastTriageVerdictIndex(comments []ForgeComment) int {
+	last := -1
+	for i, comment := range comments {
+		if strings.Contains(comment.Body, triageCommentMarker) {
+			last = i
+		}
+	}
+	return last
+}
+
+// spokenAfter reports whether any non-empty comment follows index last.
+func spokenAfter(comments []ForgeComment, last int) bool {
+	for _, comment := range comments[last+1:] {
+		if strings.TrimSpace(comment.Body) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // writeTriageCandidates renders the duplicate candidates: every OPEN issue

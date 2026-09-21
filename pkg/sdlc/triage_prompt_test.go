@@ -121,6 +121,65 @@ func TestTriagePrompt_CarriesEverythingTheVerdictNeeds(t *testing.T) {
 	}
 }
 
+// TestTriagePrompt_MarksTheAnswerToTriagesLastVerdict proves a re-triage says
+// why it is one: the comment triage last posted is marked as the verdict, and
+// every comment after it as the answer, with an opening line that says a ruling
+// given there is settled. Measured need: the NPU re-asked go-luks2#12 for a
+// ruling posted directly under its previous verdict.
+func TestTriagePrompt_MarksTheAnswerToTriagesLastVerdict(t *testing.T) {
+	spec := TriagePromptSpec{
+		Repo:  RepoRef{Owner: "jeremyhahn", Repo: "go-luks2"},
+		Issue: ForgeIssue{Number: 12, Title: "Adopt Go 1.27.0", State: "open"},
+		Comments: []ForgeComment{
+			{Body: "Blocked pending the owner's ruling.", Author: "agent-company"},
+			{Body: "Triage cannot hand this to a worker yet.\n\n<!-- " + triageCommentMarker + " verdict=not_actionable -->", Author: "agent-go-luks2"},
+			{Body: "Ruling: 1.27.0 is the standard.", Author: "jeremyhahn"},
+		},
+	}
+	prompt, err := TriagePrompt(spec)
+	if err != nil {
+		t.Fatalf("TriagePrompt: %v", err)
+	}
+	discussion := prompt[strings.Index(prompt, "### Discussion"):]
+	for _, want := range []string{
+		"a ruling given there is settled",
+		"### Comment 2 — @agent-go-luks2 -- TRIAGE'S LAST VERDICT",
+		"### Comment 3 — @jeremyhahn -- POSTED AFTER TRIAGE'S LAST VERDICT: THIS IS THE ANSWER TO IT",
+	} {
+		if !strings.Contains(discussion, want) {
+			t.Fatalf("discussion must carry %q:\n%s", want, discussion)
+		}
+	}
+	if strings.Contains(discussion, "### Comment 1 — @agent-company --") {
+		t.Fatalf("a comment before the verdict must carry no mark:\n%s", discussion)
+	}
+}
+
+// TestTriagePrompt_AFirstTriageMarksNothing proves the marks and the opening
+// line appear only on a re-triage: a thread triage has never judged, and a
+// thread whose newest comment IS triage's verdict, both render flat.
+func TestTriagePrompt_AFirstTriageMarksNothing(t *testing.T) {
+	for name, comments := range map[string][]ForgeComment{
+		"never judged":      {{Body: "Still broken on main.", Author: "jeremyhahn"}},
+		"verdict newest":    {{Body: "Still broken.", Author: "jeremyhahn"}, {Body: "<!-- " + triageCommentMarker + " verdict=needs_info -->", Author: "agent-go-luks2"}},
+		"only blanks after": {{Body: "<!-- " + triageCommentMarker + " -->", Author: "agent-go-luks2"}, {Body: "   ", Author: "jeremyhahn"}},
+	} {
+		prompt, err := TriagePrompt(TriagePromptSpec{
+			Repo:     RepoRef{Owner: "jeremyhahn", Repo: "go-luks2"},
+			Issue:    ForgeIssue{Number: 12, Title: "Adopt Go 1.27.0", State: "open"},
+			Comments: comments,
+		})
+		if err != nil {
+			t.Fatalf("%s: TriagePrompt: %v", name, err)
+		}
+		for _, absent := range []string{"THIS IS THE ANSWER TO IT", "a ruling given there is settled"} {
+			if strings.Contains(prompt, absent) {
+				t.Fatalf("%s: a first triage must not carry %q:\n%s", name, absent, prompt)
+			}
+		}
+	}
+}
+
 // TestTriagePrompt_SaysAnIssueIsNeverItsOwnDuplicate guards the one duplicate
 // verdict that is always wrong.
 //

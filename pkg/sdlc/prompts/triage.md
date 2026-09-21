@@ -12,7 +12,11 @@ not mark it ready.**
 
 ## What you are given
 
-- The issue: its number, title, body and discussion.
+- The issue: its number, title, body and discussion. If triage has judged it
+  before, the discussion says so and marks the comments posted after that
+  verdict: they are the ANSWER to it. A ruling given there is settled and a
+  fact supplied there is supplied -- judge the issue with them, and never
+  ask for the same thing twice.
 - Every other open issue in the same project, by number and title.
 - **Serena**, installed in this container: an MCP server that reads code by
   symbol rather than by file. Load it and use it for every repository question
