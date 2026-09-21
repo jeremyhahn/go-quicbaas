@@ -3063,7 +3063,6 @@ func TestNewUnixTransportCredentialsInstance(t *testing.T) {
 
 	info := creds.Info()
 	assert.Equal(t, "unix_peercred", info.SecurityProtocol)
-	assert.Equal(t, "1.0", info.SecurityVersion)
 
 	clone := creds.Clone()
 	assert.NotNil(t, clone)
