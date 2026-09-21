@@ -295,17 +295,26 @@ func TestChecksGreenForReview_ClearsOnlyOnAFinishedGreenPipeline(t *testing.T) {
 	done := ForgeCheckRun{ID: "1", Name: "build", HeadSHA: head, Status: "completed", Conclusion: "success", Completed: now}
 	failed := ForgeCheckRun{ID: "2", Name: "test", HeadSHA: head, Status: "completed", Conclusion: "failure", Completed: now}
 	running := ForgeCheckRun{ID: "3", Name: "test", HeadSHA: head, Status: "in_progress"}
+	skipped := ForgeCheckRun{ID: "4", Name: "docker", HeadSHA: head, Status: "completed", Conclusion: "skipped", Completed: now}
 
 	for name, tc := range map[string]struct {
 		runs []ForgeCheckRun
 		want GateBlockReason
 	}{
-		"every check green":   {[]ForgeCheckRun{done}, GateClear},
-		"no check at all":     {nil, GateBlockedNoChecks},
-		"still running":       {[]ForgeCheckRun{running}, GateBlockedChecksIncomplete},
-		"green and running":   {[]ForgeCheckRun{done, running}, GateBlockedChecksIncomplete},
-		"one finished red":    {[]ForgeCheckRun{failed}, GateBlockedChecksFailed},
-		"green and a red one": {[]ForgeCheckRun{done, failed}, GateBlockedChecksFailed},
+		"every check green": {[]ForgeCheckRun{done}, GateClear},
+		// A job the pipeline skipped is passed over: it neither blocks a
+		// green head nor stands in for one. go-quicbaas's Docker job is
+		// skipped on every pull request; read as unfinished, it held PR #970
+		// green and unreviewed for an hour (2026-09-21).
+		"green and a skipped one": {[]ForgeCheckRun{done, skipped}, GateClear},
+		"only a skipped one":      {[]ForgeCheckRun{skipped}, GateBlockedNoChecks},
+		"skipped and a red one":   {[]ForgeCheckRun{skipped, failed}, GateBlockedChecksFailed},
+		"skipped and running":     {[]ForgeCheckRun{skipped, running}, GateBlockedChecksIncomplete},
+		"no check at all":         {nil, GateBlockedNoChecks},
+		"still running":           {[]ForgeCheckRun{running}, GateBlockedChecksIncomplete},
+		"green and running":       {[]ForgeCheckRun{done, running}, GateBlockedChecksIncomplete},
+		"one finished red":        {[]ForgeCheckRun{failed}, GateBlockedChecksFailed},
+		"green and a red one":     {[]ForgeCheckRun{done, failed}, GateBlockedChecksFailed},
 		// A re-run supersedes the run it replaces, by the same rule the merge
 		// gate applies: a head whose failed job was restarted and passed is
 		// green, and a gate that read the old run would never review it.

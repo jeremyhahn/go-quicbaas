@@ -2173,6 +2173,13 @@ func giteaStatusToRun(state string) (status, conclusion string) {
 		return "completed", "success"
 	case "failure", "error":
 		return "completed", "failure"
+	case "skipped":
+		// A job the pipeline chose not to run for this head. Gitea Actions
+		// posts it as its own state; it is finished, and the gate passes over
+		// it (CheckSkipped). Left in the default arm it read as a run that
+		// never finished, and no pull request with a skipped job could ever be
+		// reviewed or merged.
+		return "completed", "skipped"
 	default:
 		return "in_progress", ""
 	}

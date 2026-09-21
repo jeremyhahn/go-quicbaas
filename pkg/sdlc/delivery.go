@@ -95,6 +95,16 @@ const (
 
 	// CheckCancelled is a check that was cancelled before it finished.
 	CheckCancelled CheckStatus = "cancelled"
+
+	// CheckSkipped is a check the pipeline itself decided not to run for
+	// this head — a job behind an `if:` that was false, which Gitea reports
+	// with its own `skipped` state. It is FINISHED, and it is neither green
+	// nor red: the gate passes over it. Read as "still running" (which is
+	// what an unrecognised state used to become), a skipped job blocked
+	// every review and every merge of a pull request on go-quicbaas, whose
+	// Docker job is skipped on pull requests (measured 2026-09-21: PR #970
+	// sat green for an hour with no reviewer dispatched).
+	CheckSkipped CheckStatus = "skipped"
 )
 
 // String returns the status's name.
@@ -103,7 +113,7 @@ func (s CheckStatus) String() string { return string(s) }
 // Finished reports whether the check reached a terminal status.
 func (s CheckStatus) Finished() bool {
 	switch s {
-	case CheckSuccess, CheckFailure, CheckCancelled:
+	case CheckSuccess, CheckFailure, CheckCancelled, CheckSkipped:
 		return true
 	default:
 		return false

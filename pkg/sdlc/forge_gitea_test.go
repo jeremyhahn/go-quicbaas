@@ -1643,6 +1643,7 @@ func TestListCheckRuns_SeparatesRunningFromFinished(t *testing.T) {
 			{"id": 2, "status": "success", "context": "test"},
 			{"id": 3, "status": "failure", "context": "build"},
 			{"id": 4, "status": "something-new", "context": "future"},
+			{"id": 5, "status": "skipped", "context": "docker"},
 		})
 
 	runs, err := backend.ListCheckRuns(context.Background(), testRepo, "abc123")
@@ -1661,6 +1662,12 @@ func TestListCheckRuns_SeparatesRunningFromFinished(t *testing.T) {
 	}
 	if byName["future"].Status != "in_progress" {
 		t.Error("an unrecognised state was assumed finished; a live run could stop being tracked")
+	}
+	// A job the pipeline skipped is finished with its own conclusion — not a
+	// run still consuming capacity, which is what blocked every review of a
+	// pull request whose Docker job is skipped (go-quicbaas PR #970).
+	if byName["docker"].Status != "completed" || byName["docker"].Conclusion != "skipped" {
+		t.Errorf("a skipped run reported as %+v", byName["docker"])
 	}
 	if byName["lint"].HeadSHA != "abc123" {
 		t.Error("a run lost the commit it belongs to")

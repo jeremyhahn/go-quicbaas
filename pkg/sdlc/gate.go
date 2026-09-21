@@ -217,18 +217,27 @@ func evaluateChecks(checks []CheckRecord, headSHA string) (GateBlockReason, stri
 			covering = append(covering, check)
 		}
 	}
-	if len(covering) == 0 {
-		return GateBlockedNoChecks, "green checks are required and no check covers this head"
-	}
 	for _, check := range covering {
 		if !check.Status.Finished() {
 			return GateBlockedChecksIncomplete, check.Name + " has not finished"
 		}
 	}
+	// A SKIPPED CHECK IS PASSED OVER, in both directions: it is not red, and
+	// it is not green either. A pipeline that skipped every job for this head
+	// verified nothing, which is the "no check covers this head" refusal, not
+	// a clear gate.
+	judged := 0
 	for _, check := range covering {
+		if check.Status == CheckSkipped {
+			continue
+		}
+		judged++
 		if check.Status != CheckSuccess {
 			return GateBlockedChecksFailed, check.Name + " finished " + check.Status.String()
 		}
+	}
+	if judged == 0 {
+		return GateBlockedNoChecks, "green checks are required and no check covers this head"
 	}
 	return GateClear, ""
 }
@@ -419,6 +428,7 @@ var forgeCheckStatuses = map[[2]string]CheckStatus{
 	{"completed", "success"}:   CheckSuccess,
 	{"completed", "failure"}:   CheckFailure,
 	{"completed", "cancelled"}: CheckCancelled,
+	{"completed", "skipped"}:   CheckSkipped,
 }
 
 // reviewRecordFor converts one forge review, when it carries a verdict.
@@ -588,7 +598,9 @@ func evaluateChecksFailure(checks []CheckRecord, headSHA string, now time.Time, 
 		if check.FinishedAt.After(failure.SettledAt) {
 			failure.SettledAt = check.FinishedAt
 		}
-		if check.Status != CheckSuccess {
+		// A skipped check is not a failure to triage, and cifault would refuse
+		// the conclusion; it is passed over here as the gate passes over it.
+		if check.Status != CheckSuccess && check.Status != CheckSkipped {
 			failure.Failed = append(failure.Failed, check)
 		}
 	}

@@ -556,6 +556,14 @@ be the one it was routed on. See
 backend its daemon does not serve is refused rather than served by the
 daemon's primary.
 
+A check the pipeline **skipped** (a job behind a false `if:`, which Gitea
+posts as state `skipped`) is finished and passed over: it neither blocks the
+gate nor counts as a green check, and it is never triaged as a failure. A
+head whose every check was skipped verified nothing and reads as "no check
+covers this head". Before 2026-09-21 an unrecognised state read as "still
+running", and a repository with one skipped job on pull requests could never
+be reviewed or merged.
+
 Require `quicbaas/review` in the repository's branch protection to make the
 verdict binding on every route, including the routes the module does not own.
 
