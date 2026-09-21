@@ -2806,13 +2806,13 @@ func (a *authService) Logout(ctx context.Context, req *LogoutRequest) (*LogoutRe
 	}
 	if err := provider.RevokeSessionToken(ctx, req.AccessToken); err != nil {
 		return &LogoutResponse{
-				Success: false,
-				Message: "failed to revoke token",
-			}, &errors.QBError{
-				Code: errors.ErrUnauthorized,
-				Op:   "service.Logout",
-				Err:  err,
-			}
+			Success: false,
+			Message: "failed to revoke token",
+		}, &errors.QBError{
+			Code: errors.ErrUnauthorized,
+			Op:   "service.Logout",
+			Err:  err,
+		}
 	}
 	return &LogoutResponse{
 		Success: true,

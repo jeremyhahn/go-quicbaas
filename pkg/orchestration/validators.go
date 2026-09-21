@@ -418,14 +418,14 @@ func validateWithAgent(ctx context.Context, job *JobContext, criterion ReviewCri
 	var parsed agentReviewResponse
 	if jsonErr := json.Unmarshal([]byte(responseText.String()), &parsed); jsonErr != nil {
 		return ValidationResult{
-				Name:    criterion.Name,
-				Passed:  false,
-				Message: "failed to parse agent response",
-				Details: responseText.String(),
-			}, &ValidatorExecutionError{
-				Validator: ValidatorKindAgent,
-				Cause:     jsonErr,
-			}
+			Name:    criterion.Name,
+			Passed:  false,
+			Message: "failed to parse agent response",
+			Details: responseText.String(),
+		}, &ValidatorExecutionError{
+			Validator: ValidatorKindAgent,
+			Cause:     jsonErr,
+		}
 	}
 
 	return ValidationResult{
@@ -454,13 +454,13 @@ func validateWithCommand(ctx context.Context, job *JobContext, criterion ReviewC
 	}
 	if criterion.Config == "" {
 		return ValidationResult{
-				Name:    criterion.Name,
-				Passed:  false,
-				Message: "no command configured",
-			}, &ValidatorExecutionError{
-				Validator: ValidatorKindCommand,
-				Cause:     &InputValidationError{Field: "config", Message: "command is required"},
-			}
+			Name:    criterion.Name,
+			Passed:  false,
+			Message: "no command configured",
+		}, &ValidatorExecutionError{
+			Validator: ValidatorKindCommand,
+			Cause:     &InputValidationError{Field: "config", Message: "command is required"},
+		}
 	}
 	if err := job.Guard.CheckCommand(criterion.Name, criterion.Config); err != nil {
 		return ValidationResult{
@@ -491,12 +491,12 @@ func validateWithCommand(ctx context.Context, job *JobContext, criterion ReviewC
 		}
 		// Non-exit errors (command not found, context deadline, etc.)
 		return ValidationResult{
-				Name:   criterion.Name,
-				Passed: false,
-			}, &ValidatorExecutionError{
-				Validator: ValidatorKindCommand,
-				Cause:     err,
-			}
+			Name:   criterion.Name,
+			Passed: false,
+		}, &ValidatorExecutionError{
+			Validator: ValidatorKindCommand,
+			Cause:     err,
+		}
 	}
 
 	return ValidationResult{

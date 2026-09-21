@@ -211,14 +211,14 @@ func setupActivation(t *testing.T, mode activationWriteMode) (*activationFixture
 	require.NoError(t, err)
 
 	return &activationFixture{
-			handler:  &IAMHandler{server: server},
-			token:    token,
-			invites:  invites,
-			users:    mem,
-			webauthn: webauthn,
-		}, func() {
-			server.Close()
-		}
+		handler:  &IAMHandler{server: server},
+		token:    token,
+		invites:  invites,
+		users:    mem,
+		webauthn: webauthn,
+	}, func() {
+		server.Close()
+	}
 }
 
 // finish drives ActivateFIDO2Finish for the fixture's current token.
