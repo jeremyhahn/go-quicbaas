@@ -7,6 +7,327 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0-alpha] - 2026-09-21
+
+MINOR: consumers must build with Go 1.27.0 — both modules, the images and CI
+now declare it, and the Software Factory worker image ships it. The rest is
+the factory learning to run on a small local model: triage measures the
+repository facts itself, sets aside replies that are not verdicts, bounds how
+often it re-asks, and says on its audit line what each turn actually did.
+Reviewed changes stop deadlocking on comment verdicts, the unblock sweep runs,
+and a merge re-judges the backlog it may have unblocked.
+
+### Added
+
+- **`--codex-reasoning-effort`**, defaulting to `medium`. The codex backend
+  previously ran at whatever the installed CLI defaulted to, which was stated
+  nowhere. Code review is the one role whose output is a GATE: a shallower pass
+  does not fail visibly, it approves what it should have caught. The depth a
+  review reasons at is now a deployment decision an operator can read and
+  change.
+
+- **`deployments/inference/vllm-cuda/`**, the compose file for serving the
+  triage model on a CUDA card. It carries the two flags whose absence is
+  invisible until a real job runs: without `--enable-auto-tool-choice` and
+  `--tool-call-parser`, vLLM serves plain completions perfectly well and
+  answers every agentic turn with a 400. The parser must also match the
+  model's chat template — Qwen3.8 emits XML-form tool calls, so `qwen3_xml`
+  rather than `hermes`, and a parser that disagrees yields zero tool calls
+  rather than an error.
+
+- **Triage measures the repository facts itself.** The file paths and
+  backticked identifiers an issue names are probed with `git ls-files` and
+  `git grep` in the session's checkout before the model is prompted, and the
+  answers go into the prompt as a "Repository facts" section measured at the
+  head being judged. A frontier model would have run those commands; the NPU
+  model never did — `tool_uses=0` on every triage turn of 2026-09-21 while it
+  wrote "I have examined the code" — so its already-done verdicts were
+  ungrounded by construction. The deterministic half of the check is now done
+  in Go for every rung; the judgement stays with the model.
+
+### Changed
+
+- **Go 1.27.0 across the module, the images and CI.** Go 1.27.0 has been the
+  portfolio standard since 2026-09-01 and this repository was still declaring
+  1.26.7 everywhere — including the Software Factory worker image, which ships
+  ONE toolchain under `GOTOOLCHAIN=local`. A factory project that had already
+  moved to 1.27 (go-luks2, PR #202) could therefore not be built, tested or
+  reviewed by the factory at all. Both `go.mod` files, the Makefile's
+  `GO_VERSION`, every Dockerfile base, the integration `go.work` stubs and the
+  four workflow pins now say 1.27.0, and golangci-lint moves to v2.13.2, the
+  first release that lints a 1.27 module and the version the fleet's ci-runner
+  image bakes.
+
+- **An OpenVINO turn now says what it did.** Every command the tool loop ran
+  is reported as a `tool_use` block ahead of the answer, and an answer forced
+  on the final, tool-less round carries the stop reason `tool_budget_spent`
+  instead of `end_turn`. The triage audit line records both. Before, a turn
+  that ran twelve commands and then gave a 27-byte answer was
+  indistinguishable from one that answered from the prompt alone, which is
+  why the NPU's give-ups on go-luks2 could not be told from its judgements.
+
+- **The reviewer charter no longer tells the reviewer to withhold a verdict.**
+  It defined `comment` as "deciding it needs something you do not have" and
+  closed with "if you cannot reach a verdict, say why and declare `comment`".
+  A thorough reviewer can nearly always name something it could not confirm,
+  so that made `comment` the default outcome — and a comment satisfies no
+  gate, so the change waits forever and every later round is blocked too.
+  Observed three times on clean changes: on go-luks2 #196 the reviewer read
+  all 21 files and found no defect, and on #200 it traced every caller with
+  Serena, found "no actionable code defects", and declared `comment` because a
+  changelog fragment referenced a companion issue in another repository that
+  it could not open.
+
+  `comment` is now reserved for a change that could not be judged at all — an
+  explicit draft, or a diff the reviewer could not read. An unverifiable
+  detail is recorded as a caveat inside an approval, or, when the change
+  *asserts* the thing that cannot be confirmed, as an actionable
+  `request-changes` naming what to remove or prove. The rigour is unchanged:
+  the reviewer is not told to approve anything it thinks is wrong, and the
+  gate still requires an independent approval over green checks.
+
+- **A spent tool-call budget now asks the model to conclude instead of failing
+  the turn.** The agentic loop withdraws its tools for one final round and says
+  the budget is gone, so the turn ends in the judgement a human triager makes
+  when their time box expires. Measured cause: a triage turn read the CI
+  workflow, `go.mod`, the upstream module versions and the implementation —
+  every call on point — and then returned nothing because the budget ended
+  mid-investigation. A model that is asked outright for a conclusion and still
+  produces nothing is reported exactly as before; no partial text is promoted
+  to an answer.
+
+- **Triage is told it has not read the other issues.** The duplicate
+  candidates reach the prompt as number and title only, and a small model
+  filled the gap by inventing what the other issue "already addresses" —
+  go-luks2#141 (a coverage gate) was declared a duplicate of #195 (a
+  filesystem probe) twice running, on the strength of both mentioning CI.
+  The charter and the candidate list now say the bodies are unread, that a
+  shared area is not the same work, that a prerequisite is not a duplicate
+  of what it precedes, and that when the titles alone do not settle it the
+  issue is judged on its own.
+
+- **Triage stops asking after two unusable replies at one head.** A reply set
+  aside leaves no mark on the issue, so the issue is a candidate again on
+  every pass — and a model that fails an issue the same way each time was
+  asked every fifteen minutes for as long as the head stood. The runner now
+  counts set-asides per issue and default-branch head, skips the issue after
+  two (audited as `sdlc:triage_skipped`), and asks again only when the head
+  moves or somebody comments, both of which change what the model is shown.
+
+### Fixed
+
+- **A parked issue was parked for ever, so every project ran out of work.** A
+  triage verdict is an answer about a *tree* — "blocked on another change",
+  "the prerequisite has not landed", "not actionable yet" — and the only thing
+  that could reopen one was a person commenting on the issue. Nothing about the
+  repository changing reopened anything, so a backlog the factory parked stayed
+  parked however much the code moved underneath it. Measured: 23 of 23 open
+  issues across two bound projects sat `factory:escalated` / `needs-info` /
+  `blocked`, every verdict predating the day's fixes, while triage woke every
+  fifteen minutes, found nothing, and slept.
+
+  Every verdict now records the commit it was formed against, and a parked
+  issue is re-judged when the project's default branch has moved since — which
+  is exactly the event that makes "blocked on another change" wrong. A verdict
+  carrying no commit is re-examinable, so a backlog parked by an older build
+  gets one fresh reading.
+
+- **A triage job recorded neither its backend nor its model**, so the queue
+  showed rows that could not tell an operator whether a sweep was about to
+  spend a local GPU turn or a frontier-model one. Both are now set when the
+  job is started.
+
+- **A merge no longer re-asks a question a person owes.** `needs-info` names a
+  specific thing only a person can supply, so movement in the repository says
+  nothing about it; reopening those on every merge spent a model turn per
+  parked issue to reach the same verdict again, which on a parked backlog is
+  most of the fleet's triage cost. Only `not-actionable` and escalated
+  verdicts — the ones that are answers about a tree — are reopened by a merge.
+
+- **A verdict now replaces the previous disposition instead of stacking on
+  it.** Each disposition only ever added its label, so an issue judged
+  needs-info after being escalated carried both: two contradictory answers,
+  with no way for an operator to tell which was current. Six of eleven open
+  go-luks2 issues were in that state after a single re-triage pass.
+
+- **A commit status was treated as proof that a head had been reviewed.** The
+  review floor decided "has this head been judged" from the presence of a
+  status under the reviewer's context. A status is only a *projection* of a
+  verdict, and the two disagree whenever a review declines to judge — the
+  reviewer publishes a status, records no verdict, and the head then reads as
+  reviewed forever while the gate correctly still wants a review for it.
+  Nothing could ever dispatch one. Three finished, green changes on go-luks2
+  were stranded exactly that way.
+
+  The floor now asks the forge for the verdict, using the same
+  `forgeReviewVerdicts` map the gate reduces reviews with, so "judged" means
+  the same thing in both places. The two questions are separated: a *pending*
+  status means a reviewer is at work and a second must not be started; whether
+  the head was *judged* is answered by an approval or a request for changes
+  bound to that head. A comment is neither.
+
+  It costs one review listing per open pull request, paid before the answer is
+  known. That is a deliberate trade: one forge read against a change that can
+  never merge.
+
+- **A review that declined to judge deadlocked its pull request permanently.**
+  A `comment` verdict published a `pending` commit status, on the sound
+  reasoning that it decides nothing and so must not go green. But pending is
+  the shape of a review still *running*, and the review floor deliberately
+  skips any head already carrying a status under the reviewer's context so that
+  an in-flight review is never given a duplicate reviewer. A finished review
+  that left pending behind therefore blocked the merge gate **and** the
+  backstop that exists to recover the gate: nothing could re-review that head,
+  ever. Measured on go-luks2 #202 — the round-2 commit answered the round-1
+  finding, CI went green, and it then waited indefinitely on a review no code
+  path could dispatch.
+
+  The fix is in the floor, not the mapping. `pending` is the only status that
+  means "no verdict yet", which is exactly what a comment leaves behind — it
+  binds onto no review record, so the gate correctly still wants a review and
+  the floor must still be able to dispatch one. The floor now treats a
+  `pending` reviewer status older than the job stall bound as abandoned rather
+  than in flight, sharing the engine's own "the agent is presumed gone" answer
+  rather than being a second, independently drifting number. An undated pending
+  status is never stale, so a forge that reports no timestamp does not cause a
+  re-dispatch on every pass. `error` is mapped alongside `comment` for the same
+  reason: a review that produced no verdict is owed another attempt.
+
+- **The reviewer's own commit status decided whether the head was reviewable.**
+  Both dispatch paths ask "is this head green enough to review" by evaluating
+  every status on the head — including the one the reviewer itself publishes
+  there. That is circular: it asks a review to be green before it has run.
+  While the floor short-circuited on status presence the question never
+  arose, so the fault was latent; making a stale pending status reviewable
+  exposed it immediately, and mapping a comment to `failure` would have
+  re-created the same deadlock in a different colour. The two dispatch sites
+  now exclude the reviewer's context, which is what the sweep's own
+  documentation already promised ("every *other* check"). The merge gate still
+  counts it, because there a failed review is exactly what should hold a
+  change back.
+
+- **The reviewer was told to verify acceptance criteria and never given them.**
+  Its charter says to check the change against the issue it closes; the review
+  prompt carried the pull request's title, body and file list but not the
+  issue, and the reviewer's container holds no forge credential — so every
+  attempt to fetch one came back 404. The effect was not a worse review but
+  **no verdict at all**: on go-luks2 #196 the reviewer read all 21 changed
+  files, found no defect, and still declined to approve, because it could not
+  confirm the change closed the issue. A change with nothing wrong with it
+  could not merge.
+
+  The issue and its comments are now read on the control plane, where the
+  forge token works, and rendered into the prompt. The comments matter as much
+  as the body: an owner's ruling on a question the worker raised lives in a
+  comment, and a reviewer judging against the body alone contradicts decisions
+  already made. Both are bounded so a long discussion cannot crowd out the
+  diff, and the bound keeps the newest comments, because a ruling supersedes
+  the question it answers.
+
+  When the issue cannot be read the prompt says so, names why, and tells the
+  reviewer to judge the code anyway and mark conformance unverified — a
+  missing input must not become a refused review.
+
+- **Serena could not read Go in the worker image, so every review lost symbol
+  and reference lookup.** solidlsp composes its platform id as
+  `<os>-<libc>-<arch>` whenever the libc is not glibc, and reads the libc from
+  Python's `platform.libc_ver()` — which only ever detects glibc. On this musl
+  image it returns `""`, producing `linux--x64`, which is not a member of the
+  `PlatformId` enum and raises. `linux-musl-x64` is a member; nothing was
+  missing but the detection.
+
+  It broke Go even though nothing about Go asks for a platform: resolving any
+  language server walks every `LanguageServerId` and *imports* every
+  language-server module to compare classes, and the TypeScript module
+  evaluates the platform id at import time. So starting the **Go** server
+  imported the TypeScript module and died there. The reviewer then reported it
+  could not complete the review and returned a verdict that decides nothing.
+
+- **The image gate probed a handshake, not a lookup**, which is why it stayed
+  green throughout. It started serena against a project root holding no code,
+  so no language server was ever resolved — and resolving one was exactly
+  where the failure lay. The gate now builds a Go module and resolves a symbol
+  in it.
+
+- **A routine session lookup logged up to six warnings.** The spawn server
+  finds which backend owns a session by asking each one in turn until one
+  answers, so every backend that does not hold it reports a miss — six of them
+  on a daemon serving seven backends, for a lookup that then succeeds. At WARN
+  that filled `agent.out` with `acp_backend: status session miss` for every
+  healthy openvino and vllm turn, which is how a real fault becomes invisible.
+  The diagnostic is unchanged and now emitted at debug; a miss is only
+  interesting once every backend has missed, and the server already reports
+  that as `NotFound`.
+
+- **A re-triage now says why it is one.** An issue triage has already judged
+  is judged again only because somebody spoke after that verdict — and what
+  they said is the answer to it: the fact needs-info asked for, or the ruling
+  an escalation waited on. The discussion was rendered flat, so a small model
+  read the old verdict's "blocked on an owner ruling" over the ruling posted
+  directly beneath it; measured on go-luks2#12 on the NPU (2026-09-21), which
+  re-asked for a ruling the thread already carried. The rendered discussion now
+  opens by naming triage's last verdict, marks every comment after it as the
+  answer, and the charter says a ruling given there is settled. (Landed in
+  `8f1ce591`, whose message wrongly describes it as a gofmt change.)
+
+- **A triage reply the binary cannot read is no longer posted as a verdict.**
+  An undeclared or unreadable reply, a verdict carrying no evidence, and a
+  duplicate that names the issue itself or an issue the pass never listed are
+  now set aside: audited as `sdlc:triage_unusable`, written nowhere on the
+  forge, and judged again on the next pass. Before, each was posted as
+  "triage declared a verdict this binary cannot act on" with the escalated
+  label — and that comment then became triage's last word, so the issue was
+  frozen until a person spoke. Measured on go-luks2 on the NPU (2026-09-21):
+  one pass posted a self-referencing duplicate with a misspelt marker, two
+  27-byte not-actionables with no evidence, and a duplicate of an unrelated
+  issue. Those are a small model running out of rounds, not findings about
+  the work.
+
+- **The unblock sweep was never run.** It was written, documented and tested —
+  a pass that re-examines every blocked task, checks the condition it parked
+  on, and returns the ones whose condition has cleared through the engine's
+  readmission verb — and nothing anywhere constructed it. So a task that
+  blocked on a checkable condition stayed blocked however completely that
+  condition cleared, and the only thing that ever returned one to the queue was
+  a person. A fleet parks tasks faster than a person clears them, which is how
+  every project ends up with nothing runnable: eight blocked tasks stood across
+  two projects, the oldest from 09-09.
+
+  It had no tenant-wide entry point either, which is the mechanical reason it
+  could not be mounted beside the other backstops. It now has one, shaped like
+  the review floor's, and runs at boot and on a ten-minute ticker — slower than
+  the review floor because the latency it bounds is cheaper: a finished change
+  waiting to merge costs more than a task whose blocker cleared a few minutes
+  ago.
+
+  It is wired to the engine's **service**, not its store. Only the service
+  announces a readmission, and that announcement is what takes
+  `factory:blocked` back off the issue — a sweep wired to the store would
+  return the task to the queue while the issue still said it was blocked.
+  `NewUnblockSweeper` refuses the store by name for exactly this reason.
+
+- **The worker image's Go toolchain was unreachable to every command the
+  factory ran.** The agent execs tools as `sh -lc`, and a login shell sources
+  `/etc/profile`, whose first line on the base image unconditionally overwrites
+  `PATH` — discarding the `ENV PATH` that put `/usr/local/go/bin` on it.
+  Measured on the image: `sh -c "command -v go"` resolved it, `sh -lc` did not.
+  A `/etc/profile.d` entry now restores it, asserted at build time.
+
+  The symptom was nothing like the cause. No missing-toolchain error was
+  reported anywhere: Serena's Go language server simply failed to start, the
+  reviewer lost symbol and reference lookup and returned a `comment` verdict
+  saying it could not complete the review, and because a comment is neither an
+  approval nor a request for changes the gate stayed at
+  `insufficient_approvals`. The delivery job then waited in `reviewing` for a
+  verdict that could never change and the stall detector ended it thirty
+  minutes later, logging `job stalled` — which points at the agent. Five jobs
+  died that way.
+
+- **The image gate probed a shell the factory never uses**, which is why it
+  stayed green throughout. Its checks ran under `sh -euc`, not a login shell,
+  so they asserted a `PATH` production never saw and certified a toolchain that
+  no real invocation could reach. Every probe now runs `sh -lec`.
+
 ## [0.9.2-alpha] - 2026-09-16
 
 PATCH: a dependency migration and a second inference backend. No consumer's
