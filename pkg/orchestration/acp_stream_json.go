@@ -47,8 +47,8 @@ import (
 const streamJSONInitTimeout = 5 * time.Minute
 
 // streamJSONDrainTimeout bounds the wait for the handshake reply. Expiring is
-// not fatal: the session is usable, the scanner is merely positioned somewhere
-// inside a reply that no caller asked for.
+// not fatal: the session is usable, and the reply still owed is settled by the
+// first prompt before it writes (see streamJSONReader).
 const streamJSONDrainTimeout = 2 * time.Minute
 
 // streamJSONProc is a started agent process reduced to what the stream-json
@@ -75,9 +75,15 @@ type streamJSONProc struct {
 
 // streamJSONOpen is what the opening exchange established.
 type streamJSONOpen struct {
-	// scanner is positioned immediately after the handshake reply, ready for
-	// the first real prompt's response.
-	scanner *bufio.Scanner
+	// reader is THE ONE reader of the agent's stdout for the life of the
+	// session. See streamJSONReader for why there is exactly one.
+	reader *streamJSONReader
+
+	// pending counts the prompts written to the agent whose terminal result
+	// the reader has not yet handed out: 1 when the handshake reply was still
+	// in flight when the open returned, 0 when it was consumed. The first
+	// real prompt settles it before it writes. See acpSession.pending.
+	pending int
 
 	// sessionID is the identifier the session is registered under: the one the
 	// plan demanded (a resume), else the agent's own, else a generated one.
@@ -86,6 +92,101 @@ type streamJSONOpen struct {
 	// model is what the agent reported it is running, falling back to the
 	// model the caller asked for when the init record named none.
 	model string
+}
+
+// streamJSONReader is the single goroutine that reads an agent's stream-json
+// stdout, and the channel every consumer takes records from.
+//
+// WHY EXACTLY ONE. A bufio.Scanner is not safe for concurrent use, and the
+// stream is a sequence whose ORDER carries meaning: a `result` record belongs
+// to the prompt written before it. The open used to start one goroutine to
+// wait for the init record, a second to drain the handshake reply, and then
+// every prompt started a fresh goroutine per line — and each of those
+// returned to its caller on a timeout while the goroutine it had started was
+// still blocked in Scan. On the burn-in fleet (2026-09-21, go-quicbaas #53
+// and #62) a handshake whose API calls were being retried for four minutes
+// outlived the two-minute drain bound, the first prompt's reader then raced
+// the drain goroutine on the same scanner, and the prompt's own `result`
+// went to a channel nobody was reading. Both jobs held their slots for an
+// hour, until the agent was stopped.
+//
+// One goroutine, one channel, and a count of replies still owed keep the
+// sequence intact across every timeout: a consumer that gives up leaves the
+// records where they are, and the next consumer settles what is owed before
+// it asks for anything of its own.
+type streamJSONReader struct {
+	records chan *streamJSONMessage
+
+	// err is why the stream ended, readable once records is closed: the
+	// scanner's own error, or the process-gone explanation the opener gave.
+	err  error
+	done chan struct{}
+}
+
+// streamJSONReaderBuffer bounds how many records the reader holds for a
+// consumer that is slower than the agent; a delivery turn emits thousands of
+// tool records, and the consumer must never be the reason the agent's stdout
+// blocks.
+const streamJSONReaderBuffer = 4096
+
+// newStreamJSONReader starts the reader on stdout. gone explains a clean end
+// of the stream; it must not return nil.
+func newStreamJSONReader(stdout io.Reader, gone func() error) *streamJSONReader {
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, streamJSONScannerBufferSize), streamJSONScannerBufferSize)
+	r := &streamJSONReader{
+		records: make(chan *streamJSONMessage, streamJSONReaderBuffer),
+		done:    make(chan struct{}),
+	}
+	go func() {
+		defer close(r.done)
+		defer close(r.records)
+		for scanner.Scan() {
+			var msg streamJSONMessage
+			if jsonErr := json.Unmarshal(scanner.Bytes(), &msg); jsonErr != nil {
+				continue // an unparseable line is not a record
+			}
+			r.records <- &msg
+		}
+		if scanErr := scanner.Err(); scanErr != nil {
+			r.err = scanErr
+			return
+		}
+		r.err = gone()
+	}()
+	return r
+}
+
+// next hands out the next record, or the reason the stream ended once it has,
+// or ctx's error. A deadline is the caller's to add to ctx.
+func (r *streamJSONReader) next(ctx context.Context) (*streamJSONMessage, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case msg, ok := <-r.records:
+		if !ok {
+			<-r.done
+			return nil, r.err
+		}
+		return msg, nil
+	}
+}
+
+// nextResult hands out records up to and including the next terminal
+// `result`, calling observe on each one it passes, and returns that result.
+func (r *streamJSONReader) nextResult(ctx context.Context, observe func(*streamJSONMessage)) (*streamJSONMessage, error) {
+	for {
+		msg, err := r.next(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if observe != nil {
+			observe(msg)
+		}
+		if msg.Type == "result" {
+			return msg, nil
+		}
+	}
 }
 
 // cliArgs builds the argument vector for a persistent stream-json agent CLI.
@@ -141,8 +242,7 @@ func (b *ACPBackend) openStreamJSON(
 	model string,
 	teardown func(),
 ) (*streamJSONOpen, error) {
-	scanner := bufio.NewScanner(proc.stdout)
-	scanner.Buffer(make([]byte, streamJSONScannerBufferSize), streamJSONScannerBufferSize)
+	reader := newStreamJSONReader(proc.stdout, proc.gone)
 
 	handshake, handshakeErr := encodeStreamJSONUserMessage(plan.handshakeContent())
 	if handshakeErr != nil {
@@ -158,54 +258,37 @@ func (b *ACPBackend) openStreamJSON(
 		return nil, &SpawnError{Command: b.config.Command, Cause: proc.gone()}
 	}
 
-	type initResult struct {
-		msg streamJSONMessage
-		err error
-	}
-	initCh := make(chan initResult, 1)
-	go func() {
-		for scanner.Scan() {
-			var msg streamJSONMessage
-			if jsonErr := json.Unmarshal(scanner.Bytes(), &msg); jsonErr != nil {
-				continue
-			}
-			if msg.Type == "system" && msg.Subtype == "init" {
-				initCh <- initResult{msg: msg}
-				return
-			}
-		}
-		// Scanner exhausted before the init record: the agent went away during
-		// startup. Ask the caller why — it owns the process and is the only one
-		// that can say.
-		scanErr := scanner.Err()
-		if scanErr == nil {
-			scanErr = proc.gone()
-		}
-		initCh <- initResult{err: scanErr}
-	}()
-
-	var initMsg streamJSONMessage
-	select {
-	case <-ctx.Done():
-		teardown()
-		return nil, &SpawnError{Command: b.config.Command, Cause: ctx.Err()}
-	case <-time.After(streamJSONInitTimeout):
-		teardown()
-		// AUTHORED, so it is not StreamJSONError: that type's Result is the
-		// agent's own words and is withheld (review 1330). This sentence is
-		// ours, no process wrote it, and withholding it would cost an operator
-		// the one fact that matters — how long we waited.
-		return nil, &SpawnError{
-			Command: b.config.Command,
-			Cause:   errors.New("timed out waiting for init message after " + streamJSONInitTimeout.String()),
-		}
-	case result := <-initCh:
-		if result.err != nil {
+	// The init record, within the bound and the caller's ctx. Records before
+	// it (there are none from the CLI, but the reader passes whatever comes)
+	// are skipped.
+	initCtx, cancelInit := context.WithTimeout(ctx, b.streamJSONInitBound())
+	var initMsg *streamJSONMessage
+	for initMsg == nil {
+		msg, err := reader.next(initCtx)
+		if err != nil {
+			cancelInit()
 			teardown()
-			return nil, &SpawnError{Command: b.config.Command, Cause: result.err}
+			if ctx.Err() != nil {
+				return nil, &SpawnError{Command: b.config.Command, Cause: ctx.Err()}
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				// AUTHORED, so it is not StreamJSONError: that type's Result is
+				// the agent's own words and is withheld (review 1330). This
+				// sentence is ours, no process wrote it, and withholding it
+				// would cost an operator the one fact that matters — how long
+				// we waited.
+				return nil, &SpawnError{
+					Command: b.config.Command,
+					Cause:   errors.New("timed out waiting for init message after " + b.streamJSONInitBound().String()),
+				}
+			}
+			return nil, &SpawnError{Command: b.config.Command, Cause: err}
 		}
-		initMsg = result.msg
+		if msg.Type == "system" && msg.Subtype == "init" {
+			initMsg = msg
+		}
 	}
+	cancelInit()
 
 	sessionID := initMsg.SessionID
 	if sessionID == "" {
@@ -226,30 +309,45 @@ func (b *ACPBackend) openStreamJSON(
 		model = initMsg.Model
 	}
 
-	// Drain the handshake response (assistant + result messages) so the scanner
-	// is positioned for the first real prompt's response.
-	drainCh := make(chan struct{}, 1)
-	go func() {
-		for scanner.Scan() {
-			var msg streamJSONMessage
-			if jsonErr := json.Unmarshal(scanner.Bytes(), &msg); jsonErr != nil {
-				continue
-			}
-			if msg.Type == "result" {
-				break
-			}
-		}
-		drainCh <- struct{}{}
-	}()
-	select {
-	case <-drainCh:
-		// Handshake response consumed.
-	case <-time.After(streamJSONDrainTimeout):
-		// Handshake timed out, but the session is still usable.
-	case <-ctx.Done():
+	// The handshake reply (assistant + result records) is consumed within its
+	// own bound so the first real prompt starts on a settled stream. Expiring
+	// is not fatal: the reply is still owed, the reader still holds the
+	// stream, and the session records ONE pending result for the first prompt
+	// to settle before it writes. Nothing is read past the bound behind the
+	// caller's back.
+	//
+	// A stream that ENDS inside the handshake reply is not refused here
+	// either: the session is handed over with the reply owed, and the first
+	// prompt's settle reads the closed stream and reports the agent gone with
+	// its exit code and stderr — the same report a prompt has always given
+	// for a process that died after spawn, which is what the caller expects.
+	drainCtx, cancelDrain := context.WithTimeout(ctx, b.streamJSONDrainBound())
+	defer cancelDrain()
+	pending := 1
+	if _, err := reader.nextResult(drainCtx, nil); err == nil {
+		pending = 0
+	} else if ctx.Err() != nil {
 		teardown()
 		return nil, &SpawnError{Command: b.config.Command, Cause: ctx.Err()}
 	}
 
-	return &streamJSONOpen{scanner: scanner, sessionID: sessionID, model: model}, nil
+	return &streamJSONOpen{reader: reader, pending: pending, sessionID: sessionID, model: model}, nil
+}
+
+// streamJSONInitBound is how long an open waits for the init record: the
+// backend's own setting when one was given, else streamJSONInitTimeout.
+func (b *ACPBackend) streamJSONInitBound() time.Duration {
+	if b.streamJSONInit > 0 {
+		return b.streamJSONInit
+	}
+	return streamJSONInitTimeout
+}
+
+// streamJSONDrainBound is how long an open waits for the handshake reply
+// before handing the session over with that reply still owed.
+func (b *ACPBackend) streamJSONDrainBound() time.Duration {
+	if b.streamJSONDrain > 0 {
+		return b.streamJSONDrain
+	}
+	return streamJSONDrainTimeout
 }

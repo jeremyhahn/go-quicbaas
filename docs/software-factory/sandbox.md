@@ -77,6 +77,32 @@ Both container paths build their spec through one function,
 `ACPBackend.sandboxSpec`, so a change to the isolation cannot reach one protocol
 and miss the other.
 
+### One reader per session, and the replies it is owed
+
+The agent's stdout is read by **exactly one goroutine** for the life of the
+session (`streamJSONReader`), which feeds one channel every consumer takes
+records from. A `bufio.Scanner` is not safe for concurrent use, and the
+stream's order carries meaning: a `result` belongs to the prompt written
+before it.
+
+The open used to start a goroutine to wait for the init record, another to
+drain the handshake reply, and every prompt started one more per line — each
+returning to its caller on a timeout while the goroutine it had started was
+still reading. Measured on the burn-in fleet on 2026-09-21 (go-quicbaas #53
+and #62): a handshake whose API calls were being retried for four minutes
+outlived the two-minute drain bound, the first prompt's reader then raced the
+drain goroutine on the same scanner, and the prompt's own `result` went to a
+channel nobody read. Both jobs held their slots for an hour, until the agent
+was stopped.
+
+Now the session counts the replies still owed (`pending`): one when the open
+handed the session over with the handshake reply still in flight, and one for
+every turn whose caller gave up on its context before the reply. A prompt
+**settles what is owed before it writes** — reads up to and including each
+owed `result` — so every result is attributed to the prompt that asked for it.
+A caller that gives up leaves the records where they are; nothing is read
+behind anyone's back, and nothing is lost.
+
 ### Full control inside the container
 
 **The container is the boundary, and a second boundary inside it only costs

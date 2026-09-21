@@ -1077,8 +1077,8 @@ func TestACPBackend_CLI_SpawnAndPrompt(t *testing.T) {
 	if internal.stdin == nil {
 		t.Error("stdin should not be nil for CLI session")
 	}
-	if internal.stdout == nil {
-		t.Error("stdout should not be nil for CLI session")
+	if internal.reader == nil {
+		t.Error("reader should not be nil for CLI session")
 	}
 	if internal.transport != nil {
 		t.Error("transport should be nil for CLI session")

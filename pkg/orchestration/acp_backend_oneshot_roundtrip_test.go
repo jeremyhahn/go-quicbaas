@@ -14,8 +14,8 @@
 package orchestration
 
 import (
-	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -248,7 +248,7 @@ func TestACPBackend_SessionMode_Labels(t *testing.T) {
 	b := NewACPBackend(ACPBackendConfig{Command: "claude"})
 	pipes := func(s *acpSession) *acpSession {
 		s.stdin = discardWriteCloser{}
-		s.stdout = bufio.NewScanner(strings.NewReader(""))
+		s.reader = newStreamJSONReader(strings.NewReader(""), func() error { return errors.New("gone") })
 		return s
 	}
 	cases := []struct {

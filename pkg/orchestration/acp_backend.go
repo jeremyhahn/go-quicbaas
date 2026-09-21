@@ -14,7 +14,6 @@
 package orchestration
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -205,6 +204,12 @@ type ACPBackend struct {
 	// sandboxNetworkWarning makes the host-network / invalid-network advisory
 	// fire once per backend instead of once per spawn. See sandboxNetwork.
 	sandboxNetworkWarning sync.Once
+
+	// streamJSONInit and streamJSONDrain override the stream-json open's two
+	// bounds when positive; zero means the package defaults. Set by tests
+	// that need a handshake to time out in milliseconds rather than minutes.
+	streamJSONInit  time.Duration
+	streamJSONDrain time.Duration
 }
 
 // SetContainerRuntime configures the container runtime for sandboxed sessions.
@@ -348,13 +353,20 @@ type acpSession struct {
 	// session. Read through promptSessionID.
 	agentID string
 
-	transport    *StdioTransport    // non-nil for JSON-RPC mode sessions
-	cmd          *exec.Cmd          // non-nil for CLI stream-json mode sessions
-	procCancel   context.CancelFunc // cancels the persistent subprocess on Close
-	stderr       *stderrTail        // bounded capture of the subprocess stderr
-	stdin        io.WriteCloser     // stream-json stdin pipe
-	stdout       *bufio.Scanner     // stream-json stdout reader
-	mu           sync.Mutex         // protects stdin/stdout for serial access
+	transport  *StdioTransport    // non-nil for JSON-RPC mode sessions
+	cmd        *exec.Cmd          // non-nil for CLI stream-json mode sessions
+	procCancel context.CancelFunc // cancels the persistent subprocess on Close
+	stderr     *stderrTail        // bounded capture of the subprocess stderr
+	stdin      io.WriteCloser     // stream-json stdin pipe
+	reader     *streamJSONReader  // the one reader of stream-json stdout; see streamJSONReader
+	mu         sync.Mutex         // protects stdin/reader/pending for serial access
+
+	// pending counts the prompts written to the agent whose terminal result
+	// has not been consumed: the handshake still in flight when the open
+	// returned, or a turn whose caller gave up on it. A prompt settles them
+	// before it writes, so every result is attributed to the prompt that
+	// asked for it. Guarded by mu.
+	pending      int
 	projectID    string
 	model        string
 	workDir      string
@@ -437,7 +449,7 @@ type acpSession struct {
 // `docker run -i` process belongs to the container runtime — so a cmd-based test
 // would route it to the one-shot path and it would answer no prompt at all.
 func (s *acpSession) streamJSON() bool {
-	return s.stdin != nil && s.stdout != nil
+	return s.stdin != nil && s.reader != nil
 }
 
 // promptSessionID returns the identifier to address the agent with on the ACP
@@ -1509,7 +1521,8 @@ func (b *ACPBackend) spawnCLI(ctx context.Context, req *SpawnRequest, plan spawn
 		procCancel:   procCancel,
 		stderr:       stderr,
 		stdin:        stdinPipe,
-		stdout:       open.scanner,
+		reader:       open.reader,
+		pending:      open.pending,
 		projectID:    req.ProjectID,
 		model:        open.model,
 		workDir:      req.WorkDir,
@@ -1742,6 +1755,18 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 		return nil, &PromptError{SessionID: sess.id, Cause: &SessionClosedError{SessionID: sess.id}}
 	}
 
+	// WHAT IS OWED IS SETTLED FIRST. A handshake reply still in flight when
+	// the open returned, or a turn whose caller gave up before its result,
+	// still has a `result` coming down the stream, and it belongs to THAT
+	// prompt. Reading past it here is what keeps this prompt's own result
+	// from being handed to the wrong turn — or, as measured, to nobody.
+	for sess.pending > 0 {
+		if _, err := sess.reader.nextResult(ctx, nil); err != nil {
+			return nil, &PromptError{SessionID: sess.id, Cause: b.streamJSONReadError(sess, err)}
+		}
+		sess.pending--
+	}
+
 	// Build the user message
 	userMsg := streamJSONUserMessage{
 		Type: "user",
@@ -1764,8 +1789,10 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 		// UI shows a real failure reason and follow-ups fail fast.
 		return nil, &PromptError{SessionID: sess.id, Cause: b.agentGoneError(sess)}
 	}
+	// The prompt is written: its result is owed until this call consumes it.
+	// A return on ctx before then leaves the count for the next prompt.
+	sess.pending++
 
-	// Read response lines until we get a "result" type message.
 	var contentBlocks []ContentBlock
 	var model string
 	var stopReason string
@@ -1775,113 +1802,86 @@ func (b *ACPBackend) promptStreamJSON(ctx context.Context, sess *acpSession, req
 	// result message carries no aggregate; see collectStreamJSONUsage.
 	assistantUsage := &TokenUsage{}
 
-	// Use a channel to allow context cancellation during reads.
-	type scanResult struct {
-		msg *streamJSONMessage
-		err error
-	}
-	resultCh := make(chan scanResult, 1)
-
-	for {
-		// Read the next line in a goroutine so we can select on ctx.Done().
-		go func() {
-			if sess.stdout.Scan() {
-				var msg streamJSONMessage
-				if jsonErr := json.Unmarshal(sess.stdout.Bytes(), &msg); jsonErr != nil {
-					resultCh <- scanResult{msg: nil, err: nil} // skip unparseable lines
-					return
-				}
-				resultCh <- scanResult{msg: &msg, err: nil}
-				return
-			}
-			// Scanner exhausted: process exited or pipe closed. Surface the
-			// subprocess exit code and stderr tail rather than a bare scan error.
-			scanErr := sess.stdout.Err()
-			if scanErr == nil {
-				scanErr = b.agentGoneError(sess)
-			}
-			resultCh <- scanResult{msg: nil, err: scanErr}
-		}()
-
-		select {
-		case <-ctx.Done():
-			return nil, &PromptError{SessionID: sess.id, Cause: &TransportError{Operation: "prompt", Cause: ctx.Err()}}
-
-		case sr := <-resultCh:
-			if sr.err != nil {
-				return nil, &PromptError{SessionID: sess.id, Cause: sr.err}
-			}
-			if sr.msg == nil {
-				// Unparseable line, continue reading.
-				continue
-			}
-
-			// Translate the message into structured transcript events —
-			// assistant chunks, chain-of-thought, tool calls/results — so
-			// attachers see what the agent is doing as it happens.
-			emitStreamJSONEvents(req.EventCallback, sess.id, sr.msg)
-
-			switch sr.msg.Type {
-			case "assistant":
-				if sr.msg.Message != nil {
-					if sr.msg.Message.Model != "" {
-						model = sr.msg.Message.Model
-					}
-					for _, c := range sr.msg.Message.Content {
-						if c.Type == "text" {
-							contentBlocks = append(contentBlocks, ContentBlock{Type: "text", Text: c.Text})
-						}
-					}
-					if sr.msg.Message.StopReason != "" {
-						stopReason = sr.msg.Message.StopReason
-					}
-					assistantUsage.Add(sr.msg.Message.Usage)
-				}
-
-			case "result":
-				if sr.msg.IsError {
-					// The evidence is taken from the RESULT message's own
-					// aggregate rather than from assistantUsage: the question
-					// it answers is whether the CLI ever reached the model at
-					// all, and a nil aggregate must stay distinguishable from
-					// a zero one (see TurnFailureEvidence.PreFirstTurn).
-					return nil, &PromptError{SessionID: sess.id, Cause: &StreamJSONError{
-						Command: b.config.Command,
-						Result:  sr.msg.Result,
-						TurnFailureEvidence: TurnFailureEvidence{
-							TerminalReason: sr.msg.TerminalReason,
-							NumTurns:       sr.msg.NumTurns,
-							Usage:          sr.msg.Usage,
-						},
-					}}
-				}
-				// Use accumulated content blocks, or fall back to the result text.
-				if len(contentBlocks) == 0 && sr.msg.Result != "" {
-					contentBlocks = []ContentBlock{{Type: "text", Text: sr.msg.Result}}
-				}
-				if model == "" {
-					model = sess.model
-				}
-				// The stream-json dialect reports stop_reason as null on the
-				// assistant message and signals completion with this result
-				// message instead, so a finished turn would otherwise carry an
-				// empty stop reason. Normalise it to the same value the
-				// JSON-RPC and one-shot paths report, so every backend
-				// describes a completed turn identically.
-				if stopReason == "" {
-					stopReason = StopReasonEndTurn
-				}
-				return &PromptResponse{
-					SessionID:  sess.id,
-					Content:    contentBlocks,
-					Model:      model,
-					StopReason: stopReason,
-					Usage:      collectStreamJSONUsage(sr.msg.Usage, assistantUsage),
-				}, nil
-			}
-			// Other message types (e.g., tool_use) are skipped.
+	result, readErr := sess.reader.nextResult(ctx, func(msg *streamJSONMessage) {
+		// Translate the message into structured transcript events —
+		// assistant chunks, chain-of-thought, tool calls/results — so
+		// attachers see what the agent is doing as it happens.
+		emitStreamJSONEvents(req.EventCallback, sess.id, msg)
+		if msg.Type != "assistant" || msg.Message == nil {
+			return
 		}
+		if msg.Message.Model != "" {
+			model = msg.Message.Model
+		}
+		for _, c := range msg.Message.Content {
+			if c.Type == "text" {
+				contentBlocks = append(contentBlocks, ContentBlock{Type: "text", Text: c.Text})
+			}
+		}
+		if msg.Message.StopReason != "" {
+			stopReason = msg.Message.StopReason
+		}
+		assistantUsage.Add(msg.Message.Usage)
+	})
+	if readErr != nil {
+		return nil, &PromptError{SessionID: sess.id, Cause: b.streamJSONReadError(sess, readErr)}
 	}
+	sess.pending--
+
+	if result.IsError {
+		// The evidence is taken from the RESULT message's own aggregate
+		// rather than from assistantUsage: the question it answers is
+		// whether the CLI ever reached the model at all, and a nil aggregate
+		// must stay distinguishable from a zero one (see
+		// TurnFailureEvidence.PreFirstTurn).
+		return nil, &PromptError{SessionID: sess.id, Cause: &StreamJSONError{
+			Command: b.config.Command,
+			Result:  result.Result,
+			TurnFailureEvidence: TurnFailureEvidence{
+				TerminalReason: result.TerminalReason,
+				NumTurns:       result.NumTurns,
+				Usage:          result.Usage,
+			},
+		}}
+	}
+	// Use accumulated content blocks, or fall back to the result text.
+	if len(contentBlocks) == 0 && result.Result != "" {
+		contentBlocks = []ContentBlock{{Type: "text", Text: result.Result}}
+	}
+	if model == "" {
+		model = sess.model
+	}
+	// The stream-json dialect reports stop_reason as null on the assistant
+	// message and signals completion with this result message instead, so a
+	// finished turn would otherwise carry an empty stop reason. Normalise it
+	// to the same value the JSON-RPC and one-shot paths report, so every
+	// backend describes a completed turn identically.
+	if stopReason == "" {
+		stopReason = StopReasonEndTurn
+	}
+	return &PromptResponse{
+		SessionID:  sess.id,
+		Content:    contentBlocks,
+		Model:      model,
+		StopReason: stopReason,
+		Usage:      collectStreamJSONUsage(result.Usage, assistantUsage),
+	}, nil
+}
+
+// streamJSONReadError names why a read from the agent's stream failed: the
+// caller's ctx, or the stream's end — for which the subprocess exit code and
+// stderr tail (or the container) are reported rather than a bare scan error.
+func (b *ACPBackend) streamJSONReadError(sess *acpSession, err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return &TransportError{Operation: "prompt", Cause: err}
+	}
+	// The stream ended. The reader already knows why when the opener could
+	// say; the session is closed and the process reaped either way.
+	gone := b.agentGoneError(sess)
+	if err != nil {
+		return err
+	}
+	return gone
 }
 
 // promptOneShotCLI runs a single prompt by spawning a fresh CLI process.
