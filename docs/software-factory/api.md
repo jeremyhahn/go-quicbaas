@@ -277,6 +277,10 @@ The `onboarding` block is optional and every field of it defaults; see
 The `modules` block is optional: set `rewrite_prefix` when the project
 depends on private Go modules the forge hosts under its owner; see
 [private modules](sdlc.md#modulesrewrite_prefix--private-go-modules-resolve-at-the-forge).
+The `reviewer` block takes an optional `reasoning_effort` — for codex, its
+`model_reasoning_effort` (`minimal`, `low`, `medium`, `high`, `xhigh`); empty
+takes the backend's default. It is a cost dial per project; see
+[review.md](review.md).
 
 #### `POST /api/v1/sdlc/projects/{projectID}/onboarding`
 

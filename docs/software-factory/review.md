@@ -532,6 +532,7 @@ reviewer:
   login: agent-reviewer
   token_secret_ref: forge/agent-reviewer/token
   status_context: quicbaas/review     # optional
+  reasoning_effort: medium            # optional; codex's model_reasoning_effort: minimal|low|medium|high|xhigh
 discovery: both                       # poll | webhook | both (default)
 review:
   required_approvals: 1

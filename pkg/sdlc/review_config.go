@@ -97,6 +97,34 @@ type ReviewerConfig struct {
 	// StatusContext is the commit status the verdict is published under.
 	// Empty takes DefaultReviewStatusContext.
 	StatusContext string `json:"status_context,omitempty"`
+
+	// ReasoningEffort is how hard the reviewer's model thinks per review, in
+	// the backend's own vocabulary; empty takes the backend's default. For
+	// codex it is `model_reasoning_effort`: minimal, low, medium, high or
+	// xhigh. It is a binding setting because it is a cost setting: a fleet
+	// generating reviews by the dozen while its pipelines are being brought
+	// up runs at medium, and turns it up per project once the reviews are
+	// worth it.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+}
+
+// reviewerEfforts is the vocabulary codex accepts for model_reasoning_effort.
+// A value outside it is refused at bind time rather than by every review.
+var reviewerEfforts = map[string]bool{
+	"minimal": true, "low": true, "medium": true, "high": true, "xhigh": true,
+}
+
+// ExtraArgs is what the reviewer's spawn adds to the backend's command line
+// for this configuration: for codex, the reasoning-effort override as a
+// `-c` config override, which is the one way the CLI takes it. Other
+// backends take nothing here; the field is validated for all of them so a
+// typo is caught wherever it is written.
+func (r ReviewerConfig) ExtraArgs() []string {
+	effort := strings.TrimSpace(r.ReasoningEffort)
+	if effort == "" || strings.TrimSpace(r.Backend) != "codex" {
+		return nil
+	}
+	return []string{"-c", "model_reasoning_effort=\"" + effort + "\""}
 }
 
 // Configured reports whether this project is reviewed by an agent of its own.
@@ -139,6 +167,12 @@ func (r ReviewerConfig) Validate() error {
 		return &InvalidInputError{
 			Field:   "reviewer.token_secret_ref",
 			Message: "required; a reviewer using the author's token is a change approving itself",
+		}
+	}
+	if effort := strings.TrimSpace(r.ReasoningEffort); effort != "" && !reviewerEfforts[effort] {
+		return &InvalidInputError{
+			Field:   "reviewer.reasoning_effort",
+			Message: "must be one of minimal, low, medium, high or xhigh",
 		}
 	}
 	return nil

@@ -80,6 +80,7 @@ func newReviewRunnerRig(t *testing.T) *reviewRunnerRig {
 	binding.Reviewer = ReviewerConfig{
 		Backend: "codex", Model: "gpt-5-codex", Image: "reviewer:test",
 		Login: fakeReviewerLogin, TokenSecretRef: "reviewer-tok",
+		ReasoningEffort: "medium",
 	}
 	// The independence rule is on by default in testBinding, so the reviewer
 	// has to be recorded as a family the gate can tell from the worker's.
@@ -258,6 +259,11 @@ func TestReviewRunner_TheReviewerIsSpawnedFromTheBindingAndSignsNothing(t *testi
 	}
 	if spawn.SystemPrompt != ReviewerCharter() {
 		t.Fatal("the reviewer did not get the reviewer charter")
+	}
+	// THE BINDING'S EFFORT REACHES CODEX AS ITS CONFIG OVERRIDE, and nothing
+	// else on the command line changes for it.
+	if !slices.Contains(spawn.ExtraArgs, "model_reasoning_effort=\"medium\"") {
+		t.Fatalf("the reviewer's reasoning effort did not reach its spawn: %v", spawn.ExtraArgs)
 	}
 	// NOTHING RATIONS THE REVIEWER INSIDE ITS CONTAINER (go-quicbaas#927). Its
 	// whole job is reading a diff, and `git diff` is a command. The grant a

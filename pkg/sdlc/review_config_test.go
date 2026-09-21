@@ -86,6 +86,38 @@ func TestReviewerConfig_StatusContextAndFamily(t *testing.T) {
 	}
 }
 
+// TestReviewerConfig_ReasoningEffortIsCodexsConfigOverride: the effort a
+// binding names reaches codex as `-c model_reasoning_effort`, reaches no
+// other backend, and is refused outside the CLI's vocabulary.
+func TestReviewerConfig_ReasoningEffortIsCodexsConfigOverride(t *testing.T) {
+	base := ReviewerConfig{Backend: "codex", Login: "codex", TokenSecretRef: "sdlc/reviewer/token"}
+	for _, effort := range []string{"minimal", "low", "medium", "high", "xhigh"} {
+		r := base
+		r.ReasoningEffort = effort
+		if err := r.Validate(); err != nil {
+			t.Errorf("%s refused: %v", effort, err)
+		}
+		if got := r.ExtraArgs(); len(got) != 2 || got[0] != "-c" || got[1] != "model_reasoning_effort=\""+effort+"\"" {
+			t.Errorf("%s: args = %v", effort, got)
+		}
+	}
+	r := base
+	r.ReasoningEffort = "ultra"
+	if err := r.Validate(); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("an effort outside the vocabulary was accepted: %v", err)
+	}
+	if got := base.ExtraArgs(); got != nil {
+		t.Errorf("no effort named, yet args = %v", got)
+	}
+	claude := ReviewerConfig{Backend: "claude", Login: "c", TokenSecretRef: "t", ReasoningEffort: "medium"}
+	if err := claude.Validate(); err != nil {
+		t.Errorf("a valid effort on another backend was refused: %v", err)
+	}
+	if got := claude.ExtraArgs(); got != nil {
+		t.Errorf("codex's config override was handed to another backend: %v", got)
+	}
+}
+
 func TestProjectBinding_ValidatesItsReviewer(t *testing.T) {
 	binding := testBinding()
 	if err := binding.Validate(); err != nil {

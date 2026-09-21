@@ -717,6 +717,7 @@ func (s *reviewRun) spawnRequest(ctx context.Context, mount string) (*orchestrat
 		SystemPrompt: ReviewerCharter(),
 		WorkDir:      mount,
 		Persistent:   true,
+		ExtraArgs:    s.reviewer.ExtraArgs(),
 	}
 	if image := strings.TrimSpace(s.reviewer.Image); image != "" {
 		req.ContainerImage = image
