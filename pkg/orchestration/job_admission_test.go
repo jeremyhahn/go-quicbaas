@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -187,6 +188,91 @@ func TestStartJob_TakesALeaseAndCancelJobReleasesIt(t *testing.T) {
 	if svc.JobRunning("acme", resp.JobID) {
 		t.Fatal("a cancelled job is not running")
 	}
+}
+
+// singletonRunner is a runner whose jobs are per-subject singletons: every
+// job of it names the same lease subject, and its run holds the lease until
+// cancelled.
+type singletonRunner struct{ name string }
+
+func (r *singletonRunner) Name() string { return r.name }
+func (r *singletonRunner) States() []JobStateSpec {
+	return []JobStateSpec{{State: JobStateExecuting, Label: "Executing"}}
+}
+func (r *singletonRunner) Validate(context.Context, *JobConfig) error { return nil }
+func (r *singletonRunner) LeaseSubject(*JobConfig) string             { return r.name + ":subject" }
+func (r *singletonRunner) OffProjectBudget() bool                     { return true }
+func (r *singletonRunner) Run(ctx context.Context, job *JobRun) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// TestStartJob_RefusesASecondJobOnAHeldSubjectBeforeCreatingIt: a runner
+// whose jobs are singletons per subject is refused at StartJob while another
+// job holds the subject's lease — no second job record, no failed job in the
+// queue — and admitted again once the holder has released it.
+func TestStartJob_RefusesASecondJobOnAHeldSubjectBeforeCreatingIt(t *testing.T) {
+	runner := &singletonRunner{name: "singleton-" + t.Name()}
+	registerJobRunnerForTest(t, runner)
+	backend := newHoldingBackend()
+	svc := newHoldingService(t, backend)
+	ctx := ContextWithTenant(context.Background(), "acme")
+	defer cancelAllJobs(svc)
+
+	first, err := svc.StartJob(ctx, &StartJobRequest{TenantID: "acme", Runner: runner.name, Description: "holder", LeadBackend: "mock"})
+	if err != nil {
+		t.Fatalf("StartJob (holder): %v", err)
+	}
+	loop := runningLoop(t, svc, "acme", first.JobID)
+	awaitLease(t, loop)
+
+	second, err := svc.StartJob(ctx, &StartJobRequest{TenantID: "acme", Runner: runner.name, Description: "duplicate", LeadBackend: "mock"})
+	if !errors.Is(err, ErrJobLeaseTaken) {
+		t.Fatalf("a duplicate on a held subject was not refused at StartJob: resp=%+v err=%v", second, err)
+	}
+	var taken *JobLeaseTakenError
+	if !errors.As(err, &taken) || taken.HeldByJobID != first.JobID {
+		t.Fatalf("the refusal does not name the holder: %v", err)
+	}
+	if n := countJobs(svc, "acme"); n != 1 {
+		t.Fatalf("jobs registered = %d, want only the holder; a refused duplicate must leave no record", n)
+	}
+
+	if err := svc.CancelJob(ctx, "acme", first.JobID); err != nil {
+		t.Fatalf("CancelJob: %v", err)
+	}
+	awaitFinished(t, loop)
+	third, err := svc.StartJob(ctx, &StartJobRequest{TenantID: "acme", Runner: runner.name, Description: "after release", LeadBackend: "mock"})
+	if err != nil {
+		t.Fatalf("StartJob after the holder released: %v", err)
+	}
+	if third.JobID == first.JobID {
+		t.Fatal("the job after release reused the holder's id")
+	}
+}
+
+// awaitLease waits until the run holds its lease.
+func awaitLease(t *testing.T, loop *JobRun) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for loop.Lease() == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("the run never took its lease")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// countJobs counts the jobs the service has registered for a tenant.
+func countJobs(svc *agentServiceImpl, tenantID string) int {
+	n := 0
+	svc.jobs.Range(func(key, _ any) bool {
+		if strings.HasPrefix(key.(string), tenantID+"/") {
+			n++
+		}
+		return true
+	})
+	return n
 }
 
 // TestStartJob_RefusesTheJobOverProjectCapacity proves the typed capacity

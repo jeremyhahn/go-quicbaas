@@ -16,6 +16,7 @@ package orchestration
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -50,6 +51,57 @@ func (s *agentServiceImpl) SetJobLeaseStore(store JobLeaseStore, ttl time.Durati
 	if ttl > 0 {
 		s.leaseTTL = ttl
 	}
+}
+
+// refuseHeldLease answers StartJob, synchronously, with the refusal the run
+// would otherwise reach only after the job record existed: for a runner
+// whose jobs are per-subject singletons (one declaring a JobLeasePolicy),
+// a live lease on that subject held by another job.
+//
+// WHY BEFORE THE RECORD. The lease is acquired by the run itself, so a
+// StartJob for a subject already in flight used to succeed, create the job,
+// and have it fail minutes later with "job lease: held by another job" —
+// a failed job in the queue for what was a duplicate, not a failure. The
+// triage backstop produced one every fifteen minutes for as long as a
+// project's pass ran longer than its interval (six on the burn-in node in
+// eight hours, 2026-09-21), and the scheduler's own "already running" branch
+// never saw the refusal it was written for. Refusing here is what makes
+// that branch true.
+//
+// THE RULE IS THE STORE'S RULE, jobLeaseAdmits, applied to the same key the
+// run will write, so a contender this refuses is one acquire would have
+// refused and a contender this admits is one acquire will admit — a later
+// generation superseding a stale holder included. A runner that declares
+// no subject is not asked: its jobs contend on nothing at StartJob time.
+func (s *agentServiceImpl) refuseHeldLease(ctx context.Context, runner JobRunner, cfg *JobConfig) error {
+	if s.jobLeases == nil || cfg == nil {
+		return nil
+	}
+	subject := runnerLeaseSubject(runner, cfg)
+	if subject == "" {
+		return nil
+	}
+	workflow := strings.TrimSpace(cfg.WorkflowName)
+	if workflow == "" {
+		workflow = cfg.Runner
+	}
+	held, err := s.jobLeases.Get(ctx, cfg.TenantID, cfg.ProjectID, workflow, subject)
+	if err != nil {
+		var missing *JobLeaseNotFoundError
+		if errors.As(err, &missing) {
+			return nil
+		}
+		return err
+	}
+	generation := cfg.Attempt
+	if generation < 1 {
+		generation = 1
+	}
+	contender := &JobLease{Generation: generation}
+	if held == nil || jobLeaseAdmits(held, contender, time.Now(), s.leaseTTL) {
+		return nil
+	}
+	return jobLeaseTaken(contender, held)
 }
 
 // SetIdleThresholds configures the stall detector's per-state bounds. Must

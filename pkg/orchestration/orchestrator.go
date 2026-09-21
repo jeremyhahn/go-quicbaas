@@ -4929,6 +4929,11 @@ func (s *agentServiceImpl) startJob(ctx context.Context, req *StartJobRequest, j
 	if err := runner.Validate(ctx, config); err != nil {
 		return nil, err
 	}
+	// A per-subject singleton whose subject is already held is refused
+	// here, before a record exists; see refuseHeldLease.
+	if err := s.refuseHeldLease(ctx, runner, config); err != nil {
+		return nil, err
+	}
 
 	startedID, err := s.launchJob(ctx, config, jobID, nil)
 	if err != nil {

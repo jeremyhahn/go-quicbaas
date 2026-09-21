@@ -159,6 +159,24 @@ Everything else a runner parks for — a worker's question, an owner's decision,
 a spent review budget, a prompt that repeated — carries **no** class and is
 charged exactly as before.
 
+### A held subject is refused at StartJob
+
+A runner whose jobs are per-subject singletons — one declaring a
+`JobLeasePolicy`, today triage and review — acquires its lease inside the
+run. Starting a second job on a subject already in flight therefore used to
+succeed, create the job record, and fail it minutes later with `job lease:
+held by another job`: a failed job in the queue for what was a duplicate. The
+triage backstop produced one every fifteen minutes for as long as a project's
+pass outran its interval.
+
+`StartJob` now reads the subject's lease before any record exists and applies
+the store's own admission rule (`jobLeaseAdmits`: a released or stale holder
+admits, a later generation supersedes, the same job re-acquires) to a
+contender of the request's generation. A contender the store would refuse is
+refused here, synchronously, as `ErrJobLeaseTaken` naming the holder — the
+answer the triage scheduler's "already running" branch was written for. A
+runner that declares no subject is not asked.
+
 Three **consecutive** environmental faults (`MaxConsecutiveEnvironmentFaults`)
 block the Task and charge the attempt. `Task.ChargedAttempts()` is
 `Attempts - EnvironmentFaults`; `Task.BudgetExhausted()` compares it to
