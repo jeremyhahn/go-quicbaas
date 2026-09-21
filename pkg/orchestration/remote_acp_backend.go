@@ -832,12 +832,29 @@ func (p *grpcConnPool) dial(ctx context.Context, target string) (*grpc.ClientCon
 	} else {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
+	// A WORKER'S REPLY IS NOT A SMALL MESSAGE. gRPC's default receive limit is
+	// 4 MiB; one Prompt reply carrying a 35-minute delivery turn -- the
+	// worker's text, its tool calls and the verification output it quoted --
+	// measured 16.9 MB on go-quicbaas#62 (2026-09-21) and was refused with
+	// ResourceExhausted after the whole turn had been paid for, charged to
+	// the work, and re-dispatched into the same wall. The agent side raises
+	// its send limit to the same bound (RemoteACPMaxMessageBytes).
+	opts = append(opts, grpc.WithDefaultCallOptions(
+		grpc.MaxCallRecvMsgSize(RemoteACPMaxMessageBytes),
+		grpc.MaxCallSendMsgSize(RemoteACPMaxMessageBytes),
+	))
 	conn, err := grpc.NewClient(target, opts...)
 	if err != nil {
 		return nil, &RemoteBackendDialError{Host: target, Err: err}
 	}
 	return conn, nil
 }
+
+// RemoteACPMaxMessageBytes bounds one gRPC message between the daemon and an
+// agent daemon, in both directions. 64 MiB: a turn's reply is text the model
+// wrote plus the tool output it quoted, and the largest measured (16.9 MB)
+// sits well inside it; a message beyond this is a runaway, not a turn.
+const RemoteACPMaxMessageBytes = 64 << 20
 
 // =============================================================================
 // Translation helpers

@@ -178,6 +178,12 @@ func (s *GRPCSpawnServer) Start(ctx context.Context) error {
 		// configure TLS via the DaemonDeps wiring.
 		opts = append(opts, grpc.Creds(insecure.NewCredentials()))
 	}
+	// The same bound the daemon dials with (orchestration.RemoteACPMaxMessageBytes):
+	// a worker's reply is text plus quoted tool output and has measured 16.9 MB.
+	opts = append(opts,
+		grpc.MaxRecvMsgSize(orchestration.RemoteACPMaxMessageBytes),
+		grpc.MaxSendMsgSize(orchestration.RemoteACPMaxMessageBytes),
+	)
 
 	s.grpcSrv = grpc.NewServer(opts...)
 	proto.RegisterAgentRuntimeServer(s.grpcSrv, s)
