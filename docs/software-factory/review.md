@@ -556,6 +556,14 @@ be the one it was routed on. See
 backend its daemon does not serve is refused rather than served by the
 daemon's primary.
 
+A **settled red pipeline is reported ahead of a missing approval.** The two
+are judged by different actors and only one of them acts on a red head: the
+review sweep dispatches no reviewer until the checks are green, so a pull
+request with a red pipeline and no review used to wait as "0 of 1 approvals"
+for a review that could not come. The gate now names the red first, which is
+what sends it to the worker as a CI-red round; checks that have merely not
+finished still wait behind the approvals.
+
 A check the pipeline **skipped** (a job behind a false `if:`, which Gitea
 posts as state `skipped`) is finished and passed over: it neither blocks the
 gate nor counts as a green check, and it is never triaged as a failure. A

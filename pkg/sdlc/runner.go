@@ -190,9 +190,17 @@ func (*Runner) States() []orchestration.JobStateSpec { return RunnerStates() }
 func RunnerStates() []orchestration.JobStateSpec {
 	return []orchestration.JobStateSpec{
 		{State: orchestration.JobStateInitializing, Label: labelInitializing},
-		{State: orchestration.JobStateExecuting, Label: labelExecuting, SessionBacked: true},
-		{State: orchestration.JobStateValidating, Label: labelValidating},
-		{State: orchestration.JobStateReviewing, Label: labelReviewing, SessionBacked: true},
+		// THE BOUNDS ARE THE WORK'S, NOT THE ENGINE'S DEFAULT. A delivery
+		// turn on a large repository runs an hour; its verification runs
+		// `make test` for twenty-five minutes three times over; and reviewing
+		// waits on a CI pipeline of fifty minutes and then on a reviewer. The
+		// engine's default idle bound is minutes, and on 2026-09-21 the stall
+		// detector ended a resumed go-quicbaas job in reviewing at thirty
+		// minutes — while its pull request's checks were still being judged —
+		// and the task was re-dispatched to be reviewed again from scratch.
+		{State: orchestration.JobStateExecuting, Label: labelExecuting, SessionBacked: true, IdleThreshold: 2 * time.Hour},
+		{State: orchestration.JobStateValidating, Label: labelValidating, IdleThreshold: 2 * time.Hour},
+		{State: orchestration.JobStateReviewing, Label: labelReviewing, SessionBacked: true, IdleThreshold: 4 * time.Hour},
 		{State: orchestration.JobStateRedelegating, Label: labelRedelegating},
 		{State: orchestration.JobStateCompleting, Label: labelCompleting},
 		{State: orchestration.JobStateCleanup, Label: labelCleanup},

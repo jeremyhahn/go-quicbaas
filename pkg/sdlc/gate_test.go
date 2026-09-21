@@ -55,6 +55,13 @@ func TestEvaluateReviewGate_EveryRefusalInOrder(t *testing.T) {
 		"insufficient": {GateInput{Policy: gatePolicy(), PullRequestState: PullRequestOpen, HeadSHA: "h", AuthorModelFamily: ModelFamilyAnthropic}, GateBlockedInsufficientApprovals},
 		"stale head ignored": {GateInput{Policy: gatePolicy(), PullRequestState: PullRequestOpen, HeadSHA: "h2", AuthorModelFamily: ModelFamilyAnthropic,
 			Reviews: []ReviewRecord{approve("codex", ModelFamilyOpenAI, "h1", 1)}}, GateBlockedInsufficientApprovals},
+		// A settled red outranks a missing approval: no reviewer is
+		// dispatched to a red head, so reporting the approval first would
+		// wait for a review that cannot come (go-quicbaas PR #971).
+		"red pipeline before missing approvals": {GateInput{Policy: gatePolicy(), PullRequestState: PullRequestOpen, HeadSHA: "h", AuthorModelFamily: ModelFamilyAnthropic,
+			Checks: []CheckRecord{green("build", "h"), {Name: "test", HeadSHA: "h", Status: CheckFailure}}}, GateBlockedChecksFailed},
+		"unfinished pipeline waits behind missing approvals": {GateInput{Policy: gatePolicy(), PullRequestState: PullRequestOpen, HeadSHA: "h", AuthorModelFamily: ModelFamilyAnthropic,
+			Checks: []CheckRecord{{Name: "ci", HeadSHA: "h", Status: CheckPending}}}, GateBlockedInsufficientApprovals},
 		"no checks": {GateInput{Policy: gatePolicy(), PullRequestState: PullRequestOpen, HeadSHA: "h", AuthorModelFamily: ModelFamilyAnthropic,
 			Reviews: []ReviewRecord{approve("codex", ModelFamilyOpenAI, "h", 1)}}, GateBlockedNoChecks},
 		"checks incomplete": {GateInput{Policy: gatePolicy(), PullRequestState: PullRequestOpen, HeadSHA: "h", AuthorModelFamily: ModelFamilyAnthropic,

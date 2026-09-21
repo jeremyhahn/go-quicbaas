@@ -179,6 +179,24 @@ func EvaluateReviewGate(in GateInput) GateDecision {
 		return decision
 	}
 
+	// A RED PIPELINE IS REPORTED BEFORE THE APPROVAL COUNT. The two are
+	// judged by different actors, and only one of them will ever act on a
+	// red head: the review sweep dispatches no reviewer until the checks
+	// are green, so a pull request with a settled red and no review would
+	// wait here as "0 of 1 approvals" for a review that cannot come, while
+	// the worker who could fix the red was never told. Measured on
+	// go-quicbaas PR #971 (2026-09-21): thirty minutes in reviewing on a
+	// failed Security Scan, then ended by the stall detector. Checks that
+	// have merely not finished stay behind the approvals, where waiting is
+	// the right answer for both.
+	if in.Policy.RequireGreenChecks {
+		if reason, detail := evaluateChecks(in.Checks, in.HeadSHA); reason == GateBlockedChecksFailed {
+			decision.Reason = reason
+			decision.Detail = detail
+			return decision
+		}
+	}
+
 	independent, excluded := countIndependentApprovals(verdicts, in.Policy, in.AuthorModelFamily)
 	decision.Approvals = independent
 	if independent < in.Policy.RequiredApprovals {
