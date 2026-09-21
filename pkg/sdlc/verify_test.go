@@ -16,6 +16,7 @@ package sdlc
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -111,6 +112,56 @@ func TestValidateInContainer_AFailureCarriesBothStreamsAsEvidence(t *testing.T) 
 	}
 	if !strings.Contains(result.Details, "exit code: 2") || !strings.Contains(result.Details, "TestThing") {
 		t.Errorf("details = %q, want the exit code and the stdout evidence", result.Details)
+	}
+}
+
+// TestValidateInContainer_TheEvidenceIsBoundedToTheOutputsTail: megabytes of
+// test output do not go back to the worker; its last VerificationEvidenceBytes
+// do, whole lines, with the omission stated — the failure is at the end.
+func TestValidateInContainer_TheEvidenceIsBoundedToTheOutputsTail(t *testing.T) {
+	rig := newVerifyRig(t, "/workspace/api", "make test")
+	var out strings.Builder
+	for i := 0; i < 20000; i++ {
+		out.WriteString("ok  \tpkg/thing" + strconv.Itoa(i) + "\t0.01s\n")
+	}
+	out.WriteString("--- FAIL: TestThing\nFAIL\tpkg/last\t1.2s\n")
+	rig.result = &orchestration.ExecResult{ExitCode: 2, Stdout: out.String(), Stderr: "make: *** [test] Error 1\n"}
+
+	result, err := ValidateInContainer(context.Background(), rig.job,
+		orchestration.ReviewCriterion{Name: "make test", Config: "make test"})
+	if err != nil {
+		t.Fatalf("ValidateInContainer: %v", err)
+	}
+	if len(result.Details) > VerificationEvidenceBytes+512 {
+		t.Errorf("details = %d bytes, want at most the bound plus its header", len(result.Details))
+	}
+	for _, want := range []string{"exit code: 2", "--- FAIL: TestThing", "FAIL\tpkg/last", "bytes of output are omitted"} {
+		if !strings.Contains(result.Details, want) {
+			t.Errorf("details lack %q", want)
+		}
+	}
+	if strings.Contains(result.Details, "pkg/thing0\t") {
+		t.Error("the head of the output was kept; the tail is what carries the failure")
+	}
+	// The window opens on a whole line.
+	body := strings.TrimSpace(result.Details[strings.Index(result.Details, "bytes)")+len("bytes)"):])
+	if first := strings.SplitN(body, "\n", 2)[0]; !strings.HasPrefix(first, "ok  \t") {
+		t.Errorf("the excerpt starts mid-line: %q", first)
+	}
+}
+
+// TestValidateInContainer_ShortOutputIsHandedOverWhole: nothing under the
+// bound is touched or annotated.
+func TestValidateInContainer_ShortOutputIsHandedOverWhole(t *testing.T) {
+	rig := newVerifyRig(t, "/workspace/api", "make lint")
+	rig.result = &orchestration.ExecResult{ExitCode: 1, Stdout: "pkg/a.go:1:1: unused variable\n"}
+	result, err := ValidateInContainer(context.Background(), rig.job,
+		orchestration.ReviewCriterion{Name: "make lint", Config: "make lint"})
+	if err != nil {
+		t.Fatalf("ValidateInContainer: %v", err)
+	}
+	if result.Details != "exit code: 1\n\npkg/a.go:1:1: unused variable" {
+		t.Errorf("details = %q", result.Details)
 	}
 }
 

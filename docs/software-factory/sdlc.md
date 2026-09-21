@@ -975,7 +975,11 @@ the session:
    context small.
 
 The audit event is `sdlc:session_rolled` with `class=`, `round=`, `session=`
-and `elapsed=`. **Once per round**: a fresh session that fills again on the
+and `elapsed=`. The most common way a round-1 prompt used to overflow was the
+verification feedback itself: the whole `make test` output went into the
+prompt. It is now bounded to the output's last 16 KiB
+(`VerificationEvidenceBytes`, whole lines, omission stated), which is where
+the failure is; the full output stays on the job's verification record. **Once per round**: a fresh session that fills again on the
 same prompt has a prompt the work cannot take, and the run fails with the
 CLI's reason, charged like `prompt_too_long`. Nothing in this group refunds
 an attempt — see [accounts.md](accounts.md) for the refunded set, which is

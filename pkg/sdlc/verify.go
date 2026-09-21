@@ -109,10 +109,33 @@ func ValidateInContainer(ctx context.Context, job *orchestration.JobContext, cri
 // BOTH STREAMS ARE EVIDENCE. A build tool that reports its failure on stdout
 // — go test does, make does — would otherwise send the worker back with an
 // exit code and nothing to act on.
+// VerificationEvidenceBytes bounds how much of a failed verification
+// command's output is handed back to the worker: its LAST bytes, because that
+// is where a build error, a `--- FAIL` and a `make: *** Error` land.
+//
+// THE OUTPUT USED TO BE HANDED OVER WHOLE, and `make test` on a large project
+// prints megabytes. On the burn-in fleet (go-quicbaas #51 and #965,
+// 2026-09-21) the round-1 prompt that carried it was refused by the CLI's
+// context guard (`blocking_limit`) after three minutes, and once the session
+// was rolled, by the API itself (`prompt_too_long`) in under a minute — a
+// fresh session with nothing in it but the contract and this feedback. Every
+// attempt that reached verification and failed it died there, whatever the
+// failure was.
+//
+// 16 KiB is roughly a hundred lint findings or a few failing tests with
+// their assertions, and it is a bound on the PROMPT, not on the evidence: the
+// full output stays on the job's verification record.
+const VerificationEvidenceBytes = 16 * 1024
+
 func verificationEvidence(result *orchestration.ExecResult) string {
 	evidence := "exit code: " + strconv.Itoa(result.ExitCode)
-	if stdout := strings.TrimSpace(result.Stdout); stdout != "" {
-		evidence += "\n\n" + stdout
+	stdout, truncated := boundedTail(result.Stdout, VerificationEvidenceBytes)
+	if stdout == "" {
+		return evidence
 	}
-	return evidence
+	if truncated {
+		evidence += "\n\n(the first " + strconv.Itoa(len(result.Stdout)-len(stdout)) +
+			" bytes of output are omitted; this is its last " + strconv.Itoa(VerificationEvidenceBytes) + " bytes)"
+	}
+	return evidence + "\n\n" + stdout
 }
