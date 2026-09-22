@@ -379,13 +379,31 @@ func NewTaskStore(kv interfaces.KVStore, arbiter TaskClaimArbiter, opts ...Store
 // transition the store writes is checked here, so the lifecycle is stated once
 // and read in one place:
 //
-//	pending     -> claimed | blocked
+//	pending     -> claimed (an agent) | in_progress (the engine) | blocked
 //	claimed     -> in_progress | completed | failed | blocked
 //	in_progress -> completed | failed | blocked
 //	blocked     -> pending (readmit) | failed
 //
 // completed and cancelled are terminal. FAILED IS NOT, and that is the whole
 // point of the one transition out of it.
+//
+// WHY pending -> in_progress EXISTS: THE ENGINE CLAIMS WHAT IT DISPATCHES.
+// claimed means "an agent has taken this and has not started yet", which is a
+// state only the two-step agent hand-over passes through — ClaimTask then the
+// agent's own start. A job the engine dispatches itself has no such gap: the
+// claim and the start are one decision (ClaimTaskSpawn), so the edge it needs
+// is straight to in_progress and routing it through claimed would invent a
+// claimant that does not exist.
+//
+// Without this edge the engine had no edge at all, and the task stayed pending
+// for the whole life of its job. Measured on the burn-in node (go-truststrap#14,
+// 2026-09-21): a task adopted at 02:13:49 and merged at 02:28:06 read `pending`
+// for those fourteen minutes and went straight to `completed`. Every reader of
+// Task.Status — the API, `orchestrator task get`, the task list, the label
+// reconciler's claim sweep — called a running delivery queued, and anything
+// reasoning from StatusChangedAt saw a fourteen-minute-old pending task, which
+// is also the signature of a stranded binding: a healthy run and a real stall
+// were indistinguishable by the record (go-quicbaas#966).
 //
 // WHY failed -> pending EXISTS. A task fails for two very different reasons and
 // this table could not tell them apart: the work was impossible, or the fleet
@@ -409,8 +427,9 @@ func NewTaskStore(kv interfaces.KVStore, arbiter TaskClaimArbiter, opts ...Store
 // first place, so no operator action is needed at all — is still owed.
 var taskTransitions = map[TaskStatus]map[TaskStatus]struct{}{
 	TaskStatusPending: {
-		TaskStatusClaimed: {},
-		TaskStatusBlocked: {},
+		TaskStatusClaimed:    {},
+		TaskStatusInProgress: {},
+		TaskStatusBlocked:    {},
 	},
 	TaskStatusClaimed: {
 		TaskStatusInProgress: {},

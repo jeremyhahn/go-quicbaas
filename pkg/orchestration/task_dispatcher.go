@@ -323,12 +323,22 @@ func (d *TaskDispatcher) plan(ctx context.Context) (*FleetPlan, error) {
 	return plan, nil
 }
 
+// dispatchSweepStatuses are the statuses one sweep reads.
+//
+// TWO, NOT ONE, AND THE SECOND ONE IS NOT DISPATCHABLE. Only a pending task can
+// be started, but the sweep is also the only thing that repairs a task bound to
+// a job that no longer exists (repairStrandedBindings), and since the engine
+// claims what it dispatches (ClaimTaskSpawn) a bound task reads in_progress
+// rather than pending. Listing the queue alone would leave every stranded
+// binding invisible to the one sweep that can free it.
+var dispatchSweepStatuses = []TaskStatus{TaskStatusPending, TaskStatusInProgress}
+
 // sweepProject dispatches as many of one project's pending tasks as admission
 // leaves room for, and leaves a reason on every task it declines.
 func (d *TaskDispatcher) sweepProject(ctx context.Context, project *Project, plan *FleetPlan) {
-	pending, err := d.tasks.ListTasks(ctx, project.TenantID, &TaskFilter{
+	tasks, err := d.tasks.ListTasks(ctx, project.TenantID, &TaskFilter{
 		ProjectID: project.ID,
-		Status:    TaskStatusPending,
+		Statuses:  dispatchSweepStatuses,
 	})
 	if err != nil {
 		d.logger.Warnf("task dispatcher: project %s: listing tasks failed: %s", project.ID, err.Error())
@@ -336,7 +346,8 @@ func (d *TaskDispatcher) sweepProject(ctx context.Context, project *Project, pla
 	}
 
 	now := d.now().UnixNano()
-	ready, held, bound := partitionDispatchCandidates(pending, now)
+	ready, held, bound := partitionDispatchCandidates(tasks, now)
+	queued := countQueued(tasks)
 
 	// A task naming a job that no longer exists is repaired BEFORE slots are
 	// computed, so a sweep that frees one can dispatch it in the same pass.
@@ -370,10 +381,24 @@ func (d *TaskDispatcher) sweepProject(ctx context.Context, project *Project, pla
 	for _, holding := range held {
 		d.refuse(ctx, project, holding.task, holding.reason)
 	}
-	if len(pending) > 0 {
+	if queued > 0 {
 		d.logger.Infof("task dispatcher: project %s: pending=%d inflight=%d slots=%d dispatched=%d",
-			project.ID, len(pending), inflight, slots, dispatched)
+			project.ID, queued, inflight, slots, dispatched)
 	}
+}
+
+// countQueued counts the tasks of one sweep's listing that are in the queue,
+// which is what the sweep's log line means by `pending`. The listing also
+// carries the project's running tasks, and counting those would report a busy
+// project as a backlogged one.
+func countQueued(tasks []*Task) int {
+	queued := 0
+	for _, task := range tasks {
+		if task != nil && task.Status == TaskStatusPending {
+			queued++
+		}
+	}
+	return queued
 }
 
 // dispatchSlots is how many pending tasks this project may start now, the
@@ -415,24 +440,32 @@ type heldTask struct {
 	reason string
 }
 
-// partitionDispatchCandidates splits a project's pending tasks into the ones
-// the dispatcher may start now and the ones it is holding, with the reason.
+// partitionDispatchCandidates splits one sweep's listing into the tasks the
+// dispatcher may start now and the ones it is holding, with the reason.
 // Tasks that are not the dispatcher's — no auto-spawn, or a job already
 // dispatched — appear in neither: the dispatcher has no opinion about them.
-func partitionDispatchCandidates(pending []*Task, now int64) (ready []*Task, held []heldTask, bound []*Task) {
-	for _, task := range pending {
+func partitionDispatchCandidates(tasks []*Task, now int64) (ready []*Task, held []heldTask, bound []*Task) {
+	for _, task := range tasks {
 		switch {
 		case task == nil || !task.AutoSpawn:
 			continue
 		case task.SpawnedJobID != "":
-			// A pending task naming a job is the NORMAL state for a moment:
-			// ClaimTaskSpawn writes the binding before the job starts, so the
-			// claim deduplicates concurrent spawners. It is not dispatchable and
-			// it is not held either — there is no reason to record about a task
-			// whose attempt is under way. But if that job is gone, the task is
-			// stranded silently, so it is returned for the sweep to examine
-			// against the lease store rather than dropped on the floor here.
+			// A task naming a job is the state an attempt runs in:
+			// ClaimTaskSpawn writes the binding and claims the task before the
+			// job starts, so the claim deduplicates concurrent spawners. It is
+			// not dispatchable and it is not held either — there is no reason
+			// to record about a task whose attempt is under way. But if that
+			// job is gone, the task is stranded silently, so it is returned for
+			// the sweep to examine against the lease store rather than dropped
+			// on the floor here.
 			bound = append(bound, task)
+		case task.Status != TaskStatusPending:
+			// ONLY THE QUEUE IS DISPATCHABLE, stated here rather than left to
+			// the listing. The sweep reads the running tasks too (see
+			// dispatchSweepStatuses), so "not pending and naming no job" — a
+			// task some other claimant holds — must not fall through to
+			// `ready`, where it would be handed a second attempt at live work.
+			continue
 		case task.BudgetExhausted():
 			held = append(held, heldTask{task: task, reason: dispatchReasonBudgetExhausted(task)})
 		case task.Deferred(now):
@@ -513,12 +546,21 @@ func (d *TaskDispatcher) repairStrandedBindings(ctx context.Context, project *Pr
 		}
 		// Re-read under the same conditions: another node may have concluded
 		// this attempt between the list and now, in which case there is nothing
-		// to free.
-		if repaired.Status != TaskStatusPending || repaired.SpawnedJobID != task.SpawnedJobID {
+		// to free. taskAttemptOpen is that condition — the same one
+		// concludeAttempt guards its write with — and it covers both shapes a
+		// bound task takes: in_progress for a claim this engine wrote, and
+		// pending for a record written before the engine claimed what it
+		// dispatched (go-quicbaas#966).
+		if !taskAttemptOpen(repaired.Status) || repaired.SpawnedJobID != task.SpawnedJobID {
 			continue
 		}
 		jobID := repaired.SpawnedJobID
 		recordAttemptHistory(repaired, jobID)
+		// BACK IN THE QUEUE EXPLICITLY, because the claim took it out of the
+		// queue. requeue is the same way back a reaped attempt takes, so a
+		// binding this sweep frees and one the reaper concludes leave the task
+		// in the same shape.
+		requeue(repaired)
 		if err := d.tasks.UpdateTask(ctx, repaired); err != nil {
 			d.logger.Warnf("task dispatcher: project %s: task %s names the vanished job %s and could not be freed: %s",
 				project.ID, task.ID, jobID, err.Error())
@@ -688,6 +730,18 @@ type TaskSpawnClaim struct {
 //
 // The claim charges the attempt, because the attempt and the job it runs as are
 // one decision: charging them separately is what let one task be charged twice.
+//
+// IT ALSO TAKES THE TASK OFF THE QUEUE, and that is the same decision again. A
+// job the engine dispatches itself claims nothing through ClaimTask — that path
+// exists for an agent taking work — so the task used to stay `pending` from the
+// dispatch until the conclusion, and every reader of Task.Status called a
+// running delivery queued (go-quicbaas#966; see taskTransitions for the
+// measurement). The claim is the one place that decides whose attempt this is,
+// so it is the one place the status belongs: pending -> in_progress through the
+// same transition table every other edge is checked against, in the same
+// version-checked write that records the job. THE ENGINE DISPATCHES OUT OF THE
+// QUEUE AND NOWHERE ELSE — a task that is parked, concluded, or claimed by an
+// agent is refused with TaskInvalidStateError and charged nothing.
 func ClaimTaskSpawn(ctx context.Context, store TaskDispatchReasonStore, task *Task, jobID string, now int64) (TaskSpawnClaim, error) {
 	switch {
 	case store == nil:
@@ -709,8 +763,33 @@ func ClaimTaskSpawn(ctx context.Context, store TaskDispatchReasonStore, task *Ta
 			return TaskSpawnClaim{JobID: current.SpawnedJobID, Attempt: current.Attempts}, nil
 		}
 
+		// ONLY OUT OF THE QUEUE, and the table alone does not say so: it
+		// admits claimed -> in_progress, which is an AGENT starting work it
+		// claimed, not an engine dispatch. A task with an owner is not the
+		// engine's to dispatch — the dispatcher lists the queue, so the only
+		// way to be here over a claimed task is an agent claiming in the
+		// window between that listing and this write, and standing down is
+		// the answer that leaves one claimant.
+		if current.Status != TaskStatusPending {
+			return TaskSpawnClaim{}, &TaskInvalidStateError{
+				TaskID:       task.ID,
+				CurrentState: current.Status,
+				TargetState:  TaskStatusInProgress,
+			}
+		}
+		// THE STATUS MOVES FIRST, so a task the edge is refused for is
+		// refused before anything is charged to it, and it moves through the
+		// one place a status is written.
+		if err := transition(current, TaskStatusInProgress, now); err != nil {
+			return TaskSpawnClaim{}, err
+		}
 		current.SpawnedJobID = jobID
 		current.SpawnedAt = now
+		// The claim IS the claim, so it is stamped as one: a reader asking
+		// when this task was taken gets one answer whether an agent or the
+		// engine took it. It is the dispatch's own instant, because the two
+		// are one decision.
+		current.ClaimedAt = now
 		current.Attempts++
 		// A task that has just been dispatched is not waiting for anything,
 		// so the reason it was waiting is stale from here on.
@@ -737,9 +816,10 @@ func ClaimTaskSpawn(ctx context.Context, store TaskDispatchReasonStore, task *Ta
 }
 
 // ReleaseTaskSpawnClaim gives back a claim whose job could not be started,
-// refunding the attempt it charged. A task that no longer names jobID has
-// nothing to release — the attempt concluded, or another claim replaced it —
-// and releasing then would hand the task's open attempt away.
+// refunding the attempt it charged and returning the task to the queue it was
+// claimed out of. A task that no longer names jobID has nothing to release —
+// the attempt concluded, or another claim replaced it — and releasing then
+// would hand the task's open attempt away.
 func ReleaseTaskSpawnClaim(ctx context.Context, store TaskDispatchReasonStore, task *Task, jobID string) error {
 	switch {
 	case store == nil:
@@ -761,6 +841,29 @@ func ReleaseTaskSpawnClaim(ctx context.Context, store TaskDispatchReasonStore, t
 			return nil
 		}
 
+		// THE STATUS GOES BACK TOO, or the task is left in exactly the shape a
+		// stranded binding has — in_progress naming no job — and the next sweep
+		// lists the queue, which it would no longer be in.
+		//
+		// IT UNDOES THE CLAIM AND NOTHING ELSE, which is why this is not
+		// requeue: requeue ends an ATTEMPT and clears the state an attempt
+		// leaves behind, and here no attempt ever ran. A field the claim did
+		// not write is not this release's to clear.
+		//
+		// ONLY OUT OF THE CLAIM'S OWN STATUS. Anything else was decided since
+		// the claim — a park, a conclusion another node applied — and a release
+		// that overwrote it would resurrect a task somebody stopped. The
+		// attempt is still refunded either way, because the job that charged it
+		// never ran.
+		//
+		// StatusChangedAt is left to the store, which stamps it on every write
+		// that moves the status (taskStore.update) — the one place that field
+		// is written, so a release cannot disagree with a claim about what a
+		// status change is.
+		if current.Status == TaskStatusInProgress {
+			current.Status = TaskStatusPending
+			current.ClaimedAt = 0
+		}
 		current.SpawnedJobID = ""
 		current.SpawnedAt = 0
 		if current.Attempts > 0 {

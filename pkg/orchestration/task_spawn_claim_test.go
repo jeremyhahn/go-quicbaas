@@ -412,3 +412,176 @@ func TestTaskSpawnClaimError_MessageAndSentinel(t *testing.T) {
 		t.Fatalf("unexpected message: %q", full.Error())
 	}
 }
+
+// TestClaimTaskSpawn_ClaimsTheTaskForTheJob is the claim's other half (#966):
+// the job the engine dispatches is the task's claimant, so the claim moves the
+// record off the queue exactly as an agent's ClaimTask does. A task left
+// pending for the life of its job reads as queued to every consumer of
+// Task.Status and makes a healthy run indistinguishable from a stall.
+func TestClaimTaskSpawn_ClaimsTheTaskForTheJob(t *testing.T) {
+	t.Parallel()
+	const tenantID, taskID = "tenant-claimed", "task-claimed"
+	store := spawnClaimTask(t, tenantID, taskID)
+	ctx := context.Background()
+
+	task, err := store.GetTask(ctx, tenantID, taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	claim, err := ClaimTaskSpawn(ctx, store, task, "job-live", 4242)
+	if err != nil {
+		t.Fatalf("ClaimTaskSpawn: %v", err)
+	}
+	if !claim.Claimed {
+		t.Fatalf("a pending task is claimable: %+v", claim)
+	}
+
+	stored, err := store.GetTask(ctx, tenantID, taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if stored.Status != TaskStatusInProgress {
+		t.Fatalf("the dispatched task reads %q, want in_progress", stored.Status)
+	}
+	if stored.ClaimedAt != 4242 || stored.SpawnedAt != 4242 {
+		t.Fatalf("the claim and the dispatch share one instant: %+v", stored)
+	}
+	if stored.StatusChangedAt == 0 {
+		t.Fatalf("the edge is stamped, so an idle-age report reads the age of the RUN: %+v", stored)
+	}
+	if task.Status != TaskStatusInProgress {
+		t.Fatalf("the caller's copy must match the record: %+v", task)
+	}
+
+	// A SECOND SPAWNER OBSERVES THE CLAIM rather than re-claiming it: the
+	// record is already in_progress, which no transition admits a second
+	// claim out of.
+	observer, err := ClaimTaskSpawn(ctx, store, task, "job-second", 5000)
+	if err != nil {
+		t.Fatalf("an observer reports the open attempt: %v", err)
+	}
+	if observer.Claimed || observer.JobID != "job-live" {
+		t.Fatalf("the second spawner must observe the winner's job: %+v", observer)
+	}
+}
+
+// TestClaimTaskSpawn_RefusesATaskThatIsNotQueued is the invalid-state half:
+// the engine dispatches out of the QUEUE, so a task in any other state is
+// refused typed and charged nothing.
+//
+// A CLAIMED TASK IS REFUSED TOO, and it is the case the transition table
+// cannot state: claimed -> in_progress is admissible because it is an AGENT
+// starting the work it claimed. A task with an owner is not the engine's to
+// dispatch, and standing down is what leaves one claimant.
+func TestClaimTaskSpawn_RefusesATaskThatIsNotQueued(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	for name, park := range map[string]func(t *testing.T, store TaskStore, tenantID, taskID string) TaskStatus{
+		"parked": func(t *testing.T, store TaskStore, tenantID, taskID string) TaskStatus {
+			t.Helper()
+			if err := store.BlockTask(ctx, tenantID, taskID, TaskBlockKindNeedsInfo, "which branch?"); err != nil {
+				t.Fatalf("BlockTask: %v", err)
+			}
+			return TaskStatusBlocked
+		},
+		"claimed by an agent": func(t *testing.T, store TaskStore, tenantID, taskID string) TaskStatus {
+			t.Helper()
+			if err := store.ClaimTask(ctx, tenantID, taskID, "agent-a"); err != nil {
+				t.Fatalf("ClaimTask: %v", err)
+			}
+			return TaskStatusClaimed
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tenantID, taskID := "tenant-"+name, "task-"+name
+			store := spawnClaimTask(t, tenantID, taskID)
+			want := park(t, store, tenantID, taskID)
+			task, err := store.GetTask(ctx, tenantID, taskID)
+			if err != nil {
+				t.Fatalf("GetTask: %v", err)
+			}
+
+			claim, err := ClaimTaskSpawn(ctx, store, task, "job-refused", 9)
+			var invalid *TaskInvalidStateError
+			if !errors.As(err, &invalid) || !errors.Is(err, ErrTaskInvalidState) {
+				t.Fatalf("a task that is not queued cannot be claimed for a job: %v", err)
+			}
+			if claim.Claimed {
+				t.Fatalf("a refused claim claims nothing: %+v", claim)
+			}
+			if invalid.CurrentState != want || invalid.TargetState != TaskStatusInProgress {
+				t.Fatalf("the refusal must name the edge it refused: %+v", invalid)
+			}
+			stored, err := store.GetTask(ctx, tenantID, taskID)
+			if err != nil {
+				t.Fatalf("GetTask: %v", err)
+			}
+			if stored.Status != want || stored.SpawnedJobID != "" || stored.Attempts != 0 {
+				t.Fatalf("a refused claim writes nothing: %+v", stored)
+			}
+		})
+	}
+}
+
+// TestReleaseTaskSpawnClaim_ReturnsTheTaskToTheQueue is the release's half of
+// the same statement: a claim whose job never started gives the STATUS back
+// too, because a task left in_progress with no job is exactly the stranded
+// binding the dispatcher's sweep has to repair, and the next sweep lists the
+// queue.
+func TestReleaseTaskSpawnClaim_ReturnsTheTaskToTheQueue(t *testing.T) {
+	t.Parallel()
+	const tenantID, taskID = "tenant-requeued", "task-requeued"
+	store := spawnClaimTask(t, tenantID, taskID)
+	ctx := context.Background()
+
+	task, err := store.GetTask(ctx, tenantID, taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if _, err := ClaimTaskSpawn(ctx, store, task, "job-doomed", 11); err != nil {
+		t.Fatalf("ClaimTaskSpawn: %v", err)
+	}
+	if err := ReleaseTaskSpawnClaim(ctx, store, task, "job-doomed"); err != nil {
+		t.Fatalf("ReleaseTaskSpawnClaim: %v", err)
+	}
+
+	stored, err := store.GetTask(ctx, tenantID, taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if stored.Status != TaskStatusPending || stored.ClaimedAt != 0 {
+		t.Fatalf("a released claim leaves the task in the queue: %+v", stored)
+	}
+	if task.Status != TaskStatusPending {
+		t.Fatalf("the caller's copy must match the record: %+v", task)
+	}
+
+	// A RELEASE DOES NOT UNDO A DECISION TAKEN SINCE THE CLAIM. A task parked
+	// while the release was in flight keeps its park: the claim's status is
+	// not the release's to restore from anything but its own.
+	fresh, err := store.GetTask(ctx, tenantID, taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if _, err := ClaimTaskSpawn(ctx, store, fresh, "job-parked-mid-flight", 12); err != nil {
+		t.Fatalf("ClaimTaskSpawn: %v", err)
+	}
+	if err := store.BlockTask(ctx, tenantID, taskID, TaskBlockKindBlocked, "the operator held it"); err != nil {
+		t.Fatalf("BlockTask: %v", err)
+	}
+	if err := ReleaseTaskSpawnClaim(ctx, store, fresh, "job-parked-mid-flight"); err != nil {
+		t.Fatalf("ReleaseTaskSpawnClaim: %v", err)
+	}
+	parked, err := store.GetTask(ctx, tenantID, taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if parked.Status != TaskStatusBlocked || parked.BlockedReason != "the operator held it" {
+		t.Fatalf("a release must not resurrect a parked task: %+v", parked)
+	}
+	if parked.SpawnedJobID != "" || parked.Attempts != 0 {
+		t.Fatalf("the attempt is still refunded: %+v", parked)
+	}
+}

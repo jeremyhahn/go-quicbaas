@@ -124,7 +124,10 @@ does one project now.
 
 Per autonomous project, one sweep:
 
-1. lists the project's **pending** Tasks;
+1. lists the project's **pending** and **in_progress** Tasks — the queue it
+   dispatches from, plus the running ones, because the sweep is also the only
+   thing that frees a Task bound to a job that no longer exists and a Task
+   whose attempt is under way reads `in_progress`;
 2. counts **inflight** = the project's live job leases;
 3. computes `slots` from the sweep's admission plan — the project quota, the
    fleet's free capacity divided fairly, and the provider pool's headroom — or
@@ -132,8 +135,8 @@ Per autonomous project, one sweep:
    when the quota is zero
    ([admission-and-readiness.md](admission-and-readiness.md));
 4. builds the **candidates** — `AutoSpawn && SpawnedJobID == "" &&
-   !Deferred(now) && !BudgetExhausted()` — ordered by `Priority` descending,
-   then `CreatedAt` ascending, then ID;
+   Status == pending && !Deferred(now) && !BudgetExhausted()` — ordered by
+   `Priority` descending, then `CreatedAt` ascending, then ID;
 5. starts the first `slots` of them through `TaskSpawner.SpawnTask`.
 
 `TaskSpawner` is the seam:
@@ -176,9 +179,67 @@ makes `SpawnTask` idempotent per Task.
 `Task.SpawnedJobID` already meant "the Task's open attempt" — it is what
 `recordAttemptHistory` clears when an attempt concludes — so the claim is not
 new state, only that state written a moment earlier. A claim whose job then
-fails to start is given back and the attempt refunded (`ReleaseTaskSpawnClaim`).
-A claim held by a process that died between the claim and the run leaves a Task
-naming a job with no live lease, which is what the reaper already resolves.
+fails to start is given back and the attempt refunded (`ReleaseTaskSpawnClaim`),
+which returns the Task to the queue it was claimed out of. A claim held by a
+process that died between the claim and the run leaves a Task naming a job with
+no live lease, which the sweep's own repair frees
+([the stranded binding](#a-task-bound-to-a-job-that-is-gone)).
+
+### The claim takes the Task off the queue
+
+The claim is also where the Task's **status** moves, `pending -> in_progress`,
+with the job as the claimant:
+
+| | `pending -> claimed -> in_progress` | `pending -> in_progress` |
+|---|---|---|
+| **who claims** | an agent, through `ClaimTask` | the engine, through `ClaimTaskSpawn` |
+| **why that many steps** | `claimed` means "taken, not started yet": the agent claims, then starts | there is no such gap — the claim and the dispatch are one write |
+
+Both edges go through the one transition table (`taskTransitions`), so the
+engine's claim is audited exactly like an agent's. **The engine dispatches out
+of the queue and nowhere else**: a Task that is parked, already concluded, or
+claimed by an agent in the window between the sweep's listing and the claim is
+refused with `TaskInvalidStateError` and charged nothing, which leaves one
+claimant rather than two.
+
+Before that edge existed the engine claimed nothing, and a Task stayed `pending`
+for the whole life of the job it had dispatched. Measured on the burn-in node
+(go-truststrap#14, 2026-09-21): a Task adopted at 02:13:49 and merged at
+02:28:06 read `pending` for those fourteen minutes and went straight to
+`completed`. `Task.Status` is what the API, `orchestrator task get`, the task
+list and the label reconciler's claim sweep all read, so a busy hour showed
+every running delivery as queued, the reconciler reported
+`LabelReconcileUndecidable` three times per delivery on evidence that was simply
+wrong ("the task is pending, which is queued rather than handed over"), and
+anything reasoning from `StatusChangedAt` saw a fourteen-minute-old *pending*
+Task — which is also the signature of a stranded binding, so a healthy run and a
+real stall were indistinguishable by the record (go-quicbaas#966).
+
+A conclusion moves the Task on from `in_progress` exactly as it did before
+(`completed` / `failed` / `blocked`), and a requeue after a reaped attempt
+returns it to `pending`.
+
+### A Task bound to a job that is gone
+
+The claim is written **before** the job starts, so a process that dies in
+between leaves a Task naming a job that never ran. The **reaper cannot repair
+it**: `JobReaper.Sweep` lists LEASES and examines the unreleased ones, so a job
+whose lease was never acquired — or whose lease was correctly released — has
+nothing for the reaper to find, and nothing looked at the Task again. Measured
+on the burn-in node: `pending=4 inflight=0 slots=0 dispatched=0`, with not one
+refusal line naming any of them.
+
+So the sweep repairs it (`repairStrandedBindings`), which is why it lists the
+running Tasks as well as the queued ones:
+
+- **the grace period is the lease TTL** — the same clock the reaper judges
+  staleness by. A binding younger than it is left alone whatever the lease store
+  says, because a Task legitimately names a job whose lease does not exist yet;
+- a binding older than that whose job holds **no live lease** has its attempt
+  closed into `Metadata["attempt_history"]` and the Task requeued, so it is
+  dispatchable again **in the same sweep**;
+- a **lease store that cannot be read** repairs nothing: treating an unreadable
+  store as "no live leases" would free every bound Task in the fleet at once.
 
 The job lease is still the capacity boundary; it was never the deduplicator, and
 by the time it refuses a second job the attempt is already spent.
@@ -221,8 +282,9 @@ WARN is logged on the same condition, so a project sitting at capacity for an
 hour writes nothing and logs nothing after the first sweep. A successful
 dispatch clears the reason.
 
-A Task with `AutoSpawn == false`, or one that already has a `SpawnedJobID`, is
-neither dispatched nor refused — the dispatcher has no opinion about it.
+A Task with `AutoSpawn == false`, one that already has a `SpawnedJobID`, and one
+that is live without one (an agent claimed it) is neither dispatched nor refused
+— the dispatcher has no opinion about it.
 
 ### Nudges
 

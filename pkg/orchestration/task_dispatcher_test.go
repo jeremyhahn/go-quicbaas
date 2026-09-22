@@ -71,14 +71,15 @@ func (s *fakeDispatchStore) ListTasks(_ context.Context, tenantID string, filter
 	}
 	out := make([]*Task, 0, len(s.tasks))
 	for _, task := range s.tasks {
-		switch {
-		case task.TenantID != tenantID:
-		case filter != nil && filter.ProjectID != "" && task.ProjectID != filter.ProjectID:
-		case filter != nil && filter.Status != "" && task.Status != filter.Status:
-		default:
-			clone := *task
-			out = append(out, &clone)
+		// The store's OWN matcher, so a filter the sweep relies on cannot be
+		// honoured here and ignored in production — or the other way round,
+		// which is how a fake starts answering a question the real store
+		// does not.
+		if task.TenantID != tenantID || !taskMatchesFilter(task, filter) {
+			continue
 		}
+		clone := *task
+		out = append(out, &clone)
 	}
 	return out, nil
 }
@@ -449,6 +450,30 @@ func TestPartitionDispatchCandidates_IgnoresTasksThatAreNotTheDispatchers(t *tes
 		if b.ID == "manual" {
 			t.Error("a task that does not ask to be spawned must not be examined for repair")
 		}
+	}
+}
+
+// TestPartitionDispatchCandidates_OnlyTheQueueIsDispatchable: since the sweep
+// reads the project's running tasks as well as its queued ones
+// (dispatchSweepStatuses), a task that is live and names NO job — one some
+// other claimant holds — must fall out of the partition entirely. Handing it to
+// `ready` would start a second attempt at work already under way
+// (go-quicbaas#966).
+func TestPartitionDispatchCandidates_OnlyTheQueueIsDispatchable(t *testing.T) {
+	t.Parallel()
+	for _, status := range []TaskStatus{TaskStatusInProgress, TaskStatusClaimed, TaskStatusBlocked} {
+		t.Run(string(status), func(t *testing.T) {
+			t.Parallel()
+			live := pendingTask("live", 0, 100)
+			live.Status = status
+			ready, held, bound := partitionDispatchCandidates([]*Task{live, pendingTask("queued", 0, 100)}, 0)
+			if len(ready) != 1 || ready[0].ID != "queued" {
+				t.Fatalf("ready = %v, want only the queued task", ready)
+			}
+			if len(held) != 0 || len(bound) != 0 {
+				t.Fatalf("a task with another claimant is neither held nor repaired: held=%v bound=%v", held, bound)
+			}
+		})
 	}
 }
 

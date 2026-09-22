@@ -2889,7 +2889,11 @@ func TestTaskTransitionAllowed_Table(t *testing.T) {
 		TaskStatusCompleted, TaskStatusFailed, TaskStatusCancelled, TaskStatusBlocked,
 	}
 	allowed := map[TaskStatus][]TaskStatus{
-		TaskStatusPending:    {TaskStatusClaimed, TaskStatusBlocked},
+		// pending -> in_progress is the engine's own claim (go-quicbaas#966):
+		// a job the engine dispatches has no agent to claim it and no gap
+		// between the claim and the start, so ClaimTaskSpawn takes this edge
+		// and the task stops reading as queued while its job runs.
+		TaskStatusPending:    {TaskStatusClaimed, TaskStatusInProgress, TaskStatusBlocked},
 		TaskStatusClaimed:    {TaskStatusInProgress, TaskStatusCompleted, TaskStatusFailed, TaskStatusBlocked},
 		TaskStatusInProgress: {TaskStatusCompleted, TaskStatusFailed, TaskStatusBlocked},
 		TaskStatusBlocked:    {TaskStatusPending, TaskStatusFailed},

@@ -826,3 +826,121 @@ func TestAutoSpawn_AClaimTheStoreRefusesStartsNoJob(t *testing.T) {
 		t.Fatalf("nothing was written: %+v", stored)
 	}
 }
+
+// awaitTaskStatus waits for a task to reach status, or fails the test. The
+// conclusion runs on the job's own goroutine (finishJob), so the moment it is
+// safe to read is after the record says so rather than after Run returned; a
+// ticker is used rather than time.Sleep, per the project's conventions.
+func awaitTaskStatus(t *testing.T, store TaskStore, tenantID, taskID string, status TaskStatus) *Task {
+	t.Helper()
+	timer := time.NewTimer(10 * time.Second)
+	defer timer.Stop()
+	ticker := time.NewTicker(2 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		task, err := store.GetTask(context.Background(), tenantID, taskID)
+		if err != nil {
+			t.Fatalf("GetTask: %v", err)
+		}
+		if task.Status == status {
+			return task
+		}
+		select {
+		case <-timer.C:
+			t.Fatalf("timed out waiting for task %s to read %q, it reads %q", taskID, status, task.Status)
+		case <-ticker.C:
+		}
+	}
+}
+
+// TestAutoSpawn_ClaimsTheTaskItDispatches is the defect in go-quicbaas#966:
+// the engine's own dispatch left the task PENDING for the whole life of the
+// job it started, so every reader of Task.Status — the API, the task list, the
+// label reconciler's claim sweep, anything reasoning from StatusChangedAt —
+// saw a running delivery as queued, and a healthy fourteen-minute run was
+// indistinguishable from a stranded binding.
+//
+// A job the engine dispatches itself claims the task the way an agent's
+// ClaimTask does, so the record says in_progress from the moment the attempt is
+// claimed until the moment it concludes.
+func TestAutoSpawn_ClaimsTheTaskItDispatches(t *testing.T) {
+	taskStore := NewInMemoryTaskStore()
+	svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
+	if err != nil {
+		t.Fatalf("NewAgentService: %v", err)
+	}
+	impl := svc.(*agentServiceImpl)
+	impl.SetTaskStore(taskStore)
+	ctx := context.Background()
+
+	ran := make(chan struct{}, 1)
+	release := make(chan struct{})
+	runner := &fakeRunner{
+		name:   "auto-spawn-claims-test",
+		states: []JobStateSpec{{State: JobStateInitializing, Label: "Initializing"}},
+		run: func(_ context.Context, _ *JobRun) error {
+			ran <- struct{}{}
+			<-release
+			return nil
+		},
+	}
+	registerJobRunnerForTest(t, runner)
+	defer cancelAllJobs(impl)
+
+	task, createErr := svc.CreateTask(ctx, &CreateTaskRequest{
+		TenantID: "tenant-1", Subject: "claim what you dispatch",
+		AutoSpawn: true, Runner: runner.Name(),
+	})
+	if createErr != nil {
+		t.Fatalf("CreateTask: %v", createErr)
+	}
+	if task.SpawnedJobID == "" || task.Attempts != 1 {
+		t.Fatalf("the dispatch must be recorded on the task: %+v", task)
+	}
+
+	// THE CALLER'S COPY IS THE PERSISTED ONE. The claim refreshes it from the
+	// record the store accepted, so a create response cannot say pending about
+	// a task the store holds as running.
+	if task.Status != TaskStatusInProgress {
+		t.Fatalf("an auto-spawned task is claimed by the job it dispatched, got %q", task.Status)
+	}
+
+	timer := time.NewTimer(10 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-ran:
+	case <-timer.C:
+		t.Fatal("the runner never ran")
+	}
+
+	// WHILE THE JOB RUNS. This is the whole of the fourteen minutes the issue
+	// measured: the record is read here the way `orchestrator task get` and the
+	// label reconciler read it, with the attempt genuinely under way.
+	running, err := taskStore.GetTask(ctx, "tenant-1", task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if running.Status != TaskStatusInProgress {
+		t.Fatalf("a task whose job is running reads %q, want in_progress", running.Status)
+	}
+	if running.SpawnedJobID != task.SpawnedJobID {
+		t.Fatalf("the claim must name the dispatched job: %+v", running)
+	}
+	if running.ClaimedAt == 0 || running.StatusChangedAt == 0 {
+		t.Fatalf("the claim is stamped when it was taken, so a stall heuristic reads the right age: %+v", running)
+	}
+	if running.ClaimedAt != running.SpawnedAt {
+		t.Fatalf("the dispatch and the claim are one decision and share one instant: claimed=%d spawned=%d",
+			running.ClaimedAt, running.SpawnedAt)
+	}
+
+	// AND completed AFTER, through the conclusion path that already existed.
+	close(release)
+	concluded := awaitTaskStatus(t, taskStore, "tenant-1", task.ID, TaskStatusCompleted)
+	if concluded.SpawnedJobID != "" {
+		t.Fatalf("a concluded attempt leaves no open job: %+v", concluded)
+	}
+	if history := concluded.AttemptHistory(); len(history) != 1 || history[0] != task.SpawnedJobID {
+		t.Fatalf("the concluded job must be in the history, got %v", history)
+	}
+}

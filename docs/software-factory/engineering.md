@@ -1055,7 +1055,10 @@ When the scheduler encounters an auto-spawn task:
 3. **Picks an agent** from the filtered set (round-robin or by load)
 4. **Calls `StartJob`** on the selected agent
 5. **Populates `SpawnedJobID`** with the spawned job ID
-6. **Task status** changes to `dispatched`
+6. **Task status** moves `pending -> in_progress`, in the same claim that
+   records the job (`ClaimTaskSpawn`), and back to `completed` / `failed` /
+   `blocked` when the job concludes. There is no `dispatched` status: the job
+   the engine started IS the claimant (go-quicbaas#966)
 
 #### The project's concurrency quota
 

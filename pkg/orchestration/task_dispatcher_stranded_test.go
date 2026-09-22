@@ -19,12 +19,23 @@ import (
 	"time"
 )
 
-// strandedTask is a pending, auto-spawning task that names a job, with the claim
-// aged by age so the sweep will judge it.
+// strandedTask is an auto-spawning task claimed for a job, with the claim aged
+// by age so the sweep will judge it.
+//
+// IT IS in_progress, WHICH IS WHAT A CLAIM WRITES. ClaimTaskSpawn takes the
+// task out of the queue in the same write that names the job (go-quicbaas#966),
+// so a bound task the sweep has to judge is never pending — and a sweep that
+// listed only the queue would never see one. The pre-#966 shape, a pending task
+// naming a job, is TestTaskDispatcher_FreesATaskBoundBeforeTheClaimExisted.
 func strandedTask(id, jobID string, age time.Duration) *Task {
 	task := pendingTask(id, 0, 100)
+	claimedAt := time.Now().Add(-age).UnixNano()
+	task.Status = TaskStatusInProgress
+	task.StatusChangedAt = claimedAt
+	task.ClaimedAt = claimedAt
 	task.SpawnedJobID = jobID
-	task.SpawnedAt = time.Now().Add(-age).UnixNano()
+	task.SpawnedAt = claimedAt
+	task.Attempts = 1
 	return task
 }
 
@@ -54,6 +65,12 @@ func TestTaskDispatcher_FreesATaskWhoseJobHoldsNoLease(t *testing.T) {
 	}
 	if after.SpawnedJobID != "" {
 		t.Errorf("SpawnedJobID = %q, want empty; the job it names holds no lease and is never coming back", after.SpawnedJobID)
+	}
+	// BACK IN THE QUEUE, not merely unbound. The claim took it out, so a
+	// repair that left it in_progress would hide it from the next sweep's
+	// listing and from every reader asking what is waiting.
+	if after.Status != TaskStatusPending || after.ClaimedAt != 0 {
+		t.Errorf("status = %q claimed_at = %d; a freed task is queued again", after.Status, after.ClaimedAt)
 	}
 	// The job id is the only record the attempt happened, so freeing the
 	// binding must not lose it.
@@ -134,5 +151,36 @@ func TestTaskDispatcher_RepairsNothingWithNoSpawnTimestamp(t *testing.T) {
 	}
 	if after.SpawnedJobID != "job-undated" {
 		t.Errorf("SpawnedJobID = %q; an unjudgeable claim must not be freed on a guess", after.SpawnedJobID)
+	}
+}
+
+// TestTaskDispatcher_FreesATaskBoundBeforeTheClaimExisted is the compatibility
+// half of the claim (go-quicbaas#966): a record written before the engine
+// claimed what it dispatched is a PENDING task naming a job, and those records
+// are on every node that has run a delivery. The repair judges the binding, not
+// the status, so a task stranded by the old dispatch is freed by the new sweep.
+func TestTaskDispatcher_FreesATaskBoundBeforeTheClaimExisted(t *testing.T) {
+	t.Parallel()
+	legacy := pendingTask("legacy", 0, 100)
+	legacy.SpawnedJobID = "job-gone"
+	legacy.SpawnedAt = time.Now().Add(-2 * testPollerLeaseTTL).UnixNano()
+	legacy.Attempts = 1
+	fix := newDispatcherFixture(t, 3, legacy)
+
+	if err := fix.dispatcher.Sweep(context.Background()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	after, err := fix.tasks.GetTask(context.Background(), dispatchTenant, "legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.SpawnedJobID != "" || after.Status != TaskStatusPending {
+		t.Errorf("task = %+v; a binding with no live lease is freed whatever status it was written in", after)
+	}
+	if got := after.AttemptHistory(); len(got) != 1 || got[0] != "job-gone" {
+		t.Errorf("AttemptHistory = %v, want [job-gone]", got)
+	}
+	if len(fix.spawner.spawned) != 1 {
+		t.Errorf("spawned %d task(s), want the freed task dispatched in this sweep", len(fix.spawner.spawned))
 	}
 }

@@ -195,7 +195,11 @@ quicbaas agent claim task_abc123 --agent worker-1
 
 ### Task lifecycle
 
-A task moves through `pending -> claimed -> in_progress -> completed | failed`.
+A task moves through `pending -> claimed -> in_progress -> completed | failed`
+when an **agent** claims it, and `pending -> in_progress -> completed | failed`
+when the **engine** dispatches it — an auto-spawned task is claimed by the job
+the engine started for it, so a running delivery reads `in_progress` rather than
+`pending` for as long as its job lasts.
 It can also be **blocked** from any non-terminal state when a person must
 answer something (`needs_info`), an external condition is outstanding
 (`blocked`), or the engine has given up on it (`escalated`):

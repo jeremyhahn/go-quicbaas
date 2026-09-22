@@ -680,6 +680,75 @@ func TestLabelReconciler_ClaimVerdictByLiveStatus(t *testing.T) {
 	}
 }
 
+// TestLabelReconciler_ARunningAutoSpawnedTaskIsConsistent is the other end of
+// go-quicbaas#966, measured from this side: the reconciler ran every five
+// minutes and reported `LabelReconcileUndecidable` for every executing job —
+// three times per delivery — because the engine's own dispatch left the task
+// `pending`, and reportQueued's evidence ("queued rather than handed over") was
+// simply wrong about the world: the task had been running for ten minutes.
+//
+// THE RECORD IS BUILT BY THE ENGINE'S OWN CLAIM, not by hand, so this test
+// cannot pass by agreeing with a fixture. ClaimTaskSpawn is what auto-spawn and
+// the dispatcher both dispatch through; whatever it writes is what the sweep
+// reads, and the verdict must be the `consistent` one examineClaim already had
+// for a run that has been handed over.
+func TestLabelReconciler_ARunningAutoSpawnedTaskIsConsistent(t *testing.T) {
+	ctx := context.Background()
+	queued := testTaskRecord(reconcileIssue)
+	queued.Status = orchestration.TaskStatusPending
+	queued.AutoSpawn = true
+	queued.Attempts = 0
+	// The source is attached AFTER the claim rather than created with it: the
+	// task store validates a source kind against the engine's source registry,
+	// which only the daemon populates, and the claim neither reads the source
+	// nor writes it.
+	source := queued.Source
+	queued.Source = nil
+
+	engine := orchestration.NewInMemoryTaskStore()
+	if err := engine.CreateTask(ctx, queued); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	dispatched, err := engine.GetTask(ctx, testTenant, queued.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	claim, err := orchestration.ClaimTaskSpawn(ctx, engine, dispatched, "job-running", time.Now().UnixNano())
+	if err != nil {
+		t.Fatalf("ClaimTaskSpawn: %v", err)
+	}
+	if !claim.Claimed {
+		t.Fatalf("the engine must claim the task it dispatches: %+v", claim)
+	}
+	if dispatched.Status != orchestration.TaskStatusInProgress {
+		t.Fatalf("a dispatched task reads %q; the sweep can only vouch for a hand-over", dispatched.Status)
+	}
+	dispatched.Source = source
+
+	rig := newReconcileRig(t, []string{"factory:in-progress", "bug"}, dispatched)
+	report := rig.sweep(t)
+	finding := only(t, report)
+	if finding.Verdict != LabelReconcileConsistent {
+		t.Fatalf("verdict = %q (%s), want consistent", finding.Verdict, finding.Evidence)
+	}
+	if strings.Contains(finding.Evidence, "queued rather than handed over") {
+		t.Fatalf("a running job was reported as queued: %s", finding.Evidence)
+	}
+
+	// AND IT IS SILENT. The operator's drift report is what the wrong verdict
+	// polluted three times per delivery, so a healthy run must leave nothing
+	// in it and nothing on the issue.
+	if len(report.Drifted()) != 0 {
+		t.Fatalf("a running delivery appeared in the drift report: %+v", report.Drifted())
+	}
+	if len(rig.forge.labelAdds)+len(rig.forge.labelRemovals) != 0 {
+		t.Fatalf("a true claim was written to: +%v -%v", rig.forge.labelAdds, rig.forge.labelRemovals)
+	}
+	if got := len(rig.outcomeComments()); got != 0 {
+		t.Fatalf("a running delivery was announced as ended: %d comment(s)", got)
+	}
+}
+
 // TestLabelReconciler_HandedOverIsASubsetOfLive holds the containment the two
 // directions both depend on. A status added to the handed-over set but not to
 // the live set would be surfaced as an ENDING by examineClaim — an outcome
