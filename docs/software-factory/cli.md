@@ -1015,8 +1015,49 @@ from the CLI or the desktop app.
    default path the CLI expects is `bin/quicbaas-static`.
 2. **SSH access** to the remote host. SSH private key stored
    in the xkms-backed key store (preferred).
-3. **Run from the QuicBaaS server host** so the embedded CA can mint
+3. **The target's SSH host key pinned** in the known-hosts store — see
+   [Host-key verification](#host-key-verification).
+4. **Run from the QuicBaaS server host** so the embedded CA can mint
    the agent identity. Operators do not stage any pre-shared secret.
+
+### Host-key verification
+
+The deploy verifies the remote host's SSH host key against the pins in
+the SSH known-hosts store before it dials. Pin the target once:
+
+```sh
+ssh-keyscan -t ed25519 node01 | ssh-keygen -lf -   # read the fingerprint
+quicbaas ssh known-hosts add \
+  --host node01 \
+  --algorithm ssh-ed25519 \
+  --fingerprint SHA256:mq9…
+```
+
+`quicbaas ssh known-hosts list` shows the pins. The deploy reads that
+same store, under the **same scope/owner as the SSH key**: pins default
+to `--scope user` and `--owner $USER`, and `agent deploy` looks them up
+with `--ssh-key-scope` / `--ssh-key-owner` (which default the same way).
+A key is accepted only when its algorithm and SHA256 fingerprint match a
+pin; a pin added without `--algorithm` constrains the fingerprint alone.
+Several pins may exist for one host — that is how a host key is rotated
+without a deploy window — and any of them is sufficient.
+
+The two failure modes are distinct, because they demand opposite
+responses:
+
+- **Unpinned host** — the deploy stops before dialing with
+  `service: no ssh host-key pin for node01 in scope=user owner=alice;
+  pin it first: quicbaas ssh known-hosts add --host node01 --algorithm
+  <a> --fingerprint <f> (or pass --ssh-insecure-host-key to deploy
+  without verification)`.
+- **Key does not match the pin** — the handshake fails with
+  `service: ssh host-key mismatch for node01: presented ssh-ed25519
+  SHA256:<offered>, pinned SHA256:<pinned>`. Find out why the host's key
+  changed before re-pinning it.
+
+`--ssh-insecure-host-key` skips the lookup and the verification
+entirely. It is an explicit operator opt-out for lab hosts; production
+deploys pin.
 
 ### Identity bootstrap (mTLS)
 
@@ -1055,8 +1096,10 @@ The deploy executes the following steps in order:
    the server's CA with `OU=agents, O=<tenant>, EKU=ClientAuth` and
    365-day default validity. Fails fast if the CA rejects the
    request — the remote host is never touched.
-2. **SSH dial** — establishes a session to `alice@node01` using the
-   stored key named `alice-laptop`.
+2. **SSH dial** — resolves `node01`'s pinned host key from the
+   known-hosts store, then establishes a session to `alice@node01`
+   using the stored key named `alice-laptop`. An unpinned host fails
+   here, before any connection is made.
 3. **SFTP upload** — streams `bin/quicbaas-static` to
    `$HOME/.quicbaas/bin/quicbaas` and installs `agent.crt`,
    `agent.key`, `server-ca.crt` into `$HOME/.quicbaas/agent`.
@@ -1103,6 +1146,9 @@ installed. There is no shared-secret bootstrap token at any stage.
 | --- | --- |
 | `--ssh user@host[:port]` | SSH target (required) |
 | `--ssh-key-name name` | Name of an xkms-stored SSH key (required) |
+| `--ssh-key-scope scope` | Scope for the key **and host-key pin** lookup (default `user`) |
+| `--ssh-key-owner owner` | Owner for the key **and host-key pin** lookup (default `$USER`) |
+| `--ssh-insecure-host-key` | Skip host-key verification (operator opt-out) |
 | `--server https://...` | QuicBaaS server the agent will dial (required) |
 | `--tenant id` | Tenant the agent serves |
 | `--backend kind` | Agent backend (repeatable) |

@@ -71,16 +71,19 @@ type sshSession interface {
 	Close() error
 }
 
-// sshDialer abstracts the SSH dial step.
+// sshDialer abstracts the SSH dial step. Both entry points take the
+// ssh.HostKeyCallback the service resolved from the known-hosts store;
+// a nil callback leaves the spec's own policy (InsecureHostKey) in
+// charge, which refuses to dial unless the operator opted out.
 type sshDialer interface {
 	// Dial opens an SSH connection using credentials read from the spec
-	// (ssh_key_path / ssh_password / ssh_host_key fields).
-	Dial(ctx context.Context, spec *deploy.Spec) (sshSession, error)
+	// (ssh_password).
+	Dial(ctx context.Context, spec *deploy.Spec, hostKey ssh.HostKeyCallback) (sshSession, error)
 
 	// DialWithAuth opens an SSH connection using an explicit set of
 	// ssh.AuthMethod values. AgentDeployService uses this to inject an
 	// SSHSignerResolver-backed ssh.Signer when spec.SSHKeyName is set.
-	DialWithAuth(ctx context.Context, spec *deploy.Spec, auth []ssh.AuthMethod) (sshSession, error)
+	DialWithAuth(ctx context.Context, spec *deploy.Spec, auth []ssh.AuthMethod, hostKey ssh.HostKeyCallback) (sshSession, error)
 }
 
 // binaryUploader abstracts the SFTP binary upload.
@@ -135,6 +138,7 @@ type agentDeployService struct {
 	renderer   unitRenderer
 	agents     AgentLister
 	sshKeys    SSHSignerResolver
+	hostKeys   SSHHostKeyResolver
 	certIssuer AgentCertIssuer
 	now        func() time.Time
 	sleep      func(ctx context.Context, d time.Duration) error
@@ -169,6 +173,13 @@ type AgentDeployServiceDeps struct {
 	// (SSHPassword), matching the legacy password-only workflow.
 	SSHKeys SSHSignerResolver
 
+	// SSHHostKeys resolves the deploy target's pinned host key from the
+	// SSH known-hosts store — the same store `quicbaas ssh known-hosts
+	// add/list` manage — into an ssh.HostKeyCallback. Optional: when nil
+	// the dial falls back to the spec's own policy, so a deploy without
+	// Spec.InsecureHostKey fails rather than trusting an unverified host.
+	SSHHostKeys SSHHostKeyResolver
+
 	// CertIssuer produces the mTLS client identity the daemon presents
 	// on POST /api/v1/agents/register. Required for production deploys;
 	// when nil the service returns a typed error before dialing SSH so
@@ -195,6 +206,7 @@ func NewAgentDeployService(deps AgentDeployServiceDeps) AgentDeployService {
 		renderer:    realRenderer{},
 		agents:      deps.AgentLister,
 		sshKeys:     deps.SSHKeys,
+		hostKeys:    deps.SSHHostKeys,
 		certIssuer:  deps.CertIssuer,
 		now:         time.Now,
 		sleep:       ctxSleep,
@@ -456,14 +468,22 @@ func (s *agentDeployService) waitOnline(ctx context.Context, spec *deploy.Spec, 
 	}
 }
 
-// dial selects the SSH entry point. When spec.SSHKeyName is set it
-// resolves the stored key via SSHSignerResolver and dials with an
-// injected ssh.Signer so the private material never leaves its key
-// store. Otherwise it delegates to the dialer's default credential
-// path.
+// dial selects the SSH entry point. Either way the target's host key is
+// verified against its pin first: hostKeyCallback resolves the pin
+// before any connection is made, so an unpinned or rotated host fails
+// with a typed error instead of a half-finished deployment.
+//
+// When spec.SSHKeyName is set the stored key is resolved via
+// SSHSignerResolver and dialed with an injected ssh.Signer so the
+// private material never leaves its key store. Otherwise the dialer's
+// default credential path (password) applies.
 func (s *agentDeployService) dial(ctx context.Context, spec *deploy.Spec) (sshSession, error) {
+	hostKey, err := s.hostKeyCallback(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
 	if spec.SSHKeyName == "" {
-		return s.ssh.Dial(ctx, spec)
+		return s.ssh.Dial(ctx, spec, hostKey)
 	}
 	if s.sshKeys == nil {
 		return nil, &deploy.InvalidSpecError{
@@ -479,7 +499,27 @@ func (s *agentDeployService) dial(ctx context.Context, spec *deploy.Spec) (sshSe
 	if err != nil {
 		return nil, err
 	}
-	return s.ssh.DialWithAuth(ctx, spec, []ssh.AuthMethod{ssh.PublicKeys(sshSigner)})
+	return s.ssh.DialWithAuth(ctx, spec, []ssh.AuthMethod{ssh.PublicKeys(sshSigner)}, hostKey)
+}
+
+// hostKeyCallback resolves the target's pinned host key into a callback.
+//
+// Spec.InsecureHostKey short-circuits the lookup entirely: an operator
+// who asked to skip verification is not made to pin a host first. With
+// no resolver configured the callback is nil and the dial falls back to
+// the spec's own policy, which refuses an unverified host.
+//
+// The known-hosts store is addressed by the same (scope, owner) pair as
+// the SSH key store, so --ssh-key-scope / --ssh-key-owner select both.
+func (s *agentDeployService) hostKeyCallback(ctx context.Context, spec *deploy.Spec) (ssh.HostKeyCallback, error) {
+	if spec.InsecureHostKey || s.hostKeys == nil {
+		return nil, nil
+	}
+	return s.hostKeys.HostKeyCallback(ctx, SSHHostRef{
+		Host:  spec.Host,
+		Scope: spec.SSHKeyScope,
+		Owner: spec.SSHKeyOwner,
+	})
 }
 
 // pickOnlineAgent inspects a ListAgentsResponse for an agent that
@@ -668,8 +708,8 @@ func (e *AgentIdentityUploadError) Unwrap() error { return e.Cause }
 // realSSHDialer wraps deploy.DialSSH.
 type realSSHDialer struct{}
 
-func (realSSHDialer) Dial(ctx context.Context, spec *deploy.Spec) (sshSession, error) {
-	c, err := deploy.DialSSH(ctx, spec)
+func (realSSHDialer) Dial(ctx context.Context, spec *deploy.Spec, hostKey ssh.HostKeyCallback) (sshSession, error) {
+	c, err := deploy.DialSSHWithHostKey(ctx, spec, hostKey)
 	if err != nil {
 		return nil, err
 	}
@@ -677,10 +717,10 @@ func (realSSHDialer) Dial(ctx context.Context, spec *deploy.Spec) (sshSession, e
 }
 
 // DialWithAuth dials using an explicit set of ssh.AuthMethods, letting
-// AgentDeployService inject an SSHSignerResolver-backed signer without
-// touching the spec.
-func (realSSHDialer) DialWithAuth(ctx context.Context, spec *deploy.Spec, auth []ssh.AuthMethod) (sshSession, error) {
-	c, err := deploy.DialSSHWithAuth(ctx, spec, auth)
+// AgentDeployService inject an SSHSignerResolver-backed signer and a
+// known-hosts-backed host-key callback without touching the spec.
+func (realSSHDialer) DialWithAuth(ctx context.Context, spec *deploy.Spec, auth []ssh.AuthMethod, hostKey ssh.HostKeyCallback) (sshSession, error) {
+	c, err := deploy.DialSSHWithAuthAndHostKey(ctx, spec, auth, hostKey)
 	if err != nil {
 		return nil, err
 	}

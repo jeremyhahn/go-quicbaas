@@ -50,60 +50,13 @@ type SSHClient struct {
 // a signer resolved by the caller.
 //
 // Host-key verification requires InsecureHostKey=true (explicit
-// operator opt-out) or the use of DialSSHWithAuthAndHostKey with a
-// caller-supplied ssh.HostKeyCallback. Empty callback +
-// InsecureHostKey=false yields an InvalidSpecError at dial time so a
-// misconfigured deploy fails loudly.
+// operator opt-out) or one of the entry points that accepts a
+// caller-supplied ssh.HostKeyCallback — DialSSHWithHostKey for these
+// same credentials, DialSSHWithAuthAndHostKey for injected auth. Empty
+// callback + InsecureHostKey=false yields an InvalidSpecError at dial
+// time so a misconfigured deploy fails loudly.
 func DialSSH(ctx context.Context, spec *Spec) (*SSHClient, error) {
-	if spec == nil {
-		return nil, &InvalidSpecError{Field: "spec", Reason: "spec is required"}
-	}
-	if spec.Host == "" {
-		return nil, &InvalidSpecError{Field: "host", Reason: "host is required"}
-	}
-	if spec.SSHUser == "" {
-		return nil, &InvalidSpecError{Field: "ssh_user", Reason: "ssh user is required"}
-	}
-
-	authMethods, err := buildAuthMethods(spec)
-	if err != nil {
-		return nil, err
-	}
-
-	hostKeyCb, err := buildHostKeyCallback(spec)
-	if err != nil {
-		return nil, err
-	}
-
-	cfg := &ssh.ClientConfig{
-		User:            spec.SSHUser,
-		Auth:            authMethods,
-		HostKeyCallback: hostKeyCb,
-		Timeout:         defaultDialTimeout,
-	}
-	applyFIPSAlgorithms(cfg)
-
-	addr := normalizeHostPort(spec.Host)
-
-	// Dial via a net.Dialer so we can respect the caller's context
-	// deadline. crypto/ssh does not accept a context directly, but
-	// NewClientConn takes an established net.Conn.
-	d := &net.Dialer{Timeout: cfg.Timeout}
-	netConn, err := d.DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return nil, &SSHDialError{Host: addr, User: spec.SSHUser, Cause: err}
-	}
-
-	sshConn, chans, reqs, err := ssh.NewClientConn(netConn, addr, cfg)
-	if err != nil {
-		_ = netConn.Close()
-		return nil, &SSHDialError{Host: addr, User: spec.SSHUser, Cause: err}
-	}
-
-	return &SSHClient{
-		client: ssh.NewClient(sshConn, chans, reqs),
-		host:   addr,
-	}, nil
+	return DialSSHWithHostKey(ctx, spec, nil)
 }
 
 // Host returns the dialed host:port string.

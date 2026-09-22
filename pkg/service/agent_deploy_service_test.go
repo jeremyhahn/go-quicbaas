@@ -45,10 +45,15 @@ type fakeDialer struct {
 	err      error
 	seen     *deploy.Spec
 	seenAuth []ssh.AuthMethod
+	// seenHostKey records the host-key callback the service resolved, so
+	// tests can assert a pinned deploy dials with verification in place
+	// and an insecure one does not.
+	seenHostKey ssh.HostKeyCallback
 }
 
-func (d *fakeDialer) Dial(ctx context.Context, spec *deploy.Spec) (sshSession, error) {
+func (d *fakeDialer) Dial(ctx context.Context, spec *deploy.Spec, hostKey ssh.HostKeyCallback) (sshSession, error) {
 	d.seen = spec
+	d.seenHostKey = hostKey
 	if d.err != nil {
 		return nil, d.err
 	}
@@ -60,9 +65,10 @@ func (d *fakeDialer) Dial(ctx context.Context, spec *deploy.Spec) (sshSession, e
 
 // DialWithAuth satisfies the extended sshDialer interface so the fake
 // can serve both spec-credential and SSHKeyName dial paths.
-func (d *fakeDialer) DialWithAuth(ctx context.Context, spec *deploy.Spec, auth []ssh.AuthMethod) (sshSession, error) {
+func (d *fakeDialer) DialWithAuth(ctx context.Context, spec *deploy.Spec, auth []ssh.AuthMethod, hostKey ssh.HostKeyCallback) (sshSession, error) {
 	d.seen = spec
 	d.seenAuth = auth
+	d.seenHostKey = hostKey
 	if d.err != nil {
 		return nil, d.err
 	}

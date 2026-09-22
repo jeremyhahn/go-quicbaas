@@ -30,50 +30,27 @@ import (
 // authMethods must be non-empty; an empty slice is treated as an
 // invalid spec and returns a typed error immediately.
 func DialSSHWithAuth(ctx context.Context, spec *Spec, authMethods []ssh.AuthMethod) (*SSHClient, error) {
+	return DialSSHWithAuthAndHostKey(ctx, spec, authMethods, nil)
+}
+
+// DialSSHWithHostKey opens an SSH connection using the spec's own
+// credentials plus an explicit ssh.HostKeyCallback. It is the
+// password-auth counterpart of DialSSHWithAuthAndHostKey: the service
+// layer resolves the target's pinned host key from the SSH known-hosts
+// store and injects the resulting callback here, so a password deploy
+// verifies its host exactly as a stored-key deploy does.
+//
+// A nil hostKey falls back to the spec's own policy (InsecureHostKey),
+// which refuses to dial unless the operator opted out explicitly.
+func DialSSHWithHostKey(ctx context.Context, spec *Spec, hostKey ssh.HostKeyCallback) (*SSHClient, error) {
 	if spec == nil {
 		return nil, &InvalidSpecError{Field: "spec", Reason: "spec is required"}
 	}
-	if spec.Host == "" {
-		return nil, &InvalidSpecError{Field: "host", Reason: "host is required"}
-	}
-	if spec.SSHUser == "" {
-		return nil, &InvalidSpecError{Field: "ssh_user", Reason: "ssh user is required"}
-	}
-	if len(authMethods) == 0 {
-		return nil, &InvalidSpecError{Field: "ssh_auth", Reason: "at least one auth method is required"}
-	}
-
-	hostKeyCb, err := buildHostKeyCallback(spec)
+	authMethods, err := buildAuthMethods(spec)
 	if err != nil {
 		return nil, err
 	}
-
-	cfg := &ssh.ClientConfig{
-		User:            spec.SSHUser,
-		Auth:            authMethods,
-		HostKeyCallback: hostKeyCb,
-		Timeout:         defaultDialTimeout,
-	}
-	applyFIPSAlgorithms(cfg)
-
-	addr := normalizeHostPort(spec.Host)
-
-	d := &net.Dialer{Timeout: cfg.Timeout}
-	netConn, err := d.DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return nil, &SSHDialError{Host: addr, User: spec.SSHUser, Cause: err}
-	}
-
-	sshConn, chans, reqs, err := ssh.NewClientConn(netConn, addr, cfg)
-	if err != nil {
-		_ = netConn.Close()
-		return nil, &SSHDialError{Host: addr, User: spec.SSHUser, Cause: err}
-	}
-
-	return &SSHClient{
-		client: ssh.NewClient(sshConn, chans, reqs),
-		host:   addr,
-	}, nil
+	return DialSSHWithAuthAndHostKey(ctx, spec, authMethods, hostKey)
 }
 
 // DialSSHWithAuthAndHostKey opens an SSH connection using both a

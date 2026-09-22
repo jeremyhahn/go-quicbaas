@@ -64,3 +64,33 @@ func (e *SSHAuthConflictError) Error() string {
 	}
 	return "service: conflicting ssh auth fields: " + strings.Join(e.Fields, ", ")
 }
+
+// SSHHostKeyResolver resolves the host-key verification policy for an
+// SSH target. The service layer uses this narrow interface so
+// AgentDeployService stays independent of where host-key pins live — it
+// only needs the one operation "give me the callback that decides
+// whether this host's key is trusted".
+//
+// Callers wire an xkms-backed resolver here so the pins consulted are
+// exactly the ones `quicbaas ssh known-hosts add/list` manage.
+type SSHHostKeyResolver interface {
+	// HostKeyCallback returns the ssh.HostKeyCallback that verifies a
+	// target's presented host key against its stored pins. Resolution is
+	// eager: a host with no pin fails here, before the dial, with a typed
+	// error that tells the operator how to pin it.
+	HostKeyCallback(ctx context.Context, ref SSHHostRef) (ssh.HostKeyCallback, error)
+}
+
+// SSHHostRef identifies the host whose pins to consult. Scope and Owner
+// address the known-hosts store exactly as SSHKeyRef addresses the key
+// store — both live behind the same xkms-backed SSH surface, under the
+// same (scope, owner) pair.
+type SSHHostRef struct {
+	// Host is the SSH destination in "host" or "host:port" form. The
+	// port, when present, is ignored: pins are stored per host.
+	Host string
+	// Scope is one of "user", "tenant", "service". Empty → "user".
+	Scope string
+	// Owner is the scope-specific owner id. Empty → resolver default.
+	Owner string
+}

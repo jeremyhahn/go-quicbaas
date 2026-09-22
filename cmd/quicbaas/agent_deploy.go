@@ -83,7 +83,9 @@ var agentDeployServiceFactory AgentDeployServiceFactory = createAgentDeployServi
 // environment (XKMSD_URL / XKMSD_TOKEN for the REST transport; embedded
 // file-backed store under the user's home directory otherwise) and
 // injects it as an SSHSignerResolver so `--ssh-key-name` resolves
-// against the operator's xkms-backed key store.
+// against the operator's xkms-backed key store, and as an
+// SSHHostKeyResolver so the target's host key is verified against its
+// pin in the same store.
 //
 // The AgentCertIssuer dependency is resolved from the in-process server
 // when the CLI is running alongside quicbaasd (embedded transport);
@@ -98,12 +100,15 @@ func createAgentDeployService() (service.AgentDeployService, error) {
 		deps.AgentLister = lister
 	}
 
-	// SSH signer resolver: only wired when the operator has either an
-	// XKMSD_URL (REST) or a usable file-backed local store. Failures
-	// are tolerated so password-only deploys still function when the
-	// operator has not configured xkms locally.
-	if resolver, err := buildSSHSignerResolver(); err == nil {
-		deps.SSHKeys = resolver
+	// SSH resolvers: the signer behind --ssh-key-name and the host-key
+	// pin behind the known-hosts store. Both come from one SDK client so
+	// the deploy opens a single transport. A failure here is tolerated:
+	// a password deploy with --ssh-insecure-host-key needs neither, and
+	// a deploy that does need them fails later with a typed error that
+	// names the missing piece.
+	if signer, hostKeys, err := buildDeploySSHResolvers(); err == nil {
+		deps.SSHKeys = signer
+		deps.SSHHostKeys = hostKeys
 	}
 
 	// AgentCertIssuer: required for the deploy to succeed. Resolved
@@ -123,21 +128,35 @@ func createAgentDeployService() (service.AgentDeployService, error) {
 	return service.NewAgentDeployService(deps), nil
 }
 
-// buildSSHSignerResolver constructs a service.SSHSignerResolver whose
-// Signer method is backed by the xkms SSH SDK client. The transport is
-// selected at call time so the same CLI binary works against a remote
-// xkmsd instance (XKMSD_URL) or a local file-backed store.
-func buildSSHSignerResolver() (service.SSHSignerResolver, error) {
+// buildDeploySSHResolvers constructs the two SSH resolvers the deploy
+// service needs, both backed by a single SDK SSH client:
+//
+//   - the signer behind --ssh-key-name, so the private key never leaves
+//     the key store, and
+//   - the host-key resolver, which reads the target's pin from the same
+//     known-hosts store `quicbaas ssh known-hosts add/list` manage.
+//
+// Both are addressed by the same (scope, owner) pair, which is why
+// --ssh-key-scope / --ssh-key-owner select the pin as well as the key:
+// one SSH surface, one addressing scheme. Per-ref values from the spec
+// override these defaults.
+func buildDeploySSHResolvers() (service.SSHSignerResolver, service.SSHHostKeyResolver, error) {
 	client, err := buildCLISSHClient()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	owner := cliSSHOwner()
-	return &service.XKMSSSHSignerResolver{
+	signer := &service.XKMSSSHSignerResolver{
 		Client: client,
 		Scope:  "user",
 		Owner:  owner,
-	}, nil
+	}
+	hostKeys := &service.XKMSSSHHostKeyResolver{
+		KnownHosts: client.KnownHosts(),
+		Scope:      "user",
+		Owner:      owner,
+	}
+	return signer, hostKeys, nil
 }
 
 // =============================================================================
@@ -171,6 +190,14 @@ Authentication:
   paths are no longer accepted — the private material must live behind
   the xkms-backed SSH key store so it never leaves the server.
 
+Host key:
+  The target's SSH host key is verified against its pin in the SSH
+  known-hosts store before the dial. Pin it once with
+      quicbaas ssh known-hosts add --host <h> --algorithm <a> --fingerprint <f>
+  The pin is read under the same scope/owner as the SSH key, so
+  --ssh-key-scope / --ssh-key-owner select both. Pass
+  --ssh-insecure-host-key to skip verification on a lab host.
+
 Examples:
   quicbaas agent deploy --ssh alice@node01 --ssh-key-name alice-laptop \
     --server https://quicbaas.example.com:8443 --tenant acme \
@@ -183,7 +210,7 @@ Examples:
 	cmd.Flags().StringVar(&deploySSHKeyScope, "ssh-key-scope", "", "Scope for --ssh-key-name lookup: user | tenant | service. Defaults to 'user'.")
 	cmd.Flags().StringVar(&deploySSHKeyOwner, "ssh-key-owner", "", "Owner identifier for --ssh-key-name lookup (defaults to current user for scope=user, current tenant for scope=tenant, 'default' for scope=service).")
 	cmd.Flags().StringVar(&deploySSHPassword, "ssh-password", "", "SSH password fallback (prefer --ssh-key-name when possible)")
-	cmd.Flags().BoolVar(&deployInsecureHostKey, "ssh-insecure-host-key", false, "Skip remote host key verification (operator opt-in). Production deploys should pin host keys in the xkms SSH known-hosts store via `quicbaas ssh known-hosts add`.")
+	cmd.Flags().BoolVar(&deployInsecureHostKey, "ssh-insecure-host-key", false, "Skip remote host key verification (operator opt-in). Without it the target's key must be pinned in the SSH known-hosts store via `quicbaas ssh known-hosts add`, under the same scope/owner as --ssh-key-scope / --ssh-key-owner.")
 	cmd.Flags().StringVar(&deployServer, "server", "", "QuicBaaS server address the agent will dial (required)")
 	cmd.Flags().StringVar(&deployBindAddr, "bind", "0.0.0.0:9091", "Local bind address the agent exposes on the remote host")
 	cmd.Flags().StringSliceVar(&deployBackends, "backend", []string{"acp"}, "Agent backend to enable (repeat for multiple)")
