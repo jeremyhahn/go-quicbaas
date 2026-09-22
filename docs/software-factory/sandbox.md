@@ -188,8 +188,13 @@ rejected grep inside a `|| true` pipeline *passes* a security check that never
 ran. The image carries GNU `grep` and `rsync`, and sets **no `NODE_ENV`**:
 under `NODE_ENV=production` `npm ci` omits devDependencies, `tsc` never
 installs, and `make build` fails on a missing module (go-quicbaas#966).
-`make test-worker-image` probes all three. The cheapest way to find the next
-gap is to run the project's `make build` inside the image on a clone of main:
+It also carries `pkgconf`, `gtk+3.0-dev` and `webkit2gtk-4.1-dev`, because
+`make build` links the client with its embedded desktop GUI and `build-cli`
+guards that with `pkg-config --exists webkit2gtk-4.1` — the same packages CI's
+Build job installs, for the reason CI gives: provision the toolchain rather
+than narrow what the gate covers. `make test-worker-image` probes all of
+these. The cheapest way to find the next gap is to run the project's
+`make build` inside the image on a clone of main:
 
 ```sh
 docker run --rm -e HOME=/tmp -v "$PWD":/src:ro \
