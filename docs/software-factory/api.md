@@ -51,8 +51,8 @@ that response — `total` is how many matched.
 
 | Endpoint | Natural order | `sort` fields | `q` searches | Filters |
 |---|---|---|---|---|
-| `GET /api/v1/orchestrator/jobs` | `started_at:desc` | `description`, `job_id`, `runner`, `started_at`, `state`, `task_id`, `updated_at` | job id, description, runner, state, task id | `task_id`, `runner`, `project_id`, `statuses` (comma-separated) |
-| `GET /api/v1/orchestrator/tasks` | `created_at:desc` | `created_at`, `id`, `project_id`, `status`, `subject`, `updated_at` | id, subject, status, project id | `team_name`, `assigned_to`, `created_by`, `project_id`, `status`, `statuses` |
+| `GET /api/v1/orchestrator/jobs` | `started_at:desc` | `description`, `job_id`, `runner`, `started_at`, `state`, `task_id`, `updated_at` | job id, description, runner, state, task id | `task_id`, `runner`, `project_id`, `statuses` (comma-separated), `job_ids` (comma-separated) |
+| `GET /api/v1/orchestrator/tasks` | `created_at:desc` | `created_at`, `id`, `project_id`, `status`, `subject`, `updated_at` | id, subject, status, project id | `team_name`, `assigned_to`, `created_by`, `project_id`, `status`, `statuses`, `auto_spawn` (`true`/`false`) |
 | `GET /api/v1/orchestrator/sessions` | `created_at` (**oldest first** — this listing has always answered in creation order; ask for `sort=created_at:desc` to invert it) | `backend`, `created_at`, `last_activity`, `model`, `project_id`, `session_id`, `state` | session id, backend, model, state | `backend`, `status` |
 | `GET /api/v1/orchestrator/agents` | `registered_at:desc` | `backend`, `host`, `id`, `last_seen`, `name`, `registered_at`, `status` | id, name, and every backend it serves (primary + capabilities) | `host`, `agent_type`, `backend`, `status` |
 | `GET /api/v1/orchestrator/workflows` | `name` (workflows carry no timestamp) | `mode`, `name`, `project_id` | name, which is also the identifier | — |
@@ -63,6 +63,30 @@ The allow-lists are served from `orchestration.PageSpec` values in
 `pkg/orchestration/page_specs.go`; the parameters are parsed once in
 `orchestration.ParsePage` and applied once in `orchestration.ApplyPage`.
 
+**Two filters exist for the sake of a PAGE, not of a query.** `job_ids` on the
+jobs listing is how a caller holding a page of something else — tasks, whose
+Assigned column names the agent of the latest attempt's job — resolves the jobs
+its rows name in ONE request instead of listing the tenant (which paging
+removed) or one request per row. `auto_spawn` on the tasks listing is the
+dispatch-mode filter the Tasks view offers: a tri-state boolean, where absent
+narrows nothing, `true` is the tasks that asked for immediate dispatch and
+`false` the ones queued for a claim. A value that is neither is a **400**
+naming the parameter (`orchestration.ParseOptionalBool`).
+
+### The session row says which role it played
+
+Each record of `GET /api/v1/orchestrator/sessions` carries `job_id` — the
+orchestration job the session works for — and `runner`, the job runner that
+drove it (`sdlc`, `review`, `triage`, or `workflow` for the engine's own).
+Both are omitted for a session that belongs to no job, and `runner` is omitted
+when the job is no longer on record: no runner means "not observed", never a
+guess.
+
+The daemon resolves `runner` for the page it is answering, memoised per job, so
+a page of twenty-five costs at most twenty-five job reads and a consumer never
+has to hold the job list to say what a session was doing. The UI's Role badge
+reads this field and nothing else (`cmd/quicbaas/frontend/src/lib/sessions.ts`).
+
 **Other transports.** QUIC and Unix carry the REST contract unchanged (they
 delegate to it). The Go SDK's list requests embed `page.Params` and its list
 responses embed `page.Envelope` (`sdk/go/client/page`), which the embedded
@@ -72,6 +96,55 @@ in-process transport honours as well. The MCP tools
 same envelope fields. gRPC does NOT carry them yet: its request messages are
 generated from `api/proto/orchestrator.proto` and gaining the fields requires
 a proto regeneration (go-quicbaas#968 follow-up).
+
+### TypeScript SDK
+
+One params type and one envelope type for every listing (`sdk/typescript/src/page.ts`):
+
+```ts
+import type { PageParams, PageResult } from '@quicbaas/sdk';
+
+const page = await client.orchestrator.listJobsPage(tenantID, {
+  limit: 25, offset: 50, sort: 'started_at:desc', q: 'wire',
+  statuses: ['executing'], runner: 'sdlc',       // the endpoint's own filters
+});
+page.items; page.total; page.limit; page.offset; page.next_offset;
+```
+
+| Verb | Params | Endpoint |
+|---|---|---|
+| `orchestrator.listJobsPage(tenantID, page?)` | `JobPageParams` (`task_id`, `runner`, `project_id`, `statuses[]`, `job_ids[]`) | jobs |
+| `orchestrator.listTasksPage(tenantID, page?)` | `TaskPageParams` (`status`, `statuses[]`, `project_id`, `team_name`, `assigned_to`, `created_by`, `auto_spawn`) | tasks |
+| `orchestrator.listSessionsPage(tenantID, page?)` | `SessionPageParams` (`backend`, `status`) | sessions |
+| `orchestrator.listAgentsPage(tenantID, page?)` | `AgentPageParams` (`host`, `status`, `agent_type`, `backend`, `model`) | agents |
+| `orchestrator.listWorkflowsPage(tenantID, page?)` | `PageParams` | workflows |
+| `projects.listProjectsPage(tenantID, page?)` | `PageParams` | projects |
+| `accounts.listAccountsPage({tenant_id, …})` | `AccountPageParams` (`provider`, `project_id`) | accounts |
+
+`PageResult.items` holds the records whatever the wire calls them (`jobs`,
+`tasks`, …): one envelope type per SDK rather than one per resource. The
+sessions page maps the wire's `state`/`last_activity` onto `status`/`last_active`
+exactly as the unpaged `listSessions` does, `runner` and `model` included.
+
+**The unpaged methods still exist and are still one page.** `listJobs`,
+`listTasks`, `listSessions`, `listAgents` and `listWorkflows` are unchanged and
+send no `limit` — which now means they receive the server's default page of 25
+and cannot tell that from a complete answer. A caller that needs the count, or
+the page after, asks the `*Page` verb.
+
+**A transport that cannot page says so by answering the whole set.** The Wails
+bindings take the SDK request structs verbatim, so the paging parameters DO
+reach the daemon over desktop IPC; what comes back is a projected array with no
+envelope, which the SDK reports as a single page (`total` = its length, no
+`next_offset`) rather than as a first page of an unknown number. gRPC-Web,
+QUIC, Unix and MCP have no TypeScript transport wired yet: their `*Page` verbs
+delegate to their own unpaged sibling, so a caller gets that transport's typed
+refusal rather than an invented page. None of them throws "paging not
+supported".
+
+A 200 whose body is not a listing — no records under the endpoint's key — is a
+typed `MalformedPageError` rather than an empty page, because a table rendering
+"0 of 0" for a failed read tells the operator something untrue.
 
 
 ## Transport matrix

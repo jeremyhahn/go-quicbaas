@@ -518,6 +518,13 @@ func (s *Server) HandleOrchestratorListTasks(w http.ResponseWriter, r *http.Requ
 		filter.Status = orchestration.TaskStatus(statusParam)
 	}
 
+	autoSpawn, err := orchestration.ParseOptionalBool("auto_spawn", r.URL.Query().Get("auto_spawn"))
+	if err != nil {
+		RespondBadRequest(w, r, err.Error())
+		return
+	}
+	filter.AutoSpawn = autoSpawn
+
 	page, err := pageFromRequest(r)
 	if err != nil {
 		RespondBadRequest(w, r, err.Error())
@@ -590,15 +597,15 @@ func (s *Server) HandleOrchestratorClaimTask(w http.ResponseWriter, r *http.Requ
 // into task statuses, dropping empty segments. An empty parameter yields nil
 // so the filter stays unset.
 func parseTaskStatuses(raw string) []orchestration.TaskStatus {
-	return parseStateList[orchestration.TaskStatus](raw)
+	return parseCSVList[orchestration.TaskStatus](raw)
 }
 
-// parseStateList reads a comma-separated ?statuses= filter into a list of
-// state values. Blank entries are dropped, so "executing,,failed" and
+// parseCSVList reads a comma-separated list filter — ?statuses=, ?job_ids= —
+// into its values. Blank entries are dropped, so "executing,,failed" and
 // "executing,failed" ask the same question, and a wholly blank value narrows
 // NOTHING rather than narrowing to nothing — an empty list means "every
-// state" everywhere it is read.
-func parseStateList[T ~string](raw string) []T {
+// value" everywhere it is read.
+func parseCSVList[T ~string](raw string) []T {
 	if raw == "" {
 		return nil
 	}
@@ -878,7 +885,11 @@ func (s *Server) HandleOrchestratorListJobs(w http.ResponseWriter, r *http.Reque
 		TaskID:    r.URL.Query().Get("task_id"),
 		Runner:    r.URL.Query().Get("runner"),
 		ProjectID: r.URL.Query().Get("project_id"),
-		Statuses:  parseStateList[orchestration.JobState](r.URL.Query().Get("statuses")),
+		Statuses:  parseCSVList[orchestration.JobState](r.URL.Query().Get("statuses")),
+		// job_ids answers a page of something else: the sessions page names
+		// a job per row and renders its runner's role, and asks for exactly
+		// those jobs in one call rather than 25.
+		JobIDs: parseCSVList[string](r.URL.Query().Get("job_ids")),
 	}
 
 	page, err := pageFromRequest(r)

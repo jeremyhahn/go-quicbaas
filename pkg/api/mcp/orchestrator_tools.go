@@ -726,6 +726,11 @@ func (r *ToolRegistry) registerAgentTools() {
 					"items":       map[string]interface{}{"type": "string"},
 					"description": "Narrow the listing to jobs in any of these states. Optional.",
 				},
+				"job_ids": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Narrow the listing to the named jobs — how a caller holding a page of sessions or tasks resolves the jobs they name in one call. Optional.",
+				},
 			}, strings.Join(orchestration.JobPageSpec().SortFields(), ", ")),
 		},
 	})
@@ -1903,6 +1908,7 @@ func (r *ToolRegistry) executeOrchestratorListJobs(ctx context.Context, args map
 		Runner:    getString(args, "runner"),
 		ProjectID: getString(args, "project_id"),
 		Statuses:  jobStatesFromArgs(args),
+		JobIDs:    getStringSlice(args, "job_ids"),
 	}, pageFromArgs(args))
 	if err != nil {
 		return nil, err

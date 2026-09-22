@@ -70,6 +70,29 @@ export type JobState =
   | 'completed'
   | 'failed';
 
+/**
+ * ACTIVE_JOB_STATES is every state a job can still leave — the complement of
+ * isTerminalJobState, spelled out because a SERVER filter narrows by naming
+ * states and cannot be asked for "not terminal".
+ *
+ * It is declared beside JobState on purpose: a state added to the union above
+ * and forgotten here would silently drop that job from the Active filter, and
+ * two lists in two files drift the moment one of them is edited alone.
+ */
+export const ACTIVE_JOB_STATES: readonly JobState[] = [
+  'initializing',
+  'decomposing',
+  'scheduling',
+  'assigning',
+  'executing',
+  'validating',
+  'reviewing',
+  're-delegating',
+  'completing',
+  'cleanup',
+  'escalating',
+];
+
 export type AgentStatus = 'registered' | 'running' | 'idle' | 'offline' | 'error';
 export type TaskStatus = 'pending' | 'claimed' | 'in_progress' | 'completed' | 'failed' | 'cancelled' | 'blocked';
 export type SessionState = string;
@@ -335,6 +358,13 @@ let tasksError: unknown = $state(null);
 let backends: AgentBackendInfo[] = $state([]);
 let health: HealthCheckReport | null = $state(null);
 let events: JobEvent[] = $state([]);
+
+/**
+ * jobEventRevision counts the job events that said something about a job's
+ * own record. A paged jobs list watches it and re-reads its page; see the
+ * getter on orchestratorStore for why that is not a patch.
+ */
+let jobEventRevision = $state(0);
 /**
  * qrdb's canonical control-plane tenant (qrdbsdk.SystemTenantID), always
  * provisioned at first boot. It is the LAST RESORT only — the tenant to address
@@ -528,6 +558,17 @@ export const orchestratorStore = {
   get health() { return health; },
   get events() { return _inScope() ? events : NO_EVENTS; },
   get activeTenantID() { return currentTenantID(); },
+  /**
+   * jobEventRevision counts the job events that changed a job's record.
+   *
+   * IT IS THE SIGNAL A PAGED LIST READS. A view that renders one page of jobs
+   * cannot be patched in place by an event — the job the event is about may
+   * not be on the page, and the page's ORDER and CONTENTS are the server's
+   * answer, not this store's. So the list watches this number and re-asks for
+   * its page instead of editing rows by hand. The detail views, which do hold
+   * one whole record, keep being patched (see applyJobEvent).
+   */
+  get jobEventRevision() { return jobEventRevision; },
 };
 
 // ---------------------------------------------------------------------------
@@ -759,6 +800,11 @@ export function applyJobEvent(e: JobEvent): void {
   if (typeof e?.job_id !== 'string' || e.job_id === '') return;
   const patch = jobEventPatch(e);
   if (patch === null) return;
+
+  // Announced BEFORE the patch is applied and regardless of whether this
+  // store holds the job: a paged list reads this to re-ask for its page, and
+  // the job that just changed state may well be one this store never saw.
+  jobEventRevision += 1;
 
   const idx = jobs.findIndex((j) => j.job_id === e.job_id);
   if (idx !== -1) {

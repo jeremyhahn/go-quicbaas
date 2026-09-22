@@ -171,6 +171,28 @@ func ParsePage(limit, offset, sortField, query string) (*Page, error) {
 	return page.Normalized(), nil
 }
 
+// ParseOptionalBool reads a TRI-STATE boolean list filter: present and true,
+// present and false, or absent.
+//
+// It is the ONE place a transport turns such a parameter into a *bool, for
+// the same reason ParsePage is the one place paging is parsed: `auto_spawn`
+// must mean the same thing, and refuse the same values, on every protocol.
+// An empty string is "the caller did not ask", which is nil and narrows
+// nothing — NOT false, which narrows to the queued tasks. Anything
+// strconv.ParseBool refuses is a typed InvalidFilterParamError naming the
+// parameter.
+func ParseOptionalBool(param, raw string) (*bool, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, nil
+	}
+	value, err := strconv.ParseBool(trimmed)
+	if err != nil {
+		return nil, &InvalidFilterParamError{Param: param, Value: raw}
+	}
+	return &value, nil
+}
+
 // parsePageInt reads one non-negative integer parameter. An empty value is
 // zero, which each field reads as "unset" in Normalized.
 func parsePageInt(param, raw string) (int, error) {

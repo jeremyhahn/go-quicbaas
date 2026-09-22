@@ -1,3 +1,4 @@
+import type { PageParams, PageResult } from './page.js';
 /** ProjectRole defines the level of access an agent has within a project. */
 export type ProjectRole = 'lead' | 'worker' | 'observer' | 'denied';
 /**
@@ -236,10 +237,20 @@ export interface ProjectsClient {
      */
     deleteProject(tenantId: string, projectId: string): Promise<DeleteProjectResponse>;
     /**
-     * listProjects returns all projects for a given tenant.
+     * listProjects returns a tenant's projects.
      * GET /api/v1/projects?tenant_id=...
+     *
+     * ONE PAGE OF THEM since the endpoint gained paging: it sends no `limit`
+     * and the server's default page is 25. Use listProjectsPage for the count
+     * and the page after.
      */
     listProjects(tenantId: string): Promise<ListProjectsResponse>;
+    /**
+     * listProjectsPage returns ONE PAGE of a tenant's projects, newest first,
+     * with the count of everything that matched.
+     * GET /api/v1/projects?tenant_id=...&limit=&offset=&sort=&q=
+     */
+    listProjectsPage(tenantId: string, page?: PageParams): Promise<PageResult<Project>>;
     /**
      * grantAgentRole sets or updates the role for an agent within a project.
      * PUT /api/v1/projects/:projectId/permissions/:agentId

@@ -634,17 +634,21 @@ describe('SessionDetail — Last Active, from the server’s own payload', () =>
 // ---------------------------------------------------------------------------
 
 describe('SessionDetail role', () => {
-  /** The same session, working for the job named. */
-  const workingFor = (jobID: string) => ({ ...sessions.active, job_id: jobID });
+  /** The same session, as the listing reports it: job and runner together. */
+  const drivenBy = (jobID: string, runner: string) => ({
+    ...sessions.active,
+    job_id: jobID,
+    runner,
+  });
 
   it('names the role the session played and the model running it', () => {
-    render(SessionDetail, { props: { session: workingFor('job-worker') } });
+    render(SessionDetail, { props: { session: drivenBy('job-worker', 'sdlc') } });
     expect(screen.getByTestId('session-role')).toHaveTextContent('worker');
     expect(screen.getByTestId('session-header-model')).toHaveTextContent('claude-3-5-sonnet');
   });
 
-  it('reads the role from the job, not from the transcript', () => {
-    render(SessionDetail, { props: { session: workingFor('job-reviewer') } });
+  it('reads the role from the record, not from the transcript', () => {
+    render(SessionDetail, { props: { session: drivenBy('job-reviewer', 'review') } });
     expect(screen.getByTestId('session-role')).toHaveTextContent('reviewer');
   });
 
@@ -653,8 +657,11 @@ describe('SessionDetail role', () => {
     expect(screen.queryByTestId('session-role')).toBeNull();
   });
 
-  it('claims no role when the session names a job nobody has read', () => {
-    render(SessionDetail, { props: { session: workingFor('job-nobody-read') } });
+  it('claims no role when the daemon could not resolve the runner', () => {
+    // The session names a job, but the job is no longer on record — the
+    // listing answers with no runner, and a guess is exactly what the badge
+    // exists to prevent.
+    render(SessionDetail, { props: { session: { ...sessions.active, job_id: 'job-pruned' } } });
     expect(screen.queryByTestId('session-role')).toBeNull();
   });
 });

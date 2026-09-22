@@ -11,6 +11,14 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
+import type {
+  AgentPageParams,
+  JobPageParams,
+  PageParams,
+  PageResult,
+  SessionPageParams,
+  TaskPageParams,
+} from './page.js';
 import type { RAGClient } from './rag.js';
 import type { EmbeddingsClient } from './embedding_sdk.js';
 import type { MessagingClient } from './messaging_sdk.js';
@@ -54,6 +62,7 @@ import type {
   VerifyAuthorizedRequest,
   VerifyAuthorizedResponse,
   AgentRegistration,
+  SessionStatusResponse,
   CloseSessionRequest,
   CloseSessionResponse,
   CreateKeyRequest,
@@ -203,9 +212,57 @@ export interface ConnectionClient {
 // OrchestratorClient provides all orchestration operations.
 // Implementations must delegate to the appropriate transport.
 export interface OrchestratorClient {
+  // =========================================================================
+  // The paged listings
+  //
+  // EVERY LIST ENDPOINT PAGES NOW, and the unpaged methods below did not
+  // change shape when it happened: they send no `limit`, the server's default
+  // page is 25, and an array of 25 looks exactly like a complete answer. Each
+  // `*Page` method here asks the question the unpaged one cannot — how many
+  // are there, and what is on the next page — by returning the envelope the
+  // server sends (see PageResult, and docs/software-factory/api.md).
+  //
+  // A transport whose wire format carries no paging fields still answers
+  // honestly: it reports the whole set as a single page (wholeSetPage), so a
+  // caller is never handed a first page it would ask a second of in vain.
+  // =========================================================================
+
+  // listJobsPage returns ONE PAGE of the tenant's jobs, newest first, with
+  // the count of everything that matched. `page` carries the shared
+  // limit/offset/sort/q plus the jobs listing's own narrowings.
+  listJobsPage(tenantID: string, page?: JobPageParams): Promise<PageResult<JobStatus>>;
+
+  // listTasksPage returns ONE PAGE of the tenant's tasks, newest first.
+  listTasksPage(tenantID: string, page?: TaskPageParams): Promise<PageResult<Task>>;
+
+  // listSessionsPage returns ONE PAGE of the tenant's sessions, OLDEST FIRST
+  // — the order this listing has always answered in. Ask for
+  // `sort: 'created_at:desc'` to invert it.
+  listSessionsPage(
+    tenantID: string,
+    page?: SessionPageParams,
+  ): Promise<PageResult<SessionStatusResponse>>;
+
+  // listAgentsPage returns ONE PAGE of the fleet, most recently registered
+  // first.
+  listAgentsPage(
+    tenantID: string,
+    page?: AgentPageParams,
+  ): Promise<PageResult<AgentRegistration>>;
+
+  // listWorkflowsPage returns ONE PAGE of the tenant's workflow definitions,
+  // by name — a workflow carries no timestamp to order by.
+  listWorkflowsPage(
+    tenantID: string,
+    page?: PageParams,
+  ): Promise<PageResult<WorkflowDefinition>>;
+
   // listJobs returns the tenant's jobs, sorted by start time descending.
   // taskID narrows the listing to the attempts at one task — the task's
   // attempt history, concluded jobs included. Omit it to list every job.
+  //
+  // IT IS ONE PAGE NOW, NOT THE COLLECTION: the server pages every listing
+  // and defaults to 25 records. Use listJobsPage when the count matters.
   listJobs(tenantID: string, taskID?: string): Promise<JobStatus[]>;
 
   // getJobStatus returns the current status of a specific job.
@@ -217,16 +274,19 @@ export interface OrchestratorClient {
   // cancelJob cancels a running orchestration job.
   cancelJob(tenantID: string, jobID: string): Promise<void>;
 
-  // listAgents returns all registered agents matching the filter criteria.
+  // listAgents returns the registered agents matching the filter criteria —
+  // ONE PAGE of them since paging arrived. Use listAgentsPage for the count.
   listAgents(req: ListAgentsRequest): Promise<ListAgentsResponse>;
 
   // getAgentStatus retrieves a single registered agent by ID.
   getAgentStatus(req: GetAgentRequest): Promise<AgentRegistration>;
 
-  // listSessions returns all active sessions, optionally filtered.
+  // listSessions returns the tenant's sessions, optionally filtered — ONE
+  // PAGE of them since paging arrived. Use listSessionsPage for the count.
   listSessions(req: ListSessionsRequest): Promise<ListSessionsResponse>;
 
-  // listTasks returns all tasks for a tenant.
+  // listTasks returns the tenant's tasks — ONE PAGE of them, the server's
+  // default 25, since paging arrived. Use listTasksPage for the count.
   listTasks(tenantID: string): Promise<Task[]>;
 
   // getTask retrieves a single task by ID within a tenant.
@@ -301,7 +361,8 @@ export interface OrchestratorClient {
   // Maps to POST /api/v1/orchestrator/workflows
   createWorkflow(req: CreateWorkflowRequest): Promise<CreateWorkflowResponse>;
 
-  // listWorkflows returns all registered workflow definitions for a tenant.
+  // listWorkflows returns the registered workflow definitions for a tenant —
+  // ONE PAGE of them since paging arrived. Use listWorkflowsPage for the count.
   // Maps to GET /api/v1/orchestrator/workflows?tenant_id=<tenantID>
   listWorkflows(tenantID: string): Promise<ListWorkflowsResponse>;
 

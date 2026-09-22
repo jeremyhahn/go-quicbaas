@@ -1,19 +1,27 @@
 <!--
-  SessionList renders the tenant's sessions in the shared DataTable: paged,
-  sorted and searched there rather than here.
+  SessionList renders the tenant's sessions in the shared DataTable, in SERVER
+  MODE: the table hands its loader {limit, offset, sort, q} and the daemon
+  answers one page with the count of everything that matched. The backend and
+  status selectors are server parameters too — a filter applied to a page of
+  twenty-five would report a total it cannot know.
+
+  The sort column names are the server's allow-list, which is why Status sorts
+  on `state` and Last Active on `last_activity`: those are the fields the
+  endpoint orders by (docs/software-factory/api.md). Container has no server
+  sort and is therefore not sortable, rather than sorting one page locally and
+  looking like it sorted the collection.
 
   Each row carries the ROLE the session played — worker, reviewer, triage —
-  beside the backend and model running it. A session record names no role, and
-  a worker's transcript discussing "the review's findings" reads exactly like a
-  reviewer's; the role comes from the runner of the job the session names (see
-  sessionRole in lib/sessions.ts).
+  beside the backend and model running it. The row says so itself: the listing
+  resolves the runner of the session's job server-side, per page.
 
   Clicking a row navigates to the session detail via hash routing.
 -->
 <script lang="ts">
-  import type { SessionStatusResponse } from '@quicbaas/sdk';
+  import type { SessionState, SessionStatusResponse } from '@quicbaas/sdk';
   import { sessionStore, refreshSessions } from '../../stores/sessionStore.svelte.ts';
-  import { orchestratorStore, loadJobs } from '../../stores/orchestrator.svelte.ts';
+  import { orchestratorStore } from '../../stores/orchestrator.svelte.ts';
+  import { getSDKClient } from '../../stores/sdkClient.ts';
   import { routeSessionDetail } from '../../stores/router.svelte.ts';
   import StatusBadge from '../core/StatusBadge.svelte';
   import PageHeader from '../core/PageHeader.svelte';
@@ -22,65 +30,92 @@
   import { statusToVariant } from '../core/statusVariant.ts';
   import { formatDateTime } from '../../lib/time.ts';
   import { sessionModel, sessionRole } from '../../lib/sessions.ts';
-  import type { Column } from '../../lib/dataTable.ts';
+  import type { Column, PageRequest } from '../../lib/dataTable.ts';
   import { MessageSquare } from 'lucide-svelte';
 
   // ---------------------------------------------------------------------------
-  // The job records behind the Role column
+  // The role a row played
+  //
+  // The listing resolves it: each session names its job and the daemon reads
+  // that job's runner for the page it is answering. Nothing to look up here,
+  // and nothing that could go blank because the job fell off a page.
   // ---------------------------------------------------------------------------
 
-  // Read ONCE for the page rather than once per row, the way TasksView reads
-  // them for its Assigned column. The store is stale-while-revalidate, so a
-  // page that already has jobs pays nothing.
-  $effect(() => {
-    void orchestratorStore.activeTenantID;
-    void loadJobs();
-  });
-
-  const knownJobs = $derived(
-    Array.isArray(orchestratorStore.jobs) ? orchestratorStore.jobs : [],
-  );
-
   function roleOf(session: SessionStatusResponse): string {
-    return sessionRole(session, knownJobs);
+    return sessionRole(session);
   }
 
   // ---------------------------------------------------------------------------
-  // Filters this page owns — the search, the sort and the paging are the
-  // table's, and the hand-written versions of all three were deleted.
+  // Filters this page owns — sent to the server, not applied to a page
+  //
+  // The options are FIXED rather than derived from the rows: a selector built
+  // from the loaded records could only ever offer what is on the current page,
+  // so filtering to "codex" would be impossible on a page with no codex
+  // session. The backends come from the daemon's registry, the states from the
+  // lifecycle the service defines (pkg/orchestration/backend.go).
   // ---------------------------------------------------------------------------
 
   let filterBackend = $state('');
-  let filterStatus = $state('');
+  let filterStatus = $state<SessionState | ''>('');
 
-  const filteredSessions = $derived.by((): SessionStatusResponse[] => {
-    let list = sessionStore.sessions;
-    if (filterBackend !== '') {
-      list = list.filter((s) => s.backend.toLowerCase().includes(filterBackend.toLowerCase()));
-    }
-    if (filterStatus !== '') {
-      list = list.filter((s) => s.status === filterStatus);
-    }
-    return list;
+  const SESSION_STATES: readonly SessionState[] = ['active', 'idle', 'closed', 'error'];
+
+  let backendNames = $state<string[]>([]);
+
+  $effect(() => {
+    void orchestratorStore.activeTenantID;
+    void loadBackendNames();
   });
 
-  // Unique backends and statuses for filter dropdowns.
-  const uniqueBackends = $derived([
-    ...new Set(sessionStore.sessions.map((s) => s.backend)),
-  ].sort());
+  async function loadBackendNames(): Promise<void> {
+    try {
+      const client = await getSDKClient();
+      const backends = await client.orchestrator.listBackends();
+      backendNames = (backends ?? []).map((b) => b.name).sort();
+    } catch {
+      // The selector falls back to "All backends"; the listing still loads.
+      backendNames = [];
+    }
+  }
 
-  const uniqueStatuses = $derived([
-    ...new Set(sessionStore.sessions.map((s) => s.status)),
-  ].sort());
+  // ---------------------------------------------------------------------------
+  // The page loader
+  //
+  // `reloadKey` carries the tenant and the two filters, so a change to any of
+  // them re-asks the server instead of re-cutting rows the table is holding.
+  // ---------------------------------------------------------------------------
 
+  // refreshTick is how the Refresh button re-asks: the table re-reads when the
+  // reload key changes, so a manual refresh is a change to it.
+  let refreshTick = $state(0);
+
+  const reloadKey = $derived(
+    `${orchestratorStore.activeTenantID}|${filterBackend}|${filterStatus}|${refreshTick}`,
+  );
+
+  async function loadSessions(req: PageRequest): Promise<unknown> {
+    const client = await getSDKClient();
+    return client.orchestrator.listSessionsPage(orchestratorStore.activeTenantID, {
+      limit: req.limit,
+      offset: req.offset,
+      sort: req.sort,
+      q: req.q,
+      ...(filterBackend === '' ? {} : { backend: filterBackend }),
+      ...(filterStatus === '' ? {} : { status: filterStatus }),
+    });
+  }
+
+  // The keys are the SERVER'S sort fields, not the cell labels: `state` and
+  // `last_activity` are what the sessions endpoint orders by. Role and
+  // Container are not in that allow-list, so they do not claim to sort.
   const COLUMNS: Column<SessionStatusResponse>[] = [
     { key: 'session_id', label: 'Session ID', sortable: true, searchable: true },
-    { key: 'role', label: 'Role', sortable: true, searchable: true, value: (s) => roleOf(s) },
+    { key: 'role', label: 'Role', value: (s) => roleOf(s) },
     { key: 'backend', label: 'Backend', sortable: true, searchable: true },
-    { key: 'status', label: 'Status', sortable: true },
+    { key: 'state', label: 'Status', sortable: true, value: (s) => s.status },
     { key: 'container_id', label: 'Container' },
     { key: 'created_at', label: 'Created', sortable: true },
-    { key: 'last_active', label: 'Last Active', sortable: true },
+    { key: 'last_activity', label: 'Last Active', sortable: true, value: (s) => s.last_active },
   ];
 
   function statusVariant(s: string): 'success' | 'error' | 'warning' | 'info' | 'ghost' | 'neutral' | 'primary' {
@@ -94,6 +129,10 @@
   let refreshing = $state(false);
   async function handleRefresh(): Promise<void> {
     refreshing = true;
+    // The table re-reads its page; the store is refreshed too, because the
+    // dashboard's live-session count and the session detail route still read
+    // from it.
+    refreshTick += 1;
     await refreshSessions();
     refreshing = false;
   }
@@ -139,9 +178,10 @@
 
   <DataTable
     columns={COLUMNS}
-    rows={filteredSessions}
+    load={loadSessions}
+    itemsKey="items"
+    {reloadKey}
     rowKey={(s: SessionStatusResponse) => s.session_id}
-    loading={sessionStore.sessionsLoading && sessionStore.sessions.length === 0}
     narrowed={filterBackend !== '' || filterStatus !== ''}
     urlKey="sessions"
     defaultSort="created_at:desc"
@@ -157,7 +197,7 @@
         aria-label="Filter by backend"
       >
         <option value="">All backends</option>
-        {#each uniqueBackends as backend (backend)}
+        {#each backendNames as backend (backend)}
           <option value={backend}>{backend}</option>
         {/each}
       </select>
@@ -168,7 +208,7 @@
         aria-label="Filter by status"
       >
         <option value="">All statuses</option>
-        {#each uniqueStatuses as status (status)}
+        {#each SESSION_STATES as status (status)}
           <option value={status}>{status}</option>
         {/each}
       </select>

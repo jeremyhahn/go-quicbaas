@@ -416,9 +416,12 @@ func handleOrchestratorListSessions(ctx context.Context, svc service.QuicBaaS, r
 		sessions[i] = &orchestratorSDK.SessionStatusResponse{
 			SessionID:  s.SessionID,
 			Backend:    s.Backend,
+			Model:      s.Model,
 			Status:     string(s.State),
 			CreatedAt:  s.CreatedAt,
 			LastActive: s.LastActivity,
+			JobID:      s.JobID,
+			Runner:     s.Runner,
 		}
 	}
 	return &orchestratorSDK.ListSessionsResponse{
@@ -504,6 +507,7 @@ func handleOrchestratorListTasks(ctx context.Context, svc service.QuicBaaS, req 
 		AssignedTo: r.AssignedTo,
 		ProjectID:  r.ProjectID,
 		Statuses:   taskStatusesFromSDK(r.Statuses),
+		AutoSpawn:  r.AutoSpawn,
 	}, pageFromSDK(r.Params))
 	if err != nil {
 		return nil, err
@@ -938,6 +942,7 @@ func handleOrchestratorListJobs(ctx context.Context, svc service.QuicBaaS, req i
 		Runner:    r.Runner,
 		ProjectID: r.ProjectID,
 		Statuses:  jobStatesFromSDK(r.Statuses),
+		JobIDs:    r.JobIDs,
 	}, pageFromSDK(r.Params))
 	if err != nil {
 		return nil, err

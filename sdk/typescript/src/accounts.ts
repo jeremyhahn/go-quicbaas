@@ -11,6 +11,8 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
+import type { AccountPageParams, PageResult } from './page.js';
+
 // ---------------------------------------------------------------------------
 // Pooled provider account domain types.
 //
@@ -226,8 +228,20 @@ export interface AccountsClient {
    * listAccounts returns the tenant's accounts, optionally filtered by
    * provider and/or project.
    * GET /api/v1/agent-accounts?tenant_id=...
+   *
+   * ONE PAGE OF THEM since the endpoint gained paging: it sends no `limit`
+   * and the server's default page is 25. Use listAccountsPage for the count
+   * and the page after. (Its `total` has always been the number that
+   * matched, which is now the number BEFORE the page was cut.)
    */
   listAccounts(req: ListAccountsRequest): Promise<ListAccountsResponse>;
+
+  /**
+   * listAccountsPage returns ONE PAGE of the tenant's accounts, newest first,
+   * with the count of everything that matched.
+   * GET /api/v1/agent-accounts?tenant_id=...&limit=&offset=&sort=&q=
+   */
+  listAccountsPage(req: AccountPageParams & { tenant_id: string }): Promise<PageResult<Account>>;
 
   /**
    * updateAccount changes an account's non-secret metadata.

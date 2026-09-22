@@ -10,6 +10,7 @@
 //
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
+import { adoptPage, } from './page.js';
 import { ConnectionError } from './errors.js';
 // wailsGo returns the window.go namespace cast to a two-level map.
 // Wails generates bindings at compile time; we keep the index signature
@@ -149,6 +150,23 @@ class WailsConnectionClient {
         return this._transport;
     }
 }
+// pageFields renders the shared paging parameters as the members a Go SDK
+// request struct carries (page.Params: limit/offset/sort/q). An absent field
+// is omitted so the request says only what the caller asked for.
+function pageFields(page) {
+    const fields = {};
+    if (page === undefined)
+        return fields;
+    if (typeof page.limit === 'number' && page.limit > 0)
+        fields['limit'] = page.limit;
+    if (typeof page.offset === 'number' && page.offset > 0)
+        fields['offset'] = page.offset;
+    if (page.sort !== undefined && page.sort !== '')
+        fields['sort'] = page.sort;
+    if (page.q !== undefined && page.q !== '')
+        fields['q'] = page.q;
+    return fields;
+}
 // WailsOrchestratorClient implements OrchestratorClient over Wails IPC.
 //
 // Every Wails Go binding accepts the corresponding SDK request struct
@@ -158,6 +176,88 @@ class WailsConnectionClient {
 // request object here so the interface contract is unchanged while the
 // wire shape matches what Go expects.
 class WailsOrchestratorClient {
+    // =========================================================================
+    // The paged listings
+    //
+    // THE PARAMETERS GO OVER THE BINDING; THE ENVELOPE DOES NOT COME BACK. A
+    // Wails binding takes the SDK request struct verbatim, and those structs
+    // embed the paging parameters, so limit/offset/sort/q reach the daemon and
+    // the SERVER does the paging, ordering and searching. What the bindings
+    // return, though, is a projected ARRAY — the envelope's `total` is dropped
+    // on the Go side (cmd/quicbaas/bindings_orchestrator.go) — so an answer
+    // without one is reported as a single whole page rather than as a first
+    // page of an unknown number.
+    //
+    // The consequence, written down rather than discovered: on the desktop a
+    // table shows one page and no pager until those bindings return the
+    // envelope. adoptPage already handles both shapes, so the day they do,
+    // these methods page for real without another edit here.
+    // =========================================================================
+    async listJobsPage(tenantID, page) {
+        const req = { tenant_id: tenantID, ...pageFields(page) };
+        if (page?.task_id !== undefined)
+            req.task_id = page.task_id;
+        if (page?.runner !== undefined)
+            req.runner = page.runner;
+        if (page?.project_id !== undefined)
+            req.project_id = page.project_id;
+        if (page?.statuses !== undefined)
+            req.statuses = page.statuses;
+        if (page?.job_ids !== undefined)
+            req.job_ids = page.job_ids;
+        return adoptPage(await orchestratorBinding().ListJobs(req), 'jobs');
+    }
+    async listTasksPage(tenantID, page) {
+        const req = { tenant_id: tenantID, ...pageFields(page) };
+        if (page?.status !== undefined)
+            req.status = page.status;
+        if (page?.statuses !== undefined)
+            req.statuses = page.statuses;
+        if (page?.project_id !== undefined)
+            req.project_id = page.project_id;
+        if (page?.team_name !== undefined)
+            req.team_name = page.team_name;
+        if (page?.assigned_to !== undefined)
+            req.assigned_to = page.assigned_to;
+        if (page?.created_by !== undefined)
+            req.created_by = page.created_by;
+        if (page?.auto_spawn !== undefined)
+            req.auto_spawn = page.auto_spawn;
+        return adoptPage(await orchestratorBinding().ListTasks(req), 'tasks');
+    }
+    async listSessionsPage(tenantID, page) {
+        if (!tenantID) {
+            throw new Error('listSessionsPage: tenantID is required');
+        }
+        const req = { tenantID, ...pageFields(page) };
+        if (page?.backend !== undefined)
+            req.backend = page.backend;
+        if (page?.status !== undefined)
+            req.status = page.status;
+        return adoptPage(await orchestratorBinding().ListSessions(req), 'sessions');
+    }
+    async listAgentsPage(tenantID, page) {
+        const req = { tenant_id: tenantID, ...pageFields(page) };
+        if (page?.host !== undefined)
+            req.host = page.host;
+        if (page?.status !== undefined)
+            req.status = page.status;
+        if (page?.agent_type !== undefined)
+            req.agent_type = page.agent_type;
+        if (page?.backend !== undefined)
+            req.backend = page.backend;
+        if (page?.model !== undefined)
+            req.model = page.model;
+        return adoptPage(await orchestratorBinding().ListAgents(req), 'agents');
+    }
+    async listWorkflowsPage(tenantID, page) {
+        const b = orchestratorBinding();
+        if (typeof b.ListWorkflows !== 'function') {
+            throw new Error('wails: ListWorkflows not implemented');
+        }
+        const answered = await b.ListWorkflows({ tenant_id: tenantID, ...pageFields(page) });
+        return adoptPage(answered, 'workflows');
+    }
     async listJobs(tenantID, taskID) {
         const req = { tenant_id: tenantID, task_id: taskID };
         const resp = (await orchestratorBinding().ListJobs(req));

@@ -2681,6 +2681,13 @@ func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRe
 	liveSet := make(map[string]struct{})
 	sessions := make([]*SessionInfo, 0)
 
+	// sessionTenants remembers which tenant owns each listed session, so the
+	// runner resolution below can read that tenant's job. A caller with no
+	// tenant of its own — the embedded, single-tenant case — sees every
+	// tenant's sessions, and the requesting tenant is not the answer for any
+	// of them.
+	sessionTenants := make(map[string]string)
+
 	// listErr carries a durable-read failure out of the walk. sync.Map.Range
 	// cannot return one, so the walk stops by reporting false and the error is
 	// answered below.
@@ -2725,6 +2732,7 @@ func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRe
 			Model:     rec.Model,
 			State:     state,
 			CreatedAt: rec.CreatedAt,
+			JobID:     rec.JobID,
 		}
 
 		// Enrich with store data if available.
@@ -2747,6 +2755,13 @@ func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRe
 			// write, so it always has one.
 			if info.CreatedAt == 0 {
 				info.CreatedAt = record.CreatedAt
+			}
+			// The durable record answers for the job binding when the live
+			// entry carries none: a session reconstituted after a restart is
+			// rebuilt from the store, and the binding is what the Role badge
+			// reads.
+			if info.JobID == "" {
+				info.JobID = record.JobID
 			}
 			// A STATE THE DAEMON OBSERVED BEATS ONE IT ASSUMED. Closed is
 			// such a state, and so is ERROR: recordResumeFailure writes it
@@ -2781,6 +2796,7 @@ func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRe
 			return true
 		}
 
+		sessionTenants[sessionID] = rec.TenantID
 		sessions = append(sessions, info)
 		return true
 	})
@@ -2824,6 +2840,7 @@ func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRe
 			continue
 		}
 
+		sessionTenants[record.SessionID] = record.TenantID
 		sessions = append(sessions, &SessionInfo{
 			SessionID:    record.SessionID,
 			ProjectID:    record.ProjectID,
@@ -2832,6 +2849,7 @@ func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRe
 			State:        record.Status,
 			CreatedAt:    record.CreatedAt,
 			LastActivity: record.LastActivity,
+			JobID:        record.JobID,
 		})
 	}
 
@@ -2844,6 +2862,13 @@ func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRe
 	if err != nil {
 		return nil, err
 	}
+
+	// THE RUNNER IS RESOLVED FOR THE PAGE, NOT FOR THE LISTING. A tenant with
+	// two thousand sessions names nearly as many jobs, and reading every one
+	// of them to answer a page of twenty-five would make the listing pay for
+	// records nobody asked to see. Doing it here — after the cut, memoised by
+	// job — bounds the reads to the page's distinct jobs.
+	s.resolveSessionRunners(sessionTenants, page.Items)
 
 	return &ListSessionsResponse{
 		Sessions:   page.Items,
@@ -2863,6 +2888,55 @@ func (s *agentServiceImpl) listStoredSessions(ctx context.Context, tenantID stri
 		return s.store.ListAllSessions(ctx)
 	}
 	return s.store.ListSessions(ctx, tenantID)
+}
+
+// resolveSessionRunners names the runner that drove each session's job.
+//
+// The read is MEMOISED BY JOB because a job spawns several sessions — a
+// worker, a reviewer, a lead — and they all resolve to the same record. A
+// session naming no job, or one whose job is no longer on record, is left
+// with no runner: the consumer renders no badge rather than a guess, which is
+// the same rule the listing follows for every other field it cannot observe.
+func (s *agentServiceImpl) resolveSessionRunners(tenants map[string]string, sessions []*SessionInfo) {
+	runners := make(map[string]string, len(sessions))
+	for _, session := range sessions {
+		if session == nil || session.JobID == "" {
+			continue
+		}
+		key := tenants[session.SessionID] + "/" + session.JobID
+		runner, resolved := runners[key]
+		if !resolved {
+			runner = s.jobRunner(tenants[session.SessionID], session.JobID)
+			runners[key] = runner
+		}
+		session.Runner = runner
+	}
+}
+
+// jobRunner is the runner that drove one job: the live control loop's when it
+// is still running, the persisted record's once it has returned, and empty
+// when neither can answer.
+//
+// AN EMPTY RUNNER ON A JOB THAT EXISTS IS "workflow", not "unknown" — a job
+// that names no runner is the engine's own (ResolveJobRunnerName). The two
+// are told apart here so a caller can trust that an empty answer means the
+// job itself could not be read.
+func (s *agentServiceImpl) jobRunner(tenantID, jobID string) string {
+	if val, ok := s.jobs.Load(tenantID + "/" + jobID); ok {
+		if job, castOk := val.(*runningJob); castOk {
+			if status := job.run.Status(); status != nil {
+				return ResolveJobRunnerName(jobStatusRunner(status))
+			}
+		}
+	}
+	if s.kvStore == nil {
+		return ""
+	}
+	status, err := s.loadJobStatus(tenantID, jobID)
+	if err != nil {
+		return ""
+	}
+	return ResolveJobRunnerName(jobStatusRunner(status))
 }
 
 // DecomposeTask uses an agent to decompose a task into work items.

@@ -10,6 +10,7 @@
 //
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
+import { wholeSetPage, } from './page.js';
 import { QuicBaaSError, DeployNotSupportedError } from './errors.js';
 // McpNotImplementedError is thrown by all methods until the MCP protocol
 // client is wired into this file.
@@ -36,6 +37,52 @@ class McpConnectionClient {
     getTransport() { return this._transport; }
 }
 class McpOrchestratorClient {
+    // =========================================================================
+    // The paged listings
+    //
+    // This transport is not wired to an MCP client yet, so every listing
+    // here refuses through its unpaged sibling rather than answering a page it
+    // never fetched.
+    //
+    // Each delegates to its unpaged sibling and reports the whole answer as ONE
+    // page (wholeSetPage): `total` is its length and there is no `next_offset`,
+    // which is true of what this transport can actually fetch. The day it can
+    // page, these methods are where the parameters go.
+    // =========================================================================
+    async listJobsPage(tenantID, page) {
+        return wholeSetPage(await this.listJobs(tenantID, page?.task_id));
+    }
+    async listTasksPage(tenantID, _page) {
+        return wholeSetPage(await this.listTasks(tenantID));
+    }
+    async listSessionsPage(tenantID, page) {
+        const req = { tenantID };
+        if (page?.backend !== undefined)
+            req.backend = page.backend;
+        if (page?.status !== undefined)
+            req.status = page.status;
+        const resp = await this.listSessions(req);
+        return wholeSetPage(resp.sessions ?? []);
+    }
+    async listAgentsPage(tenantID, page) {
+        const req = { tenant_id: tenantID };
+        if (page?.host !== undefined)
+            req.host = page.host;
+        if (page?.status !== undefined)
+            req.status = page.status;
+        if (page?.agent_type !== undefined)
+            req.agent_type = page.agent_type;
+        if (page?.backend !== undefined)
+            req.backend = page.backend;
+        if (page?.model !== undefined)
+            req.model = page.model;
+        const resp = await this.listAgents(req);
+        return wholeSetPage(resp.agents ?? []);
+    }
+    async listWorkflowsPage(tenantID, _page) {
+        const resp = await this.listWorkflows(tenantID);
+        return wholeSetPage(resp.workflows ?? []);
+    }
     async listJobs(_tenantID, _taskID) { return notImpl('listJobs'); }
     async getJobStatus(_tenantID, _jobID) { return notImpl('getJobStatus'); }
     async startJob(_req) { return notImpl('startJob'); }

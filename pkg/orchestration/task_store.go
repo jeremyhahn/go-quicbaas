@@ -1106,6 +1106,9 @@ func taskMatchesFilter(task *Task, filter *TaskFilter) bool {
 	if len(filter.Statuses) > 0 && !taskStatusIn(task.Status, filter.Statuses) {
 		return false
 	}
+	if filter.AutoSpawn != nil && task.AutoSpawn != *filter.AutoSpawn {
+		return false
+	}
 	return true
 }
 

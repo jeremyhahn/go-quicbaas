@@ -1656,3 +1656,139 @@ func TestSessionState_Valid(t *testing.T) {
 		t.Errorf("SessionStates() = %v, want the five states sorted", got)
 	}
 }
+
+// =============================================================================
+// The list names the job a session works for
+// =============================================================================
+
+// TestListSessions_CarriesTheJobBinding proves the LISTING names each
+// session's job, on the durable half and the live half alike.
+//
+// THE ROLE BADGE DEPENDS ON IT. A session record says nothing about what the
+// agent was doing, and a worker transcript discussing "the review's findings"
+// reads exactly like a reviewer's (go-quicbaas#969). The role is the runner
+// of the session's job, so a listing that does not name the job cannot
+// resolve one — the badge was blank for every row until this field existed.
+func TestListSessions_CarriesTheJobBinding(t *testing.T) {
+	svc, store := reconcileHarness(t)
+	ctx := ContextWithTenant(context.Background(), "t1")
+	seedSession(t, store, &SessionRecord{
+		SessionID: "s-durable", TenantID: "t1", JobID: "job-review",
+		CreatedAt: time.Now().Add(-time.Hour).UnixNano(),
+	})
+	seedSession(t, store, &SessionRecord{
+		SessionID: "s-live", TenantID: "t1", JobID: "job-worker",
+		CreatedAt: time.Now().Add(-time.Minute).UnixNano(),
+	})
+	svc.sessions.Store("s-live", &sessionRecord{
+		Backend: "mock", TenantID: "t1", JobID: "job-worker",
+	})
+
+	resp, err := svc.ListSessions(ctx, &ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	bindings := make(map[string]string, len(resp.Sessions))
+	for _, session := range resp.Sessions {
+		bindings[session.SessionID] = session.JobID
+	}
+	if got := bindings["s-durable"]; got != "job-review" {
+		t.Errorf("durable session job_id = %q, want %q", got, "job-review")
+	}
+	if got := bindings["s-live"]; got != "job-worker" {
+		t.Errorf("live session job_id = %q, want %q", got, "job-worker")
+	}
+}
+
+// TestListSessions_NamesTheRunnerBehindTheSession proves the listing resolves
+// each row's ROLE — the runner of the job it names — so a consumer holding
+// one page never has to go looking for the job.
+//
+// A worker's transcript discussing "the review's findings" reads exactly like
+// a reviewer's, and the owner drew that conclusion from one (go-quicbaas#969).
+func TestListSessions_NamesTheRunnerBehindTheSession(t *testing.T) {
+	svc, store := reconcileHarness(t)
+	ctx := ContextWithTenant(context.Background(), "t1")
+	seedJobStatus(t, svc, "t1", &JobStatus{JobID: "job-review", Runner: "review", State: JobStateCompleted})
+	seedJobStatus(t, svc, "t1", &JobStatus{JobID: "job-legacy", State: JobStateCompleted})
+	for _, seed := range []struct{ session, job string }{
+		{"s-reviewer", "job-review"},
+		{"s-workflow", "job-legacy"},
+		{"s-orphan", "job-pruned"},
+		{"s-none", ""},
+	} {
+		seedSession(t, store, &SessionRecord{
+			SessionID: seed.session, TenantID: "t1", JobID: seed.job,
+			CreatedAt: time.Now().Add(-time.Hour).UnixNano(),
+		})
+	}
+
+	resp, err := svc.ListSessions(ctx, &ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	runners := make(map[string]string, len(resp.Sessions))
+	for _, session := range resp.Sessions {
+		runners[session.SessionID] = session.Runner
+	}
+
+	tests := []struct {
+		session string
+		want    string
+		why     string
+	}{
+		{"s-reviewer", "review", "the runner its job recorded"},
+		{"s-workflow", JobRunnerWorkflow, "a job naming no runner is the engine's own"},
+		{"s-orphan", "", "a job nobody can read is no role rather than a guess"},
+		{"s-none", "", "a session belonging to no job plays no role"},
+	}
+	for _, tc := range tests {
+		if got := runners[tc.session]; got != tc.want {
+			t.Errorf("%s runner = %q, want %q — %s", tc.session, got, tc.want, tc.why)
+		}
+	}
+}
+
+// seedJobStatus persists one job record so a session naming it can resolve a
+// runner, the way a concluded job's record is the only thing left of it.
+func seedJobStatus(t *testing.T, svc *agentServiceImpl, tenantID string, status *JobStatus) {
+	t.Helper()
+	if err := svc.storeJobStatus(tenantID, status); err != nil {
+		t.Fatalf("persisting job %s: %v", status.JobID, err)
+	}
+}
+
+// TestListSessions_ALiveSessionWithNoBindingReadsItFromTheStore proves a
+// session reconstituted after a restart — live entry rebuilt without the
+// binding — still names its job, and that a session belonging to no job
+// names none rather than inventing one.
+func TestListSessions_ALiveSessionWithNoBindingReadsItFromTheStore(t *testing.T) {
+	svc, store := reconcileHarness(t)
+	ctx := ContextWithTenant(context.Background(), "t1")
+	seedSession(t, store, &SessionRecord{
+		SessionID: "s-reconstituted", TenantID: "t1", JobID: "job-triage",
+		CreatedAt: time.Now().Add(-time.Hour).UnixNano(),
+	})
+	seedSession(t, store, &SessionRecord{
+		SessionID: "s-unbound", TenantID: "t1",
+		CreatedAt: time.Now().Add(-time.Hour).UnixNano(),
+	})
+	svc.sessions.Store("s-reconstituted", &sessionRecord{Backend: "mock", TenantID: "t1"})
+
+	resp, err := svc.ListSessions(ctx, &ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	for _, session := range resp.Sessions {
+		switch session.SessionID {
+		case "s-reconstituted":
+			if session.JobID != "job-triage" {
+				t.Errorf("job_id = %q, want %q from the durable record", session.JobID, "job-triage")
+			}
+		case "s-unbound":
+			if session.JobID != "" {
+				t.Errorf("job_id = %q for a session that belongs to no job, want empty", session.JobID)
+			}
+		}
+	}
+}

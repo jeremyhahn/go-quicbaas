@@ -102,6 +102,7 @@ import type {
   ListAgentsResponse,
   ListSessionsRequest,
   ListSessionsResponse,
+  SessionStatusResponse,
   ListWorkflowsResponse,
   PromptSessionRequest,
   PromptSessionResponse,
@@ -119,6 +120,15 @@ import type {
   Task,
   WorkflowDefinition,
 } from './types.js';
+import {
+  wholeSetPage,
+  type AgentPageParams,
+  type JobPageParams,
+  type PageParams,
+  type PageResult,
+  type SessionPageParams,
+  type TaskPageParams,
+} from './page.js';
 import { QuicBaaSError, DeployNotSupportedError } from './errors.js';
 
 // GrpcWebNotImplementedError is thrown when any gRPC-Web method is called
@@ -155,6 +165,60 @@ class GrpcWebConnectionClient implements ConnectionClient {
 
 class GrpcWebOrchestratorClient implements OrchestratorClient {
   // All methods delegate to notImpl until the gRPC-Web library is wired in.
+
+  // =========================================================================
+  // The paged listings
+  //
+  // gRPC CARRIES NO PAGING FIELDS. Its request messages are generated
+  // from api/proto/orchestrator.proto, which has none, so there is no page to
+  // ask for until the proto grows them (go-quicbaas#968 follow-up).
+  //
+  // Each delegates to its unpaged sibling and reports the whole answer as ONE
+  // page (wholeSetPage): `total` is its length and there is no `next_offset`,
+  // which is true of what this transport can actually fetch. The day it can
+  // page, these methods are where the parameters go.
+  // =========================================================================
+  async listJobsPage(tenantID: string, page?: JobPageParams): Promise<PageResult<JobStatus>> {
+    return wholeSetPage(await this.listJobs(tenantID, page?.task_id));
+  }
+
+  async listTasksPage(tenantID: string, _page?: TaskPageParams): Promise<PageResult<Task>> {
+    return wholeSetPage(await this.listTasks(tenantID));
+  }
+
+  async listSessionsPage(
+    tenantID: string,
+    page?: SessionPageParams,
+  ): Promise<PageResult<SessionStatusResponse>> {
+    const req: ListSessionsRequest = { tenantID };
+    if (page?.backend !== undefined) req.backend = page.backend;
+    if (page?.status !== undefined) req.status = page.status;
+    const resp = await this.listSessions(req);
+    return wholeSetPage(resp.sessions ?? []);
+  }
+
+  async listAgentsPage(
+    tenantID: string,
+    page?: AgentPageParams,
+  ): Promise<PageResult<AgentRegistration>> {
+    const req: ListAgentsRequest = { tenant_id: tenantID };
+    if (page?.host !== undefined) req.host = page.host;
+    if (page?.status !== undefined) req.status = page.status;
+    if (page?.agent_type !== undefined) req.agent_type = page.agent_type;
+    if (page?.backend !== undefined) req.backend = page.backend;
+    if (page?.model !== undefined) req.model = page.model;
+    const resp = await this.listAgents(req);
+    return wholeSetPage(resp.agents ?? []);
+  }
+
+  async listWorkflowsPage(
+    tenantID: string,
+    _page?: PageParams,
+  ): Promise<PageResult<WorkflowDefinition>> {
+    const resp = await this.listWorkflows(tenantID);
+    return wholeSetPage(resp.workflows ?? []);
+  }
+
   async listJobs(_tenantID: string, _taskID?: string): Promise<JobStatus[]> { return notImpl('listJobs'); }
   async getJobStatus(_tenantID: string, _jobID: string): Promise<JobStatus> { return notImpl('getJobStatus'); }
   async startJob(_req: StartJobRequest): Promise<StartJobResponse> { return notImpl('startJob'); }

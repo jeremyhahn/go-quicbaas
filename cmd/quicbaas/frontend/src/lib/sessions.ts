@@ -117,17 +117,21 @@ export function countLiveSessions(
 // ---------------------------------------------------------------------------
 
 /**
- * A SESSION CARRIES NO ROLE, AND THE TRANSCRIPT READS AS IF IT DID. A worker
- * session's conversation discusses "the review's findings" because the worker
- * was told them; read without knowing whose session it is, that transcript says
- * the model on the page performed the review. The owner drew exactly that
- * conclusion from a worker session and concluded the wrong model was reviewing
- * code (go-quicbaas#969).
+ * A SESSION RECORD CARRIES NO ROLE, AND THE TRANSCRIPT READS AS IF IT DID. A
+ * worker session's conversation discusses "the review's findings" because the
+ * worker was told them; read without knowing whose session it is, that
+ * transcript says the model on the page performed the review. The owner drew
+ * exactly that conclusion from a worker session and concluded the wrong model
+ * was reviewing code (go-quicbaas#969).
  *
- * The role is not on the session record and does not need to be: the session
- * names its job, and the job names the runner that drove it. One lookup against
- * the job list the orchestrator store already holds turns `job_id` into the one
- * word that resolves the ambiguity.
+ * The role is the RUNNER of the session's job, and the row now says which one
+ * it was: the listing resolves it server-side, per page (SessionInfo.Runner in
+ * pkg/orchestration). It used to be looked up against the job list the store
+ * happened to be holding — which worked only while that list was the whole
+ * collection. Once the jobs endpoint pages, the store holds twenty-five of
+ * them, the lookup misses every session whose job is not among those, and the
+ * badge silently blanks for the rest. So the lookup is gone: the answer
+ * travels with the row.
  */
 const RUNNER_ROLES: Readonly<Record<string, string>> = {
   sdlc: 'worker',
@@ -135,15 +139,12 @@ const RUNNER_ROLES: Readonly<Record<string, string>> = {
   triage: 'triage',
 };
 
-/** SessionJobRef is the part of a session that names its job. */
-export interface SessionJobRef {
-  job_id?: string | null;
-}
-
-/** JobRunnerRef is the part of a job record that names its runner. */
-export interface JobRunnerRef {
-  job_id: string;
-  runner?: string;
+/**
+ * SessionRoleRef is the part of a session record that says what it was doing:
+ * the runner of its job, resolved by the listing that produced the row.
+ */
+export interface SessionRoleRef {
+  runner?: string | null;
 }
 
 /**
@@ -159,19 +160,14 @@ export function roleOfRunner(runner: string | null | undefined): string {
 }
 
 /**
- * sessionRole is the role of the session's job, or '' when the session belongs
- * to no job or its job is not among the records held. An empty role renders no
- * badge — asserting a role from a job nobody has read would be the same mistake
- * the badge exists to prevent.
+ * sessionRole is the role the session played, read from the runner its own
+ * record carries. It is '' when the session belongs to no job, or to one the
+ * daemon could no longer read — an empty role renders no badge, because
+ * asserting a role nobody observed is the mistake the badge exists to prevent.
  */
-export function sessionRole(
-  session: SessionJobRef | null | undefined,
-  jobs: readonly JobRunnerRef[] | null | undefined,
-): string {
-  const jobID = session?.job_id ?? '';
-  if (jobID === '' || !Array.isArray(jobs)) return '';
-  const job = jobs.find((j) => j.job_id === jobID);
-  return job === undefined ? '' : roleOfRunner(job.runner);
+export function sessionRole(session: SessionRoleRef | null | undefined): string {
+  if (session === null || typeof session !== 'object') return '';
+  return roleOfRunner(session.runner);
 }
 
 /**

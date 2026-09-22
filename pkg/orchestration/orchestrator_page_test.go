@@ -311,3 +311,80 @@ func TestJobFilter_EmptyCountsTheNewNarrowings(t *testing.T) {
 		})
 	}
 }
+
+// TestJobFilter_NarrowsToNamedJobs proves the job_ids narrowing a page of
+// sessions or tasks uses to resolve the jobs its rows name in ONE call.
+func TestJobFilter_NarrowsToNamedJobs(t *testing.T) {
+	t.Parallel()
+
+	worker := &JobStatus{JobID: "job-1", State: JobStateExecuting, Runner: "sdlc"}
+	reviewer := &JobStatus{JobID: "job-2", State: JobStateCompleted, Runner: "review"}
+
+	tests := []struct {
+		name   string
+		filter *JobFilter
+		status *JobStatus
+		want   bool
+	}{
+		{"named job matches", &JobFilter{JobIDs: []string{"job-1", "job-2"}}, worker, true},
+		{"unnamed job does not", &JobFilter{JobIDs: []string{"job-2"}}, worker, false},
+		{"an empty list narrows nothing", &JobFilter{JobIDs: []string{}}, worker, true},
+		{"composes with the runner", &JobFilter{JobIDs: []string{"job-2"}, Runner: "review"}, reviewer, true},
+		{"one failing narrowing refuses the record", &JobFilter{JobIDs: []string{"job-2"}, Runner: "sdlc"}, reviewer, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := tc.filter.Matches(tc.status); got != tc.want {
+				t.Errorf("Matches() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestJobFilter_EmptyCountsJobIDs proves a filter that narrows only to named
+// jobs is not mistaken for an unrestricted one — which would list the whole
+// tenant for a caller that asked about two rows.
+func TestJobFilter_EmptyCountsJobIDs(t *testing.T) {
+	t.Parallel()
+
+	if (&JobFilter{JobIDs: []string{"job-1"}}).Empty() {
+		t.Error("Empty() = true for a filter narrowed to one job")
+	}
+	if !(&JobFilter{JobIDs: []string{}}).Empty() {
+		t.Error("Empty() = false for an empty job id list, which narrows nothing")
+	}
+}
+
+// TestListJobsPage_NarrowsToNamedJobs proves the narrowing reaches the paged
+// listing, and that Total counts the jobs the caller asked about rather than
+// every job the tenant owns.
+func TestListJobsPage_NarrowsToNamedJobs(t *testing.T) {
+	t.Parallel()
+
+	jobs := []*JobStatus{
+		{JobID: "job-1", State: JobStateExecuting, StartedAt: 30},
+		{JobID: "job-2", State: JobStateCompleted, StartedAt: 20},
+		{JobID: "job-3", State: JobStateFailed, StartedAt: 10},
+	}
+	matched := make([]*JobStatus, 0, len(jobs))
+	filter := &JobFilter{JobIDs: []string{"job-1", "job-3"}}
+	for _, job := range jobs {
+		if filter.Matches(job) {
+			matched = append(matched, job)
+		}
+	}
+
+	page, err := ApplyPage(matched, &Page{Limit: 25}, jobPageSpec)
+	if err != nil {
+		t.Fatalf("ApplyPage() error = %v", err)
+	}
+	if page.Total != 2 {
+		t.Errorf("Total = %d, want 2", page.Total)
+	}
+	if len(page.Items) != 2 || page.Items[0].JobID != "job-1" || page.Items[1].JobID != "job-3" {
+		t.Errorf("Items = %+v, want job-1 then job-3", page.Items)
+	}
+}

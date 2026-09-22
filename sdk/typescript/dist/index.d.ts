@@ -19,6 +19,8 @@ export type { DynamicSecretsClient, DynamicSecretRole, CreateRoleRequest as Dyna
 export type * from './types.js';
 export { SandboxMode } from './types.js';
 export { SPEND_UNATTRIBUTED } from './types.js';
+export type { PageParams, PageResult, JobPageParams, TaskPageParams, SessionPageParams, AgentPageParams, AccountPageParams, } from './page.js';
+export { adoptPage, appendPageParams, appendListParam, appendCSVParam, wholeSetPage, MalformedPageError, } from './page.js';
 export { QuicBaaSError, ConnectionError, NotConnectedError, APIError, DeployNotSupportedError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError, } from './errors.js';
 export { RestSSHKeysClient, RestKnownHostsClient, RestAuthorizedKeysClient } from './rest.js';
 export { RestBarrierClient, RestTenantBarrierClient, RestCeremonyClient, RestBootstrapClient, RestClusterClient, } from './rest.js';

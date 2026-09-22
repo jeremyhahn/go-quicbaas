@@ -319,6 +319,15 @@ type TaskFilter struct {
 	// Statuses restricts the listing to tasks in any of the given statuses.
 	// It composes with Status: a task must satisfy both when both are set.
 	Statuses []TaskStatus `json:"statuses,omitempty"`
+
+	// AutoSpawn restricts the listing to the tasks that asked for immediate
+	// dispatch (true) or to the ones queued for a claim (false). Nil is "do
+	// not narrow on it", which is why this is a pointer and not a bool: a
+	// bool could not tell "queued only" from "no preference", and the Tasks
+	// view offers all three. The narrowing belongs here rather than in the
+	// client because the listing is paged — a client filtering a page of 25
+	// answers "how many queued tasks are there" with a number it cannot know.
+	AutoSpawn *bool `json:"auto_spawn,omitempty"`
 }
 
 // TaskStore manages orchestration tasks backed by QuicBaaS KV store.

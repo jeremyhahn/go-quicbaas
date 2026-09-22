@@ -50,7 +50,7 @@ const mockWorkflows = [
 vi.mock('../src/stores/sdkClient.ts', () => ({
   getSDKClient: vi.fn().mockResolvedValue({
     orchestrator: {
-      listWorkflows: vi.fn().mockResolvedValue({ workflows: [], count: 0 }),
+      listWorkflowsPage: vi.fn().mockResolvedValue({ items: [], total: 0, limit: 25, offset: 0 }),
       listBackends: vi.fn().mockResolvedValue([]),
       startJob: vi.fn().mockResolvedValue({ job_id: 'new-job', timestamp: 0 }),
       createWorkflow: vi.fn().mockResolvedValue({ name: 'new-wf', created_at: 0 }),
@@ -78,12 +78,25 @@ import { getSDKClient } from '../src/stores/sdkClient.ts';
 // Tests
 // ---------------------------------------------------------------------------
 
+/** The page requests the view sent, newest last. */
+const pageCalls: Array<Record<string, unknown>> = [];
+
+/** A page of the fixture, as the server would answer it. */
+function pageOf(workflows: WorkflowDefinition[]): Record<string, unknown> {
+  return { items: workflows, total: workflows.length, limit: 25, offset: 0 };
+}
+
 describe('WorkflowsView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    pageCalls.length = 0;
+    window.location.hash = '#/workflows';
     vi.mocked(getSDKClient).mockResolvedValue({
       orchestrator: {
-        listWorkflows: vi.fn().mockResolvedValue({ workflows: mockWorkflows, count: mockWorkflows.length }),
+        listWorkflowsPage: vi.fn(async (_tenant: string, page: Record<string, unknown> = {}) => {
+          pageCalls.push(page);
+          return pageOf(mockWorkflows);
+        }),
         listBackends: vi.fn().mockResolvedValue([]),
         startJob: vi.fn().mockResolvedValue({ job_id: 'new-job', timestamp: 0 }),
         createWorkflow: vi.fn().mockResolvedValue({ name: 'new-wf', created_at: 0 }),
@@ -146,9 +159,9 @@ describe('WorkflowsView', () => {
   });
 
   it('shows empty state when no workflows exist', async () => {
-    vi.mocked(getSDKClient).mockResolvedValueOnce({
+    vi.mocked(getSDKClient).mockResolvedValue({
       orchestrator: {
-        listWorkflows: vi.fn().mockResolvedValueOnce({ workflows: [], count: 0 }),
+        listWorkflowsPage: vi.fn(async () => pageOf([])),
         listBackends: vi.fn().mockResolvedValue([]),
         startJob: vi.fn(),
         createWorkflow: vi.fn(),
@@ -165,5 +178,34 @@ describe('WorkflowsView', () => {
     await waitFor(() => {
       expect(vi.mocked(getSDKClient)).toHaveBeenCalled();
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // The page it asks for
+  // -------------------------------------------------------------------------
+
+  it('asks the server for one page, and for the name list the wizard warns on', async () => {
+    render(WorkflowsView);
+    await waitFor(() => { expect(pageCalls.length).toBeGreaterThanOrEqual(2); });
+
+    // The table's page, and the hundred names the duplicate check reads.
+    expect(pageCalls.some((call) => call['limit'] === 25)).toBe(true);
+    expect(pageCalls.some((call) => call['limit'] === 100)).toBe(true);
+  });
+
+  it('sorts on the fields the endpoint orders by and no others', async () => {
+    render(WorkflowsView);
+    await waitFor(() => screen.getByText('dev-sprint-v1'));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Sort by Mode' }));
+    await waitFor(() => {
+      expect(pageCalls[pageCalls.length - 1]?.['sort']).toBe('mode');
+    });
+
+    // A workflow carries no timestamp and the endpoint orders by neither the
+    // description nor the agent count, so those headers do not sort.
+    expect(screen.queryByRole('button', { name: 'Sort by Description' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Sort by Agents' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Sort by Max Iter' })).toBeNull();
   });
 });

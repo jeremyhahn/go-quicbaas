@@ -20,7 +20,6 @@
   import { untrack } from 'svelte';
   import type { SessionStatusResponse, RotateSessionAccountResponse } from '@quicbaas/sdk';
   import { sessionStore, openSession, closeActiveSession, requestCloseSession } from '../../stores/sessionStore.svelte.ts';
-  import { orchestratorStore, loadJobs } from '../../stores/orchestrator.svelte.ts';
   import { routeJobDetail } from '../../stores/router.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import EventStream from './EventStream.svelte';
@@ -88,18 +87,14 @@
   // review's findings" because the worker was handed them, and with no role on
   // the page the reader concludes the model in front of them performed the
   // review -- which is how the owner came to believe the wrong model was
-  // reviewing code (go-quicbaas#969). The session names its job and the job
-  // names its runner, so the tenant's job list -- already loaded for every
-  // orchestrator view -- is all it takes to say so.
+  // reviewing code (go-quicbaas#969).
+  //
+  // THE RECORD SAYS WHICH ROLE IT WAS. The listing resolves the runner of the
+  // session's job server-side, per page, so this reads one field instead of
+  // searching a job list that is now itself a page -- which would have left
+  // the badge blank for every session whose job fell off it.
 
-  $effect(() => {
-    void orchestratorStore.activeTenantID;
-    void loadJobs();
-  });
-
-  const role = $derived(
-    sessionRole(session, Array.isArray(orchestratorStore.jobs) ? orchestratorStore.jobs : []),
-  );
+  const role = $derived(sessionRole(session));
   const model = $derived(sessionModel(session));
 
   // ---------------------------------------------------------------------------
