@@ -276,6 +276,10 @@ follows the same pattern:
 ```go
 // 1) Build the in-process *server.Server (transport=embedded, no listeners).
 srv, err := server.NewServer(cfg)
+if err != nil {
+    return err
+}
+defer srv.Shutdown(context.Background()) // see "Start-failure cleanup" below
 // ... srv.Start() ...
 
 // 2) Assemble the QRDBEmbeddedServicers payload from the node's servicers.
@@ -315,6 +319,28 @@ fall-through: the qrdb sub-client refuses to initialise without an
 embedded transport to dispatch to. This is intentional — there is no
 sensible "default" network endpoint for the in-process case, and
 silent fall-through hid bugs during gap-1 development.
+
+### Start-failure cleanup
+
+`srv.Start()` does **not** unwind on failure. It returns at the first
+component that fails and leaves everything started before it running —
+the embedded qrdb node, an open audit log, the cache-cleanup goroutine,
+the lease reaper, the scheduler poll loop.
+
+**A non-nil error from `Start()` MUST be followed by `Shutdown()`.** The
+daemon is unaffected in practice: it logs the error and exits, and process
+teardown collects everything. An embedding program — a CLI that stays
+alive, a library inside someone else's process, a test binary that boots
+many servers — has no such backstop and leaks every one of those
+resources.
+
+`Shutdown()` is safe on a server that never started, on one that started
+fully, and on one that stopped anywhere in between: every teardown step is
+guarded on the resource it releases, and resources whose owner was never
+built (the cache manager without its facade, the audit sink and seal
+strategy without their node) are released by `Shutdown` itself. It is also
+idempotent, which is why the deferred call above sits immediately after
+`NewServer` rather than after a successful `Start`.
 
 ## Comparison to network transports
 

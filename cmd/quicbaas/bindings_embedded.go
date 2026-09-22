@@ -112,7 +112,12 @@ func (b *EmbeddedServerBinding) Start(opts EmbeddedStartOptions) error {
 		return NewGUIEmbeddedStartError("EmbeddedServerBinding.Start", err)
 	}
 
+	// A failed Start does not unwind itself (see server.Server.Start), so the
+	// partial start is released here exactly as the waitReady path below
+	// does — and before the temp dir is removed, so no store is still open
+	// over the files being deleted.
 	if err := srv.Start(); err != nil {
+		srv.Shutdown(context.Background())
 		if tempDir != "" {
 			os.RemoveAll(tempDir)
 		}

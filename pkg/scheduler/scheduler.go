@@ -363,8 +363,23 @@ func (s *SchedulerEngine) Start(ctx context.Context) error {
 }
 
 // Stop gracefully stops the scheduler.
+//
+// Stop is terminal even when the scheduler is not running yet. A Stop that
+// arrives BEFORE the matching Start still records the stop, so the later
+// Start refuses instead of bringing a poll loop up against storage the
+// stopper has already closed. Without that, "stop an engine that never
+// started" was a silent no-op and the ordering decided whether a goroutine
+// leaked: an owner that tore down between constructing the engine and
+// starting it -- which is exactly what Shutdown after a failed Start does --
+// got its Stop rejected with "not running" and then watched the engine come
+// up anyway. The error it returns in that case is unchanged; only the
+// recorded state is.
 func (s *SchedulerEngine) Stop(ctx context.Context) error {
 	if !s.running.CompareAndSwap(true, false) {
+		// Not running: either never started, or already stopped. Either way
+		// the caller's intent is that this engine must not run from here on,
+		// so make it stick before reporting that there was nothing to stop.
+		s.stopped.Store(true)
 		return &SchedulerError{
 			Code:    ErrCodeSchedulerStopped,
 			Op:      "Stop",

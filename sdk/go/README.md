@@ -135,13 +135,34 @@ srv, err := quicbaas.NewServer(cfg)
 if err != nil {
     log.Fatal(err)
 }
-if err := srv.Start(); err != nil {
-    log.Fatal(err)
-}
+// BEFORE the Start check: a failed Start leaves its partial work running,
+// and this is what releases it. See "Server lifecycle" below.
 defer srv.Shutdown(context.Background())
+
+if err := srv.Start(); err != nil {
+    return err
+}
 
 client, err := quicbaas.NewClient("", quicbaas.WithEmbedded(srv.Service()))
 ```
+
+#### Server lifecycle
+
+`Start()` does **not** unwind on failure. It returns at the first component
+that fails, and every component started before it stays up: the embedded qrdb
+node, an open audit log, the cache-cleanup goroutine, the lease reaper, the
+scheduler poll loop. An embedded or library caller that takes the error and
+walks away leaks all of them for the lifetime of its process.
+
+**A non-nil error from `Start()` MUST be followed by `Shutdown()`.** The
+daemon gets this for free — it logs and exits, and process teardown collects
+everything — but an embedding application does not.
+
+`Shutdown()` is safe on a server that never started, on one that started
+fully, and on one that stopped anywhere in between: it releases whatever
+exists and skips whatever does not, and it is idempotent. So the deferred
+`Shutdown` belongs immediately after `NewServer`, before the `Start` error
+check, as above.
 
 ### MCP (Model Context Protocol)
 ```go

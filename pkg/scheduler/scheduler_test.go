@@ -526,6 +526,41 @@ func TestStartAndStop(t *testing.T) {
 		assert.True(t, errors.As(err, &schedErr))
 		assert.Contains(t, schedErr.Message, "cannot be restarted")
 	})
+
+	// Regression for go-quicbaas#62. A Stop that arrives BEFORE the matching
+	// Start must still be terminal, or the ordering decides whether a poll
+	// loop leaks: an owner that tears down between constructing an engine and
+	// starting it -- which is exactly what Shutdown after a failed Start does
+	// -- had its Stop rejected with "not running", and the Start that landed
+	// afterwards brought the loop up against storage the owner had already
+	// closed.
+	//
+	// Deterministic by construction: the two calls are made in this
+	// goroutine, in the order the defect needs, so there is no race to lose.
+	t.Run("stop before start is terminal", func(t *testing.T) {
+		scheduler := New(nil, newMockJobStorage())
+		ctx := context.Background()
+
+		stopCtx, cancel := context.WithTimeout(ctx, time.Second)
+		defer cancel()
+
+		// Stop first. It still reports that there was nothing to stop...
+		err := scheduler.Stop(stopCtx)
+		require.Error(t, err, "stopping an engine that never started still reports nothing to stop")
+		var stopErr *SchedulerError
+		require.True(t, errors.As(err, &stopErr))
+		assert.Equal(t, ErrCodeSchedulerStopped, stopErr.Code)
+
+		// ...but the intent sticks: the late Start must refuse.
+		err = scheduler.Start(ctx)
+
+		require.Error(t, err, "a Start after a Stop must refuse, whatever order they arrived in")
+		var startErr *SchedulerError
+		require.True(t, errors.As(err, &startErr))
+		assert.Contains(t, startErr.Message, "cannot be restarted")
+		assert.False(t, scheduler.IsRunning(),
+			"the refused Start must leave no poll loop running")
+	})
 }
 
 // TestScheduleJob tests job scheduling.

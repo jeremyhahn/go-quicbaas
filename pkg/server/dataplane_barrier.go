@@ -15,6 +15,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -24,6 +25,111 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
+
+// dataPlaneBarrierResources owns everything buildDataPlaneBarrierService
+// opened, and is the io.Closer that function returns. The Server stores it on
+// dataPlaneBarrierCloser and closes it during Shutdown, so every resource
+// gathered here is released on a failed Start as well as a clean one.
+//
+// It exists because returning the pebble seal sub-store ALONE left the
+// sealing strategies with no owner anywhere. For the software strategies that
+// was invisible -- closing a DeferredSoftwareStrategy or a NoneStrategy
+// releases nothing but memory. For the hardware ones it was a real leak: with
+// seal.strategy tpm2, or auto resolving to a usable TPM,
+// buildHardwareSealStrategies opens a TPM2Backend and hands it to the
+// strategy it builds, and the SealingStrategy contract is that closing the
+// strategy releases that backend. Nothing closed this strategy, so the TPM
+// open outlived both a failed startup and a clean shutdown.
+//
+// The strategy the qrdb node path builds (Server.sealStrategy, built by
+// initSealStrategy through buildHardwareSealStrategiesShared) is a separate
+// instance with its own owner in stopQRDBNode. This one is built by a
+// separate call and is reached from nowhere else, so closing it here cannot
+// double-close that one.
+type dataPlaneBarrierResources struct {
+	// strategies are the sealing strategies built for this barrier. Closed
+	// before the store: they hold the hardware handles, and releasing them
+	// first keeps teardown in the reverse of construction order.
+	strategies []qrdbsdk.SealingStrategy
+
+	// store is the pebble seal sub-store the barrier persists into. May be
+	// nil on the error paths, which close what exists and return the rest.
+	store io.Closer
+}
+
+// Close releases the strategies and then the store, accumulating rather than
+// short-circuiting so one failing closer cannot strand the others.
+func (r *dataPlaneBarrierResources) Close() error {
+	if r == nil {
+		return nil
+	}
+
+	var errs []error
+	for _, strategy := range r.strategies {
+		if strategy == nil {
+			continue
+		}
+		if err := strategy.Close(); err != nil {
+			errs = append(errs, &DataPlaneBarrierError{Stage: "close seal strategy", Cause: err})
+		}
+	}
+	if r.store != nil {
+		if err := r.store.Close(); err != nil {
+			errs = append(errs, &DataPlaneBarrierError{Stage: "close pebble seal store", Cause: err})
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// closeDataPlaneBarrierPartial releases what a failed buildDataPlaneBarrierService
+// had already opened. Every error path after the store is opened goes through
+// it, so a construction failure leaks no more than a successful build does.
+func closeDataPlaneBarrierPartial(strategies []qrdbsdk.SealingStrategy, store io.Closer) {
+	_ = (&dataPlaneBarrierResources{strategies: strategies, store: store}).Close()
+}
+
+// sealStore is the storage contract buildDataPlaneBarrierService needs from
+// the barrier's seal sub-store.
+//
+// It is declared here rather than imported because qrdb's equivalent
+// (seal.LegacyStorage) lives under pkg/, and this repository's SDK boundary
+// admits only sdk/go re-exports (CLAUDE.md, "SDK Boundary"). The method set
+// is identical, so a sealStore passes straight into
+// qrdbsdk.NewStorageAdapter with no conversion.
+type sealStore interface {
+	Get(key []byte) ([]byte, error)
+	Set(key []byte, value []byte) error
+	Delete(key []byte) error
+	List(prefix []byte) ([][]byte, error)
+	Exists(key []byte) (bool, error)
+	Close() error
+}
+
+// newSealStoreFn opens the barrier's persistent seal sub-store, creating its
+// directory first.
+//
+// A seam, in the same style as newCacheManagerFn, newSecretsMgr and the other
+// package-level function variables this package already tests through. Both
+// the MkdirAll and the pebble open live behind it so that substituting an
+// in-memory store removes the filesystem from the path entirely rather than
+// leaving a stray directory behind -- which is what lets the assembly this
+// function performs be asserted by a unit test that must run in memory
+// (AGENTS.md, "Unit Testing"), without a test-only branch in the production
+// path.
+var newSealStoreFn = openPebbleSealStore
+
+// openPebbleSealStore is the production seal-store opener: PebbleDB under
+// <dataDir>/seal, which is what every non-test caller gets.
+func openPebbleSealStore(sealDir string) (sealStore, error) {
+	if err := os.MkdirAll(sealDir, 0o750); err != nil {
+		return nil, &DataPlaneBarrierError{Stage: "mkdir seal dir", Cause: err}
+	}
+	store, err := qrdbsdk.NewPebbleStorage(qrdbsdk.DefaultPebbleConfig(sealDir))
+	if err != nil {
+		return nil, &DataPlaneBarrierError{Stage: "open pebble seal store", Cause: err}
+	}
+	return store, nil
+}
 
 // strategyAwareBarrierService enriches the qrdb BarrierService status with the
 // CONFIGURED sealing strategy when the underlying barrier reports none.
@@ -101,8 +207,11 @@ func (e *DataPlaneBarrierError) Unwrap() error { return e.Cause }
 // return value is the raw *qrdbsdk.StorageBarrier so callers can build an
 // atrest.Encryptor from it. The third is the ceremony core so composition
 // stages can attach the platform CA (SetCA) and the init ceremony can drive
-// officer enrollment. The returned io.Closer closes the underlying PebbleDB
-// instance; the caller must call Close when done.
+// officer enrollment. The returned io.Closer owns BOTH the underlying PebbleDB
+// instance and the sealing strategies built for the barrier (see
+// dataPlaneBarrierResources -- the hardware strategies hold an open TPM
+// backend, and closing the strategy is what releases it); the caller must
+// call Close when done, including after a startup that failed later on.
 //
 // The data-plane barrier is constructed whenever a persistent data directory
 // is available, INDEPENDENT of cfg.Seal.Enabled. cfg.Seal.Enabled only governs
@@ -131,12 +240,12 @@ func buildDataPlaneBarrierService(
 	// 1. Open the persistent PebbleDB seal sub-store.
 	// ------------------------------------------------------------------ //
 	sealDir := filepath.Join(cfg.Storage.DataDir, "seal")
-	if err := os.MkdirAll(sealDir, 0o750); err != nil {
-		return nil, nil, nil, nil, &DataPlaneBarrierError{Stage: "mkdir seal dir", Cause: err}
-	}
-	pebble, err := qrdbsdk.NewPebbleStorage(qrdbsdk.DefaultPebbleConfig(sealDir))
+	// Directory creation and the open both live behind newSealStoreFn; the
+	// typed DataPlaneBarrierError stages ("mkdir seal dir", "open pebble seal
+	// store") are raised there and passed through unchanged.
+	pebble, err := newSealStoreFn(sealDir)
 	if err != nil {
-		return nil, nil, nil, nil, &DataPlaneBarrierError{Stage: "open pebble seal store", Cause: err}
+		return nil, nil, nil, nil, err
 	}
 
 	// ------------------------------------------------------------------ //
@@ -179,7 +288,9 @@ func buildDataPlaneBarrierService(
 	if strategies == nil {
 		strategies, err = buildSealStrategies(strategy, threshold, totalShares)
 		if err != nil {
-			_ = pebble.Close()
+			// strategies is nil on this path -- nothing was handed back to
+			// own -- so only the store needs releasing.
+			closeDataPlaneBarrierPartial(nil, pebble)
 			return nil, nil, nil, nil, &DataPlaneBarrierError{Stage: "build strategies", Cause: err}
 		}
 	}
@@ -212,7 +323,7 @@ func buildDataPlaneBarrierService(
 
 	barrier, err := qrdbsdk.NewStorageBarrier(logger, backend, barrierCfg, strategies...)
 	if err != nil {
-		_ = pebble.Close()
+		closeDataPlaneBarrierPartial(strategies, pebble)
 		return nil, nil, nil, nil, &DataPlaneBarrierError{Stage: "construct storage barrier", Cause: err}
 	}
 
@@ -234,7 +345,7 @@ func buildDataPlaneBarrierService(
 		logger,
 	)
 	if err != nil {
-		_ = pebble.Close()
+		closeDataPlaneBarrierPartial(strategies, pebble)
 		return nil, nil, nil, nil, &DataPlaneBarrierError{Stage: "construct credential service", Cause: err}
 	}
 	ceremonyCore, err := qrdbsdk.NewCeremonyService(
@@ -244,7 +355,7 @@ func buildDataPlaneBarrierService(
 		logger,
 	)
 	if err != nil {
-		_ = pebble.Close()
+		closeDataPlaneBarrierPartial(strategies, pebble)
 		return nil, nil, nil, nil, &DataPlaneBarrierError{Stage: "construct ceremony service", Cause: err}
 	}
 
@@ -256,7 +367,10 @@ func buildDataPlaneBarrierService(
 		BaasBarrierService: qrdbsdk.NewBarrierServiceWithCeremony(barrier, ceremonyCore),
 		configuredStrategy: string(effectiveStrategy),
 	}
-	return svc, barrier, ceremonyCore, pebble, nil
+	// The strategies travel out with the store, not separately: they are the
+	// only handles here without another owner, and the caller already stores
+	// this closer and closes it on shutdown.
+	return svc, barrier, ceremonyCore, &dataPlaneBarrierResources{strategies: strategies, store: pebble}, nil
 }
 
 // buildSealStrategies instantiates the concrete SealingStrategy slice for

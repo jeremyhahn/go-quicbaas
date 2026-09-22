@@ -1728,11 +1728,13 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
+    // BEFORE the Start check: Start does not unwind, so a failed Start
+    // leaves its partial work running and only Shutdown releases it.
+    defer srv.Shutdown(context.Background())
 
     if err := srv.Start(); err != nil {
         log.Fatal(err)
     }
-    defer srv.Shutdown(context.Background())
 
     // Access the service directly
     svc := srv.Service()
@@ -1780,11 +1782,13 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
+    // BEFORE the Start check: Start does not unwind, so a failed Start
+    // leaves its partial work running and only Shutdown releases it.
+    defer srv.Shutdown(context.Background())
 
     if err := srv.Start(); err != nil {
         log.Fatal(err)
     }
-    defer srv.Shutdown(context.Background())
 }
 ```
 

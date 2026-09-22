@@ -121,8 +121,12 @@ func createEmbeddedServer() (*embeddedServer, error) {
 		return nil, &EmbeddedServerFailedError{Reason: "failed to create server: " + err.Error()}
 	}
 
-	// Start server
+	// Start server. A failed Start does not unwind itself (see
+	// server.Server.Start), so the partial start is released here exactly as
+	// the ready-timeout and nil-service paths below do — and before the temp
+	// dir is removed, so no store is still open over the files being deleted.
 	if err := srv.Start(); err != nil {
+		srv.Shutdown(context.Background())
 		os.RemoveAll(tempDir)
 		return nil, &EmbeddedServerFailedError{Reason: "failed to start server: " + err.Error()}
 	}

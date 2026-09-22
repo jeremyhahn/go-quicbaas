@@ -202,8 +202,33 @@ func (ps *PushService) Start(ctx context.Context) error {
 
 	ps.ctx, ps.cancel = context.WithCancel(ctx) // #nosec G118 -- cancel stored in PushService, called in Stop()
 
-	// Start the notification hub in a goroutine
-	go ps.hub.Run(ps.ctx)
+	// A FAILED Start LEAVES NOTHING RUNNING (go-quicbaas#62). The hub goroutine
+	// below is launched BEFORE either of the two exits that can still fail, and
+	// both used to return with it still on the stack: the readiness wait's
+	// cancelled-context arm and the hub-never-came-up refusal. Neither called
+	// ps.cancel, so the hub kept running against a live context forever.
+	//
+	// Nor could the caller clean up after them. ps.running is only stored below,
+	// on success, and Stop returns immediately while it is false -- so a caller
+	// that did the disciplined thing and called Stop on the error got a no-op,
+	// and a Server whose Shutdown reaches its messaging service found the field
+	// still nil, because startMessaging assigns it only after this returns. The
+	// hub was unreachable from every teardown path there is.
+	//
+	// So Start unwinds itself rather than exporting the problem: cancel, then
+	// JOIN. Cancelling alone would leave the goroutine's exit racing the
+	// caller's next assertion; hubDone is closed only after hub.Run has
+	// returned, and Run returns on ctx.Done (or immediately, when it refused to
+	// claim an already-running hub), so this wait always completes.
+	hubDone := make(chan struct{})
+	go func() {
+		defer close(hubDone)
+		ps.hub.Run(ps.ctx)
+	}()
+	abandonHub := func() {
+		ps.cancel()
+		<-hubDone
+	}
 
 	// Wait for hub to start
 	for i := 0; i < 100; i++ {
@@ -212,6 +237,7 @@ func (ps *PushService) Start(ctx context.Context) error {
 		}
 		select {
 		case <-ctx.Done():
+			abandonHub()
 			return ctx.Err()
 		case <-time.After(time.Millisecond):
 			// Continue waiting
@@ -219,6 +245,7 @@ func (ps *PushService) Start(ctx context.Context) error {
 	}
 
 	if !ps.hub.IsRunning() {
+		abandonHub()
 		return NewServiceNotRunningError("push.Start", "hub failed to start")
 	}
 

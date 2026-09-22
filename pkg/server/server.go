@@ -219,6 +219,17 @@ type Server struct {
 	// Cache components
 	cacheManager *cache.CacheManager
 
+	// Database management - the qrdb tenant database Manager built by
+	// startDatabases. Retained on the Server rather than left local to that
+	// function because NOTHING downstream owns it: it is handed to a
+	// qrdb DatabaseServicer and on to the service facade, and the facade's
+	// Close closes the cache manager, the backup manager, the storage, the
+	// qrdb client and the SSH client -- but never this. Its OpenAll holds
+	// every recovered tenant database open, so without an owner here a
+	// Shutdown (after a failed Start or a clean one) left them all open.
+	// Closed in Shutdown; see the Close call there.
+	databaseManager *qrdbsdk.Manager
+
 	// RAG system - provides Retrieval-Augmented Generation capabilities
 	ragSystem *rag.System
 
@@ -717,6 +728,31 @@ func NewServer(cfg *config.Config, opts ...ServerOption) (*Server, error) {
 //     Use this when running QuicBaaS as a standalone service.
 //
 // Storage backends supported: memory, file, pebble.
+//
+// # Failure contract
+//
+// Start does NOT unwind on failure. It returns at the first component that
+// fails, and every component started before it stays up -- an embedded qrdb
+// node, an open audit log, a cache-cleanup goroutine, a lease reaper, a
+// scheduler poll loop. A caller that takes the error and walks away leaks
+// all of them for the lifetime of its process.
+//
+// So: a non-nil error from Start MUST be followed by a call to Shutdown.
+//
+//	if err := srv.Start(); err != nil {
+//	    _ = srv.Shutdown(context.Background()) // release the partial start
+//	    return err
+//	}
+//
+// Shutdown is safe on a server that never started, on one that started
+// fully, and on one that stopped anywhere in between: it releases whatever
+// exists and skips whatever does not. The daemon inherits this for free by
+// exiting the process, but an embedding application does not.
+//
+// The alternative -- Start unwinding every failure path itself, so that no
+// contract is needed at all -- is a stronger guarantee and remains open.
+// It is not taken here because it changes the behaviour of a public entry
+// point, which is the owner's call to make (go-quicbaas#62).
 func (s *Server) Start() error {
 	if err := s.initialize(); err != nil {
 		return err
@@ -1060,6 +1096,57 @@ func (s *Server) initialize() error {
 // scanner) whose storage transport is the sharded client. Closing the
 // facade first stops and drains those goroutines while their transport
 // is still open, preventing a poll-after-close error storm.
+//
+// # After a partial start
+//
+// Shutdown is the other half of Start's failure contract (see Start): it
+// is safe, and required, after a Start that returned an error. Every step
+// below is guarded on the resource it tears down, so a component that a
+// failed Start never reached is skipped rather than dereferenced -- and
+// two resources whose intended owner may never have been built are
+// released here rather than by that owner:
+//
+//   - the cache manager, when startService failed before the facade that
+//     owns it was built (below);
+//   - the qrdb audit sink and the seal strategy, when node construction
+//     failed after they were built (stopQRDBNode);
+//   - the KMS manager, which has no other owner in any case: startKMS
+//     builds it and nothing downstream closes it, so its key-cache
+//     cleanup goroutine outlives a clean shutdown as readily as a failed
+//     start unless this releases it (below);
+//   - the tenant database manager, likewise owner-less: startDatabases
+//     builds it and its OpenAll holds every recovered tenant database
+//     open, so those handles outlive a clean shutdown too (below).
+//
+// Two partial-start resources are deliberately NOT in that list, because
+// no guard here could reach either one; both are fixed at their source
+// instead.
+//
+// A failed messaging start used to strand its notification hub:
+// startMessaging assigns s.messagingService only after PushService.Start
+// returns, so on the failing path the field is still nil and there is
+// nothing for a guard to test. PushService.Start now cancels and joins the
+// hub goroutine before returning an error, so there is nothing left for
+// this to release.
+//
+// The service facade's job scheduler used to be started from a goroutine,
+// which put it outside this function's reach in a subtler way: not nil,
+// but not yet started. A Shutdown that ran before that goroutine was
+// scheduled called Stop on an engine that was not running, got "not
+// running" back, and then watched the queued Start bring a poll loop up
+// against storage this had already closed. The builder now starts the
+// engine synchronously (SchedulerEngine.Start launches its own loop and
+// returns, so nothing is lost by it), and SchedulerEngine.Stop is terminal
+// even when it arrives first -- so a late Start refuses rather than
+// resurrecting the loop. Ordering can no longer decide whether it leaks.
+//
+// A resource added to a start path is only covered by this contract once
+// Shutdown can reach it WITHOUT the component that normally owns it. That
+// property is asserted in two places, split by what each tier can run: the
+// release itself in pkg/server/start_partial_failure_cleanup_test.go, which
+// hands this function each orphan directly and never calls Start (so it can
+// stay in memory), and the orphan windows themselves in
+// test/integration/lifecycle, which drives a real Start over a real store.
 func (s *Server) Shutdown(ctx context.Context) error {
 	var shutdownErr error
 
@@ -1281,6 +1368,55 @@ func (s *Server) Shutdown(ctx context.Context) error {
 			} else {
 				s.logger.Info("QuicBaaS service facade shutdown complete")
 			}
+		} else if s.cacheManager != nil {
+			// The cache manager is created inside startService BEFORE the
+			// facade that owns it, and it starts a cleanup goroutine the
+			// moment it exists. Every startService failure between the two
+			// -- and a builder.Build() failure itself -- leaves it running
+			// with the facade that would have closed it never built, so
+			// this is the only call that can reach it.
+			//
+			// Only in that case: CacheManager.Close closes an unbuffered
+			// stop channel, so closing one the facade has already closed
+			// would panic the caller of Shutdown.
+			s.logger.Info("Releasing cache manager orphaned by a partial start...")
+			if err := s.cacheManager.Close(); err != nil {
+				errs = append(errs, err)
+				s.logger.WithError(err).Error("Failed to close orphaned cache manager")
+			}
+			s.cacheManager = nil
+		}
+
+		// Close the tenant database manager, AFTER the facade above: the
+		// facade's DatabaseService routes tenant database calls into this
+		// manager, so closing it first could pull an open database out from
+		// under an in-flight request the facade's own Close is still
+		// draining.
+		//
+		// Unconditional on the manager alone, not on the facade, because
+		// this is the orphan case as much as the clean one. startDatabases
+		// builds the manager, calls OpenAll -- which opens every tenant
+		// database found on disk -- and only then attaches a DatabaseService
+		// to the facade. Nothing downstream ever closes it: the facade's
+		// Close reaches its cache manager, backup manager, storage, qrdb
+		// client and SSH client, and stops there. So a Start that failed at
+		// any later step, and equally a Start that fully succeeded, left
+		// every recovered database open until the process exited. This call
+		// is the only one that can reach them.
+		//
+		// Nil'd afterwards: Manager.Close deletes each database from its
+		// registry as it closes it, so a second call is already a no-op, but
+		// dropping the reference keeps "released" observable and matches the
+		// other release paths here.
+		if s.databaseManager != nil {
+			s.logger.Info("Closing tenant database manager...")
+			if err := s.databaseManager.Close(); err != nil {
+				errs = append(errs, err)
+				s.logger.WithError(err).Error("Failed to close tenant database manager")
+			} else {
+				s.logger.Info("Tenant database manager closed")
+			}
+			s.databaseManager = nil
 		}
 
 		// Shutdown raft node when present (legacy / test paths only;
@@ -1369,27 +1505,42 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		// must be closed after the sharded client (which holds references to
 		// the node's services) and before the data-plane barrier closer
 		// (which is nil in standalone mode since the node owns the barrier).
-		if s.getQRDBNode() != nil {
-			s.logger.Info("Shutting down embedded qrdb node...")
-			if err := s.stopQRDBNode(); err != nil {
-				errs = append(errs, err)
-				s.logger.WithError(err).Error("Failed to shutdown embedded qrdb node")
-			} else {
-				s.logger.Info("Embedded qrdb node shutdown complete")
-			}
+		//
+		// Called unconditionally: stopQRDBNode also releases the node audit
+		// sink and the seal strategy, both of which are built BEFORE the
+		// node and therefore outlive a Start that failed during node
+		// construction. A `if node != nil` guard here would skip the only
+		// call that can reach them.
+		if err := s.stopQRDBNode(); err != nil {
+			errs = append(errs, err)
+			s.logger.WithError(err).Error("Failed to shutdown embedded qrdb node")
 		}
 
-		// Close the data-plane barrier's PebbleDB seal sub-store. This must
-		// happen after the sharded client is closed (the client holds the
-		// barrier service reference) so the PebbleDB file locks are released
-		// cleanly.
+		// Close the data-plane barrier: its PebbleDB seal sub-store AND the
+		// sealing strategies built over it, both owned by the single closer
+		// buildDataPlaneBarrierService returns (dataPlaneBarrierResources).
+		// This must happen after the sharded client is closed (the client
+		// holds the barrier service reference) so the PebbleDB file locks are
+		// released cleanly.
+		//
+		// The strategies are in that closer rather than beside it because
+		// they had no owner at all before: with a hardware seal strategy
+		// configured and node sealing off, startService builds a strategy
+		// here that holds an open TPM backend, and it is distinct from the
+		// node's own s.sealStrategy that stopQRDBNode releases above. A
+		// failed Start left it open for the life of the process.
+		//
+		// Nil'd afterwards so a second Shutdown cannot re-close it, matching
+		// the other release paths here and keeping "released" observable.
 		if s.dataPlaneBarrierCloser != nil {
-			s.logger.Info("Closing data-plane barrier seal store...")
-			if err := s.dataPlaneBarrierCloser.Close(); err != nil {
+			closer := s.dataPlaneBarrierCloser
+			s.dataPlaneBarrierCloser = nil
+			s.logger.Info("Closing data-plane barrier seal store and strategies...")
+			if err := closer.Close(); err != nil {
 				errs = append(errs, err)
-				s.logger.WithError(err).Error("Failed to close data-plane barrier seal store")
+				s.logger.WithError(err).Error("Failed to close data-plane barrier")
 			} else {
-				s.logger.Info("Data-plane barrier seal store closed")
+				s.logger.Info("Data-plane barrier closed")
 			}
 		}
 
@@ -1408,6 +1559,37 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		if err := s.stopTimeSeries(); err != nil {
 			errs = append(errs, err)
 			s.logger.WithError(err).Error("Failed to shutdown time series storage")
+		}
+
+		// Close the KMS manager LAST, once every consumer of it has stopped.
+		// It has exactly two: the service facade (which builds the crypto
+		// manager and the KMS rotation scanner from it) and the catalog
+		// reencrypt worker's DEK provider. Both are torn down above, so no
+		// key operation can be routed into a closed manager from here on.
+		//
+		// This is the only call that reaches it. startKMS creates the
+		// manager, and with KMS.Cache.Enabled it carries a KeyCache whose
+		// cleanupLoop goroutine runs from the moment the manager exists --
+		// but nothing else in the tree closes it: the facade's Close does
+		// not, MemoryCryptoManager.Close is a no-op, and KMSDEKProvider only
+		// borrows the reference. So the goroutine outlived BOTH a partial
+		// start and a clean one until this call existed.
+		//
+		// Unconditional teardown is safe: KMSService.Close closes the cache
+		// (joining cleanupLoop) and then each registered backend, and
+		// XKMSBackend.Close is a documented no-op because xkms lifecycle is
+		// global -- so this cannot pull the CA's shared key storage out from
+		// under anything. Nil'd afterwards so a second Shutdown cannot
+		// re-close the cache, which would return ErrCacheClosed.
+		if s.kmsManager != nil {
+			s.logger.Info("Closing KMS manager...")
+			if err := s.kmsManager.Close(); err != nil {
+				errs = append(errs, err)
+				s.logger.WithError(err).Error("Failed to close KMS manager")
+			} else {
+				s.logger.Info("KMS manager closed")
+			}
+			s.kmsManager = nil
 		}
 
 		duration := time.Since(startTime)

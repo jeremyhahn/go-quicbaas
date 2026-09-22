@@ -2651,6 +2651,9 @@ srv, err := quicbaas.NewServer(cfg, quicbaas.WithModule(&deviceModule{}))
 if err != nil {
     return err
 }
+// BEFORE the Start check — see "Embedded server lifecycle" below.
+defer srv.Shutdown(context.Background())
+
 if err := srv.Start(); err != nil {
     return err
 }
@@ -2760,3 +2763,20 @@ The module seam covers **gRPC, unix, REST and MCP**. It does **not** cover:
 
 Both are upstream go-qrdb gaps. File them against go-qrdb rather than working
 around them downstream.
+
+## Embedded server lifecycle
+
+`Start()` does **not** unwind on failure. It returns at the first component
+that fails, and every component started before it stays up: the embedded qrdb
+node, an open audit log, the cache-cleanup goroutine, the lease reaper, the
+scheduler poll loop.
+
+**A non-nil error from `Start()` MUST be followed by `Shutdown()`.** The
+daemon is unaffected — it logs and exits, and process teardown collects
+everything — but a host program embedding the SDK has no such backstop and
+leaks every one of those resources for the lifetime of its process.
+
+`Shutdown()` is safe on a server that never started, on one that started
+fully, and on one that stopped anywhere in between, and it is idempotent. So
+the deferred call belongs immediately after `NewServer`, before the `Start`
+error check — as in the *Mount it* example above.

@@ -61,6 +61,16 @@ func (s *Server) startDatabases() error {
 		dataDir,
 	)
 
+	// OWNERSHIP IS TAKEN BEFORE THE FIRST DATABASE IS OPENED, not after this
+	// function succeeds. OpenAll below opens every tenant database on disk,
+	// and each one it opens is a handle that only Manager.Close releases --
+	// so if the Server took ownership at the end, any return between here and
+	// there (and any later startup step's failure, since Shutdown is what
+	// reaches this) would strand a directory full of open databases with no
+	// reference left to close them. Retaining first makes the window empty:
+	// from the moment the manager can open anything, Shutdown can close it.
+	s.databaseManager = dbManager
+
 	// Open all previously created databases from disk.
 	// Each database directory contains a meta.json that records the
 	// database configuration including tenant ownership.

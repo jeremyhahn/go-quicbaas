@@ -541,14 +541,26 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 				}
 			}
 
-			// Start scheduler in background
-			go func() {
-				if err := svc.schedulerEngine.Start(context.Background()); err != nil {
-					if logger != nil {
-						logger.Errorf("Scheduler failed to start: %v", err)
-					}
+			// Start the scheduler synchronously. SchedulerEngine.Start does
+			// not block -- it launches its own poll loop and returns -- so
+			// there is nothing to gain from deferring it to a goroutine, and
+			// something to lose: a queued start is a start this builder cannot
+			// order against the owner's teardown. If the caller aborted its
+			// startup and closed everything between this line and the queued
+			// goroutine being scheduled, Stop() ran against an engine that had
+			// not started yet and the loop came up afterwards, polling storage
+			// that was already closed (go-quicbaas#62). Starting here makes the
+			// engine either running or failed by the time Build returns, so
+			// every later Stop has something definite to stop.
+			//
+			// The error stays non-fatal, as it was when this ran in a
+			// goroutine: a scheduler that will not start must not fail the
+			// construction of every other service on the facade.
+			if err := svc.schedulerEngine.Start(context.Background()); err != nil {
+				if logger != nil {
+					logger.Errorf("Scheduler failed to start: %v", err)
 				}
-			}()
+			}
 
 			if logger != nil {
 				logger.Info("Scheduler service initialized and started")

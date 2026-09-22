@@ -95,6 +95,32 @@
 // NOT reach QUIC or the embedded in-process transport; see WithModule and
 // docs/go-sdk/api.md for both gaps and the failure modes.
 //
+// # Embedded server lifecycle
+//
+// NewServer returns a server whose Start does NOT unwind on failure: Start
+// returns at the first component that fails and leaves everything started
+// before it running — the embedded qrdb node, an open audit log, background
+// pollers and cleanup goroutines.
+//
+// A non-nil error from Start MUST therefore be followed by Shutdown. Shutdown
+// is safe on a server that never started, on one that started fully, and on
+// one that stopped anywhere in between, and it is idempotent, so the deferred
+// call belongs immediately after NewServer:
+//
+//	srv, err := quicbaas.NewServer(cfg)
+//	if err != nil {
+//	    return err
+//	}
+//	defer srv.Shutdown(context.Background()) // also releases a PARTIAL start
+//
+//	if err := srv.Start(); err != nil {
+//	    return err
+//	}
+//
+// The daemon does not need this — it logs the error and exits, and process
+// teardown collects everything. An embedding application has no such
+// backstop.
+//
 // # Services
 //
 // Available services through the unified client:

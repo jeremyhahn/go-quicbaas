@@ -1871,6 +1871,37 @@ func TestNewQuicBaaS_WithScheduler(t *testing.T) {
 	assert.NotNil(t, impl.schedulerService, "scheduler service should be initialized")
 }
 
+// TestNewQuicBaaS_SchedulerRunningWhenBuilderReturns pins the scheduler's
+// start to the builder's own goroutine (go-quicbaas#62).
+//
+// The engine used to be started from a `go func()`, which left a window in
+// which the facade existed and the scheduler did not: a Close arriving inside
+// that window called Stop on a not-yet-running engine, got "not running"
+// back, and the queued Start then brought the poll loop up against the
+// storage Close had just shut. Asserting the engine is already running on the
+// statement after the builder returns closes the window by construction —
+// there is no interval left for a teardown to land in.
+//
+// Deterministic: read once, immediately, with no polling. A start deferred to
+// a goroutine cannot satisfy it, because the goroutine has not been scheduled
+// on this line.
+func TestNewQuicBaaS_SchedulerRunningWhenBuilderReturns(t *testing.T) {
+	kvStore := &covMockKVStore{}
+
+	svc := createTestService(t, func(b *serviceBuilder) {
+		b.config.EnableScheduler = true
+		b.kvStoreProvider = func(_ uint64) interface{} {
+			return kvStore
+		}
+	})
+	defer svc.Close()
+
+	impl := svc.(*quicBaaS)
+	require.NotNil(t, impl.schedulerEngine, "scheduler engine should be initialized")
+	require.True(t, impl.schedulerEngine.IsRunning(),
+		"the scheduler must be running by the time the builder returns; a start deferred to a goroutine leaves a window in which Close cannot stop it")
+}
+
 func TestNewQuicBaaS_WithSchedulerDefaultIntervals(t *testing.T) {
 	// Test that scheduler defaults are applied when not configured
 	kvStore := &covMockKVStore{}

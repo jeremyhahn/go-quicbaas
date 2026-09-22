@@ -28,6 +28,10 @@ import (
 // Server is the QuicBaaS server that orchestrates all components including
 // storage, Raft consensus, API servers, KMS, secrets, and more. Use NewServer
 // to create an instance and call Start to begin serving.
+//
+// Lifecycle: every Server that was constructed must be shut down, including
+// one whose Start returned an error — Start leaves its partial work standing
+// (see Server.Start), and only Shutdown releases it.
 type Server = server.Server
 
 // QuicBaaSService is the unified service facade providing all database operations.
@@ -183,6 +187,14 @@ type ConfigLoader = config.Loader
 // NewServer creates a new QuicBaaS server instance from the provided configuration.
 // After creation, call Start() to initialize and run all server components.
 //
+// A FAILED Start must still be shut down. Start does not unwind: it returns
+// at the first component that fails and leaves everything started before it
+// running — an embedded qrdb node, an open audit log, background pollers and
+// cleanup goroutines. Shutdown is safe on a server that never started, on one
+// that started fully, and on one that stopped anywhere in between, so the
+// deferred Shutdown belongs BEFORE the error check, not after it. See
+// Server.Start for the full contract.
+//
 // Example (embedded mode):
 //
 //	cfg := quicbaas.EmbeddedServerConfig()
@@ -193,11 +205,12 @@ type ConfigLoader = config.Loader
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
+//	// Registered before Start, so it also releases a PARTIAL start.
+//	defer srv.Shutdown(context.Background())
 //
 //	if err := srv.Start(); err != nil {
-//	    log.Fatal(err)
+//	    return err // Shutdown above releases whatever Start did bring up
 //	}
-//	defer srv.Shutdown(context.Background())
 //
 //	svc := srv.Service() // Direct in-process database access
 var NewServer = server.NewServer

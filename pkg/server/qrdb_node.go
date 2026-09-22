@@ -958,18 +958,34 @@ func (s *Server) initStandaloneQRDBNode() error {
 	return nil
 }
 
-// stopQRDBNode closes the qrdb node (standalone or clustered) and clears
-// the reference. It is idempotent; a nil node is silently skipped. The
-// audit sink is closed AFTER the node so no in-flight emit from a
-// still-running node races the close.
+// stopQRDBNode closes the qrdb node (standalone or clustered), clears the
+// reference, and releases the node-scoped resources this Server built for
+// it: the audit sink and, when no node was ever constructed, the seal
+// strategy. It is idempotent, and it does real work even when the node is
+// nil -- both of those resources are created BEFORE the node, so a Start
+// that failed during node construction can only be cleaned up by a call
+// that does not require a node. The audit sink is closed AFTER the node so
+// no in-flight emit from a still-running node races the close.
 func (s *Server) stopQRDBNode() error {
-	node := s.getQRDBNode()
-	if node == nil {
-		return nil
-	}
-	s.setQRDBNode(nil)
-	closeErr := node.Close()
+	var closeErr error
 
+	node := s.getQRDBNode()
+	if node != nil {
+		s.setQRDBNode(nil)
+		s.logger.Info("Shutting down embedded qrdb node...")
+		closeErr = node.Close()
+	}
+
+	// The audit sink and the seal strategy are built BEFORE the node they
+	// belong to -- newQRDBAuditSink from unifiedModuleServerOptions and
+	// buildSealStrategyOnce from the node builder -- so a node construction
+	// that fails leaves them held by this Server with no node to release
+	// them. Releasing them only when a node exists is exactly the shape
+	// that leaks an open audit file, and an open TPM session, out of a
+	// failed Start: see the Start/Shutdown contract on Server.Start.
+	//
+	// Closing the sink AFTER the node preserves the original ordering
+	// guarantee: no in-flight emit races the close.
 	if s.qrdbAuditSink != nil {
 		sink := s.qrdbAuditSink
 		s.qrdbAuditSink = nil
@@ -978,8 +994,26 @@ func (s *Server) stopQRDBNode() error {
 		}
 	}
 
+	// A built node owns the seal strategy and closes it itself, so this
+	// releases the strategy only when no node was ever built. Close is
+	// required to be idempotent by the SealingStrategy contract, but
+	// staying off the node-owned path leaves a successful boot's teardown
+	// byte-for-byte as it was.
+	if node == nil && s.sealStrategy != nil {
+		strategy := s.sealStrategy
+		s.sealStrategy = nil
+		// Same instance as inside the strategy -- never closed separately.
+		s.sealTPM2Backend = nil
+		if err := strategy.Close(); err != nil && closeErr == nil {
+			closeErr = err
+		}
+	}
+
 	if closeErr != nil {
 		return &QRDBNodeError{Stage: "close", Cause: closeErr}
+	}
+	if node != nil {
+		s.logger.Info("Embedded qrdb node shutdown complete")
 	}
 	return nil
 }
