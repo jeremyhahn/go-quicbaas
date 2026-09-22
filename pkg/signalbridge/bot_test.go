@@ -288,18 +288,29 @@ func TestBot_AttachAndForwardEvents(t *testing.T) {
 		PayloadJSON: raw,
 	}
 
+	// Wait on the WATERMARK, not on the send. forwardLoop translates first —
+	// which is what performs the send — and advances the watermark after, so
+	// a wait that stops at the send returns inside a window where the
+	// watermark is still 0. That window is invisible on an idle machine and
+	// lost this test under -race on a loaded CI runner
+	// ("watermark not advanced: 0"). The watermark strictly follows the send,
+	// so waiting on it and then asserting the send closes the window without
+	// weakening either assertion.
 	waitFor(t, func() bool {
-		signal.mu.Lock()
-		defer signal.mu.Unlock()
-		for _, s := range signal.sends {
-			if s.Body == "Hi!" {
-				return true
-			}
-		}
-		return false
+		return mgr.Get("c", ConversationDM).LastDeliveredSeq == 1
 	})
-	if mgr.Get("c", ConversationDM).LastDeliveredSeq != 1 {
-		t.Fatalf("watermark not advanced: %d", mgr.Get("c", ConversationDM).LastDeliveredSeq)
+
+	signal.mu.Lock()
+	delivered := false
+	for _, s := range signal.sends {
+		if s.Body == "Hi!" {
+			delivered = true
+			break
+		}
+	}
+	signal.mu.Unlock()
+	if !delivered {
+		t.Fatal("assistant chunk was not forwarded to the conversation")
 	}
 
 	_ = bot.Stop()
