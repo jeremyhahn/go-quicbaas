@@ -268,7 +268,7 @@
         class="cursor-pointer hover:bg-base-300/40 transition-colors"
         onclick={() => handleRowClick(job)}
       >
-        <td class="font-mono text-xs">
+        <td class="font-mono text-xs whitespace-nowrap">
           <span class="tooltip" data-tip={job.job_id}>
             {truncateID(job.job_id)}
           </span>

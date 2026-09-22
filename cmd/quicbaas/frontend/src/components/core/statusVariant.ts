@@ -65,6 +65,8 @@ const STATUS_TO_VARIANT: Readonly<Record<string, StatusVariant>> = {
   // orchestration job states where the job is doing the work
   assigning: 'primary',
   executing: 'primary',
+  validating: 'primary',
+  reviewing: 'primary',
 
   // error — failure modes
   error: 'error',
@@ -89,6 +91,13 @@ const STATUS_TO_VARIANT: Readonly<Record<string, StatusVariant>> = {
   worker: 'info',
   lead: 'info',
   unknown: 'info',
+  // job lifecycle phases that are setup or wind-down rather than either
+  // "actively working" (primary) or "waiting on something" (warning)
+  initializing: 'info',
+  decomposing: 'info',
+  scheduling: 'info',
+  completing: 'info',
+  cleanup: 'info',
 };
 
 /**

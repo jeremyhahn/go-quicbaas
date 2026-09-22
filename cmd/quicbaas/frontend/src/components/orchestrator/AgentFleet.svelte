@@ -18,6 +18,8 @@
   import { UserPlus, Cloud, Server } from 'lucide-svelte';
   import PageHeader from '../core/PageHeader.svelte';
   import FilterBar from '../core/FilterBar.svelte';
+  import StatusBadge from '../core/StatusBadge.svelte';
+  import { statusToVariant } from '../core/statusVariant.ts';
   import { computeFacets, filterByFacets } from '../../lib/filters.ts';
   import { FilterState } from '../../lib/filterState.svelte.ts';
   import { agentFilters } from '../../lib/listFilters.ts';
@@ -48,13 +50,6 @@
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
     if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
     return `${Math.floor(diff / 86400)}d ago`;
-  }
-
-  function statusVariant(status: string): string {
-    if (status === 'running' || status === 'idle') return 'badge-success';
-    if (status === 'error') return 'badge-error';
-    if (status === 'offline') return 'badge-ghost';
-    return 'badge-info';
   }
 
   function cardBorder(status: string): string {
@@ -371,9 +366,11 @@
               <span class="font-semibold text-sm truncate" title={agent.name}>
                 {agent.name}
               </span>
-              <span class="badge badge-xs {statusVariant(agent.status)}">
-                {agent.status}
-              </span>
+              <StatusBadge
+                text={agent.status}
+                variant={statusToVariant(agent.status)}
+                pulse={agent.status === 'running'}
+              />
             </div>
 
             <!-- Host -->

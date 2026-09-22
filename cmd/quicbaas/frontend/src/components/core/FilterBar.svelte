@@ -21,6 +21,20 @@
   agent id — is a picker, because a chip per project is a thousand chips. The
   decision is `usesChips` in lib/filters.ts and a field may override it.
 
+  One row per field, and a lid on how wide any one of them gets
+  ───────────────────────────────────────────────────────────
+  A list with a large enumeration — the job lifecycle is thirteen states —
+  used to spill thirteen chips into the SAME flex-wrap run as every other
+  field, so "State" bled into "Runner" bled into the project picker with
+  nothing marking where one question ended and the next began. Two things
+  fix that without touching the URL grammar or the loader contract a single
+  field's chips still travel as: each field now gets its OWN bordered row, so
+  wrapping happens within a field, never across two; and a field whose
+  vocabulary exceeds VISIBLE_LIMIT shows the first few plus a "+N more"
+  disclosure rather than every value at once. A value the operator has
+  actually selected is never among the hidden ones — collapsing a filter
+  must never hide evidence that it is narrowing the list.
+
   The counts come from the answer
   ───────────────────────────────
   `facets` is what the endpoint counted over the set its search matched. An
@@ -31,7 +45,9 @@
   indistinguishable from here.
 -->
 <script lang="ts">
-  import { X } from 'lucide-svelte';
+  import { X, ChevronDown, ChevronUp } from 'lucide-svelte';
+  import { themeStore } from '../../stores/theme.svelte.ts';
+  import { STATUS_TONES } from '../../lib/theme/tokens.ts';
   import {
     activeFilters,
     activeCount,
@@ -65,8 +81,26 @@
     onchange: (next: FilterValues) => void;
   } = $props();
 
+  /**
+   * VISIBLE_LIMIT is how many chips a field shows before offering "+N more".
+   * Eight sits comfortably in one or two wrapped rows at the narrowest width
+   * this app targets (1024px) for every declared vocabulary except the job
+   * lifecycle (13 states) and the task lifecycle (7, so it never truncates).
+   */
+  const VISIBLE_LIMIT = 8;
+
   const active = $derived(activeFilters(fields, values, facets));
   const anyActive = $derived(activeCount(values) > 0);
+  const tone = $derived(STATUS_TONES[themeStore.theme === 'light' ? 'light' : 'dark'].primary);
+
+  /**
+   * expanded tracks which fields have had their "+N more" disclosure opened.
+   * Collapsed options are hidden with CSS (not omitted from the DOM), so a
+   * caller that already has a `data-testid="filter-chip-…"` handle on a
+   * value past VISIBLE_LIMIT — from a hand-edited link, or a test — can
+   * still find and click it; only the VISUAL row height changes.
+   */
+  let expanded = $state<Record<string, boolean>>({});
 
   function optionsFor(field: FilterField) {
     return fieldOptions(field, facets);
@@ -79,19 +113,46 @@
   function choose(field: FilterField, value: string): void {
     onchange(setValue(values, field.key, value));
   }
+
+  function toggleExpanded(key: string): void {
+    expanded = { ...expanded, [key]: !expanded[key] };
+  }
+
+  /** hiddenBeyondLimit is how many of a field's options a collapsed row is holding back. */
+  function hiddenBeyondLimit(field: FilterField, options: readonly { value: string }[]): number {
+    if (options.length <= VISIBLE_LIMIT) return 0;
+    let hidden = 0;
+    for (let i = VISIBLE_LIMIT; i < options.length; i++) {
+      const option = options[i];
+      if (option !== undefined && !isSelected(values, field.key, option.value)) hidden += 1;
+    }
+    return hidden;
+  }
+
+  /** collapsedAway says whether ONE option is presently hidden behind "+N more". */
+  function collapsedAway(field: FilterField, index: number, value: string): boolean {
+    if (expanded[field.key]) return false;
+    if (index < VISIBLE_LIMIT) return false;
+    return !isSelected(values, field.key, value);
+  }
 </script>
 
-<div class="space-y-2" data-testid="filter-bar">
+<div class="space-y-2.5" data-testid="filter-bar">
   {#if anyActive}
     <!-- The selection, repeated where it cannot be missed and can be undone. -->
-    <div class="flex flex-wrap items-center gap-1" data-testid="active-filters">
-      <span class="text-xs uppercase tracking-wider text-base-content/40 mr-1">Filtered by</span>
+    <div class="flex flex-wrap items-center gap-1.5" data-testid="active-filters">
+      <span class="text-[11px] font-medium uppercase tracking-wider text-base-content/50">Filtered by</span>
       {#each active as chip (`${chip.field}:${chip.value}`)}
-        <span class="badge badge-sm badge-primary gap-1 pr-1">
+        <span
+          class="inline-flex items-center gap-1.5 rounded-full py-1 pl-2.5 pr-1 text-xs font-medium leading-none"
+          style:background-color={tone.bg}
+          style:color={tone.fg}
+        >
           <span>{chip.fieldLabel}: {chip.valueLabel}</span>
           <button
             type="button"
             class="btn btn-ghost btn-xs btn-circle h-4 w-4 min-h-0 p-0"
+            style:color={tone.fg}
             aria-label="Remove filter {chip.fieldLabel} {chip.valueLabel}"
             title="Remove this filter"
             data-testid="active-filter-remove-{chip.field}-{chip.value}"
@@ -110,20 +171,27 @@
     </div>
   {/if}
 
-  <div class="flex flex-wrap items-start gap-x-5 gap-y-2">
+  <div class="flex flex-col gap-1.5">
     {#each fields as field (field.key)}
       {@const options = optionsFor(field)}
       {@const chosen = selected(values, field.key)}
-      <div class="flex items-center flex-wrap gap-1" data-testid="filter-field-{field.key}">
-        <span class="text-xs uppercase tracking-wider text-base-content/40 mr-1">{field.label}</span>
+      {@const hidden = hiddenBeyondLimit(field, options)}
+      <div
+        class="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-base-300/60 bg-base-200/40 px-2.5 py-1.5"
+        data-testid="filter-field-{field.key}"
+      >
+        <span class="shrink-0 text-[11px] font-semibold uppercase tracking-wider text-base-content/50">
+          {field.label}
+        </span>
 
         {#if usesChips(field, options.length)}
-          <div class="flex flex-wrap gap-1" role="group" aria-label="Filter by {field.label}">
-            {#each options as option (option.value)}
+          <div class="flex flex-1 flex-wrap items-center gap-1" role="group" aria-label="Filter by {field.label}">
+            {#each options as option, index (option.value)}
               {@const on = isSelected(values, field.key, option.value)}
               <button
                 type="button"
                 class="btn btn-xs gap-1 normal-case"
+                class:hidden={collapsedAway(field, index, option.value)}
                 class:btn-primary={on}
                 class:btn-ghost={!on}
                 class:border-base-300={!on}
@@ -134,12 +202,26 @@
               >
                 <span>{option.label}</span>
                 {#if option.count !== null}
-                  <span class="opacity-60 font-mono" data-testid="filter-count-{field.key}-{option.value}">{option.count}</span>
+                  <span class="opacity-70 font-mono" data-testid="filter-count-{field.key}-{option.value}">{option.count}</span>
                 {/if}
               </button>
             {/each}
             {#if options.length === 0}
-              <span class="text-xs text-base-content/30 italic">none</span>
+              <span class="text-xs text-base-content/50 italic">none</span>
+            {/if}
+            {#if hidden > 0}
+              <button
+                type="button"
+                class="btn btn-ghost btn-xs gap-0.5 normal-case text-base-content/60"
+                data-testid="filter-more-{field.key}"
+                onclick={() => toggleExpanded(field.key)}
+              >
+                {#if expanded[field.key]}
+                  Show less <ChevronUp class="h-3 w-3" />
+                {:else}
+                  +{hidden} more <ChevronDown class="h-3 w-3" />
+                {/if}
+              </button>
             {/if}
           </div>
         {:else}
@@ -162,7 +244,7 @@
         {#if chosen.length > 0}
           <button
             type="button"
-            class="btn btn-ghost btn-xs btn-circle"
+            class="btn btn-ghost btn-xs btn-circle ml-auto"
             aria-label="Clear {field.label} filter"
             title="Clear {field.label} filter"
             data-testid="filter-clear-{field.key}"
