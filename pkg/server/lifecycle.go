@@ -446,13 +446,12 @@ func (s *Server) initializeCA() error {
 		if err != nil {
 			return api.NewOperationFailedError("resolve CA root key password", err)
 		}
-		// xkmssdk.KeyConfig.Password is a plain string, so the plaintext has to
-		// become one here no matter which accessor produces it; routing through
-		// WithBytes would build the same immutable heap string behind a closure
-		// and only hide that. This resolves when the SDK takes a secure type,
-		// which the deprecation notice defers to the coordinated breaking release.
-		keyConfig.Password = sv.String() //nolint:staticcheck // SA1019: KeyConfig.Password is a string; no secure-typed alternative exists yet.
-		sv.Clear()
+		// Custody transfer, not a copy: sv is freshly resolved and owned by
+		// nobody else, so moving it into KeyConfig.Password hands its enclave to
+		// the CA key config, which carries it for the CA's lifetime. The
+		// plaintext never becomes a Go string, and sv is not cleared because
+		// the config now owns the same enclave.
+		keyConfig.Password = *sv
 	}
 
 	// Handle RSA vs ECDSA config

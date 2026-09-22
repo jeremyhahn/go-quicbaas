@@ -72,6 +72,17 @@ func newTestOIDCProvider(t *testing.T) *iam.OIDCProvider {
 // bearer must seed one.
 func newTestOIDCProviderWithUsers(t *testing.T) (*iam.OIDCProvider, *iam.MemoryStorage) {
 	t.Helper()
+	return newTestOIDCProviderWithResolver(t, nil)
+}
+
+// newTestOIDCProviderWithResolver is newTestOIDCProviderWithUsers with the
+// access-token permission resolver bound. A nil resolver is the seam's
+// documented "qrdb not wired" state, in which the scp claim falls back to the
+// OIDC scope — so passing nil reproduces the plain fixture exactly, and a test
+// about RBAC-resolved authority passes its own resolver instead of standing up
+// a second copy of this wiring.
+func newTestOIDCProviderWithResolver(t *testing.T, resolver iam.PermissionResolver) (*iam.OIDCProvider, *iam.MemoryStorage) {
+	t.Helper()
 	setupOIDCTestXKMS(t)
 
 	mgr, err := iam.NewSigningKeyManagerFromXKMS("oidc-session-issuer-test", "")
@@ -105,9 +116,10 @@ func newTestOIDCProviderWithUsers(t *testing.T) (*iam.OIDCProvider, *iam.MemoryS
 			AllowedMethods:    []string{"S256"},
 		},
 		iam.OIDCDependencies{
-			IdentityStore: identityStore,
-			AppStorage:    backend,
-			TokenStorage:  backend,
+			IdentityStore:      identityStore,
+			AppStorage:         backend,
+			TokenStorage:       backend,
+			PermissionResolver: resolver,
 		},
 	)
 	if err != nil {

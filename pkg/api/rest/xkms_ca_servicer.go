@@ -309,6 +309,18 @@ func (a *xkmsCAServicer) GenerateCRL(ctx context.Context, _ *xkmstransport.Gener
 	}, nil
 }
 
+// CRL returns the CA's current DER-encoded CRL. The CA regenerates and
+// persists it first only when none has been published yet or the published
+// one's NextUpdate has passed; otherwise it serves the persisted artifact
+// without signing.
+func (a *xkmsCAServicer) CRL(ctx context.Context) ([]byte, error) {
+	crlDER, err := a.ca.CRL(ctx)
+	if err != nil {
+		return nil, &XKMSCAOperationError{Op: "get crl", Err: err}
+	}
+	return crlDER, nil
+}
+
 // IsRevoked reports whether the given serial number has been revoked.
 func (a *xkmsCAServicer) IsRevoked(_ context.Context, req *xkmstransport.IsRevokedRequest) (*xkmstransport.IsRevokedResponse, error) {
 	if req == nil {
