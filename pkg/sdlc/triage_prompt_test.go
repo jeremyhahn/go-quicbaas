@@ -60,6 +60,13 @@ func TestTriageCharter_IsEditableTextCarryingTheContract(t *testing.T) {
 		t.Fatal("the charter must keep the reason closing is treated differently from labelling")
 	}
 	// The marker the runner parses, and the one reason it may carry.
+	// AN ISSUE THAT ASKS FOR A RULING IS THE UNRESOLVED QUESTION ITSELF. On
+	// 2026-09-21 the 8B triage model marked two owner-ruling issues ready and
+	// the poller adopted one; the charter now names that case so a small
+	// model does not have to infer it from "depends on a decision".
+	if !strings.Contains(strings.Join(strings.Fields(charter), " "), "asks the owner to rule, decide, or choose between options") {
+		t.Fatal("the charter must say that an issue asking the owner to rule is needs-info, never ready")
+	}
 	if !strings.Contains(charter, TriageCloseMarker) {
 		t.Fatalf("the charter must state %q, or an agent cannot ask for a close", TriageCloseMarker)
 	}

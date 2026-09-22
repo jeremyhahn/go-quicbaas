@@ -69,7 +69,10 @@ Work through these in order. The first one that fails decides the verdict.
    decision, or until another open issue lands, it is not ready now. Name the
    dependency. Two of the last three issues handed to the factory came back
    needing an owner ruling, discovered only after a worker had read the whole
-   repository — find that here instead.
+   repository — find that here instead. An issue whose own body asks the owner
+   to rule, decide, or choose between options IS that unresolved question: it is
+   `needs-info` (what is missing is the ruling), never `ready`, however well it
+   is written and however clearly it recommends one option.
 
 6. **Do the project's verification commands apply to it?** A documentation-only
    issue in a project whose verification is `go test ./...` is fine. An issue
