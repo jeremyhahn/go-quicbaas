@@ -9,12 +9,16 @@
   the fleet agent the latest attempt ran on) · Job (the latest attempt,
   linked) · Updated. A row opens the task's detail page.
 
-  `#/tasks?project=<id>` narrows the list to one project.
+  `#/tasks?tasks_status=pending,blocked&tasks_project=<id>` narrows the list,
+  and is the link somebody pastes into an issue: every facet the page offers
+  lives in the hash, so a narrowed view is a shareable address rather than a
+  sequence of clicks to describe in prose.
 
   THE TABLE IS IN SERVER MODE and the kanban board is not. The table hands its
-  loader {limit, offset, sort, q} and the daemon answers one page with the
-  count of everything that matched; the project and dispatch-mode filters go
-  with it as server parameters (`project_id`, `auto_spawn`), because a filter
+  loader {limit, offset, sort, q, filters} and the daemon answers one page with
+  the count of everything that matched and the counts behind each facet; the
+  status, dispatch, project and agent filters go with it as server parameters
+  (`statuses`, `auto_spawn`, `project_id`, `agent_id`), because a filter
   applied to a page of twenty-five reports a total it cannot know. The board
   still renders the collection the store holds — a board has no pager to put a
   second page behind, and it shows whatever the store last read.
@@ -25,14 +29,20 @@
 -->
 <script lang="ts">
   import { orchestratorStore, loadJobs, refresh, type JobStatus, type Task, type TaskStatus } from '../../stores/orchestrator.svelte.ts';
-  import { routerStore, routeTaskDetail, routeTasks } from '../../stores/router.svelte.ts';
+  import { routeTaskDetail } from '../../stores/router.svelte.ts';
+  import {
+    loadReferenceOptions,
+    referenceOptions,
+  } from '../../stores/referenceOptions.svelte.ts';
+  import { taskFilters } from '../../lib/listFilters.ts';
+  import { readFilters, selected, type FilterValues } from '../../lib/filters.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
   import StatusBadge from '../../components/core/StatusBadge.svelte';
   import { statusToVariant } from '../../components/core/statusVariant.ts';
   import CreateTaskDialog from '../../components/orchestrator/CreateTaskDialog.svelte';
-  import { LayoutList, Columns3, Plus, ClipboardList, UserCheck, CheckCircle, Zap, AlertTriangle, X } from 'lucide-svelte';
+  import { LayoutList, Columns3, Plus, ClipboardList, UserCheck, CheckCircle, AlertTriangle } from 'lucide-svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import DataTable from '../../components/core/DataTable.svelte';
   import type { Column, PageRequest } from '../../lib/dataTable.ts';
@@ -50,40 +60,46 @@
   } from '../../lib/tasks.ts';
 
   type Layout = 'table' | 'kanban';
-  type SpawnFilter = 'all' | 'auto_spawned' | 'queued';
 
   /** The permission the tasks read routes are guarded by (routes_permissions_generated.go). */
   const TASKS_READ_PERMISSION = 'orchestrator:status';
 
   let layout: Layout = $state('table');
-  let spawnFilter: SpawnFilter = $state('all');
 
   let createTaskOpen = $state(false);
   let decomposingID = $state('');
   let claimingID = $state('');
   let completingID = $state('');
 
-  // Project names, so the Project column reads as a name rather than an id.
-  // Loaded once; a task whose project is unknown to the list shows its id.
-  let projectNames = $state<Record<string, string>>({});
-
+  // The project column reads as a NAME rather than an id, and the project
+  // picker offers the same list — one read, shared with every other page that
+  // narrows by project. A project the read missed shows its id.
   $effect(() => {
-    const tenantID = orchestratorStore.activeTenantID;
-    void loadProjectNames(tenantID);
+    void loadReferenceOptions(orchestratorStore.activeTenantID);
   });
 
-  async function loadProjectNames(tenantID: string): Promise<void> {
-    try {
-      const client = await getSDKClient();
-      const resp = await client.projects.listProjects(tenantID);
-      const names: Record<string, string> = {};
-      for (const p of resp.projects ?? []) names[p.id] = p.name;
-      projectNames = names;
-    } catch {
-      // The column falls back to the project id; the tasks themselves still load.
-      projectNames = {};
-    }
-  }
+  const projectNames = $derived(
+    Object.fromEntries(referenceOptions.projects.map((p) => [p.value, p.label])),
+  );
+
+  const FILTERS = $derived(
+    taskFilters<Task>(referenceOptions.projects, referenceOptions.agents),
+  );
+
+  /**
+   * chosen is the selection the table is asking with, read from the link this
+   * page opened on and replaced on every load. The view needs it for two
+   * answers the table cannot give: the empty state that names the project
+   * nobody has tasks in, and the board, which narrows the store's collection
+   * the same way the table narrows the server's.
+   */
+  let chosen = $state<FilterValues>(
+    readFilters(
+      typeof window === 'undefined' ? '' : window.location.hash,
+      'tasks',
+      taskFilters<Task>([], []),
+    ),
+  );
 
   // THE AGENT IS ON THE JOB, NOT ON THE TASK. `assigned_to` is the claimant,
   // and the dispatcher's own path never writes one, so it is empty for the
@@ -107,19 +123,32 @@
 
   const boardJobs = $derived(Array.isArray(orchestratorStore.jobs) ? orchestratorStore.jobs : []);
 
-  const projectFilter = $derived(routerStore.params['project'] ?? '');
+  /** The project the operator narrowed to, or '' for every project. */
+  const projectFilter = $derived(selected(chosen, 'project')[0] ?? '');
 
   function projectLabel(projectID: string | undefined): string {
     if (!projectID) return '';
     return projectNames[projectID] ?? projectID;
   }
 
+  /**
+   * filteredTasks is the BOARD's collection: the store's tasks, narrowed the
+   * same way the table narrowed the server's page. The board cannot ask the
+   * server — it has no pager to put a second page behind — so the same
+   * selection is applied here to what the store holds.
+   */
   function filteredTasks(): Task[] {
     const all = Array.isArray(orchestratorStore.tasks) ? orchestratorStore.tasks : [];
-    const inProject = projectFilter === '' ? all : all.filter((t) => t.project_id === projectFilter);
-    if (spawnFilter === 'auto_spawned') return inProject.filter((t) => t.auto_spawn);
-    if (spawnFilter === 'queued') return inProject.filter((t) => !t.auto_spawn);
-    return inProject;
+    const statuses = selected(chosen, 'status');
+    const dispatch = selected(chosen, 'dispatch')[0] ?? '';
+    const agentID = selected(chosen, 'agent')[0] ?? '';
+    return all.filter((task) => {
+      if (projectFilter !== '' && task.project_id !== projectFilter) return false;
+      if (statuses.length > 0 && !statuses.includes(task.status)) return false;
+      if (dispatch !== '' && String(task.auto_spawn === true) !== dispatch) return false;
+      if (agentID !== '' && taskAgentID(task, boardJobs) !== agentID) return false;
+      return true;
+    });
   }
 
   /**
@@ -162,19 +191,20 @@
   /** refreshTick re-asks the server after an action changes a task. */
   let refreshTick = $state(0);
 
-  const reloadKey = $derived(
-    `${orchestratorStore.activeTenantID}|${projectFilter}|${spawnFilter}|${refreshTick}`,
-  );
+  const reloadKey = $derived(`${orchestratorStore.activeTenantID}|${refreshTick}`);
 
-  /** dispatchMode is the auto_spawn value the SERVER narrows on. */
-  function dispatchMode(): boolean | undefined {
-    if (spawnFilter === 'auto_spawned') return true;
-    if (spawnFilter === 'queued') return false;
-    return undefined;
-  }
-
+  /**
+   * loadTasksPage turns the table's faceted selection into the endpoint's own
+   * parameters, and records it for the board and the empty state. Dispatch
+   * travels as a string in the selection ('true'/'false') because a link
+   * carries text; the API takes the boolean.
+   */
   async function loadTasksPage(req: PageRequest): Promise<unknown> {
-    const mode = dispatchMode();
+    chosen = req.filters ?? {};
+    const statuses = selected(chosen, 'status') as TaskStatus[];
+    const dispatch = selected(chosen, 'dispatch')[0] ?? '';
+    const projectID = selected(chosen, 'project')[0] ?? '';
+    const agentID = selected(chosen, 'agent')[0] ?? '';
     try {
       const client = await getSDKClient();
       const page = await client.orchestrator.listTasksPage(orchestratorStore.activeTenantID, {
@@ -182,8 +212,10 @@
         offset: req.offset,
         sort: req.sort,
         q: req.q,
-        ...(projectFilter === '' ? {} : { project_id: projectFilter }),
-        ...(mode === undefined ? {} : { auto_spawn: mode }),
+        ...(statuses.length === 0 ? {} : { statuses }),
+        ...(dispatch === '' ? {} : { auto_spawn: dispatch === 'true' }),
+        ...(projectID === '' ? {} : { project_id: projectID }),
+        ...(agentID === '' ? {} : { agent_id: agentID }),
       });
       pageTotal = page.total;
       await loadPageJobs(page.items as unknown as Task[]);
@@ -254,10 +286,21 @@
       : loadErrorMessage(orchestratorStore.tasksError, 'tasks', TASKS_READ_PERMISSION),
   );
 
-  function emptyTitle(): string {
-    if (projectFilter !== '') return `No tasks in ${projectLabel(projectFilter)}.`;
-    return 'No tasks tracked — New Task is how you start.';
-  }
+  /**
+   * noMatchText names the project when one is selected, because "no tasks
+   * match" over a project-narrowed list leaves the operator wondering which
+   * of their four filters emptied it.
+   *
+   * It is the NO-MATCH slot and not the empty state: a tenant with tasks and
+   * a filter that excludes all of them has not got "no tasks yet", and
+   * inviting them to create their first one would be a claim about data the
+   * filter is hiding.
+   */
+  const noMatchText = $derived(
+    projectFilter === ''
+      ? 'No tasks match the current filter.'
+      : `No tasks in ${projectLabel(projectFilter)} match the current filter.`,
+  );
 
   function openTask(task: Task): void {
     routeTaskDetail(task.id);
@@ -333,43 +376,12 @@
   <PageHeader title="Tasks" subtitle="{taskCount()} tasks" icon={ClipboardList}>
     {#snippet children()}
       <div class="flex items-center gap-2">
-        {#if projectFilter !== ''}
-          <span class="badge badge-outline gap-1" data-testid="project-filter">
-            Project: {projectLabel(projectFilter)}
-            <button
-              class="btn btn-ghost btn-xs btn-circle"
-              onclick={() => routeTasks()}
-              aria-label="Show tasks from every project"
-              title="Clear project filter"
-            >
-              <X class="h-3 w-3" />
-            </button>
-          </span>
-        {/if}
-        <!-- Spawn filter -->
-        <div class="join">
-          <button
-            class="btn btn-xs join-item"
-            class:btn-primary={spawnFilter === 'all'}
-            onclick={() => (spawnFilter = 'all')}
-            aria-label="Show all tasks"
-          >All</button>
-          <button
-            class="btn btn-xs join-item gap-1"
-            class:btn-secondary={spawnFilter === 'auto_spawned'}
-            onclick={() => (spawnFilter = 'auto_spawned')}
-            aria-label="Show auto-spawned tasks"
-          >
-            <Zap class="h-3 w-3" />
-            Auto-spawned
-          </button>
-          <button
-            class="btn btn-xs join-item"
-            class:btn-ghost={spawnFilter === 'queued'}
-            onclick={() => (spawnFilter = 'queued')}
-            aria-label="Show queued tasks"
-          >Queued</button>
-        </div>
+        <!--
+          The narrowing lives in the table's own FilterBar now — status,
+          dispatch, project and agent, each with the count behind it — rather
+          than in three chips in the page header that could only ask two of
+          those questions and said nothing about how many.
+        -->
         <button
           class="btn btn-sm btn-primary gap-1"
           onclick={() => { createTaskOpen = true; }}
@@ -412,18 +424,18 @@
       load={loadTasksPage}
       itemsKey="items"
       {reloadKey}
+      filters={FILTERS}
       rowKey={(t: Task) => t.id}
-      narrowed={spawnFilter !== 'all'}
       urlKey="tasks"
       ariaLabel="Tasks"
       searchPlaceholder="Search tasks..."
       searchLabel="Search tasks"
-      noMatchText="No tasks match the current filter."
+      {noMatchText}
     >
       {#snippet empty()}
         <EmptyState
           icon={ClipboardList}
-          title={emptyTitle()}
+          title="No tasks tracked — New Task is how you start."
           description="Tasks represent units of work dispatched to your agent fleet."
           actionLabel="New Task"
           onaction={() => { createTaskOpen = true; }}
@@ -465,7 +477,24 @@
               <div class="text-xs text-base-content/40 truncate">{task.description}</div>
             {/if}
           </td>
-          <td class="text-xs">{projectLabel(task.project_id) || '—'}</td>
+          <!--
+            Every id-like cell is a LINK to the thing it names: the project to
+            its own tasks, the agent to its detail, the job to the attempt.
+            Reading an id off a row and typing it into a search box is the
+            drill-down this page used to make people do by hand.
+          -->
+          <td class="text-xs">
+            {#if task.project_id}
+              <a
+                class="link link-hover"
+                href={`#/tasks?tasks_project=${encodeURIComponent(task.project_id)}`}
+                onclick={(e) => e.stopPropagation()}
+                title="Show this project's tasks"
+              >{projectLabel(task.project_id)}</a>
+            {:else}
+              <span class="text-base-content/25">—</span>
+            {/if}
+          </td>
           <td>
             <StatusBadge text={statusLabel(task.status)} variant={statusToVariant(task.status)} />
             {#if task.status === 'blocked'}
@@ -488,7 +517,16 @@
             {/if}
           </td>
           <td class="text-xs text-base-content/60" data-testid="task-assigned">
-            {agentID || '—'}
+            {#if agentID !== ''}
+              <a
+                class="link link-hover"
+                href={`#/agents/${encodeURIComponent(agentID)}`}
+                onclick={(e) => e.stopPropagation()}
+                title="Open agent {agentID}"
+              >{agentID}</a>
+            {:else}
+              —
+            {/if}
           </td>
           <td class="text-xs" data-testid="task-job">
             {#if jobID !== ''}

@@ -132,9 +132,14 @@ describe('AgentFleet', () => {
     expect(badge.textContent?.trim()).toBe('ollama');
     expect(modelLabel.textContent?.trim()).toBe('qwen2.5:0.5b');
 
-    // "ollama" must appear exactly once — the backend badge.
-    const allText = container.textContent ?? '';
-    const ollamaOccurrences = (allText.match(/\bollama\b/g) ?? []).length;
+    // "ollama" must appear exactly once IN THE CARD — the backend badge.
+    //
+    // The count is taken over the grid and not the page, because the backend
+    // facet above it is also entitled to the word: a chip offering "ollama 1"
+    // is the control for finding this agent, not a second copy of its model.
+    const card = badge.closest('.card') as HTMLElement;
+    const cardText = card.textContent ?? '';
+    const ollamaOccurrences = (cardText.match(/\bollama\b/g) ?? []).length;
     // Agent name contains 'embedded-vm-host-2', status 'running', etc. —
     // "ollama" must appear only in the backend badge, not also in the model label.
     expect(ollamaOccurrences).toBe(1);

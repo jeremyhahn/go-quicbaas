@@ -83,6 +83,11 @@ vi.mock('../src/stores/router.svelte.ts', () => ({
   routeFleet: vi.fn(),
   routeSessionDetail: vi.fn(),
   routeAgentDetail: vi.fn(),
+  navigateTo: vi.fn(),
+  // The breadcrumb goes back to the fleet AS THE OPERATOR LEFT IT — narrowed
+  // and on the page they were on — so it navigates to a remembered hash
+  // rather than to the bare route.
+  listReturnHash: vi.fn((path: string) => `#${path}?fleet_status=offline`),
 }));
 
 vi.mock('../src/stores/toast.svelte.ts', () => ({
@@ -99,7 +104,7 @@ vi.mock('../src/stores/sdkClient.ts', () => ({
 }));
 
 import AgentDetailView from '../src/views/orchestrator/AgentDetailView.svelte';
-import { routeFleet } from '../src/stores/router.svelte.ts';
+import { navigateTo } from '../src/stores/router.svelte.ts';
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -111,7 +116,7 @@ describe('AgentDetailView', () => {
     routerStoreMock.name = 'agent-detail';
     routerStoreMock.params = { id: 'agent-xyz-789' };
     routerStoreMock.hash = '#/agents/agent-xyz-789';
-    vi.mocked(routeFleet).mockClear();
+    vi.mocked(navigateTo).mockClear();
   });
 
   it('renders agent name in the header', () => {
@@ -172,11 +177,13 @@ describe('AgentDetailView', () => {
     expect(screen.getByText('Remove Agent?')).toBeInTheDocument();
   });
 
-  it('back button calls routeFleet', async () => {
+  it('back button returns to the fleet as the operator left it', async () => {
     render(AgentDetailView);
     const backBtn = screen.getByRole('button', { name: /back to agent fleet/i });
     await fireEvent.click(backBtn);
-    expect(vi.mocked(routeFleet)).toHaveBeenCalledTimes(1);
+    // The narrowing survives: sending them to a bare #/fleet would throw away
+    // the filter they used to find this agent.
+    expect(vi.mocked(navigateTo)).toHaveBeenCalledWith('#/fleet?fleet_status=offline');
   });
 
   it('shows not-found state when agent ID does not match', () => {
@@ -187,14 +194,21 @@ describe('AgentDetailView', () => {
     expect(screen.getByText(/agent not found/i)).toBeInTheDocument();
   });
 
-  it('shows Recent Sessions section', () => {
+  it('shows the sessions that ran on THIS agent', () => {
     render(AgentDetailView);
-    expect(screen.getByText(/Recent Sessions/i)).toBeInTheDocument();
+    expect(screen.getByText(/Sessions on this agent/i)).toBeInTheDocument();
+    // And offers the same question as a full page of the Sessions list.
+    expect(
+      screen.getByRole('link', { name: 'Open in Sessions' }).getAttribute('href'),
+    ).toBe('#/sessions?sessions_agent=agent-xyz-789');
   });
 
-  it('shows Recent Jobs section', () => {
+  it('shows the jobs that ran on THIS agent', () => {
     render(AgentDetailView);
-    expect(screen.getByText(/Recent Jobs/i)).toBeInTheDocument();
+    expect(screen.getByText(/Jobs on this agent/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: 'Open in Jobs' }).getAttribute('href'),
+    ).toBe('#/jobs?jobs_agent=agent-xyz-789');
   });
 
   it('shows Metrics unavailable notice when no telemetry in metadata', () => {

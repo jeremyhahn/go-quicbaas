@@ -38,8 +38,9 @@
     type Task,
   } from '../../stores/orchestrator.svelte.ts';
   import {
+    listReturnHash,
+    navigateTo,
     routeAgentDetail,
-    routeJobs,
     routeSessionDetail,
     routeTaskDetail,
   } from '../../stores/router.svelte.ts';
@@ -334,9 +335,10 @@
   // Actions
   // ---------------------------------------------------------------------------
 
+  /** handleBack returns to the list as the operator left it — see TaskDetailView. */
   function handleBack(): void {
     selectJob(null);
-    routeJobs();
+    navigateTo(listReturnHash('/jobs'));
   }
 
   async function handleCancel(): Promise<void> {

@@ -7,16 +7,19 @@
 <script lang="ts">
   import DataTable from '../../src/components/core/DataTable.svelte';
   import type { Column, PageRequest } from '../../src/lib/dataTable.ts';
+  import type { FilterField } from '../../src/lib/filters.ts';
 
   interface HarnessRow {
     id: string;
     name: string;
     count: number;
+    status?: string;
   }
 
   let {
     rows = [],
     load,
+    filters = [],
     itemsKey,
     reloadKey,
     loading = false,
@@ -26,6 +29,7 @@
   }: {
     rows?: HarnessRow[];
     load?: (req: PageRequest) => Promise<unknown>;
+    filters?: FilterField<HarnessRow>[];
     itemsKey?: string;
     reloadKey?: string | number;
     loading?: boolean;
@@ -46,6 +50,7 @@
   {columns}
   {rows}
   {load}
+  {filters}
   {itemsKey}
   {reloadKey}
   {loading}

@@ -4,10 +4,12 @@
   daemon answers one page with the count of everything that matched. The burn-in
   tenant has ~2,000 jobs; this page never holds more than a hundred.
 
-  The state filter is a SERVER parameter (`statuses`), not a narrowing of the
-  rows in hand — "Active" asks for the eleven non-terminal states by name. A
+  The filters are SERVER parameters, not a narrowing of the rows in hand: a
   filter applied to a page of twenty-five would report a total it cannot know
-  and hide matches sitting on page two.
+  and hide matches sitting on page two. State is multi-select (`statuses`), so
+  "executing or reviewing" is one question; runner, project and agent narrow to
+  one each. The counts beside each chip are the server's, over everything the
+  search matched.
 
   Sorting names the server's allow-listed fields (job_id, description, state,
   started_at). Iteration and Progress are NOT in that list, so their headers do
@@ -26,13 +28,18 @@
 -->
 <script lang="ts">
   import {
-    ACTIVE_JOB_STATES,
     orchestratorStore,
     selectJob,
     refresh,
     type JobStatus,
     type JobState,
   } from '../../stores/orchestrator.svelte.ts';
+  import {
+    loadReferenceOptions,
+    referenceOptions,
+  } from '../../stores/referenceOptions.svelte.ts';
+  import { jobFilters } from '../../lib/listFilters.ts';
+  import { selected, type FilterValues } from '../../lib/filters.ts';
   import { routeJobDetail } from '../../stores/router.svelte.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
@@ -47,29 +54,24 @@
   import { formatDateTime } from '../../lib/time.ts';
   import { issueRef, type IssueRef } from '../../lib/tasks.ts';
 
-  type StateFilter = 'all' | 'active' | 'completed' | 'failed';
-
   /** How long the page waits after a job event before re-reading. */
   const LIVE_REFRESH_DEBOUNCE_MS = 400;
 
-  let stateFilter: StateFilter = $state('all');
   let startJobOpen = $state(false);
 
   // Job being cancelled (for confirm dialog state).
   let cancelTarget = $state<JobStatus | null>(null);
   let cancelling = $state(false);
 
-  /**
-   * statesFor turns this page's filter into the states the SERVER narrows on.
-   * "Active" is every state a job can still leave, named explicitly, because
-   * "not terminal" is not a question the endpoint can be asked.
-   */
-  function statesFor(filter: StateFilter): JobState[] {
-    if (filter === 'active') return [...ACTIVE_JOB_STATES];
-    if (filter === 'completed') return ['completed'];
-    if (filter === 'failed') return ['failed'];
-    return [];
-  }
+  // The project and agent pickers name their options; the read is cached per
+  // tenant and shared with every other list that offers the same narrowing.
+  $effect(() => {
+    void loadReferenceOptions(orchestratorStore.activeTenantID);
+  });
+
+  const FILTERS = $derived(
+    jobFilters<JobStatus>(referenceOptions.projects, referenceOptions.agents),
+  );
 
   /**
    * liveTick advances once the job event stream has been quiet for
@@ -86,17 +88,30 @@
     return () => { clearTimeout(timer); };
   });
 
-  const reloadKey = $derived(`${orchestratorStore.activeTenantID}|${stateFilter}|${liveTick}`);
+  const reloadKey = $derived(`${orchestratorStore.activeTenantID}|${liveTick}`);
 
+  /**
+   * loadJobsPage turns the table's faceted selection into the endpoint's own
+   * parameters. The table hands the selection back under the field KEYS it was
+   * declared with (`state`, `runner`, …); the names the server takes are
+   * spelled here, once, rather than travelling as an untyped bag.
+   */
   async function loadJobsPage(req: PageRequest): Promise<unknown> {
     const client = await getSDKClient();
-    const statuses = statesFor(stateFilter);
+    const chosen: FilterValues = req.filters ?? {};
+    const statuses = selected(chosen, 'state') as JobState[];
+    const runner = selected(chosen, 'runner')[0] ?? '';
+    const projectID = selected(chosen, 'project')[0] ?? '';
+    const agentID = selected(chosen, 'agent')[0] ?? '';
     return client.orchestrator.listJobsPage(orchestratorStore.activeTenantID, {
       limit: req.limit,
       offset: req.offset,
       sort: req.sort,
       q: req.q,
       ...(statuses.length === 0 ? {} : { statuses }),
+      ...(runner === '' ? {} : { runner }),
+      ...(projectID === '' ? {} : { project_id: projectID }),
+      ...(agentID === '' ? {} : { agent_id: agentID }),
     });
   }
 
@@ -229,27 +244,14 @@
     load={loadJobsPage}
     itemsKey="items"
     {reloadKey}
+    filters={FILTERS}
     rowKey={(j: JobStatus) => j.job_id}
-    narrowed={stateFilter !== 'all'}
     urlKey="jobs"
     ariaLabel="Jobs"
     searchPlaceholder="Search jobs..."
     searchLabel="Search jobs"
     noMatchText="No jobs match the current filter."
   >
-    {#snippet toolbar()}
-      <select
-        class="select select-bordered select-sm"
-        aria-label="Filter by state"
-        bind:value={stateFilter}
-      >
-        <option value="all">All States</option>
-        <option value="active">Active</option>
-        <option value="completed">Completed</option>
-        <option value="failed">Failed</option>
-      </select>
-    {/snippet}
-
     {#snippet empty()}
       <EmptyState
         icon={Briefcase}

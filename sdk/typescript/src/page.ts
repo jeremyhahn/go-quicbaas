@@ -59,6 +59,8 @@ export interface JobPageParams extends PageParams {
   runner?: string;
   /** project_id lists one project's jobs. */
   project_id?: string;
+  /** agent_id lists the jobs one fleet agent ran. */
+  agent_id?: string;
   /** statuses lists the jobs in any of these states. */
   statuses?: JobState[];
   /**
@@ -82,12 +84,24 @@ export interface TaskPageParams extends PageParams {
    * why it is optional rather than defaulting to false.
    */
   auto_spawn?: boolean;
+  /** agent_id lists the tasks whose latest attempt ran on one fleet agent. */
+  agent_id?: string;
+  /** job_id lists the tasks one job is an attempt at. */
+  job_id?: string;
 }
 
 /** SessionPageParams adds the sessions listing's own narrowings. */
 export interface SessionPageParams extends PageParams {
   backend?: string;
   status?: SessionState;
+  /** project_id lists the sessions opened for one project's work. */
+  project_id?: string;
+  /** job_id lists the sessions one job opened. */
+  job_id?: string;
+  /** runner lists the sessions by the role they played — sdlc, triage, review. */
+  runner?: string;
+  /** agent_id lists the sessions that ran on one fleet agent. */
+  agent_id?: string;
 }
 
 /** AgentPageParams adds the fleet listing's own narrowings. */
@@ -99,15 +113,43 @@ export interface AgentPageParams extends PageParams {
   model?: string;
 }
 
+/** WorkflowPageParams adds the workflow listing's own narrowings. */
+export interface WorkflowPageParams extends PageParams {
+  /** project_id lists one project's workflows. */
+  project_id?: string;
+  /** mode lists the workflows of one execution mode — sequential, parallel, dag. */
+  mode?: string;
+}
+
+/** ProjectPageParams adds the projects listing's own narrowings. */
+export interface ProjectPageParams extends PageParams {
+  /** autonomous lists the projects that dispatch their own work, or the rest. */
+  autonomous?: boolean;
+}
+
 /** AccountPageParams adds the accounts listing's own narrowings. */
 export interface AccountPageParams extends PageParams {
   provider?: string;
   project_id?: string;
+  /** status lists the accounts in one pool state — available, in_use, cooldown. */
+  status?: string;
 }
 
 // ---------------------------------------------------------------------------
 // Answer
 // ---------------------------------------------------------------------------
+
+/**
+ * PageFacets is what a listing counted, per filterable field, over the set its
+ * search matched and BEFORE its own filters were applied —
+ * `{status: {pending: 12, blocked: 3}}`.
+ *
+ * The counts are what makes faceted narrowing worth more than a select box:
+ * the control says how many records are behind each value before anything is
+ * clicked. A listing that counts nothing sends no `facets`, and a caller reads
+ * that as "nobody counted" rather than "everything is zero".
+ */
+export type PageFacets = Record<string, Record<string, number>>;
 
 /**
  * PageResult is one page of a listing, normalised.
@@ -131,6 +173,13 @@ export interface PageResult<T> {
    * it from `total`.
    */
   next_offset?: number;
+  /**
+   * facets is the per-field count of the matched set, ABSENT when the endpoint
+   * did not count — an older daemon, or a listing with nothing to facet. A
+   * caller renders its declared vocabulary without counts rather than
+   * rendering nothing.
+   */
+  facets?: PageFacets;
 }
 
 /**
@@ -245,7 +294,12 @@ export function adoptPage<T>(raw: unknown, itemsKey: string, map?: (item: never)
   }
 
   const converted = convert(items);
-  if (typeof record['total'] !== 'number') return wholeSetPage(converted);
+  const facets = adoptFacets(record['facets']);
+  if (typeof record['total'] !== 'number') {
+    const whole = wholeSetPage(converted);
+    if (facets !== undefined) whole.facets = facets;
+    return whole;
+  }
 
   const page: PageResult<T> = {
     items: converted,
@@ -254,7 +308,32 @@ export function adoptPage<T>(raw: unknown, itemsKey: string, map?: (item: never)
     offset: typeof record['offset'] === 'number' ? record['offset'] : 0,
   };
   if (typeof record['next_offset'] === 'number') page.next_offset = record['next_offset'];
+  if (facets !== undefined) page.facets = facets;
   return page;
+}
+
+/**
+ * adoptFacets reads the counts out of a listing answer, keeping only the
+ * numbers. A missing member, or one that is not a map of maps of numbers,
+ * reports undefined — which a caller reads as "nobody counted" and answers by
+ * offering its declared vocabulary uncounted.
+ *
+ * IT DOES NOT THROW. A malformed `facets` costs the operator the counts beside
+ * the chips; refusing the whole page over it would cost them the records.
+ */
+export function adoptFacets(raw: unknown): PageFacets | undefined {
+  if (raw === null || raw === undefined || typeof raw !== 'object') return undefined;
+
+  const facets: PageFacets = {};
+  for (const [field, counts] of Object.entries(raw as Record<string, unknown>)) {
+    if (counts === null || typeof counts !== 'object') continue;
+    const kept: Record<string, number> = {};
+    for (const [value, count] of Object.entries(counts as Record<string, unknown>)) {
+      if (typeof count === 'number' && Number.isFinite(count)) kept[value] = count;
+    }
+    facets[field] = kept;
+  }
+  return Object.keys(facets).length === 0 ? undefined : facets;
 }
 
 /**

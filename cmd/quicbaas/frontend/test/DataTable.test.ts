@@ -23,11 +23,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import DataTableHarness from './stubs/DataTableHarness.svelte';
 import type { PageRequest } from '../src/lib/dataTable.ts';
+import type { FilterField } from '../src/lib/filters.ts';
 
 interface HarnessRow {
   id: string;
   name: string;
   count: number;
+  status?: string;
 }
 
 /** A collection big enough that paging is the only way to see the end of it. */
@@ -354,5 +356,202 @@ describe('DataTable URL state', () => {
     render(DataTableHarness, { props: { rows: makeRows(120), urlKey: 'rows' } });
     await waitFor(() => { expect(renderedIDs()).toHaveLength(25); });
     expect(window.location.hash).toBe('#/harness');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The pager, above the table and below it
+// ---------------------------------------------------------------------------
+
+describe('DataTable pager placement', () => {
+  it('renders the pager at the TOP as well as the bottom', () => {
+    // A pager only under twenty-five rows is below the fold on every laptop
+    // in the building, which is how a paged table gets reported as having no
+    // pagination at all.
+    render(DataTableHarness, { props: { rows: makeRows(60) } });
+    expect(screen.getByTestId('data-table-pager-top')).toBeInTheDocument();
+    expect(screen.getByTestId('data-table-pager-bottom')).toBeInTheDocument();
+    expect(screen.getByLabelText('Next page')).toBeInTheDocument();
+    expect(screen.getByLabelText('Next page (bottom)')).toBeInTheDocument();
+  });
+
+  it('drives one piece of state from either end', async () => {
+    render(DataTableHarness, { props: { rows: makeRows(60) } });
+    await fireEvent.click(screen.getByLabelText('Next page (bottom)'));
+    // The top pager agrees, because there is nothing for them to disagree on.
+    expect(range()).toBe('26–50 of 60');
+    expect(screen.getByTestId('data-table-page').textContent?.trim()).toBe('2 / 3');
+    expect(screen.getByTestId('data-table-page-bottom').textContent?.trim()).toBe('2 / 3');
+
+    await fireEvent.click(screen.getByLabelText('First page'));
+    expect(screen.getByTestId('data-table-range-bottom').textContent?.trim()).toBe('1–25 of 60');
+  });
+
+  it('puts the row-count label and the size selector at the top', () => {
+    render(DataTableHarness, { props: { rows: makeRows(60) } });
+    const top = screen.getByTestId('data-table-pager-top');
+    expect(top).toContainElement(screen.getByTestId('data-table-range'));
+    expect(top).toContainElement(screen.getByLabelText('Rows per page'));
+    // One size selector, not two: the bottom pager repeats the paging
+    // controls, not every control on the page.
+    expect(screen.queryAllByLabelText('Rows per page')).toHaveLength(1);
+  });
+
+  it('keeps the pager once the operator has CHOSEN a size', async () => {
+    // Growing the page past the collection must not hide the control that put
+    // them there and strand them at 100 rows with no way back to 25.
+    render(DataTableHarness, { props: { rows: makeRows(30) } });
+    await fireEvent.change(screen.getByLabelText('Rows per page'), { target: { value: '100' } });
+    expect(range()).toBe('1–30 of 30');
+    expect(screen.getByLabelText('Next page')).toBeInTheDocument();
+    expect(screen.getByLabelText('Rows per page')).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The sort affordance
+// ---------------------------------------------------------------------------
+
+describe('DataTable sort affordance', () => {
+  it('marks an unsorted sortable header as sortable anyway', () => {
+    // A header that looks like plain text until somebody happens to click it
+    // is a control nobody finds. The neutral icon is the affordance.
+    render(DataTableHarness, { props: { rows: makeRows(4) } });
+    const header = screen.getByTestId('data-table-sort-count');
+    expect(header).toHaveAttribute('data-sort', 'none');
+    expect(header.querySelector('svg')).not.toBeNull();
+    expect(header).toHaveAttribute('title', 'Sort by Count');
+  });
+
+  it('turns the icon into the direction it is sorting', async () => {
+    render(DataTableHarness, { props: { rows: makeRows(4) } });
+    await fireEvent.click(screen.getByLabelText('Sort by Count'));
+    expect(screen.getByTestId('data-table-sort-count')).toHaveAttribute('data-sort', 'asc');
+    await fireEvent.click(screen.getByLabelText('Sort by Count'));
+    expect(screen.getByTestId('data-table-sort-count')).toHaveAttribute('data-sort', 'desc');
+    await fireEvent.click(screen.getByLabelText('Sort by Count'));
+    expect(screen.getByTestId('data-table-sort-count')).toHaveAttribute('data-sort', 'none');
+  });
+
+  it('gives an unsortable header no affordance at all', () => {
+    // Which is how the two are told apart at a glance.
+    render(DataTableHarness, { props: { rows: makeRows(4) } });
+    expect(screen.queryByTestId('data-table-sort-id')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Faceted filters
+// ---------------------------------------------------------------------------
+
+const STATUS_FILTER: FilterField<HarnessRow> = {
+  key: 'status',
+  label: 'Status',
+  param: 'statuses',
+  multi: true,
+  options: [
+    { value: 'open', label: 'open' },
+    { value: 'shut', label: 'shut' },
+  ],
+  rowValue: (row) => row.status ?? '',
+};
+
+/** Six rows: four open, two shut. */
+function statusRows(): HarnessRow[] {
+  return makeRows(6).map((row, i) => ({ ...row, status: i < 4 ? 'open' : 'shut' }));
+}
+
+describe('DataTable filters', () => {
+  it('offers no filter bar for a table that declares none', () => {
+    render(DataTableHarness, { props: { rows: makeRows(4) } });
+    expect(screen.queryByTestId('filter-bar')).toBeNull();
+  });
+
+  it('counts the collection itself and narrows it, in client mode', async () => {
+    render(DataTableHarness, { props: { rows: statusRows(), filters: [STATUS_FILTER] } });
+    expect(screen.getByTestId('filter-count-status-open')).toHaveTextContent('4');
+    expect(screen.getByTestId('filter-count-status-shut')).toHaveTextContent('2');
+
+    await fireEvent.click(screen.getByTestId('filter-chip-status-shut'));
+    expect(renderedIDs()).toEqual(['id-004', 'id-005']);
+    // The count is of what MATCHED, as it is for the search: "1–2 of 6" would
+    // claim four rows are on a page that does not exist.
+    expect(range()).toBe('1–2 of 2');
+  });
+
+  it('counts the SEARCHED set, not the set its own filter left', async () => {
+    render(DataTableHarness, { props: { rows: statusRows(), filters: [STATUS_FILTER] } });
+    await fireEvent.click(screen.getByTestId('filter-chip-status-open'));
+    // A facet counted after its own filter would read "open 4, shut 0" and
+    // tell the operator nothing about what picking `shut` would do.
+    expect(screen.getByTestId('filter-count-status-shut')).toHaveTextContent('2');
+  });
+
+  it('sends the selection to a paging endpoint and returns to page one', async () => {
+    const load = vi.fn(async () => ({ rows: makeRows(25), total: 400 }));
+    render(DataTableHarness, { props: { load, itemsKey: 'rows', filters: [STATUS_FILTER] } });
+    await waitFor(() => { expect(load).toHaveBeenCalled(); });
+
+    await fireEvent.click(screen.getByLabelText('Next page'));
+    await waitFor(() => {
+      expect(load).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 25 }));
+    });
+
+    await fireEvent.click(screen.getByTestId('filter-chip-status-open'));
+    await waitFor(() => {
+      // Page 3 of the old filter is not page 3 of the new one, and landing on
+      // an empty page is how an operator concludes a filter is broken.
+      expect(load).toHaveBeenLastCalledWith({
+        limit: 25, offset: 0, sort: '', q: '', filters: { status: ['open'] },
+      });
+    });
+  });
+
+  it('carries the counts the ENDPOINT answered with', async () => {
+    const load = vi.fn(async () => ({
+      rows: makeRows(3),
+      total: 3,
+      facets: { status: { open: 91, shut: 8 } },
+    }));
+    render(DataTableHarness, { props: { load, itemsKey: 'rows', filters: [STATUS_FILTER] } });
+    await waitFor(() => {
+      expect(screen.getByTestId('filter-count-status-open')).toHaveTextContent('91');
+    });
+  });
+
+  it('offers the vocabulary uncounted when the endpoint counts nothing', async () => {
+    const load = vi.fn(async () => ({ rows: makeRows(3), total: 3 }));
+    render(DataTableHarness, { props: { load, itemsKey: 'rows', filters: [STATUS_FILTER] } });
+    await waitFor(() => {
+      expect(screen.getByTestId('filter-chip-status-open')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('filter-count-status-open')).toBeNull();
+  });
+
+  it('says a FILTER emptied the table rather than that the tenant is empty', async () => {
+    const open = statusRows().map((row) => ({ ...row, status: 'open' }));
+    render(DataTableHarness, { props: { rows: open, filters: [STATUS_FILTER] } });
+    await fireEvent.click(screen.getByTestId('filter-chip-status-shut'));
+    expect(screen.getByTestId('data-table-no-match')).toBeInTheDocument();
+    expect(screen.queryByText('No rows yet')).toBeNull();
+  });
+
+  it('puts the selection in the hash, so a narrowed table is a link', async () => {
+    render(DataTableHarness, {
+      props: { rows: statusRows(), filters: [STATUS_FILTER], urlKey: 'rows' },
+    });
+    await fireEvent.click(screen.getByTestId('filter-chip-status-shut'));
+    await waitFor(() => {
+      expect(window.location.hash).toBe('#/harness?rows_status=shut');
+    });
+  });
+
+  it('opens narrowed when the link says so', () => {
+    window.location.hash = '#/harness?rows_status=shut';
+    render(DataTableHarness, {
+      props: { rows: statusRows(), filters: [STATUS_FILTER], urlKey: 'rows' },
+    });
+    expect(renderedIDs()).toEqual(['id-004', 'id-005']);
+    expect(screen.getByTestId('active-filters')).toHaveTextContent('Status: shut');
   });
 });

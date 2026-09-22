@@ -7,20 +7,19 @@
   - Identity card: backend, model, host, registered_at, last_seen
   - Capability chips: all capabilities, gpu highlighted
   - Metrics card: metrics if available, otherwise unavailable notice
-  - Recent sessions table: sessions on this agent (filtered by backend/model match)
-  - Recent jobs table: jobs that reference this agent's backend
+  - Sessions table: the sessions that ran on THIS agent, read from the server
+  - Jobs table: the jobs that ran on THIS agent, read from the server
   - Raw JSON drawer: collapsible debug panel
 -->
 <script lang="ts">
   import { agentStore, refreshAgents } from '../../stores/agentStore.svelte.ts';
   import { orchestratorStore, type JobStatus } from '../../stores/orchestrator.svelte.ts';
-  import { sessionStore } from '../../stores/sessionStore.svelte.ts';
-  import { routeFleet, routeSessionDetail, routerStore } from '../../stores/router.svelte.ts';
+  import { listReturnHash, navigateTo, routeFleet, routeSessionDetail, routerStore } from '../../stores/router.svelte.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import StatusBadge from '../../components/core/StatusBadge.svelte';
   import DataTable from '../../components/core/DataTable.svelte';
-  import type { Column } from '../../lib/dataTable.ts';
+  import type { Column, PageRequest } from '../../lib/dataTable.ts';
   import { ChevronLeft, Server, Trash2, Zap } from 'lucide-svelte';
   import type { AgentRegistration, SessionStatusResponse } from '@quicbaas/sdk';
   import { formatDateTime, formatRelative } from '../../lib/time.ts';
@@ -35,23 +34,40 @@
     agentStore.agents.find((a) => a.id === agentId) ?? null,
   );
 
-  // Recent sessions: match by backend name (best available correlation).
-  const recentSessions = $derived(
-    agent
-      ? sessionStore.sessions
-          .filter((s) => s.backend === agent.backend)
-          .slice(0, 10)
-      : [],
-  );
+  // ---------------------------------------------------------------------------
+  // What ran HERE
+  //
+  // Both panels used to sieve the store's collection by BACKEND — every
+  // session on claude, whichever host it ran on — which is a different
+  // question from "what ran on this agent" and answered it wrongly whenever
+  // two agents shared a backend, which is the normal case. The listings take
+  // `agent_id` now, so each panel asks the server for exactly its own agent's
+  // records, paged, and the store is left to the pages that own it.
+  // ---------------------------------------------------------------------------
 
-  // Recent jobs: match by lead_backend config field.
-  const recentJobs = $derived(
-    agent
-      ? orchestratorStore.jobs
-          .filter((j) => j.config?.lead_backend === agent.backend)
-          .slice(0, 10)
-      : [],
-  );
+  async function loadAgentSessions(req: PageRequest): Promise<unknown> {
+    if (agentId === '') return { items: [], total: 0, limit: req.limit, offset: 0 };
+    const client = await getSDKClient();
+    return client.orchestrator.listSessionsPage(orchestratorStore.activeTenantID, {
+      limit: req.limit,
+      offset: req.offset,
+      sort: req.sort,
+      q: req.q,
+      agent_id: agentId,
+    });
+  }
+
+  async function loadAgentJobs(req: PageRequest): Promise<unknown> {
+    if (agentId === '') return { items: [], total: 0, limit: req.limit, offset: 0 };
+    const client = await getSDKClient();
+    return client.orchestrator.listJobsPage(orchestratorStore.activeTenantID, {
+      limit: req.limit,
+      offset: req.offset,
+      sort: req.sort,
+      q: req.q,
+      agent_id: agentId,
+    });
+  }
 
   const AGENT_SESSION_COLUMNS: Column<SessionStatusResponse>[] = [
     { key: 'session_id', label: 'Session ID', sortable: true, searchable: true },
@@ -117,8 +133,9 @@
   // Actions
   // ---------------------------------------------------------------------------
 
+  /** handleBack returns to the fleet as the operator left it, narrowed. */
   function handleBack(): void {
-    routeFleet();
+    navigateTo(listReturnHash('/fleet'));
   }
 
   async function confirmRemove(): Promise<void> {
@@ -410,20 +427,28 @@
       {/if}
     </div>
 
-    <!-- Recent sessions -->
+    <!-- Sessions that ran on this agent -->
     <div class="card bg-base-200 rounded-box p-4">
-      <div class="text-xs font-semibold text-base-content/40 uppercase tracking-wide mb-3">
-        Recent Sessions ({recentSessions.length})
+      <div class="flex items-center justify-between gap-2 mb-3">
+        <div class="text-xs font-semibold text-base-content/40 uppercase tracking-wide">
+          Sessions on this agent
+        </div>
+        <a
+          class="link link-primary text-xs"
+          href={`#/sessions?sessions_agent=${encodeURIComponent(agentId)}`}
+        >Open in Sessions</a>
       </div>
       <DataTable
         columns={AGENT_SESSION_COLUMNS}
-        rows={recentSessions}
+        load={loadAgentSessions}
+        itemsKey="items"
+        reloadKey={agentId}
         rowKey={(session: SessionStatusResponse) => session.session_id}
-        ariaLabel="Recent sessions"
+        ariaLabel="Sessions on this agent"
         searchPlaceholder="Search sessions..."
         searchLabel="Search agent sessions"
         noMatchText="No sessions match the search."
-        emptyTitle="No sessions found for this agent's backend"
+        emptyTitle="No sessions have run on this agent"
       >
         {#snippet row(session: SessionStatusResponse)}
           <tr
@@ -449,20 +474,28 @@
     </DataTable>
     </div>
 
-    <!-- Recent jobs -->
+    <!-- Jobs that ran on this agent -->
     <div class="card bg-base-200 rounded-box p-4">
-      <div class="text-xs font-semibold text-base-content/40 uppercase tracking-wide mb-3">
-        Recent Jobs ({recentJobs.length})
+      <div class="flex items-center justify-between gap-2 mb-3">
+        <div class="text-xs font-semibold text-base-content/40 uppercase tracking-wide">
+          Jobs on this agent
+        </div>
+        <a
+          class="link link-primary text-xs"
+          href={`#/jobs?jobs_agent=${encodeURIComponent(agentId)}`}
+        >Open in Jobs</a>
       </div>
       <DataTable
         columns={AGENT_JOB_COLUMNS}
-        rows={recentJobs}
+        load={loadAgentJobs}
+        itemsKey="items"
+        reloadKey={agentId}
         rowKey={(job: JobStatus) => job.job_id}
-        ariaLabel="Recent jobs"
+        ariaLabel="Jobs on this agent"
         searchPlaceholder="Search jobs..."
         searchLabel="Search agent jobs"
         noMatchText="No jobs match the search."
-        emptyTitle="No jobs found for this agent's backend"
+        emptyTitle="No jobs have run on this agent"
       >
         {#snippet row(job: JobStatus)}
           <tr class="hover:bg-base-300/40 transition-colors">

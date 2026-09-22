@@ -608,7 +608,17 @@ describe('ProjectsView — edit dialog, git identity and autonomy', () => {
 
   it('shows the autonomous badge on the project row', async () => {
     render(ProjectsView);
-    await waitFor(() => expect(screen.getByText('autonomous')).toBeInTheDocument());
+    // The word appears twice on this page and both are right: the badge on
+    // the row, and the Dispatch facet chip that finds rows like it. The one
+    // under test is the badge, which is the one inside the project card.
+    const badge = await waitFor(() => {
+      const onRow = screen
+        .getAllByText('autonomous')
+        .find((el) => el.closest('.card') !== null);
+      expect(onRow).toBeDefined();
+      return onRow as HTMLElement;
+    });
+    expect(badge.className).toContain('badge-primary');
   });
 });
 

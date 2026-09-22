@@ -22,6 +22,12 @@
   import StatusBadge from '../../components/core/StatusBadge.svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import DataTable from '../../components/core/DataTable.svelte';
+  import { workflowFilters } from '../../lib/listFilters.ts';
+  import { selected, type FilterValues } from '../../lib/filters.ts';
+  import {
+    loadReferenceOptions,
+    referenceOptions,
+  } from '../../stores/referenceOptions.svelte.ts';
   import type { Column, PageRequest } from '../../lib/dataTable.ts';
   import StartJobDialog from '../../components/orchestrator/StartJobDialog.svelte';
   import WorkflowWizard from '../../components/orchestrator/WorkflowWizard.svelte';
@@ -69,14 +75,33 @@
 
   const reloadKey = $derived(`${orchestratorStore.activeTenantID}|${refreshTick}`);
 
+  $effect(() => {
+    void loadReferenceOptions(orchestratorStore.activeTenantID);
+  });
+
+  /**
+   * The workflow listing narrows by mode and project. `mode` carries a
+   * `rowValue` as well as a parameter, which costs nothing while this table
+   * is server-paged and is what makes the same field work unchanged on a
+   * panel that renders a collection it already holds.
+   */
+  const FILTERS = $derived(
+    workflowFilters<WorkflowDefinition>(referenceOptions.projects, (wf) => wf.mode),
+  );
+
   async function loadWorkflowsPage(req: PageRequest): Promise<unknown> {
     loadError = '';
     const client = await getSDKClient();
+    const chosen: FilterValues = req.filters ?? {};
+    const mode = selected(chosen, 'mode')[0] ?? '';
+    const projectID = selected(chosen, 'project')[0] ?? '';
     const page = await client.orchestrator.listWorkflowsPage(orchestratorStore.activeTenantID, {
       limit: req.limit,
       offset: req.offset,
       sort: req.sort,
       q: req.q,
+      ...(mode === '' ? {} : { mode }),
+      ...(projectID === '' ? {} : { project_id: projectID }),
     });
     // The listing has answered a duplicate name before (two records, one
     // name); keeping the guard means the reconciler never sees a repeated key.
@@ -571,6 +596,7 @@
       load={loadWorkflowsPage}
       itemsKey="items"
       {reloadKey}
+      filters={FILTERS}
       rowKey={(wf: WorkflowDefinition) => wf.name}
       urlKey="workflows"
       ariaLabel="Workflow definitions"

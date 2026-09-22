@@ -129,6 +129,11 @@ describe('AccountsView', () => {
 });
 
 describe('AccountsView — list rendering', () => {
+  /** onARow finds the occurrence of some text inside an account card. */
+  function onARow(text: string): HTMLElement | undefined {
+    return screen.getAllByText(text).find((el) => el.closest('.card') !== null);
+  }
+
   it('shows provider, status, default, and project scope', async () => {
     mockClient([
       account({ id: 'acct-1', display_name: 'alice-claude', default: true, status: 'active' }),
@@ -138,8 +143,10 @@ describe('AccountsView — list rendering', () => {
     await waitFor(() => {
       expect(screen.getByText('alice-claude')).toBeInTheDocument();
       expect(screen.getByText('bob-codex')).toBeInTheDocument();
-      expect(screen.getByText('Claude (Anthropic)')).toBeInTheDocument();
-      expect(screen.getByText('Codex (OpenAI)')).toBeInTheDocument();
+      // A provider name is on the row AND on the facet chip that finds rows
+      // like it; the row is the one under test.
+      expect(onARow('Claude (Anthropic)')).toBeDefined();
+      expect(onARow('Codex (OpenAI)')).toBeDefined();
       expect(screen.getByText('default')).toBeInTheDocument();
       expect(screen.getAllByText('Tenant-wide').length).toBeGreaterThan(0);
     });

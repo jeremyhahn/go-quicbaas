@@ -170,6 +170,7 @@ class RestOrchestratorClient {
         appendListParam(params, 'task_id', page?.task_id);
         appendListParam(params, 'runner', page?.runner);
         appendListParam(params, 'project_id', page?.project_id);
+        appendListParam(params, 'agent_id', page?.agent_id);
         appendCSVParam(params, 'statuses', page?.statuses);
         appendCSVParam(params, 'job_ids', page?.job_ids);
         appendPageParams(params, page);
@@ -186,6 +187,8 @@ class RestOrchestratorClient {
         appendListParam(params, 'assigned_to', page?.assigned_to);
         appendListParam(params, 'created_by', page?.created_by);
         appendListParam(params, 'auto_spawn', page?.auto_spawn);
+        appendListParam(params, 'agent_id', page?.agent_id);
+        appendListParam(params, 'job_id', page?.job_id);
         appendCSVParam(params, 'statuses', page?.statuses);
         appendPageParams(params, page);
         const raw = await this.fetchJSON(`/tasks?${params.toString()}`);
@@ -201,6 +204,10 @@ class RestOrchestratorClient {
         const params = new URLSearchParams({ tenant_id: tenantID });
         appendListParam(params, 'backend', page?.backend);
         appendListParam(params, 'status', page?.status);
+        appendListParam(params, 'project_id', page?.project_id);
+        appendListParam(params, 'job_id', page?.job_id);
+        appendListParam(params, 'runner', page?.runner);
+        appendListParam(params, 'agent_id', page?.agent_id);
         appendPageParams(params, page);
         const raw = await this.fetchJSON(`/sessions?${params.toString()}`);
         return adoptPage(raw, 'sessions', sessionFromWire);
@@ -219,9 +226,11 @@ class RestOrchestratorClient {
         return adoptPage(raw, 'agents');
     }
     // listWorkflowsPage maps to GET /api/v1/orchestrator/workflows with the
-    // shared paging parameters. The listing takes no filters of its own.
+    // shared paging parameters and the workflow listing's own filters.
     async listWorkflowsPage(tenantID, page) {
         const params = new URLSearchParams({ tenant_id: tenantID });
+        appendListParam(params, 'project_id', page?.project_id);
+        appendListParam(params, 'mode', page?.mode);
         appendPageParams(params, page);
         const raw = await this.fetchJSON(`/workflows?${params.toString()}`);
         return adoptPage(raw, 'workflows');
@@ -1715,6 +1724,7 @@ class RestProjectsClient {
     // parameters, and hands back the envelope the server answered with.
     async listProjectsPage(tenantId, page) {
         const params = new URLSearchParams({ tenant_id: tenantId });
+        appendListParam(params, 'autonomous', page?.autonomous);
         appendPageParams(params, page);
         const raw = await this.fetchJSON(`/api/v1/projects?${params.toString()}`);
         return adoptPage(raw, 'projects');
@@ -1863,6 +1873,7 @@ class RestAccountsClient {
         const params = new URLSearchParams({ tenant_id: req.tenant_id });
         appendListParam(params, 'provider', req.provider);
         appendListParam(params, 'project_id', req.project_id);
+        appendListParam(params, 'status', req.status);
         appendPageParams(params, req);
         const raw = await this.fetchJSON(`/api/v1/agent-accounts?${params.toString()}`);
         return adoptPage(raw, 'accounts');

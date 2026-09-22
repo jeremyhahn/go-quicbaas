@@ -52,6 +52,10 @@
   } from 'lucide-svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import PageHeader from '../../components/core/PageHeader.svelte';
+  import FilterBar from '../../components/core/FilterBar.svelte';
+  import { computeFacets, filterByFacets } from '../../lib/filters.ts';
+  import { FilterState } from '../../lib/filterState.svelte.ts';
+  import { projectFilters } from '../../lib/listFilters.ts';
   import ProjectFormFields from '../../components/orchestrator/ProjectFormFields.svelte';
   import SdlcBindingFields from '../../components/orchestrator/SdlcBindingFields.svelte';
   import SdlcConformancePanel from '../../components/orchestrator/SdlcConformancePanel.svelte';
@@ -89,6 +93,45 @@
 
   /** IDs of projects whose permission matrix is currently expanded. */
   let expanded = $state<Set<string>>(new Set());
+
+  // ---------------------------------------------------------------------------
+  // Finding one project
+  //
+  // The list is an expandable ROW per project, which is the right shape for a
+  // permission matrix and gives the operator nothing to search with. The
+  // controls are the app's own — the same FilterBar and the same URL grammar
+  // (`#/projects?projects_autonomous=true`) as every table — applied to the
+  // collection this view already holds.
+  // ---------------------------------------------------------------------------
+
+  const PROJECT_FILTERS = projectFilters<Project>((project) =>
+    project.autonomous === true ? 'true' : 'false',
+  );
+
+  const projectNarrowing = new FilterState('projects', PROJECT_FILTERS);
+
+  let projectSearch = $state('');
+
+  /** The searched set — what the facet counts are taken over. */
+  const searchedProjects = $derived.by(() => {
+    const needle = projectSearch.trim().toLowerCase();
+    if (needle === '') return projects;
+    return projects.filter((project) =>
+      [project.name, project.id, project.description, project.git_repo_url]
+        .some((field) => (field ?? '').toLowerCase().includes(needle)),
+    );
+  });
+
+  const projectFacets = $derived(computeFacets(searchedProjects, PROJECT_FILTERS));
+
+  const visibleProjects = $derived(
+    filterByFacets(searchedProjects, PROJECT_FILTERS, projectNarrowing.values),
+  );
+
+  /** narrowed says the emptiness is a control's doing, not the tenant's. */
+  const projectsNarrowed = $derived(
+    projectSearch.trim() !== '' || Object.keys(projectNarrowing.values).length > 0,
+  );
 
   async function fetchAll(): Promise<void> {
     loading = true;
@@ -688,8 +731,35 @@
 
   <!-- Project list -->
   {:else}
+    <div class="space-y-2 mb-3">
+      <input
+        type="search"
+        class="input input-bordered input-sm w-full max-w-xs"
+        placeholder="Search projects..."
+        aria-label="Search projects"
+        data-testid="projects-search"
+        bind:value={projectSearch}
+      />
+      <FilterBar
+        fields={PROJECT_FILTERS}
+        values={projectNarrowing.values}
+        facets={projectFacets}
+        onchange={(next) => projectNarrowing.apply(next)}
+      />
+      <div class="text-xs text-base-content/50" data-testid="projects-count">
+        {visibleProjects.length} of {projects.length} projects
+      </div>
+    </div>
+
+    {#if visibleProjects.length === 0}
+      <!-- Narrowed to nothing is not "no projects yet" — see AgentFleet. -->
+      <div class="text-center py-8 text-sm text-base-content/40" data-testid="projects-no-match">
+        {projectsNarrowed ? 'No projects match the current filter.' : 'No projects yet.'}
+      </div>
+    {/if}
+
     <div class="space-y-3">
-      {#each projects as project (project.id)}
+      {#each visibleProjects as project (project.id)}
         {@const isOpen = expanded.has(project.id)}
         {@const agentRoles = project.agent_roles ?? {}}
         {@const scopedAgentIds = Object.keys(agentRoles)}

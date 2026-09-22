@@ -1,4 +1,4 @@
-import type { AgentPageParams, JobPageParams, PageParams, PageResult, SessionPageParams, TaskPageParams } from './page.js';
+import type { AgentPageParams, JobPageParams, PageResult, SessionPageParams, TaskPageParams, WorkflowPageParams } from './page.js';
 import type { RAGClient } from './rag.js';
 import type { EmbeddingsClient } from './embedding_sdk.js';
 import type { MessagingClient } from './messaging_sdk.js';
@@ -24,7 +24,7 @@ export interface OrchestratorClient {
     listTasksPage(tenantID: string, page?: TaskPageParams): Promise<PageResult<Task>>;
     listSessionsPage(tenantID: string, page?: SessionPageParams): Promise<PageResult<SessionStatusResponse>>;
     listAgentsPage(tenantID: string, page?: AgentPageParams): Promise<PageResult<AgentRegistration>>;
-    listWorkflowsPage(tenantID: string, page?: PageParams): Promise<PageResult<WorkflowDefinition>>;
+    listWorkflowsPage(tenantID: string, page?: WorkflowPageParams): Promise<PageResult<WorkflowDefinition>>;
     listJobs(tenantID: string, taskID?: string): Promise<JobStatus[]>;
     getJobStatus(tenantID: string, jobID: string): Promise<JobStatus>;
     startJob(req: StartJobRequest): Promise<StartJobResponse>;

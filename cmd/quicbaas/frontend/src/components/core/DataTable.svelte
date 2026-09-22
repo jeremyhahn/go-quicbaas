@@ -37,18 +37,41 @@
   of it. `total` is the only thing that differs between the two answers, so
   `total` is what decides — see adoptPage in lib/dataTable.ts.
 
+  Faceted filters
+  ───────────────
+  `filters` declares the fields a list narrows by — a status, a project, a
+  runner — and the table owns the selection exactly as it owns the sort: it
+  goes in the hash, it resets the page, and it reaches the loader as
+  `req.filters`. The counts beside each chip come from the answer's `facets`
+  member in server mode and are computed here in client mode, so a view gets
+  the same control either way and neither has to know which it is.
+
   State in the URL
   ────────────────
-  With `urlKey` set, the current page, page size, sort and search live in the
-  route hash (`#/jobs?jobs_page=3&jobs_sort=started_at:desc`), so a reload or a
-  pasted link lands on the same page of the same table. The hash is rewritten
-  with replaceState: paging is not navigation, and Back must leave the view,
-  not walk back through forty pages.
+  With `urlKey` set, the current page, page size, sort, search and filters
+  live in the route hash
+  (`#/tasks?tasks_page=3&tasks_sort=updated_at:desc&tasks_status=pending,blocked`),
+  so a reload or a pasted link lands on the same page of the same table,
+  narrowed the same way. The hash is rewritten with replaceState: paging is
+  not navigation, and Back must leave the view, not walk back through forty
+  pages.
 -->
 <script lang="ts" generics="T">
   import type { Snippet } from 'svelte';
   import { untrack } from 'svelte';
+  import { ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-svelte';
   import EmptyState from './EmptyState.svelte';
+  import FilterBar from './FilterBar.svelte';
+  import {
+    activeCount,
+    computeFacets,
+    filterByFacets,
+    readFilters,
+    writeFilters,
+    type Facets,
+    type FilterField,
+    type FilterValues,
+  } from '../../lib/filters.ts';
   import {
     DEFAULT_PAGE_SIZE,
     PAGE_SIZES,
@@ -76,6 +99,7 @@
     row,
     rows = [],
     load,
+    filters = [],
     itemsKey,
     reloadKey,
     loading = false,
@@ -104,6 +128,8 @@
     rows?: readonly T[];
     /** load reads one page, for a view whose endpoint pages. */
     load?: (req: PageRequest) => Promise<unknown>;
+    /** filters declares the facets this list can be narrowed by. */
+    filters?: FilterField<T>[];
     /** itemsKey names the envelope member holding the rows (`jobs`, `tasks`). */
     itemsKey?: string;
     /** reloadKey forces a re-read when it changes — the active tenant, say. */
@@ -168,7 +194,24 @@
   /** searchInput is what the operator is typing; query is what the table ran. */
   let searchInput = $state(initial.q);
   let query = $state(initial.q);
+  /** The faceted selection, read from the link the operator arrived on. */
+  let filterValues = $state<FilterValues>(
+    untrack(() =>
+      urlKey !== '' && typeof window !== 'undefined'
+        ? readFilters(window.location.hash, urlKey, filters)
+        : {},
+    ),
+  );
+  /**
+   * sizeTouched records that the operator chose a page size. Once they have,
+   * the pager stays on screen even where the rows now fit on one page —
+   * hiding the control somebody just used would strand them at 100 rows with
+   * no way back to 25.
+   */
+  let sizeTouched = $state(false);
 
+  /** What the endpoint counted per facet, absent when it counted nothing. */
+  let serverFacets = $state<Facets | undefined>(undefined);
   /** Rows the loader answered with, when it answered a paged envelope. */
   let serverRows = $state<T[]>([]);
   let serverTotal = $state<number | null>(null);
@@ -191,10 +234,24 @@
   /** The collection the component pages itself, in client mode. */
   const collection = $derived<readonly T[]>(load !== undefined ? fallbackRows : rows);
 
+  /**
+   * searched is the client-mode collection after the SEARCH and before the
+   * facets. The counts are taken over it, because a facet counted after its
+   * own filter was applied would read "pending 12" and every other status 0.
+   */
+  const searched = $derived<readonly T[]>(
+    serverMode ? [] : filterRows(collection, columns, query),
+  );
+
   const matched = $derived(
     serverMode
       ? serverRows
-      : sortRows(filterRows(collection, columns, query), columns, sortKey, sortDir),
+      : sortRows(filterByFacets(searched, filters, filterValues), columns, sortKey, sortDir),
+  );
+
+  /** The counts the chips carry: the server's in server mode, ours otherwise. */
+  const facets = $derived<Facets | undefined>(
+    serverMode ? serverFacets : computeFacets(searched, filters),
   );
 
   const total = $derived(serverMode ? (serverTotal ?? 0) : matched.length);
@@ -203,8 +260,17 @@
   const offset = $derived(safePage * size);
   const lastPage = $derived(pageCount(total, size) - 1);
   const busy = $derived(loading || (serverBusy && visible.length === 0));
-  /** filtered says the emptiness is the search's doing, not the tenant's. */
-  const filtered = $derived(query.trim() !== '');
+  /** filtered says the emptiness is the search's or a facet's doing. */
+  const filtered = $derived(query.trim() !== '' || activeCount(filterValues) > 0);
+
+  /**
+   * hasFilters is a BOOLEAN, deliberately, and the read effect uses it rather
+   * than `filters.length`. A view builds its field list from data it loads —
+   * the project names behind a picker — so the ARRAY is a new one every time
+   * that arrives; depending on it would re-read the page each time a label
+   * showed up. The answer to "does this table facet at all" does not change.
+   */
+  const hasFilters = $derived(filters.length > 0);
   /**
    * The search box appears only where it can act: over a column that declared
    * itself searchable, or over an endpoint that searches server-side. A box
@@ -217,8 +283,12 @@
    * grants, a project's agent roles — and a page selector over three rows is
    * noise that makes the consistent treatment worth less, not more. The range
    * label stays either way: "3 of 3" is still the answer to how many there are.
+   *
+   * Once the operator has CHOSEN a size the pager stays, whatever the count:
+   * the control that put them on 100 rows has to still be there to put them
+   * back.
    */
-  const pageable = $derived(total > (PAGE_SIZES[0] ?? DEFAULT_PAGE_SIZE));
+  const pageable = $derived(total > size || sizeTouched);
   const hasRows = $derived(serverMode ? total > 0 : collection.length > 0);
 
   // -------------------------------------------------------------------------
@@ -242,12 +312,16 @@
   $effect(() => {
     const loader = load;
     const key = reloadKey;
+    const chosen = filterValues;
+    const faceted = hasFilters;
     const req: PageRequest = {
       limit: size,
       offset: page * size,
       sort: sortParam(sortKey, sortDir),
       q: query,
     };
+    // Absent rather than empty for a table with no facets — see PageRequest.
+    if (faceted) req.filters = chosen;
     if (loader === undefined) return;
     untrack(() => {
       if (key !== lastReloadKey) {
@@ -276,11 +350,15 @@
         fallbackRows = answered.items;
         serverRows = [];
         serverTotal = null;
+        // An endpoint that does not page does not count either; the chips
+        // fall back to counting the collection it handed over.
+        serverFacets = undefined;
         fellBack = true;
         return;
       }
       serverRows = answered.items;
       serverTotal = answered.total;
+      serverFacets = answered.facets;
       fallbackRows = [];
       fellBack = false;
     } catch (err: unknown) {
@@ -302,8 +380,17 @@
       sort: sortParam(sortKey, sortDir),
       q: query,
     };
+    const chosen = filterValues;
     if (urlKey === '' || typeof window === 'undefined') return;
-    const next = writeState(window.location.hash, urlKey, state, defaults);
+    // One rewrite for both halves: two effects racing to replaceState would
+    // each preserve what the other wrote, but only by reading a hash the
+    // browser had not finished updating.
+    const next = writeFilters(
+      writeState(window.location.hash, urlKey, state, defaults),
+      urlKey,
+      filters,
+      chosen,
+    );
     if (next !== window.location.hash) {
       window.history.replaceState(window.history.state, '', next);
     }
@@ -320,9 +407,16 @@
     page = 0;
   }
 
-  function sortIndicator(key: string): string {
-    if (sortKey !== key || sortDir === 'none') return '';
-    return sortDir === 'asc' ? '↑' : '↓';
+  /**
+   * sortState is what a header's icon shows. 'none' is NOT "no icon": an
+   * unsorted sortable column carries the neutral ⇅, because a header that
+   * looks like text until you happen to click it is a control nobody finds.
+   * A column that does not sort carries nothing at all, which is how the two
+   * are told apart at a glance.
+   */
+  function sortState(key: string): SortDirection {
+    if (sortKey !== key || sortDir === 'none') return 'none';
+    return sortDir;
   }
 
   function ariaSort(key: string): 'ascending' | 'descending' | 'none' {
@@ -334,11 +428,22 @@
     page = Math.min(Math.max(0, target), Math.max(0, lastPage));
   }
 
+  /**
+   * applyFilters takes the whole next selection from FilterBar and returns to
+   * the first page: page 3 of the old filter is not page 3 of the new one, and
+   * landing on an empty page is how an operator concludes a filter is broken.
+   */
+  function applyFilters(next: FilterValues): void {
+    filterValues = next;
+    page = 0;
+  }
+
   function changeSize(next: number): void {
     // Keep the first row of the current page in view: growing the page size
     // must not throw the operator back to the top of a 2,000-row list.
     const first = safePage * size;
     size = next;
+    sizeTouched = true;
     page = Math.floor(first / next);
   }
 
@@ -347,40 +452,113 @@
   }
 </script>
 
-<div class="space-y-3" data-testid="data-table">
-  <!-- Toolbar: search, the view's own filters, page size. -->
-  <div class="flex items-center gap-2 flex-wrap">
-    {#if searchable}
-      <input
-        type="search"
-        class="input input-bordered input-sm w-full max-w-xs"
-        placeholder={searchPlaceholder}
-        aria-label={searchLabel}
-        data-testid="data-table-search"
-        bind:value={searchInput}
-      />
-    {/if}
-    {#if toolbar}
-      {@render toolbar()}
-    {/if}
-    <div class="flex-1"></div>
-    {#if pageable}
-      <label class="flex items-center gap-1 text-xs text-base-content/50">
-        <span>Rows</span>
-        <select
-          class="select select-bordered select-xs"
-          aria-label="Rows per page"
-          data-testid="data-table-page-size"
-          value={size}
-          onchange={(e) => changeSize(Number((e.currentTarget as HTMLSelectElement).value))}
-        >
-          {#each PAGE_SIZES as option (option)}
-            <option value={option}>{option}</option>
-          {/each}
-        </select>
-      </label>
-    {/if}
+<!--
+  The pager, defined ONCE and rendered twice — above the table and below it.
+  Two render sites, one piece of state: whichever one the operator reaches
+  for, the other agrees, because there is nothing for them to disagree about.
+
+  THE TOP ONE IS THE POINT. A pager only at the bottom of twenty-five rows is
+  below the fold on every laptop in the building, which is how a paged table
+  gets reported as "no pagination at all".
+
+  `place` distinguishes the two for assistive technology and for tests: two
+  buttons with the identical accessible name in one document is exactly the
+  ambiguity a screen-reader user cannot resolve.
+-->
+{#snippet pagerControls(place: 'top' | 'bottom')}
+  {@const suffix = place === 'top' ? '' : ' (bottom)'}
+  <div
+    class="flex items-center justify-between gap-2 flex-wrap text-xs text-base-content/50"
+    data-testid="data-table-pager-{place}"
+  >
+    <span data-testid={place === 'top' ? 'data-table-range' : 'data-table-range-bottom'}>
+      {rangeLabel(offset, visible.length, total)}
+    </span>
+
+    <div class="flex items-center gap-2">
+      {#if place === 'top' && pageable}
+        <label class="flex items-center gap-1">
+          <span>Rows</span>
+          <select
+            class="select select-bordered select-xs"
+            aria-label="Rows per page"
+            data-testid="data-table-page-size"
+            value={size}
+            onchange={(e) => changeSize(Number((e.currentTarget as HTMLSelectElement).value))}
+          >
+            {#each PAGE_SIZES as option (option)}
+              <option value={option}>{option}</option>
+            {/each}
+          </select>
+        </label>
+      {/if}
+
+      {#if pageable}
+        <nav class="join" aria-label="Table pages{suffix}">
+          <button
+            type="button"
+            class="btn btn-xs join-item"
+            aria-label="First page{suffix}"
+            disabled={safePage <= 0}
+            onclick={() => goto(0)}
+          >&laquo;</button>
+          <button
+            type="button"
+            class="btn btn-xs join-item"
+            aria-label="Previous page{suffix}"
+            disabled={safePage <= 0}
+            onclick={() => goto(safePage - 1)}
+          >&lsaquo;</button>
+          <span
+            class="btn btn-xs join-item no-animation pointer-events-none"
+            data-testid={place === 'top' ? 'data-table-page' : 'data-table-page-bottom'}
+          >
+            {safePage + 1} / {lastPage + 1}
+          </span>
+          <button
+            type="button"
+            class="btn btn-xs join-item"
+            aria-label="Next page{suffix}"
+            disabled={safePage >= lastPage}
+            onclick={() => goto(safePage + 1)}
+          >&rsaquo;</button>
+          <button
+            type="button"
+            class="btn btn-xs join-item"
+            aria-label="Last page{suffix}"
+            disabled={safePage >= lastPage}
+            onclick={() => goto(lastPage)}
+          >&raquo;</button>
+        </nav>
+      {/if}
+    </div>
   </div>
+{/snippet}
+
+<div class="space-y-3" data-testid="data-table">
+  <!-- Toolbar: search and the view's own controls. -->
+  {#if searchable || toolbar}
+    <div class="flex items-center gap-2 flex-wrap">
+      {#if searchable}
+        <input
+          type="search"
+          class="input input-bordered input-sm w-full max-w-xs"
+          placeholder={searchPlaceholder}
+          aria-label={searchLabel}
+          data-testid="data-table-search"
+          bind:value={searchInput}
+        />
+      {/if}
+      {#if toolbar}
+        {@render toolbar()}
+      {/if}
+      <div class="flex-1"></div>
+    </div>
+  {/if}
+
+  {#if hasFilters}
+    <FilterBar fields={filters} values={filterValues} {facets} onchange={applyFilters} />
+  {/if}
 
   {#if loadError !== ''}
     <div class="alert alert-error text-sm" role="alert">
@@ -388,21 +566,37 @@
     </div>
   {/if}
 
+  {@render pagerControls('top')}
+
   <div class="overflow-x-auto rounded-box border border-base-300/50">
     <table class="table table-sm table-zebra w-full" aria-label={ariaLabel || undefined}>
       <thead>
         <tr class="bg-base-200/80 text-xs uppercase tracking-wider text-base-content/50">
           {#each columns as column (column.key)}
+            {@const direction = sortState(column.key)}
             <th class={column.headerClass ?? ''} aria-sort={ariaSort(column.key)}>
               {#if column.sortable}
                 <button
                   type="button"
-                  class="inline-flex items-center gap-1 font-semibold uppercase tracking-wider hover:text-base-content"
+                  class="inline-flex items-center gap-1 font-semibold uppercase tracking-wider hover:text-base-content group"
+                  class:text-base-content={direction !== 'none'}
                   onclick={() => toggleSort(column.key)}
                   aria-label="Sort by {column.label}"
+                  title="Sort by {column.label}"
+                  data-testid="data-table-sort-{column.key}"
+                  data-sort={direction}
                 >
                   <span>{column.label}</span>
-                  <span aria-hidden="true" class="text-primary">{sortIndicator(column.key)}</span>
+                  {#if direction === 'asc'}
+                    <ArrowUp class="h-3 w-3 text-primary" aria-hidden="true" />
+                  {:else if direction === 'desc'}
+                    <ArrowDown class="h-3 w-3 text-primary" aria-hidden="true" />
+                  {:else}
+                    <ChevronsUpDown
+                      class="h-3 w-3 opacity-40 group-hover:opacity-100"
+                      aria-hidden="true"
+                    />
+                  {/if}
                 </button>
               {:else if column.srLabel}
                 <span class="sr-only">{column.label}</span>
@@ -459,43 +653,5 @@
     </table>
   </div>
 
-  <!-- Pager -->
-  <div class="flex items-center justify-between gap-2 flex-wrap text-xs text-base-content/50">
-    <span data-testid="data-table-range">{rangeLabel(offset, visible.length, total)}</span>
-    {#if pageable}
-      <div class="join">
-        <button
-          type="button"
-          class="btn btn-xs join-item"
-          aria-label="First page"
-          disabled={safePage <= 0}
-          onclick={() => goto(0)}
-        >«</button>
-        <button
-          type="button"
-          class="btn btn-xs join-item"
-          aria-label="Previous page"
-          disabled={safePage <= 0}
-          onclick={() => goto(safePage - 1)}
-        >‹</button>
-        <span class="btn btn-xs join-item no-animation pointer-events-none" data-testid="data-table-page">
-          {safePage + 1} / {lastPage + 1}
-        </span>
-        <button
-          type="button"
-          class="btn btn-xs join-item"
-          aria-label="Next page"
-          disabled={safePage >= lastPage}
-          onclick={() => goto(safePage + 1)}
-        >›</button>
-        <button
-          type="button"
-          class="btn btn-xs join-item"
-          aria-label="Last page"
-          disabled={safePage >= lastPage}
-          onclick={() => goto(lastPage)}
-        >»</button>
-      </div>
-    {/if}
-  </div>
+  {@render pagerControls('bottom')}
 </div>

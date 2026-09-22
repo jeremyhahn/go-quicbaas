@@ -688,6 +688,77 @@ QUICBAAS_ORCHESTRATION_HEARTBEAT_TIMEOUT=120s
 QUICBAAS_ORCHESTRATION_ENABLED=true
 ```
 
+## Finding things: search, filters, sort, drill-down
+
+Every list in the web UI — jobs, tasks, sessions, workflows, the fleet,
+projects, accounts, and the security, data, AI and async lists — carries the
+same four controls, in the same places, doing the same thing.
+
+**Search** is the box at the top left. It is debounced and, on a paged list,
+runs server-side over the listing's text fields, so it searches the whole
+collection and not the twenty-five rows on screen.
+
+**Filters** are chip groups under the search box, one per facet the listing
+narrows by, each chip carrying the COUNT of records behind it:
+
+| List      | Facets                                   |
+|-----------|------------------------------------------|
+| Tasks     | status (many) · dispatch · project · agent |
+| Jobs      | state (many) · runner · project · agent  |
+| Sessions  | status · backend · role · project · agent |
+| Workflows | mode · project                           |
+| Fleet     | status · backend                         |
+| Projects  | dispatch (autonomous / manual)           |
+| Accounts  | status · provider                        |
+
+A bounded vocabulary is chips; an unbounded one — a project, an agent — is a
+picker, because a chip per project would be a thousand chips. Status on Tasks
+and state on Jobs are MULTI-select: lighting `pending` and `blocked` asks one
+question ("pending or blocked"), which is what the endpoint's `statuses`
+parameter takes. Clicking a lit chip switches it off. Whatever is narrowing
+the list is repeated as removable chips above it, with a per-field `×` and a
+**Clear all**; every chip is a button, so Tab reaches it and Enter presses it.
+
+Counts come from the listing's `facets` and are taken over the searched set
+BEFORE the facets are applied, so `shut 2` still reads 2 while `open` is
+selected — the count tells you what picking it would do. A daemon that sends
+no `facets` gets the same chips without counts rather than no chips.
+
+**Sort** is the arrow beside a column header: `⇅` when the column sorts but
+is not sorting, `▲` / `▼` when it is. A header with no arrow does not sort,
+which is how the two are told apart at a glance. Clicking cycles ascending →
+descending → off, and only the fields the endpoint orders by are sortable —
+sorting one page of twenty-five would look exactly like sorting the
+collection and would not be.
+
+**The pager is at the top AND the bottom** of every table, driving one piece
+of state: `1–25 of 1,987`, first / previous / next / last, and a rows-per-page
+selector (25 / 50 / 100) at the top. It appears once there is more than one
+page, and stays once you have chosen a size.
+
+**Drill-down.** Every id-like cell is a link: a task's project opens that
+project's tasks, its agent opens the agent, its job opens the attempt; an
+agent's detail page lists the sessions and jobs that ran on THAT agent (not
+merely on its backend) and offers each as a full page of the corresponding
+list. A detail page's **Back** returns to the list as you left it — narrowed,
+sorted, on your page.
+
+**A narrowed list is a link.** All of it lives in the route hash, prefixed
+with the table's own key so two tables on one route never read each other's
+state:
+
+```
+#/tasks?tasks_status=pending,blocked&tasks_project=<id>&tasks_sort=updated_at:desc&tasks_page=3&tasks_size=50&tasks_q=barrier
+       └ facet, comma-separated for a multi-select field
+                                     └ sort, `<field>` or `<field>:desc`
+                                                             └ 1-based page
+```
+
+Paste that into an issue and the next person opens exactly what you were
+looking at. The hash is rewritten with `replaceState`: paging is not
+navigation, so Back leaves the page rather than walking through forty pages.
+
+
 ## Next Steps
 
 - See CLI Reference for complete command documentation
