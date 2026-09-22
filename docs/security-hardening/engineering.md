@@ -1217,6 +1217,97 @@ fmt.Printf("Kernel FIPS Mode: %v\n", status.KernelFIPSMode)
 fmt.Printf("Kernel Cmdline: %v\n", status.KernelCmdline)
 ```
 
+### Data Encryption Keys Under FIPS
+
+ChaCha20-Poly1305 remains a supported DEK algorithm; FIPS activation is what
+takes it away. The artifact is the same either way — a FIPS-capable build that
+becomes FIPS-activated at runtime — so the refusal has to name the mode, not
+the algorithm, or it reads as an unknown-algorithm bug.
+
+| | Normal build | FIPS-activated |
+|---|---|---|
+| `kms.defaults.algorithm: AES-256-GCM` | accepted | accepted |
+| `kms.defaults.algorithm: CHACHA20-POLY1305` | accepted | refused at startup |
+| `CreateDEK` with AES-128/192/256-GCM | accepted | accepted |
+| `CreateDEK` with (X)ChaCha20-Poly1305 | accepted | refused |
+| `RotateDEK` of an existing ChaCha20 DEK | accepted | refused |
+
+Both refusals carry a typed `*fips.AEADNotApprovedError`, reachable with
+`errors.As`, naming the operation, the algorithm and the approved set:
+
+```
+kms.CreateDEK: CHACHA20-POLY1305 is not a FIPS 140-3 approved AEAD and this
+process is FIPS-activated; approved: AES-128-GCM, AES-192-GCM, AES-256-GCM
+```
+
+A rotation is refused as well as a creation, because re-keying carries the
+stored algorithm forward — it would hand a FIPS-activated process a fresh
+unapproved key. Existing ChaCha20 DEK records are left intact and readable by a
+process that is not FIPS-activated; switch the deployment's algorithm and
+create a new DEK to move the data.
+
+Nothing is silently substituted. A deployment that asked for ChaCha20 and got
+AES without being told would be holding a key that is not the one its
+configuration names.
+
+### Placement Hashing Under FIPS
+
+The consistent-hash ring (`pkg/util/hash`) keeps **blake2b** as its default.
+Placing a key on the ring decides which node owns it; it is not a
+cryptographic security function, and nothing about the placement is a secret, a
+signature or a key. Blake2b is also not served by the Go Cryptographic Module,
+so `GODEBUG=fips140=only` does not refuse it.
+
+**SHA-256 is selectable** for deployments that would rather every hash come
+from an approved module:
+
+```go
+hashFunc, err := hash.Select("sha256")   // "blake2b" (default), "sha256", "fnv1a"
+if err != nil {
+    return err
+}
+ring, err := hash.New(hash.Config{VirtualNodes: 150, HashFunc: hashFunc})
+```
+
+An unknown name yields a typed `*hash.UnknownAlgorithmError` listing what would
+have been accepted, so a ring is never built with a hash other than the one
+that was asked for. Changing the algorithm re-places every key: pick it when
+the ring is created, not while it is serving.
+
+### Conformance Pass
+
+`GOFIPS140=latest` activates the module; `GODEBUG=fips140=only` makes it
+**refuse** unapproved algorithms rather than merely deprioritize them. The
+second is what proves conformance, and it is what this target runs:
+
+```bash
+make test-fips-conformance
+```
+
+It covers client-secret login (PBKDF2-HMAC-SHA256), envelope field encryption,
+the DEK algorithm gate, placement hashing and configuration validation. The
+TOTP surface is deliberately outside this pass: it carries protocol-mandated
+HMAC-SHA1, which has its own FIPS treatment documented under *TOTP in FIPS
+Mode* above.
+
+**Known gap — `pkg/security` keyring encryption is not yet conformant.** Its
+AEAD is built by go-xkms `pkg/crypto/aead.NewGCM`, which calls
+`cipher.NewGCM` and supplies the IV itself; `fips140=only` refuses it, exactly
+as the field path did before this change. The fix belongs upstream in go-xkms
+(the same `cipher.NewGCMWithRandomNonce` substitution that package already
+applies elsewhere, e.g. `pkg/seal/secret_sealer.go`), so the package is named
+here rather than quietly left out of the pass.
+
+**The AES-128 field path carries one `#nosec G407`.**
+`cipher.NewGCMWithRandomNonce`'s `Seal` takes a nil nonce by contract — it
+panics on a non-empty one and draws the nonce from the module DRBG itself —
+but gosec matches the literal argument, not the constructor, and reads it as a
+hardcoded IV. The annotation sits on that single line with the reason written
+out, which is what `GOSEC_EXCLUDE` in the Makefile prescribes: G407 is
+deliberately absent from the repo-wide exclude list, so the one site that can
+raise it is answered where a reviewer reads the code rather than silenced for
+every future site as well.
+
 ### Validation Requirements
 
 **Pre-deployment checklist:**

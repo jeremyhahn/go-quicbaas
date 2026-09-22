@@ -365,6 +365,13 @@ func (c *KMSConfig) Validate() error {
 		}
 	}
 
+	// A FIPS-activated process cannot serve an unapproved DEK algorithm, so a
+	// deployment that asks for one fails at startup rather than at its first
+	// key operation
+	if err := validateFIPSDEKAlgorithm(c.Defaults.Algorithm); err != nil {
+		return err
+	}
+
 	// Validate safety thresholds
 	if c.Safety.UsageWarning < 0 || c.Safety.UsageWarning > 100 {
 		return &ValidationError{

@@ -2609,6 +2609,15 @@ func (k *kmsServiceImpl) CreateDEK(ctx context.Context, req *CreateDEKRequest) (
 		algorithm = KeyAlgAES256GCM
 	}
 
+	// Refuse an algorithm this process is not allowed to use before any key
+	// material exists
+	if err := requireFIPSApprovedDEKAlgorithm("kms.CreateDEK", algorithm); err != nil {
+		if k.metrics != nil {
+			k.metrics.errorsByType.With("invalid_input", "create_dek").Inc()
+		}
+		return nil, err
+	}
+
 	// Determine key size based on algorithm
 	keyBytes := algorithmToKeySize(algorithm)
 
@@ -2801,6 +2810,15 @@ func (k *kmsServiceImpl) RotateDEK(ctx context.Context, req *RotateDEKRequest) (
 			k.metrics.errorsByType.With("not_found", "rotate_dek").Inc()
 		}
 		return nil, NewError(errors.ErrNotFound, "kms.RotateDEK", "DEK not found at path: "+normalizedPath)
+	}
+
+	// Re-keying carries the existing algorithm forward, so a DEK this process
+	// is not allowed to use cannot be rotated into continued service either
+	if err := requireFIPSApprovedDEKAlgorithm("kms.RotateDEK", entry.metadata.Algorithm); err != nil {
+		if k.metrics != nil {
+			k.metrics.errorsByType.With("invalid_input", "rotate_dek").Inc()
+		}
+		return nil, err
 	}
 
 	// Store old version

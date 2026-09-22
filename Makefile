@@ -1258,6 +1258,38 @@ test-fips: ## Run tests in FIPS mode
 	@echo "$(YELLOW)Using GOFIPS140=latest (Go 1.24+)$(NC)"
 	GOFIPS140=latest $(GOTEST) -v ./pkg/fips/...
 
+# FIPS_ONLY_ENV activates the Go Cryptographic Module and puts it in the mode
+# that REFUSES every unapproved algorithm instead of merely preferring approved
+# ones. A package listed under test-fips-conformance passes here only if every
+# primitive it reaches is FIPS 140-3 approved.
+FIPS_ONLY_ENV = GOFIPS140=latest GODEBUG=fips140=only
+
+# FIPS_LOGIN_TESTS are the client-secret login paths (PBKDF2-HMAC-SHA256
+# derivation and verification). The rest of ./pkg/iam is deliberately not in
+# this pass: the TOTP surface carries protocol-mandated HMAC-SHA1, which has
+# its own FIPS treatment and its own refusal.
+FIPS_LOGIN_TESTS = ClientSecret|HashClientSecret|ValidateClient
+
+# FIPS_DEK_TESTS are the data-encryption-key algorithm gate. ./pkg/service is
+# far larger than this change and is filtered for the same reason.
+FIPS_DEK_TESTS = DEK
+
+.PHONY: test-fips-conformance
+test-fips-conformance: ## Run the FIPS conformance pass (GODEBUG=fips140=only)
+	@echo "$(BLUE)Running FIPS 140-3 conformance tests (fips140=only)...$(NC)"
+	@echo "$(YELLOW)Unapproved algorithms are refused by the module, not merely deprioritized$(NC)"
+	$(FIPS_ONLY_ENV) $(GOTEST) ./pkg/fips/... ./pkg/util/hash/... ./pkg/storage/encryption/... ./pkg/config/...
+	@echo "$(YELLOW)Login (client secret KDF): $(FIPS_LOGIN_TESTS)$(NC)"
+	$(FIPS_ONLY_ENV) $(GOTEST) -run '$(FIPS_LOGIN_TESTS)' ./pkg/iam/
+	@echo "$(YELLOW)Envelope DEK algorithm gate: $(FIPS_DEK_TESTS)$(NC)"
+	$(FIPS_ONLY_ENV) $(GOTEST) -run '$(FIPS_DEK_TESTS)' ./pkg/service/
+	@echo "$(GREEN)FIPS conformance pass complete$(NC)"
+	@echo "$(YELLOW)NOT covered: ./pkg/security (keyring at-rest encryption).$(NC)"
+	@echo "$(YELLOW)  Its AEAD comes from go-xkms pkg/crypto/aead.NewGCM, which builds$(NC)"
+	@echo "$(YELLOW)  cipher.NewGCM with a caller-supplied IV and is refused under$(NC)"
+	@echo "$(YELLOW)  fips140=only. The fix is upstream; adding the package here would$(NC)"
+	@echo "$(YELLOW)  report a go-xkms defect as a quicbaas one.$(NC)"
+
 .PHONY: test-unit
 test-unit: test ## Alias for test (unit tests only)
 	@# This is now an alias for the test target which already excludes integration tests

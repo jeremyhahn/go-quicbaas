@@ -112,19 +112,28 @@ func EncryptField(value []byte, key []byte, algorithm string) ([]byte, error) {
 	}
 
 	// AES-128: use raw crypto (xkms AES-GCM only supports AES-256)
-	block, err := aes.NewCipher(derivedKey)
+	gcm, err := newAES128GCM(derivedKey, "encryption.EncryptField", errors.ErrEncryption)
 	if err != nil {
-		return nil, api.NewCipherError("encryption.EncryptField", "failed to create cipher", errors.ErrEncryption, err)
+		return nil, err
 	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, api.NewCipherError("encryption.EncryptField", "failed to create GCM", errors.ErrEncryption, err)
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, api.NewCipherError("encryption.EncryptField", "failed to generate nonce", errors.ErrEncryption, err)
-	}
-	return gcm.Seal(nonce, nonce, value, nil), nil
+	// Seal generates the nonce itself and prepends it, producing the same
+	// nonce || ciphertext || tag layout this package has always written.
+	//
+	// G407 (hardcoded IV/nonce) is the only finding gosec raises on this
+	// line, and the nil it matches is not an IV: gcm comes from
+	// newAES128GCM, i.e. cipher.NewGCMWithRandomNonce, whose Seal REQUIRES an
+	// empty nonce -- it panics on anything else ("non-empty nonce passed to
+	// GCMWithRandomNonce", crypto/cipher/gcm.go) -- and draws a fresh 12-byte
+	// nonce from the module DRBG on every call
+	// (crypto/internal/fips140/aes/gcm.SealWithRandomNonce, which calls
+	// fips140.RecordApproved and then drbg.Read). The rule matches the literal
+	// argument and cannot see which constructor produced the AEAD. Supplying
+	// our own nonce here is exactly what the Go Cryptographic Module refuses
+	// under GODEBUG=fips140=only, so there is no caller-nonce form of this
+	// line to write instead; the repo-wide gosec excludes deliberately do not
+	// carry G407 (Makefile GOSEC_EXCLUDE), so it is answered here, per site.
+	// #nosec G407 -- random nonce is generated inside Seal by NewGCMWithRandomNonce
+	return gcm.Seal(nil, nil, value, nil), nil
 }
 
 // DecryptField decrypts a ciphertext value using the specified algorithm and key.
@@ -171,24 +180,47 @@ func DecryptField(value []byte, key []byte, algorithm string) ([]byte, error) {
 	}
 
 	// AES-128: use raw crypto (xkms AES-GCM only supports AES-256)
-	block, err := aes.NewCipher(derivedKey)
+	gcm, err := newAES128GCM(derivedKey, "encryption.DecryptField", errors.ErrDecryption)
 	if err != nil {
-		return nil, api.NewCipherError("encryption.DecryptField", "failed to create cipher", errors.ErrDecryption, err)
+		return nil, err
 	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, api.NewCipherError("encryption.DecryptField", "failed to create GCM", errors.ErrDecryption, err)
-	}
-	nonceSize := gcm.NonceSize()
-	if len(value) < nonceSize+gcm.Overhead() {
+	// Overhead covers the prepended nonce as well as the tag, so this is the
+	// same minimum length the nonce-splitting form checked for.
+	if len(value) < gcm.Overhead() {
 		return nil, api.NewCiphertextTooShortError("encryption.DecryptField", "")
 	}
-	nonce, ciphertext := value[:nonceSize], value[nonceSize:]
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	// Open reads the nonce from the front of the ciphertext, which is where
+	// every field this package has ever written keeps it.
+	plaintext, err := gcm.Open(nil, nil, value, nil)
 	if err != nil {
 		return nil, api.NewAuthenticationFailedError("encryption.DecryptField", err)
 	}
 	return plaintext, nil
+}
+
+// newAES128GCM builds the AEAD for the AES-128 field path.
+//
+// It uses cipher.NewGCMWithRandomNonce rather than cipher.NewGCM because the
+// Go Cryptographic Module refuses the latter's caller-supplied IV under
+// GODEBUG=fips140=only ("use of GCM with arbitrary IVs is not allowed"), which
+// took envelope encryption down on FIPS-activated hosts. The random-nonce form
+// is the approved construction and keeps the wire format byte-for-byte
+// identical: it prepends its 12-byte nonce to the sealed output and reads it
+// back from the same place, so fields encrypted by either form interoperate and
+// no data migration is required.
+//
+// AES-256 does not come through here — it is served by xkms.AESGCMEncrypt,
+// which is already FIPS-approved.
+func newAES128GCM(key []byte, op string, code errors.ErrorCode) (cipher.AEAD, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, api.NewCipherError(op, "failed to create cipher", code, err)
+	}
+	gcm, err := cipher.NewGCMWithRandomNonce(block)
+	if err != nil {
+		return nil, api.NewCipherError(op, "failed to create GCM", code, err)
+	}
+	return gcm, nil
 }
 
 // deriveKey derives the correct key size from a master key based on the algorithm.

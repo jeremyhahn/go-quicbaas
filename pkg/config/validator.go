@@ -49,11 +49,21 @@ var validServerModes = map[string]bool{
 type ValidationError struct {
 	Field   string
 	Message string
+
+	// Cause is the typed error this validation failure came from, when there
+	// is one. It lets a caller tell failures apart with errors.As instead of
+	// matching on Message.
+	Cause error
 }
 
 // Error implements the error interface.
 func (e *ValidationError) Error() string {
 	return fmt.Sprintf("validation error for field '%s': %s", e.Field, e.Message)
+}
+
+// Unwrap exposes Cause to errors.Is and errors.As.
+func (e *ValidationError) Unwrap() error {
+	return e.Cause
 }
 
 // ValidationErrors represents multiple validation errors.
@@ -71,6 +81,21 @@ func (e ValidationErrors) Error() string {
 		sb.WriteString(fmt.Sprintf("  %d. %s\n", i+1, err.Error()))
 	}
 	return sb.String()
+}
+
+// Unwrap exposes each aggregated failure to errors.Is and errors.As, so a
+// typed cause recorded by a section validator (for example
+// *fips.AEADNotApprovedError) stays reachable from the top-level Validate
+// result instead of surviving only as message text.
+func (e ValidationErrors) Unwrap() []error {
+	if len(e) == 0 {
+		return nil
+	}
+	errs := make([]error, len(e))
+	for i := range e {
+		errs[i] = &e[i]
+	}
+	return errs
 }
 
 // Validator validates configuration.
@@ -532,7 +557,9 @@ func (v *Validator) validateKMS(cfg *KMSConfig) {
 	if err := cfg.Validate(); err != nil {
 		var validationErr *ValidationError
 		if errors.As(err, &validationErr) {
-			v.addError(validationErr.Field, validationErr.Message)
+			// Keep the whole error, Cause included, so the typed failure it
+			// carries reaches the caller of Validate.
+			v.errors = append(v.errors, *validationErr)
 		} else {
 			v.addError("kms", err.Error())
 		}

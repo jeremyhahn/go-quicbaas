@@ -14,6 +14,7 @@
 package hash
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -294,4 +295,134 @@ func BenchmarkHashFunctions_Comparison(b *testing.B) {
 			}
 		})
 	}
+}
+
+func TestSHA256(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+	}{
+		{name: "simple key", key: "test-key"},
+		{name: "empty key", key: ""},
+		{name: "long key", key: "this-is-a-very-long-key-that-should-still-work-correctly-with-the-sha256-hash-function"},
+		{name: "special characters", key: "key-with-!@#$%^&*()_+-=[]{}|;:,.<>?"},
+		{name: "unicode characters", key: "key-with-unicode-世界-🌍"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			first := SHA256(tt.key)
+			second := SHA256(tt.key)
+
+			assert.Equal(t, first, second, "SHA256 should be deterministic")
+			assert.NotEqual(t, Blake2b(tt.key), first,
+				"SHA256 should not agree with Blake2b, or the ring would not actually change algorithm")
+		})
+	}
+}
+
+// TestSHA256KnownVector pins the mapping from digest to ring position. A change
+// here silently re-places every key on every ring built with this algorithm.
+func TestSHA256KnownVector(t *testing.T) {
+	// sha256("abc") = ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad,
+	// whose first eight bytes read little-endian are 0xeacf018fbf1678ba.
+	assert.Equal(t, uint64(0xeacf018fbf1678ba), SHA256("abc"))
+}
+
+func TestSHA256DistributesAcrossTheRing(t *testing.T) {
+	ring, err := New(Config{VirtualNodes: 150, HashFunc: SHA256})
+	assert.NoError(t, err)
+
+	for _, host := range []string{"node-a", "node-b", "node-c"} {
+		_, err := ring.Add(host)
+		assert.NoError(t, err)
+	}
+
+	counts := make(map[string]int)
+	for i := 0; i < 3000; i++ {
+		host, err := ring.Get("key-" + strconv.Itoa(i))
+		assert.NoError(t, err)
+		counts[host]++
+	}
+
+	assert.Len(t, counts, 3, "every host should own part of the keyspace")
+	for host, count := range counts {
+		assert.Greater(t, count, 500, "host %s took too small a share: %d of 3000", host, count)
+	}
+}
+
+func TestSelect(t *testing.T) {
+	tests := []struct {
+		name      string
+		algorithm Algorithm
+		want      HashFunc
+	}{
+		{name: "blake2b by name", algorithm: AlgorithmBlake2b, want: Blake2b},
+		{name: "sha256 by name", algorithm: AlgorithmSHA256, want: SHA256},
+		{name: "fnv1a by name", algorithm: AlgorithmFNV1a, want: FNV1a},
+		{name: "empty selects the default", algorithm: "", want: DefaultHash},
+		{name: "names are case-insensitive", algorithm: "SHA256", want: SHA256},
+		{name: "surrounding whitespace is ignored", algorithm: " sha256 ", want: SHA256},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Select(tt.algorithm)
+			assert.NoError(t, err)
+			assert.NotNil(t, got)
+			// Functions are not comparable, so compare their output instead.
+			assert.Equal(t, tt.want("compare-me"), got("compare-me"))
+		})
+	}
+}
+
+func TestSelectRejectsUnknownAlgorithm(t *testing.T) {
+	tests := []struct {
+		name      string
+		algorithm Algorithm
+	}{
+		{name: "misspelled", algorithm: "blake2"},
+		{name: "unsupported algorithm", algorithm: "md5"},
+		{name: "not an algorithm at all", algorithm: "!"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Select(tt.algorithm)
+			assert.Nil(t, got, "no hash function may be returned beside an error")
+
+			var unknown *UnknownAlgorithmError
+			assert.ErrorAs(t, err, &unknown)
+			assert.Equal(t, string(tt.algorithm), unknown.Algorithm)
+			assert.Equal(t, SupportedAlgorithms(), unknown.Supported,
+				"the error should tell the operator what it could have accepted")
+			assert.Contains(t, unknown.Error(), string(tt.algorithm))
+			assert.Contains(t, unknown.Error(), string(AlgorithmSHA256))
+		})
+	}
+}
+
+func TestSupportedAlgorithmsIsStableAndComplete(t *testing.T) {
+	supported := SupportedAlgorithms()
+
+	assert.Equal(t, []Algorithm{AlgorithmBlake2b, AlgorithmFNV1a, AlgorithmSHA256}, supported,
+		"the list is sorted so operator-facing output and error messages do not reorder between runs")
+
+	for _, algorithm := range supported {
+		fn, err := Select(algorithm)
+		assert.NoError(t, err, "advertised algorithm %q must be selectable", algorithm)
+		assert.NotNil(t, fn)
+	}
+}
+
+// TestDefaultAlgorithmIsBlake2b holds the owner's ruling in place: blake2b
+// stays the placement-hashing default and SHA-256 is the selectable
+// alternative, not a replacement.
+func TestDefaultAlgorithmIsBlake2b(t *testing.T) {
+	assert.Equal(t, AlgorithmBlake2b, DefaultAlgorithm)
+
+	fn, err := Select("")
+	assert.NoError(t, err)
+	assert.Equal(t, Blake2b("ruling-8"), fn("ruling-8"))
+	assert.Equal(t, Blake2b("ruling-8"), Hash("ruling-8"))
 }
