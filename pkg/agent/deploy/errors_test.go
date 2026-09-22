@@ -51,9 +51,19 @@ func TestErrorFormatting(t *testing.T) {
 			want: []string{"systemd install failed", "start", "u.service", cause.Error()},
 		},
 		{
+			name: "LingerNotEnabledError",
+			err:  &LingerNotEnabledError{User: "jhahn", Command: "sudo loginctl enable-linger jhahn", Cause: cause},
+			want: []string{"lingering is not enabled", "jhahn", "ssh session closes", "sudo loginctl enable-linger jhahn", cause.Error()},
+		},
+		{
+			name: "AgentUnreachableError",
+			err:  &AgentUnreachableError{Addr: "10.0.0.1:9091", Cause: cause},
+			want: []string{"runtime port is not reachable", "10.0.0.1:9091", cause.Error()},
+		},
+		{
 			name: "StartTimeoutError",
-			err:  &StartTimeoutError{Host: "h", Tenant: "t", Elapsed: "10s"},
-			want: []string{"did not appear online", "h", "t", "10s"},
+			err:  &StartTimeoutError{Host: "h", Tenant: "t", Elapsed: "10s", Cause: cause},
+			want: []string{"did not appear online", "h", "t", "10s", cause.Error()},
 		},
 		{
 			name: "InvalidSpecError",
@@ -73,8 +83,8 @@ func TestErrorFormatting(t *testing.T) {
 	}
 }
 
-// TestErrorUnwrap exercises Unwrap on the four typed errors that
-// preserve a cause. errors.Is must see through the wrapper.
+// TestErrorUnwrap exercises Unwrap on every typed error that preserves
+// a cause. errors.Is must see through the wrapper.
 func TestErrorUnwrap(t *testing.T) {
 	cause := io.ErrClosedPipe
 	errs := []error{
@@ -82,6 +92,9 @@ func TestErrorUnwrap(t *testing.T) {
 		&SFTPUploadError{Cause: cause},
 		&RemoteExecError{Cause: cause},
 		&SystemdInstallError{Cause: cause},
+		&LingerNotEnabledError{Cause: cause},
+		&AgentUnreachableError{Cause: cause},
+		&StartTimeoutError{Cause: cause},
 	}
 	for _, e := range errs {
 		if !errors.Is(e, cause) {
@@ -98,6 +111,8 @@ func TestErrorMinimal(t *testing.T) {
 		&SFTPUploadError{},
 		&RemoteExecError{},
 		&SystemdInstallError{},
+		&LingerNotEnabledError{},
+		&AgentUnreachableError{},
 		&StartTimeoutError{},
 		&InvalidSpecError{},
 	}

@@ -119,8 +119,13 @@ const (
 
 // InstallAndStart writes the rendered unit content to the remote
 // host under ~/.config/systemd/user/<unitName>, then reloads the
-// user daemon, enables the unit so it starts at next login, and
-// starts it immediately.
+// user daemon, enables the unit so it starts at next login, ensures the
+// remote user's manager lingers, and starts the unit immediately.
+//
+// The linger step is not optional housekeeping: without it the user
+// manager, and the agent with it, dies when this SSH session closes.
+// A host where it cannot be enabled fails the install with a
+// *LingerNotEnabledError instead of reporting a started agent.
 //
 // The caller must have verified that systemctl --user is available
 // on the remote (see DetectSystemdUser).
@@ -147,16 +152,27 @@ func InstallAndStart(ctx context.Context, sshClient *SSHClient, unitContent, uni
 		return &SystemdInstallError{Unit: unitName, Stage: "write", Cause: err}
 	}
 
-	// Reload + enable + start.
-	cmds := []string{
+	// Reload + enable.
+	for _, cmd := range []string{
 		"systemctl --user daemon-reload",
 		"systemctl --user enable " + shellQuote(unitName),
-		"systemctl --user restart " + shellQuote(unitName),
-	}
-	for _, cmd := range cmds {
+	} {
 		if _, _, err := sshClient.Exec(ctx, cmd); err != nil {
 			return &SystemdInstallError{Unit: unitName, Stage: stageFor(cmd), Cause: err}
 		}
+	}
+
+	// Lingering, before the unit is started. A --user manager that does
+	// not linger is torn down with the last session of its user — this
+	// very SSH connection — so starting the agent first would only
+	// produce one that enrolls, heartbeats, and is killed on disconnect.
+	if err := EnsureLinger(ctx, sshClient, sshClient.User()); err != nil {
+		return err
+	}
+
+	start := "systemctl --user restart " + shellQuote(unitName)
+	if _, _, err := sshClient.Exec(ctx, start); err != nil {
+		return &SystemdInstallError{Unit: unitName, Stage: stageFor(start), Cause: err}
 	}
 	return nil
 }

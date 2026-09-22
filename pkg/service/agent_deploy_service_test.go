@@ -18,6 +18,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"math/big"
+	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -198,8 +199,16 @@ type fakeLister struct {
 	calls     atomic.Int32
 }
 
+// maxFakeListerCalls caps the fake's patience. A wait-online loop that
+// never terminates would otherwise poll until the call counter overflows,
+// turning a logic bug into a multi-minute test with an unreadable panic.
+const maxFakeListerCalls = 10_000
+
 func (l *fakeLister) ListAgents(ctx context.Context, req *orchestratorSDK.ListAgentsRequest) (*orchestratorSDK.ListAgentsResponse, error) {
 	i := int(l.calls.Add(1)) - 1
+	if i >= maxFakeListerCalls {
+		panic("fakeLister: wait-online polled without ever terminating")
+	}
 	var resp *orchestratorSDK.ListAgentsResponse
 	var err error
 	if i < len(l.responses) {
@@ -252,6 +261,12 @@ func newTestService(
 		now:         func() time.Time { return now },
 		sleep:       func(ctx context.Context, d time.Duration) error { return nil },
 		resolveHome: func(ctx context.Context, sess sshSession) (string, error) { return "/home/deploy", nil },
+		// A probe that passes, so tests exercising the registry half of
+		// wait-online do not dial the network. Tests that care about the
+		// liveness half replace it. It is set explicitly because the
+		// service dials for real when probe is nil: a missing probe is
+		// never read as a probe that passed.
+		probe: func(ctx context.Context, addr string) error { return nil },
 	}
 }
 
@@ -636,6 +651,291 @@ func TestDeploy_WaitOnline_Timeout(t *testing.T) {
 	}
 }
 
+// TestDeploy_WaitOnline_ProbesAfterSessionClosed pins the ordering the
+// omega incident exposed (go-quicbaas#980): the liveness probe has to run
+// after the deploy's SSH session is closed, because a systemd --user
+// agent whose manager does not linger only dies at that moment.
+func TestDeploy_WaitOnline_ProbesAfterSessionClosed(t *testing.T) {
+	spec := validSpec()
+	on := true
+	spec.Systemd = &on
+	spec.WaitOnline = 10 * time.Second
+
+	now := time.Unix(1_700_000_000, 0)
+	resp := &orchestratorSDK.ListAgentsResponse{
+		Agents: []*orchestratorSDK.AgentRegistration{
+			{ID: "a-1", Host: "0.0.0.0:9091", Status: "running", LastSeen: now.UnixNano()},
+		},
+		Count: 1,
+	}
+	lst := &fakeLister{responses: []*orchestratorSDK.ListAgentsResponse{resp}}
+	sess := &fakeSession{}
+	svc := newTestService(&fakeDialer{sess: sess}, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, lst, now)
+
+	var probedAddr string
+	var closedAtProbe bool
+	probeCalls := 0
+	svc.probe = func(ctx context.Context, addr string) error {
+		probeCalls++
+		probedAddr = addr
+		closedAtProbe = sess.closed
+		return nil
+	}
+
+	result, err := svc.Deploy(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	if probeCalls != 1 {
+		t.Fatalf("probe calls=%d want 1", probeCalls)
+	}
+	if !closedAtProbe {
+		t.Fatal("the ssh session must be closed before the agent is probed")
+	}
+	if want := "remote.example.com:9091"; probedAddr != want {
+		t.Fatalf("probed %q want %q", probedAddr, want)
+	}
+	if result.AgentID != "a-1" {
+		t.Fatalf("agent id=%q", result.AgentID)
+	}
+}
+
+// TestDeploy_WaitOnline_RejectsUnreachableAgent is the omega regression:
+// the fleet registry still reported the agent as running from its last
+// heartbeat while every dial to its port was refused. A deploy must not
+// report Online on that evidence.
+func TestDeploy_WaitOnline_RejectsUnreachableAgent(t *testing.T) {
+	spec := validSpec()
+	on := true
+	spec.Systemd = &on
+	spec.WaitOnline = time.Second
+
+	now := time.Unix(1_700_000_000, 0)
+	registered := &orchestratorSDK.ListAgentsResponse{
+		Agents: []*orchestratorSDK.AgentRegistration{
+			{ID: "a-1", Host: "0.0.0.0:9091", Status: "running", LastSeen: now.UnixNano()},
+		},
+		Count: 1,
+	}
+	lst := &fakeLister{responses: []*orchestratorSDK.ListAgentsResponse{registered, registered}}
+	svc := newTestService(&fakeDialer{}, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, lst, now)
+
+	refused := &deploy.AgentUnreachableError{
+		Addr:  "remote.example.com:9091",
+		Cause: errors.New("connect: connection refused"),
+	}
+	svc.probe = func(ctx context.Context, addr string) error { return refused }
+	advancing := now
+	svc.now = func() time.Time {
+		advancing = advancing.Add(time.Second)
+		return advancing
+	}
+
+	result, err := svc.Deploy(context.Background(), spec)
+	var timeoutErr *deploy.StartTimeoutError
+	if !errors.As(err, &timeoutErr) {
+		t.Fatalf("want StartTimeoutError, got %T: %v", err, err)
+	}
+	var unreachable *deploy.AgentUnreachableError
+	if !errors.As(err, &unreachable) {
+		t.Fatalf("timeout must carry why the agent was rejected, got %v", err)
+	}
+	if result != nil && result.AgentID != "" {
+		t.Fatalf("an unreachable agent must not be reported online: %q", result.AgentID)
+	}
+}
+
+// TestDeploy_RejectsUndialableBindWhenWaitOnline pins the inverse of the
+// omega regression: when the deploy is asked to confirm the agent came
+// online but the bind gives it nothing to dial, it must refuse the spec
+// — before touching the remote host — instead of falling back to the
+// registry, whose stale "running" is what reported omega Online in the
+// first place (go-quicbaas#980).
+func TestDeploy_RejectsUndialableBindWhenWaitOnline(t *testing.T) {
+	binds := []struct {
+		name string
+		bind string
+	}{
+		{"ephemeral port", "0.0.0.0:0"},
+		{"named port", "0.0.0.0:grpc"},
+		{"unix socket", "unix:/run/agent.sock"},
+	}
+	for _, tc := range binds {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := validSpec()
+			on := true
+			spec.Systemd = &on
+			spec.AgentBind = tc.bind
+			spec.WaitOnline = 10 * time.Second
+
+			lst := &fakeLister{}
+			dialer := &fakeDialer{}
+			sys := &fakeSystemd{}
+			svc := newTestService(dialer, &fakeUploader{}, sys, &fakeNohup{}, lst, time.Unix(1_700_000_000, 0))
+			probeCalls := 0
+			svc.probe = func(ctx context.Context, addr string) error {
+				probeCalls++
+				return nil
+			}
+
+			result, err := svc.Deploy(context.Background(), spec)
+			var invalid *deploy.InvalidSpecError
+			if !errors.As(err, &invalid) {
+				t.Fatalf("want InvalidSpecError, got %T: %v", err, err)
+			}
+			if invalid.Field != "agent_bind" {
+				t.Fatalf("field=%q want agent_bind", invalid.Field)
+			}
+			if result != nil {
+				t.Fatalf("a rejected spec must not produce a result: %+v", result)
+			}
+			if dialer.seen != nil {
+				t.Fatal("the spec must be rejected before the ssh dial")
+			}
+			if sys.calls != 0 {
+				t.Fatalf("systemd installs=%d want 0", sys.calls)
+			}
+			if lst.calls.Load() != 0 {
+				t.Fatalf("registry polls=%d want 0", lst.calls.Load())
+			}
+			if probeCalls != 0 {
+				t.Fatalf("probe calls=%d want 0", probeCalls)
+			}
+		})
+	}
+}
+
+// TestWaitOnline_UndialableBindIsNotOnline guards the same invariant one
+// layer down, where an Online verdict is actually produced: even handed
+// a registry that reports the agent running, waitOnline must not return
+// an ID for a bind it cannot dial.
+func TestWaitOnline_UndialableBindIsNotOnline(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	spec := validSpec()
+	spec.AgentBind = "0.0.0.0:0"
+	spec.WaitOnline = 10 * time.Second
+
+	lst := &fakeLister{responses: []*orchestratorSDK.ListAgentsResponse{{
+		Agents: []*orchestratorSDK.AgentRegistration{
+			{ID: "a-1", Host: "0.0.0.0:0", Status: "running", LastSeen: now.UnixNano()},
+		},
+		Count: 1,
+	}}}
+	svc := newTestService(&fakeDialer{}, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, lst, now)
+
+	id, at, err := svc.waitOnline(context.Background(), spec, "a-1")
+	var invalid *deploy.InvalidSpecError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("want InvalidSpecError, got %T: %v", err, err)
+	}
+	if id != "" || at != "" {
+		t.Fatalf("no online verdict may be returned without a dial: id=%q at=%q", id, at)
+	}
+}
+
+// TestProbeRuntimePort_NoInjectedProbeStillDials asserts the other way a
+// probe can go missing: a service whose probe field was never wired must
+// dial for real rather than report a pass it never made.
+func TestProbeRuntimePort_NoInjectedProbeStillDials(t *testing.T) {
+	svc := &agentDeployService{}
+
+	t.Run("closed port is unreachable", func(t *testing.T) {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("listen: %v", err)
+		}
+		addr := ln.Addr().String()
+		if err := ln.Close(); err != nil {
+			t.Fatalf("close: %v", err)
+		}
+		err = svc.probeRuntimePort(context.Background(), addr)
+		var unreachable *deploy.AgentUnreachableError
+		if !errors.As(err, &unreachable) {
+			t.Fatalf("want AgentUnreachableError, got %T: %v", err, err)
+		}
+	})
+
+	t.Run("empty address is invalid", func(t *testing.T) {
+		err := svc.probeRuntimePort(context.Background(), "")
+		var invalid *deploy.InvalidSpecError
+		if !errors.As(err, &invalid) {
+			t.Fatalf("want InvalidSpecError, got %T: %v", err, err)
+		}
+	})
+}
+
+func TestAgentProbeAddr(t *testing.T) {
+	cases := []struct {
+		name string
+		spec *deploy.Spec
+		want string
+	}{
+		{name: "nil spec", spec: nil, want: ""},
+		{
+			name: "ssh port and wildcard bind",
+			spec: &deploy.Spec{Host: "node01:2222", AgentBind: "0.0.0.0:9091"},
+			want: "node01:9091",
+		},
+		{
+			name: "user prefixed host",
+			spec: &deploy.Spec{Host: "alice@node01", AgentBind: ":9091"},
+			want: "node01:9091",
+		},
+		{
+			name: "bind without port",
+			spec: &deploy.Spec{Host: "node01", AgentBind: "unix:/run/agent.sock"},
+			want: "",
+		},
+		{
+			name: "named port is not dialable",
+			spec: &deploy.Spec{Host: "node01", AgentBind: "0.0.0.0:grpc"},
+			want: "",
+		},
+		{
+			name: "ephemeral port is not dialable",
+			spec: &deploy.Spec{Host: "node01", AgentBind: "0.0.0.0:0"},
+			want: "",
+		},
+		{
+			name: "port out of range",
+			spec: &deploy.Spec{Host: "node01", AgentBind: "0.0.0.0:99999"},
+			want: "",
+		},
+		{
+			name: "empty bind",
+			spec: &deploy.Spec{Host: "node01", AgentBind: ""},
+			want: "",
+		},
+		{
+			name: "empty host",
+			spec: &deploy.Spec{Host: "", AgentBind: "0.0.0.0:9091"},
+			want: "",
+		},
+		{
+			name: "bracketed ipv6 host with ssh port",
+			spec: &deploy.Spec{Host: "[2001:db8::1]:22", AgentBind: "0.0.0.0:9091"},
+			want: "[2001:db8::1]:9091",
+		},
+		{
+			name: "bare ipv6 host",
+			spec: &deploy.Spec{Host: "2001:db8::1", AgentBind: "0.0.0.0:9091"},
+			want: "[2001:db8::1]:9091",
+		},
+		{
+			name: "user prefixed bracketed ipv6 host",
+			spec: &deploy.Spec{Host: "alice@[2001:db8::1]:22", AgentBind: ":9091"},
+			want: "[2001:db8::1]:9091",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := agentProbeAddr(tc.spec); got != tc.want {
+				t.Fatalf("agentProbeAddr=%q want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDeploy_WaitOnline_SkipWhenZero(t *testing.T) {
 	spec := validSpec()
 	off := false
@@ -761,6 +1061,13 @@ func TestHostnameForCert(t *testing.T) {
 		"alice@host:22":       "host",
 		"alice@gpu-host-01":   "gpu-host-01",
 		"alice@remote.lan:22": "remote.lan",
+		// IPv6 literals survive whole, without their brackets.
+		"[2001:db8::1]:22":       "2001:db8::1",
+		"[2001:db8::1]":          "2001:db8::1",
+		"2001:db8::1":            "2001:db8::1",
+		"alice@[2001:db8::1]:22": "2001:db8::1",
+		"alice@2001:db8::1":      "2001:db8::1",
+		"::1":                    "::1",
 	}
 	for in, want := range cases {
 		if got := hostnameForCert(in); got != want {
@@ -827,6 +1134,15 @@ func TestNewAgentDeployService_DefaultWiring(t *testing.T) {
 	svc := NewAgentDeployService(AgentDeployServiceDeps{})
 	if svc == nil {
 		t.Fatal("expected non-nil service")
+	}
+	// A nil probe skips the liveness check, so production wiring must
+	// supply one.
+	concrete, ok := svc.(*agentDeployService)
+	if !ok {
+		t.Fatalf("unexpected service type %T", svc)
+	}
+	if concrete.probe == nil {
+		t.Fatal("production service must wire the agent liveness probe")
 	}
 	// Calling Deploy with an invalid spec must surface a typed error
 	// without touching the network.

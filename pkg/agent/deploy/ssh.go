@@ -67,6 +67,17 @@ func (c *SSHClient) Host() string {
 	return c.host
 }
 
+// User returns the login user the connection authenticated as. The
+// linger check needs it: `systemctl --user` and `loginctl enable-linger`
+// both act on this account, so reading it from the live connection keeps
+// the check honest even if a caller's spec says something else.
+func (c *SSHClient) User() string {
+	if c == nil || c.client == nil {
+		return ""
+	}
+	return c.client.User()
+}
+
 // UnderlyingClient exposes the *ssh.Client so adjacent primitives
 // (sftp.go) can wrap it. Callers must not Close the returned client;
 // the SSHClient owns its lifecycle.

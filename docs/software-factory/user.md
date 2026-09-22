@@ -789,14 +789,20 @@ What happens:
    `agent.key`), and the server CA bundle are uploaded over SFTP to
    `~/.quicbaas/agent` on the target.
 3. A systemd `--user` unit (or a `nohup` fallback) starts the daemon,
-   which immediately registers via `POST /api/v1/agents/register`.
+   which immediately registers via `POST /api/v1/agents/register`. A
+   `--user` unit also needs **lingering** enabled for the login user, or
+   the agent is stopped when the deploy's SSH session closes; the deploy
+   enables it over `sudo -n` and fails with the command to run when it
+   cannot ([cli.md](cli.md#lingering-systemd---user)).
 4. The register response advertises the **gRPC event-ingest URL**
    (e.g., `https://<server-lan-ip>:19090`) — the agent persists this
    into `credentials.json` and uses it for the long-lived `PushEvents`
    bidi stream. **Events never traverse the REST port.**
-5. The deploy command polls the fleet registry every 2 s until the
-   agent reports `running`, `idle`, or `ready`, then prints
-   `Online At: <timestamp>`.
+5. The deploy closes the SSH session, then polls the fleet registry
+   every 2 s until the agent reports `running`, `idle`, or `ready` **and**
+   its runtime port answers a dial, and prints `Online At: <timestamp>`.
+   The dial is what distinguishes a live agent from a registration left
+   behind by one that died on disconnect.
 
 Verify:
 

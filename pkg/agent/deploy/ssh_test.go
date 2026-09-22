@@ -42,6 +42,7 @@ type testSSHServer struct {
 	execErr  map[string]string
 	execFail map[string]bool
 	writes   map[string][]byte
+	ran      []string
 	mu       sync.Mutex
 	wg       sync.WaitGroup
 
@@ -112,6 +113,26 @@ func (s *testSSHServer) setExec(cmd, stdout, stderr string, fail bool) {
 	s.execOut[cmd] = stdout
 	s.execErr[cmd] = stderr
 	s.execFail[cmd] = fail
+}
+
+// ranCommands returns every command the server was asked to execute, in
+// order. Tests that assert on sequencing (lingering must be enabled
+// before the unit starts) read this rather than inferring order from
+// side effects.
+func (s *testSSHServer) ranCommands() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.ran...)
+}
+
+// executed reports whether cmd was run at least once.
+func (s *testSSHServer) executed(cmd string) bool {
+	for _, got := range s.ranCommands() {
+		if got == cmd {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *testSSHServer) written(path string) ([]byte, bool) {
@@ -189,6 +210,10 @@ func testUnquotePath(s string) string {
 }
 
 func (s *testSSHServer) runExec(ch ssh.Channel, cmd string) {
+	s.mu.Lock()
+	s.ran = append(s.ran, cmd)
+	s.mu.Unlock()
+
 	// Intercept cat redirection for WriteFile semantics.
 	if strings.HasPrefix(cmd, "cat > ") {
 		remotePath := testUnquotePath(strings.TrimSpace(strings.TrimPrefix(cmd, "cat > ")))

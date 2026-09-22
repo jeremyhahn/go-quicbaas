@@ -124,12 +124,69 @@ func (e *SystemdInstallError) Error() string {
 // Unwrap exposes the underlying cause for errors.Is / errors.As.
 func (e *SystemdInstallError) Unwrap() error { return e.Cause }
 
+// LingerNotEnabledError indicates the remote user's systemd --user
+// manager will not outlive the deploy's SSH session, and the deploy could
+// not enable lingering itself. Command carries the exact privileged
+// command the operator must run before re-deploying.
+type LingerNotEnabledError struct {
+	User    string
+	Command string
+	Cause   error
+}
+
+// Error implements the error interface.
+func (e *LingerNotEnabledError) Error() string {
+	msg := "deploy: systemd --user lingering is not enabled"
+	if e.User != "" {
+		msg += " for " + e.User
+	}
+	msg += "; the agent would be stopped when the deploy's ssh session closes"
+	if e.Command != "" {
+		msg += "; enable it with: " + e.Command
+	}
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+// Unwrap exposes the underlying cause for errors.Is / errors.As.
+func (e *LingerNotEnabledError) Unwrap() error { return e.Cause }
+
+// AgentUnreachableError indicates the deployed agent's runtime port did
+// not accept a connection. Addr is the host:port that was dialed.
+type AgentUnreachableError struct {
+	Addr  string
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *AgentUnreachableError) Error() string {
+	msg := "deploy: agent runtime port is not reachable"
+	if e.Addr != "" {
+		msg += " addr=" + e.Addr
+	}
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+// Unwrap exposes the underlying cause for errors.Is / errors.As.
+func (e *AgentUnreachableError) Unwrap() error { return e.Cause }
+
 // StartTimeoutError indicates the agent did not come online within the
 // caller's WaitOnline budget.
 type StartTimeoutError struct {
 	Host    string
 	Tenant  string
 	Elapsed string
+
+	// Cause is the last reason the agent was rejected as online, when
+	// there was one — typically the failed liveness probe of the
+	// agent's runtime port. Nil when the agent simply never appeared
+	// in the fleet registry.
+	Cause error
 }
 
 // Error implements the error interface.
@@ -144,8 +201,14 @@ func (e *StartTimeoutError) Error() string {
 	if e.Elapsed != "" {
 		msg += " elapsed=" + e.Elapsed
 	}
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
 	return msg
 }
+
+// Unwrap exposes the underlying cause for errors.Is / errors.As.
+func (e *StartTimeoutError) Unwrap() error { return e.Cause }
 
 // InvalidSpecError indicates the caller supplied a Spec that cannot be
 // turned into a valid remote invocation. The Field reports the first

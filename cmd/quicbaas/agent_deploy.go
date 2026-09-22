@@ -182,6 +182,12 @@ Prerequisites:
   * A static CLI binary produced by: make build-static-cli
   * This CLI must run on the QuicBaaS server host (embedded transport)
     so the deploy can reach the server's CA to mint the agent cert.
+  * For a systemd --user install: lingering enabled for the login user,
+    or passwordless sudo so the deploy can enable it. Without lingering
+    the user's systemd manager — and the agent with it — is stopped when
+    the deploy's SSH session closes. The deploy enables it with
+        sudo -n loginctl enable-linger <user>
+    and fails, naming that command, when it cannot.
 
 Authentication:
   Stored keys only. Operators stage an SSH key via

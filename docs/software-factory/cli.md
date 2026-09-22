@@ -902,7 +902,7 @@ breakdown of what this command does on the wire.
 | `--binary <path>` | Local path to the static CLI (default `bin/quicbaas-static`) |
 | `--install-dir <dir>` | Remote install dir (default `~/.quicbaas/bin`) |
 | `--data-dir <dir>` | Remote data dir (default `~/.quicbaas/agent`) |
-| `--bind <addr:port>` | Local bind on the remote host (default `0.0.0.0:9091`) |
+| `--bind <addr:port>` | Local bind on the remote host (default `0.0.0.0:9091`); needs a fixed numeric port whenever `--wait-online` is non-zero |
 | `--systemd auto\|yes\|no` | Supervisor selection |
 | `--wait-online <duration>` | Max time to wait for online status (default `2m`) |
 
@@ -1019,6 +1019,43 @@ from the CLI or the desktop app.
    [Host-key verification](#host-key-verification).
 4. **Run from the QuicBaaS server host** so the embedded CA can mint
    the agent identity. Operators do not stage any pre-shared secret.
+5. **Lingering enabled for the remote login user**, or passwordless
+   `sudo` so the deploy can enable it — see
+   [Lingering](#lingering-systemd---user) below. Only a systemd
+   `--user` install needs it.
+
+### Lingering (systemd --user)
+
+A `systemd --user` manager belongs to its user's login sessions. With
+`Linger=no`, logind stops that manager — and every unit it supervises —
+when the user's last session ends. The deploy's own SSH session is such a
+session, so an agent installed and started over it is killed on
+disconnect: it enrolls, logs `ready`, heartbeats once, and is gone, while
+the fleet registry still shows `running` from that last heartbeat.
+
+The deploy therefore reads the property after installing the unit and
+before starting it:
+
+```sh
+loginctl show-user alice -p Linger     # the deploy reads this: Linger=no
+sudo -n loginctl enable-linger alice   # so the deploy runs this
+```
+
+Enabling lingering needs root. When `sudo -n` is unavailable or would
+prompt, the deploy stops with
+
+```
+deploy: systemd --user lingering is not enabled for alice; the agent
+would be stopped when the deploy's ssh session closes; enable it with:
+sudo loginctl enable-linger alice
+```
+
+Run that command on the target as an administrator and re-deploy. A
+deploy never reports an agent `Online` when it knows the agent will die
+with the session. The nohup fallback (`--systemd no`) does not install a
+unit and is not checked; it depends instead on logind's default
+`KillUserProcesses=no`, which leaves a detached process running after
+logout.
 
 ### Host-key verification
 
@@ -1105,15 +1142,37 @@ The deploy executes the following steps in order:
    `agent.key`, `server-ca.crt` into `$HOME/.quicbaas/agent`.
 4. **Supervisor install**
    - With `--systemd yes` the workflow writes
-     `$HOME/.config/systemd/user/quicbaas-agent.service`, reloads, and
-     starts the unit.
+     `$HOME/.config/systemd/user/quicbaas-agent.service`, reloads,
+     ensures the login user lingers (see
+     [Lingering](#lingering-systemd---user)), and starts the unit.
    - With `--systemd no` it uses a nohup-backed start script at
      `$HOME/.quicbaas/bin/start-quicbaas-agent.sh`.
    - With `--systemd auto` (default) it probes `systemctl --user` and
      falls back to nohup when the probe fails.
-5. **Wait online** — polls the fleet registry every 2 seconds until
-   the agent reports `running`, `idle`, or `ready`. Disable with
+5. **Wait online** — **after the SSH session is closed**, polls the
+   fleet registry every 2 seconds until the agent reports `running`,
+   `idle`, or `ready`, and confirms the agent's own runtime port
+   (`<host>:<--bind port>`) accepts a connection. Both are required: a
+   registration keeps the status of its last heartbeat after the process
+   behind it is gone, so the registry alone cannot tell a live agent from
+   one that died when the deploy disconnected. Disable with
    `--wait-online 0`.
+
+Because the confirmation is a dial, a non-zero `--wait-online` requires
+a `--bind` the deploy can dial back: `host:port` with a fixed numeric
+port. A named port (`0.0.0.0:grpc`), a unix socket, or the ephemeral
+`0.0.0.0:0` — whose real port only the remote process learns — is
+refused up front with
+
+```
+deploy: invalid spec field=agent_bind: waiting for the agent to come
+online requires a bind address the deploy can dial back, i.e. host:port
+with a fixed numeric port such as 0.0.0.0:9091; got "0.0.0.0:0"
+```
+
+and nothing is installed. Either name a fixed port or pass
+`--wait-online 0` and verify the agent yourself; the deploy never
+reports `Online` on the registry's word alone.
 
 The command prints a result that includes the issued certificate
 serial so operators can correlate the deploy against the CA's

@@ -17,8 +17,10 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -143,6 +145,13 @@ type agentDeployService struct {
 	now        func() time.Time
 	sleep      func(ctx context.Context, d time.Duration) error
 
+	// probe dials the deployed agent's runtime port to confirm a process
+	// is still holding it. The wait-online phase requires it to succeed
+	// before it calls an agent online. Left nil, the service dials for
+	// real via deploy.DialAgentRuntime: a missing probe must never be
+	// read as a probe that passed.
+	probe func(ctx context.Context, addr string) error
+
 	// mcpEndpoint is the control plane's configured MCP listener address
 	// (https://host:port/mcp). When non-empty it is stamped onto each Spec
 	// (unless the Spec already carries one) so the deployed daemon is started
@@ -210,6 +219,7 @@ func NewAgentDeployService(deps AgentDeployServiceDeps) AgentDeployService {
 		certIssuer:  deps.CertIssuer,
 		now:         time.Now,
 		sleep:       ctxSleep,
+		probe:       deploy.DialAgentRuntime,
 		resolveHome: defaultResolveRemoteHome,
 		mcpEndpoint: deps.MCPEndpoint,
 	}
@@ -245,6 +255,39 @@ func (s *agentDeployService) Deploy(ctx context.Context, spec *deploy.Spec) (*de
 	// runs via defer regardless of how the function exits.
 	defer issued.PrivateKey.Destroy()
 
+	result, err := s.install(ctx, spec, issued)
+	if err != nil {
+		return nil, err
+	}
+
+	// The SSH session is closed by now, deliberately: see install().
+	if spec.WaitOnline > 0 && s.agents != nil {
+		expectedID := expectedAgentID(spec, issued)
+		id, onlineAt, err := s.waitOnline(ctx, spec, expectedID)
+		if err != nil {
+			return result, err
+		}
+		result.AgentID = id
+		result.OnlineAt = onlineAt
+	}
+
+	return result, nil
+}
+
+// install runs every deployment step that needs the SSH session and
+// closes that session before returning.
+//
+// Closing before the caller verifies the agent is part of the contract,
+// not tidy-up. A systemd --user manager that does not linger is torn
+// down with the last session of its user, so an agent checked over the
+// deploy's own connection can be reported online and still be dead a
+// second later — the omega failure this ordering exists to catch
+// (go-quicbaas#980).
+func (s *agentDeployService) install(
+	ctx context.Context,
+	spec *deploy.Spec,
+	issued *IssuedAgentCertificate,
+) (*deploy.Result, error) {
 	sess, err := s.dial(ctx, spec)
 	if err != nil {
 		return nil, err
@@ -280,25 +323,13 @@ func (s *agentDeployService) Deploy(ctx context.Context, spec *deploy.Spec) (*de
 		return nil, err
 	}
 
-	result := &deploy.Result{
+	return &deploy.Result{
 		Host:            spec.Host,
 		InstalledPath:   remoteBin,
 		ServiceStatus:   serviceStatus,
 		AgentCertPath:   path.Join(dataDir, deploy.AgentCertFilename),
 		AgentCertSerial: formatSerial(issued),
-	}
-
-	if spec.WaitOnline > 0 && s.agents != nil {
-		expectedID := expectedAgentID(spec, issued)
-		id, onlineAt, err := s.waitOnline(ctx, spec, expectedID)
-		if err != nil {
-			return result, err
-		}
-		result.AgentID = id
-		result.OnlineAt = onlineAt
-	}
-
-	return result, nil
+	}, nil
 }
 
 // validate returns an InvalidSpecError for the first missing required
@@ -325,6 +356,18 @@ func (s *agentDeployService) validate(spec *deploy.Spec) error {
 	}
 	if spec.AgentBind == "" {
 		return &deploy.InvalidSpecError{Field: "agent_bind", Reason: "agent bind address is required"}
+	}
+	// A wait-online budget is a promise to verify the agent from this
+	// side once the SSH session is closed, and that verification is a
+	// dial. A bind the deploy cannot turn into a dial target — a named
+	// port, a unix socket, or the ephemeral ":0" whose real port only the
+	// remote process knows — makes the promise unkeepable, so it is
+	// refused here, before anything is installed, rather than silently
+	// downgraded to "the registry says running": that is the exact
+	// evidence which reported omega Online while every connection to it
+	// was refused (go-quicbaas#980).
+	if spec.WaitOnline > 0 && s.agents != nil && agentProbeAddr(spec) == "" {
+		return undialableBindError(spec)
 	}
 	if len(spec.Backends) == 0 {
 		return &deploy.InvalidSpecError{Field: "backends", Reason: "at least one backend is required"}
@@ -429,8 +472,16 @@ func (s *agentDeployService) startDaemon(
 }
 
 // waitOnline polls the orchestrator's fleet registry until the
-// freshly-deployed agent reports a live status, or the WaitOnline
-// budget elapses.
+// freshly-deployed agent reports a live status AND its runtime port
+// answers a dial, or the WaitOnline budget elapses.
+//
+// Both halves are needed. A registration keeps the status of its last
+// heartbeat after the process behind it is gone, so the registry alone
+// cannot tell a running agent from one that died seconds ago — which is
+// exactly what it reported on omega while every dial to the agent's port
+// was refused. The dial is made from here, after install() closed the
+// SSH session, so what it proves is the property the deploy claims: the
+// agent outlived the session that started it.
 //
 // The poll is scoped to the tenant only: filtering by Host on the
 // server side would re-introduce the very mismatch this code path
@@ -444,13 +495,25 @@ func (s *agentDeployService) waitOnline(ctx context.Context, spec *deploy.Spec, 
 	deadline := s.now().Add(spec.WaitOnline)
 	const pollEvery = 2 * time.Second
 
+	probeAddr := agentProbeAddr(spec)
+	if probeAddr == "" {
+		// validate() rejects this combination before the install runs;
+		// re-checking here keeps the invariant local to the only code
+		// that could otherwise report Online without dialing anything.
+		return "", "", undialableBindError(spec)
+	}
+	var probeErr error
+
 	for {
 		resp, err := s.agents.ListAgents(ctx, &orchestratorSDK.ListAgentsRequest{
 			TenantID: spec.Tenant,
 		})
 		if err == nil {
 			if id, at := pickOnlineAgent(resp, spec, expectedID); id != "" {
-				return id, at, nil
+				probeErr = s.probeRuntimePort(ctx, probeAddr)
+				if probeErr == nil {
+					return id, at, nil
+				}
 			}
 		}
 
@@ -459,6 +522,7 @@ func (s *agentDeployService) waitOnline(ctx context.Context, spec *deploy.Spec, 
 				Host:    spec.Host,
 				Tenant:  spec.Tenant,
 				Elapsed: spec.WaitOnline.String(),
+				Cause:   probeErr,
 			}
 		}
 
@@ -466,6 +530,64 @@ func (s *agentDeployService) waitOnline(ctx context.Context, spec *deploy.Spec, 
 			return "", "", err
 		}
 	}
+}
+
+// probeRuntimePort dials the agent's runtime listener once.
+//
+// There is no path through here that reports success without a dial. A
+// service built without an injected probe falls back to the real dialer
+// instead of waving the check through, and an empty address is rejected
+// by deploy.DialAgentRuntime as an invalid spec — callers never reach
+// this with one, because both validate() and waitOnline() refuse a bind
+// that has no dial target.
+func (s *agentDeployService) probeRuntimePort(ctx context.Context, addr string) error {
+	probe := s.probe
+	if probe == nil {
+		probe = deploy.DialAgentRuntime
+	}
+	return probe(ctx, addr)
+}
+
+// undialableBindError reports a Spec whose AgentBind gives the deploy no
+// address to verify the agent on, in the one case where that matters:
+// a non-zero WaitOnline. The message names the shape that works so the
+// operator can fix the flag without reading this code.
+func undialableBindError(spec *deploy.Spec) error {
+	bind := ""
+	if spec != nil {
+		bind = strings.TrimSpace(spec.AgentBind)
+	}
+	return &deploy.InvalidSpecError{
+		Field: "agent_bind",
+		Reason: "waiting for the agent to come online requires a bind address the deploy can dial back, " +
+			"i.e. host:port with a fixed numeric port such as 0.0.0.0:9091; got " + strconv.Quote(bind),
+	}
+}
+
+// agentProbeAddr returns the host:port the operator can dial to reach the
+// deployed daemon: the SSH target's host joined with the port the agent
+// binds. Returns "" when there is nothing dialable — no host, or an
+// AgentBind without a fixed numeric TCP port. net.SplitHostPort accepts
+// a service name, which no dialer here can resolve to a fixed target,
+// and port 0 asks the kernel for an ephemeral port that only the remote
+// process ever learns.
+func agentProbeAddr(spec *deploy.Spec) string {
+	if spec == nil {
+		return ""
+	}
+	host := hostnameForCert(spec.Host)
+	if host == "" {
+		return ""
+	}
+	_, port, err := net.SplitHostPort(strings.TrimSpace(spec.AgentBind))
+	if err != nil {
+		return ""
+	}
+	number, err := strconv.Atoi(port)
+	if err != nil || number <= 0 || number > 65535 {
+		return ""
+	}
+	return net.JoinHostPort(host, port)
 }
 
 // dial selects the SSH entry point. Either way the target's host key is
@@ -646,13 +768,26 @@ func defaultResolveRemoteHome(ctx context.Context, sess sshSession) (string, err
 // target may be "host", "host:port", "user@host", or "user@host:port";
 // we keep only the host segment since the cert's SANs should match the
 // DNS name or IP the daemon will advertise.
+//
+// IPv6 literals are preserved whole and unbracketed: "[2001:db8::1]:22"
+// and "2001:db8::1" both yield "2001:db8::1", so the SAN matches the
+// address and net.JoinHostPort can re-bracket it for a dial. Splitting
+// at the last colon would truncate the bare form and keep the brackets
+// on the other.
 func hostnameForCert(target string) string {
 	trimmed := strings.TrimSpace(target)
 	if at := strings.IndexByte(trimmed, '@'); at >= 0 {
 		trimmed = trimmed[at+1:]
 	}
-	if colon := strings.LastIndexByte(trimmed, ':'); colon > 0 {
-		trimmed = trimmed[:colon]
+	// A host:port pair (including a bracketed IPv6 literal with a port)
+	// splits cleanly; anything else is a bare host.
+	if host, _, err := net.SplitHostPort(trimmed); err == nil {
+		return host
+	}
+	// A bare IPv6 literal carries too many colons for SplitHostPort. It
+	// may still be bracketed when written without a port.
+	if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+		return trimmed[1 : len(trimmed)-1]
 	}
 	return trimmed
 }
