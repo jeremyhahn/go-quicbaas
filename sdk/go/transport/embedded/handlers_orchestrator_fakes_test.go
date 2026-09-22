@@ -37,7 +37,8 @@ type fakeAgentService struct {
 	// listJobsFilter records the narrowing the last ListJobs carried, so a
 	// transport that drops the caller's filter is caught rather than
 	// silently listing the whole tenant.
-	listJobsFilter *orchestration.JobFilter
+	listJobsFilter  *orchestration.JobFilter
+	listTasksFilter *orchestration.TaskFilter
 }
 
 func (f *fakeAgentService) err() error {
@@ -96,7 +97,9 @@ func (f *fakeAgentService) ListSessions(ctx context.Context, req *orchestration.
 		return nil, err
 	}
 	return &orchestration.ListSessionsResponse{
-		Sessions: []*orchestration.SessionInfo{{SessionID: "s1", Backend: "b"}},
+		Sessions: []*orchestration.SessionInfo{
+			{SessionID: "s1", Backend: "b", Model: "m", JobID: "job-1", Runner: "review"},
+		},
 	}, nil
 }
 
@@ -196,6 +199,7 @@ func (f *fakeAgentService) ListTasks(ctx context.Context, tenantID string, filte
 	if err := f.err(); err != nil {
 		return nil, err
 	}
+	f.listTasksFilter = filter
 	return []*orchestration.Task{{ID: "t1"}}, nil
 }
 

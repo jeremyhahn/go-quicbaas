@@ -100,7 +100,8 @@
     routeJobDetail,
     routeAgentDetail,
   } from '../stores/router.svelte.ts';
-  import { sessionStore, refreshSessions } from '../stores/sessionStore.svelte.ts';
+  import { sessionStore, refreshSessions, resolveSession } from '../stores/sessionStore.svelte.ts';
+  import type { SessionStatusResponse } from '@quicbaas/sdk';
   import {
     authStore,
     validateSession,
@@ -494,11 +495,31 @@
   // which forces every read site to invoke it and creates a fresh function
   // identity on each parent render (a major source of cascading effect
   // re-runs in this app).
-  const activeRouteSession = $derived.by(() => {
-    if (routerStore.name !== 'session-detail') return null;
+  // THE LIST IS A PAGE, so the routed session may not be on it: a row opened
+  // from page three of the Sessions table names a record this store has never
+  // read, and looking only in the cache answered "Session not found" for a
+  // session that exists. resolveSession reads the cache first and asks the
+  // server once when it misses.
+  let routeSession = $state<SessionStatusResponse | null>(null);
+
+  $effect(() => {
+    if (routerStore.name !== 'session-detail') {
+      routeSession = null;
+      return;
+    }
     const id = routerStore.params['id'] ?? '';
-    return sessionStore.sessions.find((s) => s.session_id === id) ?? null;
+    // Held under the id it was asked for, so a late answer for a session the
+    // operator has already navigated away from cannot land on the page.
+    void resolveSession(id).then((session) => {
+      if (routerStore.name !== 'session-detail') return;
+      if ((routerStore.params['id'] ?? '') !== id) return;
+      routeSession = session;
+    });
   });
+
+  const activeRouteSession = $derived(
+    routerStore.name === 'session-detail' ? routeSession : null,
+  );
 
   // When the job-detail route is active, sync the selectedJob in the store.
   //

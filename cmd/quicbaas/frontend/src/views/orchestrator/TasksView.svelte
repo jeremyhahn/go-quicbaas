@@ -10,9 +10,21 @@
   linked) · Updated. A row opens the task's detail page.
 
   `#/tasks?project=<id>` narrows the list to one project.
+
+  THE TABLE IS IN SERVER MODE and the kanban board is not. The table hands its
+  loader {limit, offset, sort, q} and the daemon answers one page with the
+  count of everything that matched; the project and dispatch-mode filters go
+  with it as server parameters (`project_id`, `auto_spawn`), because a filter
+  applied to a page of twenty-five reports a total it cannot know. The board
+  still renders the collection the store holds — a board has no pager to put a
+  second page behind, and it shows whatever the store last read.
+
+  The sortable columns are the ones the endpoint orders by (subject, project,
+  status, updated). Attempts, Assigned and Job are not in that allow-list and
+  do not claim to sort.
 -->
 <script lang="ts">
-  import { orchestratorStore, loadJobs, refresh, type Task, type TaskStatus } from '../../stores/orchestrator.svelte.ts';
+  import { orchestratorStore, loadJobs, refresh, type JobStatus, type Task, type TaskStatus } from '../../stores/orchestrator.svelte.ts';
   import { routerStore, routeTaskDetail, routeTasks } from '../../stores/router.svelte.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
@@ -23,7 +35,7 @@
   import { LayoutList, Columns3, Plus, ClipboardList, UserCheck, CheckCircle, Zap, AlertTriangle, X } from 'lucide-svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import DataTable from '../../components/core/DataTable.svelte';
-  import type { Column } from '../../lib/dataTable.ts';
+  import type { Column, PageRequest } from '../../lib/dataTable.ts';
   import type { DecomposeTaskRequest, ClaimTaskRequest, CompleteTaskRequest } from '@quicbaas/sdk';
   import { formatDateTime, formatRelative } from '../../lib/time.ts';
   import {
@@ -76,17 +88,24 @@
   // THE AGENT IS ON THE JOB, NOT ON THE TASK. `assigned_to` is the claimant,
   // and the dispatcher's own path never writes one, so it is empty for the
   // whole life of every auto-spawned task (see taskAgentID in lib/tasks.ts).
-  // The tenant's job list is read ONCE for the page — not once per row — and
-  // the Assigned column names the agent the task's latest attempt ran on.
+  //
+  // The jobs are read ONCE PER PAGE, for exactly the jobs this page's rows
+  // name (`job_ids`), rather than once per row or by listing the tenant. The
+  // tenant's job list used to serve this, and cannot any more: it is a page
+  // itself now, so the Assigned column would blank for every task whose
+  // attempt is not among the twenty-five jobs the store happens to hold.
+  let pageJobs = $state<JobStatus[]>([]);
+
+  // The BOARD is a different question. It renders the collection the store
+  // holds, not a page, so it names its agents from the store's jobs — read
+  // only while the board is the layout in front of the operator.
   $effect(() => {
+    if (layout !== 'kanban') return;
     void orchestratorStore.activeTenantID;
     void loadJobs();
   });
 
-  /** The job records the page holds, in the shape taskAgentID reads. */
-  const knownJobs = $derived(
-    Array.isArray(orchestratorStore.jobs) ? orchestratorStore.jobs : [],
-  );
+  const boardJobs = $derived(Array.isArray(orchestratorStore.jobs) ? orchestratorStore.jobs : []);
 
   const projectFilter = $derived(routerStore.params['project'] ?? '');
 
@@ -104,9 +123,13 @@
   }
 
   /**
-   * What the table's headers say, which of them sort, and which the search box
-   * reads. The kanban board below uses the same filtered collection and none of
-   * this: a board has no columns to sort.
+   * What the table's headers say and which of them sort. The keys are the
+   * SERVER's sort fields (docs/software-factory/api.md); a column the endpoint
+   * does not order by is not marked sortable, because sorting the twenty-five
+   * rows in hand would look exactly like sorting the collection.
+   *
+   * The kanban board below uses the store's collection and none of this: a
+   * board has no columns to sort.
    */
   const TABLE_COLUMNS: Column<Task>[] = [
     { key: 'subject', label: 'Subject', sortable: true, searchable: true },
@@ -118,18 +141,83 @@
       value: (t) => projectLabel(t.project_id),
     },
     { key: 'status', label: 'Status', sortable: true },
-    { key: 'attempts', label: 'Attempts', sortable: true, value: (t) => t.attempts ?? 0 },
+    { key: 'attempts', label: 'Attempts', value: (t) => t.attempts ?? 0 },
     {
       key: 'assigned_to',
       label: 'Assigned',
-      sortable: true,
-      searchable: true,
-      value: (t) => taskAgentID(t, knownJobs),
+      value: (t) => taskAgentID(t, pageJobs),
     },
     { key: 'job', label: 'Job', value: (t) => latestTaskJobID(t) },
     { key: 'updated_at', label: 'Updated', sortable: true },
     { key: 'actions', label: 'Actions', srLabel: true },
   ];
+
+  // ---------------------------------------------------------------------------
+  // The page loader
+  // ---------------------------------------------------------------------------
+
+  /** How many tasks the server said match, for the header count. */
+  let pageTotal = $state(0);
+
+  /** refreshTick re-asks the server after an action changes a task. */
+  let refreshTick = $state(0);
+
+  const reloadKey = $derived(
+    `${orchestratorStore.activeTenantID}|${projectFilter}|${spawnFilter}|${refreshTick}`,
+  );
+
+  /** dispatchMode is the auto_spawn value the SERVER narrows on. */
+  function dispatchMode(): boolean | undefined {
+    if (spawnFilter === 'auto_spawned') return true;
+    if (spawnFilter === 'queued') return false;
+    return undefined;
+  }
+
+  async function loadTasksPage(req: PageRequest): Promise<unknown> {
+    const mode = dispatchMode();
+    try {
+      const client = await getSDKClient();
+      const page = await client.orchestrator.listTasksPage(orchestratorStore.activeTenantID, {
+        limit: req.limit,
+        offset: req.offset,
+        sort: req.sort,
+        q: req.q,
+        ...(projectFilter === '' ? {} : { project_id: projectFilter }),
+        ...(mode === undefined ? {} : { auto_spawn: mode }),
+      });
+      pageTotal = page.total;
+      await loadPageJobs(page.items as unknown as Task[]);
+      return page;
+    } catch (err: unknown) {
+      // A 403 names the permission the account lacks rather than reading as a
+      // transport failure — the table renders whatever message it is given.
+      throw new Error(loadErrorMessage(err, 'tasks', TASKS_READ_PERMISSION));
+    }
+  }
+
+  /**
+   * loadPageJobs reads the jobs this page's rows name — ONE request for the
+   * whole page, narrowed to those ids. A page whose rows have never dispatched
+   * asks for nothing at all.
+   */
+  async function loadPageJobs(tasks: readonly Task[]): Promise<void> {
+    const ids = [...new Set(tasks.map((t) => latestTaskJobID(t)).filter((id) => id !== ''))];
+    if (ids.length === 0) {
+      pageJobs = [];
+      return;
+    }
+    try {
+      const client = await getSDKClient();
+      const page = await client.orchestrator.listJobsPage(orchestratorStore.activeTenantID, {
+        job_ids: ids,
+        limit: ids.length,
+      });
+      pageJobs = page.items as unknown as JobStatus[];
+    } catch {
+      // The Assigned column falls back to the claimant; the tasks still render.
+      pageJobs = [];
+    }
+  }
 
   const COLUMNS: TaskStatus[] = ['pending', 'claimed', 'in_progress', 'blocked', 'completed', 'failed'];
 
@@ -139,6 +227,25 @@
 
   function statusLabel(status: TaskStatus): string {
     return status.replace('_', ' ');
+  }
+
+  /**
+   * refreshTasks re-reads BOTH halves after an action: the table's page,
+   * because it is the server's answer and not this store's collection any
+   * more, and the store, because the kanban board and the task detail read it.
+   */
+  function refreshTasks(): void {
+    refreshTick += 1;
+    void refresh('tasks');
+  }
+
+  /**
+   * taskCount is how many tasks the header claims. In table mode that is the
+   * SERVER's total — the count of everything that matched, not the size of the
+   * page; the board, which shows what the store holds, counts that.
+   */
+  function taskCount(): number {
+    return layout === 'table' ? pageTotal : filteredTasks().length;
   }
 
   const loadError = $derived(
@@ -168,7 +275,7 @@
       const resp = await client.orchestrator.decomposeTask(req);
       const count = resp.tasks?.length ?? 0;
       showToast('success', `Task decomposed into ${count} sub-task${count === 1 ? '' : 's'}`);
-      void refresh('tasks');
+      refreshTasks();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       showToast('error', `Decompose failed: ${msg}`);
@@ -189,7 +296,7 @@
       const client = await getSDKClient();
       await client.orchestrator.claimTask(req);
       showToast('success', 'Task claimed');
-      void refresh('tasks');
+      refreshTasks();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       showToast('error', `Claim failed: ${msg}`);
@@ -209,7 +316,7 @@
       const client = await getSDKClient();
       await client.orchestrator.completeTask(req);
       showToast('success', 'Task marked complete');
-      void refresh('tasks');
+      refreshTasks();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       showToast('error', `Complete failed: ${msg}`);
@@ -220,10 +327,10 @@
 </script>
 
 <!-- Create Task dialog -->
-<CreateTaskDialog bind:open={createTaskOpen} onCreated={() => { void refresh('tasks'); }} />
+<CreateTaskDialog bind:open={createTaskOpen} onCreated={() => { refreshTasks(); }} />
 
 <div class="p-6 space-y-6">
-  <PageHeader title="Tasks" subtitle="{filteredTasks().length} tasks" icon={ClipboardList}>
+  <PageHeader title="Tasks" subtitle="{taskCount()} tasks" icon={ClipboardList}>
     {#snippet children()}
       <div class="flex items-center gap-2">
         {#if projectFilter !== ''}
@@ -293,20 +400,18 @@
     {/snippet}
   </PageHeader>
 
-  {#if loadError !== '' && filteredTasks().length === 0}
-    <div class="alert alert-error text-sm" role="alert">
-      <AlertTriangle class="h-4 w-4" />
-      <span>{loadError}</span>
-    </div>
-  {:else if orchestratorStore.tasksLoading && filteredTasks().length === 0}
-    <div class="flex justify-center py-8">
-      <span class="loading loading-spinner loading-md text-primary"></span>
-    </div>
-
-  {:else if layout === 'table'}
+  <!--
+    THE TWO LAYOUTS ANSWER FOR THEMSELVES. The table is server-paged: it owns
+    its own spinner and its own error, and a failure of ITS read is the one it
+    reports (the loader formats a 403 into the permission it names). The board
+    reads the store, so the store's loading and error states are the board's.
+  -->
+  {#if layout === 'table'}
     <DataTable
       columns={TABLE_COLUMNS}
-      rows={filteredTasks()}
+      load={loadTasksPage}
+      itemsKey="items"
+      {reloadKey}
       rowKey={(t: Task) => t.id}
       narrowed={spawnFilter !== 'all'}
       urlKey="tasks"
@@ -329,7 +434,7 @@
         {@const ref = issueRef(task)}
         {@const reason = blockedReason(task)}
         {@const jobID = latestTaskJobID(task)}
-        {@const agentID = taskAgentID(task, knownJobs)}
+        {@const agentID = taskAgentID(task, pageJobs)}
         <tr
           class="cursor-pointer hover:bg-base-300/40 transition-colors"
           onclick={() => openTask(task)}
@@ -451,6 +556,16 @@
       {/snippet}
     </DataTable>
 
+  {:else if loadError !== '' && filteredTasks().length === 0}
+    <div class="alert alert-error text-sm" role="alert">
+      <AlertTriangle class="h-4 w-4" />
+      <span>{loadError}</span>
+    </div>
+  {:else if orchestratorStore.tasksLoading && filteredTasks().length === 0}
+    <div class="flex justify-center py-8">
+      <span class="loading loading-spinner loading-md text-primary"></span>
+    </div>
+
   {:else}
     <!-- Kanban board -->
     <div class="flex gap-4 overflow-x-auto pb-4">
@@ -463,7 +578,7 @@
           </div>
           <div class="space-y-2">
             {#each colTasks as task (task.id)}
-              {@const agentID = taskAgentID(task, knownJobs)}
+              {@const agentID = taskAgentID(task, boardJobs)}
               <div
                 class="card bg-base-200 rounded-box p-3 shadow-sm cursor-pointer hover:bg-base-300/40"
                 onclick={() => openTask(task)}

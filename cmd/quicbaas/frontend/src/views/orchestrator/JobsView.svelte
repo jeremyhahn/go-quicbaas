@@ -1,16 +1,35 @@
 <!--
-  JobsView renders the tenant's orchestration jobs in the shared DataTable —
-  paged, sorted and searched there rather than here.
+  JobsView renders the tenant's orchestration jobs in the shared DataTable, in
+  SERVER MODE: the table hands its loader {limit, offset, sort, q} and the
+  daemon answers one page with the count of everything that matched. The burn-in
+  tenant has ~2,000 jobs; this page never holds more than a hundred.
+
+  The state filter is a SERVER parameter (`statuses`), not a narrowing of the
+  rows in hand — "Active" asks for the eleven non-terminal states by name. A
+  filter applied to a page of twenty-five would report a total it cannot know
+  and hide matches sitting on page two.
+
+  Sorting names the server's allow-listed fields (job_id, description, state,
+  started_at). Iteration and Progress are NOT in that list, so their headers do
+  not sort rather than ordering one page and looking like they ordered the
+  collection.
+
+  LIVE UPDATES ARE A RE-READ, NOT A PATCH. When the job event stream reports a
+  state change, the page is fetched again (debounced, late answers discarded by
+  the table) — because the event may be about a job this page does not hold,
+  and because the order and membership of the page are the server's answer. The
+  store keeps patching its own records for the detail views that read them.
+
   Clicking a row selects the job and navigates to JobDetailView.
   Header provides a "+ Start Job" button that opens StartJobDialog.
   Each row has a "Cancel" action that confirms before cancelling the job.
 -->
 <script lang="ts">
   import {
+    ACTIVE_JOB_STATES,
     orchestratorStore,
     selectJob,
     refresh,
-    isTerminalJobState,
     type JobStatus,
     type JobState,
   } from '../../stores/orchestrator.svelte.ts';
@@ -24,11 +43,14 @@
   import { Plus, Briefcase } from 'lucide-svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import DataTable from '../../components/core/DataTable.svelte';
-  import type { Column } from '../../lib/dataTable.ts';
+  import type { Column, PageRequest } from '../../lib/dataTable.ts';
   import { formatDateTime } from '../../lib/time.ts';
   import { issueRef, type IssueRef } from '../../lib/tasks.ts';
 
   type StateFilter = 'all' | 'active' | 'completed' | 'failed';
+
+  /** How long the page waits after a job event before re-reading. */
+  const LIVE_REFRESH_DEBOUNCE_MS = 400;
 
   let stateFilter: StateFilter = $state('all');
   let startJobOpen = $state(false);
@@ -38,23 +60,53 @@
   let cancelling = $state(false);
 
   /**
-   * The state filter stays here because it is this page's own idea; the
-   * search, the sort and the paging belong to DataTable and were deleted.
+   * statesFor turns this page's filter into the states the SERVER narrows on.
+   * "Active" is every state a job can still leave, named explicitly, because
+   * "not terminal" is not a question the endpoint can be asked.
    */
-  const filteredJobs = $derived.by((): JobStatus[] => {
-    const result = Array.isArray(orchestratorStore.jobs) ? orchestratorStore.jobs : [];
+  function statesFor(filter: StateFilter): JobState[] {
+    if (filter === 'active') return [...ACTIVE_JOB_STATES];
+    if (filter === 'completed') return ['completed'];
+    if (filter === 'failed') return ['failed'];
+    return [];
+  }
 
-    if (stateFilter === 'active') return result.filter((j) => !isTerminalJobState(j.state));
-    if (stateFilter === 'completed') return result.filter((j) => j.state === 'completed');
-    if (stateFilter === 'failed') return result.filter((j) => j.state === 'failed');
-    return result;
+  /**
+   * liveTick advances once the job event stream has been quiet for
+   * LIVE_REFRESH_DEBOUNCE_MS. It is part of the reload key, so the table
+   * re-reads the page it is on; a burst of events from five running jobs
+   * costs ONE fetch, and DataTable discards any answer a newer read overtakes.
+   */
+  let liveTick = $state(0);
+
+  $effect(() => {
+    const revision = orchestratorStore.jobEventRevision;
+    if (revision === 0) return;
+    const timer = setTimeout(() => { liveTick += 1; }, LIVE_REFRESH_DEBOUNCE_MS);
+    return () => { clearTimeout(timer); };
   });
 
+  const reloadKey = $derived(`${orchestratorStore.activeTenantID}|${stateFilter}|${liveTick}`);
+
+  async function loadJobsPage(req: PageRequest): Promise<unknown> {
+    const client = await getSDKClient();
+    const statuses = statesFor(stateFilter);
+    return client.orchestrator.listJobsPage(orchestratorStore.activeTenantID, {
+      limit: req.limit,
+      offset: req.offset,
+      sort: req.sort,
+      q: req.q,
+      ...(statuses.length === 0 ? {} : { statuses }),
+    });
+  }
+
+  // The keys are the SERVER'S sort fields (docs/software-factory/api.md).
+  // Iteration and Progress are not among them and therefore do not sort.
   const COLUMNS: Column<JobStatus>[] = [
     { key: 'job_id', label: 'Job ID', sortable: true, searchable: true },
     { key: 'description', label: 'Description', sortable: true, searchable: true },
     { key: 'state', label: 'State', sortable: true },
-    { key: 'iteration', label: 'Iteration', sortable: true },
+    { key: 'iteration', label: 'Iteration' },
     { key: 'completed', label: 'Progress' },
     { key: 'started_at', label: 'Started', sortable: true },
     { key: 'actions', label: 'Actions', srLabel: true },
@@ -106,10 +158,10 @@
       await client.orchestrator.cancelJob(orchestratorStore.activeTenantID, job.job_id);
       showToast('success', `Job ${job.job_id.slice(0, 8)} cancelled`);
       cancelTarget = null;
-      // Force immediate refresh so the row reflects the new terminal state
-      // without waiting up to 30 s for the next poll. Without this the user
-      // sees the row still labelled "executing" and has no feedback that
-      // their action took effect.
+      // Re-read THIS PAGE at once so the row reflects the new terminal state
+      // rather than sitting on "executing" until something else asks. The
+      // store is refreshed too, for the detail views that read it.
+      liveTick += 1;
       void refresh('jobs');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -174,9 +226,10 @@
 
   <DataTable
     columns={COLUMNS}
-    rows={filteredJobs}
+    load={loadJobsPage}
+    itemsKey="items"
+    {reloadKey}
     rowKey={(j: JobStatus) => j.job_id}
-    loading={orchestratorStore.jobsLoading}
     narrowed={stateFilter !== 'all'}
     urlKey="jobs"
     ariaLabel="Jobs"

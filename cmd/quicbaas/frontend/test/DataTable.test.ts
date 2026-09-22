@@ -317,6 +317,17 @@ describe('DataTable server mode', () => {
     render(DataTableHarness, { props: { load } });
     await waitFor(() => { expect(screen.getByRole('alert')).toHaveTextContent('permission denied'); });
   });
+
+  it('does not call a failed read an empty collection', async () => {
+    // "Nothing here yet — create your first one" is a claim about data. A read
+    // nobody completed supports no such claim, so the empty state stays away
+    // and the alert is the only answer on screen.
+    const load = vi.fn(async () => { throw new Error('permission denied'); });
+    render(DataTableHarness, { props: { load } });
+    await waitFor(() => { expect(screen.getByTestId('data-table-unread')).toBeInTheDocument(); });
+    expect(screen.queryByTestId('data-table-no-match')).toBeNull();
+    expect(screen.queryByText(/Nothing here yet/i)).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

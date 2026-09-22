@@ -175,6 +175,7 @@ import type {
 } from './dynamicsecrets.js';
 import type {
   AccountsClient,
+  Account,
   CreateAccountRequest,
   CreateAccountResponse,
   GetAccountResponse,
@@ -351,6 +352,19 @@ import type {
   VerifyAuthorizedResponse,
 } from './types.js';
 import {
+  adoptPage,
+  appendCSVParam,
+  appendListParam,
+  appendPageParams,
+  type AccountPageParams,
+  type AgentPageParams,
+  type JobPageParams,
+  type PageParams,
+  type PageResult,
+  type SessionPageParams,
+  type TaskPageParams,
+} from './page.js';
+import {
   APIError,
   ConnectionError,
   NotConnectedError,
@@ -476,6 +490,8 @@ interface SessionWire {
   last_activity?: number;
   container_id?: string;
   job_id?: string;
+  /** The runner of the session's job — what ROLE the session played. */
+  runner?: string;
 }
 
 // sessionFromWire renames the two fields the service and the SDK disagree
@@ -494,8 +510,13 @@ function sessionFromWire(wire: SessionWire): SessionStatusResponse {
     created_at: wire.created_at ?? 0,
     last_active: wire.last_activity ?? 0,
   };
+  if (wire.model !== undefined) session.model = wire.model;
   if (wire.container_id !== undefined) session.container_id = wire.container_id;
   if (wire.job_id !== undefined) session.job_id = wire.job_id;
+  // The ROLE the session played, resolved server-side for the page. It was
+  // dropped here while the wire carried it, which left the Role badge blank
+  // on every row (go-quicbaas#969).
+  if (wire.runner !== undefined) session.runner = wire.runner;
   return session;
 }
 
@@ -548,6 +569,93 @@ class RestOrchestratorClient implements OrchestratorClient {
     }
 
     return parseResponseBody<T>(resp);
+  }
+
+  // =========================================================================
+  // The paged listings
+  //
+  // Each one sends the four shared parameters plus its endpoint's own
+  // narrowings, and hands back the envelope the server answered with. The
+  // unpaged methods below are unchanged and still useful — they are just no
+  // longer the whole collection, because the server pages every listing and
+  // defaults to 25 records. See docs/software-factory/api.md.
+  // =========================================================================
+
+  // listJobsPage maps to GET /api/v1/orchestrator/jobs with limit/offset/
+  // sort/q and the jobs listing's own filters, all applied by the SERVER.
+  async listJobsPage(tenantID: string, page?: JobPageParams): Promise<PageResult<JobStatus>> {
+    const params = new URLSearchParams({ tenant_id: tenantID });
+    appendListParam(params, 'task_id', page?.task_id);
+    appendListParam(params, 'runner', page?.runner);
+    appendListParam(params, 'project_id', page?.project_id);
+    appendCSVParam(params, 'statuses', page?.statuses);
+    appendCSVParam(params, 'job_ids', page?.job_ids);
+    appendPageParams(params, page);
+    const raw = await this.fetchJSON<unknown>(`/jobs?${params.toString()}`);
+    return adoptPage<JobStatus>(raw, 'jobs');
+  }
+
+  // listTasksPage maps to GET /api/v1/orchestrator/tasks with the shared
+  // paging parameters and the tasks listing's own filters.
+  async listTasksPage(tenantID: string, page?: TaskPageParams): Promise<PageResult<Task>> {
+    const params = new URLSearchParams({ tenant_id: tenantID });
+    appendListParam(params, 'status', page?.status);
+    appendListParam(params, 'project_id', page?.project_id);
+    appendListParam(params, 'team_name', page?.team_name);
+    appendListParam(params, 'assigned_to', page?.assigned_to);
+    appendListParam(params, 'created_by', page?.created_by);
+    appendListParam(params, 'auto_spawn', page?.auto_spawn);
+    appendCSVParam(params, 'statuses', page?.statuses);
+    appendPageParams(params, page);
+    const raw = await this.fetchJSON<unknown>(`/tasks?${params.toString()}`);
+    return adoptPage<Task>(raw, 'tasks');
+  }
+
+  // listSessionsPage maps to GET /api/v1/orchestrator/sessions. The records
+  // are renamed through sessionFromWire, exactly as listSessions does, so a
+  // paged caller and an unpaged one hold the same session object.
+  async listSessionsPage(
+    tenantID: string,
+    page?: SessionPageParams,
+  ): Promise<PageResult<SessionStatusResponse>> {
+    if (!tenantID) {
+      throw new Error('listSessionsPage: tenantID is required');
+    }
+    const params = new URLSearchParams({ tenant_id: tenantID });
+    appendListParam(params, 'backend', page?.backend);
+    appendListParam(params, 'status', page?.status);
+    appendPageParams(params, page);
+    const raw = await this.fetchJSON<unknown>(`/sessions?${params.toString()}`);
+    return adoptPage<SessionStatusResponse>(raw, 'sessions', sessionFromWire);
+  }
+
+  // listAgentsPage maps to GET /api/v1/orchestrator/agents with the shared
+  // paging parameters and the fleet listing's own filters.
+  async listAgentsPage(
+    tenantID: string,
+    page?: AgentPageParams,
+  ): Promise<PageResult<AgentRegistration>> {
+    const params = new URLSearchParams({ tenant_id: tenantID });
+    appendListParam(params, 'host', page?.host);
+    appendListParam(params, 'status', page?.status);
+    appendListParam(params, 'agent_type', page?.agent_type);
+    appendListParam(params, 'backend', page?.backend);
+    appendListParam(params, 'model', page?.model);
+    appendPageParams(params, page);
+    const raw = await this.fetchJSON<unknown>(`/agents?${params.toString()}`);
+    return adoptPage<AgentRegistration>(raw, 'agents');
+  }
+
+  // listWorkflowsPage maps to GET /api/v1/orchestrator/workflows with the
+  // shared paging parameters. The listing takes no filters of its own.
+  async listWorkflowsPage(
+    tenantID: string,
+    page?: PageParams,
+  ): Promise<PageResult<WorkflowDefinition>> {
+    const params = new URLSearchParams({ tenant_id: tenantID });
+    appendPageParams(params, page);
+    const raw = await this.fetchJSON<unknown>(`/workflows?${params.toString()}`);
+    return adoptPage<WorkflowDefinition>(raw, 'workflows');
   }
 
   // listJobs maps to GET /api/v1/orchestrator/jobs?tenant_id=<tenantID>
@@ -2273,6 +2381,15 @@ class RestProjectsClient implements ProjectsClient {
     return this.fetchJSON<ListProjectsResponse>(`/api/v1/projects?${query}`);
   }
 
+  // listProjectsPage maps to GET /api/v1/projects with the shared paging
+  // parameters, and hands back the envelope the server answered with.
+  async listProjectsPage(tenantId: string, page?: PageParams): Promise<PageResult<Project>> {
+    const params = new URLSearchParams({ tenant_id: tenantId });
+    appendPageParams(params, page);
+    const raw = await this.fetchJSON<unknown>(`/api/v1/projects?${params.toString()}`);
+    return adoptPage<Project>(raw, 'projects');
+  }
+
   // grantAgentRole maps to PUT /api/v1/projects/:projectId/permissions/:agentId
   async grantAgentRole(req: GrantAgentRoleRequest): Promise<GrantAgentRoleResponse> {
     const query = new URLSearchParams({ tenant_id: req.tenant_id }).toString();
@@ -2435,6 +2552,19 @@ class RestAccountsClient implements AccountsClient {
     if (req.project_id) params.project_id = req.project_id;
     const query = new URLSearchParams(params).toString();
     return this.fetchJSON<ListAccountsResponse>(`/api/v1/agent-accounts?${query}`);
+  }
+
+  // listAccountsPage maps to GET /api/v1/agent-accounts with the shared
+  // paging parameters and the accounts listing's own filters.
+  async listAccountsPage(
+    req: AccountPageParams & { tenant_id: string },
+  ): Promise<PageResult<Account>> {
+    const params = new URLSearchParams({ tenant_id: req.tenant_id });
+    appendListParam(params, 'provider', req.provider);
+    appendListParam(params, 'project_id', req.project_id);
+    appendPageParams(params, req);
+    const raw = await this.fetchJSON<unknown>(`/api/v1/agent-accounts?${params.toString()}`);
+    return adoptPage<Account>(raw, 'accounts');
   }
 
   // updateAccount maps to PUT /api/v1/agent-accounts/:accountId?tenant_id=...

@@ -4050,3 +4050,39 @@ func TestRecordSourcePredecessor(t *testing.T) {
 		t.Fatalf("a terminal predecessor must name no block reason, got %q", bare.PredecessorBlockReason())
 	}
 }
+
+// TestTaskMatchesFilter_AutoSpawnIsTriState proves the auto_spawn narrowing
+// tells "dispatched immediately", "queued for a claim" and "no preference"
+// apart — the distinction a plain bool could not carry.
+func TestTaskMatchesFilter_AutoSpawnIsTriState(t *testing.T) {
+	t.Parallel()
+
+	dispatched := &Task{Status: TaskStatusInProgress, AutoSpawn: true}
+	queued := &Task{Status: TaskStatusPending}
+	yes, no := true, false
+
+	cases := []struct {
+		name   string
+		task   *Task
+		filter *TaskFilter
+		want   bool
+	}{
+		{"unset lists the dispatched", dispatched, &TaskFilter{}, true},
+		{"unset lists the queued", queued, &TaskFilter{}, true},
+		{"true keeps the dispatched", dispatched, &TaskFilter{AutoSpawn: &yes}, true},
+		{"true drops the queued", queued, &TaskFilter{AutoSpawn: &yes}, false},
+		{"false keeps the queued", queued, &TaskFilter{AutoSpawn: &no}, true},
+		{"false drops the dispatched", dispatched, &TaskFilter{AutoSpawn: &no}, false},
+		{"composes with the status", dispatched, &TaskFilter{AutoSpawn: &yes, Status: TaskStatusInProgress}, true},
+		{"one failing narrowing refuses the record", dispatched, &TaskFilter{AutoSpawn: &yes, Status: TaskStatusFailed}, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := taskMatchesFilter(tc.task, tc.filter); got != tc.want {
+				t.Errorf("taskMatchesFilter() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

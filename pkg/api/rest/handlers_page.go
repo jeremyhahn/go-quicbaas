@@ -48,10 +48,12 @@ func pageFromRequest(r *http.Request) (*orchestration.Page, error) {
 	)
 }
 
-// isPageInputError reports whether err is a refused paging parameter — an
-// unreadable limit or offset, or a sort field the endpoint does not order by.
-// Each is the caller's mistake and answers 400 naming the parameter.
+// isPageInputError reports whether err is a refused list parameter — an
+// unreadable limit or offset, a sort field the endpoint does not order by, or
+// a filter value of the wrong type. Each is the caller's mistake and answers
+// 400 naming the parameter.
 func isPageInputError(err error) bool {
 	return stderrors.Is(err, orchestration.ErrPageParamInvalid) ||
-		stderrors.Is(err, orchestration.ErrPageSortFieldUnknown)
+		stderrors.Is(err, orchestration.ErrPageSortFieldUnknown) ||
+		stderrors.Is(err, orchestration.ErrFilterParamInvalid)
 }

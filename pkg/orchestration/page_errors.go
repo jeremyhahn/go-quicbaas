@@ -31,6 +31,13 @@ var (
 	// ErrPageParamInvalid indicates a paging parameter could not be read as
 	// the number it must be.
 	ErrPageParamInvalid = errors.New("page: invalid parameter")
+
+	// ErrFilterParamInvalid indicates a list FILTER parameter could not be
+	// read as the value its type requires — a tri-state boolean sent as
+	// "maybe". It is distinct from ErrPageParamInvalid because the two name
+	// different halves of a list request, and a caller reading the message
+	// must not be told its paging is wrong when its filter is.
+	ErrFilterParamInvalid = errors.New("filter: invalid parameter")
 )
 
 // =============================================================================
@@ -74,3 +81,18 @@ func (e *InvalidPageParamError) Error() string {
 
 // Unwrap returns the sentinel error for errors.Is support.
 func (e *InvalidPageParamError) Unwrap() error { return ErrPageParamInvalid }
+
+// InvalidFilterParamError names the list filter parameter that could not be
+// parsed and the value that was sent.
+type InvalidFilterParamError struct {
+	Param string
+	Value string
+}
+
+// Error implements the error interface.
+func (e *InvalidFilterParamError) Error() string {
+	return ErrFilterParamInvalid.Error() + ": " + e.Param + "=" + strconv.Quote(e.Value)
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *InvalidFilterParamError) Unwrap() error { return ErrFilterParamInvalid }

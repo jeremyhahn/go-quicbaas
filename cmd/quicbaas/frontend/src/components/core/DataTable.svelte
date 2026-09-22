@@ -423,7 +423,17 @@
         {:else if visible.length === 0}
           <tr>
             <td colspan={columns.length}>
-              {#if hasRows || filtered || narrowed}
+              {#if loadError !== ''}
+                <!--
+                  A FAILED READ IS NOT AN EMPTY COLLECTION. The alert above
+                  says what went wrong; telling the operator there is nothing
+                  here, or inviting them to create their first one, would be a
+                  claim about data nobody managed to read.
+                -->
+                <div class="text-center py-8 text-sm text-base-content/40" data-testid="data-table-unread">
+                  Nothing loaded.
+                </div>
+              {:else if hasRows || filtered || narrowed}
                 <div class="text-center py-8 text-sm text-base-content/40" data-testid="data-table-no-match">
                   {noMatchText}
                 </div>

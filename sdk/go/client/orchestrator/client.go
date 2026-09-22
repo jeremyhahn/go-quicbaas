@@ -717,10 +717,20 @@ type SessionStatusRequest struct {
 type SessionStatusResponse struct {
 	SessionID   string `json:"session_id"`
 	Backend     string `json:"backend"`
+	Model       string `json:"model,omitempty"`
 	Status      string `json:"status"`
 	ContainerID string `json:"container_id,omitempty"`
 	CreatedAt   int64  `json:"created_at"`
 	LastActive  int64  `json:"last_active"`
+
+	// JobID names the orchestration job the session works for, empty when it
+	// belongs to none.
+	JobID string `json:"job_id,omitempty"`
+
+	// Runner is the job runner that drove that job — "sdlc", "review",
+	// "triage", "workflow" — and so which ROLE the session played. Empty
+	// when the session belongs to no job, or to one no longer on record.
+	Runner string `json:"runner,omitempty"`
 }
 
 // CloseSessionRequest is a request to close a session.
@@ -938,6 +948,11 @@ type ListTasksRequest struct {
 	// Statuses restricts the listing to tasks in any of these statuses. It
 	// composes with Status: both must hold when both are set.
 	Statuses []string `json:"statuses,omitempty"`
+
+	// AutoSpawn restricts the listing to the tasks that asked for immediate
+	// dispatch (true) or to the ones queued for a claim (false). Nil does
+	// not narrow: a bool could not tell "queued only" from "no preference".
+	AutoSpawn *bool `json:"auto_spawn,omitempty"`
 
 	// Params pages, orders and searches the listing. The zero value takes
 	// the server's default page; see package page.
@@ -3291,6 +3306,11 @@ type ListJobsRequest struct {
 
 	// Statuses narrows the listing to jobs in any of these states.
 	Statuses []string `json:"statuses,omitempty"`
+
+	// JobIDs narrows the listing to the named jobs, so a caller holding a
+	// page of sessions or tasks resolves the jobs they name in ONE call
+	// instead of one request per row. Empty lists every job.
+	JobIDs []string `json:"job_ids,omitempty"`
 
 	// Params pages, orders and searches the listing. The zero value takes
 	// the server's default page; see package page.

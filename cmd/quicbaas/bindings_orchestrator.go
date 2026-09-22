@@ -277,10 +277,17 @@ func (b *OrchestratorBinding) ListSessions(req *orchestratorSDK.ListSessionsRequ
 		result = append(result, map[string]interface{}{
 			"session_id":   session.SessionID,
 			"backend":      session.Backend,
+			"model":        session.Model,
 			"status":       session.Status,
 			"container_id": session.ContainerID,
 			"created_at":   session.CreatedAt,
 			"last_active":  session.LastActive,
+			// The job the session worked for and the RUNNER that drove it —
+			// which is the role the session played. The projection dropped
+			// both, so the desktop's session list showed no Role badge while
+			// the browser's did (go-quicbaas#969).
+			"job_id": session.JobID,
+			"runner": session.Runner,
 		})
 	}
 

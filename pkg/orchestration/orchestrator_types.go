@@ -995,6 +995,25 @@ type SessionInfo struct {
 	Model     string       `json:"model,omitempty"`
 	State     SessionState `json:"state"`
 
+	// JobID names the orchestration job the session works for, empty when it
+	// belongs to none.
+	JobID string `json:"job_id,omitempty"`
+
+	// Runner is the job runner that drove that job — "sdlc", "review",
+	// "triage", or "workflow" for the engine's own. Empty when the session
+	// belongs to no job, or to one no longer on record.
+	//
+	// THE ROW CARRIES THE ROLE BECAUSE THE PAGE CANNOT GO AND FETCH IT. A
+	// session record says nothing about what the agent was doing, and a
+	// worker's transcript discussing "the review's findings" reads exactly
+	// like a reviewer's (go-quicbaas#969). The role is the runner of the
+	// session's job — which the UI used to resolve against the job list it
+	// happened to be holding. Once that list is a PAGE, the lookup misses
+	// every session whose job is not on it, and the alternative is one
+	// request per row. So the listing resolves the runner once, for the page
+	// it is about to answer with, and the row says what it was.
+	Runner string `json:"runner,omitempty"`
+
 	// CreatedAt and LastActivity are UNIX NANOSECONDS, both of them. See the
 	// unit contract in backend.go: they reached one reader in two different
 	// units, and a client that guesses which is a bug that comes back
@@ -1414,6 +1433,16 @@ type JobFilter struct {
 
 	// ProjectID restricts the listing to jobs launched under one project.
 	ProjectID string `json:"project_id,omitempty"`
+
+	// JobIDs restricts the listing to the named jobs.
+	//
+	// IT IS HOW A PAGE OF SOMETHING ELSE RESOLVES ITS JOBS IN ONE CALL. A
+	// page of sessions names a job per row and renders the runner's role from
+	// it; a page of tasks names the job its latest attempt ran as. Before
+	// this filter the only ways to fill those columns were to list the whole
+	// tenant — which paging exists to stop — or to issue one GetJobStatus per
+	// row. Empty lists every job, as every other field here does.
+	JobIDs []string `json:"job_ids,omitempty"`
 }
 
 // Matches reports whether status satisfies the filter.
@@ -1451,13 +1480,17 @@ func (f *JobFilter) Matches(status *JobStatus) bool {
 	if len(f.Statuses) > 0 && !slices.Contains(f.Statuses, status.State) {
 		return false
 	}
+	if len(f.JobIDs) > 0 && !slices.Contains(f.JobIDs, status.JobID) {
+		return false
+	}
 	return true
 }
 
 // Empty reports whether the filter narrows nothing.
 func (f *JobFilter) Empty() bool {
 	return f == nil ||
-		(f.TaskID == "" && f.Runner == "" && f.ProjectID == "" && len(f.Statuses) == 0)
+		(f.TaskID == "" && f.Runner == "" && f.ProjectID == "" &&
+			len(f.Statuses) == 0 && len(f.JobIDs) == 0)
 }
 
 // jobStatusTaskID is the task a job is an attempt at.

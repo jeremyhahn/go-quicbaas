@@ -1,7 +1,18 @@
 <!--
   WorkflowsView
 
-  Default view: workflow list.
+  Default view: workflow list, in SERVER MODE — the table hands its loader
+  {limit, offset, sort, q} and the daemon answers one page with the count of
+  everything that matched.
+
+  The sortable columns are the ones the endpoint orders by: name and mode. A
+  workflow carries no timestamp, and Description, Agents and Max Iter are not
+  in the allow-list, so those headers do not claim to sort. The search box goes
+  to the server, which matches the NAME — which is also the identifier.
+
+  The wizard still reads a list of names, for the duplicate-name warning it
+  gives before you submit. That list is one page of a hundred and the check is
+  a courtesy: the server refuses a duplicate whatever this page believes.
   "+ New Workflow" opens WorkflowWizard as a full-screen modal.
   "Advanced" link opens a raw JSON paste modal.
   Each row has Run / Edit / Duplicate / Delete actions via an inline button group.
@@ -11,7 +22,7 @@
   import StatusBadge from '../../components/core/StatusBadge.svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import DataTable from '../../components/core/DataTable.svelte';
-  import type { Column } from '../../lib/dataTable.ts';
+  import type { Column, PageRequest } from '../../lib/dataTable.ts';
   import StartJobDialog from '../../components/orchestrator/StartJobDialog.svelte';
   import WorkflowWizard from '../../components/orchestrator/WorkflowWizard.svelte';
   import { orchestratorStore } from '../../stores/orchestrator.svelte.ts';
@@ -26,50 +37,88 @@
   // ---------------------------------------------------------------------------
 
   let workflows = $state<WorkflowDefinition[]>([]);
-  let loading = $state(false);
   let loadError = $state('');
   let highlightedName = $state('');
 
+  // The keys are the SERVER's sort fields (docs/software-factory/api.md); a
+  // column it does not order by is not marked sortable.
   const TABLE_COLUMNS: Column<WorkflowDefinition>[] = [
     { key: 'name', label: 'Name', sortable: true, searchable: true },
-    { key: 'description', label: 'Description', sortable: true, searchable: true },
+    { key: 'description', label: 'Description', searchable: true },
     { key: 'mode', label: 'Mode', sortable: true, searchable: true },
     {
       key: 'agents',
       label: 'Agents',
-      sortable: true,
       headerClass: 'text-center',
       value: (wf) => wf.agents?.length ?? 0,
     },
     {
       key: 'max_iterations',
       label: 'Max Iter',
-      sortable: true,
       headerClass: 'text-center',
       value: (wf) => wf.settings?.max_iterations ?? 0,
     },
     { key: 'actions', label: 'Actions', srLabel: true },
   ];
 
+  /** How many names the wizard's duplicate check reads. */
+  const NAME_PAGE_LIMIT = 100;
+
+  /** refreshTick re-asks the table after a workflow is written or removed. */
+  let refreshTick = $state(0);
+
+  const reloadKey = $derived(`${orchestratorStore.activeTenantID}|${refreshTick}`);
+
+  async function loadWorkflowsPage(req: PageRequest): Promise<unknown> {
+    loadError = '';
+    const client = await getSDKClient();
+    const page = await client.orchestrator.listWorkflowsPage(orchestratorStore.activeTenantID, {
+      limit: req.limit,
+      offset: req.offset,
+      sort: req.sort,
+      q: req.q,
+    });
+    // The listing has answered a duplicate name before (two records, one
+    // name); keeping the guard means the reconciler never sees a repeated key.
+    const seen = new Set<string>();
+    return {
+      ...page,
+      items: page.items.filter((wf) => {
+        if (seen.has(wf.name)) return false;
+        seen.add(wf.name);
+        return true;
+      }),
+    };
+  }
+
+  /**
+   * fetchWorkflows reads the NAMES the wizard warns on — not the table's rows,
+   * which the table asks for itself. One page of a hundred: the check is a
+   * courtesy and the server is what actually refuses a duplicate.
+   */
   async function fetchWorkflows(): Promise<void> {
-    loading = true;
     loadError = '';
     try {
       const client = await getSDKClient();
-      const resp = await client.orchestrator.listWorkflows(orchestratorStore.activeTenantID);
-      const raw = resp.workflows ?? [];
+      const page = await client.orchestrator.listWorkflowsPage(orchestratorStore.activeTenantID, {
+        limit: NAME_PAGE_LIMIT,
+      });
       const seen = new Set<string>();
-      workflows = raw.filter((wf) => {
+      workflows = page.items.filter((wf) => {
         if (seen.has(wf.name)) return false;
         seen.add(wf.name);
         return true;
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      loadError = `Failed to load workflows: ${msg}`;
-    } finally {
-      loading = false;
+      loadError = `Failed to read the workflow names: ${msg}`;
     }
+  }
+
+  /** reloadWorkflows re-reads both the table's page and the name list. */
+  async function reloadWorkflows(): Promise<void> {
+    refreshTick += 1;
+    await fetchWorkflows();
   }
 
   function highlightRow(name: string): void {
@@ -182,7 +231,7 @@
       showToast('success', `Workflow "${def.name}" created`);
     }
     wizardOpen = false;
-    await fetchWorkflows();
+    await reloadWorkflows();
     highlightRow(def.name);
   }
 
@@ -247,7 +296,7 @@
       advancedOpen = false;
       advancedDefinitionText = '';
       advancedName = '';
-      await fetchWorkflows();
+      await reloadWorkflows();
       highlightRow(advancedName.trim());
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -281,7 +330,7 @@
       await client.orchestrator.deleteWorkflow(orchestratorStore.activeTenantID, name);
       showToast('success', `Workflow "${name}" deleted`);
       deleteTarget = null;
-      await fetchWorkflows();
+      await reloadWorkflows();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       showToast('error', `Delete failed: ${msg}`);
@@ -504,21 +553,24 @@
     {/snippet}
   </PageHeader>
 
-  {#if loading}
-    <div class="flex justify-center py-12">
-      <span class="loading loading-spinner loading-md text-primary"></span>
-    </div>
-
-  {:else if loadError}
+  <!--
+    The banner is about the NAME LIST the wizard's duplicate check reads, which
+    is a second, smaller request. It does not hide the table: a table that
+    loaded its page perfectly well must not be blanked because a courtesy
+    lookup failed, and the table reports its OWN read failing.
+  -->
+  {#if loadError}
     <div class="alert alert-warning text-sm">
       <span>{loadError}</span>
-      <button class="btn btn-xs btn-ghost" onclick={() => { void fetchWorkflows(); }}>Retry</button>
+      <button class="btn btn-xs btn-ghost" onclick={() => { void reloadWorkflows(); }}>Retry</button>
     </div>
+  {/if}
 
-  {:else}
     <DataTable
       columns={TABLE_COLUMNS}
-      rows={workflows}
+      load={loadWorkflowsPage}
+      itemsKey="items"
+      {reloadKey}
       rowKey={(wf: WorkflowDefinition) => wf.name}
       urlKey="workflows"
       ariaLabel="Workflow definitions"
@@ -589,6 +641,4 @@
         </tr>
       {/snippet}
     </DataTable>
-
-  {/if}
 </div>

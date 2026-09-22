@@ -834,3 +834,174 @@ func TestListAccounts_SearchComposesWithTheProviderFilter(t *testing.T) {
 		t.Error("the search never reached the service")
 	}
 }
+
+// =============================================================================
+// Filters a paged consumer cannot live without
+//
+// A page of sessions names a job per row and a page of tasks names the job of
+// its latest attempt. Resolving those jobs used to mean listing the whole
+// tenant — which is exactly what paging removed — so the jobs listing takes
+// the ids, and the tasks listing takes the dispatch mode the Tasks view
+// offers as a filter. Both narrow on the SERVER: a client narrowing a page of
+// 25 reports a total it cannot know.
+// =============================================================================
+
+func TestListJobs_NarrowsToTheNamedJobs(t *testing.T) {
+	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+	agentSvc.listJobs = pagedJobs(6)
+
+	w := httptest.NewRecorder()
+	server.HandleOrchestratorListJobs(w,
+		orchReq(http.MethodGet, "/api/v1/orchestrator/jobs?tenant_id=acme&job_ids=job-1,job-4", nil, nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	envelope, items := decodePageEnvelope(t, w.Body.Bytes(), "jobs")
+	if envelope.Total != 2 {
+		t.Errorf("total = %d, want the 2 jobs the caller named", envelope.Total)
+	}
+	named := map[string]bool{"job-1": true, "job-4": true}
+	for _, item := range items {
+		if !named[item["job_id"].(string)] {
+			t.Errorf("listing carries %v, which the caller did not name", item["job_id"])
+		}
+	}
+	if agentSvc.listJobsFilter == nil || len(agentSvc.listJobsFilter.JobIDs) != 2 {
+		t.Error("the job_ids filter never reached the service")
+	}
+}
+
+func TestListJobs_BlankJobIDsNarrowNothing(t *testing.T) {
+	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+	agentSvc.listJobs = pagedJobs(4)
+
+	w := httptest.NewRecorder()
+	server.HandleOrchestratorListJobs(w,
+		orchReq(http.MethodGet, "/api/v1/orchestrator/jobs?tenant_id=acme&job_ids=,,", nil, nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	envelope, _ := decodePageEnvelope(t, w.Body.Bytes(), "jobs")
+	if envelope.Total != 4 {
+		t.Errorf("total = %d, want every job: a wholly blank list narrows nothing "+
+			"rather than narrowing to nothing", envelope.Total)
+	}
+	if agentSvc.listJobsFilter == nil || !agentSvc.listJobsFilter.Empty() {
+		t.Error("a blank job_ids must leave the filter unset")
+	}
+}
+
+func TestListTasks_NarrowsByDispatchMode(t *testing.T) {
+	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	dispatched := &orchestration.Task{ID: "task-auto", Subject: "auto", Status: orchestration.TaskStatusInProgress, AutoSpawn: true, CreatedAt: 2}
+	queued := &orchestration.Task{ID: "task-queued", Subject: "queued", Status: orchestration.TaskStatusPending, CreatedAt: 1}
+
+	var seen *orchestration.TaskFilter
+	agentSvc.listTasksFunc = func(_ context.Context, _ string, filter *orchestration.TaskFilter) ([]*orchestration.Task, error) {
+		seen = filter
+		matched := make([]*orchestration.Task, 0, 2)
+		for _, task := range []*orchestration.Task{dispatched, queued} {
+			if filter.AutoSpawn == nil || task.AutoSpawn == *filter.AutoSpawn {
+				matched = append(matched, task)
+			}
+		}
+		return matched, nil
+	}
+
+	for _, tc := range []struct {
+		query string
+		want  string
+	}{
+		{"auto_spawn=true", "task-auto"},
+		{"auto_spawn=false", "task-queued"},
+	} {
+		w := httptest.NewRecorder()
+		server.HandleOrchestratorListTasks(w,
+			orchReq(http.MethodGet, "/api/v1/orchestrator/tasks?tenant_id=acme&"+tc.query, nil, nil))
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200; body=%s", tc.query, w.Code, w.Body.String())
+		}
+		envelope, items := decodePageEnvelope(t, w.Body.Bytes(), "tasks")
+		if envelope.Total != 1 || items[0]["id"] != tc.want {
+			t.Errorf("%s matched %d task(s) starting %v, want only %s",
+				tc.query, envelope.Total, items[0]["id"], tc.want)
+		}
+		if seen == nil || seen.AutoSpawn == nil {
+			t.Fatalf("%s: the auto_spawn filter never reached the service", tc.query)
+		}
+	}
+
+	w := httptest.NewRecorder()
+	server.HandleOrchestratorListTasks(w,
+		orchReq(http.MethodGet, "/api/v1/orchestrator/tasks?tenant_id=acme", nil, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	envelope, _ := decodePageEnvelope(t, w.Body.Bytes(), "tasks")
+	if envelope.Total != 2 {
+		t.Errorf("total = %d, want both tasks when no dispatch mode is asked for", envelope.Total)
+	}
+	if seen == nil || seen.AutoSpawn != nil {
+		t.Error("an absent auto_spawn must narrow nothing, not narrow to the queued tasks")
+	}
+}
+
+func TestListTasks_RefusesAnUnreadableDispatchMode(t *testing.T) {
+	server, _, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+
+	w := httptest.NewRecorder()
+	server.HandleOrchestratorListTasks(w,
+		orchReq(http.MethodGet, "/api/v1/orchestrator/tasks?tenant_id=acme&auto_spawn=maybe", nil, nil))
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "auto_spawn") {
+		t.Errorf("refusal %s does not name the parameter", w.Body.String())
+	}
+}
+
+func TestListSessions_CarriesTheJobBinding(t *testing.T) {
+	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+	agentSvc.listSessions = []*orchestration.SessionInfo{
+		{SessionID: "s-1", Backend: "claude", Model: "opus", State: orchestration.SessionStateActive,
+			JobID: "job-worker", Runner: "sdlc", CreatedAt: 1},
+		{SessionID: "s-2", Backend: "codex", State: orchestration.SessionStateClosed, CreatedAt: 2},
+	}
+
+	w := httptest.NewRecorder()
+	server.HandleOrchestratorListSessions(w,
+		orchReq(http.MethodGet, "/api/v1/orchestrator/sessions?tenant_id=acme", nil, nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	_, items := decodePageEnvelope(t, w.Body.Bytes(), "sessions")
+	if len(items) != 2 {
+		t.Fatalf("listed %d session(s), want 2", len(items))
+	}
+	if items[0]["job_id"] != "job-worker" {
+		t.Errorf("job_id = %v, want job-worker", items[0]["job_id"])
+	}
+	if items[0]["runner"] != "sdlc" {
+		t.Errorf("runner = %v, want sdlc; the Role badge is blank without it", items[0]["runner"])
+	}
+	if items[0]["model"] != "opus" {
+		t.Errorf("model = %v, want opus", items[0]["model"])
+	}
+	if _, present := items[1]["job_id"]; present {
+		t.Error("a session belonging to no job must carry no job_id rather than an empty one")
+	}
+	if _, present := items[1]["runner"]; present {
+		t.Error("a session belonging to no job must carry no runner rather than an empty one")
+	}
+}

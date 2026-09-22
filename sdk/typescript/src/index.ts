@@ -273,6 +273,27 @@ export { SandboxMode } from './types.js';
 // report's unattributed row supplies it as that level's scope.
 export { SPEND_UNATTRIBUTED } from './types.js';
 
+// Paging, sorting and search — the one request and answer shape every list
+// endpoint speaks. `adoptPage` and `wholeSetPage` are values a transport (or a
+// consumer normalising its own fetch) calls; the rest are types.
+export type {
+  PageParams,
+  PageResult,
+  JobPageParams,
+  TaskPageParams,
+  SessionPageParams,
+  AgentPageParams,
+  AccountPageParams,
+} from './page.js';
+export {
+  adoptPage,
+  appendPageParams,
+  appendListParam,
+  appendCSVParam,
+  wholeSetPage,
+  MalformedPageError,
+} from './page.js';
+
 // Typed errors.
 export {
   QuicBaaSError,

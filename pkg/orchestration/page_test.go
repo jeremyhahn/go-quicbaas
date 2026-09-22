@@ -511,3 +511,78 @@ func TestPageSpecSortFields_AreLexicalAndComplete(t *testing.T) {
 		t.Errorf("SortFields() on an empty spec = %v, want none", empty)
 	}
 }
+
+// TestParseOptionalBool_ReadsTheThreeStates proves the tri-state filter
+// parameter distinguishes "narrow to true", "narrow to false" and "do not
+// narrow", which is the whole reason it is a pointer.
+func TestParseOptionalBool_ReadsTheThreeStates(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		raw  string
+		want *bool
+	}{
+		{name: "absent does not narrow", raw: "", want: nil},
+		{name: "blank does not narrow", raw: "   ", want: nil},
+		{name: "true narrows to true", raw: "true", want: boolPtr(true)},
+		{name: "false narrows to false", raw: "false", want: boolPtr(false)},
+		{name: "one is true", raw: "1", want: boolPtr(true)},
+		{name: "zero is false", raw: "0", want: boolPtr(false)},
+		{name: "surrounding whitespace is trimmed", raw: " true ", want: boolPtr(true)},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := ParseOptionalBool("auto_spawn", tc.raw)
+			if err != nil {
+				t.Fatalf("ParseOptionalBool() error = %v, want nil", err)
+			}
+			switch {
+			case tc.want == nil && got != nil:
+				t.Fatalf("ParseOptionalBool(%q) = %v, want nil", tc.raw, *got)
+			case tc.want != nil && got == nil:
+				t.Fatalf("ParseOptionalBool(%q) = nil, want %v", tc.raw, *tc.want)
+			case tc.want != nil && *got != *tc.want:
+				t.Errorf("ParseOptionalBool(%q) = %v, want %v", tc.raw, *got, *tc.want)
+			}
+		})
+	}
+}
+
+// TestParseOptionalBool_RefusesUnreadableValues proves a value that is not a
+// boolean is a typed refusal naming the parameter, rather than a silent false
+// — which would narrow the listing to exactly the records the caller did not
+// ask for.
+func TestParseOptionalBool_RefusesUnreadableValues(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{"maybe", "yes please", "2"} {
+		t.Run(raw, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := ParseOptionalBool("auto_spawn", raw)
+			if got != nil {
+				t.Error("ParseOptionalBool() returned a value for input it could not read")
+			}
+			if !errors.Is(err, ErrFilterParamInvalid) {
+				t.Fatalf("error = %v, want ErrFilterParamInvalid", err)
+			}
+			var invalid *InvalidFilterParamError
+			if !errors.As(err, &invalid) {
+				t.Fatalf("error = %v, want *InvalidFilterParamError", err)
+			}
+			if invalid.Param != "auto_spawn" || invalid.Value != raw {
+				t.Errorf("error = %+v, want param %q value %q", invalid, "auto_spawn", raw)
+			}
+			if !strings.Contains(err.Error(), "auto_spawn") {
+				t.Errorf("message %q does not name the parameter", err.Error())
+			}
+		})
+	}
+}
+
+// boolPtr is the tri-state filter's "present and this value".
+func boolPtr(v bool) *bool { return &v }

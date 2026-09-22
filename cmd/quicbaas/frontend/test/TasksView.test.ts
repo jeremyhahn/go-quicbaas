@@ -16,10 +16,17 @@
  *   - `?project=` narrows the list and the empty state names the project.
  *   - Clicking a row opens the task detail route.
  *   - A failed load says why (a 403 names the missing permission).
+ *
+ * THE TABLE IS SERVER-PAGED. Its rows come from `listTasksPage`, and the jobs
+ * behind the Assigned column from `listJobsPage` narrowed to the ids this page
+ * names — so the doubles below serve pages out of the same `storeTasks` /
+ * `storeJobs` fixtures the tests set, applying the narrowings the view claims
+ * to send. A view that stopped sending one would fail here rather than quietly
+ * filtering in the browser.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/svelte';
+import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks — declared before any src/ imports.
@@ -36,9 +43,41 @@ const { mockDecomposeTask, mockClaimTask, mockCompleteTask, mockShowToast, mockL
   mockRouteTasks: vi.fn(),
 }));
 
+/** The page requests the view sent, newest last. */
+const tasksPageCalls: Array<Record<string, unknown>> = [];
+const jobsPageCalls: Array<Record<string, unknown>> = [];
+
+/** Set by a test that wants the tasks page to fail. */
+let tasksPageError: unknown = null;
+
 vi.mock('../src/stores/sdkClient.ts', () => ({
-  getSDKClient: vi.fn().mockResolvedValue({
+  getSDKClient: vi.fn(async () => ({
     orchestrator: {
+      // The double applies the SERVER's narrowings — project and dispatch
+      // mode — to the fixture, so a filter the view forgets to send shows up
+      // as rows it should not have got.
+      listTasksPage: async (_tenant: string, page: Record<string, unknown> = {}) => {
+        tasksPageCalls.push(page);
+        if (tasksPageError !== null) throw tasksPageError;
+        const matched = (storeTasks as Array<Record<string, unknown>>).filter((task) => {
+          if (page['project_id'] !== undefined && task['project_id'] !== page['project_id']) {
+            return false;
+          }
+          if (page['auto_spawn'] !== undefined && Boolean(task['auto_spawn']) !== page['auto_spawn']) {
+            return false;
+          }
+          return true;
+        });
+        return { items: matched, total: matched.length, limit: 25, offset: 0 };
+      },
+      listJobsPage: async (_tenant: string, page: Record<string, unknown> = {}) => {
+        jobsPageCalls.push(page);
+        const ids = (page['job_ids'] ?? []) as string[];
+        const matched = (storeJobs as Array<Record<string, unknown>>).filter(
+          (job) => ids.includes(job['job_id'] as string),
+        );
+        return { items: matched, total: matched.length, limit: ids.length, offset: 0 };
+      },
       decomposeTask: mockDecomposeTask,
       claimTask: mockClaimTask,
       completeTask: mockCompleteTask,
@@ -46,7 +85,7 @@ vi.mock('../src/stores/sdkClient.ts', () => ({
     projects: {
       listProjects: mockListProjects,
     },
-  }),
+  })),
 }));
 
 vi.mock('../src/stores/toast.svelte.ts', () => ({
@@ -127,10 +166,32 @@ function resetStores(): void {
   storeJobs = [];
   storeLoading = false;
   storeError = null;
+  tasksPageError = null;
+  tasksPageCalls.length = 0;
+  jobsPageCalls.length = 0;
+  window.location.hash = '#/tasks';
   routerStoreMock.name = 'tasks';
   routerStoreMock.params = {};
   routerStoreMock.hash = '#/tasks';
   mockListProjects.mockResolvedValue({ projects: [{ id: 'proj-1', name: 'go-truststrap' }], total: 1 });
+}
+
+/**
+ * renderTasks renders the view and waits for its first page to arrive. The
+ * table reads from the server, so nothing is on screen until it answers.
+ */
+async function renderTasks(): Promise<ReturnType<typeof render>> {
+  const result = render(TasksView);
+  await waitFor(() => { expect(tasksPageCalls.length).toBeGreaterThan(0); });
+  await waitFor(() => {
+    expect(document.querySelector('[data-testid="data-table"] tbody')).not.toBeNull();
+  });
+  return result;
+}
+
+/** The parameters of the most recent tasks page request. */
+function lastTasksRequest(): Record<string, unknown> {
+  return tasksPageCalls[tasksPageCalls.length - 1] ?? {};
 }
 
 // ---------------------------------------------------------------------------
@@ -140,23 +201,27 @@ function resetStores(): void {
 describe('TasksView — columns', () => {
   beforeEach(resetStores);
 
-  it('renders the generic Task column set in table layout', () => {
-    render(TasksView);
+  it('renders the generic Task column set in table layout', async () => {
+    await renderTasks();
     for (const header of ['Subject', 'Project', 'Status', 'Attempts', 'Assigned', 'Job', 'Updated']) {
       expect(screen.getByRole('columnheader', { name: header })).toBeInTheDocument();
     }
+    // Only the endpoint's own sort fields claim to sort.
+    expect(screen.getByRole('button', { name: 'Sort by Subject' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sort by Attempts' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Sort by Assigned' })).toBeNull();
   });
 
-  it('no longer renders the Team, Created, or Spawned Job columns', () => {
-    render(TasksView);
+  it('no longer renders the Team, Created, or Spawned Job columns', async () => {
+    await renderTasks();
     expect(screen.queryByRole('columnheader', { name: 'Team' })).toBeNull();
     expect(screen.queryByRole('columnheader', { name: 'Created' })).toBeNull();
     expect(screen.queryByRole('columnheader', { name: 'Spawned Job' })).toBeNull();
   });
 
-  it('keeps the column set when tasks are present', () => {
+  it('keeps the column set when tasks are present', async () => {
     storeTasks = [makeTask()];
-    render(TasksView);
+    await renderTasks();
     expect(screen.getByRole('columnheader', { name: 'Job' })).toBeInTheDocument();
   });
 });
@@ -164,32 +229,32 @@ describe('TasksView — columns', () => {
 describe('TasksView — provenance and job link', () => {
   beforeEach(resetStores);
 
-  it('links the forge issue chip to the source URL, opening on the forge', () => {
+  it('links the forge issue chip to the source URL, opening on the forge', async () => {
     storeTasks = [makeTask({ source: { kind: 'forge_issue', ref: 'owner/repo#42', url: 'https://forge.example/owner/repo/issues/42' } })];
-    render(TasksView);
-    const chip = screen.getByTitle('Open issue #42 on the forge');
+    await renderTasks();
+    const chip = await waitFor(() => screen.getByTitle('Open issue #42 on the forge'));
     expect(chip).toHaveTextContent('#42');
     expect(chip).toHaveAttribute('href', 'https://forge.example/owner/repo/issues/42');
     expect(chip).toHaveAttribute('target', '_blank');
   });
 
-  it('renders the issue number without a link when the source carries no URL', () => {
+  it('renders the issue number without a link when the source carries no URL', async () => {
     storeTasks = [makeTask({ source: { kind: 'forge_issue', ref: '7' } })];
-    render(TasksView);
-    const chip = screen.getByTitle('Forge issue #7');
+    await renderTasks();
+    const chip = await waitFor(() => screen.getByTitle('Forge issue #7'));
     expect(chip.tagName).toBe('SPAN');
   });
 
-  it('renders no issue chip for a hand-created task', () => {
+  it('renders no issue chip for a hand-created task', async () => {
     storeTasks = [makeTask({ source: { kind: 'operator', ref: 'alice' } })];
-    render(TasksView);
+    await renderTasks();
     expect(screen.queryByTitle(/Forge issue|on the forge/)).toBeNull();
   });
 
-  it('links the open attempt to #/jobs/{id}, not the dead #/orchestrator/jobs/ path', () => {
+  it('links the open attempt to #/jobs/{id}, not the dead #/orchestrator/jobs/ path', async () => {
     storeTasks = [makeTask({ spawned_job_id: 'job-abcdef1234567890' })];
-    render(TasksView);
-    const link = screen.getByTitle(/View job job-abcdef1234567890/i);
+    await renderTasks();
+    const link = await waitFor(() => screen.getByTitle(/View job job-abcdef1234567890/i));
     expect(link).toHaveAttribute('href', '#/jobs/job-abcdef1234567890');
   });
 
@@ -198,7 +263,7 @@ describe('TasksView — provenance and job link', () => {
   // the moment the attempt concludes, so the column fell through to
   // `auto_spawn` and printed "no agent matched" for a task that had run a job
   // to completion — the operator's first hop from task to job, gone.
-  it('links a completed task to the job that ran it, from the attempt history', () => {
+  it('links a completed task to the job that ran it, from the attempt history', async () => {
     storeTasks = [makeTask({
       status: 'completed',
       auto_spawn: true,
@@ -206,15 +271,15 @@ describe('TasksView — provenance and job link', () => {
       attempts: 1,
       metadata: { attempt_history: '1f644ffba52203488392749b50573b87' },
     })];
-    render(TasksView);
-    const link = screen.getByTitle(/View job 1f644ffba52203488392749b50573b87/i);
+    await renderTasks();
+    const link = await waitFor(() => screen.getByTitle(/View job 1f644ffba52203488392749b50573b87/i));
     expect(link).toHaveAttribute('href', '#/jobs/1f644ffba52203488392749b50573b87');
     expect(screen.queryByText(/no agent matched/i)).toBeNull();
   });
 
   // A retried task names every attempt it ran; the column links the newest,
   // because that is the run whose outcome the status reflects.
-  it('links the newest attempt when a task ran several', () => {
+  it('links the newest attempt when a task ran several', async () => {
     storeTasks = [makeTask({
       status: 'failed',
       auto_spawn: true,
@@ -222,24 +287,25 @@ describe('TasksView — provenance and job link', () => {
       attempts: 3,
       metadata: { attempt_history: 'job-one,job-two,job-three' },
     })];
-    render(TasksView);
-    expect(screen.getByTitle(/View job job-three/i)).toHaveAttribute('href', '#/jobs/job-three');
+    await renderTasks();
+    expect(await waitFor(() => screen.getByTitle(/View job job-three/i)))
+      .toHaveAttribute('href', '#/jobs/job-three');
     expect(screen.queryByTitle(/View job job-one/i)).toBeNull();
   });
 
   // "No agent matched" is a claim about DISPATCH, and it stays for the one
   // task it is true of: auto-spawn requested, nothing ever started.
-  it('shows "no agent matched" only for an auto-spawn task that has never dispatched', () => {
+  it('shows "no agent matched" only for an auto-spawn task that has never dispatched', async () => {
     storeTasks = [makeTask({ auto_spawn: true, spawned_job_id: '' })];
-    render(TasksView);
-    expect(screen.getByText(/no agent matched/i)).toBeInTheDocument();
+    await renderTasks();
+    expect(await waitFor(() => screen.getByText(/no agent matched/i))).toBeInTheDocument();
   });
 
   // A task whose attempts were charged but whose history the page cannot read
   // must not be described as having matched no agent either.
-  it('does not claim "no agent matched" for a task whose attempts were charged', () => {
+  it('does not claim "no agent matched" for a task whose attempts were charged', async () => {
     storeTasks = [makeTask({ auto_spawn: true, spawned_job_id: '', attempts: 2 })];
-    render(TasksView);
+    await renderTasks();
     expect(screen.queryByText(/no agent matched/i)).toBeNull();
   });
 });
@@ -256,13 +322,13 @@ describe('TasksView — provenance and job link', () => {
 describe('TasksView — the agent working the task', () => {
   beforeEach(resetStores);
 
-  it('names the claimant when the task has one', () => {
+  it('names the claimant when the task has one', async () => {
     storeTasks = [makeTask({ assigned_to: 'alice' })];
-    render(TasksView);
-    expect(screen.getByTestId('task-assigned')).toHaveTextContent('alice');
+    await renderTasks();
+    expect(await waitFor(() => screen.getByTestId('task-assigned'))).toHaveTextContent('alice');
   });
 
-  it('names the fleet agent the latest attempt ran on when the task has no claimant', () => {
+  it('names the fleet agent the latest attempt ran on when the task has no claimant', async () => {
     storeTasks = [makeTask({
       status: 'completed',
       auto_spawn: true,
@@ -272,14 +338,19 @@ describe('TasksView — the agent working the task', () => {
       metadata: { attempt_history: 'job-abc' },
     })];
     storeJobs = [{ job_id: 'job-abc', agent_id: 'agent-automatethethings-agent-vm-host-4' }];
-    render(TasksView);
-    expect(screen.getByTestId('task-assigned'))
-      .toHaveTextContent('agent-automatethethings-agent-vm-host-4');
+    await renderTasks();
+    await waitFor(() => {
+      expect(screen.getByTestId('task-assigned'))
+        .toHaveTextContent('agent-automatethethings-agent-vm-host-4');
+    });
+    // ONE request for the whole page, narrowed to the jobs its rows name.
+    expect(jobsPageCalls).toHaveLength(1);
+    expect(jobsPageCalls[0]?.['job_ids']).toEqual(['job-abc']);
   });
 
   // The LATEST attempt's agent, not an earlier one's: a task retried onto a
   // second host must not still read as running on the first.
-  it('names the latest attempt\'s agent, not an earlier attempt\'s', () => {
+  it('names the latest attempt\'s agent, not an earlier attempt\'s', async () => {
     storeTasks = [makeTask({
       status: 'failed',
       auto_spawn: true,
@@ -292,21 +363,24 @@ describe('TasksView — the agent working the task', () => {
       { job_id: 'job-one', agent_id: 'agent-host-a' },
       { job_id: 'job-two', agent_id: 'agent-host-b' },
     ];
-    render(TasksView);
-    const cell = screen.getByTestId('task-assigned');
-    expect(cell).toHaveTextContent('agent-host-b');
+    await renderTasks();
+    const cell = await waitFor(() => {
+      const el = screen.getByTestId('task-assigned');
+      expect(el).toHaveTextContent('agent-host-b');
+      return el;
+    });
     expect(cell).not.toHaveTextContent('agent-host-a');
   });
 
   // An em-dash is still the right answer when nothing names an agent: the
   // column must not invent one from a job record it does not hold.
-  it('renders an em-dash when neither the task nor any job names an agent', () => {
+  it('renders an em-dash when neither the task nor any job names an agent', async () => {
     storeTasks = [makeTask({ assigned_to: '', spawned_job_id: '' })];
-    render(TasksView);
-    expect(screen.getByTestId('task-assigned')).toHaveTextContent('—');
+    await renderTasks();
+    expect(await waitFor(() => screen.getByTestId('task-assigned'))).toHaveTextContent('—');
   });
 
-  it('renders an em-dash when the job record for the latest attempt is not held', () => {
+  it('renders an em-dash when the job record for the latest attempt is not held', async () => {
     storeTasks = [makeTask({
       status: 'completed',
       assigned_to: '',
@@ -314,7 +388,7 @@ describe('TasksView — the agent working the task', () => {
       metadata: { attempt_history: 'job-unread' },
     })];
     storeJobs = [{ job_id: 'job-other', agent_id: 'agent-host-a' }];
-    render(TasksView);
+    await renderTasks();
     expect(screen.getByTestId('task-assigned')).toHaveTextContent('—');
   });
 });
@@ -322,37 +396,38 @@ describe('TasksView — the agent working the task', () => {
 describe('TasksView — status and attempts', () => {
   beforeEach(resetStores);
 
-  it('marks a blocked task with its reason', () => {
+  it('marks a blocked task with its reason', async () => {
     storeTasks = [makeTask({ status: 'blocked', blocked_reason: 'needs an owner ruling on the schema' })];
-    render(TasksView);
-    const marker = screen.getByTestId('blocked-marker');
+    await renderTasks();
+    const marker = await waitFor(() => screen.getByTestId('blocked-marker'));
     expect(marker).toHaveTextContent('needs an owner ruling on the schema');
     expect(marker).toHaveAttribute('title', 'needs an owner ruling on the schema');
   });
 
-  it('says so when a blocked task has no reason recorded', () => {
+  it('says so when a blocked task has no reason recorded', async () => {
     storeTasks = [makeTask({ status: 'blocked' })];
-    render(TasksView);
-    expect(screen.getByTestId('blocked-marker')).toHaveTextContent('No reason recorded.');
+    await renderTasks();
+    expect(await waitFor(() => screen.getByTestId('blocked-marker')))
+      .toHaveTextContent('No reason recorded.');
   });
 
-  it('renders no blocked marker for a working task', () => {
+  it('renders no blocked marker for a working task', async () => {
     storeTasks = [makeTask({ status: 'in_progress', blocked_reason: 'stale' })];
-    render(TasksView);
+    await renderTasks();
     expect(screen.queryByTestId('blocked-marker')).toBeNull();
   });
 
-  it('renders attempts as charged / budget with the dispatched count and a muted refund', () => {
+  it('renders attempts as charged / budget with the dispatched count and a muted refund', async () => {
     storeTasks = [makeTask({ attempts: 3, attempt_budget: 5, environment_faults: 1 })];
-    render(TasksView);
-    expect(screen.getByText('2 / 5 (3 dispatched)')).toBeInTheDocument();
+    await renderTasks();
+    expect(await waitFor(() => screen.getByText('2 / 5 (3 dispatched)'))).toBeInTheDocument();
     expect(screen.getByText(/1 refunded/)).toBeInTheDocument();
   });
 
-  it('renders an em-dash for a task with no attempt accounting', () => {
+  it('renders an em-dash for a task with no attempt accounting', async () => {
     storeTasks = [makeTask()];
-    render(TasksView);
-    const row = screen.getByRole('button', { name: 'Open task Test task' });
+    await renderTasks();
+    const row = await waitFor(() => screen.getByRole('button', { name: 'Open task Test task' }));
     expect(row.textContent).toContain('—');
   });
 });
@@ -366,9 +441,11 @@ describe('TasksView — project filter', () => {
       makeTask({ id: 't1', subject: 'In project', project_id: 'proj-1' }),
       makeTask({ id: 't2', subject: 'Elsewhere', project_id: 'proj-2' }),
     ];
-    render(TasksView);
-    expect(screen.getByText('In project')).toBeInTheDocument();
+    await renderTasks();
+    expect(await waitFor(() => screen.getByText('In project'))).toBeInTheDocument();
     expect(screen.queryByText('Elsewhere')).toBeNull();
+    // The narrowing is the SERVER's: the request names the project.
+    expect(lastTasksRequest()['project_id']).toBe('proj-1');
     // The project name arrives after the async listProjects resolves.
     expect(await screen.findByText(/Project: go-truststrap/)).toBeInTheDocument();
   });
@@ -376,13 +453,13 @@ describe('TasksView — project filter', () => {
   it('names the project in the empty state when the filter matches nothing', async () => {
     routerStoreMock.params = { project: 'proj-1' };
     storeTasks = [makeTask({ id: 't2', subject: 'Elsewhere', project_id: 'proj-2' })];
-    render(TasksView);
+    await renderTasks();
     expect(await screen.findByText('No tasks in go-truststrap.')).toBeInTheDocument();
   });
 
   it('clears the filter through routeTasks()', async () => {
     routerStoreMock.params = { project: 'proj-1' };
-    render(TasksView);
+    await renderTasks();
     await fireEvent.click(screen.getByRole('button', { name: 'Show tasks from every project' }));
     expect(mockRouteTasks).toHaveBeenCalledWith();
   });
@@ -390,7 +467,7 @@ describe('TasksView — project filter', () => {
   it('falls back to the project id when the project list cannot be read', async () => {
     mockListProjects.mockRejectedValue(new Error('forbidden'));
     storeTasks = [makeTask({ project_id: 'proj-9' })];
-    render(TasksView);
+    await renderTasks();
     expect(await screen.findByText('proj-9')).toBeInTheDocument();
   });
 });
@@ -400,16 +477,20 @@ describe('TasksView — row click', () => {
 
   it('opens the task detail route when a row is clicked', async () => {
     storeTasks = [makeTask({ id: 'task-xyz' })];
-    render(TasksView);
-    await fireEvent.click(screen.getByRole('button', { name: 'Open task Test task' }));
+    await renderTasks();
+    await fireEvent.click(
+      await waitFor(() => screen.getByRole('button', { name: 'Open task Test task' })),
+    );
     expect(mockRouteTaskDetail).toHaveBeenCalledWith('task-xyz');
   });
 
   it('does not open the detail when an action button inside the row is clicked', async () => {
     mockDecomposeTask.mockResolvedValue({ tasks: [] });
     storeTasks = [makeTask({ id: 'task-xyz' })];
-    render(TasksView);
-    await fireEvent.click(screen.getByRole('button', { name: 'Decompose task Test task' }));
+    await renderTasks();
+    await fireEvent.click(
+      await waitFor(() => screen.getByRole('button', { name: 'Decompose task Test task' })),
+    );
     expect(mockRouteTaskDetail).not.toHaveBeenCalled();
     expect(mockDecomposeTask).toHaveBeenCalled();
   });
@@ -418,36 +499,61 @@ describe('TasksView — row click', () => {
 describe('TasksView — spawn filter controls', () => {
   beforeEach(resetStores);
 
-  it('renders the Auto-spawned, Queued and All filter buttons', () => {
-    render(TasksView);
+  it('renders the Auto-spawned, Queued and All filter buttons', async () => {
+    await renderTasks();
     expect(screen.getByRole('button', { name: /Show auto-spawned tasks/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Show queued tasks/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Show all tasks/i })).toBeInTheDocument();
+  });
+
+  // The dispatch mode is a SERVER parameter: a page of twenty-five narrowed in
+  // the browser would hide matches and miscount the rest.
+  it('asks the server for the dispatch mode rather than narrowing the page', async () => {
+    storeTasks = [
+      makeTask({ id: 'auto', subject: 'Dispatched', auto_spawn: true }),
+      makeTask({ id: 'queued', subject: 'Waiting', auto_spawn: false }),
+    ];
+    await renderTasks();
+    expect(lastTasksRequest()['auto_spawn']).toBeUndefined();
+
+    await fireEvent.click(screen.getByRole('button', { name: /Show auto-spawned tasks/i }));
+    await waitFor(() => { expect(lastTasksRequest()['auto_spawn']).toBe(true); });
+    await waitFor(() => { expect(screen.queryByText('Waiting')).toBeNull(); });
+
+    await fireEvent.click(screen.getByRole('button', { name: /Show queued tasks/i }));
+    await waitFor(() => { expect(lastTasksRequest()['auto_spawn']).toBe(false); });
+
+    await fireEvent.click(screen.getByRole('button', { name: /Show all tasks/i }));
+    await waitFor(() => { expect(lastTasksRequest()['auto_spawn']).toBeUndefined(); });
   });
 });
 
 describe('TasksView — empty and error states', () => {
   beforeEach(resetStores);
 
-  it('renders the "No tasks tracked" empty-state when there are no tasks', () => {
-    render(TasksView);
-    expect(screen.getByText(/No tasks tracked/i)).toBeInTheDocument();
+  it('renders the "No tasks tracked" empty-state when there are no tasks', async () => {
+    await renderTasks();
+    expect(await waitFor(() => screen.getByText(/No tasks tracked/i))).toBeInTheDocument();
   });
 
-  it('names the missing permission when the list failed with a 403', () => {
-    storeError = { status: 403, message: 'forbidden' };
+  it('names the missing permission when the list failed with a 403', async () => {
+    // The TABLE's read is the one that failed, and it says which permission
+    // the account lacks rather than reading as a transport hiccup.
+    tasksPageError = { status: 403, message: 'forbidden' };
     render(TasksView);
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      'You do not have permission to view tasks: this account lacks orchestrator:status.',
-    );
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'You do not have permission to view tasks: this account lacks orchestrator:status.',
+      );
+    });
     expect(screen.queryByText(/No tasks tracked/i)).toBeNull();
   });
 
-  it('shows a spinner only while loading with nothing to show, never alongside rows', () => {
+  it('shows a spinner only while loading with nothing to show, never alongside rows', async () => {
     storeLoading = true;
     storeTasks = [makeTask()];
-    const { container } = render(TasksView);
+    const { container } = await renderTasks();
+    await waitFor(() => { expect(screen.getByText('Test task')).toBeInTheDocument(); });
     expect(container.querySelector('.loading-spinner')).toBeNull();
-    expect(screen.getByText('Test task')).toBeInTheDocument();
   });
 });

@@ -268,8 +268,30 @@ export interface ListJobsRequest {
   tenant_id: string;
 
   // task_id narrows the listing to the attempts at one task. Omit to list
-  // every job the tenant owns. The SERVER applies it.
+  // every job the tenant owns. The SERVER applies it, as it does every field
+  // below.
   task_id?: string;
+
+  /** runner narrows the listing to the jobs one runner drove. */
+  runner?: string;
+
+  /** project_id narrows the listing to one project's jobs. */
+  project_id?: string;
+
+  /** statuses narrows the listing to jobs in any of these states. */
+  statuses?: JobState[];
+
+  /**
+   * job_ids narrows the listing to the named jobs — how a caller holding a
+   * page of something else resolves the jobs its rows name in ONE call.
+   */
+  job_ids?: string[];
+
+  /** The shared paging parameters; see PageParams in page.ts. */
+  limit?: number;
+  offset?: number;
+  sort?: string;
+  q?: string;
 }
 
 // ListJobsResponse is the response from listing jobs.
@@ -310,6 +332,22 @@ export interface ListTasksRequest {
   project_id?: string;
   /** statuses restricts the listing to tasks in any of these statuses; composes with status. */
   statuses?: TaskStatus[];
+
+  /** created_by restricts the listing to one creator. */
+  created_by?: string;
+
+  /**
+   * auto_spawn restricts the listing to the tasks that asked for immediate
+   * dispatch (true) or the ones queued for a claim (false). Absent does not
+   * narrow.
+   */
+  auto_spawn?: boolean;
+
+  /** The shared paging parameters; see PageParams in page.ts. */
+  limit?: number;
+  offset?: number;
+  sort?: string;
+  q?: string;
 }
 
 // ListTasksResponse is the response from listing tasks.
@@ -1244,6 +1282,12 @@ export interface ListSessionsRequest {
   tenantID: string;
   backend?: string;
   status?: string;
+
+  /** The shared paging parameters; see PageParams in page.ts. */
+  limit?: number;
+  offset?: number;
+  sort?: string;
+  q?: string;
 }
 
 // SessionStatusResponse carries the status of a single session.
@@ -1251,12 +1295,22 @@ export interface ListSessionsRequest {
 export interface SessionStatusResponse {
   session_id: string;
   backend: string;
+  /** model is the model the session runs on, when the service reported one. */
+  model?: string;
   status: string;
   container_id?: string;
   created_at: number;
   last_active: number;
   /** job_id names the orchestration job this session works for, if any. */
   job_id?: string;
+  /**
+   * runner is the job runner that drove that job — `sdlc`, `review`,
+   * `triage`, `workflow` — and so which ROLE the session played. The service
+   * resolves it per page, so a consumer holding one page of sessions never
+   * has to read the job list to find out. Absent when the session belongs to
+   * no job, or to one no longer on record.
+   */
+  runner?: string;
 }
 
 // ListSessionsResponse is the response from listing sessions.
@@ -1282,6 +1336,12 @@ export interface ListAgentsRequest {
   agent_type?: string;
   backend?: string;
   model?: string;
+
+  /** The shared paging parameters; see PageParams in page.ts. */
+  limit?: number;
+  offset?: number;
+  sort?: string;
+  q?: string;
 }
 
 // ListAgentsResponse is the response from listing agents.

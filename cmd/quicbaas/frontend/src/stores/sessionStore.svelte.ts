@@ -373,6 +373,42 @@ export async function refreshSessions(): Promise<void> {
   }
 }
 
+/**
+ * resolveSession returns ONE session by id: from the list already held, or
+ * from the server when it is not on it.
+ *
+ * A LIST IS A PAGE NOW. The session list holds twenty-five records, and the
+ * Sessions table pages through the rest — so a row opened from page three
+ * names a session this store has never seen, and a detail route that looked
+ * only at the cache answered "Session not found" for a session that plainly
+ * exists. The listing searches on the session id (docs/software-factory/api.md),
+ * which makes the miss one request rather than a walk through every page.
+ *
+ * Returns null when nothing matches or the read fails: the route renders its
+ * own "not found" rather than an empty detail page.
+ */
+export async function resolveSession(
+  sessionID: string,
+): Promise<SessionStatusResponse | null> {
+  if (sessionID === '') return null;
+  const held = (inScope() ? sessions : []).find((s) => s.session_id === sessionID);
+  if (held !== undefined) return held;
+
+  const asked = tenantScope();
+  const tenantID = orchestratorStore.activeTenantID;
+  try {
+    const client = await getSDKClient();
+    const page = await client.orchestrator.listSessionsPage(tenantID, { q: sessionID, limit: 1 });
+    if (asked !== tenantScope()) return null;
+    // The search is a substring match, so the answer is confirmed against the
+    // id asked for rather than trusted to be the only thing that matched.
+    const found = page.items.find((s) => s.session_id === sessionID);
+    return found ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Active session + live event subscription
 // ---------------------------------------------------------------------------

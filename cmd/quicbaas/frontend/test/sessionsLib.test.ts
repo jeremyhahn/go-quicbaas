@@ -191,26 +191,29 @@ describe('roleOfRunner', () => {
 });
 
 describe('sessionRole', () => {
-  const jobs = [
-    { job_id: 'job-1', runner: 'sdlc' },
-    { job_id: 'job-2', runner: 'review' },
-    { job_id: 'job-3' },
-  ];
+  // The listing resolves the runner for the page it answers, so the ROW says
+  // what the session was doing. It used to be looked up in the job list the
+  // store held — which stopped working the day that list became a page.
+  it('reads the role from the runner the record carries', () => {
+    expect(sessionRole({ runner: 'sdlc' })).toBe('worker');
+    expect(sessionRole({ runner: 'review' })).toBe('reviewer');
+    expect(sessionRole({ runner: 'triage' })).toBe('triage');
+  });
 
-  it('reads the role from the runner of the job the session names', () => {
-    expect(sessionRole({ job_id: 'job-1' }, jobs)).toBe('worker');
-    expect(sessionRole({ job_id: 'job-2' }, jobs)).toBe('reviewer');
+  it('reports an unknown runner under its own name rather than dropping it', () => {
+    expect(sessionRole({ runner: 'workflow' })).toBe('workflow');
+    expect(sessionRole({ runner: 'something-new' })).toBe('something-new');
   });
 
   it('claims no role it cannot support', () => {
-    // No job on the session, a job nobody read, a job with no runner, and no
-    // job list at all: each is the absence of an answer, not a default.
-    expect(sessionRole({}, jobs)).toBe('');
-    expect(sessionRole({ job_id: '' }, jobs)).toBe('');
-    expect(sessionRole({ job_id: 'job-missing' }, jobs)).toBe('');
-    expect(sessionRole({ job_id: 'job-3' }, jobs)).toBe('');
-    expect(sessionRole({ job_id: 'job-1' }, null)).toBe('');
-    expect(sessionRole(null, jobs)).toBe('');
+    // A session belonging to no job, one whose job could not be read, and no
+    // record at all: each is the absence of an answer, not a default.
+    expect(sessionRole({})).toBe('');
+    expect(sessionRole({ runner: '' })).toBe('');
+    expect(sessionRole({ runner: '   ' })).toBe('');
+    expect(sessionRole({ runner: null })).toBe('');
+    expect(sessionRole(null)).toBe('');
+    expect(sessionRole(undefined)).toBe('');
   });
 });
 

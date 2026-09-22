@@ -394,6 +394,9 @@ func (h *orchestratorHandler) handleListTasks(ctx context.Context, req interface
 	if len(sdkReq.Statuses) > 0 {
 		url += "&statuses=" + neturl.QueryEscape(strings.Join(sdkReq.Statuses, ","))
 	}
+	if sdkReq.AutoSpawn != nil {
+		url += "&auto_spawn=" + strconv.FormatBool(*sdkReq.AutoSpawn)
+	}
 	url += pageQuerySuffix(sdkReq.Params)
 	var resp orchestrator.ListTasksResponse
 	if err := h.transport.doJSONRequest(ctx, http.MethodGet, url, nil, &resp); err != nil {
@@ -631,6 +634,9 @@ func (h *orchestratorHandler) handleListJobs(ctx context.Context, req interface{
 	}
 	if len(sdkReq.Statuses) > 0 {
 		url += "&statuses=" + neturl.QueryEscape(strings.Join(sdkReq.Statuses, ","))
+	}
+	if len(sdkReq.JobIDs) > 0 {
+		url += "&job_ids=" + neturl.QueryEscape(strings.Join(sdkReq.JobIDs, ","))
 	}
 	url += pageQuerySuffix(sdkReq.Params)
 	var resp orchestrator.ListJobsResponse

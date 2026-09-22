@@ -200,6 +200,15 @@ type SessionStatusWire struct {
 	ContainerID  string `json:"container_id"`
 	CreatedAt    int64  `json:"created_at"`
 	LastActivity int64  `json:"last_activity"`
+
+	// JobID names the orchestration job the session works for, if any.
+	JobID string `json:"job_id"`
+
+	// Runner is the job runner that drove that job — "sdlc", "review",
+	// "triage", "workflow". It is what says which ROLE the session played,
+	// and the service resolves it per page so a consumer never has to read
+	// the job list to find out (see SessionInfo in pkg/orchestration).
+	Runner string `json:"runner"`
 }
 
 // Response converts the wire status into the SDK response type.
@@ -207,10 +216,13 @@ func (w *SessionStatusWire) Response() *SessionStatusResponse {
 	return &SessionStatusResponse{
 		SessionID:   w.SessionID,
 		Backend:     w.Backend,
+		Model:       w.Model,
 		Status:      w.State,
 		ContainerID: w.ContainerID,
 		CreatedAt:   w.CreatedAt,
 		LastActive:  w.LastActivity,
+		JobID:       w.JobID,
+		Runner:      w.Runner,
 	}
 }
 

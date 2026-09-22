@@ -18,10 +18,15 @@
  * the listing said nothing about which one (go-quicbaas#580). The Description
  * cell carries an `#N` chip for the issue behind the job, and the chip opens
  * the issue without also opening the job.
+ *
+ * The rows come from the SERVER now: the view hands its loader
+ * {limit, offset, sort, q} and renders the page that comes back, so the tests
+ * mock `listJobsPage` and also check what the view ASKS FOR — the state
+ * filter, the allow-listed sort fields, and the re-read a job event triggers.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/svelte';
+import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 
 const { storeMock } = vi.hoisted(() => ({
   storeMock: {
@@ -32,12 +37,33 @@ const { storeMock } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('../src/stores/orchestrator.svelte.ts', () => ({
-  orchestratorStore: storeMock,
-  selectJob: vi.fn(),
-  refresh: vi.fn(),
-  isTerminalJobState: (state: string) => state === 'completed' || state === 'failed',
+/** The page listJobsPage answers with; tests replace it before rendering. */
+const { pageMock } = vi.hoisted(() => ({
+  pageMock: { answer: { items: [] as unknown[], total: 0, limit: 25, offset: 0 } },
 }));
+
+const listJobsPage = vi.fn(async () => pageMock.answer);
+const cancelJob = vi.fn().mockResolvedValue(undefined);
+
+// jobEventRevision must be REACTIVE for the live re-read to be observable at
+// all: a plain property would never wake the effect watching it. Runes live in
+// `.svelte.ts`, hence the stub beside this file.
+vi.mock('../src/stores/orchestrator.svelte.ts', async () => {
+  const live = await import('./stubs/jobEventRevision.svelte.ts');
+  return {
+    orchestratorStore: {
+      get jobs() { return storeMock.jobs; },
+      get tasks() { return storeMock.tasks; },
+      get jobsLoading() { return storeMock.jobsLoading; },
+      get activeTenantID() { return storeMock.activeTenantID; },
+      get jobEventRevision() { return live.jobEventRevision(); },
+    },
+    selectJob: vi.fn(),
+    refresh: vi.fn(),
+    isTerminalJobState: (state: string) => state === 'completed' || state === 'failed',
+    ACTIVE_JOB_STATES: ['executing', 'reviewing'],
+  };
+});
 
 vi.mock('../src/stores/router.svelte.ts', () => ({
   routeJobDetail: vi.fn(),
@@ -48,9 +74,12 @@ vi.mock('../src/stores/toast.svelte.ts', () => ({
 }));
 
 vi.mock('../src/stores/sdkClient.ts', () => ({
-  getSDKClient: vi.fn().mockResolvedValue({
-    orchestrator: { cancelJob: vi.fn().mockResolvedValue(undefined) },
-  }),
+  getSDKClient: vi.fn(async () => ({
+    orchestrator: {
+      listJobsPage: (...args: unknown[]) => listJobsPage(...(args as [])),
+      cancelJob: (...args: unknown[]) => cancelJob(...args),
+    },
+  })),
 }));
 
 vi.mock('../src/components/orchestrator/StartJobDialog.svelte', () => ({
@@ -59,6 +88,7 @@ vi.mock('../src/components/orchestrator/StartJobDialog.svelte', () => ({
 
 import JobsView from '../src/views/orchestrator/JobsView.svelte';
 import { routeJobDetail } from '../src/stores/router.svelte.ts';
+import { bumpJobEventRevision, resetJobEventRevision } from './stubs/jobEventRevision.svelte.ts';
 
 const factoryJob = {
   job_id: 'job-abc-def-123',
@@ -98,57 +128,164 @@ const factoryTask = {
   },
 };
 
+/** The page the daemon answers with for this test. */
+function serving(jobs: unknown[]): void {
+  pageMock.answer = { items: jobs, total: jobs.length, limit: 25, offset: 0 };
+}
+
+/** The parameters of the most recent page request. */
+function lastRequest(): Record<string, unknown> {
+  const calls = listJobsPage.mock.calls;
+  return (calls[calls.length - 1]?.[1] ?? {}) as Record<string, unknown>;
+}
+
+/** Waits for the page's rows to be on screen. */
+async function rendered(description: string): Promise<HTMLElement> {
+  return waitFor(() => screen.getByText(description));
+}
+
 describe('JobsView — the issue behind a job', () => {
   beforeEach(() => {
-    storeMock.jobs = [factoryJob, leadJob];
+    serving([factoryJob, leadJob]);
+    storeMock.jobs = [];
     storeMock.tasks = [factoryTask];
     storeMock.jobsLoading = false;
+    resetJobEventRevision();
+    listJobsPage.mockClear();
     vi.mocked(routeJobDetail).mockClear();
+    window.location.hash = '#/jobs';
   });
 
-  it('chips the forge issue the job is an attempt at', () => {
+  it('chips the forge issue the job is an attempt at', async () => {
     render(JobsView);
-    const chip = screen.getByRole('link', { name: '#580' });
+    const chip = await waitFor(() => screen.getByRole('link', { name: '#580' }));
     expect(chip.getAttribute('href')).toBe('http://forge.example/jeremyhahn/go-quicbaas/issues/580');
     expect(chip.getAttribute('rel')).toContain('noopener');
   });
 
-  it('finds the issue from the task when the job carries no task_id', () => {
-    storeMock.jobs = [{ ...factoryJob, task_id: undefined }];
+  it('finds the issue from the task when the job carries no task_id', async () => {
+    serving([{ ...factoryJob, task_id: undefined }]);
     render(JobsView);
     // The task still names the job it spawned, so the binding is readable.
-    expect(screen.getByRole('link', { name: '#580' })).toBeInTheDocument();
+    expect(await waitFor(() => screen.getByRole('link', { name: '#580' }))).toBeInTheDocument();
   });
 
-  it('shows no chip for a job with no forge issue behind it', () => {
-    storeMock.jobs = [leadJob];
+  it('shows no chip for a job with no forge issue behind it', async () => {
+    serving([leadJob]);
     storeMock.tasks = [];
     render(JobsView);
+    await rendered('An operator-started job');
     expect(screen.queryByRole('link', { name: /^#\d+$/ })).toBeNull();
-    expect(screen.getByText('An operator-started job')).toBeInTheDocument();
   });
 
-  it('renders the chip as plain text when the source records no URL', () => {
+  it('renders the chip as plain text when the source records no URL', async () => {
     storeMock.tasks = [{ ...factoryTask, source: { kind: 'forge_issue', ref: '580', url: '' } }];
     render(JobsView);
+    expect(await waitFor(() => screen.getByTitle('Forge issue #580'))).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '#580' })).toBeNull();
-    expect(screen.getByTitle('Forge issue #580')).toBeInTheDocument();
   });
 
   it('opening the issue does not also open the job', async () => {
     render(JobsView);
-    await fireEvent.click(screen.getByRole('link', { name: '#580' }));
+    await fireEvent.click(await waitFor(() => screen.getByRole('link', { name: '#580' })));
     expect(vi.mocked(routeJobDetail)).not.toHaveBeenCalled();
   });
 
   it('clicking the row still opens the job detail', async () => {
     render(JobsView);
-    await fireEvent.click(screen.getByText('An operator-started job'));
+    await fireEvent.click(await rendered('An operator-started job'));
     expect(vi.mocked(routeJobDetail)).toHaveBeenCalledWith('job-lead-999');
   });
 
-  it('keeps the description beside the chip', () => {
+  it('keeps the description beside the chip', async () => {
     render(JobsView);
-    expect(screen.getByText('Wire the job event stream')).toBeInTheDocument();
+    expect(await rendered('Wire the job event stream')).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// What the page asks the server for
+// ---------------------------------------------------------------------------
+
+describe('JobsView — the page it asks for', () => {
+  beforeEach(() => {
+    serving([factoryJob, leadJob]);
+    storeMock.jobs = [];
+    storeMock.tasks = [factoryTask];
+    resetJobEventRevision();
+    listJobsPage.mockClear();
+    window.location.hash = '#/jobs';
+  });
+
+  it('asks for the tenant page with the table default sort', async () => {
+    render(JobsView);
+    await rendered('An operator-started job');
+    expect(listJobsPage.mock.calls[0]?.[0]).toBe('acme');
+    expect(lastRequest()['limit']).toBe(25);
+    expect(lastRequest()['offset']).toBe(0);
+  });
+
+  it('turns the state filter into the states the SERVER narrows on', async () => {
+    render(JobsView);
+    await rendered('An operator-started job');
+
+    const select = screen.getByLabelText('Filter by state') as HTMLSelectElement;
+    select.value = 'active';
+    await fireEvent.change(select);
+    await waitFor(() => {
+      expect(lastRequest()['statuses']).toEqual(['executing', 'reviewing']);
+    });
+
+    select.value = 'failed';
+    await fireEvent.change(select);
+    await waitFor(() => { expect(lastRequest()['statuses']).toEqual(['failed']); });
+
+    select.value = 'all';
+    await fireEvent.change(select);
+    // "All" asks for no narrowing at all rather than for every state by name.
+    await waitFor(() => { expect(lastRequest()['statuses']).toBeUndefined(); });
+  });
+
+  it('sorts on the allow-listed fields and offers no sort on the others', async () => {
+    render(JobsView);
+    await rendered('An operator-started job');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Sort by State' }));
+    await waitFor(() => { expect(lastRequest()['sort']).toBe('state'); });
+
+    // Iteration and Progress are not in the endpoint's allow-list, so their
+    // headers do not pretend to sort one page's worth of rows.
+    expect(screen.queryByRole('button', { name: 'Sort by Iteration' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Sort by Progress' })).toBeNull();
+  });
+
+  it('re-reads the page when the job event stream reports a change', async () => {
+    vi.useFakeTimers();
+    try {
+      render(JobsView);
+      await vi.advanceTimersByTimeAsync(10);
+      const before = listJobsPage.mock.calls.length;
+
+      // A burst from several running jobs costs ONE re-read, not three: each
+      // event restarts the debounce and only the quiet at the end fires.
+      bumpJobEventRevision();
+      await vi.advanceTimersByTimeAsync(50);
+      bumpJobEventRevision();
+      await vi.advanceTimersByTimeAsync(50);
+      bumpJobEventRevision();
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(listJobsPage.mock.calls.length).toBe(before + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('surfaces a refused page instead of an empty table', async () => {
+    listJobsPage.mockRejectedValueOnce(new Error('page: unknown sort field: iteration'));
+    render(JobsView);
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain('unknown sort field');
+    });
   });
 });
