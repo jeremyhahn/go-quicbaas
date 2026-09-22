@@ -194,11 +194,23 @@ type DeleteProjectRESTResponse struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
-// ListProjectsRESTResponse is returned on GET /api/v1/projects.
+// ListProjectsRESTResponse is returned on GET /api/v1/projects. It carries
+// the paging envelope every list endpoint answers with; see
+// docs/software-factory/api.md.
 type ListProjectsRESTResponse struct {
-	Projects  []*ProjectRESTResponse `json:"projects"`
-	Total     int                    `json:"total"`
-	Timestamp time.Time              `json:"timestamp"`
+	Projects []*ProjectRESTResponse `json:"projects"`
+
+	// Total is the number of projects the search left, before paging.
+	Total int `json:"total"`
+
+	// Limit and Offset are the applied paging values.
+	Limit  int `json:"limit"`
+	Offset int `json:"offset"`
+
+	// NextOffset is the offset of the following page, absent on the last.
+	NextOffset int `json:"next_offset,omitempty"`
+
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // =============================================================================
@@ -454,8 +466,15 @@ func (s *Server) HandleListProjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	page, err := pageFromRequest(r)
+	if err != nil {
+		RespondBadRequest(w, r, err.Error())
+		return
+	}
+
 	resp, err := projectSvc.ListProjects(ctx, &service.ListProjectsRequest{
 		TenantID: tenantID,
+		Page:     page,
 	})
 	if err != nil {
 		handleProjectError(w, r, err)
@@ -468,9 +487,12 @@ func (s *Server) HandleListProjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RespondJSON(w, r, http.StatusOK, &ListProjectsRESTResponse{
-		Projects:  projects,
-		Total:     resp.Total,
-		Timestamp: resp.Timestamp,
+		Projects:   projects,
+		Total:      resp.Total,
+		Limit:      resp.Limit,
+		Offset:     resp.Offset,
+		NextOffset: resp.NextOffset,
+		Timestamp:  resp.Timestamp,
 	})
 }
 
@@ -670,6 +692,8 @@ func handleProjectError(w http.ResponseWriter, r *http.Request, err error) {
 	var roleInvalid *service.ProjectRoleInvalidError
 
 	switch {
+	case isPageInputError(err):
+		RespondError(w, r, http.StatusBadRequest, err)
 	case errors.As(err, &notFound):
 		RespondError(w, r, http.StatusNotFound, err)
 	case errors.As(err, &alreadyExists):

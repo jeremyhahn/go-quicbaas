@@ -21,6 +21,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/page"
 	projectSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/project"
 )
 
@@ -405,6 +406,7 @@ func handleOrchestratorListSessions(ctx context.Context, svc service.QuicBaaS, r
 	resp, err := agentSvc.ListSessions(ctx, &orchestration.ListSessionsRequest{
 		Backend: r.Backend,
 		Status:  orchestration.SessionState(r.Status),
+		Page:    pageFromSDK(r.Params),
 	})
 	if err != nil {
 		return nil, err
@@ -422,6 +424,12 @@ func handleOrchestratorListSessions(ctx context.Context, svc service.QuicBaaS, r
 	return &orchestratorSDK.ListSessionsResponse{
 		Sessions: sessions,
 		Count:    len(sessions),
+		Envelope: page.Envelope{
+			Total:      resp.Total,
+			Limit:      resp.Limit,
+			Offset:     resp.Offset,
+			NextOffset: resp.NextOffset,
+		},
 	}, nil
 }
 
@@ -490,21 +498,25 @@ func handleOrchestratorListTasks(ctx context.Context, svc service.QuicBaaS, req 
 	if agentSvc == nil {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "ListTasks")
 	}
-	tasks, err := agentSvc.ListTasks(ctx, r.TenantID, &orchestration.TaskFilter{
+	tasks, err := agentSvc.ListTasksPage(ctx, r.TenantID, &orchestration.TaskFilter{
 		Status:     orchestration.TaskStatus(r.Status),
 		TeamName:   r.TeamName,
 		AssignedTo: r.AssignedTo,
 		ProjectID:  r.ProjectID,
 		Statuses:   taskStatusesFromSDK(r.Statuses),
-	})
+	}, pageFromSDK(r.Params))
 	if err != nil {
 		return nil, err
 	}
-	sdkTasks := make([]*orchestratorSDK.Task, len(tasks))
-	for i, t := range tasks {
+	sdkTasks := make([]*orchestratorSDK.Task, len(tasks.Items))
+	for i, t := range tasks.Items {
 		sdkTasks[i] = convertTask(t)
 	}
-	return &orchestratorSDK.ListTasksResponse{Tasks: sdkTasks, Count: len(sdkTasks)}, nil
+	return &orchestratorSDK.ListTasksResponse{
+		Tasks:    sdkTasks,
+		Count:    len(sdkTasks),
+		Envelope: envelopeFromPage(tasks),
+	}, nil
 }
 
 func handleOrchestratorClaimTask(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -748,21 +760,25 @@ func handleOrchestratorListAgents(ctx context.Context, svc service.QuicBaaS, req
 	if agentSvc == nil {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "ListAgents")
 	}
-	agents, err := agentSvc.ListAgents(ctx, r.TenantID, &orchestration.AgentFilter{
+	agents, err := agentSvc.ListAgentsPage(ctx, r.TenantID, &orchestration.AgentFilter{
 		Host:      r.Host,
 		Status:    orchestration.AgentStatus(r.Status),
 		AgentType: r.AgentType,
 		Backend:   r.Backend,
 		Model:     r.Model,
-	})
+	}, pageFromSDK(r.Params))
 	if err != nil {
 		return nil, err
 	}
-	sdkAgents := make([]*orchestratorSDK.AgentRegistration, len(agents))
-	for i, a := range agents {
+	sdkAgents := make([]*orchestratorSDK.AgentRegistration, len(agents.Items))
+	for i, a := range agents.Items {
 		sdkAgents[i] = convertAgentRegistration(a)
 	}
-	return &orchestratorSDK.ListAgentsResponse{Agents: sdkAgents, Count: len(sdkAgents)}, nil
+	return &orchestratorSDK.ListAgentsResponse{
+		Agents:   sdkAgents,
+		Count:    len(sdkAgents),
+		Envelope: envelopeFromPage(agents),
+	}, nil
 }
 
 func handleOrchestratorRemoveAgent(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -917,12 +933,17 @@ func handleOrchestratorListJobs(ctx context.Context, svc service.QuicBaaS, req i
 	if agentSvc == nil {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "ListJobs")
 	}
-	statuses, err := agentSvc.ListJobs(ctx, r.TenantID, &orchestration.JobFilter{TaskID: r.TaskID})
+	jobs, err := agentSvc.ListJobsPage(ctx, r.TenantID, &orchestration.JobFilter{
+		TaskID:    r.TaskID,
+		Runner:    r.Runner,
+		ProjectID: r.ProjectID,
+		Statuses:  jobStatesFromSDK(r.Statuses),
+	}, pageFromSDK(r.Params))
 	if err != nil {
 		return nil, err
 	}
-	sdkSummaries := make([]orchestratorSDK.JobSummary, len(statuses))
-	for i, s := range statuses {
+	sdkSummaries := make([]orchestratorSDK.JobSummary, len(jobs.Items))
+	for i, s := range jobs.Items {
 		sdkSummaries[i] = orchestratorSDK.JobSummary{
 			JobID:       s.JobID,
 			State:       string(s.State),
@@ -937,7 +958,7 @@ func handleOrchestratorListJobs(ctx context.Context, svc service.QuicBaaS, req i
 			EventCount:  len(s.Events),
 		}
 	}
-	return &orchestratorSDK.ListJobsResponse{Jobs: sdkSummaries}, nil
+	return &orchestratorSDK.ListJobsResponse{Jobs: sdkSummaries, Envelope: envelopeFromPage(jobs)}, nil
 }
 
 func handleOrchestratorCancelJob(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -1313,6 +1334,7 @@ func handleProjectList(ctx context.Context, svc service.QuicBaaS, req interface{
 	}
 	resp, err := projectSvc.ListProjects(ctx, &service.ListProjectsRequest{
 		TenantID: r.TenantID,
+		Page:     pageFromSDK(r.Params),
 	})
 	if err != nil {
 		return nil, err
@@ -1321,7 +1343,15 @@ func handleProjectList(ctx context.Context, svc service.QuicBaaS, req interface{
 	for i, p := range resp.Projects {
 		sdkProjects[i] = convertProjectToSDK(p)
 	}
-	return &projectSDK.ListProjectsResponse{Projects: sdkProjects, Total: len(sdkProjects)}, nil
+	return &projectSDK.ListProjectsResponse{
+		Projects: sdkProjects,
+		Envelope: page.Envelope{
+			Total:      resp.Total,
+			Limit:      resp.Limit,
+			Offset:     resp.Offset,
+			NextOffset: resp.NextOffset,
+		},
+	}, nil
 }
 
 func handleProjectGrantAgentRole(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -1506,6 +1536,18 @@ func taskSourceFromSDK(src *orchestratorSDK.TaskSource) *orchestration.TaskSourc
 
 // taskStatusesFromSDK converts a status list; an empty list stays nil so the
 // filter is unset rather than matching nothing.
+// jobStatesFromSDK converts the SDK's job-state filter into the service's.
+func jobStatesFromSDK(states []string) []orchestration.JobState {
+	if len(states) == 0 {
+		return nil
+	}
+	out := make([]orchestration.JobState, len(states))
+	for i, s := range states {
+		out[i] = orchestration.JobState(s)
+	}
+	return out
+}
+
 func taskStatusesFromSDK(statuses []string) []orchestration.TaskStatus {
 	if len(statuses) == 0 {
 		return nil

@@ -17,6 +17,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/page"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
@@ -321,7 +322,10 @@ type UpdateProjectRequest struct {
 // ListProjectsResponse is the response from listing projects.
 type ListProjectsResponse struct {
 	Projects []*ProjectInfo `json:"projects"`
-	Total    int            `json:"total"`
+
+	// Envelope carries how many records matched and where the next page
+	// starts; see package page.
+	page.Envelope
 }
 
 // GrantAgentRoleRequest sets a role for an agent in a project.
@@ -387,6 +391,10 @@ type DeleteProjectResponse struct {
 // ListProjectsRequest specifies which tenant's projects to list.
 type ListProjectsRequest struct {
 	TenantID string `json:"tenant_id"`
+
+	// Params pages, orders and searches the listing. The zero value takes
+	// the server's default page; see package page.
+	page.Params
 }
 
 // client implements the Client interface.

@@ -45,6 +45,13 @@ type mockAgentService struct {
 	listJobs       []*orchestration.JobStatus
 	listJobsFilter *orchestration.JobFilter
 
+	// listAgents, listWorkflows and listSessions back the fleet, workflow
+	// and session listings the same way listJobs backs the job listing, so
+	// a paging test has records to page through.
+	listAgents    []*orchestration.AgentRegistration
+	listWorkflows []*orchestration.WorkflowDefinition
+	listSessions  []*orchestration.SessionInfo
+
 	blockTaskFunc        func(ctx context.Context, tenantID, taskID string, kind orchestration.TaskBlockKind, reason string) error
 	readmitTaskFunc      func(ctx context.Context, tenantID, taskID string) error
 	deleteTaskFunc       func(ctx context.Context, tenantID, taskID string) error
@@ -136,11 +143,35 @@ func (m *mockAgentService) CloseSession(ctx context.Context, req *orchestration.
 	}, nil
 }
 
+// ListSessions pages the canned records through the real ApplyPage, exactly
+// as the service does, so the sessions endpoint's envelope is the shipped one
+// under test rather than a second implementation of it.
 func (m *mockAgentService) ListSessions(ctx context.Context, req *orchestration.ListSessionsRequest) (*orchestration.ListSessionsResponse, error) {
 	if m.listSessionsFunc != nil {
 		return m.listSessionsFunc(ctx, req)
 	}
-	return &orchestration.ListSessionsResponse{Timestamp: time.Now().Unix()}, nil
+	matched := make([]*orchestration.SessionInfo, 0, len(m.listSessions))
+	for _, session := range m.listSessions {
+		if req.Backend != "" && session.Backend != req.Backend {
+			continue
+		}
+		if req.Status != "" && session.State != req.Status {
+			continue
+		}
+		matched = append(matched, session)
+	}
+	paged, err := orchestration.ApplyPage(matched, req.Page, orchestration.SessionPageSpec())
+	if err != nil {
+		return nil, err
+	}
+	return &orchestration.ListSessionsResponse{
+		Sessions:   paged.Items,
+		Timestamp:  time.Now().Unix(),
+		Total:      paged.Total,
+		Limit:      paged.Limit,
+		Offset:     paged.Offset,
+		NextOffset: paged.NextOffset,
+	}, nil
 }
 
 func (m *mockAgentService) DecomposeTask(ctx context.Context, req *orchestration.DecomposeTaskRequest) (*orchestration.DecomposeTaskResponse, error) {
@@ -262,8 +293,8 @@ func (m *mockAgentService) GetAgent(ctx context.Context, tenantID, agentID strin
 	return nil, nil
 }
 
-func (m *mockAgentService) ListAgents(ctx context.Context, tenantID string, filter *orchestration.AgentFilter) ([]*orchestration.AgentRegistration, error) {
-	return nil, nil
+func (m *mockAgentService) ListAgents(_ context.Context, _ string, _ *orchestration.AgentFilter) ([]*orchestration.AgentRegistration, error) {
+	return m.listAgents, nil
 }
 
 func (m *mockAgentService) RemoveAgent(ctx context.Context, tenantID, agentID string) error {
@@ -278,9 +309,18 @@ func (m *mockAgentService) GetJobStatus(ctx context.Context, tenantID, jobID str
 	return &orchestration.JobStatus{}, nil
 }
 
-func (m *mockAgentService) ListJobs(ctx context.Context, tenantID string, filter *orchestration.JobFilter) ([]*orchestration.JobStatus, error) {
+// ListJobs applies the REAL JobFilter to the canned records rather than
+// handing back everything: a handler that drops the caller's narrowing must
+// fail the test, and the narrowing that decides is the shipped one.
+func (m *mockAgentService) ListJobs(_ context.Context, _ string, filter *orchestration.JobFilter) ([]*orchestration.JobStatus, error) {
 	m.listJobsFilter = filter
-	return m.listJobs, nil
+	matched := make([]*orchestration.JobStatus, 0, len(m.listJobs))
+	for _, job := range m.listJobs {
+		if filter.Matches(job) {
+			matched = append(matched, job)
+		}
+	}
+	return matched, nil
 }
 
 func (m *mockAgentService) CancelJob(ctx context.Context, tenantID, jobID string) error {
@@ -305,7 +345,7 @@ func (m *mockAgentService) Infer(_ context.Context, _ *orchestration.InferReques
 }
 
 func (m *mockAgentService) ListWorkflows(_ context.Context) ([]*orchestration.WorkflowDefinition, error) {
-	return []*orchestration.WorkflowDefinition{}, nil
+	return m.listWorkflows, nil
 }
 
 func (m *mockAgentService) GetWorkflow(_ context.Context, name string) (*orchestration.WorkflowDefinition, error) {
@@ -1636,4 +1676,39 @@ func (m *mockAgentService) PromptSessionAsync(ctx context.Context, req *orchestr
 		Status:    orchestration.TurnStatusAccepted,
 		Sequence:  1,
 	}, nil
+}
+
+// The ListPage methods answer the paged listings by running the real
+// orchestration.ApplyPage over what this double already returns, so a transport test
+// exercises the shipped paging contract rather than a second copy of it.
+func (m *mockAgentService) ListJobsPage(ctx context.Context, tenantID string, filter *orchestration.JobFilter, page *orchestration.Page) (*orchestration.PageResult[*orchestration.JobStatus], error) {
+	jobs, err := m.ListJobs(ctx, tenantID, filter)
+	if err != nil {
+		return nil, err
+	}
+	return orchestration.ApplyPage(jobs, page, orchestration.JobPageSpec())
+}
+
+func (m *mockAgentService) ListTasksPage(ctx context.Context, tenantID string, filter *orchestration.TaskFilter, page *orchestration.Page) (*orchestration.PageResult[*orchestration.Task], error) {
+	tasks, err := m.ListTasks(ctx, tenantID, filter)
+	if err != nil {
+		return nil, err
+	}
+	return orchestration.ApplyPage(tasks, page, orchestration.TaskPageSpec())
+}
+
+func (m *mockAgentService) ListAgentsPage(ctx context.Context, tenantID string, filter *orchestration.AgentFilter, page *orchestration.Page) (*orchestration.PageResult[*orchestration.AgentRegistration], error) {
+	agents, err := m.ListAgents(ctx, tenantID, filter)
+	if err != nil {
+		return nil, err
+	}
+	return orchestration.ApplyPage(agents, page, orchestration.AgentPageSpec())
+}
+
+func (m *mockAgentService) ListWorkflowsPage(ctx context.Context, page *orchestration.Page) (*orchestration.PageResult[*orchestration.WorkflowDefinition], error) {
+	workflows, err := m.ListWorkflows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return orchestration.ApplyPage(workflows, page, orchestration.WorkflowPageSpec())
 }

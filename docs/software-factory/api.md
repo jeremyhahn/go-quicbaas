@@ -12,6 +12,68 @@ prompts are embedded markdown with no store behind them, and the planned verbs
 are in [prompt-sets.md](prompt-sets.md).
 
 
+## List paging, sorting and search
+
+Every list endpoint below — jobs, tasks, sessions, agents, workflows, projects
+and accounts — takes the SAME four parameters and answers with the SAME
+envelope. The burn-in tenant's job list is ~2,000 records; a listing that
+answers with all of them is not an answer a browser can render.
+
+| Parameter | Type | Default | Meaning |
+|---|---|---|---|
+| `limit` | int | 25 | Page size. Capped at 100 — a larger request is served the cap, not refused. `limit=0` and an absent `limit` both mean 25. |
+| `offset` | int | 0 | Records to skip. |
+| `sort` | string | the endpoint's natural order | `<field>` or `<field>:desc` (`:asc` is accepted too). The field must be one the endpoint documents below; anything else is **400** with a typed error naming the field and the allow-list. |
+| `q` | string | — | Case-insensitive substring match over the endpoint's documented text fields. |
+
+`limit` or `offset` that is not a non-negative number is a **400** naming the
+parameter. Existing filters (`statuses`, `project_id`, `task_id`, `provider`,
+…) keep working and COMPOSE with search and paging: the filter narrows first,
+then `q`, then the page is cut.
+
+The response keeps the records under the key it always used and adds the
+envelope beside it:
+
+```json
+{ "jobs": [ ... ], "total": 1987, "limit": 25, "offset": 50, "next_offset": 75 }
+```
+
+- `total` is the count AFTER filters and search, BEFORE paging.
+- `limit` and `offset` are the values the server APPLIED, which is not always
+  what was asked for.
+- `next_offset` is ABSENT on the last page. Its absence is how a client knows
+  it has reached the end; do not compute it from `total`.
+
+The fleet listing also keeps its `count`, which is the number of records in
+that response — `total` is how many matched.
+
+### Per-endpoint fields
+
+| Endpoint | Natural order | `sort` fields | `q` searches | Filters |
+|---|---|---|---|---|
+| `GET /api/v1/orchestrator/jobs` | `started_at:desc` | `description`, `job_id`, `runner`, `started_at`, `state`, `task_id`, `updated_at` | job id, description, runner, state, task id | `task_id`, `runner`, `project_id`, `statuses` (comma-separated) |
+| `GET /api/v1/orchestrator/tasks` | `created_at:desc` | `created_at`, `id`, `project_id`, `status`, `subject`, `updated_at` | id, subject, status, project id | `team_name`, `assigned_to`, `created_by`, `project_id`, `status`, `statuses` |
+| `GET /api/v1/orchestrator/sessions` | `created_at` (**oldest first** — this listing has always answered in creation order; ask for `sort=created_at:desc` to invert it) | `backend`, `created_at`, `last_activity`, `model`, `project_id`, `session_id`, `state` | session id, backend, model, state | `backend`, `status` |
+| `GET /api/v1/orchestrator/agents` | `registered_at:desc` | `backend`, `host`, `id`, `last_seen`, `name`, `registered_at`, `status` | id, name, and every backend it serves (primary + capabilities) | `host`, `agent_type`, `backend`, `status` |
+| `GET /api/v1/orchestrator/workflows` | `name` (workflows carry no timestamp) | `mode`, `name`, `project_id` | name, which is also the identifier | — |
+| `GET /api/v1/projects` | `created_at:desc` | `created_at`, `id`, `name`, `updated_at` | id, name | `tenant_id` (required) |
+| `GET /api/v1/agent-accounts` | `created_at:desc` | `created_at`, `display_name`, `id`, `provider`, `updated_at` | id, display name, provider | `provider`, `project_id` |
+
+The allow-lists are served from `orchestration.PageSpec` values in
+`pkg/orchestration/page_specs.go`; the parameters are parsed once in
+`orchestration.ParsePage` and applied once in `orchestration.ApplyPage`.
+
+**Other transports.** QUIC and Unix carry the REST contract unchanged (they
+delegate to it). The Go SDK's list requests embed `page.Params` and its list
+responses embed `page.Envelope` (`sdk/go/client/page`), which the embedded
+in-process transport honours as well. The MCP tools
+`quicbaas_orchestrator_list_jobs`, `quicbaas_orchestrator_list_sessions` and
+`quicbaas_agent_fleet_list` declare the same four arguments and return the
+same envelope fields. gRPC does NOT carry them yet: its request messages are
+generated from `api/proto/orchestrator.proto` and gaining the fields requires
+a proto regeneration (go-quicbaas#968 follow-up).
+
+
 ## Transport matrix
 
 Every row below is derived from source, not from prose. The columns mean:
@@ -40,6 +102,10 @@ Every row below is derived from source, not from prose. The columns mean:
   `pkg/api/rest/routes_permissions_generated.go`.
 
 ### `quicbaas.Orchestrator` — SDK package `sdk/go/client/orchestrator`
+
+`ListJobs`, `ListTasks`, `ListSessions`, `ListAgents` and `ListWorkflows` are
+paged, sorted and searched per
+[List paging, sorting and search](#list-paging-sorting-and-search).
 
 Dedicated transport handlers: rest=yes, grpc=yes, mcp=yes; embedded routes registered: 38; MCP tools registered server-side: 32.
 
@@ -179,6 +245,9 @@ MCP (`quicbaas_orchestrator_cost`) and the embedded transport, plus the Go SDK
 
 ### `quicbaas.Project` — SDK package `sdk/go/client/project`
 
+`List` is paged, sorted and searched per
+[List paging, sorting and search](#list-paging-sorting-and-search).
+
 Dedicated transport handlers: rest=yes, grpc=yes, mcp=yes; embedded routes registered: 8; MCP tools registered server-side: 5.
 
 MCP tools: `project_create`, `project_delete`, `project_get`, `project_list`, `project_update`
@@ -195,6 +264,9 @@ MCP tools: `project_create`, `project_delete`, `project_get`, `project_list`, `p
 | `Update` | dedicated handler (path not statically recoverable) | ? | yes | yes | yes | — |
 
 ### `quicbaas.Account` — SDK package `sdk/go/client/account`
+
+`List` is paged, sorted and searched per
+[List paging, sorting and search](#list-paging-sorting-and-search).
 
 Dedicated transport handlers: rest=yes, grpc=yes, mcp=yes; embedded routes registered: 9; MCP tools registered server-side: 9.
 
@@ -880,13 +952,18 @@ replayed.
 
 ### quicbaas_orchestrator_list_sessions
 
-List all active agent sessions for a tenant, optionally filtered by backend.
+List one page of a tenant's agent sessions, optionally filtered by backend.
 Permission: `orchestrator:list`.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `tenant_id` | string | Yes | Tenant whose sessions are listed |
 | `backend` | string | No | Filter sessions by backend name |
+| `status` | string | No | Filter sessions by lifecycle state |
+| `limit` / `offset` / `sort` / `q` | — | No | [List paging, sorting and search](#list-paging-sorting-and-search) |
+
+The result carries `total`, `limit`, `offset` and — except on the last page —
+`next_offset` beside `sessions`.
 
 **Example request:**
 ```json
@@ -1320,7 +1397,7 @@ from `orchestrator_cache_tools.go`.
 | `quicbaas_orchestrator_start_job` | `orchestrator:job_start` | Start an autonomous, iterating orchestration job |
 | `quicbaas_orchestrator_get_job_status` | `orchestrator:job_read` | Query a job's iteration count and task progress |
 | `quicbaas_orchestrator_cancel_job` | `orchestrator:job_cancel` | Cancel a running orchestration job |
-| `quicbaas_orchestrator_list_jobs` | `orchestrator:job_list` | List jobs for the tenant, newest first; `task_id` narrows to one task's attempts |
+| `quicbaas_orchestrator_list_jobs` | `orchestrator:job_list` | One page of the tenant's jobs, newest first; narrowed by `task_id`, `runner`, `project_id` or `statuses`, paged per [List paging, sorting and search](#list-paging-sorting-and-search) |
 | `quicbaas_orchestrator_task_create` | `orchestrator:task_create` | Create a task, optionally dispatching it at once |
 | `quicbaas_orchestrator_cache_put` | `orchestrator:cache_write` | Store analysis result in KV (project-scoped) |
 | `quicbaas_orchestrator_cache_get` | `orchestrator:cache_read` | Retrieve cached result by project and key |
@@ -1330,7 +1407,7 @@ from `orchestrator_cache_tools.go`.
 | Tool | Permission | Description |
 |------|------------|-------------|
 | `quicbaas_agent_fleet_register` | `orchestrator:agent_register` | Register an agent with the fleet |
-| `quicbaas_agent_fleet_list` | `orchestrator:agent_list` | List fleet agents for a tenant |
+| `quicbaas_agent_fleet_list` | `orchestrator:agent_list` | One page of a tenant's fleet agents, paged per [List paging, sorting and search](#list-paging-sorting-and-search) |
 | `quicbaas_agent_fleet_status` | `orchestrator:agent_read` | Get one fleet agent's status |
 | `quicbaas_agent_fleet_remove` | `orchestrator:agent_remove` | Remove an agent from the fleet registry |
 | `quicbaas_agent_fleet_heartbeat` | `orchestrator:agent_heartbeat` | Update an agent's last-seen timestamp |

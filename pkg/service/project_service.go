@@ -257,12 +257,29 @@ type DeleteProjectResponse struct {
 // ListProjectsRequest specifies which tenant's projects to list.
 type ListProjectsRequest struct {
 	TenantID string
+
+	// Page narrows the answer to one page of the tenant's projects and
+	// orders it per orchestration.ProjectPageSpec. Nil asks for the first
+	// orchestration.DefaultPageLimit, newest first.
+	Page *orchestration.Page
 }
 
-// ListProjectsResponse contains the list of matching projects.
+// ListProjectsResponse contains one page of the matching projects.
 type ListProjectsResponse struct {
-	Projects  []*orchestration.Project
-	Total     int
+	Projects []*orchestration.Project
+
+	// Total is the number of projects the search left, BEFORE the page was
+	// cut. It counted the whole collection before paging existed and still
+	// does, so a consumer reading it keeps the meaning it had.
+	Total int
+
+	// Limit and Offset are the applied paging values.
+	Limit  int
+	Offset int
+
+	// NextOffset is the offset of the following page, zero on the last.
+	NextOffset int
+
 	Timestamp time.Time
 }
 
@@ -917,10 +934,18 @@ func (s *projectServiceImpl) ListProjects(ctx context.Context, req *ListProjects
 		return nil, s.convertStoreError(err)
 	}
 
+	page, err := orchestration.ApplyPage(projects, req.Page, orchestration.ProjectPageSpec())
+	if err != nil {
+		return nil, err
+	}
+
 	return &ListProjectsResponse{
-		Projects:  projects,
-		Total:     len(projects),
-		Timestamp: time.Now().UTC(),
+		Projects:   page.Items,
+		Total:      page.Total,
+		Limit:      page.Limit,
+		Offset:     page.Offset,
+		NextOffset: page.NextOffset,
+		Timestamp:  time.Now().UTC(),
 	}, nil
 }
 

@@ -2835,14 +2835,23 @@ func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRe
 		})
 	}
 
-	// Sort by creation time for deterministic output
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].CreatedAt < sessions[j].CreatedAt
-	})
+	// PAGING IS THE LAST STEP, after both halves of the merge are in hand:
+	// Total must count the sessions the filters left, and a page cut before
+	// the durable records were merged in would count only the live ones.
+	// ApplyPage also supplies the deterministic creation-time order this
+	// listing has always answered in (see sessionPageSpec).
+	page, err := ApplyPage(sessions, req.Page, sessionPageSpec)
+	if err != nil {
+		return nil, err
+	}
 
 	return &ListSessionsResponse{
-		Sessions:  sessions,
-		Timestamp: time.Now().UnixNano(),
+		Sessions:   page.Items,
+		Timestamp:  time.Now().UnixNano(),
+		Total:      page.Total,
+		Limit:      page.Limit,
+		Offset:     page.Offset,
+		NextOffset: page.NextOffset,
 	}, nil
 }
 

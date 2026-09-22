@@ -782,3 +782,38 @@ func TestTaskToProto_CarriesQuestionAttempts(t *testing.T) {
 		t.Fatalf("attempts = %d, want 9", pb.Attempts)
 	}
 }
+
+// The ListPage methods answer the paged listings by running the real
+// orchestration.ApplyPage over what this double already returns, so a transport test
+// exercises the shipped paging contract rather than a second copy of it.
+func (m *grpcTestAgentService) ListJobsPage(ctx context.Context, tenantID string, filter *orchestration.JobFilter, page *orchestration.Page) (*orchestration.PageResult[*orchestration.JobStatus], error) {
+	jobs, err := m.ListJobs(ctx, tenantID, filter)
+	if err != nil {
+		return nil, err
+	}
+	return orchestration.ApplyPage(jobs, page, orchestration.JobPageSpec())
+}
+
+func (m *grpcTestAgentService) ListTasksPage(ctx context.Context, tenantID string, filter *orchestration.TaskFilter, page *orchestration.Page) (*orchestration.PageResult[*orchestration.Task], error) {
+	tasks, err := m.ListTasks(ctx, tenantID, filter)
+	if err != nil {
+		return nil, err
+	}
+	return orchestration.ApplyPage(tasks, page, orchestration.TaskPageSpec())
+}
+
+func (m *grpcTestAgentService) ListAgentsPage(ctx context.Context, tenantID string, filter *orchestration.AgentFilter, page *orchestration.Page) (*orchestration.PageResult[*orchestration.AgentRegistration], error) {
+	agents, err := m.ListAgents(ctx, tenantID, filter)
+	if err != nil {
+		return nil, err
+	}
+	return orchestration.ApplyPage(agents, page, orchestration.AgentPageSpec())
+}
+
+func (m *grpcTestAgentService) ListWorkflowsPage(ctx context.Context, page *orchestration.Page) (*orchestration.PageResult[*orchestration.WorkflowDefinition], error) {
+	workflows, err := m.ListWorkflows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return orchestration.ApplyPage(workflows, page, orchestration.WorkflowPageSpec())
+}

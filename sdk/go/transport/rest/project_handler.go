@@ -140,7 +140,7 @@ func (h *projectRESTHandler) handleList(ctx context.Context, req interface{}) (i
 	if !ok {
 		return nil, errors.NewInvalidInput("project.List", "invalid request type")
 	}
-	url := "/api/v1/projects?tenant_id=" + sdkReq.TenantID
+	url := "/api/v1/projects?tenant_id=" + sdkReq.TenantID + pageQuerySuffix(sdkReq.Params)
 	var resp project.ListProjectsResponse
 	if err := h.transport.doJSONRequest(ctx, http.MethodGet, url, nil, &resp); err != nil {
 		return nil, err

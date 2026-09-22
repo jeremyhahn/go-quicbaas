@@ -16,6 +16,7 @@ package orchestration
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 )
 
@@ -212,6 +213,11 @@ type AgentService interface {
 	// Requires permission: agent:read
 	ListAgents(ctx context.Context, tenantID string, filter *AgentFilter) ([]*AgentRegistration, error)
 
+	// ListAgentsPage returns ONE PAGE of the tenant's matching agents,
+	// searched and ordered per AgentPageSpec.
+	// Requires permission: agent:read
+	ListAgentsPage(ctx context.Context, tenantID string, filter *AgentFilter, page *Page) (*PageResult[*AgentRegistration], error)
+
 	// RemoveAgent removes an agent from the fleet registry.
 	// Requires permission: agent:admin
 	RemoveAgent(ctx context.Context, tenantID, agentID string) error
@@ -252,6 +258,13 @@ type AgentService interface {
 	//   - []*Task: Matching tasks
 	//   - error: ErrTaskStoreInvalidInput, ErrAgentServiceUnavailable
 	ListTasks(ctx context.Context, tenantID string, filter *TaskFilter) ([]*Task, error)
+
+	// ListTasksPage returns ONE PAGE of the tenant's matching tasks,
+	// searched and ordered per TaskPageSpec. The page's Total counts the
+	// records the filter and search left, so a caller knows how much it has
+	// not been sent.
+	// Requires permission: agent:task
+	ListTasksPage(ctx context.Context, tenantID string, filter *TaskFilter, page *Page) (*PageResult[*Task], error)
 
 	// ClaimTask atomically claims a task for an agent.
 	// Requires permission: agent:task
@@ -344,6 +357,16 @@ type AgentService interface {
 	//   - error: ErrTenantIDRequired
 	ListJobs(ctx context.Context, tenantID string, filter *JobFilter) ([]*JobStatus, error)
 
+	// ListJobsPage returns ONE PAGE of the tenant's matching jobs, searched
+	// and ordered per JobPageSpec.
+	//
+	// IT EXISTS BECAUSE ListJobs CANNOT ANSWER "HOW MANY". A slice return
+	// can be truncated but not counted: the caller would be handed 25 jobs
+	// with no way to tell whether 25 or 2,000 matched. The envelope carries
+	// the count with the page.
+	// Requires permission: agent:job
+	ListJobsPage(ctx context.Context, tenantID string, filter *JobFilter, page *Page) (*PageResult[*JobStatus], error)
+
 	// CancelJob cancels a running orchestration job.
 	// Requires permission: agent:job
 	// Parameters:
@@ -389,6 +412,11 @@ type AgentService interface {
 	// ListWorkflows returns all registered workflow definitions, sorted by name.
 	// Requires permission: agent:discover
 	ListWorkflows(ctx context.Context) ([]*WorkflowDefinition, error)
+
+	// ListWorkflowsPage returns ONE PAGE of the context tenant's workflow
+	// definitions, searched and ordered per WorkflowPageSpec.
+	// Requires permission: agent:discover
+	ListWorkflowsPage(ctx context.Context, page *Page) (*PageResult[*WorkflowDefinition], error)
 
 	// GetWorkflow returns a workflow definition by name.
 	// Requires permission: agent:discover
@@ -931,12 +959,32 @@ type ListSessionsRequest struct {
 	// such sessions", which is the wrong answer to a question that was never
 	// understood.
 	Status SessionState `json:"status,omitempty"`
+
+	// Page narrows the answer to one page of the matching sessions and
+	// orders it per SessionPageSpec. Nil asks for the first
+	// DefaultPageLimit, newest first.
+	Page *Page `json:"page,omitempty"`
 }
 
 // ListSessionsResponse contains the result of listing sessions.
+//
+// The paging fields carry the same envelope every other orchestrator listing
+// answers with; Sessions keeps its name and place so a consumer that predates
+// paging reads the response unchanged.
 type ListSessionsResponse struct {
 	Sessions  []*SessionInfo `json:"sessions"`
 	Timestamp int64          `json:"timestamp"`
+
+	// Total is the number of sessions the filters and search left, before
+	// the page was cut.
+	Total int `json:"total"`
+
+	// Limit and Offset are the applied paging values.
+	Limit  int `json:"limit"`
+	Offset int `json:"offset"`
+
+	// NextOffset is the offset of the following page, absent on the last.
+	NextOffset int `json:"next_offset,omitempty"`
 }
 
 // SessionInfo contains summary information about an active session.
@@ -1352,6 +1400,20 @@ type JobStatus struct {
 type JobFilter struct {
 	// TaskID restricts the listing to attempts at one task.
 	TaskID string `json:"task_id,omitempty"`
+
+	// Statuses restricts the listing to jobs in any of the given states.
+	// Empty lists every state, which is what the listing did before the
+	// tenant's job history grew past what a UI can hold.
+	Statuses []JobState `json:"statuses,omitempty"`
+
+	// Runner restricts the listing to the jobs one JobRunner drove —
+	// "sdlc", "triage", "review". A job recorded before runners existed
+	// carries no runner and is a workflow job, so it matches no runner
+	// name rather than every one.
+	Runner string `json:"runner,omitempty"`
+
+	// ProjectID restricts the listing to jobs launched under one project.
+	ProjectID string `json:"project_id,omitempty"`
 }
 
 // Matches reports whether status satisfies the filter.
@@ -1380,12 +1442,22 @@ func (f *JobFilter) Matches(status *JobStatus) bool {
 	if f.TaskID != "" && jobStatusTaskID(status) != f.TaskID {
 		return false
 	}
+	if f.Runner != "" && jobStatusRunner(status) != f.Runner {
+		return false
+	}
+	if f.ProjectID != "" && jobStatusProjectID(status) != f.ProjectID {
+		return false
+	}
+	if len(f.Statuses) > 0 && !slices.Contains(f.Statuses, status.State) {
+		return false
+	}
 	return true
 }
 
 // Empty reports whether the filter narrows nothing.
 func (f *JobFilter) Empty() bool {
-	return f == nil || f.TaskID == ""
+	return f == nil ||
+		(f.TaskID == "" && f.Runner == "" && f.ProjectID == "" && len(f.Statuses) == 0)
 }
 
 // jobStatusTaskID is the task a job is an attempt at.
@@ -1406,6 +1478,33 @@ func jobStatusTaskID(status *JobStatus) string {
 		return status.Config.TaskID
 	}
 	return ""
+}
+
+// jobStatusRunner is the JobRunner that drove a job, read from the status
+// first and the launch config second for the same reason jobStatusTaskID is:
+// a record written before the field was promoted onto JobStatus carries it
+// only on the config, and a filter that read one shape would drop the other.
+func jobStatusRunner(status *JobStatus) string {
+	if status == nil {
+		return ""
+	}
+	if status.Runner != "" {
+		return status.Runner
+	}
+	if status.Config != nil {
+		return status.Config.Runner
+	}
+	return ""
+}
+
+// jobStatusProjectID is the project a job was launched under. It lives only
+// on the launch config -- JobStatus never promoted it -- so the listing reads
+// it from there.
+func jobStatusProjectID(status *JobStatus) string {
+	if status == nil || status.Config == nil {
+		return ""
+	}
+	return status.Config.ProjectID
 }
 
 // JobEventTypeStateChange is the JobEvent.Type of an event the control loop

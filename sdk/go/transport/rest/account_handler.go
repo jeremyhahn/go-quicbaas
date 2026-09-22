@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/account"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/page"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
@@ -55,11 +56,11 @@ type accountEnvelope struct {
 	Timestamp time.Time            `json:"timestamp"`
 }
 
-// accountListEnvelope is the list response envelope.
+// accountListEnvelope is the list response envelope, paging included.
 type accountListEnvelope struct {
 	Accounts  []*account.AccountInfo `json:"accounts"`
-	Total     int                    `json:"total"`
 	Timestamp time.Time              `json:"timestamp"`
+	page.Envelope
 }
 
 // accountAckEnvelope is the acknowledgement envelope for rotate / set-default.
@@ -153,13 +154,14 @@ func (h *accountRESTHandler) handleList(ctx context.Context, req interface{}) (i
 	if sdkReq.ProjectID != "" {
 		query.Set("project_id", sdkReq.ProjectID)
 	}
+	setPageQuery(query, sdkReq.Params)
 
 	var env accountListEnvelope
 	if err := h.transport.doJSONRequest(ctx, http.MethodGet,
 		accountRESTBasePath+"?"+query.Encode(), nil, &env); err != nil {
 		return nil, err
 	}
-	return &account.ListAccountsResponse{Accounts: env.Accounts, Total: env.Total}, nil
+	return &account.ListAccountsResponse{Accounts: env.Accounts, Envelope: env.Envelope}, nil
 }
 
 // handleUpdate handles PUT /api/v1/agent-accounts/{id}.
