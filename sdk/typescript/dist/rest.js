@@ -10,6 +10,7 @@
 //
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
+import { adoptPage, appendCSVParam, appendListParam, appendPageParams, } from './page.js';
 import { APIError, ConnectionError, NotConnectedError, DeployNotSupportedError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError, } from './errors.js';
 // API base path for all orchestrator endpoints.
 const API_PREFIX = '/api/v1/orchestrator';
@@ -92,10 +93,17 @@ function sessionFromWire(wire) {
         created_at: wire.created_at ?? 0,
         last_active: wire.last_activity ?? 0,
     };
+    if (wire.model !== undefined)
+        session.model = wire.model;
     if (wire.container_id !== undefined)
         session.container_id = wire.container_id;
     if (wire.job_id !== undefined)
         session.job_id = wire.job_id;
+    // The ROLE the session played, resolved server-side for the page. It was
+    // dropped here while the wire carried it, which left the Role badge blank
+    // on every row (go-quicbaas#969).
+    if (wire.runner !== undefined)
+        session.runner = wire.runner;
     return session;
 }
 // RestOrchestratorClient implements OrchestratorClient using the QuicBaaS REST API.
@@ -145,6 +153,78 @@ class RestOrchestratorClient {
             throw new APIError(resp.status, message);
         }
         return parseResponseBody(resp);
+    }
+    // =========================================================================
+    // The paged listings
+    //
+    // Each one sends the four shared parameters plus its endpoint's own
+    // narrowings, and hands back the envelope the server answered with. The
+    // unpaged methods below are unchanged and still useful — they are just no
+    // longer the whole collection, because the server pages every listing and
+    // defaults to 25 records. See docs/software-factory/api.md.
+    // =========================================================================
+    // listJobsPage maps to GET /api/v1/orchestrator/jobs with limit/offset/
+    // sort/q and the jobs listing's own filters, all applied by the SERVER.
+    async listJobsPage(tenantID, page) {
+        const params = new URLSearchParams({ tenant_id: tenantID });
+        appendListParam(params, 'task_id', page?.task_id);
+        appendListParam(params, 'runner', page?.runner);
+        appendListParam(params, 'project_id', page?.project_id);
+        appendCSVParam(params, 'statuses', page?.statuses);
+        appendCSVParam(params, 'job_ids', page?.job_ids);
+        appendPageParams(params, page);
+        const raw = await this.fetchJSON(`/jobs?${params.toString()}`);
+        return adoptPage(raw, 'jobs');
+    }
+    // listTasksPage maps to GET /api/v1/orchestrator/tasks with the shared
+    // paging parameters and the tasks listing's own filters.
+    async listTasksPage(tenantID, page) {
+        const params = new URLSearchParams({ tenant_id: tenantID });
+        appendListParam(params, 'status', page?.status);
+        appendListParam(params, 'project_id', page?.project_id);
+        appendListParam(params, 'team_name', page?.team_name);
+        appendListParam(params, 'assigned_to', page?.assigned_to);
+        appendListParam(params, 'created_by', page?.created_by);
+        appendListParam(params, 'auto_spawn', page?.auto_spawn);
+        appendCSVParam(params, 'statuses', page?.statuses);
+        appendPageParams(params, page);
+        const raw = await this.fetchJSON(`/tasks?${params.toString()}`);
+        return adoptPage(raw, 'tasks');
+    }
+    // listSessionsPage maps to GET /api/v1/orchestrator/sessions. The records
+    // are renamed through sessionFromWire, exactly as listSessions does, so a
+    // paged caller and an unpaged one hold the same session object.
+    async listSessionsPage(tenantID, page) {
+        if (!tenantID) {
+            throw new Error('listSessionsPage: tenantID is required');
+        }
+        const params = new URLSearchParams({ tenant_id: tenantID });
+        appendListParam(params, 'backend', page?.backend);
+        appendListParam(params, 'status', page?.status);
+        appendPageParams(params, page);
+        const raw = await this.fetchJSON(`/sessions?${params.toString()}`);
+        return adoptPage(raw, 'sessions', sessionFromWire);
+    }
+    // listAgentsPage maps to GET /api/v1/orchestrator/agents with the shared
+    // paging parameters and the fleet listing's own filters.
+    async listAgentsPage(tenantID, page) {
+        const params = new URLSearchParams({ tenant_id: tenantID });
+        appendListParam(params, 'host', page?.host);
+        appendListParam(params, 'status', page?.status);
+        appendListParam(params, 'agent_type', page?.agent_type);
+        appendListParam(params, 'backend', page?.backend);
+        appendListParam(params, 'model', page?.model);
+        appendPageParams(params, page);
+        const raw = await this.fetchJSON(`/agents?${params.toString()}`);
+        return adoptPage(raw, 'agents');
+    }
+    // listWorkflowsPage maps to GET /api/v1/orchestrator/workflows with the
+    // shared paging parameters. The listing takes no filters of its own.
+    async listWorkflowsPage(tenantID, page) {
+        const params = new URLSearchParams({ tenant_id: tenantID });
+        appendPageParams(params, page);
+        const raw = await this.fetchJSON(`/workflows?${params.toString()}`);
+        return adoptPage(raw, 'workflows');
     }
     // listJobs maps to GET /api/v1/orchestrator/jobs?tenant_id=<tenantID>
     // with an optional &task_id=<taskID>, which the SERVER applies.
@@ -1631,6 +1711,14 @@ class RestProjectsClient {
         const query = new URLSearchParams({ tenant_id: tenantId }).toString();
         return this.fetchJSON(`/api/v1/projects?${query}`);
     }
+    // listProjectsPage maps to GET /api/v1/projects with the shared paging
+    // parameters, and hands back the envelope the server answered with.
+    async listProjectsPage(tenantId, page) {
+        const params = new URLSearchParams({ tenant_id: tenantId });
+        appendPageParams(params, page);
+        const raw = await this.fetchJSON(`/api/v1/projects?${params.toString()}`);
+        return adoptPage(raw, 'projects');
+    }
     // grantAgentRole maps to PUT /api/v1/projects/:projectId/permissions/:agentId
     async grantAgentRole(req) {
         const query = new URLSearchParams({ tenant_id: req.tenant_id }).toString();
@@ -1768,6 +1856,16 @@ class RestAccountsClient {
             params.project_id = req.project_id;
         const query = new URLSearchParams(params).toString();
         return this.fetchJSON(`/api/v1/agent-accounts?${query}`);
+    }
+    // listAccountsPage maps to GET /api/v1/agent-accounts with the shared
+    // paging parameters and the accounts listing's own filters.
+    async listAccountsPage(req) {
+        const params = new URLSearchParams({ tenant_id: req.tenant_id });
+        appendListParam(params, 'provider', req.provider);
+        appendListParam(params, 'project_id', req.project_id);
+        appendPageParams(params, req);
+        const raw = await this.fetchJSON(`/api/v1/agent-accounts?${params.toString()}`);
+        return adoptPage(raw, 'accounts');
     }
     // updateAccount maps to PUT /api/v1/agent-accounts/:accountId?tenant_id=...
     async updateAccount(req) {
