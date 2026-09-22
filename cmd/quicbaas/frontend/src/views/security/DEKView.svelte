@@ -35,6 +35,8 @@
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
+  import DataTable from '../../components/core/DataTable.svelte';
+  import type { Column } from '../../lib/dataTable.ts';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import { formatDateTime } from '../../lib/time.ts';
   import type {
@@ -70,6 +72,15 @@
   // ---------------------------------------------------------------------------
 
   let deks = $state<DEKMetadata[]>([]);
+
+  const DEK_COLUMNS: Column<DEKMetadata>[] = [
+    { key: 'path', label: 'Path', sortable: true, searchable: true },
+    { key: 'algorithm', label: 'Algorithm', sortable: true, searchable: true },
+    { key: 'version', label: 'Version', sortable: true },
+    { key: 'status', label: 'Status', sortable: true },
+    { key: 'usage_count', label: 'Usage', sortable: true },
+    { key: 'actions', label: 'Actions' },
+  ];
   let totalCount = $state(0);
   let listLoading = $state(false);
   let listError = $state('');
@@ -451,85 +462,81 @@
     <div class="flex justify-center py-8">
       <span class="loading loading-spinner loading-md"></span>
     </div>
-  {:else if deks.length === 0}
-    <EmptyState
-      icon={KeySquare}
-      title="No DEKs found"
-      description="Create a Data Encryption Key or adjust the filters above to see existing ones."
-      actionLabel="Create DEK"
-      onaction={openCreateDialog}
-    />
   {:else}
-    <div class="text-xs text-base-content/40">{totalCount} total</div>
-    <div class="overflow-x-auto rounded-box border border-base-300/50">
-      <table class="table table-sm table-zebra">
-        <thead>
-          <tr class="bg-base-200/80 text-xs uppercase tracking-wider text-base-content/50">
-            <th>Path</th>
-            <th>Algorithm</th>
-            <th>Version</th>
-            <th>Status</th>
-            <th>Usage</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each deks as dek (dek.path)}
-            <tr class="hover">
-              <td class="font-mono text-xs truncate max-w-[14rem]" title={dek.path}>
-                {dek.path}
-                {#if dek.is_default}<span class="badge badge-xs badge-primary ml-1">default</span>{/if}
-              </td>
-              <td class="font-mono text-xs">{dek.algorithm}</td>
-              <td class="text-xs">{dek.version}</td>
-              <td><span class="badge badge-xs {dek.status === 'active' ? 'badge-success' : 'badge-ghost'}">{dek.status}</span></td>
-              <td class="text-xs text-base-content/50">{dek.usage_count} ops / {dek.bytes_used}B</td>
-              <td>
-                <div class="flex gap-1">
-                  <div class="tooltip tooltip-left" data-tip="View Details">
-                    <button class="btn btn-ghost btn-xs" onclick={() => void openDetail(dek.path)} aria-label={`View details for ${dek.path}`}>
-                      <Eye class="h-3 w-3" />
-                    </button>
-                  </div>
-                  <div class="tooltip tooltip-left" data-tip="Rotate">
-                    <button class="btn btn-ghost btn-xs" onclick={() => openRotateDialog(dek)} aria-label={`Rotate ${dek.path}`}>
-                      <Repeat class="h-3 w-3" />
-                    </button>
-                  </div>
-                  {#if !dek.is_default}
-                    <div class="tooltip tooltip-left" data-tip="Set Default">
-                      <button
-                        class="btn btn-ghost btn-xs"
-                        onclick={() => void setDefault(dek)}
-                        disabled={settingDefaultPath === dek.path}
-                        aria-label={`Set ${dek.path} as default`}
-                      >
-                        <Star class="h-3 w-3" />
-                      </button>
-                    </div>
-                  {/if}
-                  <div class="tooltip tooltip-left" data-tip="Safety Limits">
-                    <button class="btn btn-ghost btn-xs" onclick={() => openSafetyDialog(dek)} aria-label={`Safety limits for ${dek.path}`}>
-                      <ShieldAlert class="h-3 w-3" />
-                    </button>
-                  </div>
-                  <div class="tooltip tooltip-left" data-tip="Re-encrypt">
-                    <button class="btn btn-ghost btn-xs" onclick={() => void openReencryptDialog(dek)} aria-label={`Re-encrypt ${dek.path}`}>
-                      <PlayCircle class="h-3 w-3" />
-                    </button>
-                  </div>
-                  <div class="tooltip tooltip-left" data-tip="Delete">
-                    <button class="btn btn-ghost btn-xs text-error" onclick={() => openDeleteDialog(dek)} aria-label={`Delete ${dek.path}`}>
-                      <Trash2 class="h-3 w-3" />
-                    </button>
-                  </div>
+    <DataTable
+      columns={DEK_COLUMNS}
+      rows={deks}
+      rowKey={(dek: DEKMetadata) => dek.path}
+      urlKey="deks"
+      ariaLabel="Data encryption keys"
+      searchPlaceholder="Search DEKs..."
+      searchLabel="Search DEKs"
+      noMatchText="No DEKs match the search."
+    >
+      {#snippet empty()}
+        <EmptyState
+          icon={KeySquare}
+          title="No DEKs found"
+          description="Create a Data Encryption Key or adjust the filters above to see existing ones."
+          actionLabel="Create DEK"
+          onaction={openCreateDialog}
+        />
+      {/snippet}
+
+      {#snippet row(dek: DEKMetadata)}
+        <tr class="hover">
+          <td class="font-mono text-xs truncate max-w-[14rem]" title={dek.path}>
+            {dek.path}
+            {#if dek.is_default}<span class="badge badge-xs badge-primary ml-1">default</span>{/if}
+          </td>
+          <td class="font-mono text-xs">{dek.algorithm}</td>
+          <td class="text-xs">{dek.version}</td>
+          <td><span class="badge badge-xs {dek.status === 'active' ? 'badge-success' : 'badge-ghost'}">{dek.status}</span></td>
+          <td class="text-xs text-base-content/50">{dek.usage_count} ops / {dek.bytes_used}B</td>
+          <td>
+            <div class="flex gap-1">
+              <div class="tooltip tooltip-left" data-tip="View Details">
+                <button class="btn btn-ghost btn-xs" onclick={() => void openDetail(dek.path)} aria-label={`View details for ${dek.path}`}>
+                  <Eye class="h-3 w-3" />
+                </button>
+              </div>
+              <div class="tooltip tooltip-left" data-tip="Rotate">
+                <button class="btn btn-ghost btn-xs" onclick={() => openRotateDialog(dek)} aria-label={`Rotate ${dek.path}`}>
+                  <Repeat class="h-3 w-3" />
+                </button>
+              </div>
+              {#if !dek.is_default}
+                <div class="tooltip tooltip-left" data-tip="Set Default">
+                  <button
+                    class="btn btn-ghost btn-xs"
+                    onclick={() => void setDefault(dek)}
+                    disabled={settingDefaultPath === dek.path}
+                    aria-label={`Set ${dek.path} as default`}
+                  >
+                    <Star class="h-3 w-3" />
+                  </button>
                 </div>
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
+              {/if}
+              <div class="tooltip tooltip-left" data-tip="Safety Limits">
+                <button class="btn btn-ghost btn-xs" onclick={() => openSafetyDialog(dek)} aria-label={`Safety limits for ${dek.path}`}>
+                  <ShieldAlert class="h-3 w-3" />
+                </button>
+              </div>
+              <div class="tooltip tooltip-left" data-tip="Re-encrypt">
+                <button class="btn btn-ghost btn-xs" onclick={() => void openReencryptDialog(dek)} aria-label={`Re-encrypt ${dek.path}`}>
+                  <PlayCircle class="h-3 w-3" />
+                </button>
+              </div>
+              <div class="tooltip tooltip-left" data-tip="Delete">
+                <button class="btn btn-ghost btn-xs text-error" onclick={() => openDeleteDialog(dek)} aria-label={`Delete ${dek.path}`}>
+                  <Trash2 class="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+          </td>
+        </tr>
+      {/snippet}
+    </DataTable>
   {/if}
 </div>
 

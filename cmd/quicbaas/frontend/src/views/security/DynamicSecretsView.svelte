@@ -34,6 +34,8 @@
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
+  import DataTable from '../../components/core/DataTable.svelte';
+  import type { Column } from '../../lib/dataTable.ts';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import { formatDateTime } from '../../lib/time.ts';
   import type {
@@ -79,6 +81,14 @@
   // ---------------------------------------------------------------------------
 
   let roles = $state<DynamicSecretRole[]>([]);
+
+  const ROLE_COLUMNS: Column<DynamicSecretRole>[] = [
+    { key: 'name', label: 'Name', sortable: true, searchable: true },
+    { key: 'generator_type', label: 'Generator', sortable: true, searchable: true },
+    { key: 'default_ttl', label: 'Default TTL', sortable: true },
+    { key: 'max_ttl', label: 'Max TTL', sortable: true },
+    { key: 'actions', label: 'Actions' },
+  ];
   let rolesLoading = $state(false);
   let rolesError = $state('');
   let filterPrefix = $state('');
@@ -102,6 +112,15 @@
   // ---------------------------------------------------------------------------
 
   let leases = $state<LeaseInfo[]>([]);
+
+  const LEASE_COLUMNS: Column<LeaseInfo>[] = [
+    { key: 'lease_id', label: 'Lease ID', sortable: true, searchable: true },
+    { key: 'path', label: 'Path', sortable: true, searchable: true },
+    { key: 'ttl', label: 'TTL', sortable: true },
+    { key: 'expiry', label: 'Expiry', sortable: true },
+    { key: 'renew_count', label: 'Renewals', sortable: true },
+    { key: 'actions', label: 'Actions' },
+  ];
   let leasesLoading = $state(false);
   let leasesError = $state('');
 
@@ -340,60 +359,58 @@
       <div class="flex justify-center py-8">
         <span class="loading loading-spinner loading-md"></span>
       </div>
-    {:else if roles.length === 0}
-      <EmptyState
-        icon={Timer}
-        title="No roles found"
-        description="Create a credential-generation role to start minting dynamic secrets."
-        actionLabel="Create Role"
-        onaction={openCreateRoleDialog}
-      />
     {:else}
-      <div class="overflow-x-auto rounded-box border border-base-300/50">
-        <table class="table table-sm table-zebra">
-          <thead>
-            <tr class="bg-base-200/80 text-xs uppercase tracking-wider text-base-content/50">
-              <th>Name</th>
-              <th>Generator</th>
-              <th>Default TTL</th>
-              <th>Max TTL</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each roles as role (role.name)}
-              <tr class="hover">
-                <td class="font-mono text-xs">{role.name}</td>
-                <td class="text-xs">{role.generator_type}</td>
-                <td class="text-xs text-base-content/50">{role.default_ttl}</td>
-                <td class="text-xs text-base-content/50">{role.max_ttl}</td>
-                <td>
-                  <div class="flex gap-1">
-                    <div class="tooltip tooltip-left" data-tip="Generate Credential">
-                      <button
-                        class="btn btn-ghost btn-xs"
-                        onclick={() => openGenerateDialog(role)}
-                        aria-label={`Generate credential for ${role.name}`}
-                      >
-                        <KeyRound class="h-3 w-3" />
-                      </button>
-                    </div>
-                    <div class="tooltip tooltip-left" data-tip="Delete">
-                      <button
-                        class="btn btn-ghost btn-xs text-error"
-                        onclick={() => { deleteRoleTarget = role; }}
-                        aria-label={`Delete role ${role.name}`}
-                      >
-                        <Trash2 class="h-3 w-3" />
-                      </button>
-                    </div>
-                  </div>
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
+      <DataTable
+        columns={ROLE_COLUMNS}
+        rows={roles}
+        rowKey={(role: DynamicSecretRole) => role.name}
+        urlKey="roles"
+        ariaLabel="Credential roles"
+        searchPlaceholder="Search roles..."
+        searchLabel="Search roles"
+        noMatchText="No roles match the search."
+      >
+        {#snippet empty()}
+          <EmptyState
+            icon={Timer}
+            title="No roles found"
+            description="Create a credential-generation role to start minting dynamic secrets."
+            actionLabel="Create Role"
+            onaction={openCreateRoleDialog}
+          />
+        {/snippet}
+
+        {#snippet row(role: DynamicSecretRole)}
+          <tr class="hover">
+            <td class="font-mono text-xs">{role.name}</td>
+            <td class="text-xs">{role.generator_type}</td>
+            <td class="text-xs text-base-content/50">{role.default_ttl}</td>
+            <td class="text-xs text-base-content/50">{role.max_ttl}</td>
+            <td>
+              <div class="flex gap-1">
+                <div class="tooltip tooltip-left" data-tip="Generate Credential">
+                  <button
+                    class="btn btn-ghost btn-xs"
+                    onclick={() => openGenerateDialog(role)}
+                    aria-label={`Generate credential for ${role.name}`}
+                  >
+                    <KeyRound class="h-3 w-3" />
+                  </button>
+                </div>
+                <div class="tooltip tooltip-left" data-tip="Delete">
+                  <button
+                    class="btn btn-ghost btn-xs text-error"
+                    onclick={() => { deleteRoleTarget = role; }}
+                    aria-label={`Delete role ${role.name}`}
+                  >
+                    <Trash2 class="h-3 w-3" />
+                  </button>
+                </div>
+              </div>
+            </td>
+          </tr>
+        {/snippet}
+      </DataTable>
     {/if}
   </section>
 
@@ -414,57 +431,54 @@
       <div class="flex justify-center py-8">
         <span class="loading loading-spinner loading-md"></span>
       </div>
-    {:else if leases.length === 0}
-      <EmptyState icon={Timer} title="No active leases" description="Generate a credential above to create a lease." />
     {:else}
-      <div class="overflow-x-auto rounded-box border border-base-300/50">
-        <table class="table table-sm table-zebra">
-          <thead>
-            <tr class="bg-base-200/80 text-xs uppercase tracking-wider text-base-content/50">
-              <th>Lease ID</th>
-              <th>Path</th>
-              <th>TTL</th>
-              <th>Expiry</th>
-              <th>Renewals</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each leases as lease (lease.lease_id)}
-              <tr class="hover">
-                <td class="font-mono text-xs truncate max-w-[10rem]" title={lease.lease_id}>{lease.lease_id}</td>
-                <td class="font-mono text-xs">{lease.path}</td>
-                <td class="text-xs text-base-content/50">{lease.ttl}</td>
-                <td class="text-xs text-base-content/50">{formatDateTime(lease.expiry)}</td>
-                <td class="text-xs">{lease.renew_count}</td>
-                <td>
-                  <div class="flex gap-1">
-                    <div class="tooltip tooltip-left" data-tip="Renew">
-                      <button
-                        class="btn btn-ghost btn-xs"
-                        disabled={!lease.renewable}
-                        onclick={() => openRenewDialog(lease)}
-                        aria-label={`Renew lease ${lease.lease_id}`}
-                      >
-                        <RotateCw class="h-3 w-3" />
-                      </button>
-                    </div>
-                    <div class="tooltip tooltip-left" data-tip="Revoke">
-                      <button
-                        class="btn btn-ghost btn-xs text-error"
-                        onclick={() => { revokeTarget = lease; }}
-                        aria-label={`Revoke lease ${lease.lease_id}`}
-                      >
-                        <Ban class="h-3 w-3" />
-                      </button>
-                    </div>
-                  </div>
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
+      <DataTable
+        columns={LEASE_COLUMNS}
+        rows={leases}
+        rowKey={(lease: LeaseInfo) => lease.lease_id}
+        urlKey="leases"
+        ariaLabel="Active leases"
+        searchPlaceholder="Search leases..."
+        searchLabel="Search leases"
+        noMatchText="No leases match the search."
+      >
+        {#snippet empty()}
+          <EmptyState icon={Timer} title="No active leases" description="Generate a credential above to create a lease." />
+        {/snippet}
+
+        {#snippet row(lease: LeaseInfo)}
+          <tr class="hover">
+            <td class="font-mono text-xs truncate max-w-[10rem]" title={lease.lease_id}>{lease.lease_id}</td>
+            <td class="font-mono text-xs">{lease.path}</td>
+            <td class="text-xs text-base-content/50">{lease.ttl}</td>
+            <td class="text-xs text-base-content/50">{formatDateTime(lease.expiry)}</td>
+            <td class="text-xs">{lease.renew_count}</td>
+            <td>
+              <div class="flex gap-1">
+                <div class="tooltip tooltip-left" data-tip="Renew">
+                  <button
+                    class="btn btn-ghost btn-xs"
+                    disabled={!lease.renewable}
+                    onclick={() => openRenewDialog(lease)}
+                    aria-label={`Renew lease ${lease.lease_id}`}
+                  >
+                    <RotateCw class="h-3 w-3" />
+                  </button>
+                </div>
+                <div class="tooltip tooltip-left" data-tip="Revoke">
+                  <button
+                    class="btn btn-ghost btn-xs text-error"
+                    onclick={() => { revokeTarget = lease; }}
+                    aria-label={`Revoke lease ${lease.lease_id}`}
+                  >
+                    <Ban class="h-3 w-3" />
+                  </button>
+                </div>
+              </div>
+            </td>
+          </tr>
+        {/snippet}
+      </DataTable>
     {/if}
   </section>
 </div>

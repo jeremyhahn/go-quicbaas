@@ -26,6 +26,8 @@
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
+  import DataTable from '../../components/core/DataTable.svelte';
+  import type { Column } from '../../lib/dataTable.ts';
   import type {
     IAMUser,
     IAMTenant,
@@ -94,6 +96,41 @@
   let tenants: IAMTenant[] = $state([]);
   let roles: IAMRole[] = $state([]);
   let policies: IAMPolicy[] = $state([]);
+
+  // One column declaration per tab. Each tab is its own table with its own
+  // page and sort in the URL, so switching tabs never carries one tab's page
+  // number onto another's rows.
+  const USER_COLUMNS: Column<IAMUser>[] = [
+    { key: 'username', label: 'Username', sortable: true, searchable: true },
+    { key: 'email', label: 'Email', sortable: true, searchable: true },
+    { key: 'enabled', label: 'Status', sortable: true, value: (u) => (u.enabled === false ? 'disabled' : 'active') },
+    { key: 'roles', label: 'Roles', value: (u) => (u.roles ?? []).join(' ') },
+    { key: 'created_at', label: 'Created', sortable: true },
+    { key: 'actions', label: 'Actions', srLabel: true },
+  ];
+
+  const TENANT_COLUMNS: Column<IAMTenant>[] = [
+    { key: 'id', label: 'ID', sortable: true, searchable: true },
+    { key: 'name', label: 'Name', sortable: true, searchable: true },
+    { key: 'description', label: 'Description', sortable: true, searchable: true },
+    { key: 'created_at', label: 'Created', sortable: true },
+    { key: 'actions', label: 'Actions', srLabel: true },
+  ];
+
+  const IAM_ROLE_COLUMNS: Column<IAMRole>[] = [
+    { key: 'name', label: 'Name', sortable: true, searchable: true },
+    { key: 'description', label: 'Description', sortable: true, searchable: true },
+    { key: 'permissions', label: 'Permissions' },
+    { key: 'created_at', label: 'Created', sortable: true },
+    { key: 'actions', label: 'Actions', srLabel: true },
+  ];
+
+  const POLICY_COLUMNS: Column<IAMPolicy>[] = [
+    { key: 'name', label: 'Name', sortable: true, searchable: true },
+    { key: 'description', label: 'Description', sortable: true, searchable: true },
+    { key: 'created_at', label: 'Created', sortable: true },
+    { key: 'actions', label: 'Actions', srLabel: true },
+  ];
   let loading = $state(false);
   let error: string | null = $state(null);
 
@@ -858,244 +895,228 @@
 
     <!-- Users tab -->
     {#if activeTab === 'users'}
-      {#if users.length === 0}
-        <EmptyState
-          icon={UserPlus}
-          title="No users in tenant {selectedTenantID} — + Invite User is how you start."
-          description="Users authenticate to the platform and can be assigned roles and policies."
-          actionLabel="+ Invite User"
-          onaction={() => { showCreateUser = true; }}
-        />
-      {:else}
-        <div class="overflow-x-auto rounded-box border border-base-300/50">
-          <table class="table table-sm table-zebra">
-            <thead>
-              <tr class="bg-base-200/80 text-xs uppercase tracking-wider text-base-content/50">
-                <th>Username</th>
-                <th>Email</th>
-                <th>Status</th>
-                <th>Roles</th>
-                <th>Created</th>
-                <th><span class="sr-only">Actions</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each users as user (user.id)}
-                <tr class="hover">
-                  <td class="font-mono text-xs">{user.username}</td>
-                  <td class="text-sm">{user.email}</td>
-                  <td>
-                    <span class="badge badge-xs badge-soft" class:badge-success={user.enabled !== false} class:badge-warning={user.enabled === false}>
-                      {user.enabled === false ? 'disabled' : 'active'}
-                    </span>
-                  </td>
-                  <td>
-                    <div class="flex flex-wrap gap-1">
-                      {#each (user.roles ?? []) as role}
-                        <span class="badge badge-xs badge-ghost">{roles.find((r) => r.id === role)?.name ?? role}</span>
-                      {/each}
-                    </div>
-                  </td>
-                  <td class="text-xs text-base-content/50">{formatDateTime(user.created_at)}</td>
-                  <td>
-                    <div class="flex gap-1">
-                      <button
-                        class="btn btn-ghost btn-xs"
-                        title={`Edit user ${user.username}`}
-                        aria-label={`Edit user ${user.username}`}
-                        onclick={() => openEditUser(user)}
-                      >
-                        <Pencil class="h-3 w-3" />
-                      </button>
-                      <button
-                        class="btn btn-ghost btn-xs"
-                        title={`Assign role to ${user.username}`}
-                        aria-label={`Assign role to ${user.username}`}
-                        onclick={() => openAssignRole(user)}
-                      >
-                        <UserCheck class="h-3 w-3" />
-                      </button>
-                      <button
-                        class="btn btn-ghost btn-xs text-error"
-                        title={`Delete user ${user.username}`}
-                        aria-label={`Delete user ${user.username}`}
-                        onclick={() => { userToDelete = user; }}
-                      >
-                        <Trash2 class="h-3 w-3" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {/if}
+      <DataTable
+        columns={USER_COLUMNS}
+        rows={users}
+        rowKey={(user: IAMUser) => user.id}
+        urlKey="users"
+        ariaLabel="Users"
+        searchPlaceholder="Search users..."
+        searchLabel="Search users"
+        noMatchText="No users match the search."
+      >
+        {#snippet empty()}
+          <EmptyState
+            icon={UserPlus}
+            title="No users in tenant {selectedTenantID} — + Invite User is how you start."
+            description="Users authenticate to the platform and can be assigned roles and policies."
+            actionLabel="+ Invite User"
+            onaction={() => { showCreateUser = true; }}
+          />
+        {/snippet}
+
+        {#snippet row(user: IAMUser)}
+          <tr class="hover">
+            <td class="font-mono text-xs">{user.username}</td>
+            <td class="text-sm">{user.email}</td>
+            <td>
+              <span class="badge badge-xs badge-soft" class:badge-success={user.enabled !== false} class:badge-warning={user.enabled === false}>
+                {user.enabled === false ? 'disabled' : 'active'}
+              </span>
+            </td>
+            <td>
+              <div class="flex flex-wrap gap-1">
+                {#each (user.roles ?? []) as role}
+                  <span class="badge badge-xs badge-ghost">{roles.find((r) => r.id === role)?.name ?? role}</span>
+                {/each}
+              </div>
+            </td>
+            <td class="text-xs text-base-content/50">{formatDateTime(user.created_at)}</td>
+            <td>
+              <div class="flex gap-1">
+                <button
+                  class="btn btn-ghost btn-xs"
+                  title={`Edit user ${user.username}`}
+                  aria-label={`Edit user ${user.username}`}
+                  onclick={() => openEditUser(user)}
+                >
+                  <Pencil class="h-3 w-3" />
+                </button>
+                <button
+                  class="btn btn-ghost btn-xs"
+                  title={`Assign role to ${user.username}`}
+                  aria-label={`Assign role to ${user.username}`}
+                  onclick={() => openAssignRole(user)}
+                >
+                  <UserCheck class="h-3 w-3" />
+                </button>
+                <button
+                  class="btn btn-ghost btn-xs text-error"
+                  title={`Delete user ${user.username}`}
+                  aria-label={`Delete user ${user.username}`}
+                  onclick={() => { userToDelete = user; }}
+                >
+                  <Trash2 class="h-3 w-3" />
+                </button>
+              </div>
+            </td>
+          </tr>
+        {/snippet}
+      </DataTable>
 
     <!-- Tenants tab -->
     {:else if activeTab === 'tenants'}
-      {#if tenants.length === 0}
-        <div class="text-center py-10 text-base-content/30 text-sm">No tenants found</div>
-      {:else}
-        <div class="overflow-x-auto rounded-box border border-base-300/50">
-          <table class="table table-sm table-zebra">
-            <thead>
-              <tr class="bg-base-200/80 text-xs uppercase tracking-wider text-base-content/50">
-                <th>ID</th>
-                <th>Name</th>
-                <th>Description</th>
-                <th>Created</th>
-                <th><span class="sr-only">Actions</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each tenants as tenant (tenant.id)}
-                <tr class="hover">
-                  <td class="font-mono text-xs">{tenant.id}</td>
-                  <td class="font-medium text-sm">{tenant.name}</td>
-                  <td class="text-sm text-base-content/60">{tenant.description || '—'}</td>
-                  <td class="text-xs text-base-content/50">{formatDateTime(tenant.created_at)}</td>
-                  <td>
-                    <div class="flex gap-1">
-                      <button
-                        class="btn btn-ghost btn-xs"
-                        title={`Edit tenant ${tenant.name}`}
-                        aria-label={`Edit tenant ${tenant.name}`}
-                        onclick={() => openEditTenant(tenant)}
-                      >
-                        <Pencil class="h-3 w-3" />
-                      </button>
-                      <button
-                        class="btn btn-ghost btn-xs text-error"
-                        title={`Delete tenant ${tenant.name}`}
-                        aria-label={`Delete tenant ${tenant.name}`}
-                        onclick={() => { tenantToDelete = tenant; }}
-                      >
-                        <Trash2 class="h-3 w-3" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {/if}
+      <DataTable
+        columns={TENANT_COLUMNS}
+        rows={tenants}
+        rowKey={(tenant: IAMTenant) => tenant.id}
+        urlKey="tenants"
+        ariaLabel="Tenants"
+        searchPlaceholder="Search tenants..."
+        searchLabel="Search tenants"
+        noMatchText="No tenants match the search."
+      >
+        {#snippet empty()}
+          <div class="text-center py-10 text-base-content/30 text-sm">No tenants found</div>
+        {/snippet}
+
+        {#snippet row(tenant: IAMTenant)}
+          <tr class="hover">
+            <td class="font-mono text-xs">{tenant.id}</td>
+            <td class="font-medium text-sm">{tenant.name}</td>
+            <td class="text-sm text-base-content/60">{tenant.description || '—'}</td>
+            <td class="text-xs text-base-content/50">{formatDateTime(tenant.created_at)}</td>
+            <td>
+              <div class="flex gap-1">
+                <button
+                  class="btn btn-ghost btn-xs"
+                  title={`Edit tenant ${tenant.name}`}
+                  aria-label={`Edit tenant ${tenant.name}`}
+                  onclick={() => openEditTenant(tenant)}
+                >
+                  <Pencil class="h-3 w-3" />
+                </button>
+                <button
+                  class="btn btn-ghost btn-xs text-error"
+                  title={`Delete tenant ${tenant.name}`}
+                  aria-label={`Delete tenant ${tenant.name}`}
+                  onclick={() => { tenantToDelete = tenant; }}
+                >
+                  <Trash2 class="h-3 w-3" />
+                </button>
+              </div>
+            </td>
+          </tr>
+        {/snippet}
+      </DataTable>
 
     <!-- Roles tab -->
     {:else if activeTab === 'roles'}
-      {#if roles.length === 0}
-        <div class="text-center py-10 text-base-content/30 text-sm">No roles defined in tenant "{selectedTenantID}"</div>
-      {:else}
-        <div class="overflow-x-auto rounded-box border border-base-300/50">
-          <table class="table table-sm table-zebra">
-            <thead>
-              <tr class="bg-base-200/80 text-xs uppercase tracking-wider text-base-content/50">
-                <th>Name</th>
-                <th>Description</th>
-                <th>Permissions</th>
-                <th>Created</th>
-                <th><span class="sr-only">Actions</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each roles as role (role.id)}
-                <tr class="hover">
-                  <td class="font-mono text-xs font-medium">{role.name}</td>
-                  <td class="text-sm text-base-content/60">{role.description || '—'}</td>
-                  <td>
-                    <div class="flex flex-wrap gap-1">
-                      {#each (role.permissions ?? []).slice(0, 4) as perm}
-                        <span class="badge badge-xs badge-ghost">{perm}</span>
-                      {/each}
-                      {#if (role.permissions ?? []).length > 4}
-                        <span class="badge badge-xs badge-ghost">+{(role.permissions ?? []).length - 4}</span>
-                      {/if}
-                      <!-- Drift: permissions this role still carries that the running
-                           server build no longer defines. Reconcile Roles repairs it. -->
-                      {#each role.retired_permissions ?? [] as retired}
-                        <span
-                          class="badge badge-xs badge-warning badge-outline"
-                          title={`Retired: this server build no longer defines "${retired}". Run Reconcile Roles to converge this role onto the current definitions.`}
-                        >{retired}</span>
-                      {/each}
-                    </div>
-                  </td>
-                  <td class="text-xs text-base-content/50">{formatDateTime(role.created_at)}</td>
-                  <td>
-                    <div class="flex gap-1">
-                      <button
-                        class="btn btn-ghost btn-xs"
-                        title={`Edit role ${role.name}`}
-                        aria-label={`Edit role ${role.name}`}
-                        onclick={() => openEditRole(role)}
-                      >
-                        <Pencil class="h-3 w-3" />
-                      </button>
-                      <button
-                        class="btn btn-ghost btn-xs text-error"
-                        title={`Delete role ${role.name}`}
-                        aria-label={`Delete role ${role.name}`}
-                        onclick={() => { roleToDelete = role; }}
-                      >
-                        <Trash2 class="h-3 w-3" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {/if}
+      <DataTable
+        columns={IAM_ROLE_COLUMNS}
+        rows={roles}
+        rowKey={(role: IAMRole) => role.id}
+        urlKey="iamroles"
+        ariaLabel="Roles"
+        searchPlaceholder="Search roles..."
+        searchLabel="Search roles"
+        noMatchText="No roles match the search."
+      >
+        {#snippet empty()}
+          <div class="text-center py-10 text-base-content/30 text-sm">No roles defined in tenant "{selectedTenantID}"</div>
+        {/snippet}
+
+        {#snippet row(role: IAMRole)}
+          <tr class="hover">
+            <td class="font-mono text-xs font-medium">{role.name}</td>
+            <td class="text-sm text-base-content/60">{role.description || '—'}</td>
+            <td>
+              <div class="flex flex-wrap gap-1">
+                {#each (role.permissions ?? []).slice(0, 4) as perm}
+                  <span class="badge badge-xs badge-ghost">{perm}</span>
+                {/each}
+                {#if (role.permissions ?? []).length > 4}
+                  <span class="badge badge-xs badge-ghost">+{(role.permissions ?? []).length - 4}</span>
+                {/if}
+                <!-- Drift: permissions this role still carries that the running
+                     server build no longer defines. Reconcile Roles repairs it. -->
+                {#each role.retired_permissions ?? [] as retired}
+                  <span
+                    class="badge badge-xs badge-warning badge-outline"
+                    title={`Retired: this server build no longer defines "${retired}". Run Reconcile Roles to converge this role onto the current definitions.`}
+                  >{retired}</span>
+                {/each}
+              </div>
+            </td>
+            <td class="text-xs text-base-content/50">{formatDateTime(role.created_at)}</td>
+            <td>
+              <div class="flex gap-1">
+                <button
+                  class="btn btn-ghost btn-xs"
+                  title={`Edit role ${role.name}`}
+                  aria-label={`Edit role ${role.name}`}
+                  onclick={() => openEditRole(role)}
+                >
+                  <Pencil class="h-3 w-3" />
+                </button>
+                <button
+                  class="btn btn-ghost btn-xs text-error"
+                  title={`Delete role ${role.name}`}
+                  aria-label={`Delete role ${role.name}`}
+                  onclick={() => { roleToDelete = role; }}
+                >
+                  <Trash2 class="h-3 w-3" />
+                </button>
+              </div>
+            </td>
+          </tr>
+        {/snippet}
+      </DataTable>
 
     <!-- Policies tab -->
     {:else if activeTab === 'policies'}
-      {#if policies.length === 0}
-        <div class="text-center py-10 text-base-content/30 text-sm">No policies defined in tenant "{selectedTenantID}"</div>
-      {:else}
-        <div class="overflow-x-auto rounded-box border border-base-300/50">
-          <table class="table table-sm table-zebra">
-            <thead>
-              <tr class="bg-base-200/80 text-xs uppercase tracking-wider text-base-content/50">
-                <th>Name</th>
-                <th>Description</th>
-                <th>Created</th>
-                <th><span class="sr-only">Actions</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each policies as policy (policy.name)}
-                <tr class="hover">
-                  <td class="font-mono text-xs font-medium">{policy.name}</td>
-                  <td class="text-sm text-base-content/60">{policy.description || '—'}</td>
-                  <td class="text-xs text-base-content/50">{formatDateTime(policy.created_at)}</td>
-                  <td>
-                    <div class="flex gap-1">
-                      <button
-                        class="btn btn-ghost btn-xs"
-                        title={`Edit policy ${policy.name}`}
-                        aria-label={`Edit policy ${policy.name}`}
-                        onclick={() => openEditPolicy(policy)}
-                      >
-                        <Pencil class="h-3 w-3" />
-                      </button>
-                      <button
-                        class="btn btn-ghost btn-xs text-error"
-                        title={`Delete policy ${policy.name}`}
-                        aria-label={`Delete policy ${policy.name}`}
-                        onclick={() => { policyToDelete = policy; }}
-                      >
-                        <Trash2 class="h-3 w-3" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {/if}
+      <DataTable
+        columns={POLICY_COLUMNS}
+        rows={policies}
+        rowKey={(policy: IAMPolicy) => policy.name}
+        urlKey="policies"
+        ariaLabel="Policies"
+        searchPlaceholder="Search policies..."
+        searchLabel="Search policies"
+        noMatchText="No policies match the search."
+      >
+        {#snippet empty()}
+          <div class="text-center py-10 text-base-content/30 text-sm">No policies defined in tenant "{selectedTenantID}"</div>
+        {/snippet}
+
+        {#snippet row(policy: IAMPolicy)}
+          <tr class="hover">
+            <td class="font-mono text-xs font-medium">{policy.name}</td>
+            <td class="text-sm text-base-content/60">{policy.description || '—'}</td>
+            <td class="text-xs text-base-content/50">{formatDateTime(policy.created_at)}</td>
+            <td>
+              <div class="flex gap-1">
+                <button
+                  class="btn btn-ghost btn-xs"
+                  title={`Edit policy ${policy.name}`}
+                  aria-label={`Edit policy ${policy.name}`}
+                  onclick={() => openEditPolicy(policy)}
+                >
+                  <Pencil class="h-3 w-3" />
+                </button>
+                <button
+                  class="btn btn-ghost btn-xs text-error"
+                  title={`Delete policy ${policy.name}`}
+                  aria-label={`Delete policy ${policy.name}`}
+                  onclick={() => { policyToDelete = policy; }}
+                >
+                  <Trash2 class="h-3 w-3" />
+                </button>
+              </div>
+            </td>
+          </tr>
+        {/snippet}
+      </DataTable>
     {/if}
 
   {/if}

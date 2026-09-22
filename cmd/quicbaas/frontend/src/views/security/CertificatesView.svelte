@@ -32,6 +32,8 @@
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
+  import DataTable from '../../components/core/DataTable.svelte';
+  import type { Column } from '../../lib/dataTable.ts';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import { formatDateTime } from '../../lib/time.ts';
   import type {
@@ -111,6 +113,15 @@
   // ---------------------------------------------------------------------------
 
   let certificates = $state<CertificateSummary[]>([]);
+
+  const CERT_COLUMNS: Column<CertificateSummary>[] = [
+    { key: 'common_name', label: 'Common Name', sortable: true, searchable: true },
+    { key: 'serial_number', label: 'Serial', sortable: true, searchable: true },
+    { key: 'not_before', label: 'Not Before', sortable: true },
+    { key: 'not_after', label: 'Not After', sortable: true },
+    { key: 'is_ca', label: 'Type', sortable: true, value: (c) => (c.is_ca ? 'CA' : 'Leaf') },
+    { key: 'actions', label: 'Actions' },
+  ];
   let totalCount = $state(0);
   let listLoading = $state(false);
   let listError = $state('');
@@ -489,59 +500,55 @@
     <div class="flex justify-center py-8">
       <span class="loading loading-spinner loading-md"></span>
     </div>
-  {:else if certificates.length === 0}
-    <EmptyState
-      icon={FileBadge}
-      title="No certificates found"
-      description="Issue a certificate or adjust the filters above to see existing ones."
-      actionLabel="Issue Certificate"
-      onaction={openIssueDialog}
-    />
   {:else}
-    <div class="text-xs text-base-content/40">{totalCount} total</div>
-    <div class="overflow-x-auto rounded-box border border-base-300/50">
-      <table class="table table-sm table-zebra">
-        <thead>
-          <tr class="bg-base-200/80 text-xs uppercase tracking-wider text-base-content/50">
-            <th>Common Name</th>
-            <th>Serial</th>
-            <th>Not Before</th>
-            <th>Not After</th>
-            <th>Type</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each certificates as cert (cert.serial_number)}
-            <tr class="hover">
-              <td class="font-mono text-xs">{cert.common_name}</td>
-              <td class="font-mono text-xs truncate max-w-[10rem]" title={cert.serial_number}>{cert.serial_number}</td>
-              <td class="text-xs text-base-content/50">{formatDateTime(cert.not_before)}</td>
-              <td class="text-xs text-base-content/50">{formatDateTime(cert.not_after)}</td>
-              <td>
-                <span class="badge badge-xs {cert.is_ca ? 'badge-primary' : 'badge-ghost'}">{cert.is_ca ? 'CA' : 'Leaf'}</span>
-                {#if isExpired(cert.not_after)}
-                  <span class="badge badge-xs badge-warning ml-1">expired</span>
-                {/if}
-              </td>
-              <td>
-                <div class="flex gap-1">
-                  <div class="tooltip tooltip-left" data-tip="Revoke">
-                    <button
-                      class="btn btn-ghost btn-xs text-error"
-                      onclick={() => { revokeTarget = cert; }}
-                      aria-label={`Revoke certificate ${cert.common_name}`}
-                    >
-                      <Ban class="h-3 w-3" />
-                    </button>
-                  </div>
-                </div>
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      columns={CERT_COLUMNS}
+      rows={certificates}
+      rowKey={(cert: CertificateSummary) => cert.serial_number}
+      urlKey="certs"
+      ariaLabel="Certificates"
+      searchPlaceholder="Search certificates..."
+      searchLabel="Search certificates"
+      noMatchText="No certificates match the search."
+    >
+      {#snippet empty()}
+        <EmptyState
+          icon={FileBadge}
+          title="No certificates found"
+          description="Issue a certificate or adjust the filters above to see existing ones."
+          actionLabel="Issue Certificate"
+          onaction={openIssueDialog}
+        />
+      {/snippet}
+
+      {#snippet row(cert: CertificateSummary)}
+        <tr class="hover">
+          <td class="font-mono text-xs">{cert.common_name}</td>
+          <td class="font-mono text-xs truncate max-w-[10rem]" title={cert.serial_number}>{cert.serial_number}</td>
+          <td class="text-xs text-base-content/50">{formatDateTime(cert.not_before)}</td>
+          <td class="text-xs text-base-content/50">{formatDateTime(cert.not_after)}</td>
+          <td>
+            <span class="badge badge-xs {cert.is_ca ? 'badge-primary' : 'badge-ghost'}">{cert.is_ca ? 'CA' : 'Leaf'}</span>
+            {#if isExpired(cert.not_after)}
+              <span class="badge badge-xs badge-warning ml-1">expired</span>
+            {/if}
+          </td>
+          <td>
+            <div class="flex gap-1">
+              <div class="tooltip tooltip-left" data-tip="Revoke">
+                <button
+                  class="btn btn-ghost btn-xs text-error"
+                  onclick={() => { revokeTarget = cert; }}
+                  aria-label={`Revoke certificate ${cert.common_name}`}
+                >
+                  <Ban class="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+          </td>
+        </tr>
+      {/snippet}
+    </DataTable>
   {/if}
 </div>
 

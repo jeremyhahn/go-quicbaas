@@ -164,10 +164,11 @@ describe('SessionList', () => {
     expect(sortBtn.textContent).not.toContain('↑');
   });
 
-  it('pages the sessions through the shared table', () => {
+  it('reports the range through the shared table, and offers no pager for two rows', () => {
     render(SessionList);
     expect(screen.getByTestId('data-table-range').textContent).toContain('1–2 of 2');
-    expect(screen.getByLabelText('Rows per page')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Rows per page')).toBeNull();
+    expect(screen.queryByLabelText('Next page')).toBeNull();
   });
 
   // -------------------------------------------------------------------------

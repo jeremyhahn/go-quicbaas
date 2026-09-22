@@ -195,8 +195,8 @@ describe('IAMView', () => {
     await waitFor(() => screen.getByRole('button', { name: /Invite User/i }));
     await fireEvent.click(screen.getByRole('button', { name: /Invite User/i }));
 
-    await fireEvent.input(screen.getByLabelText(/Username/i), { target: { value: 'charlie' } });
-    await fireEvent.input(screen.getByLabelText(/Email/i), { target: { value: 'charlie@example.com' } });
+    await fireEvent.input(screen.getByLabelText('Username'), { target: { value: 'charlie' } });
+    await fireEvent.input(screen.getByLabelText('Email'), { target: { value: 'charlie@example.com' } });
     // No password field — auth is FIDO2/PIV-only via the invite flow.
     await fireEvent.click(screen.getByRole('button', { name: /Send Invite/i }));
 

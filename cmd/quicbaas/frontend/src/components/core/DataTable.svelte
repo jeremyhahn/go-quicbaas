@@ -211,6 +211,14 @@
    * that matched nothing anyone declared would quietly empty the table.
    */
   const searchable = $derived(load !== undefined || columns.some((c) => c.searchable === true));
+  /**
+   * The pager's controls appear only where there is something to page. Half
+   * the tables in this app are a handful of rows inside a panel — a key's
+   * grants, a project's agent roles — and a page selector over three rows is
+   * noise that makes the consistent treatment worth less, not more. The range
+   * label stays either way: "3 of 3" is still the answer to how many there are.
+   */
+  const pageable = $derived(total > (PAGE_SIZES[0] ?? DEFAULT_PAGE_SIZE));
   const hasRows = $derived(serverMode ? total > 0 : collection.length > 0);
 
   // -------------------------------------------------------------------------
@@ -356,20 +364,22 @@
       {@render toolbar()}
     {/if}
     <div class="flex-1"></div>
-    <label class="flex items-center gap-1 text-xs text-base-content/50">
-      <span>Rows</span>
-      <select
-        class="select select-bordered select-xs"
-        aria-label="Rows per page"
-        data-testid="data-table-page-size"
-        value={size}
-        onchange={(e) => changeSize(Number((e.currentTarget as HTMLSelectElement).value))}
-      >
-        {#each PAGE_SIZES as option (option)}
-          <option value={option}>{option}</option>
-        {/each}
-      </select>
-    </label>
+    {#if pageable}
+      <label class="flex items-center gap-1 text-xs text-base-content/50">
+        <span>Rows</span>
+        <select
+          class="select select-bordered select-xs"
+          aria-label="Rows per page"
+          data-testid="data-table-page-size"
+          value={size}
+          onchange={(e) => changeSize(Number((e.currentTarget as HTMLSelectElement).value))}
+        >
+          {#each PAGE_SIZES as option (option)}
+            <option value={option}>{option}</option>
+          {/each}
+        </select>
+      </label>
+    {/if}
   </div>
 
   {#if loadError !== ''}
@@ -442,6 +452,7 @@
   <!-- Pager -->
   <div class="flex items-center justify-between gap-2 flex-wrap text-xs text-base-content/50">
     <span data-testid="data-table-range">{rangeLabel(offset, visible.length, total)}</span>
+    {#if pageable}
     <div class="join">
       <button
         type="button"
@@ -475,5 +486,6 @@
         onclick={() => goto(lastPage)}
       >»</button>
     </div>
+    {/if}
   </div>
 </div>

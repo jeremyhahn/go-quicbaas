@@ -22,6 +22,8 @@
   import CreateTaskDialog from '../../components/orchestrator/CreateTaskDialog.svelte';
   import { LayoutList, Columns3, Plus, ClipboardList, UserCheck, CheckCircle, Zap, AlertTriangle, X } from 'lucide-svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
+  import DataTable from '../../components/core/DataTable.svelte';
+  import type { Column } from '../../lib/dataTable.ts';
   import type { DecomposeTaskRequest, ClaimTaskRequest, CompleteTaskRequest } from '@quicbaas/sdk';
   import { formatDateTime, formatRelative } from '../../lib/time.ts';
   import {
@@ -100,6 +102,34 @@
     if (spawnFilter === 'queued') return inProject.filter((t) => !t.auto_spawn);
     return inProject;
   }
+
+  /**
+   * What the table's headers say, which of them sort, and which the search box
+   * reads. The kanban board below uses the same filtered collection and none of
+   * this: a board has no columns to sort.
+   */
+  const TABLE_COLUMNS: Column<Task>[] = [
+    { key: 'subject', label: 'Subject', sortable: true, searchable: true },
+    {
+      key: 'project_id',
+      label: 'Project',
+      sortable: true,
+      searchable: true,
+      value: (t) => projectLabel(t.project_id),
+    },
+    { key: 'status', label: 'Status', sortable: true },
+    { key: 'attempts', label: 'Attempts', sortable: true, value: (t) => t.attempts ?? 0 },
+    {
+      key: 'assigned_to',
+      label: 'Assigned',
+      sortable: true,
+      searchable: true,
+      value: (t) => taskAgentID(t, knownJobs),
+    },
+    { key: 'job', label: 'Job', value: (t) => latestTaskJobID(t) },
+    { key: 'updated_at', label: 'Updated', sortable: true },
+    { key: 'actions', label: 'Actions', srLabel: true },
+  ];
 
   const COLUMNS: TaskStatus[] = ['pending', 'claimed', 'in_progress', 'blocked', 'completed', 'failed'];
 
@@ -274,162 +304,152 @@
     </div>
 
   {:else if layout === 'table'}
-    <div class="overflow-x-auto rounded-box border border-base-300/50">
-      <table class="table table-sm table-zebra w-full">
-        <thead>
-          <tr class="bg-base-200/80 text-xs uppercase tracking-wider text-base-content/50">
-            <th>Subject</th>
-            <th>Project</th>
-            <th>Status</th>
-            <th>Attempts</th>
-            <th>Assigned</th>
-            <th>Job</th>
-            <th>Updated</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {#if filteredTasks().length === 0}
-            <tr>
-              <td colspan="8">
-                <EmptyState
-                  icon={ClipboardList}
-                  title={emptyTitle()}
-                  description="Tasks represent units of work dispatched to your agent fleet."
-                  actionLabel="New Task"
-                  onaction={() => { createTaskOpen = true; }}
-                />
-              </td>
-            </tr>
-          {:else}
-            {#each filteredTasks() as task (task.id)}
-              {@const ref = issueRef(task)}
-              {@const reason = blockedReason(task)}
-              {@const jobID = latestTaskJobID(task)}
-              {@const agentID = taskAgentID(task, knownJobs)}
-              <tr
-                class="cursor-pointer hover:bg-base-300/40 transition-colors"
-                onclick={() => openTask(task)}
-                onkeydown={(e) => { if (e.key === 'Enter') openTask(task); }}
-                tabindex="0"
-                role="button"
-                aria-label="Open task {task.subject}"
+    <DataTable
+      columns={TABLE_COLUMNS}
+      rows={filteredTasks()}
+      rowKey={(t: Task) => t.id}
+      narrowed={spawnFilter !== 'all'}
+      urlKey="tasks"
+      ariaLabel="Tasks"
+      searchPlaceholder="Search tasks..."
+      searchLabel="Search tasks"
+      noMatchText="No tasks match the current filter."
+    >
+      {#snippet empty()}
+        <EmptyState
+          icon={ClipboardList}
+          title={emptyTitle()}
+          description="Tasks represent units of work dispatched to your agent fleet."
+          actionLabel="New Task"
+          onaction={() => { createTaskOpen = true; }}
+        />
+      {/snippet}
+
+      {#snippet row(task: Task)}
+        {@const ref = issueRef(task)}
+        {@const reason = blockedReason(task)}
+        {@const jobID = latestTaskJobID(task)}
+        {@const agentID = taskAgentID(task, knownJobs)}
+        <tr
+          class="cursor-pointer hover:bg-base-300/40 transition-colors"
+          onclick={() => openTask(task)}
+          onkeydown={(e) => { if (e.key === 'Enter') openTask(task); }}
+          tabindex="0"
+          role="button"
+          aria-label="Open task {task.subject}"
+        >
+          <td class="max-w-xs">
+            <div class="flex items-center gap-2 min-w-0">
+              {#if ref !== null}
+                {#if ref.href !== ''}
+                  <a
+                    class="badge badge-sm badge-outline font-mono shrink-0"
+                    href={ref.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onclick={(e) => e.stopPropagation()}
+                    title="Open issue {ref.label} on the forge"
+                  >{ref.label}</a>
+                {:else}
+                  <span class="badge badge-sm badge-outline font-mono shrink-0" title="Forge issue {ref.label}">{ref.label}</span>
+                {/if}
+              {/if}
+              <span class="font-medium text-sm truncate">{task.subject}</span>
+            </div>
+            {#if task.description}
+              <div class="text-xs text-base-content/40 truncate">{task.description}</div>
+            {/if}
+          </td>
+          <td class="text-xs">{projectLabel(task.project_id) || '—'}</td>
+          <td>
+            <StatusBadge text={statusLabel(task.status)} variant={statusToVariant(task.status)} />
+            {#if task.status === 'blocked'}
+              <div
+                class="flex items-center gap-1 mt-1 text-xs text-warning max-w-xs"
+                title={reason || NO_REASON_RECORDED}
+                data-testid="blocked-marker"
               >
-                <td class="max-w-xs">
-                  <div class="flex items-center gap-2 min-w-0">
-                    {#if ref !== null}
-                      {#if ref.href !== ''}
-                        <a
-                          class="badge badge-sm badge-outline font-mono shrink-0"
-                          href={ref.href}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onclick={(e) => e.stopPropagation()}
-                          title="Open issue {ref.label} on the forge"
-                        >{ref.label}</a>
-                      {:else}
-                        <span class="badge badge-sm badge-outline font-mono shrink-0" title="Forge issue {ref.label}">{ref.label}</span>
-                      {/if}
-                    {/if}
-                    <span class="font-medium text-sm truncate">{task.subject}</span>
-                  </div>
-                  {#if task.description}
-                    <div class="text-xs text-base-content/40 truncate">{task.description}</div>
-                  {/if}
-                </td>
-                <td class="text-xs">{projectLabel(task.project_id) || '—'}</td>
-                <td>
-                  <StatusBadge text={statusLabel(task.status)} variant={statusToVariant(task.status)} />
-                  {#if task.status === 'blocked'}
-                    <div
-                      class="flex items-center gap-1 mt-1 text-xs text-warning max-w-xs"
-                      title={reason || NO_REASON_RECORDED}
-                      data-testid="blocked-marker"
-                    >
-                      <AlertTriangle class="h-3 w-3 shrink-0" />
-                      <span class="truncate">{reason || NO_REASON_RECORDED}</span>
-                    </div>
-                  {/if}
-                </td>
-                <td class="text-xs font-mono whitespace-nowrap">
-                  {budgetLabel(task)}
-                  {#if (task.environment_faults ?? 0) > 0}
-                    <span class="text-base-content/40" title="Attempts refunded because the environment failed, not the work">
-                      · {task.environment_faults} refunded
-                    </span>
-                  {/if}
-                </td>
-                <td class="text-xs text-base-content/60" data-testid="task-assigned">
-                  {agentID || '—'}
-                </td>
-                <td class="text-xs" data-testid="task-job">
-                  {#if jobID !== ''}
-                    <a
-                      class="link link-primary font-mono"
-                      href={`#/jobs/${encodeURIComponent(jobID)}`}
-                      onclick={(e) => e.stopPropagation()}
-                      title="View job {jobID}"
-                    >{jobID.slice(0, 8)}…</a>
-                  {:else if task.auto_spawn && !taskHasDispatched(task)}
-                    <span class="text-base-content/30 italic">no agent matched</span>
+                <AlertTriangle class="h-3 w-3 shrink-0" />
+                <span class="truncate">{reason || NO_REASON_RECORDED}</span>
+              </div>
+            {/if}
+          </td>
+          <td class="text-xs font-mono whitespace-nowrap">
+            {budgetLabel(task)}
+            {#if (task.environment_faults ?? 0) > 0}
+              <span class="text-base-content/40" title="Attempts refunded because the environment failed, not the work">
+                · {task.environment_faults} refunded
+              </span>
+            {/if}
+          </td>
+          <td class="text-xs text-base-content/60" data-testid="task-assigned">
+            {agentID || '—'}
+          </td>
+          <td class="text-xs" data-testid="task-job">
+            {#if jobID !== ''}
+              <a
+                class="link link-primary font-mono"
+                href={`#/jobs/${encodeURIComponent(jobID)}`}
+                onclick={(e) => e.stopPropagation()}
+                title="View job {jobID}"
+              >{jobID.slice(0, 8)}…</a>
+            {:else if task.auto_spawn && !taskHasDispatched(task)}
+              <span class="text-base-content/30 italic">no agent matched</span>
+            {:else}
+              <span class="text-base-content/25">—</span>
+            {/if}
+          </td>
+          <td class="text-xs text-base-content/50" title={formatDateTime(task.updated_at)}>{formatRelative(task.updated_at)}</td>
+          <td>
+            <div class="flex items-center gap-1">
+              {#if task.status === 'pending'}
+                <button
+                  class="btn btn-ghost btn-xs gap-1"
+                  onclick={(e) => { void handleClaim(task.id, e); }}
+                  disabled={claimingID === task.id}
+                  aria-label="Claim task {task.subject}"
+                  title="Claim"
+                >
+                  {#if claimingID === task.id}
+                    <span class="loading loading-spinner loading-xs"></span>
                   {:else}
-                    <span class="text-base-content/25">—</span>
+                    <UserCheck class="h-3 w-3" />
                   {/if}
-                </td>
-                <td class="text-xs text-base-content/50" title={formatDateTime(task.updated_at)}>{formatRelative(task.updated_at)}</td>
-                <td>
-                  <div class="flex items-center gap-1">
-                    {#if task.status === 'pending'}
-                      <button
-                        class="btn btn-ghost btn-xs gap-1"
-                        onclick={(e) => { void handleClaim(task.id, e); }}
-                        disabled={claimingID === task.id}
-                        aria-label="Claim task {task.subject}"
-                        title="Claim"
-                      >
-                        {#if claimingID === task.id}
-                          <span class="loading loading-spinner loading-xs"></span>
-                        {:else}
-                          <UserCheck class="h-3 w-3" />
-                        {/if}
-                      </button>
-                    {/if}
-                    {#if task.status === 'claimed' || task.status === 'in_progress'}
-                      <button
-                        class="btn btn-ghost btn-xs gap-1 text-success"
-                        onclick={(e) => { void handleComplete(task.id, e); }}
-                        disabled={completingID === task.id}
-                        aria-label="Complete task {task.subject}"
-                        title="Complete"
-                      >
-                        {#if completingID === task.id}
-                          <span class="loading loading-spinner loading-xs"></span>
-                        {:else}
-                          <CheckCircle class="h-3 w-3" />
-                        {/if}
-                      </button>
-                    {/if}
-                    <button
-                      class="btn btn-ghost btn-xs"
-                      onclick={(e) => { void handleDecompose(task.id, e); }}
-                      disabled={decomposingID === task.id}
-                      aria-label="Decompose task {task.subject}"
-                      title="Decompose"
-                    >
-                      {#if decomposingID === task.id}
-                        <span class="loading loading-spinner loading-xs"></span>
-                      {:else}
-                        Decompose
-                      {/if}
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            {/each}
-          {/if}
-        </tbody>
-      </table>
-    </div>
+                </button>
+              {/if}
+              {#if task.status === 'claimed' || task.status === 'in_progress'}
+                <button
+                  class="btn btn-ghost btn-xs gap-1 text-success"
+                  onclick={(e) => { void handleComplete(task.id, e); }}
+                  disabled={completingID === task.id}
+                  aria-label="Complete task {task.subject}"
+                  title="Complete"
+                >
+                  {#if completingID === task.id}
+                    <span class="loading loading-spinner loading-xs"></span>
+                  {:else}
+                    <CheckCircle class="h-3 w-3" />
+                  {/if}
+                </button>
+              {/if}
+              <button
+                class="btn btn-ghost btn-xs"
+                onclick={(e) => { void handleDecompose(task.id, e); }}
+                disabled={decomposingID === task.id}
+                aria-label="Decompose task {task.subject}"
+                title="Decompose"
+              >
+                {#if decomposingID === task.id}
+                  <span class="loading loading-spinner loading-xs"></span>
+                {:else}
+                  Decompose
+                {/if}
+              </button>
+            </div>
+          </td>
+        </tr>
+      {/snippet}
+    </DataTable>
 
   {:else}
     <!-- Kanban board -->

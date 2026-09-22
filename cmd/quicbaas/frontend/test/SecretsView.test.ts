@@ -114,7 +114,7 @@ describe('SecretsView', () => {
     await waitFor(() => screen.getByRole('button', { name: /Store secret/i }));
     await fireEvent.click(screen.getByRole('button', { name: /Store secret/i }));
 
-    await fireEvent.input(screen.getByLabelText(/Path/i), { target: { value: 'prod/api/key' } });
+    await fireEvent.input(screen.getByLabelText('Path'), { target: { value: 'prod/api/key' } });
     await fireEvent.click(screen.getByRole('button', { name: /^Store$/ }));
 
     await waitFor(() => {
@@ -129,7 +129,7 @@ describe('SecretsView', () => {
     await waitFor(() => screen.getByRole('button', { name: /Store secret/i }));
     await fireEvent.click(screen.getByRole('button', { name: /Store secret/i }));
     // Clear the path field if any default value
-    await fireEvent.input(screen.getByLabelText(/Path/i), { target: { value: '' } });
+    await fireEvent.input(screen.getByLabelText('Path'), { target: { value: '' } });
     await fireEvent.click(screen.getByRole('button', { name: /^Store$/ }));
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeInTheDocument();

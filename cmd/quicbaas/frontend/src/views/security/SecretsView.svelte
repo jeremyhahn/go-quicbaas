@@ -27,6 +27,8 @@
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
+  import DataTable from '../../components/core/DataTable.svelte';
+  import type { Column } from '../../lib/dataTable.ts';
   import type { SecretEntry, GetSecretResponse, SecretVersionEntry } from '@quicbaas/sdk';
   import { Lock } from 'lucide-svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
@@ -37,6 +39,20 @@
   // ---------------------------------------------------------------------------
 
   let secrets: SecretEntry[] = $state([]);
+
+  const SECRET_COLUMNS: Column<SecretEntry>[] = [
+    { key: 'path', label: 'Path', sortable: true, searchable: true },
+    { key: 'version', label: 'Version', sortable: true },
+    { key: 'updated_at', label: 'Updated', sortable: true },
+    { key: 'actions', label: 'Actions' },
+  ];
+
+  const VERSION_COLUMNS: Column<SecretVersionEntry>[] = [
+    { key: 'version', label: 'Version', sortable: true },
+    { key: 'created_at', label: 'Created', sortable: true },
+    { key: 'created_by', label: 'Created By', sortable: true },
+    { key: 'expires_at', label: 'Expires', sortable: true },
+  ];
   let loading = $state(false);
   let error: string | null = $state(null);
 
@@ -241,72 +257,71 @@
     <div class="flex justify-center py-8">
       <span class="loading loading-spinner loading-md"></span>
     </div>
-  {:else if secrets.length === 0}
-    <EmptyState
-      icon={Lock}
-      title="No secrets stored — + Store Secret is how you start."
-      description="Secrets are encrypted at rest and versioned. Access them securely via the API or CLI."
-      actionLabel="+ Store Secret"
-      onaction={() => { showStore = true; }}
-    />
   {:else}
-    <div class="overflow-x-auto rounded-box border border-base-300/50">
-      <table class="table table-sm table-zebra">
-        <thead>
-          <tr class="bg-base-200/80 text-xs uppercase tracking-wider text-base-content/50">
-            <th>Path</th>
-            <th>Version</th>
-            <th>Updated</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each secrets as secret (secret.path)}
-            <tr class="hover">
-              <td class="font-mono text-xs">{secret.path}</td>
-              <td class="text-sm">{secret.version}</td>
-              <td class="text-xs text-base-content/50">
-                {secret.updated_at ? new Date(secret.updated_at).toLocaleString() : '—'}
-              </td>
-              <td>
-                <div class="flex gap-1">
-                  <button
-                    class="btn btn-ghost btn-xs"
-                    disabled={fetching === secret.path}
-                    onclick={() => void fetchSecret(secret.path)}
-                    aria-label={`Fetch secret ${secret.path}`}
-                  >
-                    {fetching === secret.path ? '…' : 'Fetch'}
-                  </button>
-                  <button
-                    class="btn btn-ghost btn-xs"
-                    onclick={() => void viewVersions(secret)}
-                    aria-label={`View versions of secret ${secret.path}`}
-                  >
-                    Versions
-                  </button>
-                  <button
-                    class="btn btn-ghost btn-xs"
-                    disabled={rotatingPath === secret.path}
-                    onclick={() => { secretToRotate = secret; }}
-                    aria-label={`Rotate secret ${secret.path}`}
-                  >
-                    {rotatingPath === secret.path ? '…' : 'Rotate'}
-                  </button>
-                  <button
-                    class="btn btn-ghost btn-xs text-error"
-                    onclick={() => { secretToDelete = secret; }}
-                    aria-label={`Delete secret ${secret.path}`}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      columns={SECRET_COLUMNS}
+      rows={secrets}
+      rowKey={(sec: SecretEntry) => sec.path}
+      urlKey="secrets"
+      ariaLabel="Secrets"
+      searchPlaceholder="Search secrets..."
+      searchLabel="Search secrets"
+      noMatchText="No secrets match the search."
+    >
+      {#snippet empty()}
+        <EmptyState
+          icon={Lock}
+          title="No secrets stored — + Store Secret is how you start."
+          description="Secrets are encrypted at rest and versioned. Access them securely via the API or CLI."
+          actionLabel="+ Store Secret"
+          onaction={() => { showStore = true; }}
+        />
+      {/snippet}
+
+      {#snippet row(secret: SecretEntry)}
+        <tr class="hover">
+          <td class="font-mono text-xs">{secret.path}</td>
+          <td class="text-sm">{secret.version}</td>
+          <td class="text-xs text-base-content/50">
+            {secret.updated_at ? new Date(secret.updated_at).toLocaleString() : '—'}
+          </td>
+          <td>
+            <div class="flex gap-1">
+              <button
+                class="btn btn-ghost btn-xs"
+                disabled={fetching === secret.path}
+                onclick={() => void fetchSecret(secret.path)}
+                aria-label={`Fetch secret ${secret.path}`}
+              >
+                {fetching === secret.path ? '…' : 'Fetch'}
+              </button>
+              <button
+                class="btn btn-ghost btn-xs"
+                onclick={() => void viewVersions(secret)}
+                aria-label={`View versions of secret ${secret.path}`}
+              >
+                Versions
+              </button>
+              <button
+                class="btn btn-ghost btn-xs"
+                disabled={rotatingPath === secret.path}
+                onclick={() => { secretToRotate = secret; }}
+                aria-label={`Rotate secret ${secret.path}`}
+              >
+                {rotatingPath === secret.path ? '…' : 'Rotate'}
+              </button>
+              <button
+                class="btn btn-ghost btn-xs text-error"
+                onclick={() => { secretToDelete = secret; }}
+                aria-label={`Delete secret ${secret.path}`}
+              >
+                Delete
+              </button>
+            </div>
+          </td>
+        </tr>
+      {/snippet}
+    </DataTable>
   {/if}
 </div>
 
@@ -400,24 +415,23 @@
         <div class="flex justify-center py-6"><span class="loading loading-spinner loading-md"></span></div>
       {:else if versionsError}
         <div class="alert alert-error text-sm">{versionsError}</div>
-      {:else if versions.length === 0}
-        <div class="text-center text-sm text-base-content/40 py-6">No versions found.</div>
       {:else}
-        <div class="overflow-x-auto">
-          <table class="table table-sm">
-            <thead><tr><th>Version</th><th>Created</th><th>Created By</th><th>Expires</th></tr></thead>
-            <tbody>
-              {#each versions as v (v.version)}
-                <tr>
-                  <td class="font-mono text-xs">v{v.version}</td>
-                  <td class="text-xs text-base-content/50">{formatDateTime(v.created_at)}</td>
-                  <td class="text-xs text-base-content/50">{v.created_by || '—'}</td>
-                  <td class="text-xs text-base-content/50">{v.expires_at ? new Date(v.expires_at).toLocaleString() : '—'}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          columns={VERSION_COLUMNS}
+          rows={versions}
+          rowKey={(v: SecretVersionEntry) => v.version}
+          ariaLabel="Secret versions"
+          emptyTitle="No versions found."
+        >
+          {#snippet row(v: SecretVersionEntry)}
+            <tr>
+              <td class="font-mono text-xs">v{v.version}</td>
+              <td class="text-xs text-base-content/50">{formatDateTime(v.created_at)}</td>
+              <td class="text-xs text-base-content/50">{v.created_by || '—'}</td>
+              <td class="text-xs text-base-content/50">{v.expires_at ? new Date(v.expires_at).toLocaleString() : '—'}</td>
+            </tr>
+          {/snippet}
+        </DataTable>
       {/if}
 
       <div class="modal-action">

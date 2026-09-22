@@ -26,6 +26,8 @@
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
+  import DataTable from '../../components/core/DataTable.svelte';
+  import type { Column } from '../../lib/dataTable.ts';
   import { statusBadgeClass } from '../../components/core/statusVariant.ts';
   import type { KMSKey, CreateKeyRequest } from '@quicbaas/sdk';
   import type { KMSKeyVersion } from '@quicbaas/sdk';
@@ -37,6 +39,21 @@
   // ---------------------------------------------------------------------------
 
   let keys: KMSKey[] = $state([]);
+
+  const KEY_COLUMNS: Column<KMSKey>[] = [
+    { key: 'name', label: 'Name / ID', sortable: true, searchable: true, value: (k) => k.name || k.id },
+    { key: 'algorithm', label: 'Algorithm', sortable: true, searchable: true },
+    { key: 'status', label: 'Status', sortable: true },
+    { key: 'created_at', label: 'Created', sortable: true },
+    { key: 'actions', label: 'Actions' },
+  ];
+
+  const KEY_VERSION_COLUMNS: Column<KMSKeyVersion>[] = [
+    { key: 'version', label: 'Version', sortable: true },
+    { key: 'status', label: 'Status', sortable: true },
+    { key: 'created_at', label: 'Created', sortable: true },
+    { key: 'destroyed_at', label: 'Destroyed', sortable: true },
+  ];
   let loading = $state(false);
   let error: string | null = $state(null);
 
@@ -295,112 +312,108 @@
     <div class="flex justify-center py-8">
       <span class="loading loading-spinner loading-md"></span>
     </div>
-  {:else if keys.length === 0}
-    <div class="text-center py-10 text-base-content/30 text-sm">No keys found. Create your first key to get started.</div>
   {:else}
-    <div class="overflow-x-auto rounded-box border border-base-300/50">
-      <table class="table table-sm table-zebra">
-        <thead>
-          <tr class="bg-base-200/80 text-xs uppercase tracking-wider text-base-content/50">
-            <th>Name / ID</th>
-            <th>Algorithm</th>
-            <th>Status</th>
-            <th>Created</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each keys as key (key.id)}
-            <tr class="hover">
-              <td>
-                <div class="font-mono text-xs font-medium">{key.name || key.id}</div>
-                {#if key.description}
-                  <div class="text-xs text-base-content/40">{key.description}</div>
-                {/if}
-              </td>
-              <td class="font-mono text-xs">{key.algorithm}</td>
-              <td>
-                <span class="badge badge-xs {statusVariant(key.status)}">{key.status}</span>
-              </td>
-              <td class="text-xs text-base-content/50">
-                {formatDateTime(key.created_at)}
-              </td>
-              <td>
-                <!--
-                  Per-row actions are rendered as compact icon buttons wrapped
-                  in daisyUI `.tooltip` so the action label is visible on
-                  hover and keyboard focus. Each button additionally carries
-                  a `title` attribute for the native browser tooltip and an
-                  `aria-label` for screen readers.
-                -->
-                <div class="flex gap-1">
-                  <div class="tooltip tooltip-left" data-tip="Set as default">
-                    <button
-                      class="btn btn-ghost btn-xs"
-                      disabled={settingDefaultKey === key.id}
-                      onclick={() => void setDefaultKey(key)}
-                      title="Set as default key"
-                      aria-label={`Set "${key.name || key.id}" as default key`}
-                    >
-                      <Star class="h-3 w-3" />
-                    </button>
-                  </div>
-                  <div class="tooltip tooltip-left" data-tip="View versions">
-                    <button
-                      class="btn btn-ghost btn-xs"
-                      onclick={() => void viewVersions(key)}
-                      title="View versions"
-                      aria-label={`View versions of ${key.name || key.id}`}
-                    >
-                      <Eye class="h-3 w-3" />
-                    </button>
-                  </div>
-                  <div class="tooltip tooltip-left" data-tip="Rotate key">
-                    <button
-                      class="btn btn-ghost btn-xs"
-                      disabled={rotatingKey === key.id}
-                      onclick={() => void rotateKey(key)}
-                      title="Rotate key"
-                      aria-label={`Rotate key ${key.name || key.id}`}
-                    >
-                      <RotateCw class="h-3 w-3" />
-                    </button>
-                  </div>
-                  <div
-                    class="tooltip tooltip-left"
-                    data-tip={key.status === 'active' || key.status === 'enabled' ? 'Disable key' : 'Enable key'}
-                  >
-                    <button
-                      class="btn btn-ghost btn-xs"
-                      disabled={togglingKey === key.id}
-                      onclick={() => void toggleKeyStatus(key)}
-                      title={key.status === 'active' || key.status === 'enabled' ? 'Disable key' : 'Enable key'}
-                      aria-label={key.status === 'active' || key.status === 'enabled' ? `Disable key ${key.name || key.id}` : `Enable key ${key.name || key.id}`}
-                    >
-                      {#if key.status === 'active' || key.status === 'enabled'}
-                        <ToggleRight class="h-3 w-3 text-success" />
-                      {:else}
-                        <ToggleLeft class="h-3 w-3 text-warning" />
-                      {/if}
-                    </button>
-                  </div>
-                  <div class="tooltip tooltip-left" data-tip="Delete key">
-                    <button
-                      class="btn btn-ghost btn-xs text-error"
-                      onclick={() => { keyToDelete = key; }}
-                      title="Delete key"
-                      aria-label={`Delete key ${key.name || key.id}`}
-                    >
-                      <Trash2 class="h-3 w-3" />
-                    </button>
-                  </div>
-                </div>
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      columns={KEY_COLUMNS}
+      rows={keys}
+      rowKey={(key: KMSKey) => key.id}
+      urlKey="kms"
+      ariaLabel="KMS keys"
+      searchPlaceholder="Search keys..."
+      searchLabel="Search keys"
+      noMatchText="No keys match the search."
+      emptyTitle="No keys found."
+      emptyDescription="Create your first key to get started."
+    >
+      {#snippet row(key: KMSKey)}
+        <tr class="hover">
+          <td>
+            <div class="font-mono text-xs font-medium">{key.name || key.id}</div>
+            {#if key.description}
+              <div class="text-xs text-base-content/40">{key.description}</div>
+            {/if}
+          </td>
+          <td class="font-mono text-xs">{key.algorithm}</td>
+          <td>
+            <span class="badge badge-xs {statusVariant(key.status)}">{key.status}</span>
+          </td>
+          <td class="text-xs text-base-content/50">
+            {formatDateTime(key.created_at)}
+          </td>
+          <td>
+            <!--
+              Per-row actions are rendered as compact icon buttons wrapped
+              in daisyUI `.tooltip` so the action label is visible on
+              hover and keyboard focus. Each button additionally carries
+              a `title` attribute for the native browser tooltip and an
+              `aria-label` for screen readers.
+            -->
+            <div class="flex gap-1">
+              <div class="tooltip tooltip-left" data-tip="Set as default">
+                <button
+                  class="btn btn-ghost btn-xs"
+                  disabled={settingDefaultKey === key.id}
+                  onclick={() => void setDefaultKey(key)}
+                  title="Set as default key"
+                  aria-label={`Set "${key.name || key.id}" as default key`}
+                >
+                  <Star class="h-3 w-3" />
+                </button>
+              </div>
+              <div class="tooltip tooltip-left" data-tip="View versions">
+                <button
+                  class="btn btn-ghost btn-xs"
+                  onclick={() => void viewVersions(key)}
+                  title="View versions"
+                  aria-label={`View versions of ${key.name || key.id}`}
+                >
+                  <Eye class="h-3 w-3" />
+                </button>
+              </div>
+              <div class="tooltip tooltip-left" data-tip="Rotate key">
+                <button
+                  class="btn btn-ghost btn-xs"
+                  disabled={rotatingKey === key.id}
+                  onclick={() => void rotateKey(key)}
+                  title="Rotate key"
+                  aria-label={`Rotate key ${key.name || key.id}`}
+                >
+                  <RotateCw class="h-3 w-3" />
+                </button>
+              </div>
+              <div
+                class="tooltip tooltip-left"
+                data-tip={key.status === 'active' || key.status === 'enabled' ? 'Disable key' : 'Enable key'}
+              >
+                <button
+                  class="btn btn-ghost btn-xs"
+                  disabled={togglingKey === key.id}
+                  onclick={() => void toggleKeyStatus(key)}
+                  title={key.status === 'active' || key.status === 'enabled' ? 'Disable key' : 'Enable key'}
+                  aria-label={key.status === 'active' || key.status === 'enabled' ? `Disable key ${key.name || key.id}` : `Enable key ${key.name || key.id}`}
+                >
+                  {#if key.status === 'active' || key.status === 'enabled'}
+                    <ToggleRight class="h-3 w-3 text-success" />
+                  {:else}
+                    <ToggleLeft class="h-3 w-3 text-warning" />
+                  {/if}
+                </button>
+              </div>
+              <div class="tooltip tooltip-left" data-tip="Delete key">
+                <button
+                  class="btn btn-ghost btn-xs text-error"
+                  onclick={() => { keyToDelete = key; }}
+                  title="Delete key"
+                  aria-label={`Delete key ${key.name || key.id}`}
+                >
+                  <Trash2 class="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+          </td>
+        </tr>
+      {/snippet}
+    </DataTable>
   {/if}
 </div>
 
@@ -518,24 +531,23 @@
         <div class="flex justify-center py-6"><span class="loading loading-spinner loading-md"></span></div>
       {:else if versionsError}
         <div class="alert alert-error text-sm">{versionsError}</div>
-      {:else if versions.length === 0}
-        <div class="text-center text-sm text-base-content/40 py-6">No versions found.</div>
       {:else}
-        <div class="overflow-x-auto">
-          <table class="table table-sm">
-            <thead><tr><th>Version</th><th>Status</th><th>Created</th><th>Destroyed</th></tr></thead>
-            <tbody>
-              {#each versions as v (v.version)}
-                <tr>
-                  <td class="font-mono text-xs">v{v.version}</td>
-                  <td><span class="badge badge-xs {statusVariant(v.status)}">{v.status}</span></td>
-                  <td class="text-xs text-base-content/50">{formatDateTime(v.created_at)}</td>
-                  <td class="text-xs text-base-content/50">{v.destroyed_at ? new Date(v.destroyed_at).toLocaleString() : '—'}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          columns={KEY_VERSION_COLUMNS}
+          rows={versions}
+          rowKey={(v: KMSKeyVersion) => v.version}
+          ariaLabel="Key versions"
+          emptyTitle="No versions found."
+        >
+          {#snippet row(v: KMSKeyVersion)}
+            <tr>
+              <td class="font-mono text-xs">v{v.version}</td>
+              <td><span class="badge badge-xs {statusVariant(v.status)}">{v.status}</span></td>
+              <td class="text-xs text-base-content/50">{formatDateTime(v.created_at)}</td>
+              <td class="text-xs text-base-content/50">{v.destroyed_at ? new Date(v.destroyed_at).toLocaleString() : '—'}</td>
+            </tr>
+          {/snippet}
+        </DataTable>
       {/if}
 
       <div class="modal-action">

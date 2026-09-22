@@ -110,6 +110,15 @@ describe('DataTable paging', () => {
     expect(range()).toBe('0 of 0');
   });
 
+  it('offers no pager for a collection that fits on one page', () => {
+    // Half the tables in this app are a handful of rows in a panel; a page
+    // selector over three of them is noise. The count is still reported.
+    render(DataTableHarness, { props: { rows: makeRows(3) } });
+    expect(range()).toBe('1–3 of 3');
+    expect(screen.queryByLabelText('Next page')).toBeNull();
+    expect(screen.queryByLabelText('Rows per page')).toBeNull();
+  });
+
   it('shows the spinner, not the empty state, while a view is loading', () => {
     render(DataTableHarness, { props: { rows: [], loading: true } });
     expect(screen.queryByText('No rows yet')).not.toBeInTheDocument();
