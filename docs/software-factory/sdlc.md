@@ -493,7 +493,29 @@ SDLC-STOP: <code>
 | `environment` | `environment` | `blocked` | `operator_repair` | the workspace or tooling made the work impossible |
 | a code this binary does not know | `unreadable` | `blocked` | `operator_repair` | the worker stated it stopped and only the reason is unreadable, so nothing guesses |
 | no declaration, no text at all | `silent` | `escalated` | `operator_repair` | the turn is taken ONCE more with the silence stated, then escalated naming it |
+| no declaration, no tool use, back inside `NonAnswerTurnBound` | `non_answer` | — | — | the prompt is sent once more with one line saying the reply missed; see below |
 | no declaration, text present | `claimed_work` | — | — | `NoChangesError`: the worker reported work on a tree it did not touch. The one no-change turn that is still a failure of the work |
+
+**A reply that never read the prompt is not a verdict on anything.** A
+persistent worker session can hold a turn's worth of its own — a background
+task armed two turns earlier, a notification that expired while it worked —
+and answer THAT when the next prompt arrives. The turn is recognised from the
+two numbers its `sdlc:agent_turn` event already carries and nothing else: it
+declared no stop, used no tool, touched no file, the backend reported
+`end_turn`, and it came back inside `NonAnswerTurnBound` (5s, no working turn
+is under it; an unmeasured turn does not qualify). Measured on
+go-quicbaas#62 (2026-09-22): a review round answered in 451ms with one text
+block and no tool use, charged as a failure of the work — the task lost its
+job, its pull-request adoption state, a review round and an attempt to it.
+Such a turn is now RE-PROMPTED ONCE — the same prompt, rebuilt with its
+contract and the round's findings intact, plus one line saying the previous
+reply did not address it — and the re-prompt is audited as
+`sdlc:non_answer_reprompted`. That event is the only trace of it, because the
+re-prompt is neither a new round nor a new attempt and the `Delivery` is not
+written: a turn that judged nothing tells the next attempt nothing.
+`MaxNonAnswerTurns` is one, so a second consecutive non-answer is a session
+not reading prompts at all and takes the `claimed_work` path above; any turn
+that was something else ends the streak.
 
 The park reason is composed with `ComposeBlockedReason`, so it carries the
 [typed unblock condition](#the-block-lifecycle) the `UnblockSweeper`

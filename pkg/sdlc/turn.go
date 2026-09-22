@@ -45,6 +45,13 @@ import (
 // is a reply claiming it did the work, which on an unchanged tree is the one
 // case that is still a failure of the work.
 //
+// AND A REPLY THAT NEVER READ THE PROMPT IS NOT A VERDICT ON ANYTHING. A
+// persistent session can have a turn's worth of its own queued — an expired
+// background task, a notification armed two turns ago — and answer THAT when
+// the next prompt arrives: text, no tool use, nothing changed, back in half a
+// second. Nothing judged the work, so the prompt is sent again rather than
+// charged (NonAnswer, MaxNonAnswerTurns).
+//
 // THE ABSENT CASES ARE NAMED RATHER THAN GUESSED. An empty reply is a worker
 // that died mid-turn; a declaration whose code is not in the vocabulary is a
 // worker this binary does not understand. Neither is silently retried until
@@ -120,6 +127,11 @@ const (
 	// already done. It is the only outcome here that concludes the task
 	// instead of parking or charging it.
 	TurnOutcomeSatisfied TurnOutcome = "satisfied"
+
+	// TurnOutcomeNonAnswer is a reply that answered SOMETHING OTHER THAN THE
+	// PROMPT: text, no stop declaration, no tool use, no file touched, and
+	// back before the prompt could have been read. See NonAnswer.
+	TurnOutcomeNonAnswer TurnOutcome = "non_answer"
 )
 
 // String returns the outcome's name.
@@ -156,6 +168,11 @@ const (
 	// person can close or restate it. The only action here that is neither a
 	// park nor a failure.
 	TurnActionConclude TurnAction = "conclude"
+
+	// TurnActionReprompt sends the SAME prompt once more with one line
+	// saying the previous reply did not address it. It is neither a new
+	// round nor a new attempt, and it is bounded by MaxNonAnswerTurns.
+	TurnActionReprompt TurnAction = "reprompt"
 )
 
 // String returns the action's name.
@@ -249,6 +266,14 @@ var turnVerdicts = map[TurnOutcome]TurnVerdict{
 		Action:   TurnActionCharge,
 		Headline: "The worker reported work it did not do: the checkout is unchanged.",
 	},
+	TurnOutcomeNonAnswer: {
+		Outcome: TurnOutcomeNonAnswer,
+		Action:  TurnActionReprompt,
+		// No BlockKind, no Condition and no FaultClass: nothing is parked,
+		// nobody is waiting and nothing is judged. The same prompt is simply
+		// asked again.
+		Headline: "The worker's reply did not address the prompt it was given.",
+	},
 	TurnOutcomeSatisfied: {
 		Outcome: TurnOutcomeSatisfied,
 		Action:  TurnActionConclude,
@@ -268,6 +293,36 @@ var turnVerdicts = map[TurnOutcome]TurnVerdict{
 // nothing again. A second retry would only spend more of the same attempt on
 // a session that has already proven it is not there.
 const MaxSilentTurns = 1
+
+// NonAnswerTurnBound is how fast a reply must come back to be evidence that
+// the worker never read the prompt the turn carried.
+//
+// MEASURED AS THE TURN'S OWN ELAPSED TIME: the wall time between the prompt
+// leaving runTurn and the backend's answer arriving, which is the same
+// `elapsed` the sdlc:agent_turn event reports. Nothing here is recomputed and
+// nothing else is timed.
+//
+// FIVE SECONDS IS A BOUND NO WORKING TURN IS UNDER. A worker answering a
+// round prompt reads the findings, opens the files they name and runs
+// something; even the fastest honest no-change turn — one that reads the tree
+// and declares `satisfied` — spends tens of seconds doing it, and a turn that
+// declares a stop is classified on its declaration before this bound is
+// consulted at all. What it catches was measured at 451ms on the burn-in
+// fleet (go-quicbaas#62, 2026-09-22): a persistent CLI session holding a
+// queued background-task notification answered THAT when the review round
+// arrived — one text block, no tool use, nothing changed — and the round, the
+// job and one of the task's attempts were spent on it.
+const NonAnswerTurnBound = 5 * time.Second
+
+// MaxNonAnswerTurns bounds how many times one attempt re-sends a prompt the
+// worker's reply did not address.
+//
+// ONE, for the same reason MaxSilentTurns is one: a session that answered a
+// queued notification has flushed it by the next prompt, and a session that
+// answers past the prompt twice running is not reading prompts at all. The
+// second consecutive non-answer therefore takes the ordinary no-change path
+// — a reply claiming work on an untouched tree — and is charged.
+const MaxNonAnswerTurns = 1
 
 // TurnReplyLimit caps how much of a reply is recorded on a job event, in
 // bytes.
@@ -356,6 +411,29 @@ func (t AgentTurn) ToolUses() int {
 		}
 	}
 	return uses
+}
+
+// NonAnswer reports whether this turn answered something other than the
+// prompt it was given.
+//
+// STRUCTURE, NEVER PROSE, like every other judgement in this file. The reply
+// carries text (an empty one is TurnOutcomeSilent and has its own path); it
+// declares no stop (a declaration IS an answer, however fast it was written);
+// the backend reported the turn ENDED rather than being cut off by a limit or
+// a tool budget; it used no tool; and it came back inside NonAnswerTurnBound.
+// The checkout is not consulted here because this question is only asked
+// about a turn that already changed nothing.
+//
+// AN UNMEASURED TURN IS NOT A NON-ANSWER. A record whose Elapsed is zero was
+// assembled rather than timed — a stored turn read back, a turn built field
+// by field — and the conservative direction for an unmeasured turn is the
+// path it has today. A prompt is re-sent on evidence or not at all.
+func (t AgentTurn) NonAnswer() bool {
+	return t.ReplyBytes > 0 &&
+		!t.StopDeclared &&
+		t.ToolUses() == 0 &&
+		t.StopReason == orchestration.StopReasonEndTurn &&
+		t.Elapsed > 0 && t.Elapsed < NonAnswerTurnBound
 }
 
 // Truncated reports whether this record's reply has already been cut — true
@@ -536,6 +614,14 @@ func ClassifyTurn(turn AgentTurn) TurnVerdict {
 func classifyTurnOutcome(turn AgentTurn) TurnOutcome {
 	if turn.ReplyBytes == 0 {
 		return TurnOutcomeSilent
+	}
+	// THE NON-ANSWER IS READ BEFORE THE CLAIM. A reply with no declaration on
+	// an untouched tree is ordinarily a worker claiming work it did not do;
+	// one that also used no tool and came back inside NonAnswerTurnBound is
+	// a worker that answered a different question altogether, and charging
+	// the work for it spends an attempt nothing judged.
+	if turn.NonAnswer() {
+		return TurnOutcomeNonAnswer
 	}
 	if !turn.StopDeclared {
 		return TurnOutcomeClaimedWork

@@ -103,6 +103,15 @@ type RunnerConfig struct {
 	// and guessing one would bind a socket somewhere the mount policy never
 	// admitted.
 	SocketsRoot string
+
+	// Now is the clock ONE WORKER TURN IS MEASURED AGAINST: the elapsed time
+	// the sdlc:agent_turn event reports, and with it the NonAnswerTurnBound
+	// decision that reads the same number. Nil takes time.Now.
+	//
+	// It is injectable because the only other way a test can put a turn on
+	// either side of that bound is to make the suite wait, and a suite that
+	// sleeps to age a duration is a suite nobody runs per push.
+	Now func() time.Time
 }
 
 // Runner is the module's orchestration.JobRunner.
@@ -114,6 +123,9 @@ type Runner struct {
 	// root. The reviewer and triage hold the same seam, which is what stops
 	// the three from authenticating differently (go-quicbaas#929).
 	access forgeAccess
+
+	// now is the clock a turn's elapsed time is read from, never nil.
+	now func() time.Time
 }
 
 var (
@@ -130,7 +142,11 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Runner{hooks: cfg.Hooks, access: access}, nil
+	now := cfg.Now
+	if now == nil {
+		now = time.Now
+	}
+	return &Runner{hooks: cfg.Hooks, access: access, now: now}, nil
 }
 
 // SocketSweep reports what preparing the sockets root removed: the signing
@@ -356,10 +372,16 @@ type runnerRun struct {
 	// all, bounded by MaxSilentTurns.
 	silentTurns int
 
+	// nonAnswerTurns counts the CONSECUTIVE turns this attempt answered
+	// without addressing the prompt, bounded by MaxNonAnswerTurns. A turn
+	// that was anything else resets it (recordTurn).
+	nonAnswerTurns int
+
 	// turnNote is what the NEXT prompt of this run adds that the last one
-	// did not: the account of a turn that answered with nothing. Without it
-	// the retry would be the identical prompt, which is the loop this whole
-	// path exists to break.
+	// did not: the account of a turn that answered with nothing, or of one
+	// that answered something other than the prompt. Without it the retry
+	// would be the identical prompt, which is the loop this whole path
+	// exists to break.
 	turnNote string
 
 	// parked is how this run parks its task: the kind, and whose fault it
@@ -1002,6 +1024,12 @@ func (s *runnerRun) execute(ctx context.Context) (orchestration.JobState, error)
 	if err != nil {
 		return "", err
 	}
+	// THE NOTE IS CONSUMED BY THE PROMPT IT WAS WRITTEN FOR. Each of the
+	// three — a turn that answered with nothing, a session replaced because
+	// its context filled, a reply that did not address the prompt — is an
+	// account of what just happened; carried into a later round it would tell
+	// a worker its last reply missed when it did not.
+	s.turnNote = ""
 	repeated, err := s.repeatedPrompt(prompt)
 	if err != nil {
 		return "", err
@@ -1257,6 +1285,15 @@ func silentTurnNote(elapsed time.Duration) string {
 	})
 }
 
+// nonAnswerTurnNote is what the re-sent prompt of this run adds when the last
+// reply answered something other than the prompt: how fast it came back, and
+// that the prompt above is still the one to answer.
+func nonAnswerTurnNote(elapsed time.Duration) string {
+	return sdlcPrompts.MustRender("non_answer_turn_note", prompts.Vars{
+		"elapsed": elapsed.Round(time.Millisecond).String(),
+	})
+}
+
 // sessionRolledNote is what the first prompt of a fresh session says about
 // the session it replaced: how long the turn that filled its context took,
 // and in which round.
@@ -1295,13 +1332,17 @@ func (s *runnerRun) runTurn(ctx context.Context, prompt string) (orchestration.J
 	if err != nil {
 		return "", err
 	}
-	started := time.Now()
+	started := s.runner.now()
 	resp, promptErr := s.job.Prompt(ctx, &orchestration.PromptSessionRequest{
 		SessionID: s.sessionID,
 		Prompt:    prompt,
 	})
 	turn := ReadAgentTurn(resp)
-	turn.Elapsed = time.Since(started)
+	// THE ELAPSED TIME IS THE TURN'S OWN MEASUREMENT, taken once and read by
+	// everything downstream: the sdlc:agent_turn event and the
+	// NonAnswerTurnBound decision both take it from here, so the record and
+	// the routing cannot disagree about how long the turn took.
+	turn.Elapsed = s.runner.now().Sub(started)
 	turn.Attempt = s.attemptNumber()
 	turn.Round = s.job.Iteration()
 	turn.PromptDigest = promptDigest(prompt)
@@ -1351,6 +1392,13 @@ func (s *runnerRun) runTurn(ctx context.Context, prompt string) (orchestration.J
 // copy of it.
 func (s *runnerRun) recordTurn(turn AgentTurn) {
 	s.lastTurn = turn
+	// THE NON-ANSWER STREAK IS CONSECUTIVE. Anything else this session did —
+	// a turn that reached the checkout, a declared stop, a prompt that failed
+	// — ends it, so a round three turns later is re-prompted on its own
+	// evidence instead of being charged for a non-answer nobody remembers.
+	if turn.Outcome != TurnOutcomeNonAnswer {
+		s.nonAnswerTurns = 0
+	}
 	s.job.Audit(auditAgentTurn, turn.Describe())
 }
 
@@ -1424,6 +1472,7 @@ var turnActions = map[TurnAction]func(*runnerRun, context.Context, TurnVerdict, 
 	TurnActionPark:     (*runnerRun).parkTurn,
 	TurnActionCharge:   (*runnerRun).chargeTurn,
 	TurnActionConclude: (*runnerRun).concludeTurn,
+	TurnActionReprompt: (*runnerRun).repromptTurn,
 }
 
 // concludeTurn ends the attempt as done-with-nothing-to-do.
@@ -1541,6 +1590,44 @@ func (s *runnerRun) retryTurn(ctx context.Context, verdict TurnVerdict, turn Age
 	s.turnNote = silentTurnNote(turn.Elapsed)
 	s.job.Emit(orchestration.JobStateExecuting, "the worker answered with nothing and changed no file; "+
 		"the turn is taken once more with that stated")
+	return orchestration.JobStateExecuting, nil
+}
+
+// repromptTurn sends the SAME prompt once more, because the reply that came
+// back did not answer it.
+//
+// IT COSTS THE TASK NOTHING, and that is the whole point. The round is the
+// job's iteration and is untouched; the attempt is the engine's and is
+// untouched; the delivery's LastTurn is not written, so the next attempt is
+// not warned about a turn that judged nothing. Measured on go-quicbaas#62
+// (2026-09-22): a worker holding a queued background-task notification
+// answered THAT when the review round arrived — 451ms, one text block, no
+// tool use — and the task lost its job, its pull-request adoption state, a
+// review round and an attempt to a reply that never read the prompt.
+//
+// THE PROMPT IS REBUILT, NOT REPLAYED, and comes out the same but for one
+// line: turnPrompt renders the contract and the round's findings from the run
+// exactly as it did a moment ago, and turnNote adds the account of the reply
+// that missed. Sending the identical bytes is the loop repeatedPrompt exists
+// to refuse.
+//
+// THE SECOND CONSECUTIVE ONE IS CHARGED. A session that answers past two
+// prompts running is not reading prompts at all, and on an untouched tree
+// that is the ordinary claimed-work failure of the work.
+func (s *runnerRun) repromptTurn(ctx context.Context, _ TurnVerdict, turn AgentTurn) (orchestration.JobState, error) {
+	if s.nonAnswerTurns >= MaxNonAnswerTurns {
+		return s.chargeTurn(ctx, turnVerdicts[TurnOutcomeClaimedWork], turn)
+	}
+	s.nonAnswerTurns++
+	s.turnNote = nonAnswerTurnNote(turn.Elapsed)
+	s.job.Audit(auditNonAnswerReprompted, "attempt="+strconv.Itoa(turn.Attempt)+
+		" round="+strconv.Itoa(turn.Round)+
+		" elapsed="+turn.Elapsed.Round(time.Millisecond).String()+
+		" tool_uses="+strconv.Itoa(turn.ToolUses())+
+		"; the reply did not address the prompt, so the same prompt is sent once more: "+
+		"neither a new round nor a new attempt")
+	s.job.Emit(orchestration.JobStateExecuting, "the worker's reply did not address the prompt; "+
+		"the same prompt is sent once more with that stated")
 	return orchestration.JobStateExecuting, nil
 }
 
@@ -2083,6 +2170,14 @@ const auditParked = "sdlc:parked"
 // auditAgentTurn is the job event carrying ONE worker turn: how long it took,
 // what its reply carried, and the reply itself.
 const auditAgentTurn = "sdlc:agent_turn"
+
+// auditNonAnswerReprompted records a reply that did not address its prompt,
+// and the re-prompt it earned.
+//
+// It is the ONLY trace of one: the re-prompt is neither a round nor an
+// attempt, so without this event nothing in the record would say that a turn
+// happened and was deliberately not counted.
+const auditNonAnswerReprompted = "sdlc:non_answer_reprompted"
 
 // auditVerificationSkipped records that the binding's verification commands
 // were not run because the worker changed no file.

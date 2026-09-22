@@ -294,6 +294,14 @@ func sdlcSetSpec() prompts.SetSpec {
 				},
 			},
 			{
+				Name:        "non_answer_turn_note",
+				Description: "what is added to the prompt that is sent again because the last reply did not address it",
+				Default:     sdlcDefaults["non_answer_turn_note"],
+				Variables: []prompts.Variable{
+					{Name: "elapsed", Description: "how fast the reply that missed the prompt came back", Required: true},
+				},
+			},
+			{
 				Name:        "session_rolled_note",
 				Description: "what is added to the first prompt of a fresh session that replaced one whose context was full",
 				Default:     sdlcDefaults["session_rolled_note"],

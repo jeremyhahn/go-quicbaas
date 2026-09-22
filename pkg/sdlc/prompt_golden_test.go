@@ -186,6 +186,7 @@ func TestSDLCPrompts_Golden(t *testing.T) {
 		{"prior_turn_spoken", func(*testing.T) string { return renderPriorTurn(spokenTurn) }},
 		{"prior_turn_silent", func(*testing.T) string { return renderPriorTurn(silentTurn) }},
 		{"silent_turn_note", func(*testing.T) string { return silentTurnNote(5 * time.Second) }},
+		{"non_answer_turn_note", func(*testing.T) string { return nonAnswerTurnNote(451 * time.Millisecond) }},
 		{"session_rolled_note", func(*testing.T) string { return sessionRolledNote(24*time.Minute+4*time.Second, 1) }},
 		{"repeated_prompt", func(t *testing.T) string {
 			reason, err := repeatedPromptReason()

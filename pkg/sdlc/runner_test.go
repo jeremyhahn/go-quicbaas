@@ -114,6 +114,19 @@ type fakeAgents struct {
 	// succeed. Consulted when promptErr is nil.
 	promptErrFn func(turn int) error
 
+	// clock is the runner's own clock, which this service ADVANCES while it
+	// answers: a turn takes as long as the fake says it took. A worker turn
+	// is the one thing in this package measured against wall time — the
+	// runner reads the clock either side of the prompt — and a fake that
+	// answers instantly would make every turn in the suite look like the
+	// half-second non-answer of go-quicbaas#62.
+	clock *testClock
+
+	// turnElapsed is how long the NEXT turn takes, by turn number starting
+	// at one. Nil takes defaultTurnElapsed, which is what an ordinary
+	// working turn looks like.
+	turnElapsed func(turn int) time.Duration
+
 	// container is the worker's container. A spawn reports its id, and an
 	// exec is dispatched into it: the runner reaches git only this way.
 	container *fakeContainer
@@ -185,7 +198,18 @@ func (f *fakeAgents) PromptSession(_ context.Context, req *orchestration.PromptS
 	if err == nil && f.promptErrFn != nil {
 		err = f.promptErrFn(turn)
 	}
+	elapsed := defaultTurnElapsed
+	if f.turnElapsed != nil {
+		elapsed = f.turnElapsed(turn)
+	}
+	clock := f.clock
 	f.mu.Unlock()
+	// THE TURN TAKES TIME, and it takes it before the answer is handed back,
+	// exactly as a real one does: the runner reads the clock either side of
+	// this call.
+	if clock != nil {
+		clock.advance(elapsed)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -200,6 +224,42 @@ func (f *fakeAgents) PromptSession(_ context.Context, req *orchestration.PromptS
 		}
 	}
 	return &orchestration.PromptSessionResponse{SessionID: req.SessionID}, nil
+}
+
+// defaultTurnElapsed is how long a scripted turn takes when a test says
+// nothing about it: long enough to be a worker that read its prompt and did
+// something, which is what NonAnswerTurnBound separates a non-answer from.
+const defaultTurnElapsed = 4 * time.Minute
+
+// testClock is the clock the runner measures a turn against, advanced by the
+// scripted backend rather than by waiting. Atomic because the run reads it on
+// its own goroutine while the prompt that advances it answers.
+type testClock struct {
+	nanos atomic.Int64
+}
+
+// newTestClock starts a clock at a fixed instant, so a turn's duration is the
+// only thing that moves it.
+func newTestClock() *testClock {
+	clock := &testClock{}
+	clock.nanos.Store(goldenTime.UnixNano())
+	return clock
+}
+
+// now is the clock the runner is wired to.
+func (c *testClock) now() time.Time { return time.Unix(0, c.nanos.Load()) }
+
+// advance moves the clock forward by one turn's duration.
+func (c *testClock) advance(d time.Duration) { c.nanos.Add(int64(d)) }
+
+// answersIn makes the worker say text on every turn, each turn taking the
+// stated time. It is how a test puts a reply on either side of
+// NonAnswerTurnBound without the suite waiting for it.
+func (f *fakeAgents) answersIn(elapsed time.Duration, text string) {
+	f.answers(text)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.turnElapsed = func(int) time.Duration { return elapsed }
 }
 
 // answers makes the worker say text on every turn.
@@ -294,6 +354,10 @@ type runnerRig struct {
 	// behaviour, the post-turn publication.
 	storage orchestration.ProjectStorage
 
+	// clock is the clock the runner measures its turns against, advanced by
+	// the scripted backend as it answers.
+	clock *testClock
+
 	// audits is every audit event the run recorded, taken through the
 	// engine's own callback so a run that ended before its next snapshot
 	// still has its evidence.
@@ -385,11 +449,13 @@ func newRunnerRig(t *testing.T) *runnerRig {
 	t.Cleanup(func() { liveReviewValidator.Store(nil) })
 
 	container := &fakeContainer{checkout: filepath.Join(orchestration.WorkspaceCheckoutRoot, testOrchProject().Name)}
-	agents := &fakeAgents{container: container}
+	clock := newTestClock()
+	agents := &fakeAgents{container: container, clock: clock}
 	tokens := &fakeTokens{token: []byte("a-forge-api-token")}
 	signing := &fakeSigningAgent{}
 	runner, err := NewRunner(RunnerConfig{
 		Hooks: rebuilt, Tokens: tokens, Signing: signing, SocketsRoot: testSocketsRoot(t),
+		Now: clock.now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -397,7 +463,7 @@ func newRunnerRig(t *testing.T) *runnerRig {
 	return &runnerRig{
 		hooksRig: hooks, forgeResolver: forges, runner: runner, agents: agents,
 		tokens: tokens, container: container, signing: signing, root: root,
-		socketsRoot: runner.access.socketsRoot,
+		socketsRoot: runner.access.socketsRoot, clock: clock,
 	}
 }
 

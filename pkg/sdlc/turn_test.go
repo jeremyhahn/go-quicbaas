@@ -262,6 +262,9 @@ func TestClassifyTurn_TheTableIsComplete(t *testing.T) {
 		// below cover it without special-casing — it names no BlockKind and no
 		// Condition precisely because nobody is waiting on anything.
 		TurnOutcomeSatisfied,
+		// TurnOutcomeNonAnswer neither parks nor charges either: nothing was
+		// judged, so the same prompt is simply sent again.
+		TurnOutcomeNonAnswer,
 	}
 	for _, outcome := range outcomes {
 		verdict, ok := turnVerdicts[outcome]
@@ -317,6 +320,100 @@ func TestClassifyTurn_TheTableIsComplete(t *testing.T) {
 	}
 	if (UnblockCondition{Kind: silentEscalation.Condition}).Validate() != nil {
 		t.Fatalf("the silent escalation parks on condition %q", silentEscalation.Condition)
+	}
+}
+
+// nonAnswerTurn is the turn go-quicbaas#62 recorded, parameterised: a
+// persistent session answering its own queued notification instead of the
+// round prompt — text, no declaration, no tool use, back in 451ms.
+func nonAnswerTurn(reply string, elapsed time.Duration, tools int) AgentTurn {
+	turn := NewAgentTurn(reply)
+	turn.Elapsed = elapsed
+	turn.StopReason = orchestration.StopReasonEndTurn
+	turn.Blocks = map[string]int{contentBlockText: 1}
+	if tools > 0 {
+		turn.Blocks["tool_use"] = tools
+	}
+	return turn
+}
+
+// TestAgentTurn_NonAnswerReadsStructureNotProse: each condition of the rule,
+// asserted by removing exactly one of them from the turn that satisfies all.
+func TestAgentTurn_NonAnswerReadsStructureNotProse(t *testing.T) {
+	const missed = "The expired monitor was watching the first-round sweep logs."
+	for name, tc := range map[string]struct {
+		turn AgentTurn
+		want bool
+	}{
+		"the measured case": {nonAnswerTurn(missed, 451*time.Millisecond, 0), true},
+		"at the bound": {
+			nonAnswerTurn(missed, NonAnswerTurnBound, 0), false,
+		},
+		"a turn that worked": {
+			nonAnswerTurn(missed, NonAnswerTurnBound+time.Second, 0), false,
+		},
+		"a turn that used a tool": {
+			nonAnswerTurn(missed, 451*time.Millisecond, 3), false,
+		},
+		"a declared stop": {
+			nonAnswerTurn("already done\nSDLC-STOP: satisfied", 451*time.Millisecond, 0), false,
+		},
+		"no text at all": {
+			nonAnswerTurn("", 451*time.Millisecond, 0), false,
+		},
+		"an unmeasured turn": {
+			nonAnswerTurn(missed, 0, 0), false,
+		},
+		"a turn the backend cut off": {
+			func() AgentTurn {
+				turn := nonAnswerTurn(missed, 451*time.Millisecond, 0)
+				turn.StopReason = "max_tokens"
+				return turn
+			}(), false,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := tc.turn.NonAnswer(); got != tc.want {
+				t.Fatalf("NonAnswer() = %v, want %v for %+v", got, tc.want, tc.turn)
+			}
+		})
+	}
+}
+
+// TestClassifyTurn_ANonAnswerIsRepromptedAndEverythingElseIsNot: the
+// classifier half. The fast, tool-less, undeclared reply is the one turn
+// between `silent` and `claimed_work`, and neither of its neighbours moves.
+func TestClassifyTurn_ANonAnswerIsRepromptedAndEverythingElseIsNot(t *testing.T) {
+	const missed = "The expired monitor was watching the first-round sweep logs."
+	for name, tc := range map[string]struct {
+		turn    AgentTurn
+		outcome TurnOutcome
+		action  TurnAction
+	}{
+		"answered something else": {
+			nonAnswerTurn(missed, 451*time.Millisecond, 0), TurnOutcomeNonAnswer, TurnActionReprompt,
+		},
+		"claimed work it did not do": {
+			nonAnswerTurn("Implemented the parser and added tests.", 8*time.Minute, 0),
+			TurnOutcomeClaimedWork, TurnActionCharge,
+		},
+		"stopped fast on a question": {
+			nonAnswerTurn("Which store?\nSDLC-STOP: question", 900*time.Millisecond, 0),
+			TurnOutcomeQuestion, TurnActionPark,
+		},
+		"said nothing": {
+			nonAnswerTurn("", 451*time.Millisecond, 0), TurnOutcomeSilent, TurnActionRetry,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			verdict := ClassifyTurn(tc.turn)
+			if verdict.Outcome != tc.outcome {
+				t.Fatalf("outcome = %s, want %s", verdict.Outcome, tc.outcome)
+			}
+			if verdict.Action != tc.action {
+				t.Fatalf("action = %s, want %s", verdict.Action, tc.action)
+			}
+		})
 	}
 }
 

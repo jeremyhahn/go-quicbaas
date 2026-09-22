@@ -1,0 +1,3 @@
+## Your previous reply did not address this prompt
+
+It came back after ${elapsed} with no tool use and an unmodified checkout, answering something other than what was asked — a notification, or a turn that had already ended. The prompt above is unchanged and is still the one to answer: do the work it asks for, or end your reply with a stop declaration stating what you need.
