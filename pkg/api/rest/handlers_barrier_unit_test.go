@@ -38,10 +38,10 @@ var errBarrierBoom = stderrors.New("barrier boom")
 // Methods delegate to optional function fields so a test can shape each path.
 type fakeBarrierService struct {
 	statusFn           func(ctx context.Context) (*service.BarrierStatusInfo, error)
-	initializeFn       func(ctx context.Context, secret string) error
-	unsealFn           func(ctx context.Context, secret string) error
+	initializeFn       func(ctx context.Context, secret []byte) error
+	unsealFn           func(ctx context.Context, secret []byte) error
 	sealFn             func(ctx context.Context) error
-	initShamirFn       func(ctx context.Context, secret string, threshold, total int) (*service.ShamirInitInfo, error)
+	initShamirFn       func(ctx context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error)
 	unsealWithShareFn  func(ctx context.Context, share string) (*service.UnsealShareProgress, error)
 	unsealWithSharesFn func(ctx context.Context, shares []string) error
 	rekeyFn            func(ctx context.Context, threshold, total int) (*service.ShamirInitInfo, error)
@@ -60,14 +60,14 @@ func (f *fakeBarrierService) BarrierStatus(ctx context.Context) (*service.Barrie
 	return &service.BarrierStatusInfo{}, nil
 }
 
-func (f *fakeBarrierService) BarrierInitialize(ctx context.Context, secret string) error {
+func (f *fakeBarrierService) BarrierInitialize(ctx context.Context, secret []byte) error {
 	if f.initializeFn != nil {
 		return f.initializeFn(ctx, secret)
 	}
 	return nil
 }
 
-func (f *fakeBarrierService) BarrierUnseal(ctx context.Context, secret string) error {
+func (f *fakeBarrierService) BarrierUnseal(ctx context.Context, secret []byte) error {
 	if f.unsealFn != nil {
 		return f.unsealFn(ctx, secret)
 	}
@@ -81,7 +81,7 @@ func (f *fakeBarrierService) BarrierSeal(ctx context.Context) error {
 	return nil
 }
 
-func (f *fakeBarrierService) BarrierInitializeShamir(ctx context.Context, secret string, threshold, total int) (*service.ShamirInitInfo, error) {
+func (f *fakeBarrierService) BarrierInitializeShamir(ctx context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error) {
 	if f.initShamirFn != nil {
 		return f.initShamirFn(ctx, secret, threshold, total)
 	}
@@ -240,7 +240,8 @@ func TestHandleBarrierStatus_ServiceError(t *testing.T) {
 func TestHandleBarrierInitialize(t *testing.T) {
 	var gotSecret string
 	svc := &fakeBarrierService{
-		initializeFn: func(ctx context.Context, secret string) error { gotSecret = secret; return nil },
+		// Copy: the handler wipes this slice once the call returns.
+		initializeFn: func(ctx context.Context, secret []byte) error { gotSecret = string(secret); return nil },
 	}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/initialize", `{"secret":"s3cr3t"}`)
 	if w.Code != http.StatusNoContent {
@@ -260,7 +261,7 @@ func TestHandleBarrierInitialize_BadJSON(t *testing.T) {
 
 func TestHandleBarrierInitialize_ServiceError(t *testing.T) {
 	svc := &fakeBarrierService{
-		initializeFn: func(ctx context.Context, secret string) error { return errBarrierBoom },
+		initializeFn: func(ctx context.Context, secret []byte) error { return errBarrierBoom },
 	}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/initialize", `{"secret":"x"}`)
 	if w.Code < 500 {
@@ -269,7 +270,7 @@ func TestHandleBarrierInitialize_ServiceError(t *testing.T) {
 }
 
 func TestHandleBarrierUnseal(t *testing.T) {
-	svc := &fakeBarrierService{unsealFn: func(ctx context.Context, secret string) error { return nil }}
+	svc := &fakeBarrierService{unsealFn: func(ctx context.Context, secret []byte) error { return nil }}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/unseal", `{"secret":"x"}`)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d", w.Code)
@@ -277,7 +278,7 @@ func TestHandleBarrierUnseal(t *testing.T) {
 }
 
 func TestHandleBarrierUnseal_ServiceError(t *testing.T) {
-	svc := &fakeBarrierService{unsealFn: func(ctx context.Context, secret string) error { return errBarrierBoom }}
+	svc := &fakeBarrierService{unsealFn: func(ctx context.Context, secret []byte) error { return errBarrierBoom }}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/unseal", `{"secret":"x"}`)
 	if w.Code < 500 {
 		t.Fatalf("expected 5xx, got %d", w.Code)
@@ -306,7 +307,7 @@ func TestHandleBarrierSeal_ServiceError(t *testing.T) {
 
 func TestHandleBarrierShamirInitialize_OK(t *testing.T) {
 	svc := &fakeBarrierService{
-		initShamirFn: func(ctx context.Context, secret string, threshold, total int) (*service.ShamirInitInfo, error) {
+		initShamirFn: func(ctx context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error) {
 			return &service.ShamirInitInfo{Threshold: threshold, TotalShares: total, ShareCount: total}, nil
 		},
 	}
@@ -345,7 +346,7 @@ func TestHandleBarrierShamirInitialize_Validation(t *testing.T) {
 
 func TestHandleBarrierShamirInitialize_ServiceError(t *testing.T) {
 	svc := &fakeBarrierService{
-		initShamirFn: func(ctx context.Context, secret string, threshold, total int) (*service.ShamirInitInfo, error) {
+		initShamirFn: func(ctx context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error) {
 			return nil, errBarrierBoom
 		},
 	}

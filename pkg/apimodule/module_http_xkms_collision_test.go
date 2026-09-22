@@ -380,6 +380,7 @@ type recordingModule struct {
 	permissions map[string]qrdbsdk.Permission
 	publicGRPC  []string
 
+	quicRegistered bool
 	grpcRegistered bool
 	mcpRegistered  bool
 	httpRegistered bool
@@ -392,6 +393,9 @@ func (m *recordingModule) Name() string { return "recording" }
 
 // RegisterGRPC records the forwarded gRPC hook.
 func (m *recordingModule) RegisterGRPC(grpc.ServiceRegistrar) { m.grpcRegistered = true }
+
+// RegisterQUIC records the forwarded QUIC hook.
+func (m *recordingModule) RegisterQUIC(grpc.ServiceRegistrar) { m.quicRegistered = true }
 
 // RegisterHTTP records the forwarded HTTP hook.
 func (m *recordingModule) RegisterHTTP(*qrdbsdk.ModuleHTTPRegistrar) { m.httpRegistered = true }

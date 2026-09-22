@@ -42,14 +42,14 @@ var errTenantBarrierBoom = stderrors.New("tenant barrier boom")
 // service.TenantBarrierServicer. Methods delegate to optional function fields so
 // a test can shape each path.
 type fakeTenantBarrierService struct {
-	initFn        func(ctx context.Context, tenantID, passphrase string, threshold, shares int, strategy string) (*qrdbtransport.TenantBarrierInitResponse, error)
+	initFn        func(ctx context.Context, tenantID string, passphrase []byte, threshold, shares int, strategy string) (*qrdbtransport.TenantBarrierInitResponse, error)
 	unsealFn      func(ctx context.Context, tenantID string, key []byte) error
 	unsealShareFn func(ctx context.Context, tenantID, share string) (*qrdbtransport.TenantBarrierUnsealProgress, error)
 	sealFn        func(ctx context.Context, tenantID string) error
 	statusFn      func(ctx context.Context, tenantID string) (*qrdbtransport.TenantBarrierStatusResponse, error)
 }
 
-func (f *fakeTenantBarrierService) TenantBarrierInit(ctx context.Context, tenantID, passphrase string, threshold, shares int, strategy string) (*qrdbtransport.TenantBarrierInitResponse, error) {
+func (f *fakeTenantBarrierService) TenantBarrierInit(ctx context.Context, tenantID string, passphrase []byte, threshold, shares int, strategy string) (*qrdbtransport.TenantBarrierInitResponse, error) {
 	if f.initFn != nil {
 		return f.initFn(ctx, tenantID, passphrase, threshold, shares, strategy)
 	}
@@ -178,7 +178,7 @@ func TestTenantBarrier_MissingTenantID(t *testing.T) {
 
 func TestTenantBarrierInit_ShamirReturnsMetadata(t *testing.T) {
 	svc := &fakeTenantBarrierService{
-		initFn: func(_ context.Context, tenantID, _ string, threshold, shares int, _ string) (*qrdbtransport.TenantBarrierInitResponse, error) {
+		initFn: func(_ context.Context, tenantID string, _ []byte, threshold, shares int, _ string) (*qrdbtransport.TenantBarrierInitResponse, error) {
 			return &qrdbtransport.TenantBarrierInitResponse{
 				TenantID:    tenantID,
 				Strategy:    "shamir",
@@ -209,7 +209,7 @@ func TestTenantBarrierInit_ShamirReturnsMetadata(t *testing.T) {
 
 func TestTenantBarrierInit_NonShamirNoContent(t *testing.T) {
 	svc := &fakeTenantBarrierService{
-		initFn: func(_ context.Context, tenantID, _ string, _, _ int, _ string) (*qrdbtransport.TenantBarrierInitResponse, error) {
+		initFn: func(_ context.Context, tenantID string, _ []byte, _, _ int, _ string) (*qrdbtransport.TenantBarrierInitResponse, error) {
 			return &qrdbtransport.TenantBarrierInitResponse{TenantID: tenantID, Strategy: "none"}, nil
 		},
 	}
@@ -232,7 +232,7 @@ func TestTenantBarrierInit_BadJSON(t *testing.T) {
 
 func TestTenantBarrierInit_ServiceError(t *testing.T) {
 	svc := &fakeTenantBarrierService{
-		initFn: func(_ context.Context, _, _ string, _, _ int, _ string) (*qrdbtransport.TenantBarrierInitResponse, error) {
+		initFn: func(_ context.Context, _ string, _ []byte, _, _ int, _ string) (*qrdbtransport.TenantBarrierInitResponse, error) {
 			return nil, errTenantBarrierBoom
 		},
 	}
@@ -398,7 +398,7 @@ func barrierNotEnabledCases(s *Server, failErr error) []struct {
 		svc     *fakeTenantBarrierService
 	}{
 		{"init", http.MethodPost, `{"strategy":"passphrase","passphrase":"p"}`, s.HandleTenantBarrierInit,
-			&fakeTenantBarrierService{initFn: func(context.Context, string, string, int, int, string) (*qrdbtransport.TenantBarrierInitResponse, error) {
+			&fakeTenantBarrierService{initFn: func(context.Context, string, []byte, int, int, string) (*qrdbtransport.TenantBarrierInitResponse, error) {
 				return nil, failErr
 			}}},
 		{"unseal", http.MethodPost, `{"key":"YWJj"}`, s.HandleTenantBarrierUnseal,

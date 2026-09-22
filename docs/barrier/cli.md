@@ -240,10 +240,41 @@ guard-paged buffer that is wiped when the command finishes, per
 `conventions/security-review.md` §6 — it is never a plain Go string inside
 the CLI. Two residues are inherent to the *sources* and are the reason
 stdin is listed first: argv and the environment block both hand Go an
-immutable string that cannot be wiped. A third is inherent to the wire —
-qrdb's barrier request types field these secrets as `string`
-([go-qrdb#184](https://github.com/jeremyhahn/go-qrdb/issues/184)),
-so one unwipeable copy exists for the duration of the call.
+immutable string that cannot be wiped. The third — the *request object* the
+CLI builds — is **gone**: qrdb's barrier request types now field these
+secrets as `[]byte`
+([go-qrdb#184](https://github.com/jeremyhahn/go-qrdb/issues/184), adopted
+here in [#960](https://github.com/jeremyhahn/go-quicbaas/issues/960)), so the
+CLI hands the protected buffer's bytes straight to the request rather than
+converting to a Go string first. The `passphraseString` conversion that used
+to make that crossing is deleted rather than documented.
+
+**Request storage is not serialization, and the difference is the whole
+qualification.** What the request *holds* is now wipeable bytes for every
+transport. What a transport *writes on the wire* is its own matter, and two
+of those still produce an unwipeable copy:
+
+- **MCP** converts deliberately. An MCP tool argument is JSON and Go renders
+  a `[]byte` as base64, so `sdk/go/transport/mcp` has one explicit
+  `secretArg` conversion to plaintext — go-qrdb's documented permanent
+  exception to the wipeable-credential contract. A CLI invocation that
+  selects the MCP transport creates an immutable plaintext string for the
+  duration of the call, and no buffer discipline on either side removes it.
+  Choose another transport for barrier operations if that residue is
+  unacceptable.
+- **This daemon's own surfaces.** `string secret` in
+  `api/proto/barrier.proto`, the REST JSON request DTOs and the MCP tool
+  argument all still declare the credential as a string, so a passphrase
+  arriving from a *remote* caller exists as an unwipeable Go string before
+  any handler sees it. The handlers convert at the edge and wipe what they
+  made, which narrows the window rather than closing it. Retyping the proto
+  field and moving REST JSON to base64 is a client-visible wire change,
+  tracked as [#962](https://github.com/jeremyhahn/go-quicbaas/issues/962).
+
+The end-to-end guarantee — protected memory from the terminal to the barrier,
+with no plaintext string anywhere — therefore holds for the CLI against an
+**embedded or in-process** node, and holds for the CLI's own handling of the
+passphrase in every case.
 
 **Still on argv.** `--so-pin`, `--user-pin` and `--share` remain
 argv-only and carry the same exposure, and are still held as plain Go

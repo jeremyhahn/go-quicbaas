@@ -23,6 +23,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -256,7 +257,9 @@ func (s *Server) HandleBarrierInitialize(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := s.barrierSvc.BarrierInitialize(r.Context(), req.Secret); err != nil {
+	secret := secretBytes(req.Secret)
+	defer secure.Wipe(secret)
+	if err := s.barrierSvc.BarrierInitialize(r.Context(), secret); err != nil {
 		s.handleServiceError(w, r, err)
 		return
 	}
@@ -275,7 +278,9 @@ func (s *Server) HandleBarrierUnseal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.barrierSvc.BarrierUnseal(r.Context(), req.Secret); err != nil {
+	secret := secretBytes(req.Secret)
+	defer secure.Wipe(secret)
+	if err := s.barrierSvc.BarrierUnseal(r.Context(), secret); err != nil {
 		s.handleServiceError(w, r, err)
 		return
 	}
@@ -320,7 +325,9 @@ func (s *Server) HandleBarrierShamirInitialize(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	info, err := s.barrierSvc.BarrierInitializeShamir(r.Context(), req.Secret, req.Threshold, req.TotalShares)
+	secret := secretBytes(req.Secret)
+	defer secure.Wipe(secret)
+	info, err := s.barrierSvc.BarrierInitializeShamir(r.Context(), secret, req.Threshold, req.TotalShares)
 	if err != nil {
 		s.handleServiceError(w, r, err)
 		return
@@ -558,7 +565,15 @@ func (s *Server) HandleBarrierEnableEncryption(w http.ResponseWriter, r *http.Re
 		ShamirTotal:     req.ShamirTotal,
 	}
 	if req.Passphrase != "" {
-		opts.Credentials = qrdbsdk.Credentials{Secret: []byte(req.Passphrase)}
+		passphrase := secretBytes(req.Passphrase)
+		defer secure.Wipe(passphrase)
+		creds, credErr := qrdbsdk.CredentialsFor(passphrase)
+		if credErr != nil {
+			s.handleServiceError(w, r, credErr)
+			return
+		}
+		defer creds.Secret.Destroy()
+		opts.Credentials = creds
 	}
 
 	if err := s.barrierSvc.EnableEncryption(r.Context(), "", opts); err != nil {
@@ -566,4 +581,16 @@ func (s *Server) HandleBarrierEnableEncryption(w http.ResponseWriter, r *http.Re
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// secretBytes copies a credential out of the JSON-decoded string into a slice
+// the caller can wipe. The string itself is immutable and unwipeable, so this
+// narrows the plaintext's lifetime rather than removing it: the residue is the
+// string-typed credential field on this transport's request DTO, tracked as
+// #962.
+func secretBytes(s string) []byte {
+	if s == "" {
+		return nil
+	}
+	return []byte(s)
 }

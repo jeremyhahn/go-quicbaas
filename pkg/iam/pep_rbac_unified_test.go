@@ -106,6 +106,14 @@ func denyAllPolicy(name, resource, action string) *abac.Policy {
 //   - Neither an RBAC grant nor an ABAC policy: both deny (RBAC's own
 //     default-deny, per the unified model's explicit semantics).
 func TestPEPService_UnifiedDecision_MatchesQRDBAuthorizer(t *testing.T) {
+	// go-qrdb v0.19 removed the ScopeSelf default for an unregistered
+	// permission (go-qrdb#504): resolution now fails outright rather than
+	// silently applying the weakest check in the vocabulary. These two are
+	// this test's own synthetic permissions, so the test declares their
+	// scope. ScopeTenantOnly keeps each one inside the request's tenant,
+	// which is what the fixtures assume.
+	permission.RegisterScope(permission.ScopeTenantOnly, "widgets:read", "widgets:write")
+
 	roles := &pepTestRoleServicer{perms: map[string][]permission.Permission{
 		"viewer": {"widgets:read"},
 	}}

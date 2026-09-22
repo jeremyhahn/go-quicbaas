@@ -233,6 +233,44 @@ var qrdbDuties = map[duty]qrdbsdk.PermissionDuty{
 	dutyCryptoUse:  qrdbsdk.PermissionDutyCryptoUse,
 }
 
+// scope states a contributed permission's tenancy reach. It is a distinct
+// type from qrdbsdk.PermissionScope for the same reason duty is distinct from
+// qrdbsdk.PermissionDuty: qrdb's zero value is PermissionScopeSelf, a
+// legitimate DECISION, so a bare qrdbsdk.PermissionScope field cannot tell an
+// author who chose self-scope apart from an author who filled in nothing. The
+// difference matters here more than anywhere else in this file, because
+// go-qrdb#504 made an undeclared scope a runtime DENY on every call: the
+// omission that reads as "self" in the source would read as "refused" in
+// production.
+type scope int
+
+const (
+	// scopeUnstated is the zero value and is never valid: nobody has said how
+	// far the permission reaches. It exists only so that the omission is
+	// detectable, and Register skips a contribution carrying it rather than
+	// declaring a reach its author did not choose —
+	// TestEveryContributedPermissionStatesItsScope fails the build first.
+	scopeUnstated scope = iota
+
+	// scopeSelf maps to qrdbsdk.PermissionScopeSelf: the permission acts on
+	// the identity's own tenant, lifted across tenants for a system-tenant
+	// identity. It is the reach every permission below already had before
+	// go-qrdb#504 removed the implicit default.
+	//
+	// qrdb defines three further reaches — cross, tenant-only and
+	// self-strict. None is listed here because no contribution needs one yet;
+	// the entry and its qrdbScopes row are added together when one does.
+	scopeSelf
+)
+
+// qrdbScopes maps this package's scope statements onto qrdb's. A scope absent
+// from the map produces no RegisterPermissionScope call, which leaves the
+// permission undeclared and therefore denied — the fail-closed half of the
+// pair with the guard test.
+var qrdbScopes = map[scope]qrdbsdk.PermissionScope{
+	scopeSelf: qrdbsdk.PermissionScopeSelf,
+}
+
 // contribution pairs one contributed permission with the built-in roles that
 // hold it by default and with the separated duty it belongs to. Keeping the
 // three together makes the triple the unit of declaration: a permission cannot
@@ -243,6 +281,15 @@ type contribution struct {
 	permission qrdbsdk.Permission
 	roles      []string
 	duty       duty
+
+	// scope is the permission's tenancy reach. go-qrdb#504 removed the
+	// implicit default: a contributed permission with no declared scope is
+	// REFUSED by the authorizer on every call ("no scope declared for
+	// <name>"), not admitted as self-scope. Every entry below therefore
+	// carries one explicitly, which is what go-qrdb's RegisterPermissionScope
+	// asks for — "declare the scope you mean, even when it is
+	// PermissionScopeSelf".
+	scope scope
 }
 
 // contributions is the single source of truth for everything QuicBaaS adds to
@@ -272,6 +319,11 @@ var contributions = []contribution{
 		// beside certs:generate, trust:read beside trust:write). qrdb's roles
 		// are flat, so Admin needs the explicit grant.
 		permission: AttestationVerify,
+		// Self-scope preserves the reach this permission already had: every
+		// consumer-registered permission was implicitly ScopeSelf before
+		// go-qrdb#504. Tightening any of these is a deliberate change for
+		// this repository, not a side effect of declaring what was already true.
+		scope: scopeSelf,
 		roles: []string{
 			qrdbsdk.PermissionRoleAdmin,
 			qrdbsdk.PermissionRoleOperator,
@@ -316,6 +368,11 @@ var contributions = []contribution{
 		//     guarantee — which is what the User and Auditor exclusions above
 		//     genuinely are.
 		permission: AttestationAttest,
+		// Self-scope preserves the reach this permission already had: every
+		// consumer-registered permission was implicitly ScopeSelf before
+		// go-qrdb#504. Tightening any of these is a deliberate change for
+		// this repository, not a side effect of declaring what was already true.
+		scope: scopeSelf,
 		roles: []string{
 			qrdbsdk.PermissionRoleAdmin,
 		},
@@ -339,6 +396,11 @@ var contributions = []contribution{
 		// outside the Security Officer's role by the same reasoning as
 		// AttestationVerify below.
 		permission: AuditRecord,
+		// Self-scope preserves the reach this permission already had: every
+		// consumer-registered permission was implicitly ScopeSelf before
+		// go-qrdb#504. Tightening any of these is a deliberate change for
+		// this repository, not a side effect of declaring what was already true.
+		scope: scopeSelf,
 		roles: []string{
 			qrdbsdk.PermissionRoleAdmin,
 			qrdbsdk.PermissionRoleOperator,
@@ -356,9 +418,9 @@ var contributions = []contribution{
 	// attestation:attest off Operator. None of it touches key material or
 	// module governance, so all three fall outside the Security Officer's
 	// duties.
-	{permission: SDLCRead, roles: []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator}, duty: dutyOutsideSecurityOfficer},
-	{permission: SDLCBind, roles: []string{qrdbsdk.PermissionRoleAdmin}, duty: dutyOutsideSecurityOfficer},
-	{permission: SDLCUnbind, roles: []string{qrdbsdk.PermissionRoleAdmin}, duty: dutyOutsideSecurityOfficer},
+	{permission: SDLCRead, roles: []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
+	{permission: SDLCBind, roles: []string{qrdbsdk.PermissionRoleAdmin}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
+	{permission: SDLCUnbind, roles: []string{qrdbsdk.PermissionRoleAdmin}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
 	{
 		// agent_accounts:materialize releases a pooled login's plaintext
 		// credential envelope. Admin alone among the built-ins, by the same
@@ -377,8 +439,13 @@ var contributions = []contribution{
 		// module's own key material, so it falls outside the Security Officer's
 		// duties exactly as audit_events:record does.
 		permission: AgentAccountMaterialize,
-		roles:      []string{qrdbsdk.PermissionRoleAdmin},
-		duty:       dutyOutsideSecurityOfficer,
+		// Self-scope preserves the reach this permission already had: every
+		// consumer-registered permission was implicitly ScopeSelf before
+		// go-qrdb#504. Tightening any of these is a deliberate change for
+		// this repository, not a side effect of declaring what was already true.
+		scope: scopeSelf,
+		roles: []string{qrdbsdk.PermissionRoleAdmin},
+		duty:  dutyOutsideSecurityOfficer,
 	},
 	// The metadata reads follow the read/write split every family here takes:
 	// Admin and Operator both hold them, because listing the pool and reading
@@ -387,13 +454,23 @@ var contributions = []contribution{
 	// a pool listing is operational data, not module governance.
 	{
 		permission: AgentAccountRead,
-		roles:      []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator},
-		duty:       dutyOutsideSecurityOfficer,
+		// Self-scope preserves the reach this permission already had: every
+		// consumer-registered permission was implicitly ScopeSelf before
+		// go-qrdb#504. Tightening any of these is a deliberate change for
+		// this repository, not a side effect of declaring what was already true.
+		scope: scopeSelf,
+		roles: []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator},
+		duty:  dutyOutsideSecurityOfficer,
 	},
 	{
 		permission: AgentAccountList,
-		roles:      []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator},
-		duty:       dutyOutsideSecurityOfficer,
+		// Self-scope preserves the reach this permission already had: every
+		// consumer-registered permission was implicitly ScopeSelf before
+		// go-qrdb#504. Tightening any of these is a deliberate change for
+		// this repository, not a side effect of declaring what was already true.
+		scope: scopeSelf,
+		roles: []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator},
+		duty:  dutyOutsideSecurityOfficer,
 	},
 }
 
@@ -425,6 +502,14 @@ func All() []qrdbsdk.Permission {
 // validated, and any transport PEP resolves a permission.
 func Register() {
 	qrdbsdk.RegisterPermissions(All()...)
+	// Scope before duty and grants: the authorizer resolves a permission's
+	// reach on every call, so a grant that lands before its scope would be
+	// refused in the window between.
+	for _, c := range contributions {
+		if qrdbScope, stated := qrdbScopes[c.scope]; stated {
+			qrdbsdk.RegisterPermissionScope(qrdbScope, c.permission)
+		}
+	}
 	for _, c := range contributions {
 		if qrdbDuty, declared := qrdbDuties[c.duty]; declared {
 			qrdbsdk.RegisterPermissionDuty(qrdbDuty, c.permission)

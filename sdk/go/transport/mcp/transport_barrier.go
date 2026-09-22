@@ -49,7 +49,7 @@ func (t *Transport) BarrierInitialize(ctx context.Context, req *qrdbtransport.Ba
 		return errors.NewInvalidInput("mcp.BarrierInitialize", "request is required")
 	}
 	if _, err := t.callBarrier(ctx, "qrdb_barrier_initialize", map[string]interface{}{
-		"secret": req.Secret,
+		"secret": secretArg(req.Secret),
 	}); err != nil {
 		return err
 	}
@@ -63,7 +63,7 @@ func (t *Transport) BarrierUnseal(ctx context.Context, req *qrdbtransport.Barrie
 		return errors.NewInvalidInput("mcp.BarrierUnseal", "request is required")
 	}
 	if _, err := t.callBarrier(ctx, "qrdb_barrier_unseal", map[string]interface{}{
-		"secret": req.Secret,
+		"secret": secretArg(req.Secret),
 	}); err != nil {
 		return err
 	}
@@ -100,7 +100,7 @@ func (t *Transport) BarrierInitializeShamir(ctx context.Context, req *qrdbtransp
 		return nil, errors.NewInvalidInput("mcp.BarrierInitializeShamir", "request is required")
 	}
 	raw, err := t.callBarrier(ctx, "qrdb_barrier_shamir_initialize", map[string]interface{}{
-		"secret":       req.Secret,
+		"secret":       secretArg(req.Secret),
 		"threshold":    req.Threshold,
 		"total_shares": req.TotalShares,
 	})

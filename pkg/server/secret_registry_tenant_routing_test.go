@@ -93,7 +93,10 @@ func buildTestBarrierRegistry(t *testing.T) *qrdbsdk.BarrierRegistry {
 		sysStrategy,
 	)
 	require.NoError(t, err)
-	require.NoError(t, sysBarrier.Initialize(ctx, qrdbsdk.Credentials{Secret: []byte("test-sys-pass")}))
+	sysCreds, err := qrdbsdk.CredentialsFor([]byte("test-sys-pass"))
+	require.NoError(t, err)
+	defer sysCreds.Secret.Destroy()
+	require.NoError(t, sysBarrier.Initialize(ctx, sysCreds))
 
 	reg, err := qrdbsdk.NewBarrierRegistry(log, sysBarrier)
 	require.NoError(t, err)
@@ -171,7 +174,10 @@ func TestTenantCredentialRouting_TenantIsolation(t *testing.T) {
 		tenantAStrategy,
 	)
 	require.NoError(t, err)
-	require.NoError(t, tb.Barrier().Initialize(ctx, qrdbsdk.Credentials{Secret: []byte("tenant-a-pass")}))
+	tenantCreds, err := qrdbsdk.CredentialsFor([]byte("tenant-a-pass"))
+	require.NoError(t, err)
+	defer tenantCreds.Secret.Destroy()
+	require.NoError(t, tb.Barrier().Initialize(ctx, tenantCreds))
 
 	// Pre-store a credential directly in tenant-a's barrier via Put so we
 	// can verify retrieval without a running CredentialService.

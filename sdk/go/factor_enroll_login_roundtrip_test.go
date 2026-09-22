@@ -208,6 +208,10 @@ func (d *directoryUserServicer) AddCertBinding(context.Context, uint64, string, 
 	return nil, stubErr
 }
 
+func (d *directoryUserServicer) RemoveCertBinding(context.Context, uint64, string) (*qrdbsdk.User, error) {
+	return nil, stubErr
+}
+
 func (d *directoryUserServicer) UpdateUser(context.Context, *qrdbsdk.UpdateUserRequest) (*qrdbsdk.User, error) {
 	return nil, stubErr
 }

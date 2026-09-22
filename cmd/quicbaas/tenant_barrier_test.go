@@ -52,7 +52,7 @@ func (f *fakeTenantBarrierClient) TenantBarrierStatus(ctx context.Context, req *
 }
 
 func (f *fakeTenantBarrierClient) TenantBarrierInit(ctx context.Context, req *qrdbtransport.TenantBarrierInitRequest) (*qrdbtransport.TenantBarrierInitResponse, error) {
-	f.lastInitReq = req
+	f.lastInitReq = cloneTenantBarrierInitReq(req)
 	if f.initFunc != nil {
 		return f.initFunc(ctx, req)
 	}
@@ -336,4 +336,16 @@ func TestCanonicalSurface_TenantBarrier(t *testing.T) {
 	for _, verb := range []string{"list", "status"} {
 		assert.True(t, officerVerbs[verb], "`tenant barrier officer %s` is missing", verb)
 	}
+}
+
+// cloneTenantBarrierInitReq copies the borrowed passphrase out of the request.
+// See the note on cloneBarrierInitReq: the CLI's buffer is destroyed when the
+// command returns, so a retained header faults rather than reading zeros.
+func cloneTenantBarrierInitReq(req *qrdbtransport.TenantBarrierInitRequest) *qrdbtransport.TenantBarrierInitRequest {
+	if req == nil {
+		return nil
+	}
+	out := *req
+	out.Passphrase = bytes.Clone(req.Passphrase)
+	return &out
 }

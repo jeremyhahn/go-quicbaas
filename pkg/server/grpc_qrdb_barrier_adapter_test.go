@@ -91,12 +91,12 @@ type stubBarrierClient struct {
 }
 
 func (s *stubBarrierClient) BarrierInitialize(_ context.Context, req *transport.BarrierInitializeRequest) error {
-	s.lastInitSecret = req.Secret
+	s.lastInitSecret = string(req.Secret)
 	return s.initErr
 }
 
 func (s *stubBarrierClient) BarrierUnseal(_ context.Context, req *transport.BarrierUnsealRequest) error {
-	s.lastUnsealSecret = req.Secret
+	s.lastUnsealSecret = string(req.Secret)
 	return s.unsealErr
 }
 
@@ -195,7 +195,7 @@ func TestQRDBBarrierClientServicer_Initialize(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		c := &stubBarrierClient{}
 		s := newQRDBBarrierClientServicer(c)
-		if err := s.BarrierInitialize(ctx, "secret"); err != nil {
+		if err := s.BarrierInitialize(ctx, []byte("secret")); err != nil {
 			t.Fatalf("BarrierInitialize: %v", err)
 		}
 		if c.lastInitSecret != "secret" {
@@ -206,7 +206,7 @@ func TestQRDBBarrierClientServicer_Initialize(t *testing.T) {
 	t.Run("already initialized treated as success", func(t *testing.T) {
 		c := &stubBarrierClient{initErr: qrdbsdk.ErrAlreadyInitialized}
 		s := newQRDBBarrierClientServicer(c)
-		if err := s.BarrierInitialize(ctx, "x"); err != nil {
+		if err := s.BarrierInitialize(ctx, []byte("x")); err != nil {
 			t.Fatalf("expected nil for already-initialized, got %v", err)
 		}
 	})
@@ -215,7 +215,7 @@ func TestQRDBBarrierClientServicer_Initialize(t *testing.T) {
 		want := errors.New("boom")
 		c := &stubBarrierClient{initErr: want}
 		s := newQRDBBarrierClientServicer(c)
-		if err := s.BarrierInitialize(ctx, "x"); !errors.Is(err, want) {
+		if err := s.BarrierInitialize(ctx, []byte("x")); !errors.Is(err, want) {
 			t.Fatalf("expected %v, got %v", want, err)
 		}
 	})
@@ -226,7 +226,7 @@ func TestQRDBBarrierClientServicer_UnsealSeal(t *testing.T) {
 
 	c := &stubBarrierClient{}
 	s := newQRDBBarrierClientServicer(c)
-	if err := s.BarrierUnseal(ctx, "k"); err != nil {
+	if err := s.BarrierUnseal(ctx, []byte("k")); err != nil {
 		t.Fatalf("BarrierUnseal: %v", err)
 	}
 	if c.lastUnsealSecret != "k" {
@@ -239,7 +239,7 @@ func TestQRDBBarrierClientServicer_UnsealSeal(t *testing.T) {
 	want := errors.New("seal fail")
 	c2 := &stubBarrierClient{unsealErr: want, sealErr: want}
 	s2 := newQRDBBarrierClientServicer(c2)
-	if err := s2.BarrierUnseal(ctx, "k"); !errors.Is(err, want) {
+	if err := s2.BarrierUnseal(ctx, []byte("k")); !errors.Is(err, want) {
 		t.Fatalf("unseal err: %v", err)
 	}
 	if err := s2.BarrierSeal(ctx); !errors.Is(err, want) {
@@ -311,7 +311,7 @@ func TestQRDBBarrierClientServicer_Shamir(t *testing.T) {
 		Threshold: 2, TotalShares: 3, ShareCount: 3,
 	}}
 	s := newQRDBBarrierClientServicer(c)
-	info, err := s.BarrierInitializeShamir(ctx, "secret", 2, 3)
+	info, err := s.BarrierInitializeShamir(ctx, []byte("secret"), 2, 3)
 	if err != nil {
 		t.Fatalf("BarrierInitializeShamir: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestQRDBBarrierClientServicer_Shamir(t *testing.T) {
 	want := errors.New("shamir fail")
 	c2 := &stubBarrierClient{shamirErr: want}
 	s2 := newQRDBBarrierClientServicer(c2)
-	if _, err := s2.BarrierInitializeShamir(ctx, "s", 1, 1); !errors.Is(err, want) {
+	if _, err := s2.BarrierInitializeShamir(ctx, []byte("s"), 1, 1); !errors.Is(err, want) {
 		t.Fatalf("expected err, got %v", err)
 	}
 }

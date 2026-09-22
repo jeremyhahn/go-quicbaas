@@ -41,15 +41,14 @@
 // earliest opportunity and everything downstream is protected. The stdin
 // path never forms a Go string at all.
 //
-// The last conversion happens at the transport boundary: qrdb's
-// BarrierUnsealRequest.Secret and friends are Go string fields, so
-// passphraseString exists to make that one crossing explicit and auditable.
-// That residue cannot be removed from this repo and is filed upstream as
-// go-qrdb#184. The one field already typed []byte —
-// TenantBarrierUnsealRequest.Key — needs no conversion at all: the
+// There is no longer a conversion at the transport boundary. go-qrdb#184
+// typed every barrier credential field []byte — BarrierInitializeRequest,
+// BarrierUnsealRequest and BarrierInitializeShamirRequest .Secret,
+// BarrierEnableEncryptionRequest and TenantBarrierInitRequest .Passphrase,
+// alongside TenantBarrierUnsealRequest.Key, which always was — so the
 // protected slice crosses directly and the passphrase stays in mlocked
-// memory for the whole call. See the note at that call site for why that
-// is safe.
+// memory for the whole call. The Buffer owns that slice and destroys it;
+// nothing on the qrdb side retains it.
 package main
 
 import (
@@ -436,32 +435,6 @@ func passphraseForStrategy(cmd *cobra.Command, strategy string, secret *secure.B
 	}
 	secret.Destroy()
 	return nil
-}
-
-// passphraseString converts the protected passphrase for a transport field
-// that is typed as a Go string.
-//
-// This is the single place in the CLI where a passphrase leaves protected
-// memory, kept in one function so it stays auditable. It cannot be removed
-// from this repo: qrdb's BarrierUnsealRequest.Secret,
-// BarrierInitializeRequest.Secret, BarrierInitializeShamirRequest.Secret,
-// BarrierEnableEncryptionRequest.Passphrase and
-// TenantBarrierInitRequest.Passphrase are all `string` in
-// go-qrdb/sdk/go@v0.10.0-alpha, and a Go string is immutable, so the copy
-// cannot be wiped. Filed upstream as go-qrdb#184 (type the fields []byte,
-// or give them a wipeable field type that never forms a string during
-// serialization); until that lands the residue is documented rather than
-// claimed to be solved.
-//
-// A field already typed []byte — TenantBarrierUnsealRequest.Key — needs no
-// conversion at all and keeps the passphrase in protected memory for the
-// whole call. See the note at that call site.
-func passphraseString(secret *secure.Buffer) string {
-	b := secret.Bytes()
-	if len(b) == 0 {
-		return ""
-	}
-	return string(b)
 }
 
 // trimOneTrailingNewline removes exactly one trailing line terminator,

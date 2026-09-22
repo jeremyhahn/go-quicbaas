@@ -237,7 +237,7 @@ func TestBuildDataPlaneBarrierService_PersistenceAcrossOpen(t *testing.T) {
 	require.NotNil(t, svc1)
 
 	// Initialize with empty secret (None strategy ignores credentials).
-	initErr := svc1.BarrierInitialize(ctx, "")
+	initErr := svc1.BarrierInitialize(ctx, nil)
 	require.NoError(t, initErr)
 
 	// Barrier is now unsealed after initialization.
@@ -256,7 +256,7 @@ func TestBuildDataPlaneBarrierService_PersistenceAcrossOpen(t *testing.T) {
 	// After reopening, the barrier is sealed (root key must be loaded via Unseal).
 	// But BarrierInitialize must now return ErrAlreadyInitialized, proving the
 	// root-key blob survived the PebbleDB round-trip.
-	initErr2 := svc2.BarrierInitialize(ctx, "")
+	initErr2 := svc2.BarrierInitialize(ctx, nil)
 	assert.Error(t, initErr2, "expected ErrAlreadyInitialized on second init")
 
 	require.NoError(t, closer2.Close())

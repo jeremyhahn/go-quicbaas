@@ -83,6 +83,9 @@ func (m *mcpMockUserServicer) UserByCertThumbprint(ctx context.Context, thumbpri
 func (m *mcpMockUserServicer) AddCertBinding(context.Context, uint64, string, int64) (*qrdbsdk.User, error) {
 	return nil, errors.New("not implemented")
 }
+func (m *mcpMockUserServicer) RemoveCertBinding(context.Context, uint64, string) (*qrdbsdk.User, error) {
+	return nil, errors.New("not implemented")
+}
 func (m *mcpMockUserServicer) UpdateUser(context.Context, *qrdbsdk.UpdateUserRequest) (*qrdbsdk.User, error) {
 	return nil, errors.New("not implemented")
 }

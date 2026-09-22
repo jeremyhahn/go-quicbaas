@@ -160,6 +160,16 @@ func mapQRDBError(err error) error {
 	switch {
 	case errors.Is(err, qrdbsdk.ErrEmbeddingProviderRequired):
 		return ErrProviderRequired
+	// go-qrdb#528 stopped returning this sentinel: NewEmbeddingManager now
+	// accepts any provider name and an unregistered one surfaces as
+	// *EmbeddingProviderNotFoundError, which the errors.As above already
+	// maps. The arm is kept so an error built against an older qrdb still
+	// maps to the same public error rather than falling through to the
+	// generic case; go-qrdb re-exports the sentinel under the same
+	// suppression for the same reason. Removing the arm is a deliberate
+	// error-mapping change for this repository to make, not a side effect
+	// of a dependency bump.
+	//nolint:staticcheck // SA1019: deliberate, see above.
 	case errors.Is(err, qrdbsdk.ErrEmbeddingProviderInvalid):
 		return ErrProviderInvalid
 	case errors.Is(err, qrdbsdk.ErrEmbeddingAPIURLRequired):

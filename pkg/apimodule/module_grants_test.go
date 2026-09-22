@@ -14,6 +14,7 @@
 package apimodule
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,6 +23,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/permscope"
 )
 
 // TestNewModule_RegistersRoleGrants proves module construction contributes
@@ -142,4 +144,111 @@ func TestNewModule_RegistersRoleGrants_XKMSWireServicesNotDuplicated(t *testing.
 		assert.False(t, ok,
 			"%s must not be contributed by quicbaas's own module -- it is go-xkms's ServiceModule's canonical xkms.v1 surface now (Phase 3); reintroducing it here would duplicate that surface", perm)
 	}
+}
+
+// TestNewModule_PreservesUpstreamPermissionScopes is the regression guard for
+// the widest hole this module could open.
+//
+// Most of the module's derived vocabulary is go-qrdb's own, and qrdb declares
+// each family's tenancy reach deliberately: credentials:* is ScopeCross
+// because the credential store has no tenant namespacing at all, and the
+// secrets:* / objstore:* / tenant_barrier:* families are ScopeTenantOnly
+// because a platform (system-tenant) operator must never reach a tenant's
+// secret material, objects, or per-tenant barrier key custody.
+//
+// RegisterPermissionScope OVERWRITES. Declaring the whole derived set
+// self-scope — which is what this module did until the #963 review caught it
+// — would therefore not merely be redundant: self-scope is the one reach the
+// system-tenant rule lifts across EVERY tenant, so it would hand a platform
+// admin exactly the cross-tenant reach those declarations withhold, silently,
+// at process start. The module declares a scope only for a permission it is
+// the first to name.
+func TestNewModule_PreservesUpstreamPermissionScopes(t *testing.T) {
+	_, err := NewModule(func() service.QuicBaaS { return nil }, testLogger(t))
+	require.NoError(t, err)
+
+	resolver, err := permscope.New()
+	require.NoError(t, err)
+
+	cases := []struct {
+		permission qrdbsdk.Permission
+		want       qrdbsdk.PermissionScope
+		why        string
+	}{
+		{"credentials:store", qrdbsdk.PermissionScopeCross,
+			"the credential store is not tenant-namespaced; qrdb confines the family to the system tenant"},
+		{"credentials:rotate", qrdbsdk.PermissionScopeCross, "same family, same reason"},
+		{"secrets:read", qrdbsdk.PermissionScopeTenantOnly,
+			"a tenant's secret material is denied to the platform operator"},
+		{"secrets:write", qrdbsdk.PermissionScopeTenantOnly, "same family, same reason"},
+		{"objstore:put", qrdbsdk.PermissionScopeTenantOnly, "same broker family, same reason"},
+		{"tenant_barrier:unseal", qrdbsdk.PermissionScopeTenantOnly,
+			"per-tenant barrier key custody is the one thing a platform operator must not hold"},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.permission), func(t *testing.T) {
+			got, err := resolver.Scope(context.Background(), tc.permission)
+			require.NoError(t, err)
+			assert.Equalf(t, tc.want, got, "%s: %s", tc.permission, tc.why)
+		})
+	}
+}
+
+// TestNewModule_DeclaresAScopeForEveryDerivedPermission is the other half:
+// leaving upstream declarations alone must not leave anything UNdeclared.
+// go-qrdb#504 made an undeclared scope a deny on every call, so a derived
+// permission the module names first and then says nothing about would deny
+// the module's own route.
+func TestNewModule_DeclaresAScopeForEveryDerivedPermission(t *testing.T) {
+	_, err := NewModule(func() service.QuicBaaS { return nil }, testLogger(t))
+	require.NoError(t, err)
+
+	resolver, err := permscope.New()
+	require.NoError(t, err)
+
+	set := map[string]struct{}{}
+	if restRouteContributor != nil {
+		restRouteContributor(set)
+	}
+	if mcpToolContributor != nil {
+		mcpToolContributor(set)
+	}
+	contributeGRPCPermissions(set)
+	require.NotEmpty(t, set, "the derived set must not be empty, or this proves nothing")
+
+	for name := range set {
+		_, err := resolver.Scope(context.Background(), qrdbsdk.Permission(name))
+		assert.NoErrorf(t, err,
+			"%s is derived by this module but has no declared scope, so the authorizer denies it on every call", name)
+	}
+}
+
+// TestUndeclaredPermissions_SkipsWhatIsAlreadyRegistered is the unit behind
+// both guards above: a permission some layer already registered arrives with
+// its author's scope declaration attached and must not be reported as this
+// module's to declare.
+func TestUndeclaredPermissions_SkipsWhatIsAlreadyRegistered(t *testing.T) {
+	novel := qrdbsdk.Permission("apimodule_test:never_registered_anywhere")
+	require.False(t, qrdbsdk.IsPermissionRegistered(novel),
+		"the probe must genuinely be absent from the registry")
+
+	got := undeclaredPermissions([]qrdbsdk.Permission{
+		"credentials:store",
+		"secrets:read",
+		"keys:sign",
+		novel,
+	})
+
+	assert.Equal(t, []qrdbsdk.Permission{novel}, got,
+		"only the permission nobody has registered is this module's to scope")
+}
+
+// TestUndeclaredPermissions_EmptyAndAllKnownInputs covers the two boundaries:
+// nothing to classify, and nothing novel to report. Both must answer nil
+// rather than an empty non-nil slice, because the caller gates its
+// RegisterPermissionScope call on the length.
+func TestUndeclaredPermissions_EmptyAndAllKnownInputs(t *testing.T) {
+	assert.Nil(t, undeclaredPermissions(nil))
+	assert.Nil(t, undeclaredPermissions([]qrdbsdk.Permission{}))
+	assert.Nil(t, undeclaredPermissions([]qrdbsdk.Permission{"credentials:store", "keys:sign"}))
 }

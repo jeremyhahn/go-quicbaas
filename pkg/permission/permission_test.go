@@ -14,12 +14,15 @@
 package permission
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/permscope"
 )
 
 // TestRegister_AddsEveryPermissionToTheQRDBRegistry is the happy path: after
@@ -467,5 +470,69 @@ func TestSDLC_PermissionsAreRegisteredWithTheRightRolePlacement(t *testing.T) {
 	for _, gone := range []qrdbsdk.Permission{"sdlc:list", "sdlc:register", "sdlc:update", "sdlc:deregister"} {
 		_, ok := contributed[gone]
 		assert.Falsef(t, ok, "%s is still contributed", gone)
+	}
+}
+
+// TestEveryContributedPermissionStatesItsScope is the source-level gate:
+// every entry in contributions must say how far its permission reaches.
+//
+// go-qrdb#504 removed the implicit self-scope default, so forgetting a scope
+// does not fail open — it denies every request that needs the permission, at
+// runtime, in whichever transport reaches it first. The test reads the table
+// rather than the registry on purpose: a scope field typed
+// qrdbsdk.PermissionScope would have made this assertion VACUOUS, because
+// qrdb's zero value IS PermissionScopeSelf, so an omitted field would
+// register self-scope and read back as self-scope in perfect agreement. The
+// local scope type's zero value is scopeUnstated, which nothing maps, so the
+// omission has nowhere to hide.
+func TestEveryContributedPermissionStatesItsScope(t *testing.T) {
+	for _, c := range contributions {
+		assert.NotEqualf(t, scopeUnstated, c.scope,
+			"%s: no scope stated; add one to its contributions entry", c.permission)
+		_, mapped := qrdbScopes[c.scope]
+		assert.Truef(t, mapped,
+			"%s: scope %d has no qrdbScopes row, so Register would leave it undeclared",
+			c.permission, c.scope)
+	}
+}
+
+// TestRegisterDeclaresTheStatedScope proves the PRODUCTION registration path
+// is what makes a contributed permission resolvable — not a test-local
+// RegisterPermissionScope call. This is the gap the #963 review caught: a
+// synthetic widgets:* pair had been declared inside a test while the real
+// vocabulary went undeclared.
+//
+// The read-back goes through the SDK's per-tenant scope store
+// (pkg/testutil/permscope), which falls through to the process-global
+// declaration layer for a tenant that has defined nothing — the locked SDK
+// boundary holds in tests too, so go-qrdb/pkg/permission is not imported here.
+func TestRegisterDeclaresTheStatedScope(t *testing.T) {
+	Register()
+
+	resolver, err := permscope.New()
+	require.NoError(t, err)
+
+	for _, c := range contributions {
+		got, err := resolver.Scope(context.Background(), c.permission)
+		if !assert.NoErrorf(t, err, "%s: Register() left it without a scope", c.permission) {
+			continue
+		}
+		assert.Equalf(t, qrdbScopes[c.scope], got,
+			"%s: registry and contributions disagree", c.permission)
+	}
+}
+
+// TestRegisterLeavesNoContributedPermissionUndeclared walks All() rather than
+// contributions, so a permission that reaches the vocabulary by some other
+// route than a contributions entry is still held to the same rule.
+func TestRegisterLeavesNoContributedPermissionUndeclared(t *testing.T) {
+	Register()
+
+	resolver, err := permscope.New()
+	require.NoError(t, err)
+
+	for _, p := range All() {
+		_, err := resolver.Scope(context.Background(), p)
+		assert.NoErrorf(t, err, "%s is in All() but has no declared scope", p)
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -670,7 +671,8 @@ func executeBarrierInitialize(ctx context.Context, svc service.BarrierServicer, 
 	// The secret may be empty for the "none" barrier strategy (passthrough).
 	// Strategy-appropriate validation is the backend's responsibility, matching
 	// the gRPC/REST/QUIC transports which pass the secret through unvalidated.
-	secret := getString(args, "secret")
+	secret := secretBytes(getString(args, "secret"))
+	defer secure.Wipe(secret)
 	if err := svc.BarrierInitialize(ctx, secret); err != nil {
 		return nil, err
 	}
@@ -679,8 +681,9 @@ func executeBarrierInitialize(ctx context.Context, svc service.BarrierServicer, 
 
 // executeBarrierUnseal implements qrdb_barrier_unseal.
 func executeBarrierUnseal(ctx context.Context, svc service.BarrierServicer, args map[string]interface{}) (interface{}, error) {
-	secret := getString(args, "secret")
-	if secret == "" {
+	secret := secretBytes(getString(args, "secret"))
+	defer secure.Wipe(secret)
+	if len(secret) == 0 {
 		return nil, &BarrierThresholdInvalidError{Reason: "secret is required"}
 	}
 	if err := svc.BarrierUnseal(ctx, secret); err != nil {
@@ -699,7 +702,8 @@ func executeBarrierSeal(ctx context.Context, svc service.BarrierServicer, _ map[
 
 // executeBarrierShamirInitialize implements qrdb_barrier_shamir_initialize.
 func executeBarrierShamirInitialize(ctx context.Context, svc service.BarrierServicer, args map[string]interface{}) (interface{}, error) {
-	secret := getString(args, "secret")
+	secret := secretBytes(getString(args, "secret"))
+	defer secure.Wipe(secret)
 	threshold := getInt(args, "threshold")
 	total := getInt(args, "total_shares")
 	if err := validateBarrierThreshold(threshold, total); err != nil {
@@ -818,7 +822,11 @@ func executeBarrierEnableEncryption(ctx context.Context, svc service.BarrierServ
 	if targetStrategy == "" {
 		return nil, &BarrierTargetStrategyRequiredError{}
 	}
-	opts := buildMigrationOptions(targetStrategy, args)
+	opts, err := buildMigrationOptions(targetStrategy, args)
+	if err != nil {
+		return nil, err
+	}
+	defer opts.Credentials.Secret.Destroy()
 	// tenantID="" routes to the system barrier scope inside EnableEncryption.
 	if err := svc.EnableEncryption(ctx, "", opts); err != nil {
 		return nil, err
@@ -838,7 +846,11 @@ func executeBarrierTenantEnableEncryption(ctx context.Context, svc service.Barri
 	if targetStrategy == "" {
 		return nil, &BarrierTargetStrategyRequiredError{}
 	}
-	opts := buildMigrationOptions(targetStrategy, args)
+	opts, err := buildMigrationOptions(targetStrategy, args)
+	if err != nil {
+		return nil, err
+	}
+	defer opts.Credentials.Secret.Destroy()
 	if err := svc.EnableEncryption(ctx, tenantID, opts); err != nil {
 		return nil, err
 	}
@@ -850,7 +862,7 @@ func executeBarrierTenantEnableEncryption(ctx context.Context, svc service.Barri
 
 // buildMigrationOptions constructs a qrdbsdk.MigrationOptions from the tool
 // args map, applying defaults for mechanism and availability when omitted.
-func buildMigrationOptions(targetStrategy string, args map[string]interface{}) qrdbsdk.MigrationOptions {
+func buildMigrationOptions(targetStrategy string, args map[string]interface{}) (qrdbsdk.MigrationOptions, error) {
 	mech := getString(args, "mechanism")
 	if mech == "" {
 		mech = string(qrdbsdk.MechanismSwap)
@@ -867,9 +879,17 @@ func buildMigrationOptions(targetStrategy string, args map[string]interface{}) q
 		ShamirTotal:     getInt(args, "shamir_total"),
 	}
 	if p := getString(args, "passphrase"); p != "" {
-		opts.Credentials = qrdbsdk.Credentials{Secret: []byte(p)}
+		passphrase := secretBytes(p)
+		defer secure.Wipe(passphrase)
+		creds, err := qrdbsdk.CredentialsFor(passphrase)
+		if err != nil {
+			return qrdbsdk.MigrationOptions{}, err
+		}
+		// Ownership passes to the caller, which destroys it once the
+		// migration it was built for has returned.
+		opts.Credentials = creds
 	}
-	return opts
+	return opts, nil
 }
 
 // executeUpdateTenantQuotas implements qrdb_tenant_update_quotas. It maps the
@@ -1041,4 +1061,18 @@ func rootTokenToMap(info *service.RootTokenInfo) map[string]interface{} {
 		resp["created_at"] = info.CreatedAt.UTC().Format(barrierTimeFormat)
 	}
 	return resp
+}
+
+// secretBytes copies a credential out of the JSON-RPC argument string into a
+// slice the caller can wipe. MCP is go-qrdb's documented exception to the
+// wipeable-credential contract: a tool argument is a JSON string by definition
+// of the protocol, so the plaintext necessarily exists as an unwipeable Go
+// string before this point. Converting narrows what follows rather than
+// removing the residue, which is tracked as #962 and, for MCP alone, is not
+// removable at all.
+func secretBytes(s string) []byte {
+	if s == "" {
+		return nil
+	}
+	return []byte(s)
 }

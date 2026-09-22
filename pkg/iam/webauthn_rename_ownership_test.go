@@ -133,6 +133,10 @@ func (c *renameTestUserClient) AddCertBinding(context.Context, uint64, string, i
 	return nil, &renameTestUnsupportedError{Op: "AddCertBinding"}
 }
 
+func (c *renameTestUserClient) RemoveCertBinding(context.Context, uint64, string) (*qrdbtransport.User, error) {
+	return nil, &renameTestUnsupportedError{Op: "RemoveCertBinding"}
+}
+
 func (c *renameTestUserClient) UpdateUser(_ context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -61,6 +61,9 @@ func (stubKVService) CompareAndSwap(context.Context, string, []byte, []byte) (bo
 func (stubKVService) List(context.Context, string) ([]string, error) {
 	return nil, stubErr
 }
+func (stubKVService) ListAll(context.Context, string) ([]string, error) {
+	return nil, stubErr
+}
 func (stubKVService) Scan(context.Context, string) (map[string][]byte, error) {
 	return nil, stubErr
 }
@@ -137,13 +140,13 @@ type stubBarrierService struct {
 	status *qrdbsdk.BarrierStatusInfo
 }
 
-func (s *stubBarrierService) BarrierInitialize(context.Context, string) error { return stubErr }
-func (s *stubBarrierService) BarrierUnseal(context.Context, string) error     { return stubErr }
+func (s *stubBarrierService) BarrierInitialize(context.Context, []byte) error { return stubErr }
+func (s *stubBarrierService) BarrierUnseal(context.Context, []byte) error     { return stubErr }
 func (s *stubBarrierService) BarrierSeal(context.Context) error               { return stubErr }
 func (s *stubBarrierService) BarrierStatus(context.Context) (*qrdbsdk.BarrierStatusInfo, error) {
 	return s.status, nil
 }
-func (s *stubBarrierService) BarrierInitializeShamir(context.Context, string, int, int) (*qrdbsdk.ShamirInitInfo, error) {
+func (s *stubBarrierService) BarrierInitializeShamir(context.Context, []byte, int, int) (*qrdbsdk.ShamirInitInfo, error) {
 	return nil, stubErr
 }
 func (s *stubBarrierService) BarrierUnsealWithShare(context.Context, string) (*qrdbsdk.UnsealShareProgress, error) {

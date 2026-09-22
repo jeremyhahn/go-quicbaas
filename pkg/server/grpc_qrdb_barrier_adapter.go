@@ -70,7 +70,7 @@ func newQRDBBarrierClientServicer(client transport.BarrierClient) *qrdbBarrierCl
 // For hardware-backed and cloud KMS strategies the daemon auto-initialises the
 // barrier on first boot, so a subsequent explicit init call from the CLI is
 // idempotent — ErrAlreadyInitialized is treated as success.
-func (s *qrdbBarrierClientServicer) BarrierInitialize(ctx context.Context, secret string) error {
+func (s *qrdbBarrierClientServicer) BarrierInitialize(ctx context.Context, secret []byte) error {
 	if err := s.client.BarrierInitialize(ctx, &transport.BarrierInitializeRequest{Secret: secret}); err != nil {
 		if errors.Is(err, qrdbsdk.ErrAlreadyInitialized) {
 			return nil
@@ -81,7 +81,7 @@ func (s *qrdbBarrierClientServicer) BarrierInitialize(ctx context.Context, secre
 }
 
 // BarrierUnseal unseals the data-plane barrier with a single secret.
-func (s *qrdbBarrierClientServicer) BarrierUnseal(ctx context.Context, secret string) error {
+func (s *qrdbBarrierClientServicer) BarrierUnseal(ctx context.Context, secret []byte) error {
 	return s.client.BarrierUnseal(ctx, &transport.BarrierUnsealRequest{Secret: secret})
 }
 
@@ -115,7 +115,7 @@ func (s *qrdbBarrierClientServicer) BarrierStatus(ctx context.Context) (*qrdbsdk
 // BarrierInitializeShamir initializes the data-plane barrier with Shamir
 // secret sharing. Share material is never returned; Security Officers claim
 // their shares via the qrdb share-claim flow.
-func (s *qrdbBarrierClientServicer) BarrierInitializeShamir(ctx context.Context, secret string, threshold, totalShares int) (*qrdbsdk.ShamirInitInfo, error) {
+func (s *qrdbBarrierClientServicer) BarrierInitializeShamir(ctx context.Context, secret []byte, threshold, totalShares int) (*qrdbsdk.ShamirInitInfo, error) {
 	resp, err := s.client.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{
 		Secret:      secret,
 		Threshold:   threshold,

@@ -35,14 +35,14 @@ var errTenantBarrierGRPCBoom = stderrors.New("tenant barrier grpc boom")
 // service.TenantBarrierServicer. Methods delegate to optional function fields
 // so a test can shape each path.
 type fakeTenantBarrierServicer struct {
-	initFn        func(ctx context.Context, tenantID, passphrase string, threshold, shares int, strategy string) (*qrdbtransport.TenantBarrierInitResponse, error)
+	initFn        func(ctx context.Context, tenantID string, passphrase []byte, threshold, shares int, strategy string) (*qrdbtransport.TenantBarrierInitResponse, error)
 	unsealFn      func(ctx context.Context, tenantID string, key []byte) error
 	unsealShareFn func(ctx context.Context, tenantID, share string) (*qrdbtransport.TenantBarrierUnsealProgress, error)
 	sealFn        func(ctx context.Context, tenantID string) error
 	statusFn      func(ctx context.Context, tenantID string) (*qrdbtransport.TenantBarrierStatusResponse, error)
 }
 
-func (f *fakeTenantBarrierServicer) TenantBarrierInit(ctx context.Context, tenantID, passphrase string, threshold, shares int, strategy string) (*qrdbtransport.TenantBarrierInitResponse, error) {
+func (f *fakeTenantBarrierServicer) TenantBarrierInit(ctx context.Context, tenantID string, passphrase []byte, threshold, shares int, strategy string) (*qrdbtransport.TenantBarrierInitResponse, error) {
 	if f.initFn != nil {
 		return f.initFn(ctx, tenantID, passphrase, threshold, shares, strategy)
 	}
@@ -136,7 +136,7 @@ func TestMapTenantBarrierError_GenericErrorStaysInternal(t *testing.T) {
 func TestTenantBarrierRPCs_BarrierNotEnabled_FailedPrecondition(t *testing.T) {
 	sentinel := qrdbsdk.ErrTenantBarrierNotEnabled
 	svc := &fakeTenantBarrierServicer{
-		initFn: func(context.Context, string, string, int, int, string) (*qrdbtransport.TenantBarrierInitResponse, error) {
+		initFn: func(context.Context, string, []byte, int, int, string) (*qrdbtransport.TenantBarrierInitResponse, error) {
 			return nil, sentinel
 		},
 		unsealFn: func(context.Context, string, []byte) error { return sentinel },

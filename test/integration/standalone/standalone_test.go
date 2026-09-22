@@ -301,7 +301,7 @@ func TestStandalone_AtRest_SentinelAbsentFromDisk(t *testing.T) {
 	if barrierSvc != nil {
 		initCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = barrierSvc.BarrierInitialize(initCtx, passphrase) // idempotent on second call
+		_ = barrierSvc.BarrierInitialize(initCtx, []byte(passphrase)) // idempotent on second call
 	}
 
 	// Write the sentinel through the KV engine (should be encrypted at rest).

@@ -205,7 +205,7 @@ func TestSealedBoot_SDKDrivesBarrierAgainstSealedDaemon(t *testing.T) {
 	// verb over the same allowlisted wire route; on an uninitialized
 	// barrier only initialize is valid.)
 	require.NoError(t, barrier.BarrierInitialize(ctx, &qrdbtransport.BarrierInitializeRequest{
-		Secret: "sealed-window-e2e-passphrase",
+		Secret: []byte("sealed-window-e2e-passphrase"),
 	}), "SDK BarrierInitialize must drive the sealed daemon's barrier")
 
 	// Phase 4: the daemon notices the unseal and completes the node boot —

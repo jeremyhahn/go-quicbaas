@@ -20,6 +20,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"testing"
 	"time"
 
@@ -112,10 +113,10 @@ func TestBarrierMethodsEndToEnd(t *testing.T) {
 	})
 	defer cleanup()
 
-	if err := tr.BarrierInitialize(ctx, &qrdbtransport.BarrierInitializeRequest{Secret: "pw"}); err != nil {
+	if err := tr.BarrierInitialize(ctx, &qrdbtransport.BarrierInitializeRequest{Secret: []byte("pw")}); err != nil {
 		t.Fatalf("BarrierInitialize: %v", err)
 	}
-	if err := tr.BarrierUnseal(ctx, &qrdbtransport.BarrierUnsealRequest{Secret: "pw"}); err != nil {
+	if err := tr.BarrierUnseal(ctx, &qrdbtransport.BarrierUnsealRequest{Secret: []byte("pw")}); err != nil {
 		t.Fatalf("BarrierUnseal: %v", err)
 	}
 	if err := tr.BarrierSeal(ctx); err != nil {
@@ -131,7 +132,7 @@ func TestBarrierMethodsEndToEnd(t *testing.T) {
 	}
 
 	shamir, err := tr.BarrierInitializeShamir(ctx, &qrdbtransport.BarrierInitializeShamirRequest{
-		Secret: "pw", Threshold: 2, TotalShares: 3})
+		Secret: []byte("pw"), Threshold: 2, TotalShares: 3})
 	if err != nil {
 		t.Fatalf("BarrierInitializeShamir: %v", err)
 	}
@@ -421,5 +422,64 @@ func TestRemarshalBarrierNil(t *testing.T) {
 	}
 	if dst.X != 5 {
 		t.Errorf("X = %d, want 5", dst.X)
+	}
+}
+
+// TestBarrierCredentialsCrossAsPlaintext pins MCP's documented exception to
+// go-qrdb's wipeable-credential contract.
+//
+// The request fields are []byte since go-qrdb#184, and Go's JSON encoder
+// renders a []byte as BASE64. Handing one straight to an MCP tool argument
+// therefore sends "cHc=" where the daemon expects "pw", and an existing
+// barrier can no longer be unsealed with its real passphrase over this
+// transport. The failure is invisible to a test that only checks the call
+// returned nil, which is exactly what the earlier version of this file did.
+//
+// So this asserts what the SERVER received, not that the client succeeded.
+func TestBarrierCredentialsCrossAsPlaintext(t *testing.T) {
+	ctx := context.Background()
+	received := map[string]string{}
+
+	tr, _, cleanup := newMultiToolMCPServer(t, barrierToolNames, func(t *testing.T, tool string, args map[string]interface{}) map[string]interface{} {
+		if v, ok := args["secret"]; ok {
+			s, isString := v.(string)
+			if !isString {
+				t.Errorf("%s: secret arrived as %T, but an MCP tool argument must be a JSON string", tool, v)
+				return map[string]interface{}{"ok": true}
+			}
+			received[tool] = s
+		}
+		switch tool {
+		case "qrdb_barrier_shamir_initialize":
+			return map[string]interface{}{"threshold": 2, "total_shares": 3, "share_count": 3}
+		default:
+			return map[string]interface{}{"ok": true}
+		}
+	})
+	defer cleanup()
+
+	const passphrase = "correct horse battery staple"
+
+	if err := tr.BarrierInitialize(ctx, &qrdbtransport.BarrierInitializeRequest{Secret: []byte(passphrase)}); err != nil {
+		t.Fatalf("BarrierInitialize: %v", err)
+	}
+	if err := tr.BarrierUnseal(ctx, &qrdbtransport.BarrierUnsealRequest{Secret: []byte(passphrase)}); err != nil {
+		t.Fatalf("BarrierUnseal: %v", err)
+	}
+	if _, err := tr.BarrierInitializeShamir(ctx, &qrdbtransport.BarrierInitializeShamirRequest{
+		Secret: []byte(passphrase), Threshold: 2, TotalShares: 3}); err != nil {
+		t.Fatalf("BarrierInitializeShamir: %v", err)
+	}
+
+	for _, tool := range []string{"qrdb_barrier_initialize", "qrdb_barrier_unseal", "qrdb_barrier_shamir_initialize"} {
+		got, ok := received[tool]
+		if !ok {
+			t.Errorf("%s: no secret argument reached the server", tool)
+			continue
+		}
+		if got != passphrase {
+			t.Errorf("%s: server received %q, want the plaintext %q (base64 would be %q)",
+				tool, got, passphrase, base64.StdEncoding.EncodeToString([]byte(passphrase)))
+		}
 	}
 }

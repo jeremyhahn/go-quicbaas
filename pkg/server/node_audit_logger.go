@@ -68,7 +68,11 @@ func (l *NodeAuditLogger) Log(ctx context.Context, event *iam.AuditEvent) error 
 		return &NilAuditEventError{}
 	}
 	stampAuditEvent(event)
-	l.sink.Emit(ctx, toNodeAuditEvent(event))
+	// Emit is documented non-blocking and best-effort, so its error is not
+	// the caller's to act on and Log has always returned nil here. Discarding
+	// it explicitly says that is deliberate. Whether Log should surface it
+	// instead is a contract question, not a lint fix.
+	_ = l.sink.Emit(ctx, toNodeAuditEvent(event))
 	return nil
 }
 
@@ -82,7 +86,8 @@ func (l *NodeAuditLogger) LogAsync(event *iam.AuditEvent) {
 		return
 	}
 	stampAuditEvent(event)
-	l.sink.Emit(context.Background(), toNodeAuditEvent(event))
+	// Best-effort by contract, and LogAsync has no way to report anyway.
+	_ = l.sink.Emit(context.Background(), toNodeAuditEvent(event))
 }
 
 // stampAuditEvent assigns event's ID and Timestamp when unset, mirroring

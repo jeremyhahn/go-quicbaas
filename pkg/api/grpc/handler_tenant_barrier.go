@@ -23,6 +23,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -175,10 +176,12 @@ func (s *TenantBarrierGRPCServer) Init(ctx context.Context, req *pb.TenantBarrie
 		return nil, err
 	}
 
+	passphrase := secretBytes(req.GetPassphrase())
+	defer secure.Wipe(passphrase)
 	result, err := s.tenantBarrierSvc.TenantBarrierInit(
 		ctx,
 		req.GetTenantId(),
-		req.GetPassphrase(),
+		passphrase,
 		int(req.GetThreshold()),
 		int(req.GetShares()),
 		req.GetStrategy(),
@@ -332,7 +335,14 @@ func (s *TenantBarrierGRPCServer) EnableEncryption(ctx context.Context, req *pb.
 		ShamirTotal:     int(req.GetShamirTotal()),
 	}
 	if p := req.GetPassphrase(); p != "" {
-		opts.Credentials = qrdbsdk.Credentials{Secret: []byte(p)}
+		passphrase := secretBytes(p)
+		defer secure.Wipe(passphrase)
+		creds, credErr := qrdbsdk.CredentialsFor(passphrase)
+		if credErr != nil {
+			return nil, status.Error(codes.Internal, credErr.Error())
+		}
+		defer creds.Secret.Destroy()
+		opts.Credentials = creds
 	}
 
 	if err := s.barrierSvc.EnableEncryption(ctx, req.GetTenantId(), opts); err != nil {

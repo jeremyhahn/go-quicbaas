@@ -145,6 +145,18 @@ func (p *sealedKVServicerProxy) List(ctx context.Context, prefix string) ([]stri
 	return svc.List(ctx, prefix)
 }
 
+// ListAll delegates the guard-free listing. qrdb documents the internal-key
+// filter as a discovery guard rather than a confidentiality boundary, and
+// confidentiality between principals stays with the authorization layer, so
+// the proxy gates ListAll exactly as it gates List.
+func (p *sealedKVServicerProxy) ListAll(ctx context.Context, prefix string) ([]string, error) {
+	svc, err := p.resolve()
+	if err != nil {
+		return nil, err
+	}
+	return svc.ListAll(ctx, prefix)
+}
+
 func (p *sealedKVServicerProxy) Scan(ctx context.Context, prefix string) (map[string][]byte, error) {
 	svc, err := p.resolve()
 	if err != nil {

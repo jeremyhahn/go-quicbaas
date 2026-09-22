@@ -68,10 +68,22 @@ func TestHandleBarrierEnableEncryption_BadJSON(t *testing.T) {
 func TestHandleBarrierEnableEncryption_OK(t *testing.T) {
 	var gotTenantID string
 	var gotOpts qrdbsdk.MigrationOptions
+	var passphraseMatched bool
 	svc := &fakeBarrierService{
 		enableEncryptionFn: func(_ context.Context, tenantID string, opts qrdbsdk.MigrationOptions) error {
 			gotTenantID = tenantID
 			gotOpts = opts
+			// The credential is protected memory the handler destroys once
+			// this call returns, so it can only be compared from in here.
+			if opts.Credentials.Secret != nil {
+				plain, err := opts.Credentials.Secret.Open()
+				if err != nil {
+					t.Errorf("open the forwarded credential: %v", err)
+					return nil
+				}
+				defer plain.Destroy()
+				passphraseMatched = plain.EqualTo([]byte("s3cr3t"))
+			}
 			return nil
 		},
 	}
@@ -88,8 +100,8 @@ func TestHandleBarrierEnableEncryption_OK(t *testing.T) {
 	if gotOpts.TargetStrategy != qrdbsdk.StrategyID("passphrase") {
 		t.Errorf("target_strategy: got %q, want %q", gotOpts.TargetStrategy, "passphrase")
 	}
-	if string(gotOpts.Credentials.Secret) != "s3cr3t" {
-		t.Errorf("passphrase not forwarded: got %q", string(gotOpts.Credentials.Secret))
+	if !passphraseMatched {
+		t.Error("passphrase not forwarded to the migration credentials")
 	}
 }
 

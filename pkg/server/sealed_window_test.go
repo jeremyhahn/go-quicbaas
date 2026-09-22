@@ -68,7 +68,10 @@ func TestSealedWindowProbe_DataPlaneBarrierStates(t *testing.T) {
 
 	// Initialize (deferred software strategy unseals on init).
 	ctx := context.Background()
-	require.NoError(t, barrier.Initialize(ctx, qrdbsdk.Credentials{Secret: []byte("test-passphrase")}))
+	initCreds, err := qrdbsdk.CredentialsFor([]byte("test-passphrase"))
+	require.NoError(t, err)
+	defer initCreds.Secret.Destroy()
+	require.NoError(t, barrier.Initialize(ctx, initCreds))
 	assert.False(t, probe.IsSealed(), "initialized+unsealed must not gate")
 
 	// Seal: the probe reports sealed — every transport gate engages.
@@ -76,7 +79,10 @@ func TestSealedWindowProbe_DataPlaneBarrierStates(t *testing.T) {
 	assert.True(t, probe.IsSealed(), "initialized+sealed must gate")
 
 	// Unseal: pass-through again.
-	require.NoError(t, barrier.Unseal(ctx, qrdbsdk.Credentials{Secret: []byte("test-passphrase")}))
+	unsealCreds, err := qrdbsdk.CredentialsFor([]byte("test-passphrase"))
+	require.NoError(t, err)
+	defer unsealCreds.Secret.Destroy()
+	require.NoError(t, barrier.Unseal(ctx, unsealCreds))
 	assert.False(t, probe.IsSealed(), "re-unsealed must not gate")
 }
 

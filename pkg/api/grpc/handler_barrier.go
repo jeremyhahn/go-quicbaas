@@ -24,6 +24,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -139,7 +140,9 @@ func (s *BarrierServer) BarrierInitialize(ctx context.Context, req *pb.BarrierIn
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
-	if err := s.barrierSvc.BarrierInitialize(ctx, req.GetSecret()); err != nil {
+	secret := secretBytes(req.GetSecret())
+	defer secure.Wipe(secret)
+	if err := s.barrierSvc.BarrierInitialize(ctx, secret); err != nil {
 		return nil, mapBarrierError(err)
 	}
 	return &emptypb.Empty{}, nil
@@ -153,7 +156,9 @@ func (s *BarrierServer) BarrierUnseal(ctx context.Context, req *pb.BarrierUnseal
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
-	if err := s.barrierSvc.BarrierUnseal(ctx, req.GetSecret()); err != nil {
+	secret := secretBytes(req.GetSecret())
+	defer secure.Wipe(secret)
+	if err := s.barrierSvc.BarrierUnseal(ctx, secret); err != nil {
 		return nil, mapBarrierError(err)
 	}
 	return &emptypb.Empty{}, nil
@@ -206,7 +211,9 @@ func (s *BarrierServer) BarrierShamirInitialize(ctx context.Context, req *pb.Bar
 	if req.GetThreshold() > req.GetTotalShares() {
 		return nil, status.Error(codes.InvalidArgument, "threshold cannot exceed total_shares")
 	}
-	info, err := s.barrierSvc.BarrierInitializeShamir(ctx, req.GetSecret(), int(req.GetThreshold()), int(req.GetTotalShares()))
+	secret := secretBytes(req.GetSecret())
+	defer secure.Wipe(secret)
+	info, err := s.barrierSvc.BarrierInitializeShamir(ctx, secret, int(req.GetThreshold()), int(req.GetTotalShares()))
 	if err != nil {
 		return nil, mapBarrierError(err)
 	}
@@ -411,11 +418,29 @@ func (s *BarrierServer) BarrierEnableEncryption(ctx context.Context, req *pb.Bar
 		ShamirTotal:     int(req.GetShamirTotal()),
 	}
 	if p := req.GetPassphrase(); p != "" {
-		opts.Credentials = qrdbsdk.Credentials{Secret: []byte(p)}
+		passphrase := secretBytes(p)
+		defer secure.Wipe(passphrase)
+		creds, credErr := qrdbsdk.CredentialsFor(passphrase)
+		if credErr != nil {
+			return nil, status.Error(codes.Internal, credErr.Error())
+		}
+		defer creds.Secret.Destroy()
+		opts.Credentials = creds
 	}
 
 	if err := s.barrierSvc.EnableEncryption(ctx, "", opts); err != nil {
 		return nil, mapBarrierError(err)
 	}
 	return &emptypb.Empty{}, nil
+}
+
+// secretBytes copies a credential out of the protobuf-decoded string into a
+// slice the caller can wipe. The string itself is immutable and unwipeable, so
+// this narrows the plaintext's lifetime rather than removing it: the residue
+// is the `string secret` field in api/proto/barrier.proto, tracked as #962.
+func secretBytes(s string) []byte {
+	if s == "" {
+		return nil
+	}
+	return []byte(s)
 }

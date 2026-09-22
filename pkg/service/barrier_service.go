@@ -49,18 +49,21 @@ type BarrierServicer interface {
 	// BarrierStatus returns the current barrier state.
 	BarrierStatus(ctx context.Context) (*BarrierStatusInfo, error)
 
-	// BarrierInitialize initialises the barrier with a single passphrase.
-	BarrierInitialize(ctx context.Context, secret string) error
+	// BarrierInitialize initialises the barrier with a single passphrase. The
+	// caller owns secret and may wipe it as soon as the call returns; nothing
+	// below this seam retains the slice.
+	BarrierInitialize(ctx context.Context, secret []byte) error
 
-	// BarrierUnseal unseals the barrier with a single passphrase.
-	BarrierUnseal(ctx context.Context, secret string) error
+	// BarrierUnseal unseals the barrier with a single passphrase. The caller
+	// owns secret and may wipe it as soon as the call returns.
+	BarrierUnseal(ctx context.Context, secret []byte) error
 
 	// BarrierSeal transitions the barrier to the sealed state.
 	BarrierSeal(ctx context.Context) error
 
 	// BarrierInitializeShamir initialises the barrier with Shamir secret
 	// sharing and returns the generated shares.
-	BarrierInitializeShamir(ctx context.Context, secret string, threshold, total int) (*ShamirInitInfo, error)
+	BarrierInitializeShamir(ctx context.Context, secret []byte, threshold, total int) (*ShamirInitInfo, error)
 
 	// BarrierUnsealWithShare submits a single Shamir share toward the unseal
 	// quorum.
@@ -231,7 +234,7 @@ func (s *BarrierService) BarrierStatus(ctx context.Context) (*BarrierStatusInfo,
 // barrier on first boot, so a subsequent explicit init call from the CLI is
 // idempotent — ErrAlreadyInitialized is treated as success rather than
 // surfaced as an error to the caller.
-func (s *BarrierService) BarrierInitialize(ctx context.Context, secret string) error {
+func (s *BarrierService) BarrierInitialize(ctx context.Context, secret []byte) error {
 	if s.client == nil {
 		return &BarrierServiceMissingError{}
 	}
@@ -271,7 +274,7 @@ func containsAlreadyInitializedMsg(msg string) bool {
 }
 
 // BarrierUnseal unseals the barrier with a passphrase.
-func (s *BarrierService) BarrierUnseal(ctx context.Context, secret string) error {
+func (s *BarrierService) BarrierUnseal(ctx context.Context, secret []byte) error {
 	if s.client == nil {
 		return &BarrierServiceMissingError{}
 	}
@@ -287,7 +290,7 @@ func (s *BarrierService) BarrierSeal(ctx context.Context) error {
 }
 
 // BarrierInitializeShamir initialises the barrier with Shamir secret sharing.
-func (s *BarrierService) BarrierInitializeShamir(ctx context.Context, secret string, threshold, total int) (*ShamirInitInfo, error) {
+func (s *BarrierService) BarrierInitializeShamir(ctx context.Context, secret []byte, threshold, total int) (*ShamirInitInfo, error) {
 	if s.client == nil {
 		return nil, &BarrierServiceMissingError{}
 	}

@@ -22,6 +22,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -128,7 +129,9 @@ func (s *Server) HandleTenantBarrierInit(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	result, err := svc.TenantBarrierInit(r.Context(), tenantID, body.Passphrase, body.Threshold, body.Shares, body.Strategy)
+	passphrase := secretBytes(body.Passphrase)
+	defer secure.Wipe(passphrase)
+	result, err := svc.TenantBarrierInit(r.Context(), tenantID, passphrase, body.Threshold, body.Shares, body.Strategy)
 	if err != nil {
 		s.handleTenantBarrierError(w, r, err)
 		return
@@ -285,7 +288,15 @@ func (s *Server) HandleTenantBarrierEnableEncryption(w http.ResponseWriter, r *h
 		ShamirTotal:     body.ShamirTotal,
 	}
 	if body.Passphrase != "" {
-		opts.Credentials = qrdbsdk.Credentials{Secret: []byte(body.Passphrase)}
+		passphrase := secretBytes(body.Passphrase)
+		defer secure.Wipe(passphrase)
+		creds, credErr := qrdbsdk.CredentialsFor(passphrase)
+		if credErr != nil {
+			s.handleServiceError(w, r, credErr)
+			return
+		}
+		defer creds.Secret.Destroy()
+		opts.Credentials = creds
 	}
 
 	if err := barrierSvc.EnableEncryption(r.Context(), tenantID, opts); err != nil {

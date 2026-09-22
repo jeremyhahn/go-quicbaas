@@ -39,10 +39,10 @@ import (
 // zero values.
 type mockBarrierService struct {
 	statusFn            func(ctx context.Context) (*service.BarrierStatusInfo, error)
-	initFn              func(ctx context.Context, secret string) error
-	unsealFn            func(ctx context.Context, secret string) error
+	initFn              func(ctx context.Context, secret []byte) error
+	unsealFn            func(ctx context.Context, secret []byte) error
 	sealFn              func(ctx context.Context) error
-	initShamirFn        func(ctx context.Context, secret string, threshold, total int) (*service.ShamirInitInfo, error)
+	initShamirFn        func(ctx context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error)
 	unsealShareFn       func(ctx context.Context, share string) (*service.UnsealShareProgress, error)
 	unsealSharesFn      func(ctx context.Context, shares []string) error
 	rekeyFn             func(ctx context.Context, threshold, total int) (*service.ShamirInitInfo, error)
@@ -63,14 +63,14 @@ func (m *mockBarrierService) BarrierStatus(ctx context.Context) (*service.Barrie
 	return &service.BarrierStatusInfo{}, nil
 }
 
-func (m *mockBarrierService) BarrierInitialize(ctx context.Context, secret string) error {
+func (m *mockBarrierService) BarrierInitialize(ctx context.Context, secret []byte) error {
 	if m.initFn != nil {
 		return m.initFn(ctx, secret)
 	}
 	return nil
 }
 
-func (m *mockBarrierService) BarrierUnseal(ctx context.Context, secret string) error {
+func (m *mockBarrierService) BarrierUnseal(ctx context.Context, secret []byte) error {
 	if m.unsealFn != nil {
 		return m.unsealFn(ctx, secret)
 	}
@@ -84,7 +84,7 @@ func (m *mockBarrierService) BarrierSeal(ctx context.Context) error {
 	return nil
 }
 
-func (m *mockBarrierService) BarrierInitializeShamir(ctx context.Context, secret string, threshold, total int) (*service.ShamirInitInfo, error) {
+func (m *mockBarrierService) BarrierInitializeShamir(ctx context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error) {
 	if m.initShamirFn != nil {
 		return m.initShamirFn(ctx, secret, threshold, total)
 	}
@@ -287,8 +287,10 @@ func TestBarrierStatus_FacadeErrorBubblesUp(t *testing.T) {
 func TestBarrierInitialize_Success(t *testing.T) {
 	var captured string
 	mock := &mockBarrierService{
-		initFn: func(_ context.Context, secret string) error {
-			captured = secret
+		initFn: func(_ context.Context, secret []byte) error {
+			// Copy: the handler wipes this slice once the call returns, so a
+			// double that kept the header would assert against zeros.
+			captured = string(secret)
 			return nil
 		},
 	}
@@ -316,8 +318,8 @@ func TestBarrierUnseal_NilRequestRejected(t *testing.T) {
 
 func TestBarrierUnseal_Success(t *testing.T) {
 	mock := &mockBarrierService{
-		unsealFn: func(_ context.Context, secret string) error {
-			if secret != "key" {
+		unsealFn: func(_ context.Context, secret []byte) error {
+			if string(secret) != "key" {
 				t.Fatalf("expected secret 'key', got %q", secret)
 			}
 			return nil
@@ -365,7 +367,7 @@ func TestBarrierSeal_FacadeErrorBubblesUp(t *testing.T) {
 
 func TestBarrierShamirInitialize_Success(t *testing.T) {
 	mock := &mockBarrierService{
-		initShamirFn: func(_ context.Context, secret string, threshold, total int) (*service.ShamirInitInfo, error) {
+		initShamirFn: func(_ context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error) {
 			return &service.ShamirInitInfo{
 				Threshold:   threshold,
 				TotalShares: total,
@@ -773,4 +775,34 @@ func TestBarrier_MissingErrorFromFacadeMapsToUnavailable(t *testing.T) {
 	srv := newTestBarrierServer(mock)
 	_, err := srv.BarrierStatus(context.Background(), &emptypb.Empty{})
 	assertGRPCCode(t, err, codes.Unavailable)
+}
+
+// TestBarrierInitialize_WipesConvertedSecret pins the borrow contract at the
+// gRPC edge. The handler converts the protobuf string into a slice precisely
+// so the plaintext copy can be destroyed; a double that RETAINS the header
+// must therefore read back as zeros once the call returns. This goes red the
+// moment the wipe is dropped.
+func TestBarrierInitialize_WipesConvertedSecret(t *testing.T) {
+	var retained []byte
+	mock := &mockBarrierService{
+		initFn: func(_ context.Context, secret []byte) error {
+			retained = secret
+			if string(retained) != "topsecret" {
+				t.Fatalf("service saw %q, want the plaintext", retained)
+			}
+			return nil
+		},
+	}
+	srv := newTestBarrierServer(mock)
+	if _, err := srv.BarrierInitialize(context.Background(), &pb.BarrierInitializeRequest{Secret: "topsecret"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(retained) == 0 {
+		t.Fatal("the double retained nothing; the test cannot prove the wipe")
+	}
+	for i, b := range retained {
+		if b != 0 {
+			t.Fatalf("byte %d is %#x, want 0: the handler did not wipe the secret", i, b)
+		}
+	}
 }

@@ -55,7 +55,7 @@ type TenantBarrierServicer interface {
 	// strategy. For the Shamir strategy the response carries the generated
 	// M-of-N shares (returned exactly once, never persisted); for none/passphrase
 	// the share fields are empty.
-	TenantBarrierInit(ctx context.Context, tenantID, passphrase string, threshold, shares int, strategy string) (*qrdbtransport.TenantBarrierInitResponse, error)
+	TenantBarrierInit(ctx context.Context, tenantID string, passphrase []byte, threshold, shares int, strategy string) (*qrdbtransport.TenantBarrierInitResponse, error)
 
 	// TenantBarrierUnseal unseals the per-tenant barrier with a single key
 	// (passphrase strategy). Empty key material is rejected by qrdb.
@@ -148,7 +148,7 @@ func enforceTenantReadBinding(ctx context.Context, op, targetTenantID string) er
 
 // TenantBarrierInit delegates to qrdb, building the canonical init request.
 // It validates Shamir parameters before delegating when strategy == "shamir".
-func (s *tenantBarrierService) TenantBarrierInit(ctx context.Context, tenantID, passphrase string, threshold, shares int, strategy string) (*qrdbtransport.TenantBarrierInitResponse, error) {
+func (s *tenantBarrierService) TenantBarrierInit(ctx context.Context, tenantID string, passphrase []byte, threshold, shares int, strategy string) (*qrdbtransport.TenantBarrierInitResponse, error) {
 	if err := enforceTenantBinding(ctx, "tenant_barrier.init", tenantID); err != nil {
 		return nil, err
 	}

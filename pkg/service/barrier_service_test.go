@@ -181,11 +181,11 @@ func TestBarrierService_NilClient_ReturnsMissingError(t *testing.T) {
 	_, err := svc.BarrierStatus(ctx)
 	assertMissing(err)
 
-	assertMissing(svc.BarrierInitialize(ctx, "secret"))
-	assertMissing(svc.BarrierUnseal(ctx, "secret"))
+	assertMissing(svc.BarrierInitialize(ctx, []byte("secret")))
+	assertMissing(svc.BarrierUnseal(ctx, []byte("secret")))
 	assertMissing(svc.BarrierSeal(ctx))
 
-	_, err = svc.BarrierInitializeShamir(ctx, "secret", 2, 3)
+	_, err = svc.BarrierInitializeShamir(ctx, []byte("secret"), 2, 3)
 	assertMissing(err)
 
 	_, err = svc.BarrierUnsealWithShare(ctx, "share")
@@ -272,19 +272,19 @@ func TestBarrierService_BarrierStatus_Error(t *testing.T) {
 func TestBarrierService_BarrierInitialize(t *testing.T) {
 	mc := &mockBarrierClient{}
 	svc := service.NewBarrierService(mc)
-	require.NoError(t, svc.BarrierInitialize(context.Background(), "secret"))
+	require.NoError(t, svc.BarrierInitialize(context.Background(), []byte("secret")))
 
 	mc.initErr = errBarrierBackend
-	assert.ErrorIs(t, svc.BarrierInitialize(context.Background(), "secret"), errBarrierBackend)
+	assert.ErrorIs(t, svc.BarrierInitialize(context.Background(), []byte("secret")), errBarrierBackend)
 }
 
 func TestBarrierService_BarrierUnseal(t *testing.T) {
 	mc := &mockBarrierClient{}
 	svc := service.NewBarrierService(mc)
-	require.NoError(t, svc.BarrierUnseal(context.Background(), "secret"))
+	require.NoError(t, svc.BarrierUnseal(context.Background(), []byte("secret")))
 
 	mc.unsealErr = errBarrierBackend
-	assert.ErrorIs(t, svc.BarrierUnseal(context.Background(), "secret"), errBarrierBackend)
+	assert.ErrorIs(t, svc.BarrierUnseal(context.Background(), []byte("secret")), errBarrierBackend)
 }
 
 func TestBarrierService_BarrierSeal(t *testing.T) {
@@ -310,7 +310,7 @@ func TestBarrierService_BarrierInitializeShamir_Success(t *testing.T) {
 	}
 	svc := service.NewBarrierService(mc)
 
-	info, err := svc.BarrierInitializeShamir(context.Background(), "secret", 2, 3)
+	info, err := svc.BarrierInitializeShamir(context.Background(), []byte("secret"), 2, 3)
 	require.NoError(t, err)
 	require.NotNil(t, info)
 	assert.Equal(t, 2, info.Threshold)
@@ -322,7 +322,7 @@ func TestBarrierService_BarrierInitializeShamir_Error(t *testing.T) {
 	mc := &mockBarrierClient{initShamirErr: errBarrierBackend}
 	svc := service.NewBarrierService(mc)
 
-	info, err := svc.BarrierInitializeShamir(context.Background(), "secret", 2, 3)
+	info, err := svc.BarrierInitializeShamir(context.Background(), []byte("secret"), 2, 3)
 	require.Error(t, err)
 	assert.Nil(t, info)
 	assert.ErrorIs(t, err, errBarrierBackend)

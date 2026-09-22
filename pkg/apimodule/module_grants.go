@@ -119,9 +119,36 @@ func registerRoleGrants() {
 		}
 		sort.Slice(perms, func(i, j int) bool { return perms[i] < perms[j] })
 
+		// Which of these this module is the FIRST to name has to be
+		// answered BEFORE RegisterPermissions, because that call erases the
+		// distinction.
+		novel := undeclaredPermissions(perms)
+
 		// Register the full derived vocabulary unconditionally: a pure
 		// safety net (idempotent for anything qrdb already carries).
 		qrdbsdk.RegisterPermissions(perms...)
+
+		// A permission this module is the first to name MUST declare its
+		// tenancy reach. go-qrdb#504 removed the implicit default, so one
+		// registered without a scope is refused by the authorizer on every
+		// call rather than admitted as self-scope — the transports would
+		// deny their own routes. Self-scope is the reach these already had
+		// implicitly; a module wanting cross-tenant or tenant-only reach
+		// declares it deliberately.
+		//
+		// Only the novel ones. RegisterPermissionScope OVERWRITES, so
+		// declaring the whole derived set self-scope would silently WIDEN
+		// every permission whose author already decided otherwise —
+		// credentials:* is ScopeCross because the credential store has no
+		// tenant namespacing at all (go-qrdb constants.go), and the
+		// secrets:* / objstore:* broker families are ScopeTenantOnly so a
+		// platform operator cannot reach a tenant's material. Self-scope is
+		// the weakest of the three and the one the system-tenant rule lifts
+		// across every tenant: re-declaring those here would hand the system
+		// tenant exactly the reach their authors withheld.
+		if len(novel) > 0 {
+			qrdbsdk.RegisterPermissionScope(qrdbsdk.PermissionScopeSelf, novel...)
+		}
 
 		var gaps []qrdbsdk.Permission
 		for _, p := range perms {
@@ -136,6 +163,33 @@ func registerRoleGrants() {
 		qrdbsdk.RegisterPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, gaps...)
 		qrdbsdk.RegisterPermissionRoleGrant(qrdbsdk.RoleNameOwner, gaps...)
 	})
+}
+
+// undeclaredPermissions returns the members of perms that no layer has
+// registered yet, in input order — the permissions this module is the first
+// to name and therefore the only ones whose tenancy scope is its to declare.
+//
+// Registration is the right question to ask because in go-qrdb the two are
+// inseparable: every built-in permission is declared in self_scope.go,
+// tenant_scope.go, cross_scope.go or self_strict_scope.go beside its
+// Register call, the gate test TestEveryPermissionDeclaresItsScope refuses a
+// build that adds one without a scope, and the SDK's own permission
+// projection states the invariant outright — "a registered permission always
+// has a declared scope (the build gate enforces it)". So an already-registered
+// permission arrives with its author's decision attached, and this module's
+// job is to leave it alone.
+//
+// It runs once, inside roleGrantOnce, so the per-permission registry lookup
+// costs nothing worth batching.
+func undeclaredPermissions(perms []qrdbsdk.Permission) []qrdbsdk.Permission {
+	var out []qrdbsdk.Permission
+	for _, p := range perms {
+		if qrdbsdk.IsPermissionRegistered(p) {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 // hasAnyBuiltInGrant reports whether p is already placed on at least one of

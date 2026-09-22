@@ -21,8 +21,10 @@ import (
 	stderrors "errors"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -271,10 +273,12 @@ func executeTenantBarrierInit(ctx context.Context, svc service.TenantBarrierServ
 		return nil, &TenantBarrierTenantIDRequiredError{}
 	}
 
+	passphrase := secretBytes(getString(args, "passphrase"))
+	defer secure.Wipe(passphrase)
 	result, err := svc.TenantBarrierInit(
 		ctx,
 		tenantID,
-		getString(args, "passphrase"),
+		passphrase,
 		getInt(args, "threshold"),
 		getInt(args, "shares"),
 		getString(args, "strategy"),

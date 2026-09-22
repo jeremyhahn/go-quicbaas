@@ -83,7 +83,7 @@ func TestBarrierUnseal_PassphraseFromStdin(t *testing.T) {
 
 	require.NoError(t, cmd.Execute())
 	require.NotNil(t, fc.lastUnsealReq)
-	assert.Equal(t, "from-stdin", fc.lastUnsealReq.Secret)
+	assert.Equal(t, "from-stdin", string(fc.lastUnsealReq.Secret))
 }
 
 // TestBarrierUnseal_PassphraseFromStdinTrimsOneNewline proves the `echo`
@@ -102,7 +102,7 @@ func TestBarrierUnseal_PassphraseFromStdinTrimsOneNewline(t *testing.T) {
 
 	require.NoError(t, cmd.Execute())
 	require.NotNil(t, fc.lastUnsealReq)
-	assert.Equal(t, "echoed", fc.lastUnsealReq.Secret)
+	assert.Equal(t, "echoed", string(fc.lastUnsealReq.Secret))
 }
 
 // TestBarrierUnseal_PassphraseFromEnv unseals with the passphrase in
@@ -121,7 +121,7 @@ func TestBarrierUnseal_PassphraseFromEnv(t *testing.T) {
 
 	require.NoError(t, cmd.Execute())
 	require.NotNil(t, fc.lastUnsealReq)
-	assert.Equal(t, "from-env", fc.lastUnsealReq.Secret)
+	assert.Equal(t, "from-env", string(fc.lastUnsealReq.Secret))
 }
 
 // TestBarrierUnseal_PassphrasePrecedence asserts stdin beats the
@@ -172,7 +172,7 @@ func TestBarrierUnseal_PassphrasePrecedence(t *testing.T) {
 
 			require.NoError(t, cmd.Execute())
 			require.NotNil(t, fc.lastUnsealReq)
-			assert.Equal(t, tc.want, fc.lastUnsealReq.Secret)
+			assert.Equal(t, tc.want, string(fc.lastUnsealReq.Secret))
 		})
 	}
 }
@@ -273,7 +273,7 @@ func TestBarrierUnseal_StdinAtLimitIsAccepted(t *testing.T) {
 
 			require.NoError(t, cmd.Execute())
 			require.NotNil(t, fc.lastUnsealReq)
-			assert.Equal(t, atLimit, fc.lastUnsealReq.Secret)
+			assert.Equal(t, atLimit, string(fc.lastUnsealReq.Secret))
 		})
 	}
 }
@@ -390,7 +390,7 @@ func TestBarrierUnseal_StdinAcceptsALineWithoutEOF(t *testing.T) {
 	assert.Less(t, time.Since(start), 5*time.Second,
 		"the line must complete the read; waiting for EOF would take the full budget")
 	require.NotNil(t, fc.lastUnsealReq)
-	assert.Equal(t, "typed-at-a-prompt", fc.lastUnsealReq.Secret)
+	assert.Equal(t, "typed-at-a-prompt", string(fc.lastUnsealReq.Secret))
 }
 
 // TestReadPassphraseLimited_StopsAtTheFirstNewline proves the read does not
@@ -876,18 +876,6 @@ func TestPassphraseForStrategy_KeepsTheBufferItReturns(t *testing.T) {
 	assert.Equal(t, len("real-passphrase"), got.Size())
 }
 
-// TestPassphraseString_EmptyOnNilAndDestroyed keeps the transport-boundary
-// conversion from turning an absent or released passphrase into anything but
-// the empty string.
-func TestPassphraseString_EmptyOnNilAndDestroyed(t *testing.T) {
-	assert.Equal(t, "", passphraseString(nil))
-
-	buf, err := secure.NewBufferFromBytes([]byte("gone"))
-	require.NoError(t, err)
-	buf.Destroy()
-	assert.Equal(t, "", passphraseString(buf))
-}
-
 // =============================================================================
 // Help text
 // =============================================================================
@@ -948,7 +936,7 @@ func TestBarrierInit_PassphraseFromStdin(t *testing.T) {
 
 	require.NoError(t, cmd.Execute())
 	require.NotNil(t, fc.lastInitReq)
-	assert.Equal(t, "init-from-stdin", fc.lastInitReq.Secret)
+	assert.Equal(t, "init-from-stdin", string(fc.lastInitReq.Secret))
 }
 
 // TestBarrierInit_NoneIgnoresAmbientEnv guards the design choice that the
@@ -1009,7 +997,7 @@ func TestBarrierInitShamir_PassphraseFromEnv(t *testing.T) {
 
 	require.NoError(t, cmd.Execute())
 	require.NotNil(t, fc.lastInitShamirReq)
-	assert.Equal(t, "shamir-seed", fc.lastInitShamirReq.Secret)
+	assert.Equal(t, "shamir-seed", string(fc.lastInitShamirReq.Secret))
 }
 
 // TestBarrierEnableEncryption_PassphraseFromStdin migrates with a piped
@@ -1028,7 +1016,7 @@ func TestBarrierEnableEncryption_PassphraseFromStdin(t *testing.T) {
 
 	require.NoError(t, cmd.Execute())
 	require.NotNil(t, fc.lastEnableEncReq)
-	assert.Equal(t, "migrate-pp", fc.lastEnableEncReq.Passphrase)
+	assert.Equal(t, "migrate-pp", string(fc.lastEnableEncReq.Passphrase))
 }
 
 // TestBarrierEnableEncryption_ShamirIgnoresAmbientEnv pins the leak this
@@ -1073,7 +1061,7 @@ func TestBarrierEnableEncryption_ShamirKeepsATypedPassphrase(t *testing.T) {
 
 	require.NoError(t, cmd.Execute())
 	require.NotNil(t, fc.lastEnableEncReq)
-	assert.Equal(t, "typed-here", fc.lastEnableEncReq.Passphrase)
+	assert.Equal(t, "typed-here", string(fc.lastEnableEncReq.Passphrase))
 }
 
 // TestTenantBarrierInit_ShamirIgnoresAmbientEnv is the same guard on the
@@ -1186,5 +1174,5 @@ func TestTenantBarrierInit_PassphraseFromEnv(t *testing.T) {
 
 	require.NoError(t, cmd.Execute())
 	require.NotNil(t, fc.lastInitReq)
-	assert.Equal(t, "tenant-env-pp", fc.lastInitReq.Passphrase)
+	assert.Equal(t, "tenant-env-pp", string(fc.lastInitReq.Passphrase))
 }

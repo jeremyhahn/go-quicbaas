@@ -136,6 +136,17 @@ func (p *qrdbUserServicerProxy) AddCertBinding(ctx context.Context, userID uint6
 	return svc.AddCertBinding(ctx, userID, thumbprint, notAfterUnix)
 }
 
+// RemoveCertBinding delegates to the node user service. It is the counterpart
+// of AddCertBinding and the only way to unenroll a certificate, so the proxy
+// must carry it for a sealed-window caller to be able to revoke one.
+func (p *qrdbUserServicerProxy) RemoveCertBinding(ctx context.Context, userID uint64, thumbprint string) (*qrdbsdk.User, error) {
+	svc, err := p.servicer()
+	if err != nil {
+		return nil, err
+	}
+	return svc.RemoveCertBinding(ctx, userID, thumbprint)
+}
+
 // UpdateUser delegates to the node user service.
 func (p *qrdbUserServicerProxy) UpdateUser(ctx context.Context, req *qrdbsdk.UpdateUserRequest) (*qrdbsdk.User, error) {
 	svc, err := p.servicer()

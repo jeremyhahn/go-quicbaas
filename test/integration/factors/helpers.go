@@ -200,6 +200,14 @@ func (m *memKV) List(_ context.Context, prefix string) ([]string, error) {
 	return keys, nil
 }
 
+// ListAll mirrors List on this double. qrdb documents the internal-key filter
+// as a discovery guard rather than a confidentiality boundary, and this store
+// holds only the auth-factor keys the suite writes, so there is nothing for
+// the guard to have hidden.
+func (m *memKV) ListAll(ctx context.Context, prefix string) ([]string, error) {
+	return m.List(ctx, prefix)
+}
+
 // Scan returns every (key, value) pair matching the prefix.
 func (m *memKV) Scan(_ context.Context, prefix string) (map[string][]byte, error) {
 	m.mu.RLock()

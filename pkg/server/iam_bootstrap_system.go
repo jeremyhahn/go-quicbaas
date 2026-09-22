@@ -18,6 +18,7 @@ import (
 	"log/slog"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // runBootstrapSystem executes qrdb's canonical daemon-init bootstrap. When
@@ -48,9 +49,29 @@ func (s *Server) runBootstrapSystem(ctx context.Context, deps *qrdbsdk.FirstBoot
 		return nil, &FirstBootBootstrapError{Op: "resolve barrier strategy", Cause: err}
 	}
 
+	// BootstrapSystemConfig.Passphrase is a *secure.Buffer as of go-qrdb
+	// v0.19. An unusable buffer must be an ERROR here, never a silent
+	// downgrade: BootstrapSystem would otherwise bring up a StrategyNone
+	// barrier that reports itself unsealed, leaving an operator who asked for
+	// a passphrase barrier with plaintext at rest and nothing said about it.
+	// An absent passphrase stays legitimate — a hardware or KMS strategy
+	// supplies no operator secret — so only non-empty material is wrapped.
+	// NewBufferFromBytes WIPES its source, which moves the plaintext out of
+	// s.bootstrapSealPassphrase here rather than at the deferred zeroing; that
+	// defer stays because it is the only thing covering the paths above, where
+	// no buffer is built at all.
+	var passphrase *secure.Buffer
+	if len(s.bootstrapSealPassphrase) > 0 {
+		passphrase, err = newProtectedPassphrase(s.bootstrapSealPassphrase)
+		if err != nil {
+			return nil, &FirstBootBootstrapError{Op: "protect seal passphrase", Cause: err}
+		}
+		defer passphrase.Destroy()
+	}
+
 	result, err := qrdbsdk.BootstrapSystem(ctx, qrdbsdk.BootstrapSystemConfig{
 		Strategy:           strategy,
-		Passphrase:         string(s.bootstrapSealPassphrase),
+		Passphrase:         passphrase,
 		SeparationOfDuties: deps.SeparationOfDuties,
 		AdminCSRPEM:        deps.AdminCSRPEM,
 	}, qrdbsdk.BootstrapDependencies{
@@ -90,6 +111,14 @@ func (s *Server) bootstrapBarrierRegistry() *qrdbsdk.BarrierRegistry {
 	}
 	return registry
 }
+
+// newProtectedPassphrase moves the operator's seal passphrase into protected
+// memory. It is a package variable rather than a direct call so the failure
+// path can be exercised: the allocation needs locked pages the kernel may
+// refuse, and on a GOEXPERIMENT=boringcrypto build it always fails. That path
+// must return an error rather than bootstrap a passwordless barrier, and a
+// branch with no test is a branch that has never run.
+var newProtectedPassphrase = secure.NewBufferFromBytes
 
 // zeroBootstrapSealPassphrase wipes and releases the retained seal
 // passphrase copy. Idempotent.

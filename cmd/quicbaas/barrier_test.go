@@ -77,7 +77,7 @@ func (f *fakeBarrierClient) BarrierGenerateRootToken(ctx context.Context, req *q
 
 // BarrierEnableEncryption records the request and delegates to the injected func.
 func (f *fakeBarrierClient) BarrierEnableEncryption(ctx context.Context, req *qrdbtransport.BarrierEnableEncryptionRequest) (*qrdbtransport.BarrierEnableEncryptionResponse, error) {
-	f.lastEnableEncReq = req
+	f.lastEnableEncReq = cloneBarrierEnableEncReq(req)
 	if f.enableEncryptionFunc != nil {
 		return f.enableEncryptionFunc(ctx, req)
 	}
@@ -117,7 +117,7 @@ func (f *fakeBarrierClient) BarrierStatus(ctx context.Context) (*qrdbtransport.B
 }
 
 func (f *fakeBarrierClient) BarrierInitialize(ctx context.Context, req *qrdbtransport.BarrierInitializeRequest) error {
-	f.lastInitReq = req
+	f.lastInitReq = cloneBarrierInitReq(req)
 	if f.initFunc != nil {
 		return f.initFunc(ctx, req)
 	}
@@ -125,7 +125,7 @@ func (f *fakeBarrierClient) BarrierInitialize(ctx context.Context, req *qrdbtran
 }
 
 func (f *fakeBarrierClient) BarrierInitializeShamir(ctx context.Context, req *qrdbtransport.BarrierInitializeShamirRequest) (*qrdbtransport.BarrierInitializeShamirResponse, error) {
-	f.lastInitShamirReq = req
+	f.lastInitShamirReq = cloneBarrierInitShamirReq(req)
 	if f.initShamirFunc != nil {
 		return f.initShamirFunc(ctx, req)
 	}
@@ -137,7 +137,7 @@ func (f *fakeBarrierClient) BarrierInitializeShamir(ctx context.Context, req *qr
 }
 
 func (f *fakeBarrierClient) BarrierUnseal(ctx context.Context, req *qrdbtransport.BarrierUnsealRequest) error {
-	f.lastUnsealReq = req
+	f.lastUnsealReq = cloneBarrierUnsealReq(req)
 	if f.unsealFunc != nil {
 		return f.unsealFunc(ctx, req)
 	}
@@ -395,7 +395,7 @@ func TestBarrierInit_Success(t *testing.T) {
 
 	require.NoError(t, cmd.Execute())
 	require.NotNil(t, fc.lastInitReq)
-	assert.Equal(t, "topsecret", fc.lastInitReq.Secret)
+	assert.Equal(t, "topsecret", string(fc.lastInitReq.Secret))
 	assert.Equal(t, "passphrase", fc.lastInitReq.BarrierStrategy)
 	assert.Equal(t, "SO123", fc.lastInitReq.SOPin)
 	assert.Equal(t, "USR123", fc.lastInitReq.UserPin)
@@ -498,7 +498,7 @@ func TestBarrierInitShamir_Success(t *testing.T) {
 
 	require.NoError(t, cmd.Execute())
 	require.NotNil(t, fc.lastInitShamirReq)
-	assert.Equal(t, "x", fc.lastInitShamirReq.Secret)
+	assert.Equal(t, "x", string(fc.lastInitShamirReq.Secret))
 	assert.Equal(t, 2, fc.lastInitShamirReq.Threshold)
 	assert.Equal(t, 3, fc.lastInitShamirReq.TotalShares)
 	assert.Equal(t, "SO", fc.lastInitShamirReq.SOPin)
@@ -537,7 +537,7 @@ func TestBarrierUnseal_Success(t *testing.T) {
 
 	require.NoError(t, cmd.Execute())
 	require.NotNil(t, fc.lastUnsealReq)
-	assert.Equal(t, "pass", fc.lastUnsealReq.Secret)
+	assert.Equal(t, "pass", string(fc.lastUnsealReq.Secret))
 }
 
 // TestBarrierUnseal_DoesNotAcceptShareFlag verifies --share is NOT on
@@ -1156,4 +1156,45 @@ func TestRunBarrierEnableEncryption_ValidatesLocally(t *testing.T) {
 				"an invalid migration must not reach the server")
 		})
 	}
+}
+
+// The credential fields on these requests are a BORROW of the CLI's protected
+// buffer, which is mlocked and guard-paged and is destroyed the moment the
+// command returns. A double that kept the slice header would not read zeros,
+// it would fault reading an unmapped page, so everything asserted on after the
+// call has to be copied out here. go-qrdb#184 calls for exactly this.
+func cloneBarrierInitReq(req *qrdbtransport.BarrierInitializeRequest) *qrdbtransport.BarrierInitializeRequest {
+	if req == nil {
+		return nil
+	}
+	out := *req
+	out.Secret = bytes.Clone(req.Secret)
+	return &out
+}
+
+func cloneBarrierInitShamirReq(req *qrdbtransport.BarrierInitializeShamirRequest) *qrdbtransport.BarrierInitializeShamirRequest {
+	if req == nil {
+		return nil
+	}
+	out := *req
+	out.Secret = bytes.Clone(req.Secret)
+	return &out
+}
+
+func cloneBarrierUnsealReq(req *qrdbtransport.BarrierUnsealRequest) *qrdbtransport.BarrierUnsealRequest {
+	if req == nil {
+		return nil
+	}
+	out := *req
+	out.Secret = bytes.Clone(req.Secret)
+	return &out
+}
+
+func cloneBarrierEnableEncReq(req *qrdbtransport.BarrierEnableEncryptionRequest) *qrdbtransport.BarrierEnableEncryptionRequest {
+	if req == nil {
+		return nil
+	}
+	out := *req
+	out.Passphrase = bytes.Clone(req.Passphrase)
+	return &out
 }

@@ -7,6 +7,107 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Adopt go-xkms v0.14.0-alpha and the go-qrdb v0.19.0-alpha it carries**
+  (#960, closing #822, #830 and #831). go-xkms v0.14.0-alpha requires go-qrdb
+  v0.19.0-alpha, so minimal version selection moves qrdb, go-enclave
+  (v0.5.0-alpha) and go-quicraft (v0.11.0-alpha) forward with it. The pieces
+  below are consequences of that one bump and could not land separately: the
+  tree does not compile with any subset of them applied.
+
+  **Barrier credentials are wipeable bytes through this repository too**
+  (#822, go-qrdb#184). `BarrierServicer.{BarrierInitialize,BarrierUnseal,
+  BarrierInitializeShamir}` and `TenantBarrierServicer.TenantBarrierInit` take
+  `[]byte` instead of `string`, matching the qrdb request fields underneath
+  them. **This is a breaking change for anything that implements or wraps
+  either interface**, including test doubles. The caller owns the slice and
+  may wipe it the moment the call returns; nothing below the seam retains it.
+
+  `passphraseString` in `cmd/quicbaas` is **deleted** rather than documented as
+  residue — the CLI now hands the protected buffer's bytes straight to the
+  request instead of converting to a Go string first. That is a statement
+  about what the REQUEST HOLDS, not about what a transport writes on the
+  wire: MCP still renders the credential as plaintext at its documented
+  exception boundary, and this daemon's own gRPC/REST/MCP credential fields
+  are still strings (#962). The end-to-end "never a plain string anywhere"
+  guarantee holds for the CLI against an embedded or in-process node;
+  `docs/barrier/cli.md` states the qualification in full.
+
+  **A double that retains the slice does not read zeros — it faults.** The
+  CLI's buffer is mlocked and guard-paged and is destroyed when the command
+  returns, so a kept slice header points at an unmapped page;
+  `TestBarrierInit_Success` segfaulted inside `fmt` while formatting its
+  assertion. Doubles `bytes.Clone` what they assert on, and a credential that
+  reached protected memory can only be compared from inside the callback that
+  received it. This is stricter than go-qrdb#184's "reads back as zeros",
+  which describes its own in-process doubles.
+
+  **Where the residue really is.** Each of this repository's own transports
+  still declares its credential field as a string — `string secret` in
+  `api/proto/barrier.proto`, the JSON request DTOs on REST, and the MCP tool
+  argument. The plaintext therefore exists as an unwipeable Go string before
+  the handler sees it. The handlers convert at the edge and wipe what they
+  made, which narrows the window rather than closing it. MCP is go-qrdb's
+  documented exception and cannot be closed at all; the gRPC and REST ones are
+  a wire change this release does not take, tracked as #962.
+
+  **An unusable barrier passphrase is now an error** (#830, go-qrdb#429).
+  `BootstrapSystemConfig.Passphrase` is a `*secure.Buffer`, and
+  `runBootstrapSystem` fails loudly when the operator's passphrase cannot be
+  moved into protected memory. It must not fall through: `BootstrapSystem`
+  would otherwise bring up a `StrategyNone` barrier that reports itself
+  unsealed, leaving an operator who asked for a passphrase barrier with
+  plaintext at rest and nothing said about it. An absent passphrase stays
+  legitimate, since a hardware or KMS strategy supplies no operator secret.
+
+  **Three interface additions carried through the proxies.**
+  `user.UserServicer.RemoveCertBinding` is the only way to unenroll a
+  certificate, so `qrdbUserServicerProxy` forwards it;
+  `service.KVServicer.ListAll` is qrdb's named bypass of the internal-key
+  discovery guard, gated by `sealedKVServicerProxy` exactly as `List` is; and
+  `apimodule.ServiceModule.RegisterQUIC` joins the module registration hooks.
+  `DatabaseServicer.Drop` takes a context (#831).
+
+  **Every contributed permission now declares its tenancy scope — and only
+  its own** (go-qrdb#504). qrdb removed the `ScopeSelf` default for an
+  unregistered permission: resolution now FAILS outright rather than silently
+  applying the weakest check in the vocabulary. That reaches production code,
+  not just tests — this repository's own vocabulary (`attestation:verify`,
+  `sdlc:bind`, `agent_accounts:materialize` and the rest) and every permission
+  derived by `pkg/apimodule` would have been refused by the authorizer despite
+  valid role grants.
+
+  `permission.Register` declares `PermissionScopeSelf` for each of this
+  repository's own contributions, which is the reach they already had
+  implicitly; the field is typed with a local `scope` whose zero value is
+  `scopeUnstated`, so an omission is detectable — a field typed
+  `qrdbsdk.PermissionScope` could not tell self-scope-by-decision from
+  self-scope-by-omission, since that is qrdb's zero value.
+
+  `pkg/apimodule` declares a scope **only for a permission this module is the
+  first to name**. Most of its derived vocabulary is qrdb's own, and
+  `RegisterPermissionScope` overwrites: declaring the whole derived set
+  self-scope would have downgraded `credentials:*` from `ScopeCross` and the
+  `secrets:*` / `objstore:*` / `tenant_barrier:*` families from
+  `ScopeTenantOnly`, handing a system-tenant identity — via the system-tenant
+  rule that lifts self-scope across every tenant — exactly the cross-tenant
+  reach those declarations withhold, including per-tenant barrier key custody.
+  A regression test asserts each of those families keeps its upstream scope
+  after module registration, and another asserts no derived permission is left
+  undeclared. `pkg/iam`'s PEP test declares one for its own synthetic
+  `widgets:*` pair.
+
+  **MCP barrier credentials cross as plaintext, explicitly.** An MCP tool
+  argument is JSON and Go renders a `[]byte` as **base64**, so passing the
+  newly byte-typed `Secret` straight into the argument map sent `"cHc="` where
+  the daemon expects `"pw"` — an existing barrier could not be unsealed with
+  its real passphrase over that transport. `sdk/go/transport/mcp` gains a
+  single `secretArg` conversion mirroring go-qrdb's own, and the test asserts
+  what the SERVER received rather than that the call returned nil. This is
+  MCP's documented exception to the wipeable-credential contract, not a
+  regression of it.
+
 ## [0.10.0-alpha] - 2026-09-21
 
 MINOR: consumers must build with Go 1.27.0 — both modules, the images and CI

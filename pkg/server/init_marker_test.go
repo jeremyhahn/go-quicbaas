@@ -282,7 +282,7 @@ func TestBuildDataPlaneBarrierService_MarkerNoneRoundTrip(t *testing.T) {
 	ctx := t.Context()
 
 	// Empty-secret initialize succeeds ONLY for the none passthrough strategy.
-	require.NoError(t, svc.BarrierInitialize(ctx, ""),
+	require.NoError(t, svc.BarrierInitialize(ctx, nil),
 		"none strategy must accept an empty secret; software would reject it")
 
 	info, statusErr := svc.BarrierStatus(ctx)
@@ -310,7 +310,7 @@ func TestBuildDataPlaneBarrierService_ExplicitOverrideBeatsMarker(t *testing.T) 
 	ctx := t.Context()
 
 	// Passphrase strategy rejects an empty secret — proves it, not none, is wired.
-	require.Error(t, svc.BarrierInitialize(ctx, ""),
+	require.Error(t, svc.BarrierInitialize(ctx, nil),
 		"passphrase strategy must reject an empty secret")
 }
 

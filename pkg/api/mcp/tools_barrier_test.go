@@ -76,6 +76,7 @@ type fakeBarrierService struct {
 	gotRecGenTotal       int
 	gotRecKeys           []string
 	gotRootShares        []string
+	gotEnableEncSecret   []byte
 	gotEnableEncTenantID string
 	gotEnableEncOpts     qrdbsdk.MigrationOptions
 }
@@ -84,13 +85,13 @@ func (f *fakeBarrierService) BarrierStatus(_ context.Context) (*service.BarrierS
 	return f.status, f.statusErr
 }
 
-func (f *fakeBarrierService) BarrierInitialize(_ context.Context, secret string) error {
-	f.gotInitSecret = secret
+func (f *fakeBarrierService) BarrierInitialize(_ context.Context, secret []byte) error {
+	f.gotInitSecret = string(secret)
 	return f.initErr
 }
 
-func (f *fakeBarrierService) BarrierUnseal(_ context.Context, secret string) error {
-	f.gotUnsealSecret = secret
+func (f *fakeBarrierService) BarrierUnseal(_ context.Context, secret []byte) error {
+	f.gotUnsealSecret = string(secret)
 	return f.unsealErr
 }
 
@@ -98,8 +99,8 @@ func (f *fakeBarrierService) BarrierSeal(_ context.Context) error {
 	return f.sealErr
 }
 
-func (f *fakeBarrierService) BarrierInitializeShamir(_ context.Context, secret string, threshold, total int) (*service.ShamirInitInfo, error) {
-	f.gotShamirSecret = secret
+func (f *fakeBarrierService) BarrierInitializeShamir(_ context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error) {
+	f.gotShamirSecret = string(secret)
 	f.gotShamirThr = threshold
 	f.gotShamirTotal = total
 	return f.shamirInit, f.shamirInitErr
@@ -148,6 +149,17 @@ func (f *fakeBarrierService) BarrierGenerateRootToken(_ context.Context, shares 
 func (f *fakeBarrierService) EnableEncryption(_ context.Context, tenantID string, opts qrdbsdk.MigrationOptions) error {
 	f.gotEnableEncTenantID = tenantID
 	f.gotEnableEncOpts = opts
+	// The credential is protected memory the tool destroys once this call
+	// returns, so the plaintext has to be read out from in here.
+	f.gotEnableEncSecret = nil
+	if opts.Credentials.Secret != nil {
+		if plain, err := opts.Credentials.Secret.Open(); err == nil {
+			defer plain.Destroy()
+			if b, openErr := plain.Open(); openErr == nil {
+				f.gotEnableEncSecret = append([]byte(nil), b...)
+			}
+		}
+	}
 	return f.enableEncryptionErr
 }
 
@@ -383,7 +395,7 @@ func TestBarrierToolsExecuteSuccess(t *testing.T) {
 		assert.Equal(t, qrdbsdk.StrategyID("passphrase"), fake.gotEnableEncOpts.TargetStrategy)
 		assert.Equal(t, qrdbsdk.MechanismSwap, fake.gotEnableEncOpts.Mechanism)
 		assert.Equal(t, qrdbsdk.AvailabilityOnline, fake.gotEnableEncOpts.Availability)
-		assert.Equal(t, []byte("hunter2"), fake.gotEnableEncOpts.Credentials.Secret)
+		assert.Equal(t, []byte("hunter2"), fake.gotEnableEncSecret)
 	})
 
 	t.Run("enable_encryption_tenant", func(t *testing.T) {

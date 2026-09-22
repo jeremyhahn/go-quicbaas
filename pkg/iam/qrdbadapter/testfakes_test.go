@@ -295,6 +295,21 @@ func (f *fakeUserServicer) UserByCertThumbprint(_ context.Context, thumbprint st
 	return nil, &qrdbsdk.UserNotFoundError{Lookup: "cert_spki/" + thumbprint}
 }
 
+func (f *fakeUserServicer) RemoveCertBinding(_ context.Context, userID uint64, thumbprint string) (*qrdbsdk.User, error) {
+	u, ok := f.users[userID]
+	if !ok {
+		return nil, &qrdbsdk.UserNotFoundError{ID: userID}
+	}
+	kept := u.CertBindings[:0]
+	for _, b := range u.CertBindings {
+		if b.Thumbprint != thumbprint {
+			kept = append(kept, b)
+		}
+	}
+	u.CertBindings = kept
+	return cloneUser(u), nil
+}
+
 func (f *fakeUserServicer) AddCertBinding(_ context.Context, userID uint64, thumbprint string, _ int64) (*qrdbsdk.User, error) {
 	u, ok := f.users[userID]
 	if !ok {

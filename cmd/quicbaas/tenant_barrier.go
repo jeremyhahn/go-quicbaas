@@ -278,7 +278,7 @@ func runTenantBarrierInitCommand(cmd *cobra.Command, _ []string) error {
 	resp, err := client.TenantBarrierInit(ctx, &qrdbtransport.TenantBarrierInitRequest{
 		TenantID:   tenantBarrierTenantID,
 		Strategy:   tenantBarrierStrategy,
-		Passphrase: passphraseString(secret),
+		Passphrase: secret.Bytes(),
 		Threshold:  tenantBarrierThreshold,
 		Shares:     tenantBarrierShares,
 	})

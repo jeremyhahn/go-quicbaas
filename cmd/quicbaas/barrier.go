@@ -421,7 +421,7 @@ func runBarrierInitCommand(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	if err := client.BarrierInitialize(ctx, &qrdbtransport.BarrierInitializeRequest{
-		Secret:          passphraseString(secret),
+		Secret:          secret.Bytes(),
 		BarrierStrategy: barrierStrategy,
 		SOPin:           barrierSOPin,
 		UserPin:         barrierUserPin,
@@ -507,7 +507,7 @@ func runBarrierInitShamirCommand(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	resp, err := client.BarrierInitializeShamir(ctx, &qrdbtransport.BarrierInitializeShamirRequest{
-		Secret:      passphraseString(secret),
+		Secret:      secret.Bytes(),
 		Threshold:   barrierThreshold,
 		TotalShares: barrierTotalShares,
 		SOPin:       barrierSOPin,
@@ -576,7 +576,7 @@ func runBarrierUnsealCommand(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	return formatError(client.BarrierUnseal(ctx, &qrdbtransport.BarrierUnsealRequest{
-		Secret: passphraseString(secret),
+		Secret: secret.Bytes(),
 	}))
 }
 
@@ -1295,7 +1295,7 @@ func runBarrierEnableEncryptionCommand(cmd *cobra.Command, _ []string) error {
 		Strategy:        barrierStrategy,
 		Mechanism:       barrierMechanism,
 		Availability:    barrierAvailability,
-		Passphrase:      passphraseString(secret),
+		Passphrase:      secret.Bytes(),
 		ShamirThreshold: barrierThreshold,
 		ShamirTotal:     barrierTotalShares,
 	})

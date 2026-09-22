@@ -217,12 +217,12 @@ func TestTenantBarrierService_Init_DelegatesAndReturnsShares(t *testing.T) {
 	}
 	svc := NewTenantBarrierService(mock)
 
-	resp, err := svc.TenantBarrierInit(tenantCtx("acme"), "acme", "pw", 2, 3, "shamir")
+	resp, err := svc.TenantBarrierInit(tenantCtx("acme"), "acme", []byte("pw"), 2, 3, "shamir")
 	if err != nil {
 		t.Fatalf("TenantBarrierInit: %v", err)
 	}
 	// Request was built correctly from the clean args.
-	if mock.initReq == nil || mock.initReq.TenantID != "acme" || mock.initReq.Passphrase != "pw" ||
+	if mock.initReq == nil || mock.initReq.TenantID != "acme" || string(mock.initReq.Passphrase) != "pw" ||
 		mock.initReq.Threshold != 2 || mock.initReq.Shares != 3 || mock.initReq.Strategy != "shamir" {
 		t.Fatalf("unexpected init request: %+v", mock.initReq)
 	}
@@ -235,7 +235,7 @@ func TestTenantBarrierService_Init_DelegatesAndReturnsShares(t *testing.T) {
 func TestTenantBarrierService_Init_PropagatesError(t *testing.T) {
 	sentinel := errors.New("boom")
 	svc := NewTenantBarrierService(&mockTenantClient{initErr: sentinel})
-	if _, err := svc.TenantBarrierInit(tenantCtx("acme"), "acme", "", 0, 0, "none"); !errors.Is(err, sentinel) {
+	if _, err := svc.TenantBarrierInit(tenantCtx("acme"), "acme", nil, 0, 0, "none"); !errors.Is(err, sentinel) {
 		t.Fatalf("expected sentinel error, got %v", err)
 	}
 }
@@ -315,7 +315,7 @@ func TestTenantBarrierService_CrossTenantDenied(t *testing.T) {
 	// Caller is "acme" but target is "beta" — every operation must be forbidden.
 	ctx := tenantCtx("acme")
 
-	if _, err := svc.TenantBarrierInit(ctx, "beta", "", 1, 1, "none"); !isForbidden(err) {
+	if _, err := svc.TenantBarrierInit(ctx, "beta", nil, 1, 1, "none"); !isForbidden(err) {
 		t.Errorf("Init: expected ErrForbidden for cross-tenant, got %v", err)
 	}
 	if err := svc.TenantBarrierUnseal(ctx, "beta", []byte("k")); !isForbidden(err) {
@@ -358,7 +358,7 @@ func TestTenantBarrierService_SystemTenantWritesDenied(t *testing.T) {
 			svc := NewTenantBarrierService(mock)
 			ctx := systemCtx(tenantID)
 
-			if _, err := svc.TenantBarrierInit(ctx, "acme", "", 1, 1, "none"); !isForbidden(err) {
+			if _, err := svc.TenantBarrierInit(ctx, "acme", nil, 1, 1, "none"); !isForbidden(err) {
 				t.Errorf("Init: expected ErrForbidden for system-tenant caller, got %v", err)
 			}
 			if err := svc.TenantBarrierUnseal(ctx, "acme", []byte("k")); !isForbidden(err) {
@@ -424,7 +424,7 @@ func TestTenantBarrierService_UnauthenticatedDenied(t *testing.T) {
 	svc := NewTenantBarrierService(&mockTenantClient{})
 	ctx := context.Background() // no subject injected
 
-	if _, err := svc.TenantBarrierInit(ctx, "acme", "", 1, 1, "none"); !isForbidden(err) {
+	if _, err := svc.TenantBarrierInit(ctx, "acme", nil, 1, 1, "none"); !isForbidden(err) {
 		t.Errorf("Init: expected ErrForbidden for unauthenticated context, got %v", err)
 	}
 	if err := svc.TenantBarrierUnseal(ctx, "acme", []byte("k")); !isForbidden(err) {
@@ -450,7 +450,7 @@ func TestTenantBarrierService_UnauthenticatedDenied(t *testing.T) {
 func TestTenantBarrierService_Init_ShamirValidation_ThresholdZero(t *testing.T) {
 	mock := &mockTenantClient{}
 	svc := NewTenantBarrierService(mock)
-	_, err := svc.TenantBarrierInit(tenantCtx("acme"), "acme", "", 0, 3, "shamir")
+	_, err := svc.TenantBarrierInit(tenantCtx("acme"), "acme", nil, 0, 3, "shamir")
 	if !isInvalidInput(err) {
 		t.Fatalf("expected ErrInvalidInput for threshold=0, got %v", err)
 	}
@@ -464,7 +464,7 @@ func TestTenantBarrierService_Init_ShamirValidation_ThresholdZero(t *testing.T) 
 func TestTenantBarrierService_Init_ShamirValidation_SharesZero(t *testing.T) {
 	mock := &mockTenantClient{}
 	svc := NewTenantBarrierService(mock)
-	_, err := svc.TenantBarrierInit(tenantCtx("acme"), "acme", "", 2, 0, "shamir")
+	_, err := svc.TenantBarrierInit(tenantCtx("acme"), "acme", nil, 2, 0, "shamir")
 	if !isInvalidInput(err) {
 		t.Fatalf("expected ErrInvalidInput for shares=0, got %v", err)
 	}
@@ -478,7 +478,7 @@ func TestTenantBarrierService_Init_ShamirValidation_SharesZero(t *testing.T) {
 func TestTenantBarrierService_Init_ShamirValidation_ThresholdExceedsShares(t *testing.T) {
 	mock := &mockTenantClient{}
 	svc := NewTenantBarrierService(mock)
-	_, err := svc.TenantBarrierInit(tenantCtx("acme"), "acme", "", 5, 3, "shamir")
+	_, err := svc.TenantBarrierInit(tenantCtx("acme"), "acme", nil, 5, 3, "shamir")
 	if !isInvalidInput(err) {
 		t.Fatalf("expected ErrInvalidInput for threshold(5) > shares(3), got %v", err)
 	}
@@ -492,7 +492,7 @@ func TestTenantBarrierService_Init_ShamirValidation_ThresholdExceedsShares(t *te
 func TestTenantBarrierService_Init_ShamirValidation_EqualThresholdAndShares(t *testing.T) {
 	mock := &mockTenantClient{initResp: &qrdbtransport.TenantBarrierInitResponse{TenantID: "acme", Strategy: "shamir"}}
 	svc := NewTenantBarrierService(mock)
-	if _, err := svc.TenantBarrierInit(tenantCtx("acme"), "acme", "", 3, 3, "shamir"); err != nil {
+	if _, err := svc.TenantBarrierInit(tenantCtx("acme"), "acme", nil, 3, 3, "shamir"); err != nil {
 		t.Fatalf("threshold==shares should be valid: %v", err)
 	}
 }
@@ -506,7 +506,7 @@ func TestTenantBarrierService_Init_ShamirValidation_NotAppliedToOtherStrategies(
 			mock := &mockTenantClient{initResp: &qrdbtransport.TenantBarrierInitResponse{TenantID: "acme", Strategy: strategy}}
 			svc := NewTenantBarrierService(mock)
 			// threshold=0, shares=0 — valid for non-shamir strategies.
-			if _, err := svc.TenantBarrierInit(tenantCtx("acme"), "acme", "pw", 0, 0, strategy); err != nil {
+			if _, err := svc.TenantBarrierInit(tenantCtx("acme"), "acme", []byte("pw"), 0, 0, strategy); err != nil {
 				t.Fatalf("strategy=%s: unexpected error for zero threshold/shares: %v", strategy, err)
 			}
 		})

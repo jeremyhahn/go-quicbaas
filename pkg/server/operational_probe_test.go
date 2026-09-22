@@ -242,7 +242,7 @@ func TestServerOperationalProbe(t *testing.T) {
 		probe := s.OperationalProbe()
 		require.False(t, probe.IsOperational(), "precondition: uninitialized")
 
-		require.NoError(t, services.Barrier.BarrierInitialize(context.Background(), "unit-test-secret"))
+		require.NoError(t, services.Barrier.BarrierInitialize(context.Background(), []byte("unit-test-secret")))
 
 		assert.True(t, probe.IsOperational(),
 			"an initialized barrier must report operational even though the "+

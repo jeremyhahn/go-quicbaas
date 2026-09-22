@@ -34,7 +34,7 @@ type mockDBServicer struct {
 	createFn           func(cfg qrdbsdk.DatabaseConfig) (*qrdbsdk.DatabaseInfo, error)
 	getFn              func(name string) (*qrdbsdk.DatabaseInfo, error)
 	listFn             func() ([]qrdbsdk.DatabaseInfo, error)
-	dropFn             func(name string) error
+	dropFn             func(ctx context.Context, name string) error
 	updateProtocolFn   func(name string, p qrdbsdk.ProtocolConfig) (*qrdbsdk.DatabaseInfo, error)
 	updateEtcdFn       func(name string, e *qrdbsdk.EtcdConfig) (*qrdbsdk.DatabaseInfo, error)
 	updateRaftFn       func(name string, r *qrdbsdk.DatabaseRaftConfig) (*qrdbsdk.DatabaseInfo, error)
@@ -76,9 +76,9 @@ func (m *mockDBServicer) List() ([]qrdbsdk.DatabaseInfo, error) {
 	return nil, nil
 }
 
-func (m *mockDBServicer) Drop(name string) error {
+func (m *mockDBServicer) Drop(ctx context.Context, name string) error {
 	if m.dropFn != nil {
-		return m.dropFn(name)
+		return m.dropFn(ctx, name)
 	}
 	return nil
 }
