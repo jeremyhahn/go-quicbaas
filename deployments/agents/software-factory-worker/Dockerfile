@@ -139,6 +139,7 @@ RUN apk add --no-cache \
     make \
     build-base \
     bash \
+    rsync \
     curl \
     ca-certificates \
     tzdata \

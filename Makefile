@@ -3079,7 +3079,7 @@ test-worker-image: build-worker-image ## Build the worker image and check it car
 	@echo "$(BLUE)Checking the worker image as the uid the spawn runs it with...$(NC)"
 	@$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp \
 		$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
-		sh -lec 'git --version; ssh -V; go version; make --version | head -1; \
+		sh -lec 'git --version; ssh -V; go version; make --version | head -1; rsync --version | head -1; \
 			claude --version; codex --version; \
 			ssh-keygen -t ed25519 -N "" -f /tmp/signing-key -q; \
 			git init -q /tmp/probe; cd /tmp/probe; \
