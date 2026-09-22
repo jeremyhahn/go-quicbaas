@@ -22,7 +22,7 @@ import { render, screen, fireEvent } from '@testing-library/svelte';
 // Mocks — all vi.hoisted factories must be self-contained.
 // ---------------------------------------------------------------------------
 
-const { storeMock, routerStoreMock, mockRouteJobDetail, mockRouteTasks, mockLoadTasks, mockLoadTaskJobs, mockRefresh, mockListProjects } = vi.hoisted(() => ({
+const { storeMock, routerStoreMock, mockRouteJobDetail, mockRouteTasks, mockNavigateTo, mockLoadTasks, mockLoadTaskJobs, mockRefresh, mockListProjects } = vi.hoisted(() => ({
   storeMock: {
     tasks: [] as unknown[],
     jobs: [] as unknown[],
@@ -40,6 +40,7 @@ const { storeMock, routerStoreMock, mockRouteJobDetail, mockRouteTasks, mockLoad
   },
   mockRouteJobDetail: vi.fn(),
   mockRouteTasks: vi.fn(),
+  mockNavigateTo: vi.fn(),
   mockLoadTasks: vi.fn(),
   mockLoadTaskJobs: vi.fn(),
   mockRefresh: vi.fn(),
@@ -57,6 +58,10 @@ vi.mock('../src/stores/router.svelte.ts', () => ({
   routerStore: routerStoreMock,
   routeJobDetail: mockRouteJobDetail,
   routeTasks: mockRouteTasks,
+  navigateTo: mockNavigateTo,
+  // Back goes to the task list AS THE OPERATOR LEFT IT — narrowed, sorted and
+  // on their page — not to a bare #/tasks that throws the filters away.
+  listReturnHash: (path: string) => `#${path}?tasks_status=blocked`,
 }));
 
 vi.mock('../src/stores/sdkClient.ts', () => ({
@@ -65,7 +70,10 @@ vi.mock('../src/stores/sdkClient.ts', () => ({
   }),
 }));
 
-vi.mock('lucide-svelte', () => ({
+// Partial, so a shared component reaching for an icon nobody listed here does
+// not fail a test about the task detail (see TasksView.test.ts).
+vi.mock('lucide-svelte', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   ChevronLeft: vi.fn(),
   ClipboardList: vi.fn(),
   RefreshCw: vi.fn(),
@@ -145,7 +153,7 @@ describe('TaskDetailView — header and budget', () => {
     const issue = screen.getByTitle('Open issue #42 on the forge');
     expect(issue).toHaveAttribute('href', 'https://forge.example/owner/repo/issues/42');
     const project = await screen.findByText(/Project: go-truststrap/);
-    expect(project).toHaveAttribute('href', '#/tasks?project=proj-1');
+    expect(project).toHaveAttribute('href', '#/tasks?tasks_project=proj-1');
   });
 
   it('renders the budget with the dispatched count and refunds', () => {
@@ -503,7 +511,7 @@ describe('TaskDetailView — not found and errors', () => {
   it('Back returns to the task list; Reload refetches the task and its attempts', async () => {
     render(TaskDetailView);
     await fireEvent.click(screen.getByText('Back to Tasks'));
-    expect(mockRouteTasks).toHaveBeenCalled();
+    expect(mockNavigateTo).toHaveBeenCalledWith('#/tasks?tasks_status=blocked');
     await fireEvent.click(screen.getByRole('button', { name: 'Reload task' }));
     expect(mockRefresh).toHaveBeenCalledWith('tasks');
     expect(mockLoadTaskJobs).toHaveBeenCalledWith('task-1');

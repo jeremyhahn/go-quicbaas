@@ -17,6 +17,10 @@
   import type { AgentRegistration } from '@quicbaas/sdk';
   import { UserPlus, Cloud, Server } from 'lucide-svelte';
   import PageHeader from '../core/PageHeader.svelte';
+  import FilterBar from '../core/FilterBar.svelte';
+  import { computeFacets, filterByFacets } from '../../lib/filters.ts';
+  import { FilterState } from '../../lib/filterState.svelte.ts';
+  import { agentFilters } from '../../lib/listFilters.ts';
   import type { RemoveAgentRequest } from '@quicbaas/sdk';
 
   let {
@@ -62,6 +66,52 @@
   // Unique backends across all agents.
   const uniqueBackends = $derived(
     (a: AgentRegistration): string => a.backend,
+  );
+
+  // ---------------------------------------------------------------------------
+  // Finding one agent in a fleet
+  //
+  // The fleet is a card GRID and not a table, which is the right shape for
+  // what a card shows and the wrong shape for "which three are offline". The
+  // search and the facets are therefore the same controls every list in this
+  // app has — FilterBar, the same URL grammar (`#/fleet?fleet_status=offline`)
+  // — over the collection the store holds rather than over a server page: the
+  // fleet listing is read whole, so the counts are exact and nothing is
+  // hiding on a page two that does not exist.
+  // ---------------------------------------------------------------------------
+
+  /** The facet fields, and how each reads its value off an agent. */
+  const FLEET_FILTERS = agentFilters<AgentRegistration>(
+    (agent) => agent.status,
+    (agent) => agent.backend,
+    [],
+  );
+
+  const fleetFilters = new FilterState('fleet', FLEET_FILTERS);
+
+  let fleetSearch = $state('');
+
+  /** searchedAgents is the fleet after the search and BEFORE the facets —
+   *  which is the set the counts are taken over. */
+  const searchedAgents = $derived.by(() => {
+    const needle = fleetSearch.trim().toLowerCase();
+    const all = agentStore.agents;
+    if (needle === '') return all;
+    return all.filter((agent) =>
+      [agent.name, agent.host, agent.backend, agent.model, agent.status]
+        .some((field) => (field ?? '').toLowerCase().includes(needle)),
+    );
+  });
+
+  const fleetFacets = $derived(computeFacets(searchedAgents, FLEET_FILTERS));
+
+  const visibleAgents = $derived(
+    filterByFacets(searchedAgents, FLEET_FILTERS, fleetFilters.values),
+  );
+
+  /** narrowed says the emptiness is a control's doing, not the tenant's. */
+  const fleetNarrowed = $derived(
+    fleetSearch.trim() !== '' || Object.keys(fleetFilters.values).length > 0,
   );
 
   // Whether the Wails desktop transport is active — the Deploy
@@ -260,6 +310,29 @@
     </button>
   </PageHeader>
 
+  <!-- Search and facets — the same controls the tables in this app carry. -->
+  {#if agentStore.agents.length > 0}
+    <div class="space-y-2">
+      <input
+        type="search"
+        class="input input-bordered input-sm w-full max-w-xs"
+        placeholder="Search agents..."
+        aria-label="Search agents"
+        data-testid="fleet-search"
+        bind:value={fleetSearch}
+      />
+      <FilterBar
+        fields={FLEET_FILTERS}
+        values={fleetFilters.values}
+        facets={fleetFacets}
+        onchange={(next) => fleetFilters.apply(next)}
+      />
+      <div class="text-xs text-base-content/50" data-testid="fleet-count">
+        {visibleAgents.length} of {agentStore.agents.length} agents
+      </div>
+    </div>
+  {/if}
+
   <!-- Grid -->
   {#if agentStore.agentsLoading && agentStore.agents.length === 0}
     <div class="flex items-center justify-center flex-1">
@@ -269,9 +342,21 @@
     <div class="flex items-center justify-center flex-1 text-base-content/30 text-sm">
       No agents registered.
     </div>
+  {:else if visibleAgents.length === 0}
+    <!--
+      A FLEET NARROWED TO NOTHING IS NOT AN EMPTY FLEET. "No agents
+      registered" over a tenant with forty of them, because the operator
+      asked for the offline ones and there are none, is a falsehood.
+    -->
+    <div
+      class="flex items-center justify-center flex-1 text-base-content/30 text-sm"
+      data-testid="fleet-no-match"
+    >
+      {fleetNarrowed ? 'No agents match the current filter.' : 'No agents registered.'}
+    </div>
   {:else}
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 overflow-y-auto">
-      {#each agentStore.agents as agent (agent.id)}
+      {#each visibleAgents as agent (agent.id)}
         <div
           class="card bg-base-200 border {cardBorder(agent.status)} hover:shadow-md transition-shadow cursor-pointer"
           onclick={() => openDetail(agent)}

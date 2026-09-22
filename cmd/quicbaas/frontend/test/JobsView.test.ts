@@ -78,6 +78,22 @@ vi.mock('../src/stores/sdkClient.ts', () => ({
     orchestrator: {
       listJobsPage: (...args: unknown[]) => listJobsPage(...(args as [])),
       cancelJob: (...args: unknown[]) => cancelJob(...args),
+      // The project and agent pickers name their options from these.
+      listAgentsPage: async () => ({
+        items: [{ id: 'agent-1', name: 'burnin-01' }],
+        total: 1,
+        limit: 25,
+        offset: 0,
+      }),
+      listBackends: async () => [{ name: 'claude' }],
+    },
+    projects: {
+      listProjectsPage: async () => ({
+        items: [{ id: 'proj-1', name: 'go-truststrap' }],
+        total: 1,
+        limit: 25,
+        offset: 0,
+      }),
     },
   })),
 }));
@@ -225,25 +241,58 @@ describe('JobsView — the page it asks for', () => {
     expect(lastRequest()['offset']).toBe(0);
   });
 
-  it('turns the state filter into the states the SERVER narrows on', async () => {
+  it('turns the state chips into the states the SERVER narrows on', async () => {
     render(JobsView);
     await rendered('An operator-started job');
 
-    const select = screen.getByLabelText('Filter by state') as HTMLSelectElement;
-    select.value = 'active';
-    await fireEvent.change(select);
+    // Multi-select: two chips are ONE question — "executing or reviewing" —
+    // which is what `statuses` takes and what an operator watching a fleet
+    // actually asks.
+    await fireEvent.click(screen.getByTestId('filter-chip-state-executing'));
+    await waitFor(() => { expect(lastRequest()['statuses']).toEqual(['executing']); });
+
+    await fireEvent.click(screen.getByTestId('filter-chip-state-reviewing'));
     await waitFor(() => {
       expect(lastRequest()['statuses']).toEqual(['executing', 'reviewing']);
     });
 
-    select.value = 'failed';
-    await fireEvent.change(select);
-    await waitFor(() => { expect(lastRequest()['statuses']).toEqual(['failed']); });
+    // Clicking a lit chip switches it off with the control that switched it on.
+    await fireEvent.click(screen.getByTestId('filter-chip-state-executing'));
+    await waitFor(() => { expect(lastRequest()['statuses']).toEqual(['reviewing']); });
 
-    select.value = 'all';
-    await fireEvent.change(select);
-    // "All" asks for no narrowing at all rather than for every state by name.
+    // Clearing asks for no narrowing at all rather than for every state by name.
+    await fireEvent.click(screen.getByTestId('filter-clear-all'));
     await waitFor(() => { expect(lastRequest()['statuses']).toBeUndefined(); });
+  });
+
+  it('carries the runner, project and agent pickers to the server', async () => {
+    render(JobsView);
+    await rendered('An operator-started job');
+
+    // Three runners is a vocabulary you can read at a glance, so it is chips.
+    await fireEvent.click(screen.getByTestId('filter-chip-runner-review'));
+    await waitFor(() => { expect(lastRequest()['runner']).toBe('review'); });
+
+    // A project is not an enumeration — a chip per project would be a
+    // thousand chips — so it is a picker, labelled by name.
+    const project = await screen.findByTestId('filter-select-project');
+    await fireEvent.change(project, { target: { value: 'proj-1' } });
+    await waitFor(() => { expect(lastRequest()['project_id']).toBe('proj-1'); });
+  });
+
+  it('puts the narrowing in the hash, so a filtered list is a link', async () => {
+    render(JobsView);
+    await rendered('An operator-started job');
+    await fireEvent.click(screen.getByTestId('filter-chip-state-failed'));
+    await waitFor(() => { expect(window.location.hash).toContain('jobs_state=failed'); });
+  });
+
+  it('opens narrowed when the link says so', async () => {
+    window.location.hash = '#/jobs?jobs_state=executing,reviewing';
+    render(JobsView);
+    await waitFor(() => {
+      expect(lastRequest()['statuses']).toEqual(['executing', 'reviewing']);
+    });
   });
 
   it('sorts on the allow-listed fields and offers no sort on the others', async () => {

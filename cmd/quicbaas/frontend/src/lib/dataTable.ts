@@ -24,6 +24,8 @@
  * markup.
  */
 
+import { adoptFacets, type Facets, type FilterValues } from './filters.ts';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -79,16 +81,31 @@ export interface PageRequest {
   sort: string;
   /** q is the search text, or '' for no search. */
   q: string;
+  /**
+   * filters is the faceted selection, keyed by the field's `key` — the loader
+   * turns it into the endpoint's own parameters (`statuses`, `project_id`).
+   *
+   * IT IS ABSENT, NOT EMPTY, FOR A TABLE THAT DECLARES NO FILTERS. Most of the
+   * tables in this app declare none, and a request that always carried an
+   * empty map would make every one of their loaders read as though it might
+   * have to care.
+   */
+  filters?: FilterValues;
 }
 
 /**
  * Page is a normalised answer. `total` is the count the server reports, and
  * `null` when it reported none — which is exactly the signal that the endpoint
  * does not page yet and the table must fall back to paging what it was handed.
+ *
+ * `facets` is what the endpoint counted per filterable field, and is likewise
+ * undefined when it counted nothing — a daemon older than the faceted listing,
+ * for which the chips fall back to their declared vocabulary.
  */
 export interface Page<T> {
   items: T[];
   total: number | null;
+  facets?: Facets;
 }
 
 // ---------------------------------------------------------------------------
@@ -274,15 +291,27 @@ export function adoptPage<T>(raw: unknown, itemsKey?: string): Page<T> {
 
   const record = raw as Record<string, unknown>;
   const total = typeof record['total'] === 'number' ? record['total'] : null;
+  const facets = adoptFacets(record);
 
   if (itemsKey !== undefined) {
     const named = record[itemsKey];
-    return { items: Array.isArray(named) ? (named as T[]) : [], total };
+    return withFacets({ items: Array.isArray(named) ? (named as T[]) : [], total }, facets);
   }
   for (const value of Object.values(record)) {
-    if (Array.isArray(value)) return { items: value as T[], total };
+    if (Array.isArray(value)) return withFacets({ items: value as T[], total }, facets);
   }
-  return { items: [], total };
+  return withFacets({ items: [], total }, facets);
+}
+
+/**
+ * withFacets attaches the counts only when there are some. An answer with no
+ * `facets` member leaves the property ABSENT rather than setting it to an
+ * empty map, because the chips read undefined as "nobody counted" and an
+ * empty map as "every value has none".
+ */
+function withFacets<T>(page: Page<T>, facets: Facets | undefined): Page<T> {
+  if (facets === undefined) return page;
+  return { ...page, facets };
 }
 
 // ---------------------------------------------------------------------------

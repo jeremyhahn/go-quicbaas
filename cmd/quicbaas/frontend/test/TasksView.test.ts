@@ -50,6 +50,12 @@ const jobsPageCalls: Array<Record<string, unknown>> = [];
 /** Set by a test that wants the tasks page to fail. */
 let tasksPageError: unknown = null;
 
+/**
+ * The `facets` the tasks page answers with. `null` is a daemon that counts
+ * nothing — the case the chips must still work in.
+ */
+let facetsAnswer: Record<string, Record<string, number>> | null = null;
+
 vi.mock('../src/stores/sdkClient.ts', () => ({
   getSDKClient: vi.fn(async () => ({
     orchestrator: {
@@ -66,9 +72,19 @@ vi.mock('../src/stores/sdkClient.ts', () => ({
           if (page['auto_spawn'] !== undefined && Boolean(task['auto_spawn']) !== page['auto_spawn']) {
             return false;
           }
+          const statuses = page['statuses'] as string[] | undefined;
+          if (statuses !== undefined && !statuses.includes(task['status'] as string)) {
+            return false;
+          }
           return true;
         });
-        return { items: matched, total: matched.length, limit: 25, offset: 0 };
+        return {
+          items: matched,
+          total: matched.length,
+          limit: 25,
+          offset: 0,
+          ...(facetsAnswer === null ? {} : { facets: facetsAnswer }),
+        };
       },
       listJobsPage: async (_tenant: string, page: Record<string, unknown> = {}) => {
         jobsPageCalls.push(page);
@@ -81,9 +97,13 @@ vi.mock('../src/stores/sdkClient.ts', () => ({
       decomposeTask: mockDecomposeTask,
       claimTask: mockClaimTask,
       completeTask: mockCompleteTask,
+      // The agent picker and the backend list behind the shared reference
+      // options; neither narrows this fixture, both must answer.
+      listAgentsPage: async () => ({ items: [], total: 0, limit: 25, offset: 0 }),
+      listBackends: async () => [],
     },
     projects: {
-      listProjects: mockListProjects,
+      listProjectsPage: mockListProjects,
     },
   })),
 }));
@@ -126,7 +146,13 @@ vi.mock('../src/components/orchestrator/CreateTaskDialog.svelte', () => ({
 
 // Stub lucide icon components. jsdom has no SVG layout engine; rendering real
 // icons causes no errors but we silence them to keep test output clean.
-vi.mock('lucide-svelte', () => ({
+//
+// THE MOCK IS PARTIAL ON PURPOSE. An exhaustive one breaks the moment a shared
+// component this view renders — DataTable's sort arrows, FilterBar's chip
+// dismissals — reaches for an icon nobody listed here, which is a failure
+// about this file's bookkeeping and not about the view under test.
+vi.mock('lucide-svelte', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   LayoutList: vi.fn(),
   Columns3: vi.fn(),
   Plus: vi.fn(),
@@ -139,6 +165,7 @@ vi.mock('lucide-svelte', () => ({
 }));
 
 import TasksView from '../src/views/orchestrator/TasksView.svelte';
+import { forgetReferenceOptions } from '../src/stores/referenceOptions.svelte.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -167,13 +194,22 @@ function resetStores(): void {
   storeLoading = false;
   storeError = null;
   tasksPageError = null;
+  facetsAnswer = null;
   tasksPageCalls.length = 0;
   jobsPageCalls.length = 0;
   window.location.hash = '#/tasks';
   routerStoreMock.name = 'tasks';
   routerStoreMock.params = {};
   routerStoreMock.hash = '#/tasks';
-  mockListProjects.mockResolvedValue({ projects: [{ id: 'proj-1', name: 'go-truststrap' }], total: 1 });
+  mockListProjects.mockResolvedValue({
+    items: [{ id: 'proj-1', name: 'go-truststrap' }],
+    total: 1,
+    limit: 25,
+    offset: 0,
+  });
+  // The reference options are cached per tenant across the whole module; a
+  // test that changes what the project read answers must start from nothing.
+  forgetReferenceOptions();
 }
 
 /**
@@ -435,8 +471,8 @@ describe('TasksView — status and attempts', () => {
 describe('TasksView — project filter', () => {
   beforeEach(resetStores);
 
-  it('shows only the tasks of the project named in ?project= and labels the filter', async () => {
-    routerStoreMock.params = { project: 'proj-1' };
+  it('shows only the tasks of the project a link names, and says which', async () => {
+    window.location.hash = '#/tasks?tasks_project=proj-1';
     storeTasks = [
       makeTask({ id: 't1', subject: 'In project', project_id: 'proj-1' }),
       makeTask({ id: 't2', subject: 'Elsewhere', project_id: 'proj-2' }),
@@ -446,22 +482,27 @@ describe('TasksView — project filter', () => {
     expect(screen.queryByText('Elsewhere')).toBeNull();
     // The narrowing is the SERVER's: the request names the project.
     expect(lastTasksRequest()['project_id']).toBe('proj-1');
-    // The project name arrives after the async listProjects resolves.
+    // And the operator can see what is narrowing the list, by name.
     expect(await screen.findByText(/Project: go-truststrap/)).toBeInTheDocument();
   });
 
   it('names the project in the empty state when the filter matches nothing', async () => {
-    routerStoreMock.params = { project: 'proj-1' };
+    window.location.hash = '#/tasks?tasks_project=proj-1';
     storeTasks = [makeTask({ id: 't2', subject: 'Elsewhere', project_id: 'proj-2' })];
     await renderTasks();
-    expect(await screen.findByText('No tasks in go-truststrap.')).toBeInTheDocument();
+    expect(
+      await screen.findByText('No tasks in go-truststrap match the current filter.'),
+    ).toBeInTheDocument();
   });
 
-  it('clears the filter through routeTasks()', async () => {
-    routerStoreMock.params = { project: 'proj-1' };
+  it('clears the filter from the chip that shows it', async () => {
+    window.location.hash = '#/tasks?tasks_project=proj-1';
     await renderTasks();
-    await fireEvent.click(screen.getByRole('button', { name: 'Show tasks from every project' }));
-    expect(mockRouteTasks).toHaveBeenCalledWith();
+    await fireEvent.click(
+      await screen.findByTestId('active-filter-remove-project-proj-1'),
+    );
+    await waitFor(() => { expect(lastTasksRequest()['project_id']).toBeUndefined(); });
+    expect(window.location.hash).not.toContain('tasks_project');
   });
 
   it('falls back to the project id when the project list cannot be read', async () => {
@@ -496,14 +537,15 @@ describe('TasksView — row click', () => {
   });
 });
 
-describe('TasksView — spawn filter controls', () => {
+describe('TasksView — faceted filters', () => {
   beforeEach(resetStores);
 
-  it('renders the Auto-spawned, Queued and All filter buttons', async () => {
+  it('offers a chip group per facet the listing narrows by', async () => {
     await renderTasks();
-    expect(screen.getByRole('button', { name: /Show auto-spawned tasks/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Show queued tasks/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Show all tasks/i })).toBeInTheDocument();
+    expect(screen.getByTestId('filter-field-status')).toBeInTheDocument();
+    expect(screen.getByTestId('filter-field-dispatch')).toBeInTheDocument();
+    expect(screen.getByTestId('filter-field-project')).toBeInTheDocument();
+    expect(screen.getByTestId('filter-field-agent')).toBeInTheDocument();
   });
 
   // The dispatch mode is a SERVER parameter: a page of twenty-five narrowed in
@@ -516,15 +558,58 @@ describe('TasksView — spawn filter controls', () => {
     await renderTasks();
     expect(lastTasksRequest()['auto_spawn']).toBeUndefined();
 
-    await fireEvent.click(screen.getByRole('button', { name: /Show auto-spawned tasks/i }));
+    await fireEvent.click(screen.getByTestId('filter-chip-dispatch-true'));
     await waitFor(() => { expect(lastTasksRequest()['auto_spawn']).toBe(true); });
     await waitFor(() => { expect(screen.queryByText('Waiting')).toBeNull(); });
 
-    await fireEvent.click(screen.getByRole('button', { name: /Show queued tasks/i }));
+    await fireEvent.click(screen.getByTestId('filter-chip-dispatch-false'));
     await waitFor(() => { expect(lastTasksRequest()['auto_spawn']).toBe(false); });
 
-    await fireEvent.click(screen.getByRole('button', { name: /Show all tasks/i }));
+    await fireEvent.click(screen.getByTestId('filter-clear-dispatch'));
     await waitFor(() => { expect(lastTasksRequest()['auto_spawn']).toBeUndefined(); });
+  });
+
+  // Status is multi-valued because the endpoint takes `statuses` and
+  // "pending or blocked" is one question, not two lists to reconcile by eye.
+  it('sends several statuses as one narrowing', async () => {
+    storeTasks = [
+      makeTask({ id: 'p', subject: 'Waiting', status: 'pending' }),
+      makeTask({ id: 'b', subject: 'Parked', status: 'blocked' }),
+      makeTask({ id: 'd', subject: 'Done', status: 'completed' }),
+    ];
+    await renderTasks();
+
+    await fireEvent.click(screen.getByTestId('filter-chip-status-pending'));
+    await fireEvent.click(screen.getByTestId('filter-chip-status-blocked'));
+    await waitFor(() => {
+      expect(lastTasksRequest()['statuses']).toEqual(['pending', 'blocked']);
+    });
+    await waitFor(() => { expect(screen.queryByText('Done')).toBeNull(); });
+  });
+
+  it('puts the selection in the hash and reads it back from a link', async () => {
+    await renderTasks();
+    await fireEvent.click(screen.getByTestId('filter-chip-status-blocked'));
+    await waitFor(() => {
+      expect(window.location.hash).toContain('tasks_status=blocked');
+    });
+  });
+
+  it('counts each value from the facets the server answered with', async () => {
+    facetsAnswer = { status: { pending: 7, blocked: 2 } };
+    await renderTasks();
+    expect(await screen.findByTestId('filter-count-status-pending')).toHaveTextContent('7');
+    expect(screen.getByTestId('filter-count-status-blocked')).toHaveTextContent('2');
+    // A declared value the server counted none of reads 0 rather than
+    // vanishing: "no failed tasks" is the answer, not a missing question.
+    expect(screen.getByTestId('filter-count-status-failed')).toHaveTextContent('0');
+  });
+
+  it('offers the vocabulary uncounted when the server counts nothing', async () => {
+    facetsAnswer = null;
+    await renderTasks();
+    expect(screen.getByTestId('filter-chip-status-pending')).toBeInTheDocument();
+    expect(screen.queryByTestId('filter-count-status-pending')).toBeNull();
   });
 });
 

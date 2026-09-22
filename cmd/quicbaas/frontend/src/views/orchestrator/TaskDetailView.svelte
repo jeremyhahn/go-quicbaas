@@ -25,7 +25,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { orchestratorStore, loadTasks, loadTaskJobs, refresh, type JobStatus } from '../../stores/orchestrator.svelte.ts';
-  import { routerStore, routeTasks, routeJobDetail } from '../../stores/router.svelte.ts';
+  import { routerStore, listReturnHash, navigateTo, routeJobDetail } from '../../stores/router.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
   import DataTable from '../../components/core/DataTable.svelte';
@@ -172,8 +172,13 @@
   // Actions
   // ---------------------------------------------------------------------------
 
+  /**
+   * handleBack returns to the list the operator LEFT — narrowed, sorted and
+   * on the page they were on. Sending them to a bare `#/tasks` throws away
+   * the four filters they set to find this task in the first place.
+   */
   function handleBack(): void {
-    routeTasks();
+    navigateTo(listReturnHash('/tasks'));
   }
 
   async function handleReload(): Promise<void> {
@@ -278,7 +283,7 @@
       {#if task.project_id}
         <a
           class="badge badge-ghost gap-1"
-          href={`#/tasks?project=${encodeURIComponent(task.project_id)}`}
+          href={`#/tasks?tasks_project=${encodeURIComponent(task.project_id)}`}
           title="Tasks in this project"
         >
           Project: {projectName || task.project_id}

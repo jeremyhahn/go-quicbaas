@@ -45,6 +45,10 @@ vi.mock('../src/stores/router.svelte.ts', () => ({
   routeJobs: vi.fn(),
   routeSessionDetail: vi.fn(),
   routeTaskDetail: vi.fn(),
+  navigateTo: vi.fn(),
+  // Back goes to the jobs list AS THE OPERATOR LEFT IT — narrowed, sorted and
+  // on their page — not to a bare #/jobs.
+  listReturnHash: vi.fn((path: string) => `#${path}?jobs_state=failed`),
   routerStore: {
     route: { name: 'job-detail', params: { id: 'job-abc-def-123' }, hash: '#/jobs/job-abc-def-123' },
   },
@@ -83,7 +87,7 @@ vi.mock('../src/components/orchestrator/BudgetGauge.svelte', () => ({
 }));
 
 import JobDetailView from '../src/views/orchestrator/JobDetailView.svelte';
-import { routeJobs, routeSessionDetail, routeTaskDetail } from '../src/stores/router.svelte.ts';
+import { navigateTo, routeSessionDetail, routeTaskDetail } from '../src/stores/router.svelte.ts';
 import { startEventStream, stopEventStream } from '../src/stores/job-events.svelte.ts';
 
 // ---------------------------------------------------------------------------
@@ -163,7 +167,7 @@ describe('JobDetailView', () => {
     storeMock.selectedJob = { ...mockJob };
     storeMock.jobs = [mockJob];
     storeMock.tasks = [mockTask];
-    vi.mocked(routeJobs).mockClear();
+    vi.mocked(navigateTo).mockClear();
     vi.mocked(routeSessionDetail).mockClear();
     vi.mocked(routeTaskDetail).mockClear();
     vi.mocked(startEventStream).mockClear();
@@ -224,11 +228,11 @@ describe('JobDetailView', () => {
     expect((refused as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('clicking back button calls routeJobs', async () => {
+  it('clicking back returns to the jobs list as the operator left it', async () => {
     render(JobDetailView);
     const backBtn = screen.getByRole('button', { name: /back to jobs list/i });
     await fireEvent.click(backBtn);
-    expect(vi.mocked(routeJobs)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(navigateTo)).toHaveBeenCalledWith('#/jobs?jobs_state=failed');
   });
 
   it('renders audit events in the iteration timeline', () => {

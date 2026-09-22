@@ -30,7 +30,7 @@
  *   #/sessions       → session list
  *   #/sessions/:id   → session detail
  *   #/tasks          → tasks view
- *   #/tasks?project=:id → tasks view filtered to one project
+ *   #/tasks?tasks_project=:id → tasks view narrowed to one project
  *   #/tasks/:id      → task detail
  *   #/events         → live event stream
  *   #/live-events    → bookmark-friendly alias for /events
@@ -373,7 +373,11 @@ export const routerStore = {
 };
 
 if (typeof window !== 'undefined') {
-	window.addEventListener('hashchange', () => {
+	window.addEventListener('hashchange', (event: HashChangeEvent) => {
+		// The hash being LEFT is the one a list's breadcrumb wants back, and
+		// the event is the only place it still exists — see listReturns.
+		const leaving = event.oldURL.indexOf('#');
+		if (leaving !== -1) rememberList(event.oldURL.slice(leaving));
 		const next = parseHash(window.location.hash);
 		_name = next.name;
 		_params = next.params;
@@ -393,15 +397,70 @@ export function navigateTo(path: string): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Going back to the list you came from
+// ---------------------------------------------------------------------------
+
+/**
+ * The last hash seen for each list path — `/tasks` as
+ * `#/tasks?tasks_status=blocked&tasks_page=3`, not as `#/tasks`.
+ *
+ * WHY THIS IS NOT `history.back()`. A detail page is reached by a link as
+ * often as by a click on a row: from a job's task, from an agent's sessions,
+ * from a pasted address. Back would then leave the app, or walk into whatever
+ * the operator was doing before — while "Back to Tasks" has one meaning, and
+ * it is the list they were narrowing.
+ *
+ * It is not read off the route either. A table records its page, sort, search
+ * and filters with replaceState, precisely so paging is not navigation; by
+ * the time a detail view asks, the route object is the DETAIL's. The old hash
+ * is captured from the hashchange event, which still carries it.
+ */
+const listReturns = new Map<string, string>();
+
+/** listPath is the route path a hash names, without its query. */
+function listPath(hash: string): string {
+  const bare = hash.replace(/^#/, '');
+  const queryAt = bare.indexOf('?');
+  return queryAt === -1 ? bare : bare.slice(0, queryAt);
+}
+
+/** rememberList records a hash as the return address for its own path. */
+function rememberList(hash: string): void {
+  const path = listPath(hash);
+  if (path === '') return;
+  listReturns.set(path, hash.startsWith('#') ? hash : `#${hash}`);
+}
+
+/**
+ * listReturnHash is where a detail view's breadcrumb goes: the narrowed list
+ * the operator left, or the bare path when they never saw it.
+ */
+export function listReturnHash(path: string): string {
+  return listReturns.get(path) ?? `#${path}`;
+}
+
+/** forgetListReturns drops the remembered addresses — the hook a test uses. */
+export function forgetListReturns(): void {
+  listReturns.clear();
+}
+
 export function routeDashboard(): void { navigateTo('/dashboard'); }
 export function routeOrchestration(): void { navigateTo('/orchestration'); }
 export function routeJobs(): void { navigateTo('/jobs'); }
 export function routeSessions(): void { navigateTo('/sessions'); }
 export function routeFleet(): void { navigateTo('/fleet'); }
-/** routeTasks opens the task list, filtered to one project when an id is given. */
+/**
+ * routeTasks opens the task list, narrowed to one project when an id is given.
+ *
+ * THE PARAMETER IS THE TABLE'S OWN, not a second filter grammar beside it.
+ * `tasks_project` is what the Tasks table reads its project facet from
+ * (FilterBar, lib/filters.ts), so a link built here and a link built by
+ * clicking the chip are the same link — and the × on the chip clears it.
+ */
 export function routeTasks(projectId?: string): void {
   if (projectId) {
-    navigateTo(`/tasks?project=${encodeURIComponent(projectId)}`);
+    navigateTo(`/tasks?tasks_project=${encodeURIComponent(projectId)}`);
     return;
   }
   navigateTo('/tasks');

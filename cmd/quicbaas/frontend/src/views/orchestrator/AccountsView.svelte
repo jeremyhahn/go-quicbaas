@@ -49,6 +49,10 @@
   } from 'lucide-svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import PageHeader from '../../components/core/PageHeader.svelte';
+  import FilterBar from '../../components/core/FilterBar.svelte';
+  import { computeFacets, filterByFacets } from '../../lib/filters.ts';
+  import { FilterState } from '../../lib/filterState.svelte.ts';
+  import { accountFilters } from '../../lib/listFilters.ts';
 
   // ---------------------------------------------------------------------------
   // Vocabulary — provider / status / refresh-policy labels
@@ -81,6 +85,46 @@
   let projects = $state<Project[]>([]);
   let loading = $state(false);
   let loadError = $state('');
+
+  // ---------------------------------------------------------------------------
+  // Finding one account
+  //
+  // "Which accounts are revoked" and "which are Anthropic" are the two
+  // questions this page exists to answer and could not, so the same FilterBar
+  // and the same URL grammar (`#/accounts?accounts_status=revoked`) every
+  // other list carries sit over the collection this view holds.
+  // ---------------------------------------------------------------------------
+
+  const ACCOUNT_FILTERS = accountFilters<Account>(
+    PROVIDERS.map((provider) => ({ value: provider, label: providerLabel(provider) })),
+    (account) => account.provider,
+    (account) => account.status,
+  );
+
+  const accountNarrowing = new FilterState('accounts', ACCOUNT_FILTERS);
+
+  let accountSearch = $state('');
+
+  /** The searched set — what the facet counts are taken over. */
+  const searchedAccounts = $derived.by(() => {
+    const needle = accountSearch.trim().toLowerCase();
+    if (needle === '') return accounts;
+    return accounts.filter((account) =>
+      [account.display_name, account.id, account.provider, account.status]
+        .some((field) => (field ?? '').toLowerCase().includes(needle)),
+    );
+  });
+
+  const accountFacets = $derived(computeFacets(searchedAccounts, ACCOUNT_FILTERS));
+
+  const visibleAccounts = $derived(
+    filterByFacets(searchedAccounts, ACCOUNT_FILTERS, accountNarrowing.values),
+  );
+
+  /** narrowed says the emptiness is a control's doing, not the tenant's. */
+  const accountsNarrowed = $derived(
+    accountSearch.trim() !== '' || Object.keys(accountNarrowing.values).length > 0,
+  );
 
   async function fetchAll(): Promise<void> {
     loading = true;
@@ -934,8 +978,35 @@
     />
 
   {:else}
+    <div class="space-y-2 mb-3">
+      <input
+        type="search"
+        class="input input-bordered input-sm w-full max-w-xs"
+        placeholder="Search accounts..."
+        aria-label="Search accounts"
+        data-testid="accounts-search"
+        bind:value={accountSearch}
+      />
+      <FilterBar
+        fields={ACCOUNT_FILTERS}
+        values={accountNarrowing.values}
+        facets={accountFacets}
+        onchange={(next) => accountNarrowing.apply(next)}
+      />
+      <div class="text-xs text-base-content/50" data-testid="accounts-count">
+        {visibleAccounts.length} of {accounts.length} accounts
+      </div>
+    </div>
+
+    {#if visibleAccounts.length === 0}
+      <!-- Narrowed to nothing is not "no accounts yet" — see AgentFleet. -->
+      <div class="text-center py-8 text-sm text-base-content/40" data-testid="accounts-no-match">
+        {accountsNarrowed ? 'No accounts match the current filter.' : 'No accounts yet.'}
+      </div>
+    {/if}
+
     <div class="space-y-3">
-      {#each accounts as account (account.id)}
+      {#each visibleAccounts as account (account.id)}
         {@const busy = busyIds.has(account.id)}
         <div class="card bg-base-200 rounded-box overflow-hidden">
           <div class="flex items-center gap-3 px-4 py-3">

@@ -83,6 +83,7 @@ vi.mock('../src/stores/router.svelte.ts', () => ({
 import SessionList from '../src/components/orchestrator/SessionList.svelte';
 import { routeSessionDetail } from '../src/stores/router.svelte.ts';
 import { refreshSessions } from '../src/stores/sessionStore.svelte.ts';
+import { forgetReferenceOptions } from '../src/stores/referenceOptions.svelte.ts';
 
 /** The most recent page request the view sent. */
 function lastRequest(): Record<string, unknown> {
@@ -91,19 +92,13 @@ function lastRequest(): Record<string, unknown> {
 }
 
 /**
- * chooseFilter picks one option of a filter selector, once that option EXISTS.
- * The backend options arrive from the daemon's registry a tick after the first
- * render, and assigning a value a <select> does not carry yet leaves it
- * silently unchanged — which would test nothing.
+ * chooseFilter clicks one facet chip, once that chip EXISTS. The backend
+ * vocabulary arrives from the daemon's registry a tick after the first
+ * render, so a test that reached for its chip immediately would miss it.
  */
-async function chooseFilter(label: string, value: string): Promise<void> {
-  const select = await waitFor(() => {
-    const el = screen.getByLabelText(label) as HTMLSelectElement;
-    expect([...el.options].map((o) => o.value)).toContain(value);
-    return el;
-  });
-  select.value = value;
-  await fireEvent.change(select);
+async function chooseFilter(field: string, value: string): Promise<void> {
+  const chip = await waitFor(() => screen.getByTestId(`filter-chip-${field}-${value}`));
+  await fireEvent.click(chip);
 }
 
 /** Waits for the rows of the current answer to be on screen. */
@@ -122,6 +117,10 @@ describe('SessionList', () => {
     vi.mocked(refreshSessions).mockClear();
     listSessionsPage.mockClear();
     listBackends.mockClear();
+    // The backend/project/agent vocabularies are cached per tenant for the
+    // whole module; clearing the spy without clearing the cache would assert
+    // against a read the first test already made.
+    forgetReferenceOptions();
     window.location.hash = '#/sessions';
   });
 
@@ -167,7 +166,7 @@ describe('SessionList', () => {
     await rendered(2);
 
     answer = { items: [pageSessions[0]!], total: 1, limit: 25, offset: 0 };
-    await chooseFilter('Filter by backend', 'claude');
+    await chooseFilter('backend', 'claude');
 
     await waitFor(() => { expect(lastRequest()['backend']).toBe('claude'); });
     await rendered(1);
@@ -178,7 +177,7 @@ describe('SessionList', () => {
     await rendered(2);
 
     answer = { items: [pageSessions[1]!], total: 1, limit: 25, offset: 0 };
-    await chooseFilter('Filter by status', 'closed');
+    await chooseFilter('status', 'closed');
 
     await waitFor(() => { expect(lastRequest()['status']).toBe('closed'); });
   });
@@ -187,19 +186,25 @@ describe('SessionList', () => {
     render(SessionList);
     await waitFor(() => { expect(listBackends).toHaveBeenCalled(); });
 
-    const backends = await waitFor(() => {
-      const select = screen.getByLabelText('Filter by backend') as HTMLSelectElement;
-      expect(select.options.length).toBe(3);
-      return select;
+    // The vocabulary is NOT derived from the rows: a page with no codex
+    // session must still be able to ask for codex.
+    await waitFor(() => {
+      expect(screen.getByTestId('filter-chip-backend-claude')).toBeInTheDocument();
     });
-    // The options are NOT derived from the rows: a page with no codex session
-    // must still be able to ask for codex.
-    expect([...backends.options].map((o) => o.value)).toEqual(['', 'claude', 'ollama']);
+    expect(screen.getByTestId('filter-chip-backend-ollama')).toBeInTheDocument();
 
-    const states = screen.getByLabelText('Filter by status') as HTMLSelectElement;
-    expect([...states.options].map((o) => o.value)).toEqual([
-      '', 'active', 'idle', 'closed', 'error',
-    ]);
+    for (const state of ['active', 'idle', 'closed', 'error']) {
+      expect(screen.getByTestId(`filter-chip-status-${state}`)).toBeInTheDocument();
+    }
+  });
+
+  it('keeps the narrowing in the hash, so a filtered list is a link', async () => {
+    render(SessionList);
+    await rendered(2);
+    await chooseFilter('status', 'closed');
+    await waitFor(() => {
+      expect(window.location.hash).toContain('sessions_status=closed');
+    });
   });
 
   it('sorts on the field names the endpoint orders by, not the column labels', async () => {
@@ -250,7 +255,7 @@ describe('SessionList', () => {
   it('says the filter emptied the page rather than the tenant', async () => {
     answer = { items: [], total: 0, limit: 25, offset: 0 };
     render(SessionList);
-    await chooseFilter('Filter by backend', 'claude');
+    await chooseFilter('backend', 'claude');
 
     await waitFor(() => {
       expect(screen.getByTestId('data-table-no-match')).toBeInTheDocument();

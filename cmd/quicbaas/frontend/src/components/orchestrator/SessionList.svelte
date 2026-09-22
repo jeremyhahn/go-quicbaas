@@ -30,6 +30,12 @@
   import { statusToVariant } from '../core/statusVariant.ts';
   import { formatDateTime } from '../../lib/time.ts';
   import { sessionModel, sessionRole } from '../../lib/sessions.ts';
+  import { sessionFilters } from '../../lib/listFilters.ts';
+  import { selected, type FilterValues } from '../../lib/filters.ts';
+  import {
+    loadReferenceOptions,
+    referenceOptions,
+  } from '../../stores/referenceOptions.svelte.ts';
   import type { Column, PageRequest } from '../../lib/dataTable.ts';
   import { MessageSquare } from 'lucide-svelte';
 
@@ -48,35 +54,25 @@
   // ---------------------------------------------------------------------------
   // Filters this page owns — sent to the server, not applied to a page
   //
-  // The options are FIXED rather than derived from the rows: a selector built
+  // The vocabulary is FIXED rather than derived from the rows: a control built
   // from the loaded records could only ever offer what is on the current page,
   // so filtering to "codex" would be impossible on a page with no codex
   // session. The backends come from the daemon's registry, the states from the
-  // lifecycle the service defines (pkg/orchestration/backend.go).
+  // lifecycle the service defines (pkg/orchestration/backend.go), and the
+  // COUNTS beside each value come from the answer's own facets.
   // ---------------------------------------------------------------------------
 
-  let filterBackend = $state('');
-  let filterStatus = $state<SessionState | ''>('');
-
-  const SESSION_STATES: readonly SessionState[] = ['active', 'idle', 'closed', 'error'];
-
-  let backendNames = $state<string[]>([]);
-
   $effect(() => {
-    void orchestratorStore.activeTenantID;
-    void loadBackendNames();
+    void loadReferenceOptions(orchestratorStore.activeTenantID);
   });
 
-  async function loadBackendNames(): Promise<void> {
-    try {
-      const client = await getSDKClient();
-      const backends = await client.orchestrator.listBackends();
-      backendNames = (backends ?? []).map((b) => b.name).sort();
-    } catch {
-      // The selector falls back to "All backends"; the listing still loads.
-      backendNames = [];
-    }
-  }
+  const FILTERS = $derived(
+    sessionFilters<SessionStatusResponse>(
+      referenceOptions.backends,
+      referenceOptions.projects,
+      referenceOptions.agents,
+    ),
+  );
 
   // ---------------------------------------------------------------------------
   // The page loader
@@ -89,19 +85,27 @@
   // reload key changes, so a manual refresh is a change to it.
   let refreshTick = $state(0);
 
-  const reloadKey = $derived(
-    `${orchestratorStore.activeTenantID}|${filterBackend}|${filterStatus}|${refreshTick}`,
-  );
+  const reloadKey = $derived(`${orchestratorStore.activeTenantID}|${refreshTick}`);
 
+  /** loadSessions turns the faceted selection into the endpoint's parameters. */
   async function loadSessions(req: PageRequest): Promise<unknown> {
     const client = await getSDKClient();
+    const chosen: FilterValues = req.filters ?? {};
+    const status = (selected(chosen, 'status')[0] ?? '') as SessionState | '';
+    const backend = selected(chosen, 'backend')[0] ?? '';
+    const runner = selected(chosen, 'runner')[0] ?? '';
+    const projectID = selected(chosen, 'project')[0] ?? '';
+    const agentID = selected(chosen, 'agent')[0] ?? '';
     return client.orchestrator.listSessionsPage(orchestratorStore.activeTenantID, {
       limit: req.limit,
       offset: req.offset,
       sort: req.sort,
       q: req.q,
-      ...(filterBackend === '' ? {} : { backend: filterBackend }),
-      ...(filterStatus === '' ? {} : { status: filterStatus }),
+      ...(backend === '' ? {} : { backend }),
+      ...(status === '' ? {} : { status }),
+      ...(runner === '' ? {} : { runner }),
+      ...(projectID === '' ? {} : { project_id: projectID }),
+      ...(agentID === '' ? {} : { agent_id: agentID }),
     });
   }
 
@@ -181,8 +185,8 @@
     load={loadSessions}
     itemsKey="items"
     {reloadKey}
+    filters={FILTERS}
     rowKey={(s: SessionStatusResponse) => s.session_id}
-    narrowed={filterBackend !== '' || filterStatus !== ''}
     urlKey="sessions"
     defaultSort="created_at:desc"
     ariaLabel="Sessions"
@@ -190,30 +194,6 @@
     searchLabel="Search sessions"
     noMatchText="No sessions match the current filter."
   >
-    {#snippet toolbar()}
-      <select
-        class="select select-bordered select-sm"
-        bind:value={filterBackend}
-        aria-label="Filter by backend"
-      >
-        <option value="">All backends</option>
-        {#each backendNames as backend (backend)}
-          <option value={backend}>{backend}</option>
-        {/each}
-      </select>
-
-      <select
-        class="select select-bordered select-sm"
-        bind:value={filterStatus}
-        aria-label="Filter by status"
-      >
-        <option value="">All statuses</option>
-        {#each SESSION_STATES as status (status)}
-          <option value={status}>{status}</option>
-        {/each}
-      </select>
-    {/snippet}
-
     {#snippet empty()}
       <EmptyState
         icon={MessageSquare}
@@ -235,7 +215,19 @@
         role="button"
         aria-label="Open session {session.session_id}"
       >
-        <td class="font-mono text-xs">{session.session_id.slice(0, 14)}…</td>
+        <!--
+          The id is a LINK as well as a clickable row: an operator pasting a
+          session into an issue, or opening three of them in tabs, cannot do
+          either with a row that only answers to a click.
+        -->
+        <td class="font-mono text-xs">
+          <a
+            class="link link-hover"
+            href={`#/sessions/${encodeURIComponent(session.session_id)}`}
+            onclick={(e) => e.stopPropagation()}
+            title={session.session_id}
+          >{session.session_id.slice(0, 14)}…</a>
+        </td>
         <td>
           {#if role !== ''}
             <span

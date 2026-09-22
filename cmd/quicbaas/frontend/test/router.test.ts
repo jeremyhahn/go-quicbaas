@@ -202,8 +202,10 @@ describe('router — task detail and query params', () => {
 
   it('routeTasks(projectId) and routeTaskDetail(id) build the encoded hashes', async () => {
     const { routeTasks, routeTaskDetail } = await loadRouter();
+    // The parameter is the Tasks TABLE's own project facet, so a link built
+    // here and one built by clicking the chip are the same link.
     routeTasks('proj 1');
-    expect(window.location.hash).toBe('#/tasks?project=proj%201');
+    expect(window.location.hash).toBe('#/tasks?tasks_project=proj%201');
     routeTasks();
     expect(window.location.hash).toBe('#/tasks');
     routeTaskDetail('task/42');
