@@ -141,11 +141,22 @@ RUN apk add --no-cache \
     bash \
     grep \
     rsync \
+    pkgconf \
+    gtk+3.0-dev \
+    webkit2gtk-4.1-dev \
     curl \
     ca-certificates \
     tzdata \
     sudo
 
+# pkgconf, gtk+3.0-dev and webkit2gtk-4.1-dev are what `make build` needs to
+# link the client's embedded desktop GUI (CGO + Wails/GTK/WebKit): the same
+# packages CI's Build job installs before `make build`, and provisioned here
+# for the same reason CI gives — rather than narrowing what the Build gate
+# covers. Without them build-cli dies on its pkg-config guard, and a worker
+# either fails verification (go-quicbaas #53, 2026-09-21) or installs them
+# by hand in every round.
+#
 # The agents themselves, exactly as deployments/agents/claude-code and
 # deployments/agents/codex install them.
 #
