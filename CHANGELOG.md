@@ -7,6 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0-alpha] - 2026-09-22
+
+MINOR, and **breaking for anything that implements or wraps a barrier
+servicer**. go-trusted-platform needs `TPMFixedProperties.ManufacturerCode` and
+this repository is its only sanctioned path to it, so the stack moves to
+go-xkms v0.14.0-alpha and the go-qrdb v0.19.0-alpha it carries; barrier
+credentials become wipeable bytes on the way through, and every contributed
+permission now declares its own tenancy scope without overwriting anybody
+else's. The rest of the release is the software factory: every list surface
+becomes one paged, sortable, searchable table, and a dozen orchestration
+defects that stranded work mid-flight are fixed.
+
+### Breaking
+
+- **Barrier servicer credentials are `[]byte`, not `string`.**
+  `BarrierServicer.{BarrierInitialize,BarrierUnseal,BarrierInitializeShamir}`
+  and `TenantBarrierServicer.TenantBarrierInit` now take `[]byte`, matching the
+  go-qrdb request fields beneath them (go-qrdb#184). **Anything that implements
+  or wraps either interface must change, test doubles included.** The caller
+  owns the slice and may wipe it the moment the call returns; nothing below the
+  seam retains it. A double that retains it does not read back zeros — against
+  a protected buffer it faults, because the buffer is unmapped when the caller
+  destroys it. `DatabaseServicer.Drop` takes a `context.Context`. See the
+  Changed entry below for the full adoption.
+
+### Added
+
+- **Every orchestrator list endpoint pages, sorts and searches.** Jobs,
+  tasks, sessions, agents, workflows, projects and accounts each answered
+  with their whole collection: the burn-in tenant's job list is ~2,000
+  records and the UI loaded all of them on every visit, which the browser
+  could not render. All seven now take the same `limit` (25 by default,
+  capped at 100), `offset`, `sort=<field>[:desc]` over a documented
+  allow-list, and `q` case-insensitive substring search, and answer with
+  `total` / `limit` / `offset` / `next_offset` beside the records key they
+  always used — so a consumer that ignores paging reads the response
+  unchanged. A sort field an endpoint does not serve is a 400 naming the
+  field and the allow-list rather than a silently unordered answer, and
+  `next_offset` is absent on the last page. The jobs listing also gained the
+  `statuses`, `runner` and `project_id` filters it had no way to express;
+  every filter composes with the search and the page. One `Page` request,
+  one `PageResult` envelope and one `ApplyPage` serve all seven from
+  `pkg/orchestration`, reached over REST, QUIC, Unix, MCP and the embedded
+  transport, with `page.Params` / `page.Envelope` on the Go SDK's list
+  requests and responses. Contract:
+  `docs/software-factory/api.md#list-paging-sorting-and-search`.
+
+- **Every table in the web UI is now one paged, sortable, searchable table.**
+  No list surface paged: each of twenty-odd views rendered its own `<table>`
+  over the whole collection with whatever search and sort somebody wrote that
+  day, so the burn-in tenant's ~2,000 jobs went into the DOM in full before the
+  Jobs page painted, and an operator met different controls on every page. The
+  new `DataTable` renders 25 rows at a time with a 25/50/100 selector, a
+  first/previous/next/last pager reading "1–25 of 1,987", three-state sorting
+  on the columns a view declares, and a search box debounced at 250 ms over
+  the columns it declares searchable — all keyboard-reachable, with the
+  current page, size, sort and search kept in the route hash so a reload or a
+  shared link lands where it was left. A view hands it either a collection or
+  a loader; a loader answering an envelope with `total` puts the table in
+  server mode and it asks for each page, and an answer without one is paged
+  locally, so the UI works on both sides of the orchestrator list endpoints
+  growing `limit`/`offset`/`sort`/`q`.
+
+- **`reviewer.reasoning_effort` on the project binding.** For a codex
+  reviewer it becomes `-c model_reasoning_effort=…` (`minimal`, `low`,
+  `medium`, `high`, `xhigh`), validated at bind time; empty keeps the
+  backend's default. A fleet generating reviews by the dozen while its
+  pipelines are brought up runs at medium and turns it up per project later.
+
+- **Two list filters a paged consumer cannot work without.** `job_ids` on
+  `GET /api/v1/orchestrator/jobs` narrows the listing to the jobs a caller
+  names, so a page of tasks resolves the jobs its rows point at in ONE request
+  rather than by listing the tenant or asking once per row; `auto_spawn` on
+  `GET /api/v1/orchestrator/tasks` is the dispatch-mode filter the Tasks view
+  offers, tri-state so that "queued only" and "no preference" stay different
+  questions. Both are honoured on REST, the embedded transport and the Go SDK;
+  `job_ids` is also an argument of the `quicbaas_orchestrator_list_jobs` MCP
+  tool. A non-boolean `auto_spawn` is a 400 naming the parameter.
+
+- **`sdlc:verification` audit event per verification command** — its name,
+  whether it passed, its output size and its first line of stderr — so a
+  job that dies at verification says what make said. Until now the job
+  carried the turn, the checkout and the teardown but not that.
+
 ### Changed
 
 - **Adopt go-xkms v0.14.0-alpha and the go-qrdb v0.19.0-alpha it carries**
@@ -107,6 +191,261 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   what the SERVER received rather than that the call returned nil. This is
   MCP's documented exception to the wipeable-credential contract, not a
   regression of it.
+
+### Fixed
+
+- **A worker reply that never read the prompt no longer costs the task a
+  round and an attempt.** A persistent worker session can hold a turn's worth
+  of its own — a background task armed two turns earlier — and answer THAT
+  when a review round arrives. Measured on the burn-in fleet (2026-09-22):
+  451ms, one text block, no tool use, nothing changed, and the runner took
+  the "claimed work on an unchanged tree" path, so the job failed, the attempt
+  was charged, and the task lost its pull-request adoption state and a review
+  round to a reply that never addressed the prompt. A turn that declared no
+  stop, used no tool, changed no file and came back inside
+  `NonAnswerTurnBound` is now re-prompted once with the same prompt plus one
+  line saying the previous reply did not address it, audited as
+  `sdlc:non_answer_reprompted`, counting as neither a new round nor a new
+  attempt. The second consecutive one is charged exactly as before.
+
+- **A fresh job whose pull request was already open gets a worker for its
+  round.** Such a job never spawned one — `resumeReview` sent it straight to
+  the gate — and when the gate asked for a round (a review's findings, a
+  settled red pipeline) the turn was refused as "there is no worker session
+  to prompt", the job failed, and the task was re-dispatched into the same
+  refusal (go-quicbaas#53, 2026-09-21). A requested round now spawns the
+  worker through `initializing`, as a resumed run always did.
+
+- **A triage or review job no longer consumes a worker slot.** The lease
+  store's rule is that every reader counts a lease through
+  `CountsAgainstBudget`, which honours the off-budget flag triage and review
+  jobs carry — but the admission plan, the count the dispatcher actually
+  uses, counted `Live` leases instead, project-wide and fleet-wide. A project
+  whose backlog was being triaged ran at half its quota for the whole pass:
+  measured on a freshly onboarded project (2026-09-21), "inflight=2 slots=0"
+  against a quota of 2 with one worker running beside a 50-issue NPU triage
+  pass. Both counts now go through the lease's own rule.
+
+- `quicbaas agent deploy` now verifies the target's SSH host key against the
+  pin its own help text told operators to add. The command documented
+  `quicbaas ssh known-hosts add` as the production path, but never read the
+  known-hosts store: every deploy failed with `invalid spec
+  field=ssh_host_key: host-key verification is required`, leaving
+  `--ssh-insecure-host-key` as the only working route. The deploy now resolves
+  the pin through the same SDK SSH client the `ssh known-hosts` commands use,
+  under the same scope/owner as `--ssh-key-scope` / `--ssh-key-owner`, and
+  accepts a presented key only when its algorithm and SHA256 fingerprint match
+  a pin — several pins for one host (key rotation) all count. An unpinned host
+  fails before the dial with the `known-hosts add` command that fixes it; a
+  host whose key does not match fails with both fingerprints named.
+
+- **A failed verification command is no longer mistaken for a vanished
+  container.** The exec path read any stderr containing "not found" as the
+  runtime saying the container was gone; a `make build` whose compiler
+  diagnostics said "not found" was therefore reported as a missing
+  container, the job — which had just fixed a review finding on go-quicbaas
+  PR #970 — was failed and charged, and the round was lost (2026-09-21).
+  Only the runtime's own phrasing ("No such container", "no such object",
+  "Error response from daemon: not found") names a missing container now;
+  a command's exit status and output are the command's answer.
+
+- **A duplicate triage job is refused at StartJob, not recorded as a failure.**
+  A runner whose jobs are per-subject singletons (triage, review) acquires
+  its lease inside the run, so starting a second job on a subject already in
+  flight used to succeed, create the job, and fail it minutes later with
+  "job lease: held by another job" — the triage backstop produced one such
+  failed job every fifteen minutes for as long as a project's pass outran
+  its interval. StartJob now applies the store's own admission rule to the
+  subject's live lease and refuses synchronously, which is the answer the
+  scheduler's "already running" branch was written for.
+
+- **Verification feedback names the failure.** The bounded tail alone showed
+  a worker a bare trailing `FAIL`, because `go test -v` prints tens of
+  thousands of PASS lines after the failing package (three rounds on
+  go-quicbaas#62). The lines that name a failure — `--- FAIL`, `FAIL`,
+  `panic:`, a compiler's `# pkg` header and its `file.go:line:col:`
+  diagnostics, `make: ***` — are now gathered from the whole output, up to
+  200 of them, ahead of the tail.
+- **Two unit tests no longer read host state.** One refused a correct
+  isolated credential mount whenever `HOME` was an ancestor of the temp
+  dir (the worker image sets `HOME=/tmp`); one required a docker or podman
+  binary on `PATH`. The first now names the leak it means (the operator's
+  own credential directory); the second supplies the engine it needs. Both
+  were trunk-red inside the factory's own worker image, so no go-quicbaas
+  delivery could pass `make test` there.
+
+- **A worker session whose context is full is replaced, not failed.** In
+  print mode Claude Code cannot compact; after a long delivery turn the
+  round's re-prompt was refused as `blocking_limit` — which the CLI itself
+  files under `context_limit` — and the attempt was failed and refunded,
+  then re-run from scratch into the same wall (go-quicbaas #51, #965). The
+  runner now commits and pushes what the dead session held, records the
+  head, spawns a fresh session on the same branch with a note saying why, and
+  goes on with the same round and findings; once per round. `blocking_limit`
+  and `rapid_refill_breaker` leave the refunded (environmental) set.
+
+- **A session now says which role it played.** Session records carry no role,
+  and a worker's transcript discussing "the review's findings" reads exactly
+  like a reviewer's — the owner read one and concluded the wrong model was
+  reviewing code. The session list and session detail now show a Role badge
+  (`worker`, `reviewer`, `triage`, or the runner's own name) taken from the
+  runner of the session's job, with the backend and model beside it. A session
+  that belongs to no job, or to a job nobody has read, shows no badge rather
+  than a guess.
+
+- **A worker prompt can no longer hang forever behind a slow handshake.** The
+  stream-json open started one goroutine to wait for the agent's init record,
+  another to drain the handshake reply, and every prompt started one more per
+  line — each returned to its caller on a timeout while the goroutine it had
+  started was still reading. A handshake whose API calls were being retried
+  for four minutes outlived the two-minute drain bound, the first prompt's
+  reader then raced it on the same scanner, and the prompt's own `result` went
+  to a channel nobody read: two go-quicbaas jobs held their slots for an hour
+  (2026-09-21). One reader per session now feeds one channel, the session
+  counts the replies still owed, and a prompt settles them before it writes.
+
+- **A readmitted attempt now reads the issue again.** The worker's prompt was
+  `Task.Description`, rendered once when the issue was adopted, so an attempt
+  readmitted after a park was handed the discussion as it stood on adoption
+  day — and never saw the comment that unparked it. That comment is the whole
+  mechanism: needs-info is answered on the issue, an operator repair is posted
+  on the issue, a ruling is given on the issue, and then the task is
+  readmitted. Measured on go-truststrap#24 (2026-09-21): the template the
+  worker had asked for was posted verbatim, the task readmitted, and attempt 3
+  spent three review rounds insisting the file did not exist. Every attempt
+  after the first, and every resumed run, now renders the contract from the
+  forge at each turn; a forge that cannot be read leaves the adopted contract
+  in place and is audited as `sdlc:contract_stale`.
+
+- **A pull request with a red pipeline and no review no longer waits for a
+  review that cannot come.** The gate reported "0 of 1 approvals" before it
+  looked at the checks, and the review sweep dispatches no reviewer until
+  the checks are green — so a settled red sat in `reviewing` until the stall
+  detector ended the job (go-quicbaas PR #971, 2026-09-21). A settled red is
+  now reported ahead of the approval count, which is what sends it to the
+  worker as a CI-red round; checks that have not finished still wait behind
+  the approvals. The delivery runner's `executing`, `validating` and
+  `reviewing` states also carry idle bounds sized to the work (2 h / 2 h /
+  4 h) instead of the engine's default.
+
+- **"Already satisfied" no longer strands work on an unpublished branch.**
+  A worker that reads its checkout and finds the change present is right
+  about the checkout — but on a resumed attempt the checkout is the
+  attempt's own branch, carrying what an earlier attempt wrote and pushed
+  and never got to publish. The task was completed as satisfied with the
+  code unmerged on a branch no pull request named (go-quicbaas#51,
+  2026-09-21: three attempts of work, closed by the fourth). When the branch
+  is ahead of its base and no pull request is open, the satisfied verdict
+  now sends the branch through verification and publication like any other
+  turn's work; `sdlc:satisfied_on_branch` records it.
+
+- **A skipped CI job no longer blocks review and merge forever.** Gitea
+  Actions posts a job behind a false `if:` as its own `skipped` state; the
+  forge adapter read every unrecognised state as "still running", so the
+  gate reported the head as unfinished on every sweep. go-quicbaas's Docker
+  job is skipped on every pull request: PR #970 sat fully green for an hour
+  with no reviewer dispatched (2026-09-21). `skipped` is now a finished
+  check with its own status, passed over by both gates — neither red nor
+  green — and never triaged as a failure; a head whose every check was
+  skipped is "no check covers this head", not clear.
+
+- **A task the engine dispatches reads `in_progress` while its job runs, not
+  `pending`.** `ClaimTask` is the edge an *agent* takes, so a job the engine
+  spawned for a task claimed nothing and the task stayed queued for the whole
+  life of its attempt: measured on the burn-in node, a task adopted at 02:13:49
+  and merged at 02:28:06 read `pending` for those fourteen minutes and went
+  straight to `completed` (go-truststrap#14, 2026-09-21). `Task.Status` is what
+  the API, `orchestrator task get`, the task list and the label reconciler all
+  read, so a busy hour showed every running delivery as queued, the reconciler
+  reported `LabelReconcileUndecidable` three times per delivery on evidence that
+  was wrong about the world, and a fourteen-minute-old *pending* task is also
+  the signature of a stranded binding — a healthy run and a real stall were
+  indistinguishable by the record. The spawn claim now takes the task
+  `pending -> in_progress` with the job as the claimant, through the same
+  transition table every other edge is checked against, in the same
+  version-checked write that records the job; a claim given back returns the
+  task to the queue, and a conclusion still moves it to
+  `completed`/`failed`/`blocked` (go-quicbaas#966).
+
+- **The web UI no longer presents the first 25 records as the whole
+  collection.** The orchestrator list endpoints started paging and defaulting
+  to 25 records, and the TypeScript SDK's list methods took no paging
+  parameters and threw the envelope away — so every table in the UI would have
+  shown one page, labelled it "25 of 25", and offered no way to the rest. The
+  SDK grew a paged verb per listing (`listJobsPage`, `listTasksPage`,
+  `listSessionsPage`, `listAgentsPage`, `listWorkflowsPage`,
+  `listProjectsPage`, `listAccountsPage`) returning the server's envelope —
+  items, `total`, `limit`, `offset`, `next_offset` — behind one params type and
+  one result type shared by every resource. The Jobs, Tasks, Sessions and
+  Workflows tables now ask the daemon for each page, and their filters, sorts
+  and searches go with the request instead of narrowing the rows in hand: a
+  filter applied to a page of twenty-five reports a total it cannot know and
+  hides the matches sitting on page two. Sorting offers only the fields the
+  endpoint orders by; a column it cannot sort no longer pretends to. A 200 that
+  is not a listing is a typed error rather than an empty table, and a failed
+  read no longer invites the operator to "create their first one".
+
+- **A session says which role it played, on every page.** The Role badge
+  resolved a session's role by finding its job in the job list the store
+  happened to hold; the sessions listing carried no `job_id` at all, so the
+  badge was blank for every row, and once the jobs endpoint paged there would
+  have been no list to find the job in either. The listing now carries the job
+  AND the runner that drove it — resolved server-side for the page being
+  answered, memoised per job — and the badge reads that one field. A session
+  belonging to no job, or to one no longer on record, shows no badge rather
+  than a guess. The model beside it was dropped by the REST client's field
+  mapping and is carried now too.
+
+- **Opening a session from page two of the Sessions table finds it.** The
+  session detail route looked the routed id up in the list the store held, and
+  a paged list holds twenty-five — so a row opened from a later page answered
+  "Session not found" for a session that plainly exists. The route now reads
+  the cache first and asks the server once when it misses.
+
+- Triage names the case it kept missing: an issue whose own body asks the
+  owner to rule, decide or choose between options is `needs-info`, never
+  `ready`, however clearly it recommends one option. On 2026-09-21 the triage
+  model marked two owner-ruling issues ready and the factory adopted one as
+  work before an operator caught it.
+
+- **A failed verification's output no longer sinks the next prompt.** The
+  whole stdout of `make test` / `make lint` — megabytes on a large project —
+  was handed back to the worker as round findings; the CLI's context guard
+  refused the prompt (`blocking_limit`), and a fresh session got
+  `prompt_too_long` from the API on its first turn. Every go-quicbaas attempt
+  that failed verification died there (2026-09-21). The evidence is now the
+  output's last 16 KiB (`VerificationEvidenceBytes`), whole lines, with the
+  omission stated; the full output stays on the job's verification record.
+
+- The software-factory worker image now runs a project's own `make build` and
+  `make test`: it carries `rsync` (the frontend embed), GNU `grep` (the
+  Makefile's checks use `--include`, `--exclude-dir` and `-E`, which busybox
+  grep rejects; under busybox the `InsecureSkipVerify` allowlist check passed
+  without running), and no longer sets `NODE_ENV=production`, under which
+  `npm ci` omitted devDependencies and the TypeScript SDK build failed on a
+  missing `tsc` (go-quicbaas #966). `make test-worker-image` probes all three,
+  and the allowlist check itself uses `-E` rather than PCRE. It also carries
+  `pkgconf`, `gtk+3.0-dev` and `webkit2gtk-4.1-dev`, the packages CI's Build
+  job installs so `make build` can link the client's embedded desktop GUI;
+  without them `build-cli` failed its pkg-config guard in every worker round.
+
+- **A worker can build a project that depends on private Go modules.** The
+  worker image's Go asked the public proxy for `github.com/<owner>/<repo>`
+  and was told it did not exist, so verification failed before the change
+  compiled; measured on go-quicbaas#53 as three review rounds of one
+  dependency-resolution failure and an escalation. The binding's new
+  `modules.rewrite_prefix` puts `GOPRIVATE` and a git `insteadOf` rewrite to
+  the project's own forge remote in the worker's environment — over ssh, with
+  the key and host key the container already holds, so nothing secret travels
+  in it. A project naming no prefix is untouched.
+
+- **A large worker reply no longer fails the delivery at the wire.** gRPC's
+  default 4 MiB receive limit applied between the daemon and its agent
+  daemon; one Prompt reply carrying a 35-minute delivery turn on go-quicbaas
+  measured 16.9 MB and was refused with `ResourceExhausted` after the whole
+  turn had been paid for — then charged to the work and re-dispatched into
+  the same wall. Both sides now bound a message at 64 MiB
+  (`orchestration.RemoteACPMaxMessageBytes`).
 
 ## [0.10.0-alpha] - 2026-09-21
 
