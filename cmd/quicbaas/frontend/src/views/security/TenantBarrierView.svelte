@@ -38,6 +38,10 @@
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
   import { Lock } from 'lucide-svelte';
+  import {
+    encodeBarrierCredential,
+    encodeInitParams,
+  } from '../../lib/barrierCredential.ts';
   import { APIError, RestTenantBarrierClient } from '@quicbaas/sdk';
   import type {
     TenantBarrierClient,
@@ -220,20 +224,20 @@
     void loadTenants();
   });
 
-  // base64Encode converts a UTF-8 passphrase into the base64 bytes the broker's
-  // unseal endpoint expects for the passphrase strategy.
-  function base64Encode(value: string): string {
-    const bytes = new TextEncoder().encode(value);
-    let binary = '';
-    for (const b of bytes) binary += String.fromCharCode(b);
-    return btoa(binary);
-  }
-
   async function handleInit(params: TenantBarrierInitParams): Promise<void> {
     if (selectedTenantID === '') return;
     initing = true;
     try {
-      const resp = await tb.tenantBarrierInit(selectedTenantID, params);
+      // Encode here, not in the picker: a barrier credential is base64 BYTES
+      // on the wire, and unseal below has always encoded. Forwarding the
+      // picker's plaintext meant a barrier initialized through this view could
+      // not be unsealed through it — and worse, a passphrase that happens to
+      // be valid base64 initialized silently with different bytes
+      // (go-quicbaas#988). Both paths now go through the one encoder.
+      const resp = await tb.tenantBarrierInit(
+        selectedTenantID,
+        encodeInitParams(params),
+      );
       if (params.strategy === 'shamir' && resp !== undefined) {
         // Shamir returns the shares exactly once — reveal them behind the
         // save-acknowledgement gate before refreshing status.
@@ -264,7 +268,7 @@
 
   async function handlePassphraseUnseal(passphrase: string): Promise<void> {
     if (selectedTenantID === '') return;
-    await tb.tenantBarrierUnseal(selectedTenantID, base64Encode(passphrase));
+    await tb.tenantBarrierUnseal(selectedTenantID, encodeBarrierCredential(passphrase));
   }
 
   async function handleSeal(): Promise<void> {

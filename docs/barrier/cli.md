@@ -370,20 +370,27 @@ printf '%s' "$PP" | quicbaas barrier enable-encryption \
   --strategy passphrase --passphrase-stdin
 ```
 
-The raw API form, for callers not going through the CLI:
+The raw API form, for callers not going through the CLI. **`passphrase` is
+base64 on the wire** — like every barrier credential on the REST surface, it is
+a byte string rather than text (see docs/barrier/api.md, "a credential is bytes,
+and the shapes are aliases"). Malformed base64 is rejected with `400`, but a
+raw passphrase that happens to be valid base64 is NOT — it decodes into
+different bytes and is used as the credential, silently. Always encode:
 
 ```bash
+PP=$(printf '%s' "my-wrapping-passphrase" | base64 -w0)
+
 # System barrier — passphrase
 curl -X POST https://host:port/api/v1/barrier/enable-encryption \
-  -d '{"target_strategy":"passphrase","passphrase":"my-wrapping-passphrase"}'
+  -d "{\"target_strategy\":\"passphrase\",\"passphrase\":\"$PP\"}"
 
 # System barrier — Shamir
 curl -X POST https://host:port/api/v1/barrier/enable-encryption \
-  -d '{"target_strategy":"shamir","passphrase":"my-wrapping-passphrase","shamir_threshold":2,"shamir_total":3}'
+  -d "{\"target_strategy\":\"shamir\",\"passphrase\":\"$PP\",\"shamir_threshold\":2,\"shamir_total\":3}"
 
 # Per-tenant barrier (tenant 'acme-corp')
 curl -X POST https://host:port/api/v1/tenants/acme-corp/barrier/enable-encryption \
-  -d '{"target_strategy":"passphrase","passphrase":"tenant-wrapping-passphrase"}'
+  -d "{\"target_strategy\":\"passphrase\",\"passphrase\":\"$PP\"}"
 ```
 
 A tenant on the shared system barrier (no dedicated barrier) is rejected with

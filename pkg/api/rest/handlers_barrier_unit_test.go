@@ -244,7 +244,7 @@ func TestHandleBarrierInitialize(t *testing.T) {
 		// Copy: the handler wipes this slice once the call returns.
 		initializeFn: func(ctx context.Context, secret []byte) error { gotSecret = string(secret); return nil },
 	}
-	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/initialize", `{"secret":"s3cr3t"}`)
+	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/initialize", `{"secret":"czNjcjN0"}`)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d", w.Code)
 	}
@@ -264,7 +264,7 @@ func TestHandleBarrierInitialize_ServiceError(t *testing.T) {
 	svc := &fakeBarrierService{
 		initializeFn: func(ctx context.Context, secret []byte) error { return errBarrierBoom },
 	}
-	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/initialize", `{"secret":"x"}`)
+	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/initialize", `{"secret":"eA=="}`)
 	if w.Code < 500 {
 		t.Fatalf("expected 5xx, got %d", w.Code)
 	}
@@ -272,7 +272,7 @@ func TestHandleBarrierInitialize_ServiceError(t *testing.T) {
 
 func TestHandleBarrierUnseal(t *testing.T) {
 	svc := &fakeBarrierService{unsealFn: func(ctx context.Context, secret []byte) error { return nil }}
-	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/unseal", `{"secret":"x"}`)
+	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/unseal", `{"secret":"eA=="}`)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d", w.Code)
 	}
@@ -280,7 +280,7 @@ func TestHandleBarrierUnseal(t *testing.T) {
 
 func TestHandleBarrierUnseal_ServiceError(t *testing.T) {
 	svc := &fakeBarrierService{unsealFn: func(ctx context.Context, secret []byte) error { return errBarrierBoom }}
-	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/unseal", `{"secret":"x"}`)
+	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/unseal", `{"secret":"eA=="}`)
 	if w.Code < 500 {
 		t.Fatalf("expected 5xx, got %d", w.Code)
 	}
@@ -313,7 +313,7 @@ func TestHandleBarrierShamirInitialize_OK(t *testing.T) {
 		},
 	}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/shamir/initialize",
-		`{"secret":"x","threshold":2,"total_shares":3}`)
+		`{"secret":"eA==","threshold":2,"total_shares":3}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
@@ -333,9 +333,9 @@ func TestHandleBarrierShamirInitialize_OK(t *testing.T) {
 func TestHandleBarrierShamirInitialize_Validation(t *testing.T) {
 	svc := &fakeBarrierService{}
 	cases := []string{
-		`{"secret":"x","threshold":0,"total_shares":3}`,
-		`{"secret":"x","threshold":2,"total_shares":0}`,
-		`{"secret":"x","threshold":4,"total_shares":3}`,
+		`{"secret":"eA==","threshold":0,"total_shares":3}`,
+		`{"secret":"eA==","threshold":2,"total_shares":0}`,
+		`{"secret":"eA==","threshold":4,"total_shares":3}`,
 	}
 	for _, body := range cases {
 		w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/shamir/initialize", body)
@@ -352,7 +352,7 @@ func TestHandleBarrierShamirInitialize_ServiceError(t *testing.T) {
 		},
 	}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/shamir/initialize",
-		`{"secret":"x","threshold":2,"total_shares":3}`)
+		`{"secret":"eA==","threshold":2,"total_shares":3}`)
 	if w.Code < 500 {
 		t.Fatalf("expected 5xx, got %d", w.Code)
 	}

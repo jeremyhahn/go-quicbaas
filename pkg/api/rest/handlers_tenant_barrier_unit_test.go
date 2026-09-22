@@ -251,7 +251,11 @@ func TestTenantBarrierInit_ServiceError(t *testing.T) {
 func TestTenantBarrierUnseal_OK(t *testing.T) {
 	var gotKey []byte
 	svc := &fakeTenantBarrierService{
-		unsealFn: func(_ context.Context, _ string, key []byte) error { gotKey = key; return nil },
+		// Copy: the handler wipes the key once the call returns.
+		unsealFn: func(_ context.Context, _ string, key []byte) error {
+			gotKey = append([]byte(nil), key...)
+			return nil
+		},
 	}
 	w := httptest.NewRecorder()
 	tenantBarrierServer(t, svc).HandleTenantBarrierUnseal(w,
@@ -397,7 +401,7 @@ func barrierNotEnabledCases(s *Server, failErr error) []struct {
 		handler func(http.ResponseWriter, *http.Request)
 		svc     *fakeTenantBarrierService
 	}{
-		{"init", http.MethodPost, `{"strategy":"passphrase","passphrase":"p"}`, s.HandleTenantBarrierInit,
+		{"init", http.MethodPost, `{"strategy":"passphrase","passphrase":"cA=="}`, s.HandleTenantBarrierInit,
 			&fakeTenantBarrierService{initFn: func(context.Context, string, []byte, int, int, string) (*qrdbtransport.TenantBarrierInitResponse, error) {
 				return nil, failErr
 			}}},
@@ -491,6 +495,6 @@ func TestTenantBarrierEnableEncryption_BarrierNotEnabled_Maps422(t *testing.T) {
 	s := barrierServer(t, svc)
 	w := httptest.NewRecorder()
 	s.HandleTenantBarrierEnableEncryption(w,
-		tenantBarrierReq(http.MethodPost, "tenant-a", `{"target_strategy":"passphrase","passphrase":"p"}`))
+		tenantBarrierReq(http.MethodPost, "tenant-a", `{"target_strategy":"passphrase","passphrase":"cA=="}`))
 	requireBarrierNotEnabled422(t, w)
 }

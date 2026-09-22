@@ -23,6 +23,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -38,66 +39,73 @@ import (
 // =============================================================================
 
 // ---------------------------------------------------------------------------
-// REST request types (local, unexported — JSON shape only).
+// REST request types.
+//
+// Every request shape whose fields the go-qrdb SDK already names is an ALIAS
+// of that SDK type, never a copy. The stack is pre-v1 with exactly ONE wire
+// format (CLAUDE.md, "SDK Boundary"), and go-qrdb's
+// sdk/go/transport/barrier_types.go is where that format is written down: the
+// qrdb REST transport marshals those structs straight into the request body
+// this package decodes. A local mirror of them is a second copy of one
+// contract, and the two drift silently — go-qrdb v0.19.0-alpha retyped every
+// barrier credential from string to []byte (so it can be wiped), which made
+// `secret` a base64 string on the wire, and the mirror here kept decoding it
+// as plain text. `barrier unseal` then handed the base64 TEXT to the seal
+// strategy and every unseal over REST failed with "decryption failed".
+// Aliasing makes that class of drift a compile error instead.
 // ---------------------------------------------------------------------------
 
-// barrierInitializeRequest is the JSON payload for POST /api/v1/barrier/initialize.
-type barrierInitializeRequest struct {
-	Secret string `json:"secret"`
-}
+type (
+	// barrierInitializeRequest is the JSON payload for
+	// POST /api/v1/barrier/initialize. Secret is base64 on the wire.
+	barrierInitializeRequest = qrdbtransport.BarrierInitializeRequest
 
-// barrierUnsealRequest is the JSON payload for POST /api/v1/barrier/unseal.
-type barrierUnsealRequest struct {
-	Secret string `json:"secret"`
-}
+	// barrierUnsealRequest is the JSON payload for
+	// POST /api/v1/barrier/unseal. Secret is base64 on the wire.
+	barrierUnsealRequest = qrdbtransport.BarrierUnsealRequest
 
-// barrierShamirInitializeRequest is the JSON payload for
-// POST /api/v1/barrier/shamir/initialize.
-type barrierShamirInitializeRequest struct {
-	Secret      string `json:"secret"`
-	Threshold   int    `json:"threshold"`
-	TotalShares int    `json:"total_shares"`
-}
+	// barrierShamirInitializeRequest is the JSON payload for
+	// POST /api/v1/barrier/shamir/initialize. Secret is base64 on the wire.
+	barrierShamirInitializeRequest = qrdbtransport.BarrierInitializeShamirRequest
 
-// barrierShamirUnsealShareRequest is the JSON payload for
-// POST /api/v1/barrier/shamir/unseal-share.
-type barrierShamirUnsealShareRequest struct {
-	Share string `json:"share"`
-}
+	// barrierShamirUnsealShareRequest is the JSON payload for
+	// POST /api/v1/barrier/shamir/unseal-share.
+	barrierShamirUnsealShareRequest = qrdbtransport.BarrierUnsealShareRequest
 
-// barrierShamirUnsealSharesRequest is the JSON payload for
-// POST /api/v1/barrier/shamir/unseal-shares.
-type barrierShamirUnsealSharesRequest struct {
-	Shares []string `json:"shares"`
-}
+	// barrierShamirUnsealSharesRequest is the JSON payload for
+	// POST /api/v1/barrier/shamir/unseal-shares.
+	barrierShamirUnsealSharesRequest = qrdbtransport.BarrierUnsealSharesRequest
 
-// barrierRekeyRequest is the JSON payload for POST /api/v1/barrier/rekey.
-type barrierRekeyRequest struct {
-	Threshold int `json:"threshold"`
-	Total     int `json:"total"`
-}
+	// barrierRekeyRequest is the JSON payload for POST /api/v1/barrier/rekey.
+	barrierRekeyRequest = qrdbtransport.BarrierRekeyRequest
 
-// barrierRecoveryGenerateRequest is the JSON payload for
-// POST /api/v1/barrier/recovery/generate.
-type barrierRecoveryGenerateRequest struct {
-	Threshold int `json:"threshold"`
-	Total     int `json:"total"`
-}
+	// barrierRecoveryGenerateRequest is the JSON payload for
+	// POST /api/v1/barrier/recovery/generate.
+	barrierRecoveryGenerateRequest = qrdbtransport.BarrierGenerateRecoveryKeysRequest
 
-// barrierRecoveryRecoverRequest is the JSON payload for
-// POST /api/v1/barrier/recovery/recover.
-type barrierRecoveryRecoverRequest struct {
-	Keys []string `json:"keys"`
-}
+	// barrierRecoveryRecoverRequest is the JSON payload for
+	// POST /api/v1/barrier/recovery/recover.
+	barrierRecoveryRecoverRequest = qrdbtransport.BarrierRecoverWithKeysRequest
 
-// barrierRootTokenRequest is the JSON payload for
-// POST /api/v1/barrier/root-token.
-type barrierRootTokenRequest struct {
-	Shares []string `json:"shares"`
-}
+	// barrierRootTokenRequest is the JSON payload for
+	// POST /api/v1/barrier/root-token.
+	barrierRootTokenRequest = qrdbtransport.BarrierGenerateRootTokenRequest
+)
 
 // barrierEnableEncryptionRequest is the JSON payload for
 // POST /api/v1/barrier/enable-encryption.
+//
+// This one shape is deliberately NOT an alias of
+// qrdbtransport.BarrierEnableEncryptionRequest. The encryption migration is a
+// QuicBaaS-native verb — it is served on four QuicBaaS surfaces (REST system,
+// REST per-tenant, gRPC api/proto/barrier.proto, MCP qrdb_barrier_enable_
+// encryption), all of which name the target `target_strategy`, and go-qrdb's
+// transport has no per-tenant counterpart at all. Renaming only this copy to
+// upstream's `strategy` would de-align it from its three siblings. Passphrase
+// nonetheless follows the same wire rule as every other barrier credential
+// here — base64-encoded bytes, matching
+// qrdbtransport.BarrierEnableEncryptionRequest.Passphrase ([]byte) — so one
+// REST surface carries credentials one way.
 type barrierEnableEncryptionRequest struct {
 	// TargetStrategy is the keyed strategy to migrate to ("passphrase" or
 	// "shamir"). Required.
@@ -111,9 +119,9 @@ type barrierEnableEncryptionRequest struct {
 	// or "quiesced"). Defaults to "online" when empty.
 	Availability string `json:"availability,omitempty"`
 
-	// Passphrase is the new passphrase for a passphrase-target migration.
-	// Ignored for Shamir targets.
-	Passphrase string `json:"passphrase,omitempty"`
+	// Passphrase is the new passphrase for a passphrase-target migration,
+	// base64-encoded on the wire. Ignored for Shamir targets.
+	Passphrase []byte `json:"passphrase,omitempty"`
 
 	// ShamirThreshold / ShamirTotal configure the M-of-N scheme for a
 	// Shamir-target migration. Ignored for passphrase targets.
@@ -124,6 +132,43 @@ type barrierEnableEncryptionRequest struct {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// wipeCredential returns a cleanup that zeroes the credential slice the
+// request field finally holds. It takes a POINTER because of when it has to be
+// registered: before the decode, not after.
+//
+// encoding/json populates earlier fields before it reports a later field's
+// type error, so a body whose `secret` is well-formed and whose `threshold` is
+// not leaves the plaintext credential on the heap even though the request was
+// refused. So does every validation branch that returns 400 between the decode
+// and the service call. `defer secure.Wipe(req.Secret)` cannot cover either:
+// defer evaluates its arguments immediately, capturing the nil slice that
+// exists before the decode runs. Reading the field through a pointer inside
+// the deferred closure captures the slice the decode actually produced.
+//
+// WHAT THIS DOES AND DOES NOT DESTROY, stated because the difference is easy
+// to read past. It destroys the slice the field holds when the handler
+// returns, and every alias of it — which is the copy the barrier service was
+// handed, and the one an attacker reading this process's heap would find under
+// a stable name. It does not reach an allocation the decoder made and then
+// dropped, and nothing in this package can:
+//
+//   - A duplicate JSON key re-assigns the field. `{"secret":"aHVudGVyMg==",
+//     "secret":null}` decodes the first value, allocates it, then overwrites
+//     the field with nil; the first allocation is unreferenced and only the
+//     collector reclaims it.
+//   - A malformed base64 value leaves whatever the decoder had written to its
+//     scratch buffer before it gave up.
+//
+// This is the decode-side half of a limit go-qrdb states for the encode side
+// on BarrierInitializeRequest: "serializing a value means copying it, and the
+// wire format owns that copy." Deserializing is the same trade in reverse. The
+// claim worth making is the narrow one — the credential does not outlive the
+// request under a name anything still holds — and that is the claim
+// docs/barrier/api.md makes.
+func wipeCredential(secret *[]byte) func() {
+	return func() { secure.Wipe(*secret) }
+}
 
 // requireBarrierService writes a 503 Service Unavailable response when the
 // barrier facade is unwired. Returns true when the service is present.
@@ -253,13 +298,11 @@ func (s *Server) HandleBarrierInitialize(w http.ResponseWriter, r *http.Request)
 	}
 
 	var req barrierInitializeRequest
+	defer wipeCredential(&req.Secret)()
 	if !readBarrierJSON(w, r, &req) {
 		return
 	}
-
-	secret := secretBytes(req.Secret)
-	defer secure.Wipe(secret)
-	if err := s.barrierSvc.BarrierInitialize(r.Context(), secret); err != nil {
+	if err := s.barrierSvc.BarrierInitialize(r.Context(), req.Secret); err != nil {
 		s.handleServiceError(w, r, err)
 		return
 	}
@@ -274,13 +317,11 @@ func (s *Server) HandleBarrierUnseal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req barrierUnsealRequest
+	defer wipeCredential(&req.Secret)()
 	if !readBarrierJSON(w, r, &req) {
 		return
 	}
-
-	secret := secretBytes(req.Secret)
-	defer secure.Wipe(secret)
-	if err := s.barrierSvc.BarrierUnseal(r.Context(), secret); err != nil {
+	if err := s.barrierSvc.BarrierUnseal(r.Context(), req.Secret); err != nil {
 		s.handleServiceError(w, r, err)
 		return
 	}
@@ -309,6 +350,7 @@ func (s *Server) HandleBarrierShamirInitialize(w http.ResponseWriter, r *http.Re
 	}
 
 	var req barrierShamirInitializeRequest
+	defer wipeCredential(&req.Secret)()
 	if !readBarrierJSON(w, r, &req) {
 		return
 	}
@@ -325,9 +367,7 @@ func (s *Server) HandleBarrierShamirInitialize(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	secret := secretBytes(req.Secret)
-	defer secure.Wipe(secret)
-	info, err := s.barrierSvc.BarrierInitializeShamir(r.Context(), secret, req.Threshold, req.TotalShares)
+	info, err := s.barrierSvc.BarrierInitializeShamir(r.Context(), req.Secret, req.Threshold, req.TotalShares)
 	if err != nil {
 		s.handleServiceError(w, r, err)
 		return
@@ -546,6 +586,7 @@ func (s *Server) HandleBarrierEnableEncryption(w http.ResponseWriter, r *http.Re
 	}
 
 	var req barrierEnableEncryptionRequest
+	defer wipeCredential(&req.Passphrase)()
 	if !readBarrierJSON(w, r, &req) {
 		return
 	}
@@ -570,10 +611,8 @@ func (s *Server) HandleBarrierEnableEncryption(w http.ResponseWriter, r *http.Re
 		ShamirThreshold: req.ShamirThreshold,
 		ShamirTotal:     req.ShamirTotal,
 	}
-	if req.Passphrase != "" {
-		passphrase := secretBytes(req.Passphrase)
-		defer secure.Wipe(passphrase)
-		creds, credErr := qrdbsdk.CredentialsFor(passphrase)
+	if len(req.Passphrase) > 0 {
+		creds, credErr := qrdbsdk.CredentialsFor(req.Passphrase)
 		if credErr != nil {
 			s.handleServiceError(w, r, credErr)
 			return
@@ -587,16 +626,4 @@ func (s *Server) HandleBarrierEnableEncryption(w http.ResponseWriter, r *http.Re
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// secretBytes copies a credential out of the JSON-decoded string into a slice
-// the caller can wipe. The string itself is immutable and unwipeable, so this
-// narrows the plaintext's lifetime rather than removing it: the residue is the
-// string-typed credential field on this transport's request DTO, tracked as
-// #962.
-func secretBytes(s string) []byte {
-	if s == "" {
-		return nil
-	}
-	return []byte(s)
 }

@@ -37,7 +37,7 @@ func TestHandleBarrierEnableEncryption_ServiceUnavailable(t *testing.T) {
 	defer cleanup()
 	// barrierSvc is nil by default — don't call SetBarrierService.
 	w := doBarrierReq(t, s, http.MethodPost, "/api/v1/barrier/enable-encryption",
-		`{"target_strategy":"passphrase","passphrase":"x"}`)
+		`{"target_strategy":"passphrase","passphrase":"eA=="}`)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d (body=%s)", w.Code, w.Body.String())
 	}
@@ -47,7 +47,7 @@ func TestHandleBarrierEnableEncryption_ServiceUnavailable(t *testing.T) {
 // empty target_strategy yields a 400 before touching the service.
 func TestHandleBarrierEnableEncryption_MissingTargetStrategy(t *testing.T) {
 	w := doBarrierReq(t, barrierServer(t, &fakeBarrierService{}),
-		http.MethodPost, "/api/v1/barrier/enable-encryption", `{"passphrase":"x"}`)
+		http.MethodPost, "/api/v1/barrier/enable-encryption", `{"passphrase":"eA=="}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d (body=%s)", w.Code, w.Body.String())
 	}
@@ -89,7 +89,7 @@ func TestHandleBarrierEnableEncryption_OK(t *testing.T) {
 	}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost,
 		"/api/v1/barrier/enable-encryption",
-		`{"target_strategy":"passphrase","passphrase":"s3cr3t"}`)
+		`{"target_strategy":"passphrase","passphrase":"czNjcjN0"}`)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d (body=%s)", w.Code, w.Body.String())
 	}
@@ -118,7 +118,7 @@ func TestHandleBarrierEnableEncryption_DefaultsApplied(t *testing.T) {
 	}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost,
 		"/api/v1/barrier/enable-encryption",
-		`{"target_strategy":"passphrase","passphrase":"x"}`)
+		`{"target_strategy":"passphrase","passphrase":"eA=="}`)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d", w.Code)
 	}
@@ -140,7 +140,7 @@ func TestHandleBarrierEnableEncryption_ServiceError(t *testing.T) {
 	}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost,
 		"/api/v1/barrier/enable-encryption",
-		`{"target_strategy":"passphrase","passphrase":"x"}`)
+		`{"target_strategy":"passphrase","passphrase":"eA=="}`)
 	if w.Code < 500 {
 		t.Fatalf("expected 5xx, got %d (body=%s)", w.Code, w.Body.String())
 	}
@@ -157,7 +157,7 @@ func TestHandleBarrierEnableEncryption_ForbiddenMapsTo403(t *testing.T) {
 	}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost,
 		"/api/v1/barrier/enable-encryption",
-		`{"target_strategy":"passphrase","passphrase":"x"}`)
+		`{"target_strategy":"passphrase","passphrase":"eA=="}`)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d (body=%s)", w.Code, w.Body.String())
 	}
@@ -177,7 +177,7 @@ func TestHandleTenantBarrierEnableEncryption_ServiceUnavailable(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.HandleTenantBarrierEnableEncryption(w,
 		tenantBarrierReq(http.MethodPost, "tenant-a",
-			`{"target_strategy":"passphrase","passphrase":"x"}`))
+			`{"target_strategy":"passphrase","passphrase":"eA=="}`))
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d (body=%s)", w.Code, w.Body.String())
 	}
@@ -189,7 +189,7 @@ func TestHandleTenantBarrierEnableEncryption_MissingTenantID(t *testing.T) {
 	w := httptest.NewRecorder()
 	barrierServer(t, &fakeBarrierService{}).HandleTenantBarrierEnableEncryption(w,
 		tenantBarrierReq(http.MethodPost, "",
-			`{"target_strategy":"passphrase","passphrase":"x"}`))
+			`{"target_strategy":"passphrase","passphrase":"eA=="}`))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d (body=%s)", w.Code, w.Body.String())
 	}
@@ -200,7 +200,7 @@ func TestHandleTenantBarrierEnableEncryption_MissingTenantID(t *testing.T) {
 func TestHandleTenantBarrierEnableEncryption_MissingTargetStrategy(t *testing.T) {
 	w := httptest.NewRecorder()
 	barrierServer(t, &fakeBarrierService{}).HandleTenantBarrierEnableEncryption(w,
-		tenantBarrierReq(http.MethodPost, "tenant-a", `{"passphrase":"x"}`))
+		tenantBarrierReq(http.MethodPost, "tenant-a", `{"passphrase":"eA=="}`))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d (body=%s)", w.Code, w.Body.String())
 	}
@@ -219,7 +219,7 @@ func TestHandleTenantBarrierEnableEncryption_OK(t *testing.T) {
 	w := httptest.NewRecorder()
 	barrierServer(t, svc).HandleTenantBarrierEnableEncryption(w,
 		tenantBarrierReq(http.MethodPost, "tenant-xyz",
-			`{"target_strategy":"passphrase","passphrase":"x"}`))
+			`{"target_strategy":"passphrase","passphrase":"eA=="}`))
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d (body=%s)", w.Code, w.Body.String())
 	}
@@ -239,7 +239,7 @@ func TestHandleTenantBarrierEnableEncryption_ServiceError(t *testing.T) {
 	w := httptest.NewRecorder()
 	barrierServer(t, svc).HandleTenantBarrierEnableEncryption(w,
 		tenantBarrierReq(http.MethodPost, "tenant-a",
-			`{"target_strategy":"passphrase","passphrase":"x"}`))
+			`{"target_strategy":"passphrase","passphrase":"eA=="}`))
 	if w.Code < 500 {
 		t.Fatalf("expected 5xx, got %d (body=%s)", w.Code, w.Body.String())
 	}
@@ -257,7 +257,7 @@ func TestHandleTenantBarrierEnableEncryption_ForbiddenMapsTo403(t *testing.T) {
 	w := httptest.NewRecorder()
 	barrierServer(t, svc).HandleTenantBarrierEnableEncryption(w,
 		tenantBarrierReq(http.MethodPost, "tenant-a",
-			`{"target_strategy":"passphrase","passphrase":"x"}`))
+			`{"target_strategy":"passphrase","passphrase":"eA=="}`))
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d (body=%s)", w.Code, w.Body.String())
 	}

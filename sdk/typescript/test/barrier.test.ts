@@ -111,24 +111,24 @@ describe('RestBarrierClient passphrase strategy', () => {
     fetchMock.mockResolvedValue(noContentResponse());
 
     const client = new RestClient('http://localhost');
-    await client.barrier.initialize({ secret: 'topsecret' });
+    await client.barrier.initialize({ secret: 'dG9wc2VjcmV0' });
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('http://localhost/api/v1/barrier/initialize');
     expect(init.method).toBe('POST');
-    expect(JSON.parse(init.body as string)).toEqual({ secret: 'topsecret' });
+    expect(JSON.parse(init.body as string)).toEqual({ secret: 'dG9wc2VjcmV0' });
   });
 
   it('unseals the barrier with a passphrase', async () => {
     fetchMock.mockResolvedValue(noContentResponse());
 
     const client = new RestClient('http://localhost');
-    await client.barrier.unseal({ secret: 'topsecret' });
+    await client.barrier.unseal({ secret: 'dG9wc2VjcmV0' });
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('http://localhost/api/v1/barrier/unseal');
     expect(init.method).toBe('POST');
-    expect(JSON.parse(init.body as string)).toEqual({ secret: 'topsecret' });
+    expect(JSON.parse(init.body as string)).toEqual({ secret: 'dG9wc2VjcmV0' });
   });
 
   it('seals the barrier', async () => {
@@ -159,7 +159,7 @@ describe('RestBarrierClient Shamir strategy', () => {
 
     const client = new RestClient('http://localhost');
     const result = await client.barrier.initializeShamir({
-      secret: 'master',
+      secret: 'bWFzdGVy',
       threshold: 2,
       total_shares: 3,
     });
@@ -171,7 +171,7 @@ describe('RestBarrierClient Shamir strategy', () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('http://localhost/api/v1/barrier/shamir/initialize');
     expect(JSON.parse(init.body as string)).toEqual({
-      secret: 'master',
+      secret: 'bWFzdGVy',
       threshold: 2,
       total_shares: 3,
     });

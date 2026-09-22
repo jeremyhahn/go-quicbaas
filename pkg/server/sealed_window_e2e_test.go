@@ -21,19 +21,22 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -239,10 +242,20 @@ func driveBarrierInitialize(t *testing.T, srv *Server) {
 	t.Helper()
 	addr := srv.RESTAddr()
 	require.NotNil(t, addr, "sealed-window REST listener must be up")
+	// The body is marshalled from go-qrdb's own request type, not hand-written
+	// JSON, because that type IS the wire format (docs/barrier/api.md, "a
+	// credential is bytes, and the shapes are aliases"). A literal here would
+	// have gone on passing while the handler and the SDK disagreed about
+	// whether `secret` is base64 — which is exactly how go-quicbaas#964 reached
+	// a burn-in node.
+	body, err := json.Marshal(&qrdbtransport.BarrierInitializeRequest{
+		Secret: []byte("sealed-window-e2e-passphrase"),
+	})
+	require.NoError(t, err, "marshal the barrier initialize request")
 	resp, err := http.Post(
 		fmt.Sprintf("http://%s/api/v1/barrier/initialize", addr.String()),
 		"application/json",
-		strings.NewReader(`{"secret":"sealed-window-e2e-passphrase"}`),
+		bytes.NewReader(body),
 	)
 	require.NoError(t, err, "barrier initialize against the sealed-window REST listener")
 	defer func() { _ = resp.Body.Close() }()

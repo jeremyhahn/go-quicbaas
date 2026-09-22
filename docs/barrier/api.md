@@ -71,6 +71,72 @@ each other and the difference matters when reading a deployment's access logs.
 | `POST /api/v1/barrier/recovery/recover` | `HandleBarrierRecoveryRecover` |
 | `DELETE /api/v1/barrier/recovery` | `HandleBarrierRecoveryDelete` |
 
+#### Request shapes — a credential is bytes, and the shapes are aliases
+
+The go-qrdb SDK's REST transport marshals `go-qrdb/sdk/go/transport`'s own
+`Barrier*Request` structs straight into the body these handlers decode, so
+those structs **are** the wire format. The stack is pre-v1 with exactly one
+(CLAUDE.md, "SDK Boundary"), so `pkg/api/rest/handlers_barrier.go` declares
+its request shapes as **type aliases** of the go-qrdb ones rather than local
+copies. A field renamed or retyped upstream is then a compile error here, not
+a silent mis-decode.
+
+That rule is written down because breaking it shipped a defect
+(go-quicbaas#988). go-qrdb v0.19.0-alpha retyped every barrier credential from
+`string` to wipeable `[]byte` — a Go string cannot be zeroized — and
+`encoding/json` renders a `[]byte` as **base64**. The local mirrors here kept
+decoding `secret` as a string, so `barrier unseal --transport rest` handed the
+barrier the base64 TEXT of the passphrase and failed with
+`quicraft/seal: unseal failed (strategy=passphrase): decryption failed`.
+
+So, on every REST client including the TypeScript SDK:
+
+| Field | Type | On the wire |
+|---|---|---|
+| `secret` (initialize, unseal, shamir/initialize) | `[]byte` | base64 |
+| `passphrase` (enable-encryption, tenant barrier/init) | `[]byte` | base64 |
+| `key` (tenant barrier/unseal) | `[]byte` | base64 |
+| `share`, `shares`, `keys` | `string` | plain text — a Shamir share is already a printable encoding |
+
+On every return path of every handler that carries a credential — the four
+system shapes above and the three per-tenant ones (`barrier/init`,
+`barrier/unseal`, `barrier/enable-encryption`) — **the slice the request field
+finally holds is wiped**, not only on the successful path. `encoding/json`
+populates earlier fields before it reports a later field's type error, so a
+body with a good `secret` and a bad `threshold` leaves plaintext behind unless
+the cleanup is registered before the decode rather than after it, which is what
+`wipeCredential` is for.
+
+The guarantee is deliberately narrow, and the boundary is worth knowing. Wiping
+destroys that slice and every alias of it — the copy handed to the barrier
+service, and the one that would be found under a stable name in a heap dump. It
+does not reach an allocation `encoding/json` made and then dropped: a duplicate
+key (`{"secret":"<a>","secret":null}`) decodes the first value and then
+overwrites the field, and a malformed base64 value leaves whatever the decoder
+wrote to its scratch buffer. Those are unreferenced and reclaimed by the
+collector, but they are not zeroized, and no code in this package can zeroize
+them. go-qrdb states the same limit for the encode side on
+`BarrierInitializeRequest` — "serializing a value means copying it, and the
+wire format owns that copy" — and deserializing is that trade in reverse.
+
+**Decoding catches malformed base64 and nothing else — always encode.** A body
+whose credential is not well-formed base64 is refused with `400` and never
+reaches the barrier. That is the whole of the protection, and it is narrower
+than "a raw passphrase is caught": a raw credential that happens to be valid
+base64 (any run of the base64 alphabet whose length is a multiple of four —
+`password` is one) decodes successfully into DIFFERENT bytes, and the barrier
+is then keyed on those bytes with no complaint. An `init` done that way
+succeeds and leaves a barrier whose passphrase is not the one the operator
+typed. So a client must encode its credential rather than rely on being told
+off; `TestBarrierWire_RawCredentialThatIsValidBase64DecodesToOtherBytes` pins
+that limit so it is not mistaken for a guarantee.
+
+`enable-encryption` is the one shape that is NOT an alias: the migration is a
+QuicBaaS-native verb served on four QuicBaaS surfaces (REST system, REST
+per-tenant, gRPC, MCP) that all name the target `target_strategy`, and go-qrdb
+has no per-tenant counterpart, so renaming only the REST copy would de-align
+it from its siblings. Its `passphrase` still follows the byte rule above.
+
 #### Who owns the mount on a composed node
 
 `server.rest` no longer binds a listener of its own: `startRESTServer`

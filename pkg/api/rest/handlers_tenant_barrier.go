@@ -22,7 +22,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -38,24 +38,27 @@ import (
 // straight through and never logged.
 // =============================================================================
 
-// tenantBarrierInitBody is the JSON payload for POST .../barrier/init.
-type tenantBarrierInitBody struct {
-	Passphrase string `json:"passphrase,omitempty"`
-	Threshold  int    `json:"threshold,omitempty"`
-	Shares     int    `json:"shares,omitempty"`
-	Strategy   string `json:"strategy,omitempty"`
-}
+// The per-tenant barrier request shapes are ALIASES of the go-qrdb SDK
+// transport types, never copies, for the reason spelled out on the system
+// barrier shapes in handlers_barrier.go: go-qrdb's
+// sdk/go/transport/tenant_types.go is the one place this wire format is
+// written down, and a mirror of it drifts silently. TenantID travels in the
+// URL path on this surface, so the aliased tenant_id field goes unread and
+// chi.URLParam stays authoritative.
+type (
+	// tenantBarrierInitBody is the JSON payload for POST .../barrier/init.
+	// Passphrase is base64 on the wire (go-qrdb v0.19.0-alpha retyped it from
+	// string to wipeable []byte).
+	tenantBarrierInitBody = qrdbtransport.TenantBarrierInitRequest
 
-// tenantBarrierUnsealBody is the JSON payload for POST .../barrier/unseal.
-// Key is base64-encoded on the wire by encoding/json.
-type tenantBarrierUnsealBody struct {
-	Key []byte `json:"key,omitempty"`
-}
+	// tenantBarrierUnsealBody is the JSON payload for POST .../barrier/unseal.
+	// Key is base64-encoded on the wire by encoding/json.
+	tenantBarrierUnsealBody = qrdbtransport.TenantBarrierUnsealRequest
 
-// tenantBarrierUnsealShareBody is the JSON payload for POST .../barrier/unseal-share.
-type tenantBarrierUnsealShareBody struct {
-	Share string `json:"share,omitempty"`
-}
+	// tenantBarrierUnsealShareBody is the JSON payload for
+	// POST .../barrier/unseal-share.
+	tenantBarrierUnsealShareBody = qrdbtransport.TenantBarrierUnsealShareRequest
+)
 
 // tenantBarrierEnableEncryptionBody is the JSON payload for
 // POST /api/v1/tenants/{tenant_id}/barrier/enable-encryption.
@@ -72,8 +75,10 @@ type tenantBarrierEnableEncryptionBody struct {
 	// or "quiesced"). Defaults to "online" when empty.
 	Availability string `json:"availability,omitempty"`
 
-	// Passphrase is the new passphrase for a passphrase-target migration.
-	Passphrase string `json:"passphrase,omitempty"`
+	// Passphrase is the new passphrase for a passphrase-target migration,
+	// base64-encoded on the wire (the rule every other barrier credential on
+	// this REST surface follows).
+	Passphrase []byte `json:"passphrase,omitempty"`
 
 	// ShamirThreshold / ShamirTotal configure M-of-N for a Shamir-target
 	// migration.
@@ -125,13 +130,12 @@ func (s *Server) HandleTenantBarrierInit(w http.ResponseWriter, r *http.Request)
 	}
 
 	var body tenantBarrierInitBody
+	defer wipeCredential(&body.Passphrase)()
 	if !readBarrierJSON(w, r, &body) {
 		return
 	}
 
-	passphrase := secretBytes(body.Passphrase)
-	defer secure.Wipe(passphrase)
-	result, err := svc.TenantBarrierInit(r.Context(), tenantID, passphrase, body.Threshold, body.Shares, body.Strategy)
+	result, err := svc.TenantBarrierInit(r.Context(), tenantID, body.Passphrase, body.Threshold, body.Shares, body.Strategy)
 	if err != nil {
 		s.handleTenantBarrierError(w, r, err)
 		return
@@ -161,7 +165,12 @@ func (s *Server) HandleTenantBarrierUnseal(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Both fields are key material: Key is the tenant root key and Share is a
+	// Shamir share of it (this route consumes Key; unseal-share consumes the
+	// other). Neither may outlive the request, on any return path.
 	var body tenantBarrierUnsealBody
+	defer wipeCredential(&body.Key)()
+	defer wipeCredential(&body.Share)()
 	if !readBarrierJSON(w, r, &body) {
 		return
 	}
@@ -263,6 +272,7 @@ func (s *Server) HandleTenantBarrierEnableEncryption(w http.ResponseWriter, r *h
 	}
 
 	var body tenantBarrierEnableEncryptionBody
+	defer wipeCredential(&body.Passphrase)()
 	if !readBarrierJSON(w, r, &body) {
 		return
 	}
@@ -287,10 +297,8 @@ func (s *Server) HandleTenantBarrierEnableEncryption(w http.ResponseWriter, r *h
 		ShamirThreshold: body.ShamirThreshold,
 		ShamirTotal:     body.ShamirTotal,
 	}
-	if body.Passphrase != "" {
-		passphrase := secretBytes(body.Passphrase)
-		defer secure.Wipe(passphrase)
-		creds, credErr := qrdbsdk.CredentialsFor(passphrase)
+	if len(body.Passphrase) > 0 {
+		creds, credErr := qrdbsdk.CredentialsFor(body.Passphrase)
 		if credErr != nil {
 			s.handleServiceError(w, r, credErr)
 			return

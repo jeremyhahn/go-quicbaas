@@ -2220,24 +2220,38 @@ export interface BarrierStatusResponse {
   initialized_at?: string;
 }
 
+// Wire note: a barrier credential is BYTES, not text. go-qrdb types every
+// barrier secret as []byte (so the caller can wipe it), and encoding/json
+// renders a []byte as base64 — so `secret` / `passphrase` below are base64
+// strings on the wire, exactly like every other byte-slice field in this SDK
+// (see the wire note in crypto.ts). Callers encode at the UI boundary:
+//
+//   secret: btoa(String.fromCharCode(...new TextEncoder().encode(passphrase)))
+//
+// Always encode. The server rejects MALFORMED base64 with 400, and nothing
+// else: a raw passphrase that happens to be valid base64 (any run of the
+// base64 alphabet whose length is a multiple of four, e.g. "password") decodes
+// into different bytes and is used as the credential, silently
+// (go-quicbaas#988).
+
 // BarrierInitRequest holds the secret used to initialize the barrier with
 // a single master key. Mirrors transport.BarrierInitializeRequest.
 export interface BarrierInitRequest {
-  /** Passphrase used to derive the master key. */
+  /** Passphrase used to derive the master key, base64-encoded. */
   secret: string;
 }
 
 // BarrierUnsealRequest holds the secret used to unseal the barrier.
 // Mirrors transport.BarrierUnsealRequest.
 export interface BarrierUnsealRequest {
-  /** Passphrase used to unseal the barrier. */
+  /** Passphrase used to unseal the barrier, base64-encoded. */
   secret: string;
 }
 
 // BarrierShamirInitRequest initialises the barrier with Shamir secret
 // sharing. Mirrors transport.BarrierInitializeShamirRequest.
 export interface BarrierShamirInitRequest {
-  /** Optional passphrase used to derive the master key. */
+  /** Optional passphrase used to derive the master key, base64-encoded. */
   secret: string;
   /** Minimum shares required to reconstruct the master key. */
   threshold: number;
@@ -2333,7 +2347,7 @@ export type TenantBarrierStrategy = 'none' | 'passphrase' | 'shamir';
 export interface TenantBarrierInitRequest {
   /** Sealing strategy to provision for the tenant. */
   strategy: TenantBarrierStrategy;
-  /** Passphrase used to derive the master key (passphrase strategy). */
+  /** Passphrase used to derive the master key (passphrase strategy), base64-encoded. */
   passphrase?: string;
   /** Minimum shares required to reconstruct the master key (shamir strategy). */
   threshold?: number;

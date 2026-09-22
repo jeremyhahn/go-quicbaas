@@ -1372,15 +1372,15 @@ export interface BarrierStatusResponse {
     initialized_at?: string;
 }
 export interface BarrierInitRequest {
-    /** Passphrase used to derive the master key. */
+    /** Passphrase used to derive the master key, base64-encoded. */
     secret: string;
 }
 export interface BarrierUnsealRequest {
-    /** Passphrase used to unseal the barrier. */
+    /** Passphrase used to unseal the barrier, base64-encoded. */
     secret: string;
 }
 export interface BarrierShamirInitRequest {
-    /** Optional passphrase used to derive the master key. */
+    /** Optional passphrase used to derive the master key, base64-encoded. */
     secret: string;
     /** Minimum shares required to reconstruct the master key. */
     threshold: number;
@@ -1438,7 +1438,7 @@ export type TenantBarrierStrategy = 'none' | 'passphrase' | 'shamir';
 export interface TenantBarrierInitRequest {
     /** Sealing strategy to provision for the tenant. */
     strategy: TenantBarrierStrategy;
-    /** Passphrase used to derive the master key (passphrase strategy). */
+    /** Passphrase used to derive the master key (passphrase strategy), base64-encoded. */
     passphrase?: string;
     /** Minimum shares required to reconstruct the master key (shamir strategy). */
     threshold?: number;
