@@ -21,6 +21,8 @@
 -->
 <script lang="ts">
   import PageHeader from '../../components/core/PageHeader.svelte';
+  import DataTable from '../../components/core/DataTable.svelte';
+  import type { Column } from '../../lib/dataTable.ts';
   import StatCard from '../../components/core/StatCard.svelte';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import { Server, Network, HardDrive, CheckCircle, AlertTriangle } from 'lucide-svelte';
@@ -30,15 +32,28 @@
   // Wire shape returned by GET /api/v1/cluster/status
   // ---------------------------------------------------------------------------
 
+  /** ShardStatus is one Raft shard as the status endpoint reports it. */
+  interface ShardStatus {
+    shard_id: number;
+    leader_id: number;
+    state: string;
+  }
+
   interface ClusterStatusResponse {
     node_id: number;
     raft_address: string;
     leader_id?: string;
     total_nodes?: number;
-    shards?: Array<{ shard_id: number; leader_id: number; state: string }>;
+    shards?: ShardStatus[];
     healthy: boolean;
     timestamp: string;
   }
+
+  const SHARD_COLUMNS: Column<ShardStatus>[] = [
+    { key: 'shard_id', label: 'Shard', sortable: true },
+    { key: 'leader_id', label: 'Leader', sortable: true },
+    { key: 'state', label: 'State', sortable: true },
+  ];
 
   // ---------------------------------------------------------------------------
   // State
@@ -140,30 +155,25 @@
 
     <!-- Detail table -->
     {#if clusterMode(status) === 'raft'}
-      <div class="overflow-x-auto rounded-box border border-base-300/50">
-        <table class="table table-sm table-zebra">
-          <thead>
-            <tr class="bg-base-200/80 text-xs uppercase tracking-wider text-base-content/50">
-              <th>Shard</th>
-              <th>Leader</th>
-              <th>State</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each (status.shards ?? []) as shard (shard.shard_id)}
-              <tr class="hover">
-                <td class="font-mono text-xs">{shard.shard_id}</td>
-                <td class="font-mono text-xs">{shard.leader_id}</td>
-                <td>
-                  <span class="badge badge-xs" class:badge-success={shard.state === 'healthy'} class:badge-warning={shard.state !== 'healthy'}>
-                    {shard.state}
-                  </span>
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
+      <DataTable
+        columns={SHARD_COLUMNS}
+        rows={(status.shards ?? [])}
+        rowKey={(shard: ShardStatus) => shard.shard_id}
+        ariaLabel="Raft shards"
+        emptyTitle="No shards reported."
+      >
+        {#snippet row(shard: ShardStatus)}
+          <tr class="hover">
+            <td class="font-mono text-xs">{shard.shard_id}</td>
+            <td class="font-mono text-xs">{shard.leader_id}</td>
+            <td>
+              <span class="badge badge-xs" class:badge-success={shard.state === 'healthy'} class:badge-warning={shard.state !== 'healthy'}>
+                {shard.state}
+              </span>
+            </td>
+          </tr>
+        {/snippet}
+      </DataTable>
     {:else}
       <div class="card bg-base-200 shadow-sm">
         <div class="card-body py-4 gap-2">

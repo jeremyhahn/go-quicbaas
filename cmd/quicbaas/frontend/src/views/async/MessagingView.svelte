@@ -20,6 +20,8 @@
 -->
 <script lang="ts">
   import PageHeader from '../../components/core/PageHeader.svelte';
+  import DataTable from '../../components/core/DataTable.svelte';
+  import type { Column } from '../../lib/dataTable.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import type { MessagingChannel } from '@quicbaas/sdk';
@@ -32,6 +34,15 @@
   // ---------------------------------------------------------------------------
 
   let channels = $state<MessagingChannel[]>([]);
+
+  const CHANNEL_COLUMNS: Column<MessagingChannel>[] = [
+    { key: 'name', label: 'Name', sortable: true, searchable: true },
+    { key: 'subscribers', label: 'Subscribers', sortable: true },
+    { key: 'buffer_size', label: 'Buffer', sortable: true },
+    { key: 'persistent', label: 'Persistent', sortable: true },
+    { key: 'created_at', label: 'Created', sortable: true },
+    { key: 'actions', label: 'Actions', headerClass: 'text-right', srLabel: true },
+  ];
   let loading = $state(false);
   let loadError = $state('');
 
@@ -233,66 +244,63 @@
           <div class="flex justify-center py-8">
             <span class="loading loading-spinner loading-md"></span>
           </div>
-        {:else if channels.length === 0}
-          <EmptyState
-            icon={Megaphone}
-            title="No channels yet — channels broadcast to subscribed daemons."
-            description="Create a channel to start publishing messages to connected agents and services."
-            actionLabel="Create Channel"
-            onaction={openCreateDialog}
-          />
         {:else}
-          <div class="overflow-x-auto rounded-box border border-base-300/50">
-            <table class="table table-sm table-zebra">
-              <thead>
-                <tr class="bg-base-200/80 text-xs uppercase tracking-wider text-base-content/50">
-                  <th>Name</th>
-                  <th>Subscribers</th>
-                  <th>Buffer</th>
-                  <th>Persistent</th>
-                  <th>Created</th>
-                  <th class="text-right"><span class="sr-only">Actions</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each channels as ch (ch.name)}
-                  <tr>
-                    <td class="font-mono text-xs font-semibold">{ch.name}</td>
-                    <td>{ch.subscribers}</td>
-                    <td>{ch.buffer_size}</td>
-                    <td>
-                      {#if ch.persistent}
-                        <span class="badge badge-success badge-xs">yes</span>
-                      {:else}
-                        <span class="badge badge-ghost badge-xs">no</span>
-                      {/if}
-                    </td>
-                    <td class="text-xs text-base-content/50">
-                      {formatDateTime(ch.created_at)}
-                    </td>
-                    <td class="text-right">
-                      <button
-                        class="btn btn-xs btn-ghost gap-1"
-                        onclick={() => openPublishDialog(ch.name)}
-                        aria-label={`Publish to ${ch.name}`}
-                      >
-                        <Send class="h-3 w-3" />
-                        Publish
-                      </button>
-                      <button
-                        class="btn btn-xs btn-ghost text-error ml-1"
-                        onclick={() => { channelToDelete = ch; }}
-                        aria-label={`Delete channel ${ch.name}`}
-                        title={`Delete channel ${ch.name}`}
-                      >
-                        <Trash2 class="h-3 w-3" />
-                      </button>
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
+          <DataTable
+            columns={CHANNEL_COLUMNS}
+            rows={channels}
+            rowKey={(ch: MessagingChannel) => ch.name}
+            urlKey="channels"
+            ariaLabel="Channels"
+            searchPlaceholder="Search channels..."
+            searchLabel="Search channels"
+            noMatchText="No channels match the search."
+          >
+            {#snippet empty()}
+              <EmptyState
+                icon={Megaphone}
+                title="No channels yet — channels broadcast to subscribed daemons."
+                description="Create a channel to start publishing messages to connected agents and services."
+                actionLabel="Create Channel"
+                onaction={openCreateDialog}
+              />
+            {/snippet}
+
+            {#snippet row(ch: MessagingChannel)}
+              <tr>
+                <td class="font-mono text-xs font-semibold">{ch.name}</td>
+                <td>{ch.subscribers}</td>
+                <td>{ch.buffer_size}</td>
+                <td>
+                  {#if ch.persistent}
+                    <span class="badge badge-success badge-xs">yes</span>
+                  {:else}
+                    <span class="badge badge-ghost badge-xs">no</span>
+                  {/if}
+                </td>
+                <td class="text-xs text-base-content/50">
+                  {formatDateTime(ch.created_at)}
+                </td>
+                <td class="text-right">
+                  <button
+                    class="btn btn-xs btn-ghost gap-1"
+                    onclick={() => openPublishDialog(ch.name)}
+                    aria-label={`Publish to ${ch.name}`}
+                  >
+                    <Send class="h-3 w-3" />
+                    Publish
+                  </button>
+                  <button
+                    class="btn btn-xs btn-ghost text-error ml-1"
+                    onclick={() => { channelToDelete = ch; }}
+                    aria-label={`Delete channel ${ch.name}`}
+                    title={`Delete channel ${ch.name}`}
+                  >
+                    <Trash2 class="h-3 w-3" />
+                  </button>
+                </td>
+              </tr>
+            {/snippet}
+          </DataTable>
         {/if}
       </div>
     </section>

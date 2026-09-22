@@ -19,6 +19,8 @@
 -->
 <script lang="ts">
   import PageHeader from '../../components/core/PageHeader.svelte';
+  import DataTable from '../../components/core/DataTable.svelte';
+  import type { Column } from '../../lib/dataTable.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import type { EmbeddingProviderInfo, GenerateEmbeddingResponse } from '@quicbaas/sdk';
@@ -29,6 +31,17 @@
   // ---------------------------------------------------------------------------
 
   let providers = $state<EmbeddingProviderInfo[]>([]);
+
+  const PROVIDER_COLUMNS: Column<EmbeddingProviderInfo>[] = [
+    { key: 'name', label: 'Name', sortable: true, searchable: true },
+    { key: 'type', label: 'Type', sortable: true, searchable: true },
+    { key: 'model', label: 'Model', sortable: true, searchable: true },
+    { key: 'dimensions', label: 'Dimensions', sortable: true },
+    { key: 'status', label: 'Status', sortable: true },
+    { key: 'enabled', label: 'Enabled' },
+    { key: 'default', label: 'Default' },
+    { key: 'actions', label: 'Actions', srLabel: true },
+  ];
   let defaultProvider = $state('');
   let loadingProviders = $state(false);
   let providerError = $state('');
@@ -218,87 +231,82 @@
           <div class="flex justify-center py-6">
             <span class="loading loading-spinner loading-md"></span>
           </div>
-        {:else if providers.length === 0}
-          <div class="py-8 text-center text-sm text-base-content/40">
-            No embedding providers registered.
-          </div>
         {:else}
-          <div class="overflow-x-auto">
-            <table class="table table-sm">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Type</th>
-                  <th>Model</th>
-                  <th>Dimensions</th>
-                  <th>Status</th>
-                  <th>Enabled</th>
-                  <th>Default</th>
-                  <th><span class="sr-only">Actions</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each providers as p (p.name)}
-                  <tr class={p.name === defaultProvider ? 'bg-primary/5' : ''}>
-                    <td class="font-mono text-xs">{p.name}</td>
-                    <td>{p.type}</td>
-                    <td class="font-mono text-xs">{p.model}</td>
-                    <td>{p.dimensions.toLocaleString()}</td>
-                    <td>
-                      <span
-                        class="badge badge-sm"
-                        class:badge-success={p.status === 'available'}
-                        class:badge-error={p.status === 'unavailable'}
-                        class:badge-warning={p.status !== 'available' && p.status !== 'unavailable'}
-                      >
-                        {p.status}
-                      </span>
-                    </td>
-                    <td>
-                      <input
-                        type="checkbox"
-                        class="toggle toggle-sm toggle-success"
-                        checked={p.status === 'available'}
-                        disabled={togglingProvider === p.name}
-                        onchange={() => void toggleProviderStatus(p)}
-                        title={p.status === 'available' ? `Disable provider ${p.name}` : `Enable provider ${p.name}`}
-                        aria-label={p.status === 'available' ? `Disable provider ${p.name}` : `Enable provider ${p.name}`}
-                      />
-                    </td>
-                    <td>
-                      {#if p.name === defaultProvider}
-                        <!--
-                          The "default" indicator is informational, not
-                          destructive — render it as an outline-success
-                          pill rather than a filled brand color so it
-                          never reads as a danger/error tag.
-                        -->
-                        <span
-                          class="badge badge-success badge-outline badge-xs"
-                          data-testid="default-provider-badge"
-                        >
-                          default
-                        </span>
-                      {/if}
-                    </td>
-                    <td>
-                      {#if p.name !== defaultProvider}
-                        <button
-                          class="btn btn-ghost btn-xs"
-                          disabled={settingDefault === p.name}
-                          onclick={() => void setDefaultProvider(p.name)}
-                          title={`Set ${p.name} as default provider`}
-                          aria-label={`Set ${p.name} as default provider`}
-                        >
-                          <Star class="h-3 w-3" />
-                        </button>
-                      {/if}
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
+          <DataTable
+            columns={PROVIDER_COLUMNS}
+            rows={providers}
+            rowKey={(p: EmbeddingProviderInfo) => p.name}
+            urlKey="providers"
+            ariaLabel="Embedding providers"
+            searchPlaceholder="Search providers..."
+            searchLabel="Search providers"
+            noMatchText="No providers match the search."
+          >
+            {#snippet empty()}
+              <div class="py-8 text-center text-sm text-base-content/40">
+                No embedding providers registered.
+              </div>
+            {/snippet}
+
+            {#snippet row(p: EmbeddingProviderInfo)}
+              <tr class={p.name === defaultProvider ? 'bg-primary/5' : ''}>
+                <td class="font-mono text-xs">{p.name}</td>
+                <td>{p.type}</td>
+                <td class="font-mono text-xs">{p.model}</td>
+                <td>{p.dimensions.toLocaleString()}</td>
+                <td>
+                  <span
+                    class="badge badge-sm"
+                    class:badge-success={p.status === 'available'}
+                    class:badge-error={p.status === 'unavailable'}
+                    class:badge-warning={p.status !== 'available' && p.status !== 'unavailable'}
+                  >
+                    {p.status}
+                  </span>
+                </td>
+                <td>
+                  <input
+                    type="checkbox"
+                    class="toggle toggle-sm toggle-success"
+                    checked={p.status === 'available'}
+                    disabled={togglingProvider === p.name}
+                    onchange={() => void toggleProviderStatus(p)}
+                    title={p.status === 'available' ? `Disable provider ${p.name}` : `Enable provider ${p.name}`}
+                    aria-label={p.status === 'available' ? `Disable provider ${p.name}` : `Enable provider ${p.name}`}
+                  />
+                </td>
+                <td>
+                  {#if p.name === defaultProvider}
+                    <!--
+                      The "default" indicator is informational, not
+                      destructive — render it as an outline-success
+                      pill rather than a filled brand color so it
+                      never reads as a danger/error tag.
+                    -->
+                    <span
+                      class="badge badge-success badge-outline badge-xs"
+                      data-testid="default-provider-badge"
+                    >
+                      default
+                    </span>
+                  {/if}
+                </td>
+                <td>
+                  {#if p.name !== defaultProvider}
+                    <button
+                      class="btn btn-ghost btn-xs"
+                      disabled={settingDefault === p.name}
+                      onclick={() => void setDefaultProvider(p.name)}
+                      title={`Set ${p.name} as default provider`}
+                      aria-label={`Set ${p.name} as default provider`}
+                    >
+                      <Star class="h-3 w-3" />
+                    </button>
+                  {/if}
+                </td>
+              </tr>
+            {/snippet}
+          </DataTable>
         {/if}
       </div>
     </section>
