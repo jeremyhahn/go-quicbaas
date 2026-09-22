@@ -3112,7 +3112,7 @@ test-worker-image: build-worker-image ## Build the worker image and check it car
 	@$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp \
 		$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
 		sh -lec 'git --version; ssh -V; go version; make --version | head -1; rsync --version | head -1; \
-			grep --version | head -1; pkg-config --exists webkit2gtk-4.1 || { echo "webkit2gtk-4.1 dev headers missing: make build cannot link the client"; exit 1; }; \
+			grep --version | head -1; cryptsetup --version; pkg-config --exists webkit2gtk-4.1 || { echo "webkit2gtk-4.1 dev headers missing: make build cannot link the client"; exit 1; }; \
 			case "$$(npm config get omit)" in dev*) echo "npm omits devDependencies: NODE_ENV must not be production"; exit 1;; esac; \
 			claude --version; codex --version; \
 			ssh-keygen -t ed25519 -N "" -f /tmp/signing-key -q; \
@@ -3123,7 +3123,7 @@ test-worker-image: build-worker-image ## Build the worker image and check it car
 			git config gpg.ssh.allowedSignersFile /tmp/allowed; \
 			printf "worker@invalid %s" "$$(cat /tmp/signing-key.pub)" > /tmp/allowed; \
 			git verify-commit HEAD'
-	@echo "$(GREEN)✓ the image carries git, ssh, ssh signing, make, the Go toolchain and both agents$(NC)"
+	@echo "$(GREEN)✓ the image carries git, ssh, ssh signing, make, cryptsetup, the Go toolchain and both agents$(NC)"
 	@# SERENA IS A TOOL THE RUNNER DEPENDS ON, so the image gate proves it runs
 	@# rather than merely that a package was installed. The charters tell every
 	@# role to search with serena; an image that carries the binary but cannot

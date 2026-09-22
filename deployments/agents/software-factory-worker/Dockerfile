@@ -144,6 +144,7 @@ RUN apk add --no-cache \
     pkgconf \
     gtk+3.0-dev \
     webkit2gtk-4.1-dev \
+    cryptsetup \
     curl \
     ca-certificates \
     tzdata \
@@ -156,6 +157,13 @@ RUN apk add --no-cache \
 # covers. Without them build-cli dies on its pkg-config guard, and a worker
 # either fails verification (go-quicbaas #53, 2026-09-21) or installs them
 # by hand in every round.
+#
+# cryptsetup is a TEST dependency of a factory project, not of this repo.
+# go-luks2's unit tier runs LUKS2 conformance tests against the reference
+# implementation and fails them on purpose when the binary is absent (they
+# read and write image files; no loop device, no root). Without it every
+# go-luks2 delivery failed `make test` on six TestConformance_* cases however
+# correct the change was (go-quicbaas #1003, go-luks2 #12 and #114).
 #
 # The agents themselves, exactly as deployments/agents/claude-code and
 # deployments/agents/codex install them.
