@@ -386,7 +386,12 @@ func TestServer_SocketsRootWithoutAConfiguration(t *testing.T) {
 // registered, every state sdlc drives must keep the bound and the
 // session-backing it had before the derivation.
 //
-// THE EXPECTATIONS ARE THE PRE-#621 TABLES VERBATIM, not a re-derivation.
+// THE EXPECTATIONS ARE THE PRE-#621 TABLES VERBATIM, not a re-derivation,
+// except where sdlc has since sized a bound to its own work on purpose:
+// validating and reviewing were widened on 2026-09-21 (a verification runs
+// `make test` three times over; reviewing waits on a CI pipeline and then a
+// reviewer, and the thirty-minute bound ended a resumed job whose checks were
+// still being judged). Those two rows carry the deliberate values.
 func TestSDLCModule_DerivedIdleThresholdsAreUnchanged(t *testing.T) {
 	if err := registerSDLCModule(); err != nil {
 		t.Fatalf("registerSDLCModule: %v", err)
@@ -400,8 +405,8 @@ func TestSDLCModule_DerivedIdleThresholdsAreUnchanged(t *testing.T) {
 	}{
 		orchestration.JobStateInitializing: {10 * time.Minute, false},
 		orchestration.JobStateExecuting:    {3 * time.Hour, true},
-		orchestration.JobStateValidating:   {45 * time.Minute, false},
-		orchestration.JobStateReviewing:    {30 * time.Minute, true},
+		orchestration.JobStateValidating:   {2 * time.Hour, false},
+		orchestration.JobStateReviewing:    {4 * time.Hour, true},
 		orchestration.JobStateRedelegating: {10 * time.Minute, false},
 		orchestration.JobStateCompleting:   {10 * time.Minute, false},
 		orchestration.JobStateCleanup:      {10 * time.Minute, false},
