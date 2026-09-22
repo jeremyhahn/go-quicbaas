@@ -7,6 +7,453 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1-alpha] - 2026-09-22
+
+Fixes two defects that make v0.11.0-alpha unusable as a composition root. A
+v0.11.0-alpha CLI cannot unseal a node over REST, and no identity whose role
+holds a go-xkms permission (`keys:read`, `keys:write`, `keys:update`,
+`ssh:use`) can log in. Downstream consumers, go-trusted-platform first among
+them, should take this release rather than v0.11.0-alpha. It also moves every
+`github.com/jeremyhahn/*` stack module to its latest tag (go-xkms
+v0.16.0-alpha, go-quicraft v0.13.1-alpha, go-frost v0.3.0-alpha), makes a
+failed `Server.Start()` release everything it had built, and ships the
+filterable, faceted list surfaces with a contrast-tested web UI palette.
+
+### Breaking
+
+- **`GET /api/v1/barrier/recovery/status` answers `has_keys`, not
+  `has_recovery_keys`** (#993). The REST body now matches go-qrdb's
+  `BarrierHasRecoveryKeysResponse`. The TypeScript SDK field is renamed to
+  match. gRPC and MCP keep `has_recovery_keys`. See Fixed.
+- **Barrier credentials are base64 on the REST wire** (#989). The barrier
+  REST request types are aliases of go-qrdb's, where a credential is `[]byte`.
+  A client that builds the JSON body itself must base64-encode
+  `secret`/`passphrase`; the TypeScript SDK's fields for them now carry
+  base64. The Go SDK encodes `[]byte` automatically. Shamir share fields
+  stay plain strings. See Changed and Fixed.
+
+### Security
+
+- **On every return path, not only the successful one, the credential slice a
+  barrier request field holds is wiped.** `encoding/json` populates earlier fields before it reports
+  a later field's type error, so a body carrying a well-formed `secret` and a
+  malformed `threshold` left the plaintext on the heap — as did every
+  validation branch that answered 400 between the decode and the service call.
+  The per-tenant `barrier/unseal` route never wiped its `key` at all.
+  `defer secure.Wipe(req.Secret)` could not cover either, because `defer`
+  evaluates its arguments immediately and captures the nil slice that exists
+  before the decode runs. The cleanup is now registered before the decode and
+  reads the field through a pointer, so it zeroes whatever the decode actually
+  produced. The guarantee is stated narrowly on purpose: it covers that slice
+  and every alias of it, and not an allocation `encoding/json` made and then
+  dropped — a duplicate JSON key that re-assigns the field, or the decoder's
+  scratch buffer on a malformed value. Those are unreferenced and collected but
+  never zeroized, and nothing in this package can zeroize them; go-qrdb states
+  the same limit for the encode side.
+
+### Added
+
+- **The `Start()`-failure cleanup contract is stated where embedded callers
+  read it** — `Server.Start`, `Server.Shutdown`, the Go SDK (`sdk/go/doc.go`,
+  `sdk/go/README.md`), `docs/go-sdk/api.md` and `docs/composition/user.md`:
+  `Start` does not unwind, so a non-nil error from it MUST be followed by
+  `Shutdown`, and the deferred `Shutdown` therefore belongs immediately after
+  `NewServer` rather than after a successful `Start`. Every embedded-server
+  example is updated to that ordering, and the two in-tree embedded callers
+  (`cmd/quicbaas`) now follow it.
+
+#### Every list endpoint can be filtered, faceted and drilled into
+
+Paging (#968) made the listings answerable; it did not make them
+**askable**. A page of twenty-five jobs newest-first is not how an operator
+finds the two that agent-3 failed, and the Tasks view could not answer "what
+is this daemon working on" at all — a task record names no agent.
+
+Every orchestrator listing now takes the narrowings its view offers, and every
+list response carries the counts a filter bar renders beside each choice:
+
+- **tasks** — `statuses`, `project_id`, `agent_id`, `job_id` (plus the
+  existing `auto_spawn`), and `sort=attempts` for "which tasks have burned the
+  most attempts";
+- **jobs** — `agent_id` beside the existing `task_id`, `runner`, `project_id`,
+  `statuses` and `job_ids`, and `sort=agent_id`;
+- **sessions** — `project_id`, `job_id`, `runner` and `agent_id` beside
+  `backend` and `status`, and `sort=runner`;
+- **agents** — `status` and `backend`, where `backend` is MEMBERSHIP: a daemon
+  serving claude, codex and opencode from one record matches all three;
+- **workflows** — `project_id`, `mode`; **projects** — `autonomous`;
+  **accounts** — `provider`, `status`.
+
+`agent_id` on tasks and `runner`/`agent_id` on sessions name something the
+record does not carry: they live on the attempt's job, and the daemon resolves
+them in ONE pass over the tenant's jobs rather than one read per row.
+
+**The counts are standard faceted search**, and the order of operations is the
+contract: search, THEN count, THEN narrow. Selecting `statuses=blocked` leaves
+the counts beside `pending` and `completed` intact, so an operator can change
+their mind without clearing the filter first — `total` is what was selected,
+`facets` is what each other choice would yield. A listing the server did not
+page carries no counts: an internal sweep renders no filter bar and must not
+pay for one.
+
+**An unknown filter value still matches nothing rather than failing** — an
+agent id may legitimately name no record — with two deliberate exceptions that
+are now `400` with a typed error: a `statuses` value outside the state enum,
+and a `sort` field outside the allow-list. A state the engine does not have
+cannot be a question about this tenant's records, and answering "there are
+none" would report the caller's typo as a fact.
+
+Wired across REST, MCP, the embedded transport, the Go SDK (client + REST
+transport) and the TypeScript SDK, with the facets under `facets` in every
+envelope. `Task.agent_id` is derived on read and zeroed on write, like
+`Account.Default`: it is the job's fact, and a copy persisted on the task
+would be stale for every attempt after it.
+
+#### Faceted filters, a visible sort affordance, and a pager at both ends of every list
+
+- **Every list page can now be narrowed by the things it is made of.** The
+  deployed Tasks and Jobs pages offered a handful of chips — All /
+  Auto-spawned / Queued, Active / Completed / Failed — and no way at all to
+  ask for one project's blocked tasks or one agent's failed jobs, which is
+  the question an operator actually arrives with. `FilterBar`
+  (`cmd/quicbaas/frontend/src/components/core/FilterBar.svelte`) renders one
+  chip group per facet, each chip carrying the COUNT of records behind it, so
+  "how many jobs failed" is answered before anything is clicked. Tasks narrow
+  by status, dispatch, project and agent; jobs by state, runner, project and
+  agent; sessions by status, backend, role, project and agent; workflows by
+  mode and project; the fleet by status and backend; projects by dispatch;
+  accounts by status and provider.
+- Status on Tasks and state on Jobs are MULTI-select, because the endpoints
+  take `statuses` and "pending or blocked" is one question rather than two
+  lists to reconcile by eye. A bounded vocabulary renders as chips; an
+  unbounded one — a project, an agent — renders as a picker, because a chip
+  per project is a thousand chips.
+- **The counts come from the answer and degrade rather than disappear.** A
+  listing's `facets` member is counted over the searched set BEFORE its own
+  filters, which is what makes a count useful: it says what picking a value
+  would do. A daemon that sends no `facets` gets the declared vocabulary
+  without counts, and a value the server counts that this build never
+  declared is still offered — a state added server-side does not become
+  unaskable until the UI is rebuilt.
+- **The pager renders at the top of every table as well as the bottom**, from
+  one piece of state, with the `1–25 of 1,987` label and the rows-per-page
+  selector at the top. A pager only under twenty-five rows is below the fold
+  on every laptop in the building, which is how a paged table gets reported
+  as having no pagination at all.
+- **A sortable header says so.** Every sortable column carries a sort icon —
+  neutral when unsorted, an arrow when sorting — with a hover state and a
+  "Sort by …" tooltip; an unsortable header carries none, which is how the
+  two are told apart without clicking.
+- **A narrowed list is a link.** Filters join page, size, sort and search in
+  the route hash under the table's own key —
+  `#/tasks?tasks_status=pending,blocked&tasks_project=<id>` — so a filtered
+  view can be pasted into an issue. `routeTasks(projectId)` now builds
+  `?tasks_project=`, the table's own facet, rather than the parallel
+  `?project=` grammar it used to invent; the chip that shows the narrowing is
+  the control that clears it.
+- **Drill-down.** Ids are links: a task's project opens that project's tasks,
+  its agent opens the agent, its session and job ids open the record. A
+  detail page's Back returns to the list AS IT WAS LEFT — narrowed, sorted,
+  on the operator's page — rather than to a bare route that throws away the
+  filters they used to get there.
+
+#### The TypeScript SDK spells every listing's own filters
+
+- `TaskPageParams` gains `agent_id` and `job_id`, `JobPageParams` gains
+  `agent_id`, `SessionPageParams` gains `project_id`, `job_id`, `runner` and
+  `agent_id`, and `AccountPageParams` gains `status`. The workflows and
+  projects listings get `WorkflowPageParams` (`project_id`, `mode`) and
+  `ProjectPageParams` (`autonomous`) instead of sharing the bare `PageParams`
+  and silently dropping anything a caller passed.
+- `PageResult` gains `facets` — the per-field count of the matched set —
+  ABSENT rather than empty when the endpoint counted nothing, because "nobody
+  counted" and "every value has none" are different answers. `adoptFacets` is
+  exported for a consumer normalising its own fetch.
+
+### Changed
+
+- **The barrier REST request shapes are now type ALIASES of the go-qrdb
+  transport types, not local copies of them.** The stack is pre-v1 with
+  exactly one wire format, and `go-qrdb/sdk/go/transport` is where it is
+  written down; a mirror of those structs is a second copy of one contract
+  that drifts in silence, which is how the defect above shipped. A field
+  renamed or retyped upstream is now a compile error here.
+- **A barrier credential is base64 on the REST wire, on every client.** A
+  request whose credential is not well-formed base64 is refused with 400 and
+  never reaches the barrier. That is the whole of the protection and it is
+  stated narrowly on purpose: a raw credential that happens to be valid base64
+  — `password` is one — decodes into DIFFERENT bytes and is used as the
+  credential with no complaint, so a client must encode rather than rely on
+  being told off. The TypeScript SDK's `secret` / `passphrase` fields are
+  documented and tested as base64 accordingly, matching the byte-slice
+  convention the rest of that SDK already follows. Share fields (`share`,
+  `shares`, `keys`) are unchanged: a Shamir share is already a printable
+  encoding and go-qrdb keeps it a `string`.
+
+#### A real design system for the web UI, and status pills that don't wash out
+
+- **A single, contrast-tested palette drives every colour token.** The old
+  theme blocks picked lightness/chroma by eye and it showed: solid
+  `badge-success` measured 3.4:1 white-on-green in light theme, the dark
+  theme never declared `*-content` colours for its semantic tokens at all
+  (daisyUI's auto-derived contrast was the only thing standing between a
+  badge and invisible text), and the `/25`–`/60` muted-text opacity
+  modifiers used across ~40 view files true-blended to well under 4.5:1 in
+  BOTH themes. `cmd/quicbaas/frontend/src/lib/theme/tokens.ts` is now the
+  palette of record — every base surface, every semantic solid fill, and
+  every StatusBadge tone, as hex, for both themes — and
+  `test/themeContrast.test.ts` grades all 55 foreground/background pairs
+  against WCAG AA on every run. `src/app.css` carries the same values
+  restated as `oklch()` (daisyUI needs the CSS-variable form; a comment at
+  the top of each file points at the other). The four `text-base-content/NN`
+  opacity tiers now resolve to two dedicated, AA-passing tokens via a CSS
+  override, so every existing call site is fixed without a 40-file edit.
+- **StatusBadge renders a soft tinted pill, not a saturated fill.** A pale
+  (light theme) or deep (dark theme) tint of the status's tone sits behind
+  the text; the text is the SAME tone's deep or vivid colour, never white
+  stamped over a colour that may or may not have enough contrast to carry
+  it. Proper padding (`px-2.5 py-1`, `rounded-full`) replaces the cramped
+  `badge-sm` that produced the "no padding" complaint on the Jobs State
+  column. One tone table, `STATUS_TONES`, covers job states, task statuses,
+  session states and agent statuses; `AgentFleet`'s hand-rolled
+  `badge-xs {success|error|ghost}` switch is gone in favour of the same
+  component every other list uses.
+- **FilterBar stops chips from one facet bleeding into the next.** Each
+  field now renders inside its own bordered row instead of every field's
+  chips sharing one flex-wrap run — wrapping happens within a field, never
+  across two. A field whose vocabulary exceeds 8 values (the job lifecycle
+  is 13 states) shows the first 8 plus a "+N more" disclosure; a value the
+  operator has actually selected is never among the ones hidden by it. The
+  "Filtered by" row above the groups is now a calm tinted chip in the
+  primary tone instead of a solid `badge-primary` block. The URL grammar,
+  the loader contract, and every existing `data-testid` are unchanged —
+  `FilterBar.test.ts`, `DataTable.test.ts`, `JobsView.test.ts`,
+  `TasksView.test.ts` and `SessionList.test.ts` pass without modification.
+- Job states gained explicit tones instead of falling through to `info`:
+  `validating`/`reviewing` read as active work (same tone as
+  `executing`/`assigning`); `initializing`/`decomposing`/`scheduling` and
+  `completing`/`cleanup` read as informational setup/wind-down phases.
+
+- **Every `github.com/jeremyhahn/*` stack module is on its latest tag** (#1002), in
+  both `go.mod` and `sdk/go/go.mod`:
+
+  | Module | From | To |
+  | --- | --- | --- |
+  | `go-xkms`, `go-xkms/sdk/go`, `go-xkms/xkey` | v0.14.0-alpha | v0.16.0-alpha |
+  | `go-quicraft` | v0.11.0-alpha | v0.13.1-alpha |
+  | `go-frost` | v0.1.8-alpha | v0.3.0-alpha |
+
+  `go-qrdb` (and `sdk/go`) v0.19.0-alpha, `go-enclave` v0.5.0-alpha,
+  `go-auth` v0.2.0-alpha, `go-codec` v1.4.0, `go-objstore` v0.3.0-alpha,
+  `go-signal` v0.2.0-alpha, `go-libsignal` v0.2.0-alpha and
+  `go-truststrap` v0.4.0-alpha were already the latest tags. `golang.org/x`
+  modules moved with them (`crypto` v0.57.0, `sys` v0.48.0, `text` v0.42.0,
+  `sync` v0.23.0, `term` v0.46.0, `mod` v0.41.0).
+
+  Two go-xkms API changes are absorbed:
+
+  - `KeyConfig.Password` is now a `SecretValue` rather than a string. The CA
+    root-key password resolved from `ca.root_key_password` is moved into the
+    key config by custody transfer, so the plaintext no longer passes through
+    a Go string and the `SA1019` suppression is gone (`pkg/server/lifecycle.go`).
+  - go-xkms's REST CA contract gained `CRL(ctx)`, the read-current-CRL verb
+    behind its `GET /ca/crl`. `xkmsCAServicer` implements it over
+    `TrustedCA.CRL`, wrapping failures in `XKMSCAOperationError`
+    (`pkg/api/rest/xkms_ca_servicer.go`). QuicBaaS does not yet route a
+    `GET /api/v1/xkms/ca/crl`; `POST` (force-regenerate) is unchanged.
+
+### Fixed
+
+- **A failed `Server.Start()` no longer strands the resources it had already
+  built.** `Shutdown` now reaches the two whose owner may never exist after a
+  partial start — the cache manager, created in `startService` before the
+  service facade that closes it, and the qrdb audit sink plus seal strategy,
+  created before the node they are injected into. Previously a `Shutdown`
+  following a failed `Start` skipped all three, because each was guarded on
+  the owner that the failure had prevented from being built, leaving a
+  cleanup goroutine, an open audit file and a TPM session behind. The
+  facade-owned path is untouched, so a successful boot tears down exactly as
+  before.
+
+- **Recovered tenant databases are now closed on shutdown.** `startDatabases`
+  builds a qrdb `Manager`, and `Manager.OpenAll` opens every tenant database
+  found on disk — but the manager was a local variable handed to a
+  `DatabaseService` and on to the facade, and the facade's `Close` never
+  reached it. Nothing did. So a `Start` that failed at any step after
+  `startDatabases`, *and equally a `Start` that fully succeeded*, left a
+  directory of open stores that no teardown path could close. The `Server`
+  now takes ownership of the manager the moment it is built — before
+  `OpenAll` opens the first database, so the window in which a handle exists
+  without an owner is empty — and `Shutdown` closes it after the facade,
+  whose `DatabaseService` routes into it.
+
+- **A failed messaging start no longer orphans its notification hub.**
+  `PushService.Start` launches the hub goroutine before its readiness wait,
+  and both ways that wait can fail — a cancelled context, and a hub that
+  never came up — returned with the goroutine still running and its context
+  uncancelled. It was unreachable afterwards by construction: `Stop` returns
+  immediately while `running` is false, and `running` is only set on success,
+  while `Server.startMessaging` assigns `s.messagingService` only after
+  `Start` returns, so `Shutdown` saw a nil field. `Start` now unwinds itself
+  on both paths, cancelling the hub's context and *joining* the goroutine, so
+  the hub is provably gone by the time the caller has the error and no
+  teardown call is needed at all.
+
+- **The job scheduler can no longer outlive the shutdown that stopped it.**
+  The service facade started its `SchedulerEngine` from a goroutine, so a
+  teardown that ran before that goroutine was scheduled — exactly what a
+  `Shutdown` after a failed `Start` does — called `Stop` on an engine that
+  was not running yet, was told "not running", and then watched the queued
+  `Start` bring a poll loop up against storage the same teardown had already
+  closed. The builder now starts the engine synchronously (`Start` launches
+  its own loop and returns, so nothing is deferred by doing so), and
+  `SchedulerEngine.Stop` is terminal even when it arrives before the matching
+  `Start`, so a late `Start` refuses instead of resurrecting the loop. The
+  error `Stop` returns for a not-running engine is unchanged; only the
+  recorded state is.
+
+- **The data-plane barrier's sealing strategies now have an owner.**
+  `buildDataPlaneBarrierService` returned the pebble seal sub-store as its
+  only `io.Closer`, so the strategies it built alongside were released by
+  nobody: not the caller, which stores that closer and nothing else; not the
+  barrier, which does not own its strategies; and not `stopQRDBNode`, whose
+  `Server.sealStrategy` is a *different* instance from a separate build call.
+  With a hardware seal strategy configured and node sealing disabled, that
+  orphan holds an open TPM backend — and the `SealingStrategy` contract is
+  that closing the strategy is what releases it — so a `Start` that failed
+  after this point, and equally one that fully succeeded, left the TPM open
+  for the life of the process. The builder now returns a single
+  `dataPlaneBarrierResources` closer owning both the strategies and the
+  store, every construction-error path releases what it had already opened,
+  and `Shutdown` nils the field so a second call cannot re-close it.
+
+- **The KMS manager is now closed on shutdown, so its key-material cache
+  stops leaking a goroutine.** With `kms.cache.enabled` (the default),
+  `startKMS` builds a `KMSService` whose `KeyCache` runs a cleanup goroutine
+  for as long as the manager exists — and nothing downstream ever closed it:
+  the service facade's `Close` does not, `MemoryCryptoManager.Close` is a
+  no-op, and catalog's `KMSDEKProvider` only borrows the reference. The
+  goroutine therefore survived a *clean* `Start`/`Shutdown` cycle as readily
+  as a failed one. `Server.Shutdown` now closes the manager last, after the
+  facade and the catalog workers that use it have stopped. Teardown is
+  otherwise unchanged: `XKMSBackend.Close` is a documented no-op because xkms
+  lifecycle is global, so this cannot pull the CA's shared key storage out
+  from under anything.
+
+- **`barrier unseal --transport rest` can unseal a node again** (#989). go-qrdb
+  v0.19.0-alpha (adopted in #963) retyped every barrier credential from
+  `string` to wipeable `[]byte`, which makes `secret` a BASE64 string in the
+  JSON body its REST transport sends. This repository's REST handlers kept
+  decoding those fields as `string`, so the barrier was asked to decrypt with
+  the base64 TEXT of the passphrase. Measured on the burn-in node
+  (2026-09-22): a v0.11.0-alpha CLI answered
+  `quicraft/seal: unseal failed (strategy=passphrase): quicraft/seal:
+  decryption failed` against a node the pre-#963 CLI unsealed with the same
+  passphrase. Every credential-bearing barrier request on the REST surface —
+  `barrier initialize` / `unseal` / `shamir/initialize` /
+  `enable-encryption`, and the per-tenant `barrier/init` /
+  `barrier/enable-encryption` — now decodes the credential as `[]byte`,
+  matching go-qrdb field for field (#988).
+
+- **A `systemd --user` agent no longer dies with the deploy's SSH
+  session.** A per-user systemd manager belongs to its user's login
+  sessions unless that user lingers, so `agent deploy --systemd auto` on
+  omega reported `Online At: 2026-09-22T01:53:08Z` for an agent that was
+  killed the moment the deploy disconnected — every later probe started a
+  fresh manager, enrolled, and was stopped ten seconds later, while the
+  fleet registry still showed `running` from the last heartbeat and a
+  review routed there failed with `connection refused` on port 9091. The
+  installer now reads `loginctl show-user <user> -p Linger` after writing
+  the unit and enables lingering over `sudo -n` before starting it,
+  failing with `LingerNotEnabledError` — naming `sudo loginctl
+  enable-linger <user>` — when it cannot. `--wait-online` also verifies
+  after closing the SSH session, and requires the agent's own runtime
+  port to accept a connection before reporting it online.
+
+#### An agent's detail page lists what ran on THAT agent
+
+- The Sessions and Jobs panels of `#/agents/{id}` sieved the store's
+  collection by BACKEND: every session on `claude`, whichever host it ran on.
+  Two agents sharing a backend — the normal case — each showed the other's
+  work. Both panels now ask the server for `agent_id`, paged, which is a
+  filter the listings have and this page was not using.
+
+#### BREAKING: `GET /api/v1/barrier/recovery/status` renames its response field to `has_keys` (#993)
+
+- **A barrier that HAS recovery keys no longer reports that it has none.**
+  The route answered `{"has_recovery_keys": true}`, but the canonical client
+  of that route — go-qrdb's REST transport — decodes the body into
+  `transport.BarrierHasRecoveryKeysResponse`, whose field is tagged
+  `has_keys`. The key never matched, so
+  `Security().Barrier().BarrierHasRecoveryKeys(...)` returned `false` for a
+  barrier holding recovery keys: a wrong answer on a disaster-recovery
+  precondition, not an error, which is the failure mode that gets acted on.
+  The handler now emits `has_keys`.
+- The gRPC and MCP surfaces keep `has_recovery_keys`. The barrier is
+  go-qrdb's, and go-qrdb spells this bit per transport — `has_keys` in its
+  REST response type, `has_recovery_keys` in its MCP tool output and in the
+  protobuf field — so each quicbaas transport serves the format its own
+  upstream client reads, rather than one route emitting both keys.
+- The TypeScript SDK's `BarrierHasRecoveryKeysResponse` field is renamed to
+  `has_keys` to match the REST body it mirrors. Callers reading
+  `status.has_recovery_keys` from `barrier.recoveryStatus()` read
+  `status.has_keys` instead.
+
+- **An identity whose role carries a go-xkms permission can log in again** (#1002, go-xkms#618).
+  go-qrdb v0.19.0-alpha removed the implicit self-scope, so a permission
+  registered without a declared scope is refused, and
+  `rbac.ListPermissions` fails on the *first* unscoped permission an
+  identity holds. go-xkms v0.14.0-alpha and v0.15.0-alpha contributed
+  `keys:read`, `keys:update`, `keys:write` and `ssh:use` with no scope, and
+  token issuance calls `ListPermissions`, so every login for a role holding
+  one of them failed with `permission: no scope declared for keys:read`.
+  go-xkms v0.16.0-alpha (go-xkms#617, PR #618) declares all four
+  `PermissionScopeSelf`, the reach they had before go-qrdb#504, so no
+  deployment's authorization outcome changes. Fixed by the dependency bump
+  below. `pkg/server/xkms_permission_scope_test.go` pins it from this side:
+  the composed xkms vocabulary resolves a scope for `keys:read`, an identity
+  holding it obtains a bearer whose `scp` carries it, and an identity
+  holding an unrelated registered-but-unscoped permission still gets no
+  token at all.
+
+- The embedded UI's entry page is served `Cache-Control: no-cache` and its
+  content-hashed assets `public, max-age=31536000, immutable`. The bundle
+  carries no modification times, so browsers received no cache directive at
+  all and heuristically kept `index.html`, which names the asset hashes; after
+  a deploy the operator's browser ran the previous bundle for hours and read
+  the new features as missing (2026-09-22).
+
+### Testing
+
+- **The cleanup contract is verified in both tiers, split by what each tier
+  can actually run.** The unit half,
+  `pkg/server/start_partial_failure_cleanup_test.go`, owns the RELEASE
+  property: for every resource whose intended owner may never be built,
+  `Shutdown` closes it and drops it. Each test hands the `Server` the orphan
+  directly and calls `Shutdown`; **none of them calls `Start`**, and every
+  server comes from a helper that clears both the pebble backend and the data
+  directory, so the file runs entirely in memory as the Unit Test Contract
+  requires. The data-plane barrier's own assembly is asserted there too,
+  through a `newSealStoreFn` seam that substitutes an in-memory seal store —
+  the same package-level-function-variable pattern `newCacheManagerFn` and
+  `newSecretsMgr` already use.
+
+  That split is forced rather than chosen: **a full `Server.Start()` cannot
+  run in memory.** The embedded qrdb node refuses an empty Raft `DataDir`
+  while the vector subsystem is compiled in, and `buildDataPlaneBarrierService`
+  opens a pebble seal sub-store for any non-empty `Storage.DataDir`, ignoring
+  `Storage.Backend` entirely. So every test that drives a real `Start` lives
+  in `test/integration/lifecycle/`, which asserts the two things only a real
+  boot over a real store can show: that a mid-`Start()` failure really lands
+  in the window where the orphan exists, and that `Shutdown` afterwards joins
+  the background goroutines and returns the OS handles — proved by goroutine
+  frames, which cross the package boundary that unexported fields do not, and
+  by re-recovering the seeded pebble database. It drives its failure from
+  configuration rather than a seam, which is also the truer test: an embedded
+  caller's `Start` fails that way, not by a swapped function pointer.
+
+  Every assertion in both tiers was confirmed to fail with its fix reverted.
+
 ## [0.11.0-alpha] - 2026-09-22
 
 MINOR, and **breaking for anything that implements or wraps a barrier
