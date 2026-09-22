@@ -59,6 +59,34 @@ func Handler() http.Handler {
 	return http.StripPrefix("/ui", spaHandler(sub, fileServer))
 }
 
+// Cache policy for the two kinds of file the bundle contains.
+//
+// THE ENTRY PAGE MUST NEVER BE SERVED STALE. Vite names every asset by its
+// content hash (assets/index-Bcp8aNMP.js), so an asset URL is immutable and
+// may be cached for as long as a browser likes; index.html is the only file
+// whose content changes under a fixed URL, because it is what names the
+// current hashes. The embedded FS carries no modification times, so
+// http.FileServer sends neither Last-Modified nor ETag, and a browser with
+// no cache directive falls back to heuristic caching of index.html — on
+// 2026-09-22 the operator's browser kept the previous bundle for hours after
+// a deploy and read the new features as missing. no-cache makes the browser
+// revalidate the entry page on every load; immutable lets it never re-ask
+// for an asset it already holds.
+const (
+	cacheControlEntry = "no-cache"
+	cacheControlAsset = "public, max-age=31536000, immutable"
+	assetPrefix       = "assets/"
+)
+
+// cacheControlFor returns the Cache-Control value for a bundle path already
+// stripped of its leading slash.
+func cacheControlFor(clean string) string {
+	if strings.HasPrefix(clean, assetPrefix) {
+		return cacheControlAsset
+	}
+	return cacheControlEntry
+}
+
 // spaHandler wraps a static file server so that any path that does not match a
 // real file in the embedded FS is served as index.html. This allows the
 // Svelte hash-based router to handle all client-side routes.
@@ -70,10 +98,12 @@ func spaHandler(fsys fs.FS, files http.Handler) http.Handler {
 			clean = "index.html"
 		}
 		if _, err := fs.Stat(fsys, clean); err == nil {
+			w.Header().Set("Cache-Control", cacheControlFor(clean))
 			files.ServeHTTP(w, r)
 			return
 		}
 		// Unknown path — serve index.html and let the Svelte router decide.
+		w.Header().Set("Cache-Control", cacheControlEntry)
 		r2 := r.Clone(r.Context())
 		r2.URL.Path = "/index.html"
 		files.ServeHTTP(w, r2)
