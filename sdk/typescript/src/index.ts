@@ -279,14 +279,18 @@ export { SPEND_UNATTRIBUTED } from './types.js';
 export type {
   PageParams,
   PageResult,
+  PageFacets,
   JobPageParams,
   TaskPageParams,
   SessionPageParams,
   AgentPageParams,
+  WorkflowPageParams,
+  ProjectPageParams,
   AccountPageParams,
 } from './page.js';
 export {
   adoptPage,
+  adoptFacets,
   appendPageParams,
   appendListParam,
   appendCSVParam,

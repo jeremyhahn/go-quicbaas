@@ -18,7 +18,7 @@ export { SandboxMode } from './types.js';
 // SPEND_UNATTRIBUTED is a value, not a type: a caller drilling into a spend
 // report's unattributed row supplies it as that level's scope.
 export { SPEND_UNATTRIBUTED } from './types.js';
-export { adoptPage, appendPageParams, appendListParam, appendCSVParam, wholeSetPage, MalformedPageError, } from './page.js';
+export { adoptPage, adoptFacets, appendPageParams, appendListParam, appendCSVParam, wholeSetPage, MalformedPageError, } from './page.js';
 // Typed errors.
 export { QuicBaaSError, ConnectionError, NotConnectedError, APIError, DeployNotSupportedError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError, } from './errors.js';
 // SSH REST client classes — exported so callers can construct them directly

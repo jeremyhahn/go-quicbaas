@@ -127,8 +127,13 @@ export function adoptPage(raw, itemsKey, map) {
         throw new MalformedPageError(itemsKey, items === undefined ? 'no such member' : typeof items);
     }
     const converted = convert(items);
-    if (typeof record['total'] !== 'number')
-        return wholeSetPage(converted);
+    const facets = adoptFacets(record['facets']);
+    if (typeof record['total'] !== 'number') {
+        const whole = wholeSetPage(converted);
+        if (facets !== undefined)
+            whole.facets = facets;
+        return whole;
+    }
     const page = {
         items: converted,
         total: record['total'],
@@ -137,7 +142,34 @@ export function adoptPage(raw, itemsKey, map) {
     };
     if (typeof record['next_offset'] === 'number')
         page.next_offset = record['next_offset'];
+    if (facets !== undefined)
+        page.facets = facets;
     return page;
+}
+/**
+ * adoptFacets reads the counts out of a listing answer, keeping only the
+ * numbers. A missing member, or one that is not a map of maps of numbers,
+ * reports undefined — which a caller reads as "nobody counted" and answers by
+ * offering its declared vocabulary uncounted.
+ *
+ * IT DOES NOT THROW. A malformed `facets` costs the operator the counts beside
+ * the chips; refusing the whole page over it would cost them the records.
+ */
+export function adoptFacets(raw) {
+    if (raw === null || raw === undefined || typeof raw !== 'object')
+        return undefined;
+    const facets = {};
+    for (const [field, counts] of Object.entries(raw)) {
+        if (counts === null || typeof counts !== 'object')
+            continue;
+        const kept = {};
+        for (const [value, count] of Object.entries(counts)) {
+            if (typeof count === 'number' && Number.isFinite(count))
+                kept[value] = count;
+        }
+        facets[field] = kept;
+    }
+    return Object.keys(facets).length === 0 ? undefined : facets;
 }
 /**
  * wholeSetPage reports a complete collection as a single page.

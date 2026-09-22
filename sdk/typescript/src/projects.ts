@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-import type { PageParams, PageResult } from './page.js';
+import type { PageResult, ProjectPageParams } from './page.js';
 
 // ---------------------------------------------------------------------------
 // Project domain types
@@ -291,7 +291,7 @@ export interface ProjectsClient {
    * with the count of everything that matched.
    * GET /api/v1/projects?tenant_id=...&limit=&offset=&sort=&q=
    */
-  listProjectsPage(tenantId: string, page?: PageParams): Promise<PageResult<Project>>;
+  listProjectsPage(tenantId: string, page?: ProjectPageParams): Promise<PageResult<Project>>;
 
   /**
    * grantAgentRole sets or updates the role for an agent within a project.

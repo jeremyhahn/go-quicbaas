@@ -1,4 +1,4 @@
-import type { PageParams, PageResult } from './page.js';
+import type { PageResult, ProjectPageParams } from './page.js';
 /** ProjectRole defines the level of access an agent has within a project. */
 export type ProjectRole = 'lead' | 'worker' | 'observer' | 'denied';
 /**
@@ -250,7 +250,7 @@ export interface ProjectsClient {
      * with the count of everything that matched.
      * GET /api/v1/projects?tenant_id=...&limit=&offset=&sort=&q=
      */
-    listProjectsPage(tenantId: string, page?: PageParams): Promise<PageResult<Project>>;
+    listProjectsPage(tenantId: string, page?: ProjectPageParams): Promise<PageResult<Project>>;
     /**
      * grantAgentRole sets or updates the role for an agent within a project.
      * PUT /api/v1/projects/:projectId/permissions/:agentId

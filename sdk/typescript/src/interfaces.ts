@@ -18,6 +18,7 @@ import type {
   PageResult,
   SessionPageParams,
   TaskPageParams,
+  WorkflowPageParams,
 } from './page.js';
 import type { RAGClient } from './rag.js';
 import type { EmbeddingsClient } from './embedding_sdk.js';
@@ -254,7 +255,7 @@ export interface OrchestratorClient {
   // by name — a workflow carries no timestamp to order by.
   listWorkflowsPage(
     tenantID: string,
-    page?: PageParams,
+    page?: WorkflowPageParams,
   ): Promise<PageResult<WorkflowDefinition>>;
 
   // listJobs returns the tenant's jobs, sorted by start time descending.
