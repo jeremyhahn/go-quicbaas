@@ -111,3 +111,80 @@ export function countLiveSessions(
   }
   return live;
 }
+
+// ---------------------------------------------------------------------------
+// The role a session plays
+// ---------------------------------------------------------------------------
+
+/**
+ * A SESSION CARRIES NO ROLE, AND THE TRANSCRIPT READS AS IF IT DID. A worker
+ * session's conversation discusses "the review's findings" because the worker
+ * was told them; read without knowing whose session it is, that transcript says
+ * the model on the page performed the review. The owner drew exactly that
+ * conclusion from a worker session and concluded the wrong model was reviewing
+ * code (go-quicbaas#969).
+ *
+ * The role is not on the session record and does not need to be: the session
+ * names its job, and the job names the runner that drove it. One lookup against
+ * the job list the orchestrator store already holds turns `job_id` into the one
+ * word that resolves the ambiguity.
+ */
+const RUNNER_ROLES: Readonly<Record<string, string>> = {
+  sdlc: 'worker',
+  review: 'reviewer',
+  triage: 'triage',
+};
+
+/** SessionJobRef is the part of a session that names its job. */
+export interface SessionJobRef {
+  job_id?: string | null;
+}
+
+/** JobRunnerRef is the part of a job record that names its runner. */
+export interface JobRunnerRef {
+  job_id: string;
+  runner?: string;
+}
+
+/**
+ * roleOfRunner names what an agent driven by this runner was doing. A runner
+ * with no role of its own is reported under its own name rather than dropped:
+ * a runner this build has not heard of still tells the reader more than a
+ * blank does, which is the whole point of the badge.
+ */
+export function roleOfRunner(runner: string | null | undefined): string {
+  const named = (runner ?? '').trim();
+  if (named === '') return '';
+  return RUNNER_ROLES[named] ?? named;
+}
+
+/**
+ * sessionRole is the role of the session's job, or '' when the session belongs
+ * to no job or its job is not among the records held. An empty role renders no
+ * badge — asserting a role from a job nobody has read would be the same mistake
+ * the badge exists to prevent.
+ */
+export function sessionRole(
+  session: SessionJobRef | null | undefined,
+  jobs: readonly JobRunnerRef[] | null | undefined,
+): string {
+  const jobID = session?.job_id ?? '';
+  if (jobID === '' || !Array.isArray(jobs)) return '';
+  const job = jobs.find((j) => j.job_id === jobID);
+  return job === undefined ? '' : roleOfRunner(job.runner);
+}
+
+/**
+ * sessionModel is the model a session runs on.
+ *
+ * The daemon writes it on the session record; the SDK's SessionStatusResponse
+ * has never declared it, so every reader had to reach through the type. Reading
+ * it once, structurally, is what lets the role badge name the model beside the
+ * role — which is the pair the operator actually needs: not just what this
+ * session was doing, but who was doing it.
+ */
+export function sessionModel(record: unknown): string {
+  if (record === null || typeof record !== 'object') return '';
+  const model = (record as { model?: unknown }).model;
+  return typeof model === 'string' ? model : '';
+}

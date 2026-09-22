@@ -79,6 +79,7 @@
     itemsKey,
     reloadKey,
     loading = false,
+    narrowed = false,
     pageSize = DEFAULT_PAGE_SIZE,
     defaultSort = '',
     urlKey = '',
@@ -109,6 +110,13 @@
     reloadKey?: string | number;
     /** loading shows the spinner for a view that fetches its own rows. */
     loading?: boolean;
+    /**
+     * narrowed says the view's OWN filters are active. A table handed a
+     * pre-filtered collection cannot tell "this tenant has no sessions" from
+     * "no session is both closed and on claude", and telling the second
+     * operator to spawn their first session is a lie.
+     */
+    narrowed?: boolean;
     pageSize?: number;
     /** defaultSort is the initial sort, as `<field>` or `<field>:desc`. */
     defaultSort?: string;
@@ -405,7 +413,7 @@
         {:else if visible.length === 0}
           <tr>
             <td colspan={columns.length}>
-              {#if hasRows || filtered}
+              {#if hasRows || filtered || narrowed}
                 <div class="text-center py-8 text-sm text-base-content/40" data-testid="data-table-no-match">
                   {noMatchText}
                 </div>

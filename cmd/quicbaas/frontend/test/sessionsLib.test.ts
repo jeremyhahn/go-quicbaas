@@ -23,6 +23,9 @@ import { describe, it, expect } from 'vitest';
 import {
   TERMINAL_SESSION_STATES,
   countLiveSessions,
+  roleOfRunner,
+  sessionModel,
+  sessionRole,
   isLiveSessionState,
   sessionLifecycleState,
 } from '../src/lib/sessions.ts';
@@ -164,5 +167,62 @@ describe('sessionLifecycleState', () => {
     expect(sessionLifecycleState(null)).toBeUndefined();
     expect(sessionLifecycleState(undefined)).toBeUndefined();
     expect(sessionLifecycleState('nonsense' as unknown as { status?: string })).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The role a session played (go-quicbaas#969)
+// ---------------------------------------------------------------------------
+
+describe('roleOfRunner', () => {
+  it('names the three roles the factory runs', () => {
+    expect(roleOfRunner('sdlc')).toBe('worker');
+    expect(roleOfRunner('review')).toBe('reviewer');
+    expect(roleOfRunner('triage')).toBe('triage');
+  });
+
+  it('reports an unfamiliar runner under its own name, and none for no runner', () => {
+    expect(roleOfRunner('workflow')).toBe('workflow');
+    expect(roleOfRunner('')).toBe('');
+    expect(roleOfRunner('   ')).toBe('');
+    expect(roleOfRunner(null)).toBe('');
+    expect(roleOfRunner(undefined)).toBe('');
+  });
+});
+
+describe('sessionRole', () => {
+  const jobs = [
+    { job_id: 'job-1', runner: 'sdlc' },
+    { job_id: 'job-2', runner: 'review' },
+    { job_id: 'job-3' },
+  ];
+
+  it('reads the role from the runner of the job the session names', () => {
+    expect(sessionRole({ job_id: 'job-1' }, jobs)).toBe('worker');
+    expect(sessionRole({ job_id: 'job-2' }, jobs)).toBe('reviewer');
+  });
+
+  it('claims no role it cannot support', () => {
+    // No job on the session, a job nobody read, a job with no runner, and no
+    // job list at all: each is the absence of an answer, not a default.
+    expect(sessionRole({}, jobs)).toBe('');
+    expect(sessionRole({ job_id: '' }, jobs)).toBe('');
+    expect(sessionRole({ job_id: 'job-missing' }, jobs)).toBe('');
+    expect(sessionRole({ job_id: 'job-3' }, jobs)).toBe('');
+    expect(sessionRole({ job_id: 'job-1' }, null)).toBe('');
+    expect(sessionRole(null, jobs)).toBe('');
+  });
+});
+
+describe('sessionModel', () => {
+  it('reads the model the daemon wrote on a session record', () => {
+    expect(sessionModel({ model: 'claude-opus-4' })).toBe('claude-opus-4');
+  });
+
+  it('reads nothing for a record that carries no model', () => {
+    expect(sessionModel({})).toBe('');
+    expect(sessionModel({ model: 7 })).toBe('');
+    expect(sessionModel(null)).toBe('');
+    expect(sessionModel('nonsense')).toBe('');
   });
 });

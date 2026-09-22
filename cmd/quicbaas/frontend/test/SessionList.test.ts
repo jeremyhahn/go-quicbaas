@@ -19,6 +19,7 @@ const mockSessions: SessionStatusResponse[] = [
     status: 'active',
     created_at: 1700000100,
     last_active: 1700000200,
+    job_id: 'job-worker',
   },
   {
     session_id: 'bbb-222-bbb-222-bbb-222',
@@ -26,7 +27,14 @@ const mockSessions: SessionStatusResponse[] = [
     status: 'closed',
     created_at: 1700000000,
     last_active: 1700000050,
+    job_id: 'job-reviewer',
   },
+];
+
+/** The jobs behind the Role column: one driven by each runner. */
+const mockJobs = [
+  { job_id: 'job-worker', runner: 'sdlc' },
+  { job_id: 'job-reviewer', runner: 'review' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -42,6 +50,14 @@ vi.mock('../src/stores/sessionStore.svelte.ts', () => ({
     get sessionsLoading() { return false; },
   },
   refreshSessions: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('../src/stores/orchestrator.svelte.ts', () => ({
+  orchestratorStore: {
+    get jobs() { return mockJobs; },
+    get activeTenantID() { return 'tenant-a'; },
+  },
+  loadJobs: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../src/stores/router.svelte.ts', () => ({
@@ -132,20 +148,54 @@ describe('SessionList', () => {
     await fireEvent.change(statusSelect);
 
     expect(screen.queryAllByRole('button', { name: /Open session/i })).toHaveLength(0);
-    expect(screen.getByText(/0 of 2 sessions/)).toBeInTheDocument();
+    // The shared table says the filter emptied the page, not the tenant.
+    expect(screen.getByTestId('data-table-no-match')).toBeInTheDocument();
   });
 
-  it('clicking sort header twice cycles through asc and desc', async () => {
+  it('cycles a sort header ascending, descending, off', async () => {
     render(SessionList);
-    const sortBtn = screen.getByRole('button', { name: /Backend/i });
-    // First click on Backend: field changes (from created_at), starts at desc (↓).
-    await fireEvent.click(sortBtn);
-    expect(sortBtn.textContent).toContain('↓');
-    // Second click on Backend: same field, toggles to asc (↑).
+    const sortBtn = screen.getByRole('button', { name: 'Sort by Backend' });
     await fireEvent.click(sortBtn);
     expect(sortBtn.textContent).toContain('↑');
-    // Third click on Backend: same field, back to desc (↓).
     await fireEvent.click(sortBtn);
     expect(sortBtn.textContent).toContain('↓');
+    await fireEvent.click(sortBtn);
+    expect(sortBtn.textContent).not.toContain('↓');
+    expect(sortBtn.textContent).not.toContain('↑');
+  });
+
+  it('pages the sessions through the shared table', () => {
+    render(SessionList);
+    expect(screen.getByTestId('data-table-range').textContent).toContain('1–2 of 2');
+    expect(screen.getByLabelText('Rows per page')).toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // The Role column (go-quicbaas#969)
+  // -------------------------------------------------------------------------
+
+  it('names the role each session played, from the runner of its job', () => {
+    render(SessionList);
+    const roles = screen.getAllByTestId('session-role').map((el) => el.textContent?.trim());
+    expect(roles).toContain('worker');
+    expect(roles).toContain('reviewer');
+  });
+
+  it('claims no role for a session whose job is not among the records held', () => {
+    const orphan: SessionStatusResponse = {
+      session_id: 'ccc-333-ccc-333-ccc-333',
+      backend: 'codex',
+      status: 'active',
+      created_at: 1700000300,
+      last_active: 1700000400,
+      job_id: 'job-nobody-read',
+    };
+    mockSessions.push(orphan);
+    try {
+      render(SessionList);
+      expect(screen.getAllByTestId('session-role')).toHaveLength(2);
+    } finally {
+      mockSessions.pop();
+    }
   });
 });
