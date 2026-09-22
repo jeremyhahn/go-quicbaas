@@ -453,39 +453,39 @@
   <div class="flex items-center justify-between gap-2 flex-wrap text-xs text-base-content/50">
     <span data-testid="data-table-range">{rangeLabel(offset, visible.length, total)}</span>
     {#if pageable}
-    <div class="join">
-      <button
-        type="button"
-        class="btn btn-xs join-item"
-        aria-label="First page"
-        disabled={safePage <= 0}
-        onclick={() => goto(0)}
-      >«</button>
-      <button
-        type="button"
-        class="btn btn-xs join-item"
-        aria-label="Previous page"
-        disabled={safePage <= 0}
-        onclick={() => goto(safePage - 1)}
-      >‹</button>
-      <span class="btn btn-xs join-item no-animation pointer-events-none" data-testid="data-table-page">
-        {safePage + 1} / {lastPage + 1}
-      </span>
-      <button
-        type="button"
-        class="btn btn-xs join-item"
-        aria-label="Next page"
-        disabled={safePage >= lastPage}
-        onclick={() => goto(safePage + 1)}
-      >›</button>
-      <button
-        type="button"
-        class="btn btn-xs join-item"
-        aria-label="Last page"
-        disabled={safePage >= lastPage}
-        onclick={() => goto(lastPage)}
-      >»</button>
-    </div>
+      <div class="join">
+        <button
+          type="button"
+          class="btn btn-xs join-item"
+          aria-label="First page"
+          disabled={safePage <= 0}
+          onclick={() => goto(0)}
+        >«</button>
+        <button
+          type="button"
+          class="btn btn-xs join-item"
+          aria-label="Previous page"
+          disabled={safePage <= 0}
+          onclick={() => goto(safePage - 1)}
+        >‹</button>
+        <span class="btn btn-xs join-item no-animation pointer-events-none" data-testid="data-table-page">
+          {safePage + 1} / {lastPage + 1}
+        </span>
+        <button
+          type="button"
+          class="btn btn-xs join-item"
+          aria-label="Next page"
+          disabled={safePage >= lastPage}
+          onclick={() => goto(safePage + 1)}
+        >›</button>
+        <button
+          type="button"
+          class="btn btn-xs join-item"
+          aria-label="Last page"
+          disabled={safePage >= lastPage}
+          onclick={() => goto(lastPage)}
+        >»</button>
+      </div>
     {/if}
   </div>
 </div>
