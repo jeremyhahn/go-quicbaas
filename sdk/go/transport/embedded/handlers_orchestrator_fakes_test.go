@@ -478,7 +478,7 @@ func (m *fakeAgentService) ListAgentsPage(ctx context.Context, tenantID string, 
 	return orchestration.ApplyPage(agents, page, orchestration.AgentPageSpec())
 }
 
-func (m *fakeAgentService) ListWorkflowsPage(ctx context.Context, page *orchestration.Page) (*orchestration.PageResult[*orchestration.WorkflowDefinition], error) {
+func (m *fakeAgentService) ListWorkflowsPage(ctx context.Context, filter *orchestration.WorkflowFilter, page *orchestration.Page) (*orchestration.PageResult[*orchestration.WorkflowDefinition], error) {
 	workflows, err := m.ListWorkflows(ctx)
 	if err != nil {
 		return nil, err

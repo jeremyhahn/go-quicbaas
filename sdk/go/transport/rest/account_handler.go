@@ -154,6 +154,9 @@ func (h *accountRESTHandler) handleList(ctx context.Context, req interface{}) (i
 	if sdkReq.ProjectID != "" {
 		query.Set("project_id", sdkReq.ProjectID)
 	}
+	if sdkReq.Status != "" {
+		query.Set("status", sdkReq.Status)
+	}
 	setPageQuery(query, sdkReq.Params)
 
 	var env accountListEnvelope

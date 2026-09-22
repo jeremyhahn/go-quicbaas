@@ -376,8 +376,16 @@ func (s *Server) HandleOrchestratorListSessions(w http.ResponseWriter, r *http.R
 		Backend: backend,
 		// The SDK has sent ?status= since it gained the field; the handler
 		// dropped it, so the filter was accepted and ignored (#792).
-		Status: orchestration.SessionState(r.URL.Query().Get("status")),
-		Page:   page,
+		Status:    orchestration.SessionState(r.URL.Query().Get("status")),
+		ProjectID: r.URL.Query().Get("project_id"),
+		JobID:     r.URL.Query().Get("job_id"),
+		// runner is the session's ROLE — sdlc, review, triage, workflow —
+		// read off the job it belongs to, and agent_id is the daemon that
+		// ran it. Neither is on the session record; both are resolved for
+		// the listing before it is counted and cut.
+		Runner:  r.URL.Query().Get("runner"),
+		AgentID: r.URL.Query().Get("agent_id"),
+		Page:    page,
 	})
 	if err != nil {
 		handleOrchestratorError(w, r, err)
@@ -505,12 +513,27 @@ func (s *Server) HandleOrchestratorListTasks(w http.ResponseWriter, r *http.Requ
 	tenantID := r.URL.Query().Get("tenant_id")
 	ctx = orchestration.ContextWithTenant(ctx, tenantID)
 
+	// A STATUS THE ENGINE DOES NOT HAVE IS REFUSED, not matched against
+	// nothing: `statuses=complete` is a typo, and answering "there are no
+	// such tasks" would report the typo as a fact about the tenant. Every
+	// other narrowing here names a record that may simply not exist.
+	statuses, err := orchestration.ParseTaskStatuses("statuses", r.URL.Query().Get("statuses"))
+	if err != nil {
+		RespondBadRequest(w, r, err.Error())
+		return
+	}
+
 	filter := &orchestration.TaskFilter{
 		TeamName:   r.URL.Query().Get("team_name"),
 		AssignedTo: r.URL.Query().Get("assigned_to"),
 		CreatedBy:  r.URL.Query().Get("created_by"),
 		ProjectID:  r.URL.Query().Get("project_id"),
-		Statuses:   parseTaskStatuses(r.URL.Query().Get("statuses")),
+		Statuses:   statuses,
+		// agent_id and job_id resolve through the task's LATEST ATTEMPT: the
+		// Tasks view's "which agent is running this" and a job page's "which
+		// task is this an attempt at" are the same binding read both ways.
+		AgentID: r.URL.Query().Get("agent_id"),
+		JobID:   r.URL.Query().Get("job_id"),
 	}
 
 	statusParam := r.URL.Query().Get("status")
@@ -881,15 +904,22 @@ func (s *Server) HandleOrchestratorListJobs(w http.ResponseWriter, r *http.Reque
 	// verify. statuses, runner and project_id narrow the same listing the
 	// same way, so the ~2,000-record job history of a burn-in tenant can be
 	// asked a question instead of downloaded whole.
+	states, err := orchestration.ParseJobStates("statuses", r.URL.Query().Get("statuses"))
+	if err != nil {
+		RespondBadRequest(w, r, err.Error())
+		return
+	}
+
 	filter := &orchestration.JobFilter{
 		TaskID:    r.URL.Query().Get("task_id"),
 		Runner:    r.URL.Query().Get("runner"),
 		ProjectID: r.URL.Query().Get("project_id"),
-		Statuses:  parseCSVList[orchestration.JobState](r.URL.Query().Get("statuses")),
+		AgentID:   r.URL.Query().Get("agent_id"),
+		Statuses:  states,
 		// job_ids answers a page of something else: the sessions page names
 		// a job per row and renders its runner's role, and asks for exactly
 		// those jobs in one call rather than 25.
-		JobIDs: parseCSVList[string](r.URL.Query().Get("job_ids")),
+		JobIDs: orchestration.SplitCSVFilter(r.URL.Query().Get("job_ids")),
 	}
 
 	page, err := pageFromRequest(r)
@@ -1928,7 +1958,12 @@ func (s *Server) HandleOrchestratorListWorkflows(w http.ResponseWriter, r *http.
 		return
 	}
 
-	wfs, err := agentSvc.ListWorkflowsPage(ctx, page)
+	filter := &orchestration.WorkflowFilter{
+		ProjectID: r.URL.Query().Get("project_id"),
+		Mode:      orchestration.WorkflowMode(r.URL.Query().Get("mode")),
+	}
+
+	wfs, err := agentSvc.ListWorkflowsPage(ctx, filter, page)
 	if err != nil {
 		handleOrchestratorError(w, r, err)
 		return

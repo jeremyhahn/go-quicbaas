@@ -198,6 +198,15 @@ type mockAgentService struct {
 	listJobs       []*orchestration.JobStatus
 	listJobsFilter *orchestration.JobFilter
 
+	// listJobsPageFilter and listAgentsPageFilter record the WHOLE filter the
+	// tool built, before the service splits off the counted half: a tool that
+	// dropped a counted narrowing would look identical in listJobsFilter.
+	listJobsPageFilter   *orchestration.JobFilter
+	listAgentsPageFilter *orchestration.AgentFilter
+
+	// listAgents backs the fleet listing the way listJobs backs the job one.
+	listAgents []*orchestration.AgentRegistration
+
 	blockTaskFn       func(ctx context.Context, tenantID, taskID string, kind orchestration.TaskBlockKind, reason string) error
 	getJobStatusFn    func(ctx context.Context, tenantID, jobID string) (*orchestration.JobStatus, error)
 	readmitTaskFn     func(ctx context.Context, tenantID, taskID string) error
@@ -357,8 +366,17 @@ func (m *mockAgentService) GetAgent(ctx context.Context, tenantID, agentID strin
 	return nil, nil
 }
 
+// ListAgents answers the canned fleet, narrowed by the REAL filter rather
+// than handed back whole: a tool that drops the caller's narrowing must fail
+// the test, and the narrowing that decides is the shipped one.
 func (m *mockAgentService) ListAgents(ctx context.Context, tenantID string, filter *orchestration.AgentFilter) ([]*orchestration.AgentRegistration, error) {
-	return nil, nil
+	matched := make([]*orchestration.AgentRegistration, 0, len(m.listAgents))
+	for _, agent := range m.listAgents {
+		if filter.Matches(agent) {
+			matched = append(matched, agent)
+		}
+	}
+	return matched, nil
 }
 
 func (m *mockAgentService) RemoveAgent(ctx context.Context, tenantID, agentID string) error {
@@ -378,7 +396,13 @@ func (m *mockAgentService) GetJobStatus(ctx context.Context, tenantID, jobID str
 
 func (m *mockAgentService) ListJobs(ctx context.Context, tenantID string, filter *orchestration.JobFilter) ([]*orchestration.JobStatus, error) {
 	m.listJobsFilter = filter
-	return m.listJobs, nil
+	matched := make([]*orchestration.JobStatus, 0, len(m.listJobs))
+	for _, job := range m.listJobs {
+		if filter.Matches(job) {
+			matched = append(matched, job)
+		}
+	}
+	return matched, nil
 }
 
 func (m *mockAgentService) CancelJob(ctx context.Context, tenantID, jobID string) error {
@@ -474,37 +498,45 @@ func (m *mockAgentService) PromptSessionAsync(ctx context.Context, req *orchestr
 	}, nil
 }
 
-// The ListPage methods answer the paged listings by running the real
-// orchestration.ApplyPage over what this double already returns, so a transport test
-// exercises the shipped paging contract rather than a second copy of it.
+// The ListPage methods answer the paged listings by running the REAL
+// orchestration.ApplyFacetedPage — the same spec, the same counts and the same
+// narrowing predicate the service uses — over what this double already
+// returns, so a transport test exercises the shipped contract rather than a
+// second copy of it.
 func (m *mockAgentService) ListJobsPage(ctx context.Context, tenantID string, filter *orchestration.JobFilter, page *orchestration.Page) (*orchestration.PageResult[*orchestration.JobStatus], error) {
-	jobs, err := m.ListJobs(ctx, tenantID, filter)
+	m.listJobsPageFilter = filter
+	jobs, err := m.ListJobs(ctx, tenantID, filter.FacetBase())
 	if err != nil {
 		return nil, err
 	}
-	return orchestration.ApplyPage(jobs, page, orchestration.JobPageSpec())
+	return orchestration.ApplyFacetedPage(jobs, page, orchestration.JobPageSpec(),
+		orchestration.JobFacetSpec(), filter.MatchesFacets)
 }
 
 func (m *mockAgentService) ListTasksPage(ctx context.Context, tenantID string, filter *orchestration.TaskFilter, page *orchestration.Page) (*orchestration.PageResult[*orchestration.Task], error) {
-	tasks, err := m.ListTasks(ctx, tenantID, filter)
+	tasks, err := m.ListTasks(ctx, tenantID, filter.FacetBase())
 	if err != nil {
 		return nil, err
 	}
-	return orchestration.ApplyPage(tasks, page, orchestration.TaskPageSpec())
+	return orchestration.ApplyFacetedPage(tasks, page, orchestration.TaskPageSpec(),
+		orchestration.TaskFacetSpec(), filter.MatchesFacets)
 }
 
 func (m *mockAgentService) ListAgentsPage(ctx context.Context, tenantID string, filter *orchestration.AgentFilter, page *orchestration.Page) (*orchestration.PageResult[*orchestration.AgentRegistration], error) {
-	agents, err := m.ListAgents(ctx, tenantID, filter)
+	m.listAgentsPageFilter = filter
+	agents, err := m.ListAgents(ctx, tenantID, filter.FacetBase())
 	if err != nil {
 		return nil, err
 	}
-	return orchestration.ApplyPage(agents, page, orchestration.AgentPageSpec())
+	return orchestration.ApplyFacetedPage(agents, page, orchestration.AgentPageSpec(),
+		orchestration.AgentFacetSpec(), filter.MatchesFacets)
 }
 
-func (m *mockAgentService) ListWorkflowsPage(ctx context.Context, page *orchestration.Page) (*orchestration.PageResult[*orchestration.WorkflowDefinition], error) {
+func (m *mockAgentService) ListWorkflowsPage(ctx context.Context, filter *orchestration.WorkflowFilter, page *orchestration.Page) (*orchestration.PageResult[*orchestration.WorkflowDefinition], error) {
 	workflows, err := m.ListWorkflows(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return orchestration.ApplyPage(workflows, page, orchestration.WorkflowPageSpec())
+	return orchestration.ApplyFacetedPage(workflows, page, orchestration.WorkflowPageSpec(),
+		orchestration.WorkflowFacetSpec(), filter.Matches)
 }

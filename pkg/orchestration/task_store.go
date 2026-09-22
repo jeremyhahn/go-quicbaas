@@ -610,14 +610,31 @@ func (s *taskStore) load(ctx context.Context, key, tenantID, taskID string) (*Ta
 	return &task, nil
 }
 
-// writeRecord encodes and stores one task record.
-func (s *taskStore) writeRecord(ctx context.Context, key string, task *Task) error {
-	data, err := json.Marshal(task)
+// marshalTask encodes one task record for storage.
+//
+// IT ZEROES THE DERIVED FIELDS FIRST. Task.AgentID is the task's LATEST
+// ATTEMPT's agent, resolved when a listing is read and never a fact the record
+// owns; persisting a copy would leave the next attempt's page showing the
+// previous attempt's daemon, with nothing to say which it was. Account.Default
+// is handled the same way and for the same reason (see marshalAccount).
+func marshalTask(task *Task) ([]byte, error) {
+	stored := *task
+	stored.AgentID = ""
+	data, err := json.Marshal(&stored)
 	if err != nil {
-		return &TaskStoreError{
+		return nil, &TaskStoreError{
 			Sentinel: ErrTaskStoreMarshal,
 			Message:  "failed to marshal task: " + err.Error(),
 		}
+	}
+	return data, nil
+}
+
+// writeRecord encodes and stores one task record.
+func (s *taskStore) writeRecord(ctx context.Context, key string, task *Task) error {
+	data, err := marshalTask(task)
+	if err != nil {
+		return err
 	}
 	if err := s.kv.Put(ctx, key, data); err != nil {
 		return backendError("failed to write task", err)
@@ -768,13 +785,10 @@ func (s *taskStore) create(ctx context.Context, task *Task) error {
 		return err
 	}
 
-	data, err := json.Marshal(task)
+	data, err := marshalTask(task)
 	if err != nil {
 		release()
-		return &TaskStoreError{
-			Sentinel: ErrTaskStoreMarshal,
-			Message:  "failed to marshal task: " + err.Error(),
-		}
+		return err
 	}
 
 	stored, err := s.creator.PutIfAbsent(ctx, key, data)
@@ -1128,6 +1142,17 @@ func taskMatchesFilter(task *Task, filter *TaskFilter) bool {
 	if filter.AutoSpawn != nil && task.AutoSpawn != *filter.AutoSpawn {
 		return false
 	}
+	// THE JOB BINDING IS THE LATEST ATTEMPT'S, not any attempt's. A job page
+	// asking "which task is this" means the task this job is the CURRENT
+	// attempt at; matching the whole history instead would answer with a task
+	// that has since been re-dispatched somewhere else.
+	if filter.JobID != "" && task.LatestAttemptJobID() != filter.JobID {
+		return false
+	}
+	// AgentID is deliberately NOT matched here: it is derived from the
+	// attempt's job when a listing is paged (ListTasksPage), so a store that
+	// matched it would be matching a field the record never carries. See
+	// TaskFilter.AgentID.
 	return true
 }
 

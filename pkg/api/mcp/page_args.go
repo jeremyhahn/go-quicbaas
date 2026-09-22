@@ -65,7 +65,10 @@ func pageFromArgs(args map[string]interface{}) *orchestration.Page {
 }
 
 // pageResultFields renders the paging half of a list tool's JSON result.
-// next_offset is omitted on the last page, exactly as REST omits it.
+// next_offset is omitted on the last page, exactly as REST omits it, and the
+// facet counts travel under the same key REST answers with — a model asking
+// "how many tasks are blocked" reads one number instead of paging the listing
+// to count them itself.
 func pageResultFields[T any](result *orchestration.PageResult[T], into map[string]interface{}) map[string]interface{} {
 	into["total"] = result.Total
 	into["limit"] = result.Limit
@@ -73,5 +76,14 @@ func pageResultFields[T any](result *orchestration.PageResult[T], into map[strin
 	if result.HasNext {
 		into["next_offset"] = result.NextOffset
 	}
+	if result.Facets != nil {
+		into["facets"] = result.Facets
+	}
 	return into
+}
+
+// filterSchemaProperty is one optional scalar list filter, described for the
+// model in the one voice every transport documents it in.
+func filterSchemaProperty(description string) map[string]interface{} {
+	return map[string]interface{}{"type": "string", "description": description + " Optional."}
 }

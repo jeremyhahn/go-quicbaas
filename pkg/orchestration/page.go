@@ -103,6 +103,45 @@ func (s PageSpec[T]) SortFields() []string {
 	return fields
 }
 
+// Facets is how many records carry each value of each faceted field:
+// facets["status"]["completed"] is how many completed records the question
+// would yield. A key the endpoint facets on is ALWAYS present, even when its
+// counts are empty, so a filter bar renders its choices from the answer
+// rather than from a list it keeps itself.
+type Facets map[string]map[string]int
+
+// FacetSpec describes how ONE endpoint's records are COUNTED, beside the
+// PageSpec that says how they are ordered and searched.
+//
+// THE COUNTS ARE THE OTHER HALF OF A FILTER BAR. A bar that offers "status:
+// blocked" without saying how many blocked records there are makes the
+// operator click to find out, and a bar whose counts came from the PAGE would
+// say "3" about a tenant with two hundred. So the counts are taken over the
+// set the search left, BEFORE the faceted narrowings are applied — standard
+// faceted search, where each count answers "what would selecting this yield".
+type FacetSpec[T any] struct {
+	// Values maps a facet key — "status", "project_id", "agent_id" — to the
+	// extractor naming the values one record is counted under.
+	//
+	// IT RETURNS A SLICE BECAUSE A RECORD CAN BELONG UNDER SEVERAL. One
+	// daemon serving claude, codex and opencode matches the backend filter
+	// on all three (AgentServesBackend), so counting it once under its
+	// primary would print a number the filter contradicts. Empty values are
+	// not counted: "no project" is the absence of a choice, not a choice.
+	Values map[string]func(T) []string
+}
+
+// FacetKeys returns the endpoint's facet keys in lexical order, for
+// documentation and for tests that assert the contract.
+func (f FacetSpec[T]) FacetKeys() []string {
+	keys := make([]string, 0, len(f.Values))
+	for key := range f.Values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // PageResult is one page of a list endpoint's answer.
 type PageResult[T any] struct {
 	// Items is the page itself, never nil.
@@ -123,6 +162,11 @@ type PageResult[T any] struct {
 
 	// HasNext reports whether records remain past this page.
 	HasNext bool
+
+	// Facets counts, per facet key, how many records carry each value —
+	// what a faceted filter bar renders beside each choice. It is nil when
+	// no paging was asked for; see ApplyFacetedPage.
+	Facets Facets
 }
 
 // Envelope renders the page as a transport response body, with the records
@@ -142,6 +186,9 @@ func (p *PageResult[T]) Envelope(itemsKey string) map[string]interface{} {
 	}
 	if p.HasNext {
 		envelope["next_offset"] = p.NextOffset
+	}
+	if p.Facets != nil {
+		envelope["facets"] = p.Facets
 	}
 	return envelope
 }
@@ -269,6 +316,28 @@ func (p *Page) sortRequest(defaultField string, defaultDescending bool) (field s
 // An unknown sort field is a typed UnknownSortFieldError, which every
 // transport maps to a 400 naming the field.
 func ApplyPage[T any](items []T, page *Page, spec PageSpec[T]) (*PageResult[T], error) {
+	return ApplyFacetedPage(items, page, spec, FacetSpec[T]{}, nil)
+}
+
+// ApplyFacetedPage is ApplyPage plus the two halves of faceted search: the
+// COUNTS the filter bar renders, and the NARROWING a chosen facet applies.
+//
+// THE ORDER OF OPERATIONS IS THE CONTRACT, and it is the reason this is one
+// function rather than a count helper each endpoint calls where it likes:
+//
+//	SEARCH (q) -> COUNT THE FACETS -> NARROW BY THEM -> SORT -> CUT
+//
+// The counts are taken between the search and the narrowing, so they answer
+// "how many would selecting this yield" over the set the caller is looking at
+// — the standard faceted-search reading. Counting AFTER the narrowing instead
+// would print 12 beside "blocked" and 0 beside every other status the moment
+// blocked was selected, which is a bar the operator cannot use to change their
+// mind. Total still counts what the caller asked for, narrowings included.
+//
+// keep is the faceted narrowing, nil when the endpoint has none. It runs here
+// rather than in the store read because the counts have to see the records it
+// removes.
+func ApplyFacetedPage[T any](items []T, page *Page, spec PageSpec[T], facets FacetSpec[T], keep func(T) bool) (*PageResult[T], error) {
 	field, descending := page.sortRequest(spec.DefaultSort, spec.DefaultDescending)
 	comparator, known := spec.Sorts[field]
 	if field != "" && !known {
@@ -280,6 +349,25 @@ func ApplyPage[T any](items []T, page *Page, spec PageSpec[T]) (*PageResult[T], 
 		query = page.Query
 	}
 	matched := searchItems(items, query, spec.Text)
+
+	// A NIL PAGE GETS NO FACETS, for the same reason it gets no cut: it is
+	// not a UI listing. The health monitor's session sweep asks for every
+	// record and reads none of the counts, and computing them would charge
+	// every such caller for a filter bar nobody renders.
+	var counted Facets
+	if page != nil {
+		counted = countFacets(matched, facets)
+	}
+
+	if keep != nil {
+		narrowed := make([]T, 0, len(matched))
+		for _, item := range matched {
+			if keep(item) {
+				narrowed = append(narrowed, item)
+			}
+		}
+		matched = narrowed
+	}
 
 	if comparator != nil {
 		slices.SortStableFunc(matched, orderedBy(comparator, descending))
@@ -307,12 +395,44 @@ func ApplyPage[T any](items []T, page *Page, spec PageSpec[T]) (*PageResult[T], 
 		Total:  total,
 		Limit:  limit,
 		Offset: offset,
+		Facets: counted,
 	}
 	if end < total {
 		result.NextOffset = end
 		result.HasNext = true
 	}
 	return result, nil
+}
+
+// countFacets counts how many of items carry each value of each facet.
+//
+// A RECORD IS COUNTED ONCE PER FACET VALUE, however many times its extractor
+// names it: an agent whose primary backend also appears in its capabilities
+// is one agent serving that backend, not two.
+func countFacets[T any](items []T, spec FacetSpec[T]) Facets {
+	if len(spec.Values) == 0 {
+		return nil
+	}
+	counted := make(Facets, len(spec.Values))
+	seen := make(map[string]struct{})
+	for key, values := range spec.Values {
+		counts := make(map[string]int)
+		for _, item := range items {
+			clear(seen)
+			for _, value := range values(item) {
+				if value == "" {
+					continue
+				}
+				if _, repeated := seen[value]; repeated {
+					continue
+				}
+				seen[value] = struct{}{}
+				counts[value]++
+			}
+		}
+		counted[key] = counts
+	}
+	return counted
 }
 
 // searchItems returns the records whose text fields contain query, or a copy
@@ -348,6 +468,19 @@ func orderedBy[T any](comparator func(a, b T) int, descending bool) func(a, b T)
 // capitalised name first.
 func compareStrings(a, b string) int {
 	return strings.Compare(strings.ToLower(a), strings.ToLower(b))
+}
+
+// compareBool orders false before true, so "autonomous" ascending reads as
+// "the ones that are not, then the ones that are".
+func compareBool(a, b bool) int {
+	switch {
+	case a == b:
+		return 0
+	case b:
+		return -1
+	default:
+		return 1
+	}
 }
 
 // compareInt64 orders two integer fields — timestamps, counters — ascending.

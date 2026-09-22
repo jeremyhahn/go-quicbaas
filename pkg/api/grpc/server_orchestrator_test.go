@@ -810,7 +810,7 @@ func (m *grpcTestAgentService) ListAgentsPage(ctx context.Context, tenantID stri
 	return orchestration.ApplyPage(agents, page, orchestration.AgentPageSpec())
 }
 
-func (m *grpcTestAgentService) ListWorkflowsPage(ctx context.Context, page *orchestration.Page) (*orchestration.PageResult[*orchestration.WorkflowDefinition], error) {
+func (m *grpcTestAgentService) ListWorkflowsPage(ctx context.Context, filter *orchestration.WorkflowFilter, page *orchestration.Page) (*orchestration.PageResult[*orchestration.WorkflowDefinition], error) {
 	workflows, err := m.ListWorkflows(ctx)
 	if err != nil {
 		return nil, err

@@ -731,6 +731,10 @@ type SessionStatusResponse struct {
 	// "triage", "workflow" — and so which ROLE the session played. Empty
 	// when the session belongs to no job, or to one no longer on record.
 	Runner string `json:"runner,omitempty"`
+
+	// AgentID is the fleet agent the session's job was dispatched to, empty
+	// when it belongs to no job or the work ran in-process.
+	AgentID string `json:"agent_id,omitempty"`
 }
 
 // CloseSessionRequest is a request to close a session.
@@ -748,6 +752,21 @@ type CloseSessionResponse struct {
 type ListSessionsRequest struct {
 	Backend string `json:"backend,omitempty"`
 	Status  string `json:"status,omitempty"`
+
+	// ProjectID narrows the listing to one project's sessions.
+	ProjectID string `json:"project_id,omitempty"`
+
+	// JobID narrows the listing to the sessions one job spawned.
+	JobID string `json:"job_id,omitempty"`
+
+	// Runner narrows the listing to the sessions whose job one runner drove
+	// — "sdlc", "review", "triage", "workflow" — which is the ROLE the
+	// session played.
+	Runner string `json:"runner,omitempty"`
+
+	// AgentID narrows the listing to the sessions running on one fleet
+	// agent.
+	AgentID string `json:"agent_id,omitempty"`
 
 	// Params pages, orders and searches the listing. The zero value takes
 	// the server's default page; see package page.
@@ -953,6 +972,15 @@ type ListTasksRequest struct {
 	// dispatch (true) or to the ones queued for a claim (false). Nil does
 	// not narrow: a bool could not tell "queued only" from "no preference".
 	AutoSpawn *bool `json:"auto_spawn,omitempty"`
+
+	// AgentID restricts the listing to the tasks whose LATEST ATTEMPT ran on
+	// one fleet agent. The agent is the attempt's job's, not the task's; the
+	// server resolves it for the listing.
+	AgentID string `json:"agent_id,omitempty"`
+
+	// JobID restricts the listing to the task whose latest attempt ran as
+	// that job.
+	JobID string `json:"job_id,omitempty"`
 
 	// Params pages, orders and searches the listing. The zero value takes
 	// the server's default page; see package page.
@@ -3311,6 +3339,10 @@ type ListJobsRequest struct {
 	// page of sessions or tasks resolves the jobs they name in ONE call
 	// instead of one request per row. Empty lists every job.
 	JobIDs []string `json:"job_ids,omitempty"`
+
+	// AgentID narrows the listing to the jobs dispatched to one fleet agent.
+	// A job that ran in-process carries none and matches no agent name.
+	AgentID string `json:"agent_id,omitempty"`
 
 	// Params pages, orders and searches the listing. The zero value takes
 	// the server's default page; see package page.

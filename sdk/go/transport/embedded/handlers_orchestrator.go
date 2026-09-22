@@ -404,9 +404,13 @@ func handleOrchestratorListSessions(ctx context.Context, svc service.QuicBaaS, r
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "ListSessions")
 	}
 	resp, err := agentSvc.ListSessions(ctx, &orchestration.ListSessionsRequest{
-		Backend: r.Backend,
-		Status:  orchestration.SessionState(r.Status),
-		Page:    pageFromSDK(r.Params),
+		Backend:   r.Backend,
+		Status:    orchestration.SessionState(r.Status),
+		ProjectID: r.ProjectID,
+		JobID:     r.JobID,
+		Runner:    r.Runner,
+		AgentID:   r.AgentID,
+		Page:      pageFromSDK(r.Params),
 	})
 	if err != nil {
 		return nil, err
@@ -422,12 +426,14 @@ func handleOrchestratorListSessions(ctx context.Context, svc service.QuicBaaS, r
 			LastActive: s.LastActivity,
 			JobID:      s.JobID,
 			Runner:     s.Runner,
+			AgentID:    s.AgentID,
 		}
 	}
 	return &orchestratorSDK.ListSessionsResponse{
 		Sessions: sessions,
 		Count:    len(sessions),
 		Envelope: page.Envelope{
+			Facets:     resp.Facets,
 			Total:      resp.Total,
 			Limit:      resp.Limit,
 			Offset:     resp.Offset,
@@ -501,13 +507,24 @@ func handleOrchestratorListTasks(ctx context.Context, svc service.QuicBaaS, req 
 	if agentSvc == nil {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "ListTasks")
 	}
+	// A STATUS THE ENGINE DOES NOT HAVE IS REFUSED IN-PROCESS TOO, because an
+	// embedded caller must meet the same contract a remote one does: a typo
+	// that reads back as an empty page over REST must not read back as an
+	// empty page for a different reason here.
+	statuses, err := orchestration.TaskStatusesFrom("statuses", r.Statuses)
+	if err != nil {
+		return nil, err
+	}
+
 	tasks, err := agentSvc.ListTasksPage(ctx, r.TenantID, &orchestration.TaskFilter{
 		Status:     orchestration.TaskStatus(r.Status),
 		TeamName:   r.TeamName,
 		AssignedTo: r.AssignedTo,
 		ProjectID:  r.ProjectID,
-		Statuses:   taskStatusesFromSDK(r.Statuses),
+		Statuses:   statuses,
 		AutoSpawn:  r.AutoSpawn,
+		AgentID:    r.AgentID,
+		JobID:      r.JobID,
 	}, pageFromSDK(r.Params))
 	if err != nil {
 		return nil, err
@@ -937,11 +954,17 @@ func handleOrchestratorListJobs(ctx context.Context, svc service.QuicBaaS, req i
 	if agentSvc == nil {
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "ListJobs")
 	}
+	states, err := orchestration.JobStatesFrom("statuses", r.Statuses)
+	if err != nil {
+		return nil, err
+	}
+
 	jobs, err := agentSvc.ListJobsPage(ctx, r.TenantID, &orchestration.JobFilter{
 		TaskID:    r.TaskID,
 		Runner:    r.Runner,
 		ProjectID: r.ProjectID,
-		Statuses:  jobStatesFromSDK(r.Statuses),
+		AgentID:   r.AgentID,
+		Statuses:  states,
 		JobIDs:    r.JobIDs,
 	}, pageFromSDK(r.Params))
 	if err != nil {
@@ -1338,8 +1361,9 @@ func handleProjectList(ctx context.Context, svc service.QuicBaaS, req interface{
 		return nil, NewUnknownMethodError("quicbaas.Project", "List")
 	}
 	resp, err := projectSvc.ListProjects(ctx, &service.ListProjectsRequest{
-		TenantID: r.TenantID,
-		Page:     pageFromSDK(r.Params),
+		TenantID:   r.TenantID,
+		Autonomous: r.Autonomous,
+		Page:       pageFromSDK(r.Params),
 	})
 	if err != nil {
 		return nil, err
@@ -1351,6 +1375,7 @@ func handleProjectList(ctx context.Context, svc service.QuicBaaS, req interface{
 	return &projectSDK.ListProjectsResponse{
 		Projects: sdkProjects,
 		Envelope: page.Envelope{
+			Facets:     resp.Facets,
 			Total:      resp.Total,
 			Limit:      resp.Limit,
 			Offset:     resp.Offset,

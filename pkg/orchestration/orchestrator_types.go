@@ -416,7 +416,7 @@ type AgentService interface {
 	// ListWorkflowsPage returns ONE PAGE of the context tenant's workflow
 	// definitions, searched and ordered per WorkflowPageSpec.
 	// Requires permission: agent:discover
-	ListWorkflowsPage(ctx context.Context, page *Page) (*PageResult[*WorkflowDefinition], error)
+	ListWorkflowsPage(ctx context.Context, filter *WorkflowFilter, page *Page) (*PageResult[*WorkflowDefinition], error)
 
 	// GetWorkflow returns a workflow definition by name.
 	// Requires permission: agent:discover
@@ -960,6 +960,23 @@ type ListSessionsRequest struct {
 	// understood.
 	Status SessionState `json:"status,omitempty"`
 
+	// ProjectID narrows the listing to one project's sessions. Empty means
+	// every project.
+	ProjectID string `json:"project_id,omitempty"`
+
+	// JobID narrows the listing to the sessions one job spawned — the lead,
+	// the reviewer and each worker. Empty means every job.
+	JobID string `json:"job_id,omitempty"`
+
+	// Runner narrows the listing to the sessions whose job one runner drove,
+	// which is the ROLE the session played: "sdlc", "review", "triage",
+	// "workflow". Empty means every role.
+	Runner string `json:"runner,omitempty"`
+
+	// AgentID narrows the listing to the sessions running on one fleet
+	// agent. Empty means every agent.
+	AgentID string `json:"agent_id,omitempty"`
+
 	// Page narrows the answer to one page of the matching sessions and
 	// orders it per SessionPageSpec. Nil asks for the first
 	// DefaultPageLimit, newest first.
@@ -985,6 +1002,11 @@ type ListSessionsResponse struct {
 
 	// NextOffset is the offset of the following page, absent on the last.
 	NextOffset int `json:"next_offset,omitempty"`
+
+	// Facets counts the sessions by backend, state, role and agent over the
+	// set the search left, before the faceted narrowings — what a filter bar
+	// renders beside each choice. Absent when no page was asked for.
+	Facets Facets `json:"facets,omitempty"`
 }
 
 // SessionInfo contains summary information about an active session.
@@ -1020,6 +1042,15 @@ type SessionInfo struct {
 	// (go-quicbaas#855).
 	CreatedAt    int64 `json:"created_at"`
 	LastActivity int64 `json:"last_activity"`
+
+	// AgentID is the fleet agent the session's job was dispatched to, empty
+	// when the session belongs to no job or the work ran in-process.
+	//
+	// IT IS RESOLVED WITH Runner AND FOR THE SAME REASON. A session record
+	// says nothing about which daemon ran it, and "which agent is this
+	// session on" is the question an operator asks of a fleet. Both come off
+	// the session's job, so both are resolved in the one pass that reads it.
+	AgentID string `json:"agent_id,omitempty"`
 }
 
 // DecomposeTaskRequest contains parameters for decomposing a task.
@@ -1202,6 +1233,64 @@ const (
 	// JobStateFailed indicates the orchestration job failed.
 	JobStateFailed JobState = "failed"
 )
+
+// engineJobStates are the states the ENGINE itself drives a job through. A
+// runner declares its own on top of these (KnownJobStates), which is why
+// validity is the union rather than this list: "planning" is a real state to
+// filter on wherever the SDLC runner is registered, and refusing it because
+// the engine does not name it would make the job list unable to ask about
+// most of what the factory does.
+var engineJobStates = []JobState{
+	JobStateInitializing,
+	JobStateDecomposing,
+	JobStateScheduling,
+	JobStateAssigning,
+	JobStateExecuting,
+	JobStateValidating,
+	JobStateReviewing,
+	JobStateRedelegating,
+	JobStateCompleting,
+	JobStateCleanup,
+	JobStateEscalating,
+	JobStateCompleted,
+	JobStateFailed,
+}
+
+// JobStateNames returns every state a job may be filtered on here — the
+// engine's own plus every registered runner's — for the message a refused
+// filter carries back to the caller.
+func JobStateNames() []string {
+	names := make([]string, 0, len(engineJobStates))
+	seen := make(map[JobState]struct{}, len(engineJobStates))
+	for _, state := range engineJobStates {
+		seen[state] = struct{}{}
+		names = append(names, string(state))
+	}
+	for _, spec := range KnownJobStates() {
+		if _, known := seen[spec.State]; known {
+			continue
+		}
+		seen[spec.State] = struct{}{}
+		names = append(names, string(spec.State))
+	}
+	return names
+}
+
+// Valid reports whether the state is one this daemon has: an engine state, or
+// one a registered runner declares.
+func (s JobState) Valid() bool {
+	for _, known := range engineJobStates {
+		if s == known {
+			return true
+		}
+	}
+	for _, spec := range KnownJobStates() {
+		if s == spec.State {
+			return true
+		}
+	}
+	return false
+}
 
 // JobConfig configures an orchestration job.
 type JobConfig struct {
@@ -1443,6 +1532,12 @@ type JobFilter struct {
 	// tenant — which paging exists to stop — or to issue one GetJobStatus per
 	// row. Empty lists every job, as every other field here does.
 	JobIDs []string `json:"job_ids,omitempty"`
+
+	// AgentID restricts the listing to the jobs dispatched to one fleet
+	// agent — JobStatus.AgentID, the daemon whose runtime spawned the work,
+	// which is not necessarily the daemon that drove the control loop. A job
+	// that ran in-process carries none and matches no agent name.
+	AgentID string `json:"agent_id,omitempty"`
 }
 
 // Matches reports whether status satisfies the filter.

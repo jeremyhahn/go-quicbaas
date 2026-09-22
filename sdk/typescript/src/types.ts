@@ -287,6 +287,9 @@ export interface ListJobsRequest {
    */
   job_ids?: string[];
 
+  /** agent_id narrows the listing to the jobs dispatched to one fleet agent. */
+  agent_id?: string;
+
   /** The shared paging parameters; see PageParams in page.ts. */
   limit?: number;
   offset?: number;
@@ -342,6 +345,16 @@ export interface ListTasksRequest {
    * narrow.
    */
   auto_spawn?: boolean;
+
+  /**
+   * agent_id narrows the listing to the tasks whose LATEST ATTEMPT ran on one
+   * fleet agent. The agent is the attempt's job's, not the task's; the server
+   * resolves it for the listing.
+   */
+  agent_id?: string;
+
+  /** job_id narrows the listing to the task whose latest attempt is that job. */
+  job_id?: string;
 
   /** The shared paging parameters; see PageParams in page.ts. */
   limit?: number;
@@ -536,6 +549,12 @@ export interface Task {
   spawned_at?: number;
   /** project_id scopes the task to a Project; empty for unscoped tasks. */
   project_id?: string;
+  /**
+   * agent_id is the fleet agent the task's LATEST ATTEMPT ran on, resolved by
+   * the server when the listing is paged. Absent for a task that has had no
+   * attempt, or whose attempt ran in-process.
+   */
+  agent_id?: string;
   /** output_artifacts are what the task produced (pull requests, commits, files). */
   output_artifacts?: Artifact[];
   /** input_artifacts are what the task was given to work from. */
@@ -1282,6 +1301,17 @@ export interface ListSessionsRequest {
   tenantID: string;
   backend?: string;
   status?: string;
+  /** project_id narrows the listing to one project's sessions. */
+  project_id?: string;
+  /** job_id narrows the listing to the sessions one job spawned. */
+  job_id?: string;
+  /**
+   * runner narrows the listing to the sessions whose job one runner drove —
+   * which is the ROLE the session played.
+   */
+  runner?: string;
+  /** agent_id narrows the listing to the sessions on one fleet agent. */
+  agent_id?: string;
 
   /** The shared paging parameters; see PageParams in page.ts. */
   limit?: number;
@@ -1311,6 +1341,12 @@ export interface SessionStatusResponse {
    * no job, or to one no longer on record.
    */
   runner?: string;
+  /**
+   * agent_id is the fleet agent the session's job was dispatched to, resolved
+   * beside `runner` and from the same record. Absent when the session belongs
+   * to no job or the work ran in-process.
+   */
+  agent_id?: string;
 }
 
 // ListSessionsResponse is the response from listing sessions.

@@ -1256,6 +1256,28 @@ func (t *Task) AttemptHistory() []string {
 	return strings.Split(t.Metadata[attemptHistoryKey], ",")
 }
 
+// LatestAttemptJobID names the job the task's MOST RECENT attempt ran as: the
+// open attempt when one is running, and the last concluded attempt otherwise.
+// Empty for a task that has never been dispatched.
+//
+// It is the binding every "what happened to this task" question resolves
+// through — the agent that ran it, the branch it pushed, the review it is
+// waiting on — because those are the running attempt's facts while one is
+// running and the last one's afterwards.
+func (t *Task) LatestAttemptJobID() string {
+	if t == nil {
+		return ""
+	}
+	if t.SpawnedJobID != "" {
+		return t.SpawnedJobID
+	}
+	history := t.AttemptHistory()
+	if len(history) == 0 {
+		return ""
+	}
+	return history[len(history)-1]
+}
+
 // ErrAttemptConcluded indicates a conclusion about a job the task no longer
 // names as its open attempt.
 var ErrAttemptConcluded = errors.New("task attempt: already concluded")

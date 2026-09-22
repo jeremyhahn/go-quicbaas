@@ -767,7 +767,7 @@ func (m *healthMockAgentService) ListAgentsPage(ctx context.Context, tenantID st
 	return ApplyPage(agents, page, AgentPageSpec())
 }
 
-func (m *healthMockAgentService) ListWorkflowsPage(ctx context.Context, page *Page) (*PageResult[*WorkflowDefinition], error) {
+func (m *healthMockAgentService) ListWorkflowsPage(ctx context.Context, filter *WorkflowFilter, page *Page) (*PageResult[*WorkflowDefinition], error) {
 	workflows, err := m.ListWorkflows(ctx)
 	if err != nil {
 		return nil, err

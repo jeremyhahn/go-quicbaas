@@ -83,6 +83,7 @@ func TestListTasksPage_SearchComposesWithTheFilter(t *testing.T) {
 		{ID: "task-1", Subject: "page the job list", ProjectID: "proj-a"},
 		{ID: "task-2", Subject: "page the task list", ProjectID: "proj-a"},
 		{ID: "task-3", Subject: "unrelated", ProjectID: "proj-a"},
+		{ID: "task-4", Subject: "page the job list", ProjectID: "proj-b"},
 	}}
 	svc := pagedTestService(t)
 	svc.SetTaskStore(store)
@@ -95,8 +96,16 @@ func TestListTasksPage_SearchComposesWithTheFilter(t *testing.T) {
 	if page.Total != 1 || page.Items[0].ID != "task-1" {
 		t.Errorf("matched %d tasks, want only task-1", page.Total)
 	}
-	if len(store.listCalls) != 1 || store.listCalls[0].Filter.ProjectID != "proj-a" {
-		t.Error("the project filter did not reach the store")
+	// THE PROJECT NARROWING IS A FACET NOW, so it runs in the page rather
+	// than in the store read — the counts beside each project have to see the
+	// records the chosen one removes. What the store must still be asked for
+	// is the tenant's tasks, exactly once: the page is a narrowing on top of
+	// the listing, never a replacement for issuing it.
+	if len(store.listCalls) != 1 {
+		t.Fatalf("store listings = %d, want exactly 1", len(store.listCalls))
+	}
+	if page.Facets["project_id"]["proj-b"] != 1 {
+		t.Errorf("facets = %v, want proj-b counted even though proj-a was selected", page.Facets)
 	}
 }
 
@@ -206,7 +215,7 @@ func TestListWorkflowsPage_PagesTheRegisteredDefinitions(t *testing.T) {
 		}
 	}
 
-	page, err := svc.ListWorkflowsPage(ctx, &Page{Limit: 2})
+	page, err := svc.ListWorkflowsPage(ctx, nil, &Page{Limit: 2})
 	if err != nil {
 		t.Fatalf("ListWorkflowsPage() error = %v, want nil", err)
 	}
@@ -228,7 +237,7 @@ func TestListWorkflowsPage_RefusesAnUnknownSortField(t *testing.T) {
 
 	svc := pagedTestService(t)
 
-	page, err := svc.ListWorkflowsPage(context.Background(), &Page{Sort: "created_at"})
+	page, err := svc.ListWorkflowsPage(context.Background(), nil, &Page{Sort: "created_at"})
 	if page != nil {
 		t.Error("ListWorkflowsPage() returned a page for a sort it cannot serve")
 	}

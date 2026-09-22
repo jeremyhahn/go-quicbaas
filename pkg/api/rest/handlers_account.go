@@ -175,6 +175,10 @@ type ListAccountsRESTResponse struct {
 	// NextOffset is the offset of the following page, absent on the last.
 	NextOffset int `json:"next_offset,omitempty"`
 
+	// Facets counts the accounts by provider and status; see
+	// docs/software-factory/api.md.
+	Facets orchestration.Facets `json:"facets,omitempty"`
+
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -305,6 +309,7 @@ func (s *Server) HandleListAccounts(w http.ResponseWriter, r *http.Request) {
 		TenantID:  tenantID,
 		Provider:  orchestration.AccountProvider(r.URL.Query().Get("provider")),
 		ProjectID: r.URL.Query().Get("project_id"),
+		Status:    orchestration.AccountStatus(r.URL.Query().Get("status")),
 		Page:      page,
 	})
 	if err != nil {
@@ -323,6 +328,7 @@ func (s *Server) HandleListAccounts(w http.ResponseWriter, r *http.Request) {
 		Limit:      resp.Limit,
 		Offset:     resp.Offset,
 		NextOffset: resp.NextOffset,
+		Facets:     resp.Facets,
 		Timestamp:  resp.Timestamp,
 	})
 }

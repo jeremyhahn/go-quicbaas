@@ -194,7 +194,7 @@ func TestListJobs_SearchComposesWithTheRunnerFilter(t *testing.T) {
 	if envelope.Total != 1 || items[0]["job_id"] != "job-4" {
 		t.Errorf("matched %d jobs, want only job-4 (sdlc AND \"attempt 4\")", envelope.Total)
 	}
-	if agentSvc.listJobsFilter == nil || agentSvc.listJobsFilter.Runner != "sdlc" {
+	if agentSvc.listJobsPageFilter == nil || agentSvc.listJobsPageFilter.Runner != "sdlc" {
 		t.Error("the runner filter never reached the service")
 	}
 }
@@ -236,7 +236,7 @@ func TestListJobs_NarrowsByStateAndProject(t *testing.T) {
 			t.Errorf("job %v is %v, want only failed jobs", item["job_id"], item["state"])
 		}
 	}
-	if agentSvc.listJobsFilter == nil || len(agentSvc.listJobsFilter.Statuses) != 1 {
+	if agentSvc.listJobsPageFilter == nil || len(agentSvc.listJobsPageFilter.Statuses) != 1 {
 		t.Error("the statuses filter never reached the service")
 	}
 }
@@ -404,14 +404,18 @@ func TestListSessions_SortsOnAllowListedFieldAndRefusesOthers(t *testing.T) {
 		t.Errorf("first session = %v, want sess-2 for a descending sort", items[0]["session_id"])
 	}
 
+	// `runner` USED TO BE THE EXAMPLE HERE and is allow-listed now that the
+	// sessions listing filters and facets on the role. `description` is a
+	// jobs field the sessions listing has never had, which is what makes it
+	// the refusal worth asserting: one endpoint's allow-list is not another's.
 	refused := httptest.NewRecorder()
 	server.HandleOrchestratorListSessions(refused,
-		orchReq(http.MethodGet, "/api/v1/orchestrator/sessions?tenant_id=acme&sort=runner", nil, nil))
+		orchReq(http.MethodGet, "/api/v1/orchestrator/sessions?tenant_id=acme&sort=description", nil, nil))
 
 	if refused.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", refused.Code, refused.Body.String())
 	}
-	if !strings.Contains(refused.Body.String(), "runner") {
+	if !strings.Contains(refused.Body.String(), "description") {
 		t.Errorf("refusal %s does not name the offending field", refused.Body.String())
 	}
 }

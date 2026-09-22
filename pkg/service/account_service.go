@@ -140,6 +140,10 @@ type ListAccountsRequest struct {
 	Provider  orchestration.AccountProvider `json:"provider,omitempty"`
 	ProjectID string                        `json:"project_id,omitempty"`
 
+	// Status narrows the listing to one lifecycle state — active, revoked,
+	// error, limited. Empty lists every state.
+	Status orchestration.AccountStatus `json:"status,omitempty"`
+
 	// Page narrows the answer to one page of the matching accounts and
 	// orders it per orchestration.AccountPageSpec. Nil asks for the first
 	// orchestration.DefaultPageLimit, newest first.
@@ -160,6 +164,11 @@ type ListAccountsResponse struct {
 
 	// NextOffset is the offset of the following page, absent on the last.
 	NextOffset int `json:"next_offset,omitempty"`
+
+	// Facets counts the accounts by provider and status over the set the
+	// search left, before those two narrowings. Absent when no page was
+	// asked for.
+	Facets orchestration.Facets `json:"facets,omitempty"`
 
 	Timestamp time.Time `json:"timestamp"`
 }
@@ -511,11 +520,21 @@ func (s *accountServiceImpl) ListAccounts(ctx context.Context, req *ListAccounts
 		return nil, &AccountInvalidError{Field: "tenant_id", Message: "tenant ID is required"}
 	}
 	ctx = accountTenantContext(ctx, req.TenantID)
-	accounts, err := s.store.ListByTenant(ctx, req.TenantID, req.Provider, req.ProjectID)
+	// THE PROVIDER IS NOT PASSED TO THE STORE ANY MORE, and that is not an
+	// oversight: it is a COUNTED facet, and a filter bar's count has to see
+	// the records its own choice removes. The store read is a scan that
+	// filtered in Go either way (accountStore.ListByTenant), so nothing is
+	// lost but the place the narrowing happens. The project scope stays: no
+	// facet counts it.
+	accounts, err := s.store.ListByTenant(ctx, req.TenantID, "", req.ProjectID)
 	if err != nil {
 		return nil, convertAccountStoreError(err)
 	}
-	page, err := orchestration.ApplyPage(accounts, req.Page, orchestration.AccountPageSpec())
+	page, err := orchestration.ApplyFacetedPage(
+		accounts, req.Page, orchestration.AccountPageSpec(), orchestration.AccountFacetSpec(),
+		func(account *orchestration.Account) bool {
+			return orchestration.MatchesAccountFacets(account, req.Provider, req.Status)
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -525,6 +544,7 @@ func (s *accountServiceImpl) ListAccounts(ctx context.Context, req *ListAccounts
 		Limit:      page.Limit,
 		Offset:     page.Offset,
 		NextOffset: page.NextOffset,
+		Facets:     page.Facets,
 		Timestamp:  time.Now().UTC(),
 	}, nil
 }

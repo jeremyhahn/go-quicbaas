@@ -311,7 +311,7 @@ func (r *agentRegistry) ListAgents(ctx context.Context, tenantID string, filter 
 		if agent.TenantID != tenantID {
 			return nil
 		}
-		if !matchesAgentFilter(agent, filter) {
+		if !filter.Matches(agent) {
 			return nil
 		}
 
@@ -821,9 +821,18 @@ func marshalAgent(agent *AgentRegistration, what string) ([]byte, error) {
 	return data, nil
 }
 
-// matchesAgentFilter reports whether agent satisfies every populated field of
-// filter. An empty field matches everything; a nil filter matches every agent.
-func matchesAgentFilter(agent *AgentRegistration, filter *AgentFilter) bool {
+// Matches reports whether agent satisfies every populated field of the
+// filter. An empty field matches everything; a nil filter matches every
+// agent.
+//
+// It is a method on the filter, exported, for the same reason
+// JobFilter.Matches is: "does this record satisfy this narrowing" is the one
+// answer the registry, the paged listing and every transport double must
+// share, and a second copy of it is how a filter comes to mean two things.
+func (filter *AgentFilter) Matches(agent *AgentRegistration) bool {
+	if agent == nil {
+		return false
+	}
 	if filter == nil {
 		return true
 	}

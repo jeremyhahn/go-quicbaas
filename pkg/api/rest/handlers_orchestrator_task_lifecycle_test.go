@@ -163,8 +163,14 @@ func TestOrchestratorListTasks_ProjectAndStatusesFilters(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 	require.NotNil(t, got)
-	assert.Equal(t, "proj-1", got.ProjectID)
-	assert.Equal(t, []orchestration.TaskStatus{orchestration.TaskStatusBlocked, orchestration.TaskStatusPending}, got.Statuses)
+	// THE PROJECT AND THE STATUSES ARE COUNTED FACETS, so the store is asked
+	// for the tenant's tasks and the narrowing runs where the counts can see
+	// it. What the transport must be held to is the filter it BUILT, which is
+	// what the paged verb was handed.
+	require.NotNil(t, agentSvc.listTasksPageFilter)
+	assert.Equal(t, "proj-1", agentSvc.listTasksPageFilter.ProjectID)
+	assert.Equal(t, []orchestration.TaskStatus{orchestration.TaskStatusBlocked, orchestration.TaskStatusPending},
+		agentSvc.listTasksPageFilter.Statuses)
 
 	var resp struct {
 		Tasks []map[string]interface{} `json:"tasks"`

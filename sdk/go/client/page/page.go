@@ -61,6 +61,17 @@ type Envelope struct {
 	// NextOffset is the offset of the following page. It is ABSENT on the
 	// last page, which is how a caller knows to stop without arithmetic.
 	NextOffset int `json:"next_offset,omitempty"`
+
+	// Facets counts, per faceted field, how many records carry each value —
+	// facets["status"]["completed"] is how many completed records selecting
+	// that status would yield.
+	//
+	// THE COUNTS ARE TAKEN BEFORE THE FACETED NARROWINGS, over the set the
+	// search left, which is what lets a filter bar say what each UNSELECTED
+	// choice would give. They are absent from a response the server did not
+	// page. Which fields each endpoint counts is documented in
+	// docs/software-factory/api.md.
+	Facets map[string]map[string]int `json:"facets,omitempty"`
 }
 
 // HasMore reports whether records remain past this page.

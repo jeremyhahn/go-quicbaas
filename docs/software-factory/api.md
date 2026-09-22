@@ -27,15 +27,37 @@ answers with all of them is not an answer a browser can render.
 | `q` | string | — | Case-insensitive substring match over the endpoint's documented text fields. |
 
 `limit` or `offset` that is not a non-negative number is a **400** naming the
-parameter. Existing filters (`statuses`, `project_id`, `task_id`, `provider`,
-…) keep working and COMPOSE with search and paging: the filter narrows first,
-then `q`, then the page is cut.
+parameter. Every filter COMPOSES with search and with paging, and `total`
+counts the intersection rather than the page.
+
+**An unknown filter VALUE is not an error — it simply matches nothing.** A
+project id, an agent id or a runner name may legitimately name no record, and
+an empty page is the honest answer to "what is agent-9 running". There are
+exactly two exceptions, both of which are **400** with a typed error:
+
+- a `statuses` value outside the state enum (`orchestration.ParseTaskStatuses`
+  / `ParseJobStates`), because a state the engine does not have cannot be a
+  question about this tenant's records — answering "there are none" would
+  report the caller's typo as a fact. The refusal names the offending value and
+  lists the states that exist;
+- a `sort` field outside the endpoint's allow-list, as above.
+
+`?status=` on the sessions listing likewise refuses a lifecycle state the
+daemon does not have.
 
 The response keeps the records under the key it always used and adds the
 envelope beside it:
 
 ```json
-{ "jobs": [ ... ], "total": 1987, "limit": 25, "offset": 50, "next_offset": 75 }
+{
+  "jobs": [ ... ], "total": 1987, "limit": 25, "offset": 50, "next_offset": 75,
+  "facets": {
+    "state":      { "executing": 12, "completed": 1870, "failed": 105 },
+    "runner":     { "sdlc": 1400, "triage": 500, "review": 87 },
+    "project_id": { "go-quicbaas": 1987 },
+    "agent_id":   { "agent-1": 900, "agent-2": 1087 }
+  }
+}
 ```
 
 - `total` is the count AFTER filters and search, BEFORE paging.
@@ -43,25 +65,69 @@ envelope beside it:
   what was asked for.
 - `next_offset` is ABSENT on the last page. Its absence is how a client knows
   it has reached the end; do not compute it from `total`.
+- `facets` is what a filter bar renders beside each choice — see below.
 
 The fleet listing also keeps its `count`, which is the number of records in
 that response — `total` is how many matched.
 
 ### Per-endpoint fields
 
-| Endpoint | Natural order | `sort` fields | `q` searches | Filters |
-|---|---|---|---|---|
-| `GET /api/v1/orchestrator/jobs` | `started_at:desc` | `description`, `job_id`, `runner`, `started_at`, `state`, `task_id`, `updated_at` | job id, description, runner, state, task id | `task_id`, `runner`, `project_id`, `statuses` (comma-separated), `job_ids` (comma-separated) |
-| `GET /api/v1/orchestrator/tasks` | `created_at:desc` | `created_at`, `id`, `project_id`, `status`, `subject`, `updated_at` | id, subject, status, project id | `team_name`, `assigned_to`, `created_by`, `project_id`, `status`, `statuses`, `auto_spawn` (`true`/`false`) |
-| `GET /api/v1/orchestrator/sessions` | `created_at` (**oldest first** — this listing has always answered in creation order; ask for `sort=created_at:desc` to invert it) | `backend`, `created_at`, `last_activity`, `model`, `project_id`, `session_id`, `state` | session id, backend, model, state | `backend`, `status` |
-| `GET /api/v1/orchestrator/agents` | `registered_at:desc` | `backend`, `host`, `id`, `last_seen`, `name`, `registered_at`, `status` | id, name, and every backend it serves (primary + capabilities) | `host`, `agent_type`, `backend`, `status` |
-| `GET /api/v1/orchestrator/workflows` | `name` (workflows carry no timestamp) | `mode`, `name`, `project_id` | name, which is also the identifier | — |
-| `GET /api/v1/projects` | `created_at:desc` | `created_at`, `id`, `name`, `updated_at` | id, name | `tenant_id` (required) |
-| `GET /api/v1/agent-accounts` | `created_at:desc` | `created_at`, `display_name`, `id`, `provider`, `updated_at` | id, display name, provider | `provider`, `project_id` |
+| Endpoint | Natural order | `sort` fields | `q` searches | Filters | Facets |
+|---|---|---|---|---|---|
+| `GET /api/v1/orchestrator/jobs` | `started_at:desc` | `agent_id`, `description`, `job_id`, `runner`, `started_at`, `state`, `task_id`, `updated_at` | job id, description, runner, state, task id | `task_id`, `runner`, `project_id`, `agent_id`, `statuses` (comma-separated), `job_ids` (comma-separated) | `state`, `runner`, `project_id`, `agent_id` |
+| `GET /api/v1/orchestrator/tasks` | `created_at:desc` | `agent_id`, `attempts`, `created_at`, `id`, `project_id`, `status`, `subject`, `updated_at` | id, subject, status, project id | `statuses` (comma-separated), `project_id`, `agent_id`, `job_id`, `auto_spawn` (`true`/`false`), `team_name`, `assigned_to`, `created_by`, `status` | `status`, `project_id`, `agent_id` |
+| `GET /api/v1/orchestrator/sessions` | `created_at` (**oldest first** — this listing has always answered in creation order; ask for `sort=created_at:desc` to invert it) | `agent_id`, `backend`, `created_at`, `last_activity`, `model`, `project_id`, `runner`, `session_id`, `state` | session id, backend, model, state | `backend`, `status`, `project_id`, `job_id`, `runner`, `agent_id` | `backend`, `state`, `runner`, `agent_id` |
+| `GET /api/v1/orchestrator/agents` | `registered_at:desc` | `backend`, `host`, `id`, `last_seen`, `name`, `registered_at`, `status` | id, name, and every backend it serves (primary + capabilities) | `status`, `backend` (membership — see below), `host`, `agent_type` | `status`, `backend` |
+| `GET /api/v1/orchestrator/workflows` | `name` (workflows carry no timestamp) | `mode`, `name`, `project_id` | name, which is also the identifier | `project_id`, `mode` | `project_id`, `mode` |
+| `GET /api/v1/projects` | `created_at:desc` | `autonomous`, `created_at`, `id`, `name`, `updated_at` | id, name | `tenant_id` (required), `autonomous` (`true`/`false`) | `autonomous` |
+| `GET /api/v1/agent-accounts` | `created_at:desc` | `created_at`, `display_name`, `id`, `provider`, `status`, `updated_at` | id, display name, provider | `provider`, `status`, `project_id` | `provider`, `status` |
 
 The allow-lists are served from `orchestration.PageSpec` values in
-`pkg/orchestration/page_specs.go`; the parameters are parsed once in
-`orchestration.ParsePage` and applied once in `orchestration.ApplyPage`.
+`pkg/orchestration/page_specs.go` and the counts from the `orchestration.FacetSpec`
+values beside them in `page_facets.go`; the parameters are parsed once in
+`orchestration.ParsePage` / `ParseTaskStatuses` / `ParseJobStates` and applied
+once in `orchestration.ApplyFacetedPage`.
+
+**Three filters name something the RECORD DOES NOT CARRY**, and the daemon
+resolves them for the listing:
+
+- `agent_id` on the tasks listing is the fleet agent of the task's LATEST
+  ATTEMPT. A task record names no agent — `assigned_to` is filled only when an
+  agent claims a task and the engine dispatches most of them — so the answer
+  lives on the attempt's job and is resolved onto each row (which is also why
+  a task record in a paged answer carries `agent_id`).
+- `job_id` on the tasks listing is the reverse binding: the task whose latest
+  attempt ran as that job. A CONCLUDED attempt does not match — the task is no
+  longer running as it.
+- `runner` and `agent_id` on the sessions listing come off the session's job,
+  the same read that fills the row's `runner` badge.
+
+**`backend` on the fleet listing is MEMBERSHIP, not equality.** A daemon
+started with `--backends acp` serves claude, codex and opencode from one
+record; `?backend=codex` matches it, and the `backend` facet counts it under
+each backend it serves.
+
+### Facets
+
+Every list response carries a `facets` block: per faceted field, how many
+records carry each value.
+
+```json
+"facets": { "status": { "pending": 12, "completed": 30 }, "project_id": { … } }
+```
+
+**The counts are taken over the set the SEARCH left but the FACETS did not
+narrow** — the standard faceted-search reading, where each count answers "how
+many would selecting this yield". Select `statuses=blocked` and the counts
+beside `pending` and `completed` keep their values, so an operator can change
+their mind without clearing the filter first; `total`, by contrast, is the
+number of records actually selected. A value no record carries is absent from
+the counts rather than present as zero, and an empty field is not counted at
+all ("no project" is the absence of a choice, not a choice).
+
+The block is ABSENT from an answer the server did not page — an in-process
+caller that asks for the whole collection renders no filter bar, and computing
+the counts for it would charge every internal sweep for a UI it does not draw.
 
 **Two filters exist for the sake of a PAGE, not of a query.** `job_ids` on the
 jobs listing is how a caller holding a page of something else — tasks, whose
@@ -76,26 +142,35 @@ naming the parameter (`orchestration.ParseOptionalBool`).
 ### The session row says which role it played
 
 Each record of `GET /api/v1/orchestrator/sessions` carries `job_id` — the
-orchestration job the session works for — and `runner`, the job runner that
-drove it (`sdlc`, `review`, `triage`, or `workflow` for the engine's own).
-Both are omitted for a session that belongs to no job, and `runner` is omitted
-when the job is no longer on record: no runner means "not observed", never a
-guess.
+orchestration job the session works for — `runner`, the job runner that drove
+it (`sdlc`, `review`, `triage`, or `workflow` for the engine's own), and
+`agent_id`, the fleet agent it ran on. All three are omitted for a session
+that belongs to no job, and `runner`/`agent_id` are omitted when the job is no
+longer on record: no runner means "not observed", never a guess.
 
-The daemon resolves `runner` for the page it is answering, memoised per job, so
-a page of twenty-five costs at most twenty-five job reads and a consumer never
-has to hold the job list to say what a session was doing. The UI's Role badge
-reads this field and nothing else (`cmd/quicbaas/frontend/src/lib/sessions.ts`).
+The daemon resolves both off the session's job in ONE pass over the tenant's
+jobs, BEFORE the page is cut — which is a change from when `runner` was only a
+badge to render. They are filters and facets now, and a listing that resolved
+them for the page alone could neither narrow to the reviewer's sessions (the
+matches that fell off page one would never be found) nor count them. The UI's
+Role badge reads `runner` and nothing else
+(`cmd/quicbaas/frontend/src/lib/sessions.ts`).
 
 **Other transports.** QUIC and Unix carry the REST contract unchanged (they
-delegate to it). The Go SDK's list requests embed `page.Params` and its list
-responses embed `page.Envelope` (`sdk/go/client/page`), which the embedded
-in-process transport honours as well. The MCP tools
-`quicbaas_orchestrator_list_jobs`, `quicbaas_orchestrator_list_sessions` and
-`quicbaas_agent_fleet_list` declare the same four arguments and return the
-same envelope fields. gRPC does NOT carry them yet: its request messages are
+delegate to it). The Go SDK's list requests embed `page.Params` and carry each
+listing's own narrowings as named fields; its list responses embed
+`page.Envelope`, whose `Facets` member is the same counts block
+(`sdk/go/client/page`). The embedded in-process transport honours both. The
+MCP tools `quicbaas_orchestrator_list_jobs`,
+`quicbaas_orchestrator_list_sessions` and `quicbaas_agent_fleet_list` declare
+the same argument names REST reads — `agent_id`, `runner`, `project_id`,
+`job_id`, `backend`, `statuses` — and return the same envelope fields,
+`facets` included. gRPC does NOT carry them yet: its request messages are
 generated from `api/proto/orchestrator.proto` and gaining the fields requires
-a proto regeneration (go-quicbaas#968 follow-up).
+a proto regeneration (go-quicbaas#968 follow-up). The Go SDK routes no
+`ListWorkflows` verb on any transport, so the workflows narrowings are
+reachable over REST, MCP and the TypeScript SDK but not through
+`sdk/go/client/orchestrator`.
 
 ### TypeScript SDK
 
@@ -107,19 +182,27 @@ import type { PageParams, PageResult } from '@quicbaas/sdk';
 const page = await client.orchestrator.listJobsPage(tenantID, {
   limit: 25, offset: 50, sort: 'started_at:desc', q: 'wire',
   statuses: ['executing'], runner: 'sdlc',       // the endpoint's own filters
+  agent_id: 'agent-1',
 });
 page.items; page.total; page.limit; page.offset; page.next_offset;
+page.facets?.['state']?.['failed'];              // what the bar renders
 ```
 
 | Verb | Params | Endpoint |
 |---|---|---|
-| `orchestrator.listJobsPage(tenantID, page?)` | `JobPageParams` (`task_id`, `runner`, `project_id`, `statuses[]`, `job_ids[]`) | jobs |
-| `orchestrator.listTasksPage(tenantID, page?)` | `TaskPageParams` (`status`, `statuses[]`, `project_id`, `team_name`, `assigned_to`, `created_by`, `auto_spawn`) | tasks |
-| `orchestrator.listSessionsPage(tenantID, page?)` | `SessionPageParams` (`backend`, `status`) | sessions |
+| `orchestrator.listJobsPage(tenantID, page?)` | `JobPageParams` (`task_id`, `runner`, `project_id`, `agent_id`, `statuses[]`, `job_ids[]`) | jobs |
+| `orchestrator.listTasksPage(tenantID, page?)` | `TaskPageParams` (`status`, `statuses[]`, `project_id`, `agent_id`, `job_id`, `team_name`, `assigned_to`, `created_by`, `auto_spawn`) | tasks |
+| `orchestrator.listSessionsPage(tenantID, page?)` | `SessionPageParams` (`backend`, `status`, `project_id`, `job_id`, `runner`, `agent_id`) | sessions |
 | `orchestrator.listAgentsPage(tenantID, page?)` | `AgentPageParams` (`host`, `status`, `agent_type`, `backend`, `model`) | agents |
-| `orchestrator.listWorkflowsPage(tenantID, page?)` | `PageParams` | workflows |
-| `projects.listProjectsPage(tenantID, page?)` | `PageParams` | projects |
-| `accounts.listAccountsPage({tenant_id, …})` | `AccountPageParams` (`provider`, `project_id`) | accounts |
+| `orchestrator.listWorkflowsPage(tenantID, page?)` | `WorkflowPageParams` (`project_id`, `mode`) | workflows |
+| `projects.listProjectsPage(tenantID, page?)` | `ProjectPageParams` (`autonomous`) | projects |
+| `accounts.listAccountsPage({tenant_id, …})` | `AccountPageParams` (`provider`, `status`, `project_id`) | accounts |
+
+`PageResult.facets` carries the counts, typed `Facets`
+(`Record<string, Record<string, number>>`) and UNDEFINED when the transport
+could not page — never an empty object a bar would render as "0 of
+everything". A count that is not a number is dropped rather than passed
+through.
 
 `PageResult.items` holds the records whatever the wire calls them (`jobs`,
 `tasks`, …): one envelope type per SDK rather than one per resource. The
@@ -1461,7 +1544,7 @@ from `orchestrator_cache_tools.go`.
 | `quicbaas_orchestrator_status` | `orchestrator:status` | Query session state, uptime, last activity |
 | `quicbaas_orchestrator_close` | `orchestrator:close` | Terminate an active session |
 | `quicbaas_orchestrator_rotate_account` | `orchestrator:spawn` | Move a session onto a different pooled account |
-| `quicbaas_orchestrator_list_sessions` | `orchestrator:list` | List active sessions (filterable by backend) |
+| `quicbaas_orchestrator_list_sessions` | `orchestrator:list` | One page of a tenant's sessions, narrowed by `backend`, `status`, `project_id`, `job_id`, `runner` or `agent_id` |
 | `quicbaas_orchestrator_list_backends` | `orchestrator:backend_list` | List registered backends and capabilities |
 | `quicbaas_orchestrator_decompose` | `orchestrator:task_decompose` | Decompose a task into prioritized work items |
 | `quicbaas_orchestrator_health` | `orchestrator:health` | Check health of all active sessions |
@@ -1470,7 +1553,7 @@ from `orchestrator_cache_tools.go`.
 | `quicbaas_orchestrator_start_job` | `orchestrator:job_start` | Start an autonomous, iterating orchestration job |
 | `quicbaas_orchestrator_get_job_status` | `orchestrator:job_read` | Query a job's iteration count and task progress |
 | `quicbaas_orchestrator_cancel_job` | `orchestrator:job_cancel` | Cancel a running orchestration job |
-| `quicbaas_orchestrator_list_jobs` | `orchestrator:job_list` | One page of the tenant's jobs, newest first; narrowed by `task_id`, `runner`, `project_id` or `statuses`, paged per [List paging, sorting and search](#list-paging-sorting-and-search) |
+| `quicbaas_orchestrator_list_jobs` | `orchestrator:job_list` | One page of the tenant's jobs, newest first; narrowed by `task_id`, `runner`, `project_id`, `agent_id`, `statuses` or `job_ids`, paged and counted per [List paging, sorting and search](#list-paging-sorting-and-search) |
 | `quicbaas_orchestrator_task_create` | `orchestrator:task_create` | Create a task, optionally dispatching it at once |
 | `quicbaas_orchestrator_cache_put` | `orchestrator:cache_write` | Store analysis result in KV (project-scoped) |
 | `quicbaas_orchestrator_cache_get` | `orchestrator:cache_read` | Retrieve cached result by project and key |
@@ -1480,7 +1563,7 @@ from `orchestrator_cache_tools.go`.
 | Tool | Permission | Description |
 |------|------------|-------------|
 | `quicbaas_agent_fleet_register` | `orchestrator:agent_register` | Register an agent with the fleet |
-| `quicbaas_agent_fleet_list` | `orchestrator:agent_list` | One page of a tenant's fleet agents, paged per [List paging, sorting and search](#list-paging-sorting-and-search) |
+| `quicbaas_agent_fleet_list` | `orchestrator:agent_list` | One page of a tenant's fleet agents, narrowed by `status`, `backend` (membership), `host` or `agent_type`, paged per [List paging, sorting and search](#list-paging-sorting-and-search) |
 | `quicbaas_agent_fleet_status` | `orchestrator:agent_read` | Get one fleet agent's status |
 | `quicbaas_agent_fleet_remove` | `orchestrator:agent_remove` | Remove an agent from the fleet registry |
 | `quicbaas_agent_fleet_heartbeat` | `orchestrator:agent_heartbeat` | Update an agent's last-seen timestamp |

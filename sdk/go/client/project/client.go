@@ -392,6 +392,11 @@ type DeleteProjectResponse struct {
 type ListProjectsRequest struct {
 	TenantID string `json:"tenant_id"`
 
+	// Autonomous narrows the listing to the projects with autonomous
+	// development on (true) or off (false). Nil does not narrow: a bool
+	// could not tell "the supervised ones" from "no preference".
+	Autonomous *bool `json:"autonomous,omitempty"`
+
 	// Params pages, orders and searches the listing. The zero value takes
 	// the server's default page; see package page.
 	page.Params

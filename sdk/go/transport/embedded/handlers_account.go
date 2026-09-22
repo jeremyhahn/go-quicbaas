@@ -108,6 +108,7 @@ func handleAccountList(ctx context.Context, svc service.QuicBaaS, req interface{
 	}
 	resp, err := accountSvc.ListAccounts(ctx, &service.ListAccountsRequest{
 		TenantID:  r.TenantID,
+		Status:    orchestration.AccountStatus(r.Status),
 		Provider:  orchestration.AccountProvider(r.Provider),
 		ProjectID: r.ProjectID,
 		Page:      pageFromSDK(r.Params),
@@ -122,6 +123,7 @@ func handleAccountList(ctx context.Context, svc service.QuicBaaS, req interface{
 			Limit:      resp.Limit,
 			Offset:     resp.Offset,
 			NextOffset: resp.NextOffset,
+			Facets:     resp.Facets,
 		},
 	}
 	for _, a := range resp.Accounts {

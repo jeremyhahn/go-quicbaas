@@ -258,6 +258,12 @@ type DeleteProjectResponse struct {
 type ListProjectsRequest struct {
 	TenantID string
 
+	// Autonomous narrows the listing to the projects with autonomous
+	// development on (true) or off (false). Nil is "the caller did not ask"
+	// and narrows nothing — which is why it is a pointer: a bool could not
+	// tell "the supervised ones" from "no preference".
+	Autonomous *bool
+
 	// Page narrows the answer to one page of the tenant's projects and
 	// orders it per orchestration.ProjectPageSpec. Nil asks for the first
 	// orchestration.DefaultPageLimit, newest first.
@@ -279,6 +285,10 @@ type ListProjectsResponse struct {
 
 	// NextOffset is the offset of the following page, zero on the last.
 	NextOffset int
+
+	// Facets counts the projects by autonomy over the set the search left,
+	// before the autonomy narrowing. Nil when no page was asked for.
+	Facets orchestration.Facets
 
 	Timestamp time.Time
 }
@@ -934,7 +944,11 @@ func (s *projectServiceImpl) ListProjects(ctx context.Context, req *ListProjects
 		return nil, s.convertStoreError(err)
 	}
 
-	page, err := orchestration.ApplyPage(projects, req.Page, orchestration.ProjectPageSpec())
+	page, err := orchestration.ApplyFacetedPage(
+		projects, req.Page, orchestration.ProjectPageSpec(), orchestration.ProjectFacetSpec(),
+		func(project *orchestration.Project) bool {
+			return orchestration.MatchesProjectAutonomy(project, req.Autonomous)
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -945,6 +959,7 @@ func (s *projectServiceImpl) ListProjects(ctx context.Context, req *ListProjects
 		Limit:      page.Limit,
 		Offset:     page.Offset,
 		NextOffset: page.NextOffset,
+		Facets:     page.Facets,
 		Timestamp:  time.Now().UTC(),
 	}, nil
 }

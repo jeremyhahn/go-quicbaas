@@ -19,6 +19,7 @@ import {
   type PageResult,
   type SessionPageParams,
   type TaskPageParams,
+  type WorkflowPageParams,
 } from './page.js';
 import type {
   AuthClient,
@@ -322,6 +323,7 @@ class WailsOrchestratorClient implements OrchestratorClient {
     if (page?.project_id !== undefined) req.project_id = page.project_id;
     if (page?.statuses !== undefined) req.statuses = page.statuses;
     if (page?.job_ids !== undefined) req.job_ids = page.job_ids;
+    if (page?.agent_id !== undefined) req.agent_id = page.agent_id;
     return adoptPage<JobStatus>(await orchestratorBinding().ListJobs(req), 'jobs');
   }
 
@@ -334,6 +336,8 @@ class WailsOrchestratorClient implements OrchestratorClient {
     if (page?.assigned_to !== undefined) req.assigned_to = page.assigned_to;
     if (page?.created_by !== undefined) req.created_by = page.created_by;
     if (page?.auto_spawn !== undefined) req.auto_spawn = page.auto_spawn;
+    if (page?.agent_id !== undefined) req.agent_id = page.agent_id;
+    if (page?.job_id !== undefined) req.job_id = page.job_id;
     return adoptPage<Task>(await orchestratorBinding().ListTasks(req), 'tasks');
   }
 
@@ -347,6 +351,10 @@ class WailsOrchestratorClient implements OrchestratorClient {
     const req: ListSessionsRequest = { tenantID, ...pageFields(page) };
     if (page?.backend !== undefined) req.backend = page.backend;
     if (page?.status !== undefined) req.status = page.status;
+    if (page?.project_id !== undefined) req.project_id = page.project_id;
+    if (page?.job_id !== undefined) req.job_id = page.job_id;
+    if (page?.runner !== undefined) req.runner = page.runner;
+    if (page?.agent_id !== undefined) req.agent_id = page.agent_id;
     return adoptPage<SessionStatusResponse>(
       await orchestratorBinding().ListSessions(req),
       'sessions',
@@ -368,13 +376,20 @@ class WailsOrchestratorClient implements OrchestratorClient {
 
   async listWorkflowsPage(
     tenantID: string,
-    page?: PageParams,
+    page?: WorkflowPageParams,
   ): Promise<PageResult<WorkflowDefinition>> {
     const b = orchestratorBinding();
     if (typeof b.ListWorkflows !== 'function') {
       throw new Error('wails: ListWorkflows not implemented');
     }
-    const answered = await b.ListWorkflows({ tenant_id: tenantID, ...pageFields(page) });
+    const workflowFilters: Record<string, string> = {};
+    if (page?.project_id !== undefined) workflowFilters['project_id'] = page.project_id;
+    if (page?.mode !== undefined) workflowFilters['mode'] = page.mode;
+    const answered = await b.ListWorkflows({
+      tenant_id: tenantID,
+      ...workflowFilters,
+      ...pageFields(page),
+    });
     return adoptPage<WorkflowDefinition>(answered, 'workflows');
   }
 

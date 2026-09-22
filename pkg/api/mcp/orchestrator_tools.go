@@ -424,6 +424,10 @@ func (r *ToolRegistry) registerAgentTools() {
 					"enum":        orchestration.SessionStates(),
 					"description": "Filter sessions by lifecycle state (optional). Empty means every state.",
 				},
+				"project_id": filterSchemaProperty("Narrow the listing to one project's sessions."),
+				"job_id":     filterSchemaProperty("Narrow the listing to the sessions one job spawned."),
+				"runner":     filterSchemaProperty("Narrow the listing to the sessions whose job one runner drove — sdlc, review, triage, workflow — which is the ROLE the session played."),
+				"agent_id":   filterSchemaProperty("Narrow the listing to the sessions running on one fleet agent."),
 			}, strings.Join(orchestration.SessionPageSpec().SortFields(), ", ")),
 			"required": []string{"tenant_id"},
 		},
@@ -572,6 +576,7 @@ func (r *ToolRegistry) registerAgentTools() {
 					"type":        "string",
 					"description": "Filter by agent type (optional)",
 				},
+				"backend": filterSchemaProperty("Narrow the listing to the agents that SERVE this backend, as their primary or as one of their capabilities."),
 			}, strings.Join(orchestration.AgentPageSpec().SortFields(), ", ")),
 			"required": []string{"tenant_id"},
 		},
@@ -731,6 +736,7 @@ func (r *ToolRegistry) registerAgentTools() {
 					"items":       map[string]interface{}{"type": "string"},
 					"description": "Narrow the listing to the named jobs — how a caller holding a page of sessions or tasks resolves the jobs they name in one call. Optional.",
 				},
+				"agent_id": filterSchemaProperty("Narrow the listing to the jobs dispatched to one fleet agent."),
 			}, strings.Join(orchestration.JobPageSpec().SortFields(), ", ")),
 		},
 	})
@@ -1331,9 +1337,13 @@ func (r *ToolRegistry) executeAgentListSessions(ctx context.Context, args map[st
 	}
 
 	req := &orchestration.ListSessionsRequest{
-		Backend: getString(args, "backend"),
-		Status:  orchestration.SessionState(getString(args, "status")),
-		Page:    pageFromArgs(args),
+		Backend:   getString(args, "backend"),
+		Status:    orchestration.SessionState(getString(args, "status")),
+		ProjectID: getString(args, "project_id"),
+		JobID:     getString(args, "job_id"),
+		Runner:    getString(args, "runner"),
+		AgentID:   getString(args, "agent_id"),
+		Page:      pageFromArgs(args),
 	}
 
 	resp, err := agentSvc.ListSessions(ctx, req)
@@ -1350,6 +1360,9 @@ func (r *ToolRegistry) executeAgentListSessions(ctx context.Context, args map[st
 	}
 	if resp.NextOffset > 0 {
 		result["next_offset"] = resp.NextOffset
+	}
+	if resp.Facets != nil {
+		result["facets"] = resp.Facets
 	}
 	return marshalResult(result)
 }
@@ -1577,6 +1590,7 @@ func (r *ToolRegistry) executeAgentFleetList(ctx context.Context, args map[strin
 	filter := &orchestration.AgentFilter{
 		Host:      getString(args, "host"),
 		AgentType: getString(args, "agent_type"),
+		Backend:   getString(args, "backend"),
 	}
 
 	if status := getString(args, "status"); status != "" {
@@ -1903,11 +1917,21 @@ func (r *ToolRegistry) executeOrchestratorListJobs(ctx context.Context, args map
 
 	tenantID := orchestration.TenantFromContext(ctx)
 
+	// A STATE THE ENGINE DOES NOT HAVE IS REFUSED HERE TOO. The model sends
+	// the same names REST does and must meet the same refusal, or a tool call
+	// that misspells a state reads back as "no such jobs" and the model
+	// reports a quiet factory.
+	states, err := orchestration.JobStatesFrom("statuses", getStringSlice(args, "statuses"))
+	if err != nil {
+		return nil, err
+	}
+
 	jobs, err := agentSvc.ListJobsPage(ctx, tenantID, &orchestration.JobFilter{
 		TaskID:    getString(args, "task_id"),
 		Runner:    getString(args, "runner"),
 		ProjectID: getString(args, "project_id"),
-		Statuses:  jobStatesFromArgs(args),
+		AgentID:   getString(args, "agent_id"),
+		Statuses:  states,
 		JobIDs:    getStringSlice(args, "job_ids"),
 	}, pageFromArgs(args))
 	if err != nil {
@@ -1938,25 +1962,6 @@ func (r *ToolRegistry) executeOrchestratorListJobs(ctx context.Context, args map
 		"count":     len(summaries),
 		"timestamp": time.Now().Format(time.RFC3339Nano),
 	}))
-}
-
-// jobStatesFromArgs reads the repeated ?statuses filter off a tool call.
-func jobStatesFromArgs(args map[string]interface{}) []orchestration.JobState {
-	raw := getStringSlice(args, "statuses")
-	if len(raw) == 0 {
-		return nil
-	}
-	states := make([]orchestration.JobState, 0, len(raw))
-	for _, state := range raw {
-		if state == "" {
-			continue
-		}
-		states = append(states, orchestration.JobState(state))
-	}
-	if len(states) == 0 {
-		return nil
-	}
-	return states
 }
 
 // executeOrchestratorTaskCreate creates an orchestration task, optionally

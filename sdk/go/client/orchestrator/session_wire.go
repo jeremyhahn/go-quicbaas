@@ -209,6 +209,10 @@ type SessionStatusWire struct {
 	// and the service resolves it per page so a consumer never has to read
 	// the job list to find out (see SessionInfo in pkg/orchestration).
 	Runner string `json:"runner"`
+
+	// AgentID is the fleet agent the session's job was dispatched to, and is
+	// resolved for the listing beside Runner and from the same record.
+	AgentID string `json:"agent_id"`
 }
 
 // Response converts the wire status into the SDK response type.
@@ -223,6 +227,7 @@ func (w *SessionStatusWire) Response() *SessionStatusResponse {
 		LastActive:  w.LastActivity,
 		JobID:       w.JobID,
 		Runner:      w.Runner,
+		AgentID:     w.AgentID,
 	}
 }
 

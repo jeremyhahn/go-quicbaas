@@ -109,8 +109,11 @@ func TestMCPListJobs_SearchComposesWithTheRunnerFilter(t *testing.T) {
 	})
 
 	require.Equal(t, float64(1), decoded["total"])
-	require.NotNil(t, svc.listJobsFilter, "the runner filter never reached the service")
-	require.Equal(t, "sdlc", svc.listJobsFilter.Runner)
+	// The runner is a COUNTED narrowing now, so it runs in the page rather
+	// than in the store read — listJobsFilter sees only what survives into
+	// the listing. What the transport must be held to is the filter it built.
+	require.NotNil(t, svc.listJobsPageFilter, "the runner filter never reached the service")
+	require.Equal(t, "sdlc", svc.listJobsPageFilter.Runner)
 }
 
 // TestMCPListJobs_DeclaresThePagingArguments proves the tool's schema offers

@@ -35,7 +35,9 @@ func pageFromSDK(params page.Params) *orchestration.Page {
 	}
 }
 
-// envelopeFromPage translates a served page into the SDK's paging envelope.
+// envelopeFromPage translates a served page into the SDK's paging envelope,
+// facet counts and all: an in-process caller renders the same filter bar a
+// REST caller does, from the same numbers.
 func envelopeFromPage[T any](result *orchestration.PageResult[T]) page.Envelope {
 	if result == nil {
 		return page.Envelope{}
@@ -45,5 +47,6 @@ func envelopeFromPage[T any](result *orchestration.PageResult[T]) page.Envelope 
 		Limit:      result.Limit,
 		Offset:     result.Offset,
 		NextOffset: result.NextOffset,
+		Facets:     result.Facets,
 	}
 }

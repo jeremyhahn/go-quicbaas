@@ -248,6 +248,9 @@ type ListAccountsRequest struct {
 	Provider Provider `json:"provider,omitempty"`
 	// ProjectID filters to one project when non-empty.
 	ProjectID string `json:"project_id,omitempty"`
+	// Status filters to one lifecycle state — active, revoked, error,
+	// limited — when non-empty.
+	Status string `json:"status,omitempty"`
 
 	// Params pages, orders and searches the listing. The zero value takes
 	// the server's default page; see package page.

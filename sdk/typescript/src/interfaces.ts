@@ -14,7 +14,6 @@
 import type {
   AgentPageParams,
   JobPageParams,
-  PageParams,
   PageResult,
   SessionPageParams,
   TaskPageParams,
@@ -252,7 +251,8 @@ export interface OrchestratorClient {
   ): Promise<PageResult<AgentRegistration>>;
 
   // listWorkflowsPage returns ONE PAGE of the tenant's workflow definitions,
-  // by name — a workflow carries no timestamp to order by.
+  // by name — a workflow carries no timestamp to order by. `page` carries
+  // the shared parameters plus the project and mode narrowings.
   listWorkflowsPage(
     tenantID: string,
     page?: WorkflowPageParams,

@@ -2703,8 +2703,13 @@ func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRe
 			return true
 		}
 
-		// Apply backend filter if specified
-		if req.Backend != "" && rec.Backend != req.Backend {
+		// THE FACETED NARROWINGS ARE NOT APPLIED HERE. backend, state, runner
+		// and agent are what the filter bar counts, and a count has to see the
+		// records its own choice removes, so they run once over the merged
+		// listing (matchesSessionFacets) rather than here and again there.
+		// What IS applied here is the base half — the project and the job —
+		// which no facet counts and which spares the durable read below.
+		if req.ProjectID != "" && rec.ProjectID != req.ProjectID {
 			return true
 		}
 
@@ -2788,11 +2793,12 @@ func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRe
 			return false
 		}
 
-		// FILTERED ON THE STATE THE CALLER WILL SEE, which is why this is here
-		// and not beside the backend filter above: the durable CLOSED verdict
-		// overrides the live map's assumption a few lines up, so filtering
-		// before it would answer for a state the listing does not report.
-		if req.Status != "" && info.State != req.Status {
+		// FILTERED ON THE BINDING THE CALLER WILL SEE, which is why this is
+		// here and not beside the project filter above: the durable record
+		// answers for the job when the live entry carries none, so filtering
+		// before the enrichment would drop every session reconstituted after a
+		// restart.
+		if req.JobID != "" && info.JobID != req.JobID {
 			return true
 		}
 
@@ -2831,12 +2837,12 @@ func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRe
 			continue
 		}
 
-		// Apply backend filter
-		if req.Backend != "" && record.Backend != req.Backend {
+		// The base narrowings only; the faceted ones run over the merged
+		// listing so the counts see what they remove.
+		if req.ProjectID != "" && record.ProjectID != req.ProjectID {
 			continue
 		}
-
-		if req.Status != "" && record.Status != req.Status {
+		if req.JobID != "" && record.JobID != req.JobID {
 			continue
 		}
 
@@ -2853,22 +2859,25 @@ func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRe
 		})
 	}
 
+	// THE JOB IS RESOLVED BEFORE THE PAGE IS CUT, and that is a reversal of
+	// what this did when the runner was only a badge to render. The role and
+	// the agent are now FILTERS and FACETS: a listing that resolved them for
+	// the page could not narrow to the reviewer's sessions — the matches that
+	// fell off page one would never be found — and could not count them. The
+	// cost is one pass over the tenant's jobs however many sessions name one
+	// (resolveJobFacts), not one read per row.
+	s.resolveSessionJobs(ctx, sessionTenants, sessions)
+
 	// PAGING IS THE LAST STEP, after both halves of the merge are in hand:
 	// Total must count the sessions the filters left, and a page cut before
 	// the durable records were merged in would count only the live ones.
-	// ApplyPage also supplies the deterministic creation-time order this
-	// listing has always answered in (see sessionPageSpec).
-	page, err := ApplyPage(sessions, req.Page, sessionPageSpec)
+	// ApplyFacetedPage also supplies the deterministic creation-time order
+	// this listing has always answered in (see sessionPageSpec).
+	page, err := ApplyFacetedPage(sessions, req.Page, sessionPageSpec, sessionFacetSpec,
+		func(session *SessionInfo) bool { return MatchesSessionFacets(req, session) })
 	if err != nil {
 		return nil, err
 	}
-
-	// THE RUNNER IS RESOLVED FOR THE PAGE, NOT FOR THE LISTING. A tenant with
-	// two thousand sessions names nearly as many jobs, and reading every one
-	// of them to answer a page of twenty-five would make the listing pay for
-	// records nobody asked to see. Doing it here — after the cut, memoised by
-	// job — bounds the reads to the page's distinct jobs.
-	s.resolveSessionRunners(sessionTenants, page.Items)
 
 	return &ListSessionsResponse{
 		Sessions:   page.Items,
@@ -2877,6 +2886,7 @@ func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRe
 		Limit:      page.Limit,
 		Offset:     page.Offset,
 		NextOffset: page.NextOffset,
+		Facets:     page.Facets,
 	}, nil
 }
 
@@ -2890,26 +2900,41 @@ func (s *agentServiceImpl) listStoredSessions(ctx context.Context, tenantID stri
 	return s.store.ListSessions(ctx, tenantID)
 }
 
-// resolveSessionRunners names the runner that drove each session's job.
+// resolveSessionJobs names the runner that drove each session's job and the
+// fleet agent it ran on.
 //
-// The read is MEMOISED BY JOB because a job spawns several sessions — a
-// worker, a reviewer, a lead — and they all resolve to the same record. A
-// session naming no job, or one whose job is no longer on record, is left
-// with no runner: the consumer renders no badge rather than a guess, which is
-// the same rule the listing follows for every other field it cannot observe.
-func (s *agentServiceImpl) resolveSessionRunners(tenants map[string]string, sessions []*SessionInfo) {
-	runners := make(map[string]string, len(sessions))
+// THE READS ARE GROUPED BY TENANT AND DONE IN ONE PASS EACH. A job spawns
+// several sessions — a worker, a reviewer, a lead — and they all resolve to
+// the same record, so the answer is memoised by job; and a tenant's whole job
+// space is scanned once however many jobs are asked about, so a listing of two
+// thousand sessions costs what a listing of twenty does. A session naming no
+// job, or one whose job is no longer on record, is left with no runner and no
+// agent: the consumer renders no badge rather than a guess, which is the same
+// rule the listing follows for every other field it cannot observe.
+func (s *agentServiceImpl) resolveSessionJobs(ctx context.Context, tenants map[string]string, sessions []*SessionInfo) {
+	byTenant := make(map[string][]string)
 	for _, session := range sessions {
 		if session == nil || session.JobID == "" {
 			continue
 		}
-		key := tenants[session.SessionID] + "/" + session.JobID
-		runner, resolved := runners[key]
-		if !resolved {
-			runner = s.jobRunner(tenants[session.SessionID], session.JobID)
-			runners[key] = runner
+		byTenant[tenants[session.SessionID]] = append(byTenant[tenants[session.SessionID]], session.JobID)
+	}
+	if len(byTenant) == 0 {
+		return
+	}
+	facts := make(map[string]jobFacts, len(sessions))
+	for tenantID, jobIDs := range byTenant {
+		for jobID, fact := range s.resolveJobFacts(ctx, tenantID, jobIDs) {
+			facts[tenantID+"/"+jobID] = fact
 		}
-		session.Runner = runner
+	}
+	for _, session := range sessions {
+		if session == nil || session.JobID == "" {
+			continue
+		}
+		fact := facts[tenants[session.SessionID]+"/"+session.JobID]
+		session.Runner = fact.Runner
+		session.AgentID = fact.AgentID
 	}
 }
 
@@ -5115,7 +5140,21 @@ func (s *agentServiceImpl) ListJobs(ctx context.Context, tenantID string, filter
 			Message:  "tenant ID is required to list jobs",
 		}
 	}
+	return s.collectJobs(ctx, tenantID, filter), nil
+}
 
+// collectJobs is ListJobs without the tenant validation: the merge of the
+// running loops with the records concluded jobs left behind, narrowed by
+// filter and ordered newest first.
+//
+// IT EXISTS SO A LISTING OF SOMETHING ELSE CAN RESOLVE THE JOBS ITS ROWS NAME.
+// A page of tasks shows which agent ran each one, and a page of sessions shows
+// which role each played; both facts live on the job, and both listings serve
+// callers whose context names no tenant of its own (the embedded, single-tenant
+// case) while the records they hold name theirs. Validating the CONTEXT's
+// tenant there would refuse a caller that is entitled to every tenant. The
+// entry points that answer a caller directly — ListJobs — still validate.
+func (s *agentServiceImpl) collectJobs(ctx context.Context, tenantID string, filter *JobFilter) []*JobStatus {
 	// Collect jobs from in-memory running jobs map.
 	seen := make(map[string]struct{})
 	var jobs []*JobStatus
@@ -5176,7 +5215,50 @@ func (s *agentServiceImpl) ListJobs(ctx context.Context, tenantID string, filter
 		return jobs[i].StartedAt > jobs[j].StartedAt
 	})
 
-	return jobs, nil
+	return jobs
+}
+
+// jobFacts are what a listing of something ELSE needs from the job its rows
+// name: which runner drove it, and which fleet agent ran it.
+type jobFacts struct {
+	// Runner is the job's runner, resolved through ResolveJobRunnerName, so
+	// a job that names none reads as the engine's own "workflow" rather than
+	// as unknown.
+	Runner string
+
+	// AgentID is the fleet agent the job's work was dispatched to, empty
+	// when it ran on the daemon's own in-process backend.
+	AgentID string
+}
+
+// resolveJobFacts reads the runner and the agent of every named job IN ONE
+// PASS over the tenant's jobs.
+//
+// ONE PASS, NOT ONE READ PER ROW. A page of twenty-five sessions names up to
+// twenty-five jobs and a tenant's task list names one per task; resolving them
+// with a point read each is what the job_ids filter was added to stop
+// (JobFilter.JobIDs). The merge scans the tenant's job space once whatever is
+// asked of it, so asking for four hundred costs what asking for four does.
+//
+// A job that cannot be read is ABSENT from the result rather than present with
+// empty facts, so a caller can tell "this job says no agent" from "this job is
+// no longer on record" — the first is a job that ran in-process, the second is
+// a job whose record has aged out.
+func (s *agentServiceImpl) resolveJobFacts(ctx context.Context, tenantID string, jobIDs []string) map[string]jobFacts {
+	if tenantID == "" || len(jobIDs) == 0 {
+		return nil
+	}
+	facts := make(map[string]jobFacts, len(jobIDs))
+	for _, status := range s.collectJobs(ctx, tenantID, &JobFilter{JobIDs: jobIDs}) {
+		if status == nil {
+			continue
+		}
+		facts[status.JobID] = jobFacts{
+			Runner:  ResolveJobRunnerName(jobStatusRunner(status)),
+			AgentID: status.AgentID,
+		}
+	}
+	return facts
 }
 
 // CancelJob cancels a running orchestration job and removes it from the jobs map.

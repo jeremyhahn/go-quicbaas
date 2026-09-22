@@ -48,6 +48,45 @@ const (
 	TaskStatusBlocked TaskStatus = "blocked"
 )
 
+// taskStatuses is every task status, in lifecycle order. It is the ONE list
+// the enum is validated and documented from, so a status added above is
+// filterable the moment it exists rather than when someone remembers a second
+// list.
+var taskStatuses = []TaskStatus{
+	TaskStatusPending,
+	TaskStatusClaimed,
+	TaskStatusInProgress,
+	TaskStatusCompleted,
+	TaskStatusFailed,
+	TaskStatusCancelled,
+	TaskStatusBlocked,
+}
+
+// TaskStatuses returns every task status, in lifecycle order.
+func TaskStatuses() []TaskStatus {
+	return append([]TaskStatus(nil), taskStatuses...)
+}
+
+// TaskStatusNames returns every task status as a string, for the message a
+// refused filter carries back to the caller.
+func TaskStatusNames() []string {
+	names := make([]string, 0, len(taskStatuses))
+	for _, status := range taskStatuses {
+		names = append(names, string(status))
+	}
+	return names
+}
+
+// Valid reports whether the status is one the engine has.
+func (s TaskStatus) Valid() bool {
+	for _, known := range taskStatuses {
+		if s == known {
+			return true
+		}
+	}
+	return false
+}
+
 // TaskSourceKind names the place a task originated from. It is provenance,
 // not behaviour: the engine never branches on it beyond validating it and
 // using it as an index segment that keeps one origin from being adopted as
@@ -167,6 +206,17 @@ type Task struct {
 	ClaimedAt    int64             `json:"claimed_at,omitempty"`
 	CompletedAt  int64             `json:"completed_at,omitempty"`
 	Version      uint64            `json:"version"`
+
+	// AgentID is the fleet agent the task's LATEST ATTEMPT ran on, empty
+	// when it has had none or when the attempt ran in-process.
+	//
+	// DERIVED ON READ, NEVER PERSISTED. It is the job's fact, not the task's
+	// — a copy written down here would be stale for every attempt after the
+	// one that wrote it — so the paged listing resolves it and marshalTask
+	// zeroes it, exactly as Account.Default is derived and zeroed. It is on
+	// the record rather than beside it because the filter, the facet counts
+	// and the UI column all read it through the same PageSpec.
+	AgentID string `json:"agent_id,omitempty"`
 
 	// ProjectID scopes this task to a registered project. When non-empty,
 	// ClaimTask enforces the project's AgentRoles access matrix.
@@ -328,6 +378,21 @@ type TaskFilter struct {
 	// client because the listing is paged — a client filtering a page of 25
 	// answers "how many queued tasks are there" with a number it cannot know.
 	AutoSpawn *bool `json:"auto_spawn,omitempty"`
+
+	// JobID restricts the listing to the task whose LATEST ATTEMPT ran as
+	// that job — the reverse of JobFilter.TaskID, and the lookup a job page
+	// makes to name the task it is an attempt at.
+	JobID string `json:"job_id,omitempty"`
+
+	// AgentID restricts the listing to the tasks whose latest attempt ran on
+	// one fleet agent.
+	//
+	// THE AGENT IS THE JOB'S, NOT THE TASK'S. A task record names no agent —
+	// AssignedTo is filled only when an agent CLAIMS a task, and the engine
+	// dispatches most of them — so the answer lives on the attempt's job
+	// (JobStatus.AgentID) and is resolved onto the task when the listing is
+	// paged. See agentServiceImpl.ListTasksPage.
+	AgentID string `json:"agent_id,omitempty"`
 }
 
 // TaskStore manages orchestration tasks backed by QuicBaaS KV store.

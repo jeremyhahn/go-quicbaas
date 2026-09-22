@@ -332,6 +332,18 @@ func (h *orchestratorHandler) handleListSessions(ctx context.Context, req interf
 	if sdkReq.Status != "" {
 		query.Set("status", sdkReq.Status)
 	}
+	if sdkReq.ProjectID != "" {
+		query.Set("project_id", sdkReq.ProjectID)
+	}
+	if sdkReq.JobID != "" {
+		query.Set("job_id", sdkReq.JobID)
+	}
+	if sdkReq.Runner != "" {
+		query.Set("runner", sdkReq.Runner)
+	}
+	if sdkReq.AgentID != "" {
+		query.Set("agent_id", sdkReq.AgentID)
+	}
 	setPageQuery(query, sdkReq.Params)
 	url := "/api/v1/orchestrator/sessions"
 	if encoded := query.Encode(); encoded != "" {
@@ -396,6 +408,12 @@ func (h *orchestratorHandler) handleListTasks(ctx context.Context, req interface
 	}
 	if sdkReq.AutoSpawn != nil {
 		url += "&auto_spawn=" + strconv.FormatBool(*sdkReq.AutoSpawn)
+	}
+	if sdkReq.AgentID != "" {
+		url += "&agent_id=" + neturl.QueryEscape(sdkReq.AgentID)
+	}
+	if sdkReq.JobID != "" {
+		url += "&job_id=" + neturl.QueryEscape(sdkReq.JobID)
 	}
 	url += pageQuerySuffix(sdkReq.Params)
 	var resp orchestrator.ListTasksResponse
@@ -520,7 +538,7 @@ func (h *orchestratorHandler) handleListAgents(ctx context.Context, req interfac
 		url += "&agent_type=" + sdkReq.AgentType
 	}
 	if sdkReq.Backend != "" {
-		url += "&backend=" + sdkReq.Backend
+		url += "&backend=" + neturl.QueryEscape(sdkReq.Backend)
 	}
 	url += pageQuerySuffix(sdkReq.Params)
 	var resp orchestrator.ListAgentsResponse
@@ -637,6 +655,9 @@ func (h *orchestratorHandler) handleListJobs(ctx context.Context, req interface{
 	}
 	if len(sdkReq.JobIDs) > 0 {
 		url += "&job_ids=" + neturl.QueryEscape(strings.Join(sdkReq.JobIDs, ","))
+	}
+	if sdkReq.AgentID != "" {
+		url += "&agent_id=" + neturl.QueryEscape(sdkReq.AgentID)
 	}
 	url += pageQuerySuffix(sdkReq.Params)
 	var resp orchestrator.ListJobsResponse

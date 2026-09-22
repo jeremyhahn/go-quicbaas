@@ -210,6 +210,10 @@ type ListProjectsRESTResponse struct {
 	// NextOffset is the offset of the following page, absent on the last.
 	NextOffset int `json:"next_offset,omitempty"`
 
+	// Facets counts the projects by autonomy; see
+	// docs/software-factory/api.md.
+	Facets orchestration.Facets `json:"facets,omitempty"`
+
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -472,9 +476,16 @@ func (s *Server) HandleListProjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	autonomous, err := orchestration.ParseOptionalBool("autonomous", r.URL.Query().Get("autonomous"))
+	if err != nil {
+		RespondBadRequest(w, r, err.Error())
+		return
+	}
+
 	resp, err := projectSvc.ListProjects(ctx, &service.ListProjectsRequest{
-		TenantID: tenantID,
-		Page:     page,
+		TenantID:   tenantID,
+		Autonomous: autonomous,
+		Page:       page,
 	})
 	if err != nil {
 		handleProjectError(w, r, err)
@@ -492,6 +503,7 @@ func (s *Server) HandleListProjects(w http.ResponseWriter, r *http.Request) {
 		Limit:      resp.Limit,
 		Offset:     resp.Offset,
 		NextOffset: resp.NextOffset,
+		Facets:     resp.Facets,
 		Timestamp:  resp.Timestamp,
 	})
 }

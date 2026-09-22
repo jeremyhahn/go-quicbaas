@@ -60,15 +60,15 @@ func TestEnvelopeFromPage_CarriesTheServedNumbers(t *testing.T) {
 	}
 
 	got := envelopeFromPage(result)
-	want := page.Envelope{Total: 3, Limit: 2, Offset: 0, NextOffset: 2}
-	if got != want {
-		t.Errorf("envelopeFromPage() = %+v, want %+v", got, want)
+	if got.Total != 3 || got.Limit != 2 || got.Offset != 0 || got.NextOffset != 2 {
+		t.Errorf("envelopeFromPage() = %+v, want total 3 limit 2 offset 0 next 2", got)
 	}
 	if !got.HasMore() {
 		t.Error("HasMore() = false, want true while a next page exists")
 	}
 
-	if empty := envelopeFromPage[*orchestration.WorkflowDefinition](nil); empty != (page.Envelope{}) {
+	empty := envelopeFromPage[*orchestration.WorkflowDefinition](nil)
+	if empty.Total != 0 || empty.Limit != 0 || empty.Offset != 0 || empty.NextOffset != 0 || empty.Facets != nil {
 		t.Errorf("envelopeFromPage(nil) = %+v, want the zero envelope", empty)
 	}
 }
