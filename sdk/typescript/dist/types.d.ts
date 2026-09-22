@@ -1505,7 +1505,7 @@ export interface BarrierRecoverWithKeysRequest {
 }
 export interface BarrierHasRecoveryKeysResponse {
     /** True when recovery keys have been generated. */
-    has_recovery_keys: boolean;
+    has_keys: boolean;
 }
 export interface BarrierGenerateRootTokenRequest {
     /** Shamir shares proving knowledge of the master key. */

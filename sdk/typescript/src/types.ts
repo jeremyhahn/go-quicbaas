@@ -2419,10 +2419,13 @@ export interface BarrierRecoverWithKeysRequest {
 }
 
 // BarrierHasRecoveryKeysResponse indicates whether recovery keys exist.
-// Mirrors transport.BarrierHasRecoveryKeysResponse.
+// Mirrors transport.BarrierHasRecoveryKeysResponse, whose field is tagged
+// `has_keys` — the REST wire name served by GET /api/v1/barrier/recovery/status
+// (go-quicbaas#991). The MCP and gRPC surfaces spell the same bit
+// `has_recovery_keys` and their clients map it onto this field.
 export interface BarrierHasRecoveryKeysResponse {
   /** True when recovery keys have been generated. */
-  has_recovery_keys: boolean;
+  has_keys: boolean;
 }
 
 // BarrierGenerateRootTokenRequest holds Shamir shares used to authorise a

@@ -109,6 +109,27 @@ one barrier report `2026-08-25T04:40:05Z` over REST and
 `2026-08-25T04:40:05.727835519Z` over unix — the same instant, but not the
 byte-comparable answer an operator diffing two transports needs.
 
+#### The recovery-status field is `has_keys` on REST
+
+`GET /api/v1/barrier/recovery/status` answers `{"has_keys": true}`. The name
+is not the one the gRPC and MCP surfaces use for the same bit, and that is
+deliberate: the barrier is go-qrdb's, so each transport serves the wire format
+go-qrdb's client for THAT transport reads.
+
+| Transport | Field | Client that reads it |
+|---|---|---|
+| REST | `has_keys` | `go-qrdb/sdk/go/transport/rest` decoding `transport.BarrierHasRecoveryKeysResponse` |
+| MCP | `has_recovery_keys` | `go-qrdb/sdk/go/transport/mcp`, which maps it onto `HasKeys` |
+| gRPC | `has_recovery_keys` | the `BarrierRecoveryStatusResponse` protobuf field |
+
+Emitting `has_recovery_keys` over REST made
+`Security().Barrier().BarrierHasRecoveryKeys(...)` decode `false` for a
+barrier that HAS recovery keys — a wrong answer on a disaster-recovery
+precondition rather than an error, which is the worse failure mode
+(go-quicbaas#991). The TypeScript SDK's
+`BarrierHasRecoveryKeysResponse` mirrors the REST body and carries `has_keys`
+for the same reason.
+
 ### `/api/v1/seal` — the older seal surface, still mounted
 
 | Route | Handler |

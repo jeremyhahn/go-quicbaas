@@ -496,8 +496,14 @@ func (s *Server) HandleBarrierRecoveryStatus(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// The field is "has_keys", not "has_recovery_keys". The canonical client of
+	// this route is go-qrdb's REST transport, which decodes the body into
+	// transport.BarrierHasRecoveryKeysResponse (`json:"has_keys"`). The barrier
+	// is qrdb's, so every transport here answers in the wire format qrdb's
+	// client for THAT transport reads: REST "has_keys", MCP and gRPC
+	// "has_recovery_keys" (go-quicbaas#991).
 	RespondJSON(w, r, http.StatusOK, map[string]interface{}{
-		"has_recovery_keys": hasKeys,
+		"has_keys": hasKeys,
 	})
 }
 

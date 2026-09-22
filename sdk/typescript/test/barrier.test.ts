@@ -327,12 +327,12 @@ describe('RestBarrierClient operator flows', () => {
   });
 
   it('reports recovery key status', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ has_recovery_keys: true }));
+    fetchMock.mockResolvedValue(jsonResponse({ has_keys: true }));
 
     const client = new RestClient('http://localhost');
     const status = await client.barrier.recoveryStatus();
 
-    expect(status.has_recovery_keys).toBe(true);
+    expect(status.has_keys).toBe(true);
 
     const [url] = fetchMock.mock.calls[0];
     expect(url).toBe('http://localhost/api/v1/barrier/recovery/status');

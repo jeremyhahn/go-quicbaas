@@ -26,6 +26,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -566,8 +567,33 @@ func TestHandleBarrierRecoveryStatus_OK(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp["has_recovery_keys"] != true {
+	if resp["has_keys"] != true {
 		t.Fatalf("unexpected recovery status body: %v", resp)
+	}
+	if _, ok := resp["has_recovery_keys"]; ok {
+		t.Fatalf("has_recovery_keys is the MCP/gRPC field name, not REST's: %v", resp)
+	}
+}
+
+// TestHandleBarrierRecoveryStatus_DecodesIntoQRDBTransportType pins the wire
+// format to the client that actually reads it: go-qrdb's REST transport
+// decodes GET /v1/barrier/recovery/status into
+// transport.BarrierHasRecoveryKeysResponse, whose field is tagged "has_keys".
+// A mismatched key decodes to false for a barrier that HAS recovery keys —
+// a wrong answer on a disaster-recovery precondition, not an error
+// (go-quicbaas#991).
+func TestHandleBarrierRecoveryStatus_DecodesIntoQRDBTransportType(t *testing.T) {
+	svc := &fakeBarrierService{hasRecoveryFn: func(ctx context.Context) (bool, error) { return true, nil }}
+	w := doBarrierReq(t, barrierServer(t, svc), http.MethodGet, "/api/v1/barrier/recovery/status", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var decoded qrdbtransport.BarrierHasRecoveryKeysResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !decoded.HasKeys {
+		t.Fatalf("qrdb REST transport decoded HasKeys=false from %s", w.Body.String())
 	}
 }
 
