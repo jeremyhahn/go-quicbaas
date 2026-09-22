@@ -181,6 +181,22 @@ fail visibly: `make lint` exits non-zero with *"golangci-lint is required but
 not installed"* on a tree that is perfectly clean, so every review round fails
 and every Go job escalates to a human (go-quicbaas#772).
 
+**And the build's own tools, GNU where the Makefile assumes GNU.** A project
+that embeds a frontend copies it with `rsync`; its Makefile checks use
+`grep --include`, `--exclude-dir` and `-E`, which busybox grep rejects — and a
+rejected grep inside a `|| true` pipeline *passes* a security check that never
+ran. The image carries GNU `grep` and `rsync`, and sets **no `NODE_ENV`**:
+under `NODE_ENV=production` `npm ci` omits devDependencies, `tsc` never
+installs, and `make build` fails on a missing module (go-quicbaas#966).
+`make test-worker-image` probes all three. The cheapest way to find the next
+gap is to run the project's `make build` inside the image on a clone of main:
+
+```sh
+docker run --rm -e HOME=/tmp -v "$PWD":/src:ro \
+  quicbaas-software-factory-worker:<tag> \
+  sh -lc 'git clone -q /src /tmp/w/p && cd /tmp/w/p && make build'
+```
+
 They are installed **at `$(go env GOPATH)/bin`, not merely on the `PATH`**. A Go
 project's Makefile resolves the linter as `$(shell go env GOPATH)/bin/golangci-lint`
 and `test -x`es it, so a binary reachable only through `PATH` still reads as
