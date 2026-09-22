@@ -505,8 +505,8 @@ check-insecure-tls: ## Enforce InsecureSkipVerify allowlist - empty allowlist me
 	@# matched a fully commented-out line (`^...: *//`), not a trailing
 	@# comment on real code, so this check failed on every run regardless of
 	@# the existing nolint annotation's intent.
-	@violations=$$(grep -rPn 'InsecureSkipVerify[[:space:]]*:[[:space:]]*true' --include="*.go" --exclude-dir='.deps' --exclude-dir='vendor' . \
-		| grep -Pv '^[^:]+:[0-9]+:[[:space:]]*//|//nolint:gosec' \
+	@violations=$$(grep -rEn 'InsecureSkipVerify[[:space:]]*:[[:space:]]*true' --include="*.go" --exclude-dir='.deps' --exclude-dir='vendor' . \
+		| grep -Ev '^[^:]+:[0-9]+:[[:space:]]*//|//nolint:gosec' \
 		|| true); \
 	if [ -n "$$violations" ]; then \
 		echo "$(RED)FORBIDDEN InsecureSkipVerify in go-quicbaas (no allowlist entries):$(NC)"; \
@@ -3080,6 +3080,8 @@ test-worker-image: build-worker-image ## Build the worker image and check it car
 	@$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp \
 		$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
 		sh -lec 'git --version; ssh -V; go version; make --version | head -1; rsync --version | head -1; \
+			grep --version | head -1; \
+			case "$$(npm config get omit)" in dev*) echo "npm omits devDependencies: NODE_ENV must not be production"; exit 1;; esac; \
 			claude --version; codex --version; \
 			ssh-keygen -t ed25519 -N "" -f /tmp/signing-key -q; \
 			git init -q /tmp/probe; cd /tmp/probe; \

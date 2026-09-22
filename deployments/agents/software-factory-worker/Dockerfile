@@ -139,6 +139,7 @@ RUN apk add --no-cache \
     make \
     build-base \
     bash \
+    grep \
     rsync \
     curl \
     ca-certificates \
@@ -273,9 +274,17 @@ ENV GOPATH=/home/agent/go
 # GOTOOLCHAIN=local: this image ships ONE toolchain, and a project whose go.mod
 # asks for another fails loudly here rather than silently downloading one into
 # a sandboxed container whose network policy is the operator's to decide.
+#
+# NODE_ENV is deliberately NOT set. This image runs the project's own `make
+# build` and `make test`, whose TypeScript SDK and frontend install their
+# compilers as devDependencies; under NODE_ENV=production `npm ci` omits
+# devDependencies, tsc never lands, and `make build` fails on every project
+# that builds a frontend (go-quicbaas #966, 2026-09-21). GNU grep is installed
+# above for the same reason: the Makefile's checks use --include/--exclude-dir
+# and -E, which busybox grep rejects, and a rejected grep in a `|| true`
+# pipeline passes a security check that never ran.
 ENV PATH="/usr/local/go/bin:${GOPATH}/bin:${PATH}" \
-    GOTOOLCHAIN=local \
-    NODE_ENV=production
+    GOTOOLCHAIN=local
 
 # ENV PATH IS NOT ENOUGH, BECAUSE THE AGENT EXECS THROUGH A LOGIN SHELL.
 #
