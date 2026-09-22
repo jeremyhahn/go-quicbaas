@@ -9,6 +9,7 @@
  * 5. Metadata panel renders tenant info.
  * 6. Metadata panel links the orchestration job the session works for.
  * 7. The body leads with the conversation and keeps the event log reachable.
+ * 8. The header names the role the session played, from its job's runner.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -20,7 +21,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 
 // Define the session shapes inside vi.hoisted so they are available when
 // vi.mock factories are evaluated (factories are hoisted before top-level consts).
-const { sessions } = vi.hoisted(() => {
+const { sessions, mockJobs } = vi.hoisted(() => {
   const active = {
     session_id: 'sess-aaa-bbb-ccc-111',
     backend: 'claude',
@@ -35,8 +36,22 @@ const { sessions } = vi.hoisted(() => {
     session_id: 'sess-closed-222',
     status: 'closed',
   };
-  return { sessions: { active, closed } };
+  // The jobs behind the Role badge: the session's own, plus a reviewer's so a
+  // case can show the two are told apart rather than defaulted.
+  const mockJobs = [
+    { job_id: 'job-worker', runner: 'sdlc' },
+    { job_id: 'job-reviewer', runner: 'review' },
+  ];
+  return { sessions: { active, closed }, mockJobs };
 });
+
+vi.mock('../src/stores/orchestrator.svelte.ts', () => ({
+  orchestratorStore: {
+    get jobs() { return mockJobs; },
+    get activeTenantID() { return 'default'; },
+  },
+  loadJobs: vi.fn().mockResolvedValue(undefined),
+}));
 
 vi.mock('../src/stores/sessionStore.svelte.ts', () => ({
   sessionStore: {
@@ -611,5 +626,35 @@ describe('SessionDetail — Last Active, from the server’s own payload', () =>
     const session = await sessionFromServer({ state: 'closed' });
     render(SessionDetail, { props: { session } });
     expect(screen.getByText('closed')).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The Role badge (go-quicbaas#969)
+// ---------------------------------------------------------------------------
+
+describe('SessionDetail role', () => {
+  /** The same session, working for the job named. */
+  const workingFor = (jobID: string) => ({ ...sessions.active, job_id: jobID });
+
+  it('names the role the session played and the model running it', () => {
+    render(SessionDetail, { props: { session: workingFor('job-worker') } });
+    expect(screen.getByTestId('session-role')).toHaveTextContent('worker');
+    expect(screen.getByTestId('session-header-model')).toHaveTextContent('claude-3-5-sonnet');
+  });
+
+  it('reads the role from the job, not from the transcript', () => {
+    render(SessionDetail, { props: { session: workingFor('job-reviewer') } });
+    expect(screen.getByTestId('session-role')).toHaveTextContent('reviewer');
+  });
+
+  it('claims no role for a session that belongs to no job', () => {
+    render(SessionDetail, { props: { session: sessions.active } });
+    expect(screen.queryByTestId('session-role')).toBeNull();
+  });
+
+  it('claims no role when the session names a job nobody has read', () => {
+    render(SessionDetail, { props: { session: workingFor('job-nobody-read') } });
+    expect(screen.queryByTestId('session-role')).toBeNull();
   });
 });

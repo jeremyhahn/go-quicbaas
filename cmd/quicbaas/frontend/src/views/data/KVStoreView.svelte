@@ -23,15 +23,16 @@
   import { showToast } from '../../stores/toast.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import type { KVEntry } from '@quicbaas/sdk';
-  import { Search, Plus, Trash2, Eye, Pencil, Database } from 'lucide-svelte';
+  import { Plus, Trash2, Eye, Pencil, Database } from 'lucide-svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
+  import DataTable from '../../components/core/DataTable.svelte';
+  import type { Column } from '../../lib/dataTable.ts';
 
   // ---------------------------------------------------------------------------
   // State
   // ---------------------------------------------------------------------------
 
   let entityType = $state('default');
-  let searchKey = $state('');
   let entries = $state<KVEntry[]>([]);
   let loading = $state(false);
   let loadError = $state('');
@@ -87,11 +88,16 @@
   // Filtered view
   // ---------------------------------------------------------------------------
 
-  const filteredEntries = $derived(
-    searchKey.trim()
-      ? entries.filter((e) => e.key.includes(searchKey.trim()))
-      : entries,
-  );
+  const TABLE_COLUMNS: Column<KVEntry>[] = [
+    { key: 'key', label: 'Key', sortable: true, searchable: true },
+    {
+      key: 'value',
+      label: 'Preview',
+      searchable: true,
+      value: (e) => JSON.stringify(e.value),
+    },
+    { key: 'actions', label: 'Actions', headerClass: 'w-24 text-right', srLabel: true },
+  ];
 
   // ---------------------------------------------------------------------------
   // PUT
@@ -212,15 +218,6 @@
       />
     </label>
 
-    <label class="flex items-center gap-2 text-sm text-base-content/60 flex-1">
-      <Search class="h-4 w-4 shrink-0" />
-      <input
-        type="text"
-        class="input input-bordered input-sm w-full"
-        bind:value={searchKey}
-        placeholder="Filter by key…"
-      />
-    </label>
   </div>
 
   <!-- Error -->
@@ -236,68 +233,64 @@
     <div class="flex justify-center py-12">
       <span class="loading loading-spinner loading-md"></span>
     </div>
-  {:else if filteredEntries.length === 0 && searchKey.trim()}
-    <div class="text-center text-base-content/30 py-12 text-sm">
-      No results match the filter "<span class="font-mono">{searchKey}</span>".
-    </div>
-  {:else if filteredEntries.length === 0}
-    <EmptyState
-      icon={Database}
-      title="No keys for entity type '{entityType || 'default'}' — Put Key is how you start."
-      description="Store structured JSON values under any key. Retrieve them instantly by key or list all."
-      actionLabel="Put Key"
-      onaction={openPutDialog}
-    />
   {:else}
-    <div class="overflow-x-auto rounded-box border border-base-300/50">
-      <table class="table table-sm table-zebra w-full">
-        <thead>
-          <tr>
-            <th>Key</th>
-            <th>Preview</th>
-            <th class="w-24 text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each filteredEntries as entry (entry.key)}
-            <tr class="hover:bg-base-200/50">
-              <td class="font-mono text-xs">{entry.key}</td>
-              <td class="text-xs text-base-content/50 truncate max-w-xs">
-                {JSON.stringify(entry.value).slice(0, 80)}
-              </td>
-              <td class="text-right">
-                <div class="flex justify-end gap-1">
-                  <button
-                    class="btn btn-ghost btn-xs"
-                    title={`View ${entry.key}`}
-                    onclick={() => { detailEntry = entry; }}
-                    aria-label={`View ${entry.key}`}
-                  >
-                    <Eye class="h-3 w-3" />
-                  </button>
-                  <button
-                    class="btn btn-ghost btn-xs"
-                    title={`Edit ${entry.key}`}
-                    onclick={() => openEditDialog(entry)}
-                    aria-label={`Edit ${entry.key}`}
-                  >
-                    <Pencil class="h-3 w-3" />
-                  </button>
-                  <button
-                    class="btn btn-ghost btn-xs text-error"
-                    title={`Delete ${entry.key}`}
-                    onclick={() => { entryToDelete = entry; }}
-                    aria-label={`Delete ${entry.key}`}
-                  >
-                    <Trash2 class="h-3 w-3" />
-                  </button>
-                </div>
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      columns={TABLE_COLUMNS}
+      rows={entries}
+      rowKey={(e: KVEntry) => e.key}
+      urlKey="kv"
+      ariaLabel="Key-value entries"
+      searchPlaceholder="Filter by key…"
+      searchLabel="Filter keys"
+      noMatchText="No keys match the filter."
+    >
+      {#snippet empty()}
+        <EmptyState
+          icon={Database}
+          title="No keys for entity type '{entityType || 'default'}' — Put Key is how you start."
+          description="Store structured JSON values under any key. Retrieve them instantly by key or list all."
+          actionLabel="Put Key"
+          onaction={openPutDialog}
+        />
+      {/snippet}
+
+      {#snippet row(entry: KVEntry)}
+        <tr class="hover:bg-base-200/50">
+          <td class="font-mono text-xs">{entry.key}</td>
+          <td class="text-xs text-base-content/50 truncate max-w-xs">
+            {JSON.stringify(entry.value).slice(0, 80)}
+          </td>
+          <td class="text-right">
+            <div class="flex justify-end gap-1">
+              <button
+                class="btn btn-ghost btn-xs"
+                title={`View ${entry.key}`}
+                onclick={() => { detailEntry = entry; }}
+                aria-label={`View ${entry.key}`}
+              >
+                <Eye class="h-3 w-3" />
+              </button>
+              <button
+                class="btn btn-ghost btn-xs"
+                title={`Edit ${entry.key}`}
+                onclick={() => openEditDialog(entry)}
+                aria-label={`Edit ${entry.key}`}
+              >
+                <Pencil class="h-3 w-3" />
+              </button>
+              <button
+                class="btn btn-ghost btn-xs text-error"
+                title={`Delete ${entry.key}`}
+                onclick={() => { entryToDelete = entry; }}
+                aria-label={`Delete ${entry.key}`}
+              >
+                <Trash2 class="h-3 w-3" />
+              </button>
+            </div>
+          </td>
+        </tr>
+      {/snippet}
+    </DataTable>
   {/if}
 </div>
 

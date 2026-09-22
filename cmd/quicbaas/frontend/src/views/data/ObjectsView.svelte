@@ -20,6 +20,8 @@
 -->
 <script lang="ts">
   import PageHeader from '../../components/core/PageHeader.svelte';
+  import DataTable from '../../components/core/DataTable.svelte';
+  import type { Column } from '../../lib/dataTable.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import type { ObjectEntry } from '@quicbaas/sdk';
@@ -34,6 +36,14 @@
 
   let prefix = $state('');
   let objects = $state<ObjectEntry[]>([]);
+
+  const OBJECT_COLUMNS: Column<ObjectEntry>[] = [
+    { key: 'key', label: 'Key', sortable: true, searchable: true },
+    { key: 'size', label: 'Size', sortable: true },
+    { key: 'content_type', label: 'Content-Type', sortable: true, searchable: true },
+    { key: 'created_at', label: 'Created', sortable: true },
+    { key: 'actions', label: 'Actions', headerClass: 'text-right' },
+  ];
   let loading = $state(false);
   let fetchError: string | null = $state(null);
   let subsystemDisabled = $state(false);
@@ -256,76 +266,74 @@
       <span>{fetchError}</span>
       <button class="btn btn-xs btn-ghost" onclick={() => { void fetchObjects(); }}>Retry</button>
     </div>
-  {:else if objects.length === 0}
-    {#if prefix}
-      <EmptyState
-        icon={FolderOpen}
-        title={`No objects with prefix "${prefix}"`}
-        description="Try a different prefix or clear the filter to see all objects."
-      />
-    {:else}
-      <EmptyState
-        icon={FolderOpen}
-        title="No objects yet — upload is how you start."
-        description="Store any file: images, documents, binaries. QuicBaaS handles the rest."
-        actionLabel="Upload Object"
-        onaction={openUploadDialog}
-      />
-    {/if}
   {:else}
-    <div class="overflow-x-auto rounded-box border border-base-300/50">
-      <table class="table table-sm table-zebra w-full">
-        <thead>
-          <tr>
-            <th>Key</th>
-            <th>Size</th>
-            <th>Content-Type</th>
-            <th>Created</th>
-            <th class="text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each objects as obj (obj.key)}
-            <tr class="hover:bg-base-200/50">
-              <td class="font-mono text-xs max-w-xs truncate">{obj.key}</td>
-              <td class="text-xs">{formatBytes(obj.size)}</td>
-              <td class="text-xs text-base-content/50">{obj.content_type ?? '—'}</td>
-              <td class="text-xs text-base-content/50">
-                {formatDateTime(obj.created_at)}
-              </td>
-              <td class="text-right">
-                <div class="flex justify-end gap-1">
-                  <button
-                    class="btn btn-ghost btn-xs"
-                    onclick={() => { void handleDownload(obj.key); }}
-                    aria-label={`Download ${obj.key}`}
-                    title={`Download ${obj.key}`}
-                  >
-                    <Download class="h-3 w-3" />
-                  </button>
-                  <button
-                    class="btn btn-ghost btn-xs"
-                    onclick={() => { void copyObjectURL(obj.key); }}
-                    aria-label={`Copy URL for ${obj.key}`}
-                    title={`Copy URL for ${obj.key}`}
-                  >
-                    <Copy class="h-3 w-3" />
-                  </button>
-                  <button
-                    class="btn btn-ghost btn-xs text-error"
-                    onclick={() => { objectToDelete = obj; }}
-                    aria-label={`Delete ${obj.key}`}
-                    title={`Delete ${obj.key}`}
-                  >
-                    <Trash2 class="h-3 w-3" />
-                  </button>
-                </div>
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      columns={OBJECT_COLUMNS}
+      rows={objects}
+      rowKey={(obj: ObjectEntry) => obj.key}
+      urlKey="objects"
+      ariaLabel="Objects"
+      searchPlaceholder="Search objects..."
+      searchLabel="Search objects"
+      noMatchText="No objects match the search."
+    >
+      {#snippet empty()}
+        {#if prefix}
+          <EmptyState
+            icon={FolderOpen}
+            title={`No objects with prefix "${prefix}"`}
+            description="Try a different prefix or clear the filter to see all objects."
+          />
+        {:else}
+          <EmptyState
+            icon={FolderOpen}
+            title="No objects yet — upload is how you start."
+            description="Store any file: images, documents, binaries. QuicBaaS handles the rest."
+            actionLabel="Upload Object"
+            onaction={openUploadDialog}
+          />
+        {/if}
+      {/snippet}
+
+      {#snippet row(obj: ObjectEntry)}
+        <tr class="hover:bg-base-200/50">
+          <td class="font-mono text-xs max-w-xs truncate">{obj.key}</td>
+          <td class="text-xs">{formatBytes(obj.size)}</td>
+          <td class="text-xs text-base-content/50">{obj.content_type ?? '—'}</td>
+          <td class="text-xs text-base-content/50">
+            {formatDateTime(obj.created_at)}
+          </td>
+          <td class="text-right">
+            <div class="flex justify-end gap-1">
+              <button
+                class="btn btn-ghost btn-xs"
+                onclick={() => { void handleDownload(obj.key); }}
+                aria-label={`Download ${obj.key}`}
+                title={`Download ${obj.key}`}
+              >
+                <Download class="h-3 w-3" />
+              </button>
+              <button
+                class="btn btn-ghost btn-xs"
+                onclick={() => { void copyObjectURL(obj.key); }}
+                aria-label={`Copy URL for ${obj.key}`}
+                title={`Copy URL for ${obj.key}`}
+              >
+                <Copy class="h-3 w-3" />
+              </button>
+              <button
+                class="btn btn-ghost btn-xs text-error"
+                onclick={() => { objectToDelete = obj; }}
+                aria-label={`Delete ${obj.key}`}
+                title={`Delete ${obj.key}`}
+              >
+                <Trash2 class="h-3 w-3" />
+              </button>
+            </div>
+          </td>
+        </tr>
+      {/snippet}
+    </DataTable>
   {/if}
 </div>
 

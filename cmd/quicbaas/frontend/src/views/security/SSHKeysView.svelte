@@ -35,6 +35,8 @@
   import { showToast } from '../../stores/toast.svelte.ts';
   import { orchestratorStore } from '../../stores/orchestrator.svelte.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
+  import DataTable from '../../components/core/DataTable.svelte';
+  import type { Column } from '../../lib/dataTable.ts';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import GenerateKeyModal from './ssh/GenerateKeyModal.svelte';
   import ImportKeyModal from './ssh/ImportKeyModal.svelte';
@@ -76,6 +78,14 @@
 
   let activeScope: SSHScope = $state('user');
   let keys: SSHKey[] = $state([]);
+
+  const SSH_KEY_COLUMNS: Column<SSHKey>[] = [
+    { key: 'name', label: 'Name', sortable: true, searchable: true },
+    { key: 'algorithm', label: 'Algorithm', sortable: true, searchable: true },
+    { key: 'fingerprint', label: 'Fingerprint', searchable: true },
+    { key: 'created_at', label: 'Created', sortable: true },
+    { key: 'actions', label: 'Actions', srLabel: true },
+  ];
   let loading = $state(false);
   let error: string | null = $state(null);
   let sshUnavailable = $state(false);
@@ -273,79 +283,75 @@
       </table>
     </div>
 
-  <!-- Empty state -->
-  {:else if keys.length === 0 && !sshUnavailable && !error}
-    <EmptyState
-      icon={Key}
-      title="No SSH keys found"
-      description="Generate a new key or import an existing private key to get started."
-      actionLabel="Generate Key"
-      onaction={() => { showGenerate = true; }}
-    />
-
   <!-- Keys table -->
-  {:else if keys.length > 0}
-    <div class="overflow-x-auto rounded-box">
-      <table class="table table-sm" aria-label="SSH keys">
-        <thead>
-          <tr>
-            <th scope="col">Name</th>
-            <th scope="col">Algorithm</th>
-            <th scope="col">Fingerprint</th>
-            <th scope="col">Created</th>
-            <th scope="col"><span class="sr-only">Actions</span></th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each keys as key (key.name + (key.scope ?? '') + (key.owner ?? ''))}
-            <tr class="hover">
-              <td class="font-mono text-xs font-medium">{key.name}</td>
-              <td class="text-sm">{key.algorithm ?? '—'}</td>
-              <td class="font-mono text-xs">
-                <div class="flex items-center gap-1">
-                  <span title={key.fingerprint ?? ''}>{truncateFingerprint(key.fingerprint ?? '')}</span>
-                  {#if key.fingerprint}
-                    <button
-                      class="btn btn-ghost btn-xs px-1"
-                      onclick={() => void copyToClipboard(key.fingerprint ?? '', 'Fingerprint')}
-                      aria-label={`Copy fingerprint for ${key.name}`}
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                    </button>
-                  {/if}
-                </div>
-              </td>
-              <td class="text-xs text-base-content/50">{formatDate(key.created_at)}</td>
-              <td>
-                <div class="flex items-center gap-1">
-                  <button
-                    class="btn btn-ghost btn-xs"
-                    onclick={() => { publicKeyTarget = key; }}
-                    aria-label={`View public key for ${key.name}`}
-                  >
-                    View
-                  </button>
-                  <button
-                    class="btn btn-ghost btn-xs"
-                    onclick={() => void copyToClipboard(key.public_key ?? key.public_key_openssh ?? '', 'Public key')}
-                    aria-label={`Copy public key for ${key.name}`}
-                  >
-                    Copy
-                  </button>
-                  <button
-                    class="btn btn-ghost btn-xs text-error"
-                    onclick={() => { keyToDelete = key; }}
-                    aria-label={`Delete key ${key.name}`}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
+  {:else if !sshUnavailable && !error}
+    <DataTable
+      columns={SSH_KEY_COLUMNS}
+      rows={keys}
+      rowKey={(key: SSHKey) => key.name + (key.scope ?? '') + (key.owner ?? '')}
+      urlKey="sshkeys"
+      ariaLabel="SSH keys"
+      searchPlaceholder="Search keys..."
+      searchLabel="Search SSH keys"
+      noMatchText="No keys match the search."
+    >
+      {#snippet empty()}
+        <EmptyState
+          icon={Key}
+          title="No SSH keys found"
+          description="Generate a new key or import an existing private key to get started."
+          actionLabel="Generate Key"
+          onaction={() => { showGenerate = true; }}
+        />
+      {/snippet}
+
+      {#snippet row(key: SSHKey)}
+        <tr class="hover">
+          <td class="font-mono text-xs font-medium">{key.name}</td>
+          <td class="text-sm">{key.algorithm ?? '—'}</td>
+          <td class="font-mono text-xs">
+            <div class="flex items-center gap-1">
+              <span title={key.fingerprint ?? ''}>{truncateFingerprint(key.fingerprint ?? '')}</span>
+              {#if key.fingerprint}
+                <button
+                  class="btn btn-ghost btn-xs px-1"
+                  onclick={() => void copyToClipboard(key.fingerprint ?? '', 'Fingerprint')}
+                  aria-label={`Copy fingerprint for ${key.name}`}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </button>
+              {/if}
+            </div>
+          </td>
+          <td class="text-xs text-base-content/50">{formatDate(key.created_at)}</td>
+          <td>
+            <div class="flex items-center gap-1">
+              <button
+                class="btn btn-ghost btn-xs"
+                onclick={() => { publicKeyTarget = key; }}
+                aria-label={`View public key for ${key.name}`}
+              >
+                View
+              </button>
+              <button
+                class="btn btn-ghost btn-xs"
+                onclick={() => void copyToClipboard(key.public_key ?? key.public_key_openssh ?? '', 'Public key')}
+                aria-label={`Copy public key for ${key.name}`}
+              >
+                Copy
+              </button>
+              <button
+                class="btn btn-ghost btn-xs text-error"
+                onclick={() => { keyToDelete = key; }}
+                aria-label={`Delete key ${key.name}`}
+              >
+                Delete
+              </button>
+            </div>
+          </td>
+        </tr>
+      {/snippet}
+    </DataTable>
   {/if}
 
   <!-- Known Hosts panel -->

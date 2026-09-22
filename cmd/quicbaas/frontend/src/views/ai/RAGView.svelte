@@ -21,6 +21,8 @@
 -->
 <script lang="ts">
   import PageHeader from '../../components/core/PageHeader.svelte';
+  import DataTable from '../../components/core/DataTable.svelte';
+  import type { Column } from '../../lib/dataTable.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import type { RAGQueryResponse, RAGCitation, RAGDocument } from '@quicbaas/sdk';
@@ -110,6 +112,14 @@
 
   let docsNamespace = $state('');
   let documents = $state<RAGDocument[]>([]);
+
+  const DOC_COLUMNS: Column<RAGDocument>[] = [
+    { key: 'id', label: 'ID', sortable: true, searchable: true },
+    { key: 'namespace', label: 'Namespace', sortable: true, searchable: true },
+    { key: 'content', label: 'Content preview', searchable: true },
+    { key: 'timestamp', label: 'Timestamp', sortable: true },
+    { key: 'actions', label: 'Actions', srLabel: true },
+  ];
   let docsTotal = $state(0);
   let docsLoading = $state(false);
   let docsError = $state('');
@@ -378,55 +388,51 @@
           <div class="alert alert-error text-sm">{docsError}</div>
         {:else if documents.length > 0}
           <div class="text-xs text-base-content/50">{docsTotal} document{docsTotal !== 1 ? 's' : ''} in namespace</div>
-          <div class="overflow-x-auto">
-            <table class="table table-sm">
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Namespace</th>
-                  <th>Content preview</th>
-                  <th>Timestamp</th>
-                  <th><span class="sr-only">Actions</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each documents as doc (doc.id)}
-                  <tr class="hover">
-                    <td class="font-mono text-xs">{doc.id}</td>
-                    <td class="text-xs">{doc.namespace}</td>
-                    <td class="text-xs text-base-content/60 max-w-xs truncate">
-                      {doc.content ? doc.content.slice(0, 80) + (doc.content.length > 80 ? '…' : '') : '—'}
-                    </td>
-                    <td class="text-xs text-base-content/50">
-                      {formatDateTime(doc.timestamp)}
-                    </td>
-                    <td>
-                      <div class="flex gap-1">
-                        <button
-                          class="btn btn-ghost btn-xs"
-                          disabled={reindexingDoc === doc.id}
-                          onclick={() => void reindexDocument(doc)}
-                          title={`Reindex document #${doc.id}`}
-                          aria-label={`Reindex document #${doc.id}`}
-                        >
-                          <RotateCw class="h-3 w-3" />
-                        </button>
-                        <button
-                          class="btn btn-ghost btn-xs text-error"
-                          disabled={deletingDoc === doc.id}
-                          onclick={() => void deleteDocument(doc)}
-                          title={`Delete document #${doc.id}`}
-                          aria-label={`Delete document #${doc.id}`}
-                        >
-                          <Trash2 class="h-3 w-3" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
+          <DataTable
+            columns={DOC_COLUMNS}
+            rows={documents}
+            rowKey={(doc: RAGDocument) => doc.id}
+            urlKey="docs"
+            ariaLabel="RAG documents"
+            searchPlaceholder="Search documents..."
+            searchLabel="Search documents"
+            noMatchText="No documents match the search."
+          >
+            {#snippet row(doc: RAGDocument)}
+              <tr class="hover">
+                <td class="font-mono text-xs">{doc.id}</td>
+                <td class="text-xs">{doc.namespace}</td>
+                <td class="text-xs text-base-content/60 max-w-xs truncate">
+                  {doc.content ? doc.content.slice(0, 80) + (doc.content.length > 80 ? '…' : '') : '—'}
+                </td>
+                <td class="text-xs text-base-content/50">
+                  {formatDateTime(doc.timestamp)}
+                </td>
+                <td>
+                  <div class="flex gap-1">
+                    <button
+                      class="btn btn-ghost btn-xs"
+                      disabled={reindexingDoc === doc.id}
+                      onclick={() => void reindexDocument(doc)}
+                      title={`Reindex document #${doc.id}`}
+                      aria-label={`Reindex document #${doc.id}`}
+                    >
+                      <RotateCw class="h-3 w-3" />
+                    </button>
+                    <button
+                      class="btn btn-ghost btn-xs text-error"
+                      disabled={deletingDoc === doc.id}
+                      onclick={() => void deleteDocument(doc)}
+                      title={`Delete document #${doc.id}`}
+                      aria-label={`Delete document #${doc.id}`}
+                    >
+                      <Trash2 class="h-3 w-3" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            {/snippet}
+          </DataTable>
         {:else if !docsLoading && docsNamespace}
           <div class="text-center text-sm text-base-content/40 py-4">No documents found in this namespace.</div>
         {/if}

@@ -3,8 +3,9 @@
   prompt composer for a single session.
 
   Layout:
-  - Header: session ID + backend chip + status badge + Rotate-account +
-    Close-confirm + Prompt-modal
+  - Header: session ID + ROLE badge (worker / reviewer / triage, from the
+    runner of the session's job) + backend chip and model + status badge +
+    Rotate-account + Close-confirm + Prompt-modal
   - Right-side metadata panel: tenant, model, container_id, job, created_at,
     last_active
     (collapsible on narrow viewports via a toggle button)
@@ -19,6 +20,7 @@
   import { untrack } from 'svelte';
   import type { SessionStatusResponse, RotateSessionAccountResponse } from '@quicbaas/sdk';
   import { sessionStore, openSession, closeActiveSession, requestCloseSession } from '../../stores/sessionStore.svelte.ts';
+  import { orchestratorStore, loadJobs } from '../../stores/orchestrator.svelte.ts';
   import { routeJobDetail } from '../../stores/router.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import EventStream from './EventStream.svelte';
@@ -28,6 +30,7 @@
   import SessionActivityIndicator from './SessionActivityIndicator.svelte';
   import StatusBadge from '../core/StatusBadge.svelte';
   import { formatDateTime } from '../../lib/time.ts';
+  import { sessionModel, sessionRole } from '../../lib/sessions.ts';
   import { X, ChevronRight, ChevronDown } from 'lucide-svelte';
 
   // ---------------------------------------------------------------------------
@@ -76,6 +79,28 @@
   // the local close on the server-provided status; it resets per session id.
   let closedLocally = $state(false);
   const displayStatus = $derived(closedLocally ? 'closed' : session.status);
+
+  // ---------------------------------------------------------------------------
+  // The role this session played
+  // ---------------------------------------------------------------------------
+  //
+  // A WORKER SESSION READS LIKE A REVIEWER'S. Its transcript discusses "the
+  // review's findings" because the worker was handed them, and with no role on
+  // the page the reader concludes the model in front of them performed the
+  // review -- which is how the owner came to believe the wrong model was
+  // reviewing code (go-quicbaas#969). The session names its job and the job
+  // names its runner, so the tenant's job list -- already loaded for every
+  // orchestrator view -- is all it takes to say so.
+
+  $effect(() => {
+    void orchestratorStore.activeTenantID;
+    void loadJobs();
+  });
+
+  const role = $derived(
+    sessionRole(session, Array.isArray(orchestratorStore.jobs) ? orchestratorStore.jobs : []),
+  );
+  const model = $derived(sessionModel(session));
 
   // ---------------------------------------------------------------------------
   // Lifecycle
@@ -422,7 +447,17 @@
           variant={statusVariant(displayStatus)}
           pulse={displayStatus === 'active'}
         />
+        {#if role !== ''}
+          <span
+            class="badge badge-sm badge-outline"
+            data-testid="session-role"
+            title="The runner of this session's job decides its role"
+          >{role}</span>
+        {/if}
         <span class="badge badge-sm badge-primary">{session.backend}</span>
+        {#if model !== ''}
+          <span class="font-mono text-xs text-base-content/50" data-testid="session-header-model">{model}</span>
+        {/if}
       </div>
     </div>
 
@@ -530,10 +565,10 @@
               <div class="font-mono break-all">{session.tenant_id}</div>
             </div>
           {/if}
-          {#if session.model}
+          {#if model !== ''}
             <div>
               <div class="text-base-content/40">Model</div>
-              <div class="font-mono">{session.model}</div>
+              <div class="font-mono">{model}</div>
             </div>
           {/if}
           {#if session.container_id}
@@ -580,8 +615,8 @@
           {#if session.tenant_id}
             <span>Tenant: <span class="font-mono">{session.tenant_id}</span></span>
           {/if}
-          {#if session.model}
-            <span>Model: <span class="font-mono">{session.model}</span></span>
+          {#if model !== ''}
+            <span>Model: <span class="font-mono">{model}</span></span>
           {/if}
           {#if session.job_id}
             <span>Job: <a class="link link-primary font-mono" href="#/jobs/{session.job_id}">{session.job_id}</a></span>

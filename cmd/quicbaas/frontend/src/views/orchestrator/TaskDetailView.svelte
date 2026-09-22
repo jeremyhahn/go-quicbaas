@@ -24,10 +24,12 @@
 -->
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { orchestratorStore, loadTasks, loadTaskJobs, refresh } from '../../stores/orchestrator.svelte.ts';
+  import { orchestratorStore, loadTasks, loadTaskJobs, refresh, type JobStatus } from '../../stores/orchestrator.svelte.ts';
   import { routerStore, routeTasks, routeJobDetail } from '../../stores/router.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
+  import DataTable from '../../components/core/DataTable.svelte';
+  import type { Column } from '../../lib/dataTable.ts';
   import StatusBadge from '../../components/core/StatusBadge.svelte';
   import { statusToVariant } from '../../components/core/statusVariant.ts';
   import { ChevronLeft, ClipboardList, RefreshCw, AlertTriangle, ExternalLink, GitPullRequest } from 'lucide-svelte';
@@ -87,6 +89,13 @@
 
   // Every attempt at this task other than the latest, which is shown above.
   const priorJobs = $derived(attemptJobs.filter((j) => j.job_id !== latestJobID));
+
+  const PRIOR_JOB_COLUMNS: Column<JobStatus>[] = [
+    { key: 'attempt', label: 'Attempt', sortable: true },
+    { key: 'job_id', label: 'Job ID', sortable: true, searchable: true },
+    { key: 'state', label: 'State', sortable: true },
+    { key: 'started_at', label: 'Started', sortable: true },
+  ];
 
   // The agent working the task: its claimant when it has one, otherwise the
   // fleet agent the latest attempt ran on. The dispatcher never writes
@@ -427,37 +436,31 @@
         </div>
       {/if}
       {#if priorJobs.length > 0}
-        <div class="overflow-x-auto rounded-box border border-base-300/40">
-          <table class="table table-xs w-full">
-            <thead>
-              <tr class="text-base-content/40 text-xs">
-                <th>Attempt</th>
-                <th>Job ID</th>
-                <th>State</th>
-                <th>Started</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each priorJobs as job (job.job_id)}
-                <tr
-                  class="cursor-pointer hover:bg-base-300/40 transition-colors"
-                  onclick={() => routeJobDetail(job.job_id)}
-                  onkeydown={(e) => { if (e.key === 'Enter') routeJobDetail(job.job_id); }}
-                  tabindex="0"
-                  role="button"
-                  aria-label="Open job {job.job_id.slice(0, 8)}"
-                >
-                  <td class="font-mono text-xs">{attemptOrdinal(job)}</td>
-                  <td class="font-mono text-xs">{job.job_id.slice(0, 12)}…</td>
-                  <td>
-                    <StatusBadge text={job.state} variant={statusToVariant(job.state)} />
-                  </td>
-                  <td class="text-xs text-base-content/50">{formatDateTime(job.started_at)}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          columns={PRIOR_JOB_COLUMNS}
+          rows={priorJobs}
+          rowKey={(job: JobStatus) => job.job_id}
+          ariaLabel="Prior attempts"
+          emptyTitle="No prior attempts."
+        >
+          {#snippet row(job: JobStatus)}
+            <tr
+              class="cursor-pointer hover:bg-base-300/40 transition-colors"
+              onclick={() => routeJobDetail(job.job_id)}
+              onkeydown={(e) => { if (e.key === 'Enter') routeJobDetail(job.job_id); }}
+              tabindex="0"
+              role="button"
+              aria-label="Open job {job.job_id.slice(0, 8)}"
+            >
+              <td class="font-mono text-xs">{attemptOrdinal(job)}</td>
+              <td class="font-mono text-xs">{job.job_id.slice(0, 12)}…</td>
+              <td>
+                <StatusBadge text={job.state} variant={statusToVariant(job.state)} />
+              </td>
+              <td class="text-xs text-base-content/50">{formatDateTime(job.started_at)}</td>
+            </tr>
+          {/snippet}
+        </DataTable>
       {/if}
     </div>
 

@@ -20,6 +20,8 @@
 -->
 <script lang="ts">
   import PageHeader from '../../components/core/PageHeader.svelte';
+  import DataTable from '../../components/core/DataTable.svelte';
+  import type { Column } from '../../lib/dataTable.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import type { TSPoint } from '@quicbaas/sdk';
@@ -73,6 +75,15 @@
   let queryStart = $state('');
   let queryEnd = $state('');
   let queryResults = $state<TSPoint[]>([]);
+
+  // No rowKey: two points of one metric may share a timestamp, so the row's
+  // position in the answer is its only identity — which is what the table
+  // falls back to when a view declares none.
+  const POINT_COLUMNS: Column<TSPoint>[] = [
+    { key: 'timestamp', label: 'Timestamp', sortable: true, searchable: true },
+    { key: 'value', label: 'Value', sortable: true },
+    { key: 'tags', label: 'Tags', searchable: true, value: (pt) => (pt.tags ? JSON.stringify(pt.tags) : '') },
+  ];
   let querying = $state(false);
   let queryError = $state('');
 
@@ -336,28 +347,25 @@
         Results for "{queryMetric}"
         <span class="badge badge-sm badge-ghost ml-1">{queryResults.length} points</span>
       </h2>
-      <div class="overflow-x-auto">
-        <table class="table table-sm w-full">
-          <thead>
-            <tr>
-              <th>Timestamp</th>
-              <th>Value</th>
-              <th>Tags</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each queryResults as pt, i (`${pt.metric}-${pt.timestamp}-${i}`)}
-              <tr class="hover:bg-base-200/50">
-                <td class="font-mono text-xs">{pt.timestamp}</td>
-                <td class="font-mono text-xs">{pt.value}</td>
-                <td class="text-xs text-base-content/50">
-                  {pt.tags ? JSON.stringify(pt.tags) : '—'}
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
+      <DataTable
+        columns={POINT_COLUMNS}
+        rows={queryResults}
+        urlKey="points"
+        ariaLabel="Query results"
+        searchPlaceholder="Search points..."
+        searchLabel="Search points"
+        noMatchText="No points match the search."
+      >
+        {#snippet row(pt: TSPoint)}
+          <tr class="hover:bg-base-200/50">
+            <td class="font-mono text-xs">{pt.timestamp}</td>
+            <td class="font-mono text-xs">{pt.value}</td>
+            <td class="text-xs text-base-content/50">
+              {pt.tags ? JSON.stringify(pt.tags) : '—'}
+            </td>
+          </tr>
+        {/snippet}
+      </DataTable>
     </div>
   {/if}
 </div>

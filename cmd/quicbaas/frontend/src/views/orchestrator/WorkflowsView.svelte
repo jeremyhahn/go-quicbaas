@@ -10,6 +10,8 @@
   import PageHeader from '../../components/core/PageHeader.svelte';
   import StatusBadge from '../../components/core/StatusBadge.svelte';
   import EmptyState from '../../components/core/EmptyState.svelte';
+  import DataTable from '../../components/core/DataTable.svelte';
+  import type { Column } from '../../lib/dataTable.ts';
   import StartJobDialog from '../../components/orchestrator/StartJobDialog.svelte';
   import WorkflowWizard from '../../components/orchestrator/WorkflowWizard.svelte';
   import { orchestratorStore } from '../../stores/orchestrator.svelte.ts';
@@ -27,6 +29,27 @@
   let loading = $state(false);
   let loadError = $state('');
   let highlightedName = $state('');
+
+  const TABLE_COLUMNS: Column<WorkflowDefinition>[] = [
+    { key: 'name', label: 'Name', sortable: true, searchable: true },
+    { key: 'description', label: 'Description', sortable: true, searchable: true },
+    { key: 'mode', label: 'Mode', sortable: true, searchable: true },
+    {
+      key: 'agents',
+      label: 'Agents',
+      sortable: true,
+      headerClass: 'text-center',
+      value: (wf) => wf.agents?.length ?? 0,
+    },
+    {
+      key: 'max_iterations',
+      label: 'Max Iter',
+      sortable: true,
+      headerClass: 'text-center',
+      value: (wf) => wf.settings?.max_iterations ?? 0,
+    },
+    { key: 'actions', label: 'Actions', srLabel: true },
+  ];
 
   async function fetchWorkflows(): Promise<void> {
     loading = true;
@@ -492,87 +515,80 @@
       <button class="btn btn-xs btn-ghost" onclick={() => { void fetchWorkflows(); }}>Retry</button>
     </div>
 
-  {:else if workflows.length === 0}
-    <EmptyState
-      icon={Workflow}
-      title="No workflow definitions registered."
-      description="Workflows define how your agent fleet collaborates on a job."
-      actionLabel="+ New Workflow"
-      onaction={openCreateWizard}
-    />
-
   {:else}
-    <div class="overflow-x-auto rounded-box border border-base-300/50">
-      <table class="table table-sm table-zebra w-full">
-        <thead>
-          <tr class="bg-base-200/80 text-xs uppercase tracking-wider text-base-content/50">
-            <th>Name</th>
-            <th>Description</th>
-            <th>Mode</th>
-            <th class="text-center">Agents</th>
-            <th class="text-center">Max Iter</th>
-            <th><span class="sr-only">Actions</span></th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each workflows as wf (wf.name)}
-            <tr
-              class="hover:bg-base-300/40 transition-colors duration-300"
-              class:bg-primary={highlightedName === wf.name}
-              class:bg-opacity-10={highlightedName === wf.name}
-            >
-              <td class="font-mono text-xs font-semibold">{wf.name}</td>
-              <td class="max-w-xs truncate text-sm">{wf.description || '—'}</td>
-              <td>
-                <StatusBadge text={wf.mode} variant={modeVariant(wf.mode)} />
-              </td>
-              <td class="text-center text-sm">{wf.agents?.length ?? 0}</td>
-              <td class="text-center text-sm">{wf.settings?.max_iterations ?? '—'}</td>
-              <td>
-                <div class="flex items-center gap-1">
-                  <button
-                    class="btn btn-xs btn-primary gap-1"
-                    onclick={() => openStartJob(wf)}
-                    aria-label="Run workflow {wf.name}"
-                    title="Run"
-                  >
-                    <Play class="h-3 w-3" />
-                    Run
-                  </button>
-                  <button
-                    class="btn btn-xs btn-ghost gap-1"
-                    onclick={() => openEditWizard(wf)}
-                    aria-label="Edit workflow {wf.name}"
-                    title="Edit"
-                  >
-                    <Edit class="h-3 w-3" />
-                  </button>
-                  <button
-                    class="btn btn-xs btn-ghost gap-1"
-                    onclick={() => openDuplicateWizard(wf)}
-                    aria-label="Duplicate workflow {wf.name}"
-                    title="Duplicate"
-                  >
-                    <Copy class="h-3 w-3" />
-                  </button>
-                  <button
-                    class="btn btn-xs btn-ghost text-error gap-1"
-                    onclick={() => requestDelete(wf)}
-                    aria-label="Delete workflow {wf.name}"
-                    title="Delete"
-                  >
-                    <Trash2 class="h-3 w-3" />
-                  </button>
-                </div>
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      columns={TABLE_COLUMNS}
+      rows={workflows}
+      rowKey={(wf: WorkflowDefinition) => wf.name}
+      urlKey="workflows"
+      ariaLabel="Workflow definitions"
+      searchPlaceholder="Search workflows..."
+      searchLabel="Search workflows"
+      noMatchText="No workflows match the current search."
+    >
+      {#snippet empty()}
+        <EmptyState
+          icon={Workflow}
+          title="No workflow definitions registered."
+          description="Workflows define how your agent fleet collaborates on a job."
+          actionLabel="+ New Workflow"
+          onaction={openCreateWizard}
+        />
+      {/snippet}
 
-    <div class="text-xs text-base-content/40">
-      {workflows.length} workflow{workflows.length === 1 ? '' : 's'} registered
-    </div>
+      {#snippet row(wf: WorkflowDefinition)}
+        <tr
+          class="hover:bg-base-300/40 transition-colors duration-300"
+          class:bg-primary={highlightedName === wf.name}
+          class:bg-opacity-10={highlightedName === wf.name}
+        >
+          <td class="font-mono text-xs font-semibold">{wf.name}</td>
+          <td class="max-w-xs truncate text-sm">{wf.description || '—'}</td>
+          <td>
+            <StatusBadge text={wf.mode} variant={modeVariant(wf.mode)} />
+          </td>
+          <td class="text-center text-sm">{wf.agents?.length ?? 0}</td>
+          <td class="text-center text-sm">{wf.settings?.max_iterations ?? '—'}</td>
+          <td>
+            <div class="flex items-center gap-1">
+              <button
+                class="btn btn-xs btn-primary gap-1"
+                onclick={() => openStartJob(wf)}
+                aria-label="Run workflow {wf.name}"
+                title="Run"
+              >
+                <Play class="h-3 w-3" />
+                Run
+              </button>
+              <button
+                class="btn btn-xs btn-ghost gap-1"
+                onclick={() => openEditWizard(wf)}
+                aria-label="Edit workflow {wf.name}"
+                title="Edit"
+              >
+                <Edit class="h-3 w-3" />
+              </button>
+              <button
+                class="btn btn-xs btn-ghost gap-1"
+                onclick={() => openDuplicateWizard(wf)}
+                aria-label="Duplicate workflow {wf.name}"
+                title="Duplicate"
+              >
+                <Copy class="h-3 w-3" />
+              </button>
+              <button
+                class="btn btn-xs btn-ghost text-error gap-1"
+                onclick={() => requestDelete(wf)}
+                aria-label="Delete workflow {wf.name}"
+                title="Delete"
+              >
+                <Trash2 class="h-3 w-3" />
+              </button>
+            </div>
+          </td>
+        </tr>
+      {/snippet}
+    </DataTable>
+
   {/if}
 </div>

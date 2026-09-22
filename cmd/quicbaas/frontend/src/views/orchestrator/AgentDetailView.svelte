@@ -13,14 +13,16 @@
 -->
 <script lang="ts">
   import { agentStore, refreshAgents } from '../../stores/agentStore.svelte.ts';
-  import { orchestratorStore } from '../../stores/orchestrator.svelte.ts';
+  import { orchestratorStore, type JobStatus } from '../../stores/orchestrator.svelte.ts';
   import { sessionStore } from '../../stores/sessionStore.svelte.ts';
   import { routeFleet, routeSessionDetail, routerStore } from '../../stores/router.svelte.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import StatusBadge from '../../components/core/StatusBadge.svelte';
+  import DataTable from '../../components/core/DataTable.svelte';
+  import type { Column } from '../../lib/dataTable.ts';
   import { ChevronLeft, Server, Trash2, Zap } from 'lucide-svelte';
-  import type { AgentRegistration } from '@quicbaas/sdk';
+  import type { AgentRegistration, SessionStatusResponse } from '@quicbaas/sdk';
   import { formatDateTime, formatRelative } from '../../lib/time.ts';
 
   // ---------------------------------------------------------------------------
@@ -50,6 +52,20 @@
           .slice(0, 10)
       : [],
   );
+
+  const AGENT_SESSION_COLUMNS: Column<SessionStatusResponse>[] = [
+    { key: 'session_id', label: 'Session ID', sortable: true, searchable: true },
+    { key: 'status', label: 'Status', sortable: true },
+    { key: 'created_at', label: 'Created', sortable: true },
+    { key: 'last_active', label: 'Last Active', sortable: true },
+  ];
+
+  const AGENT_JOB_COLUMNS: Column<JobStatus>[] = [
+    { key: 'job_id', label: 'Job ID', sortable: true, searchable: true },
+    { key: 'description', label: 'Description', sortable: true, searchable: true },
+    { key: 'state', label: 'State', sortable: true },
+    { key: 'started_at', label: 'Started', sortable: true },
+  ];
 
   // ---------------------------------------------------------------------------
   // State
@@ -399,45 +415,38 @@
       <div class="text-xs font-semibold text-base-content/40 uppercase tracking-wide mb-3">
         Recent Sessions ({recentSessions.length})
       </div>
-      {#if recentSessions.length === 0}
-        <div class="text-sm text-base-content/30">No sessions found for this agent's backend</div>
-      {:else}
-        <div class="overflow-x-auto rounded-box border border-base-300/40">
-          <table class="table table-xs w-full">
-            <thead>
-              <tr class="text-base-content/40 text-xs">
-                <th>Session ID</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th>Last Active</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each recentSessions as session (session.session_id)}
-                <tr
-                  class="cursor-pointer hover:bg-base-300/40 transition-colors"
-                  onclick={() => routeSessionDetail(session.session_id)}
-                  onkeydown={(e) => { if (e.key === 'Enter') routeSessionDetail(session.session_id); }}
-                  tabindex="0"
-                  role="button"
-                  aria-label="Open session {session.session_id.slice(0, 8)}"
-                >
-                  <td class="font-mono text-xs">{session.session_id.slice(0, 16)}…</td>
-                  <td>
-                    <StatusBadge
-                      text={session.status}
-                      variant={sessionStatusVariant(session.status)}
-                      pulse={session.status === 'active'}
-                    />
-                  </td>
-                  <td class="text-xs text-base-content/50">{formatTime(session.created_at)}</td>
-                  <td class="text-xs text-base-content/50">{formatTime(session.last_active)}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {/if}
+      <DataTable
+        columns={AGENT_SESSION_COLUMNS}
+        rows={recentSessions}
+        rowKey={(session: SessionStatusResponse) => session.session_id}
+        ariaLabel="Recent sessions"
+        searchPlaceholder="Search sessions..."
+        searchLabel="Search agent sessions"
+        noMatchText="No sessions match the search."
+        emptyTitle="No sessions found for this agent's backend"
+      >
+        {#snippet row(session: SessionStatusResponse)}
+          <tr
+            class="cursor-pointer hover:bg-base-300/40 transition-colors"
+            onclick={() => routeSessionDetail(session.session_id)}
+            onkeydown={(e) => { if (e.key === 'Enter') routeSessionDetail(session.session_id); }}
+            tabindex="0"
+            role="button"
+            aria-label="Open session {session.session_id.slice(0, 8)}"
+          >
+            <td class="font-mono text-xs">{session.session_id.slice(0, 16)}…</td>
+            <td>
+              <StatusBadge
+                text={session.status}
+                variant={sessionStatusVariant(session.status)}
+                pulse={session.status === 'active'}
+              />
+            </td>
+            <td class="text-xs text-base-content/50">{formatTime(session.created_at)}</td>
+            <td class="text-xs text-base-content/50">{formatTime(session.last_active)}</td>
+          </tr>
+        {/snippet}
+    </DataTable>
     </div>
 
     <!-- Recent jobs -->
@@ -445,38 +454,31 @@
       <div class="text-xs font-semibold text-base-content/40 uppercase tracking-wide mb-3">
         Recent Jobs ({recentJobs.length})
       </div>
-      {#if recentJobs.length === 0}
-        <div class="text-sm text-base-content/30">No jobs found for this agent's backend</div>
-      {:else}
-        <div class="overflow-x-auto rounded-box border border-base-300/40">
-          <table class="table table-xs w-full">
-            <thead>
-              <tr class="text-base-content/40 text-xs">
-                <th>Job ID</th>
-                <th>Description</th>
-                <th>State</th>
-                <th>Started</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each recentJobs as job (job.job_id)}
-                <tr class="hover:bg-base-300/40 transition-colors">
-                  <td class="font-mono text-xs">{job.job_id.slice(0, 12)}…</td>
-                  <td class="text-xs max-w-xs truncate">{job.description || '—'}</td>
-                  <td>
-                    <StatusBadge
-                      text={job.state}
-                      variant={jobStateVariant(job.state)}
-                      pulse={job.state === 'executing'}
-                    />
-                  </td>
-                  <td class="text-xs text-base-content/50">{formatTime(job.started_at)}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {/if}
+      <DataTable
+        columns={AGENT_JOB_COLUMNS}
+        rows={recentJobs}
+        rowKey={(job: JobStatus) => job.job_id}
+        ariaLabel="Recent jobs"
+        searchPlaceholder="Search jobs..."
+        searchLabel="Search agent jobs"
+        noMatchText="No jobs match the search."
+        emptyTitle="No jobs found for this agent's backend"
+      >
+        {#snippet row(job: JobStatus)}
+          <tr class="hover:bg-base-300/40 transition-colors">
+            <td class="font-mono text-xs">{job.job_id.slice(0, 12)}…</td>
+            <td class="text-xs max-w-xs truncate">{job.description || '—'}</td>
+            <td>
+              <StatusBadge
+                text={job.state}
+                variant={jobStateVariant(job.state)}
+                pulse={job.state === 'executing'}
+              />
+            </td>
+            <td class="text-xs text-base-content/50">{formatTime(job.started_at)}</td>
+          </tr>
+        {/snippet}
+    </DataTable>
     </div>
 
     <!-- Raw JSON drawer -->

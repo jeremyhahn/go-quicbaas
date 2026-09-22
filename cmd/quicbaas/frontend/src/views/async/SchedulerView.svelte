@@ -19,6 +19,8 @@
 -->
 <script lang="ts">
   import PageHeader from '../../components/core/PageHeader.svelte';
+  import DataTable from '../../components/core/DataTable.svelte';
+  import type { Column } from '../../lib/dataTable.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import type { SchedulerJob, CreateJobRequest } from '@quicbaas/sdk';
@@ -30,6 +32,17 @@
   // ---------------------------------------------------------------------------
 
   let jobs = $state<SchedulerJob[]>([]);
+
+  const JOB_COLUMNS: Column<SchedulerJob>[] = [
+    { key: 'name', label: 'Name', sortable: true, searchable: true },
+    { key: 'type', label: 'Type', sortable: true, searchable: true },
+    { key: 'schedule', label: 'Schedule', sortable: true, searchable: true },
+    { key: 'handler', label: 'Handler', sortable: true, searchable: true },
+    { key: 'status', label: 'Status', sortable: true },
+    { key: 'next_run', label: 'Next Run', sortable: true },
+    { key: 'run_count', label: 'Runs', sortable: true },
+    { key: 'actions', label: 'Actions', headerClass: 'text-right' },
+  ];
   let loading = $state(false);
   let loadError = $state('');
 
@@ -309,95 +322,90 @@
           <div class="flex justify-center py-10">
             <span class="loading loading-spinner loading-md"></span>
           </div>
-        {:else if jobs.length === 0}
-          <EmptyState
-            icon={CalendarClock}
-            title="No scheduled jobs — Create Job is how you start."
-            description="Schedule recurring cron jobs or one-time delayed tasks to automate your workflows."
-            actionLabel="Create Job"
-            onaction={openCreateDialog}
-          />
         {:else}
-          <div class="overflow-x-auto">
-            <table class="table table-sm">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Type</th>
-                  <th>Schedule</th>
-                  <th>Handler</th>
-                  <th>Status</th>
-                  <th>Next Run</th>
-                  <th>Runs</th>
-                  <th class="text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each jobs as job (job.id)}
-                  <tr>
-                    <td class="font-semibold">{job.name}</td>
-                    <td>
-                      <span class="badge badge-outline badge-xs">{job.type}</span>
-                    </td>
-                    <td class="font-mono text-xs">{job.schedule ?? '—'}</td>
-                    <td class="font-mono text-xs">{job.handler}</td>
-                    <td>
-                      <span class="badge badge-sm {statusVariant(job.status)}">{job.status}</span>
-                    </td>
-                    <td class="text-xs text-base-content/60">{formatNextRun(job.next_run)}</td>
-                    <td class="text-xs">
-                      {job.run_count}
-                      {#if job.fail_count > 0}
-                        <span class="text-error ml-1">({job.fail_count} failed)</span>
+          <DataTable
+            columns={JOB_COLUMNS}
+            rows={jobs}
+            rowKey={(job: SchedulerJob) => job.id}
+            urlKey="schedjobs"
+            ariaLabel="Scheduled jobs"
+            searchPlaceholder="Search jobs..."
+            searchLabel="Search scheduled jobs"
+            noMatchText="No jobs match the search."
+          >
+            {#snippet empty()}
+              <EmptyState
+                icon={CalendarClock}
+                title="No scheduled jobs — Create Job is how you start."
+                description="Schedule recurring cron jobs or one-time delayed tasks to automate your workflows."
+                actionLabel="Create Job"
+                onaction={openCreateDialog}
+              />
+            {/snippet}
+
+            {#snippet row(job: SchedulerJob)}
+              <tr>
+                <td class="font-semibold">{job.name}</td>
+                <td>
+                  <span class="badge badge-outline badge-xs">{job.type}</span>
+                </td>
+                <td class="font-mono text-xs">{job.schedule ?? '—'}</td>
+                <td class="font-mono text-xs">{job.handler}</td>
+                <td>
+                  <span class="badge badge-sm {statusVariant(job.status)}">{job.status}</span>
+                </td>
+                <td class="text-xs text-base-content/60">{formatNextRun(job.next_run)}</td>
+                <td class="text-xs">
+                  {job.run_count}
+                  {#if job.fail_count > 0}
+                    <span class="text-error ml-1">({job.fail_count} failed)</span>
+                  {/if}
+                </td>
+                <td class="text-right">
+                  <div class="flex justify-end gap-1">
+                    <button
+                      class="btn btn-ghost btn-xs"
+                      disabled={triggeringJob === job.id}
+                      onclick={() => void handleTrigger(job)}
+                      title={`Run job ${job.name} now`}
+                      aria-label={`Run job ${job.name} now`}
+                    >
+                      <Play class="h-3 w-3" />
+                    </button>
+                    <button
+                      class="btn btn-ghost btn-xs"
+                      disabled={togglingJob === job.id}
+                      onclick={() => void handlePauseResume(job)}
+                      title={job.status === 'paused' ? `Resume job ${job.name}` : `Pause job ${job.name}`}
+                      aria-label={job.status === 'paused' ? `Resume job ${job.name}` : `Pause job ${job.name}`}
+                    >
+                      {#if job.status === 'paused'}
+                        <Square class="h-3 w-3" />
+                      {:else}
+                        <Pause class="h-3 w-3" />
                       {/if}
-                    </td>
-                    <td class="text-right">
-                      <div class="flex justify-end gap-1">
-                        <button
-                          class="btn btn-ghost btn-xs"
-                          disabled={triggeringJob === job.id}
-                          onclick={() => void handleTrigger(job)}
-                          title={`Run job ${job.name} now`}
-                          aria-label={`Run job ${job.name} now`}
-                        >
-                          <Play class="h-3 w-3" />
-                        </button>
-                        <button
-                          class="btn btn-ghost btn-xs"
-                          disabled={togglingJob === job.id}
-                          onclick={() => void handlePauseResume(job)}
-                          title={job.status === 'paused' ? `Resume job ${job.name}` : `Pause job ${job.name}`}
-                          aria-label={job.status === 'paused' ? `Resume job ${job.name}` : `Pause job ${job.name}`}
-                        >
-                          {#if job.status === 'paused'}
-                            <Square class="h-3 w-3" />
-                          {:else}
-                            <Pause class="h-3 w-3" />
-                          {/if}
-                        </button>
-                        <button
-                          class="btn btn-ghost btn-xs"
-                          onclick={() => openEditJob(job)}
-                          title={`Edit job ${job.name}`}
-                          aria-label={`Edit job ${job.name}`}
-                        >
-                          <Pencil class="h-3 w-3" />
-                        </button>
-                        <button
-                          class="btn btn-ghost btn-xs text-error"
-                          onclick={() => { jobToDelete = job; }}
-                          title={`Delete job ${job.name}`}
-                          aria-label={`Delete job ${job.name}`}
-                        >
-                          <Trash2 class="h-3 w-3" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
+                    </button>
+                    <button
+                      class="btn btn-ghost btn-xs"
+                      onclick={() => openEditJob(job)}
+                      title={`Edit job ${job.name}`}
+                      aria-label={`Edit job ${job.name}`}
+                    >
+                      <Pencil class="h-3 w-3" />
+                    </button>
+                    <button
+                      class="btn btn-ghost btn-xs text-error"
+                      onclick={() => { jobToDelete = job; }}
+                      title={`Delete job ${job.name}`}
+                      aria-label={`Delete job ${job.name}`}
+                    >
+                      <Trash2 class="h-3 w-3" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            {/snippet}
+          </DataTable>
         {/if}
       </div>
     </section>

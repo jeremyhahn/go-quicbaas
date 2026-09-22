@@ -31,6 +31,8 @@
   import { showToast } from '../../../stores/toast.svelte.ts';
   import type { SSHPin, SSHScope } from '@quicbaas/sdk';
   import { SSHUnavailableError } from '@quicbaas/sdk';
+  import DataTable from '../../../components/core/DataTable.svelte';
+  import type { Column } from '../../../lib/dataTable.ts';
 
   // ---------------------------------------------------------------------------
   // Props
@@ -52,6 +54,15 @@
 
   let open = $state(false);
   let pins: SSHPin[] = $state([]);
+
+  const PIN_COLUMNS: Column<SSHPin>[] = [
+    { key: 'host', label: 'Host', sortable: true, searchable: true },
+    { key: 'fingerprint', label: 'Fingerprint', searchable: true },
+    { key: 'algorithm', label: 'Algorithm', sortable: true },
+    { key: 'source', label: 'Source', sortable: true },
+    { key: 'added_at', label: 'Added', sortable: true },
+    { key: 'actions', label: 'Actions', srLabel: true },
+  ];
   let loading = $state(false);
   let error: string | null = $state(null);
 
@@ -231,59 +242,53 @@
           <span class="loading loading-spinner loading-sm"></span>
         </div>
 
-      <!-- Empty -->
-      {:else if pins.length === 0}
-        <p class="text-sm text-base-content/40 text-center py-4">
-          No host-key pins found. Add a pin to protect against MITM attacks.
-        </p>
-
       <!-- Pins table -->
       {:else}
-        <div class="overflow-x-auto">
-          <table class="table table-xs" aria-label="Known host pins">
-            <thead>
-              <tr>
-                <th scope="col">Host</th>
-                <th scope="col">Fingerprint</th>
-                <th scope="col">Algorithm</th>
-                <th scope="col">Source</th>
-                <th scope="col">Added</th>
-                <th scope="col"><span class="sr-only">Actions</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each pins as pin (pin.host + pin.scope)}
-                <tr class="hover">
-                  <td class="font-mono text-xs">{pin.host}</td>
-                  <td class="font-mono text-xs">
-                    <div class="flex items-center gap-1">
-                      <span title={pin.fingerprint}>{truncate(pin.fingerprint, 22)}</span>
-                      <button
-                        class="btn btn-ghost btn-xs px-1"
-                        onclick={() => void copyText(pin.fingerprint)}
-                        aria-label={`Copy fingerprint for ${pin.host}`}
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                      </button>
-                    </div>
-                  </td>
-                  <td class="text-xs">{pin.algorithm ?? '—'}</td>
-                  <td class="text-xs text-base-content/50">{pin.source ?? '—'}</td>
-                  <td class="text-xs text-base-content/50">{formatDate(pin.added_at)}</td>
-                  <td>
-                    <button
-                      class="btn btn-ghost btn-xs text-error"
-                      onclick={() => { pinToRemove = pin; }}
-                      aria-label={`Remove host pin for ${pin.host}`}
-                    >
-                      Remove
-                    </button>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          columns={PIN_COLUMNS}
+          rows={pins}
+          rowKey={(pin: SSHPin) => pin.host + pin.scope}
+          ariaLabel="Known host pins"
+          searchPlaceholder="Search pins..."
+          searchLabel="Search host pins"
+          noMatchText="No pins match the search."
+        >
+          {#snippet empty()}
+            <p class="text-sm text-base-content/40 text-center py-4">
+              No host-key pins found. Add a pin to protect against MITM attacks.
+            </p>
+          {/snippet}
+
+          {#snippet row(pin: SSHPin)}
+            <tr class="hover">
+              <td class="font-mono text-xs">{pin.host}</td>
+              <td class="font-mono text-xs">
+                <div class="flex items-center gap-1">
+                  <span title={pin.fingerprint}>{truncate(pin.fingerprint, 22)}</span>
+                  <button
+                    class="btn btn-ghost btn-xs px-1"
+                    onclick={() => void copyText(pin.fingerprint)}
+                    aria-label={`Copy fingerprint for ${pin.host}`}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  </button>
+                </div>
+              </td>
+              <td class="text-xs">{pin.algorithm ?? '—'}</td>
+              <td class="text-xs text-base-content/50">{pin.source ?? '—'}</td>
+              <td class="text-xs text-base-content/50">{formatDate(pin.added_at)}</td>
+              <td>
+                <button
+                  class="btn btn-ghost btn-xs text-error"
+                  onclick={() => { pinToRemove = pin; }}
+                  aria-label={`Remove host pin for ${pin.host}`}
+                >
+                  Remove
+                </button>
+              </td>
+            </tr>
+          {/snippet}
+        </DataTable>
       {/if}
 
     </div>
