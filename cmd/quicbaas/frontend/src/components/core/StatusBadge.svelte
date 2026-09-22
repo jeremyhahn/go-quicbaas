@@ -1,17 +1,27 @@
 <!--
-  StatusBadge renders a daisyUI badge with an optional pulse indicator dot.
+  StatusBadge renders one status as a soft, legibly-padded pill: a pale
+  (light theme) or deep (dark theme) tint of the status's tone behind the
+  text, a small dot for a glanceable colour cue, and the tone's own deep or
+  vivid colour AS the text — never white stamped over a saturated fill.
 
-  Variants map to daisyUI semantic colors so badges inherit theme tokens and
-  stay legible across both light and dark themes. The previous `badge-soft`
-  modifier produced near-invisible tinted text on the light theme; the
-  canonical filled variants ship with proper foreground contrast.
+  Every tone/theme pairing this renders is enumerated in
+  `src/lib/theme/tokens.ts` and graded against WCAG AA by
+  `test/themeContrast.test.ts`; this component only ever looks up a pair
+  from that table, it does not invent colour.
 -->
 <script lang="ts">
+  import { themeStore } from '../../stores/theme.svelte.ts';
+  import { STATUS_TONES, type Tone } from '../../lib/theme/tokens.ts';
+
   /**
    * StatusVariant is the canonical mapping from a high-level intent to a
-   * daisyUI semantic color. The mapping is consumed by view-specific helpers
-   * that translate raw status strings (e.g. "active", "failed", "queued")
-   * into a variant — see `statusToVariant()` below for the canonical mapping.
+   * tone. The mapping is consumed by view-specific helpers that translate
+   * raw status strings (e.g. "active", "failed", "queued") into a variant —
+   * see `statusToVariant()` in statusVariant.ts.
+   *
+   * 'ghost' is kept as an alias of the neutral tone: call sites that used to
+   * ask for the daisyUI ghost badge (an outline with no fill) get the same
+   * calm, low-emphasis treatment as an explicit 'neutral'.
    */
   export type StatusVariant = 'success' | 'error' | 'warning' | 'info' | 'primary' | 'ghost' | 'neutral';
 
@@ -25,32 +35,37 @@
     pulse?: boolean;
   } = $props();
 
-  const variantClasses: Readonly<Record<StatusVariant, string>> = {
-    success: 'badge-success',
-    error: 'badge-error',
-    warning: 'badge-warning',
-    info: 'badge-info',
-    primary: 'badge-primary',
-    ghost: 'badge-ghost',
-    neutral: 'badge-neutral',
-  } as const;
+  const TONE_FOR_VARIANT: Readonly<Record<StatusVariant, Tone>> = {
+    success: 'success',
+    error: 'error',
+    warning: 'warning',
+    info: 'info',
+    primary: 'primary',
+    ghost: 'neutral',
+    neutral: 'neutral',
+  };
 
-  const dotColors: Readonly<Record<StatusVariant, string>> = {
-    success: 'bg-success-content',
-    error: 'bg-error-content',
-    warning: 'bg-warning-content',
-    info: 'bg-info-content',
-    primary: 'bg-primary-content',
-    ghost: 'bg-base-content/40',
-    neutral: 'bg-neutral-content',
-  } as const;
+  const tone = $derived(STATUS_TONES[themeStore.theme === 'light' ? 'light' : 'dark'][TONE_FOR_VARIANT[variant]]);
 </script>
 
-<span class="badge badge-sm gap-1.5 {variantClasses[variant]}">
-  {#if pulse}
-    <span
-      class="inline-block h-1.5 w-1.5 rounded-full {dotColors[variant]} animate-pulse"
-    ></span>
-  {/if}
+<!--
+  `badge` is kept as a plain marker class so existing selectors (e2e specs,
+  `header .badge`) keep finding this element — it contributes none of
+  daisyUI's `.badge` visual defaults here, because every visual property
+  (colour, padding, radius, gap, size) is set explicitly below and Tailwind's
+  utility layer already wins the cascade against daisyUI's component layer.
+-->
+<span
+  class="badge status-badge inline-flex items-center gap-1.5 rounded-full border-0 px-2.5 py-1 text-xs font-medium leading-none whitespace-nowrap h-auto"
+  style:background-color={tone.bg}
+  style:color={tone.fg}
+  data-variant={variant}
+>
+  <span
+    class="h-1.5 w-1.5 shrink-0 rounded-full"
+    class:animate-pulse={pulse}
+    style:background-color={tone.fg}
+    aria-hidden="true"
+  ></span>
   {text}
 </span>

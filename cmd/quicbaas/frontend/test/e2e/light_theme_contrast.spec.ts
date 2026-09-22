@@ -141,8 +141,9 @@ test.describe('Light theme — #86 Connected badge visibility', () => {
   });
 
   test('Connected badge computed bg-color differs from body bg-color', async ({ page }) => {
-    // The badge rendered by StatusBadge with variant="success" must not share
-    // its background with the body (--color-base-100).
+    // The badge rendered by StatusBadge with variant="success" is a soft
+    // tinted pill (see src/lib/theme/tokens.ts STATUS_TONES), not a solid
+    // fill — but it must still read as visually distinct from the body.
     const bodyBg: string = await page.evaluate((): string => {
       return getComputedStyle(document.documentElement).getPropertyValue('--color-base-100').trim();
     });
