@@ -332,6 +332,7 @@ func (h *orchestratorHandler) handleListSessions(ctx context.Context, req interf
 	if sdkReq.Status != "" {
 		query.Set("status", sdkReq.Status)
 	}
+	setPageQuery(query, sdkReq.Params)
 	url := "/api/v1/orchestrator/sessions"
 	if encoded := query.Encode(); encoded != "" {
 		url += "?" + encoded
@@ -393,6 +394,7 @@ func (h *orchestratorHandler) handleListTasks(ctx context.Context, req interface
 	if len(sdkReq.Statuses) > 0 {
 		url += "&statuses=" + neturl.QueryEscape(strings.Join(sdkReq.Statuses, ","))
 	}
+	url += pageQuerySuffix(sdkReq.Params)
 	var resp orchestrator.ListTasksResponse
 	if err := h.transport.doJSONRequest(ctx, http.MethodGet, url, nil, &resp); err != nil {
 		return nil, err
@@ -517,6 +519,7 @@ func (h *orchestratorHandler) handleListAgents(ctx context.Context, req interfac
 	if sdkReq.Backend != "" {
 		url += "&backend=" + sdkReq.Backend
 	}
+	url += pageQuerySuffix(sdkReq.Params)
 	var resp orchestrator.ListAgentsResponse
 	if err := h.transport.doJSONRequest(ctx, http.MethodGet, url, nil, &resp); err != nil {
 		return nil, err
@@ -620,6 +623,16 @@ func (h *orchestratorHandler) handleListJobs(ctx context.Context, req interface{
 	if sdkReq.TaskID != "" {
 		url += "&task_id=" + neturl.QueryEscape(sdkReq.TaskID)
 	}
+	if sdkReq.Runner != "" {
+		url += "&runner=" + neturl.QueryEscape(sdkReq.Runner)
+	}
+	if sdkReq.ProjectID != "" {
+		url += "&project_id=" + neturl.QueryEscape(sdkReq.ProjectID)
+	}
+	if len(sdkReq.Statuses) > 0 {
+		url += "&statuses=" + neturl.QueryEscape(strings.Join(sdkReq.Statuses, ","))
+	}
+	url += pageQuerySuffix(sdkReq.Params)
 	var resp orchestrator.ListJobsResponse
 	if err := h.transport.doJSONRequest(ctx, http.MethodGet, url, nil, &resp); err != nil {
 		return nil, err

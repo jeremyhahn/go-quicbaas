@@ -366,11 +366,18 @@ func (s *Server) HandleOrchestratorListSessions(w http.ResponseWriter, r *http.R
 
 	backend := r.URL.Query().Get("backend")
 
+	page, err := pageFromRequest(r)
+	if err != nil {
+		RespondBadRequest(w, r, err.Error())
+		return
+	}
+
 	resp, err := agentSvc.ListSessions(ctx, &orchestration.ListSessionsRequest{
 		Backend: backend,
 		// The SDK has sent ?status= since it gained the field; the handler
 		// dropped it, so the filter was accepted and ignored (#792).
 		Status: orchestration.SessionState(r.URL.Query().Get("status")),
+		Page:   page,
 	})
 	if err != nil {
 		handleOrchestratorError(w, r, err)
@@ -511,15 +518,19 @@ func (s *Server) HandleOrchestratorListTasks(w http.ResponseWriter, r *http.Requ
 		filter.Status = orchestration.TaskStatus(statusParam)
 	}
 
-	tasks, err := agentSvc.ListTasks(ctx, tenantID, filter)
+	page, err := pageFromRequest(r)
+	if err != nil {
+		RespondBadRequest(w, r, err.Error())
+		return
+	}
+
+	tasks, err := agentSvc.ListTasksPage(ctx, tenantID, filter, page)
 	if err != nil {
 		handleOrchestratorError(w, r, err)
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, map[string]interface{}{
-		"tasks": tasks,
-	})
+	RespondJSON(w, r, http.StatusOK, tasks.Envelope("tasks"))
 }
 
 // OrchestratorClaimTaskRequest is the request body for claiming a task.
@@ -579,20 +590,29 @@ func (s *Server) HandleOrchestratorClaimTask(w http.ResponseWriter, r *http.Requ
 // into task statuses, dropping empty segments. An empty parameter yields nil
 // so the filter stays unset.
 func parseTaskStatuses(raw string) []orchestration.TaskStatus {
+	return parseStateList[orchestration.TaskStatus](raw)
+}
+
+// parseStateList reads a comma-separated ?statuses= filter into a list of
+// state values. Blank entries are dropped, so "executing,,failed" and
+// "executing,failed" ask the same question, and a wholly blank value narrows
+// NOTHING rather than narrowing to nothing — an empty list means "every
+// state" everywhere it is read.
+func parseStateList[T ~string](raw string) []T {
 	if raw == "" {
 		return nil
 	}
 	parts := strings.Split(raw, ",")
-	statuses := make([]orchestration.TaskStatus, 0, len(parts))
+	states := make([]T, 0, len(parts))
 	for _, part := range parts {
 		if trimmed := strings.TrimSpace(part); trimmed != "" {
-			statuses = append(statuses, orchestration.TaskStatus(trimmed))
+			states = append(states, T(trimmed))
 		}
 	}
-	if len(statuses) == 0 {
+	if len(states) == 0 {
 		return nil
 	}
-	return statuses
+	return states
 }
 
 // OrchestratorBlockTaskRequest is the request body for blocking a task.
@@ -851,18 +871,29 @@ func (s *Server) HandleOrchestratorListJobs(w http.ResponseWriter, r *http.Reque
 	// task_id is HONOURED, not decorative. It was accepted and ignored until
 	// go-quicbaas#822, so a task page asking for its own attempts was handed
 	// every job in the tenant and had to re-filter an answer it could not
-	// verify.
-	filter := &orchestration.JobFilter{TaskID: r.URL.Query().Get("task_id")}
+	// verify. statuses, runner and project_id narrow the same listing the
+	// same way, so the ~2,000-record job history of a burn-in tenant can be
+	// asked a question instead of downloaded whole.
+	filter := &orchestration.JobFilter{
+		TaskID:    r.URL.Query().Get("task_id"),
+		Runner:    r.URL.Query().Get("runner"),
+		ProjectID: r.URL.Query().Get("project_id"),
+		Statuses:  parseStateList[orchestration.JobState](r.URL.Query().Get("statuses")),
+	}
 
-	jobs, err := agentSvc.ListJobs(ctx, tenantID, filter)
+	page, err := pageFromRequest(r)
+	if err != nil {
+		RespondBadRequest(w, r, err.Error())
+		return
+	}
+
+	jobs, err := agentSvc.ListJobsPage(ctx, tenantID, filter, page)
 	if err != nil {
 		handleOrchestratorError(w, r, err)
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, map[string]interface{}{
-		"jobs": jobs,
-	})
+	RespondJSON(w, r, http.StatusOK, jobs.Envelope("jobs"))
 }
 
 // HandleOrchestratorCancelJob handles DELETE /api/v1/orchestrator/jobs/{jobID} - Cancel an orchestration job.
@@ -1439,16 +1470,27 @@ func (s *Server) HandleOrchestratorListAgents(w http.ResponseWriter, r *http.Req
 		filter.Status = orchestration.AgentStatus(statusParam)
 	}
 
-	agents, err := agentSvc.ListAgents(ctx, tenantID, filter)
+	page, err := pageFromRequest(r)
+	if err != nil {
+		RespondBadRequest(w, r, err.Error())
+		return
+	}
+
+	agents, err := agentSvc.ListAgentsPage(ctx, tenantID, filter, page)
 	if err != nil {
 		handleOrchestratorError(w, r, err)
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, map[string]interface{}{
-		"agents": agentsResponse(agents),
-		"count":  len(agents),
-	})
+	// "count" is how many records are IN THIS RESPONSE, which is what it has
+	// always been; "total" is how many matched. They differ for the first
+	// time now that a fleet larger than a page can be asked for, and the
+	// envelope names both rather than overloading one.
+	envelope := agents.Envelope("agents")
+	envelope["agents"] = agentsResponse(agents.Items)
+	envelope["count"] = len(agents.Items)
+
+	RespondJSON(w, r, http.StatusOK, envelope)
 }
 
 // agentResponse is an AgentRegistration as the REST API renders it: every
@@ -1797,7 +1839,8 @@ func isGRPCNotFound(err error) bool {
 // constraint set on this specific request.
 func isOrchInvalidInputError(err error) bool {
 	var noMatch *orchestration.NoMatchingAgentError
-	return stderrors.Is(err, orchestration.ErrSessionStateUnknown) ||
+	return isPageInputError(err) ||
+		stderrors.Is(err, orchestration.ErrSessionStateUnknown) ||
 		stderrors.Is(err, orchestration.ErrBackendRequired) ||
 		stderrors.Is(err, orchestration.ErrPromptRequired) ||
 		stderrors.Is(err, orchestration.ErrSessionIDRequired) ||
@@ -1868,18 +1911,19 @@ func (s *Server) HandleOrchestratorListWorkflows(w http.ResponseWriter, r *http.
 
 	ctx, _ := resolveOrchestratorTenant(r)
 
-	wfs, err := agentSvc.ListWorkflows(ctx)
+	page, err := pageFromRequest(r)
+	if err != nil {
+		RespondBadRequest(w, r, err.Error())
+		return
+	}
+
+	wfs, err := agentSvc.ListWorkflowsPage(ctx, page)
 	if err != nil {
 		handleOrchestratorError(w, r, err)
 		return
 	}
-	if wfs == nil {
-		wfs = []*orchestration.WorkflowDefinition{}
-	}
 
-	RespondJSON(w, r, http.StatusOK, map[string]interface{}{
-		"workflows": wfs,
-	})
+	RespondJSON(w, r, http.StatusOK, wfs.Envelope("workflows"))
 }
 
 // HandleOrchestratorGetWorkflow handles GET /api/v1/orchestrator/workflows/{name}

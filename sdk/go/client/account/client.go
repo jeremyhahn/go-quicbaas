@@ -25,6 +25,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/page"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
@@ -247,12 +248,19 @@ type ListAccountsRequest struct {
 	Provider Provider `json:"provider,omitempty"`
 	// ProjectID filters to one project when non-empty.
 	ProjectID string `json:"project_id,omitempty"`
+
+	// Params pages, orders and searches the listing. The zero value takes
+	// the server's default page; see package page.
+	page.Params
 }
 
-// ListAccountsResponse contains the matching accounts.
+// ListAccountsResponse contains one page of the matching accounts.
 type ListAccountsResponse struct {
 	Accounts []*AccountInfo `json:"accounts"`
-	Total    int            `json:"total"`
+
+	// Envelope carries how many records matched and where the next page
+	// starts; see package page.
+	page.Envelope
 }
 
 // UpdateAccountRequest changes non-secret metadata. Empty string fields are

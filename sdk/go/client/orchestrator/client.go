@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/page"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
@@ -737,12 +738,20 @@ type CloseSessionResponse struct {
 type ListSessionsRequest struct {
 	Backend string `json:"backend,omitempty"`
 	Status  string `json:"status,omitempty"`
+
+	// Params pages, orders and searches the listing. The zero value takes
+	// the server's default page; see package page.
+	page.Params
 }
 
 // ListSessionsResponse is the response from listing sessions.
 type ListSessionsResponse struct {
 	Sessions []*SessionStatusResponse `json:"sessions"`
 	Count    int                      `json:"count"`
+
+	// Envelope carries how many records matched and where the next page
+	// starts; see package page.
+	page.Envelope
 }
 
 // Task management types
@@ -929,12 +938,20 @@ type ListTasksRequest struct {
 	// Statuses restricts the listing to tasks in any of these statuses. It
 	// composes with Status: both must hold when both are set.
 	Statuses []string `json:"statuses,omitempty"`
+
+	// Params pages, orders and searches the listing. The zero value takes
+	// the server's default page; see package page.
+	page.Params
 }
 
 // ListTasksResponse is the response from listing tasks.
 type ListTasksResponse struct {
 	Tasks []*Task `json:"tasks"`
 	Count int     `json:"count"`
+
+	// Envelope carries how many records matched and where the next page
+	// starts; see package page.
+	page.Envelope
 }
 
 // ClaimTaskRequest is a request to claim a task for execution.
@@ -1134,12 +1151,20 @@ type ListAgentsRequest struct {
 	AgentType string `json:"agent_type,omitempty"`
 	Backend   string `json:"backend,omitempty"`
 	Model     string `json:"model,omitempty"`
+
+	// Params pages, orders and searches the listing. The zero value takes
+	// the server's default page; see package page.
+	page.Params
 }
 
 // ListAgentsResponse is the response from listing agents.
 type ListAgentsResponse struct {
 	Agents []*AgentRegistration `json:"agents"`
 	Count  int                  `json:"count"`
+
+	// Envelope carries how many records matched and where the next page
+	// starts; see package page.
+	page.Envelope
 }
 
 // RemoveAgentRequest is a request to remove an agent.
@@ -1324,12 +1349,20 @@ type CreateWorkflowRequest struct {
 // ListWorkflowsRequest is a request to list workflow definitions.
 type ListWorkflowsRequest struct {
 	TenantID string `json:"tenant_id"`
+
+	// Params pages, orders and searches the listing. The zero value takes
+	// the server's default page; see package page.
+	page.Params
 }
 
 // ListWorkflowsResponse is the response from listing workflow definitions.
 type ListWorkflowsResponse struct {
 	Workflows []*WorkflowDefinition `json:"workflows"`
 	Count     int                   `json:"count"`
+
+	// Envelope carries how many records matched and where the next page
+	// starts; see package page.
+	page.Envelope
 }
 
 // GetWorkflowRequest is a request to get a workflow definition by name.
@@ -3248,11 +3281,29 @@ type ListJobsRequest struct {
 	// TaskID narrows the listing to the attempts at one task. Empty lists
 	// every job the tenant owns.
 	TaskID string `json:"task_id,omitempty"`
+
+	// Runner narrows the listing to the jobs one runner drove — "sdlc",
+	// "triage", "review".
+	Runner string `json:"runner,omitempty"`
+
+	// ProjectID narrows the listing to one project's jobs.
+	ProjectID string `json:"project_id,omitempty"`
+
+	// Statuses narrows the listing to jobs in any of these states.
+	Statuses []string `json:"statuses,omitempty"`
+
+	// Params pages, orders and searches the listing. The zero value takes
+	// the server's default page; see package page.
+	page.Params
 }
 
-// ListJobsResponse contains the list of jobs for a tenant.
+// ListJobsResponse contains one page of a tenant's jobs.
 type ListJobsResponse struct {
 	Jobs []JobSummary `json:"jobs"`
+
+	// Envelope carries how many records matched and where the next page
+	// starts; see package page.
+	page.Envelope
 }
 
 // JobSummary provides a summary of an orchestration job.

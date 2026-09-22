@@ -158,11 +158,24 @@ type AccountEnvelopeRESTResponse struct {
 	Timestamp time.Time            `json:"timestamp"`
 }
 
-// ListAccountsRESTResponse is returned on GET /api/v1/agent-accounts.
+// ListAccountsRESTResponse is returned on GET /api/v1/agent-accounts. It
+// carries the paging envelope every list endpoint answers with; see
+// docs/software-factory/api.md.
 type ListAccountsRESTResponse struct {
-	Accounts  []*AccountRESTResponse `json:"accounts"`
-	Total     int                    `json:"total"`
-	Timestamp time.Time              `json:"timestamp"`
+	Accounts []*AccountRESTResponse `json:"accounts"`
+
+	// Total is the number of accounts the filters and search left, before
+	// paging.
+	Total int `json:"total"`
+
+	// Limit and Offset are the applied paging values.
+	Limit  int `json:"limit"`
+	Offset int `json:"offset"`
+
+	// NextOffset is the offset of the following page, absent on the last.
+	NextOffset int `json:"next_offset,omitempty"`
+
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // AccountIDRESTResponse is the acknowledgement envelope for the verbs that
@@ -282,10 +295,17 @@ func (s *Server) HandleListAccounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	page, err := pageFromRequest(r)
+	if err != nil {
+		RespondBadRequest(w, r, err.Error())
+		return
+	}
+
 	resp, err := accountSvc.ListAccounts(ctx, &service.ListAccountsRequest{
 		TenantID:  tenantID,
 		Provider:  orchestration.AccountProvider(r.URL.Query().Get("provider")),
 		ProjectID: r.URL.Query().Get("project_id"),
+		Page:      page,
 	})
 	if err != nil {
 		handleAccountError(w, r, err)
@@ -298,9 +318,12 @@ func (s *Server) HandleListAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RespondJSON(w, r, http.StatusOK, &ListAccountsRESTResponse{
-		Accounts:  accounts,
-		Total:     resp.Total,
-		Timestamp: resp.Timestamp,
+		Accounts:   accounts,
+		Total:      resp.Total,
+		Limit:      resp.Limit,
+		Offset:     resp.Offset,
+		NextOffset: resp.NextOffset,
+		Timestamp:  resp.Timestamp,
 	})
 }
 
@@ -607,6 +630,8 @@ func handleAccountError(w http.ResponseWriter, r *http.Request, err error) {
 	var leaseRevoked *lease.LeaseRevokedError
 
 	switch {
+	case isPageInputError(err):
+		RespondError(w, r, http.StatusBadRequest, err)
 	case errors.As(err, &notFound):
 		RespondError(w, r, http.StatusNotFound, err)
 	case errors.As(err, &leaseRevoked):

@@ -13,7 +13,11 @@
 
 package orchestrator
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/page"
+)
 
 // This file is the single source of truth for translating the orchestrator
 // service's session wire shapes into the flat SDK response types.
@@ -210,19 +214,27 @@ func (w *SessionStatusWire) Response() *SessionStatusResponse {
 	}
 }
 
-// ListSessionsWire mirrors the orchestrator service's ListSessions response.
+// ListSessionsWire mirrors the orchestrator service's ListSessions response,
+// including the paging envelope every list endpoint answers with.
 type ListSessionsWire struct {
 	Sessions []SessionStatusWire `json:"sessions"`
+	page.Envelope
 }
 
 // Response converts the wire session list into the SDK response type. Count is
-// derived here because the service does not put it on the wire.
+// the size of THIS PAGE and is derived here because the service does not put
+// it on the wire; Total, which the service does send, is how many sessions
+// matched before the page was cut.
 func (w *ListSessionsWire) Response() *ListSessionsResponse {
 	sessions := make([]*SessionStatusResponse, 0, len(w.Sessions))
 	for i := range w.Sessions {
 		sessions = append(sessions, w.Sessions[i].Response())
 	}
-	return &ListSessionsResponse{Sessions: sessions, Count: len(sessions)}
+	return &ListSessionsResponse{
+		Sessions: sessions,
+		Count:    len(sessions),
+		Envelope: w.Envelope,
+	}
 }
 
 // CloseSessionWire mirrors the orchestrator service's CloseSession response.

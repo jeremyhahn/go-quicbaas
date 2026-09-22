@@ -20,6 +20,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	accountSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/account"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/page"
 )
 
 // =============================================================================
@@ -109,13 +110,19 @@ func handleAccountList(ctx context.Context, svc service.QuicBaaS, req interface{
 		TenantID:  r.TenantID,
 		Provider:  orchestration.AccountProvider(r.Provider),
 		ProjectID: r.ProjectID,
+		Page:      pageFromSDK(r.Params),
 	})
 	if err != nil {
 		return nil, err
 	}
 	out := &accountSDK.ListAccountsResponse{
 		Accounts: make([]*accountSDK.AccountInfo, 0, len(resp.Accounts)),
-		Total:    resp.Total,
+		Envelope: page.Envelope{
+			Total:      resp.Total,
+			Limit:      resp.Limit,
+			Offset:     resp.Offset,
+			NextOffset: resp.NextOffset,
+		},
 	}
 	for _, a := range resp.Accounts {
 		out.Accounts = append(out.Accounts, accountInfoFromOrchestration(a))

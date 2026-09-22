@@ -739,3 +739,38 @@ func (m *healthMockAgentService) PromptSessionAsync(ctx context.Context, req *Pr
 		Sequence:  1,
 	}, nil
 }
+
+// The ListPage methods answer the paged listings by running the real
+// ApplyPage over what this double already returns, so a transport test
+// exercises the shipped paging contract rather than a second copy of it.
+func (m *healthMockAgentService) ListJobsPage(ctx context.Context, tenantID string, filter *JobFilter, page *Page) (*PageResult[*JobStatus], error) {
+	jobs, err := m.ListJobs(ctx, tenantID, filter)
+	if err != nil {
+		return nil, err
+	}
+	return ApplyPage(jobs, page, JobPageSpec())
+}
+
+func (m *healthMockAgentService) ListTasksPage(ctx context.Context, tenantID string, filter *TaskFilter, page *Page) (*PageResult[*Task], error) {
+	tasks, err := m.ListTasks(ctx, tenantID, filter)
+	if err != nil {
+		return nil, err
+	}
+	return ApplyPage(tasks, page, TaskPageSpec())
+}
+
+func (m *healthMockAgentService) ListAgentsPage(ctx context.Context, tenantID string, filter *AgentFilter, page *Page) (*PageResult[*AgentRegistration], error) {
+	agents, err := m.ListAgents(ctx, tenantID, filter)
+	if err != nil {
+		return nil, err
+	}
+	return ApplyPage(agents, page, AgentPageSpec())
+}
+
+func (m *healthMockAgentService) ListWorkflowsPage(ctx context.Context, page *Page) (*PageResult[*WorkflowDefinition], error) {
+	workflows, err := m.ListWorkflows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return ApplyPage(workflows, page, WorkflowPageSpec())
+}

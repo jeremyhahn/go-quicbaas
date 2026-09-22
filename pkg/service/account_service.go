@@ -139,13 +139,29 @@ type ListAccountsRequest struct {
 	TenantID  string                        `json:"tenant_id"`
 	Provider  orchestration.AccountProvider `json:"provider,omitempty"`
 	ProjectID string                        `json:"project_id,omitempty"`
+
+	// Page narrows the answer to one page of the matching accounts and
+	// orders it per orchestration.AccountPageSpec. Nil asks for the first
+	// orchestration.DefaultPageLimit, newest first.
+	Page *orchestration.Page `json:"page,omitempty"`
 }
 
-// ListAccountsResponse contains the matching accounts.
+// ListAccountsResponse contains one page of the matching accounts.
 type ListAccountsResponse struct {
-	Accounts  []*orchestration.Account `json:"accounts"`
-	Total     int                      `json:"total"`
-	Timestamp time.Time                `json:"timestamp"`
+	Accounts []*orchestration.Account `json:"accounts"`
+
+	// Total is the number of accounts the filters and search left, BEFORE
+	// the page was cut.
+	Total int `json:"total"`
+
+	// Limit and Offset are the applied paging values.
+	Limit  int `json:"limit"`
+	Offset int `json:"offset"`
+
+	// NextOffset is the offset of the following page, absent on the last.
+	NextOffset int `json:"next_offset,omitempty"`
+
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // UpdateAccountRequest specifies which metadata fields to change. Empty
@@ -499,7 +515,18 @@ func (s *accountServiceImpl) ListAccounts(ctx context.Context, req *ListAccounts
 	if err != nil {
 		return nil, convertAccountStoreError(err)
 	}
-	return &ListAccountsResponse{Accounts: accounts, Total: len(accounts), Timestamp: time.Now().UTC()}, nil
+	page, err := orchestration.ApplyPage(accounts, req.Page, orchestration.AccountPageSpec())
+	if err != nil {
+		return nil, err
+	}
+	return &ListAccountsResponse{
+		Accounts:   page.Items,
+		Total:      page.Total,
+		Limit:      page.Limit,
+		Offset:     page.Offset,
+		NextOffset: page.NextOffset,
+		Timestamp:  time.Now().UTC(),
+	}, nil
 }
 
 // UpdateAccount applies field-level metadata updates.

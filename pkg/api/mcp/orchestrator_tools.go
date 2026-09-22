@@ -18,6 +18,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -409,7 +410,7 @@ func (r *ToolRegistry) registerAgentTools() {
 			"call returns closed sessions too.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
-			"properties": map[string]interface{}{
+			"properties": withPageProperties(map[string]interface{}{
 				"tenant_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Tenant whose sessions are listed. Required.",
@@ -423,7 +424,7 @@ func (r *ToolRegistry) registerAgentTools() {
 					"enum":        orchestration.SessionStates(),
 					"description": "Filter sessions by lifecycle state (optional). Empty means every state.",
 				},
-			},
+			}, strings.Join(orchestration.SessionPageSpec().SortFields(), ", ")),
 			"required": []string{"tenant_id"},
 		},
 	})
@@ -554,7 +555,7 @@ func (r *ToolRegistry) registerAgentTools() {
 		Description: "List all agents registered in the fleet for a tenant with optional filters",
 		InputSchema: map[string]interface{}{
 			"type": "object",
-			"properties": map[string]interface{}{
+			"properties": withPageProperties(map[string]interface{}{
 				"tenant_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Tenant ID",
@@ -571,7 +572,7 @@ func (r *ToolRegistry) registerAgentTools() {
 					"type":        "string",
 					"description": "Filter by agent type (optional)",
 				},
-			},
+			}, strings.Join(orchestration.AgentPageSpec().SortFields(), ", ")),
 			"required": []string{"tenant_id"},
 		},
 	})
@@ -704,15 +705,28 @@ func (r *ToolRegistry) registerAgentTools() {
 
 	r.addTool(ToolDefinition{
 		Name:        "quicbaas_orchestrator_list_jobs",
-		Description: "List the current tenant's orchestration jobs, sorted by start time descending, optionally narrowed to the attempts at one task",
+		Description: "List one page of the current tenant's orchestration jobs, newest first, optionally narrowed by task, runner, project or state",
 		InputSchema: map[string]interface{}{
 			"type": "object",
-			"properties": map[string]interface{}{
+			"properties": withPageProperties(map[string]interface{}{
 				"task_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Narrow the listing to the attempts at one task. Optional; omit to list every job.",
 				},
-			},
+				"runner": map[string]interface{}{
+					"type":        "string",
+					"description": "Narrow the listing to the jobs one runner drove (sdlc, triage, review). Optional.",
+				},
+				"project_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Narrow the listing to one project's jobs. Optional.",
+				},
+				"statuses": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Narrow the listing to jobs in any of these states. Optional.",
+				},
+			}, strings.Join(orchestration.JobPageSpec().SortFields(), ", ")),
 		},
 	})
 
@@ -1314,6 +1328,7 @@ func (r *ToolRegistry) executeAgentListSessions(ctx context.Context, args map[st
 	req := &orchestration.ListSessionsRequest{
 		Backend: getString(args, "backend"),
 		Status:  orchestration.SessionState(getString(args, "status")),
+		Page:    pageFromArgs(args),
 	}
 
 	resp, err := agentSvc.ListSessions(ctx, req)
@@ -1321,10 +1336,17 @@ func (r *ToolRegistry) executeAgentListSessions(ctx context.Context, args map[st
 		return nil, err
 	}
 
-	return marshalResult(map[string]interface{}{
+	result := map[string]interface{}{
 		"sessions":  resp.Sessions,
 		"timestamp": time.Unix(0, resp.Timestamp).Format(time.RFC3339Nano),
-	})
+		"total":     resp.Total,
+		"limit":     resp.Limit,
+		"offset":    resp.Offset,
+	}
+	if resp.NextOffset > 0 {
+		result["next_offset"] = resp.NextOffset
+	}
+	return marshalResult(result)
 }
 
 func (r *ToolRegistry) executeAgentListBackends(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -1558,16 +1580,16 @@ func (r *ToolRegistry) executeAgentFleetList(ctx context.Context, args map[strin
 
 	ctx = orchestration.ContextWithTenant(ctx, tenantID)
 
-	agents, err := agentSvc.ListAgents(ctx, tenantID, filter)
+	agents, err := agentSvc.ListAgentsPage(ctx, tenantID, filter, pageFromArgs(args))
 	if err != nil {
 		return nil, err
 	}
 
-	return marshalResult(map[string]interface{}{
-		"agents":    agents,
-		"count":     len(agents),
+	return marshalResult(pageResultFields(agents, map[string]interface{}{
+		"agents":    agents.Items,
+		"count":     len(agents.Items),
 		"timestamp": time.Now().Format(time.RFC3339Nano),
-	})
+	}))
 }
 
 // executeAgentFleetStatus retrieves the status of a specific fleet agent.
@@ -1876,13 +1898,18 @@ func (r *ToolRegistry) executeOrchestratorListJobs(ctx context.Context, args map
 
 	tenantID := orchestration.TenantFromContext(ctx)
 
-	jobs, err := agentSvc.ListJobs(ctx, tenantID, &orchestration.JobFilter{TaskID: getString(args, "task_id")})
+	jobs, err := agentSvc.ListJobsPage(ctx, tenantID, &orchestration.JobFilter{
+		TaskID:    getString(args, "task_id"),
+		Runner:    getString(args, "runner"),
+		ProjectID: getString(args, "project_id"),
+		Statuses:  jobStatesFromArgs(args),
+	}, pageFromArgs(args))
 	if err != nil {
 		return nil, err
 	}
 
-	summaries := make([]map[string]interface{}, len(jobs))
-	for i, j := range jobs {
+	summaries := make([]map[string]interface{}, len(jobs.Items))
+	for i, j := range jobs.Items {
 		summaries[i] = map[string]interface{}{
 			"job_id":      j.JobID,
 			"state":       string(j.State),
@@ -1900,11 +1927,30 @@ func (r *ToolRegistry) executeOrchestratorListJobs(ctx context.Context, args map
 		}
 	}
 
-	return marshalResult(map[string]interface{}{
+	return marshalResult(pageResultFields(jobs, map[string]interface{}{
 		"jobs":      summaries,
-		"count":     len(jobs),
+		"count":     len(summaries),
 		"timestamp": time.Now().Format(time.RFC3339Nano),
-	})
+	}))
+}
+
+// jobStatesFromArgs reads the repeated ?statuses filter off a tool call.
+func jobStatesFromArgs(args map[string]interface{}) []orchestration.JobState {
+	raw := getStringSlice(args, "statuses")
+	if len(raw) == 0 {
+		return nil
+	}
+	states := make([]orchestration.JobState, 0, len(raw))
+	for _, state := range raw {
+		if state == "" {
+			continue
+		}
+		states = append(states, orchestration.JobState(state))
+	}
+	if len(states) == 0 {
+		return nil
+	}
+	return states
 }
 
 // executeOrchestratorTaskCreate creates an orchestration task, optionally
