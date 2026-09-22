@@ -841,6 +841,40 @@ func TestRunner_ResumeState(t *testing.T) {
 	}
 }
 
+// TestRunner_OnlyTheWorkerBearingStatesSpendTheProjectBudget pins the owner's
+// ruling on go-quicbaas#978: the project's MaxConcurrency bounds initializing,
+// executing, validating, re-delegating and completing. A job in reviewing
+// waits on a forge with no worker turn running and must not hold a slot; the
+// round a review asks for goes to re-delegating, which takes one back through
+// admission. Every declared state has an answer here, so a state added later
+// is decided deliberately rather than inheriting one.
+func TestRunner_OnlyTheWorkerBearingStatesSpendTheProjectBudget(t *testing.T) {
+	want := map[orchestration.JobState]bool{
+		orchestration.JobStateInitializing: false,
+		orchestration.JobStateExecuting:    false,
+		orchestration.JobStateValidating:   false,
+		orchestration.JobStateReviewing:    true,
+		orchestration.JobStateRedelegating: false,
+		orchestration.JobStateCompleting:   false,
+		orchestration.JobStateCleanup:      true,
+		orchestration.JobStateEscalating:   true,
+	}
+	for _, spec := range RunnerStates() {
+		offBudget, known := want[spec.State]
+		if !known {
+			t.Errorf("%q has no budget answer; decide whether a worker runs in it", spec.State)
+			continue
+		}
+		if spec.OffProjectBudget != offBudget {
+			t.Errorf("%q: OffProjectBudget = %v, want %v", spec.State, spec.OffProjectBudget, offBudget)
+		}
+	}
+	// The runner as a whole spends the budget; only its states move off it.
+	if _, ok := any(&Runner{}).(orchestration.JobLeasePolicy); ok {
+		t.Error("the delivery runner declares a whole-runner lease policy; its budget is per state")
+	}
+}
+
 // TestRunner_ValidateRefusesWhatItCannotDrive: an sdlc job is an attempt at a
 // task, and the refusal happens before a goroutine or a lease exists.
 func TestRunner_ValidateRefusesWhatItCannotDrive(t *testing.T) {

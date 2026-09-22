@@ -158,6 +158,17 @@ type JobLease struct {
 	// See JobLeasePolicy.OffProjectBudget for which jobs set it and why.
 	OffBudget bool `json:"off_budget,omitempty"`
 
+	// AwaitingSlot marks an off-budget lease whose job has asked to spend a
+	// slot again and was refused because the project is full: an sdlc job in
+	// reviewing whose review or CI asked for another worker round
+	// (JobStateSpec.OffProjectBudget). It is QUEUED DEMAND, and every reader
+	// counts it against the budget so new work cannot take the slot it is
+	// waiting for — without it, a busy project's dispatcher refills each slot
+	// the moment it frees and the round waits for ever. Leases that are
+	// awaiting do not count against EACH OTHER, which is what lets the first
+	// of them to ask after a slot frees take it (see HoldsSlot).
+	AwaitingSlot bool `json:"awaiting_slot,omitempty"`
+
 	// Released marks a lease the holder gave up. The record stays; a reader
 	// finds a released lease, never a missing one.
 	Released bool `json:"released,omitempty"`
@@ -184,7 +195,26 @@ func (l *JobLease) Live(now time.Time, ttl time.Duration) bool {
 // store's admission check, the task dispatcher and the task-source poller —
 // so a lease that is off the budget is off it everywhere. See
 // JobLease.OffBudget.
+//
+// A lease counts while it holds a slot, and while it is off the budget but
+// awaiting one: see JobLease.AwaitingSlot.
 func (l *JobLease) CountsAgainstBudget(now time.Time, ttl time.Duration) bool {
+	if l == nil || !l.Live(now, ttl) {
+		return false
+	}
+	return !l.OffBudget || l.AwaitingSlot
+}
+
+// HoldsSlot reports whether this lease occupies one of its project's
+// Quotas.MaxConcurrency slots at now: live and on the budget. A lease that is
+// only awaiting a slot does not hold one.
+//
+// It is what a job taking its slot BACK is counted against. A job already
+// waiting must not be refused by another job waiting beside it — two waiters
+// that each counted the other would both wait for ever — so it is compared
+// with the slots actually held, and new work is compared with those plus the
+// queue (CountsAgainstBudget).
+func (l *JobLease) HoldsSlot(now time.Time, ttl time.Duration) bool {
 	return l != nil && !l.OffBudget && l.Live(now, ttl)
 }
 
@@ -328,6 +358,13 @@ type JobLeaseStore interface {
 	// end the work of whoever does.
 	Release(ctx context.Context, lease *JobLease) error
 
+	// Rebudget writes lease.OffBudget and lease.AwaitingSlot onto the record
+	// this job holds, moving it off or back onto its project's budget without
+	// giving up the lease. A JobSupersededError means another job holds the
+	// record; a released record is left alone. A capacity decorator refuses a
+	// move BACK ONTO the budget the project has no slot for.
+	Rebudget(ctx context.Context, lease *JobLease) error
+
 	// Get reads the lease for one unit of work.
 	Get(ctx context.Context, tenantID, projectID, workflow, ref string) (*JobLease, error)
 
@@ -447,6 +484,11 @@ func (s *transactionJobLeaseStore) Heartbeat(ctx context.Context, lease *JobLeas
 	})
 }
 
+// Rebudget implements JobLeaseStore.
+func (s *transactionJobLeaseStore) Rebudget(ctx context.Context, lease *JobLease) error {
+	return s.rewrite(ctx, lease, rebudgetRewrite(lease))
+}
+
 // Release implements JobLeaseStore.
 func (s *transactionJobLeaseStore) Release(ctx context.Context, lease *JobLease) error {
 	return s.rewrite(ctx, lease, func(held *JobLease, now time.Time) (*JobLease, bool, error) {
@@ -464,6 +506,26 @@ func (s *transactionJobLeaseStore) Release(ctx context.Context, lease *JobLease)
 // the next record and true to write, false to leave the record alone, or an
 // error to stop.
 type leaseRewrite func(held *JobLease, now time.Time) (*JobLease, bool, error)
+
+// rebudgetRewrite is the ONE decision both stores make for Rebudget: the
+// holder's own record takes the budget standing lease asks for, and proves it
+// is alive in the same write. HeartbeatAt advances with it because the
+// transaction store's value-compare swap relies on no record recurring.
+func rebudgetRewrite(lease *JobLease) leaseRewrite {
+	return func(held *JobLease, now time.Time) (*JobLease, bool, error) {
+		if held.JobID != lease.JobID {
+			return nil, false, &JobSupersededError{JobID: lease.JobID, By: held.Generation, Node: held.Node}
+		}
+		if held.Released {
+			return nil, false, nil
+		}
+		next := *held
+		next.OffBudget = lease.OffBudget
+		next.AwaitingSlot = lease.AwaitingSlot
+		next.HeartbeatAt = now.UnixNano()
+		return &next, true, nil
+	}
+}
 
 // rewrite performs a read-decide-swap on the lease's record until the swap
 // wins or the decision says stop.
@@ -652,6 +714,11 @@ func (s *processJobLeaseStore) Heartbeat(_ context.Context, lease *JobLease) err
 	})
 }
 
+// Rebudget implements JobLeaseStore.
+func (s *processJobLeaseStore) Rebudget(_ context.Context, lease *JobLease) error {
+	return s.rewrite(lease, rebudgetRewrite(lease))
+}
+
 // Release implements JobLeaseStore.
 func (s *processJobLeaseStore) Release(_ context.Context, lease *JobLease) error {
 	return s.rewrite(lease, func(held *JobLease, now time.Time) (*JobLease, bool, error) {
@@ -777,26 +844,42 @@ func (s *projectCapacityJobLeaseStore) Acquire(ctx context.Context, lease *JobLe
 	if err := lease.validate(); err != nil {
 		return err
 	}
-	if lease.ProjectID != "" {
-		if err := s.admit(ctx, lease); err != nil {
+	if lease.ProjectID != "" && !lease.OffBudget {
+		if err := s.admit(ctx, lease, (*JobLease).CountsAgainstBudget); err != nil {
 			return err
 		}
 	}
 	return s.JobLeaseStore.Acquire(ctx, lease)
 }
 
-// admit compares the project's budgeted live leases against its quota.
+// Rebudget implements JobLeaseStore.
 //
-// AN OFF-BUDGET CONTENDER IS ADMITTED WITHOUT COUNTING ANYTHING. A job that
-// does not spend a worker slot cannot be the job that overruns the budget,
-// and queueing it behind the work it exists to unblock is how a project at
-// max_concurrency 1 stops reviewing its own pull requests: the review waits
-// for the worker, and the next worker takes the slot the review was waiting
-// for. See JobLease.OffBudget.
-func (s *projectCapacityJobLeaseStore) admit(ctx context.Context, lease *JobLease) error {
-	if lease.OffBudget {
-		return nil
+// ONLY A MOVE BACK ONTO THE BUDGET IS ADMITTED. Leaving it frees a slot and is
+// never refused. Returning is counted against the slots other jobs HOLD, not
+// the queue: the job asking may itself be queued (AwaitingSlot), and a queue
+// that counted its own members would never move. See JobLease.HoldsSlot.
+func (s *projectCapacityJobLeaseStore) Rebudget(ctx context.Context, lease *JobLease) error {
+	if err := lease.validate(); err != nil {
+		return err
 	}
+	if lease.ProjectID != "" && !lease.OffBudget {
+		if err := s.admit(ctx, lease, (*JobLease).HoldsSlot); err != nil {
+			return err
+		}
+	}
+	return s.JobLeaseStore.Rebudget(ctx, lease)
+}
+
+// admit compares the project's leases that occupy the budget — by counts —
+// against its quota.
+//
+// AN OFF-BUDGET CONTENDER IS NEVER ASKED HERE. A job that does not spend a
+// worker slot cannot be the job that overruns the budget, and queueing it
+// behind the work it exists to unblock is how a project at max_concurrency 1
+// stops reviewing its own pull requests: the review waits for the worker, and
+// the next worker takes the slot the review was waiting for. See
+// JobLease.OffBudget.
+func (s *projectCapacityJobLeaseStore) admit(ctx context.Context, lease *JobLease, counts func(*JobLease, time.Time, time.Duration) bool) error {
 	project, err := s.projects.Get(ctx, lease.TenantID, lease.ProjectID)
 	if err != nil {
 		var missing *ProjectStoreNotFoundError
@@ -819,7 +902,7 @@ func (s *projectCapacityJobLeaseStore) admit(ctx context.Context, lease *JobLeas
 	now := s.now()
 	live := 0
 	for _, held := range leases {
-		if held.JobID != lease.JobID && held.CountsAgainstBudget(now, s.ttl) {
+		if held.JobID != lease.JobID && counts(held, now, s.ttl) {
 			live++
 		}
 	}

@@ -1,6 +1,6 @@
 # Admission and readiness — three inputs to start, four predicates to be ready
 
-> **Status: NORMATIVE** · Last verified: 2026-09-12
+> **Status: NORMATIVE** · Last verified: 2026-09-22
 > Supplement to the Software Factory feature folder: what bounds how much work
 > runs at once, and what an issue must satisfy before it becomes a Task.
 > Conflicts with this document are defects.
@@ -32,6 +32,48 @@ Admission therefore reads three inputs and decides once:
 
 The project quota is a **ceiling**: no redistribution below ever lifts a project
 above what its operator set.
+
+### The project quota bounds worker-bearing states only
+
+The owner ruled on go-quicbaas#978 (2026-09-22) that `Project.Quotas.MaxConcurrency`
+bounds **running workers**. It does not bound open jobs. For the sdlc runner the states that spend a slot are
+`initializing`, `executing`, `validating`, `re-delegating` and `completing`.
+`reviewing`, `cleanup` and `escalating` hold no slot. A job in `reviewing` is
+waiting on a CI pipeline and a reviewer, often for 30 to 90 minutes, with no worker
+turn running. Before this ruling it held its slot for that whole wait. On the burn-in fleet two
+such jobs held both of a project's slots, and the next ready task sat
+`pending` while no worker ran anywhere.
+
+| Piece | What it does |
+|---|---|
+| `JobStateSpec.OffProjectBudget` | the runner declares which of its states hold no worker (`sdlc.RunnerStates`) |
+| `JobRun.SetState` → `moveBudget` | on every transition between the two kinds, moves the job's lease off or back onto the budget (`JobLeaseStore.Rebudget`) |
+| `projectCapacityJobLeaseStore.Rebudget` | admits a move **back onto** the budget against the slots other jobs hold. A move off the budget is never refused |
+| `JobLease.AwaitingSlot` | marks a refused return as queued demand |
+
+**A round waits and does not fail.** Suppose a review or a red pipeline asks for another round and the
+project is full. The job stays in `reviewing` and its lease is marked
+`AwaitingSlot`. The move is retried on the heartbeat cadence until a slot
+frees, and then the job proceeds to `re-delegating`. The wait ends only when the run
+ends: a cancellation, a supersession, or the stall detector, whose `reviewing`
+bound is unchanged. A refusal for any other reason is returned, because
+entering a worker state with no decided admission is the oversubscription the
+quota exists to prevent.
+
+**A queued round is ahead of new work.** `CountsAgainstBudget`, the one
+predicate the capacity store, the dispatcher, the task-source poller and the
+plan all read, counts a lease that holds a slot **and** a lease awaiting one.
+Without that, a busy project's dispatcher refills every slot the moment it
+frees and the round waits for ever. Queued rounds do not count against **each
+other**: a returning job is compared with `HoldsSlot`, the slots actually
+held, so the first waiter to ask after a slot frees takes it.
+
+**The lease itself never moves.** It is held from the first state to the
+conclusion. One job per task, the reaper and the heartbeat are unchanged. A
+job resumed into `reviewing` takes its lease off the budget from the start, so
+a project that filled while the daemon was down does not refuse it.
+
+The fleet axis and the backend axis are unchanged. They count every live lease.
 
 The provider axis is **subscription usage, never a price.** The owner's ruling is
 subscription-based accounts only, so no turn has a cost, `ConsumptionEntry.CostMicros`
@@ -234,6 +276,9 @@ The properties proved, with the tests that prove them:
 | a blocked task parks without holding a session, and resumes | `TestTaskSourcePoller_ASpecCarryingAParkAdoptsBlockedAndSpawnsNothing`, `TestSweepProject_ReleasesAPublishedTag` |
 | merged-but-unreleased does not satisfy a version pin | `TestReadiness_MergedIsNotReleased`, `TestSweepProject_AnAbsentTagIsWaitingNotUndecidable` |
 | an issue owned by a live session is not adopted twice | `TestReadiness_AnIssueOwnedByALiveSessionIsNotAdoptedTwice` |
+| a job in reviewing frees its slot, and its round waits for one | `TestJobRun_AReviewingJobFreesItsSlotAndItsRoundWaitsForOne`, `TestProjectCapacity_AJobOffTheBudgetAdmitsASecondTask` |
+| queued rounds do not block each other, and a waiting round ends with its run | `TestProjectCapacity_QueuedRoundsDoNotBlockEachOther`, `TestJobRun_AWaitingRoundEndsWithItsRun` |
+| only the worker-bearing sdlc states spend the budget | `TestRunner_OnlyTheWorkerBearingStatesSpendTheProjectBudget` |
 
 ## See also
 

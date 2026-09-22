@@ -139,6 +139,16 @@ type JobRun struct {
 	heartbeatAt   atomic.Int64
 	heartbeatDone chan struct{}
 
+	// budgetStates is the runner's per-state answer to whether a job there
+	// is off its project's budget (runnerBudgetStates), read once when the
+	// lease is taken; standing is where the job's lease stands now. Both
+	// belong to the run goroutine, the only caller of SetState, and the
+	// standing is kept here rather than read off the lease because the
+	// heartbeat goroutine replaces the lease with the record it read, which
+	// can be a write older than the last move.
+	budgetStates map[JobState]bool
+	standing     budgetStanding
+
 	// cancelRun ends the run from outside the runner; abortCause is why.
 	// finished is set when execute returns.
 	cancelRun  atomic.Pointer[context.CancelFunc]
@@ -509,7 +519,14 @@ func (r *JobRun) Decorate(fn func(status *JobStatus)) {
 // change is announced, and the lifecycle moment that belongs to the state
 // runs. A hook failure is returned as a JobHookError and fails the job with
 // FailureClassHook.
+//
+// A state that moves the job on or off its project's budget moves it first,
+// and a move back onto a full budget WAITS here — the job still in the state
+// it is leaving — until a slot frees or the run ends. See moveBudget.
 func (r *JobRun) SetState(ctx context.Context, state JobState) error {
+	if err := r.moveBudget(ctx, state); err != nil {
+		return err
+	}
 	r.entered.Store(true)
 	r.snapshot(state)
 	r.emitTransition(state)

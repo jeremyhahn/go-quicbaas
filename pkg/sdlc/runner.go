@@ -203,6 +203,19 @@ func (*Runner) States() []orchestration.JobStateSpec { return RunnerStates() }
 // mergeJobStateSpec takes the disjunction — but a declaration that is only
 // true because ANOTHER runner made it is not this runner's answer, and it
 // would go silently false the day that runner changed (go-quicbaas#668).
+//
+// REVIEWING, CLEANUP AND ESCALATING ARE OFF THE PROJECT BUDGET; THE OTHERS
+// SPEND A SLOT. The owner's ruling on go-quicbaas#978 (2026-09-22): the
+// project's MaxConcurrency bounds the states that bear a worker — initializing,
+// executing, validating, re-delegating and completing — and nothing else. A
+// job in reviewing waits on a CI pipeline and a reviewer for up to an hour
+// with no worker turn running, and holding a slot for that wait left the
+// project's next ready task pending the whole time. A round the review or a
+// red pipeline asks for goes back through the project's admission on its way
+// to re-delegating, and WAITS there while the project is full. Cleanup and
+// escalating are the run's teardown and its park, entered from a state that
+// already held a slot and leading only to a terminal one, so they give the
+// slot back rather than hold it through work no worker does.
 func RunnerStates() []orchestration.JobStateSpec {
 	return []orchestration.JobStateSpec{
 		{State: orchestration.JobStateInitializing, Label: labelInitializing},
@@ -216,11 +229,11 @@ func RunnerStates() []orchestration.JobStateSpec {
 		// and the task was re-dispatched to be reviewed again from scratch.
 		{State: orchestration.JobStateExecuting, Label: labelExecuting, SessionBacked: true, IdleThreshold: 2 * time.Hour},
 		{State: orchestration.JobStateValidating, Label: labelValidating, IdleThreshold: 2 * time.Hour},
-		{State: orchestration.JobStateReviewing, Label: labelReviewing, SessionBacked: true, IdleThreshold: 4 * time.Hour},
+		{State: orchestration.JobStateReviewing, Label: labelReviewing, SessionBacked: true, IdleThreshold: 4 * time.Hour, OffProjectBudget: true},
 		{State: orchestration.JobStateRedelegating, Label: labelRedelegating},
 		{State: orchestration.JobStateCompleting, Label: labelCompleting},
-		{State: orchestration.JobStateCleanup, Label: labelCleanup},
-		{State: orchestration.JobStateEscalating, Label: labelEscalating},
+		{State: orchestration.JobStateCleanup, Label: labelCleanup, OffProjectBudget: true},
+		{State: orchestration.JobStateEscalating, Label: labelEscalating, OffProjectBudget: true},
 	}
 }
 

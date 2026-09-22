@@ -70,6 +70,26 @@ type JobStateSpec struct {
 	// runner does not have to restate the bound: the merge in
 	// mergeJobStateSpec keeps the longest anyone declared.
 	IdleThreshold time.Duration
+
+	// OffProjectBudget says a job in this state holds no worker, so it does
+	// not spend one of its project's Quotas.MaxConcurrency slots while it is
+	// here. It is the per-state form of JobLeasePolicy.OffProjectBudget, for
+	// a runner whose jobs spend a slot in SOME states and not others: an
+	// sdlc job waiting in reviewing on a forge runs no worker turn, and
+	// holding a slot for that wait kept a project's next task pending for
+	// the whole CI pipeline and review (go-quicbaas#978).
+	//
+	// The envelope reads it on every transition (JobRun.SetState). Entering
+	// such a state moves the job's lease off the budget; leaving one for a
+	// state that spends a slot takes the slot back THROUGH THE PROJECT'S
+	// ADMISSION, and the transition WAITS while the project is full rather
+	// than failing. The lease itself is held throughout — it is what keeps
+	// one job per task — so only the budget moves.
+	//
+	// It is the RUNNER's answer and nothing else's: mergeJobStateSpec does
+	// not merge it, because another runner's job in a state of the same name
+	// may be doing work in it.
+	OffProjectBudget bool
 }
 
 // JobRunner owns the state sequence of one shape of job. The engine keeps
@@ -150,6 +170,23 @@ func runnerOffProjectBudget(runner JobRunner) bool {
 		return false
 	}
 	return policy.OffProjectBudget()
+}
+
+// runnerBudgetStates answers, per declared state, whether a job of this
+// runner is off its project's budget there. Nil means the runner's jobs never
+// move on or off the budget: a runner with no states to answer for, or one
+// whose every job is off it (JobLeasePolicy.OffProjectBudget), which no state
+// can put back on.
+func runnerBudgetStates(runner JobRunner) map[JobState]bool {
+	if runner == nil || runnerOffProjectBudget(runner) {
+		return nil
+	}
+	states := runner.States()
+	offBudget := make(map[JobState]bool, len(states))
+	for _, spec := range states {
+		offBudget[spec.State] = spec.OffProjectBudget
+	}
+	return offBudget
 }
 
 // =============================================================================

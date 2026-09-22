@@ -1,6 +1,6 @@
 # Agent Orchestration — Job Admission, Attempt Accounting, and Reaping
 
-> **Status: NORMATIVE** · Last verified: 2026-09-10
+> **Status: NORMATIVE** · Last verified: 2026-09-22
 > Supplement to the Software Factory feature folder: the durable job lease,
 > attempt accounting, the reaper and the stall detector.
 > Conflicts with this document are defects.
@@ -61,13 +61,33 @@ not filling it. A runner declares it through `JobLeasePolicy.OffProjectBudget`
 review its own pull requests instead of queueing the review behind the worker
 whose change it has to read.
 
-The flag is on the **record**, not in the admitting node's memory, because
+The flags are on the **record**, not in the admitting node's memory, because
 the budget has three readers: the capacity store's own admission check, the
 task dispatcher, and the task-source poller. All three answer through
 `JobLease.CountsAgainstBudget(now, ttl)` — the two schedulers by way of
 `CountLiveJobLeases`, which is a *budget* count rather than a job count — so
 they cannot disagree. A budget honoured in one place and ignored in another
 admits a job that then cannot run.
+
+**Off the budget, per state.** A runner whose jobs spend a worker slot in some
+states and not others declares the difference with
+`JobStateSpec.OffProjectBudget`. The sdlc runner declares `reviewing`, `cleanup`
+and `escalating` (go-quicbaas#978). On every transition between the two kinds,
+`JobRun.SetState` moves the lease with `JobLeaseStore.Rebudget`. The move rewrites
+`OffBudget`, and `AwaitingSlot`, on the holder's own record, and it heartbeats in the
+same write. A move off the budget is never refused. A move back on goes
+through `projectCapacityJobLeaseStore.Rebudget`, counted against
+`JobLease.HoldsSlot`. When the project is full, the job **waits** in the state it
+is leaving and marks its lease `AwaitingSlot`, which `CountsAgainstBudget`
+counts, so new work cannot take the slot first. The move is retried every
+TTL/3 until it is admitted or the run ends. The lease is held throughout. A
+job resumed into an off-budget state acquires its lease off the budget. Any budget
+write that answers an error leaves the run's standing **unknown**, not
+unchanged, because a write can commit and still lose its answer. Before the
+next worker state, the run re-reads its lease record. The store is the
+arbiter. A record still on the budget proceeds on the slot it never gave up.
+Anything else goes through admission. See
+[admission-and-readiness.md](admission-and-readiness.md).
 
 **Subject.** A lease is named after the work it holds, not the job holding
 it: the task's source reference for task-bound work, and otherwise whatever
@@ -420,7 +440,7 @@ validation and again at wiring.
 All typed, all with sentinels: `JobLeaseError` (`ErrJobLeaseInvalidInput`,
 `ErrJobLeaseUnreadable`, `ErrJobLeaseSubjectMismatch`, `ErrJobLeaseBackend`),
 `JobLeaseTakenError`, `JobSupersededError`, `JobLeaseNotFoundError`,
-`ProjectCapacityExceededError`, `FleetCapacityExceededError`
+`ProjectCapacityExceededError` (also a refused `Rebudget`, on which the job waits), `FleetCapacityExceededError`
 (`ErrFleetCapacityExceeded`), `AttemptConcludedError`, `JobStalledError`,
 `JobIdleThresholdError`, `DrainTimeoutError` (`ErrDrainTimeout`),
 `ServiceShuttingDownError` (`ErrServiceShuttingDown`), `StoreClosedError`

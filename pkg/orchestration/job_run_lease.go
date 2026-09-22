@@ -90,6 +90,13 @@ func (r *JobRun) acquireJobLease(ctx context.Context, runner JobRunner) error {
 	// lease named by a different one than the job goes on to use would be a
 	// record about work nobody does. See JobLeasePolicy for why the subject
 	// belongs to the runner and not to whoever started the job.
+	//
+	// The budget is read the same way, and the lease starts where the FIRST
+	// state stands: a job resumed into a state that holds no worker must not
+	// be refused a slot it is not going to use.
+	r.budgetStates = runnerBudgetStates(runner)
+	offBudget := runnerOffProjectBudget(runner) || r.budgetStates[r.StartState]
+	r.standing = standingFor(offBudget)
 	lease := &JobLease{
 		TenantID:   r.Config.TenantID,
 		ProjectID:  r.Config.ProjectID,
@@ -100,7 +107,7 @@ func (r *JobRun) acquireJobLease(ctx context.Context, runner JobRunner) error {
 		Generation: generation,
 		Node:       r.node,
 		Backend:    strings.TrimSpace(r.Config.LeadBackend),
-		OffBudget:  runnerOffProjectBudget(runner),
+		OffBudget:  offBudget,
 	}
 	if err := r.leases.Acquire(ctx, lease); err != nil {
 		return err
@@ -144,14 +151,20 @@ func (r *JobRun) leaseSubject(runner JobRunner) string {
 	return r.Config.TaskID
 }
 
+// heartbeatInterval is the cadence the run proves its lease on: a third of
+// the TTL, so two beats can be lost before the lease goes stale.
+func (r *JobRun) heartbeatInterval() time.Duration {
+	if interval := r.leaseTTL / 3; interval > 0 {
+		return interval
+	}
+	return time.Millisecond
+}
+
 // startHeartbeat runs the ticker goroutine until ctx ends.
 func (r *JobRun) startHeartbeat(ctx context.Context) {
 	done := make(chan struct{})
 	r.heartbeatDone = done
-	interval := r.leaseTTL / 3
-	if interval <= 0 {
-		interval = time.Millisecond
-	}
+	interval := r.heartbeatInterval()
 	go func() {
 		defer close(done)
 		ticker := time.NewTicker(interval)
@@ -204,6 +217,191 @@ func (r *JobRun) heartbeat(ctx context.Context) {
 	}
 	r.lease.Store(&beat)
 	r.heartbeatAt.Store(beat.HeartbeatAt)
+}
+
+// =============================================================================
+// The project budget, per state
+// =============================================================================
+//
+// A JOB HOLDS ITS LEASE FROM ITS FIRST STATE TO ITS CONCLUSION, BUT IT SPENDS
+// A WORKER SLOT ONLY WHILE A WORKER IS RUNNING. Project.Quotas.MaxConcurrency
+// bounds the second (go-quicbaas#978): an sdlc job waiting in reviewing on a
+// CI pipeline and a reviewer runs no worker turn, and holding a slot for that
+// wait left a project's next ready task pending for the whole of it while
+// the fleet sat idle. The runner declares which of its states hold no worker
+// (JobStateSpec.OffProjectBudget), and the envelope moves the lease on every
+// transition between the two kinds — here, so no runner can forget to.
+//
+// The lease itself never moves. It is what keeps one job per task and what
+// the reaper and the heartbeat act on; only its budget standing changes.
+
+// budgetStanding is where a run's lease stands against its project's
+// budget, as the run knows it.
+type budgetStanding int
+
+const (
+	// budgetOn: the lease holds one of the project's slots.
+	budgetOn budgetStanding = iota
+
+	// budgetOff: the lease holds none.
+	budgetOff
+
+	// budgetUnknown: a move answered an error, and the write may or may not
+	// have applied. A write can commit and still lose its answer — a deadline
+	// or a transport failure after the proposal applied — so an error says
+	// nothing about what the record holds, and the run must not act as if it
+	// knew (go-quicbaas#978 review). The STORE is the arbiter: see
+	// reconcileOnBudget.
+	budgetUnknown
+)
+
+// standingFor is the known standing a lease's OffBudget flag records.
+func standingFor(offBudget bool) budgetStanding {
+	if offBudget {
+		return budgetOff
+	}
+	return budgetOn
+}
+
+// moveBudget brings the lease's budget standing to what state asks for. A
+// state the runner did not declare — a terminal one — leaves it where it is.
+// An unknown standing equals neither, so it is always moved.
+func (r *JobRun) moveBudget(ctx context.Context, state JobState) error {
+	offBudget, declared := r.budgetStates[state]
+	if !declared || r.leases == nil || r.lease.Load() == nil {
+		return nil
+	}
+	want := standingFor(offBudget)
+	if r.standing == want {
+		return nil
+	}
+	if want == budgetOff {
+		r.leaveBudget(ctx, state)
+		return nil
+	}
+	return r.enterBudget(ctx, state)
+}
+
+// leaveBudget gives the job's slot back for a state that holds no worker.
+//
+// A FAILED MOVE IS LOGGED AND THE JOB CONTINUES with its standing UNKNOWN,
+// not "still on the budget": a run that believed it kept a slot the write had
+// in fact given up would enter its next worker state without admission, after
+// another task took the slot. The next transition resolves it whichever way
+// it goes — a state off the budget tries the release again, and a worker
+// state asks the store (enterBudget).
+func (r *JobRun) leaveBudget(ctx context.Context, state JobState) {
+	if err := r.rebudget(ctx, true, false); err != nil {
+		r.standing = budgetUnknown
+		r.Logger.Warnf("job run: job %s may or may not hold its project slot in %s: %s", r.JobID, state, err.Error())
+		return
+	}
+	r.standing = budgetOff
+	r.Audit("orchestration:job_slot_released", "job_id="+r.JobID+" state="+string(state))
+}
+
+// reconcileOnBudget asks the store whether the lease an unknown standing
+// belongs to is in fact still on the budget, and reports true only when the
+// record says so for this job. Anything else — a record off the budget, one
+// another job holds, one that is released, or a read that failed — answers
+// false and sends the caller through admission, which never assumes.
+func (r *JobRun) reconcileOnBudget(ctx context.Context) bool {
+	lease := r.lease.Load()
+	readCtx, cancel := context.WithTimeout(ctx, jobLeaseWriteTimeout)
+	defer cancel()
+	record, err := r.leases.Get(readCtx, lease.TenantID, lease.ProjectID, lease.Workflow, lease.Ref)
+	if err != nil {
+		r.Logger.Warnf("job run: job %s could not read its lease to settle its project slot: %s", r.JobID, err.Error())
+		return false
+	}
+	if record.JobID != r.JobID || record.Released {
+		return false
+	}
+	if record.OffBudget {
+		r.standing = budgetOff
+		return false
+	}
+	r.standing = budgetOn
+	r.Audit("orchestration:job_slot_reconciled", "job_id="+r.JobID)
+	return true
+}
+
+// enterBudget takes a slot back for a state that runs a worker, through the
+// project's admission. An unknown standing is first settled by the store: a
+// record still on the budget means the failed release never applied and the
+// slot is still this job's, so there is nothing to admit.
+//
+// A FULL PROJECT MAKES THE JOB WAIT, NOT FAIL. The round it is entering was
+// asked for by a review or a red pipeline on work already published; failing
+// it would charge the task for the project being busy. So the lease is marked
+// AwaitingSlot — queued demand every reader counts, so new work cannot take
+// the slot first — and the move is retried on the heartbeat cadence until a
+// slot frees or the run is ended from outside (cancelled, superseded,
+// stalled). Every other refusal is returned: entering a worker state without
+// a decided admission is the oversubscription the quota exists to prevent.
+func (r *JobRun) enterBudget(ctx context.Context, state JobState) error {
+	if r.standing == budgetUnknown && r.reconcileOnBudget(ctx) {
+		return nil
+	}
+	awaiting := false
+	for {
+		err := r.rebudget(ctx, false, false)
+		var full *ProjectCapacityExceededError
+		if !errors.As(err, &full) {
+			if err != nil {
+				r.standing = budgetUnknown
+				return err
+			}
+			r.standing = budgetOn
+			if awaiting {
+				r.Audit("orchestration:job_slot_admitted", "job_id="+r.JobID+" state="+string(state))
+			}
+			return nil
+		}
+		if !awaiting {
+			if err := r.rebudget(ctx, true, true); err != nil {
+				r.standing = budgetUnknown
+				return err
+			}
+			awaiting = true
+			r.Audit("orchestration:job_slot_awaited", "job_id="+r.JobID+" state="+string(state)+
+				" live="+itoa(full.Live)+" limit="+itoa(full.Limit))
+			// The status says so while the job waits, rather than at
+			// whatever transition comes after it.
+			if current := r.Status(); current != nil {
+				r.snapshot(current.State)
+			}
+		}
+		timer := time.NewTimer(r.heartbeatInterval())
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+// rebudget writes the budget standing onto the run's lease. A superseded
+// answer aborts the run, exactly as a heartbeat's does.
+func (r *JobRun) rebudget(ctx context.Context, offBudget, awaitingSlot bool) error {
+	writeCtx, cancel := context.WithTimeout(ctx, jobLeaseWriteTimeout)
+	defer cancel()
+	next := *r.lease.Load()
+	next.OffBudget = offBudget
+	next.AwaitingSlot = awaitingSlot
+	err := r.leases.Rebudget(writeCtx, &next)
+	var superseded *JobSupersededError
+	if errors.As(err, &superseded) {
+		r.Abort(superseded)
+		return superseded
+	}
+	if err != nil {
+		return err
+	}
+	r.lease.Store(&next)
+	r.heartbeatAt.Store(next.HeartbeatAt)
+	return nil
 }
 
 // releaseLease gives the lease back. Idempotent; a lease already released or
