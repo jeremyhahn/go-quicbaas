@@ -287,9 +287,6 @@ export type {
   WorkflowPageParams,
   ProjectPageParams,
   AccountPageParams,
-  ProjectPageParams,
-  WorkflowPageParams,
-  Facets,
 } from './page.js';
 export {
   adoptPage,

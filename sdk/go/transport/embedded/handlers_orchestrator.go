@@ -1564,30 +1564,11 @@ func taskSourceFromSDK(src *orchestratorSDK.TaskSource) *orchestration.TaskSourc
 	return &orchestration.TaskSourceRef{Kind: orchestration.TaskSourceKind(src.Kind), Ref: src.Ref, URL: src.URL}
 }
 
-// taskStatusesFromSDK converts a status list; an empty list stays nil so the
-// filter is unset rather than matching nothing.
-// jobStatesFromSDK converts the SDK's job-state filter into the service's.
-func jobStatesFromSDK(states []string) []orchestration.JobState {
-	if len(states) == 0 {
-		return nil
-	}
-	out := make([]orchestration.JobState, len(states))
-	for i, s := range states {
-		out[i] = orchestration.JobState(s)
-	}
-	return out
-}
-
-func taskStatusesFromSDK(statuses []string) []orchestration.TaskStatus {
-	if len(statuses) == 0 {
-		return nil
-	}
-	out := make([]orchestration.TaskStatus, len(statuses))
-	for i, s := range statuses {
-		out[i] = orchestration.TaskStatus(s)
-	}
-	return out
-}
+// THE STATUS CONVERTERS THAT USED TO LIVE HERE ARE GONE. They turned any
+// string into an enum value and left an unknown one to match nothing, which
+// answered a typo with an empty page; the shared, VALIDATING
+// orchestration.TaskStatusesFrom / JobStatesFrom refuse it instead, and an
+// embedded caller now meets the same refusal a REST caller does.
 
 func convertAgentRegistration(a *orchestration.AgentRegistration) *orchestratorSDK.AgentRegistration {
 	if a == nil {

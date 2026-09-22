@@ -138,6 +138,12 @@ export function idField<T>(
     key,
     label,
     param,
+    // THE SERVER COUNTS UNDER THE PARAMETER, NOT THE KEY. `project` is what
+    // this field is called in a link; `project_id` is what the endpoint takes
+    // and what its `facets` block is keyed by (docs/software-factory/api.md).
+    // Without this the counts silently miss and every chip renders bare — the
+    // field still works, which is exactly what would make it hard to notice.
+    facetKey: param,
     options: choices,
     control: 'select',
   };
@@ -209,6 +215,10 @@ export function sessionFilters<T>(
       key: 'status',
       label: 'Status',
       param: 'status',
+      // The sessions listing TAKES `status` and COUNTS under `state` — the
+      // name the record itself uses. The two differ only here, which is what
+      // facetKey exists for.
+      facetKey: 'state',
       options: options(SESSION_STATES),
     },
     {

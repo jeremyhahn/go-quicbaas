@@ -2938,32 +2938,6 @@ func (s *agentServiceImpl) resolveSessionJobs(ctx context.Context, tenants map[s
 	}
 }
 
-// jobRunner is the runner that drove one job: the live control loop's when it
-// is still running, the persisted record's once it has returned, and empty
-// when neither can answer.
-//
-// AN EMPTY RUNNER ON A JOB THAT EXISTS IS "workflow", not "unknown" — a job
-// that names no runner is the engine's own (ResolveJobRunnerName). The two
-// are told apart here so a caller can trust that an empty answer means the
-// job itself could not be read.
-func (s *agentServiceImpl) jobRunner(tenantID, jobID string) string {
-	if val, ok := s.jobs.Load(tenantID + "/" + jobID); ok {
-		if job, castOk := val.(*runningJob); castOk {
-			if status := job.run.Status(); status != nil {
-				return ResolveJobRunnerName(jobStatusRunner(status))
-			}
-		}
-	}
-	if s.kvStore == nil {
-		return ""
-	}
-	status, err := s.loadJobStatus(tenantID, jobID)
-	if err != nil {
-		return ""
-	}
-	return ResolveJobRunnerName(jobStatusRunner(status))
-}
-
 // DecomposeTask uses an agent to decompose a task into work items.
 // When req.Backend is empty and a lead agent session is configured, the lead
 // session is used for decomposition via PromptSession. When req.Backend is

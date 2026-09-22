@@ -145,6 +145,18 @@ func TestEmbedded_TaskSourceAndStatusConversions(t *testing.T) {
 	src := taskSourceFromSDK(&orchestratorSDK.TaskSource{Kind: "operator", Ref: "alice", URL: "u"})
 	assert.Equal(t, orchestration.TaskSourceKindOperator, src.Kind)
 	assert.Equal(t, "alice", src.Ref)
-	assert.Nil(t, taskStatusesFromSDK(nil))
-	assert.Equal(t, []orchestration.TaskStatus{orchestration.TaskStatusBlocked, orchestration.TaskStatusPending}, taskStatusesFromSDK([]string{"blocked", "pending"}))
+	// The status conversion is the SHARED, VALIDATING one now: an absent
+	// filter narrows nothing, a known status converts, and one the engine
+	// does not have is refused rather than matched against nothing.
+	empty, err := orchestration.TaskStatusesFrom("statuses", nil)
+	assert.NoError(t, err)
+	assert.Nil(t, empty)
+
+	known, err := orchestration.TaskStatusesFrom("statuses", []string{"blocked", "pending"})
+	assert.NoError(t, err)
+	assert.Equal(t, []orchestration.TaskStatus{orchestration.TaskStatusBlocked, orchestration.TaskStatusPending}, known)
+
+	refused, err := orchestration.TaskStatusesFrom("statuses", []string{"blokced"})
+	assert.Nil(t, refused)
+	assert.ErrorIs(t, err, orchestration.ErrFilterParamInvalid)
 }
