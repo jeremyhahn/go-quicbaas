@@ -172,6 +172,8 @@ func resetAccountFlags() {
 	accountClearProject = false
 	accountCredentialFile = ""
 	accountRevokeReason = ""
+	accountCredentialSecretRef = ""
+	accountCredentialSecretFile = ""
 }
 
 // credentialFile writes a credential JSON document to a temp file and returns

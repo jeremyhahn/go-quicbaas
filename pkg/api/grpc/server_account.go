@@ -64,18 +64,19 @@ func (s *AccountServer) CreateAccount(ctx context.Context, req *pb.CreateAccount
 	if req.Provider == "" {
 		return nil, status.Error(codes.InvalidArgument, "provider is required")
 	}
-	if req.Credential == nil {
-		return nil, status.Error(codes.InvalidArgument, "credential is required")
-	}
 
+	// Inline credential vs credential_secret_ref (exactly one) is the
+	// service's rule, so every transport answers it identically.
 	resp, err := s.accountSvc.CreateAccount(ctx, &service.CreateAccountRequest{
-		TenantID:      req.TenantId,
-		ProjectID:     req.ProjectId,
-		Provider:      orchestration.AccountProvider(req.Provider),
-		DisplayName:   req.DisplayName,
-		Default:       req.IsDefault,
-		RefreshPolicy: orchestration.AccountRefreshPolicy(req.RefreshPolicy),
-		Credential:    accountCredentialFromProto(req.Credential),
+		TenantID:             req.TenantId,
+		ProjectID:            req.ProjectId,
+		Provider:             orchestration.AccountProvider(req.Provider),
+		DisplayName:          req.DisplayName,
+		Default:              req.IsDefault,
+		RefreshPolicy:        orchestration.AccountRefreshPolicy(req.RefreshPolicy),
+		Credential:           accountCredentialFromProto(req.Credential),
+		CredentialSecretRef:  req.CredentialSecretRef,
+		CredentialSecretFile: req.CredentialSecretFile,
 	})
 	if err != nil {
 		return nil, convertAccountError(err)
@@ -168,6 +169,9 @@ func (s *AccountServer) UpdateAccount(ctx context.Context, req *pb.UpdateAccount
 		ProjectID:      req.ProjectId,
 		ClearProjectID: req.ClearProjectId,
 		RefreshPolicy:  orchestration.AccountRefreshPolicy(req.RefreshPolicy),
+
+		CredentialSecretRef:  req.CredentialSecretRef,
+		CredentialSecretFile: req.CredentialSecretFile,
 	})
 	if err != nil {
 		return nil, convertAccountError(err)
@@ -346,6 +350,9 @@ func accountToProto(a *orchestration.Account) *pb.Account {
 		Status:        string(a.Status),
 		RefreshPolicy: string(a.RefreshPolicy),
 		LastError:     a.LastError,
+
+		CredentialSecretRef:  a.CredentialSecretRef,
+		CredentialSecretFile: a.CredentialSecretFile,
 	}
 	out.CreatedAtUnix = unixOrZero(a.CreatedAt)
 	out.UpdatedAtUnix = unixOrZero(a.UpdatedAt)
@@ -428,6 +435,8 @@ func convertAccountError(err error) error {
 	var notReleasable *service.AccountNotReleasableError
 	var projectScope *service.AccountProjectScopeError
 	var noTokens *service.AccountTokenManagerNotConfiguredError
+	var secretUnresolved *orchestration.AccountSecretRefUnresolvedError
+	var noSecretResolver *orchestration.AccountSecretResolverNotConfiguredError
 
 	switch {
 	case stderrors.As(err, &notFound):
@@ -439,10 +448,19 @@ func convertAccountError(err error) error {
 		// this account and the account exists — it is the account's STATE that
 		// refuses, and for a limit hold that state clears on its own.
 		return status.Error(codes.FailedPrecondition, err.Error())
+	case stderrors.As(err, &secretUnresolved):
+		// FailedPrecondition for the same reason: the account exists, and the
+		// tenant secret it names does not resolve.
+		return status.Error(codes.FailedPrecondition, err.Error())
 	case stderrors.As(err, &projectScope):
 		return status.Error(codes.PermissionDenied, err.Error())
-	case stderrors.As(err, &noTracker), stderrors.As(err, &noTokens):
+	case stderrors.As(err, &noTracker), stderrors.As(err, &noTokens), stderrors.As(err, &noSecretResolver):
 		return status.Error(codes.Unavailable, err.Error())
+	case stderrors.Is(err, orchestration.ErrAccountVersionConflict):
+		// Aborted: a concurrent write changed the account under this one — a
+		// rewrite that kept losing, or an inline rotation overtaken by a switch
+		// to a secret reference. Nothing was written; the caller may retry.
+		return status.Error(codes.Aborted, err.Error())
 	default:
 		return status.Error(codes.Internal, err.Error())
 	}
@@ -514,6 +532,7 @@ func (s *AccountServer) MaterializeAccountCredential(
 		LastRefreshedAtUnix: unixOrZero(resp.LastRefreshedAt),
 		LeaseId:             resp.LeaseID,
 		LeaseExpiresAtUnix:  unixOrZero(resp.LeaseExpiresAt),
+		SingleUse:           resp.SingleUse,
 		Timestamp:           resp.Timestamp.Unix(),
 	}, nil
 }

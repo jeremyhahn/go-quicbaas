@@ -185,6 +185,14 @@ type AccountInfo struct {
 	Status        Status        `json:"status"`
 	RefreshPolicy RefreshPolicy `json:"refresh_policy"`
 
+	// CredentialSecretRef names the tenant secret the credential is read from,
+	// when the account is reference-sourced. A name, never the value.
+	CredentialSecretRef string `json:"credential_secret_ref,omitempty"`
+
+	// CredentialSecretFile is where a referenced secret is materialized
+	// (relative to the session home) instead of the access token.
+	CredentialSecretFile string `json:"credential_secret_file,omitempty"`
+
 	// AvailableAt is when a StatusLimited account rejoins the selectable pool.
 	// Zero on every other status.
 	AvailableAt time.Time `json:"available_at,omitempty"`
@@ -230,8 +238,18 @@ type CreateAccountRequest struct {
 	Default bool `json:"default,omitempty"`
 	// RefreshPolicy selects how the credential is renewed.
 	RefreshPolicy RefreshPolicy `json:"refresh_policy,omitempty"`
-	// Credential is the initial secret envelope. Required; never echoed back.
-	Credential *Credential `json:"credential"`
+	// Credential is the initial secret envelope, held inline; never echoed
+	// back. Exactly one of Credential and CredentialSecretRef is required.
+	Credential *Credential `json:"credential,omitempty"`
+	// CredentialSecretRef names the tenant secret the credential is read from
+	// on every spawn instead (e.g. "agents/claude/claude1/oauth_token"). Write
+	// the secret first (Security().Secrets()); rotating it rotates the
+	// account with no account write.
+	CredentialSecretRef string `json:"credential_secret_ref,omitempty"`
+	// CredentialSecretFile, with CredentialSecretRef, materializes the secret
+	// as this file relative to the session home (e.g. ".codex/auth.json")
+	// instead of as the access token.
+	CredentialSecretFile string `json:"credential_secret_file,omitempty"`
 }
 
 // GetAccountRequest identifies an account for transport dispatch.
@@ -275,6 +293,13 @@ type UpdateAccountRequest struct {
 	ProjectID      string        `json:"project_id,omitempty"`
 	ClearProjectID bool          `json:"clear_project_id,omitempty"`
 	RefreshPolicy  RefreshPolicy `json:"refresh_policy,omitempty"`
+
+	// CredentialSecretRef switches the account's credential to (or re-points
+	// it at) this tenant secret. Re-applying the current one returns an
+	// account whose secret was missing to service.
+	CredentialSecretRef string `json:"credential_secret_ref,omitempty"`
+	// CredentialSecretFile is applied together with CredentialSecretRef.
+	CredentialSecretFile string `json:"credential_secret_file,omitempty"`
 }
 
 // DeleteAccountRequest identifies an account to delete.
@@ -426,6 +451,12 @@ type MaterializedCredential struct {
 	// independent: a lapsing grant never shortens a token the refresher would
 	// have kept alive, and a refreshed token never extends a grant.
 	LeaseExpiresAt time.Time `json:"lease_expires_at,omitempty"`
+
+	// SingleUse says the envelope is good for the spawn that asked for it only.
+	// The account reads its credential from a tenant secret, which rotates with
+	// no account write — so a caller must not cache it past that spawn, or a
+	// secret write would not reach the next one.
+	SingleUse bool `json:"single_use,omitempty"`
 }
 
 // =============================================================================
@@ -460,8 +491,10 @@ func (c *client) Create(ctx context.Context, req *CreateAccountRequest) (*Accoun
 	if req.Provider == "" {
 		return nil, errors.NewInvalidInput(op, "provider is required")
 	}
-	if req.Credential == nil {
-		return nil, errors.NewInvalidInput(op, "credential is required")
+	// Both-supplied is the server's to refuse, with the same answer on every
+	// transport; neither-supplied cannot be a valid request anywhere.
+	if req.Credential == nil && req.CredentialSecretRef == "" {
+		return nil, errors.NewInvalidInput(op, "credential or credential_secret_ref is required")
 	}
 	return c.accountInfo(ctx, op, "Create", req)
 }

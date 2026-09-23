@@ -234,10 +234,6 @@ func TestAccountServer_InvalidInput(t *testing.T) {
 			_, err := server.CreateAccount(ctx, &pb.CreateAccountRequest{TenantId: "t", Credential: grpcSampleCredential()})
 			return err
 		},
-		"create no credential": func() error {
-			_, err := server.CreateAccount(ctx, &pb.CreateAccountRequest{TenantId: "t", Provider: "claude"})
-			return err
-		},
 		"get nil":           func() error { _, err := server.GetAccount(ctx, nil); return err },
 		"get no account":    func() error { _, err := server.GetAccount(ctx, &pb.GetAccountRequest{TenantId: "t"}); return err },
 		"list nil":          func() error { _, err := server.ListAccounts(ctx, nil); return err },
@@ -276,6 +272,53 @@ func TestAccountServer_InvalidInput(t *testing.T) {
 	}
 }
 
+// TestAccountServer_SecretRefRoundTrips proves CreateAccount and UpdateAccount
+// carry credential_secret_ref to the service with no inline credential, and
+// that the account message reports it back.
+func TestAccountServer_SecretRefRoundTrips(t *testing.T) {
+	var createReq *service.CreateAccountRequest
+	var updateReq *service.UpdateAccountRequest
+	referenced := &orchestration.Account{
+		ID: "acct-1", TenantID: "t", Provider: orchestration.AccountProviderCodex,
+		CredentialSecretRef: "agents/codex/reviewer/auth_json", CredentialSecretFile: ".codex/auth.json",
+	}
+	server := newAccountServer(&mocks.MockAccountService{
+		CreateAccountFunc: func(ctx context.Context, req *service.CreateAccountRequest) (*service.CreateAccountResponse, error) {
+			createReq = req
+			return &service.CreateAccountResponse{Account: referenced}, nil
+		},
+		UpdateAccountFunc: func(ctx context.Context, req *service.UpdateAccountRequest) (*service.UpdateAccountResponse, error) {
+			updateReq = req
+			return &service.UpdateAccountResponse{Account: referenced}, nil
+		},
+	})
+	ctx := context.Background()
+
+	resp, err := server.CreateAccount(ctx, &pb.CreateAccountRequest{
+		TenantId: "t", Provider: "codex",
+		CredentialSecretRef: "agents/codex/reviewer/auth_json", CredentialSecretFile: ".codex/auth.json",
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	if createReq == nil || createReq.Credential != nil ||
+		createReq.CredentialSecretRef != "agents/codex/reviewer/auth_json" || createReq.CredentialSecretFile != ".codex/auth.json" {
+		t.Fatalf("reference lost on the way in: %+v", createReq)
+	}
+	if resp.Account.CredentialSecretRef != "agents/codex/reviewer/auth_json" || resp.Account.CredentialSecretFile != ".codex/auth.json" {
+		t.Fatalf("reference lost on the way out: %+v", resp.Account)
+	}
+
+	if _, err := server.UpdateAccount(ctx, &pb.UpdateAccountRequest{
+		TenantId: "t", AccountId: "acct-1", CredentialSecretRef: "agents/codex/reviewer/auth_json",
+	}); err != nil {
+		t.Fatalf("UpdateAccount: %v", err)
+	}
+	if updateReq == nil || updateReq.CredentialSecretRef != "agents/codex/reviewer/auth_json" {
+		t.Fatalf("update reference lost: %+v", updateReq)
+	}
+}
+
 // TestConvertAccountError maps each service-layer error class to its gRPC code.
 func TestConvertAccountError(t *testing.T) {
 	cases := []struct {
@@ -285,6 +328,8 @@ func TestConvertAccountError(t *testing.T) {
 		{&service.AccountNotFoundError{TenantID: "t", AccountID: "a"}, codes.NotFound},
 		{&service.AccountInvalidError{Field: "f", Message: "m"}, codes.InvalidArgument},
 		{&service.AccountUsageTrackerNotConfiguredError{}, codes.Unavailable},
+		{&orchestration.AccountSecretRefUnresolvedError{TenantID: "t", AccountID: "a", Ref: "agents/x"}, codes.FailedPrecondition},
+		{&orchestration.AccountSecretResolverNotConfiguredError{AccountID: "a"}, codes.Unavailable},
 		{status.Error(codes.Unknown, "other"), codes.Internal},
 	}
 	for _, tc := range cases {

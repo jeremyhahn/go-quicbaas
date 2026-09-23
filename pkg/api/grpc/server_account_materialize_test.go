@@ -25,6 +25,7 @@ import (
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -271,5 +272,108 @@ func TestMaterializedCredentialToProto_DropsTheRefreshGrant(t *testing.T) {
 	}
 	if materializedCredentialToProto(nil) != nil {
 		t.Error("converter fabricated an envelope from nil")
+	}
+}
+
+// singleUseReleasingService releases like grpcReleasingService, marking the
+// envelope single-use as the service does for a referenced account.
+func singleUseReleasingService(singleUse bool) *mocks.MockAccountService {
+	base := grpcReleasingService(nil)
+	release := base.MaterializeAccountCredentialFunc
+	base.MaterializeAccountCredentialFunc = func(
+		ctx context.Context, req *service.MaterializeAccountCredentialRequest,
+	) (*service.MaterializeAccountCredentialResponse, error) {
+		resp, err := release(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		resp.SingleUse = singleUse
+		return resp, nil
+	}
+	return base
+}
+
+// TestAccountGRPC_MaterializeCarriesSingleUse proves the wire says when an
+// envelope must not be reused: a referenced account's secret rotates with no
+// account write, and a daemon over gRPC must learn that as one over REST does.
+func TestAccountGRPC_MaterializeCarriesSingleUse(t *testing.T) {
+	srv := newAccountServer(singleUseReleasingService(true))
+
+	resp, err := srv.MaterializeAccountCredential(grpcDaemonContext("tenant-1"),
+		&pb.MaterializeAccountCredentialRequest{AccountId: "acct-1"})
+	if err != nil {
+		t.Fatalf("MaterializeAccountCredential() error = %v", err)
+	}
+	if !resp.SingleUse {
+		t.Error("a single-use release reached the wire as reusable")
+	}
+}
+
+// TestAccountGRPC_MaterializeInlineIsNotSingleUse is the other side: an
+// inline account's envelope stays cacheable.
+func TestAccountGRPC_MaterializeInlineIsNotSingleUse(t *testing.T) {
+	srv := newAccountServer(singleUseReleasingService(false))
+
+	resp, err := srv.MaterializeAccountCredential(grpcDaemonContext("tenant-1"),
+		&pb.MaterializeAccountCredentialRequest{AccountId: "acct-1"})
+	if err != nil {
+		t.Fatalf("MaterializeAccountCredential() error = %v", err)
+	}
+	if resp.SingleUse {
+		t.Error("an inline release reached the wire as single-use")
+	}
+}
+
+// TestConvertAccountError_ConflictIsAborted proves a lost concurrent write —
+// including an inline rotation overtaken by a switch to a secret reference —
+// reaches a gRPC caller as Aborted (retryable), not Internal.
+func TestConvertAccountError_ConflictIsAborted(t *testing.T) {
+	for _, err := range []error{
+		&orchestration.AccountVersionConflictError{TenantID: "t", AccountID: "a"},
+		&orchestration.AccountCredentialSourceChangedError{TenantID: "t", AccountID: "a", Ref: "r"},
+	} {
+		if got := status.Code(convertAccountError(err)); got != codes.Aborted {
+			t.Errorf("convertAccountError(%T) = %s, want Aborted", err, got)
+		}
+	}
+}
+
+// TestConvertAccountError_UnclassifiedStaysInternal is the negative side: an
+// error that is not a conflict is not reported as one.
+func TestConvertAccountError_UnclassifiedStaysInternal(t *testing.T) {
+	if got := status.Code(convertAccountError(&orchestration.AccountStoreError{Message: "disk"})); got != codes.Internal {
+		t.Errorf("convertAccountError(store error) = %s, want Internal", got)
+	}
+}
+
+// TestAccountGRPC_UnresolvedSecretRefDoesNotLeakBackendDiagnostics proves the
+// gRPC status carries the refusal's sanitized message and nothing of the
+// secrets backend's QBError cause.
+func TestAccountGRPC_UnresolvedSecretRefDoesNotLeakBackendDiagnostics(t *testing.T) {
+	svc := &mocks.MockAccountService{
+		MaterializeAccountCredentialFunc: func(
+			context.Context, *service.MaterializeAccountCredentialRequest,
+		) (*service.MaterializeAccountCredentialResponse, error) {
+			return nil, &orchestration.AccountSecretRefUnresolvedError{
+				TenantID: "tenant-1", AccountID: "acct-1", Ref: "agents/claude/claude1/oauth_token",
+				Reason: "the secret could not be read",
+				Cause: qberrors.New(qberrors.ErrUnavailable, "secrets.GetSecret", "vault diag sk-fake-marker").
+					WithContext("backend_diagnostic", "sk-fake-marker"),
+			}
+		},
+	}
+	srv := newAccountServer(svc)
+
+	_, err := srv.MaterializeAccountCredential(grpcDaemonContext("tenant-1"),
+		&pb.MaterializeAccountCredentialRequest{AccountId: "acct-1"})
+	st, _ := status.FromError(err)
+	if st.Code() != codes.FailedPrecondition {
+		t.Fatalf("code = %s, want FailedPrecondition", st.Code())
+	}
+	if strings.Contains(st.Message(), "sk-fake-marker") {
+		t.Fatalf("status message leaks the secrets backend's diagnostics: %s", st.Message())
+	}
+	if !strings.Contains(st.Message(), "credential_secret_ref") {
+		t.Errorf("status message lost the sanitized refusal: %s", st.Message())
 	}
 }

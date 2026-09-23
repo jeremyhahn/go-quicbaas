@@ -57,6 +57,16 @@ func forwardCompareAndDelete(ctx context.Context, inner interfaces.KVStore, key 
 	return deleter.CompareAndDelete(ctx, key, expected)
 }
 
+// forwardCompareAndSwap is forwardCompareAndDelete for the guarded edit, which
+// every account record write now commits through.
+func forwardCompareAndSwap(ctx context.Context, inner interfaces.KVStore, key string, expected, next []byte) (bool, error) {
+	swapper, ok := inner.(guardedSwapper)
+	if !ok {
+		return false, errors.New("test wrapper: inner store cannot guard an edit")
+	}
+	return swapper.CompareAndSwap(ctx, key, expected, next)
+}
+
 // taskFaultKV injects a failure into one KV verb while delegating every other
 // verb to the real store. It embeds interfaces.KVStore so a new verb added to
 // the contract keeps compiling here and keeps behaving like the real store —

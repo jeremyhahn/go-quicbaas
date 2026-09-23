@@ -109,9 +109,20 @@ type CreateAccountRequest struct {
 	Default       bool                               `json:"default,omitempty"`
 	RefreshPolicy orchestration.AccountRefreshPolicy `json:"refresh_policy,omitempty"`
 
-	// Credential is the account's initial secret envelope. Required; never
-	// echoed back by any AccountService method.
+	// Credential is the account's initial secret envelope, held inline. Never
+	// echoed back by any AccountService method. Exactly one of Credential and
+	// CredentialSecretRef is required.
 	Credential *orchestration.AccountCredential `json:"credential,omitempty"`
+
+	// CredentialSecretRef names the tenant secret the credential is read from
+	// on every resolution instead (e.g. "agents/claude/claude1/oauth_token"),
+	// in TenantID's keyspace. It must resolve when the account is created.
+	CredentialSecretRef string `json:"credential_secret_ref,omitempty"`
+
+	// CredentialSecretFile materializes the referenced secret as this file
+	// (relative to the session home) rather than as the access token. Only
+	// with CredentialSecretRef.
+	CredentialSecretFile string `json:"credential_secret_file,omitempty"`
 }
 
 // CreateAccountResponse confirms account creation. Account never carries
@@ -182,6 +193,19 @@ type UpdateAccountRequest struct {
 	ProjectID      string                             `json:"project_id,omitempty"`
 	ClearProjectID bool                               `json:"clear_project_id,omitempty"`
 	RefreshPolicy  orchestration.AccountRefreshPolicy `json:"refresh_policy,omitempty"`
+
+	// CredentialSecretRef, when set, points the account's credential at this
+	// tenant secret: an inline account SWITCHES to the reference (its inline
+	// envelope is destroyed), a reference account is re-pointed. The secret
+	// must resolve. Re-applying an account's current reference is also how an
+	// operator returns an account the spawn path put in "error" (because the
+	// secret was missing) to service once the secret is written.
+	CredentialSecretRef string `json:"credential_secret_ref,omitempty"`
+
+	// CredentialSecretFile is applied together with CredentialSecretRef; see
+	// CreateAccountRequest.CredentialSecretFile. An update that sets a
+	// reference without it projects the secret as the access token.
+	CredentialSecretFile string `json:"credential_secret_file,omitempty"`
 }
 
 // UpdateAccountResponse wraps the updated account.
@@ -389,6 +413,13 @@ type accountServiceImpl struct {
 	// SetTokenManager.
 	tokens *orchestration.AccountTokenManager
 
+	// secretRefs reads the tenant secret a reference-sourced account names,
+	// so a create or update can refuse a reference that does not resolve.
+	// Optional; a reference write without it fails closed with
+	// orchestration.AccountSecretResolverNotConfiguredError. See
+	// SetSecretResolver.
+	secretRefs orchestration.AccountSecretResolver
+
 	// auditor records each credential release. Optional; nil disables the
 	// record. See SetAuditor.
 	auditor orchestration.StoreAuditor
@@ -453,6 +484,14 @@ func (s *accountServiceImpl) SetProviderRegistry(registry *orchestration.Account
 	}
 }
 
+// SetSecretResolver wires the resolver a credential_secret_ref is checked
+// against at write time. A nil resolver is ignored.
+func (s *accountServiceImpl) SetSecretResolver(resolver orchestration.AccountSecretResolver) {
+	if resolver != nil {
+		s.secretRefs = resolver
+	}
+}
+
 // CreateAccount validates, persists, and stores the credential for a new
 // account.
 func (s *accountServiceImpl) CreateAccount(ctx context.Context, req *CreateAccountRequest) (*CreateAccountResponse, error) {
@@ -462,21 +501,28 @@ func (s *accountServiceImpl) CreateAccount(ctx context.Context, req *CreateAccou
 	ctx = accountTenantContext(ctx, req.TenantID)
 
 	account := &orchestration.Account{
-		ID:          uuid.New().String(),
-		TenantID:    req.TenantID,
-		ProjectID:   req.ProjectID,
-		Provider:    req.Provider,
-		DisplayName: req.DisplayName,
-		Default:     req.Default,
-		Status:      orchestration.AccountStatusActive,
-		// Mirror the operator-declared expiry onto the non-secret metadata
-		// record. For a static token that declaration is the ONLY expiry
-		// QuicBaaS will ever know — it does not call the provider to discover
-		// one — and it is what makes Account.CredentialHealth report "expiring"
-		// ahead of the lapse instead of a permanent "unknown".
-		CredentialExpiresAt: req.Credential.ExpiresAt,
-		RefreshPolicy:       effectiveRefreshPolicy(req.RefreshPolicy),
+		ID:                   uuid.New().String(),
+		TenantID:             req.TenantID,
+		ProjectID:            req.ProjectID,
+		Provider:             req.Provider,
+		DisplayName:          req.DisplayName,
+		Default:              req.Default,
+		Status:               orchestration.AccountStatusActive,
+		RefreshPolicy:        effectiveRefreshPolicy(req.RefreshPolicy),
+		CredentialSecretRef:  req.CredentialSecretRef,
+		CredentialSecretFile: req.CredentialSecretFile,
 	}
+
+	if account.UsesSecretRef() {
+		return s.createWithSecretRef(ctx, account)
+	}
+
+	// Mirror the operator-declared expiry onto the non-secret metadata
+	// record. For a static token that declaration is the ONLY expiry
+	// QuicBaaS will ever know — it does not call the provider to discover
+	// one — and it is what makes Account.CredentialHealth report "expiring"
+	// ahead of the lapse instead of a permanent "unknown".
+	account.CredentialExpiresAt = req.Credential.ExpiresAt
 
 	// Store the credential BEFORE the metadata record, so a crash between
 	// the two writes never leaves a listable account with no credential —
@@ -566,11 +612,79 @@ func (s *accountServiceImpl) UpdateAccount(ctx context.Context, req *UpdateAccou
 		}
 	}
 
-	existing, err := s.store.Get(ctx, req.TenantID, req.AccountID)
-	if err != nil {
-		return nil, convertAccountStoreError(err)
+	if req.CredentialSecretFile != "" && req.CredentialSecretRef == "" {
+		return nil, convertAccountStoreError(&orchestration.AccountCredentialSourceError{
+			Field:   "credential_secret_file",
+			Message: "set it together with credential_secret_ref",
+		})
 	}
 
+	existing, err := s.rewriteAccount(ctx, req.TenantID, req.AccountID, func(account *orchestration.Account) error {
+		return s.applyAccountUpdate(ctx, account, req)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// A reference account reads its credential from the secret, so any inline
+	// envelope it still has describes nothing. Destroyed AFTER the record
+	// moved: a crash in between leaves an orphaned envelope, never an account
+	// with no credential.
+	//
+	// ON EVERY UPDATE OF A REFERENCE ACCOUNT, not only the one that switched
+	// it. A switch whose cleanup failed has already committed the record, so
+	// its retry no longer looks like a switch; keying the cleanup on the
+	// transition left that envelope behind for good. Delete is idempotent (an
+	// absent envelope is not an error), so the repeat is a no-op once it has
+	// succeeded. It cannot reach the referenced secret: that lives under the
+	// tenant's own secrets namespace, the inline envelope under the account
+	// store's (orchestration.AccountSecretPath).
+	if existing.UsesSecretRef() && s.secrets != nil {
+		if cleanupErr := s.secrets.Delete(ctx, req.TenantID, req.AccountID); cleanupErr != nil {
+			return nil, &AccountCredentialCleanupError{TenantID: req.TenantID, AccountID: req.AccountID, Cleanup: cleanupErr}
+		}
+	}
+	return &UpdateAccountResponse{Account: existing, Timestamp: time.Now().UTC()}, nil
+}
+
+// accountUpdateAttempts bounds how many times a record rewrite re-reads and
+// re-applies a change whose write lost a race to a concurrent change.
+const accountUpdateAttempts = 5
+
+// rewriteAccount applies apply to the stored account and writes it
+// CONDITIONALLY: the write lands only if the account is unchanged since it was
+// read (a guarded edit in the store), and a lost race re-reads and re-applies
+// the change to the new state. Every service-level read-modify-write of an
+// account record goes through here.
+//
+// Unconditional writes let a rename that read an inline account, and was then
+// overtaken by a switch to a secret reference (which destroys the inline
+// envelope), save its stale snapshot with no reference, leaving an account with
+// no credential source at all while both requests reported success.
+func (s *accountServiceImpl) rewriteAccount(
+	ctx context.Context, tenantID, accountID string, apply func(*orchestration.Account) error,
+) (*orchestration.Account, error) {
+	for attempt := 1; ; attempt++ {
+		existing, err := s.store.Get(ctx, tenantID, accountID)
+		if err != nil {
+			return nil, convertAccountStoreError(err)
+		}
+		readAt := existing.UpdatedAt
+		if err := apply(existing); err != nil {
+			return nil, err
+		}
+		err = s.store.UpdateIfUnchanged(ctx, existing, readAt)
+		if err == nil {
+			return existing, nil
+		}
+		if !stderrors.Is(err, orchestration.ErrAccountVersionConflict) || attempt >= accountUpdateAttempts {
+			return nil, convertAccountStoreError(err)
+		}
+	}
+}
+
+// applyAccountUpdate applies req's changes to account in memory.
+func (s *accountServiceImpl) applyAccountUpdate(ctx context.Context, existing *orchestration.Account, req *UpdateAccountRequest) error {
 	if req.DisplayName != "" {
 		existing.DisplayName = req.DisplayName
 	}
@@ -582,11 +696,19 @@ func (s *accountServiceImpl) UpdateAccount(ctx context.Context, req *UpdateAccou
 	if req.RefreshPolicy != "" {
 		existing.RefreshPolicy = req.RefreshPolicy
 	}
-
-	if err := s.store.Update(ctx, existing); err != nil {
-		return nil, convertAccountStoreError(err)
+	if req.CredentialSecretRef != "" {
+		return s.applySecretRef(ctx, existing, req.CredentialSecretRef, req.CredentialSecretFile)
 	}
-	return &UpdateAccountResponse{Account: existing, Timestamp: time.Now().UTC()}, nil
+	if existing.UsesSecretRef() {
+		// A mode change on a reference account is held to the same rules a
+		// reference write is: a reference is never renewed.
+		if err := s.providers.ValidateAccountCredentialSource(existing.Provider,
+			effectiveRefreshPolicy(existing.RefreshPolicy), false,
+			existing.CredentialSecretRef, existing.CredentialSecretFile); err != nil {
+			return convertAccountStoreError(err)
+		}
+	}
+	return nil
 }
 
 // RotateAccountCredential replaces the stored credential envelope.
@@ -608,6 +730,16 @@ func (s *accountServiceImpl) RotateAccountCredential(ctx context.Context, req *R
 	if err != nil {
 		return nil, convertAccountStoreError(err)
 	}
+	// A reference account has no inline envelope to replace, and writing one
+	// would leave two sources that disagree. Its rotation is a write of the
+	// secret it names.
+	if existing.UsesSecretRef() {
+		return nil, convertAccountStoreError(&orchestration.AccountCredentialSourceError{
+			Field: "credential",
+			Message: "this account reads its credential from secret " + existing.CredentialSecretRef +
+				"; rotate it by writing a new version of that secret",
+		})
+	}
 	// The replacement must satisfy the account's mode against its provider's
 	// effective descriptor, exactly as the original did at creation: a rotate
 	// is the other way an unusable credential gets into the pool.
@@ -621,14 +753,32 @@ func (s *accountServiceImpl) RotateAccountCredential(ctx context.Context, req *R
 	// The replacement envelope's expiry supersedes the old one, including when
 	// the operator declared none: carrying the retired credential's expiry
 	// forward would describe a credential that no longer exists.
-	if touchErr := s.store.Touch(ctx, req.TenantID, req.AccountID, orchestration.TouchAccountOptions{
+	//
+	// RequireInlineCredential closes the race with a switch to a reference.
+	// The check above read the account BEFORE the envelope write; a switch can
+	// commit in between and destroy the inline envelope, which the Put above
+	// has then recreated. The store decides "still inline" atomically with
+	// this record write, so the rotation either lands on an inline account or
+	// writes nothing to the record — and then removes the envelope it wrote.
+	touchErr := s.store.Touch(ctx, req.TenantID, req.AccountID, orchestration.TouchAccountOptions{
 		MarkRefreshed:            true,
 		SetStatusValid:           true,
 		SetStatus:                orchestration.AccountStatusActive,
 		ClearLastError:           true,
 		SetCredentialExpiresAt:   req.Credential.ExpiresAt,
 		SetCredentialExpiryValid: true,
-	}); touchErr != nil {
+		RequireInlineCredential:  true,
+	})
+	var switched *orchestration.AccountCredentialSourceChangedError
+	if stderrors.As(touchErr, &switched) {
+		if cleanupErr := s.secrets.Delete(ctx, req.TenantID, req.AccountID); cleanupErr != nil {
+			return nil, &AccountCredentialCleanupError{
+				TenantID: req.TenantID, AccountID: req.AccountID, Cause: touchErr, Cleanup: cleanupErr,
+			}
+		}
+		return nil, touchErr
+	}
+	if touchErr != nil {
 		return nil, &AccountRotationIncompleteError{
 			TenantID: req.TenantID, AccountID: req.AccountID, Cause: convertAccountStoreError(touchErr),
 		}
@@ -645,14 +795,13 @@ func (s *accountServiceImpl) RevokeAccount(ctx context.Context, req *RevokeAccou
 		return nil, &AccountInvalidError{Field: "account_id", Message: "account ID is required"}
 	}
 	ctx = accountTenantContext(ctx, req.TenantID)
-	existing, err := s.store.Get(ctx, req.TenantID, req.AccountID)
+	existing, err := s.rewriteAccount(ctx, req.TenantID, req.AccountID, func(account *orchestration.Account) error {
+		account.Status = orchestration.AccountStatusRevoked
+		account.LastError = req.Reason
+		return nil
+	})
 	if err != nil {
-		return nil, convertAccountStoreError(err)
-	}
-	existing.Status = orchestration.AccountStatusRevoked
-	existing.LastError = req.Reason
-	if err := s.store.Update(ctx, existing); err != nil {
-		return nil, convertAccountStoreError(err)
+		return nil, err
 	}
 	return &RevokeAccountResponse{Account: existing, Timestamp: time.Now().UTC()}, nil
 }
@@ -740,8 +889,12 @@ func (s *accountServiceImpl) validateCreate(req *CreateAccountRequest) error {
 	if req.Provider == "" {
 		return &AccountInvalidError{Field: "provider", Message: "provider is required"}
 	}
+	if err := s.providers.ValidateAccountCredentialSource(req.Provider, effectiveRefreshPolicy(req.RefreshPolicy),
+		req.Credential != nil, req.CredentialSecretRef, req.CredentialSecretFile); err != nil {
+		return convertAccountStoreError(err)
+	}
 	if req.Credential == nil {
-		return &AccountInvalidError{Field: "credential", Message: "credential is required"}
+		return nil
 	}
 	// Fail closed at write time on a credential that could never be renewed:
 	// an oauth_refresh account with no refresh token, or none whose account
@@ -777,8 +930,11 @@ func convertAccountStoreError(err error) error {
 		refreshNeeded *orchestration.AccountRefreshTokenRequiredError
 		staticRefresh *orchestration.AccountStaticTokenRefreshableError
 		endpointUnres *orchestration.AccountProviderEndpointUnresolvedError
+		sourceInvalid *orchestration.AccountCredentialSourceError
 	)
 	switch {
+	case stderrors.As(err, &sourceInvalid):
+		return &AccountInvalidError{Field: sourceInvalid.Field, Message: sourceInvalid.Message, Cause: err}
 	case stderrors.As(err, &notFound):
 		return &AccountNotFoundError{TenantID: notFound.TenantID, AccountID: notFound.AccountID}
 	case stderrors.As(err, &invalid):

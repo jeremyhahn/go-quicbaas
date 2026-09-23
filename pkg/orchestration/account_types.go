@@ -254,6 +254,19 @@ type Account struct {
 	// AccountCredentialMode constants (never a transport alias).
 	RefreshPolicy AccountCredentialMode `json:"refresh_policy"`
 
+	// CredentialSecretRef, when set, names the tenant secret this account's
+	// credential is read from on every resolution (e.g.
+	// "agents/claude/claude1/oauth_token"), in the account's OWN tenant
+	// keyspace. It is a name, not credential material, which is why it may
+	// live on this record. Mutually exclusive with an inline credential; see
+	// account_secret_ref.go.
+	CredentialSecretRef string `json:"credential_secret_ref,omitempty"`
+
+	// CredentialSecretFile, when set alongside CredentialSecretRef, materializes
+	// the secret's value as this file (relative to the per-session home, e.g.
+	// ".codex/auth.json") instead of as the provider's access token.
+	CredentialSecretFile string `json:"credential_secret_file,omitempty"`
+
 	// CreatedAt / UpdatedAt / LastUsedAt / LastRefreshedAt are audit-visible
 	// timestamps. None of them ever appear inside the encrypted credential
 	// envelope; they live only on this metadata record.
@@ -398,6 +411,13 @@ type AccountStore interface {
 	// the scope it left.
 	Update(ctx context.Context, account *Account) error
 
+	// UpdateIfUnchanged is Update, made conditional: it writes only when the
+	// stored account's UpdatedAt still equals expected (the UpdatedAt of the
+	// copy the caller read) and otherwise returns AccountVersionConflictError
+	// without writing. A read-modify-write uses it so a stale snapshot can never
+	// overwrite a change made in between.
+	UpdateIfUnchanged(ctx context.Context, account *Account, expected time.Time) error
+
 	// Delete removes an account by ID. Deleting the scope's default leaves the
 	// scope with no default rather than promoting a survivor; see
 	// accountStore.releaseDefaultLocked for why.
@@ -453,6 +473,59 @@ type TouchAccountOptions struct {
 	// uses.
 	SetAvailableAt      time.Time
 	SetAvailableAtValid bool
+
+	// RequireInlineCredential refuses the touch, writing nothing, when the
+	// record it would commit over reads its credential from a secret
+	// reference. An inline rotation sets it: its envelope write is only valid
+	// while the account still HAS an inline credential, and a switch to a
+	// reference can commit between the rotation's read and this write. The
+	// refusal is AccountCredentialSourceChangedError.
+	RequireInlineCredential bool
+
+	// RequireSource, when non-nil, refuses the touch unless the record it
+	// would commit over still reads its credential from exactly this source,
+	// last applied at exactly this time (Account.Source). A stamp about a
+	// failed secret read sets it: an operator who re-pointed the reference, or
+	// wrote the secret and re-applied the same one (which re-stamps
+	// last_refreshed_at), has already answered that failure, and stamping it
+	// would disable an account that now works. The refusal is
+	// AccountCredentialSourceChangedError.
+	RequireSource *AccountSource
+
+	// PreserveRevoked refuses the touch, writing nothing, when the account is
+	// revoked. Every AUTOMATIC stamp sets it — a refresh outcome, a failed
+	// secret read — because revoked is an operator's decision that only an
+	// operator reverses, and an automatic status write racing the revoke would
+	// otherwise replace it (with error, which re-applying a reference would
+	// then reactivate, or with active outright). The refusal is
+	// AccountRevokedError.
+	PreserveRevoked bool
+}
+
+// AccountSource identifies where an account's credential comes from, as of a
+// given application: the secret reference and file (both empty for an inline
+// credential) and the last_refreshed_at stamp the source was last applied or
+// renewed at.
+type AccountSource struct {
+	SecretRef       string
+	SecretFile      string
+	LastRefreshedAt time.Time
+}
+
+// Source returns the account's credential source as it stands.
+func (a *Account) Source() AccountSource {
+	return AccountSource{
+		SecretRef:       a.CredentialSecretRef,
+		SecretFile:      a.CredentialSecretFile,
+		LastRefreshedAt: a.LastRefreshedAt,
+	}
+}
+
+// matches reports whether account still has exactly this source.
+func (s AccountSource) matches(account *Account) bool {
+	return account.CredentialSecretRef == s.SecretRef &&
+		account.CredentialSecretFile == s.SecretFile &&
+		account.LastRefreshedAt.Equal(s.LastRefreshedAt)
 }
 
 // =============================================================================

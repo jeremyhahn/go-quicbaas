@@ -18,6 +18,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -43,6 +44,7 @@ type guardedTestKV interface {
 	interfaces.KVStore
 	PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error)
 	CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error)
+	CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error)
 }
 
 // tenantNamespacedKV mirrors pkg/server's tenantRoutingKVStore for this
@@ -53,6 +55,33 @@ type guardedTestKV interface {
 // own tenant segment is never consulted, which is the property #535 turned on.
 type tenantNamespacedKV struct {
 	namespaces sync.Map // tenant ID -> guardedTestKV
+
+	// deleteFault, when set, fails every delete whose key contains it,
+	// standing in for a secrets backend that is down while an envelope is
+	// being destroyed.
+	deleteFault atomic.Pointer[string]
+}
+
+// testKVDeleteFaultError is the injected deleteFault failure.
+type testKVDeleteFaultError struct{ Key string }
+
+func (e *testKVDeleteFaultError) Error() string { return "test kv: injected delete failure: " + e.Key }
+
+// failDeletesContaining arms deleteFault; an empty needle disarms it.
+func (kv *tenantNamespacedKV) failDeletesContaining(needle string) {
+	if needle == "" {
+		kv.deleteFault.Store(nil)
+		return
+	}
+	kv.deleteFault.Store(&needle)
+}
+
+// deleteFaultFor reports the injected failure for key, if one is armed.
+func (kv *tenantNamespacedKV) deleteFaultFor(key string) error {
+	if needle := kv.deleteFault.Load(); needle != nil && strings.Contains(key, *needle) {
+		return &testKVDeleteFaultError{Key: key}
+	}
+	return nil
 }
 
 func newTenantNamespacedKV() *tenantNamespacedKV {
@@ -98,6 +127,9 @@ func (kv *tenantNamespacedKV) Get(ctx context.Context, key string) ([]byte, erro
 }
 
 func (kv *tenantNamespacedKV) Delete(ctx context.Context, key string) error {
+	if err := kv.deleteFaultFor(key); err != nil {
+		return err
+	}
 	return kv.route(ctx).Delete(ctx, key)
 }
 
@@ -118,7 +150,14 @@ func (kv *tenantNamespacedKV) PutIfAbsent(ctx context.Context, key string, value
 }
 
 func (kv *tenantNamespacedKV) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	if err := kv.deleteFaultFor(key); err != nil {
+		return false, err
+	}
 	return kv.route(ctx).CompareAndDelete(ctx, key, expected)
+}
+
+func (kv *tenantNamespacedKV) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	return kv.route(ctx).CompareAndSwap(ctx, key, expected, next)
 }
 
 // keysIn lists every key physically stored in tenantID's namespace whose key

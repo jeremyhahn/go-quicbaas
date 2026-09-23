@@ -174,7 +174,6 @@ func TestHandleCreateAccount_InvalidInput(t *testing.T) {
 	}{
 		{name: "missing tenant", body: map[string]interface{}{"provider": "claude", "credential": sampleCredentialBody()}},
 		{name: "missing provider", body: map[string]interface{}{"tenant_id": "t1", "credential": sampleCredentialBody()}},
-		{name: "missing credential", body: map[string]interface{}{"tenant_id": "t1", "provider": "claude"}},
 		{name: "malformed json", raw: "{not-json"},
 	}
 	for _, tc := range cases {
@@ -189,6 +188,89 @@ func TestHandleCreateAccount_InvalidInput(t *testing.T) {
 			}
 			if w.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+// TestHandleCreateAccount_SecretRef proves a create that names a tenant secret
+// instead of an inline credential reaches the service with the reference and
+// file intact, and that the response reports the reference back.
+func TestHandleCreateAccount_SecretRef(t *testing.T) {
+	var captured *service.CreateAccountRequest
+	svc := &mocks.MockAccountService{
+		CreateAccountFunc: func(ctx context.Context, req *service.CreateAccountRequest) (*service.CreateAccountResponse, error) {
+			captured = req
+			account := sampleAccount()
+			account.CredentialSecretRef = req.CredentialSecretRef
+			account.CredentialSecretFile = req.CredentialSecretFile
+			return &service.CreateAccountResponse{Account: account, Timestamp: time.Now().UTC()}, nil
+		},
+	}
+	srv := newAccountTestServer(svc)
+
+	w := doAccountRequest(srv, http.MethodPost, "/api/v1/agent-accounts", map[string]interface{}{
+		"tenant_id":              "tenant-1",
+		"provider":               "codex",
+		"credential_secret_ref":  "agents/codex/reviewer/auth_json",
+		"credential_secret_file": ".codex/auth.json",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", w.Code, w.Body.String())
+	}
+	if captured == nil || captured.Credential != nil ||
+		captured.CredentialSecretRef != "agents/codex/reviewer/auth_json" ||
+		captured.CredentialSecretFile != ".codex/auth.json" {
+		t.Fatalf("secret reference not forwarded: %+v", captured)
+	}
+	var resp AccountEnvelopeRESTResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Account.CredentialSecretRef != "agents/codex/reviewer/auth_json" ||
+		resp.Account.CredentialSecretFile != ".codex/auth.json" {
+		t.Fatalf("reference not reported back: %+v", resp.Account)
+	}
+}
+
+// TestHandleCreateAccount_CredentialSourceRefusedByService proves the
+// inline-vs-reference rule is answered by the service and surfaces as a 400.
+func TestHandleCreateAccount_CredentialSourceRefusedByService(t *testing.T) {
+	svc := &mocks.MockAccountService{
+		CreateAccountFunc: func(ctx context.Context, req *service.CreateAccountRequest) (*service.CreateAccountResponse, error) {
+			return nil, &service.AccountInvalidError{Field: "credential", Message: "an account needs a credential"}
+		},
+	}
+	srv := newAccountTestServer(svc)
+
+	w := doAccountRequest(srv, http.MethodPost, "/api/v1/agent-accounts", map[string]interface{}{
+		"tenant_id": "tenant-1", "provider": "claude",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleAccountError_SecretReference maps the two reference failures: an
+// unresolvable secret is the account's state (409), a node with no resolver is
+// unavailable (503).
+func TestHandleAccountError_SecretReference(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"unresolved", &orchestration.AccountSecretRefUnresolvedError{
+			TenantID: "t", AccountID: "a", Ref: "agents/x", Reason: "the secret does not exist in this tenant",
+		}, http.StatusConflict},
+		{"no resolver", &orchestration.AccountSecretResolverNotConfiguredError{AccountID: "a"}, http.StatusServiceUnavailable},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			handleAccountError(w, httptest.NewRequest(http.MethodPost, "/", nil), tc.err)
+			if w.Code != tc.want {
+				t.Fatalf("status = %d, want %d", w.Code, tc.want)
 			}
 		})
 	}
@@ -293,6 +375,29 @@ func TestHandleUpdateAccount_HappyPath(t *testing.T) {
 	}
 	if captured == nil || captured.DisplayName != "renamed" || !captured.ClearProjectID {
 		t.Fatalf("update fields not propagated: %+v", captured)
+	}
+}
+
+// TestHandleUpdateAccount_SecretRef proves the switch-to-reference fields
+// reach the service.
+func TestHandleUpdateAccount_SecretRef(t *testing.T) {
+	var captured *service.UpdateAccountRequest
+	svc := &mocks.MockAccountService{
+		UpdateAccountFunc: func(ctx context.Context, req *service.UpdateAccountRequest) (*service.UpdateAccountResponse, error) {
+			captured = req
+			return &service.UpdateAccountResponse{Account: sampleAccount(), Timestamp: time.Now().UTC()}, nil
+		},
+	}
+	srv := newAccountTestServer(svc)
+
+	w := doAccountRequest(srv, http.MethodPut, "/api/v1/agent-accounts/acct-1?tenant_id=tenant-1", map[string]interface{}{
+		"credential_secret_ref": "agents/claude/claude1/oauth_token",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if captured == nil || captured.CredentialSecretRef != "agents/claude/claude1/oauth_token" {
+		t.Fatalf("secret reference not propagated: %+v", captured)
 	}
 }
 

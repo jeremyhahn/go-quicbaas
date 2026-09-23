@@ -69,8 +69,14 @@ type Account struct {
 	// credential_health is derived from credential_expires_at_unix:
 	// "unknown", "valid", "expiring", or "expired".
 	CredentialHealth string `protobuf:"bytes,17,opt,name=credential_health,json=credentialHealth,proto3" json:"credential_health,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// credential_secret_ref names the tenant secret the credential is read
+	// from, when the account is reference-sourced. A name, never the value.
+	CredentialSecretRef string `protobuf:"bytes,18,opt,name=credential_secret_ref,json=credentialSecretRef,proto3" json:"credential_secret_ref,omitempty"`
+	// credential_secret_file is where a referenced secret is materialized
+	// (relative to the session home) instead of the access token.
+	CredentialSecretFile string `protobuf:"bytes,19,opt,name=credential_secret_file,json=credentialSecretFile,proto3" json:"credential_secret_file,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *Account) Reset() {
@@ -218,6 +224,20 @@ func (x *Account) GetLastValidatedAtUnix() int64 {
 func (x *Account) GetCredentialHealth() string {
 	if x != nil {
 		return x.CredentialHealth
+	}
+	return ""
+}
+
+func (x *Account) GetCredentialSecretRef() string {
+	if x != nil {
+		return x.CredentialSecretRef
+	}
+	return ""
+}
+
+func (x *Account) GetCredentialSecretFile() string {
+	if x != nil {
+		return x.CredentialSecretFile
 	}
 	return ""
 }
@@ -420,9 +440,17 @@ type CreateAccountRequest struct {
 	DisplayName   string                 `protobuf:"bytes,4,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
 	IsDefault     bool                   `protobuf:"varint,5,opt,name=is_default,json=isDefault,proto3" json:"is_default,omitempty"`
 	RefreshPolicy string                 `protobuf:"bytes,6,opt,name=refresh_policy,json=refreshPolicy,proto3" json:"refresh_policy,omitempty"`
-	Credential    *AccountCredential     `protobuf:"bytes,7,opt,name=credential,proto3" json:"credential,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// credential is the inline credential. Exactly one of credential and
+	// credential_secret_ref is required.
+	Credential *AccountCredential `protobuf:"bytes,7,opt,name=credential,proto3" json:"credential,omitempty"`
+	// credential_secret_ref names the tenant secret the credential is read
+	// from on every spawn (e.g. "agents/claude/claude1/oauth_token").
+	CredentialSecretRef string `protobuf:"bytes,8,opt,name=credential_secret_ref,json=credentialSecretRef,proto3" json:"credential_secret_ref,omitempty"`
+	// credential_secret_file materializes the referenced secret as this file
+	// (relative to the session home) instead of as the access token.
+	CredentialSecretFile string `protobuf:"bytes,9,opt,name=credential_secret_file,json=credentialSecretFile,proto3" json:"credential_secret_file,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *CreateAccountRequest) Reset() {
@@ -502,6 +530,20 @@ func (x *CreateAccountRequest) GetCredential() *AccountCredential {
 		return x.Credential
 	}
 	return nil
+}
+
+func (x *CreateAccountRequest) GetCredentialSecretRef() string {
+	if x != nil {
+		return x.CredentialSecretRef
+	}
+	return ""
+}
+
+func (x *CreateAccountRequest) GetCredentialSecretFile() string {
+	if x != nil {
+		return x.CredentialSecretFile
+	}
+	return ""
 }
 
 type CreateAccountResponse struct {
@@ -788,8 +830,13 @@ type UpdateAccountRequest struct {
 	ProjectId      string                 `protobuf:"bytes,4,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
 	ClearProjectId bool                   `protobuf:"varint,5,opt,name=clear_project_id,json=clearProjectId,proto3" json:"clear_project_id,omitempty"`
 	RefreshPolicy  string                 `protobuf:"bytes,6,opt,name=refresh_policy,json=refreshPolicy,proto3" json:"refresh_policy,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// credential_secret_ref switches the account to (or re-points it at) a
+	// tenant secret; re-applying the current one returns an account whose
+	// secret was missing to service.
+	CredentialSecretRef  string `protobuf:"bytes,7,opt,name=credential_secret_ref,json=credentialSecretRef,proto3" json:"credential_secret_ref,omitempty"`
+	CredentialSecretFile string `protobuf:"bytes,8,opt,name=credential_secret_file,json=credentialSecretFile,proto3" json:"credential_secret_file,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *UpdateAccountRequest) Reset() {
@@ -860,6 +907,20 @@ func (x *UpdateAccountRequest) GetClearProjectId() bool {
 func (x *UpdateAccountRequest) GetRefreshPolicy() string {
 	if x != nil {
 		return x.RefreshPolicy
+	}
+	return ""
+}
+
+func (x *UpdateAccountRequest) GetCredentialSecretRef() string {
+	if x != nil {
+		return x.CredentialSecretRef
+	}
+	return ""
+}
+
+func (x *UpdateAccountRequest) GetCredentialSecretFile() string {
+	if x != nil {
+		return x.CredentialSecretFile
 	}
 	return ""
 }
@@ -1673,8 +1734,13 @@ type MaterializeAccountCredentialResponse struct {
 	// that is the OAuth credential's own lifetime, which the control plane's
 	// refresher owns. The two are deliberately independent.
 	LeaseExpiresAtUnix int64 `protobuf:"varint,12,opt,name=lease_expires_at_unix,json=leaseExpiresAtUnix,proto3" json:"lease_expires_at_unix,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// single_use says the envelope must not be reused for a later spawn: the
+	// account reads its credential from a tenant secret (credential_secret_ref),
+	// which rotates with no account write a caching caller could observe, so
+	// the caller re-releases for every spawn.
+	SingleUse     bool `protobuf:"varint,13,opt,name=single_use,json=singleUse,proto3" json:"single_use,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *MaterializeAccountCredentialResponse) Reset() {
@@ -1791,11 +1857,18 @@ func (x *MaterializeAccountCredentialResponse) GetLeaseExpiresAtUnix() int64 {
 	return 0
 }
 
+func (x *MaterializeAccountCredentialResponse) GetSingleUse() bool {
+	if x != nil {
+		return x.SingleUse
+	}
+	return false
+}
+
 var File_api_proto_account_proto protoreflect.FileDescriptor
 
 const file_api_proto_account_proto_rawDesc = "" +
 	"\n" +
-	"\x17api/proto/account.proto\x12\x13quicbaas.account.v1\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\x8c\x05\n" +
+	"\x17api/proto/account.proto\x12\x13quicbaas.account.v1\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\xf6\x05\n" +
 	"\aAccount\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12\x1d\n" +
@@ -1817,7 +1890,9 @@ const file_api_proto_account_proto_rawDesc = "" +
 	"\x11available_at_unix\x18\x0e \x01(\x03R\x0favailableAtUnix\x12;\n" +
 	"\x1acredential_expires_at_unix\x18\x0f \x01(\x03R\x17credentialExpiresAtUnix\x123\n" +
 	"\x16last_validated_at_unix\x18\x10 \x01(\x03R\x13lastValidatedAtUnix\x12+\n" +
-	"\x11credential_health\x18\x11 \x01(\tR\x10credentialHealth\"\x8e\x04\n" +
+	"\x11credential_health\x18\x11 \x01(\tR\x10credentialHealth\x122\n" +
+	"\x15credential_secret_ref\x18\x12 \x01(\tR\x13credentialSecretRef\x124\n" +
+	"\x16credential_secret_file\x18\x13 \x01(\tR\x14credentialSecretFile\"\x8e\x04\n" +
 	"\x11AccountCredential\x12A\n" +
 	"\x03env\x18\x01 \x03(\v2/.quicbaas.account.v1.AccountCredential.EnvEntryR\x03env\x12G\n" +
 	"\x05files\x18\x02 \x03(\v21.quicbaas.account.v1.AccountCredential.FilesEntryR\x05files\x12!\n" +
@@ -1843,7 +1918,7 @@ const file_api_proto_account_proto_rawDesc = "" +
 	"\x11last_updated_unix\x18\x05 \x01(\x03R\x0flastUpdatedUnix\x1a:\n" +
 	"\fByAgentEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"\x9f\x02\n" +
+	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"\x89\x03\n" +
 	"\x14CreateAccountRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1d\n" +
 	"\n" +
@@ -1855,7 +1930,9 @@ const file_api_proto_account_proto_rawDesc = "" +
 	"\x0erefresh_policy\x18\x06 \x01(\tR\rrefreshPolicy\x12F\n" +
 	"\n" +
 	"credential\x18\a \x01(\v2&.quicbaas.account.v1.AccountCredentialR\n" +
-	"credential\"m\n" +
+	"credential\x122\n" +
+	"\x15credential_secret_ref\x18\b \x01(\tR\x13credentialSecretRef\x124\n" +
+	"\x16credential_secret_file\x18\t \x01(\tR\x14credentialSecretFile\"m\n" +
 	"\x15CreateAccountResponse\x126\n" +
 	"\aaccount\x18\x01 \x01(\v2\x1c.quicbaas.account.v1.AccountR\aaccount\x12\x1c\n" +
 	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\"O\n" +
@@ -1874,7 +1951,7 @@ const file_api_proto_account_proto_rawDesc = "" +
 	"\x14ListAccountsResponse\x128\n" +
 	"\baccounts\x18\x01 \x03(\v2\x1c.quicbaas.account.v1.AccountR\baccounts\x12\x14\n" +
 	"\x05total\x18\x02 \x01(\x05R\x05total\x12\x1c\n" +
-	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\"\xe5\x01\n" +
+	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\"\xcf\x02\n" +
 	"\x14UpdateAccountRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1d\n" +
 	"\n" +
@@ -1883,7 +1960,9 @@ const file_api_proto_account_proto_rawDesc = "" +
 	"\n" +
 	"project_id\x18\x04 \x01(\tR\tprojectId\x12(\n" +
 	"\x10clear_project_id\x18\x05 \x01(\bR\x0eclearProjectId\x12%\n" +
-	"\x0erefresh_policy\x18\x06 \x01(\tR\rrefreshPolicy\"m\n" +
+	"\x0erefresh_policy\x18\x06 \x01(\tR\rrefreshPolicy\x122\n" +
+	"\x15credential_secret_ref\x18\a \x01(\tR\x13credentialSecretRef\x124\n" +
+	"\x16credential_secret_file\x18\b \x01(\tR\x14credentialSecretFile\"m\n" +
 	"\x15UpdateAccountResponse\x126\n" +
 	"\aaccount\x18\x01 \x01(\v2\x1c.quicbaas.account.v1.AccountR\aaccount\x12\x1c\n" +
 	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\"R\n" +
@@ -1951,7 +2030,7 @@ const file_api_proto_account_proto_rawDesc = "" +
 	"\n" +
 	"project_id\x18\x03 \x01(\tR\tprojectId\x12\x15\n" +
 	"\x06job_id\x18\x04 \x01(\tR\x05jobId\x12\x19\n" +
-	"\blease_id\x18\x05 \x01(\tR\aleaseId\"\x8f\x04\n" +
+	"\blease_id\x18\x05 \x01(\tR\aleaseId\"\xae\x04\n" +
 	"$MaterializeAccountCredentialResponse\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x1a\n" +
@@ -1969,7 +2048,9 @@ const file_api_proto_account_proto_rawDesc = "" +
 	"\ttimestamp\x18\n" +
 	" \x01(\x03R\ttimestamp\x12\x19\n" +
 	"\blease_id\x18\v \x01(\tR\aleaseId\x121\n" +
-	"\x15lease_expires_at_unix\x18\f \x01(\x03R\x12leaseExpiresAtUnix2\xed\n" +
+	"\x15lease_expires_at_unix\x18\f \x01(\x03R\x12leaseExpiresAtUnix\x12\x1d\n" +
+	"\n" +
+	"single_use\x18\r \x01(\bR\tsingleUse2\xed\n" +
 	"\n" +
 	"\x0eAccountService\x12}\n" +
 	"\rCreateAccount\x12).quicbaas.account.v1.CreateAccountRequest\x1a*.quicbaas.account.v1.CreateAccountResponse\"\x15\xc2\xf3\x18\x11credentials:store\x12v\n" +

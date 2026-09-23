@@ -27,6 +27,15 @@ var (
 	// ErrAccountNotFound indicates the requested account does not exist.
 	ErrAccountNotFound = errors.New("account: not found")
 
+	// ErrAccountVersionConflict indicates a conditional update found the
+	// account changed since the caller read it.
+	ErrAccountVersionConflict = errors.New("account: changed since it was read")
+
+	// ErrAccountCredentialSourceChanged indicates a credential write for an
+	// inline account found the account switched to a secret reference since
+	// the writer read it.
+	ErrAccountCredentialSourceChanged = errors.New("account: credential source changed since it was read")
+
 	// ErrAccountInvalid indicates an account failed validation.
 	ErrAccountInvalid = errors.New("account: invalid")
 
@@ -479,3 +488,47 @@ func (e *SessionRotationUnsupportedError) Error() string {
 
 // Unwrap returns the sentinel error for errors.Is support.
 func (e *SessionRotationUnsupportedError) Unwrap() error { return ErrSessionRotationUnsupported }
+
+// AccountVersionConflictError reports a conditional update (UpdateIfUnchanged)
+// refused because the stored account was written after the caller read it. The
+// caller re-reads and re-applies its change; nothing was written.
+type AccountVersionConflictError struct {
+	TenantID  string
+	AccountID string
+}
+
+// Error implements the error interface.
+func (e *AccountVersionConflictError) Error() string {
+	return ErrAccountVersionConflict.Error() + ": tenant=" + e.TenantID + " account=" + e.AccountID
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *AccountVersionConflictError) Unwrap() error { return ErrAccountVersionConflict }
+
+// AccountCredentialSourceChangedError reports a write refused because the
+// account's credential source changed after the writer read it: an inline
+// account switched to a secret reference (under a rotation or renewal, which
+// then cleans up the inline envelope it wrote), or a reference re-pointed or
+// re-applied (under a stamp about a failed read of the old one). Nothing was
+// written to the record. Ref is the reference the account reads now, empty
+// when it holds its credential inline.
+type AccountCredentialSourceChangedError struct {
+	TenantID  string
+	AccountID string
+	Ref       string
+}
+
+// Error implements the error interface.
+func (e *AccountCredentialSourceChangedError) Error() string {
+	now := "it now holds its credential inline"
+	if e.Ref != "" {
+		now = "it now reads its credential from secret " + e.Ref
+	}
+	return ErrAccountCredentialSourceChanged.Error() + ": tenant=" + e.TenantID + " account=" + e.AccountID + ": " + now
+}
+
+// Unwrap returns the sentinel, and ErrAccountVersionConflict: the record the
+// writer read is no longer the record.
+func (e *AccountCredentialSourceChangedError) Unwrap() []error {
+	return []error{ErrAccountCredentialSourceChanged, ErrAccountVersionConflict}
+}

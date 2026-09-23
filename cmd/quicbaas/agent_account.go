@@ -57,6 +57,11 @@ var (
 	accountClearProject   bool
 	accountCredentialFile string
 	accountRevokeReason   string
+
+	// accountCredentialSecretRef / accountCredentialSecretFile point an
+	// account's credential at a tenant secret instead of an inline document.
+	accountCredentialSecretRef  string
+	accountCredentialSecretFile string
 )
 
 // =============================================================================
@@ -71,7 +76,20 @@ type AccountCredentialSourceRequiredError struct {
 
 // Error implements the error interface.
 func (e *AccountCredentialSourceRequiredError) Error() string {
-	return e.Op + ": --credential-file is required (use '-' to read the credential JSON from stdin)"
+	return e.Op + ": a credential source is required: --credential-file (use '-' to read the credential JSON from stdin)" +
+		" or, on create and update, --credential-secret-ref"
+}
+
+// AccountCredentialSourceConflictError indicates a create command was given
+// both an inline credential document and a tenant secret reference.
+type AccountCredentialSourceConflictError struct {
+	Op string
+}
+
+// Error implements the error interface.
+func (e *AccountCredentialSourceConflictError) Error() string {
+	return e.Op + ": --credential-file and --credential-secret-ref are mutually exclusive; " +
+		"an account holds its credential inline or reads it from a tenant secret, not both"
 }
 
 // AccountCredentialReadError indicates the credential source could not be read.
@@ -202,7 +220,14 @@ Accounts are tenant-scoped: every command operates within the tenant named by
 the global --tenant flag. Credential material is supplied from a file or stdin
 and is never printed back by any command.
 
+The recommended source is a tenant SECRET the account names by reference: the
+account reads it on every spawn, so writing a new version of the secret rotates
+the account with no account write.
+
 Examples:
+  quicbaas secrets put agents/claude/claude1/oauth_token --from-stdin
+  quicbaas agent account create --provider claude --display-name claude1 \
+    --credential-secret-ref agents/claude/claude1/oauth_token
   claude setup-token | quicbaas agent account create --provider claude \
     --display-name alice-work --credential-file -
   quicbaas agent account list --provider claude
@@ -250,12 +275,24 @@ fields the provider needs:
     "env": {"SOME_KEY": "value"}
   }
 
+Instead of a document, --credential-secret-ref names a tenant secret (by its
+short name, in the --tenant keyspace) the credential is read from on every
+spawn; the secret must already exist. For a provider whose CLI reads a file
+rather than an access-token variable (codex: .codex/auth.json), add
+--credential-secret-file with the path relative to the session home. A
+referenced account uses --refresh-policy none.
+
 The FIRST account created for a provider becomes that provider's default
 automatically, so a session spawned without --account uses it. Later accounts
 are created non-default; pass --default to import one as the default instead,
 or run 'quicbaas agent account set-default' at any time.
 
 Examples:
+  quicbaas agent account create --provider claude --display-name claude1 \
+    --credential-secret-ref agents/claude/claude1/oauth_token
+  quicbaas agent account create --provider codex --display-name reviewer \
+    --credential-secret-ref agents/codex/reviewer/auth_json \
+    --credential-secret-file .codex/auth.json
   claude setup-token | quicbaas agent account create --provider claude \
     --display-name alice-work --refresh-policy oauth2 --credential-file -
   quicbaas agent account create --provider codex --display-name ci \
@@ -269,7 +306,9 @@ Examples:
 	cmd.Flags().StringVar(&accountProject, "project", "", "Scope the account to one project (empty means tenant-wide)")
 	cmd.Flags().BoolVar(&accountDefault, "default", false, "Import this account AS the tenant+provider default, displacing the current one (the first account for a provider becomes the default with or without this flag)")
 	cmd.Flags().StringVar(&accountRefreshPolicy, "refresh-policy", "", "Credential refresh policy: none or oauth2")
-	cmd.Flags().StringVar(&accountCredentialFile, "credential-file", "", "Path to the credential JSON document; '-' reads stdin (required)")
+	cmd.Flags().StringVar(&accountCredentialFile, "credential-file", "", "Path to the credential JSON document; '-' reads stdin")
+	cmd.Flags().StringVar(&accountCredentialSecretRef, "credential-secret-ref", "", "Short name of the tenant secret the credential is read from on every spawn (instead of --credential-file)")
+	cmd.Flags().StringVar(&accountCredentialSecretFile, "credential-secret-file", "", "With --credential-secret-ref: write the secret to this file relative to the session home instead of the access token")
 
 	if err := cmd.MarkFlagRequired("provider"); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to mark provider flag as required: %v\n", err)
@@ -287,7 +326,7 @@ func runAgentAccountCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return formatError(err)
 	}
-	credential, err := readAccountCredential(cmd, "account.create")
+	credential, err := readAccountCreateCredential(cmd)
 	if err != nil {
 		return formatError(err)
 	}
@@ -308,6 +347,9 @@ func runAgentAccountCreate(cmd *cobra.Command, args []string) error {
 		Default:       accountDefault,
 		RefreshPolicy: policy,
 		Credential:    credential,
+
+		CredentialSecretRef:  accountCredentialSecretRef,
+		CredentialSecretFile: accountCredentialSecretFile,
 	})
 	if err != nil {
 		return formatError(err)
@@ -421,10 +463,16 @@ func newAgentAccountUpdateCommand() *cobra.Command {
 applied; every other field keeps its current value. Use --clear-project to
 make a project-scoped account tenant-wide.
 
-Use 'rotate' to replace the credential itself.
+Use 'rotate' to replace an inline credential. --credential-secret-ref switches
+the account to read its credential from a tenant secret (its inline credential
+is destroyed), or re-points it; the secret must exist. Re-applying an account's
+current reference is how an account put in "error" by a missing secret returns
+to service once the secret is written.
 
 Examples:
   quicbaas agent account update acct_abc123 --display-name alice-personal
+  quicbaas agent account update acct_abc123 \
+    --credential-secret-ref agents/claude/claude1/oauth_token
   quicbaas agent account update acct_abc123 --project proj_abc123
   quicbaas agent account update acct_abc123 --clear-project`,
 		Args: cobra.ExactArgs(1),
@@ -435,6 +483,8 @@ Examples:
 	cmd.Flags().StringVar(&accountProject, "project", "", "Scope the account to this project")
 	cmd.Flags().BoolVar(&accountClearProject, "clear-project", false, "Remove the project scope, making the account tenant-wide")
 	cmd.Flags().StringVar(&accountRefreshPolicy, "refresh-policy", "", "New refresh policy: none or oauth2")
+	cmd.Flags().StringVar(&accountCredentialSecretRef, "credential-secret-ref", "", "Read the credential from this tenant secret from now on (switches an inline account)")
+	cmd.Flags().StringVar(&accountCredentialSecretFile, "credential-secret-file", "", "With --credential-secret-ref: write the secret to this file relative to the session home")
 
 	return cmd
 }
@@ -460,6 +510,9 @@ func runAgentAccountUpdate(cmd *cobra.Command, args []string) error {
 		ProjectID:      accountProject,
 		ClearProjectID: accountClearProject,
 		RefreshPolicy:  policy,
+
+		CredentialSecretRef:  accountCredentialSecretRef,
+		CredentialSecretFile: accountCredentialSecretFile,
 	})
 	if err != nil {
 		return formatError(err)
@@ -680,6 +733,20 @@ func runAgentAccountUsage(cmd *cobra.Command, args []string) error {
 // Credential input
 // =============================================================================
 
+// readAccountCreateCredential resolves create's credential source: the inline
+// document from --credential-file, or none when --credential-secret-ref names a
+// tenant secret instead. Both at once is refused before anything is read.
+func readAccountCreateCredential(cmd *cobra.Command) (*accountSDK.Credential, error) {
+	const op = "account.create"
+	if accountCredentialSecretRef == "" {
+		return readAccountCredential(cmd, op)
+	}
+	if accountCredentialFile != "" {
+		return nil, &AccountCredentialSourceConflictError{Op: op}
+	}
+	return nil, nil
+}
+
 // readAccountCredential loads the credential envelope from --credential-file
 // ('-' means stdin). Credentials are never accepted as a flag value: a
 // command-line secret lands in shell history and the process table.
@@ -746,6 +813,12 @@ func formatAccountDetail(info *accountSDK.AccountInfo, format string, w io.Write
 		fmt.Fprintf(tw, "Default:\t%t\n", info.Default)
 		fmt.Fprintf(tw, "Status:\t%s\n", info.Status)
 		fmt.Fprintf(tw, "Refresh Policy:\t%s\n", info.RefreshPolicy)
+		if info.CredentialSecretRef != "" {
+			fmt.Fprintf(tw, "Credential Secret:\t%s\n", info.CredentialSecretRef)
+		}
+		if info.CredentialSecretFile != "" {
+			fmt.Fprintf(tw, "Credential File:\t%s\n", info.CredentialSecretFile)
+		}
 		if !info.CreatedAt.IsZero() {
 			fmt.Fprintf(tw, "Created:\t%s\n", info.CreatedAt.Format(time.RFC3339))
 		}

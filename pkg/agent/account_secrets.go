@@ -259,6 +259,13 @@ func (c *accountCredentialCache) lookup(accountID string, now time.Time) (*cache
 	return entry, true
 }
 
+// recordGrant writes the grant this copy is held under into the calling
+// resolution's slot, so the grantor reports this copy's grant and not whatever
+// a concurrent spawn later stored for the account.
+func (e *cachedAccountCredential) recordGrant(ctx context.Context) {
+	orchestration.DeliveryGrantSlotFrom(ctx).Record(e.leaseID, e.leaseExpiresAt)
+}
+
 // accountDeliveryGrant is the non-secret authorization handle a released copy
 // is held under: which grant, and until when it stays authorised without
 // renewal. Its zero value means the control plane leases no deliveries.
@@ -445,6 +452,7 @@ func (m *materializingSecrets) resolve(ctx context.Context, accountID string) ([
 	if entry, ok := m.cache.lookup(accountID, now); ok {
 		if body, ok := entry.copyOut(); ok {
 			m.cache.hits.Add(1)
+			entry.recordGrant(ctx)
 			return body, nil
 		}
 	}
@@ -459,6 +467,7 @@ func (m *materializingSecrets) resolve(ctx context.Context, accountID string) ([
 	if entry, ok := m.cache.lookup(accountID, time.Now().UTC()); ok {
 		if body, ok := entry.copyOut(); ok {
 			m.cache.hits.Add(1)
+			entry.recordGrant(ctx)
 			return body, nil
 		}
 	}
@@ -485,10 +494,24 @@ func (m *materializingSecrets) resolve(ctx context.Context, accountID string) ([
 		return nil, &AccountAPIError{Op: "encode released credential", AccountID: accountID, Cause: marshalErr}
 	}
 
+	now = time.Now().UTC()
+	freshUntil := accountCacheFreshUntil(released.Credential.ExpiresAt, now)
+	if released.SingleUse {
+		// A REFERENCED account's credential is a tenant secret, and writing
+		// that secret changes no account timestamp — the cache's only
+		// staleness signal (Observe, on last_refreshed_at) cannot see it. So
+		// the copy is not reused: it is stored already expired, which serves
+		// THIS spawn and keeps its delivery grant reportable, and the next
+		// spawn re-releases and gets whatever the secret holds then. Checking
+		// the secret's revision instead would cost the same round trip to the
+		// control plane that a release does, so there is nothing cheaper to
+		// key on.
+		freshUntil = now
+	}
 	entry, sealErr := newCachedAccountCredential(
 		encoded,
 		released.LastRefreshedAt,
-		accountCacheFreshUntil(released.Credential.ExpiresAt, time.Now().UTC()),
+		freshUntil,
 		accountDeliveryGrant{LeaseID: released.LeaseID, ExpiresAt: released.LeaseExpiresAt},
 	)
 	if sealErr != nil {
@@ -499,6 +522,7 @@ func (m *materializingSecrets) resolve(ctx context.Context, accountID string) ([
 	// buffer is still privately owned here, so the read needs no reference and
 	// cannot race a concurrent eviction.
 	body := entry.snapshot()
+	entry.recordGrant(ctx)
 	m.cache.store(accountID, entry)
 
 	if m.logger != nil {

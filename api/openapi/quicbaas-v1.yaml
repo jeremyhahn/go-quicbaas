@@ -748,6 +748,15 @@ components:
         timestamp:
           type: string
           format: date-time
+        fault_class:
+          type: string
+          description: >-
+            Spawn configuration-fault class of the failure, when it has one
+            (e.g. "credential_not_found" on an agent-account credential
+            release whose credential_secret_ref does not resolve). An agent
+            daemon maps it back onto the orchestration fault so the work is
+            parked rather than charged an attempt.
+          example: "credential_not_found"
 
   responses:
     BadRequest:

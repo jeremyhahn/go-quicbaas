@@ -19,6 +19,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -79,6 +80,11 @@ type fakeCentral struct {
 	// control plane with no lease manager wired.
 	unleased bool
 
+	// leasePerRelease issues a distinct grant for every first release
+	// ("lease_<account>_<n>"), which is what a real control plane does for
+	// single-use releases and what lets a test tell two spawns' grants apart.
+	leasePerRelease bool
+
 	server *httptest.Server
 }
 
@@ -94,6 +100,10 @@ type fakeCentralAccount struct {
 	// produces.
 	refusalStatus int
 	refusalBody   string
+
+	// singleUse marks the account as reading its credential from a tenant
+	// secret (credential_secret_ref): the central says so on every release.
+	singleUse bool
 }
 
 // newFakeCentral starts a fake control plane and registers its shutdown.
@@ -149,6 +159,17 @@ func (c *fakeCentral) rotate(id, newToken string) {
 	// LastRefreshedAt — the signal the daemon's cache keys on.
 	account.record.LastRefreshedAt = time.Now().UTC().Add(time.Second)
 	account.record.UpdatedAt = account.record.LastRefreshedAt
+}
+
+// writeReferencedSecret simulates an operator writing the tenant secret a
+// referenced account names: the envelope changes and NOTHING on the account
+// record moves — neither UpdatedAt nor LastRefreshedAt.
+func (c *fakeCentral) writeReferencedSecret(id, newToken string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if account, ok := c.accounts[id]; ok {
+		account.token = newToken
+	}
 }
 
 // releaseCount reports how many times an account's envelope was released.
@@ -262,6 +283,7 @@ func (c *fakeCentral) handleMaterialize(w http.ResponseWriter, r *http.Request, 
 		expiresAt     time.Time
 		refusalStatus int
 		refusalBody   string
+		singleUse     bool
 	)
 	if ok {
 		c.releases[id]++
@@ -273,6 +295,7 @@ func (c *fakeCentral) handleMaterialize(w http.ResponseWriter, r *http.Request, 
 		record = *account.record
 		token, envKey, expiresAt = account.token, account.envKey, account.expiresAt
 		refusalStatus, refusalBody = account.refusalStatus, account.refusalBody
+		singleUse = account.singleUse
 	}
 	c.mu.Unlock()
 
@@ -306,6 +329,7 @@ func (c *fakeCentral) handleMaterialize(w http.ResponseWriter, r *http.Request, 
 		"last_refreshed_at": record.LastRefreshedAt,
 		"lease_id":          grantedLease,
 		"lease_expires_at":  time.Now().Add(time.Hour),
+		"single_use":        singleUse,
 	})
 }
 
@@ -320,6 +344,9 @@ func (c *fakeCentral) leaseIDFor(accountID, presented string) string {
 	}
 	if presented != "" {
 		return presented
+	}
+	if c.leasePerRelease {
+		return "lease_" + accountID + "_" + strconv.Itoa(c.releases[accountID])
 	}
 	return "lease_" + accountID
 }
@@ -626,6 +653,144 @@ func TestAccountPool_ReMaterializesAfterACentralRotation(t *testing.T) {
 	}
 }
 
+// TestAccountPool_SecretWriteReachesTheNextSpawn is the rotation contract for
+// a REFERENCED account (go-quicbaas#1023): writing its tenant secret moves no
+// account timestamp, so a warm cache would have served the retired value for
+// up to its whole window. A single-use release is re-released per spawn, and
+// the very next spawn gets the replacement.
+func TestAccountPool_SecretWriteReachesTheNextSpawn(t *testing.T) {
+	central := newFakeCentral(t, "tenant-a")
+	central.addAccount("acct-1", "claude", "", true).singleUse = true
+	pool := newTestAccountPool(t, central, &staticTokenSource{})
+	ctx := context.Background()
+	req := orchestration.AccountResolveRequest{
+		TenantID: "tenant-a", Provider: orchestration.AccountProviderClaude, AccountID: "acct-1",
+	}
+
+	first, err := pool.Resolver.Resolve(ctx, req)
+	if err != nil {
+		t.Fatalf("first Resolve() error = %v", err)
+	}
+
+	central.writeReferencedSecret("acct-1", "replacement-token")
+
+	second, err := pool.Resolver.Resolve(ctx, req)
+	if err != nil {
+		t.Fatalf("post-write Resolve() error = %v", err)
+	}
+	// Compared, never printed.
+	if first.Env["CLAUDE_CODE_OAUTH_TOKEN"] == second.Env["CLAUDE_CODE_OAUTH_TOKEN"] {
+		t.Error("the spawn after a secret write reused the retired credential")
+	}
+	if second.Env["CLAUDE_CODE_OAUTH_TOKEN"] != "replacement-token" {
+		t.Error("the spawn after a secret write did not receive the replacement")
+	}
+	if got := central.releaseCount("acct-1"); got != 2 {
+		t.Errorf("released %d times, want 2 (a single-use envelope is re-released per spawn)", got)
+	}
+}
+
+// TestAccountPool_AResolutionReportsItsOwnGrantNotAConcurrentSpawns is the
+// round-3 review finding on go-quicbaas#1028: a single-use release is stored
+// already expired, so a concurrent spawn B of the same account releases again
+// and replaces the cache entry between spawn A's lookup and A's grant report.
+// Reading the grant back from the cache then made A report B's grant, leaving
+// A's own release untracked by session teardown. Each resolution now carries
+// the grant it was served under, so the interleaving is exercised
+// deterministically: A looks up, B looks up and replaces, A reports.
+func TestAccountPool_AResolutionReportsItsOwnGrantNotAConcurrentSpawns(t *testing.T) {
+	central := newFakeCentral(t, "tenant-a")
+	central.leasePerRelease = true
+	central.addAccount("acct-1", "claude", "", true).singleUse = true
+	client, err := NewAccountAPIClient(AccountAPIClientConfig{
+		ServerAddr: central.server.URL, TenantID: central.tenantID,
+		HTTPClient: central.server.Client(), Tokens: &staticTokenSource{}, Logger: &testLogger{t: t},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := &accountCredentialCache{}
+	secrets := newMaterializingSecrets(client, cache, &testLogger{t: t})
+	reporter := newDeliveryGrantReporter(cache)
+	scope := orchestration.AccountLeaseScope{TenantID: "tenant-a", AccountID: "acct-1"}
+
+	ctxA, _ := orchestration.WithDeliveryGrantSlot(context.Background())
+	ctxB, _ := orchestration.WithDeliveryGrantSlot(context.Background())
+	if _, err := secrets.resolve(ctxA, "acct-1"); err != nil {
+		t.Fatalf("spawn A: %v", err)
+	}
+	if _, err := secrets.resolve(ctxB, "acct-1"); err != nil {
+		t.Fatalf("spawn B: %v", err)
+	}
+
+	grantA, err := reporter.GrantDelivery(ctxA, scope)
+	if err != nil || grantA == nil {
+		t.Fatalf("spawn A's grant = %v, %v", grantA, err)
+	}
+	grantB, err := reporter.GrantDelivery(ctxB, scope)
+	if err != nil || grantB == nil {
+		t.Fatalf("spawn B's grant = %v, %v", grantB, err)
+	}
+	if grantA.LeaseID != "lease_acct-1_0" || grantB.LeaseID != "lease_acct-1_1" {
+		t.Fatalf("grants A=%q B=%q, want each spawn's own release (lease_acct-1_0, lease_acct-1_1)",
+			grantA.LeaseID, grantB.LeaseID)
+	}
+}
+
+// TestAccountPool_AGrantReportWithNoResolutionFallsBackToTheCache: a caller
+// outside a resolution (no slot) still gets the grant the cached copy holds.
+func TestAccountPool_AGrantReportWithNoResolutionFallsBackToTheCache(t *testing.T) {
+	central := newFakeCentral(t, "tenant-a")
+	central.addAccount("acct-1", "claude", "", true)
+	client, err := NewAccountAPIClient(AccountAPIClientConfig{
+		ServerAddr: central.server.URL, TenantID: central.tenantID,
+		HTTPClient: central.server.Client(), Tokens: &staticTokenSource{}, Logger: &testLogger{t: t},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := &accountCredentialCache{}
+	secrets := newMaterializingSecrets(client, cache, &testLogger{t: t})
+	if _, err := secrets.resolve(context.Background(), "acct-1"); err != nil {
+		t.Fatal(err)
+	}
+	grant, err := newDeliveryGrantReporter(cache).GrantDelivery(context.Background(),
+		orchestration.AccountLeaseScope{TenantID: "tenant-a", AccountID: "acct-1"})
+	if err != nil || grant == nil || grant.LeaseID != "lease_acct-1" {
+		t.Fatalf("grant = %+v, %v; want the cached copy's lease_acct-1", grant, err)
+	}
+}
+
+// TestAccountPool_InlineAccountStaysCachedAcrossAnUnsignalledChange proves
+// the single-use rule is confined to referenced accounts: an inline envelope
+// is still served from cache until a signal (last_refreshed_at) says it went
+// stale, so the per-spawn release is not the default for every account.
+func TestAccountPool_InlineAccountStaysCachedAcrossAnUnsignalledChange(t *testing.T) {
+	central := newFakeCentral(t, "tenant-a")
+	central.addAccount("acct-1", "claude", "", true)
+	pool := newTestAccountPool(t, central, &staticTokenSource{})
+	ctx := context.Background()
+	req := orchestration.AccountResolveRequest{
+		TenantID: "tenant-a", Provider: orchestration.AccountProviderClaude, AccountID: "acct-1",
+	}
+
+	first, err := pool.Resolver.Resolve(ctx, req)
+	if err != nil {
+		t.Fatalf("first Resolve() error = %v", err)
+	}
+	central.writeReferencedSecret("acct-1", "unsignalled-token")
+	second, err := pool.Resolver.Resolve(ctx, req)
+	if err != nil {
+		t.Fatalf("second Resolve() error = %v", err)
+	}
+	if first.Env["CLAUDE_CODE_OAUTH_TOKEN"] != second.Env["CLAUDE_CODE_OAUTH_TOKEN"] {
+		t.Error("an inline account was re-released with no staleness signal")
+	}
+	if got := central.releaseCount("acct-1"); got != 1 {
+		t.Errorf("released %d times, want 1 (served from cache)", got)
+	}
+}
+
 // TestAccountPool_ReMaterializesWhenTheCachedEnvelopeExpires proves the TTL is
 // the credential's own, not a fixed window: an envelope inside its renewal
 // margin is re-released rather than served.
@@ -674,6 +839,90 @@ func TestAccountPool_SurfacesACentralRefusal(t *testing.T) {
 	}
 	if !strings.Contains(apiErr.Error(), "revoked") {
 		t.Errorf("refusal %q lost the control plane's explanation", apiErr.Error())
+	}
+}
+
+// TestAccountPool_MissingCredentialRefusalKeepsItsFaultClass proves a release
+// the control plane refused because the account's credential secret is missing
+// reaches the spawn as a MISSING CREDENTIAL, not an opaque store error. That is
+// the class the control plane parks uncharged; losing it charged the attempt.
+func TestAccountPool_MissingCredentialRefusalKeepsItsFaultClass(t *testing.T) {
+	central := newFakeCentral(t, "tenant-a")
+	account := central.addAccount("acct-1", "claude", "", true)
+	account.refusalStatus = http.StatusConflict
+	account.refusalBody = `{"error":"account: credential not found: credential_secret_ref agents/claude/x: the secret does not exist in this tenant","fault_class":"credential_not_found"}`
+
+	pool := newTestAccountPool(t, central, &staticTokenSource{})
+	_, err := pool.Resolver.Resolve(context.Background(), orchestration.AccountResolveRequest{
+		TenantID: "tenant-a", Provider: orchestration.AccountProviderClaude, AccountID: "acct-1",
+	})
+	if !errors.Is(err, orchestration.ErrAccountCredentialNotFound) {
+		t.Fatalf("error = %v, want one matching ErrAccountCredentialNotFound", err)
+	}
+	if got := orchestration.SpawnFaultClass(err); got != "credential_not_found" {
+		t.Errorf("SpawnFaultClass() = %q, want credential_not_found", got)
+	}
+	var apiErr *AccountAPIError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusConflict {
+		t.Errorf("error = %v, want the control plane's 409 refusal kept intact", err)
+	}
+}
+
+// TestAccountPool_LongRefusalKeepsItsFaultClass proves a refusal body well past
+// the detail bound still yields its class, with the detail itself bounded.
+func TestAccountPool_LongRefusalKeepsItsFaultClass(t *testing.T) {
+	central := newFakeCentral(t, "tenant-a")
+	account := central.addAccount("acct-1", "claude", "", true)
+	account.refusalStatus = http.StatusConflict
+	account.refusalBody = `{"error":"account: credential not found: ` + strings.Repeat("detail ", 400) +
+		`","fault_class":"credential_not_found"}`
+
+	pool := newTestAccountPool(t, central, &staticTokenSource{})
+	_, err := pool.Resolver.Resolve(context.Background(), orchestration.AccountResolveRequest{
+		TenantID: "tenant-a", Provider: orchestration.AccountProviderClaude, AccountID: "acct-1",
+	})
+	if !errors.Is(err, orchestration.ErrAccountCredentialNotFound) {
+		t.Fatalf("error = %v, want the class decoded from a long body", err)
+	}
+	var apiErr *AccountAPIError
+	if !errors.As(err, &apiErr) || len(apiErr.Message) > accountAPIMaxErrorDetail+len("... (truncated)") {
+		t.Errorf("error detail is not bounded: %d bytes", len(apiErr.Message))
+	}
+}
+
+// TestAccountPool_OtherConflictIsNotAMissingCredential proves the fault class
+// comes from the envelope, not the status: a 409 for a revoked account, or one
+// naming a class this build does not know, is no configuration fault.
+func TestAccountPool_OtherConflictIsNotAMissingCredential(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "no fault class", body: `{"error":"account not releasable: status revoked"}`},
+		{name: "unknown fault class", body: `{"error":"something new","fault_class":"from_a_newer_build"}`},
+		{name: "not json", body: "conflict"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			central := newFakeCentral(t, "tenant-a")
+			account := central.addAccount("acct-1", "claude", "", true)
+			account.refusalStatus = http.StatusConflict
+			account.refusalBody = tt.body
+
+			pool := newTestAccountPool(t, central, &staticTokenSource{})
+			_, err := pool.Resolver.Resolve(context.Background(), orchestration.AccountResolveRequest{
+				TenantID: "tenant-a", Provider: orchestration.AccountProviderClaude, AccountID: "acct-1",
+			})
+			if err == nil {
+				t.Fatal("a refused release resolved successfully")
+			}
+			if errors.Is(err, orchestration.ErrAccountCredentialNotFound) {
+				t.Errorf("error = %v was classified as a missing credential", err)
+			}
+			if got := orchestration.SpawnFaultClass(err); got != "" {
+				t.Errorf("SpawnFaultClass() = %q, want none", got)
+			}
+		})
 	}
 }
 

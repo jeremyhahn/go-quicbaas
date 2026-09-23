@@ -69,6 +69,9 @@ func handleAccountCreate(ctx context.Context, svc service.QuicBaaS, req interfac
 		Default:       r.Default,
 		RefreshPolicy: orchestration.AccountRefreshPolicy(r.RefreshPolicy),
 		Credential:    accountCredentialToOrchestration(r.Credential),
+
+		CredentialSecretRef:  r.CredentialSecretRef,
+		CredentialSecretFile: r.CredentialSecretFile,
 	})
 	if err != nil {
 		return nil, err
@@ -149,6 +152,9 @@ func handleAccountUpdate(ctx context.Context, svc service.QuicBaaS, req interfac
 		ProjectID:      r.ProjectID,
 		ClearProjectID: r.ClearProjectID,
 		RefreshPolicy:  orchestration.AccountRefreshPolicy(r.RefreshPolicy),
+
+		CredentialSecretRef:  r.CredentialSecretRef,
+		CredentialSecretFile: r.CredentialSecretFile,
 	})
 	if err != nil {
 		return nil, err
@@ -297,23 +303,25 @@ func accountInfoFromOrchestration(a *orchestration.Account) *accountSDK.AccountI
 		return nil
 	}
 	return &accountSDK.AccountInfo{
-		ID:                  a.ID,
-		TenantID:            a.TenantID,
-		ProjectID:           a.ProjectID,
-		Provider:            accountSDK.Provider(a.Provider),
-		DisplayName:         a.DisplayName,
-		Default:             a.Default,
-		Status:              accountSDK.Status(a.Status),
-		RefreshPolicy:       accountSDK.RefreshPolicy(a.RefreshPolicy),
-		AvailableAt:         a.AvailableAt,
-		CredentialExpiresAt: a.CredentialExpiresAt,
-		LastValidatedAt:     a.LastValidatedAt,
-		CredentialHealth:    accountSDK.CredentialHealth(a.CredentialHealth()),
-		CreatedAt:           a.CreatedAt,
-		UpdatedAt:           a.UpdatedAt,
-		LastUsedAt:          a.LastUsedAt,
-		LastRefreshedAt:     a.LastRefreshedAt,
-		LastError:           a.LastError,
+		ID:                   a.ID,
+		TenantID:             a.TenantID,
+		ProjectID:            a.ProjectID,
+		Provider:             accountSDK.Provider(a.Provider),
+		DisplayName:          a.DisplayName,
+		Default:              a.Default,
+		Status:               accountSDK.Status(a.Status),
+		RefreshPolicy:        accountSDK.RefreshPolicy(a.RefreshPolicy),
+		CredentialSecretRef:  a.CredentialSecretRef,
+		CredentialSecretFile: a.CredentialSecretFile,
+		AvailableAt:          a.AvailableAt,
+		CredentialExpiresAt:  a.CredentialExpiresAt,
+		LastValidatedAt:      a.LastValidatedAt,
+		CredentialHealth:     accountSDK.CredentialHealth(a.CredentialHealth()),
+		CreatedAt:            a.CreatedAt,
+		UpdatedAt:            a.UpdatedAt,
+		LastUsedAt:           a.LastUsedAt,
+		LastRefreshedAt:      a.LastRefreshedAt,
+		LastError:            a.LastError,
 	}
 }
 
@@ -357,6 +365,7 @@ func handleAccountMaterialize(ctx context.Context, svc service.QuicBaaS, req int
 		LastRefreshedAt: resp.LastRefreshedAt,
 		LeaseID:         resp.LeaseID,
 		LeaseExpiresAt:  resp.LeaseExpiresAt,
+		SingleUse:       resp.SingleUse,
 	}, nil
 }
 

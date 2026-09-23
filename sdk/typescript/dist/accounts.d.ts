@@ -50,6 +50,13 @@ export interface Account {
     default: boolean;
     status: AccountStatus;
     refresh_policy: AccountRefreshPolicy;
+    /**
+     * credential_secret_ref names the tenant secret the credential is read from
+     * on every spawn, when the account is reference-sourced. A name, never the value.
+     */
+    credential_secret_ref?: string;
+    /** credential_secret_file is where a referenced secret is materialized instead of the access token. */
+    credential_secret_file?: string;
     created_at: string;
     updated_at: string;
     last_used_at?: string;
@@ -70,8 +77,19 @@ export interface CreateAccountRequest {
     default?: boolean;
     /** refresh_policy selects how the credential is renewed. Required. */
     refresh_policy: AccountRefreshPolicy;
-    /** credential is the initial secret envelope. Required; never echoed back. */
-    credential: AccountCredential;
+    /**
+     * credential is the initial secret envelope, held inline; never echoed back.
+     * Exactly one of credential and credential_secret_ref is required.
+     */
+    credential?: AccountCredential;
+    /**
+     * credential_secret_ref names the tenant secret (short name, e.g.
+     * "agents/claude/claude1/oauth_token") the credential is read from on every
+     * spawn. Writing the secret rotates the account with no account write.
+     */
+    credential_secret_ref?: string;
+    /** credential_secret_file, with credential_secret_ref, materializes the secret as this file (e.g. ".codex/auth.json"). */
+    credential_secret_file?: string;
 }
 /** CreateAccountResponse is the server response after account creation. */
 export interface CreateAccountResponse {
@@ -106,6 +124,13 @@ export interface UpdateAccountRequest {
     /** clear_project_id removes the project scope when true. */
     clear_project_id?: boolean;
     refresh_policy?: AccountRefreshPolicy;
+    /**
+     * credential_secret_ref switches the account to (or re-points it at) a tenant
+     * secret; re-applying the current one returns an account whose secret was
+     * missing to service.
+     */
+    credential_secret_ref?: string;
+    credential_secret_file?: string;
 }
 /** UpdateAccountResponse is the server response after an account update. */
 export interface UpdateAccountResponse {

@@ -15,6 +15,7 @@ package orchestration
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/lease"
@@ -492,4 +493,60 @@ func accountLeaseScopeMismatch(leaseID string, meta map[string]string, scope Acc
 		}
 	}
 	return nil
+}
+
+// DeliveryGrantSlot carries the delivery grant ONE resolution was served under,
+// from the credential lookup that learned it to the grantor that reports it.
+//
+// IT EXISTS BECAUSE A SHARED CACHE CANNOT ANSWER "WHICH GRANT WAS MINE". A
+// daemon's grantor used to read the grant back out of its credential cache
+// after the lookup. With single-use releases (a credential read from a tenant
+// secret is never reused) a concurrent spawn of the same account replaces that
+// entry in between, and the first spawn then reports the second one's grant,
+// or none, leaving its own release untracked by session teardown. The resolver
+// opens a slot per resolution and threads it through the context it already
+// passes to both calls, so the grant travels with the resolution itself.
+type DeliveryGrantSlot struct {
+	mu        sync.Mutex
+	recorded  bool
+	leaseID   string
+	expiresAt time.Time
+}
+
+// Record stores the grant this resolution's credential was served under. The
+// last write wins; a resolution serves one credential.
+func (s *DeliveryGrantSlot) Record(leaseID string, expiresAt time.Time) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recorded, s.leaseID, s.expiresAt = true, leaseID, expiresAt
+}
+
+// Grant returns the recorded grant, and whether anything was recorded at all.
+// A recorded empty lease ID means the credential was served under no grant.
+func (s *DeliveryGrantSlot) Grant() (leaseID string, expiresAt time.Time, recorded bool) {
+	if s == nil {
+		return "", time.Time{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.leaseID, s.expiresAt, s.recorded
+}
+
+// deliveryGrantSlotKey is the context key for a resolution's DeliveryGrantSlot.
+type deliveryGrantSlotKey struct{}
+
+// WithDeliveryGrantSlot returns ctx carrying a fresh DeliveryGrantSlot.
+func WithDeliveryGrantSlot(ctx context.Context) (context.Context, *DeliveryGrantSlot) {
+	slot := &DeliveryGrantSlot{}
+	return context.WithValue(ctx, deliveryGrantSlotKey{}, slot), slot
+}
+
+// DeliveryGrantSlotFrom returns the resolution's slot, or nil when ctx carries
+// none (a caller outside a resolution).
+func DeliveryGrantSlotFrom(ctx context.Context) *DeliveryGrantSlot {
+	slot, _ := ctx.Value(deliveryGrantSlotKey{}).(*DeliveryGrantSlot)
+	return slot
 }

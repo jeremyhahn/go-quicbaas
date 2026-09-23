@@ -276,6 +276,7 @@ type materializeEnvelope struct {
 	LastRefreshedAt time.Time                   `json:"last_refreshed_at,omitempty"`
 	LeaseID         string                      `json:"lease_id,omitempty"`
 	LeaseExpiresAt  time.Time                   `json:"lease_expires_at,omitempty"`
+	SingleUse       bool                        `json:"single_use,omitempty"`
 	Timestamp       time.Time                   `json:"timestamp"`
 }
 
@@ -308,5 +309,6 @@ func (h *accountRESTHandler) handleMaterialize(ctx context.Context, req interfac
 		LastRefreshedAt: env.LastRefreshedAt,
 		LeaseID:         env.LeaseID,
 		LeaseExpiresAt:  env.LeaseExpiresAt,
+		SingleUse:       env.SingleUse,
 	}, nil
 }

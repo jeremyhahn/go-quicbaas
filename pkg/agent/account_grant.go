@@ -96,7 +96,13 @@ func (r *deliveryGrantReporter) GrantDelivery(
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	// THE RESOLUTION'S OWN GRANT FIRST. The cache holds the latest copy of the
+	// account, which a concurrent spawn may have replaced since this
+	// resolution's lookup; the slot holds the copy this resolution was served.
 	grant := r.cache.grantFor(scope.AccountID)
+	if leaseID, expiresAt, recorded := orchestration.DeliveryGrantSlotFrom(ctx).Grant(); recorded {
+		grant = accountDeliveryGrant{LeaseID: leaseID, ExpiresAt: expiresAt}
+	}
 	if grant.LeaseID == "" {
 		return nil, nil
 	}

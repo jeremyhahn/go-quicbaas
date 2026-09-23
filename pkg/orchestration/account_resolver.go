@@ -162,6 +162,9 @@ func (r *accountResolver) logTouchFailure(tenantID, accountID string, err error)
 
 // Resolve implements AccountResolver.
 func (r *accountResolver) Resolve(ctx context.Context, req AccountResolveRequest) (*ResolvedAccountCredential, error) {
+	// One slot per resolution: the credential lookup records the grant it was
+	// served under, and the grantor reports exactly that one (DeliveryGrantSlot).
+	ctx, _ = WithDeliveryGrantSlot(ctx)
 	account, err := r.selectAccount(ctx, req)
 	if err != nil {
 		r.audit(ctx, req.TenantID, "", err)

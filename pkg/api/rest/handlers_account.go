@@ -78,13 +78,24 @@ func (c *AccountCredentialRESTRequest) toOrchestration() *orchestration.AccountC
 
 // CreateAccountRESTRequest is the JSON body for POST /api/v1/agent-accounts.
 type CreateAccountRESTRequest struct {
-	TenantID      string                        `json:"tenant_id"`
-	ProjectID     string                        `json:"project_id,omitempty"`
-	Provider      string                        `json:"provider"`
-	DisplayName   string                        `json:"display_name,omitempty"`
-	Default       bool                          `json:"default,omitempty"`
-	RefreshPolicy string                        `json:"refresh_policy,omitempty"`
-	Credential    *AccountCredentialRESTRequest `json:"credential"`
+	TenantID      string `json:"tenant_id"`
+	ProjectID     string `json:"project_id,omitempty"`
+	Provider      string `json:"provider"`
+	DisplayName   string `json:"display_name,omitempty"`
+	Default       bool   `json:"default,omitempty"`
+	RefreshPolicy string `json:"refresh_policy,omitempty"`
+
+	// Credential is the inline credential. Exactly one of Credential and
+	// CredentialSecretRef is required.
+	Credential *AccountCredentialRESTRequest `json:"credential,omitempty"`
+
+	// CredentialSecretRef names the tenant secret the credential is read from
+	// on every spawn (e.g. "agents/claude/claude1/oauth_token").
+	CredentialSecretRef string `json:"credential_secret_ref,omitempty"`
+
+	// CredentialSecretFile materializes the referenced secret as this file
+	// (relative to the session home) instead of as the access token.
+	CredentialSecretFile string `json:"credential_secret_file,omitempty"`
 }
 
 // UpdateAccountRESTRequest is the JSON body for PUT /api/v1/agent-accounts/{id}.
@@ -93,6 +104,11 @@ type UpdateAccountRESTRequest struct {
 	ProjectID      string `json:"project_id,omitempty"`
 	ClearProjectID bool   `json:"clear_project_id,omitempty"`
 	RefreshPolicy  string `json:"refresh_policy,omitempty"`
+
+	// CredentialSecretRef switches the account to (or re-points it at) a
+	// tenant secret; see service.UpdateAccountRequest.
+	CredentialSecretRef  string `json:"credential_secret_ref,omitempty"`
+	CredentialSecretFile string `json:"credential_secret_file,omitempty"`
 }
 
 // RotateAccountCredentialRESTRequest is the JSON body for
@@ -118,6 +134,12 @@ type AccountRESTResponse struct {
 	Default       bool   `json:"default"`
 	Status        string `json:"status"`
 	RefreshPolicy string `json:"refresh_policy"`
+
+	// CredentialSecretRef / CredentialSecretFile name the tenant secret the
+	// credential is read from, when the account is reference-sourced. A name,
+	// never the value.
+	CredentialSecretRef  string `json:"credential_secret_ref,omitempty"`
+	CredentialSecretFile string `json:"credential_secret_file,omitempty"`
 
 	// AvailableAt is when a "limited" account rejoins the selectable pool.
 	// Zero on every other status.
@@ -227,24 +249,25 @@ func (s *Server) HandleCreateAccount(w http.ResponseWriter, r *http.Request) {
 		RespondBadRequest(w, r, "provider is required")
 		return
 	}
-	if req.Credential == nil {
-		RespondBadRequest(w, r, "credential is required")
-		return
-	}
 
 	accountSvc, ok := s.accountService(w, r)
 	if !ok {
 		return
 	}
 
+	// Which credential source was supplied — inline, reference, both or
+	// neither — is the service's rule to enforce, so every transport answers
+	// it identically.
 	resp, err := accountSvc.CreateAccount(ctx, &service.CreateAccountRequest{
-		TenantID:      tenantID,
-		ProjectID:     req.ProjectID,
-		Provider:      orchestration.AccountProvider(req.Provider),
-		DisplayName:   req.DisplayName,
-		Default:       req.Default,
-		RefreshPolicy: orchestration.AccountRefreshPolicy(req.RefreshPolicy),
-		Credential:    req.Credential.toOrchestration(),
+		TenantID:             tenantID,
+		ProjectID:            req.ProjectID,
+		Provider:             orchestration.AccountProvider(req.Provider),
+		DisplayName:          req.DisplayName,
+		Default:              req.Default,
+		RefreshPolicy:        orchestration.AccountRefreshPolicy(req.RefreshPolicy),
+		Credential:           req.Credential.toOrchestration(),
+		CredentialSecretRef:  req.CredentialSecretRef,
+		CredentialSecretFile: req.CredentialSecretFile,
 	})
 	if err != nil {
 		handleAccountError(w, r, err)
@@ -359,6 +382,9 @@ func (s *Server) HandleUpdateAccount(w http.ResponseWriter, r *http.Request) {
 		ProjectID:      req.ProjectID,
 		ClearProjectID: req.ClearProjectID,
 		RefreshPolicy:  orchestration.AccountRefreshPolicy(req.RefreshPolicy),
+
+		CredentialSecretRef:  req.CredentialSecretRef,
+		CredentialSecretFile: req.CredentialSecretFile,
 	})
 	if err != nil {
 		handleAccountError(w, r, err)
@@ -591,23 +617,25 @@ func accountToREST(a *orchestration.Account) *AccountRESTResponse {
 		return nil
 	}
 	return &AccountRESTResponse{
-		ID:                  a.ID,
-		TenantID:            a.TenantID,
-		ProjectID:           a.ProjectID,
-		Provider:            string(a.Provider),
-		DisplayName:         a.DisplayName,
-		Default:             a.Default,
-		Status:              string(a.Status),
-		RefreshPolicy:       string(a.RefreshPolicy),
-		AvailableAt:         a.AvailableAt,
-		CredentialExpiresAt: a.CredentialExpiresAt,
-		LastValidatedAt:     a.LastValidatedAt,
-		CredentialHealth:    string(a.CredentialHealth()),
-		CreatedAt:           a.CreatedAt,
-		UpdatedAt:           a.UpdatedAt,
-		LastUsedAt:          a.LastUsedAt,
-		LastRefreshedAt:     a.LastRefreshedAt,
-		LastError:           a.LastError,
+		ID:                   a.ID,
+		TenantID:             a.TenantID,
+		ProjectID:            a.ProjectID,
+		Provider:             string(a.Provider),
+		DisplayName:          a.DisplayName,
+		Default:              a.Default,
+		Status:               string(a.Status),
+		RefreshPolicy:        string(a.RefreshPolicy),
+		CredentialSecretRef:  a.CredentialSecretRef,
+		CredentialSecretFile: a.CredentialSecretFile,
+		AvailableAt:          a.AvailableAt,
+		CredentialExpiresAt:  a.CredentialExpiresAt,
+		LastValidatedAt:      a.LastValidatedAt,
+		CredentialHealth:     string(a.CredentialHealth()),
+		CreatedAt:            a.CreatedAt,
+		UpdatedAt:            a.UpdatedAt,
+		LastUsedAt:           a.LastUsedAt,
+		LastRefreshedAt:      a.LastRefreshedAt,
+		LastError:            a.LastError,
 	}
 }
 
@@ -625,8 +653,29 @@ func accountUsageToREST(u *orchestration.UsageReport) *AccountUsageRESTResponse 
 	}
 }
 
-// handleAccountError maps service-layer account errors to HTTP status codes.
+// respondAccountError writes err at statusCode, carrying its spawn
+// configuration-fault class (orchestration.SpawnFaultClass) in the error
+// envelope's fault_class when it has one.
+//
+// The class is what an agent daemon maps back onto the orchestration sentinel
+// (pkg/agent AccountAPIError), so a release refused because the account's
+// credential is missing is PARKED uncharged on a remote spawn exactly as it is
+// on an in-process one. A status code alone cannot say that: 409 also means a
+// revoked delivery grant, which is not a configuration fault.
+func respondAccountError(w http.ResponseWriter, r *http.Request, statusCode int, err error) {
+	errResp := newErrorResponse(r, err)
+	errResp.FaultClass = orchestration.SpawnFaultClass(err)
+	RespondJSON(w, r, statusCode, errResp)
+}
+
+// handleAccountError maps service-layer account errors to HTTP status codes
+// and writes the envelope, fault class included (respondAccountError).
 func handleAccountError(w http.ResponseWriter, r *http.Request, err error) {
+	respondAccountError(w, r, accountErrorStatus(err), err)
+}
+
+// accountErrorStatus is the HTTP status a service-layer account error maps to.
+func accountErrorStatus(err error) int {
 	var notFound *service.AccountNotFoundError
 	var invalid *service.AccountInvalidError
 	var noTracker *service.AccountUsageTrackerNotConfiguredError
@@ -634,12 +683,14 @@ func handleAccountError(w http.ResponseWriter, r *http.Request, err error) {
 	var projectScope *service.AccountProjectScopeError
 	var noTokens *service.AccountTokenManagerNotConfiguredError
 	var leaseRevoked *lease.LeaseRevokedError
+	var secretUnresolved *orchestration.AccountSecretRefUnresolvedError
+	var noSecretResolver *orchestration.AccountSecretResolverNotConfiguredError
 
 	switch {
 	case isPageInputError(err):
-		RespondError(w, r, http.StatusBadRequest, err)
+		return http.StatusBadRequest
 	case errors.As(err, &notFound):
-		RespondError(w, r, http.StatusNotFound, err)
+		return http.StatusNotFound
 	case errors.As(err, &leaseRevoked):
 		// 409, for the same reason AccountNotReleasableError is: the caller is
 		// entitled to this account and the account exists — it is the LEASE's
@@ -652,23 +703,38 @@ func handleAccountError(w http.ResponseWriter, r *http.Request, err error) {
 		// nothing to act on. Every spawn then failed until the process was
 		// restarted. A distinguishable status is what lets the daemon drop the
 		// stale grant and ask for a fresh one (pkg/agent account_secrets.go).
-		RespondError(w, r, http.StatusConflict, err)
+		return http.StatusConflict
 	case errors.As(err, &invalid):
-		RespondError(w, r, http.StatusBadRequest, err)
+		return http.StatusBadRequest
 	case errors.As(err, &notReleasable):
 		// 409, not 403: the caller is entitled to this account, and the
 		// account exists — it is the account's STATE that refuses, and that
 		// state changes on its own for a limit hold. A 403 would tell a
 		// daemon its identity was wrong and send an operator after the grant.
-		RespondError(w, r, http.StatusConflict, err)
+		return http.StatusConflict
+	case errors.As(err, &secretUnresolved):
+		// 409, like a not-releasable account: the caller is entitled to the
+		// account and it exists — the secret it names does not resolve, and
+		// the spawn path has already put the account in "error" for an
+		// operator to clear by writing the secret. The envelope's
+		// fault_class carries the missing-credential class so a daemon parks
+		// the work.
+		return http.StatusConflict
+	case errors.As(err, &noSecretResolver):
+		return http.StatusServiceUnavailable
 	case errors.As(err, &projectScope):
 		// 403: the account is fenced to another project and no retry, wait, or
 		// differently-shaped request by this caller will release it.
-		RespondError(w, r, http.StatusForbidden, err)
+		return http.StatusForbidden
 	case errors.As(err, &noTracker), errors.As(err, &noTokens):
-		RespondError(w, r, http.StatusServiceUnavailable, err)
+		return http.StatusServiceUnavailable
+	case errors.Is(err, orchestration.ErrAccountVersionConflict):
+		// 409: a concurrent write changed the account under this one — a
+		// rewrite that kept losing, or an inline rotation overtaken by a switch
+		// to a secret reference. Nothing was written; the caller may retry.
+		return http.StatusConflict
 	default:
-		RespondError(w, r, http.StatusInternalServerError, err)
+		return http.StatusInternalServerError
 	}
 }
 
@@ -756,6 +822,11 @@ type MaterializeAccountCredentialRESTResponse struct {
 	// deliberately independent.
 	LeaseExpiresAt time.Time `json:"lease_expires_at,omitempty"`
 
+	// SingleUse says the envelope must not be reused for a later spawn: the
+	// account reads its credential from a tenant secret, which rotates with no
+	// account write a cache could observe.
+	SingleUse bool `json:"single_use,omitempty"`
+
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -820,6 +891,7 @@ func (s *Server) HandleMaterializeAccountCredential(w http.ResponseWriter, r *ht
 		LastRefreshedAt: resp.LastRefreshedAt,
 		LeaseID:         resp.LeaseID,
 		LeaseExpiresAt:  resp.LeaseExpiresAt,
+		SingleUse:       resp.SingleUse,
 		Timestamp:       resp.Timestamp,
 	})
 }

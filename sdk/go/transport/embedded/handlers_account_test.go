@@ -352,6 +352,7 @@ func TestAccountEmbedded_MaterializeReleasesTheEnvelope(t *testing.T) {
 					TokenEndpoint:     "https://example.invalid/token",
 					ClientID:          "MUST-NOT-TRAVEL",
 				},
+				SingleUse: true,
 			}, nil
 		},
 	}
@@ -376,6 +377,9 @@ func TestAccountEmbedded_MaterializeReleasesTheEnvelope(t *testing.T) {
 	}
 	if captured == nil || captured.ProjectID != "project-x" {
 		t.Error("the project scope did not reach the service")
+	}
+	if !released.SingleUse {
+		t.Error("release lost single_use")
 	}
 
 	encoded, err := json.Marshal(released)

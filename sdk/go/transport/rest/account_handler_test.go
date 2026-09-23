@@ -225,7 +225,7 @@ func TestAccountHandlerMaterializeDecodesTheReleasedEnvelope(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"account_id":"acct-1","provider":"claude","refresh_policy":"none",` +
 			`"credential":{"access_token":"RELEASED","access_token_env_key":"CLAUDE_CODE_OAUTH_TOKEN"},` +
-			`"updated_at":"2026-09-09T12:00:00Z"}`))
+			`"updated_at":"2026-09-09T12:00:00Z","single_use":true}`))
 	}))
 	defer server.Close()
 
@@ -244,6 +244,9 @@ func TestAccountHandlerMaterializeDecodesTheReleasedEnvelope(t *testing.T) {
 	}
 	if released.UpdatedAt.IsZero() {
 		t.Error("release lost the cache-invalidation signal")
+	}
+	if !released.SingleUse {
+		t.Error("release lost single_use; a referenced account's copy would be reused past a secret write")
 	}
 	if !strings.Contains(gotBody, "proj-1") {
 		t.Errorf("request body %q did not carry the project scope", gotBody)

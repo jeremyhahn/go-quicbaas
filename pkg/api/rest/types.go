@@ -321,6 +321,15 @@ type ErrorResponse struct {
 	// Details contains additional error context
 	Details map[string]interface{} `json:"details,omitempty"`
 
+	// FaultClass names the spawn configuration-fault class of the failure
+	// (orchestration.SpawnFaultClass), when it has one. It is a separate field
+	// from Code because the two are different vocabularies: Code classifies the
+	// error for any client, FaultClass tells an agent daemon which
+	// orchestration sentinel to rebuild (orchestration.SpawnFaultSentinel) so
+	// a spawn it could not start is parked or charged exactly as an
+	// in-process one would be.
+	FaultClass string `json:"fault_class,omitempty"`
+
 	// Timestamp is when the error occurred
 	Timestamp time.Time `json:"timestamp"`
 

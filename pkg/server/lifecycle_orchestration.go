@@ -585,8 +585,20 @@ func (s *Server) startOrchestration() error {
 
 			accountStore := orchestration.NewAccountStore(orchKV, orchStoreOpts...)
 			accountSecrets := orchestration.NewAccountSecretStore(s.secretsManager)
-			accountTokens := orchestration.NewAccountTokenManager(accountSecrets, accountStore, 0,
-				orchestration.WithAccountProviders(accountProviders))
+			accountTokenOpts := []orchestration.AccountTokenManagerOption{
+				orchestration.WithAccountProviders(accountProviders),
+			}
+			// An account that names a credential_secret_ref is read from that
+			// tenant secret, in the ACCOUNT's tenant, on every resolution — both
+			// for an in-process spawn and for the materialize verb that hands a
+			// worker host its RESOLVED envelope. Workers never see the reference.
+			if s.quicBaaSService != nil && s.quicBaaSService.Secrets() != nil {
+				accountTokenOpts = append(accountTokenOpts, orchestration.WithAccountSecretResolver(
+					service.NewAccountSecretResolver(s.quicBaaSService.Secrets())))
+			} else {
+				s.logger.Warn("No secrets service available; pooled accounts that name a credential_secret_ref cannot be resolved")
+			}
+			accountTokens := orchestration.NewAccountTokenManager(accountSecrets, accountStore, 0, accountTokenOpts...)
 
 			// Install the RFC 6749 refresh_token-grant client on every
 			// oauth-capable provider. Without this every oauth2 account fails

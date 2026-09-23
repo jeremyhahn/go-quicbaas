@@ -745,6 +745,18 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	}
 	svc.accountService = NewAccountService(orchestration.NewAccountStore(orchKV, orchOpts...), accountSecrets)
 
+	// An account may name a tenant secret for its credential instead of
+	// holding one inline (credential_secret_ref). The write path checks the
+	// reference resolves, through the SAME SecretsService every other tenant
+	// secret is read through.
+	if svc.secretsService != nil {
+		if refWirer, refOK := svc.accountService.(interface {
+			SetSecretResolver(orchestration.AccountSecretResolver)
+		}); refOK {
+			refWirer.SetSecretResolver(NewAccountSecretResolver(svc.secretsService))
+		}
+	}
+
 	// The credential-release verb records one audit event per attempt, on the
 	// SAME sink the account store's own mutations land on, so a release and
 	// the rotation that preceded it sit on one trail. Wired here rather than

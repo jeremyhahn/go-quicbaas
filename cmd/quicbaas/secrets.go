@@ -110,11 +110,28 @@ func newSecretsPutCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "put <path>",
 		Short: "Store a secret",
-		Long: `Store a secret at the specified path with key-value data.
+		Long: `Store a secret at the specified path.
 
-Secrets are automatically encrypted and versioned.
+Secrets are automatically encrypted and versioned. Supply exactly one value
+source:
+
+  --data KEY=VALUE   a JSON object of key-value pairs (repeatable)
+  --from-stdin       the raw bytes of stdin, stored verbatim; from an
+                     interactive terminal, one line read with echo disabled
+  --from-file PATH   the raw bytes of a file, stored verbatim
+
+Use a raw source for a secret that is one opaque value another resource names
+by reference — a pooled agent account's credential_secret_ref, an SDLC
+binding's forge token or webhook key — because those are read verbatim. The
+value is never taken on the command line and never printed back.
 
 Examples:
+  # Store a provider token a pooled agent account will reference
+  quicbaas secrets put agents/claude/claude1/oauth_token --from-stdin
+
+  # Store a credential file verbatim
+  quicbaas secrets put agents/codex/reviewer/auth_json --from-file ~/.codex/auth.json
+
   # Store a single key-value pair
   quicbaas secrets put database/prod --data password=secret123
 
@@ -128,9 +145,10 @@ Examples:
 	}
 
 	cmd.Flags().StringArrayVar(&secretsData, "data", nil, "Secret data as KEY=VALUE pairs (can be specified multiple times)")
+	cmd.Flags().BoolVar(&secretsFromStdin, "from-stdin", false, "Store the raw bytes read from stdin (a hidden single line from a terminal)")
+	cmd.Flags().StringVar(&secretsFromFile, "from-file", "", "Store the raw bytes of this file")
 	cmd.Flags().DurationVar(&secretsTTL, "ttl", 0, "Time-to-live for the secret")
-
-	cmd.MarkFlagRequired("data")
+	cmd.MarkFlagsMutuallyExclusive("data", "from-stdin", "from-file")
 
 	return cmd
 }
@@ -139,19 +157,12 @@ Examples:
 func runSecretsPutCommand(cmd *cobra.Command, args []string) error {
 	secretPath := args[0]
 
-	dataMap := make(map[string]string)
-	for _, kv := range secretsData {
-		parts := strings.SplitN(kv, "=", 2)
-		if len(parts) != 2 {
-			return errors.Newf(errors.ErrInvalidInput, "secrets.put", "invalid data format: %s (expected KEY=VALUE)", kv)
-		}
-		dataMap[parts[0]] = parts[1]
-	}
-
-	dataBytes, err := json.Marshal(dataMap)
+	dataBytes, err := secretsPutValue(cmd)
 	if err != nil {
-		return errors.Wrapf(err, errors.ErrInvalidInput, "secrets.put", "failed to marshal secret data")
+		return err
 	}
+	// The value does not linger in the CLI's heap after the request is sent.
+	defer clear(dataBytes)
 
 	client, err := secretsClientFactory()
 	if err != nil {

@@ -152,6 +152,14 @@ type MaterializeAccountCredentialResponse struct {
 	// secret again. See pkg/agent's accountCredentialCache.Observe.
 	LastRefreshedAt time.Time `json:"last_refreshed_at,omitempty"`
 
+	// SingleUse says the envelope is good for the spawn that asked for it and
+	// must not be reused for the next one. It is set for an account whose
+	// credential is a tenant secret (credential_secret_ref): writing that
+	// secret rotates the credential WITHOUT any account write, so no metadata a
+	// caching caller reads could tell it that its copy went stale. Re-releasing
+	// per spawn is what makes a secret write reach the very next spawn.
+	SingleUse bool `json:"single_use,omitempty"`
+
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -415,6 +423,7 @@ func (s *accountServiceImpl) materialize(
 		ExpiresAt:       cred.ExpiresAt,
 		UpdatedAt:       account.UpdatedAt,
 		LastRefreshedAt: account.LastRefreshedAt,
+		SingleUse:       account.UsesSecretRef(),
 		Timestamp:       time.Now().UTC(),
 	}
 	if delivery != nil {

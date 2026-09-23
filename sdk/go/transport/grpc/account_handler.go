@@ -89,6 +89,9 @@ func handleAccountCreate(ctx context.Context, conn *grpc.ClientConn, req interfa
 		IsDefault:     sdkReq.Default,
 		RefreshPolicy: string(sdkReq.RefreshPolicy),
 		Credential:    accountCredentialToProto(sdkReq.Credential),
+
+		CredentialSecretRef:  sdkReq.CredentialSecretRef,
+		CredentialSecretFile: sdkReq.CredentialSecretFile,
 	})
 	if err != nil {
 		return nil, convertGRPCError(err, op)
@@ -149,6 +152,9 @@ func handleAccountUpdate(ctx context.Context, conn *grpc.ClientConn, req interfa
 		ProjectId:      sdkReq.ProjectID,
 		ClearProjectId: sdkReq.ClearProjectID,
 		RefreshPolicy:  string(sdkReq.RefreshPolicy),
+
+		CredentialSecretRef:  sdkReq.CredentialSecretRef,
+		CredentialSecretFile: sdkReq.CredentialSecretFile,
 	})
 	if err != nil {
 		return nil, convertGRPCError(err, op)
@@ -280,23 +286,25 @@ func accountFromProto(a *pb.Account) *account.AccountInfo {
 		return nil
 	}
 	return &account.AccountInfo{
-		ID:                  a.Id,
-		TenantID:            a.TenantId,
-		ProjectID:           a.ProjectId,
-		Provider:            account.Provider(a.Provider),
-		DisplayName:         a.DisplayName,
-		Default:             a.IsDefault,
-		Status:              account.Status(a.Status),
-		RefreshPolicy:       account.RefreshPolicy(a.RefreshPolicy),
-		AvailableAt:         timeFromUnix(a.AvailableAtUnix),
-		CredentialExpiresAt: timeFromUnix(a.CredentialExpiresAtUnix),
-		LastValidatedAt:     timeFromUnix(a.LastValidatedAtUnix),
-		CredentialHealth:    account.CredentialHealth(a.CredentialHealth),
-		CreatedAt:           timeFromUnix(a.CreatedAtUnix),
-		UpdatedAt:           timeFromUnix(a.UpdatedAtUnix),
-		LastUsedAt:          timeFromUnix(a.LastUsedAtUnix),
-		LastRefreshedAt:     timeFromUnix(a.LastRefreshedAtUnix),
-		LastError:           a.LastError,
+		ID:                   a.Id,
+		TenantID:             a.TenantId,
+		ProjectID:            a.ProjectId,
+		Provider:             account.Provider(a.Provider),
+		DisplayName:          a.DisplayName,
+		Default:              a.IsDefault,
+		Status:               account.Status(a.Status),
+		RefreshPolicy:        account.RefreshPolicy(a.RefreshPolicy),
+		CredentialSecretRef:  a.CredentialSecretRef,
+		CredentialSecretFile: a.CredentialSecretFile,
+		AvailableAt:          timeFromUnix(a.AvailableAtUnix),
+		CredentialExpiresAt:  timeFromUnix(a.CredentialExpiresAtUnix),
+		LastValidatedAt:      timeFromUnix(a.LastValidatedAtUnix),
+		CredentialHealth:     account.CredentialHealth(a.CredentialHealth),
+		CreatedAt:            timeFromUnix(a.CreatedAtUnix),
+		UpdatedAt:            timeFromUnix(a.UpdatedAtUnix),
+		LastUsedAt:           timeFromUnix(a.LastUsedAtUnix),
+		LastRefreshedAt:      timeFromUnix(a.LastRefreshedAtUnix),
+		LastError:            a.LastError,
 	}
 }
 
@@ -343,6 +351,7 @@ func handleAccountMaterialize(ctx context.Context, conn *grpc.ClientConn, req in
 		LastRefreshedAt: timeFromUnix(resp.LastRefreshedAtUnix),
 		LeaseID:         resp.LeaseId,
 		LeaseExpiresAt:  timeFromUnix(resp.LeaseExpiresAtUnix),
+		SingleUse:       resp.SingleUse,
 	}, nil
 }
 

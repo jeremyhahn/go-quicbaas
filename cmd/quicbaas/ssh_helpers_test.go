@@ -19,6 +19,7 @@ package main
 import (
 	"bytes"
 	stderrors "errors"
+	"os"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -181,15 +182,28 @@ func TestPrintSSHKey_NoCommentNoPublic(t *testing.T) {
 }
 
 // =============================================================================
-// isStdinTTY — non-deterministic per OS state but the function path is
-// short and safe to call (it returns false for the piped stdin used by
-// the test harness).
+// isTerminal — asks the terminal driver, not the file mode.
 // =============================================================================
 
-func TestIsStdinTTY_NoCrash(t *testing.T) {
-	// Just exercise the code path; result depends on test runner stdin.
-	// Both true and false are valid outcomes.
-	_ = isStdinTTY()
+// TestIsTerminal_DevNullIsNotATerminal is the regression: /dev/null is a
+// character device, which the old mode check took for a terminal.
+func TestIsTerminal_DevNullIsNotATerminal(t *testing.T) {
+	devNull, err := os.Open(os.DevNull)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, devNull.Close()) })
+
+	assert.False(t, isTerminal(devNull))
+}
+
+// TestIsTerminal_PipeAndClosedFileAreNotTerminals covers the ordinary
+// non-interactive attachment and a descriptor that is no longer valid.
+func TestIsTerminal_PipeAndClosedFileAreNotTerminals(t *testing.T) {
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	assert.False(t, isTerminal(r))
+	require.NoError(t, w.Close())
+	require.NoError(t, r.Close())
+	assert.False(t, isTerminal(r))
 }
 
 // =============================================================================

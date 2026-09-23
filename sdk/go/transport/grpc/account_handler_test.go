@@ -143,6 +143,17 @@ func TestAccountFromProto(t *testing.T) {
 	}
 }
 
+// TestAccountFromProto_SecretReference proves the reference name survives the
+// wire conversion.
+func TestAccountFromProto_SecretReference(t *testing.T) {
+	out := accountFromProto(&pb.Account{
+		Id: "acct-1", CredentialSecretRef: "agents/codex/reviewer/auth_json", CredentialSecretFile: ".codex/auth.json",
+	})
+	if out.CredentialSecretRef != "agents/codex/reviewer/auth_json" || out.CredentialSecretFile != ".codex/auth.json" {
+		t.Fatalf("reference lost in conversion: %+v", out)
+	}
+}
+
 // =============================================================================
 // Credential leak guard
 // =============================================================================
@@ -175,15 +186,18 @@ func TestAccountGRPCSDKTypesCarryNoCredential(t *testing.T) {
 	assertNoCredentialKeys(t, encoded)
 }
 
-// nonSecretCredentialKeys are the two metadata field names that contain the
-// word "credential" without carrying any. Both are derived from a timestamp
-// mirrored onto the account's non-secret record — an expiry is not credential
-// material — so the guards below match on JSON KEYS with these two excluded,
-// rather than scanning the whole document for the substring and tripping over
-// its own vocabulary.
+// nonSecretCredentialKeys are the metadata field names that contain the word
+// "credential" without carrying any. Two are derived from a timestamp mirrored
+// onto the account's non-secret record — an expiry is not credential material —
+// and two NAME the tenant secret a reference-sourced account reads (a secret's
+// name is not its value). The guards below match on JSON KEYS with these
+// excluded, rather than scanning the whole document for the substring and
+// tripping over its own vocabulary.
 var nonSecretCredentialKeys = map[string]bool{
-	"credential_expires_at": true,
-	"credential_health":     true,
+	"credential_expires_at":  true,
+	"credential_health":      true,
+	"credential_secret_ref":  true,
+	"credential_secret_file": true,
 }
 
 // assertNoCredentialKeys fails when encoded carries a key that looks like

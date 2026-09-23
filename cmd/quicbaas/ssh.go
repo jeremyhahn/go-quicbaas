@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	sshSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
 )
@@ -692,11 +693,17 @@ func sshPassphraseProvider() sshSDK.PassphraseProvider {
 
 // isStdinTTY reports whether stdin is attached to a terminal.
 func isStdinTTY() bool {
-	fi, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return (fi.Mode() & os.ModeCharDevice) != 0
+	return isTerminal(os.Stdin)
+}
+
+// isTerminal reports whether f is an interactive terminal.
+//
+// It asks the terminal driver rather than checking for a character device:
+// /dev/null is a character device too, and treating `cmd </dev/null` as
+// interactive prompts a user who is not there instead of reading the (empty)
+// stream.
+func isTerminal(f *os.File) bool {
+	return term.IsTerminal(int(f.Fd())) //nolint:gosec // G115: a file descriptor always fits an int
 }
 
 // printSSHKey emits the standard metadata block for a *sshSDK.Key.

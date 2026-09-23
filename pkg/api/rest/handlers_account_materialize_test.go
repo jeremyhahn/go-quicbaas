@@ -27,6 +27,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -357,5 +358,88 @@ func TestAccountCredentialToREST_DropsTheRefreshGrant(t *testing.T) {
 	}
 	if accountCredentialToREST(nil) != nil {
 		t.Error("converter fabricated an envelope from nil")
+	}
+}
+
+// TestMaterializeREST_CarriesSingleUse proves the REST release says when an
+// envelope must not be reused, and stays silent for one that may be.
+func TestMaterializeREST_CarriesSingleUse(t *testing.T) {
+	for _, singleUse := range []bool{true, false} {
+		svc := releasingAccountService(nil)
+		release := svc.MaterializeAccountCredentialFunc
+		svc.MaterializeAccountCredentialFunc = func(
+			ctx context.Context, req *service.MaterializeAccountCredentialRequest,
+		) (*service.MaterializeAccountCredentialResponse, error) {
+			resp, err := release(ctx, req)
+			if err == nil {
+				resp.SingleUse = singleUse
+			}
+			return resp, err
+		}
+		srv := newMaterializeTestServer(svc, daemonSubject("tenant-1"))
+
+		w := doMaterialize(srv, "/api/v1/agent-accounts/acct-1/materialize?tenant_id=tenant-1", nil)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+		}
+		var resp MaterializeAccountCredentialRESTResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if resp.SingleUse != singleUse {
+			t.Errorf("single_use = %v, want %v", resp.SingleUse, singleUse)
+		}
+	}
+}
+
+// leakyUnresolvedSecretRef is an unresolved-reference refusal whose cause is a
+// secrets-backend QBError carrying a fake sensitive diagnostic, in both its
+// message and its context map.
+func leakyUnresolvedSecretRef() error {
+	return &orchestration.AccountSecretRefUnresolvedError{
+		TenantID:  "tenant-1",
+		AccountID: "acct-1",
+		Ref:       "agents/claude/claude1/oauth_token",
+		Reason:    "the secret could not be read",
+		Cause: qberrors.New(qberrors.ErrUnavailable, "secrets.GetSecret", "vault diag sk-fake-marker").
+			WithContext("backend_diagnostic", "sk-fake-marker"),
+	}
+}
+
+// TestMaterializeREST_UnresolvedSecretRefDoesNotLeakBackendDiagnostics is the
+// round-6 security finding: the REST error mapper serialized the innermost
+// QBError in the chain, context included, so an unresolved reference exposed
+// the secrets backend's diagnostics in place of its sanitized message.
+func TestMaterializeREST_UnresolvedSecretRefDoesNotLeakBackendDiagnostics(t *testing.T) {
+	svc := &mocks.MockAccountService{
+		MaterializeAccountCredentialFunc: func(
+			context.Context, *service.MaterializeAccountCredentialRequest,
+		) (*service.MaterializeAccountCredentialResponse, error) {
+			return nil, leakyUnresolvedSecretRef()
+		},
+	}
+	srv := newMaterializeTestServer(svc, daemonSubject("tenant-1"))
+
+	w := doMaterialize(srv, "/api/v1/agent-accounts/acct-1/materialize?tenant_id=tenant-1", nil)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "sk-fake-marker") || strings.Contains(body, "backend_diagnostic") {
+		t.Fatalf("response leaks the secrets backend's diagnostics: %s", body)
+	}
+	if !strings.Contains(body, "credential_secret_ref agents/claude/claude1/oauth_token") {
+		t.Errorf("response lost the sanitized message: %s", body)
+	}
+}
+
+// TestMaterializeREST_ServiceQBErrorStillMapsItsCode is the other side: an
+// error that IS a QBError keeps the envelope's code, so the fix is confined to
+// the unresolved-reference refusal and not a blanket change to the mapper.
+func TestMaterializeREST_ServiceQBErrorStillMapsItsCode(t *testing.T) {
+	resp := newErrorResponse(httptest.NewRequest(http.MethodGet, "/", nil),
+		qberrors.New(qberrors.ErrNotFound, "accounts.Get", "no such account"))
+	if resp.Code != "not_found" {
+		t.Errorf("code = %q, want not_found", resp.Code)
 	}
 }

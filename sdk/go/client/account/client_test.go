@@ -223,7 +223,7 @@ func TestClient_InvalidInput(t *testing.T) {
 			_, err := c.Create(context.Background(), &CreateAccountRequest{TenantID: "t", Credential: sampleCredential()})
 			return err
 		}},
-		{"create no credential", func() error {
+		{"create no credential and no secret ref", func() error {
 			_, err := c.Create(context.Background(), &CreateAccountRequest{TenantID: "t", Provider: ProviderClaude})
 			return err
 		}},
@@ -427,15 +427,51 @@ func TestAccountInfoSerializesNoCredential(t *testing.T) {
 	assertNoCredentialKeys(t, encoded)
 }
 
-// nonSecretCredentialKeys are the two metadata field names that contain the
-// word "credential" without carrying any. Both are derived from a timestamp
-// mirrored onto the account's non-secret record — an expiry is not credential
-// material — so the guards below match on JSON KEYS with these two excluded,
-// rather than scanning the whole document for the substring and tripping over
-// its own vocabulary.
+// TestClient_CreateBySecretRef proves a create that names a tenant secret
+// instead of an inline credential passes client validation and reaches the
+// transport with the reference.
+func TestClient_CreateBySecretRef(t *testing.T) {
+	mt := &mockTransport{response: sampleInfo()}
+	_, err := NewClient(mt).Create(context.Background(), &CreateAccountRequest{
+		TenantID: "tenant-1", Provider: ProviderClaude, CredentialSecretRef: "agents/claude/claude1/oauth_token",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	req, ok := mt.request.(*CreateAccountRequest)
+	if !ok || req.CredentialSecretRef != "agents/claude/claude1/oauth_token" || req.Credential != nil {
+		t.Fatalf("transport request = %#v, want the reference and no inline credential", mt.request)
+	}
+}
+
+// TestAccountInfoWithSecretRefSerializesOnlyTheName proves a reference-sourced
+// account reports the secret's NAME and nothing credential-shaped besides.
+func TestAccountInfoWithSecretRefSerializesOnlyTheName(t *testing.T) {
+	info := sampleInfo()
+	info.CredentialSecretRef = "agents/codex/reviewer/auth_json"
+	info.CredentialSecretFile = ".codex/auth.json"
+	encoded, err := json.Marshal(info)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	assertNoCredentialKeys(t, encoded)
+	if !strings.Contains(string(encoded), `"credential_secret_ref":"agents/codex/reviewer/auth_json"`) {
+		t.Errorf("reference name missing from %s", encoded)
+	}
+}
+
+// nonSecretCredentialKeys are the metadata field names that contain the word
+// "credential" without carrying any. Two are derived from a timestamp mirrored
+// onto the account's non-secret record — an expiry is not credential material —
+// and two NAME the tenant secret a reference-sourced account reads (a secret's
+// name is not its value). The guards below match on JSON KEYS with these
+// excluded, rather than scanning the whole document for the substring and
+// tripping over its own vocabulary.
 var nonSecretCredentialKeys = map[string]bool{
-	"credential_expires_at": true,
-	"credential_health":     true,
+	"credential_expires_at":  true,
+	"credential_health":      true,
+	"credential_secret_ref":  true,
+	"credential_secret_file": true,
 }
 
 // assertNoCredentialKeys fails when encoded carries a key that looks like

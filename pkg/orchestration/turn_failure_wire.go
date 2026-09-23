@@ -281,6 +281,28 @@ var spawnFaultSentinels = map[string]error{
 	spawnFaultSessionWorkspace:       ErrSessionWorkspace,
 }
 
+// SpawnFaultClass returns the wire name of err's configuration-fault class, or
+// "" when err is not one.
+//
+// It is the ONE vocabulary a spawn-path failure crosses a process boundary in:
+// the gRPC spawn evidence below, and the REST error envelope's `fault_class` on
+// the credential-release verb (pkg/api/rest/handlers_account.go), which an agent
+// daemon maps back through SpawnFaultSentinel. Without it a daemon whose
+// release was refused for a missing credential would see an opaque HTTP
+// status, report no class, and the control plane would CHARGE an attempt it
+// should have parked.
+func SpawnFaultClass(err error) string {
+	return spawnFaultClassOf(err)
+}
+
+// SpawnFaultSentinel returns the orchestration sentinel a wire class
+// reconstructs. The second result is false for a class this build does not
+// know, which callers must leave as whatever failure it already was.
+func SpawnFaultSentinel(class string) (error, bool) {
+	sentinel, ok := spawnFaultSentinels[class]
+	return sentinel, ok
+}
+
 // spawnFaultClassOf names the class err belongs to, or "" when it is not a
 // configuration fault.
 // WHICH FAILURES ARE IN THIS SET IS A JUDGEMENT, so it is written down. All

@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
@@ -328,5 +329,61 @@ func TestAccountAPIError_ReportsWhatItKnows(t *testing.T) {
 	}
 	if (&AccountAPIError{Op: "bare"}).Unwrap() != nil {
 		t.Error("a causeless error unwrapped to something")
+	}
+}
+
+// TestAccountAPIError_UnwrapsAKnownFaultClass proves the envelope's fault class
+// is rebuilt into the orchestration sentinel, alongside any transport cause.
+func TestAccountAPIError_UnwrapsAKnownFaultClass(t *testing.T) {
+	cause := errors.New("connection reset")
+	err := &AccountAPIError{Op: "POST /m", Status: 409, FaultClass: "credential_not_found", Cause: cause}
+	if !errors.Is(err, orchestration.ErrAccountCredentialNotFound) {
+		t.Error("a credential_not_found fault class does not unwrap to ErrAccountCredentialNotFound")
+	}
+	if !errors.Is(err, cause) {
+		t.Error("the fault class displaced the transport cause")
+	}
+	cooling := &AccountAPIError{Op: "POST /m", Status: 409, FaultClass: "accounts_cooling_down"}
+	if !errors.Is(cooling, orchestration.ErrAccountsCoolingDown) {
+		t.Error("an accounts_cooling_down fault class does not unwrap to ErrAccountsCoolingDown")
+	}
+}
+
+// TestAccountAPIError_IgnoresAnUnknownFaultClass proves a class this build does
+// not know leaves the error what it was: no sentinel, no configuration fault.
+func TestAccountAPIError_IgnoresAnUnknownFaultClass(t *testing.T) {
+	err := &AccountAPIError{Op: "POST /m", Status: 409, FaultClass: "from_a_newer_build"}
+	if got := err.Unwrap(); len(got) != 0 {
+		t.Errorf("Unwrap() = %v, want nothing", got)
+	}
+	if class := orchestration.SpawnFaultClass(err); class != "" {
+		t.Errorf("SpawnFaultClass() = %q, want none", class)
+	}
+}
+
+// TestTruncateAccountAPIDetail_BoundsTheMessage covers the short and long
+// cases: a message under the bound is untouched, one over it is cut.
+func TestTruncateAccountAPIDetail_BoundsTheMessage(t *testing.T) {
+	if got := truncateAccountAPIDetail("account is revoked"); got != "account is revoked" {
+		t.Errorf("short detail = %q, want it unchanged", got)
+	}
+	long := strings.Repeat("x", accountAPIMaxErrorDetail+100)
+	got := truncateAccountAPIDetail(long)
+	if !strings.HasPrefix(got, strings.Repeat("x", accountAPIMaxErrorDetail)) || !strings.HasSuffix(got, "(truncated)") {
+		t.Errorf("long detail = %q, want the bound's prefix marked truncated", got)
+	}
+}
+
+// TestTruncateAccountAPIDetail_KeepsARuneWhole proves a cut that would land
+// inside a multi-byte rune backs off to its start rather than emitting
+// invalid UTF-8.
+func TestTruncateAccountAPIDetail_KeepsARuneWhole(t *testing.T) {
+	detail := strings.Repeat("x", accountAPIMaxErrorDetail-1) + "é" + "tail"
+	got := truncateAccountAPIDetail(detail)
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncated detail is not valid UTF-8: %q", got)
+	}
+	if strings.Contains(got, "é") {
+		t.Errorf("truncated detail kept a rune that straddles the bound: %q", got)
 	}
 }

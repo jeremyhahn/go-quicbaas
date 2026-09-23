@@ -69,8 +69,12 @@ func (r *ToolRegistry) registerAccountTools() {
 				"default":        map[string]interface{}{"type": "boolean", "description": "Mark this account the tenant+provider default"},
 				"refresh_policy": map[string]interface{}{"type": "string", "description": "Credential refresh policy: none or oauth2"},
 				"credential":     credentialSchema,
+				"credential_secret_ref": map[string]interface{}{"type": "string",
+					"description": "Short name of the tenant secret the credential is read from on every spawn (e.g. agents/claude/claude1/oauth_token); instead of credential"},
+				"credential_secret_file": map[string]interface{}{"type": "string",
+					"description": "With credential_secret_ref: materialize the secret as this file relative to the session home (e.g. .codex/auth.json) instead of as the access token"},
 			},
-			"required": []string{"tenant_id", "provider", "credential"},
+			"required": []string{"tenant_id", "provider"},
 		},
 	})
 
@@ -103,7 +107,7 @@ func (r *ToolRegistry) registerAccountTools() {
 
 	r.addTool(ToolDefinition{
 		Name:        "quicbaas_agent_account_update",
-		Description: "Update a pooled provider account's non-secret metadata (display name, project scope, refresh policy).",
+		Description: "Update a pooled provider account's non-secret metadata (display name, project scope, refresh policy), or point its credential at a tenant secret.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -113,6 +117,10 @@ func (r *ToolRegistry) registerAccountTools() {
 				"project_id":       map[string]interface{}{"type": "string", "description": "New project scope"},
 				"clear_project_id": map[string]interface{}{"type": "boolean", "description": "Remove the project scope, making the account tenant-wide"},
 				"refresh_policy":   map[string]interface{}{"type": "string", "description": "New refresh policy: none or oauth2"},
+				"credential_secret_ref": map[string]interface{}{"type": "string",
+					"description": "Switch the credential to (or re-point it at) this tenant secret; re-applying the current one returns an account whose secret was missing to service"},
+				"credential_secret_file": map[string]interface{}{"type": "string",
+					"description": "With credential_secret_ref: materialize the secret as this file relative to the session home"},
 			},
 			"required": []string{"tenant_id", "account_id"},
 		},
@@ -219,6 +227,9 @@ func (r *ToolRegistry) executeAccountCreate(ctx context.Context, args map[string
 		Default:       getBool(args, "default"),
 		RefreshPolicy: orchestration.AccountRefreshPolicy(getString(args, "refresh_policy")),
 		Credential:    accountCredentialFromArgs(args),
+
+		CredentialSecretRef:  getString(args, "credential_secret_ref"),
+		CredentialSecretFile: getString(args, "credential_secret_file"),
 	})
 }
 
@@ -257,6 +268,9 @@ func (r *ToolRegistry) executeAccountUpdate(ctx context.Context, args map[string
 		ProjectID:      getString(args, "project_id"),
 		ClearProjectID: getBool(args, "clear_project_id"),
 		RefreshPolicy:  orchestration.AccountRefreshPolicy(getString(args, "refresh_policy")),
+
+		CredentialSecretRef:  getString(args, "credential_secret_ref"),
+		CredentialSecretFile: getString(args, "credential_secret_file"),
 	})
 }
 

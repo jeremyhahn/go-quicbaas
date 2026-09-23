@@ -1,6 +1,6 @@
 # Pooled provider accounts
 
-> **Status: NORMATIVE** · Last verified: 2026-09-10
+> **Status: NORMATIVE** · Last verified: 2026-09-22
 > Supplement to the Software Factory feature folder: the account model, how a
 > credential reaches a worker host, selection, rotation and cost attribution.
 > Verbs are in [cli.md](cli.md#quicbaas-agent-account) and
@@ -29,6 +29,198 @@ Every account is stored as two records that never meet:
 The split is what makes an operator's `list` safe. `Account` has no credential
 field, and no API response type carries one — with exactly one deliberate
 exception, below.
+
+## Where the credential comes from: inline or a tenant secret
+
+An account takes its credential from exactly ONE of two sources. Supplying both,
+or neither, is refused at write time (`400`, field `credential` or
+`credential_secret_ref`).
+
+| Source | Set with | Stored | Rotated by |
+| --- | --- | --- | --- |
+| **Secret reference** (recommended) | `credential_secret_ref` (+ `credential_secret_file`) | Nowhere new: the account names a secret in its tenant's secrets store | Writing a new version of that secret |
+| Inline | `credential` | The account's own envelope (the table above) | `rotate` on the account |
+
+**A reference is a name, not a value.** `credential_secret_ref` is the SHORT,
+tenant-relative secret name — `agents/claude/claude1/oauth_token` — the same
+kind of name an SDLC binding's `forge.token_secret_ref` uses. It lives on the
+metadata record and is returned by `get`/`list`; the value never is.
+
+**It resolves in the ACCOUNT's tenant, every time.** Every resolution — an
+in-process spawn, and the release verb that serves a worker host — reads the
+secret through the tenant `SecretsService`, scoped to the account's own
+`tenant_id`, whatever tenant the caller's context carried
+(`service.NewAccountSecretResolver`). A system administrator who provisions
+tenant T's account gets T's secret; a same-named secret in the system keyspace
+or another tenant is never read. Nothing is cached on the account, so writing
+the secret is the rotation — no account write.
+
+**How the value becomes a credential:**
+
+- Without `credential_secret_file`, the value (surrounding whitespace trimmed)
+  is the access token, projected into the provider's access-token variable
+  (`CLAUDE_CODE_OAUTH_TOKEN` for `claude`). A provider with no such variable
+  (`codex`, `opencode`) must name a file instead; that is refused at write time.
+- With `credential_secret_file`, the value is written VERBATIM as that file,
+  relative to the per-session home — `.codex/auth.json` for the codex reviewer
+  account. The path must be clean and relative.
+
+**Rules checked at write time** (create, and update with a reference):
+
+- a referenced account is `refresh_policy: none`. QuicBaaS never renews it:
+  renewal would have to write a rotated refresh token back into a secret the
+  operator owns;
+- the reference is a short name — not `tenant/<id>/...` (the storage prefix the
+  store adds itself), no empty, `.` or `..` segment, no whitespace;
+- the secret must **resolve now**, in the account's tenant, to a non-empty
+  value. A reference that does not resolve is the operator's request to fix,
+  not the first spawn's surprise.
+
+**When the secret goes missing later.** A spawn whose account's secret is
+absent, empty, disabled or unreadable fails with
+`AccountSecretRefUnresolvedError`, which unwraps to
+`ErrAccountCredentialNotFound`: the work item parks uncharged
+(`account_credential_missing`), exactly as for a missing inline envelope. The
+account is put in `status: error` with a `last_error` naming the reference and
+the failure class (never the underlying error text), so it drops out of
+selection and appears in the attention inbox. The caller's own context ending
+marks nothing.
+
+The same holds for a spawn on a **remote agent daemon**. The control plane
+refuses the daemon's release with `409` and `"fault_class":
+"credential_not_found"` in the error body; the daemon's client rebuilds
+`ErrAccountCredentialNotFound` from that class, so its spawn reports the same
+fault and the work parks uncharged there too. The class, not the status, is
+what carries it: a revoked delivery grant is also a `409` and is not a
+configuration fault.
+
+To return it to service, write the secret, then re-apply the reference:
+`quicbaas agent account update <id> --credential-secret-ref <same name>`. The
+update re-checks the secret and clears `error`; it does not touch `revoked` or
+`limited`.
+
+**Switching an existing inline account.** `update --credential-secret-ref`
+moves an inline account onto a reference: the record switches first, then the
+inline envelope is destroyed (a crash in between leaves an orphaned envelope,
+never an account with no credential). If that destroy fails the update reports
+it, and **retrying the same update finishes the job**: every update of a
+referenced account idempotently destroys any inline envelope it still has, so
+the retry does not depend on still looking like a switch. `rotate` is refused on a referenced
+account — its rotation is a secret write. Deleting an account never deletes
+the secret it names; the operator owns it.
+
+**Workers never see a reference.** The agent daemon's account wire shape has
+no reference field, and its token manager has no resolver: a worker host
+receives the RESOLVED envelope through the release verb, or nothing. That
+release is marked `single_use` (below, under Rotation), so a secret write
+reaches a worker host's very next spawn too.
+
+### Runbook: loading provider tokens into tenant secrets
+
+The owner's long-lived tokens live in an env file on disk. Load each one into
+the TENANT's secrets store without the value ever reaching argv, a log, or the
+terminal, then point an account at it.
+
+1. **Write the secret as a principal of the account's tenant** (a tenant
+   administrator, or the tenant's agent certificate). Secrets writes are
+   tenant-only: a system-administrator write lands in the SYSTEM keyspace,
+   where tenant T's account will not find it — its create is refused with
+   `credential_secret_ref: secret ... in tenant T: the secret does not exist in
+   this tenant`.
+
+   ```sh
+   ENV_FILE=~/sources/automatethethings/infra/agents/tokens/ai-accounts.env
+   # One line per FACTORY account. Adjust the variable names to the file's.
+   # personal/work tokens are the owner's own and are never loaded.
+   for n in 1 2 3; do
+     sed -n "s/^CLAUDE${n}_OAUTH_TOKEN=//p" "$ENV_FILE" | tr -d "\"'" \
+       | quicbaas secrets put "agents/claude/claude${n}/oauth_token" --from-stdin \
+           <tenant principal's --tls/--cert/--key/--ca>
+   done
+   ```
+
+   `--from-stdin` stores the piped bytes verbatim with no `KEY=VALUE` JSON
+   envelope (a trailing newline is trimmed when the value is used as a token).
+   From an interactive terminal it reads one line with echo disabled instead.
+
+2. **Create the accounts** (account writes take `credentials:*`, which is
+   system-only — go-quicbaas#737 — so this step runs as the system
+   administrator, naming the tenant):
+
+   ```sh
+   for n in 1 2 3; do
+     quicbaas --tenant automatethethings agent account create --provider claude \
+       --display-name "claude${n}" \
+       --credential-secret-ref "agents/claude/claude${n}/oauth_token"
+   done
+   ```
+
+   An existing inline account migrates in place:
+   `quicbaas --tenant automatethethings agent account update <id> --credential-secret-ref agents/claude/claude1/oauth_token`.
+
+3. **The codex reviewer account** carries a credential FILE:
+
+   ```sh
+   quicbaas secrets put agents/codex/reviewer/auth_json --from-file ~/.codex/auth.json <tenant principal flags>
+   quicbaas --tenant automatethethings agent account create --provider codex \
+     --display-name reviewer \
+     --credential-secret-ref agents/codex/reviewer/auth_json \
+     --credential-secret-file .codex/auth.json
+   ```
+
+4. **Rotate** by writing a new version of the secret — nothing else:
+   `quicbaas secrets put agents/claude/claude1/oauth_token --from-stdin` (paste the
+   new token at the hidden prompt, or pipe it in).
+   Every spawn picks it up on its very next resolution, on the control plane
+   and on every worker host alike: a referenced account's release is
+   single-use, so no host serves a cached copy of a secret it cannot see change
+   (see [Rotation](#rotation)).
+
+**Updates are conditional.** `UpdateAccount` reads the account, applies the
+request, and writes with `AccountStore.UpdateIfUnchanged`, which lands only if
+the stored record's `updated_at` is still the one it read. A write that lost a
+race re-reads and re-applies the request, up to five times. So two concurrent
+updates, such as a rename and a switch to a secret reference, both take effect,
+and neither can save a stale copy over the other. Revoke uses the same loop.
+
+**The backend decides, not a lock.** The service layer and the orchestration
+runtime each build their own account store over one KV, and every daemon has
+its own, so no in-process lock can order their writes. Every write of an
+existing account record — `UpdateIfUnchanged`, `Update`, and `Touch` (usage
+and refresh stamps, status, cooldown, expiry) — commits with the KV's
+compare-and-swap against the exact bytes it read. A write that loses is never
+applied: an update reports `AccountVersionConflictError` (REST `409`, gRPC
+`Aborted`) and the service re-reads; a touch re-reads and re-applies its field
+changes itself. A store without compare-and-swap is refused rather than written
+to unconditionally.
+
+**A rotation cannot resurrect a switched account's envelope.** An inline
+`rotate` checks the account is inline, writes the new envelope, then stamps the
+record with `RequireInlineCredential`, which the store decides on the record it
+commits over. If a switch to a secret reference committed in between (and
+destroyed the inline envelope, which the rotation has just re-written), the
+stamp is refused with `AccountCredentialSourceChangedError` (`409` / `Aborted`),
+nothing reaches the record, and the rotation deletes the envelope it wrote.
+**Automatic OAuth renewal is held to the same rule**: its success and failure
+stamps require the account to still be inline, and a renewal overtaken by a
+switch removes the envelope it wrote back and returns the same error instead
+of handing out the renewed token.
+
+**Automatic stamps never undo an operator.** Every stamp the runtime makes on
+its own — a renewal's outcome, a failed secret read — refuses to replace
+`revoked`. A failed-read stamp is also conditional on the account still reading
+the reference that read attempted, as last applied (`credential_secret_ref`,
+`credential_secret_file` and `last_refreshed_at` all unchanged). An operator
+who re-points the reference, or writes the secret and re-applies the same one,
+while an earlier read is failing has already answered that failure, so the
+stale `error` is not stamped over the working account.
+
+**A failed secret read reports no backend detail.** The refusal's message names
+the reference and a failure class ("the secret does not exist in this tenant",
+"the secret could not be read") and nothing else. Its underlying secrets-service
+error stays in process: it is not reachable through the error chain, so no
+transport (REST, gRPC, MCP) can serialize that service's diagnostics in place of
+the sanitized message.
 
 ## Selection
 
@@ -108,6 +300,14 @@ principal, never from the request. A `tenant_id` naming anything else is refused
 | Account fenced to another project | `403` | No retry or reshaped request by this caller will release it. |
 | No such account in the caller's tenant | `404` | Indistinguishable from another tenant's account, deliberately. |
 | No token manager wired | `503` | The deployment's fault, not the caller's. |
+| `credential_secret_ref` does not resolve | `409`, with `fault_class: credential_not_found` | The account exists and is the caller's; its credential does not. The class is what a daemon parks the work on. |
+
+A refusal whose failure is a spawn configuration fault carries its class in the
+error body's `fault_class` — the same vocabulary as the gRPC spawn evidence
+(`orchestration.SpawnFaultClass`). A class the daemon's build does not know is
+ignored, leaving the refusal an ordinary charged failure. The daemon decodes the
+whole error body (bounded at 64 KiB) before it shortens the message it keeps to
+512 bytes, so a long refusal never loses its class.
 
 **The refresh grant does not travel.** The released envelope carries the access
 token, the environment variable to project it into, static env and file
@@ -299,6 +499,7 @@ across a daemon restart, which costs one mTLS round trip to recover.
 | Declares an expiry | Two refresh skews before it, capped at 15 minutes |
 | Declares none (typical static token) | 15 minutes |
 | Already inside its renewal margin | Not cached at all |
+| Released `single_use` (a `credential_secret_ref` account) | Not cached at all: re-released for every spawn |
 
 The two-skew margin exists so the token manager's *renewal* path is unreachable
 rather than merely unlikely: the daemon holds no refresh token, so it
@@ -316,6 +517,20 @@ the very next spawn**, with no polling and no push:
    always does, because selection comes first.
 3. A `last_refreshed_at` newer than the one the cached envelope was released
    under evicts the entry, and the next read re-materializes.
+
+A **referenced** account (`credential_secret_ref`) is rotated by writing its
+secret, and that also reaches the **very next spawn** on every host — with no
+account write. The secret write moves neither timestamp, so step 3 cannot see
+it; instead the control plane marks such a release `single_use` (on the REST,
+gRPC, MCP and embedded wires alike), and the daemon serves it to the spawn
+that asked and does not keep it. The next spawn re-releases, and the control
+plane reads the secret afresh.
+
+Why not cache it and key the cache on the secret's version instead? Because
+the daemon cannot learn that version without asking the control plane, and
+that round trip costs what a release costs — so there is nothing cheaper to
+check. The price is one release (and its audit event) per spawn of a
+referenced account; inline accounts keep the cache.
 
 `last_refreshed_at` is the signal, not `updated_at`. `updated_at` moves on any
 write — including the usage stamp the release itself makes — so a cache keyed on
@@ -1136,8 +1351,13 @@ response) run per transport:
 client, so it behaves identically on every transport:
 
 ```
+quicbaas secrets put agents/claude/claude1/oauth_token --from-stdin   # as a tenant principal
+quicbaas agent account create --provider claude --display-name claude1 \
+  --credential-secret-ref agents/claude/claude1/oauth_token
+quicbaas agent account update acct_abc123 \
+  --credential-secret-ref agents/claude/claude1/oauth_token          # switch an inline account
 quicbaas agent account create --provider claude --display-name alice-work \
-  --refresh-policy oauth2 --credential-file -      # '-' reads stdin
+  --refresh-policy oauth2 --credential-file -      # inline; '-' reads stdin
 quicbaas agent account list --provider claude --output json
 quicbaas agent account get acct_abc123
 quicbaas agent account update acct_abc123 --display-name alice-personal
@@ -1148,7 +1368,13 @@ quicbaas agent account revoke acct_abc123 --reason "token leaked"
 quicbaas agent account delete acct_abc123
 ```
 
-Credentials are read from a file or stdin, never from a flag value: a
+`--credential-secret-ref` (and `--credential-secret-file`) name a tenant secret
+instead of supplying a document; see
+[Where the credential comes from](#where-the-credential-comes-from-inline-or-a-tenant-secret)
+and its runbook. `--credential-secret-ref` and `--credential-file` together are
+refused before anything is read.
+
+Inline credentials are read from a file or stdin, never from a flag value: a
 command-line secret lands in shell history and the process table. The
 credential document mirrors the credential envelope:
 

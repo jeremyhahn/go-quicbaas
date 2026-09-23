@@ -1128,6 +1128,10 @@ func (k *moverBarrierKV) CompareAndDelete(ctx context.Context, key string, expec
 	return forwardCompareAndDelete(ctx, k.KVStore, key, expected)
 }
 
+func (k *moverBarrierKV) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	return forwardCompareAndSwap(ctx, k.KVStore, key, expected, next)
+}
+
 // TestAccountStore_Update_NineMoversIntoOneScopeElectOneDefault proves the
 // destination of a move is a single-winner election, not a vacancy probe.
 //
@@ -1359,6 +1363,10 @@ func (k *holdBetweenProbeAndClaim) PutIfAbsent(ctx context.Context, key string, 
 
 func (k *holdBetweenProbeAndClaim) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
 	return forwardCompareAndDelete(ctx, k.KVStore, key, expected)
+}
+
+func (k *holdBetweenProbeAndClaim) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	return forwardCompareAndSwap(ctx, k.KVStore, key, expected, next)
 }
 
 // TestAccountStore_Update_MoverDoesNotOverwriteADefaultSetWhileItWasDeciding is

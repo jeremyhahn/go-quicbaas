@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -137,6 +138,13 @@ func (c *AccountAPIClient) TenantID() string { return c.tenantID }
 // =============================================================================
 
 // accountWire is the non-secret account metadata record.
+//
+// It deliberately has NO credential_secret_ref / credential_secret_file field.
+// A reference-sourced account is resolved on the CONTROL PLANE, inside the
+// materialize verb, and this daemon receives only the resolved envelope. Were
+// the reference decoded here, the daemon's AccountTokenManager (which has no
+// secret resolver, and must not: a worker host has no route to the tenant
+// secrets store) would try to resolve it itself and refuse every spawn.
 type accountWire struct {
 	ID                  string    `json:"id"`
 	TenantID            string    `json:"tenant_id"`
@@ -223,6 +231,7 @@ type materializeWire struct {
 	LastRefreshedAt time.Time               `json:"last_refreshed_at,omitempty"`
 	LeaseID         string                  `json:"lease_id,omitempty"`
 	LeaseExpiresAt  time.Time               `json:"lease_expires_at,omitempty"`
+	SingleUse       bool                    `json:"single_use,omitempty"`
 }
 
 // MaterializedAccountCredential is one released envelope plus the metadata the
@@ -257,6 +266,11 @@ type MaterializedAccountCredential struct {
 	// LeaseExpiresAt is when the grant stops being refreshable without renewal.
 	// It is NOT the credential's expiry, which is on the envelope.
 	LeaseExpiresAt time.Time
+
+	// SingleUse says this copy serves the spawn that asked for it and no
+	// other: the account reads its credential from a tenant secret, which
+	// rotates with no account write this daemon could observe.
+	SingleUse bool
 }
 
 // =============================================================================
@@ -363,6 +377,7 @@ func (c *AccountAPIClient) MaterializeCredential(
 		LastRefreshedAt: envelope.LastRefreshedAt,
 		LeaseID:         envelope.LeaseID,
 		LeaseExpiresAt:  envelope.LeaseExpiresAt,
+		SingleUse:       envelope.SingleUse,
 	}, nil
 }
 
@@ -453,39 +468,61 @@ func (c *AccountAPIClient) attempt(ctx context.Context, method, path string, bod
 	case resp.StatusCode == http.StatusUnauthorized && !afterRefresh:
 		return errAccountAPIUnauthorized
 	default:
-		return &AccountAPIError{Op: op, Status: resp.StatusCode, Message: accountAPIFailureDetail(resp)}
+		message, faultClass := accountAPIFailureDetail(resp)
+		return &AccountAPIError{Op: op, Status: resp.StatusCode, Message: message, FaultClass: faultClass}
 	}
 }
 
-// accountAPIMaxErrorBody bounds how much of a failure body is read into an
-// error message.
-const accountAPIMaxErrorBody = 512
+// accountAPIMaxErrorBody bounds how much of a failure body is read at all. It
+// is generous enough that no error envelope the control plane writes is cut
+// short — a truncated envelope no longer parses, and a refusal that does not
+// parse loses its fault class, which is the difference between parking a work
+// item and charging it.
+const accountAPIMaxErrorBody = 64 << 10
+
+// accountAPIMaxErrorDetail bounds the human-readable text an error carries.
+// It is applied AFTER the envelope is decoded, to the message alone.
+const accountAPIMaxErrorDetail = 512
 
 // accountAPIFailureDetail extracts the control plane's own explanation of a
 // refusal so an operator sees "account is restricted to project X" rather than
-// a bare status code.
+// a bare status code, and the envelope's spawn fault class (`fault_class`,
+// written by the REST layer from orchestration.SpawnFaultClass).
 //
-// It reads a BOUNDED prefix and only from a FAILURE response. A 2xx body is
+// It reads a BOUNDED body and only from a FAILURE response. A 2xx body is
 // never read here, which is what keeps a released credential out of every
 // error string this package can produce.
-func accountAPIFailureDetail(resp *http.Response) string {
+func accountAPIFailureDetail(resp *http.Response) (message, faultClass string) {
 	body, err := io.ReadAll(io.LimitReader(resp.Body, accountAPIMaxErrorBody))
 	if err != nil || len(body) == 0 {
-		return ""
+		return "", ""
 	}
 	var envelope struct {
-		Error   string `json:"error"`
-		Message string `json:"message"`
+		Error      string `json:"error"`
+		Message    string `json:"message"`
+		FaultClass string `json:"fault_class"`
 	}
-	if json.Unmarshal(body, &envelope) == nil {
-		if envelope.Error != "" {
-			return envelope.Error
-		}
-		if envelope.Message != "" {
-			return envelope.Message
-		}
+	if json.Unmarshal(body, &envelope) != nil {
+		return truncateAccountAPIDetail(strings.TrimSpace(string(body))), ""
 	}
-	return strings.TrimSpace(string(body))
+	message = envelope.Error
+	if message == "" {
+		message = envelope.Message
+	}
+	return truncateAccountAPIDetail(message), envelope.FaultClass
+}
+
+// truncateAccountAPIDetail cuts detail to accountAPIMaxErrorDetail bytes,
+// backing off to a rune boundary so the result stays valid UTF-8.
+func truncateAccountAPIDetail(detail string) string {
+	if len(detail) <= accountAPIMaxErrorDetail {
+		return detail
+	}
+	cut := detail[:accountAPIMaxErrorDetail]
+	for len(cut) > 0 && !utf8.ValidString(cut) {
+		cut = cut[:len(cut)-1]
+	}
+	return cut + "... (truncated)"
 }
 
 // =============================================================================
@@ -531,6 +568,12 @@ type AccountAPIError struct {
 	// Message is the control plane's own explanation, when it sent one.
 	Message string
 
+	// FaultClass is the error envelope's spawn configuration-fault class. When
+	// this build knows it (orchestration.SpawnFaultSentinel), the error unwraps
+	// to that class's sentinel, so the daemon reports e.g. a missing credential
+	// as one and the control plane parks the work uncharged.
+	FaultClass string
+
 	// Cause is the underlying transport / encoding error, when there was one.
 	Cause error
 }
@@ -553,8 +596,19 @@ func (e *AccountAPIError) Error() string {
 	return msg
 }
 
-// Unwrap returns the underlying transport error, if any.
-func (e *AccountAPIError) Unwrap() error { return e.Cause }
+// Unwrap returns the underlying transport error, if any, and the sentinel of
+// the spawn configuration-fault class FaultClass names, if it names one: a daemon
+// refused a release for a missing credential then reports that class.
+func (e *AccountAPIError) Unwrap() []error {
+	var out []error
+	if sentinel, ok := orchestration.SpawnFaultSentinel(e.FaultClass); ok {
+		out = append(out, sentinel)
+	}
+	if e.Cause != nil {
+		out = append(out, e.Cause)
+	}
+	return out
+}
 
 // AccountAPITenantMismatchError reports a call asking about a tenant other
 // than the one this daemon is enrolled in.

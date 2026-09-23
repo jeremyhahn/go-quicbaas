@@ -103,8 +103,20 @@ type accountStore struct {
 	creator guardedCreator
 	deleter guardedDeleter
 
+	// swapper is kv's guarded-edit capability. EVERY write of an existing
+	// account record commits through it, against the exact bytes that write
+	// read (commitRecord). recordMu below only orders writers inside ONE store
+	// instance, and there is more than one per process — the service layer
+	// and the orchestration runtime each build their own over the same KV —
+	// and one per daemon beyond that. Only the backend can make "the record I
+	// read is still the record" and "write mine" a single step for all of
+	// them, so a stale snapshot can never overwrite a newer record.
+	swapper guardedSwapper
+
 	// recordMu serializes the read-modify-write sequence on one account
-	// record (Update, Touch, and the default-pointer swap in SetDefault).
+	// record (Update, Touch, and the default-pointer swap in SetDefault)
+	// within this instance, so local writers queue rather than spin on the
+	// swap. It is not what makes the write safe; swapper is.
 	recordMu keyedMutex
 
 	// defaultMu serializes default-pointer reservation within one
@@ -132,6 +144,9 @@ func NewAccountStore(kv interfaces.KVStore, opts ...StoreOption) AccountStore {
 	}
 	if deleter, ok := kv.(guardedDeleter); ok {
 		store.deleter = deleter
+	}
+	if swapper, ok := kv.(guardedSwapper); ok {
+		store.swapper = swapper
 	}
 	return store
 }
@@ -549,20 +564,29 @@ func (s *accountStore) Get(ctx context.Context, tenantID, accountID string) (*Ac
 }
 
 func (s *accountStore) load(ctx context.Context, recordKey, tenantID, accountID string) (*Account, error) {
+	account, _, err := s.loadRaw(ctx, recordKey, tenantID, accountID)
+	return account, err
+}
+
+// loadRaw is load, also returning the exact stored bytes the account was
+// decoded from. A guarded write compares against THOSE bytes (commitRecord):
+// re-encoding the decoded account would not match them, because the read
+// normalizes a lapsed cooldown and derives Default.
+func (s *accountStore) loadRaw(ctx context.Context, recordKey, tenantID, accountID string) (*Account, []byte, error) {
 	data, err := s.kv.Get(ctx, recordKey)
 	if err != nil {
 		if qerrors.IsNotFound(err) {
-			return nil, &AccountNotFoundError{TenantID: tenantID, AccountID: accountID}
+			return nil, nil, &AccountNotFoundError{TenantID: tenantID, AccountID: accountID}
 		}
-		return nil, &AccountStoreError{Message: "failed to read account: " + err.Error()}
+		return nil, nil, &AccountStoreError{Message: "failed to read account: " + err.Error()}
 	}
 	if data == nil {
-		return nil, &AccountNotFoundError{TenantID: tenantID, AccountID: accountID}
+		return nil, nil, &AccountNotFoundError{TenantID: tenantID, AccountID: accountID}
 	}
 
 	var account Account
 	if err := json.Unmarshal(data, &account); err != nil {
-		return nil, &AccountStoreError{Message: "failed to unmarshal account: " + err.Error()}
+		return nil, nil, &AccountStoreError{Message: "failed to unmarshal account: " + err.Error()}
 	}
 
 	// Defence in depth: the key already scopes the read to tenantID, so a
@@ -570,7 +594,7 @@ func (s *accountStore) load(ctx context.Context, recordKey, tenantID, accountID 
 	// bypassed. Report it as absent rather than returning another tenant's
 	// account.
 	if account.TenantID != tenantID {
-		return nil, &AccountNotFoundError{TenantID: tenantID, AccountID: accountID}
+		return nil, nil, &AccountNotFoundError{TenantID: tenantID, AccountID: accountID}
 	}
 
 	// A limit hold that has lapsed is returned to the active pool here, on the
@@ -581,9 +605,30 @@ func (s *accountStore) load(ctx context.Context, recordKey, tenantID, accountID 
 	account.expireCooldown(time.Now().UTC())
 
 	if err := s.deriveDefault(ctx, &account); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return &account, nil
+	return &account, data, nil
+}
+
+// commitRecord writes data over recordKey only if the record still holds
+// exactly raw, the bytes the caller read. It reports false, having written
+// nothing, when another writer — in this process or any other — committed in
+// between; the caller then re-reads.
+//
+// A store without the guarded edit is refused rather than written to
+// unconditionally: an unconditional write is precisely the lost update this
+// exists to prevent, and succeeding quietly would hide it.
+func (s *accountStore) commitRecord(ctx context.Context, recordKey string, raw, data []byte) (bool, error) {
+	if s.swapper == nil {
+		return false, &AccountStoreError{
+			Message: "account records need a store that can decide a guarded edit; this one cannot",
+		}
+	}
+	swapped, err := s.swapper.CompareAndSwap(ctx, recordKey, raw, data)
+	if err != nil {
+		return false, &AccountStoreError{Message: "failed to write account: " + err.Error(), Cause: err}
+	}
+	return swapped, nil
 }
 
 // deriveDefault sets account.Default from its scope's durable default pointer.
@@ -617,12 +662,28 @@ func (s *accountStore) Update(ctx context.Context, account *Account) error {
 	if account != nil {
 		tenantID, accountID = account.TenantID, account.ID
 	}
-	err := s.update(ctx, account)
+	err := s.update(ctx, account, nil)
 	s.audit(ctx, AuditActionUpdate, tenantID, accountID, err)
 	return err
 }
 
-func (s *accountStore) update(ctx context.Context, account *Account) error {
+// UpdateIfUnchanged implements AccountStore. The UpdatedAt comparison is made
+// against the record this write read, and the write itself is a guarded edit
+// against that record's bytes (commitRecord), so no writer — in any store
+// instance or process — can land between the check and the write.
+func (s *accountStore) UpdateIfUnchanged(ctx context.Context, account *Account, expected time.Time) error {
+	var tenantID, accountID string
+	if account != nil {
+		tenantID, accountID = account.TenantID, account.ID
+	}
+	err := s.update(ctx, account, &expected)
+	s.audit(ctx, AuditActionUpdate, tenantID, accountID, err)
+	return err
+}
+
+// update writes account. A non-nil expected makes the write conditional on the
+// stored record's UpdatedAt; see UpdateIfUnchanged.
+func (s *accountStore) update(ctx context.Context, account *Account, expected *time.Time) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -647,9 +708,12 @@ func (s *accountStore) update(ctx context.Context, account *Account) error {
 	unlock := s.recordMu.lock(recordKey)
 	defer unlock()
 
-	current, err := s.load(ctx, recordKey, account.TenantID, account.ID)
+	current, raw, err := s.loadRaw(ctx, recordKey, account.TenantID, account.ID)
 	if err != nil {
 		return err
+	}
+	if expected != nil && !current.UpdatedAt.Equal(*expected) {
+		return &AccountVersionConflictError{TenantID: account.TenantID, AccountID: account.ID}
 	}
 	if account.CreatedAt.IsZero() {
 		account.CreatedAt = current.CreatedAt
@@ -698,8 +762,15 @@ func (s *accountStore) update(ctx context.Context, account *Account) error {
 	// give one project's name to another, refuse to answer rather than answer
 	// plausibly, block a scope rather than reassign it. A squat inconveniences;
 	// a transfer decides. We keep the squat.
-	if err := s.kv.Put(ctx, recordKey, data); err != nil {
-		return &AccountStoreError{Message: "failed to write account: " + err.Error()}
+	swapped, err := s.commitRecord(ctx, recordKey, raw, data)
+	if err != nil {
+		return err
+	}
+	if !swapped {
+		// The record changed after this write read it. Whatever the caller
+		// built was built from an older record, so nothing is written and the
+		// caller re-reads, exactly as for a failed UpdatedAt check.
+		return &AccountVersionConflictError{TenantID: account.TenantID, AccountID: account.ID}
 	}
 
 	if moved {
@@ -1097,6 +1168,12 @@ func (s *accountStore) Touch(ctx context.Context, tenantID, accountID string, op
 	return err
 }
 
+// accountTouchAttempts bounds how often Touch re-reads and re-applies after
+// losing its guarded edit to a concurrent writer. Touch applies field-level
+// changes to whatever record it reads, so re-applying after a loss is always
+// correct; the bound only stops a pathological store from spinning here.
+const accountTouchAttempts = 5
+
 func (s *accountStore) touch(ctx context.Context, tenantID, accountID string, opts TouchAccountOptions) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -1115,12 +1192,57 @@ func (s *accountStore) touch(ctx context.Context, tenantID, accountID string, op
 	unlock := s.recordMu.lock(recordKey)
 	defer unlock()
 
-	account, err := s.load(ctx, recordKey, tenantID, accountID)
-	if err != nil {
-		return err
-	}
+	for attempt := 0; attempt < accountTouchAttempts; attempt++ {
+		account, raw, err := s.loadRaw(ctx, recordKey, tenantID, accountID)
+		if err != nil {
+			return err
+		}
+		// Checked on the record this attempt commits over, so it is decided
+		// atomically with the write: an account switched to a reference after
+		// the caller read it is refused here, not written to.
+		if err := touchPrecondition(account, opts); err != nil {
+			return err
+		}
+		applyTouch(account, opts, time.Now().UTC())
 
-	now := time.Now().UTC()
+		data, marshalErr := marshalAccount(account)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		swapped, err := s.commitRecord(ctx, recordKey, raw, data)
+		if err != nil {
+			return err
+		}
+		if swapped {
+			return nil
+		}
+	}
+	return &AccountVersionConflictError{TenantID: tenantID, AccountID: accountID}
+}
+
+// touchPrecondition decides opts' conditions against account, the record the
+// touch is about to commit over. Decided there, and not on a copy the caller
+// read earlier, the check and the write are one guarded step.
+func touchPrecondition(account *Account, opts TouchAccountOptions) error {
+	changed := func() error {
+		return &AccountCredentialSourceChangedError{
+			TenantID: account.TenantID, AccountID: account.ID, Ref: account.CredentialSecretRef,
+		}
+	}
+	if opts.RequireInlineCredential && account.UsesSecretRef() {
+		return changed()
+	}
+	if opts.RequireSource != nil && !opts.RequireSource.matches(account) {
+		return changed()
+	}
+	if opts.PreserveRevoked && account.Status == AccountStatusRevoked {
+		return &AccountRevokedError{AccountID: account.ID}
+	}
+	return nil
+}
+
+// applyTouch applies opts to account in memory, stamping now.
+func applyTouch(account *Account, opts TouchAccountOptions, now time.Time) {
 	if opts.MarkUsed {
 		account.LastUsedAt = now
 	}
@@ -1152,15 +1274,6 @@ func (s *accountStore) touch(ctx context.Context, tenantID, accountID string, op
 		account.LastError = opts.SetLastError
 	}
 	account.UpdatedAt = now
-
-	data, marshalErr := marshalAccount(account)
-	if marshalErr != nil {
-		return marshalErr
-	}
-	if err := s.kv.Put(ctx, recordKey, data); err != nil {
-		return &AccountStoreError{Message: "failed to write account: " + err.Error()}
-	}
-	return nil
 }
 
 // =============================================================================

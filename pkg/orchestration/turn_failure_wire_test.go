@@ -718,3 +718,41 @@ func TestSpawnFaultEvidence_OtherClassesCarryNoCooldownMetadata(t *testing.T) {
 		t.Error("an empty pool was reconstructed as a cooldown")
 	}
 }
+
+// TestSpawnFaultClass_RoundTripsThroughSpawnFaultSentinel proves the exported
+// pair is the one vocabulary: every class a failure is named with rebuilds a
+// sentinel that names the same class again.
+func TestSpawnFaultClass_RoundTripsThroughSpawnFaultSentinel(t *testing.T) {
+	for class := range spawnFaultSentinels {
+		t.Run(class, func(t *testing.T) {
+			sentinel, ok := SpawnFaultSentinel(class)
+			if !ok {
+				t.Fatalf("SpawnFaultSentinel(%q) is unknown", class)
+			}
+			if got := SpawnFaultClass(sentinel); got != class {
+				t.Errorf("SpawnFaultClass(SpawnFaultSentinel(%q)) = %q", class, got)
+			}
+		})
+	}
+	unresolved := &AccountSecretRefUnresolvedError{TenantID: "t", AccountID: "a", Ref: "r", Reason: "missing"}
+	if got := SpawnFaultClass(unresolved); got != spawnFaultCredentialNotFound {
+		t.Errorf("SpawnFaultClass(unresolved secret ref) = %q, want %q", got, spawnFaultCredentialNotFound)
+	}
+}
+
+// TestSpawnFaultClass_RejectsWhatIsNotAConfigurationFault covers the negative
+// side of both functions: an ordinary failure has no class, and a class this
+// build does not know rebuilds nothing.
+func TestSpawnFaultClass_RejectsWhatIsNotAConfigurationFault(t *testing.T) {
+	if got := SpawnFaultClass(&AccountStoreError{Message: "backend down"}); got != "" {
+		t.Errorf("SpawnFaultClass(store error) = %q, want none", got)
+	}
+	if got := SpawnFaultClass(nil); got != "" {
+		t.Errorf("SpawnFaultClass(nil) = %q, want none", got)
+	}
+	for _, class := range []string{"", "from_a_newer_build", "Credential_Not_Found"} {
+		if sentinel, ok := SpawnFaultSentinel(class); ok || sentinel != nil {
+			t.Errorf("SpawnFaultSentinel(%q) = %v, %v; want nil, false", class, sentinel, ok)
+		}
+	}
+}

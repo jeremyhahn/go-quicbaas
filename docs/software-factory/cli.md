@@ -1357,7 +1357,7 @@ strategies and the credential path are in [accounts.md](accounts.md).
 
 | Command | Description |
 |---------|-------------|
-| `create` | Import a credential as a new account (`--provider`, `--display-name`, `--credential-file`) |
+| `create` | Create an account over a tenant secret (`--credential-secret-ref`, `--credential-secret-file`) or an inline credential (`--credential-file`); `--provider`, `--display-name` |
 | `list` | List the tenant's accounts, filterable by `--provider` |
 | `get <accountID>` | Show one account (identifiers only; never the credential) |
 | `update <accountID>` | Change the display name, the project scope (`--project` / `--clear-project`) or the refresh policy |

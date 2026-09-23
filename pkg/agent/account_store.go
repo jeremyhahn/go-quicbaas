@@ -138,6 +138,16 @@ func (s *apiAccountStore) Update(_ context.Context, account *orchestration.Accou
 	return &AccountStoreReadOnlyError{Method: "Update", AccountID: id}
 }
 
+// UpdateIfUnchanged refuses, as Update does: account metadata is written on the
+// control plane, never by a daemon.
+func (s *apiAccountStore) UpdateIfUnchanged(_ context.Context, account *orchestration.Account, _ time.Time) error {
+	id := ""
+	if account != nil {
+		id = account.ID
+	}
+	return &AccountStoreReadOnlyError{Method: "UpdateIfUnchanged", AccountID: id}
+}
+
 // Delete refuses: removing a pooled account destroys its credential envelope,
 // which lives on the control plane.
 func (s *apiAccountStore) Delete(_ context.Context, _, accountID string) error {

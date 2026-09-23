@@ -43,7 +43,7 @@ Store a secret with automatic encryption and versioning.
 ### Usage
 
 ```bash
-quicbaas secrets put <path> --data KEY=VALUE [flags]
+quicbaas secrets put <path> (--data KEY=VALUE... | --from-stdin | --from-file PATH) [flags]
 ```
 
 ### Arguments
@@ -56,7 +56,9 @@ quicbaas secrets put <path> --data KEY=VALUE [flags]
 
 | Flag | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| `--data` | string | Yes | - | Secret data as KEY=VALUE (repeatable) |
+| `--data` | string | One source | - | Secret data as KEY=VALUE (repeatable); stored as a JSON object |
+| `--from-stdin` | bool | One source | false | Store the raw bytes of stdin verbatim; from an interactive terminal, one line read with echo disabled |
+| `--from-file` | string | One source | - | Store the raw bytes of a file verbatim |
 | `--ttl` | duration | No | 0 | Time-to-live (e.g., `1h`, `30m`, `7d`) |
 | `--tenant-id` | string | No | - | Tenant ID for tenant-specific encryption |
 | `--key-id` | string | No | - | Custom key identifier (DEKID or KeyID) |
@@ -70,7 +72,23 @@ quicbaas secrets put <path> --data KEY=VALUE [flags]
 
 ### Examples
 
+Exactly one of `--data`, `--from-stdin`, `--from-file` is required. Use a raw
+source for a secret that is ONE opaque value another resource names by
+reference — a pooled agent account's `credential_secret_ref`, an SDLC binding's
+forge token or webhook key — because those are read verbatim. The value is never
+taken on the command line and never printed back.
+
+`--from-stdin` prompts only when stdin is a real terminal (asked of the terminal
+driver). Anything else — a pipe, a file, `/dev/null` — is read as a stream, so
+an empty stream is refused as an empty value instead of waiting on a prompt.
+
 ```bash
+# Store a provider token a pooled agent account references (hidden prompt, or pipe it in)
+quicbaas secrets put agents/claude/claude1/oauth_token --from-stdin
+
+# Store a credential file verbatim
+quicbaas secrets put agents/codex/reviewer/auth_json --from-file ~/.codex/auth.json
+
 # Store single key-value pair
 quicbaas secrets put database/prod --data password=secret123
 

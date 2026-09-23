@@ -60,11 +60,16 @@ func RespondJSON(w http.ResponseWriter, r *http.Request, statusCode int, data in
 
 // RespondError writes an error response with the given status code.
 func RespondError(w http.ResponseWriter, r *http.Request, statusCode int, err error) {
-	requestID := GetRequestID(r.Context())
+	RespondJSON(w, r, statusCode, newErrorResponse(r, err))
+}
 
-	var errResp ErrorResponse
-	errResp.Timestamp = time.Now()
-	errResp.RequestID = requestID
+// newErrorResponse builds the error envelope for err: a QuicBaaS error's code,
+// retryability and context, or a generic message for anything else.
+func newErrorResponse(r *http.Request, err error) ErrorResponse {
+	errResp := ErrorResponse{
+		Timestamp: time.Now(),
+		RequestID: GetRequestID(r.Context()),
+	}
 
 	// Handle QuicBaaS errors
 	var qbErr *errors.QBError
@@ -77,13 +82,13 @@ func RespondError(w http.ResponseWriter, r *http.Request, statusCode int, err er
 		if len(qbErr.Context) > 0 {
 			errResp.Details = qbErr.Context
 		}
-	} else {
-		// Generic error
-		errResp.Error = err.Error()
-		errResp.Retryable = false
+		return errResp
 	}
 
-	RespondJSON(w, r, statusCode, errResp)
+	// Generic error
+	errResp.Error = err.Error()
+	errResp.Retryable = false
+	return errResp
 }
 
 // RespondSuccess writes a generic success response.

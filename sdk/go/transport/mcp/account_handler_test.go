@@ -185,15 +185,18 @@ func TestAccountMCPResultsCarryNoCredential(t *testing.T) {
 	assertNoCredentialKeys(t, encoded)
 }
 
-// nonSecretCredentialKeys are the two metadata field names that contain the
-// word "credential" without carrying any. Both are derived from a timestamp
-// mirrored onto the account's non-secret record — an expiry is not credential
-// material — so the guards below match on JSON KEYS with these two excluded,
-// rather than scanning the whole document for the substring and tripping over
-// its own vocabulary.
+// nonSecretCredentialKeys are the metadata field names that contain the word
+// "credential" without carrying any. Two are derived from a timestamp mirrored
+// onto the account's non-secret record — an expiry is not credential material —
+// and two NAME the tenant secret a reference-sourced account reads (a secret's
+// name is not its value). The guards below match on JSON KEYS with these
+// excluded, rather than scanning the whole document for the substring and
+// tripping over its own vocabulary.
 var nonSecretCredentialKeys = map[string]bool{
-	"credential_expires_at": true,
-	"credential_health":     true,
+	"credential_expires_at":  true,
+	"credential_health":      true,
+	"credential_secret_ref":  true,
+	"credential_secret_file": true,
 }
 
 // assertNoCredentialKeys fails when encoded carries a key that looks like
@@ -223,7 +226,7 @@ func assertNoCredentialKeys(t *testing.T, encoded []byte) {
 func TestDecodeMCPAccountMaterialize(t *testing.T) {
 	out, err := decodeMCPAccountMaterialize([]byte(
 		`{"account_id":"acct-1","provider":"claude",` +
-			`"credential":{"access_token":"RELEASED","access_token_env_key":"K"}}`))
+			`"credential":{"access_token":"RELEASED","access_token_env_key":"K"},"single_use":true}`))
 	if err != nil {
 		t.Fatalf("decodeMCPAccountMaterialize() error = %v", err)
 	}
@@ -233,6 +236,9 @@ func TestDecodeMCPAccountMaterialize(t *testing.T) {
 	}
 	if released.Credential == nil || released.Credential.AccessTokenEnvKey != "K" {
 		t.Error("decode lost the material a spawn needs")
+	}
+	if !released.SingleUse {
+		t.Error("decode lost single_use")
 	}
 
 	if _, err := decodeMCPAccountMaterialize([]byte(`{"account_id":"acct-1"}`)); err == nil {
