@@ -16,6 +16,11 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
+	"time"
+
+	mcptransport "github.com/mark3labs/mcp-go/client/transport"
+	mcpgo "github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
@@ -31,8 +36,21 @@ type RPCCaller interface {
 	CallRPC(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error)
 }
 
-// Compile-time assertion that the MCP transport satisfies RPCCaller.
-var _ RPCCaller = (*Transport)(nil)
+// RPCNotifier is implemented by transports that can carry an opaque JSON-RPC
+// 2.0 notification (a message with no id, which takes no reply) to a Model
+// Context Protocol server. The MCP lifecycle needs it: a client completes the
+// handshake by sending "notifications/initialized" after a successful
+// "initialize", before any other request.
+type RPCNotifier interface {
+	NotifyRPC(ctx context.Context, method string, params json.RawMessage) error
+}
+
+// Compile-time assertions that the MCP transport satisfies RPCCaller and
+// RPCNotifier.
+var (
+	_ RPCCaller   = (*Transport)(nil)
+	_ RPCNotifier = (*Transport)(nil)
+)
 
 // CallRPC sends an opaque JSON-RPC 2.0 request to the connected MCP server and
 // returns the raw "result" member of the response.
@@ -61,4 +79,51 @@ func (t *Transport) CallRPC(ctx context.Context, method string, params json.RawM
 	}
 
 	return t.sendRPC(ctx, method, rpcParams)
+}
+
+// IsSessionTerminated reports whether err (as returned by CallRPC) means the
+// server rejected the request because it carried no live MCP session: the
+// Streamable HTTP server answers any non-"initialize" request without a
+// recognized Mcp-Session-Id with HTTP 404, which the MCP client surfaces as a
+// session-terminated error. The remedy is to send "initialize" again and
+// retry; a caller that forwards another peer's frames (such as a stdio
+// bridge) uses this to recover from a session the server expired.
+func IsSessionTerminated(err error) bool {
+	return stderrors.Is(err, mcptransport.ErrSessionTerminated)
+}
+
+// NotifyRPC sends an opaque JSON-RPC 2.0 notification to the connected MCP
+// server over the same session as CallRPC. Like CallRPC it performs no
+// mapping: the method and params are forwarded as the caller wrote them.
+// params, when present, must be a JSON object (the only shape JSON-RPC allows
+// for named notification params); it may be nil for notifications that take
+// none.
+func (t *Transport) NotifyRPC(ctx context.Context, method string, params json.RawMessage) error {
+	if t.closed.Load() {
+		return errors.NewConnection("mcp.NotifyRPC", "transport is closed")
+	}
+	if method == "" {
+		return errors.NewInvalidInput("mcp.NotifyRPC", "method is required")
+	}
+
+	notification := mcpgo.JSONRPCNotification{
+		JSONRPC:      "2.0",
+		Notification: mcpgo.Notification{Method: method},
+	}
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &notification.Params); err != nil {
+			return errors.Wrap(err, errors.CodeInvalidInput, "mcp.NotifyRPC", "params must be a JSON object")
+		}
+	}
+
+	raw, err := t.ensureRawTransport(ctx)
+	if err != nil {
+		return err
+	}
+	if err := raw.SendNotification(ctx, notification); err != nil {
+		return t.convertHTTPError(err, "mcp.NotifyRPC")
+	}
+
+	t.lastHealth.Store(time.Now().UnixNano())
+	return nil
 }

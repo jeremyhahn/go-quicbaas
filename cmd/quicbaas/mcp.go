@@ -26,6 +26,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/version"
 	mcptransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport/mcp"
 )
 
@@ -42,10 +43,15 @@ var (
 // Client Plumbing
 // =============================================================================
 
-// MCPCaller is the raw JSON-RPC surface the mcp verbs need. It is satisfied by
-// the SDK's MCP transport; declaring it here (rather than importing a concrete
-// type) keeps the commands testable and follows the accept-interfaces rule.
-type MCPCaller = mcptransport.RPCCaller
+// MCPCaller is the raw JSON-RPC surface the mcp verbs need: requests, plus the
+// notifications the MCP lifecycle requires ("notifications/initialized"). It
+// is satisfied by the SDK's MCP transport; declaring it here (rather than
+// importing a concrete type) keeps the commands testable and follows the
+// accept-interfaces rule.
+type MCPCaller interface {
+	mcptransport.RPCCaller
+	mcptransport.RPCNotifier
+}
 
 // MCPCallerFactory is a function type for creating raw MCP callers.
 type MCPCallerFactory func(cmd *cobra.Command) (MCPCaller, error)
@@ -185,9 +191,15 @@ server. Authentication uses the same stored platform token and TLS material as
 every other CLI command, honouring --address, --tls-ca, --tls-cert, --tls-key,
 and --timeout.
 
-Notifications (JSON-RPC messages with no "id") are acknowledged locally and not
-forwarded: each bridged call is an independent HTTP request, so there is no
-client session for them to update.
+Notifications (JSON-RPC messages with no "id"), including the host's
+"notifications/initialized", are forwarded on the same session. They take no
+reply, so a notification the server rejects is reported on stderr.
+
+If the server reports the session expired (HTTP 404, "session terminated") for
+any request other than "initialize", the bridge replays the host's last
+successful "initialize" and "notifications/initialized" once and retries the
+request, so a session the server swept mid-conversation does not break the
+host. If that recovery fails, the original error is returned for the request.
 
 The command blocks until stdin reaches EOF or the process is interrupted.
 
@@ -226,8 +238,83 @@ func runMCPServe(cmd *cobra.Command, args []string) error {
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	return serveMCPStdio(ctx, caller, os.Stdin, os.Stdout)
+	return serveMCPStdio(ctx, caller, os.Stdin, os.Stdout, os.Stderr)
 }
+
+// =============================================================================
+// Session Handshake
+// =============================================================================
+
+// mcpClientName identifies the CLI in the "initialize" clientInfo it sends.
+const mcpClientName = "quicbaas-cli"
+
+// Lifecycle methods of the MCP handshake.
+const (
+	mcpMethodInitialize  = "initialize"
+	mcpMethodInitialized = "notifications/initialized"
+)
+
+// mcpInitializeParams builds a spec-compliant "initialize" params object for
+// the CLI's own MCP session.
+func mcpInitializeParams() (json.RawMessage, error) {
+	params := struct {
+		ProtocolVersion string                 `json:"protocolVersion"`
+		Capabilities    map[string]interface{} `json:"capabilities"`
+		ClientInfo      struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		} `json:"clientInfo"`
+	}{
+		ProtocolVersion: mcptransport.MCPVersion,
+		Capabilities:    map[string]interface{}{},
+	}
+	params.ClientInfo.Name = mcpClientName
+	params.ClientInfo.Version = version.Short()
+
+	encoded, err := json.Marshal(params)
+	if err != nil {
+		return nil, &MCPInitializeError{Cause: err}
+	}
+	return encoded, nil
+}
+
+// mcpInitialize opens an MCP session on caller. The server's Streamable HTTP
+// endpoint is session-based: any request other than "initialize" that carries
+// no session it issued is rejected with HTTP 404, and CallRPC deliberately
+// performs no handshake of its own, so the one-shot verbs must send it.
+func mcpInitialize(ctx context.Context, caller MCPCaller) error {
+	params, err := mcpInitializeParams()
+	if err != nil {
+		return err
+	}
+	return mcpHandshake(ctx, caller, params)
+}
+
+// mcpHandshake runs the MCP lifecycle handshake with the given "initialize"
+// params: the "initialize" request, then the "notifications/initialized"
+// notification the specification requires before any other request.
+func mcpHandshake(ctx context.Context, caller MCPCaller, params json.RawMessage) error {
+	if _, err := caller.CallRPC(ctx, mcpMethodInitialize, params); err != nil {
+		return &MCPInitializeError{Cause: err}
+	}
+	if err := caller.NotifyRPC(ctx, mcpMethodInitialized, nil); err != nil {
+		return &MCPInitializeError{Cause: err}
+	}
+	return nil
+}
+
+// MCPInitializeError indicates the MCP "initialize" handshake failed.
+type MCPInitializeError struct {
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *MCPInitializeError) Error() string {
+	return "MCP initialize failed: " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause.
+func (e *MCPInitializeError) Unwrap() error { return e.Cause }
 
 // =============================================================================
 // Stdio Bridge
@@ -266,7 +353,12 @@ const (
 // until in reaches EOF or ctx is cancelled. It never writes anything but
 // well-formed JSON-RPC to out: a transport failure becomes an error response
 // for the offending request, so one bad call cannot desynchronize the stream.
-func serveMCPStdio(ctx context.Context, caller MCPCaller, in io.Reader, out io.Writer) error {
+//
+// errOut receives diagnostics that cannot be answered on the stream: a
+// notification takes no reply, so a notification the server rejects is
+// reported there instead.
+func serveMCPStdio(ctx context.Context, caller MCPCaller, in io.Reader, out, errOut io.Writer) error {
+	bridge := &mcpStdioBridge{caller: caller, errOut: errOut}
 	decoder := json.NewDecoder(in)
 	encoder := json.NewEncoder(out)
 
@@ -286,7 +378,7 @@ func serveMCPStdio(ctx context.Context, caller MCPCaller, in io.Reader, out io.W
 			return formatError(&MCPBridgeDecodeError{Cause: err})
 		}
 
-		resp := bridgeMCPMessage(ctx, caller, &msg)
+		resp := bridge.handle(ctx, &msg)
 		if resp == nil {
 			continue
 		}
@@ -296,10 +388,23 @@ func serveMCPStdio(ctx context.Context, caller MCPCaller, in io.Reader, out io.W
 	}
 }
 
-// bridgeMCPMessage forwards one request and builds its response. It returns nil
-// for notifications, which take no reply.
-func bridgeMCPMessage(ctx context.Context, caller MCPCaller, msg *mcpMessage) *mcpResponse {
+// mcpStdioBridge relays one host's messages onto a caller. It remembers the
+// params of the host's last successful "initialize" so it can re-open a
+// session the server expired without involving the host.
+type mcpStdioBridge struct {
+	caller     MCPCaller
+	errOut     io.Writer
+	initParams json.RawMessage
+	// initialized is true once the host's "initialize" has succeeded, even
+	// when it carried no params.
+	initialized bool
+}
+
+// handle forwards one request and builds its response. It returns nil for
+// notifications, which take no reply.
+func (b *mcpStdioBridge) handle(ctx context.Context, msg *mcpMessage) *mcpResponse {
 	if len(msg.ID) == 0 {
+		b.notify(ctx, msg)
 		return nil
 	}
 	if msg.Method == "" {
@@ -310,7 +415,7 @@ func bridgeMCPMessage(ctx context.Context, caller MCPCaller, msg *mcpMessage) *m
 		}
 	}
 
-	result, err := caller.CallRPC(ctx, msg.Method, msg.Params)
+	result, err := b.forward(ctx, msg)
 	if err != nil {
 		return &mcpResponse{
 			JSONRPC: "2.0",
@@ -320,6 +425,47 @@ func bridgeMCPMessage(ctx context.Context, caller MCPCaller, msg *mcpMessage) *m
 	}
 
 	return &mcpResponse{JSONRPC: "2.0", ID: msg.ID, Result: result}
+}
+
+// notify forwards a host notification on the current session. A notification
+// takes no reply, so a failure is reported on errOut rather than the stream.
+func (b *mcpStdioBridge) notify(ctx context.Context, msg *mcpMessage) {
+	if msg.Method == "" {
+		fmt.Fprintln(b.errOut, "quicbaas mcp serve: ignoring JSON-RPC message with neither id nor method")
+		return
+	}
+	if err := b.caller.NotifyRPC(ctx, msg.Method, msg.Params); err != nil {
+		fmt.Fprintf(b.errOut, "quicbaas mcp serve: notification %s failed: %v\n", msg.Method, err)
+	}
+}
+
+// forward sends msg to the server. When a non-"initialize" request fails
+// because the server no longer recognizes the session, it replays the host's
+// last successful "initialize" (followed by "notifications/initialized", which
+// completes the handshake) and retries once; if there is nothing to replay
+// or the recovery fails, the original error is returned unchanged.
+func (b *mcpStdioBridge) forward(ctx context.Context, msg *mcpMessage) (json.RawMessage, error) {
+	result, err := b.caller.CallRPC(ctx, msg.Method, msg.Params)
+	if err == nil {
+		if msg.Method == mcpMethodInitialize {
+			b.initParams = msg.Params
+			b.initialized = true
+		}
+		return result, nil
+	}
+
+	if msg.Method == mcpMethodInitialize || !b.initialized || !mcptransport.IsSessionTerminated(err) {
+		return nil, err
+	}
+
+	if initErr := mcpHandshake(ctx, b.caller, b.initParams); initErr != nil {
+		return nil, err
+	}
+	retried, retryErr := b.caller.CallRPC(ctx, msg.Method, msg.Params)
+	if retryErr != nil {
+		return nil, err
+	}
+	return retried, nil
 }
 
 // MCPBridgeDecodeError indicates a malformed JSON-RPC message on stdin.
@@ -377,6 +523,10 @@ func runMCPTools(cmd *cobra.Command, args []string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
+
+	if err := mcpInitialize(ctx, caller); err != nil {
+		return formatError(err)
+	}
 
 	result, err := caller.CallRPC(ctx, "tools/list", nil)
 	if err != nil {
@@ -436,6 +586,10 @@ func runMCPCall(cmd *cobra.Command, args []string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
+
+	if err := mcpInitialize(ctx, caller); err != nil {
+		return formatError(err)
+	}
 
 	result, err := caller.CallRPC(ctx, "tools/call", params)
 	if err != nil {

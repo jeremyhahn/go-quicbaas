@@ -19,6 +19,8 @@ import (
 	"context"
 	"encoding/json"
 	stderrors "errors"
+	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -26,16 +28,22 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	mcpclienttransport "github.com/mark3labs/mcp-go/client/transport"
+
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	mcptransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport/mcp"
 )
 
 // =============================================================================
 // Mock
 // =============================================================================
 
-// recordedCall captures one forwarded JSON-RPC request.
+// recordedCall captures one forwarded JSON-RPC request or notification.
 type recordedCall struct {
-	Method string
-	Params json.RawMessage
+	Method       string
+	Params       json.RawMessage
+	Notification bool
 }
 
 // mockMCPCaller implements MCPCaller and records everything forwarded to it.
@@ -43,10 +51,32 @@ type mockMCPCaller struct {
 	calls  []recordedCall
 	result json.RawMessage
 	err    error
+	// respond, when set, scripts the reply to the n-th recorded call
+	// (0-based, notifications included) and takes precedence over result/err.
+	respond func(n int, method string) (json.RawMessage, error)
+	// notifyErr is returned by every NotifyRPC.
+	notifyErr error
+}
+
+func (m *mockMCPCaller) NotifyRPC(_ context.Context, method string, params json.RawMessage) error {
+	m.calls = append(m.calls, recordedCall{Method: method, Params: params, Notification: true})
+	return m.notifyErr
+}
+
+// methods lists the recorded methods in order.
+func (m *mockMCPCaller) methods() []string {
+	out := make([]string, 0, len(m.calls))
+	for _, c := range m.calls {
+		out = append(out, c.Method)
+	}
+	return out
 }
 
 func (m *mockMCPCaller) CallRPC(_ context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
 	m.calls = append(m.calls, recordedCall{Method: method, Params: params})
+	if m.respond != nil {
+		return m.respond(len(m.calls)-1, method)
+	}
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -110,7 +140,7 @@ func TestServeMCPStdio_ForwardsRequests(t *testing.T) {
 			`{"jsonrpc":"2.0","id":2,"method":"tools/list"}` + "\n")
 	var out bytes.Buffer
 
-	require.NoError(t, serveMCPStdio(context.Background(), mc, in, &out))
+	require.NoError(t, serveMCPStdio(context.Background(), mc, in, &out, io.Discard))
 
 	require.Len(t, mc.calls, 2)
 	assert.Equal(t, "initialize", mc.calls[0].Method)
@@ -128,20 +158,41 @@ func TestServeMCPStdio_ForwardsRequests(t *testing.T) {
 	assert.Contains(t, string(first.Result), "quicbaas_health")
 }
 
-// TestServeMCPStdio_NotificationsNotForwarded verifies ID-less messages are
-// swallowed: each bridged call is an independent HTTP request, so there is no
-// session for a notification to update and the server would answer
-// "method not found".
-func TestServeMCPStdio_NotificationsNotForwarded(t *testing.T) {
+// TestServeMCPStdio_NotificationsForwarded verifies ID-less messages — the
+// host's "notifications/initialized" in particular, which completes the MCP
+// handshake — are forwarded to the server and answered with nothing.
+func TestServeMCPStdio_NotificationsForwarded(t *testing.T) {
 	mc := &mockMCPCaller{}
 
-	in := strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n")
+	in := strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n" +
+		`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":3}}` + "\n")
 	var out bytes.Buffer
 
-	require.NoError(t, serveMCPStdio(context.Background(), mc, in, &out))
+	require.NoError(t, serveMCPStdio(context.Background(), mc, in, &out, io.Discard))
 
-	assert.Empty(t, mc.calls, "notifications must not be forwarded")
-	assert.Empty(t, out.String(), "notifications must not produce a response")
+	require.Len(t, mc.calls, 2)
+	assert.True(t, mc.calls[0].Notification)
+	assert.Equal(t, "notifications/initialized", mc.calls[0].Method)
+	assert.True(t, mc.calls[1].Notification)
+	assert.JSONEq(t, `{"requestId":3}`, string(mc.calls[1].Params))
+	assert.Empty(t, out.String(), "a notification takes no reply")
+}
+
+// TestServeMCPStdio_NotificationFailureReportedOnStderr verifies a rejected
+// notification is reported on errOut and never written to the stream.
+func TestServeMCPStdio_NotificationFailureReportedOnStderr(t *testing.T) {
+	mc := &mockMCPCaller{notifyErr: stderrors.New("notify boom")}
+
+	in := strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n" +
+		`{"jsonrpc":"2.0"}` + "\n")
+	var out, errOut bytes.Buffer
+
+	require.NoError(t, serveMCPStdio(context.Background(), mc, in, &out, &errOut))
+
+	require.Len(t, mc.calls, 1, "a message with neither id nor method is not forwarded")
+	assert.Empty(t, out.String())
+	assert.Contains(t, errOut.String(), "notifications/initialized failed: notify boom")
+	assert.Contains(t, errOut.String(), "neither id nor method")
 }
 
 // TestServeMCPStdio_TransportErrorBecomesRPCError verifies a transport failure
@@ -153,7 +204,7 @@ func TestServeMCPStdio_TransportErrorBecomesRPCError(t *testing.T) {
 	in := strings.NewReader(`{"jsonrpc":"2.0","id":7,"method":"tools/list"}` + "\n")
 	var out bytes.Buffer
 
-	require.NoError(t, serveMCPStdio(context.Background(), mc, in, &out))
+	require.NoError(t, serveMCPStdio(context.Background(), mc, in, &out, io.Discard))
 
 	var resp mcpResponse
 	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(out.String())), &resp))
@@ -171,7 +222,7 @@ func TestServeMCPStdio_MissingMethod(t *testing.T) {
 	in := strings.NewReader(`{"jsonrpc":"2.0","id":3}` + "\n")
 	var out bytes.Buffer
 
-	require.NoError(t, serveMCPStdio(context.Background(), mc, in, &out))
+	require.NoError(t, serveMCPStdio(context.Background(), mc, in, &out, io.Discard))
 
 	assert.Empty(t, mc.calls)
 
@@ -187,7 +238,7 @@ func TestServeMCPStdio_MalformedInput(t *testing.T) {
 	mc := &mockMCPCaller{}
 	var out bytes.Buffer
 
-	err := serveMCPStdio(context.Background(), mc, strings.NewReader("not json at all"), &out)
+	err := serveMCPStdio(context.Background(), mc, strings.NewReader("not json at all"), &out, io.Discard)
 	require.Error(t, err)
 
 	var decErr *MCPBridgeDecodeError
@@ -204,7 +255,7 @@ func TestServeMCPStdio_CancelledContext(t *testing.T) {
 	var out bytes.Buffer
 	in := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}` + "\n")
 
-	require.NoError(t, serveMCPStdio(ctx, mc, in, &out))
+	require.NoError(t, serveMCPStdio(ctx, mc, in, &out, io.Discard))
 	assert.Empty(t, mc.calls)
 }
 
@@ -253,9 +304,10 @@ func TestRunMCPTools_Happy(t *testing.T) {
 
 	require.NoError(t, runMCPTools(newMCPToolsCommand(), nil))
 
-	require.Len(t, mc.calls, 1)
-	assert.Equal(t, "tools/list", mc.calls[0].Method)
-	assert.Nil(t, mc.calls[0].Params, "tools/list takes no params")
+	assert.Equal(t, []string{"initialize", "notifications/initialized", "tools/list"}, mc.methods(),
+		"the full session handshake must precede tools/list")
+	assert.True(t, mc.calls[1].Notification)
+	assert.Nil(t, mc.calls[2].Params, "tools/list takes no params")
 }
 
 func TestRunMCPTools_TransportError(t *testing.T) {
@@ -284,9 +336,9 @@ func TestRunMCPCall_Happy(t *testing.T) {
 
 	require.NoError(t, runMCPCall(cmd, []string{"quicbaas_kv_get"}))
 
-	require.Len(t, mc.calls, 1)
-	assert.Equal(t, "tools/call", mc.calls[0].Method)
-	assert.JSONEq(t, `{"name":"quicbaas_kv_get","arguments":{"key":"k1"}}`, string(mc.calls[0].Params))
+	assert.Equal(t, []string{"initialize", "notifications/initialized", "tools/call"}, mc.methods(),
+		"the full session handshake must precede tools/call")
+	assert.JSONEq(t, `{"name":"quicbaas_kv_get","arguments":{"key":"k1"}}`, string(mc.calls[2].Params))
 }
 
 // TestRunMCPCall_InvalidArgs verifies malformed --args is rejected locally.
@@ -415,4 +467,207 @@ func TestIsUnixSocketAddress(t *testing.T) {
 	assert.True(t, isUnixSocketAddress("relative/quicbaas.sock"))
 	assert.False(t, isUnixSocketAddress("quicbaas.example.com:11443"))
 	assert.False(t, isUnixSocketAddress("localhost:11443"))
+}
+
+// =============================================================================
+// Session Handshake
+// =============================================================================
+
+// sessionTerminatedErr mirrors how the SDK surfaces the server's 404 for a
+// request carrying no live session.
+func sessionTerminatedErr() error {
+	return sdkerrors.Wrap(fmt.Errorf("failed to send request: %w", mcpclienttransport.ErrSessionTerminated),
+		sdkerrors.CodeConnection, "mcp.sendRPC", "HTTP request failed")
+}
+
+// TestMcpInitializeParams verifies the CLI's handshake is spec-compliant.
+func TestMcpInitializeParams(t *testing.T) {
+	raw, err := mcpInitializeParams()
+	require.NoError(t, err)
+
+	var params struct {
+		ProtocolVersion string                 `json:"protocolVersion"`
+		Capabilities    map[string]interface{} `json:"capabilities"`
+		ClientInfo      struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		} `json:"clientInfo"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &params))
+	assert.Equal(t, mcptransport.MCPVersion, params.ProtocolVersion)
+	assert.NotNil(t, params.Capabilities)
+	assert.Equal(t, mcpClientName, params.ClientInfo.Name)
+	assert.NotEmpty(t, params.ClientInfo.Version)
+}
+
+func TestMcpInitialize_Success(t *testing.T) {
+	mc := &mockMCPCaller{}
+
+	require.NoError(t, mcpInitialize(context.Background(), mc))
+
+	assert.Equal(t, []string{"initialize", "notifications/initialized"}, mc.methods())
+	assert.False(t, mc.calls[0].Notification)
+	assert.Contains(t, string(mc.calls[0].Params), mcptransport.MCPVersion)
+	assert.True(t, mc.calls[1].Notification, "initialized must be a notification, not a request")
+}
+
+// TestMcpInitialize_NotificationError verifies a failed
+// "notifications/initialized" fails the handshake.
+func TestMcpInitialize_NotificationError(t *testing.T) {
+	mc := &mockMCPCaller{notifyErr: stderrors.New("notify boom")}
+
+	err := mcpInitialize(context.Background(), mc)
+	require.Error(t, err)
+
+	var initErr *MCPInitializeError
+	require.True(t, stderrors.As(err, &initErr))
+	assert.Contains(t, err.Error(), "notify boom")
+}
+
+func TestMcpInitialize_TransportError(t *testing.T) {
+	mc := &mockMCPCaller{err: stderrors.New("init boom")}
+
+	err := mcpInitialize(context.Background(), mc)
+	require.Error(t, err)
+
+	var initErr *MCPInitializeError
+	require.True(t, stderrors.As(err, &initErr))
+	assert.Contains(t, err.Error(), "init boom")
+}
+
+// TestRunMCPCall_InitializeFailure verifies a failed handshake stops the
+// command before the tool is invoked.
+func TestRunMCPCall_InitializeFailure(t *testing.T) {
+	mc := &mockMCPCaller{err: stderrors.New("init boom")}
+	withMockMCPCaller(t, mc)
+
+	require.Error(t, runMCPCall(newMCPCallCommand(), []string{"quicbaas_health"}))
+	assert.Equal(t, []string{"initialize"}, mc.methods())
+}
+
+// decodeBridgeResponses parses every JSON-RPC response the bridge wrote.
+func decodeBridgeResponses(t *testing.T, out string) []mcpResponse {
+	t.Helper()
+	var resps []mcpResponse
+	for _, line := range nonEmptyLines(out) {
+		var r mcpResponse
+		require.NoError(t, json.Unmarshal([]byte(line), &r))
+		resps = append(resps, r)
+	}
+	return resps
+}
+
+// TestServeMCPStdio_RecoversExpiredSession verifies the bridge replays the
+// host's own initialize and retries once when the server has expired the
+// session, answering the host as if nothing happened.
+func TestServeMCPStdio_RecoversExpiredSession(t *testing.T) {
+	mc := &mockMCPCaller{respond: func(n int, _ string) (json.RawMessage, error) {
+		if n == 2 { // the first tools/list: the session was swept
+			return nil, sessionTerminatedErr()
+		}
+		return json.RawMessage(`{"tools":[]}`), nil
+	}}
+
+	in := strings.NewReader(
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}` + "\n" +
+			`{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n" +
+			`{"jsonrpc":"2.0","id":2,"method":"tools/list"}` + "\n")
+	var out bytes.Buffer
+
+	require.NoError(t, serveMCPStdio(context.Background(), mc, in, &out, io.Discard))
+
+	assert.Equal(t, []string{
+		"initialize", "notifications/initialized", "tools/list", // the host's own traffic
+		"initialize", "notifications/initialized", "tools/list", // recovery: full handshake, then retry
+	}, mc.methods())
+	assert.JSONEq(t, `{"protocolVersion":"2024-11-05"}`, string(mc.calls[3].Params),
+		"the replayed initialize must carry the host's own params")
+	assert.True(t, mc.calls[4].Notification)
+
+	resps := decodeBridgeResponses(t, out.String())
+	require.Len(t, resps, 2)
+	assert.Equal(t, "2", string(resps[1].ID))
+	assert.Nil(t, resps[1].Error)
+	assert.JSONEq(t, `{"tools":[]}`, string(resps[1].Result))
+}
+
+// TestServeMCPStdio_RecoveryFailureReturnsOriginalError verifies a failed
+// recovery does not loop and reports the original error for the request.
+func TestServeMCPStdio_RecoveryFailureReturnsOriginalError(t *testing.T) {
+	mc := &mockMCPCaller{respond: func(n int, _ string) (json.RawMessage, error) {
+		switch n {
+		case 0:
+			return json.RawMessage(`{}`), nil
+		case 1:
+			return nil, sessionTerminatedErr()
+		default:
+			return nil, stderrors.New("replay boom")
+		}
+	}}
+
+	in := strings.NewReader(
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n" +
+			`{"jsonrpc":"2.0","id":2,"method":"tools/list"}` + "\n")
+	var out bytes.Buffer
+
+	require.NoError(t, serveMCPStdio(context.Background(), mc, in, &out, io.Discard))
+
+	require.Len(t, mc.calls, 3, "one replayed initialize, then give up")
+	assert.Equal(t, "initialize", mc.calls[2].Method)
+
+	resps := decodeBridgeResponses(t, out.String())
+	require.Len(t, resps, 2)
+	require.NotNil(t, resps[1].Error)
+	assert.Equal(t, mcpCodeInternalError, resps[1].Error.Code)
+	assert.Contains(t, resps[1].Error.Message, "session terminated")
+	assert.NotContains(t, resps[1].Error.Message, "replay boom")
+}
+
+// TestServeMCPStdio_RecoveryNotificationFailureReturnsOriginalError verifies
+// that when the replayed handshake's "notifications/initialized" fails, the
+// request is not retried and gets the original error.
+func TestServeMCPStdio_RecoveryNotificationFailureReturnsOriginalError(t *testing.T) {
+	mc := &mockMCPCaller{respond: func(n int, _ string) (json.RawMessage, error) {
+		if n == 1 {
+			return nil, sessionTerminatedErr()
+		}
+		return json.RawMessage(`{}`), nil
+	}}
+
+	in := strings.NewReader(
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n" +
+			`{"jsonrpc":"2.0","id":2,"method":"tools/list"}` + "\n")
+	var out bytes.Buffer
+
+	// Only the recovery sends a notification in this script, so failing
+	// every NotifyRPC fails exactly the replayed handshake.
+	mc.notifyErr = stderrors.New("notify boom")
+	require.NoError(t, serveMCPStdio(context.Background(), mc, in, &out, io.Discard))
+
+	assert.Equal(t, []string{"initialize", "tools/list", "initialize", "notifications/initialized"}, mc.methods(),
+		"no retry after the handshake fails")
+
+	resps := decodeBridgeResponses(t, out.String())
+	require.Len(t, resps, 2)
+	require.NotNil(t, resps[1].Error)
+	assert.Contains(t, resps[1].Error.Message, "session terminated")
+	assert.NotContains(t, resps[1].Error.Message, "notify boom")
+}
+
+// TestServeMCPStdio_NoPriorInitializeNoRecovery verifies the bridge does not
+// invent a handshake the host never made: with no initialize to replay, the
+// session-terminated error is reported as-is.
+func TestServeMCPStdio_NoPriorInitializeNoRecovery(t *testing.T) {
+	mc := &mockMCPCaller{err: sessionTerminatedErr()}
+
+	in := strings.NewReader(`{"jsonrpc":"2.0","id":5,"method":"tools/list"}` + "\n")
+	var out bytes.Buffer
+
+	require.NoError(t, serveMCPStdio(context.Background(), mc, in, &out, io.Discard))
+
+	require.Len(t, mc.calls, 1)
+	resps := decodeBridgeResponses(t, out.String())
+	require.Len(t, resps, 1)
+	require.NotNil(t, resps[0].Error)
+	assert.Contains(t, resps[0].Error.Message, "session terminated")
 }

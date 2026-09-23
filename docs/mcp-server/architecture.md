@@ -1,6 +1,6 @@
 # MCP Server — Architecture
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-09-23
 > Design and boundaries of the Model Context Protocol surface. Feature folder:
 > `docs/mcp-server/`.
 
@@ -54,15 +54,31 @@ mechanism that keeps 459 registrations and one client in agreement.
 
 ## Authorization
 
-MCP authorization is OAuth 2.1 with mandatory PKCE (S256), Resource Indicators
-(RFC 8707) and Dynamic Client Registration (RFC 7591) — implemented per the MCP
-authorization specification. The flow and its endpoints belong to
-[`../oauth2-oidc/`](../oauth2-oidc/api.md); this folder covers the tool surface
-that sits behind it.
+The MCP endpoint is go-qrdb's `mark3labs/mcp-go` Streamable HTTP server; the
+bespoke JSON-RPC transport this package once ran — and its OAuth 2.1 / PKCE /
+Dynamic Client Registration flow — was retired (see the package doc in
+`pkg/api/mcp/server.go`). Authorization today is composed, not bespoke:
+
+- **Authentication is the connection's mTLS peer certificate**, resolved by
+  go-qrdb's shared `pkg/auth/middleware.AuthMiddleware` exactly as it is for
+  REST, gRPC, QUIC and Unix (`pkg/api/mcp/auth.go:authHTTPContext` in
+  go-qrdb). The resolved identity is bound into every tool call's context.
+- **Authorization is per tool and DEFAULT-DENY.** Each call is checked against
+  the permission the tool registered (`pkg/api/mcp/authz.go`,
+  `authz_qrdb.go`, surfaced through `pkg/apimodule`'s
+  `MCPToolPermissions`); a tool with no registered permission is refused.
+  There is no HTTP-layer gate in front of `initialize` or `tools/list`.
+- **An OAuth 2.1 bearer challenge is optional and not enabled.** go-qrdb can
+  emit a `401` + `WWW-Authenticate` challenge (`mcp.WithBearerChallenge`, via
+  `qrdbsdk.WithMCPServerOptions`); quicbaas does not configure it.
+- **The endpoint is session-based.** Every request other than `initialize`
+  must carry the `Mcp-Session-Id` the server issued, or it is answered `404`.
+  This is protocol state, not authorization — see
+  [`cli.md`](cli.md#troubleshooting-a-404).
 
 Two properties worth stating here:
 
-- **A small set of tools is public.** `sdk/go/transport/mcp/transport.go:691`
+- **A small set of tools is public.** `isPublicTool` in `sdk/go/transport/mcp/transport.go`
   names them: `quicbaas_login`, `quicbaas_login_begin`,
   `quicbaas_login_finish`, `qrdb_health`, `quicbaas_liveness`,
   `quicbaas_readiness`. Everything else calls `ensureAuthenticated` first.
@@ -97,7 +113,7 @@ pkg/api/mcp  ── tools/list ──► scope-filtered registry view
   ├─ public tool?  ──yes──► handler
   │        │no
   │        ▼
-  │   OAuth 2.1 bearer validation, audience-checked
+  │   mTLS identity + per-tool DEFAULT-DENY permission check
   ▼
 handler ──► the same service layer REST and gRPC reach
 ```
