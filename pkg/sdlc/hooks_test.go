@@ -281,6 +281,162 @@ func TestHooks_CompleteMergesTheReviewedHeadOnly(t *testing.T) {
 	}
 }
 
+// completeRig is a hooks rig whose attempt has published and opened its pull
+// request, so Complete has a reviewed head to merge.
+func completeRig(t *testing.T) (*hooksRig, *orchestration.JobContext) {
+	t.Helper()
+	rig := newHooksRig(t)
+	ctx := context.Background()
+	job := testJob(1)
+	if _, err := rig.hooks.Prepare(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	rig.publishHead(t, ctx, testPublishedHead)
+	if err := rig.hooks.Reviewable(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	return rig, job
+}
+
+// TestHooks_CompleteReportsASettledConflictAsAConflict is the go-truststrap#64
+// defect: an approved pull request whose base moved under it into a real
+// conflict. Gitea answers its merge "Please try again later" forever, and the
+// hook used to retry that to exhaustion. The attempt was then charged as a
+// failure of the work, with nothing ever asking for the rebase that is the only
+// fix.
+func TestHooks_CompleteReportsASettledConflictAsAConflict(t *testing.T) {
+	rig, job := completeRig(t)
+	ctx := context.Background()
+	rig.forge.prs[100].Mergeable = false
+	rig.forge.mergeNotReadyN = 10
+
+	err := rig.hooks.Complete(ctx, job)
+	var conflict *MergeConflictError
+	if !errors.As(err, &conflict) || !errors.Is(err, ErrMergeConflict) {
+		t.Fatalf("Complete = %v, want a MergeConflictError", err)
+	}
+	if errors.Is(err, ErrMergeNotReadyExhausted) {
+		t.Fatal("a settled conflict is still reported as a forge that was not ready")
+	}
+	if conflict.Base != "main" || conflict.Head != testPublishedHead || conflict.Attempts != 3 {
+		t.Fatalf("conflict = %+v, want base main, the approved head and 3 attempts", conflict)
+	}
+	// The bound is unchanged: the merge was asked for exactly as many times
+	// as a not-ready forge is given, and the conflict was decided after it.
+	if len(rig.forge.merges) != 3 || rig.waiter.waits != 2 {
+		t.Fatalf("merges=%d waits=%d, want the full bounded retry before the verdict", len(rig.forge.merges), rig.waiter.waits)
+	}
+	delivery, _ := rig.store.GetDelivery(ctx, testTenant, testTask)
+	if delivery.PullRequest.State == PullRequestMerged {
+		t.Fatal("a conflicting pull request was recorded as merged")
+	}
+	if labels := rig.forge.issueLabels(25); strings.Contains(strings.Join(labels, ","), "factory:merged") {
+		t.Fatalf("a conflicting pull request labelled the issue merged: %v", labels)
+	}
+}
+
+// TestHooks_CompleteMergesAPullRequestWhoseCheckWasStillPending guards the
+// other side of the rule. While Gitea is still checking a PR it reports the PR
+// not mergeable, with the same message it uses for a conflict. That answer is
+// only read as a conflict once the bound is spent, so a check that settles
+// inside the bound merges as it always did.
+func TestHooks_CompleteMergesAPullRequestWhoseCheckWasStillPending(t *testing.T) {
+	rig, job := completeRig(t)
+	ctx := context.Background()
+	rig.forge.prs[100].Mergeable = false
+	rig.forge.mergeNotReadyN = 2
+
+	if err := rig.hooks.Complete(ctx, job); err != nil {
+		t.Fatalf("Complete = %v, want the merge that succeeded on the third attempt", err)
+	}
+	if len(rig.forge.merges) != 3 || !rig.forge.prs[100].Merged {
+		t.Fatalf("merges=%d merged=%v", len(rig.forge.merges), rig.forge.prs[100].Merged)
+	}
+}
+
+// TestHooks_SettledRefusalKeepsEveryAnswerThatIsNotAConflict makes the
+// conflict verdict narrow. It is given only to an open PR that is still on the
+// approved head and still not mergeable. Every other final read keeps the
+// answer it would have had without the classification.
+func TestHooks_SettledRefusalKeepsEveryAnswerThatIsNotAConflict(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(*fakeForge)
+		check func(t *testing.T, err error)
+	}{
+		{
+			name:  "mergeable yet refused is a forge that is not ready",
+			setup: func(*fakeForge) {},
+			check: func(t *testing.T, err error) {
+				if !errors.Is(err, ErrMergeNotReadyExhausted) || errors.Is(err, ErrMergeConflict) {
+					t.Fatalf("err = %v, want exhaustion", err)
+				}
+			},
+		},
+		{
+			name:  "a closed pull request is not a conflict a rebase resolves",
+			setup: func(f *fakeForge) { f.prs[100].Mergeable, f.prs[100].State = false, "closed" },
+			check: func(t *testing.T, err error) {
+				if !errors.Is(err, ErrMergeNotReadyExhausted) {
+					t.Fatalf("err = %v, want exhaustion", err)
+				}
+			},
+		},
+		{
+			name:  "a head that moved is refused as moved",
+			setup: func(f *fakeForge) { f.prs[100].Mergeable, f.prs[100].HeadSHA = false, "pushed-later" },
+			check: func(t *testing.T, err error) {
+				var moved *HeadMovedError
+				if !errors.As(err, &moved) || moved.Current != "pushed-later" {
+					t.Fatalf("err = %v, want HeadMovedError to pushed-later", err)
+				}
+			},
+		},
+		{
+			name:  "a pull request merged meanwhile is the outcome asked for",
+			setup: func(f *fakeForge) { f.prs[100].Mergeable, f.prs[100].Merged = false, true },
+			check: func(t *testing.T, err error) {
+				if err != nil {
+					t.Fatalf("err = %v, want nil", err)
+				}
+			},
+		},
+		{
+			name:  "a pull request the forge no longer returns is not found",
+			setup: func(f *fakeForge) { f.getPRNil = true },
+			check: func(t *testing.T, err error) {
+				if !errors.Is(err, ErrNotFound) {
+					t.Fatalf("err = %v, want ErrNotFound", err)
+				}
+			},
+		},
+		{
+			name:  "a read that fails is that failure",
+			setup: func(f *fakeForge) { delete(f.prs, 100) },
+			check: func(t *testing.T, err error) {
+				if !errors.Is(err, ErrNotFound) {
+					t.Fatalf("err = %v, want the read's NotFoundError", err)
+				}
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newHooksRig(t)
+			pr, err := rig.forge.CreatePullRequest(context.Background(), testRepo, PullRequestSpec{
+				Title: "t", HeadRef: "issue/25-fix-the-thing", BaseRef: "main",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rig.forge.mergeNotReadyN = 10
+			tc.setup(rig.forge)
+			tc.check(t, rig.hooks.merge(context.Background(), rig.forge, testRepo, pr.Number,
+				MergeSpec{Method: MergeMethodSquash}, testPublishedHead))
+		})
+	}
+}
+
 func TestHooks_CompleteExhaustsNotReadyAndRefusesOtherFailures(t *testing.T) {
 	rig := newHooksRig(t)
 	ctx := context.Background()

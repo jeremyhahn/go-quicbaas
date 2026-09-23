@@ -50,6 +50,7 @@ func TestTypedErrors_NameTheirSubjectAndUnwrap(t *testing.T) {
 		{&MergeNotReadyExhaustedError{Subject: "s", Attempts: 2, Last: errors.New("x")}, ErrMergeNotReadyExhausted, "2 attempt(s): x"},
 		{&MergeNotReadyExhaustedError{Subject: "s", Attempts: 2}, ErrMergeNotReadyExhausted, "2 attempt(s)"},
 		{&HeadMovedError{Subject: "s", Reviewed: "a", Current: "b"}, ErrHeadMoved, "from reviewed a to b"},
+		{&MergeConflictError{Subject: "s", Base: "main", Head: "abc", Attempts: 6}, ErrMergeConflict, "s at abc conflicts with its base main"},
 		{&NoChangesError{TaskID: "t", WorkDir: "/w"}, ErrNoChanges, "task t produced no changes in /w"},
 		{&TaskNotForgeIssueError{TaskID: "t", Kind: "operator"}, ErrTaskNotForgeIssue, `"operator"`},
 		{&IncompleteResponseError{Op: "VerifyToken", Missing: "identity"}, ErrIncompleteResponse, "returned no identity"},

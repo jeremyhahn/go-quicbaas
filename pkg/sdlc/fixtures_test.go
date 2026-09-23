@@ -641,7 +641,10 @@ func (f *fakeForge) CreatePullRequest(_ context.Context, _ RepoRef, spec PullReq
 		return nil, f.createPRErr
 	}
 	pr := &ForgePullRequest{Number: f.nextPR, Title: spec.Title, Body: spec.Body, State: "open", HeadRef: spec.HeadRef,
-		BaseRef: spec.BaseRef, URL: "http://forge.test/acme/api/pulls/" + strconv.Itoa(f.nextPR), HeadSHA: "head-" + spec.HeadRef}
+		BaseRef: spec.BaseRef, URL: "http://forge.test/acme/api/pulls/" + strconv.Itoa(f.nextPR), HeadSHA: "head-" + spec.HeadRef,
+		// A fresh pull request with no conflict settles mergeable, as a real
+		// forge's check does; a test models a conflict by clearing it.
+		Mergeable: true}
 	f.prs[pr.Number] = pr
 	f.nextPR++
 	if f.onCreatePullRequest != nil {
@@ -1155,6 +1158,12 @@ type fakeContainer struct {
 	commitConfig []string
 	pushes       []pushedRef
 
+	// rewritten models a worker that rewrote the published branch (a rebase):
+	// the local head no longer descends from what the remote holds. Git then
+	// refuses a push without a lease as non-fast-forward, and so does this
+	// container. A push that lands clears it.
+	rewritten bool
+
 	// repos is every directory that is already a git repository, as the
 	// container sees it. A clone adds one; the checkout step's probe reads
 	// it, which is what makes a resumed attempt skip the clone.
@@ -1266,6 +1275,10 @@ type pushedRef struct {
 	// publication needs it; a plain publication must not have it, and the
 	// difference is what these tests measure.
 	Force bool
+
+	// Lease is the commit an explicit --force-with-lease=<ref>:<expect>
+	// pinned the push to, empty for an implicit lease or none.
+	Lease string
 }
 
 // exec answers one command. Unknown commands are refused rather than
@@ -1399,16 +1412,25 @@ func (c *fakeContainer) exec(containerID string, spec *orchestration.ExecSpec) (
 			return &orchestration.ExecResult{ExitCode: 1, Stderr: c.pushErr.Error()}, nil
 		}
 		branch, remote, _ := strings.Cut(args[len(args)-1], ":")
-		force := false
+		force, lease := false, ""
 		for _, arg := range args[1:] {
 			if arg == "--force-with-lease" {
 				force = true
+			}
+			if pinned, ok := strings.CutPrefix(arg, "--force-with-lease="); ok {
+				force = true
+				_, lease, _ = strings.Cut(pinned, ":")
 			}
 			if arg == "--force" || arg == "-f" {
 				return nil, &InvalidInputError{Field: "cmd", Message: "an unleased force push may discard a commit this container never saw"}
 			}
 		}
-		c.pushes = append(c.pushes, pushedRef{Branch: branch, RemoteBranch: remote, Force: force})
+		if c.rewritten && !force {
+			return &orchestration.ExecResult{ExitCode: 1,
+				Stderr: " ! [rejected]        " + branch + " -> " + branch + " (non-fast-forward)"}, nil
+		}
+		c.pushes = append(c.pushes, pushedRef{Branch: branch, RemoteBranch: remote, Force: force, Lease: lease})
+		c.rewritten = false
 		return &orchestration.ExecResult{}, nil
 	case "ls-files":
 		if c.tree == nil {

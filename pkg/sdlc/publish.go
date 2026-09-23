@@ -76,6 +76,18 @@ type publishPlan struct {
 	// with no remote-tracking ref, a fast-forward, and a push after an amend
 	// all succeed under it; only a genuinely divergent remote does not.
 	Force bool
+
+	// Lease is the commit the remote branch must still hold for a Force push
+	// to land: the head the factory last published. Empty leaves git to lease
+	// against the checkout's remote-tracking ref, which is what a mid-attempt
+	// publication with no recorded head has.
+	//
+	// A REWRITE NAMES IT EXPLICITLY. A worker rebasing onto its base runs
+	// `git fetch`, and a fetch refreshes the very tracking ref an implicit
+	// lease compares against. So an implicit lease would accept a remote that
+	// moved while the worker was working. Pinned to the published head, the
+	// push lands only on the branch the factory itself left there.
+	Lease string
 }
 
 // gitConfigArgs are the "-c key=value" pairs every git invocation carries.
@@ -226,13 +238,27 @@ func (p *publisher) Push(plan publishPlan) (string, error) {
 	args := credentialHelperArgs(p.project.Git.RepoURL)
 	args = append(args, "push")
 	if plan.Force {
-		args = append(args, "--force-with-lease")
+		args = append(args, forceWithLease(plan))
 	}
 	args = append(args, gitRemote, refspec)
 	if _, err := p.git(plan, args...); err != nil {
 		return "", err
 	}
 	return p.Head(plan)
+}
+
+// forceWithLease is the lease flag for a Force publication: pinned to the
+// plan's Lease on the ref being published when it names one, and git's own
+// remote-tracking lease when it does not. Never an unleased force.
+func forceWithLease(plan publishPlan) string {
+	if plan.Lease == "" {
+		return "--force-with-lease"
+	}
+	ref := plan.Branch
+	if plan.RemoteBranch != "" {
+		ref = plan.RemoteBranch
+	}
+	return "--force-with-lease=" + ref + ":" + plan.Lease
 }
 
 // Head is the commit the branch now points at.

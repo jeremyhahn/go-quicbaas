@@ -80,6 +80,11 @@ var (
 	// merge retry bound.
 	ErrMergeNotReadyExhausted = errors.New("sdlc: the forge did not become ready within the retry bound")
 
+	// ErrMergeConflict indicates the forge settled on the pull request not
+	// being mergeable into its base: the change conflicts with it, and only a
+	// rebase onto the base can make it mergeable again.
+	ErrMergeConflict = errors.New("sdlc: pull request conflicts with its base branch")
+
 	// ErrHeadMoved indicates the pull request's head is no longer the head
 	// the review judged.
 	ErrHeadMoved = errors.New("sdlc: pull request head moved since it was reviewed")
@@ -425,6 +430,29 @@ func (e *MergeNotReadyExhaustedError) Error() string {
 
 // Unwrap returns the sentinel for errors.Is support.
 func (e *MergeNotReadyExhaustedError) Unwrap() error { return ErrMergeNotReadyExhausted }
+
+// MergeConflictError reports a pull request the forge still held not mergeable
+// once the not-ready retry bound was spent, on the head the review approved.
+//
+// It is a verdict about the WORK, not about the forge: the base moved under
+// the change and the two no longer merge. Nothing retrying the merge can fix
+// it, and nothing about it is the environment's fault. The runner answers it
+// with a rebase round on the same branch and pull request.
+type MergeConflictError struct {
+	Subject  string
+	Base     string
+	Head     string
+	Attempts int
+}
+
+// Error implements the error interface.
+func (e *MergeConflictError) Error() string {
+	return "sdlc: " + e.Subject + " at " + e.Head + " conflicts with its base " + e.Base +
+		": the forge still reported it not mergeable after " + strconv.Itoa(e.Attempts) + " attempt(s)"
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *MergeConflictError) Unwrap() error { return ErrMergeConflict }
 
 // HeadMovedError reports a pull request whose head is no longer the one the
 // review judged, so the approval no longer covers what would merge.

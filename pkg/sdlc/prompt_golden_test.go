@@ -164,6 +164,11 @@ func TestSDLCPrompts_Golden(t *testing.T) {
 		{"review_findings", func(*testing.T) string {
 			return "## Review findings\n\n" + renderFailures(failures)
 		}},
+		{"merge_conflict", func(*testing.T) string {
+			return mergeConflictFindings(&MergeConflictError{
+				Subject: "acme/api#64", Base: "main", Head: "cf56c2ef9780", Attempts: 6,
+			})
+		}},
 		{"changes_requested", func(*testing.T) string { return findingsFor(reviews, "abc123") }},
 		{"changes_requested_none", func(*testing.T) string { return findingsFor(nil, "abc123") }},
 		{"ci_red_one_check", func(*testing.T) string {

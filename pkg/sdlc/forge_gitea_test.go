@@ -1952,6 +1952,76 @@ func TestGitea_NotReadyIsRetryableNotAFailure(t *testing.T) {
 	}
 }
 
+// TestGitea_MergeConflictIsTheSettledNotMergeable classifies a real Gitea
+// conflict end to end, from the adapter's wire decoding up to the hooks'
+// verdict.
+//
+// Gitea 1.27.1 does not tell a conflict from a check in progress on the merge
+// endpoint. CheckPullMergeable returns ErrNotMergeableState for every status
+// except mergeable, and the API maps that to 405 "Please try again later". The
+// PR's `mergeable` field is also false for checking, conflict and error alike
+// (models/issues/pull.go). So the adapter correctly reports each merge as not
+// ready, and it decodes the `mergeable` field faithfully. The settled read
+// after the bound is what turns an answer that never changes into a conflict.
+// The measured case is go-truststrap#64 (2026-09-22): `mergeable: false`, head
+// cf56c2ef, base main.
+func TestGitea_MergeConflictIsTheSettledNotMergeable(t *testing.T) {
+	cases := []struct {
+		name      string
+		mergeable bool
+		want      error
+		reject    error
+	}{
+		{name: "not mergeable for the whole bound is a conflict", mergeable: false,
+			want: ErrMergeConflict, reject: ErrMergeNotReadyExhausted},
+		{name: "mergeable yet refused is a forge that is not ready", mergeable: true,
+			want: ErrMergeNotReadyExhausted, reject: ErrMergeConflict},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			backend, fixture := newGiteaFixture(t)
+			pull := pullPayload(64, "issue/62-slug", "main", "cf56c2ef978063904fc0050373efba6d97608615", "open", false)
+			pull["mergeable"] = tc.mergeable
+			fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/pulls/64", http.StatusOK, pull)
+			fixture.respondJSON("POST /api/v1/repos/jeremyhahn/go-quicbaas/pulls/64/merge",
+				http.StatusMethodNotAllowed, map[string]any{"message": "Please try again later", "url": "http://gitea/api/swagger"})
+
+			// The adapter's half: every merge is not ready, and the field
+			// that separates the two cases is decoded as the forge sent it.
+			head := "cf56c2ef978063904fc0050373efba6d97608615"
+			if err := backend.MergePullRequest(context.Background(), testRepo, 64,
+				MergeSpec{Method: MergeMethodSquash}, head); !errors.Is(err, ErrForgeNotReady) {
+				t.Fatalf("MergePullRequest = %v, want ErrForgeNotReady", err)
+			}
+			read, err := backend.GetPullRequest(context.Background(), testRepo, 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if read.Mergeable != tc.mergeable || read.BaseRef != "main" {
+				t.Fatalf("GetPullRequest = mergeable %v base %q, want %v main", read.Mergeable, read.BaseRef, tc.mergeable)
+			}
+
+			// The hooks' half, over the real adapter.
+			fixture.requests = nil
+			waiter := &immediateWaiter{}
+			hooks := &Hooks{attempts: 3, waiter: waiter}
+			err = hooks.merge(context.Background(), backend, testRepo, 64, MergeSpec{Method: MergeMethodSquash}, head)
+			if !errors.Is(err, tc.want) || errors.Is(err, tc.reject) {
+				t.Fatalf("merge = %v, want %v and not %v", err, tc.want, tc.reject)
+			}
+			merges := 0
+			for _, req := range fixture.requests {
+				if req.Method == http.MethodPost && strings.HasSuffix(req.Path, "/pulls/64/merge") {
+					merges++
+				}
+			}
+			if merges != 3 || waiter.waits != 2 {
+				t.Fatalf("merges=%d waits=%d, want the full bound spent before the verdict", merges, waiter.waits)
+			}
+		})
+	}
+}
+
 // TestGitea_AGenuine405IsStillAFailure keeps the retryable class narrow.
 //
 // The status alone is ambiguous — only Gitea's message distinguishes "still

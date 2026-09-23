@@ -416,6 +416,12 @@ type runnerRun struct {
 	// prompt is the work's own doing and is charged, not rolled forever.
 	rolled      bool
 	rolledRound int
+
+	// rewrite records that this run asked the worker to rewrite the published
+	// branch, which a rebase round does. From then on, every publication of
+	// the attempt's branch is a lease-guarded force pinned to the head the
+	// factory last published; see publishPlan.
+	rewrite bool
 }
 
 // handler drives one state and answers the next.
@@ -991,6 +997,21 @@ func (s *runnerRun) publishPlan() publishPlan {
 	}
 	if !s.delivery.RequiresPullRequest {
 		plan.RemoteBranch = s.delivery.Target
+		return plan
+	}
+	// A REWRITTEN BRANCH CANNOT FAST-FORWARD, ON ANY WORKSPACE KIND. After a
+	// rebase round the local branch no longer descends from the head it
+	// published. A plain push is refused as non-fast-forward, and on a
+	// persistent workspace, which publishes nothing mid-turn, the plain push
+	// here was the ONLY push. So the rebase failed the attempt instead of
+	// reaching re-review (Codex on go-quicbaas#1009). The lease is the head
+	// the delivery records, which is the last one this factory published, so
+	// the force replaces exactly that commit and nothing a person pushed
+	// since. The carve-out above is never forced: its remote is the target
+	// branch itself.
+	if s.rewrite {
+		plan.Force = true
+		plan.Lease = s.delivery.HeadSHA
 	}
 	return plan
 }
@@ -2065,6 +2086,10 @@ func (s *runnerRun) complete(ctx context.Context) (orchestration.JobState, error
 	if err := s.job.RunStage(ctx, orchestration.JobStageComplete, func(hookCtx context.Context) error {
 		return s.runner.hooks.Complete(hookCtx, s.job.Context())
 	}); err != nil {
+		var conflict *MergeConflictError
+		if errors.As(err, &conflict) {
+			return s.rebaseRound(ctx, conflict)
+		}
 		return "", err
 	}
 	if err := s.loadDelivery(ctx); err != nil {
@@ -2074,6 +2099,45 @@ func (s *runnerRun) complete(ctx context.Context) (orchestration.JobState, error
 		return "", err
 	}
 	return orchestration.JobStateCleanup, nil
+}
+
+// rebaseRound sends an approved pull request that conflicts with its base
+// back to the worker, to be rebased onto the base on the same branch.
+//
+// IT IS A ROUND OF THE WORK, not a failure of it and not the environment's.
+// The base moved under an accepted change, and only the worker's checkout can
+// put the change back on top of it. Before this, the conflict came back from
+// Complete as a hook error. The attempt was charged as a failure of the work,
+// and every re-dispatch repeated the same merge until the task blocked
+// (go-truststrap#64, 2026-09-22).
+//
+// THE REBASE IS PUBLISHED AS A REWRITE. rewrite switches the attempt's
+// publications to the lease-guarded force pinned to the published head. That
+// is the one push path, on every workspace kind; see publishPlan.
+//
+// THE SAME PATH AS EVERY OTHER ROUND. The findings go into job memory the way
+// verification output and review findings do, and nextRound spends a round from
+// the same budget. So a pull request that conflicts again every time it is
+// rebased still escalates to a person. The rebased head then goes through the
+// ordinary pipeline, where validation runs, the new head is published and the
+// review gate judges it again, because an approval covers only the head it was
+// given.
+func (s *runnerRun) rebaseRound(ctx context.Context, conflict *MergeConflictError) (orchestration.JobState, error) {
+	s.job.Audit(auditMergeConflict, "base="+conflict.Base+" head="+conflict.Head+
+		" attempts="+strconv.Itoa(conflict.Attempts))
+	s.feedback = mergeConflictFindings(conflict)
+	s.job.Memory().AddFeedback(s.feedback)
+	s.rewrite = true
+	return s.nextRound(ctx, "merge conflict with "+conflict.Base)
+}
+
+// mergeConflictFindings is what the worker is told about a pull request that
+// conflicts with its base.
+func mergeConflictFindings(conflict *MergeConflictError) string {
+	return sdlcPrompts.MustRender("merge_conflict", prompts.Vars{
+		"base": conflict.Base,
+		"head": conflict.Head,
+	})
 }
 
 // runPostMerge executes what the strategy says follows the merge. The steps
@@ -2191,6 +2255,10 @@ const auditAgentTurn = "sdlc:agent_turn"
 // attempt, so without this event nothing in the record would say that a turn
 // happened and was deliberately not counted.
 const auditNonAnswerReprompted = "sdlc:non_answer_reprompted"
+
+// auditMergeConflict records that an approved pull request conflicted with its
+// base and was sent back to the worker as a rebase round.
+const auditMergeConflict = "sdlc:merge_conflict"
 
 // auditVerificationSkipped records that the binding's verification commands
 // were not run because the worker changed no file.

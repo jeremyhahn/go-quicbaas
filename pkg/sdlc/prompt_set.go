@@ -193,6 +193,16 @@ func sdlcSetSpec() prompts.SetSpec {
 				},
 			},
 			{
+				Name: "merge_conflict",
+				Description: "how an approved pull request that conflicts with its base is sent back to the worker " +
+					"to be rebased",
+				Default: sdlcDefaults["merge_conflict"],
+				Variables: []prompts.Variable{
+					{Name: "base", Description: "the branch the pull request merges into", Required: true},
+					{Name: "head", Description: "the head the review approved", Required: true},
+				},
+			},
+			{
 				Name:        "changes_requested",
 				Description: "one reviewer's refusal, for the worker's next round",
 				Default:     sdlcDefaults["changes_requested"],

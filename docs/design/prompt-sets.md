@@ -72,7 +72,7 @@ Two sets, each owned by the package that consumes it (both import the generic `p
 
 | set `sdlc` (pkg/orchestration/sdlc/prompts/*.md) | set `workflow` (pkg/orchestration/prompts/defaults/*.md … owned by the engine) |
 |---|---|
-| worker_charter, issue_contract, round_findings, verification_failed, review_findings, changes_requested, ci_red, blocked_comment, outcome_comment | worker_prompt, worker_workspace, reviewer_prompt, reviewer_system, validation_summary, capabilities_context, memory_{header,worked,failed,constraints,feedback}, decomposition_prompt, decomposition_backends, planner_system, validation_prompt, resume_priming, handshake, charter_{lead,worker,reviewer,validator} (PR4) |
+| worker_charter, issue_contract, round_findings, verification_failed, review_findings, merge_conflict, changes_requested, ci_red, blocked_comment, outcome_comment | worker_prompt, worker_workspace, reviewer_prompt, reviewer_system, validation_summary, capabilities_context, memory_{header,worked,failed,constraints,feedback}, decomposition_prompt, decomposition_backends, planner_system, validation_prompt, resume_priming, handshake, charter_{lead,worker,reviewer,validator} (PR4) |
 
 ### Decisions (one-line reason each)
 1. **Generic package `pkg/orchestration/prompts`**: spec registry, validator, renderer, record/store, resolver, seeder. Owners register a `SetSpec` from `init()`; markers such as `SDLC-STOP:` are declared by sdlc from its own `turn.go` constants, so the validator learns them by registration.

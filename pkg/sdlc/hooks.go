@@ -561,6 +561,15 @@ func (h *Hooks) Complete(ctx context.Context, job *orchestration.JobContext) err
 
 // merge issues the merge, retrying only while the forge reports itself
 // not ready; every other refusal is final.
+//
+// NOT READY MEANS TWO THINGS ON GITEA, and only the pull request tells them
+// apart. Gitea answers 405 "Please try again later" for every pull-request
+// status except mergeable: still being checked, in conflict with its base, or
+// errored while checking. Its API's `mergeable` is false for all three, and no
+// field says which one applies. What separates them is TIME: a check settles
+// in seconds and a conflict never does. So the bounded retry runs exactly as
+// before, and once it is spent the pull request is read one more time.
+// settledRefusal describes what that read decides.
 func (h *Hooks) merge(ctx context.Context, forge ForgeBackend, repo RepoRef, number int, spec MergeSpec, approvedHead string) error {
 	subject := repo.String() + "#" + strconv.Itoa(number)
 	var lastNotReady error
@@ -580,7 +589,52 @@ func (h *Hooks) merge(ctx context.Context, forge ForgeBackend, repo RepoRef, num
 			return waitErr
 		}
 	}
-	return &MergeNotReadyExhaustedError{Subject: subject, Attempts: h.attempts, Last: lastNotReady}
+	return h.settledRefusal(ctx, forge, repo, number, approvedHead,
+		&MergeNotReadyExhaustedError{Subject: subject, Attempts: h.attempts, Last: lastNotReady})
+}
+
+// settledRefusal classifies a merge that the forge answered not-ready for the
+// whole retry bound. It decides from one read of the pull request, made after
+// the bound is spent.
+//
+// A PULL REQUEST THAT IS STILL OPEN, STILL ON THE APPROVED HEAD AND STILL NOT
+// MERGEABLE CONFLICTS WITH ITS BASE. The forge has given that answer for the
+// whole backoff, about a minute by default. A mergeability check takes
+// seconds, so this is the forge's settled verdict and not a check still in
+// progress. Measured on go-truststrap#64 (2026-09-22): the PR was
+// codex-approved and green, main was five commits ahead with a real conflict,
+// and the merge retried to exhaustion twice. Both times the attempt was charged
+// as a failure of the work. Reported as a MergeConflictError, it becomes a
+// rebase round for the worker instead.
+//
+// Every other case keeps the answer it had:
+//   - The forge reports the PR mergeable but still refused to merge it. The
+//     forge really is not ready, so the error stays exhausted.
+//   - The head moved. That is a HeadMovedError, the same refusal Complete makes
+//     before it merges.
+//   - The PR was merged in the meantime. That is the outcome that was asked
+//     for, and Complete records it the same way it records a PR it found
+//     already merged.
+//   - The PR was closed. A rebase cannot resolve that.
+func (h *Hooks) settledRefusal(ctx context.Context, forge ForgeBackend, repo RepoRef, number int, approvedHead string,
+	exhausted *MergeNotReadyExhaustedError) error {
+	pr, err := forge.GetPullRequest(ctx, repo, number)
+	if err != nil {
+		return err
+	}
+	if pr == nil {
+		return &NotFoundError{Entity: "pull request", ID: exhausted.Subject}
+	}
+	if pr.Merged {
+		return nil
+	}
+	if pr.HeadSHA != approvedHead {
+		return &HeadMovedError{Subject: exhausted.Subject, Reviewed: approvedHead, Current: pr.HeadSHA}
+	}
+	if pr.Mergeable || pr.State == "closed" {
+		return exhausted
+	}
+	return &MergeConflictError{Subject: exhausted.Subject, Base: pr.BaseRef, Head: approvedHead, Attempts: exhausted.Attempts}
 }
 
 // =============================================================================

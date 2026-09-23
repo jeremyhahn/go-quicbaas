@@ -417,3 +417,32 @@ func TestPublisher_ForceStillRefusesWhatGitRefuses(t *testing.T) {
 		t.Errorf("the refusal names the command %q, want the leased force in it", refused.Command)
 	}
 }
+
+// TestForceWithLease_PinsTheLeaseToThePublishedRef covers the lease flag. It
+// is pinned to the ref actually being published when the plan names a lease,
+// and it is git's own tracking-ref lease when the plan does not. It is never a
+// bare force.
+func TestForceWithLease_PinsTheLeaseToThePublishedRef(t *testing.T) {
+	cases := []struct {
+		name string
+		plan publishPlan
+		want string
+	}{
+		{"no recorded head leases on the tracking ref", publishPlan{Branch: "issue/7-x"}, "--force-with-lease"},
+		{"a recorded head pins the lease", publishPlan{Branch: "issue/7-x", Lease: "abc123"},
+			"--force-with-lease=issue/7-x:abc123"},
+		{"the lease names the remote ref it guards", publishPlan{Branch: "local", RemoteBranch: "issue/7-x", Lease: "abc123"},
+			"--force-with-lease=issue/7-x:abc123"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := forceWithLease(tc.plan)
+			if got != tc.want {
+				t.Fatalf("forceWithLease = %q, want %q", got, tc.want)
+			}
+			if got == "--force" || got == "-f" {
+				t.Fatal("an unleased force may discard a commit this checkout never saw")
+			}
+		})
+	}
+}
