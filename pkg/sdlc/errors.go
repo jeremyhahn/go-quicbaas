@@ -351,6 +351,12 @@ type ForgeNotReadyError struct {
 	Operation string
 	Subject   string
 	Detail    string
+
+	// Cause is set when the not-ready answer was reached by reconciliation
+	// rather than said by the forge: a merge the forge never answered, read
+	// back still open. It keeps the unanswered call in the chain, so a retry
+	// bound spent on it is attributed to the forge rather than to the work.
+	Cause error
 }
 
 // Error implements the error interface.
@@ -362,8 +368,13 @@ func (e *ForgeNotReadyError) Error() string {
 	return msg
 }
 
-// Unwrap returns the sentinel for errors.Is support.
-func (e *ForgeNotReadyError) Unwrap() error { return ErrForgeNotReady }
+// Unwrap returns the sentinel and any cause for errors.Is/As support.
+func (e *ForgeNotReadyError) Unwrap() []error {
+	if e.Cause == nil {
+		return []error{ErrForgeNotReady}
+	}
+	return []error{ErrForgeNotReady, e.Cause}
+}
 
 // WebhookUnverifiedError reports a delivery whose signature did not verify.
 type WebhookUnverifiedError struct {
@@ -428,8 +439,17 @@ func (e *MergeNotReadyExhaustedError) Error() string {
 	return msg
 }
 
-// Unwrap returns the sentinel for errors.Is support.
-func (e *MergeNotReadyExhaustedError) Unwrap() error { return ErrMergeNotReadyExhausted }
+// Unwrap returns the sentinel and the last refusal for errors.Is/As support.
+//
+// The last refusal is kept in the chain so its cause is: a bound spent on a
+// merge the forge never answered is the forge's fault, and the engine can only
+// say so if it can see the unanswered call.
+func (e *MergeNotReadyExhaustedError) Unwrap() []error {
+	if e.Last == nil {
+		return []error{ErrMergeNotReadyExhausted}
+	}
+	return []error{ErrMergeNotReadyExhausted, e.Last}
+}
 
 // MergeConflictError reports a pull request the forge still held not mergeable
 // once the not-ready retry bound was spent, on the head the review approved.

@@ -138,6 +138,7 @@ prose:
 | an environmental terminal reason (`api_error`, …) | `PreFirstTurnFault` | refunded, requeued (bounded) |
 | `accounts_cooling_down` | `AccountsCoolingDownError` | refunded, requeued at `AvailableAt` (clamped to 24h) |
 | `project_capacity_exceeded` | `ProjectCapacityExceededError` | refunded, requeued at `RetryAt` |
+| `forge_unreachable` | any error unwrapping to `ErrForgeUnreachable` — a forge call unanswered after the adapter's retries and reconciliation ([sdlc.md](sdlc.md#forge-transport-deadlines-retries-and-unanswered-writes)) | refunded, requeued (bounded) |
 | `no_provider_account`, `no_account_resolver`, `account_credential_missing`, `account_refresher_missing` | resolver errors | refunded, **blocked** for a human |
 | `superseded` | `JobSupersededError`, `JobLeaseTakenError` | nothing written; the lease holder owns the Task |
 | `stalled` | stall detector | charged |

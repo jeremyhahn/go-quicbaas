@@ -438,6 +438,13 @@ func (s *Server) startSDLC() error {
 		// a module that reached this line without one would bind projects
 		// nothing ever delivers to.
 		WebhookPublicURL: cfg.Webhook.PublicURL,
+		ForgeTransport: sdlc.ForgeTransport{
+			ReadTimeout:       cfg.Forge.ReadTimeout,
+			WriteTimeout:      cfg.Forge.WriteTimeout,
+			HeavyWriteTimeout: cfg.Forge.HeavyWriteTimeout,
+			ReadAttempts:      cfg.Forge.ReadAttempts,
+			RetryBackoff:      cfg.Forge.RetryBackoff,
+		},
 	})
 	if err != nil {
 		return &SDLCInitError{Component: "binding service", Cause: err}

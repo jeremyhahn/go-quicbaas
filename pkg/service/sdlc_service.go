@@ -68,6 +68,12 @@ type SDLCServiceConfig struct {
 	// constructing the two in a cycle. Passing the one value it cannot
 	// derive keeps the construction a straight line.
 	WebhookPublicURL string
+
+	// ForgeTransport bounds every forge call the adapters this service builds
+	// make: per-call deadlines and the retry of unanswered calls. A zero field
+	// takes sdlc.DefaultForgeTransport's.
+	ForgeTransport sdlc.ForgeTransport
+
 	// Logger records the bind-time notice that a system-tenant binding runs
 	// the SDLC worker at SYSTEM privilege. Optional; a nil logger falls back
 	// to slog.Default so the notice is never silently dropped.
@@ -89,6 +95,7 @@ type SDLCService struct {
 	secrets       SecretsService
 	guard         sdlc.RepoHostGuard
 	onboarder     *sdlc.Onboarder
+	transport     sdlc.ForgeTransport
 	logger        *slog.Logger
 	nudger        atomic.Pointer[nudgerHolder]
 }
@@ -118,13 +125,18 @@ func NewSDLCService(cfg SDLCServiceConfig) (*SDLCService, error) {
 	case cfg.ProjectWriter == nil:
 		return nil, &sdlc.InvalidInputError{Field: "project_writer", Message: "binding turns the project autonomous, which has to be persisted"}
 	}
+	// Refused here rather than at the first forge call, which would fail
+	// every project's first sweep on a knob the operator set once.
+	if err := cfg.ForgeTransport.Validate(); err != nil {
+		return nil, err
+	}
 	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
 	svc := &SDLCService{
 		store: cfg.Store, routes: cfg.Routes, projects: cfg.Projects, projectWriter: cfg.ProjectWriter,
-		secrets: cfg.Secrets, guard: cfg.Guard, logger: logger,
+		secrets: cfg.Secrets, guard: cfg.Guard, transport: cfg.ForgeTransport, logger: logger,
 	}
 	onboarder, err := sdlc.NewOnboarder(svc, svc, cfg.WebhookPublicURL)
 	if err != nil {
@@ -470,7 +482,7 @@ func (s *SDLCService) ForgeFor(ctx context.Context, tenantID string, cfg sdlc.Fo
 	if err != nil {
 		return nil, err
 	}
-	return sdlc.NewForgeBackend(cfg, sdlc.ForgeCredentials{Token: token})
+	return sdlc.NewForgeBackend(cfg, sdlc.ForgeCredentials{Token: token}, s.transport)
 }
 
 // ForgeToken implements sdlc.ForgeTokenReader: the forge token value the

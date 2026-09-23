@@ -62,6 +62,9 @@ type recordedRequest struct {
 func newGiteaFixture(t *testing.T) (*GiteaBackend, *giteaFixture) {
 	t.Helper()
 	fixture := &giteaFixture{t: t, handlers: map[string]func(http.ResponseWriter, *http.Request){}}
+	// No pull request is open until a test says otherwise: CreatePullRequest
+	// looks for one to adopt before it creates.
+	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/pulls", http.StatusOK, []giteaPull{})
 
 	fixture.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := readAllString(r)
@@ -83,9 +86,11 @@ func newGiteaFixture(t *testing.T) (*GiteaBackend, *giteaFixture) {
 	}))
 	t.Cleanup(fixture.server.Close)
 
+	// An unanswered read is retried; the fixture's retries must not wait.
 	backend, err := NewGiteaBackend(GiteaConfig{
 		BaseURL: fixture.server.URL + "/api/v1",
 		Token:   "test-token",
+		Waiter:  &immediateWaiter{},
 	})
 	if err != nil {
 		t.Fatalf("NewGiteaBackend: %v", err)
@@ -1085,8 +1090,10 @@ func pullPayload(number int, head, base, sha, state string, merged bool) map[str
 		"number": number,
 		"state":  state,
 		"merged": merged,
-		"head":   map[string]any{"ref": head, "sha": sha},
-		"base":   map[string]any{"ref": base},
+		"head": map[string]any{"ref": head, "sha": sha, "repo": map[string]any{
+			"name": testRepo.Repo, "owner": map[string]any{"login": testRepo.Owner},
+		}},
+		"base": map[string]any{"ref": base},
 	}
 }
 
@@ -1781,7 +1788,7 @@ func TestGiteaBackend_IsRegisteredAsAFactory(t *testing.T) {
 	backend, err := NewForgeBackend(ForgeConfig{
 		Type:    ForgeGitea,
 		BaseURL: "http://gitea.example/api/v1",
-	}, ForgeCredentials{Token: "a-token"})
+	}, ForgeCredentials{Token: "a-token"}, ForgeTransport{})
 	if err != nil {
 		t.Fatalf("the completed gitea adapter is not selectable: %v", err)
 	}
@@ -1789,7 +1796,7 @@ func TestGiteaBackend_IsRegisteredAsAFactory(t *testing.T) {
 		t.Errorf("Type() = %v, want gitea", backend.Type())
 	}
 	// The factory must fail closed on a project that supplies no credential.
-	if _, err := NewForgeBackend(ForgeConfig{Type: ForgeGitea, BaseURL: "http://x/api/v1"}, ForgeCredentials{}); !errors.Is(err, ErrInvalidInput) {
+	if _, err := NewForgeBackend(ForgeConfig{Type: ForgeGitea, BaseURL: "http://x/api/v1"}, ForgeCredentials{}, ForgeTransport{}); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("an untokened project built an adapter (err = %v)", err)
 	}
 }

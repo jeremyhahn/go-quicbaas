@@ -581,7 +581,7 @@ func (f *e2eForge) commentsOn(number int) []sdlc.ForgeComment {
 func registerLoopForge(t *testing.T) {
 	t.Helper()
 	registerLoopForgeOnce.Do(func() {
-		sdlc.RegisterForgeFactory(loopE2EForge, func(sdlc.ForgeConfig, sdlc.ForgeCredentials) (sdlc.ForgeBackend, error) {
+		sdlc.RegisterForgeFactory(loopE2EForge, func(sdlc.ForgeConfig, sdlc.ForgeCredentials, sdlc.ForgeTransport) (sdlc.ForgeBackend, error) {
 			return loopForge, nil
 		})
 	})

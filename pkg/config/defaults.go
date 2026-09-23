@@ -216,6 +216,17 @@ func DefaultConfig() *Config {
 				ForgeInterval: 200 * time.Millisecond,
 			},
 			Webhook: SDLCWebhook{MaxBody: 1 << 20},
+			// How long one forge call may take and how hard an unanswered
+			// one is retried. Stated here so an operator can see what a slow
+			// forge is allowed; the values match sdlc.DefaultForgeTransport
+			// and a drift test pins the two.
+			Forge: SDLCForge{
+				ReadTimeout:       30 * time.Second,
+				WriteTimeout:      time.Minute,
+				HeavyWriteTimeout: 5 * time.Minute,
+				ReadAttempts:      3,
+				RetryBackoff:      time.Second,
+			},
 			// What the canonical workflow runs before publishing. Repo hosts
 			// default EMPTY: naming a forge host is the operator's explicit
 			// act.

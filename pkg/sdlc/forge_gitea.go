@@ -49,13 +49,6 @@ import (
 // small enough that a dependency would be more to keep in step than the calls
 // themselves.
 
-// giteaDefaultTimeout bounds a single API call.
-//
-// A forge that stops answering must not hold a worker forever; the reconciler
-// will come back. It is generous because Gitea under CI load is slow, not
-// because a long wait is useful.
-const giteaDefaultTimeout = 30 * time.Second
-
 // giteaDraftPrefix is how Gitea marks a pull request as a draft: there is no
 // draft field on the create API, only this title convention. The prefix is
 // server-configurable (repository.PULL_REQUEST_WORK_IN_PROGRESS_PREFIXES) and
@@ -145,9 +138,18 @@ type GiteaConfig struct {
 	// caller, like Token.
 	Custody CustodyCredential
 
-	// HTTPClient is optional. A caller supplying one owns its timeout;
-	// otherwise the adapter builds one with giteaDefaultTimeout.
+	// HTTPClient is optional. The adapter bounds every call by its own
+	// per-call deadline (Transport); a caller supplying a client with a
+	// Timeout of its own adds a second, client-wide bound on top.
 	HTTPClient *http.Client
+
+	// Transport bounds each call and paces the retry of unanswered ones. A
+	// zero field takes DefaultForgeTransport's.
+	Transport ForgeTransport
+
+	// Waiter paces the retries; nil takes exponential backoff from
+	// Transport.RetryBackoff. Tests inject one that does not wait.
+	Waiter RetryWaiter
 }
 
 // GiteaBackend talks to one Gitea instance.
@@ -157,10 +159,12 @@ type GiteaBackend struct {
 	// assertable. Production leaves it nil.
 	bodySeam func(body []byte)
 
-	baseURL string
-	token   string
-	custody CustodyCredential
-	client  *http.Client
+	baseURL   string
+	token     string
+	custody   CustodyCredential
+	client    *http.Client
+	transport ForgeTransport
+	waiter    RetryWaiter
 }
 
 // CustodyCredential is the password-equivalent the provisioning plane holds so
@@ -200,11 +204,26 @@ func NewGiteaBackend(cfg GiteaConfig) (*GiteaBackend, error) {
 		}
 	}
 
+	if err := cfg.Transport.Validate(); err != nil {
+		return nil, err
+	}
+	transport := cfg.Transport.Resolved()
+
+	// NO CLIENT-WIDE TIMEOUT: each call carries its own deadline (see do),
+	// because a single bound is too long for a listing and too short for a
+	// squash merge of a large repository.
 	client := cfg.HTTPClient
 	if client == nil {
-		client = &http.Client{Timeout: giteaDefaultTimeout}
+		client = &http.Client{}
 	}
-	return &GiteaBackend{baseURL: base, token: cfg.Token, custody: cfg.Custody, client: client}, nil
+	waiter := cfg.Waiter
+	if waiter == nil {
+		waiter = backoffWaiter{base: transport.RetryBackoff}
+	}
+	return &GiteaBackend{
+		baseURL: base, token: cfg.Token, custody: cfg.Custody, client: client,
+		transport: transport, waiter: waiter,
+	}, nil
 }
 
 // Compile-time proof the adapter is complete. It fails to build if a method is
@@ -214,11 +233,12 @@ var _ ForgeBackend = (*GiteaBackend)(nil)
 // Registered as a FACTORY: each project brings its own base URL and its own
 // token, so an adapter is built per project rather than shared.
 func init() {
-	RegisterForgeFactory(ForgeGitea, func(cfg ForgeConfig, creds ForgeCredentials) (ForgeBackend, error) {
+	RegisterForgeFactory(ForgeGitea, func(cfg ForgeConfig, creds ForgeCredentials, transport ForgeTransport) (ForgeBackend, error) {
 		return NewGiteaBackend(GiteaConfig{
-			BaseURL: cfg.BaseURL,
-			Token:   creds.Token,
-			Custody: creds.Custody,
+			BaseURL:   cfg.BaseURL,
+			Token:     creds.Token,
+			Custody:   creds.Custody,
+			Transport: transport,
 		})
 	})
 }
@@ -387,13 +407,22 @@ const (
 	authSubjectToken
 )
 
-// do performs one API call and decodes its response.
+// send performs one attempt at an API call, bounded by deadline, and decodes
+// its response. do decides whether an unanswered attempt is sent again.
 //
 // Status handling is explicit rather than "2xx is fine": Gitea distinguishes
 // absent (404) from forbidden (403) from broken (5xx), and each means something
 // different to a caller — a missing issue is ordinary, a forbidden one is a
-// token problem an operator must fix, and a 5xx is worth retrying.
-func (g *GiteaBackend) do(ctx context.Context, req giteaRequest) error {
+// token problem an operator must fix, and a gateway's 502/503/504 is no answer
+// from Gitea at all.
+//
+// THE DEADLINE COVERS THE BODY TOO: the response is read inside the attempt's
+// context, so a forge that sends headers and then stalls is bounded exactly as
+// one that never answers.
+func (g *GiteaBackend) send(ctx context.Context, req giteaRequest, deadline time.Duration) error {
+	attemptCtx, cancel := context.WithTimeout(ctx, deadline)
+	defer cancel()
+
 	endpoint := g.baseURL + req.path
 	if len(req.query) > 0 {
 		endpoint += "?" + req.query.Encode()
@@ -408,7 +437,7 @@ func (g *GiteaBackend) do(ctx context.Context, req giteaRequest) error {
 		payload = bytes.NewReader(encoded)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, req.method, endpoint, payload)
+	httpReq, err := http.NewRequestWithContext(attemptCtx, req.method, endpoint, payload)
 	if err != nil {
 		return backendError(req.operation+".request", err)
 	}
@@ -442,7 +471,7 @@ func (g *GiteaBackend) do(ctx context.Context, req giteaRequest) error {
 
 	resp, err := g.client.Do(httpReq)
 	if err != nil {
-		return backendError(req.operation, err)
+		return unanswered(ctx, req.operation, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -462,7 +491,7 @@ func (g *GiteaBackend) do(ctx context.Context, req giteaRequest) error {
 	}
 	rawBody, readErr := readBodyTail(resp.Body, readBound)
 	if readErr != nil {
-		return backendError(req.operation+".read", readErr)
+		return unanswered(ctx, req.operation, readErr)
 	}
 	// THE RAW BODY IS ADAPTER-OWNED, SECRET-BEARING MEMORY (review 991): a
 	// mint response carries the token, and any response may echo a
@@ -500,6 +529,16 @@ func (g *GiteaBackend) do(ctx context.Context, req giteaRequest) error {
 	}
 
 	switch {
+	case giteaGatewayStatuses[resp.StatusCode]:
+		return &ForgeUnansweredError{
+			Type:      ForgeGitea,
+			Operation: req.operation,
+			Cause: &GiteaAPIError{
+				Status:    resp.StatusCode,
+				Operation: req.operation,
+				Message:   giteaMessage(body),
+			},
+		}
 	case resp.StatusCode == http.StatusMethodNotAllowed && giteaIsNotReady(body):
 		// Gitea computes a pull request's mergeability asynchronously and
 		// answers 405 "Please try again later" until it has. Measured against
@@ -1446,8 +1485,12 @@ type giteaPull struct {
 	Body   string `json:"body"`
 	State  string `json:"state"`
 	Head   struct {
-		Ref string `json:"ref"`
-		SHA string `json:"sha"`
+		Ref  string `json:"ref"`
+		SHA  string `json:"sha"`
+		Repo *struct {
+			Name  string     `json:"name"`
+			Owner *giteaUser `json:"owner"`
+		} `json:"repo"`
 	} `json:"head"`
 	Base struct {
 		Ref string `json:"ref"`
@@ -1463,7 +1506,12 @@ type giteaPull struct {
 
 // toForgePullRequest converts Gitea's shape to the module's.
 func (p *giteaPull) toForgePullRequest() *ForgePullRequest {
+	var headRepo RepoRef
+	if p.Head.Repo != nil && p.Head.Repo.Owner != nil {
+		headRepo = RepoRef{Owner: p.Head.Repo.Owner.Login, Repo: p.Head.Repo.Name}
+	}
 	return &ForgePullRequest{
+		HeadRepo:  headRepo,
 		Number:    p.Number,
 		Title:     p.Title,
 		Body:      p.Body,
@@ -1523,7 +1571,16 @@ func (g *GiteaBackend) ListOpenPullRequests(ctx context.Context, repo RepoRef) (
 	return nil, backendError("ListOpenPullRequests", errOpenPullPagesExhausted)
 }
 
-// CreatePullRequest opens a pull request and verifies it by reading it back.
+// CreatePullRequest opens a pull request — or adopts the one already open for
+// the same head -> base — and verifies it by reading it back.
+//
+// ADOPTION IS THE IDEMPOTENCY. Gitea refuses a second open pull request for one
+// head -> base (409), so "is there one open for these refs" is the complete
+// answer to "did an earlier create land". That earlier create can be this
+// attempt's own: on the burn-in node a create outlasted its deadline, Gitea
+// opened go-frost#26 anyway, and the retry's create would have been refused as
+// a duplicate of a pull request the factory had never recorded. See
+// openPullRequest for the order of the lookups.
 func (g *GiteaBackend) CreatePullRequest(ctx context.Context, repo RepoRef, spec PullRequestSpec) (*ForgePullRequest, error) {
 	switch {
 	case spec.Title == "":
@@ -1548,37 +1605,15 @@ func (g *GiteaBackend) CreatePullRequest(ctx context.Context, repo RepoRef, spec
 	if spec.Draft {
 		title = giteaDraftPrefix + " " + title
 	}
-	body := map[string]any{
-		"title": title,
-		"body":  spec.Body,
-		"head":  spec.HeadRef,
-		"base":  spec.BaseRef,
-	}
-
-	var created giteaPull
-	if err := g.do(ctx, giteaRequest{
-		method:    http.MethodPost,
-		path:      repoPath(repo) + "/pulls",
-		body:      body,
-		out:       &created,
-		operation: "CreatePullRequest",
-	}); err != nil {
+	number, err := g.openPullRequest(ctx, repo, spec, title)
+	if err != nil {
 		return nil, err
-	}
-	if created.Number == 0 {
-		return nil, &ForgeWriteNotAppliedError{
-			Type:      ForgeGitea,
-			Operation: "CreatePullRequest",
-			Subject:   repo.String() + " " + spec.HeadRef + " -> " + spec.BaseRef,
-			Want:      "a pull request number",
-			Got:       "none",
-		}
 	}
 
 	// Read-back against the forge's own view, not the create response: the
 	// refs are what a later merge is guarded on, so they are worth confirming
 	// from a second read rather than trusting the echo.
-	pull, err := g.GetPullRequest(ctx, repo, created.Number)
+	pull, err := g.GetPullRequest(ctx, repo, number)
 	if err != nil {
 		return nil, err
 	}
@@ -1586,7 +1621,7 @@ func (g *GiteaBackend) CreatePullRequest(ctx context.Context, repo RepoRef, spec
 		return nil, &ForgeWriteNotAppliedError{
 			Type:      ForgeGitea,
 			Operation: "CreatePullRequest",
-			Subject:   fmt.Sprintf("%s#%d", repo, created.Number),
+			Subject:   fmt.Sprintf("%s#%d", repo, number),
 			Want:      "draft",
 			Got:       "ready for review",
 		}
@@ -1595,17 +1630,17 @@ func (g *GiteaBackend) CreatePullRequest(ctx context.Context, repo RepoRef, spec
 		return nil, &ForgeWriteNotAppliedError{
 			Type:      ForgeGitea,
 			Operation: "CreatePullRequest",
-			Subject:   fmt.Sprintf("%s#%d", repo, created.Number),
+			Subject:   fmt.Sprintf("%s#%d", repo, number),
 			Want:      spec.HeadRef + " -> " + spec.BaseRef,
 			Got:       pull.HeadRef + " -> " + pull.BaseRef,
 		}
 	}
 
 	if len(spec.Labels) > 0 {
-		if err := g.SetIssueLabels(ctx, repo, created.Number, spec.Labels); err != nil {
+		if err := g.SetIssueLabels(ctx, repo, number, spec.Labels); err != nil {
 			return nil, err
 		}
-		pull, err = g.GetPullRequest(ctx, repo, created.Number)
+		pull, err = g.GetPullRequest(ctx, repo, number)
 		if err != nil {
 			return nil, err
 		}
@@ -1731,6 +1766,12 @@ func (g *GiteaBackend) MergePullRequest(ctx context.Context, repo RepoRef, numbe
 	if err != nil {
 		return err
 	}
+	// ALREADY MERGED IS DONE. The retry after a merge the forge never answered
+	// lands here once the forge has finished it, and a second merge request
+	// would be refused for a change that is exactly where it was asked to be.
+	if mergeLanded(pull) {
+		return nil
+	}
 	if pull.HeadSHA != expectedHead {
 		return &HeadMovedError{
 			Subject:  repo.String() + "#" + strconv.Itoa(number),
@@ -1755,12 +1796,16 @@ func (g *GiteaBackend) MergePullRequest(ctx context.Context, repo RepoRef, numbe
 		// module runs against.
 		"head_commit_id": expectedHead,
 	}
-	if err := g.do(ctx, giteaRequest{
+	err = g.do(ctx, giteaRequest{
 		method:    http.MethodPost,
 		path:      repoPath(repo) + "/pulls/" + strconv.Itoa(number) + "/merge",
 		body:      body,
 		operation: "MergePullRequest",
-	}); err != nil {
+	})
+	if errors.Is(err, ErrForgeUnanswered) {
+		return g.reconcileMerge(ctx, repo, number, err)
+	}
+	if err != nil {
 		return err
 	}
 

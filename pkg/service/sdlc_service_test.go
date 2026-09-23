@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
@@ -425,12 +426,43 @@ func TestNewSDLCService_RefusesIncompleteWiring(t *testing.T) {
 		// forge webhooks point nowhere, and report each one provisioned.
 		"public url":          func(c *SDLCServiceConfig) { c.WebhookPublicURL = "" },
 		"relative public url": func(c *SDLCServiceConfig) { c.WebhookPublicURL = "/api" },
+		// A negative forge deadline would cancel every forge call before it
+		// was made; refused at construction rather than at the first sweep.
+		"negative forge deadline": func(c *SDLCServiceConfig) {
+			c.ForgeTransport = sdlc.ForgeTransport{ReadTimeout: -time.Second}
+		},
 	} {
 		cfg := base
 		mutate(&cfg)
 		if _, err := NewSDLCService(cfg); !errors.Is(err, sdlc.ErrInvalidInput) {
 			t.Fatalf("%s nil accepted: %v", name, err)
 		}
+	}
+}
+
+// TestNewSDLCService_TheForgeTransportReachesTheAdapter proves the node's forge
+// policy is what the adapters this service builds actually use: a policy set on
+// the service and dropped on the way to the factory would leave every forge
+// call on the defaults while the operator believes otherwise.
+func TestNewSDLCService_TheForgeTransportReachesTheAdapter(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	transport := sdlc.ForgeTransport{ReadTimeout: 7 * time.Second, WriteTimeout: 8 * time.Second}
+	svc, err := NewSDLCService(SDLCServiceConfig{
+		Store: rig.store, Routes: rig.svc.Routes(), Projects: rig.projects, ProjectWriter: rig.projects,
+		Secrets: rig.secrets, WebhookPublicURL: sdlcTestPublicURL, ForgeTransport: transport,
+	})
+	if err != nil {
+		t.Fatalf("NewSDLCService: %v", err)
+	}
+	if svc.transport != transport {
+		t.Fatalf("service transport = %+v, want %+v", svc.transport, transport)
+	}
+	forge, err := svc.ForgeFor(context.Background(), sdlcTestTenant, rig.binding().Forge)
+	if err != nil {
+		t.Fatalf("ForgeFor: %v", err)
+	}
+	if forge.Type() != sdlc.ForgeGitea {
+		t.Fatalf("forge type = %s", forge.Type())
 	}
 }
 

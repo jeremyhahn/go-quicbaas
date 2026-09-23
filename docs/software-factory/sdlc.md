@@ -240,7 +240,7 @@ runtime, so it runs first; `startSDLC` attaches what the runner drives with.
    |---|---|
    | `Prepare` (initializing) | the attempt's branch is planned (`issue/<n>-<slug>` from the binding's strategy, based on `Project.Git.DefaultBranch`), the `Delivery` records it, the issue is labelled `in_progress`. A later attempt continues a branch an earlier one pushed. **Nothing is materialised on the daemon's filesystem** and the returned work directory is empty: the worker's container clones the project and the project's `context_repos` itself — see [Autonomous projects](autonomy-and-dispatch.md). |
    | `Reviewable` (reviewing) | the pull request opened (or refreshed on a later round) against the head the CONTAINER already published, recorded on the `Delivery` and published as Task artifacts (`url` `pull_request`, `commit` `head`), issue labelled `in_review`. No head recorded → `NoPublishedHeadError`; the container publishes before the forge is written. |
-   | `Complete` (completing) | merge as the binding's strategy plans, **bound to the head the review approved**: the forge refuses a merge whose head moved (`HeadMovedError`), retried only while the forge says not-ready (`merge_attempts`), issue labelled `merged`. When the retries are spent, one more read of the pull request decides between `MergeNotReadyExhaustedError` and `MergeConflictError`; see [a merge conflict is a rebase round](#a-merge-conflict-is-a-rebase-round). |
+   | `Complete` (completing) | merge as the binding's strategy plans, **bound to the head the review approved**: the forge refuses a merge whose head moved (`HeadMovedError`), retried only while the forge says not-ready (`merge_attempts`), issue labelled `merged`. When the retries are spent, one more read of the pull request decides between `MergeNotReadyExhaustedError` and `MergeConflictError`; see [a merge conflict is a rebase round](#a-merge-conflict-is-a-rebase-round). A merge the forge never answered is settled by reading the pull request back — see [Forge transport](#forge-transport-deadlines-retries-and-unanswered-writes). |
    | `Discard` (cleanup, detached context) | no filesystem work — the container that made the checkout is gone with it; the `Delivery` stays as the record of the attempt. The runner publishes the branch before the container ends on every non-completed exit. |
    | `Blocked` (escalating) | the park reason posted to the issue (secrets redacted, bounded), derived from the park's [typed unblock condition](#the-block-lifecycle) plus the attempt accounting and what resumes it, retried per `surfacing`; issue labelled `blocked` / `needs_info` / `escalated`, **and the delivery's open pull request labelled with the same one**. |
 
@@ -1199,6 +1199,43 @@ QuicBaaS's policy and lives on the binding. A `ListWorkflows` method would
 have pushed that policy into every adapter and made a GitLab port invent an
 equivalent of a GitHub Actions directory.
 
+### Forge transport: deadlines, retries, and unanswered writes
+
+Every forge call is bounded by a deadline chosen by what the call costs the
+forge, and a call the forge does not answer — no response inside the
+deadline, a dropped connection, or a gateway's 502/503/504 — is handled by
+what repeating it would do (go-quicbaas#1034). Configured under
+`sdlc.forge` (see [Configuration](#configuration)); zero takes the default.
+
+One 30-second bound for everything was wrong both ways. On 2026-09-22 a
+Gitea host under CI load missed it on a triage listing, a review read and a
+squash merge, and answered in ~70 ms moments later — and the merge had
+**landed**: the job was recorded failed on a change that was on `main`. A
+create-PR the same evening timed out after Gitea had opened the pull request,
+and the retry's create would have been refused as a duplicate.
+
+| call | deadline | unanswered |
+|---|---|---|
+| any read (GET) | `read_timeout` | retried up to `read_attempts`, backing off from `retry_backoff`; then `ForgeRetriesExhaustedError` |
+| `MergePullRequest` | `heavy_write_timeout` | the PR is re-read: merged with a merge commit is **success**; open and mergeable is not-ready, so the bounded `merge_attempts` retry decides (its next attempt re-reads first and stops at "already merged"); anything else is `ForgeWriteUnconfirmedError` |
+| `CreatePullRequest` | `heavy_write_timeout` | an open PR for the same head → base **from this repository** (never a fork's same-named branch) is **adopted** — looked for before the first create, after an unanswered one, and on Gitea's 409 duplicate refusal. A create is re-sent only after a lookup has just shown none exists, within `read_attempts` |
+| labels (set, add, remove), close issue, delete branch, commit status, update/delete webhook | `write_timeout` | replayed like a read: each is idempotent on the forge and verified by the method's own read-back |
+| comment, create branch, submit review, rerun CI, create webhook, create label, mint/revoke token | `write_timeout` | **never repeated** — a second one is a second comment, verdict, pipeline, hook or credential; `ForgeWriteUnconfirmedError` |
+
+The table is `giteaWritePolicies` in `pkg/sdlc/forge_gitea_transport.go`; a
+write missing from it takes the last row, and a test fails the build if any
+write in the adapter is unclassified. Only silence is retried: a status the
+forge itself returned (404, 409, 422, Gitea's own 500) is final.
+
+**What is charged.** Every one of these errors keeps the unanswered call in
+its chain, and that call unwraps to `orchestration.ErrForgeUnreachable`. A job
+that ends on one is classified `forge_unreachable`: an environment fault,
+refunded and requeued, bounded by the three-in-a-row rule like every other
+requeueing class. A forge that ANSWERED — refused a merge, reported a moved
+head — said something about the work, and that is still charged. A caller
+that cancelled its own context is not the forge's fault either, and is
+neither retried nor attributed to it.
+
 ## Configuration
 
 The module is configured under `sdlc:`. Everything generic about a job —
@@ -1258,6 +1295,15 @@ sdlc:
     # proxy: "https://factory.example.com/quicbaas" appends correctly.
     # env: QUICBAAS_SDLC_WEBHOOK_PUBLIC_URL
     public_url: https://factory.example.com
+  forge:                            # every forge call; see "Forge transport"
+    read_timeout: 30s               # one attempt at a read
+    write_timeout: 1m               # a light write: label, comment, status
+    heavy_write_timeout: 5m         # merging or opening a pull request
+    read_attempts: 3                # attempts at an unanswered read or a
+                                    # write proven safe to repeat
+    retry_backoff: 1s               # first wait between attempts; doubles
+                                    # env: QUICBAAS_SDLC_FORGE_* (e.g.
+                                    #      QUICBAAS_SDLC_FORGE_HEAVY_WRITE_TIMEOUT)
 
 orchestration:
   sweep_interval: 30s               # task-source poller cadence

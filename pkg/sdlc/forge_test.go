@@ -30,7 +30,7 @@ type stubForge struct {
 
 // registerStub registers a factory building a stub for one platform.
 func registerStub(t ForgeType) {
-	RegisterForgeFactory(t, func(cfg ForgeConfig, _ ForgeCredentials) (ForgeBackend, error) {
+	RegisterForgeFactory(t, func(cfg ForgeConfig, _ ForgeCredentials, _ ForgeTransport) (ForgeBackend, error) {
 		return &stubForge{forgeType: t, baseURL: cfg.BaseURL}, nil
 	})
 }
@@ -142,7 +142,7 @@ func TestLookupForgeBackend_UnregisteredFailsClosed(t *testing.T) {
 	withCleanForgeRegistry(t)
 	registerStub(ForgeGitea)
 
-	backend, err := NewForgeBackend(ForgeConfig{Type: ForgeGitHub}, ForgeCredentials{Token: "token"})
+	backend, err := NewForgeBackend(ForgeConfig{Type: ForgeGitHub}, ForgeCredentials{Token: "token"}, ForgeTransport{})
 	if backend != nil {
 		t.Fatal("an unregistered forge resolved to an adapter")
 	}
@@ -161,7 +161,7 @@ func TestLookupForgeBackend_ReturnsTheRegisteredAdapter(t *testing.T) {
 	withCleanForgeRegistry(t)
 	registerStub(ForgeGitea)
 
-	got, err := NewForgeBackend(ForgeConfig{Type: ForgeGitea, BaseURL: "http://a"}, ForgeCredentials{Token: "token"})
+	got, err := NewForgeBackend(ForgeConfig{Type: ForgeGitea, BaseURL: "http://a"}, ForgeCredentials{Token: "token"}, ForgeTransport{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -181,11 +181,11 @@ func TestNewForgeBackend_BuildsOnePerProject(t *testing.T) {
 	withCleanForgeRegistry(t)
 	registerStub(ForgeGitea)
 
-	first, err := NewForgeBackend(ForgeConfig{Type: ForgeGitea, BaseURL: "http://gitea-a/api/v1"}, ForgeCredentials{Token: "token-a"})
+	first, err := NewForgeBackend(ForgeConfig{Type: ForgeGitea, BaseURL: "http://gitea-a/api/v1"}, ForgeCredentials{Token: "token-a"}, ForgeTransport{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	second, err := NewForgeBackend(ForgeConfig{Type: ForgeGitea, BaseURL: "http://gitea-b/api/v1"}, ForgeCredentials{Token: "token-b"})
+	second, err := NewForgeBackend(ForgeConfig{Type: ForgeGitea, BaseURL: "http://gitea-b/api/v1"}, ForgeCredentials{Token: "token-b"}, ForgeTransport{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestRegisteredForgeTypes_ReportsWhatThisBuildCanTalkTo(t *testing.T) {
 func TestForgeCapabilities_DescribeThePlatformNotTheAdapter(t *testing.T) {
 	withCleanForgeRegistry(t)
 	// Gitea's real shape: no cancel route, unreliable label deliveries.
-	RegisterForgeFactory(ForgeGitea, func(cfg ForgeConfig, _ ForgeCredentials) (ForgeBackend, error) {
+	RegisterForgeFactory(ForgeGitea, func(cfg ForgeConfig, _ ForgeCredentials, _ ForgeTransport) (ForgeBackend, error) {
 		return &stubForge{forgeType: ForgeGitea, baseURL: cfg.BaseURL, caps: ForgeCapabilities{
 			CancelCheckRuns:     false,
 			ReliableLabelEvents: false,
@@ -263,7 +263,7 @@ func TestForgeCapabilities_DescribeThePlatformNotTheAdapter(t *testing.T) {
 		}}, nil
 	})
 
-	backend, err := NewForgeBackend(ForgeConfig{Type: ForgeGitea}, ForgeCredentials{Token: "token"})
+	backend, err := NewForgeBackend(ForgeConfig{Type: ForgeGitea}, ForgeCredentials{Token: "token"}, ForgeTransport{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

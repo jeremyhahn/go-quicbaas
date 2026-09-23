@@ -135,7 +135,27 @@ const (
 	// configuration, and the account returns by itself when a trial
 	// succeeds.
 	FaultAccountBreakerTripped = "account_breaker_tripped"
+
+	// FaultForgeUnreachable is a forge that did not answer a call the job
+	// needed: no response inside the call's deadline, a dropped connection,
+	// or a gateway reporting the forge behind it unavailable, still so after
+	// the adapter's own bounded retry and state reconciliation.
+	//
+	// IT IS THE FORGE'S HOST, NOT THE WORK. Measured on the burn-in node: a
+	// Gitea under CI load missed the client deadline on a listing, a pull
+	// request read and a merge, and answered in ~70 ms moments later — and
+	// the merge had in fact landed. Charging those attempts spent the task's
+	// budget on the forge's load. It requeues, bounded like every other
+	// requeueing class, because a loaded forge recovers on its own.
+	FaultForgeUnreachable = "forge_unreachable"
 )
+
+// ErrForgeUnreachable reports a forge call the forge never answered.
+//
+// The forge adapters live above this package, so they cannot be named here;
+// their transport error unwraps to this sentinel instead, which is the one
+// fact classifyEnvironmentFault needs.
+var ErrForgeUnreachable = errors.New("orchestration: the forge did not answer")
 
 // =============================================================================
 // Operator faults — a factory that could not present the work
@@ -260,6 +280,7 @@ var resolverFaultClasses = map[string]bool{
 	FaultProjectCapacityExceeded:  true,
 	FaultAccountQuotaExhausted:    true,
 	FaultAccountBreakerTripped:    true,
+	FaultForgeUnreachable:         true,
 }
 
 // KnownFaultClass reports whether class is one this engine can actually
@@ -293,6 +314,7 @@ var faultClassMeanings = map[string]string{
 	FaultProjectCapacityExceeded:  "the project's concurrency budget was already fully held",
 	FaultAccountQuotaExhausted:    "the account's configured spend cap for the window is spent",
 	FaultAccountBreakerTripped:    "the account's circuit breaker took it out of service after repeated failures",
+	FaultForgeUnreachable:         "the forge did not answer a call the job needed, even after bounded retries",
 	FaultWorkspaceUnfit: "the workspace the work needed was not fit: no checkout, an empty one, " +
 		"or a declared context repository that is not there",
 	FaultWorkerEnvironment: "the worker reported that its own workspace or tooling made the work impossible",
@@ -418,6 +440,15 @@ func classifyEnvironmentFault(err error) (EnvironmentFault, bool) {
 			Class:          FaultProjectCapacityExceeded,
 			Reason:         capacityReason(err),
 			RetryNotBefore: capacityRetryAt(err),
+		}, true
+
+	case errors.Is(err, ErrForgeUnreachable):
+		return EnvironmentFault{
+			Class: FaultForgeUnreachable,
+			Reason: "the forge did not answer a call this job needed — no response inside the call's " +
+				"deadline, a dropped connection, or a gateway reporting it unavailable — after the " +
+				"adapter's bounded retries and read-back reconciliation. That is the forge's host, not " +
+				"the work, so this attempt was not charged and the task was requeued.",
 		}, true
 
 	case errors.Is(err, ErrAgentUnreachable):
@@ -788,7 +819,7 @@ func boundedFaultReason(task *Task, fault EnvironmentFault) string {
 	if detail := strings.TrimSpace(fault.Reason); detail != "" {
 		reason += "\n\nThe last one: " + detail
 	}
-	return reason + "\n\nEach was a job that started no model turn, so none was charged " +
+	return reason + "\n\nEach was a job the environment failed rather than the work, so none was charged " +
 		"against the attempt budget and the task was retried. Three in a row is not a blip; " +
 		"this one IS charged, and nothing will retry it until the condition is resolved and " +
 		"the task readmitted."

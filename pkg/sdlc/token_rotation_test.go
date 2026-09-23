@@ -672,7 +672,8 @@ func TestForgeFactory_CarriesCustodyThrough(t *testing.T) {
 		ForgeCredentials{
 			Token:   "workflow-token",
 			Custody: CustodyCredential{Username: "provisioning", Password: "pw"},
-		})
+		},
+		ForgeTransport{})
 	if err != nil {
 		t.Fatalf("NewForgeBackend: %v", err)
 	}
@@ -698,7 +699,8 @@ func TestForgeFactory_CarriesCustodyThrough(t *testing.T) {
 func TestForgeFactory_WithoutCustodyStillBuildsAWorkflowAdapter(t *testing.T) {
 	backend, err := NewForgeBackend(
 		ForgeConfig{Type: ForgeGitea, BaseURL: "http://gitea.example/api/v1"},
-		ForgeCredentials{Token: "workflow-token"})
+		ForgeCredentials{Token: "workflow-token"},
+		ForgeTransport{})
 	if err != nil {
 		t.Fatalf("a project that never rotates must still get an adapter: %v", err)
 	}

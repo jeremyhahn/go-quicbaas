@@ -249,13 +249,21 @@ type ForgeTag struct {
 
 // ForgePullRequest is a pull request as the forge reports it.
 type ForgePullRequest struct {
-	Number    int       `json:"number"`
-	Title     string    `json:"title"`
-	Body      string    `json:"body"`
-	State     string    `json:"state"`
-	HeadRef   string    `json:"head_ref"`
-	HeadSHA   string    `json:"head_sha"`
-	BaseRef   string    `json:"base_ref"`
+	Number  int    `json:"number"`
+	Title   string `json:"title"`
+	Body    string `json:"body"`
+	State   string `json:"state"`
+	HeadRef string `json:"head_ref"`
+	HeadSHA string `json:"head_sha"`
+	BaseRef string `json:"base_ref"`
+
+	// HeadRepo is the repository HeadRef lives in: the pull request's own
+	// repository, or a fork. A branch NAME does not identify a source — a
+	// fork can carry one with the same name — so anything that matches a
+	// pull request to a branch must match this too. Zero when the forge
+	// reports no head repository (a deleted fork).
+	HeadRepo RepoRef `json:"head_repo"`
+
 	Draft     bool      `json:"draft"`
 	Merged    bool      `json:"merged"`
 	MergeSHA  string    `json:"merge_sha,omitempty"`
@@ -852,7 +860,11 @@ type ForgeBackend interface {
 // The token is a VALUE and never travels on ForgeConfig, which is a stored,
 // logged, compared record. Callers resolve it from the SecretsService for the
 // call and let it go.
-type ForgeFactory func(cfg ForgeConfig, creds ForgeCredentials) (ForgeBackend, error)
+//
+// The transport policy is the NODE's (see ForgeTransport), passed alongside
+// rather than stored on the binding: how long a forge may take is a property
+// of the host it runs on, shared by every project on it.
+type ForgeFactory func(cfg ForgeConfig, creds ForgeCredentials, transport ForgeTransport) (ForgeBackend, error)
 
 // ForgeCredentials carries every credential an adapter needs, as VALUES.
 //
@@ -907,14 +919,16 @@ func RegisterForgeFactory(t ForgeType, f ForgeFactory) {
 // Fail-closed: a type nothing implements is an error, never a default. A
 // project pointed at a forge no adapter serves must fail registration rather
 // than run against whichever adapter happened to be registered.
-func NewForgeBackend(cfg ForgeConfig, creds ForgeCredentials) (ForgeBackend, error) {
+//
+// A zero transport takes DefaultForgeTransport.
+func NewForgeBackend(cfg ForgeConfig, creds ForgeCredentials, transport ForgeTransport) (ForgeBackend, error) {
 	forgeMu.RLock()
 	factory, ok := forgeByType[cfg.Type]
 	forgeMu.RUnlock()
 	if !ok {
 		return nil, NewForgeNotRegisteredError(cfg.Type)
 	}
-	return factory(cfg, creds)
+	return factory(cfg, creds, transport)
 }
 
 // RegisteredForgeTypes returns the registered platform types, for diagnostics

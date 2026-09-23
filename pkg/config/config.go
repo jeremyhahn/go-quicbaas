@@ -917,6 +917,10 @@ type SDLCConfig struct {
 	// Webhook bounds the forge webhook ingress.
 	Webhook SDLCWebhook `mapstructure:"webhook"`
 
+	// Forge bounds every call the module makes to a forge: how long one call
+	// may take, and how hard an unanswered one is retried.
+	Forge SDLCForge `mapstructure:"forge"`
+
 	// TriageSweepInterval is how often the triage backstop pass visits every
 	// bound project. Triage is ordinarily woken by the forge webhook within
 	// a second of an issue being filed; this pass catches the deliveries
@@ -994,6 +998,34 @@ type SDLCLabelReconcile struct {
 	ForgeInterval time.Duration `mapstructure:"forge_interval"`
 }
 
+// SDLCForge bounds the module's forge calls. Zero fields take the module's
+// defaults (sdlc.DefaultForgeTransport); the shipped values match them and a
+// drift test pins the two.
+//
+// SPLIT BY WHAT A CALL COSTS THE FORGE. One deadline for every call was too
+// long for a listing and too short for a squash merge of a large repository,
+// and a merge that outlasted it landed while the job was recorded failed
+// (go-quicbaas#1034).
+type SDLCForge struct {
+	// ReadTimeout bounds one attempt at a read. Reads are retried.
+	ReadTimeout time.Duration `mapstructure:"read_timeout"`
+
+	// WriteTimeout bounds a light write: a label, a comment, a status.
+	WriteTimeout time.Duration `mapstructure:"write_timeout"`
+
+	// HeavyWriteTimeout bounds a write the forge does real work for before it
+	// answers: merging a pull request, opening one.
+	HeavyWriteTimeout time.Duration `mapstructure:"heavy_write_timeout"`
+
+	// ReadAttempts bounds the attempts at an unanswered read, or at a write
+	// the adapter has proven safe to repeat. Writes that are not safe to
+	// repeat are never repeated; they are settled by reading the forge.
+	ReadAttempts int `mapstructure:"read_attempts"`
+
+	// RetryBackoff is the first wait between attempts; each retry doubles it.
+	RetryBackoff time.Duration `mapstructure:"retry_backoff"`
+}
+
 // SDLCSurfacing is the retry behind a parked task's comment on its issue.
 // Zero fields take the module's defaults (sdlc.DefaultSurfacePolicy).
 type SDLCSurfacing struct {
@@ -1059,6 +1091,11 @@ var SDLCKeys = []string{
 	"sdlc.unblock_sweep_interval",
 	"sdlc.webhook.max_body",
 	"sdlc.webhook.public_url",
+	"sdlc.forge.read_timeout",
+	"sdlc.forge.write_timeout",
+	"sdlc.forge.heavy_write_timeout",
+	"sdlc.forge.read_attempts",
+	"sdlc.forge.retry_backoff",
 }
 
 // BindSDLCEnv binds the module's own keys to their environment variables

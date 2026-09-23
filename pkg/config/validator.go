@@ -932,6 +932,7 @@ func (v *Validator) validateSDLC(cfg *SDLCConfig) {
 		v.addError("sdlc.label_reconcile.forge_interval",
 			"must not be negative; zero takes the default and a negative spacing paces nothing")
 	}
+	v.validateSDLCForge(&cfg.Forge)
 	// NEGATIVE IS REFUSED, ZERO IS NOT: zero takes the module's defaults
 	// layer, while a negative value would abandon a parked task's question
 	// before its first post.
@@ -953,5 +954,26 @@ func (v *Validator) validateSDLC(cfg *SDLCConfig) {
 	case cfg.Surfacing.PostTimeout > SDLCSurfacingMaxPostTimeout:
 		v.addError("sdlc.surfacing.post_timeout",
 			"a single post allowed more than a day is not a deadline; zero takes the default")
+	}
+}
+
+// validateSDLCForge refuses a negative forge bound. NEGATIVE IS REFUSED, ZERO
+// IS NOT: zero takes the module's default, while a negative deadline cancels
+// every call before it is made and a negative budget attempts nothing.
+func (v *Validator) validateSDLCForge(cfg *SDLCForge) {
+	fields := []struct {
+		key      string
+		negative bool
+	}{
+		{"sdlc.forge.read_timeout", cfg.ReadTimeout < 0},
+		{"sdlc.forge.write_timeout", cfg.WriteTimeout < 0},
+		{"sdlc.forge.heavy_write_timeout", cfg.HeavyWriteTimeout < 0},
+		{"sdlc.forge.read_attempts", cfg.ReadAttempts < 0},
+		{"sdlc.forge.retry_backoff", cfg.RetryBackoff < 0},
+	}
+	for _, field := range fields {
+		if field.negative {
+			v.addError(field.key, "must not be negative; zero takes the default")
+		}
 	}
 }

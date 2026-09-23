@@ -280,7 +280,7 @@ func TestSDLCForges_ListsRegisteredAdapters(t *testing.T) {
 	assert.Equal(t, len(got.Forges), got.Count)
 	assert.True(t, sort.StringsAreSorted(got.Forges), "forges must be sorted: %v", got.Forges)
 	for _, absent := range []sdlc.ForgeType{sdlc.ForgeGitHub, sdlc.ForgeGitLab} {
-		if _, err := sdlc.NewForgeBackend(sdlc.ForgeConfig{Type: absent}, sdlc.ForgeCredentials{}); err != nil {
+		if _, err := sdlc.NewForgeBackend(sdlc.ForgeConfig{Type: absent}, sdlc.ForgeCredentials{}, sdlc.ForgeTransport{}); err != nil {
 			assert.NotContains(t, got.Forges, string(absent),
 				"a type with no adapter must not be listed as available")
 		}
