@@ -119,6 +119,27 @@ func newReviewRunnerRig(t *testing.T) *reviewRunnerRig {
 // reviewerSays makes the reviewer answer every prompt with text.
 func (r *reviewRunnerRig) reviewerSays(text string) { r.agents.answers(text) }
 
+// reviewerSaysInOrder makes the reviewer answer the nth prompt with
+// texts[n-1], repeating the last for every prompt after it.
+//
+// It is how a test puts a reply that declared nothing and the reply that
+// finally declares into ONE session, which is the only way to tell a reviewer
+// that was reminded from one that was re-spawned.
+func (r *reviewRunnerRig) reviewerSaysInOrder(texts ...string) {
+	r.t.Helper()
+	if len(texts) == 0 {
+		r.t.Fatal("reviewerSaysInOrder needs at least one reply")
+	}
+	r.agents.mu.Lock()
+	defer r.agents.mu.Unlock()
+	r.agents.replyFn = func(turn int) *orchestration.PromptSessionResponse {
+		if turn > len(texts) {
+			turn = len(texts)
+		}
+		return workerSaid(texts[turn-1])
+	}
+}
+
 // rebind edits the project's binding in place.
 func (r *reviewRunnerRig) rebind(edit func(*ProjectBinding)) {
 	r.t.Helper()
@@ -679,6 +700,177 @@ func TestReviewRunner_AReplyWithNoDeclarationIsNotAVerdict(t *testing.T) {
 	status, _ := rig.forge.lastStatus()
 	if status.Status != CheckFailure {
 		t.Fatalf("status = %s, want failure", status.Status)
+	}
+}
+
+// =============================================================================
+// A reply that stated no verdict is asked once more for one
+// =============================================================================
+//
+// Measured on the burn-in fleet, 2026-09-22 03:39, PR #983, review job
+// c64bd251: the reviewer had read the whole diff and ended its turn on a
+// progress note — "I'm finishing the checks around forge mergeability" — with
+// no declaration. The job was failed and the session closed, and the sweep
+// spawned a fresh container to re-read the same diff from nothing. A whole
+// review's cost thrown away because the model paused mid-sentence.
+
+func TestReviewRunner_AReplyWithNoVerdictIsAskedOnceMoreInTheSameSession(t *testing.T) {
+	rig := newReviewRunnerRig(t)
+	rig.reviewerSaysInOrder(
+		"The round limit is shared with ordinary review rounds, and clean rebases return to "+
+			"the gate for approval on the new head. I'm finishing the checks around forge "+
+			"mergeability and the transition back to review.",
+		reviewSaying("Read the whole diff; the error types are right.", ReviewCodeApprove),
+	)
+	rig.mustRun(41)
+
+	submissions := rig.forge.submissions()
+	if len(submissions) != 1 || submissions[0].Verdict != VerdictApprove {
+		t.Fatalf("submissions = %+v, want the one verdict the second reply declared", submissions)
+	}
+	if status, _ := rig.forge.lastStatus(); status.Status != CheckSuccess {
+		t.Fatalf("status = %s, want success", status.Status)
+	}
+	// ONE SESSION AND ONE JOB. The reminder reached the reviewer that had
+	// already read the diff; a second spawn here would be the cost this
+	// whole path exists to stop paying.
+	if got := rig.agents.sessionCount(); got != 1 {
+		t.Fatalf("sessions = %d, want 1: the re-prompt spawned another reviewer", got)
+	}
+	prompts := rig.agents.promptTexts()
+	if len(prompts) != 2 {
+		t.Fatalf("prompts = %d, want the review and exactly one reminder", len(prompts))
+	}
+	if prompts[1] != reviewRepromptPrompt {
+		t.Fatalf("the second prompt was not the reminder: %q", prompts[1])
+	}
+	if !strings.Contains(prompts[1], ReviewVerdictMarker) {
+		t.Fatalf("the reminder never names the marker the parser reads: %q", prompts[1])
+	}
+	if got := rig.auditDetails(auditReviewReprompted); len(got) != 1 {
+		t.Fatalf("%s = %v, want exactly one", auditReviewReprompted, got)
+	}
+	// BOTH TURNS ARE ON THE RECORD. The re-prompt is not a round, so the
+	// audit trail is the only place a reader can see that it happened.
+	if got := rig.auditDetails(auditReviewVerdict); len(got) != 2 {
+		t.Fatalf("%s = %d, want both turns recorded", auditReviewVerdict, len(got))
+	}
+}
+
+func TestReviewRunner_ASecondReplyWithNoVerdictIsRefusedAsBefore(t *testing.T) {
+	rig := newReviewRunnerRig(t)
+	rig.reviewerSaysInOrder(
+		"Still working through the diff.",
+		"Nearly done, one more file to read.",
+	)
+	err := rig.run(41)
+	if !errors.Is(err, ErrReview) {
+		t.Fatalf("err = %v, want an ErrReview refusal", err)
+	}
+	if got := len(rig.agents.promptTexts()); got != 2 {
+		t.Fatalf("prompts = %d, want the review and exactly one reminder", got)
+	}
+	if got := rig.auditDetails(auditReviewReprompted); len(got) != 1 {
+		t.Fatalf("%s = %v, want exactly one; a reviewer is not asked indefinitely", auditReviewReprompted, got)
+	}
+	if status, _ := rig.forge.lastStatus(); status.Status != CheckFailure {
+		t.Fatalf("status = %s, want failure", status.Status)
+	}
+	for _, submission := range rig.forge.submissions() {
+		if submission.Verdict != VerdictComment {
+			t.Fatalf("prose was read as a verdict: %+v", submission)
+		}
+		if !strings.Contains(submission.Body, "Nearly done") {
+			t.Fatalf("the refusal noted a reply other than the last one: %q", submission.Body)
+		}
+	}
+}
+
+func TestReviewRunner_ADeclaredReplyIsNeverReprompted(t *testing.T) {
+	// INCLUDING THE TWO REFUSALS THAT ARE NOT A MISSING DECLARATION. A
+	// reviewer that declared an unknown code, or a code above nothing,
+	// reached the end of its review and answered badly; asking it again
+	// would be nudging it towards any answer that parses rather than
+	// letting the parser's refusal stand.
+	for name, tc := range map[string]struct {
+		reply   string
+		refused bool
+	}{
+		"a verdict":       {reply: reviewSaying("read it", ReviewCodeApprove)},
+		"an unknown code": {reply: reviewSaying("read it", "looks-fine"), refused: true},
+		"no findings":     {reply: ReviewVerdictMarker + " " + ReviewCodeApprove, refused: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rig := newReviewRunnerRig(t)
+			rig.reviewerSays(tc.reply)
+			err := rig.run(41)
+			switch {
+			case tc.refused && !errors.Is(err, ErrReview):
+				t.Fatalf("err = %v, want the parser's ErrReview refusal to stand", err)
+			case !tc.refused && err != nil:
+				t.Fatalf("Run: %v, want the declared verdict to complete the review", err)
+			}
+			if got := len(rig.agents.promptTexts()); got != 1 {
+				t.Fatalf("prompts = %d, want exactly one: a declared reply is never re-prompted", got)
+			}
+			if got := rig.auditDetails(auditReviewReprompted); len(got) != 0 {
+				t.Fatalf("%s = %v, want none", auditReviewReprompted, got)
+			}
+		})
+	}
+}
+
+func TestReviewRunner_AReminderThatIsNeverAnsweredIsCancelledAtItsDeadline(t *testing.T) {
+	// THE STALL DETECTOR WOULD NOT END THIS. It ends a job whose session is
+	// gone; this session is still addressable, it just never answers. So the
+	// reminder carries a deadline of its own, and a reviewer that goes silent
+	// after being reminded fails the job instead of holding it open.
+	rig := newReviewRunnerRig(t)
+	runner, err := NewReviewRunner(ReviewRunnerConfig{
+		Bindings: rig.store, Forges: rig.forges, Tokens: rig.tokens, Signing: rig.signing,
+		SocketsRoot:     testSocketsRoot(t),
+		RepromptTimeout: 50 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rig.runner = runner
+	rig.reviewerSays("Still reading the diff.")
+	rig.agents.mu.Lock()
+	rig.agents.hangFn = func(turn int) bool { return turn == 2 }
+	rig.agents.mu.Unlock()
+
+	err = rig.run(41)
+	var timeout *ReviewRepromptTimeoutError
+	if !errors.As(err, &timeout) {
+		t.Fatalf("err = %v, want a ReviewRepromptTimeoutError", err)
+	}
+	if !errors.Is(err, ErrReview) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want it to match ErrReview and context.DeadlineExceeded", err)
+	}
+	if timeout.Timeout != 50*time.Millisecond {
+		t.Fatalf("timeout = %s, want the runner's configured reminder deadline", timeout.Timeout)
+	}
+	if got := len(rig.agents.promptTexts()); got != 2 {
+		t.Fatalf("prompts = %d, want the review and the one reminder", got)
+	}
+	if got := rig.auditDetails(auditReviewReprompted); len(got) != 1 {
+		t.Fatalf("%s = %v, want exactly one", auditReviewReprompted, got)
+	}
+	if got := rig.agents.sessionCount(); got != 1 {
+		t.Fatalf("sessions = %d, want 1", got)
+	}
+}
+
+func TestReviewRunner_TheReminderDeadlineDefaultsToTheReviewTurnTimeout(t *testing.T) {
+	rig := newReviewRunnerRig(t)
+	if rig.runner.repromptTimeout != ReviewTurnTimeout {
+		t.Fatalf("repromptTimeout = %s, want ReviewTurnTimeout (%s)", rig.runner.repromptTimeout, ReviewTurnTimeout)
+	}
+	for _, spec := range ReviewRunnerStates() {
+		if spec.State == orchestration.JobStateExecuting && spec.IdleThreshold != ReviewTurnTimeout {
+			t.Fatalf("executing IdleThreshold = %s, want ReviewTurnTimeout", spec.IdleThreshold)
+		}
 	}
 }
 

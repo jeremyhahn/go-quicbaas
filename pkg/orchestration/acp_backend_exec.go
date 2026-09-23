@@ -118,8 +118,15 @@ func (b *ACPBackend) promptExec(ctx context.Context, sess *acpSession, req *Prom
 		model = b.config.DefaultModel
 	}
 
+	// A LATER TURN CONTINUES THE FIRST ONE'S CONVERSATION. The session's
+	// system prompt is already in that conversation, so it is not sent again;
+	// a request that names its own still carries it.
 	args := b.config.ExecTurnArgs(model, sess.extraArgs)
 	input := execTurnInput(req.SystemPrompt, sess.systemPrompt, req.Prompt)
+	if thread := sess.execThreadID.Load(); thread != nil && b.config.canResumeExec() {
+		args = b.config.ExecResumeTurnArgs(model, sess.extraArgs, *thread)
+		input = execTurnInput(req.SystemPrompt, "", req.Prompt)
+	}
 
 	var stdout, stderr string
 	var exitCode int
@@ -188,6 +195,10 @@ func (b *ACPBackend) promptExec(ctx context.Context, sess *acpSession, req *Prom
 	}
 	_ = exitCode
 
+	if turn.threadID != "" {
+		thread := turn.threadID
+		sess.execThreadID.Store(&thread)
+	}
 	sess.lastActivity.Store(time.Now().UnixNano())
 
 	return &PromptResponse{
@@ -226,6 +237,11 @@ type execTurn struct {
 	text       string
 	stopReason string
 	usage      *TokenUsage
+
+	// threadID is the conversation the turn ran in, from `thread.started`.
+	// Empty when the stream reported none, or reported one that is not a
+	// plain identifier (see validExecThreadID).
+	threadID string
 }
 
 // execEvent is the subset of the JSONL event stream this reads.
@@ -243,8 +259,9 @@ type execTurn struct {
 // Unknown event types are skipped rather than refused: a CLI that adds an event
 // must not turn a working turn into a parse failure.
 type execEvent struct {
-	Type string `json:"type"`
-	Item *struct {
+	Type     string `json:"type"`
+	ThreadID string `json:"thread_id,omitempty"`
+	Item     *struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"item,omitempty"`
@@ -281,6 +298,10 @@ func parseExecEvents(stdout string) (execTurn, error) {
 			continue
 		}
 		switch ev.Type {
+		case "thread.started":
+			if validExecThreadID(ev.ThreadID) {
+				turn.threadID = ev.ThreadID
+			}
 		case "item.completed":
 			if ev.Item != nil && ev.Item.Type == "agent_message" && ev.Item.Text != "" {
 				turn.text = ev.Item.Text
@@ -303,6 +324,25 @@ func parseExecEvents(stdout string) (execTurn, error) {
 		return turn, &ExecEventStreamError{Cause: err}
 	}
 	return turn, nil
+}
+
+// validExecThreadID reports whether id is safe to put on a later turn's argv.
+//
+// THE ID COMES FROM THE AGENT'S OWN OUTPUT and goes back on a command line, so
+// only a plain identifier is accepted: letters, digits, '-' and '_', not
+// starting with '-' so it can never be read as a flag. codex reports a UUID.
+func validExecThreadID(id string) bool {
+	if id == "" || len(id) > 128 || id[0] == '-' {
+		return false
+	}
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // ExecEventStreamError is a JSONL event stream that could not be read to its

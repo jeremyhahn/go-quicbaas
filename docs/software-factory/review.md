@@ -354,6 +354,49 @@ unknown code, or a declaration with nothing above it is **not a verdict**: it
 is recorded as a review that could not be produced, the check goes red, and
 the job fails so the engine's own retry drives another attempt.
 
+### A reply that stated no verdict is asked once more for one
+
+A missing declaration is the one of those three that is not an answer at all.
+A reviewer that declared an unknown code, or a code above nothing, reached the
+end of its review and answered badly; a reviewer that declared *nothing* paused
+mid-sentence, and it is still there, still holding the diff it has just read.
+Refusing it outright throws a whole review's cost away — the sweep spawns a
+fresh container that re-reads the same change from nothing — which is what
+was measured on the burn-in fleet (2026-09-22, PR #983, review job
+`c64bd251`): the reviewer ended its turn on a progress note about the checks
+it was still finishing, and the job was failed and the session closed.
+
+So `execute` prompts **the same session** once more, and **the same
+conversation**:
+
+```
+Your reply stated no verdict. Finish your checks and end with the SDLC-REVIEW: declaration and findings.
+```
+
+The reminder carries only the ask because the reviewer still holds
+everything else. Keeping the session is not enough on its own: codex runs on
+the exec transport, where every turn is a new `codex exec` in the session's
+container, and a new `codex exec` is a new conversation that has never seen
+the charter, the change or its own analysis. So the exec transport records
+the thread id each turn's event stream reports (`thread.started`). Every
+later turn in that session runs `codex exec … resume <thread> -`
+(`ACPBackendConfig.ExecResumeArgs`), which means the reminder reaches the
+reviewer that read the diff.
+
+The reminder is bounded by `MaxReviewReprompts` (one) and audited as
+`sdlc:review_reprompted`, which is its only trace. It is **not a review
+round**: `MaxReviewRounds` counts *heads judged*, and no new head is read.
+It spawns no second session. The reminder is prompted under a real
+deadline, `ReviewTurnTimeout` (one hour, the same bound as the executing
+state's `IdleThreshold`). The stall detector cannot provide this bound: it
+ends a job whose session is gone, and it leaves running a session that can
+still be addressed but never answers. A reviewer that goes silent after
+the reminder is cancelled at the deadline, and the job fails with
+`ReviewRepromptTimeoutError`. A **second** declaration-less reply is refused
+exactly as above: a session that answers two prompts running without declaring
+is not going to declare. The counter is per round, because
+`resetForNextRound` releases the reviewer and the next head spawns its own.
+
 ## The nine failures
 
 Twenty-six versions of `opencode-review.yml` are a specification written in

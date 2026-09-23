@@ -101,6 +101,32 @@ func (c ACPBackendConfig) ExecTurnArgs(model string, extra []string) []string {
 	return args
 }
 
+// ExecResumeTurnArgs is the argv for an exec-transport turn that continues
+// the conversation threadID names: ExecArgs, the session's extra args, then
+// ExecResumeArgs, the model, the thread id and the stdin marker.
+//
+// The extra args stay BEFORE the resume subcommand, where the first turn put
+// them, because they are the exec command's own options (for codex, `-c`
+// overrides); the model follows the subcommand because resume takes its own
+// model flag.
+func (c ACPBackendConfig) ExecResumeTurnArgs(model string, extra []string, threadID string) []string {
+	args := make([]string, 0, len(c.ExecArgs)+len(extra)+len(c.ExecResumeArgs)+4)
+	args = append(args, c.ExecArgs...)
+	args = append(args, extra...)
+	args = append(args, c.ExecResumeArgs...)
+	if model != "" && c.ExecModelFlag != "" {
+		args = append(args, c.ExecModelFlag, model)
+	}
+	args = append(args, threadID)
+	if c.ExecStdinArg != "" {
+		args = append(args, c.ExecStdinArg)
+	}
+	return args
+}
+
+// canResumeExec reports whether this CLI can continue a conversation.
+func (c ACPBackendConfig) canResumeExec() bool { return len(c.ExecResumeArgs) > 0 }
+
 // CredentialDirSpec locates a file-based pooled credential.
 //
 // A CLI whose credential is a FILE cannot be served by the environment alone,

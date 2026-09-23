@@ -15,6 +15,7 @@ package sdlc
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -82,8 +83,43 @@ const ReviewSessionCount = 1
 // fresh job. Nothing is stranded either way.
 const MaxReviewRounds = 3
 
+// MaxReviewReprompts bounds how many times one reviewer is asked again for a
+// verdict its reply did not state: ONCE.
+//
+// A REVIEW IS EXPENSIVE AND A PAUSE IS NOT A REFUSAL. Measured on the burn-in
+// fleet (2026-09-22 03:39, PR #983, review job c64bd251): a reviewer that had
+// read the whole diff ended its turn on a progress note — "I'm finishing the
+// checks around forge mergeability and the transition back to review" — and
+// declared nothing. That was refused, the job failed, and the review sweep
+// spawned a fresh container to re-read the same diff from nothing. The
+// reviewer was still there, still held the change in its context, and had
+// never been asked to finish.
+//
+// THE SECOND ONE IS REFUSED UNCHANGED. A session that answers two prompts
+// running without ever declaring is not going to declare, and a reviewer
+// asked indefinitely is the unbounded spend this bound exists to refuse.
+const MaxReviewReprompts = 1
+
+// reviewRepromptPrompt is what a reviewer that stated no verdict is asked.
+//
+// IT NAMES THE MARKER ParseReviewVerdict ACTUALLY READS, from that same
+// constant, so the ask and the parse cannot drift apart. It carries nothing
+// else: the change, the charter, the issue and the file list are all still in
+// the session's context, and re-sending them would spend a whole review
+// prompt restating what the reviewer had just finished reading.
+const reviewRepromptPrompt = "Your reply stated no verdict. Finish your checks and end with the " +
+	ReviewVerdictMarker + " declaration and findings."
+
 // auditReviewVerdict is the audit event a produced verdict is recorded under.
 const auditReviewVerdict = "sdlc:review_verdict"
+
+// auditReviewReprompted records a reply that stated no verdict, and the one
+// re-prompt it earned.
+//
+// It is the ONLY trace of one: the re-prompt is not a review round, not a new
+// job and not a second session, so without this event nothing in the record
+// would say that a turn happened and was deliberately not counted.
+const auditReviewReprompted = "sdlc:review_reprompted"
 
 // auditReviewGate is the audit event the gate's answer is recorded under.
 const auditReviewGate = "sdlc:review_gate"
@@ -118,6 +154,13 @@ type ReviewRunnerConfig struct {
 	// (orchestration.sockets_root, resolved by the host). It is required and
 	// has no default here; see RunnerConfig.SocketsRoot.
 	SocketsRoot string
+
+	// RepromptTimeout is the deadline on the one reminder turn a reviewer
+	// that stated no verdict is given (MaxReviewReprompts). Zero takes
+	// ReviewTurnTimeout, which is what production uses; a test sets it short
+	// so a reviewer that never answers is cancelled without the suite
+	// waiting an hour.
+	RepromptTimeout time.Duration
 }
 
 // ReviewRunner is the module's review-side orchestration.JobRunner.
@@ -129,6 +172,10 @@ type ReviewRunner struct {
 	// through — the same one the delivery runner and triage hold — so the
 	// three cannot authenticate differently (go-quicbaas#929).
 	access forgeAccess
+
+	// repromptTimeout bounds the reminder turn. See
+	// ReviewRunnerConfig.RepromptTimeout.
+	repromptTimeout time.Duration
 }
 
 var (
@@ -149,7 +196,11 @@ func NewReviewRunner(cfg ReviewRunnerConfig) (*ReviewRunner, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ReviewRunner{bindings: cfg.Bindings, forges: cfg.Forges, access: access}, nil
+	repromptTimeout := cfg.RepromptTimeout
+	if repromptTimeout <= 0 {
+		repromptTimeout = ReviewTurnTimeout
+	}
+	return &ReviewRunner{bindings: cfg.Bindings, forges: cfg.Forges, access: access, repromptTimeout: repromptTimeout}, nil
 }
 
 // Name implements orchestration.JobRunner.
@@ -157,6 +208,17 @@ func (*ReviewRunner) Name() string { return ReviewJobRunnerName }
 
 // States implements orchestration.JobRunner.
 func (*ReviewRunner) States() []orchestration.JobStateSpec { return ReviewRunnerStates() }
+
+// ReviewTurnTimeout is how long a reviewer turn may take: the executing
+// state's IdleThreshold in ReviewRunnerStates, and the deadline the reminder
+// turn (MaxReviewReprompts) is prompted under.
+//
+// THE REMINDER NEEDS A DEADLINE OF ITS OWN. The stall detector ends a job
+// whose session is GONE; a session that is still addressable but never
+// answers is left running, and a prompt forwards its context without adding
+// one. So the reminder is bounded here, by the same bound the state already
+// declares, rather than by a detector that would not act on it.
+const ReviewTurnTimeout = time.Hour
 
 // ReviewRunnerStates is the review sequence, in order.
 //
@@ -175,7 +237,7 @@ func (*ReviewRunner) States() []orchestration.JobStateSpec { return ReviewRunner
 func ReviewRunnerStates() []orchestration.JobStateSpec {
 	return []orchestration.JobStateSpec{
 		{State: orchestration.JobStateInitializing, Label: labelReviewInitializing, IdleThreshold: 10 * time.Minute},
-		{State: orchestration.JobStateExecuting, Label: labelReviewExecuting, SessionBacked: true, IdleThreshold: time.Hour},
+		{State: orchestration.JobStateExecuting, Label: labelReviewExecuting, SessionBacked: true, IdleThreshold: ReviewTurnTimeout},
 		{State: orchestration.JobStateCompleting, Label: labelReviewPublishing, IdleThreshold: 10 * time.Minute},
 		{State: orchestration.JobStateCleanup, Label: labelReviewCleanup, IdleThreshold: 10 * time.Minute},
 	}
@@ -326,6 +388,16 @@ type reviewRun struct {
 	// round counts the heads this job has judged, from one. It is bounded
 	// by MaxReviewRounds.
 	round int
+
+	// reprompts counts how many times THIS ROUND's reviewer has been asked
+	// again for the verdict its reply did not state, bounded by
+	// MaxReviewReprompts.
+	//
+	// IT IS PER ROUND BECAUSE THE REVIEWER IS. resetForNextRound releases the
+	// session that read the previous head and the next round spawns its own,
+	// so carrying the count across would charge a fresh reviewer for the
+	// silence of one it never was.
+	reprompts int
 
 	// workspace is the reviewer's materialized workspace and the ssh agent
 	// its checkout authenticated with. The agent is stopped as soon as the
@@ -795,34 +867,55 @@ func (s *reviewRun) openCheckout(ctx context.Context) error {
 }
 
 // =============================================================================
-// 2. executing — one turn, one verdict
+// 2. executing — one verdict, and at most one reminder to state it
 // =============================================================================
 
-// execute prompts the reviewer once and reads a verdict out of the answer.
+// execute prompts the reviewer and reads a verdict out of the answer.
 //
-// ONE TURN. A reviewer that needs a second prompt to state a verdict has not
-// reached one, and asking again would be asking it to agree with itself.
+// ONE VERDICT, NOT ONE TURN. A reviewer is asked to judge once; it is never
+// asked to judge again, because asking a second time would be asking it to
+// agree with itself. But a reply that DECLARED NOTHING has not judged at all
+// — it paused mid-sentence — and the one thing this step may do about that is
+// ask it to finish, exactly once. See MaxReviewReprompts.
+//
+// THE EXTRA TURN CONTINUES THE SAME CONVERSATION AND HAS A REAL DEADLINE. It
+// is sent through this same session, and the backend carries the reviewer's
+// conversation into it — for codex's exec transport by resuming the thread
+// the first turn started — so the reminder reaches a reviewer that still
+// holds the charter, the change and its own analysis. It is prompted under
+// ReviewTurnTimeout (see prompt): a reviewer that goes silent after being
+// reminded is cancelled, not waited on. The round is untouched —
+// MaxReviewRounds counts HEADS judged, and no new head is read here — and no
+// second session is spawned.
 func (s *reviewRun) execute(ctx context.Context) (orchestration.JobState, error) {
 	if s.sessionID == "" {
 		return "", &ReviewSessionError{PullRequest: s.subject.PullRequest, Message: "there is no reviewer session to prompt"}
 	}
-	resp, err := s.job.Prompt(ctx, &orchestration.PromptSessionRequest{
-		SessionID: s.sessionID,
-		Prompt:    s.reviewPrompt(),
-	})
-	if err != nil {
-		return "", err
-	}
-	turn := ReadAgentTurn(resp)
-	outcome, parseErr := ParseReviewVerdict(turn.Reply)
-	s.outcome = outcome
-	s.produced = parseErr == nil
+	prompt := s.reviewPrompt()
+	reminder := false
+	for {
+		resp, err := s.prompt(ctx, prompt, reminder)
+		if err != nil {
+			return "", err
+		}
+		turn := ReadAgentTurn(resp)
+		outcome, parseErr := ParseReviewVerdict(turn.Reply)
+		s.outcome = outcome
+		s.produced = parseErr == nil
 
-	// THE ANSWER IS RECORDED BEFORE ANYTHING IS DECIDED ABOUT IT, and on the
-	// failure path too: what the reviewer said is the only account of a
-	// review that produced no verdict.
-	s.job.Audit(auditReviewVerdict, s.describeTurn(turn, parseErr))
-	if parseErr != nil {
+		// THE ANSWER IS RECORDED BEFORE ANYTHING IS DECIDED ABOUT IT, and on
+		// the failure path too: what the reviewer said is the only account of
+		// a review that produced no verdict. Every turn is recorded, the
+		// re-prompted one included, so the trail carries both replies.
+		s.job.Audit(auditReviewVerdict, s.describeTurn(turn, parseErr))
+		if parseErr == nil {
+			return orchestration.JobStateCompleting, nil
+		}
+		if s.reprompt(turn) {
+			prompt = reviewRepromptPrompt
+			reminder = true
+			continue
+		}
 		// A review that states no verdict is published as one that could not
 		// be produced — a red status and the reviewer's own words — and then
 		// FAILS the job, so the engine's retry drives another attempt rather
@@ -832,7 +925,62 @@ func (s *reviewRun) execute(ctx context.Context) (orchestration.JobState, error)
 		}
 		return "", parseErr
 	}
-	return orchestration.JobStateCompleting, nil
+}
+
+// prompt sends one turn to the reviewer's session.
+//
+// THE REMINDER RUNS UNDER A DEADLINE; the first turn runs under the job's
+// context as it always has. A reviewer that is reminded and then never
+// answers is cancelled at the runner's repromptTimeout (ReviewTurnTimeout in
+// production) and the job fails with a ReviewRepromptTimeoutError, rather
+// than holding the job open on an addressable session the stall detector
+// would not end.
+func (s *reviewRun) prompt(ctx context.Context, prompt string, reminder bool) (*orchestration.PromptSessionResponse, error) {
+	req := &orchestration.PromptSessionRequest{SessionID: s.sessionID, Prompt: prompt}
+	if !reminder {
+		return s.job.Prompt(ctx, req)
+	}
+	timeout := s.runner.repromptTimeout
+	if timeout <= 0 {
+		timeout = ReviewTurnTimeout
+	}
+	turnCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	resp, err := s.job.Prompt(turnCtx, req)
+	if err != nil && ctx.Err() == nil && errors.Is(turnCtx.Err(), context.DeadlineExceeded) {
+		return nil, &ReviewRepromptTimeoutError{PullRequest: s.subject.PullRequest, Timeout: timeout, Cause: err}
+	}
+	return resp, err
+}
+
+// reprompt decides whether the reviewer is asked once more for the verdict its
+// reply did not state, and records the ask when it is.
+//
+// ONLY A MISSING DECLARATION EARNS ONE. A reviewer that declared an unknown
+// code, or declared a code above nothing, reached the end of its review and
+// answered badly; those are the parser's refusals and they stand. A reply
+// with no declaration at all is the one case where the reviewer demonstrably
+// has not finished, which is what makes "finish your checks" the right thing
+// to say to it rather than a nudge towards any answer that parses.
+//
+// THE SESSION IS STILL THE ONE THAT READ THE CHANGE. Nothing between the turn
+// above and this decision releases it — release runs on the way out of the
+// whole run, and resetForNextRound only on a head that moved — so the
+// reminder reaches a reviewer that still holds the diff, which is the entire
+// saving over the fresh container the sweep would otherwise spawn.
+func (s *reviewRun) reprompt(turn AgentTurn) bool {
+	if s.outcome.Declared || s.reprompts >= MaxReviewReprompts || s.sessionID == "" {
+		return false
+	}
+	s.reprompts++
+	s.job.Audit(auditReviewReprompted, s.subject.String()+" at "+shortSHA(s.headSHA)+
+		": round="+strconv.Itoa(s.round)+
+		" reply_bytes="+strconv.Itoa(turn.ReplyBytes)+
+		"; the reply carries no "+ReviewVerdictMarker+" declaration, so the same reviewer is asked "+
+		"once more for one: neither a review round nor a new review job")
+	s.job.Emit(orchestration.JobStateExecuting, "the reviewer's reply stated no verdict; "+
+		"it is asked once more to finish its checks and declare one")
+	return true
 }
 
 // describeTurn renders the reviewer's turn for the job's audit trail.
@@ -1125,6 +1273,7 @@ func (s *reviewRun) resetForNextRound(ctx context.Context) {
 	s.produced = false
 	s.published = CommitStatus{}
 	s.skipReason = ""
+	s.reprompts = 0
 }
 
 // refreshPullRequest re-reads the pull request before anything is written.

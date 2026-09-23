@@ -120,6 +120,19 @@ type ACPBackendConfig struct {
 	// prompt from stdin, e.g. "-". Empty appends nothing.
 	ExecStdinArg string `json:"exec_stdin_arg,omitempty"`
 
+	// ExecResumeArgs is the subcommand that CONTINUES a conversation an
+	// earlier exec turn started, e.g. {"resume"} for `codex exec resume`. It
+	// is placed after ExecArgs and followed by the thread id the first turn's
+	// event stream reported (`thread.started`), so every turn after the first
+	// in one session reaches the same conversation.
+	//
+	// WITHOUT IT EVERY TURN STARTS FROM NOTHING. The container outlives each
+	// turn, but the conversation does not: a second `codex exec` in the same
+	// container is a new thread that has never seen the charter, the change
+	// or its own analysis. Empty keeps that one-thread-per-turn behaviour for
+	// a CLI that has no resume.
+	ExecResumeArgs []string `json:"exec_resume_args,omitempty"`
+
 	// CredentialDir describes where a FILE-based pooled credential lives.
 	//
 	// This was hardcoded to OpenCode's ".config/opencode" on the JSON-RPC
@@ -374,6 +387,11 @@ type acpSession struct {
 	systemPrompt string
 	extraArgs    []string // additional CLI args for the agent command
 	createdAt    int64
+
+	// execThreadID is the conversation an exec-transport session's first turn
+	// started, as its event stream reported it. Every later turn resumes it
+	// (ACPBackendConfig.ExecResumeArgs). Nil until a turn has reported one.
+	execThreadID atomic.Pointer[string]
 	lastActivity atomic.Int64
 	closed       atomic.Bool
 
@@ -916,7 +934,8 @@ func (b *ACPBackend) dispatchSpawn(ctx context.Context, req *SpawnRequest) (*Ses
 		// subprocess. Each prompt spawns a fresh process with no conversation
 		// context. The exec transport is one-shot by nature, so unsandboxed it
 		// takes the same path — the session is a record, and each turn is its
-		// own process.
+		// own process (which resumes the session's thread when the CLI has
+		// ExecResumeArgs).
 		if b.config.isStreamJSON() || b.config.isExec() {
 			return b.spawnOneShotCLI(req)
 		}

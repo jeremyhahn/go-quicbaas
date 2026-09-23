@@ -14,6 +14,8 @@
 package orchestration
 
 import (
+	"context"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -226,5 +228,126 @@ func TestCredentialDirSpec_ReadOnlyIsTheDefaultAndWritableIsOptIn(t *testing.T) 
 	codex := CredentialDirSpec{Rel: ".codex", Target: "/home/agent/.codex", HomeEnv: "CODEX_HOME", Writable: true}
 	if !codex.configured() || !codex.Writable || codex.HomeEnv != "CODEX_HOME" {
 		t.Errorf("codex spec = %+v; want configured, writable, CODEX_HOME", codex)
+	}
+}
+
+// =============================================================================
+// A later turn continues the first one's conversation (go-quicbaas#987)
+// =============================================================================
+//
+// The container outlives an exec turn; the conversation did not. A reviewer
+// reminded to state its verdict was reached by a fresh `codex exec` that had
+// never seen the charter, the change or its own analysis. These pin that the
+// second turn resumes the thread the first one reported.
+
+// codexExecRig is a sandboxed exec-transport session over a recording
+// container runtime that answers every turn with codexRealStream.
+func codexExecRig(t *testing.T, cfg ACPBackendConfig) (*ACPBackend, *acpSession, *mockContainerRuntime) {
+	t.Helper()
+	runtime := &mockContainerRuntime{available: true, execResult: &ExecResult{Stdout: codexRealStream}}
+	b := NewACPBackend(cfg)
+	b.SetContainerRuntime(runtime)
+	sess := &acpSession{
+		id:           "sess-987",
+		model:        "gpt-5.5",
+		systemPrompt: "YOU ARE THE REVIEWER",
+		extraArgs:    []string{"-c", `model_reasoning_effort="medium"`},
+		containerID:  "container-987",
+	}
+	return b, sess, runtime
+}
+
+func codexExecConfig() ACPBackendConfig {
+	return ACPBackendConfig{
+		Command:        "codex",
+		Transport:      ACPTransportExec,
+		ExecArgs:       []string{"exec", "--json", "--skip-git-repo-check"},
+		ExecModelFlag:  "--model",
+		ExecStdinArg:   "-",
+		ExecResumeArgs: []string{"resume"},
+	}
+}
+
+func TestPromptExec_TheSecondTurnResumesTheFirstTurnsThread(t *testing.T) {
+	t.Parallel()
+	b, sess, runtime := codexExecRig(t, codexExecConfig())
+
+	if _, err := b.promptExec(context.Background(), sess, &PromptRequest{Prompt: "review the change"}); err != nil {
+		t.Fatalf("first turn: %v", err)
+	}
+	if _, err := b.promptExec(context.Background(), sess, &PromptRequest{Prompt: "state your verdict"}); err != nil {
+		t.Fatalf("second turn: %v", err)
+	}
+
+	runtime.mu.Lock()
+	calls := append([]mockExecCall(nil), runtime.execCalls...)
+	runtime.mu.Unlock()
+	if len(calls) != 2 {
+		t.Fatalf("exec calls = %d, want 2", len(calls))
+	}
+	first := strings.Join(calls[0].Spec.Cmd, " ")
+	if strings.Contains(first, "resume") {
+		t.Fatalf("the first turn has no thread to resume: %s", first)
+	}
+	want := `codex exec --json --skip-git-repo-check -c model_reasoning_effort="medium" resume --model gpt-5.5 01a09c13-a057-7ad3-b4c7-274cbc93c4d0 -`
+	if got := strings.Join(calls[1].Spec.Cmd, " "); got != want {
+		t.Fatalf("second turn argv = %s\nwant %s", got, want)
+	}
+	// The conversation already holds the system prompt; the resumed turn
+	// carries the new prompt and nothing restated.
+	if got := string(calls[1].Spec.Stdin); got != "state your verdict" {
+		t.Fatalf("second turn stdin = %q, want the prompt alone", got)
+	}
+	if !strings.Contains(string(calls[0].Spec.Stdin), "YOU ARE THE REVIEWER") {
+		t.Fatal("the first turn must carry the session's system prompt")
+	}
+	// Both turns ran in the session's own container.
+	for i, call := range calls {
+		if call.ContainerID != "container-987" {
+			t.Fatalf("turn %d ran in %q, want the session's container", i+1, call.ContainerID)
+		}
+	}
+}
+
+func TestPromptExec_ACLIWithNoResumeStartsEveryTurnFresh(t *testing.T) {
+	t.Parallel()
+	cfg := codexExecConfig()
+	cfg.ExecResumeArgs = nil
+	b, sess, runtime := codexExecRig(t, cfg)
+	for i := 0; i < 2; i++ {
+		if _, err := b.promptExec(context.Background(), sess, &PromptRequest{Prompt: "p"}); err != nil {
+			t.Fatalf("turn %d: %v", i+1, err)
+		}
+	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	for i, call := range runtime.execCalls {
+		if strings.Contains(strings.Join(call.Spec.Cmd, " "), "resume") {
+			t.Fatalf("turn %d resumed with no ExecResumeArgs configured: %v", i+1, call.Spec.Cmd)
+		}
+	}
+}
+
+func TestParseExecEvents_ReportsTheThreadAndRefusesOneThatIsNotAnIdentifier(t *testing.T) {
+	t.Parallel()
+	turn, err := parseExecEvents(codexRealStream)
+	if err != nil {
+		t.Fatalf("parseExecEvents: %v", err)
+	}
+	if turn.threadID != "01a09c13-a057-7ad3-b4c7-274cbc93c4d0" {
+		t.Fatalf("threadID = %q, want the thread.started id", turn.threadID)
+	}
+	// The id goes back on argv, so anything that could be read as a flag or
+	// is not a plain identifier is dropped rather than resumed.
+	for _, bad := range []string{"--last", "a b", "x;rm", ""} {
+		stream := `{"type":"thread.started","thread_id":` + strconv.Quote(bad) + `}
+{"type":"item.completed","item":{"id":"i0","type":"agent_message","text":"OK"}}`
+		turn, err := parseExecEvents(stream)
+		if err != nil {
+			t.Fatalf("parseExecEvents(%q): %v", bad, err)
+		}
+		if turn.threadID != "" {
+			t.Fatalf("thread id %q was accepted", bad)
+		}
 	}
 }

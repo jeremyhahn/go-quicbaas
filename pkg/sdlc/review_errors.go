@@ -16,6 +16,7 @@ package sdlc
 import (
 	"errors"
 	"strconv"
+	"time"
 )
 
 // =============================================================================
@@ -111,3 +112,39 @@ func (e *ReviewSessionError) Error() string {
 
 // Unwrap returns the sentinel error for errors.Is support.
 func (e *ReviewSessionError) Unwrap() error { return ErrReview }
+
+// ReviewRepromptTimeoutError reports a reviewer that was asked once more for
+// the verdict its reply did not state and did not answer within the deadline.
+//
+// It is distinct from a refusal: the reviewer said nothing at all, so there is
+// no reply to publish, and the reminder turn was cancelled rather than waited
+// on.
+type ReviewRepromptTimeoutError struct {
+	// PullRequest is the pull request the review is of.
+	PullRequest int
+
+	// Timeout is the deadline the reminder turn was given.
+	Timeout time.Duration
+
+	// Cause is what the prompt returned when the deadline cancelled it.
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *ReviewRepromptTimeoutError) Error() string {
+	msg := ErrReview.Error() + ": pull request #" + strconv.Itoa(e.PullRequest) +
+		": the reviewer did not answer the reminder for its verdict within " + e.Timeout.String()
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+// Unwrap returns the sentinel and the cause, so errors.Is matches ErrReview
+// and context.DeadlineExceeded alike.
+func (e *ReviewRepromptTimeoutError) Unwrap() []error {
+	if e.Cause == nil {
+		return []error{ErrReview}
+	}
+	return []error{ErrReview, e.Cause}
+}

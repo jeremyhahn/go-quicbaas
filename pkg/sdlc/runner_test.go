@@ -114,6 +114,12 @@ type fakeAgents struct {
 	// succeed. Consulted when promptErr is nil.
 	promptErrFn func(turn int) error
 
+	// hangFn makes a turn, by number starting at one, never answer: the
+	// prompt waits on its context and returns what cancelled it. It is an
+	// addressable session that has gone silent, which only a deadline on the
+	// prompt itself can end.
+	hangFn func(turn int) bool
+
 	// clock is the runner's own clock, which this service ADVANCES while it
 	// answers: a turn takes as long as the fake says it took. A worker turn
 	// is the one thing in this package measured against wall time — the
@@ -188,12 +194,19 @@ func (f *fakeAgents) ExecSession(_ context.Context, req *orchestration.ExecSessi
 
 var _ orchestration.SessionExecutor = (*fakeAgents)(nil)
 
-func (f *fakeAgents) PromptSession(_ context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptSessionResponse, error) {
+func (f *fakeAgents) PromptSession(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptSessionResponse, error) {
 	f.mu.Lock()
 	onPrompt := f.onPrompt
 	replyFn := f.replyFn
 	f.prompts = append(f.prompts, req)
 	turn := len(f.prompts)
+	hang := f.hangFn != nil && f.hangFn(turn)
+	f.mu.Unlock()
+	if hang {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	f.mu.Lock()
 	err := f.promptErr
 	if err == nil && f.promptErrFn != nil {
 		err = f.promptErrFn(turn)

@@ -430,6 +430,13 @@ func buildAgentBackends(cfg *agent.Config, logger interfaces.Logger) (map[string
 				}, orchestration.SerenaCodexConfigArgs()...),
 				ExecModelFlag: "--model",
 				ExecStdinArg:  "-",
+				// EVERY TURN AFTER THE FIRST RESUMES THE FIRST ONE'S THREAD.
+				// A second `codex exec` in the same container is a brand new
+				// conversation; `codex exec resume <thread> -` is the one that
+				// still holds the charter, the change and the reviewer's own
+				// analysis (go-quicbaas#987). The thread lives in CODEX_HOME,
+				// which the session's container keeps between turns.
+				ExecResumeArgs: []string{"resume"},
 				// codex finds its credential through CODEX_HOME, not $HOME.
 				CredentialDir: orchestration.CredentialDirSpec{
 					Rel:     ".codex",
