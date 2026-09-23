@@ -80,6 +80,10 @@ var (
 	// ErrAccountRefreshFailed indicates a token refresh attempt failed.
 	ErrAccountRefreshFailed = errors.New("account: refresh failed")
 
+	// ErrAccountRefreshStampFailed indicates the account record could not be
+	// updated with a token refresh's outcome (status, expiry, last_error).
+	ErrAccountRefreshStampFailed = errors.New("account: refresh outcome not recorded")
+
 	// ErrAccountRefresherNotConfigured indicates the account's RefreshPolicy
 	// requires a TokenRefresher that was never registered for its provider.
 	ErrAccountRefresherNotConfigured = errors.New("account: refresher not configured")
@@ -356,6 +360,40 @@ func (e *AccountRefreshFailedError) Unwrap() []error {
 		return []error{ErrAccountRefreshFailed, e.Cause}
 	}
 	return []error{ErrAccountRefreshFailed}
+}
+
+// Refresh outcomes an AccountRefreshStampFailedError can describe.
+const (
+	AccountRefreshOutcomeSuccess = "success"
+	AccountRefreshOutcomeFailure = "failure"
+)
+
+// AccountRefreshStampFailedError reports that the account record could not be
+// stamped with a token refresh's outcome. Outcome names the outcome the lost
+// write was recording (AccountRefreshOutcomeSuccess or
+// AccountRefreshOutcomeFailure); Cause is the error the account store returned.
+type AccountRefreshStampFailedError struct {
+	AccountID string
+	Outcome   string
+	Cause     error
+}
+
+// Error implements the error interface.
+func (e *AccountRefreshStampFailedError) Error() string {
+	msg := ErrAccountRefreshStampFailed.Error() + ": id=" + e.AccountID + " outcome=" + e.Outcome
+	if e.Cause != nil {
+		return msg + ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+// Unwrap returns both the sentinel and the underlying cause for errors.Is /
+// errors.As support.
+func (e *AccountRefreshStampFailedError) Unwrap() []error {
+	if e.Cause != nil {
+		return []error{ErrAccountRefreshStampFailed, e.Cause}
+	}
+	return []error{ErrAccountRefreshStampFailed}
 }
 
 // AccountRefresherNotConfiguredError indicates no TokenRefresher is

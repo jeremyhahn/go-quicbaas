@@ -587,6 +587,7 @@ func (s *Server) startOrchestration() error {
 			accountSecrets := orchestration.NewAccountSecretStore(s.secretsManager)
 			accountTokenOpts := []orchestration.AccountTokenManagerOption{
 				orchestration.WithAccountProviders(accountProviders),
+				orchestration.WithAccountTokenLogger(logAdapter),
 			}
 			// An account that names a credential_secret_ref is read from that
 			// tenant secret, in the ACCOUNT's tenant, on every resolution — both

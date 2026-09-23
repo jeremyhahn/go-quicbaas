@@ -267,16 +267,19 @@ func (m *AccountTokenManager) resolveSecretRef(ctx context.Context, account *Acc
 			// an operator who re-pointed or re-applied the reference while
 			// this read was failing has already answered it, and an error
 			// stamp must never replace revoked. A refused stamp is the right
-			// outcome, so its error is not this spawn's failure.
+			// outcome, so its error is not this spawn's failure. A stamp that
+			// FAILED is reported alongside the read failure it was recording.
 			source := account.Source()
-			if stampErr := m.touchRefreshOutcome(ctx, account, TouchAccountOptions{
+			stampErr := m.touchRefreshOutcome(ctx, account, AccountRefreshOutcomeFailure, TouchAccountOptions{
 				SetStatusValid:  true,
 				SetStatus:       AccountStatusError,
 				SetLastError:    unresolved.OperatorMessage(),
 				RequireSource:   &source,
 				PreserveRevoked: true,
-			}); stampErr != nil {
-				return nil, err
+			})
+			var stampFailed *AccountRefreshStampFailedError
+			if errors.As(stampErr, &stampFailed) {
+				return nil, withStampFailure(err, stampFailed)
 			}
 		}
 		return nil, err

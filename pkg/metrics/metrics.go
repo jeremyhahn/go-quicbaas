@@ -70,6 +70,10 @@ type Metrics struct {
 	OrchJobBudgetUtilization *prometheus.GaugeVec
 	OrchAgentRestarts        *prometheus.CounterVec
 
+	// OrchAccountRefreshStampFailures counts account-record writes that
+	// failed to stamp a token-refresh outcome (status, expiry, last_error).
+	OrchAccountRefreshStampFailures *prometheus.CounterVec
+
 	// Indexing metrics
 	IndexFilesIndexedTotal *prometheus.CounterVec
 	IndexVectorsTotal      *prometheus.GaugeVec
@@ -288,6 +292,14 @@ func InitMetrics() *Metrics {
 				[]string{"agent_id", "tenant"},
 			),
 
+			OrchAccountRefreshStampFailures: promauto.With(Registry).NewCounterVec(
+				prometheus.CounterOpts{
+					Name: "quicbaas_orch_account_refresh_stamp_failures_total",
+					Help: "Total account-record writes that failed to stamp a token-refresh outcome, by tenant and outcome",
+				},
+				[]string{"tenant", "outcome"},
+			),
+
 			// Indexing metrics
 			IndexFilesIndexedTotal: promauto.With(Registry).NewCounterVec(
 				prometheus.CounterOpts{
@@ -474,6 +486,13 @@ func (m *Metrics) SetOrchJobBudgetUtilization(jobID, tenant string, ratio float6
 // RecordOrchAgentRestart increments the agent restart counter.
 func (m *Metrics) RecordOrchAgentRestart(agentID, tenant string) {
 	m.OrchAgentRestarts.WithLabelValues(agentID, tenant).Inc()
+}
+
+// RecordOrchAccountRefreshStampFailure increments the refresh-stamp failure
+// counter. outcome is the refresh outcome the lost write was recording
+// ("success" or "failure").
+func (m *Metrics) RecordOrchAccountRefreshStampFailure(tenant, outcome string) {
+	m.OrchAccountRefreshStampFailures.WithLabelValues(tenant, outcome).Inc()
 }
 
 // RecordIndexFileIndexed increments the files indexed counter.

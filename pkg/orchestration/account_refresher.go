@@ -17,6 +17,9 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/metrics"
 )
 
 // =============================================================================
@@ -72,6 +75,7 @@ type AccountTokenManager struct {
 	refreshers map[AccountProvider]TokenRefresher
 	skew       time.Duration
 	locks      keyedMutex
+	logger     interfaces.Logger
 
 	// secretRefs reads the credential of an account that names a
 	// CredentialSecretRef. Optional; see WithAccountSecretResolver.
@@ -89,6 +93,17 @@ func WithAccountProviders(registry *AccountProviderRegistry) AccountTokenManager
 	return func(m *AccountTokenManager) {
 		if registry != nil {
 			m.providers = registry
+		}
+	}
+}
+
+// WithAccountTokenLogger installs the logger a failed refresh-outcome stamp is
+// reported on. A nil logger is ignored; the failure is still counted and
+// returned to the caller.
+func WithAccountTokenLogger(logger interfaces.Logger) AccountTokenManagerOption {
+	return func(m *AccountTokenManager) {
+		if logger != nil {
+			m.logger = logger
 		}
 	}
 }
@@ -216,13 +231,12 @@ func (m *AccountTokenManager) renew(ctx context.Context, account *Account) (*Acc
 
 	renewed, refreshErr := refresher.Refresh(ctx, effective)
 	if refreshErr != nil {
-		m.recordRefreshFailure(ctx, account, refreshErr.Error())
-		return nil, &AccountRefreshFailedError{AccountID: account.ID, Cause: refreshErr}
+		stampErr := m.recordRefreshFailure(ctx, account, refreshErr.Error())
+		return nil, &AccountRefreshFailedError{AccountID: account.ID, Cause: withStampFailure(refreshErr, stampErr)}
 	}
 	if renewed == nil || renewed.AccessToken == "" {
-		failErr := &AccountRefreshFailedError{AccountID: account.ID}
-		m.recordRefreshFailure(ctx, account, "refresher returned an empty credential")
-		return nil, failErr
+		stampErr := m.recordRefreshFailure(ctx, account, "refresher returned an empty credential")
+		return nil, &AccountRefreshFailedError{AccountID: account.ID, Cause: stampErr}
 	}
 
 	// Persist the rotated pair BEFORE returning it. If the server rotated the
@@ -231,8 +245,8 @@ func (m *AccountTokenManager) renew(ctx context.Context, account *Account) (*Acc
 	// already dead server-side) — so a persist failure must fail the whole
 	// renewal rather than silently handing out a token we cannot renew again.
 	if putErr := m.secrets.Put(ctx, account.TenantID, account.ID, applyRenewal(stored, effective, renewed)); putErr != nil {
-		m.recordRefreshFailure(ctx, account, "failed to persist renewed credential: "+putErr.Error())
-		return nil, &AccountRefreshFailedError{AccountID: account.ID, Cause: putErr}
+		stampErr := m.recordRefreshFailure(ctx, account, "failed to persist renewed credential: "+putErr.Error())
+		return nil, &AccountRefreshFailedError{AccountID: account.ID, Cause: withStampFailure(putErr, stampErr)}
 	}
 
 	// The success stamp is conditional on the account STILL holding its
@@ -242,6 +256,13 @@ func (m *AccountTokenManager) renew(ctx context.Context, account *Account) (*Acc
 	// retired expiry back on a reference account and leave the envelope
 	// behind, so a refused stamp removes the envelope instead and the renewed
 	// credential is not used: the account now reads its secret.
+	//
+	// Any other stamp failure is not reported as a success either: the record
+	// would otherwise go on describing the previous credential (its expiry,
+	// and any error status from an earlier failed refresh) with no trace of
+	// why. The renewed envelope IS persisted, so the next Resolve finds it
+	// usable and hands it out without another round trip to the token
+	// endpoint.
 	if stampErr := m.recordRefreshSuccess(ctx, account, renewed.ExpiresAt); stampErr != nil {
 		var switched *AccountCredentialSourceChangedError
 		if errors.As(stampErr, &switched) {
@@ -254,6 +275,7 @@ func (m *AccountTokenManager) renew(ctx context.Context, account *Account) (*Acc
 			}
 			return nil, switched
 		}
+		return nil, stampErr
 	}
 	return renewed, nil
 }
@@ -294,7 +316,7 @@ func equalScopes(a, b []string) bool {
 	return true
 }
 
-// recordRefreshSuccess best-effort updates the account's bookkeeping fields
+// recordRefreshSuccess updates the account's bookkeeping fields
 // after a renewal the provider honored.
 //
 // expiresAt is mirrored onto the non-secret metadata record so
@@ -305,10 +327,12 @@ func equalScopes(a, b []string) bool {
 // cycle's expiry forward would describe a credential that no longer exists.
 //
 // It is conditional on the account still being inline (see renew) and not
-// revoked, and reports the store's answer so renew can act on a refusal. Any
-// other failure is bookkeeping and does not fail the renewal.
+// revoked. A switch to a secret reference is returned as the store's
+// *AccountCredentialSourceChangedError so renew can act on it; a refusal
+// because the account was revoked meanwhile is the intended outcome and is not
+// an error; any other failure is an *AccountRefreshStampFailedError.
 func (m *AccountTokenManager) recordRefreshSuccess(ctx context.Context, account *Account, expiresAt time.Time) error {
-	err := m.touchRefreshOutcome(ctx, account, TouchAccountOptions{
+	return m.touchRefreshOutcome(ctx, account, AccountRefreshOutcomeSuccess, TouchAccountOptions{
 		MarkRefreshed:            true,
 		MarkValidated:            true,
 		SetStatusValid:           true,
@@ -319,25 +343,19 @@ func (m *AccountTokenManager) recordRefreshSuccess(ctx context.Context, account 
 		RequireInlineCredential:  true,
 		PreserveRevoked:          true,
 	})
-	var switched *AccountCredentialSourceChangedError
-	if errors.As(err, &switched) {
-		return switched
-	}
-	return nil
 }
 
-// recordRefreshFailure best-effort records a renewal the provider refused.
+// recordRefreshFailure records a renewal the provider refused.
 // The recorded expiry is left alone: the stored credential was not replaced, so
 // whatever expiry the record already carries is still the truth about it.
 //
 // Like the success stamp it lands only on an account that is still inline and
 // not revoked: a failure of the OLD credential says nothing about an account
-// that has since moved to a secret reference.
-func (m *AccountTokenManager) recordRefreshFailure(ctx context.Context, account *Account, message string) {
-	//
-	// Best effort, so it returns nothing: a refused or failed stamp leaves the
-	// renewal's own error as the answer, which is what the caller acts on.
-	stampErr := m.touchRefreshOutcome(ctx, account, TouchAccountOptions{
+// that has since moved to a secret reference, so either refusal is the
+// intended outcome and not an error. Any other failure is returned as an
+// *AccountRefreshStampFailedError for renew to join to the refresh error.
+func (m *AccountTokenManager) recordRefreshFailure(ctx context.Context, account *Account, message string) error {
+	err := m.touchRefreshOutcome(ctx, account, AccountRefreshOutcomeFailure, TouchAccountOptions{
 		MarkRefreshed:           true,
 		SetStatusValid:          true,
 		SetStatus:               AccountStatusError,
@@ -345,19 +363,57 @@ func (m *AccountTokenManager) recordRefreshFailure(ctx context.Context, account 
 		RequireInlineCredential: true,
 		PreserveRevoked:         true,
 	})
-	if stampErr != nil {
-		return
+	var switched *AccountCredentialSourceChangedError
+	if errors.As(err, &switched) {
+		return nil
 	}
+	return err
 }
 
-// touchRefreshOutcome applies one outcome's bookkeeping and reports the
-// store's answer. Callers decide what a failure means; for most it is
-// bookkeeping that never masks the outcome itself.
-func (m *AccountTokenManager) touchRefreshOutcome(ctx context.Context, account *Account, opts TouchAccountOptions) error {
+// touchRefreshOutcome applies one refresh outcome's bookkeeping. A write the
+// store refused on a precondition the caller asked for — the credential
+// source changed (*AccountCredentialSourceChangedError, returned as is so the
+// caller can act on it) or the account was revoked (not an error: the stamp
+// must never replace revoked) — is not a failure. Any other failure is
+// logged with the account it concerns and counted, then returned as an
+// *AccountRefreshStampFailedError, so it is visible even to a caller that only
+// reports the refresh error it wraps.
+//
+// A failed stamp never masks the refresh outcome itself: renew joins it to the
+// refresh failure it was recording, and turns a renewal it was recording into
+// a failure rather than a success.
+func (m *AccountTokenManager) touchRefreshOutcome(ctx context.Context, account *Account, outcome string, opts TouchAccountOptions) error {
 	if m.store == nil {
 		return nil
 	}
-	return m.store.Touch(ctx, account.TenantID, account.ID, opts)
+	touchErr := m.store.Touch(ctx, account.TenantID, account.ID, opts)
+	if touchErr == nil {
+		return nil
+	}
+	var switched *AccountCredentialSourceChangedError
+	if errors.As(touchErr, &switched) {
+		return switched
+	}
+	var revoked *AccountRevokedError
+	if opts.PreserveRevoked && errors.As(touchErr, &revoked) {
+		return nil
+	}
+	if m.logger != nil {
+		m.logger.Warnf("orchestration: failed to record refresh %s on account %s (tenant %s): %s",
+			outcome, account.ID, account.TenantID, touchErr.Error())
+	}
+	metrics.GetMetrics().RecordOrchAccountRefreshStampFailure(account.TenantID, outcome)
+	return &AccountRefreshStampFailedError{AccountID: account.ID, Outcome: outcome, Cause: touchErr}
+}
+
+// withStampFailure returns cause unchanged when the outcome stamp succeeded,
+// and cause joined with the stamp failure when it did not, so a refresh error
+// keeps its exact shape unless there is a second failure to report.
+func withStampFailure(cause, stampErr error) error {
+	if stampErr == nil {
+		return cause
+	}
+	return errors.Join(cause, stampErr)
 }
 
 // credentialUsable reports whether cred's OAuth2 access token has enough

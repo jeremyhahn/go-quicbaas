@@ -17,10 +17,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/metrics"
 )
 
 // countingRefresher records how many times Refresh was called and returns a
@@ -317,5 +323,215 @@ func TestAccountTokenManager_Resolve_NoRefresherRegistered(t *testing.T) {
 	var notConfigured *AccountRefresherNotConfiguredError
 	if !errors.As(err, &notConfigured) {
 		t.Fatalf("Resolve() error = %v (%T), want *AccountRefresherNotConfiguredError", err, err)
+	}
+}
+
+// refreshStampFailures reads the refresh-stamp failure counter for one tenant
+// and outcome. Each test uses its own tenant label so the process-wide counter
+// cannot be moved by another test.
+func refreshStampFailures(tenantID, outcome string) float64 {
+	return promtestutil.ToFloat64(metrics.GetMetrics().OrchAccountRefreshStampFailures.With(
+		prometheus.Labels{"tenant": tenantID, "outcome": outcome}))
+}
+
+// setupTouchFailingTokenManager returns a manager whose account store fails
+// every Touch with touchErr, logging to the returned recordingLogger.
+func setupTouchFailingTokenManager(t *testing.T, tenantID string, touchErr error, refresher TokenRefresher) (*AccountTokenManager, *touchFailingAccountStore, *recordingLogger, *Account) {
+	t.Helper()
+	ctx := context.Background()
+	base := NewInMemoryAccountStore()
+	secretStore := newTestAccountSecretStore(t)
+	store := &touchFailingAccountStore{AccountStore: base, err: touchErr}
+	logger := newRecordingLogger()
+	mgr := NewAccountTokenManager(secretStore, store, 60*time.Second, WithAccountTokenLogger(logger))
+	mgr.RegisterRefresher(AccountProviderClaude, refresher)
+
+	account := &Account{ID: "acct-1", TenantID: tenantID, Provider: AccountProviderClaude, RefreshPolicy: AccountRefreshOAuth2}
+	if err := base.Create(ctx, account); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if err := secretStore.Put(ctx, tenantID, "acct-1", &AccountCredential{
+		AccessToken: "old", RefreshToken: "rt-1", ExpiresAt: time.Now().Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+	return mgr, store, logger, account
+}
+
+// TestAccountTokenManager_Resolve_RefreshSuccessStampFailure proves a renewal
+// whose outcome could not be written to the account record is logged, counted
+// and reported as a failure rather than a success.
+func TestAccountTokenManager_Resolve_RefreshSuccessStampFailure(t *testing.T) {
+	const tenantID = "tenant-stamp-success"
+	ctx := context.Background()
+	touchErr := errors.New("account record write conflicted")
+	mgr, store, logger, account := setupTouchFailingTokenManager(t, tenantID, touchErr, &countingRefresher{})
+	before := refreshStampFailures(tenantID, AccountRefreshOutcomeSuccess)
+
+	cred, err := mgr.Resolve(ctx, account)
+	if err == nil {
+		t.Fatalf("Resolve() = %+v, nil error; want the stamp failure reported", cred)
+	}
+	if cred != nil {
+		t.Fatalf("Resolve() credential = %+v, want nil alongside the stamp failure", cred)
+	}
+	var stampErr *AccountRefreshStampFailedError
+	if !errors.As(err, &stampErr) {
+		t.Fatalf("Resolve() error = %v (%T), want *AccountRefreshStampFailedError", err, err)
+	}
+	if stampErr.AccountID != "acct-1" || stampErr.Outcome != AccountRefreshOutcomeSuccess {
+		t.Fatalf("stamp error = %+v, want account acct-1 and outcome success", stampErr)
+	}
+	if !errors.Is(err, ErrAccountRefreshStampFailed) || !errors.Is(err, touchErr) {
+		t.Fatalf("Resolve() error = %v, want it to match the stamp sentinel and the store's cause", err)
+	}
+	if store.touchCalls() != 1 {
+		t.Fatalf("Touch called %d times, want 1", store.touchCalls())
+	}
+
+	warn := logger.atLevel("WARN")
+	if !strings.Contains(warn, "acct-1") || !strings.Contains(warn, touchErr.Error()) {
+		t.Fatalf("warnings = %q, want the account id and the store error", warn)
+	}
+	if got := refreshStampFailures(tenantID, AccountRefreshOutcomeSuccess) - before; got != 1 {
+		t.Fatalf("refresh-stamp failure metric moved by %v, want 1", got)
+	}
+}
+
+// TestAccountTokenManager_Resolve_RefreshFailureStampFailure proves a failed
+// refresh whose error could not be written to the account record carries the
+// stamp failure alongside the refresh failure, and logs and counts it.
+func TestAccountTokenManager_Resolve_RefreshFailureStampFailure(t *testing.T) {
+	const tenantID = "tenant-stamp-failure"
+	ctx := context.Background()
+	refreshErr := errors.New("token endpoint unreachable")
+	touchErr := errors.New("store unavailable")
+	mgr, _, logger, account := setupTouchFailingTokenManager(t, tenantID, touchErr, &failingRefresher{err: refreshErr})
+	before := refreshStampFailures(tenantID, AccountRefreshOutcomeFailure)
+
+	_, err := mgr.Resolve(ctx, account)
+	var refreshFailed *AccountRefreshFailedError
+	if !errors.As(err, &refreshFailed) {
+		t.Fatalf("Resolve() error = %v (%T), want *AccountRefreshFailedError", err, err)
+	}
+	var stampErr *AccountRefreshStampFailedError
+	if !errors.As(err, &stampErr) || stampErr.Outcome != AccountRefreshOutcomeFailure {
+		t.Fatalf("Resolve() error = %v, want an *AccountRefreshStampFailedError for the failure outcome", err)
+	}
+	if !errors.Is(err, refreshErr) || !errors.Is(err, touchErr) {
+		t.Fatalf("Resolve() error = %v, want both the refresh and the store error", err)
+	}
+
+	warn := logger.atLevel("WARN")
+	if !strings.Contains(warn, "acct-1") || !strings.Contains(warn, touchErr.Error()) {
+		t.Fatalf("warnings = %q, want the account id and the store error", warn)
+	}
+	if got := refreshStampFailures(tenantID, AccountRefreshOutcomeFailure) - before; got != 1 {
+		t.Fatalf("refresh-stamp failure metric moved by %v, want 1", got)
+	}
+}
+
+// TestAccountTokenManager_Resolve_RefreshSuccessStampedCleanly proves the
+// success path is unchanged: nothing is logged, counted or returned when the
+// outcome stamp succeeds.
+func TestAccountTokenManager_Resolve_RefreshSuccessStampedCleanly(t *testing.T) {
+	const tenantID = "tenant-stamp-clean"
+	ctx := context.Background()
+	mgr, store, logger, account := setupTouchFailingTokenManager(t, tenantID, nil, &countingRefresher{})
+	before := refreshStampFailures(tenantID, AccountRefreshOutcomeSuccess)
+
+	cred, err := mgr.Resolve(ctx, account)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if cred.AccessToken != "renewed-token" {
+		t.Fatalf("Resolve() AccessToken = %s, want renewed-token", cred.AccessToken)
+	}
+	if store.touchCalls() != 1 {
+		t.Fatalf("Touch called %d times, want 1", store.touchCalls())
+	}
+	if warn := logger.atLevel("WARN"); warn != "" {
+		t.Fatalf("warnings = %q, want none on a clean stamp", warn)
+	}
+	if got := refreshStampFailures(tenantID, AccountRefreshOutcomeSuccess) - before; got != 0 {
+		t.Fatalf("refresh-stamp failure metric moved by %v, want 0", got)
+	}
+}
+
+// TestAccountTokenManager_Resolve_RefreshFailureStampRefusedAsRevoked proves a
+// failure stamp the store refuses because the account was revoked meanwhile is
+// the intended outcome, not a stamp failure: the refresh error is returned
+// alone, and nothing is logged or counted.
+func TestAccountTokenManager_Resolve_RefreshFailureStampRefusedAsRevoked(t *testing.T) {
+	const tenantID = "tenant-stamp-revoked"
+	ctx := context.Background()
+	refreshErr := errors.New("token endpoint unreachable")
+	touchErr := &AccountRevokedError{AccountID: "acct-1"}
+	mgr, _, logger, account := setupTouchFailingTokenManager(t, tenantID, touchErr, &failingRefresher{err: refreshErr})
+	before := refreshStampFailures(tenantID, AccountRefreshOutcomeFailure)
+
+	_, err := mgr.Resolve(ctx, account)
+	var refreshFailed *AccountRefreshFailedError
+	if !errors.As(err, &refreshFailed) {
+		t.Fatalf("Resolve() error = %v (%T), want *AccountRefreshFailedError", err, err)
+	}
+	var stampErr *AccountRefreshStampFailedError
+	if errors.As(err, &stampErr) {
+		t.Fatalf("Resolve() error = %v, want no stamp failure for a revoked refusal", err)
+	}
+	if warn := logger.atLevel("WARN"); warn != "" {
+		t.Fatalf("warnings = %q, want none", warn)
+	}
+	if got := refreshStampFailures(tenantID, AccountRefreshOutcomeFailure) - before; got != 0 {
+		t.Fatalf("refresh-stamp failure metric moved by %v, want 0", got)
+	}
+}
+
+// TestAccountTokenManager_Resolve_SecretRefStampFailure proves an unresolved
+// secret reference whose error stamp could not be written reports the stamp
+// failure alongside the read failure, and logs and counts it.
+func TestAccountTokenManager_Resolve_SecretRefStampFailure(t *testing.T) {
+	const tenantID = "tenant-stamp-secretref"
+	ctx := context.Background()
+	base := NewInMemoryAccountStore()
+	touchErr := errors.New("store unavailable")
+	store := &touchFailingAccountStore{AccountStore: base, err: touchErr}
+	logger := newRecordingLogger()
+	mgr := NewAccountTokenManager(NewAccountSecretStore(nil), store, 0,
+		WithAccountSecretResolver(newMemorySecretResolver()), WithAccountTokenLogger(logger))
+	account := &Account{
+		ID:                  "acct-1",
+		TenantID:            tenantID,
+		Provider:            AccountProviderClaude,
+		Status:              AccountStatusActive,
+		RefreshPolicy:       AccountCredentialModeStaticToken,
+		CredentialSecretRef: "agents/claude/missing",
+	}
+	if err := base.Create(ctx, account); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	before := refreshStampFailures(tenantID, AccountRefreshOutcomeFailure)
+
+	_, err := mgr.Resolve(ctx, account)
+	var unresolved *AccountSecretRefUnresolvedError
+	if !errors.As(err, &unresolved) {
+		t.Fatalf("Resolve() error = %v (%T), want *AccountSecretRefUnresolvedError", err, err)
+	}
+	var stampErr *AccountRefreshStampFailedError
+	if !errors.As(err, &stampErr) || stampErr.Outcome != AccountRefreshOutcomeFailure {
+		t.Fatalf("Resolve() error = %v, want an *AccountRefreshStampFailedError for the failure outcome", err)
+	}
+	if !errors.Is(err, touchErr) {
+		t.Fatalf("Resolve() error = %v, want it to carry the store error", err)
+	}
+	if store.touchCalls() != 1 {
+		t.Fatalf("Touch called %d times, want 1", store.touchCalls())
+	}
+	warn := logger.atLevel("WARN")
+	if !strings.Contains(warn, "acct-1") || !strings.Contains(warn, touchErr.Error()) {
+		t.Fatalf("warnings = %q, want the account id and the store error", warn)
+	}
+	if got := refreshStampFailures(tenantID, AccountRefreshOutcomeFailure) - before; got != 1 {
+		t.Fatalf("refresh-stamp failure metric moved by %v, want 1", got)
 	}
 }

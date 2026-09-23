@@ -489,3 +489,18 @@ func TestRecordIndexChunkDuration_Accumulates(t *testing.T) {
 	assert.Equal(t, uint64(2), count, "two observations expected for same language")
 	assert.InDelta(t, 0.05, sum, 1e-9, "sum should accumulate chunking durations")
 }
+
+func TestRecordOrchAccountRefreshStampFailure(t *testing.T) {
+	Reset()
+	m := InitMetrics()
+
+	m.RecordOrchAccountRefreshStampFailure("tenant-1", "success")
+	m.RecordOrchAccountRefreshStampFailure("tenant-1", "success")
+	m.RecordOrchAccountRefreshStampFailure("tenant-1", "failure")
+
+	success := testutil.ToFloat64(m.OrchAccountRefreshStampFailures.With(prometheus.Labels{"tenant": "tenant-1", "outcome": "success"}))
+	failure := testutil.ToFloat64(m.OrchAccountRefreshStampFailures.With(prometheus.Labels{"tenant": "tenant-1", "outcome": "failure"}))
+
+	assert.Equal(t, 2.0, success, "success-stamp failures must be counted per outcome")
+	assert.Equal(t, 1.0, failure, "failure-stamp failures must be counted per outcome")
+}
