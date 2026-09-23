@@ -250,6 +250,12 @@ func (a forgeAccess) Open(
 	if workspace.Signing != nil {
 		creds.SSHAgentSocket = workspace.Signing.SocketPath
 	}
+	if workspace.Signing != nil && plan.Scope.SignsCommits() {
+		// The key's public half travels with the spec, so the checkout can
+		// make the WORKER'S own commits signed ones and the publisher can
+		// refuse any outgoing commit that is not (go-quicbaas#1048).
+		spec.SigningKey = workspace.Signing.PublicKey
+	}
 	if err := orchestration.RequireCheckoutCredentials(spec, creds); err != nil {
 		workspace.Release(context.WithoutCancel(ctx))
 		// WRAPPED AS ErrWorkspaceUnfit, because that is the one question a

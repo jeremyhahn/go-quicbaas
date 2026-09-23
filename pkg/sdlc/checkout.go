@@ -204,8 +204,9 @@ func (c *cloner) isRepository(parent, name string) (bool, error) {
 	return result.Succeeded(), nil
 }
 
-// identify writes the project's commit author into the checkout, so a git the
-// WORKER runs commits under the same identity the publisher does.
+// identify writes the project's commit author, and its signing configuration
+// when the attempt signs, into the checkout, so a git the WORKER runs commits
+// under the same identity and key the publisher does.
 //
 // The publisher states the identity on its own invocations as well
 // (gitConfigArgs) and does not depend on this: what is written here is for
@@ -214,9 +215,14 @@ func (c *cloner) identify(dir string) error {
 	if c.project == nil {
 		return &InvalidInputError{Field: "project", Message: "the checkout is stamped with the project's commit identity"}
 	}
-	identity := []struct{ Key, Value string }{
+	identity := []gitConfigField{
 		{"user.name", c.project.Git.Author.Name},
 		{"user.email", c.project.Git.Author.Email},
+	}
+	if c.spec.SigningKey != "" {
+		// A worker that commits on its own signs with the attempt's key, and
+		// the publisher refuses any outgoing commit that is not signed by it.
+		identity = append(identity, signingConfig(c.spec.SigningKey)...)
 	}
 	for _, field := range identity {
 		if strings.TrimSpace(field.Value) == "" {

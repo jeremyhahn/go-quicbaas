@@ -92,6 +92,10 @@ var (
 	// ErrNoChanges indicates an attempt produced nothing to publish.
 	ErrNoChanges = errors.New("sdlc: the attempt produced no changes to publish")
 
+	// ErrUnsignedCommit is returned when a commit the attempt would publish
+	// is not signed by the attempt's signing key.
+	ErrUnsignedCommit = errors.New("sdlc: an outgoing commit is not signed by the attempt's key")
+
 	// ErrDeliveryAbsent indicates a lifecycle moment ran for a task whose
 	// attempt has no Delivery record, so Prepare never completed.
 	ErrDeliveryAbsent = errors.New("sdlc: no delivery recorded for this attempt")
@@ -520,6 +524,44 @@ func (e *NoChangesError) Error() string {
 
 // Unwrap returns the sentinel for errors.Is support.
 func (e *NoChangesError) Unwrap() error { return ErrNoChanges }
+
+// UnsignedCommitError reports an outgoing commit that is not signed by the
+// attempt's signing key: a commit the worker made with signing switched off,
+// or signed with some other key.
+//
+// PUBLISHING IT IS REFUSED, NOT REPAIRED. Re-signing means rewriting the
+// commit, and a branch is never rewritten once it may have been pushed. A
+// worker commits under the checkout's signing configuration by default, so
+// an unsigned commit is a worker that went out of its way to make one.
+type UnsignedCommitError struct {
+	TaskID string
+
+	// Commit is the first outgoing commit that failed the check.
+	Commit string
+
+	// Status is git's %G? verdict for it: N (no signature), B (bad), U or E
+	// (a signature by a key the allowed_signers file does not admit, or one
+	// git could not check), or G when the signature is good but by another
+	// key.
+	Status string
+
+	// Signer is the fingerprint git reported for the signing key (%GF),
+	// empty when there is none.
+	Signer string
+}
+
+// Error implements the error interface.
+func (e *UnsignedCommitError) Error() string {
+	msg := "sdlc: task " + e.TaskID + ": commit " + e.Commit +
+		" is not signed by the attempt's key (git signature status " + strconv.Quote(e.Status)
+	if e.Signer != "" {
+		msg += ", signer " + e.Signer
+	}
+	return msg + ")"
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *UnsignedCommitError) Unwrap() error { return ErrUnsignedCommit }
 
 // TaskNotForgeIssueError reports a task the module was asked to act on that
 // did not originate from a forge issue.

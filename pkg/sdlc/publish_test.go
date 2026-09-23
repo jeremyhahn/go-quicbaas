@@ -16,6 +16,7 @@ package sdlc
 import (
 	"errors"
 	"path"
+	"slices"
 	"strings"
 	"testing"
 
@@ -62,7 +63,7 @@ func testPublishPlan() publishPlan {
 // worker image's global git config happens to say.
 func TestPublisher_CommitsSignedWithTheProjectIdentity(t *testing.T) {
 	container := &fakeContainer{changed: true}
-	pub := newTestPublisher(container, &SigningSession{PublicKey: "ssh-ed25519 AAAATEST key@test"})
+	pub := newTestPublisher(container, &SigningSession{PublicKey: testSigningKey})
 
 	head, err := pub.Publish(testPublishPlan())
 	if err != nil {
@@ -79,7 +80,7 @@ func TestPublisher_CommitsSignedWithTheProjectIdentity(t *testing.T) {
 		"user.name=" + testOrchProject().Git.Author.Name,
 		"user.email=" + testOrchProject().Git.Author.Email,
 		"gpg.format=ssh",
-		"user.signingkey=key::ssh-ed25519 AAAATEST key@test",
+		"user.signingkey=key::" + testSigningKey,
 		"commit.gpgsign=true",
 	} {
 		if !strings.Contains(config, want) {
@@ -118,7 +119,7 @@ func TestPublisher_WithoutASigningAgentTheCommitIsExplicitlyUnsigned(t *testing.
 // run.
 func TestPublisher_EveryCommandRunsInTheContainersCheckout(t *testing.T) {
 	container := &fakeContainer{changed: true}
-	pub := newTestPublisher(container, &SigningSession{PublicKey: "k"})
+	pub := newTestPublisher(container, &SigningSession{PublicKey: testSigningKey})
 	plan := testPublishPlan()
 
 	if _, err := pub.Publish(plan); err != nil {
@@ -140,7 +141,7 @@ func TestPublisher_EveryCommandRunsInTheContainersCheckout(t *testing.T) {
 // tenant's forge token in an argument vector every local process can read.
 func TestPublisher_TheForgeTokenTravelsAsAPathNeverAValue(t *testing.T) {
 	container := &fakeContainer{changed: true}
-	pub := newTestPublisher(container, &SigningSession{PublicKey: "k"})
+	pub := newTestPublisher(container, &SigningSession{PublicKey: testSigningKey})
 	pub.project.Git.RepoURL = "https://forge.test/acme/api.git"
 
 	if _, err := pub.Publish(testPublishPlan()); err != nil {
@@ -173,7 +174,7 @@ func TestPublisher_TheForgeTokenTravelsAsAPathNeverAValue(t *testing.T) {
 // does not exist.
 func TestPublisher_AnSSHRemoteCarriesNoCredentialHelper(t *testing.T) {
 	container := &fakeContainer{changed: true}
-	pub := newTestPublisher(container, &SigningSession{PublicKey: "k"})
+	pub := newTestPublisher(container, &SigningSession{PublicKey: testSigningKey})
 	pub.project.Git.RepoURL = "ssh://git@forge.test/acme/api.git"
 
 	if _, err := pub.Publish(testPublishPlan()); err != nil {
@@ -199,7 +200,7 @@ func TestPublisher_TheRefspecIsTheStrategysDecision(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			container := &fakeContainer{changed: true}
-			pub := newTestPublisher(container, &SigningSession{PublicKey: "k"})
+			pub := newTestPublisher(container, &SigningSession{PublicKey: testSigningKey})
 			plan := testPublishPlan()
 			plan.RemoteBranch = tc.remoteBranch
 
@@ -223,7 +224,7 @@ func TestPublisher_TheRefspecIsTheStrategysDecision(t *testing.T) {
 // already did.
 func TestPublisher_AheadWithoutChangesStillPublishes(t *testing.T) {
 	container := &fakeContainer{changed: false, ahead: true, head: "head-prior"}
-	pub := newTestPublisher(container, &SigningSession{PublicKey: "k"})
+	pub := newTestPublisher(container, &SigningSession{PublicKey: testSigningKey})
 
 	head, err := pub.Publish(testPublishPlan())
 	if err != nil {
@@ -237,12 +238,265 @@ func TestPublisher_AheadWithoutChangesStillPublishes(t *testing.T) {
 	}
 }
 
+// TestPublisher_AChangeThatStagesNothingIsNotCommitted is go-quicbaas#1048:
+// status reported a change, "add --all" then staged nothing (a file rewritten
+// to its committed content in between), and "git commit" exited 1 on "nothing
+// to commit" — which refused an attempt whose worker had already committed the
+// real work. The publisher asks the index, skips the empty commit, and
+// publishes the commits the branch already carries.
+func TestPublisher_AChangeThatStagesNothingIsNotCommitted(t *testing.T) {
+	container := &fakeContainer{changed: true, nothingStaged: true, ahead: true, head: "head-worker"}
+	pub := newTestPublisher(container, &SigningSession{PublicKey: testSigningKey})
+
+	head, err := pub.Publish(testPublishPlan())
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if len(container.commits) != 0 {
+		t.Fatalf("an empty commit was attempted: %+v", container.commits)
+	}
+	if head != "head-worker" {
+		t.Fatalf("head = %q, want the worker's own commit", head)
+	}
+	if len(container.pushes) != 1 {
+		t.Fatalf("pushes = %d, want the branch published once", len(container.pushes))
+	}
+}
+
+// TestPublisher_AChangeThatStagesNothingAndIsNotAheadIsNoChanges: the same
+// race on a branch with no commits of its own is an attempt that produced
+// nothing — the ordinary NoChangesError, not a failed commit.
+func TestPublisher_AChangeThatStagesNothingAndIsNotAheadIsNoChanges(t *testing.T) {
+	container := &fakeContainer{changed: true, nothingStaged: true}
+	pub := newTestPublisher(container, &SigningSession{PublicKey: testSigningKey})
+
+	_, err := pub.Publish(testPublishPlan())
+	var none *NoChangesError
+	if !errors.As(err, &none) {
+		t.Fatalf("err = %v, want NoChangesError", err)
+	}
+	if len(container.commits) != 0 || len(container.pushes) != 0 {
+		t.Fatalf("commits %+v pushes %+v, want neither", container.commits, container.pushes)
+	}
+}
+
+// TestPublisher_AnUnsignedWorkerCommitIsNotPublished is the review finding on
+// go-quicbaas#1049: a branch whose WORKER committed with signing switched off
+// (or with another key) must not reach the forge. The check runs against the
+// allowed_signers file the daemon wrote, and nothing is pushed.
+func TestPublisher_AnUnsignedWorkerCommitIsNotPublished(t *testing.T) {
+	for _, status := range []string{"N", "B", "U", "E"} {
+		t.Run(status, func(t *testing.T) {
+			container := &fakeContainer{ahead: true, head: "head-worker",
+				outgoing: []outgoingCommit{{SHA: "good-1", Status: "G", Signer: testSigningFingerprint}, {SHA: "bad-2", Status: status}}}
+			pub := newTestPublisher(container, &SigningSession{PublicKey: testSigningKey})
+
+			_, err := pub.Publish(testPublishPlan())
+			var unsigned *UnsignedCommitError
+			if !errors.As(err, &unsigned) || !errors.Is(err, ErrUnsignedCommit) {
+				t.Fatalf("err = %v, want UnsignedCommitError", err)
+			}
+			if unsigned.Commit != "bad-2" || unsigned.Status != status {
+				t.Fatalf("refused %s (%s), want bad-2 (%s)", unsigned.Commit, unsigned.Status, status)
+			}
+			if len(container.pushes) != 0 {
+				t.Fatalf("pushes = %+v, want none", container.pushes)
+			}
+			if !slices.Contains(container.logConfig, "gpg.ssh.allowedSignersFile="+allowedSignersPath) {
+				t.Fatalf("log config = %v, want the allowed_signers file named", container.logConfig)
+			}
+		})
+	}
+}
+
+// TestPublisher_AGoodSignatureByAnotherKeyIsNotPublished is the second review
+// finding on go-quicbaas#1049: git picks verification from the signature's own
+// format, so a trusted OpenPGP signature (or an SSH one by some other key)
+// reports "G" without the allowed_signers file deciding anything. Only the
+// attempt's own SSH key fingerprint passes.
+func TestPublisher_AGoodSignatureByAnotherKeyIsNotPublished(t *testing.T) {
+	for name, signer := range map[string]string{
+		"openpgp":       "0123456789ABCDEF0123456789ABCDEF01234567",
+		"other ssh key": "SHA256:not-the-attempts-key",
+		"none reported": "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			container := &fakeContainer{ahead: true, head: "head-worker",
+				outgoing: []outgoingCommit{{SHA: "gpg-1", Status: "G", Signer: signer}}}
+			pub := newTestPublisher(container, &SigningSession{PublicKey: testSigningKey})
+
+			_, err := pub.Publish(testPublishPlan())
+			var unsigned *UnsignedCommitError
+			if !errors.As(err, &unsigned) || unsigned.Commit != "gpg-1" || unsigned.Signer != signer {
+				t.Fatalf("err = %v, want UnsignedCommitError naming gpg-1 and signer %q", err, signer)
+			}
+			if len(container.pushes) != 0 {
+				t.Fatalf("pushes = %+v, want none", container.pushes)
+			}
+		})
+	}
+}
+
+// TestPublisher_AnUnparseableSigningKeyIsRefused: a signing session whose
+// public half does not parse cannot vouch for anything, and nothing is pushed.
+func TestPublisher_AnUnparseableSigningKeyIsRefused(t *testing.T) {
+	container := &fakeContainer{ahead: true, head: "head-worker"}
+	pub := newTestPublisher(container, &SigningSession{PublicKey: "not a key"})
+
+	_, err := pub.Push(testPublishPlan())
+	var sessionErr *SigningSessionError
+	if !errors.As(err, &sessionErr) {
+		t.Fatalf("err = %v, want SigningSessionError", err)
+	}
+	if len(container.pushes) != 0 {
+		t.Fatalf("pushes = %+v, want none", container.pushes)
+	}
+}
+
+// TestPublisher_TheCheckReadsTheRefBeingPushedNotHEAD is the round-3 review
+// finding on go-quicbaas#1049: a worker that leaves an unsigned commit on the
+// delivery branch and checks out a signed ancestor must not get the branch
+// verified by way of HEAD. The range ends at refs/heads/<branch>, the exact
+// source of the push, on both the publish and the teardown path, and the head
+// reported is that ref's.
+func TestPublisher_TheCheckReadsTheRefBeingPushedNotHEAD(t *testing.T) {
+	plan := testPublishPlan()
+	want := "origin/" + plan.Base + "..refs/heads/" + plan.Branch
+	for name, push := range map[string]func(*publisher) error{
+		"publish": func(p *publisher) error { _, err := p.Publish(plan); return err },
+		"push":    func(p *publisher) error { _, err := p.Push(plan); return err },
+	} {
+		t.Run(name, func(t *testing.T) {
+			container := &fakeContainer{ahead: true, head: "head-worker"}
+			pub := newTestPublisher(container, &SigningSession{PublicKey: testSigningKey})
+			if err := push(pub); err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			if container.logRange != want {
+				t.Fatalf("verified %q, want %q", container.logRange, want)
+			}
+			sawBranchHead := false
+			for _, cmd := range container.commandsRun() {
+				if strings.HasSuffix(cmd, "rev-parse refs/heads/"+plan.Branch) {
+					sawBranchHead = true
+				}
+				if strings.HasSuffix(cmd, "rev-parse HEAD") {
+					t.Fatalf("the head was read from HEAD, not the pushed branch: %q", cmd)
+				}
+			}
+			if !sawBranchHead {
+				t.Fatal("the pushed branch's head was never read")
+			}
+		})
+	}
+}
+
+// TestPublisher_PushItselfVerifies: a caller that goes straight to Push (the
+// teardown publish of a failed attempt does) is held to the same check.
+func TestPublisher_PushItselfVerifies(t *testing.T) {
+	container := &fakeContainer{ahead: true, head: "head-worker",
+		outgoing: []outgoingCommit{{SHA: "bad-1", Status: "N"}}}
+	pub := newTestPublisher(container, &SigningSession{PublicKey: testSigningKey})
+
+	if _, err := pub.Push(testPublishPlan()); !errors.Is(err, ErrUnsignedCommit) {
+		t.Fatalf("err = %v, want ErrUnsignedCommit", err)
+	}
+	if len(container.pushes) != 0 {
+		t.Fatalf("pushes = %+v, want none", container.pushes)
+	}
+}
+
+// TestPublisher_SignedWorkerCommitsArePublished: every outgoing commit signed
+// by the attempt's key passes, including the worker's own.
+func TestPublisher_SignedWorkerCommitsArePublished(t *testing.T) {
+	container := &fakeContainer{changed: true, ahead: true, head: "head-worker",
+		outgoing: []outgoingCommit{{SHA: "worker-1", Status: "G", Signer: testSigningFingerprint}}}
+	pub := newTestPublisher(container, &SigningSession{PublicKey: testSigningKey})
+
+	if _, err := pub.Publish(testPublishPlan()); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if len(container.pushes) != 1 {
+		t.Fatalf("pushes = %d, want 1", len(container.pushes))
+	}
+}
+
+// TestPublisher_AProjectThatSignsNothingIsNotVerified: with no signing
+// session there is no key to verify against, and no log is run.
+func TestPublisher_AProjectThatSignsNothingIsNotVerified(t *testing.T) {
+	container := &fakeContainer{ahead: true, head: "head-worker",
+		outgoing: []outgoingCommit{{SHA: "worker-1", Status: "N"}}}
+	pub := newTestPublisher(container, nil)
+
+	if _, err := pub.Publish(testPublishPlan()); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	for _, cmd := range container.commandsRun() {
+		if strings.Contains(cmd, " log ") {
+			t.Fatalf("ran %q for a project that signs nothing", cmd)
+		}
+	}
+}
+
+// TestPublisher_ASignatureCheckGitCannotAnswerIsRefused: git failing to list
+// the outgoing commits is not "all signed".
+func TestPublisher_ASignatureCheckGitCannotAnswerIsRefused(t *testing.T) {
+	container := &fakeContainer{ahead: true, logErr: errors.New("fatal: bad revision")}
+	pub := newTestPublisher(container, &SigningSession{PublicKey: testSigningKey})
+
+	_, err := pub.Publish(testPublishPlan())
+	var cmdErr *PublishCommandError
+	if !errors.As(err, &cmdErr) || cmdErr.ExitCode != 128 {
+		t.Fatalf("err = %v, want PublishCommandError exit 128", err)
+	}
+	if len(container.pushes) != 0 {
+		t.Fatalf("pushes = %+v, want none", container.pushes)
+	}
+}
+
+// TestPublisher_AnIndexProbeGitCannotAnswerIsRefused is the second review
+// finding on go-quicbaas#1049: "diff --cached --quiet" exiting other than 0 or
+// 1 is git failing, and must stop the publication before any commit or push,
+// even on a branch that is already ahead.
+func TestPublisher_AnIndexProbeGitCannotAnswerIsRefused(t *testing.T) {
+	for _, ahead := range []bool{false, true} {
+		container := &fakeContainer{changed: true, ahead: ahead, diffExit: 128}
+		pub := newTestPublisher(container, &SigningSession{PublicKey: testSigningKey})
+
+		_, err := pub.Publish(testPublishPlan())
+		var cmdErr *PublishCommandError
+		if !errors.As(err, &cmdErr) || cmdErr.ExitCode != 128 || cmdErr.Command != "diff --cached --quiet" {
+			t.Fatalf("ahead=%v: err = %v, want PublishCommandError for the index probe", ahead, err)
+		}
+		if len(container.commits) != 0 || len(container.pushes) != 0 {
+			t.Fatalf("ahead=%v: commits %+v pushes %+v, want neither", ahead, container.commits, container.pushes)
+		}
+	}
+}
+
+// TestPublisher_AnIndexProbeThatCannotRunIsRefused: the exec itself failing
+// is returned as it is, and nothing is committed or pushed.
+func TestPublisher_AnIndexProbeThatCannotRunIsRefused(t *testing.T) {
+	for _, ahead := range []bool{false, true} {
+		execErr := errors.New("container gone")
+		container := &fakeContainer{changed: true, ahead: ahead, diffExecErr: execErr}
+		pub := newTestPublisher(container, &SigningSession{PublicKey: testSigningKey})
+
+		if _, err := pub.Publish(testPublishPlan()); !errors.Is(err, execErr) {
+			t.Fatalf("ahead=%v: err = %v, want the exec failure", ahead, err)
+		}
+		if len(container.commits) != 0 || len(container.pushes) != 0 {
+			t.Fatalf("ahead=%v: commits %+v pushes %+v, want neither", ahead, container.commits, container.pushes)
+		}
+	}
+}
+
 // TestPublisher_NothingToPublishIsRefused: an attempt that changed nothing
 // and is not ahead has produced no delivery, and opening a pull request for
 // it would point at a branch identical to its base.
 func TestPublisher_NothingToPublishIsRefused(t *testing.T) {
 	container := &fakeContainer{}
-	pub := newTestPublisher(container, &SigningSession{PublicKey: "k"})
+	pub := newTestPublisher(container, &SigningSession{PublicKey: testSigningKey})
 
 	_, err := pub.Publish(testPublishPlan())
 	var none *NoChangesError
@@ -271,7 +525,7 @@ func TestPublisher_ARefusedCommandIsTypedAndScrubsItsOutput(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			container := &fakeContainer{}
 			arrange(container)
-			pub := newTestPublisher(container, &SigningSession{PublicKey: "k"})
+			pub := newTestPublisher(container, &SigningSession{PublicKey: testSigningKey})
 
 			_, err := pub.Publish(testPublishPlan())
 			var refused *PublishCommandError
@@ -379,7 +633,7 @@ func TestPublisher_ForceIsLeasedOrAbsent(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			container := &fakeContainer{changed: true}
-			pub := newTestPublisher(container, &SigningSession{PublicKey: "k"})
+			pub := newTestPublisher(container, &SigningSession{PublicKey: testSigningKey})
 			plan := testPublishPlan()
 			plan.Force = tc.force
 
@@ -404,7 +658,7 @@ func TestPublisher_ForceStillRefusesWhatGitRefuses(t *testing.T) {
 		changed: true,
 		pushErr: errors.New("stale info: remote ref is at a commit this checkout never saw"),
 	}
-	pub := newTestPublisher(container, &SigningSession{PublicKey: "k"})
+	pub := newTestPublisher(container, &SigningSession{PublicKey: testSigningKey})
 	plan := testPublishPlan()
 	plan.Force = true
 

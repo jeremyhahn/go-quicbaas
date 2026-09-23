@@ -18,6 +18,8 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
@@ -105,12 +107,31 @@ func gitConfigArgs(project *orchestration.Project, signing *SigningSession) []st
 	if signing == nil {
 		return append(args, "-c", "commit.gpgsign=false")
 	}
-	return append(args,
-		"-c", "gpg.format=ssh",
-		"-c", "user.signingkey=key::"+signing.PublicKey,
-		"-c", "commit.gpgsign=true",
-	)
+	for _, field := range signingConfig(signing.PublicKey) {
+		args = append(args, "-c", field.Key+"="+field.Value)
+	}
+	return args
 }
+
+// gitConfigField is one git configuration key and its value.
+type gitConfigField struct{ Key, Value string }
+
+// signingConfig is the git configuration that signs commits with publicKey's
+// private half, which the signing agent holds. The publisher passes it on its
+// own invocations and the checkout writes it into the repository, so a commit
+// the WORKER makes is signed by the same key as one the publisher makes.
+func signingConfig(publicKey string) []gitConfigField {
+	return []gitConfigField{
+		{"gpg.format", "ssh"},
+		{"user.signingkey", "key::" + publicKey},
+		{"commit.gpgsign", "true"},
+		{"gpg.ssh.allowedSignersFile", allowedSignersPath},
+	}
+}
+
+// allowedSignersPath is where the container reads the allowed_signers file
+// the daemon wrote beside the spec.
+var allowedSignersPath = path.Join(orchestration.WorkspaceSpecDir, orchestration.WorkspaceAllowedSignersFile)
 
 // credentialHelperArgs teach git to read the forge token out of the file the
 // spawn mounted, for the one repository URL scheme that needs it.
@@ -219,18 +240,117 @@ func (p *publisher) AheadOfBase(plan publishPlan) (bool, error) {
 }
 
 // Commit records everything the worker changed as one signed commit.
-func (p *publisher) Commit(plan publishPlan) error {
+//
+// It answers whether a commit was made. Staging can find nothing even though
+// status reported a change — a file rewritten to its committed content between
+// the two — and "git commit" then exits 1 on "nothing to commit". That is not a
+// failure: it is an attempt whose change is already in the branch, and
+// refusing it discarded finished work the worker had committed itself
+// (go-quicbaas#1048). The index is asked, so no empty commit is attempted.
+func (p *publisher) Commit(plan publishPlan) (bool, error) {
 	if _, err := p.git(plan, "add", "--all"); err != nil {
-		return err
+		return false, err
+	}
+	staged, err := p.HasStaged(plan)
+	if err != nil || !staged {
+		return false, err
 	}
 	args := gitConfigArgs(p.project, p.signing)
 	args = append(args, "commit", "-m", plan.Message)
-	_, err := p.git(plan, args...)
-	return err
+	if _, err := p.git(plan, args...); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// HasStaged reports whether the index holds anything to commit.
+// "git diff --cached --quiet" exits 1 when it does and 0 when it does not; any
+// other exit is git failing, which is refused rather than read as either.
+func (p *publisher) HasStaged(plan publishPlan) (bool, error) {
+	result, err := p.probe(plan, "diff", "--cached", "--quiet")
+	if err != nil {
+		return false, err
+	}
+	switch result.ExitCode {
+	case 0:
+		return false, nil
+	case 1:
+		return true, nil
+	}
+	return false, &PublishCommandError{
+		TaskID:   p.taskID,
+		Command:  "diff --cached --quiet",
+		ExitCode: result.ExitCode,
+		Output:   strings.TrimSpace(result.Stderr),
+	}
+}
+
+// VerifySigned refuses the publication when any commit the branch carries
+// beyond its base is not signed by the attempt's key.
+//
+// A commit passes only when git reports a good signature ("G") AND the
+// signing key's fingerprint is the SHA-256 fingerprint of the attempt's SSH
+// public key. The status alone is not enough: git picks the verification
+// backend from the signature's own format, so a trusted OpenPGP signature
+// reports "G" without the SSH allowed_signers file ever being consulted. A
+// project that signs nothing has nothing to verify.
+func (p *publisher) VerifySigned(plan publishPlan) error {
+	if p.signing == nil {
+		return nil
+	}
+	want, err := sshKeyFingerprint(p.signing.PublicKey)
+	if err != nil {
+		return &SigningSessionError{Scope: SigningScopeDelivery, Message: "its public key does not parse: " + err.Error()}
+	}
+	// THE RANGE ENDS AT THE REF BEING PUSHED, not at HEAD. A worker can
+	// leave an unsigned commit on the delivery branch and check out a signed
+	// ancestor: HEAD would verify while the push publishes the branch.
+	rangeSpec := gitRemote + "/" + plan.Base + ".." + pushSource(plan)
+	result, err := p.git(plan,
+		"-c", "gpg.ssh.allowedSignersFile="+allowedSignersPath,
+		"log", "--format=%H %G? %GF", rangeSpec)
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(result.Output(), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		commit, status, signer := fields[0], "", ""
+		if len(fields) > 1 {
+			status = fields[1]
+		}
+		if len(fields) > 2 {
+			signer = fields[2]
+		}
+		if status != "G" || signer != want {
+			return &UnsignedCommitError{TaskID: p.taskID, Commit: commit, Status: status, Signer: signer}
+		}
+	}
+	return nil
+}
+
+// sshKeyFingerprint is the SHA-256 fingerprint ("SHA256:<base64>") of an
+// OpenSSH authorized_keys line, which is how git reports an SSH signer (%GF).
+func sshKeyFingerprint(authorizedKey string) (string, error) {
+	key, _, _, _, err := ssh.ParseAuthorizedKey([]byte(authorizedKey))
+	if err != nil {
+		return "", err
+	}
+	return ssh.FingerprintSHA256(key), nil
 }
 
 // Push publishes the branch and answers the head that landed.
+//
+// EVERY PUSH IS VERIFIED HERE, not by its callers: the end-of-turn publish,
+// the teardown publish of a failed attempt and anything added later share
+// this one path, so no route to the forge can carry a commit the attempt's
+// key did not sign.
 func (p *publisher) Push(plan publishPlan) (string, error) {
+	if err := p.VerifySigned(plan); err != nil {
+		return "", err
+	}
 	refspec := plan.Branch
 	if plan.RemoteBranch != "" {
 		refspec = plan.Branch + ":" + plan.RemoteBranch
@@ -261,9 +381,16 @@ func forceWithLease(plan publishPlan) string {
 	return "--force-with-lease=" + ref + ":" + plan.Lease
 }
 
-// Head is the commit the branch now points at.
+// pushSource is the local ref a publication pushes, spelled in full so that
+// nothing (a tag, a detached HEAD, a remote-tracking ref) can stand in for it.
+func pushSource(plan publishPlan) string {
+	return "refs/heads/" + plan.Branch
+}
+
+// Head is the commit the branch now points at: the branch's own ref, which is
+// what Push publishes, not whatever the worker left checked out.
 func (p *publisher) Head(plan publishPlan) (string, error) {
-	result, err := p.git(plan, "rev-parse", "HEAD")
+	result, err := p.git(plan, "rev-parse", pushSource(plan))
 	if err != nil {
 		return "", err
 	}
@@ -271,14 +398,16 @@ func (p *publisher) Head(plan publishPlan) (string, error) {
 }
 
 // Publish is the whole publication: commit what is uncommitted, refuse an
-// attempt that produced nothing, push, and answer the head.
+// attempt that produced nothing or carries a commit the attempt's key did not
+// sign, push, and answer the head.
 func (p *publisher) Publish(plan publishPlan) (string, error) {
 	changed, err := p.HasChanges(plan)
 	if err != nil {
 		return "", err
 	}
+	committed := false
 	if changed {
-		if err := p.Commit(plan); err != nil {
+		if committed, err = p.Commit(plan); err != nil {
 			return "", err
 		}
 	}
@@ -286,7 +415,7 @@ func (p *publisher) Publish(plan publishPlan) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !changed && !ahead {
+	if !committed && !ahead {
 		return "", &NoChangesError{TaskID: p.taskID, WorkDir: plan.WorkDir}
 	}
 	return p.Push(plan)

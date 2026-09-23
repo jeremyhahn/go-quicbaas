@@ -21,6 +21,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -111,6 +112,31 @@ var testRepoRef = RepoRef{Owner: fixtureOwner, Repo: fixtureRepo}
 // process rather than written down, so no key of any provenance is committed
 // and no fixture can be mistaken for a real forge's identity.
 var testSSHHostKey = generateTestSSHHostKey()
+
+// testSigningKey is the attempt signing key's public half every test signs
+// with: a real ed25519 key from a fixed seed, so the publisher's fingerprint
+// check sees a key it can parse and every run sees the same one.
+var testSigningKey = func() string {
+	seed := make([]byte, ed25519.SeedSize)
+	for i := range seed {
+		seed[i] = byte(i)
+	}
+	key, err := ssh.NewPublicKey(ed25519.NewKeyFromSeed(seed).Public())
+	if err != nil {
+		panic(err)
+	}
+	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))) + " agent@example.test"
+}()
+
+// testSigningFingerprint is testSigningKey's SHA-256 fingerprint, which is
+// what git reports (%GF) for a commit it signed.
+var testSigningFingerprint = func() string {
+	fp, err := sshKeyFingerprint(testSigningKey)
+	if err != nil {
+		panic(err)
+	}
+	return fp
+}()
 
 // generateTestSSHHostKey renders a fresh ed25519 public key as the OpenSSH
 // public-key line ForgeConfig.SSHHostKey holds.
@@ -1113,6 +1139,17 @@ func (f *fakeForge) pullRequest(number int) *ForgePullRequest {
 // made. Everything the runner asks of git goes through here, so a runner that
 // found some other way to commit or push would fail these tests rather than
 // pass them quietly.
+// outgoingCommit is one commit a branch carries beyond its base, with git's
+// %G? signature status for it.
+type outgoingCommit struct {
+	SHA    string
+	Status string
+
+	// Signer is the signing key's fingerprint git reports (%GF); empty for
+	// an unsigned commit.
+	Signer string
+}
+
 type fakeContainer struct {
 	mu sync.Mutex
 
@@ -1136,6 +1173,29 @@ type fakeContainer struct {
 	changed bool
 	ahead   bool
 
+	// nothingStaged makes "add --all" stage nothing even though status
+	// reported a change: a file rewritten to its committed content between
+	// the two, which is the go-quicbaas#1048 refusal.
+	nothingStaged bool
+
+	// outgoing is every commit the branch carries beyond its base, with the
+	// signature status "git log --format=%H %G?" reports for it. A commit the
+	// publisher makes is added as "G" when its configuration signs and "N"
+	// when it does not. A test that sets ahead with no outgoing commits gets
+	// one signed worker commit; one that models an unsigned worker commit
+	// lists it here.
+	outgoing []outgoingCommit
+
+	// logErr makes "git log" exit 128, which is git failing to answer rather
+	// than answering "unsigned".
+	logErr error
+
+	// diffExit makes "diff --cached --quiet" exit with this code instead of
+	// answering, and diffExecErr makes the exec itself fail, which is the
+	// index probe breaking rather than reporting.
+	diffExit    int
+	diffExecErr error
+
 	// head is what rev-parse HEAD answers. A commit advances it, which is
 	// what makes a second review round land on a NEW head, and so does a
 	// "checkout -B" whose start this container can resolve.
@@ -1156,7 +1216,15 @@ type fakeContainer struct {
 
 	commits      []string
 	commitConfig []string
-	pushes       []pushedRef
+
+	// logConfig is the "-c" configuration the last "git log" carried, which
+	// is where the signature check names the allowed_signers file.
+	logConfig []string
+
+	// logRange is the revision range the last "git log" named, which is how a
+	// test proves the signature check reads the ref being pushed.
+	logRange string
+	pushes   []pushedRef
 
 	// rewritten models a worker that rewrote the published branch (a rebase):
 	// the local head no longer descends from what the remote holds. Git then
@@ -1392,6 +1460,21 @@ func (c *fakeContainer) exec(containerID string, spec *orchestration.ExecSpec) (
 		return &orchestration.ExecResult{}, nil
 	case "add":
 		return &orchestration.ExecResult{}, nil
+	case "diff":
+		// "diff --cached --quiet" answers whether the index holds anything to
+		// commit: exit 1 when it does, 0 when it does not. nothingStaged
+		// models the race go-quicbaas#1048 reports — status saw a change that
+		// "add --all" then staged as nothing.
+		if c.diffExecErr != nil {
+			return nil, c.diffExecErr
+		}
+		if c.diffExit != 0 {
+			return &orchestration.ExecResult{ExitCode: c.diffExit, Stderr: "fatal: unable to read the index"}, nil
+		}
+		if c.changed && !c.nothingStaged {
+			return &orchestration.ExecResult{ExitCode: 1}, nil
+		}
+		return &orchestration.ExecResult{}, nil
 	case "commit":
 		if c.commitErr != nil {
 			return &orchestration.ExecResult{ExitCode: 1, Stderr: c.commitErr.Error()}, nil
@@ -1401,7 +1484,34 @@ func (c *fakeContainer) exec(containerID string, spec *orchestration.ExecSpec) (
 		c.changed = false
 		c.ahead = true
 		c.head = "head-" + itoa(len(c.commits))
+		commit := outgoingCommit{SHA: c.head, Status: "N"}
+		if slices.Contains(config, "commit.gpgsign=true") {
+			commit.Status = "G"
+			for _, cfg := range config {
+				if key, ok := strings.CutPrefix(cfg, "user.signingkey=key::"); ok {
+					if fp, err := sshKeyFingerprint(key); err == nil {
+						commit.Signer = fp
+					}
+				}
+			}
+		}
+		c.outgoing = append(c.outgoing, commit)
 		return &orchestration.ExecResult{}, nil
+	case "log":
+		if c.logErr != nil {
+			return &orchestration.ExecResult{ExitCode: 128, Stderr: c.logErr.Error()}, nil
+		}
+		c.logConfig = config
+		c.logRange = args[len(args)-1]
+		outgoing := c.outgoing
+		if c.ahead && len(outgoing) == 0 {
+			outgoing = []outgoingCommit{{SHA: "worker-1", Status: "G", Signer: testSigningFingerprint}}
+		}
+		var out strings.Builder
+		for _, commit := range outgoing {
+			out.WriteString(strings.TrimSpace(commit.SHA+" "+commit.Status+" "+commit.Signer) + "\n")
+		}
+		return &orchestration.ExecResult{Stdout: out.String()}, nil
 	case "rev-list":
 		if c.ahead {
 			return &orchestration.ExecResult{Stdout: "1\n"}, nil
@@ -1784,7 +1894,7 @@ func (a *fakeSigningAgent) StartSigningAgent(
 	if scope == SigningScopeCheckout {
 		key = ""
 	} else if key == "" {
-		key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITESTKEY agent@example.test"
+		key = testSigningKey
 	}
 	return &SigningSession{
 		SocketPath: socket,

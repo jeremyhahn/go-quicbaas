@@ -2281,6 +2281,30 @@ func TestRunner_ATeardownPushFailureDoesNotHideTheOutcome(t *testing.T) {
 	}
 }
 
+// TestRunner_AnUnsignedCommitRefusedAtPublishIsNotPushedAtTeardown is the P1
+// review finding on go-quicbaas#1049: the teardown publish of a failed attempt
+// goes straight to Push, and must not carry the commit the end-of-turn publish
+// just refused.
+func TestRunner_AnUnsignedCommitRefusedAtPublishIsNotPushedAtTeardown(t *testing.T) {
+	rig := newRunnerRig(t)
+	if err := rig.rebind(context.Background(), func(b *ProjectBinding) {
+		b.Verification = []string{"true"}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rig.workerWrote()
+	rig.container.ahead = true
+	rig.container.outgoing = []outgoingCommit{{SHA: "unsigned-1", Status: "N"}}
+
+	err := rig.runner.Run(context.Background(), rig.job(t, "true"))
+	if !errors.Is(err, ErrUnsignedCommit) {
+		t.Fatalf("err = %v, want the unsigned-commit refusal", err)
+	}
+	if len(rig.container.pushes) != 0 {
+		t.Fatalf("pushes = %+v, want none: teardown published the refused commit", rig.container.pushes)
+	}
+}
+
 // TestRunnerRun_DecorateAndTaskIDTolerateAnEmptyRun: the snapshot decorator
 // and the task accessor are called from the envelope on a run that may not
 // have reached its first state yet.

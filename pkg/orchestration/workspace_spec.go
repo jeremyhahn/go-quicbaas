@@ -18,6 +18,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // =============================================================================
@@ -50,6 +51,14 @@ const WorkspaceSpecFile = "workspace.json"
 // WorkspaceForgeTokenFile is the forge token's file name inside
 // WorkspaceSpecDir. Present only when the caller supplied a token.
 const WorkspaceForgeTokenFile = "forge-token"
+
+// WorkspaceAllowedSignersFile is the allowed_signers file's name inside
+// WorkspaceSpecDir. Present only when the attempt signs its commits, and
+// holding exactly one entry: the public half of the key the signing agent
+// serves. git reads it (gpg.ssh.allowedSignersFile) to decide whether a commit
+// was signed by that key, which is how a commit the WORKER made is checked
+// before anything publishes it.
+const WorkspaceAllowedSignersFile = "allowed_signers"
 
 // WorkspaceSpecEnv names the environment variable carrying the spec file's
 // PATH — the path, never the contents.
@@ -172,6 +181,17 @@ type WorkspaceSpec struct {
 	// SSHHostKey, relative to the spec file's own directory. Empty when the
 	// checkout needs no ssh.
 	KnownHostsFile string `json:"known_hosts_file,omitempty"`
+
+	// SigningKey is the public half of the key the attempt's signing agent
+	// serves, one OpenSSH public-key line. It is PUBLIC data. The checkout
+	// configures the worker's git to sign with it, and it is the one key the
+	// allowed_signers file admits. Empty when the attempt signs nothing.
+	SigningKey string `json:"signing_key,omitempty"`
+
+	// AllowedSignersFile names the file holding the allowed_signers written
+	// from SigningKey, relative to the spec file's own directory. Empty when
+	// the attempt signs nothing.
+	AllowedSignersFile string `json:"allowed_signers_file,omitempty"`
 }
 
 // MaterializedWorkspace is one spawn's written workspace spec: the directory
@@ -284,6 +304,12 @@ func MaterializeWorkspaceSpecIn(parent string, spec WorkspaceSpec, forgeToken []
 	} else {
 		spec.KnownHostsFile = ""
 	}
+	allowedSigners := AllowedSignersFor(spec.SigningKey)
+	if allowedSigners != "" {
+		spec.AllowedSignersFile = WorkspaceAllowedSignersFile
+	} else {
+		spec.AllowedSignersFile = ""
+	}
 	encoded, marshalErr := json.MarshalIndent(spec, "", "  ")
 	if marshalErr != nil {
 		return MaterializedWorkspace{}, &WorkspaceSpecInvalidError{Field: "spec", Message: "does not encode: " + marshalErr.Error()}
@@ -306,6 +332,9 @@ func MaterializeWorkspaceSpecIn(parent string, spec WorkspaceSpec, forgeToken []
 	if knownHosts != "" {
 		files[WorkspaceKnownHostsFile] = []byte(knownHosts)
 	}
+	if allowedSigners != "" {
+		files[WorkspaceAllowedSignersFile] = []byte(allowedSigners)
+	}
 	for name, content := range files {
 		if writeErr := os.WriteFile(filepath.Join(root, name), content, workspaceSpecFileMode); writeErr != nil {
 			cleanup()
@@ -313,6 +342,20 @@ func MaterializeWorkspaceSpecIn(parent string, spec WorkspaceSpec, forgeToken []
 		}
 	}
 	return MaterializedWorkspace{Dir: root, Spec: spec, Cleanup: cleanup}, nil
+}
+
+// AllowedSignersFor is the allowed_signers content admitting exactly
+// signingKey for git commit signatures, or empty when there is no key.
+//
+// THE PRINCIPAL IS "*" because the question the file answers is "was this
+// signed by THE key", not "by whom": the attempt has one key, and the
+// author's address is already stated by the commit itself.
+func AllowedSignersFor(signingKey string) string {
+	key := strings.TrimSpace(signingKey)
+	if key == "" {
+		return ""
+	}
+	return `* namespaces="git" ` + key + "\n"
 }
 
 // WorkspaceSpecMounts are the read-only mounts a container needs to act on a

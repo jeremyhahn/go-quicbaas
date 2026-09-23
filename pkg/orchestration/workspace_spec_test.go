@@ -365,6 +365,63 @@ func TestMaterializeWorkspaceSpec_HTTPSWritesNoKnownHosts(t *testing.T) {
 	}
 }
 
+// TestMaterializeWorkspaceSpec_ASigningKeyWritesTheAllowedSigners: the file
+// admits exactly the attempt's key for git signatures, read-only, and the
+// spec names it.
+func TestMaterializeWorkspaceSpec_ASigningKeyWritesTheAllowedSigners(t *testing.T) {
+	t.Parallel()
+	spec, err := NewWorkspaceSpec(workspaceProject(), WorkspaceBranchPlan{Name: "issue/7", Base: "main", Create: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.SigningKey = "ssh-ed25519 AAAAkey agent"
+	ws, err := MaterializeWorkspaceSpec(spec, nil)
+	if err != nil {
+		t.Fatalf("MaterializeWorkspaceSpec: %v", err)
+	}
+	t.Cleanup(ws.Cleanup)
+	file := filepath.Join(ws.Dir, WorkspaceAllowedSignersFile)
+	content, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("allowed_signers: %v", err)
+	}
+	if string(content) != `* namespaces="git" ssh-ed25519 AAAAkey agent`+"\n" {
+		t.Fatalf("allowed_signers = %q", content)
+	}
+	info, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != workspaceSpecFileMode {
+		t.Fatalf("mode = %v, want %v", info.Mode().Perm(), workspaceSpecFileMode)
+	}
+	if ws.Spec.AllowedSignersFile != WorkspaceAllowedSignersFile {
+		t.Fatalf("spec names %q", ws.Spec.AllowedSignersFile)
+	}
+}
+
+// TestMaterializeWorkspaceSpec_NoSigningKeyWritesNoAllowedSigners: an attempt
+// that signs nothing gets no file, and a stale name in the spec is cleared.
+func TestMaterializeWorkspaceSpec_NoSigningKeyWritesNoAllowedSigners(t *testing.T) {
+	t.Parallel()
+	spec, err := NewWorkspaceSpec(workspaceProject(), WorkspaceBranchPlan{Name: "issue/7", Base: "main", Create: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.AllowedSignersFile = "stale"
+	ws, err := MaterializeWorkspaceSpec(spec, nil)
+	if err != nil {
+		t.Fatalf("MaterializeWorkspaceSpec: %v", err)
+	}
+	t.Cleanup(ws.Cleanup)
+	if _, err := os.Stat(filepath.Join(ws.Dir, WorkspaceAllowedSignersFile)); !os.IsNotExist(err) {
+		t.Fatalf("an attempt that signs nothing writes no allowed_signers: %v", err)
+	}
+	if ws.Spec.AllowedSignersFile != "" {
+		t.Fatalf("the spec names %q", ws.Spec.AllowedSignersFile)
+	}
+}
+
 // =============================================================================
 // Mounts and the spawn request
 // =============================================================================

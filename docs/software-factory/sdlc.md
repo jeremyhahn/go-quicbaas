@@ -384,10 +384,21 @@ CONTAINER calls its checkout (`/workspace/<project name>`, recorded on the
 | step | command |
 |---|---|
 | is there anything uncommitted | `git status --porcelain` |
-| stage and commit | `git add --all`, then `git -c user.name=… -c user.email=… -c gpg.format=ssh -c user.signingkey=key::<public half> -c commit.gpgsign=true commit -m …` |
+| stage and commit | `git add --all`; `git diff --cached --quiet` (exit 1 = staged, 0 = nothing, anything else refused); then `git -c user.name=… -c user.email=… -c gpg.format=ssh -c user.signingkey=key::<public half> -c commit.gpgsign=true commit -m …` only when something is staged |
 | is there anything to publish | `git rev-list --count origin/<base>..HEAD` |
+| is every outgoing commit signed by the attempt's key | `git -c gpg.ssh.allowedSignersFile=/run/quicbaas/workspace/allowed_signers log --format='%H %G? %GF' origin/<base>..refs/heads/<branch>`, run inside `Push` over the exact ref being pushed (not `HEAD`, which a worker can point at a signed ancestor), so the teardown publish is checked too; a commit passes only with status `G` **and** a signer fingerprint equal to the attempt's SSH key fingerprint (a trusted OpenPGP signature reports `G` too), otherwise `UnsignedCommitError` and nothing is pushed |
 | publish | `git [-c credential.helper=…] push origin <branch>[:<target>]` |
-| what landed | `git rev-parse HEAD` |
+| what landed | `git rev-parse refs/heads/<branch>` |
+
+**The worker's own commits are signed and checked.** When the attempt
+signs, the checkout writes `gpg.format=ssh`, `user.signingkey=key::<public
+half>`, `commit.gpgsign=true` and `gpg.ssh.allowedSignersFile` into the
+repository, so a worker that commits on its own signs with the attempt's key.
+The daemon writes `allowed_signers` beside the spec, admitting exactly that
+key. Before any push the publisher checks every outgoing commit against it, so
+a commit the worker made unsigned, or with another key, is refused
+(`ErrUnsignedCommit`) rather than published. It is never re-signed, because
+re-signing rewrites the branch (go-quicbaas#1048).
 
 Three properties the argument vectors carry deliberately:
 
