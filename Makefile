@@ -67,6 +67,16 @@ GOVULNCHECK_VERSION := v1.7.0
 # behaviour changes under an image rebuild is a change nobody authored.
 SERENA_VERSION := v1.7.0
 GOPLS_VERSION := v0.23.0
+# Workflow linting. The fleet's `make lint` includes actionlint (devops.md
+# lint row), and actionlint delegates every SC* rule to shellcheck -- with
+# shellcheck absent it SILENTLY skips them and still exits 0, so a project's
+# target fails closed without it. The worker image carries both at these pins
+# (go-quicbaas#1039). shellcheck publishes no checksum file, so the SHA-256 of
+# each release tarball is pinned beside the version: change all three together.
+ACTIONLINT_VERSION := v1.7.12
+SHELLCHECK_VERSION := v0.11.0
+SHELLCHECK_SHA256_X86_64 := 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+SHELLCHECK_SHA256_AARCH64 := 12b331c1d2db6b9eb13cfca64306b1b157a86eb69db83023e261eaa7e7c14588
 
 # Benchmark configuration
 BENCHTIME ?= 100ms
@@ -3072,9 +3082,11 @@ endif
 #
 # IT IS BUILT WITH THIS REPOSITORY'S TOOL PINS. The binding's verification
 # commands are the project's own `make lint`, `make check` and `make security`,
-# which need golangci-lint, gosec and govulncheck; the build passes
-# GOLANGCI_VERSION / GOSEC_VERSION / GOVULNCHECK_VERSION so the worker reaches
-# the same verdict as CI rather than a differently-versioned one (#772).
+# which need golangci-lint, gosec and govulncheck -- and, where `make lint`
+# lints workflows, actionlint and shellcheck (#1039); the build passes
+# GOLANGCI_VERSION / GOSEC_VERSION / GOVULNCHECK_VERSION / ACTIONLINT_VERSION /
+# SHELLCHECK_VERSION so the worker reaches the same verdict as CI rather than a
+# differently-versioned one (#772).
 WORKER_IMAGE_DIR := deployments/agents/software-factory-worker
 WORKER_IMAGE_UID ?= $(shell id -u)
 WORKER_IMAGE_GID ?= $(shell id -g)
@@ -3087,6 +3099,10 @@ build-worker-image: ## Build the Software Factory worker image (quicbaas-softwar
 		--build-arg GOLANGCI_VERSION=$(GOLANGCI_VERSION) \
 		--build-arg GOSEC_VERSION=$(GOSEC_VERSION) \
 		--build-arg GOVULNCHECK_VERSION=$(GOVULNCHECK_VERSION) \
+		--build-arg ACTIONLINT_VERSION=$(ACTIONLINT_VERSION) \
+		--build-arg SHELLCHECK_VERSION=$(SHELLCHECK_VERSION) \
+		--build-arg SHELLCHECK_SHA256_X86_64=$(SHELLCHECK_SHA256_X86_64) \
+		--build-arg SHELLCHECK_SHA256_AARCH64=$(SHELLCHECK_SHA256_AARCH64) \
 		--build-arg GOPLS_VERSION=$(GOPLS_VERSION) \
 		--build-arg SERENA_VERSION=$(SERENA_VERSION) \
 		--build-arg AGENT_UID=$(WORKER_IMAGE_UID) \
@@ -3207,6 +3223,31 @@ print(\"go language server:\", type(ls).__name__)"' \
 				echo "golangci-lint passed a package with an unused function -- it is not linting"; exit 1; \
 			fi'
 	@echo "$(GREEN)✓ the worker image lints ($(GOLANGCI_VERSION)) and carries gosec + govulncheck$(NC)"
+	@# WORKFLOW LINTING (#1039). A project whose `make lint` runs actionlint
+	@# fails closed when shellcheck is missing, because actionlint would
+	@# otherwise skip every SC* rule and still exit 0. So the probe proves the
+	@# PAIR works, not that two binaries exist: a workflow whose run step
+	@# word-splits an unquoted command substitution must be REPORTED as SC2046,
+	@# which only happens when actionlint actually reaches shellcheck. Both are
+	@# checked at the pinned versions, --network none.
+	@echo "$(BLUE)Checking the worker image can lint GitHub Actions workflows...$(NC)"
+	@$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp --network none \
+		$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
+		sh -lec 'actionlint --version; shellcheck --version; \
+			actionlint --version | head -1 | grep -qx "$(ACTIONLINT_VERSION)" \
+				|| { echo "actionlint is not the pinned $(ACTIONLINT_VERSION)"; exit 1; }; \
+			shellcheck --version | grep -qx "version: $(SHELLCHECK_VERSION:v%=%)" \
+				|| { echo "shellcheck is not the pinned $(SHELLCHECK_VERSION)"; exit 1; }; \
+			mkdir -p /tmp/wfprobe/.github/workflows; cd /tmp/wfprobe; \
+			printf "%s\n" "on: push" "jobs:" "  probe:" "    runs-on: ubuntu-latest" "    steps:" "      - run: echo ok" > .github/workflows/ok.yml; \
+			actionlint .github/workflows/ok.yml; \
+			printf "%s\n" "on: push" "jobs:" "  probe:" "    runs-on: ubuntu-latest" "    steps:" "      - run: ls \$$(pwd)" > .github/workflows/bad.yml; \
+			if out="$$(actionlint .github/workflows/bad.yml 2>&1)"; then \
+				echo "actionlint passed a workflow with an SC2046 word-split -- shellcheck is not being reached"; exit 1; \
+			fi; \
+			echo "$$out" | grep -q SC2046 \
+				|| { echo "actionlint failed without reporting SC2046: $$out"; exit 1; }'
+	@echo "$(GREEN)✓ the worker image lints workflows (actionlint $(ACTIONLINT_VERSION) + shellcheck $(SHELLCHECK_VERSION))$(NC)"
 	@# THE CONTAINER IS THE BOUNDARY, so the worker has full control inside it
 	@# (#927). A worker that cannot install a package cannot finish a task whose
 	@# toolchain the image does not carry, and it does not fail usefully -- it

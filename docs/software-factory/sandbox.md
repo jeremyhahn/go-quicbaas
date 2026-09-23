@@ -179,7 +179,12 @@ because those commands run inside this container too
 `make check` and `make security` are made of. An image missing them does not
 fail visibly: `make lint` exits non-zero with *"golangci-lint is required but
 not installed"* on a tree that is perfectly clean, so every review round fails
-and every Go job escalates to a human (go-quicbaas#772).
+and every Go job escalates to a human (go-quicbaas#772). Where `make lint`
+also lints workflows it needs **`actionlint`** and **`shellcheck`**: without
+shellcheck actionlint silently skips every SC* rule, so the fleet's target
+fails closed and verification failed on a clean tree (go-quicbaas#1039). The
+image carries both at the Makefile's `ACTIONLINT_VERSION` /
+`SHELLCHECK_VERSION`.
 
 **And the build's own tools, GNU where the Makefile assumes GNU.** A project
 that embeds a frontend copies it with `rsync`; its Makefile checks use

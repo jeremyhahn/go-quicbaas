@@ -46,6 +46,15 @@
 #                  Makefile's own GOLANGCI_VERSION / GOSEC_VERSION /
 #                  GOVULNCHECK_VERSION, so the image cannot drift from the
 #                  verdict CI reaches with the same pins.
+#   actionlint     the fleet's `make lint` lints GitHub Actions workflows
+#   shellcheck     (devops.md: `make lint` = gofmt, vet, golangci-lint,
+#                  actionlint), and actionlint delegates every SC* rule to
+#                  shellcheck. With shellcheck absent actionlint SILENTLY skips
+#                  those rules and still exits 0, so a project's target fails
+#                  closed without it — and without either tool `make lint`
+#                  failed verification in this image on a tree CI passed
+#                  (go-quicbaas#1039, go-blockstore). Pinned the same way, from
+#                  the Makefile's ACTIONLINT_VERSION / SHELLCHECK_VERSION.
 #
 #                  TRIVY IS DELIBERATELY ABSENT. It is the fourth member of
 #                  `make security`, but it is an image/filesystem scanner whose
@@ -94,6 +103,7 @@ ARG GO_VERSION=1.27.0
 ARG GOLANGCI_VERSION
 ARG GOSEC_VERSION
 ARG GOVULNCHECK_VERSION
+ARG ACTIONLINT_VERSION
 
 FROM golang:${GO_VERSION}-alpine AS toolchain
 
@@ -104,6 +114,7 @@ FROM golang:${GO_VERSION}-alpine AS toolchain
 ARG GOLANGCI_VERSION
 ARG GOSEC_VERSION
 ARG GOVULNCHECK_VERSION
+ARG ACTIONLINT_VERSION
 
 # gopls is not a verdict tool — it is SERENA'S GO LANGUAGE SERVER, and serena is
 # how an agent reads this codebase without burning its context on whole files.
@@ -114,8 +125,8 @@ ARG GOPLS_VERSION
 ENV CGO_ENABLED=0 GOBIN=/toolchain/bin
 
 RUN set -eux; \
-    if [ -z "${GOLANGCI_VERSION:-}" ] || [ -z "${GOSEC_VERSION:-}" ] || [ -z "${GOVULNCHECK_VERSION:-}" ] || [ -z "${GOPLS_VERSION:-}" ]; then \
-        echo "GOLANGCI_VERSION, GOSEC_VERSION, GOVULNCHECK_VERSION and GOPLS_VERSION are required build arguments." >&2; \
+    if [ -z "${GOLANGCI_VERSION:-}" ] || [ -z "${GOSEC_VERSION:-}" ] || [ -z "${GOVULNCHECK_VERSION:-}" ] || [ -z "${ACTIONLINT_VERSION:-}" ] || [ -z "${GOPLS_VERSION:-}" ]; then \
+        echo "GOLANGCI_VERSION, GOSEC_VERSION, GOVULNCHECK_VERSION, ACTIONLINT_VERSION and GOPLS_VERSION are required build arguments." >&2; \
         echo "Build with 'make build-worker-image', which passes the Makefile's pins." >&2; \
         exit 1; \
     fi; \
@@ -126,6 +137,7 @@ RUN set -eux; \
     # avoids the same way.
     go install -ldflags "-X main.Version=${GOSEC_VERSION}" "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}"; \
     go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"; \
+    go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"; \
     go install "golang.org/x/tools/gopls@${GOPLS_VERSION}"
 
 FROM alpine:3.21
@@ -165,6 +177,38 @@ RUN apk add --no-cache \
 # go-luks2 delivery failed `make test` on six TestConformance_* cases however
 # correct the change was (go-quicbaas #1003, go-luks2 #12 and #114).
 #
+# SHELLCHECK, actionlint's SC* backend (see the header). It is a Haskell
+# program, so unlike the Go tools it cannot be `go install`ed; the upstream
+# release binary is statically linked and runs on musl unchanged. The version
+# and the SHA-256 of each architecture's tarball are the Makefile's
+# (SHELLCHECK_VERSION, SHELLCHECK_SHA256_*), passed in by `make
+# build-worker-image` with no default here for the same reason as the Go pins:
+# a default is a second copy that drifts. The digest is checked because the
+# project publishes no checksum file to check it against. It lands in
+# /usr/local/bin, which survives the login shell's PATH reset below.
+ARG SHELLCHECK_VERSION
+ARG SHELLCHECK_SHA256_X86_64
+ARG SHELLCHECK_SHA256_AARCH64
+RUN set -eux; \
+    if [ -z "${SHELLCHECK_VERSION:-}" ] || [ -z "${SHELLCHECK_SHA256_X86_64:-}" ] || [ -z "${SHELLCHECK_SHA256_AARCH64:-}" ]; then \
+        echo "SHELLCHECK_VERSION, SHELLCHECK_SHA256_X86_64 and SHELLCHECK_SHA256_AARCH64 are required build arguments." >&2; \
+        echo "Build with 'make build-worker-image', which passes the Makefile's pins." >&2; \
+        exit 1; \
+    fi; \
+    arch="$(uname -m)"; \
+    case "$arch" in \
+        x86_64) sum="$SHELLCHECK_SHA256_X86_64" ;; \
+        aarch64) sum="$SHELLCHECK_SHA256_AARCH64" ;; \
+        *) echo "no pinned shellcheck release for $arch" >&2; exit 1 ;; \
+    esac; \
+    tarball="shellcheck-${SHELLCHECK_VERSION}.linux.${arch}.tar.xz"; \
+    curl -fsSL -o "/tmp/$tarball" "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/$tarball"; \
+    echo "$sum  /tmp/$tarball" | sha256sum -c -; \
+    tar -xJf "/tmp/$tarball" -C /tmp; \
+    install -m 0755 "/tmp/shellcheck-${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck; \
+    rm -rf "/tmp/$tarball" "/tmp/shellcheck-${SHELLCHECK_VERSION}"; \
+    shellcheck --version
+
 # The agents themselves, exactly as deployments/agents/claude-code and
 # deployments/agents/codex install them.
 #
