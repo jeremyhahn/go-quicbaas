@@ -101,9 +101,9 @@ func TestRecordTurnUsageWritesTheLedgerAndTheCounters(t *testing.T) {
 	if rollup.TotalTokens != 17 {
 		t.Errorf("ledger total = %d, want 17; the two records must not contradict each other", rollup.TotalTokens)
 	}
-	if rollup.InputTokens != 12 || rollup.OutputTokens != 5 {
-		t.Errorf("input/output = %d/%d, want 12/5 — cache tokens are prompt tokens, not a third category",
-			rollup.InputTokens, rollup.OutputTokens)
+	if rollup.InputTokens != 10 || rollup.OutputTokens != 5 || rollup.CacheReadTokens != 2 {
+		t.Errorf("input/output/cache-read = %d/%d/%d, want 10/5/2 — a cache read prices apart from a fresh prompt token",
+			rollup.InputTokens, rollup.OutputTokens, rollup.CacheReadTokens)
 	}
 	if rollup.Successes != 1 {
 		t.Errorf("successes = %d, want 1", rollup.Successes)
@@ -288,29 +288,51 @@ func TestFailedTurnUsageReportsNothingWhenNothingWasReported(t *testing.T) {
 	}
 }
 
-func TestTokenUsageSplitsPromptFromGeneration(t *testing.T) {
-	usage := &TokenUsage{
-		InputTokens: 10, OutputTokens: 5,
-		CacheCreationInputTokens: 3, CacheReadInputTokens: 2,
+// TestRecordTurnUsageKeepsEveryDimensionApart is the go-quicbaas#1058
+// regression: the cache dimensions used to be folded into InputTokens, which
+// left a cached turn impossible to price. Each dimension now has its own field
+// and the total is unchanged, so no quota window moves.
+func TestRecordTurnUsageKeepsEveryDimensionApart(t *testing.T) {
+	svc, ledger, _ := newConsumptionRecorder(t)
+	ctx := ContextWithTenant(context.Background(), "t1")
+	pooledSession(svc, "sess-1", "t1", "proj-1", "a1")
+
+	usage := &TokenUsage{InputTokens: 10, OutputTokens: 5, CacheCreationInputTokens: 3, CacheReadInputTokens: 2}
+	svc.recordTurnUsage(ctx, completedTurn{
+		turnID: "turn-1", sessionID: "sess-1", projectID: "proj-1", engine: "claude", model: "m",
+	}, usage)
+
+	rollup, err := ledger.Rollup(ctx, ConsumptionScope{TenantID: "t1"})
+	if err != nil {
+		t.Fatalf("Rollup: %v", err)
 	}
-	if got := usage.consumptionInput(); got != 15 {
-		t.Errorf("consumptionInput = %d, want 15 (prompt plus both cache dimensions)", got)
+	if rollup.InputTokens != 10 || rollup.OutputTokens != 5 || rollup.CacheWriteTokens != 3 || rollup.CacheReadTokens != 2 {
+		t.Fatalf("rollup = in %d out %d cache-write %d cache-read %d, want 10/5/3/2",
+			rollup.InputTokens, rollup.OutputTokens, rollup.CacheWriteTokens, rollup.CacheReadTokens)
 	}
-	if got := usage.consumptionOutput(); got != 5 {
-		t.Errorf("consumptionOutput = %d, want 5", got)
-	}
-	// The split must total what every other reader sees, or the cap and the
-	// dashboard would disagree about the same turn.
-	if usage.consumptionInput()+usage.consumptionOutput() != usage.Total() {
-		t.Errorf("split total = %d, want Total() = %d",
-			usage.consumptionInput()+usage.consumptionOutput(), usage.Total())
+	if rollup.TotalTokens != usage.Total() {
+		t.Fatalf("ledger total = %d, want Total() = %d — the cap and the dashboard must agree", rollup.TotalTokens, usage.Total())
 	}
 }
 
-func TestTokenUsageSplitToleratesNoAccounting(t *testing.T) {
-	var usage *TokenUsage
-	if usage.consumptionInput() != 0 || usage.consumptionOutput() != 0 {
-		t.Error("a nil usage did not split to zero; a caller would have to nil-check before recording")
+// TestRecordFailedTurnWithNoAccountingRecordsNoTokens asserts a nil usage — a
+// backend that reported nothing — still records the occurrence, with zero on
+// every dimension rather than a panic or an invented figure.
+func TestRecordFailedTurnWithNoAccountingRecordsNoTokens(t *testing.T) {
+	svc, ledger, _ := newConsumptionRecorder(t)
+	ctx := ContextWithTenant(context.Background(), "t1")
+	pooledSession(svc, "sess-1", "t1", "proj-1", "a1")
+
+	svc.recordFailedTurn(ctx, completedTurn{
+		turnID: "turn-1", sessionID: "sess-1", projectID: "proj-1", engine: "claude", model: "m",
+	}, nil)
+
+	rollup, err := ledger.Rollup(ctx, ConsumptionScope{TenantID: "t1"})
+	if err != nil {
+		t.Fatalf("Rollup: %v", err)
+	}
+	if rollup.Entries != 1 || rollup.TotalTokens != 0 || rollup.CacheReadTokens != 0 || rollup.CacheWriteTokens != 0 {
+		t.Fatalf("rollup = %+v, want one entry with no tokens", rollup)
 	}
 }
 

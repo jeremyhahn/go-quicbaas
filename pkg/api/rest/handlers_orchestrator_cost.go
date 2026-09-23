@@ -79,7 +79,7 @@ func (s *Server) HandleOrchestratorCost(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	report, err := orchestration.ReadSpendReport(ctx, accessor.ConsumptionLedger(), accessor.AccountStore(), req)
+	report, err := orchestration.ReadSpendReport(ctx, orchestration.SpendSourcesOf(accessor), req)
 	if err != nil {
 		respondSpendError(w, r, err)
 		return

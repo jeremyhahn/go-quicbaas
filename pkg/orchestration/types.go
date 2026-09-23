@@ -114,6 +114,44 @@ type SessionPromptResult struct {
 	Content    []ContentBlock `json:"content"`
 	Model      string         `json:"model,omitempty"`
 	StopReason string         `json:"stopReason,omitempty"`
+
+	// Usage is the turn's token accounting, when the agent reports it. It is
+	// the ACP PromptResponse.usage object; opencode populates it.
+	Usage *ACPPromptUsage `json:"usage,omitempty"`
+}
+
+// ACPPromptUsage is the token accounting an ACP agent returns on a
+// session/prompt result.
+//
+// MEASURED, NOT ASSUMED. opencode 1.18 builds it from its own per-message
+// counts: inputTokens is the fresh prompt, the two cache counts are reported
+// apart from it, and thoughtTokens (reasoning) is reported apart from
+// outputTokens — totalTokens is the sum of all five.
+type ACPPromptUsage struct {
+	InputTokens       int64 `json:"inputTokens"`
+	OutputTokens      int64 `json:"outputTokens"`
+	ThoughtTokens     int64 `json:"thoughtTokens,omitempty"`
+	CachedReadTokens  int64 `json:"cachedReadTokens,omitempty"`
+	CachedWriteTokens int64 `json:"cachedWriteTokens,omitempty"`
+	TotalTokens       int64 `json:"totalTokens,omitempty"`
+}
+
+// TokenUsage maps the ACP accounting onto the orchestrator's. Reasoning
+// tokens are generated tokens and bill as output, so they are folded into
+// OutputTokens. A nil receiver maps to nil — "reported nothing" survives.
+func (u *ACPPromptUsage) TokenUsage() *TokenUsage {
+	if u == nil {
+		return nil
+	}
+	repaired := false
+	usage := &TokenUsage{
+		InputTokens:              nonNegative(u.InputTokens, &repaired),
+		OutputTokens:             nonNegative(u.OutputTokens, &repaired) + nonNegative(u.ThoughtTokens, &repaired),
+		CacheReadInputTokens:     nonNegative(u.CachedReadTokens, &repaired),
+		CacheCreationInputTokens: nonNegative(u.CachedWriteTokens, &repaired),
+	}
+	usage.malformed = repaired
+	return usage
 }
 
 // SessionCloseParams closes an ACP session.

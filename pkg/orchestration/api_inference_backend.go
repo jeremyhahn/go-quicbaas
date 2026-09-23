@@ -126,6 +126,7 @@ func (b *APIInferenceBackend) Prompt(ctx context.Context, req *PromptRequest) (*
 		}},
 		Model:      resp.Model,
 		StopReason: string(resp.FinishReason),
+		Usage:      countedUsage(int64(resp.Usage.PromptTokens), int64(resp.Usage.CompletionTokens)),
 	}, nil
 }
 

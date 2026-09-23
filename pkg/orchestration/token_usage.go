@@ -89,6 +89,22 @@ func (u *TokenUsage) normalize() bool {
 	return repaired
 }
 
+// nonNegative returns v, or zero when a producer reported a negative count,
+// recording the repair in *repaired.
+//
+// RAW DIMENSIONS ARE NORMALIZED ONE AT A TIME, BEFORE THEY ARE COMBINED. A sum
+// or difference computed first can hide a negative operand: output 50 plus
+// reasoning -50 is a clean-looking zero that drops valid usage, and input 100
+// minus cached -20 is a fresh prompt of 120 that was never sent. Repairing
+// after the arithmetic sees neither.
+func nonNegative(v int64, repaired *bool) int64 {
+	if v < 0 {
+		*repaired = true
+		return 0
+	}
+	return v
+}
+
 // UnmarshalJSON decodes an agent CLI's token accounting, repairing any negative
 // dimension as it arrives.
 //
@@ -155,35 +171,6 @@ func (u *TokenUsage) Total() int64 {
 // the repair belongs where the value enters.
 func (u *TokenUsage) Empty() bool {
 	return u.Total() == 0
-}
-
-// consumptionInput and consumptionOutput split a turn's counts the two ways
-// the consumption ledger prices them: everything charged as prompt (fresh
-// prompt tokens plus both cache dimensions) and everything charged as
-// generation.
-//
-// THE CACHE DIMENSIONS ARE INPUT, not a third category. A cache write and a
-// cache read are both prompt tokens the provider metered — priced differently
-// from each other and from a fresh prompt token, but never as output — and
-// dropping them would make the ledger's total smaller than Total(), so the
-// spend authority would cap an account against a number the counters
-// contradict.
-//
-// A nil receiver yields zero on both, so a caller need not nil-check before
-// recording a turn whose backend reported nothing.
-func (u *TokenUsage) consumptionInput() int64 {
-	if u == nil {
-		return 0
-	}
-	return u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
-}
-
-// consumptionOutput is the generated half; see consumptionInput.
-func (u *TokenUsage) consumptionOutput() int64 {
-	if u == nil {
-		return 0
-	}
-	return u.OutputTokens
 }
 
 // Add accumulates other into u and returns u, so a caller streaming several

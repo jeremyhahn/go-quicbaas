@@ -42,10 +42,12 @@ type agentWithLedger struct {
 	*mockAgentService
 	ledger   orchestration.ConsumptionLedger
 	accounts orchestration.AccountStore
+	projects orchestration.ProjectStore
 }
 
 func (a *agentWithLedger) ConsumptionLedger() orchestration.ConsumptionLedger { return a.ledger }
 func (a *agentWithLedger) AccountStore() orchestration.AccountStore           { return a.accounts }
+func (a *agentWithLedger) ProjectStore() orchestration.ProjectStore           { return a.projects }
 
 // costBase anchors the fixture. Fixed, for the reason every ledger fixture is:
 // the quota plane buckets by the hour.
@@ -115,6 +117,34 @@ func TestHandleOrchestratorCost_ReportsTenantSpend(t *testing.T) {
 	// The honesty rule: nothing prices a turn, so the cost is unmeasured and
 	// a renderer must show a dash rather than this zero. go-quicbaas#791.
 	assert.False(t, report.CostMeasured, "no production writer prices a turn")
+}
+
+// TestHandleOrchestratorCost_NamesProjects is the go-quicbaas#1058 regression
+// over REST: the By Project card listed bare project ids.
+func TestHandleOrchestratorCost_NamesProjects(t *testing.T) {
+	server, _, cleanup := setupMockServer(t)
+	defer cleanup()
+	ctx := context.Background()
+	ledger := orchestration.NewInMemoryConsumptionLedger()
+	seedCostFixture(t, ledger, qrdbsdk.SystemTenantID)
+	projects := orchestration.NewInMemoryProjectStore()
+	require.NoError(t, projects.Create(ctx, &orchestration.Project{
+		ID: "proj-1", TenantID: qrdbsdk.SystemTenantID, Name: "go-truststrap",
+	}))
+	server.service = &MockQuicBaaSWithAgent{
+		MockQuicBaaS: testutil.NewMockQuicBaaS(),
+		agentService: &agentWithLedger{mockAgentService: &mockAgentService{}, ledger: ledger, projects: projects},
+	}
+
+	w := httptest.NewRecorder()
+	server.HandleOrchestratorCost(w, httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/cost", nil))
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var report orchestration.SpendReport
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &report))
+	require.Len(t, report.Children, 1)
+	assert.Equal(t, "proj-1", report.Children[0].ID)
+	assert.Equal(t, "go-truststrap", report.Children[0].Name)
 }
 
 // TestHandleOrchestratorCost_DrillsDown asserts the scope narrows level by

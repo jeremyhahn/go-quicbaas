@@ -38,6 +38,7 @@ type ledgerFakeAgentService struct {
 
 	ledger   orchestration.ConsumptionLedger
 	accounts orchestration.AccountStore
+	projects orchestration.ProjectStore
 }
 
 // ConsumptionLedger implements orchestration.SpendLedgerAccessor.
@@ -47,6 +48,9 @@ func (f *ledgerFakeAgentService) ConsumptionLedger() orchestration.ConsumptionLe
 
 // AccountStore implements orchestration.SpendLedgerAccessor.
 func (f *ledgerFakeAgentService) AccountStore() orchestration.AccountStore { return f.accounts }
+
+// ProjectStore implements orchestration.SpendLedgerAccessor.
+func (f *ledgerFakeAgentService) ProjectStore() orchestration.ProjectStore { return f.projects }
 
 var _ orchestration.SpendLedgerAccessor = (*ledgerFakeAgentService)(nil)
 

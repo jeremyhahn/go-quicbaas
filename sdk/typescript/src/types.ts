@@ -1005,6 +1005,9 @@ export interface SpendChild {
   // sentinel — a job with no task. Real spend with no parent at this level,
   // to be labelled rather than shown as an entity named '-'.
   unattributed?: boolean;
+  // name is the child's human name where the level has one (a project),
+  // absent when unattributed or when the entity no longer exists.
+  name?: string;
   total_tokens: number;
 }
 
@@ -1034,9 +1037,17 @@ export interface GetSpendReportResponse {
   session_id?: string;
   round?: number;
 
+  // project_name is the name of the project the scope addresses, when it
+  // still exists.
+  project_name?: string;
+
   entries: number;
+  // input_tokens is the fresh prompt; the two cache dimensions are prompt
+  // tokens served from and written into the provider's cache.
   input_tokens: number;
   output_tokens: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
   total_tokens: number;
 
   // cost_micros is the summed charge in millionths of a currency unit, and

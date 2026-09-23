@@ -57,7 +57,7 @@ func (s *OrchestratorServer) GetSpendReport(ctx context.Context, req *pb.GetSpen
 	// which can only ever refuse more strictly and never broaden access.
 	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
 
-	report, err := orchestration.ReadSpendReport(tenantCtx, provider.ConsumptionLedger(), provider.AccountStore(),
+	report, err := orchestration.ReadSpendReport(tenantCtx, orchestration.SpendSourcesOf(provider),
 		&orchestration.SpendReportRequest{
 			TenantID:  req.GetTenantId(),
 			ProjectID: req.GetProjectId(),
@@ -99,24 +99,27 @@ func spendStatusError(err error) error {
 // to parse JSON out of a protobuf has no schema for the thing it is reading.
 func spendReportToProto(report *orchestration.SpendReport) *pb.GetSpendReportResponse {
 	out := &pb.GetSpendReportResponse{
-		Level:        string(report.Level),
-		TenantId:     report.TenantID,
-		ProjectId:    report.ProjectID,
-		TaskId:       report.TaskID,
-		JobId:        report.JobID,
-		SessionId:    report.SessionID,
-		Round:        int32(report.Round),
-		Entries:      int32(report.Entries),
-		InputTokens:  report.InputTokens,
-		OutputTokens: report.OutputTokens,
-		TotalTokens:  report.TotalTokens,
-		CostMicros:   report.CostMicros,
-		CostMeasured: report.CostMeasured,
-		Successes:    int32(report.Successes),
-		Failures:     int32(report.Failures),
-		FirstAt:      spendTimestamp(report.FirstAt),
-		LastAt:       spendTimestamp(report.LastAt),
-		ChildLevel:   string(report.ChildLevel),
+		Level:            string(report.Level),
+		TenantId:         report.TenantID,
+		ProjectId:        report.ProjectID,
+		TaskId:           report.TaskID,
+		JobId:            report.JobID,
+		SessionId:        report.SessionID,
+		Round:            int32(report.Round),
+		Entries:          int32(report.Entries),
+		InputTokens:      report.InputTokens,
+		OutputTokens:     report.OutputTokens,
+		TotalTokens:      report.TotalTokens,
+		ProjectName:      report.ProjectName,
+		CacheReadTokens:  report.CacheReadTokens,
+		CacheWriteTokens: report.CacheWriteTokens,
+		CostMicros:       report.CostMicros,
+		CostMeasured:     report.CostMeasured,
+		Successes:        int32(report.Successes),
+		Failures:         int32(report.Failures),
+		FirstAt:          spendTimestamp(report.FirstAt),
+		LastAt:           spendTimestamp(report.LastAt),
+		ChildLevel:       string(report.ChildLevel),
 	}
 	for _, account := range report.Accounts {
 		out.Accounts = append(out.Accounts, spendAccountToProto(account))
@@ -133,6 +136,7 @@ func spendReportToProto(report *orchestration.SpendReport) *pb.GetSpendReportRes
 			Id:           child.ID,
 			Level:        string(child.Level),
 			Unattributed: child.Unattributed,
+			Name:         child.Name,
 			TotalTokens:  child.TotalTokens,
 		})
 	}

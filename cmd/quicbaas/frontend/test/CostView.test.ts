@@ -175,6 +175,27 @@ describe('CostView', () => {
     expect(await screen.findByText('task-1')).toBeTruthy();
   });
 
+  // go-quicbaas#1058: the By Project card listed bare project ids.
+  it('names project rows and the breadcrumb, and drills by the id', async () => {
+    getSpendReport.mockResolvedValue({
+      ...tenantReport,
+      children: [{ id: 'proj-1', level: 'project', name: 'go-truststrap', total_tokens: 150 }],
+    });
+    render(CostView);
+    const row = await screen.findByText('go-truststrap');
+    expect(screen.queryByText('proj-1')).toBeNull();
+    getSpendReport.mockResolvedValue({ ...projectReport, project_name: 'go-truststrap' });
+
+    await fireEvent.click(row);
+
+    await waitFor(() => {
+      const last = getSpendReport.mock.calls[getSpendReport.mock.calls.length - 1]![0];
+      expect(last).toMatchObject({ tenant_id: 'acme', project_id: 'proj-1' });
+    });
+    // The breadcrumb names the project it opened.
+    expect(await screen.findByRole('button', { name: 'go-truststrap' })).toBeTruthy();
+  });
+
   it('drills into the unattributed bucket using the ledger sentinel', async () => {
     render(CostView);
     const row = await screen.findByText('No project');

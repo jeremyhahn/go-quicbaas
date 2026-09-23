@@ -620,6 +620,7 @@ export interface SpendChild {
     id?: string;
     level: SpendLevel;
     unattributed?: boolean;
+    name?: string;
     total_tokens: number;
 }
 export interface GetSpendReportRequest {
@@ -639,9 +640,12 @@ export interface GetSpendReportResponse {
     job_id?: string;
     session_id?: string;
     round?: number;
+    project_name?: string;
     entries: number;
     input_tokens: number;
     output_tokens: number;
+    cache_read_tokens?: number;
+    cache_write_tokens?: number;
     total_tokens: number;
     cost_micros: number;
     cost_measured: boolean;

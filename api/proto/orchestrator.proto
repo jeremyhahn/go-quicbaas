@@ -1431,6 +1431,9 @@ message SpendChild {
     // level, to be labelled rather than shown as an entity named "-".
     bool unattributed = 3;
     int64 total_tokens = 4;
+    // name is the child's human name where the level has one (a project),
+    // empty when unattributed or when the entity no longer exists.
+    string name = 5;
 }
 
 // GetSpendReportResponse is one scope's consumption and its drill-down.
@@ -1470,6 +1473,15 @@ message GetSpendReportResponse {
     // level where there is nothing below to attribute to.
     string child_level = 20;
     repeated SpendChild children = 21;
+
+    // project_name is the name of the project the scope addresses, when it
+    // still exists.
+    string project_name = 22;
+    // input_tokens is the fresh prompt; these are the prompt tokens served
+    // from and written into the provider's cache, reported apart because
+    // they price differently.
+    int64 cache_read_tokens = 23;
+    int64 cache_write_tokens = 24;
 }
 
 // =============================================================================

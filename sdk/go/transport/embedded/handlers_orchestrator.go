@@ -243,7 +243,7 @@ func handleOrchestratorGetSpendReport(ctx context.Context, svc service.QuicBaaS,
 	// strictly and never broaden access.
 	tenantCtx := orchestration.ContextWithTenant(ctx, r.TenantID)
 
-	report, err := orchestration.ReadSpendReport(tenantCtx, accessor.ConsumptionLedger(), accessor.AccountStore(),
+	report, err := orchestration.ReadSpendReport(tenantCtx, orchestration.SpendSourcesOf(accessor),
 		&orchestration.SpendReportRequest{
 			TenantID:  r.TenantID,
 			ProjectID: r.ProjectID,
@@ -262,24 +262,27 @@ func handleOrchestratorGetSpendReport(ctx context.Context, svc service.QuicBaaS,
 // embeddedSpendReport converts the projected report into the SDK shape.
 func embeddedSpendReport(report *orchestration.SpendReport) *orchestratorSDK.GetSpendReportResponse {
 	out := &orchestratorSDK.GetSpendReportResponse{
-		Level:        orchestratorSDK.SpendLevel(report.Level),
-		TenantID:     report.TenantID,
-		ProjectID:    report.ProjectID,
-		TaskID:       report.TaskID,
-		JobID:        report.JobID,
-		SessionID:    report.SessionID,
-		Round:        report.Round,
-		Entries:      report.Entries,
-		InputTokens:  report.InputTokens,
-		OutputTokens: report.OutputTokens,
-		TotalTokens:  report.TotalTokens,
-		CostMicros:   report.CostMicros,
-		CostMeasured: report.CostMeasured,
-		Successes:    report.Successes,
-		Failures:     report.Failures,
-		FirstAt:      report.FirstAt,
-		LastAt:       report.LastAt,
-		ChildLevel:   orchestratorSDK.SpendLevel(report.ChildLevel),
+		Level:            orchestratorSDK.SpendLevel(report.Level),
+		TenantID:         report.TenantID,
+		ProjectID:        report.ProjectID,
+		TaskID:           report.TaskID,
+		JobID:            report.JobID,
+		SessionID:        report.SessionID,
+		Round:            report.Round,
+		Entries:          report.Entries,
+		InputTokens:      report.InputTokens,
+		OutputTokens:     report.OutputTokens,
+		TotalTokens:      report.TotalTokens,
+		ProjectName:      report.ProjectName,
+		CacheReadTokens:  report.CacheReadTokens,
+		CacheWriteTokens: report.CacheWriteTokens,
+		CostMicros:       report.CostMicros,
+		CostMeasured:     report.CostMeasured,
+		Successes:        report.Successes,
+		Failures:         report.Failures,
+		FirstAt:          report.FirstAt,
+		LastAt:           report.LastAt,
+		ChildLevel:       orchestratorSDK.SpendLevel(report.ChildLevel),
 	}
 	for _, account := range report.Accounts {
 		out.Accounts = append(out.Accounts, embeddedSpendAccount(account))
@@ -296,6 +299,7 @@ func embeddedSpendReport(report *orchestration.SpendReport) *orchestratorSDK.Get
 			ID:           child.ID,
 			Level:        orchestratorSDK.SpendLevel(child.Level),
 			Unattributed: child.Unattributed,
+			Name:         child.Name,
 			TotalTokens:  child.TotalTokens,
 		})
 	}

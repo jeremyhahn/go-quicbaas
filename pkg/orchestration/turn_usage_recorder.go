@@ -249,19 +249,27 @@ func (s *agentServiceImpl) recordConsumption(
 		return
 	}
 	entry := ConsumptionEntry{
-		EntryID:      turn.turnID,
-		TenantID:     StorageTenant(ctx),
-		ProjectID:    projectID,
-		TaskID:       attribution.TaskID,
-		JobID:        attribution.JobID,
-		SessionID:    turn.sessionID,
-		AccountID:    accountID,
-		Engine:       turn.engine,
-		Model:        turn.model,
-		Outcome:      outcome,
-		InputTokens:  usage.consumptionInput(),
-		OutputTokens: usage.consumptionOutput(),
-		OccurredAt:   time.Now().UTC(),
+		EntryID:    turn.turnID,
+		TenantID:   StorageTenant(ctx),
+		ProjectID:  projectID,
+		TaskID:     attribution.TaskID,
+		JobID:      attribution.JobID,
+		SessionID:  turn.sessionID,
+		AccountID:  accountID,
+		Engine:     turn.engine,
+		Model:      turn.model,
+		Outcome:    outcome,
+		OccurredAt: time.Now().UTC(),
+	}
+	// Each dimension to its own field: the cache counts price apart from a
+	// fresh prompt, so folding them into InputTokens made a cached turn
+	// unpriceable. A nil usage — a backend that reported nothing — records
+	// the occurrence with no tokens.
+	if usage != nil {
+		entry.InputTokens = usage.InputTokens
+		entry.OutputTokens = usage.OutputTokens
+		entry.CacheReadTokens = usage.CacheReadInputTokens
+		entry.CacheWriteTokens = usage.CacheCreationInputTokens
 	}
 	if err := s.ledger.Record(ctx, entry); err != nil {
 		s.logger.Warnf(

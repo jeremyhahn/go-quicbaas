@@ -419,8 +419,11 @@ type SpendChild struct {
 	// Unattributed marks the subtree the ledger files under its no-value
 	// sentinel — a job with no task. Real spend with no parent at this
 	// level, to be labelled rather than shown as an entity named "-".
-	Unattributed bool  `json:"unattributed,omitempty"`
-	TotalTokens  int64 `json:"total_tokens"`
+	Unattributed bool `json:"unattributed,omitempty"`
+	// Name is the child's human name where the level has one (a project),
+	// empty when unattributed or when the entity no longer exists.
+	Name        string `json:"name,omitempty"`
+	TotalTokens int64  `json:"total_tokens"`
 }
 
 // GetSpendReportRequest addresses one scope of the attribution chain.
@@ -451,10 +454,18 @@ type GetSpendReportResponse struct {
 	SessionID string     `json:"session_id,omitempty"`
 	Round     int        `json:"round,omitempty"`
 
-	Entries      int   `json:"entries"`
-	InputTokens  int64 `json:"input_tokens"`
-	OutputTokens int64 `json:"output_tokens"`
-	TotalTokens  int64 `json:"total_tokens"`
+	// ProjectName is the name of the project the scope addresses, when it
+	// still exists.
+	ProjectName string `json:"project_name,omitempty"`
+
+	Entries int `json:"entries"`
+	// InputTokens is the fresh prompt; the two cache dimensions are prompt
+	// tokens served from and written into the provider's cache.
+	InputTokens      int64 `json:"input_tokens"`
+	OutputTokens     int64 `json:"output_tokens"`
+	CacheReadTokens  int64 `json:"cache_read_tokens"`
+	CacheWriteTokens int64 `json:"cache_write_tokens"`
+	TotalTokens      int64 `json:"total_tokens"`
 
 	// CostMicros is the summed charge in millionths of a currency unit, and
 	// CostMeasured says whether ANY of it was priced.

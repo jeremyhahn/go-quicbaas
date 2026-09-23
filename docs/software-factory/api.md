@@ -394,7 +394,9 @@ GET /api/v1/orchestrator/cost
 
 ```json
 {"level": "project", "tenant_id": "acme", "project_id": "p1",
- "entries": 4, "input_tokens": 4000, "output_tokens": 1200, "total_tokens": 5200,
+ "project_name": "go-truststrap",
+ "entries": 4, "input_tokens": 4000, "output_tokens": 1200,
+ "cache_read_tokens": 0, "cache_write_tokens": 0, "total_tokens": 5200,
  "cost_micros": 0, "cost_measured": false,
  "successes": 4, "failures": 0,
  "child_level": "task",
@@ -414,7 +416,10 @@ history.
 in this tree prices a turn, so it is false on every production report and a
 client MUST render a dash rather than the zero — see
 [cost-enforcement.md](cost-enforcement.md#what-the-report-refuses-to-claim)
-and go-quicbaas#791. `policy_status` likewise distinguishes an account with no
+and go-quicbaas#791. A drill-down row at the project level carries the project's `name`, and a
+report scoped to a project carries `project_name`; both are absent for a
+project that no longer exists, whose spend stays under its id.
+`policy_status` likewise distinguishes an account with no
 cap (`none`) from one this deployment could not read (`unknown`). A deployment
 recording no consumption answers `503`, not an empty report.
 

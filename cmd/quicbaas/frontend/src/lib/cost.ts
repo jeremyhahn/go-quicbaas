@@ -180,10 +180,21 @@ function trimFloat(value: number): string {
  * The ledger files spend with no parent at a level — a job started outside any
  * task — under a sentinel. It must read as an absence, never as an entity
  * whose identifier is a dash.
+ *
+ * A row the server could NAME reads as its name: the By Project card listed
+ * bare project ids, which nobody reading the page can map back to a
+ * repository (go-quicbaas#1058). A project that no longer exists keeps its
+ * spend under its id, so the id is the fallback.
  */
 export function childLabel(child: SpendChild): string {
   if (child.unattributed === true) return `No ${child.level}`;
-  return child.id ?? '';
+  const name = (child.name ?? '').trim();
+  return name !== '' ? name : (child.id ?? '');
+}
+
+/** childIsNamed says whether a row renders a name rather than an identifier. */
+export function childIsNamed(child: SpendChild): boolean {
+  return child.unattributed !== true && (child.name ?? '').trim() !== '';
 }
 
 /**
@@ -208,9 +219,10 @@ export function childIsDrillable(child: SpendChild): boolean {
  * no-value sentinel to the absence it stands for. Printing the raw '-' as a
  * project name is the exact lie this file exists to prevent.
  */
-export function scopeLabel(level: SpendLevel | string, value: string): string {
+export function scopeLabel(level: SpendLevel | string, value: string, name = ''): string {
   if (value === SPEND_UNATTRIBUTED) return `No ${level}`;
-  return value;
+  const trimmed = name.trim();
+  return trimmed !== '' ? trimmed : value;
 }
 
 /**
@@ -255,4 +267,15 @@ export function spendErrorMessage(err: unknown, subject: string): string {
     default:
       return `Could not load ${subject}: ${errorText(err)}`;
   }
+}
+
+/**
+ * reportProjectName is the breadcrumb name an accepted spend report carries for
+ * the project in scope: the report's own `project_name`, or empty when it has
+ * none. Every accepted report replaces the previous name, so a report that
+ * carries no name (a tenant-level scope, another tenant, a deleted project)
+ * clears it rather than leaving the last project's name on screen.
+ */
+export function reportProjectName(report: Pick<GetSpendReportResponse, 'project_name'>): string {
+  return report.project_name ?? '';
 }

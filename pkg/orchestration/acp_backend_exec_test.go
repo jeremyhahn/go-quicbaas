@@ -45,13 +45,46 @@ func TestParseExecEvents_RealCodexStream(t *testing.T) {
 	if turn.usage == nil {
 		t.Fatal("usage = nil; the turn.completed event carried accounting and it must be attributed")
 	}
-	if turn.usage.InputTokens != 15233 || turn.usage.OutputTokens != 5 {
-		t.Errorf("usage in/out = %d/%d, want 15233/5", turn.usage.InputTokens, turn.usage.OutputTokens)
+	// codex's input_tokens INCLUDES cached_input_tokens (OpenAI accounting),
+	// so the fresh prompt is 15233 − 12160. Carrying both whole counted every
+	// cached token twice and priced a cache hit as a fresh prompt token.
+	if turn.usage.InputTokens != 3073 || turn.usage.OutputTokens != 5 {
+		t.Errorf("usage in/out = %d/%d, want 3073/5", turn.usage.InputTokens, turn.usage.OutputTokens)
 	}
-	// cached_input_tokens is a CACHE READ, not additional input: attributing it
-	// as input would double-count every cached turn.
 	if turn.usage.CacheReadInputTokens != 12160 {
 		t.Errorf("CacheReadInputTokens = %d, want 12160", turn.usage.CacheReadInputTokens)
+	}
+	if turn.usage.Total() != 15238 {
+		t.Errorf("Total = %d, want 15238 — the prompt codex metered plus its output, once", turn.usage.Total())
+	}
+}
+
+func TestCodexExecUsage(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name                         string
+		input, cached, write, output int64
+		wantFresh, wantRead          int64
+		wantMalformed                bool
+	}{
+		{"cached part of input", 100, 60, 0, 7, 40, 60, false},
+		{"nothing cached", 100, 0, 0, 7, 100, 0, false},
+		{"cached exceeds input is repaired", 10, 60, 0, 7, 0, 60, true},
+		// Round-2 review of #1063: a negative operand must be repaired BEFORE the
+		// subtraction, never folded into it (100 - (-20) is not a 120 prompt).
+		{"negative cached is repaired, not subtracted", 100, -20, 0, 7, 100, 0, true},
+		{"negative input is repaired before the difference", -10, 5, 0, 7, 0, 5, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			usage := codexExecUsage(tc.input, tc.cached, tc.write, tc.output)
+			if usage.InputTokens != tc.wantFresh || usage.CacheReadInputTokens != tc.wantRead || usage.OutputTokens != tc.output {
+				t.Fatalf("usage = %+v, want fresh=%d read=%d out=%d", usage, tc.wantFresh, tc.wantRead, tc.output)
+			}
+			if usage.Malformed() != tc.wantMalformed {
+				t.Fatalf("Malformed = %t, want %t", usage.Malformed(), tc.wantMalformed)
+			}
+		})
 	}
 }
 

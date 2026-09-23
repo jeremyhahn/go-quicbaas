@@ -2284,7 +2284,7 @@ func (r *ToolRegistry) executeAgentCost(ctx context.Context, args map[string]int
 		req.RoundSet = true
 	}
 
-	report, err := orchestration.ReadSpendReport(ctx, accessor.ConsumptionLedger(), accessor.AccountStore(), req)
+	report, err := orchestration.ReadSpendReport(ctx, orchestration.SpendSourcesOf(accessor), req)
 	if err != nil {
 		return nil, err
 	}

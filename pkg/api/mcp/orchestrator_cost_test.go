@@ -38,10 +38,12 @@ type ledgerAgentService struct {
 	*mockAgentService
 	ledger   orchestration.ConsumptionLedger
 	accounts orchestration.AccountStore
+	projects orchestration.ProjectStore
 }
 
 func (s *ledgerAgentService) ConsumptionLedger() orchestration.ConsumptionLedger { return s.ledger }
 func (s *ledgerAgentService) AccountStore() orchestration.AccountStore           { return s.accounts }
+func (s *ledgerAgentService) ProjectStore() orchestration.ProjectStore           { return s.projects }
 
 var _ orchestration.SpendLedgerAccessor = (*ledgerAgentService)(nil)
 

@@ -833,6 +833,11 @@ func (s *agentServiceImpl) SetProjectStore(store ProjectStore) {
 	s.projectStore = store
 }
 
+// ProjectStore returns the durable project store, or nil when none is wired.
+func (s *agentServiceImpl) ProjectStore() ProjectStore {
+	return s.projectStore
+}
+
 // SetMountPolicy configures the policy that authorizes every host bind mount a
 // spawn request would place in an agent sandbox — the resolved work directory,
 // any caller-supplied container-spec mounts, and ExtraMounts. Bind mounts are

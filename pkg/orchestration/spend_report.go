@@ -281,6 +281,13 @@ type SpendChild struct {
 	// scope value, which is what addresses the subtree.
 	Unattributed bool `json:"unattributed,omitempty"`
 
+	// Name is the child's human name where the level has one — a project's
+	// name — so a drill-down row reads as the thing it is rather than as an
+	// identifier. Empty when the level has no names, when the row is
+	// unattributed, or when the entity no longer exists: the ledger outlives
+	// what it names, and a deleted project keeps its spend under its id.
+	Name string `json:"name,omitempty"`
+
 	TotalTokens int64 `json:"total_tokens"`
 }
 
@@ -305,12 +312,20 @@ type SpendReport struct {
 	SessionID string `json:"session_id,omitempty"`
 	Round     int    `json:"round,omitempty"`
 
+	// ProjectName is the name of the project the scope addresses, when it
+	// addresses one that still exists.
+	ProjectName string `json:"project_name,omitempty"`
+
 	// Entries is how many ledger records were summed.
 	Entries int `json:"entries"`
 
-	InputTokens  int64 `json:"input_tokens"`
-	OutputTokens int64 `json:"output_tokens"`
-	TotalTokens  int64 `json:"total_tokens"`
+	// InputTokens is the fresh prompt; the two cache dimensions are prompt
+	// tokens served from and written into the provider's cache.
+	InputTokens      int64 `json:"input_tokens"`
+	OutputTokens     int64 `json:"output_tokens"`
+	CacheReadTokens  int64 `json:"cache_read_tokens"`
+	CacheWriteTokens int64 `json:"cache_write_tokens"`
+	TotalTokens      int64 `json:"total_tokens"`
 
 	// CostMicros is the summed charge in millionths of a currency unit, and
 	// CostMeasured says whether ANY of it was actually priced.
@@ -404,6 +419,34 @@ type SpendLedgerAccessor interface {
 	// none is wired. Without it every account's allowance is reported as
 	// SpendPolicyUnknown rather than as absent.
 	AccountStore() AccountStore
+
+	// ProjectStore returns the durable project store, or nil when none is
+	// wired. Without it the report carries project ids and no names.
+	ProjectStore() ProjectStore
+}
+
+// SpendSources is what a spend report is read from.
+type SpendSources struct {
+	// Ledger is the consumption record. Required.
+	Ledger ConsumptionLedger
+
+	// Accounts supplies each paying account's name and allowance. Optional:
+	// without it every allowance is reported as unknown.
+	Accounts AccountStore
+
+	// Projects supplies project names. Optional: without it the report
+	// carries project ids and no names.
+	Projects ProjectStore
+}
+
+// SpendSourcesOf gathers the sources an accessor exposes, so every transport
+// reads a report from the same three stores.
+func SpendSourcesOf(accessor SpendLedgerAccessor) SpendSources {
+	return SpendSources{
+		Ledger:   accessor.ConsumptionLedger(),
+		Accounts: accessor.AccountStore(),
+		Projects: accessor.ProjectStore(),
+	}
 }
 
 // =============================================================================
@@ -464,15 +507,11 @@ func (e *SpendReportError) Unwrap() error { return e.Cause }
 // whole report, because the tokens are a fact the ledger established on its
 // own and withholding them over a missing allowance would hide the spend the
 // operator came to read.
-func ReadSpendReport(
-	ctx context.Context,
-	ledger ConsumptionLedger,
-	accounts AccountStore,
-	req *SpendReportRequest,
-) (*SpendReport, error) {
+func ReadSpendReport(ctx context.Context, sources SpendSources, req *SpendReportRequest) (*SpendReport, error) {
 	if req == nil {
 		return nil, &SpendReportError{Cause: ErrSpendRequestRequired}
 	}
+	ledger := sources.Ledger
 	if ledger == nil {
 		return nil, &SpendReportError{TenantID: req.TenantID, Cause: ErrSpendLedgerRequired}
 	}
@@ -495,36 +534,90 @@ func ReadSpendReport(
 	now = now.UTC()
 
 	report := &SpendReport{
-		Scope:        scope,
-		Level:        level,
-		TenantID:     scope.TenantID,
-		ProjectID:    scope.ProjectID,
-		TaskID:       scope.TaskID,
-		JobID:        scope.JobID,
-		SessionID:    scope.SessionID,
-		Entries:      rollup.Entries,
-		InputTokens:  rollup.InputTokens,
-		OutputTokens: rollup.OutputTokens,
-		TotalTokens:  rollup.TotalTokens,
-		CostMicros:   rollup.CostMicros,
-		CostMeasured: rollup.CostMicros > 0,
-		Successes:    rollup.Successes,
-		Failures:     rollup.Failures,
-		FirstAt:      optionalInstant(rollup.FirstAt),
-		LastAt:       optionalInstant(rollup.LastAt),
-		ChildLevel:   childLevel,
-		Models:       spendModels(rollup.ByModel),
-		Children:     spendChildren(rollup.ByChild, childLevel),
+		Scope:            scope,
+		Level:            level,
+		TenantID:         scope.TenantID,
+		ProjectID:        scope.ProjectID,
+		TaskID:           scope.TaskID,
+		JobID:            scope.JobID,
+		SessionID:        scope.SessionID,
+		Entries:          rollup.Entries,
+		InputTokens:      rollup.InputTokens,
+		OutputTokens:     rollup.OutputTokens,
+		CacheReadTokens:  rollup.CacheReadTokens,
+		CacheWriteTokens: rollup.CacheWriteTokens,
+		TotalTokens:      rollup.TotalTokens,
+		CostMicros:       rollup.CostMicros,
+		CostMeasured:     rollup.CostMicros > 0,
+		Successes:        rollup.Successes,
+		Failures:         rollup.Failures,
+		FirstAt:          optionalInstant(rollup.FirstAt),
+		LastAt:           optionalInstant(rollup.LastAt),
+		ChildLevel:       childLevel,
+		Models:           spendModels(rollup.ByModel),
+		Children:         spendChildren(rollup.ByChild, childLevel),
 	}
 	if scope.RoundSet {
 		report.Round = scope.Round
 	}
 
-	report.Accounts, err = spendAccounts(ctx, ledger, accounts, scope.TenantID, rollup.ByAccount, now)
+	report.Accounts, err = spendAccounts(ctx, ledger, sources.Accounts, scope.TenantID, rollup.ByAccount, now)
 	if err != nil {
 		return nil, &SpendReportError{TenantID: scope.TenantID, Level: level, Cause: err}
 	}
+	if err := nameSpendProjects(ctx, sources.Projects, report); err != nil {
+		return nil, &SpendReportError{TenantID: scope.TenantID, Level: level, Cause: err}
+	}
 	return report, nil
+}
+
+// nameSpendProjects puts project names on the report: on the scope when it
+// addresses a project, and on every drill-down row when the rows ARE
+// projects (go-quicbaas#1058 — the By Project card listed bare ids).
+//
+// THE SAME RULE AS loadSpendAccount. A project that is gone keeps its spend
+// under its id with no name — the ledger outlives what it names — but a store
+// that could not answer fails the report, because a fault rendered as "this
+// project has no name" is a fault presented as a fact.
+func nameSpendProjects(ctx context.Context, projects ProjectStore, report *SpendReport) error {
+	if projects == nil {
+		return nil
+	}
+	if report.ProjectID != "" && report.ProjectID != SpendUnattributed {
+		name, err := spendProjectName(ctx, projects, report.TenantID, report.ProjectID)
+		if err != nil {
+			return err
+		}
+		report.ProjectName = name
+	}
+	if report.ChildLevel != SpendLevelProject {
+		return nil
+	}
+	for i := range report.Children {
+		child := &report.Children[i]
+		if child.Unattributed {
+			continue
+		}
+		name, err := spendProjectName(ctx, projects, report.TenantID, child.ID)
+		if err != nil {
+			return err
+		}
+		child.Name = name
+	}
+	return nil
+}
+
+// spendProjectName reads one project's name; empty when the project no longer
+// exists.
+func spendProjectName(ctx context.Context, projects ProjectStore, tenantID, projectID string) (string, error) {
+	project, err := projects.Get(ctx, tenantID, projectID)
+	if err == nil {
+		return project.Name, nil
+	}
+	if errors.Is(err, ErrProjectNotFound) {
+		return "", nil
+	}
+	return "", err
 }
 
 // spendLevels names the level a scope addresses and the level below it,

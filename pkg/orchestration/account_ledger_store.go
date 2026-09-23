@@ -370,6 +370,12 @@ func validateConsumptionEntry(entry ConsumptionEntry) error {
 	if entry.OutputTokens < 0 {
 		return &ConsumptionInvalidError{Field: "output_tokens", Message: "must not be negative"}
 	}
+	if entry.CacheReadTokens < 0 {
+		return &ConsumptionInvalidError{Field: "cache_read_tokens", Message: "must not be negative"}
+	}
+	if entry.CacheWriteTokens < 0 {
+		return &ConsumptionInvalidError{Field: "cache_write_tokens", Message: "must not be negative"}
+	}
 	if entry.CostMicros < 0 {
 		return &ConsumptionInvalidError{Field: "cost_micros", Message: "must not be negative"}
 	}

@@ -37,6 +37,7 @@ type spendLedgerAgentService struct {
 	grpcTestAgentService
 	ledger   orchestration.ConsumptionLedger
 	accounts orchestration.AccountStore
+	projects orchestration.ProjectStore
 }
 
 func (m *spendLedgerAgentService) ConsumptionLedger() orchestration.ConsumptionLedger {
@@ -44,6 +45,8 @@ func (m *spendLedgerAgentService) ConsumptionLedger() orchestration.ConsumptionL
 }
 
 func (m *spendLedgerAgentService) AccountStore() orchestration.AccountStore { return m.accounts }
+
+func (m *spendLedgerAgentService) ProjectStore() orchestration.ProjectStore { return m.projects }
 
 // grpcSpendNow returns the instant the fixture's turns are placed just before.
 //
@@ -78,8 +81,10 @@ func newSpendServer(t *testing.T, tenantID string) *OrchestratorServer {
 			Windows: []orchestration.QuotaWindow{{Name: "five-hour", Size: 5 * time.Hour, MaxTokens: 1000}},
 		}},
 	}))
+	projects := orchestration.NewInMemoryProjectStore()
+	require.NoError(t, projects.Create(ctx, &orchestration.Project{ID: "p1", TenantID: tenantID, Name: "go-truststrap"}))
 	return NewOrchestratorServer(
-		&spendLedgerAgentService{ledger: ledger, accounts: accounts},
+		&spendLedgerAgentService{ledger: ledger, accounts: accounts, projects: projects},
 		createOrchestratorGRPCTestLogger(),
 	)
 }
@@ -96,6 +101,12 @@ func TestGetSpendReport_ReportsTokensAndTheAccountThatPaid(t *testing.T) {
 	assert.Equal(t, "project", resp.GetChildLevel())
 	assert.Equal(t, int64(30), resp.GetTotalTokens())
 	assert.Equal(t, int32(2), resp.GetEntries())
+
+	// The drill-down names its projects rather than listing bare ids.
+	// go-quicbaas#1058.
+	require.Len(t, resp.GetChildren(), 1)
+	assert.Equal(t, "p1", resp.GetChildren()[0].GetId())
+	assert.Equal(t, "go-truststrap", resp.GetChildren()[0].GetName())
 
 	require.Len(t, resp.GetAccounts(), 1)
 	account := resp.GetAccounts()[0]
@@ -121,6 +132,7 @@ func TestGetSpendReport_DrillsDown(t *testing.T) {
 	project, err := srv.GetSpendReport(ctx, &pb.GetSpendReportRequest{TenantId: "t1", ProjectId: "p1"})
 	require.NoError(t, err)
 	assert.Equal(t, "project", project.GetLevel())
+	assert.Equal(t, "go-truststrap", project.GetProjectName())
 	require.Len(t, project.GetChildren(), 1)
 	assert.Equal(t, "w1", project.GetChildren()[0].GetId())
 	assert.Equal(t, "task", project.GetChildren()[0].GetLevel())
