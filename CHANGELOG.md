@@ -7,6 +7,170 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0-alpha] - 2026-09-23
+
+Takes the stack to go-xkms v0.17.0-alpha. Its endorse-01 fix (go-xkms#634)
+lets a TPM without a manufacturer EK certificate enroll an IDevID, and the
+cluster CA passphrase is now held in protected memory. Following go-xkms, the
+FIDO2 MCP tools take the login key as `email`.
+
+### Breaking
+
+- **The FIDO2 MCP tools take the login key as `email`.** go-xkms v0.17
+  removed the `username` wire alias (go-xkms#628), so the SDK's MCP
+  transport, which forwards the go-xkms request unchanged, sends only
+  `email`. `xkms.fido2.beginRegistration`, `beginAuthentication` and
+  `finishAuthentication` required `username` and would have refused every
+  SDK call. Their schemas and handlers now use `email`, and a regression
+  test drives them with SDK-serialized requests. **Breaking** for any other
+  MCP client that still sends `username`.
+
+### Added
+
+- **`cache.CacheManager.Done()` and `kms.KeyCache.Done()` report when a
+  manager's background cleanup goroutine has exited.** Each channel is closed
+  only when that goroutine exits, and `Close` waits for it, so an open channel
+  means the goroutine is still running. A cache manager with no L1 TTL starts
+  no goroutine, and its `Done()` is closed from the start.
+  `CacheManager.Close` now waits on that channel instead of a WaitGroup.
+
+- **A FIPS-activated process refuses an unapproved DEK algorithm instead of
+  using it.** ChaCha20-Poly1305 stays a data-encryption-key option, and FIPS
+  activation is what takes it away (owner ruling 8): `kms.defaults.algorithm`
+  is refused at startup, and `CreateDEK` / `RotateDEK` are refused at the
+  call, both with a typed `*fips.AEADNotApprovedError` naming the operation,
+  the algorithm and the approved set. Nothing is silently substituted — a
+  deployment that asked for ChaCha20 and got AES without being told would hold
+  a key its configuration does not describe.
+- **SHA-256 is selectable for consistent-hash placement.** blake2b remains the
+  ring default — placing a key decides which node owns it, which is not a
+  cryptographic security function — and `hash.Select` now resolves a
+  configured name ("blake2b", "sha256", "fnv1a") to its function, with a typed
+  `*hash.UnknownAlgorithmError` for anything else so a ring is never built
+  with a hash other than the one that was asked for.
+- **`make test-fips-conformance`** runs login, envelope encryption, the DEK
+  gate, placement hashing and config validation under `GODEBUG=fips140=only`,
+  where the module refuses unapproved algorithms rather than deprioritizing
+  them.
+
+### Changed
+
+- A job waiting in `reviewing` no longer holds one of its project's
+  `max_concurrency` slots (go-quicbaas#978, owner ruling 2026-09-22). The
+  quota now bounds only the states that bear a worker — initializing,
+  executing, validating, re-delegating and completing. A runner declares its
+  worker-free states with `JobStateSpec.OffProjectBudget`; the sdlc runner
+  declares reviewing, cleanup and escalating. The envelope moves the job's
+  lease off the budget on entering such a state and back on through the
+  project's admission on leaving it. A review or CI round asked for while the
+  project is full **waits** for a slot, and is queued ahead of new work
+  (`JobLease.AwaitingSlot`), rather than failing. The lease, the one job per
+  task, and the stall detector's bounds are unchanged. On the burn-in fleet two
+  jobs parked on CI and codex review held both of go-quicbaas's slots, and
+  the next ready task sat pending while no worker ran anywhere.
+
+- `sdlc.ForgeFactory` and `sdlc.NewForgeBackend` take the node's
+  `sdlc.ForgeTransport` as a third argument; a zero value takes the defaults.
+
+- **go-xkms v0.17.0-alpha.** It carries the endorse-01 fix (go-xkms#634): an
+  EK certificate issued for a TPM with no manufacturer EK certificate now
+  records the TPM's tcg-at-tpmManufacturer code where a later enroll-01
+  reads it. Before this, every IDevID enrollment of such a TPM failed with
+  `500 Failed to sign TCG-CSR-IDEVID`. The endorse-01 client asserts the
+  code from `TPM_PT_MANUFACTURER`; the server validates it and holds it to
+  any code the account's EAB binds. The release also brings the go-xkms
+  compat cleanups and the protected-memory batches (go-xkms#587).
+
+### Fixed
+
+- The Software Factory worker image carries `cryptsetup`, and
+  `make test-worker-image` asserts it. go-luks2's unit tier runs LUKS2
+  conformance tests against the reference implementation and fails them by
+  design when the binary is absent, so every go-luks2 delivery failed
+  verification regardless of the change (#1003).
+
+- **`TestServer_Shutdown_Orphaned{Cache,KMS}Manager_IsReleased` no longer
+  flake (#1019).** The old tests counted goroutines across the whole process
+  that were sitting in the cleanup frame. The count missed a goroutine that
+  had been created but not yet scheduled. Parallel tests starting and stopping
+  their own managers also changed it. Each test now watches the `Done()`
+  channel of the one manager it orphans.
+
+- An approved pull request that conflicts with its base is now sent back to
+  the worker as a rebase round on the same branch. Before this, the merge was
+  retried until the attempts ran out and the attempt was charged as a failure
+  of the work. Gitea answers "Please try again later" both while it checks a
+  pull request and when the pull request conflicts, so the merge is still
+  retried within its bound. When the bound is spent, a pull request that is
+  still not mergeable on the approved head is reported as
+  `MergeConflictError`. The runner then prompts the worker (`merge_conflict`)
+  to rebase onto the latest base, keep both sides' intent and re-run
+  verification. The new head is reviewed again, and the round counts against
+  `max_review_rounds`, so a pull request that keeps conflicting still
+  escalates. Measured on go-truststrap#64 (2026-09-22); go-quicbaas#1007.
+
+- **A reviewer reply that stated no verdict no longer throws the whole review
+  away.** Measured on the burn-in fleet (2026-09-22, PR #983, review job
+  `c64bd251`): the reviewer had read the entire diff and ended its turn on a
+  progress note — "I'm finishing the checks around forge mergeability" — with
+  no `SDLC-REVIEW:` declaration. The review runner refused it, failed the job
+  and closed the session, and the review sweep then spawned a fresh container
+  to re-read the same change from nothing. When a reply carries no declaration
+  at all, the **same** reviewer session is now prompted once more — "Your
+  reply stated no verdict. Finish your checks and end with the `SDLC-REVIEW:`
+  declaration and findings." — audited as `sdlc:review_reprompted` and
+  counting as neither a review round nor a new review job. The reminder
+  reaches the same *conversation*: the codex exec transport now resumes the
+  thread its first turn started (`codex exec resume <thread> -`), so the
+  reviewer still holds the charter, the change and its own analysis. The
+  reminder runs under a real deadline, `ReviewTurnTimeout` (one hour), and a
+  reviewer that never answers it is cancelled, failing the job with
+  `ReviewRepromptTimeoutError`. A second declaration-less reply is
+  refused exactly as before, as are the two refusals that are not a missing
+  declaration: an unknown code, and a declaration with nothing above it.
+
+- **Envelope field encryption no longer fails closed on a FIPS-activated
+  host.** The AES-128 path built its AEAD with `cipher.NewGCM` and supplied
+  its own nonce, which the Go Cryptographic Module refuses under
+  `GODEBUG=fips140=only` ("use of GCM with arbitrary IVs is not allowed"), so
+  every encrypted field failed on exactly the regulated hosts the FIPS build
+  exists for. It now uses `cipher.NewGCMWithRandomNonce`, the approved
+  construction, which prepends the same 12-byte nonce to the same
+  ciphertext — fields written by either form interoperate and no migration is
+  needed.
+
+- **A slow forge no longer fails work that succeeded, or charges the task for
+  it** (go-quicbaas#1034). Every Gitea call ran under one 30-second client
+  timeout; under CI load a triage listing, a review read and a squash merge
+  missed it — and the merge had landed, so the job was recorded failed on a
+  change that was on `main`. A create-PR that timed out after Gitea opened the
+  pull request would have been refused as a duplicate on retry.
+  - Per-call deadlines: reads `sdlc.forge.read_timeout` (30s), light writes
+    `write_timeout` (1m), merge and create-PR `heavy_write_timeout` (5m).
+  - Unanswered reads (timeout, dropped connection, 502/503/504) are retried up
+    to `read_attempts` (3) with backoff from `retry_backoff` (1s); exhaustion is
+    a typed `ForgeRetriesExhaustedError`. A status the forge itself returned is
+    final.
+  - Writes are never blindly repeated. An unanswered merge re-reads the pull
+    request (merged is success; open and mergeable goes to the bounded merge
+    retry). `CreatePullRequest` adopts the open pull request for the same
+    head -> base from the same repository (a fork's same-named branch is
+    never adopted; `ForgePullRequest.HeadRepo` carries the source) — before creating, after an unanswered create, and on Gitea's
+    409 duplicate refusal. Idempotent, read-back-verified writes (labels,
+    status, close) are replayed; the rest surface
+    `ForgeWriteUnconfirmedError`. One table, `giteaWritePolicies`, holds every
+    write's policy.
+  - A job that ends on a forge that did not answer is classified
+    `forge_unreachable`: refunded and requeued under the consecutive-fault
+    bound instead of charged to the work.
+
+- **The cluster CA passphrase is sealed at the composition root.** go-xkms
+  v0.17 holds `clustercasdk.KeyProtection.Passphrase` as a `*secure.Secret`.
+  `Server.clusterCAKeyProtection` now seals `ca_key_passphrase` into an
+  enclave, and when protected memory is refused it fails the cluster CA
+  (`ClusterCAPassphraseError`) instead of running with passphrase
+  protection off.
+
 ## [0.11.1-alpha] - 2026-09-22
 
 Fixes two defects that make v0.11.0-alpha unusable as a composition root. A
