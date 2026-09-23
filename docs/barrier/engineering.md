@@ -85,10 +85,31 @@ TPM2, PKCS#11, or cloud KMS).
 |-------|-------|-----------|----------|
 | `POST /api/v1/barrier/enable-encryption` | System barrier | `seal:enable_encryption` | Encrypt the shared cluster barrier (all tenants) |
 | `POST /api/v1/tenants/{tenant_id}/barrier/enable-encryption` | Per-tenant barrier | `tenant_barrier:enable_encryption` | Encrypt a specific tenant's isolation barrier |
+| `POST /v1/barrier/enable-encryption` (go-qrdb wire) | Body `tenant_id`; empty = system | Per selected scope: `seal:enable_encryption`, or `tenant_barrier:enable_encryption` against that tenant | What go-qrdb's SDK and the CLI verb call |
+
+The wire mount is registered identity-gated because its scope is in its body.
+`HandleBarrierWireEnableEncryption` decides the scope itself, binding the target
+tenant explicitly (the system tenant when `tenant_id` is empty). The decision is
+made by the embedded qrdb node's own composed RBAC and ABAC authorizer. The
+daemon records it at node construction through the SDK's
+`WithAuthorizerWrapper` option and returns it unchanged. It is the same
+authorizer that renders every registration-site permission. It therefore
+honours both store-resolved role grants and a platform app token's
+`scp`-derived `ScopePermissions`. A tenant principal reaches only its own
+tenant's barrier, never the system barrier, even when it holds
+`seal:enable_encryption`. With no authorizer wired, or before the qrdb node is
+up, the route answers `503`.
 
 ### Request fields (both routes)
 
-- `strategy` — `passphrase`, `shamir`, `tpm2`, `pkcs11`, `awskms`, `gcpkms`, `azurekv`, `vault` (required)
+These routes answer `204`, and take their scope from the path: the system
+route rejects a body `tenant_id` with `400`. The go-qrdb wire mount
+`POST /v1/barrier/enable-encryption` — the one go-qrdb's SDK and the
+`quicbaas barrier enable-encryption` verb use — takes the same fields with the
+target named `strategy`, plus a body `tenant_id` that selects the tenant
+barrier (empty = system), and answers `200 {status, scope}` (go-quicbaas#990).
+
+- `target_strategy` — `passphrase`, `shamir`, `tpm2`, `pkcs11`, `awskms`, `gcpkms`, `azurekv`, `vault` (required)
 - `mechanism` — Provider-specific mechanism (e.g., `transit` for Vault) (optional, provider-dependent)
 - `availability` — Provider-specific availability mode (e.g., `aws-kms` for AWS) (optional, provider-dependent)
 - `passphrase` — Wrapping passphrase for `passphrase`/`shamir` strategies (required for those; rejected for `none`)

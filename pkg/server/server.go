@@ -489,6 +489,11 @@ type Server struct {
 	// Nil for cluster mode (until Phase C).
 	qrdbNode *qrdbnode.Node
 
+	// nodeAuthorizer is the embedded node's composed RBAC[+ABAC] authorizer,
+	// recorded at node construction by nodeAuthorizerCapture. Read through
+	// capturedNodeAuthorizer; nil until the node is built.
+	nodeAuthorizer atomic.Pointer[qrdbsdk.Authorizer]
+
 	// qrdbAuditSink is the compliance-grade audit sink injected into the
 	// embedded qrdb node (qrdb_node.go newQRDBAuditSink,
 	// qrdbsdk.WithAuditLogger) — the ONE audit plane every module/emit site

@@ -889,6 +889,9 @@ func (s *Server) initStandaloneQRDBNode() error {
 		// option a node built with zero initial ABAC policies would run RBAC
 		// undecorated and ABACPolicyReloader would return nil.
 		qrdbnode.WithABACLiveReload(),
+		// Record the node's composed authorizer (returned unchanged) for the
+		// REST barrier scope authorizer (go-quicbaas#990).
+		s.nodeAuthorizerCapture(),
 	}
 
 	// Inject the late-bound OIDC session issuer so a successful unified login
@@ -1091,6 +1094,9 @@ func (s *Server) initClusteredQRDBNode() error {
 		// Reloadable ABAC decorator even with zero initial policies (see
 		// initStandaloneQRDBNode for rationale).
 		qrdbnode.WithABACLiveReload(),
+		// Record the node's composed authorizer (returned unchanged) for the
+		// REST barrier scope authorizer (go-quicbaas#990).
+		s.nodeAuthorizerCapture(),
 	}
 
 	// Inject the late-bound OIDC session issuer (see initStandaloneQRDBNode).

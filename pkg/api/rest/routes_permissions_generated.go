@@ -610,7 +610,7 @@ var frozenRoutePermissions = map[string]frozenPermission{
 	"POST /api/v1/xkms/v1/ssh/known-hosts":                                            {auth: RouteAuthPermission, resource: "keys", action: "create"},
 	"POST /api/v1/xkms/v1/ssh/known-hosts/{host}/verify":                              {auth: RouteAuthPermission, resource: "keys", action: "verify"},
 	"POST /oauth2/register/":                                                          {auth: RouteAuthPermission, resource: "tenants", action: "create"},
-	"POST /v1/barrier/enable-encryption":                                              {auth: RouteAuthPermission, resource: "seal", action: "enable_encryption"},
+	"POST /v1/barrier/enable-encryption":                                              {auth: RouteAuthSession, resource: "", action: ""},
 	"POST /v1/barrier/initialize":                                                     {auth: RouteAuthPermission, resource: "tenant_barrier", action: "init"},
 	"POST /v1/barrier/recovery/generate":                                              {auth: RouteAuthPermission, resource: "seal", action: "generate_recovery"},
 	"POST /v1/barrier/recovery/recover":                                               {auth: RouteAuthPermission, resource: "seal", action: "recover_with_keys"},

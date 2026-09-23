@@ -131,11 +131,22 @@ typed. So a client must encode its credential rather than rely on being told
 off; `TestBarrierWire_RawCredentialThatIsValidBase64DecodesToOtherBytes` pins
 that limit so it is not mistaken for a guarantee.
 
-`enable-encryption` is the one shape that is NOT an alias: the migration is a
-QuicBaaS-native verb served on four QuicBaaS surfaces (REST system, REST
-per-tenant, gRPC, MCP) that all name the target `target_strategy`, and go-qrdb
-has no per-tenant counterpart, so renaming only the REST copy would de-align
-it from its siblings. Its `passphrase` still follows the byte rule above.
+`enable-encryption` on `/api/v1` is the one shape that is NOT an alias: the
+migration is a QuicBaaS-native verb served on four QuicBaaS surfaces (REST
+system, REST per-tenant, gRPC, MCP) that all name the target
+`target_strategy`, and go-qrdb has no per-tenant counterpart, so renaming only
+the REST copy would de-align it from its siblings. Its `passphrase` still
+follows the byte rule above. The go-qrdb wire mount
+`POST /v1/barrier/enable-encryption` is served by a separate handler,
+`HandleBarrierWireEnableEncryption`, whose request IS the alias
+`qrdbtransport.BarrierEnableEncryptionRequest` (`strategy`, body `tenant_id` as
+the scope) and which answers `200 {status, scope}` — the shape go-qrdb's REST
+transport decodes (go-quicbaas#990). Because the body selects the scope, the
+mount is identity-gated at registration. The handler authorizes the selected
+scope: `seal:enable_encryption` for the system barrier, or
+`tenant_barrier:enable_encryption` against the named tenant. It answers `401`
+with no identity, `403` on denial, and `503` when no scope authorizer is
+available.
 
 #### Who owns the mount on a composed node
 

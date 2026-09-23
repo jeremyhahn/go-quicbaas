@@ -283,6 +283,12 @@ func TestRoutes_SessionRoutes(t *testing.T) {
 		// fallback, the seam that validates a quicbaas-minted bearer at all.
 		"POST /api/v1/iam/validate": {},
 		"POST /api/v1/iam/logout":   {},
+		// The go-qrdb wire mount takes its scope from the body tenant_id, so
+		// no one registration-site permission describes it; the handler
+		// authorizes the selected scope itself (authorizeBarrierScope,
+		// go-quicbaas#990). Its end-to-end authorization is pinned in
+		// pkg/apimodule module_barrier_enable_encryption_authz_test.go.
+		"POST /v1/barrier/enable-encryption": {},
 	}
 	got := map[string]struct{}{}
 	for _, spec := range Routes() {

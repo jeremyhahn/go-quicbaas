@@ -561,7 +561,7 @@ POST /oauth2/register/ permission tenants:create
 POST /oauth2/revoke public -:-
 POST /oauth2/token public -:-
 POST /oauth2/token-mtls public -:-
-POST /v1/barrier/enable-encryption permission seal:enable_encryption
+POST /v1/barrier/enable-encryption session -:-
 POST /v1/barrier/initialize permission tenant_barrier:init
 POST /v1/barrier/recovery/generate permission seal:generate_recovery
 POST /v1/barrier/recovery/recover permission seal:recover_with_keys

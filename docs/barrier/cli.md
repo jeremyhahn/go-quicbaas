@@ -360,17 +360,48 @@ cat recovery.txt | quicbaas barrier recovery recover --shares-file -
 ### Enable-encryption
 
 Transitioning a cleartext (`none`) barrier to an encrypted one after the fact
-is available both as the `quicbaas barrier enable-encryption` CLI verb — over
-every transport, like all Security verbs (see §1) — and directly over the API.
-The request field is `target_strategy`; `mechanism` and `availability` default
-to `swap` / `online`.
+is available both as the `quicbaas barrier enable-encryption` CLI verb and
+directly over the API. `mechanism` and `availability` default to `swap` /
+`online`.
 
 ```bash
 printf '%s' "$PP" | quicbaas barrier enable-encryption \
   --strategy passphrase --passphrase-stdin
+quicbaas barrier enable-encryption --tenant acme-corp --strategy shamir \
+  --threshold 2 --total 3
 ```
 
-The raw API form, for callers not going through the CLI. **`passphrase` is
+The verb goes through go-qrdb's barrier client, so over REST it speaks
+go-qrdb's wire on the `/v1/barrier` mount (go-quicbaas#990), not the
+`/api/v1` route below:
+
+| | `POST /v1/barrier/enable-encryption` (go-qrdb wire, the CLI's) | `POST /api/v1/barrier/enable-encryption` (quicbaas) |
+|---|---|---|
+| Target field | `strategy` | `target_strategy` |
+| Scope | body `tenant_id`; empty = system barrier | always the system barrier; a body `tenant_id` is rejected with `400` |
+| Success | `200 {"status":"migration_started","scope":"system"\|"tenant"}` | `204 No Content` |
+
+`--tenant` sets the body `tenant_id`. The server authorizes the scope the
+body selects. Without `--tenant` the caller needs `seal:enable_encryption` in
+the system tenant. With it the caller needs `tenant_barrier:enable_encryption`
+for that tenant, and the service also binds the migration to the caller's own
+tenant. Honouring the body scope therefore grants no authority the caller's
+credential does not already carry. The migration runs
+asynchronously. Watch the barrier you migrated for the strategy change:
+`quicbaas barrier status` for the system barrier, or
+`quicbaas iam tenant barrier status --tenant <id>` for a tenant's.
+`quicbaas barrier status` reads only the system barrier, so it cannot show
+that a tenant's migration finished. If
+`--tenant` was given and the server reports any scope other than `tenant`, the
+verb fails with `BarrierScopeMismatchError` instead of reporting another
+barrier's migration as success.
+
+`target_strategy` remains the name on the quicbaas-owned surfaces: the
+`/api/v1` system and per-tenant routes, gRPC `api/proto/barrier.proto`, and the
+MCP `qrdb_barrier_enable_encryption` / `qrdb_tenant_barrier_enable_encryption`
+tools.
+
+The raw quicbaas API form, for callers not going through the CLI. **`passphrase` is
 base64 on the wire** — like every barrier credential on the REST surface, it is
 a byte string rather than text (see docs/barrier/api.md, "a credential is bytes,
 and the shapes are aliases"). Malformed base64 is rejected with `400`, but a
@@ -391,6 +422,11 @@ curl -X POST https://host:port/api/v1/barrier/enable-encryption \
 # Per-tenant barrier (tenant 'acme-corp')
 curl -X POST https://host:port/api/v1/tenants/acme-corp/barrier/enable-encryption \
   -d "{\"target_strategy\":\"passphrase\",\"passphrase\":\"$PP\"}"
+
+# The same tenant migration on the go-qrdb wire mount (what the CLI sends)
+curl -X POST https://host:port/v1/barrier/enable-encryption \
+  -d "{\"strategy\":\"passphrase\",\"tenant_id\":\"acme-corp\",\"passphrase\":\"$PP\"}"
+# => 200 {"status":"migration_started","scope":"tenant"}
 ```
 
 A tenant on the shared system barrier (no dedicated barrier) is rejected with

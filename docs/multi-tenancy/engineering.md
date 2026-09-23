@@ -236,7 +236,29 @@ curl -X POST http://localhost:3000/api/v1/tenants/acme-corp/barrier/enable-encry
     "target_strategy": "passphrase",
     "passphrase": "tenant-wrapping-passphrase"
   }'
+
+# Tenant scope on the go-qrdb wire mount — what go-qrdb's SDK and
+# `quicbaas barrier enable-encryption --tenant acme-corp` send
+curl -X POST http://localhost:3000/v1/barrier/enable-encryption \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -d '{
+    "strategy": "passphrase",
+    "tenant_id": "acme-corp",
+    "passphrase": "dGVuYW50LXdyYXBwaW5nLXBhc3NwaHJhc2U="
+  }'
+# => 200 {"status":"migration_started","scope":"tenant"}
 ```
+
+The `/api/v1` routes take `target_strategy`, derive the scope from the path
+and answer `204`; the system route rejects a body `tenant_id` with `400`
+rather than migrate the system barrier in its place. The `/v1/barrier/enable-encryption` mount speaks go-qrdb's
+wire verbatim (go-quicbaas#990): `strategy`, a body `tenant_id` selecting the
+tenant barrier (empty = system), and `200 {status, scope}`. It authorizes the
+scope it was given: `tenant_barrier:enable_encryption` against the named
+tenant, or `seal:enable_encryption` against the system tenant when `tenant_id`
+is empty. A tenant admin can therefore migrate its own barrier on this mount,
+but not the system barrier or another tenant's. On every route the service
+binds a tenant-scoped migration to the caller's own tenant.
 
 Enable-encryption requires:
 
