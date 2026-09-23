@@ -1927,27 +1927,33 @@ func TestJobExecution(t *testing.T) {
 			t.Fatal("job did not execute within timeout")
 		}
 
-		// Allow time for storage updates
-		waitDone := make(chan struct{})
-		go func() {
-			for {
-				updatedJob := storage.getJobDirect(job.ID)
-				if updatedJob != nil && updatedJob.RunCount > 0 {
-					close(waitDone)
-					return
-				}
-			}
-		}()
-
-		select {
-		case <-waitDone:
+		// The stored record and the success counter are written separately
+		// (persistJobOutcome, then successCount.Add), so wait until every
+		// asserted value has landed. Poll on a ticker with a deadline rather
+		// than spinning.
+		settled := func() bool {
 			updatedJob := storage.getJobDirect(job.ID)
-			assert.Equal(t, JobStatusCompleted, updatedJob.Status)
-			assert.Equal(t, uint64(1), updatedJob.RunCount)
-			assert.Equal(t, uint64(1), scheduler.Stats().SuccessCount)
-		case <-time.After(2 * time.Second):
-			t.Fatal("job status did not update within timeout")
+			return updatedJob != nil &&
+				updatedJob.RunCount > 0 &&
+				updatedJob.Status == JobStatusCompleted &&
+				scheduler.Stats().SuccessCount > 0
 		}
+		ticker := time.NewTicker(5 * time.Millisecond)
+		defer ticker.Stop()
+		deadline := time.NewTimer(2 * time.Second)
+		defer deadline.Stop()
+		for !settled() {
+			select {
+			case <-ticker.C:
+			case <-deadline.C:
+				t.Fatal("job outcome did not settle within timeout")
+			}
+		}
+
+		updatedJob := storage.getJobDirect(job.ID)
+		assert.Equal(t, JobStatusCompleted, updatedJob.Status)
+		assert.Equal(t, uint64(1), updatedJob.RunCount)
+		assert.Equal(t, uint64(1), scheduler.Stats().SuccessCount)
 	})
 
 	t.Run("handles job failure and retries", func(t *testing.T) {
