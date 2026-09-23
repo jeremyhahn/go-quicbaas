@@ -365,6 +365,14 @@ func (kc *KeyCache) Stats() CacheStats {
 	}
 }
 
+// Done returns a channel that is closed once the cache's background cleanup
+// goroutine has exited. NewKeyCache always starts that goroutine and only its
+// own exit closes the channel, which Close waits for, so an open Done means
+// the goroutine is live.
+func (kc *KeyCache) Done() <-chan struct{} {
+	return kc.cleanupDone
+}
+
 // Close stops the cleanup goroutine and clears all cached keys.
 // After Close, the cache cannot be used.
 func (kc *KeyCache) Close() error {

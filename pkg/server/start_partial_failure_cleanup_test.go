@@ -61,7 +61,6 @@ package server
 import (
 	"context"
 	"log/slog"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -77,7 +76,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
-	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
 
 // withInMemoryServer builds a Server that owns nothing on disk.
@@ -102,49 +100,30 @@ func withInMemoryServer(t *testing.T) *Server {
 	return srv
 }
 
-// cacheCleanupGoroutineFrame is the frame of the goroutine cache.NewManager
-// starts for every manager with a positive L1 TTL — which startService's
-// manager always has (its config hard-codes 5m when cache is disabled). It is
-// the observable that proves a cache manager is still running, as opposed to
-// merely still referenced.
-const cacheCleanupGoroutineFrame = "cache.(*CacheManager).cleanupExpiredEntries"
-
-// kmsKeyCacheGoroutineFrame is the frame of the goroutine kms.NewKeyCache
-// starts for every KMSService built with CacheKeyMaterial — which startKMS
-// sets from KMS.Cache.Enabled, on by default. It is the observable that
-// proves a KMS manager is still running, as opposed to merely still
-// referenced.
-const kmsKeyCacheGoroutineFrame = "kms.(*KeyCache).cleanupLoop"
-
-// countGoroutinesWithFrame returns how many goroutines process-wide are
-// sitting in frame. Tests compare it against a baseline taken in the same
-// test rather than against zero: this binary boots many servers, and a count
-// is only meaningful as a delta.
-func countGoroutinesWithFrame(frame string) int {
-	buf := make([]byte, 1<<20)
-	for {
-		n := runtime.Stack(buf, true)
-		if n < len(buf) {
-			return strings.Count(string(buf[:n]), frame)
-		}
-		buf = make([]byte, 2*len(buf))
+// isDone reports, without blocking, whether a manager's Done channel is
+// closed.
+//
+// Done is how these tests observe a manager's background goroutine, and it is
+// scoped to the ONE manager under test. Both cache.CacheManager.Done and
+// kms.KeyCache.Done are closed only by the exit of that manager's own cleanup
+// goroutine, and both Close methods wait for that exit before returning. So:
+//
+//   - an open Done before Shutdown proves the orphan's goroutine is live, with
+//     no dependence on when the scheduler first runs it; and
+//   - a closed Done the instant Shutdown returns proves Shutdown joined it.
+//
+// The earlier observable, a count of goroutines process-wide sitting in the
+// cleanup frame, was racy on both counts: a goroutine that has been created
+// but not yet scheduled does not show that frame, and parallel tests in this
+// binary start and stop managers of their own between the baseline and the
+// check (go-quicbaas#1019).
+func isDone(done <-chan struct{}) bool {
+	select {
+	case <-done:
+		return true
+	default:
+		return false
 	}
-}
-
-// requireGoroutinesDownTo polls until the count of goroutines in frame is
-// back to want. Polling, not sleeping: each pass re-checks the real condition
-// (go-style.md "No time.Sleep"). Both Close paths this covers join their
-// goroutine before returning — CacheManager.Close through a WaitGroup,
-// KeyCache.Close through its cleanupDone channel — so this normally succeeds
-// on the first pass; the deadline only covers the instructions between that
-// join and the goroutine actually leaving the stack.
-func requireGoroutinesDownTo(t *testing.T, frame string, want int, msg string) {
-	t.Helper()
-	err := testutil.WaitForCondition(10*time.Second, 5*time.Millisecond, func() bool {
-		return countGoroutinesWithFrame(frame) <= want
-	})
-	require.NoError(t, err, "%s (still %d goroutines in %s, want <= %d)",
-		msg, countGoroutinesWithFrame(frame), frame, want)
 }
 
 // closeRecordingAuditSink is a qrdbsdk.NodeAuditLogger that records whether it
@@ -214,18 +193,18 @@ func newOrphanedCacheManager(t *testing.T, srv *Server) *cache.CacheManager {
 func TestServer_Shutdown_OrphanedCacheManager_IsReleased(t *testing.T) {
 	srv := withInMemoryServer(t)
 
-	baseline := countGoroutinesWithFrame(cacheCleanupGoroutineFrame)
-	srv.cacheManager = newOrphanedCacheManager(t, srv)
+	mgr := newOrphanedCacheManager(t, srv)
+	srv.cacheManager = mgr
 
 	require.Nil(t, srv.quicBaaSService,
 		"precondition: the facade that would own the manager was never built")
-	require.Greater(t, countGoroutinesWithFrame(cacheCleanupGoroutineFrame), baseline,
+	require.False(t, isDone(mgr.Done()),
 		"precondition: the orphaned manager's cleanup goroutine must be running")
 
 	require.NoError(t, srv.Shutdown(context.Background()),
 		"Shutdown after a partial start must complete without error")
 
-	requireGoroutinesDownTo(t, cacheCleanupGoroutineFrame, baseline,
+	assert.True(t, isDone(mgr.Done()),
 		"Shutdown must stop the cache-cleanup goroutine the partial start orphaned")
 	assert.Nil(t, srv.cacheManager,
 		"Shutdown must release the orphaned cache manager, not merely stop it")
@@ -246,30 +225,33 @@ func TestServer_Shutdown_OrphanedCacheManager_IsReleased(t *testing.T) {
 func TestServer_Shutdown_OrphanedKMSManager_IsReleased(t *testing.T) {
 	srv := withInMemoryServer(t)
 
-	baseline := countGoroutinesWithFrame(kmsKeyCacheGoroutineFrame)
-
 	registry := kms.NewBackendRegistry(nil)
 	backend := &closeRecordingKMSBackend{}
 	require.NoError(t, registry.Register("test-backend", backend, 1),
 		"registering a backend must succeed; NewKMSService refuses an empty registry")
 
+	// The key cache is what makes the manager observable: it runs a cleanup
+	// goroutine for as long as the manager is open. startKMS turns it on from
+	// KMS.Cache.Enabled, which is on by default, and lets NewKMSService build
+	// it; here it is supplied instead, so the test holds its Done signal. The
+	// manager owns a supplied cache exactly as it owns one it built:
+	// KMSService.Close closes whichever it holds.
+	keyCache := kms.NewKeyCache(nil)
 	kmsMgr, err := kms.NewKMSService(&kms.KMSServiceOptions{
-		Registry: registry,
-		Logger:   logger.NewAdapter(srv.logger),
-		// The cache is what makes the manager observable: with it on,
-		// NewKMSService starts a KeyCache cleanup goroutine. startKMS sets
-		// this from KMS.Cache.Enabled, which is on by default.
+		Registry:         registry,
+		Logger:           logger.NewAdapter(srv.logger),
 		CacheKeyMaterial: true,
+		KeyCache:         keyCache,
 	})
 	require.NoError(t, err, "building the KMS manager under test must succeed")
 	srv.kmsManager = kmsMgr
 
-	require.Greater(t, countGoroutinesWithFrame(kmsKeyCacheGoroutineFrame), baseline,
+	require.False(t, isDone(keyCache.Done()),
 		"precondition: the KMS key-cache cleanup goroutine must be running")
 
 	require.NoError(t, srv.Shutdown(context.Background()))
 
-	requireGoroutinesDownTo(t, kmsKeyCacheGoroutineFrame, baseline,
+	assert.True(t, isDone(keyCache.Done()),
 		"Shutdown must close the KMS manager, joining its key-cache cleanup goroutine")
 	assert.Nil(t, srv.kmsManager, "the released KMS manager must not stay referenced")
 	assert.True(t, backend.closed.Load(),

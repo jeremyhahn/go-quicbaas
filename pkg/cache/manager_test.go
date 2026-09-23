@@ -351,6 +351,47 @@ func TestCacheManager_Close(t *testing.T) {
 	// Note: Cleanup goroutine stopping is verified by not panicking
 }
 
+// isDone reports whether done is closed, without blocking.
+func isDone(done <-chan struct{}) bool {
+	select {
+	case <-done:
+		return true
+	default:
+		return false
+	}
+}
+
+// TestCacheManager_Done_ClosedWhenCloseJoinsCleanup pins the lifecycle signal
+// Done exposes: open while the TTL cleanup goroutine runs, closed once Close
+// has joined it. Done is closed only by that goroutine's exit, so an open Done
+// is proof the goroutine is live -- not a guess from a goroutine count.
+func TestCacheManager_Done_ClosedWhenCloseJoinsCleanup(t *testing.T) {
+	cm, err := NewManager(Config{L1Size: 10, L1TTL: time.Minute}, testLogger(t))
+	require.NoError(t, err)
+
+	assert.False(t, isDone(cm.Done()),
+		"a manager with a positive L1 TTL must be running its cleanup goroutine")
+
+	require.NoError(t, cm.Close())
+
+	assert.True(t, isDone(cm.Done()),
+		"Close must not return before the cleanup goroutine has exited")
+}
+
+// TestCacheManager_Done_ClosedWithoutCleanupGoroutine covers the other
+// branch: with no L1 TTL there is no cleanup goroutine, so there is nothing
+// to wait for and Done must already be closed. An open Done here would make
+// every caller that waits on it hang forever.
+func TestCacheManager_Done_ClosedWithoutCleanupGoroutine(t *testing.T) {
+	cm, err := NewManager(Config{L1Size: 10}, testLogger(t))
+	require.NoError(t, err)
+
+	assert.True(t, isDone(cm.Done()),
+		"a manager with no L1 TTL starts no goroutine, so Done must be closed")
+	require.NoError(t, cm.Close())
+	assert.True(t, isDone(cm.Done()), "Done must stay closed after Close")
+}
+
 // Benchmarks
 
 func BenchmarkCacheManager_L1Get(b *testing.B) {

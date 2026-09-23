@@ -273,8 +273,8 @@ func countGoroutinesWithFrame(frame string) int {
 // requireGoroutinesDownTo polls until the count of goroutines in frame is back
 // to want. Polling rather than sleeping: each pass re-checks the real
 // condition (go-style.md, "No time.Sleep"). Both Close paths this covers join
-// their goroutine before returning -- CacheManager.Close through a WaitGroup,
-// KeyCache.Close through its cleanupDone channel -- so this normally succeeds
+// their goroutine before returning -- CacheManager.Close and KeyCache.Close
+// both wait for the channel their Done method returns -- so this normally succeeds
 // on the first pass; the deadline only covers the instructions between that
 // join and the goroutine leaving the stack.
 func requireGoroutinesDownTo(t *testing.T, frame string, want int, msg string) {

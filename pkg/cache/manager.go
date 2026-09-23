@@ -49,7 +49,7 @@ type CacheManager struct {
 	logger        interfaces.Logger
 	mu            sync.RWMutex
 	stopCh        chan struct{}
-	cleanupWg     sync.WaitGroup
+	cleanupDone   chan struct{}
 	cleanupTicker *time.Ticker
 }
 
@@ -110,12 +110,13 @@ func NewManager(config Config, log interfaces.Logger) (*CacheManager, error) {
 	l1Cache := NewLRUCache(config.L1Size)
 
 	cm := &CacheManager{
-		l1Cache: l1Cache,
-		l2Cache: config.L2Cache,
-		config:  config,
-		metrics: NewMetrics(),
-		logger:  log,
-		stopCh:  make(chan struct{}),
+		l1Cache:     l1Cache,
+		l2Cache:     config.L2Cache,
+		config:      config,
+		metrics:     NewMetrics(),
+		logger:      log,
+		stopCh:      make(chan struct{}),
+		cleanupDone: make(chan struct{}),
 	}
 
 	// Setup WriteBack eviction callback if configured
@@ -123,10 +124,12 @@ func NewManager(config Config, log interfaces.Logger) (*CacheManager, error) {
 		l1Cache.SetEvictCallback(cm.onL1Eviction)
 	}
 
-	// Start cleanup goroutine for expired entries
+	// Start cleanup goroutine for expired entries. Without an L1 TTL there is
+	// no background work, so the manager is born already done.
 	if config.L1TTL > 0 {
-		cm.cleanupWg.Add(1)
 		go cm.cleanupExpiredEntries()
+	} else {
+		close(cm.cleanupDone)
 	}
 
 	// Verify L2 cache connection if configured
@@ -436,10 +439,19 @@ func (cm *CacheManager) restartCleanupTicker() error {
 	return nil
 }
 
+// Done returns a channel that is closed once the manager's background
+// cleanup goroutine has exited. It is closed from the start when the manager
+// runs none (a zero L1 TTL), and otherwise only by that goroutine's own exit,
+// which Close waits for. An open Done therefore means the cleanup goroutine
+// is live; a closed one means the manager holds no goroutine.
+func (cm *CacheManager) Done() <-chan struct{} {
+	return cm.cleanupDone
+}
+
 // Close closes the cache manager and releases resources.
 func (cm *CacheManager) Close() error {
 	close(cm.stopCh)
-	cm.cleanupWg.Wait()
+	<-cm.cleanupDone
 
 	cm.mu.Lock()
 	if cm.cleanupTicker != nil {
@@ -497,7 +509,7 @@ func (cm *CacheManager) setL2Async(parentCtx context.Context, key string, value 
 
 // cleanupExpiredEntries periodically removes expired entries from L1 cache.
 func (cm *CacheManager) cleanupExpiredEntries() {
-	defer cm.cleanupWg.Done()
+	defer close(cm.cleanupDone)
 
 	// Get initial interval
 	cm.mu.RLock()

@@ -537,18 +537,33 @@ func TestClose_StopsCleanup(t *testing.T) {
 		CleanupInterval: 10 * time.Millisecond,
 	})
 
+	select {
+	case <-cache.Done():
+		t.Fatal("Done closed before Close: the cleanup goroutine must be running")
+	default:
+	}
+
 	err := cache.Close()
 	if err != nil {
 		t.Fatalf("Close failed: %v", err)
 	}
 
-	// Wait to ensure cleanup would have run
-	time.Sleep(30 * time.Millisecond)
+	// Close joins the cleanup goroutine, so Done is already closed here.
+	select {
+	case <-cache.Done():
+	default:
+		t.Fatal("Close returned before the cleanup goroutine exited")
+	}
 
-	// Second close should return error
+	// Second close should return error, and must not reopen Done.
 	err = cache.Close()
 	if !errors.Is(err, ErrCacheClosed) {
 		t.Errorf("expected ErrCacheClosed on second close, got %v", err)
+	}
+	select {
+	case <-cache.Done():
+	default:
+		t.Error("Done must stay closed after a rejected second Close")
 	}
 }
 
