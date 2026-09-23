@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -115,15 +116,18 @@ func newStrictTestPool(operatorMode string, agents ...*orchestration.AgentRegist
 }
 
 // onlineDaemon constructs an idle daemon-kind registration useful as a
-// "this host exists" fixture in strict-mode tests.
+// "this host exists" fixture in strict-mode tests. It heartbeated just now:
+// a registration with no sign of life is not dispatched to at all
+// (liveRegistrations), which is not what these tests are about.
 func onlineDaemon(name, host, backend string) *orchestration.AgentRegistration {
 	return &orchestration.AgentRegistration{
-		ID:      name + "-id",
-		Name:    name,
-		Host:    host,
-		Backend: backend,
-		Kind:    orchestration.AgentKindDaemon,
-		Status:  orchestration.AgentStatusIdle,
+		ID:       name + "-id",
+		Name:     name,
+		Host:     host,
+		Backend:  backend,
+		Kind:     orchestration.AgentKindDaemon,
+		Status:   orchestration.AgentStatusIdle,
+		LastSeen: time.Now().UnixNano(),
 	}
 }
 
@@ -257,7 +261,7 @@ func TestPickDaemon_EmbeddedKind_IsAccepted(t *testing.T) {
 
 	pool := newStrictTestPool(config.HostAffinityModeSoft, embedded)
 
-	got, constraint := pool.pickDaemon([]*orchestration.AgentRegistration{embedded}, "ollama", "", false)
+	got, constraint := pool.pickDaemon([]*orchestration.AgentRegistration{embedded}, "ollama", "", false, "")
 	if got == nil {
 		t.Fatalf("pickDaemon must accept AgentKindEmbedded: constraint=%q", constraint)
 	}
@@ -283,7 +287,7 @@ func TestPickDaemon_ExternalKind_IsRejected(t *testing.T) {
 
 	pool := newStrictTestPool(config.HostAffinityModeSoft, external)
 
-	got, _ := pool.pickDaemon([]*orchestration.AgentRegistration{external}, "ollama", "", false)
+	got, _ := pool.pickDaemon([]*orchestration.AgentRegistration{external}, "ollama", "", false, "")
 	if got != nil {
 		t.Fatalf("pickDaemon must reject AgentKindExternal; got %+v", got)
 	}

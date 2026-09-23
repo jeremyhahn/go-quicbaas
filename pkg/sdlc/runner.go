@@ -18,7 +18,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -803,17 +802,13 @@ func (s *runnerRun) spawnWorker(ctx context.Context) error {
 	if err := s.requireProject(); err != nil {
 		return err
 	}
-	mount, err := s.mountPoint()
-	if err != nil {
-		return err
-	}
-	req, err := s.spawnRequest(ctx, mount)
+	req, err := s.spawnRequest(ctx)
 	if err != nil {
 		return err
 	}
 	resp, err := s.job.Spawn(ctx, req)
 	if err != nil {
-		return err
+		return workspaceSpawnFault(s.job.Project.ID, err)
 	}
 	if resp == nil || resp.SessionID == "" {
 		return &WorkerSessionError{TaskID: s.taskID(), Message: "the spawn returned no session"}
@@ -822,18 +817,22 @@ func (s *runnerRun) spawnWorker(ctx context.Context) error {
 	if strings.TrimSpace(resp.ContainerID) == "" {
 		return &WorkerNotContainerizedError{TaskID: s.taskID(), SessionID: resp.SessionID}
 	}
+	if resp.Workspace == nil {
+		return &WorkerSessionError{TaskID: s.taskID(), Message: "the spawn reported no workspace for the checkout"}
+	}
 	// The job's working directory is THE PROJECT CHECKOUT, not the mount root
 	// it sits in. /workspace is the whole checkout root — the project in its
 	// own directory and each context repository beside it — so a job that
 	// recorded the root would point every reader one level above the
 	// repository the attempt is about.
 	s.containerDir = filepath.Join(s.runner.access.checkoutRoot, s.job.Project.Name)
-	s.workDir = filepath.Join(req.WorkDir, s.job.Project.Name)
+	s.workDir = filepath.Join(resp.Workspace.Dir, s.job.Project.Name)
 	s.job.SetWorkDir(s.workDir)
 	// AND THE JOB'S WORK HAPPENS IN THE CONTAINER, which is what this says.
-	// s.workDir names the host side of the bind mount, for a reader on the
-	// daemon; the container names the same checkout /workspace/<project>, and
-	// that is the only name anything the runner EXECUTES may use.
+	// s.workDir names the host side of the bind mount ON THE HOST THAT RAN THE
+	// SESSION — a fleet agent's, as often as not, where it names nothing on
+	// this daemon; the container names the same checkout /workspace/<project>,
+	// and that is the only name anything the runner EXECUTES may use.
 	if err := s.job.SetContainer(s.sessionID, s.containerDir); err != nil {
 		return err
 	}
@@ -848,27 +847,16 @@ func (s *runnerRun) spawnWorker(ctx context.Context) error {
 	})
 }
 
-// mountPoint is the host directory the attempt's checkout lives in — the
-// directory the container's /workspace is bind-mounted from.
-//
-// It is the project's own workspace, per attempt, and it is REQUIRED: a
-// project with no workspace path has nowhere for a worker to work, and
-// guessing one would put a tenant's checkout somewhere the operator's mount
-// policy never admitted.
-func (s *runnerRun) mountPoint() (string, error) {
-	root, err := s.workspaceRoot()
-	if err != nil {
-		return "", err
-	}
+// workspaceKey names the attempt's workspace: one per attempt, so every
+// session the attempt spawns — its rounds, a rolled-over session, the respawn
+// after a restart — continues the same clone, on the host the job is pinned
+// to, and a new attempt starts clean.
+func (s *runnerRun) workspaceKey() string {
 	attemptNo := 1
 	if s.job.Config != nil && s.job.Config.Attempt > 0 {
 		attemptNo = s.job.Config.Attempt
 	}
-	dir := filepath.Join(root, s.taskID()+"-a"+strconv.Itoa(attemptNo))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", &WorkspaceUnavailableError{ProjectID: s.job.Project.ID, Cause: err}
-	}
-	return dir, nil
+	return s.taskID() + "-a" + strconv.Itoa(attemptNo)
 }
 
 // requireProject refuses a job with no project record. Everything an attempt
@@ -885,27 +873,15 @@ func (s *runnerRun) requireProject() error {
 	return nil
 }
 
-// workspaceRoot is the project's own workspace directory: where the attempt's
-// checkout is mounted from, under the operator's projects root the mount
-// policy admits for this tenant.
-func (s *runnerRun) workspaceRoot() (string, error) {
-	root := strings.TrimSpace(s.job.Project.Workspace.Path)
-	if root == "" {
-		return "", &WorkspaceUnavailableError{ProjectID: s.job.Project.ID}
-	}
-	return root, nil
-}
-
 // spawnRequest builds the worker's spawn: the charter as its system prompt,
 // the binding's backend, model and image, and the workspace spec, forge token
 // and signing socket mounted.
-func (s *runnerRun) spawnRequest(ctx context.Context, mount string) (*orchestration.SpawnSessionRequest, error) {
+func (s *runnerRun) spawnRequest(ctx context.Context) (*orchestration.SpawnSessionRequest, error) {
 	req := &orchestration.SpawnSessionRequest{
 		Backend:      s.attempt.binding.Worker.Backend,
 		Model:        s.attempt.binding.Worker.Model,
 		ProjectID:    s.job.Project.ID,
 		SystemPrompt: WorkerCharter(),
-		WorkDir:      mount,
 		Persistent:   true,
 	}
 	if image := strings.TrimSpace(s.attempt.binding.Worker.Image); image != "" {
@@ -941,7 +917,7 @@ func (s *runnerRun) spawnRequest(ctx context.Context, mount string) (*orchestrat
 			Base:   s.delivery.Base,
 			Create: s.delivery.HeadSHA == "",
 		},
-		Mount: mount,
+		Key:   s.workspaceKey(),
 		Scope: SigningScopeDelivery,
 	})
 	if err != nil {

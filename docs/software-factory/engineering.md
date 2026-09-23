@@ -3886,9 +3886,12 @@ quicbaas agent serve \
   --allowed-mount-root /srv/agent-workspaces
 ```
 
-`--allowed-mount-root` is repeatable and required in practice: without it the
-daemon refuses every sandboxed spawn that names a work directory. See
-[Bind-Mount Allowlist Reference](#bind-mount-allowlist-reference).
+`--allowed-mount-root` is repeatable. The job workspaces the daemon provisions
+itself live under `--projects-root` (default `<--work-dir>/projects`), which is
+admitted tenant-scoped without an allowlist entry; list only what else a spawn
+may mount (a sockets root, a models directory). See
+[Bind-Mount Allowlist Reference](#bind-mount-allowlist-reference) and
+[sandbox.md § Agent-local workspaces](sandbox.md#agent-local-workspaces).
 
 #### Registration Flow (first start)
 
@@ -4017,8 +4020,8 @@ allowed_mount_roots:
 
 | Setting | Effect on a sandboxed spawn naming a `work_dir` |
 |---------|------------------------------------------------|
-| omitted (default) | **Every** spawn naming a work directory is refused |
-| one or more absolute roots | Only sources resolving under a listed root are accepted |
+| omitted (default) | Only the workspaces this daemon provisioned under its own `--projects-root`, for the requesting tenant, are accepted |
+| one or more absolute roots | Those, plus sources resolving under a listed root |
 
 Deny-by-default is deliberate. The daemon's Spawn RPC takes `work_dir` straight
 off the wire, and the ACP backend bind-mounts it into the container **read-write
@@ -4042,10 +4045,13 @@ behave identically:
   `extra_mounts` is authorized on every path, since it exists for no other
   purpose.
 
-The roots are **not** tenant-scoped: a daemon manages no project workspaces of
-its own, so the operator's list is shared by every tenant it serves. Do not list
-a directory holding one tenant's data on a daemon serving several. Non-absolute
-entries fail `Validate()` at startup rather than silently granting nothing.
+The listed roots are **not** tenant-scoped: they are shared by every tenant the
+daemon serves, so do not list a directory holding one tenant's data on a daemon
+serving several. The daemon's own `--projects-root` IS tenant-scoped
+(`<root>/<tenant>/…` only for that tenant), exactly as the control plane's
+projects root is (go-quicbaas#981). Non-absolute entries — and a relative
+projects root — fail `Validate()` at startup rather than silently granting
+nothing.
 
 #### Why the daemon checks again
 

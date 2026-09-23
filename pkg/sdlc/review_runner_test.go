@@ -99,7 +99,7 @@ func newReviewRunnerRig(t *testing.T) *reviewRunnerRig {
 
 	root := t.TempDir()
 	container := &fakeContainer{checkout: filepath.Join(orchestration.WorkspaceCheckoutRoot, testOrchProject().Name)}
-	agents := &fakeAgents{container: container}
+	agents := &fakeAgents{container: container, host: executingHost{root: root}}
 	forges := &fakeForges{forge: forge}
 	tokens := &fakeTokens{token: []byte("a-reviewer-api-token")}
 	signing := &fakeSigningAgent{}
@@ -1361,12 +1361,40 @@ func TestReviewRunner_RefusesAJobWithNoProjectRecord(t *testing.T) {
 	}
 }
 
-func TestReviewRunner_RefusesAProjectWithNoWorkspace(t *testing.T) {
+// TestReviewRunner_RefusesAWorkspaceNoHostCanProvision: a host with nowhere
+// to put the reviewer's checkout is a workspace fault, typed as one.
+func TestReviewRunner_RefusesAWorkspaceNoHostCanProvision(t *testing.T) {
 	rig := newReviewRunnerRig(t)
 	job := rig.job(41)
-	job.Project.Workspace = orchestration.ProjectWorkspace{}
-	if err := rig.runner.Run(context.Background(), job); !errors.Is(err, ErrRunner) {
-		t.Fatalf("err = %v, want ErrRunner", err)
+	rig.agents.host.root = ""
+	err := rig.runner.Run(context.Background(), job)
+	var unavailable *WorkspaceUnavailableError
+	if !errors.As(err, &unavailable) || !errors.Is(err, ErrWorkspaceUnfit) ||
+		!errors.Is(err, orchestration.ErrSessionWorkspace) {
+		t.Fatalf("err = %v, want a workspace fault", err)
+	}
+}
+
+// TestReviewRunner_NamesTheReviewWorkspaceForTheHead: the reviewer's spawn
+// names a workspace for the pull request and the head, and carries no path.
+func TestReviewRunner_NamesTheReviewWorkspaceForTheHead(t *testing.T) {
+	rig := newReviewRunnerRig(t)
+	rig.reviewerSays(reviewSaying("fine", ReviewCodeApprove))
+	job := rig.job(41)
+	if err := rig.runner.Run(context.Background(), job); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	spawn := rig.agents.spawns[0]
+	if spawn.WorkDir != "" || spawn.Workspace == nil ||
+		spawn.Workspace.Key != "review-41-"+shortSHA(reviewHead) {
+		t.Fatalf("spawn = work_dir %q workspace %+v", spawn.WorkDir, spawn.Workspace)
+	}
+	provisioned := rig.agents.host.workspaces()
+	if len(provisioned) != 1 {
+		t.Fatalf("provisioned = %d, want one", len(provisioned))
+	}
+	if want := filepath.Join(provisioned[0].Dir, testOrchProject().Name); job.WorkDir() != want {
+		t.Errorf("job work dir = %q, want the checkout on the executing host %q", job.WorkDir(), want)
 	}
 }
 

@@ -1101,6 +1101,93 @@ func (w *immediateWaiter) Wait(ctx context.Context, _ int) error {
 	return ctx.Err()
 }
 
+// executingHost is the host a fake agent service runs its sessions on. It
+// provisions each spawn's named workspace under its own projects root with the
+// WorkspaceManager every real host runs — the daemon's in-process backend and a
+// fleet agent alike — and releases the spec directory when the session closes.
+// That is the whole of the contract a runner may rely on (go-quicbaas#981), so
+// the fakes implement it with the production code rather than a copy of it.
+type executingHost struct {
+	// agentHost is the fleet agent this host is, empty for the daemon.
+	agentHost string
+
+	mu sync.Mutex
+
+	// root is the host's projects root. Empty refuses every named workspace,
+	// as a host with no projects root does.
+	root string
+
+	// sessions is each live session's provisioned workspace, released on close.
+	sessions map[string]*orchestration.ProvisionedWorkspace
+
+	// provisioned is every workspace provisioned, in spawn order.
+	provisioned []*orchestration.ProvisionedWorkspace
+
+	// specs is the spec each spawn carried, copied before provisioning wipes
+	// the request's own.
+	specs []map[string][]byte
+}
+
+// provision makes the workspace a spawn names and answers where, or nil when
+// the spawn named none.
+func (h *executingHost) provision(sessionID string, req *orchestration.SpawnSessionRequest) (*orchestration.WorkspacePlacement, error) {
+	if req.Workspace == nil {
+		return nil, nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.root == "" {
+		return nil, &orchestration.SessionWorkspaceUnsupportedError{Host: "the test host"}
+	}
+	manager, err := orchestration.NewWorkspaceManager(h.root)
+	if err != nil {
+		return nil, err
+	}
+	if req.Workspace.Spec != nil {
+		spec := make(map[string][]byte, len(req.Workspace.Spec.Files))
+		for name, content := range req.Workspace.Spec.Files {
+			spec[name] = append([]byte(nil), content...)
+		}
+		h.specs = append(h.specs, spec)
+	}
+	p, err := manager.ProvisionSession(req.Workspace)
+	if err != nil {
+		return nil, err
+	}
+	if h.sessions == nil {
+		h.sessions = map[string]*orchestration.ProvisionedWorkspace{}
+	}
+	h.sessions[sessionID] = p
+	h.provisioned = append(h.provisioned, p)
+	return &orchestration.WorkspacePlacement{AgentHost: h.agentHost, Key: req.Workspace.Key, Dir: p.Dir}, nil
+}
+
+// release drops a closed session's spec directory.
+func (h *executingHost) release(sessionID string) {
+	h.mu.Lock()
+	p := h.sessions[sessionID]
+	delete(h.sessions, sessionID)
+	h.mu.Unlock()
+	p.Release()
+}
+
+// spec is the spec the n-th spawn carried, nil when there was none.
+func (h *executingHost) spec(n int) map[string][]byte {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if n >= len(h.specs) {
+		return nil
+	}
+	return h.specs[n]
+}
+
+// workspaces is every workspace provisioned so far, in spawn order.
+func (h *executingHost) workspaces() []*orchestration.ProvisionedWorkspace {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]*orchestration.ProvisionedWorkspace(nil), h.provisioned...)
+}
+
 func testRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(t.TempDir())

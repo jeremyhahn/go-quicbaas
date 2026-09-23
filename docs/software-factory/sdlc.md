@@ -159,7 +159,7 @@ runtime, so it runs first; `startSDLC` attaches what the runner drives with.
 
    | state | what happens |
    |---|---|
-   | `initializing` | `Prepare` plans the branch, writes the `Delivery` and labels the issue; the ONE worker session is spawned in the binding's `worker.image` with the workspace spec and the forge token mounted read-only. The runner then clones the project and its `context_repos` INSIDE that container, through the runtime's exec seam (`checkout.go`), and puts the planned branch on the checkout; the daemon makes only the directory the checkout is mounted through. A **pre-flight** then proves that checkout (`preflight.go`) before anything is prompted: an unfit workspace parks the task for an operator at zero token cost — see [Autonomous projects](autonomy-and-dispatch.md#the-pre-flight--the-workspace-is-proved-before-anything-is-prompted). |
+   | `initializing` | `Prepare` plans the branch, writes the `Delivery` and labels the issue; the ONE worker session is spawned in the binding's `worker.image` with the workspace spec and the forge token mounted read-only. The runner then clones the project and its `context_repos` INSIDE that container, through the runtime's exec seam (`checkout.go`), and puts the planned branch on the checkout; the host that runs the session — this daemon or a fleet agent — makes only the directory the checkout is mounted through, under its own projects root ([sandbox](sandbox.md#agent-local-workspaces)). A **pre-flight** then proves that checkout (`preflight.go`) before anything is prompted: an unfit workspace parks the task for an operator at zero token cost — see [Autonomous projects](autonomy-and-dispatch.md#the-pre-flight--the-workspace-is-proved-before-anything-is-prompted). |
    | `executing` | the worker is prompted with the issue contract verbatim, plus the previous round's findings from job memory and, when the last attempt changed nothing, that attempt's turn. The answer is recorded on the job as an `sdlc:agent_turn` event whatever it was, and what the run does next is decided by whether the checkout moved — see [the worker's turn](#the-workers-turn). |
    | `validating` | reached ONLY when the turn changed something. The binding's `verification` commands, in order, through the module's `container_command` validator: the operator's `ExecutionGuard` admits each command on the DAEMON, and the command then runs INSIDE the worker's container, in the checkout its entrypoint made (`ContainerRuntime.Exec`, the same seam the delivery's git uses). Nothing verifies on the daemon; a job with no container is refused. A failure goes back to `executing` with the command's output — both streams — and counts a round. |
    | `reviewing` | `Reviewable` publishes; then the `forge_review` gate. `request_changes` → `re-delegating`; a plan needing no pull request (the trunk-based carve-out) goes straight to `completing`. |
@@ -436,10 +436,12 @@ Three properties the argument vectors carry deliberately:
 
 `forgeAccess` (`pkg/sdlc/workspace.go`) is the **one** way any of the module's
 three runners gets a container to the forge. A runner states the project, the
-binding's forge, the branch plan, the host mount and whether its container signs
-commits; the seam resolves the token, starts the ssh agent when one is needed,
-**checks the credentials against the spec**, materializes the workspace and puts
-every mount and every path on the spawn request.
+binding's forge, the branch plan, the workspace key and whether its container
+signs commits; the seam resolves the token, starts the ssh agent when one is
+needed, **checks the credentials against the spec**, and puts the named
+workspace, its decided spec and every container path on the spawn request. The
+host that runs the session provisions the workspace and writes the spec — see
+[sandbox.md § Agent-local workspaces](sandbox.md#agent-local-workspaces).
 
 | runner | scope | what the agent serves |
 | --- | --- | --- |

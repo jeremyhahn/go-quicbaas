@@ -152,24 +152,42 @@ func TestNewWorkspaceSpec_Refusals(t *testing.T) {
 }
 
 // =============================================================================
-// Materialization
+// Deciding and writing the spec directory
 // =============================================================================
 
-// TestMaterializeWorkspaceSpec_WritesTheSpecReadOnly proves the spec and the
-// forge token land in a private directory as read-only files, and that the
-// spec names the token file rather than carrying the token.
-func TestMaterializeWorkspaceSpec_WritesTheSpecReadOnly(t *testing.T) {
+// writtenSpec decides spec's directory and writes it under a fresh temporary
+// parent, the way the host that executes a session does.
+func writtenSpec(t *testing.T, spec WorkspaceSpec, token []byte) (*WorkspaceSpecFiles, string) {
+	t.Helper()
+	files, err := NewWorkspaceSpecFiles(spec, token)
+	if err != nil {
+		t.Fatalf("NewWorkspaceSpecFiles: %v", err)
+	}
+	dir, cleanup, err := writeWorkspaceSpecDir(t.TempDir(), files.Files)
+	if err != nil {
+		t.Fatalf("writeWorkspaceSpecDir: %v", err)
+	}
+	t.Cleanup(cleanup)
+	return files, dir
+}
+
+// TestWorkspaceSpecFiles_WritesTheSpecReadOnly proves the spec and the forge
+// token land in a private directory as read-only files, and that the spec
+// names the token file rather than carrying the token.
+func TestWorkspaceSpecFiles_WritesTheSpecReadOnly(t *testing.T) {
 	t.Parallel()
 	spec, err := NewWorkspaceSpec(workspaceProject(), WorkspaceBranchPlan{Name: "issue/7", Base: "main", Create: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ws, err := MaterializeWorkspaceSpec(spec, []byte("forge-secret"))
+	files, err := NewWorkspaceSpecFiles(spec, []byte("forge-secret"))
 	if err != nil {
-		t.Fatalf("MaterializeWorkspaceSpec: %v", err)
+		t.Fatalf("NewWorkspaceSpecFiles: %v", err)
 	}
-	dir, cleanup := ws.Dir, ws.Cleanup
-	t.Cleanup(cleanup)
+	dir, cleanup, err := writeWorkspaceSpecDir(t.TempDir(), files.Files)
+	if err != nil {
+		t.Fatalf("writeWorkspaceSpecDir: %v", err)
+	}
 
 	info, err := os.Stat(dir)
 	if err != nil {
@@ -178,7 +196,6 @@ func TestMaterializeWorkspaceSpec_WritesTheSpecReadOnly(t *testing.T) {
 	if perm := info.Mode().Perm(); perm != workspaceSpecDirMode {
 		t.Fatalf("spec directory mode = %v, want %v", perm, workspaceSpecDirMode)
 	}
-
 	for _, name := range []string{WorkspaceSpecFile, WorkspaceForgeTokenFile} {
 		fi, statErr := os.Stat(filepath.Join(dir, name))
 		if statErr != nil {
@@ -197,7 +214,7 @@ func TestMaterializeWorkspaceSpec_WritesTheSpecReadOnly(t *testing.T) {
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		t.Fatalf("decode spec: %v", err)
 	}
-	if decoded.ForgeTokenFile != WorkspaceForgeTokenFile {
+	if decoded.ForgeTokenFile != WorkspaceForgeTokenFile || files.Spec.ForgeTokenFile != WorkspaceForgeTokenFile {
 		t.Fatalf("the spec must name the token file: %q", decoded.ForgeTokenFile)
 	}
 	if decoded.Project.RepoURL != spec.Project.RepoURL || len(decoded.ContextRepos) != 2 ||
@@ -207,7 +224,6 @@ func TestMaterializeWorkspaceSpec_WritesTheSpecReadOnly(t *testing.T) {
 	if strings.Contains(string(raw), "forge-secret") {
 		t.Fatal("the spec must not carry the token value")
 	}
-
 	token, err := os.ReadFile(filepath.Join(dir, WorkspaceForgeTokenFile))
 	if err != nil || string(token) != "forge-secret" {
 		t.Fatalf("token file = %q, %v", token, err)
@@ -219,21 +235,38 @@ func TestMaterializeWorkspaceSpec_WritesTheSpecReadOnly(t *testing.T) {
 	}
 }
 
-// TestMaterializeWorkspaceSpec_NoTokenWritesNoTokenFile: a spawn with no
-// forge token has no token file and says so in the spec.
-func TestMaterializeWorkspaceSpec_NoTokenWritesNoTokenFile(t *testing.T) {
+// TestWorkspaceSpecFiles_TokenIsCopied: the files hold their own copy of the
+// token, so a caller that zeroes its buffer after deciding the spec does not
+// hand the executing host an empty credential.
+func TestWorkspaceSpecFiles_TokenIsCopied(t *testing.T) {
+	t.Parallel()
+	spec, err := NewWorkspaceSpec(workspaceProject(), WorkspaceBranchPlan{Name: "issue/7", Base: "main", Create: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := []byte("forge-secret")
+	files, err := NewWorkspaceSpecFiles(spec, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range token {
+		token[i] = 0
+	}
+	if got := string(files.Files[WorkspaceForgeTokenFile]); got != "forge-secret" {
+		t.Fatalf("token file content = %q", got)
+	}
+}
+
+// TestWorkspaceSpecFiles_NoTokenWritesNoTokenFile: a spawn with no forge
+// token has no token file and says so in the spec.
+func TestWorkspaceSpecFiles_NoTokenWritesNoTokenFile(t *testing.T) {
 	t.Parallel()
 	spec, err := NewWorkspaceSpec(workspaceProject(), WorkspaceBranchPlan{Name: "issue/7", Base: "main", Create: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	spec.ForgeTokenFile = "stale"
-	ws, err := MaterializeWorkspaceSpec(spec, nil)
-	if err != nil {
-		t.Fatalf("MaterializeWorkspaceSpec: %v", err)
-	}
-	dir := ws.Dir
-	t.Cleanup(ws.Cleanup)
+	_, dir := writtenSpec(t, spec, nil)
 	if _, err := os.Stat(filepath.Join(dir, WorkspaceForgeTokenFile)); !os.IsNotExist(err) {
 		t.Fatalf("no token means no token file: %v", err)
 	}
@@ -259,10 +292,10 @@ func sshWorkspaceProject() *Project {
 	return p
 }
 
-// TestMaterializeWorkspaceSpec_SSHWritesTheKnownHosts proves the ssh half of
-// the checkout: the pinned key becomes a read-only known_hosts beside the
-// spec, the spec names it, and the file pins the port the remote names.
-func TestMaterializeWorkspaceSpec_SSHWritesTheKnownHosts(t *testing.T) {
+// TestWorkspaceSpecFiles_SSHWritesTheKnownHosts proves the ssh half of the
+// checkout: the pinned key becomes a read-only known_hosts beside the spec,
+// the spec names it, and the file pins the port the remote names.
+func TestWorkspaceSpecFiles_SSHWritesTheKnownHosts(t *testing.T) {
 	t.Parallel()
 	spec, err := NewWorkspaceSpec(sshWorkspaceProject(), WorkspaceBranchPlan{Name: "issue/7", Base: "main", Create: true})
 	if err != nil {
@@ -271,23 +304,18 @@ func TestMaterializeWorkspaceSpec_SSHWritesTheKnownHosts(t *testing.T) {
 	hostKey := testHostKeyLine(t)
 	spec.SSHHostKey = hostKey
 
-	ws, err := MaterializeWorkspaceSpec(spec, nil)
-	if err != nil {
-		t.Fatalf("MaterializeWorkspaceSpec: %v", err)
+	files, dir := writtenSpec(t, spec, nil)
+	if files.Spec.KnownHostsFile != WorkspaceKnownHostsFile {
+		t.Fatalf("the decided spec must name the known_hosts it holds: %q", files.Spec.KnownHostsFile)
 	}
-	t.Cleanup(ws.Cleanup)
-
-	if ws.Spec.KnownHostsFile != WorkspaceKnownHostsFile {
-		t.Fatalf("the returned spec must name the known_hosts it wrote: %q", ws.Spec.KnownHostsFile)
-	}
-	info, err := os.Stat(filepath.Join(ws.Dir, WorkspaceKnownHostsFile))
+	info, err := os.Stat(filepath.Join(dir, WorkspaceKnownHostsFile))
 	if err != nil {
 		t.Fatalf("stat known_hosts: %v", err)
 	}
 	if perm := info.Mode().Perm(); perm != workspaceSpecFileMode {
 		t.Fatalf("known_hosts mode = %v, want %v", perm, workspaceSpecFileMode)
 	}
-	content, err := os.ReadFile(filepath.Join(ws.Dir, WorkspaceKnownHostsFile))
+	content, err := os.ReadFile(filepath.Join(dir, WorkspaceKnownHostsFile))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +323,7 @@ func TestMaterializeWorkspaceSpec_SSHWritesTheKnownHosts(t *testing.T) {
 		t.Fatalf("known_hosts = %q, want %q", content, want)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(ws.Dir, WorkspaceSpecFile))
+	raw, err := os.ReadFile(filepath.Join(dir, WorkspaceSpecFile))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,15 +332,15 @@ func TestMaterializeWorkspaceSpec_SSHWritesTheKnownHosts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if decoded.KnownHostsFile != WorkspaceKnownHostsFile || decoded.SSHHostKey != hostKey {
-		t.Fatalf("the container must read the same pinning the daemon wrote: %+v", decoded)
+		t.Fatalf("the container must read the same pinning the daemon decided: %+v", decoded)
 	}
 }
 
-// TestMaterializeWorkspaceSpec_SSHWithoutAPinnedKeyIsRefused is the burn-in
+// TestWorkspaceSpecFiles_SSHWithoutAPinnedKeyIsRefused is the burn-in
 // blocker's second half: an ssh remote whose binding pinned nothing must be
 // refused HERE, before any container starts, with an error naming the field
 // the operator has to fill in — never softened into accept-new.
-func TestMaterializeWorkspaceSpec_SSHWithoutAPinnedKeyIsRefused(t *testing.T) {
+func TestWorkspaceSpecFiles_SSHWithoutAPinnedKeyIsRefused(t *testing.T) {
 	t.Parallel()
 	spec, err := NewWorkspaceSpec(sshWorkspaceProject(), WorkspaceBranchPlan{Name: "issue/7", Base: "main", Create: true})
 	if err != nil {
@@ -324,16 +352,13 @@ func TestMaterializeWorkspaceSpec_SSHWithoutAPinnedKeyIsRefused(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			spec.SSHHostKey = hostKey
-			ws, matErr := MaterializeWorkspaceSpecIn(t.TempDir(), spec, nil)
-			if matErr == nil {
-				t.Fatal("an unpinned ssh checkout was materialized")
-			}
-			if ws.Dir != "" || ws.Cleanup != nil {
-				t.Fatalf("a refused materialization must leave nothing behind: %+v", ws.Dir)
+			files, decideErr := NewWorkspaceSpecFiles(spec, nil)
+			if decideErr == nil || files != nil {
+				t.Fatalf("an unpinned ssh checkout was decided: %+v", files)
 			}
 			var typed *SSHHostKeyError
-			if !errors.As(matErr, &typed) || !errors.Is(matErr, ErrSSHHostKeyInvalid) {
-				t.Fatalf("got %T %v, want *SSHHostKeyError", matErr, matErr)
+			if !errors.As(decideErr, &typed) || !errors.Is(decideErr, ErrSSHHostKeyInvalid) {
+				t.Fatalf("got %T %v, want *SSHHostKeyError", decideErr, decideErr)
 			}
 			if typed.Field() != "forge.ssh_host_key" {
 				t.Fatalf("the refusal must name the missing field: %q", typed.Field())
@@ -342,45 +367,52 @@ func TestMaterializeWorkspaceSpec_SSHWithoutAPinnedKeyIsRefused(t *testing.T) {
 	}
 }
 
-// TestMaterializeWorkspaceSpec_HTTPSWritesNoKnownHosts: an https checkout
-// needs no host key, so no file is written and no stale name survives on the
-// spec the container reads.
-func TestMaterializeWorkspaceSpec_HTTPSWritesNoKnownHosts(t *testing.T) {
+// TestWorkspaceSpecFiles_HTTPSWritesNoKnownHosts: an https checkout needs no
+// host key, so no file is decided and no stale name survives on the spec the
+// container reads.
+func TestWorkspaceSpecFiles_HTTPSWritesNoKnownHosts(t *testing.T) {
 	t.Parallel()
 	spec, err := NewWorkspaceSpec(workspaceProject(), WorkspaceBranchPlan{Name: "issue/7", Base: "main", Create: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	spec.KnownHostsFile = "stale"
-	ws, err := MaterializeWorkspaceSpec(spec, nil)
-	if err != nil {
-		t.Fatalf("MaterializeWorkspaceSpec: %v", err)
-	}
-	t.Cleanup(ws.Cleanup)
-	if _, err := os.Stat(filepath.Join(ws.Dir, WorkspaceKnownHostsFile)); !os.IsNotExist(err) {
+	files, dir := writtenSpec(t, spec, nil)
+	if _, err := os.Stat(filepath.Join(dir, WorkspaceKnownHostsFile)); !os.IsNotExist(err) {
 		t.Fatalf("an https checkout writes no known_hosts: %v", err)
 	}
-	if ws.Spec.KnownHostsFile != "" {
-		t.Fatalf("the spec must not name a known_hosts that is not there: %q", ws.Spec.KnownHostsFile)
+	if files.Spec.KnownHostsFile != "" {
+		t.Fatalf("the spec must not name a known_hosts that is not there: %q", files.Spec.KnownHostsFile)
 	}
 }
 
-// TestMaterializeWorkspaceSpec_ASigningKeyWritesTheAllowedSigners: the file
+// TestWriteWorkspaceSpecDir_UnwritableParent reports a spec directory the
+// host could not create, typed and with the cause, leaving no cleanup.
+func TestWriteWorkspaceSpecDir_UnwritableParent(t *testing.T) {
+	t.Parallel()
+	dir, cleanup, err := writeWorkspaceSpecDir(filepath.Join(t.TempDir(), "does-not-exist"),
+		map[string][]byte{WorkspaceSpecFile: []byte("{}")})
+	if dir != "" || cleanup != nil {
+		t.Fatal("a failed write has nothing to clean up")
+	}
+	var typed *WorkspaceSpecMaterializeError
+	if !errors.As(err, &typed) || !errors.Is(err, ErrWorkspaceSpecMaterialize) {
+		t.Fatalf("got %v, want WorkspaceSpecMaterializeError", err)
+	}
+}
+
+// TestWorkspaceSpecFiles_ASigningKeyWritesTheAllowedSigners: the file
 // admits exactly the attempt's key for git signatures, read-only, and the
 // spec names it.
-func TestMaterializeWorkspaceSpec_ASigningKeyWritesTheAllowedSigners(t *testing.T) {
+func TestWorkspaceSpecFiles_ASigningKeyWritesTheAllowedSigners(t *testing.T) {
 	t.Parallel()
 	spec, err := NewWorkspaceSpec(workspaceProject(), WorkspaceBranchPlan{Name: "issue/7", Base: "main", Create: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	spec.SigningKey = "ssh-ed25519 AAAAkey agent"
-	ws, err := MaterializeWorkspaceSpec(spec, nil)
-	if err != nil {
-		t.Fatalf("MaterializeWorkspaceSpec: %v", err)
-	}
-	t.Cleanup(ws.Cleanup)
-	file := filepath.Join(ws.Dir, WorkspaceAllowedSignersFile)
+	files, dir := writtenSpec(t, spec, nil)
+	file := filepath.Join(dir, WorkspaceAllowedSignersFile)
 	content, err := os.ReadFile(file)
 	if err != nil {
 		t.Fatalf("allowed_signers: %v", err)
@@ -395,53 +427,69 @@ func TestMaterializeWorkspaceSpec_ASigningKeyWritesTheAllowedSigners(t *testing.
 	if info.Mode().Perm() != workspaceSpecFileMode {
 		t.Fatalf("mode = %v, want %v", info.Mode().Perm(), workspaceSpecFileMode)
 	}
-	if ws.Spec.AllowedSignersFile != WorkspaceAllowedSignersFile {
-		t.Fatalf("spec names %q", ws.Spec.AllowedSignersFile)
+	if files.Spec.AllowedSignersFile != WorkspaceAllowedSignersFile {
+		t.Fatalf("spec names %q", files.Spec.AllowedSignersFile)
+	}
+	// And the file is one a host provisioning the workspace will write: the
+	// closed set of spec file names admits it.
+	ws := namedWorkspace()
+	ws.Spec = files
+	if err := ws.Validate(); err != nil {
+		t.Fatalf("a spec carrying allowed_signers is refused: %v", err)
 	}
 }
 
-// TestMaterializeWorkspaceSpec_NoSigningKeyWritesNoAllowedSigners: an attempt
+// TestWorkspaceSpecFiles_NoSigningKeyWritesNoAllowedSigners: an attempt
 // that signs nothing gets no file, and a stale name in the spec is cleared.
-func TestMaterializeWorkspaceSpec_NoSigningKeyWritesNoAllowedSigners(t *testing.T) {
+func TestWorkspaceSpecFiles_NoSigningKeyWritesNoAllowedSigners(t *testing.T) {
 	t.Parallel()
 	spec, err := NewWorkspaceSpec(workspaceProject(), WorkspaceBranchPlan{Name: "issue/7", Base: "main", Create: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	spec.AllowedSignersFile = "stale"
-	ws, err := MaterializeWorkspaceSpec(spec, nil)
-	if err != nil {
-		t.Fatalf("MaterializeWorkspaceSpec: %v", err)
-	}
-	t.Cleanup(ws.Cleanup)
-	if _, err := os.Stat(filepath.Join(ws.Dir, WorkspaceAllowedSignersFile)); !os.IsNotExist(err) {
+	files, dir := writtenSpec(t, spec, nil)
+	if _, err := os.Stat(filepath.Join(dir, WorkspaceAllowedSignersFile)); !os.IsNotExist(err) {
 		t.Fatalf("an attempt that signs nothing writes no allowed_signers: %v", err)
 	}
-	if ws.Spec.AllowedSignersFile != "" {
-		t.Fatalf("the spec names %q", ws.Spec.AllowedSignersFile)
+	if files.Spec.AllowedSignersFile != "" {
+		t.Fatalf("the spec names %q", files.Spec.AllowedSignersFile)
 	}
 }
 
 // =============================================================================
-// Mounts and the spawn request
+// The spawn request
 // =============================================================================
 
-// TestApplyWorkspaceSpec_MountsReadOnlyAndNamesPathsOnly proves the spawn
-// request carries the mounts and the two path variables, and no secret.
-func TestApplyWorkspaceSpec_MountsReadOnlyAndNamesPathsOnly(t *testing.T) {
-	t.Parallel()
-	req := &SpawnSessionRequest{Backend: "claude", ExtraArgs: []string{"--kept"}}
-	ApplyWorkspaceSpec(req, MaterializedWorkspace{Dir: "/tmp/spec-dir"}, "/tmp/agent.sock")
+// namedWorkspaceRequest is a spawn request that names its workspace, the only
+// shape ApplyWorkspaceSpec acts on.
+func namedWorkspaceRequest() *SpawnSessionRequest {
+	return &SpawnSessionRequest{
+		Backend:   "claude",
+		ExtraArgs: []string{"--kept"},
+		Workspace: &SessionWorkspace{TenantID: "t1", ProjectID: "p1", Key: "task-a1"},
+	}
+}
 
-	if len(req.ExtraMounts) != 2 {
-		t.Fatalf("mounts = %+v", req.ExtraMounts)
+// TestApplyWorkspaceSpec_CarriesTheFilesAndNamesPathsOnly proves the spawn
+// request carries the spec files for the executing host, the signing socket's
+// mount and the two path variables — and no secret in the environment. The
+// spec directory is NOT mounted here: it does not exist until the executing
+// host writes it.
+func TestApplyWorkspaceSpec_CarriesTheFilesAndNamesPathsOnly(t *testing.T) {
+	t.Parallel()
+	req := namedWorkspaceRequest()
+	files := &WorkspaceSpecFiles{Files: map[string][]byte{WorkspaceForgeTokenFile: []byte("forge-secret")}}
+	ApplyWorkspaceSpec(req, files, "/tmp/agent.sock")
+
+	if req.Workspace.Spec != files {
+		t.Fatal("the spec files must travel on the named workspace")
 	}
-	spec := req.ExtraMounts[0]
-	if spec.Source != "/tmp/spec-dir" || spec.Target != WorkspaceSpecDir || !spec.ReadOnly {
-		t.Fatalf("the spec mount must be read-only at its fixed target: %+v", spec)
+	if len(req.ExtraMounts) != 1 {
+		t.Fatalf("only the signing socket is mounted from this host: %+v", req.ExtraMounts)
 	}
-	sock := req.ExtraMounts[1]
-	if sock.Source != "/tmp/agent.sock" || sock.Target != WorkspaceSigningAgentSocket {
+	sock := req.ExtraMounts[0]
+	if sock.Source != "/tmp/agent.sock" || sock.Target != WorkspaceSigningAgentSocket || !sock.ReadOnly {
 		t.Fatalf("signing agent mount = %+v", sock)
 	}
 	if req.Env[WorkspaceSpecEnv] != filepath.Join(WorkspaceSpecDir, WorkspaceSpecFile) {
@@ -449,6 +497,11 @@ func TestApplyWorkspaceSpec_MountsReadOnlyAndNamesPathsOnly(t *testing.T) {
 	}
 	if req.Env[WorkspaceSigningAgentEnv] != WorkspaceSigningAgentSocket {
 		t.Fatalf("%s = %q", WorkspaceSigningAgentEnv, req.Env[WorkspaceSigningAgentEnv])
+	}
+	for name, value := range req.Env {
+		if strings.Contains(value, "forge-secret") {
+			t.Fatalf("the token must never reach the environment: %s", name)
+		}
 	}
 	if len(req.ExtraArgs) != 1 || req.ExtraArgs[0] != "--kept" {
 		t.Fatalf("the caller's argv must survive: %v", req.ExtraArgs)
@@ -459,63 +512,44 @@ func TestApplyWorkspaceSpec_MountsReadOnlyAndNamesPathsOnly(t *testing.T) {
 	}
 }
 
-// TestApplyWorkspaceSpec_SSHNamesTheKnownHostsStrictly: when the spec wrote a
+// TestApplyWorkspaceSpec_SSHNamesTheKnownHostsStrictly: when the spec holds a
 // known_hosts, the spawn carries the GIT_SSH_COMMAND that makes the worker's
-// git verify the forge against it — the PATH inside the container, never the
-// daemon's directory.
+// git verify the forge against it — the PATH inside the container.
 func TestApplyWorkspaceSpec_SSHNamesTheKnownHostsStrictly(t *testing.T) {
 	t.Parallel()
-	req := &SpawnSessionRequest{Backend: "claude"}
-	ws := MaterializedWorkspace{
-		Dir:  "/srv/projects/t1/p1/quicbaas-workspace-abc",
-		Spec: WorkspaceSpec{KnownHostsFile: WorkspaceKnownHostsFile},
-	}
-	ApplyWorkspaceSpec(req, ws, "")
+	req := namedWorkspaceRequest()
+	ApplyWorkspaceSpec(req, &WorkspaceSpecFiles{Spec: WorkspaceSpec{KnownHostsFile: WorkspaceKnownHostsFile}}, "")
 
 	got := req.Env[WorkspaceSSHCommandEnv]
 	want := WorkspaceSSHCommand(filepath.Join(WorkspaceSpecDir, WorkspaceKnownHostsFile))
 	if got != want {
 		t.Fatalf("%s = %q, want %q", WorkspaceSSHCommandEnv, got, want)
 	}
-	if strings.Contains(got, ws.Dir) {
-		t.Fatalf("the daemon's own path must not reach the container: %q", got)
+	if len(req.ExtraMounts) != 0 {
+		t.Fatalf("no signing socket means nothing mounted from this host: %+v", req.ExtraMounts)
 	}
 }
 
-// TestApplyWorkspaceSpec_NothingToApply: a nil request and an empty spec
-// directory are both no-ops.
+// TestApplyWorkspaceSpec_NothingToApply: a nil request, a request that names
+// no workspace, and a nil spec are all no-ops.
 func TestApplyWorkspaceSpec_NothingToApply(t *testing.T) {
 	t.Parallel()
-	ApplyWorkspaceSpec(nil, MaterializedWorkspace{Dir: "/tmp/spec-dir"}, "")
+	files := &WorkspaceSpecFiles{}
+	ApplyWorkspaceSpec(nil, files, "/tmp/agent.sock")
 
-	req := &SpawnSessionRequest{Backend: "claude"}
-	ApplyWorkspaceSpec(req, MaterializedWorkspace{}, "")
-	if len(req.ExtraMounts) != 0 {
-		t.Fatalf("nothing to mount: %+v", req.ExtraMounts)
+	unnamed := &SpawnSessionRequest{Backend: "claude"}
+	ApplyWorkspaceSpec(unnamed, files, "/tmp/agent.sock")
+	if len(unnamed.ExtraMounts) != 0 || len(unnamed.Env) != 0 {
+		t.Fatalf("a request naming no workspace is left alone: %+v", unnamed)
 	}
-	if len(req.Env) != 0 {
-		t.Fatalf("nothing to name: %+v", req.Env)
+
+	named := namedWorkspaceRequest()
+	ApplyWorkspaceSpec(named, nil, "/tmp/agent.sock")
+	if named.Workspace.Spec != nil || len(named.ExtraMounts) != 0 || len(named.Env) != 0 {
+		t.Fatalf("a nil spec applies nothing: %+v", named)
 	}
 	if mounts := WorkspaceSpecMounts("", ""); len(mounts) != 0 {
 		t.Fatalf("mounts = %+v", mounts)
-	}
-}
-
-// TestMaterializeWorkspaceSpec_UnwritableTempDir reports a spec directory the
-// daemon could not create, typed and with the cause.
-func TestMaterializeWorkspaceSpec_UnwritableTempDir(t *testing.T) {
-	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "does-not-exist"))
-	spec, err := NewWorkspaceSpec(workspaceProject(), WorkspaceBranchPlan{Name: "issue/7", Base: "main", Create: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ws, err := MaterializeWorkspaceSpec(spec, nil)
-	if ws.Cleanup != nil {
-		t.Fatal("a failed materialization has nothing to clean up")
-	}
-	var typed *WorkspaceSpecMaterializeError
-	if !errors.As(err, &typed) || !errors.Is(err, ErrWorkspaceSpecMaterialize) {
-		t.Fatalf("got %v, want WorkspaceSpecMaterializeError", err)
 	}
 }
 

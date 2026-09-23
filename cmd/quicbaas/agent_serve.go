@@ -67,6 +67,7 @@ var (
 	serveImageRegistry    string
 	serveAutoPull         bool
 	serveWorkDir          string
+	serveProjectsRoot     string
 	serveAgentCertFile    string
 	serveAgentKeyFile     string
 	serveServerCAFile     string
@@ -127,6 +128,7 @@ Examples:
 	cmd.Flags().StringVar(&serveImageRegistry, "image-registry", "", "Registry prefix applied to unqualified image references")
 	cmd.Flags().BoolVar(&serveAutoPull, "auto-pull", false, "Pull missing container images at startup")
 	cmd.Flags().StringVar(&serveWorkDir, "work-dir", "/var/lib/quicbaas-agent", "Working directory for state, scratch, and session workspaces")
+	cmd.Flags().StringVar(&serveProjectsRoot, "projects-root", "", "Absolute directory this agent provisions job workspaces under (<root>/<tenant>/<project>/workspace/<key>); the checkouts live here and a job's later sessions are pinned back to them, so it must persist across restarts. Admitted for mounts tenant-scoped, like the server's own projects root. Empty takes <work-dir>/projects.")
 	cmd.Flags().StringVar(&serveAgentCertFile, "agent-cert", "", "Path to the daemon's PEM-encoded mTLS client certificate (required)")
 	cmd.Flags().StringVar(&serveAgentKeyFile, "agent-key", "", "Path to the daemon's PEM-encoded mTLS private key (required)")
 	cmd.Flags().StringVar(&serveServerCAFile, "server-ca", "", "Path to the PEM-encoded CA bundle the daemon trusts when dialing --server (required)")
@@ -350,6 +352,13 @@ func buildAgentRuntime(cfg *agent.Config, backends map[string]orchestration.Agen
 			ov.SetContainerRuntime(containerRuntime)
 		}
 	}
+	// The job workspaces this daemon provisions live under its own projects
+	// root (go-quicbaas#981); the mount policy below admits that root
+	// tenant-scoped, so nothing else has to be allowlisted for them.
+	workspaces, wsErr := orchestration.NewWorkspaceManager(cfg.EffectiveProjectsRoot())
+	if wsErr != nil {
+		return nil, wsErr
+	}
 	return agent.NewRuntime(agent.RuntimeConfig{
 		Backends:         backends,
 		ContainerRuntime: containerRuntime,
@@ -358,10 +367,12 @@ func buildAgentRuntime(cfg *agent.Config, backends map[string]orchestration.Agen
 		ImageRegistry:    cfg.ImageRegistry,
 		Logger:           logger,
 		WorkDir:          cfg.WorkDir,
-		// Bind-mount allowlist. Empty denies every host mount a sandboxed
-		// spawn asks for, so a daemon started without --allowed-mount-root
-		// cannot be talked into mounting an operator's filesystem.
+		// Bind-mount policy: this daemon's projects root, tenant-scoped, plus
+		// the --allowed-mount-root allowlist. Nothing outside those is ever
+		// mounted, so a daemon cannot be talked into mounting an operator's
+		// filesystem.
 		MountPolicy: cfg.MountPolicy(),
+		Workspaces:  workspaces,
 	})
 }
 
@@ -782,6 +793,7 @@ func buildServeConfig() (*agent.Config, error) {
 		ImageRegistry:            serveImageRegistry,
 		AutoPull:                 serveAutoPull,
 		WorkDir:                  serveWorkDir,
+		ProjectsRoot:             serveProjectsRoot,
 		AgentCertFile:            serveAgentCertFile,
 		AgentKeyFile:             serveAgentKeyFile,
 		ServerCAFile:             serveServerCAFile,

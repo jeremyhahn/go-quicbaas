@@ -649,9 +649,16 @@ func reconcileAgentBackends(agent *AgentRegistration, observed *AgentObservation
 
 	traits := make([]string, 0, len(agent.Capabilities))
 	for _, capability := range agent.Capabilities {
-		if _, isTrait := agentCapabilityTraits[capability]; isTrait {
+		_, isTrait := agentCapabilityTraits[capability]
+		// A signing-agent trait survives only an observation that says
+		// nothing about it; one that reports the list replaces it below.
+		keepSigning := isSigningAgentTrait(capability) && observed.SigningAgents == nil
+		if isTrait || keepSigning {
 			traits = append(traits, capability)
 		}
+	}
+	for _, id := range observed.SigningAgents {
+		traits = append(traits, SigningAgentTrait(id))
 	}
 
 	capabilities := make([]string, 0, len(observed.Backends)+len(traits))
@@ -680,7 +687,7 @@ func reconcileAgentBackends(agent *AgentRegistration, observed *AgentObservation
 //
 // AN OPERATOR LOWERS A HOST'S CAPACITY BY REPORTING THE LOWER NUMBER, not by
 // reporting none: draining a host is reported as the daemon leaving (its
-// heartbeat stops, and fleetAgentAlive stops counting it), which is a different
+// heartbeat stops, and AgentAlive stops counting it), which is a different
 // fact from a host that is up and can serve fewer jobs.
 func reconcileAgentCapacity(agent *AgentRegistration, observed *AgentObservation) bool {
 	if agent == nil || observed == nil || observed.MaxConcurrentJobs <= 0 {

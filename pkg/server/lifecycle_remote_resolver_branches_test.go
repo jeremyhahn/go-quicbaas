@@ -91,7 +91,7 @@ func TestPickDaemon_SkipsNilAndBackendMismatch(t *testing.T) {
 		onlineDaemon("beta", "10.0.0.2:9090", "vllm"), // skipped: different backend
 	}
 
-	reg, constraint := pool.pickDaemon(regs, "ollama", "", false)
+	reg, constraint := pool.pickDaemon(regs, "ollama", "", false, "")
 	if reg != nil {
 		t.Fatalf("expected no matching daemon, got %v", reg)
 	}

@@ -107,6 +107,13 @@ type SpawnRequest struct {
 	Env          map[string]string `json:"env,omitempty"`
 	ExtraArgs    []string          `json:"extra_args,omitempty"` // Additional CLI args for the agent command
 
+	// Workspace names the workspace a remote host provisions for the
+	// session. The orchestrator provisions an in-process spawn's workspace
+	// itself and hands the backend WorkDir; a remote backend forwards this to
+	// the agent that executes the session, which provisions it under its own
+	// projects root and reports the directory as the session's WorkDir.
+	Workspace *SessionWorkspace `json:"workspace,omitempty"`
+
 	// Persistent requests a persistent session where the agent maintains
 	// conversation context across multiple prompts. When false, each prompt
 	// spawns a fresh one-shot process. Configured per-agent in the workflow

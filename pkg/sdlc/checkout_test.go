@@ -548,7 +548,7 @@ func TestRunner_TheJobsWorkDirIsTheProjectCheckout(t *testing.T) {
 	if err := rig.runner.Run(context.Background(), job); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	want := filepath.Join(rig.root, testTask+"-a1", "api")
+	want := filepath.Join(rig.root, testTenant, testProject, "workspace", testTask+"-a1", "api")
 	if got := job.WorkDir(); got != want {
 		t.Errorf("job work dir = %q, want the project checkout %q", got, want)
 	}

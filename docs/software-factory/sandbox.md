@@ -244,6 +244,145 @@ refused by the runner before it is prompted. If a required spawn comes back with
 an empty `ContainerID`, the sandbox was not applied — treat it as a security
 defect, not a cosmetic one.
 
+## Agent-local workspaces
+
+A spawn **names** the directory its session works in; it never gives a host
+path. The host that executes the session — this daemon's in-process backend or
+a fleet agent (`quicbaas agent serve`) — provisions it under **its own**
+projects root and reports where:
+
+```
+<projects_root>/<tenant_id>/<project_id>/workspace/<key>          # the checkout, mounted at /workspace
+<projects_root>/<tenant_id>/<project_id>/workspace/quicbaas-workspace-*   # the spec + forge token, read-only at /run/quicbaas/workspace
+```
+
+Until go-quicbaas#981 the sdlc runners provisioned that directory under the
+**daemon's** projects root and bind-mounted the absolute path, so every sdlc and
+review spawn routed to an agent on another machine was refused at the agent's
+mount check (`mount source is outside the tenant's projects root and every
+allowed mount root`). Git already stayed agent-side — the clone, the commit and
+the push run inside the session's container — and now the directory does too.
+
+| Piece | Where it lives |
+|---|---|
+| `SpawnSessionRequest.Workspace` (`tenant`, `project`, `key`) | the spawn; mutually exclusive with `WorkDir` |
+| workspace spec + forge token (`WorkspaceSpecFiles`) | decided on the daemon, carried on the authenticated spawn RPC, **written by the executing host** beside the workspace; never serialized into a durable record |
+| `WorkspaceManager.ProvisionSession` | the one provisioner, run by the daemon for in-process spawns and by every agent for its own |
+| `SpawnSessionResponse.Workspace` (`agent_host`, `key`, `dir`) | reported back; `dir` is recorded as the session's `WorkDir` |
+| `JobStatus.WorkspacePin` | the job's first placement, stored **strictly** the moment the spawn returns — before the checkout. A store that refuses it closes the session and returns `WorkspacePinPersistError` (parked), so no checkout is ever made that a recovery could not locate |
+
+**Workspace keys.** Delivery `<task>-a<attempt>` (one checkout per attempt,
+shared by its rounds and rolled-over sessions), review `review-<pr>-<head>`,
+triage `triage-<project>`.
+
+**A job stays where its checkout is.** `JobRun.Spawn` stamps every later spawn
+of the job that names a workspace — the next review round, a session rolled over
+on a full context, the respawn after a daemon restart — with the job's pin. The
+orchestrator resolves a pinned spawn with **strict** host affinity to that agent
+(or to the in-process backend when the daemon holds it) and checks the result
+after resolution, because the dispatcher's soft fallback (an offline pinned host
+falls through to the in-process backend) is exactly a fresh clone somewhere
+else. What cannot be honoured is refused, typed, before any container starts:
+
+| Refusal | When |
+|---|---|
+| `WorkspaceAgentUnavailableError` | the pinned agent is deregistered, offline, or no longer serves the backend — or it resolved (heartbeat still fresh) and then never answered the spawn |
+| `WorkspaceStaleError` | the pinned agent is there but the checkout is not where the pin says (removed, or its projects root moved) |
+| `SessionWorkspaceUnsupportedError` | the executing host has no projects root, or is an agent build that predates named workspaces (the daemon closes that session again) |
+| `SessionWorkspaceTenantError` | the workspace names a tenant other than the one the spawn runs under |
+| `WorkspaceLinkError` | a level of the workspace is a symbolic link |
+
+All four unwrap to `orchestration.ErrSessionWorkspace`, which crosses the agent
+wire as spawn-fault evidence (`session_workspace`), and the sdlc runners report
+them as `WorkspaceUnavailableError` → `ErrWorkspaceUnfit`: the attempt is parked
+for an operator (`workspace_unfit`, `operator_repair`) with no tokens spent and
+no attempt charged. Restart the agent, or readmit the task — a readmitted task
+is a new attempt with a new key, which may land anywhere.
+
+**Provisioning never leaves the tenant's subtree.** A tenant can mount its own
+workspaces read-write, so anything under `<projects_root>/<tenant>` may be a
+link it planted. Every create, chmod, write and removal the provisioner and the
+sweep make goes through an `os.Root` opened at `<projects_root>/<tenant>`,
+which refuses a path resolving outside it, race-free. Every level of a
+workspace must be a directory — a link there is `WorkspaceLinkError` — and a
+mode is set through a handle opened inside the root and proved to be the
+directory at that name, never by name (`Root.Chmod` is documented as racy).
+
+**The forge token never outlives its session.** The spec directory holds it in
+plaintext, so:
+
+- the executing host removes it when the session closes, and when a spawn fails
+  after writing it;
+- **at startup**, before it accepts a spawn, every host removes every spec
+  directory under its projects root (`WorkspaceManager.SweepSessionSpecs`,
+  run by `agent serve`, the embedded agent and the daemon). No session
+  survives a restart — the agent's container sweep ends them — so each one is
+  an orphan no `Close` will ever release;
+- the in-memory copy is wiped (bytes zeroed) the moment it is written on the
+  executing host, and on the daemon once the spawn is over, sent or not.
+
+What an agent persists about a session (`<work-dir>/sessions/*.json`) is the
+workspace path and nothing more; the token is re-delivered by the control plane
+on every spawn. The checkout stays for the job's next session.
+
+**The mount grant.** An agent's projects root is admitted **tenant-scoped** by
+its mount policy, exactly as the control plane admits its own, so it needs no
+`--allowed-mount-root` entry. It defaults to `<--work-dir>/projects`; set
+`--projects-root` to put checkouts on a larger or faster disk. It must persist
+across restarts — a root on tmpfs makes every restart a `WorkspaceStaleError`.
+
+**The signing agent is placed, not assumed.** A container that signs commits —
+the delivery worker — or clones an **ssh** remote is handed the KMS-backed ssh
+agent's socket, which is bound on the **daemon** host; an agent anywhere else
+cannot mount it. So such a spawn is placed only where that socket is local:
+
+- The daemon writes a random identifier into its sockets root
+  (`<sockets_root>/.quicbaas-signing-root`, `orchestration.EnsureSigningRootID`).
+- An agent looks for that marker in, and one level below, each of its
+  `--allowed-mount-root` directories (`DiscoverSigningRootIDs`) and advertises
+  `signing-agent:<id>` for each one it finds — at registration and on every
+  heartbeat (`signing_agents`), so the trait follows a daemon that re-created
+  its root. An agent on another host finds none.
+- A spawn that mounts the signing socket (`WorkspaceSigningAgentSocket`) is
+  resolved with the requirement on its context; the fleet resolver takes only
+  an agent advertising **this** daemon's identifier (an embedded agent is
+  co-located by construction), then this daemon's own backend, and otherwise
+  refuses with `SigningAgentUnavailableError` — parked `workspace_unfit`,
+  uncharged. A path would not do as the identifier: two daemons with the same
+  data directory on two hosts derive the same sockets root.
+
+Reviews and triage of **https** remotes run on any agent; delivery and ssh
+checkouts run on an agent co-located with the daemon until the signing-agent
+relay lands (go-quicbaas#1013).
+
+**Commands run where the container is.** The checkout, the verification and
+the publish are commands the engine runs in a session's container
+(`JobRun.Exec`). For a session on a fleet agent the daemon's container runtime
+does not know that container, so `ExecSession` routes the command to the agent
+that holds it over the `AgentRuntime.ExecSession` RPC — authenticated as the
+agent's tenant under the spawn scope, resolved from the SESSION (the caller
+never names a container), refused for a session the agent did not spawn, of
+another tenant (answered as not found), or with no container. The command is
+validated exactly as on the local path, and the engine's command allowlist is
+applied before either path; on the agent it runs under a deadline (30 minutes
+when the caller set none) and each of stdout and stderr is bounded to 1 MiB,
+keeping the end and cutting on a UTF-8 rune boundary. Output travels as
+protobuf bytes and is returned byte for byte, exactly as the local exec path
+returns it — output that is not UTF-8 is neither rejected nor rewritten. An agent that cannot be reached is `SessionHostUnavailableError`
+— the daemon's runtime is never asked.
+
+**A silent agent is not placed on.** A crashed daemon cannot mark itself
+offline, so its record keeps its last status; when **placing a new session**
+the resolver skips any daemon-kind registration whose last heartbeat is older
+than `orchestration.heartbeat_timeout` (default 90s, `orchestration.AgentAlive`,
+the predicate the fleet capacity sum already used). **Routing an existing
+session is different:** its prompt, status, exec and close go to the host it
+was spawned on or fail with `SessionHostUnavailableError` — never to the local
+backend, whose "not found" would conclude a session still running on the
+agent. A missed heartbeat is not evidence the session is gone. Before this, a dead
+agent's reviews were routed to a refused connection until someone
+deregistered it.
+
 ## The orphan sweep
 
 A session that ends releases its container: `Close` fires the process cancel

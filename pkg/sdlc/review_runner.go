@@ -16,7 +16,6 @@ package sdlc
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -720,17 +719,13 @@ func (s *reviewRun) spawnReviewer(ctx context.Context) error {
 			Message: "the job carries no project record; the reviewer's checkout is described from it",
 		}
 	}
-	mount, err := s.mountPoint()
-	if err != nil {
-		return err
-	}
-	req, err := s.spawnRequest(ctx, mount)
+	req, err := s.spawnRequest(ctx)
 	if err != nil {
 		return err
 	}
 	resp, err := s.job.Spawn(ctx, req)
 	if err != nil {
-		return err
+		return workspaceSpawnFault(s.job.Project.ID, err)
 	}
 	if resp == nil || resp.SessionID == "" {
 		return &ReviewSessionError{PullRequest: s.subject.PullRequest, Message: "the spawn returned no session"}
@@ -743,26 +738,21 @@ func (s *reviewRun) spawnReviewer(ctx context.Context) error {
 				"which is untrusted input, and must not read it on the daemon",
 		}
 	}
+	if resp.Workspace == nil {
+		return &ReviewSessionError{PullRequest: s.subject.PullRequest, Message: "the spawn reported no workspace for the checkout"}
+	}
 	s.containerDir = filepath.Join(s.runner.access.checkoutRoot, s.job.Project.Name)
-	s.job.SetWorkDir(filepath.Join(req.WorkDir, s.job.Project.Name))
+	// The host side of the checkout, on whichever host ran the session.
+	s.job.SetWorkDir(filepath.Join(resp.Workspace.Dir, s.job.Project.Name))
 	return s.job.SetContainer(s.sessionID, s.containerDir)
 }
 
-// mountPoint is the host directory the reviewer's checkout lives in.
-//
-// It is named for the pull request and the head, so two reviews of different
-// heads never share a directory and a re-review of the same head reuses the
-// clone the last one made.
-func (s *reviewRun) mountPoint() (string, error) {
-	root := strings.TrimSpace(s.job.Project.Workspace.Path)
-	if root == "" {
-		return "", &WorkspaceUnavailableError{ProjectID: s.job.Project.ID}
-	}
-	dir := filepath.Join(root, "review-"+strconv.Itoa(s.subject.PullRequest)+"-"+shortSHA(s.headSHA))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", &WorkspaceUnavailableError{ProjectID: s.job.Project.ID, Cause: err}
-	}
-	return dir, nil
+// workspaceKey names the reviewer's workspace for the pull request and the
+// head, so two reviews of different heads never share a directory and a
+// re-review of the same head on the same host reuses the clone the last one
+// made.
+func (s *reviewRun) workspaceKey() string {
+	return "review-" + strconv.Itoa(s.subject.PullRequest) + "-" + shortSHA(s.headSHA)
 }
 
 // spawnRequest builds the reviewer's spawn: the reviewer charter as its
@@ -781,13 +771,12 @@ func (s *reviewRun) mountPoint() (string, error) {
 // THE REVIEWER'S TOKEN IS ITS OWN. ForgeConfigFor picks the reviewer's forge
 // configuration over the binding's, which is how the verdict is posted as the
 // reviewer rather than as the author.
-func (s *reviewRun) spawnRequest(ctx context.Context, mount string) (*orchestration.SpawnSessionRequest, error) {
+func (s *reviewRun) spawnRequest(ctx context.Context) (*orchestration.SpawnSessionRequest, error) {
 	req := &orchestration.SpawnSessionRequest{
 		Backend:      s.reviewer.Backend,
 		Model:        s.reviewer.Model,
 		ProjectID:    s.job.Project.ID,
 		SystemPrompt: ReviewerCharter(),
-		WorkDir:      mount,
 		Persistent:   true,
 		ExtraArgs:    s.reviewer.ExtraArgs(),
 	}
@@ -813,7 +802,7 @@ func (s *reviewRun) spawnRequest(ctx context.Context, mount string) (*orchestrat
 			Base:   s.pr.BaseRef,
 			Commit: s.headSHA,
 		},
-		Mount: mount,
+		Key:   s.workspaceKey(),
 		Scope: SigningScopeCheckout,
 	})
 	if err != nil {

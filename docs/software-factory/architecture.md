@@ -507,6 +507,22 @@ Agents run on machines that do NOT have QuicBaaS installed. They connect to a re
 Claude Code ←stdio→ QuicBaaS Channel Proxy ←gRPC→ Remote QuicBaaS Server
 ```
 
+**How workspaces work remotely** (go-quicbaas#981): a factory spawn *names*
+its workspace (tenant, project, key) instead of giving a server path. The agent
+that runs the session provisions it under **its own** projects root
+(`quicbaas agent serve --projects-root`, default `<--work-dir>/projects`),
+writes the workspace spec and forge token beside it, and reports the directory
+back; the server records it on the session. The job's later sessions — review
+rounds, a rolled-over worker, the respawn after a restart — are pinned to that
+agent with strict host affinity, and a pinned agent that is gone is a typed
+refusal (`WorkspaceAgentUnavailableError`), never a fresh clone elsewhere. The
+checkout, commit and push all run inside the session's container on that
+agent. See [sandbox.md § Agent-local workspaces](sandbox.md#agent-local-workspaces);
+the KMS signing agent is still daemon-local, so a spawn that signs or clones
+over ssh is placed only on an agent advertising this daemon's `signing-agent`
+trait (go-quicbaas#1013). An agent silent past `orchestration.heartbeat_timeout`
+is not dispatched to.
+
 #### Mode 3: Multi-Node Raft Cluster
 
 Full distributed mode with Raft consensus. Multiple QuicBaaS nodes, agents on any machine.
@@ -2756,6 +2772,22 @@ Point hook URLs to the remote QuicBaaS server:
   }
 }
 ```
+
+#### Workspace Configuration (Remote Agent)
+
+A fleet agent provisions every job workspace it runs under its own projects
+root; the server never names a path on the agent's host.
+
+```bash
+quicbaas agent serve ... \
+  --work-dir /var/lib/quicbaas-agent \
+  --projects-root /srv/quicbaas/projects   # optional; default <work-dir>/projects
+```
+
+The root is admitted for mounts tenant-scoped, as the server's own projects
+root is, so it needs no `--allowed-mount-root` entry. It must survive
+restarts: a job whose checkout vanished is refused (`WorkspaceStaleError`)
+rather than re-cloned. See [sandbox.md § Agent-local workspaces](sandbox.md#agent-local-workspaces).
 
 #### Channel Configuration (Remote Proxy)
 

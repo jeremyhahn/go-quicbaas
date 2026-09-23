@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/agent"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 // withServeGlobals installs a clean set of serve* globals and restores
@@ -42,6 +43,7 @@ func withServeGlobals(t *testing.T) {
 		ImageRegistry string
 		AutoPull      bool
 		WorkDir       string
+		ProjectsRoot  string
 		AgentCertFile string
 		AgentKeyFile  string
 		ServerCAFile  string
@@ -60,6 +62,7 @@ func withServeGlobals(t *testing.T) {
 		ImageRegistry: serveImageRegistry,
 		AutoPull:      serveAutoPull,
 		WorkDir:       serveWorkDir,
+		ProjectsRoot:  serveProjectsRoot,
 		AgentCertFile: serveAgentCertFile,
 		AgentKeyFile:  serveAgentKeyFile,
 		ServerCAFile:  serveServerCAFile,
@@ -79,6 +82,7 @@ func withServeGlobals(t *testing.T) {
 		serveImageRegistry = origs.ImageRegistry
 		serveAutoPull = origs.AutoPull
 		serveWorkDir = origs.WorkDir
+		serveProjectsRoot = origs.ProjectsRoot
 		serveAgentCertFile = origs.AgentCertFile
 		serveAgentKeyFile = origs.AgentKeyFile
 		serveServerCAFile = origs.ServerCAFile
@@ -98,6 +102,7 @@ func withServeGlobals(t *testing.T) {
 	serveImageRegistry = ""
 	serveAutoPull = false
 	serveWorkDir = ""
+	serveProjectsRoot = ""
 	serveAgentCertFile = ""
 	serveAgentKeyFile = ""
 	serveServerCAFile = ""
@@ -285,4 +290,34 @@ func TestAgentServeCommand_EnrollRetryFlagDefaults(t *testing.T) {
 		require.NotNil(t, f, "flag --%s must be registered", tc.flag)
 		assert.Equal(t, tc.want, f.DefValue, "--%s default", tc.flag)
 	}
+}
+
+// TestAgentServe_ProjectsRoot: --projects-root is registered with an empty
+// default (which takes <work-dir>/projects), reaches the config, and the
+// runtime refuses to start over a root it could not provision under — rather
+// than refusing every job workspace later, one spawn at a time.
+func TestAgentServe_ProjectsRoot(t *testing.T) {
+	withServeGlobals(t)
+	flag := newAgentServeCommand().Flags().Lookup("projects-root")
+	require.NotNil(t, flag, "flag --projects-root must be registered")
+	assert.Equal(t, "", flag.DefValue, "--projects-root defaults under --work-dir")
+
+	serveServerAddr = "https://x:8443"
+	serveTenantID = "t1"
+	serveWorkDir = "/var/lib/quicbaas-agent"
+	serveProjectsRoot = "/srv/quicbaas/projects"
+	cfg, err := buildServeConfig()
+	require.NoError(t, err)
+	assert.Equal(t, "/srv/quicbaas/projects", cfg.EffectiveProjectsRoot())
+	assert.Equal(t, "/srv/quicbaas/projects", cfg.MountPolicy().ProjectsRoot)
+
+	serveProjectsRoot = ""
+	cfg, err = buildServeConfig()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join("/var/lib/quicbaas-agent", "projects"), cfg.EffectiveProjectsRoot())
+
+	relative := serveRuntimeConfig(agent.ContainerRuntimeNone, orchestration.SandboxPolicyOptIn, "relative/work")
+	_, err = buildAgentRuntime(relative, map[string]orchestration.AgentBackend{"stub": &serveStubBackend{}}, newCaptureLogger())
+	var rootErr *orchestration.WorkspaceRootError
+	require.ErrorAs(t, err, &rootErr, "a relative projects root must refuse the daemon at start")
 }

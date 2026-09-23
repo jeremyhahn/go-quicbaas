@@ -608,6 +608,14 @@ message SpawnSessionRequest {
     // the job it served even though the daemon's own credential cache — and
     // therefore the grant itself — is keyed by account rather than by job.
     string job_id = 28;
+
+    // THE WORKSPACE, NAMED RATHER THAN GIVEN AS A PATH (go-quicbaas#981). A
+    // work_dir is a path on the control plane's host and means nothing on any
+    // other; an agent on another machine refused every mount it named. So the
+    // spawn names the workspace and the agent provisions it under its own
+    // projects root, reporting the directory in SpawnSessionResponse.work_dir.
+    // Mutually exclusive with work_dir.
+    SessionWorkspace workspace = 29;
 }
 
 // WorkspaceStoragePlan is the RESOLVED storage decision for one spawn: which
@@ -662,6 +670,10 @@ message SpawnSessionResponse {
     // and then un-revocable, which is worse than not leasing it at all: the
     // grant would expire on its own TTL while claiming to be governed.
     string credential_lease_id = 8;
+
+    // work_dir is the directory the agent provisioned the spawn's named
+    // workspace at, on the agent's own host. Empty when the spawn named none.
+    string work_dir = 9;
 }
 
 // PromptSession
@@ -1728,4 +1740,24 @@ message SpawnFaultEvidence {
     // plane composes can say "all three are busy" rather than "all 0". A plain
     // count; nothing identifying crosses.
     int32 candidates = 3;
+}
+
+// SessionWorkspace names the workspace a spawn works in:
+// <projects_root>/<tenant_id>/<project_id>/workspace/<key> on the host that
+// executes the session.
+message SessionWorkspace {
+    string tenant_id = 1;
+    string project_id = 2;
+    string key = 3;
+
+    // pinned_dir is where an earlier session of the same job provisioned this
+    // workspace on this host, empty for the job's first spawn. A host whose
+    // workspace is not there refuses the spawn rather than cloning afresh.
+    string pinned_dir = 4;
+
+    // spec_files is the workspace spec directory's content by file name —
+    // the spec, the forge token and the known_hosts — written read-only beside
+    // the workspace and mounted at /run/quicbaas/workspace. Only the fixed
+    // spec file names are accepted.
+    map<string, bytes> spec_files = 5;
 }

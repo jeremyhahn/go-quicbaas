@@ -347,6 +347,11 @@ func (s *GRPCSpawnServer) Spawn(ctx context.Context, req *proto.SpawnSessionRequ
 		// ApplyWorkspaceStorage — and an under-provisioned memory budget is
 		// refused there rather than becoming an OOM kill mid-attempt.
 		Storage: protoStorageToRuntime(req.GetStorage()),
+
+		// THE WORKSPACE BY NAME (go-quicbaas#981). This daemon provisions it
+		// under its own projects root — Runtime.provisionWorkspace — and the
+		// response says where.
+		Workspace: protoWorkspaceToRuntime(req.GetWorkspace()),
 	}
 
 	session, err := s.runtime.Spawn(ctx, identity.TenantID, nil, req.GetBackend(), spawnReq)
@@ -409,7 +414,80 @@ func (s *GRPCSpawnServer) Spawn(ctx context.Context, req *proto.SpawnSessionRequ
 		// records it and its session conclusion withdraws it — which is what
 		// makes a remote session's provider credential revocable at all.
 		CredentialLeaseId: session.CredentialLeaseID,
+
+		// WHERE THIS DAEMON PROVISIONED THE NAMED WORKSPACE, which only it
+		// can say: the root is this host's. The control plane records it on
+		// the session and pins the job's later sessions to it. Empty when the
+		// spawn named none.
+		WorkDir: spawnedWorkDir(spawnReq, session),
 	}, nil
+}
+
+// ExecSession runs one command in the container of a session this daemon
+// spawned, after authenticating the caller for the session's tenant under the
+// spawn scope — the authority that created the container is the authority
+// that may act in it. See Runtime.ExecSession for the scoping.
+func (s *GRPCSpawnServer) ExecSession(ctx context.Context, req *proto.ExecSessionRequest) (*proto.ExecSessionResponse, error) {
+	begin := time.Now()
+	identity, authErr := s.authorize(req.GetTenantId(), orchestration.AgentScopeRuntimeSpawn)
+	if authErr != nil {
+		s.auditRPC(ctx, "exec", req.GetTenantId(), "", req.GetSessionId(), authErr)
+		observeRPC("exec", authErr, begin)
+		return nil, authErr
+	}
+	result, truncated, err := s.runtime.ExecSession(ctx, identity.TenantID, req.GetSessionId(), &orchestration.ExecSpec{
+		Cmd:     req.GetCmd(),
+		Env:     req.GetEnv(),
+		WorkDir: req.GetWorkDir(),
+		Stdin:   req.GetStdin(),
+	})
+	if err != nil {
+		mapped := mapRuntimeError(err)
+		s.auditRPC(ctx, "exec", identity.TenantID, identity.AgentID, req.GetSessionId(), mapped)
+		observeRPC("exec", mapped, begin)
+		return nil, mapped
+	}
+	s.auditRPC(ctx, "exec", identity.TenantID, identity.AgentID, req.GetSessionId(), nil)
+	observeRPC("exec", nil, begin)
+	return &proto.ExecSessionResponse{
+		ExitCode:  int32(result.ExitCode), //nolint:gosec // G115: an exit status fits in 32 bits
+		Stdout:    []byte(result.Stdout),
+		Stderr:    []byte(result.Stderr),
+		Truncated: truncated,
+	}, nil
+}
+
+// spawnedWorkDir is the work directory a spawn response reports: the
+// provisioned workspace for a spawn that named one, nothing otherwise — a
+// work_dir the control plane sent is its own path and needs no echo.
+func spawnedWorkDir(req *orchestration.SpawnRequest, session *orchestration.Session) string {
+	if req.Workspace == nil || session == nil {
+		return ""
+	}
+	return session.WorkDir
+}
+
+// protoWorkspaceToRuntime is the runtime form of a named workspace, nil for a
+// spawn that named none. A pinned directory becomes a pin on this very key.
+func protoWorkspaceToRuntime(in *proto.SessionWorkspace) *orchestration.SessionWorkspace {
+	if in == nil {
+		return nil
+	}
+	ws := &orchestration.SessionWorkspace{
+		TenantID:  in.GetTenantId(),
+		ProjectID: in.GetProjectId(),
+		Key:       in.GetKey(),
+	}
+	if dir := in.GetPinnedDir(); dir != "" {
+		ws.Pin = &orchestration.WorkspacePlacement{Key: ws.Key, Dir: dir}
+	}
+	if files := in.GetSpecFiles(); len(files) > 0 {
+		ws.Spec = &orchestration.WorkspaceSpecFiles{Files: make(map[string][]byte, len(files))}
+		for name, content := range files {
+			ws.Spec.Files[name] = content
+		}
+	}
+	return ws
 }
 
 // Prompt dispatches to Runtime.Prompt and streams a single response. The
@@ -808,6 +886,17 @@ func mapRuntimeError(err error) error {
 		return status.Error(codes.NotFound, err.Error())
 	}
 	if errors.Is(err, ErrRuntimeNoImage) {
+		return status.Error(codes.FailedPrecondition, err.Error())
+	}
+	// A named workspace this host could not provision or find is a
+	// precondition of the request — a stale pin, a foreign tenant, no projects
+	// root — never an internal fault. Its class travels as SpawnFaultEvidence
+	// so the control plane rebuilds ErrSessionWorkspace.
+	if errors.Is(err, orchestration.ErrSessionWorkspace) {
+		return status.Error(codes.FailedPrecondition, err.Error())
+	}
+	// A session that runs no container has nowhere for a command to run.
+	if errors.Is(err, orchestration.ErrSessionNotContainerized) {
 		return status.Error(codes.FailedPrecondition, err.Error())
 	}
 	return status.Error(codes.Internal, err.Error())

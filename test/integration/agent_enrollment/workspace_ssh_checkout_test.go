@@ -45,9 +45,9 @@ import (
 // DIFFERENT key is actually refused.
 //
 // So this scenario runs a real sshd, a real git and a real ssh, and drives
-// them with the production `orchestration.MaterializeWorkspaceSpecIn` and
-// `orchestration.ApplyWorkspaceSpec` — the same calls pkg/sdlc's runner makes
-// per attempt. NOTHING about the forge is written down here: the sshd
+// them with the production `orchestration.NewWorkspaceSpecFiles`,
+// `WorkspaceManager.ProvisionSession` and `orchestration.ApplyWorkspaceSpec` —
+// the calls pkg/sdlc's runner and the executing host make per attempt. NOTHING about the forge is written down here: the sshd
 // generates its host key at container start and the test reads it back, which
 // is exactly what an operator does with `ssh-keyscan` before binding.
 //
@@ -184,26 +184,35 @@ func (f *sshForge) hostKey(t *testing.T) string {
 	return strings.TrimSpace(out)
 }
 
-// install copies a materialized workspace's known_hosts into the container at
-// the path the spec mount would put it, and returns the container path.
+// sshWorkspace is one attempt's ssh workspace as the production path leaves
+// it: the spec the daemon decided, and the spec directory the executing host
+// wrote beside the workspace it provisioned.
+type sshWorkspace struct {
+	files   *orchestration.WorkspaceSpecFiles
+	specDir string
+}
+
+// install copies a written workspace's known_hosts into the container at the
+// path the spec mount would put it, and returns the container path.
 //
 // `docker cp` rather than a bind mount: a bind SOURCE is resolved by the
 // docker DAEMON, and this suite may be running against a mounted socket where
 // a path this process created does not exist daemon-side.
-func (f *sshForge) install(t *testing.T, ws orchestration.MaterializedWorkspace) string {
+func (f *sshForge) install(t *testing.T, ws sshWorkspace) string {
 	t.Helper()
-	target := filepath.Join(orchestration.WorkspaceSpecDir, ws.Spec.KnownHostsFile)
+	target := filepath.Join(orchestration.WorkspaceSpecDir, ws.files.Spec.KnownHostsFile)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	source := filepath.Join(ws.Dir, orchestration.WorkspaceKnownHostsFile)
+	source := filepath.Join(ws.specDir, orchestration.WorkspaceKnownHostsFile)
 	out, err := exec.CommandContext(ctx, "docker", "cp", source, f.container+":"+target).CombinedOutput()
 	require.NoError(t, err, "docker cp known_hosts failed: %s", out)
 	return target
 }
 
-// materializeSSHWorkspace runs the production materialization for a project
-// cloned over ssh with hostKey pinned on its binding.
-func materializeSSHWorkspace(t *testing.T, hostKey string) orchestration.MaterializedWorkspace {
+// materializeSSHWorkspace runs the production path for a project cloned over
+// ssh with hostKey pinned on its binding: the daemon decides the spec, and the
+// executing host provisions the named workspace and writes the spec beside it.
+func materializeSSHWorkspace(t *testing.T, hostKey string) sshWorkspace {
 	t.Helper()
 	spec, err := orchestration.NewWorkspaceSpec(&orchestration.Project{
 		ID: "p-749", TenantID: "t-749", Name: "repo",
@@ -212,11 +221,18 @@ func materializeSSHWorkspace(t *testing.T, hostKey string) orchestration.Materia
 	require.NoError(t, err)
 	spec.SSHHostKey = hostKey
 
-	ws, err := orchestration.MaterializeWorkspaceSpecIn(t.TempDir(), spec, nil)
-	require.NoError(t, err, "materializing an ssh workspace with a pinned key failed")
-	t.Cleanup(ws.Cleanup)
-	require.Equal(t, orchestration.WorkspaceKnownHostsFile, ws.Spec.KnownHostsFile)
-	return ws
+	files, err := orchestration.NewWorkspaceSpecFiles(spec, nil)
+	require.NoError(t, err, "deciding an ssh workspace with a pinned key failed")
+	require.Equal(t, orchestration.WorkspaceKnownHostsFile, files.Spec.KnownHostsFile)
+
+	host, err := orchestration.NewWorkspaceManager(t.TempDir())
+	require.NoError(t, err)
+	provisioned, err := host.ProvisionSession(&orchestration.SessionWorkspace{
+		TenantID: "t-749", ProjectID: "p-749", Key: "attempt-1", Spec: files,
+	})
+	require.NoError(t, err, "provisioning the ssh workspace failed")
+	t.Cleanup(provisioned.Release)
+	return sshWorkspace{files: files, specDir: provisioned.SpecDir}
 }
 
 // wrongHostKeyLine is a key no host holds: a freshly generated ed25519 public
@@ -235,10 +251,13 @@ func wrongHostKeyLine(t *testing.T) string {
 // checkoutEnv is the environment the spawn would carry for this workspace:
 // the production ApplyWorkspaceSpec's GIT_SSH_COMMAND, which names the
 // known_hosts by its path INSIDE the container.
-func checkoutEnv(t *testing.T, ws orchestration.MaterializedWorkspace) map[string]string {
+func checkoutEnv(t *testing.T, ws sshWorkspace) map[string]string {
 	t.Helper()
-	req := &orchestration.SpawnSessionRequest{Backend: "claude"}
-	orchestration.ApplyWorkspaceSpec(req, ws, "")
+	req := &orchestration.SpawnSessionRequest{
+		Backend:   "claude",
+		Workspace: &orchestration.SessionWorkspace{TenantID: "t-749", ProjectID: "p-749", Key: "attempt-1"},
+	}
+	orchestration.ApplyWorkspaceSpec(req, ws.files, "")
 	command := req.Env[orchestration.WorkspaceSSHCommandEnv]
 	require.NotEmpty(t, command, "an ssh workspace produced no GIT_SSH_COMMAND")
 	return map[string]string{orchestration.WorkspaceSSHCommandEnv: command}
@@ -300,10 +319,9 @@ func TestE2E_SSHCheckout_AnUnpinnedForgeIsRefusedBeforeAnythingRuns(t *testing.T
 	}, orchestration.WorkspaceBranchPlan{Name: "main"})
 	require.NoError(t, err)
 
-	ws, err := orchestration.MaterializeWorkspaceSpecIn(t.TempDir(), spec, nil)
-	require.Error(t, err, "an ssh checkout with no pinned host key was materialized")
-	require.Empty(t, ws.Dir, "a refused materialization left a directory behind")
-	require.Nil(t, ws.Cleanup)
+	files, err := orchestration.NewWorkspaceSpecFiles(spec, nil)
+	require.Error(t, err, "an ssh checkout with no pinned host key was decided")
+	require.Nil(t, files, "a refused spec has nothing to write")
 	require.ErrorIs(t, err, orchestration.ErrSSHHostKeyInvalid)
 	require.Contains(t, err.Error(), "forge.ssh_host_key")
 }

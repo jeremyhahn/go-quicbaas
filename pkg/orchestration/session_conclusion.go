@@ -501,6 +501,9 @@ func (s *agentServiceImpl) concludeBackend(
 	if err := s.revokeSessionCredentialLeases(ctx, mem, storageTenant, sessionID); err != nil {
 		return err
 	}
+	// The named workspace's spec directory goes with the process that read
+	// it: it holds the forge token, and nothing after the teardown needs it.
+	mem.workspace.Release()
 	return nil
 }
 

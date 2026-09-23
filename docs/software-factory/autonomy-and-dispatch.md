@@ -299,21 +299,22 @@ whatever was already queued and leave the new issue for the next tick.
 a filesystem that has to be reaped, kept in step with the record, and reasoned
 about after a crash. A container that clones owns nothing that outlives it.
 
-What the daemon hands the container at spawn is a **spec**, materialized into a
-fresh per-spawn directory and bind-mounted read-only — the same path the pooled
-provider account's credential already travels
-(`account_materialize.go`).
+What the daemon hands the container at spawn is a **spec**, decided on the
+daemon and written — by the host that executes the session — into a fresh
+per-spawn directory beside the session's workspace, bind-mounted read-only.
+The spawn **names** its workspace rather than giving a host path, because the
+host that runs it may be a fleet agent on another machine
+([sandbox](sandbox.md#agent-local-workspaces), go-quicbaas#981).
 
 ```go
 spec, err := NewWorkspaceSpec(project, WorkspaceBranchPlan{
     Name: "issue/601-dispatcher-autonomy", Base: "main", Create: true,
 })
-// Under the project's own workspace, not the OS temporary directory: every
-// bind-mount source is authorized against the operator's projects root and
-// allowed roots, and /tmp is neither.
-dir, cleanup, err := MaterializeWorkspaceSpecIn(project.Workspace.Path, spec, forgeToken)
-defer cleanup()
-ApplyWorkspaceSpec(spawnReq, dir, signingAgentSocket)
+files, err := NewWorkspaceSpecFiles(spec, forgeToken) // decided on the daemon
+spawnReq.Workspace = &SessionWorkspace{TenantID: t, ProjectID: p, Key: "task-a1"}
+ApplyWorkspaceSpec(spawnReq, files, signingAgentSocket)
+// The executing host: WorkspaceManager.ProvisionSession(spawnReq.Workspace)
+// makes <projects_root>/<t>/<p>/workspace/task-a1 and writes the spec beside it.
 ```
 
 The **signing socket goes somewhere else**, and for a different reason. A

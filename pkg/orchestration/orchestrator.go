@@ -62,6 +62,7 @@ type agentServiceImpl struct {
 	lifecyclePolicy  JobLifecyclePolicy    // operator command allowlist + per-stage bounds handed to every control loop
 	projectStore     ProjectStore          // optional: durable project records for managed workspaces
 	mountPolicy      *MountPolicy          // optional: bind-mount policy; nil denies every host mount
+	workspaces       WorkspaceProvisioner  // optional: provisions named workspaces for in-process spawns; nil refuses them
 
 	// accountStore is the pooled provider account metadata store. Optional:
 	// without it rotation still selects a replacement, but the limit hold on
@@ -287,6 +288,12 @@ type sessionRecord struct {
 	// Persistent mirrors the durable record: the session holds a long-running
 	// agent process carrying conversation context across turns.
 	Persistent bool
+
+	// workspace is the named workspace this daemon provisioned for an
+	// in-process session, nil for every other session. Its spec directory —
+	// the forge token — is released when the session's teardown succeeds; the
+	// workspace itself stays for the job's next session.
+	workspace *ProvisionedWorkspace
 
 	// resumable marks a record reconstituted from the durable store at boot
 	// whose agent process is gone. The session is addressable — Status and
@@ -1313,7 +1320,33 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 		ctx = WithGpuRequired(ctx)
 	}
 
+	// A NAMED WORKSPACE IS ADMITTED BEFORE ANYTHING RESOLVES, and a pinned one
+	// resolves only to the host that holds it. See orchestrator_workspace.go.
+	if req.Workspace != nil {
+		// The forge token this spawn carries is wiped however the spawn ends:
+		// written by the host that provisions it, sent on the spawn RPC, or
+		// refused. Nothing on this daemon holds it afterwards.
+		defer req.Workspace.Spec.Wipe()
+		if err := admitSessionWorkspace(ctx, req); err != nil {
+			return nil, err
+		}
+		ctx = workspaceSpawnContext(ctx, req.Workspace)
+	}
+	// A SPAWN THAT MOUNTS THE DAEMON'S SIGNING SOCKET IS PLACED WHERE THAT
+	// SOCKET IS: an agent advertising this daemon's signing-agent trait, or
+	// this daemon's own backend. Anywhere else refuses it at the mount check.
+	needsSigning := spawnNeedsSigningAgent(req)
+	if needsSigning {
+		ctx = WithSigningAgentRequired(ctx)
+	}
+
 	backend, fromRemote, err := s.resolveBackendForSpawn(ctx, req.Backend, req.ProjectID)
+	if needsSigning && err != nil {
+		err = &SigningAgentUnavailableError{Backend: req.Backend, Cause: err}
+	}
+	if req.Workspace != nil {
+		err = requireWorkspacePlacement(req, backend, fromRemote, err)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1347,22 +1380,54 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 	// workspace additionally gates the spawn on its provisioning state:
 	// starting an agent in a half-cloned tree produces work against the
 	// wrong base, so anything but ready is refused.
+	//
+	// A NAMED WORKSPACE REPLACES THE CHAIN. On this daemon's own backend it is
+	// provisioned here, under this daemon's projects root, and its spec
+	// directory joins the extra mounts so it is authorized with them; on a
+	// fleet agent it is provisioned there, and workDir stays empty until the
+	// agent reports the directory.
 	workDir := req.WorkDir
-	if workDir == "" && req.ProjectID != "" {
-		managedDir, managedErr := s.managedWorkspaceDir(ctx, req.ProjectID)
-		if managedErr != nil {
-			return nil, managedErr
+	var provisioned *ProvisionedWorkspace
+	switch {
+	case req.Workspace != nil && !fromRemote:
+		p, provErr := s.provisionDaemonWorkspace(req.Workspace)
+		if provErr != nil {
+			return nil, provErr
 		}
-		workDir = managedDir
-	}
-	if workDir == "" && req.ProjectID != "" {
-		if project, ok := s.lookupProject(req.ProjectID); ok {
-			workDir = project.Path
+		provisioned = p
+		workDir = p.Dir
+		local := *req
+		local.ExtraMounts = append(append([]ContainerMount(nil), req.ExtraMounts...),
+			WorkspaceSpecMounts(p.SpecDir, "")...)
+		req = &local
+	case req.Workspace != nil:
+		// Provisioned by the fleet agent the spawn resolved to, under that
+		// agent's own root; requireAgentWorkspace reads its answer below.
+	default:
+		if workDir == "" && req.ProjectID != "" {
+			managedDir, managedErr := s.managedWorkspaceDir(ctx, req.ProjectID)
+			if managedErr != nil {
+				return nil, managedErr
+			}
+			workDir = managedDir
+		}
+		if workDir == "" && req.ProjectID != "" {
+			if project, ok := s.lookupProject(req.ProjectID); ok {
+				workDir = project.Path
+			}
+		}
+		if workDir == "" {
+			workDir = WorkDirCurrent
 		}
 	}
-	if workDir == "" {
-		workDir = WorkDirCurrent
-	}
+	// A spawn that fails after provisioning releases the spec directory it
+	// wrote: it holds the forge token and no session will ever read it.
+	spawned := false
+	defer func() {
+		if !spawned {
+			provisioned.Release()
+		}
+	}()
 
 	// The event channel keeps the caller's own tenant (empty for an untenanted
 	// caller) so messaging topics are unchanged, while durable records are
@@ -1481,6 +1546,7 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 			HostAffinity: sessionHost,
 			BackendLocal: backendLocal,
 			Persistent:   req.Persistent,
+			workspace:    provisioned,
 		})
 
 		// The same race, on the branch that has no backend session to ask
@@ -1503,12 +1569,14 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 			"sandboxed":    "true",
 		})
 
+		spawned = true
 		return &SpawnSessionResponse{
 			SessionID:   sessionID,
 			Backend:     req.Backend,
 			Model:       model,
 			ContainerID: containerID,
 			AgentID:     spawnedOnAgent,
+			Workspace:   workspacePlacement(req.Workspace, sessionHost, workDir),
 			Timestamp:   now,
 		}, nil
 	}
@@ -1539,10 +1607,24 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 		AccountStrategy: req.AccountStrategy,
 		AccountAllow:    append([]string(nil), req.AccountAllow...),
 	}
+	if fromRemote {
+		spawnReq.Workspace = req.Workspace
+	}
 
 	session, err := backend.Spawn(ctx, spawnReq)
 	if err != nil {
-		return nil, err
+		return nil, pinnedAgentUnreachable(req, sessionHost, err)
+	}
+	// THE AGENT PROVISIONED THE WORKSPACE, AND ONLY IT KNOWS WHERE. Its
+	// answer is the session's work directory, recorded on the durable record
+	// and reported on the response the job pins its later sessions from.
+	if req.Workspace != nil && fromRemote {
+		if wsErr := requireAgentWorkspace(session, sessionHost); wsErr != nil {
+			s.unwindSpawnedProcess(ctx, backend, session.ID, "the agent provisioned no workspace")
+			return nil, wsErr
+		}
+		workDir = session.WorkDir
+		durable.WorkDir = session.WorkDir
 	}
 
 	// Track the session in memory for fast lookup.
@@ -1570,6 +1652,7 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 		HostAffinity: sessionHost,
 		BackendLocal: backendLocal,
 		Persistent:   req.Persistent,
+		workspace:    provisioned,
 	}
 	mem.SetAccountID(session.AccountID)
 	mem.AddCredentialLease(session.CredentialLeaseID)
@@ -1756,12 +1839,14 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 		return nil, reconcileErr
 	}
 
+	spawned = true
 	return &SpawnSessionResponse{
 		SessionID:   session.ID,
 		Backend:     req.Backend,
 		Model:       session.Model,
 		ContainerID: session.ContainerID,
 		AgentID:     spawnedOnAgent,
+		Workspace:   workspacePlacement(req.Workspace, sessionHost, workDir),
 		Timestamp:   now,
 	}, nil
 }
@@ -4466,6 +4551,12 @@ func (s *agentServiceImpl) lookupBackendCtx(ctx context.Context, name, projectID
 			return backend, nil
 		}
 	}
+	// A REMOTE SESSION IS ROUTED TO ITS HOST OR NOWHERE. The local backend
+	// never held it, and its "not found" would conclude a session that is
+	// still running on the agent. See session_routing.go.
+	if pin, remote := remoteSessionPinFrom(ctx); remote {
+		return nil, &SessionHostUnavailableError{SessionID: pin.sessionID, Host: pin.host}
+	}
 	return s.lookupBackend(name)
 }
 
@@ -4475,8 +4566,10 @@ func (s *agentServiceImpl) lookupBackendCtx(ctx context.Context, name, projectID
 // origin on the session so the whole lifecycle is pinned to the same backend
 // instance the session was spawned on. See sessionRecord.BackendLocal.
 func (s *agentServiceImpl) resolveBackendForSpawn(ctx context.Context, name, projectID string) (backend AgentBackend, fromRemote bool, err error) {
-	if s.remoteResolver != nil {
-		if b, ok := s.remoteResolver(ctx, name, projectID); ok && b != nil {
+	// A local pin skips the fleet: the spawn continues a workspace that lives
+	// on this daemon (workspaceSpawnContext).
+	if s.remoteResolver != nil && !localBackendPinned(ctx) {
+		if b, ok := s.remoteResolver(WithSpawnPlacement(ctx), name, projectID); ok && b != nil {
 			return b, true, nil
 		}
 	}
@@ -4641,6 +4734,9 @@ func (s *agentServiceImpl) pinSessionBackend(ctx context.Context, sessionID stri
 	if rec.HostAffinity == "" {
 		return ctx
 	}
+	// The session lives on a fleet agent: its operations reach that agent or
+	// fail, never the local backend table (session_routing.go).
+	ctx = withRemoteSessionPin(ctx, sessionID, rec.HostAffinity)
 	// Do not override an explicit per-request affinity — an operator may be
 	// deliberately re-routing. Only fill in when the caller left it empty.
 	if HostAffinityFromContext(ctx) != "" {

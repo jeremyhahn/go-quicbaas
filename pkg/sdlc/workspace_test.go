@@ -43,15 +43,16 @@ func sshAccessProject() *orchestration.Project {
 	return project
 }
 
-// accessRig is a forgeAccess with fakes behind it and a mount directory the
-// spec can be materialized beside.
+// accessRig is a forgeAccess with fakes behind it.
 type accessRig struct {
 	access  forgeAccess
 	signing *fakeSigningAgent
 	tokens  *fakeTokens
-	mount   string
 	forge   ForgeConfig
 }
+
+// testWorkspaceKey is the workspace key the rig's plans name.
+const testWorkspaceKey = "attempt-1"
 
 // newAccessRig builds the seam over fakes.
 func newAccessRig(t *testing.T) *accessRig {
@@ -62,27 +63,21 @@ func newAccessRig(t *testing.T) *accessRig {
 	if err != nil {
 		t.Fatalf("newForgeAccess: %v", err)
 	}
-	// The mount is a directory under a workspace root, because the spec is
-	// materialized BESIDE it — the same rule the mount policy imposes.
-	mount := filepath.Join(t.TempDir(), "workspace", "attempt-1")
-	if err := os.MkdirAll(mount, 0o700); err != nil {
-		t.Fatalf("mount: %v", err)
-	}
 	forge := testBinding().Forge
 	forge.SSHHostKey = testSSHHostKey
-	return &accessRig{access: access, signing: signing, tokens: tokens, mount: mount, forge: forge}
+	return &accessRig{access: access, signing: signing, tokens: tokens, forge: forge}
 }
 
-// open runs the seam for one plan, defaulting the project, forge and mount.
+// open runs the seam for one plan, defaulting the project, forge and key.
 func (r *accessRig) open(t *testing.T, project *orchestration.Project, scope SigningScope) (*orchestration.SpawnSessionRequest, *containerWorkspace, error) {
 	t.Helper()
-	req := &orchestration.SpawnSessionRequest{Backend: "claude", ProjectID: project.ID, WorkDir: r.mount}
+	req := &orchestration.SpawnSessionRequest{Backend: "claude", ProjectID: project.ID}
 	workspace, err := r.access.Open(context.Background(), req, workspacePlan{
 		TenantID: project.TenantID,
 		Project:  project,
 		Forge:    r.forge,
 		Branch:   orchestration.WorkspaceBranchPlan{Name: "main"},
-		Mount:    r.mount,
+		Key:      testWorkspaceKey,
 		Scope:    scope,
 	})
 	if workspace != nil {
@@ -243,10 +238,6 @@ func TestForgeAccess_RefusesAnAgentThatCameBackUnusable(t *testing.T) {
 			if err != nil {
 				t.Fatalf("newForgeAccess: %v", err)
 			}
-			mount := filepath.Join(t.TempDir(), "workspace", "attempt-1")
-			if err := os.MkdirAll(mount, 0o700); err != nil {
-				t.Fatalf("mount: %v", err)
-			}
 			forge := testBinding().Forge
 			forge.SSHHostKey = testSSHHostKey
 			req := &orchestration.SpawnSessionRequest{Backend: "claude"}
@@ -255,7 +246,7 @@ func TestForgeAccess_RefusesAnAgentThatCameBackUnusable(t *testing.T) {
 				Project:  sshAccessProject(),
 				Forge:    forge,
 				Branch:   orchestration.WorkspaceBranchPlan{Name: "main"},
-				Mount:    mount,
+				Key:      testWorkspaceKey,
 				Scope:    tc.scope,
 			})
 			var unusable *SigningSessionError
@@ -290,33 +281,53 @@ func TestForgeAccess_RefusesADeliveryScopeForAProjectThatSignsNothing(t *testing
 	}
 }
 
-// TestForgeAccess_ReleaseStopsTheAgentAndRemovesTheSpecDirectory: a workspace
-// owns two things that outlive nothing, and both go. A leaked agent is a live
-// signing socket on the daemon after its container is gone.
-func TestForgeAccess_ReleaseStopsTheAgentAndRemovesTheSpecDirectory(t *testing.T) {
+// TestForgeAccess_NamesTheWorkspaceAndPicksNoHostPath is go-quicbaas#981 at
+// the seam: the spawn names the workspace — tenant, project, key — and carries
+// the decided spec for whichever host runs it, and the seam neither writes a
+// file nor names a path on this daemon. The executing host provisions both.
+func TestForgeAccess_NamesTheWorkspaceAndPicksNoHostPath(t *testing.T) {
 	rig := newAccessRig(t)
-	req, workspace, err := rig.open(t, sshAccessProject(), SigningScopeCheckout)
+	project := sshAccessProject()
+	req, workspace, err := rig.open(t, project, SigningScopeCheckout)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	specDir := ""
+	ws := req.Workspace
+	if ws == nil || ws.TenantID != project.TenantID || ws.ProjectID != project.ID || ws.Key != testWorkspaceKey {
+		t.Fatalf("workspace = %+v, want the plan's tenant, project and key", ws)
+	}
+	if req.WorkDir != "" {
+		t.Fatalf("the seam named a host path: %q", req.WorkDir)
+	}
 	for _, mount := range req.ExtraMounts {
 		if mount.Target == orchestration.WorkspaceSpecDir {
-			specDir = mount.Source
+			t.Fatalf("the spec directory is the executing host's to write and mount: %+v", mount)
 		}
 	}
-	if specDir == "" {
-		t.Fatal("the spec directory was not mounted")
+	if ws.Spec == nil || string(ws.Spec.Files[orchestration.WorkspaceForgeTokenFile]) != "t0ken" {
+		t.Fatal("the forge token must travel with the spec to the host that writes it")
 	}
-	if _, err := os.Stat(filepath.Join(specDir, orchestration.WorkspaceSpecFile)); err != nil {
-		t.Fatalf("the spec was not written: %v", err)
+	if ws.Spec.Spec.KnownHostsFile != orchestration.WorkspaceKnownHostsFile ||
+		workspace.Spec.KnownHostsFile != orchestration.WorkspaceKnownHostsFile {
+		t.Fatal("the runner must drive the checkout from the spec the container will read")
+	}
+	if err := ws.Validate(); err != nil {
+		t.Fatalf("the named workspace is not one a host could provision: %v", err)
+	}
+}
+
+// TestForgeAccess_ReleaseStopsTheAgent: the one thing a workspace holds on
+// this daemon is the ssh agent, and it goes. A leaked agent is a live signing
+// socket on the daemon after its container is gone.
+func TestForgeAccess_ReleaseStopsTheAgent(t *testing.T) {
+	rig := newAccessRig(t)
+	_, workspace, err := rig.open(t, sshAccessProject(), SigningScopeCheckout)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
 	}
 	workspace.Release(context.Background())
 	if rig.signing.stopCount() != 1 {
 		t.Errorf("agents stopped = %d, want the one this workspace started", rig.signing.stopCount())
-	}
-	if _, err := os.Stat(specDir); !os.IsNotExist(err) {
-		t.Errorf("the spec directory survived release: %v", err)
 	}
 	// Idempotent: every unplanned exit arrives here behind a path that may
 	// already have released.
@@ -335,12 +346,6 @@ func TestForgeAccess_StopSigningLeavesTheSpecAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	specDir := ""
-	for _, mount := range req.ExtraMounts {
-		if mount.Target == orchestration.WorkspaceSpecDir {
-			specDir = mount.Source
-		}
-	}
 	workspace.StopSigning(context.Background())
 	workspace.StopSigning(context.Background())
 	if rig.signing.stopCount() != 1 {
@@ -349,8 +354,8 @@ func TestForgeAccess_StopSigningLeavesTheSpecAndIsIdempotent(t *testing.T) {
 	if workspace.Signing != nil || workspace.signingSession() != nil {
 		t.Error("the stopped agent is still reachable from the workspace")
 	}
-	if _, err := os.Stat(filepath.Join(specDir, orchestration.WorkspaceSpecFile)); err != nil {
-		t.Errorf("stopping the agent removed the spec: %v", err)
+	if req.Workspace.Spec == nil {
+		t.Error("stopping the agent dropped the spec the container reads")
 	}
 	// And a nil workspace answers the same questions without panicking: the
 	// teardown paths reach here behind a failed open.
@@ -392,8 +397,8 @@ func TestNewForgeAccess_RefusesAWiringNoContainerCouldCloneWith(t *testing.T) {
 }
 
 // TestForgeAccess_RefusesAPlanNothingCouldBeBuiltFrom covers the seam's own
-// input validation: a request, a project and a mount are each required, and
-// each refusal names what is missing.
+// input validation: a request, a project and a workspace key are each
+// required, and each refusal names what is missing.
 func TestForgeAccess_RefusesAPlanNothingCouldBeBuiltFrom(t *testing.T) {
 	rig := newAccessRig(t)
 	plan := workspacePlan{
@@ -401,7 +406,7 @@ func TestForgeAccess_RefusesAPlanNothingCouldBeBuiltFrom(t *testing.T) {
 		Project:  testOrchProject(),
 		Forge:    rig.forge,
 		Branch:   orchestration.WorkspaceBranchPlan{Name: "main"},
-		Mount:    rig.mount,
+		Key:      testWorkspaceKey,
 		Scope:    SigningScopeCheckout,
 	}
 	if _, err := rig.access.Open(context.Background(), nil, plan); !fieldRefused(err, "request") {
@@ -412,11 +417,10 @@ func TestForgeAccess_RefusesAPlanNothingCouldBeBuiltFrom(t *testing.T) {
 	if _, err := rig.access.Open(context.Background(), &orchestration.SpawnSessionRequest{}, noProject); !fieldRefused(err, "project") {
 		t.Fatalf("a nil project: %v", err)
 	}
-	noMount := plan
-	noMount.Mount = "   "
-	_, err := rig.access.Open(context.Background(), &orchestration.SpawnSessionRequest{}, noMount)
-	if !errors.Is(err, ErrWorkspaceUnfit) {
-		t.Fatalf("a mountless plan: %v, want ErrWorkspaceUnfit", err)
+	noKey := plan
+	noKey.Key = "   "
+	if _, err := rig.access.Open(context.Background(), &orchestration.SpawnSessionRequest{}, noKey); !fieldRefused(err, "workspace.key") {
+		t.Fatalf("a plan naming no workspace: %v", err)
 	}
 	// A token the provisioner could not resolve is the caller's error, not a
 	// missing credential: the difference matters because one is retried and
@@ -506,7 +510,7 @@ func TestForgeAccess_IsTheOnlyPlaceTheModuleAcquiresForgeCredentials(t *testing.
 	// Each call, and the one file it is allowed to appear in.
 	owners := map[string]string{
 		".StartSigningAgent(":                     "workspace.go",
-		"orchestration.MaterializeWorkspaceSpec":  "workspace.go",
+		"orchestration.NewWorkspaceSpecFiles(":    "workspace.go",
 		"orchestration.ApplyWorkspaceSpec(":       "workspace.go",
 		"orchestration.RequireCheckoutCredential": "workspace.go",
 		"orchestration.NewWorkspaceSpec(":         "workspace.go",

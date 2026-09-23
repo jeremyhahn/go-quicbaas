@@ -786,15 +786,15 @@ func (e *ProjectRecordMissingError) Unwrap() []error {
 	return []error{ErrRunner, ErrWorkspaceUnfit}
 }
 
-// WorkspaceUnavailableError reports a project whose worker has nowhere to
-// work: no workspace path, or one the daemon could not make the container's
-// mount point under.
+// WorkspaceUnavailableError reports a project whose session has nowhere to
+// work: the host that executes it could not provision the named workspace, or
+// the host the job's checkout is pinned to is gone or no longer holds it
+// (orchestration.ErrSessionWorkspace).
 type WorkspaceUnavailableError struct {
 	// ProjectID is the project.
 	ProjectID string
 
-	// Cause is the filesystem failure, nil when the project simply names no
-	// workspace.
+	// Cause is why, nil when nothing more is known.
 	Cause error
 }
 

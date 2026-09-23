@@ -393,6 +393,11 @@ func (b *RemoteACPBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Sessi
 		// disk its operator configured the project off, with no memory limit on
 		// the tmpfs the tier depends on.
 		Storage: runtimeStorageToProto(req.Storage),
+
+		// THE WORKSPACE BY NAME (go-quicbaas#981). WorkDir is a path on THIS
+		// host; the daemon provisions the named workspace under its own
+		// projects root and answers with where, below.
+		Workspace: sessionWorkspaceToProto(req.Workspace),
 	}
 	resp, rpcErr := client.Spawn(b.authCtx(ctx), pbReq)
 	if rpcErr != nil {
@@ -404,6 +409,14 @@ func (b *RemoteACPBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Sessi
 	createdAt := time.Now().UnixNano()
 	if resp.GetTimestamp() != nil {
 		createdAt = resp.GetTimestamp().AsTime().UnixNano()
+	}
+	// A NAMED WORKSPACE'S DIRECTORY IS THE DAEMON'S ANSWER, and only the
+	// daemon's: it provisioned it under a root this host knows nothing about.
+	// An empty answer is a daemon that did not provision it, which the
+	// orchestrator refuses (requireAgentWorkspace).
+	workDir := req.WorkDir
+	if req.Workspace != nil {
+		workDir = resp.GetWorkDir()
 	}
 	return &Session{
 		ID:        resp.GetSessionId(),
@@ -417,7 +430,7 @@ func (b *RemoteACPBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Sessi
 		Backend:   b.backend,
 		Model:     resp.GetModel(),
 		Status:    SessionStateActive,
-		WorkDir:   req.WorkDir,
+		WorkDir:   workDir,
 		CreatedAt: createdAt,
 
 		// THE ACCOUNT THE DAEMON RESOLVED, WHICH ONLY THE DAEMON KNOWS.
@@ -668,6 +681,48 @@ func (b *RemoteACPBackend) Status(ctx context.Context, sessionID string) (*Sessi
 		State:        protoSessionStateToRuntime(resp.GetState()),
 		LastActivity: timestampAsUnixNano(resp.GetLastActivity()),
 		Uptime:       resp.GetUptimeSeconds(),
+	}, nil
+}
+
+// Compile-time check: a remote backend runs commands in its sessions'
+// containers on the daemon that owns them.
+var _ SessionContainerExecutor = (*RemoteACPBackend)(nil)
+
+// ExecInSession runs one command in the container of a session the daemon
+// holds, for this backend's tenant. The daemon resolves the container from
+// the session; a session it does not hold, of another tenant, or with no
+// container is refused there.
+func (b *RemoteACPBackend) ExecInSession(ctx context.Context, sessionID string, spec *ExecSpec) (*ExecResult, error) {
+	if err := spec.Validate(); err != nil {
+		return nil, err
+	}
+	client, err := b.client(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, rpcErr := client.ExecSession(b.authCtx(ctx), &proto.ExecSessionRequest{
+		TenantId:  b.registration.TenantID,
+		SessionId: sessionID,
+		Cmd:       spec.Cmd,
+		Env:       spec.Env,
+		WorkDir:   spec.WorkDir,
+		Stdin:     spec.Stdin,
+	})
+	if rpcErr != nil {
+		switch grpcstatus.Code(rpcErr) {
+		case codes.NotFound:
+			return nil, &SessionNotFoundError{SessionID: sessionID}
+		case codes.FailedPrecondition:
+			return nil, &SessionNotContainerizedError{SessionID: sessionID}
+		}
+		return nil, &RemoteBackendRPCError{Op: "ExecSession", Err: rpcErr}
+	}
+	// The bytes the command wrote, as the local exec path returns them: no
+	// encoding is assumed or repaired.
+	return &ExecResult{
+		ExitCode: int(resp.GetExitCode()),
+		Stdout:   string(resp.GetStdout()),
+		Stderr:   string(resp.GetStderr()),
 	}, nil
 }
 
@@ -983,3 +1038,28 @@ func timestampAsUnixNano(ts interface{ AsTime() time.Time }) int64 {
 // _ is a compile marker to ensure the oauth credentials dependency is
 // tracked — it's used by future JWT interceptors the deployment wires in.
 var _ = oauth.TokenSource{}
+
+// sessionWorkspaceToProto is the wire form of a named workspace, nil for a
+// spawn that named none. The pinned directory travels only when the pin is for
+// this very workspace: a pin naming another key of the job places the spawn on
+// the right host but says nothing about where this workspace lives on it.
+func sessionWorkspaceToProto(ws *SessionWorkspace) *proto.SessionWorkspace {
+	if ws == nil {
+		return nil
+	}
+	out := &proto.SessionWorkspace{
+		TenantId:  ws.TenantID,
+		ProjectId: ws.ProjectID,
+		Key:       ws.Key,
+	}
+	if ws.Pin != nil && ws.Pin.Key == ws.Key {
+		out.PinnedDir = ws.Pin.Dir
+	}
+	if ws.Spec != nil {
+		out.SpecFiles = make(map[string][]byte, len(ws.Spec.Files))
+		for name, content := range ws.Spec.Files {
+			out.SpecFiles[name] = content
+		}
+	}
+	return out
+}

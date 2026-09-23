@@ -86,6 +86,19 @@ var spawnRequestNotOnTheWire = map[string]string{
 	"AccountHomeDir": "spawn-time wiring on the daemon, never caller-supplied (backend.go: `json:\"-\"`)",
 }
 
+// spawnRequestProvisionedOnTheDaemon names the SpawnRequest fields that DO
+// cross the boundary but are consumed there by design, so the request the
+// daemon's backend receives is not the request that was sent — and the test
+// that asserts their crossing instead.
+//
+// Workspace is mutually exclusive with WorkDir (the sentinel's), and the
+// daemon turns it into a WorkDir and a spec mount of its own
+// (Runtime.provisionWorkspace). A field-equality round trip cannot express
+// that; TestSpawnWireContract_ANamedWorkspaceIsProvisionedOnTheDaemon does.
+var spawnRequestProvisionedOnTheDaemon = map[string]string{
+	"Workspace": "TestSpawnWireContract_ANamedWorkspaceIsProvisionedOnTheDaemon",
+}
+
 // sentinelSpawnRequest builds a SpawnRequest with every exported field set to a
 // distinctive non-zero value.
 //
@@ -172,6 +185,9 @@ func TestSpawnWireContract_SentinelCoversEverySpawnRequestField(t *testing.T) {
 		if !field.IsExported() {
 			continue
 		}
+		if _, elsewhere := spawnRequestProvisionedOnTheDaemon[field.Name]; elsewhere {
+			continue
+		}
 		if sentinel.Field(i).IsZero() {
 			t.Errorf("SpawnRequest.%s is left at its zero value by sentinelSpawnRequest.\n"+
 				"A field the sentinel does not set is a field this contract cannot check. Give it a\n"+
@@ -218,7 +234,7 @@ func TestSpawnWireContract_SpawnRequestSurvivesTheRemoteBoundary(t *testing.T) {
 
 	remote, cleanup := newContractBoundary(t, backend, &orchestration.MountPolicy{
 		AllowedRoots: []string{mountRoot},
-	}, &fakeContainerRuntime{available: true})
+	}, &fakeContainerRuntime{available: true}, nil)
 	defer cleanup()
 
 	sent := sentinelSpawnRequest(mountRoot)
@@ -237,7 +253,11 @@ func TestSpawnWireContract_SpawnRequestSurvivesTheRemoteBoundary(t *testing.T) {
 		t.Fatal("the daemon's backend never received a spawn request")
 	}
 
-	compareFields(t, "SpawnRequest", reflect.ValueOf(expected), reflect.ValueOf(*got), spawnRequestNotOnTheWire)
+	skipped := make(map[string]bool, len(spawnRequestProvisionedOnTheDaemon))
+	for name := range spawnRequestProvisionedOnTheDaemon {
+		skipped[name] = true
+	}
+	compareFields(t, "SpawnRequest", reflect.ValueOf(expected), reflect.ValueOf(*got), spawnRequestNotOnTheWire, skipped)
 }
 
 // compareFields reports every exported field of want that differs from got,
@@ -247,13 +267,13 @@ func TestSpawnWireContract_SpawnRequestSurvivesTheRemoteBoundary(t *testing.T) {
 // Reporting the second direction matters as much as the first: a deny-list
 // entry that no longer describes the code is a comment claiming a field is
 // withheld while the wire carries it, which is worse than no comment at all.
-func compareFields(t *testing.T, typeName string, want, got reflect.Value, denied map[string]string) {
+func compareFields(t *testing.T, typeName string, want, got reflect.Value, denied map[string]string, skipped map[string]bool) {
 	t.Helper()
 
 	typ := want.Type()
 	for i := 0; i < typ.NumField(); i++ {
 		field := typ.Field(i)
-		if !field.IsExported() {
+		if !field.IsExported() || skipped[field.Name] {
 			continue
 		}
 		wantVal := want.Field(i).Interface()
@@ -288,6 +308,7 @@ func newContractBoundary(
 	backend orchestration.AgentBackend,
 	mountPolicy *orchestration.MountPolicy,
 	containerRuntime orchestration.ContainerRuntime,
+	workspaces orchestration.WorkspaceProvisioner,
 ) (*orchestration.RemoteACPBackend, func()) {
 	t.Helper()
 
@@ -297,6 +318,7 @@ func newContractBoundary(
 		MountPolicy:      mountPolicy,
 		ContainerRuntime: containerRuntime,
 		Logger:           &testLogger{t: t},
+		Workspaces:       workspaces,
 	})
 	if err != nil {
 		t.Fatalf("runtime: %v", err)
@@ -445,7 +467,7 @@ func TestSpawnWireContract_SessionSurvivesTheRemoteBoundary(t *testing.T) {
 		},
 	}
 
-	remote, cleanup := newContractBoundary(t, backend, nil, nil)
+	remote, cleanup := newContractBoundary(t, backend, nil, nil, nil)
 	defer cleanup()
 
 	got, err := remote.Spawn(context.Background(), &orchestration.SpawnRequest{
@@ -458,7 +480,7 @@ func TestSpawnWireContract_SessionSurvivesTheRemoteBoundary(t *testing.T) {
 	}
 
 	want := sentinelSession("proj-sentinel", workDir)
-	compareFields(t, "Session", reflect.ValueOf(*want), reflect.ValueOf(*got), sessionNotOnTheWire)
+	compareFields(t, "Session", reflect.ValueOf(*want), reflect.ValueOf(*got), sessionNotOnTheWire, nil)
 }
 
 // =============================================================================
@@ -490,6 +512,13 @@ func TestSpawnWireContract_SessionSurvivesTheRemoteBoundary(t *testing.T) {
 // entry here has to argue that a field the message declares must nonetheless
 // never be sent.
 var spawnResponseNotOnTheWire = map[string]string{}
+
+// spawnResponseForANamedWorkspace names the response fields the daemon sets
+// only when the spawn named a workspace, and the test that asserts them. The
+// sentinel spawn names none, so they are correctly unset here.
+var spawnResponseForANamedWorkspace = map[string]string{
+	"work_dir": "TestSpawnWireContract_ANamedWorkspaceIsProvisionedOnTheDaemon",
+}
 
 // spawnResponseSentinelValues is what each field of the response must carry for
 // the sentinel session the daemon's backend returns. Written out by name rather
@@ -587,6 +616,9 @@ func TestSpawnWireContract_SpawnSessionResponseLeavesNoFieldUnset(t *testing.T) 
 	for i := 0; i < fields.Len(); i++ {
 		field := fields.Get(i)
 		name := string(field.Name())
+		if _, conditional := spawnResponseForANamedWorkspace[name]; conditional {
+			continue
+		}
 		reason, denied := spawnResponseNotOnTheWire[name]
 
 		set := resp.ProtoReflect().Has(field)
