@@ -12,8 +12,8 @@ require (
 	github.com/jeremyhahn/go-qrdb v0.19.0-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.19.0-alpha
 	github.com/jeremyhahn/go-quicbaas v0.11.1-alpha
-	github.com/jeremyhahn/go-xkms v0.16.0-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.16.0-alpha
+	github.com/jeremyhahn/go-xkms v0.17.0-alpha
+	github.com/jeremyhahn/go-xkms/sdk/go v0.17.0-alpha
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/quic-go/quic-go v0.62.0
 	github.com/stretchr/testify v1.12.1

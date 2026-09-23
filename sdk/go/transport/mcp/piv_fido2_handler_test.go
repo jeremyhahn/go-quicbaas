@@ -163,7 +163,9 @@ func TestFIDO2MCPHandler_TransformRequest(t *testing.T) {
 		DisplayName: "Alice",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "alice@example.com", args["username"])
+	assert.Equal(t, "alice@example.com", args["email"])
+	assert.NotContains(t, args, "username",
+		"go-xkms v0.17 removed the username wire alias (go-xkms#628); the login key travels as email only")
 	assert.Equal(t, "Alice", args["display_name"])
 
 	args, err = h.transformRequest("FinishAuthentication", &xkmstransport.FinishAuthenticationRequest{

@@ -568,10 +568,10 @@ func (r *ToolRegistry) registerXKMSPIVTools() {
 			"type": "object",
 			"properties": map[string]interface{}{
 				"tenant_id":    map[string]interface{}{"type": "string", "description": "Tenant scope; defaults to the authenticated tenant"},
-				"username":     map[string]interface{}{"type": "string", "description": "Username (email) to register the credential for"},
+				"email":        map[string]interface{}{"type": "string", "description": "Email (the login key) to register the credential for"},
 				"display_name": map[string]interface{}{"type": "string", "description": "Human-readable display name"},
 			},
-			"required": []string{"username"},
+			"required": []string{"email"},
 		},
 	})
 
@@ -596,9 +596,9 @@ func (r *ToolRegistry) registerXKMSPIVTools() {
 			"type": "object",
 			"properties": map[string]interface{}{
 				"tenant_id": map[string]interface{}{"type": "string", "description": "Tenant scope; defaults to the authenticated tenant"},
-				"username":  map[string]interface{}{"type": "string", "description": "Username (email) whose registered credentials are challenged"},
+				"email":     map[string]interface{}{"type": "string", "description": "Email (the login key) whose registered credentials are challenged"},
 			},
-			"required": []string{"username"},
+			"required": []string{"email"},
 		},
 	})
 
@@ -610,10 +610,10 @@ func (r *ToolRegistry) registerXKMSPIVTools() {
 			"properties": map[string]interface{}{
 				"tenant_id":      map[string]interface{}{"type": "string", "description": "Tenant scope; defaults to the authenticated tenant"},
 				"session_id":     map[string]interface{}{"type": "string", "description": "Session ID returned by beginAuthentication"},
-				"username":       map[string]interface{}{"type": "string", "description": "Username (email) whose credentials are being asserted"},
+				"email":          map[string]interface{}{"type": "string", "description": "Email (the login key) whose credentials are being asserted"},
 				"assertion_json": map[string]interface{}{"type": "string", "description": "WebAuthn PublicKeyCredential assertion JSON from the authenticator"},
 			},
-			"required": []string{"session_id", "username", "assertion_json"},
+			"required": []string{"session_id", "email", "assertion_json"},
 		},
 	})
 }
@@ -1861,16 +1861,16 @@ func (r *ToolRegistry) handleXKMSFIDO2BeginRegistration(ctx context.Context, arg
 		return nil, err
 	}
 
-	username := getString(args, "username")
-	if username == "" {
-		return nil, api.NewRequiredFieldError("username")
+	// The login key is the email, spelled as go-xkms spells it on the wire:
+	// v0.17 removed the "username" alias (go-xkms#628), so the SDK's MCP
+	// transport, which forwards the go-xkms request as-is, sends "email".
+	email := getString(args, "email")
+	if email == "" {
+		return nil, api.NewRequiredFieldError("email")
 	}
 
 	resp, err := fido2Svc.BeginRegistration(ctx, fido2TenantFromArgs(ctx, args), &transport.BeginRegistrationRequest{
-		// The MCP tool argument is still spelled "username"; xkms v0.12
-		// renamed the field to Email and resolves the account with GetByEmail,
-		// so the value has to BE the email either way.
-		Email:       username,
+		Email:       email,
 		DisplayName: getString(args, "display_name"),
 	})
 	if err != nil {
@@ -1917,13 +1917,13 @@ func (r *ToolRegistry) handleXKMSFIDO2BeginAuthentication(ctx context.Context, a
 		return nil, err
 	}
 
-	username := getString(args, "username")
-	if username == "" {
-		return nil, api.NewRequiredFieldError("username")
+	email := getString(args, "email")
+	if email == "" {
+		return nil, api.NewRequiredFieldError("email")
 	}
 
 	resp, err := fido2Svc.BeginAuthentication(ctx, fido2TenantFromArgs(ctx, args), &transport.BeginAuthenticationRequest{
-		Email: username,
+		Email: email,
 	})
 	if err != nil {
 		return nil, &XKMSOperationError{Operation: "fido2.beginAuthentication", Cause: err}
@@ -1945,9 +1945,9 @@ func (r *ToolRegistry) handleXKMSFIDO2FinishAuthentication(ctx context.Context, 
 		return nil, api.NewRequiredFieldError("session_id")
 	}
 
-	username := getString(args, "username")
-	if username == "" {
-		return nil, api.NewRequiredFieldError("username")
+	email := getString(args, "email")
+	if email == "" {
+		return nil, api.NewRequiredFieldError("email")
 	}
 
 	assertionJSON := getString(args, "assertion_json")
@@ -1957,7 +1957,7 @@ func (r *ToolRegistry) handleXKMSFIDO2FinishAuthentication(ctx context.Context, 
 
 	resp, err := fido2Svc.FinishAuthentication(ctx, fido2TenantFromArgs(ctx, args), &transport.FinishAuthenticationRequest{
 		SessionID:     sessionID,
-		Email:         username,
+		Email:         email,
 		AssertionJSON: assertionJSON,
 	})
 	if err != nil {

@@ -17,6 +17,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -92,7 +93,7 @@ func TestXKMSFIDO2BeginRegistration_HappyPath(t *testing.T) {
 
 	result, err := registry.handleXKMSFIDO2BeginRegistration(context.Background(), map[string]interface{}{
 		"tenant_id":    "tenant-a",
-		"username":     "alice@example.com",
+		"email":        "alice@example.com",
 		"display_name": "Alice",
 	})
 	require.NoError(t, err)
@@ -114,13 +115,13 @@ func TestXKMSFIDO2BeginRegistration_TenantFromContext(t *testing.T) {
 
 	ctx := iam.ContextWithTenant(context.Background(), "ctx-tenant")
 	_, err := registry.handleXKMSFIDO2BeginRegistration(ctx, map[string]interface{}{
-		"username": "alice@example.com",
+		"email": "alice@example.com",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "ctx-tenant", fake.lastTenant)
 }
 
-func TestXKMSFIDO2BeginRegistration_MissingUsername(t *testing.T) {
+func TestXKMSFIDO2BeginRegistration_MissingEmail(t *testing.T) {
 	registry := newFIDO2Registry(t, &fido2FakeService{})
 
 	_, err := registry.handleXKMSFIDO2BeginRegistration(context.Background(), map[string]interface{}{
@@ -169,7 +170,7 @@ func TestXKMSFIDO2AuthenticationCeremony_HappyPath(t *testing.T) {
 
 	begin, err := registry.handleXKMSFIDO2BeginAuthentication(context.Background(), map[string]interface{}{
 		"tenant_id": "tenant-b",
-		"username":  "bob@example.com",
+		"email":     "bob@example.com",
 	})
 	require.NoError(t, err)
 	bm, ok := begin.(map[string]interface{})
@@ -181,7 +182,7 @@ func TestXKMSFIDO2AuthenticationCeremony_HappyPath(t *testing.T) {
 	finish, err := registry.handleXKMSFIDO2FinishAuthentication(context.Background(), map[string]interface{}{
 		"tenant_id":      "tenant-b",
 		"session_id":     "sess-2",
-		"username":       "bob@example.com",
+		"email":          "bob@example.com",
 		"assertion_json": `{"id":"cred"}`,
 	})
 	require.NoError(t, err)
@@ -197,9 +198,9 @@ func TestXKMSFIDO2FinishAuthentication_MissingArgs(t *testing.T) {
 	registry := newFIDO2Registry(t, &fido2FakeService{})
 
 	for _, args := range []map[string]interface{}{
-		{"username": "bob", "assertion_json": `{}`}, // missing session_id
-		{"session_id": "s", "assertion_json": `{}`}, // missing username
-		{"session_id": "s", "username": "bob"},      // missing assertion_json
+		{"email": "bob", "assertion_json": `{}`},    // missing session_id
+		{"session_id": "s", "assertion_json": `{}`}, // missing email
+		{"session_id": "s", "email": "bob"},         // missing assertion_json
 	} {
 		_, err := registry.handleXKMSFIDO2FinishAuthentication(context.Background(), args)
 		require.Error(t, err, "%v", args)
@@ -211,7 +212,7 @@ func TestXKMSFIDO2Handlers_ServiceErrorPropagates(t *testing.T) {
 	registry := newFIDO2Registry(t, fake)
 
 	_, err := registry.handleXKMSFIDO2BeginRegistration(context.Background(), map[string]interface{}{
-		"tenant_id": "t", "username": "alice",
+		"tenant_id": "t", "email": "alice",
 	})
 	require.Error(t, err)
 	var opErr *XKMSOperationError
@@ -224,7 +225,7 @@ func TestXKMSFIDO2Handlers_NilServiceUnavailable(t *testing.T) {
 	registry := NewToolRegistry(&mockService{}, log)
 
 	_, err := registry.handleXKMSFIDO2BeginAuthentication(context.Background(), map[string]interface{}{
-		"tenant_id": "t", "username": "alice",
+		"tenant_id": "t", "email": "alice",
 	})
 	require.Error(t, err)
 }
@@ -291,4 +292,45 @@ func TestXKMSFIDO2ToolsRegisteredAndMapped(t *testing.T) {
 		assert.Equal(t, want[0], res, name)
 		assert.Equal(t, want[1], act, name)
 	}
+}
+
+// TestXKMSFIDO2Handlers_AcceptSDKSerializedRequests is the regression for the
+// login-key spelling across the MCP boundary: the SDK's MCP transport
+// forwards the go-xkms request struct as its JSON, and since go-xkms v0.17
+// (go-xkms#628) that JSON carries the login key as "email" only. The server
+// handlers must accept exactly those arguments, so they are built here the way
+// the SDK builds them rather than written by hand.
+func TestXKMSFIDO2Handlers_AcceptSDKSerializedRequests(t *testing.T) {
+	fake := &fido2FakeService{}
+	registry := newFIDO2Registry(t, fake)
+	ctx := iam.ContextWithTenant(context.Background(), "tenant-sdk")
+
+	_, err := registry.handleXKMSFIDO2BeginRegistration(ctx, sdkArgs(t, &transport.BeginRegistrationRequest{
+		Email: "carol@example.com", DisplayName: "Carol",
+	}))
+	require.NoError(t, err, "beginRegistration must accept the SDK's arguments")
+	assert.Equal(t, "carol@example.com", fake.lastBeginReg.Email)
+
+	_, err = registry.handleXKMSFIDO2BeginAuthentication(ctx, sdkArgs(t, &transport.BeginAuthenticationRequest{
+		Email: "carol@example.com",
+	}))
+	require.NoError(t, err, "beginAuthentication must accept the SDK's arguments")
+	assert.Equal(t, "carol@example.com", fake.lastBeginAuth.Email)
+
+	_, err = registry.handleXKMSFIDO2FinishAuthentication(ctx, sdkArgs(t, &transport.FinishAuthenticationRequest{
+		SessionID: "sess-2", Email: "carol@example.com", AssertionJSON: `{"id":"cred"}`,
+	}))
+	require.NoError(t, err, "finishAuthentication must accept the SDK's arguments")
+	assert.Equal(t, "carol@example.com", fake.lastFinishAuth.Email)
+}
+
+// sdkArgs serializes a go-xkms request into MCP tool arguments the way the
+// SDK's MCP transport does (sdk/go/transport/mcp fido2MCPHandler).
+func sdkArgs(t *testing.T, req interface{}) map[string]interface{} {
+	t.Helper()
+	data, err := json.Marshal(req)
+	require.NoError(t, err)
+	var args map[string]interface{}
+	require.NoError(t, json.Unmarshal(data, &args))
+	return args
 }

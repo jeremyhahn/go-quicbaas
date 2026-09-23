@@ -25,6 +25,7 @@ import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkmsacme "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 	clustercasdk "github.com/jeremyhahn/go-xkms/sdk/go/clusterca"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
@@ -77,24 +78,44 @@ func (s *Server) clusterCACacheDir() string {
 }
 
 // clusterCAKeyProtection builds the KeyProtection for the cluster CA keystore
-// from the cluster enrollment configuration.
-func (s *Server) clusterCAKeyProtection() clustercasdk.KeyProtection {
+// from the cluster enrollment configuration. The operator passphrase is moved
+// into a sealed enclave here, at the composition root, because go-xkms holds
+// it only as a *secure.Secret so the plaintext is never a long-lived Go string
+// on its side. An empty passphrase leaves passphrase mode disabled.
+func (s *Server) clusterCAKeyProtection() (clustercasdk.KeyProtection, error) {
 	enr := s.config.Raft.RaftEnrollment
-	return clustercasdk.KeyProtection{
+	protection := clustercasdk.KeyProtection{
 		Mode:          clustercasdk.KeyProtectionMode(enr.CAKeyProtection),
-		Passphrase:    enr.CAKeyPassphrase,
 		AllowInsecure: clustercasdk.KeyProtectionMode(enr.CAKeyProtection) == clustercasdk.KeyProtectNone,
 	}
+	if enr.CAKeyPassphrase != "" {
+		passphrase, err := newClusterCAPassphrase([]byte(enr.CAKeyPassphrase))
+		if err != nil {
+			return clustercasdk.KeyProtection{}, &ClusterCAPassphraseError{Cause: err}
+		}
+		protection.Passphrase = passphrase
+	}
+	return protection, nil
 }
+
+// newClusterCAPassphrase seals the cluster CA passphrase into protected
+// memory. It is a package variable so the failure path can be exercised: the
+// enclave needs locked pages the kernel may refuse, and that must fail the
+// cluster CA rather than run it with no passphrase.
+var newClusterCAPassphrase = secure.NewSecret
 
 // clusterStrategyDeps assembles the dependencies a cluster CA key strategy
 // needs. Pre-node calls pass nil replicated storage (bootstrap); post-node calls
 // (initializeCA) pass the qrdb-routed replicated stores.
-func (s *Server) clusterStrategyDeps(replicatedKey, replicatedCert xkmssdk.StorageBackend) *clustercasdk.StrategyDeps {
+func (s *Server) clusterStrategyDeps(replicatedKey, replicatedCert xkmssdk.StorageBackend) (*clustercasdk.StrategyDeps, error) {
+	protection, err := s.clusterCAKeyProtection()
+	if err != nil {
+		return nil, err
+	}
 	deps := &clustercasdk.StrategyDeps{
 		NodeLocalDataDir:      s.clusterCACacheDir(),
 		CAConfig:              s.clusterCAConfig,
-		Protection:            s.clusterCAKeyProtection(),
+		Protection:            protection,
 		ReplicatedKeyStorage:  replicatedKey,
 		ReplicatedCertStorage: replicatedCert,
 		// Bootstrapping is true on the node that pre-stages the CA (no joiner
@@ -110,7 +131,7 @@ func (s *Server) clusterStrategyDeps(replicatedKey, replicatedCert xkmssdk.Stora
 		deps.TPMSealer = s.sealTPM2Backend
 		deps.Credentials = s.sealTPM2Backend.TPM()
 	}
-	return deps
+	return deps, nil
 }
 
 // resolveClusterCARuntimeBackend resolves this node's runtime cluster CA
@@ -132,8 +153,11 @@ func (s *Server) resolveClusterCARuntimeBackend() (xkmssdk.ServiceBackend, error
 	if err != nil {
 		return nil, err
 	}
-	return s.clusterCAKeyStrategy.RuntimeBackend(context.Background(),
-		s.clusterStrategyDeps(replicatedKey, replicatedCert))
+	deps, err := s.clusterStrategyDeps(replicatedKey, replicatedCert)
+	if err != nil {
+		return nil, err
+	}
+	return s.clusterCAKeyStrategy.RuntimeBackend(context.Background(), deps)
 }
 
 // ClusterSecretDeliveryService builds the post-enrollment secret-delivery

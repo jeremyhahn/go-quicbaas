@@ -31,8 +31,8 @@ require (
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.19.0-alpha
 	github.com/jeremyhahn/go-quicbaas/sdk/go v0.11.1-alpha
 	github.com/jeremyhahn/go-signal v0.2.0-alpha
-	github.com/jeremyhahn/go-xkms v0.16.0-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.16.0-alpha
+	github.com/jeremyhahn/go-xkms v0.17.0-alpha
+	github.com/jeremyhahn/go-xkms/sdk/go v0.17.0-alpha
 	github.com/klauspost/compress v1.19.1
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/minio/blake2b-simd v0.0.0-20160723061019-3f5f724cb5b1
@@ -188,7 +188,7 @@ require (
 	github.com/jeremyhahn/go-frost v0.3.0-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.13.1-alpha // indirect
 	github.com/jeremyhahn/go-truststrap v0.4.0-alpha // indirect
-	github.com/jeremyhahn/go-xkms/xkey v0.16.0-alpha // indirect
+	github.com/jeremyhahn/go-xkms/xkey v0.17.0-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect

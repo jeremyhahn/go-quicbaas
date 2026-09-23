@@ -453,3 +453,21 @@ func (e *ClusterMembersError) Error() string {
 
 // Unwrap returns the underlying cause for errors.Is/As traversal.
 func (e *ClusterMembersError) Unwrap() error { return e.Cause }
+
+// ClusterCAPassphraseError indicates the cluster CA key passphrase could not
+// be moved into protected memory. The cluster CA does not run without it
+// rather than running with passphrase protection silently off.
+type ClusterCAPassphraseError struct {
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *ClusterCAPassphraseError) Error() string {
+	if e.Cause == nil {
+		return "cluster ca: passphrase could not be protected"
+	}
+	return "cluster ca: passphrase could not be protected: " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause for errors.Is/As traversal.
+func (e *ClusterCAPassphraseError) Unwrap() error { return e.Cause }
