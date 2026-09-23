@@ -39,6 +39,10 @@ type fakeAgentService struct {
 	// silently listing the whole tenant.
 	listJobsFilter  *orchestration.JobFilter
 	listTasksFilter *orchestration.TaskFilter
+
+	// listJobs is what ListJobs answers with when a test needs particular
+	// records; nil keeps the single bare job the conversion tests rely on.
+	listJobs []*orchestration.JobStatus
 }
 
 func (f *fakeAgentService) err() error {
@@ -262,6 +266,9 @@ func (f *fakeAgentService) ListJobs(ctx context.Context, tenantID string, filter
 		return nil, err
 	}
 	f.listJobsFilter = filter
+	if f.listJobs != nil {
+		return f.listJobs, nil
+	}
 	return []*orchestration.JobStatus{{JobID: "j1"}}, nil
 }
 

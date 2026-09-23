@@ -1760,7 +1760,7 @@ func (r *ToolRegistry) executeOrchestratorGetJobStatus(ctx context.Context, args
 		return nil, err
 	}
 
-	return marshalResult(map[string]interface{}{
+	status := map[string]interface{}{
 		"job_id":          jobStatus.JobID,
 		"state":           string(jobStatus.State),
 		"iteration":       jobStatus.Iteration,
@@ -1794,7 +1794,19 @@ func (r *ToolRegistry) executeOrchestratorGetJobStatus(ctx context.Context, args
 		"verification":    jobStatus.Verification,
 
 		"timestamp": time.Now().Format(time.RFC3339Nano),
-	})
+	}
+
+	// The forge issue behind the job's task, on the detail read exactly as on
+	// quicbaas_orchestrator_list_jobs: the two must agree about the same job,
+	// or a model that reads one and then the other sees the issue disappear.
+	// It is OMITTED rather than emitted empty, which is the listing's rule and
+	// the rest of this field's contract — absent means "no issue recorded",
+	// never "the issue is blank".
+	if jobStatus.Source != nil {
+		status["source"] = jobStatus.Source
+	}
+
+	return marshalResult(status)
 }
 
 // executeOrchestratorTaskBlock handles the quicbaas_orchestrator_task_block tool.
@@ -1954,6 +1966,16 @@ func (r *ToolRegistry) executeOrchestratorListJobs(ctx context.Context, args map
 			"event_count": len(j.Events),
 			"task_id":     j.TaskID,
 			"attempt":     j.Attempt,
+		}
+		// The forge issue behind the job, present only when the job is an
+		// attempt at a task that records one. It is omitted rather than
+		// emitted empty so a reader can tell "no issue" from "issue unknown".
+		if j.Source != nil {
+			summaries[i]["source"] = map[string]interface{}{
+				"kind": string(j.Source.Kind),
+				"ref":  j.Source.Ref,
+				"url":  j.Source.URL,
+			}
 		}
 	}
 

@@ -205,6 +205,8 @@ class WailsOrchestratorClient {
             req.statuses = page.statuses;
         if (page?.job_ids !== undefined)
             req.job_ids = page.job_ids;
+        if (page?.agent_id !== undefined)
+            req.agent_id = page.agent_id;
         return adoptPage(await orchestratorBinding().ListJobs(req), 'jobs');
     }
     async listTasksPage(tenantID, page) {
@@ -223,6 +225,10 @@ class WailsOrchestratorClient {
             req.created_by = page.created_by;
         if (page?.auto_spawn !== undefined)
             req.auto_spawn = page.auto_spawn;
+        if (page?.agent_id !== undefined)
+            req.agent_id = page.agent_id;
+        if (page?.job_id !== undefined)
+            req.job_id = page.job_id;
         return adoptPage(await orchestratorBinding().ListTasks(req), 'tasks');
     }
     async listSessionsPage(tenantID, page) {
@@ -234,6 +240,14 @@ class WailsOrchestratorClient {
             req.backend = page.backend;
         if (page?.status !== undefined)
             req.status = page.status;
+        if (page?.project_id !== undefined)
+            req.project_id = page.project_id;
+        if (page?.job_id !== undefined)
+            req.job_id = page.job_id;
+        if (page?.runner !== undefined)
+            req.runner = page.runner;
+        if (page?.agent_id !== undefined)
+            req.agent_id = page.agent_id;
         return adoptPage(await orchestratorBinding().ListSessions(req), 'sessions');
     }
     async listAgentsPage(tenantID, page) {
@@ -255,7 +269,16 @@ class WailsOrchestratorClient {
         if (typeof b.ListWorkflows !== 'function') {
             throw new Error('wails: ListWorkflows not implemented');
         }
-        const answered = await b.ListWorkflows({ tenant_id: tenantID, ...pageFields(page) });
+        const workflowFilters = {};
+        if (page?.project_id !== undefined)
+            workflowFilters['project_id'] = page.project_id;
+        if (page?.mode !== undefined)
+            workflowFilters['mode'] = page.mode;
+        const answered = await b.ListWorkflows({
+            tenant_id: tenantID,
+            ...workflowFilters,
+            ...pageFields(page),
+        });
         return adoptPage(answered, 'workflows');
     }
     async listJobs(tenantID, taskID) {

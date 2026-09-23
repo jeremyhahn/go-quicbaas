@@ -111,6 +111,105 @@ func TestOrchestratorGRPC_ListJobs_WithoutTaskNarrowsNothing(t *testing.T) {
 	assert.True(t, svc.listJobsFilter.Empty(), "an absent task_id must narrow nothing")
 }
 
+// TestOrchestratorGRPC_ListJobs_CarriesTaskSource pins the forge issue onto
+// every row of this transport's listing. A gRPC consumer holds no tasks to
+// resolve the issue against, so a summary without it cannot name the issue
+// at all. go-quicbaas#976.
+func TestOrchestratorGRPC_ListJobs_CarriesTaskSource(t *testing.T) {
+	svc := &grpcTestAgentService{listJobs: []*orchestration.JobStatus{{
+		JobID:   "job-1",
+		TaskID:  "task-a",
+		Attempt: 2,
+		Source: &orchestration.TaskSourceRef{
+			Kind: "forge_issue",
+			Ref:  "jeremyhahn/go-quicbaas#62",
+			URL:  "https://forge.invalid/jeremyhahn/go-quicbaas/issues/62",
+		},
+	}}}
+	srv := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger())
+
+	resp, err := srv.ListJobs(context.Background(), &pb.OrchestratorListJobsRequest{TenantId: "t1"})
+	require.NoError(t, err)
+	require.True(t, svc.listJobsPaged,
+		"the listing must read the verb that fills the source, or the rows arrive without one")
+	require.Len(t, resp.GetJobs(), 1)
+
+	source := resp.GetJobs()[0].GetSource()
+	require.NotNil(t, source, "the row dropped the forge issue behind its task")
+	assert.Equal(t, "forge_issue", source.GetKind())
+	assert.Equal(t, "jeremyhahn/go-quicbaas#62", source.GetRef())
+	assert.Equal(t, "https://forge.invalid/jeremyhahn/go-quicbaas/issues/62", source.GetUrl())
+}
+
+// TestOrchestratorGRPC_ListJobs_WithoutTaskSourceCarriesNone is the other
+// half: a job whose task records no origin must answer with NO source, not
+// an empty one a consumer would render as a chip pointing nowhere.
+func TestOrchestratorGRPC_ListJobs_WithoutTaskSourceCarriesNone(t *testing.T) {
+	svc := &grpcTestAgentService{listJobs: []*orchestration.JobStatus{
+		{JobID: "job-1", TaskID: "task-a"},
+	}}
+	srv := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger())
+
+	resp, err := srv.ListJobs(context.Background(), &pb.OrchestratorListJobsRequest{TenantId: "t1"})
+	require.NoError(t, err)
+	require.Len(t, resp.GetJobs(), 1)
+	assert.Nil(t, resp.GetJobs()[0].GetSource())
+}
+
+// TestOrchestratorGRPC_ListJobs_AnswersEveryJobNewestFirst pins what reading
+// the paged verb with no page must NOT change: the listing still answers the
+// whole tenant, ordered by start time descending.
+func TestOrchestratorGRPC_ListJobs_AnswersEveryJobNewestFirst(t *testing.T) {
+	svc := &grpcTestAgentService{listJobs: []*orchestration.JobStatus{
+		{JobID: "older", StartedAt: 100},
+		{JobID: "newest", StartedAt: 300},
+		{JobID: "middle", StartedAt: 200},
+	}}
+	srv := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger())
+
+	resp, err := srv.ListJobs(context.Background(), &pb.OrchestratorListJobsRequest{TenantId: "t1"})
+	require.NoError(t, err)
+	require.Len(t, resp.GetJobs(), 3, "a nil page must cut nothing")
+	assert.Equal(t, []string{"newest", "middle", "older"},
+		[]string{resp.GetJobs()[0].GetJobId(), resp.GetJobs()[1].GetJobId(), resp.GetJobs()[2].GetJobId()})
+}
+
+// TestOrchestratorGRPC_GetJobStatus_CarriesTaskSource keeps the detail read
+// agreeing with the listing: both name the same issue for the same job.
+func TestOrchestratorGRPC_GetJobStatus_CarriesTaskSource(t *testing.T) {
+	svc := &grpcTestAgentService{getJobStatusFunc: func(_ context.Context, _, jobID string) (*orchestration.JobStatus, error) {
+		return &orchestration.JobStatus{
+			JobID:  jobID,
+			State:  "completed",
+			TaskID: "task-a",
+			Source: &orchestration.TaskSourceRef{
+				Kind: "forge_issue",
+				Ref:  "jeremyhahn/go-quicbaas#62",
+				URL:  "https://forge.invalid/jeremyhahn/go-quicbaas/issues/62",
+			},
+		}, nil
+	}}
+	srv := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger())
+
+	resp, err := srv.GetJobStatus(context.Background(), &pb.OrchestratorGetJobStatusRequest{TenantId: "t1", JobId: "j1"})
+	require.NoError(t, err)
+	source := resp.GetSource()
+	require.NotNil(t, source, "the detail read dropped the forge issue behind the job's task")
+	assert.Equal(t, "forge_issue", source.GetKind())
+	assert.Equal(t, "jeremyhahn/go-quicbaas#62", source.GetRef())
+	assert.Equal(t, "https://forge.invalid/jeremyhahn/go-quicbaas/issues/62", source.GetUrl())
+}
+
+// TestOrchestratorGRPC_GetJobStatus_WithoutTaskSourceCarriesNone is its
+// error-side twin: no origin on the job means no source on the wire.
+func TestOrchestratorGRPC_GetJobStatus_WithoutTaskSourceCarriesNone(t *testing.T) {
+	srv := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
+
+	resp, err := srv.GetJobStatus(context.Background(), &pb.OrchestratorGetJobStatusRequest{TenantId: "t1", JobId: "j1"})
+	require.NoError(t, err)
+	assert.Nil(t, resp.GetSource())
+}
+
 func TestOrchestratorGRPC_DecomposeTask(t *testing.T) {
 	srv := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
 	ctx := context.Background()

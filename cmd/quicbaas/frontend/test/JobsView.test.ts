@@ -179,6 +179,39 @@ describe('JobsView — the issue behind a job', () => {
     expect(chip.getAttribute('rel')).toContain('noopener');
   });
 
+  // -------------------------------------------------------------------------
+  // go-quicbaas#976: the row names its own issue
+  // -------------------------------------------------------------------------
+
+  it('chips the issue the ROW carries, with no tasks loaded at all', async () => {
+    // This is page 2 of a server-paged listing: the store holds one page of
+    // tasks and none of them is this job's. Before the server filled `source`
+    // the chip blanked here, which is the whole defect.
+    storeMock.tasks = [];
+    serving([{ ...factoryJob, job_id: 'job-page-2', task_id: 'task-999', source: factoryTask.source }]);
+    render(JobsView);
+    const chip = await waitFor(() => screen.getByRole('link', { name: '#580' }));
+    expect(chip.getAttribute('href')).toBe('http://forge.example/jeremyhahn/go-quicbaas/issues/580');
+  });
+
+  it("prefers the row's own source over a task page that disagrees", async () => {
+    // The task in the store is stale or is another job's; the server's answer
+    // for THIS row is the one that renders.
+    storeMock.tasks = [{ ...factoryTask, source: { kind: 'forge_issue', ref: '#111', url: '' } }];
+    serving([{ ...factoryJob, source: { kind: 'forge_issue', ref: 'jeremyhahn/go-quicbaas#222', url: '' } }]);
+    render(JobsView);
+    expect(await waitFor(() => screen.getByTitle('Forge issue #222'))).toBeInTheDocument();
+    expect(screen.queryByTitle('Forge issue #111')).toBeNull();
+  });
+
+  it('shows no chip when neither the row nor the store names an issue', async () => {
+    storeMock.tasks = [];
+    serving([{ ...factoryJob, source: { kind: 'scheduler', ref: 'nightly', url: '' } }]);
+    render(JobsView);
+    await rendered('Wire the job event stream');
+    expect(screen.queryByRole('link', { name: /^#\d+$/ })).toBeNull();
+  });
+
   it('finds the issue from the task when the job carries no task_id', async () => {
     serving([{ ...factoryJob, task_id: undefined }]);
     render(JobsView);

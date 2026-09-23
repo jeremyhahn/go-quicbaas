@@ -215,6 +215,47 @@ func TestListJobs_RefusesAnUnreadableLimit(t *testing.T) {
 	}
 }
 
+// TestListJobs_RowsCarryTheForgeIssue is the REST half of go-quicbaas#976:
+// the row must name the issue behind the job itself. The jobs view is paged
+// and holds no tasks, so a `source` the handler drops is a chip the view
+// cannot render at all — and `omitempty` makes that a silent omission rather
+// than a decode failure, which is why it is asserted on the wire.
+func TestListJobs_RowsCarryTheForgeIssue(t *testing.T) {
+	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+	defer cleanup()
+	jobs := pagedJobs(2)
+	jobs[0].Source = &orchestration.TaskSourceRef{
+		Kind: "forge_issue",
+		Ref:  "jeremyhahn/go-quicbaas#62",
+		URL:  "http://forge.example/jeremyhahn/go-quicbaas/issues/62",
+	}
+	agentSvc.listJobs = jobs
+
+	w := httptest.NewRecorder()
+	server.HandleOrchestratorListJobs(w,
+		orchReq(http.MethodGet, "/api/v1/orchestrator/jobs?tenant_id=acme", nil, nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	_, items := decodePageEnvelope(t, w.Body.Bytes(), "jobs")
+
+	// Newest first: job-1 has no source, job-0 does.
+	sourced, ok := items[1]["source"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("job-0 row = %v, want a source object", items[1])
+	}
+	if sourced["kind"] != "forge_issue" || sourced["ref"] != "jeremyhahn/go-quicbaas#62" {
+		t.Errorf("source = %v, want the task's forge issue", sourced)
+	}
+	if sourced["url"] != "http://forge.example/jeremyhahn/go-quicbaas/issues/62" {
+		t.Errorf("source url = %v, want the URL the origin recorded", sourced["url"])
+	}
+	if _, present := items[0]["source"]; present {
+		t.Errorf("job-1 row = %v, want no source key for a job whose task records none", items[0])
+	}
+}
+
 func TestListJobs_NarrowsByStateAndProject(t *testing.T) {
 	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()

@@ -35,6 +35,16 @@ func (f *fakeOrchestratorServer) e() error { return failErr(f.fail) }
 
 func orchTime() *timestamppb.Timestamp { return timestamppb.Now() }
 
+// fakeJobTaskSource is the forge issue the fake server reports behind the
+// job it answers with, on BOTH the listing and the detail read. The two
+// shapes carry the same origin, so a converter that decodes one and drops
+// the other is caught. See TestOrchestratorHandler_JobsCarryTaskSource.
+var fakeJobTaskSource = &pb.TaskSource{
+	Kind: "forge_issue",
+	Ref:  "jeremyhahn/go-quicbaas#62",
+	Url:  "https://forge.invalid/jeremyhahn/go-quicbaas/issues/62",
+}
+
 func (f *fakeOrchestratorServer) Health(context.Context, *pb.OrchestratorHealthRequest) (*pb.OrchestratorHealthResponse, error) {
 	if err := f.e(); err != nil {
 		return nil, err
@@ -181,13 +191,13 @@ func (f *fakeOrchestratorServer) GetJobStatus(context.Context, *pb.OrchestratorG
 	if err := f.e(); err != nil {
 		return nil, err
 	}
-	return &pb.OrchestratorGetJobStatusResponse{JobId: "j1", State: "running", Iteration: 1, TaskCount: 2, Completed: 1, Events: []*pb.OrchestratorAuditEvent{{Type: "started", Details: "ok"}}}, nil
+	return &pb.OrchestratorGetJobStatusResponse{JobId: "j1", State: "running", Iteration: 1, TaskCount: 2, Completed: 1, Events: []*pb.OrchestratorAuditEvent{{Type: "started", Details: "ok"}}, Source: fakeJobTaskSource}, nil
 }
 func (f *fakeOrchestratorServer) ListJobs(context.Context, *pb.OrchestratorListJobsRequest) (*pb.OrchestratorListJobsResponse, error) {
 	if err := f.e(); err != nil {
 		return nil, err
 	}
-	return &pb.OrchestratorListJobsResponse{Jobs: []*pb.OrchestratorJobSummary{{JobId: "j1", State: "running", EventCount: 3}}}, nil
+	return &pb.OrchestratorListJobsResponse{Jobs: []*pb.OrchestratorJobSummary{{JobId: "j1", State: "running", EventCount: 3, Source: fakeJobTaskSource}}}, nil
 }
 func (f *fakeOrchestratorServer) CancelJob(context.Context, *pb.OrchestratorCancelJobRequest) (*pb.OrchestratorCancelJobResponse, error) {
 	if err := f.e(); err != nil {

@@ -984,6 +984,7 @@ func handleOrchestratorListJobs(ctx context.Context, svc service.QuicBaaS, req i
 			UpdatedAt:   s.UpdatedAt,
 			Error:       s.Error,
 			EventCount:  len(s.Events),
+			Source:      taskSourceToSDK(s.Source),
 		}
 	}
 	return &orchestratorSDK.ListJobsResponse{Jobs: sdkSummaries, Envelope: envelopeFromPage(jobs)}, nil
@@ -1636,6 +1637,7 @@ func convertJobStatus(s *orchestration.JobStatus) *orchestratorSDK.JobStatus {
 		AttemptBudget:  s.AttemptBudget,
 		TerminalReason: string(s.TerminalReason),
 		ReadmitAllowed: s.ReadmitAllowed,
+		Source:         taskSourceToSDK(s.Source),
 		Delivery:       convertJobDelivery(s.Delivery),
 		Verification:   convertJobVerification(s.Verification),
 	}

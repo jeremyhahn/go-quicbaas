@@ -972,6 +972,11 @@ message OrchestratorGetJobStatusResponse {
     bool readmit_allowed = 27;                     // whether a person may requeue the task
     OrchestratorJobDelivery delivery = 28;         // branch, head, pull request, reviews
     repeated OrchestratorJobVerification verification = 29; // last validator pipeline's results
+
+    // source is where the job's TASK came from — the forge issue it was
+    // adopted from, in the task's own {kind, ref, url} shape. Absent for a
+    // job that is not an attempt at a task, or whose task records no origin.
+    TaskSource source = 30;
 }
 
 // OrchestratorJobVerification is one verification command's outcome.
@@ -1067,6 +1072,13 @@ message OrchestratorJobSummary {
     int32 event_count = 11;
     string task_id = 12;
     int64 attempt = 13;
+
+    // source is the forge issue behind the job's task, filled by the server
+    // for every row it answers. A consumer paging the jobs listing holds no
+    // tasks to resolve it against, so without it the row cannot name its
+    // issue at all (go-quicbaas#976). Absent when the job is not an attempt
+    // at a task, or its task records no origin.
+    TaskSource source = 14;
 }
 
 // SubscribeJobEventsRequest subscribes to real-time events from a job.

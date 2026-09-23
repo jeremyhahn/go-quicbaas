@@ -154,6 +154,14 @@ export interface JobStatus {
   delivery?: JobDelivery | null;
   /** verification is the last validator pipeline's results: the build, the tests. */
   verification?: JobVerificationResult[];
+  /**
+   * source is where the job's TASK came from — the forge issue it was adopted
+   * from. It is the task's own TaskSource, so `issueRef` reads a job exactly
+   * as it reads a task. Unlike the rest of this block it is on the LISTING as
+   * well as the detail read: a paged jobs view holds no tasks to resolve it
+   * from (go-quicbaas#976).
+   */
+  source?: TaskSource | null;
 }
 
 /** JobVerificationResult is one verification command's outcome. */

@@ -36,13 +36,28 @@ import "context"
 // =============================================================================
 
 // ListJobsPage returns one page of the tenant's matching jobs, with the facet
-// counts for its state, runner, project and agent.
+// counts for its state, runner, project and agent, each row carrying the
+// source of the task it is an attempt at.
+//
+// THE SOURCE IS RESOLVED AFTER THE CUT, which is the one place this verb is
+// more than its unpaged twin plus ApplyFacetedPage. The projection costs a
+// task read per distinct task, so it must be paid for the twenty-five rows
+// being answered and not for the two thousand the tenant owns; doing it
+// before the cut would make the page's cost the collection's. It runs after
+// the facet counts for the same reason it runs after the page: the counts are
+// taken over the matching set, which is the thing too big to project. See
+// resolveJobSources.
 func (s *agentServiceImpl) ListJobsPage(ctx context.Context, tenantID string, filter *JobFilter, page *Page) (*PageResult[*JobStatus], error) {
 	jobs, err := s.ListJobs(ctx, tenantID, filter.FacetBase())
 	if err != nil {
 		return nil, err
 	}
-	return ApplyFacetedPage(jobs, page, jobPageSpec, jobFacetSpec, filter.MatchesFacets)
+	result, err := ApplyFacetedPage(jobs, page, jobPageSpec, jobFacetSpec, filter.MatchesFacets)
+	if err != nil {
+		return nil, err
+	}
+	s.resolveJobSources(ctx, tenantID, result.Items)
+	return result, nil
 }
 
 // ListTasksPage returns one page of the tenant's matching tasks, with the

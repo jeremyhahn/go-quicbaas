@@ -1464,6 +1464,21 @@ type JobStatus struct {
 	// job last wrote its status would be stale for every attempt after it.
 	// All are absent for a job that is not an attempt at a task.
 
+	// Source is where the job's TASK came from — the forge issue it was
+	// adopted from, carrying the ref (`owner/repo#62`) and the URL the origin
+	// recorded. It is the task's own TaskSourceRef, unchanged, so a consumer
+	// names a job's issue with the code it already uses for a task's.
+	//
+	// IT IS ON THE LISTING AND NOT ONLY ON THE DETAIL READ, which is the
+	// whole point of it. The jobs view is server-paged: it holds twenty-five
+	// jobs and one page of tasks, so resolving each row's issue against the
+	// tasks it happens to hold only ever worked for the jobs whose task shared
+	// that page, and blanked for every other row (go-quicbaas#976). ListJobsPage
+	// fills it for the page it answers, memoised per task, so a page of
+	// twenty-five costs at most twenty-five task reads and the consumer needs
+	// no second request at all.
+	Source *TaskSourceRef `json:"source,omitempty"`
+
 	// Attempts is every attempt at the job's task, oldest first, with the
 	// one this status belongs to marked Current.
 	Attempts []JobAttemptRecord `json:"attempts,omitempty"`

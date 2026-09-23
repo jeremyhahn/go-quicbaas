@@ -17,6 +17,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 )
 
@@ -47,6 +48,73 @@ func TestEmbeddedListJobs_CarriesTheJobIDsFilter(t *testing.T) {
 	}
 	if got := agent.listJobsFilter.JobIDs; len(got) != 2 || got[0] != "job-1" || got[1] != "job-2" {
 		t.Errorf("JobIDs = %v, want [job-1 job-2]", got)
+	}
+}
+
+// TestEmbeddedListJobs_SummaryCarriesTheForgeIssue is the embedded half of
+// go-quicbaas#976. The in-process transport converts the domain status into a
+// JobSummary field by field, so a field it does not name is a field the
+// consumer never sees — and the jobs view that renders the chip holds no tasks
+// to resolve the issue from itself.
+func TestEmbeddedListJobs_SummaryCarriesTheForgeIssue(t *testing.T) {
+	agent := &fakeAgentService{listJobs: []*orchestration.JobStatus{
+		{
+			JobID:  "job-1",
+			TaskID: "task-a",
+			Source: &orchestration.TaskSourceRef{
+				Kind: "forge_issue",
+				Ref:  "jeremyhahn/go-quicbaas#62",
+				URL:  "http://forge.example/jeremyhahn/go-quicbaas/issues/62",
+			},
+		},
+		{JobID: "job-2"},
+	}}
+	svc := &orchMock{agent: agent}
+
+	out, err := handleOrchestratorListJobs(context.Background(), svc,
+		&orchestratorSDK.ListJobsRequest{TenantID: "t-1"})
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	resp, ok := out.(*orchestratorSDK.ListJobsResponse)
+	if !ok {
+		t.Fatalf("response = %T, want *orchestrator.ListJobsResponse", out)
+	}
+	if len(resp.Jobs) != 2 {
+		t.Fatalf("listed %d jobs, want 2", len(resp.Jobs))
+	}
+	source := resp.Jobs[0].Source
+	if source == nil {
+		t.Fatal("job-1 carries no source; the transport dropped the issue behind the job")
+	}
+	if source.Kind != "forge_issue" || source.Ref != "jeremyhahn/go-quicbaas#62" {
+		t.Errorf("source = %+v, want the task's forge issue", source)
+	}
+	if source.URL != "http://forge.example/jeremyhahn/go-quicbaas/issues/62" {
+		t.Errorf("source URL = %q, want the URL the origin recorded", source.URL)
+	}
+	if resp.Jobs[1].Source != nil {
+		t.Errorf("job-2 source = %+v, want none for a job whose task records one", resp.Jobs[1].Source)
+	}
+}
+
+// TestEmbeddedGetJobStatus_CarriesTheForgeIssue proves the detail read agrees
+// with the listing over the same transport: one shape for the issue behind a
+// job, whichever verb answered.
+func TestEmbeddedGetJobStatus_CarriesTheForgeIssue(t *testing.T) {
+	converted := convertJobStatus(&orchestration.JobStatus{
+		JobID:  "job-1",
+		TaskID: "task-a",
+		Source: &orchestration.TaskSourceRef{Kind: "forge_issue", Ref: "jeremyhahn/go-quicbaas#62"},
+	})
+	if converted.Source == nil || converted.Source.Ref != "jeremyhahn/go-quicbaas#62" {
+		t.Errorf("source = %+v, want the task's forge issue", converted.Source)
+	}
+
+	// A job that is an attempt at no task has nothing to name, and must not
+	// be given an empty source object to render.
+	if bare := convertJobStatus(&orchestration.JobStatus{JobID: "job-2"}); bare.Source != nil {
+		t.Errorf("source = %+v, want none for a job bound to no task", bare.Source)
 	}
 }
 
