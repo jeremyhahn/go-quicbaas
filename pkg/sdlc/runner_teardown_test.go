@@ -63,10 +63,21 @@ type daemonAgents struct {
 	// onSpawn runs once the daemon holds the session, so a test can act in
 	// the window between a live worker and a teardown.
 	onSpawn func()
+
+	// host is the fleet agent the sessions run on: it provisions each
+	// spawn's named workspace under its OWN projects root.
+	host executingHost
 }
 
-func newDaemonAgents(container *fakeContainer) *daemonAgents {
-	return &daemonAgents{live: map[string]string{}, container: container}
+// newDaemonAgents is a fleet agent whose projects root is its own — never the
+// control plane's — which is the arrangement go-quicbaas#981 exists for.
+func newDaemonAgents(t *testing.T, container *fakeContainer) *daemonAgents {
+	t.Helper()
+	return &daemonAgents{
+		live:      map[string]string{},
+		container: container,
+		host:      executingHost{agentHost: "fleet-agent:9091", root: testRoot(t)},
+	}
 }
 
 func (d *daemonAgents) SpawnSession(_ context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
@@ -75,16 +86,21 @@ func (d *daemonAgents) SpawnSession(_ context.Context, req *orchestration.SpawnS
 	d.seq++
 	sessionID := "remote-session-" + itoa(d.seq)
 	containerID := "quicbaas-acp-" + itoa(d.seq)
+	placement, err := d.host.provision(sessionID, req)
+	if err != nil {
+		return nil, err
+	}
 	d.live[sessionID] = containerID
-	if d.container != nil {
+	if d.container != nil && placement != nil {
 		d.container.mu.Lock()
-		d.container.hostRoot = req.WorkDir
+		d.container.hostRoot = placement.Dir
 		d.container.mu.Unlock()
 	}
 	resp := &orchestration.SpawnSessionResponse{
 		SessionID:   sessionID,
 		Backend:     req.Backend,
 		ContainerID: containerID,
+		Workspace:   placement,
 	}
 	if d.onSpawn != nil {
 		d.onSpawn()
@@ -118,6 +134,7 @@ func (d *daemonAgents) CloseSession(ctx context.Context, req *orchestration.Clos
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	d.host.release(req.SessionID)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.closes = append(d.closes, req.SessionID)
@@ -190,7 +207,7 @@ func TestRunner_ACheckoutFailureClosesTheWorkerSession(t *testing.T) {
 // the runner must ask.
 func TestRunner_ARefusalAfterTheSpawnClosesTheSessionOnTheDaemonThatOwnsIt(t *testing.T) {
 	rig := newRunnerRig(t)
-	daemon := newDaemonAgents(rig.container)
+	daemon := newDaemonAgents(t, rig.container)
 	rig.agentService = daemon
 	rig.container.cloneErr = errors.New("sh: ssh: not found")
 
@@ -213,7 +230,7 @@ func TestRunner_ARefusalAfterTheSpawnClosesTheSessionOnTheDaemonThatOwnsIt(t *te
 // this test fails on a teardown that simply passed the run's context along.
 func TestRunner_ACancelledAttemptStillClosesTheWorkerSession(t *testing.T) {
 	rig := newRunnerRig(t)
-	daemon := newDaemonAgents(rig.container)
+	daemon := newDaemonAgents(t, rig.container)
 	rig.agentService = daemon
 
 	ctx, cancel := context.WithCancel(context.Background())

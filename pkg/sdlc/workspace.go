@@ -15,6 +15,7 @@ package sdlc
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 
@@ -41,11 +42,19 @@ import (
 // denied (publickey)" and concluded. The capability had never once worked.
 //
 // So this is the seam, and it is the only one. A runner states WHAT it needs —
-// the project, the binding's forge, the branch, and whether its container also
-// signs commits — and gets back a materialized workspace with the spawn
-// request already carrying every mount and every path. There is no second way
-// to build one, which is what makes the divergence above unrepresentable
-// rather than merely fixed.
+// the project, the binding's forge, the branch, the workspace key, and whether
+// its container also signs commits — and gets back a workspace with the spawn
+// request already naming it and carrying its spec. There is no second way to
+// build one, which is what makes the divergence above unrepresentable rather
+// than merely fixed.
+//
+// THE SEAM NAMES THE WORKSPACE; IT NEVER PICKS A HOST PATH (go-quicbaas#981).
+// A path on this daemon's host means nothing to a fleet agent on another one,
+// which refused every mount it was handed. The spawn carries the workspace's
+// name and its spec files, and whichever host executes the session provisions
+// the directory under its own projects root and writes the spec beside it
+// (orchestration.SessionWorkspace). The job's later sessions are pinned to that
+// host by the job itself (JobRun.Spawn), so no runner has to remember to.
 //
 // WHAT IT REFUSES, BEFORE ANY CONTAINER STARTS, is a checkout it holds no
 // credential for (orchestration.RequireCheckoutCredentials). The transport
@@ -130,20 +139,22 @@ type workspacePlan struct {
 	// Branch is the branch plan the container checks out.
 	Branch orchestration.WorkspaceBranchPlan
 
-	// Mount is the HOST directory the container's checkout root is bound
-	// from. The spec directory is written beside it, because every bind-mount
-	// source is authorized against the operator's projects root.
-	Mount string
+	// Key names the workspace within the project — an attempt, a review of
+	// one head, a triage checkout. The executing host provisions it as
+	// <projects_root>/<tenant>/<project>/workspace/<key>, and a later session
+	// naming the same key continues the same clone.
+	Key string
 
 	// Scope says whether this container also signs commits.
 	Scope SigningScope
 }
 
-// containerWorkspace is one spawn's materialized workspace: the spec both
-// sides act on, the ssh agent the checkout authenticates with, and the
-// releases that undo both.
+// containerWorkspace is one spawn's workspace: the spec both sides act on,
+// the ssh agent the checkout authenticates with, and the releases that undo
+// the latter. The spec directory is the executing host's, and goes with the
+// session.
 type containerWorkspace struct {
-	// Spec is what was written — the same bytes the container reads at
+	// Spec is what is written — the same bytes the container reads at
 	// $QUICBAAS_WORKSPACE_SPEC — so the runner drives the checkout from the
 	// description the container has.
 	Spec orchestration.WorkspaceSpec
@@ -152,13 +163,9 @@ type containerWorkspace struct {
 	// none: an https-only checkout by a container that signs nothing.
 	Signing *SigningSession
 
-	// stopSigning tears the agent down. Separate from release because a
-	// READER stops its agent as soon as the checkout is made, long before its
-	// session ends.
+	// stopSigning tears the agent down. A READER stops its agent as soon as
+	// the checkout is made, long before its session ends.
 	stopSigning func(context.Context)
-
-	// release undoes everything else, in reverse order of acquisition.
-	release []func()
 }
 
 // StopSigning tears down the agent this workspace's checkout authenticated
@@ -193,27 +200,25 @@ func (w *containerWorkspace) signingSession() *SigningSession {
 	return w.Signing
 }
 
-// Release undoes the workspace: the agent when it is still up, then the spec
-// directory. It is idempotent.
+// Release undoes what this daemon holds for the workspace: the agent when it
+// is still up. The spec directory is the executing host's, released with the
+// session. It is idempotent.
 func (w *containerWorkspace) Release(ctx context.Context) {
 	if w == nil {
 		return
 	}
 	w.StopSigning(ctx)
-	for i := len(w.release) - 1; i >= 0; i-- {
-		w.release[i]()
-	}
-	w.release = nil
 }
 
-// Open materializes one spawn's workspace and puts it on the spawn request:
-// the read-only mounts, the environment variables naming their paths, and
+// Open decides one spawn's workspace and puts it on the spawn request: the
+// workspace's name, its spec files for the executing host to write, the
+// environment variables naming their paths, the signing socket's mount, and
 // nothing else.
 //
 // THE ORDER IS THE POINT. The spec is built, the credentials are resolved, and
-// then the credentials are CHECKED AGAINST THE SPEC — before the spec
-// directory is written and long before req is spawned. A runner that holds no
-// credential for the remote it named never reaches a container.
+// then the credentials are CHECKED AGAINST THE SPEC — long before req is
+// spawned. A runner that holds no credential for the remote it named never
+// reaches a container.
 func (a forgeAccess) Open(
 	ctx context.Context,
 	req *orchestration.SpawnSessionRequest,
@@ -225,8 +230,8 @@ func (a forgeAccess) Open(
 	if plan.Project == nil {
 		return nil, &InvalidInputError{Field: "project", Message: "a workspace belongs to a project"}
 	}
-	if strings.TrimSpace(plan.Mount) == "" {
-		return nil, &WorkspaceUnavailableError{ProjectID: plan.Project.ID}
+	if strings.TrimSpace(plan.Key) == "" {
+		return nil, &InvalidInputError{Field: "workspace.key", Message: "a spawn names the workspace it works in"}
 	}
 	spec, err := orchestration.NewWorkspaceSpec(plan.Project, plan.Branch)
 	if err != nil {
@@ -250,6 +255,12 @@ func (a forgeAccess) Open(
 	if workspace.Signing != nil {
 		creds.SSHAgentSocket = workspace.Signing.SocketPath
 	}
+	if workspace.Signing != nil && plan.Scope.SignsCommits() {
+		// The key's public half travels with the spec, so the checkout can
+		// make the WORKER'S own commits signed ones and the publisher can
+		// refuse any outgoing commit that is not (go-quicbaas#1048).
+		spec.SigningKey = workspace.Signing.PublicKey
+	}
 	if err := orchestration.RequireCheckoutCredentials(spec, creds); err != nil {
 		workspace.Release(context.WithoutCancel(ctx))
 		// WRAPPED AS ErrWorkspaceUnfit, because that is the one question a
@@ -260,19 +271,44 @@ func (a forgeAccess) Open(
 		// time.
 		return nil, &WorkspaceCredentialError{ProjectID: plan.Project.ID, Cause: err}
 	}
-	// The spec directory is written BESIDE the container's mount rather than
-	// in the OS temporary directory: every bind-mount source is authorized
-	// against the operator's projects root, and a directory nothing admits is
-	// a spawn the mount policy refuses.
-	materialized, err := orchestration.MaterializeWorkspaceSpecIn(filepath.Dir(plan.Mount), spec, token)
+	// The spec is DECIDED here and WRITTEN by the host that executes the
+	// session, beside the workspace it provisions there: this daemon holds the
+	// token and the binding, that host holds the directory its container
+	// mounts.
+	files, err := orchestration.NewWorkspaceSpecFiles(spec, token)
 	if err != nil {
 		workspace.Release(context.WithoutCancel(ctx))
 		return nil, err
 	}
-	workspace.release = append(workspace.release, materialized.Cleanup)
-	workspace.Spec = materialized.Spec
-	orchestration.ApplyWorkspaceSpec(req, materialized, creds.SSHAgentSocket)
+	req.Workspace = &orchestration.SessionWorkspace{
+		TenantID:  plan.TenantID,
+		ProjectID: plan.Project.ID,
+		Key:       plan.Key,
+	}
+	workspace.Spec = files.Spec
+	orchestration.ApplyWorkspaceSpec(req, files, creds.SSHAgentSocket)
 	return workspace, nil
+}
+
+// workspaceSpawnFault classifies a spawn the named workspace refused as the
+// workspace fault it is, and leaves every other spawn failure alone.
+//
+// A REFUSED WORKSPACE IS AN OPERATOR'S CONDITION, NOT THE WORK'S. The job's
+// checkout lives on one host and the job is pinned there; when that host is
+// gone, or holds the checkout no longer, no retry on another host could
+// continue it and nothing the worker does would change that. So it arrives as
+// ErrWorkspaceUnfit — parked for a person with no attempt charged — naming the
+// host and the workspace, rather than as an attempt spent on a spawn that was
+// never going to start.
+//
+// A SIGNING SPAWN WITH NOWHERE TO MOUNT THE SIGNING SOCKET IS THE SAME FAULT.
+// Only an agent co-located with the daemon can mount it (go-quicbaas#1013), and
+// when none serves the backend the condition is an operator's to repair.
+func workspaceSpawnFault(projectID string, err error) error {
+	if errors.Is(err, orchestration.ErrSessionWorkspace) || errors.Is(err, orchestration.ErrSigningAgentUnavailable) {
+		return &WorkspaceUnavailableError{ProjectID: projectID, Cause: err}
+	}
+	return err
 }
 
 // startSigning binds the container's ssh agent when it needs one, and leaves

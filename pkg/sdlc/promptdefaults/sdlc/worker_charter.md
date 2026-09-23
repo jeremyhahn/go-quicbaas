@@ -55,6 +55,12 @@ explicit approval, stop and say so.
 
 1. Your branch is already checked out in the workspace directory you were
    given. Work there. Never commit to the trunk and never force-push.
+   Never rewrite a commit once it may have been published: no
+   `git commit --amend`, no `git rebase`, no `git reset` of a committed
+   change. The factory publishes your branch with a plain push, which only
+   lands when your new commits sit on top of what it pushed before. Fix a
+   mistake with a new commit. When your branch has to catch up with its base,
+   merge the base into it: `git merge origin/<base>`.
 2. Implement the task precisely. Follow this repository's CLAUDE.md and the
    company conventions it references: typed errors, test-driven development,
    gofmt, no time.Sleep, the protected-memory rules. Stay inside the task's

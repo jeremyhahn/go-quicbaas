@@ -99,7 +99,25 @@ func (b *OllamaBackend) Prompt(ctx context.Context, req *PromptRequest) (*Prompt
 		},
 		Model:      resp.Model,
 		StopReason: StopReasonEndTurn,
+		Usage:      countedUsage(int64(resp.PromptEvalCount), int64(resp.EvalCount)),
 	}, nil
+}
+
+// countedUsage is the usage of a model server that reports a prompt count and
+// a generation count and nothing about caching.
+//
+// BOTH ZERO IS "REPORTED NOTHING", not "cost nothing". A turn that produced
+// an answer generated tokens, so a response carrying no counts at all is one
+// whose server left them out — Ollama omits them on some paths, and an
+// OpenAI-compatible provider may omit usage entirely. Recording that as a
+// measured zero would make the model look free.
+func countedUsage(prompt, generated int64) *TokenUsage {
+	if prompt == 0 && generated == 0 {
+		return nil
+	}
+	usage := &TokenUsage{InputTokens: prompt, OutputTokens: generated}
+	usage.normalize()
+	return usage
 }
 
 // Status returns an UnsupportedOperationError because Ollama does not support

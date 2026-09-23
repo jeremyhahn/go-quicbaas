@@ -211,6 +211,7 @@ func resetBarrierFlags() {
 	barrierOutputFmt = "table"
 	barrierAssumeYes = false
 	barrierStrategy = ""
+	barrierTenantID = ""
 	barrierSOPin = ""
 	barrierUserPin = ""
 	barrierRecoveryShares = nil
@@ -1097,7 +1098,7 @@ func TestRunBarrierEnableEncryption_SendsTheMigration(t *testing.T) {
 	resetBarrierFlags()
 	fb := &fakeBarrierClient{
 		enableEncryptionFunc: func(_ context.Context, _ *qrdbtransport.BarrierEnableEncryptionRequest) (*qrdbtransport.BarrierEnableEncryptionResponse, error) {
-			return &qrdbtransport.BarrierEnableEncryptionResponse{Status: "started", Scope: "tenant:acme"}, nil
+			return &qrdbtransport.BarrierEnableEncryptionResponse{Status: "migration_started", Scope: "tenant"}, nil
 		},
 	}
 	restore := withFakeBarrier(fb)
@@ -1120,6 +1121,62 @@ func TestRunBarrierEnableEncryption_SendsTheMigration(t *testing.T) {
 	assert.Equal(t, 2, req.ShamirThreshold)
 	assert.Equal(t, 3, req.ShamirTotal)
 	assert.Contains(t, out.String(), "started")
+}
+
+// TestRunBarrierEnableEncryption_RefusesAWrongScope pins the client half of
+// go-quicbaas#990: a server that drops the body tenant_id migrates the SYSTEM
+// barrier and says so in `scope`. The verb must not report that as the tenant
+// migration the operator asked for.
+func TestRunBarrierEnableEncryption_RefusesAWrongScope(t *testing.T) {
+	resetBarrierFlags()
+	fb := &fakeBarrierClient{
+		enableEncryptionFunc: func(_ context.Context, _ *qrdbtransport.BarrierEnableEncryptionRequest) (*qrdbtransport.BarrierEnableEncryptionResponse, error) {
+			return &qrdbtransport.BarrierEnableEncryptionResponse{Status: "migration_started", Scope: "system"}, nil
+		},
+	}
+	restore := withFakeBarrier(fb)
+	defer restore()
+
+	barrierTenantID = "acme"
+	barrierStrategy = "shamir"
+	barrierThreshold = 2
+	barrierTotalShares = 3
+
+	cmd := &cobra.Command{Use: "enable-encryption"}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	err := runBarrierEnableEncryptionCommand(cmd, nil)
+
+	var mismatch *BarrierScopeMismatchError
+	require.ErrorAs(t, err, &mismatch)
+	assert.Equal(t, "acme", mismatch.TenantID)
+	assert.Equal(t, "system", mismatch.Scope)
+	assert.NotContains(t, out.String(), "migration_started",
+		"a migration of the wrong barrier must not be rendered as success")
+}
+
+// TestRunBarrierEnableEncryption_SystemScopeNeedsNoTenant asserts the scope
+// check only applies when --tenant was given.
+func TestRunBarrierEnableEncryption_SystemScopeNeedsNoTenant(t *testing.T) {
+	resetBarrierFlags()
+	fb := &fakeBarrierClient{
+		enableEncryptionFunc: func(_ context.Context, _ *qrdbtransport.BarrierEnableEncryptionRequest) (*qrdbtransport.BarrierEnableEncryptionResponse, error) {
+			return &qrdbtransport.BarrierEnableEncryptionResponse{Status: "migration_started", Scope: "system"}, nil
+		},
+	}
+	restore := withFakeBarrier(fb)
+	defer restore()
+
+	barrierStrategy = "shamir"
+	barrierThreshold = 2
+	barrierTotalShares = 3
+
+	cmd := &cobra.Command{Use: "enable-encryption"}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	require.NoError(t, runBarrierEnableEncryptionCommand(cmd, nil))
+	assert.Empty(t, fb.lastEnableEncReq.TenantID)
+	assert.Contains(t, out.String(), "system")
 }
 
 // TestRunBarrierEnableEncryption_ValidatesLocally verifies combinations the
@@ -1197,4 +1254,26 @@ func cloneBarrierEnableEncReq(req *qrdbtransport.BarrierEnableEncryptionRequest)
 	out := *req
 	out.Passphrase = bytes.Clone(req.Passphrase)
 	return &out
+}
+
+// The enable-encryption help must send each operator to the status command
+// that can observe THEIR migration: `barrier status` reads the system barrier
+// only, so a tenant migration is watched with `iam tenant barrier status`.
+// Both commands must exist where the help says they are.
+func TestBarrierEnableEncryptionHelp_NamesTheStatusCommandPerScope(t *testing.T) {
+	help := newBarrierEnableEncryptionCommand().Long
+
+	for _, path := range [][]string{
+		{"barrier", "status"},
+		{"iam", "tenant", "barrier", "status"},
+	} {
+		invocation := "quicbaas " + strings.Join(path, " ")
+		assert.Contains(t, help, invocation, "the help does not name %q", invocation)
+
+		cmd, _, err := rootCmd.Find(path)
+		require.NoError(t, err, "%q does not resolve", invocation)
+		assert.Equal(t, path[len(path)-1], cmd.Name(), "%q resolved to %q", invocation, cmd.CommandPath())
+	}
+	assert.Contains(t, help, "quicbaas iam tenant barrier status --tenant",
+		"a tenant migration's status command must name the tenant")
 }

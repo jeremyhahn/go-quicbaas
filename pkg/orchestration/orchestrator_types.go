@@ -822,6 +822,13 @@ type SpawnSessionRequest struct {
 	// before any side effects; a source outside every permitted root fails
 	// the spawn with MountNotAllowedError. Ignored for non-sandboxed spawns.
 	ExtraMounts []ContainerMount `json:"extra_mounts,omitempty"`
+
+	// Workspace NAMES the directory the session works in, instead of WorkDir
+	// giving a host path. The host that executes the session — this daemon's
+	// in-process backend or a fleet agent — provisions it under its own
+	// projects root and reports where on the response. Mutually exclusive
+	// with WorkDir. See session_workspace.go.
+	Workspace *SessionWorkspace `json:"workspace,omitempty"`
 }
 
 // EffectiveSandboxMode returns the sandbox mode to be resolved against the
@@ -852,6 +859,12 @@ type SpawnSessionResponse struct {
 	// registered agent. A job records it so its page can name — and link —
 	// the daemon that did the work (go-quicbaas#796).
 	AgentID string `json:"agent_id,omitempty"`
+
+	// Workspace is where the named workspace the spawn asked for was
+	// provisioned: the host that holds it and the directory on that host. Nil
+	// when the spawn named no workspace. A job pins its later sessions to it;
+	// see SessionWorkspace.
+	Workspace *WorkspacePlacement `json:"workspace,omitempty"`
 
 	Timestamp int64 `json:"timestamp"`
 }
@@ -1457,12 +1470,35 @@ type JobStatus struct {
 	// ran on this daemon's own in-process backend, where Node names it.
 	AgentID string `json:"agent_id,omitempty"`
 
+	// WorkspacePin is where the job's named workspace was provisioned: the
+	// host holding its checkout and the directory on it. Every later session
+	// of the job is pinned there. It is on the persisted record so a resumed
+	// job respawns where its checkout is rather than cloning afresh on
+	// whatever host the dispatcher would pick. Nil for a job that named no
+	// workspace.
+	WorkspacePin *WorkspacePlacement `json:"workspace_pin,omitempty"`
+
 	// --- Derived from the task when the status is read -------------------
 	//
 	// These are the TASK's facts, not the run's: they are filled in on read
 	// (GetJobStatus) rather than persisted, because a copy taken when the
 	// job last wrote its status would be stale for every attempt after it.
 	// All are absent for a job that is not an attempt at a task.
+
+	// Source is where the job's TASK came from — the forge issue it was
+	// adopted from, carrying the ref (`owner/repo#62`) and the URL the origin
+	// recorded. It is the task's own TaskSourceRef, unchanged, so a consumer
+	// names a job's issue with the code it already uses for a task's.
+	//
+	// IT IS ON THE LISTING AND NOT ONLY ON THE DETAIL READ, which is the
+	// whole point of it. The jobs view is server-paged: it holds twenty-five
+	// jobs and one page of tasks, so resolving each row's issue against the
+	// tasks it happens to hold only ever worked for the jobs whose task shared
+	// that page, and blanked for every other row (go-quicbaas#976). ListJobsPage
+	// fills it for the page it answers, memoised per task, so a page of
+	// twenty-five costs at most twenty-five task reads and the consumer needs
+	// no second request at all.
+	Source *TaskSourceRef `json:"source,omitempty"`
 
 	// Attempts is every attempt at the job's task, oldest first, with the
 	// one this status belongs to marked Current.

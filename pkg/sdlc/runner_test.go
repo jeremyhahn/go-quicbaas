@@ -146,6 +146,10 @@ type fakeAgents struct {
 	// go-quicbaas#740, where it was dropped in transit and every remote worker
 	// was refused as running no container.
 	containerID string
+
+	// host is where the sessions run: it provisions each spawn's named
+	// workspace and reports where (go-quicbaas#981).
+	host executingHost
 }
 
 func (f *fakeAgents) SpawnSession(_ context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
@@ -154,13 +158,22 @@ func (f *fakeAgents) SpawnSession(_ context.Context, req *orchestration.SpawnSes
 	if f.spawnErr != nil {
 		return nil, f.spawnErr
 	}
+	sessionID := "session-" + itoa(f.seq+1)
+	placement, err := f.host.provision(sessionID, req)
+	if err != nil {
+		return nil, err
+	}
 	f.seq++
 	f.spawns = append(f.spawns, req)
+	hostRoot := req.WorkDir
+	if placement != nil {
+		hostRoot = placement.Dir
+	}
 	// The spawn is where the container learns which host directory its
 	// checkout root is bind-mounted from, exactly as a real one does.
 	if f.container != nil {
 		f.container.mu.Lock()
-		f.container.hostRoot = req.WorkDir
+		f.container.hostRoot = hostRoot
 		// AND WHICH CREDENTIALS IT HOLDS. SSH_AUTH_SOCK is how a client key
 		// reaches a container, so copying it here is what lets the container
 		// refuse a clone it could not have authenticated — the whole of
@@ -168,7 +181,7 @@ func (f *fakeAgents) SpawnSession(_ context.Context, req *orchestration.SpawnSes
 		f.container.sshAgentSocket = req.Env[orchestration.WorkspaceSigningAgentEnv]
 		f.container.mu.Unlock()
 	}
-	resp := &orchestration.SpawnSessionResponse{SessionID: "session-" + itoa(f.seq), Backend: req.Backend}
+	resp := &orchestration.SpawnSessionResponse{SessionID: sessionID, Backend: req.Backend, Workspace: placement}
 	if !f.noContainer {
 		resp.ContainerID = "container-" + itoa(f.seq)
 		if f.containerID != "" {
@@ -301,6 +314,7 @@ func (f *fakeAgents) CloseSession(ctx context.Context, req *orchestration.CloseS
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	f.host.release(req.SessionID)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.closed = append(f.closed, req.SessionID)
@@ -463,7 +477,7 @@ func newRunnerRig(t *testing.T) *runnerRig {
 
 	container := &fakeContainer{checkout: filepath.Join(orchestration.WorkspaceCheckoutRoot, testOrchProject().Name)}
 	clock := newTestClock()
-	agents := &fakeAgents{container: container, clock: clock}
+	agents := &fakeAgents{container: container, clock: clock, host: executingHost{root: root}}
 	tokens := &fakeTokens{token: []byte("a-forge-api-token")}
 	signing := &fakeSigningAgent{}
 	runner, err := NewRunner(RunnerConfig{
@@ -1066,8 +1080,18 @@ func TestRunner_DeliversTheIssueThroughExactlyOneSession(t *testing.T) {
 	if spawn.Backend != "claude" || spawn.Model != "claude-opus-5" {
 		t.Errorf("worker spawned as %q/%q, want the binding's", spawn.Backend, spawn.Model)
 	}
-	if !strings.HasPrefix(spawn.WorkDir, rig.root) {
-		t.Errorf("work dir %q is not under the project's workspace", spawn.WorkDir)
+	// THE SPAWN NAMES THE WORKSPACE AND GIVES NO HOST PATH (go-quicbaas#981):
+	// the host that runs the session provisions it under its own root.
+	if spawn.WorkDir != "" {
+		t.Errorf("the spawn named a host path %q; the executing host picks it", spawn.WorkDir)
+	}
+	if ws := spawn.Workspace; ws == nil || ws.TenantID != testTenant || ws.ProjectID != testProject ||
+		ws.Key != testTask+"-a1" {
+		t.Fatalf("workspace = %+v, want the attempt's", spawn.Workspace)
+	}
+	provisioned := rig.agents.host.workspaces()
+	if len(provisioned) != 1 || !strings.HasPrefix(provisioned[0].Dir, rig.root) {
+		t.Fatalf("provisioned = %+v, want one workspace under the host's root", provisioned)
 	}
 
 	// The container is told what to clone and given the credentials to clone
@@ -1076,17 +1100,9 @@ func TestRunner_DeliversTheIssueThroughExactlyOneSession(t *testing.T) {
 	if specPath != filepath.Join(orchestration.WorkspaceSpecDir, orchestration.WorkspaceSpecFile) {
 		t.Fatalf("spec env = %q", specPath)
 	}
-	var specDir string
-	for _, mount := range spawn.ExtraMounts {
-		if mount.Target == orchestration.WorkspaceSpecDir {
-			specDir = mount.Source
-			if !mount.ReadOnly {
-				t.Error("the workspace spec is mounted writable")
-			}
-		}
-	}
+	specDir := provisioned[0].SpecDir
 	if specDir == "" {
-		t.Fatalf("no workspace spec was mounted: %+v", spawn.ExtraMounts)
+		t.Fatal("the executing host wrote no workspace spec")
 	}
 	for _, value := range spawn.Env {
 		if strings.Contains(value, "a-forge-api-token") {
@@ -1111,7 +1127,7 @@ func TestRunner_DeliversTheIssueThroughExactlyOneSession(t *testing.T) {
 		t.Errorf("the worker session was not closed: %v", rig.agents.closed)
 	}
 	if _, err := os.Stat(specDir); !os.IsNotExist(err) {
-		t.Errorf("the materialized workspace spec outlived the job: %v", err)
+		t.Errorf("the workspace spec outlived the session: %v", err)
 	}
 	if status := job.Status(); status == nil || status.State != orchestration.JobStateCompleted {
 		t.Fatalf("final status = %+v", status)
@@ -1133,19 +1149,15 @@ func TestRunner_WorkspaceSpecNamesTheProjectAndItsContextRepos(t *testing.T) {
 	if err := rig.runner.Run(context.Background(), job); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	// The spec directory is removed with the job, so it is read from the copy
-	// the mount named while the container still had it: the runner writes it
-	// before the spawn, and the spawn is what the fake recorded.
+	// The spec is read from the files the spawn carried to the executing
+	// host: the same bytes that host writes and the container reads.
 	spawn := rig.agents.spawns[0]
-	for _, mount := range spawn.ExtraMounts {
-		if mount.Target != orchestration.WorkspaceSpecDir {
-			continue
-		}
-		if raw, err := os.ReadFile(filepath.Join(mount.Source, orchestration.WorkspaceSpecFile)); err == nil {
-			if err := json.Unmarshal(raw, &captured); err != nil {
-				t.Fatal(err)
-			}
-		}
+	carried := rig.agents.host.spec(0)
+	if spawn.Workspace == nil || carried == nil {
+		t.Fatal("the spawn carried no workspace spec")
+	}
+	if err := json.Unmarshal(carried[orchestration.WorkspaceSpecFile], &captured); err != nil {
+		t.Fatal(err)
 	}
 	if captured.Project.Name != "" && captured.Project.Name != "api" {
 		t.Fatalf("spec project = %+v", captured.Project)
@@ -1244,6 +1256,19 @@ func TestRunner_AFullContextRollsTheSessionNotTheAttempt(t *testing.T) {
 	}
 	if second := rig.agents.prompts[1]; second.SessionID == first || !strings.Contains(second.Prompt, "ran out of context") {
 		t.Errorf("the fresh session was not told why it is fresh: session=%s prompt=%q", second.SessionID, second.Prompt)
+	}
+	// THE FRESH SESSION CONTINUES THE SAME CHECKOUT, ON THE SAME HOST: it names
+	// the same workspace and carries the pin the first session's placement set.
+	provisioned := rig.agents.host.workspaces()
+	respawn := rig.agents.spawns[1].Workspace
+	if respawn == nil || respawn.Key != rig.agents.spawns[0].Workspace.Key {
+		t.Fatalf("the fresh session named workspace %+v, want the attempt's own", respawn)
+	}
+	if respawn.Pin == nil || respawn.Pin.Dir != provisioned[0].Dir {
+		t.Errorf("the fresh session was not pinned to the checkout: pin=%+v", respawn.Pin)
+	}
+	if len(provisioned) != 2 || provisioned[1].Dir != provisioned[0].Dir {
+		t.Errorf("the fresh session did not continue the first one's directory: %+v", provisioned)
 	}
 	rolled := rig.auditDetails(auditSessionRolled)
 	if len(rolled) != 1 || !strings.Contains(rolled[0], "class=blocking_limit") || !strings.Contains(rolled[0], "round=0") {
@@ -1686,7 +1711,7 @@ func TestRunner_AProjectWithNoWorkspaceIsParkedForAnOperatorAndNotCharged(t *tes
 	rig := newRunnerRig(t)
 	rig.rebindVerification(t, "true")
 	job := rig.job(t)
-	job.Project.Workspace.Path = ""
+	rig.agents.host.root = ""
 	err := rig.runner.Run(context.Background(), job)
 	if !errors.Is(err, ErrWorkspaceUnfit) && !errors.Is(err, ErrRunner) {
 		t.Fatalf("err = %v, want the run to end on the workspace fault", err)
@@ -1710,6 +1735,67 @@ func TestRunner_AProjectWithNoWorkspaceIsParkedForAnOperatorAndNotCharged(t *tes
 	condition, err := ParseUnblockCondition(parked.Message)
 	if err != nil || condition.Kind != UnblockOperatorRepair {
 		t.Fatalf("condition = %+v, err = %v, want operator_repair", condition, err)
+	}
+}
+
+// TestRunner_AWorkspaceHostThatCannotTakeTheSpawnIsParkedNotRehomed: the
+// host holding the attempt's checkout is gone, or holds it no longer — refused
+// on this daemon, or by the agent itself and carried back over the wire. The
+// run spends nothing, is not charged, and is parked for a person with the
+// refusal named, because a spawn anywhere else would be a fresh clone every
+// record of the job says did not happen (go-quicbaas#981).
+func TestRunner_AWorkspaceHostThatCannotTakeTheSpawnIsParkedNotRehomed(t *testing.T) {
+	cases := map[string]struct {
+		refusal error
+		names   string
+	}{
+		"the pinned agent is gone": {
+			refusal: &orchestration.WorkspaceAgentUnavailableError{
+				AgentHost: "omega:9091", Key: testTask + "-a1", Backend: "claude",
+			},
+			names: "omega:9091",
+		},
+		"the agent no longer holds the checkout": {
+			refusal: &orchestration.RemoteSpawnFaultError{
+				Op:       "Spawn",
+				Sentinel: orchestration.ErrSessionWorkspace,
+				Err:      errors.New("rpc error: code = FailedPrecondition desc = the checkout no longer exists"),
+			},
+			names: "the checkout no longer exists",
+		},
+		"no host can mount the signing socket": {
+			refusal: &orchestration.SigningAgentUnavailableError{Backend: "claude"},
+			names:   "signing socket",
+		},
+		"the host's disk refused the workspace": {
+			refusal: &orchestration.SessionWorkspaceProvisionError{
+				Key: testTask + "-a1", Cause: errors.New("no space left on device"),
+			},
+			names: "no space left on device",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			rig := newRunnerRig(t)
+			rig.rebindVerification(t, "true")
+			rig.agents.spawnErr = tc.refusal
+			job := rig.job(t)
+			err := rig.runner.Run(context.Background(), job)
+			if !errors.Is(err, ErrWorkspaceUnfit) && !errors.Is(err, ErrRunner) {
+				t.Fatalf("err = %v, want the run to end on the workspace fault", err)
+			}
+			if rig.agents.sessionCount() != 0 || len(rig.agents.host.workspaces()) != 0 {
+				t.Fatal("a refused spawn produced a session or a checkout somewhere")
+			}
+			parked := job.Parked()
+			if parked == nil || parked.FaultClass != orchestration.FaultWorkspaceUnfit ||
+				parked.Kind != orchestration.TaskBlockKindBlocked {
+				t.Fatalf("park = %+v, want a blocked workspace fault", parked)
+			}
+			if !strings.Contains(parked.Message, tc.names) {
+				t.Errorf("the park does not name the refusal %q: %q", tc.names, parked.Message)
+			}
+		})
 	}
 }
 
@@ -2278,6 +2364,30 @@ func TestRunner_ATeardownPushFailureDoesNotHideTheOutcome(t *testing.T) {
 	var escalated *EscalatedError
 	if !errors.As(err, &escalated) {
 		t.Fatalf("err = %v, want the escalation the job actually ended on", err)
+	}
+}
+
+// TestRunner_AnUnsignedCommitRefusedAtPublishIsNotPushedAtTeardown is the P1
+// review finding on go-quicbaas#1049: the teardown publish of a failed attempt
+// goes straight to Push, and must not carry the commit the end-of-turn publish
+// just refused.
+func TestRunner_AnUnsignedCommitRefusedAtPublishIsNotPushedAtTeardown(t *testing.T) {
+	rig := newRunnerRig(t)
+	if err := rig.rebind(context.Background(), func(b *ProjectBinding) {
+		b.Verification = []string{"true"}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rig.workerWrote()
+	rig.container.ahead = true
+	rig.container.outgoing = []outgoingCommit{{SHA: "unsigned-1", Status: "N"}}
+
+	err := rig.runner.Run(context.Background(), rig.job(t, "true"))
+	if !errors.Is(err, ErrUnsignedCommit) {
+		t.Fatalf("err = %v, want the unsigned-commit refusal", err)
+	}
+	if len(rig.container.pushes) != 0 {
+		t.Fatalf("pushes = %+v, want none: teardown published the refused commit", rig.container.pushes)
 	}
 }
 

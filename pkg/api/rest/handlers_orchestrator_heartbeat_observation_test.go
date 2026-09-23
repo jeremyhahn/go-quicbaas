@@ -203,3 +203,32 @@ func TestHandleOrchestratorAgentHeartbeat_ServingNothingIsABadRequest(t *testing
 		`{"bind_addr":"10.0.0.5:9091","backends":[]}`)
 	assert.Equal(t, http.StatusBadRequest, w.Code, "body=%s", w.Body.String())
 }
+
+// TestHeartbeatBody_ObservationCarriesTheSigningAgents: the signing sockets a
+// daemon can mount reach the registry, and an absent key (an older daemon)
+// stays distinguishable from an empty list (a daemon that reaches none), for
+// the reason the served list's pointer exists (go-quicbaas#981).
+func TestHeartbeatBody_ObservationCarriesTheSigningAgents(t *testing.T) {
+	t.Parallel()
+	const id = "0123456789abcdef0123456789abcdef"
+	tests := map[string]struct {
+		body string
+		want []string
+	}{
+		"absent":  {body: `{"backends":["claude"]}`, want: nil},
+		"empty":   {body: `{"backends":["claude"],"signing_agents":[]}`, want: []string{}},
+		"one":     {body: `{"backends":["claude"],"signing_agents":["` + id + `"]}`, want: []string{id}},
+		"null is": {body: `{"backends":["claude"],"signing_agents":null}`, want: nil},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var payload heartbeatBody
+			require.NoError(t, json.Unmarshal([]byte(tt.body), &payload))
+			observed := payload.observation()
+			require.NotNil(t, observed)
+			assert.Equal(t, tt.want, observed.SigningAgents)
+			assert.NoError(t, observed.Validate())
+		})
+	}
+}

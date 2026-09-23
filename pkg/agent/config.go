@@ -97,6 +97,16 @@ type Config struct {
 	// state, and cached credentials. Created if missing.
 	WorkDir string `json:"work_dir" yaml:"work_dir"`
 
+	// ProjectsRoot is where this daemon provisions the named workspaces the
+	// control plane's spawns ask for:
+	// <projects_root>/<tenant_id>/<project_id>/workspace/<key>. Empty takes
+	// <work_dir>/projects. See EffectiveProjectsRoot.
+	//
+	// The checkouts of every job this daemon runs live here, and a job's
+	// later sessions are pinned back to it, so it must persist across
+	// restarts — a root on tmpfs turns every restart into a stale workspace.
+	ProjectsRoot string `json:"projects_root,omitempty" yaml:"projects_root,omitempty"`
+
 	// AgentCertFile is the path to the daemon's PEM-encoded mTLS client
 	// certificate issued by the QuicBaaS server's CA. Required.
 	AgentCertFile string `json:"agent_cert_file" yaml:"agent_cert_file"`
@@ -239,11 +249,11 @@ type Config struct {
 	// orchestration.sandbox.allowed_mount_roots.
 	//
 	// Deny-by-default: the zero value is an empty allowlist, under which a
-	// sandboxed spawn naming ANY work directory is refused. A daemon has no
-	// managed projects root of its own, so unlike the control plane it has no
-	// tenant-scoped grant to fall back on — the operator must name every root
-	// the fleet is allowed to mount from. There is deliberately no setting
-	// that turns the check off.
+	// sandboxed spawn may mount nothing but the workspaces this daemon
+	// provisioned itself under its projects root (tenant-scoped, exactly as
+	// the control plane grants its own). Any other directory — a sockets
+	// root, a shared data directory — must be named here. There is
+	// deliberately no setting that turns the check off.
 	AllowedMountRoots []string `json:"allowed_mount_roots,omitempty" yaml:"allowed_mount_roots,omitempty"`
 
 	// MCPEndpoint is the fully-qualified https://host:port/mcp address of the
@@ -335,14 +345,51 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
+	// The projects root is a mount grant and a path the control plane pins
+	// jobs to, so a relative one — which would move with the process's
+	// working directory — is refused for the allowlist's own reason.
+	if root := c.EffectiveProjectsRoot(); !filepath.IsAbs(root) {
+		return &SentinelDetailError{
+			Sentinel: ErrConfigProjectsRootNotAbsolute,
+			Detail:   fmt.Sprintf("projects_root: %q", root),
+		}
+	}
 	return nil
 }
 
+// SigningAgents is the identifier of every control-plane sockets root this
+// daemon can mount a signing socket from: the markers found under the roots
+// its mount policy admits (orchestration.DiscoverSigningRootIDs). It is never
+// nil. A daemon on another host than the control plane finds none, which is
+// the point — it cannot mount that socket, and the control plane must not
+// place a signing spawn on it (go-quicbaas#981).
+func (c *Config) SigningAgents() []string {
+	return orchestration.DiscoverSigningRootIDs(c.AllowedMountRoots)
+}
+
+// EffectiveProjectsRoot is the root this daemon provisions named workspaces
+// under: ProjectsRoot when set, <WorkDir>/projects otherwise.
+func (c *Config) EffectiveProjectsRoot() string {
+	if root := strings.TrimSpace(c.ProjectsRoot); root != "" {
+		return filepath.Clean(root)
+	}
+	return filepath.Join(c.WorkDir, defaultProjectsDirName)
+}
+
+// defaultProjectsDirName is the projects root's directory under the work
+// directory when none is configured.
+const defaultProjectsDirName = "projects"
+
 // MountPolicy returns the bind-mount policy this daemon enforces on every
-// sandboxed spawn. A daemon owns no managed projects root, so the policy is
-// exactly the operator's allowlist; an empty allowlist denies every mount.
+// sandboxed spawn: the workspaces it provisioned under its projects root,
+// tenant-scoped, plus the operator's allowlist. It is the control plane's
+// policy shape exactly, so a workspace is admitted here by the same grant that
+// admits it on the daemon.
 func (c *Config) MountPolicy() *orchestration.MountPolicy {
-	return &orchestration.MountPolicy{AllowedRoots: c.AllowedMountRoots}
+	return &orchestration.MountPolicy{
+		ProjectsRoot: c.EffectiveProjectsRoot(),
+		AllowedRoots: c.AllowedMountRoots,
+	}
 }
 
 // EffectiveSandboxNetwork returns the configured container network for
@@ -468,6 +515,10 @@ var (
 	// source, so accepting it would leave the operator believing they had
 	// granted a root they had not.
 	ErrConfigMountRootNotAbsolute = errors.New("agent: allowed mount root must be an absolute path")
+
+	// ErrConfigProjectsRootNotAbsolute reports a projects root — configured,
+	// or derived from a relative work directory — that is not absolute.
+	ErrConfigProjectsRootNotAbsolute = errors.New("agent: projects root must be an absolute path")
 
 	// ErrConfigNegativeCapacity reports a negative max_concurrent_jobs. Zero is
 	// the legitimate "this host reports no count" value; a negative number is

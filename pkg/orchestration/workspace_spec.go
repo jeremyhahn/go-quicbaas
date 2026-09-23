@@ -14,10 +14,13 @@
 package orchestration
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // =============================================================================
@@ -50,6 +53,14 @@ const WorkspaceSpecFile = "workspace.json"
 // WorkspaceForgeTokenFile is the forge token's file name inside
 // WorkspaceSpecDir. Present only when the caller supplied a token.
 const WorkspaceForgeTokenFile = "forge-token"
+
+// WorkspaceAllowedSignersFile is the allowed_signers file's name inside
+// WorkspaceSpecDir. Present only when the attempt signs its commits, and
+// holding exactly one entry: the public half of the key the signing agent
+// serves. git reads it (gpg.ssh.allowedSignersFile) to decide whether a commit
+// was signed by that key, which is how a commit the WORKER made is checked
+// before anything publishes it.
+const WorkspaceAllowedSignersFile = "allowed_signers"
 
 // WorkspaceSpecEnv names the environment variable carrying the spec file's
 // PATH — the path, never the contents.
@@ -85,9 +96,9 @@ const WorkspaceSigningAgentEnv = "SSH_AUTH_SOCK"
 // project at <root>/<project name>, each context repository at <root>/<name>.
 const WorkspaceCheckoutRoot = "/workspace"
 
-// workspaceSpecDirPrefix names the temporary directory created to hold one
-// spawn's workspace spec and forge token.
-const workspaceSpecDirPrefix = "quicbaas-workspace-*"
+// workspaceSpecDirName is the name every spec directory begins with: one
+// spawn's workspace spec and forge token, beside the session's workspace.
+const workspaceSpecDirName = "quicbaas-workspace-"
 
 // workspaceSpecDirMode is the mode of the directory the daemon writes; the
 // container sees it read-only through the mount.
@@ -172,25 +183,17 @@ type WorkspaceSpec struct {
 	// SSHHostKey, relative to the spec file's own directory. Empty when the
 	// checkout needs no ssh.
 	KnownHostsFile string `json:"known_hosts_file,omitempty"`
-}
 
-// MaterializedWorkspace is one spawn's written workspace spec: the directory
-// the caller mounts read-only into the container, the spec exactly as the
-// container will read it, and the cleanup that removes both.
-//
-// THE SPEC COMES BACK because materializing DECIDES things — which sibling
-// files were written, and therefore which paths the spawn must name in the
-// container's environment. A caller that kept its own copy would be applying
-// a spec no container ever sees.
-type MaterializedWorkspace struct {
-	// Dir is the directory holding the spec and its sibling files.
-	Dir string
+	// SigningKey is the public half of the key the attempt's signing agent
+	// serves, one OpenSSH public-key line. It is PUBLIC data. The checkout
+	// configures the worker's git to sign with it, and it is the one key the
+	// allowed_signers file admits. Empty when the attempt signs nothing.
+	SigningKey string `json:"signing_key,omitempty"`
 
-	// Spec is what was written, with its file-naming fields filled in.
-	Spec WorkspaceSpec
-
-	// Cleanup removes Dir. It is nil when materializing failed.
-	Cleanup func()
+	// AllowedSignersFile names the file holding the allowed_signers written
+	// from SigningKey, relative to the spec file's own directory. Empty when
+	// the attempt signs nothing.
+	AllowedSignersFile string `json:"allowed_signers_file,omitempty"`
 }
 
 // NewWorkspaceSpec builds the spec for one attempt at a project, taking the
@@ -245,31 +248,52 @@ func NewWorkspaceSpec(project *Project, branch WorkspaceBranchPlan) (WorkspaceSp
 	return spec, nil
 }
 
-// MaterializeWorkspaceSpec writes spec into a fresh directory under the OS
-// temporary directory; see MaterializeWorkspaceSpecIn.
-func MaterializeWorkspaceSpec(spec WorkspaceSpec, forgeToken []byte) (MaterializedWorkspace, error) {
-	return MaterializeWorkspaceSpecIn("", spec, forgeToken)
+// WorkspaceSpecFiles is one spawn's workspace spec, ready to be written: the
+// spec exactly as the container will read it, and the bytes of every file its
+// directory holds.
+//
+// THE SPEC IS DECIDED HERE, ON THE DAEMON, AND WRITTEN WHEREVER THE SESSION
+// RUNS. Deciding it — which sibling files exist, and therefore which paths the
+// container's environment names — needs the binding and the forge token, which
+// only the daemon holds. Writing it needs the host that mounts it, which is
+// the executing host (session_workspace.go). So the two halves are separate,
+// and what crosses between them is this value.
+//
+// THE SPEC COMES BACK because deciding it DECIDES things. A caller that kept
+// its own copy would be applying a spec no container ever sees.
+type WorkspaceSpecFiles struct {
+	// Spec is what is written, with its file-naming fields filled in.
+	Spec WorkspaceSpec
+
+	// Files is the directory's content by file name: the spec itself, and
+	// the forge token and known_hosts when the spec names them.
+	Files map[string][]byte
 }
 
-// MaterializeWorkspaceSpecIn writes spec, and its sibling credential and
-// known_hosts files, into a fresh directory under parent. An empty parent
-// takes the OS temporary directory. The caller mounts the returned directory
-// read-only into the container with WorkspaceSpecMounts; nothing here is
-// written where anything but this spawn can read it.
-//
-// PARENT EXISTS BECAUSE THE MOUNT POLICY IS DENY-BY-DEFAULT. Every bind-mount
-// source is authorized against the operator's projects root and allowed
-// roots, and the OS temporary directory is neither. A caller that already
-// owns an admitted directory — the project's own workspace, which is where
-// the attempt's checkout is mounted from — names it here so the spec travels
-// through the same door as everything else the spawn mounts.
+// Wipe zeroes every file's bytes and drops them, so the forge token held for
+// a spawn does not outlive the moment it was written or sent. It is safe on a
+// nil receiver and idempotent.
+func (f *WorkspaceSpecFiles) Wipe() {
+	if f == nil {
+		return
+	}
+	for name, content := range f.Files {
+		for i := range content {
+			content[i] = 0
+		}
+		delete(f.Files, name)
+	}
+}
+
+// NewWorkspaceSpecFiles decides the spec directory for spec and forgeToken:
+// which sibling files it holds, and their bytes.
 //
 // AN SSH CHECKOUT IS REFUSED WITHOUT A PINNED HOST KEY, here, before any
 // container is started. There is no accept-new and no learned key: a spec
 // whose project is cloned over ssh and whose binding pinned nothing names a
 // forge nothing can vouch for, and the error says which binding field the
 // operator has to fill in.
-func MaterializeWorkspaceSpecIn(parent string, spec WorkspaceSpec, forgeToken []byte) (MaterializedWorkspace, error) {
+func NewWorkspaceSpecFiles(spec WorkspaceSpec, forgeToken []byte) (*WorkspaceSpecFiles, error) {
 	if len(forgeToken) > 0 {
 		spec.ForgeTokenFile = WorkspaceForgeTokenFile
 	} else {
@@ -277,47 +301,119 @@ func MaterializeWorkspaceSpecIn(parent string, spec WorkspaceSpec, forgeToken []
 	}
 	knownHosts, hostKeyErr := KnownHostsFor(spec.Project.RepoURL, spec.SSHHostKey)
 	if hostKeyErr != nil {
-		return MaterializedWorkspace{}, hostKeyErr
+		return nil, hostKeyErr
 	}
 	if knownHosts != "" {
 		spec.KnownHostsFile = WorkspaceKnownHostsFile
 	} else {
 		spec.KnownHostsFile = ""
 	}
+	allowedSigners := AllowedSignersFor(spec.SigningKey)
+	if allowedSigners != "" {
+		spec.AllowedSignersFile = WorkspaceAllowedSignersFile
+	} else {
+		spec.AllowedSignersFile = ""
+	}
 	encoded, marshalErr := json.MarshalIndent(spec, "", "  ")
 	if marshalErr != nil {
-		return MaterializedWorkspace{}, &WorkspaceSpecInvalidError{Field: "spec", Message: "does not encode: " + marshalErr.Error()}
+		return nil, &WorkspaceSpecInvalidError{Field: "spec", Message: "does not encode: " + marshalErr.Error()}
 	}
-
-	root, mkErr := os.MkdirTemp(parent, workspaceSpecDirPrefix)
-	if mkErr != nil {
-		return MaterializedWorkspace{}, &WorkspaceSpecMaterializeError{Message: "creating the spec directory failed", Cause: mkErr}
-	}
-	cleanup := func() { _ = os.RemoveAll(root) }
-	if chmodErr := os.Chmod(root, workspaceSpecDirMode); chmodErr != nil {
-		cleanup()
-		return MaterializedWorkspace{}, &WorkspaceSpecMaterializeError{Message: "sealing the spec directory failed", Cause: chmodErr}
-	}
-
 	files := map[string][]byte{WorkspaceSpecFile: encoded}
 	if len(forgeToken) > 0 {
-		files[WorkspaceForgeTokenFile] = forgeToken
+		files[WorkspaceForgeTokenFile] = append([]byte(nil), forgeToken...)
 	}
 	if knownHosts != "" {
 		files[WorkspaceKnownHostsFile] = []byte(knownHosts)
 	}
-	for name, content := range files {
-		if writeErr := os.WriteFile(filepath.Join(root, name), content, workspaceSpecFileMode); writeErr != nil {
-			cleanup()
-			return MaterializedWorkspace{}, &WorkspaceSpecMaterializeError{Message: "writing " + name + " failed", Cause: writeErr}
+	if allowedSigners != "" {
+		files[WorkspaceAllowedSignersFile] = []byte(allowedSigners)
+	}
+	return &WorkspaceSpecFiles{Spec: spec, Files: files}, nil
+}
+
+// writeWorkspaceSpecDir writes files into a fresh directory under parent and
+// returns it with the cleanup that removes it. See writeSpecDirIn.
+func writeWorkspaceSpecDir(parent string, files map[string][]byte) (string, func(), error) {
+	root, err := os.OpenRoot(parent)
+	if err != nil {
+		return "", nil, &WorkspaceSpecMaterializeError{Message: "opening the spec directory's parent failed", Cause: err}
+	}
+	defer root.Close()
+	name, err := writeSpecDirIn(root, ".", files)
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() {
+		if r, openErr := os.OpenRoot(parent); openErr == nil {
+			_ = r.RemoveAll(name)
+			_ = r.Close()
 		}
 	}
-	return MaterializedWorkspace{Dir: root, Spec: spec, Cleanup: cleanup}, nil
+	return filepath.Join(parent, name), cleanup, nil
+}
+
+// writeSpecDirIn writes files into a fresh directory under parent, inside
+// root, and returns the new directory's name. Every create and write goes
+// through root, so a parent a tenant replaced with a link cannot aim the
+// token outside the tree root was opened on.
+//
+// PARENT EXISTS BECAUSE THE MOUNT POLICY IS DENY-BY-DEFAULT. Every bind-mount
+// source is authorized against the host's projects root and allowed roots, so
+// the directory is written beside the session's workspace, where the same
+// grant that admits the workspace admits it.
+func writeSpecDirIn(root *os.Root, parent string, files map[string][]byte) (string, error) {
+	suffix := make([]byte, 8)
+	if _, err := rand.Read(suffix); err != nil {
+		return "", &WorkspaceSpecMaterializeError{Message: "naming the spec directory failed", Cause: err}
+	}
+	name := workspaceSpecDirName + hex.EncodeToString(suffix)
+	dir := filepath.Join(parent, name)
+	// Mkdir, never MkdirAll: the directory must be new, so nothing already
+	// at the name — a link included — is written through.
+	if err := root.Mkdir(dir, workspaceSpecDirMode); err != nil {
+		return "", &WorkspaceSpecMaterializeError{Message: "creating the spec directory failed", Cause: err}
+	}
+	cleanup := func() { _ = root.RemoveAll(dir) }
+	if err := chmodConfinedDir(root, dir, workspaceSpecDirMode); err != nil {
+		cleanup()
+		return "", &WorkspaceSpecMaterializeError{Message: "sealing the spec directory failed", Cause: err}
+	}
+	for fileName, content := range files {
+		if err := writeSpecFile(root, filepath.Join(dir, fileName), content); err != nil {
+			cleanup()
+			return "", &WorkspaceSpecMaterializeError{Message: "writing " + fileName + " failed", Cause: err}
+		}
+	}
+	return name, nil
+}
+
+// writeSpecFile creates one spec file, exclusively, read-only to its owner.
+func writeSpecFile(root *os.Root, path string, content []byte) error {
+	file, err := root.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, workspaceSpecFileMode)
+	if err != nil {
+		return err
+	}
+	_, writeErr := file.Write(content)
+	return errors.Join(writeErr, file.Close())
+}
+
+// AllowedSignersFor is the allowed_signers content admitting exactly
+// signingKey for git commit signatures, or empty when there is no key.
+//
+// THE PRINCIPAL IS "*" because the question the file answers is "was this
+// signed by THE key", not "by whom": the attempt has one key, and the
+// author's address is already stated by the commit itself.
+func AllowedSignersFor(signingKey string) string {
+	key := strings.TrimSpace(signingKey)
+	if key == "" {
+		return ""
+	}
+	return `* namespaces="git" ` + key + "\n"
 }
 
 // WorkspaceSpecMounts are the read-only mounts a container needs to act on a
-// materialized spec: the spec directory, and the signing agent's socket when
-// one was started for this spawn.
+// written spec: the spec directory, and the signing agent's socket when one
+// was started for this spawn.
 func WorkspaceSpecMounts(specDir, signingAgentSocket string) []ContainerMount {
 	mounts := make([]ContainerMount, 0, 2)
 	if specDir != "" {
@@ -347,26 +443,30 @@ func WorkspaceSSHCommand(knownHostsPath string) string {
 	return "ssh -o UserKnownHostsFile=" + knownHostsPath + " -o StrictHostKeyChecking=yes"
 }
 
-// ApplyWorkspaceSpec puts a materialized workspace onto a spawn request: the
-// read-only mounts, and the environment variables that name their PATHS.
-// No credential value is ever put on the request.
-func ApplyWorkspaceSpec(req *SpawnSessionRequest, ws MaterializedWorkspace, signingAgentSocket string) {
-	if req == nil {
+// ApplyWorkspaceSpec puts a decided workspace spec onto a spawn request that
+// already names its workspace: the spec files on the workspace, for the
+// executing host to write, and the environment variables naming their paths
+// as the CONTAINER sees them. No credential value is ever put in the
+// environment.
+//
+// The signing agent's socket, when there is one, is a DAEMON-host path and is
+// mounted as it is; it is the one mount the executing host does not make.
+func ApplyWorkspaceSpec(req *SpawnSessionRequest, files *WorkspaceSpecFiles, signingAgentSocket string) {
+	if req == nil || req.Workspace == nil || files == nil {
 		return
 	}
-	req.ExtraMounts = append(req.ExtraMounts, WorkspaceSpecMounts(ws.Dir, signingAgentSocket)...)
+	req.Workspace.Spec = files
+	req.ExtraMounts = append(req.ExtraMounts, WorkspaceSpecMounts("", signingAgentSocket)...)
 	if req.Env == nil {
 		req.Env = make(map[string]string, 3)
 	}
-	if ws.Dir != "" {
-		req.Env[WorkspaceSpecEnv] = filepath.Join(WorkspaceSpecDir, WorkspaceSpecFile)
-	}
+	req.Env[WorkspaceSpecEnv] = filepath.Join(WorkspaceSpecDir, WorkspaceSpecFile)
 	if signingAgentSocket != "" {
 		req.Env[WorkspaceSigningAgentEnv] = WorkspaceSigningAgentSocket
 	}
-	if ws.Dir != "" && ws.Spec.KnownHostsFile != "" {
+	if files.Spec.KnownHostsFile != "" {
 		req.Env[WorkspaceSSHCommandEnv] = WorkspaceSSHCommand(
-			filepath.Join(WorkspaceSpecDir, ws.Spec.KnownHostsFile))
+			filepath.Join(WorkspaceSpecDir, files.Spec.KnownHostsFile))
 	}
 }
 

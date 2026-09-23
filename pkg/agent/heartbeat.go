@@ -275,12 +275,13 @@ func (s *HTTPHeartbeatSender) buildEndpoint(agentID string) (string, error) {
 func heartbeatRequestBody(status HeartbeatStatus) string {
 	return fmt.Sprintf(
 		`{"active_sessions":%d,"sandbox_policy":%q,"backends":%s,"has_container_runtime":%t,`+
-			`"max_concurrent_jobs":%d,"sequence":%d,"bind_addr":%q}`,
+			`"max_concurrent_jobs":%d,"signing_agents":%s,"sequence":%d,"bind_addr":%q}`,
 		status.ActiveSessions,
 		status.SandboxPolicy.String(),
 		marshalStringSlice(status.Backends),
 		status.HasContainerRT,
 		status.MaxConcurrentJobs,
+		marshalStringSlice(status.SigningAgents),
 		status.SequenceNumber,
 		status.BindAddr,
 	)

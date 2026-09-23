@@ -35,13 +35,14 @@ import "context"
 // that reads but whose published artifacts cannot be DECODED is an error,
 // because that is a delivery the page would silently omit.
 func (s *agentServiceImpl) withTaskProvenance(ctx context.Context, tenantID string, status *JobStatus) (*JobStatus, error) {
-	if status == nil || status.TaskID == "" || s.taskStore == nil {
+	taskID := jobStatusTaskID(status)
+	if taskID == "" || s.taskStore == nil {
 		return status, nil
 	}
-	task, err := s.taskStore.GetTask(ctx, tenantID, status.TaskID)
+	task, err := s.taskStore.GetTask(ctx, tenantID, taskID)
 	if err != nil {
 		s.logger.Debugf("orchestration: job %s: task %s not readable for provenance: %s",
-			status.JobID, status.TaskID, err.Error())
+			status.JobID, taskID, err.Error())
 		return status, nil
 	}
 	artifacts, err := s.resolveDeliveryArtifacts(ctx, tenantID, task, status.Attempt)
@@ -53,6 +54,7 @@ func (s *agentServiceImpl) withTaskProvenance(ctx context.Context, tenantID stri
 		return nil, err
 	}
 	enriched := *status
+	enriched.Source = task.Source
 	enriched.Attempts = JobAttemptsOfTask(task, status.JobID, status.Attempt)
 	enriched.AttemptBudget = task.EffectiveAttemptBudget()
 	enriched.TerminalReason = task.ConclusionReason
@@ -94,4 +96,69 @@ func (s *agentServiceImpl) resolveDeliveryArtifacts(
 		break
 	}
 	return out, nil
+}
+
+// =============================================================================
+// The source projection, for a page of jobs
+// =============================================================================
+
+// resolveJobSources names the forge issue behind each job in a page, read off
+// the task the job is an attempt at.
+//
+// IT RUNS OVER A PAGE, NOT OVER A LISTING, for the reason resolveSessionRunners
+// does: a tenant with two thousand jobs names nearly as many tasks, and reading
+// every one of them to answer a page of twenty-five would make the listing pay
+// for records nobody asked to see. The read is MEMOISED BY TASK because a task
+// has several attempts and every one of them resolves to the same record, so
+// the whole attempt history of one task costs one read.
+//
+// THE STATUS IS COPIED BEFORE IT IS WRITTEN TO. A running job's status is
+// published by its own goroutine and read by every poll in flight; writing the
+// source into that published struct would be a data race with readers holding
+// the same pointer. The page gets copies, which is what withTaskProvenance does
+// for the same reason and what the transports serialize.
+//
+// A task that cannot be read leaves the job with no source, and a job that is
+// not an attempt at a task never had one: the consumer renders no chip rather
+// than a guess, which is the rule every other unobservable field here follows.
+func (s *agentServiceImpl) resolveJobSources(ctx context.Context, tenantID string, jobs []*JobStatus) {
+	if s.taskStore == nil {
+		return
+	}
+	sources := make(map[string]*TaskSourceRef, len(jobs))
+	for i, job := range jobs {
+		if job == nil || job.Source != nil {
+			continue
+		}
+		taskID := jobStatusTaskID(job)
+		if taskID == "" {
+			continue
+		}
+		source, resolved := sources[taskID]
+		if !resolved {
+			source = s.taskSource(ctx, tenantID, job.JobID, taskID)
+			sources[taskID] = source
+		}
+		if source == nil {
+			continue
+		}
+		enriched := *job
+		enriched.Source = source
+		jobs[i] = &enriched
+	}
+}
+
+// taskSource is the origin recorded on one job's task, nil when the task
+// cannot be read or records none.
+func (s *agentServiceImpl) taskSource(ctx context.Context, tenantID, jobID, taskID string) *TaskSourceRef {
+	task, err := s.taskStore.GetTask(ctx, tenantID, taskID)
+	if err != nil {
+		s.logger.Debugf("orchestration: job %s: task %s not readable for its source: %s",
+			jobID, taskID, err.Error())
+		return nil
+	}
+	if task == nil {
+		return nil
+	}
+	return task.Source
 }

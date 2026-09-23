@@ -130,7 +130,19 @@ func EnsureSigningSocketRoot(root string) (SigningSocketSweep, error) {
 		// directory's name and put their own agent at it.
 		return SigningSocketSweep{}, &SigningSocketRootUnusableError{Root: cleaned, Reason: "is writable by group or other"}
 	}
-	return sweepSigningSocketRoot(cleaned)
+	sweep, err := sweepSigningSocketRoot(cleaned)
+	if err != nil {
+		return sweep, err
+	}
+	// THE ROOT CARRIES THIS DAEMON'S SIGNING IDENTIFIER, which is how a fleet
+	// agent proves it can mount the sockets bound here and how the dispatcher
+	// places a signing spawn only on such an agent (go-quicbaas#981).
+	if _, err := orchestration.EnsureSigningRootID(cleaned); err != nil {
+		return sweep, &SigningSocketRootUnusableError{
+			Root: cleaned, Reason: "could not carry its signing-root marker", Cause: err,
+		}
+	}
+	return sweep, nil
 }
 
 // =============================================================================

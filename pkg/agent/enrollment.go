@@ -381,6 +381,11 @@ func (e *ProductionEnroller) bootstrap(ctx context.Context, cfg *Config, client 
 	if DetectGPU() {
 		backendNames = append(backendNames, "gpu")
 	}
+	// And the signing sockets this host can mount, so a delivery worker can be
+	// placed here from the first spawn rather than from the first heartbeat.
+	for _, id := range cfg.SigningAgents() {
+		backendNames = append(backendNames, orchestration.SigningAgentTrait(id))
+	}
 
 	payload := map[string]interface{}{
 		"tenant_id":      cfg.TenantID,

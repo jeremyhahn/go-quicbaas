@@ -120,6 +120,15 @@ func (s *agentServiceImpl) ExecSession(ctx context.Context, req *ExecSessionRequ
 	if err := req.Spec.Validate(); err != nil {
 		return nil, err
 	}
+	// A SESSION ON A FLEET AGENT IS EXECUTED ON THAT AGENT. Its container is
+	// on the agent's host, known to the agent's container runtime and to no
+	// other; asking this daemon's runtime for it answers "no such container"
+	// at best (go-quicbaas#981).
+	if remote, host, err := s.remoteSessionHost(ctx, req.SessionID); err != nil {
+		return nil, err
+	} else if remote {
+		return s.execOnAgent(ctx, req, host)
+	}
 	if s.containerRuntime == nil {
 		return nil, &SessionExecUnsupportedError{SessionID: req.SessionID}
 	}
@@ -128,6 +137,57 @@ func (s *agentServiceImpl) ExecSession(ctx context.Context, req *ExecSessionRequ
 		return nil, err
 	}
 	return s.containerRuntime.Exec(ctx, containerID, req.Spec)
+}
+
+// SessionContainerExecutor is the capability of a backend whose sessions'
+// containers live on another host: it runs a command in one of them there.
+// RemoteACPBackend implements it over the agent's authenticated AgentRuntime
+// link.
+type SessionContainerExecutor interface {
+	ExecInSession(ctx context.Context, sessionID string, spec *ExecSpec) (*ExecResult, error)
+}
+
+// remoteSessionHost reports whether a session lives on a fleet agent, and
+// which. The caller's tenant must own the session, as for the local path.
+func (s *agentServiceImpl) remoteSessionHost(ctx context.Context, sessionID string) (bool, string, error) {
+	if mem, ok := s.liveSessionRecord(sessionID); ok {
+		if caller := TenantFromContext(ctx); caller != "" && caller != mem.TenantID {
+			return false, "", &SessionNotFoundError{SessionID: sessionID}
+		}
+		return !mem.BackendLocal && mem.HostAffinity != "", mem.HostAffinity, nil
+	}
+	record, err := s.store.GetSession(ctx, StorageTenant(ctx), sessionID)
+	if err != nil {
+		return false, "", err
+	}
+	if record == nil {
+		return false, "", &SessionNotFoundError{SessionID: sessionID}
+	}
+	return !record.BackendLocal && record.HostAffinity != "", record.HostAffinity, nil
+}
+
+// execOnAgent runs the command on the agent that owns the session's
+// container, through the backend routed to that agent. It reaches that agent
+// or fails; there is no other host the container could be on.
+func (s *agentServiceImpl) execOnAgent(ctx context.Context, req *ExecSessionRequest, host string) (*ExecResult, error) {
+	backendName, err := s.findSessionBackend(req.SessionID)
+	if err != nil {
+		record, storeErr := s.store.GetSession(ctx, StorageTenant(ctx), req.SessionID)
+		if storeErr != nil || record == nil {
+			return nil, err
+		}
+		backendName = record.Backend
+	}
+	routed := withRemoteSessionPin(WithHostAffinityStrict(WithHostAffinity(ctx, host)), req.SessionID, host)
+	backend, err := s.lookupBackendCtx(routed, backendName, "")
+	if err != nil {
+		return nil, err
+	}
+	executor, ok := backend.(SessionContainerExecutor)
+	if !ok {
+		return nil, &SessionExecUnsupportedError{SessionID: req.SessionID}
+	}
+	return executor.ExecInSession(ctx, req.SessionID, req.Spec)
 }
 
 // sessionContainerID answers which container a session's agent runs in.

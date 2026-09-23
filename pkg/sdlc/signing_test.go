@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 // =============================================================================
@@ -478,8 +480,49 @@ func TestEnsureSigningSocketRoot_SweepingAnEmptyRootIsANoOp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the root was not created: %v", err)
 	}
-	if len(entries) != 0 {
-		t.Errorf("the root holds %d entries after a no-op sweep", len(entries))
+	// The one thing a prepared root holds is this daemon's signing-root
+	// marker, which the sweep never touches.
+	if len(entries) != 1 || entries[0].Name() != orchestration.SigningRootMarkerFile {
+		t.Errorf("the root holds %v after a no-op sweep, want only the signing-root marker", entries)
+	}
+	if _, err := orchestration.ReadSigningRootID(root); err != nil {
+		t.Errorf("the prepared root carries no signing identifier: %v", err)
+	}
+}
+
+// TestEnsureSigningSocketRoot_KeepsItsSigningIdentifier: preparing the root
+// again — a restarted daemon — keeps the identifier, so the agents that proved
+// they reach it stay placeable without re-registering; and a root whose marker
+// cannot be written refuses the daemon rather than leaving signing spawns with
+// nowhere provable to go.
+func TestEnsureSigningSocketRoot_KeepsItsSigningIdentifier(t *testing.T) {
+	root := filepath.Join(testSocketsRoot(t), "kept")
+	if _, err := EnsureSigningSocketRoot(root); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	first, err := orchestration.ReadSigningRootID(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureSigningSocketRoot(root); err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	second, err := orchestration.ReadSigningRootID(root)
+	if err != nil || second != first {
+		t.Fatalf("identifier %q -> %q (%v), want it kept", first, second, err)
+	}
+
+	// A marker that cannot be read or written: a DIRECTORY at the marker's
+	// name. Reading it fails EISDIR and creating it fails EEXIST for every
+	// uid, root included, so the refusal is staged the same everywhere.
+	unmarkable := filepath.Join(testSocketsRoot(t), "unmarkable")
+	if err := os.MkdirAll(filepath.Join(unmarkable, orchestration.SigningRootMarkerFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err = EnsureSigningSocketRoot(unmarkable)
+	var unusable *SigningSocketRootUnusableError
+	if !errors.As(err, &unusable) || !strings.Contains(err.Error(), "signing-root marker") {
+		t.Fatalf("err = %v, want the unmarkable root refused", err)
 	}
 }
 

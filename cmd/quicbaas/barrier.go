@@ -59,6 +59,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -215,6 +216,25 @@ func sharesFileOp(op string) string {
 		return "barrier unseal-shares"
 	}
 	return op
+}
+
+// BarrierScopeMismatchError is returned by `barrier enable-encryption
+// --tenant` when the server reports it migrated a barrier other than that
+// tenant's. It is the client half of go-quicbaas#990: a server that drops the
+// body tenant_id migrates the SYSTEM barrier, and the verb must not report
+// that as the migration the operator asked for.
+type BarrierScopeMismatchError struct {
+	// TenantID is the tenant the operator asked to migrate.
+	TenantID string
+	// Scope is the scope the server reports it migrated.
+	Scope string
+}
+
+// Error returns a human-readable description.
+func (e *BarrierScopeMismatchError) Error() string {
+	return "barrier enable-encryption: asked to migrate tenant " + e.TenantID +
+		" but the server reports scope " + strconv.Quote(e.Scope) +
+		"; check `quicbaas barrier status` before retrying"
 }
 
 // PINsNotAllowedError is returned when SO/User PINs are supplied to a
@@ -1224,6 +1244,14 @@ The migration re-encrypts existing data, so it requires an UNSEALED data
 plane and cannot run during the sealed window. Scope it to one tenant
 with --tenant, or omit it to migrate the system barrier.
 
+The migration runs asynchronously: the server answers with a status of
+"migration_started" and the scope it migrated ("system" or "tenant").
+Watch the barrier you migrated for the strategy change:
+'quicbaas barrier status' for the system barrier, or
+'quicbaas iam tenant barrier status --tenant <id>' for a tenant's ('barrier
+status' reads only the system barrier). If --tenant was given and the server reports any other scope, the verb fails
+rather than report the wrong barrier's migration as success.
+
 A tenant on a SHARED barrier cannot be migrated independently — the
 server rejects that as an entitlement violation, not an auth failure.
 
@@ -1302,8 +1330,15 @@ func runBarrierEnableEncryptionCommand(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return formatError(err)
 	}
+	if barrierTenantID != "" && resp != nil && resp.Scope != barrierEnableEncryptionTenantScope {
+		return &BarrierScopeMismatchError{TenantID: barrierTenantID, Scope: resp.Scope}
+	}
 	return formatBarrierEnableEncryption(resp, barrierOutputFmt, cmd.OutOrStdout())
 }
+
+// barrierEnableEncryptionTenantScope is the `scope` go-qrdb's wire reports
+// for a migration of one tenant's dedicated barrier.
+const barrierEnableEncryptionTenantScope = "tenant"
 
 // isPassphraseStrategyName reports whether the strategy name selects the
 // passphrase-sealed barrier.

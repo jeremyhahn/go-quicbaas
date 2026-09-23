@@ -1743,6 +1743,12 @@ type heartbeatBody struct {
 
 	SandboxPolicy  string `json:"sandbox_policy,omitempty"`
 	HasContainerRT bool   `json:"has_container_runtime,omitempty"`
+
+	// SigningAgents is the identifier of every control-plane sockets root the
+	// daemon can mount a signing socket from. A POINTER for the reason
+	// Backends is one: an absent key (an older daemon) reconciles nothing,
+	// while an empty list reports that it can reach none.
+	SigningAgents *[]string `json:"signing_agents"`
 }
 
 // observation returns what the daemon reported about itself on this
@@ -1759,10 +1765,14 @@ func (b *heartbeatBody) observation() *orchestration.AgentObservation {
 	// backends key would be rejected rather than reconciled — and there is no
 	// such body: pkg/agent writes both fields in one payload, and the
 	// transports that carry no served list carry no capacity either.
-	return &orchestration.AgentObservation{
+	observation := &orchestration.AgentObservation{
 		Backends:          *b.Backends,
 		MaxConcurrentJobs: b.MaxConcurrentJobs,
 	}
+	if b.SigningAgents != nil {
+		observation.SigningAgents = append([]string{}, *b.SigningAgents...)
+	}
+	return observation
 }
 
 // =============================================================================

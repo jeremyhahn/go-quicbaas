@@ -190,6 +190,12 @@ export interface JobStatus {
   delivery?: JobDelivery | null;
   /** verification is the last validator pipeline's results. */
   verification?: JobVerificationResult[];
+  /**
+   * source is the forge issue behind the job's task, laid over the record by
+   * the server — on the PAGED LISTING as well as the detail read, because a
+   * paged view holds no tasks to resolve it from (go-quicbaas#976).
+   */
+  source?: TaskSource | null;
 }
 
 export interface JobEvent {

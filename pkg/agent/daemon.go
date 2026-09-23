@@ -49,6 +49,13 @@ type HeartbeatStatus struct {
 	HasContainerRT bool
 	SequenceNumber uint64
 
+	// SigningAgents is the identifier of every control-plane sockets root
+	// this daemon can mount a signing socket from (Config.SigningAgents),
+	// re-read on every heartbeat. The control plane places a spawn that mounts
+	// its signing socket only on a daemon reporting ITS identifier here.
+	// Never nil on a heartbeat: an empty list reports "none reachable".
+	SigningAgents []string
+
 	// MaxConcurrentJobs is how many orchestration jobs this host declares it
 	// can run at once (Config.MaxConcurrentJobs). Sent on every heartbeat so
 	// the control plane's fleet capacity tracks a host being drained or added
@@ -207,6 +214,18 @@ func (d *Daemon) Start(ctx context.Context) error {
 		if len(sweep.Removed) > 0 {
 			d.logger.Infof("agent daemon: swept %d orphaned worker container(s) left by a previous run",
 				len(sweep.Removed))
+		}
+		// AND THEIR SPEC DIRECTORIES, which hold a forge token each and which
+		// no Close will release now that their sessions are gone.
+		specs, specErr := d.runtime.SweepOrphanWorkspaceSpecs()
+		if specErr != nil {
+			d.state.Store(int32(stateFailed))
+			d.recordRunErr(&OpError{Op: "workspace spec sweep", Cause: specErr})
+			startErr = specErr
+			return
+		}
+		if len(specs) > 0 {
+			d.logger.Infof("agent daemon: removed %d workspace spec(s) a previous run left behind", len(specs))
 		}
 
 		if err := d.spawnServer.Start(ctx); err != nil {
@@ -382,6 +401,7 @@ func (d *Daemon) sendHeartbeat(ctx context.Context) {
 		Backends:          d.runtime.Backends(),
 		HasContainerRT:    d.runtime.SandboxResolver().HasContainerRuntime(),
 		MaxConcurrentJobs: d.cfg.MaxConcurrentJobs,
+		SigningAgents:     d.cfg.SigningAgents(),
 		SequenceNumber:    d.hbSeq.Add(1),
 		BindAddr:          d.spawnServer.Addr(),
 	}

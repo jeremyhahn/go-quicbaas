@@ -245,6 +245,15 @@ func (s *Server) startEmbeddedAgent() error {
 		return &ServerCauseError{Message: "embedded agent: sockets root", Cause: socketsErr}
 	}
 
+	// The embedded agent runs on this host, so the job workspaces it
+	// provisions live under this daemon's own projects root — the root its
+	// mount policy below already admits tenant-scoped.
+	projectsRoot := s.config.Orchestration.EffectiveProjectsRoot(s.config.Storage.DataDir)
+	workspaces, wsErr := orchestration.NewWorkspaceManager(projectsRoot)
+	if wsErr != nil {
+		return &ServerCauseError{Message: "embedded agent: projects root", Cause: wsErr}
+	}
+
 	// Construct agent Runtime.
 	runtime, rtErr := agent.NewRuntime(agent.RuntimeConfig{
 		Backends:         backends,
@@ -260,10 +269,11 @@ func (s *Server) startEmbeddedAgent() error {
 		// Without it a spawn dispatched over the bufconn would bypass the
 		// control plane's mount check entirely.
 		MountPolicy: &orchestration.MountPolicy{
-			ProjectsRoot: s.config.Orchestration.EffectiveProjectsRoot(s.config.Storage.DataDir),
+			ProjectsRoot: projectsRoot,
 			AllowedRoots: s.config.Orchestration.Sandbox.AllowedMountRoots,
 			SocketsRoot:  socketsRoot,
 		},
+		Workspaces: workspaces,
 	})
 	if rtErr != nil {
 		return &ServerCauseError{Message: "embedded agent: construct runtime", Cause: rtErr}
@@ -281,6 +291,13 @@ func (s *Server) startEmbeddedAgent() error {
 	}
 	if len(sweep.Removed) > 0 {
 		log.Infof("Embedded agent: swept %d orphaned worker container(s) left by a previous run", len(sweep.Removed))
+	}
+	specs, specErr := runtime.SweepOrphanWorkspaceSpecs()
+	if specErr != nil {
+		return &ServerCauseError{Message: "embedded agent: sweep orphaned workspace specs", Cause: specErr}
+	}
+	if len(specs) > 0 {
+		log.Infof("Embedded agent: removed %d workspace spec(s) a previous run left behind", len(specs))
 	}
 
 	// Construct bufconn listener. The spawn server will serve on this;

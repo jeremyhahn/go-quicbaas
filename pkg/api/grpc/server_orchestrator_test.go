@@ -40,6 +40,11 @@ type grpcTestAgentService struct {
 	listJobs       []*orchestration.JobStatus
 	listJobsFilter *orchestration.JobFilter
 
+	// listJobsPaged records that the PAGED verb answered the listing. Only
+	// that verb fills each row's Source, so a transport that reverts to the
+	// unpaged twin would answer rows with no forge issue on them.
+	listJobsPaged bool
+
 	createTaskFunc    func(ctx context.Context, req *orchestration.CreateTaskRequest) (*orchestration.Task, error)
 	startJobFunc      func(ctx context.Context, req *orchestration.StartJobRequest) (*orchestration.StartJobResponse, error)
 	blockTaskFunc     func(ctx context.Context, tenantID, taskID string, kind orchestration.TaskBlockKind, reason string) error
@@ -787,6 +792,7 @@ func TestTaskToProto_CarriesQuestionAttempts(t *testing.T) {
 // orchestration.ApplyPage over what this double already returns, so a transport test
 // exercises the shipped paging contract rather than a second copy of it.
 func (m *grpcTestAgentService) ListJobsPage(ctx context.Context, tenantID string, filter *orchestration.JobFilter, page *orchestration.Page) (*orchestration.PageResult[*orchestration.JobStatus], error) {
+	m.listJobsPaged = true
 	jobs, err := m.ListJobs(ctx, tenantID, filter)
 	if err != nil {
 		return nil, err

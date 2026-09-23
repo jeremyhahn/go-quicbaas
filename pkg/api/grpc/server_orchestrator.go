@@ -698,6 +698,7 @@ func (s *OrchestratorServer) GetJobStatus(ctx context.Context, req *pb.Orchestra
 		// Provenance: the same facts the REST job shape carries, so a
 		// consumer on this transport reads the run without a second call.
 		AgentId:        jobStatus.AgentID,
+		Source:         taskSourceToProto(jobStatus.Source),
 		Stages:         jobStagesToProto(jobStatus.Stages),
 		Attempts:       jobAttemptsToProto(jobStatus.Attempts),
 		AttemptBudget:  int32(jobStatus.AttemptBudget), //nolint:gosec // G115: bounded count
@@ -806,15 +807,24 @@ func (s *OrchestratorServer) CancelJob(ctx context.Context, req *pb.Orchestrator
 
 // ListJobs returns the tenant's jobs, narrowed to one task when the request
 // names one.
+//
+// IT READS THE PAGED VERB WITH NO PAGE. ListJobsPage is the verb that fills
+// each row's Source — the forge issue behind the job's task — and this RPC
+// carries no page fields, so it passes a nil page: ApplyPage then cuts
+// nothing and orders by started_at descending, which is the order the unpaged
+// listing already sorted itself into. The answer is the same jobs in the same
+// order, now with the field a gRPC consumer had no other way to obtain
+// (go-quicbaas#976).
 func (s *OrchestratorServer) ListJobs(ctx context.Context, req *pb.OrchestratorListJobsRequest) (*pb.OrchestratorListJobsResponse, error) {
 	s.logger.Debug("Processing ListJobs request")
 
 	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
 
-	jobs, err := s.agentSvc.ListJobs(tenantCtx, req.GetTenantId(), &orchestration.JobFilter{TaskID: req.GetTaskId()})
+	page, err := s.agentSvc.ListJobsPage(tenantCtx, req.GetTenantId(), &orchestration.JobFilter{TaskID: req.GetTaskId()}, nil)
 	if err != nil {
 		return nil, convertOrchestratorError(err)
 	}
+	jobs := page.Items
 
 	pbJobs := make([]*pb.OrchestratorJobSummary, len(jobs))
 	for i, j := range jobs {
@@ -839,9 +849,10 @@ func (s *OrchestratorServer) ListJobs(ctx context.Context, req *pb.OrchestratorL
 	}, nil
 }
 
-// bindJobSummaries copies each job's task binding onto its summary. The
-// attempt ordinal is int64 on the wire, so it widens from the domain's int
-// without narrowing.
+// bindJobSummaries copies each job's task binding onto its summary — the
+// task it is an attempt at, which attempt it was, and where that task came
+// from. The attempt ordinal is int64 on the wire, so it widens from the
+// domain's int without narrowing.
 func bindJobSummaries(summaries []*pb.OrchestratorJobSummary, jobs []*orchestration.JobStatus) {
 	for i, j := range jobs {
 		if i >= len(summaries) || summaries[i] == nil {
@@ -849,6 +860,7 @@ func bindJobSummaries(summaries []*pb.OrchestratorJobSummary, jobs []*orchestrat
 		}
 		summaries[i].TaskId = j.TaskID
 		summaries[i].Attempt = int64(j.Attempt)
+		summaries[i].Source = taskSourceToProto(j.Source)
 	}
 }
 
@@ -1205,6 +1217,21 @@ func protoTaskSourceToService(src *pb.TaskSource) *orchestration.TaskSourceRef {
 	}
 }
 
+// taskSourceToProto converts a recorded origin the other way; nil stays nil
+// so a record without provenance emits no source rather than an empty one a
+// consumer would render as a chip pointing nowhere. It serves the task shape
+// and the two job shapes, which carry the same origin.
+func taskSourceToProto(src *orchestration.TaskSourceRef) *pb.TaskSource {
+	if src == nil {
+		return nil
+	}
+	return &pb.TaskSource{
+		Kind: string(src.Kind),
+		Ref:  src.Ref,
+		Url:  src.URL,
+	}
+}
+
 // protoAgentStatusToService converts a proto AgentStatus to the domain AgentStatus.
 func protoAgentStatusToService(as pb.AgentStatus) orchestration.AgentStatus {
 	switch as {
@@ -1382,13 +1409,7 @@ func serviceTaskToProto(task *orchestration.Task) *pb.Task {
 	}
 
 	pbTask.ProjectId = task.ProjectID
-	if task.Source != nil {
-		pbTask.Source = &pb.TaskSource{
-			Kind: string(task.Source.Kind),
-			Ref:  task.Source.Ref,
-			Url:  task.Source.URL,
-		}
-	}
+	pbTask.Source = taskSourceToProto(task.Source)
 	pbTask.Priority = int64(task.Priority)
 	pbTask.Attempts = int64(task.Attempts)
 	pbTask.AttemptBudget = int64(task.AttemptBudget)

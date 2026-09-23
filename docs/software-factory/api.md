@@ -156,6 +156,34 @@ matches that fell off page one would never be found) nor count them. The UI's
 Role badge reads `runner` and nothing else
 (`cmd/quicbaas/frontend/src/lib/sessions.ts`).
 
+### The job row names its forge issue
+
+Each record of `GET /api/v1/orchestrator/jobs` carries `source` — the origin of
+the TASK the job is an attempt at, in the task's own shape
+(`{kind, ref, url}`), so `source.ref` reads `jeremyhahn/go-quicbaas#62` for a
+job adopted from a forge issue. It is omitted for a job bound to no task, for a
+task that records no origin, and for a task the daemon cannot read: no source
+means "not observed", never a guess.
+
+The daemon resolves it for the page it is answering, memoised per task, so a
+page of twenty-five costs at most twenty-five task reads and a whole attempt
+history of one task costs one. **The listing is the only place a consumer can
+get this**: the jobs view is server-paged and holds no tasks, so before
+go-quicbaas#976 it named a row's issue by hunting the job's task in whatever
+page of tasks it happened to be holding — which worked on page 1 and blanked
+on page 2. `GET /api/v1/orchestrator/jobs/{id}` carries the same field beside
+the rest of the task provenance.
+
+Every transport carries it, on the listing and on the detail read alike: REST
+and the transports that delegate to it, the embedded transport, the MCP
+`quicbaas_orchestrator_list_jobs` and `quicbaas_orchestrator_get_job_status`
+tools (which leave the key out altogether when there is no origin to name),
+both SDKs, and gRPC — `OrchestratorJobSummary.source` on `ListJobs` and
+`OrchestratorGetJobStatusResponse.source` on `GetJobStatus`, both the same
+`TaskSource` message a task already uses. The gRPC listing takes no page, so it
+reads the paged verb with a nil page: same jobs, same order, now with the
+source the projection fills.
+
 **Other transports.** QUIC and Unix carry the REST contract unchanged (they
 delegate to it). The Go SDK's list requests embed `page.Params` and carry each
 listing's own narrowings as named fields; its list responses embed
@@ -366,7 +394,9 @@ GET /api/v1/orchestrator/cost
 
 ```json
 {"level": "project", "tenant_id": "acme", "project_id": "p1",
- "entries": 4, "input_tokens": 4000, "output_tokens": 1200, "total_tokens": 5200,
+ "project_name": "go-truststrap",
+ "entries": 4, "input_tokens": 4000, "output_tokens": 1200,
+ "cache_read_tokens": 0, "cache_write_tokens": 0, "total_tokens": 5200,
  "cost_micros": 0, "cost_measured": false,
  "successes": 4, "failures": 0,
  "child_level": "task",
@@ -386,7 +416,10 @@ history.
 in this tree prices a turn, so it is false on every production report and a
 client MUST render a dash rather than the zero — see
 [cost-enforcement.md](cost-enforcement.md#what-the-report-refuses-to-claim)
-and go-quicbaas#791. `policy_status` likewise distinguishes an account with no
+and go-quicbaas#791. A drill-down row at the project level carries the project's `name`, and a
+report scoped to a project carries `project_name`; both are absent for a
+project that no longer exists, whose spend stays under its id.
+`policy_status` likewise distinguishes an account with no
 cap (`none`) from one this deployment could not read (`unknown`). A deployment
 recording no consumption answers `503`, not an empty report.
 

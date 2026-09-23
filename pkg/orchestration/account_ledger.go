@@ -189,10 +189,17 @@ type ConsumptionEntry struct {
 	// Outcome is required and must be one of validConsumptionOutcomes.
 	Outcome ConsumptionOutcome `json:"outcome"`
 
-	// InputTokens and OutputTokens are the provider's own counts. Kept apart
-	// rather than pre-summed because they price differently.
-	InputTokens  int64 `json:"input_tokens"`
-	OutputTokens int64 `json:"output_tokens"`
+	// The provider's own counts, one per way they price. InputTokens is the
+	// FRESH (uncached) prompt; CacheReadTokens and CacheWriteTokens are prompt
+	// tokens served from and written into the provider's prompt cache, which
+	// price at a fraction and a multiple of a fresh token. Kept apart rather
+	// than pre-summed because they price differently: before go-quicbaas#1058
+	// both cache dimensions were folded into InputTokens, which left a cached
+	// turn impossible to price.
+	InputTokens      int64 `json:"input_tokens"`
+	OutputTokens     int64 `json:"output_tokens"`
+	CacheReadTokens  int64 `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int64 `json:"cache_write_tokens,omitempty"`
 
 	// CostMicros is the charge in millionths of the account's currency unit.
 	// An integer, deliberately: money summed as float64 does not associate,
@@ -224,9 +231,11 @@ type ConsumptionEntry struct {
 	OccurredAt time.Time `json:"occurred_at"`
 }
 
-// TotalTokens returns the entry's combined token count.
+// TotalTokens returns the entry's combined token count: every dimension the
+// provider metered, cached or not. It is the quantity every quota window sums,
+// and it is unchanged by the split of the cache dimensions out of InputTokens.
 func (e ConsumptionEntry) TotalTokens() int64 {
-	return e.InputTokens + e.OutputTokens
+	return e.InputTokens + e.OutputTokens + e.CacheReadTokens + e.CacheWriteTokens
 }
 
 // ModelKey is the engine/model pair as one breakdown key. Two engines serving
@@ -312,10 +321,12 @@ type ConsumptionScope struct {
 type ConsumptionRollup struct {
 	Scope ConsumptionScope `json:"scope"`
 
-	Entries      int   `json:"entries"`
-	InputTokens  int64 `json:"input_tokens"`
-	OutputTokens int64 `json:"output_tokens"`
-	TotalTokens  int64 `json:"total_tokens"`
+	Entries          int   `json:"entries"`
+	InputTokens      int64 `json:"input_tokens"`
+	OutputTokens     int64 `json:"output_tokens"`
+	CacheReadTokens  int64 `json:"cache_read_tokens"`
+	CacheWriteTokens int64 `json:"cache_write_tokens"`
+	TotalTokens      int64 `json:"total_tokens"`
 
 	// CostMicros sums the entries' charges. It is ZERO ON EVERY PRODUCTION
 	// ROLL-UP because nothing prices a turn yet — see
@@ -371,6 +382,8 @@ func (r *ConsumptionRollup) add(entry ConsumptionEntry, child string) {
 	r.Entries++
 	r.InputTokens += entry.InputTokens
 	r.OutputTokens += entry.OutputTokens
+	r.CacheReadTokens += entry.CacheReadTokens
+	r.CacheWriteTokens += entry.CacheWriteTokens
 	r.TotalTokens += entry.TotalTokens()
 	r.CostMicros += entry.CostMicros
 

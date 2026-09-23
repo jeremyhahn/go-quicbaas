@@ -70,6 +70,12 @@ type JobRunConfig struct {
 	PersistFn func(status *JobStatus)
 	AuditFn   func(eventType, details string)
 
+	// StoreFn writes a status snapshot and REPORTS whether it was stored. It
+	// is used where a write must not be best-effort — the workspace pin, which
+	// a session may not be used before it is durable. Nil falls back to
+	// PersistFn, which reports nothing.
+	StoreFn func(status *JobStatus) error
+
 	Hooks      JobLifecycleHooks
 	HooksName  string
 	Policy     *JobLifecyclePolicy
@@ -124,6 +130,7 @@ type JobRun struct {
 	decorate func(status *JobStatus)
 
 	persistFn func(status *JobStatus)
+	storeFn   func(status *JobStatus) error
 	auditFn   func(eventType, details string)
 
 	auditMu     sync.Mutex
@@ -236,6 +243,12 @@ type JobRun struct {
 	// poll reads the run from another.
 	agentID atomic.Value // string
 
+	// workspacePin is where the job's first named workspace was provisioned.
+	// Every later spawn of the job that names a workspace carries it, so the
+	// job's sessions stay on the host holding its checkout. Atomic for the
+	// reason agentID is.
+	workspacePin atomic.Pointer[WorkspacePlacement]
+
 	// verifyMu guards the last validator pipeline's results, for the same
 	// reason stageMu guards the moments: the published status is immutable.
 	verifyMu     sync.Mutex
@@ -281,6 +294,7 @@ func newJobRun(cfg JobRunConfig) *JobRun {
 		CostTracker:       cfg.CostTracker,
 		events:            make(chan JobEvent, defaultEventBufferSize),
 		persistFn:         cfg.PersistFn,
+		storeFn:           cfg.StoreFn,
 		auditFn:           cfg.AuditFn,
 		leases:            cfg.Leases,
 		node:              cfg.Node,
@@ -579,6 +593,7 @@ func (r *JobRun) snapshot(state JobState) *JobStatus {
 
 	status.Stages = r.stageHistory()
 	status.AgentID = r.AgentID()
+	status.WorkspacePin = r.WorkspacePin()
 	status.Verification = r.verificationResults()
 
 	if r.decorate != nil {
@@ -769,6 +784,13 @@ func (r *JobRun) Spawn(ctx context.Context, req *SpawnSessionRequest) (*SpawnSes
 		req.ProjectID = r.Config.ProjectID
 	}
 	ApplyWorkerSpawnEnvironment(req, r.Policy().AgentConfigDir)
+	// A LATER SESSION GOES WHERE THE CHECKOUT IS. The job's first named
+	// workspace was provisioned on one host and cloned into there; a round,
+	// a rolled-over session or a respawn after a restart continues that
+	// clone, so it is pinned to that host and refused anywhere else.
+	if req.Workspace != nil && req.Workspace.Pin == nil {
+		req.Workspace.Pin = r.WorkspacePin()
+	}
 	resp, err := r.Agents.SpawnSession(ctx, req)
 	if err != nil {
 		return nil, err
@@ -776,6 +798,15 @@ func (r *JobRun) Spawn(ctx context.Context, req *SpawnSessionRequest) (*SpawnSes
 	if resp != nil && resp.SessionID != "" {
 		r.trackSession(resp.SessionID)
 		r.RecordAgent(resp.AgentID)
+		if resp.Workspace != nil {
+			if pinErr := r.recordWorkspace(*resp.Workspace); pinErr != nil {
+				// THE SESSION IS NOT HANDED OUT. Its checkout would be made
+				// in a workspace no durable record names, and a recovery
+				// after a crash would be free to place the attempt anywhere.
+				r.Close(context.WithoutCancel(ctx), resp.SessionID)
+				return nil, pinErr
+			}
+		}
 	}
 	return resp, nil
 }
@@ -1004,6 +1035,74 @@ func (r *JobRun) RecordAgent(agentID string) {
 		return
 	}
 	r.agentID.CompareAndSwap(nil, agentID)
+}
+
+// WorkspacePin is where the job's named workspace was provisioned, nil until
+// a spawn provisioned one. The returned value is a copy.
+func (r *JobRun) WorkspacePin() *WorkspacePlacement {
+	pin := r.workspacePin.Load()
+	if pin == nil {
+		return nil
+	}
+	cp := *pin
+	return &cp
+}
+
+// recordWorkspace pins the job to the host its workspace was provisioned on.
+// The FIRST placement wins: every later session was pinned to it, so a second
+// answer could only be the same host.
+//
+// THE PIN IS DURABLE BEFORE THE SESSION IS USED. It is published and persisted
+// here, not left for the next state transition: the runner clones into the
+// workspace before it transitions, and a daemon that died in that window would
+// otherwise recover a job with no record of where its checkout is — free to
+// provision the same attempt on another host instead of honouring, or
+// refusing, the original placement.
+//
+// THE WRITE IS STRICT. A pin the store refused is a pin a recovery will not
+// find, so the failure is returned — the caller closes the session and hands
+// it to no one — and the in-memory pin is withdrawn with it, so nothing this
+// run publishes later claims a placement no session holds.
+func (r *JobRun) recordWorkspace(placement WorkspacePlacement) error {
+	pin := &placement
+	if !r.workspacePin.CompareAndSwap(nil, pin) {
+		return nil
+	}
+	published := r.republishWorkspacePin()
+	if published == nil {
+		return nil
+	}
+	persisted := *published
+	switch {
+	case r.storeFn != nil:
+		if err := r.storeFn(&persisted); err != nil {
+			r.workspacePin.CompareAndSwap(pin, nil)
+			r.republishWorkspacePin()
+			return &WorkspacePinPersistError{JobID: r.JobID, Key: placement.Key, Cause: err}
+		}
+	case r.persistFn != nil:
+		r.persistFn(&persisted)
+	}
+	return nil
+}
+
+// republishWorkspacePin swaps the published status for one carrying the
+// workspace pin, and answers what it published. Nil when the job has
+// published nothing yet; the envelope publishes its start state before any
+// runner can spawn, so that is a run no envelope drives.
+func (r *JobRun) republishWorkspacePin() *JobStatus {
+	for {
+		current, ok := r.status.Load().(*JobStatus)
+		if !ok || current == nil {
+			return nil
+		}
+		updated := *current
+		updated.WorkspacePin = r.WorkspacePin()
+		updated.UpdatedAt = time.Now().UnixNano()
+		if r.status.CompareAndSwap(current, &updated) {
+			return &updated
+		}
+	}
 }
 
 // stagePrepare runs Prepare and records the directory every session is

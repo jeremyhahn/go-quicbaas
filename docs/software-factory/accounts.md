@@ -759,13 +759,19 @@ ledger untouched.
 |---|---|---|
 | `claude` (ACP stream-json CLI mode) | yes | `usage` on the terminal `result` message (the CLI's own turn aggregate), falling back to the per-`assistant`-message `usage` when the turn ends without one |
 | `claude` one-shot (`--print --output-format json`) | yes | `usage` on the result object |
-| `opencode` (ACP JSON-RPC) | **no** | the ACP `session/prompt` result and `session/update` notifications carry no token accounting; nothing is recorded |
-| `codex` (`CodexExecBackend`) | **no** | `codex exec` prints a human-readable `tokens used` section, not a structured field; it is deliberately not scraped |
-| `ollama` | **no** | not wired |
-| remote daemons (`RemoteACPBackend`) | recorded on the daemon that ran the turn | the remote daemon runs its own `runPromptTurn` against its own ledger; the wire response carries no usage back, so there is exactly one record and no double counting |
+| `opencode` (ACP JSON-RPC) | yes | `usage` on the ACP `session/prompt` result (`inputTokens`, `outputTokens`, `thoughtTokens`, `cachedReadTokens`, `cachedWriteTokens`). It is read even when the answer streamed as `session/update` notifications, which is every opencode turn; reasoning tokens are counted as output |
+| `codex` exec transport (`codex exec --json`, the worker daemons) | yes | `usage` on the `turn.completed` event. codex's `input_tokens` INCLUDES `cached_input_tokens`, so the fresh prompt is recorded as `input − cached` and the cached part as a cache read |
+| `codex` (`CodexExecBackend`, the control plane's text-mode `codex exec`) | **no** | it prints a human-readable `tokens used` section, not a structured field; it is deliberately not scraped |
+| `openvino` | yes | the OpenAI-compatible `usage` of every tool round, summed |
+| `ollama` (direct) | yes | `prompt_eval_count` / `eval_count`; a response with neither is "reported nothing" |
+| API inference (`anthropic`, `openai`, …) | yes | the provider's `usage`; a response with none is "reported nothing" |
 
-Making `opencode`/`codex` report usage requires a change to what those CLIs
-emit (or a structured-output flag), not a change here.
+The ledger keeps every dimension apart: `input_tokens` is the fresh prompt,
+and `cache_read_tokens` / `cache_write_tokens` are the prompt tokens served
+from and written into the provider's cache (go-quicbaas#1058). They price
+differently, so folding them into input — as the ledger did before — left a
+cached turn impossible to price. The total, which every quota window sums, is
+unchanged.
 
 ## Provider registry (token supply)
 

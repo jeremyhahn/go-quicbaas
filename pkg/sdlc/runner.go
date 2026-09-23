@@ -18,7 +18,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -416,12 +415,6 @@ type runnerRun struct {
 	// prompt is the work's own doing and is charged, not rolled forever.
 	rolled      bool
 	rolledRound int
-
-	// rewrite records that this run asked the worker to rewrite the published
-	// branch, which a rebase round does. From then on, every publication of
-	// the attempt's branch is a lease-guarded force pinned to the head the
-	// factory last published; see publishPlan.
-	rewrite bool
 }
 
 // handler drives one state and answers the next.
@@ -803,17 +796,13 @@ func (s *runnerRun) spawnWorker(ctx context.Context) error {
 	if err := s.requireProject(); err != nil {
 		return err
 	}
-	mount, err := s.mountPoint()
-	if err != nil {
-		return err
-	}
-	req, err := s.spawnRequest(ctx, mount)
+	req, err := s.spawnRequest(ctx)
 	if err != nil {
 		return err
 	}
 	resp, err := s.job.Spawn(ctx, req)
 	if err != nil {
-		return err
+		return workspaceSpawnFault(s.job.Project.ID, err)
 	}
 	if resp == nil || resp.SessionID == "" {
 		return &WorkerSessionError{TaskID: s.taskID(), Message: "the spawn returned no session"}
@@ -822,18 +811,22 @@ func (s *runnerRun) spawnWorker(ctx context.Context) error {
 	if strings.TrimSpace(resp.ContainerID) == "" {
 		return &WorkerNotContainerizedError{TaskID: s.taskID(), SessionID: resp.SessionID}
 	}
+	if resp.Workspace == nil {
+		return &WorkerSessionError{TaskID: s.taskID(), Message: "the spawn reported no workspace for the checkout"}
+	}
 	// The job's working directory is THE PROJECT CHECKOUT, not the mount root
 	// it sits in. /workspace is the whole checkout root — the project in its
 	// own directory and each context repository beside it — so a job that
 	// recorded the root would point every reader one level above the
 	// repository the attempt is about.
 	s.containerDir = filepath.Join(s.runner.access.checkoutRoot, s.job.Project.Name)
-	s.workDir = filepath.Join(req.WorkDir, s.job.Project.Name)
+	s.workDir = filepath.Join(resp.Workspace.Dir, s.job.Project.Name)
 	s.job.SetWorkDir(s.workDir)
 	// AND THE JOB'S WORK HAPPENS IN THE CONTAINER, which is what this says.
-	// s.workDir names the host side of the bind mount, for a reader on the
-	// daemon; the container names the same checkout /workspace/<project>, and
-	// that is the only name anything the runner EXECUTES may use.
+	// s.workDir names the host side of the bind mount ON THE HOST THAT RAN THE
+	// SESSION — a fleet agent's, as often as not, where it names nothing on
+	// this daemon; the container names the same checkout /workspace/<project>,
+	// and that is the only name anything the runner EXECUTES may use.
 	if err := s.job.SetContainer(s.sessionID, s.containerDir); err != nil {
 		return err
 	}
@@ -848,27 +841,16 @@ func (s *runnerRun) spawnWorker(ctx context.Context) error {
 	})
 }
 
-// mountPoint is the host directory the attempt's checkout lives in — the
-// directory the container's /workspace is bind-mounted from.
-//
-// It is the project's own workspace, per attempt, and it is REQUIRED: a
-// project with no workspace path has nowhere for a worker to work, and
-// guessing one would put a tenant's checkout somewhere the operator's mount
-// policy never admitted.
-func (s *runnerRun) mountPoint() (string, error) {
-	root, err := s.workspaceRoot()
-	if err != nil {
-		return "", err
-	}
+// workspaceKey names the attempt's workspace: one per attempt, so every
+// session the attempt spawns — its rounds, a rolled-over session, the respawn
+// after a restart — continues the same clone, on the host the job is pinned
+// to, and a new attempt starts clean.
+func (s *runnerRun) workspaceKey() string {
 	attemptNo := 1
 	if s.job.Config != nil && s.job.Config.Attempt > 0 {
 		attemptNo = s.job.Config.Attempt
 	}
-	dir := filepath.Join(root, s.taskID()+"-a"+strconv.Itoa(attemptNo))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", &WorkspaceUnavailableError{ProjectID: s.job.Project.ID, Cause: err}
-	}
-	return dir, nil
+	return s.taskID() + "-a" + strconv.Itoa(attemptNo)
 }
 
 // requireProject refuses a job with no project record. Everything an attempt
@@ -885,27 +867,15 @@ func (s *runnerRun) requireProject() error {
 	return nil
 }
 
-// workspaceRoot is the project's own workspace directory: where the attempt's
-// checkout is mounted from, under the operator's projects root the mount
-// policy admits for this tenant.
-func (s *runnerRun) workspaceRoot() (string, error) {
-	root := strings.TrimSpace(s.job.Project.Workspace.Path)
-	if root == "" {
-		return "", &WorkspaceUnavailableError{ProjectID: s.job.Project.ID}
-	}
-	return root, nil
-}
-
 // spawnRequest builds the worker's spawn: the charter as its system prompt,
 // the binding's backend, model and image, and the workspace spec, forge token
 // and signing socket mounted.
-func (s *runnerRun) spawnRequest(ctx context.Context, mount string) (*orchestration.SpawnSessionRequest, error) {
+func (s *runnerRun) spawnRequest(ctx context.Context) (*orchestration.SpawnSessionRequest, error) {
 	req := &orchestration.SpawnSessionRequest{
 		Backend:      s.attempt.binding.Worker.Backend,
 		Model:        s.attempt.binding.Worker.Model,
 		ProjectID:    s.job.Project.ID,
 		SystemPrompt: WorkerCharter(),
-		WorkDir:      mount,
 		Persistent:   true,
 	}
 	if image := strings.TrimSpace(s.attempt.binding.Worker.Image); image != "" {
@@ -941,7 +911,7 @@ func (s *runnerRun) spawnRequest(ctx context.Context, mount string) (*orchestrat
 			Base:   s.delivery.Base,
 			Create: s.delivery.HeadSHA == "",
 		},
-		Mount: mount,
+		Key:   s.workspaceKey(),
 		Scope: SigningScopeDelivery,
 	})
 	if err != nil {
@@ -997,21 +967,6 @@ func (s *runnerRun) publishPlan() publishPlan {
 	}
 	if !s.delivery.RequiresPullRequest {
 		plan.RemoteBranch = s.delivery.Target
-		return plan
-	}
-	// A REWRITTEN BRANCH CANNOT FAST-FORWARD, ON ANY WORKSPACE KIND. After a
-	// rebase round the local branch no longer descends from the head it
-	// published. A plain push is refused as non-fast-forward, and on a
-	// persistent workspace, which publishes nothing mid-turn, the plain push
-	// here was the ONLY push. So the rebase failed the attempt instead of
-	// reaching re-review (Codex on go-quicbaas#1009). The lease is the head
-	// the delivery records, which is the last one this factory published, so
-	// the force replaces exactly that commit and nothing a person pushed
-	// since. The carve-out above is never forced: its remote is the target
-	// branch itself.
-	if s.rewrite {
-		plan.Force = true
-		plan.Lease = s.delivery.HeadSHA
 	}
 	return plan
 }
@@ -1152,7 +1107,6 @@ func (s *runnerRun) pushTurnWork(ctx context.Context) error {
 	}
 	plan := s.publishPlan()
 	plan.RemoteBranch = ""
-	plan.Force = true
 	head, err := s.publisher(ctx).Publish(plan)
 	if err != nil {
 		var nothing *NoChangesError
@@ -2088,7 +2042,7 @@ func (s *runnerRun) complete(ctx context.Context) (orchestration.JobState, error
 	}); err != nil {
 		var conflict *MergeConflictError
 		if errors.As(err, &conflict) {
-			return s.rebaseRound(ctx, conflict)
+			return s.mergeRound(ctx, conflict)
 		}
 		return "", err
 	}
@@ -2101,33 +2055,35 @@ func (s *runnerRun) complete(ctx context.Context) (orchestration.JobState, error
 	return orchestration.JobStateCleanup, nil
 }
 
-// rebaseRound sends an approved pull request that conflicts with its base
-// back to the worker, to be rebased onto the base on the same branch.
+// mergeRound sends an approved pull request that conflicts with its base
+// back to the worker, to merge the latest base into the same branch.
 //
 // IT IS A ROUND OF THE WORK, not a failure of it and not the environment's.
 // The base moved under an accepted change, and only the worker's checkout can
-// put the change back on top of it. Before this, the conflict came back from
-// Complete as a hook error. The attempt was charged as a failure of the work,
-// and every re-dispatch repeated the same merge until the task blocked
+// bring the change up to date with it. Before this, the conflict came back
+// from Complete as a hook error. The attempt was charged as a failure of the
+// work, and every re-dispatch repeated the same merge until the task blocked
 // (go-truststrap#64, 2026-09-22).
 //
-// THE REBASE IS PUBLISHED AS A REWRITE. rewrite switches the attempt's
-// publications to the lease-guarded force pinned to the published head. That
-// is the one push path, on every workspace kind; see publishPlan.
+// A MERGE, NEVER A REBASE. The owner's ruling (2026-09-04, handbook
+// version-control §5b) is absolute: a pushed branch is never rewritten and
+// never force-pushed. Merging the base keeps the published head as an
+// ancestor of the new one, so the publication that follows is the same plain
+// fast-forward push every other round makes. The runner prepares nothing on
+// the branch itself; the worker runs the merge (merge_conflict).
 //
 // THE SAME PATH AS EVERY OTHER ROUND. The findings go into job memory the way
 // verification output and review findings do, and nextRound spends a round from
-// the same budget. So a pull request that conflicts again every time it is
-// rebased still escalates to a person. The rebased head then goes through the
+// the same budget. So a pull request that conflicts again every time the base
+// is merged still escalates to a person. The merged head then goes through the
 // ordinary pipeline, where validation runs, the new head is published and the
 // review gate judges it again, because an approval covers only the head it was
 // given.
-func (s *runnerRun) rebaseRound(ctx context.Context, conflict *MergeConflictError) (orchestration.JobState, error) {
+func (s *runnerRun) mergeRound(ctx context.Context, conflict *MergeConflictError) (orchestration.JobState, error) {
 	s.job.Audit(auditMergeConflict, "base="+conflict.Base+" head="+conflict.Head+
 		" attempts="+strconv.Itoa(conflict.Attempts))
 	s.feedback = mergeConflictFindings(conflict)
 	s.job.Memory().AddFeedback(s.feedback)
-	s.rewrite = true
 	return s.nextRound(ctx, "merge conflict with "+conflict.Base)
 }
 
@@ -2257,7 +2213,7 @@ const auditAgentTurn = "sdlc:agent_turn"
 const auditNonAnswerReprompted = "sdlc:non_answer_reprompted"
 
 // auditMergeConflict records that an approved pull request conflicted with its
-// base and was sent back to the worker as a rebase round.
+// base and was sent back to the worker as a merge round.
 const auditMergeConflict = "sdlc:merge_conflict"
 
 // auditVerificationSkipped records that the binding's verification commands

@@ -406,6 +406,16 @@ type AgentObservation struct {
 	// silently clamping it to zero would turn a caller's bug into a daemon
 	// that quietly stopped counting.
 	MaxConcurrentJobs int
+
+	// SigningAgents is the identifier of every daemon sockets root the agent
+	// can mount from (DiscoverSigningRootIDs), re-read on every heartbeat so the
+	// trait follows a daemon that re-created its root. It replaces the record's
+	// signing-agent traits.
+	//
+	// NIL REPORTS NOTHING AND RECONCILES NOTHING — an older build, or a
+	// transport that carries no such list. An EMPTY list is a report: the agent
+	// can reach no signing socket, and its traits are cleared.
+	SigningAgents []string
 }
 
 // Validate rejects an observation that reports no served backend, or one whose
@@ -436,6 +446,14 @@ func (o *AgentObservation) Validate() error {
 			Sentinel: ErrAgentRegistryInvalidInput,
 			Message: "heartbeat reported a negative concurrent-job capacity (" +
 				strconv.Itoa(o.MaxConcurrentJobs) + "): use zero to report none",
+		}
+	}
+	for _, id := range o.SigningAgents {
+		if !validSigningRootID(id) {
+			return &AgentRegistryError{
+				Sentinel: ErrAgentRegistryInvalidInput,
+				Message:  "heartbeat reported a malformed signing-root identifier " + strconv.Quote(id),
+			}
 		}
 	}
 	return nil

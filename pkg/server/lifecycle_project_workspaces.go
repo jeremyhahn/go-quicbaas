@@ -34,12 +34,8 @@ const hostKeysDirName = ".hostkeys"
 // pattern the agent registry uses. projectStore must be the SAME store the
 // ProjectService persists to, so background state transitions land on the
 // records callers read.
-func (s *Server) wireProjectWorkspaces(projectStore orchestration.ProjectStore, projectsRoot string) error {
-	workspaces, err := orchestration.NewWorkspaceManager(projectsRoot)
-	if err != nil {
-		return err
-	}
-
+func (s *Server) wireProjectWorkspaces(projectStore orchestration.ProjectStore, workspaces *orchestration.WorkspaceManager) error {
+	projectsRoot := workspaces.Root()
 	logAdapter := logger.NewAdapter(s.logger)
 	git := &service.GitProvisioner{
 		Logger: logAdapter,

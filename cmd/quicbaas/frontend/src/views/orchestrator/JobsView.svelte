@@ -128,11 +128,21 @@
   ];
 
   /**
-   * jobIssueRef is the forge issue behind a job, read from the Task the job is
-   * an attempt at — by the job's own binding, or from the other end when the
-   * server does not yet carry one. A lead-driven job has neither, and no chip.
+   * jobIssueRef is the forge issue behind a job.
+   *
+   * THE ROW'S OWN `source` IS THE ANSWER, and the store is only a fallback.
+   * The server fills the source for the page it answers (go-quicbaas#976);
+   * before it did, this read the job's task out of `orchestratorStore.tasks`,
+   * which since the tasks listing became server-paged holds ONE page of 25.
+   * So the chip rendered for whichever jobs happened to have their task on
+   * that page and blanked for the rest — on page 2 of jobs, for nearly every
+   * row. The fallback stays for the one binding the server cannot follow: a
+   * job that carries no task_id, which only the task names, from the other
+   * end. A lead-driven job has neither, and no chip.
    */
   function jobIssueRef(job: JobStatus): IssueRef | null {
+    const fromServer = issueRef(job);
+    if (fromServer) return fromServer;
     const tasks = Array.isArray(orchestratorStore.tasks) ? orchestratorStore.tasks : [];
     const task = job.task_id
       ? tasks.find((t) => t.id === job.task_id)

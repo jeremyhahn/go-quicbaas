@@ -147,6 +147,9 @@ func (s *agentServiceImpl) launchJob(ctx context.Context, config *JobConfig, job
 		runCfg.PersistFn = func(status *JobStatus) {
 			s.persistJobStatus(tenantID, status)
 		}
+		runCfg.StoreFn = func(status *JobStatus) error {
+			return s.storeJobStatus(tenantID, status)
+		}
 	}
 
 	// The job outlives the call that launched it: the caller's context
@@ -356,6 +359,14 @@ func (r *JobRun) restore(status *JobStatus) {
 	// belongs to the persisted record and the run must not write through
 	// it.
 	r.park = status.Park.clone()
+	// AND THE WORKSPACE PIN, for the park's own reason: snapshot() rebuilds
+	// it from the run, so a resumed run that did not restore it would erase
+	// the only record of where its checkout is — and its respawn would then
+	// be free to clone afresh on whatever host the dispatcher picked.
+	if status.WorkspacePin != nil {
+		pin := *status.WorkspacePin
+		r.workspacePin.Store(&pin)
+	}
 }
 
 // execute runs the job to a terminal state. It owns the whole envelope: the

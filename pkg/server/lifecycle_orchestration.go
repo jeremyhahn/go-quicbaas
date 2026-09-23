@@ -226,6 +226,7 @@ func (s *Server) startOrchestration() error {
 		SetProjectAuthz(authz *orchestration.ProjectAuthz)
 		SetProjectStore(store orchestration.ProjectStore)
 		SetMountPolicy(policy *orchestration.MountPolicy)
+		SetWorkspaceProvisioner(p orchestration.WorkspaceProvisioner)
 		SetTrustPolicy(policy orchestration.TrustPolicy)
 		SetTranscriptReplayBudget(budget int)
 		SetCostTracker(tracker orchestration.CostTracker)
@@ -312,8 +313,30 @@ func (s *Server) startOrchestration() error {
 		}
 		wirer.SetTrustPolicy(trustPolicy)
 		s.logger.Infof("Agent trust policy: %s (integrity floor)", trustPolicy.String())
-		if wsErr := s.wireProjectWorkspaces(projectStore, projectsRoot); wsErr != nil {
+		// One manager over the projects root serves both halves of it: the
+		// managed project clones CreateProject provisions, and the named job
+		// workspaces a spawn on this daemon's own backend asks for
+		// (go-quicbaas#981). A root the manager refuses disables both, and a
+		// spawn naming a workspace is then refused rather than placed
+		// somewhere the mount policy never admitted.
+		workspaces, wsErr := orchestration.NewWorkspaceManager(projectsRoot)
+		if wsErr != nil {
 			s.logger.Warnf("Managed project workspaces disabled: %v", wsErr)
+		} else {
+			// The spec directories an in-process session of a previous run
+			// left behind each hold a forge token; no session survived the
+			// restart to release them, so they go before anything spawns.
+			specs, sweepErr := workspaces.SweepSessionSpecs()
+			if sweepErr != nil {
+				return sweepErr
+			}
+			if len(specs) > 0 {
+				s.logger.Infof("Removed %d workspace spec(s) a previous run left behind", len(specs))
+			}
+			wirer.SetWorkspaceProvisioner(workspaces)
+			if wireErr := s.wireProjectWorkspaces(projectStore, workspaces); wireErr != nil {
+				s.logger.Warnf("Managed project workspaces disabled: %v", wireErr)
+			}
 		}
 		// Reuse the registry created during IAM init so enrollment-time
 		// registrations are immediately visible to dispatch. Builds one over

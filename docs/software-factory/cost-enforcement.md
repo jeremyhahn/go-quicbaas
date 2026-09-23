@@ -1,6 +1,6 @@
 # Cost enforcement — the consumption ledger, the spend cap and the breaker
 
-> **Status: NORMATIVE** · Last verified: 2026-09-11
+> **Status: NORMATIVE** · Last verified: 2026-09-23
 > Supplement to the Software Factory feature folder: the consumption
 > ledger, the per-account spend cap and the failure circuit breaker that
 > guard every credential release. Conflicts with this document are defects.
@@ -91,7 +91,13 @@ is either in both or in neither and the dashboard can never contradict the cap.
   reads occurrences rather than quantities — and for the backends that publish
   no counts at all, every success is unmeasured, so dropping them would leave
   an account that can trip and can never be untripped by the turn that proves
-  it recovered.
+  it recovered. Which backends publish counts, and from where, is tabled in
+  [accounts.md](accounts.md#which-backends-report-token-counts).
+- Each **token dimension keeps its own field**: `input_tokens` is the fresh
+  prompt, `cache_read_tokens` and `cache_write_tokens` the prompt tokens served
+  from and written into the provider's cache. They price differently, and
+  before go-quicbaas#1058 both were folded into input. The total every quota
+  window sums is the sum of all four, so the split moved no cap.
 - A turn that drew on **no pooled account** is not ledgered. The quota plane is
   keyed by account because an allowance belongs to an account; such turns stay
   visible in the counters.
@@ -269,6 +275,7 @@ Every figure the system does not have is absent and labelled, never a zero:
 | --- | --- |
 | `cost_micros` | Accompanied by `cost_measured`. **Nothing prices a turn**, so the flag is false on every production report and a reader must render a dash. Deriving the flag from the data rather than hard-coding it is what lets go-quicbaas#791's price source land without every reader changing. |
 | `accounts[].policy_status` | `metered` / `none` / `unknown`. `none` means the account was READ and meters nothing; `unknown` means nothing could read it. Collapsing the two would let an unwired deployment report every account as uncapped. |
+| `project_name` / `children[].name` | A project's name, from the project store. Absent for a project that no longer exists — the ledger outlives what it names, so its spend stays under its id — and a project store that cannot answer FAILS the report, the same rule as the account store. |
 | `children[].unattributed` | The no-value bucket, with `id` deliberately EMPTY so no reader can print the sentinel by accident. |
 | `first_at` / `last_at` / `frees_at`, and the breaker's instants | Absent rather than the zero instant, which a client would render as the year 1. They are POINTERS in Go, because `omitempty` does NOT omit a zero `time.Time` — for a struct field `encoding/json` treats nothing as empty, so a non-pointer would always have serialised, and an absent moment would have crossed as `0001-01-01T00:00:00Z` on REST, MCP and the desktop binding (which re-marshals the SDK type). Guarded by tests that read the JSON rather than the struct, since the struct cannot tell the two encodings apart. |
 
@@ -294,6 +301,11 @@ account — it has none.
 and `JobDetailView.svelte`'s Cost tab is that job's entries. Both read through
 `cmd/quicbaas/frontend/src/lib/cost.ts`, which owns the rendering rules so they
 are testable rather than re-derived in a template.
+
+**A row reads as its name.** A project row renders the project's `name` and
+keeps the id as its tooltip and its drill value (`childLabel`,
+`childIsNamed`); the breadcrumb names the project it opened (`scopeLabel`).
+Before go-quicbaas#1058 the By Project card listed bare ids.
 
 **The iteration gauge renders only for a runner that iterates.** Before #794
 the Cost page showed "0.0% Iterations" and a per-job breakdown of `0/10`:

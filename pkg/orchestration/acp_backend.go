@@ -2159,11 +2159,20 @@ func (b *ACPBackend) promptJSONRPC(ctx context.Context, sess *acpSession, req *P
 	contentMu.Unlock()
 
 	if fullContent != "" {
+		// THE RESULT STILL CARRIES THE TURN'S COST even when its content
+		// arrived as notifications. A result that cannot be decoded costs the
+		// turn its accounting, never its answer.
+		result, decodeErr := decodePromptResult(resp)
+		if decodeErr != nil && b.logger != nil {
+			b.logger.Warnf("acp_backend: session/prompt result for session %s could not be decoded; the turn's usage is unreported: %s",
+				sess.id, decodeErr.Error())
+		}
 		return &PromptResponse{
 			SessionID:  sess.id,
 			Content:    []ContentBlock{{Type: "text", Text: fullContent}},
 			Model:      sess.model,
 			StopReason: StopReasonEndTurn,
+			Usage:      result.Usage.TokenUsage(),
 		}, nil
 	}
 
@@ -2203,22 +2212,30 @@ func (b *ACPBackend) promptEphemeral(ctx context.Context, req *PromptRequest) (*
 
 // parsePromptResult extracts a PromptResponse from a JSON-RPC response.
 func (b *ACPBackend) parsePromptResult(resp *JSONRPCMessage, sessionID string) (*PromptResponse, error) {
-	resultBytes, err := json.Marshal(resp.Result)
+	promptResult, err := decodePromptResult(resp)
 	if err != nil {
-		return nil, &ProtocolError{Message: "failed to marshal prompt result", Cause: err}
+		return nil, err
 	}
-
-	var promptResult SessionPromptResult
-	if err := json.Unmarshal(resultBytes, &promptResult); err != nil {
-		return nil, &ProtocolError{Message: "failed to parse prompt result", Cause: err}
-	}
-
 	return &PromptResponse{
 		SessionID:  sessionID,
 		Content:    promptResult.Content,
 		Model:      promptResult.Model,
 		StopReason: promptResult.StopReason,
+		Usage:      promptResult.Usage.TokenUsage(),
 	}, nil
+}
+
+// decodePromptResult decodes a session/prompt response's result object.
+func decodePromptResult(resp *JSONRPCMessage) (SessionPromptResult, error) {
+	var promptResult SessionPromptResult
+	resultBytes, err := json.Marshal(resp.Result)
+	if err != nil {
+		return promptResult, &ProtocolError{Message: "failed to marshal prompt result", Cause: err}
+	}
+	if err := json.Unmarshal(resultBytes, &promptResult); err != nil {
+		return SessionPromptResult{}, &ProtocolError{Message: "failed to parse prompt result", Cause: err}
+	}
+	return promptResult, nil
 }
 
 // Status returns health information for an active ACP session.

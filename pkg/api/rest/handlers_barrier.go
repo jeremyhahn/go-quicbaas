@@ -127,7 +127,33 @@ type barrierEnableEncryptionRequest struct {
 	// Shamir-target migration. Ignored for passphrase targets.
 	ShamirThreshold int `json:"shamir_threshold,omitempty"`
 	ShamirTotal     int `json:"shamir_total,omitempty"`
+
+	// TenantID is decoded only so it can be REFUSED. This route's scope is
+	// its path — the system barrier; a tenant migration has its own route —
+	// and a body tenant_id silently dropped here migrated the system barrier
+	// for a caller who asked for a tenant's (go-quicbaas#990).
+	TenantID string `json:"tenant_id,omitempty"`
 }
+
+// barrierWireEnableEncryptionRequest is the JSON payload for the go-qrdb
+// wire mount POST /v1/barrier/enable-encryption. Unlike the /api/v1 shape
+// above, it IS an alias of qrdbtransport.BarrierEnableEncryptionRequest: the
+// path is go-qrdb's, re-served here, and its client is go-qrdb's REST
+// transport, so the target is `strategy` and a body `tenant_id` selects the
+// scope (empty means the system barrier) — go-quicbaas#990.
+type barrierWireEnableEncryptionRequest = qrdbtransport.BarrierEnableEncryptionRequest
+
+// Values of qrdbtransport.BarrierEnableEncryptionResponse on the wire mount.
+// They are go-qrdb's own: its server answers the same path with these words.
+const (
+	// barrierMigrationStarted acknowledges an accepted migration. Callers
+	// observe completion through the migrated barrier's status — the system
+	// barrier's or the tenant's — whose strategy changes.
+	barrierMigrationStarted = "migration_started"
+	// barrierScopeSystem / barrierScopeTenant name the barrier migrated.
+	barrierScopeSystem = string(qrdbsdk.ScopeSystem)
+	barrierScopeTenant = string(qrdbsdk.ScopeTenant)
+)
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -590,6 +616,11 @@ func (s *Server) HandleBarrierEnableEncryption(w http.ResponseWriter, r *http.Re
 	if !readBarrierJSON(w, r, &req) {
 		return
 	}
+	if req.TenantID != "" {
+		RespondBadRequest(w, r, "tenant_id is not accepted on this route: it migrates the system barrier; "+
+			"use POST /api/v1/tenants/{tenant_id}/barrier/enable-encryption for a tenant")
+		return
+	}
 	if req.TargetStrategy == "" {
 		RespondBadRequest(w, r, "target_strategy is required")
 		return
@@ -626,4 +657,155 @@ func (s *Server) HandleBarrierEnableEncryption(w http.ResponseWriter, r *http.Re
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// HandleBarrierWireEnableEncryption handles the go-qrdb wire mount
+// POST /v1/barrier/enable-encryption.
+//
+// It speaks go-qrdb's wire verbatim (go-quicbaas#990): the request is
+// qrdbtransport.BarrierEnableEncryptionRequest — `strategy`, with a body
+// `tenant_id` selecting a tenant's dedicated barrier and an empty one the
+// system barrier — and the answer is 200 with a
+// qrdbtransport.BarrierEnableEncryptionResponse, which is what go-qrdb's REST
+// transport decodes. The quicbaas-owned /api/v1 route keeps `target_strategy`
+// and 204, as do the gRPC and MCP surfaces.
+//
+// Because the body selects the scope, the route is registered identity-gated
+// and this handler authorizes the scope the request selected
+// (authorizeBarrierScope): seal:enable_encryption against the system tenant
+// for the system barrier, tenant_barrier:enable_encryption against the named
+// tenant for a tenant's. BarrierService.EnableEncryption then binds a
+// tenant-scoped migration to the caller's own tenant, as on every transport.
+func (s *Server) HandleBarrierWireEnableEncryption(w http.ResponseWriter, r *http.Request) {
+	if !s.requireBarrierService(w, r) {
+		return
+	}
+
+	var req barrierWireEnableEncryptionRequest
+	defer wipeCredential(&req.Passphrase)()
+	if !readBarrierJSON(w, r, &req) {
+		return
+	}
+	if req.Strategy == "" {
+		RespondBadRequest(w, r, "strategy is required")
+		return
+	}
+	if !s.authorizeBarrierScope(w, r, req.TenantID) {
+		return
+	}
+
+	mech := req.Mechanism
+	if mech == "" {
+		mech = string(qrdbsdk.MechanismSwap)
+	}
+	avail := req.Availability
+	if avail == "" {
+		avail = string(qrdbsdk.AvailabilityOnline)
+	}
+
+	opts := qrdbsdk.MigrationOptions{
+		TargetStrategy:  qrdbsdk.StrategyID(req.Strategy),
+		Mechanism:       qrdbsdk.MigrationMechanism(mech),
+		Availability:    qrdbsdk.MigrationAvailability(avail),
+		ShamirThreshold: req.ShamirThreshold,
+		ShamirTotal:     req.ShamirTotal,
+	}
+	if len(req.Passphrase) > 0 {
+		creds, credErr := qrdbsdk.CredentialsFor(req.Passphrase)
+		if credErr != nil {
+			s.handleServiceError(w, r, credErr)
+			return
+		}
+		defer creds.Secret.Destroy()
+		opts.Credentials = creds
+	}
+
+	scope := barrierScopeSystem
+	if req.TenantID != "" {
+		scope = barrierScopeTenant
+	}
+	if err := s.barrierSvc.EnableEncryption(r.Context(), req.TenantID, opts); err != nil {
+		if req.TenantID != "" {
+			s.handleTenantBarrierError(w, r, err)
+			return
+		}
+		s.handleServiceError(w, r, err)
+		return
+	}
+	RespondJSON(w, r, http.StatusOK, qrdbtransport.BarrierEnableEncryptionResponse{
+		Status: barrierMigrationStarted,
+		Scope:  scope,
+	})
+}
+
+// Permissions HandleBarrierWireEnableEncryption requires, per selected scope.
+// They are the permissions the path-scoped siblings carry at registration:
+// POST /api/v1/barrier/enable-encryption (system) and
+// POST /api/v1/tenants/{tenant_id}/barrier/enable-encryption (tenant).
+const (
+	barrierSystemEnableResource = "seal"
+	barrierTenantEnableResource = "tenant_barrier"
+	barrierEnableAction         = "enable_encryption"
+)
+
+// BarrierScopeAuthorizerUnavailableError reports that the scope authorizer
+// POST /v1/barrier/enable-encryption depends on is not wired or not yet able
+// to decide. The route fails closed on it (503) rather than admit a caller
+// no decision was rendered for.
+type BarrierScopeAuthorizerUnavailableError struct {
+	// Reason says why no decision could be made.
+	Reason string
+}
+
+// Error returns a human-readable description.
+func (e *BarrierScopeAuthorizerUnavailableError) Error() string {
+	if e.Reason == "" {
+		return "barrier scope authorizer is not available"
+	}
+	return "barrier scope authorizer is not available: " + e.Reason
+}
+
+// authorizeBarrierScope authorizes the go-qrdb wire enable-encryption request
+// for the scope its body selected, writing the refusal and returning false
+// when the caller may not migrate that barrier.
+//
+// The route is registered identity-gated (routes_permissions_generated.go)
+// because one registration-site permission cannot describe a route whose
+// scope is in its body: seal:enable_encryption would refuse a tenant
+// principal holding tenant_barrier:enable_encryption, and
+// tenant_barrier:enable_encryption would admit a tenant principal to the
+// SYSTEM barrier. The decision is go-qrdb's RBAC authorizer's, with the
+// target tenant bound explicitly — never inherited from the request context —
+// so a tenant principal cannot reach the system barrier or another tenant's.
+func (s *Server) authorizeBarrierScope(w http.ResponseWriter, r *http.Request, tenantID string) bool {
+	authz := s.barrierScopeAuthorizer()
+	if authz == nil {
+		RespondError(w, r, http.StatusServiceUnavailable,
+			&BarrierScopeAuthorizerUnavailableError{Reason: "not configured"})
+		return false
+	}
+	identity := qrdbsdk.IdentityFromContext(r.Context())
+	if identity == nil {
+		RespondError(w, r, http.StatusUnauthorized, &UnauthorizedError{Message: "authentication required"})
+		return false
+	}
+
+	resource := barrierSystemEnableResource
+	if tenantID != "" {
+		resource = barrierTenantEnableResource
+	}
+	// An empty tenantID binds the system tenant (qrdbsdk.ContextWithTenant).
+	ctx := qrdbsdk.ContextWithTenant(r.Context(), tenantID)
+	if err := authz.Authorize(ctx, identity, resource, barrierEnableAction); err != nil {
+		var unavailable *BarrierScopeAuthorizerUnavailableError
+		if errors.As(err, &unavailable) {
+			RespondError(w, r, http.StatusServiceUnavailable, unavailable)
+			return false
+		}
+		RespondError(w, r, http.StatusForbidden, &ForbiddenError{
+			Reason: resource + ":" + barrierEnableAction + " is required for the requested scope",
+		})
+		return false
+	}
+	return true
 }

@@ -15,6 +15,8 @@ package agent
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -84,20 +86,34 @@ func TestConfig_Validate_AllowedMountRoots(t *testing.T) {
 }
 
 // TestConfig_MountPolicy_DeniesByDefault asserts the accessor's deny-by-default
-// posture and that a configured root is carried through unchanged. A daemon
-// owns no projects root, so tenant-scoped grants never apply to it.
+// posture and that a configured root is carried through unchanged. The one
+// grant a daemon holds without an allowlist is its OWN projects root, the
+// workspaces it provisions there, tenant-scoped (go-quicbaas#981).
 func TestConfig_MountPolicy_DeniesByDefault(t *testing.T) {
 	t.Parallel()
 
-	empty := (&Config{}).MountPolicy()
+	workDir := t.TempDir()
+	empty := (&Config{WorkDir: workDir}).MountPolicy()
 	if empty == nil {
 		t.Fatal("MountPolicy must never be nil: a nil policy is indistinguishable from an unwired runtime")
 	}
-	if empty.ProjectsRoot != "" {
-		t.Errorf("projects root: got %q, want empty (a daemon manages no workspaces)", empty.ProjectsRoot)
+	if want := filepath.Join(workDir, "projects"); empty.ProjectsRoot != want {
+		t.Errorf("projects root: got %q, want the daemon's own %q", empty.ProjectsRoot, want)
 	}
 	if err := empty.AuthorizeSource("tenant-a", orchestration.MountFieldWorkDir, "/etc"); err == nil {
-		t.Fatal("an unconfigured daemon must deny every mount source")
+		t.Fatal("an unconfigured daemon must deny every mount source outside its projects root")
+	}
+	// The projects-root grant is tenant-scoped: another tenant's workspace
+	// under the same root is refused.
+	other := filepath.Join(empty.ProjectsRoot, "tenant-b", "p", "workspace", "k")
+	if err := os.MkdirAll(other, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := empty.AuthorizeSource("tenant-a", orchestration.MountFieldWorkDir, other); err == nil {
+		t.Fatal("tenant-a mounted tenant-b's workspace")
+	}
+	if err := empty.AuthorizeSource("tenant-b", orchestration.MountFieldWorkDir, other); err != nil {
+		t.Fatalf("tenant-b was refused its own workspace: %v", err)
 	}
 
 	configured := (&Config{AllowedMountRoots: []string{"/srv/workspaces"}}).MountPolicy()

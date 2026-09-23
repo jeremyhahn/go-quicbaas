@@ -63,6 +63,12 @@ service AgentRuntime {
     // seen from this daemon. For Ollama this is the set of locally-pulled
     // models; for ACP backends it returns a curated catalog.
     rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
+
+    // Exec runs one command inside the container of a session THIS daemon
+    // spawned, for the caller's tenant (go-quicbaas#981). The session names
+    // the container; the caller never does. The daemon refuses a session it
+    // does not hold, one of another tenant, and one with no container.
+    rpc ExecSession(ExecSessionRequest) returns (ExecSessionResponse);
 }
 
 // EnrollRequest carries the daemon-declared capabilities it would have
@@ -176,4 +182,29 @@ message InferResponse {
     // final is true on the last frame of the stream. Callers must not
     // send further requests after receiving a frame with final=true.
     bool final = 4;
+}
+
+// ExecSessionRequest names a session this daemon holds and the command to run
+// in its container.
+message ExecSessionRequest {
+    string tenant_id = 1;
+    string session_id = 2;
+    repeated string cmd = 3;
+    map<string, string> env = 4;
+    // work_dir is the directory INSIDE the container.
+    string work_dir = 5;
+    bytes stdin = 6;
+}
+
+// ExecSessionResponse is what the command did. A non-zero exit_code is an
+// answer, not an error. Output is bounded by the daemon; truncated says it
+// was cut. stdout and stderr are BYTES, exactly as the command wrote them: a
+// command's output is not guaranteed to be UTF-8, and a string field holding
+// invalid UTF-8 cannot be serialized — the response, and its exit status,
+// would be lost.
+message ExecSessionResponse {
+    int32 exit_code = 1;
+    bytes stdout = 2;
+    bytes stderr = 3;
+    bool truncated = 4;
 }

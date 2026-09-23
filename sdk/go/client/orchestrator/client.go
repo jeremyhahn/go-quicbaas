@@ -419,8 +419,11 @@ type SpendChild struct {
 	// Unattributed marks the subtree the ledger files under its no-value
 	// sentinel — a job with no task. Real spend with no parent at this
 	// level, to be labelled rather than shown as an entity named "-".
-	Unattributed bool  `json:"unattributed,omitempty"`
-	TotalTokens  int64 `json:"total_tokens"`
+	Unattributed bool `json:"unattributed,omitempty"`
+	// Name is the child's human name where the level has one (a project),
+	// empty when unattributed or when the entity no longer exists.
+	Name        string `json:"name,omitempty"`
+	TotalTokens int64  `json:"total_tokens"`
 }
 
 // GetSpendReportRequest addresses one scope of the attribution chain.
@@ -451,10 +454,18 @@ type GetSpendReportResponse struct {
 	SessionID string     `json:"session_id,omitempty"`
 	Round     int        `json:"round,omitempty"`
 
-	Entries      int   `json:"entries"`
-	InputTokens  int64 `json:"input_tokens"`
-	OutputTokens int64 `json:"output_tokens"`
-	TotalTokens  int64 `json:"total_tokens"`
+	// ProjectName is the name of the project the scope addresses, when it
+	// still exists.
+	ProjectName string `json:"project_name,omitempty"`
+
+	Entries int `json:"entries"`
+	// InputTokens is the fresh prompt; the two cache dimensions are prompt
+	// tokens served from and written into the provider's cache.
+	InputTokens      int64 `json:"input_tokens"`
+	OutputTokens     int64 `json:"output_tokens"`
+	CacheReadTokens  int64 `json:"cache_read_tokens"`
+	CacheWriteTokens int64 `json:"cache_write_tokens"`
+	TotalTokens      int64 `json:"total_tokens"`
 
 	// CostMicros is the summed charge in millionths of a currency unit, and
 	// CostMeasured says whether ANY of it was priced.
@@ -3239,6 +3250,14 @@ type JobStatus struct {
 	// ReadmitAllowed says whether a person may return the task to the queue.
 	ReadmitAllowed bool `json:"readmit_allowed,omitempty"`
 
+	// Source is where the job's TASK came from — the forge issue it was
+	// adopted from, with the ref (`owner/repo#62`) and the URL the origin
+	// recorded. It is the task's own TaskSource, so a consumer names a job's
+	// issue with the code it already uses for a task's. Unlike the rest of
+	// this block it is also on the LISTING, because a paged jobs view holds
+	// no tasks to resolve it from (go-quicbaas#976).
+	Source *TaskSource `json:"source,omitempty"`
+
 	// Delivery is the git side of THIS ATTEMPT — branch, head, pull request
 	// and review rounds — read off the artifacts the runner published.
 	Delivery *JobDelivery `json:"delivery,omitempty"`
@@ -3373,6 +3392,11 @@ type JobSummary struct {
 	EventCount  int    `json:"event_count"`
 	TaskID      string `json:"task_id,omitempty"`
 	Attempt     int    `json:"attempt,omitempty"`
+
+	// Source is the forge issue behind the job's task, filled by the server
+	// for the page it answers. A jobs view is paged and holds no tasks of its
+	// own, so without this the row cannot name its issue (go-quicbaas#976).
+	Source *TaskSource `json:"source,omitempty"`
 }
 
 // SubscribeJobEventsRequest is a request to subscribe to real-time job events.

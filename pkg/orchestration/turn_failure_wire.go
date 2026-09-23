@@ -258,6 +258,13 @@ const (
 	// control plane does not mistake a busy pool for an empty one and park
 	// work that clears itself. See AccountsCoolingDownError.
 	spawnFaultCoolingDown = "accounts_cooling_down"
+
+	// spawnFaultSessionWorkspace is a named workspace the daemon could not
+	// provision or find (go-quicbaas#981): a pinned checkout that is gone or
+	// moved, a daemon with no projects root, a workspace of another tenant.
+	// No process was started, and the job's checkout is not somewhere a
+	// retry on another host could continue it.
+	spawnFaultSessionWorkspace = "session_workspace"
 )
 
 // spawnFaultSentinels maps a wire class onto the sentinel it reconstructs.
@@ -271,6 +278,7 @@ var spawnFaultSentinels = map[string]error{
 	spawnFaultCredentialNotFound:     ErrAccountCredentialNotFound,
 	spawnFaultRefresherNotConfigured: ErrAccountRefresherNotConfigured,
 	spawnFaultCoolingDown:            ErrAccountsCoolingDown,
+	spawnFaultSessionWorkspace:       ErrSessionWorkspace,
 }
 
 // spawnFaultClassOf names the class err belongs to, or "" when it is not a
@@ -309,6 +317,8 @@ func spawnFaultClassOf(err error) string {
 		return spawnFaultCredentialNotFound
 	case errors.Is(err, ErrAccountRefresherNotConfigured):
 		return spawnFaultRefresherNotConfigured
+	case errors.Is(err, ErrSessionWorkspace):
+		return spawnFaultSessionWorkspace
 	}
 	return ""
 }

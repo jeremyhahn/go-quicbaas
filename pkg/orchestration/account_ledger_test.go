@@ -283,6 +283,8 @@ func TestConsumptionLedgerRecordValidation(t *testing.T) {
 		{"negative round", func(e *ConsumptionEntry) { e.Round = -1 }, "round", true},
 		{"negative input tokens", func(e *ConsumptionEntry) { e.InputTokens = -1 }, "input_tokens", true},
 		{"negative output tokens", func(e *ConsumptionEntry) { e.OutputTokens = -1 }, "output_tokens", true},
+		{"negative cache read tokens", func(e *ConsumptionEntry) { e.CacheReadTokens = -1 }, "cache_read_tokens", true},
+		{"negative cache write tokens", func(e *ConsumptionEntry) { e.CacheWriteTokens = -1 }, "cache_write_tokens", true},
 		{"negative cost", func(e *ConsumptionEntry) { e.CostMicros = -1 }, "cost_micros", true},
 		{"zero occurred at", func(e *ConsumptionEntry) { e.OccurredAt = time.Time{} }, "occurred_at", true},
 
@@ -293,6 +295,7 @@ func TestConsumptionLedgerRecordValidation(t *testing.T) {
 		{"failure outcome", func(e *ConsumptionEntry) { e.Outcome = ConsumptionOutcomeFailure }, "", false},
 		{"round zero", func(e *ConsumptionEntry) { e.Round = 0 }, "", false},
 		{"zero tokens", func(e *ConsumptionEntry) { e.InputTokens, e.OutputTokens = 0, 0 }, "", false},
+		{"cache tokens", func(e *ConsumptionEntry) { e.CacheReadTokens, e.CacheWriteTokens = 5, 6 }, "", false},
 		{"zero cost", func(e *ConsumptionEntry) { e.CostMicros = 0 }, "", false},
 		{"no project", func(e *ConsumptionEntry) { e.ProjectID = "" }, "", false},
 		{"no session", func(e *ConsumptionEntry) { e.SessionID = "" }, "", false},

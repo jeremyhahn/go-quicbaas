@@ -728,7 +728,7 @@ func rawRouteSpecs() []RouteSpec {
 		// --- GroupBarrierWire ---
 		// Load-bearing for the standalone sealed-window REST listener
 		// (pkg/server/sealed_window_rest.go); see the RouteGroup doc comment.
-		{Method: "POST", Pattern: "/v1/barrier/enable-encryption", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierEnableEncryption }},
+		{Method: "POST", Pattern: "/v1/barrier/enable-encryption", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierWireEnableEncryption }},
 		{Method: "POST", Pattern: "/v1/barrier/initialize", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierInitialize }},
 		{Method: "DELETE", Pattern: "/v1/barrier/recovery", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierRecoveryDelete }},
 		{Method: "POST", Pattern: "/v1/barrier/recovery/generate", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierRecoveryGenerate }},

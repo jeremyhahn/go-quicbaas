@@ -19,6 +19,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -50,6 +51,33 @@ func TestHandleBarrierEnableEncryption_MissingTargetStrategy(t *testing.T) {
 		http.MethodPost, "/api/v1/barrier/enable-encryption", `{"passphrase":"eA=="}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d (body=%s)", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleBarrierEnableEncryption_RejectsBodyTenantID pins item 3 of
+// go-quicbaas#990 on the quicbaas-owned route: its scope is the path (this one
+// is the system barrier; the tenant route carries the tenant in its path), so
+// a body tenant_id must be refused rather than silently dropped — dropping it
+// migrated the SYSTEM barrier for a caller who asked for a tenant's.
+func TestHandleBarrierEnableEncryption_RejectsBodyTenantID(t *testing.T) {
+	called := false
+	svc := &fakeBarrierService{
+		enableEncryptionFn: func(context.Context, string, qrdbsdk.MigrationOptions) error {
+			called = true
+			return nil
+		},
+	}
+	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost,
+		"/api/v1/barrier/enable-encryption",
+		`{"target_strategy":"shamir","tenant_id":"acme","shamir_threshold":2,"shamir_total":3}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "tenant_id") {
+		t.Errorf("the 400 should name tenant_id, body=%s", w.Body.String())
+	}
+	if called {
+		t.Error("the system barrier was migrated for a request that named a tenant")
 	}
 }
 

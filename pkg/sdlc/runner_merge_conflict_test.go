@@ -23,7 +23,7 @@ import (
 )
 
 // =============================================================================
-// A pull request that conflicts with its base is a rebase round
+// A pull request that conflicts with its base is a merge round
 // =============================================================================
 //
 // Measured on go-truststrap#64 (2026-09-22). The PR was codex-approved, green
@@ -31,7 +31,11 @@ import (
 // conflict. Complete retried the merge until the not-ready bound was spent,
 // returned the exhaustion as a hook error, and the attempt was charged as a
 // failure of the work. That happened twice. Nothing ever asked the worker to
-// rebase, which is the only thing that fixes it.
+// merge the base into the branch, which is the only thing that fixes it.
+//
+// The branch is never rewritten (owner ruling 2026-09-04, handbook
+// version-control §5b). The fake container refuses every force push outright,
+// so each test here also proves no round asked for one.
 
 // conflictOnPublish arms a pull request that is approved and green on the head
 // it opens with, and that conflicts with its base. The forge answers every
@@ -45,17 +49,14 @@ func (r *runnerRig) conflictOnPublish() {
 	}
 }
 
-// workerRebased is a worker that rebased onto the base: the head moves to a
-// commit that does not descend from the published one, the reviewer approves
-// it, and a push without a lease is refused as non-fast-forward.
-func (r *runnerRig) workerRebased(head string) {
+// workerMergedBase is a worker that merged the base into its branch: the head
+// moves to a merge commit that descends from the published one, so the plain
+// push fast-forwards, and the reviewer approves the new head.
+func (r *runnerRig) workerMergedBase(head string) {
 	r.approveOnANewHead(head)
-	r.container.mu.Lock()
-	defer r.container.mu.Unlock()
-	r.container.rewritten = true
 }
 
-// resolveConflict is the base's check settling mergeable once the rebase is
+// resolveConflict is the base's check settling mergeable once the merge is
 // published, so the forge merges again.
 func (r *runnerRig) resolveConflict() {
 	r.forge.mu.Lock()
@@ -66,7 +67,7 @@ func (r *runnerRig) resolveConflict() {
 	r.forge.mergeNotReadyN = 0
 }
 
-func TestRunner_AConflictingApprovedPullRequestGetsARebaseRound(t *testing.T) {
+func TestRunner_AConflictingApprovedPullRequestGetsAMergeRound(t *testing.T) {
 	rig := newRunnerRig(t)
 	rig.rebindVerification(t, "true")
 	rig.workerWrote()
@@ -76,47 +77,51 @@ func TestRunner_AConflictingApprovedPullRequestGetsARebaseRound(t *testing.T) {
 	rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) {
 		turn++
 		if turn > 1 {
-			// The rebase moves the head, the reviewer approves the new head,
+			// The merge moves the head, the reviewer approves the new head,
 			// and the base no longer conflicts.
-			rig.workerRebased("head-rebased")
+			rig.workerMergedBase("head-merged")
 			rig.resolveConflict()
 		}
 	}
 	if err := rig.runner.Run(context.Background(), rig.job(t)); err != nil {
-		t.Fatalf("Run = %v, want the rebased change merged; a conflict is not a failure of the work", err)
+		t.Fatalf("Run = %v, want the merged change landed; a conflict is not a failure of the work", err)
 	}
 
 	prompts := rig.agents.promptTexts()
 	if len(prompts) != 2 {
-		t.Fatalf("worker turns = %d, want the first turn and one rebase round", len(prompts))
+		t.Fatalf("worker turns = %d, want the first turn and one merge round", len(prompts))
 	}
-	for _, want := range []string{"Round 1 findings", "Merge conflict with main", "git rebase origin/main", "head-issue/25-fix-the-thing"} {
+	for _, want := range []string{"Round 1 findings", "Merge conflict with main", "git fetch origin main",
+		"git merge origin/main", "head-issue/25-fix-the-thing"} {
 		if !strings.Contains(prompts[1], want) {
-			t.Errorf("the rebase round does not tell the worker %q:\n%s", want, prompts[1])
+			t.Errorf("the merge round does not tell the worker %q:\n%s", want, prompts[1])
 		}
 	}
+	if strings.Contains(strings.ToLower(prompts[1]), "rebase") {
+		t.Errorf("the merge round mentions a rebase; a published branch is never rewritten:\n%s", prompts[1])
+	}
 	if rig.agents.sessionCount() != WorkerSessionCount {
-		t.Fatalf("the rebase round spawned a second session: %d", rig.agents.sessionCount())
+		t.Fatalf("the merge round spawned a second session: %d", rig.agents.sessionCount())
 	}
 
 	// The approval of the conflicting head did not carry over. The merge that
-	// landed is bound to the rebased head, which the gate judged again.
+	// landed is bound to the merged head, which the gate judged again.
 	merges := rig.forge.mergeCalls()
-	if len(merges) == 0 || merges[len(merges)-1].head != "head-rebased" {
-		t.Fatalf("merges = %+v, want the last one bound to the rebased head", merges)
+	if len(merges) == 0 || merges[len(merges)-1].head != "head-merged" {
+		t.Fatalf("merges = %+v, want the last one bound to the merged head", merges)
 	}
 	if conflicts := rig.auditDetails(auditMergeConflict); len(conflicts) != 1 ||
 		!strings.Contains(conflicts[0], "base=main") {
 		t.Fatalf("merge-conflict records = %v, want exactly one naming the base", conflicts)
 	}
 	if parked := rig.auditDetails(auditParked); len(parked) != 0 {
-		t.Fatalf("a conflict that one rebase resolved parked the task: %v", parked)
+		t.Fatalf("a conflict that one merge resolved parked the task: %v", parked)
 	}
 }
 
 // TestRunner_APullRequestThatKeepsConflictingStillEscalates keeps the round
-// budget honest. A rebase round is spent from the same budget as a review
-// round, so a base that conflicts again after every rebase ends with a person
+// budget honest. A merge round is spent from the same budget as a review
+// round, so a base that conflicts again after every merge ends with a person
 // and not with another worker turn.
 func TestRunner_APullRequestThatKeepsConflictingStillEscalates(t *testing.T) {
 	const rounds = 1
@@ -133,8 +138,8 @@ func TestRunner_APullRequestThatKeepsConflictingStillEscalates(t *testing.T) {
 	rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) {
 		turn++
 		if turn > 1 {
-			// Rebased and re-approved, and still in conflict.
-			rig.workerRebased("head-rebased")
+			// Merged and re-approved, and still in conflict.
+			rig.workerMergedBase("head-merged")
 		}
 	}
 
@@ -147,7 +152,7 @@ func TestRunner_APullRequestThatKeepsConflictingStillEscalates(t *testing.T) {
 		t.Fatalf("the escalation does not say what was not converging: %q", escalated.Reason)
 	}
 	if prompts := rig.agents.promptTexts(); len(prompts) != rounds+1 {
-		t.Fatalf("worker turns = %d, want the first turn plus %d rebase round(s)", len(prompts), rounds)
+		t.Fatalf("worker turns = %d, want the first turn plus %d merge round(s)", len(prompts), rounds)
 	}
 	if conflicts := rig.auditDetails(auditMergeConflict); len(conflicts) != rounds+1 {
 		t.Fatalf("merge-conflict records = %d, want one per merge that conflicted (%d)", len(conflicts), rounds+1)
@@ -187,13 +192,13 @@ func TestRunnerRun_CompleteLeavesEveryOtherMergeRefusalAHookFailure(t *testing.T
 	}
 }
 
-// TestRunner_AConflictFoundWithNoWorkerSpawnsOneForTheRebase is the production
+// TestRunner_AConflictFoundWithNoWorkerSpawnsOneForTheMerge is the production
 // shape of the defect. The re-dispatched job found its approved PR already
 // open, went straight to the gate without spawning a worker, and met the
-// conflict at the merge. A rebase needs a checkout that the run does not have,
+// conflict at the merge. Merging the base needs a checkout that the run does not have,
 // so it goes back through initializing to get one. It does not fail on a
 // session that was never there.
-func TestRunner_AConflictFoundWithNoWorkerSpawnsOneForTheRebase(t *testing.T) {
+func TestRunner_AConflictFoundWithNoWorkerSpawnsOneForTheMerge(t *testing.T) {
 	rig := newRunnerRig(t)
 	ctx := context.Background()
 	rig.rebindVerification(t, "true")
@@ -213,36 +218,34 @@ func TestRunner_AConflictFoundWithNoWorkerSpawnsOneForTheRebase(t *testing.T) {
 	rig.forge.mergeNotReadyN = 1 << 20
 	rig.forge.mu.Unlock()
 	rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) {
-		rig.workerRebased("head-rebased")
+		rig.workerMergedBase("head-merged")
 		rig.resolveConflict()
 	}
 
 	job := rig.job(t)
 	job.StartState = orchestration.JobStateCompleting
 	if err := rig.runner.Run(ctx, job); err != nil {
-		t.Fatalf("Run = %v, want the rebased change merged", err)
+		t.Fatalf("Run = %v, want the merged change landed", err)
 	}
 	if rig.agents.sessionCount() != WorkerSessionCount {
-		t.Fatalf("sessions = %d, want the one worker the rebase runs in", rig.agents.sessionCount())
+		t.Fatalf("sessions = %d, want the one worker the merge runs in", rig.agents.sessionCount())
 	}
 	prompts := rig.agents.promptTexts()
 	if len(prompts) != 1 || !strings.Contains(prompts[0], "Merge conflict with main") {
-		t.Fatalf("prompts = %d, want the one rebase round:\n%s", len(prompts), strings.Join(prompts, "\n---\n"))
+		t.Fatalf("prompts = %d, want the one merge round:\n%s", len(prompts), strings.Join(prompts, "\n---\n"))
 	}
 	merges := rig.forge.mergeCalls()
-	if merges[len(merges)-1].head != "head-rebased" {
-		t.Fatalf("merges = %+v, want the last bound to the rebased head", merges)
+	if merges[len(merges)-1].head != "head-merged" {
+		t.Fatalf("merges = %+v, want the last bound to the merged head", merges)
 	}
 }
 
-// TestRunner_ARebaseIsPublishedUnderALeaseOnEveryWorkspaceKind is the Codex
-// finding on go-quicbaas#1009. A rebase round rewrites the published branch,
-// and a persistent workspace publishes nothing mid-turn. So the review push was
-// the only push, and as a plain push it was refused as non-fast-forward. The
-// attempt then failed instead of reaching re-review. The container here refuses
-// exactly that push. The publication has to be a force leased on the head the
-// factory published, on the persistent tier and on the ephemeral one.
-func TestRunner_ARebaseIsPublishedUnderALeaseOnEveryWorkspaceKind(t *testing.T) {
+// TestRunner_AMergeRoundPublishesWithAPlainPushOnEveryWorkspaceKind is the
+// owner's ruling held end to end. The merge round's head descends from the
+// head the factory published, so the publication after it is the same plain
+// fast-forward push every round makes, on the persistent tier and on the
+// ephemeral one, and no push of the attempt carries a force of any kind.
+func TestRunner_AMergeRoundPublishesWithAPlainPushOnEveryWorkspaceKind(t *testing.T) {
 	tiers := []struct {
 		name    string
 		storage func(*runnerRig)
@@ -261,61 +264,67 @@ func TestRunner_ARebaseIsPublishedUnderALeaseOnEveryWorkspaceKind(t *testing.T) 
 			rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) {
 				turn++
 				if turn > 1 {
-					rig.workerRebased("head-rebased")
+					rig.workerMergedBase("head-merged")
 					rig.resolveConflict()
 				}
 			}
 
 			if err := rig.runner.Run(context.Background(), rig.job(t)); err != nil {
-				t.Fatalf("Run = %v, want the rebased branch published and merged", err)
+				t.Fatalf("Run = %v, want the merged branch published and landed", err)
 			}
-			// The first publication is of the approved head; every one after
-			// the conflict is the rewrite, and each must be leased on the head
-			// the remote held when it was made.
-			rig.container.mu.Lock()
-			pushes := append([]pushedRef(nil), rig.container.pushes...)
-			rig.container.mu.Unlock()
-			approved := rig.forge.mergeCalls()[0].head
-			var rewrite *pushedRef
-			for i := range pushes {
-				if pushes[i].Lease != "" {
-					rewrite = &pushes[i]
-					break
+			pushes := rig.pushes()
+			if len(pushes) < 2 {
+				t.Fatalf("pushes = %+v, want the approved head and the merge published", pushes)
+			}
+			for _, push := range pushes {
+				for _, arg := range push.Args {
+					if arg == "-f" || strings.Contains(arg, "force") {
+						t.Fatalf("a publication carried %q; the factory never forces: %+v", arg, push)
+					}
+				}
+				if push.RemoteBranch != "" {
+					t.Fatalf("the merge was published to %q, want the attempt's own branch", push.RemoteBranch)
 				}
 			}
-			if rewrite == nil || !rewrite.Force || rewrite.Lease != approved {
-				t.Fatalf("pushes = %+v, want the rebase forced under a lease on the approved head %s", pushes, approved)
-			}
-			if rewrite.RemoteBranch != "" {
-				t.Fatalf("the rebase was published to %q, want the attempt's own branch", rewrite.RemoteBranch)
-			}
 			merges := rig.forge.mergeCalls()
-			if merges[len(merges)-1].head != "head-rebased" {
-				t.Fatalf("merges = %+v, want the last bound to the rebased head", merges)
+			if merges[len(merges)-1].head != "head-merged" {
+				t.Fatalf("merges = %+v, want the last bound to the merged head", merges)
 			}
 		})
 	}
 }
 
-// TestRunner_ARoundThatRewritesNothingIsNeverForced keeps the lease on the
-// rebase round alone. A review round without a conflict publishes as it always
-// has, with no force.
-func TestRunner_ARoundThatRewritesNothingIsNeverForced(t *testing.T) {
+// TestRunner_ARewrittenBranchIsRefusedNotForced is the other half. A worker
+// that rewrote its published branch anyway leaves a head the remote cannot
+// fast-forward to. The push is refused, the refusal is the error, and nothing
+// forces past it: forcing would discard the commit the review approved.
+func TestRunner_ARewrittenBranchIsRefusedNotForced(t *testing.T) {
 	rig := newRunnerRig(t)
 	rig.rebindVerification(t, "true")
 	rig.workerWrote()
-	rig.verdictOnPublish("REQUEST_CHANGES", "keep the fix inside pkg/thing")
+	rig.conflictOnPublish()
 	turn := 0
 	rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) {
 		turn++
 		if turn > 1 {
-			rig.approveOnANewHead("head-round-2")
+			rig.workerMergedBase("head-rewritten")
+			rig.container.mu.Lock()
+			rig.container.diverged = true
+			rig.container.mu.Unlock()
 		}
 	}
-	if err := rig.runner.Run(context.Background(), rig.job(t)); err != nil {
-		t.Fatalf("Run: %v", err)
+
+	err := rig.runner.Run(context.Background(), rig.job(t))
+	var refused *PublishCommandError
+	if !errors.As(err, &refused) {
+		t.Fatalf("Run = %T %v, want the non-fast-forward refusal as a PublishCommandError", err, err)
 	}
-	if forced := rig.forcedPushes(); len(forced) != 0 {
-		t.Fatalf("a round with no rewrite was force-published: %+v", forced)
+	if !strings.Contains(refused.Output, "non-fast-forward") {
+		t.Fatalf("the refusal says %q, want git's non-fast-forward rejection", refused.Output)
+	}
+	for _, merge := range rig.forge.mergeCalls() {
+		if merge.head == "head-rewritten" {
+			t.Fatalf("a rewritten head that was never published was merged: %+v", rig.forge.mergeCalls())
+		}
 	}
 }

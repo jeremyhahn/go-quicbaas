@@ -331,8 +331,8 @@ func TestMountPolicy_AdmitsTheSigningSocketUnderTheSocketsRoot(t *testing.T) {
 		t.Errorf("the socket is the daemon's, not a tenant's, yet an untenanted spawn was denied: %v", err)
 	}
 	// The mount the runner actually builds is the one that has to pass.
-	req := &SpawnSessionRequest{}
-	ApplyWorkspaceSpec(req, MaterializedWorkspace{}, f.socket)
+	req := &SpawnSessionRequest{Workspace: &SessionWorkspace{TenantID: "tenant-a", ProjectID: "p1", Key: "k"}}
+	ApplyWorkspaceSpec(req, &WorkspaceSpecFiles{}, f.socket)
 	if err := f.policy.Authorize("tenant-a", MountFieldExtraMounts, req.ExtraMounts); err != nil {
 		t.Errorf("the mount ApplyWorkspaceSpec builds was denied: %v", err)
 	}

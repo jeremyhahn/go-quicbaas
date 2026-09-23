@@ -489,6 +489,11 @@ type Server struct {
 	// Nil for cluster mode (until Phase C).
 	qrdbNode *qrdbnode.Node
 
+	// nodeAuthorizer is the embedded node's composed RBAC[+ABAC] authorizer,
+	// recorded at node construction by nodeAuthorizerCapture. Read through
+	// capturedNodeAuthorizer; nil until the node is built.
+	nodeAuthorizer atomic.Pointer[qrdbsdk.Authorizer]
+
 	// qrdbAuditSink is the compliance-grade audit sink injected into the
 	// embedded qrdb node (qrdb_node.go newQRDBAuditSink,
 	// qrdbsdk.WithAuditLogger) — the ONE audit plane every module/emit site
@@ -1008,52 +1013,9 @@ func (s *Server) initialize() error {
 		}
 	}
 
-	// A module's SEAMS are registered before the engine starts, and its
-	// RUNTIME after it.
-	//
-	// The order matters in one direction only, and it is this one: the stall
-	// detector's idle thresholds are validated against the states every
-	// registered runner declares, and startOrchestration is where they are
-	// set. A module that registered its runner afterwards would declare
-	// states the operator could not have configured a threshold for — the
-	// configuration would be refused as naming an unknown state, or accepted
-	// and silently ignored. Registration is static and needs no runtime, so
-	// it happens first; the runtime the runner drives with is attached by
-	// startSDLC below.
-	if s.config.SDLC.Enabled {
-		if err := registerSDLCModule(); err != nil {
-			return err
-		}
-	}
-
-	// Initialize agent orchestration service if enabled
-	if s.config.Orchestration.Enabled {
-		if err := s.startOrchestration(); err != nil {
-			return err
-		}
-	}
-
-	// Attach the SDLC module's runtime. After orchestration, because the
-	// binding service, the hooks and the runner are all built over the
-	// engine's services; before the API servers, so the webhook route is
-	// backed by a live module the moment it is reachable.
-	if s.config.SDLC.Enabled {
-		if err := s.startSDLC(); err != nil {
-			return err
-		}
-	}
-
-	// Resume the jobs this node owned when it last stopped, now that every
-	// module's hooks are registered; a job resumed earlier would run its
-	// prepare hook against a module that has not started.
-	if s.config.Orchestration.Enabled {
-		s.recoverOrchestrationJobs()
-	}
-
-	// Initialize embedded agent runtime if enabled. Must start after
-	// orchestration so the fleet registry and agent service are available.
-	if s.config.Server.EmbeddedAgent.Enabled {
-		if err := s.startEmbeddedAgent(); err != nil {
+	// The orchestration plane, in the order orchestrationStartup documents.
+	for _, step := range s.orchestrationStartup() {
+		if err := step.run(); err != nil {
 			return err
 		}
 	}
@@ -1985,4 +1947,58 @@ func validateFIPSMode(log *logger.Logger) error {
 
 	log.Info("FIPS 140-3 mode validation successful")
 	return nil
+}
+
+// startupStep is one ordered step of bringing the orchestration plane up.
+type startupStep struct {
+	// name identifies the step to the ordering test.
+	name string
+
+	// run performs it.
+	run func() error
+}
+
+// Names of the orchestration startup steps, in the order they must run.
+const (
+	startupRegisterSDLC  = "register_sdlc"
+	startupOrchestration = "orchestration"
+	startupEmbeddedAgent = "embedded_agent"
+	startupSDLC          = "sdlc"
+	startupRecoverJobs   = "recover_jobs"
+)
+
+// orchestrationStartup is the orchestration plane's startup, in order.
+//
+// THE ORDER IS THE CONTRACT, which is why it is a list a test can read:
+//
+//   - The SDLC module's SEAMS are registered before the engine starts: the
+//     stall detector's idle thresholds are validated against the states every
+//     registered runner declares, and startOrchestration is where they are set.
+//   - The embedded agent is fully started — its startup sweeps done, its fleet
+//     registration and dialer installed — BEFORE anything can dispatch. It
+//     shares the daemon's projects root, so its sweep of orphaned workspace
+//     specs would delete the spec of a session a recovered job had just
+//     spawned; and a recovered job pinned to the embedded agent would be
+//     refused as "agent unavailable" before its dialer existed (go-quicbaas#981).
+//   - The SDLC module's RUNTIME follows the engine, because its hooks and
+//     runner are built over the engine's services, and its backstop sweepers
+//     dispatch jobs — so it follows the embedded agent too.
+//   - Interrupted jobs are recovered last, once every module's hooks and every
+//     executing host are in place.
+func (s *Server) orchestrationStartup() []startupStep {
+	var steps []startupStep
+	add := func(enabled bool, name string, run func() error) {
+		if enabled {
+			steps = append(steps, startupStep{name: name, run: run})
+		}
+	}
+	add(s.config.SDLC.Enabled, startupRegisterSDLC, registerSDLCModule)
+	add(s.config.Orchestration.Enabled, startupOrchestration, s.startOrchestration)
+	add(s.config.Server.EmbeddedAgent.Enabled, startupEmbeddedAgent, s.startEmbeddedAgent)
+	add(s.config.SDLC.Enabled, startupSDLC, s.startSDLC)
+	add(s.config.Orchestration.Enabled, startupRecoverJobs, func() error {
+		s.recoverOrchestrationJobs()
+		return nil
+	})
+	return steps
 }

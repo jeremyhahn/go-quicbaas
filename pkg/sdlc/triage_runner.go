@@ -16,7 +16,6 @@ package sdlc
 import (
 	"context"
 	"errors"
-	"os"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -680,21 +679,13 @@ func triageVerdictHead(body string) string {
 // signing socket beside untrusted issue text" rule was written to get.
 func (s *triageRun) spawnSession(ctx context.Context) error {
 	project := s.job.Project
-	root := strings.TrimSpace(project.Workspace.Path)
-	if root == "" {
-		return &WorkspaceUnavailableError{ProjectID: project.ID}
-	}
-	mount := filepath.Join(root, "triage-"+project.ID)
-	if err := os.MkdirAll(mount, 0o700); err != nil {
-		return &WorkspaceUnavailableError{ProjectID: project.ID, Cause: err}
-	}
-	req, err := s.spawnRequest(ctx, mount)
+	req, err := s.spawnRequest(ctx)
 	if err != nil {
 		return err
 	}
 	resp, err := s.job.Spawn(ctx, req)
 	if err != nil {
-		return err
+		return workspaceSpawnFault(project.ID, err)
 	}
 	if resp == nil || resp.SessionID == "" {
 		return &TriageSessionError{ProjectID: project.ID, Message: "the spawn returned no session"}
@@ -707,8 +698,12 @@ func (s *triageRun) spawnSession(ctx context.Context) error {
 				"anybody who can open an issue, which is untrusted input, and must not read it on the daemon",
 		}
 	}
+	if resp.Workspace == nil {
+		return &TriageSessionError{ProjectID: project.ID, Message: "the spawn reported no workspace for the checkout"}
+	}
 	s.containerDir = path.Join(s.spec.CheckoutRoot, project.Name)
-	s.job.SetWorkDir(filepath.Join(req.WorkDir, project.Name))
+	// The host side of the checkout, on whichever host ran the session.
+	s.job.SetWorkDir(filepath.Join(resp.Workspace.Dir, project.Name))
 	if err := s.job.SetContainer(s.sessionID, s.containerDir); err != nil {
 		return err
 	}
@@ -773,7 +768,7 @@ func (s *triageRun) decorate(status *orchestration.JobStatus) {
 
 // spawnRequest builds the session's spawn: a read-only checkout of the
 // default branch, the triage charter as the system prompt.
-func (s *triageRun) spawnRequest(ctx context.Context, mount string) (*orchestration.SpawnSessionRequest, error) {
+func (s *triageRun) spawnRequest(ctx context.Context) (*orchestration.SpawnSessionRequest, error) {
 	charter := TriageCharter()
 	if strings.TrimSpace(charter) == "" {
 		return nil, &TriageSessionError{
@@ -795,7 +790,6 @@ func (s *triageRun) spawnRequest(ctx context.Context, mount string) (*orchestrat
 		Model:        agent.Model,
 		ProjectID:    project.ID,
 		SystemPrompt: charter,
-		WorkDir:      mount,
 		Persistent:   true,
 	}
 	if image := strings.TrimSpace(agent.Image); image != "" {
@@ -816,7 +810,7 @@ func (s *triageRun) spawnRequest(ctx context.Context, mount string) (*orchestrat
 		Project:  project,
 		Forge:    s.binding.Forge,
 		Branch:   orchestration.WorkspaceBranchPlan{Name: branch},
-		Mount:    mount,
+		Key:      "triage-" + project.ID,
 		Scope:    SigningScopeCheckout,
 	})
 	if err != nil {

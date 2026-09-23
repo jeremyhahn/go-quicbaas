@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -48,6 +49,21 @@ type Runtime struct {
 	// sandbox container on THIS host. Nil denies every mount, which is what an
 	// unconfigured daemon must do — see Runtime.authorizeMounts.
 	mountPolicy *orchestration.MountPolicy
+
+	// workspaces provisions the named workspaces spawns ask for, under this
+	// daemon's own projects root. Nil refuses every spawn that names one.
+	workspaces orchestration.WorkspaceProvisioner
+
+	// sessionWorkspaces tracks {sessionID -> *ProvisionedWorkspace} so Close
+	// releases the spec directory — the forge token — a session was spawned
+	// with. The workspace itself stays for the job's next session.
+	sessionWorkspaces sync.Map
+
+	// sessionContainers tracks {sessionID -> sessionContainer}: the container
+	// each session this daemon spawned runs in, and the tenant it belongs to.
+	// It is what ExecSession resolves a session to — the control plane names
+	// a session, never a container.
+	sessionContainers sync.Map
 
 	// workDir is the parent for <workDir>/sessions. Session records are
 	// persisted as plaintext JSON; at-rest confidentiality is provided by
@@ -106,6 +122,14 @@ type RuntimeConfig struct {
 	// this nil is deny-by-default, not permissive: a sandboxed spawn naming
 	// any work directory is refused.
 	MountPolicy *orchestration.MountPolicy
+
+	// Workspaces provisions the named workspaces the control plane's spawns
+	// ask for (go-quicbaas#981): the spawn names tenant, project and key, and
+	// this daemon makes the directory under its own projects root and reports
+	// it back. The mount policy must admit that root — Config.MountPolicy
+	// grants it tenant-scoped. Nil refuses every spawn that names a workspace
+	// with SessionWorkspaceUnsupportedError.
+	Workspaces orchestration.WorkspaceProvisioner
 
 	// AccountResolver turns a spawn's AccountID / AccountAuto request into
 	// concrete credential material for a pooled provider account. It is the
@@ -198,6 +222,7 @@ func NewRuntime(cfg RuntimeConfig) (*Runtime, error) {
 		containerRuntime: cfg.ContainerRuntime,
 		logger:           cfg.Logger,
 		mountPolicy:      cfg.MountPolicy,
+		workspaces:       cfg.Workspaces,
 		workDir:          cfg.WorkDir,
 		sessionTenants:   map[string]string{},
 		eventForwarder:   cfg.EventForwarder,
@@ -286,6 +311,20 @@ func (r *Runtime) Spawn(ctx context.Context, tenantID string, tenantOverride *or
 	req.SandboxMode = effective
 	req.Sandboxed = effective == orchestration.SandboxModeRequired
 
+	// A NAMED WORKSPACE IS MADE HERE, ON THIS HOST, before the mounts are
+	// authorized — so the directory and spec this daemon wrote go through the
+	// same check as every path the control plane named.
+	workspace, wsErr := r.provisionWorkspace(tenantID, req)
+	if wsErr != nil {
+		return nil, wsErr
+	}
+	spawned := false
+	defer func() {
+		if !spawned {
+			workspace.Release()
+		}
+	}()
+
 	// Authorize every host path this spawn would bind-mount, against the mode
 	// THIS daemon resolved, before any side effect. See authorizeMounts.
 	if mountErr := r.authorizeMounts(tenantID, req, effective); mountErr != nil {
@@ -318,6 +357,17 @@ func (r *Runtime) Spawn(ctx context.Context, tenantID string, tenantOverride *or
 	if spawnErr != nil {
 		return nil, spawnErr
 	}
+	spawned = true
+	if sess.ContainerID != "" {
+		r.sessionContainers.Store(sess.ID, sessionContainer{tenantID: tenantID, containerID: sess.ContainerID})
+	}
+	if workspace != nil {
+		// The directory this host provisioned is the session's work directory
+		// whatever the backend echoed, because it is the answer the control
+		// plane records and pins the job's later sessions to.
+		sess.WorkDir = workspace.Dir
+		r.sessionWorkspaces.Store(sess.ID, workspace)
+	}
 
 	// Remember the backend for this session so Prompt can tag outbound
 	// events with the correct producer when callers don't re-supply it.
@@ -336,6 +386,112 @@ func (r *Runtime) Spawn(ctx context.Context, tenantID string, tenantOverride *or
 	r.sessionTenantsMu.Unlock()
 
 	return sess, nil
+}
+
+// sessionContainer is the container a spawned session runs in.
+type sessionContainer struct {
+	tenantID    string
+	containerID string
+}
+
+// DefaultExecTimeout bounds a command run through ExecSession when the caller
+// set no deadline, so a hung git cannot hold the RPC forever.
+const DefaultExecTimeout = 30 * time.Minute
+
+// MaxExecOutputBytes bounds each of a command's stdout and stderr as
+// returned over the wire, below the gRPC message limit. A command that says
+// more is truncated, and the result says so.
+const MaxExecOutputBytes = 1 << 20
+
+// ExecSession runs one command in the container of a session THIS daemon
+// spawned, for tenantID (go-quicbaas#981). The control plane routes here
+// every command a job runs in a session on this host — the checkout, the
+// verification, the publish — because the container is known to this host's
+// runtime and no other.
+//
+// It is scoped exactly as the control plane's local path is: the session
+// must be one this daemon holds, of the caller's tenant (another tenant's is
+// answered as not found, never as someone else's), running in a container;
+// the command is validated the same way. Output is bounded and the command
+// carries a deadline.
+func (r *Runtime) ExecSession(ctx context.Context, tenantID, sessionID string, spec *orchestration.ExecSpec) (*orchestration.ExecResult, bool, error) {
+	if err := spec.Validate(); err != nil {
+		return nil, false, err
+	}
+	held, ok := r.sessionContainers.Load(sessionID)
+	if !ok {
+		return nil, false, &orchestration.SessionNotFoundError{SessionID: sessionID}
+	}
+	container, _ := held.(sessionContainer)
+	if container.tenantID != tenantID {
+		return nil, false, &orchestration.SessionNotFoundError{SessionID: sessionID}
+	}
+	if container.containerID == "" || r.containerRuntime == nil {
+		return nil, false, &orchestration.SessionNotContainerizedError{SessionID: sessionID}
+	}
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, DefaultExecTimeout)
+		defer cancel()
+	}
+	result, err := r.containerRuntime.Exec(ctx, container.containerID, spec)
+	if err != nil {
+		return nil, false, err
+	}
+	stdout, cutOut := boundOutput(result.Stdout)
+	stderr, cutErr := boundOutput(result.Stderr)
+	return &orchestration.ExecResult{ExitCode: result.ExitCode, Stdout: stdout, Stderr: stderr}, cutOut || cutErr, nil
+}
+
+// boundOutput truncates s to at most MaxExecOutputBytes, keeping the END —
+// where a failing command says why — and reports whether it cut anything.
+//
+// THE CUT LANDS ON A RUNE BOUNDARY: when it would start inside a multibyte
+// UTF-8 character, the character's remaining continuation bytes are dropped
+// too, so valid output stays valid. Nothing else is rewritten — output that
+// was never UTF-8 is carried byte for byte, exactly as the local exec path
+// hands it back (orchestration.ExecResult holds the bytes the command wrote),
+// and it travels as protobuf bytes, so no encoding is imposed on the wire.
+func boundOutput(s string) (string, bool) {
+	if len(s) <= MaxExecOutputBytes {
+		return s, false
+	}
+	start := len(s) - MaxExecOutputBytes
+	for i := 0; i < utf8.UTFMax-1 && start < len(s) && !utf8.RuneStart(s[start]); i++ {
+		start++
+	}
+	return s[start:], true
+}
+
+// provisionWorkspace makes the workspace a spawn names, under this daemon's
+// projects root, and puts it on the request. A spawn that names none is
+// returned untouched with a nil workspace.
+func (r *Runtime) provisionWorkspace(tenantID string, req *orchestration.SpawnRequest) (*orchestration.ProvisionedWorkspace, error) {
+	ws := req.Workspace
+	if ws == nil {
+		return nil, nil
+	}
+	if strings.TrimSpace(req.WorkDir) != "" {
+		return nil, &orchestration.SessionWorkspaceInvalidError{
+			Field:  "work_dir",
+			Reason: "a spawn names its workspace or gives a work directory, never both",
+		}
+	}
+	// THE AUTHENTICATED TENANT DECIDES, not the request's own claim: a
+	// principal enrolled for one tenant may not have this daemon provision —
+	// or find a pinned checkout of — another tenant's workspace.
+	if ws.TenantID != tenantID {
+		return nil, &orchestration.SessionWorkspaceTenantError{SpawnTenant: tenantID, WorkspaceTenant: ws.TenantID}
+	}
+	if r.workspaces == nil {
+		return nil, &orchestration.SessionWorkspaceUnsupportedError{Host: "agent " + r.workDir}
+	}
+	provisioned, err := r.workspaces.ProvisionSession(ws)
+	if err != nil {
+		return nil, err
+	}
+	provisioned.ApplyTo(req)
+	return provisioned, nil
 }
 
 // authorizeMounts authorizes every host path this spawn would bind-mount into
@@ -546,7 +702,17 @@ func (r *Runtime) Close(ctx context.Context, backendName, sessionID string) erro
 	// answer, reported below.
 	r.forgetSessionBackend(sessionID)
 	r.removePersistedSession(sessionID)
-	if err := backend.Close(ctx, sessionID); err != nil {
+	err := backend.Close(ctx, sessionID)
+	// The spec directory goes whether or not the backend's teardown did: it
+	// holds the forge token, and the session it was written for is one the
+	// control plane has stopped addressing.
+	r.sessionContainers.Delete(sessionID)
+	if held, ok := r.sessionWorkspaces.LoadAndDelete(sessionID); ok {
+		if ws, isWS := held.(*orchestration.ProvisionedWorkspace); isWS {
+			ws.Release()
+		}
+	}
+	if err != nil {
 		return err
 	}
 
@@ -679,6 +845,22 @@ func (r *Runtime) SweepOrphanContainers(ctx context.Context) (orchestration.Cont
 		return orchestration.ContainerSweep{}, nil
 	}
 	return sweeper.SweepOwned(ctx, r.workDir)
+}
+
+// SweepOrphanWorkspaceSpecs removes every workspace spec directory — each one
+// holding a forge token in plaintext — a previous run of this daemon left
+// under its projects root, and reports what it removed. The checkouts stay.
+//
+// It belongs at startup with SweepOrphanContainers and for the same reason:
+// no session survives a restart (that sweep removed its container), so every
+// spec directory present before the spawn server accepts anything is an
+// orphan, and one this daemon's Close will never be asked to release. A daemon
+// that provisions no workspaces has nothing to sweep.
+func (r *Runtime) SweepOrphanWorkspaceSpecs() ([]string, error) {
+	if r.workspaces == nil {
+		return nil, nil
+	}
+	return r.workspaces.SweepSessionSpecs()
 }
 
 // LoadPersistedSessions reads every session record under <workDir>/sessions

@@ -1097,6 +1097,7 @@ func handleOrchestratorGetJobStatus(ctx context.Context, conn *grpc.ClientConn, 
 		// off the JSON body. A converter that stops here hands the caller a
 		// job with no attempts, no delivery and no reason it stopped.
 		AgentID:        protoResp.GetAgentId(),
+		Source:         taskSourceFromProto(protoResp.GetSource()),
 		Stages:         jobStagesFromProto(protoResp.GetStages()),
 		Attempts:       jobAttemptsFromProto(protoResp.GetAttempts()),
 		AttemptBudget:  int(protoResp.GetAttemptBudget()),
@@ -1226,6 +1227,7 @@ func handleOrchestratorListJobs(ctx context.Context, conn *grpc.ClientConn, req 
 			EventCount:  int(j.GetEventCount()),
 			TaskID:      j.GetTaskId(),
 			Attempt:     int(j.GetAttempt()),
+			Source:      taskSourceFromProto(j.GetSource()),
 		}
 	}
 
@@ -1302,9 +1304,7 @@ func taskFromProto(t *pb.Task) *orchestrator.Task {
 		sdkTask.SpawnedAt = t.GetSpawnedAt().AsTime().UnixNano()
 	}
 	sdkTask.ProjectID = t.GetProjectId()
-	if src := t.GetSource(); src != nil {
-		sdkTask.Source = &orchestrator.TaskSource{Kind: src.GetKind(), Ref: src.GetRef(), URL: src.GetUrl()}
-	}
+	sdkTask.Source = taskSourceFromProto(t.GetSource())
 	sdkTask.Priority = int(t.GetPriority())
 	sdkTask.Attempts = int(t.GetAttempts())
 	sdkTask.AttemptBudget = int(t.GetAttemptBudget())
@@ -1334,6 +1334,16 @@ func taskSourceToProto(src *orchestrator.TaskSource) *pb.TaskSource {
 		return nil
 	}
 	return &pb.TaskSource{Kind: src.Kind, Ref: src.Ref, Url: src.URL}
+}
+
+// taskSourceFromProto converts a server-recorded provenance back; nil stays
+// nil so an absent origin decodes as no source rather than an empty one. It
+// serves the task shape and the two job shapes, which carry the same origin.
+func taskSourceFromProto(src *pb.TaskSource) *orchestrator.TaskSource {
+	if src == nil {
+		return nil
+	}
+	return &orchestrator.TaskSource{Kind: src.GetKind(), Ref: src.GetRef(), URL: src.GetUrl()}
 }
 
 // agentRegistrationFromProto converts a proto AgentRegistration to an SDK AgentRegistration.
@@ -1885,24 +1895,27 @@ func handleOrchestratorGetSpendReport(ctx context.Context, conn *grpc.ClientConn
 // spendReportFromProto converts the wire report into the SDK type.
 func spendReportFromProto(resp *pb.GetSpendReportResponse) *orchestrator.GetSpendReportResponse {
 	out := &orchestrator.GetSpendReportResponse{
-		Level:        orchestrator.SpendLevel(resp.GetLevel()),
-		TenantID:     resp.GetTenantId(),
-		ProjectID:    resp.GetProjectId(),
-		TaskID:       resp.GetTaskId(),
-		JobID:        resp.GetJobId(),
-		SessionID:    resp.GetSessionId(),
-		Round:        int(resp.GetRound()),
-		Entries:      int(resp.GetEntries()),
-		InputTokens:  resp.GetInputTokens(),
-		OutputTokens: resp.GetOutputTokens(),
-		TotalTokens:  resp.GetTotalTokens(),
-		CostMicros:   resp.GetCostMicros(),
-		CostMeasured: resp.GetCostMeasured(),
-		Successes:    int(resp.GetSuccesses()),
-		Failures:     int(resp.GetFailures()),
-		FirstAt:      spendTimeFromProto(resp.GetFirstAt()),
-		LastAt:       spendTimeFromProto(resp.GetLastAt()),
-		ChildLevel:   orchestrator.SpendLevel(resp.GetChildLevel()),
+		Level:            orchestrator.SpendLevel(resp.GetLevel()),
+		TenantID:         resp.GetTenantId(),
+		ProjectID:        resp.GetProjectId(),
+		TaskID:           resp.GetTaskId(),
+		JobID:            resp.GetJobId(),
+		SessionID:        resp.GetSessionId(),
+		Round:            int(resp.GetRound()),
+		Entries:          int(resp.GetEntries()),
+		InputTokens:      resp.GetInputTokens(),
+		OutputTokens:     resp.GetOutputTokens(),
+		TotalTokens:      resp.GetTotalTokens(),
+		ProjectName:      resp.GetProjectName(),
+		CacheReadTokens:  resp.GetCacheReadTokens(),
+		CacheWriteTokens: resp.GetCacheWriteTokens(),
+		CostMicros:       resp.GetCostMicros(),
+		CostMeasured:     resp.GetCostMeasured(),
+		Successes:        int(resp.GetSuccesses()),
+		Failures:         int(resp.GetFailures()),
+		FirstAt:          spendTimeFromProto(resp.GetFirstAt()),
+		LastAt:           spendTimeFromProto(resp.GetLastAt()),
+		ChildLevel:       orchestrator.SpendLevel(resp.GetChildLevel()),
 	}
 	for _, account := range resp.GetAccounts() {
 		out.Accounts = append(out.Accounts, spendAccountFromProto(account))
@@ -1919,6 +1932,7 @@ func spendReportFromProto(resp *pb.GetSpendReportResponse) *orchestrator.GetSpen
 			ID:           child.GetId(),
 			Level:        orchestrator.SpendLevel(child.GetLevel()),
 			Unattributed: child.GetUnattributed(),
+			Name:         child.GetName(),
 			TotalTokens:  child.GetTotalTokens(),
 		})
 	}

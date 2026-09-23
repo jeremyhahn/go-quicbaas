@@ -488,8 +488,10 @@ func (s *SDLCService) ForgeFor(ctx context.Context, tenantID string, cfg sdlc.Fo
 // ForgeToken implements sdlc.ForgeTokenReader: the forge token value the
 // binding names, for the worker container's own clone and push.
 //
-// The value leaves this process only into the per-spawn workspace directory
-// the container mounts read-only; see orchestration.MaterializeWorkspaceSpec.
+// The value leaves this process only in the spawn's named workspace spec,
+// written by the host that executes the session into the per-spawn directory
+// its container mounts read-only; see orchestration.NewWorkspaceSpecFiles and
+// WorkspaceManager.ProvisionSession.
 func (s *SDLCService) ForgeToken(ctx context.Context, tenantID string, cfg sdlc.ForgeConfig) ([]byte, error) {
 	token, err := s.forgeToken(ctx, tenantID, cfg)
 	if err != nil {

@@ -466,6 +466,7 @@ func TestSpawnFaultClasses_RoundTripToTheirSentinels(t *testing.T) {
 		{"a missing credential", &AccountCredentialNotFoundError{TenantID: "t", AccountID: "a"}, ErrAccountCredentialNotFound},
 		{"no refresher for the provider", &AccountRefresherNotConfiguredError{Provider: "claude"}, ErrAccountRefresherNotConfigured},
 		{"a pool that is merely cooling down", &AccountsCoolingDownError{TenantID: "t", Candidates: 2}, ErrAccountsCoolingDown},
+		{"a stale pinned workspace", &WorkspaceStaleError{Key: "k", Expected: "/d", Reason: "gone"}, ErrSessionWorkspace},
 	}
 
 	for _, f := range faults {

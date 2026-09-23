@@ -309,12 +309,8 @@ func parseExecEvents(stdout string) (execTurn, error) {
 		case "turn.completed":
 			turn.stopReason = "end_turn"
 			if ev.Usage != nil {
-				turn.usage = &TokenUsage{
-					InputTokens:              ev.Usage.InputTokens,
-					OutputTokens:             ev.Usage.OutputTokens,
-					CacheReadInputTokens:     ev.Usage.CachedInputTokens,
-					CacheCreationInputTokens: ev.Usage.CacheWriteInputTokens,
-				}
+				turn.usage = codexExecUsage(ev.Usage.InputTokens, ev.Usage.CachedInputTokens,
+					ev.Usage.CacheWriteInputTokens, ev.Usage.OutputTokens)
 			}
 		case "turn.failed", "error":
 			turn.stopReason = "error"
@@ -343,6 +339,38 @@ func validExecThreadID(id string) bool {
 		}
 	}
 	return true
+}
+
+// codexExecUsage maps codex's turn accounting onto TokenUsage.
+//
+// CODEX'S input_tokens INCLUDES ITS CACHED TOKENS. It follows the OpenAI
+// accounting model, where cached_input_tokens is the part of input_tokens
+// served from the prompt cache (codex itself reports the fresh prompt as
+// input − cached). TokenUsage.InputTokens is the FRESH prompt, so the cached
+// part is subtracted here; carrying both whole counted every cached token
+// twice and priced a cache hit as a full prompt token (go-quicbaas#1058).
+// reasoning_output_tokens is likewise a part of output_tokens and is not added.
+//
+// A cached count larger than the input is a producer defect; the fresh prompt
+// is clamped at zero and the record marked repaired, like any other count
+// that could not be carried faithfully.
+func codexExecUsage(input, cached, cacheWrite, output int64) *TokenUsage {
+	repaired := false
+	input = nonNegative(input, &repaired)
+	cached = nonNegative(cached, &repaired)
+	fresh := input - cached
+	if fresh < 0 {
+		fresh = 0
+		repaired = true
+	}
+	usage := &TokenUsage{
+		InputTokens:              fresh,
+		OutputTokens:             nonNegative(output, &repaired),
+		CacheReadInputTokens:     cached,
+		CacheCreationInputTokens: nonNegative(cacheWrite, &repaired),
+	}
+	usage.malformed = repaired
+	return usage
 }
 
 // ExecEventStreamError is a JSONL event stream that could not be read to its

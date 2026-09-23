@@ -100,12 +100,13 @@ func newTriageRig(t *testing.T) *triageRig {
 	// rig models one: a triage run with no container is a refusal, which is
 	// its own test rather than the shape every other test runs in.
 	container := &fakeContainer{checkout: filepath.Join(orchestration.WorkspaceCheckoutRoot, testOrchProject().Name)}
-	agents := &fakeAgents{container: container}
+	root := testRoot(t)
+	agents := &fakeAgents{container: container, host: executingHost{root: root}}
 	signing := &fakeSigningAgent{}
 	tokens := &fakeTokens{token: []byte("t0ken")}
 	rig := &triageRig{
 		t: t, forge: forge, store: store, agents: agents, container: container,
-		root: testRoot(t), binding: binding, signing: signing, tokens: tokens,
+		root: root, binding: binding, signing: signing, tokens: tokens,
 	}
 	runner, err := NewTriageRunner(TriageRunnerConfig{
 		Bindings:     store,
@@ -1074,7 +1075,7 @@ func TestTriageRunner_ReportsAnIssueWhoseDiscussionCannotBeRead(t *testing.T) {
 // preconditions are typed refusals rather than a container started nowhere.
 func TestTriageRunner_RefusesAProjectWithNoWorkspace(t *testing.T) {
 	rig := newTriageRig(t)
-	rig.root = ""
+	rig.agents.host.root = ""
 	rig.forge.putIssue(903, "an issue")
 	rig.answers("SDLC-TRIAGE: ready")
 
@@ -1179,7 +1180,8 @@ func TestTriageRunner_AReplyToATriagedIssueIsJudgedAgain(t *testing.T) {
 func newTriageRigOver(t *testing.T, first *triageRig) *triageRig {
 	t.Helper()
 	container := &fakeContainer{checkout: filepath.Join(orchestration.WorkspaceCheckoutRoot, testOrchProject().Name)}
-	agents := &fakeAgents{container: container}
+	root := testRoot(t)
+	agents := &fakeAgents{container: container, host: executingHost{root: root}}
 	signing := &fakeSigningAgent{}
 	runner, err := NewTriageRunner(TriageRunnerConfig{
 		Bindings:     first.store,
@@ -1194,7 +1196,7 @@ func newTriageRigOver(t *testing.T, first *triageRig) *triageRig {
 	}
 	return &triageRig{
 		t: t, forge: first.forge, store: first.store, agents: agents, container: container,
-		runner: runner, root: testRoot(t), binding: first.binding,
+		runner: runner, root: root, binding: first.binding,
 	}
 }
 

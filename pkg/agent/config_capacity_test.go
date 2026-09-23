@@ -15,8 +15,12 @@ package agent
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 // TestConfig_MaxConcurrentJobs_AcceptsADeclaredCount is the ordinary case: a host
@@ -92,5 +96,45 @@ func TestHeartbeatBody_ReportsNothingWhenNothingIsDeclared(t *testing.T) {
 	body := heartbeatRequestBody(HeartbeatStatus{Backends: []string{"claude"}})
 	if !strings.Contains(body, `"max_concurrent_jobs":0`) {
 		t.Fatalf("an undeclared count must still be a well-formed zero: %s", body)
+	}
+}
+
+// TestHeartbeatBody_CarriesTheSigningAgents: the signing sockets this daemon
+// can mount go out on every heartbeat, and "none" goes out as an empty list —
+// a report the control plane acts on — never as an absent key.
+func TestHeartbeatBody_CarriesTheSigningAgents(t *testing.T) {
+	t.Parallel()
+	const id = "0123456789abcdef0123456789abcdef"
+	body := heartbeatRequestBody(HeartbeatStatus{Backends: []string{"claude"}, SigningAgents: []string{id}})
+	if !strings.Contains(body, `"signing_agents":["`+id+`"]`) {
+		t.Fatalf("the heartbeat must report the reachable signing sockets: %s", body)
+	}
+	if none := heartbeatRequestBody(HeartbeatStatus{Backends: []string{"claude"}}); !strings.Contains(none, `"signing_agents":[]`) {
+		t.Fatalf("no reachable socket must still be reported: %s", none)
+	}
+}
+
+// TestConfig_SigningAgents discovers a control-plane sockets root under an
+// admitted mount root — one level down, the <runtime>/quicbaas/<instance>
+// shape a co-located daemon admits — and finds none on a host that admits no
+// such directory.
+func TestConfig_SigningAgents(t *testing.T) {
+	t.Parallel()
+	runtimeRoot := t.TempDir()
+	instance := filepath.Join(runtimeRoot, "3f2a9c1e")
+	if err := os.Mkdir(instance, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	id, err := orchestration.EnsureSigningRootID(instance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	colocated := &Config{AllowedMountRoots: []string{t.TempDir(), runtimeRoot}}
+	if got := colocated.SigningAgents(); len(got) != 1 || got[0] != id {
+		t.Fatalf("co-located daemon reported %v, want [%s]", got, id)
+	}
+	remote := &Config{AllowedMountRoots: []string{t.TempDir()}}
+	if got := remote.SigningAgents(); got == nil || len(got) != 0 {
+		t.Fatalf("a remote daemon must report an empty, non-nil list: %#v", got)
 	}
 }

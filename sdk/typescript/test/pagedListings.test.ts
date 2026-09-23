@@ -224,6 +224,39 @@ describe('RestOrchestratorClient paged listings', () => {
     expect(params.get('job_ids')).toBe('job-1,job-2');
   });
 
+  it("carries each row's forge issue through untouched", async () => {
+    // go-quicbaas#976: the server fills `source` for the page it answers, and
+    // the jobs view names each row's issue from it alone — it holds no tasks
+    // to resolve it from. A client that dropped the field on the way through
+    // would blank the chip with nothing reporting a failure.
+    fetchMock.mockResolvedValueOnce(
+      mockOK({
+        jobs: [
+          {
+            ...JOB,
+            task_id: 'task-a',
+            source: {
+              kind: 'forge_issue',
+              ref: 'jeremyhahn/go-quicbaas#62',
+              url: 'http://forge.example/jeremyhahn/go-quicbaas/issues/62',
+            },
+          },
+        ],
+        total: 1,
+        limit: 25,
+        offset: 0,
+      }),
+    );
+
+    const page = await client.orchestrator.listJobsPage('acme');
+
+    expect(page.items[0]?.source).toEqual({
+      kind: 'forge_issue',
+      ref: 'jeremyhahn/go-quicbaas#62',
+      url: 'http://forge.example/jeremyhahn/go-quicbaas/issues/62',
+    });
+  });
+
   it('omits an empty narrowing rather than sending an empty value', async () => {
     fetchMock.mockResolvedValueOnce(mockOK({ jobs: [], total: 0, limit: 25, offset: 0 }));
 

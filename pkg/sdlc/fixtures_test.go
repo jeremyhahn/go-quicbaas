@@ -21,6 +21,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -111,6 +112,31 @@ var testRepoRef = RepoRef{Owner: fixtureOwner, Repo: fixtureRepo}
 // process rather than written down, so no key of any provenance is committed
 // and no fixture can be mistaken for a real forge's identity.
 var testSSHHostKey = generateTestSSHHostKey()
+
+// testSigningKey is the attempt signing key's public half every test signs
+// with: a real ed25519 key from a fixed seed, so the publisher's fingerprint
+// check sees a key it can parse and every run sees the same one.
+var testSigningKey = func() string {
+	seed := make([]byte, ed25519.SeedSize)
+	for i := range seed {
+		seed[i] = byte(i)
+	}
+	key, err := ssh.NewPublicKey(ed25519.NewKeyFromSeed(seed).Public())
+	if err != nil {
+		panic(err)
+	}
+	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))) + " agent@example.test"
+}()
+
+// testSigningFingerprint is testSigningKey's SHA-256 fingerprint, which is
+// what git reports (%GF) for a commit it signed.
+var testSigningFingerprint = func() string {
+	fp, err := sshKeyFingerprint(testSigningKey)
+	if err != nil {
+		panic(err)
+	}
+	return fp
+}()
 
 // generateTestSSHHostKey renders a fresh ed25519 public key as the OpenSSH
 // public-key line ForgeConfig.SSHHostKey holds.
@@ -1075,6 +1101,93 @@ func (w *immediateWaiter) Wait(ctx context.Context, _ int) error {
 	return ctx.Err()
 }
 
+// executingHost is the host a fake agent service runs its sessions on. It
+// provisions each spawn's named workspace under its own projects root with the
+// WorkspaceManager every real host runs — the daemon's in-process backend and a
+// fleet agent alike — and releases the spec directory when the session closes.
+// That is the whole of the contract a runner may rely on (go-quicbaas#981), so
+// the fakes implement it with the production code rather than a copy of it.
+type executingHost struct {
+	// agentHost is the fleet agent this host is, empty for the daemon.
+	agentHost string
+
+	mu sync.Mutex
+
+	// root is the host's projects root. Empty refuses every named workspace,
+	// as a host with no projects root does.
+	root string
+
+	// sessions is each live session's provisioned workspace, released on close.
+	sessions map[string]*orchestration.ProvisionedWorkspace
+
+	// provisioned is every workspace provisioned, in spawn order.
+	provisioned []*orchestration.ProvisionedWorkspace
+
+	// specs is the spec each spawn carried, copied before provisioning wipes
+	// the request's own.
+	specs []map[string][]byte
+}
+
+// provision makes the workspace a spawn names and answers where, or nil when
+// the spawn named none.
+func (h *executingHost) provision(sessionID string, req *orchestration.SpawnSessionRequest) (*orchestration.WorkspacePlacement, error) {
+	if req.Workspace == nil {
+		return nil, nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.root == "" {
+		return nil, &orchestration.SessionWorkspaceUnsupportedError{Host: "the test host"}
+	}
+	manager, err := orchestration.NewWorkspaceManager(h.root)
+	if err != nil {
+		return nil, err
+	}
+	if req.Workspace.Spec != nil {
+		spec := make(map[string][]byte, len(req.Workspace.Spec.Files))
+		for name, content := range req.Workspace.Spec.Files {
+			spec[name] = append([]byte(nil), content...)
+		}
+		h.specs = append(h.specs, spec)
+	}
+	p, err := manager.ProvisionSession(req.Workspace)
+	if err != nil {
+		return nil, err
+	}
+	if h.sessions == nil {
+		h.sessions = map[string]*orchestration.ProvisionedWorkspace{}
+	}
+	h.sessions[sessionID] = p
+	h.provisioned = append(h.provisioned, p)
+	return &orchestration.WorkspacePlacement{AgentHost: h.agentHost, Key: req.Workspace.Key, Dir: p.Dir}, nil
+}
+
+// release drops a closed session's spec directory.
+func (h *executingHost) release(sessionID string) {
+	h.mu.Lock()
+	p := h.sessions[sessionID]
+	delete(h.sessions, sessionID)
+	h.mu.Unlock()
+	p.Release()
+}
+
+// spec is the spec the n-th spawn carried, nil when there was none.
+func (h *executingHost) spec(n int) map[string][]byte {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if n >= len(h.specs) {
+		return nil
+	}
+	return h.specs[n]
+}
+
+// workspaces is every workspace provisioned so far, in spawn order.
+func (h *executingHost) workspaces() []*orchestration.ProvisionedWorkspace {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]*orchestration.ProvisionedWorkspace(nil), h.provisioned...)
+}
+
 func testRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs(t.TempDir())
@@ -1113,6 +1226,17 @@ func (f *fakeForge) pullRequest(number int) *ForgePullRequest {
 // made. Everything the runner asks of git goes through here, so a runner that
 // found some other way to commit or push would fail these tests rather than
 // pass them quietly.
+// outgoingCommit is one commit a branch carries beyond its base, with git's
+// %G? signature status for it.
+type outgoingCommit struct {
+	SHA    string
+	Status string
+
+	// Signer is the signing key's fingerprint git reports (%GF); empty for
+	// an unsigned commit.
+	Signer string
+}
+
 type fakeContainer struct {
 	mu sync.Mutex
 
@@ -1136,6 +1260,29 @@ type fakeContainer struct {
 	changed bool
 	ahead   bool
 
+	// nothingStaged makes "add --all" stage nothing even though status
+	// reported a change: a file rewritten to its committed content between
+	// the two, which is the go-quicbaas#1048 refusal.
+	nothingStaged bool
+
+	// outgoing is every commit the branch carries beyond its base, with the
+	// signature status "git log --format=%H %G?" reports for it. A commit the
+	// publisher makes is added as "G" when its configuration signs and "N"
+	// when it does not. A test that sets ahead with no outgoing commits gets
+	// one signed worker commit; one that models an unsigned worker commit
+	// lists it here.
+	outgoing []outgoingCommit
+
+	// logErr makes "git log" exit 128, which is git failing to answer rather
+	// than answering "unsigned".
+	logErr error
+
+	// diffExit makes "diff --cached --quiet" exit with this code instead of
+	// answering, and diffExecErr makes the exec itself fail, which is the
+	// index probe breaking rather than reporting.
+	diffExit    int
+	diffExecErr error
+
 	// head is what rev-parse HEAD answers. A commit advances it, which is
 	// what makes a second review round land on a NEW head, and so does a
 	// "checkout -B" whose start this container can resolve.
@@ -1156,13 +1303,21 @@ type fakeContainer struct {
 
 	commits      []string
 	commitConfig []string
-	pushes       []pushedRef
 
-	// rewritten models a worker that rewrote the published branch (a rebase):
-	// the local head no longer descends from what the remote holds. Git then
-	// refuses a push without a lease as non-fast-forward, and so does this
-	// container. A push that lands clears it.
-	rewritten bool
+	// logConfig is the "-c" configuration the last "git log" carried, which
+	// is where the signature check names the allowed_signers file.
+	logConfig []string
+
+	// logRange is the revision range the last "git log" named, which is how a
+	// test proves the signature check reads the ref being pushed.
+	logRange string
+	pushes   []pushedRef
+
+	// diverged models a local branch that no longer descends from what the
+	// remote holds: a worker that rewrote a published commit. Git refuses a
+	// plain push of it as non-fast-forward, and so does this container. The
+	// factory never forces past that refusal, so it stays set.
+	diverged bool
 
 	// repos is every directory that is already a git repository, as the
 	// container sees it. A clone adds one; the checkout step's probe reads
@@ -1271,14 +1426,9 @@ type pushedRef struct {
 	Branch       string
 	RemoteBranch string
 
-	// Force records that the push carried --force-with-lease. A mid-attempt
-	// publication needs it; a plain publication must not have it, and the
-	// difference is what these tests measure.
-	Force bool
-
-	// Lease is the commit an explicit --force-with-lease=<ref>:<expect>
-	// pinned the push to, empty for an implicit lease or none.
-	Lease string
+	// Args is the whole push argv after "push", so a test can assert what the
+	// publication did and did not pass.
+	Args []string
 }
 
 // exec answers one command. Unknown commands are refused rather than
@@ -1392,6 +1542,21 @@ func (c *fakeContainer) exec(containerID string, spec *orchestration.ExecSpec) (
 		return &orchestration.ExecResult{}, nil
 	case "add":
 		return &orchestration.ExecResult{}, nil
+	case "diff":
+		// "diff --cached --quiet" answers whether the index holds anything to
+		// commit: exit 1 when it does, 0 when it does not. nothingStaged
+		// models the race go-quicbaas#1048 reports — status saw a change that
+		// "add --all" then staged as nothing.
+		if c.diffExecErr != nil {
+			return nil, c.diffExecErr
+		}
+		if c.diffExit != 0 {
+			return &orchestration.ExecResult{ExitCode: c.diffExit, Stderr: "fatal: unable to read the index"}, nil
+		}
+		if c.changed && !c.nothingStaged {
+			return &orchestration.ExecResult{ExitCode: 1}, nil
+		}
+		return &orchestration.ExecResult{}, nil
 	case "commit":
 		if c.commitErr != nil {
 			return &orchestration.ExecResult{ExitCode: 1, Stderr: c.commitErr.Error()}, nil
@@ -1401,36 +1566,57 @@ func (c *fakeContainer) exec(containerID string, spec *orchestration.ExecSpec) (
 		c.changed = false
 		c.ahead = true
 		c.head = "head-" + itoa(len(c.commits))
+		commit := outgoingCommit{SHA: c.head, Status: "N"}
+		if slices.Contains(config, "commit.gpgsign=true") {
+			commit.Status = "G"
+			for _, cfg := range config {
+				if key, ok := strings.CutPrefix(cfg, "user.signingkey=key::"); ok {
+					if fp, err := sshKeyFingerprint(key); err == nil {
+						commit.Signer = fp
+					}
+				}
+			}
+		}
+		c.outgoing = append(c.outgoing, commit)
 		return &orchestration.ExecResult{}, nil
+	case "log":
+		if c.logErr != nil {
+			return &orchestration.ExecResult{ExitCode: 128, Stderr: c.logErr.Error()}, nil
+		}
+		c.logConfig = config
+		c.logRange = args[len(args)-1]
+		outgoing := c.outgoing
+		if c.ahead && len(outgoing) == 0 {
+			outgoing = []outgoingCommit{{SHA: "worker-1", Status: "G", Signer: testSigningFingerprint}}
+		}
+		var out strings.Builder
+		for _, commit := range outgoing {
+			out.WriteString(strings.TrimSpace(commit.SHA+" "+commit.Status+" "+commit.Signer) + "\n")
+		}
+		return &orchestration.ExecResult{Stdout: out.String()}, nil
 	case "rev-list":
 		if c.ahead {
 			return &orchestration.ExecResult{Stdout: "1\n"}, nil
 		}
 		return &orchestration.ExecResult{Stdout: "0\n"}, nil
 	case "push":
+		for _, arg := range args[1:] {
+			// The factory never force-pushes, leased or not (handbook
+			// version-control §5b). A push that asks for it is a defect, and
+			// this container refuses it loudly rather than modelling it.
+			if arg == "-f" || strings.Contains(arg, "force") {
+				return nil, &InvalidInputError{Field: "cmd", Message: "a force push was requested: " + strings.Join(args, " ")}
+			}
+		}
 		if c.pushErr != nil {
 			return &orchestration.ExecResult{ExitCode: 1, Stderr: c.pushErr.Error()}, nil
 		}
 		branch, remote, _ := strings.Cut(args[len(args)-1], ":")
-		force, lease := false, ""
-		for _, arg := range args[1:] {
-			if arg == "--force-with-lease" {
-				force = true
-			}
-			if pinned, ok := strings.CutPrefix(arg, "--force-with-lease="); ok {
-				force = true
-				_, lease, _ = strings.Cut(pinned, ":")
-			}
-			if arg == "--force" || arg == "-f" {
-				return nil, &InvalidInputError{Field: "cmd", Message: "an unleased force push may discard a commit this container never saw"}
-			}
-		}
-		if c.rewritten && !force {
+		if c.diverged {
 			return &orchestration.ExecResult{ExitCode: 1,
 				Stderr: " ! [rejected]        " + branch + " -> " + branch + " (non-fast-forward)"}, nil
 		}
-		c.pushes = append(c.pushes, pushedRef{Branch: branch, RemoteBranch: remote, Force: force, Lease: lease})
-		c.rewritten = false
+		c.pushes = append(c.pushes, pushedRef{Branch: branch, RemoteBranch: remote, Args: append([]string(nil), args[1:]...)})
 		return &orchestration.ExecResult{}, nil
 	case "ls-files":
 		if c.tree == nil {
@@ -1784,7 +1970,7 @@ func (a *fakeSigningAgent) StartSigningAgent(
 	if scope == SigningScopeCheckout {
 		key = ""
 	} else if key == "" {
-		key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITESTKEY agent@example.test"
+		key = testSigningKey
 	}
 	return &SigningSession{
 		SocketPath: socket,

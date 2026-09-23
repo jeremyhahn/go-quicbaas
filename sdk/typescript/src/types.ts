@@ -154,6 +154,14 @@ export interface JobStatus {
   delivery?: JobDelivery | null;
   /** verification is the last validator pipeline's results: the build, the tests. */
   verification?: JobVerificationResult[];
+  /**
+   * source is where the job's TASK came from — the forge issue it was adopted
+   * from. It is the task's own TaskSource, so `issueRef` reads a job exactly
+   * as it reads a task. Unlike the rest of this block it is on the LISTING as
+   * well as the detail read: a paged jobs view holds no tasks to resolve it
+   * from (go-quicbaas#976).
+   */
+  source?: TaskSource | null;
 }
 
 /** JobVerificationResult is one verification command's outcome. */
@@ -997,6 +1005,9 @@ export interface SpendChild {
   // sentinel — a job with no task. Real spend with no parent at this level,
   // to be labelled rather than shown as an entity named '-'.
   unattributed?: boolean;
+  // name is the child's human name where the level has one (a project),
+  // absent when unattributed or when the entity no longer exists.
+  name?: string;
   total_tokens: number;
 }
 
@@ -1026,9 +1037,17 @@ export interface GetSpendReportResponse {
   session_id?: string;
   round?: number;
 
+  // project_name is the name of the project the scope addresses, when it
+  // still exists.
+  project_name?: string;
+
   entries: number;
+  // input_tokens is the fresh prompt; the two cache dimensions are prompt
+  // tokens served from and written into the provider's cache.
   input_tokens: number;
   output_tokens: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
   total_tokens: number;
 
   // cost_micros is the summed charge in millionths of a currency unit, and

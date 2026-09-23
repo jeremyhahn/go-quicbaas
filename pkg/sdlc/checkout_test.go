@@ -232,6 +232,50 @@ func TestCloner_WritesTheProjectCommitIdentityIntoTheCheckout(t *testing.T) {
 	}
 }
 
+// TestCloner_ASigningAttemptMakesTheWorkersCommitsSigned is go-quicbaas#1048's
+// review finding at its root: a worker that commits on its own must sign with
+// the attempt's key, so the checkout writes the signing configuration beside
+// the identity.
+func TestCloner_ASigningAttemptMakesTheWorkersCommitsSigned(t *testing.T) {
+	spec := testWorkspaceSpec(t, true)
+	spec.SigningKey = "ssh-ed25519 AAAAkey"
+	container := &fakeContainer{}
+	c := testCloner(container, spec)
+	if err := c.Checkout(); err != nil {
+		t.Fatalf("Checkout: %v", err)
+	}
+	written := map[string]string{}
+	for _, cfg := range container.configsWritten() {
+		written[cfg.Key] = cfg.Value
+	}
+	want := map[string]string{
+		"gpg.format":                 "ssh",
+		"user.signingkey":            "key::ssh-ed25519 AAAAkey",
+		"commit.gpgsign":             "true",
+		"gpg.ssh.allowedSignersFile": path.Join(orchestration.WorkspaceSpecDir, orchestration.WorkspaceAllowedSignersFile),
+	}
+	for key, value := range want {
+		if written[key] != value {
+			t.Errorf("%s = %q, want %q", key, written[key], value)
+		}
+	}
+}
+
+// TestCloner_AnAttemptThatSignsNothingWritesNoSigningConfig: a reviewer or
+// triage checkout has no key, and its git is not told to sign.
+func TestCloner_AnAttemptThatSignsNothingWritesNoSigningConfig(t *testing.T) {
+	container := &fakeContainer{}
+	c := testCloner(container, testWorkspaceSpec(t, true))
+	if err := c.Checkout(); err != nil {
+		t.Fatalf("Checkout: %v", err)
+	}
+	for _, cfg := range container.configsWritten() {
+		if strings.HasPrefix(cfg.Key, "gpg.") || cfg.Key == "commit.gpgsign" || cfg.Key == "user.signingkey" {
+			t.Fatalf("wrote %s for an attempt that signs nothing", cfg.Key)
+		}
+	}
+}
+
 // TestCloner_ARefusedCloneIsATypedErrorThatScrubsItsOutput: a clone git
 // refused ends the attempt with CheckoutCommandError, whose STRING says what
 // git said — scrubbed, because an error reaches logs and, through the module's
@@ -504,7 +548,7 @@ func TestRunner_TheJobsWorkDirIsTheProjectCheckout(t *testing.T) {
 	if err := rig.runner.Run(context.Background(), job); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	want := filepath.Join(rig.root, testTask+"-a1", "api")
+	want := filepath.Join(rig.root, testTenant, testProject, "workspace", testTask+"-a1", "api")
 	if got := job.WorkDir(); got != want {
 		t.Errorf("job work dir = %q, want the project checkout %q", got, want)
 	}

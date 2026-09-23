@@ -71,6 +71,13 @@ func (s *Server) installRemoteBackendResolver(agentSvc orchestration.AgentServic
 	adapter := logger.NewAdapter(s.logger)
 	caCertPath := filepath.Join(s.config.Storage.DataDir, "certs", "ca-chain.crt")
 	pool := newRemoteBackendPool(s.agentRegistry, s.orchestratorDaemonClient, s.centralTokenEndpoint(), caCertPath, s.config.Orchestration.HostAffinity, adapter)
+	// A daemon silent past the heartbeat bound is not dispatched to, and a
+	// spawn that mounts this daemon's signing socket is placed only on an agent
+	// that proved it can reach this daemon's sockets root (go-quicbaas#981).
+	pool.staleAfter = s.config.Orchestration.HeartbeatTimeout
+	if socketsRoot, rootErr := s.socketsRoot(); rootErr == nil {
+		pool.signingRoot = socketsRoot
+	}
 
 	// Wire the embedded dialer registry so in-process agents bypass TCP.
 	// Initialized here so the pool is ready before embedded agent startup;
@@ -129,6 +136,19 @@ type remoteBackendPool struct {
 	// embedded agents. When non-nil and a dialer is found for a host, the
 	// pool bypasses the TCP/TLS dial path entirely.
 	embeddedDialers *EmbeddedDialerRegistry
+
+	// staleAfter is the heartbeat bound past which a registration is not
+	// dispatched to, whatever its status says. Non-positive selects
+	// orchestration.DefaultAgentHeartbeatTimeout.
+	staleAfter time.Duration
+
+	// now is the clock liveness is judged against; nil is time.Now.
+	now func() time.Time
+
+	// signingRoot is this daemon's signing sockets root. Its marker names the
+	// identifier a signing spawn requires of an agent; empty (or a root with
+	// no marker yet) means no agent can be proved to reach it.
+	signingRoot string
 
 	mu sync.Mutex
 	// entries maps daemon host -> the backends constructed for it.
@@ -214,7 +234,18 @@ func (p *remoteBackendPool) resolve(ctx context.Context, backend, projectID stri
 		return nil, false
 	}
 
-	reg, constraint := p.pickDaemon(allRegs, backend, hostAffinity, gpuRequired)
+	// FRESHNESS DECIDES PLACEMENT ONLY. A new session is not sent to an agent
+	// that has gone quiet; an existing session's operation still goes to the
+	// agent that holds it, whose own answer is the only one that counts — a
+	// missed heartbeat is not evidence the session is gone.
+	if orchestration.SpawnPlacementFromContext(ctx) {
+		allRegs = p.liveRegistrations(allRegs)
+	}
+	signingTrait, signingErr := p.requiredSigningTrait(ctx)
+	if signingErr != nil {
+		p.logger.Warnf("remote resolver: signing placement: %v", signingErr)
+	}
+	reg, constraint := p.pickDaemon(allRegs, backend, hostAffinity, gpuRequired, signingTrait)
 	if reg == nil {
 		noMatchErr := buildNoMatchError(backend, hostAffinity, gpuRequired, constraint)
 		// In hard mode (operator default OR per-request override) and when
@@ -247,9 +278,11 @@ func (p *remoteBackendPool) pickDaemon(
 	regs []*orchestration.AgentRegistration,
 	backend, hostAffinity string,
 	gpuRequired bool,
+	signingTrait string,
 ) (reg *orchestration.AgentRegistration, failedConstraint string) {
 	passedBackend := false
 	passedAffinity := false
+	passedGPU := false
 
 	for _, r := range regs {
 		if r == nil {
@@ -272,6 +305,15 @@ func (p *remoteBackendPool) pickDaemon(
 		if gpuRequired && !capabilityContains(r.Capabilities, "gpu") {
 			continue
 		}
+		passedGPU = true
+
+		// An EMBEDDED agent runs inside this daemon, so this daemon's signing
+		// socket is local to it by construction (its mount policy admits the
+		// sockets root); only a daemon-kind agent has to prove it.
+		if signingTrait != "" && kind != orchestration.AgentKindEmbedded &&
+			!capabilityContains(r.Capabilities, signingTrait) {
+			continue
+		}
 
 		return r, ""
 	}
@@ -283,8 +325,72 @@ func (p *remoteBackendPool) pickDaemon(
 	if hostAffinity != "" && !passedAffinity {
 		return nil, "host_affinity"
 	}
-	return nil, "gpu"
+	if gpuRequired && !passedGPU {
+		return nil, "gpu"
+	}
+	return nil, "signing_agent"
 }
+
+// liveRegistrations drops every registration that is not a daemon that will
+// take work — above all one whose last heartbeat is older than the bound.
+//
+// A CRASHED DAEMON CANNOT MARK ITSELF OFFLINE, so its record keeps saying
+// "running" until something decides otherwise, and nothing else did: the
+// dispatcher routed omega's reviews to a daemon that had been dead for hours,
+// and every one failed on a refused connection. The same predicate the fleet's
+// capacity sum uses decides it here (orchestration.AgentAlive).
+func (p *remoteBackendPool) liveRegistrations(regs []*orchestration.AgentRegistration) []*orchestration.AgentRegistration {
+	staleAfter := p.staleAfter
+	if staleAfter <= 0 {
+		staleAfter = orchestration.DefaultAgentHeartbeatTimeout
+	}
+	now := time.Now()
+	if p.now != nil {
+		now = p.now()
+	}
+	live := make([]*orchestration.AgentRegistration, 0, len(regs))
+	for _, r := range regs {
+		// An embedded agent is this process: it is alive exactly when the
+		// resolver asking is, and it heartbeats nothing to prove it.
+		if r != nil && r.EffectiveKind() == orchestration.AgentKindEmbedded {
+			live = append(live, r)
+			continue
+		}
+		if orchestration.AgentAlive(r, now, staleAfter) {
+			live = append(live, r)
+			continue
+		}
+		if r != nil {
+			p.logger.Debugf("remote resolver: skipping agent %s (%s): no heartbeat within %s",
+				r.ID, r.Host, staleAfter)
+		}
+	}
+	return live
+}
+
+// requiredSigningTrait is the trait a spawn resolved under ctx requires of an
+// agent: this daemon's signing-agent trait when the spawn mounts the signing
+// socket, "" when it does not. A signing spawn on a daemon whose sockets root
+// carries no identifier yet can be placed on no agent, and gets a trait no
+// agent holds rather than none at all.
+func (p *remoteBackendPool) requiredSigningTrait(ctx context.Context) (string, error) {
+	if !orchestration.SigningAgentRequiredFromContext(ctx) {
+		return "", nil
+	}
+	if p.signingRoot == "" {
+		return unreachableSigningTrait, nil
+	}
+	id, err := orchestration.ReadSigningRootID(p.signingRoot)
+	if err != nil {
+		return unreachableSigningTrait, err
+	}
+	return orchestration.SigningAgentTrait(id), nil
+}
+
+// unreachableSigningTrait is a trait no agent can advertise — its identifier
+// is not the shape DiscoverSigningRootIDs reports — so a signing spawn this
+// daemon cannot identify is placed on no agent.
+const unreachableSigningTrait = orchestration.AgentTraitSigningAgentPrefix + "unidentified"
 
 // buildNoMatchError constructs a NoMatchingAgentError that names the
 // unsatisfied constraint and all active filters for clear operator messaging.
@@ -295,6 +401,9 @@ func buildNoMatchError(backend, hostAffinity string, gpuRequired bool, constrain
 	}
 	if gpuRequired {
 		detail += " and have capability=gpu"
+	}
+	if constraint == "signing_agent" {
+		detail += " and can mount this daemon's signing socket"
 	}
 	return &orchestration.NoMatchingAgentError{
 		Constraint: constraint,

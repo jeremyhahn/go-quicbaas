@@ -213,7 +213,7 @@ func (c *agentFleetCapacity) FleetCapacity(ctx context.Context, now time.Time) (
 			return FleetCapacity{}, &AdmissionUndecidableError{Input: "agents of tenant " + tenantID, Cause: listErr}
 		}
 		for _, agent := range registered {
-			if !fleetAgentAlive(agent, now, c.staleAfter) {
+			if !AgentAlive(agent, now, c.staleAfter) {
 				continue
 			}
 			capacity.Agents++
@@ -239,14 +239,21 @@ func (c *agentFleetCapacity) FleetCapacity(ctx context.Context, now time.Time) (
 	return capacity, nil
 }
 
-// fleetAgentAlive reports whether a registration's slots still count.
+// AgentAlive reports whether a registration is a daemon that will take work:
+// its slots count towards the fleet, and the dispatcher may place a session on
+// it.
 //
-// THREE WAYS TO NOT COUNT, and each one is a daemon that will not take work:
+// THREE WAYS TO NOT BE, and each one is a daemon that will not take work:
 // administratively disabled, reported unreachable, or silent for longer than the
-// heartbeat bound. A record that has NEVER heartbeated does not count either —
-// an enrollment is a claim about the future, and counting it would give the
-// fleet slots on a daemon that never started.
-func fleetAgentAlive(agent *AgentRegistration, now time.Time, staleAfter time.Duration) bool {
+// heartbeat bound. A record with no sign of life at all does not count either —
+// registration stamps LastSeen, so one without it was never written by a
+// daemon that started.
+//
+// THE SILENCE BOUND IS WHAT KEEPS A DEAD DAEMON OUT OF DISPATCH. Nothing marks a
+// crashed daemon offline — it cannot say so itself — so a record whose last
+// heartbeat is older than the bound still reads "running"; the dispatcher that
+// trusted the status routed every review to a connection that was refused.
+func AgentAlive(agent *AgentRegistration, now time.Time, staleAfter time.Duration) bool {
 	switch {
 	case agent == nil:
 		return false

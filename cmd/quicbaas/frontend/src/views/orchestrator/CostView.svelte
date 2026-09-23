@@ -29,6 +29,7 @@
   import {
     UNMEASURED,
     childIsDrillable,
+    childIsNamed,
     childLabel,
     childScopeValue,
     costIsMeasured,
@@ -37,6 +38,7 @@
     levelLabel,
     policyLabel,
     policyVariant,
+    reportProjectName,
     scopeLabel,
     spendErrorMessage,
     windowPercent,
@@ -58,6 +60,9 @@
   let report = $state<GetSpendReportResponse | null>(null);
   let loadError = $state('');
   let loading = $state(false);
+  // projectName is the name of the project the scope has drilled into, so the
+  // breadcrumb reads as the project rather than its id (go-quicbaas#1058).
+  let projectName = $state('');
 
   // The chain is a PATH, so a drill step sets the next level and every level
   // below it must be cleared. Keeping the order here, once, is what stops a
@@ -75,15 +80,25 @@
       // stands for; printing a raw '-' as a project name is the exact lie
       // this page exists to remove.
       if (value !== '') {
-        crumbs.push({ label: scopeLabel(CHAIN_LEVELS[index]!, value), depth: index + 1 });
+        const name = key === 'project_id' ? projectName : '';
+        crumbs.push({ label: scopeLabel(CHAIN_LEVELS[index]!, value, name), depth: index + 1 });
       }
     });
     return crumbs;
   });
 
+  // The tenant the name on the breadcrumb was read under. A tenant switch
+  // clears the name at once, so another tenant's project name is never shown
+  // while the new tenant's report is in flight.
+  let nameTenantID = '';
+
   $effect(() => {
     const tenantID = orchestratorStore.activeTenantID;
     const asked = { ...scope };
+    if (tenantID !== nameTenantID) {
+      nameTenantID = tenantID;
+      projectName = '';
+    }
     // THE REPORT ON SCREEN BELONGS TO THE BREADCRUMB ABOVE IT. The breadcrumb
     // changes on the click, so leaving the previous scope's report rendered
     // while the new read is in flight prints the parent's totals as the
@@ -109,6 +124,7 @@
       // than rendered under the new breadcrumb.
       if (!isCurrentRequest(tenantID, asked)) return;
       report = resp;
+      projectName = reportProjectName(resp);
       loadError = '';
     } catch (err: unknown) {
       if (!isCurrentRequest(tenantID, asked)) return;
@@ -147,6 +163,8 @@
     if (index < 0) return;
     const next: Scope = { ...scope };
     next[CHAIN[index]!] = childScopeValue(child);
+    // The breadcrumb names the project it opened, as the row did.
+    if (index === 0) projectName = childIsNamed(child) ? (child.name ?? '') : '';
     // Clear everything below the level just selected.
     for (let i = index + 1; i < CHAIN.length; i++) next[CHAIN[i]!] = '';
     scope = next;
@@ -157,6 +175,7 @@
   }
 
   function drillUpTo(depth: number): void {
+    if (depth === 0) projectName = '';
     const next: Scope = { ...scope };
     for (let i = depth; i < CHAIN.length; i++) next[CHAIN[i]!] = '';
     scope = next;
@@ -245,14 +264,19 @@
             />
           {:else}
             <div class="space-y-2 max-h-96 overflow-y-auto">
-              {#each report.children ?? [] as child (childLabel(child))}
+              {#each report.children ?? [] as child (childScopeValue(child))}
                 <button
                   class="w-full flex items-center justify-between gap-3 px-3 py-2 rounded-box bg-base-300/50 hover:bg-base-300 transition-colors text-left"
                   class:cursor-default={!childIsDrillable(child)}
                   disabled={!childIsDrillable(child)}
                   onclick={() => drillInto(child)}
                 >
-                  <span class="text-xs font-mono truncate" class:italic={child.unattributed === true}>
+                  <span
+                    class="text-xs truncate"
+                    class:font-mono={!childIsNamed(child)}
+                    class:italic={child.unattributed === true}
+                    title={childIsNamed(child) ? child.id : undefined}
+                  >
                     {childLabel(child)}
                   </span>
                   <span class="text-xs text-base-content/60 shrink-0">

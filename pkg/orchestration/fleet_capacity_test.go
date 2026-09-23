@@ -516,7 +516,7 @@ func TestFleetCapacitySource_String(t *testing.T) {
 func TestFleetAgentAlive_ToleratesANilRecord(t *testing.T) {
 	t.Parallel()
 
-	assert.False(t, fleetAgentAlive(nil, fleetClock, time.Minute))
+	assert.False(t, AgentAlive(nil, fleetClock, time.Minute))
 }
 
 // TestFleetAgentAlive_CountsADaemonHeartbeatingNow is the positive case the
@@ -525,7 +525,7 @@ func TestFleetAgentAlive_ToleratesANilRecord(t *testing.T) {
 func TestFleetAgentAlive_CountsADaemonHeartbeatingNow(t *testing.T) {
 	t.Parallel()
 
-	assert.True(t, fleetAgentAlive(
+	assert.True(t, AgentAlive(
 		fleetDaemonRecord("t1", "agent-1", 2, time.Second), fleetClock, time.Minute))
 }
 

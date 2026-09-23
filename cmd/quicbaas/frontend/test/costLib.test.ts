@@ -8,9 +8,11 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  reportProjectName,
   SPEND_UNATTRIBUTED_LEVEL,
   UNMEASURED,
   childIsDrillable,
+  childIsNamed,
   childLabel,
   childScopeValue,
   costIsMeasured,
@@ -215,6 +217,26 @@ describe('childLabel', () => {
   it('names the no-value bucket as an absence, never as an entity called "-"', () => {
     expect(childLabel(unattributed)).toBe('No task');
   });
+
+  // go-quicbaas#1058: the By Project card listed bare project ids.
+  it('names a project row by its name when the server supplied one', () => {
+    const project: SpendChild = { id: 'p-9f2c', level: 'project', name: 'go-truststrap', total_tokens: 7 };
+    expect(childLabel(project)).toBe('go-truststrap');
+    expect(childIsNamed(project)).toBe(true);
+    // The id is still what a drill step addresses.
+    expect(childScopeValue(project)).toBe('p-9f2c');
+  });
+
+  it('falls back to the id for a project that no longer exists', () => {
+    const gone: SpendChild = { id: 'p-dead', level: 'project', name: '  ', total_tokens: 7 };
+    expect(childLabel(gone)).toBe('p-dead');
+    expect(childIsNamed(gone)).toBe(false);
+  });
+
+  it('never names the no-value bucket, even if a name were sent', () => {
+    expect(childIsNamed({ ...unattributed, name: 'x' })).toBe(false);
+    expect(childLabel({ ...unattributed, name: 'x' })).toBe('No task');
+  });
 });
 
 describe('childScopeValue / childIsDrillable', () => {
@@ -240,6 +262,15 @@ describe('scopeLabel', () => {
 
   it('renders a real id unchanged', () => {
     expect(scopeLabel('project', 'proj-1')).toBe('proj-1');
+  });
+
+  it('renders the name when one is known, and the id when it is blank', () => {
+    expect(scopeLabel('project', 'proj-1', 'go-truststrap')).toBe('go-truststrap');
+    expect(scopeLabel('project', 'proj-1', ' ')).toBe('proj-1');
+  });
+
+  it('keeps the sentinel an absence even beside a name', () => {
+    expect(scopeLabel('project', SPEND_UNATTRIBUTED_LEVEL, 'x')).toBe('No project');
   });
 });
 
@@ -281,5 +312,19 @@ describe('spendErrorMessage', () => {
 
   it('carries the underlying text for anything else', () => {
     expect(spendErrorMessage(new Error('boom'), 'spend')).toBe('Could not load spend: boom');
+  });
+});
+
+describe('reportProjectName', () => {
+  // Round-2 review of #1063: a report without a name must CLEAR the breadcrumb
+  // name. Keeping the previous one showed a project of the tenant the operator
+  // had just left, under the new tenant, indefinitely.
+  it('replaces the name on every accepted report, clearing it when the report has none', () => {
+    let name = reportProjectName({ project_name: 'alpha' });
+    expect(name).toBe('alpha');
+    name = reportProjectName({});
+    expect(name).toBe('');
+    name = reportProjectName({ project_name: 'beta' });
+    expect(name).toBe('beta');
   });
 });

@@ -41,18 +41,11 @@ func ephemeralWorkspaceTier() orchestration.ProjectStorage {
 	}
 }
 
-// forcedPushes is every publication that carried --force-with-lease, which is
-// the shape a MID-ATTEMPT publication has and a final one does not.
-func (r *runnerRig) forcedPushes() []pushedRef {
+// pushes is every publication that landed, in order.
+func (r *runnerRig) pushes() []pushedRef {
 	r.container.mu.Lock()
 	defer r.container.mu.Unlock()
-	var forced []pushedRef
-	for _, push := range r.container.pushes {
-		if push.Force {
-			forced = append(forced, push)
-		}
-	}
-	return forced
+	return append([]pushedRef(nil), r.container.pushes...)
 }
 
 // TestRunner_AnEphemeralWorkspacePublishesTheTurnThatTouchedTheTree is the
@@ -69,11 +62,13 @@ func TestRunner_AnEphemeralWorkspacePublishesTheTurnThatTouchedTheTree(t *testin
 		t.Fatalf("Run: %v", err)
 	}
 
-	forced := rig.forcedPushes()
-	if len(forced) == 0 {
-		t.Fatal("the turn's work was never published; an ephemeral checkout loses it with the container")
+	// The final publication is the one push a persistent workspace makes;
+	// the ephemeral tier publishes the turn's work before it.
+	pushes := rig.pushes()
+	if len(pushes) < 2 {
+		t.Fatalf("pushes = %+v; the turn's work was never published mid-attempt, and an ephemeral checkout loses it with the container", pushes)
 	}
-	for _, push := range forced {
+	for _, push := range pushes {
 		if push.Branch == "" {
 			t.Errorf("a publication named no branch: %+v", push)
 		}
@@ -98,8 +93,8 @@ func TestRunner_APersistentWorkspacePublishesNothingMidTurn(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	if forced := rig.forcedPushes(); len(forced) != 0 {
-		t.Fatalf("a persistent workspace published mid-turn: %+v", forced)
+	if pushes := rig.pushes(); len(pushes) != 1 {
+		t.Fatalf("pushes = %+v, want only the final publication; a persistent workspace publishes nothing mid-turn", pushes)
 	}
 }
 

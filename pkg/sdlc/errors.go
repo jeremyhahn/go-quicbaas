@@ -82,7 +82,7 @@ var (
 
 	// ErrMergeConflict indicates the forge settled on the pull request not
 	// being mergeable into its base: the change conflicts with it, and only a
-	// rebase onto the base can make it mergeable again.
+	// merge of the base into the branch can make it mergeable again.
 	ErrMergeConflict = errors.New("sdlc: pull request conflicts with its base branch")
 
 	// ErrHeadMoved indicates the pull request's head is no longer the head
@@ -91,6 +91,10 @@ var (
 
 	// ErrNoChanges indicates an attempt produced nothing to publish.
 	ErrNoChanges = errors.New("sdlc: the attempt produced no changes to publish")
+
+	// ErrUnsignedCommit is returned when a commit the attempt would publish
+	// is not signed by the attempt's signing key.
+	ErrUnsignedCommit = errors.New("sdlc: an outgoing commit is not signed by the attempt's key")
 
 	// ErrDeliveryAbsent indicates a lifecycle moment ran for a task whose
 	// attempt has no Delivery record, so Prepare never completed.
@@ -457,7 +461,8 @@ func (e *MergeNotReadyExhaustedError) Unwrap() []error {
 // It is a verdict about the WORK, not about the forge: the base moved under
 // the change and the two no longer merge. Nothing retrying the merge can fix
 // it, and nothing about it is the environment's fault. The runner answers it
-// with a rebase round on the same branch and pull request.
+// with a merge round on the same branch and pull request: the worker merges
+// the base into the branch, and the branch is never rewritten.
 type MergeConflictError struct {
 	Subject  string
 	Base     string
@@ -520,6 +525,44 @@ func (e *NoChangesError) Error() string {
 
 // Unwrap returns the sentinel for errors.Is support.
 func (e *NoChangesError) Unwrap() error { return ErrNoChanges }
+
+// UnsignedCommitError reports an outgoing commit that is not signed by the
+// attempt's signing key: a commit the worker made with signing switched off,
+// or signed with some other key.
+//
+// PUBLISHING IT IS REFUSED, NOT REPAIRED. Re-signing means rewriting the
+// commit, and a branch is never rewritten once it may have been pushed. A
+// worker commits under the checkout's signing configuration by default, so
+// an unsigned commit is a worker that went out of its way to make one.
+type UnsignedCommitError struct {
+	TaskID string
+
+	// Commit is the first outgoing commit that failed the check.
+	Commit string
+
+	// Status is git's %G? verdict for it: N (no signature), B (bad), U or E
+	// (a signature by a key the allowed_signers file does not admit, or one
+	// git could not check), or G when the signature is good but by another
+	// key.
+	Status string
+
+	// Signer is the fingerprint git reported for the signing key (%GF),
+	// empty when there is none.
+	Signer string
+}
+
+// Error implements the error interface.
+func (e *UnsignedCommitError) Error() string {
+	msg := "sdlc: task " + e.TaskID + ": commit " + e.Commit +
+		" is not signed by the attempt's key (git signature status " + strconv.Quote(e.Status)
+	if e.Signer != "" {
+		msg += ", signer " + e.Signer
+	}
+	return msg + ")"
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *UnsignedCommitError) Unwrap() error { return ErrUnsignedCommit }
 
 // TaskNotForgeIssueError reports a task the module was asked to act on that
 // did not originate from a forge issue.
@@ -744,15 +787,15 @@ func (e *ProjectRecordMissingError) Unwrap() []error {
 	return []error{ErrRunner, ErrWorkspaceUnfit}
 }
 
-// WorkspaceUnavailableError reports a project whose worker has nowhere to
-// work: no workspace path, or one the daemon could not make the container's
-// mount point under.
+// WorkspaceUnavailableError reports a project whose session has nowhere to
+// work: the host that executes it could not provision the named workspace, or
+// the host the job's checkout is pinned to is gone or no longer holds it
+// (orchestration.ErrSessionWorkspace).
 type WorkspaceUnavailableError struct {
 	// ProjectID is the project.
 	ProjectID string
 
-	// Cause is the filesystem failure, nil when the project simply names no
-	// workspace.
+	// Cause is why, nil when nothing more is known.
 	Cause error
 }
 
