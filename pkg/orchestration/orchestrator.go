@@ -1508,7 +1508,7 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 
 	if effectiveMode == SandboxModeRequired && !backendHandlesContainers && s.containerRuntime != nil && s.containerRuntime.IsAvailable() {
 		containerID, spawnErr := s.spawnSandboxedSession(
-			ctx, req, workDir, model, effectiveTrust, effectiveNetwork, effectiveStorage)
+			ctx, req, workDir, model, effectiveTrust, effectiveNetwork, sandboxSecurityFor(backend), effectiveStorage)
 		if spawnErr != nil {
 			return nil, spawnErr
 		}
@@ -1926,6 +1926,7 @@ func (s *agentServiceImpl) spawnSandboxedSession(
 	model string,
 	trustLevel TrustLevel,
 	network SandboxNetwork,
+	security SandboxSecurity,
 	storage WorkspaceStoragePlan,
 ) (string, error) {
 	// Use the provided container config, or build one from request fields.
@@ -1959,6 +1960,13 @@ func (s *agentServiceImpl) spawnSandboxedSession(
 	// resolveSandboxNetwork already failed the spawn.
 	spec.TrustLevel = trustLevel
 	spec.Network = network.String()
+
+	// The privilege policy overrides the spec on the same terms: a caller's
+	// ContainerConfig cannot ask for --privileged, a wider capability set or
+	// an unbounded process count. See sandbox_security.go.
+	if err := security.Apply(spec); err != nil {
+		return "", err
+	}
 
 	// Add project directory as a mount if a work dir is set and no mounts
 	// configured. Only an absolute path can be a host bind-mount source; the

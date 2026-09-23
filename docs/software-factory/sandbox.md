@@ -163,6 +163,84 @@ and `sudo -n apk add`. `make test-worker-image` asserts the same three
 properties against the built image, plus that a bind-mounted write stays owned
 by the spawning uid.
 
+### The boundary around root
+
+Passwordless `sudo` makes root inside the container reachable by design, so
+**what root holds there is the width of the boundary**. Left to the runtime it
+was Docker's whole default capability set and no process bound
+(`HostConfig.CapDrop=[] PidsLimit=<nil>`). A live worker used that to
+`apk add docker` and start `dockerd` inside itself (go-quicbaas#1040).
+
+Every sandboxed container now runs under one privilege policy,
+`orchestration.SandboxSecurity` (`pkg/orchestration/sandbox_security.go`):
+
+```
+--cap-drop ALL
+--cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --cap-add SETGID --cap-add SETUID
+--pids-limit 4096
+```
+
+It is applied in the places every sandboxed spawn builds its spec:
+`ACPBackend.sandboxSpec`, shared by the CLI, JSON-RPC and exec transports;
+the orchestrator's detached sandbox (`spawnSandboxedSession`); and the
+OpenVINO/ollama-agent/vLLM tool container. So the embedded agent and a remote
+`quicbaas agent serve` get it through the same code. The policy **overrides**
+the spec. A caller's `ContainerConfig` cannot ask for `--privileged`, a wider
+capability set or a different process bound. `ContainerSpec.PidsLimit` is
+measured by `ContainerConfigDigest`, like the capability lists.
+
+**Each add-back is there because a command fails without it.** Measured
+with the worker's `sudo -n apk add` under a bounding set missing one
+capability at a time:
+
+| Missing        | What fails                                                               |
+|----------------|--------------------------------------------------------------------------|
+| `SETUID`       | `sudo: setresuid() [0, 0, 0] -> [1000, -1, -1]: Operation not permitted` |
+| `SETGID`       | `sudo: unable to change to root gid: Operation not permitted`            |
+| `CHOWN`        | `apk: ERROR: Failed to set ownership on etc/.apk.…`                      |
+| `FOWNER`       | `apk: ERROR: Failed to preserve modification time on etc/.apk.…`         |
+| `DAC_OVERRIDE` | root writing a file whose mode bits exclude it, e.g. the agent's 0600 files |
+
+`NET_RAW`, `MKNOD`, `SETFCAP`, `SYS_CHROOT`, `KILL`, `AUDIT_WRITE`,
+`NET_BIND_SERVICE`, `FSETID` and `SETPCAP` are gone. `sudo mknod` is refused.
+`ping` still works through the kernel's unprivileged ICMP sockets. Add a
+capability back only for a command shown to fail without it.
+
+**Two things are deliberately not done.** No `--security-opt` of any kind, so
+the runtime's default seccomp and AppArmor profiles stay in force. And no
+`no-new-privileges`: that flag stops a setuid binary from gaining privilege,
+and `sudo` is a setuid binary.
+
+**The pids limit counts threads as well as processes.** The default comes from
+a measurement. A full `make test` of this repository, the heaviest workload a
+worker runs here, peaked at 609 tasks on a 24-core host. That is the `pids.peak`
+of the cgroup it ran in, so it is an upper bound. Go's thread count grows with
+`GOMAXPROCS`, which is the host's core count, and the agent CLI, `gopls` and
+`golangci-lint` run alongside the tests. So the default of 4096 leaves about
+6.7 times that peak. A fork past the limit fails with `EAGAIN` inside the
+container. It does not use up the host's pid space.
+
+**Configuration** (operator only; a spawn request cannot change it):
+
+| Where                          | Capabilities                              | Pids limit                           |
+|--------------------------------|-------------------------------------------|--------------------------------------|
+| Embedded agent (`server.embedded_agent`) | `sandbox_cap_add: [...]`         | `sandbox_pids_limit: N`              |
+| Remote agent config            | `sandbox_cap_add`                         | `sandbox_pids_limit`                 |
+| `quicbaas agent serve`         | `--sandbox-cap-add CHOWN,...` (repeatable) | `--sandbox-pids-limit N`             |
+| Agent daemon unit / image env  | `QUICBAAS_SANDBOX_CAP_ADD`                | `QUICBAAS_SANDBOX_PIDS_LIMIT`        |
+
+An empty capability list keeps the default set. A non-empty one **replaces**
+it. `ALL`, a malformed name and a negative limit are refused at startup, not
+at the first spawn. There is no "unlimited".
+
+`make test-worker-image` proves the policy against the built image. It takes
+the flags from `scripts/sandboxargs`, which renders them with the same two calls
+the spawn makes, so the gate cannot check a policy production does not use. It
+asserts that `sudo apk add` works, that root's `CapEff` is exactly `0xcb` (no
+`NET_RAW`, no `MKNOD`), that `mknod` is refused, and, using
+`pids-limit-probe.py` under a lowered bound, that a fork past the limit gets
+`EAGAIN` and the container recovers after its processes are reaped.
+
 ### The worker image
 
 The image must carry the agent CLI on the `PATH` of the uid the daemon runs as.

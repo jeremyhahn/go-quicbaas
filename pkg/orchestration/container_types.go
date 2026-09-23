@@ -134,6 +134,13 @@ type ContainerSpec struct {
 	// knows its own build/test memory headroom.
 	MemoryBytes int64 `json:"memory_bytes,omitempty"`
 
+	// PidsLimit bounds how many processes and threads the container may hold
+	// at once (--pids-limit). Zero leaves the runtime's own default, which is
+	// usually unbounded. A fork past the limit fails with EAGAIN inside the
+	// container instead of exhausting the host's pid space. See
+	// SandboxSecurity, which sets it on every sandboxed agent container.
+	PidsLimit int64 `json:"pids_limit,omitempty"`
+
 	// --- Privilege dimension (measured; see ContainerConfigDigest) ---
 	//
 	// These three fields decide how much of the host a container can reach.
@@ -260,6 +267,9 @@ func (s *ContainerSpec) Validate() error {
 	}
 	if s.MemoryBytes < 0 {
 		return &InputValidationError{Field: "memory_bytes", Message: "cannot be negative"}
+	}
+	if s.PidsLimit < 0 {
+		return &InputValidationError{Field: "pids_limit", Message: "cannot be negative"}
 	}
 	// The environment reaches the runtime through a line-oriented --env-file,
 	// so an entry that cannot be represented there is rejected here — before

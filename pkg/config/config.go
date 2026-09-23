@@ -790,6 +790,17 @@ type EmbeddedAgentConfig struct {
 	// was configured here deliberately.
 	SandboxNetwork string `mapstructure:"sandbox_network"`
 
+	// SandboxCapAdd is the capability set a sandboxed container is given back
+	// after every capability is dropped (--cap-drop ALL). Empty keeps the
+	// default CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID — what the worker's
+	// sudo and apk need. A non-empty list REPLACES that set; "ALL" is refused.
+	SandboxCapAdd []string `mapstructure:"sandbox_cap_add"`
+
+	// SandboxPidsLimit bounds processes plus threads in a sandboxed container
+	// (--pids-limit). Zero takes orchestration.DefaultSandboxPidsLimit;
+	// negative is refused.
+	SandboxPidsLimit int64 `mapstructure:"sandbox_pids_limit"`
+
 	// SandboxImage is a convenience setting that supplies the OCI image used
 	// for sandboxed sessions across every configured backend when ImageMap
 	// does not already name one. The image must have the backend agent binary

@@ -471,21 +471,7 @@ func (r *ExecContainerRuntime) appendCommonRunArgs(args []string, spec *Containe
 		args = append(args, "--memory", strconv.FormatInt(spec.MemoryBytes, 10))
 	}
 
-	// Privilege is emitted here so the launched container matches the spec
-	// ContainerConfigDigest measured. Capabilities are sorted by the same
-	// helper the digest uses: if the two orderings could differ, a spec could
-	// measure one way and launch another.
-	if spec.Privileged {
-		args = append(args, "--privileged")
-	}
-
-	for _, capability := range sortedCopy(spec.CapAdd) {
-		args = append(args, "--cap-add", capability)
-	}
-
-	for _, capability := range sortedCopy(spec.CapDrop) {
-		args = append(args, "--cap-drop", capability)
-	}
+	args = append(args, spec.PrivilegeRunArgs()...)
 
 	// The environment is passed by reference to a private 0600 file. A caller
 	// that supplied no file gets a container with no spec environment rather
@@ -541,6 +527,33 @@ func (r *ExecContainerRuntime) appendCommonRunArgs(args []string, spec *Containe
 		args = append(args, spec.Args...)
 	}
 
+	return args
+}
+
+// PrivilegeRunArgs returns the run flags that bound what the container may do:
+// --pids-limit, --privileged, --cap-add and --cap-drop, in that order. It is
+// the ONE renderer of those flags — the runtime launches with it, and
+// `make test-worker-image` probes the worker image with it (scripts/sandboxargs)
+// — so the probe cannot certify a boundary the spawn does not use.
+//
+// Privilege is emitted so the launched container matches the spec
+// ContainerConfigDigest measured. Capabilities are sorted by the same helper
+// the digest uses: if the two orderings could differ, a spec could measure one
+// way and launch another.
+func (s *ContainerSpec) PrivilegeRunArgs() []string {
+	var args []string
+	if s.PidsLimit > 0 {
+		args = append(args, "--pids-limit", strconv.FormatInt(s.PidsLimit, 10))
+	}
+	if s.Privileged {
+		args = append(args, "--privileged")
+	}
+	for _, capability := range sortedCopy(s.CapAdd) {
+		args = append(args, "--cap-add", capability)
+	}
+	for _, capability := range sortedCopy(s.CapDrop) {
+		args = append(args, "--cap-drop", capability)
+	}
 	return args
 }
 

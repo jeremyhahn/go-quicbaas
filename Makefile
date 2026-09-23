@@ -3090,6 +3090,10 @@ endif
 WORKER_IMAGE_DIR := deployments/agents/software-factory-worker
 WORKER_IMAGE_UID ?= $(shell id -u)
 WORKER_IMAGE_GID ?= $(shell id -g)
+# The --pids-limit the fork probe in test-worker-image runs under: small, so the
+# probe reaches it without starting thousands of processes. Production's bound
+# is orchestration.DefaultSandboxPidsLimit, rendered by scripts/sandboxargs.
+WORKER_PIDS_PROBE_LIMIT ?= 64
 
 .PHONY: build-worker-image
 build-worker-image: ## Build the Software Factory worker image (quicbaas-software-factory-worker:$(VERSION))
@@ -3254,16 +3258,49 @@ print(\"go language server:\", type(ls).__name__)"' \
 	@# narrates a plan and spends an attempt. Proved as the uid the spawn runs
 	@# as, because sudo resolves the invoking user through getpwuid and refuses
 	@# outright for a uid with no /etc/passwd entry.
-	@echo "$(BLUE)Checking the worker has full control of its container...$(NC)"
-	@$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp \
+	@#
+	@# AND IT IS PROVED UNDER THE BOUNDARY PRODUCTION DRAWS AROUND IT (#1040):
+	@# --cap-drop ALL, the add-back set, and the pids limit. The flags are not
+	@# written here; scripts/sandboxargs renders them with the same two calls the
+	@# spawn makes, so this gate cannot certify a capability set no worker runs
+	@# with. A missing add-back fails here as the command it breaks -- sudo's
+	@# setresuid, apk's chown -- rather than as a stalled delivery.
+	@echo "$(BLUE)Checking the worker has full control of its container, under the production boundary...$(NC)"
+	@sandbox_args="$$($(GOCMD) run ./scripts/sandboxargs)" && test -n "$$sandbox_args" \
+		|| { echo "scripts/sandboxargs did not render the production sandbox flags"; exit 1; }; \
+	echo "  $$sandbox_args"; \
+	$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp $$sandbox_args \
 		$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
 		sh -lec 'sudo -n true; \
 			test "$$(sudo -n id -u)" = "0" \
 				|| { echo "sudo did not reach root"; exit 1; }; \
 			sudo -n apk add --no-cache jq; jq --version; \
 			sudo -n sh -c "echo arbitrary > /etc/quicbaas-full-control-probe"; \
-			test -f /etc/quicbaas-full-control-probe'
-	@echo "$(GREEN)✓ the worker can escalate, install a package and run an arbitrary command$(NC)"
+			test -f /etc/quicbaas-full-control-probe; \
+			eff="$$(sudo -n awk "/^CapEff:/ {print \$$2}" /proc/self/status)"; \
+			echo "root CapEff: $$eff"; \
+			test "$$(( 0x$$eff & (1 << 13) ))" -eq 0 || { echo "root in the worker holds CAP_NET_RAW"; exit 1; }; \
+			test "$$(( 0x$$eff & (1 << 27) ))" -eq 0 || { echo "root in the worker holds CAP_MKNOD"; exit 1; }; \
+			test "$$(( 0x$$eff ))" -eq "$$(( 0xcb ))" \
+				|| { echo "root CapEff $$eff is not exactly CHOWN,DAC_OVERRIDE,FOWNER,SETGID,SETUID (0xcb)"; exit 1; }; \
+			if sudo -n mknod /tmp/quicbaas-mknod-probe c 1 3 2>/dev/null; then \
+				echo "root in the worker created a device node"; exit 1; \
+			fi'
+	@echo "$(GREEN)✓ the worker can escalate, install a package and run an arbitrary command, and root holds only CHOWN,DAC_OVERRIDE,FOWNER,SETGID,SETUID$(NC)"
+	@# THE PIDS BOUND HOLDS, AND FAILS CLEANLY. A fork past the limit must be
+	@# refused inside the container (EAGAIN), not take the host's pid space --
+	@# and the container must run a command again once those processes are
+	@# gone. The bound is lowered to WORKER_PIDS_PROBE_LIMIT for this probe
+	@# alone so it need not start thousands of processes; the capability flags
+	@# are still the production ones. The probe is a script piped on stdin,
+	@# not a shell loop: see pids-limit-probe.py for why.
+	@echo "$(BLUE)Checking a fork past the pids limit fails cleanly...$(NC)"
+	@sandbox_args="$$($(GOCMD) run ./scripts/sandboxargs -pids-limit $(WORKER_PIDS_PROBE_LIMIT))" && test -n "$$sandbox_args" \
+		|| { echo "scripts/sandboxargs did not render the sandbox flags"; exit 1; }; \
+	$(DOCKER) run --rm -i --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp $$sandbox_args \
+		$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
+		sh -lec 'python3 - $(WORKER_PIDS_PROBE_LIMIT)' < deployments/agents/software-factory-worker/pids-limit-probe.py
+	@echo "$(GREEN)✓ a fork past the pids limit is refused inside the container and the container recovers$(NC)"
 	@# And the cost of that privilege is NOT paid on the host. The spawn runs as
 	@# the daemon's uid rather than root precisely so a write through a bind
 	@# mount lands owned by the daemon; a root-owned tree left in the workspace

@@ -189,7 +189,7 @@ var ImageRepository = pkgorch.ImageRepository
 // ContainerConfigDigest returns a deterministic SHA-256 digest over the parts
 // of a spec that determine what the container executes, what it can see and
 // what it is allowed to do — including ContainerSpec.Privileged, CapAdd,
-// CapDrop and each mount's Type. It is the value extended into a PCR at
+// CapDrop, PidsLimit and each mount's Type. It is the value extended into a PCR at
 // measured launch, so it must be reproducible across launches of the same
 // approved configuration; capability lists are sorted before hashing so their
 // order is not significant.

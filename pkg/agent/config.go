@@ -170,6 +170,17 @@ type Config struct {
 	// orchestration.ParseSandboxNetwork.
 	SandboxNetwork string `json:"sandbox_network,omitempty" yaml:"sandbox_network,omitempty"`
 
+	// SandboxCapAdd is the capability set a sandboxed container is given back
+	// after --cap-drop ALL. Empty takes orchestration.DefaultSandboxCapAdd
+	// (CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID: what sudo and apk need).
+	// A non-empty list REPLACES the default; "ALL" is refused.
+	SandboxCapAdd []string `json:"sandbox_cap_add,omitempty" yaml:"sandbox_cap_add,omitempty"`
+
+	// SandboxPidsLimit bounds processes plus threads in a sandboxed
+	// container (--pids-limit). Zero takes
+	// orchestration.DefaultSandboxPidsLimit; negative is refused.
+	SandboxPidsLimit int64 `json:"sandbox_pids_limit,omitempty" yaml:"sandbox_pids_limit,omitempty"`
+
 	// OllamaBaseURL is the OpenAI-compatible base URL of the ollama server
 	// this daemon's local-model backends talk to, WITHOUT the /v1 suffix.
 	// Empty takes DefaultOllamaBaseURL.
@@ -312,6 +323,12 @@ func (c *Config) Validate() error {
 			Detail:   fmt.Sprintf("%q", c.SandboxNetwork),
 		}
 	}
+	if err := c.EffectiveSandboxSecurity().Validate(); err != nil {
+		return &SentinelDetailError{
+			Sentinel: ErrConfigInvalidSandboxSecurity,
+			Detail:   err.Error(),
+		}
+	}
 	if c.EnrollRetryBase < 0 {
 		return &SentinelDetailError{
 			Sentinel: ErrConfigInvalidRetryWindow,
@@ -401,6 +418,16 @@ func (c *Config) EffectiveSandboxNetwork() orchestration.SandboxNetwork {
 		return orchestration.SandboxNetworkDefault
 	}
 	return network
+}
+
+// EffectiveSandboxSecurity returns the privilege policy every sandboxed
+// container this agent launches runs under. Its zero fields resolve to the
+// secure defaults inside orchestration.SandboxSecurity.
+func (c *Config) EffectiveSandboxSecurity() orchestration.SandboxSecurity {
+	return orchestration.SandboxSecurity{
+		CapAdd:    c.SandboxCapAdd,
+		PidsLimit: c.SandboxPidsLimit,
+	}
 }
 
 // DefaultOllamaBaseURL is the ollama server a daemon uses when none is
@@ -503,6 +530,12 @@ var (
 	ErrConfigUnknownBackend = errors.New("agent: unknown backend")
 	ErrConfigUnknownRuntime = errors.New("agent: unknown container runtime selector")
 	ErrConfigUnknownNetwork = errors.New("agent: invalid sandbox network")
+
+	// ErrConfigInvalidSandboxSecurity reports a sandbox privilege policy that
+	// cannot be applied: a negative pids limit, or a capability add-back that
+	// is malformed or "ALL". It is refused at startup, because the same policy
+	// applied at spawn time would fail every sandboxed session.
+	ErrConfigInvalidSandboxSecurity = errors.New("agent: invalid sandbox security policy")
 
 	// ErrConfigInvalidRetryWindow reports a negative enrollment backoff
 	// setting. A negative wait would make the retry loop the tight spin

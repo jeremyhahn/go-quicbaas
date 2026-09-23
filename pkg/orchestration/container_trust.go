@@ -402,6 +402,7 @@ func ContainerConfigDigest(spec *ContainerSpec) (string, error) {
 	w.flag("gpu_enabled", spec.GPUEnabled)
 	w.flag("privileged", spec.Privileged)
 	w.number("memory_bytes", spec.MemoryBytes)
+	w.number("pids_limit", spec.PidsLimit)
 	w.sortedSlice("cap_add", spec.CapAdd)
 	w.sortedSlice("cap_drop", spec.CapDrop)
 	w.slice("entrypoint", spec.Entrypoint)

@@ -238,7 +238,7 @@ func TestBuildEmbeddedAgentBackends_DefaultsToOllama(t *testing.T) {
 	t.Parallel()
 
 	log := makeNoopLogger()
-	backends, err := buildEmbeddedAgentBackends(nil, "http://127.0.0.1:11434", orchestration.SandboxNetworkDefault, nil, log)
+	backends, err := buildEmbeddedAgentBackends(nil, "http://127.0.0.1:11434", orchestration.SandboxNetworkDefault, orchestration.SandboxSecurity{}, nil, log)
 	require.NoError(t, err)
 	_, ok := backends["ollama"]
 	assert.True(t, ok, "default backend must be ollama")
@@ -249,7 +249,7 @@ func TestBuildEmbeddedAgentBackends_UnknownKindSkipped(t *testing.T) {
 
 	log := makeNoopLogger()
 	// Mixing a valid backend with an unknown one: should succeed with just the valid backend.
-	backends, err := buildEmbeddedAgentBackends([]string{"ollama", "unknown-kind"}, "", orchestration.SandboxNetworkDefault, nil, log)
+	backends, err := buildEmbeddedAgentBackends([]string{"ollama", "unknown-kind"}, "", orchestration.SandboxNetworkDefault, orchestration.SandboxSecurity{}, nil, log)
 	require.NoError(t, err)
 	_, ok := backends["ollama"]
 	assert.True(t, ok)
@@ -259,7 +259,7 @@ func TestBuildEmbeddedAgentBackends_AllUnknownReturnsError(t *testing.T) {
 	t.Parallel()
 
 	log := makeNoopLogger()
-	_, err := buildEmbeddedAgentBackends([]string{"unsupported-a", "unsupported-b"}, "", orchestration.SandboxNetworkDefault, nil, log)
+	_, err := buildEmbeddedAgentBackends([]string{"unsupported-a", "unsupported-b"}, "", orchestration.SandboxNetworkDefault, orchestration.SandboxSecurity{}, nil, log)
 	require.Error(t, err, "all-unknown backends must return error")
 }
 
@@ -494,7 +494,7 @@ func TestBuildEmbeddedAgentBackends_ACPKinds(t *testing.T) {
 
 	log := makeNoopLogger()
 	backends, err := buildEmbeddedAgentBackends(
-		[]string{"ollama", "claude", "codex", "opencode"}, "", orchestration.SandboxNetworkDefault, nil, log)
+		[]string{"ollama", "claude", "codex", "opencode"}, "", orchestration.SandboxNetworkDefault, orchestration.SandboxSecurity{}, nil, log)
 	require.NoError(t, err)
 
 	for _, name := range []string{"ollama", "claude", "codex", "opencode"} {
@@ -566,4 +566,30 @@ func TestStopEmbeddedAgent_DeregisterErrorTolerated(t *testing.T) {
 
 	require.Nil(t, srv.embeddedAgentState,
 		"embedded agent state must clear even when fleet deregistration fails")
+}
+
+// TestStartEmbeddedAgent_RefusesAnInvalidSandboxSecurityPolicy: a policy the
+// spawn could not apply fails startup, rather than every sandboxed session.
+func TestStartEmbeddedAgent_RefusesAnInvalidSandboxSecurityPolicy(t *testing.T) {
+	t.Parallel()
+
+	for name, mutate := range map[string]func(*config.EmbeddedAgentConfig){
+		"NegativePidsLimit": func(c *config.EmbeddedAgentConfig) { c.SandboxPidsLimit = -1 },
+		"AddBackAll":        func(c *config.EmbeddedAgentConfig) { c.SandboxCapAdd = []string{"ALL"} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			srv := withTempServer(t)
+			srv.agentRegistry = orchestration.NewInMemoryAgentRegistry()
+			srv.config.Server.EmbeddedAgent.Backends = []string{"ollama"}
+			srv.config.Server.EmbeddedAgent.DataDir = t.TempDir()
+			mutate(&srv.config.Server.EmbeddedAgent)
+
+			err := srv.startEmbeddedAgent()
+			require.Error(t, err)
+			assert.ErrorIs(t, err, orchestration.ErrInvalidInput)
+			assert.Contains(t, err.Error(), "sandbox security policy")
+			assert.Nil(t, srv.embeddedAgentState, "a refused start must leave no agent state")
+		})
+	}
 }

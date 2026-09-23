@@ -108,6 +108,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 #
 #   Optional, flag omitted entirely when unset:
 #     QUICBAAS_SANDBOX_NETWORK      container network for sandboxed sessions
+#     QUICBAAS_SANDBOX_CAP_ADD      capabilities kept after --cap-drop ALL
+#     QUICBAAS_SANDBOX_PIDS_LIMIT   process+thread bound per sandboxed container
 #     QUICBAAS_ALLOWED_MOUNT_ROOTS  host dirs a sandboxed spawn may bind-mount
 #     QUICBAAS_AUTO_PULL            pull missing images at startup
 #     QUICBAAS_IMAGE_MAP            backend=image pairs
@@ -131,6 +133,8 @@ CMD ["exec /usr/local/bin/quicbaas agent serve \
   --server-ca \"${QUICBAAS_CREDENTIALS_DIR:-/etc/quicbaas/agent}/server-ca.crt\" \
   --work-dir \"${QUICBAAS_WORK_DIR:-/var/lib/quicbaas-agent}\" \
   ${QUICBAAS_SANDBOX_NETWORK:+--sandbox-network \"${QUICBAAS_SANDBOX_NETWORK}\"} \
+  ${QUICBAAS_SANDBOX_CAP_ADD:+--sandbox-cap-add \"${QUICBAAS_SANDBOX_CAP_ADD}\"} \
+  ${QUICBAAS_SANDBOX_PIDS_LIMIT:+--sandbox-pids-limit \"${QUICBAAS_SANDBOX_PIDS_LIMIT}\"} \
   ${QUICBAAS_ALLOWED_MOUNT_ROOTS:+--allowed-mount-root \"${QUICBAAS_ALLOWED_MOUNT_ROOTS}\"} \
   ${QUICBAAS_AUTO_PULL:+--auto-pull} \
   ${QUICBAAS_IMAGE_MAP:+--image-map \"${QUICBAAS_IMAGE_MAP}\"} \

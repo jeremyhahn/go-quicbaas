@@ -700,6 +700,14 @@ func TestContainerConfigDigest_MeasuresResourceLimits(t *testing.T) {
 				{Target: "/workspace", Type: MountTypeTmpfs, TmpfsSizeBytes: 2 * gib},
 			},
 		},
+		"PidsBounded": {
+			Image: "alpine", ImageDigest: testDigest,
+			PidsLimit: 4096,
+		},
+		"PidsBoundedDifferently": {
+			Image: "alpine", ImageDigest: testDigest,
+			PidsLimit: 8192,
+		},
 	}
 
 	seen := make(map[string]string, len(configurations))

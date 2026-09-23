@@ -4532,6 +4532,7 @@ sudo mount -o bind,ro /var/lib/quicbaas-agent /var/lib/quicbaas-agent
 - **Policy semantics**: `pkg/orchestration/sandbox_policy.go`
 - **Bind-mount policy**: `pkg/orchestration/mount_policy.go` (shared with the control plane)
 - **Network isolation**: `pkg/orchestration/sandbox_network.go`
+- **Capabilities and pids limit**: `pkg/orchestration/sandbox_security.go` (see `sandbox.md`, "The boundary around root")
 - **Container environment transport**: `pkg/orchestration/container_env_file.go`
 - **Daemon API types**: `pkg/agent/config.go`
 - **Registration flow**: `pkg/agent/enrollment.go`
@@ -4591,6 +4592,8 @@ server:
     data_dir: /var/lib/quicbaas/embedded-agent
     sandbox_policy: opt-in     # opt-in | preferred | required
     sandbox_network: bridge    # bridge (default) | none | host | <network name>
+    sandbox_cap_add: []        # empty keeps CHOWN,DAC_OVERRIDE,FOWNER,SETGID,SETUID after --cap-drop ALL
+    sandbox_pids_limit: 0      # 0 takes the default (4096)
 ```
 
 The embedded agent has **no** bind-mount key of its own: it shares a host with

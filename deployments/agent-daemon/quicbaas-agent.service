@@ -77,6 +77,8 @@ StateDirectory=quicbaas-agent
 #
 # Optional -- the flag is omitted entirely when the variable is unset:
 #   QUICBAAS_SANDBOX_NETWORK=bridge
+#   QUICBAAS_SANDBOX_CAP_ADD=CHOWN,DAC_OVERRIDE,FOWNER,SETGID,SETUID
+#   QUICBAAS_SANDBOX_PIDS_LIMIT=4096
 #   QUICBAAS_ALLOWED_MOUNT_ROOTS=/srv/agent-workspaces
 #   QUICBAAS_AUTO_PULL=1
 #   QUICBAAS_IMAGE_MAP=claude-code=quicbaas/claude-code:v1
@@ -111,6 +113,8 @@ ExecStart=/bin/sh -c 'exec /usr/local/bin/quicbaas agent serve \
   --server-ca "$${QUICBAAS_SERVER_CA:-/var/lib/quicbaas-agent/server-ca.crt}" \
   --work-dir /var/lib/quicbaas-agent/work \
   $${QUICBAAS_SANDBOX_NETWORK:+--sandbox-network "$${QUICBAAS_SANDBOX_NETWORK}"} \
+  $${QUICBAAS_SANDBOX_CAP_ADD:+--sandbox-cap-add "$${QUICBAAS_SANDBOX_CAP_ADD}"} \
+  $${QUICBAAS_SANDBOX_PIDS_LIMIT:+--sandbox-pids-limit "$${QUICBAAS_SANDBOX_PIDS_LIMIT}"} \
   $${QUICBAAS_ALLOWED_MOUNT_ROOTS:+--allowed-mount-root "$${QUICBAAS_ALLOWED_MOUNT_ROOTS}"} \
   $${QUICBAAS_AUTO_PULL:+--auto-pull} \
   $${QUICBAAS_IMAGE_MAP:+--image-map "$${QUICBAAS_IMAGE_MAP}"} \

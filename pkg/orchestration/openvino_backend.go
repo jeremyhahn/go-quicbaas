@@ -102,6 +102,12 @@ type OpenVINOBackendConfig struct {
 	// context_limit.go for why this is a declaration rather than a probe.
 	ContextTokens int
 
+	// SandboxSecurity is the privilege policy the tool container runs under,
+	// exactly as for the ACP backends' sandboxes: --cap-drop ALL, the add-back
+	// capability set, and the pids limit. The zero value is the secure
+	// default. See sandbox_security.go.
+	SandboxSecurity SandboxSecurity
+
 	// RequestTimeout bounds a single completion. Zero takes the default.
 	RequestTimeout time.Duration
 
@@ -320,6 +326,11 @@ func (b *OpenVINOBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Sessio
 		}
 		if wd := strings.TrimSpace(req.WorkDir); wd != "" {
 			spec.Mounts = append(spec.Mounts, ContainerMount{Source: wd, Target: WorkspaceCheckoutRoot})
+		}
+		// The same privilege policy as every other sandboxed container:
+		// --cap-drop ALL, the add-back set, and a pids bound.
+		if secErr := b.config.SandboxSecurity.Apply(spec); secErr != nil {
+			return nil, secErr
 		}
 		containerID, runErr := b.containerRuntime.Run(ctx, spec)
 		if runErr != nil {

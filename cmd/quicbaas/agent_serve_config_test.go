@@ -51,6 +51,8 @@ func withServeGlobals(t *testing.T) {
 		Shutdown      time.Duration
 		EnrollBase    time.Duration
 		EnrollMax     time.Duration
+		SandboxCapAdd []string
+		SandboxPids   int64
 	}{
 		ServerAddr:    serveServerAddr,
 		TenantID:      serveTenantID,
@@ -70,6 +72,8 @@ func withServeGlobals(t *testing.T) {
 		Shutdown:      serveShutdownGrace,
 		EnrollBase:    serveEnrollRetry,
 		EnrollMax:     serveEnrollRetryMax,
+		SandboxCapAdd: serveSandboxCapAdd,
+		SandboxPids:   serveSandboxPidsLimit,
 	}
 	t.Cleanup(func() {
 		serveServerAddr = origs.ServerAddr
@@ -90,6 +94,8 @@ func withServeGlobals(t *testing.T) {
 		serveShutdownGrace = origs.Shutdown
 		serveEnrollRetry = origs.EnrollBase
 		serveEnrollRetryMax = origs.EnrollMax
+		serveSandboxCapAdd = origs.SandboxCapAdd
+		serveSandboxPidsLimit = origs.SandboxPids
 	})
 	// Reset to safe defaults so tests don't inherit residue from prior runs.
 	serveServerAddr = ""
@@ -110,6 +116,8 @@ func withServeGlobals(t *testing.T) {
 	serveShutdownGrace = time.Second
 	serveEnrollRetry = time.Second
 	serveEnrollRetryMax = time.Minute
+	serveSandboxCapAdd = nil
+	serveSandboxPidsLimit = 0
 }
 
 // =============================================================================
@@ -121,6 +129,37 @@ func TestBuildServeConfig_BadSandboxPolicy(t *testing.T) {
 	serveSandboxPolicy = "bogus-policy"
 	_, err := buildServeConfig()
 	require.Error(t, err)
+}
+
+// TestBuildServeConfig_SandboxSecurityFlags: the remote agent's privilege
+// policy is set by flags, and reaches the config every backend is built from.
+func TestBuildServeConfig_SandboxSecurityFlags(t *testing.T) {
+	withServeGlobals(t)
+	cmd := newAgentServeCommand()
+	require.NoError(t, cmd.Flags().Parse([]string{
+		"--sandbox-cap-add", "SETUID,SETGID",
+		"--sandbox-cap-add", "CHOWN",
+		"--sandbox-pids-limit", "1024",
+	}))
+
+	cfg, err := buildServeConfig()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"SETUID", "SETGID", "CHOWN"}, cfg.SandboxCapAdd)
+	assert.Equal(t, int64(1024), cfg.SandboxPidsLimit)
+	policy := cfg.EffectiveSandboxSecurity()
+	assert.Equal(t, int64(1024), policy.EffectivePidsLimit())
+}
+
+// TestBuildServeConfig_SandboxSecurityDefaults: with neither flag the policy
+// is the secure default, not "unbounded".
+func TestBuildServeConfig_SandboxSecurityDefaults(t *testing.T) {
+	withServeGlobals(t)
+	cfg, err := buildServeConfig()
+	require.NoError(t, err)
+	assert.Equal(t, orchestration.DefaultSandboxPidsLimit, cfg.EffectiveSandboxSecurity().EffectivePidsLimit())
+	capAdd, err := cfg.EffectiveSandboxSecurity().EffectiveCapAdd()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"}, capAdd)
 }
 
 func TestBuildServeConfig_BadImageMap(t *testing.T) {

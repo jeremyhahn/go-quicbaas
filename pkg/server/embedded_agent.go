@@ -202,7 +202,18 @@ func (s *Server) startEmbeddedAgent() error {
 		return &ServerCauseError{Message: "embedded agent: invalid sandbox_network", Cause: networkErr}
 	}
 
-	backends, buildErr := buildEmbeddedAgentBackends(cfg.Backends, cfg.OllamaURL, sandboxNetwork, mcpResolver, log)
+	// The privilege policy every sandboxed container runs under: --cap-drop
+	// ALL, the add-back set and the pids bound. Refused here rather than at
+	// the first spawn, which it would fail.
+	sandboxSecurity := orchestration.SandboxSecurity{
+		CapAdd:    cfg.SandboxCapAdd,
+		PidsLimit: cfg.SandboxPidsLimit,
+	}
+	if securityErr := sandboxSecurity.Validate(); securityErr != nil {
+		return &ServerCauseError{Message: "embedded agent: invalid sandbox security policy", Cause: securityErr}
+	}
+
+	backends, buildErr := buildEmbeddedAgentBackends(cfg.Backends, cfg.OllamaURL, sandboxNetwork, sandboxSecurity, mcpResolver, log)
 	if buildErr != nil {
 		return buildErr
 	}
@@ -543,6 +554,7 @@ func buildEmbeddedAgentBackends(
 	kinds []string,
 	ollamaURL string,
 	sandboxNetwork orchestration.SandboxNetwork,
+	sandboxSecurity orchestration.SandboxSecurity,
 	mcpResolver orchestration.MCPPresetResolver,
 	log interfaces.Logger,
 ) (map[string]orchestration.AgentBackend, error) {
@@ -577,6 +589,7 @@ func buildEmbeddedAgentBackends(
 				DefaultModel:      "",
 				CLIMode:           true,
 				SandboxNetwork:    sandboxNetwork,
+				SandboxSecurity:   sandboxSecurity,
 				MCPPresetResolver: mcpResolver,
 			})
 			b.SetLogger(log)
@@ -597,6 +610,7 @@ func buildEmbeddedAgentBackends(
 				Args:              []string{"acp"},
 				DefaultModel:      "",
 				SandboxNetwork:    sandboxNetwork,
+				SandboxSecurity:   sandboxSecurity,
 				MCPPresetResolver: mcpResolver,
 			})
 			b.SetLogger(log)

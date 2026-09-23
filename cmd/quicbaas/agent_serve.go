@@ -51,6 +51,8 @@ var (
 	serveBackendsCSV      string
 	serveSandboxPolicy    string
 	serveSandboxNetwork   string
+	serveSandboxCapAdd    []string
+	serveSandboxPidsLimit int64
 	serveOllamaBaseURL    string
 	serveOpenVINOURL      string
 	serveOpenVINOModel    string
@@ -113,6 +115,8 @@ Examples:
 	cmd.Flags().StringVar(&serveBackendsCSV, "backends", "acp,ollama", "Comma-separated backends to enable")
 	cmd.Flags().StringVar(&serveSandboxPolicy, "sandbox-policy", "required", "Sandbox policy: required | preferred | opt-in")
 	cmd.Flags().StringVar(&serveSandboxNetwork, "sandbox-network", "", "Container network for sandboxed sessions: bridge (default) | none | host | <network name>. \"host\" removes network isolation and exposes this host's loopback services to the agent.")
+	cmd.Flags().StringSliceVar(&serveSandboxCapAdd, "sandbox-cap-add", nil, "Capabilities given back to sandboxed containers after --cap-drop ALL; comma-separated or repeatable. Empty keeps the default CHOWN,DAC_OVERRIDE,FOWNER,SETGID,SETUID (what sudo and apk need); a value REPLACES that set. ALL is refused.")
+	cmd.Flags().Int64Var(&serveSandboxPidsLimit, "sandbox-pids-limit", 0, fmt.Sprintf("Maximum processes plus threads in a sandboxed container (--pids-limit). Zero takes the default %d.", orchestration.DefaultSandboxPidsLimit))
 	cmd.Flags().StringVar(&serveContainerRT, "container-runtime", "auto", "OCI runtime: docker | podman | auto | none")
 	cmd.Flags().StringVar(&serveOllamaBaseURL, "ollama-url", "", "Base URL of the ollama server the \"ollama\" backend uses, without /v1 (default http://127.0.0.1:11434).")
 	cmd.Flags().StringVar(&serveOpenVINOURL, "openvino-url", "", "OpenVINO Model Server base URL, without /v3 (e.g. http://gpu-host:9000). Registers the \"openvino\" backend; empty leaves it unregistered.")
@@ -393,12 +397,14 @@ func buildAgentBackends(cfg *agent.Config, logger interfaces.Logger) (map[string
 		switch kind {
 		case agent.BackendACP:
 			sandboxNetwork := cfg.EffectiveSandboxNetwork()
+			sandboxSecurity := cfg.EffectiveSandboxSecurity()
 			backends["claude"] = orchestration.NewACPBackend(orchestration.ACPBackendConfig{
 				Command:           "claude",
 				Args:              []string{"--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--disable-slash-commands"},
 				DefaultModel:      "",
 				CLIMode:           true,
 				SandboxNetwork:    sandboxNetwork,
+				SandboxSecurity:   sandboxSecurity,
 				MCPPresetResolver: mcpResolver,
 			})
 			// CODEX SPEAKS NO ACP. `codex --help` lists exec, review, login,
@@ -464,6 +470,7 @@ func buildAgentBackends(cfg *agent.Config, logger interfaces.Logger) (map[string
 				},
 				DefaultModel:      "",
 				SandboxNetwork:    sandboxNetwork,
+				SandboxSecurity:   sandboxSecurity,
 				MCPPresetResolver: mcpResolver,
 			})
 			// EVERY OPENAI-COMPATIBLE AGENT ENDPOINT, REGISTERED THE SAME WAY.
@@ -516,10 +523,11 @@ func buildAgentBackends(cfg *agent.Config, logger interfaces.Logger) (map[string
 					continue
 				}
 				agentic := orchestration.NewOpenVINOBackend(orchestration.OpenVINOBackendConfig{
-					BaseURL:       base,
-					ChatPath:      endpoint.chatPath,
-					DefaultModel:  endpoint.model,
-					ContextTokens: endpoint.context,
+					BaseURL:         base,
+					ChatPath:        endpoint.chatPath,
+					DefaultModel:    endpoint.model,
+					ContextTokens:   endpoint.context,
+					SandboxSecurity: sandboxSecurity,
 				})
 				agentic.SetLogger(logger)
 				backends[endpoint.name] = agentic
@@ -529,6 +537,7 @@ func buildAgentBackends(cfg *agent.Config, logger interfaces.Logger) (map[string
 				Args:              []string{"acp"},
 				DefaultModel:      "",
 				SandboxNetwork:    sandboxNetwork,
+				SandboxSecurity:   sandboxSecurity,
 				MCPPresetResolver: mcpResolver,
 				// Was hardcoded in the backend; stated here now so a second
 				// file-credential CLI needs no edit to the backend. Same paths,
@@ -777,6 +786,8 @@ func buildServeConfig() (*agent.Config, error) {
 		Backends:                 backends,
 		SandboxPolicy:            policy,
 		SandboxNetwork:           serveSandboxNetwork,
+		SandboxCapAdd:            serveSandboxCapAdd,
+		SandboxPidsLimit:         serveSandboxPidsLimit,
 		OllamaBaseURL:            serveOllamaBaseURL,
 		OpenVINOBaseURL:          serveOpenVINOURL,
 		OpenVINOModel:            serveOpenVINOModel,

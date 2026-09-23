@@ -166,6 +166,13 @@ type ACPBackendConfig struct {
 	// sandbox_network.go.
 	SandboxNetwork SandboxNetwork `json:"sandbox_network,omitempty"`
 
+	// SandboxSecurity is the privilege policy every sandboxed container this
+	// backend launches runs under: --cap-drop ALL, the add-back capability
+	// set, and the pids limit. The zero value is the secure default
+	// (DefaultSandboxCapAdd, DefaultSandboxPidsLimit). See
+	// sandbox_security.go.
+	SandboxSecurity SandboxSecurity `json:"sandbox_security,omitempty"`
+
 	// MCPPresetResolver, when non-nil, resolves the empty-URL QuicBaaS MCP
 	// preset (MCPServerConfig with Name=="quicbaas" and URL=="") at spawn
 	// time into a concrete endpoint URL plus a fresh per-spawn mTLS agent
@@ -965,8 +972,9 @@ const containerAgentHome = "/tmp"
 // command the container is to execute.
 //
 // EVERYTHING THAT MAKES A SANDBOX A SANDBOX IS DECIDED HERE, ONCE: the network,
-// the user, the workspace mount, the mount-policy-authorized extra mounts, the
-// trust dimension, the labels. Both sandboxed spawn paths — the ACP JSON-RPC
+// the capability set and pids limit (SandboxSecurity), the user, the workspace
+// mount, the mount-policy-authorized extra mounts, the trust dimension, the
+// labels. Both sandboxed spawn paths — the ACP JSON-RPC
 // one and the CLI one — go through it, so a change to the isolation cannot
 // reach one protocol and miss the other. That is not hypothetical tidiness:
 // the CLI path had NO sandbox at all until #741, and a second hand-built spec
@@ -1040,6 +1048,13 @@ func (b *ACPBackend) sandboxSpec(req *SpawnRequest, image string, command []stri
 		TrustLevel:   req.TrustLevel,
 		TrustLabel:   req.TrustLabel,
 		ExpectedPCRs: req.ExpectedPCRs,
+	}
+
+	// --cap-drop ALL, the add-back set and the pids bound. sudo keeps working
+	// (SETUID/SETGID are in the default add-back set) but root inside the
+	// container no longer holds the runtime's whole default capability set.
+	if err := b.config.SandboxSecurity.Apply(spec); err != nil {
+		return nil, err
 	}
 
 	// Mount workspace if specified.

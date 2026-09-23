@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -239,6 +240,51 @@ func TestConfig_SandboxNetwork(t *testing.T) {
 		}
 		if got := c.EffectiveSandboxNetwork(); got != want {
 			t.Errorf("EffectiveSandboxNetwork() for %q = %q, want %q", value, got, want)
+		}
+	}
+}
+
+// TestConfig_SandboxSecurity covers the privilege dimension of the sandbox:
+// unset fields resolve to the secure defaults, operator values round-trip, and
+// a policy the spawn could not apply is refused at startup.
+func TestConfig_SandboxSecurity(t *testing.T) {
+	t.Parallel()
+
+	c := newTestConfig(t)
+	if err := c.Validate(); err != nil {
+		t.Fatalf("an unset sandbox security policy must be valid: %v", err)
+	}
+	policy := c.EffectiveSandboxSecurity()
+	if got := policy.EffectivePidsLimit(); got != orchestration.DefaultSandboxPidsLimit {
+		t.Errorf("default pids limit = %d, want %d", got, orchestration.DefaultSandboxPidsLimit)
+	}
+	capAdd, err := policy.EffectiveCapAdd()
+	if err != nil {
+		t.Fatalf("EffectiveCapAdd: %v", err)
+	}
+	if want := []string{"CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"}; !slices.Equal(capAdd, want) {
+		t.Errorf("default cap add = %v, want %v", capAdd, want)
+	}
+
+	c = newTestConfig(t)
+	c.SandboxCapAdd = []string{"SETUID", "SETGID"}
+	c.SandboxPidsLimit = 1024
+	if err := c.Validate(); err != nil {
+		t.Fatalf("Validate() with an operator policy: %v", err)
+	}
+	if got := c.EffectiveSandboxSecurity(); got.PidsLimit != 1024 || !slices.Equal(got.CapAdd, c.SandboxCapAdd) {
+		t.Errorf("EffectiveSandboxSecurity() = %+v, want the configured values", got)
+	}
+
+	for name, mutate := range map[string]func(*Config){
+		"NegativePidsLimit": func(c *Config) { c.SandboxPidsLimit = -1 },
+		"AddBackAll":        func(c *Config) { c.SandboxCapAdd = []string{"ALL"} },
+		"Malformed":         func(c *Config) { c.SandboxCapAdd = []string{"NET RAW"} },
+	} {
+		c = newTestConfig(t)
+		mutate(c)
+		if err := c.Validate(); !errors.Is(err, ErrConfigInvalidSandboxSecurity) {
+			t.Errorf("%s: Validate() = %v, want ErrConfigInvalidSandboxSecurity", name, err)
 		}
 	}
 }

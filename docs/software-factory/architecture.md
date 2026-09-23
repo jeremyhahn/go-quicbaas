@@ -157,6 +157,7 @@ pkg/orchestration/
 
     sandbox_policy.go          Sandbox axis: containment
     sandbox_network.go         Sandbox axis: network isolation
+    sandbox_security.go        Sandbox axis: capabilities and pids limit
     mount_policy.go            Sandbox axis: bind-mount allowlist
     trust_policy.go            Trust axis: TrustLevel / TrustPolicy / resolution
     container_trust.go         Tier 0: digest pinning, config digest
@@ -2271,6 +2272,7 @@ but it is a separate decision throughout.
 |-----------|------|------|----------|
 | Containment | `SandboxMode` / `SandboxPolicy` | `sandbox_policy.go` | Is the agent in a container at all? |
 | Network | `SandboxNetwork` | `sandbox_network.go` | Can the agent reach the host's loopback services? |
+| Privilege | `SandboxSecurity` | `sandbox_security.go` | What does root inside the container hold, and how many processes may it run? |
 | Filesystem | mount allowlist | `mount_policy.go` | Which host paths may be bind-mounted in? |
 
 Network isolation is worth calling out because it is easy to lose: a container
@@ -2568,18 +2570,22 @@ Agent orchestration follows the same service integration pattern as Secrets and 
 
 ### Sandboxed Session Isolation
 
-A sandboxed agent session is isolated along two independent dimensions:
+A sandboxed agent session is isolated along three independent dimensions:
 
 | Dimension | Control | Default |
 |---|---|---|
 | Process/filesystem | `sandbox_policy` (`pkg/orchestration/sandbox_policy.go`) | container-sandboxed on agent daemons |
 | Network namespace | `sandbox_network` (`pkg/orchestration/sandbox_network.go`) | `bridge` — own namespace with egress |
+| Privilege | `sandbox_cap_add` / `sandbox_pids_limit` (`pkg/orchestration/sandbox_security.go`) | `--cap-drop ALL` + CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID; `--pids-limit 4096` |
 
-Neither dimension is caller-selectable in the unsafe direction: a spawn request
+No dimension is caller-selectable in the unsafe direction: a spawn request
 can ask for a *stricter* sandbox mode but carries no network field at all, so no
 tenant or workflow can move a session onto the host network namespace. Only
 operator configuration can (`--sandbox-network host`), and doing so is logged at
 WARN.
+The privilege policy is applied over whatever spec the spawn carries, so a
+caller's `ContainerConfig` cannot ask for `--privileged`, extra capabilities or
+a looser pids bound.
 
 Provider credentials in a sandboxed session's environment are passed to the
 container runtime through a private `0600` `--env-file`, never as command-line
