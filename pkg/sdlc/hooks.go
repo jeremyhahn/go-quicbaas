@@ -605,7 +605,7 @@ func (h *Hooks) merge(ctx context.Context, forge ForgeBackend, repo RepoRef, num
 // codex-approved and green, main was five commits ahead with a real conflict,
 // and the merge retried to exhaustion twice. Both times the attempt was charged
 // as a failure of the work. Reported as a MergeConflictError, it becomes a
-// rebase round for the worker instead.
+// merge round for the worker instead: the base is merged into the branch.
 //
 // Every other case keeps the answer it had:
 //   - The forge reports the PR mergeable but still refused to merge it. The
@@ -615,7 +615,7 @@ func (h *Hooks) merge(ctx context.Context, forge ForgeBackend, repo RepoRef, num
 //   - The PR was merged in the meantime. That is the outcome that was asked
 //     for, and Complete records it the same way it records a PR it found
 //     already merged.
-//   - The PR was closed. A rebase cannot resolve that.
+//   - The PR was closed. Merging the base cannot resolve that.
 func (h *Hooks) settledRefusal(ctx context.Context, forge ForgeBackend, repo RepoRef, number int, approvedHead string,
 	exhausted *MergeNotReadyExhaustedError) error {
 	pr, err := forge.GetPullRequest(ctx, repo, number)

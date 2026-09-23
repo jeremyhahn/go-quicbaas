@@ -616,87 +616,80 @@ func TestCredentialHelperArgs_OnlyHTTPSCarriesOne(t *testing.T) {
 	}
 }
 
-// TestPublisher_ForceIsLeasedOrAbsent is the mid-attempt publication's own
-// property. A plain push fails the job whenever the worker amended or rebased
-// its own commits between turns, which is normal work — so the post-turn push
-// asks for a force. It must be a LEASED force: the lease refuses the push when
-// the remote moved since this checkout last saw it, so the one thing a force
-// must never do, discard a commit this container never observed, is refused by
-// git rather than trusted to the caller.
-func TestPublisher_ForceIsLeasedOrAbsent(t *testing.T) {
-	for name, tc := range map[string]struct {
-		force     bool
-		wantForce bool
-	}{
-		"AFinalPublicationDoesNotForce": {force: false, wantForce: false},
-		"APostTurnPublicationForces":    {force: true, wantForce: true},
+// pushArgv is the argv of every push the publisher ran, as the container
+// received it.
+func pushArgv(container *fakeContainer) [][]string {
+	var pushes [][]string
+	for _, exec := range container.execs {
+		for _, arg := range exec.Cmd {
+			if arg == "push" {
+				pushes = append(pushes, exec.Cmd)
+				break
+			}
+		}
+	}
+	return pushes
+}
+
+// TestPublisher_EveryPushIsAPlainPush is the owner's ruling (2026-09-04,
+// handbook version-control §5b) held on the argv itself: no publication ever
+// forces, leased or not, whether it is the final publication, a mid-attempt
+// one or the direct-push carve-out.
+func TestPublisher_EveryPushIsAPlainPush(t *testing.T) {
+	carveOut := testPublishPlan()
+	carveOut.RemoteBranch = "main"
+	for name, plan := range map[string]publishPlan{
+		"TheAttemptsBranch": testPublishPlan(),
+		"TheCarveOut":       carveOut,
 	} {
 		t.Run(name, func(t *testing.T) {
 			container := &fakeContainer{changed: true}
 			pub := newTestPublisher(container, &SigningSession{PublicKey: testSigningKey})
-			plan := testPublishPlan()
-			plan.Force = tc.force
 
 			if _, err := pub.Publish(plan); err != nil {
 				t.Fatalf("Publish: %v", err)
 			}
-			if len(container.pushes) != 1 {
-				t.Fatalf("pushes = %+v, want one", container.pushes)
+			pushes := pushArgv(container)
+			if len(pushes) != 1 {
+				t.Fatalf("push commands = %v, want one", pushes)
 			}
-			if container.pushes[0].Force != tc.wantForce {
-				t.Fatalf("push force = %v, want %v", container.pushes[0].Force, tc.wantForce)
+			argv := pushes[0]
+			for _, arg := range argv {
+				if arg == "-f" || strings.Contains(arg, "force") {
+					t.Fatalf("the push carried %q; the factory never forces: %v", arg, argv)
+				}
+			}
+			refspec := plan.Branch
+			if plan.RemoteBranch != "" {
+				refspec += ":" + plan.RemoteBranch
+			}
+			if tail := argv[len(argv)-3:]; tail[0] != "push" || tail[1] != gitRemote || tail[2] != refspec {
+				t.Fatalf("push argv ends %v, want [push %s %s]", tail, gitRemote, refspec)
 			}
 		})
 	}
 }
 
-// TestPublisher_ForceStillRefusesWhatGitRefuses: a leased force that the remote
-// rejects is a failure, not a success that silently discarded work. The whole
-// value of --force-with-lease is that this path exists.
-func TestPublisher_ForceStillRefusesWhatGitRefuses(t *testing.T) {
-	container := &fakeContainer{
-		changed: true,
-		pushErr: errors.New("stale info: remote ref is at a commit this checkout never saw"),
-	}
+// TestPublisher_ANonFastForwardPushIsAPublishCommandError: a local branch that
+// no longer descends from what the remote holds is refused by git, and the
+// refusal is the answer. Nothing forces past it, because forcing would discard
+// a published commit.
+func TestPublisher_ANonFastForwardPushIsAPublishCommandError(t *testing.T) {
+	container := &fakeContainer{changed: true, diverged: true}
 	pub := newTestPublisher(container, &SigningSession{PublicKey: testSigningKey})
-	plan := testPublishPlan()
-	plan.Force = true
 
-	_, err := pub.Publish(plan)
+	_, err := pub.Publish(testPublishPlan())
 	var refused *PublishCommandError
 	if !errors.As(err, &refused) {
 		t.Fatalf("Publish() = %T %v, want a PublishCommandError", err, err)
 	}
-	if !strings.Contains(refused.Command, "--force-with-lease") {
-		t.Errorf("the refusal names the command %q, want the leased force in it", refused.Command)
+	if !strings.Contains(refused.Output, "non-fast-forward") {
+		t.Errorf("the refusal says %q, want git's non-fast-forward rejection", refused.Output)
 	}
-}
-
-// TestForceWithLease_PinsTheLeaseToThePublishedRef covers the lease flag. It
-// is pinned to the ref actually being published when the plan names a lease,
-// and it is git's own tracking-ref lease when the plan does not. It is never a
-// bare force.
-func TestForceWithLease_PinsTheLeaseToThePublishedRef(t *testing.T) {
-	cases := []struct {
-		name string
-		plan publishPlan
-		want string
-	}{
-		{"no recorded head leases on the tracking ref", publishPlan{Branch: "issue/7-x"}, "--force-with-lease"},
-		{"a recorded head pins the lease", publishPlan{Branch: "issue/7-x", Lease: "abc123"},
-			"--force-with-lease=issue/7-x:abc123"},
-		{"the lease names the remote ref it guards", publishPlan{Branch: "local", RemoteBranch: "issue/7-x", Lease: "abc123"},
-			"--force-with-lease=issue/7-x:abc123"},
+	if len(pushArgv(container)) != 1 {
+		t.Fatalf("push commands = %v, want the one refused push and no retry", pushArgv(container))
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := forceWithLease(tc.plan)
-			if got != tc.want {
-				t.Fatalf("forceWithLease = %q, want %q", got, tc.want)
-			}
-			if got == "--force" || got == "-f" {
-				t.Fatal("an unleased force may discard a commit this checkout never saw")
-			}
-		})
+	if len(container.pushes) != 0 {
+		t.Fatalf("a refused push landed: %+v", container.pushes)
 	}
 }

@@ -164,7 +164,7 @@ runtime, so it runs first; `startSDLC` attaches what the runner drives with.
    | `validating` | reached ONLY when the turn changed something. The binding's `verification` commands, in order, through the module's `container_command` validator: the operator's `ExecutionGuard` admits each command on the DAEMON, and the command then runs INSIDE the worker's container, in the checkout its entrypoint made (`ContainerRuntime.Exec`, the same seam the delivery's git uses). Nothing verifies on the daemon; a job with no container is refused. A failure goes back to `executing` with the command's output — both streams — and counts a round. |
    | `reviewing` | `Reviewable` publishes; then the `forge_review` gate. `request_changes` → `re-delegating`; a plan needing no pull request (the trunk-based carve-out) goes straight to `completing`. |
    | `re-delegating` | round++ up to `max_review_rounds`, then `escalating`. |
-   | `completing` | `Complete` merges, bound to the reviewed head; the strategy's `PostMerge` steps run through the forge adapter (gitflow's hotfix back-merge). A pull request that [conflicts with its base](#a-merge-conflict-is-a-rebase-round) (`MergeConflictError`) goes back to `executing` as a rebase round; it counts a round, and it is not a failure of the work. |
+   | `completing` | `Complete` merges, bound to the reviewed head; the strategy's `PostMerge` steps run through the forge adapter (gitflow's hotfix back-merge). A pull request that [conflicts with its base](#a-merge-conflict-is-a-merge-round) (`MergeConflictError`) goes back to `executing` as a merge round (the base is merged into the branch; nothing is rebased or force-pushed); it counts a round, and it is not a failure of the work. |
    | `cleanup` / `escalating` | the session is closed and the container goes; on a non-completed exit the branch is published FIRST so nothing the worker did is lost, and `Blocked` posts the reason to the issue. |
    | ANY OTHER EXIT | a refusal after the spawn, a checkout or verification that would not run, a cancellation or a panic runs the SAME teardown, deferred (`abandonWorker` → `teardownWorker`). It publishes, closes and discards exactly as a planned exit does, and the close is issued on a context the run's own cancellation cannot reach — bounded by the discard stage timeout. Without it a refused attempt left its container running and its daemon session record behind. |
 
@@ -240,7 +240,7 @@ runtime, so it runs first; `startSDLC` attaches what the runner drives with.
    |---|---|
    | `Prepare` (initializing) | the attempt's branch is planned (`issue/<n>-<slug>` from the binding's strategy, based on `Project.Git.DefaultBranch`), the `Delivery` records it, the issue is labelled `in_progress`. A later attempt continues a branch an earlier one pushed. **Nothing is materialised on the daemon's filesystem** and the returned work directory is empty: the worker's container clones the project and the project's `context_repos` itself — see [Autonomous projects](autonomy-and-dispatch.md). |
    | `Reviewable` (reviewing) | the pull request opened (or refreshed on a later round) against the head the CONTAINER already published, recorded on the `Delivery` and published as Task artifacts (`url` `pull_request`, `commit` `head`), issue labelled `in_review`. No head recorded → `NoPublishedHeadError`; the container publishes before the forge is written. |
-   | `Complete` (completing) | merge as the binding's strategy plans, **bound to the head the review approved**: the forge refuses a merge whose head moved (`HeadMovedError`), retried only while the forge says not-ready (`merge_attempts`), issue labelled `merged`. When the retries are spent, one more read of the pull request decides between `MergeNotReadyExhaustedError` and `MergeConflictError`; see [a merge conflict is a rebase round](#a-merge-conflict-is-a-rebase-round). A merge the forge never answered is settled by reading the pull request back — see [Forge transport](#forge-transport-deadlines-retries-and-unanswered-writes). |
+   | `Complete` (completing) | merge as the binding's strategy plans, **bound to the head the review approved**: the forge refuses a merge whose head moved (`HeadMovedError`), retried only while the forge says not-ready (`merge_attempts`), issue labelled `merged`. When the retries are spent, one more read of the pull request decides between `MergeNotReadyExhaustedError` and `MergeConflictError`; see [a merge conflict is a merge round](#a-merge-conflict-is-a-merge-round). A merge the forge never answered is settled by reading the pull request back — see [Forge transport](#forge-transport-deadlines-retries-and-unanswered-writes). |
    | `Discard` (cleanup, detached context) | no filesystem work — the container that made the checkout is gone with it; the `Delivery` stays as the record of the attempt. The runner publishes the branch before the container ends on every non-completed exit. |
    | `Blocked` (escalating) | the park reason posted to the issue (secrets redacted, bounded), derived from the park's [typed unblock condition](#the-block-lifecycle) plus the attempt accounting and what resumes it, retried per `surfacing`; issue labelled `blocked` / `needs_info` / `escalated`, **and the delivery's open pull request labelled with the same one**. |
 
@@ -258,7 +258,7 @@ runtime, so it runs first; `startSDLC` attaches what the runner drives with.
    A hook error fails the job with `FailureClass: hook`; the engine's attempt
    accounting decides what happens to the Task.
 
-   #### A merge conflict is a rebase round
+   #### A merge conflict is a merge round
 
    Gitea (measured on 1.27.1) does not say whether a pull request conflicts
    with its base or is still being checked. The merge endpoint answers
@@ -279,27 +279,35 @@ runtime, so it runs first; `startSDLC` attaches what the runner drives with.
 
    The runner treats a `MergeConflictError` as a **round of the work** on the
    same branch and pull request. It is not a hook failure and it is not an
-   environment fault. The `merge_conflict` prompt (the base, the approved
-   head, rebase or merge the latest base, keep both sides' intent, re-run the
-   build and tests) goes into job memory the way review findings do, and
-   `nextRound` spends a round from `max_review_rounds`. A rebased branch no
-   longer descends from the head it published, so a plain push would be
-   refused as non-fast-forward. From the rebase round on, every publication
-   of the attempt's branch goes through the existing `Force` path as
-   `--force-with-lease=<branch>:<published head>`, on every workspace kind:
+   environment fault. The `merge_conflict` prompt goes into job memory the
+   way review findings do, and `nextRound` spends a round from
+   `max_review_rounds`. It names the base and the approved head and tells the
+   worker to `git fetch origin <base>` and `git merge origin/<base>`, to
+   resolve each conflict keeping both sides' intent (never `-X ours`,
+   `-X theirs`, `checkout --ours` or `checkout --theirs`), to commit the
+   merge and to re-run the build and tests.
+
+   **The branch is merged, never rewritten.** The owner's ruling (2026-09-04,
+   handbook `software/conventions/version-control.md` §5b) is absolute: no
+   force push of any kind, leased or not, and no rebase, reset or amend of a
+   pushed commit. The worker charter says so too. Merging the base keeps the
+   published head as an ancestor of the new one, so every publication of the
+   attempt's branch stays a plain fast-forward push, on every workspace kind:
    the end-of-turn push on an ephemeral workspace and the review push on a
-   persistent one. The lease is pinned to the head the delivery records, not
-   to the tracking ref. The worker's own `git fetch` refreshes the tracking
-   ref, so an implicit lease would accept a remote that moved in the
-   meantime. It is never an unleased force. The new head then goes through
-   validation and the review gate again, because an approval only covers the
-   head it was given. A run that holds no worker (for example, a
-   re-dispatched job that went straight from its open pull request to the
-   gate) goes through `initializing` to get one. A pull request that
-   conflicts again after every rebase uses up the budget and escalates to a
-   person, like a review that never converges. Each conflict is recorded on
-   the job as an `sdlc:merge_conflict` event. Measured on go-truststrap#64
-   (2026-09-22) and fixed in go-quicbaas#1007.
+   persistent one. The publisher has no force path at all. A push that git
+   refuses as non-fast-forward means a published commit was rewritten, and
+   it surfaces as a `PublishCommandError`; nothing forces past it. The
+   runner prepares nothing on the branch itself: the worker runs the merge.
+
+   The merged head then goes through validation and the review gate again,
+   because an approval only covers the head it was given. A run that holds no
+   worker (for example, a re-dispatched job that went straight from its open
+   pull request to the gate) goes through `initializing` to get one. A pull
+   request that conflicts again after every merge uses up the budget and
+   escalates to a person, like a review that never converges. Each conflict
+   is recorded on the job as an `sdlc:merge_conflict` event. Measured on
+   go-truststrap#64 (2026-09-22), fixed in go-quicbaas#1007, and made a merge
+   round in go-quicbaas#1051.
 
 6. **`TaskConclusionObserver` — the task's own ending** (`outcome.go`). The
    moments above belong to a JOB. A TASK's conclusion is decided after the run
@@ -834,7 +842,7 @@ label task:ready ─► poller/webhook ─► Task{Source: forge_issue owner/rep
                  ├─ request_changes ───► re-delegating → executing (round 2 …)
                  ├─ rounds exhausted ──► escalating
                  └─ approved + green ──► completing ── Complete ─► merge (head-guarded), label merged
-                                                    ├─ conflicts with base ─► executing: rebase round (round counts)
+                                                    ├─ conflicts with base ─► executing: merge round, base merged in (round counts)
                                                     └─ strategy PostMerge steps (gitflow back-merge)
    escalating ── Blocked ──────────────► comment on the issue, label per kind; Task blocked
    cleanup ── Discard ─────────────────► nothing on disk to reclaim; the Delivery records the attempt

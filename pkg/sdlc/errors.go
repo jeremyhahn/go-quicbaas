@@ -82,7 +82,7 @@ var (
 
 	// ErrMergeConflict indicates the forge settled on the pull request not
 	// being mergeable into its base: the change conflicts with it, and only a
-	// rebase onto the base can make it mergeable again.
+	// merge of the base into the branch can make it mergeable again.
 	ErrMergeConflict = errors.New("sdlc: pull request conflicts with its base branch")
 
 	// ErrHeadMoved indicates the pull request's head is no longer the head
@@ -461,7 +461,8 @@ func (e *MergeNotReadyExhaustedError) Unwrap() []error {
 // It is a verdict about the WORK, not about the forge: the base moved under
 // the change and the two no longer merge. Nothing retrying the merge can fix
 // it, and nothing about it is the environment's fault. The runner answers it
-// with a rebase round on the same branch and pull request.
+// with a merge round on the same branch and pull request: the worker merges
+// the base into the branch, and the branch is never rewritten.
 type MergeConflictError struct {
 	Subject  string
 	Base     string

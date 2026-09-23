@@ -65,31 +65,6 @@ type publishPlan struct {
 
 	// Message is the commit message, when there is something to commit.
 	Message string
-
-	// Force publishes with --force-with-lease, which is what a MID-ATTEMPT
-	// publication needs: a worker that amended or rebased its own commits
-	// between turns leaves a branch the remote cannot fast-forward to, and a
-	// plain push would fail the job over work that is perfectly fine.
-	//
-	// IT IS --force-with-lease AND NOT --force. The lease refuses the push
-	// when the remote moved since this checkout last saw it, so the one thing
-	// a force push must never do — discard a commit this container never
-	// observed — is refused by git rather than trusted to the caller. A branch
-	// with no remote-tracking ref, a fast-forward, and a push after an amend
-	// all succeed under it; only a genuinely divergent remote does not.
-	Force bool
-
-	// Lease is the commit the remote branch must still hold for a Force push
-	// to land: the head the factory last published. Empty leaves git to lease
-	// against the checkout's remote-tracking ref, which is what a mid-attempt
-	// publication with no recorded head has.
-	//
-	// A REWRITE NAMES IT EXPLICITLY. A worker rebasing onto its base runs
-	// `git fetch`, and a fetch refreshes the very tracking ref an implicit
-	// lease compares against. So an implicit lease would accept a remote that
-	// moved while the worker was working. Pinned to the published head, the
-	// push lands only on the branch the factory itself left there.
-	Lease string
 }
 
 // gitConfigArgs are the "-c key=value" pairs every git invocation carries.
@@ -343,6 +318,15 @@ func sshKeyFingerprint(authorizedKey string) (string, error) {
 
 // Push publishes the branch and answers the head that landed.
 //
+// EVERY PUSH IS A PLAIN, FAST-FORWARD PUSH. The factory never rewrites a
+// pushed branch: no force of any kind, leased or not (owner ruling
+// 2026-09-04, handbook version-control §5b). A branch that conflicts with its
+// base is brought up to date by merging the base into it, which the pushed
+// head is an ancestor of, so the push still fast-forwards. A remote that
+// refuses the push as non-fast-forward is a real error and surfaces as a
+// PublishCommandError: the local branch no longer descends from what was
+// published, and replacing the remote would discard a commit.
+//
 // EVERY PUSH IS VERIFIED HERE, not by its callers: the end-of-turn publish,
 // the teardown publish of a failed attempt and anything added later share
 // this one path, so no route to the forge can carry a commit the attempt's
@@ -356,29 +340,11 @@ func (p *publisher) Push(plan publishPlan) (string, error) {
 		refspec = plan.Branch + ":" + plan.RemoteBranch
 	}
 	args := credentialHelperArgs(p.project.Git.RepoURL)
-	args = append(args, "push")
-	if plan.Force {
-		args = append(args, forceWithLease(plan))
-	}
-	args = append(args, gitRemote, refspec)
+	args = append(args, "push", gitRemote, refspec)
 	if _, err := p.git(plan, args...); err != nil {
 		return "", err
 	}
 	return p.Head(plan)
-}
-
-// forceWithLease is the lease flag for a Force publication: pinned to the
-// plan's Lease on the ref being published when it names one, and git's own
-// remote-tracking lease when it does not. Never an unleased force.
-func forceWithLease(plan publishPlan) string {
-	if plan.Lease == "" {
-		return "--force-with-lease"
-	}
-	ref := plan.Branch
-	if plan.RemoteBranch != "" {
-		ref = plan.RemoteBranch
-	}
-	return "--force-with-lease=" + ref + ":" + plan.Lease
 }
 
 // pushSource is the local ref a publication pushes, spelled in full so that
