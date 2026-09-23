@@ -1089,6 +1089,12 @@ func applyConclusion(task *Task, c attemptConclusion, now time.Time) TaskConclus
 		if c.status.Satisfied {
 			return TaskConcludedAlreadySatisfied
 		}
+		// A SUPERSEDED ATTEMPT ENDS THE SAME WAY, for the same reason: its
+		// pull request was closed without merging, so there is nothing to
+		// merge and no round that could change that (go-quicbaas#1054).
+		if c.status.Superseded {
+			return TaskConcludedSuperseded
+		}
 		return TaskConcludedCompleted
 	}
 

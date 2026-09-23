@@ -338,21 +338,14 @@ func TestStartJob_BoundJobConcludesItsTaskSynchronously(t *testing.T) {
 	svc.SetTaskStore(store)
 	ctx := ContextWithTenant(context.Background(), "acme")
 
-	seeded := seedSpawnedTask(t, store, &Task{Status: TaskStatusPending, SpawnedJobID: "pending-binding", Attempts: 1})
-	resp, err := svc.StartJob(ctx, &StartJobRequest{TenantID: "acme", Description: "bound", LeadBackend: "mock", TaskID: seeded.ID, Attempt: 1, MaxIterations: 1})
-	if err != nil {
-		t.Fatalf("StartJob: %v", err)
-	}
+	// The task is bound to the job the way the dispatcher binds it, before
+	// the job runs; the job is then cancelled so it fails: a charged failure
+	// with budget left requeues.
+	seeded := seedSpawnedTask(t, store, &Task{Status: TaskStatusPending, Attempts: 1})
+	resp := startBoundJob(ctx, t, svc, store, seeded.ID, &StartJobRequest{TenantID: "acme", Description: "bound", LeadBackend: "mock", Attempt: 1, MaxIterations: 1})
 	defer cancelAllJobs(svc)
 	awaitArrival(t, backend)
 
-	// Bind the task to the job the way the dispatcher does, then cancel the
-	// job so it fails: a charged failure with budget left requeues.
-	bound := readTask(t, store, seeded.ID)
-	bound.SpawnedJobID = resp.JobID
-	if err := store.UpdateTask(ctx, bound); err != nil {
-		t.Fatalf("bind task: %v", err)
-	}
 	loop := runningLoop(t, svc, "acme", resp.JobID)
 	lease := loop.Lease()
 	if lease == nil || lease.TaskID != seeded.ID || lease.Ref != seeded.ID {
@@ -628,7 +621,7 @@ func TestSweep_ConcludesAJobWhoseWorkerSessionIsGone(t *testing.T) {
 	// The sweep examines this node's TASK-BOUND jobs, which is what a
 	// dispatched worker always is.
 	ctx := ContextWithTenant(context.Background(), "acme")
-	seeded := seedSpawnedTask(t, tasks, &Task{Status: TaskStatusClaimed, Attempts: 1})
+	seeded := seedUnboundTask(t, tasks, &Task{Status: TaskStatusClaimed, Attempts: 1})
 	started, err := impl.StartJob(ctx, &StartJobRequest{
 		TenantID: "acme", Description: "remote worker", LeadBackend: "mock",
 		TaskID: seeded.ID, Attempt: 1, MaxIterations: 1,

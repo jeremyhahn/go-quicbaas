@@ -327,7 +327,15 @@ func TestCreateTask_AutoSpawn_BindsJobToTaskAndProject(t *testing.T) {
 func TestStartJob_CopiesTaskBindingIntoConfig(t *testing.T) {
 	t.Parallel()
 
-	svc, impl := newTaskServiceWithStore(t, nil)
+	// A task-bound start binds a task that exists (job_bind.go); one an agent
+	// already holds keeps the attempt ordinal the caller names.
+	store := NewInMemoryTaskStore()
+	if err := store.CreateTask(context.Background(), &Task{
+		ID: "task-77", TenantID: "tenant-1", Subject: "work", Status: TaskStatusClaimed, Attempts: 3,
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	svc, impl := newTaskServiceWithStore(t, store)
 	impl.backends.Store("ollama", &testMinimalBackend{})
 
 	resp, err := svc.StartJob(context.Background(), &StartJobRequest{

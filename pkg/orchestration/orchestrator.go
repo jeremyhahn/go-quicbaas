@@ -4007,6 +4007,9 @@ func (s *agentServiceImpl) BlockTask(ctx context.Context, tenantID, taskID strin
 
 	s.logger.Debugf("blocked task: id=%s tenant=%s kind=%s", taskID, tenantID, string(kind))
 
+	// The job the block interrupts is ended with it: see job_block.go.
+	s.abortBlockedTaskJob(ctx, tenantID, taskID, kind)
+
 	s.publishEvent(ctx, tenantID, "task_blocked", map[string]string{
 		"task_id":    taskID,
 		"block_kind": string(kind),
@@ -5008,7 +5011,14 @@ func (s *agentServiceImpl) AgentHeartbeat(ctx context.Context, tenantID, agentID
 // gives the job's runner the chance to refuse the configuration, and hands
 // the rest to the envelope (job_envelope.go), which mints the job ID, takes
 // the lease and drives the run.
+//
+// A request naming a task binds the task to the job before the job runs
+// (startTaskBoundJob, job_bind.go), because a job acts for its task only while
+// the task names it.
 func (s *agentServiceImpl) StartJob(ctx context.Context, req *StartJobRequest) (*StartJobResponse, error) {
+	if req != nil && req.TaskID != "" {
+		return s.startTaskBoundJob(ctx, req)
+	}
 	return s.startJob(ctx, req, "")
 }
 

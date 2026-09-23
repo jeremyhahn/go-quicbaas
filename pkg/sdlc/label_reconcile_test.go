@@ -698,6 +698,7 @@ func TestLabelReconciler_ARunningAutoSpawnedTaskIsConsistent(t *testing.T) {
 	queued.Status = orchestration.TaskStatusPending
 	queued.AutoSpawn = true
 	queued.Attempts = 0
+	queued.SpawnedJobID = ""
 	// The source is attached AFTER the claim rather than created with it: the
 	// task store validates a source kind against the engine's source registry,
 	// which only the daemon populates, and the claim neither reads the source

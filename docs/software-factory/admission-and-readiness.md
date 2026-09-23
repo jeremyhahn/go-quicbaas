@@ -1,6 +1,6 @@
-# Admission and readiness — three inputs to start, four predicates to be ready
+# Admission and readiness — three inputs to start, five predicates to be ready
 
-> **Status: NORMATIVE** · Last verified: 2026-09-22
+> **Status: NORMATIVE** · Last verified: 2026-09-23
 > Supplement to the Software Factory feature folder: what bounds how much work
 > runs at once, and what an issue must satisfy before it becomes a Task.
 > Conflicts with this document are defects.
@@ -180,7 +180,7 @@ max_concurrent_jobs: 4       # 0 = this host reports no count (default)
 ## Readiness
 
 Eligibility used to be one test: the issue is open and carries the binding's
-trigger label. `ReadinessEvaluator.Evaluate` now applies four predicates in a
+trigger label. `ReadinessEvaluator.Evaluate` now applies five predicates in a
 fixed order — cheapest first, so an issue refused for a reason readable from its
 own text costs no forge round trip:
 
@@ -189,6 +189,7 @@ own text costs no forge round trip:
 | open, and carrying the trigger label | skip |
 | acceptance criteria present (opt-in) | refuse |
 | not already owned by a live session | skip |
+| not already closed by a pull request | skip |
 | declared dependencies satisfied | park, or refuse |
 
 `ReadinessPolicy` lives on `ProjectBinding.Readiness`; the zero value is the
@@ -197,6 +198,41 @@ and are on. Acceptance criteria are a **judgement** about an issue's text, so th
 predicate is opt-in: a project whose issues do not use the heading convention
 would otherwise have every issue refused, which is worse than an under-specified
 issue.
+
+### Issues a pull request already closes
+
+An issue that a pull request says it closes is not adopted (go-quicbaas#1054).
+On 2026-09-22 pull request #1049 said `Closes #1048`, #1048 was adopted anyway,
+and its worker opened #1052, a duplicate of the change already under review.
+
+Two sources establish the claim:
+
+- **the pull request's text.** The source lists the repository's open pull
+  requests once per sweep and reads the closing keywords in each one's title and
+  body: `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`,
+  `resolves`, `resolved`, followed by `#<n>`, `owner/repo#<n>`, or the issue's
+  URL. Only the bound repository counts. A URL must also be on the bound forge:
+  the repository's web address is read from the forge's own issue URLs, so
+  `https://github.com/acme/api/issues/25` never claims Gitea's `acme/api#25`
+  (`pkg/sdlc/closing_refs.go`).
+- **the forge's own link.** A forge implementing `IssueLinkReader` is asked
+  which pull requests it links to the issue as closing it. Gitea answers from
+  the issue timeline: a `pull_ref` entry whose `ref_action` is `closes`. The read
+  is per issue, so it runs only for an issue that nothing else has refused or
+  claimed (`pkg/sdlc/forge_links.go`, `forge_gitea_links.go`).
+
+A skipped issue is recorded once on the platform audit trail as
+`sdlc:adoption_skipped`, naming the issue and the pull request.
+
+Only an **open** pull request holds its issue. Once the pull request is no
+longer open, the issue is offered again on the next sweep. That holds whether
+it closed without merging (nobody is delivering it) or merged. A merged change
+is history: an issue still open and still labelled after its change merged has
+been reopened or re-triggered because that fix was incomplete or reverted. The
+forge's link and the pull request's text both outlive the merge, and holding
+the issue for them would mean it is never adopted again. A listing or a link
+read the forge cannot answer adopts nothing from that project on that sweep
+(`pkg/sdlc/issue_source_claims.go`).
 
 ### Declared dependencies
 
@@ -276,6 +312,7 @@ The properties proved, with the tests that prove them:
 | a blocked task parks without holding a session, and resumes | `TestTaskSourcePoller_ASpecCarryingAParkAdoptsBlockedAndSpawnsNothing`, `TestSweepProject_ReleasesAPublishedTag` |
 | merged-but-unreleased does not satisfy a version pin | `TestReadiness_MergedIsNotReleased`, `TestSweepProject_AnAbsentTagIsWaitingNotUndecidable` |
 | an issue owned by a live session is not adopted twice | `TestReadiness_AnIssueOwnedByALiveSessionIsNotAdoptedTwice` |
+| an issue an open pull request closes is skipped, audited once, and offered again when the pull request closes unmerged | `TestIssueSource_AnIssueAnOpenPullRequestClosesIsNotAdopted`, `TestIssueSource_AnIssueTheForgeLinksToAnOpenPullRequestIsNotAdopted`, `TestIssueSource_AReopenedIssueWhosePullRequestMergedIsAdopted`, `TestIssueSource_AReopenedIssueTheForgeLinksToAMergedPullRequestIsAdopted`, `TestClosingIssueNumbers_AURLCountsOnlyOnTheBoundForge` |
 | a job in reviewing frees its slot, and its round waits for one | `TestJobRun_AReviewingJobFreesItsSlotAndItsRoundWaitsForOne`, `TestProjectCapacity_AJobOffTheBudgetAdmitsASecondTask` |
 | queued rounds do not block each other, and a waiting round ends with its run | `TestProjectCapacity_QueuedRoundsDoNotBlockEachOther`, `TestJobRun_AWaitingRoundEndsWithItsRun` |
 | only the worker-bearing sdlc states spend the budget | `TestRunner_OnlyTheWorkerBearingStatesSpendTheProjectBudget` |

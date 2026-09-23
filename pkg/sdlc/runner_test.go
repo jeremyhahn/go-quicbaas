@@ -3185,7 +3185,10 @@ func TestDeliveryHeadRefused_IsTheDurableFormOfARequestedRound(t *testing.T) {
 // An empty state and no error is "do not resume", which sends the run on to
 // spawn the worker that addresses the findings.
 func TestResumeReview_ARefusedHeadDoesNotResumeIntoReview(t *testing.T) {
-	refused := &runnerRun{delivery: &Delivery{
+	// The pull request is still OPEN on the forge. It is read before the
+	// refusal is consulted, because a closed one ends the attempt instead
+	// (TestResumeReview_AClosedPullRequestOutranksEveryPathToTheWorker).
+	refused := resumeRun(t, &Delivery{
 		RequiresPullRequest: true,
 		HeadSHA:             "e3fc67d8",
 		PullRequest:         DeliveryPullRequest{Number: 66, State: PullRequestOpen},
@@ -3193,10 +3196,7 @@ func TestResumeReview_ARefusedHeadDoesNotResumeIntoReview(t *testing.T) {
 			Reviewer: "codex", Verdict: VerdictRequestChanges, HeadSHA: "e3fc67d8",
 			SubmittedAt: time.Date(2026, 9, 13, 20, 43, 36, 0, time.UTC),
 		}},
-	}}
-	// The forge is deliberately nil: reaching it would mean the refusal did
-	// not short-circuit, and the nil would surface as a panic rather than as a
-	// quietly wrong resume.
+	}, &ForgePullRequest{Number: 66, State: "open", HeadSHA: "e3fc67d8"})
 	state, err := refused.resumeReview(context.Background())
 	if err != nil {
 		t.Fatalf("resumeReview: %v", err)

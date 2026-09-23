@@ -475,6 +475,9 @@ func (s *Server) startSDLC() error {
 	} else {
 		s.logger.Warn("SDLC issue source: no job lease store; readiness cannot tell whether another project's live session already owns an issue")
 	}
+	// Issues skipped because a pull request already closes them land on the
+	// platform audit trail with that pull request's number (go-quicbaas#1054).
+	source.SetAdoptionAuditor(newSDLCAdoptionAuditor(s.auditLoggerForStores))
 	review, err := sdlc.NewReviewValidator(store, sdlcService, sdlcService)
 	if err != nil {
 		return &SDLCInitError{Component: "review validator", Cause: err}

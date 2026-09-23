@@ -147,6 +147,12 @@ type publisher struct {
 
 	// taskID names the attempt in every error.
 	taskID string
+
+	// admit re-reads the task and refuses when the attempt no longer holds
+	// it. Push asks it before every push, so a block that lands while the
+	// work is being committed still stops the publication. Required: a
+	// publisher with no way to ask pushes nothing. See attempt_admission.go.
+	admit func() error
 }
 
 // git runs one git command in the checkout and refuses on a non-zero exit.
@@ -331,8 +337,19 @@ func sshKeyFingerprint(authorizedKey string) (string, error) {
 // the teardown publish of a failed attempt and anything added later share
 // this one path, so no route to the forge can carry a commit the attempt's
 // key did not sign.
+//
+// THE TASK IS RE-READ LAST, immediately before the push (admit). The
+// verification runs a command in the container, and a block that lands on
+// another node while it runs must still stop the push. A read made before the
+// verification would miss that block.
 func (p *publisher) Push(plan publishPlan) (string, error) {
+	if p.admit == nil {
+		return "", &InvalidInputError{Field: "admit", Message: "a publisher that cannot re-read its task must not push"}
+	}
 	if err := p.VerifySigned(plan); err != nil {
+		return "", err
+	}
+	if err := p.admit(); err != nil {
 		return "", err
 	}
 	refspec := plan.Branch

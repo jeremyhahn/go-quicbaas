@@ -63,6 +63,8 @@ type IssueSource struct {
 	ranker    *Ranker
 	readiness *ReadinessEvaluator
 	live      LiveWorkReader
+	auditor   AdoptionAuditor
+	claims    claimMemory
 	pageLimit int
 	now       func() time.Time
 }
@@ -182,6 +184,14 @@ func (s *IssueSource) Poll(ctx context.Context, project *orchestration.Project) 
 		}
 		scope.LiveRefs = liveRefs
 	}
+	// Which issues a pull request already closes, read once per sweep for
+	// the same reason: see issue_source_claims.go.
+	closing, err := closingClaims(ctx, forge, repo, repoWebURL(issues))
+	if err != nil {
+		return nil, unavailable(err)
+	}
+	scope.Closing = closing
+	skipped := map[int]ClosingClaim{}
 
 	specs := make([]orchestration.TaskSourceSpec, 0, len(issues))
 	for i := range issues {
@@ -189,6 +199,9 @@ func (s *IssueSource) Poll(ctx context.Context, project *orchestration.Project) 
 		finding, readyErr := s.readiness.Evaluate(ctx, scope, issue)
 		if readyErr != nil {
 			return nil, unavailable(readyErr)
+		}
+		if finding.Verdict == ReadinessClosedByPullRequest {
+			skipped[issue.Number] = finding.Claim
 		}
 		if !finding.Verdict.Adoptable() {
 			continue
@@ -225,6 +238,7 @@ func (s *IssueSource) Poll(ctx context.Context, project *orchestration.Project) 
 			},
 		})
 	}
+	s.settleClaims(ctx, project, repo, skipped)
 	return specs, nil
 }
 

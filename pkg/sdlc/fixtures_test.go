@@ -191,7 +191,7 @@ func testOrchProject() *orchestration.Project {
 func testTaskRecord(issue int) *orchestration.Task {
 	return &orchestration.Task{
 		ID: testTask, TenantID: testTenant, ProjectID: testProject, Subject: "Fix the thing",
-		Status: orchestration.TaskStatusInProgress, Attempts: 1, AttemptBudget: 3,
+		Status: orchestration.TaskStatusInProgress, Attempts: 1, AttemptBudget: 3, SpawnedJobID: "job-1",
 		Source: &orchestration.TaskSourceRef{Kind: TaskSourceKindForgeIssue, Ref: IssueRefString(testRepoRef, issue), URL: "http://forge.test/acme/api/issues/" + strconv.Itoa(issue)},
 	}
 }

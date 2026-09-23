@@ -43,6 +43,7 @@ func newTestPublisher(container *fakeContainer, signing *SigningSession) *publis
 		project: project,
 		signing: signing,
 		taskID:  testTask,
+		admit:   func() error { return nil },
 	}
 }
 

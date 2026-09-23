@@ -445,6 +445,28 @@ Park a pending, claimed or in-progress task until a person readmits it. A
 blocked task is never dispatched; the kind says why it waits and the reason is
 surfaced to whoever it waits for.
 
+A block also ends the job the task has running, and the job publishes
+nothing. A job on the node that took the block is aborted at once. A job on
+another node is aborted by its own lease heartbeat, which re-reads the task,
+within a third of the lease TTL. Either way the lease is released and the
+container is torn down. Until then the delivery runner re-reads its task
+before every state, every push and every pull request, so a block that races a
+publication wins (go-quicbaas#1054).
+
+Both checks ask whether the task still names **this job** as its open attempt,
+not only whether it is blocked. Readmission moves the old job's binding into
+the attempt history. So a block followed by a readmit, even one that lands
+between two heartbeats, still ends the old job, and it never publishes. A
+block's own abort ends a job only while the task is still blocked, so a block
+that is readmitted and dispatched again before the abort runs leaves the new
+job alone.
+
+A job started directly for a task (`StartJob` with `task_id`) binds the task to
+itself before it runs. A pending task is claimed and charged the attempt, and a
+task an agent already holds is bound to the job. A task that already names a
+job, or is parked or concluded, is refused, and a start that fails after the
+binding releases it.
+
 ```bash
 quicbaas orchestrator task block task_abc123 --kind needs_info --reason "which branch?"
 quicbaas orchestrator task block task_abc123 --kind escalated --reason "attempt budget exhausted"

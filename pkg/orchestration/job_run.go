@@ -176,6 +176,10 @@ type JobRun struct {
 	// JobRun.Satisfy — it concludes the task rather than parking it.
 	satisfied bool
 
+	// superseded is the runner's judgement that the attempt's pull request
+	// was closed without merging. See JobRun.Supersede.
+	superseded bool
+
 	// turnPusher publishes a turn's work as soon as the turn produced any.
 	// Nil for a run nothing installed one on, which is every lead-driven job
 	// and every job whose workspace survives its container. See
@@ -581,6 +585,7 @@ func (r *JobRun) snapshot(state JobState) *JobStatus {
 		Error:        r.failureMessage,
 		Park:         r.park.clone(),
 		Satisfied:    r.satisfied,
+		Superseded:   r.superseded,
 	}
 	r.fanoutMu.Lock()
 	status.ParentJobID = r.parentJobID
@@ -1243,6 +1248,17 @@ func (r *JobRun) Satisfy() { r.satisfied = true }
 
 // Satisfied reports the judgement Satisfy recorded.
 func (r *JobRun) Satisfied() bool { return r.satisfied }
+
+// Supersede records the runner's judgement that this attempt's pull request
+// was CLOSED WITHOUT MERGING, so the delivery is over (go-quicbaas#1054).
+//
+// Like Satisfy, it is not a park and not a failure. A person closed the pull
+// request, so no worker round can change the outcome and nobody else has a
+// decision to make. The task completes and concludes `superseded`.
+func (r *JobRun) Supersede() { r.superseded = true }
+
+// Superseded reports the judgement Supersede recorded.
+func (r *JobRun) Superseded() bool { return r.superseded }
 
 // ParkSurfaced records that the park has reached the person it is for: the
 // comment is on the issue and the label has moved.

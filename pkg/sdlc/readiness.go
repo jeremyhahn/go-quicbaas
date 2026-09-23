@@ -44,7 +44,7 @@ import (
 //     to guess what "done" meant, and the guess is the expensive part: it is
 //     discovered at review, after the work.
 //
-// So readiness is four predicates, evaluated in a fixed order and reported as
+// So readiness is five predicates, evaluated in a fixed order and reported as
 // ONE verdict per issue. The order is by cost ascending — the free local tests
 // first, the forge round trips last — so an issue refused for a reason readable
 // from its own text costs no network at all.
@@ -191,6 +191,12 @@ const (
 	// adopting it would put two agents on one piece of work.
 	ReadinessOwned ReadinessVerdict = "owned"
 
+	// ReadinessClosedByPullRequest means an open pull request already closes
+	// the issue. Adopting it would put a second change under review for one
+	// piece of work (go-quicbaas#1054). Not adopted, and offered again once
+	// the pull request is no longer open, merged or not.
+	ReadinessClosedByPullRequest ReadinessVerdict = "closed_by_pull_request"
+
 	// ReadinessNoAcceptanceCriteria means the issue states no criteria and the
 	// policy requires them. A person must say what "done" is.
 	ReadinessNoAcceptanceCriteria ReadinessVerdict = "no_acceptance_criteria"
@@ -246,6 +252,10 @@ type ReadinessFinding struct {
 	// Cycle names the dependency cycle, for a ReadinessRefuse that found one,
 	// as the chain of issue references that closes on itself.
 	Cycle []string
+
+	// Claim is the pull request that already closes the issue, for a
+	// ReadinessClosedByPullRequest.
+	Claim ClosingClaim
 
 	// Evidence is the operator-facing reason for the verdict.
 	Evidence string
@@ -358,6 +368,18 @@ type ReadinessScope struct {
 	// LiveRefs are the work references the fleet holds, read once per sweep
 	// rather than once per issue.
 	LiveRefs map[string]struct{}
+
+	// Closing maps an issue number to the open pull request that already
+	// closes it. It is read once per sweep from the repository's open pull
+	// requests (see closingClaims).
+	Closing map[int]ClosingClaim
+}
+
+// ClosingClaim is an open pull request's claim on an issue: it says it closes
+// the issue. Only an open pull request claims; see issue_source_claims.go.
+type ClosingClaim struct {
+	// PullRequest is the claiming pull request's number.
+	PullRequest int
 }
 
 // Validate checks the scope names what every predicate needs.
@@ -408,6 +430,7 @@ var readinessPredicates = []readinessPredicate{
 	predicateTriggered,
 	predicateAcceptanceCriteria,
 	predicateNotOwned,
+	predicateNotClosedByPullRequest,
 	predicateDependenciesSatisfied,
 }
 
@@ -449,7 +472,7 @@ func (e *ReadinessEvaluator) Evaluate(ctx context.Context, scope ReadinessScope,
 	return ReadinessFinding{
 		IssueNumber: issue.Number,
 		Verdict:     ReadinessAdopt,
-		Evidence:    "open, triggered, unowned, and every declared dependency is satisfied",
+		Evidence:    "open, triggered, unowned, closed by no pull request, and every declared dependency is satisfied",
 	}, nil
 }
 
@@ -555,6 +578,33 @@ func predicateNotOwned(_ context.Context, _ *ReadinessEvaluator, scope Readiness
 	return &ReadinessFinding{
 		Verdict:  ReadinessOwned,
 		Evidence: "a live job lease already holds " + ref + ", so adopting it would put a second agent on one piece of work",
+	}, nil
+}
+
+// predicateNotClosedByPullRequest refuses an issue a pull request already
+// closes: one whose text says so (scope.Closing, read once per sweep), or one
+// the forge itself links to the issue (IssueLinkReader, read per issue and
+// only when the text claimed nothing). See closing_refs.go and forge_links.go.
+func predicateNotClosedByPullRequest(ctx context.Context, _ *ReadinessEvaluator, scope ReadinessScope, issue *ForgeIssue) (*ReadinessFinding, error) {
+	claim, claimed := scope.Closing[issue.Number]
+	if !claimed {
+		reader, reads := scope.Forge.(IssueLinkReader)
+		if !reads {
+			return nil, nil
+		}
+		links, err := reader.ListClosingPullRequests(ctx, scope.Repo, issue.Number)
+		if err != nil {
+			return nil, err
+		}
+		if claim, claimed = claimFromLinks(links); !claimed {
+			return nil, nil
+		}
+	}
+	return &ReadinessFinding{
+		Verdict: ReadinessClosedByPullRequest,
+		Claim:   claim,
+		Evidence: "the open pull request #" + strconv.Itoa(claim.PullRequest) +
+			" already closes it, so adopting it would put a second change under review for one piece of work",
 	}, nil
 }
 

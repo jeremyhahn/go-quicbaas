@@ -456,6 +456,13 @@ func (s *runnerRun) drive(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		// A BLOCKED TASK GETS NO FURTHER STATE, from whatever drove the run
+		// here: a review verdict, a CI result, a resume after a restart. The
+		// task is re-read on every pass because a block can land at any point
+		// in a run that lasts hours (go-quicbaas#1054, attempt_admission.go).
+		if err := s.runner.hooks.admitAttempt(ctx, s.job.TenantID, s.taskID(), s.job.JobID); err != nil {
+			return err
+		}
 		step, ok := handlers[state]
 		if !ok {
 			return &UnknownRunnerStateError{State: string(state)}
@@ -652,17 +659,39 @@ func (s *runnerRun) adoptBranchPullRequest(ctx context.Context) (bool, error) {
 // send this attempt into a review of something that already landed. This is
 // the same reason Hooks.Complete re-reads before merging.
 //
-// A CLOSED-BUT-UNMERGED PULL REQUEST FALLS THROUGH TO THE WORKER, deliberately:
-// somebody rejected that delivery, so the work genuinely is outstanding and
-// re-doing it is right.
+// A CLOSED-BUT-UNMERGED PULL REQUEST ENDS THE ATTEMPT as superseded
+// (go-quicbaas#1054). Somebody closed that delivery on purpose, so no worker
+// round can change it and nobody has a question to answer. That check runs
+// BEFORE every other exit here. A requested round and a recorded refusal both
+// send the attempt to the worker, and a pull request closed after either would
+// otherwise get another worker round.
 func (s *runnerRun) resumeReview(ctx context.Context) (orchestration.JobState, error) {
+	if s.delivery == nil || !s.delivery.RequiresPullRequest {
+		return "", nil
+	}
+	var pr *ForgePullRequest
+	fetched := false
+	if s.delivery.PullRequest.Opened() {
+		var err error
+		pr, err = s.attempt.forge.GetPullRequest(ctx, s.attempt.repo, s.delivery.PullRequest.Number)
+		if err != nil {
+			return "", err
+		}
+		fetched = true
+		// ForgePullRequest.State is the forge's own string ("open"/"closed"),
+		// not the delivery's typed PullRequestState; forge_review.go compares
+		// it the same way.
+		if pr != nil && !pr.Merged && pr.State == "closed" {
+			// Falling through would initialize a worker for a pull request
+			// nobody will merge. That is the extra round task 3a58725f ran
+			// against its closed PR #1052.
+			return s.supersede(pr.Number), nil
+		}
+	}
 	// A REQUESTED ROUND OUTRANKS THE RESUME. The gate rejected the head this
 	// pull request carries, so reviewing it again would judge the identical
 	// tree and reject it identically.
 	if s.roundRequested {
-		return "", nil
-	}
-	if s.delivery == nil || !s.delivery.RequiresPullRequest {
 		return "", nil
 	}
 	// A TASK THAT HOLDS NO PULL REQUEST MAY STILL BE ABOUT ONE. See
@@ -701,13 +730,15 @@ func (s *runnerRun) resumeReview(ctx context.Context) (orchestration.JobState, e
 	if s.delivery.HeadRefused() {
 		return "", nil
 	}
-	pr, err := s.attempt.forge.GetPullRequest(ctx, s.attempt.repo, s.delivery.PullRequest.Number)
-	if err != nil {
-		return "", err
+	// An adopted pull request was not read above: it came from the open
+	// listing, so it is read here for its current state.
+	if !fetched {
+		var err error
+		pr, err = s.attempt.forge.GetPullRequest(ctx, s.attempt.repo, s.delivery.PullRequest.Number)
+		if err != nil {
+			return "", err
+		}
 	}
-	// ForgePullRequest.State is the forge's own string ("open"/"closed"), not
-	// the delivery's typed PullRequestState; forge_review.go compares it the
-	// same way.
 	if pr == nil || pr.Merged || pr.State == "closed" {
 		return "", nil
 	}
@@ -942,6 +973,9 @@ func (s *runnerRun) publisher(ctx context.Context) *publisher {
 		project: s.job.Project,
 		signing: s.workspace.signingSession(),
 		taskID:  s.taskID(),
+		admit: func() error {
+			return s.runner.hooks.admitAttempt(ctx, s.job.TenantID, s.taskID(), s.job.JobID)
+		},
 	}
 }
 
@@ -1897,6 +1931,16 @@ func (s *runnerRun) review(ctx context.Context) (orchestration.JobState, error) 
 		if errors.As(err, &defect) {
 			return s.park(orchestration.TaskBlockKindEscalated, defect.ParkReason(), orchestration.FaultCIHostDefect), nil
 		}
+		// A CLOSED, UNMERGED PULL REQUEST ENDS THE DELIVERY. It is neither
+		// a refusal to address in another round nor a question for the
+		// owner (go-quicbaas#1054).
+		var closed *PullRequestClosedUnmergedError
+		if errors.As(err, &closed) {
+			if err := s.republishDelivery(ctx); err != nil {
+				return "", err
+			}
+			return s.supersede(closed.Number), nil
+		}
 		return "", err
 	}
 	// THE VERDICT IS ONLY READABLE ONCE IT IS AN ARTIFACT. Reviewable
@@ -1921,6 +1965,21 @@ func (s *runnerRun) review(ctx context.Context) (orchestration.JobState, error) 
 	})
 	s.job.Memory().AddFeedback(s.feedback)
 	return orchestration.JobStateRedelegating, nil
+}
+
+// supersede ends the attempt because its pull request was closed without
+// merging (go-quicbaas#1054).
+//
+// Like concludeTurn, it completes the task. It runs no further worker round
+// and asks the owner nothing. The judgement goes
+// on the run so the persisted status carries it, and applyConclusion reads it
+// there as `superseded`.
+func (s *runnerRun) supersede(number int) orchestration.JobState {
+	reason := "pull request #" + strconv.Itoa(number) + " was closed without merging; the attempt ends as superseded"
+	s.job.Audit(auditSuperseded, reason)
+	s.job.Emit(orchestration.JobStateCompleted, reason)
+	s.job.Supersede()
+	return orchestration.JobStateCompleted
 }
 
 // republishDelivery re-reads the delivery the review gate wrote and publishes
@@ -2224,6 +2283,10 @@ const auditVerificationSkipped = "sdlc:verification_skipped"
 // the attempt's own unpublished branch rather than by the base, and was
 // therefore verified and published instead of concluded.
 const auditSatisfiedOnBranch = "sdlc:satisfied_on_branch"
+
+// auditSuperseded records an attempt that ended because its pull request was
+// closed without merging (go-quicbaas#1054).
+const auditSuperseded = "sdlc:superseded"
 
 // auditVerification records one verification command's answer: its name,
 // whether it passed, how much output it produced, and its first line of

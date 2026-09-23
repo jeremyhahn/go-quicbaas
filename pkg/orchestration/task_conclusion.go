@@ -124,6 +124,24 @@ const (
 	// no decision — which is how a real escalation gets lost — and the stale
 	// issue is never reported as stale, so it is adopted again.
 	TaskConcludedAlreadySatisfied TaskConclusionReason = "already_satisfied"
+
+	// TaskConcludedSuperseded is a task whose pull request was closed without
+	// merging while the attempt still held it (go-quicbaas#1054).
+	//
+	// A CONCLUSION, NOT A ROUND AND NOT A PARK. Somebody closed the pull
+	// request on purpose: a duplicate of another change, or a delivery that is
+	// no longer wanted. Before this reason existed the closed pull request was
+	// read as a refused review. The attempt went back to the worker for
+	// another round and, when the rounds ran out, parked with a question for
+	// the owner. Both cost a worker session, and neither could change a pull
+	// request nobody will merge. Task 3a58725f (2026-09-23) ran another turn
+	// against its closed PR #1052 and parked with an owner question.
+	//
+	// The task COMPLETES, as an already_satisfied one does. A completed task
+	// is terminal in the store's transition table, so it cannot be
+	// readmitted. It releases its source instead: if the change is still
+	// wanted, re-triggering the issue adopts it as a new task.
+	TaskConcludedSuperseded TaskConclusionReason = "superseded"
 )
 
 // taskConclusionReasons is the closed set, as a membership test.
@@ -139,6 +157,7 @@ var taskConclusionReasons = map[TaskConclusionReason]struct{}{
 	TaskConcludedRunnerParked:     {},
 	TaskConcludedReadmitted:       {},
 	TaskConcludedAlreadySatisfied: {},
+	TaskConcludedSuperseded:       {},
 }
 
 // Valid reports whether the reason is a member of the closed vocabulary.

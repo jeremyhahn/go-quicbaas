@@ -1447,6 +1447,12 @@ type JobStatus struct {
 	// the issue is told it is stale instead of being closed in silence.
 	Satisfied bool `json:"satisfied,omitempty"`
 
+	// Superseded is the runner's judgement that the attempt's pull request
+	// was closed without merging, so the delivery is over. It travels on the
+	// status for the same reason Satisfied does. The task completes and
+	// concludes `superseded` (go-quicbaas#1054).
+	Superseded bool `json:"superseded,omitempty"`
+
 	// LeadSessionID is the session of the lead agent, empty until spawned.
 	LeadSessionID string `json:"lead_session_id,omitempty"`
 

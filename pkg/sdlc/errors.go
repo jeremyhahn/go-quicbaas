@@ -57,6 +57,10 @@ var (
 	// could turn green: the machine is broken, and an operator has to look.
 	ErrCIHostDefect = errors.New("sdlc: continuous integration failed on a host defect")
 
+	// ErrPullRequestClosedUnmerged indicates a delivery whose pull request
+	// was closed without merging. The attempt ends as superseded.
+	ErrPullRequestClosedUnmerged = errors.New("sdlc: pull request closed without merging")
+
 	// ErrWebhookUnverified indicates a webhook signature did not verify.
 	ErrWebhookUnverified = errors.New("sdlc: webhook signature did not verify")
 
@@ -325,6 +329,30 @@ func (e *CIHostDefectError) Unwrap() error { return ErrCIHostDefect }
 
 // ParkReason is the text the run parks the task with.
 func (e *CIHostDefectError) ParkReason() string { return e.Reason }
+
+// PullRequestClosedUnmergedError reports a delivery whose pull request was
+// closed without merging (go-quicbaas#1054).
+//
+// IT TRAVELS AS AN ERROR SO THE RUN CONCLUDES RATHER THAN RE-DELEGATES, which
+// is how CIHostDefectError is handled too. A gate that merely FAILED would
+// send the closed pull request back to the worker for another round and,
+// once the rounds were spent, park it with a question for the owner. The SDLC
+// runner recognises this type and concludes the attempt `superseded`.
+type PullRequestClosedUnmergedError struct {
+	// TaskID is the attempt's task.
+	TaskID string
+
+	// Number is the pull request that was closed.
+	Number int
+}
+
+// Error implements the error interface.
+func (e *PullRequestClosedUnmergedError) Error() string {
+	return "sdlc: task " + e.TaskID + ": pull request #" + strconv.Itoa(e.Number) + " was closed without merging"
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *PullRequestClosedUnmergedError) Unwrap() error { return ErrPullRequestClosedUnmerged }
 
 // ForgeWriteNotAppliedError reports a write the forge accepted but whose
 // read-back does not show.

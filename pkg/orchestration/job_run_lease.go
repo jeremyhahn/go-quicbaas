@@ -217,6 +217,7 @@ func (r *JobRun) heartbeat(ctx context.Context) {
 	}
 	r.lease.Store(&beat)
 	r.heartbeatAt.Store(beat.HeartbeatAt)
+	r.observeBlock(ctx)
 }
 
 // =============================================================================

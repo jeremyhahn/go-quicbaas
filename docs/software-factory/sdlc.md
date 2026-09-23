@@ -1610,6 +1610,7 @@ no row — a conclusion the module cannot render is the defect itself.
 | `parked_escalated` | `BlockTask` kind `escalated` | `escalated` — *This task needs the owner* | `in_progress` → `escalated` | yes |
 | `runner_parked` | the RUN parked the task itself | none — the `Blocked` moment already posted it | already moved by that moment | yes |
 | `readmitted` | `orchestrator:task_readmit` | `readmitted` — *This task has been readmitted* | every owned label removed | n/a |
+| `superseded` | the attempt's pull request was closed without merging, seen by the review gate or on resume | `superseded` — *This task's pull request was closed without merging* | every owned label removed | **no** — the task is completed; re-adding the trigger label adopts a new task |
 
 A failed attempt that leaves budget behind concludes **nothing**: the task is
 requeued and the next attempt starts. One comment per failed attempt would bury

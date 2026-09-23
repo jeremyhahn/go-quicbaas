@@ -82,6 +82,11 @@ const (
 	// escalation the owner must rule on.
 	OutcomeAlreadySatisfied OutcomeKind = "already_satisfied"
 
+	// OutcomeSuperseded says the attempt's pull request was closed without
+	// merging, so the delivery ended with no further round and no owner
+	// question (go-quicbaas#1054).
+	OutcomeSuperseded OutcomeKind = "superseded"
+
 	OutcomeSilent OutcomeKind = ""
 )
 
@@ -178,6 +183,24 @@ var outcomeSpecs = map[OutcomeKind]outcomeSpec{
 		terminal:  true,
 		resumable: true,
 	},
+	OutcomeSuperseded: {
+		headline: "This task's pull request was closed without merging",
+		meaning: "somebody closed the pull request this task delivered, so the Software " +
+			"Factory has stopped working on it: no further round and no question for the " +
+			"owner. The task is complete and cannot be readmitted, and its trigger label " +
+			"has been removed. If the change is still wanted, add the trigger label back " +
+			"and the issue is adopted as a new task.",
+		// NO LABEL, for the reason OutcomeAlreadySatisfied carries none: every
+		// label the binding owns says something is wrong or pending, and a pull
+		// request closed on purpose is neither.
+		labelKey: "",
+		terminal: true,
+		// NOT RESUMABLE. The task completes, and a completed task is
+		// terminal in the store's transition table. The way back is a new
+		// task: the owned labels, the trigger among them, are removed, and
+		// re-adding the trigger releases the completed task's source.
+		resumable: false,
+	},
 	OutcomeReadmitted: {
 		headline: "This task has been readmitted",
 		meaning:  "the park was cleared and the task is back in the queue for another attempt.",
@@ -212,6 +235,7 @@ var blockKindOutcomes = map[orchestration.TaskBlockKind]OutcomeKind{
 //	parked_escalated      escalated    in_progress → escalated   yes
 //	runner_parked         none         already made by the run    yes
 //	readmitted            readmitted   every owned label removed n/a
+//	superseded            superseded   every owned label removed yes
 //
 // `completed` is OutcomeSilent because the Complete moment has already
 // merged the pull request and moved the issue to `merged`; a second comment
@@ -247,6 +271,7 @@ var conclusionOutcomes = map[orchestration.TaskConclusionReason]OutcomeKind{
 	orchestration.TaskConcludedRunnerParked:     OutcomeSilent,
 	orchestration.TaskConcludedReadmitted:       OutcomeReadmitted,
 	orchestration.TaskConcludedAlreadySatisfied: OutcomeAlreadySatisfied,
+	orchestration.TaskConcludedSuperseded:       OutcomeSuperseded,
 }
 
 // OutcomeOfConclusion returns what the module posts for a conclusion reason,

@@ -334,6 +334,13 @@ func (h *Hooks) Reviewable(ctx context.Context, job *orchestration.JobContext) e
 	if delivery.PullRequest.Opened() {
 		pr, err = a.forge.GetPullRequest(ctx, a.repo, delivery.PullRequest.Number)
 	} else {
+		// RE-READ HERE, NOT ONLY AT resolve ABOVE. Opening the pull request is
+		// the write a block most needs to stop, because a duplicate pull
+		// request costs a review and a person's cleanup. The re-read keeps
+		// the window between the check and the write as short as it can be.
+		if err := h.admitAttempt(ctx, job.TenantID, job.TaskID, job.JobID); err != nil {
+			return err
+		}
 		pr, err = a.forge.CreatePullRequest(ctx, a.repo, PullRequestSpec{
 			Title:   a.task.Subject,
 			Body:    pullRequestBody(a, job),

@@ -195,6 +195,14 @@ func (v *ReviewValidator) round(ctx context.Context, job *orchestration.JobConte
 			result.Message = "pull request already merged"
 			return result, true, nil
 		}
+		// CLOSED WITHOUT MERGING ENDS THE DELIVERY; IT IS NOT A REFUSAL.
+		// Answered decisive-and-failed, it went back to the worker for
+		// another round and then to the owner as a question, for a pull
+		// request nobody will merge (go-quicbaas#1054). The runner concludes
+		// the attempt `superseded` on this error.
+		if delivery.PullRequest.State == PullRequestClosed {
+			return result, false, &PullRequestClosedUnmergedError{TaskID: job.TaskID, Number: delivery.PullRequest.Number}
+		}
 		result.Message = decision.Detail
 		return result, true, nil
 	case decision.Reason == GateBlockedPolicyInvalid, decision.Reason == GateBlockedAuthorUnknown, decision.Reason == GateBlockedHeadUnknown:

@@ -248,7 +248,7 @@ func TestReviewValidator_PullRequestStates(t *testing.T) {
 	rig.forge.prs[100].Merged = false
 	rig.forge.prs[100].State = "closed"
 	result, err = rig.validator.Validate(context.Background(), testJob(1), rig.criterion)
-	if err != nil || result.Passed || result.Details != string(GateBlockedPullRequestNotOpen) {
+	if !errors.Is(err, ErrPullRequestClosedUnmerged) || result.Passed {
 		t.Fatalf("closed: %+v, %v", result, err)
 	}
 	// The forge's head moves the delivery's head.

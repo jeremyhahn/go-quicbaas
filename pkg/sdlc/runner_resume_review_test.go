@@ -97,16 +97,16 @@ func TestResumeReview_EmptyHeadDoesNotResume(t *testing.T) {
 // send an attempt into a review of something that already landed.
 //
 // The delivery says what was true when it was written. A pull request merged
-// or closed by a person since then is finished, and the attempt must do its
-// own work rather than review a merge. Hooks.Complete re-reads for the same
-// reason.
+// since then is finished, and the attempt must do its own work rather than
+// review a merge. Hooks.Complete re-reads for the same reason. A pull request
+// closed unmerged ends the attempt instead: see
+// TestResumeReview_AClosedUnmergedPullRequestSupersedesTheAttempt.
 func TestResumeReview_AsksTheForgeNotTheRecord(t *testing.T) {
 	cases := []struct {
 		name string
 		pr   *ForgePullRequest
 	}{
 		{"merged since the record was written", &ForgePullRequest{Number: 197, State: "closed", Merged: true, HeadSHA: "e2de"}},
-		{"closed unmerged — somebody rejected this delivery", &ForgePullRequest{Number: 197, State: "closed", HeadSHA: "e2de"}},
 		{"gone from the forge entirely", nil},
 	}
 	for _, c := range cases {
