@@ -1,5 +1,5 @@
 /**
- * SdlcReviewerProfiles.test.ts
+ * SdlcReviewerProfiles.component.test.ts
  *
  * The profiles editor: every row says its merge role in words, a new first
  * profile is the default and counts, and "Make default" reorders without

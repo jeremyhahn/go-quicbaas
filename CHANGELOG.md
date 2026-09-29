@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1-alpha] - 2026-09-29
+
+### Fixed
+
+- The v0.13.0-alpha module could not be downloaded: two frontend test files
+  differed only by letter case (`SdlcReviewerProfiles.test.ts` and
+  `sdlcReviewerProfiles.test.ts`), and the Go module proxy refuses to zip such a
+  tree. The component test is renamed `SdlcReviewerProfiles.component.test.ts`,
+  and `make test` now runs `check-case-collisions`, which fails on any two
+  tracked paths that differ only by case.
+
 ## [0.13.0-alpha] - 2026-09-29
 
 The Software Factory's production-readiness release (go-quicbaas#1123), which

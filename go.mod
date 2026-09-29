@@ -29,7 +29,7 @@ require (
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha
 	github.com/jeremyhahn/go-qrdb v0.20.6-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.20.6-alpha
-	github.com/jeremyhahn/go-quicbaas/sdk/go v0.13.0-alpha
+	github.com/jeremyhahn/go-quicbaas/sdk/go v0.13.1-alpha
 	github.com/jeremyhahn/go-signal v0.2.0-alpha
 	github.com/jeremyhahn/go-xkms v0.31.0-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.31.0-alpha

@@ -1114,7 +1114,7 @@ IAM_TEST_TAGS := $(TEST_TAGS)
 # command, where a `@#` line is handed to bash as a COMMAND and fails with
 # exit 127. That is exactly how this comment broke `make test` in CI run 4119.
 .PHONY: test
-test: check-insecure-tls check-build-tags check-coded-sentinels check-local-keygen ## Run unit tests (excludes integration tests)
+test: check-insecure-tls check-build-tags check-coded-sentinels check-local-keygen check-case-collisions ## Run unit tests (excludes integration tests)
 	@echo "$(BLUE)Running unit tests (excludes integration tests)...$(NC)"
 ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(TEST_TAGS)$(NC)"
@@ -1133,6 +1133,14 @@ endif
 		printf "$(GREEN)Total time: %ds$(NC)\n" $$SECONDS; \
 	fi; \
 	exit $$TEST_RESULT
+
+.PHONY: check-case-collisions
+# check-case-collisions fails when two tracked paths differ only by letter
+# case. The Go module proxy refuses to zip such a tree ("case-insensitive file
+# name collision"), so one release was unusable by every consumer (v0.13.0-alpha).
+check-case-collisions: ## Fail if two tracked paths differ only by letter case
+	@dups=$$(git ls-files | LC_ALL=C sort -f | uniq -di); \
+	if [ -n "$$dups" ]; then echo "check-case-collisions: paths that differ only by case:"; echo "$$dups"; exit 1; fi
 
 .PHONY: check-local-keygen
 # go-xkms owns keys and certificates for the whole stack; go-quicbaas composes
