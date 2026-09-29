@@ -546,9 +546,6 @@ func parseTenantResponse(resp interface{}) (*Tenant, error) {
 		if v, ok := quotas["max_users"].(float64); ok {
 			tenant.Quotas.MaxUsers = int(v)
 		}
-		if v, ok := quotas["max_groups"].(float64); ok {
-			tenant.Quotas.MaxGroups = int(v)
-		}
 		if v, ok := quotas["max_roles"].(float64); ok {
 			tenant.Quotas.MaxRoles = int(v)
 		}

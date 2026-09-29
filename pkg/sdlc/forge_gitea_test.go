@@ -1507,6 +1507,11 @@ func TestParseWebhook_MapsTheEventsTheModuleActsOn(t *testing.T) {
 		{"pr closed unmerged", "pull_request", `{"action":"closed","pull_request":{"number":41}}`, EventPullRequestClosed},
 		{"review", "pull_request_review", `{"number":41}`, EventReviewSubmitted},
 		{"ci status", "status", `{"sha":"abc123"}`, EventCheckRunUpdated},
+		{"issue comment created", "issue_comment", `{"action":"created","issue":{"number":32}}`, EventIssueCommented},
+		// Only a NEW comment can be a ruling: rewording or deleting an old
+		// one must not readmit anything.
+		{"issue comment edited", "issue_comment", `{"action":"edited","issue":{"number":32}}`, EventUnsupported},
+		{"issue comment deleted", "issue_comment", `{"action":"deleted","issue":{"number":32}}`, EventUnsupported},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2313,5 +2318,60 @@ func TestGiteaBackend_ListOpenPullRequests_Refusals(t *testing.T) {
 	missing, _ := newGiteaFixture(t)
 	if _, err := missing.ListOpenPullRequests(context.Background(), RepoRef{Owner: "nobody", Repo: "nothing"}); err == nil {
 		t.Fatal("a 404 was read as naming no pull request")
+	}
+}
+
+// =============================================================================
+// AuthenticatedUser and pull request authorship — whose work is this
+// =============================================================================
+
+// TestGiteaBackend_AuthenticatedUser_AsksAsTheAdaptersOwnToken proves the
+// identity is read with the adapter's token, the one the binding holds.
+func TestGiteaBackend_AuthenticatedUser_AsksAsTheAdaptersOwnToken(t *testing.T) {
+	backend, fixture := newGiteaFixture(t)
+	fixture.respondJSON("GET /api/v1/user", http.StatusOK, giteaUser{Login: "agent-go-luks2"})
+
+	identity, err := backend.AuthenticatedUser(context.Background())
+	if err != nil {
+		t.Fatalf("AuthenticatedUser: %v", err)
+	}
+	if identity.Username != "agent-go-luks2" {
+		t.Fatalf("Username = %q, want agent-go-luks2", identity.Username)
+	}
+	last := fixture.requests[len(fixture.requests)-1]
+	if last.Auth != "token test-token" {
+		t.Fatalf("Authorization = %q, want the adapter's own token", last.Auth)
+	}
+}
+
+// TestGiteaBackend_AuthenticatedUser_RefusesAnAnonymousOrFailedAnswer proves
+// neither an empty login nor a refused token reads as an identity.
+func TestGiteaBackend_AuthenticatedUser_RefusesAnAnonymousOrFailedAnswer(t *testing.T) {
+	backend, fixture := newGiteaFixture(t)
+	fixture.respondJSON("GET /api/v1/user", http.StatusOK, giteaUser{})
+	var unverified *TokenVerificationError
+	if _, err := backend.AuthenticatedUser(context.Background()); !errors.As(err, &unverified) {
+		t.Fatalf("an empty login = %v, want a TokenVerificationError", err)
+	}
+
+	fixture.respondJSON("GET /api/v1/user", http.StatusUnauthorized, map[string]string{"message": "token is invalid"})
+	if identity, err := backend.AuthenticatedUser(context.Background()); err == nil {
+		t.Fatalf("a refused token answered %+v", identity)
+	}
+}
+
+// TestGiteaBackend_PullRequestsCarryTheirAuthor proves the opener's login is
+// read from Gitea's user field.
+func TestGiteaBackend_PullRequestsCarryTheirAuthor(t *testing.T) {
+	backend, fixture := newGiteaFixture(t)
+	pull := giteaPull{Number: 7, State: "open", User: &giteaUser{Login: "agent-go-luks2"}}
+	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/pulls", http.StatusOK, []giteaPull{pull, {Number: 8, State: "open"}})
+
+	pulls, err := backend.ListOpenPullRequests(context.Background(), testRepo)
+	if err != nil {
+		t.Fatalf("ListOpenPullRequests: %v", err)
+	}
+	if len(pulls) != 2 || pulls[0].Author != "agent-go-luks2" || pulls[1].Author != "" {
+		t.Fatalf("pulls = %+v, want the first authored by agent-go-luks2 and the second by nobody", pulls)
 	}
 }

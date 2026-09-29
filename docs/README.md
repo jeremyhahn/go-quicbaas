@@ -85,7 +85,7 @@ and is kept as a record of decisions, not as a plan.
 | [composition/](composition/) | The composer: building go-xkms adapters and injecting them into go-qrdb. The capability this repository alone owns |
 | [multiprotocol-api/](multiprotocol-api/) | The unified API server and the transport model — start here to understand how any capability reaches any transport |
 | [go-sdk/](go-sdk/) | The Go SDK, the canonical entry point for the whole stack |
-| [mcp-server/](mcp-server/) | The Model Context Protocol surface: 459 registered tools, scope-filtered per principal |
+| [mcp-server/](mcp-server/) | The Model Context Protocol surface: 520 registered tools, scope-filtered per principal |
 | [desktop-gui/](desktop-gui/) | The Wails desktop application and the embedded web UI |
 | [data-services/](data-services/) | KV, DAO, collections, transactions, batch, sharding, storage engine |
 | [vector/](vector/) | Vector namespaces, search, indexing |

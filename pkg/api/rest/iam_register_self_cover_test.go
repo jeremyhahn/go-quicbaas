@@ -61,10 +61,9 @@ func setupSelfRegHandler(t *testing.T, cfg config.IAMSelfServiceRegistrationConf
 	memStorage := iam.NewMemoryStorage()
 	tenants := &testTenantManager{storage: memStorage}
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
-		Tenants:      tenants,
+		UserStorage: memStorage,
+		RoleStorage: memStorage,
+		Tenants:     tenants,
 	})
 
 	privateKey, err := rsa.GenerateKey(cryptorand.Reader, 2048)

@@ -34,10 +34,10 @@ function orchestratorBinding() {
 function sessionBinding() {
     return wailsGo().main.SessionBinding;
 }
-// agentDeployBinding returns the Wails-generated AgentDeployBinding proxy.
-// Wails exposes the Go struct at window.go.main.AgentDeployBinding.
-function agentDeployBinding() {
-    return wailsGo().main.AgentDeployBinding;
+// fleetDeployBinding returns the Wails-generated FleetDeployBinding proxy.
+// Wails exposes the Go struct at window.go.main.FleetDeployBinding.
+function fleetDeployBinding() {
+    return wailsGo().main.FleetDeployBinding;
 }
 // sshKeysBinding returns the Wails-generated SSHKeysBinding proxy. The
 // Go struct lives at window.go.main.SSHKeysBinding and mirrors the
@@ -250,19 +250,19 @@ class WailsOrchestratorClient {
             req.agent_id = page.agent_id;
         return adoptPage(await orchestratorBinding().ListSessions(req), 'sessions');
     }
-    async listAgentsPage(tenantID, page) {
+    async listFleetNodesPage(tenantID, page) {
         const req = { tenant_id: tenantID, ...pageFields(page) };
         if (page?.host !== undefined)
             req.host = page.host;
         if (page?.status !== undefined)
             req.status = page.status;
-        if (page?.agent_type !== undefined)
-            req.agent_type = page.agent_type;
+        if (page?.node_type !== undefined)
+            req.node_type = page.node_type;
         if (page?.backend !== undefined)
             req.backend = page.backend;
         if (page?.model !== undefined)
             req.model = page.model;
-        return adoptPage(await orchestratorBinding().ListAgents(req), 'agents');
+        return adoptPage(await orchestratorBinding().ListFleetNodes(req), 'nodes');
     }
     async listWorkflowsPage(tenantID, page) {
         const b = orchestratorBinding();
@@ -301,11 +301,11 @@ class WailsOrchestratorClient {
         const req = { tenant_id: tenantID, job_id: jobID };
         await orchestratorBinding().CancelJob(req);
     }
-    async listAgents(req) {
-        return orchestratorBinding().ListAgents(req);
+    async listFleetNodes(req) {
+        return orchestratorBinding().ListFleetNodes(req);
     }
-    async getAgentStatus(req) {
-        return orchestratorBinding().GetAgent(req);
+    async getFleetNode(req) {
+        return orchestratorBinding().GetFleetNode(req);
     }
     async listSessions(req) {
         if (!req.tenantID) {
@@ -330,8 +330,8 @@ class WailsOrchestratorClient {
     async listRunners() {
         return orchestratorBinding().ListRunners();
     }
-    async listBackendModels(agentID, backendName) {
-        return orchestratorBinding().ListBackendModels({ agent_id: agentID, backend_name: backendName });
+    async listBackendModels(nodeID, backendName) {
+        return orchestratorBinding().ListBackendModels({ node_id: nodeID, backend_name: backendName });
     }
     async healthCheck() {
         return orchestratorBinding().HealthCheck();
@@ -379,11 +379,11 @@ class WailsOrchestratorClient {
     async rotateSessionAccount(_req) {
         throw new Error('rotateSessionAccount: use REST transport for account rotation in desktop mode');
     }
-    // deployAgent forwards the spec to the Wails AgentDeployBinding.Deploy
+    // deployFleetNode forwards the spec to the Wails FleetDeployBinding.Deploy
     // method. The Go-side binding orchestrates the SSH+SFTP+systemd workflow
     // and returns a structured result.
-    async deployAgent(spec) {
-        return agentDeployBinding().Deploy(spec);
+    async deployFleetNode(spec) {
+        return fleetDeployBinding().Deploy(spec);
     }
     // getSessionHistory fetches a page of historical session events.
     // The Go binding forwards the request struct verbatim to the SDK.
@@ -397,10 +397,35 @@ class WailsOrchestratorClient {
     }
     // getSpendReport delegates to OrchestratorBinding.GetSpendReport. The Go
     // binding forwards the request struct verbatim and returns the SDK type
-    // unreshaped, so cost_measured — the flag that says whether cost_micros is
-    // a measured figure — survives the IPC hop.
+    // unreshaped, so priced_entries — what says whether equivalent_micros is a
+    // measured figure — survives the IPC hop.
     async getSpendReport(req) {
         return orchestratorBinding().GetSpendReport(req);
+    }
+    // getTenantSpendPolicy / setTenantSpendPolicy delegate to the binding verbs
+    // of the same name, which forward the request struct verbatim.
+    async getTenantSpendPolicy(req) {
+        return orchestratorBinding().GetTenantSpendPolicy(req);
+    }
+    async setTenantSpendPolicy(req) {
+        return orchestratorBinding().SetTenantSpendPolicy(req);
+    }
+    // getCostSettings / setCostSettings delegate to the binding verbs of the
+    // same names, which pass the SDK types straight through.
+    async getCostSettings(req) {
+        return orchestratorBinding().GetCostSettings(req);
+    }
+    async setCostSettings(req) {
+        return orchestratorBinding().SetCostSettings(req);
+    }
+    // getWorkerImageStatus delegates to OrchestratorBinding.GetWorkerImageStatus,
+    // which reaches the Go SDK's SDLC client and returns its type unreshaped.
+    async getWorkerImageStatus() {
+        return orchestratorBinding().GetWorkerImageStatus();
+    }
+    // refreshWorkerImage delegates to OrchestratorBinding.RefreshWorkerImage.
+    async refreshWorkerImage() {
+        return orchestratorBinding().RefreshWorkerImage();
     }
     // createWorkflow delegates to OrchestratorBinding.CreateWorkflow if available.
     async createWorkflow(req) {
@@ -486,6 +511,29 @@ class WailsOrchestratorClient {
         }
         return b.DeleteTask(req);
     }
+    // listAttention delegates to OrchestratorBinding.AttentionList, which
+    // returns the full paged envelope (items/total/facets), not a bare array —
+    // adoptPage reads it either way.
+    async listAttention(tenantID, page) {
+        const b = orchestratorBinding();
+        if (typeof b.AttentionList !== 'function') {
+            throw new Error('wails: AttentionList not implemented');
+        }
+        const req = { tenant_id: tenantID, ...pageFields(page) };
+        if (page?.project_id !== undefined)
+            req.project_id = page.project_id;
+        if (page?.kind !== undefined)
+            req.kind = page.kind;
+        return adoptPage(await b.AttentionList(req), 'items');
+    }
+    // resolveAttention delegates to OrchestratorBinding.AttentionResolve.
+    async resolveAttention(req) {
+        const b = orchestratorBinding();
+        if (typeof b.AttentionResolve !== 'function') {
+            throw new Error('wails: AttentionResolve not implemented');
+        }
+        return b.AttentionResolve(req);
+    }
     // decomposeTask delegates to OrchestratorBinding.DecomposeTask.
     async decomposeTask(req) {
         const b = orchestratorBinding();
@@ -494,37 +542,37 @@ class WailsOrchestratorClient {
         }
         return b.DecomposeTask(req);
     }
-    // registerAgent delegates to OrchestratorBinding.RegisterAgent.
-    async registerAgent(req) {
+    // registerFleetNode delegates to OrchestratorBinding.RegisterFleetNode.
+    async registerFleetNode(req) {
         const b = orchestratorBinding();
-        if (typeof b.RegisterAgent !== 'function') {
-            throw new Error('wails: RegisterAgent not implemented');
+        if (typeof b.RegisterFleetNode !== 'function') {
+            throw new Error('wails: RegisterFleetNode not implemented');
         }
-        return b.RegisterAgent(req);
+        return b.RegisterFleetNode(req);
     }
-    // removeAgent delegates to OrchestratorBinding.RemoveAgent.
-    async removeAgent(req) {
+    // removeFleetNode delegates to OrchestratorBinding.RemoveFleetNode.
+    async removeFleetNode(req) {
         const b = orchestratorBinding();
-        if (typeof b.RemoveAgent !== 'function') {
-            throw new Error('wails: RemoveAgent not implemented');
+        if (typeof b.RemoveFleetNode !== 'function') {
+            throw new Error('wails: RemoveFleetNode not implemented');
         }
-        await b.RemoveAgent(req);
+        await b.RemoveFleetNode(req);
     }
-    // disableAgent delegates to OrchestratorBinding.DisableAgent.
-    async disableAgent(req) {
+    // disableFleetNode delegates to OrchestratorBinding.DisableFleetNode.
+    async disableFleetNode(req) {
         const b = orchestratorBinding();
-        if (typeof b.DisableAgent !== 'function') {
-            throw new Error('wails: DisableAgent not implemented');
+        if (typeof b.DisableFleetNode !== 'function') {
+            throw new Error('wails: DisableFleetNode not implemented');
         }
-        return b.DisableAgent(req);
+        return b.DisableFleetNode(req);
     }
-    // enableAgent delegates to OrchestratorBinding.EnableAgent.
-    async enableAgent(req) {
+    // enableFleetNode delegates to OrchestratorBinding.EnableFleetNode.
+    async enableFleetNode(req) {
         const b = orchestratorBinding();
-        if (typeof b.EnableAgent !== 'function') {
-            throw new Error('wails: EnableAgent not implemented');
+        if (typeof b.EnableFleetNode !== 'function') {
+            throw new Error('wails: EnableFleetNode not implemented');
         }
-        return b.EnableAgent(req);
+        return b.EnableFleetNode(req);
     }
     // subscribeSession returns an async iterable of session events via Wails IPC.
     //
@@ -670,6 +718,8 @@ export class WailsClient {
     sdlc = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     accounts = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    agents = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     iam = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

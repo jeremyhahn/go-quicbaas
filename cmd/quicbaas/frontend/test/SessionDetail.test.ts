@@ -429,6 +429,24 @@ describe('SessionDetail — job binding', () => {
   });
 });
 
+// The container the session's agent runs in rides the session list beside the
+// job (go-quicbaas#860); the panel shows its short form and nothing at all
+// for a session that runs on the host.
+describe('SessionDetail — container', () => {
+  it('shows the short container ID in the metadata panel', () => {
+    render(SessionDetail, {
+      props: { session: { ...activeSession, container_id: '0123456789abcdef0123' } },
+    });
+    expect(screen.getByText('Container')).toBeTruthy();
+    expect(screen.getByText('0123456789ab')).toBeTruthy();
+  });
+
+  it('shows no Container row for a session with no container', () => {
+    render(SessionDetail, { props: { session: activeSession } });
+    expect(screen.queryByText('Container')).toBeNull();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Conversation vs event log (go-quicbaas#834)
 // ---------------------------------------------------------------------------

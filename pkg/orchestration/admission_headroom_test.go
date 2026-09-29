@@ -59,7 +59,7 @@ func (r *headroomRig) account(t *testing.T, id, projectID string, metered bool) 
 	account.ProjectID = projectID
 	account.Status = AccountStatusActive
 	if metered {
-		account.Spend = AccountSpendPolicy{Quota: AccountQuotaPolicy{Windows: []QuotaWindow{headroomWindow}}}
+		account.Spend = AccountSpendPolicy{Quota: SpendLimits{Windows: []QuotaWindow{headroomWindow}}}
 	}
 	if err := r.accounts.Create(context.Background(), account); err != nil {
 		t.Fatalf("create account %s: %v", id, err)
@@ -100,6 +100,10 @@ func (f *failingAccountLister) ListByTenant(context.Context, string, AccountProv
 type failingQuotaAuthority struct{ err error }
 
 func (f *failingQuotaAuthority) Admit(context.Context, QuotaAdmitRequest, time.Time) (*QuotaDecision, error) {
+	return nil, f.err
+}
+
+func (f *failingQuotaAuthority) AdmitScope(context.Context, ScopeAdmitRequest, time.Time) (*QuotaDecision, error) {
 	return nil, f.err
 }
 

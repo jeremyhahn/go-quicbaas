@@ -34,7 +34,7 @@ func buildProjectSvc(t *testing.T, project *orchestration.Project) service.Proje
 }
 
 // ---------------------------------------------------------------------------
-// AuthorizeAgent
+// AuthorizeFleetNode
 // ---------------------------------------------------------------------------
 
 func TestProjectService_AuthorizeAgent_WorkerAllowed(t *testing.T) {
@@ -44,17 +44,17 @@ func TestProjectService_AuthorizeAgent_WorkerAllowed(t *testing.T) {
 		TenantID: "t1",
 		Name:     "p",
 		Permissions: orchestration.ProjectPermissions{
-			AgentRoles: map[string]orchestration.ProjectRole{
+			FleetNodeRoles: map[string]orchestration.ProjectRole{
 				"agent-A": orchestration.ProjectRoleWorker,
 			},
 		},
 	}
 	svc := buildProjectSvc(t, project)
 
-	err := svc.AuthorizeAgent(ctx, &service.AuthorizeAgentRequest{
+	err := svc.AuthorizeFleetNode(ctx, &service.AuthorizeFleetNodeRequest{
 		TenantID:     "t1",
 		ProjectID:    "proj-1",
-		AgentID:      "agent-A",
+		FleetNodeID:  "agent-A",
 		RequiredRole: orchestration.ProjectRoleWorker,
 	})
 	if err != nil {
@@ -69,17 +69,17 @@ func TestProjectService_AuthorizeAgent_DeniedRejected(t *testing.T) {
 		TenantID: "t1",
 		Name:     "p2",
 		Permissions: orchestration.ProjectPermissions{
-			AgentRoles: map[string]orchestration.ProjectRole{
+			FleetNodeRoles: map[string]orchestration.ProjectRole{
 				"agent-B": orchestration.ProjectRoleDenied,
 			},
 		},
 	}
 	svc := buildProjectSvc(t, project)
 
-	err := svc.AuthorizeAgent(ctx, &service.AuthorizeAgentRequest{
+	err := svc.AuthorizeFleetNode(ctx, &service.AuthorizeFleetNodeRequest{
 		TenantID:     "t1",
 		ProjectID:    "proj-2",
-		AgentID:      "agent-B",
+		FleetNodeID:  "agent-B",
 		RequiredRole: orchestration.ProjectRoleObserver,
 	})
 	if err == nil {
@@ -93,7 +93,7 @@ func TestProjectService_AuthorizeAgent_DeniedRejected(t *testing.T) {
 
 func TestProjectService_AuthorizeAgent_NilRequestError(t *testing.T) {
 	svc := service.NewProjectService(orchestration.NewInMemoryProjectStore())
-	err := svc.AuthorizeAgent(context.Background(), nil)
+	err := svc.AuthorizeFleetNode(context.Background(), nil)
 	if err == nil {
 		t.Fatal("expected error for nil request, got nil")
 	}
@@ -101,9 +101,9 @@ func TestProjectService_AuthorizeAgent_NilRequestError(t *testing.T) {
 
 func TestProjectService_AuthorizeAgent_EmptyTenantIDError(t *testing.T) {
 	svc := service.NewProjectService(orchestration.NewInMemoryProjectStore())
-	err := svc.AuthorizeAgent(context.Background(), &service.AuthorizeAgentRequest{
+	err := svc.AuthorizeFleetNode(context.Background(), &service.AuthorizeFleetNodeRequest{
 		ProjectID:    "p",
-		AgentID:      "a",
+		FleetNodeID:  "a",
 		RequiredRole: orchestration.ProjectRoleWorker,
 	})
 	if err == nil {
@@ -112,7 +112,7 @@ func TestProjectService_AuthorizeAgent_EmptyTenantIDError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// GrantAgentRole
+// GrantFleetNodeRole
 // ---------------------------------------------------------------------------
 
 func TestProjectService_GrantAgentRole_Success(t *testing.T) {
@@ -124,24 +124,24 @@ func TestProjectService_GrantAgentRole_Success(t *testing.T) {
 	}
 	svc := buildProjectSvc(t, project)
 
-	resp, err := svc.GrantAgentRole(ctx, &service.GrantAgentRoleRequest{
-		TenantID:  "t1",
-		ProjectID: "proj-3",
-		AgentID:   "agent-C",
-		Role:      orchestration.ProjectRoleLead,
+	resp, err := svc.GrantFleetNodeRole(ctx, &service.GrantFleetNodeRoleRequest{
+		TenantID:    "t1",
+		ProjectID:   "proj-3",
+		FleetNodeID: "agent-C",
+		Role:        orchestration.ProjectRoleLead,
 	})
 	if err != nil {
-		t.Fatalf("GrantAgentRole: %v", err)
+		t.Fatalf("GrantFleetNodeRole: %v", err)
 	}
 	if resp.Role != orchestration.ProjectRoleLead {
 		t.Errorf("role = %q, want %q", resp.Role, orchestration.ProjectRoleLead)
 	}
 
 	// Verify by authorizing.
-	authErr := svc.AuthorizeAgent(ctx, &service.AuthorizeAgentRequest{
+	authErr := svc.AuthorizeFleetNode(ctx, &service.AuthorizeFleetNodeRequest{
 		TenantID:     "t1",
 		ProjectID:    "proj-3",
-		AgentID:      "agent-C",
+		FleetNodeID:  "agent-C",
 		RequiredRole: orchestration.ProjectRoleLead,
 	})
 	if authErr != nil {
@@ -153,11 +153,11 @@ func TestProjectService_GrantAgentRole_ProjectNotFound(t *testing.T) {
 	ctx := context.Background()
 	svc := service.NewProjectService(orchestration.NewInMemoryProjectStore())
 
-	_, err := svc.GrantAgentRole(ctx, &service.GrantAgentRoleRequest{
-		TenantID:  "t1",
-		ProjectID: "no-such-project",
-		AgentID:   "agent-D",
-		Role:      orchestration.ProjectRoleWorker,
+	_, err := svc.GrantFleetNodeRole(ctx, &service.GrantFleetNodeRoleRequest{
+		TenantID:    "t1",
+		ProjectID:   "no-such-project",
+		FleetNodeID: "agent-D",
+		Role:        orchestration.ProjectRoleWorker,
 	})
 	if err == nil {
 		t.Fatal("expected error for missing project, got nil")
@@ -169,7 +169,7 @@ func TestProjectService_GrantAgentRole_ProjectNotFound(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// RevokeAgentRole
+// RevokeFleetNodeRole
 // ---------------------------------------------------------------------------
 
 func TestProjectService_RevokeAgentRole_SetsRoleToDenied(t *testing.T) {
@@ -179,30 +179,30 @@ func TestProjectService_RevokeAgentRole_SetsRoleToDenied(t *testing.T) {
 		TenantID: "t1",
 		Name:     "p4",
 		Permissions: orchestration.ProjectPermissions{
-			AgentRoles: map[string]orchestration.ProjectRole{
+			FleetNodeRoles: map[string]orchestration.ProjectRole{
 				"agent-E": orchestration.ProjectRoleWorker,
 			},
 		},
 	}
 	svc := buildProjectSvc(t, project)
 
-	resp, err := svc.RevokeAgentRole(ctx, &service.RevokeAgentRoleRequest{
-		TenantID:  "t1",
-		ProjectID: "proj-4",
-		AgentID:   "agent-E",
+	resp, err := svc.RevokeFleetNodeRole(ctx, &service.RevokeFleetNodeRoleRequest{
+		TenantID:    "t1",
+		ProjectID:   "proj-4",
+		FleetNodeID: "agent-E",
 	})
 	if err != nil {
-		t.Fatalf("RevokeAgentRole: %v", err)
+		t.Fatalf("RevokeFleetNodeRole: %v", err)
 	}
-	if resp.AgentID != "agent-E" {
-		t.Errorf("AgentID = %q, want %q", resp.AgentID, "agent-E")
+	if resp.FleetNodeID != "agent-E" {
+		t.Errorf("AgentID = %q, want %q", resp.FleetNodeID, "agent-E")
 	}
 
 	// Authorization should now fail.
-	authErr := svc.AuthorizeAgent(ctx, &service.AuthorizeAgentRequest{
+	authErr := svc.AuthorizeFleetNode(ctx, &service.AuthorizeFleetNodeRequest{
 		TenantID:     "t1",
 		ProjectID:    "proj-4",
-		AgentID:      "agent-E",
+		FleetNodeID:  "agent-E",
 		RequiredRole: orchestration.ProjectRoleObserver,
 	})
 	if authErr == nil {
@@ -218,10 +218,10 @@ func TestProjectService_RevokeAgentRole_ProjectNotFound(t *testing.T) {
 	ctx := context.Background()
 	svc := service.NewProjectService(orchestration.NewInMemoryProjectStore())
 
-	_, err := svc.RevokeAgentRole(ctx, &service.RevokeAgentRoleRequest{
-		TenantID:  "t1",
-		ProjectID: "no-such-project",
-		AgentID:   "agent-F",
+	_, err := svc.RevokeFleetNodeRole(ctx, &service.RevokeFleetNodeRoleRequest{
+		TenantID:    "t1",
+		ProjectID:   "no-such-project",
+		FleetNodeID: "agent-F",
 	})
 	if err == nil {
 		t.Fatal("expected error for missing project, got nil")

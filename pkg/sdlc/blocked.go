@@ -271,6 +271,10 @@ func labelTransition(binding *ProjectBinding, key string) string {
 	switch {
 	case trigger == "" && parked == "":
 		return ""
+	case key == TriggerLabelKey:
+		// A readmission: the issue goes back to the trigger, the display
+		// state of queued work, whatever park label it carried.
+		return "`" + trigger + "` kept until the next attempt starts"
 	case parked == "":
 		return "`" + trigger + "` removed"
 	case trigger == "":

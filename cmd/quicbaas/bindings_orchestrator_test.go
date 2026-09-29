@@ -27,7 +27,9 @@ import (
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
+	agentsSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/agents"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/page"
 )
 
 // newTestOrchestratorBinding constructs an OrchestratorBinding wired to a
@@ -163,8 +165,7 @@ func TestOrchestratorBinding_StartJob_HappyPath(t *testing.T) {
 		startJobFn: func(ctx context.Context, req *orchestratorSDK.StartJobRequest) (*orchestratorSDK.StartJobResponse, error) {
 			assert.Equal(t, "acme", req.TenantID)
 			assert.Equal(t, "build the db", req.Description)
-			assert.Equal(t, "claude", req.LeadBackend)
-			assert.Equal(t, "sonnet", req.LeadModel)
+			assert.Equal(t, "claude-lead", req.Lead.AgentID)
 			return &orchestratorSDK.StartJobResponse{JobID: "job-99", Timestamp: 42}, nil
 		},
 	}
@@ -173,8 +174,7 @@ func TestOrchestratorBinding_StartJob_HappyPath(t *testing.T) {
 	result, err := binding.StartJob(&orchestratorSDK.StartJobRequest{
 		TenantID:    "acme",
 		Description: "build the db",
-		LeadBackend: "claude",
-		LeadModel:   "sonnet",
+		Lead:        agentsSDK.AgentRef{AgentID: "claude-lead"},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "job-99", result["job_id"])
@@ -290,7 +290,7 @@ func TestOrchestratorBinding_ReadmitTask_TransportError(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// ListAgents — the direct cause of the "json: cannot unmarshal object into
+// ListFleetNodes — the direct cause of the "json: cannot unmarshal object into
 // Go value of type string" runtime error. The regression test verifies that
 // the binding takes the SDK request struct (matching the Wails wire format)
 // rather than a bare string.
@@ -298,10 +298,10 @@ func TestOrchestratorBinding_ReadmitTask_TransportError(t *testing.T) {
 
 func TestOrchestratorBinding_ListAgents_HappyPath(t *testing.T) {
 	mock := &mockOrchestratorClient{
-		listAgentsFn: func(ctx context.Context, req *orchestratorSDK.ListAgentsRequest) (*orchestratorSDK.ListAgentsResponse, error) {
+		listAgentsFn: func(ctx context.Context, req *orchestratorSDK.ListFleetNodesRequest) (*orchestratorSDK.ListFleetNodesResponse, error) {
 			assert.Equal(t, "default", req.TenantID)
-			return &orchestratorSDK.ListAgentsResponse{
-				Agents: []*orchestratorSDK.AgentRegistration{
+			return &orchestratorSDK.ListFleetNodesResponse{
+				Nodes: []*orchestratorSDK.FleetNode{
 					{ID: "a1", Name: "alpha", Status: "running"},
 				},
 				Count: 1,
@@ -310,7 +310,7 @@ func TestOrchestratorBinding_ListAgents_HappyPath(t *testing.T) {
 	}
 	binding := newTestOrchestratorBinding(t, mock)
 
-	result, err := binding.ListAgents(&orchestratorSDK.ListAgentsRequest{TenantID: "default"})
+	result, err := binding.ListFleetNodes(&orchestratorSDK.ListFleetNodesRequest{TenantID: "default"})
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 	assert.Equal(t, "a1", result[0]["id"])
@@ -318,32 +318,32 @@ func TestOrchestratorBinding_ListAgents_HappyPath(t *testing.T) {
 
 // TestOrchestratorBinding_ListAgents_WailsPayloadShape simulates the exact
 // JSON body Wails delivers when the frontend calls
-// orchestratorBinding().ListAgents({tenant_id: "default"}). This is the
+// orchestratorBinding().ListFleetNodes({tenant_id: "default"}). This is the
 // regression test for the runtime error
 // "json: cannot unmarshal object into Go value of type string" — the binding
-// now accepts a *ListAgentsRequest so the object unmarshals successfully.
+// now accepts a *ListFleetNodesRequest so the object unmarshals successfully.
 func TestOrchestratorBinding_ListAgents_WailsPayloadShape(t *testing.T) {
 	payload := []byte(`{"tenant_id":"default","status":"running"}`)
-	var req orchestratorSDK.ListAgentsRequest
+	var req orchestratorSDK.ListFleetNodesRequest
 	require.NoError(t, json.Unmarshal(payload, &req))
 
 	mock := &mockOrchestratorClient{
-		listAgentsFn: func(ctx context.Context, got *orchestratorSDK.ListAgentsRequest) (*orchestratorSDK.ListAgentsResponse, error) {
+		listAgentsFn: func(ctx context.Context, got *orchestratorSDK.ListFleetNodesRequest) (*orchestratorSDK.ListFleetNodesResponse, error) {
 			assert.Equal(t, "default", got.TenantID)
 			assert.Equal(t, "running", got.Status)
-			return &orchestratorSDK.ListAgentsResponse{Agents: []*orchestratorSDK.AgentRegistration{}, Count: 0}, nil
+			return &orchestratorSDK.ListFleetNodesResponse{Nodes: []*orchestratorSDK.FleetNode{}, Count: 0}, nil
 		},
 	}
 	binding := newTestOrchestratorBinding(t, mock)
 
-	_, err := binding.ListAgents(&req)
+	_, err := binding.ListFleetNodes(&req)
 	require.NoError(t, err)
 }
 
 func TestOrchestratorBinding_ListAgents_NilRequest(t *testing.T) {
 	binding := newTestOrchestratorBinding(t, &mockOrchestratorClient{})
 
-	result, err := binding.ListAgents(nil)
+	result, err := binding.ListFleetNodes(nil)
 	require.Error(t, err)
 	assert.Nil(t, result)
 
@@ -354,32 +354,32 @@ func TestOrchestratorBinding_ListAgents_NilRequest(t *testing.T) {
 func TestOrchestratorBinding_ListAgents_TransportError(t *testing.T) {
 	sentinel := errors.New("agents unavailable")
 	mock := &mockOrchestratorClient{
-		listAgentsFn: func(ctx context.Context, req *orchestratorSDK.ListAgentsRequest) (*orchestratorSDK.ListAgentsResponse, error) {
+		listAgentsFn: func(ctx context.Context, req *orchestratorSDK.ListFleetNodesRequest) (*orchestratorSDK.ListFleetNodesResponse, error) {
 			return nil, sentinel
 		},
 	}
 	binding := newTestOrchestratorBinding(t, mock)
 
-	_, err := binding.ListAgents(&orchestratorSDK.ListAgentsRequest{TenantID: "t"})
+	_, err := binding.ListFleetNodes(&orchestratorSDK.ListFleetNodesRequest{TenantID: "t"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, sentinel)
 }
 
 // -----------------------------------------------------------------------------
-// GetAgent
+// GetFleetNode
 // -----------------------------------------------------------------------------
 
 func TestOrchestratorBinding_GetAgent_HappyPath(t *testing.T) {
 	mock := &mockOrchestratorClient{
-		getAgentFn: func(ctx context.Context, req *orchestratorSDK.GetAgentRequest) (*orchestratorSDK.AgentRegistration, error) {
+		getAgentFn: func(ctx context.Context, req *orchestratorSDK.GetFleetNodeRequest) (*orchestratorSDK.FleetNode, error) {
 			assert.Equal(t, "t", req.TenantID)
-			assert.Equal(t, "a-1", req.AgentID)
-			return &orchestratorSDK.AgentRegistration{ID: "a-1", Name: "alpha"}, nil
+			assert.Equal(t, "a-1", req.NodeID)
+			return &orchestratorSDK.FleetNode{ID: "a-1", Name: "alpha"}, nil
 		},
 	}
 	binding := newTestOrchestratorBinding(t, mock)
 
-	result, err := binding.GetAgent(&orchestratorSDK.GetAgentRequest{TenantID: "t", AgentID: "a-1"})
+	result, err := binding.GetFleetNode(&orchestratorSDK.GetFleetNodeRequest{TenantID: "t", NodeID: "a-1"})
 	require.NoError(t, err)
 	assert.Equal(t, "a-1", result["id"])
 	assert.Equal(t, "alpha", result["name"])
@@ -388,7 +388,7 @@ func TestOrchestratorBinding_GetAgent_HappyPath(t *testing.T) {
 func TestOrchestratorBinding_GetAgent_NilRequest(t *testing.T) {
 	binding := newTestOrchestratorBinding(t, &mockOrchestratorClient{})
 
-	result, err := binding.GetAgent(nil)
+	result, err := binding.GetFleetNode(nil)
 	require.Error(t, err)
 	assert.Nil(t, result)
 
@@ -574,7 +574,7 @@ func TestOrchestratorBinding_ListBackendModels_HappyPath(t *testing.T) {
 	mock := &mockOrchestratorClient{
 		listBackendModelsFn: func(ctx context.Context, req *orchestratorSDK.ListBackendModelsRequest) (*orchestratorSDK.ListBackendModelsResponse, error) {
 			require.NotNil(t, req)
-			assert.Equal(t, "agent-1", req.AgentID)
+			assert.Equal(t, "agent-1", req.NodeID)
 			assert.Equal(t, "ollama", req.BackendName)
 			return &orchestratorSDK.ListBackendModelsResponse{
 				Backend: req.BackendName,
@@ -586,7 +586,7 @@ func TestOrchestratorBinding_ListBackendModels_HappyPath(t *testing.T) {
 	binding := newTestOrchestratorBinding(t, mock)
 
 	models, err := binding.ListBackendModels(&orchestratorSDK.ListBackendModelsRequest{
-		AgentID:     "agent-1",
+		NodeID:      "agent-1",
 		BackendName: "ollama",
 	})
 	require.NoError(t, err)
@@ -610,7 +610,7 @@ func TestOrchestratorBinding_ListBackendModels_EmptyAgent(t *testing.T) {
 	binding := newTestOrchestratorBinding(t, mock)
 
 	models, err := binding.ListBackendModels(&orchestratorSDK.ListBackendModelsRequest{
-		AgentID:     "missing-agent",
+		NodeID:      "missing-agent",
 		BackendName: "ollama",
 	})
 	require.NoError(t, err)
@@ -753,4 +753,69 @@ func TestOrchestratorBinding_Startup_StoresContext(t *testing.T) {
 func TestOrchestratorBinding_Shutdown_Noop(t *testing.T) {
 	binding := newTestOrchestratorBinding(t, &mockOrchestratorClient{})
 	binding.shutdown(context.Background())
+}
+
+// -----------------------------------------------------------------------------
+// AttentionList / AttentionResolve
+// -----------------------------------------------------------------------------
+
+func TestOrchestratorBinding_AttentionList_CarriesTheFullPagedEnvelope(t *testing.T) {
+	mock := &mockOrchestratorClient{
+		attentionListFn: func(_ context.Context, req *orchestratorSDK.AttentionListRequest) (*orchestratorSDK.AttentionListResponse, error) {
+			assert.Equal(t, "acme", req.TenantID)
+			return &orchestratorSDK.AttentionListResponse{
+				Items: []*orchestratorSDK.AttentionItem{{ID: "task-1", Kind: "parked_task", Subject: "s"}},
+				Count: 1,
+				Envelope: page.Envelope{
+					Total: 1, Limit: 25, Offset: 0,
+					Facets: map[string]map[string]int{"kind": {"parked_task": 1}},
+				},
+			}, nil
+		},
+	}
+	binding := newTestOrchestratorBinding(t, mock)
+
+	got, err := binding.AttentionList(&orchestratorSDK.AttentionListRequest{TenantID: "acme"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, got["total"])
+	assert.Equal(t, 1, got["count"])
+	facets, ok := got["facets"].(map[string]map[string]int)
+	require.True(t, ok, "facets = %#v", got["facets"])
+	assert.Equal(t, 1, facets["kind"]["parked_task"])
+}
+
+func TestOrchestratorBinding_AttentionList_NilRequest(t *testing.T) {
+	binding := newTestOrchestratorBinding(t, &mockOrchestratorClient{})
+
+	_, err := binding.AttentionList(nil)
+	require.Error(t, err)
+
+	var typed *GUIRequestRequiredError
+	assert.ErrorAs(t, err, &typed)
+}
+
+func TestOrchestratorBinding_AttentionResolve_HappyPath(t *testing.T) {
+	mock := &mockOrchestratorClient{
+		attentionResolveFn: func(_ context.Context, req *orchestratorSDK.AttentionResolveRequest) (*orchestratorSDK.AttentionItem, error) {
+			assert.Equal(t, "acme", req.TenantID)
+			assert.Equal(t, "task-1", req.TaskID)
+			assert.Equal(t, "readmit", req.Action)
+			return &orchestratorSDK.AttentionItem{ID: req.TaskID, Kind: "parked_task"}, nil
+		},
+	}
+	binding := newTestOrchestratorBinding(t, mock)
+
+	got, err := binding.AttentionResolve(&orchestratorSDK.AttentionResolveRequest{TenantID: "acme", TaskID: "task-1", Action: "readmit"})
+	require.NoError(t, err)
+	assert.Equal(t, "task-1", got.ID)
+}
+
+func TestOrchestratorBinding_AttentionResolve_NilRequest(t *testing.T) {
+	binding := newTestOrchestratorBinding(t, &mockOrchestratorClient{})
+
+	_, err := binding.AttentionResolve(nil)
+	require.Error(t, err)
+
+	var typed *GUIRequestRequiredError
+	assert.ErrorAs(t, err, &typed)
 }

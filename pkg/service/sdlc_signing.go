@@ -161,28 +161,13 @@ func (a *SDLCSigningAgent) StartSigningAgent(
 	}, nil
 }
 
-// signerFor resolves one of the project's KMS-held keys, defaulting the key's
-// owner to the project's tenant exactly as the clone path does.
+// signerFor resolves one of the project's KMS-held keys.
 func (a *SDLCSigningAgent) signerFor(
 	ctx context.Context,
 	project *orchestration.Project,
 	ref orchestration.KMSKeyRef,
 ) (ssh.Signer, error) {
-	keyRef := sshKeyRefFrom(ref)
-	if keyRef.Owner == "" {
-		keyRef.Owner = project.TenantID
-	}
-	signer, err := a.provisioner.SSHSigner.Signer(ctx, keyRef)
-	if err != nil {
-		return nil, err
-	}
-	if signer == nil {
-		return nil, &GitCredentialError{
-			Ref:    ref.Name,
-			Reason: "the signer resolver returned no signer for the key",
-		}
-	}
-	return signer, nil
+	return a.provisioner.projectSigner(ctx, project.TenantID, ref)
 }
 
 // isHTTPRepoURL reports whether a remote authenticates with a bearer token

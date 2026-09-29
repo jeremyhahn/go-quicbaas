@@ -235,22 +235,7 @@ service QuicBaaS {
       option (qrdb.v1.permission) = "user_authfactors:login";
   }
 
-  // User/Role Management (Phase 4)
-
-  // CreateUser creates a new user.
-  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse) {
-      option (qrdb.v1.permission) = "users:create";
-  }
-
-  // DeleteUser deletes a user.
-  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse) {
-      option (qrdb.v1.permission) = "users:delete";
-  }
-
-  // ListUsers lists all users.
-  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse) {
-      option (qrdb.v1.permission) = "users:list";
-  }
+  // Role Management (Phase 4). Users are served by quicbaas.iam.v1.IAMService.
 
   // CreateRole creates a new role.
   rpc CreateRole(CreateRoleRequest) returns (CreateRoleResponse) {
@@ -1582,76 +1567,15 @@ message ValidateTokenResponse {
   // roles are the roles from the token.
   repeated string roles = 4;
 
-  // expires_at is when the token expires (Unix nanoseconds).
+  // expires_at is when the token expires (Unix seconds).
   int64 expires_at = 5;
+
+  // tenant_id is the tenant the token was issued into (the tenant_id claim).
+  // Empty for a token minted without tenant context.
+  string tenant_id = 6;
 }
 
-// Phase 4: User/Role Management Messages
-
-// CreateUserRequest creates a new user.
-message CreateUserRequest {
-  // username is the user's username.
-  string username = 1;
-
-  // password is the user's password.
-  string password = 2;
-
-  // roles are the initial roles to assign.
-  repeated string roles = 3;
-}
-
-// CreateUserResponse returns information about the created user.
-message CreateUserResponse {
-  // user_id is the created user's ID.
-  string user_id = 1;
-
-  // username is the user's username.
-  string username = 2;
-
-  // created is when the user was created (Unix nanoseconds).
-  int64 created = 3;
-}
-
-// DeleteUserRequest deletes a user.
-message DeleteUserRequest {
-  // user_id is the ID of the user to delete.
-  string user_id = 1;
-}
-
-// DeleteUserResponse confirms deletion.
-message DeleteUserResponse {
-  // success indicates if the user was deleted.
-  bool success = 1;
-}
-
-// ListUsersRequest lists all users.
-message ListUsersRequest {
-  // No parameters needed for now.
-}
-
-// ListUsersResponse returns a list of users.
-message ListUsersResponse {
-  // users is the list of users.
-  repeated UserInfo users = 1;
-}
-
-// UserInfo contains information about a user.
-message UserInfo {
-  // user_id is the user's ID.
-  string user_id = 1;
-
-  // username is the user's username.
-  string username = 2;
-
-  // roles are the user's roles.
-  repeated string roles = 3;
-
-  // created is when the user was created (Unix nanoseconds).
-  int64 created = 4;
-
-  // last_auth is when the user last authenticated (Unix nanoseconds).
-  int64 last_auth = 5;
-}
+// Phase 4: Role Management Messages
 
 // CreateRoleRequest creates a new role.
 message CreateRoleRequest {

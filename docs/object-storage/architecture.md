@@ -417,6 +417,28 @@ for {
 }
 ```
 
+### Worker Shutdown Ordering
+
+Every background worker reads the catalog while it runs, so the catalog store
+must outlive the workers that scan it:
+
+1. `WorkerManager.StopAll()` — stops workers in reverse registration order.
+   Each `Stop()` cancels the worker's context and then **joins** its
+   goroutines, so it returns only once no scan is still reading the catalog.
+2. `BackendManager.Close()` — closes the storage backends.
+3. `CatalogManager.Close()` — closes the catalog store.
+
+`Server.Shutdown` performs exactly this sequence. Embedders that drive the
+managers directly must keep it: closing the catalog first leaves a scan
+iterating a closed PebbleDB.
+
+The store defends the ordering rather than trusting it. `pebbleStorage` holds
+every read and write open against its close, so a `Close()` that arrives while
+a scan is in flight waits for that scan, and any operation arriving afterwards
+receives a `catalog closed` error (`IsCatalogClosed`) instead of panicking
+inside PebbleDB. Workers treat that error as an ordinary end-of-life condition
+and return.
+
 ## Multi-Tenancy
 
 ### Tenant Isolation

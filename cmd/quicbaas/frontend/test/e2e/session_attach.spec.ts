@@ -43,11 +43,11 @@ test.describe('Sessions view — UI smoke tests', () => {
     });
   });
 
-  test('4. "+ Spawn" button is visible in sessions toolbar', async ({ page }) => {
+  test('4. "Spawn" button is visible in sessions toolbar', async ({ page }) => {
     await page.goto(`${BASE}#/sessions`, { waitUntil: 'networkidle' });
     const spawnBtn = page.locator('button[aria-label="Spawn new session"]');
     await expect(spawnBtn).toBeVisible({ timeout: 10_000 });
-    await expect(spawnBtn).toContainText('+ Spawn');
+    await expect(spawnBtn).toContainText('Spawn');
   });
 
   test('5. Empty-state copy is displayed when no sessions exist', async ({ page }) => {
@@ -66,7 +66,7 @@ test.describe('Sessions view — UI smoke tests', () => {
     // Either path is valid — the test asserts the view renders without error.
   });
 
-  test('6. "+ Spawn" empty-state action button opens the Spawn dialog', async ({ page }) => {
+  test('6. "Spawn a session" empty-state action button opens the Spawn dialog', async ({ page }) => {
     await page.goto(`${BASE}#/sessions`, { waitUntil: 'networkidle' });
     await expect(page.locator('.loading.loading-spinner')).toHaveCount(0, { timeout: 10_000 });
 
@@ -74,7 +74,7 @@ test.describe('Sessions view — UI smoke tests', () => {
 
     if (hasRows === 0) {
       // Click the action button inside the EmptyState component.
-      const emptyStateAction = page.locator('button', { hasText: '+ Spawn' }).first();
+      const emptyStateAction = page.locator('button', { hasText: 'Spawn a session' }).first();
       await expect(emptyStateAction).toBeVisible({ timeout: 5_000 });
       await emptyStateAction.click();
     } else {

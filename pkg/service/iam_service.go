@@ -23,7 +23,7 @@ import (
 // =============================================================================
 
 // IAMService handles identity and access management operations including
-// tenants, users, groups, roles, applications, and policies.
+// tenants, users, roles, applications, and policies.
 type IAMService interface {
 	// =============================================================================
 	// Tenant Operations
@@ -122,73 +122,6 @@ type IAMService interface {
 	//   - IAMListUsersResponse: Contains users, total count, and timestamp
 	//   - error: ErrUnauthorized, ErrTimeout
 	ListUsers(ctx context.Context, req *IAMListUsersRequest) (*IAMListUsersResponse, error)
-
-	// =============================================================================
-	// Group Operations
-	// =============================================================================
-
-	// CreateGroup creates a new group in a tenant.
-	// Parameters:
-	//   - ctx: Request context with timeout and metadata
-	//   - req: Create group request with name and members
-	// Returns:
-	//   - CreateGroupResponse: Contains created group and timestamp
-	//   - error: ErrInvalidInput, ErrAlreadyExists, ErrResourceExhausted, ErrTimeout
-	CreateGroup(ctx context.Context, req *CreateGroupRequest) (*CreateGroupResponse, error)
-
-	// GetGroup retrieves a group by ID.
-	// Parameters:
-	//   - ctx: Request context with timeout and metadata
-	//   - req: Get group request with tenant ID and group ID
-	// Returns:
-	//   - GetGroupResponse: Contains group and timestamp
-	//   - error: ErrNotFound, ErrUnauthorized, ErrTimeout
-	GetGroup(ctx context.Context, req *GetGroupRequest) (*GetGroupResponse, error)
-
-	// UpdateGroup updates an existing group.
-	// Parameters:
-	//   - ctx: Request context with timeout and metadata
-	//   - req: Update group request with optional fields
-	// Returns:
-	//   - UpdateGroupResponse: Contains updated group and timestamp
-	//   - error: ErrNotFound, ErrInvalidInput, ErrUnauthorized, ErrTimeout
-	UpdateGroup(ctx context.Context, req *UpdateGroupRequest) (*UpdateGroupResponse, error)
-
-	// DeleteGroup deletes a group from a tenant.
-	// Parameters:
-	//   - ctx: Request context with timeout and metadata
-	//   - req: Delete group request with tenant ID and group ID
-	// Returns:
-	//   - DeleteGroupResponse: Contains deletion status and timestamp
-	//   - error: ErrNotFound, ErrUnauthorized, ErrTimeout
-	DeleteGroup(ctx context.Context, req *DeleteGroupRequest) (*DeleteGroupResponse, error)
-
-	// ListGroups lists groups in a tenant with pagination and filtering.
-	// Parameters:
-	//   - ctx: Request context with timeout and metadata
-	//   - req: List groups request with tenant ID and pagination options
-	// Returns:
-	//   - ListGroupsResponse: Contains groups, total count, and timestamp
-	//   - error: ErrUnauthorized, ErrTimeout
-	ListGroups(ctx context.Context, req *ListGroupsRequest) (*ListGroupsResponse, error)
-
-	// AddUserToGroup adds a user to a group.
-	// Parameters:
-	//   - ctx: Request context with timeout and metadata
-	//   - req: Add user to group request with tenant ID, group ID, and user ID
-	// Returns:
-	//   - AddUserToGroupResponse: Contains updated group and timestamp
-	//   - error: ErrNotFound, ErrAlreadyExists, ErrUnauthorized, ErrTimeout
-	AddUserToGroup(ctx context.Context, req *AddUserToGroupRequest) (*AddUserToGroupResponse, error)
-
-	// RemoveUserFromGroup removes a user from a group.
-	// Parameters:
-	//   - ctx: Request context with timeout and metadata
-	//   - req: Remove user from group request with tenant ID, group ID, and user ID
-	// Returns:
-	//   - RemoveUserFromGroupResponse: Contains updated group and timestamp
-	//   - error: ErrNotFound, ErrUnauthorized, ErrTimeout
-	RemoveUserFromGroup(ctx context.Context, req *RemoveUserFromGroupRequest) (*RemoveUserFromGroupResponse, error)
 
 	// =============================================================================
 	// Role Operations

@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/agents"
+
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/sdlc"
 )
@@ -31,7 +33,7 @@ func TestSDLCHandler_ConvertersAndDispatch(t *testing.T) {
 		Forge: sdlc.ForgeConfig{Type: "gitea", BaseURL: "u", Owner: "o", Repo: "r",
 			Labels: map[string]string{"merged": "done"}, TriggerLabel: "task:ready", WebhookSecretRef: "wh", TokenSecretRef: "tok"},
 		Strategy:        "gitflow",
-		Worker:          sdlc.WorkerConfig{Backend: "claude", Model: "claude-opus-5"},
+		Worker:          agents.AgentRef{AgentID: "claude-coder"},
 		Verification:    []string{"make build", "make test"},
 		Review:          sdlc.ReviewPolicy{RequiredApprovals: 2, RequireIndependentReviewer: true, ChecksSettleWindow: time.Minute, Reviewers: map[string]string{"codex": "openai"}},
 		MaxReviewRounds: 4,
@@ -166,12 +168,12 @@ func TestSDLCBindingConverters_ReviewerSurvivesTheWire(t *testing.T) {
 	binding := &sdlc.ProjectBinding{
 		ProjectID: "p1",
 		Reviewer: sdlc.ReviewerConfig{
-			Backend:        "codex",
-			Model:          "gpt-5-codex",
-			Image:          "quicbaas-software-factory-worker:0.7.0-alpha",
+			Agent:          "codex-reviewer",
 			Login:          "codex",
 			TokenSecretRef: "sdlc/reviewer/go-luks2/token",
 			StatusContext:  "quicbaas/review",
+			Endpoint:       "http://gpu-host.internal:11434",
+			HostAffinity:   "gpu-host",
 		},
 		Discovery: "poll",
 	}
@@ -197,10 +199,63 @@ func TestSDLCBindingConverters_ReviewerSurvivesTheWire(t *testing.T) {
 // against the mappers inventing a reviewer for a project that binds none.
 func TestSDLCBindingConverters_UnconfiguredReviewerStaysUnconfigured(t *testing.T) {
 	back := sdlcBindingFromProto(sdlcBindingToProto(&sdlc.ProjectBinding{ProjectID: "p2"}))
-	if back.Reviewer.Backend != "" || back.Reviewer.Login != "" || back.Reviewer.TokenSecretRef != "" {
+	if back.Reviewer.Agent != "" || back.Reviewer.Login != "" || back.Reviewer.TokenSecretRef != "" {
 		t.Fatalf("empty reviewer came back populated: %+v", back.Reviewer)
 	}
 	if back.Discovery != "" {
 		t.Fatalf("empty discovery came back as %q; the zero value must stay zero", back.Discovery)
+	}
+}
+
+// TestSDLCOpenWork_ConverterAndDispatch proves every field of a project's open
+// work survives the wire, and that the verb refuses the wrong request type.
+func TestSDLCOpenWork_ConverterAndDispatch(t *testing.T) {
+	work := sdlcOpenWorkFromProto(&pb.OpenWork{
+		ProjectId: "p1", Repo: "acme/api", Agent: "agent-api", ReadAtUnix: 1_700_000_000,
+		PullRequests: []*pb.OpenPullRequest{{
+			Number: 7, Title: "fix", HeadRef: "issue/7-fix", HeadSha: "abc", CiState: "pending",
+			ReviewState: "awaiting_review", Url: "u", CreatedAtUnix: 1_699_999_000, AgeSeconds: 1000,
+		}},
+		Issues: []*pb.OpenIssue{{Number: 3, Title: "held", Labels: []string{"task:blocked"}, Url: "i", CreatedAtUnix: 1_699_998_000, AgeSeconds: 2000}},
+	})
+	if work.ProjectID != "p1" || work.Repo != "acme/api" || work.Agent != "agent-api" || work.ReadAt.Unix() != 1_700_000_000 {
+		t.Fatalf("work = %+v", work)
+	}
+	pr := work.PullRequests[0]
+	if pr.Number != 7 || pr.Title != "fix" || pr.HeadRef != "issue/7-fix" || pr.HeadSHA != "abc" || pr.CIState != "pending" ||
+		pr.ReviewState != "awaiting_review" || pr.URL != "u" || pr.Created.Unix() != 1_699_999_000 || pr.AgeSeconds != 1000 {
+		t.Fatalf("pull request = %+v", pr)
+	}
+	issue := work.Issues[0]
+	if issue.Number != 3 || issue.Title != "held" || issue.Labels[0] != "task:blocked" || issue.URL != "i" ||
+		issue.Created.Unix() != 1_699_998_000 || issue.AgeSeconds != 2000 {
+		t.Fatalf("issue = %+v", issue)
+	}
+	if sdlcOpenWorkFromProto(nil) != nil {
+		t.Fatal("nil open work converted to a non-nil one")
+	}
+	if _, err := newSDLCHandler(nil).handleRequest(context.Background(), "quicbaas.SDLC", "OpenWork", "wrong"); err == nil {
+		t.Fatal("OpenWork accepted the wrong request type")
+	}
+}
+
+// TestSDLCBindingConverters_SlotAppendsSurviveTheWire: a bind replaces the
+// whole record, so a slot's prompt append this transport dropped would be
+// erased by every rebind through it.
+func TestSDLCBindingConverters_SlotAppendsSurviveTheWire(t *testing.T) {
+	binding := &sdlc.ProjectBinding{
+		ProjectID:          "p1",
+		WorkerPromptAppend: "worker material",
+		TriagePromptAppend: "triage material",
+		Reviewer:           sdlc.ReviewerConfig{Agent: "codex-reviewer", Login: "codex", TokenSecretRef: "tok", PromptAppend: "seat material"},
+		Reviewers:          []sdlc.ReviewerConfig{{Name: "qwen", Agent: "qwen-reviewer", PromptAppend: "alternate material"}},
+	}
+	back := sdlcBindingFromProto(sdlcBindingToProto(binding))
+	if back.WorkerPromptAppend != "worker material" || back.TriagePromptAppend != "triage material" ||
+		back.Reviewer.PromptAppend != "seat material" || len(back.Reviewers) != 1 || back.Reviewers[0].PromptAppend != "alternate material" {
+		t.Fatalf("round trip lost a slot's append: %+v", back)
+	}
+	if empty := sdlcBindingFromProto(sdlcBindingToProto(&sdlc.ProjectBinding{ProjectID: "p2"})); empty.WorkerPromptAppend != "" || empty.Reviewer.PromptAppend != "" {
+		t.Fatalf("the converters invented an append: %+v", empty)
 	}
 }

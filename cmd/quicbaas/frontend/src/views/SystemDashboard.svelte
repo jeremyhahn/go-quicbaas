@@ -28,7 +28,10 @@
   import { orchestratorStore } from '../stores/orchestrator.svelte.ts';
   import type { JobStatus, SessionInfo } from '../stores/orchestrator.svelte.ts';
   import { sessionStore } from '../stores/sessionStore.svelte.ts';
-  import { agentStore } from '../stores/agentStore.svelte.ts';
+  import { fleetStore } from '../stores/fleetStore.svelte.ts';
+  import { attentionStore } from '../stores/attentionStore.svelte.ts';
+  import { parkedCountByProject } from '../lib/attention.ts';
+  import { formatRelative } from '../lib/time.ts';
   import { getSDKClient } from '../stores/sdkClient.ts';
   import { navigate } from '../stores/navigation.svelte.ts';
   import StatCard from '../components/core/StatCard.svelte';
@@ -45,7 +48,7 @@
     Clock,
     MessageSquare,
     Briefcase,
-    Bot,
+    ServerCog,
     Workflow,
     CheckCircle,
     XCircle,
@@ -56,6 +59,7 @@
     Plus,
     Terminal,
     Eye,
+    Inbox,
   } from 'lucide-svelte';
 
   // ---------------------------------------------------------------------------
@@ -384,9 +388,17 @@
   // Effective address: prefer the SDK's address, fall back to connectionStore.
   const effectiveAddress = $derived(daemonAddress || connectionStore.address || '—');
 
-  // Agent counts from agentStore (has the real SDK-backed data).
-  const totalAgents = $derived((Array.isArray(agentStore.agents) ? agentStore.agents : []).length);
-  const onlineAgents = $derived(agentStore.onlineAgents.length);
+  // Project health strip: parked count per project, from the attention
+  // inbox's own items — a function rather than a $derived so the template
+  // reads a fresh Map each render without a reactive dependency footgun over
+  // a Map's internal mutation.
+  function parkedByProject() {
+    return parkedCountByProject(attentionStore.items);
+  }
+
+  // Fleet node counts from fleetStore (has the real SDK-backed data).
+  const totalFleetNodes = $derived((Array.isArray(fleetStore.nodes) ? fleetStore.nodes : []).length);
+  const onlineFleetNodes = $derived(fleetStore.onlineNodes.length);
 
   // Session counts. The list holds every session the tenant has, closed ones
   // included, because the Sessions view shows them and a closed session is
@@ -567,21 +579,37 @@
   </div>
 
   <!-- Quick stats -->
-  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+  <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
 
-    <!-- Agent count tile -->
+    <!-- Needs you tile -->
     <button
       class="text-left hover:scale-[1.02] transition-transform cursor-pointer"
-      onclick={() => navigate('agents')}
-      aria-label="Go to Agent Fleet view"
+      onclick={() => navigate('attention')}
+      aria-label="Go to the Needs you inbox"
+      data-testid="stat-attention"
+    >
+      <StatCard
+        label="Needs you"
+        value={attentionStore.total}
+        description={attentionStore.total > 0 ? `oldest waiting ${formatRelative(attentionStore.oldestAgeInstant)}` : 'nothing waiting'}
+        icon={Inbox}
+        variant={attentionStore.total > 0 ? 'warning' : 'default'}
+      />
+    </button>
+
+    <!-- Fleet node count tile -->
+    <button
+      class="text-left hover:scale-[1.02] transition-transform cursor-pointer"
+      onclick={() => navigate('fleet')}
+      aria-label="Go to Fleet view"
       data-testid="stat-agents"
     >
       <StatCard
-        label="Agents"
-        value={totalAgents}
-        description="{onlineAgents} online"
-        icon={Bot}
-        variant={onlineAgents > 0 ? 'success' : 'default'}
+        label="Fleet nodes"
+        value={totalFleetNodes}
+        description="{onlineFleetNodes} online"
+        icon={ServerCog}
+        variant={onlineFleetNodes > 0 ? 'success' : 'default'}
       />
     </button>
 
@@ -632,6 +660,44 @@
       />
     </button>
   </div>
+
+  <!-- Project health strip: per project, parked count is read from the
+       attention inbox's own facets — real, today. Merged PRs (24h) and
+       worker success rate need a job-history aggregation this endpoint does
+       not yet compute, so they render as a dash rather than a fabricated
+       number until that aggregation exists (see go-quicbaas issue tracker,
+       "project health strip: merged PRs / success rate"). -->
+  {#if parkedByProject().size > 0}
+    <div class="card bg-base-200 rounded-box">
+      <div class="card-body p-5">
+        <h3 class="text-sm font-semibold text-base-content mb-3">Project Health</h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead>
+              <tr>
+                <th>Project</th>
+                <th>Merged PRs (24h)</th>
+                <th>Worker success rate</th>
+                <th>Parked</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each [...parkedByProject().entries()] as [projectId, info] (projectId)}
+                <tr class="hover cursor-pointer" onclick={() => navigate('attention')}>
+                  <td class="font-medium">{info.name}</td>
+                  <td class="text-base-content/40">—</td>
+                  <td class="text-base-content/40">—</td>
+                  <td>
+                    <span class="badge badge-warning badge-sm">{info.count}</span>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  {/if}
 
   <!-- Status panel: cluster mode + node count + version -->
   <div class="card bg-base-200 rounded-box">

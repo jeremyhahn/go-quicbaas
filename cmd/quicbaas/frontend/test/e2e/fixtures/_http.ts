@@ -3,7 +3,7 @@
  *
  * Shared admin-bearer auth + fetch helpers for the Playwright e2e fixture suite.
  *
- * All six fixture modules (api, iam, tenants, security_seed, agents_seed,
+ * All six fixture modules (api, iam, tenants, security_seed, fleet_seed,
  * workflows_seed) previously reimplemented the same ~50 lines of token-cache +
  * authHeader + 401-silent-refresh logic independently. This module is the
  * single canonical home for that shared infrastructure.

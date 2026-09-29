@@ -48,6 +48,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/iamtest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // ---------------------------------------------------------------------------
@@ -329,6 +330,7 @@ func writeSelfSignedAdminCert(t *testing.T, dir string) string {
 // IAM is enabled; all other optional services are disabled to keep startup fast.
 func minimalBootstrapConfig(dataDir string) *config.Config {
 	cfg := config.DefaultConfig()
+	cfg.IAM.SPIFFETrustDomain = helpers.SPIFFETrustDomain
 	cfg.Storage.DataDir = filepath.Join(dataDir, "data")
 	cfg.Storage.WALDir = filepath.Join(dataDir, "wal")
 	cfg.Raft.NodeID = 1

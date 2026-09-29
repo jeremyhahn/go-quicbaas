@@ -45,7 +45,7 @@ type inferenceHTTPRequest struct {
 	// SystemPrompt is an optional system message.
 	SystemPrompt string `json:"system_prompt,omitempty"`
 
-	// HostAffinity pins the call to a specific agent daemon by Name or Host.
+	// HostAffinity pins the call to a specific fleet node daemon by Name or Host.
 	HostAffinity string `json:"host_affinity,omitempty"`
 
 	// GpuRequired restricts dispatch to daemons that advertise "gpu" in
@@ -54,7 +54,7 @@ type inferenceHTTPRequest struct {
 
 	// HostAffinityStrict, when true, forces hard host_affinity semantics
 	// for this request: if HostAffinity names a host that is offline the
-	// resolver returns NoMatchingAgentError (HTTP 400) rather than falling
+	// resolver returns NoMatchingFleetNodeError (HTTP 400) rather than falling
 	// back to any available daemon. Defers to the operator-level
 	// orchestration.host_affinity.mode default when false.
 	HostAffinityStrict bool `json:"host_affinity_strict,omitempty"`
@@ -102,7 +102,7 @@ type inferenceHTTPResponse struct {
 // HandleOrchestratorInference handles
 // POST /api/v1/orchestrator/inference
 //
-// Routes a stateless prompt to a fleet-resident agent daemon and returns the
+// Routes a stateless prompt to a fleet-resident fleet node daemon and returns the
 // response. Supports two modes controlled by the "stream" field in the
 // request body:
 //   - stream=false (default): waits for the full response and returns a
@@ -156,7 +156,7 @@ func (s *Server) HandleOrchestratorInference(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Install a resolve-error holder so the remote backend resolver can
-	// surface a typed NoMatchingAgentError when host_affinity is strict and
+	// surface a typed NoMatchingFleetNodeError when host_affinity is strict and
 	// the named host is offline. Without the holder we'd lose the typed
 	// error to the soft (nil, false) fall-through.
 	holder := orchestration.NewResolveErrorHolder()
@@ -177,7 +177,7 @@ func (s *Server) HandleOrchestratorInference(w http.ResponseWriter, r *http.Requ
 	chunks, err := agentSvc.Infer(ctx, inferReq)
 	if err != nil {
 		// Substitute the resolver's typed error when strict host_affinity
-		// failed: BackendNotFoundError -> NoMatchingAgentError so the
+		// failed: BackendNotFoundError -> NoMatchingFleetNodeError so the
 		// caller sees 400 no_matching_agent rather than 404 backend.
 		if resolveErr := holder.Err(); resolveErr != nil {
 			handleOrchestratorError(w, r, resolveErr)

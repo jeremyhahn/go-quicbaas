@@ -165,13 +165,15 @@ func (h *authHandler) handleValidateToken(ctx context.Context, client pb.QuicBaa
 		return nil, convertGRPCError(err, "authHandler.handleValidateToken")
 	}
 
-	// Convert protobuf response to SDK response.
+	// Convert protobuf response to SDK response. The server fills
+	// expires_at with Unix seconds (service.ValidateTokenResponse.ExpiresAt).
 	return &service.TokenClaims{
-		Valid:     pbResp.Valid,
-		UserID:    pbResp.UserId,
-		Username:  pbResp.Username,
-		Roles:     pbResp.Roles,
-		ExpiresAt: time.Unix(0, pbResp.ExpiresAt),
+		Valid:     pbResp.GetValid(),
+		UserID:    pbResp.GetUserId(),
+		Username:  pbResp.GetUsername(),
+		TenantID:  pbResp.GetTenantId(),
+		Roles:     pbResp.GetRoles(),
+		ExpiresAt: time.Unix(pbResp.GetExpiresAt(), 0),
 	}, nil
 }
 

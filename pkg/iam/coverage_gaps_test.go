@@ -24,11 +24,11 @@ import (
 )
 
 // -----------------------------------------------------------------------------
-// agent_registrar.go
+// fleet_registrar.go
 // -----------------------------------------------------------------------------
 
 func TestDefaultAgentRuntimeScopes(t *testing.T) {
-	scopes := DefaultAgentRuntimeScopes()
+	scopes := DefaultFleetRuntimeScopes()
 	assert.ElementsMatch(t, []string{
 		"agent:runtime:spawn",
 		"agent:runtime:prompt",
@@ -39,9 +39,9 @@ func TestDefaultAgentRuntimeScopes(t *testing.T) {
 func TestDefaultAgentRuntimeScopes_FreshSlice(t *testing.T) {
 	// Each call must return an independent slice so callers can't mutate
 	// shared package state.
-	a := DefaultAgentRuntimeScopes()
+	a := DefaultFleetRuntimeScopes()
 	a[0] = "mutated"
-	b := DefaultAgentRuntimeScopes()
+	b := DefaultFleetRuntimeScopes()
 	assert.Equal(t, "agent:runtime:spawn", b[0])
 }
 

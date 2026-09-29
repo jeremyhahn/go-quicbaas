@@ -180,6 +180,12 @@ This prefix is applied before data reaches the storage or routing layers. The or
 - **List**: Results are filtered to the requesting tenant's prefix, with the prefix stripped from returned metric names
 - **Delete/Retention**: The metric name is scoped before the operation is applied
 
+Every one of these goes through one rule, `tenantScopedMetric` in
+`pkg/service/timeseries_tenant.go`, on both the Raft and the direct-storage
+write paths, so what a tenant writes is exactly what it reads. Platform
+components that file a tenant's series directly in storage (fleet device
+telemetry) use the exported `service.TenantScopedMetric`, the same rule.
+
 ### Single-Tenant Mode
 
 When the tenant ID from context is empty, the service operates in single-tenant mode. Metrics are stored and queried as-is with no prefix applied and no filtering on list operations. This preserves full backward compatibility with existing deployments.

@@ -105,7 +105,7 @@ func TestReadSpendReportAtEveryLevel(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			report, err := ReadSpendReport(ctx, SpendSources{Ledger: ledger}, &tc.req)
+			report, err := ReadSpendReport(ctx, SpendSources{Ledger: ledger, Accounts: nil}, &tc.req)
 			if err != nil {
 				t.Fatalf("ReadSpendReport: %v", err)
 			}
@@ -136,7 +136,7 @@ func TestReadSpendReportDrillDownSumsToTheParent(t *testing.T) {
 	ledger := NewInMemoryConsumptionLedger()
 	seedSpendFixture(t, ledger)
 
-	report, err := ReadSpendReport(context.Background(), SpendSources{Ledger: ledger},
+	report, err := ReadSpendReport(context.Background(), SpendSources{Ledger: ledger, Accounts: nil},
 		&SpendReportRequest{TenantID: "t1", ProjectID: "p1"})
 	if err != nil {
 		t.Fatalf("ReadSpendReport: %v", err)
@@ -157,7 +157,7 @@ func TestReadSpendReportLabelsTheUnattributedChild(t *testing.T) {
 	ledger := NewInMemoryConsumptionLedger()
 	seedSpendFixture(t, ledger)
 
-	report, err := ReadSpendReport(context.Background(), SpendSources{Ledger: ledger},
+	report, err := ReadSpendReport(context.Background(), SpendSources{Ledger: ledger, Accounts: nil},
 		&SpendReportRequest{TenantID: "t1", ProjectID: "p1"})
 	if err != nil {
 		t.Fatalf("ReadSpendReport: %v", err)
@@ -196,7 +196,7 @@ func TestReadSpendReportDrillsIntoTheUnattributedSubtree(t *testing.T) {
 	ledger := NewInMemoryConsumptionLedger()
 	seedSpendFixture(t, ledger)
 
-	report, err := ReadSpendReport(context.Background(), SpendSources{Ledger: ledger}, &SpendReportRequest{
+	report, err := ReadSpendReport(context.Background(), SpendSources{Ledger: ledger, Accounts: nil}, &SpendReportRequest{
 		TenantID: "t1", ProjectID: "p1", TaskID: SpendUnattributed,
 	})
 	if err != nil {
@@ -238,7 +238,7 @@ func TestReadSpendReportUnpadsTheRoundSegment(t *testing.T) {
 	ledger := NewInMemoryConsumptionLedger()
 	seedSpendFixture(t, ledger)
 
-	report, err := ReadSpendReport(context.Background(), SpendSources{Ledger: ledger}, &SpendReportRequest{
+	report, err := ReadSpendReport(context.Background(), SpendSources{Ledger: ledger, Accounts: nil}, &SpendReportRequest{
 		TenantID: "t1", ProjectID: "p1", TaskID: "task-a", JobID: "job-1", SessionID: "s1",
 	})
 	if err != nil {
@@ -262,7 +262,7 @@ func TestReadSpendReportPartitionsOutcomes(t *testing.T) {
 	ledger := NewInMemoryConsumptionLedger()
 	seedSpendFixture(t, ledger)
 
-	report, err := ReadSpendReport(context.Background(), SpendSources{Ledger: ledger}, &SpendReportRequest{TenantID: "t1"})
+	report, err := ReadSpendReport(context.Background(), SpendSources{Ledger: ledger, Accounts: nil}, &SpendReportRequest{TenantID: "t1"})
 	if err != nil {
 		t.Fatalf("ReadSpendReport: %v", err)
 	}
@@ -286,7 +286,7 @@ func TestReadSpendReportSplitsTheModelKey(t *testing.T) {
 		t.Fatalf("Record: %v", err)
 	}
 
-	report, err := ReadSpendReport(context.Background(), SpendSources{Ledger: ledger}, &SpendReportRequest{TenantID: "t1"})
+	report, err := ReadSpendReport(context.Background(), SpendSources{Ledger: ledger, Accounts: nil}, &SpendReportRequest{TenantID: "t1"})
 	if err != nil {
 		t.Fatalf("ReadSpendReport: %v", err)
 	}
@@ -298,19 +298,98 @@ func TestReadSpendReportSplitsTheModelKey(t *testing.T) {
 	}
 }
 
+// TestReadSpendReportCountsAnUnmeasuredTurnAsIncompleteCoverage is the
+// go-quicbaas#1058 review regression: a turn whose backend reported no usage
+// was a zero-token entry counted as neither unpriced nor unbilled, so a
+// scope of one priced turn and one unmeasured turn reported a complete
+// subtotal. It must report a floor on both figures — except that a
+// subscription turn bills zero whatever it consumed.
+func TestReadSpendReportCountsAnUnmeasuredTurnAsIncompleteCoverage(t *testing.T) {
+	ledger := NewInMemoryConsumptionLedger()
+	ctx := context.Background()
+
+	measured := spendEntry("e1", "p1", "", "", "", 0, "acct-1", 100, ConsumptionOutcomeSuccess, spendBase)
+	measured.EquivalentMicros, measured.PriceRef = 1_500, "v1:default:*/claude-opus-5"
+	measured.Billing, measured.BilledMicros = BillingAPI, 1_500
+
+	unmeasured := spendEntry("e2", "p1", "", "", "", 0, "acct-1", 0, ConsumptionOutcomeSuccess, spendBase.Add(time.Minute))
+	unmeasured.Unmeasured, unmeasured.Billing = true, BillingAPI
+
+	onSubscription := spendEntry("e3", "p2", "", "", "", 0, "acct-2", 0, ConsumptionOutcomeSuccess, spendBase.Add(2*time.Minute))
+	onSubscription.Unmeasured, onSubscription.Billing = true, BillingSubscription
+
+	idle := spendEntry("e4", "p2", "", "", "", 0, "acct-2", 0, ConsumptionOutcomeSuccess, spendBase.Add(3*time.Minute))
+	idle.Billing = BillingSubscription
+
+	for _, e := range []ConsumptionEntry{measured, unmeasured, onSubscription, idle} {
+		if err := ledger.Record(ctx, e); err != nil {
+			t.Fatalf("Record %s: %v", e.EntryID, err)
+		}
+	}
+
+	report, err := ReadSpendReport(ctx, SpendSources{Ledger: ledger, Accounts: nil}, &SpendReportRequest{TenantID: "t1"})
+	if err != nil {
+		t.Fatalf("ReadSpendReport: %v", err)
+	}
+	got := report.ConsumptionTotals
+	if got.PricedEntries != 1 || got.UnpricedEntries != 2 || got.EquivalentMicros != 1_500 {
+		t.Errorf("equivalent coverage = %d priced / %d unpriced ($%d), want 1 / 2 ($1500): both unmeasured turns make it a floor",
+			got.PricedEntries, got.UnpricedEntries, got.EquivalentMicros)
+	}
+	if got.BilledEntries != 2 || got.UnbilledEntries != 1 || got.BilledMicros != 1_500 {
+		t.Errorf("billed coverage = %d billed / %d unbilled ($%d), want 2 / 1 ($1500): the metered turn is unknown, the subscription one bills zero",
+			got.BilledEntries, got.UnbilledEntries, got.BilledMicros)
+	}
+}
+
 // TestReadSpendReportModelSplitIsUnambiguous states WHY cutting at the first
-// separator is exact: the ledger refuses a separator inside either half at the
-// write, so no engine or model name can span the cut. If that guard is ever
-// relaxed, this test fails and spendModels has to be revisited.
+// separator is exact: the ledger refuses a separator inside the ENGINE at the
+// write, so the first separator is always the one ModelKey inserted. A model
+// may carry its own — opencode reports "ollama/review-q8:latest" — and must
+// come back whole. If the engine guard is ever relaxed, this test fails and
+// spendModels has to be revisited.
 func TestReadSpendReportModelSplitIsUnambiguous(t *testing.T) {
 	ledger := NewInMemoryConsumptionLedger()
 	entry := spendEntry("e1", "p1", "", "", "", 0, "acct-1", 3, ConsumptionOutcomeSuccess, spendBase)
-	entry.Model = "anthropic/claude-opus-5"
+	entry.Engine = "opencode"
+	entry.Model = "ollama/review-q8:latest"
+	if err := ledger.Record(context.Background(), entry); err != nil {
+		t.Fatalf("a provider-qualified model must be recorded, got %v", err)
+	}
+
+	report, err := ReadSpendReport(context.Background(), SpendSources{Ledger: ledger, Accounts: nil}, &SpendReportRequest{TenantID: "t1"})
+	if err != nil {
+		t.Fatalf("ReadSpendReport: %v", err)
+	}
+	if len(report.Models) != 1 {
+		t.Fatalf("Models = %+v, want one row", report.Models)
+	}
+	if report.Models[0].Engine != "opencode" || report.Models[0].Model != "ollama/review-q8:latest" {
+		t.Fatalf("model row = %+v, want engine opencode and model ollama/review-q8:latest", report.Models[0])
+	}
+}
+
+// TestLedgerRefusesASeparatorInTheEngine is the guard the split above rests on.
+func TestLedgerRefusesASeparatorInTheEngine(t *testing.T) {
+	ledger := NewInMemoryConsumptionLedger()
+	entry := spendEntry("e1", "p1", "", "", "", 0, "acct-1", 3, ConsumptionOutcomeSuccess, spendBase)
+	entry.Engine = "open/code"
 
 	err := ledger.Record(context.Background(), entry)
-	if err == nil {
-		t.Fatal("a model containing the key separator must be refused at the write")
+	var invalid *ConsumptionInvalidError
+	if !stderrors.As(err, &invalid) || invalid.Field != "engine" {
+		t.Fatalf("want a ConsumptionInvalidError naming engine, got %v", err)
 	}
+}
+
+// TestLedgerRefusesAnEmptyModel asserts relaxing the segment rule for the model
+// did not also drop the requirement that one is named.
+func TestLedgerRefusesAnEmptyModel(t *testing.T) {
+	ledger := NewInMemoryConsumptionLedger()
+	entry := spendEntry("e1", "p1", "", "", "", 0, "acct-1", 3, ConsumptionOutcomeSuccess, spendBase)
+	entry.Model = "  "
+
+	err := ledger.Record(context.Background(), entry)
 	var invalid *ConsumptionInvalidError
 	if !stderrors.As(err, &invalid) || invalid.Field != "model" {
 		t.Fatalf("want a ConsumptionInvalidError naming model, got %v", err)
@@ -321,7 +400,7 @@ func TestReadSpendReportModelSplitIsUnambiguous(t *testing.T) {
 // with no separator — which this package never writes — is reported as it was
 // read rather than guessed apart.
 func TestReadSpendReportKeepsAnUnsplittableModelKeyWhole(t *testing.T) {
-	models := spendModels(map[string]int64{"bare": 7})
+	models := spendModels(map[string]*ConsumptionTotals{"bare": {TotalTokens: 7}})
 	if len(models) != 1 {
 		t.Fatalf("spendModels = %+v, want one row", models)
 	}
@@ -334,11 +413,10 @@ func TestReadSpendReportKeepsAnUnsplittableModelKeyWhole(t *testing.T) {
 // The honesty rules
 // =============================================================================
 
-// TestReadSpendReportCostIsUnmeasured is the guard go-quicbaas#791 asks for:
-// nothing prices a turn, so a production roll-up's cost is UNMEASURED and a
-// reader must not render it. It fails the day a price source lands, which is
-// the reminder to revisit every renderer.
-func TestReadSpendReportCostIsUnmeasured(t *testing.T) {
+// TestReadSpendReportCostIsUnmeasuredWhenNothingIsPriced asserts a scope whose
+// turns carry no price reports NO priced entries and a zero figure, so every
+// renderer shows a dash rather than a measured zero.
+func TestReadSpendReportCostIsUnmeasuredWhenNothingIsPriced(t *testing.T) {
 	ledger := NewInMemoryConsumptionLedger()
 	seedSpendFixture(t, ledger)
 
@@ -346,31 +424,111 @@ func TestReadSpendReportCostIsUnmeasured(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadSpendReport: %v", err)
 	}
-	if report.CostMeasured {
-		t.Fatal("no production writer prices a turn; CostMeasured must be false")
+	if report.PricedEntries != 0 || report.EquivalentMicros != 0 {
+		t.Fatalf("priced=%d micros=%d, want nothing priced", report.PricedEntries, report.EquivalentMicros)
 	}
-	if report.CostMicros != 0 {
-		t.Fatalf("CostMicros = %d, want 0 (unmeasured)", report.CostMicros)
+	if report.UnpricedEntries != 5 {
+		t.Fatalf("UnpricedEntries = %d, want 5 — every entry consumed tokens with no price", report.UnpricedEntries)
+	}
+	if report.Currency != PriceCurrency() {
+		t.Fatalf("Currency = %q, want %q", report.Currency, PriceCurrency())
 	}
 }
 
-// TestReadSpendReportCostIsMeasuredWhenPriced asserts the flag is DERIVED and
-// not hard-coded: an entry that carries a price reports a measured total, so
-// the price source can land without every reader changing.
-func TestReadSpendReportCostIsMeasuredWhenPriced(t *testing.T) {
+// TestReadSpendReportCostSumsOnlyPricedEntries asserts the money figure is the
+// sum of the PRICED entries and that an unpriced entry beside them is counted,
+// so a reader can say the figure is a floor.
+func TestReadSpendReportCostSumsOnlyPricedEntries(t *testing.T) {
 	ledger := NewInMemoryConsumptionLedger()
-	entry := spendEntry("e1", "p1", "", "", "", 0, "acct-1", 3, ConsumptionOutcomeSuccess, spendBase)
-	entry.CostMicros = 4200
-	if err := ledger.Record(context.Background(), entry); err != nil {
-		t.Fatalf("Record: %v", err)
+	priced := spendEntry("e1", "p1", "", "", "", 0, "acct-1", 3, ConsumptionOutcomeSuccess, spendBase)
+	priced.EquivalentMicros = 4200
+	priced.PriceRef = "v1:default:*/claude-opus-5"
+	unpriced := spendEntry("e2", "p1", "", "", "", 0, "", 7, ConsumptionOutcomeSuccess, spendBase)
+	unpriced.Engine, unpriced.Model = "openvino", "qwen3-8b"
+	for _, entry := range []ConsumptionEntry{priced, unpriced} {
+		if err := ledger.Record(context.Background(), entry); err != nil {
+			t.Fatalf("Record %s: %v", entry.EntryID, err)
+		}
 	}
 
 	report, err := ReadSpendReport(context.Background(), SpendSources{Ledger: ledger}, &SpendReportRequest{TenantID: "t1"})
 	if err != nil {
 		t.Fatalf("ReadSpendReport: %v", err)
 	}
-	if !report.CostMeasured || report.CostMicros != 4200 {
-		t.Fatalf("measured=%t cost=%d, want true and 4200", report.CostMeasured, report.CostMicros)
+	if report.EquivalentMicros != 4200 || report.PricedEntries != 1 || report.UnpricedEntries != 1 {
+		t.Fatalf("micros=%d priced=%d unpriced=%d, want 4200/1/1",
+			report.EquivalentMicros, report.PricedEntries, report.UnpricedEntries)
+	}
+	// The unpooled local turn is reported with the rest of the scope but is
+	// never attributed to an account.
+	if len(report.Accounts) != 1 || report.Accounts[0].AccountID != "acct-1" {
+		t.Fatalf("Accounts = %+v, want only the pooled account", report.Accounts)
+	}
+	if report.TotalTokens != 20 {
+		t.Fatalf("TotalTokens = %d, want 20 (pooled and unpooled together)", report.TotalTokens)
+	}
+}
+
+// TestReadSpendReportNamesProjects asserts a project-level drill-down carries
+// each project's name, and a scope that addresses a project carries its name.
+func TestReadSpendReportNamesProjects(t *testing.T) {
+	ledger := NewInMemoryConsumptionLedger()
+	seedSpendFixture(t, ledger)
+	projects := NewInMemoryProjectStore()
+	ctx := context.Background()
+	if err := projects.Create(ctx, &Project{ID: "p1", TenantID: "t1", Name: "go-truststrap"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	report, err := ReadSpendReport(ctx, SpendSources{Ledger: ledger, Projects: projects}, &SpendReportRequest{TenantID: "t1"})
+	if err != nil {
+		t.Fatalf("ReadSpendReport: %v", err)
+	}
+	names := map[string]string{}
+	for _, child := range report.Children {
+		names[child.ID] = child.Name
+	}
+	if names["p1"] != "go-truststrap" {
+		t.Fatalf("p1 name = %q, want go-truststrap (children %+v)", names["p1"], report.Children)
+	}
+	// p2 no longer exists: its spend stays, under its id, with no name.
+	if name, ok := names["p2"]; !ok || name != "" {
+		t.Fatalf("p2 = %q (present=%t), want present and unnamed", name, ok)
+	}
+
+	scoped, err := ReadSpendReport(ctx, SpendSources{Ledger: ledger, Projects: projects},
+		&SpendReportRequest{TenantID: "t1", ProjectID: "p1"})
+	if err != nil {
+		t.Fatalf("ReadSpendReport(project): %v", err)
+	}
+	if scoped.ProjectName != "go-truststrap" {
+		t.Fatalf("ProjectName = %q, want go-truststrap", scoped.ProjectName)
+	}
+}
+
+// faultyProjectStore answers every read with err.
+type faultyProjectStore struct {
+	ProjectStore
+	err error
+}
+
+func (s *faultyProjectStore) Get(context.Context, string, string) (*Project, error) {
+	return nil, s.err
+}
+
+// TestReadSpendReportFailsWhenProjectNamesCannotBeRead asserts a project store
+// that cannot answer fails the report rather than rendering every project as
+// unnamed.
+func TestReadSpendReportFailsWhenProjectNamesCannotBeRead(t *testing.T) {
+	ledger := NewInMemoryConsumptionLedger()
+	seedSpendFixture(t, ledger)
+	boom := stderrors.New("store down")
+
+	_, err := ReadSpendReport(context.Background(),
+		SpendSources{Ledger: ledger, Projects: &faultyProjectStore{err: boom}},
+		&SpendReportRequest{TenantID: "t1"})
+	if !stderrors.Is(err, boom) {
+		t.Fatalf("err = %v, want the store's failure", err)
 	}
 }
 
@@ -380,7 +538,7 @@ func TestReadSpendReportPolicyIsUnknownWithoutAnAccountStore(t *testing.T) {
 	ledger := NewInMemoryConsumptionLedger()
 	seedSpendFixture(t, ledger)
 
-	report, err := ReadSpendReport(context.Background(), SpendSources{Ledger: ledger}, &SpendReportRequest{TenantID: "t1"})
+	report, err := ReadSpendReport(context.Background(), SpendSources{Ledger: ledger, Accounts: nil}, &SpendReportRequest{TenantID: "t1"})
 	if err != nil {
 		t.Fatalf("ReadSpendReport: %v", err)
 	}
@@ -466,7 +624,7 @@ func TestReadSpendReportReportsQuotaWindows(t *testing.T) {
 	ctx := context.Background()
 	mustCreateSpendAccount(t, accounts, &Account{
 		ID: "acct-1", TenantID: "t1", Provider: AccountProviderClaude,
-		Spend: AccountSpendPolicy{Quota: AccountQuotaPolicy{Windows: []QuotaWindow{
+		Spend: AccountSpendPolicy{Quota: SpendLimits{Windows: []QuotaWindow{
 			{Name: "five-hour", Size: 5 * time.Hour, MaxTokens: 1000},
 		}}},
 	})
@@ -510,7 +668,7 @@ func TestReadSpendReportClampsAnOverspentWindow(t *testing.T) {
 	ctx := context.Background()
 	mustCreateSpendAccount(t, accounts, &Account{
 		ID: "acct-1", TenantID: "t1", Provider: AccountProviderClaude,
-		Spend: AccountSpendPolicy{Quota: AccountQuotaPolicy{Windows: []QuotaWindow{
+		Spend: AccountSpendPolicy{Quota: SpendLimits{Windows: []QuotaWindow{
 			{Name: "tight", Size: time.Hour, MaxTokens: 10},
 		}}},
 	})
@@ -549,7 +707,7 @@ func TestReadSpendReportExhaustedIsAboutTheAllowanceNotTheRequest(t *testing.T) 
 	window := QuotaWindow{Name: "tight", Size: time.Hour, MaxTokens: 20}
 	account := &Account{
 		ID: "acct-1", TenantID: "t1", Provider: AccountProviderClaude,
-		Spend: AccountSpendPolicy{Quota: AccountQuotaPolicy{Windows: []QuotaWindow{window}}},
+		Spend: AccountSpendPolicy{Quota: SpendLimits{Windows: []QuotaWindow{window}}},
 	}
 	mustCreateSpendAccount(t, accounts, account)
 	// Exactly the allowance: 10 in + 10 out.
@@ -690,7 +848,7 @@ func TestReadSpendReportOmitsTheBreakerWhenNoRuleIsSet(t *testing.T) {
 	ctx := context.Background()
 	mustCreateSpendAccount(t, accounts, &Account{
 		ID: "acct-1", TenantID: "t1", Provider: AccountProviderClaude,
-		Spend: AccountSpendPolicy{Quota: AccountQuotaPolicy{Windows: []QuotaWindow{
+		Spend: AccountSpendPolicy{Quota: SpendLimits{Windows: []QuotaWindow{
 			{Name: "five-hour", Size: 5 * time.Hour, MaxTokens: 1000},
 		}}},
 	})
@@ -728,7 +886,7 @@ func TestSpendReportOmitsInstantsThatNeverHappened(t *testing.T) {
 	ledger := NewInMemoryConsumptionLedger()
 
 	// An empty scope: nothing was spent, so there is no first and no last.
-	report, err := ReadSpendReport(context.Background(), SpendSources{Ledger: ledger},
+	report, err := ReadSpendReport(context.Background(), SpendSources{Ledger: ledger, Accounts: nil},
 		&SpendReportRequest{TenantID: "t1", Now: spendBase})
 	if err != nil {
 		t.Fatalf("ReadSpendReport: %v", err)
@@ -757,7 +915,7 @@ func TestSpendWindowOmitsFreesAtForAnEmptyWindow(t *testing.T) {
 	mustCreateSpendAccount(t, accounts, &Account{
 		ID: "acct-1", TenantID: "t1", Provider: AccountProviderClaude,
 		Spend: AccountSpendPolicy{
-			Quota: AccountQuotaPolicy{Windows: []QuotaWindow{
+			Quota: SpendLimits{Windows: []QuotaWindow{
 				{Name: "five-hour", Size: 5 * time.Hour, MaxTokens: 1000},
 			}},
 			// A breaker that has never tripped: its last failure never
@@ -805,7 +963,7 @@ func TestSpendReportKeepsInstantsThatDidHappen(t *testing.T) {
 	ledger := NewInMemoryConsumptionLedger()
 	seedSpendFixture(t, ledger)
 
-	report, err := ReadSpendReport(context.Background(), SpendSources{Ledger: ledger},
+	report, err := ReadSpendReport(context.Background(), SpendSources{Ledger: ledger, Accounts: nil},
 		&SpendReportRequest{TenantID: "t1", Now: spendBase.Add(time.Hour)})
 	if err != nil {
 		t.Fatalf("ReadSpendReport: %v", err)
@@ -854,7 +1012,7 @@ func TestReadSpendReportRefusalPaths(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			report, err := ReadSpendReport(ctx, SpendSources{Ledger: tc.ledger}, tc.req)
+			report, err := ReadSpendReport(ctx, SpendSources{Ledger: tc.ledger, Accounts: nil}, tc.req)
 			if report != nil {
 				t.Fatalf("a refused read must return no report, got %+v", report)
 			}
@@ -877,7 +1035,7 @@ func TestReadSpendReportRefusesAnUnreadableSubtree(t *testing.T) {
 	kv.scanErr = stderrors.New("store unavailable")
 	ledger := NewConsumptionLedger(kv)
 
-	report, err := ReadSpendReport(context.Background(), SpendSources{Ledger: ledger}, &SpendReportRequest{TenantID: "t1"})
+	report, err := ReadSpendReport(context.Background(), SpendSources{Ledger: ledger, Accounts: nil}, &SpendReportRequest{TenantID: "t1"})
 	if report != nil {
 		t.Fatalf("a failed scan must return no report, got %+v", report)
 	}
@@ -954,59 +1112,23 @@ func mustCreateSpendAccount(t *testing.T, store AccountStore, account *Account) 
 }
 
 // faultyAccountStore is an AccountStore whose Get always fails with err. Only
-// Get is exercised by the spend report; the rest panic so a future caller
+// Get and ListByTenant are exercised by the spend report; the rest panic so a future caller
 // that starts using them cannot get a silent zero value.
 type faultyAccountStore struct {
 	AccountStore
 	err error
+
+	// listErr is what ListByTenant fails with; nil lists no accounts. The
+	// tenant report lists accounts to share subscription fees.
+	listErr error
 }
 
 func (s *faultyAccountStore) Get(context.Context, string, string) (*Account, error) {
 	return nil, s.err
 }
 
-// TestReadSpendReportNamesProjects is the go-quicbaas#1058 regression: the By
-// Project card listed bare project ids. A project-level drill-down carries each
-// project's name, and a scope that addresses a project carries its name.
-func TestReadSpendReportNamesProjects(t *testing.T) {
-	ledger := NewInMemoryConsumptionLedger()
-	seedSpendFixture(t, ledger)
-	projects := NewInMemoryProjectStore()
-	ctx := context.Background()
-	if err := projects.Create(ctx, &Project{ID: "p1", TenantID: "t1", Name: "go-truststrap"}); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-
-	report, err := ReadSpendReport(ctx, SpendSources{Ledger: ledger, Projects: projects}, &SpendReportRequest{TenantID: "t1"})
-	if err != nil {
-		t.Fatalf("ReadSpendReport: %v", err)
-	}
-	names := map[string]string{}
-	for _, child := range report.Children {
-		names[child.ID] = child.Name
-	}
-	if names["p1"] != "go-truststrap" {
-		t.Fatalf("p1 name = %q, want go-truststrap (children %+v)", names["p1"], report.Children)
-	}
-	// p2 no longer exists: its spend stays, under its id, with no name.
-	if name, ok := names["p2"]; !ok || name != "" {
-		t.Fatalf("p2 = %q (present=%t), want present and unnamed", name, ok)
-	}
-
-	scoped, err := ReadSpendReport(ctx, SpendSources{Ledger: ledger, Projects: projects},
-		&SpendReportRequest{TenantID: "t1", ProjectID: "p1"})
-	if err != nil {
-		t.Fatalf("ReadSpendReport(project): %v", err)
-	}
-	if scoped.ProjectName != "go-truststrap" {
-		t.Fatalf("ProjectName = %q, want go-truststrap", scoped.ProjectName)
-	}
-	// Below the project level the rows are tasks, which carry no names.
-	for _, child := range scoped.Children {
-		if child.Name != "" {
-			t.Fatalf("task row %+v carries a name; only project rows are named", child)
-		}
-	}
+func (s *faultyAccountStore) ListByTenant(context.Context, string, AccountProvider, string) ([]*Account, error) {
+	return nil, s.listErr
 }
 
 // TestReadSpendReportWithoutAProjectStoreCarriesIDsOnly asserts an unwired
@@ -1026,34 +1148,8 @@ func TestReadSpendReportWithoutAProjectStoreCarriesIDsOnly(t *testing.T) {
 	}
 }
 
-// faultyProjectStore answers every read with err.
-type faultyProjectStore struct {
-	ProjectStore
-	err error
-}
-
-func (s *faultyProjectStore) Get(context.Context, string, string) (*Project, error) {
-	return nil, s.err
-}
-
-// TestReadSpendReportFailsWhenProjectNamesCannotBeRead asserts a project store
-// that cannot answer fails the report rather than rendering every project as
-// unnamed.
-func TestReadSpendReportFailsWhenProjectNamesCannotBeRead(t *testing.T) {
-	ledger := NewInMemoryConsumptionLedger()
-	seedSpendFixture(t, ledger)
-	boom := stderrors.New("store down")
-
-	_, err := ReadSpendReport(context.Background(),
-		SpendSources{Ledger: ledger, Projects: &faultyProjectStore{err: boom}},
-		&SpendReportRequest{TenantID: "t1"})
-	if !stderrors.Is(err, boom) {
-		t.Fatalf("err = %v, want the store's failure", err)
-	}
-}
-
 // TestReadSpendReportCarriesCacheTokens asserts the report exposes the cache
-// dimensions the ledger now keeps apart.
+// dimensions the ledger keeps apart.
 func TestReadSpendReportCarriesCacheTokens(t *testing.T) {
 	ledger := NewInMemoryConsumptionLedger()
 	entry := spendEntry("e1", "p1", "", "", "", 0, "acct-1", 3, ConsumptionOutcomeSuccess, spendBase)
@@ -1067,5 +1163,28 @@ func TestReadSpendReportCarriesCacheTokens(t *testing.T) {
 	}
 	if report.CacheReadTokens != 40 || report.CacheWriteTokens != 5 || report.TotalTokens != 51 {
 		t.Fatalf("report = read %d write %d total %d, want 40/5/51", report.CacheReadTokens, report.CacheWriteTokens, report.TotalTokens)
+	}
+}
+
+// TestReadSpendReportCarriesEachAccountsBilling asserts an account row says
+// how the account is billed, which is what a reader pro-rates a subscription
+// fee from.
+func TestReadSpendReportCarriesEachAccountsBilling(t *testing.T) {
+	ledger := NewInMemoryConsumptionLedger()
+	seedSpendFixture(t, ledger)
+	accounts := NewInMemoryAccountStore()
+	ctx := context.Background()
+	if err := accounts.Create(ctx, &Account{ID: "acct-1", TenantID: "t1", Provider: AccountProviderClaude,
+		Billing: AccountBilling{Mode: BillingSubscription, MonthlyFeeMicros: 200_000_000}}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	report, err := ReadSpendReport(ctx, SpendSources{Ledger: ledger, Accounts: accounts}, &SpendReportRequest{TenantID: "t1"})
+	if err != nil {
+		t.Fatalf("ReadSpendReport: %v", err)
+	}
+	for _, account := range report.Accounts {
+		if account.AccountID == "acct-1" && (account.Billing.Mode != BillingSubscription || account.Billing.MonthlyFeeMicros != 200_000_000) {
+			t.Fatalf("acct-1 billing = %+v, want the subscription and its fee", account.Billing)
+		}
 	}
 }

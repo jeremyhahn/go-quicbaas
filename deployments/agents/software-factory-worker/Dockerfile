@@ -11,6 +11,8 @@
 #
 #   claude-code    the agent the ACP backend drives, as deployments/agents/
 #                  claude-code installs it.
+#   opencode       the ACP agent a fleet node drives against a local model
+#                  server (the review model on ollama); pinned release binary.
 #   git            the runner's checkout and publish steps are git commands
 #                  exec'd into this container (pkg/sdlc/checkout.go,
 #                  pkg/sdlc/publish.go).
@@ -122,23 +124,61 @@ ARG ACTIONLINT_VERSION
 # by this toolchain, so it can be copied into a runtime stage sharing only musl.
 ARG GOPLS_VERSION
 
+# The dependency floors gopls and gosec are built with (toolchain.mk's
+# GO_TOOL_DEPENDENCY_FLOORS, which says which CVEs they close). Space-separated
+# module@version pairs; no default, for the same reason as the pins above.
+ARG GO_TOOL_DEPENDENCY_FLOORS
+
 ENV CGO_ENABLED=0 GOBIN=/toolchain/bin
 
 RUN set -eux; \
-    if [ -z "${GOLANGCI_VERSION:-}" ] || [ -z "${GOSEC_VERSION:-}" ] || [ -z "${GOVULNCHECK_VERSION:-}" ] || [ -z "${ACTIONLINT_VERSION:-}" ] || [ -z "${GOPLS_VERSION:-}" ]; then \
-        echo "GOLANGCI_VERSION, GOSEC_VERSION, GOVULNCHECK_VERSION, ACTIONLINT_VERSION and GOPLS_VERSION are required build arguments." >&2; \
+    if [ -z "${GOLANGCI_VERSION:-}" ] || [ -z "${GOSEC_VERSION:-}" ] || [ -z "${GOVULNCHECK_VERSION:-}" ] || [ -z "${ACTIONLINT_VERSION:-}" ] || [ -z "${GOPLS_VERSION:-}" ] || [ -z "${GO_TOOL_DEPENDENCY_FLOORS:-}" ]; then \
+        echo "GOLANGCI_VERSION, GOSEC_VERSION, GOVULNCHECK_VERSION, ACTIONLINT_VERSION, GOPLS_VERSION and GO_TOOL_DEPENDENCY_FLOORS are required build arguments." >&2; \
         echo "Build with 'make build-worker-image', which passes the Makefile's pins." >&2; \
         exit 1; \
     fi; \
     go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_VERSION}"; \
-    # gosec stamps its version only through main.Version; a bare install
+    go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"; \
+    go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"; \
+    # gopls and gosec are the two tools this image ships whose own newest
+    # releases carry vulnerable dependencies, and `go install tool@version`
+    # cannot change a dependency. So each is built from a throwaway module:
+    # require the tool at its pin, raise every floor the tool already depends
+    # on (a floor it does not use would only drag unrelated modules along),
+    # and `go build` the tool's main package. Every module is resolved through
+    # the proxy and verified against the checksum database into that module's
+    # go.sum, and every version is fixed, so the build is reproducible.
+    #
+    #   $1  binary name        $2  main package        $3  its pin
+    #   $4  -ldflags           $5  a module the tool is released in lockstep
+    #                              with, held at the version the tool requires
+    build_with_floors() { \
+        dir="/tmp/build-$1"; \
+        mkdir -p "$dir"; \
+        cd "$dir"; \
+        go mod init "build.local/$1"; \
+        go get "$2@$3"; \
+        if [ -n "$5" ]; then held="$(go list -m -f '{{.Version}}' "$5")"; fi; \
+        for floor in ${GO_TOOL_DEPENDENCY_FLOORS}; do \
+            if go list -m "${floor%@*}" >/dev/null 2>&1; then go get "$floor"; fi; \
+        done; \
+        if [ -n "$5" ]; then go mod edit -replace "$5=$5@$held"; fi; \
+        go build -ldflags "$4" -o "${GOBIN}/$1" "$2"; \
+        cd /; \
+        rm -rf "$dir"; \
+    }; \
+    # gosec stamps its version only through main.Version; a bare build
     # reports "Version: dev", which makes every scan unreproducible (the
     # fleet learned this on go-luks2#21) and is what the ci-runner image
     # avoids the same way.
-    go install -ldflags "-X main.Version=${GOSEC_VERSION}" "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}"; \
-    go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"; \
-    go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"; \
-    go install "golang.org/x/tools/gopls@${GOPLS_VERSION}"
+    build_with_floors gosec "github.com/securego/gosec/v2/cmd/gosec" "${GOSEC_VERSION}" "-X main.Version=${GOSEC_VERSION}" ""; \
+    # gopls compiles only against the exact golang.org/x/tools commit it was
+    # released with (it imports x/tools' internal packages), and every fixed
+    # golang.org/x/mod requires a newer x/tools -- for x/mod's own tests, not
+    # its code. So x/tools is held at gopls's version while x/mod is raised.
+    build_with_floors gopls "golang.org/x/tools/gopls" "${GOPLS_VERSION}" "" "golang.org/x/tools"; \
+    "${GOBIN}/gopls" version; \
+    "${GOBIN}/gosec" -version
 
 FROM alpine:3.21
 
@@ -221,9 +261,68 @@ RUN set -eux; \
 # Dockerfile would duplicate every one of those and then drift from this one.
 # ReviewerConfig.Image stays a separate field so a project MAY differ; the
 # default is that it does not.
-RUN npm install -g @anthropic-ai/claude-code@latest @openai/codex@latest \
-    && claude --version \
-    && codex --version
+#
+# PINNED, AND THE PIN IS WHAT MOVES. The two CLIs are installed at the exact
+# versions passed in, never at @latest: an image that installs @latest cannot
+# be rebuilt to the same bytes, and nobody could say which CLI a bound image
+# carries. Keeping them current is the daemon's job, not the build's — its
+# worker image refresh (pkg/sdlc/workerimage, docs/software-factory/
+# worker-image.md) reads the npm registry, rebuilds this file with the newer
+# versions, gates the result and only then rebinds projects to it. The
+# versions are recorded as labels below, which is how that refresh knows what
+# a bound image carries without running it.
+ARG CLAUDE_CODE_VERSION
+ARG CODEX_VERSION
+RUN set -eux; \
+    if [ -z "${CLAUDE_CODE_VERSION:-}" ] || [ -z "${CODEX_VERSION:-}" ]; then \
+        echo "CLAUDE_CODE_VERSION and CODEX_VERSION are required build arguments." >&2; \
+        echo "Build with 'make build-worker-image', which passes the Makefile's pins." >&2; \
+        exit 1; \
+    fi; \
+    npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" "@openai/codex@${CODEX_VERSION}"; \
+    claude --version; \
+    codex --version
+
+# OPENCODE, the third agent CLI: the one a fleet node drives against a LOCAL
+# model server, where claude and codex drive hosted ones. A node that serves
+# the local review model advertises the "opencode" backend, and a reviewer
+# placed there runs this binary in this image -- so an image without it is a
+# node that advertises a backend it cannot run.
+#
+# FROM THE RELEASE TARBALL, NOT FROM npm. opencode ships as one static Bun
+# binary per platform, and the musl build is the one this Alpine image runs.
+# The version and each architecture's SHA-256 are the repository's pins
+# (pkg/version/toolchain.mk: OPENCODE_VERSION, OPENCODE_SHA256_*), taken from
+# the digests the release itself publishes and passed in by `make
+# build-worker-image` and the daemon's refresh with no default here, for the
+# same reason as every other pin: a default is a second copy that drifts. The
+# digest is CHECKED, so a tarball that is not the release's fails the build.
+#
+# libstdc++ and libgcc are the Bun runtime's own shared dependencies on musl.
+ARG OPENCODE_VERSION
+ARG OPENCODE_SHA256_X86_64
+ARG OPENCODE_SHA256_AARCH64
+RUN set -eux; \
+    if [ -z "${OPENCODE_VERSION:-}" ] || [ -z "${OPENCODE_SHA256_X86_64:-}" ] || [ -z "${OPENCODE_SHA256_AARCH64:-}" ]; then \
+        echo "OPENCODE_VERSION, OPENCODE_SHA256_X86_64 and OPENCODE_SHA256_AARCH64 are required build arguments." >&2; \
+        echo "Build with 'make build-worker-image', which passes the repository's pins." >&2; \
+        exit 1; \
+    fi; \
+    apk add --no-cache libstdc++ libgcc; \
+    arch="$(uname -m)"; \
+    case "$arch" in \
+        x86_64) platform="linux-x64-musl"; sum="$OPENCODE_SHA256_X86_64" ;; \
+        aarch64) platform="linux-arm64-musl"; sum="$OPENCODE_SHA256_AARCH64" ;; \
+        *) echo "no pinned opencode release for $arch" >&2; exit 1 ;; \
+    esac; \
+    tarball="opencode-${platform}.tar.gz"; \
+    curl -fsSL -o "/tmp/$tarball" "https://github.com/anomalyco/opencode/releases/download/${OPENCODE_VERSION}/$tarball"; \
+    echo "$sum  /tmp/$tarball" | sha256sum -c -; \
+    mkdir -p /tmp/opencode; \
+    tar -xzf "/tmp/$tarball" -C /tmp/opencode; \
+    install -m 0755 /tmp/opencode/opencode /usr/local/bin/opencode; \
+    rm -rf "/tmp/$tarball" /tmp/opencode; \
+    test "$(opencode --version)" = "${OPENCODE_VERSION#v}"
 
 # SERENA, the semantic code-retrieval MCP server, so an agent reads this
 # codebase by symbol instead of by whole file.
@@ -541,7 +640,36 @@ RUN set -eux; \
 
 CMD ["claude"]
 
+# THE LABELS ARE THE IMAGE'S BILL OF MATERIALS, and two of them are read by
+# software. io.quicbaas.worker.claude-code.version and ...codex.version are how
+# the daemon's worker image refresh decides whether a bound image is behind the
+# npm registry; every other one records what the image was built from, so an
+# operator rolling back can see what they are rolling back to. The keys are
+# declared once, in Go (softwarefactoryworker.Label*), and the refresh passes
+# the same values as --label, so an image built here and one built by the
+# daemon are labelled identically.
+ARG GO_VERSION
+ARG GOLANGCI_VERSION
+ARG GOSEC_VERSION
+ARG GOVULNCHECK_VERSION
+ARG GOPLS_VERSION
+ARG ACTIONLINT_VERSION
+ARG OPENCODE_VERSION
+ARG QUICBAAS_VERSION
 LABEL org.opencontainers.image.title="QuicBaaS Software Factory Worker" \
-      org.opencontainers.image.description="Worker container for the sdlc runner: claude-code, git, ssh, ssh-keygen, make, the Go toolchain and the golangci-lint/gosec/govulncheck verification tools" \
+      org.opencontainers.image.description="Worker container for the sdlc runner: claude-code, codex, opencode, git, ssh, ssh-keygen, make, the Go toolchain and the golangci-lint/gosec/govulncheck/actionlint/shellcheck verification tools" \
       org.opencontainers.image.vendor="QuicBaaS" \
-      org.opencontainers.image.licenses="AGPL-3.0-or-later"
+      org.opencontainers.image.licenses="AGPL-3.0-or-later" \
+      org.opencontainers.image.version="${QUICBAAS_VERSION}" \
+      io.quicbaas.worker.base.version="${QUICBAAS_VERSION}" \
+      io.quicbaas.worker.claude-code.version="${CLAUDE_CODE_VERSION}" \
+      io.quicbaas.worker.codex.version="${CODEX_VERSION}" \
+      io.quicbaas.worker.go.version="${GO_VERSION}" \
+      io.quicbaas.worker.golangci-lint.version="${GOLANGCI_VERSION}" \
+      io.quicbaas.worker.gosec.version="${GOSEC_VERSION}" \
+      io.quicbaas.worker.govulncheck.version="${GOVULNCHECK_VERSION}" \
+      io.quicbaas.worker.gopls.version="${GOPLS_VERSION}" \
+      io.quicbaas.worker.serena.version="${SERENA_VERSION}" \
+      io.quicbaas.worker.actionlint.version="${ACTIONLINT_VERSION}" \
+      io.quicbaas.worker.shellcheck.version="${SHELLCHECK_VERSION}" \
+      io.quicbaas.worker.opencode.version="${OPENCODE_VERSION}"

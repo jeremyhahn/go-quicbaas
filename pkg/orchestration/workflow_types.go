@@ -13,6 +13,8 @@
 
 package orchestration
 
+import "strconv"
+
 // =============================================================================
 // Communication Topology
 // =============================================================================
@@ -186,6 +188,11 @@ func (wd *WorkflowDefinition) Validate() error {
 			}
 		}
 	}
+	for i := range wd.Agents {
+		if err := ValidatePromptAppend("agents["+strconv.Itoa(i)+"].prompt_append", wd.Agents[i].PromptAppend); err != nil {
+			return err
+		}
+	}
 	// Validate settings.
 	if err := wd.Settings.Validate(); err != nil {
 		return err
@@ -220,8 +227,8 @@ type AgentRoleSpec struct {
 	ContainerImage string `yaml:"container_image,omitempty" json:"container_image,omitempty"` // Container image name
 
 	// HostAffinity optionally pins this agent role to a specific daemon
-	// hostname. When set, the orchestrator requires an AgentRegistration
-	// with a matching Host and AgentKindDaemon kind before scheduling the
+	// hostname. When set, the orchestrator requires a FleetNode
+	// with a matching Host and FleetNodeKindDaemon kind before scheduling the
 	// role; if no such registration exists the workflow fails fast.
 	// Leaving this empty allows the orchestrator to pick any eligible host.
 	HostAffinity string `yaml:"host_affinity,omitempty" json:"host_affinity,omitempty"`
@@ -236,6 +243,12 @@ type AgentRoleSpec struct {
 	// role is spawned with. A module ships its charter here; empty leaves
 	// the backend's own default in force.
 	SystemPrompt string `yaml:"system_prompt,omitempty" json:"system_prompt,omitempty"`
+
+	// PromptAppend is run-time prompt material appended after SystemPrompt
+	// (or the Agent's own prompt) for every session of this role, so roles
+	// that share one charter can each carry their own content. At most
+	// MaxPromptAppendBytes; see prompt_append.go.
+	PromptAppend string `yaml:"prompt_append,omitempty" json:"prompt_append,omitempty"`
 }
 
 // =============================================================================

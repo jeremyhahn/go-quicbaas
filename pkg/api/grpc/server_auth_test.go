@@ -189,6 +189,7 @@ func TestServer_ValidateToken(t *testing.T) {
 					Valid:     true,
 					UserID:    "user-1",
 					Username:  "admin",
+					TenantID:  "acme",
 					Roles:     []string{"admin", "user"},
 					ExpiresAt: 1700003600,
 				}, nil).Once()
@@ -198,6 +199,7 @@ func TestServer_ValidateToken(t *testing.T) {
 				assert.True(t, resp.Valid)
 				assert.Equal(t, "user-1", resp.UserId)
 				assert.Equal(t, "admin", resp.Username)
+				assert.Equal(t, "acme", resp.TenantId)
 				assert.Equal(t, []string{"admin", "user"}, resp.Roles)
 				assert.Equal(t, int64(1700003600), resp.ExpiresAt)
 			},

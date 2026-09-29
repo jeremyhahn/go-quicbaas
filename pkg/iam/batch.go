@@ -144,7 +144,6 @@ func NewBatchManager(opts BatchManagerOptions) *BatchManager {
 type BatchImportRequest struct {
 	TenantID string
 	Users    []*UserImport
-	Groups   []*GroupImport
 	Roles    []*RoleImport
 	Policies []*PolicyImport
 	Options  BatchImportOptions
@@ -170,7 +169,7 @@ type BatchImportProgress struct {
 	ProcessedItems  int
 	SuccessCount    int
 	FailureCount    int
-	CurrentType     string // "user", "group", "role", "policy"
+	CurrentType     string // "user", "role", "policy"
 	PercentComplete float64
 }
 
@@ -189,7 +188,7 @@ type BatchImportResult struct {
 // BatchError represents an error that occurred during batch processing.
 type BatchError struct {
 	Index int
-	Type  string // "user", "group", "role", "policy"
+	Type  string // "user", "role", "policy"
 	ID    string
 	Error error
 }
@@ -201,7 +200,6 @@ type UserImport struct {
 	Username   string
 	Name       string
 	Attributes map[string]string
-	Groups     []string
 	Roles      []string
 
 	// Lifecycle is the account state the import asserts. Empty means the import
@@ -228,15 +226,6 @@ type UserImport struct {
 	Enabled *bool
 }
 
-// GroupImport represents group data for batch import.
-type GroupImport struct {
-	ID          string
-	Name        string
-	Description string
-	Members     []string
-	Attributes  map[string]interface{}
-}
-
 // RoleImport represents role data for batch import.
 type RoleImport struct {
 	ID          string
@@ -260,7 +249,6 @@ type PolicyImport struct {
 type BatchExportRequest struct {
 	TenantID        string
 	IncludeUsers    bool
-	IncludeGroups   bool
 	IncludeRoles    bool
 	IncludePolicies bool
 	Filter          ExportFilter
@@ -269,7 +257,6 @@ type BatchExportRequest struct {
 // ExportFilter defines filtering options for exports.
 type ExportFilter struct {
 	UserIDs       []string
-	GroupIDs      []string
 	RoleIDs       []string
 	PolicyNames   []string
 	CreatedAfter  *time.Time
@@ -282,7 +269,6 @@ type ExportFilter struct {
 type BatchExportResult struct {
 	TenantID string
 	Users    []*User
-	Groups   []*Group
 	Roles    []*Role
 	Policies []*Policy
 	Duration time.Duration
@@ -294,7 +280,7 @@ func (r *BatchImportRequest) Validate() error {
 		return &ValidationError{Field: "tenant_id", Message: "tenant ID is required"}
 	}
 
-	totalItems := len(r.Users) + len(r.Groups) + len(r.Roles) + len(r.Policies)
+	totalItems := len(r.Users) + len(r.Roles) + len(r.Policies)
 	if totalItems == 0 {
 		return ErrBatchEmpty
 	}
@@ -326,7 +312,7 @@ func (r *BatchExportRequest) Validate() error {
 	}
 
 	// At least one resource type must be requested
-	if !r.IncludeUsers && !r.IncludeGroups && !r.IncludeRoles && !r.IncludePolicies {
+	if !r.IncludeUsers && !r.IncludeRoles && !r.IncludePolicies {
 		return &ValidationError{Field: "include_*", Message: "at least one resource type must be included"}
 	}
 

@@ -627,6 +627,34 @@ func TestDynamicSecretsService_ListLeases_Success(t *testing.T) {
 	assert.Equal(t, 3, resp.Count)
 }
 
+// The lease manager keeps a revoked lease's record as a tombstone for the
+// retention window, and an expired lease stays stored as it was until the
+// reaper's next pass. ListLeases is documented, on every surface that reaches
+// it, as the ACTIVE leases — so neither may be listed (go-quicbaas#852).
+func TestDynamicSecretsService_ListLeases_ExcludesExpiredAndRevoked(t *testing.T) {
+	now := time.Now()
+	revokedAt := now.Add(-time.Minute)
+	active := &lease.Lease{LeaseID: "active", SecretPath: "db/a", IssuedAt: now, ExpiresAt: now.Add(time.Hour), TTL: time.Hour}
+	expired := &lease.Lease{LeaseID: "expired", SecretPath: "db/b", IssuedAt: now.Add(-2 * time.Hour), ExpiresAt: now.Add(-time.Hour), TTL: time.Hour}
+	revoked := &lease.Lease{LeaseID: "revoked", SecretPath: "db/c", IssuedAt: now, ExpiresAt: now.Add(time.Hour), TTL: time.Hour, RevokedAt: &revokedAt}
+
+	leaseManager := newMockDSLeaseManager()
+	leaseManager.listLeasesFn = func(ctx context.Context, prefix string) ([]*lease.Lease, error) {
+		return []*lease.Lease{expired, active, revoked}, nil
+	}
+
+	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
+		Store: newDSStore(), LeaseManager: leaseManager, GeneratorRegistry: credentials.NewGeneratorRegistry(), Logger: newMockDSLogger(),
+	})
+	require.NoError(t, err)
+
+	resp, err := svc.ListLeases(context.Background(), &ListLeasesRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.Leases, 1)
+	assert.Equal(t, "active", resp.Leases[0].LeaseID)
+	assert.Equal(t, 1, resp.Count)
+}
+
 func TestDynamicSecretsService_GenerateCredential_StoreCredentialError(t *testing.T) {
 	registry := credentials.NewGeneratorRegistry()
 	gen := newMockDSGenerator("postgres")

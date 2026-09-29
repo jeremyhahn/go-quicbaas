@@ -6,7 +6,7 @@
   import { SandboxMode } from '@quicbaas/sdk';
   import type { AgentBackendInfo, SandboxModeValue, MCPServerConfig, Project, Account } from '@quicbaas/sdk';
   import { getSDKClient } from '../../stores/sdkClient.ts';
-  import { agentStore } from '../../stores/agentStore.svelte.ts';
+  import { fleetStore } from '../../stores/fleetStore.svelte.ts';
   import { orchestratorStore } from '../../stores/orchestrator.svelte.ts';
   import { routeSessionDetail } from '../../stores/router.svelte.ts';
   import { refreshSessions } from '../../stores/sessionStore.svelte.ts';
@@ -51,6 +51,10 @@
   let model = $state('');
   let hostAffinity = $state('');
   let sandboxMode: SandboxModeValue = $state(SandboxMode.Default);
+  // promptAppend is run-time material appended after the session's resolved
+  // system prompt (prompt_append). It is standing context for the whole
+  // session, unlike the initial prompt, which is the first turn.
+  let promptAppend = $state('');
   let initialPrompt = $state('');
   let submitting = $state(false);
   let submitError = $state('');
@@ -85,6 +89,7 @@
     accountSelection = '';
     accountStrategy = '';
     accountAllow = [];
+    promptAppend = '';
     void (async () => {
       try {
         const client = await getSDKClient();
@@ -182,6 +187,7 @@
         account_auto: accountSelection === ACCOUNT_AUTO_VALUE ? true : undefined,
         account_strategy: accountSelection === ACCOUNT_AUTO_VALUE && accountStrategy ? accountStrategy : undefined,
         account_allow: isPinnedAccount && accountAllow.length > 0 ? accountAllow : undefined,
+        prompt_append: promptAppend.trim() !== '' ? promptAppend : undefined,
       });
 
       // If an initial prompt was provided, send it immediately.
@@ -262,7 +268,7 @@
             data-testid="no-backends-banner"
           >
             No backends registered. Register an agent or start the daemon with
-            <code class="font-mono">--embedded-agent</code> to enable session spawning.
+            <code class="font-mono">--embedded-fleet-node</code> to enable session spawning.
           </div>
         {:else}
           <div class="text-xs text-base-content/50">Loading backends…</div>
@@ -384,7 +390,7 @@
           aria-label="Host affinity"
         >
           <option value="">Any daemon</option>
-          {#each agentStore.onlineAgents as agent (agent.id)}
+          {#each fleetStore.onlineNodes as agent (agent.id)}
             <option value={agent.host}>{agent.name} ({agent.host})</option>
           {/each}
         </select>
@@ -421,6 +427,19 @@
             </p>
           </div>
         </div>
+      </label>
+
+      <!-- Run-time prompt material, appended to the system prompt -->
+      <label class="form-control">
+        <div class="label"><span class="label-text">Append to the system prompt (optional)</span></div>
+        <textarea
+          class="textarea textarea-bordered textarea-sm resize-y font-mono"
+          bind:value={promptAppend}
+          placeholder="Context the session keeps for its whole life, after the agent's own prompt"
+          rows="3"
+          aria-label="Prompt to append"
+          data-testid="spawn-prompt-append"
+        ></textarea>
       </label>
 
       <!-- Initial prompt -->

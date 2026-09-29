@@ -35,7 +35,7 @@ own implementation of the same flow
 > never enter the platform's key custody — the CA only ever sees the CSR.
 
 So a credential whose private key belongs to somebody else — the platform
-administrator's personal certificate, a deployed agent daemon's mTLS identity, a
+administrator's personal certificate, a deployed fleet node daemon's mTLS identity, a
 `ca issue` caller's key pair — is created at the point of custody and certified
 through a CSR. Putting it in the platform keystore instead would give the
 platform a copy of a credential it has no business holding, and would leave the
@@ -126,9 +126,9 @@ than the whole function. This mirrors `check-coded-sentinels`.
 | Platform admin (`<data-dir>/admin/`) | qrdb first-boot Path A | go-xkms `CAAdapter.GenerateAdminCert` | go-xkms CA, client profile, system-tenant SPIFFE SAN |
 | Platform admin, operator-supplied CSR | qrdb first-boot Path B | the operator, off-host | go-xkms CA |
 | Platform admin, presented certificate | qrdb first-boot Path C | nothing is created | already issued elsewhere; adopted after validation |
-| Agent daemon / per-session agent MCP identity | `service.XKMSAgentCertIssuer` | `xkms.GenerateRequesterKey` | embedded go-xkms CA, `clientAuth`, tenant SPIFFE SAN |
-| Agent identity over an SDK transport | `service.SDKAgentCertIssuer` | `xkms.GenerateRequesterKey` | remote go-xkms CA via `CAService.SignCSR` |
-| `quicbaas agent deploy` | `cmd/quicbaas` `sdkAgentCertIssuer` | `xkms.GenerateRequesterKey`, on the operator's host | remote CA via `/api/v1/xkms/ca/sign-csr` |
+| Fleet node daemon / per-session agent MCP identity | `service.XKMSFleetNodeCertIssuer` | `xkms.GenerateRequesterKey` | embedded go-xkms CA, `clientAuth`, tenant SPIFFE SAN |
+| Agent identity over an SDK transport | `service.SDKFleetNodeCertIssuer` | `xkms.GenerateRequesterKey` | remote go-xkms CA via `CAService.SignCSR` |
+| `quicbaas fleet deploy` | `cmd/quicbaas` `sdkFleetNodeCertIssuer` | `xkms.GenerateRequesterKey`, on the operator's host | remote CA via `/api/v1/xkms/ca/sign-csr` |
 | `quicbaas ca issue` | `caServiceAdapter.IssueCertificate` | `xkms.GenerateRequesterKey` | embedded go-xkms CA |
 | `/api/v1/xkms/ca/issue` (mounted go-xkms REST CA) | go-xkms keystore | go-xkms, non-exportable | go-xkms CA. **Returns no private key** — use the CSR-sign route or the certificate service. |
 

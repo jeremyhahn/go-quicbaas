@@ -15,6 +15,7 @@ package sdlc
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -50,6 +51,60 @@ type PriorityInputs struct {
 // the project default, clamped to [ComputedFloor, ComputedCeiling].
 func (in PriorityInputs) Computed() int {
 	return clamp(saturatingAdd(in.BlastRadius, BlastRadiusWeight, in.ProjectDefault), ComputedFloor, ComputedCeiling)
+}
+
+// Priority label shifts move an issue by the tier the repository's
+// project-management labels give it. They are sized to outrank blast radius:
+// a priority:critical issue in a project nothing depends on still comes before
+// an unlabelled issue in the most-depended-on project of a realistic fleet.
+//
+// AN UNLABELLED ISSUE IS UNCHANGED — Computed, exactly as before — so the
+// labels only ever reorder the work a person has marked. Labelled issues may
+// leave Computed's [ComputedFloor, ComputedCeiling] band on purpose: a
+// priority:low issue must sort below every unlabelled one, including those at
+// the floor, and a priority:critical one above every unlabelled one at the
+// ceiling.
+const (
+	PriorityShiftCritical = 600
+	PriorityShiftHigh     = 300
+	PriorityShiftLow      = -300
+)
+
+// priorityLabelShifts maps a repository's priority:* label to its shift.
+// "priority:normal", like no label at all, shifts nothing.
+var priorityLabelShifts = map[string]int{
+	"priority:critical": PriorityShiftCritical,
+	"priority:high":     PriorityShiftHigh,
+	"priority:low":      PriorityShiftLow,
+}
+
+// labelShift is the shift of the most urgent priority:* label among labels,
+// or 0 when none is present. An issue carrying two tiers is ranked by the
+// more urgent one: a label added to raise an issue must not be cancelled by
+// one left over from before.
+func labelShift(labels []string) int {
+	shift, found := 0, false
+	for _, label := range labels {
+		s, ok := priorityLabelShifts[strings.ToLower(strings.TrimSpace(label))]
+		if !ok {
+			continue
+		}
+		if !found || s > shift {
+			shift, found = s, true
+		}
+	}
+	return shift
+}
+
+// ComputedFor is the priority of one issue: Computed, shifted by the most
+// urgent priority:* label among labels.
+func (in PriorityInputs) ComputedFor(labels []string) int {
+	base := in.Computed()
+	shift := labelShift(labels)
+	if shift == 0 {
+		return base
+	}
+	return clamp(base+shift, ComputedFloor+PriorityShiftLow, ComputedCeiling+PriorityShiftCritical)
 }
 
 func saturatingAdd(radius, weight, offset int) int {

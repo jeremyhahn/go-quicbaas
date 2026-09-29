@@ -87,7 +87,7 @@ func decodeToolResult(t *testing.T, result interface{}) map[string]interface{} {
 func TestRotateAccountToolRegistered(t *testing.T) {
 	t.Parallel()
 
-	reg := newAgentRegistry(t, &mockAgentService{})
+	reg := newFleetRegistry(t, &mockAgentService{})
 	tool := toolByName(t, reg, "quicbaas_orchestrator_rotate_account")
 
 	assert.NotEmpty(t, tool.Description)
@@ -105,7 +105,7 @@ func TestExecuteRotateAccount_MovesTheSession(t *testing.T) {
 	t.Parallel()
 
 	agentSvc := &rotatingMockAgentService{mockAgentService: &mockAgentService{}}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	availableAt := time.Now().UTC().Add(15 * time.Minute).Truncate(time.Second)
 	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_rotate_account",
@@ -145,7 +145,7 @@ func TestExecuteRotateAccount_MissingRequiredArgs(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			agentSvc := &rotatingMockAgentService{mockAgentService: &mockAgentService{}}
-			reg := newAgentRegistry(t, agentSvc)
+			reg := newFleetRegistry(t, agentSvc)
 
 			_, err := reg.executeAgentTool(context.Background(),
 				"quicbaas_orchestrator_rotate_account", tc.args)
@@ -162,7 +162,7 @@ func TestExecuteRotateAccount_MalformedAvailableAtIsRejected(t *testing.T) {
 	t.Parallel()
 
 	agentSvc := &rotatingMockAgentService{mockAgentService: &mockAgentService{}}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_rotate_account",
 		map[string]interface{}{
@@ -185,7 +185,7 @@ func TestExecuteRotateAccount_ServiceErrorPropagates(t *testing.T) {
 			Reason:    "the session is pinned to a named account",
 		}
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_rotate_account",
 		map[string]interface{}{"tenant_id": "acme", "session_id": "sess-42"})
@@ -199,7 +199,7 @@ func TestExecuteRotateAccount_ServiceErrorPropagates(t *testing.T) {
 func TestExecuteRotateAccount_UnsupportedDeployment(t *testing.T) {
 	t.Parallel()
 
-	reg := newAgentRegistry(t, &mockAgentService{})
+	reg := newFleetRegistry(t, &mockAgentService{})
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_rotate_account",
 		map[string]interface{}{"tenant_id": "acme", "session_id": "sess-42"})
@@ -236,7 +236,7 @@ func TestSpawnToolCarriesAccountAllow(t *testing.T) {
 			return &orchestration.SpawnSessionResponse{SessionID: "sess-42", Backend: req.Backend}, nil
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_spawn",
 		map[string]interface{}{
@@ -258,7 +258,7 @@ func TestSpawnToolCarriesAccountAllow(t *testing.T) {
 func TestSpawnToolSchemaDeclaresAccountAllow(t *testing.T) {
 	t.Parallel()
 
-	reg := newAgentRegistry(t, &mockAgentService{})
+	reg := newFleetRegistry(t, &mockAgentService{})
 	props := schemaProperties(t, toolByName(t, reg, "quicbaas_orchestrator_spawn"))
 	assert.Contains(t, props, "account_allow")
 }

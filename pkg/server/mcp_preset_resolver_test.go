@@ -1,3 +1,5 @@
+//go:build !integration
+
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
@@ -44,15 +46,15 @@ import (
 // Test doubles
 // =============================================================================
 
-// fakeAgentCertIssuer is a test double for service.AgentCertIssuer. It records
+// fakeFleetNodeCertIssuer is a test double for service.FleetNodeCertIssuer. It records
 // every request it received and MINTS A REAL CERTIFICATE from it — subject, OU
 // and tenant SPIFFE SAN included — so the resolver's tenant derivation, SPKI
 // binding and enrollment run against genuine x509 material rather than a
 // placeholder. The private key comes back in a real mlocked buffer so the
 // Bytes()/Destroy() lifecycle is exercised.
-type fakeAgentCertIssuer struct {
+type fakeFleetNodeCertIssuer struct {
 	mu   sync.Mutex
-	reqs []*service.AgentCertificateRequest
+	reqs []*service.FleetNodeCertificateRequest
 	err  error
 
 	// omitSPIFFE drops the tenant SPIFFE SAN even when the request asks for
@@ -63,7 +65,7 @@ type fakeAgentCertIssuer struct {
 	// tenant than the request named.
 	spiffeTenantOverride string
 
-	// omitParsedCert leaves IssuedAgentCertificate.ParsedCert nil.
+	// omitParsedCert leaves IssuedFleetNodeCertificate.ParsedCert nil.
 	omitParsedCert bool
 
 	// malformedSPIFFE emits a SPIFFE SAN whose tenant segment is empty, the
@@ -71,7 +73,7 @@ type fakeAgentCertIssuer struct {
 	malformedSPIFFE bool
 }
 
-func (f *fakeAgentCertIssuer) IssueAgentCertificate(_ context.Context, req *service.AgentCertificateRequest) (*service.IssuedAgentCertificate, error) {
+func (f *fakeFleetNodeCertIssuer) IssueFleetNodeCertificate(_ context.Context, req *service.FleetNodeCertificateRequest) (*service.IssuedFleetNodeCertificate, error) {
 	f.mu.Lock()
 	f.reqs = append(f.reqs, req)
 	scriptedErr := f.err
@@ -109,7 +111,7 @@ func (f *fakeAgentCertIssuer) IssueAgentCertificate(_ context.Context, req *serv
 	if err != nil {
 		return nil, err
 	}
-	issued := &service.IssuedAgentCertificate{
+	issued := &service.IssuedFleetNodeCertificate{
 		CertPEM:    certPEM,
 		PrivateKey: buf,
 		CAPEM:      []byte("-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----\n"),
@@ -122,7 +124,7 @@ func (f *fakeAgentCertIssuer) IssueAgentCertificate(_ context.Context, req *serv
 }
 
 // request returns the last request the issuer saw, or nil when it saw none.
-func (f *fakeAgentCertIssuer) request() *service.AgentCertificateRequest {
+func (f *fakeFleetNodeCertIssuer) request() *service.FleetNodeCertificateRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if len(f.reqs) == 0 {
@@ -132,7 +134,7 @@ func (f *fakeAgentCertIssuer) request() *service.AgentCertificateRequest {
 }
 
 // commonNames returns the CommonName of every certificate the issuer minted.
-func (f *fakeAgentCertIssuer) commonNames() []string {
+func (f *fakeFleetNodeCertIssuer) commonNames() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := make([]string, 0, len(f.reqs))
@@ -143,7 +145,7 @@ func (f *fakeAgentCertIssuer) commonNames() []string {
 }
 
 // setError scripts issuance to fail.
-func (f *fakeAgentCertIssuer) setError(err error) {
+func (f *fakeFleetNodeCertIssuer) setError(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.err = err
@@ -154,7 +156,7 @@ func (f *fakeAgentCertIssuer) setError(err error) {
 // OU=agents, CN=<requested>, and — when a trust domain is supplied — the
 // tenant-scoped SPIFFE URI SAN go-qrdb derives the identity's tenant from.
 func mintTestAgentCert(
-	req *service.AgentCertificateRequest,
+	req *service.FleetNodeCertificateRequest,
 	trustDomain, spiffeTenant string,
 ) (certPEM, keyPEM []byte, parsed *x509.Certificate, err error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -210,16 +212,15 @@ func newSessionIdentityStore(t *testing.T) (*iam.IdentityStore, *iam.MemoryStora
 	t.Helper()
 	memory := iam.NewMemoryStorage()
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  memory,
-		GroupStorage: memory,
-		RoleStorage:  memory,
+		UserStorage: memory,
+		RoleStorage: memory,
 	})
 	return store, memory
 }
 
 // newTestResolver wires a resolver over the supplied issuer and a real identity
 // store, returning the storage so a test can inspect the enrollment.
-func newTestResolver(t *testing.T, issuer service.AgentCertIssuer, defaultTenant string) (*AgentMCPPresetResolver, *iam.MemoryStorage) {
+func newTestResolver(t *testing.T, issuer service.FleetNodeCertIssuer, defaultTenant string) (*AgentMCPPresetResolver, *iam.MemoryStorage) {
 	t.Helper()
 	store, memory := newSessionIdentityStore(t)
 	r, err := NewAgentMCPPresetResolver(AgentMCPPresetResolverConfig{
@@ -258,7 +259,7 @@ func staticIdentityStore(store AgentSessionIdentityStore) AgentSessionIdentitySt
 // authenticates into, is active, is restricted to mTLS, is bound to the
 // certificate's SPKI thumbprint, and holds exactly the session grant.
 func TestAgentMCPPresetResolver_Resolve_EnrollsTheSessionPrincipal(t *testing.T) {
-	issuer := &fakeAgentCertIssuer{}
+	issuer := &fakeFleetNodeCertIssuer{}
 	r, memory := newTestResolver(t, issuer, "system")
 
 	endpoint, env, cleanup, err := r.Resolve(context.Background(), "ses-xyz", "tenant-7")
@@ -281,8 +282,8 @@ func TestAgentMCPPresetResolver_Resolve_EnrollsTheSessionPrincipal(t *testing.T)
 	if req.Subject.Organization != "tenant-7" {
 		t.Errorf("cert O= = %q, want tenant-7", req.Subject.Organization)
 	}
-	if req.Subject.OrganizationalUnit != service.DefaultAgentCertOU {
-		t.Errorf("cert OU = %q, want %q", req.Subject.OrganizationalUnit, service.DefaultAgentCertOU)
+	if req.Subject.OrganizationalUnit != service.DefaultFleetNodeCertOU {
+		t.Errorf("cert OU = %q, want %q", req.Subject.OrganizationalUnit, service.DefaultFleetNodeCertOU)
 	}
 	if req.Subject.CommonName != "agent-ses-xyz" {
 		t.Errorf("cert CN = %q, want agent-ses-xyz", req.Subject.CommonName)
@@ -342,12 +343,12 @@ func TestAgentMCPPresetResolver_Resolve_EnrollsTheSessionPrincipal(t *testing.T)
 // record names — and it must be the SESSION's, distinct from the daemon identity
 // running on the same host and from any other session.
 func TestAgentMCPPresetResolver_Resolve_AttributesTheSessionNotTheDaemon(t *testing.T) {
-	issuer := &fakeAgentCertIssuer{}
+	issuer := &fakeFleetNodeCertIssuer{}
 	r, memory := newTestResolver(t, issuer, "system")
 
 	// The daemon identity on this host: the subject a session must NOT be
 	// attributed to. Its CN is hostname-derived and stable across restarts
-	// (pkg/server startEmbeddedAgent), where a session's is per-spawn.
+	// (pkg/server startEmbeddedFleetNode), where a session's is per-spawn.
 	const daemonCN = "agent-embedded-host-1"
 
 	first, _, cleanupFirst, err := r.Resolve(context.Background(), "ses-one", "tenant-7")
@@ -393,7 +394,7 @@ func TestAgentMCPPresetResolver_Resolve_AttributesTheSessionNotTheDaemon(t *test
 // pinned floor — in particular none of the destructive, secret, key-material,
 // identity or control-plane verbs.
 func TestAgentMCPPresetResolver_Resolve_GrantsNothingBeyondTheSessionFloor(t *testing.T) {
-	issuer := &fakeAgentCertIssuer{}
+	issuer := &fakeFleetNodeCertIssuer{}
 	r, memory := newTestResolver(t, issuer, "system")
 
 	_, _, cleanup, err := r.Resolve(context.Background(), "ses-1", "acme")
@@ -440,7 +441,7 @@ func TestAgentMCPPresetResolver_Resolve_GrantsNothingBeyondTheSessionFloor(t *te
 // roles from is gone, so the certificate authenticates into empty roles and the
 // default-deny MCP gate refuses it. The ephemeral material goes with it.
 func TestAgentMCPPresetResolver_Cleanup_RevokesThePrincipal(t *testing.T) {
-	issuer := &fakeAgentCertIssuer{}
+	issuer := &fakeFleetNodeCertIssuer{}
 	r, memory := newTestResolver(t, issuer, "system")
 
 	_, env, cleanup, err := r.Resolve(context.Background(), "ses-close", "tenant-7")
@@ -466,7 +467,7 @@ func TestAgentMCPPresetResolver_Cleanup_RevokesThePrincipal(t *testing.T) {
 // twice — the ACP backend runs it on Close, and runs it immediately when the
 // session can no longer be found, so both can happen for one spawn.
 func TestAgentMCPPresetResolver_Cleanup_IsIdempotent(t *testing.T) {
-	issuer := &fakeAgentCertIssuer{}
+	issuer := &fakeFleetNodeCertIssuer{}
 	r, memory := newTestResolver(t, issuer, "system")
 
 	_, _, cleanup, err := r.Resolve(context.Background(), "ses-twice", "tenant-7")
@@ -483,11 +484,11 @@ func TestAgentMCPPresetResolver_Cleanup_IsIdempotent(t *testing.T) {
 
 // TestAgentMCPPresetResolver_Resolve_ConcurrentSpawnsDoNotRace spawns many
 // sessions at once in ONE tenant. They all converge the same tenant-scoped role
-// — the case EnrollAgentCertIdentity was made race-safe for — so each must end
+// — the case EnrollFleetNodeCertIdentity was made race-safe for — so each must end
 // up with its own principal holding exactly the floor, and the role must exist
 // exactly once. Run with -race.
 func TestAgentMCPPresetResolver_Resolve_ConcurrentSpawnsDoNotRace(t *testing.T) {
-	issuer := &fakeAgentCertIssuer{}
+	issuer := &fakeFleetNodeCertIssuer{}
 	r, memory := newTestResolver(t, issuer, "system")
 
 	const spawns = 16
@@ -572,7 +573,7 @@ func TestAgentMCPPresetResolver_Resolve_ConcurrentSpawnsDoNotRace(t *testing.T) 
 // spawned agent reads: three files inside a 0700 directory, the private key
 // strictly 0600, and a key the certificate can actually be presented with.
 func TestAgentMCPPresetResolver_Resolve_FilesAndModes(t *testing.T) {
-	issuer := &fakeAgentCertIssuer{}
+	issuer := &fakeFleetNodeCertIssuer{}
 	r, _ := newTestResolver(t, issuer, "system")
 
 	_, env, cleanup, err := r.Resolve(context.Background(), "ses-files", "tenant-7")
@@ -608,7 +609,7 @@ func TestAgentMCPPresetResolver_Resolve_FilesAndModes(t *testing.T) {
 // TestAgentMCPPresetResolver_DefaultTenant uses the configured default tenant
 // when the spawn supplies none, and enrolls the principal there.
 func TestAgentMCPPresetResolver_DefaultTenant(t *testing.T) {
-	issuer := &fakeAgentCertIssuer{}
+	issuer := &fakeFleetNodeCertIssuer{}
 	r, memory := newTestResolver(t, issuer, "system")
 
 	_, _, cleanup, err := r.Resolve(context.Background(), "ses-1", "")
@@ -628,7 +629,7 @@ func TestAgentMCPPresetResolver_DefaultTenant(t *testing.T) {
 // TestAgentMCPPresetResolver_HostnameFallbackCN uses the hostname-derived CN when
 // the spawn carries no session identifier, and enrolls that subject.
 func TestAgentMCPPresetResolver_HostnameFallbackCN(t *testing.T) {
-	issuer := &fakeAgentCertIssuer{}
+	issuer := &fakeFleetNodeCertIssuer{}
 	r, memory := newTestResolver(t, issuer, "system")
 
 	_, _, cleanup, err := r.Resolve(context.Background(), "  ", "tenant-7")
@@ -652,7 +653,7 @@ func TestAgentMCPPresetResolver_HostnameFallbackCN(t *testing.T) {
 // TestAgentMCPPresetResolver_IssueError surfaces an MCPPresetResolveError when
 // the issuer fails, and enrolls nothing.
 func TestAgentMCPPresetResolver_IssueError(t *testing.T) {
-	issuer := &fakeAgentCertIssuer{}
+	issuer := &fakeFleetNodeCertIssuer{}
 	sealed := errors.New("ca sealed")
 	issuer.setError(sealed)
 	r, memory := newTestResolver(t, issuer, "system")
@@ -679,7 +680,7 @@ func TestAgentMCPPresetResolver_IssueError(t *testing.T) {
 // TestAgentMCPPresetResolver_NoTenant denies issuance when neither the spawn nor
 // the resolver default supplies a tenant.
 func TestAgentMCPPresetResolver_NoTenant(t *testing.T) {
-	issuer := &fakeAgentCertIssuer{}
+	issuer := &fakeFleetNodeCertIssuer{}
 	r, _ := newTestResolver(t, issuer, "")
 
 	if _, _, _, err := r.Resolve(context.Background(), "ses-1", ""); !errors.Is(err, ErrMCPPresetResolverNoTenant) {
@@ -696,7 +697,7 @@ func TestAgentMCPPresetResolver_NoTenant(t *testing.T) {
 // Handing the session a credential that resolves to nothing is exactly the defect
 // #901 recorded, so the spawn gets no credential instead.
 func TestAgentMCPPresetResolver_NoSPIFFETenant(t *testing.T) {
-	issuer := &fakeAgentCertIssuer{omitSPIFFE: true}
+	issuer := &fakeFleetNodeCertIssuer{omitSPIFFE: true}
 	r, memory := newTestResolver(t, issuer, "system")
 
 	_, _, cleanup, err := r.Resolve(context.Background(), "ses-1", "tenant-7")
@@ -722,7 +723,7 @@ func TestAgentMCPPresetResolver_NoSPIFFETenant(t *testing.T) {
 // a different tenant than the spawn named. Enrolling into either tenant would be
 // wrong, so neither happens.
 func TestAgentMCPPresetResolver_SPIFFETenantMismatch(t *testing.T) {
-	issuer := &fakeAgentCertIssuer{spiffeTenantOverride: "other-tenant"}
+	issuer := &fakeFleetNodeCertIssuer{spiffeTenantOverride: "other-tenant"}
 	r, memory := newTestResolver(t, issuer, "system")
 
 	_, _, _, err := r.Resolve(context.Background(), "ses-1", "tenant-7")
@@ -747,7 +748,7 @@ func TestAgentMCPPresetResolver_SPIFFETenantMismatch(t *testing.T) {
 // parsed leaf. Every identifying value of the principal is derived FROM the
 // certificate, so there is nothing to enroll without it.
 func TestAgentMCPPresetResolver_NoParsedCert(t *testing.T) {
-	issuer := &fakeAgentCertIssuer{omitParsedCert: true}
+	issuer := &fakeFleetNodeCertIssuer{omitParsedCert: true}
 	r, _ := newTestResolver(t, issuer, "system")
 
 	if _, _, _, err := r.Resolve(context.Background(), "ses-1", "tenant-7"); !errors.Is(err, ErrMCPPresetResolverNoParsedCert) {
@@ -759,9 +760,9 @@ func TestAgentMCPPresetResolver_NoParsedCert(t *testing.T) {
 // minting anything when the identity store is not up. A certificate issued for a
 // session that cannot be enrolled would be one more credential with no authority.
 func TestAgentMCPPresetResolver_IdentityStoreUnavailable(t *testing.T) {
-	newResolver := func(t *testing.T, identities AgentSessionIdentityStoreResolver) (*AgentMCPPresetResolver, *fakeAgentCertIssuer) {
+	newResolver := func(t *testing.T, identities AgentSessionIdentityStoreResolver) (*AgentMCPPresetResolver, *fakeFleetNodeCertIssuer) {
 		t.Helper()
-		issuer := &fakeAgentCertIssuer{}
+		issuer := &fakeFleetNodeCertIssuer{}
 		r, err := NewAgentMCPPresetResolver(AgentMCPPresetResolverConfig{
 			Issuer:            issuer,
 			Identities:        identities,
@@ -850,9 +851,9 @@ func (s *scriptedIdentityStore) revocation() (tenant, username string, calls int
 }
 
 // newScriptedResolver wires a resolver over a scripted store.
-func newScriptedResolver(t *testing.T, store *scriptedIdentityStore) (*AgentMCPPresetResolver, *fakeAgentCertIssuer) {
+func newScriptedResolver(t *testing.T, store *scriptedIdentityStore) (*AgentMCPPresetResolver, *fakeFleetNodeCertIssuer) {
 	t.Helper()
-	issuer := &fakeAgentCertIssuer{}
+	issuer := &fakeFleetNodeCertIssuer{}
 	r, err := NewAgentMCPPresetResolver(AgentMCPPresetResolverConfig{
 		Issuer:            issuer,
 		Identities:        staticIdentityStore(store),
@@ -937,7 +938,7 @@ func TestNewAgentMCPPresetResolver_Validation(t *testing.T) {
 	store, _ := newSessionIdentityStore(t)
 	complete := func() AgentMCPPresetResolverConfig {
 		return AgentMCPPresetResolverConfig{
-			Issuer:            &fakeAgentCertIssuer{},
+			Issuer:            &fakeFleetNodeCertIssuer{},
 			Identities:        staticIdentityStore(store),
 			EndpointURL:       "https://h:1/mcp",
 			Hostname:          "host",
@@ -999,7 +1000,7 @@ func TestNewAgentMCPPresetResolver_Validation(t *testing.T) {
 // report a fixable misconfiguration for a certificate that is actually
 // unverifiable.
 func TestAgentMCPPresetResolver_MalformedSPIFFETenant(t *testing.T) {
-	issuer := &fakeAgentCertIssuer{malformedSPIFFE: true}
+	issuer := &fakeFleetNodeCertIssuer{malformedSPIFFE: true}
 	r, memory := newTestResolver(t, issuer, "system")
 
 	_, _, cleanup, err := r.Resolve(context.Background(), "ses-1", "tenant-7")
@@ -1032,7 +1033,7 @@ func TestAgentMCPPresetResolver_MalformedSPIFFETenant(t *testing.T) {
 // take it back down — otherwise a spawn that never started would leave a live
 // identity nothing will ever close.
 func TestAgentMCPPresetResolver_RevokesWhenTheMaterialCannotBeWritten(t *testing.T) {
-	issuer := &fakeAgentCertIssuer{}
+	issuer := &fakeFleetNodeCertIssuer{}
 	r, memory := newTestResolver(t, issuer, "system")
 
 	// os.MkdirTemp resolves its parent through os.TempDir, which honours
@@ -1135,13 +1136,13 @@ func TestCreateAgentSessionDir_ReportsAnUncreatableDir(t *testing.T) {
 
 // newIssuedForWriteTest returns issued material with a real mlocked key buffer,
 // so a test exercises the same Bytes()/Destroy() lifecycle production does.
-func newIssuedForWriteTest(t *testing.T) *service.IssuedAgentCertificate {
+func newIssuedForWriteTest(t *testing.T) *service.IssuedFleetNodeCertificate {
 	t.Helper()
 	buf, err := secure.NewBufferFromBytes([]byte("-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----\n"))
 	if err != nil {
 		t.Fatalf("NewBufferFromBytes: %v", err)
 	}
-	return &service.IssuedAgentCertificate{
+	return &service.IssuedFleetNodeCertificate{
 		CertPEM:    []byte("-----BEGIN CERTIFICATE-----\nLEAF\n-----END CERTIFICATE-----\n"),
 		PrivateKey: buf,
 		CAPEM:      []byte("-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----\n"),
@@ -1263,15 +1264,15 @@ func TestAgentSessionGrant_IsDisjointFromTheDaemonGrant(t *testing.T) {
 	for _, permission := range iam.AgentSessionGrant() {
 		session[permission] = true
 	}
-	for _, permission := range iam.AgentRuntimeGrant() {
+	for _, permission := range iam.FleetRuntimeGrant() {
 		if session[permission] {
-			t.Errorf("%q is held by BOTH an agent session and an agent daemon", permission)
+			t.Errorf("%q is held by BOTH an agent session and a fleet node daemon", permission)
 		}
 	}
-	if iam.AgentSessionRoleName == iam.AgentRuntimeRoleName {
+	if iam.AgentSessionRoleName == iam.FleetRuntimeRoleName {
 		t.Error("a session and a daemon must not converge the same role")
 	}
-	if iam.AgentSessionRoleID("t") == iam.AgentRuntimeRoleID("t") {
+	if iam.AgentSessionRoleID("t") == iam.FleetRuntimeRoleID("t") {
 		t.Error("a session and a daemon must not share a role ID")
 	}
 }

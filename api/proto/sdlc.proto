@@ -12,6 +12,7 @@ package quicbaas.sdlc.v1;
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
 import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+import "api/proto/agents.proto";
 
 // =============================================================================
 // SDLCService — forge bindings and deliveries
@@ -56,6 +57,75 @@ service SDLCService {
     rpc GetConformance(GetConformanceRequest) returns (GetConformanceResponse) {
         option (qrdb.v1.permission) = "sdlc:read";
     }
+    // GetOpenWork reads a bound project's open work from its forge: the open
+    // pull requests the project's agent opened, with their CI and review
+    // state, and the open issues carrying a label the module writes.
+    // Read-only.
+    rpc GetOpenWork(GetOpenWorkRequest) returns (GetOpenWorkResponse) {
+        option (qrdb.v1.permission) = "sdlc:read";
+    }
+    // GetReviewerSelection reports which reviewer profile reviews one pull
+    // request: the operator's override when one is recorded, the binding's
+    // default otherwise. Read-only.
+    rpc GetReviewerSelection(GetReviewerSelectionRequest) returns (ReviewerSelectionResponse) {
+        option (qrdb.v1.permission) = "sdlc:read";
+    }
+    // SetReviewerOverride records that one pull request is reviewed by a named
+    // profile of the binding. An operator verb, gated like the binding it
+    // refines; nothing a forge sends can write one.
+    rpc SetReviewerOverride(SetReviewerOverrideRequest) returns (ReviewerSelectionResponse) {
+        option (qrdb.v1.permission) = "sdlc:bind";
+    }
+    // ClearReviewerOverride removes one pull request's override, so the
+    // binding's default reviews it again.
+    rpc ClearReviewerOverride(ClearReviewerOverrideRequest) returns (ReviewerSelectionResponse) {
+        option (qrdb.v1.permission) = "sdlc:bind";
+    }
+    // GetWorkerImageStatus reports the worker image refresh loop's state and
+    // its last pass. A HOST verb: the refresh keeps every tenant's bound
+    // worker image current, so it is gated on the cross-tenant
+    // worker_images:read the REST route GET /api/v1/sdlc/worker-image is.
+    rpc GetWorkerImageStatus(GetWorkerImageStatusRequest) returns (GetWorkerImageStatusResponse) {
+        option (qrdb.v1.permission) = "worker_images:read";
+    }
+    // RefreshWorkerImage queues a full refresh pass on the node's refresh
+    // loop and returns at once; the pass builds, gates, publishes and
+    // rebinds in the background. Poll GetWorkerImageStatus for its outcome.
+    rpc RefreshWorkerImage(RefreshWorkerImageRequest) returns (RefreshWorkerImageResponse) {
+        option (qrdb.v1.permission) = "worker_images:refresh";
+    }
+    // FileIssue files an issue on a bound project's repository through the
+    // binding's own forge token — how the lead splits an issue into
+    // follow-ups. An audited operator verb.
+    rpc FileIssue(FileIssueRequest) returns (FileIssueResponse) {
+        option (qrdb.v1.permission) = "sdlc:issue_create";
+    }
+    // ListCollaborators returns the accounts that may rule on a bound
+    // project's repository: its owner, then every collaborator. Read-only;
+    // the binding editor's ruler picker.
+    rpc ListCollaborators(ListCollaboratorsRequest) returns (ListCollaboratorsResponse) {
+        option (qrdb.v1.permission) = "sdlc:read";
+    }
+    // AdoptIssue hands one forge issue back to the factory: the task is
+    // created for it — on the named pull request's own head branch when one
+    // is named — the issue's holds come off and the ruling is posted. An
+    // operator verb, gated as task creation, which is what it does.
+    rpc AdoptIssue(AdoptIssueRequest) returns (AdoptIssueResponse) {
+        option (qrdb.v1.permission) = "orchestrator:task_create";
+    }
+    // ListAttention pages the tenant's attention inbox: every parked task and
+    // environmental alert, faceted like every other listing. The same verb as
+    // GET /api/v1/orchestrator/attention, under the same permission.
+    rpc ListAttention(ListAttentionRequest) returns (ListAttentionResponse) {
+        option (qrdb.v1.permission) = "orchestrator:status";
+    }
+    // ResolveAttention applies an operator's decision to one parked task —
+    // approve_recommendation, answer, allow_another_round, close_as_done,
+    // readmit or note — posting the ruling to the forge issue before the task
+    // moves. The same verb as POST .../attention/{taskID}/resolve.
+    rpc ResolveAttention(ResolveAttentionRequest) returns (ResolveAttentionResponse) {
+        option (qrdb.v1.permission) = "orchestrator:task_readmit";
+    }
 }
 
 // =============================================================================
@@ -87,36 +157,47 @@ message ReviewPolicy {
     map<string, string> reviewers       = 5;
 }
 
-// ReviewerConfig names the agent that reviews this project's pull requests.
+// ReviewerConfig is one review seat: the tenant Agent that reviews, and the
+// forge identity it reviews as.
 //
-// EMPTY backend means the project is not self-reviewed, which is a legitimate
-// configuration: a project reviewed by people, or by automation outside this
-// module, binds no reviewer and the review runner is never dispatched for it.
-// It must be carried on the wire all the same — without it no transport but
-// REST could configure a reviewer, and a rebind through this service would
-// silently erase one that was already set.
+// EMPTY agent_id means the project is not self-reviewed, which is a
+// legitimate configuration: a project reviewed by people, or by automation
+// outside this module, binds no reviewer and the review runner is never
+// dispatched for it. It must be carried on the wire all the same — without it
+// no transport but REST could configure a reviewer, and a rebind through this
+// service would silently erase one that was already set.
 message ReviewerConfig {
-    string backend           = 1;
-    string model             = 2;
-    string image             = 3;
+    reserved 1, 2, 3, 7;
     // login is the forge account the reviewer's token authenticates as.
-    // Required when a backend is named.
+    // Required when an agent is named.
     string login             = 4;
     // token_secret_ref names the tenant secret holding the REVIEWER's forge
     // token, deliberately separate from ForgeConfig.token_secret_ref.
     string token_secret_ref  = 5;
     // status_context is the commit status the verdict is published under;
-    // empty takes the module default.
+    // empty takes the module default for the profile's role.
     string status_context    = 6;
-}
-
-// WorkerConfig names the agent that writes the code for this project.
-message WorkerConfig {
-    string backend = 1;
-    string model   = 2;
-    // image is the container image the worker session runs in; naming one
-    // requires the sandbox for this project's workers.
-    string image   = 3;
+    // name identifies the seat: what a per-pull-request override names.
+    // Optional on the default reviewer, required on every alternate.
+    string name              = 8;
+    // counts_toward_merge says whether the seat's verdicts decide whether a
+    // change may land. Unset means true on the default reviewer and false on
+    // an alternate, which is why presence is carried.
+    optional bool counts_toward_merge = 9;
+    // agent_id names the tenant Agent the seat reviews as; it must declare
+    // the review role. It supplies the backend, the model, the image and the
+    // reasoning effort.
+    string agent_id          = 10;
+    // endpoint is the root of the model server an opencode reviewer on a local
+    // model (ollama/<name>) is served from, as its container reaches it.
+    // Required when the seat's Agent is such a reviewer and refused otherwise.
+    string endpoint          = 11;
+    // host_affinity pins the reviewer session to one fleet node, strictly: an
+    // offline node refuses the review rather than running it elsewhere.
+    string host_affinity     = 12;
+    // prompt_append is run-time prompt material appended after the reviewer
+    // charter for every review this seat runs. At most 64 KiB.
+    string prompt_append     = 13;
 }
 
 // RankingPolicy is a project's contribution to task ordering.
@@ -139,6 +220,26 @@ message OnboardingConfig {
     map<string, string> label_colors         = 6;
 }
 
+// MergeTrainPolicy is a project's merge train: approved pull requests are
+// queued and landed together, CI running once per train. The zero value is ON
+// with the default size; disabled merges changes one at a time.
+message MergeTrainPolicy {
+    bool  disabled = 1;
+    // max_size bounds how many changes one train carries; zero takes the
+    // default.
+    int32 max_size = 2;
+}
+
+// ClusteringPolicy is a project's issue clustering: related ready issues are
+// adopted as one task and one pull request. The zero value is ON with the
+// default size; disabled makes every ready issue its own task.
+message ClusteringPolicy {
+    bool  disabled = 1;
+    // max_size bounds how many issues one task covers, the anchor included;
+    // zero takes the default.
+    int32 max_size = 2;
+}
+
 // ProjectBinding attaches a forge repository and its delivery policy to a
 // project.
 message ProjectBinding {
@@ -146,7 +247,8 @@ message ProjectBinding {
     ForgeConfig   forge        = 2;
     // strategy names the registered SDLC the project follows.
     string        strategy     = 3;
-    WorkerConfig  worker       = 4;
+    // worker is the Agent or pool that writes the code.
+    quicbaas.agents.v1.AgentRef worker = 4;
     // verification are the commands that must pass before review, in order.
     repeated string verification = 5;
     ReviewPolicy  review       = 6;
@@ -161,13 +263,33 @@ message ProjectBinding {
     // discovery selects which discovery paths this project runs
     // ("both" | "poll" | "webhook"); empty takes the default.
     string discovery             = 13;
-    // triage names the agent that triages this project's open issues; empty
-    // falls back to worker. Triage reads and judges and writes no code, so it
-    // can run on a cheaper or locally hosted model.
-    WorkerConfig triage          = 14;
+    // triage is the Agent or pool that triages this project's open issues;
+    // unset takes the node's default triage agent, then worker. Triage reads
+    // and judges and writes no code, so it can run on a cheaper or locally
+    // hosted model.
+    quicbaas.agents.v1.AgentRef triage = 14;
     // triage_may_close lets triage close an issue it found is already done.
     // Off by default: closing carries weight a label does not.
     bool triage_may_close        = 15;
+    // reviewers are the alternate reviewer profiles; reviewer stays the
+    // default. A bind replaces the whole record, so a transport that did not
+    // carry this field would erase every alternate on a rebind.
+    repeated ReviewerConfig reviewers = 16;
+    // merge_train decides whether approved changes land through the train.
+    // A bind replaces the whole record, so a transport that did not carry it
+    // would turn an operator's disabled train back on at the next rebind.
+    MergeTrainPolicy merge_train      = 17;
+    // clustering decides whether triage adopts related issues as one task.
+    ClusteringPolicy clustering       = 18;
+    // rulers are forge logins, beyond the repository's owner and the node's
+    // configured rulers, whose comment on a parked issue is an owner ruling.
+    // Each must be the owner or a collaborator of the bound repository.
+    repeated string rulers            = 19;
+    // worker_prompt_append and triage_prompt_append are run-time prompt
+    // material appended after the worker's and triage's charters for every
+    // session of that slot. At most 64 KiB each.
+    string worker_prompt_append       = 20;
+    string triage_prompt_append       = 21;
 }
 
 // PullRequest is the pull request an attempt opened.
@@ -311,6 +433,97 @@ message GetConformanceResponse {
     ConformanceReport report = 1;
 }
 
+message GetOpenWorkRequest {
+    string tenant_id  = 1;
+    string project_id = 2;
+}
+
+message GetOpenWorkResponse {
+    OpenWork work = 1;
+}
+
+// OpenPullRequest is one open pull request the project's agent opened.
+message OpenPullRequest {
+    int32  number    = 1;
+    string title     = 2;
+    string head_ref  = 3;
+    string head_sha  = 4;
+    // ci_state is success, failure, pending or none.
+    string ci_state  = 5;
+    // review_state is approved, changes_requested or awaiting_review.
+    string review_state = 6;
+    string url       = 7;
+    int64  created_at_unix = 8;
+    int64  age_seconds     = 9;
+}
+
+// OpenIssue is one open issue carrying a label the module writes.
+message OpenIssue {
+    int32           number = 1;
+    string          title  = 2;
+    repeated string labels = 3;
+    string          url    = 4;
+    int64           created_at_unix = 5;
+    int64           age_seconds     = 6;
+}
+
+// OpenWork is one bound project's open work on its forge.
+message OpenWork {
+    string project_id = 1;
+    string repo       = 2;
+    // agent is the forge account the binding's token authenticates as.
+    string agent      = 3;
+    repeated OpenPullRequest pull_requests = 4;
+    repeated OpenIssue       issues        = 5;
+    int64  read_at_unix = 6;
+}
+
+message GetReviewerSelectionRequest {
+    string tenant_id    = 1;
+    string project_id   = 2;
+    int32  pull_request = 3;
+}
+
+message SetReviewerOverrideRequest {
+    string tenant_id    = 1;
+    string project_id   = 2;
+    int32  pull_request = 3;
+    // profile names one of the binding's reviewer profiles.
+    string profile      = 4;
+}
+
+message ClearReviewerOverrideRequest {
+    string tenant_id    = 1;
+    string project_id   = 2;
+    int32  pull_request = 3;
+}
+
+// ReviewerSelection is which reviewer profile reviews one pull request, and
+// whether an operator chose it.
+message ReviewerSelection {
+    string project_id          = 1;
+    int32  pull_request        = 2;
+    string profile             = 3;
+    // overridden is true when an operator chose profile for this pull request.
+    bool   overridden          = 4;
+    // counts_toward_merge is false for an advisory review.
+    bool   counts_toward_merge = 5;
+    string status_context      = 6;
+    // updated_at_unix is when the override was last written; zero with none.
+    int64  updated_at_unix     = 7;
+    reserved 8;
+    reserved "cancelled_jobs";
+    // redispatched reports that setting the override started a review by the
+    // chosen seat now. False while a review already runs: switching reviewer
+    // cancels nothing, and the next dispatch is by the chosen seat. Set only
+    // on the answer to setting an override.
+    bool   redispatched        = 9;
+}
+
+message ReviewerSelectionResponse {
+    ReviewerSelection selection = 1;
+}
+
 // OnboardingReport is what a provisioning pass did, plus the conformance the
 // repository is in afterwards. The two are different claims: provisioning can
 // succeed while a stale workflow it is not allowed to delete remains.
@@ -366,4 +579,221 @@ message ConformanceReport {
     repeated ConformanceCheckResult checks   = 6;
     repeated ConformanceFinding     findings = 7;
     int64  checked_at_unix = 8;
+}
+
+// =============================================================================
+// Worker image refresh
+// =============================================================================
+
+// FileIssueRequest files one issue on a bound project's repository.
+message FileIssueRequest {
+    string tenant_id  = 1;
+    string project_id = 2;
+    string title      = 3;
+    string body       = 4;
+    // labels are label names the repository already defines.
+    repeated string labels = 5;
+    // parent is the issue this one was split out of; zero for none.
+    int32 parent      = 6;
+}
+
+// ForgeIssue is an issue as the forge stored it.
+message ForgeIssue {
+    int32  number = 1;
+    string title  = 2;
+    string body   = 3;
+    string state  = 4;
+    repeated string labels = 5;
+    string author = 6;
+    string url    = 7;
+}
+
+message FileIssueResponse {
+    ForgeIssue issue = 1;
+}
+
+message ListCollaboratorsRequest {
+    string tenant_id  = 1;
+    string project_id = 2;
+}
+
+// ForgeUser is one account with access to a repository.
+message ForgeUser {
+    string login     = 1;
+    string full_name = 2;
+}
+
+message ListCollaboratorsResponse {
+    repeated ForgeUser users = 1;
+}
+
+message GetWorkerImageStatusRequest {}
+
+message GetWorkerImageStatusResponse {
+    WorkerImageStatus status = 1;
+}
+
+message RefreshWorkerImageRequest {}
+
+message RefreshWorkerImageResponse {
+    WorkerImageStatus status = 1;
+}
+
+// WorkerImageStatus is the refresh loop's state as an operator reads it.
+message WorkerImageStatus {
+    // serving reports whether the refresh loop runs on this node.
+    bool serving = 1;
+    bool running = 2;
+    int64 running_since_unix = 3;
+    // queued reports a requested pass not yet started.
+    bool queued = 4;
+    // last is the most recent pass that finished; absent before the first.
+    WorkerImageReport last = 5;
+}
+
+// WorkerImageAgents are the two agent CLI versions an image carries.
+message WorkerImageAgents {
+    string claude_code = 1;
+    string codex       = 2;
+}
+
+// WorkerImageCheck is one probe or smoke the gate ran.
+message WorkerImageCheck {
+    string name   = 1;
+    bool   passed = 2;
+    string detail = 3;
+}
+
+// WorkerImageBound is one managed image bindings name, as a pass found it.
+message WorkerImageBound {
+    string image = 1;
+    // agents are the CLI versions its labels declare; empty when unreadable.
+    WorkerImageAgents agents = 2;
+    // uses counts the binding roles naming it.
+    int32 uses = 3;
+    bool stale = 4;
+}
+
+// WorkerImagePromotion is one Agent a pass repointed, or tried to.
+message WorkerImagePromotion {
+    string tenant_id       = 1;
+    reserved 2;
+    repeated string from   = 3;
+    string to              = 4;
+    // error is why the Agent was NOT updated; empty on success.
+    string error           = 5;
+    string agent_id        = 6;
+}
+
+// WorkerImageReport is what one refresh pass did.
+message WorkerImageReport {
+    // trigger is schedule or manual.
+    string trigger = 1;
+    // outcome is current, promoted, partial or failed.
+    string outcome = 2;
+    int64  started_at_unix  = 3;
+    int64  finished_at_unix = 4;
+    WorkerImageAgents latest = 5;
+    repeated string stale    = 6;
+    repeated string skipped  = 7;
+    string candidate = 8;
+    string image_id  = 9;
+    // reference is what the bindings were rebound to: the digest-pinned
+    // registry reference, or the local tag in local mode.
+    string reference = 10;
+    string digest    = 11;
+    repeated WorkerImageCheck     probes     = 12;
+    repeated WorkerImageCheck     smokes     = 13;
+    repeated WorkerImagePromotion promotions = 14;
+    string error = 15;
+    repeated WorkerImageBound bound = 16;
+}
+
+// AdoptIssueRequest names the issue to adopt.
+message AdoptIssueRequest {
+    string tenant_id    = 1;
+    string project_id   = 2;
+    int32  issue        = 3;
+    // pull_request, when set, is the open pull request the task resumes.
+    int32  pull_request = 4;
+    // ruling, when set, is appended to the task's contract and posted on
+    // the issue.
+    string ruling       = 5;
+}
+
+// AdoptIssueResponse is what the adoption did.
+message AdoptIssueResponse {
+    string task_id      = 1;
+    int32  issue        = 2;
+    int32  pull_request = 3;
+    // branch is the pull request's head branch the delivery works on.
+    string branch       = 4;
+    // superseded is the finished task that held the issue before, if any.
+    string superseded   = 5;
+}
+
+// AttentionItem is one thing only an operator can clear: a parked task, or an
+// environmental alert. Mirrors sdlc.AttentionItem; times are Unix seconds.
+message AttentionItem {
+    string id                 = 1;
+    string kind               = 2;
+    string project_id         = 3;
+    string project_name       = 4;
+    string subject            = 5;
+    string issue_ref          = 6;
+    string issue_url          = 7;
+    string block_kind         = 8;
+    string condition          = 9;
+    string question           = 10;
+    string recommendation     = 11;
+    bool   truncated          = 12;
+    bool   ruling_posted      = 13;
+    string message            = 14;
+    string severity           = 15;
+    int64  created_at         = 16;
+    int64  status_changed_at  = 17;
+    int32  attempts           = 18;
+    repeated string actions   = 19;
+}
+
+// ListAttentionRequest pages the inbox. limit, offset, sort and q are the
+// contract every list endpoint speaks (docs/software-factory/api.md).
+message ListAttentionRequest {
+    string tenant_id  = 1;
+    string project_id = 2;
+    string kind       = 3;
+    int32  limit      = 4;
+    int32  offset     = 5;
+    string sort       = 6;
+    string q          = 7;
+}
+
+// FacetCounts is how many records carry each value of one faceted field.
+message FacetCounts {
+    map<string, int32> counts = 1;
+}
+
+// ListAttentionResponse is one page of the inbox with the paging envelope.
+// next_offset is zero on the last page.
+message ListAttentionResponse {
+    repeated AttentionItem items       = 1;
+    int32 total                        = 2;
+    int32 limit                        = 3;
+    int32 offset                       = 4;
+    int32 next_offset                  = 5;
+    map<string, FacetCounts> facets    = 6;
+}
+
+// ResolveAttentionRequest applies one decision to one parked task. answer is
+// required for "answer" and "note".
+message ResolveAttentionRequest {
+    string tenant_id = 1;
+    string task_id   = 2;
+    string action    = 3;
+    string answer    = 4;
+}
+
+// ResolveAttentionResponse is the item as it stands after the decision.
+message ResolveAttentionResponse {
+    AttentionItem item = 1;
 }

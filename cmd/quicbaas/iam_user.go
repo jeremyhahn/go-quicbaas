@@ -32,9 +32,7 @@ var (
 	// User command flags.
 	iamUserName         string
 	iamUserRoles        []string
-	iamUserGroups       []string
 	iamUserRole         string
-	iamUserGroup        string
 	iamUserRejectReason string
 )
 
@@ -46,7 +44,7 @@ func newIAMUserCommand() *cobra.Command {
 		Long: `Manage users within a tenant.
 
 Users are the primary identity entities in the IAM system. Each user
-belongs to a tenant and can be assigned roles and group memberships.
+belongs to a tenant and can be assigned roles.
 
 All user commands require the --tenant flag to specify the tenant context.`,
 	}
@@ -182,17 +180,14 @@ func newIAMUserCreateCommand() *cobra.Command {
 The email address serves as the unique identifier for the user within the tenant.
 QuicBaaS is passwordless — the new user is created in the pending state and
 must complete invite-based activation (FIDO2 / PIV) before they can sign in.
-You can optionally assign roles and groups during creation.
+You can optionally assign roles during creation.
 
 Examples:
   # Create basic user
   quicbaas iam user create alice@acme.com --tenant acme-corp --name "Alice Smith"
 
   # Create user with roles
-  quicbaas iam user create alice@acme.com --tenant acme-corp --name "Alice" --roles admin,developer
-
-  # Create user with roles and groups
-  quicbaas iam user create alice@acme.com --tenant acme-corp --name "Alice" --roles developer --groups engineering,team-west`,
+  quicbaas iam user create alice@acme.com --tenant acme-corp --name "Alice" --roles admin,developer`,
 		Args: cobra.ExactArgs(1),
 		RunE: runIAMUserCreateCommand,
 	}
@@ -200,7 +195,6 @@ Examples:
 	cmd.Flags().StringVar(&iamUserName, "name", "", "User display name (required)")
 	cmd.Flags().StringSliceVar(&iamUserRoles, "roles", []string{}, "Roles to assign (comma-separated)")
 	cmd.Flags().StringVar(&iamUserRole, "role", "", "Single role to assign (alternative to --roles)")
-	cmd.Flags().StringSliceVar(&iamUserGroups, "groups", []string{}, "Groups to add user to (comma-separated)")
 	cmd.MarkFlagRequired("name")
 
 	return cmd
@@ -242,7 +236,6 @@ func runIAMUserCreateCommand(cmd *cobra.Command, args []string) error {
 		Email:       email,
 		DisplayName: iamUserName,
 		Roles:       roles,
-		Groups:      iamUserGroups,
 	})
 	if err != nil {
 		return formatError(err)
@@ -268,9 +261,6 @@ func runIAMUserCreateCommand(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Tenant: %s\n", user.TenantID)
 		if len(user.Roles) > 0 {
 			fmt.Printf("  Roles: %s\n", strings.Join(user.Roles, ", "))
-		}
-		if len(user.Groups) > 0 {
-			fmt.Printf("  Groups: %s\n", strings.Join(user.Groups, ", "))
 		}
 		fmt.Printf("  Created: %s\n", user.CreatedAt.Format("2006-01-02 15:04:05"))
 	}
@@ -343,7 +333,6 @@ func runIAMUserGetCommand(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Name: %s\n", user.DisplayName)
 		fmt.Printf("  Tenant: %s\n", user.TenantID)
 		fmt.Printf("  Roles: %s\n", strings.Join(user.Roles, ", "))
-		fmt.Printf("  Groups: %s\n", strings.Join(user.Groups, ", "))
 		fmt.Printf("  Created: %s\n", user.CreatedAt.Format("2006-01-02 15:04:05"))
 		fmt.Printf("  Updated: %s\n", user.UpdatedAt.Format("2006-01-02 15:04:05"))
 	}
@@ -496,7 +485,7 @@ func newIAMUserListCommand() *cobra.Command {
 		Short: "List users in a tenant",
 		Long: `List all users within a tenant.
 
-You can optionally filter users by role or group membership.
+You can optionally filter users by role.
 
 Examples:
   # List all users in tenant
@@ -505,16 +494,12 @@ Examples:
   # List users with specific role
   quicbaas iam user list --tenant acme-corp --role admin
 
-  # List users in specific group
-  quicbaas iam user list --tenant acme-corp --group engineering
-
   # List users as JSON
   quicbaas iam user list --tenant acme-corp --output json`,
 		RunE: runIAMUserListCommand,
 	}
 
 	cmd.Flags().StringVar(&iamUserRole, "role", "", "Filter by role")
-	cmd.Flags().StringVar(&iamUserGroup, "group", "", "Filter by group")
 
 	return cmd
 }
@@ -539,8 +524,7 @@ func runIAMUserListCommand(cmd *cobra.Command, args []string) error {
 	// List users using SDK sub-client
 	log.Debugf("Listing users in tenant: %s", globalTenantID)
 	resp, err := iamClient.User().List(ctx, globalTenantID, &iam.ListUsersRequest{
-		RoleID:  iamUserRole,
-		GroupID: iamUserGroup,
+		RoleID: iamUserRole,
 	})
 	if err != nil {
 		return formatError(err)

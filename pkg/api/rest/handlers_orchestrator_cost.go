@@ -19,6 +19,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
@@ -43,6 +44,13 @@ import (
 //	&job_id=      — narrow to one job (requires task_id)
 //	&session_id=  — narrow to one session (requires job_id)
 //	&round=       — narrow to one round (requires session_id)
+//	&from=        — only turns at or after this RFC 3339 instant
+//	&to=          — only turns before this RFC 3339 instant (requires from;
+//	                from alone ranges up to now)
+//	&host=        — only turns that ran on this host ("-" for none)
+//	&agent=       — only turns of sessions that ran as this tenant Agent
+//	                ("-" for raw-backend sessions); the report then carries
+//	                the Agent's own limits
 //
 // Gated on orchestrator:status, the same permission every other orchestrator
 // read carries. A spend report names no secret material: it reports token
@@ -56,6 +64,8 @@ func (s *Server) HandleOrchestratorCost(w http.ResponseWriter, r *http.Request) 
 		TaskID:    r.URL.Query().Get("task_id"),
 		JobID:     r.URL.Query().Get("job_id"),
 		SessionID: r.URL.Query().Get("session_id"),
+		Host:      r.URL.Query().Get("host"),
+		Agent:     r.URL.Query().Get("agent"),
 	}
 	if raw := r.URL.Query().Get("round"); raw != "" {
 		round, err := strconv.Atoi(raw)
@@ -65,6 +75,21 @@ func (s *Server) HandleOrchestratorCost(w http.ResponseWriter, r *http.Request) 
 		}
 		req.Round = round
 		req.RoundSet = true
+	}
+	for _, bound := range []struct {
+		name string
+		into *time.Time
+	}{{"from", &req.From}, {"to", &req.To}} {
+		raw := r.URL.Query().Get(bound.name)
+		if raw == "" {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			RespondBadRequest(w, r, "invalid "+bound.name+" parameter: want an RFC 3339 instant: "+err.Error())
+			return
+		}
+		*bound.into = at.UTC()
 	}
 
 	agentSvc := s.getAgentService(w, r)

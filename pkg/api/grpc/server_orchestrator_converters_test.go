@@ -75,25 +75,25 @@ func TestServiceTaskStatusToProto(t *testing.T) {
 }
 
 // =============================================================================
-// protoAgentStatusToService / serviceAgentStatusToProto
+// protoFleetNodeStatusToService / serviceFleetNodeStatusToProto
 // =============================================================================
 
 func TestProtoAgentStatusToService(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    pb.AgentStatus
-		expected orchestration.AgentStatus
+		input    pb.FleetNodeStatus
+		expected orchestration.FleetNodeStatus
 	}{
-		{"online_running", pb.AgentStatus_AGENT_STATUS_ONLINE, orchestration.AgentStatusRunning},
-		{"offline", pb.AgentStatus_AGENT_STATUS_OFFLINE, orchestration.AgentStatusOffline},
-		{"busy_running", pb.AgentStatus_AGENT_STATUS_BUSY, orchestration.AgentStatusRunning},
-		{"error", pb.AgentStatus_AGENT_STATUS_ERROR, orchestration.AgentStatusError},
-		{"draining_idle", pb.AgentStatus_AGENT_STATUS_DRAINING, orchestration.AgentStatusIdle},
-		{"unspecified_empty", pb.AgentStatus_AGENT_STATUS_UNSPECIFIED, orchestration.AgentStatus("")},
+		{"online_running", pb.FleetNodeStatus_FLEET_NODE_STATUS_ONLINE, orchestration.FleetNodeStatusRunning},
+		{"offline", pb.FleetNodeStatus_FLEET_NODE_STATUS_OFFLINE, orchestration.FleetNodeStatusOffline},
+		{"busy_running", pb.FleetNodeStatus_FLEET_NODE_STATUS_BUSY, orchestration.FleetNodeStatusRunning},
+		{"error", pb.FleetNodeStatus_FLEET_NODE_STATUS_ERROR, orchestration.FleetNodeStatusError},
+		{"draining_idle", pb.FleetNodeStatus_FLEET_NODE_STATUS_DRAINING, orchestration.FleetNodeStatusIdle},
+		{"unspecified_empty", pb.FleetNodeStatus_FLEET_NODE_STATUS_UNSPECIFIED, orchestration.FleetNodeStatus("")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, protoAgentStatusToService(tt.input))
+			assert.Equal(t, tt.expected, protoFleetNodeStatusToService(tt.input))
 		})
 	}
 }
@@ -101,19 +101,19 @@ func TestProtoAgentStatusToService(t *testing.T) {
 func TestServiceAgentStatusToProto(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    orchestration.AgentStatus
-		expected pb.AgentStatus
+		input    orchestration.FleetNodeStatus
+		expected pb.FleetNodeStatus
 	}{
-		{"registered_online", orchestration.AgentStatusRegistered, pb.AgentStatus_AGENT_STATUS_ONLINE},
-		{"running_busy", orchestration.AgentStatusRunning, pb.AgentStatus_AGENT_STATUS_BUSY},
-		{"idle_online", orchestration.AgentStatusIdle, pb.AgentStatus_AGENT_STATUS_ONLINE},
-		{"offline", orchestration.AgentStatusOffline, pb.AgentStatus_AGENT_STATUS_OFFLINE},
-		{"error", orchestration.AgentStatusError, pb.AgentStatus_AGENT_STATUS_ERROR},
-		{"unknown_unspecified", orchestration.AgentStatus("bogus"), pb.AgentStatus_AGENT_STATUS_UNSPECIFIED},
+		{"registered_online", orchestration.FleetNodeStatusRegistered, pb.FleetNodeStatus_FLEET_NODE_STATUS_ONLINE},
+		{"running_busy", orchestration.FleetNodeStatusRunning, pb.FleetNodeStatus_FLEET_NODE_STATUS_BUSY},
+		{"idle_online", orchestration.FleetNodeStatusIdle, pb.FleetNodeStatus_FLEET_NODE_STATUS_ONLINE},
+		{"offline", orchestration.FleetNodeStatusOffline, pb.FleetNodeStatus_FLEET_NODE_STATUS_OFFLINE},
+		{"error", orchestration.FleetNodeStatusError, pb.FleetNodeStatus_FLEET_NODE_STATUS_ERROR},
+		{"unknown_unspecified", orchestration.FleetNodeStatus("bogus"), pb.FleetNodeStatus_FLEET_NODE_STATUS_UNSPECIFIED},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, serviceAgentStatusToProto(tt.input))
+			assert.Equal(t, tt.expected, serviceFleetNodeStatusToProto(tt.input))
 		})
 	}
 }
@@ -186,6 +186,8 @@ func TestServiceSessionInfoToProto(t *testing.T) {
 			State:        orchestration.SessionStateActive,
 			CreatedAt:    1700000000_000000000,
 			LastActivity: 1700000100_000000000,
+			JobID:        "job-1",
+			ContainerID:  "ctr-1",
 		})
 		require.NotNil(t, out)
 		assert.Equal(t, "sess-1", out.SessionId)
@@ -195,6 +197,10 @@ func TestServiceSessionInfoToProto(t *testing.T) {
 		assert.Equal(t, pb.SessionState_SESSION_STATE_ACTIVE, out.State)
 		assert.Equal(t, int64(1700000000), out.CreatedAt.AsTime().Unix())
 		assert.Equal(t, int64(1700000100), out.LastActivity.AsTime().Unix())
+		// The job and the container are what let a session link back to the
+		// job that spawned it (go-quicbaas#860).
+		assert.Equal(t, "job-1", out.JobId)
+		assert.Equal(t, "ctr-1", out.ContainerId)
 	})
 
 	// An unset instant stays unset: "never active" and "active at the epoch"
@@ -205,6 +211,8 @@ func TestServiceSessionInfoToProto(t *testing.T) {
 		require.NotNil(t, out)
 		assert.Nil(t, out.CreatedAt)
 		assert.Nil(t, out.LastActivity)
+		assert.Empty(t, out.JobId, "a session no job spawned names no job")
+		assert.Empty(t, out.ContainerId)
 	})
 }
 
@@ -498,10 +506,10 @@ func TestServiceAgentRegistrationToProtoInstantsAreNanoseconds(t *testing.T) {
 	const nanos = int64(1700000000_123456789)
 
 	t.Run("last_seen_and_registered_at_read_back_as_the_same_moment", func(t *testing.T) {
-		out := serviceAgentRegistrationToProto(&orchestration.AgentRegistration{
+		out := serviceFleetNodeToProto(&orchestration.FleetNode{
 			ID:           "agent-1",
 			TenantID:     "tenant-a",
-			Name:         "vm-host-4",
+			Name:         "agent-04",
 			Backend:      "acp",
 			LastSeen:     nanos,
 			RegisteredAt: nanos,
@@ -516,7 +524,7 @@ func TestServiceAgentRegistrationToProtoInstantsAreNanoseconds(t *testing.T) {
 	// An agent registered but never seen is not an agent last seen in 1970:
 	// the heartbeat view reads this to decide whether a daemon is alive.
 	t.Run("unset_instants_stay_unset", func(t *testing.T) {
-		out := serviceAgentRegistrationToProto(&orchestration.AgentRegistration{ID: "agent-2"})
+		out := serviceFleetNodeToProto(&orchestration.FleetNode{ID: "agent-2"})
 		require.NotNil(t, out)
 		assert.Nil(t, out.LastSeen)
 		assert.Nil(t, out.RegisteredAt)

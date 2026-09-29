@@ -59,3 +59,11 @@ quicbaasd
 # build context. This is the second line of defence: if one is ever written
 # into the workspace by mistake, COPY . . must not bake it into a layer.
 gomodauth*
+
+# The private development workflow never enters an image build context: the
+# same list .gitattributes keeps out of every archive, enforced by
+# pkg/labstrings (docs/release/public-releasability.md).
+**/CLAUDE.md
+**/AGENTS.md
+**/.claude
+**/.serena

@@ -181,14 +181,6 @@ func iamManagedRouteSpecs() []RouteSpec {
 		{Method: "DELETE", Pattern: user + "/links/{provider_id}", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.UnlinkAccount })},
 
 		// ---- Groups ----
-		{Method: "GET", Pattern: tenants + "/groups/", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.ListGroups })},
-		{Method: "POST", Pattern: tenants + "/groups/", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.CreateGroup })},
-		{Method: "GET", Pattern: tenants + "/groups/{group_id}", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.GetGroup })},
-		{Method: "PUT", Pattern: tenants + "/groups/{group_id}", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.UpdateGroup })},
-		{Method: "DELETE", Pattern: tenants + "/groups/{group_id}", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.DeleteGroup })},
-		{Method: "GET", Pattern: tenants + "/groups/{group_id}/members", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.ListMembers })},
-		{Method: "POST", Pattern: tenants + "/groups/{group_id}/members", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.AddMember })},
-		{Method: "DELETE", Pattern: tenants + "/groups/{group_id}/members/{user_id}", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.RemoveMember })},
 
 		// ---- Roles ----
 		{Method: "GET", Pattern: tenants + "/roles/", Group: GroupIAM, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.ListRoles })},
@@ -399,7 +391,7 @@ func oauth2CoreRouteSpecs() []RouteSpec {
 // apiAuthPublicRouteSpecs returns the /api/v1/auth login ceremony +
 // self-registration verbs, the federated login/callback redirect, and the
 // mTLS agent-registration bootstrap. registerIAMRoutes /
-// RegisterFederationAuthRoutes / registerAgentRegistrationPublicRoutes mount
+// RegisterFederationAuthRoutes / registerFleetEnrollmentPublicRoutes mount
 // every one of these at the router root with NO authorization wrapper: each
 // is a first-contact ceremony (no token exists yet) or authenticates via the
 // credential carried in the request itself (the mTLS handshake for agent
@@ -446,7 +438,7 @@ func apiAuthPublicRouteSpecs() []RouteSpec {
 		{Method: "POST", Pattern: "/api/v1/auth/register/finish", Group: GroupAPIAuthPublic, Auth: RouteAuthPublic, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.RegisterSelfFinish })},
 		{Method: "GET", Pattern: "/api/v1/auth/providers/{tenant_id}/{provider_name}/login", Group: GroupAPIAuthPublic, Auth: RouteAuthPublic, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.BeginFederatedLogin })},
 		{Method: "GET", Pattern: "/api/v1/auth/providers/{tenant_id}/{provider_name}/callback", Group: GroupAPIAuthPublic, Auth: RouteAuthPublic, Handler: iamRoute(func(h *IAMHandler) http.HandlerFunc { return h.HandleFederatedCallback })},
-		{Method: "POST", Pattern: "/api/v1/agents/register", Group: GroupAPIAuthPublic, Auth: RouteAuthPublic, Handler: func(s *Server) http.HandlerFunc { return s.HandleAgentRegister }},
+		{Method: "POST", Pattern: "/api/v1/fleet/enroll", Group: GroupAPIAuthPublic, Auth: RouteAuthPublic, Handler: func(s *Server) http.HandlerFunc { return s.HandleFleetEnroll }},
 	}
 }
 

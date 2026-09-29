@@ -42,7 +42,7 @@ func requireGPU(t *testing.T) {
 	cmd := exec.Command("nvidia-smi", "--query-gpu=name", "--format=csv,noheader")
 	output, err := cmd.Output()
 	if err != nil || len(strings.TrimSpace(string(output))) == 0 {
-		t.Skip("no NVIDIA GPU available")
+		t.Fatalf("the gpu build tag requires an NVIDIA GPU; nvidia-smi found none (err=%v)", err)
 	}
 	t.Logf("GPU detected: %s", strings.TrimSpace(string(output)))
 }
@@ -52,10 +52,10 @@ func requireOllamaModel(t *testing.T, model string) {
 	cmd := exec.Command("ollama", "list")
 	output, err := cmd.Output()
 	if err != nil {
-		t.Skipf("ollama not available: %v", err)
+		t.Fatalf("the gpu build tag requires ollama: %v", err)
 	}
 	if !strings.Contains(string(output), model) {
-		t.Skipf("model %s not available (pull with: ollama pull %s)", model, model)
+		t.Fatalf("model %s not available (pull with: ollama pull %s)", model, model)
 	}
 }
 
@@ -110,7 +110,7 @@ func (l *gpuLogger) WithError(_ error) interfaces.Logger                   { ret
 type serviceWirer interface {
 	SetTaskStore(store orchestration.TaskStore)
 	SetTenantGuard(guard *orchestration.TenantGuard)
-	SetAgentRegistry(registry orchestration.AgentRegistry)
+	SetFleetRegistry(registry orchestration.FleetRegistry)
 }
 
 func newGPUService(t *testing.T) orchestration.AgentService {
@@ -139,9 +139,32 @@ func newGPUService(t *testing.T) orchestration.AgentService {
 
 	wirer.SetTaskStore(orchestration.NewInMemoryTaskStore())
 	wirer.SetTenantGuard(orchestration.NewTenantGuard(logger))
-	wirer.SetAgentRegistry(orchestration.NewInMemoryAgentRegistry())
+	wirer.SetFleetRegistry(orchestration.NewInMemoryFleetRegistry())
 
 	return svc
+}
+
+// runGPUJob drives one lead-driven workflow job to a terminal state through
+// the control loop's RunJob entry point, over a run built the way the
+// envelope builds one for the workflow runner, and returns the run's final
+// status alongside the loop's error.
+func runGPUJob(ctx context.Context, t *testing.T, wf *orchestration.WorkflowDefinition, cfg *orchestration.JobConfig) (*orchestration.JobStatus, error) {
+	t.Helper()
+
+	svc := newGPUService(t)
+	logger := &gpuLogger{t: t}
+
+	run := orchestration.NewJobRun(orchestration.JobRunConfig{
+		JobID:      wf.Name,
+		Runner:     orchestration.JobRunnerWorkflow,
+		Config:     cfg,
+		Workflow:   wf,
+		StartState: orchestration.JobStateInitializing,
+		Agents:     svc,
+		Logger:     logger,
+	})
+	err := orchestration.NewControlLoop(svc, logger).RunJob(ctx, run)
+	return run.Status(), err
 }
 
 // =============================================================================
@@ -203,30 +226,24 @@ func TestGPUAgent_EndToEnd_SimpleTask(t *testing.T) {
 	requireGPU(t)
 	requireOllamaModel(t, gpuTestModel)
 
-	svc := newGPUService(t)
-	logger := &gpuLogger{t: t}
-
-	cl := orchestration.NewControlLoop(svc, logger)
-	cl.SetWorkflow(&orchestration.WorkflowDefinition{
+	wf := &orchestration.WorkflowDefinition{
 		Name: "gpu-simple-test",
 		Mode: orchestration.WorkflowModeConstrained,
 		Agents: []orchestration.AgentRoleSpec{
 			{Role: "lead", Backend: "ollama", Model: gpuTestModel},
 			{Role: "worker", Backend: "ollama", Model: gpuTestModel},
 		},
-	})
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	err := cl.Run(ctx, &orchestration.JobConfig{
+	status, err := runGPUJob(ctx, t, wf, &orchestration.JobConfig{
 		TenantID:      "gpu-test",
 		Description:   "Respond with a JSON object containing a summary field",
 		MaxIterations: 2,
 		PollInterval:  2 * time.Second,
 	})
-
-	status := cl.Status()
 	if err != nil {
 		t.Logf("Control loop error (may be expected): %v", err)
 	}
@@ -241,30 +258,24 @@ func TestGPUAgent_WorkflowSequencing(t *testing.T) {
 	requireGPU(t)
 	requireOllamaModel(t, gpuTestModel)
 
-	svc := newGPUService(t)
-	logger := &gpuLogger{t: t}
-
-	cl := orchestration.NewControlLoop(svc, logger)
-	cl.SetWorkflow(&orchestration.WorkflowDefinition{
+	wf := &orchestration.WorkflowDefinition{
 		Name: "gpu-seq-test",
 		Mode: orchestration.WorkflowModeConstrained,
 		Agents: []orchestration.AgentRoleSpec{
 			{Role: "lead", Backend: "ollama", Model: gpuTestModel},
 			{Role: "worker", Backend: "ollama", Model: gpuTestModel},
 		},
-	})
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	err := cl.Run(ctx, &orchestration.JobConfig{
+	status, err := runGPUJob(ctx, t, wf, &orchestration.JobConfig{
 		TenantID:      "gpu-seq",
 		Description:   "Step 1: Define a data structure. Step 2: After step 1, describe the structure.",
 		MaxIterations: 3,
 		PollInterval:  2 * time.Second,
 	})
-
-	status := cl.Status()
 	if err != nil {
 		t.Logf("Sequencing error: %v", err)
 	}
@@ -279,11 +290,7 @@ func TestGPUAgent_ReviewAndRedelegate(t *testing.T) {
 	requireGPU(t)
 	requireOllamaModel(t, gpuTestModel)
 
-	svc := newGPUService(t)
-	logger := &gpuLogger{t: t}
-
-	cl := orchestration.NewControlLoop(svc, logger)
-	cl.SetWorkflow(&orchestration.WorkflowDefinition{
+	wf := &orchestration.WorkflowDefinition{
 		Name: "gpu-review-test",
 		Mode: orchestration.WorkflowModeConstrained,
 		Agents: []orchestration.AgentRoleSpec{
@@ -296,19 +303,17 @@ func TestGPUAgent_ReviewAndRedelegate(t *testing.T) {
 				{Name: "output_exists", Validator: "agent", Config: "Output must exist", Required: true},
 			},
 		},
-	})
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	err := cl.Run(ctx, &orchestration.JobConfig{
+	status, err := runGPUJob(ctx, t, wf, &orchestration.JobConfig{
 		TenantID:      "gpu-review",
 		Description:   "Describe a simple calculator with add and subtract operations",
 		MaxIterations: 3,
 		PollInterval:  2 * time.Second,
 	})
-
-	status := cl.Status()
 	if err != nil {
 		t.Logf("Review error: %v", err)
 	}

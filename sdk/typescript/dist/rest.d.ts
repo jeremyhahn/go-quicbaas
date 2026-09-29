@@ -11,6 +11,7 @@ import type { CryptoClient, CryptoEncryptRequest, CryptoEncryptResponse, CryptoD
 import type { DEKClient, CreateDEKRequest, CreateDEKResponse, GetDEKResponse, ListDEKsRequest, ListDEKsResponse, RotateDEKRequest, RotateDEKResponse, DeleteDEKRequest, DeleteDEKResponse, GetDEKStatusResponse, SetDefaultDEKResponse, SetDEKSafetyRequest, SetDEKSafetyResponse, ClearDEKSafetyResponse, StartReencryptionRequest, StartReencryptionResponse, GetReencryptionProgressResponse } from './dek.js';
 import type { DynamicSecretsClient, DynamicSecretRole, CreateRoleRequest as DynamicSecretCreateRoleRequest, ListRolesResponse as ListDynamicSecretRolesResponse, DeleteRoleResponse as DeleteDynamicSecretRoleResponse, GenerateCredentialRequest, GenerateCredentialResponse, RenewLeaseRequest, RenewLeaseResponse, RevokeLeaseResponse as RevokeDynamicSecretLeaseResponse, ListLeasesResponse } from './dynamicsecrets.js';
 import type { AccountsClient } from './accounts.js';
+import type { AgentsClient } from './agents.js';
 import type { ClientConfig, BarrierStatusResponse, BarrierInitRequest, BarrierUnsealRequest, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, BarrierShamirSharesResponse, BarrierShamirDeleteShareRequest, BarrierRekeyRequest, BarrierRekeyResponse, BarrierGenerateRecoveryKeysRequest, BarrierRecoveryKeysResponse, BarrierRecoverWithKeysRequest, BarrierHasRecoveryKeysResponse, BarrierGenerateRootTokenRequest, BarrierRootTokenResponse, TenantBarrierInitRequest, TenantBarrierInitResponse, TenantBarrierUnsealShareResponse, TenantBarrierStatusResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonyStatusResponse, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareRequest, CeremonyClaimShareResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, BootstrapBundleRequest, BootstrapBundleResponse, ClusterStatusResponse, SessionInfo, SSHScope, SSHKey, SSHPublicKey, SignRequest, SignResponse, CreateSSHKeyRequest, ImportSSHKeyRequest, ListSSHKeysQuery, ListSSHKeysResponse, AddSSHPinRequest, ListSSHPinsResponse, VerifySSHPinRequest, EmitAuthorizedRequest, EmitAuthorizedResponse, VerifyAuthorizedRequest, VerifyAuthorizedResponse } from './types.js';
 import { APIError, ConnectionError, NotConnectedError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError } from './errors.js';
 export declare class RestCAClient implements CAClient {
@@ -181,6 +182,7 @@ export declare class RestClient implements Client {
     readonly projects: ProjectsClient;
     readonly sdlc: SdlcClient;
     readonly accounts: AccountsClient;
+    readonly agents: AgentsClient;
     readonly iam: IAMClient;
     readonly kms: KMSClient;
     readonly secrets: SecretsClient;

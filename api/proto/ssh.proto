@@ -95,7 +95,8 @@ message SSHKeyInfo {
     string backend_key_id  = 10;
 }
 
-// SSHHostPin is one pinned host-key fingerprint.
+// SSHHostPin is one pinned host key. public_key is the authorized_keys-format
+// key the pin trusts; fingerprint and algorithm are derived from it.
 message SSHHostPin {
     string scope         = 1;
     string owner         = 2;
@@ -104,6 +105,7 @@ message SSHHostPin {
     string algorithm     = 5;
     int64  added_at_unix = 6;
     string source        = 7;
+    string public_key    = 8;
 }
 
 // SSHAuthorizedEntry is one stored authorized_keys record.
@@ -197,6 +199,9 @@ message SSHSignDigestResponse {
 // Known-hosts messages
 // =============================================================================
 
+// SSHAddKnownHostRequest pins a host key. public_key (an authorized_keys-format
+// line) is required: go-xkms trusts only the full key, and derives the pin's
+// fingerprint and algorithm from it rather than from the caller.
 message SSHAddKnownHostRequest {
     string scope       = 1;
     string owner       = 2;
@@ -204,6 +209,7 @@ message SSHAddKnownHostRequest {
     string fingerprint = 4;
     string algorithm   = 5;
     string source      = 6;
+    string public_key  = 7;
 }
 
 message SSHListKnownHostsRequest {

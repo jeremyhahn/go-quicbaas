@@ -139,35 +139,35 @@ func (f *fakeOrchestratorServer) CompleteTask(context.Context, *pb.CompleteTaskR
 	}
 	return &pb.CompleteTaskResponse{TaskId: "t1", Completed: true}, nil
 }
-func (f *fakeOrchestratorServer) RegisterAgent(context.Context, *pb.RegisterAgentRequest) (*pb.RegisterAgentResponse, error) {
+func (f *fakeOrchestratorServer) RegisterFleetNode(context.Context, *pb.RegisterFleetNodeRequest) (*pb.RegisterFleetNodeResponse, error) {
 	if err := f.e(); err != nil {
 		return nil, err
 	}
-	return &pb.RegisterAgentResponse{Agent: sampleAgent()}, nil
+	return &pb.RegisterFleetNodeResponse{Node: sampleAgent()}, nil
 }
-func (f *fakeOrchestratorServer) GetAgent(context.Context, *pb.GetAgentRequest) (*pb.GetAgentResponse, error) {
+func (f *fakeOrchestratorServer) GetFleetNode(context.Context, *pb.GetFleetNodeRequest) (*pb.GetFleetNodeResponse, error) {
 	if err := f.e(); err != nil {
 		return nil, err
 	}
-	return &pb.GetAgentResponse{Agent: sampleAgent()}, nil
+	return &pb.GetFleetNodeResponse{Node: sampleAgent()}, nil
 }
-func (f *fakeOrchestratorServer) ListAgents(context.Context, *pb.ListAgentsRequest) (*pb.ListAgentsResponse, error) {
+func (f *fakeOrchestratorServer) ListFleetNodes(context.Context, *pb.ListFleetNodesRequest) (*pb.ListFleetNodesResponse, error) {
 	if err := f.e(); err != nil {
 		return nil, err
 	}
-	return &pb.ListAgentsResponse{Agents: []*pb.AgentRegistration{sampleAgent()}}, nil
+	return &pb.ListFleetNodesResponse{Nodes: []*pb.FleetNode{sampleAgent()}}, nil
 }
-func (f *fakeOrchestratorServer) RemoveAgent(context.Context, *pb.RemoveAgentRequest) (*pb.RemoveAgentResponse, error) {
+func (f *fakeOrchestratorServer) RemoveFleetNode(context.Context, *pb.RemoveFleetNodeRequest) (*pb.RemoveFleetNodeResponse, error) {
 	if err := f.e(); err != nil {
 		return nil, err
 	}
-	return &pb.RemoveAgentResponse{AgentId: "a1", Removed: true}, nil
+	return &pb.RemoveFleetNodeResponse{NodeId: "a1", Removed: true}, nil
 }
-func (f *fakeOrchestratorServer) AgentHeartbeat(context.Context, *pb.AgentHeartbeatRequest) (*pb.AgentHeartbeatResponse, error) {
+func (f *fakeOrchestratorServer) FleetNodeHeartbeat(context.Context, *pb.FleetNodeHeartbeatRequest) (*pb.FleetNodeHeartbeatResponse, error) {
 	if err := f.e(); err != nil {
 		return nil, err
 	}
-	return &pb.AgentHeartbeatResponse{AgentId: "a1", Acknowledged: true}, nil
+	return &pb.FleetNodeHeartbeatResponse{NodeId: "a1", Acknowledged: true}, nil
 }
 func (f *fakeOrchestratorServer) DecomposeTask(context.Context, *pb.DecomposeTaskRequest) (*pb.DecomposeTaskResponse, error) {
 	if err := f.e(); err != nil {
@@ -226,10 +226,10 @@ func sampleTask() *pb.Task {
 	}
 }
 
-func sampleAgent() *pb.AgentRegistration {
-	return &pb.AgentRegistration{
+func sampleAgent() *pb.FleetNode {
+	return &pb.FleetNode{
 		Id: "a1", TenantId: "t1", Name: "agent", Host: "host", Backend: "claude",
-		AgentType: "worker", WorkDir: "/w", Version: 1, RegisteredAt: orchTime(), LastSeen: orchTime(),
+		NodeType: "worker", WorkDir: "/w", Version: 1, RegisteredAt: orchTime(), LastSeen: orchTime(),
 	}
 }
 
@@ -265,11 +265,11 @@ var orchCases = []orchCase{
 	{"DeleteTask", "DeleteTask", &orchestrator.DeleteTaskRequest{TenantID: "t1", TaskID: "t1"}},
 	{"ListTasksProjectStatuses", "ListTasks", &orchestrator.ListTasksRequest{TenantID: "t1", ProjectID: "p1", Statuses: []string{"blocked", "pending"}}},
 	{"CreateTaskWithSource", "CreateTask", &orchestrator.CreateTaskRequest{TenantID: "t1", Subject: "subj", Source: &orchestrator.TaskSource{Kind: "operator", Ref: "alice"}, Priority: 2, AttemptBudget: 3}},
-	{"RegisterAgent", "RegisterAgent", &orchestrator.RegisterAgentRequest{TenantID: "t1", Name: "agent"}},
-	{"GetAgent", "GetAgent", &orchestrator.GetAgentRequest{TenantID: "t1", AgentID: "a1"}},
-	{"ListAgents", "ListAgents", &orchestrator.ListAgentsRequest{TenantID: "t1", Host: "host", Status: "active", AgentType: "worker", Backend: "claude"}},
-	{"RemoveAgent", "RemoveAgent", &orchestrator.RemoveAgentRequest{TenantID: "t1", AgentID: "a1"}},
-	{"AgentHeartbeat", "AgentHeartbeat", &orchestrator.AgentHeartbeatRequest{TenantID: "t1", AgentID: "a1"}},
+	{"RegisterFleetNode", "RegisterFleetNode", &orchestrator.RegisterFleetNodeRequest{TenantID: "t1", Name: "agent"}},
+	{"GetFleetNode", "GetFleetNode", &orchestrator.GetFleetNodeRequest{TenantID: "t1", NodeID: "a1"}},
+	{"ListFleetNodes", "ListFleetNodes", &orchestrator.ListFleetNodesRequest{TenantID: "t1", Host: "host", Status: "active", NodeType: "worker", Backend: "claude"}},
+	{"RemoveFleetNode", "RemoveFleetNode", &orchestrator.RemoveFleetNodeRequest{TenantID: "t1", NodeID: "a1"}},
+	{"FleetNodeHeartbeat", "FleetNodeHeartbeat", &orchestrator.FleetNodeHeartbeatRequest{TenantID: "t1", NodeID: "a1"}},
 	{"DecomposeTask", "DecomposeTask", &orchestrator.DecomposeTaskRequest{Backend: "claude", Task: "do it"}},
 	{"SpawnChildJob", "SpawnChildJob", &orchestrator.SpawnChildJobRequest{ParentJobID: "j0", Tasks: []*orchestrator.TaskSpec{{Title: "t"}}}},
 	{"StartJob", "StartJob", &orchestrator.StartJobRequest{Description: "d", MaxIterations: 3}},

@@ -239,6 +239,38 @@ func TestFaultOutcomeFor(t *testing.T) {
 	if got := faultOutcomeFor(nil, EnvironmentFault{Class: TerminalReasonAPIError}); !got.requeue {
 		t.Fatalf("a nil task is not bounded, got %+v", got)
 	}
+	want := faultOutcome{refund: true, requeue: true, keepsCount: true}
+	if got := faultOutcomeFor(&Task{ConsecutiveEnvironmentFaults: MaxConsecutiveEnvironmentFaults - 1}, EnvironmentFault{Class: FaultAccountsSaturated}); got != want {
+		t.Fatalf("saturation at the bound still requeues uncounted, got %+v", got)
+	}
+}
+
+// TestApplyConclusion_RepeatedSaturationIsNeverChargedOrParked is the
+// regression for a busy pool: contention past the three-strike bound must
+// keep requeueing uncharged, and must neither advance nor clear the count
+// another fault class left behind.
+func TestApplyConclusion_RepeatedSaturationIsNeverChargedOrParked(t *testing.T) {
+	task := &Task{ID: "t", TenantID: "acme", ConsecutiveEnvironmentFaults: 1}
+	fault := EnvironmentFault{Class: FaultAccountsSaturated, Reason: "saturated"}
+
+	for round := 1; round <= 3*MaxConsecutiveEnvironmentFaults; round++ {
+		task.Status = TaskStatusClaimed
+		task.Attempts++
+		reason := applyConclusion(task, attemptConclusion{
+			status: failedStatus("job", FaultAccountsSaturated, "saturated"),
+			fault:  fault,
+		}, time.Now().UTC())
+
+		if reason != "" || task.Status != TaskStatusPending {
+			t.Fatalf("round %d: conclusion %q status %s, want a plain requeue", round, reason, task.Status)
+		}
+		if charged := task.ChargedAttempts(); charged != 0 {
+			t.Fatalf("round %d: charged attempts = %d, want 0", round, charged)
+		}
+		if task.ConsecutiveEnvironmentFaults != 1 {
+			t.Fatalf("round %d: consecutive = %d, want the prior 1 untouched", round, task.ConsecutiveEnvironmentFaults)
+		}
+	}
 }
 
 // TestClampRetryDeferral pins both directions of the cap.

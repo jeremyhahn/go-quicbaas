@@ -550,7 +550,7 @@ func qrdbUserToMCPMap(u *qrdbsdk.User) map[string]interface{} {
 		"username":  u.Username,
 		"tenantID":  u.TenantID,
 		"roleIDs":   roleIDs,
-		"enabled":   u.Enabled,
+		"lifecycle": string(u.Lifecycle),
 		"system":    u.System,
 		"createdAt": u.CreatedAt.Format(time.RFC3339),
 		"updatedAt": u.UpdatedAt.Format(time.RFC3339),

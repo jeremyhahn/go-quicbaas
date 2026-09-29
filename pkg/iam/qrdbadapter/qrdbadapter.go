@@ -442,10 +442,10 @@ func (a *UserAdapter) CreateUser(ctx context.Context, req *qrdbsdk.CreateUserReq
 	}
 	a.created = u
 	return &qrdbsdk.User{
-		Username: u.Username,
-		TenantID: u.TenantID,
-		RoleIDs:  u.Roles,
-		Enabled:  true,
+		Username:  u.Username,
+		TenantID:  u.TenantID,
+		RoleIDs:   u.Roles,
+		Lifecycle: u.Lifecycle,
 	}, nil
 }
 

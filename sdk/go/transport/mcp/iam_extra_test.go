@@ -627,17 +627,13 @@ func TestTransformIAMToolArguments_UserCreate(t *testing.T) {
 		}
 	})
 
-	t.Run("roles and groups pass through untouched", func(t *testing.T) {
+	t.Run("roles pass through untouched", func(t *testing.T) {
 		out := transformIAMToolArguments("quicbaas_iam_user_create",
 			map[string]interface{}{
-				"roles":  []interface{}{"role-a"},
-				"groups": []interface{}{"group-a"},
+				"roles": []interface{}{"role-a"},
 			})
 		if roles := out["roles"].([]interface{}); len(roles) != 1 || roles[0] != "role-a" {
 			t.Errorf("roles = %v", out["roles"])
-		}
-		if groups := out["groups"].([]interface{}); len(groups) != 1 || groups[0] != "group-a" {
-			t.Errorf("groups = %v", out["groups"])
 		}
 	})
 }

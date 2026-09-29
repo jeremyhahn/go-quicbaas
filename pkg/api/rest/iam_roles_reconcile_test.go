@@ -72,10 +72,9 @@ func setupReconcileTest(t *testing.T) (*IAMHandler, *reconcilingRoleStorage, fun
 
 	roleStorage := &reconcilingRoleStorage{MemoryStorage: memStorage}
 	mockService.identityStore = iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  roleStorage,
-		Tenants:      mockService.tenantManager,
+		UserStorage: memStorage,
+		RoleStorage: roleStorage,
+		Tenants:     mockService.tenantManager,
 	})
 
 	require.NoError(t, memStorage.CreateTenant(context.Background(), &iam.Tenant{
@@ -231,10 +230,9 @@ func TestReconcileRoles_StorageRefusesReconciliation(t *testing.T) {
 
 	// MemoryStorage is a plain RoleStorage: no BuiltInRoleReconciler.
 	mockService.identityStore = iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
-		Tenants:      mockService.tenantManager,
+		UserStorage: memStorage,
+		RoleStorage: memStorage,
+		Tenants:     mockService.tenantManager,
 	})
 	require.NoError(t, memStorage.CreateTenant(context.Background(), &iam.Tenant{
 		ID:   reconcileTenant,
@@ -276,10 +274,9 @@ func TestReconcileRoles_RouteReachesHandler(t *testing.T) {
 		report:        &iam.RoleReconcileReport{TenantID: reconcileTenant},
 	}
 	mockService.identityStore = iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  roleStorage,
-		Tenants:      mockService.tenantManager,
+		UserStorage: memStorage,
+		RoleStorage: roleStorage,
+		Tenants:     mockService.tenantManager,
 	})
 	require.NoError(t, memStorage.CreateTenant(context.Background(), &iam.Tenant{
 		ID:   reconcileTenant,

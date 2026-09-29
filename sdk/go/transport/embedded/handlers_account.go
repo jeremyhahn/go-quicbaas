@@ -68,10 +68,13 @@ func handleAccountCreate(ctx context.Context, svc service.QuicBaaS, req interfac
 		DisplayName:   r.DisplayName,
 		Default:       r.Default,
 		RefreshPolicy: orchestration.AccountRefreshPolicy(r.RefreshPolicy),
+		Billing:       accountBillingToOrchestration(r.Billing),
+		Spend:         accountSpendPolicyToOrchestration(r.Spend),
 		Credential:    accountCredentialToOrchestration(r.Credential),
 
-		CredentialSecretRef:  r.CredentialSecretRef,
-		CredentialSecretFile: r.CredentialSecretFile,
+		CredentialSecretRef:   r.CredentialSecretRef,
+		CredentialSecretFile:  r.CredentialSecretFile,
+		MaxConcurrentSessions: r.MaxConcurrentSessions,
 	})
 	if err != nil {
 		return nil, err
@@ -152,9 +155,12 @@ func handleAccountUpdate(ctx context.Context, svc service.QuicBaaS, req interfac
 		ProjectID:      r.ProjectID,
 		ClearProjectID: r.ClearProjectID,
 		RefreshPolicy:  orchestration.AccountRefreshPolicy(r.RefreshPolicy),
+		Billing:        optionalAccountBilling(r.Billing),
+		Spend:          optionalAccountSpendPolicyToOrchestration(r.Spend),
 
-		CredentialSecretRef:  r.CredentialSecretRef,
-		CredentialSecretFile: r.CredentialSecretFile,
+		CredentialSecretRef:   r.CredentialSecretRef,
+		CredentialSecretFile:  r.CredentialSecretFile,
+		MaxConcurrentSessions: r.MaxConcurrentSessions,
 	})
 	if err != nil {
 		return nil, err
@@ -265,12 +271,32 @@ func handleAccountUsage(ctx context.Context, svc service.QuicBaaS, req interface
 		return &accountSDK.UsageReport{}, nil
 	}
 	return &accountSDK.UsageReport{
-		TotalTokens: resp.Usage.TotalTokens,
-		BudgetLimit: resp.Usage.BudgetLimit,
-		PercentUsed: resp.Usage.PercentUsed,
-		ByAgent:     resp.Usage.ByAgent,
-		LastUpdated: resp.Usage.LastUpdated,
+		TotalTokens:  resp.Usage.TotalTokens,
+		BudgetLimit:  resp.Usage.BudgetLimit,
+		PercentUsed:  resp.Usage.PercentUsed,
+		ByAgent:      resp.Usage.ByAgent,
+		LastUpdated:  resp.Usage.LastUpdated,
+		LiveSessions: resp.LiveSessions,
+		Spend:        embeddedSpendHeadroom(resp.Spend),
 	}, nil
+}
+
+// embeddedSpendHeadroom converts the spend-gate verdict, leaving an absent one
+// nil.
+func embeddedSpendHeadroom(h *orchestration.SpendHeadroom) *accountSDK.SpendHeadroom {
+	if h == nil {
+		return nil
+	}
+	return &accountSDK.SpendHeadroom{
+		Admits:   h.Admits,
+		Refusal:  h.Refusal,
+		Window:   h.Window,
+		Axis:     h.Axis,
+		Used:     h.Used,
+		Limit:    h.Limit,
+		Failures: h.Failures,
+		FreesAt:  h.FreesAt,
+	}
 }
 
 // =============================================================================
@@ -298,30 +324,61 @@ func accountCredentialToOrchestration(c *accountSDK.Credential) *orchestration.A
 
 // accountInfoFromOrchestration converts an account metadata record to the SDK
 // type. It touches metadata fields only.
+// accountBillingToOrchestration converts an SDK billing; nil is "not
+// configured".
+func accountBillingToOrchestration(b *accountSDK.Billing) orchestration.AccountBilling {
+	if b == nil {
+		return orchestration.AccountBilling{}
+	}
+	return orchestration.AccountBilling{Mode: orchestration.BillingMode(b.Mode), MonthlyFeeMicros: b.MonthlyFeeMicros}
+}
+
+// optionalAccountBilling converts an update's billing to the service's "nil
+// means unchanged" pointer.
+func optionalAccountBilling(b *accountSDK.Billing) *orchestration.AccountBilling {
+	if b == nil {
+		return nil
+	}
+	billing := accountBillingToOrchestration(b)
+	return &billing
+}
+
+// accountBillingFromOrchestration renders a record's billing; not configured
+// is nil.
+func accountBillingFromOrchestration(b orchestration.AccountBilling) *accountSDK.Billing {
+	if b == (orchestration.AccountBilling{}) {
+		return nil
+	}
+	return &accountSDK.Billing{Mode: accountSDK.BillingMode(b.Mode), MonthlyFeeMicros: b.MonthlyFeeMicros}
+}
+
 func accountInfoFromOrchestration(a *orchestration.Account) *accountSDK.AccountInfo {
 	if a == nil {
 		return nil
 	}
 	return &accountSDK.AccountInfo{
-		ID:                   a.ID,
-		TenantID:             a.TenantID,
-		ProjectID:            a.ProjectID,
-		Provider:             accountSDK.Provider(a.Provider),
-		DisplayName:          a.DisplayName,
-		Default:              a.Default,
-		Status:               accountSDK.Status(a.Status),
-		RefreshPolicy:        accountSDK.RefreshPolicy(a.RefreshPolicy),
-		CredentialSecretRef:  a.CredentialSecretRef,
-		CredentialSecretFile: a.CredentialSecretFile,
-		AvailableAt:          a.AvailableAt,
-		CredentialExpiresAt:  a.CredentialExpiresAt,
-		LastValidatedAt:      a.LastValidatedAt,
-		CredentialHealth:     accountSDK.CredentialHealth(a.CredentialHealth()),
-		CreatedAt:            a.CreatedAt,
-		UpdatedAt:            a.UpdatedAt,
-		LastUsedAt:           a.LastUsedAt,
-		LastRefreshedAt:      a.LastRefreshedAt,
-		LastError:            a.LastError,
+		ID:                    a.ID,
+		TenantID:              a.TenantID,
+		ProjectID:             a.ProjectID,
+		Provider:              accountSDK.Provider(a.Provider),
+		DisplayName:           a.DisplayName,
+		Default:               a.Default,
+		Status:                accountSDK.Status(a.Status),
+		RefreshPolicy:         accountSDK.RefreshPolicy(a.RefreshPolicy),
+		CredentialSecretRef:   a.CredentialSecretRef,
+		CredentialSecretFile:  a.CredentialSecretFile,
+		AvailableAt:           a.AvailableAt,
+		CredentialExpiresAt:   a.CredentialExpiresAt,
+		LastValidatedAt:       a.LastValidatedAt,
+		CredentialHealth:      accountSDK.CredentialHealth(a.CredentialHealth()),
+		CreatedAt:             a.CreatedAt,
+		UpdatedAt:             a.UpdatedAt,
+		LastUsedAt:            a.LastUsedAt,
+		LastRefreshedAt:       a.LastRefreshedAt,
+		LastError:             a.LastError,
+		MaxConcurrentSessions: a.MaxConcurrentSessions,
+		Billing:               accountBillingFromOrchestration(a.Billing),
+		Spend:                 accountSpendPolicyFromOrchestration(a.Spend),
 	}
 }
 
@@ -369,6 +426,72 @@ func handleAccountMaterialize(ctx context.Context, svc service.QuicBaaS, req int
 	}, nil
 }
 
+// reservationTenant binds a reservation verb to the authenticated subject's
+// tenant when the context carries a tenant-scoped subject, with the same rule
+// every other transport applies: an omitted tenant is the subject's, and one
+// naming another tenant is refused. An in-process caller with no bound subject
+// is the process holding the pool and names its tenant on the request, as for
+// every other embedded account verb.
+func reservationTenant(ctx context.Context, requested, method string) (string, error) {
+	subject, scoped := tenantScopedSubject(ctx)
+	if !scoped {
+		return requested, nil
+	}
+	if requested != "" && requested != subject.TenantID {
+		return "", NewPermissionDeniedError(accountServiceName, method,
+			"tenant_id does not match the authenticated subject")
+	}
+	return subject.TenantID, nil
+}
+
+// handleAccountReserveSession claims a session slot in-process.
+func handleAccountReserveSession(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*accountSDK.ReserveSessionRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError(accountServiceName, "ReserveSession",
+			"*account.ReserveSessionRequest", reflect.TypeOf(req).String())
+	}
+	tenantID, err := reservationTenant(ctx, r.TenantID, "ReserveSession")
+	if err != nil {
+		return nil, err
+	}
+	accountSvc, err := accountService(svc, "ReserveSession")
+	if err != nil {
+		return nil, err
+	}
+	resp, err := accountSvc.ReserveAccountSession(ctx, &service.ReserveAccountSessionRequest{
+		TenantID: tenantID, AccountID: r.AccountID, ExpectedLive: r.ExpectedLive,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &accountSDK.SessionReservation{ReservationID: resp.ReservationID}, nil
+}
+
+// handleAccountReleaseSession gives a session reservation back in-process.
+func handleAccountReleaseSession(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*accountSDK.ReleaseSessionRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError(accountServiceName, "ReleaseSession",
+			"*account.ReleaseSessionRequest", reflect.TypeOf(req).String())
+	}
+	tenantID, err := reservationTenant(ctx, r.TenantID, "ReleaseSession")
+	if err != nil {
+		return nil, err
+	}
+	accountSvc, err := accountService(svc, "ReleaseSession")
+	if err != nil {
+		return nil, err
+	}
+	resp, err := accountSvc.ReleaseAccountSession(ctx, &service.ReleaseAccountSessionRequest{
+		TenantID: tenantID, AccountID: r.AccountID, ReservationID: r.ReservationID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &accountSDK.SessionReservation{ReservationID: resp.ReservationID}, nil
+}
+
 // releasedCredentialFromOrchestration converts a released envelope to the SDK
 // type, dropping the refresh grant (refresh token, token endpoint, client id).
 func releasedCredentialFromOrchestration(c *orchestration.AccountCredential) *accountSDK.ReleasedCredential {
@@ -382,5 +505,6 @@ func releasedCredentialFromOrchestration(c *orchestration.AccountCredential) *ac
 		ExpiresAt:         c.ExpiresAt,
 		Scopes:            c.Scopes,
 		AccessTokenEnvKey: c.AccessTokenEnvKey,
+		Generation:        c.Generation,
 	}
 }

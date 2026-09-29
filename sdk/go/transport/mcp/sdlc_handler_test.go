@@ -120,3 +120,27 @@ func TestSDLCOnboardingTransforms_RefuseNonsense(t *testing.T) {
 		t.Error("an unmapped verb was transformed rather than refused")
 	}
 }
+
+// TestSDLCOpenWorkTransform decodes sdlc_open_work's result into the SDK's
+// own type, and refuses a result that is not one.
+func TestSDLCOpenWorkTransform(t *testing.T) {
+	if got, ok := sdlcToolName("OpenWork"); !ok || got != "sdlc_open_work" {
+		t.Fatalf("OpenWork → %q %v", got, ok)
+	}
+	decoded, err := transformSDLCResponse("OpenWork", map[string]any{
+		"project_id": "p1", "repo": "acme/api", "agent": "agent-api",
+		"pull_requests": []map[string]any{{"number": 7, "head_ref": "issue/7", "ci_state": "failure", "review_state": "changes_requested", "age_seconds": 60}},
+		"issues":        []map[string]any{{"number": 3, "labels": []string{"task:blocked"}}},
+	})
+	if err != nil {
+		t.Fatalf("OpenWork transform: %v", err)
+	}
+	work, ok := decoded.(*sdlc.OpenWork)
+	if !ok || work.Agent != "agent-api" || len(work.PullRequests) != 1 || work.PullRequests[0].CIState != "failure" ||
+		work.PullRequests[0].AgeSeconds != 60 || len(work.Issues) != 1 || work.Issues[0].Labels[0] != "task:blocked" {
+		t.Fatalf("OpenWork decoded to %T = %+v", decoded, decoded)
+	}
+	if _, err := transformSDLCResponse("OpenWork", map[string]any{"pull_requests": "none"}); err == nil {
+		t.Error("a mistyped open-work result decoded")
+	}
+}

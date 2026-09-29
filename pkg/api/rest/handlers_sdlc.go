@@ -21,6 +21,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -39,6 +40,12 @@ import (
 //   DELETE /api/v1/sdlc/projects/{projectID}/binding   sdlc:unbind
 //   POST   /api/v1/sdlc/projects/{projectID}/onboarding      sdlc:bind
 //   GET    /api/v1/sdlc/projects/{projectID}/conformance     sdlc:read
+//   GET    /api/v1/sdlc/projects/{projectID}/open-work       sdlc:read
+//   GET    /api/v1/sdlc/projects/{projectID}/pulls/{number}/reviewer   sdlc:read
+//   PUT    /api/v1/sdlc/projects/{projectID}/pulls/{number}/reviewer   sdlc:bind
+//   DELETE /api/v1/sdlc/projects/{projectID}/pulls/{number}/reviewer   sdlc:bind
+//   POST   /api/v1/sdlc/projects/{projectID}/issues          sdlc:issue_create
+//   GET    /api/v1/sdlc/projects/{projectID}/collaborators   sdlc:read
 //   GET    /api/v1/sdlc/tasks/{taskID}/delivery        sdlc:read
 //   POST   /api/v1/sdlc/webhook/{projectID}            public (HMAC)
 //
@@ -80,6 +87,9 @@ func (s *Server) sdlcService(w http.ResponseWriter, r *http.Request) *service.SD
 
 // respondSDLCError maps the module's typed errors onto statuses.
 func respondSDLCError(w http.ResponseWriter, r *http.Request, err error) {
+	if respondReferenceError(w, r, err) {
+		return
+	}
 	var (
 		notRegistered   *sdlc.ForgeNotRegisteredError
 		strategy        *sdlc.StrategyNotRegisteredError
@@ -88,11 +98,22 @@ func respondSDLCError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, sdlc.ErrNotFound), isOrchNotFoundError(err), errors.As(err, &projectNotFound):
 		RespondError(w, r, http.StatusNotFound, err)
-	case errors.Is(err, sdlc.ErrAlreadyExists), errors.Is(err, sdlc.ErrVersionConflict), errors.Is(err, sdlc.ErrWebhookRouteConflict):
+	case errors.Is(err, sdlc.ErrAlreadyExists), errors.Is(err, sdlc.ErrVersionConflict), errors.Is(err, sdlc.ErrWebhookRouteConflict),
+		errors.Is(err, orchestration.ErrTaskInvalidState), errors.Is(err, orchestration.ErrTaskSourceAlreadyAdopted),
+		errors.Is(err, sdlc.ErrAdoptionRefused):
+		// ErrTaskInvalidState covers the attention inbox resolving an item
+		// that is no longer blocked — another caller readmitted or failed it
+		// first, exactly the race a 409 exists to report.
 		RespondError(w, r, http.StatusConflict, err)
 	case errors.Is(err, sdlc.ErrInvalidInput), errors.As(err, &notRegistered), errors.As(err, &strategy),
-		errors.Is(err, orchestration.ErrWorkflowValidation):
+		errors.Is(err, orchestration.ErrWorkflowValidation), errors.Is(err, orchestration.ErrInvalidInput):
 		RespondError(w, r, http.StatusBadRequest, err)
+	case errors.Is(err, sdlc.ErrUnavailable):
+		RespondError(w, r, http.StatusServiceUnavailable, err)
+	case errors.Is(err, sdlc.ErrAdoptionIncomplete):
+		// The task exists and runs; a forge write after it did not land. The
+		// error names the task, and the forge is the party that failed.
+		RespondError(w, r, http.StatusBadGateway, err)
 	default:
 		RespondError(w, r, http.StatusInternalServerError, err)
 	}
@@ -305,4 +326,127 @@ func (s *Server) HandleGetSDLCConformance(w http.ResponseWriter, r *http.Request
 		return
 	}
 	RespondJSON(w, r, http.StatusOK, report)
+}
+
+// HandleGetSDLCOpenWork serves GET /api/v1/sdlc/projects/{projectID}/open-work.
+//
+// READ-ONLY. It answers what the factory has in flight on a bound project's
+// forge: the open pull requests the project's agent opened, with their CI and
+// review state, and the open issues carrying a label the module writes.
+func (s *Server) HandleGetSDLCOpenWork(w http.ResponseWriter, r *http.Request) {
+	svc := s.sdlcService(w, r)
+	if svc == nil {
+		return
+	}
+	projectID := chi.URLParam(r, "projectID")
+	if projectID == "" {
+		RespondBadRequest(w, r, "project ID is required")
+		return
+	}
+	tenantID, ok := sdlcRequestTenant(w, r)
+	if !ok {
+		return
+	}
+	work, err := svc.OpenWork(r.Context(), tenantID, projectID)
+	if err != nil {
+		respondSDLCError(w, r, err)
+		return
+	}
+	RespondJSON(w, r, http.StatusOK, work)
+}
+
+// =============================================================================
+// The per-pull-request reviewer override
+// =============================================================================
+
+// SDLCReviewerOverrideRequest is the body of
+// PUT /api/v1/sdlc/projects/{projectID}/pulls/{number}/reviewer.
+type SDLCReviewerOverrideRequest struct {
+	// Profile names one of the binding's reviewer profiles.
+	Profile string `json:"profile"`
+}
+
+// sdlcReviewerTarget resolves the module, the tenant, the project and the pull
+// request every reviewer-override route acts on, or answers the refusal.
+func (s *Server) sdlcReviewerTarget(w http.ResponseWriter, r *http.Request) (*service.SDLCService, string, string, int, bool) {
+	svc := s.sdlcService(w, r)
+	if svc == nil {
+		return nil, "", "", 0, false
+	}
+	projectID := chi.URLParam(r, "projectID")
+	if projectID == "" {
+		RespondBadRequest(w, r, "project ID is required")
+		return nil, "", "", 0, false
+	}
+	number, err := strconv.Atoi(chi.URLParam(r, "number"))
+	if err != nil || number <= 0 {
+		RespondBadRequest(w, r, "the pull request number must be a positive integer")
+		return nil, "", "", 0, false
+	}
+	tenantID, ok := sdlcRequestTenant(w, r)
+	if !ok {
+		return nil, "", "", 0, false
+	}
+	return svc, tenantID, projectID, number, true
+}
+
+// HandleGetSDLCReviewer serves
+// GET /api/v1/sdlc/projects/{projectID}/pulls/{number}/reviewer: which
+// reviewer profile reviews the pull request, and whether an operator chose it.
+func (s *Server) HandleGetSDLCReviewer(w http.ResponseWriter, r *http.Request) {
+	svc, tenantID, projectID, number, ok := s.sdlcReviewerTarget(w, r)
+	if !ok {
+		return
+	}
+	selection, err := svc.ReviewerSelection(r.Context(), tenantID, projectID, number)
+	if err != nil {
+		respondSDLCError(w, r, err)
+		return
+	}
+	RespondJSON(w, r, http.StatusOK, selection)
+}
+
+// HandleSetSDLCReviewer serves
+// PUT /api/v1/sdlc/projects/{projectID}/pulls/{number}/reviewer: an operator
+// choosing which profile reviews one pull request.
+func (s *Server) HandleSetSDLCReviewer(w http.ResponseWriter, r *http.Request) {
+	svc, tenantID, projectID, number, ok := s.sdlcReviewerTarget(w, r)
+	if !ok {
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		RespondBadRequest(w, r, "failed to read request body")
+		return
+	}
+	defer r.Body.Close()
+	var req SDLCReviewerOverrideRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		RespondBadRequest(w, r, "invalid JSON body")
+		return
+	}
+	selection, err := svc.SetReviewerOverride(r.Context(), tenantID, projectID, number, req.Profile)
+	if err != nil {
+		respondSDLCError(w, r, err)
+		return
+	}
+	RespondJSON(w, r, http.StatusOK, selection)
+}
+
+// HandleClearSDLCReviewer serves
+// DELETE /api/v1/sdlc/projects/{projectID}/pulls/{number}/reviewer: the
+// binding's default reviews the pull request again. It answers the selection
+// that now holds rather than 204, so a caller renders the result without a
+// second read.
+func (s *Server) HandleClearSDLCReviewer(w http.ResponseWriter, r *http.Request) {
+	svc, tenantID, projectID, number, ok := s.sdlcReviewerTarget(w, r)
+	if !ok {
+		return
+	}
+	selection, err := svc.ClearReviewerOverride(r.Context(), tenantID, projectID, number)
+	if err != nil {
+		respondSDLCError(w, r, err)
+		return
+	}
+	RespondJSON(w, r, http.StatusOK, selection)
 }

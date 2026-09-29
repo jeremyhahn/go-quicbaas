@@ -1,12 +1,12 @@
 # SSH — CLI
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-09-24
 > Every verb and flag, with runnable examples. Feature folder: `docs/ssh/`.
 
 Server-side SSH key store backed by [go-xkms](https://github.com/jeremyhahn/go-xkms).
 Private key material is mlocked into a memguard `Secret` and never
 written to the operator's filesystem. Operators consume the keys
-indirectly: `quicbaas agent deploy --ssh-key-name <name>` looks up
+indirectly: `quicbaas fleet deploy --ssh-key-name <name>` looks up
 the key in the store and uses it to dial the remote host without
 ever materialising the PEM bytes outside the server process.
 
@@ -22,6 +22,14 @@ surface, so a script written against one works unchanged against the others.
 > `XKMSD_TOKEN` environment variables and the `~/.quicbaas/ssh-store` local
 > file store are gone. To reach a remote store, point `--server` at the
 > quicbaasd that owns it.
+
+> Keys live in quicbaasd's barrier-sealed store, never on disk (see
+> [architecture](architecture.md#where-the-keys-live)). The CLI never reads
+> `~/.quicbaas/ssh-store`. A copy left there by an old CLI is dead plaintext:
+> confirm the daemon holds the key you deploy with
+> (`quicbaas ssh keys get --scope user --owner $USER --name <name>`), then
+> destroy the old copy:
+> `find ~/.quicbaas/ssh-store -type f -exec shred -u {} + && rm -r ~/.quicbaas/ssh-store`.
 
 ## Subcommands
 
@@ -122,7 +130,7 @@ key changes.
 ```bash
 quicbaas ssh known-hosts add \
   --host gpu-node-01 \
-  --fingerprint "SHA256:abc..." \
+  --key "ssh-ed25519 AAAAC3Nza..." \
   --scope user
 ```
 
@@ -164,3 +172,26 @@ quicbaas ssh authorized remove --name fleet-deploy --scope user
 - [Fleet quick start](../software-factory/user.md)
 - [Agent deploy reference](../software-factory/cli.md)
 - [SDK security surface — SSH](engineering.md#ssh--sshservice)
+
+## `quicbaas ssh agent` — use a KMS-held key from git and ssh
+
+`quicbaas ssh agent` serves a local ssh-agent socket for one stored key. The
+agent holds only the public half; every signature is made by quicbaasd, so
+the private key never leaves the KMS. It prints `SSH_AUTH_SOCK=<path>` once
+listening (and writes it to `--env-file`, mode 0600), then runs until
+interrupted, removing the socket on exit.
+
+```sh
+quicbaas ssh agent --scope service --owner agent-go-codec \
+  --name agent-go-codec-signing --env-file /run/user/$UID/codec-agent.env &
+. /run/user/$UID/codec-agent.env; export SSH_AUTH_SOCK
+
+# Push over SSH and sign commits with the same KMS key:
+PUB=$(quicbaas ssh keys export --scope service --owner agent-go-codec --name agent-go-codec-signing)
+git -c gpg.format=ssh -c user.signingkey="key::$PUB" commit -S -m "..."
+git push
+```
+
+`--socket-dir` names the directory for the socket; it must not exist yet
+(the agent creates it 0700 and never adopts a directory it did not create).
+The default is a private temporary directory.

@@ -8,6 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/agents"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/page"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/spend"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
@@ -483,7 +487,7 @@ func TestClient_List_HappyPath(t *testing.T) {
 		},
 	}
 	c := NewClient(mt)
-	resp, err := c.List(context.Background(), "tenant-1")
+	resp, err := c.List(context.Background(), &ListProjectsRequest{TenantID: "tenant-1"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -495,9 +499,36 @@ func TestClient_List_HappyPath(t *testing.T) {
 	}
 }
 
+// TestClient_List_CarriesPageParams proves the request's paging, sorting and
+// search reach the transport, which writes them onto the wire.
+func TestClient_List_CarriesPageParams(t *testing.T) {
+	want := page.Params{Limit: 10, Offset: 20, Sort: "name:desc", Query: "web"}
+	mt := &mockTransport{
+		requestFn: func(_ context.Context, _, _ string, req interface{}) (interface{}, error) {
+			r := req.(*ListProjectsRequest)
+			if r.Params != want {
+				t.Errorf("params = %+v, want %+v", r.Params, want)
+			}
+			return &ListProjectsResponse{}, nil
+		},
+	}
+	c := NewClient(mt)
+	if _, err := c.List(context.Background(), &ListProjectsRequest{TenantID: "t", Params: want}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestClient_List_NilRequest(t *testing.T) {
+	c := NewClient(&mockTransport{})
+	_, err := c.List(context.Background(), nil)
+	if err == nil || !errors.IsInvalidInput(err) {
+		t.Errorf("expected InvalidInput error, got %v", err)
+	}
+}
+
 func TestClient_List_EmptyTenantID(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	_, err := c.List(context.Background(), "")
+	_, err := c.List(context.Background(), &ListProjectsRequest{})
 	if err == nil || !errors.IsInvalidInput(err) {
 		t.Errorf("expected InvalidInput error, got %v", err)
 	}
@@ -506,7 +537,7 @@ func TestClient_List_EmptyTenantID(t *testing.T) {
 func TestClient_List_NilContext(t *testing.T) {
 	c := NewClient(&mockTransport{})
 	//nolint:staticcheck
-	_, err := c.List(nil, "t")
+	_, err := c.List(nil, &ListProjectsRequest{TenantID: "t"})
 	if err == nil || errors.Code(err) != errors.CodeInvalidInput {
 		t.Errorf("expected CodeInvalidInput, got %v", err)
 	}
@@ -519,7 +550,7 @@ func TestClient_List_NilResponse_ReturnsEmpty(t *testing.T) {
 		},
 	}
 	c := NewClient(mt)
-	resp, err := c.List(context.Background(), "t")
+	resp, err := c.List(context.Background(), &ListProjectsRequest{TenantID: "t"})
 	if err != nil {
 		t.Fatalf("unexpected error for nil response: %v", err)
 	}
@@ -535,7 +566,7 @@ func TestClient_List_InvalidResponseType(t *testing.T) {
 		},
 	}
 	c := NewClient(mt)
-	_, err := c.List(context.Background(), "t")
+	_, err := c.List(context.Background(), &ListProjectsRequest{TenantID: "t"})
 	if err == nil || errors.Code(err) != errors.CodeInternal {
 		t.Errorf("expected CodeInternal, got %v", err)
 	}
@@ -548,7 +579,7 @@ func TestClient_List_TransportError(t *testing.T) {
 		},
 	}
 	c := NewClient(mt)
-	_, err := c.List(context.Background(), "t")
+	_, err := c.List(context.Background(), &ListProjectsRequest{TenantID: "t"})
 	if err == nil || errors.Code(err) != errors.CodeUnavailable {
 		t.Errorf("expected CodeUnavailable, got %v", err)
 	}
@@ -605,50 +636,50 @@ func TestValidateUpdateRequest(t *testing.T) {
 // =============================================================================
 
 // =============================================================================
-// GrantAgentRole (Gap 4)
+// GrantFleetNodeRole (Gap 4)
 // =============================================================================
 
 func TestClient_GrantAgentRole_HappyPath(t *testing.T) {
 	mt := &mockTransport{
 		requestFn: func(_ context.Context, _, method string, req interface{}) (interface{}, error) {
-			if method != "GrantAgentRole" {
-				t.Errorf("expected method 'GrantAgentRole', got %q", method)
+			if method != "GrantFleetNodeRole" {
+				t.Errorf("expected method 'GrantFleetNodeRole', got %q", method)
 			}
-			r, ok := req.(*GrantAgentRoleRequest)
+			r, ok := req.(*GrantFleetNodeRoleRequest)
 			if !ok {
-				t.Errorf("expected *GrantAgentRoleRequest, got %T", req)
+				t.Errorf("expected *GrantFleetNodeRoleRequest, got %T", req)
 			}
-			if r.AgentID != "agent-1" || r.Role != ProjectRoleWorker {
+			if r.FleetNodeID != "agent-1" || r.Role != ProjectRoleWorker {
 				t.Errorf("unexpected request: %+v", r)
 			}
-			return &GrantAgentRoleResponse{
-				ProjectID: r.ProjectID,
-				AgentID:   r.AgentID,
-				Role:      r.Role,
+			return &GrantFleetNodeRoleResponse{
+				ProjectID:   r.ProjectID,
+				FleetNodeID: r.FleetNodeID,
+				Role:        r.Role,
 			}, nil
 		},
 	}
 	c := NewClient(mt)
-	resp, err := c.GrantAgentRole(context.Background(), &GrantAgentRoleRequest{
-		TenantID:  "tenant-1",
-		ProjectID: "proj-1",
-		AgentID:   "agent-1",
-		Role:      ProjectRoleWorker,
+	resp, err := c.GrantFleetNodeRole(context.Background(), &GrantFleetNodeRoleRequest{
+		TenantID:    "tenant-1",
+		ProjectID:   "proj-1",
+		FleetNodeID: "agent-1",
+		Role:        ProjectRoleWorker,
 	})
 	if err != nil {
-		t.Fatalf("GrantAgentRole: %v", err)
+		t.Fatalf("GrantFleetNodeRole: %v", err)
 	}
-	if resp.AgentID != "agent-1" || resp.Role != ProjectRoleWorker {
+	if resp.FleetNodeID != "agent-1" || resp.Role != ProjectRoleWorker {
 		t.Errorf("unexpected response: %+v", resp)
 	}
 }
 
 func TestClient_GrantAgentRole_MissingTenantID(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	_, err := c.GrantAgentRole(context.Background(), &GrantAgentRoleRequest{
-		ProjectID: "proj-1",
-		AgentID:   "agent-1",
-		Role:      ProjectRoleWorker,
+	_, err := c.GrantFleetNodeRole(context.Background(), &GrantFleetNodeRoleRequest{
+		ProjectID:   "proj-1",
+		FleetNodeID: "agent-1",
+		Role:        ProjectRoleWorker,
 	})
 	if err == nil {
 		t.Fatal("expected error for missing TenantID, got nil")
@@ -657,7 +688,7 @@ func TestClient_GrantAgentRole_MissingTenantID(t *testing.T) {
 
 func TestClient_GrantAgentRole_MissingAgentID(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	_, err := c.GrantAgentRole(context.Background(), &GrantAgentRoleRequest{
+	_, err := c.GrantFleetNodeRole(context.Background(), &GrantFleetNodeRoleRequest{
 		TenantID:  "tenant-1",
 		ProjectID: "proj-1",
 		Role:      ProjectRoleWorker,
@@ -670,15 +701,15 @@ func TestClient_GrantAgentRole_MissingAgentID(t *testing.T) {
 func TestClient_GrantAgentRole_TransportError(t *testing.T) {
 	mt := &mockTransport{
 		requestFn: func(_ context.Context, _, _ string, _ interface{}) (interface{}, error) {
-			return nil, errors.NewInternal("project.GrantAgentRole", "grant failed")
+			return nil, errors.NewInternal("project.GrantFleetNodeRole", "grant failed")
 		},
 	}
 	c := NewClient(mt)
-	_, err := c.GrantAgentRole(context.Background(), &GrantAgentRoleRequest{
-		TenantID:  "tenant-1",
-		ProjectID: "proj-1",
-		AgentID:   "agent-1",
-		Role:      ProjectRoleWorker,
+	_, err := c.GrantFleetNodeRole(context.Background(), &GrantFleetNodeRoleRequest{
+		TenantID:    "tenant-1",
+		ProjectID:   "proj-1",
+		FleetNodeID: "agent-1",
+		Role:        ProjectRoleWorker,
 	})
 	if err == nil {
 		t.Fatal("expected transport error, got nil")
@@ -686,44 +717,44 @@ func TestClient_GrantAgentRole_TransportError(t *testing.T) {
 }
 
 // =============================================================================
-// RevokeAgentRole (Gap 4)
+// RevokeFleetNodeRole (Gap 4)
 // =============================================================================
 
 func TestClient_RevokeAgentRole_HappyPath(t *testing.T) {
 	mt := &mockTransport{
 		requestFn: func(_ context.Context, _, method string, req interface{}) (interface{}, error) {
-			if method != "RevokeAgentRole" {
-				t.Errorf("expected method 'RevokeAgentRole', got %q", method)
+			if method != "RevokeFleetNodeRole" {
+				t.Errorf("expected method 'RevokeFleetNodeRole', got %q", method)
 			}
-			r, ok := req.(*RevokeAgentRoleRequest)
+			r, ok := req.(*RevokeFleetNodeRoleRequest)
 			if !ok {
-				t.Errorf("expected *RevokeAgentRoleRequest, got %T", req)
+				t.Errorf("expected *RevokeFleetNodeRoleRequest, got %T", req)
 			}
-			return &RevokeAgentRoleResponse{
-				ProjectID: r.ProjectID,
-				AgentID:   r.AgentID,
+			return &RevokeFleetNodeRoleResponse{
+				ProjectID:   r.ProjectID,
+				FleetNodeID: r.FleetNodeID,
 			}, nil
 		},
 	}
 	c := NewClient(mt)
-	resp, err := c.RevokeAgentRole(context.Background(), &RevokeAgentRoleRequest{
-		TenantID:  "tenant-1",
-		ProjectID: "proj-1",
-		AgentID:   "agent-1",
+	resp, err := c.RevokeFleetNodeRole(context.Background(), &RevokeFleetNodeRoleRequest{
+		TenantID:    "tenant-1",
+		ProjectID:   "proj-1",
+		FleetNodeID: "agent-1",
 	})
 	if err != nil {
-		t.Fatalf("RevokeAgentRole: %v", err)
+		t.Fatalf("RevokeFleetNodeRole: %v", err)
 	}
-	if resp.AgentID != "agent-1" {
-		t.Errorf("expected AgentID='agent-1', got %q", resp.AgentID)
+	if resp.FleetNodeID != "agent-1" {
+		t.Errorf("expected AgentID='agent-1', got %q", resp.FleetNodeID)
 	}
 }
 
 func TestClient_RevokeAgentRole_MissingProjectID(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	_, err := c.RevokeAgentRole(context.Background(), &RevokeAgentRoleRequest{
-		TenantID: "tenant-1",
-		AgentID:  "agent-1",
+	_, err := c.RevokeFleetNodeRole(context.Background(), &RevokeFleetNodeRoleRequest{
+		TenantID:    "tenant-1",
+		FleetNodeID: "agent-1",
 	})
 	if err == nil {
 		t.Fatal("expected error for missing ProjectID, got nil")
@@ -733,14 +764,14 @@ func TestClient_RevokeAgentRole_MissingProjectID(t *testing.T) {
 func TestClient_RevokeAgentRole_TransportError(t *testing.T) {
 	mt := &mockTransport{
 		requestFn: func(_ context.Context, _, _ string, _ interface{}) (interface{}, error) {
-			return nil, errors.NewInternal("project.RevokeAgentRole", "revoke failed")
+			return nil, errors.NewInternal("project.RevokeFleetNodeRole", "revoke failed")
 		},
 	}
 	c := NewClient(mt)
-	_, err := c.RevokeAgentRole(context.Background(), &RevokeAgentRoleRequest{
-		TenantID:  "tenant-1",
-		ProjectID: "proj-1",
-		AgentID:   "agent-1",
+	_, err := c.RevokeFleetNodeRole(context.Background(), &RevokeFleetNodeRoleRequest{
+		TenantID:    "tenant-1",
+		ProjectID:   "proj-1",
+		FleetNodeID: "agent-1",
 	})
 	if err == nil {
 		t.Fatal("expected transport error, got nil")
@@ -756,19 +787,19 @@ func TestProjectInfo_AllFields(t *testing.T) {
 				TenantID:         "tenant-1",
 				Name:             "full-project",
 				Description:      "desc",
-				Workspace:        ProjectWorkspace{AgentID: "agent-1", Path: "/ws"},
+				Workspace:        ProjectWorkspace{FleetNodeID: "agent-1", Path: "/ws"},
 				HostAffinity:     "host-a",
-				DefaultLeadAgent: "lead-1",
+				DefaultLeadAgent: agents.AgentRef{AgentID: "lead-1"},
 				Git: ProjectGit{
 					RepoURL:       "https://github.com/example/repo",
 					DefaultBranch: "main",
 					CurrentSHA:    "abc123",
 				},
 				Permissions: ProjectPermissions{
-					AgentRoles: map[string]ProjectRole{"agent-1": ProjectRoleLead},
+					FleetNodeRoles: map[string]ProjectRole{"agent-1": ProjectRoleLead},
 				},
+				Spend: spend.Limits{Windows: []spend.Window{{Name: "daily", Size: time.Hour, MaxTokens: 1000000}}},
 				Quotas: ProjectQuotas{
-					TokenBudget:    1000000,
 					GPUMinutes:     60,
 					MaxConcurrency: 4,
 				},
@@ -783,16 +814,16 @@ func TestProjectInfo_AllFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if info.Workspace.AgentID != "agent-1" {
-		t.Errorf("expected Workspace.AgentID='agent-1', got %q", info.Workspace.AgentID)
+	if info.Workspace.FleetNodeID != "agent-1" {
+		t.Errorf("expected Workspace.AgentID='agent-1', got %q", info.Workspace.FleetNodeID)
 	}
 	if info.Git.RepoURL != "https://github.com/example/repo" {
 		t.Errorf("unexpected Git.RepoURL: %q", info.Git.RepoURL)
 	}
-	if info.Quotas.TokenBudget != 1000000 {
-		t.Errorf("expected TokenBudget=1000000, got %d", info.Quotas.TokenBudget)
+	if len(info.Spend.Windows) != 1 || info.Spend.Windows[0].MaxTokens != 1000000 {
+		t.Errorf("expected the spend window to survive, got %+v", info.Spend)
 	}
-	if info.Permissions.AgentRoles["agent-1"] != ProjectRoleLead {
+	if info.Permissions.FleetNodeRoles["agent-1"] != ProjectRoleLead {
 		t.Errorf("expected lead role for agent-1")
 	}
 }
@@ -886,14 +917,14 @@ func TestClient_Update_InvalidResponseType(t *testing.T) {
 }
 
 // =============================================================================
-// Additional branch coverage: GrantAgentRole
+// Additional branch coverage: GrantFleetNodeRole
 // =============================================================================
 
 func TestClient_GrantAgentRole_NilContext(t *testing.T) {
 	c := NewClient(&mockTransport{})
 	//nolint:staticcheck
-	_, err := c.GrantAgentRole(nil, &GrantAgentRoleRequest{
-		TenantID: "t", ProjectID: "p", AgentID: "a", Role: ProjectRoleWorker,
+	_, err := c.GrantFleetNodeRole(nil, &GrantFleetNodeRoleRequest{
+		TenantID: "t", ProjectID: "p", FleetNodeID: "a", Role: ProjectRoleWorker,
 	})
 	if err == nil || errors.Code(err) != errors.CodeInvalidInput {
 		t.Errorf("expected CodeInvalidInput, got %v", err)
@@ -902,15 +933,15 @@ func TestClient_GrantAgentRole_NilContext(t *testing.T) {
 
 func TestClient_GrantAgentRole_NilRequest(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	if _, err := c.GrantAgentRole(context.Background(), nil); err == nil || !errors.IsInvalidInput(err) {
+	if _, err := c.GrantFleetNodeRole(context.Background(), nil); err == nil || !errors.IsInvalidInput(err) {
 		t.Errorf("expected InvalidInput error, got %v", err)
 	}
 }
 
 func TestClient_GrantAgentRole_MissingProjectID(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	_, err := c.GrantAgentRole(context.Background(), &GrantAgentRoleRequest{
-		TenantID: "t", AgentID: "a", Role: ProjectRoleWorker,
+	_, err := c.GrantFleetNodeRole(context.Background(), &GrantFleetNodeRoleRequest{
+		TenantID: "t", FleetNodeID: "a", Role: ProjectRoleWorker,
 	})
 	if err == nil || !errors.IsInvalidInput(err) {
 		t.Errorf("expected InvalidInput error, got %v", err)
@@ -919,8 +950,8 @@ func TestClient_GrantAgentRole_MissingProjectID(t *testing.T) {
 
 func TestClient_GrantAgentRole_MissingRole(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	_, err := c.GrantAgentRole(context.Background(), &GrantAgentRoleRequest{
-		TenantID: "t", ProjectID: "p", AgentID: "a",
+	_, err := c.GrantFleetNodeRole(context.Background(), &GrantFleetNodeRoleRequest{
+		TenantID: "t", ProjectID: "p", FleetNodeID: "a",
 	})
 	if err == nil || !errors.IsInvalidInput(err) {
 		t.Errorf("expected InvalidInput error, got %v", err)
@@ -934,8 +965,8 @@ func TestClient_GrantAgentRole_NilResponse(t *testing.T) {
 		},
 	}
 	c := NewClient(mt)
-	_, err := c.GrantAgentRole(context.Background(), &GrantAgentRoleRequest{
-		TenantID: "t", ProjectID: "p", AgentID: "a", Role: ProjectRoleWorker,
+	_, err := c.GrantFleetNodeRole(context.Background(), &GrantFleetNodeRoleRequest{
+		TenantID: "t", ProjectID: "p", FleetNodeID: "a", Role: ProjectRoleWorker,
 	})
 	if err == nil || errors.Code(err) != errors.CodeInternal {
 		t.Errorf("expected CodeInternal, got %v", err)
@@ -949,8 +980,8 @@ func TestClient_GrantAgentRole_InvalidResponseType(t *testing.T) {
 		},
 	}
 	c := NewClient(mt)
-	_, err := c.GrantAgentRole(context.Background(), &GrantAgentRoleRequest{
-		TenantID: "t", ProjectID: "p", AgentID: "a", Role: ProjectRoleWorker,
+	_, err := c.GrantFleetNodeRole(context.Background(), &GrantFleetNodeRoleRequest{
+		TenantID: "t", ProjectID: "p", FleetNodeID: "a", Role: ProjectRoleWorker,
 	})
 	if err == nil || errors.Code(err) != errors.CodeInternal {
 		t.Errorf("expected CodeInternal, got %v", err)
@@ -958,14 +989,14 @@ func TestClient_GrantAgentRole_InvalidResponseType(t *testing.T) {
 }
 
 // =============================================================================
-// Additional branch coverage: RevokeAgentRole
+// Additional branch coverage: RevokeFleetNodeRole
 // =============================================================================
 
 func TestClient_RevokeAgentRole_NilContext(t *testing.T) {
 	c := NewClient(&mockTransport{})
 	//nolint:staticcheck
-	_, err := c.RevokeAgentRole(nil, &RevokeAgentRoleRequest{
-		TenantID: "t", ProjectID: "p", AgentID: "a",
+	_, err := c.RevokeFleetNodeRole(nil, &RevokeFleetNodeRoleRequest{
+		TenantID: "t", ProjectID: "p", FleetNodeID: "a",
 	})
 	if err == nil || errors.Code(err) != errors.CodeInvalidInput {
 		t.Errorf("expected CodeInvalidInput, got %v", err)
@@ -974,15 +1005,15 @@ func TestClient_RevokeAgentRole_NilContext(t *testing.T) {
 
 func TestClient_RevokeAgentRole_NilRequest(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	if _, err := c.RevokeAgentRole(context.Background(), nil); err == nil || !errors.IsInvalidInput(err) {
+	if _, err := c.RevokeFleetNodeRole(context.Background(), nil); err == nil || !errors.IsInvalidInput(err) {
 		t.Errorf("expected InvalidInput error, got %v", err)
 	}
 }
 
 func TestClient_RevokeAgentRole_MissingTenantID(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	_, err := c.RevokeAgentRole(context.Background(), &RevokeAgentRoleRequest{
-		ProjectID: "p", AgentID: "a",
+	_, err := c.RevokeFleetNodeRole(context.Background(), &RevokeFleetNodeRoleRequest{
+		ProjectID: "p", FleetNodeID: "a",
 	})
 	if err == nil || !errors.IsInvalidInput(err) {
 		t.Errorf("expected InvalidInput error, got %v", err)
@@ -991,7 +1022,7 @@ func TestClient_RevokeAgentRole_MissingTenantID(t *testing.T) {
 
 func TestClient_RevokeAgentRole_MissingAgentID(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	_, err := c.RevokeAgentRole(context.Background(), &RevokeAgentRoleRequest{
+	_, err := c.RevokeFleetNodeRole(context.Background(), &RevokeFleetNodeRoleRequest{
 		TenantID: "t", ProjectID: "p",
 	})
 	if err == nil || !errors.IsInvalidInput(err) {
@@ -1006,8 +1037,8 @@ func TestClient_RevokeAgentRole_NilResponse(t *testing.T) {
 		},
 	}
 	c := NewClient(mt)
-	_, err := c.RevokeAgentRole(context.Background(), &RevokeAgentRoleRequest{
-		TenantID: "t", ProjectID: "p", AgentID: "a",
+	_, err := c.RevokeFleetNodeRole(context.Background(), &RevokeFleetNodeRoleRequest{
+		TenantID: "t", ProjectID: "p", FleetNodeID: "a",
 	})
 	if err == nil || errors.Code(err) != errors.CodeInternal {
 		t.Errorf("expected CodeInternal, got %v", err)
@@ -1021,8 +1052,8 @@ func TestClient_RevokeAgentRole_InvalidResponseType(t *testing.T) {
 		},
 	}
 	c := NewClient(mt)
-	_, err := c.RevokeAgentRole(context.Background(), &RevokeAgentRoleRequest{
-		TenantID: "t", ProjectID: "p", AgentID: "a",
+	_, err := c.RevokeFleetNodeRole(context.Background(), &RevokeFleetNodeRoleRequest{
+		TenantID: "t", ProjectID: "p", FleetNodeID: "a",
 	})
 	if err == nil || errors.Code(err) != errors.CodeInternal {
 		t.Errorf("expected CodeInternal, got %v", err)

@@ -39,6 +39,10 @@ var (
 	// ErrAccountInvalid indicates an account failed validation.
 	ErrAccountInvalid = errors.New("account: invalid")
 
+	// ErrAccountEnvConflict indicates an account's credential environment
+	// names a variable the spawn already sets to something else.
+	ErrAccountEnvConflict = errors.New("account: credential environment overrides the spawn's own")
+
 	// ErrAccountStore indicates an internal account store failure.
 	ErrAccountStore = errors.New("account: store error")
 
@@ -70,6 +74,25 @@ var (
 	// later behind a human — see AccountsCoolingDownError.
 	ErrAccountsCoolingDown = errors.New("account: all candidates are cooling down")
 
+	// ErrAccountsSaturated indicates the pool has selectable accounts but
+	// every one of them is already serving as many live sessions as its
+	// MaxConcurrentSessions allows.
+	//
+	// Like a cooldown, it is a busy pool rather than an empty one, and it
+	// clears by itself: the first session to end frees a slot. Unlike a
+	// cooldown it cannot say when, because nothing knows when a session will
+	// end. See AccountsSaturatedError.
+	ErrAccountsSaturated = errors.New("account: all candidates are at their session cap")
+
+	// ErrAccountsSpent indicates the pool has selectable accounts but every
+	// one of them is refused by its own spend policy: a window's allowance is
+	// spent or its failure breaker is open (go-quicbaas#1058, ruling F6).
+	//
+	// Busy, not empty, for the reason a cooldown is: the operator set the
+	// allowances and they are holding, and each frees up at a stated moment.
+	// See AccountsSpentError.
+	ErrAccountsSpent = errors.New("account: every candidate's spend allowance is spent")
+
 	// ErrAccountResolverNotConfigured indicates a spawn requested account
 	// selection (AccountID or AccountAuto) but the backend was never wired
 	// with an AccountResolver. This fails closed rather than silently
@@ -96,6 +119,11 @@ var (
 	// ErrAccountLimited indicates the provider refused the account because it
 	// hit a rate, quota, or usage limit.
 	ErrAccountLimited = errors.New("account: rate/usage limited")
+
+	// ErrAccountCredentialExpiring indicates a pinned account's credential,
+	// which QuicBaaS cannot renew, expires inside
+	// AccountCredentialExpiryBuffer, so a new session must not start on it.
+	ErrAccountCredentialExpiring = errors.New("account: credential expires too soon for a new session")
 
 	// ErrSessionNotRotatable indicates a session cannot be moved onto a
 	// different pooled account.
@@ -170,7 +198,7 @@ type AccountStoreError struct {
 	//
 	// It exists because AccountSecretStore is a SEAM, not only a wrapper: a
 	// deployment can back it with something other than the platform vault (the
-	// agent daemon backs it with a read-through store over the control plane's
+	// fleet node daemon backs it with a read-through store over the control plane's
 	// release endpoint, go-quicbaas#734). Flattening that store's typed refusal
 	// into a message would leave every caller above it matching on substrings
 	// to tell "the credential is revoked" from "the secrets backend is down".
@@ -234,6 +262,26 @@ func (e *AccountErroredError) Error() string {
 
 // Unwrap returns the sentinel error for errors.Is support.
 func (e *AccountErroredError) Unwrap() error { return ErrAccountErrored }
+
+// AccountCredentialExpiringError reports a pinned NEW session refused because
+// its account's non-renewable credential expires inside
+// AccountCredentialExpiryBuffer. A resume of an existing session is exempt.
+type AccountCredentialExpiringError struct {
+	// AccountID is the account that was refused.
+	AccountID string
+
+	// ExpiresAt is the credential's recorded expiry.
+	ExpiresAt time.Time
+}
+
+// Error implements the error interface.
+func (e *AccountCredentialExpiringError) Error() string {
+	return ErrAccountCredentialExpiring.Error() + ": id=" + e.AccountID +
+		" expires_at=" + e.ExpiresAt.UTC().Format(time.RFC3339)
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *AccountCredentialExpiringError) Unwrap() error { return ErrAccountCredentialExpiring }
 
 // AccountProviderMismatchError indicates a pinned account's provider does not
 // match the requesting backend.
@@ -319,6 +367,81 @@ func (e *AccountsCoolingDownError) Error() string {
 // pool.
 func (e *AccountsCoolingDownError) Unwrap() []error {
 	return []error{ErrNoAccountAvailable, ErrAccountsCoolingDown}
+}
+
+// AccountsSaturatedError reports a pool whose every selectable account is at
+// its MaxConcurrentSessions cap.
+//
+// It unwraps to both ErrNoAccountAvailable and ErrAccountsSaturated, for the
+// reason AccountsCoolingDownError does: every existing caller asking whether an
+// account is available is still told no, and the caller that must not park the
+// work for a human (the SDLC module) can tell a busy pool from an empty one.
+type AccountsSaturatedError struct {
+	TenantID  string
+	ProjectID string
+	Provider  AccountProvider
+
+	// Candidates is how many selectable accounts were all at their cap.
+	Candidates int
+
+	// Occupancy renders each capped account as "id live/cap", so the reason
+	// an operator reads names what is holding the pool.
+	Occupancy string
+}
+
+// Error implements the error interface.
+func (e *AccountsSaturatedError) Error() string {
+	msg := ErrAccountsSaturated.Error() + ": tenant=" + e.TenantID +
+		" project=" + e.ProjectID + " provider=" + string(e.Provider) +
+		" candidates=" + strconv.Itoa(e.Candidates)
+	if e.Occupancy != "" {
+		msg += " sessions=[" + e.Occupancy + "]"
+	}
+	return msg
+}
+
+// Unwrap returns both sentinels; see the type.
+func (e *AccountsSaturatedError) Unwrap() []error {
+	return []error{ErrNoAccountAvailable, ErrAccountsSaturated}
+}
+
+// AccountsSpentError reports a pool whose every selectable account is refused
+// by its own spend policy — "the pool is spent until AvailableAt".
+//
+// It unwraps to both ErrNoAccountAvailable and ErrAccountsSpent, for the
+// reason AccountsCoolingDownError does: every caller asking whether an account
+// is available is still told no, and the caller that must not park the work
+// for a human can tell a spent pool from an empty one. It is a DEFERRAL, not a
+// park (ruling F6): the allowances are the operator's and they are working.
+type AccountsSpentError struct {
+	TenantID  string
+	ProjectID string
+	Provider  AccountProvider
+
+	// Candidates is how many accounts were refused for their spend.
+	Candidates int
+
+	// AvailableAt is the earliest moment one of them frees up: a window's
+	// oldest turn ageing out, or a breaker's cooldown ending. Never zero on an
+	// error this package raises; zero only on one rebuilt from a wire message
+	// that carried none.
+	AvailableAt time.Time
+}
+
+// Error implements the error interface.
+func (e *AccountsSpentError) Error() string {
+	msg := ErrAccountsSpent.Error() + ": tenant=" + e.TenantID +
+		" project=" + e.ProjectID + " provider=" + string(e.Provider) +
+		" candidates=" + strconv.Itoa(e.Candidates)
+	if !e.AvailableAt.IsZero() {
+		msg += " available_at=" + e.AvailableAt.UTC().Format(time.RFC3339)
+	}
+	return msg
+}
+
+// Unwrap returns both sentinels; see the type.
+func (e *AccountsSpentError) Unwrap() []error {
+	return []error{ErrNoAccountAvailable, ErrAccountsSpent}
 }
 
 // AccountResolverNotConfiguredError indicates account selection was
@@ -479,6 +602,54 @@ func (e *AccountLimitedError) Error() string {
 // Unwrap returns the sentinel error for errors.Is support.
 func (e *AccountLimitedError) Unwrap() error { return ErrAccountLimited }
 
+// TurnAccountLimitedError reports a turn the provider refused because the
+// session's account hit a limit, after that account has been held.
+//
+// It unwraps to BOTH the limit and the turn's own error. The limit is what a
+// runner acts on (errors.As to *AccountLimitedError names the account and when
+// it returns); the turn error still carries the CLI's structured evidence,
+// which every existing classification of a failed turn reads.
+type TurnAccountLimitedError struct {
+	SessionID string
+	Limit     *AccountLimitedError
+	Cause     error
+}
+
+// Error implements the error interface.
+func (e *TurnAccountLimitedError) Error() string {
+	msg := "orchestration: the turn on session " + e.SessionID + " was refused by the provider"
+	if e.Limit != nil {
+		msg += ": " + e.Limit.Error()
+	}
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+// Unwrap returns the limit and the turn's error.
+func (e *TurnAccountLimitedError) Unwrap() []error {
+	out := make([]error, 0, 2)
+	if e.Limit != nil {
+		out = append(out, e.Limit)
+	}
+	if e.Cause != nil {
+		out = append(out, e.Cause)
+	}
+	return out
+}
+
+// AccountLimitOf reports whether err is a turn the provider refused for an
+// account limit, and returns that limit. It is the one question a runner
+// asks; see TurnAccountLimitedError.
+func AccountLimitOf(err error) (*AccountLimitedError, bool) {
+	var limited *AccountLimitedError
+	if errors.As(err, &limited) && limited != nil {
+		return limited, true
+	}
+	return nil, false
+}
+
 // SessionNotRotatableError reports a rotation request against a session that
 // may not change pooled accounts.
 //
@@ -570,3 +741,27 @@ func (e *AccountCredentialSourceChangedError) Error() string {
 func (e *AccountCredentialSourceChangedError) Unwrap() []error {
 	return []error{ErrAccountCredentialSourceChanged, ErrAccountVersionConflict}
 }
+
+// AccountEnvConflictError reports an account whose credential environment
+// would replace a variable the spawn request already states.
+//
+// THE REQUEST'S ENVIRONMENT IS THE CALLER'S CONFIGURATION, and an account is a
+// credential, not configuration. A reviewer's OPENCODE_CONFIG_CONTENT pins the
+// provider, the model and the tool fences its verdict is attributed to; an
+// account carrying the same variable would silently swap all of that after
+// the runner had validated it. So a collision is refused rather than resolved
+// in either direction: the account is misconfigured, and saying so is the only
+// answer that does not quietly run something nobody asked for.
+type AccountEnvConflictError struct {
+	AccountID string
+	Key       string
+}
+
+// Error implements the error interface.
+func (e *AccountEnvConflictError) Error() string {
+	return ErrAccountEnvConflict.Error() + ": account " + e.AccountID + " sets " + e.Key +
+		", which the spawn already sets; remove it from the account's credential"
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *AccountEnvConflictError) Unwrap() error { return ErrAccountEnvConflict }

@@ -1,3 +1,5 @@
+//go:build !integration
+
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
@@ -67,6 +69,14 @@ func TestComposeDynamicSecrets(t *testing.T) {
 	require.NoError(t, err)
 	_, err = leaseManager.Validate(ctx, created.LeaseID)
 	assert.True(t, lease.IsLeaseRevoked(err), "want a revoked refusal, got %v", err)
+
+	// The revoked lease's tombstone is still stored for the retention window,
+	// but it is no longer an active lease and must not be listed as one
+	// (go-quicbaas#852).
+	listed, err = handler.ListLeases(ctx, &service.ListLeasesRequest{})
+	require.NoError(t, err)
+	assert.Empty(t, listed.Leases)
+	assert.Equal(t, 0, listed.Count)
 }
 
 func TestComposeDynamicSecrets_EmptyRegistryRefusesAnUnknownGenerator(t *testing.T) {

@@ -15,7 +15,7 @@
 
 // Package orchestrator_test — embedded session spawn integration tests.
 //
-// These tests exercise the full embedded-agent dispatch path: an in-process
+// These tests exercise the full embedded-fleet-node dispatch path: an in-process
 // daemon with the orchestration AgentService wired and the embedded agent
 // registered, using a mock Ollama HTTP endpoint so no real GPU/model is
 // required. The mocked Ollama endpoint is acceptable here because this is a
@@ -25,7 +25,7 @@
 //
 //  1. The dispatch router selects the embedded agent for backend="ollama".
 //  2. The embedded agent's GRPCSpawnServer accepts the Spawn RPC without the
-//     "agent daemon has not completed enrollment" rejection (routing-bug fix).
+//     "fleet node daemon has not completed enrollment" rejection (routing-bug fix).
 //  3. SpawnSession returns a valid session_id — no 500 internal server error.
 //  4. A subsequent GetSession lookup succeeds on the returned session_id.
 package orchestrator_test
@@ -33,8 +33,6 @@ package orchestrator_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -50,6 +48,8 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/netport"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // =============================================================================
@@ -123,12 +123,12 @@ func startMockOllama(t *testing.T) string {
 }
 
 // =============================================================================
-// Embedded server with embedded-agent enabled
+// Embedded server with embedded-fleet-node enabled
 // =============================================================================
 
 // embeddedSessionEnv holds a purpose-built server for these tests. It is
 // separate from the shared testServer in main_test.go because it needs
-// --embedded-agent and a mock Ollama URL wired during startup.
+// --embedded-fleet-node and a mock Ollama URL wired during startup.
 type embeddedSessionEnv struct {
 	srv *server.Server
 	svc interface {
@@ -146,10 +146,10 @@ func newEmbeddedSessionEnv(t *testing.T, mockOllamaURL string) *embeddedSessionE
 
 	tmpDir := t.TempDir()
 
-	raftPort, err := findFreeEmbeddedPort(t)
-	require.NoError(t, err)
+	raftPort := findFreeEmbeddedPort(t)
 
 	cfg := config.EmbeddedConfig()
+	cfg.IAM.SPIFFETrustDomain = helpers.SPIFFETrustDomain
 	cfg.Storage.DataDir = filepath.Join(tmpDir, "data")
 	cfg.Storage.WALDir = filepath.Join(tmpDir, "wal")
 	cfg.Raft.NodeID = 1
@@ -159,10 +159,10 @@ func newEmbeddedSessionEnv(t *testing.T, mockOllamaURL string) *embeddedSessionE
 	cfg.Server.Embedded = true
 
 	// Enable embedded agent with the mock Ollama endpoint.
-	cfg.Server.EmbeddedAgent.Enabled = true
-	cfg.Server.EmbeddedAgent.Backends = []string{"ollama"}
-	cfg.Server.EmbeddedAgent.OllamaURL = mockOllamaURL
-	cfg.Server.EmbeddedAgent.DataDir = filepath.Join(tmpDir, "agent-data")
+	cfg.Server.EmbeddedFleetNode.Enabled = true
+	cfg.Server.EmbeddedFleetNode.Backends = []string{"ollama"}
+	cfg.Server.EmbeddedFleetNode.OllamaURL = mockOllamaURL
+	cfg.Server.EmbeddedFleetNode.DataDir = filepath.Join(tmpDir, "agent-data")
 
 	srv, srvErr := server.NewServer(cfg)
 	require.NoError(t, srvErr)
@@ -200,11 +200,11 @@ func newEmbeddedSessionEnv(t *testing.T, mockOllamaURL string) *embeddedSessionE
 // TestEmbeddedSessionSpawn_SucceedsWithoutEnrollment is the primary regression
 // test for the routing bug where SpawnSession for an embedded agent was routed
 // through RemoteACPBackend, which called GRPCSpawnServer.authorize() and
-// returned "agent daemon has not completed enrollment" because SetIdentity()
+// returned "fleet node daemon has not completed enrollment" because SetIdentity()
 // was never called.
 //
 // After the fix:
-//   - GRPCSpawnServer.SetIdentity() is called during startEmbeddedAgent with
+//   - GRPCSpawnServer.SetIdentity() is called during startEmbeddedFleetNode with
 //     a synthetic identity carrying all runtime scopes.
 //   - SpawnSession succeeds and returns a non-empty session_id.
 //   - The TLS handshake noise is eliminated by skipping the token source for
@@ -233,9 +233,9 @@ func TestEmbeddedSessionSpawn_SucceedsWithoutEnrollment(t *testing.T) {
 }
 
 // TestEmbeddedSessionSpawn_EmbeddedAgentIsRegistered verifies that after
-// startEmbeddedAgent the fleet registry contains exactly one embedded-kind
+// startEmbeddedFleetNode the fleet registry contains exactly one embedded-kind
 // agent. The embedded agent registers under the system tenant
-// (embeddedAgentTenantID = qrdbsdk.SystemTenantID), which is what triggers
+// (embeddedFleetNodeTenantID = qrdbsdk.SystemTenantID), which is what triggers
 // the embedded dispatch path in the remote backend resolver.
 func TestEmbeddedSessionSpawn_EmbeddedAgentIsRegistered(t *testing.T) {
 	mockURL := startMockOllama(t)
@@ -244,21 +244,21 @@ func TestEmbeddedSessionSpawn_EmbeddedAgentIsRegistered(t *testing.T) {
 
 	ctx := orchestration.ContextWithTenant(context.Background(), qrdbsdk.SystemTenantID)
 
-	agents, err := agentSvc.ListAgents(ctx, qrdbsdk.SystemTenantID, &orchestration.AgentFilter{})
+	agents, err := agentSvc.ListFleetNodes(ctx, qrdbsdk.SystemTenantID, &orchestration.FleetNodeFilter{})
 	require.NoError(t, err)
 	require.NotNil(t, agents)
 
-	var embeddedAgent *orchestration.AgentRegistration
+	var embeddedFleetNode *orchestration.FleetNode
 	for _, a := range agents {
-		if a.Kind == orchestration.AgentKindEmbedded {
-			embeddedAgent = a
+		if a.Kind == orchestration.FleetNodeKindEmbedded {
+			embeddedFleetNode = a
 			break
 		}
 	}
 
-	require.NotNil(t, embeddedAgent, "at least one AgentKindEmbedded must appear in the registry")
-	assert.Equal(t, "ollama", embeddedAgent.Backend, "embedded agent must advertise ollama backend")
-	assert.Contains(t, embeddedAgent.Capabilities, "ollama", "capabilities must include ollama")
+	require.NotNil(t, embeddedFleetNode, "at least one FleetNodeKindEmbedded must appear in the registry")
+	assert.Equal(t, "ollama", embeddedFleetNode.Backend, "embedded agent must advertise ollama backend")
+	assert.Contains(t, embeddedFleetNode.Capabilities, "ollama", "capabilities must include ollama")
 }
 
 // TestEmbeddedSessionSpawn_WrongBackendReturnsError verifies that requesting
@@ -284,14 +284,13 @@ func TestEmbeddedSessionSpawn_WrongBackendReturnsError(t *testing.T) {
 // Helpers
 // =============================================================================
 
-func findFreeEmbeddedPort(t *testing.T) (int, error) {
+// findFreeEmbeddedPort reserves a loopback port for the test's server to bind. It is
+// reserved through netport rather than drawn from :0 and released, so nothing
+// else can be handed it before the bind (go-quicbaas#721), and it is released
+// after the test's own cleanups.
+func findFreeEmbeddedPort(t *testing.T) int {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, fmt.Errorf("find free port: %w", err)
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port, nil
+	return netport.MustReserveOne(t)
 }
 
 func waitForReady(t *testing.T, srv *server.Server, timeout time.Duration) error {

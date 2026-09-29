@@ -7,6 +7,1281 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0-alpha] - 2026-09-29
+
+The Software Factory's production-readiness release (go-quicbaas#1123), which
+has run the burn-in fleet since 2026-09-23. Pooled provider accounts are
+balanced, capped and fail over on a provider limit; fleet agents sign through
+a relay over their mTLS link and are placed by load, capacity and image; every
+backend reports its usage, and turns are priced, billed and held to spend
+limits. Reviewers are named profiles per project. Agent containers no longer
+write a credential back: every credential lives in, and rotates in, the
+server. Lab host names are gone from the tree, so it passes the public-release
+gate (pkg/labstrings).
+
+Stack at release: go-xkms v0.31.0-alpha, go-qrdb v0.20.6-alpha, go-quicraft
+v0.13.1-alpha (held; see Changed).
+
+### Upgrade notes
+
+- Redeploy each fleet node with a spec that declares
+  `agent.max_concurrent_jobs`; hosts running a hand-written unit can be
+  brought under `agent deploy` the same way. A redeploy replaces the unit.
+
+- Upgrade every fleet agent with the server. An agent that predates named
+  workspaces reports none; the server closes that session and refuses the
+  spawn (`SessionWorkspaceUnsupportedError`) rather than let the checkout land
+  inside a container layer.
+- Jobs in flight at the upgrade respawn under the new layout, cloning afresh
+  from the branch they pushed; nothing unpushed from before the upgrade is
+  carried over.
+- The KMS signing agent's socket is still bound on the daemon host, so delivery
+  and ssh-remote checkouts run only on an agent co-located with the daemon (or
+  its in-process backend) until go-quicbaas#1013. Upgrade the co-located agent
+  with the server: an older one advertises no signing trait, and signing
+  spawns would have nowhere to go.
+
+### Security
+
+- A relayed sign for another tenant, session or key is refused on the control
+  plane; the agent refuses an unknown session, another tenant's, one spawned
+  with no relay, and a second attach. A dropped relay link is final: signs fail
+  typed, with no fallback.
+
+- **Sandboxed agent containers drop every capability and have a pids limit** (#1040).
+  Every worker, reviewer and triage container now starts with `--cap-drop ALL`.
+  Only `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETGID` and `SETUID` are added back,
+  which is what `sudo` and `apk` need. Each container also gets a
+  `--pids-limit` (default 4096, counting threads). This covers the embedded
+  agent and remote `quicbaas agent serve`, on the CLI, JSON-RPC and exec
+  transports, the orchestrator's detached sandbox and the tool container.
+  Passwordless `sudo` and a writable rootfs are kept, so root inside a worker
+  still installs packages. It no longer holds `NET_RAW`, `MKNOD`, `SETFCAP` or
+  the rest of Docker's default set. A caller's `ContainerConfig` cannot widen
+  the policy. seccomp and AppArmor defaults stay in force.
+  `ContainerSpec.PidsLimit` is measured by `ContainerConfigDigest`.
+- Operators configure the policy with `sandbox_cap_add` / `sandbox_pids_limit`
+  in the embedded-agent and remote agent configs, or with
+  `--sandbox-cap-add` / `--sandbox-pids-limit` (`QUICBAAS_SANDBOX_CAP_ADD` /
+  `QUICBAAS_SANDBOX_PIDS_LIMIT` in the agent-daemon unit and image). A policy
+  that cannot be applied is refused at startup.
+- `make test-worker-image` checks the image under the production flags,
+  rendered by the same two calls the spawn makes. It asserts that `sudo apk add`
+  works, that root's `CapEff` has no `NET_RAW` or `MKNOD`, and that a fork
+  past the pids limit fails cleanly.
+
+- **The daemon refuses to start when first-boot created no administrator.** A
+  failed first-boot used to log `First-boot bootstrap failed — no admin
+  credential will be created this boot` at WARN and carry on serving: the node
+  answered `/health/ready` with 200 while no admin user, no admin assignment and
+  no certificate existed, and at `--log-level error` the warning was not even
+  printed. IAM initialization now returns a typed `NoAdministratorError` and
+  startup aborts before any listener comes up; the message names the cause and
+  the cause is reachable with `errors.Is`. A `FirstBootBootstrapError` now
+  unwraps to BOTH the `ErrFirstBootBootstrap` sentinel and its cause, which is
+  what makes the specific failure (e.g. `ErrNoSPIFFETrustDomain`) legible to a
+  program instead of only to a human reading the message. (#57)
+
+- **A count of admin assignments is no longer mistaken for an administrator.**
+  First-boot skipped whenever the assignment listing was non-empty, so an
+  orphaned grant whose user was deleted, a tenant-scoped administrator, or a
+  grant on an account that cannot authenticate all skipped bootstrap for a
+  platform nobody could administer. The check now requires a `super_admin`,
+  system-scoped grant held by a user who exists and may authenticate, and it
+  fails closed when the lookup cannot answer rather than reading "I could not
+  check" as "there is nobody". (#57)
+
+- **The first-boot super-admin grant is written last.** PIV binding,
+  hardware-factor enrollment and bundle delivery used to run AFTER the grant was
+  persisted, so a failure in any of them left the grant behind and the next boot
+  read it as completion — serving with an administrator who had no usable
+  credential. The grant is now the final step, which is what makes a failed
+  bootstrap resumable. A re-entry that can deliver no credential (a CA is
+  configured and qrdb's idempotent first-boot reissues nothing) fails with the
+  new `AdminBundleNotDeliveredError` instead of completing. Because that one
+  cause is NOT resumable — the certificate is already bound and will not be
+  reissued, so every restart lands on the same refusal — the refusal withholds
+  its "will resume from where it stopped" line for it alone, rather than printing
+  that immediately after telling the operator to wipe and re-bootstrap. (#57)
+
+- **A CA-backed node must declare `iam.spiffe_trust_domain`.** That requirement
+  already existed — first-boot fails closed without it, because the admin
+  certificate would carry no tenant SAN for login to resolve — but the failure
+  was swallowed. It now refuses the boot. Existing deployments are unaffected: a
+  node that already has an administrator never re-enters first-boot. The
+  integration fixtures and the CLI's own ephemeral embedded node declare one
+  explicitly. (#57)
+
+- Provisioning a session workspace never follows a link out of the tenant's
+  projects subtree: every filesystem operation goes through an `os.Root`
+  opened at `<projects_root>/<tenant>`, workspace levels must be directories
+  (`WorkspaceLinkError`), and modes are set through a verified handle rather
+  than by name, so a link a tenant plants through its own mount — or swaps in
+  mid-provision — cannot redirect a chmod, a directory or the forge token.
+
+### Added
+
+- **`Security().Secrets().GetWithBytes` reads a secret without the plaintext
+  ever becoming a Go string** (go-quicbaas#954, security-review.md §6).
+  `GetWithBytes(ctx, path, field, fn, opts...)` fetches the stored payload
+  as bytes, locates `field` without decoding the payload into a map of
+  strings, seals the value into protected storage (the qrdb `SecretValue`
+  re-exported by `sdk/go/secret`), wipes every intermediate buffer, and
+  lends the plaintext to `fn` for the duration of the call only. An empty
+  `field` lends the whole stored payload. Served by the gRPC, Unix, REST,
+  QUIC and embedded transports. **The MCP transport refuses it** with
+  `CodeUnimplemented` before any I/O: MCP delivers tool results as text, so
+  the secret would already be an ordinary string inside the MCP client.
+
+- **`sdk/go/xkms` re-exports go-xkms#798's TPM lifecycle and EK credential
+  challenge** (go-quicbaas#1090). New aliases: `ProvisioningState`,
+  `CredentialChallenge`, `ActivationKey`, `NewCredentialChallenge`,
+  `ActivationKeyName`, and the sentinels `ErrTPMClearLockoutRefused`,
+  `ErrTPMClearPlatformRefused`, `ErrTPMProvisioningStateRead`,
+  `ErrTPMCredentialChallenge`, `ErrTPMEKPublicRequired`,
+  `ErrTPMActivationKeyNameRequired`, `ErrTPMActivationKeyCreate`,
+  `ErrTPMActivationKeyRequired` and `ErrTPMCredentialChallengeRequired`. The
+  verbs `State`, `ClearForReprovision`, `CreateActivationKey` and
+  `AnswerCredentialChallenge` arrive through the `TrustedPlatformModule`
+  alias.
+
+- A fleet agent on another host can now run delivery and ssh-checkout sessions:
+  the KMS-backed signing agent is relayed over the agent's existing mTLS
+  AgentRuntime link (`AgentRuntime.SigningRelay`) instead of mounted. The agent
+  binds its own socket under `quicbaas agent serve --sockets-root` (derived like
+  the server's when unset), whose signers forward each request; the control
+  plane answers it from the session's daemon-local agent, so the key never
+  leaves the daemon host and `StopSigning` still closes the window. Every relayed
+  signature is audited (session, tenant, agent, key fingerprint, SHA-256 of the
+  data — never the data). Agents advertise `signing-relay` at registration and
+  on every heartbeat (go-quicbaas#1013).
+
+- `quicbaas agent deploy --spec <node>.yaml` deploys from a node spec: the SSH
+  target, the control plane, `projects_root`, `worker_images`, and an `agent:`
+  section that is exactly the daemon's config schema (`agent.Config`) — so
+  capacity, mount roots, backend URLs, the image map and registry, auto-pull,
+  sandbox policy and container runtime are all declarable. The deploy renders
+  it to `<install-dir>/agent.yaml` and the unit runs `agent serve --config`.
+  Flags set on the command line override the spec. The annotated template is
+  `deployments/fleet/example.yaml` (go-quicbaas#1022).
+- `quicbaas agent serve --config <file>` reads an `agent.Config` YAML file; a
+  flag set explicitly on the command line overrides it. `--max-concurrent-jobs`
+  declares the host's capacity from the command line.
+- `quicbaas agent deploy --preflight` checks a node without changing it: ssh
+  and the pinned host key (an algorithm mismatch is named as one), the deploy
+  key, systemd --user and lingering, the container runtime and docker group,
+  free disk for images and workspaces, the worker images and their
+  `AGENT_UID` against the node's uid, and that the node reaches the control
+  plane over TLS verified by the deploy's CA, tunnelled through the SSH
+  connection. Every failure is a typed error carrying its fix. `agent deploy`
+  runs the checks first unless `--skip-preflight`.
+- `quicbaas agent stop`, `agent start` and `agent undeploy`. `stop` and
+  `undeploy` remove the agent from the fleet registry after stopping it, so a
+  stopped node never reads `running`; `undeploy` removes the unit, config,
+  binary, identity and credentials and keeps workspaces unless
+  `--purge-workspaces`.
+- Runbook: `docs/software-factory/fleet.md`.
+
+- `max_concurrent_sessions` on pooled accounts, settable on create and update
+  over REST, gRPC, QUIC, MCP, Unix, the SDK and the CLI
+  (`--max-concurrent-sessions`). 0 is unmetered. An account at its cap is not
+  selected. A pool whose accounts are all capped defers admission, as a spent
+  usage window does, and a spawn that loses the race for the last slot is
+  requeued uncharged (`accounts_saturated`). `GET
+  /agent-accounts/{id}/usage` reports `live_sessions`, counted from the
+  session records.
+- The live count holds while spawns are in flight. The control plane's
+  session counter is also a reservation table, and every resolution reserves
+  a slot on the account it selects under a per-tenant lock. Metered and
+  unmetered accounts are both reserved; the cap is enforced only where one is
+  set. Selection and claim are one decision, because an automatic claim is
+  conditional on the count it selected by and re-selects if that count moved.
+  So of N concurrent spawns against a cap of one exactly one gets the account,
+  and a burst against unmetered accounts spreads across the pool.
+  - A reservation is satisfied only by the session record that names it
+    (`SessionRecord.ReservationIDs`, carried through the daemon's spawn
+    response).
+  - A failed resolution or spawn gives it back, and an orphaned reservation
+    expires after 15 minutes.
+  - Worker daemons reserve against the control plane's table through new
+    verbs, `POST/DELETE /api/v1/agent-accounts/{id}/reservations[/{rid}]`.
+    The same verbs are on gRPC (`ReserveAccountSession` /
+    `ReleaseAccountSession`), MCP and the SDK.
+  - The verbs are bound to the authenticated caller's tenant on every
+    transport and permissioned `agent_accounts:materialize`.
+- A project whose own accounts are all at their cap falls back to the
+  tenant-wide pool, as a project whose accounts are all held does.
+- Subscription-limit failover. The CLI's structured signals are read first:
+  `rate_limit_event` rejected, assistant `error: rate_limit`, and
+  `api_error_status: 429`. The result text (`You've hit your session limit ·
+  resets 9pm (America/New_York)`) is only a fallback. The verdict crosses
+  the daemon wire. The account is held until the stated reset and the refusal
+  is recorded in `last_error`. The SDLC runner rolls the worker onto another
+  account on the same branch without charging the attempt. When no account is
+  free, the task is requeued, uncharged, until the first hold lifts.
+- A static-token credential that expires within two minutes is not handed to a
+  new session.
+- A pool that is entirely cooling down or saturated is audited
+  (`pool_exhausted`) and counted
+  (`quicbaas_orch_account_pool_exhausted_total`), both at spawn and when
+  admission defers a project, once per exhaustion. Limit holds are counted in
+  `quicbaas_orch_account_limit_holds_total`.
+
+- Bounded factory metrics (#1058 ruling F7):
+  `quicbaas_factory_tokens_total{tenant,project,kind,provider,backend,model,direction}`,
+  `quicbaas_factory_cost_micros_total{…,basis=equivalent|billed}` and
+  `quicbaas_factory_spend_deferrals_total{tenant,project,axis}`. `model` is a
+  name the price table lists or `other`, so the series count cannot grow
+  without bound. A spent account pool counts on
+  `quicbaas_orch_account_pool_exhausted_total{reason="spent"}`.
+
+- The spend report takes a time range (`from`/`to`, RFC 3339) on every
+  transport: REST query parameters, gRPC fields, MCP arguments, the embedded
+  transport and the Go and TypeScript SDKs. A tenant or project range is read
+  from the ledger's time-indexed quota plane, so its cost follows the range,
+  not the history (#1058).
+- A tenant-level spend report pro-rates each subscription's monthly fee over
+  its range (`subscription_fee_micros`, per account and summed), idle
+  subscriptions included. The fee is shown beside the per-turn billed figure,
+  never smeared across turns (#1058 ruling F4, #791).
+- The Cost page has a range selector (all time, 24 hours, 7 days, 30 days) and
+  shows the subscription fees over the range (#1058).
+
+- A spent account is skipped before any selection strategy runs, so
+  `least_usage`, `static` and the worker daemon's pool all fail over to a
+  sibling with headroom instead of requeueing onto the same refusal. A pool
+  whose every account is spent is the typed deferral `AccountsSpentError`
+  (`accounts_spent`): refunded, requeued until the first account frees up, and
+  never parked (#1058 ruling F6, #781).
+- Admission defers a project whose own spend limits, or whose tenant's, are
+  spent (axis `project_spend` / `tenant_spend`), with the window's usage in the
+  reason and an `orchestration_project:spend_deferred` audit event when the
+  deferral starts (#1058 ruling F6).
+- The account usage verb carries the spend gate's verdict (`spend`) on every
+  transport and in `quicbaas agent account usage`. The worker daemon fails
+  over on it (#1058).
+- The spend report carries the scope's own limits with live usage — the
+  project's at project level, the tenant's at tenant level — and the Cost page
+  shows them (#1058).
+
+- Spend windows meter list-price dollars as well as tokens
+  (`max_equivalent_micros`), on the priced turns in the window. A spent dollar
+  window refuses with the axis named (#791, #1058).
+- One `SpendLimits` type is carried by an account, a project and a tenant, and
+  each is settable on every transport (REST, gRPC, QUIC, MCP, Unix, the
+  embedded, Go and TypeScript SDKs) and the CLI:
+  - an account's spend policy — windows and failure breaker —
+    (`--spend-window`, `--breaker-*`) (#781);
+  - a project's limits (`spend`), replacing the never-enforced
+    `token_budget` (#1058);
+  - a tenant's own limits, `GET`/`PUT /api/v1/orchestrator/spend-policy`,
+    `quicbaas orchestrator spend-policy get|set`, gated on the new
+    `spend_policy:write` permission (#1058).
+- The project dialog edits spend windows (hours, max tokens, max list-price
+  dollars) (#1058).
+- Project and tenant limits are stored and validated. A tenant's windows are
+  reported against its usage by `spend-policy get`; reporting a project's
+  windows, and admission deferral for a spent project or tenant, follow in a
+  later change (#1058). An account's windows are enforced at
+  credential release as before.
+
+- Turns are priced. `orchestration.pricing` in `quicbaas.yaml` is a price
+  table per model, overridable per tenant, with input, output, cache-read and
+  cache-write rates per million tokens. Every ledger entry is stamped when it
+  is recorded with its list-price equivalent and a `price_ref` naming the
+  table entry, so a later price change never re-prices history. A model the
+  table does not name is unpriced, never guessed (#791, #1058).
+- Accounts carry their billing (`subscription` with an optional monthly fee,
+  or `api`), settable on create and update over REST, gRPC, QUIC, MCP, Unix,
+  the embedded and Go SDKs, the TypeScript SDK, and the CLI
+  (`--billing`, `--monthly-fee`). Every turn carries a billed figure beside
+  its equivalent: zero on a subscription, the list price on a metered key,
+  and unknown when nobody configured the account (#1058).
+- The spend report and the Cost page show both figures on the scope, on every
+  project, account and model row, with how complete each is ("at least — N
+  turns unpriced"); a breakdown row covering only some of its turns is marked
+  `≥`. An unmeasured figure is a dash, never a zero (#1058).
+- Every turn is ledgered, local inference included. A turn on no pooled
+  account (OpenVINO triage, a review model on Ollama) is recorded against its
+  project and tenant and never against an account's allowance. Entries carry
+  the job kind, the host, the agent and the turn's duration (#1058).
+- The ledger writes project and tenant quota planes, so a project's or a
+  tenant's window and every time-ranged read cost what the window is worth
+  (#1058).
+
+- Local inference is costed from electricity: `power_watts × turn seconds /
+  3.6e6 kWh × electricity_price_per_kwh`. The rate defaults to $0.12/kWh and
+  is overridable per tenant. Local price entries carry `power_watts`, and
+  `engine_power_watts` covers an engine's unlisted models. An explicit
+  per-token rate still wins. A turn with no measured duration is unknown, not
+  $0. Entries record their `price_basis` and `energy_mwh`, and every roll-up
+  and the Cost page show local energy beside dollars (#1058).
+- Runtime cost settings: a tenant's electricity rate and per-engine draws are
+  readable and replaceable over REST (`/api/v1/orchestrator/cost-settings`),
+  gRPC, MCP, the Go and TypeScript SDKs, the CLI
+  (`quicbaas orchestrator cost-settings get|set`) and the Cost page, gated on
+  the new `cost_settings:write` permission (#1058).
+
+- sdlc: adopted issues honour the repository's `priority:*` labels — `critical` +600, `high` +300, `low` −300 on top of the blast-radius priority; unlabelled issues rank exactly as before (#1129).
+
+- **The CLI list commands page, sort and search, and say how many records
+  there are.** `orchestrator job list`, `orchestrator task list`,
+  `orchestrator sessions`, `agent list`, `project list` and
+  `agent account list` take `--limit`, `--offset`, `--sort` and `--search`,
+  which reach the list endpoints as `limit`, `offset`, `sort` and `q`. `--all`
+  follows `next_offset` to the last page. Since #968 every listing answers 25
+  records by default, and the CLI printed those 25 with no sign that more
+  existed and no way to ask for them. Table and text output now end with
+  "Showing N–M of T" and, when there is one, the next page's offset. JSON and
+  YAML keep the envelope. One flag set, `pageFlags` in
+  `cmd/quicbaas/list_page.go`, serves every command. An unknown `--sort`
+  field comes back as the server's 400, reported as an invalid-input error.
+
+- **`session_rotation` project setting: `resume` (default) or `fresh`.** It
+  decides what the replacement session keeps when a worker's pooled account
+  rotates. `resume` reads the old session's transcript before closing it and
+  carries the conversation into the new session's first prompt
+  (`sdlc:session_resumed`); `fresh` starts a new conversation told only why it
+  is new (`sdlc:session_rolled reason=account_rotated`). A project that never
+  set it runs `resume`; a resume whose conversation cannot be read starts fresh
+  and says why (`resume_unavailable=`). Set it with `session_rotation` on
+  REST, gRPC, QUIC, MCP, Unix and the embedded transport, the Go and
+  TypeScript SDKs, `quicbaas project create|update --session-rotation`, and the
+  project dialog's "When a Worker's Account Rotates" field (owner ruling,
+  2026-09-24).
+
+- A pooled agent account can take its credential from a tenant secret instead
+  of holding it inline: `credential_secret_ref` names the secret by its short
+  name (e.g. `agents/claude/claude1/oauth_token`), and `credential_secret_file`
+  materializes it as a file (e.g. `.codex/auth.json` for the codex reviewer).
+  The secret is read in the ACCOUNT's tenant on every spawn and release, so
+  writing it rotates the very next spawn with no account write — on a remote
+  agent daemon too, because a referenced account's release is marked
+  `single_use` and the daemon re-releases it per spawn instead of caching it.
+  Exactly one of an inline credential and a reference is accepted; a reference
+  is static-token only and must resolve when it is written. A secret that later
+  goes missing parks the work uncharged and puts the account in `error` with a
+  `last_error` naming the reference. On a remote agent daemon the release
+  refusal carries `fault_class: credential_not_found` in its error body, which
+  the daemon decodes whole (up to 64 KiB, so a long message cannot cut the
+  class off) and rebuilds into the missing-credential fault. Re-applying the
+  reference (`account update --credential-secret-ref`) returns the account to
+  service. `update --credential-secret-ref` also switches an inline account
+  over and destroys its inline envelope; if that destroy fails, retrying the
+  same update finishes it, since every update of a referenced account removes
+  any leftover envelope. Wired on REST, gRPC, MCP, QUIC, Unix, embedded, the Go
+  and TypeScript SDKs, and `quicbaas agent account create|update
+  --credential-secret-ref [--credential-secret-file]` (go-quicbaas#1023).
+- `quicbaas secrets put --from-stdin | --from-file PATH` stores a secret's raw
+  bytes verbatim, with no `KEY=VALUE` JSON envelope; from an interactive
+  terminal `--from-stdin` reads one line with echo disabled. Interactivity is
+  detected by the terminal driver, so `--from-stdin </dev/null` is refused as
+  an empty value rather than prompting. The value never
+  appears on the command line or in the output (go-quicbaas#143).
+- Each resolution carries the delivery grant its credential was served under,
+  so two concurrent spawns of a single-use account each report their own grant
+  and every release stays tracked by session teardown.
+- An account update is a conditional write: it lands only if the account is
+  unchanged since it was read, and otherwise re-reads and re-applies. A rename
+  overtaken by a switch to a secret reference can no longer save a stale copy
+  that leaves the account with no credential source. Every account record
+  write (update, revoke, and every usage, refresh, status, cooldown and expiry
+  stamp) now commits with the KV's compare-and-swap, so a writer in another
+  store instance or daemon can no longer be overwritten; a lost update is a
+  `409` / gRPC `Aborted`. An inline rotation overtaken by a switch to a secret
+  reference is refused (`AccountCredentialSourceChangedError`) and removes the
+  envelope it wrote instead of re-creating one on a referenced account; an
+  automatic OAuth renewal overtaken the same way does the same.
+- Automatic account stamps no longer undo an operator: a renewal outcome or a
+  failed secret read never replaces `revoked`, and a failed-read `error` is
+  stamped only if the account still reads the reference that read attempted,
+  as last applied — so re-pointing or re-applying a reference while an older
+  read fails leaves the working account in service.
+- A failed `credential_secret_ref` read reports only a sanitized refusal (the
+  reference and a failure class) on REST, gRPC and MCP; the secrets service's
+  own error, and any diagnostics it carries, never leave the process.
+
+- **Every issue that waits on a person has a parked task.** The issue source
+  offers each open, untriggered issue labelled needs-info, escalated,
+  blocked or `task:blocked` as a task adopted parked, carrying triage's last
+  question, so it appears in Needs-you. The interval sweep backfills issues
+  labelled before this existed. A parked adoption spends no adoption slot.
+- **`note` resolve action.** Posts the operator's text to the task's issue
+  under the factory marker and leaves the task parked. It is served on every
+  transport and in the Needs-you view as **Add note**.
+- **`project_idle` attention kind.** Names an autonomous, unparked project
+  that holds parked work with nothing pending or in progress.
+
+- **A merge train for every self-reviewed project.** Approved pull requests
+  are queued instead of merged; a train takes up to `merge_train.max_size`
+  (default 5) of them, builds `queue/<n>` in a container (the target plus
+  each approved head, a signed `--no-ff` merge each), and runs the target's
+  own CI **once** through a pull request of its own. Green: the project's
+  counting reviewer profile reviews the train's pull request through the
+  ordinary review job, told it is a train, which changes it carries and that
+  each was already approved on its own head, so it judges how they combine;
+  the train never posts a review or a review status of its own. Approved: the
+  train's pull request lands through the forge's ordinary merge by the
+  project's strategy, so branch protection is enforced on exactly the commit
+  that lands; each change's own pull request is closed naming where it
+  landed. Changes requested: the train is abandoned, every change it carried
+  is told the findings on its own pull request with a link to the train
+  review, and goes back to the queue with its approval standing, bounded to a
+  train half the size so a smaller train re-forms; a train that carried one
+  change ejects it to its worker with the findings. A review job that ends
+  with no verdict is asked again, up to three review jobs per head; past that
+  the train is abandoned without ejecting anyone, and every change is told the
+  review never decided and rides again on its own approval. A train waiting on
+  its review resumes the wait after a restart without asking twice. Red: the train is bisected over its prefixes, the
+  first change that turns it red is ejected back to its worker with the
+  train's red, the verified prefix lands and the rest are requeued. A void red
+  is re-run, a host defect stops the train without ejecting anyone, and a
+  target that moved abandons the train. Every decision is on a guarded ledger,
+  so a restart resumes the same probe or finishes the same landing. On by
+  default (`merge_train.disabled`); a project with no reviewer profile that
+  counts toward merge merges one change at a time, and records why
+  (`sdlc:train_off`). A fourth JobRunner, `merge_train`, one per
+  project; backstop `sdlc.train_sweep_interval` (5m). See
+  `docs/software-factory/merge-train.md`.
+- **Triage clusters related ready issues into one task and one pull
+  request.** Issues a pass finds ready whose measured footprints share a
+  file or a package are adopted as one task under the lowest-numbered issue,
+  whose contract carries every member's verbatim and whose pull request
+  closes them all; members are told where their work went and are never
+  triggered on their own. No model turn is spent deciding. On by default
+  (`clustering.disabled`), up to `clustering.max_size` (default 4) issues per
+  task. See `docs/software-factory/triage.md`.
+- Both policies travel on the binding over REST, QUIC, Unix, gRPC, MCP and the
+  embedded transport, in the Go and TypeScript SDKs, and in
+  `quicbaas sdlc binding`.
+- `ForgeBackend.ClosePullRequest`, and `ForgeCapabilities.NativeMergeQueue`
+  (false for Gitea; read by nothing yet).
+
+- cli: `quicbaas ssh agent` serves an ssh-agent socket for a KMS-held key, so git commit signing and SSH pushes use keys that never leave the KMS.
+
+- **Attention inbox.** `GET /api/v1/orchestrator/attention` lists every
+  blocked task and environmental alert (a fleet agent offline, a pooled
+  credential erroring, the tenant's own barrier sealed) a tenant carries,
+  paged and faceted by project and kind; `POST .../attention/{taskID}/resolve`
+  applies
+  one of five operator rulings (`approve_recommendation`, `answer`,
+  `allow_another_round`, `close_as_done`, `readmit`), posting the ruling to
+  the task's forge issue before the task moves. A blocked task's
+  question and recommendation are extracted from the worker's own reply
+  (`sdlc.ExtractAsk`). Served on REST, MCP
+  (`quicbaas_orchestrator_attention_list` /
+  `quicbaas_orchestrator_attention_resolve`), the embedded transport, and the
+  Go and TypeScript SDKs. The desktop and browser UI surfaces this as
+  **Needs You** in the sidebar with a count badge, a dashboard card naming
+  the oldest item's age, a per-project parked-count strip, and a dismissible
+  banner for environmental alerts at the top of every page.
+- A blocked task may now be granted one extra review round from the
+  attention inbox (`Task.ReviewRoundBonus`, bounded by
+  `orchestration.MaxReviewRoundBonus`) without raising the project binding's
+  `max_review_rounds` for every other task it drives.
+
+- **The Software Factory worker image keeps itself current** (go-quicbaas#1021).
+  A model release that needs a newer agent CLI (claude-opus-5-5 needs Claude
+  Code 2.1.280) no longer strands every project until somebody rebuilds by
+  hand. The daemon runs a scheduled, gated refresh (`pkg/sdlc/workerimage`):
+  once a day (`refresh_interval`) — and whenever an operator asks, from the
+  CLI, the API or the web UI — it reads the latest `@anthropic-ai/claude-code`
+  and `@openai/codex` from npm and the versions the bound images carry from
+  their new labels, rebuilds the embedded Dockerfile under a content tag
+  `<version>-cc<claude-code>-cx<codex>`, gates exactly that build — the
+  image's probes plus one real session per agent the bindings run and the
+  default Claude model, on the tenant's pooled credential — publishes it to
+  `sdlc.worker_image.registry` with its digest recorded, and only then rebinds
+  every binding naming a stale managed image through the SDLC service. A
+  failed pass changes nothing and is logged at error, counted on
+  `quicbaas_sdlc_worker_image_refresh_total{outcome="failed"}` and audited;
+  previous tags are never overwritten, so a rollback is a rebind. A pass that
+  could not read every tenant ends `partial` (none readable: `failed`), never
+  `current`; a promotion that would downgrade either CLI is refused; each
+  rebinding is a write guarded on the record it read, so a concurrent `Bind`
+  or `Unbind` is never undone; and a probe cut short has its container
+  force-removed.
+  Configuration: `sdlc.worker_image.*`. See
+  `docs/software-factory/worker-image.md`.
+- **`quicbaas sdlc worker-image status | refresh [--wait]`**, over every
+  transport: REST/QUIC `GET /api/v1/sdlc/worker-image` and
+  `POST /api/v1/sdlc/worker-image/refresh`, gRPC/Unix
+  `GetWorkerImageStatus`/`RefreshWorkerImage`, MCP `quicbaas_sdlc_worker_image` and
+  `quicbaas_sdlc_worker_image_refresh`, embedded, and `client.SDLC()` in the Go SDK.
+  Host verbs under the new cross-tenant permissions `worker_images:read` and
+  `worker_images:refresh`.
+- **A "Worker image" panel on the Agent Fleet page** shows each bound image
+  with its Claude Code and Codex versions, npm's latest at the last check, the
+  last check's time and outcome, and **Check for updates now**, which requests
+  a pass and follows it to its outcome. TypeScript SDK:
+  `orchestrator.getWorkerImageStatus()` / `refreshWorkerImage()` (REST and
+  Wails), backed by the desktop binding
+  `OrchestratorBinding.GetWorkerImageStatus` / `RefreshWorkerImage`.
+- **Remote agents pull a promoted image themselves.** Under `--auto-pull`
+  (`auto_pull` for the embedded agent) an agent now pulls an image a spawn
+  names before starting it when its host does not hold it, so a digest-pinned
+  registry reference reaches every node at its first job instead of a manual
+  `docker save | docker load` per node per version.
+- **`make push-worker-image WORKER_IMAGE_REGISTRY=<host>/<owner>/<name>`**
+  publishes a hand-built worker image and prints its digest-pinned reference.
+
+### Changed
+
+- **Dependencies track the newest stack:** go-xkms (and `sdk/go`, `xkey`)
+  v0.30.0-alpha to v0.31.0-alpha; go-qrdb (and `sdk/go`) v0.20.2-alpha to
+  v0.20.6-alpha, in both the root module and `sdk/go`. go-quicraft stays at
+  v0.13.1-alpha, with the reason on its `require` line: go-qrdb
+  v0.20.6-alpha's `sdk/go/node` builds its quicraft host without declaring
+  an at-rest encryption choice, so go-quicraft v0.14 refuses every
+  in-process node with `ErrAtRestEncryptionUnspecified`. The pin lifts when
+  go-qrdb#566 (the clustered host never declares at-rest encryption) ships
+  in a tag.
+
+- Placement ranks every eligible agent by the jobs live on it against its
+  advertised `max_concurrent_jobs` and takes the least loaded — ties broken by
+  fewest recent placements, then name — instead of the first agent the registry
+  lists, which put all work on one host while the rest of the fleet idled. An
+  agent at capacity is skipped; host affinity still pins a workspace to its
+  host. A signing spawn may now be placed on an embedded agent, one advertising
+  this daemon's `signing-agent:<id>`, or one advertising `signing-relay`.
+- The sockets-root preparation and orphan sweep moved from `pkg/sdlc` to
+  `orchestration.EnsureSigningSocketRoot`, shared by the daemon and the fleet
+  agent; the daemon still adds its signing-root marker.
+
+- `agent deploy` refuses a node that declares no capacity
+  (`CapacityUndeclaredError`): set `agent.max_concurrent_jobs` in the spec or
+  pass `--max-concurrent-jobs`. Every deployed host now reports capacity, so
+  the fleet's capacity is no longer undeclared.
+- The installed unit and nohup launcher run `quicbaas agent serve --config
+  <install-dir>/agent.yaml` instead of a flag list.
+- `agent deploy` results in YAML use snake_case keys (`installed_path`, …),
+  matching JSON.
+
+- Pooled provider accounts are balanced by default (go-quicbaas#1046). An
+  unpinned spawn now takes the account serving the fewest live sessions, then
+  the one with the least recorded usage. `default: true` only breaks a tie. On
+  the control plane and on every worker daemon the default strategy is
+  `least_usage`; `static` is still registered for a caller that names it. On
+  the burn-in fleet, tenant `automatethethings` pools three Claude accounts,
+  and every worker had run on `claude3`, the default, while `claude1` and
+  `claude2` were never selected.
+- A provider limit falls back to a five-hour hold (`DefaultAccountLimitBackoff`,
+  previously one hour) when its reset cannot be read.
+
+- The SDLC worker charter now tells a worker to confirm where a fact came from
+  whenever it relies on a file outside its own diff: `git show
+  origin/<base>:<path>` for what the base says and `git branch --contains
+  <commit>` for which branch a commit belongs to, rather than trusting the
+  working copy. A clean `git status` does not prove the tree is the lane's
+  base. Isolation itself was already in place: every factory worker clones
+  its project inside its own container, so no two workers share a working
+  directory (go-quicbaas#870).
+
+- **The gRPC list RPCs page, sort and search like every other transport.**
+  `ListJobs`, `ListTasks`, `ListSessions`, `ListAgents`, `ListProjects` and
+  `ListAccounts` take `limit`, `offset`, `sort` and `q` and answer with
+  `total`, `limit`, `offset` and `next_offset` (`0` on the last page). The
+  fields are read by the same `orchestration.ParsePage` and checked against
+  the same allow-lists as REST, QUIC, Unix, MCP and the embedded transport; a
+  negative `limit`/`offset` or an unknown sort field is `InvalidArgument`
+  naming it. Before this the gRPC servers passed a nil page and answered the
+  whole ordered set (go-quicbaas#968 follow-up).
+
+- **An RPC that names no paging now receives the default page of 25**, as a
+  REST request with no `?limit=` already did. A gRPC caller that read the whole
+  listing in one call must follow `next_offset`. `ListTasksResponse.total_count`
+  keeps meaning the matched count (it equals `total`); `ListAgentsResponse.count`
+  is the size of the page, as on REST.
+
+- The Go SDK gRPC transport (and the Unix transport, which delegates to it)
+  sends `page.Params` on these listings and fills `page.Envelope` from the
+  response.
+
+- **Go SDK: `project.Client.List` takes a `*ListProjectsRequest`**, as
+  `account.Client.List` does, instead of a bare tenant ID. The request already
+  carried `page.Params` and the transports already put them on the wire, but
+  the old signature built the request itself and could not pass a page.
+  Callers write `List(ctx, &project.ListProjectsRequest{TenantID: id})`.
+
+- **`project_list` and `quicbaas_agent_account_list` page like the
+  orchestrator list tools.** Both MCP tools now accept `limit` (default 25,
+  capped at 100), `offset`, `sort` (allow-listed per listing; an unknown field
+  is refused with `UnknownSortFieldError`) and `q`, pass a non-nil page to the
+  service, and answer with the shared page envelope — the records under
+  `projects`/`accounts` plus `total`, `limit`, `offset`, `next_offset` (absent
+  on the last page), `facets` and `timestamp`. `project_list` previously
+  returned the service struct with Go field names (`Projects`, `Total`); the
+  keys are now snake_case like every other listing, which the Go SDK's MCP
+  transport already decoded.
+
+- **`quicbaas barrier enable-encryption --tenant` refuses a wrong-scope
+  answer.** If the server reports it migrated any scope other than `tenant`,
+  the verb fails with `BarrierScopeMismatchError` instead of reporting another
+  barrier's migration as success.
+- The quicbaas-owned surfaces are unchanged by owner ruling: `/api/v1` system
+  and per-tenant routes, gRPC `api/proto/barrier.proto` and the MCP tools keep
+  `target_strategy` and their existing responses. `docs/barrier/cli.md`,
+  `docs/barrier/api.md`, `docs/barrier/engineering.md` and
+  `docs/multi-tenancy/engineering.md` document both shapes.
+
+- Software Factory spawns (delivery, review, triage) name their workspace —
+  tenant, project, key — instead of bind-mounting a directory the daemon
+  provisioned on its own host. The host that runs the session provisions it
+  under its own projects root, writes the workspace spec and forge token beside
+  it, and reports the directory, which the daemon records on the session. A
+  fleet agent on another machine no longer refuses every sdlc or review spawn
+  at its mount check (go-quicbaas#981).
+- A job's later sessions — review rounds, a rolled-over worker, the respawn
+  after a restart — are pinned to the host holding its checkout with strict
+  host affinity (`JobStatus.workspace_pin`). A pinned agent that is gone, or no
+  longer holds the checkout, is refused with a typed error
+  (`WorkspaceAgentUnavailableError`, `WorkspaceStaleError`) and the attempt is
+  parked for an operator, uncharged — never cloned afresh on another host.
+- `quicbaas agent serve --projects-root` (default `<--work-dir>/projects`) is
+  where an agent provisions job workspaces; its mount policy admits that root
+  tenant-scoped, so it needs no `--allowed-mount-root` entry.
+- A spawn that mounts the daemon's KMS signing socket (delivery, ssh
+  checkouts) is placed only on an agent that proved it can reach that socket:
+  the daemon marks its sockets root with a random identifier, a co-located
+  agent finds it under its `--allowed-mount-root` and advertises
+  `signing-agent:<id>` on registration and every heartbeat. With no such agent
+  and no in-process backend the spawn is refused
+  (`SigningAgentUnavailableError`) and parked, instead of refused at a remote
+  agent's mount check.
+
+- The factory never force-pushes. An approved pull request that conflicts
+  with its base is now a merge round, not a rebase round: the
+  `merge_conflict` prompt tells the worker to `git fetch origin <base>`,
+  `git merge origin/<base>`, resolve each conflict keeping both sides'
+  intent, commit the merge and re-run verification. The worker charter
+  forbids amending, rebasing or resetting a published commit. Every
+  publication, including the mid-attempt push on an ephemeral workspace, is
+  a plain push; `--force-with-lease` is gone. A push git refuses as
+  non-fast-forward now surfaces as `PublishCommandError`. Owner ruling
+  2026-09-04 (handbook version-control §5b); go-quicbaas#1051.
+
+- **A job waiting in `reviewing` releases its worker container and stops counting against the fleet.** Once the worker's branch is pushed, the sdlc runner closes the worker's session and container for the whole CI and review wait. It no longer sits idle for hours with a `pending` session label. The job's lease is marked `Dormant`, so the fleet and backend capacity checks stop counting it, just as the project budget and the admission plan already did. A review that asks for changes wakes the lease through admission on all three axes, and waits if any is full. It then spawns a fresh container on the same branch and workspace. The stall detector reads each job's own runner declaration, so a slow sdlc review is reported and never ended for lacking a session it released on purpose. A respawn inside one attempt keeps the attempt's `Delivery` whole (go-quicbaas#938, go-quicbaas#1036).
+
+- **`session_rotation` governs a refused account's session switch**
+  (go-quicbaas#1046). When the provider refuses a worker's pooled account for
+  a usage limit and the runner moves the session onto another account, the new
+  session now follows the project's `session_rotation`, as a rotated
+  credential already did (go-quicbaas#997): `resume` (the default) carries the
+  refused session's conversation into it (prompt `account_resumed_note`,
+  audited `sdlc:session_resumed class=account_limited`); `fresh` keeps the
+  previous behaviour (`account_rolled_note`, `sdlc:session_rolled`).
+- **`session_rotation` governs a respawned review worker** (go-quicbaas#938).
+  A worker released on entry to `reviewing` whose review asks for changes is
+  respawned under the project's `session_rotation`: `resume` (the default)
+  reads the released session's conversation before closing it and carries it
+  into the new session (prompt `worker_resumed_note`; `sdlc:worker_released`
+  records `replayed_turns=`); `fresh` keeps the previous behaviour
+  (`worker_released_note`).
+
+- **The agent fleet is the Fleet.** The node daemon and its registry are named for what they are, on every surface and with no aliases: `quicbaas fleet …` (provider accounts move to `quicbaas account …`), REST `/api/v1/fleet[/{nodeID}…]` with mTLS enrollment at `POST /api/v1/fleet/enroll`, gRPC `RegisterFleetNode`/`GetFleetNode`/`ListFleetNodes`/`RemoveFleetNode`/`FleetNodeHeartbeat` and the node's `FleetRuntime` service, MCP `quicbaas_fleet_*` and `project_{grant,revoke}_fleet_node`, the `pkg/fleet` package, and the UI's **Fleet** page at `#/fleet`. The daemon's identity flags are `--node-cert`/`--node-key` (config `node_cert_file`/`node_key_file`), a node spec says `node_bind` and `node:`, and quicbaasd's in-process node is `server.embedded_fleet_node` / `--embedded-fleet-node*`. `#/agents` and `/api/v1/agents` are left free for AI agent definitions. Every fleet node must run the new binary: an old daemon enrolls at a path that no longer exists.
+
+- **The default Claude coding model is `claude-opus-5-5` (Claude Opus 5.5).**
+  `orchestration.DefaultClaudeModel` names it once; the ACP model catalog
+  offers it for `claude`, `claude-code` and opencode's `anthropic/` entry in
+  place of the superseded `claude-opus-5`, which is no longer listed. Codex
+  review routing is unchanged.
+
+- **The documented worker bindings pair the model with an image that runs
+  it.** The examples in `docs/software-factory/sdlc.md`, `user.md` and
+  `api.md` name `quicbaas-software-factory-worker:0.11.0-alpha` (Claude Code
+  2.1.280). Older images carry a Claude Code that rejects `claude-opus-5-5`
+  as `unrecognized_model` (2.1.278 in `0.10.0-alpha`).
+
+- **The Makefile names no forge.** `GITEA_HTTP_ORIGIN` has no default any more
+  (it carried the private forge under a waiver, go-quicbaas#1130).
+  `stage-gomodauth` reads it from the environment, else from a
+  `GITEA_HTTP_ORIGIN=` line in the agent tokens file beside the token, and
+  fails with a message naming both places when a token is present but no
+  origin is set. `verify-gomodauth` passes its origin explicitly and now
+  proves both the refusal and the tokens-file source
+  (docs/testing/private-modules.md).
+
+- **The public tree keeps the agent files out, and test files are scanned.**
+  `CLAUDE.md`/`AGENTS.md` (any depth), `.claude/` and `.serena/` stay in the
+  private repository but are `export-ignore` in a new `.gitattributes` (so
+  `git archive` and forge source tarballs omit them) and excluded from the
+  Docker build context. `pkg/labstrings` scans only the published manifest
+  (`PublishedFiles`) and proves the exclusion three ways. The `**/*_test.go`
+  allowance is gone: the ~45 test files that used fleet hostnames, the fleet
+  subnet and owner paths now use neutral fixtures, and a new `owner-account`
+  rule reports the owner's bare account name
+  (docs/release/public-releasability.md).
+
+- **The public-releasability gate knows the whole fleet** (go-quicbaas#1130).
+  `pkg/labstrings` now also reports the remote agent host's name and the
+  burn-in node's deployment directory, and the Makefile lost its whole-file
+  allowance: that allowance had let a private forge default
+  (`GITEA_HTTP_ORIGIN`) land unreported. The one remaining lab value in the
+  Makefile carries an inline waiver naming the release issue it must be gone
+  by. Fleet hostnames, lab addresses and the owner's account name were
+  replaced with neutral fixtures (`agent-NN`, `gpu-host`, RFC 5737
+  addresses, `operator`) in the tests, comments and changelog that carried
+  them.
+
+- **The worker image pins its agent CLIs.** The Dockerfile installs
+  `CLAUDE_CODE_VERSION` / `CODEX_VERSION` (required build arguments; the
+  Makefile pins them) instead of `@latest`, labels the image with every tool
+  version, and `make build-worker-image` tags it with the content tag as well
+  as `:<version>`.
+- **The toolchain pins moved to `pkg/version/toolchain.mk`**, which the
+  Makefile includes and the binary embeds, so a daemon built by any path
+  (make, the release workflow, a Dockerfile) knows the toolchain its worker
+  image is built with. `make print-GOLANGCI_VERSION` and the rest are
+  unchanged.
+- **`make test-worker-image` runs the probes in Go** (`deployments/agents/
+  software-factory-worker/probes.go` via `./deployments/agents/
+  software-factory-worker/probe`) — the same list the refresh gate runs — and
+  additionally asserts the two agent CLIs are the versions the labels claim.
+  That list includes the workflow-lint probe (#1039) and the production-boundary
+  probes (#1040): full control under the spawn's capability set and a fork past
+  a lowered pids bound, whose flags the probe runner now renders itself with the
+  spawn's own calls (`ImageRunSpec.Security`), so `scripts/sandboxargs` is gone.
+  The actionlint and shellcheck pins moved to `pkg/version/toolchain.mk` with the
+  rest, and the image is labelled with both versions.
+
+### Deprecated
+
+- **`Secrets().Get` for secret material.** `Secret.Data` holds field values as
+  ordinary Go strings that cannot be wiped; read keys, passwords and tokens
+  with `GetWithBytes`. `Get` stays for non-sensitive fields until the
+  coordinated signature change (security-review.md §6, sequencing step 2).
+
+### Removed
+
+- `quicbaas_orch_agent_tokens_total{agent_id,job_id,tenant}`: its `job_id`
+  label was unbounded and nothing recorded it. Use
+  `quicbaas_factory_tokens_total` (#1058).
+
+- `ProjectQuotas.TokenBudget` / `token_budget` / `--token-budget`: nothing
+  enforced it. Use a project spend window (#1058).
+
+- `AgentRegistration.container_id`. Nothing ever wrote it. No registration
+  path knows an agent's container, and the agent detail view no longer has a
+  Container row. The protobuf field number 9 and its name are reserved (#862).
+
+- **quicbaas keeps no groups.** Identity is go-qrdb's, and a role binding is the grouping it offers. The local Group subsystem that duplicated it is gone everywhere: the group model and its storage, service and InheritanceManager group hierarchy; the REST `/api/v1/tenants/{tenant_id}/groups` routes; the gRPC `CreateGroup`, `GetGroup`, `UpdateGroup`, `DeleteGroup`, `ListGroups`, `AddUserToGroup` and `RemoveUserFromGroup` RPCs; the eight `quicbaas_iam_group_*` MCP tools; the Go SDK `GroupClient` and `UserClient.AddToGroup` / `RemoveFromGroup`; and `quicbaas iam group` together with `iam user list --group`. Also removed: batch group import and export, the GDPR `groups` data category, the `group_admin` delegated admin role and the `group:*` admin permissions, the tenant group quota (`max_groups`), the users-by-group filter, and federation's `default_groups` (`default_roles` is the provisioning grant). Proto fields and values are reserved: `ListUsersRequest.group` (6), `UserDataExport.groups` (5), `DeletionSummary.group_memberships_removed` (6), `default_groups` (17) on `ExternalProvider`, `CreateProviderRequest` and `UpdateProviderRequest`, and `ADMIN_ROLE_GROUP_ADMIN` (4). The OIDC `groups` claim is unchanged: it carries the names of the roles the user is bound to.
+
+- `.github/workflows/pr-base-guard.yml` (#463). It existed only for the
+  private forge's stacked-PR retargeting problem.
+
+### Fixed
+
+- **A failed verification's record and escalation carry its failing lines,
+  not its first line** (#1037). `sdlc:verification` recorded the first line
+  of stderr, and on go-luks2 that was GNU make 4.4's harmless
+  `env: can't execute 'GOPATH'` (go-luks2#205), so both escalations of
+  go-luks2#12 named the wrong cause. A failed command's record is now its
+  header line followed by the lines naming a failure from ahead of the tail
+  (`--- FAIL`, `FAIL\t`, `panic:`, `error:`, `Error `, `make: *** ` and the
+  verification evidence's own markers) and each stream's last lines, bounded
+  by `VerificationSummaryMarkedLines`, `VerificationSummaryTailLines` and
+  `VerificationSummaryLineBytes`. The escalation a spent round budget ends on
+  carries the same lines. A passing command keeps the one-line form. The
+  worker's truncated verification evidence gathers the same failure lines
+  ahead of its tail, since the record reads stdout through it. A failed
+  command's output is redacted whole before it is bounded, selected or cut,
+  so no cut can leave a credential fragment in the round's prompt, the
+  record or the posted escalation. The escalation's evidence is sized to
+  what the forge comment keeps (`publicOutputLimit`), with the failing lines
+  kept first, so long harmless lines can no longer push the failure out.
+
+- **A CI check the runner failed while tearing down its own job container is
+  re-run, not sent to the worker.** A job whose every step passed but which
+  act_runner then failed removing its container (`Error while stop job
+  container … volume is in use`) was read as the change's failure, because the
+  runner writes that line as a `##[error]` annotation — costing a worker round
+  and an owner escalation (go-luks2 PR #203). The runner's own lines now live
+  in one table in `pkg/cifault` (`runner_teardown`, `runner_lost`), are never
+  counted as the change's failure, and classify `void`: the review gate re-runs
+  the failed jobs through the forge, bounded at three per check per head, and
+  writes an `sdlc:ci_rerun` event to the job's audit trail for each. A step
+  that ended `Process completed with exit code N` stays a real failure
+  (go-quicbaas#1011).
+
+- Triage no longer re-posts a verdict identical to its last one on the same
+  issue each time a merge reopens it (go-quicbaas#1013 carried sixteen identical
+  "duplicate of #981" comments).
+
+- **Orchestration: the shipped workflows no longer pin a retired model**
+  (#1015). `workflows/autonomous.yaml`, `code-review.yaml` and
+  `software-dev.yaml` named `claude-sonnet-4-5-20250514` for every role. The
+  handbook's model-usage policy forbids pinning an older model, and the Claude
+  backend no longer offers that ID. Every role in these files does coding or
+  review, so none names a model now, and each runs its backend's configured
+  default. A new test loads every shipped workflow and fails if any role names
+  a model outside its backend's advertised catalog, so a retired ID cannot ship
+  again. The "Built-in Workflows" section of
+  `docs/software-factory/engineering.md` had drifted from the files. It now
+  shows them exactly as they ship.
+
+- The nohup launcher single-quoted `$HOME`, so its pid and log files landed
+  in a literal `$HOME` directory under the working directory. They are now
+  under the user's home, where `agent stop` finds them.
+
+- **Docker test images fetch private modules on a developer or agent host** (#1031).
+  `make stage-gomodauth` built the `gomodauth` BuildKit secret only from the
+  variables a Gitea runner injects, so anywhere else it was written empty and
+  the image's `go mod download` failed on `github.com/jeremyhahn/go-auth` with
+  `unknown revision`. It now falls back to a Gitea read token from
+  `GITEA_READ_TOKEN` or `AGENT_TOKEN_GO_QUICBAAS` in
+  `~/.agent-identity/tokens.env`, against an overridable `GITEA_HTTP_ORIGIN`,
+  and refuses a value that is not token-shaped. `integration-test-seal`,
+  `integration-test-tenantbarrier`, `integration-bench`, `test-e2e-docker` and
+  `test-e2e-acp-docker` now stage the secret too, and every one of them empties
+  it once its images are built, failure and interrupt paths included. The file
+  is forced to 0600 before a token is written into it, `Dockerfile.seal` now
+  mounts the secret for its module download (the seal lane never received it),
+  and `integration-test`'s go.mod backup paths are overridable
+  (`GOMOD_BACKUP`, `SDK_GOMOD_BACKUP`). `make verify-gomodauth` pins the
+  contract. See `docs/testing/private-modules.md`.
+
+- **Sandboxed agent containers get the CI runners' locked-memory limit** (#1038).
+  Docker's default `RLIMIT_MEMLOCK` is 8 MiB, so a suite that keeps its secrets
+  in `mlock`ed memory failed in a worker but passed in CI. The worker could not
+  raise the limit because the sandbox drops `CAP_SYS_RESOURCE`. Every sandboxed
+  container now starts with `--ulimit memlock=4294967296:4294967296` (4 GiB),
+  what the CI runners pass. It is applied by the same `SandboxSecurity` policy
+  as the capability set and pids limit, on every spawn path.
+- `ContainerSpec.Ulimits` (`ContainerUlimit`, also re-exported from
+  `sdk/go/orchestration`) carries `--ulimit` flags and is measured by
+  `ContainerConfigDigest`.
+- Operators set ulimits with `sandbox_ulimits` in the embedded-agent and remote
+  agent configs, or with `--sandbox-ulimit name=soft[:hard]`
+  (`QUICBAAS_SANDBOX_ULIMITS` in the agent-daemon unit and image). Entries
+  apply by name over the default. A ulimit the runtime would refuse is
+  rejected at startup.
+- The worker-image probes check the memlock limit under the production policy
+  and lock 64 MiB for real.
+
+- **SDLC: the worker image carries actionlint and shellcheck** (#1039). A
+  project whose `make lint` lints its GitHub Actions workflows (go-blockstore)
+  failed verification in the worker on a tree CI passed. The target fails
+  closed without shellcheck, because actionlint would otherwise skip every SC*
+  rule and still exit 0, and the image carried neither tool. The image now
+  builds actionlint with `go install` at the Makefile's `ACTIONLINT_VERSION`
+  and installs the upstream static shellcheck release at `SHELLCHECK_VERSION`,
+  checked against a pinned SHA-256 for each architecture. `make
+  test-worker-image` checks both pins, and checks that actionlint reports a
+  shellcheck finding (SC2046), so the image cannot pass with shellcheck
+  unreachable.
+
+- A one-shot CLI turn that exits non-zero is read for its structured result
+  object before the process error is reported. A subscription limit (429,
+  exit 1) now holds the account and fails over.
+- A remote worker turn's token usage is recorded. The daemon now returns it
+  on the Prompt response. Previously every remote turn, which is every
+  factory worker turn, was charged as nothing, so `/usage` reported zero for
+  every pooled account.
+- A resume does not count the session it reconstitutes against its own
+  account's cap. After a restart, an idle persistent session on a cap-one
+  account no longer refuses itself as saturated.
+
+- **SDLC: finished work is no longer refused on "nothing to commit"** (#1048). When
+  `git status` reported a change that `git add --all` then staged as nothing — a
+  file rewritten to its committed content in between — the runner's commit exited
+  1 and refused an attempt whose worker had already committed the real work, so
+  the work was never pushed and every retry failed the same way. The publisher now
+  asks the index (`git diff --cached --quiet`) after staging, skips the empty
+  commit, and publishes the commits the branch already carries; a branch with
+  nothing of its own is the ordinary "no changes" outcome.
+- **SDLC: a worker's own commits are signed, and an unsigned one is never published** (#1048).
+  The checkout now configures the worker's git to sign with the attempt's key, the
+  daemon writes an `allowed_signers` file admitting only that key beside the
+  workspace spec, and the publisher refuses to push when any commit the branch
+  carries beyond its base is not signed by it (`UnsignedCommitError`). An index
+  probe that git cannot answer stops the publication before any commit or push.
+  The check runs inside every push, the teardown publish of a failed attempt
+  included, and it accepts only a good signature whose signer fingerprint is the
+  attempt's own SSH key, so a trusted OpenPGP signature does not pass.
+  It verifies, and reports the head of, the exact ref being pushed
+  (`refs/heads/<branch>`), never `HEAD`.
+
+- Blocking a task now ends the job it has running (go-quicbaas#1054). On the
+  node that took the block the job is aborted at once, the way the stall
+  detector ends one. On any other node the job's own lease heartbeat re-reads
+  the task and aborts it within a third of the lease TTL. Either way the lease
+  is released, the container is torn down, and nothing is published. The sdlc
+  delivery runner also re-reads its task before every state, every push and
+  before opening a pull request, so a block that races a publication wins.
+  Both checks fence on the attempt's identity: the job keeps its authority only
+  while the task still names it as the open attempt. A block and a readmit that
+  both land between two heartbeats therefore still end the old job. Before this
+  change the old job would see a pending task and publish anyway. On
+  2026-09-22 a task blocked at 23:11 had its job open a duplicate pull request
+  at 23:34.
+- The `forge_issue` task source no longer adopts an issue that a pull request
+  already closes. Two sources count. One is an open pull request whose title or
+  body uses a closing keyword (`close[sd]`, `fix(e[sd])`, `resolve[sd]`)
+  followed by `#<n>`, `owner/repo#<n>`, or the issue's URL on the bound forge.
+  The other is the forge's own issue-to-pull-request link (on Gitea, the
+  issue timeline). The skip is recorded once on the audit trail as
+  `sdlc:adoption_skipped`, with the pull request's number. Only an open pull
+  request holds its issue. The issue is offered again once that pull request
+  is no longer open, whether it closed without merging or merged. A merged
+  pull request's closing reference therefore never suppresses a reopened
+  issue.
+- A delivery whose pull request is closed without merging now ends its attempt
+  as `superseded` (go-quicbaas#1054). Before, the review gate read the closed
+  pull request as a refusal and the runner started another worker round. A
+  resumed attempt initialized a worker the same way. Once the rounds ran out,
+  the task parked with a question for the owner. Now both paths conclude the
+  task `superseded`: it completes with no further round and no question for
+  the owner, and one comment on the issue. The task cannot be readmitted. The
+  trigger label is removed, and adding it back adopts the issue as a new
+  task. On 2026-09-23 task
+  3a58725f ran another turn against its closed PR #1052.
+
+- Codex turns no longer count cached prompt tokens twice. codex's
+  `input_tokens` already includes `cached_input_tokens`, and the ledger
+  carried both whole (#1058).
+- opencode turns report their token usage. The ACP `session/prompt` result
+  carries it, and it was discarded whenever the answer streamed as
+  notifications, which is every opencode turn (#1058).
+- The direct Ollama backend (`prompt_eval_count` / `eval_count`) and the
+  API inference backends (the provider's `usage`) report the tokens their
+  servers publish. A response with no counts is still "reported nothing", not
+  a measured zero (#1058).
+- Consumption ledger entries keep cache-read and cache-write tokens in their
+  own fields instead of folding them into input, so a cached turn can be
+  priced. Totals, and therefore every quota window, are unchanged (#1058).
+- The Cost page's drill-down names projects instead of listing their ids, and
+  the breadcrumb names the project it opened. The spend report carries
+  `children[].name` and `project_name` on every transport, and
+  `cache_read_tokens` / `cache_write_tokens` beside input and output (#1058).
+- Negative counts from a producer are repaired one dimension at a time, before
+  any are summed or subtracted, and the record is marked repaired. Output 50
+  with reasoning -50 no longer becomes a clean zero, and input 100 with cached
+  -20 no longer becomes a 120-token prompt.
+- The Cost page breadcrumb takes its project name from every accepted report
+  and clears it on a tenant switch, so another tenant's project name is never
+  left on screen.
+
+- MCP refuses a spend cap, window size or breaker threshold that is not a
+  whole number with a typed error naming the field, instead of reading it as
+  zero and so removing the cap (#1058).
+
+- Repaired token accounting (a negative count clamped to zero) is not
+  priced. A cost-settings read that fails records the turn's electricity cost
+  as unknown instead of working it from the configuration. The Cost page's
+  settings panel clears its form and disables Save across a tenant switch. A
+  caller may read or replace only its own tenant's cost settings, unless it
+  is of the system tenant (#1058).
+- An unpooled turn is billed only when it is identified as local inference
+  (billing `local`). A cloud CLI on the host's own login bills unknown
+  (`unpooled`) instead of its list price. A turn that reported zero tokens is
+  a measurement, not missing coverage (#1058).
+
+- A provider-qualified model name (`ollama/review-q8:latest`, as opencode
+  reports it) is ledgered instead of refused, and workflow control-loop turns
+  carry their job kind (#1058).
+- A turn whose backend reported no usage is marked unmeasured and counted
+  as missing price and billing coverage, so a subtotal over it reads as a
+  floor rather than complete. A tenant's re-price of a model now also applies
+  to the model's declared aliases (`opus`) (#1058).
+- The control plane's codex backend runs `codex exec --json`, so its turns
+  carry usage, and a turn on codex's default model is recorded under the
+  model its config.toml pins (or `codex-cli-default`) instead of being
+  refused by the ledger. A codex turn that fails, including one that failed
+  after an assistant message, is ledgered as a failure under that model with
+  the usage codex reported. Tenant price overrides inherit only aliases declared
+  under the same engine (#1058).
+- MCP `agent_account_create` / `agent_account_update` refuse a malformed
+  `billing` argument with a typed error instead of reading it as "not
+  configured", which on an update erased the saved billing (#1058).
+
+- A `task:blocked` issue is out of the Software Factory's reach. Triage passes
+  it over (audited `sdlc:triage_skipped reason=held`), the verdict writer
+  re-reads the issue and refuses to write to one held since it was listed, and
+  the task source does not adopt one even when it also carries `task:ready`.
+  The binding's `blocked` and `escalated` labels hold an issue against triage
+  too. An escalated issue is no longer re-judged when a comment arrives or the
+  head moves; it returns to triage only when a person removes the label.
+  The triage backstop had judged go-quicbaas#1058 ready, relabelled it, and the
+  adopted task was charged an attempt the worker rightly refused (#1060).
+
+- **An agent restart no longer charges the work it cut off** (go-quicbaas#1064).
+  Stopping `quicbaas-agent` closed a live worker's stream mid-prompt; the turn
+  came back `Internal` ("container: agent stream closed") and the job was charged
+  as a failure of the work, so every routine agent restart spent an attempt.
+  - The control plane classifies a Prompt the agent stopped serving —
+    `Unavailable`, or `Canceled` on a stream it did not cancel itself — as the new
+    `agent_interrupted` environment fault: refunded and requeued. It is never
+    charged: the third consecutive interruption blocks the task for a person,
+    as every requeueing class does, but that attempt is refunded as well. The
+    job's error and its attribution log line name the agent's host.
+  - The agent drains before it closes anything: from the first moment of `Stop`
+    it refuses new spawns (`Unavailable`), lets in-flight prompts finish within
+    its shutdown grace, and reports a turn that fails while it drains as
+    `Unavailable` rather than `Internal`.
+  - The packaged and rendered systemd units set `KillMode=mixed`, so SIGTERM
+    reaches the daemon alone and the `docker run` clients behind live workers are
+    not killed before the drain starts.
+  - A worker's container stream that closes without the worker's own exit is
+    transport loss, drain or no drain: the agent now reads the container's exit
+    status from the runtime before tearing it down (`ContainerStreamClosedError`
+    carries it), and a close with no status — the container was killed, the
+    pipe cut — or the runtime's own failure (125) is reported `Unavailable` and
+    refunded. The same rule classifies a turn whose backend ran in-process.
+  - A worker process that exits non-zero while its agent is healthy is still
+    `Internal` and still charged.
+
+- **Every integration-tagged package compiles again, and `make vet-integration` holds all of them.** `pkg/backup`, `pkg/server` and `pkg/storage/file` had rotted under the integration tag and were excluded from the gate; the exclusion list is gone. `pkg/server`'s unit-only test files now carry the package's `!integration` constraint, so the helpers they share no longer vanish under the tag, and the two lifecycle files that asserted a local storage engine, index manager and Raft node the server no longer hosts were deleted (the unit tier covers what remains). The in-process integration suites set the SPIFFE trust domain first-boot requires, so they boot again (go-quicbaas#690).
+- **`test/integration/agent_runtime` compiles and is vetted.** It configures the daemon with certificate material (`pkg/testutil/agentcert`, shared with `pkg/fleet`'s tests) instead of the removed enrollment token, the dead `legacy_enrollment_token` tag is gone, and `agent_runtime` is in the vet tag set so the suite cannot rot unseen again (go-quicbaas#733).
+- **The integration tree and the QUIC SDK tests reserve ports instead of drawing and releasing them.** `allocPortBundle`, nine Raft-port helpers and the QUIC connection-refused test now go through `netport`; the unused `freeLocalAddr` is deleted (go-quicbaas#721).
+
+- **`sdlc bind` refuses a context repository the worker could not clone, naming it.** A context repository is now checked against `sdlc.repo_hosts` like the project's own, so an `http://` URL — which the forge token is never sent over, leaving a private repository uncloneable ("could not read Username") — is refused at bind with the reason and the `https://`/`ssh://` alternatives, instead of failing three attempts later inside the worker. An `ssh://` context repository on a host other than the project's ssh host is refused too, because the spawn pins only that host's key (go-quicbaas#770).
+- **A failed verification command's record and the escalation name its exit status.** The `sdlc:verification` record carries `exit_code=`, and the escalation heads each failed command's lines with `` `make lint` exited 2: `` rather than a bare "failed", so the owner comment says which command refused the change and how (go-quicbaas#773).
+
+- A task's `created_by` is the authenticated principal that created it,
+  stamped by the server in `CreateTask`. It is not a request field, so a
+  caller cannot name someone else. Every task created through the SDK, the
+  UI or the CLI used to show "Created by —". A task a poller adopts from a
+  forge issue has no principal, so it still carries none (#862).
+- A secret version's `created_by` is the authenticated principal that wrote
+  it. The memory, KV and encrypted backends record it on every version they
+  create, whether by store, rotate, re-encrypt or rollback. A rollback is
+  credited to whoever rolled back, not to the author of the version it
+  copies. `ListSecretVersions` and `GetSecretVersion` return it on every
+  transport (#862).
+
+- **Projects: the storage tier is settable from every transport** (#913). The
+  ephemeral workspace tier (#899) lived on the project record and was honoured
+  by both sandbox spawn paths, but no client could set it. `CreateProject`,
+  `UpdateProject` and the project read shape now carry `workspace_tier`,
+  `workspace_tmpfs_mb` and `container_memory_mb` flat over REST, gRPC
+  (`api/proto/project.proto`), QUIC, MCP (`project_create` / `project_update`),
+  Unix and the embedded transport, plus the TypeScript SDK and the CLI
+  (`--workspace-tier`, `--workspace-tmpfs-mb`, `--container-memory-mb`). On an
+  update the two sizes are presence-based like the quotas: absent leaves the
+  stored size alone, `0` clears it. The project service validates the merged
+  storage on create and update, so an unrecognized tier is refused with the
+  same `InputValidationError` on every transport.
+
+- **SDLC: a session whose container is gone is no longer reported as a failed git command** (#932).
+  When the runtime refused an exec because the container had stopped
+  (`container … is not running`, `cannot exec in a stopped container`, podman's
+  `container state improper`), `ExecContainerRuntime.Exec` returned the runtime
+  CLI's exit status as though the command had run. The checkout then reported
+  `checkout: git clone … exited 128: <docker's message>`, which looks exactly like
+  a real clone failure, and the checkout probe read the refusal as "not a
+  repository". The runtime now answers `ContainerNotRunningError`, and the
+  checkout and pre-flight answer `SessionContainerGoneError`, which names the
+  session, the container and the runtime's own message. The job's evidence line
+  says the container was gone and does not print the git command. A genuine
+  non-zero git exit is still a `CheckoutCommandError`. The runner still parks the
+  task as a workspace fault, with no attempt charged.
+
+- A task says why it stopped. The task representation on REST, gRPC, the
+  embedded transport and the Go and TypeScript SDKs now carries
+  `charged_attempts`, `effective_budget`, `fault_class` and `fault_origin`
+  (derived by the server on every read, never stored), plus
+  `conclusion_reason` and `block_fault_class` on gRPC and the SDKs. The
+  counters and the block triple (`attempts`, `environment_faults`,
+  `question_attempts`, `conclusion_reason`, `block_kind`, `blocked_reason`,
+  `block_fault_class`) are always present on the JSON representation instead of
+  disappearing when zero (#947).
+- The Tasks page and the task detail page badge why a task stopped: an
+  environment fault (naming its class), a failure of the work, a lost node, or
+  a park awaiting an owner ruling, so the four no longer all read `failed` or
+  `blocked`. Charged attempts and the budget come from the server, so a
+  question refunded by the engine is no longer counted against the budget on
+  the page (#947).
+
+- **The jobs listing now names the forge issue behind every row, on every
+  page.** `JobStatus` gained `source` — the origin of the TASK the job is an
+  attempt at, in the task's own `{kind, ref, url}` shape — and
+  `ListJobsPage` fills it for the page it answers, memoised per task. The
+  Jobs view's `#N` chip read this from `orchestratorStore.tasks`, which since
+  the listings became server-paged holds ONE page of twenty-five tasks: the
+  chip rendered for whichever jobs happened to have their task on that page
+  and blanked for the rest, which on page 2 of jobs is nearly every row. No
+  task filter could express "the tasks behind these jobs", so the view had no
+  second request to fall back on either. The chip now reads the row it is
+  rendering, and needs no tasks loaded at all.
+
+- The projection runs **after the page is cut**, which is the one thing
+  `ListJobsPage` does beyond its unpaged twin plus `ApplyPage`: a tenant with
+  two thousand jobs names nearly as many tasks, and resolving them all to
+  answer a page of twenty-five would make the page cost the collection. It is
+  memoised by task, so a task's whole attempt history costs one task read. A
+  task that cannot be read leaves the row with no source rather than failing
+  the page — the same rule `runner` follows on the sessions listing.
+
+- The field is carried by **every** transport: REST (and the QUIC and Unix
+  transports that delegate to it), the embedded transport (on `JobSummary` and
+  on `GetJobStatus`'s `JobStatus`), the MCP `quicbaas_orchestrator_list_jobs`
+  and `quicbaas_orchestrator_get_job_status` tools (which omit the key
+  entirely when the job's task records no origin, so "no issue" reads
+  differently from "blank issue"), the Go SDK, the TypeScript SDK, and
+  gRPC — `OrchestratorJobSummary`
+  and `OrchestratorGetJobStatusResponse` gained a `source` of the same
+  `TaskSource` message a task already carries. `GetJobStatus` fills it
+  alongside the rest of the task provenance, so the detail read and the
+  listing agree.
+
+- The gRPC listing takes no page fields, so it now reads the PAGED verb with
+  a nil page: that is the verb the projection lives in, and a nil page cuts
+  nothing and orders by started_at descending — the order the unpaged listing
+  already sorted itself into. Same jobs, same order, with the source on them.
+  Answering the whole listing costs one task read per DISTINCT task in it, on
+  a call that already materialises every job the tenant owns; the request's
+  `task_id` narrows the jobs before the projection runs, so a consumer that
+  wants to pay less asks for less.
+
+- **`barrier enable-encryption --transport rest` works, and `--tenant`
+  migrates that tenant.** The go-qrdb wire mount
+  `POST /v1/barrier/enable-encryption` was bound to the quicbaas `/api/v1`
+  handler, so go-qrdb's REST transport — the client behind the CLI verb and
+  `Security().Barrier().BarrierEnableEncryption` — could not drive it: the
+  handler required `target_strategy` where go-qrdb sends `strategy`
+  (`validation error: target_strategy is required`), answered `204` where the
+  client decodes `{status, scope}` (a JSON EOF even on success), and silently
+  dropped the body `tenant_id`, so a tenant migration ran against the SYSTEM
+  barrier. The mount now has its own handler that speaks go-qrdb's wire
+  verbatim: `strategy`, body `tenant_id` as the scope (empty = system), and
+  `200 {"status":"migration_started","scope":"system"|"tenant"}`. It
+  authorizes the scope the body selects: `seal:enable_encryption` against the
+  system tenant, or `tenant_barrier:enable_encryption` against the named
+  tenant. The decision is the embedded qrdb node's own authorizer, so role
+  grants and a platform app token's `scp` scopes are both honoured. A tenant
+  admin can migrate its own barrier, but not the system barrier or another
+  tenant's. The route is registered identity-gated, and the
+  service still binds a tenant-scoped migration to the caller's own tenant
+  (#990).
+- **`POST /api/v1/barrier/enable-encryption` rejects a body `tenant_id`.**
+  The route's scope is its path — the system barrier — and it used to drop a
+  body `tenant_id` silently and migrate the system barrier anyway. It now
+  answers `400` without touching the barrier; per-tenant migrations use
+  `/api/v1/tenants/{tenant_id}/barrier/enable-encryption` (#990).
+
+- **A worker session whose pooled provider account rotates under it now
+  resumes its conversation instead of losing the round.** A session
+  materializes its provider credential once, at spawn, and never re-reads it,
+  so a host refresh, an OAuth renewal or a rewritten account secret left every
+  open session presenting a credential the provider had stopped honouring. The
+  next prompt died in about 2.5 s as `api_error`, the runner refunded the
+  attempt and re-dispatched, and the round's work was done over in a fresh job
+  (three review rounds lost in one day: #965, #980, #982).
+
+  Before every prompt the SDLC runner now asks whether the credential its
+  session holds is still the account's (`SessionAccountFreshness`). Every copy
+  of an account's material carries a **generation** — stamped into an inline
+  envelope by the write that stores it, or the version of a referenced
+  account's secret — recorded on the session before its container starts,
+  carried to and back from fleet hosts on the released credential and the spawn
+  response, and compared against the account's authority rather than a
+  metadata mirror. A left-behind session is replaced before the turn is spent:
+  its work is pushed, it is closed, and a new session is spawned on the same
+  branch, in the same workspace and round, with no attempt charged.
+
+- **An account whose login the provider rejects leaves the pool and asks for a re-login.** Before this, a codex `401 ... sign in again` failed the turn as `codex (8591 bytes of stderr withheld)`, the account stayed `active`, and every review dispatch walked into the same refusal every five minutes. The backend that ran the CLI now recognises a rejected login (401, expired or already-used refresh token, "sign in again", "Please run /login") and sends the verdict across the daemon wire. The control plane puts the account in `error` with a `re-login needed:` last error, and the inbox asks for a re-login. The SDLC worker rolls onto another account, the attempt is refunded (`account_auth_rejected`), and a spawn fails over to the next Agent.
+
+- A command the engine runs in a session's container — a review's or
+  triage's checkout, a delivery's verification and publish — now runs on the
+  fleet agent that holds that container, over a new authenticated,
+  tenant-scoped `AgentRuntime.ExecSession` RPC (bounded output cut on a rune
+  boundary and carried as bytes, so non-UTF-8 output survives; deadline),
+  instead of on the daemon's own container runtime, which does not know it.
+- The first workspace pin is stored strictly: a refused write closes the
+  session and parks the job (`WorkspacePinPersistError`) rather than
+  proceeding with a pin no durable record holds.
+
+- An operation on an existing remote session (prompt, status, exec, close) is
+  routed to the agent that holds it or fails with
+  `SessionHostUnavailableError`; it no longer falls back to the local backend,
+  whose session-not-found closed the record while the remote container ran on.
+  Heartbeat freshness now decides only where a NEW session is placed.
+- A job's workspace pin is persisted when its first spawn returns, not at the
+  next state transition, so a crash during checkout cannot lose it.
+
+- A pinned spawn whose agent resolved (heartbeat still fresh) and then never
+  answered is `WorkspaceAgentUnavailableError` and parks, instead of an
+  ordinary unreachable-agent requeue that let the next attempt clone afresh
+  elsewhere.
+
+- A workspace spec directory — the forge token, in plaintext — no longer
+  outlives its session on disk: every host removes all of them at startup,
+  before it accepts a spawn, since no session survives a restart; and the
+  token's in-memory copy is zeroed once written or sent.
+
+- The fleet resolver no longer dispatches to an agent whose last heartbeat is
+  older than `orchestration.heartbeat_timeout`. A crashed agent kept its
+  "running" status and received work until it was deregistered by hand; every
+  review routed to it failed on a refused connection.
+
+- **A review is not started when its reviewer has no usable account.** The dispatcher now asks whether the seat's Agent can draw any usable pooled account before it creates a review job. When every account is errored, revoked or over budget, the review is held: no job is created, the account's Needs-you item says what to fix, and the next sweep dispatches the review once an account is usable. Previously a dead codex login produced a failing review job every five minutes.
+
+- **A context repository edited onto a project after `sdlc bind` is checked before the worker clones it.** Bind was the only place a project's repositories met `sdlc.repo_hosts`, so a context repository added with `project update` afterwards — an `http://` URL, an `ssh://` one on a host other than the project's, a host off the allowlist — or an allowlist that shrank under a bound project, reached the worker and failed its clone. Every runner now repeats the bind check when it opens a workspace, and a refusal parks the task for an operator, naming the repository, with no attempt charged (go-quicbaas#770).
+
+- A ruling that readmits a task now hands its issue back to the factory:
+  the trigger label goes on and the park labels come off. The first attempt
+  after a park re-reads the issue, so the worker sees the ruling.
+- The MCP orchestrator task, job and attention tools honour `tenant_id`, and
+  fall back to the caller's binding, as REST does. Before this,
+  `attention_list` and `attention_resolve` refused calls with "invalid
+  tenant_id" even when a tenant was passed.
+- A running job's heartbeat reads its task under the job's own tenant, so a
+  task blocked elsewhere now ends its job.
+- Needs-you no longer reports a tenant with no per-tenant barrier as
+  "Your barrier is sealed". qrdb answers that tenant `sealed: true,
+  initialized: false`, and the alert now needs both flags.
+- `GET /api/v1/tenants/{tenant_id}/barrier/status` answers from the
+  embedded qrdb node again. It used to return 501. The co-hosted go-xkms
+  module no longer mounts its host-inert `/api/v1/tenants/` routes, which
+  collided with quicbaas's under a differently named wildcard. The
+  module-overlap test now compares route shapes, not spellings.
+
+- **KMS key rotation fires exactly once on a cluster.** The cryptoperiod scan
+  (PCI DSS 3.6) ran on its own timer on every node with no leader check or
+  claim, so a cluster rotated each due key once per node. It is now the
+  `kms.rotation` scheduler system job: cluster-wide, dispatched by the leader
+  only, with each firing arbitrated by the firing claim. The standalone timer
+  loop (`KMSRotationScheduler`) is gone. Rotation policy semantics are
+  unchanged; `KMSRotationScanInterval` must now be a whole number of seconds.
+  The scheduler gains `RegisterSystemJob` — platform-declared jobs under
+  reserved IDs (at or above `SystemJobIDFloor`), installed idempotently on every
+  node and re-armed after a failed run.
+
+- **Review and triage jobs take a fleet slot in the admission plan.** The plan
+  counted fleet load through the project-budget rule, which leaves review and
+  triage jobs out, while the fleet capacity check counted them because they
+  run a container. The plan now counts through `JobLease.ClaimsWorker`, the
+  fleet check's own predicate, so it no longer hands out slots the check then
+  refuses. They remain off the project budget; a dormant job is off both.
+
+- **A Claude worker with no model named no longer runs on Sonnet.** The
+  `claude` ACP backend in `quicbaas agent serve`, the embedded agent and the
+  daemon's in-process orchestration was built with an empty default model,
+  which hands the choice to Claude Code — and Claude Code's own default is
+  `claude-sonnet-5`, below the Opus floor for coding work. An SDLC binding
+  that left `worker.model` empty therefore ran every task on the utility
+  tier without saying so. Each of those backends now defaults to
+  `DefaultClaudeModel` (go-quicbaas#1012).
+
+- **A restart no longer dispatches a second job for a task whose job it just resumed.** The task dispatcher started with the engine, so its first sweep ran before job recovery had re-acquired the resumed jobs' leases. It saw each task naming a job that "holds no live lease", released the task back to the queue as stranded, and later dispatched a second job that superseded the resumed one, throwing its in-flight review or turn away. This happened on every restart. The dispatcher now starts as the last startup step, after `recover_jobs` (go-quicbaas#1064).
+
+- **Triage never hands a tracking checklist to a worker.** The charter has a new check, ahead of "scoped to one pull request": an issue that tracks other work — child issues, checkboxes over several changes, or a body that calls itself a tracker or epic — is `not-actionable`, left for a person, with a one-line reason. Two "Release readiness" trackers (go-blockstore#75, go-frost#30) whose own bodies said "This is a tracking checklist, not work" had been marked ready, and both workers stopped on owner questions.
+
+### Testing
+
+- **Every first-boot refusal is mutation-verified at its source (#60).** The
+  earlier tests stubbed the IAM seam, so they showed that the caller refuses a
+  `NoAdministratorError` but not that one is ever produced. Reverting the
+  producer to warn-and-carry-on left the suite green. A fresh-install fixture
+  (`pkg/server/first_boot_fresh_install_test.go`) now reaches the producer on
+  a real node where no first-boot has run. It can also stop qrdb's own
+  first-boot after the built-in roles are written and before the admin user
+  is created. Each of these mutations now fails a test:
+  - the refusal reverted to a warning
+  - a role-name resolver that never resolves
+  - completion inferred from qrdb's own artifacts
+  - the undelivered-bundle guard disabled
+
 ## [0.12.0-alpha] - 2026-09-23
 
 Takes the stack to go-xkms v0.17.0-alpha. Its endorse-01 fix (go-xkms#634)
@@ -522,7 +1797,7 @@ would be stale for every attempt after it.
 - **A `systemd --user` agent no longer dies with the deploy's SSH
   session.** A per-user systemd manager belongs to its user's login
   sessions unless that user lingers, so `agent deploy --systemd auto` on
-  omega reported `Online At: 2026-09-22T01:53:08Z` for an agent that was
+  a remote agent host reported `Online At: 2026-09-22T01:53:08Z` for an agent that was
   killed the moment the deploy disconnected — every later probe started a
   fresh manager, enrolled, and was stopped ten seconds later, while the
   fleet registry still showed `running` from the last heartbeat and a
@@ -2326,7 +3601,7 @@ and the reviewer judging the new one.
   `job_id` and `lease_id`. An absent lease is a first delivery and is governed by
   the checks that already existed; a presented lease is a REFRESH of a copy the
   caller holds, and a revoked, expired or wrongly-scoped one is refused from the
-  lease store whatever the caller believes. `pkg/agent`'s read-through cache
+  lease store whatever the caller believes. `pkg/fleet`'s read-through cache
   records the grant each copy was released under and presents it on every
   refresh — without that, every refresh would look like a first delivery and
   revocation would be unenforceable.
@@ -2348,7 +3623,7 @@ and the reviewer judging the new one.
   — only the daemon can. `AccountCredentialLeaser` is therefore split: the
   one-verb `AccountDeliveryGrantor` is what a resolution needs, and it has two
   honest implementations — the control plane's, which CREATES the grant in the
-  lease store, and `pkg/agent`'s, which REPORTS the one the control plane already
+  lease store, and `pkg/fleet`'s, which REPORTS the one the control plane already
   issued. A daemon holds no lease store, so requiring it to implement `Validate`
   and `Revoke` would have forced a stub.
 
@@ -3208,7 +4483,7 @@ and the reviewer judging the new one.
   misled one analysis pass into believing spawned agents were governed by it.
   Its sentinel and error type go with it.
 
-  `AgentIdentity` stays, because it is real: `pkg/agent` `ProductionEnroller`
+  `AgentIdentity` stays, because it is real: `pkg/fleet` `ProductionEnroller`
   populates it from the daemon's registration and token exchange, and the
   daemon's own spawn server authorizes the central's inbound dispatch against its
   `Scopes`. Its doc comment no longer claims provisioning via
@@ -3732,8 +5007,9 @@ and the reviewer judging the new one.
 - **The Software Factory worker can run `make lint` now.** The worker image
   carried git, ssh, make and the Go toolchain but no linter, so a binding whose
   verification commands are a Go project's own — which is all of them — hit
-  `make lint` exiting 2 with *"golangci-lint is required but not installed"* on
-  a tree that was perfectly clean. `make build` and `make test` passed in the
+  `make lint` exiting 2 on a tree that was perfectly clean (observed on the
+  go-truststrap binding, whose Makefile words it *"golangci-lint is required but
+  not installed"*). `make build` and `make test` passed in the
   same container, so every review round failed on the verification step and
   every Go job escalated to a human.
 
@@ -5067,7 +6343,7 @@ and the reviewer judging the new one.
   unreachable host); the shipped UI's commit-author placeholder is `agent`
   instead of the owner's private Gitea principal, with **both** tracked bundles
   rebuilt so the embedded UI stops carrying it; `--help` text and exported godoc
-  across `cmd/quicbaas` and `pkg/agent.Config.ServerAddr` name
+  across `cmd/quicbaas` and `pkg/fleet.Config.ServerAddr` name
   `quicbaas.example.com:8443` and `agent-01` rather than fleet hosts; and the
   copy-pasteable endpoints in `docs/embeddings/npu.md` name `npu-host.internal`.
   Benchmark prose naming the machine a measurement was taken on is provenance and

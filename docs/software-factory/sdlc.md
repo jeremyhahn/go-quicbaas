@@ -113,7 +113,11 @@ runtime, so it runs first; `startSDLC` attaches what the runner drives with.
    given, checks running) is waited for on the workflow's `poll_interval`,
    and an `sdlc` job has no workflow, so it is always
    `DefaultReviewPollInterval` (30s); the job sits in `reviewing` until a
-   person or a pipeline decides. A refusal — changes requested, a red that
+   person or a pipeline decides. A round whose forge READ fails (the pull
+   request, its reviews or its checks) is polled again on the next tick, up
+   to `reviewReadFailureBound` (10) failed rounds in a row, so a forge blip
+   never ends a long wait. Only a forge that keeps failing ends it, with the
+   forge's own error, attributed as before. A refusal — changes requested, a red that
    stayed red past the settle window — fails the criterion with the findings,
    and the runner re-delegates to the worker (`re-delegating → executing`)
    with the findings in job memory. The binding's `max_review_rounds` rounds
@@ -121,9 +125,15 @@ runtime, so it runs first; `startSDLC` attaches what the runner drives with.
 
    **A settled red is classified before anyone is woken.** `pkg/cifault` reads
    each failed check's log and answers `genuine`, `void` (a runner died, a
-   status write raced shutdown — re-run it, bounded, and wake nobody) or
+   status write raced shutdown, the runner failed tearing down a job whose
+   steps all passed — re-run it through the forge, at most
+   `DefaultChecksRerunBudget` (3) times per check per head, record an
+   `sdlc:ci_rerun` audit event for each, and wake nobody) or
    `host_defect` (registry, container runtime, module resolution — park for an
-   operator). Only `genuine` re-delegates. See
+   operator). Only `genuine` re-delegates, and a step that ended `Process
+   completed with exit code N` is always `genuine`. The runner's own error
+   lines (job-container teardown, runner lost) are one table in
+   `pkg/cifault/infra.go`. See
    [ci-failure-classification.md](ci-failure-classification.md).
    **The round bound terminates, and that is the point of it.** `nextRound`
    answers `escalating` on every call once the bound is crossed, so a run can
@@ -147,7 +157,9 @@ runtime, so it runs first; `startSDLC` attaches what the runner drives with.
    the verdict; both output streams are the evidence the failing round sends
    back to the worker. A job with no containerized session is refused
    (`VerificationNotContainerizedError`) rather than verified on the daemon
-   — there is no second path.
+   — there is no second path. What it runs ON is the tree the forge's checks
+   will judge, not always the branch as pushed — see
+   [Verification judges the merge result](#verification-judges-the-merge-result-not-the-branch-tree).
 
 4. **`JobRunner` — `sdlc`** (`runner.go`). The shape of an issue-driven job.
    An issue is not a DAG: there is nothing to decompose, because the issue IS
@@ -159,41 +171,41 @@ runtime, so it runs first; `startSDLC` attaches what the runner drives with.
 
    | state | what happens |
    |---|---|
-   | `initializing` | `Prepare` plans the branch, writes the `Delivery` and labels the issue; the ONE worker session is spawned in the binding's `worker.image` with the workspace spec and the forge token mounted read-only. The runner then clones the project and its `context_repos` INSIDE that container, through the runtime's exec seam (`checkout.go`), and puts the planned branch on the checkout; the host that runs the session — this daemon or a fleet agent — makes only the directory the checkout is mounted through, under its own projects root ([sandbox](sandbox.md#agent-local-workspaces)). A **pre-flight** then proves that checkout (`preflight.go`) before anything is prompted: an unfit workspace parks the task for an operator at zero token cost — see [Autonomous projects](autonomy-and-dispatch.md#the-pre-flight--the-workspace-is-proved-before-anything-is-prompted). |
+   | `initializing` | `Prepare` plans the branch, writes the `Delivery` and labels the issue; the ONE worker session is spawned in the worker Agent's `image` with the workspace spec and the forge token mounted read-only. The runner then clones the project and its `context_repos` INSIDE that container, through the runtime's exec seam (`checkout.go`), and puts the planned branch on the checkout; the host that runs the session — this daemon or a fleet node — makes only the directory the checkout is mounted through, under its own projects root ([sandbox](sandbox.md#agent-local-workspaces)). A **pre-flight** then proves that checkout (`preflight.go`) before anything is prompted: an unfit workspace parks the task for an operator at zero token cost — see [Autonomous projects](autonomy-and-dispatch.md#the-pre-flight--the-workspace-is-proved-before-anything-is-prompted). |
    | `executing` | the worker is prompted with the issue contract verbatim, plus the previous round's findings from job memory and, when the last attempt changed nothing, that attempt's turn. The answer is recorded on the job as an `sdlc:agent_turn` event whatever it was, and what the run does next is decided by whether the checkout moved — see [the worker's turn](#the-workers-turn). |
-   | `validating` | reached ONLY when the turn changed something. The binding's `verification` commands, in order, through the module's `container_command` validator: the operator's `ExecutionGuard` admits each command on the DAEMON, and the command then runs INSIDE the worker's container, in the checkout its entrypoint made (`ContainerRuntime.Exec`, the same seam the delivery's git uses). Nothing verifies on the daemon; a job with no container is refused. A failure goes back to `executing` with the command's output — both streams — and counts a round. |
-   | `reviewing` | `Reviewable` publishes; then the `forge_review` gate. `request_changes` → `re-delegating`; a plan needing no pull request (the trunk-based carve-out) goes straight to `completing`. |
-   | `re-delegating` | round++ up to `max_review_rounds`, then `escalating`. |
+   | `validating` | reached ONLY when the turn changed something. The binding's `verification` commands, in order, through the module's `container_command` validator: the operator's `ExecutionGuard` admits each command on the DAEMON, and the command then runs INSIDE the worker's container, in the checkout its entrypoint made (`ContainerRuntime.Exec`, the same seam the delivery's git uses). Nothing verifies on the daemon; a job with no container is refused. A failure goes back to `executing` with the command's output — both streams — and counts a round. A branch BEHIND its base is verified on the merge result instead, and the round says so first (below). |
+   | `reviewing` | the container pushes, then the worker's session and container are CLOSED for the wait (`releaseWorker`, go-quicbaas#938; audited `sdlc:worker_released`). On a project whose `session_rotation` is `resume` (the default) the session's conversation is read first, and the audit records `replayed_turns=` (or `resume_unavailable=`). `Reviewable` publishes; then the `forge_review` gate. `request_changes` → `re-delegating`; a plan needing no pull request (the trunk-based carve-out) goes straight to `completing`. |
+   | `re-delegating` | round++ up to `max_review_rounds`, then `escalating`. The round goes back through `initializing`, which spawns a new container on the same branch and workspace. Its first prompt carries `worker_resumed_note` with the released session's conversation under `session_rotation` `resume` (the default), or `worker_released_note` under `fresh`. |
    | `completing` | `Complete` merges, bound to the reviewed head; the strategy's `PostMerge` steps run through the forge adapter (gitflow's hotfix back-merge). A pull request that [conflicts with its base](#a-merge-conflict-is-a-merge-round) (`MergeConflictError`) goes back to `executing` as a merge round (the base is merged into the branch; nothing is rebased or force-pushed); it counts a round, and it is not a failure of the work. |
    | `cleanup` / `escalating` | the session is closed and the container goes; on a non-completed exit the branch is published FIRST so nothing the worker did is lost, and `Blocked` posts the reason to the issue. |
    | ANY OTHER EXIT | a refusal after the spawn, a checkout or verification that would not run, a cancellation or a panic runs the SAME teardown, deferred (`abandonWorker` → `teardownWorker`). It publishes, closes and discards exactly as a planned exit does, and the close is issued on a context the run's own cancellation cannot reach — bounded by the discard stage timeout. Without it a refused attempt left its container running and its daemon session record behind. |
 
-   **`executing` and `reviewing` are declared session-backed**
-   (`JobStateSpec.SessionBacked`), and nothing else is. The declaration says
+   **Only `executing` is declared session-backed**
+   (`JobStateSpec.SessionBacked`). The declaration says
    which states the stall detector may CONCLUDE about: a job past its bound
    in one of them with no addressable session has lost the worker it is
    waiting on and is ended; a job in any other state is only reported. The
-   one worker session outlives more states than that — it is spawned in
-   `initializing` and closed in `cleanup`, in `escalating`, or on the
-   deferred exit path any other ending takes — so "the run happens to hold a
-   session here" is not the test.
+   worker session outlives more states than that — it is spawned in
+   `initializing` and closed on entry to `reviewing`, in `cleanup`, in
+   `escalating`, or on the deferred exit path any other ending takes — so
+   "the run happens to hold a session here" is not the test.
 
-   `reviewing` is declared because the wait in it never touches the worker:
-   the container commits, signs and pushes, and the daemon then polls the
-   forge for a verdict that may never arrive, so a worker that died after the
-   push is noticed by nothing else — and a review that cannot take another
-   round (`re-delegating → executing`, on the SAME session) is a job to end.
+   `reviewing` is NOT declared: the run holds no worker there. A job waiting
+   on a verdict runs no worker turn, so it holds no container, no project
+   slot and no fleet or backend slot (its lease is `Dormant`, see
+   [admission-and-readiness.md](admission-and-readiness.md)). A verdict that
+   never arrives is reported, and no worker exists whose death could strand
+   it.
    `validating` is NOT declared even though its commands run in the
    container: the state's own work IS the exec, so a worker that has gone
    fails the pipeline rather than leaving the run waiting. `initializing`,
    `re-delegating`, `completing` and `cleanup` are the daemon's own work and
    each finishes correctly whether or not a worker is still there.
 
-   The engine's `workflow` runner declares `reviewing` session-backed too and
-   `mergeJobStateSpec` takes the disjunction, so the effective value is
-   unchanged — but a declaration that is only true because another runner
-   made it would go silently false the day that runner changed
-   (go-quicbaas#668).
+   The engine's `workflow` runner declares `reviewing` session-backed and
+   `mergeJobStateSpec` takes the disjunction, so the stall detector reads each
+   job's OWN runner's declaration (`runnerSessionBackedIn`) and falls back to
+   the merge only for a runner nobody registered.
 
    **Recovery is answered per state** (`JobResumer`, `runnerResumeStates`),
    and what decides each answer is what is already true on the forge — a
@@ -239,7 +251,7 @@ runtime, so it runs first; `startSDLC` attaches what the runner drives with.
    | moment | what the module does |
    |---|---|
    | `Prepare` (initializing) | the attempt's branch is planned (`issue/<n>-<slug>` from the binding's strategy, based on `Project.Git.DefaultBranch`), the `Delivery` records it, the issue is labelled `in_progress`. A later attempt continues a branch an earlier one pushed. **Nothing is materialised on the daemon's filesystem** and the returned work directory is empty: the worker's container clones the project and the project's `context_repos` itself — see [Autonomous projects](autonomy-and-dispatch.md). |
-   | `Reviewable` (reviewing) | the pull request opened (or refreshed on a later round) against the head the CONTAINER already published, recorded on the `Delivery` and published as Task artifacts (`url` `pull_request`, `commit` `head`), issue labelled `in_review`. No head recorded → `NoPublishedHeadError`; the container publishes before the forge is written. |
+   | `Reviewable` (reviewing) | the pull request opened (or refreshed on a later round) against the head the CONTAINER already published, recorded on the `Delivery` and published as Task artifacts (`url` `pull_request`, `commit` `head`), issue labelled `in_review`. A readmitted task's attempt that refreshes an open pull request takes off the park labels an earlier `Blocked` put on it; labels a person added stay. No head recorded → `NoPublishedHeadError`; the container publishes before the forge is written. |
    | `Complete` (completing) | merge as the binding's strategy plans, **bound to the head the review approved**: the forge refuses a merge whose head moved (`HeadMovedError`), retried only while the forge says not-ready (`merge_attempts`), issue labelled `merged`. When the retries are spent, one more read of the pull request decides between `MergeNotReadyExhaustedError` and `MergeConflictError`; see [a merge conflict is a merge round](#a-merge-conflict-is-a-merge-round). A merge the forge never answered is settled by reading the pull request back — see [Forge transport](#forge-transport-deadlines-retries-and-unanswered-writes). |
    | `Discard` (cleanup, detached context) | no filesystem work — the container that made the checkout is gone with it; the `Delivery` stays as the record of the attempt. The runner publishes the branch before the container ends on every non-completed exit. |
    | `Blocked` (escalating) | the park reason posted to the issue (secrets redacted, bounded), derived from the park's [typed unblock condition](#the-block-lifecycle) plus the attempt accounting and what resumes it, retried per `surfacing`; issue labelled `blocked` / `needs_info` / `escalated`, **and the delivery's open pull request labelled with the same one**. |
@@ -426,7 +438,11 @@ Three properties the argument vectors carry deliberately:
   bound under `orchestration.sockets_root` — not the project workspace, which
   a 107-byte unix socket path does not fit under — measured at startup and
   admitted by the mount policy by construction; see
-  [The signing socket’s root](#the-signing-sockets-root).
+  [The signing socket’s root](#the-signing-sockets-root). A session placed on
+  a fleet node on another host is served the same agent over the agent's
+  FleetRuntime link rather than a mount — the key and the socket stay here,
+  `StopSigning` still closes the window, and every relayed signature is
+  audited ([sandbox.md](sandbox.md#agent-local-workspaces), go-quicbaas#1013).
 - **The forge token never travels either.** For an `https://` remote the push
   carries a credential helper that READS the mounted token file when git asks;
   for `ssh://` there is no helper at all, because the agent socket already
@@ -648,6 +664,79 @@ produced no changes refuses to dispatch it and parks with that as the stated
 reason. The note is the mechanism; the digest is what makes "the same prompt"
 a decidable question rather than a judgement.
 
+## Verification judges the merge result, not the branch tree
+
+Verification and the merge gate used to judge **different trees**. Verification
+ran the binding's commands on the branch exactly as the container held it; the
+forge's "Merge Result" job runs its checks on the pull request **merged with
+its base**. A branch one commit behind a base that had already fixed an
+environment-sensitive test therefore failed here and passed there, and the
+round of feedback the worker got was about a defect `main` had already fixed.
+Measured on go-quicbaas#965 (2026-09-22): six minutes and one of the attempt's
+turns spent merging `origin/main` to make the same commands pass — and the
+same thing had cost #966 a round earlier that evening.
+
+So before the binding's commands run, the runner **refreshes the base and
+counts the branch against it** — `git fetch origin <base>`, then
+`git rev-list --count HEAD..<the commit that fetch landed on>`, in the
+container, like every other git this module runs (`merge_result.go`).
+
+The refresh is not optional. The container fetched the base when the attempt
+was *initialized*, before the worker was prompted; a base that moves during
+the turn — which is exactly what happened to #965 and #966, `main` fixing the
+environment-sensitive test mid-attempt — is invisible to that ref, and a count
+against it answers "level" for a branch that is not. Everything downstream
+names the **commit** the fetch landed on rather than the ref, so a base that
+moves again between the count and the merge cannot have verification judge a
+tree it never counted.
+
+| what it finds | what happens |
+|---|---|
+| **level with its base** (the overwhelmingly common case) | nothing. No worktree, no merge, no cleanup; verification runs exactly as it did before, one fetch and one count the poorer. |
+| **behind by N**, checkout clean | a throwaway worktree is added beside the checkout (`.merge-result-<project>`), `origin/<base>` is merged into it **`--no-commit --no-ff`**, and the binding's commands run there. The worktree is removed the moment verification ends. |
+| **behind by N**, merge conflicts | `MergeResultConflictError`, naming the conflicting paths. It is a REFUSAL, not a verification failure: a branch that will not merge says nothing about the work, and reporting it as a failed build would send the worker looking for a defect that is not there. Only a merge git left unmerged paths for is reported this way, and the paths are read back with `git diff --name-only --diff-filter=U`. |
+| **behind by N**, merge fails for any other reason | `PublishCommandError` naming the merge — a worktree that is not there, a git configuration the image refuses, a full disk. Nothing about such a branch needs reconciling, so calling it a conflict would send the worker after conflicting paths that do not exist. If the unmerged-paths probe is what failed, its own failure travels with the merge's rather than being read as "no conflicts". |
+| **behind by N**, checkout holds uncommitted work | the working tree is snapshotted into a commit **object** — a **copy of the worker's own index** beside the checkout (`GIT_INDEX_FILE`), `git add --all` staged into it, then `write-tree` and `commit-tree` parented on `HEAD` — and the worktree is made from that snapshot. The copy is what makes the snapshot the tree the delivery would commit: `git add --all` into an index that starts EMPTY skips every file the repository tracks despite an ignore rule (seven here, the vector-store markers), which would record them as deleted and have verification judge a tree missing files the branch never touched. What the snapshot tree actually holds is measured against real git by `make integration-test-merge-result`, which CI runs on every push and pull request as the `Merge-Result Snapshot` job; the unit suite holds the command plumbing. The merge result is therefore the worker's actual work merged with the base, uncommitted changes and new files included. No ref moves, the worker's own index and working tree are untouched, and the snapshot is never signed: it is scaffolding nobody will pull, review or verify. |
+
+**The pushed branch is untouched and the worker still owns git.** Nothing here
+commits, amends, rebases or pushes: the merge exists only inside a worktree
+that is thrown away, and the merge gate — not this — is what decides whether
+the merge lands.
+
+**The throwaway worktree is removed on a context detached from the stage's**,
+bounded by the same discard timeout every other detached cleanup in the runner
+takes. A verification that was cancelled or timed out is exactly when the
+removal matters: the checkout outlives the job on a persistent workspace tier,
+so a worktree left behind is the next attempt's problem. "There is no such
+worktree" is told from "the removal failed" by asking git what worktrees it
+holds (`git worktree list --porcelain`) rather than by reading an exit status,
+and a removal that failed is reported — on the job as `sdlc:verification`, and
+to the caller as a typed `PublishCommandError`. Nothing here is swallowed.
+
+Verifying the checkout itself when it is dirty was the earlier behaviour, and
+it left #982 open where it bites hardest. `PushTurn` commits and pushes only on
+the **ephemeral** tier, where the container's tmpfs is the sole copy of the
+work; off it the checkout stays dirty between turns by design. So "dirty,
+therefore judge the branch as committed" was not a corner case on a persistent
+workspace — it was every attempt, each one still paying the wasted round for a
+failure the base had already fixed.
+
+Both throwaway artefacts — the worktree and the snapshot index — are removed
+together when verification ends, and both answers are kept: the one that could
+be removed is not abandoned because the other could not. The index is removed
+with `rm -f`, the one undo here git cannot do, since the file belongs to no
+repository; a path that was never there exits zero, so an ordinary cleanup is
+never mistaken for a failure.
+
+**The "behind by N" line leads the round's evidence**, in front of the failure
+output and inside the existing bound (salient lines + the last 16 KiB). A
+worker that reads a test failure first starts by fixing the test; a worker that
+reads *"Your branch is 1 commit behind `main`; rebase or merge before fixing
+anything below"* first knows to look at the base before it writes anything.
+Which tree was judged is on the job as `sdlc:verification` with `behind=`,
+`base=` and `judged=merge_result|branch_tree`, so a verification that ran
+somewhere other than the branch as pushed is never silent.
+
 ## The two records
 
 Both reference orchestration ids and never duplicate a Project or a Task.
@@ -804,9 +893,23 @@ pipeline could not deliver: the Project must exist; `Project.Git.RepoURL`
 must be on a host in `sdlc.repo_hosts` (or `allow_local_repos`);
 `Project.Git.Signing` must be enabled and name a key — the module signs
 every commit it pushes and never degrades to unsigned;
-the token secret must resolve, and the webhook secret when named; and the
-binding must name a registered strategy and a registered forge adapter.
-Every refusal leaves no record behind.
+the token secret must resolve, and the webhook secret when named; the
+binding must name a registered strategy and a registered forge adapter; and
+every `verification` command must be on the operator allowlist
+`orchestration.verification_commands` — refused with
+`VerificationCommandRefusedError` naming the index and the command (400 over
+REST, `InvalidArgument` over gRPC). Every refusal leaves no record behind.
+`Onboard` makes the same allowlist check on the stored binding, so a binding
+written before the allowlist narrowed is refused there too.
+
+The allowlist is checked a third time **before a worker is spawned**: a task
+whose binding carries a command the node refuses is parked `blocked` with the
+operator fault class `config_error` (condition `operator_repair`), so the
+attempt is refunded and no worker turn is paid for. The execution guard's own
+refusal at validation — an allowlist narrowed while the job ran — parks the
+same way instead of failing the attempt. Before this, go-blockstore's binding
+named `make fmt-check vet golangci-lint guards`, was accepted, and was refused
+after twelve paid worker turns, each charged as an attempt (X14).
 
 Those checks all run BEFORE anything is written. The one refusal that does
 leave a record is a **provisioning** failure: the route index and the binding
@@ -841,6 +944,10 @@ label task:ready ─► poller/webhook ─► Task{Source: forge_issue owner/rep
              ── forge_review ──────────► waits for approvals + green checks on the head
                  ├─ request_changes ───► re-delegating → executing (round 2 …)
                  ├─ rounds exhausted ──► escalating
+                 ├─ approved + green, trained project ─► queued; waits in reviewing for the merge train
+                 │     ├─ landed ──────► completing ── Complete ─► own PR closed naming the landing, label merged
+                 │     ├─ ejected red ─► re-delegating with the train's red (round counts)
+                 │     └─ ejected conflict ─► executing: merge round
                  └─ approved + green ──► completing ── Complete ─► merge (head-guarded), label merged
                                                     ├─ conflicts with base ─► executing: merge round, base merged in (round counts)
                                                     └─ strategy PostMerge steps (gitflow back-merge)
@@ -852,8 +959,14 @@ label task:ready ─► poller/webhook ─► Task{Source: forge_issue owner/rep
      node died, no attempts left    ─► comment `abandoned`,  label escalated
      environment fault held/bounded ─► comment `blocked`,    label blocked
      attempts left                  ─► requeued; nothing concluded, nothing posted
-   readmit ─────────────────────────► comment `readmitted`, every owned label removed
+   readmit ─────────────────────────► comment `readmitted`, park label → trigger (queued)
 ```
+
+A trained project's approved changes land through the merge train, CI
+running once per batch rather than once per change; see
+[merge-train.md](merge-train.md). An issue triage clustered with related ones
+is delivered by its anchor's task, whose pull request closes every issue in the
+cluster; see [triage.md](triage.md#clustering--related-ready-issues-become-one-task).
 
 A turn that changed no file never reaches `validating` at all; it is
 classified and routed straight from `executing`:
@@ -872,6 +985,26 @@ carries a machine-checked unblock condition needs no readmission — see
 [the block lifecycle](#the-block-lifecycle). Every ending and the readmission
 are posted to the issue through one table — see [Outcomes](#outcomes-every-way-a-task-stops-and-what-reaches-the-issue).
 
+## Issue priority: blast radius, shifted by `priority:*` labels
+
+An adopted issue's task priority is the project's computed priority (its
+blast radius × 10, plus the binding's `ranking.default_priority`, clamped to
+0–999), shifted by the most urgent `priority:*` label the issue carries:
+
+| label | shift |
+|---|---|
+| `priority:critical` | +600 |
+| `priority:high` | +300 |
+| none, or `priority:normal` | 0 — exactly the computed priority |
+| `priority:low` | −300 |
+
+The shifts outrank blast radius on purpose, so project-management priority set
+in the forge actually orders the work: a `priority:critical` issue in a project
+nothing depends on dispatches before an unlabelled issue in a heavily
+depended-on one. Labelled issues may leave the 0–999 band so that `low` sorts
+below every unlabelled issue and `critical` above every one. Label matching
+ignores case; an issue carrying two tiers is ranked by the more urgent.
+
 ## The project binding
 
 A **binding** attaches an orchestration Project to a forge repository and is
@@ -889,6 +1022,23 @@ module owns besides the delivery.
 This page documents the **forge half** of the record — `forge:` — and, in
 detail, the one field of it that decides whether a worker can check out at
 all over ssh.
+
+`rulers:` (a list of forge logins) adds owner-ruling authority for this
+project on top of the repository owner and the node's `sdlc.rulers`. Each is
+validated at bind time: a malformed login is `400`, and a login that is neither
+the owner nor a collaborator of the repository is refused with
+`RulerNotCollaboratorError`. See
+[user.md](user.md#answering-on-the-issue-automatic-readmission).
+
+Each slot may carry run-time prompt material that is appended after its role's
+charter, separated by a horizontal rule. `worker_prompt_append` applies to every
+worker session and `triage_prompt_append` to every triage session. A review
+seat's own `prompt_append` (on `reviewer` and on each of `reviewers[]`) applies
+to every review that seat runs, so it follows the seat through a failover. The
+charter itself is never replaced. Each block is bounded at 64 KiB, and an
+oversized block is refused at bind time with `400` (`InvalidArgument`) naming
+the field. The rules for composing these blocks are in
+[agents.md](agents.md#run-time-prompt-material).
 
 ### `forge:` fields
 
@@ -1077,8 +1227,18 @@ the session:
 
 The audit event is `sdlc:session_rolled` with `class=`, `round=`, `session=`
 and `elapsed=`. Every verification command also leaves `sdlc:verification`
-(`command=`, `passed=`, `output_bytes=`, first line of stderr) on the job,
-whether or not the pipeline went on. The most common way a round-1 prompt used to overflow was the
+(`command=`, `passed=`, `exit_code=` for a command that ran and failed,
+`output_bytes=`) on the job, whether or not the pipeline went on. A passing command's record adds its first line; a failed
+one's adds, on the lines after the header, its failing lines — the lines
+naming a failure (`--- FAIL`, `FAIL\t`, `panic:`, `error:`, `Error `,
+`make: *** `) from ahead of the tail, then the last
+`VerificationSummaryTailLines` lines of each stream, each line cut at
+`VerificationSummaryLineBytes` — because a first line can be harmless noise
+(go-luks2#205). When verification failing spends the round budget, the
+escalation carries the same lines under a head naming the command and its
+exit status (`` `make lint` exited 2: ``), sized to the 1200 bytes the posted
+comment keeps, failing lines first. The output is redacted whole before any
+of it is selected or cut. The most common way a round-1 prompt used to overflow was the
 verification feedback itself: the whole `make test` output went into the
 prompt. It is now the lines that name the failure (`--- FAIL`, `FAIL`,
 `panic:`, a compiler's `# pkg` header and `file.go:line:col:` diagnostics,
@@ -1090,6 +1250,108 @@ same prompt has a prompt the work cannot take, and the run fails with the
 CLI's reason, charged like `prompt_too_long`. Nothing in this group refunds
 an attempt — see [accounts.md](accounts.md) for the refunded set, which is
 now `api_error` and `turn_setup_failed` only.
+
+## A refused account rolls the session onto another account
+
+The same mechanics answer a turn the provider refused because the worker's
+pooled account hit its subscription limit (go-quicbaas#1046). The
+orchestration layer has already held that account until the provider's stated
+reset. The runner then pushes, closes, and spawns a fresh session on the same
+branch in the same round, and the fresh spawn selects a different account.
+The attempt is not charged. This roll is checked **before** the context
+rollover, because a refused account makes every other reading of the failure
+beside the point.
+
+What the new session keeps follows the project's `session_rotation`, exactly
+as for a rotated credential below: the conversation is read from the refused
+session **before** it is closed, through the same carry-over.
+
+| `session_rotation` | The new session | Audit event |
+| --- | --- | --- |
+| `resume` (default; also an unset project) | continues the conversation; its first prompt carries the `account_resumed_note` template with the bounded transcript | `sdlc:session_resumed` with `replayed_turns=` and `omitted_turns=` |
+| `fresh` | starts a new conversation, told only why by the `account_rolled_note` template | `sdlc:session_rolled` |
+
+Both events carry `class=account_limited`, `account=`, `available_at=`,
+`round=` and `session=`. A resume whose conversation cannot be read starts
+fresh with `resume_unavailable=`, and any other read failure fails the turn,
+as described below.
+
+Each account is rolled off at most once per run. If a fresh session lands on
+an account that was already refused, the error is returned, classified
+`account_limited`, refunded and requeued. When no account in the pool is
+free, the fresh spawn fails with the pool's cooldown, and the task waits,
+uncharged, until the first hold lifts. See
+[accounts.md](accounts.md#worker-failover-the-sdlc-runner).
+
+## A rotated account resumes the session, or starts it fresh
+
+A session materializes its pooled provider credential once, at spawn: the
+access token into the container's process environment, the provider's config
+files into a per-session directory. Neither is re-read. When the pool replaces
+that credential — the host refreshes the login (on the burn-in fleet roughly
+every eight hours), an `oauth_refresh` renewal lands, or the tenant secret a
+referenced account reads is rewritten — the copy the session holds is no
+longer what the provider honours. Its next prompt dies in about two and a half
+seconds as an `api_error`, which the runner refunds and re-dispatches: the
+round's work is done over in a fresh job. Measured on go-quicbaas #965, #980
+and #982 (2026-09-22), each losing a review round to a refresh.
+
+**The pool is asked before the turn is spent.** Before every prompt the runner
+asks the orchestrator whether the credential this session materialized is
+still the one its account holds (`SessionAccountFreshness`). The comparison is
+between two **credential generations**, the copy the session recorded when its
+material was produced and the copy the account's authority holds now (the
+envelope, or a referenced account's secret version), so a rotation that lands
+while a container is still starting is visible. A remote worker is checked the
+same way: the generation travels on the released credential to the fleet host
+and back on the spawn response. See
+[accounts.md](accounts.md#credential-generations-go-quicbaas997). A session
+that carries no generation — one spawned before stamping existed — falls back
+to the account's `CredentialRotatedAt` against the start of its current
+account segment.
+
+**A left-behind session is replaced; the project decides what the replacement
+keeps.** The only way onto the current credential is a new container, so the
+first three steps are the full-context rollover's: push what the session
+committed, close it, spawn again on the same branch, in the same workspace and
+the same round. The attempt is not charged and the round does not advance.
+What the new session is handed is the project's `session_rotation` setting
+(see [projects.md](projects.md#session-rotation)):
+
+| `session_rotation` | The new session | Audit event |
+| --- | --- | --- |
+| `resume` (default; also an unset project) | continues the old session's conversation: its transcript is read from the durable session log **before** the old session is closed and carried into the first prompt with the `session_resumed_account_note` template | `sdlc:session_resumed` with `replayed_turns=` and `omitted_turns=` |
+| `fresh` | starts a new conversation, told only why it is new by the `session_rolled_account_note` template, and reads the branch | `sdlc:session_rolled` |
+
+Both events carry `reason=account_rotated`, `account=`, `round=`, `session=`
+and the evidence the verdict rested on: `session_generation=` /
+`account_generation=`, or `rotated_at=` when timestamps decided it.
+
+The carried conversation is the same bounded transcript a restored session is
+primed with — the prompts and the agent's answers, oldest turns dropped first
+to fit the replay budget, with the number dropped stated — so a resume never
+hands the worker a silently truncated history. Tool calls are not replayed;
+the branch holds their effects. A session replaced before it was ever prompted
+has no conversation and is told only why it is in a new container.
+
+**A resume that cannot read the conversation starts fresh.** When the agent
+service keeps no session log, or the log will not answer
+(`SessionTranscriptUnavailableError`), the session is replaced fresh rather
+than prompted with a credential the provider will refuse, and the
+`sdlc:session_rolled` record says so with `resume_unavailable=`. Any other
+failure to read the conversation — the session is unknown to the service —
+fails the turn, because a fresh session does not answer it.
+
+**Once per round, counted apart from the other rollovers.** The replacement
+holds the material the pool holds now, so a second report inside one round is
+the pool flapping rather than the session being behind; the run prompts rather
+than spawning containers without end.
+
+**Fail-soft in one direction only.** Every case where the question cannot be
+answered — a deployment running no pooled accounts, an agent service that is
+not a freshness reader, an account or secret that cannot be read, a session
+record with neither a generation nor a datable pair of timestamps — answers
+"not stale" and the turn proceeds exactly as it did before.
 
 ## Onboarding a repository
 
@@ -1283,6 +1545,15 @@ sdlc:
   # is what the runner's clone commands name. Name it only if the worker image
   # lays its filesystem out differently.
   checkout_root: /workspace
+  # Who, beyond each repository's owner and its binding's `rulers`, may rule
+  # on a parked task by commenting on its issue. File-only. A tenant entry
+  # replaces `default` for that tenant; unset `default` takes agent-company;
+  # `default: []` names nobody. A malformed login refuses startup. Tenant IDs
+  # are map keys, so viper lowercases them.
+  rulers:
+    default: [agent-company]
+    tenants:
+      automatethethings: [agent-company, lead-agent]
   surfacing:                        # the Blocked hook's post to the issue
     retry_attempts: 5
     retry_interval: 2m
@@ -1365,6 +1636,11 @@ failed on every realistic deployment.
 | longest usable root | 83 bytes — the root, plus a 12-character session directory, plus `/agent.sock` |
 | created | at startup, mode `0700`, by the daemon |
 | per attempt | `<sockets_root>/<12 hex characters>/agent.sock`, created `0700` by the agent and removed when the attempt ends |
+
+The root's rules — the budget, the refusals and the startup sweep — are
+`orchestration.EnsureSigningSocketRoot`, shared with a fleet node's relay root
+(`quicbaas fleet serve --sockets-root`, go-quicbaas#1013); the daemon adds only
+its signing-root marker (`sdlc.EnsureSigningSocketRoot`).
 
 Three properties are load-bearing:
 
@@ -1465,23 +1741,32 @@ from the environment. Pre-v1: there is no migration path; rename by hand.
 
 ### The worker image
 
-A binding's `worker.image` names the container image the job's one worker
+The worker's [Agent](agents.md) names the container image the job's one worker
 session runs in. Naming one requires the sandbox for that project's workers.
 
-This repository builds one:
+This repository builds one, and the daemon keeps it current by itself — see
+[the worker image refresh](worker-image.md):
 
 ```
-make build-worker-image      # quicbaas-software-factory-worker:<VERSION>
-make test-worker-image       # builds it, then proves it can sign a commit and lint a module
+make build-worker-image      # quicbaas-software-factory-worker:<VERSION>-cc<claude-code>-cx<codex>
+make test-worker-image       # builds it, then runs the refresh gate's probes against it
+make push-worker-image WORKER_IMAGE_REGISTRY=<host>/<owner>/software-factory-worker
 ```
 
 ```yaml
-# the binding
-worker:
-  backend: claude
-  model: claude-opus-5
-  image: quicbaas-software-factory-worker:0.5.1-alpha
+# the Agent the binding's worker names
+id: claude-coder
+roles: [coding]
+backend: claude
+model: claude-opus-5-5
+image: quicbaas-software-factory-worker:0.11.0-alpha-cc2.1.280-cx0.156.0
 ```
+
+An Agent always has a model. The claude Agents the boot migration seeds get
+`claude-opus-5-5` (`orchestration.DefaultClaudeModel`, the coding tier). The
+worker image's Claude Code must be new enough to know the model: Claude Code
+2.1.278 rejects `claude-opus-5-5` as `unrecognized_model`, and 2.1.280 accepts
+it.
 
 The image (`deployments/agents/software-factory-worker/Dockerfile`) carries the
 claude-code agent, **git**, **ssh-keygen** — git's `gpg.format=ssh` signing
@@ -1494,8 +1779,10 @@ key never arrives, only a socket to an agent that holds it.
 verification commands run inside this container: **golangci-lint**, **gosec**
 and **govulncheck**, which is what a Go project's `make lint`, `make check`
 (fmt vet lint gosec vuln) and `make security` are made of. Without them
-`make lint` exits non-zero with *"golangci-lint is required but not installed"*
-on a clean tree, so every review round fails and every Go job escalates
+`make lint` exits non-zero on a clean tree — observed live as go-truststrap's
+Makefile reporting *"golangci-lint is required but not installed"*; this
+repository's own Makefile says *"golangci-lint not installed. Run: make
+install-tools"* — so every review round fails and every Go job escalates
 (go-quicbaas#772). They are installed at `$(go env GOPATH)/bin` — where a Go
 Makefile actually looks for the linter, which is not the same as the `PATH` —
 and at the versions this repository pins:
@@ -1504,7 +1791,9 @@ and at the versions this repository pins:
 make build-worker-image  # passes GOLANGCI_VERSION / GOSEC_VERSION / GOVULNCHECK_VERSION
 ```
 
-Those three Makefile variables are the repository's **only** copy of the pins:
+Those pins live in `pkg/version/toolchain.mk` — the repository's **only** copy,
+which the Makefile includes and the daemon embeds (so its worker image refresh
+builds with the same toolchain):
 `make install-tools` installs them, CI installs them by reading them
 (`make print-GOLANGCI_VERSION`), and the image bakes them. A worker linting with
 a version CI does not use produces a review verdict the merge then contradicts.
@@ -1542,7 +1831,12 @@ the project (`context_repos`) are `Project` fields, set with
 `quicbaas project create` / `update` (`--git-repo`, `--git-branch`,
 `--git-signing` + `--git-signing-key`, `--autonomous`,
 `--context-repo`, `--clear-context-repos`, `--max-concurrency`). Bind refuses a project without a signing policy or with a repository
-outside `repo_hosts`. It **turns the project autonomous** (`autonomous:
+outside `repo_hosts`. The repository half of that check is not only a bind-time
+one: the forge access seam (`workspace.go`) repeats it every time a runner
+opens a workspace, because the project record stays editable after the bind
+and the allowlist can change under it. A refusal there is
+`WorkspaceRepoRefusedError` — `ErrWorkspaceUnfit`, so the task is parked for
+an operator with no attempt charged, naming the refused repository. It **turns the project autonomous** (`autonomous:
 true`), and it neither reads nor sets `default_workflow` — that field belongs
 to the lead-driven `workflow` runner, and an `sdlc` job has no workflow.
 
@@ -1609,7 +1903,7 @@ no row — a conclusion the module cannot render is the defect itself.
 | `parked_blocked` | `BlockTask` kind `blocked` | `blocked` | `in_progress` → `blocked` | yes |
 | `parked_escalated` | `BlockTask` kind `escalated` | `escalated` — *This task needs the owner* | `in_progress` → `escalated` | yes |
 | `runner_parked` | the RUN parked the task itself | none — the `Blocked` moment already posted it | already moved by that moment | yes |
-| `readmitted` | `orchestrator:task_readmit` | `readmitted` — *This task has been readmitted* | every owned label removed | n/a |
+| `readmitted` | `orchestrator:task_readmit` | `readmitted` — *This task has been readmitted* | park label → trigger (the display state of queued work, until the next attempt starts) | n/a |
 | `superseded` | the attempt's pull request was closed without merging, seen by the review gate or on resume | `superseded` — *This task's pull request was closed without merging* | every owned label removed | **no** — the task is completed; re-adding the trigger label adopts a new task |
 
 A failed attempt that leaves budget behind concludes **nothing**: the task is
@@ -1793,7 +2087,7 @@ right now — and compares that claim with the engine's own task records:
 | claiming label | task completed | `relabelled` | move to `merged`, post nothing |
 | claiming label | the **worker** parked it | `relabelled` | restore the park's label, post nothing |
 | no lifecycle label | task claimed / in_progress | `restored` | re-apply `in_progress`, post nothing |
-| a park's label | task readmitted, **still queued** | `relabelled` | clear the label, post nothing |
+| a park's label | task readmitted, **still queued** | `relabelled` | move it to the trigger, post nothing |
 | — | forge refused | `deferred` | nothing; retried next sweep |
 | — | record unreadable | `deferred` | nothing; retried next sweep |
 | — | status the table names no ending for | `undecidable` | nothing; logged |
@@ -1859,8 +2153,8 @@ label key is *empty*, so the park label comes off and the next attempt's
 task is queued again while the issue still says `factory:blocked` — and neither
 other direction sees it, because the claim direction lists only `in_progress` and
 `in_review`, and the hand-over direction skips pending tasks. So the sweep also
-walks tasks whose persisted reason is `readmitted` and clears the label their
-readmission could not, announcing nothing. It re-reads the record first: a task
+walks tasks whose persisted reason is `readmitted` and moves the park label their
+readmission could not onto the trigger, announcing nothing. It re-reads the record first: a task
 readmitted and then parked *again* mid-pass has a new park whose label is correct.
 
 **Only while the task is still queued**, and the asymmetry matters. `ReadmitTask`
@@ -1979,7 +2273,7 @@ module does. The engine is the **Software Factory** on user-facing surfaces
 and `pkg/orchestration` in code.
 
 The earlier working name for the area is retired, and `make lint` enforces
-that: `scripts/verify-naming.sh` fails when the retired word appears in **any
+that: `scripts/verifynaming` fails when the retired word appears in **any
 tracked file**, case-insensitively and with no allowlist. (The English verb
 *fabricate* and its inflections are a different word and are left alone.) The
 script's second rule is the `Seal*` deprecation alias surface — see

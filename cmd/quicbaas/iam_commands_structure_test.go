@@ -21,37 +21,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestNewIAMGroupCommand_Structure tests group command structure.
-func TestNewIAMGroupCommand_Structure(t *testing.T) {
-	cmd := newIAMGroupCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "group", cmd.Use)
-	assert.NotEmpty(t, cmd.Short)
-	assert.NotEmpty(t, cmd.Long)
-
-	// Verify subcommands
-	expectedSubcmds := []string{
-		"create", "get", "update", "delete", "list",
-		"add-member", "remove-member", "members",
-	}
-
-	for _, expected := range expectedSubcmds {
-		found := false
-		for _, sub := range cmd.Commands() {
-			if sub.Use == expected || sub.Name() == expected {
-				found = true
-				break
-			}
-			// Handle commands with arguments like "create <id>"
-			if len(sub.Use) >= len(expected) && sub.Use[:len(expected)] == expected {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found, "Expected subcommand %s not found", expected)
-	}
-}
-
 // TestNewIAMRoleCommand_Structure tests role command structure.
 func TestNewIAMRoleCommand_Structure(t *testing.T) {
 	cmd := newIAMRoleCommand()

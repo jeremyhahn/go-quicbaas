@@ -95,6 +95,11 @@ type ReviewSweeperConfig struct {
 	// Forges builds the adapter a project's pull requests are read through.
 	Forges ForgeResolver
 
+	// Overrides are the operators' per-pull-request reviewer choices. The
+	// pass asks each candidate's CHOSEN reviewer whether it has judged the
+	// head, and watches that reviewer's status for a review in flight.
+	Overrides ReviewerOverrideReader
+
 	// Reviews is the port a candidate is handed to. It is ReviewTrigger and
 	// not the dispatcher's concrete type: this sweep decides only WHICH pull
 	// requests to ask about, and everything about whether a review is
@@ -108,10 +113,11 @@ type ReviewSweeperConfig struct {
 // ReviewSweeper finds the open pull requests that are green and unjudged, and
 // asks the review trigger for each.
 type ReviewSweeper struct {
-	bindings BindingReader
-	forges   ForgeResolver
-	reviews  ReviewTrigger
-	now      func() time.Time
+	bindings  BindingReader
+	forges    ForgeResolver
+	overrides ReviewerOverrideReader
+	reviews   ReviewTrigger
+	now       func() time.Time
 
 	// failures are the per-tenant and per-project failures a pass deferred,
 	// drained by SweepFailures so the caller logs them where it logs
@@ -133,6 +139,11 @@ func NewReviewSweeper(cfg ReviewSweeperConfig) (*ReviewSweeper, error) {
 			Field:   "forges",
 			Message: "which pull requests are open, and what has run against each head, are read from the forge",
 		}
+	case cfg.Overrides == nil:
+		return nil, &InvalidInputError{
+			Field:   "overrides",
+			Message: "whether a head is judged depends on which reviewer an operator chose for it",
+		}
 	case cfg.Reviews == nil:
 		return nil, &InvalidInputError{
 			Field:   "reviews",
@@ -143,7 +154,9 @@ func NewReviewSweeper(cfg ReviewSweeperConfig) (*ReviewSweeper, error) {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &ReviewSweeper{bindings: cfg.Bindings, forges: cfg.Forges, reviews: cfg.Reviews, now: now}, nil
+	return &ReviewSweeper{
+		bindings: cfg.Bindings, forges: cfg.Forges, overrides: cfg.Overrides, reviews: cfg.Reviews, now: now,
+	}, nil
 }
 
 // Sweep visits every bound project of every tenant and reports how many
@@ -263,7 +276,11 @@ func (s *ReviewSweeper) sweepBinding(ctx context.Context, tenantID string, bindi
 		if err := ctx.Err(); err != nil {
 			return started, err
 		}
-		needed, needErr := s.needsReview(ctx, forge, binding, pull)
+		profile, _, selectErr := SelectReviewer(ctx, s.overrides, tenantID, binding, pull.Number)
+		if selectErr != nil {
+			return started, s.sweepError(tenantID, binding, "SelectReviewer", selectErr)
+		}
+		needed, needErr := s.needsReview(ctx, forge, binding, profile, pull)
 		if needErr != nil {
 			return started, s.sweepError(tenantID, binding, "ListCheckRuns", needErr)
 		}
@@ -291,9 +308,10 @@ func (s *ReviewSweeper) sweepBinding(ctx context.Context, tenantID string, bindi
 	return started, nil
 }
 
-// needsReview reports whether one open pull request is a candidate: no status
-// under the reviewer's context, and every other check on the head finished
-// green.
+// needsReview reports whether one open pull request is a candidate for the
+// reviewer profile chosen for it: no review of that profile's in flight, no
+// verdict on the head that answers it, and every other check on the head
+// finished green.
 //
 // ONE FORGE READ ANSWERS BOTH, and the order is deliberate. The absent-status
 // question is decided from that one listing before the check evaluation runs,
@@ -308,6 +326,7 @@ func (s *ReviewSweeper) needsReview(
 	ctx context.Context,
 	forge ForgeBackend,
 	binding *ProjectBinding,
+	profile ReviewerProfile,
 	pull ForgePullRequest,
 ) (bool, error) {
 	head := strings.TrimSpace(pull.HeadSHA)
@@ -319,9 +338,8 @@ func (s *ReviewSweeper) needsReview(
 		return false, err
 	}
 	now := s.now()
-	reviewerContext := binding.Reviewer.Context()
 	// A review that is RUNNING must not be given a second reviewer.
-	if reviewInFlight(runs, reviewerContext, now) {
+	if reviewInFlight(runs, profile.Context(), now) {
 		return false, nil
 	}
 	// A head that already carries a verdict has been judged and is not swept
@@ -331,7 +349,7 @@ func (s *ReviewSweeper) needsReview(
 	// anything else holding status-write on the repository, leaves a status
 	// behind that no verdict backs. Reading the status alone, such a head is
 	// "reviewed" forever and no code path can ever judge it.
-	judged, judgedErr := headJudged(ctx, forge, binding.Repo(), pull.Number, head)
+	judged, judgedErr := headJudged(ctx, forge, binding.Repo(), pull.Number, head, verdictsAnswering(binding, profile))
 	if judgedErr != nil {
 		return false, judgedErr
 	}
@@ -339,9 +357,9 @@ func (s *ReviewSweeper) needsReview(
 		return false, nil
 	}
 	// "EVERY OTHER CHECK", which is what this function has always promised:
-	// the reviewer's own status is excluded, or a head that carries one can
-	// never be green enough to review again. See runsExcludingContext.
-	reason, _ := ChecksGreenForReview(binding.Review, head, runsExcludingContext(runs, reviewerContext), now)
+	// every reviewer's own status is excluded, or a head that carries one can
+	// never be green enough to review again. See runsExcludingContexts.
+	reason, _ := ChecksGreenForReview(binding.Review, head, runsExcludingContexts(runs, binding.ReviewerStatusContexts()), now)
 	return reason.Clear(), nil
 }
 
@@ -350,21 +368,44 @@ func (s *ReviewSweeper) sweepError(tenantID string, binding *ProjectBinding, op 
 	return &ReviewSweepError{TenantID: tenantID, ProjectID: binding.ProjectID, Op: op, Cause: cause}
 }
 
+// verdictsAnswering decides whose verdicts answer the chosen profile's
+// question "has this head been judged".
+//
+// A PROFILE THAT COUNTS IS ANSWERED BY ANY BINDING VERDICT, exactly as the
+// single reviewer always was: a person's approval or refusal on the head is
+// a judgement the gate will read, and reviewing it again would spend a model
+// to add nothing. An advisory profile's verdict is not one of those — the gate
+// reads past it — so it never stands in for a counting review.
+//
+// AN ADVISORY PROFILE IS ANSWERED ONLY BY ITS OWN VERDICT. An operator chose
+// it for this pull request to hear what it says; somebody else's approval on
+// the head is not that answer.
+func verdictsAnswering(binding *ProjectBinding, profile ReviewerProfile) func(login string) bool {
+	if profile.Advisory() {
+		return func(login string) bool {
+			return strings.EqualFold(strings.TrimSpace(login), strings.TrimSpace(profile.Login))
+		}
+	}
+	advisory := binding.AdvisoryReviewers()
+	return func(login string) bool { return !advisory.Login(login) }
+}
+
 // headJudged reports whether the forge already holds a BINDING verdict for
-// this head — an approval or a request for changes.
+// this head — an approval or a request for changes — from a login whose
+// verdict answers the chosen reviewer (verdictsAnswering).
 //
 // A COMMENT IS NOT A JUDGEMENT, and that is the whole reason this asks the
 // forge for reviews instead of reading the commit status. forgeReviewVerdicts
 // is the same map the gate reduces reviews with, so "judged" means here
 // exactly what it means there; a second definition would eventually sweep a
 // head the gate considers decided, or hold back one it does not.
-func headJudged(ctx context.Context, forge ForgeBackend, repo RepoRef, number int, head string) (bool, error) {
+func headJudged(ctx context.Context, forge ForgeBackend, repo RepoRef, number int, head string, answers func(login string) bool) (bool, error) {
 	reviews, err := forge.ListReviews(ctx, repo, number)
 	if err != nil {
 		return false, err
 	}
 	for _, review := range reviews {
-		if !strings.EqualFold(strings.TrimSpace(review.HeadSHA), head) {
+		if !strings.EqualFold(strings.TrimSpace(review.HeadSHA), head) || !answers(review.Reviewer) {
 			continue
 		}
 		if _, binds := forgeReviewVerdicts[strings.ToUpper(strings.TrimSpace(review.State))]; binds {

@@ -30,13 +30,13 @@
   import {
     orchestratorStore,
     setActiveTenant,
-    selectJob,
     startOrchestratorPolling,
-    loadJobs,
-    loadSelectedJob,
+    followJobRoute,
+    readyScope,
   } from '../stores/orchestrator.svelte.ts';
   import { syncActiveJobStreams, stopAllJobStreams } from '../stores/job-events.svelte.ts';
-  import { onDestroy, untrack } from 'svelte';
+  import { attentionStore, refreshAttention } from '../stores/attentionStore.svelte.ts';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import { showToast } from '../stores/toast.svelte.ts';
 
   // Views
@@ -44,8 +44,10 @@
   import OrchestratorDashboard from './orchestrator/OrchestratorDashboard.svelte';
   import JobsView from './orchestrator/JobsView.svelte';
   import JobDetailView from './orchestrator/JobDetailView.svelte';
-  import AgentDetailView from './orchestrator/AgentDetailView.svelte';
+  import FleetNodeDetailView from './orchestrator/FleetNodeDetailView.svelte';
   import TasksView from './orchestrator/TasksView.svelte';
+  import AttentionView from './orchestrator/AttentionView.svelte';
+  import AttentionBanner from '../components/orchestrator/AttentionBanner.svelte';
   import TaskDetailView from './orchestrator/TaskDetailView.svelte';
   import WorkflowsView from './orchestrator/WorkflowsView.svelte';
   import EventStreamView from './orchestrator/EventStreamView.svelte';
@@ -93,12 +95,12 @@
   // New session management views
   import SessionList from '../components/orchestrator/SessionList.svelte';
   import SessionDetail from '../components/orchestrator/SessionDetail.svelte';
-  import AgentFleet from '../components/orchestrator/AgentFleet.svelte';
+  import FleetList from '../components/orchestrator/FleetList.svelte';
   import {
     routerStore,
     routeLogin,
     routeJobDetail,
-    routeAgentDetail,
+    routeFleetNode,
   } from '../stores/router.svelte.ts';
   import { sessionStore, refreshSessions, resolveSession } from '../stores/sessionStore.svelte.ts';
   import type { SessionStatusResponse } from '@quicbaas/sdk';
@@ -109,7 +111,7 @@
     setAuthStatus,
     readAuthToken,
   } from '../stores/auth.svelte.ts';
-  import { agentStore, refreshAgents } from '../stores/agentStore.svelte.ts';
+  import { fleetStore, refreshFleet } from '../stores/fleetStore.svelte.ts';
   import { isWailsRuntime } from '@quicbaas/sdk';
   import { getSDKClient } from '../stores/sdkClient.ts';
 
@@ -120,7 +122,6 @@
   import {
     LayoutDashboard,
     Workflow,
-    Bot,
     Terminal,
     ClipboardList,
     Radio,
@@ -139,6 +140,7 @@
     Lock,
     LockKeyhole,
     Server,
+    ServerCog,
     Network,
     HardDrive,
     Settings,
@@ -158,6 +160,7 @@
     Binary,
     KeySquare,
     Timer,
+    Inbox,
   } from 'lucide-svelte';
 
   // ---------------------------------------------------------------------------
@@ -190,7 +193,7 @@
 
   const navSections: NavSection[] = [
     {
-      title: 'OVERVIEW',
+      title: 'Overview',
       items: [
         // Three sections each own a landing page: OVERVIEW > Overview,
         // SOFTWARE FACTORY > Dashboard, CLUSTER > Cluster. The section
@@ -198,14 +201,15 @@
         // (owner ruling 2026-09-11); an item repeating its own section read
         // as a second product name rather than a page.
         { id: 'dashboard', label: 'Overview', icon: LayoutDashboard, implemented: true },
+        { id: 'attention', label: 'Needs you', icon: Inbox, implemented: true },
       ],
     },
     {
-      title: 'SOFTWARE FACTORY',
+      title: 'Software factory',
       items: [
         { id: 'orchestration', label: 'Dashboard',        icon: Workflow,  implemented: true },
         { id: 'jobs',          label: 'Jobs',         icon: Cpu,           implemented: true },
-        { id: 'agents',        label: 'Agent Fleet',  icon: Bot,           implemented: true },
+        { id: 'fleet',         label: 'Fleet',        icon: ServerCog,     implemented: true },
         { id: 'sessions',      label: 'Sessions',     icon: Terminal,      implemented: true },
         { id: 'tasks',         label: 'Tasks',        icon: ClipboardList, implemented: true },
         { id: 'workflows',     label: 'Workflows',    icon: Workflow,      implemented: true },
@@ -217,7 +221,7 @@
       ],
     },
     {
-      title: 'DATA',
+      title: 'Data',
       items: [
         { id: 'kv',         label: 'KV Store',    icon: Database,   implemented: true },
         { id: 'vectors',    label: 'Vectors',     icon: Sparkles,   implemented: true },
@@ -233,14 +237,14 @@
       ],
     },
     {
-      title: 'ASYNC',
+      title: 'Async',
       items: [
         { id: 'messaging',  label: 'Messaging',  icon: MessageSquare, implemented: true },
         { id: 'scheduler',  label: 'Scheduler',  icon: Clock,         implemented: true },
       ],
     },
     {
-      title: 'SECURITY',
+      title: 'Security',
       items: [
         { id: 'iam',       label: 'IAM',       icon: Shield,   implemented: true },
         { id: 'kms',       label: 'KMS',       icon: Key,      implemented: true },
@@ -258,7 +262,7 @@
       ],
     },
     {
-      title: 'CLUSTER',
+      title: 'Cluster',
       items: [
         { id: 'cluster', label: 'Cluster',   icon: Server,    implemented: true },
         { id: 'nodes',   label: 'Nodes',     icon: Network,   implemented: false },
@@ -266,7 +270,7 @@
       ],
     },
     {
-      title: 'SETTINGS',
+      title: 'Settings',
       items: [
         { id: 'connection', label: 'Connection', icon: Settings, implemented: false },
       ],
@@ -277,19 +281,40 @@
   // Orchestrator polling — single poller for all orchestrator resources.
   // startOrchestratorPolling() fires every 30 s with stale-while-revalidate
   // (15 s freshness window) and pauses when the tab is hidden.
+  //
+  // Gated on authStore.status === 'authenticated', not merely "this effect
+  // ran": MainApp mounts on EVERY route, including the public ones (/login,
+  // /register, /invite-activate), and this effect ran unconditionally on
+  // every one of them — so the poller fired every 30 s with no session at
+  // all, every "Authorization" header omitted because there was no token to
+  // attach, every request refused with "authorization header is missing"
+  // (go-quicbaas UI-login-refused investigation, 2026-09-25: reproduced live
+  // on the invite page, before any login). The same gap meant polling that
+  // was already running when a session ENDED — expiry, a rejected renewal,
+  // an explicit sign-out — kept firing every 30 s afterwards with no token,
+  // producing exactly the same log line for as long as the tab stayed open.
+  // Reading authStore.status here (the same reactive getter authStatus below
+  // already proves works across this module boundary) makes the effect
+  // re-run on every transition: Svelte tears down the previous poller/interval
+  // via the cleanup below before the new run decides whether to start again.
   // ---------------------------------------------------------------------------
 
   $effect(() => {
+    if (authStore.status !== 'authenticated') return;
     const stopPolling = startOrchestratorPolling();
     // The orchestrator poller covers orchestratorStore.{jobs,agents,sessions,tasks}
-    // but the standalone agentStore and sessionStore (used by AgentFleet, SpawnDialog,
-    // SessionList, etc.) need their own refresh ticks.
-    void refreshAgents();
+    // but the standalone fleetStore and sessionStore (used by FleetList, SpawnDialog,
+    // SessionList, etc.) need their own refresh ticks. The attention inbox
+    // rides the same tick: the nav badge and the banner both need a count
+    // that is not a page-view away from current.
+    void refreshFleet();
     void refreshSessions();
+    void refreshAttention();
     const auxInterval = setInterval(() => {
       if (typeof document !== 'undefined' && document.hidden) return;
-      void refreshAgents();
+      void refreshFleet();
       void refreshSessions();
+      void refreshAttention();
     }, 30_000);
     return () => {
       clearInterval(auxInterval);
@@ -508,11 +533,18 @@
       return;
     }
     const id = routerStore.params['id'] ?? '';
-    // Held under the id it was asked for, so a late answer for a session the
-    // operator has already navigated away from cannot land on the page.
+    // Keyed on the scope as well as the route: resolveSession answers null
+    // for a read whose scope moved in flight (start-up validation does that
+    // to a deep link), and the scope change re-runs this to ask again.
+    const scope = readyScope();
+    if (scope === '') return;
+    // Held under the id and scope it was asked for, so a late answer for a
+    // session the operator has already left — or a stale scope's null —
+    // cannot land on the page.
     void resolveSession(id).then((session) => {
       if (routerStore.name !== 'session-detail') return;
       if ((routerStore.params['id'] ?? '') !== id) return;
+      if (readyScope() !== scope) return;
       routeSession = session;
     });
   });
@@ -521,37 +553,43 @@
     routerStore.name === 'session-detail' ? routeSession : null,
   );
 
-  // When the job-detail route is active, sync the selectedJob in the store.
-  //
-  // TWO READS, and the second is the one that matters. The list record
-  // (ListJobs) is the placeholder: it paints the page immediately and, on a
-  // fresh load at #/jobs/:id where the poller has not answered yet, may not
-  // exist at all. The AUTHORITATIVE record is GetJobStatus, because only that
-  // path lays the task's provenance over the status — attempts, budget,
-  // terminal reason, readmit state, delivery and review rounds. A detail page
-  // populated from the list alone renders every one of those panels empty,
-  // which is the whole of go-quicbaas#796 still broken.
-  //
-  // The effect depends on the ROUTE, not on the selection it writes:
-  // depending on selectedJob would re-run on its own write, forever.
+  // When the job-detail route is active, make its job the selection. The
+  // reads themselves (placeholder row, then the authoritative GetJobStatus)
+  // are followJobRoute's; this effect decides WHEN. It depends on the route
+  // and on readyScope(): a deep link's first read can be dropped because
+  // start-up validation moved the session scope while it was in flight, and
+  // the scope change is what re-runs this and asks again (go-quicbaas
+  // "No job selected" on a fresh #/jobs/:id).
   $effect(() => {
     if (routerStore.name !== 'job-detail') return;
     const id = routerStore.params['id'] ?? '';
-    if (id === '') return;
-    untrack(() => {
-      const found = orchestratorStore.jobs.find((j) => j.job_id === id) ?? null;
-      if (found !== null) {
-        selectJob(found);
-      } else {
-        // Nothing to paint yet; refresh the list so the row exists for the
-        // back navigation, bounded by network latency not the poll cadence.
-        void loadJobs();
-      }
-      void loadSelectedJob(id);
-    });
+    if (readyScope() === '') return;
+    followJobRoute(id);
   });
 
 
+
+  // ---------------------------------------------------------------------------
+  // Phone layout: the sidebar is a drawer, not a column.
+  //
+  // At phone width a 232px column leaves the page ~150px, so below the `md`
+  // breakpoint the expanded sidebar floats over the content (with a backdrop)
+  // and the collapsed one is hidden entirely; the header toggle opens it. It
+  // starts closed on a phone, and choosing a page closes it again.
+  // ---------------------------------------------------------------------------
+  const PHONE_QUERY = '(max-width: 767px)';
+
+  function isPhone(): boolean {
+    return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(PHONE_QUERY).matches;
+  }
+
+  function closeDrawerOnPhone(): void {
+    if (isPhone() && !navStore.sidebarCollapsed) toggleSidebar();
+  }
+
+  onMount(() => {
+    closeDrawerOnPhone();
+  });
 </script>
 
 <!-- Invite activation is a standalone public page — render it without the app shell. -->
@@ -594,8 +632,8 @@
   <!-- =========================================================================
        HEADER
        ========================================================================= -->
-  <header class="bg-base-200/80 border-base-300/50 sticky top-0 z-30 border-b backdrop-blur-sm">
-    <div class="flex h-12 items-center px-3 gap-3">
+  <header class="sticky top-0 z-30 border-b border-base-300 bg-base-100">
+    <div class="flex h-13 items-center gap-3 px-3">
 
       <!-- Sidebar toggle -->
       <button
@@ -621,13 +659,16 @@
       />
 
       <!-- Breadcrumb -->
-      <div class="flex flex-1 items-center justify-center">
-        <div class="breadcrumbs text-sm hidden sm:block">
+      <div class="flex min-w-0 flex-1 items-center border-l border-base-300 pl-4 max-sm:border-l-0 max-sm:pl-0">
+        <div class="breadcrumbs hidden py-0 text-sm sm:block">
           <ul>
             <li class="text-base-content/40">QuicBaaS</li>
             {#if routerStore.name === 'dashboard'}
               <li class="text-base-content/40">Overview</li>
               <li class="font-medium">Dashboard</li>
+            {:else if routerStore.name === 'attention'}
+              <li class="text-base-content/40">Overview</li>
+              <li class="font-medium">Needs you</li>
             {:else if routerStore.name === 'orchestration'}
               <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li class="font-medium">Dashboard</li>
@@ -640,8 +681,8 @@
               <li class="font-medium font-mono text-xs">{(routerStore.params['id'] ?? '').slice(0, 12)}…</li>
             {:else if routerStore.name === 'fleet'}
               <li class="text-base-content/40">{FACTORY_CRUMB}</li>
-              <li class="font-medium">Agent Fleet</li>
-            {:else if routerStore.name === 'agent-detail'}
+              <li class="font-medium">Fleet</li>
+            {:else if routerStore.name === 'fleet-node'}
               <li class="text-base-content/40">{FACTORY_CRUMB}</li>
               <li><a href="#/fleet" class="text-base-content/60">Fleet</a></li>
               <li class="font-medium font-mono text-xs">{(routerStore.params['id'] ?? '').slice(0, 12)}…</li>
@@ -762,13 +803,13 @@
              page CTA (e.g. "Register Agent", "Put Key"). -->
         <div class="relative z-[1000]" data-testid="tenant-selector">
           <select
-            class="select select-bordered select-xs font-mono hidden md:block relative z-[1000]"
+            class="select select-sm relative z-[1000] hidden w-auto max-w-[16rem] bg-base-100 md:block"
             value={orchestratorStore.activeTenantID}
             aria-label="Active tenant"
             onchange={(e) => {
               // One call. setActiveTenant announces the scope change, and every
               // store holding tenant-scoped data releases and refetches itself —
-              // including agentStore and sessionStore, which this handler used to
+              // including fleetStore and sessionStore, which this handler used to
               // leave blank until the 30-second auxiliary poll caught up.
               setActiveTenant((e.target as HTMLSelectElement).value);
             }}
@@ -821,38 +862,49 @@
   <!-- =========================================================================
        BODY: sidebar + content
        ========================================================================= -->
-  <div class="flex flex-1 overflow-hidden">
+  <div class="relative flex flex-1 overflow-hidden">
+
+    {#if !navStore.sidebarCollapsed}
+      <!-- Phone only: the backdrop behind the navigation drawer. -->
+      <button
+        type="button"
+        class="absolute inset-0 z-30 bg-black/40 md:hidden"
+        aria-label="Close navigation"
+        onclick={toggleSidebar}
+      ></button>
+    {/if}
 
     <!-- -----------------------------------------------------------------------
          SIDEBAR
          ----------------------------------------------------------------------- -->
     <aside
-      class="bg-base-200 border-base-300/50 flex flex-col border-r transition-all duration-200 overflow-hidden shrink-0"
-      style:width={navStore.sidebarCollapsed ? '56px' : '220px'}
+      class="flex shrink-0 flex-col overflow-hidden border-r border-base-300 bg-base-200 transition-all duration-200 max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:shadow-xl"
+      class:max-md:hidden={navStore.sidebarCollapsed}
+      style:width={navStore.sidebarCollapsed ? '60px' : '232px'}
     >
-      <nav class="flex-1 overflow-y-auto overflow-x-hidden py-2">
+      <nav class="flex-1 overflow-y-auto overflow-x-hidden pt-1 pb-4">
         {#each navSections as section}
           <!-- Section header — hidden when collapsed -->
           {#if !navStore.sidebarCollapsed}
-            <div class="px-3 pt-4 pb-1">
-              <span class="text-[10px] font-semibold tracking-[0.12em] text-base-content/30 uppercase">
+            <div class="px-4 pt-5 pb-1.5">
+              <span class="text-xs font-semibold text-base-content/60">
                 {section.title}
               </span>
             </div>
           {:else}
-            <div class="my-1 border-t border-base-300/20"></div>
+            <div class="mx-3 my-2 border-t border-base-300"></div>
           {/if}
 
           {#each section.items as item}
             {@const NavIcon = item.icon}
             {@const isActive = navStore.activeView === item.id}
             <button
-              class="flex w-full items-center gap-3 px-3 py-1.5 text-sm transition-colors rounded-none hover:bg-base-300/50"
+              class="mx-2 flex w-[calc(100%-1rem)] items-center gap-3 rounded-field px-2.5 py-1.5 text-sm transition-colors hover:bg-base-300/60"
               class:bg-base-300={isActive}
               class:text-base-content={true}
               class:font-medium={isActive}
               class:opacity-40={!item.implemented}
-              onclick={() => { if (item.implemented) navigate(item.id as ViewID); }}
+              onclick={() => { if (item.implemented) { navigate(item.id as ViewID); closeDrawerOnPhone(); } }}
               title={navStore.sidebarCollapsed ? item.label : undefined}
               aria-current={isActive ? 'page' : undefined}
             >
@@ -864,6 +916,8 @@
                 <span class="truncate">{item.label}</span>
                 {#if !item.implemented}
                   <span class="badge badge-xs badge-ghost ml-auto">soon</span>
+                {:else if item.id === 'attention' && attentionStore.total > 0}
+                  <span class="badge badge-xs badge-error ml-auto" data-testid="attention-nav-badge">{attentionStore.total}</span>
                 {/if}
               {/if}
             </button>
@@ -877,6 +931,11 @@
          ----------------------------------------------------------------------- -->
     <main class="content-bg flex-1 overflow-hidden flex flex-col">
 
+      <!-- Environmental alerts (agent offline, credential erroring, barrier
+           sealed) render above every routed view — the same banner, whatever
+           page the operator happens to be on. -->
+      <AttentionBanner />
+
       <!-- Hash router drives all view rendering. URL is the single source of truth.
            'login' / 'register' / 'invite-activate' never reach this router: they
            render in the minimal auth shell above (showAppShell is false for
@@ -884,6 +943,11 @@
       {#if routerStore.name === 'dashboard'}
         <div class="flex-1 overflow-y-auto">
           <SystemDashboard />
+        </div>
+
+      {:else if routerStore.name === 'attention'}
+        <div class="flex-1 overflow-y-auto">
+          <AttentionView />
         </div>
 
       {:else if routerStore.name === 'orchestration'}
@@ -909,12 +973,12 @@
 
       {:else if routerStore.name === 'fleet'}
         <div class="flex-1 overflow-y-auto">
-          <AgentFleet />
+          <FleetList />
         </div>
 
-      {:else if routerStore.name === 'agent-detail'}
+      {:else if routerStore.name === 'fleet-node'}
         <div class="flex-1 overflow-y-auto">
-          <AgentDetailView />
+          <FleetNodeDetailView />
         </div>
 
       {:else if routerStore.name === 'sessions'}
@@ -1095,8 +1159,8 @@
   <!-- =========================================================================
        STATUS BAR
        ========================================================================= -->
-  <footer class="bg-base-300/80 border-base-300/50 flex items-center justify-between border-t px-4 py-1 text-xs backdrop-blur-sm">
-    <div class="flex items-center gap-3 text-base-content/40">
+  <footer class="flex items-center justify-between gap-3 border-t border-base-300 bg-base-200 px-4 py-1.5 text-xs">
+    <div class="flex min-w-0 items-center gap-3 truncate text-base-content/60">
       <span>{connectionStore.address || 'localhost:9443'}</span>
       {#if connectionStore.transport}
         <span class="badge badge-xs badge-ghost">{connectionStore.transport}</span>
@@ -1109,7 +1173,7 @@
           variant={orchestratorStore.health.status === 'ok' || orchestratorStore.health.status === 'healthy' ? 'success' : 'warning'}
         />
       {/if}
-      <span class="text-base-content/25">QuicBaaS v0.1.0</span>
+      <span class="text-base-content/60">QuicBaaS v0.1.0</span>
     </div>
   </footer>
 

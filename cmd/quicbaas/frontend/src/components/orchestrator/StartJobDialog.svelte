@@ -8,38 +8,37 @@
   import { showToast } from '../../stores/toast.svelte.ts';
   import { navigateTo } from '../../stores/router.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
+  import RefPicker from '../core/RefPicker.svelte';
   import type { StartJobRequest } from '@quicbaas/sdk';
+  import { parseAgentRef } from '@quicbaas/sdk';
 
   let {
     open = $bindable(false),
     prefillWorkflow = '',
     defaultDescription = '',
-    defaultLeadBackend = '',
-    defaultLeadModel = '',
   }: {
     open: boolean;
     prefillWorkflow?: string;
-    // Optional defaults pre-filled when launching a job from a workflow row.
+    // Optional default pre-filled when launching a job from a workflow row.
     defaultDescription?: string;
-    defaultLeadBackend?: string;
-    defaultLeadModel?: string;
   } = $props();
 
   // Form fields matching StartJobRequest.
   let tenantID = $state(orchestratorStore.activeTenantID);
   let description = $state('');
   let workflowName = $state(prefillWorkflow);
-  let leadBackend = $state('');
-  let leadModel = $state('');
+  // lead is the Agent or pool the lead runs as, "agent:<id>" or "pool:<id>";
+  // empty takes the project's default lead.
+  let lead = $state('');
   let maxIterations = $state(10);
   let pollInterval = $state('2s');
+  // promptAppend is run-time material appended to every session the job
+  // spawns, the lead's included (prompt_append).
+  let promptAppend = $state('');
 
-  // agentBackends holds the distinct backend names derived from the live
-  // agent registry. Using the agent registry (not listBackends) guarantees
-  // we only offer backends that have at least one registered, reachable
-  // agent — never a preconfigured-but-offline entry like "claude (acp)".
-  let agentBackends = $state<string[]>([]);
-  let backendsLoaded = $state(false);
+  // leadChoices are the tenant's Agents that declare the lead role, and its
+  // pools, read from the agent catalog when the dialog opens.
+  let leadChoices = $state<{ value: string; label: string }[]>([]);
   let submitting = $state(false);
   let errorMsg = $state('');
 
@@ -48,55 +47,27 @@
     workflowName = prefillWorkflow;
   });
 
-  // Apply workflow-level defaults when the dialog opens. defaultDescription,
-  // defaultLeadBackend, and defaultLeadModel are set by WorkflowsView when
-  // launching a job from a workflow row.
   $effect(() => {
     if (!open) return;
     if (defaultDescription) description = defaultDescription;
-    if (defaultLeadModel) leadModel = defaultLeadModel;
-    // defaultLeadBackend is honoured below in the agent-load effect when set.
   });
 
-  // Load the live agent registry when the dialog opens and derive the set of
-  // available backends from it. The first agent's backend becomes the default.
-  // Hardcoded defaults (e.g. "claude") are never used — the selection must
-  // reflect what is actually registered server-side.
+  // Load the lead choices from the tenant's agent catalog when the dialog opens.
   $effect(() => {
     if (!open) return;
-    backendsLoaded = false;
     void (async () => {
       try {
         const client = await getSDKClient();
-        const resp = await client.orchestrator.listAgents({
-          tenant_id: orchestratorStore.activeTenantID,
-        });
-        const agents = resp.agents ?? [];
-        // Deduplicate backend names while preserving insertion order so the
-        // first registered agent's backend is always the top entry.
-        const seen = new Set<string>();
-        const distinct: string[] = [];
-        for (const a of agents) {
-          if (a.backend && !seen.has(a.backend)) {
-            seen.add(a.backend);
-            distinct.push(a.backend);
-          }
-        }
-        agentBackends = distinct;
-        if (agentBackends.length > 0) {
-          // Prefer the workflow's lead backend when provided and registered;
-          // otherwise re-anchor to the first registered backend.
-          const preferred = defaultLeadBackend || leadBackend;
-          const stillRegistered = agentBackends.includes(preferred);
-          leadBackend = stillRegistered ? preferred : (agentBackends[0] ?? '');
-        } else {
-          leadBackend = '';
-        }
+        const tenant = orchestratorStore.activeTenantID;
+        const [agents, pools] = await Promise.all([client.agents.listAgents(tenant), client.agents.listPools(tenant)]);
+        leadChoices = [
+          ...agents
+            .filter((a) => a.roles.includes('lead'))
+            .map((a) => ({ value: `agent:${a.id}`, label: `${a.name || a.id} (${a.backend}/${a.model})` })),
+          ...pools.map((p) => ({ value: `pool:${p.id}`, label: `Pool ${p.name || p.id}` })),
+        ];
       } catch {
-        agentBackends = [];
-        leadBackend = '';
-      } finally {
-        backendsLoaded = true;
+        leadChoices = [];
       }
     })();
   });
@@ -104,10 +75,10 @@
   function resetForm(): void {
     description = '';
     workflowName = prefillWorkflow;
-    leadBackend = agentBackends.length > 0 ? (agentBackends[0] ?? '') : '';
-    leadModel = '';
+    lead = '';
     maxIterations = 10;
     pollInterval = '2s';
+    promptAppend = '';
     errorMsg = '';
   }
 
@@ -121,10 +92,6 @@
       errorMsg = 'Description is required.';
       return;
     }
-    if (!leadModel.trim()) {
-      errorMsg = 'Lead model is required.';
-      return;
-    }
 
     submitting = true;
     errorMsg = '';
@@ -133,11 +100,11 @@
       tenant_id: tenantID || orchestratorStore.activeTenantID,
       description: description.trim(),
       workflow_name: workflowName.trim(),
-      lead_backend: leadBackend.trim(),
-      lead_model: leadModel.trim(),
+      lead: parseAgentRef(lead),
       project_id: '',
       max_iterations: maxIterations,
       poll_interval: pollInterval.trim() || '2s',
+      prompt_append: promptAppend.trim() !== '' ? promptAppend : undefined,
     };
 
     try {
@@ -179,12 +146,7 @@
           <label class="label" for="sj-tenant">
             <span class="label-text">Tenant ID</span>
           </label>
-          <input
-            id="sj-tenant"
-            type="text"
-            class="input input-bordered input-sm font-mono"
-            bind:value={tenantID}
-          />
+          <RefPicker id="sj-tenant" kind="tenant" bind:value={tenantID} />
         </div>
 
         <!-- Description (required) -->
@@ -207,52 +169,27 @@
             <span class="label-text">Workflow Name</span>
             <span class="label-text-alt text-base-content/40">optional</span>
           </label>
-          <input
+          <RefPicker
             id="sj-workflow"
-            type="text"
-            class="input input-bordered input-sm"
+            kind="workflow"
+            tenantID={orchestratorStore.activeTenantID}
             placeholder="e.g. dev-sprint-v2"
             bind:value={workflowName}
-            readonly={prefillWorkflow !== ''}
+            disabled={prefillWorkflow !== ''}
           />
         </div>
 
-        <!-- Lead backend (combobox populated from live agent registry) -->
+        <!-- Lead Agent or pool (from the tenant's agent catalog) -->
         <div class="form-control">
-          <label class="label" for="sj-backend">
-            <span class="label-text">Lead Backend</span>
+          <label class="label" for="sj-lead">
+            <span class="label-text">Lead Agent</span>
           </label>
-          {#if agentBackends.length > 0}
-            <select id="sj-backend" class="select select-bordered select-sm" bind:value={leadBackend}>
-              {#each agentBackends as backend (backend)}
-                <option value={backend}>{backend}</option>
-              {/each}
-            </select>
-          {:else if backendsLoaded}
-            <div
-              class="alert alert-warning py-2 px-3 text-sm"
-              role="alert"
-              data-testid="no-backends-banner"
-            >
-              No agents registered. Register an agent first to enable job orchestration.
-            </div>
-          {:else}
-            <div class="text-xs text-base-content/50">Loading agents…</div>
-          {/if}
-        </div>
-
-        <!-- Lead model (required) -->
-        <div class="form-control">
-          <label class="label" for="sj-model">
-            <span class="label-text">Lead Model <span class="text-error">*</span></span>
-          </label>
-          <input
-            id="sj-model"
-            type="text"
-            class="input input-bordered input-sm"
-            placeholder="e.g. claude-opus-4-5, llama3.2"
-            bind:value={leadModel}
-          />
+          <select id="sj-lead" class="select select-bordered select-sm" bind:value={lead}>
+            <option value="">Project default</option>
+            {#each leadChoices as choice (choice.value)}
+              <option value={choice.value}>{choice.label}</option>
+            {/each}
+          </select>
         </div>
 
         <!-- Max iterations + poll interval in a row -->
@@ -284,6 +221,22 @@
           </div>
         </div>
 
+        <!-- Run-time prompt material for every session the job spawns -->
+        <div class="form-control">
+          <label class="label" for="sj-prompt-append">
+            <span class="label-text">Append to every session's prompt</span>
+            <span class="label-text-alt text-base-content/40">optional</span>
+          </label>
+          <textarea
+            id="sj-prompt-append"
+            class="textarea textarea-bordered text-sm font-mono"
+            rows="3"
+            placeholder="Context every session of this job reads after its agent's own prompt"
+            bind:value={promptAppend}
+            data-testid="start-job-prompt-append"
+          ></textarea>
+        </div>
+
         {#if errorMsg}
           <div class="alert alert-error text-sm py-2">
             <span>{errorMsg}</span>
@@ -302,7 +255,7 @@
           <button
             type="submit"
             class="btn btn-sm btn-primary"
-            disabled={submitting || (backendsLoaded && agentBackends.length === 0)}
+            disabled={submitting}
           >
             {#if submitting}
               <span class="loading loading-spinner loading-xs"></span>

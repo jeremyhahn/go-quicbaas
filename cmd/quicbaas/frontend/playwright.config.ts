@@ -8,7 +8,7 @@ import { chromiumLaunchOptions } from './test/e2e/fixtures/browser.ts';
 //
 //   chromium-no-backend  (default)
 //     Runs every spec EXCEPT session_lifecycle.spec.ts.
-//     Works against the daemon started with --embedded-agent --embedded-agent-backend ollama.
+//     Works against the daemon started with --embedded-fleet-node --embedded-fleet-node-backend ollama.
 //     Expected result: 0 skipped, 0 failed.
 //     Invoked by: make test-e2e
 //

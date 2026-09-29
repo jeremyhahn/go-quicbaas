@@ -43,8 +43,8 @@ type controlLoopMockService struct {
 	backends   []*AgentBackendInfo
 	backendErr error
 
-	// ListAgents behavior
-	agents    []*AgentRegistration
+	// ListFleetNodes behavior
+	agents    []*FleetNode
 	agentsErr error
 
 	// CreateTask behavior
@@ -163,26 +163,26 @@ func (m *controlLoopMockService) HealthCheck(_ context.Context) (*HealthCheckRep
 	return &HealthCheckReport{}, nil
 }
 
-func (m *controlLoopMockService) RegisterAgent(_ context.Context, _ *RegisterAgentRequest) (*RegisterAgentResponse, error) {
-	return &RegisterAgentResponse{}, nil
+func (m *controlLoopMockService) RegisterFleetNode(_ context.Context, _ *RegisterFleetNodeRequest) (*RegisterFleetNodeResponse, error) {
+	return &RegisterFleetNodeResponse{}, nil
 }
 
-func (m *controlLoopMockService) GetAgent(_ context.Context, _, _ string) (*AgentRegistration, error) {
+func (m *controlLoopMockService) GetFleetNode(_ context.Context, _, _ string) (*FleetNode, error) {
 	return nil, nil
 }
 
-func (m *controlLoopMockService) ListAgents(_ context.Context, _ string, _ *AgentFilter) ([]*AgentRegistration, error) {
+func (m *controlLoopMockService) ListFleetNodes(_ context.Context, _ string, _ *FleetNodeFilter) ([]*FleetNode, error) {
 	if m.agentsErr != nil {
 		return nil, m.agentsErr
 	}
 	return m.agents, nil
 }
 
-func (m *controlLoopMockService) RemoveAgent(_ context.Context, _, _ string) error {
+func (m *controlLoopMockService) RemoveFleetNode(_ context.Context, _, _ string) error {
 	return nil
 }
 
-func (m *controlLoopMockService) AgentHeartbeat(_ context.Context, _, _ string, _ *AgentObservation) error {
+func (m *controlLoopMockService) FleetNodeHeartbeat(_ context.Context, _, _ string, _ *FleetNodeObservation) error {
 	return nil
 }
 
@@ -233,6 +233,14 @@ func (m *controlLoopMockService) BlockTask(_ context.Context, _, _ string, _ Tas
 
 func (m *controlLoopMockService) ReadmitTask(_ context.Context, _, _ string) error {
 	return nil
+}
+
+func (*controlLoopMockService) CloseBlockedTask(_ context.Context, _, _ string, _ *TaskResult) error {
+	return nil
+}
+
+func (m *controlLoopMockService) BumpTaskReviewRoundBudget(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
 }
 
 func (m *controlLoopMockService) DeleteTask(_ context.Context, _, _ string) error {
@@ -587,14 +595,14 @@ func newTestBackendsWithPersistent() []*AgentBackendInfo {
 }
 
 // newTestAgents creates a basic agent list.
-func newTestAgents() []*AgentRegistration {
-	return []*AgentRegistration{
+func newTestAgents() []*FleetNode {
+	return []*FleetNode{
 		{
 			ID:       "agent-1",
 			TenantID: "test-tenant",
 			Name:     "worker-1",
 			Backend:  "ollama",
-			Status:   AgentStatusIdle,
+			Status:   FleetNodeStatusIdle,
 		},
 	}
 }
@@ -912,7 +920,7 @@ func TestRun_NoAgentsAvailable(t *testing.T) {
 
 	svc := &controlLoopMockService{
 		backends: newTestBackends(),
-		agents:   []*AgentRegistration{}, // No agents!
+		agents:   []*FleetNode{}, // No agents!
 		decomposeResponse: &DecomposeTaskResponse{
 			WorkItems: []*WorkItem{
 				{ID: "w1", Title: "Task 1", Description: "Do it"},
@@ -926,8 +934,8 @@ func TestRun_NoAgentsAvailable(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for no agents")
 	}
-	if !errors.Is(err, ErrNoAgentsAvailable) {
-		t.Fatalf("expected ErrNoAgentsAvailable, got: %v", err)
+	if !errors.Is(err, ErrNoFleetNodesAvailable) {
+		t.Fatalf("expected ErrNoFleetNodesAvailable, got: %v", err)
 	}
 }
 
@@ -1322,7 +1330,7 @@ func TestHandleAssign_NoAgents(t *testing.T) {
 
 	svc := &controlLoopMockService{
 		backends: newTestBackends(),
-		agents:   []*AgentRegistration{},
+		agents:   []*FleetNode{},
 	}
 	logger := &controlLoopMockLogger{}
 	cl := NewControlLoop(svc, logger)
@@ -1340,8 +1348,8 @@ func TestHandleAssign_NoAgents(t *testing.T) {
 	if nextState != JobStateFailed {
 		t.Fatalf("expected failed state, got %q", nextState)
 	}
-	if !errors.Is(err, ErrNoAgentsAvailable) {
-		t.Fatalf("expected ErrNoAgentsAvailable, got: %v", err)
+	if !errors.Is(err, ErrNoFleetNodesAvailable) {
+		t.Fatalf("expected ErrNoFleetNodesAvailable, got: %v", err)
 	}
 }
 
@@ -1376,13 +1384,13 @@ func TestHandleAssign_WithPersistentBackend_SpawnsSession(t *testing.T) {
 
 	svc := &controlLoopMockService{
 		backends: newTestBackendsWithPersistent(),
-		agents: []*AgentRegistration{
+		agents: []*FleetNode{
 			{
 				ID:       "agent-1",
 				TenantID: "test-tenant",
 				Name:     "claude-worker",
 				Backend:  "claude",
-				Status:   AgentStatusIdle,
+				Status:   FleetNodeStatusIdle,
 			},
 		},
 	}
@@ -2568,14 +2576,14 @@ func TestMatchAgentForTask_ByBackend(t *testing.T) {
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
 
-	agents := []*AgentRegistration{
-		{ID: "a1", Backend: "ollama", Status: AgentStatusIdle},
-		{ID: "a2", Backend: "claude", Status: AgentStatusIdle},
+	agents := []*FleetNode{
+		{ID: "a1", Backend: "ollama", Status: FleetNodeStatusIdle},
+		{ID: "a2", Backend: "claude", Status: FleetNodeStatusIdle},
 	}
 	backends := newTestBackendsWithPersistent()
 
 	item := &WorkItem{Backend: "claude"}
-	agentID, backendName, _ := cl.matchAgentForTask(item, agents, backends)
+	agentID, backendName, _ := cl.matchFleetNodeForTask(item, agents, backends)
 	if agentID != "a2" {
 		t.Fatalf("expected agent a2, got %q", agentID)
 	}
@@ -2589,14 +2597,14 @@ func TestMatchAgentForTask_PersistentRequired(t *testing.T) {
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
 
-	agents := []*AgentRegistration{
-		{ID: "a1", Backend: "ollama", Status: AgentStatusIdle},
-		{ID: "a2", Backend: "claude", Status: AgentStatusIdle},
+	agents := []*FleetNode{
+		{ID: "a1", Backend: "ollama", Status: FleetNodeStatusIdle},
+		{ID: "a2", Backend: "claude", Status: FleetNodeStatusIdle},
 	}
 	backends := newTestBackendsWithPersistent()
 
 	item := &WorkItem{RequiredCapabilities: []string{"persistent_sessions"}}
-	agentID, _, _ := cl.matchAgentForTask(item, agents, backends)
+	agentID, _, _ := cl.matchFleetNodeForTask(item, agents, backends)
 	if agentID != "a2" {
 		t.Fatalf("expected agent a2 (persistent), got %q", agentID)
 	}
@@ -2607,13 +2615,13 @@ func TestMatchAgentForTask_BestAvailable(t *testing.T) {
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
 
-	agents := []*AgentRegistration{
-		{ID: "a1", Backend: "ollama", Status: AgentStatusRunning},
-		{ID: "a2", Backend: "ollama", Status: AgentStatusIdle},
+	agents := []*FleetNode{
+		{ID: "a1", Backend: "ollama", Status: FleetNodeStatusRunning},
+		{ID: "a2", Backend: "ollama", Status: FleetNodeStatusIdle},
 	}
 
 	item := &WorkItem{Title: "anything"}
-	agentID, _, _ := cl.matchAgentForTask(item, agents, newTestBackends())
+	agentID, _, _ := cl.matchFleetNodeForTask(item, agents, newTestBackends())
 	if agentID != "a2" {
 		t.Fatalf("expected idle agent a2, got %q", agentID)
 	}
@@ -2625,7 +2633,7 @@ func TestMatchAgentForTask_NoMatch(t *testing.T) {
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
 
 	item := &WorkItem{Backend: "nonexistent"}
-	agentID, _, _ := cl.matchAgentForTask(item, []*AgentRegistration{}, nil)
+	agentID, _, _ := cl.matchFleetNodeForTask(item, []*FleetNode{}, nil)
 	if agentID != "" {
 		t.Fatalf("expected empty agent ID, got %q", agentID)
 	}
@@ -3067,8 +3075,8 @@ func TestHandleAssign_ConstrainedMode_UsesWorkflowAgents(t *testing.T) {
 
 	svc := &controlLoopMockService{
 		backends: newTestBackendsWithPersistent(),
-		agents: []*AgentRegistration{
-			{ID: "a1", TenantID: "test-tenant", Backend: "claude", Status: AgentStatusIdle},
+		agents: []*FleetNode{
+			{ID: "a1", TenantID: "test-tenant", Backend: "claude", Status: FleetNodeStatusIdle},
 		},
 	}
 	logger := &controlLoopMockLogger{}
@@ -3840,11 +3848,11 @@ func TestBuildWorkerPrompt_ToolGuidanceNotDuplicated(t *testing.T) {
 }
 
 // =============================================================================
-// Tests: WorkItem.HostAffinity and filterAgentsByHostAffinity
+// Tests: WorkItem.HostAffinity and filterFleetNodesByHostAffinity
 // =============================================================================
 
 // TestWorkItem_HostAffinity_ProvidesToSpawn verifies that a WorkItem carrying
-// a HostAffinity value is correctly represented and that filterAgentsByHostAffinity
+// a HostAffinity value is correctly represented and that filterFleetNodesByHostAffinity
 // restricts the candidate list to agents whose Name or Host field matches.
 func TestWorkItem_HostAffinity_ProvidesToSpawn(t *testing.T) {
 	t.Parallel()
@@ -3856,13 +3864,13 @@ func TestWorkItem_HostAffinity_ProvidesToSpawn(t *testing.T) {
 	}
 
 	// Three agents: only the one named "gpu-host" or hosted at "gpu-host" should match.
-	agents := []*AgentRegistration{
-		{ID: "a1", Name: "general-1", Host: "server-a", Backend: "ollama", Status: AgentStatusIdle},
-		{ID: "a2", Name: "gpu-host", Host: "gpu-host.local", Backend: "ollama", Status: AgentStatusIdle},
-		{ID: "a3", Name: "general-2", Host: "server-c", Backend: "ollama", Status: AgentStatusIdle},
+	agents := []*FleetNode{
+		{ID: "a1", Name: "general-1", Host: "server-a", Backend: "ollama", Status: FleetNodeStatusIdle},
+		{ID: "a2", Name: "gpu-host", Host: "gpu-host.local", Backend: "ollama", Status: FleetNodeStatusIdle},
+		{ID: "a3", Name: "general-2", Host: "server-c", Backend: "ollama", Status: FleetNodeStatusIdle},
 	}
 
-	filtered, _ := filterAgentsByHostAffinity(agents, item.HostAffinity, false)
+	filtered, _ := filterFleetNodesByHostAffinity(agents, item.HostAffinity, false)
 
 	if len(filtered) != 1 {
 		t.Fatalf("expected 1 matching agent, got %d", len(filtered))
@@ -3872,17 +3880,17 @@ func TestWorkItem_HostAffinity_ProvidesToSpawn(t *testing.T) {
 	}
 }
 
-// TestWorkItem_HostAffinity_HostFieldMatch verifies that filterAgentsByHostAffinity
+// TestWorkItem_HostAffinity_HostFieldMatch verifies that filterFleetNodesByHostAffinity
 // also matches on the Host field (not just Name).
 func TestWorkItem_HostAffinity_HostFieldMatch(t *testing.T) {
 	t.Parallel()
 
-	agents := []*AgentRegistration{
-		{ID: "a1", Name: "worker-1", Host: "alpha", Backend: "ollama", Status: AgentStatusIdle},
-		{ID: "a2", Name: "worker-2", Host: "beta", Backend: "ollama", Status: AgentStatusIdle},
+	agents := []*FleetNode{
+		{ID: "a1", Name: "worker-1", Host: "alpha", Backend: "ollama", Status: FleetNodeStatusIdle},
+		{ID: "a2", Name: "worker-2", Host: "beta", Backend: "ollama", Status: FleetNodeStatusIdle},
 	}
 
-	filtered, _ := filterAgentsByHostAffinity(agents, "beta", false)
+	filtered, _ := filterFleetNodesByHostAffinity(agents, "beta", false)
 
 	if len(filtered) != 1 {
 		t.Fatalf("expected 1 matching agent, got %d", len(filtered))
@@ -3893,17 +3901,17 @@ func TestWorkItem_HostAffinity_HostFieldMatch(t *testing.T) {
 }
 
 // TestWorkItem_HostAffinity_NoMatch_ReturnsFull verifies that
-// filterAgentsByHostAffinity returns the original unfiltered slice when no
+// filterFleetNodesByHostAffinity returns the original unfiltered slice when no
 // agent matches (warn-only semantics: hard failure is at dispatch time).
 func TestWorkItem_HostAffinity_NoMatch_ReturnsFull(t *testing.T) {
 	t.Parallel()
 
-	agents := []*AgentRegistration{
-		{ID: "a1", Name: "worker-1", Host: "alpha", Backend: "ollama", Status: AgentStatusIdle},
-		{ID: "a2", Name: "worker-2", Host: "beta", Backend: "ollama", Status: AgentStatusIdle},
+	agents := []*FleetNode{
+		{ID: "a1", Name: "worker-1", Host: "alpha", Backend: "ollama", Status: FleetNodeStatusIdle},
+		{ID: "a2", Name: "worker-2", Host: "beta", Backend: "ollama", Status: FleetNodeStatusIdle},
 	}
 
-	filtered, _ := filterAgentsByHostAffinity(agents, "nonexistent-host", false)
+	filtered, _ := filterFleetNodesByHostAffinity(agents, "nonexistent-host", false)
 
 	// Should fall through to original list, not return empty.
 	if len(filtered) != len(agents) {
@@ -3912,16 +3920,16 @@ func TestWorkItem_HostAffinity_NoMatch_ReturnsFull(t *testing.T) {
 }
 
 // TestControlLoop_HostAffinityFromWorkflow_FiltersAgents verifies that
-// matchAgentForTask applies the host-affinity filter from WorkItem.HostAffinity
+// matchFleetNodeForTask applies the host-affinity filter from WorkItem.HostAffinity
 // before selecting a candidate, returning the affinity-matched agent.
 func TestControlLoop_HostAffinityFromWorkflow_FiltersAgents(t *testing.T) {
 	t.Parallel()
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
 
-	agents := []*AgentRegistration{
-		{ID: "a-generic", Name: "generic-node", Host: "server-x", Backend: "ollama", Status: AgentStatusIdle},
-		{ID: "a-gpu", Name: "gpu-host", Host: "gpu-host.cluster", Backend: "ollama", Status: AgentStatusIdle},
+	agents := []*FleetNode{
+		{ID: "a-generic", Name: "generic-node", Host: "server-x", Backend: "ollama", Status: FleetNodeStatusIdle},
+		{ID: "a-gpu", Name: "gpu-host", Host: "gpu-host.cluster", Backend: "ollama", Status: FleetNodeStatusIdle},
 	}
 
 	item := &WorkItem{
@@ -3930,7 +3938,7 @@ func TestControlLoop_HostAffinityFromWorkflow_FiltersAgents(t *testing.T) {
 		HostAffinity: "gpu-host",
 	}
 
-	agentID, _, _ := cl.matchAgentForTask(item, agents, newTestBackends())
+	agentID, _, _ := cl.matchFleetNodeForTask(item, agents, newTestBackends())
 
 	if agentID != "a-gpu" {
 		t.Errorf("expected host-affinity to select agent a-gpu, got %q", agentID)
@@ -3946,8 +3954,8 @@ func TestControlLoop_AgentSpec_HostAffinityPropagatedToSpawnReq(t *testing.T) {
 	var capturedSpawnReq *SpawnSessionRequest
 	svc := &controlLoopMockService{
 		backends: newTestBackends(),
-		agents: []*AgentRegistration{
-			{ID: "a-gpu-host", Name: "gpu-host", Host: "gpu-host", Backend: "ollama", Status: AgentStatusIdle},
+		agents: []*FleetNode{
+			{ID: "a-gpu-host", Name: "gpu-host", Host: "gpu-host", Backend: "ollama", Status: FleetNodeStatusIdle},
 		},
 	}
 	// Override SpawnSession to capture what the control loop sends.
@@ -3965,7 +3973,7 @@ func TestControlLoop_AgentSpec_HostAffinityPropagatedToSpawnReq(t *testing.T) {
 	}
 	_ = capturingSvc // unused, use direct assertion below
 
-	// Build a simpler assertion by using filterAgentsByHostAffinity directly
+	// Build a simpler assertion by using filterFleetNodesByHostAffinity directly
 	// and checking the spawnReq fields are copied as documented in the
 	// implementation. This tests the data flow from AgentRoleSpec → SpawnReq.
 	agentSpec := &AgentRoleSpec{
@@ -4237,12 +4245,12 @@ func (m *controlLoopMockService) ListTasksPage(ctx context.Context, tenantID str
 	return ApplyPage(tasks, page, TaskPageSpec())
 }
 
-func (m *controlLoopMockService) ListAgentsPage(ctx context.Context, tenantID string, filter *AgentFilter, page *Page) (*PageResult[*AgentRegistration], error) {
-	agents, err := m.ListAgents(ctx, tenantID, filter)
+func (m *controlLoopMockService) ListFleetNodesPage(ctx context.Context, tenantID string, filter *FleetNodeFilter, page *Page) (*PageResult[*FleetNode], error) {
+	agents, err := m.ListFleetNodes(ctx, tenantID, filter)
 	if err != nil {
 		return nil, err
 	}
-	return ApplyPage(agents, page, AgentPageSpec())
+	return ApplyPage(agents, page, FleetNodePageSpec())
 }
 
 func (m *controlLoopMockService) ListWorkflowsPage(ctx context.Context, filter *WorkflowFilter, page *Page) (*PageResult[*WorkflowDefinition], error) {

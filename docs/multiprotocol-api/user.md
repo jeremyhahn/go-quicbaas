@@ -470,8 +470,7 @@ Identity and Access Management - a composite service with 11 sub-clients for com
 | Sub-Client | Description |
 |------------|-------------|
 | `Tenant()` | Multi-tenant management |
-| `User()` | User CRUD, roles, groups |
-| `Group()` | User organization |
+| `User()` | User CRUD and roles |
 | `Role()` | Permission bundles |
 | `Policy()` | ABAC policies |
 | `PEP()` | Policy Enforcement Point for authorization checks |
@@ -898,7 +897,7 @@ QuicBaaS services are accessible through multiple transport protocols. All 28 se
 
 ### MCP Protocol Support
 
-QuicBaaS also supports the Model Context Protocol (MCP) for AI/LLM integration. The MCP server registers 500 tools covering all services, enabling AI assistants and language models to interact with QuicBaaS programmatically. Fifty of them are deliberately unmapped in the authorization gate and filtered out of `tools/list`, so 450 are reachable — see the [README's category breakdown](../README.md#mcp-tools-ai-agents).
+QuicBaaS also supports the Model Context Protocol (MCP) for AI/LLM integration. The MCP server registers 520 tools on the default build (515 with `WITH_RAG=0`), counted from `pkg/api/mcp/tools.go`'s `registerTools`, enabling AI assistants and language models to interact with QuicBaaS programmatically. Forty-two of them are declared deliberately unmapped in `pkg/api/mcp/authz_qrdb_unmapped.go` and filtered out of `tools/list` by the authorization gate, so 478 are reachable — see the [README's category breakdown](../../README.md#mcp-tools-ai-agents).
 
 **Source:** `pkg/api/mcp/`
 

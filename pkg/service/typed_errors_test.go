@@ -37,28 +37,28 @@ func TestAgentAdminTypedErrors_Messages(t *testing.T) {
 		want string
 	}{
 		{
-			name: "AgentAdminNotFoundError",
-			err:  &service.AgentAdminNotFoundError{TenantID: "t1", AgentID: "a1"},
+			name: "FleetAdminNotFoundError",
+			err:  &service.FleetAdminNotFoundError{TenantID: "t1", NodeID: "a1"},
 			want: "agent not found: tenant=t1 agent=a1",
 		},
 		{
-			name: "AgentAlreadyDisabledError",
-			err:  &service.AgentAlreadyDisabledError{TenantID: "t1", AgentID: "a1"},
+			name: "FleetNodeAlreadyDisabledError",
+			err:  &service.FleetNodeAlreadyDisabledError{TenantID: "t1", NodeID: "a1"},
 			want: "agent already disabled: tenant=t1 agent=a1",
 		},
 		{
-			name: "AgentNotDisabledError",
-			err:  &service.AgentNotDisabledError{TenantID: "t1", AgentID: "a1"},
+			name: "FleetNodeNotDisabledError",
+			err:  &service.FleetNodeNotDisabledError{TenantID: "t1", NodeID: "a1"},
 			want: "agent not disabled: tenant=t1 agent=a1",
 		},
 		{
-			name: "AgentDisabledError",
-			err:  &service.AgentDisabledError{TenantID: "t1", AgentID: "a1"},
+			name: "FleetNodeDisabledError",
+			err:  &service.FleetNodeDisabledError{TenantID: "t1", NodeID: "a1"},
 			want: "agent is disabled: tenant=t1 agent=a1",
 		},
 		{
-			name: "AgentStreamCloseNotImplementedError",
-			err:  &service.AgentStreamCloseNotImplementedError{AgentID: "a1"},
+			name: "FleetStreamCloseNotImplementedError",
+			err:  &service.FleetStreamCloseNotImplementedError{NodeID: "a1"},
 			want: "agent stream close not implemented: no stream registry wired for agent=a1",
 		},
 	}
@@ -110,7 +110,7 @@ func TestProjectTypedErrors_Messages(t *testing.T) {
 			name: "ProjectAccessDeniedError",
 			err: &service.ProjectAccessDeniedError{
 				ProjectID:    "p1",
-				AgentID:      "a1",
+				FleetNodeID:  "a1",
 				RequiredRole: orchestration.ProjectRoleLead,
 				ActualRole:   orchestration.ProjectRoleObserver,
 			},
@@ -137,12 +137,12 @@ func TestProjectTypedErrors_Messages(t *testing.T) {
 
 func TestAgentCertIssuerTypedErrors_Messages(t *testing.T) {
 	assert.EqualError(t,
-		&service.AgentCertRequestFieldError{Field: "tenant_id"},
+		&service.FleetNodeCertRequestFieldError{Field: "tenant_id"},
 		"agent cert issuer: field tenant_id is required",
 	)
 
 	cause := errors.New("ca offline")
-	issueErr := &service.AgentCertIssueError{Op: "issue agent certificate", Cause: cause}
+	issueErr := &service.FleetNodeCertIssueError{Op: "issue agent certificate", Cause: cause}
 	assert.EqualError(t, issueErr, "agent cert issuer: issue agent certificate: ca offline")
 
 	// Unwrap must expose the wrapped cause so callers can match it.
@@ -156,7 +156,7 @@ func TestAgentCertIssuerTypedErrors_Messages(t *testing.T) {
 
 func TestAgentDeployTypedErrors_Messages(t *testing.T) {
 	cause := errors.New("sftp closed")
-	uploadErr := &service.AgentIdentityUploadError{File: "agent.crt", Cause: cause}
+	uploadErr := &service.FleetNodeIdentityUploadError{File: "agent.crt", Cause: cause}
 	assert.EqualError(t, uploadErr, "agent deploy: upload agent.crt: sftp closed")
 
 	// Unwrap must expose the wrapped cause for errors.Is matching.

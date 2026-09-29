@@ -21,20 +21,20 @@ import (
 )
 
 func TestReviewerConfig_ValidateAcceptsNoneAndRefusesHalf(t *testing.T) {
-	complete := ReviewerConfig{Backend: "codex", Login: "bot", TokenSecretRef: "tok"}
+	complete := ReviewerConfig{Agent: testReviewerAgent, Login: "bot", TokenSecretRef: "tok"}
 	for name, tc := range map[string]struct {
 		cfg    ReviewerConfig
 		wantOK bool
 	}{
 		// A project reviewed by people, or by automation outside this
 		// module, binds no reviewer. That is a configuration, not a gap.
-		"unconfigured":   {ReviewerConfig{}, true},
-		"complete":       {complete, true},
-		"no login":       {ReviewerConfig{Backend: "codex", TokenSecretRef: "tok"}, false},
-		"no token":       {ReviewerConfig{Backend: "codex", Login: "bot"}, false},
-		"login no agent": {ReviewerConfig{Login: "bot"}, false},
-		"token no agent": {ReviewerConfig{TokenSecretRef: "tok"}, false},
-		"blank backend":  {ReviewerConfig{Backend: "  ", Login: "bot", TokenSecretRef: "tok"}, false},
+		"unconfigured":    {ReviewerConfig{}, true},
+		"complete":        {complete, true},
+		"no login":        {ReviewerConfig{Agent: testReviewerAgent, TokenSecretRef: "tok"}, false},
+		"no token":        {ReviewerConfig{Agent: testReviewerAgent, Login: "bot"}, false},
+		"login no agent":  {ReviewerConfig{Login: "bot"}, false},
+		"token no agent":  {ReviewerConfig{TokenSecretRef: "tok"}, false},
+		"malformed agent": {ReviewerConfig{Agent: "Not An Agent", Login: "bot", TokenSecretRef: "tok"}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			err := tc.cfg.Validate()
@@ -53,7 +53,7 @@ func TestReviewerConfig_TheReviewerActsThroughItsOwnToken(t *testing.T) {
 	// itself: the forge would record the author as the reviewer and the
 	// independence rule would have nothing to distinguish.
 	author := ForgeConfig{Type: ForgeGitea, BaseURL: "http://forge.test", Owner: "acme", Repo: "api", TokenSecretRef: "worker-tok"}
-	reviewer := ReviewerConfig{Backend: "codex", Login: "bot", TokenSecretRef: "reviewer-tok"}
+	reviewer := ReviewerConfig{Agent: testReviewerAgent, Login: "bot", TokenSecretRef: "reviewer-tok"}
 	got := reviewer.ForgeConfigFor(author)
 	if got.TokenSecretRef != "reviewer-tok" {
 		t.Fatalf("token ref = %q, want the reviewer's", got.TokenSecretRef)
@@ -69,8 +69,8 @@ func TestReviewerConfig_TheReviewerActsThroughItsOwnToken(t *testing.T) {
 	}
 }
 
-func TestReviewerConfig_StatusContextAndFamily(t *testing.T) {
-	bare := ReviewerConfig{Backend: "codex", Model: "gpt-5-codex"}
+func TestReviewerConfig_StatusContext(t *testing.T) {
+	bare := ReviewerConfig{Agent: testReviewerAgent}
 	if bare.Context() != DefaultReviewStatusContext {
 		t.Fatalf("context = %q", bare.Context())
 	}
@@ -78,43 +78,14 @@ func TestReviewerConfig_StatusContextAndFamily(t *testing.T) {
 	if named.Context() != "ci/review" {
 		t.Fatalf("context = %q", named.Context())
 	}
-	if bare.ModelFamily() != ModelFamily("codex", "gpt-5-codex") {
-		t.Fatalf("family = %q", bare.ModelFamily())
+	if SeatFamily(testAgents(), bare) != ModelFamilyOpenAI {
+		t.Fatalf("family = %q", SeatFamily(testAgents(), bare))
+	}
+	if SeatFamily(testAgents(), ReviewerConfig{Agent: "ghost"}) != "" {
+		t.Fatal("an undefined agent has no family")
 	}
 	if !bare.Configured() || (ReviewerConfig{}).Configured() {
 		t.Fatal("Configured")
-	}
-}
-
-// TestReviewerConfig_ReasoningEffortIsCodexsConfigOverride: the effort a
-// binding names reaches codex as `-c model_reasoning_effort`, reaches no
-// other backend, and is refused outside the CLI's vocabulary.
-func TestReviewerConfig_ReasoningEffortIsCodexsConfigOverride(t *testing.T) {
-	base := ReviewerConfig{Backend: "codex", Login: "codex", TokenSecretRef: "sdlc/reviewer/token"}
-	for _, effort := range []string{"minimal", "low", "medium", "high", "xhigh"} {
-		r := base
-		r.ReasoningEffort = effort
-		if err := r.Validate(); err != nil {
-			t.Errorf("%s refused: %v", effort, err)
-		}
-		if got := r.ExtraArgs(); len(got) != 2 || got[0] != "-c" || got[1] != "model_reasoning_effort=\""+effort+"\"" {
-			t.Errorf("%s: args = %v", effort, got)
-		}
-	}
-	r := base
-	r.ReasoningEffort = "ultra"
-	if err := r.Validate(); !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("an effort outside the vocabulary was accepted: %v", err)
-	}
-	if got := base.ExtraArgs(); got != nil {
-		t.Errorf("no effort named, yet args = %v", got)
-	}
-	claude := ReviewerConfig{Backend: "claude", Login: "c", TokenSecretRef: "t", ReasoningEffort: "medium"}
-	if err := claude.Validate(); err != nil {
-		t.Errorf("a valid effort on another backend was refused: %v", err)
-	}
-	if got := claude.ExtraArgs(); got != nil {
-		t.Errorf("codex's config override was handed to another backend: %v", got)
 	}
 }
 
@@ -123,7 +94,7 @@ func TestProjectBinding_ValidatesItsReviewer(t *testing.T) {
 	if err := binding.Validate(); err != nil {
 		t.Fatalf("the fixture does not validate: %v", err)
 	}
-	binding.Reviewer = ReviewerConfig{Backend: "codex"}
+	binding.Reviewer = ReviewerConfig{Agent: testReviewerAgent}
 	if err := binding.Validate(); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("a half-configured reviewer was bound: %v", err)
 	}

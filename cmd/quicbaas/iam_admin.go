@@ -70,7 +70,6 @@ Admin Roles:
   - super_admin    Full access to all tenants and system operations
   - tenant_admin   Full access within assigned tenant(s)
   - user_admin     Can manage users within assigned tenant(s)
-  - group_admin    Can manage groups within assigned tenant(s)
   - policy_admin   Can manage policies within assigned tenant(s)
   - audit_admin    Can view audit logs within assigned tenant(s)
   - read_only      Read-only access to assigned resources
@@ -141,7 +140,7 @@ Examples:
 	}
 
 	cmd.Flags().StringVar(&adminUserID, "user", "", "User ID to assign admin privileges (required)")
-	cmd.Flags().StringVar(&adminRole, "role", "", "Admin role (required): super_admin, tenant_admin, user_admin, group_admin, policy_admin, audit_admin, read_only")
+	cmd.Flags().StringVar(&adminRole, "role", "", "Admin role (required): super_admin, tenant_admin, user_admin, policy_admin, audit_admin, read_only")
 	cmd.Flags().StringSliceVar(&adminTenantIDs, "tenant-ids", nil, "Comma-separated list of tenant IDs this assignment applies to")
 	cmd.Flags().StringSliceVar(&adminPermissions, "permissions", nil, "Comma-separated list of additional permissions to grant")
 	cmd.Flags().StringSliceVar(&adminDeniedPermissions, "denied-permissions", nil, "Comma-separated list of permissions to explicitly deny")
@@ -158,7 +157,7 @@ Examples:
 // runIAMAdminAssignmentCreateCommand executes the assignment create command.
 func runIAMAdminAssignmentCreateCommand(cmd *cobra.Command, args []string) error {
 	// Validate admin role
-	validRoles := []string{"super_admin", "tenant_admin", "user_admin", "group_admin", "policy_admin", "audit_admin", "read_only"}
+	validRoles := []string{"super_admin", "tenant_admin", "user_admin", "policy_admin", "audit_admin", "read_only"}
 	roleValid := false
 	for _, r := range validRoles {
 		if adminRole == r {
@@ -356,7 +355,7 @@ func runIAMAdminAssignmentUpdateCommand(cmd *cobra.Command, args []string) error
 
 	if cmd.Flags().Changed("role") {
 		// Validate admin role
-		validRoles := []string{"super_admin", "tenant_admin", "user_admin", "group_admin", "policy_admin", "audit_admin", "read_only"}
+		validRoles := []string{"super_admin", "tenant_admin", "user_admin", "policy_admin", "audit_admin", "read_only"}
 		roleValid := false
 		for _, r := range validRoles {
 			if adminRole == r {

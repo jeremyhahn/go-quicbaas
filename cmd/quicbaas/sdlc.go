@@ -28,6 +28,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
+	agentsSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/agents"
 	sdlcSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/sdlc"
 )
 
@@ -106,9 +107,14 @@ Examples:
   quicbaas sdlc bind go-truststrap --file go-truststrap-binding.yaml
   quicbaas sdlc binding go-truststrap --output json
   quicbaas sdlc conformance go-truststrap
+  quicbaas sdlc open-work go-truststrap
   quicbaas sdlc onboard go-truststrap
   quicbaas sdlc delivery 1788567351228350294
-  quicbaas sdlc unbind go-truststrap`,
+  quicbaas sdlc reviewer set go-truststrap 42 qwen
+  quicbaas sdlc issue create go-truststrap --title "Follow-up" --label task:ready --parent 41
+  quicbaas sdlc collaborators go-truststrap
+  quicbaas sdlc unbind go-truststrap
+  quicbaas sdlc worker-image refresh --wait`,
 	}
 	cmd.PersistentFlags().StringVar(&sdlcOutputFmt, "output", "table", "Output format (json, yaml, table)")
 
@@ -155,6 +161,23 @@ non-zero when the project is not conformant, so it can gate a script.`,
 			Args: cobra.ExactArgs(1),
 			RunE: runSDLCConformance,
 		},
+		&cobra.Command{
+			Use:   "open-work <project-id>",
+			Short: "List a bound project's open factory pull requests and labelled issues",
+			Long: `List what the factory has in flight on a bound project's forge: the open
+pull requests the project's agent opened, each with its head branch, CI state,
+review state and age, and the open issues carrying a label the factory writes
+(its display labels, its trigger label and task:blocked).
+
+READ-ONLY. It is read from the forge, so it shows work whose task is gone too.`,
+			Args: cobra.ExactArgs(1),
+			RunE: runSDLCOpenWork,
+		},
+		newSDLCReviewerCommand(),
+		newSDLCIssueCommand(),
+		newSDLCCollaboratorsCommand(),
+		newSDLCAdoptCommand(),
+		newSDLCWorkerImageCommand(),
 	)
 	return cmd
 }
@@ -271,6 +294,81 @@ func runSDLCConformance(_ *cobra.Command, args []string) error {
 		return &SDLCNotConformantError{ProjectID: args[0], Findings: len(report.Findings)}
 	}
 	return nil
+}
+
+func runSDLCOpenWork(_ *cobra.Command, args []string) error {
+	client, err := sdlcClientFactory()
+	if err != nil {
+		return formatError(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
+	defer cancel()
+	work, err := client.OpenWork(ctx, globalTenantID, args[0])
+	if err != nil {
+		return formatError(err)
+	}
+	return formatSDLCOpenWork(work, sdlcOutputFmt, os.Stdout)
+}
+
+func formatSDLCOpenWork(work *sdlcSDK.OpenWork, format string, w io.Writer) error {
+	outputFmt, err := cli.ParseOutputFormat(format)
+	if err != nil {
+		return err
+	}
+	switch outputFmt {
+	case cli.OutputFormatJSON:
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(work)
+	case cli.OutputFormatYAML:
+		return yaml.NewEncoder(w).Encode(work)
+	default:
+		return writeOpenWorkTable(work, w)
+	}
+}
+
+// writeOpenWorkTable prints the project's open pull requests, then its
+// labelled issues, each section present even when empty so "none" is said
+// rather than implied.
+func writeOpenWorkTable(work *sdlcSDK.OpenWork, w io.Writer) error {
+	if _, err := fmt.Fprintf(w, "Project: %s  Repository: %s  Agent: %s\n\nPull requests (%d):\n",
+		work.ProjectID, orDash(work.Repo), orDash(work.Agent), len(work.PullRequests)); err != nil {
+		return err
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "  #\tHEAD\tCI\tREVIEW\tAGE\tTITLE")
+	for _, pr := range work.PullRequests {
+		fmt.Fprintf(tw, "  %d\t%s\t%s\t%s\t%s\t%s\n", pr.Number, pr.HeadRef, pr.CIState, pr.ReviewState, ageLabel(pr.AgeSeconds), pr.Title)
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "\nIssues (%d):\n", len(work.Issues)); err != nil {
+		return err
+	}
+	itw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(itw, "  #\tLABELS\tAGE\tTITLE")
+	for _, issue := range work.Issues {
+		fmt.Fprintf(itw, "  %d\t%s\t%s\t%s\n", issue.Number, strings.Join(issue.Labels, ","), ageLabel(issue.AgeSeconds), issue.Title)
+	}
+	return itw.Flush()
+}
+
+// ageLabel renders an age in seconds as days and hours, hours and minutes,
+// or minutes: the precision an operator triaging stale work reads.
+func ageLabel(seconds int64) string {
+	age := time.Duration(seconds) * time.Second
+	days := int64(age / (24 * time.Hour))
+	hours := int64(age % (24 * time.Hour) / time.Hour)
+	minutes := int64(age % time.Hour / time.Minute)
+	switch {
+	case days > 0:
+		return strconv.FormatInt(days, 10) + "d" + strconv.FormatInt(hours, 10) + "h"
+	case hours > 0:
+		return strconv.FormatInt(hours, 10) + "h" + strconv.FormatInt(minutes, 10) + "m"
+	default:
+		return strconv.FormatInt(minutes, 10) + "m"
+	}
 }
 
 // SDLCNotConformantError reports a project that is not correctly onboarded,
@@ -405,14 +503,20 @@ func formatSDLCBinding(binding *sdlcSDK.ProjectBinding, format string, w io.Writ
 		fmt.Fprintf(tw, "Trigger label:\t%s\n", orDash(binding.Forge.TriggerLabel))
 		fmt.Fprintf(tw, "Strategy:\t%s\n", orDash(binding.Strategy))
 		fmt.Fprintf(tw, "Worker:\t%s\n", workerLabel(binding.Worker))
+		fmt.Fprintf(tw, "Worker prompt append:\t%s\n", promptAppendLabel(binding.WorkerPromptAppend))
 		fmt.Fprintf(tw, "Verification:\t%s\n", orDash(strings.Join(binding.Verification, "; ")))
 		fmt.Fprintf(tw, "Review:\t%d approval(s), independent=%v, green-checks=%v\n",
 			binding.Review.RequiredApprovals, binding.Review.RequireIndependentReviewer, binding.Review.RequireGreenChecks)
 		fmt.Fprintf(tw, "Triage:\t%s\n", triageLabel(binding.Triage, binding.Worker))
+		fmt.Fprintf(tw, "Triage prompt append:\t%s\n", promptAppendLabel(binding.TriagePromptAppend))
 		fmt.Fprintf(tw, "Triage may close:\t%s\n", yesNo(binding.TriageMayClose))
 		fmt.Fprintf(tw, "Reviewer:\t%s\n", reviewerLabel(binding.Reviewer))
+		fmt.Fprintf(tw, "Reviewer alternates:\t%s\n", alternatesLabel(binding.Reviewers))
 		fmt.Fprintf(tw, "Review rounds:\t%s\n", reviewRoundsLabel(binding.MaxReviewRounds))
+		fmt.Fprintf(tw, "Merge train:\t%s\n", mergeTrainLabel(binding.MergeTrain, binding.Reviewer, binding.Reviewers))
+		fmt.Fprintf(tw, "Issue clustering:\t%s\n", clusteringLabel(binding.Clustering))
 		fmt.Fprintf(tw, "Discovery:\t%s\n", discoveryLabel(binding.Discovery))
+		fmt.Fprintf(tw, "Rulers:\t%s\n", rulersLabel(binding))
 		fmt.Fprintf(tw, "Webhook:\t%s\n", boolWord(binding.Forge.WebhookSecretRef != ""))
 		fmt.Fprintf(tw, "SSH host key:\t%s\n", sshHostKeyLabel(binding.Forge.SSHHostKey))
 		if !binding.UpdatedAt.IsZero() {
@@ -420,6 +524,16 @@ func formatSDLCBinding(binding *sdlcSDK.ProjectBinding, format string, w io.Writ
 		}
 		return tw.Flush()
 	}
+}
+
+// promptAppendLabel sizes a slot's appended prompt material rather than
+// printing it: it may run to kilobytes, and the JSON and YAML formats carry
+// the text itself.
+func promptAppendLabel(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return "-"
+	}
+	return strconv.Itoa(len(text)) + " bytes"
 }
 
 func formatSDLCDelivery(delivery *sdlcSDK.Delivery, format string, w io.Writer) error {
@@ -494,21 +608,12 @@ func sshHostKeyLabel(hostKey string) string {
 	return fields[0]
 }
 
-// workerLabel renders the binding's worker as "backend/model in image",
-// dropping the model when the backend runs its own default and the image when
-// the project names none.
-func workerLabel(worker sdlcSDK.WorkerConfig) string {
-	if worker.Backend == "" {
+// workerLabel renders the binding's worker: the Agent or pool it references.
+func workerLabel(worker agentsSDK.AgentRef) string {
+	if worker.IsZero() {
 		return "-"
 	}
-	label := worker.Backend
-	if worker.Model != "" {
-		label += "/" + worker.Model
-	}
-	if worker.Image != "" {
-		label += " in " + worker.Image
-	}
-	return label
+	return worker.String()
 }
 
 // reviewRoundsLabel names the configured bound, saying so when the binding
@@ -527,9 +632,9 @@ func yesNo(b bool) string {
 // triageLabel renders the triage row, saying plainly when it falls back to the
 // worker — a project paying a code-writing model to read issues should be able
 // to see that it is.
-func triageLabel(triage, worker sdlcSDK.WorkerConfig) string {
-	if strings.TrimSpace(triage.Backend) == "" {
-		return workerLabel(worker) + " (falls back to the worker)"
+func triageLabel(triage, worker agentsSDK.AgentRef) string {
+	if triage.IsZero() {
+		return workerLabel(worker) + " (the node's default triage agent where defined, else the worker)"
 	}
 	return workerLabel(triage)
 }
@@ -542,13 +647,10 @@ func triageLabel(triage, worker sdlcSDK.WorkerConfig) string {
 // green pull request is sitting there, and a bare dash would read as a
 // cosmetic gap rather than the reason.
 func reviewerLabel(r sdlcSDK.ReviewerConfig) string {
-	if strings.TrimSpace(r.Backend) == "" {
+	if strings.TrimSpace(r.Agent) == "" {
 		return "none (not self-reviewed)"
 	}
-	label := r.Backend
-	if r.Model != "" {
-		label += "/" + r.Model
-	}
+	label := "agent:" + r.Agent
 	if r.Login != "" {
 		label += " as " + r.Login
 	}
@@ -561,6 +663,53 @@ func discoveryLabel(mode string) string {
 		return "both (default)"
 	}
 	return mode
+}
+
+// mergeTrainLabel renders the merge-train row. It says why a train that is
+// not disabled is still off: a train's pull request lands only on a verdict
+// from a reviewer profile that counts toward merge, so a project with none
+// merges one change at a time.
+func mergeTrainLabel(policy sdlcSDK.MergeTrainPolicy, reviewer sdlcSDK.ReviewerConfig, alternates []sdlcSDK.ReviewerConfig) string {
+	switch {
+	case policy.Disabled:
+		return "off"
+	case !hasCountingReviewer(reviewer, alternates):
+		return "off (no reviewer profile that counts toward merge to review a train)"
+	case policy.MaxSize <= 0:
+		return "on, default size"
+	default:
+		return "on, up to " + strconv.Itoa(policy.MaxSize) + " change(s)"
+	}
+}
+
+// hasCountingReviewer reports whether the binding carries a reviewer profile
+// whose verdict counts toward merge: a configured default counts unless it
+// says otherwise, an alternate only when it says so.
+func hasCountingReviewer(reviewer sdlcSDK.ReviewerConfig, alternates []sdlcSDK.ReviewerConfig) bool {
+	if strings.TrimSpace(reviewer.Agent) == "" {
+		return false
+	}
+	if reviewer.CountsTowardMerge == nil || *reviewer.CountsTowardMerge {
+		return true
+	}
+	for _, alternate := range alternates {
+		if alternate.CountsTowardMerge != nil && *alternate.CountsTowardMerge {
+			return true
+		}
+	}
+	return false
+}
+
+// clusteringLabel renders the issue-clustering row.
+func clusteringLabel(policy sdlcSDK.ClusteringPolicy) string {
+	switch {
+	case policy.Disabled:
+		return "off"
+	case policy.MaxSize <= 0:
+		return "on, default size"
+	default:
+		return "on, up to " + strconv.Itoa(policy.MaxSize) + " issue(s)"
+	}
 }
 
 func reviewRoundsLabel(rounds int) string {

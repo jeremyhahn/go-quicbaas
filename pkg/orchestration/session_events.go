@@ -422,7 +422,7 @@ type SessionMeta struct {
 	ProjectID      string            `json:"project_id,omitempty"`
 	Backend        string            `json:"backend"`
 	Model          string            `json:"model,omitempty"`
-	Host           string            `json:"host,omitempty"` // reachable agent daemon host, when remote
+	Host           string            `json:"host,omitempty"` // reachable fleet node daemon host, when remote
 	Status         SessionState      `json:"status"`
 	CreatedAt      time.Time         `json:"created_at"`
 	CreatedBy      string            `json:"created_by,omitempty"`

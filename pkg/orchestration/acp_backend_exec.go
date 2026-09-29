@@ -52,7 +52,15 @@ func (b *ACPBackend) spawnContainerExec(ctx context.Context, req *SpawnRequest) 
 		model = b.config.DefaultModel
 	}
 
-	spec, specErr := b.sandboxSpec(req, image, execKeepAlive)
+	// The session's ID is decided before its container exists, so the
+	// container is labelled with it.
+	identity, idErr := newContainerIdentity(ctx, req, "")
+	if idErr != nil {
+		return nil, &SpawnError{Command: b.config.Command, Cause: idErr}
+	}
+	sessionID := identity.SessionID
+
+	spec, specErr := b.sandboxSpec(req, identity, image, execKeepAlive)
 	if specErr != nil {
 		return nil, specErr
 	}
@@ -61,11 +69,6 @@ func (b *ACPBackend) spawnContainerExec(ctx context.Context, req *SpawnRequest) 
 	// id, and a --rm container that has already gone makes that a spurious
 	// error. Own the lifetime explicitly instead.
 	spec.AutoRemove = false
-
-	sessionID, idErr := generateSessionID()
-	if idErr != nil {
-		return nil, &SpawnError{Command: b.config.Command, Cause: idErr}
-	}
 
 	// The container outlives this call, so it must not be bound to the Spawn
 	// RPC's context — the same reason spawnContainerCLI detaches. Run itself is
@@ -189,8 +192,9 @@ func (b *ACPBackend) promptExec(ctx context.Context, sess *acpSession, req *Prom
 				b.config.Command, exitCode, truncateForLog(detail, 2000))
 		}
 		return nil, &PromptError{SessionID: sess.id, Cause: &OneShotExecutionError{
-			Command: b.config.Command,
-			Stderr:  detail,
+			Command:             b.config.Command,
+			Stderr:              detail,
+			TurnFailureEvidence: TurnFailureEvidence{ProviderAuth: providerAuthEvidence(detail)},
 		}}
 	}
 	_ = exitCode

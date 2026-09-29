@@ -67,9 +67,8 @@ func setupAuthorizeHandler(t *testing.T) *IAMHandler {
 		AuthCodeTTL:      10 * time.Minute,
 	}, iam.OIDCDependencies{
 		IdentityStore: iam.NewIdentityStore(iam.IdentityStoreOptions{
-			UserStorage:  iam.NewMemoryStorage(),
-			GroupStorage: iam.NewMemoryStorage(),
-			RoleStorage:  iam.NewMemoryStorage(),
+			UserStorage: iam.NewMemoryStorage(),
+			RoleStorage: iam.NewMemoryStorage(),
 		}),
 		AppStorage:   backend,
 		TokenStorage: backend,

@@ -99,7 +99,7 @@ func TestOrchestratorHandleRequest_AllMethodsMapped(t *testing.T) {
 		"Health", "ListBackends",
 		"SpawnSession", "PromptSession", "SessionStatus", "CloseSession", "ListSessions",
 		"CreateTask", "GetTask", "ListTasks", "ClaimTask", "CompleteTask",
-		"RegisterAgent", "GetAgent", "ListAgents", "RemoveAgent", "AgentHeartbeat",
+		"RegisterFleetNode", "GetFleetNode", "ListFleetNodes", "RemoveFleetNode", "FleetNodeHeartbeat",
 	}
 	for _, method := range expectedMethods {
 		t.Run(method, func(t *testing.T) {
@@ -174,31 +174,31 @@ func TestOrchestratorCompleteTask_InvalidRequestType(t *testing.T) {
 }
 
 func TestOrchestratorRegisterAgent_InvalidRequestType(t *testing.T) {
-	_, err := handleOrchestratorRegisterAgent(context.Background(), nil, 0)
+	_, err := handleFleetRegister(context.Background(), nil, 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid request type")
 }
 
 func TestOrchestratorGetAgent_InvalidRequestType(t *testing.T) {
-	_, err := handleOrchestratorGetAgent(context.Background(), nil, struct{}{})
+	_, err := handleFleetGet(context.Background(), nil, struct{}{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid request type")
 }
 
 func TestOrchestratorListAgents_InvalidRequestType(t *testing.T) {
-	_, err := handleOrchestratorListAgents(context.Background(), nil, "bad")
+	_, err := handleFleetList(context.Background(), nil, "bad")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid request type")
 }
 
 func TestOrchestratorRemoveAgent_InvalidRequestType(t *testing.T) {
-	_, err := handleOrchestratorRemoveAgent(context.Background(), nil, 3.14)
+	_, err := handleFleetRemove(context.Background(), nil, 3.14)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid request type")
 }
 
 func TestOrchestratorAgentHeartbeat_InvalidRequestType(t *testing.T) {
-	_, err := handleOrchestratorAgentHeartbeat(context.Background(), nil, []byte{})
+	_, err := handleFleetHeartbeat(context.Background(), nil, []byte{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid request type")
 }
@@ -273,12 +273,35 @@ func TestTaskFromProto_NoResult(t *testing.T) {
 	assert.Nil(t, result.Result)
 }
 
+// TestTaskFromProto_CarriesFaultAccounting: every fault and budget field the
+// server derives must survive the decode (go-quicbaas#947). A field the SDK
+// dropped would read as "no fault" on a task that has one.
+func TestTaskFromProto_CarriesFaultAccounting(t *testing.T) {
+	result := taskFromProto(&pb.Task{
+		Id: "task-1", Status: pb.TaskStatus_TASK_STATUS_BLOCKED, Attempts: 3,
+		BlockKind: "blocked", BlockFaultClass: "forge_unreachable",
+		ConclusionReason: "fault_bounded", ChargedAttempts: 1, EffectiveBudget: 4,
+		FaultClass: "forge_unreachable", FaultOrigin: "environment",
+	})
+	require.NotNil(t, result)
+	assert.Equal(t, "forge_unreachable", result.BlockFaultClass)
+	assert.Equal(t, "fault_bounded", result.ConclusionReason)
+	assert.Equal(t, 1, result.ChargedAttempts)
+	assert.Equal(t, 4, result.EffectiveBudget)
+	assert.Equal(t, "forge_unreachable", result.FaultClass)
+	assert.Equal(t, "environment", result.FaultOrigin)
+
+	open := taskFromProto(&pb.Task{Id: "task-2", Status: pb.TaskStatus_TASK_STATUS_PENDING})
+	assert.Empty(t, open.FaultOrigin)
+	assert.Empty(t, open.ConclusionReason)
+}
+
 // =============================================================================
-// Proto-to-SDK Conversion: agentRegistrationFromProto
+// Proto-to-SDK Conversion: fleetNodeFromProto
 // =============================================================================
 
 func TestAgentRegistrationFromProto_NilAgent(t *testing.T) {
-	result := agentRegistrationFromProto(nil)
+	result := fleetNodeFromProto(nil)
 	assert.Nil(t, result)
 }
 
@@ -286,14 +309,14 @@ func TestAgentRegistrationFromProto_CompleteAgent(t *testing.T) {
 	now := timestamppb.Now()
 	registered := timestamppb.New(now.AsTime().Add(-24 * time.Hour))
 
-	protoAgent := &pb.AgentRegistration{
+	protoAgent := &pb.FleetNode{
 		Id:           "agent-001",
 		TenantId:     "tenant-abc",
 		Name:         "test-agent",
 		Host:         "host-1.example.com",
 		Backend:      "claude",
-		AgentType:    "coding",
-		Status:       pb.AgentStatus_AGENT_STATUS_ONLINE,
+		NodeType:     "coding",
+		Status:       pb.FleetNodeStatus_FLEET_NODE_STATUS_ONLINE,
 		WorkDir:      "/workspace",
 		LastSeen:     now,
 		RegisteredAt: registered,
@@ -301,14 +324,14 @@ func TestAgentRegistrationFromProto_CompleteAgent(t *testing.T) {
 		Metadata:     map[string]string{"region": "us-east-1"},
 	}
 
-	result := agentRegistrationFromProto(protoAgent)
+	result := fleetNodeFromProto(protoAgent)
 	require.NotNil(t, result)
 	assert.Equal(t, "agent-001", result.ID)
 	assert.Equal(t, "tenant-abc", result.TenantID)
 	assert.Equal(t, "test-agent", result.Name)
 	assert.Equal(t, "host-1.example.com", result.Host)
 	assert.Equal(t, "claude", result.Backend)
-	assert.Equal(t, "coding", result.AgentType)
+	assert.Equal(t, "coding", result.NodeType)
 	assert.Contains(t, result.Status, "ONLINE")
 	assert.Equal(t, "/workspace", result.WorkDir)
 	assert.Equal(t, now.AsTime().Unix(), result.LastSeen)
@@ -439,7 +462,7 @@ func TestAgentStatusToProtoEnum(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.input, func(t *testing.T) {
-			assert.Equal(t, tc.expected, agentStatusToProtoEnum(tc.input))
+			assert.Equal(t, tc.expected, fleetNodeStatusToProtoEnum(tc.input))
 		})
 	}
 }
@@ -478,7 +501,7 @@ func TestOrchestratorSpawnSession_RequestFieldMapping(t *testing.T) {
 
 func TestOrchestratorRegisterAgent_RequestFieldMapping(t *testing.T) {
 	var wrongType *orchestrator.ClaimTaskRequest
-	_, err := handleOrchestratorRegisterAgent(context.Background(), nil, wrongType)
+	_, err := handleFleetRegister(context.Background(), nil, wrongType)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid request type")
 }

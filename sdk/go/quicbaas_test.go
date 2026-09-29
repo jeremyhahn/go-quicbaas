@@ -710,6 +710,9 @@ func (m *mockSecretsClientForCoverage) Store(ctx context.Context, req *StoreSecr
 func (m *mockSecretsClientForCoverage) Get(ctx context.Context, path string, opts ...SecretOption) (*Secret, error) {
 	return nil, nil
 }
+func (m *mockSecretsClientForCoverage) GetWithBytes(ctx context.Context, path, field string, fn func([]byte) error, opts ...SecretOption) error {
+	return nil
+}
 func (m *mockSecretsClientForCoverage) List(ctx context.Context, prefix string) (*ListSecretsResponse, error) {
 	return nil, nil
 }
@@ -875,7 +878,6 @@ type mockIAMClientForCoverage struct{}
 
 func (m *mockIAMClientForCoverage) Tenant() iam.TenantClient   { return nil }
 func (m *mockIAMClientForCoverage) User() iam.UserClient       { return nil }
-func (m *mockIAMClientForCoverage) Group() iam.GroupClient     { return nil }
 func (m *mockIAMClientForCoverage) Role() iam.RoleClient       { return nil }
 func (m *mockIAMClientForCoverage) Policy() iam.PolicyClient   { return nil }
 func (m *mockIAMClientForCoverage) PEP() iam.PEPClient         { return nil }

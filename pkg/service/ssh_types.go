@@ -18,10 +18,12 @@ import (
 	"strings"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/fleet/deploy"
 )
 
 // SSHSignerResolver resolves a named SSH key into an ssh.Signer. The
-// service layer uses this narrow interface to keep AgentDeployService
+// service layer uses this narrow interface to keep FleetDeployService
 // independent of any specific SSH key-management implementation — it
 // only needs the one operation "give me a signer for this key name".
 //
@@ -67,18 +69,20 @@ func (e *SSHAuthConflictError) Error() string {
 
 // SSHHostKeyResolver resolves the host-key verification policy for an
 // SSH target. The service layer uses this narrow interface so
-// AgentDeployService stays independent of where host-key pins live — it
-// only needs the one operation "give me the callback that decides
+// FleetDeployService stays independent of where host-key pins live — it
+// only needs the one operation "give me the policy that decides
 // whether this host's key is trusted".
 //
 // Callers wire an xkms-backed resolver here so the pins consulted are
 // exactly the ones `quicbaas ssh known-hosts add/list` manage.
 type SSHHostKeyResolver interface {
-	// HostKeyCallback returns the ssh.HostKeyCallback that verifies a
-	// target's presented host key against its stored pins. Resolution is
-	// eager: a host with no pin fails here, before the dial, with a typed
-	// error that tells the operator how to pin it.
-	HostKeyCallback(ctx context.Context, ref SSHHostRef) (ssh.HostKeyCallback, error)
+	// HostKeyPolicy returns the policy that verifies a target's
+	// presented host key against its stored pins: the callback that
+	// checks the key, and the host-key algorithms to negotiate so the
+	// host presents a key the pins cover. Resolution is eager: a host
+	// with no pin fails here, before the dial, with a typed error that
+	// tells the operator how to pin it.
+	HostKeyPolicy(ctx context.Context, ref SSHHostRef) (*deploy.HostKeyPolicy, error)
 }
 
 // SSHHostRef identifies the host whose pins to consult. Scope and Owner

@@ -46,7 +46,10 @@
     Ban,
     Activity,
     CircleAlert,
+    Pencil,
   } from 'lucide-svelte';
+  import AccountEditDialog from '../../components/orchestrator/AccountEditDialog.svelte';
+  import { accountSettingsSummary } from '../../lib/accountEdit.ts';
   import EmptyState from '../../components/core/EmptyState.svelte';
   import PageHeader from '../../components/core/PageHeader.svelte';
   import FilterBar from '../../components/core/FilterBar.svelte';
@@ -395,6 +398,9 @@
       markBusy(account.id, false);
     }
   }
+
+  // The account whose settings are being edited (AccountEditDialog).
+  let editTarget = $state<Account | null>(null);
 
   let deleteTarget = $state<Account | null>(null);
   let deleting = $state(false);
@@ -899,7 +905,7 @@
           </div>
           {#if usageReport.by_agent && Object.keys(usageReport.by_agent).length > 0}
             <div>
-              <div class="text-xs font-semibold text-base-content/40 uppercase tracking-wide mb-1">By Agent</div>
+              <div class="section-title mb-1">By Agent</div>
               <table class="table table-xs w-full">
                 <tbody>
                   {#each Object.entries(usageReport.by_agent) as [agentId, tokens] (agentId)}
@@ -923,8 +929,17 @@
   </dialog>
 {/if}
 
+{#if editTarget}
+  <AccountEditDialog
+    account={editTarget}
+    tenantID={orchestratorStore.activeTenantID}
+    onclose={() => { editTarget = null; }}
+    onsaved={() => { editTarget = null; void fetchAll(); }}
+  />
+{/if}
+
 <!-- Main content -->
-<div class="p-6 space-y-5 max-w-5xl mx-auto">
+<div class="page">
 
   <PageHeader
     title="Accounts"
@@ -932,16 +947,13 @@
     icon={UserCog}
   >
     {#snippet children()}
-      {#if !loading}
-        <span class="badge badge-sm badge-ghost" aria-label="{accounts.length} accounts">{accounts.length}</span>
-      {/if}
       <button
         class="btn btn-sm btn-ghost gap-1"
         onclick={() => { void fetchAll(); }}
         disabled={loading}
         aria-label="Refresh accounts"
       >
-        <RefreshCw class="h-3 w-3 {loading ? 'animate-spin' : ''}" />
+        <RefreshCw class="h-4 w-4 {loading ? 'animate-spin' : ''}" />
         Refresh
       </button>
       <button
@@ -949,7 +961,7 @@
         onclick={openCreateDialog}
         aria-label="Create account"
       >
-        <Plus class="h-3 w-3" />
+        <Plus class="h-4 w-4" />
         New Account
       </button>
     {/snippet}
@@ -978,10 +990,10 @@
     />
 
   {:else}
-    <div class="space-y-2 mb-3">
+    <div class="space-y-3">
       <input
         type="search"
-        class="input input-bordered input-sm w-full max-w-xs"
+        class="input input-sm w-full bg-base-100 sm:max-w-xs"
         placeholder="Search accounts..."
         aria-label="Search accounts"
         data-testid="accounts-search"
@@ -993,39 +1005,44 @@
         facets={accountFacets}
         onchange={(next) => accountNarrowing.apply(next)}
       />
-      <div class="text-xs text-base-content/50" data-testid="accounts-count">
+      <div class="text-xs tabular-nums text-base-content/60" data-testid="accounts-count">
         {visibleAccounts.length} of {accounts.length} accounts
       </div>
     </div>
 
     {#if visibleAccounts.length === 0}
-      <!-- Narrowed to nothing is not "no accounts yet" — see AgentFleet. -->
-      <div class="text-center py-8 text-sm text-base-content/40" data-testid="accounts-no-match">
+      <!-- Narrowed to nothing is not "no accounts yet" — see FleetList. -->
+      <div class="rounded-box border border-dashed border-base-300 px-6 py-14 text-center text-sm text-base-content/60" data-testid="accounts-no-match">
         {accountsNarrowed ? 'No accounts match the current filter.' : 'No accounts yet.'}
       </div>
     {/if}
 
-    <div class="space-y-3">
+    <div class="space-y-2.5">
       {#each visibleAccounts as account (account.id)}
         {@const busy = busyIds.has(account.id)}
         <div class="card bg-base-200 rounded-box overflow-hidden">
-          <div class="flex items-center gap-3 px-4 py-3">
+          <div class="flex items-center gap-3 px-4 py-3.5">
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2 flex-wrap">
-                <span class="font-semibold text-sm truncate">{account.display_name || account.id}</span>
-                <span class="badge badge-xs badge-outline">{providerLabel(account.provider)}</span>
-                <span class="badge badge-xs {statusVariant(account.status)}">{account.status}</span>
+                <span class="truncate text-[0.9375rem] font-semibold">{account.display_name || account.id}</span>
+                <span class="badge badge-sm badge-outline">{providerLabel(account.provider)}</span>
+                <span class="badge badge-sm {statusVariant(account.status)}">{account.status}</span>
                 {#if account.default}
-                  <span class="badge badge-xs badge-primary flex items-center gap-0.5">
-                    <Star class="h-2.5 w-2.5" />
+                  <span class="badge badge-sm badge-primary gap-1">
+                    <Star class="h-3 w-3" />
                     default
                   </span>
                 {/if}
               </div>
-              <div class="flex items-center gap-3 text-xs text-base-content/40 mt-0.5">
+              <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-base-content/60">
                 <span>{projectName(account.project_id)}</span>
                 <span>{refreshPolicyLabel(account.refresh_policy)}</span>
                 <span>Last used: {account.last_used_at ? formatRelative(account.last_used_at) : 'never'}</span>
+              </div>
+              <div class="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-base-content/60" data-testid="account-settings-summary">
+                {#each accountSettingsSummary(account) as part (part)}
+                  <span>{part}</span>
+                {/each}
               </div>
               {#if account.status === 'error' && account.last_error}
                 <div class="flex items-center gap-1 text-xs text-error mt-1">
@@ -1044,6 +1061,14 @@
                 aria-label="Set {account.display_name || account.id} as default"
               >
                 <Star class="h-3.5 w-3.5" />
+              </button>
+              <button
+                class="btn btn-ghost btn-xs btn-square"
+                onclick={() => { editTarget = account; }}
+                title="Edit billing, limits and session cap"
+                aria-label="Edit {account.display_name || account.id}"
+              >
+                <Pencil class="h-3.5 w-3.5" />
               </button>
               <button
                 class="btn btn-ghost btn-xs btn-square"

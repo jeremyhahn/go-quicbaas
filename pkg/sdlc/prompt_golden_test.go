@@ -193,6 +193,46 @@ func TestSDLCPrompts_Golden(t *testing.T) {
 		{"silent_turn_note", func(*testing.T) string { return silentTurnNote(5 * time.Second) }},
 		{"non_answer_turn_note", func(*testing.T) string { return nonAnswerTurnNote(451 * time.Millisecond) }},
 		{"session_rolled_note", func(*testing.T) string { return sessionRolledNote(24*time.Minute+4*time.Second, 1) }},
+		{"account_rolled_note", func(*testing.T) string { return accountRolledNote(2) }},
+		{"account_resumed_note", func(*testing.T) string {
+			return accountResumedNote(2, &orchestration.ReplayTranscript{
+				SessionID: "session-1",
+				Turns: []orchestration.ReplayTurn{
+					{Role: orchestration.ReplayRoleUser, Text: "implement the router"},
+					{Role: orchestration.ReplayRoleAssistant, Text: "the handler table lives in pkg/router/table.go"},
+				},
+			})
+		}},
+		{"account_resumed_note_unprompted", func(*testing.T) string {
+			return accountResumedNote(2, &orchestration.ReplayTranscript{SessionID: "session-1"})
+		}},
+		{"session_rolled_account_note", func(*testing.T) string { return sessionRolledAccountNote(2) }},
+		{"worker_released_note", func(*testing.T) string { return workerReleasedNote(1) }},
+		{"worker_resumed_note", func(*testing.T) string {
+			return workerResumedNote(1, &orchestration.ReplayTranscript{
+				SessionID: "session-1",
+				Turns: []orchestration.ReplayTurn{
+					{Role: orchestration.ReplayRoleUser, Text: "implement the router"},
+					{Role: orchestration.ReplayRoleAssistant, Text: "the handler table lives in pkg/router/table.go"},
+				},
+			})
+		}},
+		{"worker_resumed_note_unprompted", func(*testing.T) string {
+			return workerResumedNote(1, &orchestration.ReplayTranscript{SessionID: "session-1"})
+		}},
+		{"session_resumed_account_note", func(*testing.T) string {
+			return sessionResumedAccountNote(2, &orchestration.ReplayTranscript{
+				SessionID: "session-1",
+				Turns: []orchestration.ReplayTurn{
+					{Role: orchestration.ReplayRoleUser, Text: "implement the router"},
+					{Role: orchestration.ReplayRoleAssistant, Text: "the handler table lives in pkg/router/table.go"},
+				},
+				Omitted: 3,
+			})
+		}},
+		{"session_resumed_account_note_unprompted", func(*testing.T) string {
+			return sessionResumedAccountNote(2, &orchestration.ReplayTranscript{SessionID: "session-1"})
+		}},
 		{"repeated_prompt", func(t *testing.T) string {
 			reason, err := repeatedPromptReason()
 			if err != nil {

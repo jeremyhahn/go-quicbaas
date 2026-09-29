@@ -204,9 +204,15 @@ var outcomeSpecs = map[OutcomeKind]outcomeSpec{
 	OutcomeReadmitted: {
 		headline: "This task has been readmitted",
 		meaning:  "the park was cleared and the task is back in the queue for another attempt.",
-		// Empty clears what the park left: the next attempt's Prepare is what
-		// labels the issue in progress again.
-		labelKey:  "",
+		// THE TRIGGER, NOT NOTHING. A readmitted task is queued work, and the
+		// trigger label is the display state of queued work: it says the
+		// factory owns the issue, and triage never re-judges a triggered one.
+		// This row used to clear every owned label, so a ruling that handed
+		// the trigger back (AttentionService.handBack) had it stripped again
+		// the same second, and a queued task's issue carried no state label
+		// at all until dispatch (X11, go-luks2#211, 2026-09-25). The next
+		// attempt's Prepare moves it to in progress, exactly as first ingest.
+		labelKey:  TriggerLabelKey,
 		terminal:  false,
 		resumable: true,
 	},
@@ -234,7 +240,7 @@ var blockKindOutcomes = map[orchestration.TaskBlockKind]OutcomeKind{
 //	parked_blocked        blocked      in_progress → blocked     yes
 //	parked_escalated      escalated    in_progress → escalated   yes
 //	runner_parked         none         already made by the run    yes
-//	readmitted            readmitted   every owned label removed n/a
+//	readmitted            readmitted   park label → trigger      n/a
 //	superseded            superseded   every owned label removed yes
 //
 // `completed` is OutcomeSilent because the Complete moment has already

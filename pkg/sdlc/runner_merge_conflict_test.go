@@ -100,8 +100,10 @@ func TestRunner_AConflictingApprovedPullRequestGetsAMergeRound(t *testing.T) {
 	if strings.Contains(strings.ToLower(prompts[1]), "rebase") {
 		t.Errorf("the merge round mentions a rebase; a published branch is never rewritten:\n%s", prompts[1])
 	}
-	if rig.agents.sessionCount() != WorkerSessionCount {
-		t.Fatalf("the merge round spawned a second session: %d", rig.agents.sessionCount())
+	// The worker was released while the approval was judged, so the merge
+	// round runs in a fresh container on the same branch.
+	if got := rig.agents.sessionCount(); got != 2 {
+		t.Fatalf("spawns = %d, want the first worker and the one respawned for the merge round", got)
 	}
 
 	// The approval of the conflicting head did not carry over. The merge that

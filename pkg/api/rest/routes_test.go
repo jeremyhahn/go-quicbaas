@@ -101,7 +101,32 @@ import (
 // GET /api/v1/sdlc/projects/{projectID}/conformance, handlers_sdlc.go,
 // go-quicbaas#877): repair and report, deliberately two routes under two
 // permissions so no GET can rewrite a repository's configuration.
-const baseRouteTableSize = 622
+// PLUS 3 for the per-pull-request reviewer override
+// (GET, PUT and DELETE /api/v1/sdlc/projects/{projectID}/pulls/{number}/reviewer,
+// handlers_sdlc.go): an operator choosing which reviewer profile judges one
+// pull request — read under sdlc:read, written under sdlc:bind.
+// PLUS 2 for the worker image refresh
+// (GET /api/v1/sdlc/worker-image and POST /api/v1/sdlc/worker-image/refresh,
+// handlers_sdlc_worker_image.go, go-quicbaas#1021): report and request, again
+// under two permissions of the cross-tenant worker_images family.
+// PLUS 2 for the attention inbox
+// (GET /api/v1/orchestrator/attention and
+// POST /api/v1/orchestrator/attention/{taskID}/resolve, go-quicbaas#1020):
+// everything only an operator can clear, and the one verb that clears it.
+// PLUS 1 for a project's open work
+// (GET /api/v1/sdlc/projects/{projectID}/open-work, handlers_sdlc.go): the
+// agent's open pull requests and the labelled issues, read from the forge.
+// MINUS 8 for the tenant group routes (/api/v1/tenants/{tenant_id}/groups…):
+// quicbaas keeps no groups; identity is qrdb's.
+// PLUS 2 for filing an issue and listing collaborators
+// (POST /api/v1/sdlc/projects/{projectID}/issues under sdlc:issue_create and
+// GET /api/v1/sdlc/projects/{projectID}/collaborators under sdlc:read).
+// PLUS 1 for adopting an issue (POST /api/v1/sdlc/projects/{projectID}/adopt,
+// handlers_sdlc_adopt.go): the operator verb that hands an issue no task
+// holds back to the factory, under orchestrator:task_create.
+// PLUS 12 for the tenant AI agent catalog (/api/v1/agents and
+// /api/v1/agent-pools: list, create, get, update, delete and used-by of each).
+const baseRouteTableSize = 643
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder
@@ -186,7 +211,7 @@ func TestRoutes_PublicRoutes(t *testing.T) {
 		"POST /api/v1/auth/register/finish":                               {},
 		"GET /api/v1/auth/providers/{tenant_id}/{provider_name}/login":    {},
 		"GET /api/v1/auth/providers/{tenant_id}/{provider_name}/callback": {},
-		"POST /api/v1/agents/register":                                    {},
+		"POST /api/v1/fleet/enroll":                                       {},
 
 		// Invite activation + WebAuthn login ceremony (GroupIAM, PEP-derived
 		// via preAuthRouteTemplates). login/piv (P3.3) is quicbaas's own

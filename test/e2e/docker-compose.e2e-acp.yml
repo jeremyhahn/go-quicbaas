@@ -26,7 +26,7 @@ services:
       # the daemon spawns as a sibling container per session. Built on the host
       # docker by the Makefile target before the compose run, with the ollama
       # baseURL baked in. run-e2e.sh forwards it to the daemon's
-      # --embedded-agent-sandbox-image flag.
+      # --embedded-fleet-node-sandbox-image flag.
       QUICBAAS_E2E_SANDBOX_IMAGE: "${QUICBAAS_E2E_SANDBOX_IMAGE:-quicbaas-e2e-sandbox-agent:latest}"
     volumes:
       # Required only for the sandboxed path so the daemon can spawn sibling

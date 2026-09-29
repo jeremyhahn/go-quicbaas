@@ -1,0 +1,180 @@
+// QuicBaaS Agents Protocol Buffer Definitions v1
+// A tenant's AI agent definitions and the ordered pools role slots fail over
+// along. Not the fleet: a fleet node is a daemon that serves backends; an
+// Agent is a named runtime + model + provider a role slot references.
+//
+// Copyright (c) 2026 QuicBaaS Project
+// Licensed under MIT License
+
+syntax = "proto3";
+
+package quicbaas.agents.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+import "api/proto/spend.proto";
+
+// =============================================================================
+// AgentCatalogService — Agents and pools
+// =============================================================================
+
+service AgentCatalogService {
+    rpc ListAgents(ListCatalogAgentsRequest) returns (ListCatalogAgentsResponse) {
+        option (qrdb.v1.permission) = "agents:read";
+    }
+    rpc GetAgent(GetCatalogAgentRequest) returns (AgentResponse) {
+        option (qrdb.v1.permission) = "agents:read";
+    }
+    // CreateAgent stores a new Agent, checked against the live backend and
+    // model catalog.
+    rpc CreateAgent(CreateAgentRequest) returns (AgentResponse) {
+        option (qrdb.v1.permission) = "agents:write";
+    }
+    // UpdateAgent replaces an Agent; a role a slot still needs cannot be
+    // dropped.
+    rpc UpdateAgent(UpdateAgentRequest) returns (AgentResponse) {
+        option (qrdb.v1.permission) = "agents:write";
+    }
+    // DeleteAgent removes an Agent nothing references; the refusal names
+    // every user.
+    rpc DeleteAgent(DeleteAgentRequest) returns (DeleteAgentResponse) {
+        option (qrdb.v1.permission) = "agents:write";
+    }
+    // AgentUsedBy lists everything that references an Agent.
+    rpc AgentUsedBy(AgentUsedByRequest) returns (AgentUsedByResponse) {
+        option (qrdb.v1.permission) = "agents:read";
+    }
+
+    rpc ListAgentPools(ListAgentPoolsRequest) returns (ListAgentPoolsResponse) {
+        option (qrdb.v1.permission) = "agents:read";
+    }
+    rpc GetAgentPool(GetAgentPoolRequest) returns (AgentPoolResponse) {
+        option (qrdb.v1.permission) = "agents:read";
+    }
+    rpc CreateAgentPool(CreateAgentPoolRequest) returns (AgentPoolResponse) {
+        option (qrdb.v1.permission) = "agents:write";
+    }
+    rpc UpdateAgentPool(UpdateAgentPoolRequest) returns (AgentPoolResponse) {
+        option (qrdb.v1.permission) = "agents:write";
+    }
+    rpc DeleteAgentPool(DeleteAgentPoolRequest) returns (DeleteAgentResponse) {
+        option (qrdb.v1.permission) = "agents:write";
+    }
+    rpc AgentPoolUsedBy(AgentPoolUsedByRequest) returns (AgentUsedByResponse) {
+        option (qrdb.v1.permission) = "agents:read";
+    }
+}
+
+// =============================================================================
+// Shared messages
+// =============================================================================
+
+// AgentRef is a role slot's reference: exactly one Agent or one pool. Both
+// empty is "not configured".
+message AgentRef {
+    string agent_id = 1;
+    string pool_id  = 2;
+}
+
+// ProviderEndpoint locates where an Agent's model is served; empty is the
+// runtime's own default.
+message ProviderEndpoint {
+    string name          = 1;
+    string base_url      = 2;
+    string wire_api      = 3;
+    bool   requires_auth = 4;
+}
+
+// AgentAccountPolicy narrows the pooled provider accounts an Agent draws on.
+message AgentAccountPolicy {
+    string strategy          = 1;
+    repeated string accounts = 2;
+}
+
+// AgentPrompt is a built-in charter by reference or a custom system prompt.
+message AgentPrompt {
+    string charter_set = 1;
+    string charter     = 2;
+    string system      = 3;
+}
+
+// RolePolicy says which role an Agent in a shared pool is held for.
+message RolePolicy {
+    string prefer    = 1;
+    int32  reserve   = 2;
+    bool   exclusive = 3;
+}
+
+// Agent is one tenant AI agent definition.
+message Agent {
+    string id                    = 1;
+    string name                  = 2;
+    string description           = 3;
+    repeated string roles        = 4;
+    string backend               = 5;
+    string model                 = 6;
+    ProviderEndpoint provider    = 7;
+    string image                 = 8;
+    string reasoning_effort      = 9;
+    AgentAccountPolicy account   = 10;
+    AgentPrompt prompt           = 11;
+    repeated string mcp_scopes   = 12;
+    repeated string capabilities = 13;
+    int32 context_tokens         = 14;
+    int32 max_concurrent         = 15;
+    RolePolicy placement         = 16;
+    int64 created_at_unix        = 17;
+    int64 updated_at_unix        = 18;
+    // spend is the Agent's own spend limits, checked when a session of the
+    // Agent is spawned; the project's and tenant's apply on top.
+    quicbaas.spend.v1.SpendLimits spend = 19;
+}
+
+// AgentPool is an ordered failover list of Agent IDs.
+message AgentPool {
+    string id              = 1;
+    string name            = 2;
+    string description     = 3;
+    repeated string agents = 4;
+    int64 created_at_unix  = 5;
+    int64 updated_at_unix  = 6;
+}
+
+// AgentUsage is one thing that references an Agent or pool.
+message AgentUsage {
+    string kind = 1;
+    string id   = 2;
+    string slot = 3;
+}
+
+// AgentAttempt is one Agent a pooled spawn passed over, and why.
+message AgentAttempt {
+    string agent_id = 1;
+    string reason   = 2;
+    string detail   = 3;
+}
+
+// =============================================================================
+// Requests and responses
+// =============================================================================
+
+message ListCatalogAgentsRequest       { string tenant_id = 1; }
+message ListCatalogAgentsResponse      { repeated Agent agents = 1; }
+message GetCatalogAgentRequest         { string tenant_id = 1; string agent_id = 2; }
+message CreateAgentRequest      { string tenant_id = 1; Agent agent = 2; }
+message UpdateAgentRequest      { string tenant_id = 1; string agent_id = 2; Agent agent = 3; }
+message DeleteAgentRequest      { string tenant_id = 1; string agent_id = 2; }
+message AgentResponse           { Agent agent = 1; }
+message DeleteAgentResponse     { bool deleted = 1; }
+message AgentUsedByRequest      { string tenant_id = 1; string agent_id = 2; }
+message AgentUsedByResponse     { repeated AgentUsage used_by = 1; }
+
+message ListAgentPoolsRequest   { string tenant_id = 1; }
+message ListAgentPoolsResponse  { repeated AgentPool pools = 1; }
+message GetAgentPoolRequest     { string tenant_id = 1; string pool_id = 2; }
+message CreateAgentPoolRequest  { string tenant_id = 1; AgentPool pool = 2; }
+message UpdateAgentPoolRequest  { string tenant_id = 1; string pool_id = 2; AgentPool pool = 3; }
+message DeleteAgentPoolRequest  { string tenant_id = 1; string pool_id = 2; }
+message AgentPoolResponse       { AgentPool pool = 1; }
+message AgentPoolUsedByRequest  { string tenant_id = 1; string pool_id = 2; }

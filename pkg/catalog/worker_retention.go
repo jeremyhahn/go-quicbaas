@@ -92,25 +92,34 @@ func NewRetentionWorker(
 }
 
 // Start begins the retention worker's processing loop.
+//
+// Every goroutine it launches is counted on the wait group before the worker
+// is marked running. Stop joins that wait group as soon as it sees a running
+// worker, so a counter raised afterwards could be missed by the join and leave
+// a scan reading the catalog after the caller believes the worker is done.
 func (w *RetentionWorker) Start(ctx context.Context) error {
+	goroutines := 1 + w.config.Workers
+	w.wg.Add(goroutines)
+
 	if err := w.StartBase(ctx); err != nil {
+		w.wg.Add(-goroutines)
 		return err
 	}
 
 	// Start the scanner goroutine
-	w.wg.Add(1)
 	go w.scanLoop()
 
 	// Start worker goroutines for processing deletion tasks
 	for i := 0; i < w.config.Workers; i++ {
-		w.wg.Add(1)
 		go w.processLoop(i)
 	}
 
 	return nil
 }
 
-// Stop gracefully stops the retention worker.
+// Stop gracefully stops the retention worker. It returns only once the scan
+// and processing goroutines have returned, so the caller may close the catalog
+// store as soon as it does.
 func (w *RetentionWorker) Stop() error {
 	return w.StopBase()
 }
@@ -121,6 +130,12 @@ func (w *RetentionWorker) scanLoop() {
 
 	ticker := time.NewTicker(w.scanInterval)
 	defer ticker.Stop()
+
+	// Stop may already have been called between Start marking the worker
+	// running and this goroutine being scheduled; skip the initial scan then.
+	if !w.ShouldContinue() {
+		return
+	}
 
 	// Do an initial scan
 	w.scanForExpiredEntries()
@@ -140,7 +155,8 @@ func (w *RetentionWorker) scanForExpiredEntries() {
 	ctx, cancel := context.WithTimeout(w.ctx, 5*time.Minute)
 	defer cancel()
 
-	// List all entries with active status
+	// List all entries with active status. A closed catalog is an ordinary
+	// end-of-life condition for a background scan, not a failure to report.
 	result, err := w.catalog.ListByStatus(ctx, StatusActive, &ListOptions{Limit: 1000})
 	if err != nil {
 		if w.logger != nil && !IsCatalogClosed(err) {
@@ -157,6 +173,10 @@ func (w *RetentionWorker) scanForExpiredEntries() {
 
 		entry, err := w.catalog.Get(ctx, key)
 		if err != nil {
+			// The store closed under the scan: nothing left to read.
+			if IsCatalogClosed(err) {
+				return
+			}
 			continue
 		}
 

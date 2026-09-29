@@ -14,7 +14,6 @@
 package orchestration
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -164,6 +163,11 @@ type ValidationResult struct {
 	Passed  bool   `json:"passed"`
 	Message string `json:"message,omitempty"`
 	Details string `json:"details,omitempty"`
+
+	// ExitCode is the exit status of the command a command-running validator
+	// ran and judged failed. It is zero for a check that passed, for one that
+	// runs no command, and for a command refused before it ran.
+	ExitCode int `json:"exit_code,omitempty"`
 }
 
 // Validator judges work outputs against a review criterion. It is the
@@ -470,8 +474,10 @@ func validateWithCommand(ctx context.Context, job *JobContext, criterion ReviewC
 		}, err
 	}
 
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
+	// Tails, not buffers: a validator's output is persisted on the job, and
+	// a test suite prints megabytes. See MaxValidationTextBytes.
+	var stdout tailWriter
+	var stderr tailWriter
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", criterion.Config)
 	cmd.Dir = job.WorkDir

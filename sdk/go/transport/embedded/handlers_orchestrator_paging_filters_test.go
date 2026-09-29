@@ -180,6 +180,9 @@ func TestEmbeddedListSessions_CarriesTheRoleFields(t *testing.T) {
 	if resp.Sessions[0].JobID != "job-1" {
 		t.Errorf("job_id = %q, want job-1", resp.Sessions[0].JobID)
 	}
+	if resp.Sessions[0].ContainerID != "ctr-1" {
+		t.Errorf("container_id = %q, want ctr-1; the session page's Container row is blank without it", resp.Sessions[0].ContainerID)
+	}
 	if resp.Sessions[0].Model != "m" {
 		t.Errorf("model = %q, want m", resp.Sessions[0].Model)
 	}

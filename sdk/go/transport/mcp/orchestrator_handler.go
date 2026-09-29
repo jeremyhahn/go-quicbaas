@@ -58,12 +58,18 @@ var orchestratorMethodTools = map[string]string{
 	"GetSessionHistory":      "quicbaas_orchestrator_session_history",
 	"GetSessionConversation": "quicbaas_orchestrator_session_conversation",
 	"GetSpendReport":         "quicbaas_orchestrator_cost",
+	"GetTenantSpendPolicy":   "quicbaas_orchestrator_spend_policy_get",
+	"SetTenantSpendPolicy":   "quicbaas_orchestrator_spend_policy_set",
 
 	// Task lifecycle tools are named after the noun and verb
 	// (quicbaas_orchestrator_task_block), not the RPC (BlockTask).
 	"BlockTask":   "quicbaas_orchestrator_task_block",
 	"ReadmitTask": "quicbaas_orchestrator_task_readmit",
 	"DeleteTask":  "quicbaas_orchestrator_task_delete",
+
+	// A tenant's runtime cost settings (go-quicbaas#1058).
+	"GetCostSettings": "quicbaas_orchestrator_cost_settings_get",
+	"SetCostSettings": "quicbaas_orchestrator_cost_settings_set",
 }
 
 // orchestratorMCPTransform decodes one MCP tool result into its SDK type.
@@ -83,11 +89,18 @@ var orchestratorMCPTransforms = map[string]orchestratorMCPTransform{
 	"GetSessionHistory":      decodeMCPSessionHistory,
 	"GetSessionConversation": decodeMCPSessionConversation,
 	"GetSpendReport":         decodeMCPSpendReport,
+	"GetTenantSpendPolicy":   decodeMCPTenantSpendPolicy,
+	"SetTenantSpendPolicy":   decodeMCPTenantSpendPolicy,
 
-	"ListRunners": decodeMCPListRunners,
-	"BlockTask":   decodeMCPBlockTask,
-	"ReadmitTask": decodeMCPReadmitTask,
-	"DeleteTask":  decodeMCPDeleteTask,
+	"ListRunners":      decodeMCPListRunners,
+	"BlockTask":        decodeMCPBlockTask,
+	"ReadmitTask":      decodeMCPReadmitTask,
+	"DeleteTask":       decodeMCPDeleteTask,
+	"AttentionList":    decodeMCPAttentionList,
+	"AttentionResolve": decodeMCPAttentionResolve,
+
+	"GetCostSettings": decodeMCPCostSettings,
+	"SetCostSettings": decodeMCPCostSettings,
 }
 
 // transformResponse converts the raw MCP tool result to the expected SDK type
@@ -269,6 +282,30 @@ func decodeMCPReadmitTask(raw []byte) (interface{}, error) {
 	return &resp, nil
 }
 
+// decodeMCPAttentionList decodes quicbaas_orchestrator_attention_list output.
+func decodeMCPAttentionList(raw []byte) (interface{}, error) {
+	var resp orchestrator.AttentionListResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.AttentionList", "failed to decode MCP attention list result")
+	}
+	if resp.Items == nil {
+		resp.Items = []*orchestrator.AttentionItem{}
+	}
+	return &resp, nil
+}
+
+// decodeMCPAttentionResolve decodes quicbaas_orchestrator_attention_resolve
+// output.
+func decodeMCPAttentionResolve(raw []byte) (interface{}, error) {
+	var resp orchestrator.AttentionItem
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.AttentionResolve", "failed to decode MCP attention resolve result")
+	}
+	return &resp, nil
+}
+
 // decodeMCPDeleteTask decodes quicbaas_orchestrator_task_delete output. The
 // tool result mirrors the SDK response field for field, so the decode is
 // direct; without it the client would receive the raw tool map and refuse it
@@ -363,11 +400,33 @@ func decodeMCPSessionConversation(raw []byte) (interface{}, error) {
 // back a map[string]interface{}, and the SDK's contract is a typed response —
 // which is also what carries cost_measured, the flag a renderer must consult
 // before showing a cost.
+// decodeMCPCostSettings decodes the cost settings tools' result: the server's
+// CostSettingsReport, whose JSON matches the SDK type.
+func decodeMCPCostSettings(raw []byte) (interface{}, error) {
+	var out orchestrator.CostSettings
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.CostSettings", "failed to decode MCP cost settings result")
+	}
+	return &out, nil
+}
+
 func decodeMCPSpendReport(raw []byte) (interface{}, error) {
 	var out orchestrator.GetSpendReportResponse
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, errors.Wrap(err, errors.CodeInternal,
 			"mcp.orchestrator.GetSpendReport", "failed to decode MCP spend report result")
+	}
+	return &out, nil
+}
+
+// decodeMCPTenantSpendPolicy decodes the tenant spend-policy tools' result:
+// the server's TenantSpendPolicyReport, whose JSON matches the SDK type.
+func decodeMCPTenantSpendPolicy(raw []byte) (interface{}, error) {
+	var out orchestrator.TenantSpendPolicy
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal,
+			"mcp.orchestrator.TenantSpendPolicy", "failed to decode MCP tenant spend policy result")
 	}
 	return &out, nil
 }

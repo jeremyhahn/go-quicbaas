@@ -845,9 +845,9 @@ func TestKVSessionEventLog_Range_ScanError(t *testing.T) {
 // observed exactly where the registry looks for the record.
 func seedCorruptAgent(t *testing.T, kv interfaces.KVStore, tenantID, agentID string) {
 	t.Helper()
-	key, err := agentKey(tenantID, agentID)
+	key, err := fleetNodeKey(tenantID, agentID)
 	if err != nil {
-		t.Fatalf("agentKey(%s, %s): %v", tenantID, agentID, err)
+		t.Fatalf("fleetNodeKey(%s, %s): %v", tenantID, agentID, err)
 	}
 	if err := kv.Put(context.Background(), key, []byte("{not json")); err != nil {
 		t.Fatalf("seed corrupt agent record: %v", err)
@@ -857,8 +857,8 @@ func seedCorruptAgent(t *testing.T, kv interfaces.KVStore, tenantID, agentID str
 // TestAgentRegistry_CorruptRecord covers the decode-failure branch on the
 // registry's mutating paths. Each one loads the current record before writing
 // its successor, so a record the registry cannot decode must abort the mutation
-// under the marshal sentinel rather than be silently overwritten. (GetAgent's
-// read path and the ListAgents skip branch are covered by agent_registry_test.go.)
+// under the marshal sentinel rather than be silently overwritten. (GetFleetNode's
+// read path and the ListFleetNodes skip branch are covered by agent_registry_test.go.)
 func TestAgentRegistry_CorruptRecord(t *testing.T) {
 	const (
 		tenantID = "t"
@@ -867,23 +867,23 @@ func TestAgentRegistry_CorruptRecord(t *testing.T) {
 
 	cases := []struct {
 		name   string
-		invoke func(context.Context, AgentRegistry) error
+		invoke func(context.Context, FleetRegistry) error
 	}{
 		{
-			name: "UpdateAgent",
-			invoke: func(ctx context.Context, reg AgentRegistry) error {
-				return reg.UpdateAgent(ctx, &AgentRegistration{ID: agentID, TenantID: tenantID})
+			name: "UpdateFleetNode",
+			invoke: func(ctx context.Context, reg FleetRegistry) error {
+				return reg.UpdateFleetNode(ctx, &FleetNode{ID: agentID, TenantID: tenantID})
 			},
 		},
 		{
-			name: "RemoveAgent",
-			invoke: func(ctx context.Context, reg AgentRegistry) error {
-				return reg.RemoveAgent(ctx, tenantID, agentID)
+			name: "RemoveFleetNode",
+			invoke: func(ctx context.Context, reg FleetRegistry) error {
+				return reg.RemoveFleetNode(ctx, tenantID, agentID)
 			},
 		},
 		{
 			name: "Heartbeat",
-			invoke: func(ctx context.Context, reg AgentRegistry) error {
+			invoke: func(ctx context.Context, reg FleetRegistry) error {
 				return reg.Heartbeat(ctx, tenantID, agentID, nil)
 			},
 		},
@@ -894,10 +894,10 @@ func TestAgentRegistry_CorruptRecord(t *testing.T) {
 			kv := NewMemoryTaskKV()
 			seedCorruptAgent(t, kv, tenantID, agentID)
 
-			err := tc.invoke(context.Background(), NewAgentRegistry(kv))
-			var re *AgentRegistryError
-			if !errors.As(err, &re) || !errors.Is(re, ErrAgentRegistryMarshal) {
-				t.Fatalf("want AgentRegistryError(marshal), got %T: %v", err, err)
+			err := tc.invoke(context.Background(), NewFleetRegistry(kv))
+			var re *FleetRegistryError
+			if !errors.As(err, &re) || !errors.Is(re, ErrFleetRegistryMarshal) {
+				t.Fatalf("want FleetRegistryError(marshal), got %T: %v", err, err)
 			}
 		})
 	}

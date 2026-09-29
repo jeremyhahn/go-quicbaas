@@ -7,10 +7,26 @@ Speak the **Model Context Protocol** to a QuicBaaS server from the CLI.
 
 ## Why a bridge
 
-The QuicBaaS daemon publishes its full MCP tool registry over HTTP
-(`server.mcp.port`, TLS-terminated like every other listener). MCP hosts —
-Claude Code, Claude Desktop, opencode — do not dial HTTP: they spawn a
-child process and speak JSON-RPC 2.0 over its stdin/stdout.
+The QuicBaaS daemon publishes its full MCP tool registry over HTTP on its
+**own, dedicated listener** — `server.mcp.port`, TLS-terminated like every
+other listener, but a SEPARATE port from REST/gRPC/QUIC/Unix, not a path
+mounted on any of them. The listener does not start at all unless the
+daemon's config also carries `server.mcp.enabled: true`:
+
+```yaml
+server:
+  mcp:
+    enabled: true
+    port: 18444   # any free port; distinct from server.rest.port etc.
+```
+
+Point `--address` at THIS host:port, never at the REST port. A CLI or an
+MCP host aimed at the wrong port, or at a node with `mcp.enabled: false`,
+sees the identical symptom either way: the very first request 404s (see
+"The `--address` given here" below for how to tell the two apart).
+
+MCP hosts — Claude Code, Claude Desktop, opencode — do not dial HTTP: they
+spawn a child process and speak JSON-RPC 2.0 over its stdin/stdout.
 
 `quicbaas mcp serve --stdio` is that missing piece. It relays each
 JSON-RPC message between the host's pipe and the configured server.

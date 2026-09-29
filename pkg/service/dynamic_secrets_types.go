@@ -194,11 +194,11 @@ type ListLeasesRequest struct {
 	Prefix string `json:"prefix,omitempty"`
 }
 
-// ListLeasesResponse contains the list of leases.
+// ListLeasesResponse contains the list of active leases.
 type ListLeasesResponse struct {
-	// Leases is the list of leases.
+	// Leases is the list of active leases: expired and revoked leases are excluded.
 	Leases []*lease.Lease `json:"leases"`
 
-	// Count is the total number of leases.
+	// Count is the number of active leases.
 	Count int `json:"count"`
 }

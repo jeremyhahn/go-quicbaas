@@ -49,6 +49,9 @@ func createEmbeddedTestConfig(t *testing.T) *config.Config {
 	cfg.Raft.RaftAddress = "127.0.0.1:" + strconv.Itoa(raftPort)
 	cfg.Raft.ListenAddress = "127.0.0.1:" + strconv.Itoa(raftPort)
 	cfg.Logging.Level = "error" // Reduce noise in tests
+	// First-boot fails closed without a trust domain: the admin certificate
+	// would carry no tenant SAN.
+	cfg.IAM.SPIFFETrustDomain = testTrustDomain
 
 	return cfg
 }
@@ -130,7 +133,7 @@ func TestEmbeddedModeServerStart(t *testing.T) {
 		// Cleanup
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		srv.Shutdown(ctx)
+		require.NoError(t, srv.Shutdown(ctx))
 	})
 }
 
@@ -163,7 +166,7 @@ func TestEmbeddedModeServiceAccess(t *testing.T) {
 		// Cleanup
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		srv.Shutdown(ctx)
+		require.NoError(t, srv.Shutdown(ctx))
 	})
 }
 
@@ -209,7 +212,7 @@ func TestEmbeddedModeHealthCheck(t *testing.T) {
 		// Cleanup
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownCancel()
-		srv.Shutdown(shutdownCtx)
+		require.NoError(t, srv.Shutdown(shutdownCtx))
 	})
 }
 
@@ -232,57 +235,54 @@ func TestEmbeddedModeCRUDOperations(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		// Wait for Raft leader election
-		time.Sleep(2 * time.Second)
-
 		// Get the service
 		svc := srv.Service()
 		require.NotNil(t, svc)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		// Put operation
+		// The first write lands once the embedded node has elected itself
+		// leader; poll for it rather than guessing how long election takes.
 		testData := []byte(`{"name":"test","value":42}`)
-		putResp, err := svc.Put(ctx, &service.PutRequest{
-			EntityType:  "test_entity",
-			ID:          1,
-			Data:        testData,
-			Consistency: service.ConsistencyLevelLinearizable,
-		})
-
-		// Note: In single-node mode without full cluster, some operations may fail
-		// This test verifies the service interface is accessible
-		if err != nil {
-			t.Logf("Put operation returned error (expected in single-node without quorum): %v", err)
-		} else {
-			require.NotNil(t, putResp)
-			assert.Equal(t, uint64(1), putResp.ID)
-			t.Logf("Put successful: ID=%d, Version=%d", putResp.ID, putResp.Version)
-
-			// Get operation
-			getResp, err := svc.Get(ctx, &service.GetRequest{
+		var putResp *service.PutResponse
+		var putErr error
+		err = testutil.WaitForCondition(30*time.Second, 100*time.Millisecond, func() bool {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			putResp, putErr = svc.Put(ctx, &service.PutRequest{
 				EntityType:  "test_entity",
 				ID:          1,
+				Data:        testData,
 				Consistency: service.ConsistencyLevelLinearizable,
 			})
-			require.NoError(t, err)
-			require.NotNil(t, getResp)
-			assert.True(t, getResp.Found, "Entity should be found")
-			assert.Equal(t, testData, getResp.Data, "Data should match")
-			t.Logf("Get successful: Found=%v, Version=%d", getResp.Found, getResp.Version)
-		}
+			return putErr == nil
+		})
+		require.NoError(t, err, "put never succeeded; last error: %v", putErr)
+		require.NotNil(t, putResp)
+		assert.Equal(t, uint64(1), putResp.ID)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		getResp, err := svc.Get(ctx, &service.GetRequest{
+			EntityType:  "test_entity",
+			ID:          1,
+			Consistency: service.ConsistencyLevelLinearizable,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, getResp)
+		assert.True(t, getResp.Found, "Entity should be found")
+		assert.Equal(t, testData, getResp.Data, "Data should match")
 
 		// Cleanup
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownCancel()
-		srv.Shutdown(shutdownCtx)
+		require.NoError(t, srv.Shutdown(shutdownCtx))
 	})
 }
 
-// TestEmbeddedModeRaftNodeInitialized verifies Raft is still initialized for consensus.
-func TestEmbeddedModeRaftNodeInitialized(t *testing.T) {
-	t.Run("raft node is initialized in embedded mode", func(t *testing.T) {
+// TestEmbeddedModeQRDBNodeHostsConsensus verifies that consensus in embedded
+// mode is the embedded qrdb node's: the node is running, and the server holds
+// no Raft node of its own.
+func TestEmbeddedModeQRDBNodeHostsConsensus(t *testing.T) {
+	t.Run("embedded qrdb node hosts consensus", func(t *testing.T) {
 		cfg := createEmbeddedTestConfig(t)
 		defer cleanupTestData(t, cfg)
 
@@ -299,18 +299,13 @@ func TestEmbeddedModeRaftNodeInitialized(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		// Raft node should still be initialized (needed for consensus)
-		raftNode := srv.GetRaftNode()
-		require.NotNil(t, raftNode, "Raft node should be initialized even in embedded mode")
-
-		// Index manager should be initialized
-		indexMgr := srv.GetIndexManager()
-		require.NotNil(t, indexMgr, "Index manager should be initialized in embedded mode")
+		require.NotNil(t, srv.getQRDBNode(), "the embedded qrdb node should be running")
+		assert.Nil(t, srv.GetRaftNode(), "the server should hold no Raft node of its own")
 
 		// Cleanup
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		srv.Shutdown(ctx)
+		require.NoError(t, srv.Shutdown(ctx))
 	})
 }
 
@@ -338,6 +333,6 @@ func TestEmbeddedModeStartBlocking(t *testing.T) {
 		// Cleanup
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		srv.Shutdown(ctx)
+		require.NoError(t, srv.Shutdown(ctx))
 	})
 }

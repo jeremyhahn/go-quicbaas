@@ -35,7 +35,7 @@ var ErrProjectUnresolved = errors.New("project: unresolved")
 // ProjectAccessDeniedError is returned when an agent lacks the required role.
 type ProjectAccessDeniedError struct {
 	ProjectID    string
-	AgentID      string
+	FleetNodeID  string
 	RequiredRole ProjectRole
 	ActualRole   ProjectRole
 }
@@ -44,7 +44,7 @@ type ProjectAccessDeniedError struct {
 func (e *ProjectAccessDeniedError) Error() string {
 	return ErrProjectAccessDenied.Error() +
 		": project=" + e.ProjectID +
-		" agent=" + e.AgentID +
+		" agent=" + e.FleetNodeID +
 		" required=" + string(e.RequiredRole) +
 		" actual=" + string(e.ActualRole)
 }
@@ -64,9 +64,9 @@ func (e *ProjectAccessDeniedError) Unwrap() error { return ErrProjectAccessDenie
 // project was written to, in which case every project looks unscoped and the
 // whole boundary silently disappears (go-quicbaas#634).
 type ProjectUnresolvedError struct {
-	TenantID  string
-	ProjectID string
-	AgentID   string
+	TenantID    string
+	ProjectID   string
+	FleetNodeID string
 }
 
 // Error implements the error interface.
@@ -74,7 +74,7 @@ func (e *ProjectUnresolvedError) Error() string {
 	return ErrProjectUnresolved.Error() +
 		": tenant=" + e.TenantID +
 		" project=" + e.ProjectID +
-		" agent=" + e.AgentID
+		" agent=" + e.FleetNodeID
 }
 
 // Unwrap returns the sentinel for errors.Is support.
@@ -127,16 +127,16 @@ func NewProjectAuthz(store ProjectStore) *ProjectAuthz {
 	return &ProjectAuthz{store: store}
 }
 
-// AuthorizeAgent verifies that agentID holds at least requiredRole in projectID.
+// AuthorizeFleetNode verifies that agentID holds at least requiredRole in projectID.
 //
 // Rules:
 //   - ProjectRoleDenied → always rejected with ProjectAccessDeniedError.
-//   - Project has a non-empty AgentRoles map and agentID is absent → denied.
-//   - Project has an empty AgentRoles map (legacy unscoped) → allowed.
+//   - Project has a non-empty FleetNodeRoles map and agentID is absent → denied.
+//   - Project has an empty FleetNodeRoles map (legacy unscoped) → allowed.
 //   - Actual role weight < required role weight → denied.
 //   - Project cannot be read → ProjectUnresolvedError. A check that cannot
 //     read the rule refuses; it never passes.
-func (a *ProjectAuthz) AuthorizeAgent(ctx context.Context, projectID, agentID string, requiredRole ProjectRole) error {
+func (a *ProjectAuthz) AuthorizeFleetNode(ctx context.Context, projectID, agentID string, requiredRole ProjectRole) error {
 	if projectID == "" || agentID == "" {
 		return nil // unscoped call — legacy path
 	}
@@ -149,14 +149,14 @@ func (a *ProjectAuthz) AuthorizeAgent(ctx context.Context, projectID, agentID st
 		return err
 	}
 	if project == nil {
-		return &ProjectUnresolvedError{ProjectID: projectID, AgentID: agentID}
+		return &ProjectUnresolvedError{ProjectID: projectID, FleetNodeID: agentID}
 	}
 
 	actual := a.resolveRole(project, agentID)
 	if !RoleAtLeast(actual, requiredRole) {
 		return &ProjectAccessDeniedError{
 			ProjectID:    projectID,
-			AgentID:      agentID,
+			FleetNodeID:  agentID,
 			RequiredRole: requiredRole,
 			ActualRole:   actual,
 		}
@@ -166,7 +166,7 @@ func (a *ProjectAuthz) AuthorizeAgent(ctx context.Context, projectID, agentID st
 
 // resolveRole returns the effective ProjectRole for the given agent within a project.
 func (a *ProjectAuthz) resolveRole(project *Project, agentID string) ProjectRole {
-	roles := project.Permissions.AgentRoles
+	roles := project.Permissions.FleetNodeRoles
 	if len(roles) == 0 {
 		// Legacy unscoped project: all agents allowed as lead.
 		return ProjectRoleLead
@@ -199,10 +199,10 @@ func (a *ProjectAuthz) findProject(ctx context.Context, projectID string) (*Proj
 	return project, nil
 }
 
-// AuthorizeAgentForTenant is like AuthorizeAgent but uses a tenant-scoped
+// AuthorizeFleetNodeForTenant is like AuthorizeFleetNode but uses a tenant-scoped
 // lookup which is more efficient when the tenantID is known. A project the
 // store cannot produce refuses with ProjectUnresolvedError.
-func (a *ProjectAuthz) AuthorizeAgentForTenant(ctx context.Context, tenantID, projectID, agentID string, requiredRole ProjectRole) error {
+func (a *ProjectAuthz) AuthorizeFleetNodeForTenant(ctx context.Context, tenantID, projectID, agentID string, requiredRole ProjectRole) error {
 	if projectID == "" || agentID == "" {
 		return nil
 	}
@@ -214,7 +214,7 @@ func (a *ProjectAuthz) AuthorizeAgentForTenant(ctx context.Context, tenantID, pr
 	if err != nil {
 		var notFound *ProjectStoreNotFoundError
 		if errors.As(err, &notFound) {
-			return &ProjectUnresolvedError{TenantID: tenantID, ProjectID: projectID, AgentID: agentID}
+			return &ProjectUnresolvedError{TenantID: tenantID, ProjectID: projectID, FleetNodeID: agentID}
 		}
 		return err
 	}
@@ -223,7 +223,7 @@ func (a *ProjectAuthz) AuthorizeAgentForTenant(ctx context.Context, tenantID, pr
 	if !RoleAtLeast(actual, requiredRole) {
 		return &ProjectAccessDeniedError{
 			ProjectID:    projectID,
-			AgentID:      agentID,
+			FleetNodeID:  agentID,
 			RequiredRole: requiredRole,
 			ActualRole:   actual,
 		}

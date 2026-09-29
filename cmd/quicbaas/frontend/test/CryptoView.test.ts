@@ -62,7 +62,7 @@ describe('CryptoView', () => {
     const h1 = container.querySelector('h1');
     expect(h1).not.toBeNull();
     expect(h1!.textContent).toContain('Crypto Console');
-    expect(container.querySelector('div.bg-primary\\/10 svg')).not.toBeNull();
+    expect(container.querySelector('header.page-header svg')).not.toBeNull();
   });
 
   it('renders all seven primitive panels', () => {

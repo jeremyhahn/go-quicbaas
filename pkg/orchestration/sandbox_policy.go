@@ -13,6 +13,8 @@
 
 package orchestration
 
+import "gopkg.in/yaml.v3"
+
 // This file holds the SANDBOX axis: is the agent isolated from the host?
 //
 // The orthogonal TRUST axis — is the agent the code we approved, and can the
@@ -76,7 +78,7 @@ func ParseSandboxMode(s string) (SandboxMode, error) {
 //
 // The zero value is SandboxPolicyOptIn: the central orchestrator preserves
 // legacy "raw exec unless explicitly sandboxed" semantics unless the operator
-// explicitly tightens the policy. Remote agent daemons flip this default to
+// explicitly tightens the policy. Remote fleet node daemons flip this default to
 // SandboxPolicyRequired at startup (see Phase 2).
 type SandboxPolicy int32
 
@@ -94,7 +96,7 @@ const (
 	// SandboxPolicyRequired is the most restrictive policy. DEFAULT resolves
 	// to container-sandboxed execution, NONE is forbidden. This is the
 	// production default for compliance-sensitive deployments and the
-	// default for agent daemons.
+	// default for fleet node daemons.
 	SandboxPolicyRequired SandboxPolicy = 2
 )
 
@@ -131,6 +133,30 @@ func ParseSandboxPolicy(s string) (SandboxPolicy, error) {
 			Message: "must be one of: required, preferred, opt-in",
 		}
 	}
+}
+
+// MarshalYAML writes a SandboxPolicy as its canonical name, so a rendered
+// agent config file reads "sandbox_policy: required" rather than the enum's
+// integer — which would silently mean something else if the constants were
+// ever reordered.
+func (p SandboxPolicy) MarshalYAML() (interface{}, error) {
+	return p.String(), nil
+}
+
+// UnmarshalYAML reads a SandboxPolicy from its name, accepting exactly what
+// ParseSandboxPolicy accepts. An integer or an unknown name is refused rather
+// than mapped to the zero value, because the zero value is the least secure
+// policy there is.
+func (p *SandboxPolicy) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.ScalarNode {
+		return &InputValidationError{Field: "sandbox_policy", Message: "must be one of: required, preferred, opt-in"}
+	}
+	parsed, err := ParseSandboxPolicy(value.Value)
+	if err != nil {
+		return err
+	}
+	*p = parsed
+	return nil
 }
 
 // SandboxModeViolationError signals that a request's SandboxMode cannot be

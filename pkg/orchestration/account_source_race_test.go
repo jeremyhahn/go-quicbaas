@@ -63,7 +63,7 @@ type hookedSecretResolver struct {
 	fired  atomic.Bool
 }
 
-func (r *hookedSecretResolver) ResolveAccountSecret(ctx context.Context, tenantID, ref string) ([]byte, error) {
+func (r *hookedSecretResolver) ResolveAccountSecret(ctx context.Context, tenantID, ref string) (*AccountSecretValue, error) {
 	if r.during != nil && r.fired.CompareAndSwap(false, true) {
 		r.during()
 	}

@@ -38,7 +38,7 @@ import (
 // SessionExecutor runs a command inside the container backing a session.
 //
 // agentServiceImpl implements it. A caller holding an AgentService asserts for
-// it rather than requiring every implementation — the remote agent client, the
+// it rather than requiring every implementation — the remote fleet node client, the
 // SDK's orchestrator client, a test's fake — to carry a container runtime it
 // does not have.
 type SessionExecutor interface {
@@ -141,13 +141,13 @@ func (s *agentServiceImpl) ExecSession(ctx context.Context, req *ExecSessionRequ
 
 // SessionContainerExecutor is the capability of a backend whose sessions'
 // containers live on another host: it runs a command in one of them there.
-// RemoteACPBackend implements it over the agent's authenticated AgentRuntime
+// RemoteACPBackend implements it over the agent's authenticated FleetRuntime
 // link.
 type SessionContainerExecutor interface {
 	ExecInSession(ctx context.Context, sessionID string, spec *ExecSpec) (*ExecResult, error)
 }
 
-// remoteSessionHost reports whether a session lives on a fleet agent, and
+// remoteSessionHost reports whether a session lives on a fleet node, and
 // which. The caller's tenant must own the session, as for the local path.
 func (s *agentServiceImpl) remoteSessionHost(ctx context.Context, sessionID string) (bool, string, error) {
 	if mem, ok := s.liveSessionRecord(sessionID); ok {

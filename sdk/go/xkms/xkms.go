@@ -559,3 +559,61 @@ var (
 	PeerChannelBinding = xkmssdk.PeerChannelBinding
 	PeerQualifyingData = xkmssdk.PeerQualifyingData
 )
+
+// TPM lifecycle and EK credential challenge (go-xkms#798). The lifecycle
+// verbs are methods on TrustedPlatformModule — State, ClearForReprovision,
+// CreateActivationKey and AnswerCredentialChallenge — and arrive through that
+// alias; the aliases below are the value types they return and the
+// software-only challenge builder a verifier runs without a TPM of its own.
+// Pure aliases of the go-xkms SDK surface; go-trusted-platform's provisioning
+// and enrollment paths are the consumer.
+type (
+	// ProvisioningState classifies a TPM's provisioning progress: the
+	// hierarchy auth bits, which configured persistent handles exist, and
+	// whether the Platform SRK's policy matches the current policy digest.
+	ProvisioningState = xkmssdk.ProvisioningState
+
+	// CredentialChallenge is a TPM2_MakeCredential challenge built in
+	// software by NewCredentialChallenge.
+	CredentialChallenge = xkmssdk.CredentialChallenge
+
+	// ActivationKey is the transient null-hierarchy key a device creates to
+	// answer an EK credential challenge.
+	ActivationKey = xkmssdk.ActivationKey
+)
+
+var (
+	// NewCredentialChallenge builds a credential challenge for an EK public
+	// key and an activation key Name, returning the challenge and the secret
+	// only the TPM holding that EK can recover.
+	NewCredentialChallenge = xkmssdk.NewCredentialChallenge
+
+	// ActivationKeyName computes the TPM Name of a marshaled TPMT_PUBLIC
+	// received off the wire, for NewCredentialChallenge.
+	ActivationKeyName = xkmssdk.ActivationKeyName
+
+	// ErrTPMClearLockoutRefused and ErrTPMClearPlatformRefused are the
+	// ClearForReprovision refusals of the LOCKOUT and PLATFORM hierarchies.
+	ErrTPMClearLockoutRefused  = xkmssdk.ErrTPMClearLockoutRefused
+	ErrTPMClearPlatformRefused = xkmssdk.ErrTPMClearPlatformRefused
+
+	// ErrTPMProvisioningStateRead is returned when State cannot read the TPM.
+	ErrTPMProvisioningStateRead = xkmssdk.ErrTPMProvisioningStateRead
+
+	// ErrTPMCredentialChallenge is returned when a challenge cannot be built
+	// or an activation key Name cannot be computed.
+	ErrTPMCredentialChallenge = xkmssdk.ErrTPMCredentialChallenge
+
+	// ErrTPMEKPublicRequired and ErrTPMActivationKeyNameRequired are the
+	// NewCredentialChallenge input refusals.
+	ErrTPMEKPublicRequired          = xkmssdk.ErrTPMEKPublicRequired
+	ErrTPMActivationKeyNameRequired = xkmssdk.ErrTPMActivationKeyNameRequired
+
+	// ErrTPMActivationKeyCreate is returned when CreateActivationKey fails.
+	ErrTPMActivationKeyCreate = xkmssdk.ErrTPMActivationKeyCreate
+
+	// ErrTPMActivationKeyRequired and ErrTPMCredentialChallengeRequired are
+	// the AnswerCredentialChallenge input refusals.
+	ErrTPMActivationKeyRequired       = xkmssdk.ErrTPMActivationKeyRequired
+	ErrTPMCredentialChallengeRequired = xkmssdk.ErrTPMCredentialChallengeRequired
+)

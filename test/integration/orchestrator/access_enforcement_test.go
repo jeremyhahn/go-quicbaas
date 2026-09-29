@@ -20,6 +20,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -34,9 +35,9 @@ func tenantCtx(tenantID string) context.Context {
 }
 
 // TestProjectAccessEnforcement_OnClaimTask validates that ClaimTask honours
-// the per-project AgentRoles matrix when a task is project-scoped. The flow:
+// the per-project FleetNodeRoles matrix when a task is project-scoped. The flow:
 //
-//  1. Create a project with a non-empty AgentRoles map (worker for our agent).
+//  1. Create a project with a non-empty FleetNodeRoles map (worker for our agent).
 //  2. Register the agent in the orchestration registry.
 //  3. Create a task scoped to the project.
 //  4. Claim succeeds while role is "worker".
@@ -49,7 +50,7 @@ func tenantCtx(tenantID string) context.Context {
 // to construct the project-scoped task. Project authz is wired into the
 // AgentService during Server.startOrchestration().
 func TestProjectAccessEnforcement_OnClaimTask(t *testing.T) {
-	tenantID := "tenant-pae-" + uniqueSuffix()
+	tenantID := newTenant(t, "tenant-pae-")
 	ctx := tenantCtx(tenantID)
 	plainCtx := context.Background() // ProjectService does not require tenant ctx
 
@@ -61,7 +62,7 @@ func TestProjectAccessEnforcement_OnClaimTask(t *testing.T) {
 	createResp, err := testService.Project().CreateProject(plainCtx, &service.CreateProjectRequest{
 		TenantID: tenantID,
 		Name:     projectName,
-		AgentRoles: map[string]orchestration.ProjectRole{
+		FleetNodeRoles: map[string]orchestration.ProjectRole{
 			"placeholder-keeps-map-non-empty": orchestration.ProjectRoleObserver,
 		},
 	})
@@ -70,23 +71,23 @@ func TestProjectAccessEnforcement_OnClaimTask(t *testing.T) {
 	projectID := createResp.Project.ID
 
 	// Step 2: register an agent so subsequent task ops are valid.
-	regResp, err := testService.Agent().RegisterAgent(ctx, &orchestration.RegisterAgentRequest{
-		TenantID:  tenantID,
-		Name:      projectAgentName,
-		Host:      "host-pae",
-		AgentType: "worker",
-		Backend:   "ollama",
+	regResp, err := testService.Agent().RegisterFleetNode(ctx, &orchestration.RegisterFleetNodeRequest{
+		TenantID: tenantID,
+		Name:     projectAgentName,
+		Host:     "host-pae",
+		NodeType: "worker",
+		Backend:  "ollama",
 	})
 	require.NoError(t, err, "register agent")
-	require.NotNil(t, regResp.Agent)
-	agentID := regResp.Agent.ID
+	require.NotNil(t, regResp.Node)
+	agentID := regResp.Node.ID
 
 	// Grant the worker role against the registered agent's actual ID.
-	_, err = testService.Project().GrantAgentRole(plainCtx, &service.GrantAgentRoleRequest{
-		TenantID:  tenantID,
-		ProjectID: projectID,
-		AgentID:   agentID,
-		Role:      orchestration.ProjectRoleWorker,
+	_, err = testService.Project().GrantFleetNodeRole(plainCtx, &service.GrantFleetNodeRoleRequest{
+		TenantID:    tenantID,
+		ProjectID:   projectID,
+		FleetNodeID: agentID,
+		Role:        orchestration.ProjectRoleWorker,
 	})
 	require.NoError(t, err, "grant worker role to registered agent")
 
@@ -111,11 +112,11 @@ func TestProjectAccessEnforcement_OnClaimTask(t *testing.T) {
 
 	// Step 5: flip to denied — claim should be rejected with the typed error.
 	t.Run("DeniedCannotClaim", func(t *testing.T) {
-		_, gerr := testService.Project().GrantAgentRole(plainCtx, &service.GrantAgentRoleRequest{
-			TenantID:  tenantID,
-			ProjectID: projectID,
-			AgentID:   agentID,
-			Role:      orchestration.ProjectRoleDenied,
+		_, gerr := testService.Project().GrantFleetNodeRole(plainCtx, &service.GrantFleetNodeRoleRequest{
+			TenantID:    tenantID,
+			ProjectID:   projectID,
+			FleetNodeID: agentID,
+			Role:        orchestration.ProjectRoleDenied,
 		})
 		require.NoError(t, gerr)
 
@@ -127,18 +128,18 @@ func TestProjectAccessEnforcement_OnClaimTask(t *testing.T) {
 		require.True(t, errors.As(claimErr, &deniedErr),
 			"expected *orchestration.ProjectAccessDeniedError, got %T: %v", claimErr, claimErr)
 		assert.Equal(t, projectID, deniedErr.ProjectID)
-		assert.Equal(t, agentID, deniedErr.AgentID)
+		assert.Equal(t, agentID, deniedErr.FleetNodeID)
 		assert.Equal(t, orchestration.ProjectRoleWorker, deniedErr.RequiredRole)
 		assert.Equal(t, orchestration.ProjectRoleDenied, deniedErr.ActualRole)
 	})
 
 	// Step 6: flip to observer — observer can't claim worker tasks.
 	t.Run("ObserverCannotClaim", func(t *testing.T) {
-		_, gerr := testService.Project().GrantAgentRole(plainCtx, &service.GrantAgentRoleRequest{
-			TenantID:  tenantID,
-			ProjectID: projectID,
-			AgentID:   agentID,
-			Role:      orchestration.ProjectRoleObserver,
+		_, gerr := testService.Project().GrantFleetNodeRole(plainCtx, &service.GrantFleetNodeRoleRequest{
+			TenantID:    tenantID,
+			ProjectID:   projectID,
+			FleetNodeID: agentID,
+			Role:        orchestration.ProjectRoleObserver,
 		})
 		require.NoError(t, gerr)
 
@@ -153,11 +154,11 @@ func TestProjectAccessEnforcement_OnClaimTask(t *testing.T) {
 
 	// Step 7: flip to lead — lead is more permissive than worker, claim allowed.
 	t.Run("LeadCanClaim", func(t *testing.T) {
-		_, gerr := testService.Project().GrantAgentRole(plainCtx, &service.GrantAgentRoleRequest{
-			TenantID:  tenantID,
-			ProjectID: projectID,
-			AgentID:   agentID,
-			Role:      orchestration.ProjectRoleLead,
+		_, gerr := testService.Project().GrantFleetNodeRole(plainCtx, &service.GrantFleetNodeRoleRequest{
+			TenantID:    tenantID,
+			ProjectID:   projectID,
+			FleetNodeID: agentID,
+			Role:        orchestration.ProjectRoleLead,
 		})
 		require.NoError(t, gerr)
 
@@ -168,15 +169,15 @@ func TestProjectAccessEnforcement_OnClaimTask(t *testing.T) {
 }
 
 // TestProjectAccessEnforcement_LegacyAllowAll verifies that a project with an
-// empty AgentRoles map preserves legacy unscoped behaviour: any agent can
+// empty FleetNodeRoles map preserves legacy unscoped behaviour: any agent can
 // claim regardless of role membership. This guards against accidental
 // regressions that would tighten enforcement on legacy projects.
 func TestProjectAccessEnforcement_LegacyAllowAll(t *testing.T) {
-	tenantID := "tenant-legacy-" + uniqueSuffix()
+	tenantID := newTenant(t, "tenant-legacy-")
 	ctx := tenantCtx(tenantID)
 	plainCtx := context.Background()
 
-	// Create a project with NO AgentRoles map.
+	// Create a project with NO FleetNodeRoles map.
 	createResp, err := testService.Project().CreateProject(plainCtx, &service.CreateProjectRequest{
 		TenantID: tenantID,
 		Name:     "proj-legacy-" + uniqueSuffix(),
@@ -185,15 +186,15 @@ func TestProjectAccessEnforcement_LegacyAllowAll(t *testing.T) {
 	projectID := createResp.Project.ID
 
 	// Register an agent that is *not* in the role matrix.
-	regResp, err := testService.Agent().RegisterAgent(ctx, &orchestration.RegisterAgentRequest{
-		TenantID:  tenantID,
-		Name:      "agent-legacy-" + uniqueSuffix(),
-		Host:      "host-legacy",
-		AgentType: "worker",
-		Backend:   "ollama",
+	regResp, err := testService.Agent().RegisterFleetNode(ctx, &orchestration.RegisterFleetNodeRequest{
+		TenantID: tenantID,
+		Name:     "agent-legacy-" + uniqueSuffix(),
+		Host:     "host-legacy",
+		NodeType: "worker",
+		Backend:  "ollama",
 	})
 	require.NoError(t, err)
-	agentID := regResp.Agent.ID
+	agentID := regResp.Node.ID
 
 	// Create project-scoped task.
 	task, err := testService.Agent().CreateTask(ctx, &orchestration.CreateTaskRequest{
@@ -203,7 +204,7 @@ func TestProjectAccessEnforcement_LegacyAllowAll(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Empty AgentRoles ⇒ legacy unscoped allow-all.
+	// Empty FleetNodeRoles ⇒ legacy unscoped allow-all.
 	err = testService.Agent().ClaimTask(ctx, tenantID, task.ID, agentID)
 	require.NoError(t, err, "legacy project (empty role map) should allow any agent")
 }
@@ -213,19 +214,19 @@ func TestProjectAccessEnforcement_LegacyAllowAll(t *testing.T) {
 //
 // A CLAIM IS THE AGENT ASKING; A DISPATCH IS THE ENGINE TELLING. Auto-spawn at
 // creation time and the dispatcher's later sweep share one dispatch path
-// (SpawnTask → autoSpawnTask), and that path assigns the task to a fleet agent
+// (SpawnTask → autoSpawnTask), and that path assigns the task to a fleet node
 // it picked itself. If only the claim consulted the project's role matrix, a
 // denied agent would simply be handed the work instead of being refused when
 // it asked for it — so both entry points are asserted here.
 func TestProjectAccessEnforcement_OnDispatch(t *testing.T) {
-	tenantID := "tenant-pad-" + uniqueSuffix()
+	tenantID := newTenant(t, "tenant-pad-")
 	ctx := tenantCtx(tenantID)
 	plainCtx := context.Background()
 
 	createResp, err := testService.Project().CreateProject(plainCtx, &service.CreateProjectRequest{
 		TenantID: tenantID,
 		Name:     "proj-pad-" + uniqueSuffix(),
-		AgentRoles: map[string]orchestration.ProjectRole{
+		FleetNodeRoles: map[string]orchestration.ProjectRole{
 			"placeholder-keeps-map-non-empty": orchestration.ProjectRoleObserver,
 		},
 	})
@@ -236,11 +237,11 @@ func TestProjectAccessEnforcement_OnDispatch(t *testing.T) {
 
 	grant := func(t *testing.T, role orchestration.ProjectRole) {
 		t.Helper()
-		_, gerr := testService.Project().GrantAgentRole(plainCtx, &service.GrantAgentRoleRequest{
-			TenantID:  tenantID,
-			ProjectID: projectID,
-			AgentID:   agent.ID,
-			Role:      role,
+		_, gerr := testService.Project().GrantFleetNodeRole(plainCtx, &service.GrantFleetNodeRoleRequest{
+			TenantID:    tenantID,
+			ProjectID:   projectID,
+			FleetNodeID: agent.ID,
+			Role:        role,
 		})
 		require.NoError(t, gerr, "grant %s", role)
 	}
@@ -290,9 +291,9 @@ func TestProjectAccessEnforcement_OnDispatch(t *testing.T) {
 		require.NotNil(t, task, "the task is persisted even when the dispatch is refused")
 		assert.Empty(t, task.SpawnedJobID, "a refused dispatch starts no job")
 
-		var noMatch *orchestration.NoMatchingAgentError
+		var noMatch *orchestration.NoMatchingFleetNodeError
 		require.True(t, errors.As(terr, &noMatch),
-			"expected *orchestration.NoMatchingAgentError, got %T: %v", terr, terr)
+			"expected *orchestration.NoMatchingFleetNodeError, got %T: %v", terr, terr)
 		assert.Equal(t, "project_role", noMatch.Constraint,
 			"the refusal must name the role matrix, not routing")
 	})
@@ -305,9 +306,9 @@ func TestProjectAccessEnforcement_OnDispatch(t *testing.T) {
 		require.Error(t, serr, "the dispatcher must refuse a denied agent too")
 		assert.Empty(t, jobID)
 
-		var noMatch *orchestration.NoMatchingAgentError
+		var noMatch *orchestration.NoMatchingFleetNodeError
 		require.True(t, errors.As(serr, &noMatch),
-			"expected *orchestration.NoMatchingAgentError, got %T: %v", serr, serr)
+			"expected *orchestration.NoMatchingFleetNodeError, got %T: %v", serr, serr)
 		assert.Equal(t, "project_role", noMatch.Constraint)
 	})
 
@@ -318,9 +319,9 @@ func TestProjectAccessEnforcement_OnDispatch(t *testing.T) {
 		_, serr := spawner.SpawnTask(ctx, task)
 		require.Error(t, serr, "an observer cannot claim, so it must not be dispatched either")
 
-		var noMatch *orchestration.NoMatchingAgentError
+		var noMatch *orchestration.NoMatchingFleetNodeError
 		require.True(t, errors.As(serr, &noMatch),
-			"expected *orchestration.NoMatchingAgentError, got %T: %v", serr, serr)
+			"expected *orchestration.NoMatchingFleetNodeError, got %T: %v", serr, serr)
 		assert.Equal(t, "project_role", noMatch.Constraint)
 	})
 
@@ -328,9 +329,11 @@ func TestProjectAccessEnforcement_OnDispatch(t *testing.T) {
 		grant(t, orchestration.ProjectRoleWorker)
 
 		task, terr := testService.Agent().CreateTask(ctx, &orchestration.CreateTaskRequest{
-			TenantID:  tenantID,
-			Subject:   "dispatch-unresolved-" + uniqueSuffix(),
-			ProjectID: "no-such-project-" + uniqueSuffix(),
+			TenantID: tenantID,
+			Subject:  "dispatch-unresolved-" + uniqueSuffix(),
+			// Well-formed, so CreateTask accepts it, but never created, so
+			// the project store cannot produce it at dispatch.
+			ProjectID: uuid.NewString(),
 			Backend:   "ollama",
 		})
 		require.NoError(t, terr, "create task")

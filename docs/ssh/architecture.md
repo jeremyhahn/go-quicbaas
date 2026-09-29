@@ -1,6 +1,6 @@
 # SSH — Architecture
 
-> **Status: NORMATIVE** · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Last verified: 2026-09-24
 > Design and boundaries of the server-held SSH key surface. Feature folder:
 > `docs/ssh/`.
 
@@ -57,9 +57,62 @@ sign locally". That asymmetry is the whole design.
   `/api/v1/ssh` (`sshRESTBasePath`, `:28`), the same mount the go-xkms REST SSH
   client alias targets, so the SDK and that client observe one server surface
   rather than two that drift.
-- **`../software-factory/`** — the largest consumer. `quicbaas agent deploy
+- **`../software-factory/`** — the largest consumer. `quicbaas fleet deploy
   --ssh-key-name` names a key held here; the private half stays here for the
   whole deployment.
+
+## Where the keys live
+
+quicbaasd composes the go-xkms embedded SSH client the way xkmsd does
+(`pkg/server/ssh_store.go`):
+
+- **Storage** is the embedded qrdb node's platform shard, under the system
+  keyspace prefix `__sys:ssh/`. That keyspace is replicated and encrypted at
+  rest by the barrier, and tenant KV operations cannot reach it. Private keys
+  are never written to the filesystem.
+- **Backend provider**: a key generated with a `Backend` is minted and signed
+  on that registered xkms crypto backend (software, tpm2, pkcs11, cloud). A
+  hardware-backed private key never leaves the device.
+- **`xkms.url`**, when set, replaces all of this with the REST client for a
+  remote xkmsd, which holds the keys in its own sealed storage.
+
+**Fail closed.** A node whose seal is disabled has no barrier and so no SSH
+key store. Every SSH verb returns `SSHNotConfiguredError` (HTTP 503), and boot
+logs `SSH key store unavailable`. There is no file-backed fallback. The
+throwaway embedded server the CLI starts for `--transport embedded` is
+unsealed, so SSH verbs must target a real quicbaasd with `--server`.
+
+### Migration from the plaintext store
+
+Older builds kept the store as plaintext files in `<data-dir>/xkms-ssh`. On the
+first sealed boot that finds that directory, `pkg/sshstore` migrates it:
+
+1. It copies every record (keys, host pins, authorized-keys entries) byte for
+   byte into the sealed store and reads each one back.
+2. It proves every key: the public key and fingerprint must match, and a
+   signature the sealed key makes over a random challenge must verify against
+   the legacy public key.
+3. It renames the directory to `xkms-ssh.wiping`, overwrites each file with
+   random bytes, fsyncs it and unlinks it, then removes the tree. A boot
+   interrupted mid-wipe finishes the wipe the next time it starts.
+
+On success, boot logs one line:
+
+```
+SSH key store migrated into barrier-sealed storage; legacy plaintext store destroyed
+  legacy_dir=<data-dir>/xkms-ssh keys=N known_hosts=N authorized_keys=N other_records=0 resumed_wipe=false
+```
+
+Any failure stops the boot with `SSHStoreMigrationError` and leaves the legacy
+store untouched. The run is idempotent: records already copied with identical
+bytes are accepted. A record the sealed store already holds with *different*
+bytes is a `RecordConflictError`, and nothing is overwritten. On an unsealed
+node the legacy store is neither served nor migrated; boot warns that it is
+still on disk.
+
+The overwrite destroys the live copy. Copy-on-write filesystems, SSD wear
+levelling and earlier snapshots or backups can still hold old blocks, so treat
+every migrated key as exposed and rotate it.
 
 ## Data flow — deploying with a server-held key
 

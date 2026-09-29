@@ -70,7 +70,7 @@ func (s *Server) getAgentService(w http.ResponseWriter, r *http.Request) orchest
 // every orchestrator REST handler so the orchestrator's tenant guard
 // (orchestration.agentServiceImpl.validateTenant) observes a non-empty tenant on
 // every code path — the in-process service call and, transitively, the
-// embedded-agent gRPC backend call.
+// embedded-fleet-node gRPC backend call.
 //
 // Precedence:
 //  1. explicit ?tenant_id= query parameter (operator override / cross-tenant
@@ -123,8 +123,8 @@ func (s *Server) HandleOrchestratorSpawn(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if req.Backend == "" {
-		RespondBadRequest(w, r, "backend is required")
+	if req.Backend == "" && req.AgentID == "" && req.PoolID == "" {
+		RespondBadRequest(w, r, "an agent, a pool or a backend is required")
 		return
 	}
 
@@ -152,14 +152,14 @@ func (s *Server) HandleOrchestratorSpawn(w http.ResponseWriter, r *http.Request)
 
 	// Per-request strict bit overrides the operator-level
 	// orchestration.host_affinity.mode default: when set to true, an offline
-	// host_affinity surfaces NoMatchingAgentError (400) instead of falling
+	// host_affinity surfaces NoMatchingFleetNodeError (400) instead of falling
 	// through to BackendNotFoundError (404).
 	if req.HostAffinityStrict {
 		ctx = orchestration.WithHostAffinityStrict(ctx)
 	}
 
 	// Install a holder so the remote backend resolver can stash a typed
-	// NoMatchingAgentError when strict mode rejects an offline host.
+	// NoMatchingFleetNodeError when strict mode rejects an offline host.
 	holder := orchestration.NewResolveErrorHolder()
 	ctx = orchestration.WithResolveErrorHolder(ctx, holder)
 
@@ -1049,15 +1049,15 @@ func (s *Server) HandleOrchestratorListBackends(w http.ResponseWriter, r *http.R
 	})
 }
 
-// HandleOrchestratorListBackendModels handles
-// GET /api/v1/orchestrator/agents/{agentID}/backends/{backendName}/models
+// HandleListFleetNodeBackendModels handles
+// GET /api/v1/fleet/{nodeID}/backends/{backendName}/models
 //
 // Returns the model names available on the named backend as seen from the
 // specified agent. For Ollama this is the set of locally-pulled models;
 // for ACP backends (claude, codex, opencode) it returns their curated catalog.
 // The agentID is used as a host affinity hint when a remote backend resolver
 // is active; it is ignored for locally-registered backends.
-func (s *Server) HandleOrchestratorListBackendModels(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleListFleetNodeBackendModels(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	agentSvc := s.getAgentService(w, r)
@@ -1071,11 +1071,11 @@ func (s *Server) HandleOrchestratorListBackendModels(w http.ResponseWriter, r *h
 		return
 	}
 
-	// Thread agent ID as host affinity so the remote backend resolver can
-	// forward the request to the correct daemon when needed.
-	agentID := chi.URLParam(r, "agentID")
-	if agentID != "" && agentID != "any" {
-		ctx = orchestration.WithHostAffinity(ctx, agentID)
+	// Thread the fleet node ID as host affinity so the remote backend
+	// resolver can forward the request to the correct node when needed.
+	nodeID := chi.URLParam(r, "nodeID")
+	if nodeID != "" && nodeID != "any" {
+		ctx = orchestration.WithHostAffinity(ctx, nodeID)
 	}
 
 	// Default to the canonical tenant when the caller omits ?tenant_id=...;
@@ -1433,11 +1433,11 @@ func (s *Server) HandleOrchestratorHealth(w http.ResponseWriter, r *http.Request
 }
 
 // =============================================================================
-// Agent Fleet Management Handlers
+// Fleet Management Handlers
 // =============================================================================
 
-// HandleOrchestratorRegisterAgent handles POST /api/v1/orchestrator/agents - Register a new agent.
-func (s *Server) HandleOrchestratorRegisterAgent(w http.ResponseWriter, r *http.Request) {
+// HandleRegisterFleetNode handles POST /api/v1/fleet - Register a fleet node.
+func (s *Server) HandleRegisterFleetNode(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	agentSvc := s.getAgentService(w, r)
@@ -1452,7 +1452,7 @@ func (s *Server) HandleOrchestratorRegisterAgent(w http.ResponseWriter, r *http.
 	}
 	defer r.Body.Close()
 
-	var req orchestration.RegisterAgentRequest
+	var req orchestration.RegisterFleetNodeRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		RespondBadRequest(w, r, "invalid JSON body")
 		return
@@ -1468,8 +1468,8 @@ func (s *Server) HandleOrchestratorRegisterAgent(w http.ResponseWriter, r *http.
 		return
 	}
 
-	if req.AgentType == "" {
-		RespondBadRequest(w, r, "agent_type is required")
+	if req.NodeType == "" {
+		RespondBadRequest(w, r, "node_type is required")
 		return
 	}
 
@@ -1479,7 +1479,7 @@ func (s *Server) HandleOrchestratorRegisterAgent(w http.ResponseWriter, r *http.
 
 	ctx = orchestration.ContextWithTenant(ctx, req.TenantID)
 
-	resp, err := agentSvc.RegisterAgent(ctx, &req)
+	resp, err := agentSvc.RegisterFleetNode(ctx, &req)
 	if err != nil {
 		handleOrchestratorError(w, r, err)
 		return
@@ -1488,8 +1488,8 @@ func (s *Server) HandleOrchestratorRegisterAgent(w http.ResponseWriter, r *http.
 	RespondCreated(w, r, resp)
 }
 
-// HandleOrchestratorListAgents handles GET /api/v1/orchestrator/agents - List registered agents.
-func (s *Server) HandleOrchestratorListAgents(w http.ResponseWriter, r *http.Request) {
+// HandleListFleetNodes handles GET /api/v1/fleet - List registered fleet nodes.
+func (s *Server) HandleListFleetNodes(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	agentSvc := s.getAgentService(w, r)
@@ -1500,15 +1500,15 @@ func (s *Server) HandleOrchestratorListAgents(w http.ResponseWriter, r *http.Req
 	tenantID := r.URL.Query().Get("tenant_id")
 	ctx = orchestration.ContextWithTenant(ctx, tenantID)
 
-	filter := &orchestration.AgentFilter{
-		Host:      r.URL.Query().Get("host"),
-		AgentType: r.URL.Query().Get("agent_type"),
-		Backend:   r.URL.Query().Get("backend"),
+	filter := &orchestration.FleetNodeFilter{
+		Host:     r.URL.Query().Get("host"),
+		NodeType: r.URL.Query().Get("node_type"),
+		Backend:  r.URL.Query().Get("backend"),
 	}
 
 	statusParam := r.URL.Query().Get("status")
 	if statusParam != "" {
-		filter.Status = orchestration.AgentStatus(statusParam)
+		filter.Status = orchestration.FleetNodeStatus(statusParam)
 	}
 
 	page, err := pageFromRequest(r)
@@ -1517,7 +1517,7 @@ func (s *Server) HandleOrchestratorListAgents(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	agents, err := agentSvc.ListAgentsPage(ctx, tenantID, filter, page)
+	nodes, err := agentSvc.ListFleetNodesPage(ctx, tenantID, filter, page)
 	if err != nil {
 		handleOrchestratorError(w, r, err)
 		return
@@ -1527,14 +1527,14 @@ func (s *Server) HandleOrchestratorListAgents(w http.ResponseWriter, r *http.Req
 	// always been; "total" is how many matched. They differ for the first
 	// time now that a fleet larger than a page can be asked for, and the
 	// envelope names both rather than overloading one.
-	envelope := agents.Envelope("agents")
-	envelope["agents"] = agentsResponse(agents.Items)
-	envelope["count"] = len(agents.Items)
+	envelope := nodes.Envelope("nodes")
+	envelope["nodes"] = fleetNodesResponse(nodes.Items)
+	envelope["count"] = len(nodes.Items)
 
 	RespondJSON(w, r, http.StatusOK, envelope)
 }
 
-// agentResponse is an AgentRegistration as the REST API renders it: every
+// fleetNodeResponse is a FleetNode as the REST API renders it: every
 // field of the record, plus the "backends" the record does not itself carry.
 //
 // AN OPERATOR READING THE REGISTRY MUST SEE WHAT DISPATCH SEES. A daemon that
@@ -1543,14 +1543,14 @@ func (s *Server) HandleOrchestratorListAgents(w http.ResponseWriter, r *http.Req
 // "gpu". Reading "backend": "claude" off that record, an operator concludes a
 // task routed on "codex" cannot land there — and is wrong, because the
 // registry's backend filter and the remote backend resolver both match on the
-// whole list (agentServesBackend). "backends" is that list, so the answer the
+// whole list (fleetNodeServesBackend). "backends" is that list, so the answer the
 // API gives and the answer dispatch gives are the same one (go-quicbaas#681).
 //
 // Additive by construction: "backend" and "capabilities" are rendered
-// unchanged, because the TypeScript SDK's AgentRegistration and the Agent
+// unchanged, because the TypeScript SDK's FleetNode and the Agent
 // Fleet UI read them.
-type agentResponse struct {
-	*orchestration.AgentRegistration
+type fleetNodeResponse struct {
+	*orchestration.FleetNode
 
 	// Backends is every name this agent will be matched on: the primary
 	// backend first, then each capability. Never null for a registered
@@ -1559,21 +1559,21 @@ type agentResponse struct {
 	Backends []string `json:"backends"`
 }
 
-// agentsResponse renders a fleet listing.
-func agentsResponse(agents []*orchestration.AgentRegistration) []agentResponse {
-	out := make([]agentResponse, 0, len(agents))
+// fleetNodesResponse renders a fleet listing.
+func fleetNodesResponse(agents []*orchestration.FleetNode) []fleetNodeResponse {
+	out := make([]fleetNodeResponse, 0, len(agents))
 	for _, agent := range agents {
-		out = append(out, newAgentResponse(agent))
+		out = append(out, newFleetNodeResponse(agent))
 	}
 	return out
 }
 
-// newAgentResponse renders one registration, deduplicating the primary
+// newFleetNodeResponse renders one registration, deduplicating the primary
 // backend against the capability list so a daemon that advertises its primary
 // in both places is not reported as serving it twice.
-func newAgentResponse(agent *orchestration.AgentRegistration) agentResponse {
+func newFleetNodeResponse(agent *orchestration.FleetNode) fleetNodeResponse {
 	if agent == nil {
-		return agentResponse{Backends: []string{}}
+		return fleetNodeResponse{Backends: []string{}}
 	}
 	backends := make([]string, 0, len(agent.Capabilities)+1)
 	seen := make(map[string]struct{}, len(agent.Capabilities)+1)
@@ -1587,11 +1587,11 @@ func newAgentResponse(agent *orchestration.AgentRegistration) agentResponse {
 		seen[name] = struct{}{}
 		backends = append(backends, name)
 	}
-	return agentResponse{AgentRegistration: agent, Backends: backends}
+	return fleetNodeResponse{FleetNode: agent, Backends: backends}
 }
 
-// HandleOrchestratorGetAgent handles GET /api/v1/orchestrator/agents/{agentID} - Get an agent.
-func (s *Server) HandleOrchestratorGetAgent(w http.ResponseWriter, r *http.Request) {
+// HandleGetFleetNode handles GET /api/v1/fleet/{nodeID} - Get a fleet node.
+func (s *Server) HandleGetFleetNode(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	agentSvc := s.getAgentService(w, r)
@@ -1599,26 +1599,26 @@ func (s *Server) HandleOrchestratorGetAgent(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	agentID := chi.URLParam(r, "agentID")
-	if agentID == "" {
-		RespondBadRequest(w, r, "agent ID is required")
+	nodeID := chi.URLParam(r, "nodeID")
+	if nodeID == "" {
+		RespondBadRequest(w, r, "node ID is required")
 		return
 	}
 
 	tenantID := r.URL.Query().Get("tenant_id")
 	ctx = orchestration.ContextWithTenant(ctx, tenantID)
 
-	agent, err := agentSvc.GetAgent(ctx, tenantID, agentID)
+	agent, err := agentSvc.GetFleetNode(ctx, tenantID, nodeID)
 	if err != nil {
 		handleOrchestratorError(w, r, err)
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, newAgentResponse(agent))
+	RespondJSON(w, r, http.StatusOK, newFleetNodeResponse(agent))
 }
 
-// HandleOrchestratorRemoveAgent handles DELETE /api/v1/orchestrator/agents/{agentID} - Remove an agent.
-func (s *Server) HandleOrchestratorRemoveAgent(w http.ResponseWriter, r *http.Request) {
+// HandleRemoveFleetNode handles DELETE /api/v1/fleet/{nodeID} - Remove a fleet node.
+func (s *Server) HandleRemoveFleetNode(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	agentSvc := s.getAgentService(w, r)
@@ -1626,39 +1626,39 @@ func (s *Server) HandleOrchestratorRemoveAgent(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	agentID := chi.URLParam(r, "agentID")
-	if agentID == "" {
-		RespondBadRequest(w, r, "agent ID is required")
+	nodeID := chi.URLParam(r, "nodeID")
+	if nodeID == "" {
+		RespondBadRequest(w, r, "node ID is required")
 		return
 	}
 
 	tenantID := r.URL.Query().Get("tenant_id")
 	ctx = orchestration.ContextWithTenant(ctx, tenantID)
 
-	if err := agentSvc.RemoveAgent(ctx, tenantID, agentID); err != nil {
+	if err := agentSvc.RemoveFleetNode(ctx, tenantID, nodeID); err != nil {
 		handleOrchestratorError(w, r, err)
 		return
 	}
 
 	RespondJSON(w, r, http.StatusOK, map[string]interface{}{
-		"agent_id": agentID,
-		"removed":  true,
+		"node_id": nodeID,
+		"removed": true,
 	})
 }
 
-// HandleOrchestratorAgentHeartbeat handles POST /api/v1/orchestrator/agents/{agentID}/heartbeat - Agent heartbeat.
+// HandleFleetNodeHeartbeat handles POST /api/v1/fleet/{nodeID}/heartbeat - Fleet node heartbeat.
 //
 // Self-healing recovery contract: when the agent is unknown to the registry
 // (typical case: central daemon restart lost its in-memory map) AND the
-// server has an agentHeartbeatRecoverer wired, the handler asks the
+// server has a fleetHeartbeatRecoverer wired, the handler asks the
 // recoverer to re-publish the agent from its mTLS peer certificate before
 // surfacing 404. The recoverer cross-checks the cert subject against the
-// supplied agentID and refuses any cert that does not own the identity.
+// supplied nodeID and refuses any cert that does not own the identity.
 // Recovery is idempotent and is logged at INFO. When the recoverer is nil
 // (unit tests, builds without iam) or the agent is not recoverable, the
 // handler falls through to the original 404 path so the agent's client-side
 // fallback can re-enroll explicitly.
-func (s *Server) HandleOrchestratorAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleFleetNodeHeartbeat(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	agentSvc := s.getAgentService(w, r)
@@ -1666,9 +1666,9 @@ func (s *Server) HandleOrchestratorAgentHeartbeat(w http.ResponseWriter, r *http
 		return
 	}
 
-	agentID := chi.URLParam(r, "agentID")
-	if agentID == "" {
-		RespondBadRequest(w, r, "agent ID is required")
+	nodeID := chi.URLParam(r, "nodeID")
+	if nodeID == "" {
+		RespondBadRequest(w, r, "node ID is required")
 		return
 	}
 
@@ -1698,13 +1698,13 @@ func (s *Server) HandleOrchestratorAgentHeartbeat(w http.ResponseWriter, r *http
 	// forever (go-quicbaas#699).
 	observed := payload.observation()
 
-	err := agentSvc.AgentHeartbeat(ctx, tenantID, agentID, observed)
+	err := agentSvc.FleetNodeHeartbeat(ctx, tenantID, nodeID, observed)
 	if err != nil && isOrchNotFoundError(err) {
 		// Try idempotent recovery — if the recoverer accepts the cert
 		// it has already re-published the agent, so the retry below
 		// hits the live entry and succeeds.
-		if recovered := s.tryRecoverAgentHeartbeat(ctx, r, tenantID, agentID, &payload); recovered {
-			err = agentSvc.AgentHeartbeat(ctx, tenantID, agentID, observed)
+		if recovered := s.tryRecoverFleetHeartbeat(ctx, r, tenantID, nodeID, &payload); recovered {
+			err = agentSvc.FleetNodeHeartbeat(ctx, tenantID, nodeID, observed)
 		}
 	}
 	if err != nil {
@@ -1713,7 +1713,7 @@ func (s *Server) HandleOrchestratorAgentHeartbeat(w http.ResponseWriter, r *http
 	}
 
 	RespondJSON(w, r, http.StatusOK, map[string]interface{}{
-		"agent_id":  agentID,
+		"node_id":   nodeID,
 		"heartbeat": true,
 	})
 }
@@ -1737,7 +1737,7 @@ type heartbeatBody struct {
 	// MaxConcurrentJobs is how many orchestration jobs the daemon declares its
 	// host can run at once — its contribution to the fleet's worker-slot
 	// capacity. Zero, or an absent key, reports nothing and reconciles nothing;
-	// see orchestration.AgentObservation.MaxConcurrentJobs for why that is not
+	// see orchestration.FleetNodeObservation.MaxConcurrentJobs for why that is not
 	// the same as reporting no slots.
 	MaxConcurrentJobs int `json:"max_concurrent_jobs,omitempty"`
 
@@ -1749,29 +1749,51 @@ type heartbeatBody struct {
 	// Backends is one: an absent key (an older daemon) reconciles nothing,
 	// while an empty list reports that it can reach none.
 	SigningAgents *[]string `json:"signing_agents"`
+
+	// SigningRelay reports whether the daemon can serve a session's signing
+	// socket from a relay over its FleetRuntime link (go-quicbaas#1013). A
+	// POINTER so an absent key (an older daemon) reconciles nothing.
+	SigningRelay *bool `json:"signing_relay,omitempty"`
+
+	// Images are the container images on the daemon's host. Absent is
+	// unknown; placement treats only a reported list as authoritative.
+	Images *[]string `json:"images,omitempty"`
+
+	// Devices is the daemon's accelerator telemetry: one sample per GPU, NPU
+	// and CPU package it can read. Absent reports nothing.
+	Devices []orchestration.DeviceSample `json:"devices,omitempty"`
 }
 
 // observation returns what the daemon reported about itself on this
 // heartbeat, or nil when it reported nothing at all. An empty served list is
 // carried through rather than dropped, because refusing it is the point: the
 // registry decides that, not the decoder.
-func (b *heartbeatBody) observation() *orchestration.AgentObservation {
+func (b *heartbeatBody) observation() *orchestration.FleetNodeObservation {
 	if b == nil || b.Backends == nil {
 		return nil
 	}
 	// THE SLOT COUNT RIDES ON THE SERVED LIST rather than standing alone. An
 	// observation is refused outright when it reports no backend at all
-	// (AgentObservation.Validate), so a body carrying a capacity and no
+	// (FleetNodeObservation.Validate), so a body carrying a capacity and no
 	// backends key would be rejected rather than reconciled — and there is no
-	// such body: pkg/agent writes both fields in one payload, and the
+	// such body: pkg/fleet writes both fields in one payload, and the
 	// transports that carry no served list carry no capacity either.
-	observation := &orchestration.AgentObservation{
+	observation := &orchestration.FleetNodeObservation{
 		Backends:          *b.Backends,
 		MaxConcurrentJobs: b.MaxConcurrentJobs,
 	}
 	if b.SigningAgents != nil {
 		observation.SigningAgents = append([]string{}, *b.SigningAgents...)
 	}
+	if b.SigningRelay != nil {
+		relay := *b.SigningRelay
+		observation.SigningRelay = &relay
+	}
+	if b.Images != nil {
+		images := append([]string{}, (*b.Images)...)
+		observation.Images = &images
+	}
+	observation.Devices = b.Devices
 	return observation
 }
 
@@ -1781,6 +1803,15 @@ func (b *heartbeatBody) observation() *orchestration.AgentObservation {
 
 // handleOrchestratorError maps orchestration errors to appropriate HTTP responses.
 func handleOrchestratorError(w http.ResponseWriter, r *http.Request, err error) {
+	if respondReferenceError(w, r, err) {
+		return
+	}
+	// A spawn or a job naming an Agent or pool is refused in the catalog's
+	// own vocabulary; a pool every Agent of which refused is exhausted.
+	if fault, ok := orchestration.ClassifyAgentCatalogError(err); ok {
+		agentCatalogResponders[fault](w, r, err.Error())
+		return
+	}
 	switch {
 	case isOrchNotFoundError(err):
 		RespondNotFound(w, r, err.Error())
@@ -1812,8 +1843,8 @@ func isOrchForbiddenError(err error) bool {
 }
 
 // isGRPCPermissionDenied reports whether err carries a gRPC
-// codes.PermissionDenied status. A spawn dispatched to a remote agent daemon
-// is policy-checked a second time on that daemon (pkg/agent Runtime.Spawn),
+// codes.PermissionDenied status. A spawn dispatched to a remote fleet node daemon
+// is policy-checked a second time on that daemon (pkg/fleet Runtime.Spawn),
 // and its denial arrives here wrapped in a RemoteBackendRPCError that unwraps
 // to the grpc status error. Without this the last line of defence would answer
 // 500.
@@ -1834,7 +1865,7 @@ func isGRPCPermissionDenied(err error) bool {
 func isOrchNotFoundError(err error) bool {
 	var taskNotFound *orchestration.TaskNotFoundError
 	var projectNotFound *orchestration.ProjectNotFoundError
-	var agentNotFound *orchestration.AgentNotFoundError
+	var agentNotFound *orchestration.FleetNodeNotFoundError
 	var jobNotFound *orchestration.JobNotFoundError
 	var backendNotFound *orchestration.BackendNotFoundError
 	var workflowNotFound *orchestration.WorkflowNotFoundError
@@ -1844,7 +1875,7 @@ func isOrchNotFoundError(err error) bool {
 	return stderrors.Is(err, orchestration.ErrTaskNotFound) ||
 		stderrors.Is(err, orchestration.ErrProjectNotFound) ||
 		stderrors.Is(err, orchestration.ErrAgentStoreNotFound) ||
-		stderrors.Is(err, orchestration.ErrAgentRegistryNotFound) ||
+		stderrors.Is(err, orchestration.ErrFleetNodeNotFound) ||
 		stderrors.Is(err, orchestration.ErrJobNotFound) ||
 		stderrors.Is(err, orchestration.ErrBackendNotFound) ||
 		stderrors.Is(err, orchestration.ErrWorkflowNotFound) ||
@@ -1864,8 +1895,8 @@ func isOrchNotFoundError(err error) bool {
 }
 
 // isGRPCNotFound reports whether err carries a gRPC codes.NotFound status. The
-// remote agent daemon returns NotFound for an unknown session (see
-// pkg/agent/spawn_server.go mapRuntimeError); RemoteACPBackend wraps it in a
+// remote fleet node daemon returns NotFound for an unknown session (see
+// pkg/fleet/spawn_server.go mapRuntimeError); RemoteACPBackend wraps it in a
 // RemoteBackendRPCError that unwraps to the grpc status error, so
 // status.FromError on the chain recovers the code.
 func isGRPCNotFound(err error) bool {
@@ -1884,13 +1915,14 @@ func isGRPCNotFound(err error) bool {
 // 400 rather than falling through to the 500 default: the caller named a state
 // this daemon does not use, which is a bad request and not a server fault.
 //
-// NoMatchingAgentError is classified here (not as not-found) so strict
+// NoMatchingFleetNodeError is classified here (not as not-found) so strict
 // host_affinity offline failures surface as 400 no_matching_agent — the
 // resource (backend) exists, the operator just can't satisfy the
 // constraint set on this specific request.
 func isOrchInvalidInputError(err error) bool {
-	var noMatch *orchestration.NoMatchingAgentError
+	var noMatch *orchestration.NoMatchingFleetNodeError
 	return isPageInputError(err) ||
+		stderrors.Is(err, orchestration.ErrInvalidInput) ||
 		stderrors.Is(err, orchestration.ErrSessionStateUnknown) ||
 		stderrors.Is(err, orchestration.ErrBackendRequired) ||
 		stderrors.Is(err, orchestration.ErrPromptRequired) ||
@@ -1900,13 +1932,13 @@ func isOrchInvalidInputError(err error) bool {
 		stderrors.Is(err, orchestration.ErrProjectPathRequired) ||
 		stderrors.Is(err, orchestration.ErrTaskRequired) ||
 		stderrors.Is(err, orchestration.ErrTaskStoreInvalidInput) ||
-		stderrors.Is(err, orchestration.ErrAgentNameRequired) ||
-		stderrors.Is(err, orchestration.ErrAgentHostRequired) ||
-		stderrors.Is(err, orchestration.ErrAgentTypeRequired) ||
-		stderrors.Is(err, orchestration.ErrAgentRegistryInvalidInput) ||
+		stderrors.Is(err, orchestration.ErrFleetNodeNameRequired) ||
+		stderrors.Is(err, orchestration.ErrFleetNodeHostRequired) ||
+		stderrors.Is(err, orchestration.ErrFleetNodeTypeRequired) ||
+		stderrors.Is(err, orchestration.ErrFleetRegistryInvalidInput) ||
 		stderrors.Is(err, orchestration.ErrTenantRequired) ||
 		stderrors.Is(err, orchestration.ErrUnsupportedOperation) ||
-		stderrors.Is(err, orchestration.ErrNoMatchingAgent) ||
+		stderrors.Is(err, orchestration.ErrNoMatchingFleetNode) ||
 		stderrors.As(err, &noMatch)
 }
 
@@ -1915,7 +1947,7 @@ func isOrchConflictError(err error) bool {
 	var alreadyClaimed *orchestration.TaskAlreadyClaimedError
 	var alreadyExists *orchestration.TaskAlreadyExistsError
 	var versionConflict *orchestration.TaskVersionConflictError
-	var agentAlreadyExists *orchestration.AgentAlreadyExistsError
+	var agentAlreadyExists *orchestration.FleetNodeAlreadyExistsError
 	var workflowAlreadyExists *orchestration.WorkflowAlreadyExistsError
 	// A session that may not rotate is a state conflict, not a bad request:
 	// the caller named a real session and only its policy stands in the way.
@@ -1936,7 +1968,7 @@ func isOrchConflictError(err error) bool {
 		stderrors.Is(err, orchestration.ErrTaskAlreadyClaimed) ||
 		stderrors.Is(err, orchestration.ErrTaskAlreadyExists) ||
 		stderrors.Is(err, orchestration.ErrTaskVersionConflict) ||
-		stderrors.Is(err, orchestration.ErrAgentRegistryAlreadyExists) ||
+		stderrors.Is(err, orchestration.ErrFleetNodeAlreadyExists) ||
 		stderrors.Is(err, orchestration.ErrJobAlreadyRunning) ||
 		stderrors.Is(err, orchestration.ErrWorkflowAlreadyExists) ||
 		stderrors.As(err, &alreadyClaimed) ||
@@ -2136,7 +2168,7 @@ func (s *Server) HandleOrchestratorCreateWorkflow(w http.ResponseWriter, r *http
 // =============================================================================
 
 // HandleOrchestratorSpawnChildJob handles POST /api/v1/orchestrator/jobs/{jobID}/children.
-// The caller_agent_id in the request body is the fleet agent identity of the spawning lead.
+// The caller_agent_id in the request body is the fleet node identity of the spawning lead.
 func (s *Server) HandleOrchestratorSpawnChildJob(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

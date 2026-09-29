@@ -21,7 +21,7 @@ import (
 )
 
 // =============================================================================
-// Admission — three inputs, decided in one place
+// Admission — four inputs, decided in one place
 // =============================================================================
 //
 // CONCURRENCY USED TO BE BOUNDED BY ONE INPUT, AND IT WAS THE WRONG NUMBER OF
@@ -33,7 +33,7 @@ import (
 // thirty will also draw on one shared pool of provider accounts that may have
 // no usage headroom left at all.
 //
-// So admission is decided HERE, once per sweep, from three inputs:
+// So admission is decided HERE, once per sweep, from four inputs:
 //
 //  1. THE PROJECT'S OWN QUOTA. Unchanged, and it stays a hard ceiling: no
 //     redistribution below may lift a project above what its operator set.
@@ -44,12 +44,13 @@ import (
 //     of "running" and not a second bookkeeping surface to drift from it.
 //
 //  3. PROVIDER USAGE HEADROOM. Whether the project's pooled accounts can serve
-//     another session at all. SUBSCRIPTION USAGE, NEVER A PRICE: the owner's
-//     ruling is subscription accounts only, ConsumptionEntry.CostMicros has no
-//     production writer, and a money axis summing zeroes would admit forever
-//     while looking like a cap (go-quicbaas#791). The signals read are the ones
-//     that exist: the sliding token windows in account_quota.go, and the
-//     AvailableAt cooldown a provider refusal writes.
+//     another session at all: each account's own sliding windows
+//     (account_quota.go, in tokens and list-price dollars) and the AvailableAt
+//     cooldown a provider refusal writes.
+//
+//  4. THE PROJECT'S AND THE TENANT'S OWN SPEND LIMITS (admission_spend.go,
+//     go-quicbaas#1058 ruling F6). A spent project or tenant is DEFERRED with
+//     a typed reason, exactly as a pool with no headroom is.
 //
 // WHY A PLAN RATHER THAN A PREDICATE. The fleet axis cannot be answered for one
 // project in isolation — a fair division needs to know who else is asking — so
@@ -69,7 +70,7 @@ import (
 // would be the oversubscription this file exists to prevent, wearing the
 // costume of a successful measurement.
 
-// AdmissionAxis names which of the three inputs decided an admission.
+// AdmissionAxis names which of the inputs decided an admission.
 type AdmissionAxis string
 
 const (
@@ -95,7 +96,7 @@ const (
 func (a AdmissionAxis) String() string { return string(a) }
 
 // AdmissionDecision is what one project may start right now, and which of the
-// three inputs said so.
+// inputs said so.
 //
 // IT ANSWERS TWO QUESTIONS, not one, because the two enforcement points ask
 // different ones: the dispatcher asks how many QUEUED tasks it may start
@@ -121,8 +122,9 @@ type AdmissionDecision struct {
 	Axis AdmissionAxis `json:"axis"`
 
 	// Deferred reports a decision that is not a refusal but a wait: the
-	// provider pool has no headroom now and RetryAt says when that changes.
-	// A deferred project's share is released to the others.
+	// provider pool has no headroom now, or the project's or tenant's spend
+	// limits are spent, and RetryAt says when that changes. A deferred
+	// project's share is released to the others.
 	Deferred bool `json:"deferred,omitempty"`
 
 	// RetryAt is when a deferred decision would change, zero when unknown.
@@ -261,6 +263,15 @@ type PoolHeadroom struct {
 	// now is expected to be able to, zero when none names one.
 	RetryAt time.Time
 
+	// SessionBounded reports that every ready account has a
+	// MaxConcurrentSessions cap, so the pool can serve at most SessionSlots
+	// more sessions. False when any ready account is unmetered.
+	SessionBounded bool
+
+	// SessionSlots is how many more sessions the ready accounts can take
+	// before each reaches its cap. Meaningful only when SessionBounded.
+	SessionSlots int
+
 	// Reason is the operator-facing sentence for a pool with no ready
 	// account.
 	Reason string
@@ -328,6 +339,11 @@ type AdmissionControllerConfig struct {
 	// correct for a deployment that pools no accounts.
 	Headroom PoolHeadroomReader
 
+	// Spend answers the spend axis: a project's and its tenant's own limits
+	// (admission_spend.go). Nil leaves that axis out, which is correct for a
+	// deployment that records no consumption.
+	Spend ScopeSpendReader
+
 	// Now is the clock; nil takes utcNow.
 	Now func() time.Time
 }
@@ -341,6 +357,7 @@ type AdmissionController struct {
 	ttl      time.Duration
 	capacity FleetCapacityReader
 	headroom PoolHeadroomReader
+	spend    ScopeSpendReader
 	now      func() time.Time
 }
 
@@ -372,6 +389,7 @@ func NewAdmissionController(cfg AdmissionControllerConfig) (*AdmissionController
 		ttl:      cfg.LeaseTTL,
 		capacity: cfg.Capacity,
 		headroom: cfg.Headroom,
+		spend:    cfg.Spend,
 		now:      now,
 	}, nil
 }
@@ -436,7 +454,7 @@ func (c *AdmissionController) Plan(ctx context.Context) (*FleetPlan, error) {
 	// sweeps already do. So the answer is "no plan", the sweeps fall back to
 	// exactly what they did before this existed, and the blast radius of a
 	// failed read is unchanged for a deployment that declared neither axis.
-	if !capacity.Known() && c.headroom == nil {
+	if !capacity.Known() && c.headroom == nil && c.spend == nil {
 		return nil, nil
 	}
 
@@ -471,7 +489,8 @@ func (c *AdmissionController) Plan(ctx context.Context) (*FleetPlan, error) {
 	return plan, nil
 }
 
-// countFleetInflight counts the live job leases of every tenant.
+// countFleetInflight counts the job leases of every tenant that occupy a
+// worker.
 //
 // ONE LEASE LISTING FOR THE WHOLE FLEET rather than a sum of per-project
 // listings. A sum taken project by project is taken at as many instants as
@@ -484,9 +503,13 @@ func (c *AdmissionController) countFleetInflight(ctx context.Context, now time.T
 	}
 	live := 0
 	for _, lease := range held {
-		// The fleet budget is the sum of what the projects may spend, so the
-		// same off-budget rule applies: see countProjectInflight.
-		if lease != nil && lease.CountsAgainstBudget(now, c.ttl) {
+		// THROUGH ClaimsWorker, NOT CountsAgainstBudget. The fleet's slots are
+		// containers, and a triage or review job runs one for its whole life
+		// even though it is off the PROJECT budget (owner ruling, 2026-09-25).
+		// fleetCapacityJobLeaseStore counts through the same predicate, so the
+		// plan and the last-ditch check cannot divide the fleet by different
+		// counts; a dormant job, which runs nothing, is off both.
+		if lease.ClaimsWorker(now, c.ttl) {
 			live++
 		}
 	}
@@ -578,6 +601,18 @@ func (c *AdmissionController) projectDemand(ctx context.Context, project *Projec
 		}
 	}
 
+	// The spend axis. A project whose own limits, or whose tenant's, are
+	// spent is DEFERRED like one with no provider headroom, and asks for
+	// nothing.
+	spend, err := c.projectSpend(ctx, project, now)
+	if err != nil {
+		return nil, err
+	}
+	if spend.Deferred {
+		demand.deferTo(spend.Axis, spend.Decision.RetryAt, spend.Reason)
+		return demand, nil
+	}
+
 	// The provider axis. A project with no headroom is DEFERRED and asks for
 	// nothing, so the fleet division below hands its share to a project that
 	// can actually use it.
@@ -586,16 +621,46 @@ func (c *AdmissionController) projectDemand(ctx context.Context, project *Projec
 		return nil, err
 	}
 	if !headroom.HasHeadroom() {
-		demand.demand = 0
+		demand.deferTo(AdmissionAxisProviderHeadroom, headroom.RetryAt, headroom.Reason)
+		return demand, nil
+	}
+
+	// A POOL OF CAPPED ACCOUNTS BOUNDS THE PROJECT TO ITS FREE SESSIONS. Asking
+	// for more would dispatch jobs whose spawns find every account full; each
+	// of those is an environment fault on the task and a wasted sweep. The
+	// bound is per project and the accounts may be shared, so two projects can
+	// still race for the last slot; the spawn-time check settles that race.
+	if headroom.SessionBounded && (demand.unbounded || demand.demand > headroom.SessionSlots) {
+		demand.demand = headroom.SessionSlots
 		demand.unbounded = false
 		demand.decision.Bounded = true
-		demand.decision.Entitlement = 0
-		demand.decision.Deferred = true
+		demand.decision.Entitlement = headroom.SessionSlots
 		demand.decision.Axis = AdmissionAxisProviderHeadroom
-		demand.decision.RetryAt = headroom.RetryAt
-		demand.decision.Reason = headroom.Reason
 	}
 	return demand, nil
+}
+
+// deferTo turns the demand into a deferral: the project asks for nothing, so
+// its share of the fleet goes to projects that can use it, and the decision
+// says which axis deferred it, why and until when.
+func (d *projectDemand) deferTo(axis AdmissionAxis, retryAt time.Time, reason string) {
+	d.demand = 0
+	d.unbounded = false
+	d.decision.Bounded = true
+	d.decision.Entitlement = 0
+	d.decision.Deferred = true
+	d.decision.Axis = axis
+	d.decision.RetryAt = retryAt
+	d.decision.Reason = reason
+}
+
+// projectSpend asks the spend axis, treating an unwired reader as an axis the
+// deployment did not declare.
+func (c *AdmissionController) projectSpend(ctx context.Context, project *Project, now time.Time) (ScopeSpendVerdict, error) {
+	if c.spend == nil {
+		return ScopeSpendVerdict{}, nil
+	}
+	return c.spend.ScopeSpend(ctx, project, now)
 }
 
 // projectHeadroom asks the provider axis, treating an unwired reader as an
@@ -657,6 +722,10 @@ func (c *AdmissionController) countProjectPending(ctx context.Context, project *
 	if err != nil {
 		return 0, &AdmissionUndecidableError{Input: "queue of project " + project.ID, Cause: err}
 	}
+	// A PARKED PROJECT ASKS ONLY FOR WHAT IT MAY START: its tasks already in
+	// flight. Counting the ones it refuses would hand it a share of the fleet
+	// it cannot use and take that share from a project that could.
+	pending, _ = holdUnstartedWhileParked(project, pending)
 	return CountPendingUndispatched(pending), nil
 }
 

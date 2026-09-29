@@ -23,6 +23,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -193,35 +195,64 @@ func TestRunSSHKeysImport_MissingFile(t *testing.T) {
 func TestRunSSHKnownHostsAdd_MissingHost(t *testing.T) {
 	withSSHHome(t)
 	cmd := newSSHKnownHostsAddCmd()
-	require.NoError(t, cmd.Flags().Set("fingerprint", testKnownHostFingerprint))
+	require.NoError(t, cmd.Flags().Set("key", sshfixture.Host(t).AuthorizedLine))
 	err := runSSHKnownHostsAdd(cmd, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSSHMissingHost)
 }
 
-func TestRunSSHKnownHostsAdd_MissingFingerprint(t *testing.T) {
+// TestRunSSHKnownHostsAdd_MissingHostKey pins that a bare host is refused: the
+// store trusts only a full public key, never a fingerprint alone.
+func TestRunSSHKnownHostsAdd_MissingHostKey(t *testing.T) {
 	withSSHHome(t)
 	cmd := newSSHKnownHostsAddCmd()
 	require.NoError(t, cmd.Flags().Set("host", "git.example.com:22"))
 	err := runSSHKnownHostsAdd(cmd, nil)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrSSHMissingFingerprint)
+	assert.ErrorIs(t, err, ErrSSHMissingHostKey)
 }
 
-// testKnownHostFingerprint is the OpenSSH SHA256 fingerprint of a real
-// deterministic ed25519 key, so the pin this CLI writes describes a key
-// that actually exists. (go-xkms known_hosts.ValidateFingerprint also
-// rejects anything whose base64 body is not a 32-byte digest, so a
-// placeholder such as "SHA256:abcdef0123" never reaches the store.)
-const testKnownHostFingerprint = sshfixture.HostFingerprint
+// TestRunSSHKnownHostsAdd_BadHostKey covers the two ways a supplied key can be
+// unusable: a file that cannot be read and text that is not a key.
+func TestRunSSHKnownHostsAdd_BadHostKey(t *testing.T) {
+	withSSHHome(t)
+
+	cmd := newSSHKnownHostsAddCmd()
+	require.NoError(t, cmd.Flags().Set("host", "git.example.com:22"))
+	require.NoError(t, cmd.Flags().Set("file", filepath.Join(t.TempDir(), "absent.pub")))
+	var readErr *SSHReadHostKeyError
+	require.ErrorAs(t, runSSHKnownHostsAdd(cmd, nil), &readErr)
+
+	cmd = newSSHKnownHostsAddCmd()
+	require.NoError(t, cmd.Flags().Set("host", "git.example.com:22"))
+	require.NoError(t, cmd.Flags().Set("key", "not-a-key"))
+	var parseErr *SSHParseHostKeyError
+	require.ErrorAs(t, runSSHKnownHostsAdd(cmd, nil), &parseErr)
+}
+
+// TestRunSSHKnownHostsAdd_FromFile pins a key read from --file and reports
+// the fingerprint derived from it.
+func TestRunSSHKnownHostsAdd_FromFile(t *testing.T) {
+	withSSHHome(t)
+	host := sshfixture.Host(t)
+	path := filepath.Join(t.TempDir(), "host.pub")
+	require.NoError(t, os.WriteFile(path, []byte(host.AuthorizedLine+"\n"), 0o600))
+
+	cmd := newSSHKnownHostsAddCmd()
+	require.NoError(t, cmd.Flags().Set("host", "git.example.com:22"))
+	require.NoError(t, cmd.Flags().Set("file", path))
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	require.NoError(t, runSSHKnownHostsAdd(cmd, nil))
+	assert.Contains(t, buf.String(), host.Fingerprint)
+}
 
 func TestRunSSHKnownHosts_RoundTrip(t *testing.T) {
 	withSSHHome(t)
 
 	add := newSSHKnownHostsAddCmd()
 	require.NoError(t, add.Flags().Set("host", "git.example.com:22"))
-	require.NoError(t, add.Flags().Set("fingerprint", testKnownHostFingerprint))
-	require.NoError(t, add.Flags().Set("algorithm", "ssh-ed25519"))
+	require.NoError(t, add.Flags().Set("key", sshfixture.Host(t).AuthorizedLine))
 	require.NoError(t, add.Flags().Set("source", "manual"))
 	var aBuf bytes.Buffer
 	add.SetOut(&aBuf)

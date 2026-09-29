@@ -25,7 +25,7 @@ import (
 //
 // What used to live here — a BrokerProfile carrying fourteen fields qrdb could
 // not model, and an IDMapEntry correlating a broker UUID with qrdb's uint64 —
-// is gone. qrdb owns Email, Name, GroupIDs, AuthMethods, Lifecycle and LastAuth
+// is gone. qrdb owns Email, Name, AuthMethods, Lifecycle and LastAuth
 // natively now, and the identity is qrdb's Snowflake rendered in decimal, so the
 // correlation is strconv rather than a table that can fail to resolve.
 //
@@ -65,7 +65,6 @@ func ToIAMUser(core qrdbsdk.User) *iam.User {
 		Name:         displayName(core),
 		TenantID:     core.TenantID,
 		Roles:        cloneStrings(core.RoleIDs),
-		Groups:       cloneStrings(core.GroupIDs),
 		AuthMethods:  cloneStrings(core.AuthMethods),
 		Lifecycle:    core.Lifecycle,
 		LastAuth:     core.LastAuth,
@@ -93,12 +92,8 @@ func FromIAMUser(u *iam.User) (qrdbsdk.User, error) {
 		id = parsed
 	}
 	// Normalization is qrdb's, not a local copy of it: a consumer that
-	// de-duplicates or case-folds these sets differently would disagree with the
-	// store about what the user belongs to and what it may present.
-	groupIDs, err := qrdbsdk.NormalizeGroupIDs(u.Groups)
-	if err != nil {
-		return qrdbsdk.User{}, err
-	}
+	// de-duplicates or case-folds the set differently would disagree with the
+	// store about what the user may present.
 	authMethods, err := qrdbsdk.NormalizeAuthMethods(u.AuthMethods)
 	if err != nil {
 		return qrdbsdk.User{}, err
@@ -110,7 +105,6 @@ func FromIAMUser(u *iam.User) (qrdbsdk.User, error) {
 		Name:         u.Name,
 		TenantID:     u.TenantID,
 		RoleIDs:      cloneStrings(u.Roles),
-		GroupIDs:     groupIDs,
 		AuthMethods:  authMethods,
 		Lifecycle:    u.Lifecycle,
 		LastAuth:     u.LastAuth,

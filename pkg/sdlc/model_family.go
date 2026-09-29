@@ -42,7 +42,10 @@ const (
 )
 
 // backendFamilies maps a backend name to its family.
-// backendFamilies maps a backend name to its family.
+//
+// A RUNTIME THAT RUNS ANY MODEL HAS NO FAMILY OF ITS OWN. opencode is absent
+// here on purpose: it drives Claude, GPT and the local Qwen builds alike, so
+// the family of an opencode session is its model's.
 //
 // THE BACKEND NAME IS LOAD-BEARING FOR QWEN IN A WAY IT IS NOT FOR THE OTHERS.
 // The locally served review models are tagged `review-bf16`, `review-q8` and
@@ -68,6 +71,14 @@ var prefixFamilies = []struct {
 	{"claude-", ModelFamilyAnthropic},
 	{"gpt-", ModelFamilyOpenAI},
 	{"qwen", ModelFamilyQwen},
+	// The locally served review models are tagged `review-bf16`,
+	// `review-q8` and `review-q4_K_M` — named for their JOB, and carrying no
+	// "qwen" anywhere in the string. They are the qwen builds the handbook's
+	// model-usage convention names (review.Modelfile), so the tag prefix is
+	// what classifies them; without it an opencode reviewer on
+	// ollama/review-q8 would have no family, and its approval would never
+	// count as independent.
+	{"review-", ModelFamilyQwen},
 }
 
 // ModelFamily returns the family of a backend/model pair, or empty when

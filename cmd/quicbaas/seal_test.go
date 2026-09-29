@@ -611,23 +611,6 @@ func TestErrEmbeddedServerNotStarted_Extended(t *testing.T) {
 	})
 }
 
-func TestGetFreePortForEmbedded_Extended(t *testing.T) {
-	cleanup := setupCoverageTestLogger(t)
-	defer cleanup()
-
-	t.Run("MultiplePorts", func(t *testing.T) {
-		port1, err1 := getFreePortForEmbedded()
-		assert.NoError(t, err1)
-
-		port2, err2 := getFreePortForEmbedded()
-		assert.NoError(t, err2)
-
-		// Ports should be different (usually) and both valid
-		assert.Greater(t, port1, 0)
-		assert.Greater(t, port2, 0)
-	})
-}
-
 func TestShutdownEmbeddedServer_Extended(t *testing.T) {
 	cleanup := setupCoverageTestLogger(t)
 	defer cleanup()

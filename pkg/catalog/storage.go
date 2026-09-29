@@ -16,8 +16,6 @@ package catalog
 import (
 	"context"
 	"errors"
-	"sync"
-	"sync/atomic"
 
 	"github.com/cockroachdb/pebble"
 )
@@ -117,8 +115,11 @@ type pebbleStorage struct {
 	db           *pebble.DB
 	config       *PebbleStorageConfig
 	indexManager IndexManager
-	closed       atomic.Bool
-	mu           sync.RWMutex
+
+	// gate keeps the database open for the operations running against it and
+	// makes Close wait for them, so no call is ever issued on a closed
+	// PebbleDB instance (which panics instead of returning an error).
+	gate *storeGate
 }
 
 // NewPebbleStorage creates a new PebbleDB-backed storage.
@@ -152,22 +153,26 @@ func OpenPebbleStorage(config *PebbleStorageConfig) (PebbleStorage, error) {
 		return nil, NewStorageError("open", err)
 	}
 
-	indexMgr, err := NewIndexManager(db)
+	// The index manager shares the storage's gate so that index reads observe
+	// the close of the store exactly as entry reads do.
+	gate := newStoreGate()
+	indexMgr, err := newGatedIndexManager(db, gate)
 	if err != nil {
 		//nolint:gosec // G104: db.Close() error is intentionally ignored during cleanup on initialization failure
 		db.Close()
 		return nil, err
 	}
 
-	return &pebbleStorage{db: db, config: cfg, indexManager: indexMgr}, nil
+	return &pebbleStorage{db: db, config: cfg, indexManager: indexMgr, gate: gate}, nil
 }
 
 func (s *pebbleStorage) DB() *pebble.DB { return s.db }
 
 func (s *pebbleStorage) GetEntry(ctx context.Context, key string) (*CatalogEntry, error) {
-	if err := s.checkClosed(); err != nil {
+	if err := s.gate.enter(); err != nil {
 		return nil, err
 	}
+	defer s.gate.leave()
 	if err := ctx.Err(); err != nil {
 		return nil, NewStorageError("get", err)
 	}
@@ -197,9 +202,10 @@ func (s *pebbleStorage) GetEntry(ctx context.Context, key string) (*CatalogEntry
 }
 
 func (s *pebbleStorage) PutEntry(ctx context.Context, entry *CatalogEntry) error {
-	if err := s.checkClosed(); err != nil {
+	if err := s.gate.enter(); err != nil {
 		return err
 	}
+	defer s.gate.leave()
 	if err := ctx.Err(); err != nil {
 		return NewStorageError("put", err)
 	}
@@ -241,9 +247,10 @@ func (s *pebbleStorage) PutEntry(ctx context.Context, entry *CatalogEntry) error
 }
 
 func (s *pebbleStorage) DeleteEntry(ctx context.Context, key string) error {
-	if err := s.checkClosed(); err != nil {
+	if err := s.gate.enter(); err != nil {
 		return err
 	}
+	defer s.gate.leave()
 	if err := ctx.Err(); err != nil {
 		return NewStorageError("delete", err)
 	}
@@ -282,9 +289,10 @@ func (s *pebbleStorage) DeleteEntry(ctx context.Context, key string) error {
 }
 
 func (s *pebbleStorage) GetEntries(ctx context.Context, keys []string) ([]*CatalogEntry, error) {
-	if err := s.checkClosed(); err != nil {
+	if err := s.gate.enter(); err != nil {
 		return nil, err
 	}
+	defer s.gate.leave()
 	if err := ctx.Err(); err != nil {
 		return nil, NewStorageError("get_entries", err)
 	}
@@ -304,9 +312,10 @@ func (s *pebbleStorage) GetEntries(ctx context.Context, keys []string) ([]*Catal
 }
 
 func (s *pebbleStorage) PutEntries(ctx context.Context, entries []*CatalogEntry) error {
-	if err := s.checkClosed(); err != nil {
+	if err := s.gate.enter(); err != nil {
 		return err
 	}
+	defer s.gate.leave()
 	if err := ctx.Err(); err != nil {
 		return NewStorageError("put_entries", err)
 	}
@@ -352,9 +361,10 @@ func (s *pebbleStorage) PutEntries(ctx context.Context, entries []*CatalogEntry)
 }
 
 func (s *pebbleStorage) DeleteEntries(ctx context.Context, keys []string) error {
-	if err := s.checkClosed(); err != nil {
+	if err := s.gate.enter(); err != nil {
 		return err
 	}
+	defer s.gate.leave()
 	if err := ctx.Err(); err != nil {
 		return NewStorageError("delete_entries", err)
 	}
@@ -401,9 +411,10 @@ func (s *pebbleStorage) DeleteEntries(ctx context.Context, keys []string) error 
 }
 
 func (s *pebbleStorage) Iterate(ctx context.Context, prefix string, fn func(*CatalogEntry) bool) error {
-	if err := s.checkClosed(); err != nil {
+	if err := s.gate.enter(); err != nil {
 		return err
 	}
+	defer s.gate.leave()
 	if err := ctx.Err(); err != nil {
 		return NewStorageError("iterate", err)
 	}
@@ -447,9 +458,10 @@ func (s *pebbleStorage) Iterate(ctx context.Context, prefix string, fn func(*Cat
 }
 
 func (s *pebbleStorage) IterateKeys(ctx context.Context, prefix string, fn func(string) bool) error {
-	if err := s.checkClosed(); err != nil {
+	if err := s.gate.enter(); err != nil {
 		return err
 	}
+	defer s.gate.leave()
 	if err := ctx.Err(); err != nil {
 		return NewStorageError("iterate_keys", err)
 	}
@@ -491,37 +503,31 @@ func (s *pebbleStorage) IterateKeys(ctx context.Context, prefix string, fn func(
 
 func (s *pebbleStorage) GetPebbleIndexManager() IndexManager { return s.indexManager }
 
+// Close shuts the store down. It waits for the reads and writes already in
+// flight to finish before closing the database, so a background scan can never
+// be left holding an iterator over a closed PebbleDB instance. Operations that
+// arrive after Close receive a catalog-closed error.
 func (s *pebbleStorage) Close() error {
-	if s.closed.Swap(true) {
-		return nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.db != nil {
-		if err := s. //nolint:gosec // G104: db.Close() error is intentionally ignored during cleanup on initialization failure
-				db.Close(); err != nil {
+	return s.gate.close(func() error {
+		if s.db == nil {
+			return nil
+		}
+		if err := s.db.Close(); err != nil {
 			return NewStorageError("close", err)
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func (s *pebbleStorage) Sync() error {
-	if err := s.checkClosed(); err != nil {
+	if err := s.gate.enter(); err != nil {
 		return err
 	}
+	defer s.gate.leave()
 	if s.db != nil {
 		if err := s.db.Flush(); err != nil {
 			return NewStorageError("sync", err)
 		}
-	}
-	return nil
-}
-
-func (s *pebbleStorage) checkClosed() error {
-	if s.closed.Load() {
-		return NewCatalogClosedError()
 	}
 	return nil
 }

@@ -35,8 +35,8 @@ func newTestProject(id, tenantID, name string) *Project {
 		TenantID: tenantID,
 		Name:     name,
 		Workspace: ProjectWorkspace{
-			AgentID: "agent-1",
-			Path:    "/workspace/foo",
+			FleetNodeID: "agent-1",
+			Path:        "/workspace/foo",
 		},
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
@@ -2441,5 +2441,123 @@ func TestProjectStore_Create_DoesNotHealARenameInFlight(t *testing.T) {
 	}
 	if string(owner) != "id-1" {
 		t.Fatalf("reservation now names %q; the refused create must not have touched it", string(owner))
+	}
+}
+
+// projectHoldAfterRecordDelete parks a Delete the instant its record removal
+// lands — after the record is gone and before the name reservation is
+// released — and holds it there until the test lets go.
+type projectHoldAfterRecordDelete struct {
+	interfaces.KVStore
+
+	recordKey string
+	parked    chan struct{}
+	release   chan struct{}
+	once      sync.Once
+}
+
+func newProjectHoldAfterRecordDelete(inner interfaces.KVStore, recordKey string) *projectHoldAfterRecordDelete {
+	return &projectHoldAfterRecordDelete{
+		KVStore:   inner,
+		recordKey: recordKey,
+		parked:    make(chan struct{}),
+		release:   make(chan struct{}),
+	}
+}
+
+func (k *projectHoldAfterRecordDelete) Delete(ctx context.Context, key string) error {
+	err := k.KVStore.Delete(ctx, key)
+	if key != k.recordKey || err != nil {
+		return err
+	}
+	k.once.Do(func() { close(k.parked) })
+	select {
+	case <-k.release:
+	case <-time.After(barrierWait):
+	}
+	return nil
+}
+
+func (k *projectHoldAfterRecordDelete) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	return forwardPutIfAbsent(ctx, k.KVStore, key, value)
+}
+
+func (k *projectHoldAfterRecordDelete) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	return forwardCompareAndDelete(ctx, k.KVStore, key, expected)
+}
+
+// TestProjectStore_Delete_DoesNotReleaseAReservationItNoLongerHolds drives the
+// interleaving an unguarded name release loses (go-qrdb#41, issue #846):
+//
+//  1. Delete removes id-A's record and is parked before releasing the name.
+//  2. A create of the same name finds the reservation naming id-A with no
+//     record, correctly heals it, claims the name for id-B and succeeds.
+//  3. Delete resumes. An unguarded release would now remove id-B's live
+//     reservation; the guarded one releases only id-A's own hold.
+//
+// Driven, not raced: the create cannot run until the Delete is parked, and the
+// Delete cannot resume until the create has returned.
+func TestProjectStore_Delete_DoesNotReleaseAReservationItNoLongerHolds(t *testing.T) {
+	ctx := context.Background()
+	shared := NewMemoryTaskKV()
+
+	if err := NewProjectStore(shared).Create(ctx, newTestProject("id-A", "tenant-1", "contested")); err != nil {
+		t.Fatalf("seed Create() error = %v", err)
+	}
+
+	recordKey, err := projectRecordKey("tenant-1", "id-A")
+	if err != nil {
+		t.Fatalf("projectRecordKey() error = %v", err)
+	}
+	nameKey, err := projectNameIndexKey("tenant-1", "contested")
+	if err != nil {
+		t.Fatalf("projectNameIndexKey() error = %v", err)
+	}
+	held := newProjectHoldAfterRecordDelete(shared, recordKey)
+
+	var (
+		wg        sync.WaitGroup
+		deleteErr error
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		deleteErr = NewProjectStore(held).Delete(ctx, "tenant-1", "id-A")
+	}()
+
+	select {
+	case <-held.parked:
+	case <-time.After(barrierWait):
+		t.Fatal("the Delete never removed its record")
+	}
+
+	createErr := NewProjectStore(shared).Create(ctx, newTestProject("id-B", "tenant-1", "contested"))
+
+	close(held.release)
+	wg.Wait()
+
+	if createErr != nil {
+		t.Fatalf("Create() of a name whose project was deleted: %T: %v; the reservation "+
+			"named a project with no record and should have been healed", createErr, createErr)
+	}
+	if deleteErr != nil {
+		t.Fatalf("Delete() error = %T: %v; finding the name already reclaimed is a no-op, "+
+			"the project record is gone either way", deleteErr, deleteErr)
+	}
+
+	owner, err := shared.Get(ctx, nameKey)
+	if err != nil {
+		t.Fatalf("Get(nameKey) error = %v; the resumed Delete released id-B's reservation", err)
+	}
+	if string(owner) != "id-B" {
+		t.Fatalf("name reserved for %q, want id-B", string(owner))
+	}
+
+	got, err := NewProjectStore(shared).GetByName(ctx, "tenant-1", "contested")
+	if err != nil {
+		t.Fatalf("GetByName() error = %T: %v; id-B is live and must stay reachable by name", err, err)
+	}
+	if got.ID != "id-B" {
+		t.Fatalf("GetByName() = %q, want id-B", got.ID)
 	}
 }

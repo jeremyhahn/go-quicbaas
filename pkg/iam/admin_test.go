@@ -319,7 +319,7 @@ func TestAdminManager_CreateAssignment(t *testing.T) {
 				AdminRole: AdminRoleUserAdmin,
 				ResourceScopes: []ResourceScope{
 					{ResourceType: "user", ResourcePattern: "user:*"},
-					{ResourceType: "group", ResourcePattern: "group:engineering-*"},
+					{ResourceType: "role", ResourcePattern: "role:engineering-*"},
 				},
 				GrantedBy: "admin456",
 			},
@@ -776,7 +776,7 @@ func TestAdminManager_ListAssignments(t *testing.T) {
 	// User3: inactive assignment
 	assignment, err := manager.CreateAssignment(ctx, CreateAdminAssignmentOptions{
 		UserID:    "user3",
-		AdminRole: AdminRoleGroupAdmin,
+		AdminRole: AdminRolePolicyAdmin,
 		GrantedBy: "admin",
 	})
 	require.NoError(t, err)
@@ -1547,7 +1547,7 @@ func TestGetDefaultPermissions(t *testing.T) {
 			name: "TenantAdmin has broad permissions",
 			role: AdminRoleTenantAdmin,
 			expectedContains: []AdminPermission{
-				PermUserCreate, PermGroupCreate, PermPolicyCreate, PermAuditRead,
+				PermUserCreate, PermRoleCreate, PermPolicyCreate, PermAuditRead,
 			},
 			expectedExcludes: []AdminPermission{
 				PermTenantCreate, PermUserImpersonate,
@@ -1560,17 +1560,7 @@ func TestGetDefaultPermissions(t *testing.T) {
 				PermUserCreate, PermUserRead, PermUserUpdate, PermUserDelete,
 			},
 			expectedExcludes: []AdminPermission{
-				PermTenantCreate, PermGroupCreate, PermPolicyCreate,
-			},
-		},
-		{
-			name: "GroupAdmin has group management permissions",
-			role: AdminRoleGroupAdmin,
-			expectedContains: []AdminPermission{
-				PermGroupCreate, PermGroupRead, PermGroupUpdate, PermGroupDelete,
-			},
-			expectedExcludes: []AdminPermission{
-				PermUserCreate, PermPolicyCreate, PermTenantCreate,
+				PermTenantCreate, PermRoleCreate, PermPolicyCreate,
 			},
 		},
 		{
@@ -1580,7 +1570,7 @@ func TestGetDefaultPermissions(t *testing.T) {
 				PermPolicyCreate, PermPolicyRead, PermPolicyUpdate, PermPolicyDelete,
 			},
 			expectedExcludes: []AdminPermission{
-				PermUserCreate, PermGroupCreate, PermTenantCreate,
+				PermUserCreate, PermRoleCreate, PermTenantCreate,
 			},
 		},
 		{
@@ -1590,21 +1580,21 @@ func TestGetDefaultPermissions(t *testing.T) {
 				PermAuditRead, PermAuditExport,
 			},
 			expectedExcludes: []AdminPermission{
-				PermUserCreate, PermGroupCreate, PermPolicyCreate,
+				PermUserCreate, PermRoleCreate, PermPolicyCreate,
 			},
 		},
 		{
 			name: "ReadOnly has read permissions only",
 			role: AdminRoleReadOnly,
 			expectedContains: []AdminPermission{
-				PermTenantRead, PermUserRead, PermGroupRead, PermRoleRead, PermPolicyRead,
+				PermTenantRead, PermUserRead, PermRoleRead, PermPolicyRead,
 			},
 			expectedExcludes: []AdminPermission{
-				PermUserCreate, PermUserUpdate, PermUserDelete, PermGroupCreate,
+				PermUserCreate, PermUserUpdate, PermUserDelete, PermRoleCreate,
 			},
 		},
 		{
-			name: "AgentAdmin has all agent permissions",
+			name: "FleetAdmin has all agent permissions",
 			role: AdminRoleAgentAdmin,
 			expectedContains: []AdminPermission{
 				PermAgentDiscover, PermAgentRegister, PermAgentSpawn,
@@ -1677,11 +1667,11 @@ func TestIsValidAdminRole(t *testing.T) {
 		{"SuperAdmin is valid", AdminRoleSuperAdmin, true},
 		{"TenantAdmin is valid", AdminRoleTenantAdmin, true},
 		{"UserAdmin is valid", AdminRoleUserAdmin, true},
-		{"GroupAdmin is valid", AdminRoleGroupAdmin, true},
+		{"group_admin is no longer a role", AdminRole("group_admin"), false},
 		{"PolicyAdmin is valid", AdminRolePolicyAdmin, true},
 		{"AuditAdmin is valid", AdminRoleAuditAdmin, true},
 		{"ReadOnly is valid", AdminRoleReadOnly, true},
-		{"AgentAdmin is valid", AdminRoleAgentAdmin, true},
+		{"FleetAdmin is valid", AdminRoleAgentAdmin, true},
 		{"AgentOperator is valid", AdminRoleAgentOperator, true},
 		{"AgentViewer is valid", AdminRoleAgentViewer, true},
 		{"Empty role is invalid", "", false},
@@ -1736,7 +1726,7 @@ func TestAgentRolePermissionCounts(t *testing.T) {
 		role          AdminRole
 		expectedCount int
 	}{
-		{"AgentAdmin has 9 permissions", AdminRoleAgentAdmin, 9},
+		{"FleetAdmin has 9 permissions", AdminRoleAgentAdmin, 9},
 		{"AgentOperator has 8 permissions", AdminRoleAgentOperator, 8},
 		{"AgentViewer has 2 permissions", AdminRoleAgentViewer, 2},
 	}
@@ -2121,7 +2111,7 @@ func TestMemoryAdminStorage_ListAssignments(t *testing.T) {
 		createTestAssignment("user1", AdminRoleSuperAdmin),
 		createTestAssignment("user2", AdminRoleTenantAdmin),
 		createTestAssignmentWithExpiry("user3", AdminRoleUserAdmin, pastTime),
-		createTestAssignmentWithExpiry("user4", AdminRoleGroupAdmin, futureTime),
+		createTestAssignmentWithExpiry("user4", AdminRolePolicyAdmin, futureTime),
 	}
 
 	// Set different tenant IDs
@@ -2228,7 +2218,7 @@ func TestMemoryAdminStorage_GetUserAssignments(t *testing.T) {
 	expiredAssignment.ID = "expired_assignment"
 
 	// One inactive
-	inactiveAssignment := createTestAssignment("user1", AdminRoleGroupAdmin)
+	inactiveAssignment := createTestAssignment("user1", AdminRolePolicyAdmin)
 	inactiveAssignment.ID = "inactive_assignment"
 	inactiveAssignment.Active = false
 
@@ -2764,7 +2754,7 @@ func TestAdminManager_CheckPermission_ResourceScopeMatching(t *testing.T) {
 		GrantedBy: "system",
 		ResourceScopes: []ResourceScope{
 			{ResourceType: "user", ResourcePattern: "user:engineering-*"},
-			{ResourceType: "group", ResourcePattern: "*-team"},
+			{ResourceType: "role", ResourcePattern: "*-team"},
 		},
 	})
 	require.NoError(t, err)
@@ -2789,9 +2779,9 @@ func TestAdminManager_CheckPermission_ResourceScopeMatching(t *testing.T) {
 			name: "Resource scope matches - prefix wildcard",
 			request: &AdminCheckRequest{
 				UserID:       "scoped_admin",
-				Permission:   PermGroupRead,
+				Permission:   PermRoleRead,
 				TenantID:     "tenant1",
-				ResourceType: "group",
+				ResourceType: "role",
 				ResourceID:   "frontend-team",
 			},
 			expectAllowed: true,

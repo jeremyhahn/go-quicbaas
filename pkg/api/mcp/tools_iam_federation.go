@@ -145,11 +145,6 @@ func (r *ToolRegistry) registerFederationTools() {
 					"description": "Roles assigned to auto-provisioned users",
 					"items":       map[string]interface{}{"type": "string"},
 				},
-				"default_groups": map[string]interface{}{
-					"type":        "array",
-					"description": "Groups assigned to auto-provisioned users",
-					"items":       map[string]interface{}{"type": "string"},
-				},
 			},
 			"required": []string{"id", "tenant_id", "name", "type", "client_id", "issuer_url"},
 		},
@@ -482,7 +477,6 @@ func (r *ToolRegistry) executeIAMFederationCreateProvider(ctx context.Context, a
 		AutoProvision: getBool(args, "auto_provision"),
 		AllowLinking:  getBool(args, "allow_linking"),
 		DefaultRoles:  getStringSlice(args, "default_roles"),
-		DefaultGroups: getStringSlice(args, "default_groups"),
 	}
 
 	// Default enabled to true if not explicitly provided

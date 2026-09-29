@@ -371,7 +371,7 @@ func TestNewIAMProviderCreateCommand(t *testing.T) {
 	expectedFlags := []string{
 		"provider", "domain", "provider-id", "name", "type",
 		"client-id", "client-secret", "issuer-url", "scopes",
-		"auto-provision", "allow-linking", "default-roles", "default-groups",
+		"auto-provision", "allow-linking", "default-roles",
 	}
 
 	for _, flagName := range expectedFlags {
@@ -379,6 +379,10 @@ func TestNewIAMProviderCreateCommand(t *testing.T) {
 		if flag == nil {
 			t.Errorf("flag --%s not found", flagName)
 		}
+	}
+	// quicbaas keeps no groups; default-roles is the provisioning grant.
+	if cmd.Flags().Lookup("default-groups") != nil {
+		t.Error("flag --default-groups must not exist")
 	}
 }
 
@@ -398,7 +402,7 @@ func TestNewIAMProviderOperatorCommand(t *testing.T) {
 	expectedFlags := []string{
 		"provider", "domain", "provider-id", "name", "type",
 		"client-id", "client-secret", "issuer-url", "scopes",
-		"auto-provision", "allow-linking", "default-roles", "default-groups",
+		"auto-provision", "allow-linking", "default-roles",
 	}
 	for _, flagName := range expectedFlags {
 		if cmd.Flags().Lookup(flagName) == nil {

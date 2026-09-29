@@ -256,29 +256,46 @@ func WorkerSpawnEnv(backend, configDir string) map[string]string {
 // "acp: transport failed: initialize" — a credential failure wearing a
 // transport error's clothes. Measured on the burn-in node 2026-09-13.
 //
-// The daemon side needs no list change: pkg/agent's Runtime attaches the
+// The daemon side needs no list change: pkg/fleet's Runtime attaches the
 // resolver to EVERY ACP backend it serves, deliberately, to avoid exactly this
 // kind of name-list omission. The server-local path is the one that still
 // disagrees — its codex is a CodexExecBackend, which has no
 // SetAccountResolver — so an in-process codex spawn now fails closed and loud
 // rather than silently unauthenticated. That is the correct direction of the
 // two, and giving CodexExecBackend resolver support is the follow-on.
-var pooledAccountBackends = map[string]bool{
-	"claude":      true,
-	"claude-code": true,
-	"codex":       true,
-	"opencode":    true,
+//
+// Each maps to the provider whose accounts it draws on, which is what an
+// Agent naming accounts is checked against when it is saved.
+var pooledAccountBackends = map[string]AccountProvider{
+	"claude":      AccountProviderClaude,
+	"claude-code": AccountProviderClaude,
+	"codex":       AccountProviderCodex,
+	"opencode":    AccountProviderOpenCode,
 }
 
-// WorkerSpawnAccountAuto reports whether a worker spawn on this backend must
-// resolve a pooled provider account.
+// PooledAccountProvider returns the provider whose pooled accounts a backend
+// draws on, and false for a backend that draws on none.
+func PooledAccountProvider(backend string) (AccountProvider, bool) {
+	provider, ok := pooledAccountBackends[backend]
+	return provider, ok
+}
+
+// WorkerSpawnAccountAuto reports whether a worker spawn on this backend and
+// model must resolve a pooled provider account.
 //
 // Auto, never a pinned id: the engine asks for "an account this tenant and
 // project may use" and lets the pool's strategy choose, which is what makes
 // the pool a pool — accounts can be added, retired, rate-limited and rotated
 // without a task naming any of them.
-func WorkerSpawnAccountAuto(backend string) bool {
-	return pooledAccountBackends[backend]
+//
+// A MODEL ON A LOCAL PROVIDER NEEDS NO ACCOUNT. opencode routes a turn by its
+// model's provider, and "ollama/review-q8:latest" is served by an ollama the
+// fleet runs, with no credential to present. Demanding a pooled opencode
+// account there would refuse the spawn with NoAccountAvailableError on a node
+// that has everything it needs (SpawnNeedsNoAccount).
+func WorkerSpawnAccountAuto(backend, model string) bool {
+	_, pooled := pooledAccountBackends[backend]
+	return pooled && !SpawnNeedsNoAccount(backend, model)
 }
 
 // ApplyWorkerSpawnEnvironment puts the engine's grant, configuration
@@ -314,7 +331,7 @@ func ApplyWorkerSpawnEnvironment(req *SpawnSessionRequest, configDir string) {
 		}
 		req.Env[k] = v
 	}
-	if WorkerSpawnAccountAuto(req.Backend) && req.AccountID == "" {
+	if WorkerSpawnAccountAuto(req.Backend, req.Model) && req.AccountID == "" {
 		req.AccountAuto = true
 	}
 }

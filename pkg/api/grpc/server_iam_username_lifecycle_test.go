@@ -43,10 +43,9 @@ func newRealIAMGRPCStack(t *testing.T) (*IAMServer, *iam.MemoryStorage) {
 	require.NoError(t, err)
 
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  mem,
-		GroupStorage: mem,
-		RoleStorage:  mem,
-		Tenants:      tenants,
+		UserStorage: mem,
+		RoleStorage: mem,
+		Tenants:     tenants,
 	})
 	adapter := NewIAMServiceAdapter(tenants, store, nil, nil, nil, nil)
 	return NewIAMServer(adapter, log), mem

@@ -281,7 +281,7 @@ func TestConcludeAbsentSession_TwoDaemonsWriteOneEnding(t *testing.T) {
 	resultA := make(chan outcome, 1)
 	go func() {
 		written, err := daemonA.svc.concludeAbsentSession(
-			context.Background(), tenantID, tenantID, sessionID, ConcludedByAgentGone)
+			context.Background(), tenantID, tenantID, sessionID, ConcludedByFleetNodeGone)
 		resultA <- outcome{written: written, err: err}
 	}()
 
@@ -371,7 +371,7 @@ func TestConcludeAbsentSession_TwoDaemonsStartingTogetherWriteOneEnding(t *testi
 			defer wg.Done()
 			<-start
 			_, err := d.svc.concludeAbsentSession(
-				context.Background(), tenantID, tenantID, sessionID, ConcludedByAgentGone)
+				context.Background(), tenantID, tenantID, sessionID, ConcludedByFleetNodeGone)
 			errs <- err
 		}(daemon)
 	}
@@ -397,8 +397,8 @@ func TestConcludeAbsentSession_TwoDaemonsStartingTogetherWriteOneEnding(t *testi
 	// Both daemons conclude under the SAME reason here, which is what a sweep
 	// does -- both derive it from the same two facts. Whichever wins the swap,
 	// the reason on the record is that one.
-	if reason != ConcludedByAgentGone {
-		t.Errorf("reason = %q, want %q", reason, ConcludedByAgentGone)
+	if reason != ConcludedByFleetNodeGone {
+		t.Errorf("reason = %q, want %q", reason, ConcludedByFleetNodeGone)
 	}
 }
 
@@ -499,12 +499,12 @@ func TestConcludeSession_AnUncontendedConclusionStillCommits(t *testing.T) {
 	seedSession(t, store, &SessionRecord{SessionID: "s-plain", TenantID: "t1"})
 
 	if err := store.ConcludeSession(
-		context.Background(), "t1", "s-plain", ConcludedByAgentGone); err != nil {
+		context.Background(), "t1", "s-plain", ConcludedByFleetNodeGone); err != nil {
 		t.Fatalf("ConcludeSession: %v", err)
 	}
 	state, reason := storedStatus(t, store, "t1", "s-plain")
-	if state != SessionStateClosed || reason != ConcludedByAgentGone {
-		t.Errorf("state/reason = %q/%q, want closed/%q", state, reason, ConcludedByAgentGone)
+	if state != SessionStateClosed || reason != ConcludedByFleetNodeGone {
+		t.Errorf("state/reason = %q/%q, want closed/%q", state, reason, ConcludedByFleetNodeGone)
 	}
 
 	// And a second call over a complete ending is a no-op, not a rewrite.
@@ -512,8 +512,8 @@ func TestConcludeSession_AnUncontendedConclusionStillCommits(t *testing.T) {
 		context.Background(), "t1", "s-plain", ConcludedByOperator); err != nil {
 		t.Fatalf("second ConcludeSession: %v", err)
 	}
-	if _, reason := storedStatus(t, store, "t1", "s-plain"); reason != ConcludedByAgentGone {
-		t.Errorf("reason = %q, want %q kept", reason, ConcludedByAgentGone)
+	if _, reason := storedStatus(t, store, "t1", "s-plain"); reason != ConcludedByFleetNodeGone {
+		t.Errorf("reason = %q, want %q kept", reason, ConcludedByFleetNodeGone)
 	}
 }
 
@@ -586,13 +586,13 @@ func TestConcludeAbsentSession_OneAttributionAcrossAllThreeArtifacts(t *testing.
 	done := make(chan error, 1)
 	go func() {
 		_, concludeErr := daemonA.svc.concludeAbsentSession(
-			context.Background(), tenantID, tenantID, sessionID, ConcludedByAgentGone)
+			context.Background(), tenantID, tenantID, sessionID, ConcludedByFleetNodeGone)
 		done <- concludeErr
 	}()
 
 	// A owns the log now, under agent_gone.
 	<-held.parked
-	if logged := sessionClosedReason(t, daemonA.svc.sessionLog, tenantID, sessionID); logged != ConcludedByAgentGone.String() {
+	if logged := sessionClosedReason(t, daemonA.svc.sessionLog, tenantID, sessionID); logged != ConcludedByFleetNodeGone.String() {
 		t.Fatalf("the log was not written before the park: reason = %q; this test is not "+
 			"exercising the window it exists for", logged)
 	}
@@ -613,14 +613,14 @@ func TestConcludeAbsentSession_OneAttributionAcrossAllThreeArtifacts(t *testing.
 	// All three must name the SAME cause, and it must be the one the log
 	// arbitrated — A's, because A won the append.
 	logReason := sessionClosedReason(t, daemonB.svc.sessionLog, tenantID, sessionID)
-	if logReason != ConcludedByAgentGone.String() {
-		t.Errorf("log terminal event reason = %q, want %q", logReason, ConcludedByAgentGone)
+	if logReason != ConcludedByFleetNodeGone.String() {
+		t.Errorf("log terminal event reason = %q, want %q", logReason, ConcludedByFleetNodeGone)
 	}
 
 	_, recordReason := storedStatus(t, daemonB.store, tenantID, sessionID)
-	if recordReason != ConcludedByAgentGone {
+	if recordReason != ConcludedByFleetNodeGone {
 		t.Errorf("record reason = %q, want %q; the tombstone disagreed with the transcript, "+
-			"which is worse for an auditor than either answer alone", recordReason, ConcludedByAgentGone)
+			"which is worse for an auditor than either answer alone", recordReason, ConcludedByFleetNodeGone)
 	}
 
 	status, jobErr := daemonB.svc.loadJobStatus(tenantID, jobID)
@@ -631,8 +631,8 @@ func TestConcludeAbsentSession_OneAttributionAcrossAllThreeArtifacts(t *testing.
 	for _, event := range status.Events {
 		if event.Type == JobAuditTypeSessionConcluded {
 			audited++
-			if !strings.Contains(event.Details, ConcludedByAgentGone.String()) {
-				t.Errorf("job audit line = %q, want it to name %q", event.Details, ConcludedByAgentGone)
+			if !strings.Contains(event.Details, ConcludedByFleetNodeGone.String()) {
+				t.Errorf("job audit line = %q, want it to name %q", event.Details, ConcludedByFleetNodeGone)
 			}
 		}
 	}

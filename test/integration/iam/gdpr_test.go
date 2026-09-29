@@ -109,15 +109,14 @@ type DeletionResponse struct {
 
 // DeletionSummary summarizes what data was deleted.
 type DeletionSummary struct {
-	ProfileDeleted          bool           `json:"profile_deleted"`
-	SessionsDeleted         int            `json:"sessions_deleted"`
-	AuditLogsAnonymized     int            `json:"audit_logs_anonymized"`
-	ConsentsDeleted         int            `json:"consents_deleted"`
-	CredentialsDeleted      int            `json:"credentials_deleted"`
-	GroupMembershipsRemoved int            `json:"group_memberships_removed"`
-	RoleAssignmentsRemoved  int            `json:"role_assignments_removed"`
-	TokensRevoked           int            `json:"tokens_revoked"`
-	AdditionalData          map[string]int `json:"additional_data,omitempty"`
+	ProfileDeleted         bool           `json:"profile_deleted"`
+	SessionsDeleted        int            `json:"sessions_deleted"`
+	AuditLogsAnonymized    int            `json:"audit_logs_anonymized"`
+	ConsentsDeleted        int            `json:"consents_deleted"`
+	CredentialsDeleted     int            `json:"credentials_deleted"`
+	RoleAssignmentsRemoved int            `json:"role_assignments_removed"`
+	TokensRevoked          int            `json:"tokens_revoked"`
+	AdditionalData         map[string]int `json:"additional_data,omitempty"`
 }
 
 // UserDataExport contains all exportable user data.

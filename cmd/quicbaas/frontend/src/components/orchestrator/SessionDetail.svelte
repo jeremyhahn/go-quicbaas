@@ -431,7 +431,7 @@
 <div class="flex flex-col h-full overflow-hidden">
 
   <!-- Session header -->
-  <div class="flex items-start justify-between px-4 py-3 border-b border-base-300/50 bg-base-200/50 gap-3 flex-wrap shrink-0">
+  <div class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-base-300 bg-base-100 px-5 py-3">
     <div class="flex flex-col gap-1">
       <div class="flex items-center gap-2 flex-wrap">
         <span class="font-mono text-sm font-semibold text-base-content">
@@ -449,9 +449,9 @@
             title="The runner of this session's job decides its role"
           >{role}</span>
         {/if}
-        <span class="badge badge-sm badge-primary">{session.backend}</span>
+        <span class="badge badge-sm badge-ghost">{session.backend}</span>
         {#if model !== ''}
-          <span class="font-mono text-xs text-base-content/50" data-testid="session-header-model">{model}</span>
+          <span class="font-mono text-xs text-base-content/60" data-testid="session-header-model">{model}</span>
         {/if}
       </div>
     </div>
@@ -479,21 +479,21 @@
 
       {#if displayStatus !== 'closed'}
         <button
-          class="btn btn-xs btn-primary"
+          class="btn btn-sm btn-primary"
           onclick={() => { promptModalOpen = true; }}
           aria-label="Send prompt to session"
         >
           Prompt
         </button>
         <button
-          class="btn btn-xs btn-warning"
+          class="btn btn-sm btn-ghost"
           onclick={() => { openRotateDialog(); }}
           aria-label="Rotate session account"
         >
           Rotate Account
         </button>
         <button
-          class="btn btn-xs btn-error gap-1"
+          class="btn btn-sm btn-outline btn-error gap-1"
           onclick={() => { closeConfirmOpen = true; }}
           disabled={isClosing}
           aria-label="Close session"
@@ -501,7 +501,7 @@
           {#if isClosing}
             <span class="loading loading-spinner loading-xs"></span>
           {:else}
-            <X class="h-3 w-3" />
+            <X class="h-4 w-4" />
           {/if}
           Close
         </button>
@@ -521,7 +521,7 @@
 
     <!-- Transcript (flex-1) -->
     <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
-      <div role="tablist" class="tabs tabs-bordered shrink-0 px-2">
+      <div role="tablist" class="tabs tabs-border shrink-0 px-2">
         {#each BODY_TABS as tab (tab.id)}
           <button
             role="tab"
@@ -550,7 +550,7 @@
     <!-- Right-side metadata panel (collapsible on narrow) -->
     {#if metadataOpen}
       <aside class="w-56 shrink-0 border-l border-base-300/50 bg-base-200/30 p-3 overflow-y-auto hidden sm:block">
-        <div class="text-[10px] font-semibold uppercase tracking-widest text-base-content/30 mb-3">
+        <div class="section-title mb-3">
           Session Info
         </div>
         <div class="space-y-3 text-xs">

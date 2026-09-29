@@ -73,7 +73,7 @@ func TestCreateTask_AutoSpawnFalse_NoJobCreated(t *testing.T) {
 	}
 }
 
-// TestCreateTask_AutoSpawnTrue_NoAgentRegistry returns ErrNoMatchingAgent when
+// TestCreateTask_AutoSpawnTrue_NoAgentRegistry returns ErrNoMatchingFleetNode when
 // AutoSpawn is requested but the agent registry is not configured.
 func TestCreateTask_AutoSpawnTrue_NoAgentRegistry(t *testing.T) {
 	t.Parallel()
@@ -85,7 +85,7 @@ func TestCreateTask_AutoSpawnTrue_NoAgentRegistry(t *testing.T) {
 	}
 	impl := svc.(*agentServiceImpl)
 	impl.SetTaskStore(store)
-	// No agentRegistry set — autoSpawnTask should return NoMatchingAgentError.
+	// No fleetRegistry set — autoSpawnTask should return NoMatchingFleetNodeError.
 
 	task, spawnErr := svc.CreateTask(context.Background(), &CreateTaskRequest{
 		TenantID:  "tenant-1",
@@ -97,8 +97,8 @@ func TestCreateTask_AutoSpawnTrue_NoAgentRegistry(t *testing.T) {
 	if task == nil {
 		t.Fatal("expected non-nil task even when spawn fails")
 	}
-	if !errors.Is(spawnErr, ErrNoMatchingAgent) {
-		t.Fatalf("expected ErrNoMatchingAgent, got %v", spawnErr)
+	if !errors.Is(spawnErr, ErrNoMatchingFleetNode) {
+		t.Fatalf("expected ErrNoMatchingFleetNode, got %v", spawnErr)
 	}
 	if task.SpawnedJobID != "" {
 		t.Errorf("expected empty SpawnedJobID when spawn fails, got %q", task.SpawnedJobID)
@@ -112,7 +112,7 @@ func TestCreateTask_AutoSpawnTrue_NoAgentRegistry(t *testing.T) {
 	}
 }
 
-// TestCreateTask_AutoSpawnTrue_BackendFilterNoMatch returns NoMatchingAgentError
+// TestCreateTask_AutoSpawnTrue_BackendFilterNoMatch returns NoMatchingFleetNodeError
 // when a backend constraint is specified but no online agent uses that backend.
 // This is Gap 3: autoSpawnTask must surface a typed error rather than silently
 // dispatching to any agent.
@@ -120,19 +120,19 @@ func TestCreateTask_AutoSpawnTrue_BackendFilterNoMatch(t *testing.T) {
 	t.Parallel()
 
 	store := &mockTaskStore{}
-	registry := NewInMemoryAgentRegistry()
+	registry := NewInMemoryFleetRegistry()
 
 	// Register a live agent that uses a DIFFERENT backend (anthropic).
-	onlineAgent := &AgentRegistration{
-		ID:        "agent-1",
-		TenantID:  "tenant-1",
-		Name:      "worker-1",
-		Host:      "host-1",
-		Backend:   "anthropic",
-		AgentType: "worker",
-		Status:    AgentStatusIdle,
+	onlineAgent := &FleetNode{
+		ID:       "agent-1",
+		TenantID: "tenant-1",
+		Name:     "worker-1",
+		Host:     "host-1",
+		Backend:  "anthropic",
+		NodeType: "worker",
+		Status:   FleetNodeStatusIdle,
 	}
-	if regErr := registry.RegisterAgent(context.Background(), onlineAgent); regErr != nil {
+	if regErr := registry.RegisterFleetNode(context.Background(), onlineAgent); regErr != nil {
 		t.Fatalf("failed to register agent: %v", regErr)
 	}
 
@@ -142,7 +142,7 @@ func TestCreateTask_AutoSpawnTrue_BackendFilterNoMatch(t *testing.T) {
 	}
 	impl := svc.(*agentServiceImpl)
 	impl.SetTaskStore(store)
-	impl.SetAgentRegistry(registry)
+	impl.SetFleetRegistry(registry)
 
 	// Request a task with Backend="ollama"; no agent offers ollama.
 	task, spawnErr := svc.CreateTask(context.Background(), &CreateTaskRequest{
@@ -155,9 +155,9 @@ func TestCreateTask_AutoSpawnTrue_BackendFilterNoMatch(t *testing.T) {
 	if task == nil {
 		t.Fatal("expected non-nil task even when spawn fails")
 	}
-	var name *NoMatchingAgentError
+	var name *NoMatchingFleetNodeError
 	if !errors.As(spawnErr, &name) {
-		t.Fatalf("expected *NoMatchingAgentError, got %T: %v", spawnErr, spawnErr)
+		t.Fatalf("expected *NoMatchingFleetNodeError, got %T: %v", spawnErr, spawnErr)
 	}
 	if task.SpawnedJobID != "" {
 		t.Errorf("expected empty SpawnedJobID when backend not found, got %q", task.SpawnedJobID)
@@ -170,19 +170,19 @@ func TestCreateTask_AutoSpawnTrue_BackendFilterMatch(t *testing.T) {
 	t.Parallel()
 
 	store := &mockTaskStore{}
-	registry := NewInMemoryAgentRegistry()
+	registry := NewInMemoryFleetRegistry()
 
 	// Register a live agent that uses ollama.
-	onlineAgent := &AgentRegistration{
-		ID:        "agent-ollama",
-		TenantID:  "tenant-1",
-		Name:      "ollama-worker",
-		Host:      "host-1",
-		Backend:   "ollama",
-		AgentType: "worker",
-		Status:    AgentStatusIdle,
+	onlineAgent := &FleetNode{
+		ID:       "agent-ollama",
+		TenantID: "tenant-1",
+		Name:     "ollama-worker",
+		Host:     "host-1",
+		Backend:  "ollama",
+		NodeType: "worker",
+		Status:   FleetNodeStatusIdle,
 	}
-	if regErr := registry.RegisterAgent(context.Background(), onlineAgent); regErr != nil {
+	if regErr := registry.RegisterFleetNode(context.Background(), onlineAgent); regErr != nil {
 		t.Fatalf("failed to register agent: %v", regErr)
 	}
 
@@ -192,10 +192,10 @@ func TestCreateTask_AutoSpawnTrue_BackendFilterMatch(t *testing.T) {
 	}
 	impl := svc.(*agentServiceImpl)
 	impl.SetTaskStore(store)
-	impl.SetAgentRegistry(registry)
+	impl.SetFleetRegistry(registry)
 
 	// Task creation returns the task; spawn may fail because no real job runner
-	// is wired — but the backend selection should succeed (no NoMatchingAgentError).
+	// is wired — but the backend selection should succeed (no NoMatchingFleetNodeError).
 	task, spawnErr := svc.CreateTask(context.Background(), &CreateTaskRequest{
 		TenantID:  "tenant-1",
 		Subject:   "run ollama inference",
@@ -206,32 +206,32 @@ func TestCreateTask_AutoSpawnTrue_BackendFilterMatch(t *testing.T) {
 	if task == nil {
 		t.Fatal("expected non-nil task")
 	}
-	// spawnErr may be a job-runner error, but must NOT be a NoMatchingAgentError.
-	var name *NoMatchingAgentError
+	// spawnErr may be a job-runner error, but must NOT be a NoMatchingFleetNodeError.
+	var name *NoMatchingFleetNodeError
 	if errors.As(spawnErr, &name) {
-		t.Fatalf("should have matched the ollama agent, got NoMatchingAgentError: %v", spawnErr)
+		t.Fatalf("should have matched the ollama agent, got NoMatchingFleetNodeError: %v", spawnErr)
 	}
 }
 
-// TestCreateTask_AutoSpawnTrue_NoOnlineAgents returns ErrNoMatchingAgent when
+// TestCreateTask_AutoSpawnTrue_NoOnlineAgents returns ErrNoMatchingFleetNode when
 // all registered agents are offline.
 func TestCreateTask_AutoSpawnTrue_NoOnlineAgents(t *testing.T) {
 	t.Parallel()
 
 	store := &mockTaskStore{}
-	registry := NewInMemoryAgentRegistry()
+	registry := NewInMemoryFleetRegistry()
 
 	// Register an agent that is offline.
-	offlineAgent := &AgentRegistration{
-		ID:        "agent-offline",
-		TenantID:  "tenant-1",
-		Name:      "worker-1",
-		Host:      "host-1",
-		Backend:   "ollama",
-		AgentType: "worker",
-		Status:    AgentStatusOffline,
+	offlineAgent := &FleetNode{
+		ID:       "agent-offline",
+		TenantID: "tenant-1",
+		Name:     "worker-1",
+		Host:     "host-1",
+		Backend:  "ollama",
+		NodeType: "worker",
+		Status:   FleetNodeStatusOffline,
 	}
-	if regErr := registry.RegisterAgent(context.Background(), offlineAgent); regErr != nil {
+	if regErr := registry.RegisterFleetNode(context.Background(), offlineAgent); regErr != nil {
 		t.Fatalf("failed to register agent: %v", regErr)
 	}
 
@@ -241,7 +241,7 @@ func TestCreateTask_AutoSpawnTrue_NoOnlineAgents(t *testing.T) {
 	}
 	impl := svc.(*agentServiceImpl)
 	impl.SetTaskStore(store)
-	impl.SetAgentRegistry(registry)
+	impl.SetFleetRegistry(registry)
 
 	task, spawnErr := svc.CreateTask(context.Background(), &CreateTaskRequest{
 		TenantID:  "tenant-1",
@@ -252,34 +252,34 @@ func TestCreateTask_AutoSpawnTrue_NoOnlineAgents(t *testing.T) {
 	if task == nil {
 		t.Fatal("expected non-nil task even when spawn fails")
 	}
-	if !errors.Is(spawnErr, ErrNoMatchingAgent) {
-		t.Fatalf("expected ErrNoMatchingAgent, got %v", spawnErr)
+	if !errors.Is(spawnErr, ErrNoMatchingFleetNode) {
+		t.Fatalf("expected ErrNoMatchingFleetNode, got %v", spawnErr)
 	}
 	if task.SpawnedJobID != "" {
 		t.Errorf("expected empty SpawnedJobID when no agents available, got %q", task.SpawnedJobID)
 	}
 }
 
-// TestCreateTask_AutoSpawnTrue_GpuRequired_NoGpuAgents returns ErrNoMatchingAgent
+// TestCreateTask_AutoSpawnTrue_GpuRequired_NoGpuAgents returns ErrNoMatchingFleetNode
 // when GpuRequired is set but no agents advertise GPU capability.
 func TestCreateTask_AutoSpawnTrue_GpuRequired_NoGpuAgents(t *testing.T) {
 	t.Parallel()
 
 	store := &mockTaskStore{}
-	registry := NewInMemoryAgentRegistry()
+	registry := NewInMemoryFleetRegistry()
 
 	// Register an idle non-GPU agent.
-	nonGPUAgent := &AgentRegistration{
+	nonGPUAgent := &FleetNode{
 		ID:           "agent-cpu",
 		TenantID:     "tenant-1",
 		Name:         "cpu-worker",
 		Host:         "host-cpu",
 		Backend:      "ollama",
-		AgentType:    "worker",
-		Status:       AgentStatusIdle,
+		NodeType:     "worker",
+		Status:       FleetNodeStatusIdle,
 		Capabilities: []string{"inference"},
 	}
-	if regErr := registry.RegisterAgent(context.Background(), nonGPUAgent); regErr != nil {
+	if regErr := registry.RegisterFleetNode(context.Background(), nonGPUAgent); regErr != nil {
 		t.Fatalf("failed to register non-GPU agent: %v", regErr)
 	}
 
@@ -289,7 +289,7 @@ func TestCreateTask_AutoSpawnTrue_GpuRequired_NoGpuAgents(t *testing.T) {
 	}
 	impl := svc.(*agentServiceImpl)
 	impl.SetTaskStore(store)
-	impl.SetAgentRegistry(registry)
+	impl.SetFleetRegistry(registry)
 
 	task, spawnErr := svc.CreateTask(context.Background(), &CreateTaskRequest{
 		TenantID:    "tenant-1",
@@ -301,8 +301,8 @@ func TestCreateTask_AutoSpawnTrue_GpuRequired_NoGpuAgents(t *testing.T) {
 	if task == nil {
 		t.Fatal("expected non-nil task even when GPU spawn fails")
 	}
-	if !errors.Is(spawnErr, ErrNoMatchingAgent) {
-		t.Fatalf("expected ErrNoMatchingAgent for GPU-required with no GPU agents, got %v", spawnErr)
+	if !errors.Is(spawnErr, ErrNoMatchingFleetNode) {
+		t.Fatalf("expected ErrNoMatchingFleetNode for GPU-required with no GPU agents, got %v", spawnErr)
 	}
 	if task.SpawnedJobID != "" {
 		t.Errorf("expected empty SpawnedJobID, got %q", task.SpawnedJobID)
@@ -316,19 +316,19 @@ func TestCreateTask_AutoSpawnTrue_Success(t *testing.T) {
 
 	// Use in-memory task store so CAS semantics work correctly.
 	taskStore := NewInMemoryTaskStore()
-	registry := NewInMemoryAgentRegistry()
+	registry := NewInMemoryFleetRegistry()
 
 	// Register an idle agent.
-	idleAgent := &AgentRegistration{
-		ID:        "agent-idle",
-		TenantID:  "tenant-1",
-		Name:      "worker-gpu",
-		Host:      "host-gpu",
-		Backend:   "ollama",
-		AgentType: "worker",
-		Status:    AgentStatusIdle,
+	idleAgent := &FleetNode{
+		ID:       "agent-idle",
+		TenantID: "tenant-1",
+		Name:     "worker-gpu",
+		Host:     "host-gpu",
+		Backend:  "ollama",
+		NodeType: "worker",
+		Status:   FleetNodeStatusIdle,
 	}
-	if regErr := registry.RegisterAgent(context.Background(), idleAgent); regErr != nil {
+	if regErr := registry.RegisterFleetNode(context.Background(), idleAgent); regErr != nil {
 		t.Fatalf("failed to register agent: %v", regErr)
 	}
 
@@ -338,7 +338,7 @@ func TestCreateTask_AutoSpawnTrue_Success(t *testing.T) {
 	}
 	impl := svc.(*agentServiceImpl)
 	impl.SetTaskStore(taskStore)
-	impl.SetAgentRegistry(registry)
+	impl.SetFleetRegistry(registry)
 
 	// Register a minimal backend so StartJob can build a control loop.
 	backend := &testMinimalBackend{}
@@ -456,7 +456,7 @@ var _ AgentBackend = (*testMinimalBackend)(nil)
 
 // TestCreateTask_ModuleRunnerNeedsNoFleetAgent proves the dispatch rule the
 // JobRunner seam introduces: a task whose runner is a module's is dispatched
-// with no fleet agent registered, no backend and no project workflow, because
+// with no fleet node registered, no backend and no project workflow, because
 // the runner spawns its own sessions and the job's lease is the capacity
 // check. The lead-driven runner still needs all three — that refusal is
 // TestCreateTask_AutoSpawnTrue_NoAgentRegistry.
@@ -491,7 +491,7 @@ func TestCreateTask_ModuleRunnerNeedsNoFleetAgent(t *testing.T) {
 		Runner:    runner.Name(),
 	})
 	if createErr != nil {
-		t.Fatalf("a module runner needs no fleet agent: %v", createErr)
+		t.Fatalf("a module runner needs no fleet node: %v", createErr)
 	}
 	defer cancelAllJobs(impl)
 
@@ -551,8 +551,8 @@ func TestCreateTask_DispatchRefusalLandsOnTheTask(t *testing.T) {
 		Subject:   "fix bug",
 		AutoSpawn: true,
 	})
-	if !errors.Is(spawnErr, ErrNoMatchingAgent) {
-		t.Fatalf("got %v, want ErrNoMatchingAgent", spawnErr)
+	if !errors.Is(spawnErr, ErrNoMatchingFleetNode) {
+		t.Fatalf("got %v, want ErrNoMatchingFleetNode", spawnErr)
 	}
 	if task.DispatchReason == "" || !strings.Contains(task.DispatchReason, "agent registry not configured") {
 		t.Fatalf("the returned task must carry the refusal, got %q", task.DispatchReason)
@@ -628,7 +628,7 @@ func TestRecordDispatchRefusal_IsACASWriteThatNeverFailsTheCaller(t *testing.T) 
 		t.Fatalf("CreateTask: %v", err)
 	}
 
-	refusal := &NoMatchingAgentError{Constraint: "agent_selection", Detail: "nothing online"}
+	refusal := &NoMatchingFleetNodeError{Constraint: "agent_selection", Detail: "nothing online"}
 	svc.recordDispatchRefusal(ctx, task, refusal)
 	if store.updates.Load() != 2 {
 		t.Fatalf("expected the conflict and one retry, got %d updates", store.updates.Load())

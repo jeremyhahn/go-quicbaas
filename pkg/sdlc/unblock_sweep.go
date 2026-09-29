@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -67,6 +68,10 @@ import (
 type BlockedTaskService interface {
 	TaskLister
 	ReadmitTask(ctx context.Context, tenantID, taskID string) error
+
+	// SubmitTaskArtifacts records the audit of a readmission an owner's
+	// ruling caused: who ruled, and in which comment. See ruling.go.
+	SubmitTaskArtifacts(ctx context.Context, tenantID, taskID string, artifacts []orchestration.Artifact) error
 }
 
 // The engine's service is the implementation, asserted here so a change to
@@ -111,6 +116,12 @@ type UnblockSweeperConfig struct {
 
 	// Now is the clock a check reads; nil takes time.Now.
 	Now func() time.Time
+
+	// Rulers are the node-configured forge logins, beyond the repository's
+	// owner and the binding's own rulers, whose comment on a parked issue is
+	// an owner ruling that readmits the task. See RulerPolicy; a malformed
+	// policy is refused at construction.
+	Rulers RulerPolicy
 }
 
 // UnblockSweeper re-examines blocked tasks and readmits the ones whose typed
@@ -120,6 +131,7 @@ type UnblockSweeper struct {
 	bindings BindingReader
 	forges   ForgeResolver
 	now      func() time.Time
+	rulers   RulerPolicy
 
 	// failures are the per-tenant and per-project failures a pass deferred,
 	// drained by SweepFailures. Only the sweep goroutine touches them, and
@@ -139,11 +151,17 @@ func NewUnblockSweeper(cfg UnblockSweeperConfig) (*UnblockSweeper, error) {
 	case cfg.Forges == nil:
 		return nil, &InvalidInputError{Field: "forges", Message: "a condition is checked through the forge adapter"}
 	}
+	if err := cfg.Rulers.Validate(); err != nil {
+		return nil, err
+	}
 	now := cfg.Now
 	if now == nil {
 		now = time.Now
 	}
-	return &UnblockSweeper{tasks: cfg.Tasks, bindings: cfg.Bindings, forges: cfg.Forges, now: now}, nil
+	return &UnblockSweeper{
+		tasks: cfg.Tasks, bindings: cfg.Bindings, forges: cfg.Forges, now: now,
+		rulers: cfg.Rulers,
+	}, nil
 }
 
 // =============================================================================
@@ -199,6 +217,16 @@ const (
 	// it now — the fact an operator needs and the one a silent readmit
 	// hides.
 	UnblockBudgetExhausted UnblockVerdict = "budget_exhausted"
+
+	// UnblockHeldForLead means the task's issue carries the hold label
+	// (HoldLabel), so the task was NOT readmitted whatever else cleared.
+	//
+	// The hold is how an issue is kept for the lead to deliver — an approved
+	// ruling that says "delivery stays lead-driven" leaves it on. Triage
+	// already respects it; a sweep that readmitted past it would hand the
+	// factory the very work the owner assigned elsewhere, and the owner's
+	// ruling comment is exactly what it would readmit on.
+	UnblockHeldForLead UnblockVerdict = "held_for_lead"
 )
 
 // String returns the verdict's name.
@@ -366,6 +394,31 @@ func (s *UnblockSweeper) examine(ctx context.Context, tenantID string, task *orc
 	}
 	finding := UnblockFinding{TaskID: task.ID}
 
+	// AN OWNER'S RULING IS READ FIRST, because it answers every park it
+	// applies to whatever else the record says: a needs_info or escalated
+	// task carries no checkable condition, and the person it waits on has
+	// already spoken. A ruling that cannot be read leaves the task to the
+	// ordinary examination below — fail-closed, and reported.
+	if awaitsRuling(task) {
+		ruled, rulingErr := s.readmitOnRuling(ctx, tenantID, task, scope)
+		var held *TaskHeldForLeadError
+		if errors.As(rulingErr, &held) {
+			finding.Verdict = UnblockHeldForLead
+			finding.Evidence = held.Error()
+			return finding, nil
+		}
+		if rulingErr != nil {
+			s.failures = append(s.failures, rulingErr)
+		}
+		if ruled != nil {
+			finding.Kind = UnblockOwnerRuling
+			finding.Verdict = UnblockReleased
+			finding.Evidence = "owner ruling by " + ruled.Author + " in comment " +
+				strconv.FormatInt(ruled.ID, 10) + " — readmitted"
+			return finding, nil
+		}
+	}
+
 	condition, err := ParseUnblockCondition(task.BlockedReason)
 	if err != nil {
 		if errors.Is(err, ErrUnblockConditionAbsent) {
@@ -404,6 +457,21 @@ func (s *UnblockSweeper) examine(ctx context.Context, tenantID string, task *orc
 		finding.Verdict = UnblockBudgetExhausted
 		finding.Evidence = condition.Describe() +
 			" — satisfied, but the task has spent its attempt budget and was not readmitted"
+		return finding, nil
+	}
+
+	// A HELD ISSUE STAYS WITH THE LEAD even once its condition clears. The
+	// hold is read only here, when a readmission is about to happen, so a
+	// sweep that releases nothing never needs the forge for it.
+	if err := s.refuseIfHeld(ctx, task, scope); err != nil {
+		var held *TaskHeldForLeadError
+		if errors.As(err, &held) {
+			finding.Verdict = UnblockHeldForLead
+			finding.Evidence = held.Error()
+			return finding, nil
+		}
+		finding.Verdict = UnblockUndecidable
+		finding.Evidence = "the issue's hold could not be read, so the task stays blocked: " + err.Error()
 		return finding, nil
 	}
 
@@ -482,6 +550,7 @@ type lazyScope struct {
 	projectID string
 
 	forge    ForgeBackend
+	binding  *ProjectBinding
 	resolved bool
 }
 
@@ -504,7 +573,123 @@ func (l *lazyScope) resolve(ctx context.Context, task *orchestration.Task) (unbl
 		if forge == nil {
 			return unblockScope{}, NewForgeNotRegisteredError(binding.Forge.Type)
 		}
-		l.forge, l.resolved = forge, true
+		l.forge, l.binding, l.resolved = forge, binding, true
 	}
 	return unblockScope{forge: l.forge, repo: repo, now: l.sweeper.now}, nil
+}
+
+// =============================================================================
+// Owner rulings
+// =============================================================================
+
+// readmitOnRuling readmits a task parked on an owner decision when its issue
+// carries a ruling newer than the park, and returns the ruling comment; nil
+// when there is none. See ruling.go for what counts as one.
+//
+// READMIT FIRST, AUDIT SECOND. The transition table lets exactly one
+// readmission of one park through, so a webhook and a sweep that both find
+// the same ruling cannot both readmit: the loser is refused as an invalid
+// state and reports nothing. Auditing first would instead leave a record of
+// a readmission that may never have happened, and — because the record is
+// what marks a comment spent — a task that could never be readmitted by the
+// ruling that was meant to readmit it.
+func (s *UnblockSweeper) readmitOnRuling(ctx context.Context, tenantID string, task *orchestration.Task, scope *lazyScope) (*ForgeComment, error) {
+	_, number, err := issueOfTask(task)
+	if err != nil {
+		// A task adopted from no forge issue has nowhere a ruling could be
+		// posted; it is left to the ordinary examination, not failed.
+		return nil, nil
+	}
+	resolved, err := scope.resolve(ctx, task)
+	if err != nil {
+		return nil, err
+	}
+	comments, err := resolved.forge.ListIssueComments(ctx, resolved.repo, number)
+	if err != nil {
+		return nil, err
+	}
+	ruling, ok := findRuling(task, comments, rulerSet(scope.binding, s.rulers.For(tenantID)))
+	if !ok {
+		return nil, nil
+	}
+	// A ruling on a HELD issue is the owner's decision for the lead — "delivery
+	// stays lead-driven" is itself such a ruling — not a release to the factory.
+	if err := s.refuseIfHeld(ctx, task, scope); err != nil {
+		return nil, err
+	}
+	if err := s.tasks.ReadmitTask(ctx, tenantID, task.ID); err != nil {
+		if errors.Is(err, orchestration.ErrTaskInvalidState) {
+			// Somebody else readmitted it first — the other half of this
+			// same ruling, or an operator. Either way it is not parked.
+			return nil, nil
+		}
+		return nil, err
+	}
+	if err := s.tasks.SubmitTaskArtifacts(ctx, tenantID, task.ID, []orchestration.Artifact{rulingArtifact(task, ruling)}); err != nil {
+		return &ruling, err
+	}
+	return &ruling, nil
+}
+
+// refuseIfHeld returns a TaskHeldForLeadError when the task's issue carries
+// the hold label, and the read error when the issue cannot be read. A task
+// adopted from no forge issue has no issue to hold it.
+func (s *UnblockSweeper) refuseIfHeld(ctx context.Context, task *orchestration.Task, scope *lazyScope) error {
+	_, number, err := issueOfTask(task)
+	if err != nil {
+		return nil
+	}
+	resolved, err := scope.resolve(ctx, task)
+	if err != nil {
+		return err
+	}
+	issue, err := resolved.forge.GetIssue(ctx, resolved.repo, number)
+	if err != nil {
+		return err
+	}
+	if label := heldBy(issue, HoldLabel); label != "" {
+		return &TaskHeldForLeadError{TaskID: task.ID, Issue: number, Label: label}
+	}
+	return nil
+}
+
+// ReadmitOnRuling examines the parked task adopted from one issue and
+// readmits it when the issue carries an owner's ruling. It is the webhook's
+// half of the ruling path: a verified issue-comment delivery calls it so the
+// ruling takes effect at once rather than on the next sweep, and the sweep
+// stays the backstop for a delivery that never arrived.
+//
+// The delivery is only a HINT: the comments are re-read from the forge here,
+// never taken from the payload. It reports whether a task was readmitted.
+func (s *UnblockSweeper) ReadmitOnRuling(ctx context.Context, tenantID, projectID string, issue int) (bool, error) {
+	if tenantID == "" || projectID == "" || issue <= 0 {
+		return false, &InvalidInputError{Field: "issue", Message: "a ruling is read from one issue of one project"}
+	}
+	ctx = orchestration.ContextWithTenant(ctx, tenantID)
+	tasks, err := s.tasks.ListTasks(ctx, tenantID, &orchestration.TaskFilter{
+		ProjectID: projectID,
+		Status:    orchestration.TaskStatusBlocked,
+	})
+	if err != nil {
+		return false, err
+	}
+	scope := &lazyScope{sweeper: s, tenantID: tenantID, projectID: projectID}
+	for _, task := range tasks {
+		if !awaitsRuling(task) {
+			continue
+		}
+		if _, number, err := issueOfTask(task); err != nil || number != issue {
+			continue
+		}
+		ruling, err := s.readmitOnRuling(ctx, tenantID, task, scope)
+		var held *TaskHeldForLeadError
+		if errors.As(err, &held) {
+			return false, nil
+		}
+		if err != nil {
+			return ruling != nil, err
+		}
+		return ruling != nil, nil
+	}
+	return false, nil
 }

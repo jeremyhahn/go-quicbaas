@@ -278,3 +278,17 @@ func TestTenantService_Tenant_PropagatesError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestClient_Agents_NonNil_AndCached(t *testing.T) {
+	c := &client{transport: &mockTransport{}, opts: defaultOptions()}
+	first := c.Agents()
+	if first == nil {
+		t.Fatal("Agents() returned nil")
+	}
+	if second := c.Agents(); first != second {
+		t.Error("Agents() should return the same instance across calls")
+	}
+	if newAgentsClient(nil) != nil {
+		t.Error("no transport, no Agents client")
+	}
+}

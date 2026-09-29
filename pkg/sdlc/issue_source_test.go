@@ -30,7 +30,7 @@ func newIssueSourceRig(t *testing.T) (*IssueSource, *fakeForge, *Store) {
 		t.Fatal(err)
 	}
 	forge := newFakeForge()
-	source, err := NewIssueSource(store, &fakeForges{forge: forge}, 10)
+	source, err := NewIssueSource(store, &fakeForges{forge: forge}, store, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,30 +127,33 @@ func TestIssueSource_ForgeResolutionFailures(t *testing.T) {
 	if err := store.PutBinding(context.Background(), testTenant, testBinding()); err != nil {
 		t.Fatal(err)
 	}
-	failing, err := NewIssueSource(store, &fakeForges{err: errors.New("no token")}, 0)
+	failing, err := NewIssueSource(store, &fakeForges{err: errors.New("no token")}, store, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := failing.Poll(context.Background(), testOrchProject()); err == nil {
 		t.Fatal("forge resolution failure swallowed")
 	}
-	nilForge, _ := NewIssueSource(store, &fakeForges{}, 0)
+	nilForge, _ := NewIssueSource(store, &fakeForges{}, store, 0)
 	if _, err := nilForge.Poll(context.Background(), testOrchProject()); !errors.Is(err, ErrForgeNotRegistered) {
 		t.Fatalf("nil forge: %v", err)
 	}
 	if nilForge.pageLimit != DefaultIssuePageLimit {
 		t.Fatal("page limit default")
 	}
-	if _, err := NewIssueSource(nil, &fakeForges{}, 0); !errors.Is(err, ErrInvalidInput) {
+	if _, err := NewIssueSource(nil, &fakeForges{}, store, 0); !errors.Is(err, ErrInvalidInput) {
 		t.Fatal("nil bindings")
 	}
-	if _, err := NewIssueSource(store, nil, 0); !errors.Is(err, ErrInvalidInput) {
+	if _, err := NewIssueSource(store, nil, store, 0); !errors.Is(err, ErrInvalidInput) {
 		t.Fatal("nil forges")
+	}
+	if _, err := NewIssueSource(store, &fakeForges{}, nil, 0); !errors.Is(err, ErrInvalidInput) {
+		t.Fatal("nil clusters")
 	}
 	resolver := newMemoryResolver()
 	resolver.err = errors.New("sealed")
 	sealed, _ := NewStore(resolver)
-	src, _ := NewIssueSource(sealed, &fakeForges{forge: newFakeForge()}, 0)
+	src, _ := NewIssueSource(sealed, &fakeForges{forge: newFakeForge()}, sealed, 0)
 	if _, err := src.Poll(context.Background(), testOrchProject()); !errors.Is(err, ErrBackend) {
 		t.Fatalf("sealed store: %v", err)
 	}

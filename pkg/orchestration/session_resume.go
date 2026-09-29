@@ -265,7 +265,25 @@ func (t *ReplayTranscript) PrimingMessage() string {
 		b.WriteString("\n\n--- session instructions ---\n")
 		b.WriteString(t.SystemPrompt)
 	}
-	b.WriteString("\n\n--- transcript of session ")
+	b.WriteString("\n\n")
+	b.WriteString(t.Render())
+	return b.String()
+}
+
+// Render renders the transcript's conversation — the retained turns, and how
+// many older ones the budget dropped — without any framing around it.
+//
+// It is the part every reproduction of a session shares. PrimingMessage wraps
+// it for a process that is restored and must only acknowledge; a caller that
+// carries a conversation into a replacement session's next working prompt
+// wraps it in its own words (pkg/sdlc, go-quicbaas#997).
+func (t *ReplayTranscript) Render() string {
+	if t == nil {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("--- transcript of session ")
 	b.WriteString(t.SessionID)
 	b.WriteString(" ---\n")
 	if t.Omitted > 0 {

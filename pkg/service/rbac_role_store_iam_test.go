@@ -34,9 +34,8 @@ func newRoleStoreTestService(t *testing.T, tenantID string) (QuicBaaS, context.C
 
 	storage := iam.NewMemoryStorage()
 	is := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
+		UserStorage: storage,
+		RoleStorage: storage,
 	})
 
 	return newRoleStoreTestServiceWithStore(t, tenantID, is)
@@ -298,9 +297,8 @@ func TestRoleStore_DeleteRole_ListError(t *testing.T) {
 func TestRoleStore_AssignRevokeRole_RoundTrip(t *testing.T) {
 	storage := iam.NewMemoryStorage()
 	is := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
+		UserStorage: storage,
+		RoleStorage: storage,
 	})
 	svc, ctx := newRoleStoreTestServiceWithStore(t, "tenant-bind", is)
 
@@ -334,9 +332,8 @@ func TestRoleStore_AssignRevokeRole_RoundTrip(t *testing.T) {
 func TestRoleStore_AssignRole_UnknownUser(t *testing.T) {
 	storage := iam.NewMemoryStorage()
 	is := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
+		UserStorage: storage,
+		RoleStorage: storage,
 	})
 	svc, ctx := newRoleStoreTestServiceWithStore(t, "tenant-bind", is)
 	require.NoError(t, storage.CreateRole(ctx, &iam.Role{ID: "r-1", TenantID: "tenant-bind", Name: "editor"}))
@@ -355,9 +352,8 @@ func TestRoleStore_AssignRole_UnknownUser(t *testing.T) {
 func TestRoleStore_AssignRole_UnknownRole(t *testing.T) {
 	storage := iam.NewMemoryStorage()
 	is := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
+		UserStorage: storage,
+		RoleStorage: storage,
 	})
 	svc, ctx := newRoleStoreTestServiceWithStore(t, "tenant-bind", is)
 	require.NoError(t, storage.CreateUser(ctx, &iam.User{ID: "1", TenantID: "tenant-bind", Username: "alice", Name: "Alice", Email: "alice@bind.test"}))
@@ -428,9 +424,8 @@ func TestRoleStore_RevokeRole_MissingTenantContext(t *testing.T) {
 func TestRoleStore_AssignRole_UserNotFound(t *testing.T) {
 	storage := iam.NewMemoryStorage()
 	is := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
+		UserStorage: storage,
+		RoleStorage: storage,
 	})
 	svc, ctx := newRoleStoreTestServiceWithStore(t, "tenant-nf-user", is)
 	require.NoError(t, storage.CreateRole(ctx, &iam.Role{ID: "r-1", TenantID: "tenant-nf-user", Name: "editor"}))
@@ -449,9 +444,8 @@ func TestRoleStore_AssignRole_UserNotFound(t *testing.T) {
 func TestRoleStore_AssignRole_RoleNotFound(t *testing.T) {
 	storage := iam.NewMemoryStorage()
 	is := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
+		UserStorage: storage,
+		RoleStorage: storage,
 	})
 	svc, ctx := newRoleStoreTestServiceWithStore(t, "tenant-nf-role", is)
 	require.NoError(t, storage.CreateUser(ctx, &iam.User{ID: "1", TenantID: "tenant-nf-role", Username: "alice", Name: "Alice", Email: "alice@nf.test"}))

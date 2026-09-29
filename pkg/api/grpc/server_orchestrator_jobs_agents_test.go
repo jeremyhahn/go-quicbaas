@@ -226,28 +226,28 @@ func TestOrchestratorGRPC_DecomposeTask(t *testing.T) {
 }
 
 // =============================================================================
-// Agent fleet operations
+// Fleet operations
 // =============================================================================
 
 func TestOrchestratorGRPC_RegisterAgent(t *testing.T) {
 	srv := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
-	resp, err := srv.RegisterAgent(context.Background(), &pb.RegisterAgentRequest{
-		TenantId: "t1", Name: "agent-a", Host: "h1", AgentType: "claude",
+	resp, err := srv.RegisterFleetNode(context.Background(), &pb.RegisterFleetNodeRequest{
+		TenantId: "t1", Name: "agent-a", Host: "h1", NodeType: "claude",
 	})
 	require.NoError(t, err)
-	require.NotNil(t, resp.Agent)
-	assert.Equal(t, "agent-1", resp.Agent.Id)
+	require.NotNil(t, resp.Node)
+	assert.Equal(t, "agent-1", resp.Node.Id)
 }
 
 func TestOrchestratorGRPC_GetAgent(t *testing.T) {
 	srv := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
 	ctx := context.Background()
 
-	resp, err := srv.GetAgent(ctx, &pb.GetAgentRequest{TenantId: "t1", AgentId: "a1"})
+	resp, err := srv.GetFleetNode(ctx, &pb.GetFleetNodeRequest{TenantId: "t1", NodeId: "a1"})
 	require.NoError(t, err)
-	assert.Equal(t, "a1", resp.Agent.Id)
+	assert.Equal(t, "a1", resp.Node.Id)
 
-	_, err = srv.GetAgent(ctx, &pb.GetAgentRequest{TenantId: "t1"})
+	_, err = srv.GetFleetNode(ctx, &pb.GetFleetNodeRequest{TenantId: "t1"})
 	require.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
@@ -257,15 +257,15 @@ func TestOrchestratorGRPC_ListAgents(t *testing.T) {
 	ctx := context.Background()
 
 	// With filter to exercise the filter conversion branch.
-	resp, err := srv.ListAgents(ctx, &pb.ListAgentsRequest{
+	resp, err := srv.ListFleetNodes(ctx, &pb.ListFleetNodesRequest{
 		TenantId: "t1",
-		Filter:   &pb.AgentFilter{Host: "h1", AgentType: "claude", Backend: "acp", Limit: 10},
+		Filter:   &pb.FleetNodeFilter{Host: "h1", NodeType: "claude", Backend: "acp", Limit: 10},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 
 	// Without filter.
-	resp, err = srv.ListAgents(ctx, &pb.ListAgentsRequest{TenantId: "t1"})
+	resp, err = srv.ListFleetNodes(ctx, &pb.ListFleetNodesRequest{TenantId: "t1"})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -274,11 +274,11 @@ func TestOrchestratorGRPC_RemoveAgent(t *testing.T) {
 	srv := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
 	ctx := context.Background()
 
-	resp, err := srv.RemoveAgent(ctx, &pb.RemoveAgentRequest{TenantId: "t1", AgentId: "a1"})
+	resp, err := srv.RemoveFleetNode(ctx, &pb.RemoveFleetNodeRequest{TenantId: "t1", NodeId: "a1"})
 	require.NoError(t, err)
 	assert.True(t, resp.Removed)
 
-	_, err = srv.RemoveAgent(ctx, &pb.RemoveAgentRequest{TenantId: "t1"})
+	_, err = srv.RemoveFleetNode(ctx, &pb.RemoveFleetNodeRequest{TenantId: "t1"})
 	require.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
@@ -287,11 +287,11 @@ func TestOrchestratorGRPC_AgentHeartbeat(t *testing.T) {
 	srv := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
 	ctx := context.Background()
 
-	resp, err := srv.AgentHeartbeat(ctx, &pb.AgentHeartbeatRequest{TenantId: "t1", AgentId: "a1"})
+	resp, err := srv.FleetNodeHeartbeat(ctx, &pb.FleetNodeHeartbeatRequest{TenantId: "t1", NodeId: "a1"})
 	require.NoError(t, err)
 	assert.True(t, resp.Acknowledged)
 
-	_, err = srv.AgentHeartbeat(ctx, &pb.AgentHeartbeatRequest{TenantId: "t1"})
+	_, err = srv.FleetNodeHeartbeat(ctx, &pb.FleetNodeHeartbeatRequest{TenantId: "t1"})
 	require.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }

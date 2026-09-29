@@ -362,6 +362,15 @@ func TestValidateOrchestration_ProjectsRootAndMountRoots(t *testing.T) {
 			},
 			wantError: "orchestration.sandbox.allowed_mount_roots[0]",
 		},
+		{
+			name:   "absolute go cache dir is valid",
+			mutate: func(c *OrchestrationConfig) { c.Sandbox.GoCacheDir = "/srv/go-cache" },
+		},
+		{
+			name:      "relative go cache dir is rejected",
+			mutate:    func(c *OrchestrationConfig) { c.Sandbox.GoCacheDir = "cache/go" },
+			wantError: "orchestration.sandbox.go_cache_dir",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -427,5 +436,20 @@ func TestValidateOrchestration_TrustPolicy(t *testing.T) {
 				t.Fatalf("expected the error on orchestration.trust_policy, got %v", v.errors)
 			}
 		})
+	}
+}
+
+// TestOrchestrationSandboxConfig_EffectiveGoCacheDir pins the shared Go
+// cache's default under the data directory and the operator override.
+func TestOrchestrationSandboxConfig_EffectiveGoCacheDir(t *testing.T) {
+	t.Parallel()
+	if got := (OrchestrationSandboxConfig{}).EffectiveGoCacheDir("/var/lib/quicbaas"); got != "/var/lib/quicbaas/cache/go" {
+		t.Errorf("default = %q", got)
+	}
+	if got := (OrchestrationSandboxConfig{GoCacheDir: "/srv/go"}).EffectiveGoCacheDir("/var/lib/quicbaas"); got != "/srv/go" {
+		t.Errorf("override = %q", got)
+	}
+	if got := (OrchestrationSandboxConfig{}).EffectiveGoCacheDir(""); got != "" {
+		t.Errorf("no data dir = %q, want empty", got)
 	}
 }

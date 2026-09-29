@@ -719,8 +719,7 @@ func TestControlLoop_Stateless_StartJobAndStatus(t *testing.T) {
 	resp, err := svc.StartJob(ctx, &orchestration.StartJobRequest{
 		TenantID:      tenantID,
 		Description:   "Create a simple hello world function in Go",
-		LeadBackend:   "ollama",
-		LeadModel:     env.ollamaModel,
+		Lead:          ollamaLead(t, svc, tenantID),
 		MaxIterations: 3,
 		PollInterval:  "2s",
 	})
@@ -789,7 +788,6 @@ func TestControlLoop_Stateless_StartJobAndStatus_MissingDescription(t *testing.T
 	_, err := svc.StartJob(ctx, &orchestration.StartJobRequest{
 		TenantID:    tenantID,
 		Description: "",
-		LeadBackend: "ollama",
 	})
 	require.Error(t, err, "StartJob without description should fail")
 }
@@ -810,8 +808,7 @@ func TestControlLoop_Stateless_CancelJob(t *testing.T) {
 	resp, err := svc.StartJob(ctx, &orchestration.StartJobRequest{
 		TenantID:      tenantID,
 		Description:   "Long running task that should be cancelled",
-		LeadBackend:   "ollama",
-		LeadModel:     env.ollamaModel,
+		Lead:          ollamaLead(t, svc, tenantID),
 		MaxIterations: 20,
 		PollInterval:  "10s",
 	})
@@ -1016,9 +1013,8 @@ func TestControlLoop_Stateless_AgentIdentity_ScopeMatching(t *testing.T) {
 func findWorkflowDir(t *testing.T) string {
 	t.Helper()
 
-	// Walk up from the test directory to find the project root.
+	// The project root is three levels above this package.
 	candidates := []string{
-		"/home/jhahn/sources/go-quicbaas/workflows",
 		"../../../workflows",
 	}
 

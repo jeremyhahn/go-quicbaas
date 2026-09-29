@@ -14,9 +14,12 @@
 package server
 
 import (
+	"context"
+
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbembedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -73,7 +76,47 @@ func (s *Server) buildTenantBarrierService() service.TenantBarrierServicer {
 	if client == nil {
 		return nil
 	}
-	return service.NewTenantBarrierService(client.Tenants())
+	return service.NewTenantBarrierService(client.Tenants(), service.WithTenantUnsealHooks(&s.tenantUnsealHooks))
+}
+
+// =============================================================================
+// Attention-inbox barrier_sealed adapter
+//
+// The SDLC module's attention inbox reads each tenant's own barrier through
+// this thin adapter rather than a new barrier client: it delegates to the
+// SAME broker-side TenantBarrierServicer facade every transport uses, which
+// itself forwards to the embedded qrdb node. No new barrier logic is added
+// here — see docs/software-factory and go-quicbaas#1020 (owner ruling: the
+// alert watches the CALLING tenant's own barrier, never the system barrier,
+// since a sealed system barrier takes the whole API down before the inbox
+// could render anything).
+// =============================================================================
+
+// tenantBarrierAttentionReader adapts TenantBarrierServicer to
+// sdlc.AttentionBarrierReader.
+type tenantBarrierAttentionReader struct {
+	barrier service.TenantBarrierServicer
+}
+
+var _ sdlc.AttentionBarrierReader = (*tenantBarrierAttentionReader)(nil)
+
+// newTenantBarrierAttentionReader wraps a live TenantBarrierServicer for the
+// attention inbox. barrier MUST be non-nil; callers gate construction on
+// buildTenantBarrierService returning one.
+func newTenantBarrierAttentionReader(barrier service.TenantBarrierServicer) sdlc.AttentionBarrierReader {
+	return &tenantBarrierAttentionReader{barrier: barrier}
+}
+
+// BarrierStatus implements sdlc.AttentionBarrierReader by delegating to the
+// facade's own read verb, which re-applies the tenant read binding (a
+// tenant principal may read only its own barrier; the system tenant may
+// read any, for control-plane observability) beneath it.
+func (r *tenantBarrierAttentionReader) BarrierStatus(ctx context.Context, tenantID string) (sdlc.AttentionBarrierStatus, error) {
+	status, err := r.barrier.TenantBarrierStatus(ctx, tenantID)
+	if err != nil {
+		return sdlc.AttentionBarrierStatus{}, err
+	}
+	return sdlc.AttentionBarrierStatus{Scope: tenantID, Initialized: status.Initialized, Sealed: status.Sealed}, nil
 }
 
 // qrdbTenantClient returns the in-process qrdb SDK client whose embedded

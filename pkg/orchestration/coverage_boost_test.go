@@ -79,7 +79,7 @@ func TestNoAgentsAvailableError(t *testing.T) {
 	t.Parallel()
 
 	t.Run("ErrorWithCapabilities", func(t *testing.T) {
-		err := &NoAgentsAvailableError{
+		err := &NoFleetNodesAvailableError{
 			TaskTitle:            "build api",
 			RequiredCapabilities: []string{"go", "docker"},
 		}
@@ -93,7 +93,7 @@ func TestNoAgentsAvailableError(t *testing.T) {
 	})
 
 	t.Run("ErrorWithoutCapabilities", func(t *testing.T) {
-		err := &NoAgentsAvailableError{TaskTitle: "simple task"}
+		err := &NoFleetNodesAvailableError{TaskTitle: "simple task"}
 		got := err.Error()
 		if !containsStr(got, "simple task") {
 			t.Errorf("expected task title in error, got %q", got)
@@ -101,15 +101,15 @@ func TestNoAgentsAvailableError(t *testing.T) {
 	})
 
 	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &NoAgentsAvailableError{TaskTitle: "t"}
-		if !errors.Is(err, ErrNoAgentsAvailable) {
-			t.Error("errors.Is(err, ErrNoAgentsAvailable) = false, want true")
+		err := &NoFleetNodesAvailableError{TaskTitle: "t"}
+		if !errors.Is(err, ErrNoFleetNodesAvailable) {
+			t.Error("errors.Is(err, ErrNoFleetNodesAvailable) = false, want true")
 		}
 	})
 
 	t.Run("As", func(t *testing.T) {
-		var target *NoAgentsAvailableError
-		err := error(&NoAgentsAvailableError{TaskTitle: "task-x", RequiredCapabilities: []string{"rust"}})
+		var target *NoFleetNodesAvailableError
+		err := error(&NoFleetNodesAvailableError{TaskTitle: "task-x", RequiredCapabilities: []string{"rust"}})
 		if !errors.As(err, &target) {
 			t.Fatal("errors.As failed")
 		}
@@ -237,14 +237,14 @@ func TestControlLoopError(t *testing.T) {
 }
 
 // =============================================================================
-// Tier 1: Error type methods — agent_registry_types.go
+// Tier 1: Error type methods — fleet_registry_types.go
 // =============================================================================
 
 func TestAgentNotFoundError(t *testing.T) {
 	t.Parallel()
 
 	t.Run("Error", func(t *testing.T) {
-		err := &AgentNotFoundError{TenantID: "tenant-x", AgentID: "agent-y"}
+		err := &FleetNodeNotFoundError{TenantID: "tenant-x", NodeID: "agent-y"}
 		got := err.Error()
 		if !containsStr(got, "tenant-x") || !containsStr(got, "agent-y") {
 			t.Errorf("expected tenant and agent in error, got %q", got)
@@ -252,20 +252,20 @@ func TestAgentNotFoundError(t *testing.T) {
 	})
 
 	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &AgentNotFoundError{TenantID: "t", AgentID: "a"}
-		if !errors.Is(err, ErrAgentRegistryNotFound) {
-			t.Error("errors.Is(err, ErrAgentRegistryNotFound) = false, want true")
+		err := &FleetNodeNotFoundError{TenantID: "t", NodeID: "a"}
+		if !errors.Is(err, ErrFleetNodeNotFound) {
+			t.Error("errors.Is(err, ErrFleetNodeNotFound) = false, want true")
 		}
 	})
 
 	t.Run("As", func(t *testing.T) {
-		var target *AgentNotFoundError
-		err := error(&AgentNotFoundError{TenantID: "t1", AgentID: "a1"})
+		var target *FleetNodeNotFoundError
+		err := error(&FleetNodeNotFoundError{TenantID: "t1", NodeID: "a1"})
 		if !errors.As(err, &target) {
 			t.Fatal("errors.As failed")
 		}
-		if target.TenantID != "t1" || target.AgentID != "a1" {
-			t.Errorf("got TenantID=%q AgentID=%q", target.TenantID, target.AgentID)
+		if target.TenantID != "t1" || target.NodeID != "a1" {
+			t.Errorf("got TenantID=%q AgentID=%q", target.TenantID, target.NodeID)
 		}
 	})
 }
@@ -274,7 +274,7 @@ func TestAgentAlreadyExistsError(t *testing.T) {
 	t.Parallel()
 
 	t.Run("Error", func(t *testing.T) {
-		err := &AgentAlreadyExistsError{AgentID: "agent-dup"}
+		err := &FleetNodeAlreadyExistsError{NodeID: "agent-dup"}
 		got := err.Error()
 		if !containsStr(got, "agent-dup") {
 			t.Errorf("expected agent ID in error, got %q", got)
@@ -282,9 +282,9 @@ func TestAgentAlreadyExistsError(t *testing.T) {
 	})
 
 	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &AgentAlreadyExistsError{AgentID: "a"}
-		if !errors.Is(err, ErrAgentRegistryAlreadyExists) {
-			t.Error("errors.Is(err, ErrAgentRegistryAlreadyExists) = false, want true")
+		err := &FleetNodeAlreadyExistsError{NodeID: "a"}
+		if !errors.Is(err, ErrFleetNodeAlreadyExists) {
+			t.Error("errors.Is(err, ErrFleetNodeAlreadyExists) = false, want true")
 		}
 	})
 }
@@ -293,7 +293,7 @@ func TestAgentRegistryError(t *testing.T) {
 	t.Parallel()
 
 	t.Run("ErrorWithMessage", func(t *testing.T) {
-		err := &AgentRegistryError{Sentinel: ErrAgentRegistryNotFound, Message: "extra detail"}
+		err := &FleetRegistryError{Sentinel: ErrFleetNodeNotFound, Message: "extra detail"}
 		got := err.Error()
 		if !containsStr(got, "extra detail") {
 			t.Errorf("expected message in error, got %q", got)
@@ -301,7 +301,7 @@ func TestAgentRegistryError(t *testing.T) {
 	})
 
 	t.Run("ErrorWithoutMessage", func(t *testing.T) {
-		err := &AgentRegistryError{Sentinel: ErrAgentRegistryNotFound}
+		err := &FleetRegistryError{Sentinel: ErrFleetNodeNotFound}
 		got := err.Error()
 		if got == "" {
 			t.Fatal("expected non-empty error string")
@@ -309,9 +309,9 @@ func TestAgentRegistryError(t *testing.T) {
 	})
 
 	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &AgentRegistryError{Sentinel: ErrAgentRegistryNotFound, Message: "x"}
-		if !errors.Is(err, ErrAgentRegistryNotFound) {
-			t.Error("errors.Is(err, ErrAgentRegistryNotFound) = false, want true")
+		err := &FleetRegistryError{Sentinel: ErrFleetNodeNotFound, Message: "x"}
+		if !errors.Is(err, ErrFleetNodeNotFound) {
+			t.Error("errors.Is(err, ErrFleetNodeNotFound) = false, want true")
 		}
 	})
 }
@@ -354,7 +354,7 @@ func TestAgentStoreError(t *testing.T) {
 	t.Parallel()
 
 	t.Run("ErrorWithMessage", func(t *testing.T) {
-		err := &AgentStoreError{Sentinel: ErrAgentRegistryNotFound, Message: "store detail"}
+		err := &AgentStoreError{Sentinel: ErrFleetNodeNotFound, Message: "store detail"}
 		got := err.Error()
 		if !containsStr(got, "store detail") {
 			t.Errorf("expected message in error, got %q", got)
@@ -362,7 +362,7 @@ func TestAgentStoreError(t *testing.T) {
 	})
 
 	t.Run("ErrorWithoutMessage", func(t *testing.T) {
-		err := &AgentStoreError{Sentinel: ErrAgentRegistryNotFound}
+		err := &AgentStoreError{Sentinel: ErrFleetNodeNotFound}
 		got := err.Error()
 		if got == "" {
 			t.Fatal("expected non-empty error string")
@@ -370,9 +370,9 @@ func TestAgentStoreError(t *testing.T) {
 	})
 
 	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &AgentStoreError{Sentinel: ErrAgentRegistryNotFound, Message: "x"}
-		if !errors.Is(err, ErrAgentRegistryNotFound) {
-			t.Error("errors.Is(err, ErrAgentRegistryNotFound) = false, want true")
+		err := &AgentStoreError{Sentinel: ErrFleetNodeNotFound, Message: "x"}
+		if !errors.Is(err, ErrFleetNodeNotFound) {
+			t.Error("errors.Is(err, ErrFleetNodeNotFound) = false, want true")
 		}
 	})
 }
@@ -499,15 +499,15 @@ func TestOrchestrator_SetAgentRegistry(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	if impl.agentRegistry != nil {
-		t.Fatal("expected agentRegistry to be nil initially")
+	if impl.fleetRegistry != nil {
+		t.Fatal("expected fleetRegistry to be nil initially")
 	}
 
-	registry := NewInMemoryAgentRegistry()
-	impl.SetAgentRegistry(registry)
+	registry := NewInMemoryFleetRegistry()
+	impl.SetFleetRegistry(registry)
 
-	if impl.agentRegistry == nil {
-		t.Fatal("expected agentRegistry to be set")
+	if impl.fleetRegistry == nil {
+		t.Fatal("expected fleetRegistry to be set")
 	}
 }
 
@@ -684,23 +684,23 @@ func TestOrchestrator_ListProjects_Paginated(t *testing.T) {
 }
 
 // =============================================================================
-// Tier 2: RegisterAgent / GetAgent / ListAgents / RemoveAgent / AgentHeartbeat
+// Tier 2: RegisterFleetNode / GetFleetNode / ListFleetNodes / RemoveFleetNode / FleetNodeHeartbeat
 // =============================================================================
 
 func TestOrchestrator_RegisterAgent_NoRegistry(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	_, err := impl.RegisterAgent(context.Background(), &RegisterAgentRequest{
-		Name:      "agent-1",
-		Host:      "localhost:9090",
-		AgentType: "claude-code",
+	_, err := impl.RegisterFleetNode(context.Background(), &RegisterFleetNodeRequest{
+		Name:     "agent-1",
+		Host:     "localhost:9090",
+		NodeType: "claude-code",
 	})
 	if err == nil {
 		t.Fatal("expected error when agent registry not configured")
 	}
-	if !errors.Is(err, ErrAgentRegistryRequired) {
-		t.Fatalf("expected ErrAgentRegistryRequired, got %v", err)
+	if !errors.Is(err, ErrFleetRegistryRequired) {
+		t.Fatalf("expected ErrFleetRegistryRequired, got %v", err)
 	}
 }
 
@@ -708,17 +708,17 @@ func TestOrchestrator_RegisterAgent_MissingName(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	impl.SetAgentRegistry(NewInMemoryAgentRegistry())
+	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
 
-	_, err := impl.RegisterAgent(context.Background(), &RegisterAgentRequest{
-		Host:      "localhost:9090",
-		AgentType: "claude-code",
+	_, err := impl.RegisterFleetNode(context.Background(), &RegisterFleetNodeRequest{
+		Host:     "localhost:9090",
+		NodeType: "claude-code",
 	})
 	if err == nil {
 		t.Fatal("expected error for empty name")
 	}
-	if !errors.Is(err, ErrAgentNameRequired) {
-		t.Fatalf("expected ErrAgentNameRequired, got %v", err)
+	if !errors.Is(err, ErrFleetNodeNameRequired) {
+		t.Fatalf("expected ErrFleetNodeNameRequired, got %v", err)
 	}
 }
 
@@ -726,17 +726,17 @@ func TestOrchestrator_RegisterAgent_MissingHost(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	impl.SetAgentRegistry(NewInMemoryAgentRegistry())
+	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
 
-	_, err := impl.RegisterAgent(context.Background(), &RegisterAgentRequest{
-		Name:      "agent-1",
-		AgentType: "claude-code",
+	_, err := impl.RegisterFleetNode(context.Background(), &RegisterFleetNodeRequest{
+		Name:     "agent-1",
+		NodeType: "claude-code",
 	})
 	if err == nil {
 		t.Fatal("expected error for empty host")
 	}
-	if !errors.Is(err, ErrAgentHostRequired) {
-		t.Fatalf("expected ErrAgentHostRequired, got %v", err)
+	if !errors.Is(err, ErrFleetNodeHostRequired) {
+		t.Fatalf("expected ErrFleetNodeHostRequired, got %v", err)
 	}
 }
 
@@ -744,17 +744,17 @@ func TestOrchestrator_RegisterAgent_MissingType(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	impl.SetAgentRegistry(NewInMemoryAgentRegistry())
+	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
 
-	_, err := impl.RegisterAgent(context.Background(), &RegisterAgentRequest{
+	_, err := impl.RegisterFleetNode(context.Background(), &RegisterFleetNodeRequest{
 		Name: "agent-1",
 		Host: "localhost:9090",
 	})
 	if err == nil {
 		t.Fatal("expected error for empty agent type")
 	}
-	if !errors.Is(err, ErrAgentTypeRequired) {
-		t.Fatalf("expected ErrAgentTypeRequired, got %v", err)
+	if !errors.Is(err, ErrFleetNodeTypeRequired) {
+		t.Fatalf("expected ErrFleetNodeTypeRequired, got %v", err)
 	}
 }
 
@@ -762,30 +762,30 @@ func TestOrchestrator_RegisterAndGetAgent(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	impl.SetAgentRegistry(NewInMemoryAgentRegistry())
+	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
 	ctx := context.Background()
 
-	resp, err := impl.RegisterAgent(ctx, &RegisterAgentRequest{
-		TenantID:  "tenant-1",
-		Name:      "worker-agent",
-		Host:      "worker.host:9090",
-		AgentType: "claude-code",
-		Backend:   "acp",
+	resp, err := impl.RegisterFleetNode(ctx, &RegisterFleetNodeRequest{
+		TenantID: "tenant-1",
+		Name:     "worker-agent",
+		Host:     "worker.host:9090",
+		NodeType: "claude-code",
+		Backend:  "acp",
 	})
 	if err != nil {
-		t.Fatalf("RegisterAgent: %v", err)
+		t.Fatalf("RegisterFleetNode: %v", err)
 	}
-	if resp.Agent.ID == "" {
+	if resp.Node.ID == "" {
 		t.Fatal("expected non-empty agent ID")
 	}
 
-	// GetAgent returns the same registration.
-	got, err := impl.GetAgent(ctx, "tenant-1", resp.Agent.ID)
+	// GetFleetNode returns the same registration.
+	got, err := impl.GetFleetNode(ctx, "tenant-1", resp.Node.ID)
 	if err != nil {
-		t.Fatalf("GetAgent: %v", err)
+		t.Fatalf("GetFleetNode: %v", err)
 	}
-	if got.ID != resp.Agent.ID {
-		t.Errorf("ID mismatch: got %q want %q", got.ID, resp.Agent.ID)
+	if got.ID != resp.Node.ID {
+		t.Errorf("ID mismatch: got %q want %q", got.ID, resp.Node.ID)
 	}
 }
 
@@ -793,12 +793,12 @@ func TestOrchestrator_GetAgent_NoRegistry(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	_, err := impl.GetAgent(context.Background(), "t", "a")
+	_, err := impl.GetFleetNode(context.Background(), "t", "a")
 	if err == nil {
 		t.Fatal("expected error when agent registry not configured")
 	}
-	if !errors.Is(err, ErrAgentRegistryRequired) {
-		t.Fatalf("expected ErrAgentRegistryRequired, got %v", err)
+	if !errors.Is(err, ErrFleetRegistryRequired) {
+		t.Fatalf("expected ErrFleetRegistryRequired, got %v", err)
 	}
 }
 
@@ -806,25 +806,25 @@ func TestOrchestrator_ListAgents(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	impl.SetAgentRegistry(NewInMemoryAgentRegistry())
+	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
 	ctx := context.Background()
 
 	// Register a couple of agents.
 	for i := 0; i < 3; i++ {
-		_, err := impl.RegisterAgent(ctx, &RegisterAgentRequest{
-			TenantID:  "tenant-1",
-			Name:      "agent-" + itoa(i),
-			Host:      "host-" + itoa(i) + ":9090",
-			AgentType: "claude-code",
+		_, err := impl.RegisterFleetNode(ctx, &RegisterFleetNodeRequest{
+			TenantID: "tenant-1",
+			Name:     "agent-" + itoa(i),
+			Host:     "host-" + itoa(i) + ":9090",
+			NodeType: "claude-code",
 		})
 		if err != nil {
-			t.Fatalf("RegisterAgent[%d]: %v", i, err)
+			t.Fatalf("RegisterFleetNode[%d]: %v", i, err)
 		}
 	}
 
-	agents, err := impl.ListAgents(ctx, "tenant-1", nil)
+	agents, err := impl.ListFleetNodes(ctx, "tenant-1", nil)
 	if err != nil {
-		t.Fatalf("ListAgents: %v", err)
+		t.Fatalf("ListFleetNodes: %v", err)
 	}
 	if len(agents) != 3 {
 		t.Fatalf("expected 3 agents, got %d", len(agents))
@@ -835,12 +835,12 @@ func TestOrchestrator_ListAgents_NoRegistry(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	_, err := impl.ListAgents(context.Background(), "t", nil)
+	_, err := impl.ListFleetNodes(context.Background(), "t", nil)
 	if err == nil {
 		t.Fatal("expected error when agent registry not configured")
 	}
-	if !errors.Is(err, ErrAgentRegistryRequired) {
-		t.Fatalf("expected ErrAgentRegistryRequired, got %v", err)
+	if !errors.Is(err, ErrFleetRegistryRequired) {
+		t.Fatalf("expected ErrFleetRegistryRequired, got %v", err)
 	}
 }
 
@@ -848,25 +848,25 @@ func TestOrchestrator_RemoveAgent(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	impl.SetAgentRegistry(NewInMemoryAgentRegistry())
+	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
 	ctx := context.Background()
 
-	resp, err := impl.RegisterAgent(ctx, &RegisterAgentRequest{
-		TenantID:  "tenant-1",
-		Name:      "removable-agent",
-		Host:      "host:9090",
-		AgentType: "claude-code",
+	resp, err := impl.RegisterFleetNode(ctx, &RegisterFleetNodeRequest{
+		TenantID: "tenant-1",
+		Name:     "removable-agent",
+		Host:     "host:9090",
+		NodeType: "claude-code",
 	})
 	if err != nil {
-		t.Fatalf("RegisterAgent: %v", err)
+		t.Fatalf("RegisterFleetNode: %v", err)
 	}
 
-	if err := impl.RemoveAgent(ctx, "tenant-1", resp.Agent.ID); err != nil {
-		t.Fatalf("RemoveAgent: %v", err)
+	if err := impl.RemoveFleetNode(ctx, "tenant-1", resp.Node.ID); err != nil {
+		t.Fatalf("RemoveFleetNode: %v", err)
 	}
 
 	// Agent should be gone now.
-	_, err = impl.GetAgent(ctx, "tenant-1", resp.Agent.ID)
+	_, err = impl.GetFleetNode(ctx, "tenant-1", resp.Node.ID)
 	if err == nil {
 		t.Fatal("expected error after removal")
 	}
@@ -876,12 +876,12 @@ func TestOrchestrator_RemoveAgent_NoRegistry(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	err := impl.RemoveAgent(context.Background(), "t", "a")
+	err := impl.RemoveFleetNode(context.Background(), "t", "a")
 	if err == nil {
 		t.Fatal("expected error when agent registry not configured")
 	}
-	if !errors.Is(err, ErrAgentRegistryRequired) {
-		t.Fatalf("expected ErrAgentRegistryRequired, got %v", err)
+	if !errors.Is(err, ErrFleetRegistryRequired) {
+		t.Fatalf("expected ErrFleetRegistryRequired, got %v", err)
 	}
 }
 
@@ -889,21 +889,21 @@ func TestOrchestrator_AgentHeartbeat(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	impl.SetAgentRegistry(NewInMemoryAgentRegistry())
+	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
 	ctx := context.Background()
 
-	resp, err := impl.RegisterAgent(ctx, &RegisterAgentRequest{
-		TenantID:  "tenant-1",
-		Name:      "heartbeat-agent",
-		Host:      "host:9090",
-		AgentType: "claude-code",
+	resp, err := impl.RegisterFleetNode(ctx, &RegisterFleetNodeRequest{
+		TenantID: "tenant-1",
+		Name:     "heartbeat-agent",
+		Host:     "host:9090",
+		NodeType: "claude-code",
 	})
 	if err != nil {
-		t.Fatalf("RegisterAgent: %v", err)
+		t.Fatalf("RegisterFleetNode: %v", err)
 	}
 
-	if err := impl.AgentHeartbeat(ctx, "tenant-1", resp.Agent.ID, nil); err != nil {
-		t.Fatalf("AgentHeartbeat: %v", err)
+	if err := impl.FleetNodeHeartbeat(ctx, "tenant-1", resp.Node.ID, nil); err != nil {
+		t.Fatalf("FleetNodeHeartbeat: %v", err)
 	}
 }
 
@@ -911,12 +911,12 @@ func TestOrchestrator_AgentHeartbeat_NoRegistry(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	err := impl.AgentHeartbeat(context.Background(), "t", "a", nil)
+	err := impl.FleetNodeHeartbeat(context.Background(), "t", "a", nil)
 	if err == nil {
 		t.Fatal("expected error when agent registry not configured")
 	}
-	if !errors.Is(err, ErrAgentRegistryRequired) {
-		t.Fatalf("expected ErrAgentRegistryRequired, got %v", err)
+	if !errors.Is(err, ErrFleetRegistryRequired) {
+		t.Fatalf("expected ErrFleetRegistryRequired, got %v", err)
 	}
 }
 
@@ -1515,24 +1515,24 @@ func TestAgentServiceError(t *testing.T) {
 }
 
 // =============================================================================
-// Tier 2: EffectiveKind — agent_registry_types.go line 66
+// Tier 2: EffectiveKind — fleet_registry_types.go line 66
 // =============================================================================
 
 func TestAgentRegistration_EffectiveKind(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		kind AgentKind
-		want AgentKind
+		kind FleetNodeKind
+		want FleetNodeKind
 	}{
-		{AgentKindDaemon, AgentKindDaemon},
-		{AgentKindContainerScript, AgentKindContainerScript},
-		{AgentKindEmbedded, AgentKindEmbedded},
-		{"", AgentKindExternal}, // empty kind should default to External
+		{FleetNodeKindDaemon, FleetNodeKindDaemon},
+		{FleetNodeKindContainerScript, FleetNodeKindContainerScript},
+		{FleetNodeKindEmbedded, FleetNodeKindEmbedded},
+		{"", FleetNodeKindExternal}, // empty kind should default to External
 	}
 
 	for _, tc := range tests {
-		reg := &AgentRegistration{Kind: tc.kind}
+		reg := &FleetNode{Kind: tc.kind}
 		got := reg.EffectiveKind()
 		if got != tc.want {
 			t.Errorf("EffectiveKind() with Kind=%q = %q, want %q", tc.kind, got, tc.want)
@@ -2201,7 +2201,7 @@ func TestExecContainerRuntime_Run_EmptyImage(t *testing.T) {
 }
 
 // =============================================================================
-// Tier 4: findAgentByBackend / findAgentWithPersistentSessions / findBestAvailableAgent
+// Tier 4: findFleetNodeByBackend / findAgentWithPersistentSessions / findBestAvailableFleetNode
 // =============================================================================
 
 func TestControlLoop_FindAgentByBackend(t *testing.T) {
@@ -2209,14 +2209,14 @@ func TestControlLoop_FindAgentByBackend(t *testing.T) {
 
 	cl := newMinimalControlLoop(t)
 
-	agents := []*AgentRegistration{
-		{ID: "a1", Backend: "acp", Status: AgentStatusRunning},
-		{ID: "a2", Backend: "acp", Status: AgentStatusIdle},
-		{ID: "a3", Backend: "ollama", Status: AgentStatusIdle},
+	agents := []*FleetNode{
+		{ID: "a1", Backend: "acp", Status: FleetNodeStatusRunning},
+		{ID: "a2", Backend: "acp", Status: FleetNodeStatusIdle},
+		{ID: "a3", Backend: "ollama", Status: FleetNodeStatusIdle},
 	}
 
 	t.Run("PrefersIdle", func(t *testing.T) {
-		id, backend := cl.findAgentByBackend("acp", agents)
+		id, backend := cl.findFleetNodeByBackend("acp", agents)
 		if id != "a2" {
 			t.Errorf("expected idle agent a2, got %q", id)
 		}
@@ -2226,10 +2226,10 @@ func TestControlLoop_FindAgentByBackend(t *testing.T) {
 	})
 
 	t.Run("FallsBackToRunning", func(t *testing.T) {
-		runningAgents := []*AgentRegistration{
-			{ID: "a1", Backend: "acp", Status: AgentStatusRunning},
+		runningAgents := []*FleetNode{
+			{ID: "a1", Backend: "acp", Status: FleetNodeStatusRunning},
 		}
-		id, backend := cl.findAgentByBackend("acp", runningAgents)
+		id, backend := cl.findFleetNodeByBackend("acp", runningAgents)
 		if id != "a1" {
 			t.Errorf("expected fallback agent a1, got %q", id)
 		}
@@ -2239,7 +2239,7 @@ func TestControlLoop_FindAgentByBackend(t *testing.T) {
 	})
 
 	t.Run("NotFoundReturnsEmpty", func(t *testing.T) {
-		id, backend := cl.findAgentByBackend("unknown-backend", agents)
+		id, backend := cl.findFleetNodeByBackend("unknown-backend", agents)
 		if id != "" || backend != "" {
 			t.Errorf("expected empty strings, got id=%q backend=%q", id, backend)
 		}
@@ -2255,10 +2255,10 @@ func TestControlLoop_FindAgentWithPersistentSessions(t *testing.T) {
 		"acp": {PersistentSessions: true},
 	}
 
-	agents := []*AgentRegistration{
-		{ID: "a1", Backend: "acp", Status: AgentStatusRunning},
-		{ID: "a2", Backend: "acp", Status: AgentStatusIdle},
-		{ID: "a3", Backend: "ollama", Status: AgentStatusIdle},
+	agents := []*FleetNode{
+		{ID: "a1", Backend: "acp", Status: FleetNodeStatusRunning},
+		{ID: "a2", Backend: "acp", Status: FleetNodeStatusIdle},
+		{ID: "a3", Backend: "ollama", Status: FleetNodeStatusIdle},
 	}
 
 	t.Run("PrefersIdleWithPersistentSessions", func(t *testing.T) {
@@ -2282,8 +2282,8 @@ func TestControlLoop_FindAgentWithPersistentSessions(t *testing.T) {
 	})
 
 	t.Run("FallbackToRunning", func(t *testing.T) {
-		runningOnly := []*AgentRegistration{
-			{ID: "a1", Backend: "acp", Status: AgentStatusRunning},
+		runningOnly := []*FleetNode{
+			{ID: "a1", Backend: "acp", Status: FleetNodeStatusRunning},
 		}
 		id, backend := cl.findAgentWithPersistentSessions(runningOnly, backendCaps)
 		if id != "a1" {
@@ -2301,11 +2301,11 @@ func TestControlLoop_FindBestAvailableAgent(t *testing.T) {
 	cl := newMinimalControlLoop(t)
 
 	t.Run("PrefersIdle", func(t *testing.T) {
-		agents := []*AgentRegistration{
-			{ID: "a1", Backend: "acp", Status: AgentStatusRunning},
-			{ID: "a2", Backend: "acp", Status: AgentStatusIdle},
+		agents := []*FleetNode{
+			{ID: "a1", Backend: "acp", Status: FleetNodeStatusRunning},
+			{ID: "a2", Backend: "acp", Status: FleetNodeStatusIdle},
 		}
-		id, backend := cl.findBestAvailableAgent(agents)
+		id, backend := cl.findBestAvailableFleetNode(agents)
 		if id != "a2" {
 			t.Errorf("expected idle agent a2, got %q", id)
 		}
@@ -2315,17 +2315,17 @@ func TestControlLoop_FindBestAvailableAgent(t *testing.T) {
 	})
 
 	t.Run("FallbackToRunning", func(t *testing.T) {
-		agents := []*AgentRegistration{
-			{ID: "a1", Backend: "acp", Status: AgentStatusRunning},
+		agents := []*FleetNode{
+			{ID: "a1", Backend: "acp", Status: FleetNodeStatusRunning},
 		}
-		id, _ := cl.findBestAvailableAgent(agents)
+		id, _ := cl.findBestAvailableFleetNode(agents)
 		if id != "a1" {
 			t.Errorf("expected fallback agent a1, got %q", id)
 		}
 	})
 
 	t.Run("EmptyReturnsEmpty", func(t *testing.T) {
-		id, backend := cl.findBestAvailableAgent(nil)
+		id, backend := cl.findBestAvailableFleetNode(nil)
 		if id != "" || backend != "" {
 			t.Errorf("expected empty strings, got id=%q backend=%q", id, backend)
 		}
@@ -2407,9 +2407,9 @@ func TestOrchestrator_StartJob_WithBackend(t *testing.T) {
 
 	// StartJob with all required fields — it will launch and immediately return.
 	resp, startErr := impl.StartJob(ctx, &StartJobRequest{
-		TenantID:    "tenant-1",
-		Description: "build the thing",
-		LeadBackend: "mock",
+		TenantID:      "tenant-1",
+		Description:   "build the thing",
+		routedBackend: "mock",
 	})
 	if startErr != nil {
 		t.Fatalf("StartJob: %v", startErr)
@@ -2554,22 +2554,22 @@ func TestOrchestrator_GetTask_NoStore(t *testing.T) {
 }
 
 // =============================================================================
-// Tier 5: RemoveAgent (agent_registry.go) — error path
+// Tier 5: RemoveFleetNode (fleet_registry.go) — error path
 // =============================================================================
 
 func TestAgentRegistry_RemoveAgent_NotFound(t *testing.T) {
 	t.Parallel()
 
-	registry := NewInMemoryAgentRegistry()
+	registry := NewInMemoryFleetRegistry()
 	ctx := context.Background()
 
-	err := registry.RemoveAgent(ctx, "tenant-1", "nonexistent-agent-id")
+	err := registry.RemoveFleetNode(ctx, "tenant-1", "nonexistent-agent-id")
 	if err == nil {
 		t.Fatal("expected error for nonexistent agent")
 	}
-	var notFound *AgentNotFoundError
+	var notFound *FleetNodeNotFoundError
 	if !errors.As(err, &notFound) {
-		t.Fatalf("expected *AgentNotFoundError, got %T: %v", err, err)
+		t.Fatalf("expected *FleetNodeNotFoundError, got %T: %v", err, err)
 	}
 }
 
@@ -2699,40 +2699,40 @@ func TestOrchestrator_DiscoverProjects_BadPath(t *testing.T) {
 }
 
 // =============================================================================
-// Agent Registry: UpdateAgent — success and error paths
+// Agent Registry: UpdateFleetNode — success and error paths
 // =============================================================================
 
 func TestAgentRegistry_UpdateAgent_Success(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
+	reg := NewInMemoryFleetRegistry()
 	ctx := context.Background()
 
-	agent := &AgentRegistration{
-		ID:        "update-1",
-		TenantID:  "tenant-upd",
-		Name:      "update-agent",
-		Host:      "localhost",
-		Backend:   "acp",
-		AgentType: "worker",
-		Status:    AgentStatusIdle,
-		Version:   0,
+	agent := &FleetNode{
+		ID:       "update-1",
+		TenantID: "tenant-upd",
+		Name:     "update-agent",
+		Host:     "localhost",
+		Backend:  "acp",
+		NodeType: "worker",
+		Status:   FleetNodeStatusIdle,
+		Version:  0,
 	}
-	if err := reg.RegisterAgent(ctx, agent); err != nil {
-		t.Fatalf("RegisterAgent: %v", err)
-	}
-
-	// UpdateAgent must use Version=0 to match the stored version.
-	agent.Status = AgentStatusRunning
-	if err := reg.UpdateAgent(ctx, agent); err != nil {
-		t.Fatalf("UpdateAgent: %v", err)
+	if err := reg.RegisterFleetNode(ctx, agent); err != nil {
+		t.Fatalf("RegisterFleetNode: %v", err)
 	}
 
-	got, err := reg.GetAgent(ctx, "tenant-upd", "update-1")
+	// UpdateFleetNode must use Version=0 to match the stored version.
+	agent.Status = FleetNodeStatusRunning
+	if err := reg.UpdateFleetNode(ctx, agent); err != nil {
+		t.Fatalf("UpdateFleetNode: %v", err)
+	}
+
+	got, err := reg.GetFleetNode(ctx, "tenant-upd", "update-1")
 	if err != nil {
-		t.Fatalf("GetAgent: %v", err)
+		t.Fatalf("GetFleetNode: %v", err)
 	}
-	if got.Status != AgentStatusRunning {
+	if got.Status != FleetNodeStatusRunning {
 		t.Errorf("status = %q, want Running", got.Status)
 	}
 }
@@ -2740,52 +2740,52 @@ func TestAgentRegistry_UpdateAgent_Success(t *testing.T) {
 func TestAgentRegistry_UpdateAgent_VersionConflict(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
+	reg := NewInMemoryFleetRegistry()
 	ctx := context.Background()
 
-	agent := &AgentRegistration{
-		ID:        "conflict-1",
-		TenantID:  "tenant-conflict",
-		Name:      "conflict-agent",
-		Host:      "localhost",
-		Backend:   "acp",
-		AgentType: "worker",
-		Status:    AgentStatusIdle,
-		Version:   0,
+	agent := &FleetNode{
+		ID:       "conflict-1",
+		TenantID: "tenant-conflict",
+		Name:     "conflict-agent",
+		Host:     "localhost",
+		Backend:  "acp",
+		NodeType: "worker",
+		Status:   FleetNodeStatusIdle,
+		Version:  0,
 	}
-	if err := reg.RegisterAgent(ctx, agent); err != nil {
-		t.Fatalf("RegisterAgent: %v", err)
+	if err := reg.RegisterFleetNode(ctx, agent); err != nil {
+		t.Fatalf("RegisterFleetNode: %v", err)
 	}
 
 	// Submit with wrong version.
 	agent.Version = 99
-	err := reg.UpdateAgent(ctx, agent)
+	err := reg.UpdateFleetNode(ctx, agent)
 	if err == nil {
 		t.Fatal("expected error for version conflict")
 	}
-	if !errors.Is(err, ErrAgentRegistryInvalidInput) {
-		t.Errorf("expected ErrAgentRegistryInvalidInput, got %v", err)
+	if !errors.Is(err, ErrFleetRegistryInvalidInput) {
+		t.Errorf("expected ErrFleetRegistryInvalidInput, got %v", err)
 	}
 }
 
 func TestAgentRegistry_UpdateAgent_NilAgent(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
-	err := reg.UpdateAgent(context.Background(), nil)
+	reg := NewInMemoryFleetRegistry()
+	err := reg.UpdateFleetNode(context.Background(), nil)
 	if err == nil {
 		t.Fatal("expected error for nil agent")
 	}
-	if !errors.Is(err, ErrAgentRegistryInvalidInput) {
-		t.Errorf("expected ErrAgentRegistryInvalidInput, got %v", err)
+	if !errors.Is(err, ErrFleetRegistryInvalidInput) {
+		t.Errorf("expected ErrFleetRegistryInvalidInput, got %v", err)
 	}
 }
 
 func TestAgentRegistry_UpdateAgent_NotFound(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
-	err := reg.UpdateAgent(context.Background(), &AgentRegistration{
+	reg := NewInMemoryFleetRegistry()
+	err := reg.UpdateFleetNode(context.Background(), &FleetNode{
 		ID:       "ghost-agent",
 		TenantID: "tenant-ghost",
 		Version:  0,
@@ -2793,63 +2793,63 @@ func TestAgentRegistry_UpdateAgent_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for non-existent agent")
 	}
-	if !errors.Is(err, ErrAgentRegistryNotFound) {
-		t.Errorf("expected ErrAgentRegistryNotFound, got %v", err)
+	if !errors.Is(err, ErrFleetNodeNotFound) {
+		t.Errorf("expected ErrFleetNodeNotFound, got %v", err)
 	}
 }
 
 // =============================================================================
-// Agent Registry: ListAgents — with filter
+// Agent Registry: ListFleetNodes — with filter
 // =============================================================================
 
 func TestAgentRegistry_ListAgents_WithFilter(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
+	reg := NewInMemoryFleetRegistry()
 	ctx := context.Background()
 
-	agents := []*AgentRegistration{
-		{ID: "la-1", TenantID: "tenant-la", Name: "agent-a", Host: "h1", Backend: "acp", AgentType: "worker", Status: AgentStatusIdle},
-		{ID: "la-2", TenantID: "tenant-la", Name: "agent-b", Host: "h2", Backend: "ollama", AgentType: "worker", Status: AgentStatusRunning},
-		{ID: "la-3", TenantID: "tenant-la", Name: "agent-c", Host: "h1", Backend: "acp", AgentType: "reviewer", Status: AgentStatusIdle},
+	agents := []*FleetNode{
+		{ID: "la-1", TenantID: "tenant-la", Name: "agent-a", Host: "h1", Backend: "acp", NodeType: "worker", Status: FleetNodeStatusIdle},
+		{ID: "la-2", TenantID: "tenant-la", Name: "agent-b", Host: "h2", Backend: "ollama", NodeType: "worker", Status: FleetNodeStatusRunning},
+		{ID: "la-3", TenantID: "tenant-la", Name: "agent-c", Host: "h1", Backend: "acp", NodeType: "reviewer", Status: FleetNodeStatusIdle},
 	}
 	for _, a := range agents {
-		if err := reg.RegisterAgent(ctx, a); err != nil {
-			t.Fatalf("RegisterAgent %s: %v", a.ID, err)
+		if err := reg.RegisterFleetNode(ctx, a); err != nil {
+			t.Fatalf("RegisterFleetNode %s: %v", a.ID, err)
 		}
 	}
 
 	// Filter by backend.
-	list, err := reg.ListAgents(ctx, "tenant-la", &AgentFilter{Backend: "acp"})
+	list, err := reg.ListFleetNodes(ctx, "tenant-la", &FleetNodeFilter{Backend: "acp"})
 	if err != nil {
-		t.Fatalf("ListAgents: %v", err)
+		t.Fatalf("ListFleetNodes: %v", err)
 	}
 	if len(list) != 2 {
 		t.Errorf("expected 2 acp agents, got %d", len(list))
 	}
 
 	// Filter by host.
-	list, err = reg.ListAgents(ctx, "tenant-la", &AgentFilter{Host: "h1"})
+	list, err = reg.ListFleetNodes(ctx, "tenant-la", &FleetNodeFilter{Host: "h1"})
 	if err != nil {
-		t.Fatalf("ListAgents by host: %v", err)
+		t.Fatalf("ListFleetNodes by host: %v", err)
 	}
 	if len(list) != 2 {
 		t.Errorf("expected 2 agents on h1, got %d", len(list))
 	}
 
 	// Filter by status.
-	list, err = reg.ListAgents(ctx, "tenant-la", &AgentFilter{Status: AgentStatusRunning})
+	list, err = reg.ListFleetNodes(ctx, "tenant-la", &FleetNodeFilter{Status: FleetNodeStatusRunning})
 	if err != nil {
-		t.Fatalf("ListAgents by status: %v", err)
+		t.Fatalf("ListFleetNodes by status: %v", err)
 	}
 	if len(list) != 1 {
 		t.Errorf("expected 1 running agent, got %d", len(list))
 	}
 
 	// Filter with limit.
-	list, err = reg.ListAgents(ctx, "tenant-la", &AgentFilter{Limit: 1})
+	list, err = reg.ListFleetNodes(ctx, "tenant-la", &FleetNodeFilter{Limit: 1})
 	if err != nil {
-		t.Fatalf("ListAgents with limit: %v", err)
+		t.Fatalf("ListFleetNodes with limit: %v", err)
 	}
 	if len(list) != 1 {
 		t.Errorf("expected 1 agent with limit=1, got %d", len(list))
@@ -2859,47 +2859,47 @@ func TestAgentRegistry_ListAgents_WithFilter(t *testing.T) {
 func TestAgentRegistry_ListAgents_EmptyTenantID(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
-	_, err := reg.ListAgents(context.Background(), "", nil)
+	reg := NewInMemoryFleetRegistry()
+	_, err := reg.ListFleetNodes(context.Background(), "", nil)
 	if err == nil {
 		t.Fatal("expected error for empty tenantID")
 	}
-	if !errors.Is(err, ErrAgentRegistryInvalidInput) {
-		t.Errorf("expected ErrAgentRegistryInvalidInput, got %v", err)
+	if !errors.Is(err, ErrFleetRegistryInvalidInput) {
+		t.Errorf("expected ErrFleetRegistryInvalidInput, got %v", err)
 	}
 }
 
 // =============================================================================
-// Agent Registry: DeleteTenantAgents
+// Agent Registry: DeleteTenantFleetNodes
 // =============================================================================
 
 func TestAgentRegistry_DeleteTenantAgents(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
+	reg := NewInMemoryFleetRegistry()
 	ctx := context.Background()
 
 	for i := 0; i < 3; i++ {
-		if err := reg.RegisterAgent(ctx, &AgentRegistration{
-			ID:        "del-" + itoa(i),
-			TenantID:  "tenant-del",
-			Name:      "agent-del-" + itoa(i),
-			Host:      "h",
-			Backend:   "acp",
-			AgentType: "worker",
-			Status:    AgentStatusIdle,
+		if err := reg.RegisterFleetNode(ctx, &FleetNode{
+			ID:       "del-" + itoa(i),
+			TenantID: "tenant-del",
+			Name:     "agent-del-" + itoa(i),
+			Host:     "h",
+			Backend:  "acp",
+			NodeType: "worker",
+			Status:   FleetNodeStatusIdle,
 		}); err != nil {
-			t.Fatalf("RegisterAgent: %v", err)
+			t.Fatalf("RegisterFleetNode: %v", err)
 		}
 	}
 
-	if err := reg.DeleteTenantAgents(ctx, "tenant-del"); err != nil {
-		t.Fatalf("DeleteTenantAgents: %v", err)
+	if err := reg.DeleteTenantFleetNodes(ctx, "tenant-del"); err != nil {
+		t.Fatalf("DeleteTenantFleetNodes: %v", err)
 	}
 
-	list, err := reg.ListAgents(ctx, "tenant-del", nil)
+	list, err := reg.ListFleetNodes(ctx, "tenant-del", nil)
 	if err != nil {
-		t.Fatalf("ListAgents after delete: %v", err)
+		t.Fatalf("ListFleetNodes after delete: %v", err)
 	}
 	if len(list) != 0 {
 		t.Errorf("expected 0 agents after delete, got %d", len(list))
@@ -2909,13 +2909,13 @@ func TestAgentRegistry_DeleteTenantAgents(t *testing.T) {
 func TestAgentRegistry_DeleteTenantAgents_EmptyTenantID(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
-	err := reg.DeleteTenantAgents(context.Background(), "")
+	reg := NewInMemoryFleetRegistry()
+	err := reg.DeleteTenantFleetNodes(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error for empty tenantID")
 	}
-	if !errors.Is(err, ErrAgentRegistryInvalidInput) {
-		t.Errorf("expected ErrAgentRegistryInvalidInput, got %v", err)
+	if !errors.Is(err, ErrFleetRegistryInvalidInput) {
+		t.Errorf("expected ErrFleetRegistryInvalidInput, got %v", err)
 	}
 }
 
@@ -2926,30 +2926,30 @@ func TestAgentRegistry_DeleteTenantAgents_EmptyTenantID(t *testing.T) {
 func TestAgentRegistry_Heartbeat_Success(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
+	reg := NewInMemoryFleetRegistry()
 	ctx := context.Background()
 
-	if err := reg.RegisterAgent(ctx, &AgentRegistration{
-		ID:        "hb-1",
-		TenantID:  "tenant-hb",
-		Name:      "hb-agent",
-		Host:      "h",
-		Backend:   "acp",
-		AgentType: "worker",
-		Status:    AgentStatusIdle,
+	if err := reg.RegisterFleetNode(ctx, &FleetNode{
+		ID:       "hb-1",
+		TenantID: "tenant-hb",
+		Name:     "hb-agent",
+		Host:     "h",
+		Backend:  "acp",
+		NodeType: "worker",
+		Status:   FleetNodeStatusIdle,
 	}); err != nil {
-		t.Fatalf("RegisterAgent: %v", err)
+		t.Fatalf("RegisterFleetNode: %v", err)
 	}
 
 	if err := reg.Heartbeat(ctx, "tenant-hb", "hb-1", nil); err != nil {
 		t.Fatalf("Heartbeat: %v", err)
 	}
 
-	got, err := reg.GetAgent(ctx, "tenant-hb", "hb-1")
+	got, err := reg.GetFleetNode(ctx, "tenant-hb", "hb-1")
 	if err != nil {
-		t.Fatalf("GetAgent: %v", err)
+		t.Fatalf("GetFleetNode: %v", err)
 	}
-	if got.Status != AgentStatusRunning {
+	if got.Status != FleetNodeStatusRunning {
 		t.Errorf("status after heartbeat = %q, want Running", got.Status)
 	}
 }
@@ -2957,13 +2957,13 @@ func TestAgentRegistry_Heartbeat_Success(t *testing.T) {
 func TestAgentRegistry_Heartbeat_NotFound(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
+	reg := NewInMemoryFleetRegistry()
 	err := reg.Heartbeat(context.Background(), "tenant-hb", "no-such-agent", nil)
 	if err == nil {
 		t.Fatal("expected error for missing agent")
 	}
-	if !errors.Is(err, ErrAgentRegistryNotFound) {
-		t.Errorf("expected ErrAgentRegistryNotFound, got %v", err)
+	if !errors.Is(err, ErrFleetNodeNotFound) {
+		t.Errorf("expected ErrFleetNodeNotFound, got %v", err)
 	}
 }
 
@@ -3468,24 +3468,24 @@ func TestOrchestrator_RegisterAgent_WithRegistry(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	reg := NewInMemoryAgentRegistry()
-	impl.SetAgentRegistry(reg)
+	reg := NewInMemoryFleetRegistry()
+	impl.SetFleetRegistry(reg)
 
-	resp, err := impl.RegisterAgent(context.Background(), &RegisterAgentRequest{
-		TenantID:  "tenant-svc",
-		Name:      "svc-agent",
-		Host:      "localhost",
-		Backend:   "acp",
-		AgentType: "worker",
+	resp, err := impl.RegisterFleetNode(context.Background(), &RegisterFleetNodeRequest{
+		TenantID: "tenant-svc",
+		Name:     "svc-agent",
+		Host:     "localhost",
+		Backend:  "acp",
+		NodeType: "worker",
 	})
 	if err != nil {
-		t.Fatalf("RegisterAgent: %v", err)
+		t.Fatalf("RegisterFleetNode: %v", err)
 	}
-	if resp == nil || resp.Agent == nil {
+	if resp == nil || resp.Node == nil {
 		t.Fatal("expected non-nil response")
 	}
-	if resp.Agent.Name != "svc-agent" {
-		t.Errorf("name = %q, want svc-agent", resp.Agent.Name)
+	if resp.Node.Name != "svc-agent" {
+		t.Errorf("name = %q, want svc-agent", resp.Node.Name)
 	}
 }
 
@@ -3493,27 +3493,27 @@ func TestOrchestrator_ListAgents_WithRegistry(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	reg := NewInMemoryAgentRegistry()
-	impl.SetAgentRegistry(reg)
+	reg := NewInMemoryFleetRegistry()
+	impl.SetFleetRegistry(reg)
 
 	ctx := context.Background()
 	for i := 0; i < 2; i++ {
-		if err := reg.RegisterAgent(ctx, &AgentRegistration{
-			ID:        "la-svc-" + itoa(i),
-			TenantID:  "tenant-la-svc",
-			Name:      "agent-" + itoa(i),
-			Host:      "h",
-			Backend:   "acp",
-			AgentType: "worker",
-			Status:    AgentStatusIdle,
+		if err := reg.RegisterFleetNode(ctx, &FleetNode{
+			ID:       "la-svc-" + itoa(i),
+			TenantID: "tenant-la-svc",
+			Name:     "agent-" + itoa(i),
+			Host:     "h",
+			Backend:  "acp",
+			NodeType: "worker",
+			Status:   FleetNodeStatusIdle,
 		}); err != nil {
-			t.Fatalf("RegisterAgent: %v", err)
+			t.Fatalf("RegisterFleetNode: %v", err)
 		}
 	}
 
-	agents, err := impl.ListAgents(ctx, "tenant-la-svc", nil)
+	agents, err := impl.ListFleetNodes(ctx, "tenant-la-svc", nil)
 	if err != nil {
-		t.Fatalf("ListAgents: %v", err)
+		t.Fatalf("ListFleetNodes: %v", err)
 	}
 	if len(agents) != 2 {
 		t.Errorf("expected 2 agents, got %d", len(agents))
@@ -3521,22 +3521,22 @@ func TestOrchestrator_ListAgents_WithRegistry(t *testing.T) {
 }
 
 // =============================================================================
-// Orchestrator: AgentHeartbeat — with registry, not found
+// Orchestrator: FleetNodeHeartbeat — with registry, not found
 // =============================================================================
 
 func TestOrchestrator_AgentHeartbeat_NotFound(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	reg := NewInMemoryAgentRegistry()
-	impl.SetAgentRegistry(reg)
+	reg := NewInMemoryFleetRegistry()
+	impl.SetFleetRegistry(reg)
 
-	err := impl.AgentHeartbeat(context.Background(), "tenant-hb2", "ghost-agent", nil)
+	err := impl.FleetNodeHeartbeat(context.Background(), "tenant-hb2", "ghost-agent", nil)
 	if err == nil {
 		t.Fatal("expected error for missing agent")
 	}
-	if !errors.Is(err, ErrAgentRegistryNotFound) {
-		t.Errorf("expected ErrAgentRegistryNotFound, got %v", err)
+	if !errors.Is(err, ErrFleetNodeNotFound) {
+		t.Errorf("expected ErrFleetNodeNotFound, got %v", err)
 	}
 }
 
@@ -3609,7 +3609,7 @@ func TestControlLoop_RoleHasCapability_Matching(t *testing.T) {
 }
 
 // =============================================================================
-// ControlLoop: resolveAgentSpec
+// ControlLoop: resolveNodeSpec
 // =============================================================================
 
 func TestControlLoop_ResolveAgentSpec_Found(t *testing.T) {
@@ -3622,7 +3622,7 @@ func TestControlLoop_ResolveAgentSpec_Found(t *testing.T) {
 			{Role: "lead", Backend: "acp", Model: "claude-3"},
 		},
 	}
-	spec := cl.resolveAgentSpec("lead")
+	spec := cl.resolveNodeSpec("lead")
 	if spec == nil {
 		t.Fatal("expected non-nil spec for 'lead' role")
 	}
@@ -3641,7 +3641,7 @@ func TestControlLoop_ResolveAgentSpec_NotFound(t *testing.T) {
 			{Role: "lead", Backend: "acp"},
 		},
 	}
-	spec := cl.resolveAgentSpec("worker")
+	spec := cl.resolveNodeSpec("worker")
 	if spec != nil {
 		t.Errorf("expected nil spec for missing role, got %+v", spec)
 	}
@@ -4326,26 +4326,26 @@ func TestCostTrackerStore_GetAgentUsage_AfterRecord(t *testing.T) {
 func TestAgentRegistry_GetAgent_EmptyAgentID(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
-	_, err := reg.GetAgent(context.Background(), "tenant-1", "")
+	reg := NewInMemoryFleetRegistry()
+	_, err := reg.GetFleetNode(context.Background(), "tenant-1", "")
 	if err == nil {
 		t.Fatal("expected error for empty agentID")
 	}
-	if !errors.Is(err, ErrAgentRegistryInvalidInput) {
-		t.Errorf("expected ErrAgentRegistryInvalidInput, got %v", err)
+	if !errors.Is(err, ErrFleetRegistryInvalidInput) {
+		t.Errorf("expected ErrFleetRegistryInvalidInput, got %v", err)
 	}
 }
 
 func TestAgentRegistry_RemoveAgent_EmptyTenantID(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
-	err := reg.RemoveAgent(context.Background(), "", "agent-1")
+	reg := NewInMemoryFleetRegistry()
+	err := reg.RemoveFleetNode(context.Background(), "", "agent-1")
 	if err == nil {
 		t.Fatal("expected error for empty tenantID")
 	}
-	if !errors.Is(err, ErrAgentRegistryInvalidInput) {
-		t.Errorf("expected ErrAgentRegistryInvalidInput, got %v", err)
+	if !errors.Is(err, ErrFleetRegistryInvalidInput) {
+		t.Errorf("expected ErrFleetRegistryInvalidInput, got %v", err)
 	}
 }
 
@@ -4783,30 +4783,30 @@ func TestPeerMessagingStore_NotifySubscriber_BufferFull(t *testing.T) {
 }
 
 // =============================================================================
-// agent_registry — ListAgents with filters, UpdateAgent version conflict
+// agent_registry — ListFleetNodes with filters, UpdateFleetNode version conflict
 // =============================================================================
 
 func TestAgentRegistry_ListAgents_WithFilters(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
+	reg := NewInMemoryFleetRegistry()
 	ctx := context.Background()
 
-	agents := []*AgentRegistration{
-		{ID: "ar-fil-1", TenantID: "t-filter", Name: "alpha", Host: "host-a", AgentType: "worker", Backend: "acp", Status: AgentStatusRunning},
-		{ID: "ar-fil-2", TenantID: "t-filter", Name: "beta", Host: "host-b", AgentType: "lead", Backend: "ollama", Status: AgentStatusIdle},
-		{ID: "ar-fil-3", TenantID: "t-filter", Name: "gamma", Host: "host-a", AgentType: "worker", Backend: "acp", Status: AgentStatusRunning, Model: "gpt4"},
+	agents := []*FleetNode{
+		{ID: "ar-fil-1", TenantID: "t-filter", Name: "alpha", Host: "host-a", NodeType: "worker", Backend: "acp", Status: FleetNodeStatusRunning},
+		{ID: "ar-fil-2", TenantID: "t-filter", Name: "beta", Host: "host-b", NodeType: "lead", Backend: "ollama", Status: FleetNodeStatusIdle},
+		{ID: "ar-fil-3", TenantID: "t-filter", Name: "gamma", Host: "host-a", NodeType: "worker", Backend: "acp", Status: FleetNodeStatusRunning, Model: "gpt4"},
 	}
 	for _, a := range agents {
-		if err := reg.RegisterAgent(ctx, a); err != nil {
-			t.Fatalf("RegisterAgent %s: %v", a.ID, err)
+		if err := reg.RegisterFleetNode(ctx, a); err != nil {
+			t.Fatalf("RegisterFleetNode %s: %v", a.ID, err)
 		}
 	}
 
 	t.Run("FilterByHost", func(t *testing.T) {
-		results, err := reg.ListAgents(ctx, "t-filter", &AgentFilter{Host: "host-a"})
+		results, err := reg.ListFleetNodes(ctx, "t-filter", &FleetNodeFilter{Host: "host-a"})
 		if err != nil {
-			t.Fatalf("ListAgents: %v", err)
+			t.Fatalf("ListFleetNodes: %v", err)
 		}
 		for _, a := range results {
 			if a.Host != "host-a" {
@@ -4819,9 +4819,9 @@ func TestAgentRegistry_ListAgents_WithFilters(t *testing.T) {
 	})
 
 	t.Run("FilterByStatus", func(t *testing.T) {
-		results, err := reg.ListAgents(ctx, "t-filter", &AgentFilter{Status: AgentStatusIdle})
+		results, err := reg.ListFleetNodes(ctx, "t-filter", &FleetNodeFilter{Status: FleetNodeStatusIdle})
 		if err != nil {
-			t.Fatalf("ListAgents: %v", err)
+			t.Fatalf("ListFleetNodes: %v", err)
 		}
 		if len(results) != 1 {
 			t.Errorf("expected 1 idle agent, got %d", len(results))
@@ -4829,9 +4829,9 @@ func TestAgentRegistry_ListAgents_WithFilters(t *testing.T) {
 	})
 
 	t.Run("FilterByBackend", func(t *testing.T) {
-		results, err := reg.ListAgents(ctx, "t-filter", &AgentFilter{Backend: "ollama"})
+		results, err := reg.ListFleetNodes(ctx, "t-filter", &FleetNodeFilter{Backend: "ollama"})
 		if err != nil {
-			t.Fatalf("ListAgents: %v", err)
+			t.Fatalf("ListFleetNodes: %v", err)
 		}
 		if len(results) != 1 {
 			t.Errorf("expected 1 ollama agent, got %d", len(results))
@@ -4839,9 +4839,9 @@ func TestAgentRegistry_ListAgents_WithFilters(t *testing.T) {
 	})
 
 	t.Run("FilterByModel", func(t *testing.T) {
-		results, err := reg.ListAgents(ctx, "t-filter", &AgentFilter{Model: "gpt4"})
+		results, err := reg.ListFleetNodes(ctx, "t-filter", &FleetNodeFilter{Model: "gpt4"})
 		if err != nil {
-			t.Fatalf("ListAgents: %v", err)
+			t.Fatalf("ListFleetNodes: %v", err)
 		}
 		if len(results) != 1 {
 			t.Errorf("expected 1 gpt4 agent, got %d", len(results))
@@ -4849,9 +4849,9 @@ func TestAgentRegistry_ListAgents_WithFilters(t *testing.T) {
 	})
 
 	t.Run("FilterByAgentType", func(t *testing.T) {
-		results, err := reg.ListAgents(ctx, "t-filter", &AgentFilter{AgentType: "lead"})
+		results, err := reg.ListFleetNodes(ctx, "t-filter", &FleetNodeFilter{NodeType: "lead"})
 		if err != nil {
-			t.Fatalf("ListAgents: %v", err)
+			t.Fatalf("ListFleetNodes: %v", err)
 		}
 		if len(results) != 1 {
 			t.Errorf("expected 1 lead agent, got %d", len(results))
@@ -4859,9 +4859,9 @@ func TestAgentRegistry_ListAgents_WithFilters(t *testing.T) {
 	})
 
 	t.Run("FilterByLimit", func(t *testing.T) {
-		results, err := reg.ListAgents(ctx, "t-filter", &AgentFilter{Limit: 1})
+		results, err := reg.ListFleetNodes(ctx, "t-filter", &FleetNodeFilter{Limit: 1})
 		if err != nil {
-			t.Fatalf("ListAgents: %v", err)
+			t.Fatalf("ListFleetNodes: %v", err)
 		}
 		if len(results) != 1 {
 			t.Errorf("expected 1 result with limit=1, got %d", len(results))
@@ -4869,7 +4869,7 @@ func TestAgentRegistry_ListAgents_WithFilters(t *testing.T) {
 	})
 
 	t.Run("EmptyTenant", func(t *testing.T) {
-		_, err := reg.ListAgents(ctx, "", nil)
+		_, err := reg.ListFleetNodes(ctx, "", nil)
 		if err == nil {
 			t.Fatal("expected error for empty tenantID")
 		}
@@ -4879,8 +4879,8 @@ func TestAgentRegistry_ListAgents_WithFilters(t *testing.T) {
 func TestAgentRegistry_RemoveAgent_EmptyID(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
-	err := reg.RemoveAgent(context.Background(), "t-rem", "")
+	reg := NewInMemoryFleetRegistry()
+	err := reg.RemoveFleetNode(context.Background(), "t-rem", "")
 	if err == nil {
 		t.Fatal("expected error for empty agentID")
 	}
@@ -4889,7 +4889,7 @@ func TestAgentRegistry_RemoveAgent_EmptyID(t *testing.T) {
 func TestAgentRegistry_Heartbeat_EmptyTenant(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
+	reg := NewInMemoryFleetRegistry()
 	err := reg.Heartbeat(context.Background(), "", "agent-x", nil)
 	if err == nil {
 		t.Fatal("expected error for empty tenantID")
@@ -4899,7 +4899,7 @@ func TestAgentRegistry_Heartbeat_EmptyTenant(t *testing.T) {
 func TestAgentRegistry_Heartbeat_EmptyAgent(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
+	reg := NewInMemoryFleetRegistry()
 	err := reg.Heartbeat(context.Background(), "t-hb", "", nil)
 	if err == nil {
 		t.Fatal("expected error for empty agentID")
@@ -4909,8 +4909,8 @@ func TestAgentRegistry_Heartbeat_EmptyAgent(t *testing.T) {
 func TestAgentRegistry_DeleteTenantAgents_EmptyTenant(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
-	err := reg.DeleteTenantAgents(context.Background(), "")
+	reg := NewInMemoryFleetRegistry()
+	err := reg.DeleteTenantFleetNodes(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error for empty tenantID")
 	}
@@ -5549,67 +5549,67 @@ func TestCmdReadCloser_Close_Error(t *testing.T) {
 func TestAgentRegistry_Heartbeat_StatusTransition(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
+	reg := NewInMemoryFleetRegistry()
 	ctx := context.Background()
 
-	a := &AgentRegistration{
-		ID:        "hb-trans-1",
-		TenantID:  "t-hb-trans",
-		Name:      "hb-agent",
-		Host:      "host-hb",
-		AgentType: "worker",
-		Backend:   "acp",
-		Status:    AgentStatusRegistered,
+	a := &FleetNode{
+		ID:       "hb-trans-1",
+		TenantID: "t-hb-trans",
+		Name:     "hb-agent",
+		Host:     "host-hb",
+		NodeType: "worker",
+		Backend:  "acp",
+		Status:   FleetNodeStatusRegistered,
 	}
-	if err := reg.RegisterAgent(ctx, a); err != nil {
-		t.Fatalf("RegisterAgent: %v", err)
+	if err := reg.RegisterFleetNode(ctx, a); err != nil {
+		t.Fatalf("RegisterFleetNode: %v", err)
 	}
 
 	if err := reg.Heartbeat(ctx, "t-hb-trans", "hb-trans-1", nil); err != nil {
 		t.Fatalf("Heartbeat: %v", err)
 	}
 
-	got, err := reg.GetAgent(ctx, "t-hb-trans", "hb-trans-1")
+	got, err := reg.GetFleetNode(ctx, "t-hb-trans", "hb-trans-1")
 	if err != nil {
-		t.Fatalf("GetAgent: %v", err)
+		t.Fatalf("GetFleetNode: %v", err)
 	}
 	// Status should transition from registered → running on heartbeat.
-	if got.Status == AgentStatusRegistered {
+	if got.Status == FleetNodeStatusRegistered {
 		t.Error("expected status to transition away from registered after heartbeat")
 	}
 }
 
 // =============================================================================
-// agent_registry — DeleteTenantAgents success path
+// agent_registry — DeleteTenantFleetNodes success path
 // =============================================================================
 
 func TestAgentRegistry_DeleteTenantAgents_Success(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
+	reg := NewInMemoryFleetRegistry()
 	ctx := context.Background()
 
 	for i := 0; i < 3; i++ {
-		if err := reg.RegisterAgent(ctx, &AgentRegistration{
-			ID:        "dta-" + itoa(i),
-			TenantID:  "t-dta",
-			Name:      "agent-" + itoa(i),
-			Host:      "host-x",
-			AgentType: "worker",
-			Backend:   "acp",
-			Status:    AgentStatusRegistered,
+		if err := reg.RegisterFleetNode(ctx, &FleetNode{
+			ID:       "dta-" + itoa(i),
+			TenantID: "t-dta",
+			Name:     "agent-" + itoa(i),
+			Host:     "host-x",
+			NodeType: "worker",
+			Backend:  "acp",
+			Status:   FleetNodeStatusRegistered,
 		}); err != nil {
-			t.Fatalf("RegisterAgent %d: %v", i, err)
+			t.Fatalf("RegisterFleetNode %d: %v", i, err)
 		}
 	}
 
-	if err := reg.DeleteTenantAgents(ctx, "t-dta"); err != nil {
-		t.Fatalf("DeleteTenantAgents: %v", err)
+	if err := reg.DeleteTenantFleetNodes(ctx, "t-dta"); err != nil {
+		t.Fatalf("DeleteTenantFleetNodes: %v", err)
 	}
 
-	results, err := reg.ListAgents(ctx, "t-dta", nil)
+	results, err := reg.ListFleetNodes(ctx, "t-dta", nil)
 	if err != nil {
-		t.Fatalf("ListAgents: %v", err)
+		t.Fatalf("ListFleetNodes: %v", err)
 	}
 	if len(results) != 0 {
 		t.Errorf("expected 0 agents after delete, got %d", len(results))
@@ -5658,13 +5658,13 @@ func (f *fakeTokenSource) Token() (*oauth2.Token, error) {
 func TestRemoteACPBackend_AuthCtx_WithToken(t *testing.T) {
 	t.Parallel()
 
-	reg := &AgentRegistration{
+	reg := &FleetNode{
 		ID:       "auth-agent-1",
 		TenantID: "auth-tenant",
 		Name:     "auth-agent",
 		Host:     "localhost:9999",
 		Backend:  "acp",
-		Kind:     AgentKindDaemon,
+		Kind:     FleetNodeKindDaemon,
 	}
 
 	logger := &peerTestLogger{}
@@ -5691,13 +5691,13 @@ func TestRemoteACPBackend_AuthCtx_WithToken(t *testing.T) {
 func TestRemoteACPBackend_AuthCtx_NilToken(t *testing.T) {
 	t.Parallel()
 
-	reg := &AgentRegistration{
+	reg := &FleetNode{
 		ID:       "auth-agent-2",
 		TenantID: "auth-tenant-2",
 		Name:     "auth-agent-2",
 		Host:     "localhost:9998",
 		Backend:  "acp",
-		Kind:     AgentKindDaemon,
+		Kind:     FleetNodeKindDaemon,
 	}
 
 	logger := &peerTestLogger{}
@@ -5851,45 +5851,45 @@ func TestSessionStore_UpdateSessionStatus_Success(t *testing.T) {
 }
 
 // =============================================================================
-// orchestrator — RemoveAgent not-found error path
+// orchestrator — RemoveFleetNode not-found error path
 // =============================================================================
 
 func TestOrchestrator_RemoveAgent_NotFound(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	impl.SetAgentRegistry(NewInMemoryAgentRegistry())
+	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
 
-	// Remove an agent that doesn't exist → RemoveAgent returns error.
-	err := impl.RemoveAgent(context.Background(), "tenant-rna", "ghost-agent")
+	// Remove an agent that doesn't exist → RemoveFleetNode returns error.
+	err := impl.RemoveFleetNode(context.Background(), "tenant-rna", "ghost-agent")
 	if err == nil {
 		t.Fatal("expected error for removing nonexistent agent")
 	}
 }
 
 // =============================================================================
-// orchestrator — AgentHeartbeat success path
+// orchestrator — FleetNodeHeartbeat success path
 // =============================================================================
 
 func TestOrchestrator_AgentHeartbeat_Success(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	impl.SetAgentRegistry(NewInMemoryAgentRegistry())
+	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
 	ctx := context.Background()
 
-	resp, err := impl.RegisterAgent(ctx, &RegisterAgentRequest{
-		TenantID:  "tenant-hbs",
-		Name:      "hb-agent-s",
-		Host:      "host:8080",
-		AgentType: "worker",
+	resp, err := impl.RegisterFleetNode(ctx, &RegisterFleetNodeRequest{
+		TenantID: "tenant-hbs",
+		Name:     "hb-agent-s",
+		Host:     "host:8080",
+		NodeType: "worker",
 	})
 	if err != nil {
-		t.Fatalf("RegisterAgent: %v", err)
+		t.Fatalf("RegisterFleetNode: %v", err)
 	}
 
-	if err := impl.AgentHeartbeat(ctx, "tenant-hbs", resp.Agent.ID, nil); err != nil {
-		t.Fatalf("AgentHeartbeat: %v", err)
+	if err := impl.FleetNodeHeartbeat(ctx, "tenant-hbs", resp.Node.ID, nil); err != nil {
+		t.Fatalf("FleetNodeHeartbeat: %v", err)
 	}
 }
 
@@ -6079,15 +6079,15 @@ func TestOrchestrator_ClaimTask_EmptyAgentID(t *testing.T) {
 }
 
 // =============================================================================
-// orchestrator — GetAgent error paths
+// orchestrator — GetFleetNode error paths
 // =============================================================================
 
 func TestOrchestrator_GetAgent_EmptyTenantID(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	impl.SetAgentRegistry(NewInMemoryAgentRegistry())
-	_, err := impl.GetAgent(context.Background(), "", "agent-x")
+	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
+	_, err := impl.GetFleetNode(context.Background(), "", "agent-x")
 	if err == nil {
 		t.Fatal("expected error for empty tenantID")
 	}
@@ -6097,38 +6097,38 @@ func TestOrchestrator_GetAgent_NotFound(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	impl.SetAgentRegistry(NewInMemoryAgentRegistry())
-	_, err := impl.GetAgent(context.Background(), "t-ga", "ghost-agent")
+	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
+	_, err := impl.GetFleetNode(context.Background(), "t-ga", "ghost-agent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent agent")
 	}
 }
 
 // =============================================================================
-// orchestrator — ListAgents with filter
+// orchestrator — ListFleetNodes with filter
 // =============================================================================
 
 func TestOrchestrator_ListAgents_WithFilter(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	impl.SetAgentRegistry(NewInMemoryAgentRegistry())
+	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
 	ctx := context.Background()
 
 	for i := 0; i < 2; i++ {
-		if _, err := impl.RegisterAgent(ctx, &RegisterAgentRequest{
-			TenantID:  "t-lag",
-			Name:      "agent-" + itoa(i),
-			Host:      "host:9090",
-			AgentType: "worker",
+		if _, err := impl.RegisterFleetNode(ctx, &RegisterFleetNodeRequest{
+			TenantID: "t-lag",
+			Name:     "agent-" + itoa(i),
+			Host:     "host:9090",
+			NodeType: "worker",
 		}); err != nil {
-			t.Fatalf("RegisterAgent %d: %v", i, err)
+			t.Fatalf("RegisterFleetNode %d: %v", i, err)
 		}
 	}
 
-	results, err := impl.ListAgents(ctx, "t-lag", &AgentFilter{AgentType: "worker"})
+	results, err := impl.ListFleetNodes(ctx, "t-lag", &FleetNodeFilter{NodeType: "worker"})
 	if err != nil {
-		t.Fatalf("ListAgents: %v", err)
+		t.Fatalf("ListFleetNodes: %v", err)
 	}
 	if len(results) < 2 {
 		t.Errorf("expected at least 2 agents, got %d", len(results))
@@ -6296,33 +6296,33 @@ func TestTaskStore_ClaimTask_NotFound(t *testing.T) {
 }
 
 // =============================================================================
-// agent_registry — RegisterAgent duplicate
+// agent_registry — RegisterFleetNode duplicate
 // =============================================================================
 
 func TestAgentRegistry_RegisterAgent_Duplicate(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
+	reg := NewInMemoryFleetRegistry()
 	ctx := context.Background()
 
-	a := &AgentRegistration{
-		ID:        "dup-agent-1",
-		TenantID:  "t-dup",
-		Name:      "dup-agent",
-		Host:      "host-x",
-		AgentType: "worker",
-		Backend:   "acp",
-		Status:    AgentStatusRegistered,
+	a := &FleetNode{
+		ID:       "dup-agent-1",
+		TenantID: "t-dup",
+		Name:     "dup-agent",
+		Host:     "host-x",
+		NodeType: "worker",
+		Backend:  "acp",
+		Status:   FleetNodeStatusRegistered,
 	}
-	if err := reg.RegisterAgent(ctx, a); err != nil {
-		t.Fatalf("RegisterAgent first: %v", err)
+	if err := reg.RegisterFleetNode(ctx, a); err != nil {
+		t.Fatalf("RegisterFleetNode first: %v", err)
 	}
-	err := reg.RegisterAgent(ctx, a)
+	err := reg.RegisterFleetNode(ctx, a)
 	if err == nil {
 		t.Fatal("expected error for duplicate agent")
 	}
-	if !errors.Is(err, ErrAgentRegistryAlreadyExists) {
-		t.Errorf("expected ErrAgentRegistryAlreadyExists, got %v", err)
+	if !errors.Is(err, ErrFleetNodeAlreadyExists) {
+		t.Errorf("expected ErrFleetNodeAlreadyExists, got %v", err)
 	}
 }
 
@@ -6397,32 +6397,32 @@ func TestOrchestrator_PersistJobStatus_WithKVStore(t *testing.T) {
 }
 
 // =============================================================================
-// agent_registry — ListAgents with limit filter
+// agent_registry — ListFleetNodes with limit filter
 // =============================================================================
 
 func TestAgentRegistry_ListAgents_WithLimit(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
+	reg := NewInMemoryFleetRegistry()
 	ctx := context.Background()
 
 	for i := 0; i < 5; i++ {
-		if err := reg.RegisterAgent(ctx, &AgentRegistration{
-			ID:        "lim-" + itoa(i),
-			TenantID:  "t-lim",
-			Name:      "agent-lim-" + itoa(i),
-			Host:      "host-lim:9090",
-			AgentType: "worker",
-			Backend:   "acp",
-			Status:    AgentStatusRegistered,
+		if err := reg.RegisterFleetNode(ctx, &FleetNode{
+			ID:       "lim-" + itoa(i),
+			TenantID: "t-lim",
+			Name:     "agent-lim-" + itoa(i),
+			Host:     "host-lim:9090",
+			NodeType: "worker",
+			Backend:  "acp",
+			Status:   FleetNodeStatusRegistered,
 		}); err != nil {
-			t.Fatalf("RegisterAgent %d: %v", i, err)
+			t.Fatalf("RegisterFleetNode %d: %v", i, err)
 		}
 	}
 
-	agents, err := reg.ListAgents(ctx, "t-lim", &AgentFilter{Limit: 2})
+	agents, err := reg.ListFleetNodes(ctx, "t-lim", &FleetNodeFilter{Limit: 2})
 	if err != nil {
-		t.Fatalf("ListAgents: %v", err)
+		t.Fatalf("ListFleetNodes: %v", err)
 	}
 	if len(agents) > 2 {
 		t.Errorf("expected at most 2 agents, got %d", len(agents))
@@ -6708,14 +6708,14 @@ func TestOrchestrator_SessionStatus_FromStore(t *testing.T) {
 }
 
 // =============================================================================
-// agent_registry — RemoveAgent empty agentID
+// agent_registry — RemoveFleetNode empty agentID
 // =============================================================================
 
 func TestAgentRegistry_RemoveAgent_EmptyAgentID(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
-	err := reg.RemoveAgent(context.Background(), "t-rem", "")
+	reg := NewInMemoryFleetRegistry()
+	err := reg.RemoveFleetNode(context.Background(), "t-rem", "")
 	if err == nil {
 		t.Fatal("expected error for empty agentID")
 	}
@@ -6790,15 +6790,15 @@ func TestPeerMessagingStore_Acknowledge_Success(t *testing.T) {
 }
 
 // =============================================================================
-// orchestrator — AgentHeartbeat via orchestrator layer — empty tenantID
+// orchestrator — FleetNodeHeartbeat via orchestrator layer — empty tenantID
 // =============================================================================
 
 func TestOrchestrator_AgentHeartbeat_EmptyTenantID(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	impl.SetAgentRegistry(NewInMemoryAgentRegistry())
-	err := impl.AgentHeartbeat(context.Background(), "", "agent-x", nil)
+	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
+	err := impl.FleetNodeHeartbeat(context.Background(), "", "agent-x", nil)
 	if err == nil {
 		t.Fatal("expected error for empty tenantID")
 	}
@@ -6920,10 +6920,10 @@ func TestOrchestrator_StartJob_WorkflowNameNoLoader(t *testing.T) {
 
 	ctx := ContextWithTenant(context.Background(), "t-wnnl")
 	resp, err := impl.StartJob(ctx, &StartJobRequest{
-		TenantID:     "t-wnnl",
-		Description:  "test job without loader",
-		WorkflowName: "nonexistent-workflow",
-		LeadBackend:  "acp",
+		TenantID:      "t-wnnl",
+		Description:   "test job without loader",
+		WorkflowName:  "nonexistent-workflow",
+		routedBackend: "acp",
 	})
 	_ = resp
 	_ = err
@@ -7033,29 +7033,29 @@ func TestSpawnRequest_EffectiveSandboxMode_ExplicitSandboxMode(t *testing.T) {
 }
 
 // =============================================================================
-// AgentRegistration — EffectiveKind
+// FleetNode — EffectiveKind
 // =============================================================================
 
 func TestAgentRegistration_EffectiveKind_Default(t *testing.T) {
 	t.Parallel()
 
-	var a *AgentRegistration
-	if kind := a.EffectiveKind(); kind != AgentKindExternal {
-		t.Errorf("expected AgentKindExternal for nil, got %s", kind)
+	var a *FleetNode
+	if kind := a.EffectiveKind(); kind != FleetNodeKindExternal {
+		t.Errorf("expected FleetNodeKindExternal for nil, got %s", kind)
 	}
 
-	a = &AgentRegistration{Kind: ""}
-	if kind := a.EffectiveKind(); kind != AgentKindExternal {
-		t.Errorf("expected AgentKindExternal for empty kind, got %s", kind)
+	a = &FleetNode{Kind: ""}
+	if kind := a.EffectiveKind(); kind != FleetNodeKindExternal {
+		t.Errorf("expected FleetNodeKindExternal for empty kind, got %s", kind)
 	}
 }
 
 func TestAgentRegistration_EffectiveKind_Daemon(t *testing.T) {
 	t.Parallel()
 
-	a := &AgentRegistration{Kind: AgentKindDaemon}
-	if kind := a.EffectiveKind(); kind != AgentKindDaemon {
-		t.Errorf("expected AgentKindDaemon, got %s", kind)
+	a := &FleetNode{Kind: FleetNodeKindDaemon}
+	if kind := a.EffectiveKind(); kind != FleetNodeKindDaemon {
+		t.Errorf("expected FleetNodeKindDaemon, got %s", kind)
 	}
 }
 
@@ -7066,44 +7066,44 @@ func TestAgentRegistration_EffectiveKind_Daemon(t *testing.T) {
 func TestAgentNotFoundError_Error(t *testing.T) {
 	t.Parallel()
 
-	err := &AgentNotFoundError{TenantID: "t1", AgentID: "a1"}
+	err := &FleetNodeNotFoundError{TenantID: "t1", NodeID: "a1"}
 	if err.Error() == "" {
 		t.Error("expected non-empty error string")
 	}
-	if !errors.Is(err, ErrAgentRegistryNotFound) {
-		t.Error("expected to unwrap to ErrAgentRegistryNotFound")
+	if !errors.Is(err, ErrFleetNodeNotFound) {
+		t.Error("expected to unwrap to ErrFleetNodeNotFound")
 	}
 }
 
 func TestAgentAlreadyExistsError_Error(t *testing.T) {
 	t.Parallel()
 
-	err := &AgentAlreadyExistsError{AgentID: "a1"}
+	err := &FleetNodeAlreadyExistsError{NodeID: "a1"}
 	if err.Error() == "" {
 		t.Error("expected non-empty error string")
 	}
-	if !errors.Is(err, ErrAgentRegistryAlreadyExists) {
-		t.Error("expected to unwrap to ErrAgentRegistryAlreadyExists")
+	if !errors.Is(err, ErrFleetNodeAlreadyExists) {
+		t.Error("expected to unwrap to ErrFleetNodeAlreadyExists")
 	}
 }
 
 func TestAgentRegistryError_Error(t *testing.T) {
 	t.Parallel()
 
-	err := &AgentRegistryError{Sentinel: ErrAgentRegistryInvalidInput, Message: "bad input"}
+	err := &FleetRegistryError{Sentinel: ErrFleetRegistryInvalidInput, Message: "bad input"}
 	if err.Error() == "" {
 		t.Error("expected non-empty error string")
 	}
-	if !errors.Is(err, ErrAgentRegistryInvalidInput) {
-		t.Error("expected to unwrap to ErrAgentRegistryInvalidInput")
+	if !errors.Is(err, ErrFleetRegistryInvalidInput) {
+		t.Error("expected to unwrap to ErrFleetRegistryInvalidInput")
 	}
 }
 
 func TestAgentRegistryError_Error_NoMessage(t *testing.T) {
 	t.Parallel()
 
-	err := &AgentRegistryError{Sentinel: ErrAgentRegistryInvalidInput}
-	if err.Error() != ErrAgentRegistryInvalidInput.Error() {
+	err := &FleetRegistryError{Sentinel: ErrFleetRegistryInvalidInput}
+	if err.Error() != ErrFleetRegistryInvalidInput.Error() {
 		t.Errorf("expected sentinel error string, got %q", err.Error())
 	}
 }
@@ -7316,7 +7316,7 @@ func TestControlLoop_HandleAssign_NoAgents(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	impl.SetAgentRegistry(NewInMemoryAgentRegistry()) // empty registry
+	impl.SetFleetRegistry(NewInMemoryFleetRegistry()) // empty registry
 	backend := &mockAgentBackend{
 		backendType: "acp",
 		promptFn: func(ctx context.Context, req *PromptRequest) (*PromptResponse, error) {
@@ -7337,7 +7337,7 @@ func TestControlLoop_HandleAssign_NoAgents(t *testing.T) {
 	cl.workItems = []*WorkItem{{Title: "task-1"}}
 
 	state, err := cl.handleAssign(ContextWithTenant(context.Background(), "t-ha"))
-	// With no agents and no workflow, should fail with NoAgentsAvailableError.
+	// With no agents and no workflow, should fail with NoFleetNodesAvailableError.
 	if err == nil {
 		t.Fatal("expected error for no available agents")
 	}
@@ -7543,14 +7543,14 @@ func TestOrchestrator_SpawnSession_WithProjectModel(t *testing.T) {
 }
 
 // =============================================================================
-// agent_registry — UpdateAgent validation errors
+// agent_registry — UpdateFleetNode validation errors
 // =============================================================================
 
 func TestAgentRegistry_UpdateAgent_EmptyID(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
-	err := reg.UpdateAgent(context.Background(), &AgentRegistration{
+	reg := NewInMemoryFleetRegistry()
+	err := reg.UpdateFleetNode(context.Background(), &FleetNode{
 		ID:       "",
 		TenantID: "t1",
 	})
@@ -7562,8 +7562,8 @@ func TestAgentRegistry_UpdateAgent_EmptyID(t *testing.T) {
 func TestAgentRegistry_UpdateAgent_EmptyTenantID(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
-	err := reg.UpdateAgent(context.Background(), &AgentRegistration{
+	reg := NewInMemoryFleetRegistry()
+	err := reg.UpdateFleetNode(context.Background(), &FleetNode{
 		ID:       "agent-1",
 		TenantID: "",
 	})
@@ -7573,17 +7573,17 @@ func TestAgentRegistry_UpdateAgent_EmptyTenantID(t *testing.T) {
 }
 
 // =============================================================================
-// agent_registry — GetAgent with cancelled context
+// agent_registry — GetFleetNode with cancelled context
 // =============================================================================
 
 func TestAgentRegistry_GetAgent_CancelledContext(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
+	reg := NewInMemoryFleetRegistry()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := reg.GetAgent(ctx, "t1", "agent-1")
+	_, err := reg.GetFleetNode(ctx, "t1", "agent-1")
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}
@@ -7596,7 +7596,7 @@ func TestAgentRegistry_GetAgent_CancelledContext(t *testing.T) {
 func TestAgentRegistry_Heartbeat_CancelledContext(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
+	reg := NewInMemoryFleetRegistry()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -7726,34 +7726,34 @@ func TestTaskStore_DeleteTask_CancelledContext(t *testing.T) {
 }
 
 // =============================================================================
-// agent_registry — ListAgents with cancelled context
+// agent_registry — ListFleetNodes with cancelled context
 // =============================================================================
 
 func TestAgentRegistry_ListAgents_CancelledContext(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
+	reg := NewInMemoryFleetRegistry()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := reg.ListAgents(ctx, "t1", nil)
+	_, err := reg.ListFleetNodes(ctx, "t1", nil)
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}
 }
 
 // =============================================================================
-// agent_registry — DeleteTenantAgents with cancelled context
+// agent_registry — DeleteTenantFleetNodes with cancelled context
 // =============================================================================
 
 func TestAgentRegistry_DeleteTenantAgents_CancelledContext(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryAgentRegistry()
+	reg := NewInMemoryFleetRegistry()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := reg.DeleteTenantAgents(ctx, "t1")
+	err := reg.DeleteTenantFleetNodes(ctx, "t1")
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}
@@ -7798,31 +7798,31 @@ func TestOrchestrator_DefaultBackendName_MultipleBackends(t *testing.T) {
 }
 
 // =============================================================================
-// orchestrator — ListAgents success path (orchestrator wrapper)
+// orchestrator — ListFleetNodes success path (orchestrator wrapper)
 // =============================================================================
 
 func TestOrchestrator_ListAgents_SuccessPath(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	impl.SetAgentRegistry(NewInMemoryAgentRegistry())
+	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
 	ctx := context.Background()
 
 	// Register some agents.
 	for i := 0; i < 2; i++ {
-		if _, err := impl.RegisterAgent(ctx, &RegisterAgentRequest{
-			TenantID:  "t-la-s",
-			Name:      "agent-las-" + itoa(i),
-			Host:      "host-las:9090",
-			AgentType: "worker",
+		if _, err := impl.RegisterFleetNode(ctx, &RegisterFleetNodeRequest{
+			TenantID: "t-la-s",
+			Name:     "agent-las-" + itoa(i),
+			Host:     "host-las:9090",
+			NodeType: "worker",
 		}); err != nil {
-			t.Fatalf("RegisterAgent %d: %v", i, err)
+			t.Fatalf("RegisterFleetNode %d: %v", i, err)
 		}
 	}
 
-	agents, err := impl.ListAgents(ctx, "t-la-s", nil)
+	agents, err := impl.ListFleetNodes(ctx, "t-la-s", nil)
 	if err != nil {
-		t.Fatalf("ListAgents: %v", err)
+		t.Fatalf("ListFleetNodes: %v", err)
 	}
 	if len(agents) < 2 {
 		t.Errorf("expected at least 2 agents, got %d", len(agents))
@@ -7830,28 +7830,28 @@ func TestOrchestrator_ListAgents_SuccessPath(t *testing.T) {
 }
 
 // =============================================================================
-// orchestrator — AgentHeartbeat success path
+// orchestrator — FleetNodeHeartbeat success path
 // =============================================================================
 
 func TestOrchestrator_AgentHeartbeat_SuccessPath(t *testing.T) {
 	t.Parallel()
 
 	impl := newTestService(t)
-	impl.SetAgentRegistry(NewInMemoryAgentRegistry())
+	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
 	ctx := context.Background()
 
-	resp, err := impl.RegisterAgent(ctx, &RegisterAgentRequest{
-		TenantID:  "t-hb-s",
-		Name:      "agent-hbs",
-		Host:      "host-hbs:9090",
-		AgentType: "worker",
+	resp, err := impl.RegisterFleetNode(ctx, &RegisterFleetNodeRequest{
+		TenantID: "t-hb-s",
+		Name:     "agent-hbs",
+		Host:     "host-hbs:9090",
+		NodeType: "worker",
 	})
 	if err != nil {
-		t.Fatalf("RegisterAgent: %v", err)
+		t.Fatalf("RegisterFleetNode: %v", err)
 	}
 
-	if err := impl.AgentHeartbeat(ctx, "t-hb-s", resp.Agent.ID, nil); err != nil {
-		t.Fatalf("AgentHeartbeat: %v", err)
+	if err := impl.FleetNodeHeartbeat(ctx, "t-hb-s", resp.Node.ID, nil); err != nil {
+		t.Fatalf("FleetNodeHeartbeat: %v", err)
 	}
 }
 
@@ -8380,16 +8380,16 @@ func TestOrchestrator_ListProjects_PaginationClamping(t *testing.T) {
 func TestAgentRegistry_UpdateAgent_CancelledCtx(t *testing.T) {
 	t.Parallel()
 
-	registry := NewInMemoryAgentRegistry()
+	registry := NewInMemoryFleetRegistry()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
-	agent := &AgentRegistration{
+	agent := &FleetNode{
 		ID:       "agent-update-ctx",
 		TenantID: "t-upd",
 		Name:     "update-agent",
 	}
-	err := registry.UpdateAgent(ctx, agent)
+	err := registry.UpdateFleetNode(ctx, agent)
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}
@@ -8398,11 +8398,11 @@ func TestAgentRegistry_UpdateAgent_CancelledCtx(t *testing.T) {
 func TestAgentRegistry_RemoveAgent_CancelledCtx(t *testing.T) {
 	t.Parallel()
 
-	registry := NewInMemoryAgentRegistry()
+	registry := NewInMemoryFleetRegistry()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
-	err := registry.RemoveAgent(ctx, "t-rm", "agent-rm-ctx")
+	err := registry.RemoveFleetNode(ctx, "t-rm", "agent-rm-ctx")
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}
@@ -8545,7 +8545,7 @@ func TestOrchestrator_CloseSession_BackendCloseError(t *testing.T) {
 }
 
 // =============================================================================
-// orchestrator — GetAgent and ListAgents with validateTenant failure
+// orchestrator — GetFleetNode and ListFleetNodes with validateTenant failure
 // (lines 1939, 1950 — validateTenant guard)
 // =============================================================================
 
@@ -8554,10 +8554,10 @@ func TestOrchestrator_GetAgent_ValidateTenantFail(t *testing.T) {
 
 	impl := newTestService(t)
 	impl.SetTenantGuard(NewTenantGuard(&agentTestLogger{}))
-	impl.SetAgentRegistry(NewInMemoryAgentRegistry())
+	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
 
 	// No tenant in context → validateTenant returns TenantRequiredError.
-	_, err := impl.GetAgent(context.Background(), "t-vt", "agent-1")
+	_, err := impl.GetFleetNode(context.Background(), "t-vt", "agent-1")
 	if err == nil {
 		t.Fatal("expected error when tenant guard set and no tenant in ctx")
 	}
@@ -8568,9 +8568,9 @@ func TestOrchestrator_ListAgents_ValidateTenantFail(t *testing.T) {
 
 	impl := newTestService(t)
 	impl.SetTenantGuard(NewTenantGuard(&agentTestLogger{}))
-	impl.SetAgentRegistry(NewInMemoryAgentRegistry())
+	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
 
-	_, err := impl.ListAgents(context.Background(), "t-vt", nil)
+	_, err := impl.ListFleetNodes(context.Background(), "t-vt", nil)
 	if err == nil {
 		t.Fatal("expected error when tenant guard set and no tenant in ctx")
 	}
@@ -8581,9 +8581,9 @@ func TestOrchestrator_AgentHeartbeat_ValidateTenantFail(t *testing.T) {
 
 	impl := newTestService(t)
 	impl.SetTenantGuard(NewTenantGuard(&agentTestLogger{}))
-	impl.SetAgentRegistry(NewInMemoryAgentRegistry())
+	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
 
-	err := impl.AgentHeartbeat(context.Background(), "t-vt", "agent-1", nil)
+	err := impl.FleetNodeHeartbeat(context.Background(), "t-vt", "agent-1", nil)
 	if err == nil {
 		t.Fatal("expected error when tenant guard set and no tenant in ctx")
 	}
@@ -8903,9 +8903,9 @@ func TestOrchestrator_CompleteTask_ValidateTenantFail(t *testing.T) {
 func TestOrchestrator_RegisterAgent_ValidateTenantFail(t *testing.T) {
 	t.Parallel()
 	impl := newGuardedService(t)
-	impl.SetAgentRegistry(NewInMemoryAgentRegistry())
-	_, err := impl.RegisterAgent(context.Background(), &RegisterAgentRequest{
-		Name: "a", Host: "h:9090", AgentType: "worker",
+	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
+	_, err := impl.RegisterFleetNode(context.Background(), &RegisterFleetNodeRequest{
+		Name: "a", Host: "h:9090", NodeType: "worker",
 	})
 	if err == nil {
 		t.Fatal("expected error from validateTenant")
@@ -8915,8 +8915,8 @@ func TestOrchestrator_RegisterAgent_ValidateTenantFail(t *testing.T) {
 func TestOrchestrator_RemoveAgent_ValidateTenantFail(t *testing.T) {
 	t.Parallel()
 	impl := newGuardedService(t)
-	impl.SetAgentRegistry(NewInMemoryAgentRegistry())
-	err := impl.RemoveAgent(context.Background(), "t-ra", "agent-1")
+	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
+	err := impl.RemoveFleetNode(context.Background(), "t-ra", "agent-1")
 	if err == nil {
 		t.Fatal("expected error from validateTenant")
 	}

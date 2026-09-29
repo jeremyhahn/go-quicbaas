@@ -21,13 +21,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// InheritanceManager manages role and group hierarchies and computes effective permissions.
+// InheritanceManager manages role hierarchies and computes effective permissions.
 // It provides operations for creating hierarchies, navigating parent-child relationships,
 // and calculating the transitive closure of permissions through inheritance.
 type InheritanceManager struct {
 	hierarchyStorage HierarchyStorage
 	roleStorage      RoleStorage
-	groupStorage     GroupStorage
 	userStorage      UserStorage
 }
 
@@ -38,9 +37,6 @@ type InheritanceManagerOptions struct {
 
 	// RoleStorage is the storage backend for roles.
 	RoleStorage RoleStorage
-
-	// GroupStorage is the storage backend for groups.
-	GroupStorage GroupStorage
 
 	// UserStorage is the storage backend for users.
 	UserStorage UserStorage
@@ -54,9 +50,6 @@ func NewInheritanceManager(opts InheritanceManagerOptions) (*InheritanceManager,
 	if opts.RoleStorage == nil {
 		return nil, NewIAMError(ErrHierarchyInvalid, "iam.inheritance.new", "role storage is required", nil)
 	}
-	if opts.GroupStorage == nil {
-		return nil, NewIAMError(ErrHierarchyInvalid, "iam.inheritance.new", "group storage is required", nil)
-	}
 	if opts.UserStorage == nil {
 		return nil, NewIAMError(ErrHierarchyInvalid, "iam.inheritance.new", "user storage is required", nil)
 	}
@@ -64,7 +57,6 @@ func NewInheritanceManager(opts InheritanceManagerOptions) (*InheritanceManager,
 	return &InheritanceManager{
 		hierarchyStorage: opts.HierarchyStorage,
 		roleStorage:      opts.RoleStorage,
-		groupStorage:     opts.GroupStorage,
 		userStorage:      opts.UserStorage,
 	}, nil
 }
@@ -122,78 +114,6 @@ func (m *InheritanceManager) RemoveRoleParent(ctx context.Context, tenantID, chi
 // GetRoleHierarchy returns the parent chain for a role, from direct parents to root.
 func (m *InheritanceManager) GetRoleHierarchy(ctx context.Context, tenantID, roleID string) ([]*RoleHierarchy, error) {
 	return m.hierarchyStorage.ListRoleParents(ctx, tenantID, roleID)
-}
-
-// AddGroupParent adds a parent group to a child group.
-// If inheritMembers is true, the child group inherits all members from the parent.
-// Returns an error if this would create a cycle in the hierarchy.
-func (m *InheritanceManager) AddGroupParent(ctx context.Context, tenantID, childGroupID, parentGroupID string, inheritMembers bool) error {
-	// Validate that both groups exist
-	if _, err := m.groupStorage.GetGroup(ctx, tenantID, childGroupID); err != nil {
-		return NewIAMError(ErrGroupNotFound, "iam.inheritance.group.add_parent",
-			fmt.Sprintf("child group not found: %s", childGroupID), err)
-	}
-	if _, err := m.groupStorage.GetGroup(ctx, tenantID, parentGroupID); err != nil {
-		return NewIAMError(ErrGroupNotFound, "iam.inheritance.group.add_parent",
-			fmt.Sprintf("parent group not found: %s", parentGroupID), err)
-	}
-
-	// Create the hierarchy relationship
-	hierarchy := &GroupHierarchy{
-		ID:             uuid.New().String(),
-		TenantID:       tenantID,
-		ParentGroupID:  parentGroupID,
-		ChildGroupID:   childGroupID,
-		InheritMembers: inheritMembers,
-		Created:        time.Now(),
-	}
-
-	if err := m.hierarchyStorage.CreateGroupHierarchy(ctx, hierarchy); err != nil {
-		return err
-	}
-
-	// Invalidate cached permissions for affected users
-	if inheritMembers {
-		// Get all members of the parent group
-		parentGroup, err := m.groupStorage.GetGroup(ctx, tenantID, parentGroupID)
-		if err == nil {
-			for _, userID := range parentGroup.Members {
-				_ = m.hierarchyStorage.InvalidateEffectivePermissions(ctx, tenantID, userID)
-			}
-		}
-	}
-
-	return nil
-}
-
-// RemoveGroupParent removes a parent-child relationship between groups.
-func (m *InheritanceManager) RemoveGroupParent(ctx context.Context, tenantID, childGroupID, parentGroupID string) error {
-	// Get the hierarchy before deleting to check inheritMembers
-	hierarchy, err := m.hierarchyStorage.GetGroupHierarchy(ctx, tenantID, parentGroupID, childGroupID)
-	if err != nil {
-		return err
-	}
-
-	if err := m.hierarchyStorage.DeleteGroupHierarchy(ctx, tenantID, parentGroupID, childGroupID); err != nil {
-		return err
-	}
-
-	// Invalidate cached permissions for affected users
-	if hierarchy.InheritMembers {
-		parentGroup, err := m.groupStorage.GetGroup(ctx, tenantID, parentGroupID)
-		if err == nil {
-			for _, userID := range parentGroup.Members {
-				_ = m.hierarchyStorage.InvalidateEffectivePermissions(ctx, tenantID, userID)
-			}
-		}
-	}
-
-	return nil
-}
-
-// GetGroupHierarchy returns the parent chain for a group, from direct parents to root.
-func (m *InheritanceManager) GetGroupHierarchy(ctx context.Context, tenantID, groupID string) ([]*GroupHierarchy, error) {
-	return m.hierarchyStorage.ListGroupParents(ctx, tenantID, groupID)
 }
 
 // GetEffectiveRolePermissions computes all permissions for a role including inherited ones.
@@ -261,51 +181,9 @@ func (m *InheritanceManager) GetEffectiveRolePermissions(ctx context.Context, te
 	return effective, nil
 }
 
-// GetEffectiveUserGroups returns all groups a user belongs to, including parent groups.
-// It traverses the group hierarchy to find all ancestor groups.
-func (m *InheritanceManager) GetEffectiveUserGroups(ctx context.Context, tenantID, userID string) ([]string, error) {
-	// Get the user
-	user, err := m.userStorage.GetUser(ctx, tenantID, userID)
-	if err != nil {
-		return nil, NewIAMError(ErrUserNotFound, "iam.inheritance.user.effective_groups",
-			fmt.Sprintf("user not found: %s", userID), err)
-	}
-
-	// Start with user's direct groups
-	groupSet := make(map[string]bool)
-	for _, groupID := range user.Groups {
-		groupSet[groupID] = true
-
-		// Get ancestors for each group
-		ancestors, err := m.hierarchyStorage.GetGroupAncestors(ctx, tenantID, groupID)
-		if err != nil {
-			continue
-		}
-
-		// Check which ancestors should be included based on InheritMembers
-		for _, ancestorID := range ancestors {
-			// Check if the path from user's group to ancestor has InheritMembers=true
-			if m.shouldInheritFromGroup(ctx, tenantID, groupID, ancestorID) {
-				groupSet[ancestorID] = true
-			}
-		}
-	}
-
-	// Convert set to slice
-	groups := make([]string, 0, len(groupSet))
-	for groupID := range groupSet {
-		groups = append(groups, groupID)
-	}
-
-	return groups, nil
-}
-
-// GetEffectiveUserPermissions computes all permissions for a user.
-// This includes permissions from:
-// - Directly assigned roles
-// - Roles inherited through role hierarchy
-// - Roles assigned to user's groups
-// - Roles inherited through group hierarchy.
+// GetEffectiveUserPermissions computes all permissions for a user: the
+// permissions of the roles assigned to the user directly, plus those each role
+// inherits through the role hierarchy.
 func (m *InheritanceManager) GetEffectiveUserPermissions(ctx context.Context, tenantID, userID string) (*EffectivePermissions, error) {
 	// Check cache first
 	cached, err := m.hierarchyStorage.GetCachedEffectivePermissions(ctx, tenantID, userID)
@@ -323,26 +201,9 @@ func (m *InheritanceManager) GetEffectiveUserPermissions(ctx context.Context, te
 	inheritedPerms := make(map[string][]string)
 	allPermsSet := make(map[string]bool)
 
-	// Get effective groups (including inherited)
-	effectiveGroups, err := m.GetEffectiveUserGroups(ctx, tenantID, userID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Collect all roles from user and groups
 	roleSet := make(map[string]bool)
 	for _, roleID := range user.Roles {
 		roleSet[roleID] = true
-	}
-
-	// Add roles from all effective groups
-	for _, groupID := range effectiveGroups {
-		_, err := m.groupStorage.GetGroup(ctx, tenantID, groupID)
-		if err != nil {
-			continue
-		}
-		// Groups don't have roles in the current schema, but we keep the structure for future
-		// In a complete implementation, groups might have associated roles
 	}
 
 	// Get effective permissions for each role
@@ -401,41 +262,4 @@ func (m *InheritanceManager) invalidateRoleHierarchy(ctx context.Context, tenant
 	}
 
 	return nil
-}
-
-// shouldInheritFromGroup checks if a group should inherit members from an ancestor.
-// It walks the path from child to ancestor and checks if InheritMembers is true.
-func (m *InheritanceManager) shouldInheritFromGroup(ctx context.Context, tenantID, childGroupID, ancestorGroupID string) bool {
-	// Walk up the hierarchy from child to ancestor
-	visited := make(map[string]bool)
-	queue := []string{childGroupID}
-
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-
-		if visited[current] {
-			continue
-		}
-		visited[current] = true
-
-		if current == ancestorGroupID {
-			return true
-		}
-
-		// Get parents of current group
-		parents, err := m.hierarchyStorage.ListGroupParents(ctx, tenantID, current)
-		if err != nil {
-			continue
-		}
-
-		for _, parent := range parents {
-			// Only follow the path if InheritMembers is true
-			if parent.InheritMembers {
-				queue = append(queue, parent.ParentGroupID)
-			}
-		}
-	}
-
-	return false
 }

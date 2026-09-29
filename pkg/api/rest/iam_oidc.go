@@ -198,7 +198,7 @@ func (h *IAMHandler) Token(w http.ResponseWriter, r *http.Request) {
 
 	// Extract client credentials. RFC 6749 §2.3.1 specifies HTTP Basic
 	// authentication as the recommended method for confidential clients;
-	// OAuth2 libraries (including our own agent daemon) commonly send
+	// OAuth2 libraries (including our own fleet node daemon) commonly send
 	// Authorization: Basic base64(client_id:client_secret) on the
 	// token endpoint. Body fields are an alternative fallback per the
 	// same section. Basic-auth values take precedence when both are

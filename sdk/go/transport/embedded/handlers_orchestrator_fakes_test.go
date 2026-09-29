@@ -33,6 +33,8 @@ type fakeAgentService struct {
 	blockCalls   []blockCall
 	readmitCalls []blockCall
 	deleteCalls  []blockCall
+	bumpCalls    []blockCall
+	bumpBonus    int
 
 	// listJobsFilter records the narrowing the last ListJobs carried, so a
 	// transport that drops the caller's filter is caught rather than
@@ -102,7 +104,7 @@ func (f *fakeAgentService) ListSessions(ctx context.Context, req *orchestration.
 	}
 	return &orchestration.ListSessionsResponse{
 		Sessions: []*orchestration.SessionInfo{
-			{SessionID: "s1", Backend: "b", Model: "m", JobID: "job-1", Runner: "review"},
+			{SessionID: "s1", Backend: "b", Model: "m", JobID: "job-1", ContainerID: "ctr-1", Runner: "review"},
 		},
 	}, nil
 }
@@ -153,32 +155,32 @@ func (f *fakeAgentService) HealthCheck(ctx context.Context) (*orchestration.Heal
 	}, nil
 }
 
-func (f *fakeAgentService) RegisterAgent(ctx context.Context, req *orchestration.RegisterAgentRequest) (*orchestration.RegisterAgentResponse, error) {
+func (f *fakeAgentService) RegisterFleetNode(ctx context.Context, req *orchestration.RegisterFleetNodeRequest) (*orchestration.RegisterFleetNodeResponse, error) {
 	if err := f.err(); err != nil {
 		return nil, err
 	}
-	return &orchestration.RegisterAgentResponse{Agent: &orchestration.AgentRegistration{ID: "a1"}}, nil
+	return &orchestration.RegisterFleetNodeResponse{Node: &orchestration.FleetNode{ID: "a1"}}, nil
 }
 
-func (f *fakeAgentService) GetAgent(ctx context.Context, tenantID, agentID string) (*orchestration.AgentRegistration, error) {
+func (f *fakeAgentService) GetFleetNode(ctx context.Context, tenantID, agentID string) (*orchestration.FleetNode, error) {
 	if err := f.err(); err != nil {
 		return nil, err
 	}
-	return &orchestration.AgentRegistration{ID: agentID}, nil
+	return &orchestration.FleetNode{ID: agentID}, nil
 }
 
-func (f *fakeAgentService) ListAgents(ctx context.Context, tenantID string, filter *orchestration.AgentFilter) ([]*orchestration.AgentRegistration, error) {
+func (f *fakeAgentService) ListFleetNodes(ctx context.Context, tenantID string, filter *orchestration.FleetNodeFilter) ([]*orchestration.FleetNode, error) {
 	if err := f.err(); err != nil {
 		return nil, err
 	}
-	return []*orchestration.AgentRegistration{{ID: "a1"}}, nil
+	return []*orchestration.FleetNode{{ID: "a1"}}, nil
 }
 
-func (f *fakeAgentService) RemoveAgent(ctx context.Context, tenantID, agentID string) error {
+func (f *fakeAgentService) RemoveFleetNode(ctx context.Context, tenantID, agentID string) error {
 	return f.err()
 }
 
-func (f *fakeAgentService) AgentHeartbeat(ctx context.Context, tenantID, agentID string, _ *orchestration.AgentObservation) error {
+func (f *fakeAgentService) FleetNodeHeartbeat(ctx context.Context, tenantID, agentID string, _ *orchestration.FleetNodeObservation) error {
 	return f.err()
 }
 
@@ -229,6 +231,18 @@ func (f *fakeAgentService) ReadmitTask(ctx context.Context, tenantID, taskID str
 	}
 	f.readmitCalls = append(f.readmitCalls, blockCall{TenantID: tenantID, TaskID: taskID})
 	return nil
+}
+
+func (*fakeAgentService) CloseBlockedTask(_ context.Context, _, _ string, _ *orchestration.TaskResult) error {
+	return nil
+}
+
+func (f *fakeAgentService) BumpTaskReviewRoundBudget(ctx context.Context, tenantID, taskID string) (int, error) {
+	if err := f.err(); err != nil {
+		return 0, err
+	}
+	f.bumpCalls = append(f.bumpCalls, blockCall{TenantID: tenantID, TaskID: taskID})
+	return f.bumpBonus, nil
 }
 
 func (f *fakeAgentService) DeleteTask(ctx context.Context, tenantID, taskID string) error {
@@ -379,70 +393,70 @@ func (f *fakeProjectService) ListProjects(ctx context.Context, req *service.List
 	return &service.ListProjectsResponse{Projects: []*orchestration.Project{{ID: "p1"}}}, nil
 }
 
-func (f *fakeProjectService) AuthorizeAgent(ctx context.Context, req *service.AuthorizeAgentRequest) error {
+func (f *fakeProjectService) AuthorizeFleetNode(ctx context.Context, req *service.AuthorizeFleetNodeRequest) error {
 	return f.err()
 }
 
-func (f *fakeProjectService) GrantAgentRole(ctx context.Context, req *service.GrantAgentRoleRequest) (*service.GrantAgentRoleResponse, error) {
+func (f *fakeProjectService) GrantFleetNodeRole(ctx context.Context, req *service.GrantFleetNodeRoleRequest) (*service.GrantFleetNodeRoleResponse, error) {
 	if err := f.err(); err != nil {
 		return nil, err
 	}
-	return &service.GrantAgentRoleResponse{ProjectID: req.ProjectID, AgentID: req.AgentID}, nil
+	return &service.GrantFleetNodeRoleResponse{ProjectID: req.ProjectID, FleetNodeID: req.FleetNodeID}, nil
 }
 
-func (f *fakeProjectService) RevokeAgentRole(ctx context.Context, req *service.RevokeAgentRoleRequest) (*service.RevokeAgentRoleResponse, error) {
+func (f *fakeProjectService) RevokeFleetNodeRole(ctx context.Context, req *service.RevokeFleetNodeRoleRequest) (*service.RevokeFleetNodeRoleResponse, error) {
 	if err := f.err(); err != nil {
 		return nil, err
 	}
-	return &service.RevokeAgentRoleResponse{ProjectID: req.ProjectID, AgentID: req.AgentID}, nil
+	return &service.RevokeFleetNodeRoleResponse{ProjectID: req.ProjectID, FleetNodeID: req.FleetNodeID}, nil
 }
 
-// fakeAgentAdminService is a configurable service.AgentAdminService.
-type fakeAgentAdminService struct {
+// fakeFleetAdminService is a configurable service.FleetAdminService.
+type fakeFleetAdminService struct {
 	fail bool
 }
 
-func (f *fakeAgentAdminService) err() error {
+func (f *fakeFleetAdminService) err() error {
 	if f.fail {
 		return errOrch
 	}
 	return nil
 }
 
-func (f *fakeAgentAdminService) DisableAgent(ctx context.Context, req *service.DisableAgentRequest) (*service.DisableAgentResponse, error) {
+func (f *fakeFleetAdminService) DisableFleetNode(ctx context.Context, req *service.DisableFleetNodeRequest) (*service.DisableFleetNodeResponse, error) {
 	if err := f.err(); err != nil {
 		return nil, err
 	}
-	return &service.DisableAgentResponse{AgentID: req.AgentID, Disabled: true}, nil
+	return &service.DisableFleetNodeResponse{NodeID: req.NodeID, Disabled: true}, nil
 }
 
-func (f *fakeAgentAdminService) EnableAgent(ctx context.Context, req *service.EnableAgentRequest) (*service.EnableAgentResponse, error) {
+func (f *fakeFleetAdminService) EnableFleetNode(ctx context.Context, req *service.EnableFleetNodeRequest) (*service.EnableFleetNodeResponse, error) {
 	if err := f.err(); err != nil {
 		return nil, err
 	}
-	return &service.EnableAgentResponse{AgentID: req.AgentID, Enabled: true}, nil
+	return &service.EnableFleetNodeResponse{NodeID: req.NodeID, Enabled: true}, nil
 }
 
-func (f *fakeAgentAdminService) GetAgentRegistration(ctx context.Context, req *service.GetAgentRegistrationRequest) (*service.GetAgentRegistrationResponse, error) {
-	return &service.GetAgentRegistrationResponse{}, f.err()
+func (f *fakeFleetAdminService) GetFleetNodeRegistration(ctx context.Context, req *service.GetFleetNodeRegistrationRequest) (*service.GetFleetNodeRegistrationResponse, error) {
+	return &service.GetFleetNodeRegistrationResponse{}, f.err()
 }
 
-func (f *fakeAgentAdminService) ListAgentRegistrations(ctx context.Context, req *service.ListAgentRegistrationsRequest) (*service.ListAgentRegistrationsResponse, error) {
-	return &service.ListAgentRegistrationsResponse{}, f.err()
+func (f *fakeFleetAdminService) ListFleetNodeRegistrations(ctx context.Context, req *service.ListFleetNodeRegistrationsRequest) (*service.ListFleetNodeRegistrationsResponse, error) {
+	return &service.ListFleetNodeRegistrationsResponse{}, f.err()
 }
 
-// orchMock embeds the base mock and overrides Agent/Project/AgentAdmin.
+// orchMock embeds the base mock and overrides Agent/Project/FleetAdmin.
 type orchMock struct {
 	*mockQuicBaaS
 	agent orchestration.AgentService
 	proj  service.ProjectService
-	admin service.AgentAdminService
+	admin service.FleetAdminService
 }
 
 func (m *orchMock) Agent() orchestration.AgentService     { return m.agent }
 func (m *orchMock) Project() service.ProjectService       { return m.proj }
 func (m *orchMock) Account() service.AccountService       { return nil }
-func (m *orchMock) AgentAdmin() service.AgentAdminService { return m.admin }
+func (m *orchMock) FleetAdmin() service.FleetAdminService { return m.admin }
 
 // PromptSessionAsync mirrors the production contract: the turn is acknowledged
 // immediately and its output would flow to the session event log.
@@ -477,12 +491,12 @@ func (m *fakeAgentService) ListTasksPage(ctx context.Context, tenantID string, f
 	return orchestration.ApplyPage(tasks, page, orchestration.TaskPageSpec())
 }
 
-func (m *fakeAgentService) ListAgentsPage(ctx context.Context, tenantID string, filter *orchestration.AgentFilter, page *orchestration.Page) (*orchestration.PageResult[*orchestration.AgentRegistration], error) {
-	agents, err := m.ListAgents(ctx, tenantID, filter)
+func (m *fakeAgentService) ListFleetNodesPage(ctx context.Context, tenantID string, filter *orchestration.FleetNodeFilter, page *orchestration.Page) (*orchestration.PageResult[*orchestration.FleetNode], error) {
+	agents, err := m.ListFleetNodes(ctx, tenantID, filter)
 	if err != nil {
 		return nil, err
 	}
-	return orchestration.ApplyPage(agents, page, orchestration.AgentPageSpec())
+	return orchestration.ApplyPage(agents, page, orchestration.FleetNodePageSpec())
 }
 
 func (m *fakeAgentService) ListWorkflowsPage(ctx context.Context, filter *orchestration.WorkflowFilter, page *orchestration.Page) (*orchestration.PageResult[*orchestration.WorkflowDefinition], error) {

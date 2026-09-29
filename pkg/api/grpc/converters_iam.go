@@ -162,7 +162,6 @@ func convertProtoToUser(pb *iampb.User) *iam.User {
 		Username:    pb.Username,
 		Name:        pb.Name,
 		Roles:       pb.Roles,
-		Groups:      pb.Groups,
 		AuthMethods: pb.AuthMethods,
 		Lifecycle:   iam.Lifecycle(pb.Lifecycle),
 	}
@@ -203,7 +202,6 @@ func convertUserToProto(u *iam.User) *iampb.User {
 		Username:    u.Username,
 		Name:        u.Name,
 		Roles:       u.Roles,
-		Groups:      u.Groups,
 		AuthMethods: u.AuthMethods,
 		Lifecycle:   string(u.Lifecycle),
 	}
@@ -225,51 +223,6 @@ func convertUserToProto(u *iam.User) *iampb.User {
 	}
 
 	return pb
-}
-
-// =============================================================================
-// Group Conversions
-// =============================================================================
-
-// convertProtoToGroup converts a proto Group to a domain Group.
-func convertProtoToGroup(pb *iampb.Group) *iam.Group {
-	if pb == nil {
-		return nil
-	}
-
-	group := &iam.Group{
-		ID:          pb.Id,
-		TenantID:    pb.TenantId,
-		Name:        pb.Name,
-		Description: pb.Description,
-		Members:     pb.Members,
-	}
-
-	if pb.CreatedAt != nil {
-		group.Created = pb.CreatedAt.AsTime()
-	}
-	if pb.UpdatedAt != nil {
-		group.Updated = pb.UpdatedAt.AsTime()
-	}
-
-	return group
-}
-
-// convertGroupToProto converts a domain Group to a proto Group.
-func convertGroupToProto(g *iam.Group) *iampb.Group {
-	if g == nil {
-		return nil
-	}
-
-	return &iampb.Group{
-		Id:          g.ID,
-		TenantId:    g.TenantID,
-		Name:        g.Name,
-		Description: g.Description,
-		Members:     g.Members,
-		CreatedAt:   timestamppb.New(g.Created),
-		UpdatedAt:   timestamppb.New(g.Updated),
-	}
 }
 
 // =============================================================================
@@ -547,8 +500,6 @@ func convertProtoAdminRole(pb iampb.AdminRole) iam.AdminRole {
 		return iam.AdminRoleTenantAdmin
 	case iampb.AdminRole_ADMIN_ROLE_USER_ADMIN:
 		return iam.AdminRoleUserAdmin
-	case iampb.AdminRole_ADMIN_ROLE_GROUP_ADMIN:
-		return iam.AdminRoleGroupAdmin
 	case iampb.AdminRole_ADMIN_ROLE_POLICY_ADMIN:
 		return iam.AdminRolePolicyAdmin
 	case iampb.AdminRole_ADMIN_ROLE_AUDIT_ADMIN:
@@ -569,8 +520,6 @@ func convertAdminRoleToProto(role iam.AdminRole) iampb.AdminRole {
 		return iampb.AdminRole_ADMIN_ROLE_TENANT_ADMIN
 	case iam.AdminRoleUserAdmin:
 		return iampb.AdminRole_ADMIN_ROLE_USER_ADMIN
-	case iam.AdminRoleGroupAdmin:
-		return iampb.AdminRole_ADMIN_ROLE_GROUP_ADMIN
 	case iam.AdminRolePolicyAdmin:
 		return iampb.AdminRole_ADMIN_ROLE_POLICY_ADMIN
 	case iam.AdminRoleAuditAdmin:
@@ -1085,13 +1034,6 @@ func convertUserDataExportToProto(e *iam.UserDataExport) *iampb.UserDataExport {
 		}
 	}
 
-	if len(e.Groups) > 0 {
-		pb.Groups = make([]*iampb.GroupMembershipExport, len(e.Groups))
-		for i, g := range e.Groups {
-			pb.Groups[i] = convertGroupMembershipExportToProto(g)
-		}
-	}
-
 	if len(e.Roles) > 0 {
 		pb.Roles = make([]*iampb.RoleAssignmentExport, len(e.Roles))
 		for i, r := range e.Roles {
@@ -1208,19 +1150,6 @@ func convertConsentExportToProto(c *iam.ConsentExport) *iampb.ConsentExport {
 	}
 
 	return pb
-}
-
-// convertGroupMembershipExportToProto converts a domain GroupMembershipExport to a proto GroupMembershipExport.
-func convertGroupMembershipExportToProto(g *iam.GroupMembershipExport) *iampb.GroupMembershipExport {
-	if g == nil {
-		return nil
-	}
-
-	return &iampb.GroupMembershipExport{
-		GroupId:   g.GroupID,
-		GroupName: g.GroupName,
-		JoinedAt:  timestamppb.New(g.JoinedAt),
-	}
 }
 
 // convertRoleAssignmentExportToProto converts a domain RoleAssignmentExport to a proto RoleAssignmentExport.
@@ -1420,14 +1349,13 @@ func convertDeletionSummaryToProto(s *iam.DeletionSummary) *iampb.DeletionSummar
 	}
 
 	pb := &iampb.DeletionSummary{
-		ProfileDeleted:          s.ProfileDeleted,
-		SessionsDeleted:         int32(s.SessionsDeleted),         //nolint:gosec // G115: Reasonable count
-		AuditLogsAnonymized:     int32(s.AuditLogsAnonymized),     //nolint:gosec // G115: Reasonable count
-		ConsentsDeleted:         int32(s.ConsentsDeleted),         //nolint:gosec // G115: Reasonable count
-		CredentialsDeleted:      int32(s.CredentialsDeleted),      //nolint:gosec // G115: Reasonable count
-		GroupMembershipsRemoved: int32(s.GroupMembershipsRemoved), //nolint:gosec // G115: Reasonable count
-		RoleAssignmentsRemoved:  int32(s.RoleAssignmentsRemoved),  //nolint:gosec // G115: Reasonable count
-		TokensRevoked:           int32(s.TokensRevoked),           //nolint:gosec // G115: Reasonable count
+		ProfileDeleted:         s.ProfileDeleted,
+		SessionsDeleted:        int32(s.SessionsDeleted),        //nolint:gosec // G115: Reasonable count
+		AuditLogsAnonymized:    int32(s.AuditLogsAnonymized),    //nolint:gosec // G115: Reasonable count
+		ConsentsDeleted:        int32(s.ConsentsDeleted),        //nolint:gosec // G115: Reasonable count
+		CredentialsDeleted:     int32(s.CredentialsDeleted),     //nolint:gosec // G115: Reasonable count
+		RoleAssignmentsRemoved: int32(s.RoleAssignmentsRemoved), //nolint:gosec // G115: Reasonable count
+		TokensRevoked:          int32(s.TokensRevoked),          //nolint:gosec // G115: Reasonable count
 	}
 
 	if len(s.AdditionalData) > 0 {
@@ -1447,14 +1375,13 @@ func convertProtoToDeletionSummary(pb *iampb.DeletionSummary) *iam.DeletionSumma
 	}
 
 	s := &iam.DeletionSummary{
-		ProfileDeleted:          pb.ProfileDeleted,
-		SessionsDeleted:         int(pb.SessionsDeleted),
-		AuditLogsAnonymized:     int(pb.AuditLogsAnonymized),
-		ConsentsDeleted:         int(pb.ConsentsDeleted),
-		CredentialsDeleted:      int(pb.CredentialsDeleted),
-		GroupMembershipsRemoved: int(pb.GroupMembershipsRemoved),
-		RoleAssignmentsRemoved:  int(pb.RoleAssignmentsRemoved),
-		TokensRevoked:           int(pb.TokensRevoked),
+		ProfileDeleted:         pb.ProfileDeleted,
+		SessionsDeleted:        int(pb.SessionsDeleted),
+		AuditLogsAnonymized:    int(pb.AuditLogsAnonymized),
+		ConsentsDeleted:        int(pb.ConsentsDeleted),
+		CredentialsDeleted:     int(pb.CredentialsDeleted),
+		RoleAssignmentsRemoved: int(pb.RoleAssignmentsRemoved),
+		TokensRevoked:          int(pb.TokensRevoked),
 	}
 
 	if len(pb.AdditionalData) > 0 {

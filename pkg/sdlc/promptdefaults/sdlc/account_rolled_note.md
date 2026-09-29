@@ -1,0 +1,3 @@
+## Your previous session on this branch was moved to another account
+
+In round ${round} the provider refused the account your previous session ran on, because that account could not serve it: it had reached its usage limit, or the provider rejected its login. Nothing about the work caused it. This is a fresh session on the same branch, running on a different account: everything that session committed and pushed is checked out here, and nothing it did not commit survived. Read the branch before you write, and continue from what it holds.

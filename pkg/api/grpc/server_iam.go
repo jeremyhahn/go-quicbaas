@@ -60,15 +60,6 @@ type IAMService interface {
 	DeleteUser(ctx context.Context, tenantID, userID string) error
 	ListUsers(ctx context.Context, tenantID string, limit, offset int, filters map[string]string) ([]*iam.User, int, error)
 
-	// Group operations
-	CreateGroup(ctx context.Context, group *iam.Group) (*iam.Group, error)
-	GetGroup(ctx context.Context, tenantID, groupID string) (*iam.Group, error)
-	UpdateGroup(ctx context.Context, group *iam.Group) (*iam.Group, error)
-	DeleteGroup(ctx context.Context, tenantID, groupID string) error
-	ListGroups(ctx context.Context, tenantID string, limit, offset int) ([]*iam.Group, int, error)
-	AddUserToGroup(ctx context.Context, tenantID, groupID, userID string) error
-	RemoveUserFromGroup(ctx context.Context, tenantID, groupID, userID string) error
-
 	// Role operations
 	CreateRole(ctx context.Context, role *iam.Role) (*iam.Role, error)
 	GetRole(ctx context.Context, tenantID, roleID string) (*iam.Role, error)
@@ -292,7 +283,6 @@ func (s *IAMServer) CreateUser(ctx context.Context, req *iampb.CreateUserRequest
 		Username:    req.Username,
 		Name:        req.Name,
 		Roles:       req.Roles,
-		Groups:      req.Groups,
 		AuthMethods: req.AuthMethods,
 		Lifecycle:   iam.Lifecycle(req.Lifecycle),
 	}
@@ -355,7 +345,6 @@ func (s *IAMServer) UpdateUser(ctx context.Context, req *iampb.UpdateUserRequest
 		Username:  req.Username,
 		Name:      req.Name,
 		Roles:     req.Roles,
-		Groups:    req.Groups,
 		Lifecycle: iam.Lifecycle(req.Lifecycle),
 	}
 	// PRESENCE of the wrapper is the instruction, and a nil vs empty-but-present
@@ -427,9 +416,6 @@ func (s *IAMServer) ListUsers(ctx context.Context, req *iampb.ListUsersRequest) 
 	if req.Role != "" {
 		filters["role"] = req.Role
 	}
-	if req.Group != "" {
-		filters["group"] = req.Group
-	}
 
 	users, total, err := s.iamService.ListUsers(ctx, req.TenantId, limit, offset, filters)
 	if err != nil {
@@ -445,197 +431,6 @@ func (s *IAMServer) ListUsers(ctx context.Context, req *iampb.ListUsersRequest) 
 		Users: pbUsers,
 		Total: int32(total), //nolint:gosec // G115: Total count from pagination
 	}, nil
-}
-
-// =============================================================================
-// Group Operations
-// =============================================================================
-
-// CreateGroup creates a new group.
-func (s *IAMServer) CreateGroup(ctx context.Context, req *iampb.CreateGroupRequest) (*iampb.Group, error) {
-	s.logger.WithFields(map[string]interface{}{
-		"tenant_id": req.TenantId,
-		"group_id":  req.Id,
-	}).Debug("Processing CreateGroup request")
-
-	if req.TenantId == "" {
-		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
-	}
-	if req.Id == "" {
-		return nil, status.Error(codes.InvalidArgument, "group id is required")
-	}
-	if req.Name == "" {
-		return nil, status.Error(codes.InvalidArgument, "group name is required")
-	}
-
-	group := &iam.Group{
-		ID:          req.Id,
-		TenantID:    req.TenantId,
-		Name:        req.Name,
-		Description: req.Description,
-	}
-
-	created, err := s.iamService.CreateGroup(ctx, group)
-	if err != nil {
-		return nil, convertIAMError(err)
-	}
-
-	return convertGroupToProto(created), nil
-}
-
-// GetGroup retrieves a group by ID.
-func (s *IAMServer) GetGroup(ctx context.Context, req *iampb.GetGroupRequest) (*iampb.Group, error) {
-	s.logger.WithFields(map[string]interface{}{
-		"tenant_id": req.TenantId,
-		"group_id":  req.GroupId,
-	}).Debug("Processing GetGroup request")
-
-	if req.TenantId == "" {
-		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
-	}
-	if req.GroupId == "" {
-		return nil, status.Error(codes.InvalidArgument, "group_id is required")
-	}
-
-	group, err := s.iamService.GetGroup(ctx, req.TenantId, req.GroupId)
-	if err != nil {
-		return nil, convertIAMError(err)
-	}
-
-	return convertGroupToProto(group), nil
-}
-
-// UpdateGroup updates an existing group.
-func (s *IAMServer) UpdateGroup(ctx context.Context, req *iampb.UpdateGroupRequest) (*iampb.Group, error) {
-	s.logger.WithFields(map[string]interface{}{
-		"tenant_id": req.TenantId,
-		"group_id":  req.GroupId,
-	}).Debug("Processing UpdateGroup request")
-
-	if req.TenantId == "" {
-		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
-	}
-	if req.GroupId == "" {
-		return nil, status.Error(codes.InvalidArgument, "group_id is required")
-	}
-
-	group := &iam.Group{
-		ID:          req.GroupId,
-		TenantID:    req.TenantId,
-		Name:        req.Name,
-		Description: req.Description,
-	}
-
-	updated, err := s.iamService.UpdateGroup(ctx, group)
-	if err != nil {
-		return nil, convertIAMError(err)
-	}
-
-	return convertGroupToProto(updated), nil
-}
-
-// DeleteGroup deletes a group.
-func (s *IAMServer) DeleteGroup(ctx context.Context, req *iampb.DeleteGroupRequest) (*iampb.DeleteGroupResponse, error) {
-	s.logger.WithFields(map[string]interface{}{
-		"tenant_id": req.TenantId,
-		"group_id":  req.GroupId,
-	}).Info("Processing DeleteGroup request")
-
-	if req.TenantId == "" {
-		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
-	}
-	if req.GroupId == "" {
-		return nil, status.Error(codes.InvalidArgument, "group_id is required")
-	}
-
-	err := s.iamService.DeleteGroup(ctx, req.TenantId, req.GroupId)
-	if err != nil {
-		return nil, convertIAMError(err)
-	}
-
-	return &iampb.DeleteGroupResponse{Success: true}, nil
-}
-
-// ListGroups lists groups with pagination.
-func (s *IAMServer) ListGroups(ctx context.Context, req *iampb.ListGroupsRequest) (*iampb.ListGroupsResponse, error) {
-	s.logger.WithField("tenant_id", req.TenantId).Debug("Processing ListGroups request")
-
-	if req.TenantId == "" {
-		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
-	}
-
-	limit := int(req.Limit)
-	if limit == 0 {
-		limit = 100
-	}
-	offset := int(req.Offset)
-
-	groups, total, err := s.iamService.ListGroups(ctx, req.TenantId, limit, offset)
-	if err != nil {
-		return nil, convertIAMError(err)
-	}
-
-	pbGroups := make([]*iampb.Group, 0, len(groups))
-	for _, group := range groups {
-		pbGroups = append(pbGroups, convertGroupToProto(group))
-	}
-
-	return &iampb.ListGroupsResponse{
-		Groups: pbGroups,
-		Total:  int32(total), //nolint:gosec // G115: Total count from pagination
-	}, nil
-}
-
-// AddUserToGroup adds a user to a group.
-func (s *IAMServer) AddUserToGroup(ctx context.Context, req *iampb.AddUserToGroupRequest) (*iampb.AddUserToGroupResponse, error) {
-	s.logger.WithFields(map[string]interface{}{
-		"tenant_id": req.TenantId,
-		"group_id":  req.GroupId,
-		"user_id":   req.UserId,
-	}).Debug("Processing AddUserToGroup request")
-
-	if req.TenantId == "" {
-		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
-	}
-	if req.GroupId == "" {
-		return nil, status.Error(codes.InvalidArgument, "group_id is required")
-	}
-	if req.UserId == "" {
-		return nil, status.Error(codes.InvalidArgument, "user_id is required")
-	}
-
-	err := s.iamService.AddUserToGroup(ctx, req.TenantId, req.GroupId, req.UserId)
-	if err != nil {
-		return nil, convertIAMError(err)
-	}
-
-	return &iampb.AddUserToGroupResponse{Success: true}, nil
-}
-
-// RemoveUserFromGroup removes a user from a group.
-func (s *IAMServer) RemoveUserFromGroup(ctx context.Context, req *iampb.RemoveUserFromGroupRequest) (*iampb.RemoveUserFromGroupResponse, error) {
-	s.logger.WithFields(map[string]interface{}{
-		"tenant_id": req.TenantId,
-		"group_id":  req.GroupId,
-		"user_id":   req.UserId,
-	}).Debug("Processing RemoveUserFromGroup request")
-
-	if req.TenantId == "" {
-		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
-	}
-	if req.GroupId == "" {
-		return nil, status.Error(codes.InvalidArgument, "group_id is required")
-	}
-	if req.UserId == "" {
-		return nil, status.Error(codes.InvalidArgument, "user_id is required")
-	}
-
-	err := s.iamService.RemoveUserFromGroup(ctx, req.TenantId, req.GroupId, req.UserId)
-	if err != nil {
-		return nil, convertIAMError(err)
-	}
-
-	return &iampb.RemoveUserFromGroupResponse{Success: true}, nil
 }
 
 // =============================================================================

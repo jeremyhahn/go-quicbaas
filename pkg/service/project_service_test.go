@@ -107,30 +107,97 @@ func TestProjectService_CreateProject_MissingName(t *testing.T) {
 	}
 }
 
+// leadDirectory is a real agent directory holding one lead Agent, "lead-agent",
+// and one coder, "coder", in tenant-1.
+func leadDirectory(t *testing.T) *orchestration.AgentDirectory {
+	t.Helper()
+	store := orchestration.NewInMemoryAgentCatalogStore()
+	for _, agent := range []orchestration.Agent{
+		{ID: "lead-agent", Name: "Lead", Backend: "claude", Model: "claude-opus-5-5", Roles: []orchestration.AgentRole{orchestration.AgentRoleLead}},
+		{ID: "coder", Name: "Coder", Backend: "claude", Model: "claude-opus-5-5", Roles: []orchestration.AgentRole{orchestration.AgentRoleCoding}},
+	} {
+		if err := store.CreateAgent(context.Background(), "tenant-1", &agent); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	dir, err := orchestration.NewAgentDirectory(orchestration.AgentDirectoryConfig{Store: store, Models: noModels{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// noModels is a live catalog in which every backend is served with no curated
+// model list.
+type noModels struct{}
+
+func (noModels) ListBackendModels(context.Context, string) ([]string, error) { return nil, nil }
+
+func TestProjectService_DefaultLeadAgentIsCheckedAgainstTheCatalog(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestProjectService()
+	wirer := svc.(interface{ SetAgentRefChecker(AgentRefChecker) })
+
+	create := func(ref orchestration.AgentRef) error {
+		_, err := svc.CreateProject(ctx, &CreateProjectRequest{TenantID: "tenant-1", Name: "p-" + ref.String(), DefaultLeadAgent: ref})
+		return err
+	}
+	if err := create(orchestration.AgentRefTo("lead-agent")); !errors.Is(err, orchestration.ErrAgentCatalogUnavailable) {
+		t.Fatalf("with no catalog a default lead is refused, got %v", err)
+	}
+	wirer.SetAgentRefChecker(leadDirectory(t))
+	if err := create(orchestration.AgentRefTo("lead-agent")); err != nil {
+		t.Fatalf("a lead agent: %v", err)
+	}
+	if err := create(orchestration.AgentRefTo("coder")); !errors.Is(err, orchestration.ErrAgentRoleMismatch) {
+		t.Fatalf("a coder as lead = %v", err)
+	}
+	if err := create(orchestration.AgentRefTo("ghost")); !errors.Is(err, orchestration.ErrAgentUnknown) {
+		t.Fatalf("an unknown lead = %v", err)
+	}
+	if err := create(orchestration.AgentRef{}); err != nil {
+		t.Fatalf("no default lead is fine: %v", err)
+	}
+
+	created, err := svc.CreateProject(ctx, &CreateProjectRequest{TenantID: "tenant-1", Name: "to-update"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.UpdateProject(ctx, &UpdateProjectRequest{TenantID: "tenant-1", ProjectID: created.Project.ID, DefaultLeadAgent: orchestration.AgentRefTo("coder")})
+	if !errors.Is(err, orchestration.ErrAgentRoleMismatch) {
+		t.Fatalf("an update to a coder lead = %v", err)
+	}
+	updated, err := svc.UpdateProject(ctx, &UpdateProjectRequest{TenantID: "tenant-1", ProjectID: created.Project.ID, DefaultLeadAgent: orchestration.AgentRefTo("lead-agent")})
+	if err != nil || updated.Project.DefaultLeadAgent.AgentID != "lead-agent" {
+		t.Fatalf("UpdateProject = %+v, %v", updated, err)
+	}
+}
+
 func TestProjectService_CreateProject_WithAllFields(t *testing.T) {
 	svc := newTestProjectService()
+	svc.(*projectServiceImpl).SetFleetNodes(newTestFleet(t))
+	svc.(interface{ SetAgentRefChecker(AgentRefChecker) }).SetAgentRefChecker(leadDirectory(t))
 	ctx := context.Background()
 
 	resp, err := svc.CreateProject(ctx, &CreateProjectRequest{
-		TenantID:         "tenant-1",
-		Name:             "full-project",
-		Description:      "A full project",
-		WorkspaceAgentID: "agent-1",
-		WorkspacePath:    "/workspace/full",
-		HostAffinity:     "host-a",
-		DefaultLeadAgent: "lead-agent",
-		GitRepoURL:       "https://github.com/example/repo",
-		GitDefaultBranch: "main",
-		TokenBudget:      1000000,
-		GPUMinutes:       60,
-		MaxConcurrency:   4,
-		Metadata:         map[string]string{"env": "prod"},
+		TenantID:             "tenant-1",
+		Name:                 "full-project",
+		Description:          "A full project",
+		WorkspaceFleetNodeID: "agent-1",
+		WorkspacePath:        "/workspace/full",
+		HostAffinity:         "host-a",
+		DefaultLeadAgent:     orchestration.AgentRefTo("lead-agent"),
+		GitRepoURL:           "https://github.com/example/repo",
+		GitDefaultBranch:     "main",
+		GPUMinutes:           60,
+		MaxConcurrency:       4,
+		Metadata:             map[string]string{"env": "prod"},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp.Project.Quotas.TokenBudget != 1000000 {
-		t.Errorf("expected token budget 1000000, got %d", resp.Project.Quotas.TokenBudget)
+	if resp.Project.Quotas.GPUMinutes != 60 {
+		t.Errorf("expected gpu minutes 60, got %d", resp.Project.Quotas.GPUMinutes)
 	}
 	if resp.Project.Git.RepoURL != "https://github.com/example/repo" {
 		t.Errorf("unexpected git URL: %q", resp.Project.Git.RepoURL)

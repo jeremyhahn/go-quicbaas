@@ -15,6 +15,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
@@ -47,14 +48,17 @@ func sampleProject() *orchestration.Project {
 		TenantID:         "acme",
 		Name:             "web-api",
 		Description:      "public API",
-		Workspace:        orchestration.ProjectWorkspace{AgentID: "agent-1", Path: "/srv/web-api"},
+		Workspace:        orchestration.ProjectWorkspace{FleetNodeID: "agent-1", Path: "/srv/web-api"},
 		HostAffinity:     "builder-3",
-		DefaultLeadAgent: "agent-1",
+		DefaultLeadAgent: orchestration.AgentRefTo("agent-1"),
 		Git:              orchestration.ProjectGit{RepoURL: "https://example.com/r.git", DefaultBranch: "main", CurrentSHA: "abc123"},
 		Permissions: orchestration.ProjectPermissions{
-			AgentRoles: map[string]orchestration.ProjectRole{"agent-1": orchestration.ProjectRoleLead},
+			FleetNodeRoles: map[string]orchestration.ProjectRole{"agent-1": orchestration.ProjectRoleLead},
 		},
-		Quotas:    orchestration.ProjectQuotas{TokenBudget: 1000, GPUMinutes: 60, MaxConcurrency: 4},
+		Quotas: orchestration.ProjectQuotas{GPUMinutes: 60, MaxConcurrency: 4},
+		Spend: orchestration.SpendLimits{Windows: []orchestration.QuotaWindow{
+			{Name: "daily", Size: 24 * time.Hour, MaxTokens: 1000},
+		}},
 		Metadata:  map[string]string{"env": "prod"},
 		CreatedAt: time.Unix(1700000000, 0).UTC(),
 		UpdatedAt: time.Unix(1700000100, 0).UTC(),
@@ -80,13 +84,13 @@ func TestIsMCPProjectService(t *testing.T) {
 // "tool not registered", which is the bug this mapping was added to fix.
 func TestProjectMethodToolNames(t *testing.T) {
 	want := map[string]string{
-		"Create":          "project_create",
-		"Get":             "project_get",
-		"List":            "project_list",
-		"Update":          "project_update",
-		"Delete":          "project_delete",
-		"GrantAgentRole":  "project_grant_agent",
-		"RevokeAgentRole": "project_revoke_agent",
+		"Create":              "project_create",
+		"Get":                 "project_get",
+		"List":                "project_list",
+		"Update":              "project_update",
+		"Delete":              "project_delete",
+		"GrantFleetNodeRole":  "project_grant_fleet_node",
+		"RevokeFleetNodeRole": "project_revoke_fleet_node",
 	}
 	for method, expected := range want {
 		got, ok := projectToolName(method)
@@ -119,9 +123,9 @@ func TestProjectMethodToolNames(t *testing.T) {
 func TestProjectMCPToolNameDerivation(t *testing.T) {
 	tr := &Transport{}
 	for method, want := range map[string]string{
-		"Create":          "project_create",
-		"GrantAgentRole":  "project_grant_agent",
-		"RevokeAgentRole": "project_revoke_agent",
+		"Create":              "project_create",
+		"GrantFleetNodeRole":  "project_grant_fleet_node",
+		"RevokeFleetNodeRole": "project_revoke_fleet_node",
 	} {
 		if got := tr.mapToToolName("quicbaas.Project", method); got != want {
 			t.Errorf("mapToToolName(Project, %s) = %q, want %q", method, got, want)
@@ -152,19 +156,20 @@ func TestProjectMCPTransformResponse_HappyPaths(t *testing.T) {
 		if info.ID != "proj-1" || info.TenantID != "acme" || info.Name != "web-api" {
 			t.Errorf("%s lost identity fields: %#v", method, info)
 		}
-		if info.Workspace.AgentID != "agent-1" || info.Workspace.Path != "/srv/web-api" {
+		if info.Workspace.FleetNodeID != "agent-1" || info.Workspace.Path != "/srv/web-api" {
 			t.Errorf("%s lost workspace: %#v", method, info.Workspace)
 		}
-		if info.HostAffinity != "builder-3" || info.DefaultLeadAgent != "agent-1" {
+		if info.HostAffinity != "builder-3" || info.DefaultLeadAgent.AgentID != "agent-1" {
 			t.Errorf("%s lost affinity fields: %#v", method, info)
 		}
 		if info.Git.RepoURL == "" || info.Git.DefaultBranch != "main" || info.Git.CurrentSHA != "abc123" {
 			t.Errorf("%s lost git metadata: %#v", method, info.Git)
 		}
-		if info.Permissions.AgentRoles["agent-1"] != project.ProjectRoleLead {
+		if info.Permissions.FleetNodeRoles["agent-1"] != project.ProjectRoleLead {
 			t.Errorf("%s lost the role matrix: %#v", method, info.Permissions)
 		}
-		if info.Quotas.TokenBudget != 1000 || info.Quotas.GPUMinutes != 60 || info.Quotas.MaxConcurrency != 4 {
+		if len(info.Spend.Windows) != 1 || info.Spend.Windows[0].MaxTokens != 1000 || info.Spend.Windows[0].Size != 24*time.Hour ||
+			info.Quotas.GPUMinutes != 60 || info.Quotas.MaxConcurrency != 4 {
 			t.Errorf("%s lost quotas: %#v", method, info.Quotas)
 		}
 		if info.Metadata["env"] != "prod" {
@@ -199,38 +204,38 @@ func TestProjectMCPTransformResponse_HappyPaths(t *testing.T) {
 	}
 
 	stamp := time.Unix(1700000200, 0).UTC()
-	out, err = h.transformResponse("GrantAgentRole", toolResult(t, &service.GrantAgentRoleResponse{
-		ProjectID: "proj-1",
-		AgentID:   "agent-2",
-		Role:      orchestration.ProjectRoleWorker,
-		Timestamp: stamp,
+	out, err = h.transformResponse("GrantFleetNodeRole", toolResult(t, &service.GrantFleetNodeRoleResponse{
+		ProjectID:   "proj-1",
+		FleetNodeID: "agent-2",
+		Role:        orchestration.ProjectRoleWorker,
+		Timestamp:   stamp,
 	}))
 	if err != nil {
-		t.Fatalf("GrantAgentRole: %v", err)
+		t.Fatalf("GrantFleetNodeRole: %v", err)
 	}
-	grant, ok := out.(*project.GrantAgentRoleResponse)
+	grant, ok := out.(*project.GrantFleetNodeRoleResponse)
 	if !ok {
-		t.Fatalf("GrantAgentRole decoded to %T", out)
+		t.Fatalf("GrantFleetNodeRole decoded to %T", out)
 	}
-	if grant.ProjectID != "proj-1" || grant.AgentID != "agent-2" ||
+	if grant.ProjectID != "proj-1" || grant.FleetNodeID != "agent-2" ||
 		grant.Role != project.ProjectRoleWorker || !grant.Timestamp.Equal(stamp) {
-		t.Errorf("GrantAgentRole decoded to %#v", grant)
+		t.Errorf("GrantFleetNodeRole decoded to %#v", grant)
 	}
 
-	out, err = h.transformResponse("RevokeAgentRole", toolResult(t, &service.RevokeAgentRoleResponse{
-		ProjectID: "proj-1",
-		AgentID:   "agent-2",
-		Timestamp: stamp,
+	out, err = h.transformResponse("RevokeFleetNodeRole", toolResult(t, &service.RevokeFleetNodeRoleResponse{
+		ProjectID:   "proj-1",
+		FleetNodeID: "agent-2",
+		Timestamp:   stamp,
 	}))
 	if err != nil {
-		t.Fatalf("RevokeAgentRole: %v", err)
+		t.Fatalf("RevokeFleetNodeRole: %v", err)
 	}
-	revoke, ok := out.(*project.RevokeAgentRoleResponse)
+	revoke, ok := out.(*project.RevokeFleetNodeRoleResponse)
 	if !ok {
-		t.Fatalf("RevokeAgentRole decoded to %T", out)
+		t.Fatalf("RevokeFleetNodeRole decoded to %T", out)
 	}
-	if revoke.ProjectID != "proj-1" || revoke.AgentID != "agent-2" || !revoke.Timestamp.Equal(stamp) {
-		t.Errorf("RevokeAgentRole decoded to %#v", revoke)
+	if revoke.ProjectID != "proj-1" || revoke.FleetNodeID != "agent-2" || !revoke.Timestamp.Equal(stamp) {
+		t.Errorf("RevokeFleetNodeRole decoded to %#v", revoke)
 	}
 }
 
@@ -264,7 +269,7 @@ func TestProjectMCPTransformResponse_ErrorPaths(t *testing.T) {
 	if _, err := h.transformResponse("List", map[string]interface{}{"projects": "not-an-array"}); err == nil {
 		t.Error("a malformed list envelope must fail")
 	}
-	if _, err := h.transformResponse("GrantAgentRole", map[string]interface{}{"Role": 42}); err == nil {
+	if _, err := h.transformResponse("GrantFleetNodeRole", map[string]interface{}{"Role": 42}); err == nil {
 		t.Error("a malformed role envelope must fail")
 	}
 
@@ -330,7 +335,7 @@ func TestProjectMCPTransformResponse_CarriesGitIdentity(t *testing.T) {
 		},
 		SSHKey: project.KMSKeyRef{Name: "api-access", Scope: "service", Owner: "deploy"},
 	}
-	if info.DefaultWorkflow != "sdlc" || info.Git != want {
+	if info.DefaultWorkflow != "sdlc" || !reflect.DeepEqual(info.Git, want) {
 		t.Errorf("git identity lost in the MCP transform:\n got %+v\nwant %+v", info.Git, want)
 	}
 }
@@ -452,5 +457,36 @@ func TestProjectMCPTransformResponse_CarriesAutonomyAndContextRepos(t *testing.T
 	cleared := decode("Get", &service.GetProjectResponse{Project: stored, Timestamp: time.Now()})
 	if len(cleared.ContextRepos) != 0 {
 		t.Fatalf("ContextRepos = %+v after clear, want none", cleared.ContextRepos)
+	}
+}
+
+// TestProjectMCP_ParkSwitchAndRecordCrossTheWire asserts the park switch
+// reaches the project_update tool under the name the tool declares, stays
+// absent when unset, and that the park record decodes off the server's
+// envelope.
+func TestProjectMCP_ParkSwitchAndRecordCrossTheWire(t *testing.T) {
+	tr := &Transport{}
+	if _, present := tr.convertToArguments(&project.UpdateProjectRequest{TenantID: "t1", ProjectID: "p1"})["parked"]; present {
+		t.Error("an unset parked appeared in the tool arguments")
+	}
+	park := true
+	if args := tr.convertToArguments(&project.UpdateProjectRequest{TenantID: "t1", ProjectID: "p1", Parked: &park}); args["parked"] != true {
+		t.Errorf("update parked = %v, want true", args["parked"])
+	}
+
+	stored := sampleProject()
+	parkedAt := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	stored.Park("ops", parkedAt)
+	out, err := newProjectMCPHandler().transformResponse("Update",
+		toolResult(t, &service.UpdateProjectResponse{Project: stored, Timestamp: time.Now()}))
+	if err != nil {
+		t.Fatalf("transformResponse: %v", err)
+	}
+	info, ok := out.(*project.ProjectInfo)
+	if !ok {
+		t.Fatalf("transformResponse returned %T", out)
+	}
+	if !info.Parked || !info.ParkedAt.Equal(parkedAt) || info.ParkedBy != "ops" {
+		t.Fatalf("decoded = %v %v %q, want the park record", info.Parked, info.ParkedAt, info.ParkedBy)
 	}
 }

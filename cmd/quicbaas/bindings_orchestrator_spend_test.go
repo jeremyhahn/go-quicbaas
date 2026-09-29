@@ -41,15 +41,13 @@ func TestOrchestratorBinding_GetSpendReport_ForwardsTheScope(t *testing.T) {
 	setSpendReportFn(mock, func(_ context.Context, req *orchestratorSDK.GetSpendReportRequest) (*orchestratorSDK.GetSpendReportResponse, error) {
 		got = req
 		return &orchestratorSDK.GetSpendReportResponse{
-			Level:        orchestratorSDK.SpendLevelJob,
-			TenantID:     req.TenantID,
-			JobID:        req.JobID,
-			TotalTokens:  4242,
-			CostMicros:   0,
-			CostMeasured: false,
+			Level:       orchestratorSDK.SpendLevelJob,
+			TenantID:    req.TenantID,
+			JobID:       req.JobID,
+			SpendTotals: orchestratorSDK.SpendTotals{TotalTokens: 4242},
 			Accounts: []orchestratorSDK.SpendAccount{{
 				AccountID:    "acct-1",
-				TotalTokens:  4242,
+				SpendTotals:  orchestratorSDK.SpendTotals{TotalTokens: 4242},
 				PolicyStatus: orchestratorSDK.SpendPolicyNone,
 			}},
 		}, nil
@@ -65,7 +63,7 @@ func TestOrchestratorBinding_GetSpendReport_ForwardsTheScope(t *testing.T) {
 
 	assert.Equal(t, orchestratorSDK.SpendLevelJob, resp.Level)
 	assert.Equal(t, int64(4242), resp.TotalTokens)
-	assert.False(t, resp.CostMeasured, "an unmeasured cost must stay unmeasured across the binding")
+	assert.Zero(t, resp.PricedEntries, "an unmeasured cost must stay unmeasured across the binding")
 	require.Len(t, resp.Accounts, 1)
 	assert.Equal(t, orchestratorSDK.SpendPolicyNone, resp.Accounts[0].PolicyStatus)
 }
@@ -88,4 +86,36 @@ func TestOrchestratorBinding_GetSpendReport_BadInput(t *testing.T) {
 	resp, err = binding.GetSpendReport(&orchestratorSDK.GetSpendReportRequest{TenantID: "acme"})
 	require.Error(t, err)
 	assert.Nil(t, resp, "a failed read must return no report, never an empty one")
+}
+
+// TestOrchestratorBinding_TenantSpendPolicy is go-quicbaas#1058 on the desktop
+// binding: both verbs forward the request and return the SDK's policy.
+func TestOrchestratorBinding_TenantSpendPolicy(t *testing.T) {
+	mock := &mockOrchestratorClient{}
+	binding := newTestOrchestratorBinding(t, mock)
+	t.Cleanup(func() { clearSessionOverrides(mock) })
+
+	got, err := binding.GetTenantSpendPolicy(&orchestratorSDK.GetTenantSpendPolicyRequest{TenantID: "acme"})
+	require.NoError(t, err)
+	assert.Equal(t, "acme", got.TenantID)
+
+	set, err := binding.SetTenantSpendPolicy(&orchestratorSDK.SetTenantSpendPolicyRequest{TenantID: "acme"})
+	require.NoError(t, err)
+	assert.Equal(t, "acme", set.TenantID)
+
+	_, err = binding.GetTenantSpendPolicy(nil)
+	require.Error(t, err)
+	_, err = binding.SetTenantSpendPolicy(nil)
+	require.Error(t, err)
+
+	overridesFor(mock).getPolicy = func(context.Context, *orchestratorSDK.GetTenantSpendPolicyRequest) (*orchestratorSDK.TenantSpendPolicy, error) {
+		return nil, errors.New("transport down")
+	}
+	overridesFor(mock).setPolicy = func(context.Context, *orchestratorSDK.SetTenantSpendPolicyRequest) (*orchestratorSDK.TenantSpendPolicy, error) {
+		return nil, errors.New("transport down")
+	}
+	_, err = binding.GetTenantSpendPolicy(&orchestratorSDK.GetTenantSpendPolicyRequest{TenantID: "acme"})
+	require.Error(t, err)
+	_, err = binding.SetTenantSpendPolicy(&orchestratorSDK.SetTenantSpendPolicyRequest{TenantID: "acme"})
+	require.Error(t, err)
 }

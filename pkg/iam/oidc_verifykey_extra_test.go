@@ -85,9 +85,8 @@ func TestOIDCProvider_ResolveVerificationKey_UnknownKID(t *testing.T) {
 		AllowedMethods:    []string{CodeChallengeMethodS256},
 	}, OIDCDependencies{
 		IdentityStore: NewIdentityStore(IdentityStoreOptions{
-			UserStorage:  NewMemoryStorage(),
-			GroupStorage: NewMemoryStorage(),
-			RoleStorage:  NewMemoryStorage(),
+			UserStorage: NewMemoryStorage(),
+			RoleStorage: NewMemoryStorage(),
 		}),
 		AppStorage:   newMockAppStorage(),
 		TokenStorage: newMockTokenStorage(),

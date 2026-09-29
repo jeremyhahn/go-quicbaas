@@ -202,7 +202,6 @@ func (f *fakeUserServicer) seed(u *qrdbsdk.User) *qrdbsdk.User {
 	if u.Lifecycle == "" {
 		u.Lifecycle = qrdbsdk.LifecycleActive
 	}
-	u.Enabled = u.Lifecycle.CanAuthenticate()
 	f.users[u.ID] = u
 	return cloneUser(u)
 }
@@ -237,10 +236,8 @@ func (f *fakeUserServicer) CreateUser(_ context.Context, req *qrdbsdk.CreateUser
 		Name:        req.Name,
 		TenantID:    req.TenantID,
 		RoleIDs:     append([]string(nil), req.RoleIDs...),
-		GroupIDs:    append([]string(nil), req.GroupIDs...),
 		AuthMethods: append([]string(nil), req.AuthMethods...),
 		Lifecycle:   lifecycle,
-		Enabled:     lifecycle.CanAuthenticate(),
 	}
 	f.users[u.ID] = u
 	return cloneUser(u), nil
@@ -348,9 +345,6 @@ func (f *fakeUserServicer) UpdateUser(_ context.Context, req *qrdbsdk.UpdateUser
 	if req.RoleIDs != nil {
 		u.RoleIDs = append([]string(nil), req.RoleIDs...)
 	}
-	if req.GroupIDs != nil {
-		u.GroupIDs = append([]string(nil), req.GroupIDs...)
-	}
 	if req.AuthMethods != nil {
 		u.AuthMethods = append([]string(nil), req.AuthMethods...)
 	}
@@ -369,7 +363,6 @@ func (f *fakeUserServicer) UpdateUser(_ context.Context, req *qrdbsdk.UpdateUser
 	if req.Lifecycle != "" {
 		u.Lifecycle = req.Lifecycle
 	}
-	u.Enabled = u.Lifecycle.CanAuthenticate()
 	return cloneUser(u), nil
 }
 
@@ -384,7 +377,6 @@ func (f *fakeUserServicer) DeleteUser(_ context.Context, id uint64) error {
 		return &qrdbsdk.UserNotFoundError{ID: id}
 	}
 	u.Lifecycle = qrdbsdk.LifecycleDeleting
-	u.Enabled = false
 	delete(f.users, id)
 	return nil
 }
@@ -420,14 +412,12 @@ func onlyReassertsLifecycle(req *qrdbsdk.UpdateUserRequest) bool {
 		req.Attributes == nil &&
 		req.CertBindings == nil &&
 		req.Factors == nil &&
-		req.GroupIDs == nil &&
 		req.AuthMethods == nil
 }
 
 func cloneUser(u *qrdbsdk.User) *qrdbsdk.User {
 	cp := *u
 	cp.RoleIDs = append([]string(nil), u.RoleIDs...)
-	cp.GroupIDs = append([]string(nil), u.GroupIDs...)
 	cp.AuthMethods = append([]string(nil), u.AuthMethods...)
 	cp.CertBindings = append([]qrdbsdk.CertBinding(nil), u.CertBindings...)
 	if u.Attributes != nil {

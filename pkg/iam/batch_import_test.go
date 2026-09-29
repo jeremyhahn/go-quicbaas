@@ -18,9 +18,8 @@ func createTestBatchManager(t *testing.T) (*BatchManager, *MemoryStorage) {
 	memStorage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
+		UserStorage: memStorage,
+		RoleStorage: memStorage,
 	})
 
 	policyEngine := NewPolicyEngine(PolicyEngineOptions{
@@ -64,10 +63,6 @@ func TestImportAll(t *testing.T) {
 				{ID: "role1", Name: "Admin", Description: "Admin role", Permissions: []string{"read", "write"}},
 				{ID: "role2", Name: "User", Description: "User role", Permissions: []string{"read"}},
 			},
-			Groups: []*GroupImport{
-				{ID: "group1", Name: "Developers", Description: "Dev team"},
-				{ID: "group2", Name: "Ops", Description: "Ops team"},
-			},
 			Users: []*UserImport{
 				{ID: "user1", Email: "user1@example.com", Username: "user1", Name: "User One", Enabled: boolPtr(true)},
 				{ID: "user2", Email: "user2@example.com", Username: "user2", Name: "User Two", Enabled: boolPtr(true)},
@@ -96,14 +91,14 @@ func TestImportAll(t *testing.T) {
 		if result == nil {
 			t.Fatal("expected result, got nil")
 		}
-		if result.SuccessCount != 7 {
-			t.Errorf("expected 7 successes, got %d", result.SuccessCount)
+		if result.SuccessCount != 5 {
+			t.Errorf("expected 5 successes, got %d", result.SuccessCount)
 		}
 		if result.FailureCount != 0 {
 			t.Errorf("expected 0 failures, got %d", result.FailureCount)
 		}
-		if result.TotalItems != 7 {
-			t.Errorf("expected 7 total items, got %d", result.TotalItems)
+		if result.TotalItems != 5 {
+			t.Errorf("expected 5 total items, got %d", result.TotalItems)
 		}
 		if len(result.ProcessedItems["users"]) != 2 {
 			t.Errorf("expected 2 processed users, got %d", len(result.ProcessedItems["users"]))
@@ -221,9 +216,6 @@ func TestImportAll(t *testing.T) {
 			Roles: []*RoleImport{
 				{ID: "role1", Name: "Role1"},
 			},
-			Groups: []*GroupImport{
-				{ID: "group1", Name: "Group1"},
-			},
 		}
 
 		result, err := bm.ImportAll(ctx, req)
@@ -309,9 +301,6 @@ func TestImportAll(t *testing.T) {
 			Roles: []*RoleImport{
 				{ID: "role1", Name: "Admin"},
 			},
-			Groups: []*GroupImport{
-				{ID: "group1", Name: "Developers"},
-			},
 			Options: BatchImportOptions{
 				ContinueOnError: false,
 			},
@@ -327,69 +316,6 @@ func TestImportAll(t *testing.T) {
 		_ = err
 	})
 
-	t.Run("groups fail but roles succeed with continue on error", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		req := &BatchImportRequest{
-			TenantID: "test-tenant",
-			Roles: []*RoleImport{
-				{ID: "role1", Name: "Admin"},
-			},
-			Groups: []*GroupImport{
-				{ID: "group1", Name: ""}, // Invalid - missing name
-			},
-			Options: BatchImportOptions{
-				ContinueOnError: true,
-			},
-		}
-
-		result, err := bm.ImportAll(ctx, req)
-		if err != nil {
-			t.Fatalf("unexpected error with continue on error: %v", err)
-		}
-
-		if result.SuccessCount != 1 {
-			t.Errorf("expected 1 success (role), got %d", result.SuccessCount)
-		}
-		if result.FailureCount != 1 {
-			t.Errorf("expected 1 failure (group), got %d", result.FailureCount)
-		}
-	})
-
-	t.Run("users fail but roles and groups succeed with continue on error", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		req := &BatchImportRequest{
-			TenantID: "test-tenant",
-			Roles: []*RoleImport{
-				{ID: "role1", Name: "Admin"},
-			},
-			Groups: []*GroupImport{
-				{ID: "group1", Name: "Developers"},
-			},
-			Users: []*UserImport{
-				{ID: "user1", Email: "", Username: "user1"}, // Invalid - missing email
-			},
-			Options: BatchImportOptions{
-				ContinueOnError: true,
-			},
-		}
-
-		result, err := bm.ImportAll(ctx, req)
-		if err != nil {
-			t.Fatalf("unexpected error with continue on error: %v", err)
-		}
-
-		if result.SuccessCount != 2 {
-			t.Errorf("expected 2 successes (role, group), got %d", result.SuccessCount)
-		}
-		if result.FailureCount != 1 {
-			t.Errorf("expected 1 failure (user), got %d", result.FailureCount)
-		}
-	})
-
 	t.Run("policies fail but other resources succeed with continue on error", func(t *testing.T) {
 		bm, _ := createTestBatchManager(t)
 		ctx := context.Background()
@@ -398,9 +324,6 @@ func TestImportAll(t *testing.T) {
 			TenantID: "test-tenant",
 			Roles: []*RoleImport{
 				{ID: "role1", Name: "Admin"},
-			},
-			Groups: []*GroupImport{
-				{ID: "group1", Name: "Developers"},
 			},
 			Users: []*UserImport{
 				{ID: "user1", Email: "user1@example.com", Username: "user1"},
@@ -418,8 +341,8 @@ func TestImportAll(t *testing.T) {
 			t.Fatalf("unexpected error with continue on error: %v", err)
 		}
 
-		if result.SuccessCount != 3 {
-			t.Errorf("expected 3 successes, got %d", result.SuccessCount)
+		if result.SuccessCount != 2 {
+			t.Errorf("expected 2 successes, got %d", result.SuccessCount)
 		}
 		if result.FailureCount != 1 {
 			t.Errorf("expected 1 failure (policy), got %d", result.FailureCount)
@@ -435,9 +358,6 @@ func TestImportAll(t *testing.T) {
 			TenantID: "test-tenant",
 			Roles: []*RoleImport{
 				{ID: "role1", Name: "Admin"},
-			},
-			Groups: []*GroupImport{
-				{ID: "group1", Name: "Developers"},
 			},
 		}
 
@@ -491,28 +411,6 @@ func TestImportAll(t *testing.T) {
 		}
 		if result.TotalItems != 2 {
 			t.Errorf("expected 2 total items, got %d", result.TotalItems)
-		}
-	})
-
-	t.Run("only groups in request", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		req := &BatchImportRequest{
-			TenantID: "test-tenant",
-			Groups: []*GroupImport{
-				{ID: "group1", Name: "Developers"},
-				{ID: "group2", Name: "Operations"},
-			},
-		}
-
-		result, err := bm.ImportAll(ctx, req)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if result.SuccessCount != 2 {
-			t.Errorf("expected 2 successes, got %d", result.SuccessCount)
 		}
 	})
 
@@ -571,19 +469,14 @@ func TestImportUsers(t *testing.T) {
 		}
 	})
 
-	t.Run("import with roles and groups", func(t *testing.T) {
+	t.Run("import with roles", func(t *testing.T) {
 		bm, memStorage := createTestBatchManager(t)
 		ctx := context.Background()
 
-		// Pre-create a role and group
+		// Pre-create a role
 		role := &Role{ID: "role1", TenantID: "test-tenant", Name: "TestRole"}
 		if err := memStorage.CreateRole(ctx, role); err != nil {
 			t.Fatalf("failed to create role: %v", err)
-		}
-
-		group := &Group{ID: "group1", TenantID: "test-tenant", Name: "TestGroup", Members: []string{}}
-		if err := memStorage.CreateGroup(ctx, group); err != nil {
-			t.Fatalf("failed to create group: %v", err)
 		}
 
 		users := []*UserImport{
@@ -593,7 +486,6 @@ func TestImportUsers(t *testing.T) {
 				Username: "user1",
 				Name:     "User One",
 				Roles:    []string{"role1"},
-				Groups:   []string{"group1"},
 				Enabled:  boolPtr(true),
 			},
 		}
@@ -616,9 +508,6 @@ func TestImportUsers(t *testing.T) {
 		}
 		if len(user.Roles) != 1 {
 			t.Errorf("expected 1 role, got %d", len(user.Roles))
-		}
-		if len(user.Groups) != 1 {
-			t.Errorf("expected 1 group, got %d", len(user.Groups))
 		}
 	})
 
@@ -959,24 +848,6 @@ func TestImportUser(t *testing.T) {
 		}
 	})
 
-	t.Run("import with non-existent group", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		user := &UserImport{
-			ID:       "1",
-			Email:    "user1@example.com",
-			Username: "user1",
-			Groups:   []string{"nonexistent-group"},
-		}
-
-		// Should succeed but log warning (group not found is ignored)
-		err := bm.importUser(ctx, "test-tenant", user, BatchImportOptions{})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	})
-
 	t.Run("nil identity store error", func(t *testing.T) {
 		bm := NewBatchManager(BatchManagerOptions{})
 		ctx := context.Background()
@@ -992,43 +863,7 @@ func TestImportUser(t *testing.T) {
 		}
 	})
 
-	t.Run("update existing user with groups", func(t *testing.T) {
-		bm, memStorage := createTestBatchManager(t)
-		ctx := context.Background()
-
-		// Create group first
-		group := &Group{ID: "group1", TenantID: "test-tenant", Name: "TestGroup", Members: []string{}}
-		if err := memStorage.CreateGroup(ctx, group); err != nil {
-			t.Fatalf("failed to create group: %v", err)
-		}
-
-		// Create existing user
-		existingUser := &User{
-			ID:       "1",
-			Email:    "user1@example.com",
-			TenantID: "test-tenant",
-			Name:     "Old Name",
-		}
-		if err := memStorage.CreateUser(ctx, existingUser); err != nil {
-			t.Fatalf("failed to create user: %v", err)
-		}
-
-		user := &UserImport{
-			ID:       "1",
-			Email:    "user1@example.com",
-			Username: "user1",
-			Name:     "New Name",
-			Groups:   []string{"group1"},
-			Enabled:  boolPtr(true),
-		}
-
-		err := bm.importUser(ctx, "test-tenant", user, BatchImportOptions{UpdateExisting: true})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("import user with multiple roles and groups", func(t *testing.T) {
+	t.Run("import user with multiple roles", func(t *testing.T) {
 		bm, memStorage := createTestBatchManager(t)
 		ctx := context.Background()
 
@@ -1040,20 +875,11 @@ func TestImportUser(t *testing.T) {
 			}
 		}
 
-		// Create multiple groups
-		for i := 1; i <= 3; i++ {
-			group := &Group{ID: fmt.Sprintf("group%d", i), TenantID: "test-tenant", Name: fmt.Sprintf("Group%d", i), Members: []string{}}
-			if err := memStorage.CreateGroup(ctx, group); err != nil {
-				t.Fatalf("failed to create group: %v", err)
-			}
-		}
-
 		user := &UserImport{
 			ID:       "1",
 			Email:    "user1@example.com",
 			Username: "user1",
 			Roles:    []string{"role1", "role2", "role3"},
-			Groups:   []string{"group1", "group2", "group3"},
 			Enabled:  boolPtr(true),
 		}
 
@@ -1069,150 +895,6 @@ func TestImportUser(t *testing.T) {
 		}
 		if len(createdUser.Roles) != 3 {
 			t.Errorf("expected 3 roles, got %d", len(createdUser.Roles))
-		}
-		if len(createdUser.Groups) != 3 {
-			t.Errorf("expected 3 groups, got %d", len(createdUser.Groups))
-		}
-	})
-}
-
-// TestImportGroups tests the ImportGroups function.
-func TestImportGroups(t *testing.T) {
-	t.Run("successful batch import", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		groups := []*GroupImport{
-			{ID: "g1", Name: "Group One", Description: "First group"},
-			{ID: "g2", Name: "Group Two", Description: "Second group"},
-		}
-
-		result, err := bm.ImportGroups(ctx, "test-tenant", groups, BatchImportOptions{})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if result.SuccessCount != 2 {
-			t.Errorf("expected 2 successes, got %d", result.SuccessCount)
-		}
-	})
-
-	t.Run("update existing group", func(t *testing.T) {
-		bm, memStorage := createTestBatchManager(t)
-		ctx := context.Background()
-
-		// Create existing group
-		existingGroup := &Group{
-			ID:          "g1",
-			TenantID:    "test-tenant",
-			Name:        "Old Name",
-			Description: "Old Description",
-		}
-		if err := memStorage.CreateGroup(ctx, existingGroup); err != nil {
-			t.Fatalf("failed to create group: %v", err)
-		}
-
-		groups := []*GroupImport{
-			{ID: "g1", Name: "New Name", Description: "New Description"},
-		}
-
-		result, err := bm.ImportGroups(ctx, "test-tenant", groups, BatchImportOptions{UpdateExisting: true})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if result.SuccessCount != 1 {
-			t.Errorf("expected 1 success, got %d", result.SuccessCount)
-		}
-
-		// Verify update
-		group, err := memStorage.GetGroup(ctx, "test-tenant", "g1")
-		if err != nil {
-			t.Fatalf("failed to get group: %v", err)
-		}
-		if group.Name != "New Name" {
-			t.Errorf("expected name 'New Name', got '%s'", group.Name)
-		}
-	})
-
-	t.Run("validation error - missing name", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		groups := []*GroupImport{
-			{ID: "g1", Name: ""},
-		}
-
-		result, err := bm.ImportGroups(ctx, "test-tenant", groups, BatchImportOptions{ContinueOnError: true})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if result.FailureCount != 1 {
-			t.Errorf("expected 1 failure, got %d", result.FailureCount)
-		}
-	})
-
-	t.Run("empty group list", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		result, err := bm.ImportGroups(ctx, "test-tenant", []*GroupImport{}, BatchImportOptions{})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if result.TotalItems != 0 {
-			t.Errorf("expected 0 total items, got %d", result.TotalItems)
-		}
-	})
-
-	t.Run("missing tenant ID", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		groups := []*GroupImport{{ID: "g1", Name: "Test Group"}}
-
-		_, err := bm.ImportGroups(ctx, "", groups, BatchImportOptions{})
-		if err == nil {
-			t.Error("expected error for missing tenant ID")
-		}
-	})
-
-	t.Run("invalid options", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		groups := []*GroupImport{{ID: "g1", Name: "Test Group"}}
-
-		_, err := bm.ImportGroups(ctx, "test-tenant", groups, BatchImportOptions{
-			BatchSize: -1,
-		})
-		if err == nil {
-			t.Error("expected error for invalid batch size")
-		}
-	})
-
-	t.Run("batch of multiple groups", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		groups := []*GroupImport{
-			{ID: "g1", Name: "Group 1", Description: "First group"},
-			{ID: "g2", Name: "Group 2", Description: "Second group"},
-			{ID: "g3", Name: "Group 3", Description: "Third group"},
-		}
-
-		result, err := bm.ImportGroups(ctx, "test-tenant", groups, BatchImportOptions{})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if result.TotalItems != 3 {
-			t.Errorf("expected 3 total items, got %d", result.TotalItems)
-		}
-		if result.SuccessCount != 3 {
-			t.Errorf("expected 3 successes, got %d", result.SuccessCount)
 		}
 	})
 }
@@ -1637,248 +1319,6 @@ func TestImportPolicies(t *testing.T) {
 
 		if result.SuccessCount != 3 {
 			t.Errorf("expected 3 successes, got %d", result.SuccessCount)
-		}
-	})
-}
-
-// TestImportGroup tests the importGroup function.
-func TestImportGroup(t *testing.T) {
-	t.Run("successful import with members", func(t *testing.T) {
-		bm, memStorage := createTestBatchManager(t)
-		ctx := context.Background()
-
-		// Create a user first
-		user := &User{
-			ID:       "1",
-			TenantID: "test-tenant",
-			Email:    "user1@example.com",
-		}
-		if err := memStorage.CreateUser(ctx, user); err != nil {
-			t.Fatalf("failed to create user: %v", err)
-		}
-
-		group := &GroupImport{
-			ID:          "g1",
-			Name:        "Test Group",
-			Description: "A test group",
-			Members:     []string{"1"},
-		}
-
-		err := bm.importGroup(ctx, "test-tenant", group, BatchImportOptions{})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify group was created
-		createdGroup, err := memStorage.GetGroup(ctx, "test-tenant", "g1")
-		if err != nil {
-			t.Fatalf("failed to get group: %v", err)
-		}
-		if createdGroup.Name != "Test Group" {
-			t.Errorf("expected name 'Test Group', got '%s'", createdGroup.Name)
-		}
-	})
-
-	t.Run("nil identity store error", func(t *testing.T) {
-		bm := NewBatchManager(BatchManagerOptions{})
-		ctx := context.Background()
-
-		group := &GroupImport{
-			Name: "Test Group",
-		}
-
-		err := bm.importGroup(ctx, "test-tenant", group, BatchImportOptions{})
-		if err == nil {
-			t.Error("expected error for nil identity store")
-		}
-	})
-
-	t.Run("group already exists without update mode", func(t *testing.T) {
-		bm, memStorage := createTestBatchManager(t)
-		ctx := context.Background()
-
-		// Create existing group
-		existingGroup := &Group{
-			ID:       "g1",
-			TenantID: "test-tenant",
-			Name:     "Existing Group",
-		}
-		if err := memStorage.CreateGroup(ctx, existingGroup); err != nil {
-			t.Fatalf("failed to create group: %v", err)
-		}
-
-		group := &GroupImport{
-			ID:   "g1",
-			Name: "New Name",
-		}
-
-		err := bm.importGroup(ctx, "test-tenant", group, BatchImportOptions{UpdateExisting: false})
-		if err == nil {
-			t.Error("expected error for existing group")
-		}
-	})
-
-	t.Run("dry run mode", func(t *testing.T) {
-		bm, memStorage := createTestBatchManager(t)
-		ctx := context.Background()
-
-		group := &GroupImport{
-			ID:   "g1",
-			Name: "Test Group",
-		}
-
-		err := bm.importGroup(ctx, "test-tenant", group, BatchImportOptions{DryRun: true})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify group was NOT created
-		_, err = memStorage.GetGroup(ctx, "test-tenant", "g1")
-		if err == nil {
-			t.Error("expected group not to be created in dry run")
-		}
-	})
-
-	t.Run("import group without ID", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		group := &GroupImport{
-			Name:        "Test Group",
-			Description: "A test group without ID",
-		}
-
-		err := bm.importGroup(ctx, "test-tenant", group, BatchImportOptions{})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("import group with non-existent member", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		group := &GroupImport{
-			ID:      "g1",
-			Name:    "Test Group",
-			Members: []string{"nonexistent-user"},
-		}
-
-		// Should succeed but log warning (member not found is ignored)
-		err := bm.importGroup(ctx, "test-tenant", group, BatchImportOptions{})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("import group with multiple members", func(t *testing.T) {
-		bm, memStorage := createTestBatchManager(t)
-		ctx := context.Background()
-
-		// Create multiple users
-		for i := 1; i <= 3; i++ {
-			user := &User{
-				ID:       FormatUserID(uint64(i)),
-				TenantID: "test-tenant",
-				Email:    fmt.Sprintf("user%d@example.com", i),
-			}
-			if err := memStorage.CreateUser(ctx, user); err != nil {
-				t.Fatalf("failed to create user: %v", err)
-			}
-		}
-
-		group := &GroupImport{
-			ID:      "g1",
-			Name:    "Test Group",
-			Members: []string{"1", "2", "3"},
-		}
-
-		err := bm.importGroup(ctx, "test-tenant", group, BatchImportOptions{})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify group was created with members
-		createdGroup, err := memStorage.GetGroup(ctx, "test-tenant", "g1")
-		if err != nil {
-			t.Fatalf("failed to get group: %v", err)
-		}
-		if len(createdGroup.Members) != 3 {
-			t.Errorf("expected 3 members, got %d", len(createdGroup.Members))
-		}
-	})
-
-	t.Run("update existing group with members", func(t *testing.T) {
-		bm, memStorage := createTestBatchManager(t)
-		ctx := context.Background()
-
-		// Create existing group
-		existingGroup := &Group{
-			ID:       "g1",
-			TenantID: "test-tenant",
-			Name:     "Old Name",
-			Members:  []string{},
-		}
-		if err := memStorage.CreateGroup(ctx, existingGroup); err != nil {
-			t.Fatalf("failed to create group: %v", err)
-		}
-
-		// Create users
-		for i := 1; i <= 2; i++ {
-			user := &User{
-				ID:       FormatUserID(uint64(i)),
-				TenantID: "test-tenant",
-				Email:    fmt.Sprintf("user%d@example.com", i),
-			}
-			if err := memStorage.CreateUser(ctx, user); err != nil {
-				t.Fatalf("failed to create user: %v", err)
-			}
-		}
-
-		group := &GroupImport{
-			ID:      "g1",
-			Name:    "New Name",
-			Members: []string{"1", "2"},
-		}
-
-		err := bm.importGroup(ctx, "test-tenant", group, BatchImportOptions{UpdateExisting: true})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify update
-		updated, err := memStorage.GetGroup(ctx, "test-tenant", "g1")
-		if err != nil {
-			t.Fatalf("failed to get group: %v", err)
-		}
-		if updated.Name != "New Name" {
-			t.Errorf("expected name 'New Name', got '%s'", updated.Name)
-		}
-	})
-
-	t.Run("import group with attributes", func(t *testing.T) {
-		bm, memStorage := createTestBatchManager(t)
-		ctx := context.Background()
-
-		group := &GroupImport{
-			ID:          "g1",
-			Name:        "Test Group",
-			Description: "A test group with attributes",
-			Attributes:  map[string]interface{}{"department": "engineering", "location": "remote"},
-		}
-
-		err := bm.importGroup(ctx, "test-tenant", group, BatchImportOptions{})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify group was created with attributes
-		createdGroup, err := memStorage.GetGroup(ctx, "test-tenant", "g1")
-		if err != nil {
-			t.Fatalf("failed to get group: %v", err)
-		}
-		if createdGroup.Description != "A test group with attributes" {
-			t.Errorf("expected description 'A test group with attributes', got '%s'", createdGroup.Description)
 		}
 	})
 }
@@ -2450,57 +1890,6 @@ func TestImportAllErrorPropagation(t *testing.T) {
 		}
 	})
 
-	t.Run("group error propagates after role success without continue on error", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		req := &BatchImportRequest{
-			TenantID: "test-tenant",
-			Roles: []*RoleImport{
-				{ID: "role1", Name: "Admin"},
-			},
-			Groups: []*GroupImport{
-				{ID: "group1", Name: ""}, // Invalid - will fail
-			},
-			Options: BatchImportOptions{
-				ContinueOnError: false,
-			},
-		}
-
-		result, _ := bm.ImportAll(ctx, req)
-		// Roles should have succeeded before group failure
-		if result != nil && result.SuccessCount < 1 {
-			t.Error("expected at least 1 success from roles")
-		}
-	})
-
-	t.Run("user error propagates after role and group success", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		req := &BatchImportRequest{
-			TenantID: "test-tenant",
-			Roles: []*RoleImport{
-				{ID: "role1", Name: "Admin"},
-			},
-			Groups: []*GroupImport{
-				{ID: "group1", Name: "Developers"},
-			},
-			Users: []*UserImport{
-				{ID: "user1", Email: "", Username: "user1"}, // Invalid - will fail
-			},
-			Options: BatchImportOptions{
-				ContinueOnError: false,
-			},
-		}
-
-		result, _ := bm.ImportAll(ctx, req)
-		// Roles and groups should have succeeded
-		if result != nil && result.SuccessCount < 2 {
-			t.Error("expected at least 2 successes from roles and groups")
-		}
-	})
-
 	t.Run("policy error propagates after all other resources succeed", func(t *testing.T) {
 		bm, _ := createTestBatchManager(t)
 		ctx := context.Background()
@@ -2509,9 +1898,6 @@ func TestImportAllErrorPropagation(t *testing.T) {
 			TenantID: "test-tenant",
 			Roles: []*RoleImport{
 				{ID: "role1", Name: "Admin"},
-			},
-			Groups: []*GroupImport{
-				{ID: "group1", Name: "Developers"},
 			},
 			Users: []*UserImport{
 				{ID: "user1", Email: "user1@example.com", Username: "user1"},
@@ -2526,8 +1912,8 @@ func TestImportAllErrorPropagation(t *testing.T) {
 
 		result, _ := bm.ImportAll(ctx, req)
 		// All other resources should have succeeded
-		if result != nil && result.SuccessCount < 3 {
-			t.Error("expected at least 3 successes")
+		if result != nil && result.SuccessCount < 2 {
+			t.Error("expected at least 2 successes")
 		}
 	})
 }
@@ -2550,26 +1936,6 @@ func TestWorkerPoolSubmissionFailure(t *testing.T) {
 
 		result, err := bm.ImportUsers(ctx, "test-tenant", users, BatchImportOptions{})
 		// Should handle cancellation gracefully
-		if err != nil && !errors.Is(err, ErrBatchCanceled) && !errors.Is(err, context.Canceled) {
-			t.Logf("Got error: %v", err)
-		}
-		_ = result
-	})
-
-	t.Run("group import with immediately cancelled context", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-
-		groups := make([]*GroupImport, 10)
-		for i := 0; i < 10; i++ {
-			groups[i] = &GroupImport{
-				ID:   fmt.Sprintf("group-%d", i),
-				Name: fmt.Sprintf("Group %d", i),
-			}
-		}
-
-		result, err := bm.ImportGroups(ctx, "test-tenant", groups, BatchImportOptions{})
 		if err != nil && !errors.Is(err, ErrBatchCanceled) && !errors.Is(err, context.Canceled) {
 			t.Logf("Got error: %v", err)
 		}
@@ -2611,38 +1977,6 @@ func TestErrAlreadyExistsHandling(t *testing.T) {
 				result.FailureCount, result.SkippedCount)
 		}
 	})
-
-	t.Run("group already exists counts as skipped", func(t *testing.T) {
-		bm, memStorage := createTestBatchManager(t)
-		ctx := context.Background()
-
-		// Create existing group
-		existingGroup := &Group{
-			ID:       "g1",
-			TenantID: "test-tenant",
-			Name:     "Existing Group",
-		}
-		if err := memStorage.CreateGroup(ctx, existingGroup); err != nil {
-			t.Fatalf("failed to create group: %v", err)
-		}
-
-		groups := []*GroupImport{
-			{ID: "g1", Name: "Existing Group"},
-		}
-
-		result, err := bm.ImportGroups(ctx, "test-tenant", groups, BatchImportOptions{
-			UpdateExisting: false,
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// The group should be counted as failure or skipped
-		if result.FailureCount != 1 && result.SkippedCount != 1 {
-			t.Errorf("expected failure or skipped count of 1, got failure=%d, skipped=%d",
-				result.FailureCount, result.SkippedCount)
-		}
-	})
 }
 
 // TestQBErrorHandling tests proper handling of QBError types
@@ -2657,25 +1991,6 @@ func TestQBErrorHandling(t *testing.T) {
 		}
 
 		err := bm.importUser(ctx, "test-tenant", user, BatchImportOptions{})
-		if err == nil {
-			t.Error("expected error for nil identity store")
-		}
-
-		var qbErr *dberrors.QBError
-		if !errors.As(err, &qbErr) {
-			t.Errorf("expected QBError, got %T: %v", err, err)
-		}
-	})
-
-	t.Run("nil identity store in importGroup returns QBError", func(t *testing.T) {
-		bm := NewBatchManager(BatchManagerOptions{})
-		ctx := context.Background()
-
-		group := &GroupImport{
-			Name: "Test Group",
-		}
-
-		err := bm.importGroup(ctx, "test-tenant", group, BatchImportOptions{})
 		if err == nil {
 			t.Error("expected error for nil identity store")
 		}
@@ -2738,9 +2053,8 @@ func TestBatchManager_ImportAll_ContextCancellation(t *testing.T) {
 	storage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
+		UserStorage: storage,
+		RoleStorage: storage,
 	})
 
 	policyEngine := NewPolicyEngine(PolicyEngineOptions{
@@ -2777,9 +2091,8 @@ func TestBatchManager_ImportRoles_WithPermissionsExtra(t *testing.T) {
 	storage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
+		UserStorage: storage,
+		RoleStorage: storage,
 	})
 
 	policyEngine := NewPolicyEngine(PolicyEngineOptions{
@@ -2820,9 +2133,8 @@ func TestBatchManager_ExportAll_WithAllOptions(t *testing.T) {
 	storage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
+		UserStorage: storage,
+		RoleStorage: storage,
 	})
 
 	policyEngine := NewPolicyEngine(PolicyEngineOptions{
@@ -2848,11 +2160,6 @@ func TestBatchManager_ExportAll_WithAllOptions(t *testing.T) {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
 
-	group := &Group{ID: "exp-group-1", TenantID: tenantID, Name: "Export Group", Created: time.Now(), Updated: time.Now()}
-	if err := storage.CreateGroup(ctx, group); err != nil {
-		t.Fatalf("CreateGroup failed: %v", err)
-	}
-
 	role := &Role{ID: "exp-role-1", TenantID: tenantID, Name: "Export Role", Created: time.Now(), Updated: time.Now()}
 	if err := storage.CreateRole(ctx, role); err != nil {
 		t.Fatalf("CreateRole failed: %v", err)
@@ -2872,7 +2179,6 @@ func TestBatchManager_ExportAll_WithAllOptions(t *testing.T) {
 	result, err := bm.ExportAll(ctx, &BatchExportRequest{
 		TenantID:        tenantID,
 		IncludeUsers:    true,
-		IncludeGroups:   true,
 		IncludeRoles:    true,
 		IncludePolicies: true,
 	})
@@ -2881,9 +2187,6 @@ func TestBatchManager_ExportAll_WithAllOptions(t *testing.T) {
 	}
 	if len(result.Users) != 1 {
 		t.Errorf("expected 1 user, got %d", len(result.Users))
-	}
-	if len(result.Groups) != 1 {
-		t.Errorf("expected 1 group, got %d", len(result.Groups))
 	}
 	if len(result.Roles) != 1 {
 		t.Errorf("expected 1 role, got %d", len(result.Roles))
@@ -3116,34 +2419,6 @@ func TestMemoryStorage_CreateUser_Duplicate(t *testing.T) {
 }
 
 // =============================================================================
-// MemoryStorage - CreateGroup duplicate
-// =============================================================================
-
-func TestMemoryStorage_CreateGroup_Duplicate(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	tenantID := "dup-group-tenant"
-	tenant := &Tenant{ID: tenantID, Name: "Dup Group Tenant", Created: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	group := &Group{ID: "dup-group", TenantID: tenantID, Name: "Dup Group", Created: time.Now(), Updated: time.Now()}
-
-	// Create first group
-	if err := storage.CreateGroup(ctx, group); err != nil {
-		t.Fatalf("First CreateGroup failed: %v", err)
-	}
-
-	// Try to create duplicate
-	err := storage.CreateGroup(ctx, group)
-	if err == nil {
-		t.Error("expected error for duplicate group")
-	}
-}
-
-// =============================================================================
 // MemoryStorage - CreateRole duplicate
 // =============================================================================
 
@@ -3179,9 +2454,8 @@ func TestBatchManager_ImportAll_WithTimeout(t *testing.T) {
 	storage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
+		UserStorage: storage,
+		RoleStorage: storage,
 	})
 
 	policyEngine := NewPolicyEngine(PolicyEngineOptions{
@@ -3224,9 +2498,8 @@ func TestBatchManager_ImportAll_WithRolesFirst(t *testing.T) {
 	storage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
+		UserStorage: storage,
+		RoleStorage: storage,
 	})
 
 	policyEngine := NewPolicyEngine(PolicyEngineOptions{
@@ -3251,15 +2524,12 @@ func TestBatchManager_ImportAll_WithRolesFirst(t *testing.T) {
 		Roles: []*RoleImport{
 			{ID: "role-1", Name: "Test Role"},
 		},
-		Groups: []*GroupImport{
-			{ID: "group-1", Name: "Test Group"},
-		},
 	})
 	if err != nil {
 		t.Fatalf("ImportAll failed: %v", err)
 	}
-	if result.TotalItems != 2 {
-		t.Errorf("expected 2 total items, got %d", result.TotalItems)
+	if result.TotalItems != 1 {
+		t.Errorf("expected 1 total item, got %d", result.TotalItems)
 	}
 }
 
@@ -3267,9 +2537,8 @@ func TestBatchManager_ImportAll_WithPolicies(t *testing.T) {
 	storage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
+		UserStorage: storage,
+		RoleStorage: storage,
 	})
 
 	policyEngine := NewPolicyEngine(PolicyEngineOptions{
@@ -3315,9 +2584,8 @@ func TestBatchManager_ImportPolicies_WithInlineRules(t *testing.T) {
 	storage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
+		UserStorage: storage,
+		RoleStorage: storage,
 	})
 
 	policyEngine := NewPolicyEngine(PolicyEngineOptions{
@@ -3392,26 +2660,6 @@ func TestMemoryConsentStorage_SaveAndGetConsent(t *testing.T) {
 // MemoryStorage - More quota edge cases
 // =============================================================================
 
-func TestMemoryStorage_IncrementQuotaUsage_GroupsExceedsLimit(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	tenant := &Tenant{ID: "groups-tenant", Name: "Groups Tenant", Created: time.Now(), Updated: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	quota := &TenantQuota{MaxGroups: 2, CurrentGroups: 2}
-	if err := storage.UpdateQuota(ctx, "groups-tenant", quota); err != nil {
-		t.Fatalf("UpdateQuota failed: %v", err)
-	}
-
-	err := storage.IncrementQuotaUsage(ctx, "groups-tenant", "groups", 1)
-	if err == nil {
-		t.Error("expected error when exceeding groups quota")
-	}
-}
-
 // TestMemoryStorage_IncrementQuotaUsage_RolesExceedsLimit is removed:
 // roles are engine-level quotas owned by qrdb TenantServicer, not tracked in IAM storage.
 
@@ -3432,30 +2680,6 @@ func TestMemoryStorage_IncrementQuotaUsage_PoliciesExceedsLimit(t *testing.T) {
 	err := storage.IncrementQuotaUsage(ctx, "pol-tenant", "policies", 1)
 	if err == nil {
 		t.Error("expected error when exceeding policies quota")
-	}
-}
-
-func TestMemoryStorage_DecrementQuotaUsage_GroupsFloor(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	tenant := &Tenant{ID: "dec-groups", Name: "Dec Groups", Created: time.Now(), Updated: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	quota := &TenantQuota{CurrentGroups: 1}
-	if err := storage.UpdateQuota(ctx, "dec-groups", quota); err != nil {
-		t.Fatalf("UpdateQuota failed: %v", err)
-	}
-
-	if err := storage.DecrementQuotaUsage(ctx, "dec-groups", "groups", 10); err != nil {
-		t.Fatalf("DecrementQuotaUsage failed: %v", err)
-	}
-
-	updatedQuota, _ := storage.GetQuota(ctx, "dec-groups")
-	if updatedQuota.CurrentGroups != 0 {
-		t.Errorf("expected CurrentGroups=0, got %d", updatedQuota.CurrentGroups)
 	}
 }
 

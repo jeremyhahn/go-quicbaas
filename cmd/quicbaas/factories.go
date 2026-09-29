@@ -134,7 +134,7 @@ var sshClientFactory SSHClientFactory = createSDKSSHClient
 
 // AccountClientFactory is a function type for creating pooled provider
 // account clients. The returned client routes through the active SDK
-// transport, so `quicbaas agent account ...` behaves identically on rest /
+// transport, so `quicbaas account ...` behaves identically on rest /
 // grpc / quic / mcp / unix / embedded.
 type AccountClientFactory func() (accountSDK.Client, error)
 
@@ -248,11 +248,11 @@ type OrchestratorClient interface {
 	BlockTask(ctx context.Context, req *orchestratorSDK.BlockTaskRequest) (*orchestratorSDK.BlockTaskResponse, error)
 	ReadmitTask(ctx context.Context, req *orchestratorSDK.ReadmitTaskRequest) (*orchestratorSDK.ReadmitTaskResponse, error)
 	DeleteTask(ctx context.Context, req *orchestratorSDK.DeleteTaskRequest) (*orchestratorSDK.DeleteTaskResponse, error)
-	RegisterAgent(ctx context.Context, req *orchestratorSDK.RegisterAgentRequest) (*orchestratorSDK.RegisterAgentResponse, error)
-	GetAgent(ctx context.Context, req *orchestratorSDK.GetAgentRequest) (*orchestratorSDK.AgentRegistration, error)
-	ListAgents(ctx context.Context, req *orchestratorSDK.ListAgentsRequest) (*orchestratorSDK.ListAgentsResponse, error)
-	RemoveAgent(ctx context.Context, req *orchestratorSDK.RemoveAgentRequest) (*orchestratorSDK.RemoveAgentResponse, error)
-	AgentHeartbeat(ctx context.Context, req *orchestratorSDK.AgentHeartbeatRequest) (*orchestratorSDK.AgentHeartbeatResponse, error)
+	RegisterFleetNode(ctx context.Context, req *orchestratorSDK.RegisterFleetNodeRequest) (*orchestratorSDK.RegisterFleetNodeResponse, error)
+	GetFleetNode(ctx context.Context, req *orchestratorSDK.GetFleetNodeRequest) (*orchestratorSDK.FleetNode, error)
+	ListFleetNodes(ctx context.Context, req *orchestratorSDK.ListFleetNodesRequest) (*orchestratorSDK.ListFleetNodesResponse, error)
+	RemoveFleetNode(ctx context.Context, req *orchestratorSDK.RemoveFleetNodeRequest) (*orchestratorSDK.RemoveFleetNodeResponse, error)
+	FleetNodeHeartbeat(ctx context.Context, req *orchestratorSDK.FleetNodeHeartbeatRequest) (*orchestratorSDK.FleetNodeHeartbeatResponse, error)
 	DecomposeTask(ctx context.Context, req *orchestratorSDK.DecomposeTaskRequest) (*orchestratorSDK.DecomposeTaskResponse, error)
 	StartJob(ctx context.Context, req *orchestratorSDK.StartJobRequest) (*orchestratorSDK.StartJobResponse, error)
 	GetJobStatus(ctx context.Context, req *orchestratorSDK.GetJobStatusRequest) (*orchestratorSDK.JobStatus, error)
@@ -260,9 +260,14 @@ type OrchestratorClient interface {
 	CancelJob(ctx context.Context, req *orchestratorSDK.CancelJobRequest) (*orchestratorSDK.CancelJobResponse, error)
 	SubscribeJobEvents(ctx context.Context, req *orchestratorSDK.SubscribeJobEventsRequest) (<-chan *orchestratorSDK.JobEvent, error)
 	GetSessionHistory(ctx context.Context, req *orchestratorSDK.GetSessionHistoryRequest) (*orchestratorSDK.GetSessionHistoryResponse, error)
+	GetTenantSpendPolicy(ctx context.Context, req *orchestratorSDK.GetTenantSpendPolicyRequest) (*orchestratorSDK.TenantSpendPolicy, error)
+	SetTenantSpendPolicy(ctx context.Context, req *orchestratorSDK.SetTenantSpendPolicyRequest) (*orchestratorSDK.TenantSpendPolicy, error)
 	SubscribeSessionEvents(ctx context.Context, req *orchestratorSDK.SubscribeSessionEventsRequest) (<-chan *orchestratorSDK.SessionEventEnvelope, error)
 	Inference(ctx context.Context, req *orchestratorSDK.InferenceRequest) (*orchestratorSDK.InferenceResponse, error)
 	InferenceStream(ctx context.Context, req *orchestratorSDK.InferenceRequest) (<-chan *orchestratorSDK.InferenceChunk, error)
+	GetCostSettings(ctx context.Context, req *orchestratorSDK.GetCostSettingsRequest) (*orchestratorSDK.CostSettings, error)
+	SetCostSettings(ctx context.Context, req *orchestratorSDK.SetCostSettingsRequest) (*orchestratorSDK.CostSettings, error)
+	GetSpendReport(ctx context.Context, req *orchestratorSDK.GetSpendReportRequest) (*orchestratorSDK.GetSpendReportResponse, error)
 	Close() error
 }
 

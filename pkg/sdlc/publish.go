@@ -17,6 +17,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 
@@ -138,6 +139,19 @@ type publisher struct {
 	// exec runs one command in the container, returning what it did.
 	exec func(spec *orchestration.ExecSpec) (*orchestration.ExecResult, error)
 
+	// cleanup runs one command whose job is to UNDO something this publisher
+	// already did, on a context that does NOT end when the attempt's does.
+	//
+	// A CANCELLED ATTEMPT IS EXACTLY WHEN CLEANUP MATTERS. `exec` carries the
+	// stage's context, so a removal issued through it after a timeout or a
+	// shutdown is refused before it ever reaches the container — and what is
+	// then left behind is a git worktree inside a checkout that OUTLIVES the
+	// job on a persistent workspace tier, which the next attempt on that node
+	// finds in its way. The bound on the detached context belongs to whoever
+	// supplies this seam; nil falls back to exec, which is the honest answer
+	// for a caller that has no second seam rather than a silent one.
+	cleanup func(spec *orchestration.ExecSpec) (*orchestration.ExecResult, error)
+
 	// project supplies the git identity and the repository URL.
 	project *orchestration.Project
 
@@ -157,8 +171,20 @@ type publisher struct {
 
 // git runs one git command in the checkout and refuses on a non-zero exit.
 func (p *publisher) git(plan publishPlan, args ...string) (*orchestration.ExecResult, error) {
+	return p.gitEnv(plan, nil, args...)
+}
+
+// gitEnv is git with an environment added to the one the container already
+// has, for the single caller that has to name GIT_INDEX_FILE.
+//
+// THE WORKER'S INDEX IS THE WORKER'S. Staging the working tree to answer
+// "what would the gate judge" must not disturb what the worker has staged for
+// its own commit, and the only way git stages anywhere else is to be told so
+// in the environment. See SnapshotWorkTree in merge_result.go.
+func (p *publisher) gitEnv(plan publishPlan, env map[string]string, args ...string) (*orchestration.ExecResult, error) {
 	result, err := p.exec(&orchestration.ExecSpec{
 		Cmd:     append([]string{gitCommand}, args...),
+		Env:     env,
 		WorkDir: plan.WorkDir,
 	})
 	if err != nil {
@@ -267,49 +293,138 @@ func (p *publisher) HasStaged(plan publishPlan) (bool, error) {
 }
 
 // VerifySigned refuses the publication when any commit the branch carries
-// beyond its base is not signed by the attempt's key.
+// beyond its base was not signed by a key the project trusts for it.
 //
-// A commit passes only when git reports a good signature ("G") AND the
-// signing key's fingerprint is the SHA-256 fingerprint of the attempt's SSH
-// public key. The status alone is not enough: git picks the verification
-// backend from the signature's own format, so a trusted OpenPGP signature
-// reports "G" without the SSH allowed_signers file ever being consulted. A
-// project that signs nothing has nothing to verify.
+// A commit passes when git reports a good signature ("G") AND the signing
+// key's fingerprint is one the project trusts:
+//
+//   - the attempt's own key, for any commit; or
+//   - a key in the project's trusted signing history (CommitSigning.Retired),
+//     for a commit the project's own identity committed BEFORE that key was
+//     retired. A rotation must not orphan the pull requests the old key
+//     signed, and the factory never rewrites a pushed branch to re-sign them.
+//
+// The status alone is not enough: git picks the verification backend from
+// the signature's own format, so a trusted OpenPGP signature reports "G"
+// without the SSH allowed_signers file ever being consulted. The retirement
+// time is enforced twice — by the allowed_signers file's valid-before, which
+// git checks against the commit's time, and here — so neither a git that
+// ignores the option nor a file written without it can widen the window. A
+// commit someone else committed is held to the attempt's key alone, exactly
+// as before the history existed. A project that signs nothing has nothing to
+// verify.
 func (p *publisher) VerifySigned(plan publishPlan) error {
-	if p.signing == nil {
-		return nil
-	}
-	want, err := sshKeyFingerprint(p.signing.PublicKey)
-	if err != nil {
-		return &SigningSessionError{Scope: SigningScopeDelivery, Message: "its public key does not parse: " + err.Error()}
-	}
 	// THE RANGE ENDS AT THE REF BEING PUSHED, not at HEAD. A worker can
 	// leave an unsigned commit on the delivery branch and check out a signed
 	// ancestor: HEAD would verify while the push publishes the branch.
-	rangeSpec := gitRemote + "/" + plan.Base + ".." + pushSource(plan)
-	result, err := p.git(plan,
+	return p.verifyRange(plan.WorkDir, gitRemote+"/"+plan.Base+".."+pushSource(plan))
+}
+
+// verifySignedFormat is the git log format verifyRange reads: the commit, the
+// signature status, the committer time and address, and the signer's
+// fingerprint last because it is the one field that may be empty.
+const verifySignedFormat = "--format=%H%x1f%G?%x1f%ct%x1f%ce%x1f%GF"
+
+// verifyRange checks every commit in rangeSpec, in the checkout at workDir,
+// against the project's trusted signing keys. See VerifySigned.
+func (p *publisher) verifyRange(workDir, rangeSpec string) error {
+	if p.signing == nil {
+		return nil
+	}
+	trust, err := p.trustedSigners()
+	if err != nil {
+		return err
+	}
+	result, err := p.git(publishPlan{WorkDir: workDir},
 		"-c", "gpg.ssh.allowedSignersFile="+allowedSignersPath,
-		"log", "--format=%H %G? %GF", rangeSpec)
+		"log", verifySignedFormat, rangeSpec)
 	if err != nil {
 		return err
 	}
 	for _, line := range strings.Split(result.Output(), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
+		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		commit, status, signer := fields[0], "", ""
-		if len(fields) > 1 {
-			status = fields[1]
-		}
-		if len(fields) > 2 {
-			signer = fields[2]
-		}
-		if status != "G" || signer != want {
-			return &UnsignedCommitError{TaskID: p.taskID, Commit: commit, Status: status, Signer: signer}
+		commit := parseSignedCommit(line)
+		if !trust.admits(commit) {
+			return &UnsignedCommitError{TaskID: p.taskID, Commit: commit.SHA, Status: commit.Status, Signer: commit.Signer}
 		}
 	}
 	return nil
+}
+
+// signedCommit is one line of verifySignedFormat.
+type signedCommit struct {
+	SHA, Status, Committer, Signer string
+
+	// Time is the committer time; zero when git gave none that parses.
+	Time time.Time
+}
+
+// parseSignedCommit reads one line of verifySignedFormat. A missing or
+// unreadable field is left empty, which no trust rule admits.
+func parseSignedCommit(line string) signedCommit {
+	fields := strings.Split(strings.TrimSpace(line), "\x1f")
+	field := func(i int) string {
+		if i < len(fields) {
+			return strings.TrimSpace(fields[i])
+		}
+		return ""
+	}
+	commit := signedCommit{SHA: field(0), Status: field(1), Committer: field(3), Signer: field(4)}
+	if seconds, err := strconv.ParseInt(field(2), 10, 64); err == nil {
+		commit.Time = time.Unix(seconds, 0).UTC()
+	}
+	return commit
+}
+
+// trustedSigners is what one verification trusts: the attempt's key, and the
+// project's retired keys by fingerprint with their retirement times.
+type trustedSigners struct {
+	current  string
+	identity string
+	retired  map[string]time.Time
+}
+
+// trustedSigners builds the trust for this publisher's project and session.
+func (p *publisher) trustedSigners() (trustedSigners, error) {
+	current, err := sshKeyFingerprint(p.signing.PublicKey)
+	if err != nil {
+		return trustedSigners{}, &SigningSessionError{Scope: SigningScopeDelivery, Message: "its public key does not parse: " + err.Error()}
+	}
+	trust := trustedSigners{current: current, retired: make(map[string]time.Time)}
+	if p.project == nil {
+		return trust, nil
+	}
+	trust.identity = strings.TrimSpace(p.project.Git.Author.Email)
+	for _, old := range p.project.Git.Signing.Retired {
+		// An entry that does not validate is not trusted: the history
+		// admits less than it names, never more.
+		if old.Validate() != nil {
+			continue
+		}
+		fingerprint, err := old.Fingerprint()
+		if err != nil {
+			continue
+		}
+		trust.retired[fingerprint] = old.RetiredAt
+	}
+	return trust, nil
+}
+
+// admits reports whether commit's signature is one the project trusts.
+func (t trustedSigners) admits(commit signedCommit) bool {
+	if commit.Status != "G" || commit.Signer == "" {
+		return false
+	}
+	if commit.Signer == t.current {
+		return true
+	}
+	retiredAt, ok := t.retired[commit.Signer]
+	if !ok || t.identity == "" || commit.Time.IsZero() {
+		return false
+	}
+	return strings.EqualFold(commit.Committer, t.identity) && commit.Time.Before(retiredAt)
 }
 
 // sshKeyFingerprint is the SHA-256 fingerprint ("SHA256:<base64>") of an

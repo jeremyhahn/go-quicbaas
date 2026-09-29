@@ -40,9 +40,11 @@ type fakeRuntimeCLI struct {
 	root string
 	path string
 
-	// psExit and rmExit make the two halves of the sweep fail on demand.
-	psExit int
-	rmExit int
+	// psExit and rmExit make the two halves of the sweep fail on demand;
+	// inspectExit makes the reaper's describe step fail.
+	psExit      int
+	rmExit      int
+	inspectExit int
 }
 
 func newFakeRuntimeCLI(t *testing.T) *fakeRuntimeCLI {
@@ -83,6 +85,13 @@ func (f *fakeRuntimeCLI) write() {
 		"  done\n" +
 		"  exit 0\n" +
 		"  ;;\n" +
+		"inspect)\n" +
+		"  [ " + strconv.Itoa(f.inspectExit) + " -ne 0 ] && { echo 'cannot connect to the daemon' >&2; exit " + strconv.Itoa(f.inspectExit) + "; }\n" +
+		"  [ \"$1\" = '--format' ] || { echo 'inspect without --format' >&2; exit 2; }\n" +
+		"  shift 2\n" +
+		"  for id in \"$@\"; do cat \"$ROOT.meta/$id\" 2>/dev/null; done\n" +
+		"  exit 0\n" +
+		"  ;;\n" +
 		"rm)\n" +
 		"  [ " + strconv.Itoa(f.rmExit) + " -ne 0 ] && { echo 'device or resource busy' >&2; exit " + strconv.Itoa(f.rmExit) + "; }\n" +
 		"  shift\n" +
@@ -103,6 +112,20 @@ func (f *fakeRuntimeCLI) add(id, owner string) {
 	f.t.Helper()
 	if err := os.WriteFile(filepath.Join(f.root, id), []byte(owner), 0o600); err != nil {
 		f.t.Fatalf("plant container %s: %v", id, err)
+	}
+}
+
+// describe plants what inspect reports for a container: its creation time and
+// identity labels, in ListOwned's tab-separated format.
+func (f *fakeRuntimeCLI) describe(id, created, session, job, tenant string) {
+	f.t.Helper()
+	dir := f.root + ".meta"
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		f.t.Fatalf("meta root: %v", err)
+	}
+	line := id + "\t/" + id + "\t" + created + "\t" + session + "\t" + job + "\t" + tenant + "\n"
+	if err := os.WriteFile(filepath.Join(dir, id), []byte(line), 0o600); err != nil {
+		f.t.Fatalf("describe container %s: %v", id, err)
 	}
 }
 
@@ -248,7 +271,7 @@ func TestSandboxSpec_StampsTheOwnerLabelOnEverySandboxContainer(t *testing.T) {
 	backend := NewACPBackend(ACPBackendConfig{Command: "claude", CLIMode: true})
 	backend.SetSandboxOwner("  /var/lib/quicbaas-agent  ")
 
-	spec, err := backend.sandboxSpec(&SpawnRequest{WorkDir: WorkDirCurrent}, "worker:1", []string{"claude"})
+	spec, err := backend.sandboxSpec(&SpawnRequest{WorkDir: WorkDirCurrent}, testContainerIdentity, "worker:1", []string{"claude"})
 	if err != nil {
 		t.Fatalf("sandboxSpec: %v", err)
 	}
@@ -276,7 +299,7 @@ func TestSandboxSpec_StampsTheOwnerLabelOnEverySandboxContainer(t *testing.T) {
 func TestSandboxSpec_AnUnownedBackendStampsNoOwnerLabel(t *testing.T) {
 	backend := NewACPBackend(ACPBackendConfig{Command: "claude", CLIMode: true})
 
-	spec, err := backend.sandboxSpec(&SpawnRequest{WorkDir: WorkDirCurrent}, "worker:1", []string{"claude"})
+	spec, err := backend.sandboxSpec(&SpawnRequest{WorkDir: WorkDirCurrent}, testContainerIdentity, "worker:1", []string{"claude"})
 	if err != nil {
 		t.Fatalf("sandboxSpec: %v", err)
 	}

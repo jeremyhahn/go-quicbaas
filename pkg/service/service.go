@@ -173,10 +173,9 @@ type QuicBaaS interface {
 	SchedulerEngine() *scheduler.SchedulerEngine
 
 	// SSHClient returns the SSH key, known-hosts, and authorized-keys
-	// client (xkms-backed). Transport is selected at construction time:
-	// a non-empty XKMS URL uses the REST transport, otherwise an embedded
-	// file-backed store is used. Returns nil only when SSH is explicitly
-	// disabled.
+	// client (xkms-backed) supplied through WithSSHClient. Returns nil
+	// when the node has no SSH key store: no remote xkmsd is configured
+	// and the data plane is not barrier-sealed.
 	SSHClient() xkmsssh.Client
 
 	// Project returns the Project service for managing agentic project entities.
@@ -189,9 +188,9 @@ type QuicBaaS interface {
 	// credential material — see pkg/service/account_service.go.
 	Account() AccountService
 
-	// AgentAdmin returns the Agent Admin service for global agent lifecycle management.
+	// FleetAdmin returns the Agent Admin service for global agent lifecycle management.
 	// This service handles enabling and disabling agents across all projects.
-	AgentAdmin() AgentAdminService
+	FleetAdmin() FleetAdminService
 
 	// Agent returns the Agent service (returns nil if not configured)
 	// Agent provides AI agent orchestration across multiple backends.
@@ -1279,9 +1278,12 @@ type (
 	}
 	ValidateTokenRequest  struct{ AccessToken string }
 	ValidateTokenResponse struct {
-		Valid     bool
-		UserID    string
-		Username  string
+		Valid    bool
+		UserID   string
+		Username string
+		// TenantID is the tenant the bearer was issued into (its tenant_id
+		// claim); empty for a token minted without tenant context.
+		TenantID  string
 		Roles     []string
 		ExpiresAt int64
 	}
@@ -1595,10 +1597,11 @@ type ServiceConfig struct {
 	// SchedulerMaxConcurrentJobs limits parallel job execution (default: 10)
 	SchedulerMaxConcurrentJobs int
 
-	// KMSRotationScanInterval controls how often the KMS rotation scheduler
-	// checks for keys whose cryptoperiod has expired (PCI DSS 3.6).
-	// When zero, defaultRotationScanInterval (5 minutes) is used.
-	// Only active when the KMS service is configured.
+	// KMSRotationScanInterval controls how often the KMS rotation system job
+	// checks for keys whose cryptoperiod has expired (PCI DSS 3.6). It must be
+	// a whole number of seconds; zero selects
+	// handlers.DefaultKMSRotationScanInterval (5 minutes). Only active when
+	// the KMS service and the scheduler are configured.
 	KMSRotationScanInterval time.Duration
 
 	// TimeSeriesShardID is the Raft shard used for time series write operations.
@@ -1608,19 +1611,6 @@ type ServiceConfig struct {
 	// TenantIsolation configures the tenant isolation strategy used when
 	// tenants are created or removed. Defaults to keyspace mode.
 	TenantIsolation config.TenantIsolationConfig
-
-	// XKMS selects the SSH-client transport. When URL is empty the
-	// service uses a file-backed embedded store rooted at SSHStoreDir
-	// (defaulting to $DataDir/xkms-ssh when empty).
-	XKMS config.XKMSConfig
-
-	// SSHStoreDir is the filesystem root for the embedded SSH store.
-	// Optional; when empty the service derives a default from DataDir.
-	SSHStoreDir string
-
-	// DataDir is the base data directory used when the service needs
-	// to derive default paths for embedded stores (e.g. xkms-ssh).
-	DataDir string
 }
 
 // =============================================================================
@@ -1740,6 +1730,13 @@ type ServiceBuilder interface {
 	// WithOllamaService sets the Ollama AI service for model inference
 	WithOllamaService(ollamaService OllamaService) ServiceBuilder
 
+	// WithSSHClient sets the SSH key store client behind Security().SSH().
+	// The server composes it: embedded over the barrier-sealed store, or
+	// REST to a remote xkmsd. When unset every SSH verb fails with
+	// *SSHNotConfiguredError. The service owns the client once Build
+	// succeeds and closes it on shutdown.
+	WithSSHClient(client xkmsssh.Client) ServiceBuilder
+
 	// Build creates the service instance
 	Build() (QuicBaaS, error)
 }
@@ -1789,6 +1786,7 @@ type serviceBuilder struct {
 	embeddingManager          interfaces.EmbeddingManager
 	qrdbClient                interface{}
 	ollamaService             OllamaService
+	sshClient                 xkmsssh.Client
 }
 
 func (b *serviceBuilder) WithRaftNode(raftNode interface{}) ServiceBuilder {
@@ -1938,6 +1936,11 @@ func (b *serviceBuilder) WithQRDBClient(client interface{}) ServiceBuilder {
 
 func (b *serviceBuilder) WithOllamaService(ollamaService OllamaService) ServiceBuilder {
 	b.ollamaService = ollamaService
+	return b
+}
+
+func (b *serviceBuilder) WithSSHClient(client xkmsssh.Client) ServiceBuilder {
+	b.sshClient = client
 	return b
 }
 

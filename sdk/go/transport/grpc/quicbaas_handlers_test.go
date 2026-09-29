@@ -16,6 +16,7 @@ package grpc
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cluster"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
@@ -297,6 +298,27 @@ func TestAuthHandler_AllMethods_Success(t *testing.T) {
 				t.Fatalf("%s: unexpected error: %v", tc.name, err)
 			}
 		})
+	}
+}
+
+// ValidateToken over gRPC keeps the bearer's tenant and reads expires_at as
+// the Unix seconds the server sends (go-quicbaas#955).
+func TestAuthHandler_ValidateToken_Claims(t *testing.T) {
+	h := newAuthHandler(newQuicBaaSConn(t, false))
+	resp, err := h.handleRequest(context.Background(), "quicbaas.Auth", "ValidateToken",
+		&service.ValidateTokenRequest{AccessToken: "at"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	claims, ok := resp.(*service.TokenClaims)
+	if !ok {
+		t.Fatalf("expected *service.TokenClaims, got %T", resp)
+	}
+	if claims.TenantID != "acme" {
+		t.Errorf("expected tenant ID 'acme', got %q", claims.TenantID)
+	}
+	if !claims.ExpiresAt.Equal(time.Unix(3000, 0)) {
+		t.Errorf("expected expiry %v, got %v", time.Unix(3000, 0), claims.ExpiresAt)
 	}
 }
 

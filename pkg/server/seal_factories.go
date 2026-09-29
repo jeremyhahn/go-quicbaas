@@ -301,7 +301,7 @@ func provisionTPM2Backend(cfg *xkmssdk.TPM2BackendConfig) (*xkmssdk.TPM2Backend,
 		tpmConfig.EK = &xkmssdk.EKConfig{
 			Handle:        0x81010001,
 			CertHandle:    0x01C00002,
-			HierarchyAuth: xkmssdk.TPM_DEFAULT_PASSWORD,
+			HierarchyAuth: xkmssdk.NewLiteralSecretValue([]byte(xkmssdk.TPM_DEFAULT_PASSWORD)),
 			KeyAlgorithm:  x509.RSA.String(),
 			RSAConfig:     &xkmssdk.RSAConfig{KeySize: 2048},
 		}
@@ -309,7 +309,7 @@ func provisionTPM2Backend(cfg *xkmssdk.TPM2BackendConfig) (*xkmssdk.TPM2Backend,
 	if tpmConfig.SSRK == nil {
 		tpmConfig.SSRK = &xkmssdk.SRKConfig{
 			Handle:        0x81000001,
-			HierarchyAuth: xkmssdk.TPM_DEFAULT_PASSWORD,
+			HierarchyAuth: xkmssdk.NewLiteralSecretValue([]byte(xkmssdk.TPM_DEFAULT_PASSWORD)),
 			KeyAlgorithm:  x509.RSA.String(),
 			RSAConfig:     &xkmssdk.RSAConfig{KeySize: 2048},
 		}

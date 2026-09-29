@@ -2550,7 +2550,7 @@ func TestIsSystemKey(t *testing.T) {
 		{"empty algorithm (TLS IP cert)", "127.0.0.1", "", true},
 		{"empty algorithm (agent identity)", "agent-embedded-host-abc12345", "", true},
 		{"well-known CA name without algorithm", "QuicBaaS Root CA", "", true},
-		{"agent-embedded prefix", "agent-embedded-vm-host-2-0c592403", "", true},
+		{"agent-embedded prefix", "agent-embedded-agent-02-0c592403", "", true},
 		{"agent-embedded prefix with algorithm empty", "agent-embedded-myhost", "", true},
 		// Legitimate operator keys — must be included
 		{"tenant DEK key", "quicbaas-tenant-dek-kek", "AES-256-GCM", false},

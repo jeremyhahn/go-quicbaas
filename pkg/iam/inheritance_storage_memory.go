@@ -30,11 +30,6 @@ type MemoryHierarchyStorage struct {
 	roleParents     map[string]map[string]*RoleHierarchy // key: tenantID:roleID -> parentID -> hierarchy
 	roleChildren    map[string]map[string]*RoleHierarchy // key: tenantID:roleID -> childID -> hierarchy
 
-	// Group hierarchy data structures
-	groupHierarchies map[string]*GroupHierarchy            // key: tenantID:parentID:childID
-	groupParents     map[string]map[string]*GroupHierarchy // key: tenantID:groupID -> parentID -> hierarchy
-	groupChildren    map[string]map[string]*GroupHierarchy // key: tenantID:groupID -> childID -> hierarchy
-
 	// Effective permissions cache
 	permissionsCache map[string]*EffectivePermissions // key: tenantID:subjectID
 }
@@ -45,9 +40,6 @@ func NewMemoryHierarchyStorage() *MemoryHierarchyStorage {
 		roleHierarchies:  make(map[string]*RoleHierarchy),
 		roleParents:      make(map[string]map[string]*RoleHierarchy),
 		roleChildren:     make(map[string]map[string]*RoleHierarchy),
-		groupHierarchies: make(map[string]*GroupHierarchy),
-		groupParents:     make(map[string]map[string]*GroupHierarchy),
-		groupChildren:    make(map[string]map[string]*GroupHierarchy),
 		permissionsCache: make(map[string]*EffectivePermissions),
 	}
 }
@@ -254,203 +246,6 @@ func (s *MemoryHierarchyStorage) getRoleDescendantsRecursive(tenantID, roleID st
 	return descendants
 }
 
-// CreateGroupHierarchy creates a parent-child relationship between groups.
-func (s *MemoryHierarchyStorage) CreateGroupHierarchy(ctx context.Context, hierarchy *GroupHierarchy) error {
-	if err := hierarchy.Validate(); err != nil {
-		return err
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Check for cycles before creating
-	if s.wouldCreateGroupCycle(hierarchy.TenantID, hierarchy.ParentGroupID, hierarchy.ChildGroupID) {
-		return NewIAMError(ErrHierarchyCycle, "iam.inheritance.group.create",
-			fmt.Sprintf("adding parent %s to child %s would create a cycle", hierarchy.ParentGroupID, hierarchy.ChildGroupID), nil)
-	}
-
-	key := s.groupHierarchyKey(hierarchy.TenantID, hierarchy.ParentGroupID, hierarchy.ChildGroupID)
-	if _, exists := s.groupHierarchies[key]; exists {
-		return NewIAMError(ErrHierarchyAlreadyExists, "iam.inheritance.group.create",
-			fmt.Sprintf("hierarchy relationship already exists: %s -> %s", hierarchy.ParentGroupID, hierarchy.ChildGroupID), nil)
-	}
-
-	// Store the hierarchy
-	s.groupHierarchies[key] = hierarchy
-
-	// Update adjacency lists
-	childKey := s.groupKey(hierarchy.TenantID, hierarchy.ChildGroupID)
-	if s.groupParents[childKey] == nil {
-		s.groupParents[childKey] = make(map[string]*GroupHierarchy)
-	}
-	s.groupParents[childKey][hierarchy.ParentGroupID] = hierarchy
-
-	parentKey := s.groupKey(hierarchy.TenantID, hierarchy.ParentGroupID)
-	if s.groupChildren[parentKey] == nil {
-		s.groupChildren[parentKey] = make(map[string]*GroupHierarchy)
-	}
-	s.groupChildren[parentKey][hierarchy.ChildGroupID] = hierarchy
-
-	return nil
-}
-
-// GetGroupHierarchy retrieves a specific group hierarchy relationship.
-func (s *MemoryHierarchyStorage) GetGroupHierarchy(ctx context.Context, tenantID, parentGroupID, childGroupID string) (*GroupHierarchy, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	key := s.groupHierarchyKey(tenantID, parentGroupID, childGroupID)
-	hierarchy, exists := s.groupHierarchies[key]
-	if !exists {
-		return nil, NewIAMError(ErrHierarchyNotFound, "iam.inheritance.group.get",
-			fmt.Sprintf("hierarchy not found: %s -> %s", parentGroupID, childGroupID), nil)
-	}
-
-	return hierarchy, nil
-}
-
-// ListGroupParents retrieves all parent groups for a given group.
-func (s *MemoryHierarchyStorage) ListGroupParents(ctx context.Context, tenantID, groupID string) ([]*GroupHierarchy, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	key := s.groupKey(tenantID, groupID)
-	parents := s.groupParents[key]
-	if parents == nil {
-		return []*GroupHierarchy{}, nil
-	}
-
-	// Convert map to slice
-	result := make([]*GroupHierarchy, 0, len(parents))
-	for _, h := range parents {
-		result = append(result, h)
-	}
-
-	return result, nil
-}
-
-// ListGroupChildren retrieves all child groups for a given group.
-func (s *MemoryHierarchyStorage) ListGroupChildren(ctx context.Context, tenantID, groupID string) ([]*GroupHierarchy, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	key := s.groupKey(tenantID, groupID)
-	children := s.groupChildren[key]
-	if children == nil {
-		return []*GroupHierarchy{}, nil
-	}
-
-	// Convert map to slice
-	result := make([]*GroupHierarchy, 0, len(children))
-	for _, h := range children {
-		result = append(result, h)
-	}
-
-	return result, nil
-}
-
-// DeleteGroupHierarchy removes a parent-child relationship.
-func (s *MemoryHierarchyStorage) DeleteGroupHierarchy(ctx context.Context, tenantID, parentGroupID, childGroupID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	key := s.groupHierarchyKey(tenantID, parentGroupID, childGroupID)
-	if _, exists := s.groupHierarchies[key]; !exists {
-		return NewIAMError(ErrHierarchyNotFound, "iam.inheritance.group.delete",
-			fmt.Sprintf("hierarchy not found: %s -> %s", parentGroupID, childGroupID), nil)
-	}
-
-	// Remove from main storage
-	delete(s.groupHierarchies, key)
-
-	// Remove from adjacency lists
-	childKey := s.groupKey(tenantID, childGroupID)
-	if parents := s.groupParents[childKey]; parents != nil {
-		delete(parents, parentGroupID)
-		if len(parents) == 0 {
-			delete(s.groupParents, childKey)
-		}
-	}
-
-	parentKey := s.groupKey(tenantID, parentGroupID)
-	if children := s.groupChildren[parentKey]; children != nil {
-		delete(children, childGroupID)
-		if len(children) == 0 {
-			delete(s.groupChildren, parentKey)
-		}
-	}
-
-	return nil
-}
-
-// GetGroupAncestors retrieves all ancestor groups (transitive closure) for a group.
-func (s *MemoryHierarchyStorage) GetGroupAncestors(ctx context.Context, tenantID, groupID string) ([]string, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	return s.getGroupAncestorsRecursive(tenantID, groupID, make(map[string]bool)), nil
-}
-
-// getGroupAncestorsRecursive performs DFS to find all ancestors.
-func (s *MemoryHierarchyStorage) getGroupAncestorsRecursive(tenantID, groupID string, visited map[string]bool) []string {
-	if visited[groupID] {
-		return nil
-	}
-	visited[groupID] = true
-
-	var ancestors []string
-	key := s.groupKey(tenantID, groupID)
-	parents := s.groupParents[key]
-
-	for parentID := range parents {
-		ancestors = append(ancestors, parentID)
-		// Recursively get ancestors of this parent
-		ancestors = append(ancestors, s.getGroupAncestorsRecursive(tenantID, parentID, visited)...)
-	}
-
-	return ancestors
-}
-
-// DetectGroupCycle checks if adding a parent-child relationship would create a cycle.
-func (s *MemoryHierarchyStorage) DetectGroupCycle(ctx context.Context, tenantID, parentGroupID, childGroupID string) (bool, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	return s.wouldCreateGroupCycle(tenantID, parentGroupID, childGroupID), nil
-}
-
-// wouldCreateGroupCycle checks if adding parent->child would create a cycle.
-func (s *MemoryHierarchyStorage) wouldCreateGroupCycle(tenantID, parentGroupID, childGroupID string) bool {
-	// If parent is a descendant of child, adding this edge creates a cycle
-	descendants := s.getGroupDescendantsRecursive(tenantID, childGroupID, make(map[string]bool))
-	for _, desc := range descendants {
-		if desc == parentGroupID {
-			return true
-		}
-	}
-	return false
-}
-
-// getGroupDescendantsRecursive performs DFS to find all descendants.
-func (s *MemoryHierarchyStorage) getGroupDescendantsRecursive(tenantID, groupID string, visited map[string]bool) []string {
-	if visited[groupID] {
-		return nil
-	}
-	visited[groupID] = true
-
-	var descendants []string
-	key := s.groupKey(tenantID, groupID)
-	children := s.groupChildren[key]
-
-	for childID := range children {
-		descendants = append(descendants, childID)
-		// Recursively get descendants of this child
-		descendants = append(descendants, s.getGroupDescendantsRecursive(tenantID, childID, visited)...)
-	}
-
-	return descendants
-}
-
 // CacheEffectivePermissions stores computed effective permissions for a subject.
 func (s *MemoryHierarchyStorage) CacheEffectivePermissions(ctx context.Context, permissions *EffectivePermissions) error {
 	if err := permissions.Validate(); err != nil {
@@ -500,14 +295,6 @@ func (s *MemoryHierarchyStorage) roleHierarchyKey(tenantID, parentID, childID st
 
 func (s *MemoryHierarchyStorage) roleKey(tenantID, roleID string) string {
 	return fmt.Sprintf("%s:%s", tenantID, roleID)
-}
-
-func (s *MemoryHierarchyStorage) groupHierarchyKey(tenantID, parentID, childID string) string {
-	return fmt.Sprintf("%s:%s:%s", tenantID, parentID, childID)
-}
-
-func (s *MemoryHierarchyStorage) groupKey(tenantID, groupID string) string {
-	return fmt.Sprintf("%s:%s", tenantID, groupID)
 }
 
 func (s *MemoryHierarchyStorage) permissionsKey(tenantID, subjectID string) string {

@@ -49,14 +49,14 @@ type projectMethodHandler func(ctx context.Context, req interface{}) (interface{
 // handleRequest routes Project requests using map-based O(1) dispatch.
 func (h *projectRESTHandler) handleRequest(ctx context.Context, method string, req interface{}) (interface{}, error) {
 	handlers := map[string]projectMethodHandler{
-		"Create":          h.handleCreate,
-		"Get":             h.handleGet,
-		"GetByName":       h.handleGetByName,
-		"Update":          h.handleUpdate,
-		"Delete":          h.handleDelete,
-		"List":            h.handleList,
-		"GrantAgentRole":  h.handleGrantAgentRole,
-		"RevokeAgentRole": h.handleRevokeAgentRole,
+		"Create":              h.handleCreate,
+		"Get":                 h.handleGet,
+		"GetByName":           h.handleGetByName,
+		"Update":              h.handleUpdate,
+		"Delete":              h.handleDelete,
+		"List":                h.handleList,
+		"GrantFleetNodeRole":  h.handleGrantFleetNodeRole,
+		"RevokeFleetNodeRole": h.handleRevokeFleetNodeRole,
 	}
 
 	handler, ok := handlers[method]
@@ -154,31 +154,31 @@ func (h *projectRESTHandler) handleList(ctx context.Context, req interface{}) (i
 	return &resp, nil
 }
 
-// handleGrantAgentRole handles PUT /api/v1/projects/{id}/permissions/{agent_id}.
-func (h *projectRESTHandler) handleGrantAgentRole(ctx context.Context, req interface{}) (interface{}, error) {
-	sdkReq, ok := req.(*project.GrantAgentRoleRequest)
+// handleGrantFleetNodeRole handles PUT /api/v1/projects/{id}/permissions/{node_id}.
+func (h *projectRESTHandler) handleGrantFleetNodeRole(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*project.GrantFleetNodeRoleRequest)
 	if !ok {
-		return nil, errors.NewInvalidInput("project.GrantAgentRole", "invalid request type")
+		return nil, errors.NewInvalidInput("project.GrantFleetNodeRole", "invalid request type")
 	}
-	url := "/api/v1/projects/" + sdkReq.ProjectID + "/permissions/" + sdkReq.AgentID + "?tenant_id=" + sdkReq.TenantID
+	url := "/api/v1/projects/" + sdkReq.ProjectID + "/permissions/" + sdkReq.FleetNodeID + "?tenant_id=" + sdkReq.TenantID
 	body := struct {
 		Role project.ProjectRole `json:"role"`
 	}{Role: sdkReq.Role}
-	var resp project.GrantAgentRoleResponse
+	var resp project.GrantFleetNodeRoleResponse
 	if err := h.transport.doJSONRequest(ctx, http.MethodPut, url, &body, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
 }
 
-// handleRevokeAgentRole handles DELETE /api/v1/projects/{id}/permissions/{agent_id}.
-func (h *projectRESTHandler) handleRevokeAgentRole(ctx context.Context, req interface{}) (interface{}, error) {
-	sdkReq, ok := req.(*project.RevokeAgentRoleRequest)
+// handleRevokeFleetNodeRole handles DELETE /api/v1/projects/{id}/permissions/{node_id}.
+func (h *projectRESTHandler) handleRevokeFleetNodeRole(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*project.RevokeFleetNodeRoleRequest)
 	if !ok {
-		return nil, errors.NewInvalidInput("project.RevokeAgentRole", "invalid request type")
+		return nil, errors.NewInvalidInput("project.RevokeFleetNodeRole", "invalid request type")
 	}
-	url := "/api/v1/projects/" + sdkReq.ProjectID + "/permissions/" + sdkReq.AgentID + "?tenant_id=" + sdkReq.TenantID
-	var resp project.RevokeAgentRoleResponse
+	url := "/api/v1/projects/" + sdkReq.ProjectID + "/permissions/" + sdkReq.FleetNodeID + "?tenant_id=" + sdkReq.TenantID
+	var resp project.RevokeFleetNodeRoleResponse
 	if err := h.transport.doJSONRequest(ctx, http.MethodDelete, url, nil, &resp); err != nil {
 		return nil, err
 	}

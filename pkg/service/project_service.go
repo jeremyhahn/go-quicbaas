@@ -16,10 +16,12 @@ package service
 import (
 	"context"
 	stderrors "errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
@@ -56,18 +58,18 @@ type ProjectService interface {
 	// ListProjects returns all projects for a given tenant.
 	ListProjects(ctx context.Context, req *ListProjectsRequest) (*ListProjectsResponse, error)
 
-	// AuthorizeAgent verifies that agentID holds at least requiredRole in projectID.
+	// AuthorizeFleetNode verifies that agentID holds at least requiredRole in projectID.
 	// Returns ProjectAccessDeniedError if the agent lacks the required role.
 	// Returns nil when the project has no role matrix (legacy unscoped behaviour).
-	AuthorizeAgent(ctx context.Context, req *AuthorizeAgentRequest) error
+	AuthorizeFleetNode(ctx context.Context, req *AuthorizeFleetNodeRequest) error
 
-	// GrantAgentRole sets or updates the role for agentID in projectID.
+	// GrantFleetNodeRole sets or updates the role for agentID in projectID.
 	// Returns ProjectNotFoundError if the project does not exist.
-	GrantAgentRole(ctx context.Context, req *GrantAgentRoleRequest) (*GrantAgentRoleResponse, error)
+	GrantFleetNodeRole(ctx context.Context, req *GrantFleetNodeRoleRequest) (*GrantFleetNodeRoleResponse, error)
 
-	// RevokeAgentRole sets the agent's role to ProjectRoleDenied in projectID.
+	// RevokeFleetNodeRole sets the agent's role to ProjectRoleDenied in projectID.
 	// Returns ProjectNotFoundError if the project does not exist.
-	RevokeAgentRole(ctx context.Context, req *RevokeAgentRoleRequest) (*RevokeAgentRoleResponse, error)
+	RevokeFleetNodeRole(ctx context.Context, req *RevokeFleetNodeRoleRequest) (*RevokeFleetNodeRoleResponse, error)
 }
 
 // =============================================================================
@@ -76,16 +78,16 @@ type ProjectService interface {
 
 // CreateProjectRequest contains the parameters for creating a project.
 type CreateProjectRequest struct {
-	TenantID         string
-	Name             string
-	Description      string
-	WorkspaceAgentID string
-	WorkspacePath    string
-	HostAffinity     string
-	DefaultLeadAgent string
-	GitRepoURL       string
-	GitDefaultBranch string
-	AgentRoles       map[string]orchestration.ProjectRole
+	TenantID             string
+	Name                 string
+	Description          string
+	WorkspaceFleetNodeID string
+	WorkspacePath        string
+	HostAffinity         string
+	DefaultLeadAgent     orchestration.AgentRef
+	GitRepoURL           string
+	GitDefaultBranch     string
+	FleetNodeRoles       map[string]orchestration.ProjectRole
 
 	// DefaultWorkflow names the tenant-scoped workflow a Task under this
 	// project auto-spawns into. Empty means never. A set name must be
@@ -114,10 +116,13 @@ type CreateProjectRequest struct {
 	GitSigningKeyName   string
 	GitSigningKeyScope  string
 	GitSigningKeyOwner  string
-	TokenBudget         int64
 	GPUMinutes          int64
 	MaxConcurrency      int
 	Metadata            map[string]string
+
+	// Spend is the project's spend limits: sliding windows in tokens and/or
+	// list-price dollars. The zero value meters nothing.
+	Spend orchestration.SpendLimits
 
 	// WorkspaceManaged requests a server-managed workspace: the server
 	// provisions <projects_root>/<tenant_id>/<project_id>/workspace (0700)
@@ -142,11 +147,25 @@ type CreateProjectRequest struct {
 	// deploy Spec's (name, scope, owner) triple. The reference (never the
 	// material) is persisted on the project as Git.SSHKey; when empty, the
 	// signing key doubles as the access key (Git.AccessKey). Mutually
-	// exclusive with GitCredentialSecretRef. Scope defaults to "tenant" and
+	// exclusive with GitCredentialSecretRef. Scope defaults to "user" and
 	// owner to the tenant ID.
 	GitSSHKeyName  string
 	GitSSHKeyScope string
 	GitSSHKeyOwner string
+
+	// WorkspaceTier / WorkspaceTmpfsMB / ContainerMemoryMB are the storage
+	// tier of the project's sandboxed checkout
+	// (docs/software-factory/storage-tiers.md). Every one is inert at its
+	// zero value; the combination is refused unless
+	// orchestration.ProjectStorage.Validate accepts it.
+	WorkspaceTier     orchestration.WorkspaceTier
+	WorkspaceTmpfsMB  int
+	ContainerMemoryMB int
+
+	// SessionRotation is what a persistent worker session does when the
+	// pooled provider account under it rotates. Empty is the default,
+	// orchestration.SessionRotationResume; an unrecognized value is refused.
+	SessionRotation orchestration.SessionRotationPolicy
 }
 
 // CreateProjectResponse is returned after a successful project creation.
@@ -176,29 +195,32 @@ type GetProjectResponse struct {
 // UpdateProjectRequest specifies which fields to change. Empty string fields
 // are left unchanged (except Description which can be cleared via ClearDescription).
 type UpdateProjectRequest struct {
-	TenantID         string
-	ProjectID        string
-	Name             string
-	Description      string
-	ClearDescription bool
-	WorkspaceAgentID string
-	WorkspacePath    string
-	HostAffinity     string
-	DefaultLeadAgent string
-	GitRepoURL       string
-	GitDefaultBranch string
-	GitCurrentSHA    string
-	AgentRoles       map[string]orchestration.ProjectRole
-	Metadata         map[string]string
+	TenantID             string
+	ProjectID            string
+	Name                 string
+	Description          string
+	ClearDescription     bool
+	WorkspaceFleetNodeID string
+	WorkspacePath        string
+	HostAffinity         string
+	DefaultLeadAgent     orchestration.AgentRef
+	GitRepoURL           string
+	GitDefaultBranch     string
+	GitCurrentSHA        string
+	FleetNodeRoles       map[string]orchestration.ProjectRole
+	Metadata             map[string]string
 
 	// The quotas are POINTERS so that zero is expressible. Zero is not "no
 	// value" here — ProjectQuotas defines it as UNLIMITED — so applying a
 	// quota only when it was non-zero meant an operator could lift a cap,
 	// watch the save succeed, and stay capped. Nil is "leave it alone",
 	// which is the same presence rule GitSigningEnabled already uses.
-	TokenBudget    *int64
 	GPUMinutes     *int64
 	MaxConcurrency *int
+
+	// Spend replaces the project's spend limits when non-nil; a non-nil empty
+	// value clears them.
+	Spend *orchestration.SpendLimits
 
 	// DefaultWorkflow sets the auto-spawn workflow when non-empty; the name
 	// must be registered in the tenant. ClearDefaultWorkflow removes it.
@@ -208,6 +230,12 @@ type UpdateProjectRequest struct {
 	// Autonomous updates the autonomous-development switch when non-nil, so
 	// "unchanged" and "off" stay distinct.
 	Autonomous *bool
+
+	// Parked parks (true) or resumes (false) the project when non-nil.
+	// Parking closes the intake and lets work in flight finish; resuming
+	// reopens it. Neither touches Autonomous. See
+	// orchestration/project_park.go.
+	Parked *bool
 
 	// ContextRepos replaces the whole context repository list when non-nil;
 	// ClearContextRepos empties it.
@@ -233,6 +261,25 @@ type UpdateProjectRequest struct {
 	GitSSHKeyName  string
 	GitSSHKeyScope string
 	GitSSHKeyOwner string
+
+	// GitSigningRetire records a key the project signed with before its
+	// current one in the project's trusted signing history, when non-nil.
+	// See retireSigningKey.
+	GitSigningRetire *GitSigningRetirement
+
+	// WorkspaceTier updates the storage tier when non-empty.
+	//
+	// The sizes are POINTERS for the reason the quotas are: zero is a
+	// meaningful value — an unsized tmpfs, the runtime's default memory
+	// limit — so nil ("leave it alone") and zero ("lift the limit") are
+	// different instructions. The merged storage must still validate.
+	WorkspaceTier     orchestration.WorkspaceTier
+	WorkspaceTmpfsMB  *int
+	ContainerMemoryMB *int
+
+	// SessionRotation updates the session rotation policy when non-empty.
+	// Setting it back to the default is naming it: "resume".
+	SessionRotation orchestration.SessionRotationPolicy
 }
 
 // UpdateProjectResponse wraps the updated project.
@@ -293,42 +340,42 @@ type ListProjectsResponse struct {
 	Timestamp time.Time
 }
 
-// AuthorizeAgentRequest contains the parameters for authorizing an agent.
-type AuthorizeAgentRequest struct {
+// AuthorizeFleetNodeRequest contains the parameters for authorizing an agent.
+type AuthorizeFleetNodeRequest struct {
 	TenantID     string
 	ProjectID    string
-	AgentID      string
+	FleetNodeID  string
 	RequiredRole orchestration.ProjectRole
 }
 
-// GrantAgentRoleRequest sets a specific role for an agent in a project.
-type GrantAgentRoleRequest struct {
-	TenantID  string
-	ProjectID string
-	AgentID   string
-	Role      orchestration.ProjectRole
+// GrantFleetNodeRoleRequest sets a specific role for an agent in a project.
+type GrantFleetNodeRoleRequest struct {
+	TenantID    string
+	ProjectID   string
+	FleetNodeID string
+	Role        orchestration.ProjectRole
 }
 
-// GrantAgentRoleResponse confirms the role assignment.
-type GrantAgentRoleResponse struct {
-	ProjectID string
-	AgentID   string
-	Role      orchestration.ProjectRole
-	Timestamp time.Time
+// GrantFleetNodeRoleResponse confirms the role assignment.
+type GrantFleetNodeRoleResponse struct {
+	ProjectID   string
+	FleetNodeID string
+	Role        orchestration.ProjectRole
+	Timestamp   time.Time
 }
 
-// RevokeAgentRoleRequest denies a specific agent's access to a project.
-type RevokeAgentRoleRequest struct {
-	TenantID  string
-	ProjectID string
-	AgentID   string
+// RevokeFleetNodeRoleRequest denies a specific agent's access to a project.
+type RevokeFleetNodeRoleRequest struct {
+	TenantID    string
+	ProjectID   string
+	FleetNodeID string
 }
 
-// RevokeAgentRoleResponse confirms the revocation.
-type RevokeAgentRoleResponse struct {
-	ProjectID string
-	AgentID   string
-	Timestamp time.Time
+// RevokeFleetNodeRoleResponse confirms the revocation.
+type RevokeFleetNodeRoleResponse struct {
+	ProjectID   string
+	FleetNodeID string
+	Timestamp   time.Time
 }
 
 // =============================================================================
@@ -385,7 +432,7 @@ func (e *ProjectInvalidError) Error() string {
 // ProjectAccessDeniedError is returned when an agent lacks the required project role.
 type ProjectAccessDeniedError struct {
 	ProjectID    string
-	AgentID      string
+	FleetNodeID  string
 	RequiredRole orchestration.ProjectRole
 	ActualRole   orchestration.ProjectRole
 }
@@ -393,7 +440,7 @@ type ProjectAccessDeniedError struct {
 // Error implements the error interface.
 func (e *ProjectAccessDeniedError) Error() string {
 	return "project access denied: project=" + e.ProjectID +
-		" agent=" + e.AgentID +
+		" agent=" + e.FleetNodeID +
 		" required=" + string(e.RequiredRole) +
 		" actual=" + string(e.ActualRole)
 }
@@ -402,9 +449,9 @@ func (e *ProjectAccessDeniedError) Error() string {
 // a project the store cannot produce. It is the service-layer face of
 // orchestration.ProjectUnresolvedError: a refusal, never a pass.
 type ProjectUnresolvedError struct {
-	TenantID  string
-	ProjectID string
-	AgentID   string
+	TenantID    string
+	ProjectID   string
+	FleetNodeID string
 
 	// Err is the orchestration error this converts, so callers can still
 	// match orchestration.ErrProjectUnresolved with errors.Is.
@@ -418,7 +465,7 @@ func (e *ProjectUnresolvedError) Unwrap() error { return e.Err }
 func (e *ProjectUnresolvedError) Error() string {
 	return "project unresolved: tenant=" + e.TenantID +
 		" project=" + e.ProjectID +
-		" agent=" + e.AgentID
+		" agent=" + e.FleetNodeID
 }
 
 // ProjectRoleInvalidError is returned when a role string is not recognized.
@@ -448,6 +495,16 @@ type projectServiceImpl struct {
 	authz       *orchestration.ProjectAuthz
 	provisioner *ProjectWorkspaceProvisioner
 	workflows   WorkflowResolver
+
+	// secrets, sshKeys and fleet are the stores a saved reference is
+	// verified against: the git credential secret, the git signing and
+	// access keys, and the host affinity. A save that names a reference
+	// whose store is not attached is refused as unavailable, never stored
+	// unverified.
+	secrets SecretsService
+	sshKeys SSHKeyGetter
+	fleet   orchestration.FleetNodeLister
+	agents  AgentRefChecker
 }
 
 // projectStoreContext binds the request's tenant to the context the project
@@ -491,7 +548,7 @@ func (s *projectServiceImpl) Store() orchestration.ProjectStore {
 // SetWorkspaceProvisioner wires the managed-workspace provisioner. The server
 // binds it after construction, once the projects root, secrets service and
 // xkms SSH client it composes are all available — the same post-construction
-// rebind pattern SetAgentRegistry uses. Without it, requests that ask for a
+// rebind pattern SetFleetRegistry uses. Without it, requests that ask for a
 // managed workspace fail with ProjectProvisioningUnavailableError.
 func (s *projectServiceImpl) SetWorkspaceProvisioner(p *ProjectWorkspaceProvisioner) {
 	s.provisioner = p
@@ -511,21 +568,114 @@ func (s *projectServiceImpl) SetWorkflowResolver(r WorkflowResolver) {
 	s.workflows = r
 }
 
+// SetSecrets wires the secrets store a git credential secret reference is
+// verified against.
+func (s *projectServiceImpl) SetSecrets(secrets SecretsService) {
+	s.secrets = secrets
+}
+
+// SetSSHKeys wires the KMS key store the git signing and access key
+// references are verified against.
+func (s *projectServiceImpl) SetSSHKeys(keys SSHKeyGetter) {
+	s.sshKeys = keys
+}
+
+// SetFleetNodes wires the fleet registry a host affinity is verified
+// against. The server binds it once the shared registry exists.
+func (s *projectServiceImpl) SetFleetNodes(fleet orchestration.FleetNodeLister) {
+	s.fleet = fleet
+}
+
+// AgentRefChecker checks a reference into the tenant agent catalog;
+// *orchestration.AgentDirectory satisfies it.
+type AgentRefChecker interface {
+	CheckRef(ctx context.Context, tenantID string, ref orchestration.AgentRef, field string, role orchestration.AgentRole) error
+}
+
+// SetAgentRefChecker wires the tenant agent catalog a DefaultLeadAgent is
+// verified against. Without it, a request that names a default lead is
+// refused rather than stored unverified.
+func (s *projectServiceImpl) SetAgentRefChecker(checker AgentRefChecker) {
+	s.agents = checker
+}
+
+// validateDefaultLead refuses a default lead the tenant does not define, or
+// an Agent that does not declare the lead role.
+func (s *projectServiceImpl) validateDefaultLead(ctx context.Context, tenantID string, ref orchestration.AgentRef) error {
+	if ref.IsZero() {
+		return nil
+	}
+	if s.agents == nil {
+		return &orchestration.AgentCatalogUnavailableError{Ref: ref}
+	}
+	return s.agents.CheckRef(ctx, tenantID, ref, "default_lead_agent", orchestration.AgentRoleLead)
+}
+
 // validateDefaultWorkflow refuses a DefaultWorkflow the tenant does not have.
 func (s *projectServiceImpl) validateDefaultWorkflow(tenantID, name string) error {
 	if name == "" {
 		return nil
 	}
-	if s.workflows == nil {
-		return &ProjectInvalidError{
-			Field:   "default_workflow",
-			Message: "no workflow registry is attached; a default workflow cannot be verified",
+	return orchestration.RequireWorkflow(s.workflows, "default_workflow", tenantID, name)
+}
+
+// validateHostAffinity refuses a host affinity naming no fleet node.
+func (s *projectServiceImpl) validateHostAffinity(ctx context.Context, tenantID, hostAffinity string) error {
+	if hostAffinity == "" {
+		return nil
+	}
+	return orchestration.RequireFleetNode(ctx, s.fleet, "host_affinity", tenantID, hostAffinity)
+}
+
+// validateGitKey refuses a git key reference naming no SSH key. An unset
+// reference checks nothing.
+func (s *projectServiceImpl) validateGitKey(ctx context.Context, tenantID, field string, ref orchestration.KMSKeyRef) error {
+	if !ref.Set() {
+		return nil
+	}
+	return requireSSHKeyRef(ctx, s.sshKeys, tenantID, field, ref)
+}
+
+// validateGitCredentialSecret refuses a git credential secret reference
+// naming no secret.
+func (s *projectServiceImpl) validateGitCredentialSecret(ctx context.Context, tenantID, ref string) error {
+	if ref == "" {
+		return nil
+	}
+	_, err := requireSecretRef(ctx, s.secrets, tenantID, "git_credential_secret_ref", ref)
+	return err
+}
+
+// validateCreateReferences refuses a new project naming an object that does
+// not exist. Each check runs only for a field the request sets.
+func (s *projectServiceImpl) validateCreateReferences(ctx context.Context, req *CreateProjectRequest, git orchestration.ProjectGit) error {
+	if err := s.validateHostAffinity(ctx, req.TenantID, req.HostAffinity); err != nil {
+		return err
+	}
+	if err := s.validateGitKey(ctx, req.TenantID, "git_signing_key", git.Signing.Key); err != nil {
+		return err
+	}
+	if err := s.validateGitKey(ctx, req.TenantID, "git_ssh_key", git.SSHKey); err != nil {
+		return err
+	}
+	return s.validateGitCredentialSecret(ctx, req.TenantID, req.GitCredentialSecretRef)
+}
+
+// validateUpdateReferences refuses an update that points a reference at an
+// object that does not exist. Only a reference the request changes is
+// checked: stored data is not re-validated.
+func (s *projectServiceImpl) validateUpdateReferences(ctx context.Context, req *UpdateProjectRequest, git orchestration.ProjectGit) error {
+	if err := s.validateHostAffinity(ctx, req.TenantID, req.HostAffinity); err != nil {
+		return err
+	}
+	if req.GitSigningKeyName != "" || req.GitSigningKeyScope != "" || req.GitSigningKeyOwner != "" {
+		if err := s.validateGitKey(ctx, req.TenantID, "git_signing_key", git.Signing.Key); err != nil {
+			return err
 		}
 	}
-	if _, err := s.workflows.Get(tenantID, name); err != nil {
-		return &ProjectInvalidError{
-			Field:   "default_workflow",
-			Message: "unknown workflow " + name + " in tenant " + tenantID,
+	if req.GitSSHKeyName != "" || req.GitSSHKeyScope != "" || req.GitSSHKeyOwner != "" {
+		if err := s.validateGitKey(ctx, req.TenantID, "git_ssh_key", git.SSHKey); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -541,6 +691,51 @@ func (s *projectServiceImpl) validateContextRepos(repos []orchestration.ContextR
 			Message: err.Error(),
 			Err:     err,
 		}
+	}
+	return nil
+}
+
+// validateProjectSpend refuses spend limits that cannot mean what they
+// appear to, naming the field the operator wrote.
+func validateProjectSpend(limits orchestration.SpendLimits) error {
+	err := limits.Validate()
+	if err == nil {
+		return nil
+	}
+	var invalid *orchestration.QuotaInvalidError
+	if stderrors.As(err, &invalid) {
+		return &ProjectInvalidError{Field: "spend." + invalid.Field, Message: invalid.Message, Err: err}
+	}
+	return &ProjectInvalidError{Field: "spend", Message: err.Error(), Err: err}
+}
+
+// validateStorage refuses a storage-tier configuration the spawn paths could
+// not honour. It is the ONE place every transport's create and update reach,
+// so an unrecognized tier is refused identically over REST, gRPC, QUIC, MCP,
+// Unix and the embedded transport rather than by each handler separately.
+// The domain *orchestration.InputValidationError is carried as Err, so a
+// caller can still match it with errors.As.
+func (s *projectServiceImpl) validateStorage(storage orchestration.ProjectStorage) error {
+	if err := storage.Validate(); err != nil {
+		invalid := &ProjectInvalidError{Message: err.Error(), Err: err}
+		var input *orchestration.InputValidationError
+		if stderrors.As(err, &input) {
+			// The domain names the field by its record path
+			// ("storage.workspace_tier"); the wire is flat.
+			invalid.Field = strings.TrimPrefix(input.Field, "storage.")
+			invalid.Message = input.Message
+		}
+		return invalid
+	}
+	return nil
+}
+
+// validateSessionRotation refuses a session rotation policy the runner could
+// not act on. Like validateStorage it is the one place every transport's create
+// and update reach, so an unknown policy is refused identically everywhere.
+func validateSessionRotation(policy orchestration.SessionRotationPolicy) error {
+	if err := policy.Validate(); err != nil {
+		return &ProjectInvalidError{Field: "session_rotation", Message: err.Error(), Err: err}
 	}
 	return nil
 }
@@ -576,6 +771,9 @@ func (s *projectServiceImpl) CreateProject(ctx context.Context, req *CreateProje
 	if err := s.validateDefaultWorkflow(req.TenantID, req.DefaultWorkflow); err != nil {
 		return nil, err
 	}
+	if err := s.validateDefaultLead(ctx, req.TenantID, req.DefaultLeadAgent); err != nil {
+		return nil, err
+	}
 	if err := s.validateContextRepos(req.ContextRepos); err != nil {
 		return nil, err
 	}
@@ -594,6 +792,24 @@ func (s *projectServiceImpl) CreateProject(ctx context.Context, req *CreateProje
 	if err := s.validateGit(git); err != nil {
 		return nil, err
 	}
+	if err := validateProjectSpend(req.Spend); err != nil {
+		return nil, err
+	}
+
+	storage := orchestration.ProjectStorage{
+		WorkspaceTier:     req.WorkspaceTier,
+		WorkspaceTmpfsMB:  req.WorkspaceTmpfsMB,
+		ContainerMemoryMB: req.ContainerMemoryMB,
+	}
+	if err := s.validateStorage(storage); err != nil {
+		return nil, err
+	}
+	if err := validateSessionRotation(req.SessionRotation); err != nil {
+		return nil, err
+	}
+	if err := s.validateCreateReferences(ctx, req, git); err != nil {
+		return nil, err
+	}
 
 	project := &orchestration.Project{
 		ID:               uuid.New().String(),
@@ -606,22 +822,24 @@ func (s *projectServiceImpl) CreateProject(ctx context.Context, req *CreateProje
 		Autonomous:       req.Autonomous,
 		ContextRepos:     req.ContextRepos,
 		Workspace: orchestration.ProjectWorkspace{
-			AgentID: req.WorkspaceAgentID,
-			Path:    req.WorkspacePath,
+			FleetNodeID: req.WorkspaceFleetNodeID,
+			Path:        req.WorkspacePath,
 		},
-		Git: git,
+		Git:     git,
+		Storage: storage,
 		Quotas: orchestration.ProjectQuotas{
-			TokenBudget:    req.TokenBudget,
 			GPUMinutes:     req.GPUMinutes,
 			MaxConcurrency: req.MaxConcurrency,
 		},
-		Metadata:  req.Metadata,
-		CreatedAt: time.Now().UTC(),
-		UpdatedAt: time.Now().UTC(),
+		Spend:           req.Spend,
+		SessionRotation: req.SessionRotation,
+		Metadata:        req.Metadata,
+		CreatedAt:       time.Now().UTC(),
+		UpdatedAt:       time.Now().UTC(),
 	}
 
-	if req.AgentRoles != nil {
-		project.Permissions = orchestration.ProjectPermissions{AgentRoles: req.AgentRoles}
+	if req.FleetNodeRoles != nil {
+		project.Permissions = orchestration.ProjectPermissions{FleetNodeRoles: req.FleetNodeRoles}
 	}
 
 	if req.WorkspaceManaged {
@@ -787,8 +1005,8 @@ func (s *projectServiceImpl) UpdateProject(ctx context.Context, req *UpdateProje
 	} else if req.Description != "" {
 		existing.Description = req.Description
 	}
-	if req.WorkspaceAgentID != "" {
-		existing.Workspace.AgentID = req.WorkspaceAgentID
+	if req.WorkspaceFleetNodeID != "" {
+		existing.Workspace.FleetNodeID = req.WorkspaceFleetNodeID
 	}
 	if req.WorkspacePath != "" {
 		existing.Workspace.Path = req.WorkspacePath
@@ -796,7 +1014,10 @@ func (s *projectServiceImpl) UpdateProject(ctx context.Context, req *UpdateProje
 	if req.HostAffinity != "" {
 		existing.HostAffinity = req.HostAffinity
 	}
-	if req.DefaultLeadAgent != "" {
+	if !req.DefaultLeadAgent.IsZero() {
+		if err := s.validateDefaultLead(ctx, req.TenantID, req.DefaultLeadAgent); err != nil {
+			return nil, err
+		}
 		existing.DefaultLeadAgent = req.DefaultLeadAgent
 	}
 	if req.GitRepoURL != "" {
@@ -838,7 +1059,15 @@ func (s *projectServiceImpl) UpdateProject(ctx context.Context, req *UpdateProje
 	if req.GitSSHKeyOwner != "" {
 		existing.Git.SSHKey.Owner = req.GitSSHKeyOwner
 	}
+	if req.GitSigningRetire != nil {
+		if err := s.retireSigningKey(ctx, existing, *req.GitSigningRetire); err != nil {
+			return nil, err
+		}
+	}
 	if err := s.validateGit(existing.Git); err != nil {
+		return nil, err
+	}
+	if err := s.validateUpdateReferences(ctx, req, existing.Git); err != nil {
 		return nil, err
 	}
 	if req.ClearDefaultWorkflow {
@@ -852,6 +1081,13 @@ func (s *projectServiceImpl) UpdateProject(ctx context.Context, req *UpdateProje
 	if req.Autonomous != nil {
 		existing.Autonomous = *req.Autonomous
 	}
+	if req.Parked != nil {
+		if *req.Parked {
+			existing.Park(callerName(ctx), time.Now())
+		} else {
+			existing.Resume()
+		}
+	}
 	if req.ClearContextRepos {
 		existing.ContextRepos = nil
 	} else if req.ContextRepos != nil {
@@ -860,17 +1096,38 @@ func (s *projectServiceImpl) UpdateProject(ctx context.Context, req *UpdateProje
 		}
 		existing.ContextRepos = req.ContextRepos
 	}
-	if req.AgentRoles != nil {
-		existing.Permissions.AgentRoles = req.AgentRoles
+	if req.FleetNodeRoles != nil {
+		existing.Permissions.FleetNodeRoles = req.FleetNodeRoles
 	}
-	if req.TokenBudget != nil {
-		existing.Quotas.TokenBudget = *req.TokenBudget
+	if req.Spend != nil {
+		if err := validateProjectSpend(*req.Spend); err != nil {
+			return nil, err
+		}
+		existing.Spend = *req.Spend
 	}
 	if req.GPUMinutes != nil {
 		existing.Quotas.GPUMinutes = *req.GPUMinutes
 	}
 	if req.MaxConcurrency != nil {
 		existing.Quotas.MaxConcurrency = *req.MaxConcurrency
+	}
+	if req.WorkspaceTier != "" {
+		existing.Storage.WorkspaceTier = req.WorkspaceTier
+	}
+	if req.WorkspaceTmpfsMB != nil {
+		existing.Storage.WorkspaceTmpfsMB = *req.WorkspaceTmpfsMB
+	}
+	if req.ContainerMemoryMB != nil {
+		existing.Storage.ContainerMemoryMB = *req.ContainerMemoryMB
+	}
+	if err := s.validateStorage(existing.Storage); err != nil {
+		return nil, err
+	}
+	if req.SessionRotation != "" {
+		if err := validateSessionRotation(req.SessionRotation); err != nil {
+			return nil, err
+		}
+		existing.SessionRotation = req.SessionRotation
 	}
 	if req.Metadata != nil {
 		existing.Metadata = req.Metadata
@@ -884,6 +1141,20 @@ func (s *projectServiceImpl) UpdateProject(ctx context.Context, req *UpdateProje
 		Project:   existing,
 		Timestamp: time.Now().UTC(),
 	}, nil
+}
+
+// callerName names the authenticated principal behind ctx for a record that
+// says who acted, preferring the human-readable name. Empty when the request
+// carried no authenticated subject.
+func callerName(ctx context.Context) string {
+	subject, ok := auth.SubjectFromContext(ctx)
+	if !ok || !subject.Authenticated {
+		return ""
+	}
+	if subject.Username != "" {
+		return subject.Username
+	}
+	return subject.ID
 }
 
 // DeleteProject removes a project. A managed workspace is torn down before
@@ -999,23 +1270,23 @@ func (s *projectServiceImpl) convertStoreError(err error) error {
 	}
 }
 
-// AuthorizeAgent verifies that agentID holds at least requiredRole in projectID.
-func (s *projectServiceImpl) AuthorizeAgent(ctx context.Context, req *AuthorizeAgentRequest) error {
+// AuthorizeFleetNode verifies that agentID holds at least requiredRole in projectID.
+func (s *projectServiceImpl) AuthorizeFleetNode(ctx context.Context, req *AuthorizeFleetNodeRequest) error {
 	if req == nil {
 		return &ProjectInvalidError{Message: "request must not be nil"}
 	}
 	if req.TenantID == "" {
 		return &ProjectInvalidError{Field: "tenant_id", Message: "tenant ID is required"}
 	}
-	if req.AgentID == "" {
+	if req.FleetNodeID == "" {
 		return &ProjectInvalidError{Field: "agent_id", Message: "agent ID is required"}
 	}
 	if req.ProjectID == "" {
 		return nil // unscoped — legacy behaviour
 	}
 
-	err := s.authz.AuthorizeAgentForTenant(
-		projectStoreContext(ctx, req.TenantID), req.TenantID, req.ProjectID, req.AgentID, req.RequiredRole)
+	err := s.authz.AuthorizeFleetNodeForTenant(
+		projectStoreContext(ctx, req.TenantID), req.TenantID, req.ProjectID, req.FleetNodeID, req.RequiredRole)
 	if err != nil {
 		var (
 			denied      *orchestration.ProjectAccessDeniedError
@@ -1026,16 +1297,16 @@ func (s *projectServiceImpl) AuthorizeAgent(ctx context.Context, req *AuthorizeA
 		case stderrors.As(err, &denied):
 			return &ProjectAccessDeniedError{
 				ProjectID:    denied.ProjectID,
-				AgentID:      denied.AgentID,
+				FleetNodeID:  denied.FleetNodeID,
 				RequiredRole: denied.RequiredRole,
 				ActualRole:   denied.ActualRole,
 			}
 		case stderrors.As(err, &unresolved):
 			return &ProjectUnresolvedError{
-				TenantID:  unresolved.TenantID,
-				ProjectID: unresolved.ProjectID,
-				AgentID:   unresolved.AgentID,
-				Err:       err,
+				TenantID:    unresolved.TenantID,
+				ProjectID:   unresolved.ProjectID,
+				FleetNodeID: unresolved.FleetNodeID,
+				Err:         err,
 			}
 		case stderrors.As(err, &roleInvalid):
 			return &ProjectRoleInvalidError{Role: roleInvalid.Role}
@@ -1046,8 +1317,8 @@ func (s *projectServiceImpl) AuthorizeAgent(ctx context.Context, req *AuthorizeA
 	return nil
 }
 
-// GrantAgentRole sets or updates a specific role for an agent in a project.
-func (s *projectServiceImpl) GrantAgentRole(ctx context.Context, req *GrantAgentRoleRequest) (*GrantAgentRoleResponse, error) {
+// GrantFleetNodeRole sets or updates a specific role for an agent in a project.
+func (s *projectServiceImpl) GrantFleetNodeRole(ctx context.Context, req *GrantFleetNodeRoleRequest) (*GrantFleetNodeRoleResponse, error) {
 	if req == nil {
 		return nil, &ProjectInvalidError{Message: "request must not be nil"}
 	}
@@ -1057,7 +1328,7 @@ func (s *projectServiceImpl) GrantAgentRole(ctx context.Context, req *GrantAgent
 	if req.ProjectID == "" {
 		return nil, &ProjectInvalidError{Field: "project_id", Message: "project ID is required"}
 	}
-	if req.AgentID == "" {
+	if req.FleetNodeID == "" {
 		return nil, &ProjectInvalidError{Field: "agent_id", Message: "agent ID is required"}
 	}
 
@@ -1068,26 +1339,26 @@ func (s *projectServiceImpl) GrantAgentRole(ctx context.Context, req *GrantAgent
 		return nil, s.convertStoreError(err)
 	}
 
-	if project.Permissions.AgentRoles == nil {
-		project.Permissions.AgentRoles = make(map[string]orchestration.ProjectRole)
+	if project.Permissions.FleetNodeRoles == nil {
+		project.Permissions.FleetNodeRoles = make(map[string]orchestration.ProjectRole)
 	}
-	project.Permissions.AgentRoles[req.AgentID] = req.Role
+	project.Permissions.FleetNodeRoles[req.FleetNodeID] = req.Role
 	project.UpdatedAt = time.Now().UTC()
 
 	if err := s.store.Update(ctx, project); err != nil {
 		return nil, s.convertStoreError(err)
 	}
 
-	return &GrantAgentRoleResponse{
-		ProjectID: req.ProjectID,
-		AgentID:   req.AgentID,
-		Role:      req.Role,
-		Timestamp: time.Now().UTC(),
+	return &GrantFleetNodeRoleResponse{
+		ProjectID:   req.ProjectID,
+		FleetNodeID: req.FleetNodeID,
+		Role:        req.Role,
+		Timestamp:   time.Now().UTC(),
 	}, nil
 }
 
-// RevokeAgentRole sets the agent's role to ProjectRoleDenied in projectID.
-func (s *projectServiceImpl) RevokeAgentRole(ctx context.Context, req *RevokeAgentRoleRequest) (*RevokeAgentRoleResponse, error) {
+// RevokeFleetNodeRole sets the agent's role to ProjectRoleDenied in projectID.
+func (s *projectServiceImpl) RevokeFleetNodeRole(ctx context.Context, req *RevokeFleetNodeRoleRequest) (*RevokeFleetNodeRoleResponse, error) {
 	if req == nil {
 		return nil, &ProjectInvalidError{Message: "request must not be nil"}
 	}
@@ -1097,24 +1368,24 @@ func (s *projectServiceImpl) RevokeAgentRole(ctx context.Context, req *RevokeAge
 	if req.ProjectID == "" {
 		return nil, &ProjectInvalidError{Field: "project_id", Message: "project ID is required"}
 	}
-	if req.AgentID == "" {
+	if req.FleetNodeID == "" {
 		return nil, &ProjectInvalidError{Field: "agent_id", Message: "agent ID is required"}
 	}
 
-	_, err := s.GrantAgentRole(ctx, &GrantAgentRoleRequest{
-		TenantID:  req.TenantID,
-		ProjectID: req.ProjectID,
-		AgentID:   req.AgentID,
-		Role:      orchestration.ProjectRoleDenied,
+	_, err := s.GrantFleetNodeRole(ctx, &GrantFleetNodeRoleRequest{
+		TenantID:    req.TenantID,
+		ProjectID:   req.ProjectID,
+		FleetNodeID: req.FleetNodeID,
+		Role:        orchestration.ProjectRoleDenied,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return &RevokeAgentRoleResponse{
-		ProjectID: req.ProjectID,
-		AgentID:   req.AgentID,
-		Timestamp: time.Now().UTC(),
+	return &RevokeFleetNodeRoleResponse{
+		ProjectID:   req.ProjectID,
+		FleetNodeID: req.FleetNodeID,
+		Timestamp:   time.Now().UTC(),
 	}, nil
 }
 

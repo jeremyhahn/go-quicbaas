@@ -87,3 +87,25 @@ func pageResultFields[T any](result *orchestration.PageResult[T], into map[strin
 func filterSchemaProperty(description string) map[string]interface{} {
 	return map[string]interface{}{"type": "string", "description": description + " Optional."}
 }
+
+// servicePageEnvelope renders a service-layer listing response — which
+// carries the page as flat fields rather than an orchestration.PageResult —
+// through PageResult.Envelope, so these tools answer in the very shape the
+// orchestrator list tools and REST do. The services report the last page
+// with a zero NextOffset; a following page always starts past zero, so a
+// positive offset is exactly "records remain".
+func servicePageEnvelope[T any](itemsKey string, items []T, total, limit, offset, nextOffset int, facets orchestration.Facets) map[string]interface{} {
+	if items == nil {
+		items = []T{}
+	}
+	result := &orchestration.PageResult[T]{
+		Items:      items,
+		Total:      total,
+		Limit:      limit,
+		Offset:     offset,
+		NextOffset: nextOffset,
+		HasNext:    nextOffset > 0,
+		Facets:     facets,
+	}
+	return result.Envelope(itemsKey)
+}

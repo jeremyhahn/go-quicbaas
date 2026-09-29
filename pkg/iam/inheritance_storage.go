@@ -48,33 +48,6 @@ type HierarchyStorage interface {
 	// Returns true if a cycle would be created, false otherwise.
 	DetectRoleCycle(ctx context.Context, tenantID, parentRoleID, childRoleID string) (bool, error)
 
-	// CreateGroupHierarchy creates a parent-child relationship between groups.
-	// Returns ErrAlreadyExists if the relationship already exists.
-	// Returns ErrHierarchyCycle if this would create a cycle in the hierarchy.
-	CreateGroupHierarchy(ctx context.Context, hierarchy *GroupHierarchy) error
-
-	// GetGroupHierarchy retrieves a specific group hierarchy relationship.
-	// Returns ErrNotFound if the relationship does not exist.
-	GetGroupHierarchy(ctx context.Context, tenantID, parentGroupID, childGroupID string) (*GroupHierarchy, error)
-
-	// ListGroupParents retrieves all parent groups for a given group.
-	ListGroupParents(ctx context.Context, tenantID, groupID string) ([]*GroupHierarchy, error)
-
-	// ListGroupChildren retrieves all child groups for a given group.
-	ListGroupChildren(ctx context.Context, tenantID, groupID string) ([]*GroupHierarchy, error)
-
-	// DeleteGroupHierarchy removes a parent-child relationship.
-	// Returns ErrNotFound if the relationship does not exist.
-	DeleteGroupHierarchy(ctx context.Context, tenantID, parentGroupID, childGroupID string) error
-
-	// GetGroupAncestors retrieves all ancestor groups (transitive closure) for a group.
-	// Returns groups from direct parents to root ancestors.
-	GetGroupAncestors(ctx context.Context, tenantID, groupID string) ([]string, error)
-
-	// DetectGroupCycle checks if adding a parent-child relationship would create a cycle.
-	// Returns true if a cycle would be created, false otherwise.
-	DetectGroupCycle(ctx context.Context, tenantID, parentGroupID, childGroupID string) (bool, error)
-
 	// CacheEffectivePermissions stores computed effective permissions for a subject.
 	// This cache improves performance by avoiding repeated permission calculations.
 	CacheEffectivePermissions(ctx context.Context, permissions *EffectivePermissions) error
@@ -84,6 +57,6 @@ type HierarchyStorage interface {
 	GetCachedEffectivePermissions(ctx context.Context, tenantID, subjectID string) (*EffectivePermissions, error)
 
 	// InvalidateEffectivePermissions removes cached permissions for a subject.
-	// This should be called when a role/group hierarchy or permissions change.
+	// This should be called when a role hierarchy or permissions change.
 	InvalidateEffectivePermissions(ctx context.Context, tenantID, subjectID string) error
 }

@@ -23,7 +23,6 @@ func setupInheritanceTest(t *testing.T) (*InheritanceManager, *MemoryStorage, co
 	manager, err := NewInheritanceManager(InheritanceManagerOptions{
 		HierarchyStorage: hierarchyStorage,
 		RoleStorage:      storage,
-		GroupStorage:     storage,
 		UserStorage:      storage,
 	})
 	require.NoError(t, err)
@@ -43,7 +42,6 @@ func TestNewInheritanceManager(t *testing.T) {
 			opts: InheritanceManagerOptions{
 				HierarchyStorage: NewMemoryHierarchyStorage(),
 				RoleStorage:      NewMemoryStorage(),
-				GroupStorage:     NewMemoryStorage(),
 				UserStorage:      NewMemoryStorage(),
 			},
 			expectError: false,
@@ -51,9 +49,8 @@ func TestNewInheritanceManager(t *testing.T) {
 		{
 			name: "missing hierarchy storage",
 			opts: InheritanceManagerOptions{
-				RoleStorage:  NewMemoryStorage(),
-				GroupStorage: NewMemoryStorage(),
-				UserStorage:  NewMemoryStorage(),
+				RoleStorage: NewMemoryStorage(),
+				UserStorage: NewMemoryStorage(),
 			},
 			expectError: true,
 		},
@@ -61,16 +58,6 @@ func TestNewInheritanceManager(t *testing.T) {
 			name: "missing role storage",
 			opts: InheritanceManagerOptions{
 				HierarchyStorage: NewMemoryHierarchyStorage(),
-				GroupStorage:     NewMemoryStorage(),
-				UserStorage:      NewMemoryStorage(),
-			},
-			expectError: true,
-		},
-		{
-			name: "missing group storage",
-			opts: InheritanceManagerOptions{
-				HierarchyStorage: NewMemoryHierarchyStorage(),
-				RoleStorage:      NewMemoryStorage(),
 				UserStorage:      NewMemoryStorage(),
 			},
 			expectError: true,
@@ -80,7 +67,6 @@ func TestNewInheritanceManager(t *testing.T) {
 			opts: InheritanceManagerOptions{
 				HierarchyStorage: NewMemoryHierarchyStorage(),
 				RoleStorage:      NewMemoryStorage(),
-				GroupStorage:     NewMemoryStorage(),
 			},
 			expectError: true,
 		},
@@ -206,72 +192,6 @@ func TestRoleHierarchyRemoval(t *testing.T) {
 	hierarchy, err = manager.GetRoleHierarchy(ctx, tenantID, "child")
 	assert.NoError(t, err)
 	assert.Len(t, hierarchy, 0)
-}
-
-func TestGroupHierarchyCreation(t *testing.T) {
-	manager, storage, ctx := setupInheritanceTest(t)
-	tenantID := "test-tenant"
-
-	// Create groups
-	allUsersGroup := &Group{
-		ID:       "all-users",
-		Name:     "All Users",
-		TenantID: tenantID,
-		Members:  []string{"user1", "user2"},
-		Created:  time.Now(),
-		Updated:  time.Now(),
-	}
-	require.NoError(t, storage.CreateGroup(ctx, allUsersGroup))
-
-	engineersGroup := &Group{
-		ID:       "engineers",
-		Name:     "Engineers",
-		TenantID: tenantID,
-		Members:  []string{"user3"},
-		Created:  time.Now(),
-		Updated:  time.Now(),
-	}
-	require.NoError(t, storage.CreateGroup(ctx, engineersGroup))
-
-	// Add parent group with member inheritance
-	err := manager.AddGroupParent(ctx, tenantID, "engineers", "all-users", true)
-	assert.NoError(t, err)
-
-	// Verify hierarchy
-	hierarchy, err := manager.GetGroupHierarchy(ctx, tenantID, "engineers")
-	assert.NoError(t, err)
-	assert.Len(t, hierarchy, 1)
-	assert.Equal(t, "all-users", hierarchy[0].ParentGroupID)
-	assert.Equal(t, "engineers", hierarchy[0].ChildGroupID)
-	assert.True(t, hierarchy[0].InheritMembers)
-}
-
-func TestGroupHierarchyCycleDetection(t *testing.T) {
-	manager, storage, ctx := setupInheritanceTest(t)
-	tenantID := "test-tenant"
-
-	// Create groups
-	groups := []string{"group-a", "group-b", "group-c"}
-	for _, groupID := range groups {
-		group := &Group{
-			ID:       groupID,
-			Name:     groupID,
-			TenantID: tenantID,
-			Members:  []string{},
-			Created:  time.Now(),
-			Updated:  time.Now(),
-		}
-		require.NoError(t, storage.CreateGroup(ctx, group))
-	}
-
-	// Create chain: group-c -> group-b -> group-a
-	require.NoError(t, manager.AddGroupParent(ctx, tenantID, "group-c", "group-b", false))
-	require.NoError(t, manager.AddGroupParent(ctx, tenantID, "group-b", "group-a", false))
-
-	// Attempt to create cycle: group-a -> group-c
-	err := manager.AddGroupParent(ctx, tenantID, "group-a", "group-c", false)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "cycle")
 }
 
 func TestEffectiveRolePermissions(t *testing.T) {
@@ -410,67 +330,6 @@ func TestMultiParentInheritance(t *testing.T) {
 	assert.Contains(t, effective.AllPermissions, "perm:parent2")
 	assert.Contains(t, effective.AllPermissions, "perm:root")
 	assert.Len(t, effective.AllPermissions, 4)
-}
-
-func TestEffectiveUserGroups(t *testing.T) {
-	manager, storage, ctx := setupInheritanceTest(t)
-	tenantID := "test-tenant"
-
-	// Create groups
-	allGroup := &Group{
-		ID:       "all",
-		Name:     "All",
-		TenantID: tenantID,
-		Members:  []string{},
-		Created:  time.Now(),
-		Updated:  time.Now(),
-	}
-	require.NoError(t, storage.CreateGroup(ctx, allGroup))
-
-	engineersGroup := &Group{
-		ID:       "engineers",
-		Name:     "Engineers",
-		TenantID: tenantID,
-		Members:  []string{},
-		Created:  time.Now(),
-		Updated:  time.Now(),
-	}
-	require.NoError(t, storage.CreateGroup(ctx, engineersGroup))
-
-	backendGroup := &Group{
-		ID:       "backend",
-		Name:     "Backend",
-		TenantID: tenantID,
-		Members:  []string{},
-		Created:  time.Now(),
-		Updated:  time.Now(),
-	}
-	require.NoError(t, storage.CreateGroup(ctx, backendGroup))
-
-	// Build hierarchy: backend -> engineers -> all
-	require.NoError(t, manager.AddGroupParent(ctx, tenantID, "engineers", "all", true))
-	require.NoError(t, manager.AddGroupParent(ctx, tenantID, "backend", "engineers", true))
-
-	// Create user in backend group
-	user := &User{
-		ID:       "11",
-		Email:    "user1@test.com",
-		Name:     "User 1",
-		TenantID: tenantID,
-		Groups:   []string{"backend"},
-		Created:  time.Now(),
-		Updated:  time.Now(),
-	}
-	require.NoError(t, storage.CreateUser(ctx, user))
-
-	// Get effective groups
-	groups, err := manager.GetEffectiveUserGroups(ctx, tenantID, "11")
-	assert.NoError(t, err)
-
-	// User should be in all three groups
-	assert.Contains(t, groups, "backend")
-	assert.Contains(t, groups, "engineers")
-	assert.Contains(t, groups, "all")
 }
 
 func TestEffectiveUserPermissions(t *testing.T) {
@@ -649,45 +508,6 @@ func TestRoleHierarchyValidation(t *testing.T) {
 	assert.Error(t, h.Validate())
 }
 
-func TestGroupHierarchyValidation(t *testing.T) {
-	hierarchy := &GroupHierarchy{
-		ID:             uuid.New().String(),
-		TenantID:       "tenant1",
-		ParentGroupID:  "parent",
-		ChildGroupID:   "child",
-		InheritMembers: true,
-		Created:        time.Now(),
-	}
-
-	err := hierarchy.Validate()
-	assert.NoError(t, err)
-
-	// Test missing ID
-	h := *hierarchy
-	h.ID = ""
-	assert.Error(t, h.Validate())
-
-	// Test missing tenant
-	h = *hierarchy
-	h.TenantID = ""
-	assert.Error(t, h.Validate())
-
-	// Test missing parent
-	h = *hierarchy
-	h.ParentGroupID = ""
-	assert.Error(t, h.Validate())
-
-	// Test missing child
-	h = *hierarchy
-	h.ChildGroupID = ""
-	assert.Error(t, h.Validate())
-
-	// Test self-parent
-	h = *hierarchy
-	h.ParentGroupID = h.ChildGroupID
-	assert.Error(t, h.Validate())
-}
-
 func TestEffectivePermissionsValidation(t *testing.T) {
 	perms := &EffectivePermissions{
 		SubjectID:            "subject1",
@@ -755,15 +575,6 @@ func TestGetEffectiveRolePermissionsNonexistent(t *testing.T) {
 
 	// Try to get permissions for nonexistent role
 	_, err := manager.GetEffectiveRolePermissions(ctx, tenantID, "nonexistent")
-	assert.Error(t, err)
-}
-
-func TestGetEffectiveUserGroupsNonexistentUser(t *testing.T) {
-	manager, _, ctx := setupInheritanceTest(t)
-	tenantID := "test-tenant"
-
-	// Try to get groups for nonexistent user
-	_, err := manager.GetEffectiveUserGroups(ctx, tenantID, "nonexistent")
 	assert.Error(t, err)
 }
 
@@ -876,202 +687,6 @@ func TestMemoryHierarchyStorage_DetectRoleCycle_WithCycle(t *testing.T) {
 	}
 }
 
-func TestMemoryHierarchyStorage_GetGroupHierarchy_Success(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryHierarchyStorage()
-
-	hierarchy := &GroupHierarchy{
-		ID:             "gh1",
-		TenantID:       "t1",
-		ParentGroupID:  "parent-group",
-		ChildGroupID:   "child-group",
-		InheritMembers: true,
-		Created:        time.Now(),
-	}
-	if err := storage.CreateGroupHierarchy(ctx, hierarchy); err != nil {
-		t.Fatalf("CreateGroupHierarchy failed: %v", err)
-	}
-
-	result, err := storage.GetGroupHierarchy(ctx, "t1", "parent-group", "child-group")
-	if err != nil {
-		t.Fatalf("GetGroupHierarchy failed: %v", err)
-	}
-	if result.ID != "gh1" {
-		t.Fatalf("expected ID gh1, got %s", result.ID)
-	}
-	if !result.InheritMembers {
-		t.Fatal("expected InheritMembers to be true")
-	}
-}
-
-func TestMemoryHierarchyStorage_GetGroupHierarchy_NotFound(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryHierarchyStorage()
-
-	_, err := storage.GetGroupHierarchy(ctx, "t1", "no-parent", "no-child")
-	if err == nil {
-		t.Fatal("expected error for nonexistent group hierarchy")
-	}
-}
-
-func TestMemoryHierarchyStorage_ListGroupChildren_Success(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryHierarchyStorage()
-
-	// Create parent -> child1 and parent -> child2
-	h1 := &GroupHierarchy{
-		ID:             "gh_pc1",
-		TenantID:       "t1",
-		ParentGroupID:  "parent-group",
-		ChildGroupID:   "child1",
-		InheritMembers: false,
-		Created:        time.Now(),
-	}
-	h2 := &GroupHierarchy{
-		ID:             "gh_pc2",
-		TenantID:       "t1",
-		ParentGroupID:  "parent-group",
-		ChildGroupID:   "child2",
-		InheritMembers: false,
-		Created:        time.Now(),
-	}
-	if err := storage.CreateGroupHierarchy(ctx, h1); err != nil {
-		t.Fatalf("CreateGroupHierarchy 1 failed: %v", err)
-	}
-	if err := storage.CreateGroupHierarchy(ctx, h2); err != nil {
-		t.Fatalf("CreateGroupHierarchy 2 failed: %v", err)
-	}
-
-	children, err := storage.ListGroupChildren(ctx, "t1", "parent-group")
-	if err != nil {
-		t.Fatalf("ListGroupChildren failed: %v", err)
-	}
-	if len(children) != 2 {
-		t.Fatalf("expected 2 children, got %d", len(children))
-	}
-}
-
-func TestMemoryHierarchyStorage_ListGroupChildren_Empty(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryHierarchyStorage()
-
-	children, err := storage.ListGroupChildren(ctx, "t1", "no-children")
-	if err != nil {
-		t.Fatalf("ListGroupChildren failed: %v", err)
-	}
-	if len(children) != 0 {
-		t.Fatalf("expected 0 children, got %d", len(children))
-	}
-}
-
-func TestMemoryHierarchyStorage_DeleteGroupHierarchy_Success(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryHierarchyStorage()
-
-	hierarchy := &GroupHierarchy{
-		ID:             "gh_del",
-		TenantID:       "t1",
-		ParentGroupID:  "parent",
-		ChildGroupID:   "child",
-		InheritMembers: false,
-		Created:        time.Now(),
-	}
-	if err := storage.CreateGroupHierarchy(ctx, hierarchy); err != nil {
-		t.Fatalf("CreateGroupHierarchy failed: %v", err)
-	}
-
-	if err := storage.DeleteGroupHierarchy(ctx, "t1", "parent", "child"); err != nil {
-		t.Fatalf("DeleteGroupHierarchy failed: %v", err)
-	}
-
-	// Verify it's gone
-	_, err := storage.GetGroupHierarchy(ctx, "t1", "parent", "child")
-	if err == nil {
-		t.Fatal("expected error after deleting hierarchy")
-	}
-
-	// Verify parent has no children
-	children, err := storage.ListGroupChildren(ctx, "t1", "parent")
-	if err != nil {
-		t.Fatalf("ListGroupChildren failed: %v", err)
-	}
-	if len(children) != 0 {
-		t.Fatalf("expected 0 children after delete, got %d", len(children))
-	}
-}
-
-func TestMemoryHierarchyStorage_DeleteGroupHierarchy_NotFound(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryHierarchyStorage()
-
-	err := storage.DeleteGroupHierarchy(ctx, "t1", "no-parent", "no-child")
-	if err == nil {
-		t.Fatal("expected error deleting nonexistent group hierarchy")
-	}
-}
-
-func TestMemoryHierarchyStorage_DetectGroupCycle_NoCycle(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryHierarchyStorage()
-
-	h := &GroupHierarchy{
-		ID:             "gh_cycle1",
-		TenantID:       "t1",
-		ParentGroupID:  "groupA",
-		ChildGroupID:   "groupB",
-		InheritMembers: false,
-		Created:        time.Now(),
-	}
-	if err := storage.CreateGroupHierarchy(ctx, h); err != nil {
-		t.Fatalf("CreateGroupHierarchy failed: %v", err)
-	}
-
-	hasCycle, err := storage.DetectGroupCycle(ctx, "t1", "groupB", "groupC")
-	if err != nil {
-		t.Fatalf("DetectGroupCycle failed: %v", err)
-	}
-	if hasCycle {
-		t.Fatal("expected no cycle for B -> C")
-	}
-}
-
-func TestMemoryHierarchyStorage_DetectGroupCycle_WithCycle(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryHierarchyStorage()
-
-	// Create A -> B and B -> C
-	h1 := &GroupHierarchy{
-		ID:             "gh_cyc_ab",
-		TenantID:       "t1",
-		ParentGroupID:  "groupA",
-		ChildGroupID:   "groupB",
-		InheritMembers: false,
-		Created:        time.Now(),
-	}
-	h2 := &GroupHierarchy{
-		ID:             "gh_cyc_bc",
-		TenantID:       "t1",
-		ParentGroupID:  "groupB",
-		ChildGroupID:   "groupC",
-		InheritMembers: false,
-		Created:        time.Now(),
-	}
-	if err := storage.CreateGroupHierarchy(ctx, h1); err != nil {
-		t.Fatalf("CreateGroupHierarchy A->B failed: %v", err)
-	}
-	if err := storage.CreateGroupHierarchy(ctx, h2); err != nil {
-		t.Fatalf("CreateGroupHierarchy B->C failed: %v", err)
-	}
-
-	hasCycle, err := storage.DetectGroupCycle(ctx, "t1", "groupC", "groupA")
-	if err != nil {
-		t.Fatalf("DetectGroupCycle failed: %v", err)
-	}
-	if !hasCycle {
-		t.Fatal("expected cycle detected for C -> A")
-	}
-}
-
 func TestMemoryHierarchyStorage_CacheEffectivePermissions_InvalidInput(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryHierarchyStorage()
@@ -1090,115 +705,6 @@ func TestMemoryHierarchyStorage_CacheEffectivePermissions_InvalidInput(t *testin
 	}
 	if err := storage.CacheEffectivePermissions(ctx, p2); err == nil {
 		t.Fatal("expected error for missing TenantID")
-	}
-}
-
-// =============================================================================
-// InheritanceManager - RemoveGroupParent coverage (0% -> 100%)
-// =============================================================================
-
-func TestInheritanceManager_RemoveGroupParent_Success(t *testing.T) {
-	manager, storage, ctx := setupInheritanceTest(t)
-
-	tenantID := "tenant-1"
-
-	// Create a tenant first
-	tenant := &Tenant{ID: tenantID, Name: "Test Tenant", Created: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Create parent and child groups
-	parentGroup := &Group{
-		ID:       "parent-group",
-		TenantID: tenantID,
-		Name:     "Parent Group",
-		Members:  []string{"user-1", "user-2"},
-	}
-	childGroup := &Group{
-		ID:       "child-group",
-		TenantID: tenantID,
-		Name:     "Child Group",
-	}
-
-	if err := storage.CreateGroup(ctx, parentGroup); err != nil {
-		t.Fatalf("CreateGroup (parent) failed: %v", err)
-	}
-	if err := storage.CreateGroup(ctx, childGroup); err != nil {
-		t.Fatalf("CreateGroup (child) failed: %v", err)
-	}
-
-	// Add parent relationship with inheritMembers = true
-	err := manager.AddGroupParent(ctx, tenantID, childGroup.ID, parentGroup.ID, true)
-	if err != nil {
-		t.Fatalf("AddGroupParent failed: %v", err)
-	}
-
-	// Now remove the relationship
-	err = manager.RemoveGroupParent(ctx, tenantID, childGroup.ID, parentGroup.ID)
-	if err != nil {
-		t.Fatalf("RemoveGroupParent failed: %v", err)
-	}
-
-	// Verify relationship is removed
-	_, err = manager.GetGroupHierarchy(ctx, tenantID, childGroup.ID)
-	// Should return empty or the relationship should be gone
-}
-
-func TestInheritanceManager_RemoveGroupParent_NonExistent(t *testing.T) {
-	manager, storage, ctx := setupInheritanceTest(t)
-
-	tenantID := "tenant-1"
-	tenant := &Tenant{ID: tenantID, Name: "Test Tenant", Created: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Try to remove a non-existent relationship
-	err := manager.RemoveGroupParent(ctx, tenantID, "child", "parent")
-	if err == nil {
-		t.Error("expected error when removing non-existent relationship")
-	}
-}
-
-func TestInheritanceManager_RemoveGroupParent_NoInheritMembers(t *testing.T) {
-	manager, storage, ctx := setupInheritanceTest(t)
-
-	tenantID := "tenant-1"
-	tenant := &Tenant{ID: tenantID, Name: "Test Tenant", Created: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	parentGroup := &Group{
-		ID:       "parent-group-2",
-		TenantID: tenantID,
-		Name:     "Parent Group 2",
-		Members:  []string{},
-	}
-	childGroup := &Group{
-		ID:       "child-group-2",
-		TenantID: tenantID,
-		Name:     "Child Group 2",
-	}
-
-	if err := storage.CreateGroup(ctx, parentGroup); err != nil {
-		t.Fatalf("CreateGroup (parent) failed: %v", err)
-	}
-	if err := storage.CreateGroup(ctx, childGroup); err != nil {
-		t.Fatalf("CreateGroup (child) failed: %v", err)
-	}
-
-	// Add parent relationship with inheritMembers = false
-	err := manager.AddGroupParent(ctx, tenantID, childGroup.ID, parentGroup.ID, false)
-	if err != nil {
-		t.Fatalf("AddGroupParent failed: %v", err)
-	}
-
-	// Remove the relationship
-	err = manager.RemoveGroupParent(ctx, tenantID, childGroup.ID, parentGroup.ID)
-	if err != nil {
-		t.Fatalf("RemoveGroupParent failed: %v", err)
 	}
 }
 
@@ -1288,12 +794,6 @@ func TestMemoryStorage_DeleteTenant_WithCascade(t *testing.T) {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
 
-	// Create groups
-	group := &Group{ID: "group-1", TenantID: tenantID, Name: "Test Group"}
-	if err := storage.CreateGroup(ctx, group); err != nil {
-		t.Fatalf("CreateGroup failed: %v", err)
-	}
-
 	// Create roles
 	role := &Role{ID: "role-1", TenantID: tenantID, Name: "Test Role"}
 	if err := storage.CreateRole(ctx, role); err != nil {
@@ -1323,7 +823,6 @@ func TestMemoryStorage_DeleteTenant_WithCascade(t *testing.T) {
 		t.Error("user should be deleted after tenant deletion")
 	}
 
-	_, err = storage.GetGroup(ctx, tenantID, "group-1")
 	if err == nil {
 		t.Error("group should be deleted after tenant deletion")
 	}
@@ -1807,10 +1306,10 @@ func TestOIDCProviderAdapter_Creation(t *testing.T) {
 }
 
 // =============================================================================
-// User import with roles and groups
+// User import with roles
 // =============================================================================
 
-func TestBatchProcessor_ProcessUsers_WithRolesAndGroups(t *testing.T) {
+func TestBatchProcessor_ProcessUsers_WithRoles(t *testing.T) {
 	storage := newMockBatchStorage()
 	tenantMgr := newUpdateCapableTenantMgr()
 	bp := NewIAMBatchProcessor(storage, tenantMgr)
@@ -1820,10 +1319,9 @@ func TestBatchProcessor_ProcessUsers_WithRolesAndGroups(t *testing.T) {
 
 	items := []UserImportItem{
 		{
-			Email:  "rolesgroups@test.com",
-			Name:   "User With Roles",
-			Roles:  []string{"admin", "viewer"},
-			Groups: []string{"engineering", "qa"},
+			Email: "rolesgroups@test.com",
+			Name:  "User With Roles",
+			Roles: []string{"admin", "viewer"},
 		},
 	}
 
@@ -1838,13 +1336,10 @@ func TestBatchProcessor_ProcessUsers_WithRolesAndGroups(t *testing.T) {
 		t.Errorf("expected 1 success, got %d", saved.Progress.Succeeded)
 	}
 
-	// Verify user has roles and groups
+	// Verify user has roles
 	user, _ := tenantMgr.GetUserByEmail(ctx, tenantID, "rolesgroups@test.com")
 	if len(user.Roles) != 2 {
 		t.Errorf("expected 2 roles, got %d", len(user.Roles))
-	}
-	if len(user.Groups) != 2 {
-		t.Errorf("expected 2 groups, got %d", len(user.Groups))
 	}
 }
 

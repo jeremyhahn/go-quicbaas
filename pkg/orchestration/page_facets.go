@@ -145,15 +145,15 @@ func MatchesSessionFacets(req *ListSessionsRequest, session *SessionInfo) bool {
 		matchesFilterValue(session.AgentID, req.AgentID)
 }
 
-// agentFacetSpec counts the fleet registry by status and served backend.
-var agentFacetSpec = FacetSpec[*AgentRegistration]{
-	Values: map[string]func(*AgentRegistration) []string{
-		"status": func(agent *AgentRegistration) []string { return []string{string(agent.Status)} },
+// fleetNodeFacetSpec counts the fleet registry by status and served backend.
+var fleetNodeFacetSpec = FacetSpec[*FleetNode]{
+	Values: map[string]func(*FleetNode) []string{
+		"status": func(agent *FleetNode) []string { return []string{string(agent.Status)} },
 		// EVERY BACKEND THE DAEMON SERVES, not just its primary: the filter
-		// matches on membership (AgentServesBackend), so counting only
+		// matches on membership (FleetNodeServesBackend), so counting only
 		// Backend would print a zero beside a choice that selects the
 		// daemon.
-		"backend": func(agent *AgentRegistration) []string {
+		"backend": func(agent *FleetNode) []string {
 			backends := make([]string, 0, len(agent.Capabilities)+1)
 			backends = append(backends, agent.Backend)
 			return append(backends, agent.Capabilities...)
@@ -161,20 +161,20 @@ var agentFacetSpec = FacetSpec[*AgentRegistration]{
 	},
 }
 
-// AgentFacetSpec returns the facets the agents listing counts.
-func AgentFacetSpec() FacetSpec[*AgentRegistration] { return agentFacetSpec }
+// FleetNodeFacetSpec returns the facets the agents listing counts.
+func FleetNodeFacetSpec() FacetSpec[*FleetNode] { return fleetNodeFacetSpec }
 
 // FacetBase returns a copy of the filter narrowed to its base half — host,
 // type and model, which no facet counts.
-func (f *AgentFilter) FacetBase() *AgentFilter {
+func (f *FleetNodeFilter) FacetBase() *FleetNodeFilter {
 	if f == nil {
 		return nil
 	}
-	return &AgentFilter{Host: f.Host, AgentType: f.AgentType, Model: f.Model, Limit: f.Limit}
+	return &FleetNodeFilter{Host: f.Host, NodeType: f.NodeType, Model: f.Model, Limit: f.Limit}
 }
 
 // MatchesFacets reports whether agent satisfies the filter's faceted half.
-func (f *AgentFilter) MatchesFacets(agent *AgentRegistration) bool {
+func (f *FleetNodeFilter) MatchesFacets(agent *FleetNode) bool {
 	if agent == nil {
 		return false
 	}
@@ -184,7 +184,7 @@ func (f *AgentFilter) MatchesFacets(agent *AgentRegistration) bool {
 	if f.Status != "" && agent.Status != f.Status {
 		return false
 	}
-	return f.Backend == "" || AgentServesBackend(agent, f.Backend)
+	return f.Backend == "" || FleetNodeServesBackend(agent, f.Backend)
 }
 
 // WorkflowFilter narrows a workflow-definition listing.

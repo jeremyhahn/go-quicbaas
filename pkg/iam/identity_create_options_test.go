@@ -55,9 +55,8 @@ func assertFieldValidationError(t *testing.T, err error, field string) {
 func newCreateOptionsStore() (*IdentityStore, *MemoryStorage) {
 	mem := NewMemoryStorage()
 	return NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  mem,
-		GroupStorage: mem,
-		RoleStorage:  mem,
+		UserStorage: mem,
+		RoleStorage: mem,
 	}), mem
 }
 

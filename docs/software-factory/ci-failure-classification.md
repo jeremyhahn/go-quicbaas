@@ -54,17 +54,55 @@ Tried in order; the first match decides.
 | 1 | `registry_unreachable` | `host_defect` | `failed to pull image`, `http response to https client` |
 | 2 | `container_create_failed` | `host_defect` | `OCI runtime create failed`, `runc create failed` |
 | 3 | `module_resolution` | `host_defect` | `unknown revision` on a module belonging to a declared private owner |
-| 4 | `status_raced_shutdown` | `void` | the log's own last word is `Job succeeded`, against a conclusion of `failure` |
-| 5 | `host_eviction` | `void` | exit 137 (SIGKILL) with the OOM scope observed as `none` or `host` |
-| 6 | `runner_died` | `void` | no end-of-job marker anywhere, nothing in the log failing, the runner not known to be reporting |
+| 4 | `runner_teardown` / `runner_lost` | `void` | a line in the runner-infrastructure table (below), and nothing in the log failing |
+| 5 | `status_raced_shutdown` | `void` | the log's own last word is `Job succeeded`, against a conclusion of `failure` |
+| 6 | `host_eviction` | `void` | exit 137 (SIGKILL) with the OOM scope observed as `none` or `host` |
+| 7 | `runner_died` | `void` | no end-of-job marker anywhere, nothing in the log failing, the runner not known to be reporting |
 | — | `cancelled` | `void` | the forge reports the check cancelled; an act from outside the tests |
 | — | `unrecognised` | `genuine` | everything else |
 
 **Order is load-bearing.** The host-defect rules come first because a host that
 cannot pull the image or create the container never writes an end-of-job marker
 either — jobs 77520, 77604 and 77625 of 2026-09-12 all stop mid-preamble — so
-rule 6 matches them too, and its verdict is the wrong one: it would re-run them
-on the one host that cannot run them.
+rule 7 matches them too, and its verdict is the wrong one: it would re-run them
+on the one host that cannot run them. Rule 4 sits before rule 7 so a runner
+that said why it went away is named for what it said.
+
+### The runner-infrastructure table
+
+A runner writes its own errors in the same `##[error]` annotation a failed step
+uses. On 2026-09-22 (go-luks2 PR #203, go-quicbaas#1011) `CI / Unit Tests` went
+red after every step and post-step had passed, in the runner's own teardown:
+
+```
+Timed out waiting for the daemon to remove container 895cf614c74b…, its volumes and network may be left behind
+##[error]Error while stop job container: Error response from daemon: remove GITEA-ACTIONS-TASK-73374-…: volume is in use
+Job failed
+```
+
+The `##[error]` vetoed every void rule, so the red reached the worker, who spent
+a round proving a docs-only diff was fine before the task escalated to the
+owner.
+
+The runner's own lines now live in ONE table, `runnerInfraSignatures` in
+`pkg/cifault/infra.go` — a map from a lower-cased needle to its signature and
+any co-needle that must share the line. It is read two ways: rule 4 reads it
+for the signature, and `failureLine` reads it to refuse those lines as the
+change's failure. A new signature is a new row, never a new conditional.
+
+| Needle | Also on the line | Signature |
+|---|---|---|
+| `error while stop job container` | | `runner_teardown` |
+| `timed out waiting for the daemon to remove container` | | `runner_teardown` |
+| `volume is in use` | `error response from daemon: remove` | `runner_teardown` |
+| `the runner has received a shutdown signal` | | `runner_lost` |
+| `lost communication with the server` | | `runner_lost` |
+
+**A failed step stays genuine.** Rule 4 fires only when nothing else in the log
+failed, and `Process completed with exit code N` (N ≠ 0) is failure evidence
+with or without its `##[error]` prefix — the step's answer is the change's,
+whatever the runner did afterwards. A check the runner *cancelled* is already
+`void` by its conclusion (`cancelled`, below).
 
 ### Two guards carry most of the safety
 
@@ -74,8 +112,9 @@ of a suite it then fails must not void the run that failed it.
 
 **`vetoVoid` sits after every rule.** No void verdict stands over a log
 containing the change's own failure — a `--- FAIL:`, a bare `FAIL`, a `panic:`,
-a `fatal error:`, `make: *** … Error`, or a `##[error]` / `::error`
-annotation. It was added because the corpus test found the hole: a genuine test
+a `fatal error:`, `make: *** … Error`, a non-zero `Process completed with exit
+code N`, or a `##[error]` / `::error` annotation that is not one of the
+runner's own lines (the table above). It was added because the corpus test found the hole: a genuine test
 failure on a host that *also* reported an out-of-cgroup SIGKILL classified as
 an eviction. It deliberately does **not** read the runner's `Job failed` line,
 which a runner writes for any non-zero exit including a SIGKILL and which
@@ -160,6 +199,12 @@ stops: a permanently broken host answers void every time.
   validator, because a budget lost to a daemon restart is an unbounded loop with
   extra steps. The write is guarded and merges append-only: a count applied
   twice escalates a healthy fleet and one dropped bounds nothing.
+- Every ask is also written to the job's audit trail as an **`sdlc:ci_rerun`**
+  event — `check=… head=… run=… signature=… attempt=N/3`, plus `refused=…`
+  when the forge said no. The runner hands the review gate its audit sink
+  through the context (`withCIRerunAudit`), because the gate is one validator
+  shared by every job and blocks until a decision, so the re-run would
+  otherwise be invisible on the job until the round ended.
 - Three paths escalate rather than loop: a spent budget (the account says how
   many times the fleet was asked), a forge with no rerun route, and a rerun the
   forge refuses (which still spends budget).
@@ -211,6 +256,7 @@ among six would send the whole outage to a coding agent.
 | Concern | File |
 |---|---|
 | The classifier, pure | `pkg/cifault/classify.go`, `verdict.go`, `log.go` |
+| Runner-infrastructure signatures | `pkg/cifault/infra.go` (`runnerInfraSignatures`) |
 | Typed refusals | `pkg/cifault/errors.go` |
 | Real-log corpus | `pkg/cifault/testdata/*.log` |
 | The seam and the budget constant | `pkg/sdlc/checks_triage.go` |

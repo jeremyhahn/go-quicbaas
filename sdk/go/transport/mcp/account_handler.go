@@ -42,6 +42,8 @@ var accountMethodTools = map[string]string{
 	"SetDefault":       "quicbaas_agent_account_set_default",
 	"Usage":            "quicbaas_agent_account_usage",
 	"Materialize":      "quicbaas_agent_account_materialize",
+	"ReserveSession":   "quicbaas_agent_account_reserve_session",
+	"ReleaseSession":   "quicbaas_agent_account_release_session",
 }
 
 // accountMCPHandler converts MCP tool results back into the typed SDK account
@@ -73,6 +75,19 @@ var accountMCPTransforms = map[string]accountMCPTransform{
 	"SetDefault":       decodeMCPAccountAck,
 	"Usage":            decodeMCPAccountUsage,
 	"Materialize":      decodeMCPAccountMaterialize,
+	"ReserveSession":   decodeMCPSessionReservation,
+	"ReleaseSession":   decodeMCPSessionReservation,
+}
+
+// decodeMCPSessionReservation decodes a reserve or release result; both
+// service responses carry the reservation's ID.
+func decodeMCPSessionReservation(raw []byte) (interface{}, error) {
+	var env account.SessionReservation
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.account",
+			"failed to decode session reservation result")
+	}
+	return &env, nil
 }
 
 // transformResponse converts the raw MCP tool result to the SDK type for
@@ -148,7 +163,9 @@ func decodeMCPAccountAck(raw []byte) (interface{}, error) {
 
 func decodeMCPAccountUsage(raw []byte) (interface{}, error) {
 	var env struct {
-		Usage *account.UsageReport `json:"usage"`
+		Usage        *account.UsageReport   `json:"usage"`
+		LiveSessions int                    `json:"live_sessions"`
+		Spend        *account.SpendHeadroom `json:"spend,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &env); err != nil {
 		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.account",
@@ -157,6 +174,8 @@ func decodeMCPAccountUsage(raw []byte) (interface{}, error) {
 	if env.Usage == nil {
 		return nil, errors.NewInternal("mcp.account", "tool returned no usage report")
 	}
+	env.Usage.LiveSessions = env.LiveSessions
+	env.Usage.Spend = env.Spend
 	return env.Usage, nil
 }
 

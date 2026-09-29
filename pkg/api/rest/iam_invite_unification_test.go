@@ -98,10 +98,9 @@ func newUnificationInviteHandler(t *testing.T, inviteStore iam.InviteStore) (*IA
 
 	memStorage := iam.NewMemoryStorage()
 	identityStore := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
-		Tenants:      &testTenantManager{storage: memStorage},
+		UserStorage: memStorage,
+		RoleStorage: memStorage,
+		Tenants:     &testTenantManager{storage: memStorage},
 	})
 	require.NoError(t, memStorage.CreateUser(context.Background(), &iam.User{
 		ID: userID, TenantID: tenantID, Email: email,

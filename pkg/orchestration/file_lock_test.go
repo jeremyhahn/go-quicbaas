@@ -234,6 +234,21 @@ func (m *testFileLockLeaseManager) Close() error {
 	return nil
 }
 
+// leasesForPath reports how many leases the manager has ever created for a
+// secret path. A lock key that carries more than one has been handed to more
+// than one holder.
+func (m *testFileLockLeaseManager) leasesForPath(path string) int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	n := 0
+	for _, l := range m.leases {
+		if l.SecretPath == path {
+			n++
+		}
+	}
+	return n
+}
+
 // expireLease forces a lease to expire for testing stale-lock scenarios.
 func (m *testFileLockLeaseManager) expireLease(leaseID string) {
 	m.mu.Lock()
@@ -292,6 +307,26 @@ func newTestFileLockSvc(raftNode interfaces.RaftNode) (FileLockService, *testFil
 		MaxRenewals:       60,
 	}
 	svc := NewFileLockService(kv, lm, raftNode, 1, settings, IsolationShared, &testFileLockLogger{})
+	return svc, kv, lm
+}
+
+// fileLockIsolationModes is every workspace isolation mode a lock service can
+// be built with. Lock enforcement is identical across all of them, so the
+// Acquire tests run against the whole set rather than against whichever single
+// mode a change happens to be about.
+var fileLockIsolationModes = []WorkspaceIsolation{IsolationShared, IsolationWorktree}
+
+// newTestFileLockSvcIsolated builds a standalone (non-Raft) service in the
+// given isolation mode.
+func newTestFileLockSvcIsolated(isolation WorkspaceIsolation) (FileLockService, *testFileLockKVStore, *testFileLockLeaseManager) {
+	kv := newTestFileLockKVStore()
+	lm := newTestFileLockLeaseManager()
+	settings := FileLockSettings{
+		LeaseTTL:          "5m",
+		HeartbeatInterval: "30s",
+		MaxRenewals:       60,
+	}
+	svc := NewFileLockService(kv, lm, nil, 1, settings, isolation, &testFileLockLogger{})
 	return svc, kv, lm
 }
 
@@ -374,99 +409,168 @@ func TestFileLock_Acquire_MissingFields(t *testing.T) {
 	}
 }
 
-func TestFileLock_Acquire_AlreadyLocked_SharedMode(t *testing.T) {
-	svc, _, _ := newTestFileLockSvc(nil)
-	ctx := context.Background()
+// TestFileLock_Acquire_LiveLockOfAnotherAgentIsRefusedInEveryIsolationMode is
+// the mode-check test. Acquire once granted a live lock to a second agent
+// whenever the workflow declared IsolationWorktree, on the reasoning that
+// separate worktrees cannot collide on a file. An implementation that brings
+// that weakening back passes the "shared" case and fails the "worktree" one.
+//
+// The weakening is wrong on its own terms: this service locks an opaque
+// (tenant, project, path) triple and cannot tell a path a per-agent worktree
+// privatises from one that stays shared, and refs, the object database and a
+// submodule's checkout stay shared however the working directories are split.
+func TestFileLock_Acquire_LiveLockOfAnotherAgentIsRefusedInEveryIsolationMode(t *testing.T) {
+	for _, isolation := range fileLockIsolationModes {
+		t.Run(string(isolation), func(t *testing.T) {
+			svc, _, _ := newTestFileLockSvcIsolated(isolation)
+			ctx := context.Background()
 
-	// First acquire succeeds.
-	_, err := svc.Acquire(ctx, "t1", "p1", "/file.go", "agent-a")
-	if err != nil {
-		t.Fatalf("first acquire failed: %v", err)
-	}
+			if _, err := svc.Acquire(ctx, "t1", "p1", "/file.go", "agent-a"); err != nil {
+				t.Fatalf("first acquire failed: %v", err)
+			}
 
-	// Second acquire by different agent should fail.
-	_, err = svc.Acquire(ctx, "t1", "p1", "/file.go", "agent-b")
-	if err == nil {
-		t.Fatal("expected error on second acquire, got nil")
-	}
-	if !errors.Is(err, ErrFileLocked) {
-		t.Errorf("expected ErrFileLocked, got %v", err)
-	}
-	var lockedErr *FileLockedError
-	if !errors.As(err, &lockedErr) {
-		t.Fatalf("expected FileLockedError, got %T", err)
-	}
-	if lockedErr.AgentID != "agent-a" {
-		t.Errorf("expected holder agent-a, got %s", lockedErr.AgentID)
+			_, err := svc.Acquire(ctx, "t1", "p1", "/file.go", "agent-b")
+			if err == nil {
+				t.Fatalf("isolation %q granted /file.go to agent-b while agent-a's "+
+					"lease was still live: two agents now believe they hold it "+
+					"exclusively and will write over each other", isolation)
+			}
+			if !errors.Is(err, ErrFileLocked) {
+				t.Fatalf("expected ErrFileLocked, got %v", err)
+			}
+
+			var lockedErr *FileLockedError
+			if !errors.As(err, &lockedErr) {
+				t.Fatalf("expected *FileLockedError, got %T", err)
+			}
+			if lockedErr.AgentID != "agent-a" {
+				t.Errorf("expected holder agent-a, got %s", lockedErr.AgentID)
+			}
+			if lockedErr.FilePath != "/file.go" {
+				t.Errorf("expected path /file.go, got %s", lockedErr.FilePath)
+			}
+		})
 	}
 }
 
-func TestFileLock_Acquire_AlreadyLocked_WorktreeMode(t *testing.T) {
-	kv := newTestFileLockKVStore()
-	lm := newTestFileLockLeaseManager()
-	settings := FileLockSettings{
-		LeaseTTL:          "5m",
-		HeartbeatInterval: "30s",
-		MaxRenewals:       60,
-	}
-	svc := NewFileLockService(kv, lm, nil, 1, settings, IsolationWorktree, &testFileLockLogger{})
-	ctx := context.Background()
+// TestFileLock_Acquire_RefusalLeavesTheHoldersLeaseAndRecordIntact names what
+// granting the override cost, which is more than an interleaved write.
+//
+// A granted override created a SECOND lease on the same lock key and pointed
+// the stored record at it. The original holder, which had been told nothing,
+// then finished its critical section normally — and its Release revoked the
+// NEWCOMER's lease and deleted the newcomer's lock while the newcomer was
+// still editing, while its Renew extended a lease it did not hold. Refusing
+// keeps one lease, one record and one holder per key, so each agent's Renew
+// and Release act on their own lock and nobody else's.
+func TestFileLock_Acquire_RefusalLeavesTheHoldersLeaseAndRecordIntact(t *testing.T) {
+	for _, isolation := range fileLockIsolationModes {
+		t.Run(string(isolation), func(t *testing.T) {
+			svc, _, lm := newTestFileLockSvcIsolated(isolation)
+			ctx := context.Background()
 
-	// First acquire.
-	_, err := svc.Acquire(ctx, "t1", "p1", "/file.go", "agent-a")
-	if err != nil {
-		t.Fatalf("first acquire failed: %v", err)
-	}
+			held, err := svc.Acquire(ctx, "t1", "p1", "/file.go", "agent-a")
+			if err != nil {
+				t.Fatalf("first acquire failed: %v", err)
+			}
+			if held.Isolation != string(isolation) {
+				t.Errorf("expected the lock to record isolation %q, got %q", isolation, held.Isolation)
+			}
 
-	// Second acquire by different agent should succeed in worktree mode.
-	lock, err := svc.Acquire(ctx, "t1", "p1", "/file.go", "agent-b")
-	if err != nil {
-		t.Fatalf("expected worktree mode to allow re-acquire, got %v", err)
-	}
-	if lock.AgentID != "agent-b" {
-		t.Errorf("expected agent-b, got %s", lock.AgentID)
+			if _, err := svc.Acquire(ctx, "t1", "p1", "/file.go", "agent-b"); err == nil {
+				t.Fatalf("isolation %q granted the lock to agent-b", isolation)
+			}
+
+			if n := lm.leasesForPath(held.LockKey); n != 1 {
+				t.Fatalf("expected exactly 1 lease on the lock key, got %d: a second "+
+					"lease means agent-a's Release would revoke agent-b's", n)
+			}
+
+			stored, active, err := svc.IsLocked(ctx, "t1", "p1", "/file.go")
+			if err != nil {
+				t.Fatalf("IsLocked failed: %v", err)
+			}
+			if !active {
+				t.Fatal("expected the lock to still be held")
+			}
+			if stored.AgentID != "agent-a" {
+				t.Errorf("expected the record to still name agent-a, got %s", stored.AgentID)
+			}
+			if stored.LeaseID != held.LeaseID {
+				t.Errorf("expected the record to still carry agent-a's lease %s, got %s",
+					held.LeaseID, stored.LeaseID)
+			}
+
+			// Agent-a's renewal therefore extends agent-a's own lease.
+			if err := svc.Renew(ctx, "t1", held.LockKey); err != nil {
+				t.Fatalf("holder could not renew its own lock: %v", err)
+			}
+
+			// And its release ends its own critical section, after which the
+			// lock is genuinely available to the agent that was refused.
+			if err := svc.Release(ctx, "t1", held.LockKey); err != nil {
+				t.Fatalf("holder could not release its own lock: %v", err)
+			}
+			taken, err := svc.Acquire(ctx, "t1", "p1", "/file.go", "agent-b")
+			if err != nil {
+				t.Fatalf("expected agent-b to acquire after release, got %v", err)
+			}
+			if taken.AgentID != "agent-b" {
+				t.Errorf("expected agent-b, got %s", taken.AgentID)
+			}
+		})
 	}
 }
 
+// TestFileLock_Acquire_StaleLock_Overwritten covers the other half of the
+// rule: what a refusal is NOT. An expired lease is not a holder, so the lock
+// is reclaimable in every isolation mode. Were this to start refusing, one
+// crashed agent would strand a path for as long as the record survived.
 func TestFileLock_Acquire_StaleLock_Overwritten(t *testing.T) {
-	svc, _, lm := newTestFileLockSvc(nil)
-	ctx := context.Background()
+	for _, isolation := range fileLockIsolationModes {
+		t.Run(string(isolation), func(t *testing.T) {
+			svc, _, lm := newTestFileLockSvcIsolated(isolation)
+			ctx := context.Background()
 
-	// First acquire.
-	lock1, err := svc.Acquire(ctx, "t1", "p1", "/file.go", "agent-a")
-	if err != nil {
-		t.Fatalf("first acquire failed: %v", err)
-	}
+			lock1, err := svc.Acquire(ctx, "t1", "p1", "/file.go", "agent-a")
+			if err != nil {
+				t.Fatalf("first acquire failed: %v", err)
+			}
 
-	// Expire the lease.
-	lm.expireLease(lock1.LeaseID)
+			lm.expireLease(lock1.LeaseID)
 
-	// Second acquire by different agent should succeed because lease is expired.
-	lock2, err := svc.Acquire(ctx, "t1", "p1", "/file.go", "agent-b")
-	if err != nil {
-		t.Fatalf("expected stale lock overwrite, got %v", err)
-	}
-	if lock2.AgentID != "agent-b" {
-		t.Errorf("expected agent-b, got %s", lock2.AgentID)
+			lock2, err := svc.Acquire(ctx, "t1", "p1", "/file.go", "agent-b")
+			if err != nil {
+				t.Fatalf("expected stale lock overwrite, got %v", err)
+			}
+			if lock2.AgentID != "agent-b" {
+				t.Errorf("expected agent-b, got %s", lock2.AgentID)
+			}
+		})
 	}
 }
 
+// TestFileLock_Acquire_SameAgent_Idempotent asserts the refusal is scoped to
+// another agent. A holder re-acquiring its own lock is a no-op it is entitled
+// to, in every isolation mode.
 func TestFileLock_Acquire_SameAgent_Idempotent(t *testing.T) {
-	svc, _, _ := newTestFileLockSvc(nil)
-	ctx := context.Background()
+	for _, isolation := range fileLockIsolationModes {
+		t.Run(string(isolation), func(t *testing.T) {
+			svc, _, _ := newTestFileLockSvcIsolated(isolation)
+			ctx := context.Background()
 
-	_, err := svc.Acquire(ctx, "t1", "p1", "/file.go", "agent-a")
-	if err != nil {
-		t.Fatalf("first acquire failed: %v", err)
-	}
+			if _, err := svc.Acquire(ctx, "t1", "p1", "/file.go", "agent-a"); err != nil {
+				t.Fatalf("first acquire failed: %v", err)
+			}
 
-	// Same agent re-acquiring should succeed (idempotent).
-	lock, err := svc.Acquire(ctx, "t1", "p1", "/file.go", "agent-a")
-	if err != nil {
-		t.Fatalf("expected idempotent re-acquire, got %v", err)
-	}
-	if lock.AgentID != "agent-a" {
-		t.Errorf("expected agent-a, got %s", lock.AgentID)
+			lock, err := svc.Acquire(ctx, "t1", "p1", "/file.go", "agent-a")
+			if err != nil {
+				t.Fatalf("expected idempotent re-acquire, got %v", err)
+			}
+			if lock.AgentID != "agent-a" {
+				t.Errorf("expected agent-a, got %s", lock.AgentID)
+			}
+		})
 	}
 }
 

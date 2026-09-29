@@ -5,7 +5,7 @@
  * SDK client and never calls window.fetch() directly.
  *
  * Two assertions matter here:
- *   1. SDK methods (listJobs, listAgents, listSessions, listTasks, healthCheck,
+ *   1. SDK methods (listJobs, listFleetNodes, listSessions, listTasks, healthCheck,
  *      authValidate) are invoked with the correct arguments on mount.
  *   2. window.fetch is called ZERO times — the anti-regression that prevents
  *      anyone from sneaking a raw fetch() back in.
@@ -31,7 +31,7 @@ Object.defineProperty(window, 'fetch', {
 // ---------------------------------------------------------------------------
 
 const mockListJobs        = vi.fn().mockResolvedValue([]);
-const mockListAgents      = vi.fn().mockResolvedValue({ agents: [] });
+const mockListAgents      = vi.fn().mockResolvedValue({ nodes: [] });
 const mockListSessions    = vi.fn().mockResolvedValue({ sessions: [] });
 const mockListTasks       = vi.fn().mockResolvedValue([]);
 const mockHealthCheck     = vi.fn().mockResolvedValue({ status: 'ok' });
@@ -42,7 +42,7 @@ function makeMockClient() {
   return {
     orchestrator: {
       listJobs:           mockListJobs,
-      listAgents:         mockListAgents,
+      listFleetNodes:         mockListAgents,
       listSessions:       mockListSessions,
       listTasks:          mockListTasks,
       healthCheck:        mockHealthCheck,
@@ -52,7 +52,7 @@ function makeMockClient() {
       startJob:           vi.fn().mockResolvedValue({}),
       cancelJob:          vi.fn().mockResolvedValue(undefined),
       listBackends:       vi.fn().mockResolvedValue([]),
-      getAgentStatus:     vi.fn().mockResolvedValue({}),
+      getFleetNode:     vi.fn().mockResolvedValue({}),
       listTasks2:         vi.fn().mockResolvedValue([]),
       getTask:            vi.fn().mockResolvedValue({}),
       spawnSession:       vi.fn().mockResolvedValue({}),
@@ -107,12 +107,12 @@ vi.mock('../src/stores/router.svelte.ts', () => ({
   navigateTo:         vi.fn(),
 }));
 
-// Stub the agentStore and sessionStore auto-refresh so they don't fire
+// Stub the fleetStore and sessionStore auto-refresh so they don't fire
 // additional SDK calls that interfere with our assertions.
-vi.mock('../src/stores/agentStore.svelte.ts', () => ({
-  agentStore: { agents: [], agentsLoading: false, onlineAgents: [] },
+vi.mock('../src/stores/fleetStore.svelte.ts', () => ({
+  fleetStore: { nodes: [], nodesLoading: false, onlineNodes: [] },
   startAgentsAutoRefresh: vi.fn().mockReturnValue(() => { /* cleanup noop */ }),
-  refreshAgents: vi.fn().mockResolvedValue(undefined),
+  refreshFleet: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../src/stores/sessionStore.svelte.ts', () => ({
@@ -132,7 +132,8 @@ vi.mock('../src/views/SystemDashboard.svelte', () => ({
 
 // Import the component under test AFTER mocks are declared.
 import MainApp from '../src/views/MainApp.svelte';
-import { resetOrchestratorStore } from '../src/stores/orchestrator.svelte.ts';
+import { resetOrchestratorStore, stopOrchestratorPolling } from '../src/stores/orchestrator.svelte.ts';
+import { authStore, setAuthenticated, setUnauthenticated } from '../src/stores/auth.svelte.ts';
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -146,13 +147,21 @@ describe('MainApp — no direct fetch() calls', () => {
     // module-level, so without a reset the second test's mount sees "fresh"
     // data and skips the fetch. resetOrchestratorStore() clears both.
     resetOrchestratorStore();
+    stopOrchestratorPolling();
   });
 
   afterEach(() => {
     cleanup();
+    stopOrchestratorPolling();
+    setUnauthenticated();
   });
 
   it('calls listJobs via SDK with the active tenant ID on mount', async () => {
+    // Polling is gated on an authenticated session (go-quicbaas UI-login-
+    // refused investigation, 2026-09-25) — it no longer fires for an
+    // anonymous/unauthenticated tab, so establish one the same way a real
+    // sign-in does before mounting.
+    setAuthenticated({ access_token: 'test-token-123' });
     render(MainApp);
 
     // Allow microtasks and effect queue to drain.
@@ -167,7 +176,8 @@ describe('MainApp — no direct fetch() calls', () => {
     expect(mockListJobs).toHaveBeenCalledWith('system');
   });
 
-  it('calls listAgents via SDK with the active tenant ID on mount', async () => {
+  it('calls listFleetNodes via SDK with the active tenant ID on mount', async () => {
+    setAuthenticated({ access_token: 'test-token-123' });
     render(MainApp);
 
     await vi.waitFor(() => {
@@ -180,6 +190,7 @@ describe('MainApp — no direct fetch() calls', () => {
   });
 
   it('calls listSessions via SDK with the active tenant ID on mount', async () => {
+    setAuthenticated({ access_token: 'test-token-123' });
     render(MainApp);
 
     await vi.waitFor(() => {
@@ -201,6 +212,7 @@ describe('MainApp — no direct fetch() calls', () => {
   });
 
   it('calls listTasks via SDK with the active tenant ID on mount', async () => {
+    setAuthenticated({ access_token: 'test-token-123' });
     render(MainApp);
 
     await vi.waitFor(() => {
@@ -234,16 +246,20 @@ describe('MainApp — no direct fetch() calls', () => {
     localStorage.removeItem('quicbaas_token');
     render(MainApp);
 
-    // Wait for all $effects to settle (the orchestrator poller's loadJobs fires
-    // shortly after mount) before asserting authValidate was never called.
+    // Wait for validateSession()'s no-token branch to settle instead of the
+    // orchestrator poller: polling is now gated on an authenticated session
+    // (go-quicbaas UI-login-refused investigation, 2026-09-25) and never
+    // fires here at all, so mockListJobs is not a usable settle point.
     await vi.waitFor(() => {
-      expect(mockListJobs).toHaveBeenCalled();
+      expect(authStore.status).toBe('unauthenticated');
     }, { timeout: 2000 });
 
     expect(mockAuthValidate).not.toHaveBeenCalled();
+    expect(mockListJobs).not.toHaveBeenCalled();
   });
 
   it('never calls window.fetch() directly — anti-regression guard', async () => {
+    setAuthenticated({ access_token: 'test-token-123' });
     render(MainApp);
 
     // Wait long enough for all $effect callbacks to have fired.

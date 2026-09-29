@@ -196,3 +196,67 @@ func TestStore_DeliveryIsolatedByTenantAndTask(t *testing.T) {
 		t.Fatalf("other task: %v", err)
 	}
 }
+
+// A guarded update is refused when the binding it read was replaced or
+// deleted underneath it, so a read-modify-write can neither undo a
+// concurrent write nor resurrect a removed binding.
+func TestStore_UpdateBinding_RefusesAChangedOrDeletedRecord(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	base := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return base }
+	if err := store.PutBinding(ctx, testTenant, testBinding()); err != nil {
+		t.Fatalf("PutBinding: %v", err)
+	}
+
+	read, err := store.GetBinding(ctx, testTenant, testProject)
+	if err != nil {
+		t.Fatalf("GetBinding: %v", err)
+	}
+	// The same record, unchanged: the guarded write lands and advances the
+	// stamp even when the clock has not moved.
+	read.Review.RequiredApprovals = 3
+	if err := store.UpdateBinding(ctx, testTenant, read); err != nil {
+		t.Fatalf("UpdateBinding on an unchanged record: %v", err)
+	}
+	if !read.UpdatedAt.After(base) {
+		t.Fatalf("stamp not advanced: %v", read.UpdatedAt)
+	}
+
+	// A stale reader: another writer replaced the record since it was read.
+	stale, err := store.GetBinding(ctx, testTenant, testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.now = func() time.Time { return base.Add(time.Hour) }
+	concurrent := testBinding()
+	concurrent.Review.RequiredApprovals = 5
+	if err := store.PutBinding(ctx, testTenant, concurrent); err != nil {
+		t.Fatal(err)
+	}
+	stale.Review.RequiredApprovals = 9
+	if err := store.UpdateBinding(ctx, testTenant, stale); !errors.Is(err, ErrVersionConflict) {
+		t.Fatalf("stale update: err=%v, want ErrVersionConflict", err)
+	}
+	got, err := store.GetBinding(ctx, testTenant, testProject)
+	if err != nil || got.Review.RequiredApprovals != 5 {
+		t.Fatalf("the concurrent write was undone: %+v, %v", got, err)
+	}
+
+	// A deleted record is not recreated.
+	if err := store.DeleteBinding(ctx, testTenant, testProject); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateBinding(ctx, testTenant, got); !errors.Is(err, ErrVersionConflict) {
+		t.Fatalf("update after delete: err=%v, want ErrVersionConflict", err)
+	}
+	if _, err := store.GetBinding(ctx, testTenant, testProject); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("the deleted binding was resurrected: %v", err)
+	}
+
+	// A binding with no stamp names no record to guard against.
+	unstamped := testBinding()
+	if err := store.UpdateBinding(ctx, testTenant, unstamped); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("unstamped update: err=%v, want ErrInvalidInput", err)
+	}
+}

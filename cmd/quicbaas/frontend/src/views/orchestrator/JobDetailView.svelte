@@ -40,13 +40,19 @@
   import {
     listReturnHash,
     navigateTo,
-    routeAgentDetail,
+    routeFleetNode,
     routeSessionDetail,
     routeTaskDetail,
   } from '../../stores/router.svelte.ts';
-  import { startEventStream, stopEventStream } from '../../stores/job-events.svelte.ts';
+  import {
+    eventSubStore,
+    retryEventStream,
+    startEventStream,
+    stopEventStream,
+  } from '../../stores/job-events.svelte.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
+  import SdlcReviewerPicker from '../../components/orchestrator/SdlcReviewerPicker.svelte';
   import type { JobRunnerInfo } from '@quicbaas/sdk';
   import JobStateMachine from '../../components/orchestrator/JobStateMachine.svelte';
   import DAGGraph from '../../components/orchestrator/DAGGraph.svelte';
@@ -54,14 +60,16 @@
   import BudgetGauge from '../../components/orchestrator/BudgetGauge.svelte';
   import StatusBadge from '../../components/core/StatusBadge.svelte';
   import { statusToVariant } from '../../components/core/statusVariant.ts';
-  import { ChevronLeft, X, RotateCcw, Radio, ExternalLink, GitPullRequest, ClipboardList, Terminal, Bot, GitBranch, CheckCircle2, XCircle } from 'lucide-svelte';
+  import { ChevronLeft, X, RotateCcw, Radio, RadioTower, ExternalLink, GitPullRequest, ClipboardList, Terminal, Bot, GitBranch, CheckCircle2, XCircle } from 'lucide-svelte';
   import { formatDateTime, formatTimeOnly, toMillis } from '../../lib/time.ts';
   import { issueRef } from '../../lib/tasks.ts';
   import type { GetSpendReportResponse } from '@quicbaas/sdk';
   import {
     SPEND_UNATTRIBUTED_LEVEL,
-    costIsMeasured,
-    formatCost,
+    billedNote,
+    equivalentNote,
+    formatBilled,
+    formatEquivalent,
     formatTokens,
     noIterationBudgetNotice,
     policyLabel,
@@ -382,45 +390,66 @@
     <div class="text-base-content/30">No job selected</div>
   </div>
 {:else}
-  <div class="p-6 space-y-5 max-w-5xl mx-auto">
+  <div class="page page-narrow">
 
     <!-- Header -->
-    <div class="flex items-start gap-3 flex-wrap">
-      <button
-        class="btn btn-ghost btn-sm gap-1 shrink-0"
-        onclick={handleBack}
-        aria-label="Back to jobs list"
-      >
-        <ChevronLeft class="h-4 w-4" />
-        Back
-      </button>
-
-      <div class="flex-1 min-w-0">
-        <h1 class="text-xl font-bold truncate">{job.description || job.job_id}</h1>
-        <div class="flex items-center gap-2 mt-1 flex-wrap">
+    <div class="flex flex-wrap items-start gap-x-6 gap-y-3">
+      <div class="min-w-0 flex-1">
+        <button
+          class="-ml-2 mb-1 inline-flex items-center gap-1 rounded-field px-2 py-0.5 text-sm text-primary hover:bg-base-200"
+          onclick={handleBack}
+          aria-label="Back to jobs list"
+        >
+          <ChevronLeft class="h-4 w-4" />
+          Jobs
+        </button>
+        <h1 class="display text-[1.75rem] text-base-content">{job.description || job.job_id}</h1>
+        <div class="mt-2 flex flex-wrap items-center gap-2">
           <StatusBadge
             text={job.state}
             variant={statusToVariant(job.state)}
             pulse={job.state === 'executing'}
           />
-          <span class="text-xs text-base-content/40 font-mono">{job.job_id}</span>
+          <span class="font-mono text-xs text-base-content/60">{job.job_id}</span>
         </div>
+        {#if streamJobID !== '' && eventSubStore.liveUpdatesUnavailable(streamJobID)}
+          <!--
+            The job's event stream ended in error (refused, or not an event
+            stream). It is not retried on its own, so say plainly that the page
+            has stopped moving and offer the one action that restarts it.
+          -->
+          <div
+            class="mt-3 inline-flex flex-wrap items-center gap-x-3 gap-y-1 rounded-field border px-3 py-1.5 text-sm"
+            style:background-color="var(--tone-warning-bg)"
+            style:color="var(--tone-warning-fg)"
+            style:border-color="color-mix(in oklch, var(--tone-warning-fg) 30%, transparent)"
+            role="status"
+            data-testid="live-updates-unavailable"
+          >
+            <RadioTower class="h-4 w-4 shrink-0" />
+            <span>Live updates unavailable. This page no longer refreshes on its own.</span>
+            <button
+              class="font-medium underline underline-offset-2 hover:no-underline"
+              onclick={() => { retryEventStream(orchestratorStore.activeTenantID, streamJobID); }}
+            >Reconnect</button>
+          </div>
+        {/if}
       </div>
 
       <!-- State-aware action buttons -->
-      <div class="flex items-center gap-2 shrink-0">
+      <div class="flex shrink-0 items-center gap-2">
         <button
-          class="btn btn-xs btn-ghost gap-1"
+          class="btn btn-sm btn-ghost gap-1"
           onclick={() => { activeTab = 'events'; }}
           aria-label="Open event stream"
         >
-          <Radio class="h-3 w-3" />
+          <Radio class="h-4 w-4" />
           Events
         </button>
 
         {#if isCancellable(job.state)}
           <button
-            class="btn btn-xs btn-error gap-1"
+            class="btn btn-sm btn-outline btn-error gap-1"
             onclick={() => { void handleCancel(); }}
             disabled={cancelling}
             aria-label="Cancel job"
@@ -428,7 +457,7 @@
             {#if cancelling}
               <span class="loading loading-spinner loading-xs"></span>
             {:else}
-              <X class="h-3 w-3" />
+              <X class="h-4 w-4" />
             {/if}
             Cancel
           </button>
@@ -436,7 +465,7 @@
 
         {#if job.state === 'failed' || conclusion !== null}
           <button
-            class="btn btn-xs btn-primary gap-1"
+            class="btn btn-sm btn-primary gap-1"
             aria-label="Readmit task"
             title={canReadmit
               ? 'Return the task to the queue for another attempt'
@@ -447,7 +476,7 @@
             {#if readmitting}
               <span class="loading loading-spinner loading-xs"></span>
             {:else}
-              <RotateCcw class="h-3 w-3" />
+              <RotateCcw class="h-4 w-4" />
             {/if}
             Readmit
           </button>
@@ -464,33 +493,33 @@
     <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
       {#if workflowJob}
         <div class="card bg-base-200 rounded-box p-4 space-y-1" data-testid="summary-workflow">
-          <div class="text-xs text-base-content/40 uppercase tracking-wide">Workflow</div>
+          <div class="text-xs font-medium text-base-content/60">Workflow</div>
           <div class="font-semibold text-sm">{job.workflow_name || job.config?.workflow_name || '—'}</div>
-          <div class="text-xs text-base-content/40">Lead backend: {job.config?.lead_backend || '—'}</div>
+          <div class="text-xs text-base-content/60">Lead backend: {job.config?.lead_backend || '—'}</div>
         </div>
 
         <div class="card bg-base-200 rounded-box p-4 space-y-1" data-testid="summary-lead">
-          <div class="text-xs text-base-content/40 uppercase tracking-wide">Lead model</div>
+          <div class="text-xs font-medium text-base-content/60">Lead model</div>
           <div class="font-semibold text-sm">{job.config?.lead_model || '—'}</div>
-          <div class="text-xs text-base-content/40">Tenant: {job.tenant_id}</div>
+          <div class="text-xs text-base-content/60">Tenant: {job.tenant_id}</div>
         </div>
       {:else}
         <div class="card bg-base-200 rounded-box p-4 space-y-1" data-testid="summary-attempt">
-          <div class="text-xs text-base-content/40 uppercase tracking-wide">Attempt</div>
+          <div class="text-xs font-medium text-base-content/60">Attempt</div>
           <div class="font-semibold text-sm">{attempt === '' ? '—' : attempt}</div>
-          <div class="text-xs text-base-content/40">
+          <div class="text-xs text-base-content/60">
             Budget: {job.attempt_budget && job.attempt_budget > 0 ? job.attempt_budget : '—'}
             · Runner: {runner}
           </div>
         </div>
 
         <div class="card bg-base-200 rounded-box p-4 space-y-1" data-testid="summary-agent">
-          <div class="text-xs text-base-content/40 uppercase tracking-wide">Agent</div>
+          <div class="text-xs font-medium text-base-content/60">Agent</div>
           {#if job.agent_id}
             <a
               class="link link-primary font-semibold text-sm inline-flex items-center gap-1"
               href="#/agents/{job.agent_id}"
-              onclick={(e) => { e.preventDefault(); routeAgentDetail(job.agent_id ?? ''); }}
+              onclick={(e) => { e.preventDefault(); routeFleetNode(job.agent_id ?? ''); }}
             >
               <Bot class="h-3.5 w-3.5" />
               {job.agent_id}
@@ -500,15 +529,15 @@
               {job.node || '—'}
             </div>
           {/if}
-          <div class="text-xs text-base-content/40">Daemon: {job.node || '—'}</div>
+          <div class="text-xs text-base-content/60">Daemon: {job.node || '—'}</div>
         </div>
       {/if}
 
       <div class="card bg-base-200 rounded-box p-4 space-y-1">
-        <div class="text-xs text-base-content/40 uppercase tracking-wide">Timing</div>
-        <div class="text-sm">Started: <span class="font-mono text-xs">{formatTime(job.started_at)}</span></div>
+        <div class="text-xs font-medium text-base-content/60">Timing</div>
+        <div class="text-sm"><span class="text-base-content/60">Started</span> <span class="tabular-nums">{formatTime(job.started_at)}</span></div>
         {#if job.state === 'completed' || job.state === 'failed'}
-          <div class="text-sm">Completed: <span class="font-mono text-xs">{formatTime(job.updated_at)}</span></div>
+          <div class="text-sm"><span class="text-base-content/60">Completed</span> <span class="tabular-nums">{formatTime(job.updated_at)}</span></div>
         {/if}
         <div class="text-xs text-base-content/60">Duration: <strong>{duration}</strong></div>
       </div>
@@ -518,7 +547,7 @@
     {#if conclusion !== null}
       <div class="card bg-base-200 rounded-box p-4 space-y-1" data-testid="terminal-reason">
         <div class="flex items-center gap-2">
-          <div class="text-xs text-base-content/40 uppercase tracking-wide">Outcome</div>
+          <div class="text-xs font-medium text-base-content/60">Outcome</div>
           <span class="badge badge-sm badge-{conclusion.tone}">{conclusion.label}</span>
         </div>
         <div class="text-sm text-base-content/70">{conclusion.detail}</div>
@@ -534,7 +563,7 @@
       <div class="card bg-base-200 rounded-box p-4 space-y-3" data-testid="iteration-progress">
         <div class="flex items-center justify-between">
           <div class="text-sm font-semibold">Iteration Progress</div>
-          <div class="text-xs text-base-content/50">
+          <div class="text-xs text-base-content/60">
             {job.iteration} / {job.config?.max_iterations ?? '∞'} max
           </div>
         </div>
@@ -608,18 +637,18 @@
         {:else}
           <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
             <div>
-              <div class="text-xs text-base-content/40">Branch</div>
+              <div class="text-xs font-medium text-base-content/60">Branch</div>
               <div class="font-mono text-xs inline-flex items-center gap-1">
                 <GitBranch class="h-3 w-3 text-base-content/50" />
                 {delivery.branch || '—'}
               </div>
             </div>
             <div>
-              <div class="text-xs text-base-content/40">Head</div>
+              <div class="text-xs font-medium text-base-content/60">Head</div>
               <div class="font-mono text-xs">{delivery.head_sha ? delivery.head_sha.slice(0, 12) : '—'}</div>
             </div>
             <div>
-              <div class="text-xs text-base-content/40">Pull request</div>
+              <div class="text-xs font-medium text-base-content/60">Pull request</div>
               {#if delivery.pull_request_url}
                 <a
                   class="link link-primary text-sm inline-flex items-center gap-1"
@@ -645,9 +674,18 @@
             </div>
           </div>
 
+          {#if (delivery.pull_request_number ?? 0) > 0 && job.config?.project_id}
+            <!-- Which of the project's reviewer profiles reviews this pull request. -->
+            <SdlcReviewerPicker
+              tenantId={orchestratorStore.activeTenantID}
+              projectId={job.config.project_id}
+              pullRequest={delivery.pull_request_number ?? 0}
+            />
+          {/if}
+
           {#if reviewRounds.length > 0}
             <div class="space-y-1 pt-2" aria-label="Review rounds">
-              <div class="text-xs text-base-content/40 uppercase tracking-wide">Review rounds</div>
+              <div class="text-xs font-medium text-base-content/60">Review rounds</div>
               {#each reviewRounds as round, i (i)}
                 <div class="flex items-start gap-2 text-xs border-b border-base-300/30 py-1">
                   <span class="text-base-content/40 shrink-0">Round {round.round}</span>
@@ -713,7 +751,7 @@
           {/if}
 
           {#if workerTurn.silent}
-            <div class="text-xs text-base-content/50">
+            <div class="text-xs text-base-content/60">
               The worker produced no text at all. A silent turn is evidence, not a
               failure of the work — see the outcome above for what the runner
               concluded from it.
@@ -726,12 +764,13 @@
     {/if}
 
     <!-- Tabs -->
-    <div role="tablist" class="tabs tabs-bordered">
+    <div role="tablist" class="tabs tabs-border">
       {#each visibleTabs as tab}
         <button
           role="tab"
           class="tab"
           class:tab-active={activeTab === tab}
+          aria-selected={activeTab === tab}
           onclick={() => { activeTab = tab; }}
         >
           {tab.charAt(0).toUpperCase() + tab.slice(1)}
@@ -746,7 +785,7 @@
         {#if activeTab === 'overview'}
           <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
             <div>
-              <div class="text-xs text-base-content/40">Tenant</div>
+              <div class="text-xs font-medium text-base-content/60">Tenant</div>
               <div class="font-mono text-sm">{job.tenant_id}</div>
             </div>
             <!--
@@ -755,53 +794,53 @@
             -->
             {#if workflowJob}
               <div>
-                <div class="text-xs text-base-content/40">Iteration</div>
+                <div class="text-xs font-medium text-base-content/60">Iteration</div>
                 <div class="text-sm">{job.iteration}</div>
               </div>
               <div>
-                <div class="text-xs text-base-content/40">Task Count</div>
+                <div class="text-xs font-medium text-base-content/60">Task Count</div>
                 <div class="text-sm">{job.task_count}</div>
               </div>
               <div>
-                <div class="text-xs text-base-content/40">Completed</div>
+                <div class="text-xs font-medium text-base-content/60">Completed</div>
                 <div class="text-sm text-success">{job.completed}</div>
               </div>
               <div>
-                <div class="text-xs text-base-content/40">Failed Tasks</div>
+                <div class="text-xs font-medium text-base-content/60">Failed Tasks</div>
                 <div class="text-sm text-error">{job.failed}</div>
               </div>
             {:else}
               <div>
-                <div class="text-xs text-base-content/40">Attempt</div>
+                <div class="text-xs font-medium text-base-content/60">Attempt</div>
                 <div class="text-sm">{attempt === '' ? '—' : attempt}</div>
               </div>
               <div>
-                <div class="text-xs text-base-content/40">Runner</div>
+                <div class="text-xs font-medium text-base-content/60">Runner</div>
                 <div class="badge badge-sm">{runner}</div>
               </div>
             {/if}
             <div>
-              <div class="text-xs text-base-content/40">Started</div>
+              <div class="text-xs font-medium text-base-content/60">Started</div>
               <div class="text-sm">{formatTime(job.started_at)}</div>
             </div>
             <div>
-              <div class="text-xs text-base-content/40">Updated</div>
+              <div class="text-xs font-medium text-base-content/60">Updated</div>
               <div class="text-sm">{formatTime(job.updated_at)}</div>
             </div>
             {#if workflowJob && job.config?.lead_backend}
               <div>
-                <div class="text-xs text-base-content/40">Lead Backend</div>
+                <div class="text-xs font-medium text-base-content/60">Lead Backend</div>
                 <div class="badge badge-sm">{job.config.lead_backend}</div>
               </div>
             {/if}
             {#if workflowJob && job.workflow_name}
               <div>
-                <div class="text-xs text-base-content/40">Workflow</div>
+                <div class="text-xs font-medium text-base-content/60">Workflow</div>
                 <div class="text-sm">{job.workflow_name}</div>
               </div>
             {/if}
             <div>
-              <div class="text-xs text-base-content/40">Task</div>
+              <div class="text-xs font-medium text-base-content/60">Task</div>
               {#if sourceTask !== null}
                 <a
                   class="link link-primary text-sm inline-flex items-center gap-1"
@@ -816,7 +855,7 @@
               {/if}
             </div>
             <div>
-              <div class="text-xs text-base-content/40">Issue</div>
+              <div class="text-xs font-medium text-base-content/60">Issue</div>
               {#if ref !== null && ref.href !== ''}
                 <a
                   class="link link-primary text-sm font-mono inline-flex items-center gap-1"
@@ -836,7 +875,7 @@
             </div>
             {#if workflowJob && inReviewRound}
               <div>
-                <div class="text-xs text-base-content/40">Review round</div>
+                <div class="text-xs font-medium text-base-content/60">Review round</div>
                 <div class="text-sm">{reviewRound}</div>
               </div>
             {/if}
@@ -845,7 +884,7 @@
               primaryPullRequestUrl above.
             -->
             <div data-testid="summary-pull-request">
-              <div class="text-xs text-base-content/40">Pull request</div>
+              <div class="text-xs font-medium text-base-content/60">Pull request</div>
               {#if pullRequestLabel === ''}
                 <div class="text-sm">—</div>
               {:else}
@@ -882,9 +921,22 @@
             </div>
           </div>
 
+          <!--
+            The run-time prompt material every session of this job was spawned
+            with, after its agent's own prompt: the audit of what the job added.
+          -->
+          {#if job.prompt_append}
+            <details class="mb-4" data-testid="job-prompt-append">
+              <summary class="text-xs font-medium text-base-content/60 cursor-pointer">
+                Appended to every session's prompt ({new TextEncoder().encode(job.prompt_append).length} bytes)
+              </summary>
+              <pre class="mt-2 whitespace-pre-wrap break-words font-mono text-xs bg-base-200 rounded p-2">{job.prompt_append}</pre>
+            </details>
+          {/if}
+
           <!-- Sessions the job holds: the lead first, then every worker. -->
           <div class="space-y-1">
-            <div class="text-xs text-base-content/40">Sessions</div>
+            <div class="text-xs font-medium text-base-content/60">Sessions</div>
             {#if sessionIDs.length === 0}
               <div class="text-sm text-base-content/30">
                 This job has no open session. A session appears here once the job spawns one.
@@ -893,7 +945,7 @@
               <div class="flex flex-wrap gap-2" aria-label="Job sessions">
                 {#each sessionIDs as sessionID (sessionID)}
                   <a
-                    class="badge badge-sm badge-outline gap-1 font-mono"
+                    class="ref-chip"
                     href="#/sessions/{sessionID}"
                     onclick={(e) => { e.preventDefault(); routeSessionDetail(sessionID); }}
                     title={sessionID === job.lead_session_id ? 'Lead session ' + sessionID : 'Session ' + sessionID}
@@ -952,7 +1004,7 @@
                     : 0}
                   label="Iterations Used"
                 />
-                <div class="text-xs text-base-content/50">
+                <div class="text-xs text-base-content/60">
                   {job.iteration} of {job.config?.max_iterations ?? '∞'} max
                 </div>
               </div>
@@ -969,28 +1021,31 @@
             {:else if spend === null}
               <div class="text-sm text-base-content/40">Loading this job's spend…</div>
             {:else}
-              <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                <div class="stat bg-base-300 rounded-box p-3">
-                  <div class="stat-title text-xs">Total tokens</div>
+              <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                <div class="stat rounded-field border border-base-300/80 bg-base-100 px-4 py-3">
+                  <div class="stat-title text-xs font-medium text-base-content/60">Total tokens</div>
                   <div class="stat-value text-xl" data-testid="job-total-tokens">
                     {formatTokens(spend.total_tokens)}
                   </div>
-                  <div class="stat-desc">{spend.entries} turns</div>
+                  <div class="stat-desc">{spend.entries ?? 0} turns</div>
                 </div>
-                <div class="stat bg-base-300 rounded-box p-3">
-                  <div class="stat-title text-xs">Input</div>
+                <div class="stat rounded-field border border-base-300/80 bg-base-100 px-4 py-3">
+                  <div class="stat-title text-xs font-medium text-base-content/60">Input</div>
                   <div class="stat-value text-xl">{formatTokens(spend.input_tokens)}</div>
                 </div>
-                <div class="stat bg-base-300 rounded-box p-3">
-                  <div class="stat-title text-xs">Output</div>
+                <div class="stat rounded-field border border-base-300/80 bg-base-100 px-4 py-3">
+                  <div class="stat-title text-xs font-medium text-base-content/60">Output</div>
                   <div class="stat-value text-xl">{formatTokens(spend.output_tokens)}</div>
                 </div>
-                <div class="stat bg-base-300 rounded-box p-3">
-                  <div class="stat-title text-xs">Cost</div>
-                  <div class="stat-value text-xl" data-testid="job-cost">{formatCost(spend)}</div>
-                  <div class="stat-desc">
-                    {#if costIsMeasured(spend)}priced{:else}no price sheet — cost unmeasured{/if}
-                  </div>
+                <div class="stat rounded-field border border-base-300/80 bg-base-100 px-4 py-3">
+                  <div class="stat-title text-xs font-medium text-base-content/60">List-price equivalent</div>
+                  <div class="stat-value text-xl" data-testid="job-cost">{formatEquivalent(spend, spend.currency)}</div>
+                  <div class="stat-desc">{equivalentNote(spend)}</div>
+                </div>
+                <div class="stat rounded-field border border-base-300/80 bg-base-100 px-4 py-3">
+                  <div class="stat-title text-xs font-medium text-base-content/60">Billed</div>
+                  <div class="stat-value text-xl" data-testid="job-billed">{formatBilled(spend, spend.currency)}</div>
+                  <div class="stat-desc">{billedNote(spend)}</div>
                 </div>
               </div>
 
@@ -1000,7 +1055,7 @@
                 </div>
               {:else}
                 <div class="space-y-2">
-                  <div class="text-xs font-semibold text-base-content/50 uppercase tracking-wide">
+                  <div class="section-title">
                     Accounts that paid
                   </div>
                   {#each spend.accounts ?? [] as account (account.account_id)}

@@ -82,6 +82,7 @@ type admissionRig struct {
 	queue    *fakeDispatchStore
 	leases   *recordedLeaseStore
 	headroom *fakePoolHeadroom
+	spend    ScopeSpendReader
 }
 
 func newAdmissionRig(t *testing.T, tenantIDs ...string) *admissionRig {
@@ -181,6 +182,9 @@ func (r *admissionRig) controller(t *testing.T, capacity int) *AdmissionControll
 	}
 	if r.headroom != nil {
 		cfg.Headroom = r.headroom
+	}
+	if r.spend != nil {
+		cfg.Spend = r.spend
 	}
 	controller, err := NewAdmissionController(cfg)
 	if err != nil {
@@ -289,17 +293,62 @@ func TestNewAdmissionController_DefaultsTheClock(t *testing.T) {
 // Five projects, each permitted three concurrent jobs — fifteen in aggregate —
 // against a fleet of four slots. The sum of what admission hands out must be at
 // most four, and no project may be given more than its own quota.
-// TestPlan_AnOffBudgetLeaseHoldsNoSlot proves the plan counts leases through
-// the lease's own budget rule: a live lease a triage or review job holds
-// (OffBudget, see JobLeasePolicy) consumes neither a project slot nor a
-// fleet slot. Measured need: a freshly onboarded project ran one worker
-// beside a 50-issue NPU triage pass and the dispatcher reported
-// "inflight=2 slots=0" against a quota of 2 for the whole pass.
-func TestPlan_AnOffBudgetLeaseHoldsNoSlot(t *testing.T) {
+// TestPlan_AnOffBudgetLeaseHoldsNoProjectSlotButAFleetSlot proves the plan
+// counts leases through the lease's own rules, one per axis.
+//
+// THE PROJECT AXIS: a live lease a triage or review job holds (OffBudget, see
+// JobLeasePolicy) consumes no project slot. Measured need: a freshly onboarded
+// project ran one worker beside a 50-issue NPU triage pass and the dispatcher
+// reported "inflight=2 slots=0" against a quota of 2 for the whole pass.
+//
+// THE FLEET AXIS: the same lease DOES consume a fleet slot, because the job
+// runs a container (owner ruling, 2026-09-25). The plan used to leave it out
+// while fleetCapacityJobLeaseStore counted it, so the plan handed out a slot
+// the lease store then refused. A dormant lease, whose job runs nothing, is
+// off both axes.
+func TestPlan_AnOffBudgetLeaseHoldsNoProjectSlotButAFleetSlot(t *testing.T) {
 	t.Parallel()
 	rig := newAdmissionRig(t)
 	rig.project(t, admissionTenant, "p0", 2)
 	rig.queued(admissionTenant, "p0", 3)
+	rig.running(t, admissionTenant, "p0", 1)
+	rig.leases.records = append(rig.leases.records, &JobLease{
+		TenantID: admissionTenant, ProjectID: "p0", Workflow: "triage",
+		Ref: "triage:p0", JobID: "p0-triage", Generation: 1,
+		AcquiredAt: admissionClock.UnixNano(), HeartbeatAt: admissionClock.UnixNano(),
+		OffBudget: true,
+	}, &JobLease{
+		TenantID: admissionTenant, ProjectID: "p0", Workflow: "sdlc",
+		Ref: "sdlc:p0-reviewing", JobID: "p0-reviewing", Generation: 1,
+		AcquiredAt: admissionClock.UnixNano(), HeartbeatAt: admissionClock.UnixNano(),
+		OffBudget: true, Dormant: true,
+	})
+
+	plan, err := rig.controller(t, 3).Plan(context.Background())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	decision := plan.For(admissionTenant, "p0")
+	if decision.ProjectInflight != 1 {
+		t.Fatalf("project inflight = %d, want 1: the triage and dormant leases are off the project budget", decision.ProjectInflight)
+	}
+	if plan.FleetInflight != 2 {
+		t.Fatalf("fleet inflight = %d, want 2: the worker and the triage container, not the dormant job", plan.FleetInflight)
+	}
+	if decision.DispatchSlots() != 1 {
+		t.Fatalf("dispatch slots = %d, want 1: a quota of 2 with one worker, and one free fleet slot of 3", decision.DispatchSlots())
+	}
+}
+
+// TestPlan_ATriageContainerCanFillTheFleet is the refusal side of the same
+// ruling: a fleet whose last slot is held by a triage container has no slot to
+// hand out, however much of the project's own quota is free, and the decision
+// names the fleet as the axis that bounded it.
+func TestPlan_ATriageContainerCanFillTheFleet(t *testing.T) {
+	t.Parallel()
+	rig := newAdmissionRig(t)
+	rig.project(t, admissionTenant, "p0", 3)
+	rig.queued(admissionTenant, "p0", 2)
 	rig.running(t, admissionTenant, "p0", 1)
 	rig.leases.records = append(rig.leases.records, &JobLease{
 		TenantID: admissionTenant, ProjectID: "p0", Workflow: "triage",
@@ -312,15 +361,15 @@ func TestPlan_AnOffBudgetLeaseHoldsNoSlot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
+	if plan.FleetFree != 0 {
+		t.Fatalf("fleet free = %d, want 0: the worker and the triage container hold both slots", plan.FleetFree)
+	}
 	decision := plan.For(admissionTenant, "p0")
-	if decision.ProjectInflight != 1 {
-		t.Fatalf("project inflight = %d, want 1: the triage lease is off the project budget", decision.ProjectInflight)
+	if decision.DispatchSlots() != 0 {
+		t.Fatalf("dispatch slots = %d, want 0 on a full fleet", decision.DispatchSlots())
 	}
-	if decision.DispatchSlots() != 1 {
-		t.Fatalf("dispatch slots = %d, want 1 of a quota of 2 with one worker running", decision.DispatchSlots())
-	}
-	if plan.FleetInflight != 1 {
-		t.Fatalf("fleet inflight = %d, want 1: the triage lease is off the fleet budget too", plan.FleetInflight)
+	if decision.Axis != AdmissionAxisFleetCapacity {
+		t.Fatalf("axis = %q, want %q", decision.Axis, AdmissionAxisFleetCapacity)
 	}
 }
 

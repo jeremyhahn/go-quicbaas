@@ -47,7 +47,7 @@ func mcpTestUser() *qrdbsdk.User {
 		Username:  "alice",
 		TenantID:  "tenant-a",
 		RoleIDs:   []string{"role-1"},
-		Enabled:   true,
+		Lifecycle: qrdbsdk.LifecycleActive,
 		CreatedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
 		UpdatedAt: time.Date(2026, 1, 2, 3, 4, 6, 0, time.UTC),
 	}
@@ -273,7 +273,7 @@ func TestQRDBUserLookupTools_HappyPaths_WireShape(t *testing.T) {
 		t.Helper()
 		m, ok := result.(map[string]interface{})
 		require.True(t, ok, "result must be a map")
-		for _, key := range []string{"id", "username", "tenantID", "roleIDs", "enabled", "system", "createdAt", "updatedAt"} {
+		for _, key := range []string{"id", "username", "tenantID", "roleIDs", "lifecycle", "system", "createdAt", "updatedAt"} {
 			_, present := m[key]
 			assert.True(t, present, "missing wire key %q", key)
 		}
@@ -281,6 +281,7 @@ func TestQRDBUserLookupTools_HappyPaths_WireShape(t *testing.T) {
 		assert.Equal(t, uint64(42), m["id"])
 		assert.Equal(t, "alice", m["username"])
 		assert.Equal(t, "tenant-a", m["tenantID"])
+		assert.Equal(t, "active", m["lifecycle"])
 		assert.Equal(t, "2026-01-02T03:04:05Z", m["createdAt"])
 	}
 

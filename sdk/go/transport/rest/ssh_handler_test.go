@@ -104,7 +104,7 @@ func TestSSHHandlerRoutes(t *testing.T) {
 		{
 			name: "AddKnownHost", method: sshclient.MethodAddKnownHost,
 			req: &sshclient.AddKnownHostRequest{Scope: "user", Owner: "alice", Host: "h",
-				Fingerprint: sshfixture.HostFingerprint},
+				PublicKey: sshfixture.Host(t).AuthorizedLine},
 			wantMethod: http.MethodPost, wantPath: "/api/v1/ssh/known-hosts",
 		},
 		{

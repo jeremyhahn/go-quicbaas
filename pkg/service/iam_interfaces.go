@@ -41,15 +41,6 @@ type IdentityStore interface {
 	AssignRole(ctx context.Context, tenantID, userID, roleID string) error
 	RevokeRole(ctx context.Context, tenantID, userID, roleID string) error
 
-	// Group operations
-	CreateGroup(ctx context.Context, tenantID string, opts iam.CreateGroupOptions) (*iam.Group, error)
-	GetGroup(ctx context.Context, tenantID, groupID string) (*iam.Group, error)
-	UpdateGroup(ctx context.Context, tenantID, groupID string, opts iam.UpdateGroupOptions) (*iam.Group, error)
-	DeleteGroup(ctx context.Context, tenantID, groupID string) error
-	ListGroups(ctx context.Context, tenantID string, opts iam.ListGroupsOptions) ([]*iam.Group, string, error)
-	AddMember(ctx context.Context, tenantID, groupID, userID string) error
-	RemoveMember(ctx context.Context, tenantID, groupID, userID string) error
-
 	// Role operations
 	CreateRole(ctx context.Context, tenantID string, opts iam.CreateRoleOptions) (*iam.Role, error)
 	GetRole(ctx context.Context, tenantID, roleID string) (*iam.Role, error)

@@ -1333,6 +1333,11 @@ func (p *OIDCProvider) generateTokenResponse(ctx context.Context, user *User, cl
 // variant rather than an eighth positional parameter on the common path so the
 // two intents are stated at the call site instead of encoded in a bare string.
 func (p *OIDCProvider) generateTokenResponseForSession(ctx context.Context, user *User, clientID string, scopes []string, nonce string, resource string, cnf *ConfirmationClaim, session grantSession) (*TokenResponse, error) {
+	groups, err := p.identityStore.RoleNames(ctx, user)
+	if err != nil {
+		return nil, NewOAuthError(ErrOAuthServerError, "failed to resolve role names")
+	}
+
 	now := time.Now()
 
 	// Build audience with resource indicator (RFC 8707). When the request
@@ -1359,7 +1364,7 @@ func (p *OIDCProvider) generateTokenResponseForSession(ctx context.Context, user
 		TenantID:     user.TenantID,
 		UserID:       user.ID,
 		Roles:        user.Roles,
-		Groups:       user.Groups,
+		Groups:       groups,
 		Email:        user.Email,
 		Name:         user.Name,
 		ClientID:     clientID,
@@ -1399,7 +1404,7 @@ func (p *OIDCProvider) generateTokenResponseForSession(ctx context.Context, user
 		SessionID: sessionEstablishedID(session, accessClaims.SessionID),
 		UserID:    user.ID,
 		Roles:     user.Roles,
-		Groups:    user.Groups,
+		Groups:    groups,
 		Audience:  audience,
 		Email:     user.Email,
 		Name:      user.Name,
@@ -1441,7 +1446,7 @@ func (p *OIDCProvider) generateTokenResponseForSession(ctx context.Context, user
 			Name:          user.Name,
 			TenantID:      user.TenantID,
 			Roles:         user.Roles,
-			Groups:        user.Groups,
+			Groups:        groups,
 			// MFAVerified is deliberately not set. It asserts that MFA was
 			// verified in THIS session, and this authorization-code exchange
 			// verified none. It used to be copied off the user record, where a
@@ -1465,6 +1470,14 @@ func (p *OIDCProvider) generateTokenResponseForSession(ctx context.Context, user
 // successful hardware-attested authentication (WebAuthn FIDO2 or PIV smartcard).
 // The caller is responsible for verifying the credential before calling this.
 func (p *OIDCProvider) IssueHardwareTokens(ctx context.Context, opts HardwareTokenOptions) (*HardwareTokenSet, error) {
+	if opts.User == nil {
+		return p.tokenService.IssueHardwareTokens(ctx, opts)
+	}
+	groups, err := p.identityStore.RoleNames(ctx, opts.User)
+	if err != nil {
+		return nil, err
+	}
+	opts.groups = groups
 	return p.tokenService.IssueHardwareTokens(ctx, opts)
 }
 

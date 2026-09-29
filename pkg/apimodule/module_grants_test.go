@@ -56,7 +56,7 @@ func TestNewModule_RegistersRoleGrants(t *testing.T) {
 	// account surface's metadata reads moved to QuicBaaS's own tenant-scoped
 	// agent_accounts:* family (go-quicbaas#734) because credentials:* is
 	// registered ScopeCross — system tenant only — and therefore denied every
-	// tenant identity, including the enrolled agent daemon that must select
+	// tenant identity, including the enrolled fleet node daemon that must select
 	// over the pool. No proto in this module declares credentials:retrieve now,
 	// so the gap fill has nothing to fill, and asserting the grant would pin a
 	// permission the module no longer references.
@@ -151,10 +151,12 @@ func TestNewModule_RegistersRoleGrants_XKMSWireServicesNotDuplicated(t *testing.
 //
 // Most of the module's derived vocabulary is go-qrdb's own, and qrdb declares
 // each family's tenancy reach deliberately: credentials:* is ScopeCross
-// because the credential store has no tenant namespacing at all, and the
-// secrets:* / objstore:* / tenant_barrier:* families are ScopeTenantOnly
-// because a platform (system-tenant) operator must never reach a tenant's
-// secret material, objects, or per-tenant barrier key custody.
+// because the credential store has no tenant namespacing at all, the
+// objstore:* / tenant_barrier:* families are ScopeTenantOnly because a platform
+// (system-tenant) operator must never reach a tenant's objects or per-tenant
+// barrier key custody, and secrets:* is qrdb's self-strict scope: every
+// identity reaches its own tenant's vault and no identity is lifted across
+// tenants (go-qrdb#372).
 //
 // RegisterPermissionScope OVERWRITES. Declaring the whole derived set
 // self-scope — which is what this module did until the #963 review caught it
@@ -178,9 +180,6 @@ func TestNewModule_PreservesUpstreamPermissionScopes(t *testing.T) {
 		{"credentials:store", qrdbsdk.PermissionScopeCross,
 			"the credential store is not tenant-namespaced; qrdb confines the family to the system tenant"},
 		{"credentials:rotate", qrdbsdk.PermissionScopeCross, "same family, same reason"},
-		{"secrets:read", qrdbsdk.PermissionScopeTenantOnly,
-			"a tenant's secret material is denied to the platform operator"},
-		{"secrets:write", qrdbsdk.PermissionScopeTenantOnly, "same family, same reason"},
 		{"objstore:put", qrdbsdk.PermissionScopeTenantOnly, "same broker family, same reason"},
 		{"tenant_barrier:unseal", qrdbsdk.PermissionScopeTenantOnly,
 			"per-tenant barrier key custody is the one thing a platform operator must not hold"},
@@ -191,6 +190,16 @@ func TestNewModule_PreservesUpstreamPermissionScopes(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equalf(t, tc.want, got, "%s: %s", tc.permission, tc.why)
 		})
+	}
+
+	// secrets:* is self-strict upstream, a scope the qrdb SDK does not name.
+	// What this module must not do is overwrite it with a reach that lifts a
+	// platform operator across tenants.
+	for _, p := range []qrdbsdk.Permission{"secrets:read", "secrets:write"} {
+		got, err := resolver.Scope(context.Background(), p)
+		require.NoError(t, err)
+		assert.NotEqualf(t, qrdbsdk.PermissionScopeSelf, got, "%s was widened to self-scope", p)
+		assert.NotEqualf(t, qrdbsdk.PermissionScopeCross, got, "%s was widened to cross-scope", p)
 	}
 }
 

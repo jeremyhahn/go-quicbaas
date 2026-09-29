@@ -113,6 +113,9 @@ func TestValidateInContainer_AFailureCarriesBothStreamsAsEvidence(t *testing.T) 
 	if !strings.Contains(result.Details, "exit code: 2") || !strings.Contains(result.Details, "TestThing") {
 		t.Errorf("details = %q, want the exit code and the stdout evidence", result.Details)
 	}
+	if result.ExitCode != 2 {
+		t.Errorf("exit code = %d, want the command's 2 carried as a field, not only as text", result.ExitCode)
+	}
 }
 
 // TestValidateInContainer_TheEvidenceIsBoundedToTheOutputsTail: megabytes of
@@ -198,6 +201,9 @@ func TestValidateInContainer_ACommandTheOperatorNeverAllowedIsRefused(t *testing
 	if result.Passed {
 		t.Error("a refused command passed")
 	}
+	if result.ExitCode != 0 {
+		t.Errorf("a command that never ran reports exit code %d", result.ExitCode)
+	}
 	if len(rig.execs) != 0 {
 		t.Fatalf("a refused command reached the container: %v", rig.execs)
 	}
@@ -281,5 +287,217 @@ func TestValidateInContainer_AContainerThatCouldNotRunTheCommandIsAnError(t *tes
 	}
 	if result.Passed {
 		t.Error("a command that never ran passed")
+	}
+}
+
+// =============================================================================
+// verificationSummary — what the record says (go-quicbaas#1037)
+// =============================================================================
+
+// makeEnvNoise is GNU make 4.4's harmless first line on go-luks2
+// (go-luks2#205), which the record used to report as the failure.
+const makeEnvNoise = "env: can't execute 'GOPATH': No such file or directory"
+
+// TestVerificationSummary_AFailureCarriesItsFailingLinesNotItsFirst: the
+// recorded output of go-luks2#12 — noise first, the failure at the end.
+func TestVerificationSummary_AFailureCarriesItsFailingLinesNotItsFirst(t *testing.T) {
+	var stdout strings.Builder
+	stdout.WriteString("exit code: 2\n\n")
+	stdout.WriteString("--- FAIL: TestOpenVolume (0.01s)\n")
+	for i := 0; i < 50; i++ {
+		stdout.WriteString("=== RUN   TestPassing" + strconv.Itoa(i) + "\n")
+	}
+	stdout.WriteString("FAIL\tgithub.com/jeremyhahn/go-luks2/pkg/luks2\t0.412s\n")
+	stdout.WriteString("FAIL\n")
+	var stderr strings.Builder
+	stderr.WriteString(makeEnvNoise + "\n")
+	for i := 0; i < 20; i++ {
+		stderr.WriteString("go: downloading example.com/mod" + strconv.Itoa(i) + " v1.0.0\n")
+	}
+	stderr.WriteString("make: *** [Makefile:12: test] Error 1\n")
+
+	summary := verificationSummary(orchestration.ValidationResult{
+		Name: "make test", Message: strings.TrimSpace(stderr.String()), Details: stdout.String(),
+	})
+	for _, want := range []string{
+		"make: *** [Makefile:12: test] Error 1",
+		"--- FAIL: TestOpenVolume (0.01s)",
+		"FAIL\tgithub.com/jeremyhahn/go-luks2/pkg/luks2\t0.412s",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("the summary lacks the failing line %q:\n%s", want, summary)
+		}
+	}
+	if strings.Contains(summary, makeEnvNoise) {
+		t.Errorf("the summary still carries the harmless first line:\n%s", summary)
+	}
+	if strings.HasPrefix(summary, "env:") {
+		t.Errorf("the summary leads with the noise:\n%s", summary)
+	}
+}
+
+// TestVerificationSummary_MarkersAnywhereInALineAreFailures: a compiler's
+// `error:` and make's `Error 2` name the failure mid-line, ahead of the tail.
+func TestVerificationSummary_MarkersAnywhereInALineAreFailures(t *testing.T) {
+	var stderr strings.Builder
+	stderr.WriteString(makeEnvNoise + "\n")
+	stderr.WriteString("src/luks.c:10:3: error: unknown type name 'foo'\n")
+	stderr.WriteString("Makefile:4: recipe failed; Error 2 from sub-make\n")
+	for i := 0; i < 30; i++ {
+		stderr.WriteString("note: context " + strconv.Itoa(i) + "\n")
+	}
+	summary := verificationSummary(orchestration.ValidationResult{Message: stderr.String()})
+	for _, want := range []string{"error: unknown type name 'foo'", "Error 2 from sub-make"} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("the summary lacks %q:\n%s", want, summary)
+		}
+	}
+	if strings.Contains(summary, makeEnvNoise) || strings.Contains(summary, "note: context 0\n") {
+		t.Errorf("the summary carries lines that name no failure:\n%s", summary)
+	}
+}
+
+// TestVerificationSummary_APassingCommandKeepsTheShortForm: one line.
+func TestVerificationSummary_APassingCommandKeepsTheShortForm(t *testing.T) {
+	summary := verificationSummary(orchestration.ValidationResult{
+		Passed: true, Message: makeEnvNoise + "\nok  \tgithub.com/acme/api\t0.1s",
+	})
+	if summary != makeEnvNoise {
+		t.Fatalf("summary = %q, want the first line alone", summary)
+	}
+}
+
+// TestVerificationSummary_IsBounded: however much fails, the summary is a
+// record, not the output.
+func TestVerificationSummary_IsBounded(t *testing.T) {
+	var stdout strings.Builder
+	// Enough to exceed every bound — more failing lines than the summary keeps,
+	// each longer than a summary line — and no more: production input reaches
+	// here already cut to VerificationEvidenceBytes, and redaction is linear, so
+	// megabytes here would only spend minutes proving the same thing.
+	long := strings.Repeat("x", 2*VerificationSummaryLineBytes)
+	for i := 0; i < 4*(VerificationSummaryMarkedLines+VerificationSummaryTailLines); i++ {
+		stdout.WriteString("--- FAIL: TestCase" + strconv.Itoa(i) + " " + long + "\n")
+	}
+	summary := verificationSummary(orchestration.ValidationResult{Message: stdout.String(), Details: stdout.String()})
+	lines := strings.Split(summary, "\n")
+	if max := VerificationSummaryMarkedLines + 2*VerificationSummaryTailLines; len(lines) > max {
+		t.Errorf("summary lines = %d, want at most %d", len(lines), max)
+	}
+	for _, line := range lines {
+		if len(line) > VerificationSummaryLineBytes+len(" …") {
+			t.Fatalf("a summary line is %d bytes, want at most %d", len(line), VerificationSummaryLineBytes)
+		}
+	}
+}
+
+// TestBoundedLine_CutsOnARuneBoundary: a cut never splits a character.
+func TestBoundedLine_CutsOnARuneBoundary(t *testing.T) {
+	got := boundedLine("aé", 2)
+	if got != "a …" {
+		t.Fatalf("boundedLine = %q, want the whole rune dropped", got)
+	}
+	if got := boundedLine("short", 10); got != "short" {
+		t.Fatalf("boundedLine = %q, want a short line untouched", got)
+	}
+}
+
+// TestValidateInContainer_ASummaryKeepsAMidLineErrorBeyondTheEvidenceTail is
+// the path the summary actually reads: stdout reaches it only through the
+// evidence, which keeps the tail and the failure-naming lines. A compiler's
+// mid-line `error:` on stdout, followed by more than the evidence bound of
+// ordinary output, must survive into both the evidence and the summary.
+func TestValidateInContainer_ASummaryKeepsAMidLineErrorBeyondTheEvidenceTail(t *testing.T) {
+	rig := newVerifyRig(t, "/workspace/api", "make test")
+	var out strings.Builder
+	out.WriteString(makeEnvNoise + "\n")
+	out.WriteString("src/luks.c:10:3: error: unknown type name 'foo'\n")
+	for out.Len() < 2*VerificationEvidenceBytes {
+		out.WriteString("cc -O2 -c src/other.c -o build/other.o\n")
+	}
+	rig.result = &orchestration.ExecResult{ExitCode: 2, Stdout: out.String(), Stderr: "make: *** [build] Error 2\n"}
+
+	result, err := ValidateInContainer(context.Background(), rig.job,
+		orchestration.ReviewCriterion{Name: "make test", Config: "make test"})
+	if err != nil {
+		t.Fatalf("ValidateInContainer: %v", err)
+	}
+	const failing = "src/luks.c:10:3: error: unknown type name 'foo'"
+	if !strings.Contains(result.Details, failing) {
+		t.Fatalf("the evidence dropped the failing line:\n%s", result.Details[:512])
+	}
+	summary := verificationSummary(result)
+	for _, want := range []string{failing, "make: *** [build] Error 2"} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("the summary lacks %q:\n%s", want, summary)
+		}
+	}
+	if strings.Contains(summary, makeEnvNoise) {
+		t.Errorf("the summary carries the harmless first line:\n%s", summary)
+	}
+}
+
+// TestVerificationSummary_RedactsBeforeItCuts: a credential that straddles
+// the summary's line cut is redacted whole, not cut to a fragment redaction
+// no longer recognises; so is a PEM block whose delimiters no selection keeps.
+func TestVerificationSummary_RedactsBeforeItCuts(t *testing.T) {
+	const token = "ghp_" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"
+	const pemBody = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7"
+	stderr := strings.Repeat("w", VerificationSummaryLineBytes-10) + " " + token + "\n" +
+		"-----BEGIN PRIVATE KEY-----\n" + pemBody + "\n-----END PRIVATE KEY-----\n" +
+		"make: *** [test] Error 1\n"
+	summary := verificationSummary(orchestration.ValidationResult{Message: stderr})
+	for _, leaked := range []string{"ghp_", token[4:14], pemBody[:16]} {
+		if strings.Contains(summary, leaked) {
+			t.Errorf("the summary carries a credential fragment %q:\n%s", leaked, summary)
+		}
+	}
+	if !strings.Contains(summary, "make: *** [test] Error 1") {
+		t.Errorf("the summary lost the failure:\n%s", summary)
+	}
+}
+
+// TestVerificationExcerpt_KeepsTheFailingLinesWithinItsBudget: long harmless
+// tail lines give up their room before a line that names the failure does.
+func TestVerificationExcerpt_KeepsTheFailingLinesWithinItsBudget(t *testing.T) {
+	var stderr strings.Builder
+	stderr.WriteString("src/luks.c:10:3: error: unknown type name 'foo'\n")
+	for i := 0; i < 20; i++ {
+		stderr.WriteString("warning: harmless " + strconv.Itoa(i) + " " + strings.Repeat("h", 400) + "\n")
+	}
+	stderr.WriteString("make: *** [build] Error 2\n")
+	result := orchestration.ValidationResult{Message: stderr.String()}
+	const budget = 600
+	excerpt := verificationExcerpt(result, budget)
+	if len(excerpt) > budget {
+		t.Errorf("excerpt = %d bytes, want at most %d", len(excerpt), budget)
+	}
+	for _, want := range []string{"error: unknown type name 'foo'", "make: *** [build] Error 2"} {
+		if !strings.Contains(excerpt, want) {
+			t.Errorf("the excerpt lacks %q:\n%s", want, excerpt)
+		}
+	}
+	if !strings.HasPrefix(excerpt, "src/luks.c") {
+		t.Errorf("the excerpt is out of the summary's order:\n%s", excerpt)
+	}
+	if got := verificationExcerpt(result, 20); len(got) > 20 || got == "" {
+		t.Errorf("a budget no whole line fits = %q, want a cut failing line within it", got)
+	}
+}
+
+// TestVerificationVerdict_NamesTheExitStatusWhenThereIsOne: an escalation
+// says `make lint` exited 2 when the command ran, and falls back to plain
+// "failed" only for a command that has no exit status because it never ran.
+func TestVerificationVerdict_NamesTheExitStatusWhenThereIsOne(t *testing.T) {
+	for name, tc := range map[string]struct {
+		result orchestration.ValidationResult
+		want   string
+	}{
+		"ran and exited non-zero": {orchestration.ValidationResult{Name: "make lint", ExitCode: 2}, "exited 2"},
+		"refused before it ran":   {orchestration.ValidationResult{Name: "rm", Message: "refused"}, "failed"},
+	} {
+		if got := verificationVerdict(tc.result); got != tc.want {
+			t.Errorf("%s: verdict = %q, want %q", name, got, tc.want)
+		}
 	}
 }

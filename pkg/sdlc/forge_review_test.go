@@ -48,7 +48,7 @@ func newReviewRig(t *testing.T) *reviewRig {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	validator, err := NewReviewValidator(store, store, &fakeForges{forge: forge})
+	validator, err := NewReviewValidator(store, store, &fakeForges{forge: forge}, testAgentCatalog())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestReviewValidator_IndependentReviewerRule(t *testing.T) {
 	// worker role once carried it is gone — so a binding naming a backend no
 	// family is known for is what leaves the author unknown.
 	binding := testBinding()
-	binding.Worker = WorkerConfig{Backend: "a-backend-no-family-is-known-for"}
+	binding.Worker = orchestration.AgentRefTo(testMysteryAgent)
 	if err := rig.store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestReviewValidator_RecordsTheRoundOnceUnderAConflict(t *testing.T) {
 	rig := newReviewRig(t)
 	rig.approveBy("codex", "h1", 1)
 	rig.greenChecks("h1")
-	validator, err := NewReviewValidator(&conflictingDeliveries{Store: rig.store, t: t}, rig.store, &fakeForges{forge: rig.forge})
+	validator, err := NewReviewValidator(&conflictingDeliveries{Store: rig.store, t: t}, rig.store, &fakeForges{forge: rig.forge}, testAgentCatalog())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,11 +315,14 @@ func TestReviewValidator_Refusals(t *testing.T) {
 		if args[2] != nil {
 			forges = args[2].(ForgeResolver)
 		}
-		if _, err := NewReviewValidator(deliveries, bindings, forges); !errors.Is(err, ErrInvalidInput) {
+		if _, err := NewReviewValidator(deliveries, bindings, forges, testAgentCatalog()); !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("%s nil accepted: %v", name, err)
 		}
 	}
-	nilForge, _ := NewReviewValidator(rig.store, rig.store, &fakeForges{})
+	if _, err := NewReviewValidator(rig.store, rig.store, &fakeForges{}, nil); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("nil agents accepted: %v", err)
+	}
+	nilForge, _ := NewReviewValidator(rig.store, rig.store, &fakeForges{}, testAgentCatalog())
 	if _, err := nilForge.Validate(context.Background(), testJob(1), rig.criterion); !errors.Is(err, ErrForgeNotRegistered) {
 		t.Fatalf("nil forge: %v", err)
 	}
@@ -358,7 +361,7 @@ func (r *reviewRig) round(t *testing.T) (orchestration.ValidationResult, bool, e
 		t.Fatalf("binding: %v", err)
 	}
 	return r.validator.round(ctx, testJob(1), r.criterion, binding, r.forge,
-		ModelFamily(binding.Worker.Backend, binding.Worker.Model))
+		bindingAgentsFrom(testAgents(), binding))
 }
 
 // redCheck settles one red check on a head, with the log the forge will serve
@@ -723,5 +726,100 @@ func TestReviewValidator_ACancelledCheckIsReRunRatherThanWaitedOut(t *testing.T)
 	}
 	if delivery.CIReruns[0].Signature != "cancelled" {
 		t.Errorf("signature = %q, want cancelled", delivery.CIReruns[0].Signature)
+	}
+}
+
+// forgeRejected is the forge answer that ended four review waits at once on
+// 2026-09-28 (20:03:18 EDT): a single 401 on a poll's GetPullRequest, with
+// the same credential reading fine before and after.
+func forgeRejected() error {
+	return backendError("GetPullRequest", &GiteaAPIError{Status: 401, Operation: "GetPullRequest", Message: "invalid username, password or token"})
+}
+
+// TestReviewValidator_AFailedReadIsPolledAgain pins that a review wait
+// survives forge reads that fail and then recover. The wait is a poll, and
+// the next tick is a free retry: go-blockstore#74's delivery had waited
+// 8h52m when one failed read ended it and charged the task an attempt.
+func TestReviewValidator_AFailedReadIsPolledAgain(t *testing.T) {
+	rig := newReviewRig(t)
+	rig.approveBy("codex", "h1", 1)
+	rig.greenChecks("h1")
+	rig.forge.getPRErrs = []error{forgeRejected(), forgeRejected(), forgeRejected()}
+
+	result, err := rig.validator.Validate(context.Background(), testJob(1), rig.criterion)
+	if err != nil || !result.Passed {
+		t.Fatalf("Validate after three failed reads = %+v, %v; want the wait to go on and pass", result, err)
+	}
+}
+
+// TestReviewValidator_AFailedReadEndsTheWaitAtTheBound is the other side: a
+// forge that keeps failing (a revoked credential) still ends the wait, after
+// reviewReadFailureBound consecutive rounds, with the forge's own error so
+// the engine attributes it exactly as before.
+func TestReviewValidator_AFailedReadEndsTheWaitAtTheBound(t *testing.T) {
+	rig := newReviewRig(t)
+	failures := make([]error, reviewReadFailureBound+1)
+	for i := range failures {
+		failures[i] = forgeRejected()
+	}
+	rig.forge.getPRErrs = failures
+
+	_, err := rig.validator.Validate(context.Background(), testJob(1), rig.criterion)
+	var apiErr *GiteaAPIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 401 {
+		t.Fatalf("Validate against a forge that keeps failing = %v; want its 401", err)
+	}
+	var wrapped *reviewReadError
+	if errors.As(err, &wrapped) {
+		t.Fatalf("Validate leaked the poll's internal wrapper: %v", err)
+	}
+	rig.forge.mu.Lock()
+	left := len(rig.forge.getPRErrs)
+	rig.forge.mu.Unlock()
+	if left != 1 {
+		t.Fatalf("reads attempted = %d, want exactly reviewReadFailureBound (%d)", len(failures)-left, reviewReadFailureBound)
+	}
+}
+
+// TestReviewValidator_ASuccessfulReadResetsTheBound pins "consecutive": a
+// read that succeeds between failures starts the count again, so a flaky
+// forge over a long wait never adds up to a failed review.
+func TestReviewValidator_ASuccessfulReadResetsTheBound(t *testing.T) {
+	rig := newReviewRig(t)
+	reads := 0
+	rig.forge.onGetPullRequest = func(*ForgePullRequest) {
+		reads++
+		if reads == 1 {
+			// Refill the failures after the first good read: the total
+			// exceeds the bound, but no run of them reaches it.
+			for range reviewReadFailureBound - 1 {
+				rig.forge.getPRErrs = append(rig.forge.getPRErrs, forgeRejected())
+			}
+		}
+		if reads == 2 {
+			rig.forge.reviews[100] = append(rig.forge.reviews[100], ForgeReview{ID: 1, Reviewer: "codex", State: "APPROVED", HeadSHA: "h1", Submitted: time.Now()})
+			rig.forge.checks["h1"] = []ForgeCheckRun{{ID: "1", Name: "ci", HeadSHA: "h1", Status: "completed", Conclusion: "success", Completed: time.Now()}}
+		}
+	}
+	for range reviewReadFailureBound - 1 {
+		rig.forge.getPRErrs = append(rig.forge.getPRErrs, forgeRejected())
+	}
+
+	result, err := rig.validator.Validate(context.Background(), testJob(1), rig.criterion)
+	if err != nil || !result.Passed {
+		t.Fatalf("Validate = %+v, %v; want two runs of failures under the bound to be absorbed", result, err)
+	}
+}
+
+// TestReviewValidator_ACancelledWaitIsNotRetried is the bad-input side: a
+// read that failed because the job was cancelled ends the wait at once.
+func TestReviewValidator_ACancelledWaitIsNotRetried(t *testing.T) {
+	rig := newReviewRig(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	rig.forge.getPRErrs = []error{context.Canceled}
+
+	if _, err := rig.validator.Validate(ctx, testJob(1), rig.criterion); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Validate on a cancelled job = %v, want context.Canceled", err)
 	}
 }

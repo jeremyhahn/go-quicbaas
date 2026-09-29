@@ -20,6 +20,9 @@ import {
   NO_REASON_RECORDED,
   artifactBaseName,
   pullRequestArtifacts,
+  taskAgentID,
+  taskStopKind,
+  taskStopPresentation,
 } from '../src/lib/tasks.ts';
 
 describe('issueRef', () => {
@@ -161,5 +164,71 @@ describe('loadErrorMessage', () => {
     expect(loadErrorMessage('boom', 'tasks', 'p')).toBe('Could not load tasks: boom');
     expect(loadErrorMessage({ status: '403' }, 'tasks', 'p')).toBe('Could not load tasks: [object Object]');
     expect(loadErrorMessage(null, 'tasks', 'p')).toBe('Could not load tasks: null');
+  });
+});
+
+describe('taskAgentID', () => {
+  it('names the claimant first, then the agent the server resolved onto the row', () => {
+    expect(taskAgentID({ assigned_to: 'claimant', agent_id: 'fleet-02', spawned_job_id: 'j1' })).toBe('claimant');
+    expect(taskAgentID({ agent_id: ' fleet-02 ', spawned_job_id: 'j1' })).toBe('fleet-02');
+  });
+
+  it('falls back to the latest attempt among the jobs the caller holds', () => {
+    const jobs = [{ job_id: 'j0', agent_id: 'old' }, { job_id: 'j1', agent_id: 'fleet-03' }];
+    expect(taskAgentID({ spawned_job_id: 'j1' }, jobs)).toBe('fleet-03');
+  });
+
+  it('answers empty when nothing records an agent', () => {
+    expect(taskAgentID({ spawned_job_id: 'j1' })).toBe('');
+    expect(taskAgentID({ spawned_job_id: 'j1' }, [{ job_id: 'j0', agent_id: 'old' }])).toBe('');
+    expect(taskAgentID({})).toBe('');
+  });
+});
+
+describe('server-derived attempt accounting (go-quicbaas#947)', () => {
+  it('prefers the server\'s charged count and effective budget over re-deriving them', () => {
+    // The server refunds questions too; a local re-derivation from
+    // environment_faults alone would say 3.
+    const task = { attempts: 4, environment_faults: 1, question_attempts: 2, charged_attempts: 1, effective_budget: 3 };
+    expect(chargedAttempts(task)).toBe(1);
+    expect(budgetLabel(task)).toBe('1 / 3 (4 dispatched)');
+  });
+
+  it('refunds questions as well as environment faults when the server sent no charged count', () => {
+    expect(chargedAttempts({ attempts: 4, environment_faults: 1, question_attempts: 2 })).toBe(1);
+    expect(chargedAttempts({ attempts: 1, charged_attempts: -1 })).toBe(0);
+  });
+});
+
+describe('taskStopKind / taskStopPresentation (go-quicbaas#947)', () => {
+  it('tells an environment fault, a work failure and a lost node apart', () => {
+    expect(taskStopKind({ status: 'failed', fault_origin: 'environment' })).toBe('environment');
+    expect(taskStopKind({ status: 'failed', fault_origin: 'work' })).toBe('work');
+    expect(taskStopKind({ status: 'blocked', block_kind: 'escalated', fault_origin: 'undiagnosed' })).toBe('undiagnosed');
+    const env = taskStopPresentation({ status: 'blocked', fault_origin: 'environment', fault_class: 'forge_unreachable' });
+    const work = taskStopPresentation({ status: 'failed', fault_origin: 'work', fault_class: 'stalled' });
+    expect(env?.label).toBe('Environment fault: forge_unreachable');
+    expect(work?.label).toBe('Failed on the work');
+    expect(env?.variant).not.toBe(work?.variant);
+  });
+
+  it('tells a park on the owner apart from a hold and an escalation', () => {
+    expect(taskStopKind({ status: 'blocked', block_kind: 'needs_info' })).toBe('owner');
+    expect(taskStopPresentation({ status: 'blocked', block_kind: 'needs_info' })?.label).toBe('Awaiting owner ruling');
+    expect(taskStopKind({ status: 'blocked', block_kind: 'blocked' })).toBe('held');
+    expect(taskStopKind({ status: 'blocked', block_kind: 'escalated' })).toBe('escalated');
+    expect(taskStopKind({ status: 'blocked' })).toBe('held');
+  });
+
+  it('reports nothing for a task that is not stopped, and never reads the prose', () => {
+    expect(taskStopKind({ status: 'completed' })).toBe('none');
+    expect(taskStopKind({ status: 'pending', fault_origin: '' })).toBe('none');
+    expect(taskStopPresentation({ status: 'in_progress' })).toBeNull();
+    // A failed task the server did not classify is not guessed at.
+    expect(taskStopPresentation({ status: 'failed' })).toBeNull();
+  });
+
+  it('labels an environment fault with no class without a trailing colon', () => {
+    expect(taskStopPresentation({ status: 'blocked', fault_origin: 'environment' })?.label).toBe('Environment fault');
   });
 });

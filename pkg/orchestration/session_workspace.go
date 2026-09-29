@@ -29,7 +29,7 @@ import (
 //
 // A SPAWN THAT CARRIES A HOST PATH CAN ONLY RUN ON THE HOST THAT MADE IT. The
 // sdlc runners used to provision their checkout directory under the DAEMON's
-// projects root and bind-mount that absolute path, so a fleet agent on any
+// projects root and bind-mount that absolute path, so a fleet node on any
 // other machine refused the mount — it has no such directory, and its mount
 // policy admits nothing of the daemon's (go-quicbaas#981). Git already stays
 // agent-side: the clone, the commit and the push all run inside the session's
@@ -50,7 +50,7 @@ import (
 // after a restart — reuse the clone the first one made, which is only possible
 // where the clone is. They carry the first session's placement as a pin
 // (SessionWorkspace.Pin), and a pin that cannot be honoured is a typed refusal,
-// never a fresh clone somewhere else: WorkspaceAgentUnavailableError when the
+// never a fresh clone somewhere else: WorkspaceFleetNodeUnavailableError when the
 // agent is gone, WorkspaceStaleError when it is there but the checkout is not.
 
 // sessionWorkspaceSpecFiles is the closed set of file names a spec directory
@@ -140,7 +140,7 @@ func (w *SessionWorkspace) Pinned() bool {
 // WorkspacePlacement is where a session's workspace was provisioned: the host
 // that holds it and the directory on that host.
 type WorkspacePlacement struct {
-	// AgentHost is the fleet agent the workspace lives on — its registration
+	// AgentHost is the fleet node the workspace lives on — its registration
 	// Host, the value the dispatcher resolves host affinity against. Empty
 	// means the daemon's own in-process backend.
 	AgentHost string `json:"agent_host,omitempty"`
@@ -154,7 +154,7 @@ type WorkspacePlacement struct {
 }
 
 // OnDaemon reports whether the workspace lives on the daemon itself rather
-// than on a fleet agent.
+// than on a fleet node.
 func (p WorkspacePlacement) OnDaemon() bool { return p.AgentHost == "" }
 
 // ProvisionedWorkspace is a session workspace made on this host: the
@@ -196,7 +196,7 @@ func (p *ProvisionedWorkspace) ApplyTo(req *SpawnRequest) {
 
 // WorkspaceProvisioner provisions named session workspaces on the host it
 // runs on. *WorkspaceManager is the implementation; the daemon and every
-// fleet agent use it over their own projects root.
+// fleet node use it over their own projects root.
 type WorkspaceProvisioner interface {
 	// ProvisionSession makes the named workspace and writes its spec.
 	ProvisionSession(ws *SessionWorkspace) (*ProvisionedWorkspace, error)
@@ -583,11 +583,11 @@ func (e *SessionWorkspaceUnsupportedError) Error() string {
 // Unwrap returns ErrSessionWorkspace.
 func (e *SessionWorkspaceUnsupportedError) Unwrap() error { return ErrSessionWorkspace }
 
-// WorkspaceAgentUnavailableError reports a pinned spawn whose workspace lives
+// WorkspaceFleetNodeUnavailableError reports a pinned spawn whose workspace lives
 // on an agent the dispatcher cannot reach: deregistered, offline, or no longer
 // serving the backend. The checkout is there and nowhere else, so the spawn is
 // refused rather than sent to a host that would clone afresh.
-type WorkspaceAgentUnavailableError struct {
+type WorkspaceFleetNodeUnavailableError struct {
 	// AgentHost is the agent the workspace is pinned to; empty for the
 	// daemon's own in-process backend.
 	AgentHost string
@@ -610,7 +610,7 @@ type WorkspaceAgentUnavailableError struct {
 }
 
 // Error implements the error interface.
-func (e *WorkspaceAgentUnavailableError) Error() string {
+func (e *WorkspaceFleetNodeUnavailableError) Error() string {
 	holder := "the daemon's in-process backend"
 	if e.AgentHost != "" {
 		holder = "agent " + strconv.Quote(e.AgentHost)
@@ -627,7 +627,7 @@ func (e *WorkspaceAgentUnavailableError) Error() string {
 }
 
 // Unwrap returns ErrSessionWorkspace.
-func (e *WorkspaceAgentUnavailableError) Unwrap() error { return ErrSessionWorkspace }
+func (e *WorkspaceFleetNodeUnavailableError) Unwrap() error { return ErrSessionWorkspace }
 
 // SessionWorkspaceProvisionError reports a session workspace the host could not
 // provision for a filesystem reason: a read-only or full disk, a permission, a

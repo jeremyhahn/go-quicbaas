@@ -44,6 +44,8 @@ const (
 	AccountService_SetDefaultAccount_FullMethodName            = "/quicbaas.account.v1.AccountService/SetDefaultAccount"
 	AccountService_GetAccountUsage_FullMethodName              = "/quicbaas.account.v1.AccountService/GetAccountUsage"
 	AccountService_MaterializeAccountCredential_FullMethodName = "/quicbaas.account.v1.AccountService/MaterializeAccountCredential"
+	AccountService_ReserveAccountSession_FullMethodName        = "/quicbaas.account.v1.AccountService/ReserveAccountSession"
+	AccountService_ReleaseAccountSession_FullMethodName        = "/quicbaas.account.v1.AccountService/ReleaseAccountSession"
 )
 
 // AccountServiceClient is the client API for AccountService service.
@@ -75,6 +77,14 @@ type AccountServiceClient interface {
 	// the pool's metadata must not thereby be able to extract every login in
 	// it. See docs/agent-orchestration/accounts.md.
 	MaterializeAccountCredential(ctx context.Context, in *MaterializeAccountCredentialRequest, opts ...grpc.CallOption) (*MaterializeAccountCredentialResponse, error)
+	// ReserveAccountSession claims one session slot on a capped account in the
+	// control plane's reservation table, the claim that makes
+	// max_concurrent_sessions hold when several hosts spawn at once. It is the
+	// credential release's companion and carries its permission. An account
+	// at its cap answers RESOURCE_EXHAUSTED.
+	ReserveAccountSession(ctx context.Context, in *ReserveAccountSessionRequest, opts ...grpc.CallOption) (*ReserveAccountSessionResponse, error)
+	// ReleaseAccountSession gives a reservation back, for a spawn that failed.
+	ReleaseAccountSession(ctx context.Context, in *ReleaseAccountSessionRequest, opts ...grpc.CallOption) (*ReleaseAccountSessionResponse, error)
 }
 
 type accountServiceClient struct {
@@ -185,6 +195,26 @@ func (c *accountServiceClient) MaterializeAccountCredential(ctx context.Context,
 	return out, nil
 }
 
+func (c *accountServiceClient) ReserveAccountSession(ctx context.Context, in *ReserveAccountSessionRequest, opts ...grpc.CallOption) (*ReserveAccountSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReserveAccountSessionResponse)
+	err := c.cc.Invoke(ctx, AccountService_ReserveAccountSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *accountServiceClient) ReleaseAccountSession(ctx context.Context, in *ReleaseAccountSessionRequest, opts ...grpc.CallOption) (*ReleaseAccountSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReleaseAccountSessionResponse)
+	err := c.cc.Invoke(ctx, AccountService_ReleaseAccountSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AccountServiceServer is the server API for AccountService service.
 // All implementations should embed UnimplementedAccountServiceServer
 // for forward compatibility.
@@ -214,6 +244,14 @@ type AccountServiceServer interface {
 	// the pool's metadata must not thereby be able to extract every login in
 	// it. See docs/agent-orchestration/accounts.md.
 	MaterializeAccountCredential(context.Context, *MaterializeAccountCredentialRequest) (*MaterializeAccountCredentialResponse, error)
+	// ReserveAccountSession claims one session slot on a capped account in the
+	// control plane's reservation table, the claim that makes
+	// max_concurrent_sessions hold when several hosts spawn at once. It is the
+	// credential release's companion and carries its permission. An account
+	// at its cap answers RESOURCE_EXHAUSTED.
+	ReserveAccountSession(context.Context, *ReserveAccountSessionRequest) (*ReserveAccountSessionResponse, error)
+	// ReleaseAccountSession gives a reservation back, for a spawn that failed.
+	ReleaseAccountSession(context.Context, *ReleaseAccountSessionRequest) (*ReleaseAccountSessionResponse, error)
 }
 
 // UnimplementedAccountServiceServer should be embedded to have
@@ -252,6 +290,12 @@ func (UnimplementedAccountServiceServer) GetAccountUsage(context.Context, *GetAc
 }
 func (UnimplementedAccountServiceServer) MaterializeAccountCredential(context.Context, *MaterializeAccountCredentialRequest) (*MaterializeAccountCredentialResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method MaterializeAccountCredential not implemented")
+}
+func (UnimplementedAccountServiceServer) ReserveAccountSession(context.Context, *ReserveAccountSessionRequest) (*ReserveAccountSessionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReserveAccountSession not implemented")
+}
+func (UnimplementedAccountServiceServer) ReleaseAccountSession(context.Context, *ReleaseAccountSessionRequest) (*ReleaseAccountSessionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReleaseAccountSession not implemented")
 }
 func (UnimplementedAccountServiceServer) testEmbeddedByValue() {}
 
@@ -453,6 +497,42 @@ func _AccountService_MaterializeAccountCredential_Handler(srv interface{}, ctx c
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AccountService_ReserveAccountSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReserveAccountSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AccountServiceServer).ReserveAccountSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AccountService_ReserveAccountSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AccountServiceServer).ReserveAccountSession(ctx, req.(*ReserveAccountSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AccountService_ReleaseAccountSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReleaseAccountSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AccountServiceServer).ReleaseAccountSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AccountService_ReleaseAccountSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AccountServiceServer).ReleaseAccountSession(ctx, req.(*ReleaseAccountSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AccountService_ServiceDesc is the grpc.ServiceDesc for AccountService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -499,6 +579,14 @@ var AccountService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "MaterializeAccountCredential",
 			Handler:    _AccountService_MaterializeAccountCredential_Handler,
+		},
+		{
+			MethodName: "ReserveAccountSession",
+			Handler:    _AccountService_ReserveAccountSession_Handler,
+		},
+		{
+			MethodName: "ReleaseAccountSession",
+			Handler:    _AccountService_ReleaseAccountSession_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -111,7 +111,7 @@ func TestJobRunRecordAgentIgnoresAnEmptyID(t *testing.T) {
 	t.Parallel()
 
 	// A spawn that landed on this daemon's own in-process backend names no
-	// fleet agent; recording "" would make AgentID unusable for every later
+	// fleet node; recording "" would make AgentID unusable for every later
 	// spawn that does name one.
 	run := newProvenanceRun(t)
 	run.RecordAgent("")
@@ -127,7 +127,7 @@ func TestJobRunRecordAgentIgnoresAnEmptyID(t *testing.T) {
 func TestSpawnAgentIDReadsABackendBoundToAFleetAgent(t *testing.T) {
 	t.Parallel()
 
-	backend := &RemoteACPBackend{registration: &AgentRegistration{ID: "agent-7", Host: "node-a"}}
+	backend := &RemoteACPBackend{registration: &FleetNode{ID: "agent-7", Host: "node-a"}}
 	if got := spawnAgentID(backend); got != "agent-7" {
 		t.Errorf("spawnAgentID = %q, want agent-7", got)
 	}

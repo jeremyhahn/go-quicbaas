@@ -116,10 +116,10 @@ func TestValidateFIPSMode_FIPSNotEnabled_DoesNotFailHard(t *testing.T) {
 
 func TestServer_InstallRemoteBackendResolver_NoRegistryFallsThrough(t *testing.T) {
 	srv := withTempServer(t)
-	require.Nil(t, srv.agentRegistry)
+	require.Nil(t, srv.fleetRegistry)
 
 	// agentSvc is a do-nothing — the function exits before ever calling
-	// SetRemoteBackendResolver because agentRegistry is nil.
+	// SetRemoteBackendResolver because fleetRegistry is nil.
 	assert.NotPanics(t, func() {
 		srv.installRemoteBackendResolver(nil)
 	})
@@ -127,7 +127,7 @@ func TestServer_InstallRemoteBackendResolver_NoRegistryFallsThrough(t *testing.T
 
 func TestServer_InstallRemoteBackendResolver_NoDaemonClientFallsThrough(t *testing.T) {
 	srv := withTempServer(t)
-	srv.agentRegistry = orchestration.NewInMemoryAgentRegistry()
+	srv.fleetRegistry = orchestration.NewInMemoryFleetRegistry()
 	require.Nil(t, srv.orchestratorDaemonClient)
 
 	assert.NotPanics(t, func() {
@@ -136,7 +136,7 @@ func TestServer_InstallRemoteBackendResolver_NoDaemonClientFallsThrough(t *testi
 }
 
 // =============================================================================
-// embedded_agent.go — installEmbeddedBackendDialer
+// embedded_fleet_node.go — installEmbeddedBackendDialer
 //
 // Wires a bufconn-backed dialer into the embedded backend dialer map. The
 // dialer entry is registered against the agentID and (when an embedded dialer
@@ -151,7 +151,7 @@ func TestServer_InstallEmbeddedBackendDialer_RegistersInMap(t *testing.T) {
 	bufListener := bufconn.Listen(1024 * 1024)
 	t.Cleanup(func() { _ = bufListener.Close() })
 
-	reg := &orchestration.AgentRegistration{
+	reg := &orchestration.FleetNode{
 		ID:   "agent-1",
 		Host: "agent-1-host",
 	}
@@ -176,7 +176,7 @@ func TestServer_InstallEmbeddedBackendDialer_InitializesNilMap(t *testing.T) {
 	bufListener := bufconn.Listen(1024 * 1024)
 	t.Cleanup(func() { _ = bufListener.Close() })
 
-	srv.installEmbeddedBackendDialer("agent-2", &orchestration.AgentRegistration{
+	srv.installEmbeddedBackendDialer("agent-2", &orchestration.FleetNode{
 		ID:   "agent-2",
 		Host: "agent-2-host",
 	}, bufListener)
@@ -275,11 +275,11 @@ func TestRemoteBackendPool_BackendFor_CachesBackend(t *testing.T) {
 		)
 	})
 
-	reg := &orchestration.AgentRegistration{
+	reg := &orchestration.FleetNode{
 		ID:      "reg-1",
 		Backend: "claude",
 		Host:    "agent-host-1",
-		Kind:    orchestration.AgentKindDaemon,
+		Kind:    orchestration.FleetNodeKindDaemon,
 	}
 
 	b1, ok := pool.backendFor(context.Background(), reg, "claude")

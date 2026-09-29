@@ -34,9 +34,9 @@ Every row below is derived from source, not from prose. The columns mean:
 
 ### `quicbaas.IAM.Admin` — SDK package `sdk/go/client/iam`
 
-Dedicated transport handlers: rest=yes, grpc=yes, mcp=yes; embedded routes registered: 0; MCP tools registered server-side: 52.
+Dedicated transport handlers: rest=yes, grpc=yes, mcp=yes; embedded routes registered: 0; MCP tools registered server-side: 44.
 
-MCP tools: `quicbaas_iam_app_delete`, `quicbaas_iam_app_get`, `quicbaas_iam_app_list`, `quicbaas_iam_app_register`, `quicbaas_iam_app_rotate_secret`, `quicbaas_iam_app_update`, `quicbaas_iam_audit_delete`, `quicbaas_iam_audit_get`, `quicbaas_iam_audit_query`, `quicbaas_iam_group_add_member`, `quicbaas_iam_group_create`, `quicbaas_iam_group_delete`, `quicbaas_iam_group_get`, `quicbaas_iam_group_list`, `quicbaas_iam_group_list_members`, `quicbaas_iam_group_remove_member`, `quicbaas_iam_group_update`, `quicbaas_iam_policy_create`, `quicbaas_iam_policy_delete`, `quicbaas_iam_policy_get`, `quicbaas_iam_policy_list`, `quicbaas_iam_policy_test`, `quicbaas_iam_policy_update`, `quicbaas_iam_role_create`, `quicbaas_iam_role_delete`, `quicbaas_iam_role_get`, `quicbaas_iam_role_list`, `quicbaas_iam_role_update`, `quicbaas_iam_tenant_create`, `quicbaas_iam_tenant_delete`, `quicbaas_iam_tenant_get`, `quicbaas_iam_tenant_list`, `quicbaas_iam_tenant_update`, `quicbaas_iam_user_assign_role`, `quicbaas_iam_user_create`, `quicbaas_iam_user_delete`, `quicbaas_iam_user_get`, `quicbaas_iam_user_list`, `quicbaas_iam_user_revoke_role`, `quicbaas_iam_user_update`, `quicbaas_mfa_backup_codes_generate`, `quicbaas_mfa_backup_codes_status`, `quicbaas_mfa_backup_codes_verify`, `quicbaas_mfa_challenge_begin`, `quicbaas_mfa_challenge_verify`, `quicbaas_mfa_disable`, `quicbaas_mfa_enroll_begin`, `quicbaas_mfa_enroll_cancel`, `quicbaas_mfa_enroll_complete`, `quicbaas_mfa_status`, `quicbaas_pep_check`, `quicbaas_pep_check_batch`
+MCP tools: `quicbaas_iam_app_delete`, `quicbaas_iam_app_get`, `quicbaas_iam_app_list`, `quicbaas_iam_app_register`, `quicbaas_iam_app_rotate_secret`, `quicbaas_iam_app_update`, `quicbaas_iam_audit_delete`, `quicbaas_iam_audit_get`, `quicbaas_iam_audit_query`, `quicbaas_iam_policy_create`, `quicbaas_iam_policy_delete`, `quicbaas_iam_policy_get`, `quicbaas_iam_policy_list`, `quicbaas_iam_policy_test`, `quicbaas_iam_policy_update`, `quicbaas_iam_role_create`, `quicbaas_iam_role_delete`, `quicbaas_iam_role_get`, `quicbaas_iam_role_list`, `quicbaas_iam_role_update`, `quicbaas_iam_tenant_create`, `quicbaas_iam_tenant_delete`, `quicbaas_iam_tenant_get`, `quicbaas_iam_tenant_list`, `quicbaas_iam_tenant_update`, `quicbaas_iam_user_assign_role`, `quicbaas_iam_user_create`, `quicbaas_iam_user_delete`, `quicbaas_iam_user_get`, `quicbaas_iam_user_list`, `quicbaas_iam_user_revoke_role`, `quicbaas_iam_user_update`, `quicbaas_mfa_backup_codes_generate`, `quicbaas_mfa_backup_codes_status`, `quicbaas_mfa_backup_codes_verify`, `quicbaas_mfa_challenge_begin`, `quicbaas_mfa_challenge_verify`, `quicbaas_mfa_disable`, `quicbaas_mfa_enroll_begin`, `quicbaas_mfa_enroll_cancel`, `quicbaas_mfa_enroll_complete`, `quicbaas_mfa_status`, `quicbaas_pep_check`, `quicbaas_pep_check_batch`
 
 | SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
 |---|---|---|---|---|---|---|
@@ -90,7 +90,6 @@ every transport sees, so it is the shape to reason about:
 | `quicbaas.IAM.Audit` | `Delete`, `Get`, `Query`, `Record`, `RecordAsync` |
 | `quicbaas.IAM.Federation` | `CreateProvider`, `DeleteProvider`, `GetProvider`, `ListProviders`, `UpdateProvider` |
 | `quicbaas.IAM.GDPR` | `CancelDeletion`, `GenerateExport`, `GetConsent`, `GetDeletionStatus`, `GetExportStatus`, `GrantConsent`, `ListConsents`, `RequestDeletion`, `RequestExport`, `WithdrawConsent` |
-| `quicbaas.IAM.Group` | `AddMember`, `Create`, `Delete`, `Get`, `List`, `ListMembers`, `RemoveMember`, `Update` |
 | `quicbaas.IAM.Identity` | `LinkIdentity`, `ListUserIdentities`, `UnlinkIdentity` |
 | `quicbaas.IAM.Invite` | `ActivateFIDO2Begin`, `ActivateFIDO2Finish`, `ActivatePIV`, `GetInvite` |
 | `quicbaas.IAM.MFA` | `BeginMFAEnrollment`, `CompleteMFAEnrollment`, `DisableMFA`, `GenerateBackupCodes`, `GetBackupCodeStatus`, `GetMFAStatus` |
@@ -99,7 +98,7 @@ every transport sees, so it is the shape to reason about:
 | `quicbaas.IAM.Role` | `Create`, `Delete`, `Get`, `List`, `Update` |
 | `quicbaas.IAM.Session` | `Get`, `List`, `Revoke`, `RevokeAll`, `RevokeOthers`, `Touch` |
 | `quicbaas.IAM.Tenant` | `Create`, `Delete`, `Get`, `List`, `Update` |
-| `quicbaas.IAM.User` | `AddToGroup`, `Approve`, `AssignRole`, `Create`, `Delete`, `FindByUsername`, `Get`, `GetByEmail`, `List`, `Reject`, `RemoveFromGroup`, `RevokeRole`, `Suspend`, `Unsuspend`, `Update` |
+| `quicbaas.IAM.User` | `Approve`, `AssignRole`, `Create`, `Delete`, `FindByUsername`, `Get`, `GetByEmail`, `List`, `Reject`, `RevokeRole`, `Suspend`, `Unsuspend`, `Update` |
 
 Every transport resolves these names by table, not by derivation:
 
@@ -155,14 +154,6 @@ Every transport resolves these names by table, not by derivation:
   - `quicbaas_iam_gdpr_export_generate`
   - `quicbaas_iam_gdpr_export_request`
   - `quicbaas_iam_gdpr_export_status`
-  - `quicbaas_iam_group_add_member`
-  - `quicbaas_iam_group_create`
-  - `quicbaas_iam_group_delete`
-  - `quicbaas_iam_group_get`
-  - `quicbaas_iam_group_list`
-  - `quicbaas_iam_group_list_members`
-  - `quicbaas_iam_group_remove_member`
-  - `quicbaas_iam_group_update`
   - `quicbaas_iam_identity_linkidentity`
   - `quicbaas_iam_identity_listuseridentities`
   - `quicbaas_iam_identity_unlinkidentity`
@@ -327,9 +318,12 @@ Response:
   "email_verified": true,
   "tenant_id": "acme-corp",
   "roles": ["developer", "team-lead"],
-  "groups": ["engineering"]
+  "groups": ["Developers", "Team Leads"]
 }
 ```
+
+`roles` carries the IDs of the roles the user is bound to; `groups` carries
+those roles' names. An account holds no group list of its own.
 
 ### JWKS
 
@@ -446,7 +440,6 @@ Query Parameters:
 | `offset` | Pagination offset |
 | `email` | Filter by email |
 | `role` | Filter by role |
-| `group` | Filter by group |
 
 **Create User**
 ```
@@ -457,13 +450,16 @@ Content-Type: application/json
   "email": "alice@acme.com",
   "name": "Alice Smith",
   "roles": ["developer"],
-  "groups": ["engineering"],
   "attributes": {
     "department": "engineering",
     "team_id": "team-west"
   }
 }
 ```
+
+A user carries no group list, and quicbaas keeps no groups: identity is qrdb's,
+and a role binding is the grouping it offers. The OIDC `groups` claim carries
+the names of the roles the user is bound to.
 
 **Get User**
 ```
@@ -493,45 +489,6 @@ Content-Type: application/json
 **Remove Role**
 ```
 DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/roles/{role}
-```
-
-### Groups
-
-**List Groups**
-```
-GET /api/v1/tenants/{tenant_id}/groups
-```
-
-**Create Group**
-```
-POST /api/v1/tenants/{tenant_id}/groups
-Content-Type: application/json
-
-{
-  "id": "engineering",
-  "name": "Engineering Team",
-  "description": "All engineering staff"
-}
-```
-
-**Get Group**
-```
-GET /api/v1/tenants/{tenant_id}/groups/{group_id}
-```
-
-**Add User to Group**
-```
-POST /api/v1/tenants/{tenant_id}/groups/{group_id}/members
-Content-Type: application/json
-
-{
-  "user_id": "user_abc123"
-}
-```
-
-**Remove User from Group**
-```
-DELETE /api/v1/tenants/{tenant_id}/groups/{group_id}/members/{user_id}
 ```
 
 ### Roles
@@ -1027,7 +984,7 @@ TOTP codes are derived with HMAC-SHA1 by default (RFC 6238) and with
 HMAC-SHA256 in FIPS mode, where SHA1 is not an approved algorithm. Each
 enrollment stores the algorithm it was provisioned with, so changing the
 default never invalidates an existing enrollment. See
-[FIPS 140-3 capability differences](../security/fips.md#totp-multi-factor-authentication).
+[Security Hardening: TOTP in FIPS Mode](../security-hardening/engineering.md#totp-in-fips-mode).
 
 ### Get MFA Status
 

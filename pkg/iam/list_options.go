@@ -21,9 +21,6 @@ type ListTenantsOptions = ListOptions
 // ListUsersOptions defines options for listing users.
 type ListUsersOptions = ListOptions
 
-// ListGroupsOptions defines options for listing groups.
-type ListGroupsOptions = ListOptions
-
 // ListRolesOptions defines options for listing roles.
 type ListRolesOptions = ListOptions
 

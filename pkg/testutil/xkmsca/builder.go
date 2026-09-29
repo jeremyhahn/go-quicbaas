@@ -88,7 +88,7 @@ func Build(cfg Config) (xkmssdk.TrustedCA, error) {
 		return nil, ErrNoCommonName
 	}
 
-	keyStorage, certStorage, err := storage(cfg.Dir)
+	keyStorage, certStorage, revocationStorage, err := storage(cfg.Dir)
 	if err != nil {
 		return nil, err
 	}
@@ -135,6 +135,12 @@ func Build(cfg Config) (xkmssdk.TrustedCA, error) {
 		KeyAttributes: keyAttrs,
 		KeyStore:      backend,
 		CertStore:     certStore,
+		// One uniform software backend: every StoreType resolves to it, which
+		// go-xkms requires be stated rather than assumed.
+		BackendForStore: func(string, xkmssdk.StoreType) (xkmssdk.ServiceBackend, error) {
+			return backend, nil
+		},
+		RevocationStore: revocationStorage,
 	})
 }
 
@@ -161,21 +167,26 @@ func Open(ctx context.Context, cfg Config) (xkmssdk.TrustedCA, error) {
 	return ca, nil
 }
 
-// storage returns the key and certificate storage backends for a Config's Dir:
-// memory when it is empty, files under Dir and Dir/certs when it is not.
-func storage(dir string) (keys, certs xkmssdk.StorageBackend, err error) {
+// storage returns the key, certificate and revocation storage backends for a
+// Config's Dir: memory when it is empty, files under Dir, Dir/certs and
+// Dir/revocations when it is not.
+func storage(dir string) (keys, certs, revocations xkmssdk.StorageBackend, err error) {
 	if dir == "" {
-		return xkmssdk.NewStorageMemory(), xkmssdk.NewStorageMemory(), nil
+		return xkmssdk.NewStorageMemory(), xkmssdk.NewStorageMemory(), xkmssdk.NewStorageMemory(), nil
 	}
 	keys, err = xkmssdk.NewFileStorageBackend(dir)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	certs, err = xkmssdk.NewFileStorageBackend(dir + "/certs")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return keys, certs, nil
+	revocations, err = xkmssdk.NewFileStorageBackend(dir + "/revocations")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return keys, certs, revocations, nil
 }
 
 // caIdentity builds the root identity from a Config, applying the defaults.
@@ -202,8 +213,7 @@ func caIdentity(cfg Config) xkmssdk.TrustedCAIdentity {
 			StoreType:          xkmssdk.StoreSoftware,
 			ECCConfig:          &xkmssdk.KeyECCConfig{Curve: xkmssdk.CurveP256},
 		}},
-		KeystoreType: xkmssdk.StoreSoftware,
-		IsRoot:       true,
+		IsRoot: true,
 	}
 }
 

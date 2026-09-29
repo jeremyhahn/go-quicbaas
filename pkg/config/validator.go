@@ -710,6 +710,10 @@ func (v *Validator) validateOrchestration(cfg *OrchestrationConfig) {
 				fmt.Sprintf("must be an absolute path: %q", root))
 		}
 	}
+	if dir := cfg.Sandbox.GoCacheDir; dir != "" && !filepath.IsAbs(dir) {
+		v.addError("orchestration.sandbox.go_cache_dir",
+			fmt.Sprintf("must be an absolute path: %q", dir))
+	}
 
 	// An unrecognized trust policy must fail the config rather than fall back
 	// to the zero value: the fallback is the WEAKEST policy, so a typo in
@@ -740,6 +744,7 @@ func (v *Validator) validateOrchestration(cfg *OrchestrationConfig) {
 	}
 
 	v.validateAccountProviders(cfg.AccountProviders)
+	v.validatePricing(cfg.Pricing)
 
 	// The task-source poller's cadence. Zero means unset and takes the
 	// default (EffectiveSweepInterval); a negative interval is a value
@@ -954,6 +959,63 @@ func (v *Validator) validateSDLC(cfg *SDLCConfig) {
 	case cfg.Surfacing.PostTimeout > SDLCSurfacingMaxPostTimeout:
 		v.addError("sdlc.surfacing.post_timeout",
 			"a single post allowed more than a day is not a deadline; zero takes the default")
+	}
+	v.validateSDLCWorkerImage(&cfg.WorkerImage)
+}
+
+// validateSDLCWorkerImageCredential validates the push credential: a registry
+// account and the tenant secret holding its token, named together or not at
+// all. The secret reference's own shape is checked where it is resolved
+// (workerimage.NewSecretCredential, at startup), against the one rule every
+// tenant secret reference follows.
+func (v *Validator) validateSDLCWorkerImageCredential(cfg *SDLCWorkerImage) {
+	named := 0
+	for _, field := range []string{cfg.RegistryUsername, cfg.RegistryTokenSecret, cfg.RegistryTokenTenant} {
+		if strings.TrimSpace(field) != "" {
+			named++
+		}
+	}
+	switch {
+	case named == 0:
+		return
+	case named < 3:
+		v.addError("sdlc.worker_image.registry_token_secret",
+			"registry_username, registry_token_secret and registry_token_tenant go together: "+
+				"name all three, or none to use the engine's own login")
+	case cfg.Registry == "":
+		v.addError("sdlc.worker_image.registry", "a registry credential is configured but no registry to push to")
+	}
+}
+
+// validateSDLCWorkerImage validates the worker image refresh when it is
+// enabled. The shapes that would only fail at the first pass — hours after
+// boot, with nobody watching — are refused at load instead.
+func (v *Validator) validateSDLCWorkerImage(cfg *SDLCWorkerImage) {
+	if !cfg.Enabled {
+		return
+	}
+	if strings.TrimSpace(cfg.Repository) == "" || strings.ContainsAny(cfg.Repository, "@ ") {
+		v.addError("sdlc.worker_image.repository", "must name a repository, with no tag or digest")
+	}
+	if cfg.Registry != "" && (!strings.Contains(cfg.Registry, "/") || strings.ContainsAny(cfg.Registry, "@ ")) {
+		v.addError("sdlc.worker_image.registry", "must be host[:port]/owner/name, with no tag or digest")
+	}
+	v.validateSDLCWorkerImageCredential(cfg)
+	if u, err := url.Parse(cfg.NPMRegistryURL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		v.addError("sdlc.worker_image.npm_registry_url", "must be an absolute http(s) URL")
+	}
+	if strings.TrimSpace(cfg.SmokeModel) == "" {
+		v.addError("sdlc.worker_image.smoke_model", "must name the Claude model every refresh proves the new image runs")
+	}
+	// Zero takes the module's default; negative would make a ticker the
+	// runtime panics on.
+	for key, d := range map[string]time.Duration{
+		"sdlc.worker_image.refresh_interval": cfg.RefreshInterval,
+		"sdlc.worker_image.pass_timeout":     cfg.PassTimeout,
+	} {
+		if d < 0 {
+			v.addError(key, "must not be negative; zero takes the default")
+		}
 	}
 }
 

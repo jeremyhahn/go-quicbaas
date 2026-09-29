@@ -38,11 +38,19 @@ func TestHandleOrchestratorError_Dispatch(t *testing.T) {
 	}{
 		{"not_found", orchestration.ErrJobNotFound, http.StatusNotFound},
 		{"session_not_found_typed", &orchestration.SessionNotFoundError{SessionID: "ses-x"}, http.StatusNotFound},
-		// A "session not found" returned from the remote agent daemon arrives
+		// A "session not found" returned from the remote fleet node daemon arrives
 		// as a gRPC codes.NotFound status. It must surface as 404, not the
 		// generic 500 that masked the lifecycle bug after a just-successful spawn.
 		{"session_not_found_grpc", grpcstatus.Error(grpccodes.NotFound, "acp: session not found: ses-x"), http.StatusNotFound},
 		{"invalid_input", orchestration.ErrBackendRequired, http.StatusBadRequest},
+		// Every refusal of the request's own shape unwraps to ErrInvalidInput:
+		// an oversized prompt append is the caller's to correct.
+		{"prompt_append_too_large", &orchestration.PromptAppendTooLargeError{Field: "prompt_append", Size: 70000, Limit: orchestration.MaxPromptAppendBytes}, http.StatusBadRequest},
+		{"input_validation", &orchestration.InputValidationError{Field: "backend", Message: "name the agent or the backend, not both"}, http.StatusBadRequest},
+		// An Agent over its own spend window is exhausted, as a pool is; an
+		// Agent whose limits could not be checked is unavailable.
+		{"agent_over_budget", &orchestration.AgentSpendExhaustedError{AgentID: "a", Window: "daily", Axis: "tokens", Used: 2, Limit: 1}, http.StatusServiceUnavailable},
+		{"agent_spend_undecidable", &orchestration.AgentSpendUndecidableError{AgentID: "a"}, http.StatusServiceUnavailable},
 		{"conflict", orchestration.ErrTaskAlreadyClaimed, http.StatusConflict},
 		{"forbidden", orchestration.ErrNotLeadOfParent, http.StatusForbidden},
 		// Every spawn-policy refusal is a 403 carrying its actionable message.
@@ -84,7 +92,7 @@ func TestHandleOrchestratorError_Dispatch(t *testing.T) {
 			},
 			http.StatusForbidden,
 		},
-		// A policy denial raised on the remote agent daemon arrives as a gRPC
+		// A policy denial raised on the remote fleet node daemon arrives as a gRPC
 		// PermissionDenied status; the daemon is the last line of defence and
 		// its verdict must not be flattened into a 500 either.
 		{

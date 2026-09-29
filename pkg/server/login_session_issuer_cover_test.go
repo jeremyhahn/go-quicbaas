@@ -98,9 +98,8 @@ func newTestOIDCProviderWithResolver(t *testing.T, resolver iam.PermissionResolv
 	// persistence, so the user store is an in-memory double. Apps/tokens stay on
 	// the BackendStorage KVStore.
 	identityStore := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  users,
-		GroupStorage: backend,
-		RoleStorage:  backend,
+		UserStorage: users,
+		RoleStorage: backend,
 	})
 
 	provider, err := iam.NewOIDCProvider(

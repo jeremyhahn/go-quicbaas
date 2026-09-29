@@ -14,6 +14,7 @@
 package uicontract
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -23,6 +24,8 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc/workerimage"
 )
 
 // =============================================================================
@@ -47,8 +50,12 @@ import (
 
 // binding pairs one TypeScript interface with the Go struct behind it.
 type binding struct {
-	// tsInterface is the name in sdk/typescript/src/types.ts.
+	// tsInterface is the interface's name.
 	tsInterface string
+
+	// tsFile is the sdk/typescript/src file that declares it; empty is
+	// types.ts.
+	tsFile string
 
 	// goStruct is a zero value of the struct the server serialises.
 	goStruct any
@@ -86,10 +93,6 @@ func bindings() []binding {
 			mappingFiles: []string{
 				filepath.Join("sdk", "typescript", "src", "rest.ts"),
 			},
-			absent: map[string]string{
-				"container_id": "the session list does not carry the container; SessionRecord has it and SessionInfo does not (go-quicbaas#856)",
-				"job_id":       "the session list does not carry the job it works for; SessionRecord has it and SessionInfo does not (go-quicbaas#856)",
-			},
 		},
 		{
 			tsInterface:  "SessionInfo",
@@ -107,20 +110,60 @@ func bindings() []binding {
 			goStructName: "orchestration.JobStatus",
 		},
 		{
-			tsInterface:  "AgentRegistration",
-			goStruct:     orchestration.AgentRegistration{},
-			goStructName: "orchestration.AgentRegistration",
+			tsInterface:  "FleetNode",
+			goStruct:     orchestration.FleetNode{},
+			goStructName: "orchestration.FleetNode",
 		},
+		{
+			tsInterface:  "SpawnSessionResponse",
+			goStruct:     orchestration.SpawnSessionResponse{},
+			goStructName: "orchestration.SpawnSessionResponse",
+		},
+		{
+			tsInterface:  "JobConfig",
+			goStruct:     orchestration.JobConfig{},
+			goStructName: "orchestration.JobConfig",
+		},
+		{
+			tsInterface:  "WorkerImagePromotion",
+			goStruct:     workerimage.Promotion{},
+			goStructName: "workerimage.Promotion",
+		},
+		// The tenant agent catalog.
+		{tsInterface: "Agent", tsFile: "agents.ts", goStruct: orchestration.Agent{}, goStructName: "orchestration.Agent"},
+		{tsInterface: "AgentPool", tsFile: "agents.ts", goStruct: orchestration.AgentPool{}, goStructName: "orchestration.AgentPool"},
+		{tsInterface: "AgentRef", tsFile: "agents.ts", goStruct: orchestration.AgentRef{}, goStructName: "orchestration.AgentRef"},
+		{tsInterface: "AgentUsage", tsFile: "agents.ts", goStruct: orchestration.AgentUsage{}, goStructName: "orchestration.AgentUsage"},
+		{tsInterface: "AgentAttempt", tsFile: "agents.ts", goStruct: orchestration.AgentAttempt{}, goStructName: "orchestration.AgentAttempt"},
+		{tsInterface: "ProviderEndpoint", tsFile: "agents.ts", goStruct: orchestration.ProviderEndpoint{}, goStructName: "orchestration.ProviderEndpoint"},
+		{tsInterface: "AgentAccountPolicy", tsFile: "agents.ts", goStruct: orchestration.AgentAccountPolicy{}, goStructName: "orchestration.AgentAccountPolicy"},
+		{tsInterface: "AgentPrompt", tsFile: "agents.ts", goStruct: orchestration.AgentPrompt{}, goStructName: "orchestration.AgentPrompt"},
+		{tsInterface: "AgentPlacement", tsFile: "agents.ts", goStruct: orchestration.RolePolicy{}, goStructName: "orchestration.RolePolicy"},
+		// The binding's references into it.
+		{tsInterface: "ProjectBinding", tsFile: "sdlc.ts", goStruct: sdlc.ProjectBinding{}, goStructName: "sdlc.ProjectBinding"},
+		{tsInterface: "ReviewerConfig", tsFile: "sdlc.ts", goStruct: sdlc.ReviewerConfig{}, goStructName: "sdlc.ReviewerConfig"},
+		{tsInterface: "ReviewerSelection", tsFile: "sdlc.ts", goStruct: sdlc.ReviewerSelection{}, goStructName: "sdlc.ReviewerSelection"},
 	}
+}
+
+// source reads the TypeScript file that declares b's interface.
+func (b binding) source(t *testing.T, root string) (string, string) {
+	t.Helper()
+	file := b.tsFile
+	if file == "" {
+		file = "types.ts"
+	}
+	rel := filepath.Join("sdk", "typescript", "src", file)
+	return rel, readFile(t, filepath.Join(root, rel))
 }
 
 func TestTypeScriptResponseTypesNameOnlyFieldsTheServerSends(t *testing.T) {
 	root := repoRoot(t)
-	typesSrc := readFile(t, filepath.Join(root, "sdk", "typescript", "src", "types.ts"))
 
 	for _, b := range bindings() {
 		t.Run(b.tsInterface, func(t *testing.T) {
-			tsFields := typeScriptInterfaceFields(t, typesSrc, b.tsInterface)
+			_, src := b.source(t, root)
+			tsFields := typeScriptInterfaceFields(t, src, b.tsInterface)
 			if len(tsFields) == 0 {
 				t.Fatalf("interface %s declares no fields; the parse found nothing, which is a defect in this test rather than a passing contract", b.tsInterface)
 			}
@@ -128,6 +171,15 @@ func TestTypeScriptResponseTypesNameOnlyFieldsTheServerSends(t *testing.T) {
 
 			for _, field := range tsFields {
 				switch {
+				case b.absent[field] != "":
+					// Checked BEFORE the plain case, or a debt the server has
+					// since paid would match there and never be reported —
+					// which is how job_id stayed listed as absent after
+					// SessionInfo started sending it (go-quicbaas#860).
+					if wire[field] {
+						t.Errorf("%s.%s is listed as absent from the wire (%s), but %s does send it — delete the exception",
+							b.tsInterface, field, b.absent[field], b.goStructName)
+					}
 				case wire[field]:
 					// The plain case: the names agree.
 				case b.renames[field] != "":
@@ -135,11 +187,6 @@ func TestTypeScriptResponseTypesNameOnlyFieldsTheServerSends(t *testing.T) {
 					if !wire[target] {
 						t.Errorf("%s.%s is declared as a rename of %s.%s, but that struct has no json tag %q — the rename points at nothing",
 							b.tsInterface, field, b.goStructName, target, target)
-					}
-				case b.absent[field] != "":
-					if wire[field] {
-						t.Errorf("%s.%s is listed as absent from the wire (%s), but %s does send it — delete the exception",
-							b.tsInterface, field, b.absent[field], b.goStructName)
 					}
 				default:
 					t.Errorf("%s.%s has no counterpart on %s. The browser reads this field and the server never writes it, so it renders as an em-dash and nothing reports a failure. Either the name is wrong, or declare a rename a transport performs, or record it in `absent` with the issue that will add it. The wire fields are: %s",
@@ -187,15 +234,37 @@ func TestDeclaredRenamesArePerformed(t *testing.T) {
 // that checks nothing is worse than none: it reports success.
 func TestBindingsNameRealTypes(t *testing.T) {
 	root := repoRoot(t)
-	typesSrc := readFile(t, filepath.Join(root, "sdk", "typescript", "src", "types.ts"))
 
 	for _, b := range bindings() {
-		if !strings.Contains(typesSrc, "export interface "+b.tsInterface+" {") {
-			t.Errorf("sdk/typescript/src/types.ts declares no interface %s; the binding checks nothing", b.tsInterface)
+		rel, src := b.source(t, root)
+		if !strings.Contains(src, "export interface "+b.tsInterface+" {") {
+			t.Errorf("%s declares no interface %s; the binding checks nothing", rel, b.tsInterface)
 		}
 		if len(jsonFieldsOf(t, b.goStruct)) == 0 {
 			t.Errorf("%s has no json-tagged fields; the binding checks nothing", b.goStructName)
 		}
+	}
+}
+
+// TestJSONFieldsOfReadsWhatAMarshallerWrites: a field a type's MarshalJSON
+// adds is on the wire even though no tag names it, and a tagged field is
+// still counted when its zero value is omitted. Without the first half the
+// contract refuses a TypeScript field the server does send; without the
+// second it forgets every omitempty field.
+func TestJSONFieldsOfReadsWhatAMarshallerWrites(t *testing.T) {
+	fields := jsonFieldsOf(t, orchestration.Task{})
+	for _, derived := range []string{"charged_attempts", "effective_budget", "fault_class", "fault_origin"} {
+		if !fields[derived] {
+			t.Errorf("the derived key %q that Task.MarshalJSON writes is not counted as a wire field", derived)
+		}
+	}
+	for _, omitted := range []string{"assigned_to", "retry_not_before"} {
+		if !fields[omitted] {
+			t.Errorf("the omitempty key %q is lost when the zero value is encoded", omitted)
+		}
+	}
+	if fields["taskRecord"] {
+		t.Error("the unexported embedded record leaked onto the wire as a field of its own")
 	}
 }
 
@@ -206,11 +275,41 @@ func TestBindingsNameRealTypes(t *testing.T) {
 // jsonFieldsOf is every name the struct writes onto the wire, by reflection
 // rather than by parsing — this side is exact. An embedded struct contributes
 // its own fields, as encoding/json does.
+//
+// A TYPE WITH ITS OWN MarshalJSON WRITES WHAT THAT METHOD WRITES, which its
+// tags cannot say: orchestration.Task adds the accounting it derives on read
+// (go-quicbaas#947). So such a type is also ENCODED, and the keys its zero
+// value produces join the reflected tags. The union is needed because an
+// omitempty tag is absent from a zero value's encoding, and the encoding is
+// needed because a derived key has no tag at all.
 func jsonFieldsOf(t *testing.T, v any) map[string]bool {
 	t.Helper()
 	fields := map[string]bool{}
 	collectJSONFields(reflect.TypeOf(v), fields)
+	if _, custom := v.(json.Marshaler); custom {
+		for name := range encodedKeys(t, v) {
+			fields[name] = true
+		}
+	}
 	return fields
+}
+
+// encodedKeys is the set of top-level keys v's JSON encoding carries.
+func encodedKeys(t *testing.T, v any) map[string]bool {
+	t.Helper()
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("encode %T: %v", v, err)
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(data, &object); err != nil {
+		t.Fatalf("%T does not encode as a JSON object: %v", v, err)
+	}
+	keys := make(map[string]bool, len(object))
+	for name := range object {
+		keys[name] = true
+	}
+	return keys
 }
 
 func collectJSONFields(typ reflect.Type, into map[string]bool) {

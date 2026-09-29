@@ -160,6 +160,18 @@ func (s *Server) resolveClusterCARuntimeBackend() (xkmssdk.ServiceBackend, error
 	return s.clusterCAKeyStrategy.RuntimeBackend(context.Background(), deps)
 }
 
+// clusterCARevocationStore returns the cluster CA's revocation store over the
+// same replicated (qrdb-routed, barrier-encrypted) shard as its keys and
+// certificates. Any node can issue, so any node can revoke, and every node's
+// CRL must reflect every revocation — which a node-local store cannot give.
+func (s *Server) clusterCARevocationStore() (xkmssdk.StorageBackend, error) {
+	shardClient, err := s.qrdbClient.ForShard(clusterCAShardID)
+	if err != nil {
+		return nil, err
+	}
+	return xkmssdk.NewStoragePrefixBackend(xkmssdk.NewQRDBStorageBackend(shardClient.KV()), "cluster-ca-revocations/")
+}
+
 // ClusterSecretDeliveryService builds the post-enrollment secret-delivery
 // service for the active cluster CA key strategy, or nil when the strategy
 // delivers no enrollment material (barrier/hsm) or no cluster strategy is
@@ -280,10 +292,9 @@ func (s *Server) buildClusterCAMultiIdentityConfig(caStoreType xkmssdk.StoreType
 					CommonName:   rootCN,
 					Organization: s.config.CA.RootOrganization,
 				},
-				Valid:        rootValid,
-				Keys:         []*xkmssdk.KeyConfig{newKeyConfig()},
-				KeystoreType: caStoreType,
-				IsRoot:       true,
+				Valid:  rootValid,
+				Keys:   []*xkmssdk.KeyConfig{newKeyConfig()},
+				IsRoot: true,
 			},
 			{
 				// Dedicated cluster intermediate — root signs it (ParentCA), and
@@ -293,11 +304,10 @@ func (s *Server) buildClusterCAMultiIdentityConfig(caStoreType xkmssdk.StoreType
 					CommonName:   s.clusterCACommonName(),
 					Organization: s.config.CA.RootOrganization,
 				},
-				Valid:        intermediateValid,
-				Keys:         []*xkmssdk.KeyConfig{newKeyConfig()},
-				KeystoreType: caStoreType,
-				ParentCA:     rootCN,
-				IsRoot:       false,
+				Valid:    intermediateValid,
+				Keys:     []*xkmssdk.KeyConfig{newKeyConfig()},
+				ParentCA: rootCN,
+				IsRoot:   false,
 			},
 		},
 		// The root remains the issuing identity for ordinary (TLS server) certs;

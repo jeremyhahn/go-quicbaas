@@ -34,6 +34,7 @@ import (
 
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/fips"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/qrdbadapter"
@@ -326,11 +327,10 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 
 	// Create identity store with storage backends
 	identityStore := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  userStorage,
-		GroupStorage: backendStorage,
-		RoleStorage:  roleStorage,
-		Tenants:      tenantManager,
-		Logger:       slog.Default(),
+		UserStorage: userStorage,
+		RoleStorage: roleStorage,
+		Tenants:     tenantManager,
+		Logger:      slog.Default(),
 	})
 
 	// Seed every new tenant's built-in roles through the SAME adapter
@@ -634,10 +634,8 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		// Route user/role storage to the qrdb-backed stores so a GDPR export or
 		// erasure operates on the same user record and roles the rest of the
 		// stack uses; backendStorage would expose an empty user/role view.
-		// Groups stay on backendStorage (qrdb has no Group type).
 		UserStorage:    userStorage,
 		SessionStorage: sessionStorage,
-		GroupStorage:   backendStorage,
 		RoleStorage:    roleStorage,
 		// An erasure that leaves the subject's authenticators behind has not
 		// erased them: a stored credential is personal data, and it would go on
@@ -670,15 +668,15 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 
 	// Create the shared fleet registry so orchestration has a fleet view
 	// from day one. Registration now flows through the mTLS /api/v1/agents/
-	// register endpoint (pkg/api/rest/handlers_agent_register.go) which
+	// register endpoint (pkg/api/rest/handlers_fleet_enroll.go) which
 	// publishes into this same registry.
 	//
 	// It binds to the same per-tenant KVStore as the IAM stores above, so an
 	// agent registration is durable across restarts and a barrier-isolated
 	// tenant's fleet lives inside that tenant's own barrier (own DEK +
 	// namespace) rather than a shared table.
-	if s.agentRegistry == nil {
-		s.agentRegistry = orchestration.NewAgentRegistry(
+	if s.fleetRegistry == nil {
+		s.fleetRegistry = orchestration.NewFleetRegistry(
 			iamKV,
 			orchestration.WithStoreAuditor(newOrchestrationStoreAuditor(func() iam.AuditLogger { return auditLogger })),
 		)
@@ -788,9 +786,28 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// runs, including when BootstrapAdminPIVCertPath is configured for
 	// non-interactive PIV pre-provisioning.
 	if bootstrapErr := s.firstBootBootstrap(context.Background(), components); bootstrapErr != nil {
-		// Non-fatal: log the error but do not abort the server. The operator
-		// can fix the cause (e.g., corrupt storage) and restart.
-		s.logger.WithError(bootstrapErr).Warn("First-boot bootstrap failed — no admin credential will be created this boot")
+		// FATAL, whatever the cause. A failed first-boot means no administrator
+		// exists, so nobody can administer this server — and a server nobody can
+		// administer is not a working server. The cause does not grade the
+		// severity: a missing config line and corrupt storage leave the same
+		// hole, and neither is fixable from inside a process that has already
+		// started serving.
+		//
+		// This used to warn and carry on, reasoning that the operator could fix
+		// the cause and restart. Refusing serves that identically and does not
+		// depend on the operator noticing a WARN — while carrying on yielded a
+		// server answering /health/ready with 200 that nobody could administer,
+		// which is the more dangerous of the two by a wide margin. Readiness
+		// knows only about raft, so it had nothing to say about administrability.
+		//
+		// A first-boot that SUCCEEDS but issues no certificate (no CA available)
+		// is a different, supported case: the admin principal exists, the
+		// operator is told on stderr how to finish enrollment, and bootstrap
+		// returns nil so this branch is not taken.
+		//
+		// attachIAMComponents aborts startup on any error from this function, so
+		// returning here is the refusal; no separate check is needed there.
+		return nil, &NoAdministratorError{Cause: bootstrapErr}
 	}
 
 	// Reconcile against qrdb's canonical admin role (created by first-boot in
@@ -862,10 +879,13 @@ var writeFirstBootBannerFn = func(w interface{ WriteString(string) (int, error) 
 // pre-provision the admin certificate out of band; it binds that certificate
 // instead of issuing one.
 //
-// On every subsequent boot the admin assignment exists so the function is a
-// no-op.
+// On every subsequent boot a usable system administrator exists
+// (hasSystemAdministrator) so the function is a no-op. A boot that finds a grant
+// which administers nothing — orphaned, tenant-scoped, or on an account that
+// cannot authenticate — RE-ENTERS the (idempotent) sequence instead of skipping.
 func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error {
-	// Detect first boot: any active admin assignment means a prior bootstrap ran.
+	// Detect first boot: a usable system administrator means a prior bootstrap
+	// COMPLETED. An assignment on its own does not — see hasSystemAdministrator.
 	//
 	// On a fresh cluster, IAM init runs before raft consensus is established, so
 	// this read — and the bootstrap writes that follow — initially fail with
@@ -878,9 +898,16 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 	if err != nil {
 		return &FirstBootBootstrapError{Op: "list admin assignments", Cause: err}
 	}
-	if len(assignments) > 0 {
-		// Admin already exists — nothing to do.
+	administered, err := hasSystemAdministrator(ctx, c, assignments)
+	if err != nil {
+		return err
+	}
+	if administered {
+		// A usable system administrator already exists — nothing to do.
 		return nil
+	}
+	if len(assignments) > 0 {
+		reportUnusableAdministrators(ctx, c, assignments, s.logger)
 	}
 
 	deps, users, err := s.firstBootDependencies(c)
@@ -934,27 +961,10 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 	// mtls`: enroll it as an mtls auth factor in qrdb's UserAuthFactor store.
 	// This runs BEFORE the admin assignment so a failure leaves first-boot
 	// incomplete and the next boot retries the whole (idempotent) sequence
-	// rather than leaving a privileged admin who cannot log in.
+	// rather than leaving a privileged admin who cannot log in. Every remaining
+	// step now shares that ordering — see grantFirstBootSuperAdmin.
 	if err := s.enrollFirstBootAdminCert(ctx, c, adminTenantID, user.ID, result); err != nil {
 		return err
-	}
-
-	// Grant the user a super_admin assignment so they can manage the system
-	// after collecting their certificate. Nil TenantIDs scopes the
-	// assignment to the SYSTEM tenant alone (iam.AdminAssignment.TenantIDs,
-	// #357): it passes unscoped and system-tenant permission checks —
-	// everything platform management needs — but never a check targeting a
-	// customer tenant, so this admin cannot, for example, impersonate a
-	// tenant's users. Cross-tenant administrative reach requires a separate
-	// assignment naming the tenant explicitly.
-	_, err = c.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
-		UserID:    user.ID,
-		AdminRole: iam.AdminRoleSuperAdmin,
-		TenantIDs: nil, // system-tenant scope only (#357)
-		GrantedBy: "system:first-boot",
-	})
-	if err != nil {
-		return &FirstBootBootstrapError{Op: "create admin assignment", Cause: err}
 	}
 
 	// Non-interactive PIV binding (path d, pre-provisioned deployments and
@@ -966,7 +976,8 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 			return &FirstBootBootstrapError{Op: "bind bootstrap admin PIV cert", Cause: err}
 		}
 		s.logger.Infof("Bootstrap admin %s bound to PIV cert at %s", user.ID, path)
-		return nil
+		// LAST, exactly as on the enrollment path below.
+		return s.grantFirstBootSuperAdmin(ctx, c, user.ID)
 	}
 
 	// Enroll the operator's chosen HARDWARE login factors (--admin-factor).
@@ -983,11 +994,134 @@ func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error
 		return err
 	}
 
+	// DELIVERY MUST HAVE HAPPENED BEFORE THE BOOTSTRAP IS CALLED COMPLETE.
+	//
+	// On a re-entered bootstrap qrdb's idempotent first-boot returns no
+	// AdminCertPEM, so writeAdminBundle succeeds as a NO-OP and the operator
+	// never receives the private key matching the certificate already bound to
+	// the admin. Granting the assignment there would cement that state: the next
+	// boot reads a usable administrator and starts a server whose administrator
+	// cannot log in.
+	//
+	// Checked BEFORE the banner is printed — a banner headed FIRST-BOOT COMPLETE
+	// that names no certificate is exactly the reassurance an operator must not
+	// be given here.
+	//
+	// A CA-less deployment is a different case and a supported one, which is why
+	// this asks about the CA rather than about the path alone.
+	if deps.CA != nil && banner.CertPath == "" {
+		return &FirstBootBootstrapError{Op: "deliver admin bundle", Cause: &AdminBundleNotDeliveredError{}}
+	}
+
 	// Print the enrollment banner to stderr. Use os.Stderr directly — NOT the
 	// structured logger — so operators see it regardless of log level.
 	writeFirstBootBannerFn(os.Stderr, banner)
 
+	// LAST. Every step above must have succeeded for control to arrive here.
+	return s.grantFirstBootSuperAdmin(ctx, c, user.ID)
+}
+
+// grantFirstBootSuperAdmin gives the bootstrap admin their system super_admin
+// assignment. Nil TenantIDs scopes it to the SYSTEM tenant alone
+// (iam.AdminAssignment.TenantIDs, #357): it passes unscoped and system-tenant
+// permission checks — everything platform management needs — but never a check
+// targeting a customer tenant, so this admin cannot, for example, impersonate a
+// tenant's users. Cross-tenant administrative reach requires a separate
+// assignment naming the tenant explicitly.
+//
+// IT IS THE LAST STEP OF FIRST-BOOT, and both enrollment paths end here rather
+// than granting mid-flow. The grant is what the NEXT boot reads as "bootstrap
+// completed" (via hasSystemAdministrator), so every step it vouches for must
+// have run before it is written. It used to be created before PIV binding,
+// hardware-factor enrollment and bundle delivery — three steps whose failure
+// left the grant behind, and the next boot read it as completion and served with
+// an administrator who had no usable credential. Anything added to first-boot
+// belongs BEFORE this call, never after.
+func (s *Server) grantFirstBootSuperAdmin(ctx context.Context, c *iamComponents, userID string) error {
+	if _, err := c.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
+		UserID:    userID,
+		AdminRole: iam.AdminRoleSuperAdmin,
+		TenantIDs: nil, // system-tenant scope only (#357)
+		GrantedBy: "system:first-boot",
+	}); err != nil {
+		return &FirstBootBootstrapError{Op: "create admin assignment", Cause: err}
+	}
 	return nil
+}
+
+// hasSystemAdministrator reports whether the assignments contain a usable SYSTEM
+// administrator — not merely something active.
+//
+// A COUNT IS NOT AN ADMINISTRATOR. The caller used to ask whether the listing
+// was non-empty, and ListAssignments accepts any active assignment: an orphaned
+// grant whose user was deleted, or a tenant-scoped administrator with no system
+// authority, both satisfy "len > 0" while leaving nobody able to administer the
+// platform. Skipping bootstrap on that is the same fail-open this refusal exists
+// to remove, reached by a longer route.
+//
+// Three things must hold together: the grant is SUPER-ADMIN, it is SYSTEM-WIDE
+// (no tenant scoping — that is how first-boot creates it), and the user it names
+// still exists and MAY AUTHENTICATE. The last is asked of iam.User.CanAuthenticate
+// rather than compared against a state here, so a lifecycle the store refuses to
+// log in with is refused here too, by the same rule.
+//
+// A lookup failure is not "absent": it is reported, and the caller fails closed
+// rather than guessing that nobody is there.
+func hasSystemAdministrator(ctx context.Context, c *iamComponents, assignments []*iam.AdminAssignment) (bool, error) {
+	var lookupErr error
+
+	for _, a := range assignments {
+		if a == nil || a.AdminRole != iam.AdminRoleSuperAdmin || len(a.TenantIDs) != 0 {
+			continue
+		}
+
+		user, err := c.identityStore.GetUser(ctx, qrdbsdk.SystemTenantID, a.UserID)
+		if err != nil {
+			if dberrors.IsNotFound(err) {
+				// An ORPHANED grant: the assignment outlived its user. It
+				// confers nothing, and it is a clean answer rather than a
+				// failure — absent and unreadable are different facts.
+				continue
+			}
+			// The lookup could not answer. Remember it and keep looking: another
+			// assignment may confirm an administrator outright, and only if none
+			// does is the unresolved error surfaced. Fail closed rather than read
+			// "I could not check" as "there is nobody".
+			lookupErr = err
+			continue
+		}
+		if user.CanAuthenticate() {
+			return true, nil
+		}
+		// A grant on an account that cannot authenticate confers nothing. Not an
+		// error: the assignment simply does not make anyone an administrator.
+	}
+
+	if lookupErr != nil {
+		return false, &FirstBootBootstrapError{Op: "verify bootstrap administrator", Cause: lookupErr}
+	}
+	return false, nil
+}
+
+// reportUnusableAdministrators names every system super-admin grant and why it
+// does not make anyone an administrator, before an EXISTING node re-enters
+// first-boot. Re-entering is correct — the grants confer nothing — but it is
+// never expected on a node that has been running, and without this line the
+// operator sees only the failure of whatever first-boot tried next.
+func reportUnusableAdministrators(ctx context.Context, c *iamComponents, assignments []*iam.AdminAssignment, log iamStorageLogger) {
+	for _, a := range assignments {
+		if a == nil || a.AdminRole != iam.AdminRoleSuperAdmin || len(a.TenantIDs) != 0 {
+			continue
+		}
+		user, err := c.identityStore.GetUser(ctx, qrdbsdk.SystemTenantID, a.UserID)
+		switch {
+		case err != nil:
+			log.Warnf("first-boot: super-admin grant %s names user %s, which cannot be read: %s", a.ID, a.UserID, err.Error())
+		case !user.CanAuthenticate():
+			log.Warnf("first-boot: super-admin grant %s names user %s (%s), whose lifecycle %v cannot authenticate", a.ID, a.UserID, user.Email, user.Lifecycle)
+		}
+	}
+	log.Warnf("first-boot: none of %d admin grants makes a usable system administrator; re-entering first-boot", len(assignments))
 }
 
 // firstBootDependencies assembles the seam set handed to qrdb's first-boot,
@@ -1222,11 +1356,13 @@ func (s *Server) writeAdminBundle(result *qrdbsdk.FirstBootResult) (adminEnrollm
 // shard to elect a leader before giving up. In a fresh cluster IAM init runs
 // before consensus, so the bootstrap must wait for leadership; a healthy
 // cluster elects within seconds, and an unhealthy one falls through to the
-// existing non-fatal warning after the deadline.
+// bootstrap failure after the deadline — which now refuses the boot, because a
+// node that cannot read its own admin assignments cannot establish that anyone
+// can administer it.
 const firstBootLeaderWait = 90 * time.Second
 
-// waitForAdminAssignmentsCheck lists admin assignments, retrying while the read
-// fails because the raft shard has no leader yet (the canonical
+// waitForAdminAssignmentsCheck lists the SUPER-ADMIN assignments, retrying
+// while the read fails because the raft shard has no leader yet (the canonical
 // "not leader, leader unknown" startup condition). It returns the assignments
 // once a leader serves the read, the last error after firstBootLeaderWait
 // elapses, or ctx.Err() if the context is cancelled. Using the read itself as
@@ -1239,7 +1375,17 @@ func (s *Server) waitForAdminAssignmentsCheck(ctx context.Context, c *iamCompone
 	for {
 		assignments, err := c.adminManager.ListAssignments(ctx, iam.ListAdminAssignmentsOptions{
 			ActiveOnly: true,
-			Limit:      1,
+			// UNLIMITED, and filtered to the role first-boot grants.
+			//
+			// This read used to carry Limit: 1 because its only consumer was a
+			// count. hasSystemAdministrator asks a question of the assignments
+			// themselves, and a truncated page can answer it WRONGLY: with one
+			// row returned, an orphaned or tenant-scoped grant that happened to
+			// sort first would hide a real administrator and send an already
+			// bootstrapped node back through first-boot. The storage scans every
+			// assignment and filters in memory either way, so the page limit
+			// bought nothing and could only mislead.
+			AdminRole: iam.AdminRoleSuperAdmin,
 		})
 		if err == nil {
 			return assignments, nil
@@ -1650,7 +1796,7 @@ func (s *Server) registerIAMService(grpcServer *ggrpc.Server) {
 }
 
 // OrchestratorDaemonClientAppName is the fixed OAuth2 application name the
-// central uses for its own outbound calls to remote agent daemons. The name
+// central uses for its own outbound calls to remote fleet node daemons. The name
 // is stable across restarts so the app is created once per data directory.
 const OrchestratorDaemonClientAppName = "quicbaas-orchestrator-daemon-client"
 
@@ -1675,7 +1821,7 @@ func (s *Server) ensureOrchestratorDaemonClient(ctx context.Context, appManager 
 	// application record holds (go-quicbaas#653) — and it is the whole of the
 	// central's authority AS A CLIENT of its own fleet. It confers nothing on
 	// the control plane, where the central acts under its own identity.
-	scopes := iam.DefaultAgentRuntimeScopes()
+	scopes := iam.DefaultFleetRuntimeScopes()
 
 	// Fast path: credentials already cached on disk. Trust the cache — on a
 	// corrupted file we re-bootstrap which is cheap. The cache short-circuits

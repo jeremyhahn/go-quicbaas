@@ -38,7 +38,7 @@ import (
 //   - A REFRESH of a copy a host already holds presents the grant it was
 //     released under, and is REFUSED once that grant has been revoked or has
 //     lapsed. That is the case that matters: the daemon's cache presents its
-//     grant on every refresh (pkg/agent/account_secrets.go), so a revoked grant
+//     grant on every refresh (pkg/fleet/account_secrets.go), so a revoked grant
 //     means the copy in that process ages out with nothing able to replace it.
 //   - A FIRST release presents no grant and is governed by the account's own
 //     status, project fence and spend cap — the checks that already existed.

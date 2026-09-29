@@ -229,9 +229,9 @@ func TestHandleIAMAdminCreateAssignment_NonTenantScopeIDIsNotATenant(t *testing.
 		CreateAdminAssignmentRequest: &iamsdk.CreateAdminAssignmentRequest{
 			AdminID:   "admin-1",
 			TenantID:  "t-1",
-			Scope:     iamsdk.AdminScopeGroup,
-			ScopeID:   "group-42",
-			RoleID:    string(iam.AdminRoleGroupAdmin),
+			Scope:     iamsdk.AdminScopeProject,
+			ScopeID:   "project-42",
+			RoleID:    string(iam.AdminRolePolicyAdmin),
 			GrantedBy: "owner",
 		},
 	})
@@ -244,7 +244,7 @@ func TestHandleIAMAdminCreateAssignment_NonTenantScopeIDIsNotATenant(t *testing.
 		t.Fatalf("GetAssignment failed: %v", err)
 	}
 	if len(stored.TenantIDs) != 1 || stored.TenantIDs[0] != "t-1" {
-		t.Errorf("TenantIDs = %v, want only [t-1]; a group scope id is not a tenant", stored.TenantIDs)
+		t.Errorf("TenantIDs = %v, want only [t-1]; a project scope id is not a tenant", stored.TenantIDs)
 	}
 }
 

@@ -28,6 +28,23 @@ import (
 // SDLC module tools — forge bindings and deliveries
 // =============================================================================
 
+// sdlcReviewerSchema is the JSON schema of one reviewer profile.
+var sdlcReviewerSchema = map[string]interface{}{
+	"type":        "object",
+	"description": "A reviewer profile: the agent that reviews pull requests, as its own forge identity.",
+	"properties": map[string]interface{}{
+		"name":                map[string]interface{}{"type": "string", "description": "The profile's name; required on alternates, optional on the default (reads as \"default\")"},
+		"counts_toward_merge": map[string]interface{}{"type": "boolean", "description": "Whether the profile's verdicts can land a change; unset is true on the default and false on an alternate"},
+		"agent_id":            map[string]interface{}{"type": "string", "description": "The tenant Agent the seat reviews as; it must declare the review role and supplies the backend, model and image"},
+		"login":               map[string]interface{}{"type": "string", "description": "The forge account the reviewer posts as; distinct per profile"},
+		"token_secret_ref":    map[string]interface{}{"type": "string", "description": "The tenant secret holding this profile's forge token; distinct per profile"},
+		"status_context":      map[string]interface{}{"type": "string", "description": "The commit status context; empty takes the role's default"},
+		"endpoint":            map[string]interface{}{"type": "string", "description": "The http(s) root of the model server an opencode reviewer on a local model (ollama/<name>) runs against, as its container reaches it; required for such a reviewer, refused otherwise"},
+		"host_affinity":       map[string]interface{}{"type": "string", "description": "The fleet node the reviewer must run on; strict — an offline node refuses the review"},
+		"prompt_append":       map[string]interface{}{"type": "string", "description": "Prompt material appended after the reviewer charter for every review this seat runs; at most 64 KiB"},
+	},
+}
+
 // sdlcBindingSchema is the JSON schema of a ProjectBinding argument.
 var sdlcBindingSchema = map[string]interface{}{
 	"type":        "object",
@@ -55,14 +72,15 @@ var sdlcBindingSchema = map[string]interface{}{
 			"type":        "string",
 			"description": "The registered SDLC the project follows: github-flow, trunk-based or gitflow",
 		},
-		"worker": map[string]interface{}{
-			"type":        "object",
-			"description": "The agent that writes the code",
-			"properties": map[string]interface{}{
-				"backend": map[string]interface{}{"type": "string", "description": "The ACP agent backend, e.g. claude"},
-				"model":   map[string]interface{}{"type": "string", "description": "The model it runs; empty takes the backend default"},
-				"image":   map[string]interface{}{"type": "string", "description": "The container image the worker runs in; naming one requires the sandbox"},
-			},
+		"worker": agentRefSchema("The Agent or pool that writes the code; every Agent it names declares the coding role."),
+		"worker_prompt_append": map[string]interface{}{
+			"type":        "string",
+			"description": "Prompt material appended after the worker charter for every worker session of this project; at most 64 KiB",
+		},
+		"triage": agentRefSchema("The Agent or pool that triages the project's open issues; unset takes the node's default triage Agent, then the worker."),
+		"triage_prompt_append": map[string]interface{}{
+			"type":        "string",
+			"description": "Prompt material appended after the triage charter for every triage session of this project; at most 64 KiB",
 		},
 		"verification": map[string]interface{}{
 			"type":        "array",
@@ -83,12 +101,39 @@ var sdlcBindingSchema = map[string]interface{}{
 				"reviewers":                    map[string]interface{}{"type": "object", "additionalProperties": map[string]interface{}{"type": "string"}},
 			},
 		},
+		"reviewer": sdlcReviewerSchema,
+		"reviewers": map[string]interface{}{
+			"type":        "array",
+			"description": "Alternate reviewer profiles, chosen per pull request by an operator override; advisory unless counts_toward_merge is true",
+			"items":       sdlcReviewerSchema,
+		},
 		"ranking": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"default_priority":    map[string]interface{}{"type": "integer"},
 				"analyzer_name":       map[string]interface{}{"type": "string"},
 				"declared_dependents": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+			},
+		},
+		"merge_train": map[string]interface{}{
+			"type":        "object",
+			"description": "The merge train: approved pull requests land together, CI running once per train. On by default for a self-reviewed project.",
+			"properties": map[string]interface{}{
+				"disabled": map[string]interface{}{"type": "boolean", "description": "Merge approved pull requests one at a time instead"},
+				"max_size": map[string]interface{}{"type": "integer", "description": "Changes per train; zero takes the default (5)"},
+			},
+		},
+		"rulers": map[string]interface{}{
+			"type":        "array",
+			"description": "Forge logins, beyond the repository owner and the node's configured rulers, whose comment on a parked issue is an owner ruling. Each must be the owner or a collaborator of the repository (see sdlc_collaborators).",
+			"items":       map[string]interface{}{"type": "string"},
+		},
+		"clustering": map[string]interface{}{
+			"type":        "object",
+			"description": "Issue clustering: triage adopts related ready issues as one task and one pull request. On by default.",
+			"properties": map[string]interface{}{
+				"disabled": map[string]interface{}{"type": "boolean", "description": "Make every ready issue its own task"},
+				"max_size": map[string]interface{}{"type": "integer", "description": "Issues per task, the anchor included; zero takes the default (4)"},
 			},
 		},
 	},
@@ -175,8 +220,125 @@ func (r *ToolRegistry) registerSDLCTools() {
 		},
 	})
 	r.addTool(ToolDefinition{
+		Name: "sdlc_open_work",
+		Description: "List a bound project's open work on its forge: the open pull requests the project's agent opened (number, title, head branch, CI state, review state, age) " +
+			"and the open issues carrying a label the factory writes (number, title, labels, age). Read-only: it changes nothing.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id":  tenant,
+				"project_id": map[string]interface{}{"type": "string"},
+			},
+			"required": []string{"project_id"},
+		},
+	})
+	pullRequest := func() map[string]interface{} {
+		return map[string]interface{}{
+			"tenant_id":    tenant,
+			"project_id":   map[string]interface{}{"type": "string"},
+			"pull_request": map[string]interface{}{"type": "integer", "description": "The pull request number"},
+		}
+	}
+	r.addTool(ToolDefinition{
+		Name:        "sdlc_reviewer",
+		Description: "Report which reviewer profile reviews a pull request: the operator's override when one is set, the binding's default otherwise, and whether its verdict counts toward merge.",
+		InputSchema: map[string]interface{}{
+			"type":       "object",
+			"properties": pullRequest(),
+			"required":   []string{"project_id", "pull_request"},
+		},
+	})
+	setProps := pullRequest()
+	setProps["profile"] = map[string]interface{}{"type": "string", "description": "A reviewer profile the project's binding carries"}
+	r.addTool(ToolDefinition{
+		Name: "sdlc_reviewer_set",
+		Description: "Choose which of the binding's reviewer profiles reviews one pull request. An operator verb: nothing a forge sends can set it. " +
+			"It never cancels anything: a review already running finishes, and every new review dispatch uses the chosen profile. " +
+			"An advisory profile's verdict is shown and never counted toward merge.",
+		InputSchema: map[string]interface{}{
+			"type":       "object",
+			"properties": setProps,
+			"required":   []string{"project_id", "pull_request", "profile"},
+		},
+	})
+	r.addTool(ToolDefinition{
+		Name:        "sdlc_reviewer_clear",
+		Description: "Clear a pull request's reviewer override, so the binding's default reviewer reviews it again.",
+		InputSchema: map[string]interface{}{
+			"type":       "object",
+			"properties": pullRequest(),
+			"required":   []string{"project_id", "pull_request"},
+		},
+	})
+	r.addTool(ToolDefinition{
+		Name: "sdlc_issue_create",
+		Description: "File an issue on a bound project's repository through the binding's own forge token, e.g. to split an issue into follow-ups. " +
+			"Labels must already exist on the repository (task:ready hands the issue straight to the factory); parent links the issue it was split out of. Audited.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id":  tenant,
+				"project_id": map[string]interface{}{"type": "string"},
+				"title":      map[string]interface{}{"type": "string", "description": "One line, at most 255 characters"},
+				"body":       map[string]interface{}{"type": "string"},
+				"labels":     map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+				"parent":     map[string]interface{}{"type": "integer", "description": "The issue this one was split out of; omit for none"},
+			},
+			"required": []string{"project_id", "title"},
+		},
+	})
+	r.addTool(ToolDefinition{
+		Name:        "sdlc_collaborators",
+		Description: "List the accounts that may rule on a bound project's repository: its owner, then every collaborator. The candidates for a binding's rulers. Read-only.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id":  tenant,
+				"project_id": map[string]interface{}{"type": "string"},
+			},
+			"required": []string{"project_id"},
+		},
+	})
+	r.addTool(ToolDefinition{
+		Name: "sdlc_adopt_issue",
+		Description: "Hand one forge issue back to the Software Factory: create its task, take its holds off (needs-info, escalated, blocked, the portfolio hold) and put the trigger label on. " +
+			"Name an open pull request to resume it: the task works on that pull request's own head branch, never a new one cut from the issue title. " +
+			"A ruling is appended to the task's contract and posted on the issue. Refused while a live task still holds the issue — readmit that one instead.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id":    tenant,
+				"project_id":   map[string]interface{}{"type": "string"},
+				"issue":        map[string]interface{}{"type": "integer", "description": "The issue number"},
+				"pull_request": map[string]interface{}{"type": "integer", "description": "An open pull request the task resumes, by number"},
+				"ruling":       map[string]interface{}{"type": "string", "description": "The operator's instruction to the worker"},
+			},
+			"required": []string{"project_id", "issue"},
+		},
+	})
+	r.addTool(ToolDefinition{
 		Name:        "sdlc_forges",
 		Description: "List the forge platforms this build can talk to, so an unavailable platform can be shown disabled rather than hidden.",
+		InputSchema: map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		},
+	})
+	r.addTool(ToolDefinition{
+		Name: "quicbaas_sdlc_worker_image",
+		Description: "Report the Software Factory worker image refresh on this node: whether its loop is serving, whether a pass is running or queued, " +
+			"and what the last pass did — the npm versions it worked towards, the candidate it built, every probe and smoke of its gate, the reference " +
+			"bindings were rebound to and any binding it could not rebind. Read-only; system operators only.",
+		InputSchema: map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		},
+	})
+	r.addTool(ToolDefinition{
+		Name: "quicbaas_sdlc_worker_image_refresh",
+		Description: "Queue a full worker image refresh pass now: rebuild the worker image if the npm registry has newer Claude Code or Codex CLIs than the bound " +
+			"image carries, gate it, publish it and rebind every binding naming a stale managed image. Returns at once; poll quicbaas_sdlc_worker_image for the outcome. " +
+			"System administrators only.",
 		InputSchema: map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -193,6 +355,16 @@ var sdlcTools = map[string]func(*ToolRegistry, context.Context, map[string]inter
 	"sdlc_forges":      (*ToolRegistry).executeSDLCForges,
 	"sdlc_onboard":     (*ToolRegistry).executeSDLCOnboard,
 	"sdlc_conformance": (*ToolRegistry).executeSDLCConformance,
+	"sdlc_open_work":   (*ToolRegistry).executeSDLCOpenWork,
+
+	"sdlc_reviewer":                      (*ToolRegistry).executeSDLCReviewer,
+	"sdlc_reviewer_set":                  (*ToolRegistry).executeSDLCReviewerSet,
+	"sdlc_reviewer_clear":                (*ToolRegistry).executeSDLCReviewerClear,
+	"sdlc_issue_create":                  (*ToolRegistry).executeSDLCIssueCreate,
+	"sdlc_collaborators":                 (*ToolRegistry).executeSDLCCollaborators,
+	"sdlc_adopt_issue":                   (*ToolRegistry).executeSDLCAdoptIssue,
+	"quicbaas_sdlc_worker_image":         (*ToolRegistry).executeSDLCWorkerImage,
+	"quicbaas_sdlc_worker_image_refresh": (*ToolRegistry).executeSDLCWorkerImageRefresh,
 }
 
 // isSDLCTool reports whether name is one of the module's tools.
@@ -287,6 +459,15 @@ func (r *ToolRegistry) executeSDLCConformance(ctx context.Context, args map[stri
 	return svc.Conformance(ctx, getString(args, "tenant_id"), getString(args, "project_id"))
 }
 
+// executeSDLCOpenWork answers sdlc_open_work and changes nothing.
+func (r *ToolRegistry) executeSDLCOpenWork(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	svc, err := r.getSDLCService()
+	if err != nil {
+		return nil, err
+	}
+	return svc.OpenWork(ctx, getString(args, "tenant_id"), getString(args, "project_id"))
+}
+
 // executeSDLCForges answers sdlc_forges: the forge adapters this build
 // carries.
 //
@@ -305,4 +486,121 @@ func (r *ToolRegistry) executeSDLCForges(_ context.Context, _ map[string]interfa
 		forges = append(forges, string(forgeType))
 	}
 	return map[string]interface{}{"forges": forges, "count": len(forges)}, nil
+}
+
+// executeSDLCReviewer answers sdlc_reviewer: which profile reviews one pull
+// request. It changes nothing.
+func (r *ToolRegistry) executeSDLCReviewer(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	svc, err := r.getSDLCService()
+	if err != nil {
+		return nil, err
+	}
+	return svc.ReviewerSelection(ctx, getString(args, "tenant_id"), getString(args, "project_id"), getInt(args, "pull_request"))
+}
+
+// executeSDLCReviewerSet answers sdlc_reviewer_set: an operator choosing the
+// reviewer profile for one pull request.
+func (r *ToolRegistry) executeSDLCReviewerSet(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	svc, err := r.getSDLCService()
+	if err != nil {
+		return nil, err
+	}
+	return svc.SetReviewerOverride(ctx, getString(args, "tenant_id"), getString(args, "project_id"),
+		getInt(args, "pull_request"), getString(args, "profile"))
+}
+
+// executeSDLCReviewerClear answers sdlc_reviewer_clear: the binding's default
+// reviews the pull request again.
+func (r *ToolRegistry) executeSDLCReviewerClear(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	svc, err := r.getSDLCService()
+	if err != nil {
+		return nil, err
+	}
+	return svc.ClearReviewerOverride(ctx, getString(args, "tenant_id"), getString(args, "project_id"), getInt(args, "pull_request"))
+}
+
+// executeSDLCAdoptIssue answers sdlc_adopt_issue: the issue's task is created
+// and the issue handed back to the factory.
+func (r *ToolRegistry) executeSDLCAdoptIssue(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	svc, err := r.getSDLCService()
+	if err != nil {
+		return nil, err
+	}
+	return svc.AdoptIssue(ctx, getString(args, "tenant_id"), sdlc.AdoptIssueRequest{
+		ProjectID:   getString(args, "project_id"),
+		Issue:       getInt(args, "issue"),
+		PullRequest: getInt(args, "pull_request"),
+		Ruling:      getString(args, "ruling"),
+	})
+}
+
+// executeSDLCWorkerImage answers quicbaas_sdlc_worker_image: the refresh loop's state
+// and its last pass. A host verb, so no tenant is derived.
+func (r *ToolRegistry) executeSDLCWorkerImage(ctx context.Context, _ map[string]interface{}) (interface{}, error) {
+	svc, err := r.getSDLCService()
+	if err != nil {
+		return nil, err
+	}
+	return svc.WorkerImageStatus(ctx)
+}
+
+// executeSDLCWorkerImageRefresh answers quicbaas_sdlc_worker_image_refresh: queue a
+// pass and report the status it left behind.
+func (r *ToolRegistry) executeSDLCWorkerImageRefresh(ctx context.Context, _ map[string]interface{}) (interface{}, error) {
+	svc, err := r.getSDLCService()
+	if err != nil {
+		return nil, err
+	}
+	return svc.RefreshWorkerImage(ctx)
+}
+
+// executeSDLCIssueCreate answers sdlc_issue_create: an operator filing an
+// issue on the project's bound repository.
+func (r *ToolRegistry) executeSDLCIssueCreate(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	svc, err := r.getSDLCService()
+	if err != nil {
+		return nil, err
+	}
+	labels, err := sdlcStringList(args, "labels")
+	if err != nil {
+		return nil, err
+	}
+	return svc.FileIssue(ctx, getString(args, "tenant_id"), getString(args, "project_id"), sdlc.IssueFiling{
+		Title: getString(args, "title"), Body: getString(args, "body"), Labels: labels, Parent: getInt(args, "parent"),
+	})
+}
+
+// executeSDLCCollaborators answers sdlc_collaborators and changes nothing.
+func (r *ToolRegistry) executeSDLCCollaborators(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	svc, err := r.getSDLCService()
+	if err != nil {
+		return nil, err
+	}
+	users, err := svc.Collaborators(ctx, getString(args, "tenant_id"), getString(args, "project_id"))
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"users": users, "count": len(users)}, nil
+}
+
+// sdlcStringList reads an optional list of strings, refusing any other shape
+// rather than dropping what it cannot read.
+func sdlcStringList(args map[string]interface{}, key string) ([]string, error) {
+	raw, ok := args[key]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	items, ok := raw.([]interface{})
+	if !ok {
+		return nil, &sdlc.InvalidInputError{Field: key, Message: "must be a list of strings"}
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		value, ok := item.(string)
+		if !ok {
+			return nil, &sdlc.InvalidInputError{Field: key, Message: "must be a list of strings"}
+		}
+		out = append(out, value)
+	}
+	return out, nil
 }

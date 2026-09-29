@@ -35,7 +35,7 @@
     type InferenceHistoryEntry,
   } from '../../stores/inferenceHistoryStore.svelte.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
-  import type { AgentBackendInfo, AgentRegistration, InferenceChunk } from '@quicbaas/sdk';
+  import type { AgentBackendInfo, FleetNode, InferenceChunk } from '@quicbaas/sdk';
 
   // ---------------------------------------------------------------------------
   // State
@@ -46,8 +46,8 @@
   let backendsLoading = $state(true);
   let backendsError = $state('');
 
-  // Agent fleet for host affinity
-  let agents: AgentRegistration[] = $state([]);
+  // Fleet nodes for host affinity
+  let agents: FleetNode[] = $state([]);
   let agentsLoading = $state(true);
 
   // Form fields
@@ -109,8 +109,8 @@
     return SESSION_ONLY_BACKENDS.has(b.name);
   }
 
-  // Agents filtered to those compatible with the currently selected backend.
-  const compatibleAgents = $derived.by((): AgentRegistration[] => {
+  // Fleet nodes filtered to those compatible with the currently selected backend.
+  const compatibleAgents = $derived.by((): FleetNode[] => {
     if (!selectedBackend) return agents;
     return agents.filter((a) => {
       // Match by backend field or capabilities list.
@@ -139,7 +139,7 @@
 
   onMount(() => {
     void loadBackends();
-    void loadAgents();
+    void loadFleet();
   });
 
   async function loadBackends(): Promise<void> {
@@ -169,14 +169,14 @@
     }
   }
 
-  async function loadAgents(): Promise<void> {
+  async function loadFleet(): Promise<void> {
     agentsLoading = true;
     try {
       const client = await getSDKClient();
-      const resp = await client.orchestrator.listAgents({
+      const resp = await client.orchestrator.listFleetNodes({
         tenant_id: orchestratorStore.activeTenantID,
       });
-      agents = resp.agents ?? [];
+      agents = resp.nodes ?? [];
     } catch {
       agents = [];
     } finally {
@@ -381,7 +381,7 @@
   }
 </script>
 
-<div class="p-6 space-y-6 max-w-4xl mx-auto">
+<div class="page page-narrow">
   <PageHeader
     title="Inference"
     subtitle="Send a stateless prompt to a fleet-resident backend"
@@ -407,10 +407,10 @@
           <button
             type="button"
             class="link link-primary"
-            onclick={() => navigate('agents')}
-            aria-label="Navigate to Agent Fleet to deploy an agent"
+            onclick={() => navigate('fleet')}
+            aria-label="Navigate to Fleet to deploy a node"
           >
-            Deploy an agent
+            Deploy a fleet node
           </button>
           first.
         </div>
@@ -455,14 +455,14 @@
               <div class="skeleton h-8 w-full rounded"></div>
             {:else if compatibleAgents.length === 0}
               <div class="text-xs text-base-content/40 mt-2">
-                No agents found for this backend.
+                No fleet nodes found for this backend.
                 <button
                   type="button"
                   class="link link-primary"
-                  onclick={() => navigate('agents')}
-                  aria-label="Navigate to Agent Fleet"
+                  onclick={() => navigate('fleet')}
+                  aria-label="Navigate to Fleet"
                 >
-                  Deploy an agent serving {selectedBackend} first.
+                  Deploy a fleet node serving {selectedBackend} first.
                 </button>
               </div>
             {:else}
@@ -488,7 +488,7 @@
                   class="checkbox checkbox-xs"
                   bind:checked={hostAffinityStrict}
                   disabled={inFlight}
-                  aria-label="Fail the request if the selected host is offline instead of falling back to any agent"
+                  aria-label="Fail the request if the selected host is offline instead of falling back to any fleet node"
                 />
               </label>
             {/if}
@@ -525,7 +525,7 @@
                 </div>
               {:else}
                 <div class="text-xs text-base-content/40 mb-1">
-                  No models reachable. The agent's backend may not be configured.
+                  No models reachable. The fleet node's backend may not be configured.
                 </div>
               {/if}
             {:else}

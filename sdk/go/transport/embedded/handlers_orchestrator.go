@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/page"
@@ -40,6 +41,9 @@ func handleOrchestratorSpawnSession(ctx context.Context, svc service.QuicBaaS, r
 		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "SpawnSession")
 	}
 	resp, err := agentSvc.SpawnSession(ctx, &orchestration.SpawnSessionRequest{
+		AgentID:      r.AgentID,
+		PoolID:       r.PoolID,
+		Role:         orchestration.AgentRole(r.Role),
 		Backend:      r.Backend,
 		ProjectID:    r.ProjectID,
 		Model:        r.Model,
@@ -60,14 +64,18 @@ func handleOrchestratorSpawnSession(ctx context.Context, svc service.QuicBaaS, r
 		// being AccountAuto); dropping it here would make an explicitly
 		// enumerated pool unreachable in-process.
 		AccountAllow: r.AccountAllow,
+		PromptAppend: r.PromptAppend,
 	})
 	if err != nil {
 		return nil, err
 	}
 	return &orchestratorSDK.SpawnSessionResponse{
-		SessionID:   resp.SessionID,
-		Backend:     resp.Backend,
-		ContainerID: resp.ContainerID,
+		SessionID:       resp.SessionID,
+		Backend:         resp.Backend,
+		Model:           resp.Model,
+		ContainerID:     resp.ContainerID,
+		ResolvedAgentID: resp.ResolvedAgentID,
+		Failovers:       agentAttemptsFromDomain(resp.Failovers),
 	}, nil
 }
 
@@ -252,6 +260,10 @@ func handleOrchestratorGetSpendReport(ctx context.Context, svc service.QuicBaaS,
 			SessionID: r.SessionID,
 			Round:     r.Round,
 			RoundSet:  r.RoundSet,
+			From:      embeddedInstant(r.From),
+			To:        embeddedInstant(r.To),
+			Host:      r.Host,
+			Agent:     r.Agent,
 		})
 	if err != nil {
 		return nil, err
@@ -259,30 +271,60 @@ func handleOrchestratorGetSpendReport(ctx context.Context, svc service.QuicBaaS,
 	return embeddedSpendReport(report), nil
 }
 
+// embeddedInstant reads an optional SDK instant: nil is the zero time, which
+// the report reads as "no bound".
+func embeddedInstant(at *time.Time) time.Time {
+	if at == nil {
+		return time.Time{}
+	}
+	return at.UTC()
+}
+
 // embeddedSpendReport converts the projected report into the SDK shape.
 func embeddedSpendReport(report *orchestration.SpendReport) *orchestratorSDK.GetSpendReportResponse {
 	out := &orchestratorSDK.GetSpendReportResponse{
-		Level:            orchestratorSDK.SpendLevel(report.Level),
-		TenantID:         report.TenantID,
-		ProjectID:        report.ProjectID,
-		TaskID:           report.TaskID,
-		JobID:            report.JobID,
-		SessionID:        report.SessionID,
-		Round:            report.Round,
-		Entries:          report.Entries,
-		InputTokens:      report.InputTokens,
-		OutputTokens:     report.OutputTokens,
-		TotalTokens:      report.TotalTokens,
-		ProjectName:      report.ProjectName,
-		CacheReadTokens:  report.CacheReadTokens,
-		CacheWriteTokens: report.CacheWriteTokens,
-		CostMicros:       report.CostMicros,
-		CostMeasured:     report.CostMeasured,
-		Successes:        report.Successes,
-		Failures:         report.Failures,
-		FirstAt:          report.FirstAt,
-		LastAt:           report.LastAt,
-		ChildLevel:       orchestratorSDK.SpendLevel(report.ChildLevel),
+		Level:       orchestratorSDK.SpendLevel(report.Level),
+		TenantID:    report.TenantID,
+		ProjectID:   report.ProjectID,
+		TaskID:      report.TaskID,
+		JobID:       report.JobID,
+		SessionID:   report.SessionID,
+		Round:       report.Round,
+		ProjectName: report.ProjectName,
+		SpendTotals: embeddedSpendTotals(report.ConsumptionTotals),
+		Currency:    report.Currency,
+		FirstAt:     report.FirstAt,
+		LastAt:      report.LastAt,
+		From:        report.From,
+		To:          report.To,
+		ChildLevel:  orchestratorSDK.SpendLevel(report.ChildLevel),
+
+		SubscriptionFeeMicros: report.SubscriptionFeeMicros,
+		ScopePolicyStatus:     orchestratorSDK.SpendPolicyStatus(report.ScopePolicyStatus),
+		Host:                  report.Host,
+	}
+	for _, host := range report.Hosts {
+		out.Hosts = append(out.Hosts, orchestratorSDK.SpendHost{
+			Host:         host.Host,
+			Unattributed: host.Unattributed,
+			SpendTotals:  embeddedSpendTotals(host.ConsumptionTotals),
+		})
+	}
+	for _, window := range report.ScopeWindows {
+		out.ScopeWindows = append(out.ScopeWindows, embeddedSpendWindow(window))
+	}
+	out.Agent = report.Agent
+	out.AgentPolicyStatus = orchestratorSDK.SpendPolicyStatus(report.AgentPolicyStatus)
+	for _, agent := range report.Agents {
+		out.Agents = append(out.Agents, orchestratorSDK.SpendAgent{
+			AgentID:      agent.AgentID,
+			Name:         agent.Name,
+			Unattributed: agent.Unattributed,
+			SpendTotals:  embeddedSpendTotals(agent.ConsumptionTotals),
+		})
+	}
+	for _, window := range report.AgentWindows {
+		out.AgentWindows = append(out.AgentWindows, embeddedSpendWindow(window))
 	}
 	for _, account := range report.Accounts {
 		out.Accounts = append(out.Accounts, embeddedSpendAccount(account))
@@ -291,7 +333,7 @@ func embeddedSpendReport(report *orchestration.SpendReport) *orchestratorSDK.Get
 		out.Models = append(out.Models, orchestratorSDK.SpendModel{
 			Engine:      model.Engine,
 			Model:       model.Model,
-			TotalTokens: model.TotalTokens,
+			SpendTotals: embeddedSpendTotals(model.ConsumptionTotals),
 		})
 	}
 	for _, child := range report.Children {
@@ -300,10 +342,35 @@ func embeddedSpendReport(report *orchestration.SpendReport) *orchestratorSDK.Get
 			Level:        orchestratorSDK.SpendLevel(child.Level),
 			Unattributed: child.Unattributed,
 			Name:         child.Name,
-			TotalTokens:  child.TotalTokens,
+			SpendTotals:  embeddedSpendTotals(child.ConsumptionTotals),
 		})
 	}
 	return out
+}
+
+// embeddedSpendTotals converts one set of consumption totals.
+func embeddedSpendTotals(totals orchestration.ConsumptionTotals) orchestratorSDK.SpendTotals {
+	return orchestratorSDK.SpendTotals{
+		Entries:            totals.Entries,
+		InputTokens:        totals.InputTokens,
+		OutputTokens:       totals.OutputTokens,
+		CacheReadTokens:    totals.CacheReadTokens,
+		CacheWriteTokens:   totals.CacheWriteTokens,
+		TotalTokens:        totals.TotalTokens,
+		EquivalentMicros:   totals.EquivalentMicros,
+		PricedEntries:      totals.PricedEntries,
+		UnpricedEntries:    totals.UnpricedEntries,
+		BilledMicros:       totals.BilledMicros,
+		BilledEntries:      totals.BilledEntries,
+		UnbilledEntries:    totals.UnbilledEntries,
+		DurationMillis:     totals.DurationMillis,
+		EnergyMilliWh:      totals.EnergyMilliWh,
+		ElectricityEntries: totals.ElectricityEntries,
+		Successes:          totals.Successes,
+		Failures:           totals.Failures,
+
+		MeasuredEnergyEntries: totals.MeasuredEnergyEntries,
+	}
 }
 
 // embeddedSpendAccount converts one account's contribution and allowance.
@@ -312,19 +379,14 @@ func embeddedSpendAccount(account orchestration.SpendAccount) orchestratorSDK.Sp
 		AccountID:    account.AccountID,
 		DisplayName:  account.DisplayName,
 		Provider:     account.Provider,
-		TotalTokens:  account.TotalTokens,
+		SpendTotals:  embeddedSpendTotals(account.ConsumptionTotals),
+		Billing:      orchestratorSDK.SpendAccountBilling{Mode: string(account.Billing.Mode), MonthlyFeeMicros: account.Billing.MonthlyFeeMicros},
 		PolicyStatus: orchestratorSDK.SpendPolicyStatus(account.PolicyStatus),
+
+		SubscriptionFeeMicros: account.SubscriptionFeeMicros,
 	}
 	for _, window := range account.Windows {
-		out.Windows = append(out.Windows, orchestratorSDK.SpendWindowStatus{
-			Name:            window.Name,
-			Size:            int64(window.Size),
-			MaxTokens:       window.MaxTokens,
-			UsedTokens:      window.UsedTokens,
-			RemainingTokens: window.RemainingTokens,
-			Exhausted:       window.Exhausted,
-			FreesAt:         window.FreesAt,
-		})
+		out.Windows = append(out.Windows, embeddedSpendWindow(window))
 	}
 	if account.Breaker != nil {
 		out.Breaker = &orchestratorSDK.SpendBreakerVerdict{
@@ -422,15 +484,16 @@ func handleOrchestratorListSessions(ctx context.Context, svc service.QuicBaaS, r
 	sessions := make([]*orchestratorSDK.SessionStatusResponse, len(resp.Sessions))
 	for i, s := range resp.Sessions {
 		sessions[i] = &orchestratorSDK.SessionStatusResponse{
-			SessionID:  s.SessionID,
-			Backend:    s.Backend,
-			Model:      s.Model,
-			Status:     string(s.State),
-			CreatedAt:  s.CreatedAt,
-			LastActive: s.LastActivity,
-			JobID:      s.JobID,
-			Runner:     s.Runner,
-			AgentID:    s.AgentID,
+			SessionID:   s.SessionID,
+			Backend:     s.Backend,
+			Model:       s.Model,
+			Status:      string(s.State),
+			ContainerID: s.ContainerID,
+			CreatedAt:   s.CreatedAt,
+			LastActive:  s.LastActivity,
+			JobID:       s.JobID,
+			Runner:      s.Runner,
+			AgentID:     s.AgentID,
 		}
 	}
 	return &orchestratorSDK.ListSessionsResponse{
@@ -477,6 +540,7 @@ func handleOrchestratorCreateTask(ctx context.Context, svc service.QuicBaaS, req
 		Priority:      r.Priority,
 		AttemptBudget: r.AttemptBudget,
 		Runner:        r.Runner,
+		PromptAppend:  r.PromptAppend,
 	})
 	if err != nil {
 		return nil, err
@@ -601,6 +665,71 @@ func handleOrchestratorReadmitTask(ctx context.Context, svc service.QuicBaaS, re
 		TaskID:     r.TaskID,
 		Readmitted: true,
 	}, nil
+}
+
+// convertAttentionItem converts an sdlc.AttentionItem to its SDK wire shape.
+func convertAttentionItem(item *sdlc.AttentionItem) *orchestratorSDK.AttentionItem {
+	if item == nil {
+		return nil
+	}
+	actions := make([]string, len(item.Actions))
+	for i, a := range item.Actions {
+		actions[i] = string(a)
+	}
+	return &orchestratorSDK.AttentionItem{
+		ID: item.ID, Kind: string(item.Kind),
+		ProjectID: item.ProjectID, ProjectName: item.ProjectName,
+		Subject: item.Subject, IssueRef: item.IssueRef, IssueURL: item.IssueURL,
+		BlockKind: string(item.BlockKind), Condition: string(item.Condition),
+		Question: item.Question, Recommendation: item.Recommendation, Truncated: item.Truncated,
+		RulingPosted: item.RulingPosted, Message: item.Message, Severity: item.Severity,
+		CreatedAt: item.CreatedAt, StatusChangedAt: item.StatusChangedAt, Attempts: item.Attempts,
+		Actions: actions,
+	}
+}
+
+func handleOrchestratorAttentionList(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*orchestratorSDK.AttentionListRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "AttentionList",
+			"*orchestrator.AttentionListRequest", reflect.TypeOf(req).String())
+	}
+	sdlcSvc := svc.SDLC()
+	if sdlcSvc == nil || sdlcSvc.Attention() == nil {
+		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "AttentionList")
+	}
+	result, err := sdlcSvc.Attention().List(ctx, r.TenantID,
+		sdlc.AttentionFilter{ProjectID: r.ProjectID, Kind: sdlc.AttentionKind(r.Kind)},
+		pageFromSDK(r.Params))
+	if err != nil {
+		return nil, err
+	}
+	items := make([]*orchestratorSDK.AttentionItem, len(result.Items))
+	for i, item := range result.Items {
+		items[i] = convertAttentionItem(item)
+	}
+	return &orchestratorSDK.AttentionListResponse{
+		Items: items, Count: len(items), Envelope: envelopeFromPage(result),
+	}, nil
+}
+
+func handleOrchestratorAttentionResolve(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*orchestratorSDK.AttentionResolveRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "AttentionResolve",
+			"*orchestrator.AttentionResolveRequest", reflect.TypeOf(req).String())
+	}
+	sdlcSvc := svc.SDLC()
+	if sdlcSvc == nil || sdlcSvc.Attention() == nil {
+		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "AttentionResolve")
+	}
+	item, err := sdlcSvc.Attention().Resolve(ctx, r.TenantID, r.TaskID, sdlc.AttentionResolution{
+		Action: sdlc.AttentionAction(r.Action), Answer: r.Answer,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return convertAttentionItem(item), nil
 }
 
 func handleOrchestratorDeleteTask(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -730,164 +859,164 @@ func handleOrchestratorListTaskArtifacts(ctx context.Context, svc service.QuicBa
 // Orchestrator — Agent Registry Operations
 // =============================================================================
 
-func handleOrchestratorRegisterAgent(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*orchestratorSDK.RegisterAgentRequest)
+func handleFleetRegister(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*orchestratorSDK.RegisterFleetNodeRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "RegisterAgent",
-			"*orchestrator.RegisterAgentRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "RegisterFleetNode",
+			"*orchestrator.RegisterFleetNodeRequest", reflect.TypeOf(req).String())
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
-		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "RegisterAgent")
+		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "RegisterFleetNode")
 	}
-	resp, err := agentSvc.RegisterAgent(ctx, &orchestration.RegisterAgentRequest{
-		TenantID:  r.TenantID,
-		Name:      r.Name,
-		Host:      r.Host,
-		AgentType: r.AgentType,
-		Backend:   r.Backend,
-		Model:     r.Model,
-		WorkDir:   r.WorkDir,
-		Metadata:  r.Metadata,
+	resp, err := agentSvc.RegisterFleetNode(ctx, &orchestration.RegisterFleetNodeRequest{
+		TenantID: r.TenantID,
+		Name:     r.Name,
+		Host:     r.Host,
+		NodeType: r.NodeType,
+		Backend:  r.Backend,
+		Model:    r.Model,
+		WorkDir:  r.WorkDir,
+		Metadata: r.Metadata,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &orchestratorSDK.RegisterAgentResponse{
-		Agent: convertAgentRegistration(resp.Agent),
+	return &orchestratorSDK.RegisterFleetNodeResponse{
+		Node: convertFleetNode(resp.Node),
 	}, nil
 }
 
-func handleOrchestratorGetAgent(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*orchestratorSDK.GetAgentRequest)
+func handleFleetGet(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*orchestratorSDK.GetFleetNodeRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "GetAgent",
-			"*orchestrator.GetAgentRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "GetFleetNode",
+			"*orchestrator.GetFleetNodeRequest", reflect.TypeOf(req).String())
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
-		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "GetAgent")
+		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "GetFleetNode")
 	}
-	agent, err := agentSvc.GetAgent(ctx, r.TenantID, r.AgentID)
+	agent, err := agentSvc.GetFleetNode(ctx, r.TenantID, r.NodeID)
 	if err != nil {
 		return nil, err
 	}
-	return convertAgentRegistration(agent), nil
+	return convertFleetNode(agent), nil
 }
 
-func handleOrchestratorListAgents(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*orchestratorSDK.ListAgentsRequest)
+func handleFleetList(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*orchestratorSDK.ListFleetNodesRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "ListAgents",
-			"*orchestrator.ListAgentsRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "ListFleetNodes",
+			"*orchestrator.ListFleetNodesRequest", reflect.TypeOf(req).String())
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
-		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "ListAgents")
+		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "ListFleetNodes")
 	}
-	agents, err := agentSvc.ListAgentsPage(ctx, r.TenantID, &orchestration.AgentFilter{
-		Host:      r.Host,
-		Status:    orchestration.AgentStatus(r.Status),
-		AgentType: r.AgentType,
-		Backend:   r.Backend,
-		Model:     r.Model,
+	agents, err := agentSvc.ListFleetNodesPage(ctx, r.TenantID, &orchestration.FleetNodeFilter{
+		Host:     r.Host,
+		Status:   orchestration.FleetNodeStatus(r.Status),
+		NodeType: r.NodeType,
+		Backend:  r.Backend,
+		Model:    r.Model,
 	}, pageFromSDK(r.Params))
 	if err != nil {
 		return nil, err
 	}
-	sdkAgents := make([]*orchestratorSDK.AgentRegistration, len(agents.Items))
+	sdkAgents := make([]*orchestratorSDK.FleetNode, len(agents.Items))
 	for i, a := range agents.Items {
-		sdkAgents[i] = convertAgentRegistration(a)
+		sdkAgents[i] = convertFleetNode(a)
 	}
-	return &orchestratorSDK.ListAgentsResponse{
-		Agents:   sdkAgents,
+	return &orchestratorSDK.ListFleetNodesResponse{
+		Nodes:    sdkAgents,
 		Count:    len(sdkAgents),
 		Envelope: envelopeFromPage(agents),
 	}, nil
 }
 
-func handleOrchestratorRemoveAgent(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*orchestratorSDK.RemoveAgentRequest)
+func handleFleetRemove(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*orchestratorSDK.RemoveFleetNodeRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "RemoveAgent",
-			"*orchestrator.RemoveAgentRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "RemoveFleetNode",
+			"*orchestrator.RemoveFleetNodeRequest", reflect.TypeOf(req).String())
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
-		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "RemoveAgent")
+		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "RemoveFleetNode")
 	}
-	if err := agentSvc.RemoveAgent(ctx, r.TenantID, r.AgentID); err != nil {
+	if err := agentSvc.RemoveFleetNode(ctx, r.TenantID, r.NodeID); err != nil {
 		return nil, err
 	}
-	return &orchestratorSDK.RemoveAgentResponse{AgentID: r.AgentID, Removed: true}, nil
+	return &orchestratorSDK.RemoveFleetNodeResponse{NodeID: r.NodeID, Removed: true}, nil
 }
 
-func handleOrchestratorAgentHeartbeat(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*orchestratorSDK.AgentHeartbeatRequest)
+func handleFleetHeartbeat(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*orchestratorSDK.FleetNodeHeartbeatRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "AgentHeartbeat",
-			"*orchestrator.AgentHeartbeatRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "FleetNodeHeartbeat",
+			"*orchestrator.FleetNodeHeartbeatRequest", reflect.TypeOf(req).String())
 	}
 	agentSvc := svc.Agent()
 	if agentSvc == nil {
-		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "AgentHeartbeat")
+		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "FleetNodeHeartbeat")
 	}
 	// The SDK heartbeat request carries no served-backend list, so it observes
 	// nothing and reconciles nothing.
-	if err := agentSvc.AgentHeartbeat(ctx, r.TenantID, r.AgentID, nil); err != nil {
+	if err := agentSvc.FleetNodeHeartbeat(ctx, r.TenantID, r.NodeID, nil); err != nil {
 		return nil, err
 	}
-	return &orchestratorSDK.AgentHeartbeatResponse{AgentID: r.AgentID, Heartbeat: true}, nil
+	return &orchestratorSDK.FleetNodeHeartbeatResponse{NodeID: r.NodeID, Heartbeat: true}, nil
 }
 
 // =============================================================================
 // Orchestrator — Agent Admin Operations
 // =============================================================================
 
-func handleOrchestratorDisableAgent(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*orchestratorSDK.DisableAgentRequest)
+func handleFleetDisable(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*orchestratorSDK.DisableFleetNodeRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "DisableAgent",
-			"*orchestrator.DisableAgentRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "DisableFleetNode",
+			"*orchestrator.DisableFleetNodeRequest", reflect.TypeOf(req).String())
 	}
-	adminSvc := svc.AgentAdmin()
+	adminSvc := svc.FleetAdmin()
 	if adminSvc == nil {
-		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "DisableAgent")
+		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "DisableFleetNode")
 	}
-	resp, err := adminSvc.DisableAgent(ctx, &service.DisableAgentRequest{
+	resp, err := adminSvc.DisableFleetNode(ctx, &service.DisableFleetNodeRequest{
 		TenantID: r.TenantID,
-		AgentID:  r.AgentID,
+		NodeID:   r.NodeID,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &orchestratorSDK.DisableAgentResponse{
-		AgentID:    resp.AgentID,
+	return &orchestratorSDK.DisableFleetNodeResponse{
+		NodeID:     resp.NodeID,
 		Disabled:   resp.Disabled,
 		DisabledAt: resp.DisabledAt,
 		Timestamp:  resp.Timestamp,
 	}, nil
 }
 
-func handleOrchestratorEnableAgent(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*orchestratorSDK.EnableAgentRequest)
+func handleFleetEnable(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*orchestratorSDK.EnableFleetNodeRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "EnableAgent",
-			"*orchestrator.EnableAgentRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "EnableFleetNode",
+			"*orchestrator.EnableFleetNodeRequest", reflect.TypeOf(req).String())
 	}
-	adminSvc := svc.AgentAdmin()
+	adminSvc := svc.FleetAdmin()
 	if adminSvc == nil {
-		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "EnableAgent")
+		return nil, NewUnknownMethodError("quicbaas.Orchestrator", "EnableFleetNode")
 	}
-	resp, err := adminSvc.EnableAgent(ctx, &service.EnableAgentRequest{
+	resp, err := adminSvc.EnableFleetNode(ctx, &service.EnableFleetNodeRequest{
 		TenantID: r.TenantID,
-		AgentID:  r.AgentID,
+		NodeID:   r.NodeID,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &orchestratorSDK.EnableAgentResponse{
-		AgentID:   resp.AgentID,
+	return &orchestratorSDK.EnableFleetNodeResponse{
+		NodeID:    resp.NodeID,
 		Enabled:   resp.Enabled,
 		Timestamp: resp.Timestamp,
 	}, nil
@@ -910,8 +1039,7 @@ func handleOrchestratorStartJob(ctx context.Context, svc service.QuicBaaS, req i
 	resp, err := agentSvc.StartJob(ctx, &orchestration.StartJobRequest{
 		TenantID:      r.TenantID,
 		Description:   r.Description,
-		LeadBackend:   r.LeadBackend,
-		LeadModel:     r.LeadModel,
+		Lead:          agentRefToDomain(r.Lead),
 		LeadAgentID:   r.LeadAgentID,
 		ProjectID:     r.ProjectID,
 		WorkflowName:  r.WorkflowName,
@@ -921,6 +1049,7 @@ func handleOrchestratorStartJob(ctx context.Context, svc service.QuicBaaS, req i
 		PollInterval:  r.PollInterval,
 		TaskID:        r.TaskID,
 		Attempt:       r.Attempt,
+		PromptAppend:  r.PromptAppend,
 	})
 	if err != nil {
 		return nil, err
@@ -1102,8 +1231,8 @@ func handleOrchestratorListBackendModels(ctx context.Context, svc service.QuicBa
 	// forward the request to the daemon hosting the agent. Pass the tenant ID
 	// through context so the resolver dispatches to the correct fleet.
 	lookupCtx := ctx
-	if r.AgentID != "" && r.AgentID != "any" {
-		lookupCtx = orchestration.WithHostAffinity(lookupCtx, r.AgentID)
+	if r.NodeID != "" && r.NodeID != "any" {
+		lookupCtx = orchestration.WithHostAffinity(lookupCtx, r.NodeID)
 	}
 	tenantID := r.TenantID
 	if tenantID == "" {
@@ -1210,19 +1339,19 @@ func handleProjectCreate(ctx context.Context, svc service.QuicBaaS, req interfac
 		return nil, NewUnknownMethodError("quicbaas.Project", "Create")
 	}
 	resp, err := projectSvc.CreateProject(ctx, &service.CreateProjectRequest{
-		TenantID:         r.TenantID,
-		Name:             r.Name,
-		Description:      r.Description,
-		WorkspaceAgentID: r.WorkspaceAgentID,
-		WorkspacePath:    r.WorkspacePath,
-		HostAffinity:     r.HostAffinity,
-		DefaultLeadAgent: r.DefaultLeadAgent,
-		GitRepoURL:       r.GitRepoURL,
-		GitDefaultBranch: r.GitDefaultBranch,
-		TokenBudget:      r.TokenBudget,
-		GPUMinutes:       r.GPUMinutes,
-		MaxConcurrency:   r.MaxConcurrency,
-		Metadata:         r.Metadata,
+		TenantID:             r.TenantID,
+		Name:                 r.Name,
+		Description:          r.Description,
+		WorkspaceFleetNodeID: r.WorkspaceFleetNodeID,
+		WorkspacePath:        r.WorkspacePath,
+		HostAffinity:         r.HostAffinity,
+		DefaultLeadAgent:     agentRefToDomain(r.DefaultLeadAgent),
+		GitRepoURL:           r.GitRepoURL,
+		GitDefaultBranch:     r.GitDefaultBranch,
+		Spend:                spendLimitsToOrchestration(r.Spend),
+		GPUMinutes:           r.GPUMinutes,
+		MaxConcurrency:       r.MaxConcurrency,
+		Metadata:             r.Metadata,
 
 		DefaultWorkflow:     r.DefaultWorkflow,
 		Autonomous:          r.Autonomous,
@@ -1237,6 +1366,10 @@ func handleProjectCreate(ctx context.Context, svc service.QuicBaaS, req interfac
 		GitSSHKeyName:       r.GitSSHKeyName,
 		GitSSHKeyScope:      r.GitSSHKeyScope,
 		GitSSHKeyOwner:      r.GitSSHKeyOwner,
+		WorkspaceTier:       orchestration.WorkspaceTier(r.WorkspaceTier),
+		WorkspaceTmpfsMB:    r.WorkspaceTmpfsMB,
+		ContainerMemoryMB:   r.ContainerMemoryMB,
+		SessionRotation:     orchestration.SessionRotationPolicy(r.SessionRotation),
 	})
 	if err != nil {
 		return nil, err
@@ -1294,28 +1427,34 @@ func handleProjectUpdate(ctx context.Context, svc service.QuicBaaS, req interfac
 	if projectSvc == nil {
 		return nil, NewUnknownMethodError("quicbaas.Project", "Update")
 	}
+	retirement, err := service.ParseGitSigningRetirement(r.GitSigningRetireKeyName,
+		r.GitSigningRetireKeyScope, r.GitSigningRetireKeyOwner, r.GitSigningRetiredAt)
+	if err != nil {
+		return nil, err
+	}
 	resp, err := projectSvc.UpdateProject(ctx, &service.UpdateProjectRequest{
-		TenantID:         r.TenantID,
-		ProjectID:        r.ProjectID,
-		Name:             r.Name,
-		Description:      r.Description,
-		ClearDescription: r.ClearDescription,
-		WorkspaceAgentID: r.WorkspaceAgentID,
-		WorkspacePath:    r.WorkspacePath,
-		HostAffinity:     r.HostAffinity,
-		DefaultLeadAgent: r.DefaultLeadAgent,
-		GitRepoURL:       r.GitRepoURL,
-		GitDefaultBranch: r.GitDefaultBranch,
-		GitCurrentSHA:    r.GitCurrentSHA,
-		AgentRoles:       sdkAgentRolesToOrchestration(r.AgentRoles),
-		TokenBudget:      r.TokenBudget,
-		GPUMinutes:       r.GPUMinutes,
-		MaxConcurrency:   r.MaxConcurrency,
-		Metadata:         r.Metadata,
+		TenantID:             r.TenantID,
+		ProjectID:            r.ProjectID,
+		Name:                 r.Name,
+		Description:          r.Description,
+		ClearDescription:     r.ClearDescription,
+		WorkspaceFleetNodeID: r.WorkspaceFleetNodeID,
+		WorkspacePath:        r.WorkspacePath,
+		HostAffinity:         r.HostAffinity,
+		DefaultLeadAgent:     agentRefToDomain(r.DefaultLeadAgent),
+		GitRepoURL:           r.GitRepoURL,
+		GitDefaultBranch:     r.GitDefaultBranch,
+		GitCurrentSHA:        r.GitCurrentSHA,
+		FleetNodeRoles:       sdkFleetNodeRolesToOrchestration(r.FleetNodeRoles),
+		Spend:                optionalSpendLimitsToOrchestration(r.Spend),
+		GPUMinutes:           r.GPUMinutes,
+		MaxConcurrency:       r.MaxConcurrency,
+		Metadata:             r.Metadata,
 
 		DefaultWorkflow:      r.DefaultWorkflow,
 		ClearDefaultWorkflow: r.ClearDefaultWorkflow,
 		Autonomous:           r.Autonomous,
+		Parked:               r.Parked,
 		ContextRepos:         contextReposToOrchestration(r.ContextRepos),
 		ClearContextRepos:    r.ClearContextRepos,
 		GitAuthorName:        r.GitAuthorName,
@@ -1328,6 +1467,11 @@ func handleProjectUpdate(ctx context.Context, svc service.QuicBaaS, req interfac
 		GitSSHKeyName:        r.GitSSHKeyName,
 		GitSSHKeyScope:       r.GitSSHKeyScope,
 		GitSSHKeyOwner:       r.GitSSHKeyOwner,
+		GitSigningRetire:     retirement,
+		WorkspaceTier:        orchestration.WorkspaceTier(r.WorkspaceTier),
+		WorkspaceTmpfsMB:     r.WorkspaceTmpfsMB,
+		ContainerMemoryMB:    r.ContainerMemoryMB,
+		SessionRotation:      orchestration.SessionRotationPolicy(r.SessionRotation),
 	})
 	if err != nil {
 		return nil, err
@@ -1389,55 +1533,55 @@ func handleProjectList(ctx context.Context, svc service.QuicBaaS, req interface{
 	}, nil
 }
 
-func handleProjectGrantAgentRole(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*projectSDK.GrantAgentRoleRequest)
+func handleProjectGrantFleetNodeRole(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*projectSDK.GrantFleetNodeRoleRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Project", "GrantAgentRole",
-			"*project.GrantAgentRoleRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Project", "GrantFleetNodeRole",
+			"*project.GrantFleetNodeRoleRequest", reflect.TypeOf(req).String())
 	}
 	projectSvc := svc.Project()
 	if projectSvc == nil {
-		return nil, NewUnknownMethodError("quicbaas.Project", "GrantAgentRole")
+		return nil, NewUnknownMethodError("quicbaas.Project", "GrantFleetNodeRole")
 	}
-	resp, err := projectSvc.GrantAgentRole(ctx, &service.GrantAgentRoleRequest{
-		TenantID:  r.TenantID,
-		ProjectID: r.ProjectID,
-		AgentID:   r.AgentID,
-		Role:      orchestration.ProjectRole(r.Role),
+	resp, err := projectSvc.GrantFleetNodeRole(ctx, &service.GrantFleetNodeRoleRequest{
+		TenantID:    r.TenantID,
+		ProjectID:   r.ProjectID,
+		FleetNodeID: r.FleetNodeID,
+		Role:        orchestration.ProjectRole(r.Role),
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &projectSDK.GrantAgentRoleResponse{
-		ProjectID: resp.ProjectID,
-		AgentID:   resp.AgentID,
-		Role:      projectSDK.ProjectRole(resp.Role),
-		Timestamp: resp.Timestamp,
+	return &projectSDK.GrantFleetNodeRoleResponse{
+		ProjectID:   resp.ProjectID,
+		FleetNodeID: resp.FleetNodeID,
+		Role:        projectSDK.ProjectRole(resp.Role),
+		Timestamp:   resp.Timestamp,
 	}, nil
 }
 
-func handleProjectRevokeAgentRole(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*projectSDK.RevokeAgentRoleRequest)
+func handleProjectRevokeFleetNodeRole(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*projectSDK.RevokeFleetNodeRoleRequest)
 	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Project", "RevokeAgentRole",
-			"*project.RevokeAgentRoleRequest", reflect.TypeOf(req).String())
+		return nil, NewInvalidRequestTypeError("quicbaas.Project", "RevokeFleetNodeRole",
+			"*project.RevokeFleetNodeRoleRequest", reflect.TypeOf(req).String())
 	}
 	projectSvc := svc.Project()
 	if projectSvc == nil {
-		return nil, NewUnknownMethodError("quicbaas.Project", "RevokeAgentRole")
+		return nil, NewUnknownMethodError("quicbaas.Project", "RevokeFleetNodeRole")
 	}
-	resp, err := projectSvc.RevokeAgentRole(ctx, &service.RevokeAgentRoleRequest{
-		TenantID:  r.TenantID,
-		ProjectID: r.ProjectID,
-		AgentID:   r.AgentID,
+	resp, err := projectSvc.RevokeFleetNodeRole(ctx, &service.RevokeFleetNodeRoleRequest{
+		TenantID:    r.TenantID,
+		ProjectID:   r.ProjectID,
+		FleetNodeID: r.FleetNodeID,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &projectSDK.RevokeAgentRoleResponse{
-		ProjectID: resp.ProjectID,
-		AgentID:   resp.AgentID,
-		Timestamp: resp.Timestamp,
+	return &projectSDK.RevokeFleetNodeRoleResponse{
+		ProjectID:   resp.ProjectID,
+		FleetNodeID: resp.FleetNodeID,
+		Timestamp:   resp.Timestamp,
 	}, nil
 }
 
@@ -1490,12 +1634,19 @@ func convertTask(t *orchestration.Task) *orchestratorSDK.Task {
 		BlockKind:                    string(t.BlockKind),
 		StatusChangedAt:              t.StatusChangedAt,
 		Runner:                       t.Runner,
+		PromptAppend:                 t.PromptAppend,
 		Routing: orchestratorSDK.TaskRouting{
 			Backend:      t.Routing.Backend,
 			HostAffinity: t.Routing.HostAffinity,
 			GpuRequired:  t.Routing.GpuRequired,
 		},
-		DispatchReason: t.DispatchReason,
+		DispatchReason:   t.DispatchReason,
+		BlockFaultClass:  t.BlockFaultClass,
+		ConclusionReason: string(t.ConclusionReason),
+		ChargedAttempts:  t.ChargedAttempts(),
+		EffectiveBudget:  t.EffectiveAttemptBudget(),
+		FaultClass:       t.FaultClass(),
+		FaultOrigin:      string(t.FaultOrigin()),
 	}
 }
 
@@ -1575,18 +1726,18 @@ func taskSourceFromSDK(src *orchestratorSDK.TaskSource) *orchestration.TaskSourc
 // orchestration.TaskStatusesFrom / JobStatesFrom refuse it instead, and an
 // embedded caller now meets the same refusal a REST caller does.
 
-func convertAgentRegistration(a *orchestration.AgentRegistration) *orchestratorSDK.AgentRegistration {
+func convertFleetNode(a *orchestration.FleetNode) *orchestratorSDK.FleetNode {
 	if a == nil {
 		return nil
 	}
-	return &orchestratorSDK.AgentRegistration{
+	return &orchestratorSDK.FleetNode{
 		ID:           a.ID,
 		TenantID:     a.TenantID,
 		Name:         a.Name,
 		Host:         a.Host,
 		Backend:      a.Backend,
 		Model:        a.Model,
-		AgentType:    a.AgentType,
+		NodeType:     a.NodeType,
 		Status:       string(a.Status),
 		WorkDir:      a.WorkDir,
 		LastSeen:     a.LastSeen,
@@ -1630,6 +1781,7 @@ func convertJobStatus(s *orchestration.JobStatus) *orchestratorSDK.JobStatus {
 		SessionIDs:    s.SessionIDs,
 		Stage:         s.Stage,
 		Runner:        s.Runner,
+		PromptAppend:  s.PromptAppend,
 
 		// Provenance — the in-process transport reads the domain record
 		// directly, so it is the one converter with nothing standing between
@@ -1754,21 +1906,30 @@ func convertProjectToSDK(p *orchestration.Project) *projectSDK.ProjectInfo {
 	if p == nil {
 		return nil
 	}
-	agentRoles := make(map[string]projectSDK.ProjectRole, len(p.Permissions.AgentRoles))
-	for id, role := range p.Permissions.AgentRoles {
-		agentRoles[id] = projectSDK.ProjectRole(role)
+	fleetNodeRoles := make(map[string]projectSDK.ProjectRole, len(p.Permissions.FleetNodeRoles))
+	for id, role := range p.Permissions.FleetNodeRoles {
+		fleetNodeRoles[id] = projectSDK.ProjectRole(role)
 	}
 	return &projectSDK.ProjectInfo{
 		ID:               p.ID,
 		TenantID:         p.TenantID,
 		Name:             p.Name,
 		Description:      p.Description,
-		Workspace:        projectSDK.ProjectWorkspace{AgentID: p.Workspace.AgentID, Path: p.Workspace.Path},
+		Workspace:        projectSDK.ProjectWorkspace{FleetNodeID: p.Workspace.FleetNodeID, Path: p.Workspace.Path},
 		HostAffinity:     p.HostAffinity,
-		DefaultLeadAgent: p.DefaultLeadAgent,
+		DefaultLeadAgent: agentRefFromDomain(p.DefaultLeadAgent),
 		DefaultWorkflow:  p.DefaultWorkflow,
 		Autonomous:       p.Autonomous,
+		Parked:           p.Parked,
+		ParkedAt:         p.ParkedAt,
+		ParkedBy:         p.ParkedBy,
 		ContextRepos:     contextReposToSDK(p.ContextRepos),
+		Storage: projectSDK.ProjectStorage{
+			WorkspaceTier:     projectSDK.WorkspaceTier(p.Storage.WorkspaceTier),
+			WorkspaceTmpfsMB:  p.Storage.WorkspaceTmpfsMB,
+			ContainerMemoryMB: p.Storage.ContainerMemoryMB,
+		},
+		SessionRotation: projectSDK.SessionRotationPolicy(p.SessionRotation),
 		Git: projectSDK.ProjectGit{
 			RepoURL:       p.Git.RepoURL,
 			DefaultBranch: p.Git.DefaultBranch,
@@ -1778,33 +1939,129 @@ func convertProjectToSDK(p *orchestration.Project) *projectSDK.ProjectInfo {
 				Enabled:   p.Git.Signing.Enabled,
 				Algorithm: p.Git.Signing.Algorithm,
 				Key:       projectSDK.KMSKeyRef{Name: p.Git.Signing.Key.Name, Scope: p.Git.Signing.Key.Scope, Owner: p.Git.Signing.Key.Owner},
+				Retired:   retiredSigningKeysToSDK(p.Git.Signing.Retired),
 			},
 			SSHKey: projectSDK.KMSKeyRef{Name: p.Git.SSHKey.Name, Scope: p.Git.SSHKey.Scope, Owner: p.Git.SSHKey.Owner},
 		},
 		Permissions: projectSDK.ProjectPermissions{
-			AgentRoles: agentRoles,
+			FleetNodeRoles: fleetNodeRoles,
 		},
 		Quotas: projectSDK.ProjectQuotas{
-			TokenBudget:    p.Quotas.TokenBudget,
 			GPUMinutes:     p.Quotas.GPUMinutes,
 			MaxConcurrency: p.Quotas.MaxConcurrency,
 		},
+		Spend:     spendLimitsFromOrchestration(p.Spend),
 		Metadata:  p.Metadata,
 		CreatedAt: p.CreatedAt,
 		UpdatedAt: p.UpdatedAt,
 	}
 }
 
-// sdkAgentRolesToOrchestration converts an SDK-level agent role map to its
+// sdkFleetNodeRolesToOrchestration converts an SDK-level agent role map to its
 // orchestration-domain equivalent. Returns nil when the input map is nil so
 // the service-layer Update can distinguish "leave unchanged" from "clear all".
-func sdkAgentRolesToOrchestration(roles map[string]projectSDK.ProjectRole) map[string]orchestration.ProjectRole {
+func sdkFleetNodeRolesToOrchestration(roles map[string]projectSDK.ProjectRole) map[string]orchestration.ProjectRole {
 	if roles == nil {
 		return nil
 	}
 	out := make(map[string]orchestration.ProjectRole, len(roles))
 	for id, role := range roles {
 		out[id] = orchestration.ProjectRole(role)
+	}
+	return out
+}
+
+// embeddedSpendWindow converts one window and the usage against it.
+func embeddedSpendWindow(window orchestration.SpendWindowStatus) orchestratorSDK.SpendWindowStatus {
+	return orchestratorSDK.SpendWindowStatus{
+		Name:                      window.Name,
+		Size:                      int64(window.Size),
+		MaxTokens:                 window.MaxTokens,
+		UsedTokens:                window.UsedTokens,
+		RemainingTokens:           window.RemainingTokens,
+		MaxEquivalentMicros:       window.MaxEquivalentMicros,
+		UsedEquivalentMicros:      window.UsedEquivalentMicros,
+		RemainingEquivalentMicros: window.RemainingEquivalentMicros,
+		Exhausted:                 window.Exhausted,
+		FreesAt:                   window.FreesAt,
+	}
+}
+
+// tenantSpendAccessorOf resolves the in-process tenant spend-policy store.
+func tenantSpendAccessorOf(svc service.QuicBaaS, method string) (service.TenantSpendPolicySource, error) {
+	agentSvc := svc.Agent()
+	if agentSvc == nil {
+		return nil, NewUnknownMethodError("quicbaas.Orchestrator", method)
+	}
+	accessor, ok := agentSvc.(service.TenantSpendPolicySource)
+	if !ok {
+		return nil, NewUnknownMethodError("quicbaas.Orchestrator", method)
+	}
+	return accessor, nil
+}
+
+// handleOrchestratorGetTenantSpendPolicy answers GetTenantSpendPolicy in
+// process. service.GetTenantSpendPolicy scopes the storage namespace.
+func handleOrchestratorGetTenantSpendPolicy(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*orchestratorSDK.GetTenantSpendPolicyRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "GetTenantSpendPolicy",
+			"*orchestrator.GetTenantSpendPolicyRequest", reflect.TypeOf(req).String())
+	}
+	accessor, err := tenantSpendAccessorOf(svc, "GetTenantSpendPolicy")
+	if err != nil {
+		return nil, err
+	}
+	report, err := service.GetTenantSpendPolicy(ctx, accessor, r.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	return embeddedTenantSpendPolicy(report), nil
+}
+
+// handleOrchestratorSetTenantSpendPolicy answers SetTenantSpendPolicy in
+// process.
+func handleOrchestratorSetTenantSpendPolicy(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*orchestratorSDK.SetTenantSpendPolicyRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.Orchestrator", "SetTenantSpendPolicy",
+			"*orchestrator.SetTenantSpendPolicyRequest", reflect.TypeOf(req).String())
+	}
+	accessor, err := tenantSpendAccessorOf(svc, "SetTenantSpendPolicy")
+	if err != nil {
+		return nil, err
+	}
+	report, err := service.SetTenantSpendPolicy(ctx, accessor, r.TenantID, spendLimitsToOrchestration(r.Limits))
+	if err != nil {
+		return nil, err
+	}
+	return embeddedTenantSpendPolicy(report), nil
+}
+
+// embeddedTenantSpendPolicy converts a tenant's limits and window usage.
+func embeddedTenantSpendPolicy(report *orchestration.TenantSpendPolicyReport) *orchestratorSDK.TenantSpendPolicy {
+	out := &orchestratorSDK.TenantSpendPolicy{
+		TenantID: report.TenantID,
+		Limits:   spendLimitsFromOrchestration(report.Limits),
+	}
+	if !report.UpdatedAt.IsZero() {
+		updated := report.UpdatedAt
+		out.UpdatedAt = &updated
+	}
+	for _, window := range report.Windows {
+		out.Windows = append(out.Windows, embeddedSpendWindow(window))
+	}
+	return out
+}
+
+// retiredSigningKeysToSDK renders a project's trusted signing history.
+func retiredSigningKeysToSDK(keys []orchestration.RetiredSigningKey) []projectSDK.RetiredSigningKey {
+	if len(keys) == 0 {
+		return nil
+	}
+	out := make([]projectSDK.RetiredSigningKey, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, projectSDK.RetiredSigningKey{PublicKey: key.PublicKey, Name: key.Name, RetiredAt: key.RetiredAt})
 	}
 	return out
 }

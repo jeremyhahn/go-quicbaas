@@ -14,6 +14,7 @@
 package sdlc
 
 import (
+	"context"
 	"sort"
 	"strconv"
 	"strings"
@@ -194,4 +195,44 @@ func rerunUnsupported(triage ChecksTriage, headSHA, why string) string {
 	b.WriteString("\n")
 	b.WriteString(triage.Account(headSHA))
 	return b.String()
+}
+
+// auditCIRerun is the job audit event of one automatic re-run the engine asked
+// the forge for (go-quicbaas#1011): which check, on which head, why, and how
+// much of the budget it spent. The durable record is the delivery's
+// CIReruns; this is the line a reader of the job's own trail sees.
+const auditCIRerun = "sdlc:ci_rerun"
+
+// ciRerunAuditKey carries the running job's audit sink to the review gate.
+type ciRerunAuditKey struct{}
+
+// withCIRerunAudit hands the review gate the job's audit sink for the rounds
+// run under ctx.
+//
+// THROUGH THE CONTEXT, because the gate is one validator shared by every job
+// and a job's audit trail belongs to its run: the runner is the only party
+// holding both, and it holds them exactly for the duration of the call.
+func withCIRerunAudit(ctx context.Context, audit func(eventType, details string)) context.Context {
+	if audit == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, ciRerunAuditKey{}, audit)
+}
+
+// auditRerun records one re-run on the job's audit trail, when the job that
+// asked for it supplied one.
+func auditRerun(ctx context.Context, record CIRerunRecord, attempt, budget int) {
+	audit, ok := ctx.Value(ciRerunAuditKey{}).(func(eventType, details string))
+	if !ok {
+		return
+	}
+	details := "check=" + record.Check +
+		" head=" + shortSHA(record.HeadSHA) +
+		" run=" + record.ForgeRunID +
+		" signature=" + record.Signature +
+		" attempt=" + strconv.Itoa(attempt) + "/" + strconv.Itoa(budget)
+	if record.Failure != "" {
+		details += " refused=" + record.Failure
+	}
+	audit(auditCIRerun, details)
 }

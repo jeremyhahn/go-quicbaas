@@ -70,12 +70,12 @@ export interface Palette {
  */
 export const PALETTES: Readonly<Record<ThemeName, Palette>> = {
   light: {
-    base100: '#f7f5f1',
-    base200: '#eeebe5',
-    base300: '#dcd7cf',
-    baseContent: '#1d1a15',
-    contentSecondary: '#4b4742',
-    contentTertiary: '#615d56',
+    base100: '#f5f6f8',
+    base200: '#eceef1',
+    base300: '#dadee3',
+    baseContent: '#15181c',
+    contentSecondary: '#474d56',
+    contentTertiary: '#565c66',
     primary: '#06489c',
     primaryContent: '#ffffff',
     secondary: '#c0401f',
@@ -90,16 +90,16 @@ export const PALETTES: Readonly<Record<ThemeName, Palette>> = {
     errorContent: '#ffffff',
     info: '#005ba0',
     infoContent: '#ffffff',
-    neutral: '#302d28',
-    neutralContent: '#f7f5f1',
+    neutral: '#2b3036',
+    neutralContent: '#f5f6f8',
   },
   dark: {
-    base100: '#100d09',
-    base200: '#17130e',
-    base300: '#231f18',
-    baseContent: '#e8e4dd',
-    contentSecondary: '#a8a49e',
-    contentTertiary: '#908b84',
+    base100: '#0e1013',
+    base200: '#15181c',
+    base300: '#20242a',
+    baseContent: '#e4e7eb',
+    contentSecondary: '#a6acb4',
+    contentTertiary: '#8e949d',
     primary: '#79afff',
     primaryContent: '#061223',
     secondary: '#f28058',
@@ -114,8 +114,8 @@ export const PALETTES: Readonly<Record<ThemeName, Palette>> = {
     errorContent: '#1c0203',
     info: '#69b5f5',
     infoContent: '#000e1d',
-    neutral: '#312d27',
-    neutralContent: '#e8e4dd',
+    neutral: '#2a2f36',
+    neutralContent: '#e4e7eb',
   },
 };
 
@@ -141,7 +141,7 @@ export const STATUS_TONES: Readonly<Record<ThemeName, Record<Tone, StatusTone>>>
     error: { bg: '#ffe7e4', fg: '#9b0007' },
     info: { bg: '#e1f1ff', fg: '#004a88' },
     primary: { bg: '#e4efff', fg: '#013e8b' },
-    neutral: { bg: '#f1eee9', fg: '#403d37' },
+    neutral: { bg: '#e2e5e9', fg: '#3a4048' },
   },
   dark: {
     success: { bg: '#022710', fg: '#58c97d' },
@@ -149,7 +149,7 @@ export const STATUS_TONES: Readonly<Record<ThemeName, Record<Tone, StatusTone>>>
     error: { bg: '#371112', fg: '#f66c6d' },
     info: { bg: '#01213a', fg: '#69b5f5' },
     primary: { bg: '#0b1f3b', fg: '#79afff' },
-    neutral: { bg: '#221f19', fg: '#bbb7b0' },
+    neutral: { bg: '#272c32', fg: '#b5bbc3' },
   },
 };
 

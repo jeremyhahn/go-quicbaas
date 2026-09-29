@@ -18,7 +18,10 @@ import (
 	"errors"
 	"log/slog"
 	"slices"
+	"strconv"
+	"strings"
 	"sync/atomic"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
@@ -55,9 +58,40 @@ type SDLCServiceConfig struct {
 	Secrets  SecretsService
 	Guard    sdlc.RepoHostGuard
 
+	// Verification is the operator's command allowlist
+	// (orchestration.verification_commands). Bind and Onboard refuse a
+	// binding whose verification names a command it does not carry, so the
+	// refusal happens where the binding is written rather than after a paid
+	// worker turn (X14). Its zero value refuses every command, exactly as the
+	// guard does at validation.
+	Verification orchestration.ExecutionGuard
+
 	// ProjectWriter persists the project Bind turned autonomous.
 	// orchestration.ProjectStore satisfies it.
 	ProjectWriter ProjectWriter
+
+	// Tasks is the engine's own task service: the attention inbox pages
+	// blocked tasks and drives their resolution through it (readmit,
+	// complete, bump the review-round bonus), and it doubles as the
+	// agent_offline alert's fleet reader. Required.
+	Tasks orchestration.AgentService
+
+	// Accounts is the pooled-provider-account store, read for the attention
+	// inbox's account_error alert (a pooled credential whose last refresh
+	// failed). Optional: a node with no accounts configured (no
+	// secretsManager wired, see lifecycle_orchestration.go) passes nil, and
+	// the alert kind is simply never reported rather than the module
+	// refusing to start.
+	Accounts orchestration.AccountStore
+
+	// Barrier reports the CALLING TENANT's own barrier state, read for the
+	// attention inbox's barrier_sealed alert (owner ruling, go-quicbaas#1020:
+	// the alert watches each tenant's own barrier, never the system barrier
+	// — a sealed system barrier takes the whole API down, so the inbox could
+	// not render it anyway). Optional, same as Accounts: nil before the
+	// embedded qrdb node's tenant service is reachable simply omits the
+	// alert kind.
+	Barrier sdlc.AttentionBarrierReader
 
 	// WebhookPublicURL is THIS NODE's externally reachable base URL, the
 	// origin a forge delivers to. Required.
@@ -73,6 +107,20 @@ type SDLCServiceConfig struct {
 	// make: per-call deadlines and the retry of unanswered calls. A zero field
 	// takes sdlc.DefaultForgeTransport's.
 	ForgeTransport sdlc.ForgeTransport
+
+	// Rulers is the node's configured ruler policy: the forge logins whose
+	// comment on a parked issue is an owner ruling, per tenant. The attention
+	// inbox's "ruling posted" flag reads it; a malformed policy is refused.
+	Rulers sdlc.RulerPolicy
+
+	// Auditor records every issue an operator files. Optional at
+	// construction, but FileIssue refuses while none is wired: an operator
+	// write to a forge is never made unaudited.
+	Auditor sdlc.IssueAuditor
+
+	// Agents is the tenant agent catalog a binding's worker, triage and
+	// review seats are checked against when it is bound. Required.
+	Agents sdlc.AgentCatalog
 
 	// Logger records the bind-time notice that a system-tenant binding runs
 	// the SDLC worker at SYSTEM privilege. Optional; a nil logger falls back
@@ -94,10 +142,17 @@ type SDLCService struct {
 	projectWriter ProjectWriter
 	secrets       SecretsService
 	guard         sdlc.RepoHostGuard
+	verification  orchestration.ExecutionGuard
 	onboarder     *sdlc.Onboarder
 	transport     sdlc.ForgeTransport
 	logger        *slog.Logger
+	agents        sdlc.AgentCatalog
 	nudger        atomic.Pointer[nudgerHolder]
+	reviews       atomic.Pointer[sdlc.ReviewDispatcher]
+	workerImage   atomic.Pointer[workerImageHolder]
+	attention     *sdlc.AttentionService
+	auditor       sdlc.IssueAuditor
+	adopter       *sdlc.IssueAdopter
 }
 
 type nudgerHolder struct {
@@ -105,10 +160,14 @@ type nudgerHolder struct {
 }
 
 var (
-	_ sdlc.ForgeResolver         = (*SDLCService)(nil)
-	_ sdlc.WebhookSecretResolver = (*SDLCService)(nil)
-	_ sdlc.BindingReader         = (*SDLCService)(nil)
-	_ sdlc.ProjectNudger         = (*SDLCService)(nil)
+	_ sdlc.ForgeResolver          = (*SDLCService)(nil)
+	_ sdlc.WebhookSecretResolver  = (*SDLCService)(nil)
+	_ sdlc.BindingReader          = (*SDLCService)(nil)
+	_ sdlc.ProjectNudger          = (*SDLCService)(nil)
+	_ sdlc.ReviewerOverrideReader = (*SDLCService)(nil)
+	_ sdlc.ProjectReader          = (*SDLCService)(nil)
+
+	_ orchestration.AgentUsageReporter = (*SDLCService)(nil)
 )
 
 // NewSDLCService wires the service; every collaborator is required.
@@ -124,6 +183,10 @@ func NewSDLCService(cfg SDLCServiceConfig) (*SDLCService, error) {
 		return nil, &sdlc.InvalidInputError{Field: "secrets", Message: "forge tokens and webhook secrets live in the tenant's secrets"}
 	case cfg.ProjectWriter == nil:
 		return nil, &sdlc.InvalidInputError{Field: "project_writer", Message: "binding turns the project autonomous, which has to be persisted"}
+	case cfg.Tasks == nil:
+		return nil, &sdlc.InvalidInputError{Field: "tasks", Message: "the attention inbox reads and resolves blocked tasks through the engine's task service"}
+	case cfg.Agents == nil:
+		return nil, &sdlc.InvalidInputError{Field: "agents", Message: "a binding's agents are checked against the tenant agent catalog"}
 	}
 	// Refused here rather than at the first forge call, which would fail
 	// every project's first sweep on a knob the operator set once.
@@ -136,18 +199,60 @@ func NewSDLCService(cfg SDLCServiceConfig) (*SDLCService, error) {
 	}
 	svc := &SDLCService{
 		store: cfg.Store, routes: cfg.Routes, projects: cfg.Projects, projectWriter: cfg.ProjectWriter,
-		secrets: cfg.Secrets, guard: cfg.Guard, transport: cfg.ForgeTransport, logger: logger,
+		secrets: cfg.Secrets, guard: cfg.Guard, verification: cfg.Verification, transport: cfg.ForgeTransport, logger: logger,
+		auditor: cfg.Auditor, agents: cfg.Agents,
 	}
 	onboarder, err := sdlc.NewOnboarder(svc, svc, cfg.WebhookPublicURL)
 	if err != nil {
 		return nil, err
 	}
+	// Accounts and Barrier are wired straight through from cfg — nil is a
+	// valid, honest "not configured on this node" rather than a refusal to
+	// start.
+	attention, err := sdlc.NewAttentionService(sdlc.AttentionServiceConfig{
+		Tasks: cfg.Tasks, Bindings: svc, Forges: svc, Projects: svc, Fleet: cfg.Tasks,
+		Accounts: cfg.Accounts, Barrier: cfg.Barrier, Rulers: cfg.Rulers,
+	})
+	if err != nil {
+		return nil, err
+	}
+	adopter, err := sdlc.NewIssueAdopter(cfg.Tasks, svc, svc)
+	if err != nil {
+		return nil, err
+	}
+	svc.attention = attention
+	svc.adopter = adopter
 	svc.onboarder = onboarder
 	return svc, nil
 }
 
 // Store returns the module's record store.
 func (s *SDLCService) Store() *sdlc.Store { return s.store }
+
+// Attention returns the attention inbox service.
+func (s *SDLCService) Attention() *sdlc.AttentionService { return s.attention }
+
+// AdoptIssue hands one issue back to the factory on an operator's
+// instruction: the task is created for it — on the named pull request's own
+// branch when one is named — the issue's holds come off and the ruling is
+// posted. See sdlc.IssueAdopter.
+//
+// THE TENANT IS STAMPED ON THE CONTEXT when the caller's carries none, so the
+// engine's tenant guard admits the task in the tenant the request was
+// admitted to, and never in some other one: a context that already names a
+// tenant is left exactly as it is.
+func (s *SDLCService) AdoptIssue(ctx context.Context, tenantID string, req sdlc.AdoptIssueRequest) (*sdlc.Adoption, error) {
+	return s.adopter.Adopt(projectStoreContext(ctx, tenantID), tenantID, req)
+}
+
+// Get implements sdlc.ProjectReader: the orchestration Project a binding or
+// a task's ProjectID names. It is the same read Bind and Conformance already
+// make (see project below), exposed so the attention inbox can resolve a
+// parked task's project display name through the one port every other SDLC
+// verb already trusts.
+func (s *SDLCService) Get(ctx context.Context, tenantID, projectID string) (*orchestration.Project, error) {
+	return s.project(ctx, tenantID, projectID)
+}
 
 // Routes returns the webhook route index.
 func (s *SDLCService) Routes() *sdlc.WebhookRouteIndex { return s.routes }
@@ -185,6 +290,20 @@ func (s *SDLCService) Bind(ctx context.Context, tenantID string, binding *sdlc.P
 	if err := binding.Validate(); err != nil {
 		return nil, err
 	}
+	// EVERY AGENT REFERENCE IS CHECKED WHERE THE OPERATOR IS LOOKING. A
+	// worker naming no Agent, a triage pool with a coder in it, or a review
+	// seat whose Agent cannot count would otherwise surface as a failed
+	// spawn minutes later, charged to the work.
+	catalogue, err := s.agents.Catalogue(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if err := binding.CheckAgents(catalogue); err != nil {
+		return nil, err
+	}
+	if err := binding.CheckVerification(s.verification); err != nil {
+		return nil, err
+	}
 	if !slices.Contains(sdlc.RegisteredForgeTypes(), binding.Forge.Type) {
 		return nil, sdlc.NewForgeNotRegisteredError(binding.Forge.Type)
 	}
@@ -196,6 +315,12 @@ func (s *SDLCService) Bind(ctx context.Context, tenantID string, binding *sdlc.P
 		return nil, err
 	}
 	if err := s.checkSecrets(ctx, tenantID, binding); err != nil {
+		return nil, err
+	}
+	if err := s.checkRulers(ctx, tenantID, binding); err != nil {
+		return nil, err
+	}
+	if err := s.retirePriorDelivery(ctx, tenantID, binding); err != nil {
 		return nil, err
 	}
 	if err := s.enableAutonomy(ctx, project); err != nil {
@@ -224,6 +349,56 @@ func (s *SDLCService) Bind(ctx context.Context, tenantID string, binding *sdlc.P
 	return binding, nil
 }
 
+// checkReviewerSecrets refuses a binding that names a reviewer profile whose
+// forge token cannot be resolved — the default AND every alternate.
+//
+// IT IS CHECKED AT BIND TIME BECAUSE THE ALTERNATIVE FAILS AT REVIEW TIME, and
+// review time is the worst possible moment to discover it: the pull request is
+// already finished and green, a review job starts, spends a model run reading
+// the change, and only then cannot publish a verdict — and the attempt is
+// charged to the work. The forge token is checked here for exactly this
+// reason; a reviewer token is no different, and was once simply missed. An
+// alternate's token is no different either: an override is an operator asking
+// for that reviewer on a pull request that is already waiting.
+//
+// AN UNCONFIGURED REVIEWER IS STILL VALID and checks nothing: a project
+// reviewed by people binds no reviewer, and ReviewerConfig.Validate already
+// refuses the half-configured case.
+func (s *SDLCService) checkReviewerSecrets(ctx context.Context, tenantID string, binding *sdlc.ProjectBinding) error {
+	for i, profile := range binding.ReviewerProfiles() {
+		field := "reviewer.token_secret_ref"
+		if !profile.Default {
+			field = "reviewers[" + strconv.Itoa(i-1) + "].token_secret_ref"
+		}
+		if err := s.checkReviewerSecret(ctx, tenantID, field, profile); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkReviewerSecret refuses one profile whose token does not resolve.
+func (s *SDLCService) checkReviewerSecret(ctx context.Context, tenantID, field string, profile sdlc.ReviewerProfile) error {
+	ref := profile.TokenSecretRef
+	if ref == "" {
+		return &sdlc.InvalidInputError{
+			Field:   field,
+			Message: "reviewer profile " + profile.Name + " names no token secret; a reviewer with no token cannot publish a verdict",
+		}
+	}
+	token, err := requireSecretRef(ctx, s.secrets, tenantID, field, ref)
+	if err != nil {
+		return err
+	}
+	if len(token) == 0 {
+		return &sdlc.InvalidInputError{
+			Field:   field,
+			Message: "the token secret " + ref + " of reviewer profile " + profile.Name + " is empty",
+		}
+	}
+	return nil
+}
+
 // warnSystemTenantBind emits a one-line notice when a project is bound in the
 // system tenant. The system tenant has full parity with regular tenants,
 // including the right to run an SDLC project (a single-tenant deployment that
@@ -231,43 +406,6 @@ func (s *SDLCService) Bind(ctx context.Context, tenantID string, binding *sdlc.P
 // informed-operator choice rather than an error. The notice records that the
 // SDLC worker the binding turns on will run at SYSTEM privilege — the highest
 // scope on the platform — so the operator who bound it can see the exposure.
-// checkReviewerSecret refuses a binding that names a reviewer whose forge token
-// cannot be resolved.
-//
-// IT IS CHECKED AT BIND TIME BECAUSE THE ALTERNATIVE FAILS AT REVIEW TIME, and
-// review time is the worst possible moment to discover it: the pull request is
-// already finished and green, a review job starts, spends a model run reading
-// the change, and only then cannot publish a verdict — and the attempt is
-// charged to the work. The forge token is checked here for exactly this
-// reason; a reviewer token is no different, and was simply missed.
-//
-// AN UNCONFIGURED REVIEWER IS STILL VALID and checks nothing: a project
-// reviewed by people binds no reviewer, and ReviewerConfig.Validate already
-// refuses the half-configured case.
-func (s *SDLCService) checkReviewerSecret(ctx context.Context, tenantID string, binding *sdlc.ProjectBinding) error {
-	if !binding.Reviewer.Configured() {
-		return nil
-	}
-	ref := binding.Reviewer.TokenSecretRef
-	if ref == "" {
-		return &sdlc.InvalidInputError{
-			Field:   "reviewer.token_secret_ref",
-			Message: "the binding names a reviewer but no reviewer token secret; a reviewer with no token cannot publish a verdict",
-		}
-	}
-	resp, err := s.secrets.GetSecret(iam.ContextWithTenant(ctx, tenantID), &GetSecretRequest{SecretID: ref})
-	if err != nil {
-		return err
-	}
-	if resp == nil || len(resp.Data) == 0 {
-		return &sdlc.InvalidInputError{
-			Field:   "reviewer.token_secret_ref",
-			Message: "the reviewer token secret " + ref + " is absent or empty",
-		}
-	}
-	return nil
-}
-
 func (s *SDLCService) warnSystemTenantBind(tenantID, projectID string) {
 	if !qrdbsdk.IsSystemTenant(tenantID) {
 		return
@@ -301,6 +439,11 @@ func (s *SDLCService) Unbind(ctx context.Context, tenantID, projectID string) er
 		return err
 	}
 	if err := s.store.DeleteBinding(ctx, tenantID, projectID); err != nil {
+		return err
+	}
+	// An override names a profile of THIS binding. A later binding may carry
+	// different profiles, and must not inherit choices made about these.
+	if err := s.store.DeleteReviewerOverrides(ctx, tenantID, projectID); err != nil {
 		return err
 	}
 	return s.routes.Forget(ctx, projectID, tenantID)
@@ -346,14 +489,75 @@ func (s *SDLCService) offboard(ctx context.Context, tenantID, projectID string) 
 		}
 		return err
 	}
+	return s.offboardBinding(ctx, tenantID, binding)
+}
+
+// offboardBinding removes the delivery a stored binding provisioned, under the
+// rule offboard documents: a transient failure refuses, a permanent forge
+// refusal is logged and waved through.
+func (s *SDLCService) offboardBinding(ctx context.Context, tenantID string, binding *sdlc.ProjectBinding) error {
 	if err := s.onboarder.Offboard(ctx, tenantID, binding); err != nil {
-		if !quicbaaserrors.IsNotFound(err) && !sdlc.ForgeRefusalIsPermanent(err) {
+		var missingRef *quicbaaserrors.ReferenceNotFoundError
+		if !quicbaaserrors.IsNotFound(err) && !errors.As(err, &missingRef) && !sdlc.ForgeRefusalIsPermanent(err) {
 			return err
 		}
 		s.logger.Warn("sdlc: the forge refused this offboarding and repeating it cannot help; the local record is removed and the forge is left as it stands",
-			"tenant", tenantID, "project", projectID, "reason", err.Error())
+			"tenant", tenantID, "project", binding.ProjectID, "reason", err.Error())
 	}
 	return nil
+}
+
+// retirePriorDelivery offboards the binding a rebind is about to replace, when
+// the replacement would leave its webhook behind.
+//
+// A REBIND TO DIFFERENT FORGE COORDINATES ORPHANS THE OLD WEBHOOK otherwise.
+// Once PutBinding returns, the old repository and forge are recorded nowhere:
+// Conformance and Unbind resolve only the new binding, the route index maps
+// the project to it, and the old repository keeps delivering to this node and
+// is answered 401 for ever. That is the state offboard exists to prevent on
+// the Unbind path, and a rebind reaches it by another road. Switching a
+// webhook-backed binding to poll-only has the same shape: onboarding a binding
+// with no webhook secret provisions nothing, so it removes nothing either.
+//
+// IT RUNS BEFORE ANYTHING IS WRITTEN, and a failure refuses the rebind. The
+// old binding is then still stored and still names the hook, so the operator
+// can retry; the other order would leave a half-applied rebind and a hook
+// nothing can find.
+//
+// A rebind that keeps the same repository on the same forge offboards
+// nothing: onboarding the replacement reconciles the existing webhook in
+// place.
+func (s *SDLCService) retirePriorDelivery(ctx context.Context, tenantID string, next *sdlc.ProjectBinding) error {
+	prior, err := s.store.GetBinding(ctx, tenantID, next.ProjectID)
+	if err != nil {
+		if errors.Is(err, sdlc.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if !orphansDelivery(prior, next) {
+		return nil
+	}
+	return s.offboardBinding(ctx, tenantID, prior)
+}
+
+// orphansDelivery reports whether replacing prior with next would leave
+// prior's webhook on a forge that nothing records any longer: the repository,
+// the forge or its API root changed, or the delivery is being switched off.
+func orphansDelivery(prior, next *sdlc.ProjectBinding) bool {
+	if prior.Forge.WebhookSecretRef == "" {
+		return false
+	}
+	switch {
+	case next.Forge.WebhookSecretRef == "":
+		return true
+	case prior.Forge.Type != next.Forge.Type:
+		return true
+	case strings.TrimRight(prior.Forge.BaseURL, "/") != strings.TrimRight(next.Forge.BaseURL, "/"):
+		return true
+	default:
+		return prior.Repo() != next.Repo()
+	}
 }
 
 // Onboard re-runs provisioning against the project's stored binding and
@@ -369,6 +573,11 @@ func (s *SDLCService) Onboard(ctx context.Context, tenantID, projectID string) (
 	}
 	binding, err := s.store.GetBinding(ctx, tenantID, projectID)
 	if err != nil {
+		return nil, err
+	}
+	// A binding written before the allowlist narrowed is refused here too:
+	// onboarding it would drive work every attempt of which parks.
+	if err := binding.CheckVerification(s.verification); err != nil {
 		return nil, err
 	}
 	return s.onboarder.Onboard(ctx, tenantID, binding)
@@ -398,6 +607,29 @@ func (s *SDLCService) Conformance(ctx context.Context, tenantID, projectID strin
 	return report, nil
 }
 
+// OpenWork reads a bound project's open work from its forge: the open pull
+// requests the project's agent opened, each with its CI and review state, and
+// the open issues carrying a label the module writes. It changes nothing.
+//
+// Unlike Conformance, an UNBOUND project is an error: it has no forge to read.
+func (s *SDLCService) OpenWork(ctx context.Context, tenantID, projectID string) (*sdlc.OpenWork, error) {
+	if tenantID == "" {
+		return nil, &sdlc.InvalidInputError{Field: "tenant_id", Message: "open work is tenant-scoped"}
+	}
+	if _, err := s.project(ctx, tenantID, projectID); err != nil {
+		return nil, err
+	}
+	binding, err := s.store.GetBinding(ctx, tenantID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	forge, err := s.ForgeFor(ctx, tenantID, binding.Forge)
+	if err != nil {
+		return nil, err
+	}
+	return sdlc.ReadOpenWork(ctx, forge, binding, time.Now())
+}
+
 // Binding returns the project's binding.
 func (s *SDLCService) Binding(ctx context.Context, tenantID, projectID string) (*sdlc.ProjectBinding, error) {
 	return s.store.GetBinding(ctx, tenantID, projectID)
@@ -411,6 +643,142 @@ func (s *SDLCService) GetBinding(ctx context.Context, tenantID, projectID string
 // ListBindings implements sdlc.BindingReader.
 func (s *SDLCService) ListBindings(ctx context.Context, tenantID string) ([]*sdlc.ProjectBinding, error) {
 	return s.store.ListBindings(ctx, tenantID)
+}
+
+// =============================================================================
+// The per-pull-request reviewer override
+// =============================================================================
+//
+// OPERATOR VERBS, GATED LIKE THE BINDING THEY REFINE. Choosing which reviewer
+// judges a change is as much a decision about the project's review as binding
+// the reviewer was, so setting and clearing an override carry sdlc:bind on
+// every transport and reading one carries sdlc:read. Nothing else writes an
+// override: not a label, not a comment, not a webhook.
+
+// ReviewerSelection reports which reviewer profile reviews one pull request:
+// the operator's override when one is recorded, the binding's default
+// otherwise.
+func (s *SDLCService) ReviewerSelection(ctx context.Context, tenantID, projectID string, pullRequest int) (*sdlc.ReviewerSelection, error) {
+	binding, err := s.selfReviewedBinding(ctx, tenantID, projectID, pullRequest)
+	if err != nil {
+		return nil, err
+	}
+	_, selection, err := sdlc.SelectReviewer(ctx, s.store, tenantID, binding, pullRequest)
+	if err != nil {
+		return nil, err
+	}
+	return &selection, nil
+}
+
+// SetReviewerOverride records that one pull request is reviewed by the named
+// profile, and returns the selection that now holds.
+//
+// THE PROFILE MUST BE ONE THE BINDING CARRIES NOW. A name nobody bound is
+// refused here, where the operator is looking, rather than at dispatch, where
+// it would surface as a sweep failure minutes later.
+func (s *SDLCService) SetReviewerOverride(ctx context.Context, tenantID, projectID string, pullRequest int, profile string) (*sdlc.ReviewerSelection, error) {
+	binding, err := s.selfReviewedBinding(ctx, tenantID, projectID, pullRequest)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(profile) == "" {
+		return nil, &sdlc.InvalidInputError{Field: "profile", Message: "required; clear the override to review with the default"}
+	}
+	resolved, err := binding.ReviewerProfile(profile)
+	if err != nil {
+		return nil, err
+	}
+	override := &sdlc.ReviewerOverride{ProjectID: projectID, PullRequest: pullRequest, Profile: resolved.Name}
+	if err := s.store.PutReviewerOverride(ctx, tenantID, override); err != nil {
+		return nil, err
+	}
+	return s.redispatchReview(ctx, tenantID, projectID, pullRequest)
+}
+
+// SetReviewDispatcher attaches the dispatcher a reviewer override asks for a
+// review by the newly selected seat through. Until one is set, an override is
+// recorded and takes effect on the next dispatch.
+func (s *SDLCService) SetReviewDispatcher(dispatcher *sdlc.ReviewDispatcher) {
+	s.reviews.Store(dispatcher)
+}
+
+// redispatchReview asks for a review of the pull request by the now-selected
+// seat, then reports the selection with whether one started.
+//
+// OWNER RULING 2026-09-25: switching reviewer never cancels anything. A review
+// already running finishes normally; the switch decides who reviews from here
+// on. The selection is recorded before this runs, so a failure here leaves the
+// override in force for the next dispatch rather than lost.
+func (s *SDLCService) redispatchReview(ctx context.Context, tenantID, projectID string, pullRequest int) (*sdlc.ReviewerSelection, error) {
+	selection, err := s.ReviewerSelection(ctx, tenantID, projectID, pullRequest)
+	if err != nil {
+		return nil, err
+	}
+	dispatcher := s.reviews.Load()
+	if dispatcher == nil {
+		return selection, nil
+	}
+	started, err := dispatcher.RedispatchReview(ctx, tenantID, projectID, pullRequest)
+	if err != nil {
+		return nil, err
+	}
+	selection.Redispatched = started
+	return selection, nil
+}
+
+// AgentReferences implements orchestration.AgentUsageReporter: every
+// reference tenantID's bindings hold into its agent catalog.
+func (s *SDLCService) AgentReferences(ctx context.Context, tenantID string) ([]orchestration.AgentReference, error) {
+	bindings, err := s.store.ListBindings(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	var references []orchestration.AgentReference
+	for _, binding := range bindings {
+		references = append(references, binding.AgentReferences()...)
+	}
+	return references, nil
+}
+
+// ClearReviewerOverride removes one pull request's override, so the binding's
+// default reviews it again, and returns the selection that now holds.
+// Clearing an absent override is not an error.
+func (s *SDLCService) ClearReviewerOverride(ctx context.Context, tenantID, projectID string, pullRequest int) (*sdlc.ReviewerSelection, error) {
+	if _, err := s.selfReviewedBinding(ctx, tenantID, projectID, pullRequest); err != nil {
+		return nil, err
+	}
+	if err := s.store.DeleteReviewerOverride(ctx, tenantID, projectID, pullRequest); err != nil {
+		return nil, err
+	}
+	return s.ReviewerSelection(ctx, tenantID, projectID, pullRequest)
+}
+
+// GetReviewerOverride implements sdlc.ReviewerOverrideReader.
+func (s *SDLCService) GetReviewerOverride(ctx context.Context, tenantID, projectID string, pullRequest int) (*sdlc.ReviewerOverride, error) {
+	return s.store.GetReviewerOverride(ctx, tenantID, projectID, pullRequest)
+}
+
+// selfReviewedBinding loads the binding an override verb acts on, refusing a
+// request that names no tenant or pull request and a project that reviews
+// nothing of its own.
+func (s *SDLCService) selfReviewedBinding(ctx context.Context, tenantID, projectID string, pullRequest int) (*sdlc.ProjectBinding, error) {
+	if tenantID == "" {
+		return nil, &sdlc.InvalidInputError{Field: "tenant_id", Message: "reviewer overrides are tenant-scoped"}
+	}
+	if pullRequest <= 0 {
+		return nil, &sdlc.InvalidInputError{Field: "pull_request", Message: "pull requests are numbered from one"}
+	}
+	binding, err := s.store.GetBinding(ctx, tenantID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if !binding.Reviewer.Configured() {
+		return nil, &sdlc.InvalidInputError{
+			Field:   "reviewer",
+			Message: "project " + projectID + " binds no reviewer, so there is no reviewer to choose between",
+		}
+	}
+	return binding, nil
 }
 
 // Delivery returns what the task's attempt published.
@@ -432,7 +800,7 @@ func (s *SDLCService) project(ctx context.Context, tenantID, projectID string) (
 
 // checkProject refuses a project the pipeline could not deliver.
 func (s *SDLCService) checkProject(project *orchestration.Project) error {
-	if err := s.guard.CheckRepoURL(project.Git.RepoURL); err != nil {
+	if err := s.guard.CheckProject(project); err != nil {
 		return err
 	}
 	if !project.Git.Signing.Enabled {
@@ -447,18 +815,21 @@ func (s *SDLCService) checkProject(project *orchestration.Project) error {
 	return nil
 }
 
-// checkSecrets refuses a binding whose secrets do not resolve.
+// checkSecrets refuses a binding whose secrets do not resolve. A secret that
+// does not exist is a ReferenceNotFoundError; a secrets store that cannot
+// answer (a sealed barrier) is a ReferenceUnavailableError, never a false
+// "not found".
 func (s *SDLCService) checkSecrets(ctx context.Context, tenantID string, binding *sdlc.ProjectBinding) error {
 	if _, err := s.forgeToken(ctx, tenantID, binding.Forge); err != nil {
 		return err
 	}
-	if err := s.checkReviewerSecret(ctx, tenantID, binding); err != nil {
+	if err := s.checkReviewerSecrets(ctx, tenantID, binding); err != nil {
 		return err
 	}
 	if binding.Forge.WebhookSecretRef == "" {
 		return nil
 	}
-	secret, err := s.WebhookSecret(ctx, tenantID, binding.Forge.WebhookSecretRef)
+	secret, err := requireSecretRef(ctx, s.secrets, tenantID, "forge.webhook_secret_ref", binding.Forge.WebhookSecretRef)
 	if err != nil {
 		return err
 	}
@@ -509,17 +880,17 @@ func (s *SDLCService) forgeToken(ctx context.Context, tenantID string, cfg sdlc.
 			Message: "the binding names no forge token secret; an adapter with no token cannot read the forge",
 		}
 	}
-	resp, err := s.secrets.GetSecret(iam.ContextWithTenant(ctx, tenantID), &GetSecretRequest{SecretID: ref})
+	token, err := requireSecretRef(ctx, s.secrets, tenantID, "forge.token_secret_ref", ref)
 	if err != nil {
 		return "", err
 	}
-	if resp == nil || len(resp.Data) == 0 {
+	if len(token) == 0 {
 		return "", &sdlc.InvalidInputError{
 			Field:   "forge.token_secret_ref",
-			Message: "the forge token secret " + ref + " is absent or empty",
+			Message: "the forge token secret " + ref + " is empty",
 		}
 	}
-	return string(resp.Data), nil
+	return string(token), nil
 }
 
 // WebhookSecret implements sdlc.WebhookSecretResolver, returning a copy the

@@ -43,7 +43,7 @@ func newDeletionFixture(t *testing.T) (*IdentityStore, *MemoryStorage, *User) {
 	t.Helper()
 	mem := NewMemoryStorage()
 	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: mem, GroupStorage: mem, RoleStorage: mem,
+		UserStorage: mem, RoleStorage: mem,
 	})
 	ctx := context.Background()
 	user, err := store.CreateUser(ctx, "acme", CreateUserOptions{
@@ -193,9 +193,8 @@ func TestDeleteUser_FailsClosedWhenTheClaimCannotBeWritten(t *testing.T) {
 	mem := NewMemoryStorage()
 	markErr := errors.New("store unavailable")
 	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  &markFailingStorage{UserStorage: mem, err: markErr},
-		GroupStorage: mem,
-		RoleStorage:  mem,
+		UserStorage: &markFailingStorage{UserStorage: mem, err: markErr},
+		RoleStorage: mem,
 	})
 	ctx := context.Background()
 
@@ -256,7 +255,7 @@ func TestDeleteUser_AbortsWhenThePostClaimRereadFails(t *testing.T) {
 	rereadErr := errors.New("store unavailable")
 	backing := &rereadFailingStorage{UserStorage: mem, err: rereadErr}
 	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: backing, GroupStorage: mem, RoleStorage: mem,
+		UserStorage: backing, RoleStorage: mem,
 	})
 	ctx := context.Background()
 
@@ -295,7 +294,7 @@ func TestDeleteUser_AbortsWhenThePostClaimRereadFails(t *testing.T) {
 func TestUpdateUser_AuthMethodsPresenceDistinguishesClearFromSilence(t *testing.T) {
 	mem := NewMemoryStorage()
 	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: mem, GroupStorage: mem, RoleStorage: mem,
+		UserStorage: mem, RoleStorage: mem,
 	})
 	ctx := context.Background()
 

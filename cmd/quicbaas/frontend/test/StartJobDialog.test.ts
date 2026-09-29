@@ -4,54 +4,22 @@
  * Verifies that StartJobDialog mounts, fills required fields, submits the
  * request with the correct shape, and routes to /jobs on success.
  *
- * Issue #77 regression: Lead Backend MUST default to the backend of the first
- * REGISTERED agent, never a hardcoded value like "claude". The dialog now
- * derives its backend list from listAgents(), not listBackends(), so only
- * agents that are actually registered server-side appear in the dropdown.
+ * The lead is chosen from the tenant's agent catalog: the Agents that declare
+ * the lead role and the tenant's pools. "Project default" sends no lead, and
+ * the server takes the project's default lead.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 
-// ---------------------------------------------------------------------------
-// Mocks — factories must not reference top-level const declarations because
-// vi.mock() is hoisted to the top of the file before any const is initialized.
-// Use vi.fn() inline and retrieve mocked references after import.
-// ---------------------------------------------------------------------------
-
+// vi.mock() is hoisted, so its factory must not reference top-level consts.
 vi.mock('../src/stores/sdkClient.ts', () => ({
-  getSDKClient: vi.fn().mockResolvedValue({
-    orchestrator: {
-      startJob: vi.fn().mockResolvedValue({ job_id: 'test-job-id-abc', timestamp: 0 }),
-      // Default mock: one registered ollama agent — ensures submit-disabled
-      // logic does not block tests that exercise unrelated form behaviour.
-      listAgents: vi.fn().mockResolvedValue({
-        agents: [
-          {
-            id: 'agent-1',
-            name: 'embedded-vm-host-2',
-            backend: 'ollama',
-            model: 'qwen2.5:0.5b',
-            status: 'idle',
-            host: 'localhost',
-            capabilities: [],
-            last_seen: 0,
-            registered_at: 0,
-            version: 1,
-            metadata: {},
-            tenant_id: 'default',
-            agent_type: 'inference',
-            container_id: '',
-            work_dir: '',
-          },
-        ],
-      }),
-    },
-  }),
+  getSDKClient: vi.fn(),
 }));
 
 vi.mock('../src/stores/orchestrator.svelte.ts', () => ({
   orchestratorStore: { activeTenantID: 'default' },
+  refresh: vi.fn(),
 }));
 
 vi.mock('../src/stores/toast.svelte.ts', () => ({
@@ -68,209 +36,136 @@ import { getSDKClient } from '../src/stores/sdkClient.ts';
 import { navigateTo } from '../src/stores/router.svelte.ts';
 import { showToast } from '../src/stores/toast.svelte.ts';
 
-// ---------------------------------------------------------------------------
-// Helper: build a minimal agent object for test mocks.
-// ---------------------------------------------------------------------------
+const leadAgent = { id: 'claude-lead', name: 'Claude lead', roles: ['lead'], backend: 'claude', model: 'claude-opus-5-5' };
+const coder = { id: 'claude-coder', name: 'Claude coder', roles: ['coding'], backend: 'claude', model: 'claude-opus-5-5' };
+const leads = { id: 'leads', name: 'Leads', agents: ['claude-lead'] };
 
-function makeAgent(backend: string, model = '') {
-  return {
-    id: `agent-${backend}`,
-    name: `agent-${backend}`,
-    backend,
-    model,
-    status: 'idle' as const,
-    host: 'localhost',
-    capabilities: [] as string[],
-    last_seen: 0,
-    registered_at: 0,
-    version: 1,
-    metadata: {} as Record<string, string>,
-    tenant_id: 'default',
-    agent_type: 'inference' as const,
-    container_id: '',
-    work_dir: '',
-  };
+let startJob: ReturnType<typeof vi.fn>;
+
+function mockClient(agents: unknown[] = [leadAgent, coder], pools: unknown[] = [leads]): void {
+  startJob = vi.fn().mockResolvedValue({ job_id: 'test-job-id-abc', timestamp: 0 });
+  vi.mocked(getSDKClient).mockResolvedValue({
+    orchestrator: { startJob },
+    agents: {
+      listAgents: vi.fn().mockResolvedValue(agents),
+      listPools: vi.fn().mockResolvedValue(pools),
+    },
+  } as never);
 }
 
 function renderDialog(props: Record<string, unknown> = {}) {
   return render(StartJobDialog, { props: { open: true, ...props } });
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe('StartJobDialog', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Re-establish mock return values after clearAllMocks.
-    vi.mocked(getSDKClient).mockResolvedValue({
-      orchestrator: {
-        startJob: vi.fn().mockResolvedValue({ job_id: 'test-job-id-abc', timestamp: 0 }),
-        listAgents: vi.fn().mockResolvedValue({
-          agents: [makeAgent('ollama', 'qwen2.5:0.5b')],
-        }),
-      },
-    } as never);
-    vi.mocked(navigateTo).mockReset();
-    vi.mocked(showToast).mockReset();
+    mockClient();
   });
 
   it('renders form fields when open is true', () => {
     renderDialog();
     expect(screen.getByLabelText(/Description/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Lead Model/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Lead Agent/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Max Iterations/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Poll Interval/i)).toBeInTheDocument();
   });
 
   it('prefills workflow name when prefillWorkflow is provided', () => {
     renderDialog({ prefillWorkflow: 'my-workflow' });
+    // The Workflow Name field is a RefPicker now: a prefilled workflow
+    // disables it (rather than marking it readOnly) so it cannot be reopened
+    // and searched away from the workflow the dialog was launched for.
     const input = screen.getByLabelText(/Workflow Name/i) as HTMLInputElement;
     expect(input.value).toBe('my-workflow');
-    expect(input.readOnly).toBe(true);
+    expect(input.disabled).toBe(true);
   });
 
   it('shows validation error when description is empty on submit', async () => {
     renderDialog();
-    const submitBtn = screen.getByRole('button', { name: /Start Job/i });
-    await fireEvent.click(submitBtn);
+    await fireEvent.click(screen.getByRole('button', { name: /Start Job/i }));
     expect(screen.getByText(/Description is required/i)).toBeInTheDocument();
   });
 
-  it('shows validation error when lead model is empty on submit', async () => {
+  it('offers the lead Agents and the pools, and never an Agent without the lead role', async () => {
     renderDialog();
-    await fireEvent.input(screen.getByLabelText(/Description/i), {
-      target: { value: 'Test job' },
-    });
-    await fireEvent.click(screen.getByRole('button', { name: /Start Job/i }));
-    expect(screen.getByText(/Lead model is required/i)).toBeInTheDocument();
+    const select = screen.getByLabelText(/Lead Agent/i) as HTMLSelectElement;
+    await waitFor(() => expect(select.querySelectorAll('option')).toHaveLength(3));
+    const values = Array.from(select.querySelectorAll('option')).map((o) => o.value);
+    expect(values).toEqual(['', 'agent:claude-lead', 'pool:leads']);
   });
 
-  it('calls startJob with correct shape on valid submit', async () => {
+  it('sends the chosen lead as a reference', async () => {
     renderDialog();
-
-    await fireEvent.input(screen.getByLabelText(/Description/i), {
-      target: { value: 'Build the feature' },
-    });
-    await fireEvent.input(screen.getByLabelText(/Lead Model/i), {
-      target: { value: 'claude-opus-4-5' },
-    });
-
+    const select = screen.getByLabelText(/Lead Agent/i) as HTMLSelectElement;
+    await waitFor(() => expect(select.querySelectorAll('option')).toHaveLength(3));
+    await fireEvent.input(screen.getByLabelText(/Description/i), { target: { value: 'Build the feature' } });
+    await fireEvent.change(select, { target: { value: 'pool:leads' } });
     await fireEvent.click(screen.getByRole('button', { name: /Start Job/i }));
-
-    await waitFor(() => {
-      expect(vi.mocked(getSDKClient)).toHaveBeenCalled();
-    });
+    await waitFor(() => expect(startJob).toHaveBeenCalled());
+    expect(startJob.mock.calls[0][0].lead).toEqual({ pool_id: 'leads' });
+    expect(startJob.mock.calls[0][0].description).toBe('Build the feature');
   });
 
-  it('shows success toast on successful submit', async () => {
+  it('sends no lead for the project default, and reports success', async () => {
     renderDialog();
-
-    await fireEvent.input(screen.getByLabelText(/Description/i), {
-      target: { value: 'Deploy service' },
-    });
-    await fireEvent.input(screen.getByLabelText(/Lead Model/i), {
-      target: { value: 'gpt-4o' },
-    });
-
+    await fireEvent.input(screen.getByLabelText(/Description/i), { target: { value: 'Deploy service' } });
     await fireEvent.click(screen.getByRole('button', { name: /Start Job/i }));
+    await waitFor(() => expect(vi.mocked(showToast)).toHaveBeenCalledWith('success', expect.any(String)));
+    expect(startJob.mock.calls[0][0].lead).toEqual({});
+    expect(vi.mocked(navigateTo)).toHaveBeenCalledWith('/jobs');
+  });
 
-    await waitFor(() => {
-      expect(vi.mocked(showToast)).toHaveBeenCalledWith('success', expect.any(String));
-    });
+  it('still starts a job when the catalog cannot be read', async () => {
+    vi.mocked(getSDKClient).mockResolvedValue({
+      orchestrator: { startJob: vi.fn().mockResolvedValue({ job_id: 'j', timestamp: 0 }) },
+      agents: {
+        listAgents: vi.fn().mockRejectedValue(new Error('503')),
+        listPools: vi.fn().mockRejectedValue(new Error('503')),
+      },
+    } as never);
+    renderDialog();
+    const select = screen.getByLabelText(/Lead Agent/i) as HTMLSelectElement;
+    await waitFor(() => expect(select.querySelectorAll('option')).toHaveLength(1));
+    const startBtn = screen.getByRole('button', { name: /Start Job/i }) as HTMLButtonElement;
+    expect(startBtn.disabled).toBe(false);
+  });
+
+  it('reports a refused start', async () => {
+    startJob.mockRejectedValue(new Error('agent catalog: unknown agent ghost'));
+    renderDialog();
+    await fireEvent.input(screen.getByLabelText(/Description/i), { target: { value: 'x' } });
+    await fireEvent.click(screen.getByRole('button', { name: /Start Job/i }));
+    await waitFor(() => expect(screen.getByText(/Failed to start job/i)).toBeInTheDocument());
   });
 
   it('closes the dialog when Cancel is clicked', async () => {
     renderDialog();
-    const cancelBtn = screen.getByRole('button', { name: /^Cancel$/i });
-    expect(cancelBtn).toBeInTheDocument();
-    await fireEvent.click(cancelBtn);
-    await waitFor(() => {
-      expect(screen.queryByRole('dialog')).toBeNull();
-    });
+    await fireEvent.click(screen.getByRole('button', { name: /^Cancel$/i }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+});
+
+describe('StartJobDialog — run-time prompt material', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockClient();
   });
 
-  // ---------------------------------------------------------------------------
-  // Issue #77 regression tests: Lead Backend MUST default to the backend of
-  // the first registered agent — never a hardcoded value like "claude (acp)".
-  // The dialog derives its backend list from listAgents() so only agents that
-  // are actually registered server-side appear in the dropdown.
-  // ---------------------------------------------------------------------------
-
-  it('#77: defaults leadBackend to first registered agent backend (ollama)', async () => {
-    vi.mocked(getSDKClient).mockResolvedValue({
-      orchestrator: {
-        startJob: vi.fn().mockResolvedValue({ job_id: 'j', timestamp: 0 }),
-        listAgents: vi.fn().mockResolvedValue({
-          agents: [makeAgent('ollama')],
-        }),
-      },
-    } as never);
-
+  it('sends the appended prompt for every session of the job', async () => {
     renderDialog();
-
-    const select = (await waitFor(() =>
-      screen.getByLabelText(/Lead Backend/i),
-    )) as HTMLSelectElement;
-    expect(select.value).toBe('ollama');
-    expect(select.value).not.toBe('claude');
-
-    const options = Array.from(select.querySelectorAll('option')).map((o) => o.value);
-    expect(options).toEqual(['ollama']);
+    await fireEvent.input(screen.getByLabelText(/Description/i), { target: { value: 'Fix the flaky test' } });
+    await fireEvent.input(screen.getByLabelText(/Append to every session/i), { target: { value: 'touch only pkg/cache' } });
+    await fireEvent.click(screen.getByRole('button', { name: /Start Job/i }));
+    await waitFor(() => expect(startJob).toHaveBeenCalled());
+    expect(startJob.mock.calls[0][0].prompt_append).toBe('touch only pkg/cache');
   });
 
-  it('#77: defaults leadBackend to empty string when no agents are registered', async () => {
-    vi.mocked(getSDKClient).mockResolvedValue({
-      orchestrator: {
-        startJob: vi.fn().mockResolvedValue({ job_id: 'j', timestamp: 0 }),
-        listAgents: vi.fn().mockResolvedValue({ agents: [] }),
-      },
-    } as never);
-
+  it('sends none when the field is left blank', async () => {
     renderDialog();
-
-    const banner = await waitFor(() => screen.getByTestId('no-backends-banner'));
-    expect(banner).toBeInTheDocument();
-
-    // Start Job must be disabled when there are no registered agents.
-    const startBtn = screen.getByRole('button', { name: /Start Job/i }) as HTMLButtonElement;
-    expect(startBtn.disabled).toBe(true);
-  });
-
-  it('#77: defaults leadBackend to first registered backend when multiple agents exist', async () => {
-    vi.mocked(getSDKClient).mockResolvedValue({
-      orchestrator: {
-        startJob: vi.fn().mockResolvedValue({ job_id: 'j', timestamp: 0 }),
-        listAgents: vi.fn().mockResolvedValue({
-          agents: [makeAgent('codex'), makeAgent('ollama')],
-        }),
-      },
-    } as never);
-
-    renderDialog();
-
-    const select = (await waitFor(() =>
-      screen.getByLabelText(/Lead Backend/i),
-    )) as HTMLSelectElement;
-    // First registered agent's backend is 'codex', so it must be selected by default.
-    expect(select.value).toBe('codex');
-
-    const options = Array.from(select.querySelectorAll('option')).map((o) => o.value);
-    expect(options).toEqual(['codex', 'ollama']);
-  });
-
-  it('#77: shows "No agents registered" notice when agent list is empty', async () => {
-    vi.mocked(getSDKClient).mockResolvedValue({
-      orchestrator: {
-        startJob: vi.fn().mockResolvedValue({ job_id: 'j', timestamp: 0 }),
-        listAgents: vi.fn().mockResolvedValue({ agents: [] }),
-      },
-    } as never);
-
-    renderDialog();
-
-    const banner = await waitFor(() => screen.getByTestId('no-backends-banner'));
-    expect(banner.textContent).toMatch(/No agents registered/i);
+    await fireEvent.input(screen.getByLabelText(/Description/i), { target: { value: 'Fix the flaky test' } });
+    await fireEvent.click(screen.getByRole('button', { name: /Start Job/i }));
+    await waitFor(() => expect(startJob).toHaveBeenCalled());
+    expect(startJob.mock.calls[0][0].prompt_append).toBeUndefined();
   });
 });

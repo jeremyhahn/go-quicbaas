@@ -27,9 +27,8 @@ func newCredentialTestStore(t *testing.T) (*iam.IdentityStore, string) {
 	t.Helper()
 	mem := iam.NewMemoryStorage()
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  mem,
-		GroupStorage: mem,
-		RoleStorage:  mem,
+		UserStorage: mem,
+		RoleStorage: mem,
 	})
 	user, err := store.CreateUser(context.Background(), "t1", iam.CreateUserOptions{
 		Email:    "alice@example.com",

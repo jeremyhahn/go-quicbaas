@@ -79,7 +79,7 @@ vi.mock('../src/stores/sdkClient.ts', () => ({
       listJobsPage: (...args: unknown[]) => listJobsPage(...(args as [])),
       cancelJob: (...args: unknown[]) => cancelJob(...args),
       // The project and agent pickers name their options from these.
-      listAgentsPage: async () => ({
+      listFleetNodesPage: async () => ({
         items: [{ id: 'agent-1', name: 'burnin-01' }],
         total: 1,
         limit: 25,

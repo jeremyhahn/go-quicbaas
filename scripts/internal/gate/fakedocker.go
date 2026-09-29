@@ -18,9 +18,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // The gates that decide what a Makefile recipe DOES with Docker put a fake
@@ -44,6 +46,12 @@ import (
 //	images.out  — what `docker images` prints
 //	images.rc   — the status `docker images` exits with (default 0)
 //	rmi.fail    — tags whose removal fails, one per line
+//	watch.path  — a file whose size (-1 when absent) is appended to watch.log
+//	              beside every call, as "<call>\t<bytes>"
+//	hang.match  — when non-empty, a call containing this text writes itself to
+//	              the FIFO hang.fifo (which the gate creates) and then waits
+//	              to be signalled -- dying of SIGINT, returning 130 on SIGTERM --
+//	              so a gate can interrupt a recipe while that call is in progress
 //
 // A gate writes only the files its cases need; an absent file is the neutral
 // behaviour, so the union above behaves for each gate exactly as its own
@@ -83,6 +91,41 @@ func DispatchFake() {
 	}
 }
 
+// HangFIFO is the FIFO, inside FakeDirEnv, on which a hung call announces
+// itself. The gate creates it and reads it to learn the call is in progress.
+const HangFIFO = "hang.fifo"
+
+// hangInterruptedStatus is what a hung call returns once it receives SIGTERM:
+// the status a shell reports for an interrupted command.
+const hangInterruptedStatus = 130
+
+// hang announces call on the FIFO and waits to be signalled.
+//
+// Only SIGTERM is caught. SIGINT is left to the Go runtime, which kills the
+// process WITH that signal, as a real docker dies of a Ctrl-C. That matters:
+// a shell waiting on a child that exited normally carries on with its script
+// after a SIGINT, and one whose child died of SIGINT stops -- so a fake that
+// exited 130 on SIGINT would let a recipe with no cleanup trap reach its
+// explicit cleanup line and pass for the wrong reason.
+func hang(dir, call string, stderr io.Writer) int {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGTERM)
+	defer signal.Stop(signals)
+
+	fifo := filepath.Join(dir, HangFIFO)
+	info, err := os.Stat(fifo)
+	if err != nil || info.Mode()&os.ModeNamedPipe == 0 {
+		fmt.Fprintln(stderr, "fake docker: hang.match is set but", fifo, "is not a FIFO")
+		return ExitToolError
+	}
+	if err := appendLine(fifo, call); err != nil {
+		fmt.Fprintln(stderr, "fake docker: cannot announce the hang:", err)
+		return ExitToolError
+	}
+	<-signals
+	return hangInterruptedStatus
+}
+
 // FakeDirUnsetError reports that the fake was invoked without the directory it
 // reads its behaviour from. That means something other than the gate resolved
 // this binary as docker, which must fail loudly rather than answer as a daemon.
@@ -113,6 +156,21 @@ func RunFake(name string, args []string, stdout, stderr io.Writer) int {
 	if err := appendLine(filepath.Join(dir, "calls.log"), joined); err != nil {
 		fmt.Fprintln(stderr, "fake docker: cannot log the call:", err)
 		return ExitToolError
+	}
+
+	if watched := readTrimmed(dir, "watch.path"); watched != "" {
+		size := int64(-1)
+		if info, err := os.Stat(watched); err == nil {
+			size = info.Size()
+		}
+		if err := appendLine(filepath.Join(dir, "watch.log"), joined+"\t"+strconv.FormatInt(size, 10)); err != nil {
+			fmt.Fprintln(stderr, "fake docker: cannot log the watched file:", err)
+			return ExitToolError
+		}
+	}
+
+	if match := readTrimmed(dir, "hang.match"); match != "" && strings.Contains(joined, match) {
+		return hang(dir, joined, stderr)
 	}
 
 	if match := readTrimmed(dir, "fail.match"); match != "" && strings.Contains(joined, match) {

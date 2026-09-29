@@ -129,27 +129,18 @@ curl -H "Accept: application/yaml" \
 - Latency (P99): <15ms
 - Connection overhead: Higher (HTTP/1.1 or HTTP/2)
 
-### QUIC (`pkg/api/quic`)
+### QUIC (SDK client only)
 
-UDP-based protocol for low-latency communication.
+**No component in this repository serves HTTP/3 today.** There is no
+`pkg/api/quic` package, no QUIC server, no `--quic-port` on `quicbaasd` and no
+`http3.Server` anywhere under `pkg/`.
 
-**Features:**
-- 0-RTT connection establishment
-- Built-in encryption (TLS 1.3)
-- Connection migration
-- Improved congestion control
-- Multiplexed streams
-
-**Use Cases:**
-- Mobile clients with network handoffs
-- Geo-distributed deployments
-- Latency-sensitive applications
-- Environments with packet loss
-
-**Performance:**
-- Throughput: 100,000+ ops/sec
-- Latency (P99): <3ms (0-RTT)
-- Connection overhead: Very low
+QUIC exists only as the SDK client transport `sdk/go/transport/quic`. It embeds
+`*rest.Transport` and swaps only the `http.Client` for quic-go's
+`http3.Transport` (`sdk/go/transport/quic/transport.go`), so it speaks the REST
+dialect over HTTP/3 and has no wire protocol of its own. Until something serves
+HTTP/3, that client has nothing to dial. Client usage:
+[api.md § QUIC API](api.md#quic-api).
 
 ### MCP (`pkg/api/mcp`)
 
@@ -413,7 +404,7 @@ rate(quicbaas_api_requests_total{status="error"}[5m])
 |----------|----------------|--------|
 | Service-to-service | gRPC | High performance, strong typing |
 | Web applications | REST | Universal compatibility |
-| Mobile apps | QUIC | Low latency, connection migration |
+| Mobile apps | REST | QUIC has no server today (see [QUIC](#quic-sdk-client-only)) |
 | AI agents | MCP | Native tool interface |
 | DevOps | CLI | Human-friendly, scriptable |
 
@@ -438,7 +429,7 @@ rate(quicbaas_api_requests_total{status="error"}[5m])
 ### Implementation
 - **gRPC Server** - `pkg/api/grpc/server.go`
 - **REST Server** - `pkg/api/rest/server.go`
-- **QUIC Server** - `pkg/api/quic/server.go`
+- **QUIC client transport** - `sdk/go/transport/quic/transport.go` (no server)
 - **MCP Server** - `pkg/api/mcp/server.go`
 - **CLI** - `cmd/quicbaas/main.go`
 

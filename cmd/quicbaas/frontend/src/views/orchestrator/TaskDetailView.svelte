@@ -13,7 +13,7 @@
   - Raw JSON drawer
 
   The task is resolved from the orchestrator store by route param, the same
-  way AgentDetailView resolves an agent. Its ATTEMPTS are read separately and
+  way FleetNodeDetailView resolves an agent. Its ATTEMPTS are read separately and
   narrowed to this task by the server (loadTaskJobs); the tenant-wide job
   list holds what an operator has recently browsed, not one task's history.
   A fresh page load asks the store to load tasks once and reads this task's
@@ -24,7 +24,7 @@
 -->
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { orchestratorStore, loadTasks, loadTaskJobs, refresh, type JobStatus } from '../../stores/orchestrator.svelte.ts';
+  import { orchestratorStore, loadTasks, loadTaskJobs, readyScope, refresh, type JobStatus } from '../../stores/orchestrator.svelte.ts';
   import { routerStore, listReturnHash, navigateTo, routeJobDetail } from '../../stores/router.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
@@ -49,6 +49,7 @@
     taskAgentID,
     taskJobsEmptyMessage,
     taskPullRequestEmptyMessage,
+    taskStopPresentation,
   } from '../../lib/tasks.ts';
 
   /** The permission the tasks read routes are guarded by (routes_permissions_generated.go). */
@@ -98,7 +99,7 @@
   ];
 
   // The agent working the task: its claimant when it has one, otherwise the
-  // fleet agent the latest attempt ran on. The dispatcher never writes
+  // fleet node the latest attempt ran on. The dispatcher never writes
   // `assigned_to`, so for an auto-spawned task the job record is the only
   // place the agent is recorded (see taskAgentID in lib/tasks.ts).
   const agentID = $derived(task ? taskAgentID(task, attemptJobs) : '');
@@ -114,6 +115,7 @@
   const pullRequests = $derived(task ? pullRequestArtifacts(task) : []);
   const reason = $derived(task ? blockedReason(task) : '');
   const waiting = $derived(task ? isWaitingOnPerson(task) : false);
+  const stop = $derived(task ? taskStopPresentation(task) : null);
 
   const loadError = $derived(
     orchestratorStore.tasksError === null || orchestratorStore.tasksError === undefined
@@ -130,10 +132,12 @@
   });
 
   // The attempt history is read per task, so it is re-read whenever the route
-  // names a different one.
+  // names a different one — and whenever the session scope moves, because
+  // loadTaskJobs drops an answer asked under a scope no longer in effect and
+  // a deep link's first read can be asked mid start-up validation.
   $effect(() => {
     const id = taskId;
-    if (id === '') return;
+    if (id === '' || readyScope() === '') return;
     untrack(() => { void loadTaskJobs(id); });
   });
 
@@ -227,7 +231,7 @@
     </div>
   </div>
 {:else}
-  <div class="p-6 space-y-5 max-w-5xl mx-auto">
+  <div class="page page-narrow">
 
     <PageHeader title="Task" subtitle={task.subject} icon={ClipboardList}>
       {#snippet children()}
@@ -267,7 +271,7 @@
       {#if ref !== null}
         {#if ref.href !== ''}
           <a
-            class="badge badge-outline font-mono gap-1"
+            class="ref-chip"
             href={ref.href}
             target="_blank"
             rel="noopener noreferrer"
@@ -277,19 +281,19 @@
             <ExternalLink class="h-3 w-3" />
           </a>
         {:else}
-          <span class="badge badge-outline font-mono" title="Forge issue {ref.label}">{ref.label}</span>
+          <span class="ref-chip" title="Forge issue {ref.label}">{ref.label}</span>
         {/if}
       {/if}
       {#if task.project_id}
         <a
-          class="badge badge-ghost gap-1"
+          class="badge badge-sm badge-ghost gap-1 hover:text-primary"
           href={`#/tasks?tasks_project=${encodeURIComponent(task.project_id)}`}
           title="Tasks in this project"
         >
           Project: {projectName || task.project_id}
         </a>
       {/if}
-      <span class="text-xs text-base-content/40 font-mono">{task.id}</span>
+      <span class="font-mono text-xs text-base-content/60">{task.id}</span>
     </div>
 
     <!-- Waiting on a person -->
@@ -297,7 +301,20 @@
       <div class="alert alert-warning items-start" role="status" data-testid="waiting-on-person">
         <AlertTriangle class="h-5 w-5 shrink-0 mt-0.5" />
         <div class="min-w-0">
-          <div class="font-semibold text-sm">Waiting on a person</div>
+          <div class="font-semibold text-sm flex flex-wrap items-center gap-2">
+            Waiting on a person
+            {#if stop}
+              <span title={stop.detail} data-testid="task-stop"><StatusBadge text={stop.label} variant={stop.variant} /></span>
+            {/if}
+          </div>
+          {#if stop}
+            <div class="text-xs mt-1" data-testid="task-stop-detail">{stop.detail}</div>
+          {/if}
+          {#if task.conclusion_reason}
+            <div class="text-xs mt-1 opacity-70" data-testid="conclusion-reason">
+              Concluded: <span class="font-mono">{task.conclusion_reason}</span>
+            </div>
+          {/if}
           <div class="text-sm mt-1 whitespace-pre-wrap break-words">
             {reason || NO_REASON_RECORDED}
           </div>
@@ -314,31 +331,31 @@
 
     <!-- State card -->
     <div class="card bg-base-200 rounded-box p-5">
-      <div class="text-xs font-semibold text-base-content/40 uppercase tracking-wide mb-3">State</div>
+      <div class="section-title mb-3">State</div>
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
         <div>
-          <div class="text-xs text-base-content/40">Status</div>
+          <div class="text-xs font-medium text-base-content/60">Status</div>
           <div class="mt-0.5">
             <StatusBadge text={task.status.replace('_', ' ')} variant={statusToVariant(task.status)} />
           </div>
         </div>
         <div>
-          <div class="text-xs text-base-content/40">Status changed</div>
-          <div class="text-xs mt-0.5" title={formatDateTime(task.status_changed_at)}>
+          <div class="text-xs font-medium text-base-content/60">Status changed</div>
+          <div class="mt-0.5 text-sm" title={formatDateTime(task.status_changed_at)}>
             {hasInstant(task.status_changed_at) ? formatRelative(task.status_changed_at) : '—'}
           </div>
         </div>
         <div>
-          <div class="text-xs text-base-content/40">Priority</div>
-          <div class="font-mono text-xs mt-0.5">{task.priority ?? '—'}</div>
+          <div class="text-xs font-medium text-base-content/60">Priority</div>
+          <div class="mt-0.5 font-mono text-[0.8125rem]">{task.priority ?? '—'}</div>
         </div>
         <div>
-          <div class="text-xs text-base-content/40">Assigned to</div>
-          <div class="text-xs mt-0.5" data-testid="task-assigned">{agentID || '—'}</div>
+          <div class="text-xs font-medium text-base-content/60">Assigned to</div>
+          <div class="mt-0.5 text-sm" data-testid="task-assigned">{agentID || '—'}</div>
         </div>
         <div>
-          <div class="text-xs text-base-content/40">Source</div>
-          <div class="text-xs mt-0.5">
+          <div class="text-xs font-medium text-base-content/60">Source</div>
+          <div class="mt-0.5 text-sm">
             {#if task.source}
               <span class="badge badge-sm badge-neutral">{sourceLabel(task.source.kind)}</span>
               <span class="font-mono ml-1">{task.source.ref}</span>
@@ -348,47 +365,47 @@
           </div>
         </div>
         <div>
-          <div class="text-xs text-base-content/40">Created by</div>
-          <div class="text-xs mt-0.5">{task.created_by || '—'}</div>
+          <div class="text-xs font-medium text-base-content/60">Created by</div>
+          <div class="mt-0.5 text-sm">{task.created_by || '—'}</div>
         </div>
         <div>
-          <div class="text-xs text-base-content/40">Created</div>
-          <div class="text-xs mt-0.5">{formatDateTime(task.created_at)}</div>
+          <div class="text-xs font-medium text-base-content/60">Created</div>
+          <div class="mt-0.5 text-sm">{formatDateTime(task.created_at)}</div>
         </div>
         <div>
-          <div class="text-xs text-base-content/40">Updated</div>
-          <div class="text-xs mt-0.5">{formatDateTime(task.updated_at)}</div>
+          <div class="text-xs font-medium text-base-content/60">Updated</div>
+          <div class="mt-0.5 text-sm">{formatDateTime(task.updated_at)}</div>
         </div>
         <div>
-          <div class="text-xs text-base-content/40">Tenant</div>
-          <div class="font-mono text-xs mt-0.5">{task.tenant_id}</div>
+          <div class="text-xs font-medium text-base-content/60">Tenant</div>
+          <div class="mt-0.5 font-mono text-[0.8125rem]">{task.tenant_id}</div>
         </div>
       </div>
     </div>
 
     <!-- Attempts card -->
     <div class="card bg-base-200 rounded-box p-5">
-      <div class="text-xs font-semibold text-base-content/40 uppercase tracking-wide mb-3">Attempts</div>
+      <div class="section-title mb-3">Attempts</div>
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div class="stat bg-base-300 rounded-box p-3">
-          <div class="stat-title text-xs">Charged / budget</div>
-          <div class="stat-value text-xl font-mono" data-testid="budget-label">{budgetLabel(task)}</div>
+        <div class="stat rounded-field border border-base-300/80 bg-base-100 px-4 py-3">
+          <div class="stat-title text-xs font-medium text-base-content/60">Charged / budget</div>
+          <div class="stat-value text-xl font-semibold tabular-nums" data-testid="budget-label">{budgetLabel(task)}</div>
         </div>
-        <div class="stat bg-base-300 rounded-box p-3">
-          <div class="stat-title text-xs">Dispatched</div>
-          <div class="stat-value text-xl font-mono">{task.attempts === undefined ? '—' : dispatchedAttempts(task)}</div>
+        <div class="stat rounded-field border border-base-300/80 bg-base-100 px-4 py-3">
+          <div class="stat-title text-xs font-medium text-base-content/60">Dispatched</div>
+          <div class="stat-value text-xl font-semibold tabular-nums">{task.attempts === undefined ? '—' : dispatchedAttempts(task)}</div>
         </div>
-        <div class="stat bg-base-300 rounded-box p-3">
-          <div class="stat-title text-xs">Refunded</div>
-          <div class="stat-value text-xl font-mono" data-testid="refunded">
+        <div class="stat rounded-field border border-base-300/80 bg-base-100 px-4 py-3">
+          <div class="stat-title text-xs font-medium text-base-content/60">Refunded</div>
+          <div class="stat-value text-xl font-semibold tabular-nums" data-testid="refunded">
             {task.environment_faults === undefined ? '—' : task.environment_faults}
           </div>
           {#if (task.consecutive_environment_faults ?? 0) > 0}
             <div class="stat-desc text-xs">{task.consecutive_environment_faults} in a row</div>
           {/if}
         </div>
-        <div class="stat bg-base-300 rounded-box p-3">
-          <div class="stat-title text-xs">Retry not before</div>
+        <div class="stat rounded-field border border-base-300/80 bg-base-100 px-4 py-3">
+          <div class="stat-title text-xs font-medium text-base-content/60">Retry not before</div>
           <div class="stat-value text-sm" data-testid="retry-not-before">
             {#if hasInstant(task.retry_not_before)}
               <span title={formatDateTime(task.retry_not_before)}>{formatRelative(task.retry_not_before)}</span>
@@ -400,14 +417,15 @@
       </div>
       {#if task.attempts !== undefined && chargedAttempts(task) !== dispatchedAttempts(task)}
         <div class="text-xs text-base-content/50 mt-3">
-          {dispatchedAttempts(task) - chargedAttempts(task)} of {dispatchedAttempts(task)} dispatched attempts were refunded because the environment failed, not the work.
+          {dispatchedAttempts(task) - chargedAttempts(task)} of {dispatchedAttempts(task)} dispatched attempts were refunded:
+          {task.environment_faults ?? 0} because the environment failed, not the work{#if (task.question_attempts ?? 0) > 0}, and {task.question_attempts} because the worker stopped to ask a person{/if}.
         </div>
       {/if}
     </div>
 
     <!-- Jobs card -->
     <div class="card bg-base-200 rounded-box p-4">
-      <div class="text-xs font-semibold text-base-content/40 uppercase tracking-wide mb-3">
+      <div class="section-title mb-3">
         Jobs ({attemptJobs.length})
       </div>
       {#if latestJobID !== ''}
@@ -471,7 +489,7 @@
 
     <!-- Pull requests card -->
     <div class="card bg-base-200 rounded-box p-4">
-      <div class="text-xs font-semibold text-base-content/40 uppercase tracking-wide mb-3">
+      <div class="section-title mb-3">
         Pull requests ({pullRequests.length})
       </div>
       {#if pullRequests.length === 0}

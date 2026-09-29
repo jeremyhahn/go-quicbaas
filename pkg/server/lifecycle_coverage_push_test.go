@@ -857,9 +857,10 @@ func TestCovPush_StartCatalogManager_EnabledNoBackends(t *testing.T) {
 	assert.NotNil(t, srv.backendManager)
 	assert.NotNil(t, srv.workerManager)
 
-	if srv.catalogManager != nil {
-		_ = srv.catalogManager.Close()
-	}
+	// Tear down in the same order Shutdown uses. The background workers scan
+	// the catalog, so they have to be joined before the store they read is
+	// closed; closing it first leaves a scan reading a closed PebbleDB.
+	stopCatalogStackForTest(t, srv)
 }
 
 func TestCovPush_StartCatalogManager_WorkerCreationErrors(t *testing.T) {
@@ -892,9 +893,7 @@ func TestCovPush_StartCatalogManager_WorkerCreationErrors(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, srv.catalogManager)
 
-	if srv.catalogManager != nil {
-		_ = srv.catalogManager.Close()
-	}
+	stopCatalogStackForTest(t, srv)
 }
 
 // =============================================================================

@@ -110,9 +110,8 @@ type GDPRManagerDependencies struct {
 	// Optional audit logger
 	AuditLogger GDPRAuditLogger
 
-	// Optional group and role storage for complete data export
-	GroupStorage GroupStorage
-	RoleStorage  RoleStorage
+	// Optional role storage for complete data export
+	RoleStorage RoleStorage
 }
 
 // GDPRManager manages GDPR compliance operations including consent, data export, and deletion.

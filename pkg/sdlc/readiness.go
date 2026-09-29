@@ -187,6 +187,12 @@ const (
 	// this is the ordinary state of most of a repository's issues.
 	ReadinessNotTriggered ReadinessVerdict = "not_triggered"
 
+	// ReadinessHeld means the issue carries the portfolio hold (HoldLabel).
+	// Not offered, whatever its other labels say: a trigger label beside a
+	// hold is a contradiction only the party named on the issue resolves, and
+	// the hold is the side that must win it.
+	ReadinessHeld ReadinessVerdict = "held"
+
 	// ReadinessOwned means a live session already holds this issue, so
 	// adopting it would put two agents on one piece of work.
 	ReadinessOwned ReadinessVerdict = "owned"
@@ -428,6 +434,7 @@ type readinessPredicate func(ctx context.Context, e *ReadinessEvaluator, scope R
 // last and only for an issue that would otherwise be adopted.
 var readinessPredicates = []readinessPredicate{
 	predicateTriggered,
+	predicateNotHeld,
 	predicateAcceptanceCriteria,
 	predicateNotOwned,
 	predicateNotClosedByPullRequest,
@@ -485,6 +492,20 @@ func predicateTriggered(_ context.Context, _ *ReadinessEvaluator, scope Readines
 	return &ReadinessFinding{
 		Verdict:  ReadinessNotTriggered,
 		Evidence: "the issue is closed, or does not carry the trigger label " + strconv.Quote(scope.Binding.Forge.TriggerLabel),
+	}, nil
+}
+
+// predicateNotHeld refuses an issue carrying the portfolio hold, even when it
+// also carries the trigger. It runs straight after the trigger test and before
+// anything that costs a forge call: a held issue is not this source's to look
+// at any further.
+func predicateNotHeld(_ context.Context, _ *ReadinessEvaluator, _ ReadinessScope, issue *ForgeIssue) (*ReadinessFinding, error) {
+	if !issueHeld(issue) {
+		return nil, nil
+	}
+	return &ReadinessFinding{
+		Verdict:  ReadinessHeld,
+		Evidence: "the issue carries the hold " + strconv.Quote(HoldLabel) + "; only the party named on the issue clears it",
 	}, nil
 }
 

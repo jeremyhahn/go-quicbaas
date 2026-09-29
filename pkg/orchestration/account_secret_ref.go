@@ -46,9 +46,9 @@ import (
 // gets T's secret, not the system tenant's (the mis-homing go-quicbaas#535
 // measured for the account record itself).
 //
-// A worker host never sees a reference. The agent daemon receives the RESOLVED
+// A worker host never sees a reference. The fleet node daemon receives the RESOLVED
 // envelope through the materialize verb, and its account wire shape carries no
-// reference field (pkg/agent/account_client.go), so a daemon has neither the
+// reference field (pkg/fleet/account_client.go), so a daemon has neither the
 // name nor any route to the store.
 // =============================================================================
 
@@ -56,9 +56,28 @@ import (
 //
 // ref is tenant-relative (e.g. "agents/claude/claude1/oauth_token"); the
 // implementation is responsible for addressing it inside tenantID's keyspace
-// and nowhere else. The returned bytes are the secret's value verbatim.
+// and nowhere else.
 type AccountSecretResolver interface {
-	ResolveAccountSecret(ctx context.Context, tenantID, ref string) ([]byte, error)
+	ResolveAccountSecret(ctx context.Context, tenantID, ref string) (*AccountSecretValue, error)
+}
+
+// AccountSecretValue is the current version of a referenced secret.
+type AccountSecretValue struct {
+	// Data is the secret's value verbatim.
+	Data []byte
+
+	// Generation identifies WHICH VERSION of the secret Data is: a number
+	// every write of the secret advances. It becomes the credential's
+	// generation (AccountCredential.Generation), so a live session can tell
+	// that the secret was rewritten since it materialized its copy
+	// (SessionAccountFreshness, go-quicbaas#997). Writing the secret is how a
+	// referenced account is rotated, and that write moves no account field,
+	// so this is the only evidence of the rotation there is.
+	//
+	// It is ordered only against other versions of the same secret, which is
+	// the only comparison a referenced account's sessions ever make. Zero
+	// means the store reported no version; readers treat it as unknown.
+	Generation int64
 }
 
 // WithAccountSecretResolver installs the resolver AccountTokenManager reads a
@@ -242,10 +261,14 @@ func ReadAccountSecretRef(ctx context.Context, resolver AccountSecretResolver, a
 		}
 		return nil, newAccountSecretRefUnresolvedError(account, err)
 	}
-	cred, err := credentialFromSecret(account, value)
+	if value == nil {
+		return nil, newAccountSecretRefUnresolvedError(account, errAccountSecretEmpty)
+	}
+	cred, err := credentialFromSecret(account, value.Data)
 	if err != nil {
 		return nil, newAccountSecretRefUnresolvedError(account, err)
 	}
+	cred.Generation = value.Generation
 	return cred, nil
 }
 

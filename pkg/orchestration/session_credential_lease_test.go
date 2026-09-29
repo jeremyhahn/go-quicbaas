@@ -435,7 +435,7 @@ func TestCountingLeaserIsATrueWrapper(t *testing.T) {
 //
 // A worker daemon's credential cache is keyed by account, so a burst of spawns
 // onto one account collapses onto one release and therefore onto one delivery
-// grant (pkg/agent/account_grant.go). Two concurrent sessions can be served
+// grant (pkg/fleet/account_grant.go). Two concurrent sessions can be served
 // under it. Withdrawing it when the first of them ends would refuse the other's
 // next refresh and break a job nobody ended — so the conclusion asks the
 // durable records who else is still holding it.

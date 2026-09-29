@@ -58,19 +58,6 @@ func TestClient_User(t *testing.T) {
 	}
 }
 
-func TestClient_Group(t *testing.T) {
-	mt := &mockTransport{}
-	client := NewClient(mt)
-	if client == nil {
-		t.Fatal("NewClient should return a non-nil client")
-	}
-
-	groupClient := client.Group()
-	if groupClient == nil {
-		t.Error("Group() should return a non-nil GroupClient")
-	}
-}
-
 func TestClient_Role(t *testing.T) {
 	mt := &mockTransport{}
 	client := NewClient(mt)
@@ -193,12 +180,6 @@ func TestClient_AllAccessorsReturnConsistentInstances(t *testing.T) {
 	user2 := client.User()
 	if user1 != user2 {
 		t.Error("User() should return the same instance on multiple calls")
-	}
-
-	group1 := client.Group()
-	group2 := client.Group()
-	if group1 != group2 {
-		t.Error("Group() should return the same instance on multiple calls")
 	}
 
 	role1 := client.Role()

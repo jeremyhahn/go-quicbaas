@@ -51,11 +51,12 @@ import (
 // WHAT THIS FILE REFUSES TO RENDER. A number the system does not have is
 // ABSENT AND LABELLED, never a zero:
 //
-//   - COST. Nothing in this tree prices a turn, so every ConsumptionEntry
-//     carries CostMicros zero, meaning UNMEASURED (go-quicbaas#791). The
-//     report therefore carries CostMeasured alongside the figure, and a
-//     reader that renders the number without consulting it is reporting an
-//     unmeasured total as a measured one.
+//   - COST. A turn on a model the price table does not price carries no
+//     figure (go-quicbaas#791, #1058). Every total carries PricedEntries and
+//     UnpricedEntries beside the money, and a reader that renders the number
+//     without consulting them is reporting an unmeasured total as a measured
+//     one. A subscription fee share is a pointer for the same reason: no fee
+//     configured is absent, never zero.
 //   - A SPEND POLICY NOBODY CONFIGURED. SpendPolicyNone says "this account
 //     has no cap", which is a fact. It is not the same fact as
 //     SpendPolicyUnknown, which says the deployment wires no account store so
@@ -160,7 +161,19 @@ type SpendWindowStatus struct {
 	// "0 remaining" next to "not exhausted", which is the more confusing of
 	// the two readings and would also make Exhausted depend on an estimate
 	// the report does not have.
+	//
+	// With a dollar axis the window is exhausted when EITHER metered axis has
+	// no allowance left.
 	Exhausted bool `json:"exhausted"`
+
+	// MaxEquivalentMicros, UsedEquivalentMicros and RemainingEquivalentMicros
+	// are the dollar axis, in millionths of a US dollar at list price, over
+	// the window's PRICED turns. MaxEquivalentMicros is zero when the window
+	// does not meter dollars, and so is MaxTokens when it does not meter
+	// tokens.
+	MaxEquivalentMicros       int64 `json:"max_equivalent_micros,omitempty"`
+	UsedEquivalentMicros      int64 `json:"used_equivalent_micros"`
+	RemainingEquivalentMicros int64 `json:"remaining_equivalent_micros"`
 
 	// FreesAt is when the window's oldest entry ages out, which is the
 	// earliest the figures above can improve without new spend. NIL when the
@@ -187,8 +200,24 @@ type SpendAccount struct {
 	DisplayName string `json:"display_name,omitempty"`
 	Provider    string `json:"provider,omitempty"`
 
-	// TotalTokens is what this account spent inside the report's scope.
-	TotalTokens int64 `json:"total_tokens"`
+	// ConsumptionTotals is what this account spent inside the report's
+	// scope: its tokens by dimension, their list-price equivalent and what
+	// they added to the bill.
+	ConsumptionTotals
+
+	// Billing is how the account is billed, from its record; empty when
+	// PolicyStatus is SpendPolicyUnknown.
+	Billing AccountBilling `json:"billing,omitzero"`
+
+	// SubscriptionFeeMicros is the part of a subscription's monthly fee that
+	// falls in the report's range (AccountBilling.FeeShare), set only on a
+	// TENANT-level report and only for a subscription whose fee is
+	// configured. Nil otherwise, which a reader renders as a dash.
+	//
+	// ONLY AT THE TENANT LEVEL: one subscription serves every project, and
+	// charging its whole fee to whichever project is being read would count
+	// it once per project.
+	SubscriptionFeeMicros *int64 `json:"subscription_fee_micros,omitempty"`
 
 	// PolicyStatus says whether the allowance below is a fact, an absence,
 	// or unknown. See SpendPolicyStatus.
@@ -255,11 +284,41 @@ func optionalInstant(at time.Time) *time.Time {
 	return &utc
 }
 
-// SpendModel is one engine/model pair's share of a scope's tokens.
+// SpendModel is one engine/model pair's share of a scope's spend.
 type SpendModel struct {
-	Engine      string `json:"engine"`
-	Model       string `json:"model"`
-	TotalTokens int64  `json:"total_tokens"`
+	Engine string `json:"engine"`
+	Model  string `json:"model"`
+	ConsumptionTotals
+}
+
+// SpendHost is one host's share of a scope's spend: the node or worker host
+// the turns ran on.
+type SpendHost struct {
+	// Host is the host's address as the fleet knows it ("gpu-host:9091"). It
+	// is empty when Unattributed.
+	Host string `json:"host,omitempty"`
+
+	// Unattributed marks the entries that name no host. A caller drilling
+	// into this row passes SpendUnattributed as the report's host.
+	Unattributed bool `json:"unattributed,omitempty"`
+
+	ConsumptionTotals
+}
+
+// SpendAgent is one tenant Agent's share of a scope's spend: the turns of the
+// sessions that ran as it.
+type SpendAgent struct {
+	// AgentID is the Agent's catalog ID. It is empty when Unattributed.
+	AgentID string `json:"agent_id,omitempty"`
+
+	// Name is the Agent's name when it still exists.
+	Name string `json:"name,omitempty"`
+
+	// Unattributed marks the turns of sessions spawned on a raw backend. A
+	// caller drilling into this row passes SpendUnattributed as the agent.
+	Unattributed bool `json:"unattributed,omitempty"`
+
+	ConsumptionTotals
 }
 
 // SpendChild is one row of the drill-down: the next chain level below the
@@ -288,7 +347,7 @@ type SpendChild struct {
 	// what it names, and a deleted project keeps its spend under its id.
 	Name string `json:"name,omitempty"`
 
-	TotalTokens int64 `json:"total_tokens"`
+	ConsumptionTotals
 }
 
 // SpendReport is one scope's consumption, its drill-down, and the allowance
@@ -316,34 +375,18 @@ type SpendReport struct {
 	// addresses one that still exists.
 	ProjectName string `json:"project_name,omitempty"`
 
-	// Entries is how many ledger records were summed.
-	Entries int `json:"entries"`
-
-	// InputTokens is the fresh prompt; the two cache dimensions are prompt
-	// tokens served from and written into the provider's cache.
-	InputTokens      int64 `json:"input_tokens"`
-	OutputTokens     int64 `json:"output_tokens"`
-	CacheReadTokens  int64 `json:"cache_read_tokens"`
-	CacheWriteTokens int64 `json:"cache_write_tokens"`
-	TotalTokens      int64 `json:"total_tokens"`
-
-	// CostMicros is the summed charge in millionths of a currency unit, and
-	// CostMeasured says whether ANY of it was actually priced.
+	// ConsumptionTotals is what the scope spent: entries, tokens by
+	// dimension, successes and failures, and the list-price equivalent.
 	//
-	// A READER MUST CONSULT CostMeasured BEFORE RENDERING CostMicros. Nothing
-	// in this tree prices a turn (go-quicbaas#791), so today CostMeasured is
-	// false on every production report and the figure must be shown as a
-	// dash. Deriving the flag from the data rather than hard-coding false is
-	// what lets the price source land without every reader changing: the day
-	// a turn carries a price, the total stops being zero and starts being
-	// measured.
-	CostMicros   int64 `json:"cost_micros"`
-	CostMeasured bool  `json:"cost_measured"`
+	// A READER MUST CONSULT PricedEntries BEFORE RENDERING THE MONEY. Zero
+	// priced entries means nothing in the scope was priced — its models are
+	// not in the price table — and the figure is a dash, never a zero.
+	// UnpricedEntries > 0 alongside priced ones means the figure is a floor:
+	// some turns ran on models the table does not price.
+	ConsumptionTotals
 
-	// Successes and Failures partition Entries. A failed turn spends tokens
-	// too, which is why it is in the ledger at all.
-	Successes int `json:"successes"`
-	Failures  int `json:"failures"`
+	// Currency is what every money figure on this report is denominated in.
+	Currency string `json:"currency"`
 
 	// FirstAt and LastAt bound the entries summed; both NIL when Entries is
 	// zero, because an empty scope has no first and no last. Pointers for the
@@ -351,11 +394,55 @@ type SpendReport struct {
 	FirstAt *time.Time `json:"first_at,omitempty"`
 	LastAt  *time.Time `json:"last_at,omitempty"`
 
+	// From and To echo the range the report was narrowed to, [From, To);
+	// both nil for a report over the scope's whole history.
+	From *time.Time `json:"from,omitempty"`
+	To   *time.Time `json:"to,omitempty"`
+
+	// SubscriptionFeeMicros sums the accounts' SubscriptionFeeMicros: what the
+	// tenant's subscriptions cost over the range, beside the per-turn billed
+	// figure (which is zero for every subscription turn). Nil when no
+	// subscription account carries a fee, or below the tenant level.
+	//
+	// The range a fee is shared over is [From, To) when the report is
+	// ranged, and otherwise from the first recorded turn to Now. Either way it
+	// starts no earlier than the account's registration.
+	SubscriptionFeeMicros *int64 `json:"subscription_fee_micros,omitempty"`
+
 	// Accounts, Models and Children are sorted deterministically — by
 	// identifier, then by name — so two reads of an unchanged ledger render
 	// identically and a diff of two reports is a diff of the spend.
 	Accounts []SpendAccount `json:"accounts,omitempty"`
 	Models   []SpendModel   `json:"models,omitempty"`
+
+	// Host echoes the host the report was narrowed to, empty for every host.
+	// Hosts breaks the (narrowed) totals down by the host each turn ran on,
+	// the unattributed row last.
+	Host  string      `json:"host,omitempty"`
+	Hosts []SpendHost `json:"hosts,omitempty"`
+
+	// Agent echoes the tenant Agent the report was narrowed to, empty for
+	// every Agent. Agents breaks the (narrowed) totals down by the Agent each
+	// turn's session ran as, the raw-backend row last.
+	Agent  string       `json:"agent,omitempty"`
+	Agents []SpendAgent `json:"agents,omitempty"`
+
+	// AgentPolicyStatus and AgentWindows are the narrowed-to Agent's OWN
+	// spend limits, with usage against each window read from the Agent quota
+	// plane — what a spawn of the Agent is checked against (agent_spend.go).
+	// Unknown when no catalog is wired or the Agent no longer exists; empty
+	// when the report is not narrowed to one Agent.
+	AgentPolicyStatus SpendPolicyStatus   `json:"agent_policy_status,omitempty"`
+	AgentWindows      []SpendWindowStatus `json:"agent_windows,omitempty"`
+
+	// ScopePolicyStatus and ScopeWindows are the scope's OWN spend limits —
+	// a project's at the project level, the tenant's at the tenant level —
+	// with live usage against each window, read from the project or tenant
+	// quota plane (go-quicbaas#1058, ruling F6). The status reads as an
+	// account's does: none, metered, or unknown when the limits could not be
+	// read. Both are empty at the deeper levels, which carry no limits.
+	ScopePolicyStatus SpendPolicyStatus   `json:"scope_policy_status,omitempty"`
+	ScopeWindows      []SpendWindowStatus `json:"scope_windows,omitempty"`
 
 	// Children is the drill-down: one row per identifier at ChildLevel.
 	// Empty at the deepest level, where there is nothing below to attribute
@@ -383,15 +470,31 @@ type SpendReportRequest struct {
 	Round    int
 	RoundSet bool
 
+	// From and To narrow the report to the entries that occurred in
+	// [From, To). From alone ranges up to Now; To alone is refused. Both zero
+	// report the scope's whole history.
+	From time.Time
+	To   time.Time
+
+	// Host narrows the report to the turns that ran on one host; empty
+	// reports every host. SpendUnattributed selects the turns that name none.
+	Host string
+
+	// Agent narrows the report to the turns of the sessions one tenant Agent
+	// ran; empty reports every Agent. SpendUnattributed selects the turns of
+	// raw-backend sessions.
+	Agent string
+
 	// Now is the instant the quota windows and the breaker are evaluated
 	// against. Zero selects time.Now(), which is what every caller but a
 	// test wants; a caller that passes it makes the report reproducible.
 	Now time.Time
 }
 
-// scope renders the request as the ledger's own scope type.
-func (r *SpendReportRequest) scope() ConsumptionScope {
-	return ConsumptionScope{
+// scope renders the request as the ledger's own scope type, with an open end
+// of the range closed at now.
+func (r *SpendReportRequest) scope(now time.Time) ConsumptionScope {
+	scope := ConsumptionScope{
 		TenantID:  r.TenantID,
 		ProjectID: r.ProjectID,
 		TaskID:    r.TaskID,
@@ -399,7 +502,15 @@ func (r *SpendReportRequest) scope() ConsumptionScope {
 		SessionID: r.SessionID,
 		Round:     r.Round,
 		RoundSet:  r.RoundSet,
+		From:      r.From,
+		To:        r.To,
+		Host:      r.Host,
+		Agent:     r.Agent,
 	}
+	if !scope.From.IsZero() && scope.To.IsZero() {
+		scope.To = now
+	}
+	return scope
 }
 
 // SpendLedgerAccessor is implemented by an agent service that can hand out
@@ -423,6 +534,20 @@ type SpendLedgerAccessor interface {
 	// ProjectStore returns the durable project store, or nil when none is
 	// wired. Without it the report carries project ids and no names.
 	ProjectStore() ProjectStore
+
+	// TenantSpendPolicyAccessor supplies the tenant's own limits, reported
+	// on a tenant-level report.
+	TenantSpendPolicyAccessor
+
+	// AgentDirectoryAccessor supplies Agent names and an Agent's own limits.
+	// A nil directory reports them as unknown.
+	AgentDirectoryAccessor
+}
+
+// SpendAgentCatalog is the slice of the tenant agent catalog a spend report
+// reads: every Agent's name and limits in one read.
+type SpendAgentCatalog interface {
+	Catalogue(ctx context.Context, tenantID string) (AgentCatalogue, error)
 }
 
 // SpendSources is what a spend report is read from.
@@ -430,23 +555,37 @@ type SpendSources struct {
 	// Ledger is the consumption record. Required.
 	Ledger ConsumptionLedger
 
-	// Accounts supplies each paying account's name and allowance. Optional:
-	// without it every allowance is reported as unknown.
+	// Accounts supplies each paying account's name and allowance. Optional.
 	Accounts AccountStore
 
-	// Projects supplies project names. Optional: without it the report
-	// carries project ids and no names.
+	// Projects supplies project names and a project's own limits. Optional.
 	Projects ProjectStore
+
+	// TenantPolicies supplies the tenant's own limits. Optional.
+	TenantPolicies TenantSpendPolicyStore
+
+	// Agents supplies Agent names and an Agent's own limits. Optional.
+	Agents SpendAgentCatalog
 }
 
-// SpendSourcesOf gathers the sources an accessor exposes, so every transport
-// reads a report from the same three stores.
+// SpendSourcesOf gathers the sources an accessor exposes.
 func SpendSourcesOf(accessor SpendLedgerAccessor) SpendSources {
 	return SpendSources{
-		Ledger:   accessor.ConsumptionLedger(),
-		Accounts: accessor.AccountStore(),
-		Projects: accessor.ProjectStore(),
+		Ledger:         accessor.ConsumptionLedger(),
+		Accounts:       accessor.AccountStore(),
+		Projects:       accessor.ProjectStore(),
+		TenantPolicies: accessor.TenantSpendPolicies(),
+		Agents:         spendAgentCatalogOf(accessor.AgentDirectory()),
 	}
+}
+
+// spendAgentCatalogOf keeps a nil directory a nil interface, so "no catalog"
+// reads as unknown rather than as a catalog that panics.
+func spendAgentCatalogOf(directory *AgentDirectory) SpendAgentCatalog {
+	if directory == nil {
+		return nil
+	}
+	return directory
 }
 
 // =============================================================================
@@ -516,7 +655,13 @@ func ReadSpendReport(ctx context.Context, sources SpendSources, req *SpendReport
 		return nil, &SpendReportError{TenantID: req.TenantID, Cause: ErrSpendLedgerRequired}
 	}
 
-	scope := req.scope()
+	now := req.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	now = now.UTC()
+
+	scope := req.scope(now)
 	level, childLevel, err := spendLevels(scope)
 	if err != nil {
 		return nil, &SpendReportError{TenantID: req.TenantID, Cause: err}
@@ -527,35 +672,27 @@ func ReadSpendReport(ctx context.Context, sources SpendSources, req *SpendReport
 		return nil, &SpendReportError{TenantID: req.TenantID, Level: level, Cause: err}
 	}
 
-	now := req.Now
-	if now.IsZero() {
-		now = time.Now()
-	}
-	now = now.UTC()
-
 	report := &SpendReport{
-		Scope:            scope,
-		Level:            level,
-		TenantID:         scope.TenantID,
-		ProjectID:        scope.ProjectID,
-		TaskID:           scope.TaskID,
-		JobID:            scope.JobID,
-		SessionID:        scope.SessionID,
-		Entries:          rollup.Entries,
-		InputTokens:      rollup.InputTokens,
-		OutputTokens:     rollup.OutputTokens,
-		CacheReadTokens:  rollup.CacheReadTokens,
-		CacheWriteTokens: rollup.CacheWriteTokens,
-		TotalTokens:      rollup.TotalTokens,
-		CostMicros:       rollup.CostMicros,
-		CostMeasured:     rollup.CostMicros > 0,
-		Successes:        rollup.Successes,
-		Failures:         rollup.Failures,
-		FirstAt:          optionalInstant(rollup.FirstAt),
-		LastAt:           optionalInstant(rollup.LastAt),
-		ChildLevel:       childLevel,
-		Models:           spendModels(rollup.ByModel),
-		Children:         spendChildren(rollup.ByChild, childLevel),
+		Scope:             scope,
+		Level:             level,
+		TenantID:          scope.TenantID,
+		ProjectID:         scope.ProjectID,
+		TaskID:            scope.TaskID,
+		JobID:             scope.JobID,
+		SessionID:         scope.SessionID,
+		ConsumptionTotals: rollup.ConsumptionTotals,
+		Currency:          PriceCurrency(),
+		FirstAt:           optionalInstant(rollup.FirstAt),
+		LastAt:            optionalInstant(rollup.LastAt),
+		From:              optionalInstant(scope.From),
+		To:                optionalInstant(scope.To),
+		ChildLevel:        childLevel,
+		Models:            spendModels(rollup.ByModel),
+		Host:              scope.Host,
+		Hosts:             spendHosts(rollup.ByHost),
+		Agent:             scope.Agent,
+		Agents:            spendAgents(rollup.ByAgent),
+		Children:          spendChildren(rollup.ByChild, childLevel),
 	}
 	if scope.RoundSet {
 		report.Round = scope.Round
@@ -565,20 +702,138 @@ func ReadSpendReport(ctx context.Context, sources SpendSources, req *SpendReport
 	if err != nil {
 		return nil, &SpendReportError{TenantID: scope.TenantID, Level: level, Cause: err}
 	}
+	// A subscription fee belongs to an account, not to a host, so a report
+	// narrowed to one host carries no share of it.
+	if level == SpendLevelTenant && scope.Host == "" {
+		if err := shareSubscriptionFees(ctx, ledger, sources.Accounts, report, rollup.FirstAt, now); err != nil {
+			return nil, &SpendReportError{TenantID: scope.TenantID, Level: level, Cause: err}
+		}
+	}
 	if err := nameSpendProjects(ctx, sources.Projects, report); err != nil {
+		return nil, &SpendReportError{TenantID: scope.TenantID, Level: level, Cause: err}
+	}
+	if err := describeScopeLimits(ctx, sources, report, now); err != nil {
+		return nil, &SpendReportError{TenantID: scope.TenantID, Level: level, Cause: err}
+	}
+	if err := describeAgents(ctx, sources, report, now); err != nil {
 		return nil, &SpendReportError{TenantID: scope.TenantID, Level: level, Cause: err}
 	}
 	return report, nil
 }
 
+// describeAgents names the Agent rows and, when the report is narrowed to one
+// Agent, reports that Agent's own limits and the usage against each window,
+// read from the Agent quota plane a spawn is checked against.
+//
+// The rule describeScopeLimits follows: no catalog wired, or an Agent that no
+// longer exists, is UNKNOWN; a catalog that fails fails the report.
+func describeAgents(ctx context.Context, sources SpendSources, report *SpendReport, now time.Time) error {
+	narrowed := report.Agent != "" && report.Agent != SpendUnattributed
+	if narrowed {
+		report.AgentPolicyStatus = SpendPolicyUnknown
+	}
+	if sources.Agents == nil || (len(report.Agents) == 0 && !narrowed) {
+		return nil
+	}
+	catalogue, err := sources.Agents.Catalogue(ctx, report.TenantID)
+	if err != nil {
+		return err
+	}
+	for i := range report.Agents {
+		if agent, ok := catalogue.Agent(report.Agents[i].AgentID); ok {
+			report.Agents[i].Name = agent.Name
+		}
+	}
+	if !narrowed {
+		return nil
+	}
+	agent, ok := catalogue.Agent(report.Agent)
+	if !ok {
+		return nil
+	}
+	if !agent.Spend.Metered() {
+		report.AgentPolicyStatus = SpendPolicyNone
+		return nil
+	}
+	windows, err := windowStatuses(agent.Spend, now, func(from, to time.Time) (*ConsumptionRollup, error) {
+		return sources.Ledger.AgentWindowUsage(ctx, report.TenantID, report.Agent, from, to)
+	})
+	if err != nil {
+		return err
+	}
+	report.AgentPolicyStatus = SpendPolicyMetered
+	report.AgentWindows = windows
+	return nil
+}
+
+// describeScopeLimits reports the scope's own spend limits and the usage
+// against each window: the project's at the project level, the tenant's at
+// the tenant level. They are what admission defers a spent project or tenant
+// on (admission_spend.go), read from the same quota planes.
+//
+// The rule describeSpendPolicy follows: limits that could not be read because
+// nothing is wired are UNKNOWN, never "none"; a project that no longer exists
+// has no limits to report and is unknown too; a store that fails fails the
+// report.
+func describeScopeLimits(ctx context.Context, sources SpendSources, report *SpendReport, now time.Time) error {
+	var (
+		limits SpendLimits
+		read   windowReader
+	)
+	switch {
+	case report.Level == SpendLevelTenant:
+		report.ScopePolicyStatus = SpendPolicyUnknown
+		if sources.TenantPolicies == nil {
+			return nil
+		}
+		policy, err := sources.TenantPolicies.Get(ctx, report.TenantID)
+		if err != nil {
+			return err
+		}
+		limits = policy.Limits
+		read = func(from, to time.Time) (*ConsumptionRollup, error) {
+			return sources.Ledger.TenantWindowUsage(ctx, report.TenantID, from, to)
+		}
+	case report.Level == SpendLevelProject && report.ProjectID != SpendUnattributed:
+		report.ScopePolicyStatus = SpendPolicyUnknown
+		if sources.Projects == nil {
+			return nil
+		}
+		project, err := sources.Projects.Get(ctx, report.TenantID, report.ProjectID)
+		if errors.Is(err, ErrProjectNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		limits = project.Spend
+		read = func(from, to time.Time) (*ConsumptionRollup, error) {
+			return sources.Ledger.ProjectWindowUsage(ctx, report.TenantID, report.ProjectID, from, to)
+		}
+	default:
+		return nil
+	}
+	if !limits.Metered() {
+		report.ScopePolicyStatus = SpendPolicyNone
+		return nil
+	}
+	windows, err := windowStatuses(limits, now, read)
+	if err != nil {
+		return err
+	}
+	report.ScopePolicyStatus = SpendPolicyMetered
+	report.ScopeWindows = windows
+	return nil
+}
+
 // nameSpendProjects puts project names on the report: on the scope when it
 // addresses a project, and on every drill-down row when the rows ARE
-// projects (go-quicbaas#1058 — the By Project card listed bare ids).
+// projects.
 //
 // THE SAME RULE AS loadSpendAccount. A project that is gone keeps its spend
-// under its id with no name — the ledger outlives what it names — but a store
-// that could not answer fails the report, because a fault rendered as "this
-// project has no name" is a fault presented as a fact.
+// under its id with no name — the ledger outlives what it names — but a
+// store that could not answer fails the report, because a fault rendered as
+// "this project has no name" is a fault presented as a fact.
 func nameSpendProjects(ctx context.Context, projects ProjectStore, report *SpendReport) error {
 	if projects == nil {
 		return nil
@@ -603,6 +858,77 @@ func nameSpendProjects(ctx context.Context, projects ProjectStore, report *Spend
 			return err
 		}
 		child.Name = name
+	}
+	return nil
+}
+
+// shareSubscriptionFees pro-rates every subscription's monthly fee over the
+// report's range (go-quicbaas#1058, ruling F4) and totals it on the report.
+//
+// EVERY FEE-CARRYING SUBSCRIPTION OF THE TENANT, used or not. A subscription
+// that served no turn in the range still cost its fee, and an idle plan is
+// exactly what this figure exists to show; so such an account gets a row with
+// no consumption beside its fee share.
+//
+// The range is the report's own when it was ranged, and otherwise the span
+// from the first recorded turn to now — the period the ledger can speak for.
+// An unranged report over an empty scope has no span and shares no fee. Each
+// account's share starts no earlier than its registration.
+func shareSubscriptionFees(
+	ctx context.Context,
+	ledger ConsumptionLedger,
+	store AccountStore,
+	report *SpendReport,
+	firstAt, now time.Time,
+) error {
+	if store == nil {
+		return nil
+	}
+	from, to := firstAt, now
+	if report.From != nil && report.To != nil {
+		from, to = *report.From, *report.To
+	}
+	if from.IsZero() {
+		return nil
+	}
+	accounts, err := store.ListByTenant(ContextWithTenant(ctx, report.TenantID), report.TenantID, "", "")
+	if err != nil {
+		return err
+	}
+	rows := make(map[string]int, len(report.Accounts))
+	for i := range report.Accounts {
+		rows[report.Accounts[i].AccountID] = i
+	}
+	var total int64
+	shared := false
+	for _, account := range accounts {
+		if account == nil {
+			continue
+		}
+		start := from
+		if account.CreatedAt.After(start) {
+			start = account.CreatedAt
+		}
+		share, known := account.Billing.FeeShare(start, to)
+		if !known {
+			continue
+		}
+		index, present := rows[account.ID]
+		if !present {
+			row := SpendAccount{AccountID: account.ID, PolicyStatus: SpendPolicyUnknown}
+			if err := describeSpendPolicy(ctx, ledger, account, &row, now); err != nil {
+				return err
+			}
+			report.Accounts = append(report.Accounts, row)
+			index = len(report.Accounts) - 1
+		}
+		report.Accounts[index].SubscriptionFeeMicros = &share
+		total += share
+		shared = true
+	}
+	if shared {
+		report.SubscriptionFeeMicros = &total
+		sort.Slice(report.Accounts, func(i, j int) bool { return report.Accounts[i].AccountID < report.Accounts[j].AccountID })
 	}
 	return nil
 }
@@ -638,24 +964,25 @@ func spendLevels(scope ConsumptionScope) (level, child SpendLevel, err error) {
 // engine/model key back into its two parts.
 //
 // The key is built by ConsumptionEntry.ModelKey as engine + "/" + model, and
-// the split is unambiguous because the ledger refuses a separator inside
-// either half at the write (validateConsumptionEntry -> validateKeySegment).
-// Cutting at the first separator rather than the last therefore recovers
-// exactly what was recorded; a key with no separator at all was not written
-// by this package and is reported whole rather than guessed apart.
-func spendModels(byModel map[string]int64) []SpendModel {
+// the split is unambiguous because the ledger refuses a separator inside the
+// ENGINE at the write (validateConsumptionEntry -> validateKeySegment). The
+// model may carry separators of its own — "ollama/review-q8:latest" — so the
+// cut is at the FIRST separator, which recovers exactly what was recorded; a
+// key with no separator at all was not written by this package and is
+// reported whole rather than guessed apart.
+func spendModels(byModel map[string]*ConsumptionTotals) []SpendModel {
 	if len(byModel) == 0 {
 		return nil
 	}
 	models := make([]SpendModel, 0, len(byModel))
-	for key, tokens := range byModel {
+	for key, totals := range byModel {
 		engine, model, found := strings.Cut(key, "/")
 		if !found {
 			// A key with no separator cannot be split honestly, so it is
 			// reported whole as the model rather than guessed apart.
 			engine, model = "", key
 		}
-		models = append(models, SpendModel{Engine: engine, Model: model, TotalTokens: tokens})
+		models = append(models, SpendModel{Engine: engine, Model: model, ConsumptionTotals: *totals})
 	}
 	sort.Slice(models, func(i, j int) bool {
 		if models[i].Engine != models[j].Engine {
@@ -666,15 +993,65 @@ func spendModels(byModel map[string]int64) []SpendModel {
 	return models
 }
 
+// spendHosts renders the host breakdown, sorted by host with the unattributed
+// row last.
+func spendHosts(byHost map[string]*ConsumptionTotals) []SpendHost {
+	if len(byHost) == 0 {
+		return nil
+	}
+	hosts := make([]SpendHost, 0, len(byHost))
+	for host, totals := range byHost {
+		row := SpendHost{ConsumptionTotals: *totals}
+		if host == consumptionUnattributed {
+			row.Unattributed = true
+		} else {
+			row.Host = host
+		}
+		hosts = append(hosts, row)
+	}
+	sort.Slice(hosts, func(i, j int) bool {
+		if hosts[i].Unattributed != hosts[j].Unattributed {
+			return hosts[j].Unattributed
+		}
+		return hosts[i].Host < hosts[j].Host
+	})
+	return hosts
+}
+
+// spendAgents renders the Agent breakdown, sorted by Agent with the
+// raw-backend row last.
+func spendAgents(byAgent map[string]*ConsumptionTotals) []SpendAgent {
+	if len(byAgent) == 0 {
+		return nil
+	}
+	agents := make([]SpendAgent, 0, len(byAgent))
+	for agentID, totals := range byAgent {
+		row := SpendAgent{ConsumptionTotals: *totals}
+		if agentID == consumptionUnattributed {
+			row.Unattributed = true
+		} else {
+			row.AgentID = agentID
+		}
+		agents = append(agents, row)
+	}
+	sort.Slice(agents, func(i, j int) bool {
+		if agents[i].Unattributed != agents[j].Unattributed {
+			return agents[j].Unattributed
+		}
+		return agents[i].AgentID < agents[j].AgentID
+	})
+	return agents
+}
+
 // spendChildren renders the drill-down rows, labelling the unattributed
 // subtree and un-padding a round segment.
-func spendChildren(byChild map[string]int64, level SpendLevel) []SpendChild {
+func spendChildren(byChild map[string]*ConsumptionTotals, level SpendLevel) []SpendChild {
 	if level == "" || len(byChild) == 0 {
 		return nil
 	}
 	children := make([]SpendChild, 0, len(byChild))
-	for id, tokens := range byChild {
-		child := SpendChild{Level: level, TotalTokens: tokens}
+	for id, totals := range byChild {
+		child := SpendChild{Level: level, ConsumptionTotals: *totals}
 		switch {
 		case id == consumptionUnattributed:
 			// The ledger's no-value sentinel. Reported as an absence, never
@@ -721,18 +1098,18 @@ func spendAccounts(
 	ledger ConsumptionLedger,
 	store AccountStore,
 	tenantID string,
-	byAccount map[string]int64,
+	byAccount map[string]*ConsumptionTotals,
 	now time.Time,
 ) ([]SpendAccount, error) {
 	if len(byAccount) == 0 {
 		return nil, nil
 	}
 	out := make([]SpendAccount, 0, len(byAccount))
-	for accountID, tokens := range byAccount {
+	for accountID, totals := range byAccount {
 		entry := SpendAccount{
-			AccountID:    accountID,
-			TotalTokens:  tokens,
-			PolicyStatus: SpendPolicyUnknown,
+			AccountID:         accountID,
+			ConsumptionTotals: *totals,
+			PolicyStatus:      SpendPolicyUnknown,
 		}
 		account, err := loadSpendAccount(ctx, store, tenantID, accountID)
 		if err != nil {
@@ -795,6 +1172,7 @@ func describeSpendPolicy(
 ) error {
 	entry.DisplayName = account.DisplayName
 	entry.Provider = string(account.Provider)
+	entry.Billing = account.Billing
 
 	policy := account.Spend
 	if !policy.Metered() {
@@ -803,13 +1181,13 @@ func describeSpendPolicy(
 	}
 	entry.PolicyStatus = SpendPolicyMetered
 
-	for _, window := range policy.Quota.Windows {
-		status, err := spendWindowStatus(ctx, ledger, account.TenantID, account.ID, window, now)
-		if err != nil {
-			return err
-		}
-		entry.Windows = append(entry.Windows, status)
+	windows, err := windowStatuses(policy.Quota, now, func(from, to time.Time) (*ConsumptionRollup, error) {
+		return ledger.WindowUsage(ctx, account.TenantID, account.ID, from, to)
+	})
+	if err != nil {
+		return err
 	}
+	entry.Windows = windows
 	if policy.Breaker == nil {
 		return nil
 	}
@@ -821,32 +1199,43 @@ func describeSpendPolicy(
 	return nil
 }
 
+// windowStatuses reads every window of limits, in order.
+func windowStatuses(limits SpendLimits, now time.Time, read windowReader) ([]SpendWindowStatus, error) {
+	var out []SpendWindowStatus
+	for _, window := range limits.Windows {
+		status, err := spendWindowStatus(window, now, read)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, status)
+	}
+	return out, nil
+}
+
 // spendWindowStatus reads one sliding window's live usage.
-func spendWindowStatus(
-	ctx context.Context,
-	ledger ConsumptionLedger,
-	tenantID, accountID string,
-	window QuotaWindow,
-	now time.Time,
-) (SpendWindowStatus, error) {
-	usage, err := ledger.WindowUsage(ctx, tenantID, accountID, now.Add(-window.Size), now)
+func spendWindowStatus(window QuotaWindow, now time.Time, read windowReader) (SpendWindowStatus, error) {
+	usage, err := read(now.Add(-window.Size), now)
 	if err != nil {
 		// No status. A window whose usage could not be read must not be
 		// reported as an empty one: that is a full allowance drawn on a
 		// store that is in trouble.
 		return SpendWindowStatus{}, err
 	}
-	remaining := window.MaxTokens - usage.TotalTokens
-	if remaining < 0 {
-		remaining = 0
-	}
 	status := SpendWindowStatus{
-		Name:            window.Name,
-		Size:            window.Size,
-		MaxTokens:       window.MaxTokens,
-		UsedTokens:      usage.TotalTokens,
-		RemainingTokens: remaining,
-		Exhausted:       usage.TotalTokens >= window.MaxTokens,
+		Name:                 window.Name,
+		Size:                 window.Size,
+		MaxTokens:            window.MaxTokens,
+		UsedTokens:           usage.TotalTokens,
+		MaxEquivalentMicros:  window.MaxEquivalentMicros,
+		UsedEquivalentMicros: usage.EquivalentMicros,
+	}
+	if window.MaxTokens > 0 {
+		status.RemainingTokens = max(window.MaxTokens-usage.TotalTokens, 0)
+		status.Exhausted = usage.TotalTokens >= window.MaxTokens
+	}
+	if window.MaxEquivalentMicros > 0 {
+		status.RemainingEquivalentMicros = max(window.MaxEquivalentMicros-usage.EquivalentMicros, 0)
+		status.Exhausted = status.Exhausted || usage.EquivalentMicros >= window.MaxEquivalentMicros
 	}
 	// A sliding window frees up when its oldest entry ages out; with nothing
 	// in it there is nothing to age out, and the caller is told so by an

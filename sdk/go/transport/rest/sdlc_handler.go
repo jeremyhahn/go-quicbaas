@@ -17,6 +17,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/sdlc"
@@ -58,6 +59,16 @@ var sdlcMethods = map[string]func(*sdlcRESTHandler) sdlcMethodHandler{
 	"ListForges":  func(h *sdlcRESTHandler) sdlcMethodHandler { return h.handleListForges },
 	"Onboard":     func(h *sdlcRESTHandler) sdlcMethodHandler { return h.handleOnboard },
 	"Conformance": func(h *sdlcRESTHandler) sdlcMethodHandler { return h.handleConformance },
+	"OpenWork":    func(h *sdlcRESTHandler) sdlcMethodHandler { return h.handleOpenWork },
+
+	"Reviewer":           func(h *sdlcRESTHandler) sdlcMethodHandler { return h.handleReviewer },
+	"SetReviewer":        func(h *sdlcRESTHandler) sdlcMethodHandler { return h.handleSetReviewer },
+	"AdoptIssue":         func(h *sdlcRESTHandler) sdlcMethodHandler { return h.handleAdoptIssue },
+	"ClearReviewer":      func(h *sdlcRESTHandler) sdlcMethodHandler { return h.handleClearReviewer },
+	"WorkerImageStatus":  func(h *sdlcRESTHandler) sdlcMethodHandler { return h.handleWorkerImageStatus },
+	"RefreshWorkerImage": func(h *sdlcRESTHandler) sdlcMethodHandler { return h.handleRefreshWorkerImage },
+	"FileIssue":          func(h *sdlcRESTHandler) sdlcMethodHandler { return h.handleFileIssue },
+	"Collaborators":      func(h *sdlcRESTHandler) sdlcMethodHandler { return h.handleCollaborators },
 }
 
 func (h *sdlcRESTHandler) handleRequest(ctx context.Context, method string, req interface{}) (interface{}, error) {
@@ -78,6 +89,22 @@ func sdlcOnboardingPath(projectID string) string {
 
 func sdlcConformancePath(projectID string) string {
 	return "/api/v1/sdlc/projects/" + url.PathEscape(projectID) + "/conformance"
+}
+
+func sdlcOpenWorkPath(projectID string) string {
+	return "/api/v1/sdlc/projects/" + url.PathEscape(projectID) + "/open-work"
+}
+
+func sdlcReviewerPath(projectID string, pullRequest int) string {
+	return "/api/v1/sdlc/projects/" + url.PathEscape(projectID) + "/pulls/" + strconv.Itoa(pullRequest) + "/reviewer"
+}
+
+func sdlcIssuesPath(projectID string) string {
+	return "/api/v1/sdlc/projects/" + url.PathEscape(projectID) + "/issues"
+}
+
+func sdlcCollaboratorsPath(projectID string) string {
+	return "/api/v1/sdlc/projects/" + url.PathEscape(projectID) + "/collaborators"
 }
 
 func sdlcDeliveryPath(taskID string) string {
@@ -172,11 +199,151 @@ func (h *sdlcRESTHandler) handleConformance(ctx context.Context, req interface{}
 	return &resp, nil
 }
 
+// handleOpenWork reads a bound project's open work and changes nothing.
+func (h *sdlcRESTHandler) handleOpenWork(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*sdlc.OpenWorkRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("sdlc.OpenWork", "invalid request type")
+	}
+	var resp sdlc.OpenWork
+	path := sdlcOpenWorkPath(sdkReq.ProjectID) + tenantQuery(sdkReq.TenantID)
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// handleReviewer reads which reviewer profile reviews one pull request.
+func (h *sdlcRESTHandler) handleReviewer(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*sdlc.ReviewerRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("sdlc.Reviewer", "invalid request type")
+	}
+	var resp sdlc.ReviewerSelection
+	path := sdlcReviewerPath(sdkReq.ProjectID, sdkReq.PullRequest) + tenantQuery(sdkReq.TenantID)
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// handleSetReviewer records an operator's reviewer choice for one pull
+// request. The body carries the profile and nothing else: the path already
+// names the project and the pull request.
+func (h *sdlcRESTHandler) handleSetReviewer(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*sdlc.SetReviewerRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("sdlc.SetReviewer", "invalid request type")
+	}
+	var resp sdlc.ReviewerSelection
+	path := sdlcReviewerPath(sdkReq.ProjectID, sdkReq.PullRequest) + tenantQuery(sdkReq.TenantID)
+	body := struct {
+		Profile string `json:"profile"`
+	}{Profile: sdkReq.Profile}
+	if err := h.transport.doJSONRequest(ctx, http.MethodPut, path, &body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// handleClearReviewer removes one pull request's reviewer override.
+func (h *sdlcRESTHandler) handleClearReviewer(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*sdlc.ReviewerRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("sdlc.ClearReviewer", "invalid request type")
+	}
+	var resp sdlc.ReviewerSelection
+	path := sdlcReviewerPath(sdkReq.ProjectID, sdkReq.PullRequest) + tenantQuery(sdkReq.TenantID)
+	if err := h.transport.doJSONRequest(ctx, http.MethodDelete, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // handleListForges reads the build's registered forge adapters. The route
 // takes no tenant: the adapter set is the build's, not a tenant's.
 func (h *sdlcRESTHandler) handleListForges(ctx context.Context, _ interface{}) (interface{}, error) {
 	var resp sdlc.ListForgesResponse
 	if err := h.transport.doJSONRequest(ctx, http.MethodGet, "/api/v1/sdlc/forges", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// sdlcWorkerImagePath is the worker image refresh's route. It takes no tenant:
+// the refresh is a host verb over every tenant's bindings.
+const sdlcWorkerImagePath = "/api/v1/sdlc/worker-image"
+
+// handleWorkerImageStatus reads the refresh loop's state and its last pass.
+func (h *sdlcRESTHandler) handleWorkerImageStatus(ctx context.Context, _ interface{}) (interface{}, error) {
+	var resp sdlc.WorkerImageStatus
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, sdlcWorkerImagePath, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// handleRefreshWorkerImage queues a pass. The server answers 202 with the
+// status the request left behind.
+func (h *sdlcRESTHandler) handleRefreshWorkerImage(ctx context.Context, _ interface{}) (interface{}, error) {
+	var resp sdlc.WorkerImageStatus
+	if err := h.transport.doJSONRequest(ctx, http.MethodPost, sdlcWorkerImagePath+"/refresh", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// handleFileIssue files an issue on the bound repository. The body carries
+// the filing and nothing else: the path already names the project.
+func (h *sdlcRESTHandler) handleFileIssue(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*sdlc.FileIssueRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("sdlc.FileIssue", "invalid request type")
+	}
+	body := struct {
+		Title  string   `json:"title"`
+		Body   string   `json:"body,omitempty"`
+		Labels []string `json:"labels,omitempty"`
+		Parent int      `json:"parent,omitempty"`
+	}{Title: sdkReq.Title, Body: sdkReq.Body, Labels: sdkReq.Labels, Parent: sdkReq.Parent}
+	var resp sdlc.ForgeIssue
+	path := sdlcIssuesPath(sdkReq.ProjectID) + tenantQuery(sdkReq.TenantID)
+	if err := h.transport.doJSONRequest(ctx, http.MethodPost, path, &body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// handleAdoptIssue adopts one issue: POST .../projects/{id}/adopt. The path
+// names the project; the body carries the rest.
+func (h *sdlcRESTHandler) handleAdoptIssue(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*sdlc.AdoptIssueRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("sdlc.AdoptIssue", "invalid request type")
+	}
+	var resp sdlc.Adoption
+	path := "/api/v1/sdlc/projects/" + url.PathEscape(sdkReq.ProjectID) + "/adopt" + tenantQuery(sdkReq.TenantID)
+	body := struct {
+		Issue       int    `json:"issue"`
+		PullRequest int    `json:"pull_request,omitempty"`
+		Ruling      string `json:"ruling,omitempty"`
+	}{Issue: sdkReq.Issue, PullRequest: sdkReq.PullRequest, Ruling: sdkReq.Ruling}
+	if err := h.transport.doJSONRequest(ctx, http.MethodPost, path, &body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// handleCollaborators reads the accounts that may rule on the bound
+// repository.
+func (h *sdlcRESTHandler) handleCollaborators(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*sdlc.CollaboratorsRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("sdlc.Collaborators", "invalid request type")
+	}
+	var resp sdlc.CollaboratorsResponse
+	path := sdlcCollaboratorsPath(sdkReq.ProjectID) + tenantQuery(sdkReq.TenantID)
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil

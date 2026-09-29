@@ -106,3 +106,58 @@ func auditActorFromContext(ctx context.Context) *iam.AuditActor {
 	}
 	return &iam.AuditActor{UserID: userID}
 }
+
+// Compile-time interface satisfaction check.
+var _ orchestration.SigningRelayAuditor = (*orchestrationStoreAuditor)(nil)
+
+// signingRelayAuditAction is the audit action a relayed signature is recorded
+// under.
+const signingRelayAuditAction = "orchestration_signing_relay:sign"
+
+// newSigningRelayAuditor binds relayed-signature events to the platform audit
+// logger returned by resolve, the same trail the orchestration stores record
+// on. A nil resolver yields a nil auditor.
+func newSigningRelayAuditor(resolve func() iam.AuditLogger) orchestration.SigningRelayAuditor {
+	if resolve == nil {
+		return nil
+	}
+	return &orchestrationStoreAuditor{resolve: resolve}
+}
+
+// RecordSigningRelaySign appends one signature relayed to a fleet node
+// (go-quicbaas#1013): the session, the tenant, the agent, the key's
+// fingerprint and the SHA-256 of the data. Never the data itself — the trail
+// records that a signature was made and over what, not a copy of what was
+// signed. Written asynchronously, like every store event.
+func (a *orchestrationStoreAuditor) RecordSigningRelaySign(ctx context.Context, event orchestration.SigningRelaySignEvent) {
+	logger := a.resolve()
+	if logger == nil {
+		return
+	}
+	outcome := iam.AuditOutcomeSuccess
+	if !event.Success {
+		outcome = iam.AuditOutcomeFailure
+	}
+	details := map[string]interface{}{
+		"session_id":      event.SessionID,
+		"agent_id":        event.AgentID,
+		"key_fingerprint": event.KeyFingerprint,
+		"data_sha256":     event.DataSHA256,
+	}
+	if event.Reason != "" {
+		details["reason"] = event.Reason
+	}
+	auditEvent := &iam.AuditEvent{
+		EventType: iam.AuditEventAppEvent,
+		Category:  iam.AuditCategorySecurity,
+		TenantID:  event.TenantID,
+		Action:    signingRelayAuditAction,
+		Outcome:   outcome,
+		Resource:  &iam.AuditResource{Type: "orchestration_session", ID: event.SessionID},
+		Details:   details,
+	}
+	if actor := auditActorFromContext(ctx); actor != nil {
+		auditEvent.Actor = actor
+	}
+	logger.LogAsync(auditEvent)
+}

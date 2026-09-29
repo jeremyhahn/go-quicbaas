@@ -17,23 +17,27 @@
   } = $props();
 </script>
 
-<div class="flex items-start justify-between mb-6">
-  <div class="flex items-center gap-3">
+<!--
+  The title is set in the condensed display cut (`.display`, app.css) — the
+  one place the app raises its voice. The icon sits beside it as a quiet
+  glyph in the accent colour rather than inside a tinted tile, and the
+  actions wrap under the title on a narrow screen instead of squeezing it.
+-->
+<header class="page-header mb-6 flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+  <div class="flex min-w-0 items-start gap-3">
     {#if Icon}
-      <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-primary/10 text-primary shrink-0">
-        <Icon class="h-5 w-5" />
-      </div>
+      <Icon class="mt-1.5 h-5 w-5 shrink-0 text-primary" />
     {/if}
-    <div>
-      <h1 class="text-2xl font-bold text-base-content">{title}</h1>
+    <div class="min-w-0">
+      <h1 class="display text-[1.75rem] text-base-content">{title}</h1>
       {#if subtitle}
-        <p class="text-sm text-base-content/60 mt-0.5">{subtitle}</p>
+        <p class="mt-1 text-sm text-base-content/60">{subtitle}</p>
       {/if}
     </div>
   </div>
   {#if children}
-    <div class="flex items-center gap-2">
+    <div class="flex flex-wrap items-center gap-2">
       {@render children()}
     </div>
   {/if}
-</div>
+</header>

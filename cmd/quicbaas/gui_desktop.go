@@ -37,10 +37,11 @@ func launchGUI(log *logger.Logger, logFile string) error {
 	conn := NewConnectionBinding(log)
 	orch := NewOrchestratorBinding(log, conn)
 	sessions := NewSessionBinding(log, conn)
-	agents := NewAgentBinding(log, conn)
+	agents := NewFleetBinding(log, conn)
 	embedded := NewEmbeddedServerBinding(log)
-	agentDeploy := NewAgentDeployBinding(log, conn)
+	agentDeploy := NewFleetDeployBinding(log, conn)
 	sshKeys := NewSSHKeysBinding(log)
+	agentCatalog := NewAgentCatalogBinding(log, conn)
 
 	return wails.Run(&options.App{
 		Title:  "QuicBaaS",
@@ -57,8 +58,10 @@ func launchGUI(log *logger.Logger, logFile string) error {
 			embedded.startup(ctx)
 			agentDeploy.startup(ctx)
 			sshKeys.startup(ctx)
+			agentCatalog.startup(ctx)
 		},
 		OnShutdown: func(ctx context.Context) {
+			agentCatalog.shutdown(ctx)
 			sshKeys.shutdown(ctx)
 			agentDeploy.shutdown(ctx)
 			embedded.shutdown(ctx)
@@ -67,6 +70,6 @@ func launchGUI(log *logger.Logger, logFile string) error {
 			orch.shutdown(ctx)
 			conn.shutdown(ctx)
 		},
-		Bind: []interface{}{conn, orch, sessions, agents, embedded, agentDeploy, sshKeys},
+		Bind: []interface{}{conn, orch, sessions, agents, embedded, agentDeploy, sshKeys, agentCatalog},
 	})
 }

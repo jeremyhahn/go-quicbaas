@@ -14,6 +14,7 @@
 package sdlc
 
 import (
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -47,34 +48,53 @@ import (
 // have to be re-required on the forge every time either changed.
 const DefaultReviewStatusContext = "quicbaas/review"
 
-// ReviewerConfig names the agent that reviews this project's pull requests.
+// ReviewerConfig is one REVIEW SEAT: the tenant Agent that reviews this
+// project's pull requests, and the forge identity it reviews as.
 //
-// It lives beside WorkerConfig on the binding and mirrors its shape, because
-// it answers the same question for the other half of the pipeline: which
-// agent, on which model, in which image. What it adds is an IDENTITY — a
-// reviewer, unlike a worker, has to be someone on the forge.
+// The Agent answers which runtime, which model and which image; the seat adds
+// what an Agent cannot carry, because it is the project's and not the
+// Agent's — an IDENTITY on the forge.
 type ReviewerConfig struct {
-	// Backend is the ACP agent backend the reviewer session runs on.
+	// Name identifies this reviewer as a PROFILE: what a per-pull-request
+	// override names, what an advisory status context is derived from, and
+	// what an operator reads in a listing.
+	//
+	// Optional on the binding's default reviewer, where empty reads as
+	// DefaultReviewerProfileName; required on every alternate in
+	// ProjectBinding.Reviewers. Names are unique within a binding. See
+	// reviewer_profiles.go.
+	Name string `json:"name,omitempty"`
+
+	// CountsTowardMerge says whether this profile's verdicts decide whether a
+	// change may land.
+	//
+	// A POINTER BECAUSE THE DEFAULT DEPENDS ON THE ROLE. Unset on the
+	// binding's default reviewer means true, which is exactly what every
+	// binding written before profiles existed meant; unset on an alternate
+	// means false, so a reviewer added to try a new model is advisory until
+	// someone decides its approvals should merge code. An advisory profile's
+	// verdicts are posted and shown, and the gate neither approves nor blocks
+	// on them.
+	CountsTowardMerge *bool `json:"counts_toward_merge,omitempty"`
+
+	// Agent is the ID of the tenant Agent this seat reviews as. It supplies
+	// the backend, the model, the image and the reasoning effort; the seat
+	// keeps only the forge identity. The Agent must declare the review role.
 	//
 	// EMPTY MEANS THIS PROJECT IS NOT SELF-REVIEWED, which is a legitimate
 	// configuration and not a half-finished one: a project reviewed by
 	// people, or by automation outside this module, binds no reviewer and
 	// the review runner is never dispatched for it. The gate is unaffected
 	// — it judges whatever verdicts arrive, from wherever they came.
-	Backend string `json:"backend,omitempty"`
-
-	// Model is the model that backend runs. Empty takes the backend's own
-	// default.
-	Model string `json:"model,omitempty"`
-
-	// Image is the container image the reviewer session runs in. It needs
-	// git and the project's toolchain, because the reviewer reads the change
-	// in a real checkout rather than from a summary of it.
-	Image string `json:"image,omitempty"`
+	//
+	// A SEAT NAMES AN AGENT, NOT A POOL. The seat is a forge identity, and
+	// its failover chain is the binding's seat order (NextReviewerSeat), so a
+	// switch of reviewer is always a switch of the login that posts.
+	Agent string `json:"agent_id,omitempty"`
 
 	// Login is the forge account the reviewer's token authenticates as.
 	//
-	// REQUIRED WHEN A BACKEND IS NAMED, and it is load-bearing twice over.
+	// REQUIRED WHEN AN AGENT IS NAMED, and it is load-bearing twice over.
 	// It is how the runner recognises its OWN previous verdicts when it asks
 	// whether a head has already been reviewed — without it, the runner
 	// cannot tell its own standing rejection from a human's and would review
@@ -85,7 +105,7 @@ type ReviewerConfig struct {
 	// TokenSecretRef names the tenant secret holding the REVIEWER's forge
 	// token.
 	//
-	// REQUIRED WHEN A BACKEND IS NAMED, and deliberately separate from
+	// REQUIRED WHEN AN AGENT IS NAMED, and deliberately separate from
 	// ForgeConfig.TokenSecretRef, which is the account the worker commits
 	// and pushes as. A verdict posted with the author's own token is a
 	// change approving itself: the forge would record the author as the
@@ -95,40 +115,43 @@ type ReviewerConfig struct {
 	TokenSecretRef string `json:"token_secret_ref,omitempty"`
 
 	// StatusContext is the commit status the verdict is published under.
-	// Empty takes DefaultReviewStatusContext.
+	//
+	// On the default reviewer, empty takes DefaultReviewStatusContext, and
+	// whatever it resolves to is the project's REQUIRED review context: every
+	// profile that counts toward merge publishes there, so branch protection
+	// requires one name however many reviewers the project has. On an
+	// advisory profile, empty takes DefaultReviewStatusContext + "/" + Name,
+	// so its status can never satisfy or block the required one. See
+	// ProjectBinding.ReviewerProfile.
 	StatusContext string `json:"status_context,omitempty"`
 
-	// ReasoningEffort is how hard the reviewer's model thinks per review, in
-	// the backend's own vocabulary; empty takes the backend's default. For
-	// codex it is `model_reasoning_effort`: minimal, low, medium, high or
-	// xhigh. It is a binding setting because it is a cost setting: a fleet
-	// generating reviews by the dozen while its pipelines are being brought
-	// up runs at medium, and turns it up per project once the reviews are
-	// worth it.
-	ReasoningEffort string `json:"reasoning_effort,omitempty"`
-}
+	// Endpoint is the root of the model server an opencode reviewer on a
+	// local model is served from — the ollama URL as the reviewer's CONTAINER
+	// reaches it, e.g. "http://gpu-host.internal:11434".
+	//
+	// REQUIRED WHEN THE SEAT'S AGENT IS AN OPENCODE REVIEWER ON A LOCAL MODEL
+	// (model "ollama/<name>"), REFUSED OTHERWISE (CheckAgents). It is carried
+	// per seat rather than taken from whatever the fleet node configures,
+	// because the model a verdict is attributed to must be the model that
+	// produced it: the runner hands opencode this endpoint as its only
+	// provider, with the Agent's model pinned (opencodeProviderConfig).
+	Endpoint string `json:"endpoint,omitempty"`
 
-// reviewerEfforts is the vocabulary codex accepts for model_reasoning_effort.
-// A value outside it is refused at bind time rather than by every review.
-var reviewerEfforts = map[string]bool{
-	"minimal": true, "low": true, "medium": true, "high": true, "xhigh": true,
-}
+	// HostAffinity pins the reviewer session to one fleet node, by name or
+	// host. Empty leaves placement to the fleet: any online node serving the
+	// Agent's backend. When set it is STRICT — a node that is offline refuses
+	// the review rather than letting it run somewhere that may not reach
+	// Endpoint.
+	HostAffinity string `json:"host_affinity,omitempty"`
 
-// ExtraArgs is what the reviewer's spawn adds to the backend's command line
-// for this configuration: for codex, the reasoning-effort override as a
-// `-c` config override, which is the one way the CLI takes it. Other
-// backends take nothing here; the field is validated for all of them so a
-// typo is caught wherever it is written.
-func (r ReviewerConfig) ExtraArgs() []string {
-	effort := strings.TrimSpace(r.ReasoningEffort)
-	if effort == "" || strings.TrimSpace(r.Backend) != "codex" {
-		return nil
-	}
-	return []string{"-c", "model_reasoning_effort=\"" + effort + "\""}
+	// PromptAppend is run-time prompt material appended after the reviewer
+	// charter for every review this seat runs: what this project's reviews
+	// must also check. At most orchestration.MaxPromptAppendBytes.
+	PromptAppend string `json:"prompt_append,omitempty"`
 }
 
 // Configured reports whether this project is reviewed by an agent of its own.
-func (r ReviewerConfig) Configured() bool { return strings.TrimSpace(r.Backend) != "" }
+func (r ReviewerConfig) Configured() bool { return strings.TrimSpace(r.Agent) != "" }
 
 // Context is the commit status name the verdict is published under.
 func (r ReviewerConfig) Context() string {
@@ -138,20 +161,24 @@ func (r ReviewerConfig) Context() string {
 	return DefaultReviewStatusContext
 }
 
-// ModelFamily is the family behind the reviewer, for the independence rule.
-func (r ReviewerConfig) ModelFamily() string { return ModelFamily(r.Backend, r.Model) }
-
 // Validate checks a reviewer could be spawned and could post as somebody.
 //
 // AN UNCONFIGURED REVIEWER IS VALID; a partly configured one is not. The
 // failure this refuses is a project that looks reviewed and is not: a backend
 // with no login posts verdicts nobody can attribute, and a backend with no
 // token of its own posts them as the author.
-func (r ReviewerConfig) Validate() error {
+func (r ReviewerConfig) Validate() error { return r.validateAs("reviewer") }
+
+// validateAs is Validate with the field path the refusal names, so an
+// alternate profile's error says which entry of reviewers[] it is about.
+func (r ReviewerConfig) validateAs(field string) error {
+	if err := orchestration.ValidatePromptAppend(field+".prompt_append", r.PromptAppend); err != nil {
+		return err
+	}
 	if !r.Configured() {
 		if strings.TrimSpace(r.Login) != "" || strings.TrimSpace(r.TokenSecretRef) != "" {
 			return &InvalidInputError{
-				Field:   "reviewer.backend",
+				Field:   field + ".agent_id",
 				Message: "required; an identity and a token with no agent to use them review nothing",
 			}
 		}
@@ -159,23 +186,90 @@ func (r ReviewerConfig) Validate() error {
 	}
 	if strings.TrimSpace(r.Login) == "" {
 		return &InvalidInputError{
-			Field:   "reviewer.login",
+			Field:   field + ".login",
 			Message: "required; without it the runner cannot recognise its own standing verdict on a head",
 		}
 	}
 	if strings.TrimSpace(r.TokenSecretRef) == "" {
 		return &InvalidInputError{
-			Field:   "reviewer.token_secret_ref",
+			Field:   field + ".token_secret_ref",
 			Message: "required; a reviewer using the author's token is a change approving itself",
 		}
 	}
-	if effort := strings.TrimSpace(r.ReasoningEffort); effort != "" && !reviewerEfforts[effort] {
+	if !orchestration.ValidCatalogID(strings.TrimSpace(r.Agent)) {
 		return &InvalidInputError{
-			Field:   "reviewer.reasoning_effort",
-			Message: "must be one of minimal, low, medium, high or xhigh",
+			Field:   field + ".agent_id",
+			Message: "must name an agent: 1-64 lowercase letters, digits, '.', '_' or '-'",
+		}
+	}
+	if err := r.validateEndpoint(field); err != nil {
+		return err
+	}
+	if name := strings.TrimSpace(r.Name); name != "" && !validReviewerProfileName(name) {
+		return &InvalidInputError{
+			Field:   field + ".name",
+			Message: "must be 1-" + strconv.Itoa(maxReviewerProfileName) + " lowercase letters, digits, '.', '_' or '-', starting with a letter or digit",
 		}
 	}
 	return nil
+}
+
+// ReviewerBackendOpencode is the backend a reviewer on a local model runs on:
+// opencode, routed to the seat's Endpoint.
+const ReviewerBackendOpencode = "opencode"
+
+// ReviewsOnLocalModel reports whether agent runs opencode on a model a server
+// the fleet operates serves, which is what a seat's Endpoint is for.
+func ReviewsOnLocalModel(agent orchestration.Agent) bool {
+	return strings.TrimSpace(agent.Backend) == ReviewerBackendOpencode &&
+		orchestration.ModelProviderOf(agent.Model).Local()
+}
+
+// validateEndpoint checks that an endpoint, when one is written, is an http(s)
+// server root. Whether the seat may carry one at all depends on its Agent, so
+// that half is checked against the catalog (checkEndpointFor).
+func (r ReviewerConfig) validateEndpoint(field string) error {
+	endpoint := strings.TrimSpace(r.Endpoint)
+	if endpoint == "" {
+		return nil
+	}
+	if !validEndpointRoot(endpoint) {
+		return &InvalidInputError{
+			Field:   field + ".endpoint",
+			Message: "must be the http(s) root of the model server the reviewer's container reaches, e.g. http://gpu-host.internal:11434",
+		}
+	}
+	return nil
+}
+
+// checkEndpointFor checks the endpoint is present exactly when the seat's
+// Agent runs opencode on a local model.
+func (r ReviewerConfig) checkEndpointFor(field string, agent orchestration.Agent) error {
+	endpoint := strings.TrimSpace(r.Endpoint)
+	if !ReviewsOnLocalModel(agent) {
+		if endpoint != "" {
+			return &InvalidInputError{
+				Field: field + ".endpoint",
+				Message: "only a seat whose agent runs opencode on a local model (ollama/<name>) is handed an endpoint; " +
+					"agent " + strconv.Quote(agent.ID) + " reaches its provider through its own configuration",
+			}
+		}
+		return nil
+	}
+	if !validEndpointRoot(endpoint) {
+		return &InvalidInputError{
+			Field: field + ".endpoint",
+			Message: "required for agent " + strconv.Quote(agent.ID) + " on " + strconv.Quote(agent.Model) +
+				": the http(s) root of the model server its container reaches, e.g. http://gpu-host.internal:11434",
+		}
+	}
+	return nil
+}
+
+// validEndpointRoot reports whether endpoint is an absolute http(s) URL.
+func validEndpointRoot(endpoint string) bool {
+	parsed, err := url.Parse(endpoint)
+	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
 }
 
 // ForgeConfigFor returns the forge configuration the REVIEWER acts through:
@@ -202,6 +296,15 @@ const ReviewJobRunnerName = "review"
 // review job is about. Namespaced by its runner, per JobConfig.Params.
 const ParamPullRequest = "review.pull_request"
 
+// ParamReviewerProfile is the JobConfig parameter naming the reviewer profile
+// a review job runs as. Absent or empty is the binding's default.
+//
+// IT IS WRITTEN BY THE DISPATCHER, FROM THE OPERATOR'S OVERRIDE RECORD, and
+// nothing else sets it: the job's parameters are the engine's own record, not
+// a payload's, and the runner resolves the name against the binding again so
+// a profile removed after dispatch is refused rather than impersonated.
+const ParamReviewerProfile = "review.profile"
+
 // ReviewJobSubject is what one review job is about.
 //
 // THE PULL REQUEST NUMBER AND NOTHING ELSE. The head is deliberately absent,
@@ -213,6 +316,10 @@ const ParamPullRequest = "review.pull_request"
 // costs one call and is always the head the verdict should bind to.
 type ReviewJobSubject struct {
 	PullRequest int
+
+	// Profile names the reviewer profile the job runs as; empty is the
+	// binding's default. See ParamReviewerProfile.
+	Profile string
 }
 
 // Validate refuses a subject naming no pull request.
@@ -228,7 +335,11 @@ func (s ReviewJobSubject) Validate() error {
 
 // Params renders the subject as the job parameters that carry it.
 func (s ReviewJobSubject) Params() map[string]string {
-	return map[string]string{ParamPullRequest: strconv.Itoa(s.PullRequest)}
+	params := map[string]string{ParamPullRequest: strconv.Itoa(s.PullRequest)}
+	if profile := strings.TrimSpace(s.Profile); profile != "" {
+		params[ParamReviewerProfile] = profile
+	}
+	return params
 }
 
 // ReviewLeaseSubject is what every review job of one pull request holds its
@@ -280,5 +391,8 @@ func ReviewJobSubjectFrom(cfg *orchestration.JobConfig) (ReviewJobSubject, error
 		}
 	}
 	subject := ReviewJobSubject{PullRequest: number}
+	if profile, named := cfg.Param(ParamReviewerProfile); named {
+		subject.Profile = strings.TrimSpace(profile)
+	}
 	return subject, subject.Validate()
 }

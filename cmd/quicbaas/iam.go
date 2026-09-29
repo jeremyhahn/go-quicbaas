@@ -29,7 +29,7 @@ func newIAMCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "iam",
 		Short: "Identity and Access Management commands",
-		Long: `Manage tenants, users, groups, roles, applications, and policies.
+		Long: `Manage tenants, users, roles, applications, and policies.
 
 The IAM subsystem provides comprehensive identity and access management
 capabilities for QuicBaaS, including multi-tenancy, role-based access control,
@@ -41,9 +41,6 @@ Examples:
 
   # Create a user within a tenant
   quicbaas iam user create alice@acme.com --tenant acme-corp --name "Alice"
-
-  # Create a group
-  quicbaas iam group create engineering --tenant acme-corp --name "Engineering"
 
   # Register an OAuth application
   quicbaas iam app register --name my-app --tenant acme-corp
@@ -82,7 +79,6 @@ Examples:
 	// Add subcommands
 	cmd.AddCommand(newIAMTenantCommand())
 	cmd.AddCommand(newIAMUserCommand())
-	cmd.AddCommand(newIAMGroupCommand())
 	cmd.AddCommand(newIAMRoleCommand())
 	cmd.AddCommand(newIAMAppCommand())
 	cmd.AddCommand(newIAMPolicyCommand())

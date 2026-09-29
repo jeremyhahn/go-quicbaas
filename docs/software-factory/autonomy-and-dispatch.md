@@ -29,6 +29,10 @@ It gates two loops:
 - the **task dispatcher** (`task_dispatcher.go`), which starts jobs for the
   Tasks that are waiting.
 
+A **parked** project (`Project.Parked`) keeps both loops running for the work it
+has already started and refuses everything new; see
+[Parking a project](projects.md#parking-a-project).
+
 `Project.DefaultWorkflow` no longer gates anything. It keeps its original
 meaning — the workflow a Task under this project is auto-spawned into — for
 projects whose work runs the `workflow` runner, and it is irrelevant to a
@@ -78,9 +82,9 @@ nothing will start for hours.
 projects each inside their own quota from oversubscribing the fleet — ten
 projects at three jobs each will run thirty on a fleet with eight worker slots —
 and it says nothing about whether the provider pool can serve another session.
-Both sweeps therefore ask an **admission controller** that considers three inputs
-at once — the project quota, the fleet's worker capacity, and provider usage
-headroom — and divides the fleet's free slots by max-min fairness, so the
+Both sweeps therefore ask an **admission controller** that considers four inputs
+at once — the project quota, the fleet's worker capacity, provider usage
+headroom, and the project's and tenant's own spend limits — and divides the fleet's free slots by max-min fairness, so the
 aggregate bound cannot let one busy project starve every other. The fleet row
 above is that bound's last-ditch check at the lease, reading the same capacity
 the controller reads. See
@@ -122,6 +126,14 @@ NewTaskDispatcher(TaskDispatcherConfig{
 `Sweep(ctx)` visits every tenant's autonomous projects once; `SweepProject`
 does one project now.
 
+A project that is **not autonomous** dispatches nothing, parked or not. The
+sweep still reads its pending queue so the skip is not silent: every
+auto-spawned, unbound pending task gets the `dispatch_reason` "project autonomy
+is off: nothing dispatches until it is switched on". Like every refusal, the
+reason is written once and warned once. It is cleared when a later sweep
+dispatches the task. A parked project drains only while autonomy is on (see
+[Parking a project](projects.md#parking-a-project)).
+
 Per autonomous project, one sweep:
 
 1. lists the project's **pending** and **in_progress** Tasks — the queue it
@@ -155,7 +167,7 @@ folded into `Task.Metadata` and never read back; see
 [job-runners.md](job-runners.md).
 
 What a refusal means depends on the runner: the `workflow` runner needs a
-matching online fleet agent and the project's `default_workflow`, while a
+matching online fleet node and the project's `default_workflow`, while a
 module runner such as `sdlc` needs neither — it spawns its own sessions and
 the job's lease is the capacity check.
 
@@ -299,11 +311,18 @@ whatever was already queued and leave the new issue for the next tick.
 a filesystem that has to be reaped, kept in step with the record, and reasoned
 about after a crash. A container that clones owns nothing that outlives it.
 
+It is also what keeps parallel workers apart: each has its own HEAD, index and
+stash, so no worker can read another's branch as its own base or pop a stash
+onto someone else's checkout. The charter adds the habit that catches the rest:
+a fact read from a file outside the worker's own diff is confirmed from a ref
+(`git show origin/<base>:<path>`, `git branch --contains <commit>`), not the
+working copy (go-quicbaas#870).
+
 What the daemon hands the container at spawn is a **spec**, decided on the
 daemon and written — by the host that executes the session — into a fresh
 per-spawn directory beside the session's workspace, bind-mounted read-only.
 The spawn **names** its workspace rather than giving a host path, because the
-host that runs it may be a fleet agent on another machine
+host that runs it may be a fleet node on another machine
 ([sandbox](sandbox.md#agent-local-workspaces), go-quicbaas#981).
 
 ```go
@@ -392,6 +411,16 @@ Every command and its output is recorded on the job under the
 `sdlc:workspace_checkout` audit event — a clone that could not reach the forge
 is the most common way an attempt dies, and that record is where a person reads
 why.
+
+A session whose container has stopped or been removed is not a failed git
+command. If the runtime refuses an exec because the container has stopped, or
+cannot find the container, no git ran. The checkout and the pre-flight report
+that as `SessionContainerGoneError`, which names the session, the container and
+the runtime's own message. The evidence line starts with `!` and says the
+container was gone, in place of the `$ git …` line for the command that never
+ran. `CheckoutCommandError` is only for a git that ran and exited non-zero
+(go-quicbaas#932). Both are workspace faults, so the task is parked and no
+attempt is charged.
 
 **What the image must carry**, since the runner runs these in it: `git`,
 `ssh-keygen` (git's `gpg.format=ssh` signing invokes it), and whatever the
@@ -529,13 +558,13 @@ shape `AttestingContainerRuntime` already uses in this package.
 
 ### The container a REMOTE daemon created
 
-A session dispatched to a registered agent daemon is sandboxed by THAT daemon:
+A session dispatched to a registered fleet node daemon is sandboxed by THAT daemon:
 its runtime creates the container, from its own image map, under its own mount
 policy. So the container's identity exists only on the worker host, and the
 spawn response is the one place it can come home from.
 
 `SpawnSessionResponse.container_id` carries it. The daemon fills it from the
-session its backend returned (`pkg/agent` `GRPCSpawnServer.Spawn`) and the
+session its backend returned (`pkg/fleet` `GRPCSpawnServer.Spawn`) and the
 control plane reads it into the `Session` it builds
 (`RemoteACPBackend.Spawn`), from where the orchestrator copies it onto the live
 record, the durable record and its own `SpawnSessionResponse` — the same three
@@ -547,7 +576,7 @@ The id belongs to the daemon's host. It addresses a container under the
 container runtime the AGENT owns, which is not the control plane's whenever the
 two are on different hosts — and `ExecSession` above uses the control plane's
 own runtime unconditionally. Routing a command to the daemon that can run it
-needs an exec seam the `AgentRuntime` service does not have yet; the session
+needs an exec seam the `FleetRuntime` service does not have yet; the session
 record already names the host (`SessionRecord.HostAffinity`) for it to route
 on. Until then, treat the id as an identifier the control plane RECORDS rather
 than one it acts on.
@@ -555,14 +584,14 @@ than one it acts on.
 ### The backend a REMOTE daemon serves
 
 A daemon registers ONE primary backend and advertises the whole set it serves.
-The heartbeat reports the set (`AgentObservation.Backends`), reconciliation
+The heartbeat reports the set (`FleetNodeObservation.Backends`), reconciliation
 writes the first as the registration's `Backend` and all of them into
-`Capabilities`, and `AgentServesBackend` — the one predicate every backend
+`Capabilities`, and `FleetNodeServesBackend` — the one predicate every backend
 filter in the stack shares — admits the daemon for any of them. So one daemon
 answers for claude, codex and opencode, and the scheduler is right to pick it
 for all three.
 
-The name on the WIRE is what the daemon runs. Every `AgentRuntime` request
+The name on the WIRE is what the daemon runs. Every `FleetRuntime` request
 carries a backend field, and the daemon looks its runtime's backend up by that
 name — so the control plane's choice of what to put there IS the choice of
 model family. `RemoteACPBackend` therefore serves exactly ONE backend name,
@@ -574,7 +603,7 @@ on the wire, and both vary independently. Invalidation stays per host — a
 daemon replaced at the same address drops every backend cached for it.
 
 A registration asked for a backend it does not serve is REFUSED, with the
-resolver's own `NoMatchingAgentError` (constraint `backend`), stashed on the
+resolver's own `NoMatchingFleetNodeError` (constraint `backend`), stashed on the
 request so the API answers `no_matching_agent` rather than falling through to
 an in-process backend.
 

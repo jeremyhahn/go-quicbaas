@@ -64,18 +64,18 @@ func newFloorRig(t *testing.T) *floorRig {
 	binding := testBinding()
 	binding.Forge.Owner, binding.Forge.Repo = testRepo.Owner, testRepo.Repo
 	binding.Forge.BaseURL = gitea.APIURL()
-	binding.Reviewer = ReviewerConfig{Backend: "codex", Login: fakeReviewerLogin, TokenSecretRef: "reviewer-tok"}
+	binding.Reviewer = ReviewerConfig{Agent: testReviewerAgent, Login: fakeReviewerLogin, TokenSecretRef: "reviewer-tok"}
 	if err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 
 	jobs := &fakeJobStarter{}
 	forges := &backendForges{backend: backend}
-	dispatcher, err := NewReviewDispatcher(store, jobs, forges)
+	dispatcher, err := NewReviewDispatcher(store, store, jobs, forges)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sweeper, err := NewReviewSweeper(ReviewSweeperConfig{Bindings: store, Forges: forges, Reviews: dispatcher})
+	sweeper, err := NewReviewSweeper(ReviewSweeperConfig{Bindings: store, Forges: forges, Overrides: store, Reviews: dispatcher})
 	if err != nil {
 		t.Fatal(err)
 	}

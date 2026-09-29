@@ -938,14 +938,21 @@ func main() {
     fmt.Printf("  Port: %v\n", secret.Data["port"])
     fmt.Printf("  Created: %v\n", secret.CreatedAt)
 
-    // Retrieve a specific version
-    secretV1, err := client.Secrets().Get(ctx, "database/production",
+    // Borrow secret material without it ever becoming a Go string. Get
+    // returns fields as ordinary strings that cannot be wiped; GetWithBytes
+    // holds the value in protected storage, lends it to the callback, and
+    // destroys it on return. fn must not retain the slice. An empty field
+    // name lends the whole stored payload. (Refused by the MCP transport,
+    // whose tool results are text strings.)
+    err = client.Secrets().GetWithBytes(ctx, "database/production", "password",
+        func(password []byte) error {
+            return connectDatabase(password)
+        },
         secrets.WithVersion(1),
     )
     if err != nil {
-        log.Fatalf("Get secret version failed: %v", err)
+        log.Fatalf("Borrow secret failed: %v", err)
     }
-    fmt.Printf("\nVersion 1 password: %v\n", secretV1.Data["password"])
 
     // List all secrets under a path
     listResp, err := client.Secrets().List(ctx, "database/")

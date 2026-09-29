@@ -62,6 +62,21 @@ const (
 
 	// QuotaReasonTokenLimit refuses because a window's token allowance is spent.
 	QuotaReasonTokenLimit QuotaReason = "token_limit"
+
+	// QuotaReasonCostLimit refuses because a window's dollar allowance —
+	// measured as the list-price equivalent of the priced turns in it — is
+	// spent.
+	QuotaReasonCostLimit QuotaReason = "cost_limit"
+)
+
+// Quota axes, as named in a decision and in every refusal built from one.
+const (
+	// QuotaAxisTokens meters every token the provider metered.
+	QuotaAxisTokens = "tokens"
+
+	// QuotaAxisEquivalentMicros meters the list-price equivalent, in
+	// millionths of a US dollar, of the PRICED turns in the window.
+	QuotaAxisEquivalentMicros = "equivalent_micros"
 )
 
 // QuotaWindow is one metered allowance interval.
@@ -80,29 +95,34 @@ type QuotaWindow struct {
 	// Size is the window's length. Required and positive.
 	Size time.Duration `json:"size"`
 
-	// MaxTokens is the window's allowance, in tokens. Required and positive:
-	// a window that meters nothing can only ever say yes, and its presence in
-	// a policy would read as a limit that is silently absent.
+	// MaxTokens is the window's allowance in tokens, and MaxEquivalentMicros
+	// its allowance in millionths of a US dollar at list price. Each is
+	// optional and zero means "this axis is not metered", but a window must
+	// meter at least one: a window that meters nothing can only ever say yes,
+	// and its presence in a policy would read as a limit that is silently
+	// absent. When both are set, both are limits and the first spent one
+	// refuses.
 	//
-	// THERE IS NO COST AXIS, AND ITS ABSENCE IS DELIBERATE. wp12 metered
-	// tokens and integer micros independently; the micros half was re-homed
-	// and then REMOVED, because nothing in this tree prices a turn.
-	// ConsumptionEntry.CostMicros has no production writer, so every entry
-	// carries zero, so a MaxCostMicros window would sum zero and admit every
-	// turn forever — a knob an operator sets believing it is a cap, which is
-	// this package's own founding failure reproduced on the money axis.
-	// Shipping the knob before the price source is worse than not shipping
-	// it, because it looks like protection. See go-quicbaas#791.
-	MaxTokens int64 `json:"max_tokens,omitempty"`
+	// THE DOLLAR AXIS METERS PRICED TURNS ONLY. It sums the ledger's
+	// EquivalentMicros, which is stamped from the operator's price table
+	// (PriceBook) when a turn is recorded; a turn on a model the table does
+	// not price carries no figure and does not move a dollar window. That is
+	// the honest reading of "a $X limit" — an operator who wants every turn
+	// counted prices every model, or caps tokens as well. go-quicbaas#791.
+	MaxTokens           int64 `json:"max_tokens,omitempty"`
+	MaxEquivalentMicros int64 `json:"max_equivalent_micros,omitempty"`
 }
 
-// AccountQuotaPolicy is the set of windows an account is metered by.
+// SpendLimits is the set of sliding windows a spender is metered by. It is the
+// one limits type (go-quicbaas#1058, ruling F5): an account carries it as
+// AccountSpendPolicy.Quota, a project as Project.Spend, and a tenant as its
+// TenantSpendPolicy.
 //
 // Windows are evaluated IN ORDER and the first refusal is returned, so a policy
 // listing its tightest window first produces the most immediately useful
 // answer. Every window is still a hard limit; the ordering decides only which
 // one a refusal names.
-type AccountQuotaPolicy struct {
+type SpendLimits struct {
 	Windows []QuotaWindow `json:"windows"`
 }
 
@@ -114,6 +134,10 @@ type QuotaDecision struct {
 	// Window names the window that decided, empty for a hold or an admission
 	// against a policy with no metered window.
 	Window string `json:"window,omitempty"`
+
+	// Axis names which of the window's allowances decided a refusal:
+	// QuotaAxisTokens or QuotaAxisEquivalentMicros.
+	Axis string `json:"axis,omitempty"`
 
 	// Used, Limit and Remaining describe the deciding axis. Remaining is
 	// clamped at zero: a negative remainder is an over-spend that already
@@ -134,6 +158,29 @@ type QuotaAuthority interface {
 	// Admit answers for one account at one instant. It returns an error and
 	// NO decision whenever it could not establish the answer.
 	Admit(ctx context.Context, req QuotaAdmitRequest, now time.Time) (*QuotaDecision, error)
+
+	// AdmitScope answers for a project or a tenant: whether its own limits
+	// admit more consumption, from the project or tenant quota plane. It
+	// returns an error and NO decision whenever it could not establish the
+	// answer.
+	AdmitScope(ctx context.Context, req ScopeAdmitRequest, now time.Time) (*QuotaDecision, error)
+}
+
+// ScopeAdmitRequest is one admission question about a project or a tenant.
+type ScopeAdmitRequest struct {
+	// TenantID is required. ProjectID, when set, asks about that project;
+	// AgentID, when set, about that tenant Agent; neither asks about the
+	// whole tenant. Naming both is refused: a window belongs to one spender.
+	TenantID  string
+	ProjectID string
+	AgentID   string
+
+	// Limits are the scope's windows. None admits.
+	Limits SpendLimits
+
+	// EstimatedTokens is what the caller is about to spend; see
+	// QuotaAdmitRequest.EstimatedTokens.
+	EstimatedTokens int64
 }
 
 // QuotaAdmitRequest is one admission question.
@@ -147,7 +194,7 @@ type QuotaAdmitRequest struct {
 	// Policy is the account's allowances. A policy with no windows meters
 	// nothing and admits on the ledger axis, which is the honest answer for
 	// an account nobody has configured a limit for.
-	Policy AccountQuotaPolicy
+	Policy SpendLimits
 
 	// EstimatedTokens is what the caller is about to spend. It is added to
 	// the window's usage before the comparison, so a turn that would cross
@@ -195,33 +242,74 @@ func (a *quotaAuthority) Admit(ctx context.Context, req QuotaAdmitRequest, now t
 		}, nil
 	}
 
-	for _, window := range req.Policy.Windows {
-		decision, err := a.evaluate(ctx, req, window, now)
+	account := req.Account
+	return evaluateWindows(req.Policy, req.EstimatedTokens, now, func(from, to time.Time) (*ConsumptionRollup, error) {
+		return a.ledger.WindowUsage(ctx, account.TenantID, account.ID, from, to)
+	})
+}
+
+// AdmitScope implements QuotaAuthority.
+func (a *quotaAuthority) AdmitScope(ctx context.Context, req ScopeAdmitRequest, now time.Time) (*QuotaDecision, error) {
+	if a.ledger == nil {
+		return nil, &QuotaInvalidError{Field: "ledger", Message: "must not be nil"}
+	}
+	if req.TenantID == "" {
+		return nil, &QuotaInvalidError{Field: "tenant_id", Message: "must not be empty"}
+	}
+	if req.EstimatedTokens < 0 {
+		return nil, &QuotaInvalidError{Field: "estimated_tokens", Message: "must not be negative"}
+	}
+	if req.ProjectID != "" && req.AgentID != "" {
+		return nil, &QuotaInvalidError{Field: "agent_id", Message: "a window belongs to a project or an Agent, not both"}
+	}
+	if err := req.Limits.validate(); err != nil {
+		return nil, err
+	}
+	read := func(from, to time.Time) (*ConsumptionRollup, error) {
+		return a.ledger.TenantWindowUsage(ctx, req.TenantID, from, to)
+	}
+	switch {
+	case req.ProjectID != "":
+		read = func(from, to time.Time) (*ConsumptionRollup, error) {
+			return a.ledger.ProjectWindowUsage(ctx, req.TenantID, req.ProjectID, from, to)
+		}
+	case req.AgentID != "":
+		read = func(from, to time.Time) (*ConsumptionRollup, error) {
+			return a.ledger.AgentWindowUsage(ctx, req.TenantID, req.AgentID, from, to)
+		}
+	}
+	return evaluateWindows(req.Limits, req.EstimatedTokens, now, read)
+}
+
+// windowReader sums a spender's consumption in [from, to).
+type windowReader func(from, to time.Time) (*ConsumptionRollup, error)
+
+// evaluateWindows answers for a set of windows IN ORDER, returning the first
+// refusal. It is the one comparison every spender — account, project,
+// tenant — is judged by; only where the usage is read from differs.
+func evaluateWindows(limits SpendLimits, estimatedTokens int64, now time.Time, read windowReader) (*QuotaDecision, error) {
+	for _, window := range limits.Windows {
+		usage, err := read(now.Add(-window.Size), now)
 		if err != nil {
+			// No decision. See the fail-closed note at the top of this file.
 			return nil, err
 		}
-		if !decision.Allowed {
+		// A zero allowance is an axis the window does not meter; the policy's
+		// validation guarantees at least one is positive.
+		if window.MaxTokens > 0 && usage.TotalTokens+estimatedTokens > window.MaxTokens {
+			decision := quotaRefusal(QuotaReasonTokenLimit, window, usage.TotalTokens, window.MaxTokens, usage.FirstAt, now)
+			decision.Axis = QuotaAxisTokens
+			return decision, nil
+		}
+		// The dollar axis refuses once the allowance is SPENT, not when an
+		// estimate would cross it: a turn's price is not known before it runs.
+		if window.MaxEquivalentMicros > 0 && usage.EquivalentMicros >= window.MaxEquivalentMicros {
+			decision := quotaRefusal(QuotaReasonCostLimit, window, usage.EquivalentMicros, window.MaxEquivalentMicros, usage.FirstAt, now)
+			decision.Axis = QuotaAxisEquivalentMicros
 			return decision, nil
 		}
 	}
 	return &QuotaDecision{Allowed: true, Reason: QuotaReasonWithinLimits}, nil
-}
-
-// evaluate answers for one window.
-func (a *quotaAuthority) evaluate(ctx context.Context, req QuotaAdmitRequest, window QuotaWindow, now time.Time) (*QuotaDecision, error) {
-	usage, err := a.ledger.WindowUsage(ctx, req.Account.TenantID, req.Account.ID, now.Add(-window.Size), now)
-	if err != nil {
-		// No decision. See the fail-closed note at the top of this file.
-		return nil, err
-	}
-
-	// The policy's validation guarantees a positive allowance, so this is
-	// the whole comparison rather than one branch of several.
-	projected := usage.TotalTokens + req.EstimatedTokens
-	if projected > window.MaxTokens {
-		return quotaRefusal(QuotaReasonTokenLimit, window, usage.TotalTokens, window.MaxTokens, usage.FirstAt, now), nil
-	}
-	return &QuotaDecision{Allowed: true, Reason: QuotaReasonWithinLimits, Window: window.Name}, nil
 }
 
 // quotaRefusal builds a refusing decision, including when the window next
@@ -262,8 +350,20 @@ func quotaRefusal(reason QuotaReason, window QuotaWindow, used, limit int64, old
 	}
 }
 
+// Validate refuses limits that cannot mean what they appear to. Every write
+// of an account, project or tenant policy calls it, so a malformed window is
+// refused where the operator wrote it rather than discovered at the gate.
+func (p SpendLimits) Validate() error {
+	return p.validate()
+}
+
+// Metered reports whether the limits meter anything.
+func (p SpendLimits) Metered() bool {
+	return len(p.Windows) > 0
+}
+
 // validate refuses a policy that cannot mean what it appears to.
-func (p AccountQuotaPolicy) validate() error {
+func (p SpendLimits) validate() error {
 	seen := make(map[string]struct{}, len(p.Windows))
 	for _, window := range p.Windows {
 		if window.Name == "" {
@@ -283,13 +383,19 @@ func (p AccountQuotaPolicy) validate() error {
 				Message: window.Name + ": must be positive",
 			}
 		}
+		if window.MaxTokens < 0 {
+			return &QuotaInvalidError{Field: "window.max_tokens", Message: window.Name + ": must not be negative"}
+		}
+		if window.MaxEquivalentMicros < 0 {
+			return &QuotaInvalidError{Field: "window.max_equivalent_micros", Message: window.Name + ": must not be negative"}
+		}
 		// A window with no allowance can only ever admit. Listed in a policy
 		// it reads as a limit, so it is refused rather than kept as a limit
 		// that silently is not one.
-		if window.MaxTokens <= 0 {
+		if window.MaxTokens == 0 && window.MaxEquivalentMicros == 0 {
 			return &QuotaInvalidError{
 				Field:   "window.max_tokens",
-				Message: window.Name + ": must be positive; a window that meters nothing is not a limit",
+				Message: window.Name + ": set max_tokens, max_equivalent_micros or both; a window that meters nothing is not a limit",
 			}
 		}
 	}

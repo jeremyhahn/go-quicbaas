@@ -91,10 +91,17 @@ type PullRequest struct {
 	Title  string `json:"title"`
 	State  string `json:"state"`
 	Draft  bool   `json:"draft"`
+	User   *User  `json:"user,omitempty"`
 	Head   Commit `json:"head"`
 	Base   Commit `json:"base"`
 	URL    string `json:"html_url"`
+
+	CreatedAt time.Time `json:"created_at"`
 }
+
+// DefaultLogin is the account the instance's token authenticates as until
+// SetLogin names another.
+const DefaultLogin = "agent-api"
 
 // Review is one review on a pull request, in Gitea's own wire shape.
 //
@@ -113,6 +120,24 @@ type Review struct {
 // User is the author of a review.
 type User struct {
 	Login string `json:"login"`
+}
+
+// Issue is an issue as Gitea reports it.
+type Issue struct {
+	Number    int       `json:"number"`
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`
+	State     string    `json:"state"`
+	Labels    []Label   `json:"labels"`
+	User      *User     `json:"user"`
+	HTMLURL   string    `json:"html_url"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// Collaborator is one entry of a repository's collaborator listing.
+type Collaborator struct {
+	Login    string `json:"login"`
+	FullName string `json:"full_name"`
 }
 
 // Commit is the head or base end of a pull request.
@@ -192,8 +217,14 @@ type Server struct {
 	contents   map[string][]Content
 	protection map[string]BranchProtection
 	pulls      []PullRequest
+	login      string
 	statuses   map[string][]CommitStatus
 	reviews    map[int][]Review
+
+	// issues are the repository's issues by number, and collaborators the
+	// accounts granted access beyond the owner.
+	issues        map[int]Issue
+	collaborators []Collaborator
 
 	nextLabelID  int64
 	nextHookID   int64
@@ -219,10 +250,12 @@ func New(t *testing.T, owner, repo string) *Server {
 	server := &Server{
 		t:          t,
 		prefix:     "/api/v1/repos/" + owner + "/" + repo,
+		login:      DefaultLogin,
 		contents:   map[string][]Content{},
 		protection: map[string]BranchProtection{},
 		statuses:   map[string][]CommitStatus{},
 		reviews:    map[int][]Review{},
+		issues:     map[int]Issue{},
 		calls:      map[string]int{},
 		failNext:   map[string]bool{},
 		forced:     map[string]forcedStatus{},
@@ -261,6 +294,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if r.URL.Path == "/api/v1/user" && r.Method == http.MethodGet {
+		s.calls["GET /user"]++
+		s.writeJSON(w, http.StatusOK, User{Login: s.login})
+		return
+	}
 	if !strings.HasPrefix(r.URL.Path, s.prefix) {
 		s.fail(w, http.StatusNotFound, "unknown repository")
 		return
@@ -293,6 +331,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.deleteHook(w, strings.TrimPrefix(suffix, "/hooks/"))
 	case suffix == "/pulls" && r.Method == http.MethodGet:
 		s.listPulls(w, r)
+	case suffix == "/issues" && r.Method == http.MethodGet:
+		s.listIssues(w, r)
 	case strings.HasPrefix(suffix, "/pulls/") && strings.HasSuffix(suffix, "/reviews") && r.Method == http.MethodGet:
 		s.listReviews(w, strings.TrimSuffix(strings.TrimPrefix(suffix, "/pulls/"), "/reviews"))
 	case strings.HasPrefix(suffix, "/pulls/") && r.Method == http.MethodGet:
@@ -303,6 +343,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.createStatus(w, r, strings.TrimPrefix(suffix, "/statuses/"))
 	case strings.HasPrefix(suffix, "/contents"):
 		s.listContents(w, strings.Trim(strings.TrimPrefix(suffix, "/contents"), "/"))
+	case suffix == "/collaborators" && r.Method == http.MethodGet:
+		s.listCollaborators(w, r)
+	case suffix == "/issues" && r.Method == http.MethodPost:
+		s.createIssue(w, r)
+	case strings.HasPrefix(suffix, "/issues/") && r.Method == http.MethodGet:
+		s.getIssue(w, strings.TrimPrefix(suffix, "/issues/"))
 	case strings.HasPrefix(suffix, "/branch_protections/"):
 		s.getProtection(w, strings.TrimPrefix(suffix, "/branch_protections/"))
 	default:
@@ -427,7 +473,12 @@ func (s *Server) listPulls(w http.ResponseWriter, r *http.Request) {
 			matching = append(matching, pull)
 		}
 	}
+	s.writeJSON(w, http.StatusOK, pageOf(matching, r))
+}
 
+// pageOf returns the page of items the request's limit and page ask for, the
+// way Gitea pages every listing.
+func pageOf[T any](items []T, r *http.Request) []T {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit <= 0 {
 		limit = DefaultPageSize
@@ -437,15 +488,14 @@ func (s *Server) listPulls(w http.ResponseWriter, r *http.Request) {
 		page = 1
 	}
 	start := (page - 1) * limit
-	if start >= len(matching) {
-		s.writeJSON(w, http.StatusOK, []PullRequest{})
-		return
+	if start >= len(items) {
+		return []T{}
 	}
 	end := start + limit
-	if end > len(matching) {
-		end = len(matching)
+	if end > len(items) {
+		end = len(items)
 	}
-	s.writeJSON(w, http.StatusOK, matching[start:end])
+	return items[start:end]
 }
 
 // getPull answers one pull request, and 404s for a number the repository does
@@ -551,6 +601,92 @@ func (s *Server) getProtection(w http.ResponseWriter, branch string) {
 	s.writeJSON(w, http.StatusOK, rule)
 }
 
+// listCollaborators pages the collaborator listing as Gitea does.
+func (s *Server) listCollaborators(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		limit = DefaultPageSize
+	}
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page <= 0 {
+		page = 1
+	}
+	start := (page - 1) * limit
+	if start >= len(s.collaborators) {
+		s.writeJSON(w, http.StatusOK, []Collaborator{})
+		return
+	}
+	end := min(start+limit, len(s.collaborators))
+	s.writeJSON(w, http.StatusOK, s.collaborators[start:end])
+}
+
+// createIssue files an issue, resolving its label IDs against the
+// repository's labels and refusing an unknown ID with 422 as Gitea does.
+func (s *Server) createIssue(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Title  string  `json:"title"`
+		Body   string  `json:"body"`
+		Labels []int64 `json:"labels"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		s.fail(w, http.StatusBadRequest, "undecodable body")
+		return
+	}
+	if strings.TrimSpace(body.Title) == "" {
+		s.fail(w, http.StatusUnprocessableEntity, "title is required")
+		return
+	}
+	labels := make([]Label, 0, len(body.Labels))
+	for _, id := range body.Labels {
+		label, ok := s.labelByID(id)
+		if !ok {
+			s.fail(w, http.StatusUnprocessableEntity, "unknown label id "+strconv.FormatInt(id, 10))
+			return
+		}
+		labels = append(labels, label)
+	}
+	// Issues and pull requests share one number sequence, as on Gitea.
+	number := 1
+	for existing := range s.issues {
+		number = max(number, existing+1)
+	}
+	for _, pull := range s.pulls {
+		number = max(number, pull.Number+1)
+	}
+	issue := Issue{
+		Number: number, Title: body.Title, Body: body.Body, State: "open", Labels: labels,
+		User: &User{Login: "quicbaas"}, HTMLURL: s.server.URL + "/issues/" + strconv.Itoa(number),
+		CreatedAt: time.Now().UTC(),
+	}
+	s.issues[number] = issue
+	s.writeJSON(w, http.StatusCreated, issue)
+}
+
+// getIssue answers one issue, 404 when there is none.
+func (s *Server) getIssue(w http.ResponseWriter, rawNumber string) {
+	number, err := strconv.Atoi(rawNumber)
+	if err != nil {
+		s.fail(w, http.StatusNotFound, "no issue "+rawNumber)
+		return
+	}
+	issue, ok := s.issues[number]
+	if !ok {
+		s.fail(w, http.StatusNotFound, "no issue "+rawNumber)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, issue)
+}
+
+// labelByID finds a label by its ID.
+func (s *Server) labelByID(id int64) (Label, bool) {
+	for _, label := range s.labels {
+		if label.ID == id {
+			return label, true
+		}
+	}
+	return Label{}, false
+}
+
 func (s *Server) writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -573,6 +709,28 @@ func (s *Server) fail(w http.ResponseWriter, status int, message string) {
 // =============================================================================
 // State a test seeds and reads
 // =============================================================================
+
+// PutCollaborator grants an account access to the repository.
+func (s *Server) PutCollaborator(login string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.collaborators = append(s.collaborators, Collaborator{Login: login})
+}
+
+// Issue returns one issue as the instance holds it.
+func (s *Server) Issue(number int) (Issue, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	issue, ok := s.issues[number]
+	return issue, ok
+}
+
+// IssueCount is how many issues the instance holds.
+func (s *Server) IssueCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.issues)
+}
 
 // PutLabel seeds a label as a human created it.
 func (s *Server) PutLabel(name, color, description string) {
@@ -667,6 +825,42 @@ func (s *Server) PutFile(path string) {
 	defer s.mu.Unlock()
 	segments := strings.Split(path, "/")
 	s.contents[path] = []Content{{Name: segments[len(segments)-1], Path: path, Type: "file"}}
+}
+
+// listIssues answers the repository's issues in one state, oldest first. It
+// holds no pull requests, so it answers every listing, including the
+// adapter's type=issues one.
+func (s *Server) listIssues(w http.ResponseWriter, r *http.Request) {
+	state := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("state")))
+	matching := make([]Issue, 0, len(s.issues))
+	for _, issue := range s.issues {
+		if state == "" || state == "all" || strings.EqualFold(issue.State, state) {
+			matching = append(matching, issue)
+		}
+	}
+	sort.Slice(matching, func(i, j int) bool { return matching[i].Number < matching[j].Number })
+	s.writeJSON(w, http.StatusOK, pageOf(matching, r))
+}
+
+// PutIssue seeds an open issue, as a human filed it, carrying labels.
+func (s *Server) PutIssue(number int, title string, labels ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	issue := Issue{
+		Number: number, Title: title, State: "open", User: &User{Login: "someone"},
+		HTMLURL: s.URL() + "/issues/" + strconv.Itoa(number), CreatedAt: time.Now().UTC(),
+	}
+	for _, name := range labels {
+		issue.Labels = append(issue.Labels, Label{Name: name})
+	}
+	s.issues[number] = issue
+}
+
+// SetLogin names the account the instance's token authenticates as.
+func (s *Server) SetLogin(login string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.login = login
 }
 
 // PutPullRequest seeds an open pull request on headSHA. A test that needs a

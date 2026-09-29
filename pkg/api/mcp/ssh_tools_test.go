@@ -169,7 +169,7 @@ func TestSSHTools_KnownHostsAndAuthorized(t *testing.T) {
 
 	_, err := registry.executeSSHTool(ctx, "quicbaas_ssh_known_host_add", map[string]interface{}{
 		"scope": "user", "owner": "alice", "host": "git.example.com",
-		"fingerprint": host.Fingerprint,
+		"public_key": host.AuthorizedLine,
 	})
 	require.NoError(t, err)
 
@@ -180,7 +180,7 @@ func TestSSHTools_KnownHostsAndAuthorized(t *testing.T) {
 	pins := res.(*sshclient.ListKnownHostsResponse).Items
 	require.Len(t, pins, 1)
 	assert.Equal(t, host.Fingerprint, pins[0].Fingerprint,
-		"the MCP tool must pin the fingerprint it was given, unaltered")
+		"the pin's fingerprint must be the one derived from the key the MCP tool was given")
 
 	_, err = registry.executeSSHTool(ctx, "quicbaas_ssh_authorized_add", map[string]interface{}{
 		"scope": "user", "owner": "alice", "name": "deploy", "line": "ssh-ed25519 AAAA",

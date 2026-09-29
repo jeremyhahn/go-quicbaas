@@ -185,9 +185,8 @@ func TestRoleAdapter_ResolveSystemRoleID_FailsClosedOnStoreError(t *testing.T) {
 	outage := errors.New("shard offline")
 	mem := iam.NewMemoryStorage()
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  mem,
-		GroupStorage: mem,
-		RoleStorage:  &lookupFailingRoleStorage{RoleStorage: mem, err: outage},
+		UserStorage: mem,
+		RoleStorage: &lookupFailingRoleStorage{RoleStorage: mem, err: outage},
 	})
 	a := WrapRole(store)
 

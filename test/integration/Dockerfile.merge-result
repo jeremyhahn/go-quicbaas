@@ -1,0 +1,110 @@
+# QuicBaaS merge-result snapshot test runner.
+#
+# Runs the one suite that measures what the tree a verification judges
+# actually HOLDS (pkg/sdlc/merge_result_snapshot_integration_test.go,
+# go-quicbaas#982): `git add --all` staged into an index that starts EMPTY
+# silently drops every file the repository tracks despite an ignore rule, and
+# a double that records the argument vector sees an identical command either
+# way. Only real git against a real working tree can tell the two apart, which
+# is why the suite carries the `integration` tag and runs here rather than in
+# the unit tier — the rule is about what a suite TOUCHES, not what it costs,
+# and this one finishes in well under a second.
+#
+# Built and run by `make integration-test-merge-result`, which CI runs as the
+# `Merge-Result Snapshot` job. Nothing else executes this suite: `make test`
+# never compiles the `integration` tag, and `make vet-integration` only
+# typechecks it.
+#
+# BUILD MODEL: the source is BAKED IN and the module cache is warmed at build
+# time, exactly as test/integration/Dockerfile does it, and for the same
+# reason — a bind mount cannot work on a CI runner. act_runner talks to the
+# HOST's docker daemon over its socket, so `docker run -v $PWD:/workspace`
+# asks that daemon to resolve a path that exists only inside the job
+# container, and it fails with `error while creating mount source path`
+# (runner-log-proven; see the Build Binaries step in .github/workflows/
+# release.yml). A build context is streamed to the daemon over the API
+# instead, so it resolves wherever the two filesystems actually live. That is
+# what lets CI run the same `make integration-test-merge-result` a developer
+# runs.
+#
+# The container needs NOTHING to reach: no server, no credential and no
+# network (`make integration-test-merge-result` runs it with `--network
+# none`). Everything the suite writes is under the container's own temp dir,
+# and `--rm` takes that whole tree away afterwards.
+
+# ============================================================================
+# Stage 1: compile the test binary
+# ============================================================================
+FROM golang:1.27.0-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates
+
+WORKDIR /workspace/go-quicbaas
+
+# The test binary compiles here, so this stage's module cache is what has to
+# be warm. Warming it at build time is what lets the run itself need neither
+# a credential nor a network.
+COPY go.mod go.sum ./
+COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
+
+# Gitea credentials arrive as a BuildKit secret, mounted on tmpfs for this RUN
+# alone and sourced rather than exported, so the token reaches neither a layer,
+# image metadata, nor a command line (dependency-resolution.md §6). The mount
+# is optional: on GitHub no secret is supplied and these modules resolve from
+# the public proxy once tags are mirrored.
+RUN --mount=type=secret,id=gomodauth \
+    set -eu; \
+    if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
+    go mod download
+
+COPY . .
+
+# COMPILED AT IMAGE BUILD TIME, so a compile break fails the build with the
+# compiler's own message rather than at container start. CGO_ENABLED=0 makes
+# the result static, which is what lets the runtime stage below be a bare
+# alpine instead of a second copy of the toolchain.
+ENV CGO_ENABLED=0 \
+    GO111MODULE=on \
+    GOFLAGS=-mod=readonly
+RUN go test -tags integration -c -o /out/merge-result.test ./pkg/sdlc/
+
+# ============================================================================
+# Stage 2: the runtime — git, and the suite that drives it
+# ============================================================================
+#
+# The toolchain, the module cache and the source stay in stage 1: the suite
+# builds its fixtures from scratch under t.TempDir() and reads nothing from
+# the checkout, so shipping them would be gigabytes of image that no test
+# opens.
+#
+# The base is the one the shipped images pin (Dockerfile, Dockerfile.cli), and
+# its packages are upgraded on top of it for the same reason they are there:
+# `trivy-image-merge-result` scans this image before anything runs from it,
+# and a pin alone freezes whatever advisories the base shipped with. Measured
+# 2026-09-22: alpine 3.22.1 carries fixable HIGHs in openssl, musl and zlib
+# and failed that gate; 3.24.1 carries CVE-2026-14456 (libcrypto3/libssl3
+# 3.5.7-r0), which `apk upgrade` closes.
+FROM alpine:3.24.1
+
+LABEL maintainer="Jeremy Hahn"
+LABEL description="QuicBaaS merge-result snapshot integration test runner"
+
+# git is not a build dependency here, it is the SUBJECT: the suite drives a
+# real git against a real working tree, and the pinned base is what makes the
+# version it drives the same one everywhere.
+RUN apk upgrade --no-cache && \
+    apk add --no-cache git
+
+COPY --from=builder /out/merge-result.test /usr/local/bin/merge-result.test
+
+WORKDIR /tmp
+
+# ENTRYPOINT plus default arguments: `docker run <image>` runs the snapshot
+# suite, and `docker run <image> -test.run X` narrows it without a rebuild.
+#
+# The -test.run filter is not a convenience. pkg/sdlc's integration tag also
+# carries the LIVE Gitea forge suite (TestLive_*, forge_gitea_live_test.go),
+# which needs a server and a credential this container deliberately has
+# neither of; `make integration-test-forge-gitea` owns that one.
+ENTRYPOINT ["/usr/local/bin/merge-result.test"]
+CMD ["-test.run", "TestSnapshotWorkTree", "-test.v", "-test.timeout=5m"]

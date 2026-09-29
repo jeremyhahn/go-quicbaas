@@ -453,7 +453,7 @@ func TestJobRun_Exec_DelegatesToTheEngine(t *testing.T) {
 }
 
 // TestJobRun_Exec_RefusesAServiceThatCannotExec covers the agent services that
-// are NOT the engine's — the remote agent client, the SDK's orchestrator
+// are NOT the engine's — the remote fleet node client, the SDK's orchestrator
 // client, a test's own fake. They carry no container runtime, and the run has
 // to say so rather than fail somewhere less legible.
 func TestJobRun_Exec_RefusesAServiceThatCannotExec(t *testing.T) {

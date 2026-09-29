@@ -40,7 +40,6 @@ var (
 	autoProvision     bool
 	allowLinking      bool
 	defaultRoles      []string
-	defaultGroups     []string
 	providerPreset    string
 	providerDomain    string
 
@@ -208,7 +207,6 @@ Examples:
 	cmd.Flags().BoolVar(&autoProvision, "auto-provision", false, "Enable JIT user provisioning")
 	cmd.Flags().BoolVar(&allowLinking, "allow-linking", false, "Allow linking to existing accounts by email")
 	cmd.Flags().StringSliceVar(&defaultRoles, "default-roles", nil, "Default roles for auto-provisioned operators")
-	cmd.Flags().StringSliceVar(&defaultGroups, "default-groups", nil, "Default groups for auto-provisioned operators")
 
 	return cmd
 }
@@ -285,7 +283,6 @@ Examples:
 	cmd.Flags().BoolVar(&autoProvision, "auto-provision", false, "Enable JIT user provisioning")
 	cmd.Flags().BoolVar(&allowLinking, "allow-linking", false, "Allow linking to existing accounts by email")
 	cmd.Flags().StringSliceVar(&defaultRoles, "default-roles", nil, "Default roles for auto-provisioned users")
-	cmd.Flags().StringSliceVar(&defaultGroups, "default-groups", nil, "Default groups for auto-provisioned users")
 
 	return cmd
 }
@@ -361,7 +358,6 @@ func runIAMProviderCreate(cmd *cobra.Command, op string) error {
 		AutoProvision: autoProvision,
 		AllowLinking:  allowLinking,
 		DefaultRoles:  defaultRoles,
-		DefaultGroups: defaultGroups,
 	})
 	if err != nil {
 		return formatError(err)
@@ -390,9 +386,6 @@ func runIAMProviderCreate(cmd *cobra.Command, op string) error {
 		fmt.Printf("  Allow Linking: %v\n", provider.AllowLinking)
 		if len(provider.DefaultRoles) > 0 {
 			fmt.Printf("  Default Roles: %s\n", strings.Join(provider.DefaultRoles, ", "))
-		}
-		if len(provider.DefaultGroups) > 0 {
-			fmt.Printf("  Default Groups: %s\n", strings.Join(provider.DefaultGroups, ", "))
 		}
 		fmt.Printf("  Created: %s\n", provider.Created.Format("2006-01-02 15:04:05"))
 	}
@@ -473,9 +466,6 @@ func runIAMProviderGetCommand(cmd *cobra.Command, args []string) error {
 		if len(provider.DefaultRoles) > 0 {
 			fmt.Printf("  Default Roles: %s\n", strings.Join(provider.DefaultRoles, ", "))
 		}
-		if len(provider.DefaultGroups) > 0 {
-			fmt.Printf("  Default Groups: %s\n", strings.Join(provider.DefaultGroups, ", "))
-		}
 		fmt.Printf("  Created: %s\n", provider.Created.Format("2006-01-02 15:04:05"))
 		fmt.Printf("  Updated: %s\n", provider.Updated.Format("2006-01-02 15:04:05"))
 	}
@@ -519,7 +509,6 @@ Examples:
 	cmd.Flags().BoolVar(&autoProvision, "auto-provision", false, "Enable JIT user provisioning")
 	cmd.Flags().BoolVar(&allowLinking, "allow-linking", false, "Allow linking to existing accounts")
 	cmd.Flags().StringSliceVar(&defaultRoles, "default-roles", nil, "Default roles for auto-provisioned users")
-	cmd.Flags().StringSliceVar(&defaultGroups, "default-groups", nil, "Default groups for auto-provisioned users")
 
 	cmd.MarkFlagRequired("provider-id")
 
@@ -538,7 +527,7 @@ func runIAMProviderUpdateCommand(cmd *cobra.Command, args []string) error {
 		cmd.Flags().Changed("client-secret") || cmd.Flags().Changed("issuer-url") ||
 		cmd.Flags().Changed("scopes") || cmd.Flags().Changed("enabled") ||
 		cmd.Flags().Changed("auto-provision") || cmd.Flags().Changed("allow-linking") ||
-		cmd.Flags().Changed("default-roles") || cmd.Flags().Changed("default-groups")
+		cmd.Flags().Changed("default-roles")
 
 	if !hasUpdate {
 		return errors.Newf(errors.ErrInvalidInput, "iam.provider.update", "at least one update flag must be specified")
@@ -587,9 +576,6 @@ func runIAMProviderUpdateCommand(cmd *cobra.Command, args []string) error {
 	}
 	if cmd.Flags().Changed("default-roles") {
 		opts.DefaultRoles = defaultRoles
-	}
-	if cmd.Flags().Changed("default-groups") {
-		opts.DefaultGroups = defaultGroups
 	}
 
 	// Update provider

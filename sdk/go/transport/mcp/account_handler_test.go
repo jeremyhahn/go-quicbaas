@@ -51,6 +51,8 @@ func TestAccountMethodToolNames(t *testing.T) {
 		"SetDefault":       "quicbaas_agent_account_set_default",
 		"Usage":            "quicbaas_agent_account_usage",
 		"Materialize":      "quicbaas_agent_account_materialize",
+		"ReserveSession":   "quicbaas_agent_account_reserve_session",
+		"ReleaseSession":   "quicbaas_agent_account_release_session",
 	}
 	for method, expected := range want {
 		if got := accountMethodTools[method]; got != expected {

@@ -14,9 +14,11 @@
 package gate
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -269,5 +271,108 @@ func TestInstallFakesFailsWhenItCannotPrepareTheDirectory(t *testing.T) {
 	}
 	if err := InstallFakes(occupied); err == nil {
 		t.Fatal("InstallFakes must fail when the directory cannot be created")
+	}
+}
+
+func TestRunFakeRecordsTheSizeOfTheWatchedFileAtEachCall(t *testing.T) {
+	// verify-gomodauth asks whether the staged credentials file held something
+	// while the image was being built and nothing once it was: the fake records
+	// the watched file's size beside every call it answers.
+	dir := t.TempDir()
+	t.Setenv(FakeDirEnv, dir)
+	watched := filepath.Join(dir, "secret.env")
+	if err := os.WriteFile(filepath.Join(dir, "watch.path"), []byte(watched+"\n"), 0o600); err != nil {
+		t.Fatalf("writing watch.path: %v", err)
+	}
+
+	var stdout, stderr strings.Builder
+	if status := RunFake("docker", []string{"compose", "ps"}, &stdout, &stderr); status != ExitClean {
+		t.Fatalf("ps exited %d: %s", status, stderr.String())
+	}
+	if err := os.WriteFile(watched, []byte("12345"), 0o600); err != nil {
+		t.Fatalf("writing the watched file: %v", err)
+	}
+	if status := RunFake("docker", []string{"compose", "build"}, &stdout, &stderr); status != ExitClean {
+		t.Fatalf("build exited %d: %s", status, stderr.String())
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, "watch.log"))
+	if err != nil {
+		t.Fatalf("reading watch.log: %v", err)
+	}
+	want := "compose ps\t-1\ncompose build\t5\n"
+	if string(raw) != want {
+		t.Fatalf("watch.log = %q, want %q", raw, want)
+	}
+}
+
+func TestRunFakeWritesNoWatchLogWithoutAWatchedFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(FakeDirEnv, dir)
+	var stdout, stderr strings.Builder
+	if status := RunFake("docker", []string{"compose", "ps"}, &stdout, &stderr); status != ExitClean {
+		t.Fatalf("ps exited %d: %s", status, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "watch.log")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("watch.log exists without a watch.path: %v", err)
+	}
+}
+
+func TestRunFakeHangsOnTheMatchedCallUntilSignalled(t *testing.T) {
+	// A gate that interrupts a recipe mid-build needs the build to be in
+	// progress when the signal lands: the fake announces the matched call on
+	// hang.fifo and then waits for SIGINT or SIGTERM.
+	dir := t.TempDir()
+	t.Setenv(FakeDirEnv, dir)
+	if err := os.WriteFile(filepath.Join(dir, "hang.match"), []byte("build e2e\n"), 0o600); err != nil {
+		t.Fatalf("writing hang.match: %v", err)
+	}
+	fifo := filepath.Join(dir, HangFIFO)
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatalf("making the fifo: %v", err)
+	}
+
+	status := make(chan int, 1)
+	go func() {
+		var stdout, stderr strings.Builder
+		status <- RunFake("docker", []string{"compose", "build", "e2e"}, &stdout, &stderr)
+	}()
+
+	announced, err := os.ReadFile(fifo)
+	if err != nil {
+		t.Fatalf("reading the announcement: %v", err)
+	}
+	if !strings.Contains(string(announced), "compose build e2e") {
+		t.Fatalf("announcement = %q, want the matched call", announced)
+	}
+	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatalf("signalling: %v", err)
+	}
+	if got := <-status; got != hangInterruptedStatus {
+		t.Fatalf("an interrupted hang returned %d, want %d", got, hangInterruptedStatus)
+	}
+}
+
+func TestRunFakeDoesNotHangOnAnUnmatchedCall(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(FakeDirEnv, dir)
+	if err := os.WriteFile(filepath.Join(dir, "hang.match"), []byte("build e2e\n"), 0o600); err != nil {
+		t.Fatalf("writing hang.match: %v", err)
+	}
+	var stdout, stderr strings.Builder
+	if status := RunFake("docker", []string{"compose", "ps"}, &stdout, &stderr); status != ExitClean {
+		t.Fatalf("an unmatched call exited %d: %s", status, stderr.String())
+	}
+}
+
+func TestRunFakeFailsAMatchedHangWithoutItsFIFO(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(FakeDirEnv, dir)
+	if err := os.WriteFile(filepath.Join(dir, "hang.match"), []byte("build\n"), 0o600); err != nil {
+		t.Fatalf("writing hang.match: %v", err)
+	}
+	var stdout, stderr strings.Builder
+	if status := RunFake("docker", []string{"compose", "build"}, &stdout, &stderr); status != ExitToolError {
+		t.Fatalf("a hang with no fifo exited %d, want %d", status, ExitToolError)
 	}
 }

@@ -89,12 +89,12 @@ func TestOrchestrationStoreAuditor_TranslatesStoreEvents(t *testing.T) {
 			name: "agent update",
 			event: orchestration.StoreAuditEvent{
 				TenantID:   "tenant-b",
-				Resource:   orchestration.AuditResourceAgent,
+				Resource:   orchestration.AuditResourceFleetNode,
 				ResourceID: "agent-7",
 				Action:     orchestration.AuditActionUpdate,
 				Success:    true,
 			},
-			wantAction:  orchestration.AuditResourceAgent + ":" + orchestration.AuditActionUpdate,
+			wantAction:  orchestration.AuditResourceFleetNode + ":" + orchestration.AuditActionUpdate,
 			wantOutcome: iam.AuditOutcomeSuccess,
 		},
 		{
@@ -235,4 +235,49 @@ func TestServer_AuditLoggerForStores_WithoutIAM(t *testing.T) {
 	if got := srv.auditLoggerForStores(); got != nil {
 		t.Fatalf("want nil audit logger before IAM init, got %#v", got)
 	}
+}
+
+// TestSigningRelayAuditor_RecordsTheSignatureNotTheData: a signature relayed to
+// a fleet node lands on the platform trail with the session, agent, key
+// fingerprint and data digest — never the data — and a refusal is a failure
+// carrying its reason (go-quicbaas#1013).
+func TestSigningRelayAuditor_RecordsTheSignatureNotTheData(t *testing.T) {
+	logger := &recordingAuditLogger{}
+	auditor := newSigningRelayAuditor(func() iam.AuditLogger { return logger })
+	auditor.RecordSigningRelaySign(context.Background(), orchestration.SigningRelaySignEvent{
+		TenantID: "tenant-a", SessionID: "sess-1", AgentID: "agent-2",
+		KeyFingerprint: "SHA256:abc", DataSHA256: "deadbeef", Success: true,
+	})
+	auditor.RecordSigningRelaySign(context.Background(), orchestration.SigningRelaySignEvent{
+		TenantID: "tenant-a", SessionID: "sess-1", AgentID: "agent-2", Reason: "refused",
+	})
+
+	events := logger.recorded()
+	if len(events) != 2 {
+		t.Fatalf("recorded %d events, want 2", len(events))
+	}
+	signed := events[0]
+	if signed.Action != signingRelayAuditAction || signed.TenantID != "tenant-a" ||
+		signed.Outcome != iam.AuditOutcomeSuccess || signed.Resource.ID != "sess-1" ||
+		signed.Details["key_fingerprint"] != "SHA256:abc" || signed.Details["data_sha256"] != "deadbeef" ||
+		signed.Details["agent_id"] != "agent-2" {
+		t.Fatalf("signed event = %+v", signed)
+	}
+	if _, hasReason := signed.Details["reason"]; hasReason {
+		t.Error("a successful signature carries a refusal reason")
+	}
+	if refused := events[1]; refused.Outcome != iam.AuditOutcomeFailure || refused.Details["reason"] != "refused" {
+		t.Fatalf("refused event = %+v", refused)
+	}
+}
+
+// TestSigningRelayAuditor_WithNoLoggerRecordsNothing: no resolver is no
+// auditor, and a resolver with no logger yet drops the event rather than
+// panicking.
+func TestSigningRelayAuditor_WithNoLoggerRecordsNothing(t *testing.T) {
+	if newSigningRelayAuditor(nil) != nil {
+		t.Fatal("a nil resolver built an auditor")
+	}
+	auditor := newSigningRelayAuditor(func() iam.AuditLogger { return nil })
+	auditor.RecordSigningRelaySign(context.Background(), orchestration.SigningRelaySignEvent{TenantID: "tenant-a"})
 }

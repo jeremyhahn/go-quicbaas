@@ -32,7 +32,7 @@ import (
 // four, and the SDLC runner, which refuses a worker whose delivery could never
 // be committed inside a container, refuses every remote worker.
 //
-// pkg/agent's wire contract drives this through a real daemon end to end. These
+// pkg/fleet's wire contract drives this through a real daemon end to end. These
 // two pin the client-side mapping on its own, so a change that stops reading
 // the field fails here first, naming it.
 

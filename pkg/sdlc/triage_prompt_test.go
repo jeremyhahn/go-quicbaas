@@ -67,6 +67,22 @@ func TestTriageCharter_IsEditableTextCarryingTheContract(t *testing.T) {
 	if !strings.Contains(strings.Join(strings.Fields(charter), " "), "asks the owner to rule, decide, or choose between options") {
 		t.Fatal("the charter must say that an issue asking the owner to rule is needs-info, never ready")
 	}
+	// A TRACKER IS NEVER WORK. On 2026-09-25 triage marked two "Release
+	// readiness" trackers ready (go-blockstore#75, go-frost#30) although their
+	// bodies said they were a checklist, not work, and both workers stopped on
+	// owner questions. The charter names the tracker, its signs, and its
+	// verdict, so a model does not have to infer them.
+	flat := strings.Join(strings.Fields(charter), " ")
+	for _, want := range []string{
+		"An issue that tracks other work is never itself work",
+		"it lists child issues, or carries checkboxes over several changes",
+		"Its verdict is `not-actionable`, left for a person, with a one-line reason",
+		"it is a tracker rather than work",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Fatalf("the charter must state %q: a tracking checklist is not-actionable, never ready", want)
+		}
+	}
 	if !strings.Contains(charter, TriageCloseMarker) {
 		t.Fatalf("the charter must state %q, or an agent cannot ask for a close", TriageCloseMarker)
 	}
@@ -98,7 +114,7 @@ func TestTriageCharter_IsNotAGoConstant(t *testing.T) {
 
 // TestTriagePrompt_CarriesEverythingTheVerdictNeeds proves the rendered
 // prompt names the issue under triage, the other open issues a duplicate is
-// judged against, and the verification commands check six reads.
+// judged against, and the verification commands check seven reads.
 func TestTriagePrompt_CarriesEverythingTheVerdictNeeds(t *testing.T) {
 	spec := TriagePromptSpec{
 		Repo:         RepoRef{Owner: "jeremyhahn", Repo: "go-truststrap"},

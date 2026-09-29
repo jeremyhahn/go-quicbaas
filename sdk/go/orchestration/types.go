@@ -153,6 +153,11 @@ type ContainerSpec = pkgorch.ContainerSpec
 // measured.
 type ContainerMount = pkgorch.ContainerMount
 
+// ContainerUlimit is one per-process resource limit inside a container
+// (ContainerSpec.Ulimits, emitted as --ulimit name=soft:hard). Ulimits
+// participate in ContainerConfigDigest, sorted by name.
+type ContainerUlimit = pkgorch.ContainerUlimit
+
 // Mount kinds accepted by ContainerMount.Type. The empty string keeps the
 // untyped short form (-v source:target[:ro]).
 const (
@@ -189,7 +194,7 @@ var ImageRepository = pkgorch.ImageRepository
 // ContainerConfigDigest returns a deterministic SHA-256 digest over the parts
 // of a spec that determine what the container executes, what it can see and
 // what it is allowed to do — including ContainerSpec.Privileged, CapAdd,
-// CapDrop, PidsLimit and each mount's Type. It is the value extended into a PCR at
+// CapDrop, PidsLimit, Ulimits and each mount's Type. It is the value extended into a PCR at
 // measured launch, so it must be reproducible across launches of the same
 // approved configuration; capability lists are sorted before hashing so their
 // order is not significant.
@@ -477,6 +482,8 @@ var (
 	_ *ContainerSpec                    = (*pkgorch.ContainerSpec)(nil)
 	_ *pkgorch.ContainerMount           = (*ContainerMount)(nil)
 	_ *ContainerMount                   = (*pkgorch.ContainerMount)(nil)
+	_ *pkgorch.ContainerUlimit          = (*ContainerUlimit)(nil)
+	_ *ContainerUlimit                  = (*pkgorch.ContainerUlimit)(nil)
 	_ *pkgorch.ImageSignature           = (*ImageSignature)(nil)
 	_ *pkgorch.ContainerAttestation     = (*ContainerAttestation)(nil)
 	_ *ContainerAttestation             = (*pkgorch.ContainerAttestation)(nil)

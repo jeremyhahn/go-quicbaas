@@ -15,13 +15,6 @@ package sdlc
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"net"
-	"os"
-	"path/filepath"
-	"strings"
-	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
@@ -51,250 +44,33 @@ import (
 // recognise one by its shape.
 const SigningSocketFile = orchestration.WorkspaceSigningAgentSocketFile
 
-// MaxSigningSocketPath bounds the socket's absolute path.
+// EnsureSigningSocketRoot prepares the daemon's sockets root — refusing, AT
+// STARTUP, every root a session could not bind a socket in, and sweeping the
+// session directories a killed process left (orchestration.EnsureSigningSocketRoot,
+// shared with the fleet node's relay root) — and then stamps it with this
+// daemon's signing identifier.
 //
-// A unix socket address is a fixed-size field in the kernel — sun_path is 108
-// bytes on Linux, including its terminator, so 107 is the longest path that
-// can be bound. Checking it turns "the agent failed to listen" into a message
-// that names the path and the limit.
-const MaxSigningSocketPath = 107
-
-// SigningSocketDirNameLen is the length of one session's directory name: 12
-// hexadecimal characters over 6 random bytes. It is a fixed width so the
-// worst-case socket path for a root is a computation and not a guess.
-const SigningSocketDirNameLen = 12
-
-// MaxSigningSocketRoot is the longest sockets root that can hold a session
-// socket: the kernel's limit less the session directory, the socket's name
-// and the two separators between them. On Linux that is 83 bytes.
-const MaxSigningSocketRoot = MaxSigningSocketPath - SigningSocketDirNameLen - len(SigningSocketFile) - 2
-
-// LongestSigningSocketPath returns the length of the longest socket path root
-// can yield. Every session directory is the same width, so this is exact
-// rather than an estimate.
-func LongestSigningSocketPath(root string) int {
-	return len(filepath.Clean(root)) + SigningSocketDirNameLen + len(SigningSocketFile) + 2
-}
-
-// EnsureSigningSocketRoot prepares the daemon's sockets root and refuses,
-// AT STARTUP, every root a session could not bind a socket in.
+// It is called before the runner exists precisely so a root no socket fits
+// under is a refusal naming the root and the limit, not one failed job per
+// delivery on a deployment that looks configured.
 //
-// It is called before the runner exists precisely so the two failures this
-// subsystem actually has are reported by the thing that can name them:
-//
-//   - a root so long that the socket would exceed the kernel's sun_path field.
-//     Discovered at initializing, it is one failed job per delivery on a
-//     deployment that looks configured; discovered here, it is a refusal
-//     naming the root and the limit.
-//   - a root that cannot hold an agent socket safely. The socket's own 0600
-//     mode does not protect its PATHNAME — the containing directory decides
-//     who may unlink and re-bind it — so the session's parent must be private
-//     to this user. go-xkms refuses a world-writable parent (which is why the
-//     OS temporary directory is not a candidate) and it refuses it at the
-//     same late moment; this refuses it now.
-//
-// The root itself is created 0700 and outlives every session. The session's
-// own directory under it is created by the agent and removed with it — unless
-// the process died holding it, which is what the sweep this returns is for.
-//
-// The refusals are ALL EVALUATED BEFORE THE SWEEP. The sweep unlinks
-// directories, so it runs only under a root this function has just vouched
-// for; a root it refuses is left exactly as it was found.
-func EnsureSigningSocketRoot(root string) (SigningSocketSweep, error) {
-	cleaned := filepath.Clean(strings.TrimSpace(root))
-	if cleaned == "" || cleaned == "." || !filepath.IsAbs(cleaned) {
-		return SigningSocketSweep{}, &InvalidInputError{
-			Field:   "orchestration.sockets_root",
-			Message: "the daemon binds its per-session agent sockets under an absolute root",
-		}
-	}
-	if longest := LongestSigningSocketPath(cleaned); longest > MaxSigningSocketPath {
-		return SigningSocketSweep{}, &SigningSocketRootError{Root: cleaned, Longest: longest, Limit: MaxSigningSocketPath}
-	}
-	if err := os.MkdirAll(cleaned, signingSocketRootMode); err != nil {
-		return SigningSocketSweep{}, &SigningSocketRootUnusableError{Root: cleaned, Reason: "could not be created", Cause: err}
-	}
-	info, err := os.Lstat(cleaned)
-	if err != nil {
-		return SigningSocketSweep{}, &SigningSocketRootUnusableError{Root: cleaned, Reason: "could not be inspected", Cause: err}
-	}
-	switch {
-	case info.Mode()&os.ModeSymlink != 0:
-		// A symlink can be re-pointed between this check and the bind.
-		return SigningSocketSweep{}, &SigningSocketRootUnusableError{Root: cleaned, Reason: "is a symlink"}
-	case !info.IsDir():
-		return SigningSocketSweep{}, &SigningSocketRootUnusableError{Root: cleaned, Reason: "is not a directory"}
-	case info.Mode().Perm()&0o022 != 0:
-		// The OS temporary directory is exactly this shape, and it is why a
-		// socket is never bound there: another user can unlink the session
-		// directory's name and put their own agent at it.
-		return SigningSocketSweep{}, &SigningSocketRootUnusableError{Root: cleaned, Reason: "is writable by group or other"}
-	}
-	sweep, err := sweepSigningSocketRoot(cleaned)
+// THE ROOT CARRIES THIS DAEMON'S SIGNING IDENTIFIER, which is how a fleet
+// agent proves it can mount the sockets bound here and how the dispatcher
+// places a signing spawn on such an agent without a relay (go-quicbaas#981).
+// The marker is the daemon's alone: a fleet node's relay root never carries
+// one, because nothing another host binds there is this daemon's socket.
+func EnsureSigningSocketRoot(root string) (orchestration.SigningSocketSweep, error) {
+	sweep, err := orchestration.EnsureSigningSocketRoot(root)
 	if err != nil {
 		return sweep, err
 	}
-	// THE ROOT CARRIES THIS DAEMON'S SIGNING IDENTIFIER, which is how a fleet
-	// agent proves it can mount the sockets bound here and how the dispatcher
-	// places a signing spawn only on such an agent (go-quicbaas#981).
-	if _, err := orchestration.EnsureSigningRootID(cleaned); err != nil {
-		return sweep, &SigningSocketRootUnusableError{
-			Root: cleaned, Reason: "could not carry its signing-root marker", Cause: err,
+	if _, err := orchestration.EnsureSigningRootID(sweep.Root); err != nil {
+		return sweep, &orchestration.SigningSocketRootUnusableError{
+			Root: sweep.Root, Reason: "could not carry its signing-root marker", Cause: err,
 		}
 	}
 	return sweep, nil
 }
-
-// =============================================================================
-// The startup sweep — what a process that died mid-attempt left behind
-// =============================================================================
-//
-// An attempt that ENDS releases its agent: the runner's teardown stops the
-// session on a context detached from the attempt's, so a cancelled or failed
-// attempt still unlinks its socket and its directory. What no teardown can
-// survive is the process not running any more. A daemon killed between the
-// agent's bind and its release leaves a 0700 directory holding a dead socket,
-// and the sockets root OUTLIVES THE DAEMON — it is $XDG_RUNTIME_DIR/quicbaas
-// or <data_dir>/s — so on a node that kills jobs those accumulate without
-// bound. go-quicbaas#633.
-//
-// WHAT "NOT LIVE" MEANS. An agent's listener dies with the process that held
-// it, so a socket that refuses a connection is answered by nobody and the
-// attempt that bound it is over. The sweep asks the socket rather than
-// leaning on the simpler invariant "this daemon has only just started, so
-// nothing under the root can be live": that invariant holds for ONE daemon
-// per root and the root can be shared. $XDG_RUNTIME_DIR/quicbaas is reached
-// by every daemon of the same user, and a second one starting must not unlink
-// the first one's live sockets. Asking costs one connect that is immediately
-// released, and it is correct under both deployments.
-//
-// WHAT IS SWEPT is only what this package mints: a directory named exactly
-// SigningSocketDirNameLen hexadecimal characters, holding nothing but
-// SigningSocketFile, and that socket answering nobody. An empty one is a
-// process killed between the agent's mkdir and its bind, and there is nothing
-// to ask. Anything else under the root — a foreign name, a file, a symlink,
-// a directory with other contents in it, a directory this daemon may not read
-// — is somebody else's and is left exactly where it is.
-
-// signingSocketProbeTimeout bounds the liveness probe. Connecting to a unix
-// socket is answered by the kernel without a round trip — a live listener
-// takes the connection onto its backlog and a dead one is refused at once —
-// so this is a ceiling on a pathology, not a wait anything reaches.
-const signingSocketProbeTimeout = 2 * time.Second
-
-// SigningSocketSweep reports what preparing the sockets root removed.
-//
-// It is a value rather than a log line because the module holds no logger:
-// the host owns the sockets root's configuration and its logger, and reports
-// the sweep next to the module it started.
-type SigningSocketSweep struct {
-	// Root is the sockets root the sweep ran under, cleaned.
-	Root string
-
-	// Removed names the orphaned session directories it removed, in the
-	// order the root enumerated them. It is nil when there were none.
-	Removed []string
-}
-
-// sweepSigningSocketRoot removes the session directories left by a process
-// that is no longer running. Its caller has already vouched for root.
-func sweepSigningSocketRoot(root string) (SigningSocketSweep, error) {
-	sweep := SigningSocketSweep{Root: root}
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return sweep, &SigningSocketSweepError{Root: root, Reason: "could not be enumerated", Cause: err}
-	}
-	for _, entry := range entries {
-		// ReadDir does not follow a symlink, so IsDir is false for one and a
-		// link planted under the root is never descended into or removed.
-		if !entry.IsDir() || !isSigningSessionDirName(entry.Name()) {
-			continue
-		}
-		dir := filepath.Join(root, entry.Name())
-		socket, ours := signingSessionSocket(dir)
-		if !ours {
-			continue
-		}
-		if socket != "" {
-			live, err := signingSocketAnswers(socket)
-			if err != nil {
-				return sweep, &SigningSocketSweepError{
-					Root: root, Entry: entry.Name(), Reason: "could not be probed for a live agent", Cause: err,
-				}
-			}
-			if live {
-				continue
-			}
-		}
-		if err := os.RemoveAll(dir); err != nil {
-			return sweep, &SigningSocketSweepError{
-				Root: root, Entry: entry.Name(), Reason: "could not be removed", Cause: err,
-			}
-		}
-		sweep.Removed = append(sweep.Removed, entry.Name())
-	}
-	return sweep, nil
-}
-
-// isSigningSessionDirName reports whether name has the shape
-// signingSocketDirName mints: exactly SigningSocketDirNameLen lowercase
-// hexadecimal characters, and nothing else. A multi-byte rune fails on its
-// leading byte, so the check is safe over any name the filesystem returns.
-func isSigningSessionDirName(name string) bool {
-	if len(name) != SigningSocketDirNameLen {
-		return false
-	}
-	for i := 0; i < len(name); i++ {
-		c := name[i]
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
-}
-
-// signingSessionSocket reports whether dir is one of this package's session
-// directories, and the socket inside it when there is one.
-//
-// A directory holding anything other than the agent's socket is not one of
-// ours whatever it is named, and one this daemon cannot read is not
-// positively identified as ours either — both are declined rather than
-// reported as failures, because the sweep removes only what it recognises.
-func signingSessionSocket(dir string) (socket string, ours bool) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return "", false
-	}
-	for _, entry := range entries {
-		if entry.Name() != SigningSocketFile || entry.Type()&os.ModeSocket == 0 {
-			return "", false
-		}
-	}
-	if len(entries) == 0 {
-		// Killed between the agent's mkdir and its bind: ours, and there is
-		// no socket to ask.
-		return "", true
-	}
-	return filepath.Join(dir, SigningSocketFile), true
-}
-
-// signingSocketAnswers reports whether a live listener holds path.
-//
-// The connect is the whole question — the agent is asked nothing and told
-// nothing — and the error returned is the probe's own release, so a
-// connection this sweep opened is never dropped silently.
-func signingSocketAnswers(path string) (bool, error) {
-	conn, err := net.DialTimeout("unix", path, signingSocketProbeTimeout)
-	if err != nil {
-		return false, nil
-	}
-	return true, conn.Close()
-}
-
-// signingSocketRootMode is the sockets root's own mode: private to the daemon
-// user, because it is the parent every session directory is created in and a
-// parent nobody else can write to is what makes the socket's pathname safe.
-const signingSocketRootMode = 0o700
 
 // SigningScope says which of the project's keys an agent serves, and it is
 // the ONE place the difference between a reader's container and a deliverer's
@@ -349,24 +125,6 @@ func (s SigningScope) String() string {
 // key. It is the question the publisher's git configuration turns on, asked of
 // the scope rather than inferred from a session's fields.
 func (s SigningScope) SignsCommits() bool { return s == SigningScopeDelivery }
-
-// signingSocketDirName is a fresh directory name per session:
-// SigningSocketDirNameLen hexadecimal characters over random bytes, with no
-// prefix, because every byte of it is spent out of the socket path's budget.
-//
-// It is random rather than derived from the job for two reasons. A resumed
-// attempt never collides with a directory a previous one owned — the agent
-// refuses an existing path by design, and adopting one would be adopting its
-// contents. And the sockets root is shared by every tenant, so an unguessable
-// name is what stops one spawn naming another session's live socket as a mount
-// source.
-func signingSocketDirName() (string, error) {
-	buf := make([]byte, SigningSocketDirNameLen/2)
-	if _, err := rand.Read(buf); err != nil {
-		return "", &SigningSessionError{Message: "could not name the agent's socket directory: " + err.Error()}
-	}
-	return hex.EncodeToString(buf), nil
-}
 
 // SigningSession is one running signing agent.
 type SigningSession struct {

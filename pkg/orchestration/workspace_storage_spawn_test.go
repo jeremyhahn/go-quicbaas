@@ -84,7 +84,7 @@ func TestSandboxSpec_TheEphemeralTierReachesTheACPWorkerContainer(t *testing.T) 
 	spec, err := backend.sandboxSpec(&SpawnRequest{
 		WorkDir: "/srv/projects/tenant-a/proj-1/workspace",
 		Storage: ephemeralStorage().Plan(),
-	}, "worker:1", []string{"claude"})
+	}, testContainerIdentity, "worker:1", []string{"claude"})
 	if err != nil {
 		t.Fatalf("sandboxSpec: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestSandboxSpec_AnUnconfiguredProjectBuildsTheSpecItAlwaysDid(t *testing.T)
 	backend := NewACPBackend(ACPBackendConfig{Command: "claude", CLIMode: true})
 	const workDir = "/srv/projects/tenant-a/proj-1/workspace"
 
-	spec, err := backend.sandboxSpec(&SpawnRequest{WorkDir: workDir}, "worker:1", []string{"claude"})
+	spec, err := backend.sandboxSpec(&SpawnRequest{WorkDir: workDir}, testContainerIdentity, "worker:1", []string{"claude"})
 	if err != nil {
 		t.Fatalf("sandboxSpec: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestSandboxSpec_RefusesAnUnderProvisionedBudget(t *testing.T) {
 			WorkspaceTmpfsMB:  4096,
 			ContainerMemoryMB: 4096,
 		}.Plan(),
-	}, "worker:1", []string{"claude"})
+	}, testContainerIdentity, "worker:1", []string{"claude"})
 
 	var budget *MemoryBudgetError
 	if !errors.As(err, &budget) {

@@ -51,9 +51,9 @@ func TestReviewerFamily_ClaudeIsRefusedRegardlessOfPolicy(t *testing.T) {
 // act on is a refusal that becomes a support question.
 func TestReviewerFamilyRefusedError_NamesWhatToChange(t *testing.T) {
 	t.Parallel()
-	err := &ReviewerFamilyRefusedError{ProjectID: "proj-1", Backend: "claude", Family: ModelFamilyAnthropic}
+	err := &ReviewerFamilyRefusedError{ProjectID: "proj-1", Agent: "claude-reviewer", Family: ModelFamilyAnthropic}
 	msg := err.Error()
-	for _, want := range []string{"proj-1", "claude", ModelFamilyAnthropic, "reviewer.backend"} {
+	for _, want := range []string{"proj-1", "claude-reviewer", ModelFamilyAnthropic, "agent_id"} {
 		if !contains(msg, want) {
 			t.Errorf("the refusal does not mention %q: %s", want, msg)
 		}

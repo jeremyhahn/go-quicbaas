@@ -93,13 +93,13 @@ func TestSessionWorkspaceToProto_PinTravelsOnlyForItsOwnKey(t *testing.T) {
 		t.Fatal("no workspace is no wire workspace")
 	}
 	own := namedWorkspace()
-	own.Pin = &WorkspacePlacement{AgentHost: "omega:9091", Key: own.Key, Dir: "/d"}
+	own.Pin = &WorkspacePlacement{AgentHost: "agent-09:9091", Key: own.Key, Dir: "/d"}
 	if got := sessionWorkspaceToProto(own).GetPinnedDir(); got != "/d" {
 		t.Fatalf("pinned_dir = %q, want /d", got)
 	}
 	other := namedWorkspace()
 	other.Spec = nil
-	other.Pin = &WorkspacePlacement{AgentHost: "omega:9091", Key: "review-1-abc", Dir: "/d"}
+	other.Pin = &WorkspacePlacement{AgentHost: "agent-09:9091", Key: "review-1-abc", Dir: "/d"}
 	wire := sessionWorkspaceToProto(other)
 	if wire.GetPinnedDir() != "" || wire.GetSpecFiles() != nil {
 		t.Fatalf("a pin for another key names no directory, and no spec means no files: %+v", wire)

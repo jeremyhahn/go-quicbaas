@@ -83,6 +83,10 @@ type SecretEntry struct {
 	// UpdatedAt is when the secret was last updated.
 	UpdatedAt time.Time
 
+	// CreatedBy is the authenticated principal that minted this version,
+	// empty when it was written with no principal in context (#862).
+	CreatedBy string
+
 	// DeletedAt is when the secret was deleted (nil if not deleted).
 	DeletedAt *time.Time
 }
@@ -94,6 +98,10 @@ type VersionMetadata struct {
 
 	// CreatedAt is when this version was created.
 	CreatedAt time.Time
+
+	// CreatedBy is the authenticated principal that minted this version,
+	// empty when it was written with no principal in context (#862).
+	CreatedBy string
 
 	// Deleted indicates if this version has been destroyed.
 	Deleted bool

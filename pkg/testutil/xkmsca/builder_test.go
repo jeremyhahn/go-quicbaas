@@ -129,16 +129,16 @@ func TestOpen_AdoptsAnExistingCAOnTheSecondCall(t *testing.T) {
 // An empty Dir selects in-memory storage, so a unit test writes nothing and
 // needs no cleanup; a non-empty Dir selects the file backends the daemon uses.
 func TestStorage_SelectsMemoryOrFiles(t *testing.T) {
-	keys, certs, err := storage("")
+	keys, certs, revocations, err := storage("")
 	if err != nil {
 		t.Fatalf("storage(\"\"): %v", err)
 	}
-	if keys == nil || certs == nil {
+	if keys == nil || certs == nil || revocations == nil {
 		t.Fatal("storage(\"\") returned a nil backend")
 	}
 
 	dir := t.TempDir()
-	if _, _, err := storage(dir); err != nil {
+	if _, _, _, err := storage(dir); err != nil {
 		t.Fatalf("storage(%s): %v", dir, err)
 	}
 	entries, err := os.ReadDir(dir)
@@ -147,6 +147,9 @@ func TestStorage_SelectsMemoryOrFiles(t *testing.T) {
 	}
 	if len(entries) == 0 {
 		t.Errorf("storage(%s) created no file storage under it", dir)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "revocations")); err != nil {
+		t.Errorf("storage(%s) created no revocation store: %v", dir, err)
 	}
 }
 
@@ -171,7 +174,7 @@ func TestCAIdentity_AppliesAndOverridesDefaults(t *testing.T) {
 	if id.Valid != DefaultValidYears {
 		t.Errorf("valid years = %d, want %d", id.Valid, DefaultValidYears)
 	}
-	if !id.IsRoot || id.KeystoreType != xkmssdk.StoreSoftware {
+	if !id.IsRoot || id.GetStoreType() != xkmssdk.StoreSoftware {
 		t.Errorf("identity = %+v, want a software root", id)
 	}
 

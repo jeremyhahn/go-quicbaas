@@ -210,6 +210,7 @@ func (h *IAMHandler) ValidateToken(w http.ResponseWriter, r *http.Request) {
 		"valid":      resp.Valid,
 		"user_id":    resp.UserID,
 		"username":   resp.Username,
+		"tenant_id":  resp.TenantID,
 		"roles":      resp.Roles,
 		"expires_at": time.Unix(resp.ExpiresAt, 0).Format(time.RFC3339),
 	})

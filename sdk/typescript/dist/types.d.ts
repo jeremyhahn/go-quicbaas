@@ -1,3 +1,5 @@
+import type { SpendLimits } from './spend.js';
+import type { AgentRef, AgentRole, AgentAttempt } from './agents.js';
 export type JobState = 'initializing' | 'decomposing' | 'scheduling' | 'assigning' | 'executing' | 'validating' | 'reviewing' | 're-delegating' | 'completing' | 'cleanup' | 'escalating' | 'completed' | 'failed';
 export interface JobAuditEvent {
     timestamp: number;
@@ -34,8 +36,11 @@ export interface WorkItem {
 export interface JobConfig {
     tenant_id: string;
     description: string;
-    lead_backend: string;
-    lead_model: string;
+    /** lead is the Agent or pool the job's lead runs as; absent for a job that names none. */
+    lead?: AgentRef;
+    /** lead_backend and lead_model are what lead resolved to when the job started. */
+    lead_backend?: string;
+    lead_model?: string;
     project_id: string;
     poll_interval: number;
     max_iterations: number;
@@ -75,11 +80,13 @@ export interface JobStatus {
     stage?: string;
     /** runner names the JobRunner that drove the job's states; absent means the "workflow" runner. */
     runner?: string;
+    /** prompt_append is the run-time prompt material the job appended to every session it spawned. */
+    prompt_append?: string;
     /** node names the daemon running the job's control loop. */
     node?: string;
     /** heartbeat_at is the nanosecond Unix instant the loop last proved alive. */
     heartbeat_at?: number;
-    /** agent_id is the fleet agent the work was dispatched to; absent when it ran in-process. */
+    /** agent_id is the fleet node the work was dispatched to; absent when it ran in-process. */
     agent_id?: string;
     /** stages is every lifecycle moment the job entered, in order. */
     stages?: JobStageRecord[];
@@ -164,14 +171,19 @@ export interface StartJobRequest {
     tenant_id: string;
     description: string;
     workflow_name: string;
-    lead_backend: string;
-    lead_model: string;
+    /** lead is the Agent or pool the lead runs as; absent takes the project's default lead. */
+    lead?: AgentRef;
     project_id: string;
     max_iterations: number;
     poll_interval?: string;
     workflow_file?: string;
     /** runner names the JobRunner that drives the job's states; omit for the "workflow" runner. */
     runner?: string;
+    /**
+     * prompt_append is run-time prompt material appended to every session the
+     * job spawns, the lead's included. At most 64 KiB.
+     */
+    prompt_append?: string;
 }
 export interface StartJobResponse {
     job_id: string;
@@ -195,7 +207,7 @@ export interface ListJobsRequest {
      * page of something else resolves the jobs its rows name in ONE call.
      */
     job_ids?: string[];
-    /** agent_id narrows the listing to the jobs dispatched to one fleet agent. */
+    /** agent_id narrows the listing to the jobs dispatched to one fleet node. */
     agent_id?: string;
     /** The shared paging parameters; see PageParams in page.ts. */
     limit?: number;
@@ -237,7 +249,7 @@ export interface ListTasksRequest {
     auto_spawn?: boolean;
     /**
      * agent_id narrows the listing to the tasks whose LATEST ATTEMPT ran on one
-     * fleet agent. The agent is the attempt's job's, not the task's; the server
+     * fleet node. The agent is the attempt's job's, not the task's; the server
      * resolves it for the listing.
      */
     agent_id?: string;
@@ -253,18 +265,17 @@ export interface ListTasksResponse {
     tasks: Task[];
     count: number;
 }
-export type AgentStatus = 'registered' | 'running' | 'idle' | 'offline' | 'error' | 'disabled';
-export interface AgentRegistration {
+export type FleetNodeStatus = 'registered' | 'running' | 'idle' | 'offline' | 'error' | 'disabled';
+export interface FleetNode {
     id: string;
     tenant_id: string;
     name: string;
     host: string;
     backend: string;
     model: string;
-    agent_type: string;
-    status: AgentStatus;
+    node_type: string;
+    status: FleetNodeStatus;
     capabilities: string[];
-    container_id: string;
     work_dir: string;
     last_seen: number;
     registered_at: number;
@@ -272,22 +283,22 @@ export interface AgentRegistration {
     version: number;
     metadata: Record<string, string>;
 }
-export interface DisableAgentRequest {
+export interface DisableFleetNodeRequest {
     tenant_id: string;
-    agent_id: string;
+    node_id: string;
 }
-export interface DisableAgentResponse {
-    agent_id: string;
+export interface DisableFleetNodeResponse {
+    node_id: string;
     disabled: boolean;
     disabled_at: string;
     timestamp: string;
 }
-export interface EnableAgentRequest {
+export interface EnableFleetNodeRequest {
     tenant_id: string;
-    agent_id: string;
+    node_id: string;
 }
-export interface EnableAgentResponse {
-    agent_id: string;
+export interface EnableFleetNodeResponse {
+    node_id: string;
     enabled: boolean;
     timestamp: string;
 }
@@ -314,6 +325,7 @@ export interface TaskSource {
     url?: string;
 }
 export type TaskBlockKind = 'needs_info' | 'blocked' | 'escalated';
+export type TaskFaultOrigin = 'environment' | 'work' | 'undiagnosed' | '';
 export type ArtifactKind = 'inline' | 'file' | 'commit' | 'kv_key' | 'url';
 export interface ArtifactRef {
     agent_id?: string;
@@ -358,7 +370,7 @@ export interface Task {
     /** project_id scopes the task to a Project; empty for unscoped tasks. */
     project_id?: string;
     /**
-     * agent_id is the fleet agent the task's LATEST ATTEMPT ran on, resolved by
+     * agent_id is the fleet node the task's LATEST ATTEMPT ran on, resolved by
      * the server when the listing is paged. Absent for a task that has had no
      * attempt, or whose attempt ran in-process.
      */
@@ -389,10 +401,31 @@ export interface Task {
     status_changed_at?: number;
     /** runner names the JobRunner that drives an attempt; absent means the lead-driven 'workflow' runner. */
     runner?: string;
+    /** prompt_append is run-time prompt material every attempt carries to the sessions it spawns. */
+    prompt_append?: string;
     /** routing are the placement hints a dispatch reads, kept so a requeue keeps them. */
     routing?: TaskRouting;
     /** dispatch_reason says why the last dispatch produced no job; cleared when one does. */
     dispatch_reason?: string;
+    /** question_attempts counts attempts refunded because the worker stopped to ask a person. */
+    question_attempts?: number;
+    /** block_fault_class names the environment fault class a block came from; '' for a hold or a question. */
+    block_fault_class?: string;
+    /**
+     * conclusion_reason is the typed reason the task stopped; '' while it is
+     * open. Open to strings because the server's vocabulary is wider than the
+     * reasons TaskConclusionReason renders (runner_parked, already_satisfied,
+     * superseded).
+     */
+    conclusion_reason?: TaskConclusionReason | string;
+    /** charged_attempts is attempts less the refunded ones. Derived by the server. */
+    charged_attempts?: number;
+    /** effective_budget is attempt_budget, or the engine default when none is declared. Derived by the server. */
+    effective_budget?: number;
+    /** fault_class names the fault behind the latest concluded attempt; for a blocked task, its block's class. Derived by the server. */
+    fault_class?: string;
+    /** fault_origin says whose failure stopped the task. Derived by the server. */
+    fault_origin?: TaskFaultOrigin;
 }
 export interface TaskRouting {
     /** backend restricts the attempt to agents running this backend. */
@@ -401,6 +434,47 @@ export interface TaskRouting {
     host_affinity?: string;
     /** gpu_required restricts the attempt to agents advertising "gpu". */
     gpu_required?: boolean;
+}
+export type AttentionKind = 'parked_task' | 'agent_offline' | 'account_error' | 'barrier_sealed' | 'project_idle';
+export type AttentionAction = 'approve_recommendation' | 'answer' | 'allow_another_round' | 'close_as_done' | 'readmit' | 'note';
+export interface AttentionItem {
+    id: string;
+    kind: AttentionKind;
+    project_id?: string;
+    project_name?: string;
+    subject: string;
+    issue_ref?: string;
+    issue_url?: string;
+    block_kind?: TaskBlockKind;
+    /** condition is the typed unblock condition the park names — see
+     * sdlc.UnblockKind: pipeline_green, forge_issue_state, release_tag,
+     * owner_ruling, operator_repair. */
+    condition?: string;
+    question?: string;
+    recommendation?: string;
+    /** truncated is true when the underlying reply was capped before it was
+     * stored, so recommendation may end mid-sentence. */
+    truncated?: boolean;
+    /** ruling_posted is true when the parked task's issue carries an
+     * authorized ruler's comment newer than the park — the owner has already
+     * answered, and the unblock sweep readmits the task. */
+    ruling_posted?: boolean;
+    /** message is an environmental alert's own explanation. */
+    message?: string;
+    /** severity is "warning" or "critical", set only on environmental alerts. */
+    severity?: string;
+    created_at?: number;
+    status_changed_at?: number;
+    attempts?: number;
+    actions?: AttentionAction[];
+}
+export interface AttentionResolveRequest {
+    tenant_id: string;
+    task_id: string;
+    action: AttentionAction;
+    /** answer carries the operator's free text. Required for "answer";
+     * optional context for "close_as_done"; ignored otherwise. */
+    answer?: string;
 }
 export type BackendKind = 'agent' | 'model_server' | 'api_inference';
 export interface BackendCapabilities {
@@ -494,6 +568,10 @@ export interface AgentRoleSpec {
     sandboxed: boolean;
     container_image: string;
     num_ctx: number;
+    /** system_prompt is the role's standing instruction; empty leaves the Agent's or the runtime's. */
+    system_prompt?: string;
+    /** prompt_append is run-time prompt material appended to every session of this role. At most 64 KiB. */
+    prompt_append?: string;
 }
 export interface PeerMessagingSettings {
     max_message_size: number;
@@ -591,6 +669,9 @@ export interface SpendWindowStatus {
     max_tokens: number;
     used_tokens: number;
     remaining_tokens: number;
+    max_equivalent_micros?: number;
+    used_equivalent_micros?: number;
+    remaining_equivalent_micros?: number;
     exhausted: boolean;
     frees_at?: string;
 }
@@ -602,26 +683,49 @@ export interface SpendBreakerVerdict {
     last_success_at?: string;
     open_until?: string;
 }
-export interface SpendAccount {
+export interface SpendTotals {
+    entries?: number;
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_tokens?: number;
+    cache_write_tokens?: number;
+    total_tokens: number;
+    equivalent_micros?: number;
+    priced_entries?: number;
+    unpriced_entries?: number;
+    billed_micros?: number;
+    billed_entries?: number;
+    unbilled_entries?: number;
+    duration_ms?: number;
+    energy_mwh?: number;
+    electricity_entries?: number;
+    measured_energy_entries?: number;
+    successes?: number;
+    failures?: number;
+}
+export interface SpendAccountBilling {
+    mode?: string;
+    monthly_fee_micros?: number;
+}
+export interface SpendAccount extends SpendTotals {
     account_id: string;
     display_name?: string;
     provider?: string;
-    total_tokens: number;
+    billing?: SpendAccountBilling;
     policy_status: SpendPolicyStatus;
     windows?: SpendWindowStatus[];
     breaker?: SpendBreakerVerdict;
+    subscription_fee_micros?: number;
 }
-export interface SpendModel {
+export interface SpendModel extends SpendTotals {
     engine: string;
     model: string;
-    total_tokens: number;
 }
-export interface SpendChild {
+export interface SpendChild extends SpendTotals {
     id?: string;
     level: SpendLevel;
     unattributed?: boolean;
     name?: string;
-    total_tokens: number;
 }
 export interface GetSpendReportRequest {
     tenant_id?: string;
@@ -631,8 +735,21 @@ export interface GetSpendReportRequest {
     session_id?: string;
     round?: number;
     round_set?: boolean;
+    from?: string;
+    to?: string;
+    host?: string;
+    agent?: string;
 }
-export interface GetSpendReportResponse {
+export interface SpendAgent extends SpendTotals {
+    agent_id?: string;
+    name?: string;
+    unattributed?: boolean;
+}
+export interface SpendHost extends SpendTotals {
+    host?: string;
+    unattributed?: boolean;
+}
+export interface GetSpendReportResponse extends SpendTotals {
     level: SpendLevel;
     tenant_id: string;
     project_id?: string;
@@ -641,22 +758,37 @@ export interface GetSpendReportResponse {
     session_id?: string;
     round?: number;
     project_name?: string;
-    entries: number;
-    input_tokens: number;
-    output_tokens: number;
-    cache_read_tokens?: number;
-    cache_write_tokens?: number;
-    total_tokens: number;
-    cost_micros: number;
-    cost_measured: boolean;
-    successes: number;
-    failures: number;
+    currency?: string;
     first_at?: string;
     last_at?: string;
+    from?: string;
+    to?: string;
+    subscription_fee_micros?: number;
     accounts?: SpendAccount[];
     models?: SpendModel[];
     child_level?: SpendLevel;
     children?: SpendChild[];
+    scope_policy_status?: SpendPolicyStatus;
+    scope_windows?: SpendWindowStatus[];
+    host?: string;
+    hosts?: SpendHost[];
+    agent?: string;
+    agents?: SpendAgent[];
+    agent_policy_status?: SpendPolicyStatus;
+    agent_windows?: SpendWindowStatus[];
+}
+export interface GetTenantSpendPolicyRequest {
+    tenant_id: string;
+}
+export interface SetTenantSpendPolicyRequest {
+    tenant_id: string;
+    limits: SpendLimits;
+}
+export interface TenantSpendPolicy {
+    tenant_id: string;
+    limits?: SpendLimits;
+    updated_at?: string;
+    windows?: SpendWindowStatus[];
 }
 export type SessionTurnRole = 'user' | 'assistant' | 'system';
 export interface SessionTokenUsage {
@@ -719,7 +851,10 @@ export interface MCPServerConfig {
 }
 export interface SpawnSessionRequest {
     tenantID: string;
-    backend: string;
+    agent_id?: string;
+    pool_id?: string;
+    role?: AgentRole;
+    backend?: string;
     project_id?: string;
     model?: string;
     work_dir?: string;
@@ -733,11 +868,14 @@ export interface SpawnSessionRequest {
     account_auto?: boolean;
     account_strategy?: string;
     account_allow?: string[];
+    prompt_append?: string;
 }
 export interface SpawnSessionResponse {
     session_id: string;
     backend: string;
     container_id?: string;
+    resolved_agent_id?: string;
+    failovers?: AgentAttempt[];
 }
 export interface PromptSessionRequest {
     session_id: string;
@@ -782,7 +920,7 @@ export interface ListSessionsRequest {
      * which is the ROLE the session played.
      */
     runner?: string;
-    /** agent_id narrows the listing to the sessions on one fleet agent. */
+    /** agent_id narrows the listing to the sessions on one fleet node. */
     agent_id?: string;
     /** The shared paging parameters; see PageParams in page.ts. */
     limit?: number;
@@ -810,7 +948,7 @@ export interface SessionStatusResponse {
      */
     runner?: string;
     /**
-     * agent_id is the fleet agent the session's job was dispatched to, resolved
+     * agent_id is the fleet node the session's job was dispatched to, resolved
      * beside `runner` and from the same record. Absent when the session belongs
      * to no job or the work ran in-process.
      */
@@ -820,15 +958,15 @@ export interface ListSessionsResponse {
     sessions: SessionStatusResponse[];
     count: number;
 }
-export interface GetAgentRequest {
+export interface GetFleetNodeRequest {
     tenant_id: string;
-    agent_id: string;
+    node_id: string;
 }
-export interface ListAgentsRequest {
+export interface ListFleetNodesRequest {
     tenant_id: string;
     host?: string;
     status?: string;
-    agent_type?: string;
+    node_type?: string;
     backend?: string;
     model?: string;
     /** The shared paging parameters; see PageParams in page.ts. */
@@ -837,8 +975,8 @@ export interface ListAgentsRequest {
     sort?: string;
     q?: string;
 }
-export interface ListAgentsResponse {
-    agents: AgentRegistration[];
+export interface ListFleetNodesResponse {
+    nodes: FleetNode[];
     count: number;
 }
 export interface CreateWorkflowRequest {
@@ -869,6 +1007,7 @@ export interface CreateTaskRequest {
     auto_spawn?: boolean;
     backend?: string;
     runner?: string;
+    prompt_append?: string;
 }
 export interface ListBackendModelsResponse {
     backend: string;
@@ -916,21 +1055,21 @@ export interface CompleteTaskRequest {
         metadata?: Record<string, string>;
     };
 }
-export interface RegisterAgentRequest {
+export interface RegisterFleetNodeRequest {
     tenant_id: string;
     name: string;
     host: string;
     backend: string;
-    agent_type: string;
+    node_type: string;
     model?: string;
     metadata?: Record<string, string>;
 }
-export interface RegisterAgentResponse {
-    agent: AgentRegistration;
+export interface RegisterFleetNodeResponse {
+    node: FleetNode;
 }
-export interface RemoveAgentRequest {
+export interface RemoveFleetNodeRequest {
     tenant_id: string;
-    agent_id: string;
+    node_id: string;
 }
 export type Transport = 'wails' | 'rest' | 'grpc-web' | 'unix' | 'mcp' | 'quic';
 export interface ClientConfig {
@@ -1057,6 +1196,8 @@ export interface SSHPin {
     added_at: string;
     /** Provenance tag: 'manual', 'imported:<path>', 'first-contact', etc. */
     source?: string;
+    /** The pinned host key as an authorized_keys-format line. */
+    public_key?: string;
 }
 export interface AddSSHPinRequest {
     /** Scope that owns this pin. */
@@ -1065,10 +1206,8 @@ export interface AddSSHPinRequest {
     owner?: string;
     /** Hostname or IP address to pin. */
     host: string;
-    /** OpenSSH SHA256 fingerprint. */
-    fingerprint: string;
-    /** Algorithm of the host key. */
-    algorithm?: string;
+    /** Host key as an authorized_keys-format line, e.g. "ssh-ed25519 AAAA…". */
+    public_key: string;
     /** Provenance tag. */
     source?: string;
 }
@@ -1126,7 +1265,7 @@ export interface VerifyAuthorizedResponse {
     /** The matching authorized entry. */
     entry: SSHAuthorizedEntry;
 }
-export interface DeployAgentSpec {
+export interface DeployFleetNodeSpec {
     host: string;
     ssh_user: string;
     ssh_key_name?: string;
@@ -1137,7 +1276,7 @@ export interface DeployAgentSpec {
     insecure_host_key?: boolean;
     server: string;
     tenant: string;
-    agent_bind: string;
+    node_bind: string;
     backends: string[];
     binary: string;
     install_dir?: string;
@@ -1147,25 +1286,25 @@ export interface DeployAgentSpec {
     /** Nanoseconds (Go time.Duration). Zero disables the online wait. */
     wait_online?: number;
 }
-export interface DeployAgentResult {
+export interface DeployFleetNodeResult {
     host: string;
     installed_path: string;
     service_status: string;
-    agent_id?: string;
+    node_id?: string;
     online_at?: string;
     /** Path to the mTLS client certificate installed on the remote host. */
-    agent_cert_path?: string;
-    /** Hex-encoded serial number of the issued agent certificate. */
-    agent_cert_serial?: string;
+    node_cert_path?: string;
+    /** Hex-encoded serial number of the issued fleet node certificate. */
+    node_cert_serial?: string;
 }
+export type UserLifecycle = 'pending' | 'active' | 'suspended' | 'locked' | 'disabled' | 'deleting';
 export interface IAMUser {
     id: string;
     tenant_id: string;
     username: string;
     email: string;
-    enabled?: boolean;
+    lifecycle?: UserLifecycle;
     roles: string[];
-    groups: string[];
     created_at: string;
     updated_at: string;
 }
@@ -1826,5 +1965,75 @@ export interface WebAuthnLoginChallenge {
     session_id: string;
     rp_session_id: string;
     options: CredentialAssertionJSON;
+}
+export interface GetCostSettingsRequest {
+    tenant_id?: string;
+}
+export interface SetCostSettingsRequest {
+    tenant_id?: string;
+    electricity_price_per_kwh?: number;
+    engine_power_watts?: Record<string, number>;
+}
+export type ElectricityRateSource = 'tenant_settings' | 'tenant_config' | 'deployment_config' | 'default';
+export interface CostSettings {
+    settings: {
+        tenant_id: string;
+        electricity_price_per_kwh?: number;
+        engine_power_watts?: Record<string, number>;
+        updated_at?: string;
+    };
+    electricity: {
+        price_per_kwh: number;
+        source: ElectricityRateSource;
+    };
+    engine_power_watts?: Record<string, number>;
+}
+export interface WorkerImageAgents {
+    claude_code: string;
+    codex: string;
+}
+export interface WorkerImageCheck {
+    name: string;
+    passed: boolean;
+    detail?: string;
+}
+export interface WorkerImageBound {
+    image: string;
+    agents: WorkerImageAgents;
+    uses: number;
+    stale: boolean;
+}
+export interface WorkerImagePromotion {
+    tenant_id: string;
+    agent_id: string;
+    from: string[] | null;
+    to: string;
+    error?: string;
+}
+export type WorkerImageOutcome = 'current' | 'promoted' | 'partial' | 'failed';
+export interface WorkerImageReport {
+    trigger: string;
+    outcome: WorkerImageOutcome;
+    started_at: string;
+    finished_at: string;
+    latest: WorkerImageAgents;
+    bound?: WorkerImageBound[];
+    stale?: string[];
+    skipped?: string[];
+    candidate?: string;
+    image_id?: string;
+    reference?: string;
+    digest?: string;
+    probes?: WorkerImageCheck[];
+    smokes?: WorkerImageCheck[];
+    promotions?: WorkerImagePromotion[];
+    error?: string;
+}
+export interface WorkerImageStatus {
+    serving: boolean;
+    running: boolean;
+    running_since?: string;
+    queued: boolean;
+    last?: WorkerImageReport;
 }
 //# sourceMappingURL=types.d.ts.map

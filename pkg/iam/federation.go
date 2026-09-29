@@ -1367,14 +1367,6 @@ func (m *DefaultFederationManager) provisionUser(ctx context.Context, provider *
 		return nil, err
 	}
 
-	// Assign default groups
-	for _, groupID := range provider.DefaultGroups {
-		if err := m.identityStore.AddUserToGroup(ctx, tenantID, groupID, user.ID); err != nil {
-			return nil, NewIAMError(ErrUserInvalid, "iam.federation.provision",
-				"failed to assign default group", err)
-		}
-	}
-
 	return user, nil
 }
 

@@ -53,20 +53,20 @@ func (l strictNoopLogger) WithFields(map[string]interface{}) interfaces.Logger {
 }
 func (l strictNoopLogger) WithError(error) interfaces.Logger { return l }
 
-// strictMockRegistry is a minimal AgentRegistry for strict-mode tests. Only
-// ListAgents is exercised; the other interface methods are stubs.
+// strictMockRegistry is a minimal FleetRegistry for strict-mode tests. Only
+// ListFleetNodes is exercised; the other interface methods are stubs.
 type strictMockRegistry struct {
-	agents []*orchestration.AgentRegistration
+	agents []*orchestration.FleetNode
 }
 
-func (m *strictMockRegistry) RegisterAgent(context.Context, *orchestration.AgentRegistration) error {
+func (m *strictMockRegistry) RegisterFleetNode(context.Context, *orchestration.FleetNode) error {
 	return nil
 }
-func (m *strictMockRegistry) GetAgent(context.Context, string, string) (*orchestration.AgentRegistration, error) {
+func (m *strictMockRegistry) GetFleetNode(context.Context, string, string) (*orchestration.FleetNode, error) {
 	return nil, nil
 }
-func (m *strictMockRegistry) ListAgents(_ context.Context, _ string, filter *orchestration.AgentFilter) ([]*orchestration.AgentRegistration, error) {
-	out := make([]*orchestration.AgentRegistration, 0, len(m.agents))
+func (m *strictMockRegistry) ListFleetNodes(_ context.Context, _ string, filter *orchestration.FleetNodeFilter) ([]*orchestration.FleetNode, error) {
+	out := make([]*orchestration.FleetNode, 0, len(m.agents))
 	for _, a := range m.agents {
 		// Status filter: callers in resolve() walk Running/Idle/Registered;
 		// emit each agent only when its Status matches the filter.
@@ -90,23 +90,23 @@ func (m *strictMockRegistry) ListAgents(_ context.Context, _ string, filter *orc
 	}
 	return out, nil
 }
-func (m *strictMockRegistry) UpdateAgent(context.Context, *orchestration.AgentRegistration) error {
+func (m *strictMockRegistry) UpdateFleetNode(context.Context, *orchestration.FleetNode) error {
 	return nil
 }
-func (m *strictMockRegistry) RefreshAgent(context.Context, *orchestration.AgentRegistration) error {
+func (m *strictMockRegistry) RefreshFleetNode(context.Context, *orchestration.FleetNode) error {
 	return nil
 }
-func (m *strictMockRegistry) RemoveAgent(context.Context, string, string) error { return nil }
-func (m *strictMockRegistry) Heartbeat(context.Context, string, string, *orchestration.AgentObservation) error {
+func (m *strictMockRegistry) RemoveFleetNode(context.Context, string, string) error { return nil }
+func (m *strictMockRegistry) Heartbeat(context.Context, string, string, *orchestration.FleetNodeObservation) error {
 	return nil
 }
-func (m *strictMockRegistry) DeleteTenantAgents(context.Context, string) error { return nil }
+func (m *strictMockRegistry) DeleteTenantFleetNodes(context.Context, string) error { return nil }
 
 // newStrictTestPool builds a remoteBackendPool wired to a mock registry,
 // the supplied operator default, and a no-op logger. It does NOT install a
 // centralCred / tokenURL since the tests only exercise the filter path —
 // pickDaemon never reaches backendFor when the host is offline.
-func newStrictTestPool(operatorMode string, agents ...*orchestration.AgentRegistration) *remoteBackendPool {
+func newStrictTestPool(operatorMode string, agents ...*orchestration.FleetNode) *remoteBackendPool {
 	return &remoteBackendPool{
 		registry:        &strictMockRegistry{agents: agents},
 		hostAffinityCfg: config.SchedulerHostAffinityConfig{Mode: operatorMode},
@@ -119,14 +119,14 @@ func newStrictTestPool(operatorMode string, agents ...*orchestration.AgentRegist
 // "this host exists" fixture in strict-mode tests. It heartbeated just now:
 // a registration with no sign of life is not dispatched to at all
 // (liveRegistrations), which is not what these tests are about.
-func onlineDaemon(name, host, backend string) *orchestration.AgentRegistration {
-	return &orchestration.AgentRegistration{
+func onlineDaemon(name, host, backend string) *orchestration.FleetNode {
+	return &orchestration.FleetNode{
 		ID:       name + "-id",
 		Name:     name,
 		Host:     host,
 		Backend:  backend,
-		Kind:     orchestration.AgentKindDaemon,
-		Status:   orchestration.AgentStatusIdle,
+		Kind:     orchestration.FleetNodeKindDaemon,
+		Status:   orchestration.FleetNodeStatusIdle,
 		LastSeen: time.Now().UnixNano(),
 	}
 }
@@ -137,7 +137,7 @@ func onlineDaemon(name, host, backend string) *orchestration.AgentRegistration {
 
 // TestPickDaemon_HostAffinityStrict_ReturnsTypedError_WhenOffline verifies
 // that a per-request strict flag (regardless of operator default = soft)
-// causes resolve() to stash a NoMatchingAgentError on the context-bound
+// causes resolve() to stash a NoMatchingFleetNodeError on the context-bound
 // holder when the requested host is offline. The dispatcher still gets
 // (nil, false), which is by design — the REST handler reads the holder
 // post-call.
@@ -162,17 +162,17 @@ func TestPickDaemon_HostAffinityStrict_ReturnsTypedError_WhenOffline(t *testing.
 
 	stashed := holder.Err()
 	if stashed == nil {
-		t.Fatalf("expected typed NoMatchingAgentError on holder, got nil")
+		t.Fatalf("expected typed NoMatchingFleetNodeError on holder, got nil")
 	}
-	var nme *orchestration.NoMatchingAgentError
+	var nme *orchestration.NoMatchingFleetNodeError
 	if !errors.As(stashed, &nme) {
-		t.Fatalf("expected *NoMatchingAgentError, got %T: %v", stashed, stashed)
+		t.Fatalf("expected *NoMatchingFleetNodeError, got %T: %v", stashed, stashed)
 	}
 	if nme.Constraint != "host_affinity" {
 		t.Errorf("expected Constraint=host_affinity, got %q", nme.Constraint)
 	}
-	if !errors.Is(stashed, orchestration.ErrNoMatchingAgent) {
-		t.Errorf("expected errors.Is to find ErrNoMatchingAgent, got %v", stashed)
+	if !errors.Is(stashed, orchestration.ErrNoMatchingFleetNode) {
+		t.Errorf("expected errors.Is to find ErrNoMatchingFleetNode, got %v", stashed)
 	}
 }
 
@@ -206,7 +206,7 @@ func TestPickDaemon_HostAffinitySoft_FallsBackToFullList(t *testing.T) {
 
 // TestPickDaemon_OperatorDefaultHard_OverridesPerRequest verifies that
 // setting orchestration.host_affinity.mode = "hard" makes every offline
-// host_affinity surface NoMatchingAgentError, even when the request omits
+// host_affinity surface NoMatchingFleetNodeError, even when the request omits
 // host_affinity_strict. This is the documented operator opt-in for the
 // stricter default.
 func TestPickDaemon_OperatorDefaultHard_OverridesPerRequest(t *testing.T) {
@@ -229,11 +229,11 @@ func TestPickDaemon_OperatorDefaultHard_OverridesPerRequest(t *testing.T) {
 
 	stashed := holder.Err()
 	if stashed == nil {
-		t.Fatalf("expected NoMatchingAgentError under operator-hard default, got nil")
+		t.Fatalf("expected NoMatchingFleetNodeError under operator-hard default, got nil")
 	}
-	var nme *orchestration.NoMatchingAgentError
+	var nme *orchestration.NoMatchingFleetNodeError
 	if !errors.As(stashed, &nme) {
-		t.Fatalf("expected *NoMatchingAgentError, got %T: %v", stashed, stashed)
+		t.Fatalf("expected *NoMatchingFleetNodeError, got %T: %v", stashed, stashed)
 	}
 	if nme.Constraint != "host_affinity" {
 		t.Errorf("expected Constraint=host_affinity, got %q", nme.Constraint)
@@ -245,25 +245,25 @@ func TestPickDaemon_OperatorDefaultHard_OverridesPerRequest(t *testing.T) {
 // =============================================================================
 
 // TestPickDaemon_EmbeddedKind_IsAccepted verifies that pickDaemon selects
-// AgentKindEmbedded registrations alongside AgentKindDaemon registrations.
+// FleetNodeKindEmbedded registrations alongside FleetNodeKindDaemon registrations.
 // This ensures the embedded agent participates in backend dispatch.
 func TestPickDaemon_EmbeddedKind_IsAccepted(t *testing.T) {
 	t.Parallel()
 
-	embedded := &orchestration.AgentRegistration{
+	embedded := &orchestration.FleetNode{
 		ID:      "embedded-host-abc",
 		Name:    "embedded-host-abc",
-		Host:    "vm-host-2",
+		Host:    "agent-02",
 		Backend: "ollama",
-		Kind:    orchestration.AgentKindEmbedded,
-		Status:  orchestration.AgentStatusIdle,
+		Kind:    orchestration.FleetNodeKindEmbedded,
+		Status:  orchestration.FleetNodeStatusIdle,
 	}
 
 	pool := newStrictTestPool(config.HostAffinityModeSoft, embedded)
 
-	got, constraint := pool.pickDaemon([]*orchestration.AgentRegistration{embedded}, "ollama", "", false, "")
+	got, constraint := pool.pickDaemon([]*orchestration.FleetNode{embedded}, "ollama", "", false, "")
 	if got == nil {
-		t.Fatalf("pickDaemon must accept AgentKindEmbedded: constraint=%q", constraint)
+		t.Fatalf("pickDaemon must accept FleetNodeKindEmbedded: constraint=%q", constraint)
 	}
 	if got.ID != embedded.ID {
 		t.Errorf("expected registration ID %q, got %q", embedded.ID, got.ID)
@@ -276,20 +276,20 @@ func TestPickDaemon_EmbeddedKind_IsAccepted(t *testing.T) {
 func TestPickDaemon_ExternalKind_IsRejected(t *testing.T) {
 	t.Parallel()
 
-	external := &orchestration.AgentRegistration{
+	external := &orchestration.FleetNode{
 		ID:      "ext-agent-1",
 		Name:    "ext-agent-1",
 		Host:    "host-x",
 		Backend: "ollama",
-		Kind:    orchestration.AgentKindExternal,
-		Status:  orchestration.AgentStatusIdle,
+		Kind:    orchestration.FleetNodeKindExternal,
+		Status:  orchestration.FleetNodeStatusIdle,
 	}
 
 	pool := newStrictTestPool(config.HostAffinityModeSoft, external)
 
-	got, _ := pool.pickDaemon([]*orchestration.AgentRegistration{external}, "ollama", "", false, "")
+	got, _ := pool.pickDaemon([]*orchestration.FleetNode{external}, "ollama", "", false, "")
 	if got != nil {
-		t.Fatalf("pickDaemon must reject AgentKindExternal; got %+v", got)
+		t.Fatalf("pickDaemon must reject FleetNodeKindExternal; got %+v", got)
 	}
 }
 
@@ -305,22 +305,22 @@ func TestBackendFor_EmbeddedDialer_SkipsTokenSource(t *testing.T) {
 
 	// Register a dialer that always returns an error — we're testing
 	// backend construction, not actual gRPC calls.
-	registry.Register("vm-host-2", func(ctx context.Context, _ string) (*grpc.ClientConn, error) {
+	registry.Register("agent-02", func(ctx context.Context, _ string) (*grpc.ClientConn, error) {
 		return grpc.NewClient("passthrough:///noop",
 			grpc.WithTransportCredentials(insecure.NewCredentials()))
 	})
 
-	embedded := &orchestration.AgentRegistration{
+	embedded := &orchestration.FleetNode{
 		ID:      "embedded-host-abc",
 		Name:    "embedded-host-abc",
-		Host:    "vm-host-2",
+		Host:    "agent-02",
 		Backend: "ollama",
-		Kind:    orchestration.AgentKindEmbedded,
-		Status:  orchestration.AgentStatusIdle,
+		Kind:    orchestration.FleetNodeKindEmbedded,
+		Status:  orchestration.FleetNodeStatusIdle,
 	}
 
 	pool := &remoteBackendPool{
-		registry:        &strictMockRegistry{agents: []*orchestration.AgentRegistration{embedded}},
+		registry:        &strictMockRegistry{agents: []*orchestration.FleetNode{embedded}},
 		embeddedDialers: registry,
 		logger:          strictNoopLogger{},
 		entries:         map[string]*pooledDaemon{},
@@ -342,21 +342,21 @@ func TestBackendFor_EmbeddedDialer_SkipsTokenSource(t *testing.T) {
 // registrations (non-embedded, no dialer) reach newCentralOAuth2TokenSource.
 // We confirm this indirectly: backendFor with nil centralCred still constructs
 // a backend (the token source is created but never called during construction),
-// confirming the token-source path is taken for remote agents.
+// confirming the token-source path is taken for remote fleet nodes.
 func TestBackendFor_RemoteDaemon_UsesTokenSource(t *testing.T) {
 	t.Parallel()
 
-	remote := &orchestration.AgentRegistration{
+	remote := &orchestration.FleetNode{
 		ID:      "daemon-remote-1",
 		Name:    "daemon-remote-1",
 		Host:    "10.0.0.5:9090",
 		Backend: "ollama",
-		Kind:    orchestration.AgentKindDaemon,
-		Status:  orchestration.AgentStatusIdle,
+		Kind:    orchestration.FleetNodeKindDaemon,
+		Status:  orchestration.FleetNodeStatusIdle,
 	}
 
 	pool := &remoteBackendPool{
-		registry:    &strictMockRegistry{agents: []*orchestration.AgentRegistration{remote}},
+		registry:    &strictMockRegistry{agents: []*orchestration.FleetNode{remote}},
 		centralCred: &OrchestratorDaemonClient{ClientID: "test-id", ClientSecret: "test-secret"},
 		tokenURL:    "https://127.0.0.1:19999/oauth2/token", // unreachable — construction only
 		logger:      strictNoopLogger{},
@@ -369,7 +369,7 @@ func TestBackendFor_RemoteDaemon_UsesTokenSource(t *testing.T) {
 
 	// The pool constructs a backend without dialing. Token source is created
 	// lazily (no network call happens until the first RPC). The test just
-	// confirms construction succeeds for remote agents.
+	// confirms construction succeeds for remote fleet nodes.
 	if !ok {
 		t.Fatal("backendFor must return (backend, true) for remote daemon")
 	}
@@ -406,9 +406,9 @@ func TestPickDaemon_PerRequestStrict_OverridesOperatorSoft(t *testing.T) {
 	if stashed == nil {
 		t.Fatalf("expected per-request strict to surface a typed error, got nil")
 	}
-	var nme *orchestration.NoMatchingAgentError
+	var nme *orchestration.NoMatchingFleetNodeError
 	if !errors.As(stashed, &nme) {
-		t.Fatalf("expected *NoMatchingAgentError, got %T: %v", stashed, stashed)
+		t.Fatalf("expected *NoMatchingFleetNodeError, got %T: %v", stashed, stashed)
 	}
 	if nme.Constraint != "host_affinity" {
 		t.Errorf("expected Constraint=host_affinity, got %q", nme.Constraint)

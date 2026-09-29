@@ -1,0 +1,20 @@
+2026-09-12T17:47:29.7157187Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-09-12T17:47:29.7193964Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/workspace/jeremyhahn/go-quicbaas/.git.path
+2026-09-12T17:47:29.7273313Z /tmp/git-credentials-3071793b-a391-4014-be9c-a1bdd22a146c.config
+2026-09-12T17:47:29.7274364Z [command]/usr/bin/git config --local --unset includeif.gitdir:/workspace/jeremyhahn/go-quicbaas/.git.path /tmp/git-credentials-3071793b-a391-4014-be9c-a1bdd22a146c.config
+2026-09-12T17:47:29.7311085Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/workspace/jeremyhahn/go-quicbaas/.git/worktrees/*.path
+2026-09-12T17:47:29.7337362Z /tmp/git-credentials-3071793b-a391-4014-be9c-a1bdd22a146c.config
+2026-09-12T17:47:29.7346456Z [command]/usr/bin/git config --local --unset includeif.gitdir:/workspace/jeremyhahn/go-quicbaas/.git/worktrees/*.path /tmp/git-credentials-3071793b-a391-4014-be9c-a1bdd22a146c.config
+2026-09-12T17:47:29.7393914Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-09-12T17:47:29.7422693Z /github/runner_temp/git-credentials-3071793b-a391-4014-be9c-a1bdd22a146c.config
+2026-09-12T17:47:29.7452800Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-3071793b-a391-4014-be9c-a1bdd22a146c.config
+2026-09-12T17:47:29.7482212Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-09-12T17:47:29.7506540Z /github/runner_temp/git-credentials-3071793b-a391-4014-be9c-a1bdd22a146c.config
+2026-09-12T17:47:29.7517239Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-3071793b-a391-4014-be9c-a1bdd22a146c.config
+2026-09-12T17:47:29.7566270Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-12T17:47:29.7945713Z Removing credentials config '/tmp/git-credentials-3071793b-a391-4014-be9c-a1bdd22a146c.config'
+2026-09-12T17:47:29.8119539Z Success - Post Checkout code
+2026-09-12T17:47:29.8818432Z Cleaning up container for job Unit Tests
+2026-09-12T17:47:59.8825530Z Timed out waiting for the daemon to remove container 895cf614c74b…, its volumes and network may be left behind
+2026-09-12T17:47:59.8831204Z ##[error]Error while stop job container: Error response from daemon: remove GITEA-ACTIONS-TASK-73374-…: volume is in use
+2026-09-12T17:47:59.9052876Z Job failed

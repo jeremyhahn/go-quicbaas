@@ -265,7 +265,7 @@ func TestCreateTask_AutoSpawnAdmitsWithinTheProjectQuota(t *testing.T) {
 	if errors.As(err, &exceeded) {
 		t.Fatalf("a dispatch inside the quota was refused for capacity: %v", err)
 	}
-	if !errors.Is(err, ErrNoMatchingAgent) {
+	if !errors.Is(err, ErrNoMatchingFleetNode) {
 		t.Fatalf("err = %v, want the dispatch to have reached agent matching", err)
 	}
 }

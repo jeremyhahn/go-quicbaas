@@ -39,6 +39,12 @@ type ledgerFakeAgentService struct {
 	ledger   orchestration.ConsumptionLedger
 	accounts orchestration.AccountStore
 	projects orchestration.ProjectStore
+	tenant   orchestration.TenantSpendPolicyStore
+}
+
+// TenantSpendPolicies implements orchestration.TenantSpendPolicyAccessor.
+func (f *ledgerFakeAgentService) TenantSpendPolicies() orchestration.TenantSpendPolicyStore {
+	return f.tenant
 }
 
 // ConsumptionLedger implements orchestration.SpendLedgerAccessor.
@@ -51,6 +57,9 @@ func (f *ledgerFakeAgentService) AccountStore() orchestration.AccountStore { ret
 
 // ProjectStore implements orchestration.SpendLedgerAccessor.
 func (f *ledgerFakeAgentService) ProjectStore() orchestration.ProjectStore { return f.projects }
+
+// AgentDirectory reports no agent catalog: Agent names and limits are unknown.
+func (f *ledgerFakeAgentService) AgentDirectory() *orchestration.AgentDirectory { return nil }
 
 var _ orchestration.SpendLedgerAccessor = (*ledgerFakeAgentService)(nil)
 
@@ -89,7 +98,7 @@ func newSpendTransport(t *testing.T, tenantID string) *Transport {
 			fakeAgentService: &fakeAgentService{}, ledger: ledger, accounts: accounts,
 		},
 		proj:  &fakeProjectService{},
-		admin: &fakeAgentAdminService{},
+		admin: &fakeFleetAdminService{},
 	})
 	require.NoError(t, err)
 	return tr
@@ -118,9 +127,28 @@ func TestEmbeddedGetSpendReport_RollsUpTheLedger(t *testing.T) {
 	assert.Equal(t, orchestratorSDK.SpendPolicyNone, report.Accounts[0].PolicyStatus,
 		"an account that was read and meters nothing has NO policy, not an unknown one")
 
-	assert.False(t, report.CostMeasured, "no production writer prices a turn")
+	assert.Zero(t, report.PricedEntries, "no turn in the fixture was priced")
 	require.Len(t, report.Children, 1)
 	assert.Equal(t, "w1", report.Children[0].ID)
+}
+
+// TestEmbeddedGetSpendReport_NarrowsToARange asserts the in-process caller's
+// range reaches the ledger and is echoed back.
+func TestEmbeddedGetSpendReport_NarrowsToARange(t *testing.T) {
+	tr := newSpendTransport(t, "t1")
+	from := embeddedSpendBase.Add(30 * time.Second)
+	to := embeddedSpendBase.Add(time.Hour)
+
+	resp, err := tr.Request(context.Background(), "quicbaas.Orchestrator", "GetSpendReport",
+		&orchestratorSDK.GetSpendReportRequest{TenantID: "t1", From: &from, To: &to})
+	require.NoError(t, err)
+	report, ok := resp.(*orchestratorSDK.GetSpendReportResponse)
+	require.Truef(t, ok, "response is %T", resp)
+	assert.Equal(t, 1, report.Entries, "only the second turn falls in the range")
+	require.NotNil(t, report.From)
+	require.NotNil(t, report.To)
+	assert.True(t, report.From.Equal(from))
+	assert.True(t, report.To.Equal(to))
 }
 
 // TestEmbeddedGetSpendReport_DrillsDownToTheJob asserts the chain narrows in
@@ -164,7 +192,7 @@ func TestEmbeddedGetSpendReport_RejectsBadInput(t *testing.T) {
 			mockQuicBaaS: &mockQuicBaaS{},
 			agent:        &fakeAgentService{},
 			proj:         &fakeProjectService{},
-			admin:        &fakeAgentAdminService{},
+			admin:        &fakeFleetAdminService{},
 		})
 		require.NoError(t, err)
 		_, reqErr := tr.Request(context.Background(), "quicbaas.Orchestrator", "GetSpendReport",
@@ -226,7 +254,7 @@ func TestEmbeddedGetSpendReport_StampsTheTenantIntoTheContext(t *testing.T) {
 			fakeAgentService: &fakeAgentService{}, ledger: witness, accounts: accounts,
 		},
 		proj:  &fakeProjectService{},
-		admin: &fakeAgentAdminService{},
+		admin: &fakeFleetAdminService{},
 	})
 	require.NoError(t, err)
 
@@ -242,4 +270,53 @@ func TestEmbeddedGetSpendReport_StampsTheTenantIntoTheContext(t *testing.T) {
 			"read %d reached the ledger with tenant %q in context, want %q: a tenant-routed "+
 				"store resolves the backend from the context, so this read lands on the wrong store", i, got, tenantID)
 	}
+}
+
+// TestEmbeddedGetSpendReport_NarrowsToAHost asserts the host drill-down in
+// process: the fixture's turns name no host, so they are the unattributed row,
+// and a named host that ran nothing reports nothing.
+func TestEmbeddedGetSpendReport_NarrowsToAHost(t *testing.T) {
+	tr := newSpendTransport(t, "t1")
+	ctx := context.Background()
+
+	all, err := tr.Request(ctx, "quicbaas.Orchestrator", "GetSpendReport",
+		&orchestratorSDK.GetSpendReportRequest{TenantID: "t1"})
+	require.NoError(t, err)
+	report := all.(*orchestratorSDK.GetSpendReportResponse)
+	require.Len(t, report.Hosts, 1)
+	assert.True(t, report.Hosts[0].Unattributed)
+	assert.Equal(t, report.TotalTokens, report.Hosts[0].TotalTokens)
+
+	none, err := tr.Request(ctx, "quicbaas.Orchestrator", "GetSpendReport",
+		&orchestratorSDK.GetSpendReportRequest{TenantID: "t1", Host: "gpu-host:9091"})
+	require.NoError(t, err)
+	narrowed := none.(*orchestratorSDK.GetSpendReportResponse)
+	assert.Equal(t, "gpu-host:9091", narrowed.Host)
+	assert.Zero(t, narrowed.Entries)
+}
+
+func TestEmbeddedGetSpendReport_NarrowsToAnAgent(t *testing.T) {
+	tr := newSpendTransport(t, "t1")
+	ctx := context.Background()
+
+	all, err := tr.Request(ctx, "quicbaas.Orchestrator", "GetSpendReport",
+		&orchestratorSDK.GetSpendReportRequest{TenantID: "t1"})
+	require.NoError(t, err)
+	report := all.(*orchestratorSDK.GetSpendReportResponse)
+	require.Len(t, report.Agents, 1)
+	assert.True(t, report.Agents[0].Unattributed, "turns of raw-backend sessions are labelled, not named")
+	assert.Equal(t, report.TotalTokens, report.Agents[0].TotalTokens)
+
+	one, err := tr.Request(ctx, "quicbaas.Orchestrator", "GetSpendReport",
+		&orchestratorSDK.GetSpendReportRequest{TenantID: "t1", Agent: "claude-coder"})
+	require.NoError(t, err)
+	narrowed := one.(*orchestratorSDK.GetSpendReportResponse)
+	assert.Equal(t, "claude-coder", narrowed.Agent)
+	assert.Zero(t, narrowed.Entries)
+	assert.Equal(t, orchestratorSDK.SpendPolicyStatus("unknown"), narrowed.AgentPolicyStatus,
+		"with no agent catalog wired the Agent's limits are unknown, never none")
+
+	_, err = tr.Request(ctx, "quicbaas.Orchestrator", "GetSpendReport",
+		&orchestratorSDK.GetSpendReportRequest{TenantID: "t1", Agent: "Not An ID"})
+	assert.Error(t, err)
 }

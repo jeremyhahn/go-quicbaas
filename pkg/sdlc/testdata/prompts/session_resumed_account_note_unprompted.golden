@@ -1,0 +1,3 @@
+## Your session on this branch continues on a refreshed provider credential
+
+In round 2 the pooled provider account this session runs on had its credential replaced, so the session was moved into a new container that holds the current one. Nothing about the work caused it, and the work was never judged. Everything the previous container committed and pushed is checked out here; nothing it did not commit survived, so check the branch before relying on an edit you remember making.

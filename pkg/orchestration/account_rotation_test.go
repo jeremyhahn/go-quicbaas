@@ -90,7 +90,7 @@ func TestSessionRecord_OpenAccountSegment_BackfillsTheOriginalSegment(t *testing
 		SessionID: "s1", CreatedAt: created,
 		AccountID: "acct-a", AccountStrategy: LeastUsageAccountStrategyName,
 	}
-	record.OpenAccountSegment("acct-b", LeastUsageAccountStrategyName, "usage limit reached", rotatedAt)
+	record.OpenAccountSegment("acct-b", LeastUsageAccountStrategyName, "usage limit reached", rotatedAt, 0)
 
 	if len(record.AccountHistory) != 2 {
 		t.Fatalf("AccountHistory = %+v, want two segments", record.AccountHistory)
@@ -113,7 +113,7 @@ func TestSessionRecord_OpenAccountSegment_BackfillsTheOriginalSegment(t *testing
 
 func TestSessionRecord_OpenAccountSegment_IgnoresAnEmptyAccount(t *testing.T) {
 	record := &SessionRecord{SessionID: "s1", AccountID: "acct-a"}
-	record.OpenAccountSegment("", "x", "y", time.Now().UnixNano())
+	record.OpenAccountSegment("", "x", "y", time.Now().UnixNano(), 0)
 	if record.AccountID != "acct-a" || len(record.AccountHistory) != 0 {
 		t.Fatalf("an empty replacement must be a no-op, got AccountID=%q history=%+v",
 			record.AccountID, record.AccountHistory)

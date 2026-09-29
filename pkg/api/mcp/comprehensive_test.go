@@ -613,7 +613,7 @@ func (m *mockService) RotateRootKey(_ context.Context, _ *service.RotateRootKeyR
 	return &service.RotateRootKeyResponse{Success: true}, nil
 }
 
-func (m *mockService) AgentAdmin() service.AgentAdminService { return nil }
+func (m *mockService) FleetAdmin() service.FleetAdminService { return nil }
 
 func TestComprehensive_ToolRegistry(t *testing.T) {
 	svc := &mockService{}

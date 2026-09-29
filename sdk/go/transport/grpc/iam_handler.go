@@ -28,7 +28,6 @@ import (
 const (
 	iamUserServicePrefix       = "quicbaas.IAM.User"
 	iamTenantServicePrefix     = "quicbaas.IAM.Tenant"
-	iamGroupServicePrefix      = "quicbaas.IAM.Group"
 	iamRoleServicePrefix       = "quicbaas.IAM.Role"
 	iamPolicyServicePrefix     = "quicbaas.IAM.Policy"
 	iamAppServicePrefix        = "quicbaas.IAM.App"
@@ -72,8 +71,6 @@ func (h *iamHandler) handleRequest(ctx context.Context, service, method string, 
 		return h.handleUserRequest(ctx, method, req)
 	case strings.HasPrefix(service, iamTenantServicePrefix):
 		return h.handleTenantRequest(ctx, method, req)
-	case strings.HasPrefix(service, iamGroupServicePrefix):
-		return h.handleGroupRequest(ctx, method, req)
 	case strings.HasPrefix(service, iamRoleServicePrefix):
 		return h.handleRoleRequest(ctx, method, req)
 	case strings.HasPrefix(service, iamPolicyServicePrefix):
@@ -123,10 +120,6 @@ func (h *iamHandler) handleUserRequest(ctx context.Context, method string, req i
 		return h.handleAssignRole(ctx, client, req)
 	case "RevokeRole":
 		return h.handleRevokeRole(ctx, client, req)
-	case "AddToGroup":
-		return h.handleAddUserToGroup(ctx, client, req)
-	case "RemoveFromGroup":
-		return h.handleRemoveUserFromGroup(ctx, client, req)
 	default:
 		return nil, errors.NewUnimplemented("iamHandler.handleUserRequest",
 			"unsupported method: "+method)
@@ -150,33 +143,6 @@ func (h *iamHandler) handleTenantRequest(ctx context.Context, method string, req
 		return h.handleListTenants(ctx, client, req)
 	default:
 		return nil, errors.NewUnimplemented("iamHandler.handleTenantRequest",
-			"unsupported method: "+method)
-	}
-}
-
-// handleGroupRequest handles Group service requests.
-func (h *iamHandler) handleGroupRequest(ctx context.Context, method string, req interface{}) (interface{}, error) {
-	client := iampb.NewIAMServiceClient(h.conn)
-
-	switch method {
-	case "Create":
-		return h.handleCreateGroup(ctx, client, req)
-	case "Get":
-		return h.handleGetGroup(ctx, client, req)
-	case "Update":
-		return h.handleUpdateGroup(ctx, client, req)
-	case "Delete":
-		return h.handleDeleteGroup(ctx, client, req)
-	case "List":
-		return h.handleListGroups(ctx, client, req)
-	case "AddMember":
-		return h.handleAddGroupMember(ctx, client, req)
-	case "RemoveMember":
-		return h.handleRemoveGroupMember(ctx, client, req)
-	case "ListMembers":
-		return h.handleListGroupMembers(ctx, client, req)
-	default:
-		return nil, errors.NewUnimplemented("iamHandler.handleGroupRequest",
 			"unsupported method: "+method)
 	}
 }

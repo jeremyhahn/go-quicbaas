@@ -27,7 +27,7 @@ import (
 // The agent runtime grant is spelled in pkg/iam and DEFINED in pkg/permission.
 //
 // pkg/iam deliberately does not import the permission package (see
-// agent_registrar.go), so the two spellings are restated literals that could
+// fleet_registrar.go), so the two spellings are restated literals that could
 // drift. A drift is silent and total: the daemon would be enrolled holding a
 // permission no route resolves and no registry admits, and every call it
 // guards would be refused with no signal naming the typo.
@@ -39,9 +39,9 @@ import (
 // TestAgentRuntimeGrant_MatchesTheContributedVocabulary pins the credential-plane
 // literal against the permission it names.
 func TestAgentRuntimeGrant_MatchesTheContributedVocabulary(t *testing.T) {
-	if iam.AgentScopeAccountMaterialize != string(quicbaaspermission.AgentAccountMaterialize) {
-		t.Fatalf("iam.AgentScopeAccountMaterialize = %q, permission.AgentAccountMaterialize = %q; the two spellings must agree",
-			iam.AgentScopeAccountMaterialize, quicbaaspermission.AgentAccountMaterialize)
+	if iam.FleetScopeAccountMaterialize != string(quicbaaspermission.AgentAccountMaterialize) {
+		t.Fatalf("iam.FleetScopeAccountMaterialize = %q, permission.AgentAccountMaterialize = %q; the two spellings must agree",
+			iam.FleetScopeAccountMaterialize, quicbaaspermission.AgentAccountMaterialize)
 	}
 }
 
@@ -52,7 +52,7 @@ func TestAgentRuntimeGrant_MatchesTheContributedVocabulary(t *testing.T) {
 func TestAgentRuntimeGrant_IsRegisteredVocabulary(t *testing.T) {
 	quicbaaspermission.Register()
 
-	for _, granted := range iam.AgentRuntimeGrant() {
+	for _, granted := range iam.FleetRuntimeGrant() {
 		// The service-surface scopes (agent:runtime:*) are the daemon's OWN
 		// spawn-server vocabulary, checked in-process by GRPCSpawnServer and
 		// never presented to qrdb's PDP, so they are not registry members.

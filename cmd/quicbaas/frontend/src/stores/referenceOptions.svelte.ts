@@ -102,7 +102,7 @@ async function readProjects(tenantID: string): Promise<void> {
 async function readAgents(tenantID: string): Promise<void> {
   try {
     const client = await getSDKClient();
-    const page = await client.orchestrator.listAgentsPage(tenantID, { limit: PICKER_LIMIT });
+    const page = await client.orchestrator.listFleetNodesPage(tenantID, { limit: PICKER_LIMIT });
     _agents = page.items
       .map((agent) => ({ value: agent.id, label: agent.name || agent.id }))
       .sort(byLabel);

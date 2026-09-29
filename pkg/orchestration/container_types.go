@@ -102,6 +102,40 @@ type InteractiveProcess struct {
 	// process is responsible for calling Cleanup exactly once when the
 	// container is torn down. Nil when the spec carried no environment.
 	Cleanup func()
+
+	// Wait reports how the container's entrypoint process ended. Call it only
+	// once Stdout has reached EOF: it reaps the runtime's foreground process,
+	// which closes Stdout. It returns an unknown exit when ctx ends first, and
+	// it is safe to call more than once. Nil when the runtime cannot report an
+	// exit, which callers must read as "unknown", never as a clean exit.
+	//
+	// It is what tells a worker that crashed apart from a container stream the
+	// infrastructure closed (go-quicbaas#1064): only the former has an exit
+	// code of its own.
+	Wait func(ctx context.Context) ContainerExit
+}
+
+// ContainerExit is how a container's entrypoint process ended, as far as the
+// runtime could tell.
+type ContainerExit struct {
+	// Known is set when the runtime's foreground process exited on its own
+	// with a status. It is unset when the process was killed by a signal, when
+	// the wait failed, or when it did not finish within the caller's bound.
+	Known bool
+
+	// Code is the exit status, meaningful only when Known.
+	Code int
+}
+
+// containerRuntimeFailureExitCode is the status docker and podman give their
+// own failure — the runtime lost its daemon, or could not run the container —
+// as opposed to a status the container's process chose.
+const containerRuntimeFailureExitCode = 125
+
+// WorkerCrashed reports whether the exit is the worker's own non-zero exit: a
+// known status that is neither success nor the runtime's own failure.
+func (e ContainerExit) WorkerCrashed() bool {
+	return e.Known && e.Code != 0 && e.Code != containerRuntimeFailureExitCode
 }
 
 // ContainerSpec defines a container to run. No external library dependencies.
@@ -140,6 +174,15 @@ type ContainerSpec struct {
 	// container instead of exhausting the host's pid space. See
 	// SandboxSecurity, which sets it on every sandboxed agent container.
 	PidsLimit int64 `json:"pids_limit,omitempty"`
+
+	// Ulimits sets per-process resource limits inside the container
+	// (--ulimit name=soft:hard). Empty leaves the runtime's defaults — for
+	// Docker an 8 MiB RLIMIT_MEMLOCK, which a suite holding mlocked secrets
+	// exhausts (#1038). Ordering is not significant: the digest and the
+	// emitted command line both sort by name. A resource may be named once.
+	// See ContainerUlimit and SandboxSecurity, which sets the memlock limit on
+	// every sandboxed agent container.
+	Ulimits []ContainerUlimit `json:"ulimits,omitempty"`
 
 	// --- Privilege dimension (measured; see ContainerConfigDigest) ---
 	//
@@ -270,6 +313,9 @@ func (s *ContainerSpec) Validate() error {
 	}
 	if s.PidsLimit < 0 {
 		return &InputValidationError{Field: "pids_limit", Message: "cannot be negative"}
+	}
+	if err := validateUlimits(s.Ulimits); err != nil {
+		return err
 	}
 	// The environment reaches the runtime through a line-oriented --env-file,
 	// so an entry that cannot be represented there is rejected here — before

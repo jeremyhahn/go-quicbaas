@@ -165,7 +165,7 @@ func TestDeriveHandle_AlwaysProducesAStorableHandle(t *testing.T) {
 	} {
 		mem := iam.NewMemoryStorage()
 		store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-			UserStorage: mem, GroupStorage: mem, RoleStorage: mem,
+			UserStorage: mem, RoleStorage: mem,
 		})
 		handle := deriveHandle(email)
 		_, err := store.CreateUser(ctx, "acme", iam.CreateUserOptions{

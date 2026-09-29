@@ -1,0 +1,15 @@
+## Your session on this branch continues in a new container after the review
+
+The container that did round 1 pushed its work and was closed, so that it did not sit idle for the whole review. This session continues the same conversation in a new container on the same branch. Everything the previous container committed and pushed is checked out here; nothing it did not commit survived, so check the branch before relying on an edit you remember making, then address the findings above.
+
+This is the same conversation, continued. What was said in it so far is reproduced below. Those turns are done: do not act on them again. Answer the prompt above from where the conversation left off.
+
+--- transcript of session session-1 ---
+
+[user]
+implement the router
+
+[assistant]
+the handler table lives in pkg/router/table.go
+
+--- end of transcript ---

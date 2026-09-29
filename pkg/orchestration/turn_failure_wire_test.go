@@ -285,7 +285,7 @@ func TestRemoteTurnFailure_RendersOnlyCompiledConstants(t *testing.T) {
 func TestRemoteACPBackend_PromptReconstructsTheTurnFailure(t *testing.T) {
 	t.Parallel()
 
-	// The daemon answers the way pkg/agent's Prompt handler does once it has
+	// The daemon answers the way pkg/fleet's Prompt handler does once it has
 	// attached the evidence.
 	local := localPreFirstTurnError()
 	daemon := startBufconnDaemon(t, &fakeDaemonServer{
@@ -466,6 +466,8 @@ func TestSpawnFaultClasses_RoundTripToTheirSentinels(t *testing.T) {
 		{"a missing credential", &AccountCredentialNotFoundError{TenantID: "t", AccountID: "a"}, ErrAccountCredentialNotFound},
 		{"no refresher for the provider", &AccountRefresherNotConfiguredError{Provider: "claude"}, ErrAccountRefresherNotConfigured},
 		{"a pool that is merely cooling down", &AccountsCoolingDownError{TenantID: "t", Candidates: 2}, ErrAccountsCoolingDown},
+		{"a pool whose accounts are all at their session cap", &AccountsSaturatedError{TenantID: "t", Candidates: 3}, ErrAccountsSaturated},
+		{"a pool whose accounts have all spent their allowance", &AccountsSpentError{TenantID: "t", Candidates: 2, AvailableAt: time.Now().Add(time.Hour)}, ErrAccountsSpent},
 		{"a stale pinned workspace", &WorkspaceStaleError{Key: "k", Expected: "/d", Reason: "gone"}, ErrSessionWorkspace},
 	}
 
@@ -754,5 +756,63 @@ func TestSpawnFaultClass_RejectsWhatIsNotAConfigurationFault(t *testing.T) {
 		if sentinel, ok := SpawnFaultSentinel(class); ok || sentinel != nil {
 			t.Errorf("SpawnFaultSentinel(%q) = %v, %v; want nil, false", class, sentinel, ok)
 		}
+	}
+}
+
+// TestRemoteACPBackend_AuditsARemotePoolExhaustion covers a refusal admission
+// did not defer: the project had headroom (another provider's account was
+// free), the daemon found the requested pool saturated, and the control plane
+// must still put it on the audit trail, because the daemon has no auditor.
+func TestRemoteACPBackend_AuditsARemotePoolExhaustion(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		resolverErr error
+		wantReason  bool
+	}{
+		"saturated":    {&AccountsSaturatedError{TenantID: "tenant-a", ProjectID: "proj-1", Provider: "claude", Candidates: 2}, true},
+		"cooling down": {&AccountsCoolingDownError{AvailableAt: time.Now().Add(time.Minute)}, true},
+		"spent":        {&AccountsSpentError{AvailableAt: time.Now().Add(time.Hour)}, true},
+		"empty pool":   {&NoAccountAvailableError{TenantID: "tenant-a", ProjectID: "proj-1", Provider: "claude"}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			daemon := startBufconnDaemon(t, &fakeDaemonServer{
+				spawnErr: AttachSpawnFaultEvidence(status.Error(codes.Internal, tc.resolverErr.Error()), tc.resolverErr),
+			})
+			registration := newDaemonRegistration()
+			registration.Backend = "claude"
+			auditor := &recordingAuditor{}
+			backend, err := NewRemoteACPBackend(RemoteACPBackendDeps{
+				Registration: registration,
+				Backend:      "claude",
+				Logger:       &agentTestLogger{},
+				ConnDialer:   daemon.dialer(),
+				Auditor:      auditor,
+			})
+			if err != nil {
+				t.Fatalf("NewRemoteACPBackend: %v", err)
+			}
+			t.Cleanup(func() { _ = backend.CloseAll() })
+
+			if _, err := backend.Spawn(context.Background(), &SpawnRequest{ProjectID: "proj-1", AccountAuto: true}); err == nil {
+				t.Fatal("the refused spawn was reported as successful")
+			}
+
+			events := auditor.all()
+			if !tc.wantReason {
+				if len(events) != 0 {
+					t.Fatalf("an empty pool is a configuration fault, not exhaustion; audited %+v", events)
+				}
+				return
+			}
+			if len(events) != 1 {
+				t.Fatalf("audit events = %d, want exactly one", len(events))
+			}
+			got := events[0]
+			if got.Action != AuditActionPoolExhausted || got.ResourceID != "pool/proj-1/claude" ||
+				got.TenantID != "tenant-a" || got.Success {
+				t.Fatalf("audit event = %+v, want a failed pool_exhausted on pool/proj-1/claude", got)
+			}
+		})
 	}
 }

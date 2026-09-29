@@ -35,7 +35,7 @@ func (s *quicBaaS) IAM() IAMService {
 
 // iamServiceWrapper implements IAMService by delegating to IAMServiceProvider.
 // Tenant barrier lifecycle is owned by qrdb's TenantServicer; this wrapper
-// manages only the BaaS-layer IAM metadata (groups, policies, apps, OIDC, etc.).
+// manages only the BaaS-layer IAM metadata (policies, apps, OIDC, etc.).
 type iamServiceWrapper struct {
 	provider IAMServiceProvider
 }
@@ -228,14 +228,12 @@ func (w *iamServiceWrapper) CreateUser(ctx context.Context, req *IAMCreateUserRe
 		Username:   username,
 		Name:       req.Name,
 		Attributes: req.Attributes,
-		// Roles and Groups are validated against the tenant's role and
-		// group stores by IdentityStore.CreateUser BEFORE the user record
-		// is written (validate-before-create), matching the gRPC/Unix
-		// adapter contract.
+		// Roles are validated against the tenant's role store by
+		// IdentityStore.CreateUser BEFORE the user record is written
+		// (validate-before-create), matching the gRPC/Unix adapter contract.
 		AuthMethods: req.AuthMethods,
 		Lifecycle:   req.Lifecycle,
 		Roles:       req.Roles,
-		Groups:      req.Groups,
 	}
 
 	user, err := is.CreateUser(ctx, req.TenantID, opts)
@@ -296,24 +294,20 @@ func (w *iamServiceWrapper) UpdateUser(ctx context.Context, req *IAMUpdateUserRe
 	if req.AuthMethods != nil {
 		opts.AuthMethods = req.AuthMethods
 	}
-	// Attributes, Roles and Groups are forwarded for the same reason the
-	// fields above are: a field this request type ACCEPTS and this wrapper
-	// never copies is answered with success and changed nothing, and the
-	// caller cannot tell. That is not a missing convenience for any of the
-	// three — attributes feed ABAC evaluation and roles and groups feed RBAC,
-	// so an operator who tightens one is told the tightening took effect while
-	// the old grant is still what gets evaluated. REST already forwards all
-	// three through the same identity store, so dropping them here also made
-	// one verb mean two different things depending on the transport carrying
-	// it.
+	// Attributes and Roles are forwarded for the same reason the fields above
+	// are: a field this request type ACCEPTS and this wrapper never copies is
+	// answered with success and changed nothing, and the caller cannot tell.
+	// That is not a missing convenience for either — attributes feed ABAC
+	// evaluation and roles feed RBAC, so an operator who tightens one is told
+	// the tightening took effect while the old grant is still what gets
+	// evaluated. REST already forwards both through the same identity store,
+	// so dropping them here also made one verb mean two different things
+	// depending on the transport carrying it.
 	if req.Attributes != nil {
 		opts.Attributes = req.Attributes
 	}
 	if req.Roles != nil {
 		opts.Roles = req.Roles
-	}
-	if req.Groups != nil {
-		opts.Groups = req.Groups
 	}
 
 	user, err := is.UpdateUser(ctx, req.TenantID, req.UserID, opts)
@@ -370,192 +364,6 @@ func (w *iamServiceWrapper) ListUsers(ctx context.Context, req *IAMListUsersRequ
 		Users:      users,
 		TotalCount: int64(len(users)),
 		Timestamp:  time.Now(),
-	}, nil
-}
-
-// =============================================================================
-// Group Operations
-// =============================================================================
-
-func (w *iamServiceWrapper) CreateGroup(ctx context.Context, req *CreateGroupRequest) (*CreateGroupResponse, error) {
-	is, err := w.provider.GetIdentityStore(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if is == nil {
-		return nil, errors.New(errors.ErrUnavailable, "iam.CreateGroup", "identity store not available")
-	}
-
-	opts := iam.CreateGroupOptions{
-		ID:          req.ID,
-		Name:        req.Name,
-		Description: req.Description,
-	}
-
-	group, err := is.CreateGroup(ctx, req.TenantID, opts)
-	if err != nil {
-		return nil, err
-	}
-
-	return &CreateGroupResponse{
-		Group:     group,
-		Timestamp: time.Now(),
-	}, nil
-}
-
-func (w *iamServiceWrapper) GetGroup(ctx context.Context, req *GetGroupRequest) (*GetGroupResponse, error) {
-	is, err := w.provider.GetIdentityStore(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if is == nil {
-		return nil, errors.New(errors.ErrUnavailable, "iam.GetGroup", "identity store not available")
-	}
-
-	group, err := is.GetGroup(ctx, req.TenantID, req.GroupID)
-	if err != nil {
-		return nil, err
-	}
-
-	return &GetGroupResponse{
-		Group:     group,
-		Timestamp: time.Now(),
-	}, nil
-}
-
-func (w *iamServiceWrapper) UpdateGroup(ctx context.Context, req *UpdateGroupRequest) (*UpdateGroupResponse, error) {
-	is, err := w.provider.GetIdentityStore(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if is == nil {
-		return nil, errors.New(errors.ErrUnavailable, "iam.UpdateGroup", "identity store not available")
-	}
-
-	opts := iam.UpdateGroupOptions{}
-	if req.Name != nil {
-		opts.Name = req.Name
-	}
-	if req.Description != nil {
-		opts.Description = req.Description
-	}
-	// Members is forwarded for the reason the user wrapper forwards Roles and
-	// Groups: found by auditing the sibling request types after the attribute
-	// defect, it was the same silent success. Group membership is an
-	// authorization input — permissions are resolved through the groups a user
-	// is in — so an administrator who removes someone from a group and is told
-	// it worked, while the store still lists them, has been given a revocation
-	// that did not happen.
-	if req.Members != nil {
-		opts.Members = req.Members
-	}
-
-	group, err := is.UpdateGroup(ctx, req.TenantID, req.GroupID, opts)
-	if err != nil {
-		return nil, err
-	}
-
-	return &UpdateGroupResponse{
-		Group:     group,
-		Timestamp: time.Now(),
-	}, nil
-}
-
-func (w *iamServiceWrapper) DeleteGroup(ctx context.Context, req *DeleteGroupRequest) (*DeleteGroupResponse, error) {
-	is, err := w.provider.GetIdentityStore(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if is == nil {
-		return nil, errors.New(errors.ErrUnavailable, "iam.DeleteGroup", "identity store not available")
-	}
-
-	err = is.DeleteGroup(ctx, req.TenantID, req.GroupID)
-	if err != nil {
-		return nil, err
-	}
-
-	return &DeleteGroupResponse{
-		Deleted:   true,
-		Timestamp: time.Now(),
-	}, nil
-}
-
-func (w *iamServiceWrapper) ListGroups(ctx context.Context, req *ListGroupsRequest) (*ListGroupsResponse, error) {
-	is, err := w.provider.GetIdentityStore(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if is == nil {
-		return nil, errors.New(errors.ErrUnavailable, "iam.ListGroups", "identity store not available")
-	}
-
-	opts := iam.ListOptions{
-		Limit:  req.Limit,
-		Offset: req.Offset,
-	}
-
-	groups, err := is.ListGroups(ctx, req.TenantID, opts)
-	if err != nil {
-		return nil, err
-	}
-
-	return &ListGroupsResponse{
-		Groups:     groups,
-		TotalCount: int64(len(groups)),
-		Timestamp:  time.Now(),
-	}, nil
-}
-
-func (w *iamServiceWrapper) AddUserToGroup(ctx context.Context, req *AddUserToGroupRequest) (*AddUserToGroupResponse, error) {
-	is, err := w.provider.GetIdentityStore(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if is == nil {
-		return nil, errors.New(errors.ErrUnavailable, "iam.AddUserToGroup", "identity store not available")
-	}
-
-	err = is.AddUserToGroup(ctx, req.TenantID, req.GroupID, req.UserID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Re-fetch the group to return updated state
-	group, err := is.GetGroup(ctx, req.TenantID, req.GroupID)
-	if err != nil {
-		return nil, err
-	}
-
-	return &AddUserToGroupResponse{
-		Group:     group,
-		Timestamp: time.Now(),
-	}, nil
-}
-
-func (w *iamServiceWrapper) RemoveUserFromGroup(ctx context.Context, req *RemoveUserFromGroupRequest) (*RemoveUserFromGroupResponse, error) {
-	is, err := w.provider.GetIdentityStore(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if is == nil {
-		return nil, errors.New(errors.ErrUnavailable, "iam.RemoveUserFromGroup", "identity store not available")
-	}
-
-	err = is.RemoveUserFromGroup(ctx, req.TenantID, req.GroupID, req.UserID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Re-fetch the group to return updated state
-	group, err := is.GetGroup(ctx, req.TenantID, req.GroupID)
-	if err != nil {
-		return nil, err
-	}
-
-	return &RemoveUserFromGroupResponse{
-		Group:     group,
-		Timestamp: time.Now(),
 	}, nil
 }
 

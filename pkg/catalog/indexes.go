@@ -70,15 +70,33 @@ type IndexManager interface {
 // indexManager implements IndexManager using PebbleDB.
 type indexManager struct {
 	db *pebble.DB
+
+	// gate keeps the database open for the duration of an index read. When the
+	// index manager belongs to a pebbleStorage this is that store's gate, so
+	// closing the store waits for index reads in flight and fails later ones
+	// with a catalog-closed error instead of panicking inside PebbleDB.
+	gate *storeGate
 }
 
 // NewIndexManager creates a new index manager for the given PebbleDB instance.
+// The caller owns the database: closing it while index reads are in flight is
+// the caller's responsibility. Index managers obtained from a PebbleStorage via
+// GetPebbleIndexManager are tied to that store's lifecycle instead.
 func NewIndexManager(db *pebble.DB) (IndexManager, error) {
+	return newGatedIndexManager(db, newStoreGate())
+}
+
+// newGatedIndexManager creates an index manager whose reads are guarded by the
+// given gate, which is the gate of the storage that owns the database.
+func newGatedIndexManager(db *pebble.DB, gate *storeGate) (IndexManager, error) {
 	if db == nil {
 		return nil, NewInvalidEntryError("db", "PebbleDB instance is required")
 	}
+	if gate == nil {
+		return nil, NewInvalidEntryError("gate", "store gate is required")
+	}
 
-	return &indexManager{db: db}, nil
+	return &indexManager{db: db, gate: gate}, nil
 }
 
 // WriteIndexes writes all secondary indexes for a catalog entry.
@@ -357,6 +375,13 @@ func (m *indexManager) listByPrefix(ctx context.Context, prefix []byte, opts *Li
 		}
 	}
 
+	// Hold the store open for the life of the iterator: PebbleDB panics when
+	// an iterator is created on a closed database.
+	if err := m.gate.enter(); err != nil {
+		return nil, err
+	}
+	defer m.gate.leave()
+
 	// Create iterator with prefix bounds
 	iterOpts := &pebble.IterOptions{
 		LowerBound: prefix,
@@ -434,6 +459,12 @@ func (m *indexManager) countByPrefix(ctx context.Context, prefix []byte) (int64,
 	if err := ctx.Err(); err != nil {
 		return 0, NewStorageError("count", err)
 	}
+
+	// Hold the store open for the life of the iterator; see listByPrefix.
+	if err := m.gate.enter(); err != nil {
+		return 0, err
+	}
+	defer m.gate.leave()
 
 	iterOpts := &pebble.IterOptions{
 		LowerBound: prefix,

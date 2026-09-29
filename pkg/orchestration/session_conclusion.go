@@ -100,21 +100,21 @@ const (
 	// route the job took to get there.
 	ConcludedByJobConcluded SessionConclusionReason = "job_concluded"
 
-	// ConcludedByAgentGone is a session bound to a daemon that unregistered or
+	// ConcludedByFleetNodeGone is a session bound to a daemon that unregistered or
 	// stopped heartbeating. The process is on a host that is no longer in the
 	// fleet, so nothing here can reach it again.
-	ConcludedByAgentGone SessionConclusionReason = "agent_gone"
+	ConcludedByFleetNodeGone SessionConclusionReason = "agent_gone"
 )
 
 // sessionConclusionReasons is every reason a session may carry, keyed for
 // O(1) validation of a value decoded from a durable record or a wire message.
 var sessionConclusionReasons = map[SessionConclusionReason]struct{}{
-	ConcludedByOperator:     {},
-	ConcludedByProcessExit:  {},
-	ConcludedByReconcile:    {},
-	ConcludedByNodeRestart:  {},
-	ConcludedByJobConcluded: {},
-	ConcludedByAgentGone:    {},
+	ConcludedByOperator:      {},
+	ConcludedByProcessExit:   {},
+	ConcludedByReconcile:     {},
+	ConcludedByNodeRestart:   {},
+	ConcludedByJobConcluded:  {},
+	ConcludedByFleetNodeGone: {},
 }
 
 // Valid reports whether r is one of the reasons this daemon writes. An empty
@@ -521,7 +521,7 @@ func (s *agentServiceImpl) concludeBackend(
 // its own and the scan below finds no other holder. A worker daemon's
 // credential cache is keyed by account by design — a burst of spawns onto one
 // account collapses onto one release, and therefore onto one grant
-// (pkg/agent/account_grant.go) — so two concurrent sessions on that host can be
+// (pkg/fleet/account_grant.go) — so two concurrent sessions on that host can be
 // serving under the same grant. Withdrawing it on the first conclusion would
 // refuse the other session's next refresh and break a job nobody ended, which
 // is a worse failure than the one the grant exists to prevent. So the last

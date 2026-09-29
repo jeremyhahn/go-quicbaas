@@ -285,6 +285,23 @@ type TurnFailureEvidence struct {
 	// nothing" is not evidence of anything, while "reported zero" is evidence
 	// that no request reached the model.
 	Usage *TokenUsage
+
+	// ProviderLimit is the backend's verdict that the provider refused the
+	// account for a rate or usage limit, or nil when nothing said so. It is
+	// decided where the stream was read; see account_limit_evidence.go.
+	ProviderLimit *ProviderLimitEvidence
+
+	// ProviderAuth is the backend's verdict that the provider refused the
+	// account's login itself, or nil when nothing said so. Decided where the
+	// CLI's output was read; see account_auth_rejection.go.
+	ProviderAuth *ProviderAuthEvidence
+
+	// Model is the model the backend ran the failed turn on, when the backend
+	// resolved one the request did not name — codex exec on its configured
+	// default. Empty when the backend knows no better than the request. It is
+	// what the ledger records the failure under, so a failure on a default
+	// model is not refused for naming none.
+	Model string
 }
 
 // usageProvesNoTurn reports whether the CLI's token accounting says, in its own

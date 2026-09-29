@@ -118,10 +118,9 @@ func setupUserReadHandler(t *testing.T) (*IAMHandler, *iam.MemoryStorage, func()
 	}))
 
 	identity := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  mem,
-		GroupStorage: mem,
-		RoleStorage:  mem,
-		Tenants:      tenants,
+		UserStorage: mem,
+		RoleStorage: mem,
+		Tenants:     tenants,
 	})
 
 	mock := testutil.NewMockQuicBaaS()

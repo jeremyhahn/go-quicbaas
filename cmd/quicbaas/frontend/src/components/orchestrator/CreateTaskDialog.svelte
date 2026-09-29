@@ -6,7 +6,7 @@
   import { orchestratorStore } from '../../stores/orchestrator.svelte.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
-  import type { CreateTaskRequest, AgentRegistration } from '@quicbaas/sdk';
+  import type { CreateTaskRequest, FleetNode } from '@quicbaas/sdk';
 
   let {
     open = $bindable(false),
@@ -24,25 +24,28 @@
   let gpuRequired = $state(false);
   let autoSpawn = $state(false);
   let backend = $state('');
+  // promptAppend is run-time material every attempt at the task carries to
+  // the sessions it spawns (prompt_append).
+  let promptAppend = $state('');
   let submitting = $state(false);
   let errorMsg = $state('');
 
   // Agent list for host affinity dropdown.
-  let agents: AgentRegistration[] = $state([]);
+  let agents: FleetNode[] = $state([]);
   let agentsLoading = $state(false);
 
   onMount(() => {
-    void loadAgents();
+    void loadFleet();
   });
 
-  async function loadAgents(): Promise<void> {
+  async function loadFleet(): Promise<void> {
     agentsLoading = true;
     try {
       const client = await getSDKClient();
-      const resp = await client.orchestrator.listAgents({
+      const resp = await client.orchestrator.listFleetNodes({
         tenant_id: orchestratorStore.activeTenantID,
       });
-      agents = resp.agents ?? [];
+      agents = resp.nodes ?? [];
     } catch {
       agents = [];
     } finally {
@@ -59,6 +62,7 @@
     gpuRequired = false;
     autoSpawn = false;
     backend = '';
+    promptAppend = '';
     errorMsg = '';
   }
 
@@ -86,6 +90,7 @@
       gpu_required: gpuRequired || undefined,
       auto_spawn: autoSpawn || undefined,
       backend: (autoSpawn && backend.trim()) ? backend.trim() : undefined,
+      prompt_append: promptAppend.trim() !== '' ? promptAppend : undefined,
     };
 
     try {
@@ -165,6 +170,22 @@
           ></textarea>
         </div>
 
+        <!-- Run-time prompt material for every attempt's sessions -->
+        <div class="form-control">
+          <label class="label" for="ct-prompt-append">
+            <span class="label-text">Append to the agent's prompt</span>
+            <span class="label-text-alt text-base-content/40">optional</span>
+          </label>
+          <textarea
+            id="ct-prompt-append"
+            class="textarea textarea-bordered text-sm font-mono"
+            rows="3"
+            placeholder="Context every attempt's sessions read after their agent's own prompt"
+            bind:value={promptAppend}
+            data-testid="create-task-prompt-append"
+          ></textarea>
+        </div>
+
         <!-- Host affinity -->
         <div class="form-control">
           <label class="label" for="ct-host">
@@ -178,7 +199,7 @@
               id="ct-host"
               class="select select-bordered select-sm"
               bind:value={hostAffinity}
-              aria-label="Host affinity — pin task to a specific agent (optional)"
+              aria-label="Host affinity — pin task to a specific fleet node (optional)"
             >
               <option value="">Any</option>
               {#each agents as agent (agent.id ?? agent.name)}
@@ -194,7 +215,7 @@
                 type="checkbox"
                 class="checkbox checkbox-xs"
                 bind:checked={hostAffinityStrict}
-                aria-label="Fail the request if the selected host is offline instead of falling back to any agent"
+                aria-label="Fail the request if the selected host is offline instead of falling back to any fleet node"
               />
             </label>
           {/if}
@@ -209,12 +230,12 @@
               type="checkbox"
               class="toggle toggle-sm toggle-primary"
               bind:checked={gpuRequired}
-              aria-label="Require a GPU-capable agent for this task"
+              aria-label="Require a GPU-capable fleet node for this task"
             />
           </label>
           {#if gpuRequired}
             <p class="text-xs text-base-content/40 -mt-1">
-              Task will only be assigned to agents that advertise GPU capability.
+              Task will only be assigned to fleet nodes that advertise GPU capability.
             </p>
           {/if}
         </div>
@@ -234,7 +255,7 @@
               type="checkbox"
               class="toggle toggle-sm toggle-secondary"
               bind:checked={autoSpawn}
-              aria-label="Spawn a job immediately on the best-matching agent"
+              aria-label="Spawn a job immediately on the best-matching fleet node"
             />
           </label>
         </div>

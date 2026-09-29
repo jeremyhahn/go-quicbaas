@@ -54,9 +54,13 @@ vi.mock('../src/stores/router.svelte.ts', () => ({
   },
 }));
 
+const streamMock = vi.hoisted(() => ({ unavailable: false }));
+
 vi.mock('../src/stores/job-events.svelte.ts', () => ({
   startEventStream: vi.fn(),
   stopEventStream: vi.fn(),
+  retryEventStream: vi.fn(),
+  eventSubStore: { liveUpdatesUnavailable: () => streamMock.unavailable },
 }));
 
 vi.mock('../src/stores/toast.svelte.ts', () => ({
@@ -88,7 +92,7 @@ vi.mock('../src/components/orchestrator/BudgetGauge.svelte', () => ({
 
 import JobDetailView from '../src/views/orchestrator/JobDetailView.svelte';
 import { navigateTo, routeSessionDetail, routeTaskDetail } from '../src/stores/router.svelte.ts';
-import { startEventStream, stopEventStream } from '../src/stores/job-events.svelte.ts';
+import { retryEventStream, startEventStream, stopEventStream } from '../src/stores/job-events.svelte.ts';
 
 // ---------------------------------------------------------------------------
 // Shared mock job fixture
@@ -172,6 +176,8 @@ describe('JobDetailView', () => {
     vi.mocked(routeTaskDetail).mockClear();
     vi.mocked(startEventStream).mockClear();
     vi.mocked(stopEventStream).mockClear();
+    vi.mocked(retryEventStream).mockClear();
+    streamMock.unavailable = false;
   });
 
   it('renders the back button with ChevronLeft icon (svg), not plain text arrow', () => {
@@ -180,6 +186,19 @@ describe('JobDetailView', () => {
     expect(backBtn).toBeTruthy();
     expect(backBtn.querySelector('svg')).not.toBeNull();
     expect(backBtn.textContent).not.toContain('←');
+  });
+
+  it('shows the prompt material the job appended to every session, sized', () => {
+    storeMock.selectedJob = { ...mockJob, prompt_append: 'touch only pkg/cache' };
+    render(JobDetailView);
+    const block = screen.getByTestId('job-prompt-append');
+    expect(block.textContent).toContain('touch only pkg/cache');
+    expect(block.textContent).toContain('20 bytes');
+  });
+
+  it('shows no appended-prompt block for a job that appended nothing', () => {
+    render(JobDetailView);
+    expect(screen.queryByTestId('job-prompt-append')).toBeNull();
   });
 
   it('displays the job description in the heading', () => {
@@ -381,5 +400,20 @@ describe('JobDetailView', () => {
     storeMock.selectedJob = { ...mockJob, state: 'completed' as const };
     render(JobDetailView);
     expect(vi.mocked(startEventStream)).not.toHaveBeenCalled();
+  });
+
+  it('says so when the live stream failed, and Reconnect retries it', async () => {
+    streamMock.unavailable = true;
+    render(JobDetailView);
+    const notice = screen.getByTestId('live-updates-unavailable');
+    expect(notice).toHaveTextContent(/live updates unavailable/i);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
+    expect(vi.mocked(retryEventStream)).toHaveBeenCalledWith('acme', 'job-abc-def-123');
+  });
+
+  it('shows no stream notice while live updates are flowing', () => {
+    render(JobDetailView);
+    expect(screen.queryByTestId('live-updates-unavailable')).toBeNull();
   });
 });

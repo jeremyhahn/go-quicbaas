@@ -37,7 +37,6 @@ func TestTokenService_IssueHardwareTokens(t *testing.T) {
 			Email:    "u@example.com",
 			Name:     "U",
 			Roles:    []string{"admin"},
-			Groups:   []string{"devs"},
 		},
 		AMR:         []string{"webauthn", "hwk"},
 		ACR:         "phr",

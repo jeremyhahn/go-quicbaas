@@ -43,15 +43,6 @@ service IAMService {
       option (qrdb.v1.permission) = "users:delete";
   }
 
-  // Group management
-  rpc CreateGroup(CreateGroupRequest) returns (Group);
-  rpc GetGroup(GetGroupRequest) returns (Group);
-  rpc UpdateGroup(UpdateGroupRequest) returns (Group);
-  rpc DeleteGroup(DeleteGroupRequest) returns (DeleteGroupResponse);
-  rpc ListGroups(ListGroupsRequest) returns (ListGroupsResponse);
-  rpc AddUserToGroup(AddUserToGroupRequest) returns (AddUserToGroupResponse);
-  rpc RemoveUserFromGroup(RemoveUserFromGroupRequest) returns (RemoveUserFromGroupResponse);
-
   // Role management
   rpc CreateRole(CreateRoleRequest) returns (Role);
   rpc GetRole(GetRoleRequest) returns (Role);
@@ -193,12 +184,17 @@ message User {
   reserved 11, 12;
   reserved "mfa_verified", "mfa_timestamp";
 
+  // groups was the account's own group-membership list. quicbaas keeps no
+  // group membership on the account (go-quicbaas#1027); the OIDC `groups`
+  // claim is derived from the roles the account is bound to.
+  reserved 6;
+  reserved "groups";
+
   string id = 1;
   string tenant_id = 2;
   string email = 3;
   string name = 4;
   repeated string roles = 5;
-  repeated string groups = 6;
   map<string, string> attributes = 7;
   google.protobuf.Timestamp created_at = 8;
   google.protobuf.Timestamp updated_at = 9;
@@ -220,16 +216,6 @@ message User {
   // the record, and two accounts sharing a display name collided on an index
   // neither had named.
   string username = 15;
-}
-
-message Group {
-  string id = 1;
-  string tenant_id = 2;
-  string name = 3;
-  string description = 4;
-  repeated string members = 5;
-  google.protobuf.Timestamp created_at = 6;
-  google.protobuf.Timestamp updated_at = 7;
 }
 
 message Role {
@@ -435,11 +421,14 @@ message ListTenantsResponse {
 
 // User CRUD messages
 message CreateUserRequest {
+  // groups: the account carries no group membership (go-quicbaas#1027).
+  reserved 5;
+  reserved "groups";
+
   string tenant_id = 1;
   string email = 2;
   string name = 3;
   repeated string roles = 4;
-  repeated string groups = 5;
   map<string, string> attributes = 6;
 
   // lifecycle is the state to create in — pending, active or disabled only;
@@ -464,12 +453,15 @@ message GetUserRequest {
 }
 
 message UpdateUserRequest {
+  // groups: the account carries no group membership (go-quicbaas#1027).
+  reserved 6;
+  reserved "groups";
+
   string tenant_id = 1;
   string user_id = 2;
   string email = 3;
   string name = 4;
   repeated string roles = 5;
-  repeated string groups = 6;
   map<string, string> attributes = 7;
 
   // lifecycle, when non-empty, transitions the account: pending, active,
@@ -519,72 +511,16 @@ message ListUsersRequest {
   int32 offset = 3;
   string email = 4;
   string role = 5;
-  string group = 6;
+
+  // group filtered by membership in a quicbaas group. quicbaas keeps no
+  // groups: identity is qrdb's, and a role is the grouping it offers.
+  reserved 6;
+  reserved "group";
 }
 
 message ListUsersResponse {
   repeated User users = 1;
   int32 total = 2;
-}
-
-// Group CRUD messages
-message CreateGroupRequest {
-  string tenant_id = 1;
-  string id = 2;
-  string name = 3;
-  string description = 4;
-}
-
-message GetGroupRequest {
-  string tenant_id = 1;
-  string group_id = 2;
-}
-
-message UpdateGroupRequest {
-  string tenant_id = 1;
-  string group_id = 2;
-  string name = 3;
-  string description = 4;
-}
-
-message DeleteGroupRequest {
-  string tenant_id = 1;
-  string group_id = 2;
-}
-
-message DeleteGroupResponse {
-  bool success = 1;
-}
-
-message ListGroupsRequest {
-  string tenant_id = 1;
-  int32 limit = 2;
-  int32 offset = 3;
-}
-
-message ListGroupsResponse {
-  repeated Group groups = 1;
-  int32 total = 2;
-}
-
-message AddUserToGroupRequest {
-  string tenant_id = 1;
-  string group_id = 2;
-  string user_id = 3;
-}
-
-message AddUserToGroupResponse {
-  bool success = 1;
-}
-
-message RemoveUserFromGroupRequest {
-  string tenant_id = 1;
-  string group_id = 2;
-  string user_id = 3;
-}
-
-message RemoveUserFromGroupResponse {
-  bool success = 1;
 }
 
 // Role CRUD messages
@@ -802,7 +738,9 @@ enum AdminRole {
   ADMIN_ROLE_SUPER_ADMIN = 1;
   ADMIN_ROLE_TENANT_ADMIN = 2;
   ADMIN_ROLE_USER_ADMIN = 3;
-  ADMIN_ROLE_GROUP_ADMIN = 4;
+  // ADMIN_ROLE_GROUP_ADMIN managed quicbaas groups; quicbaas keeps none.
+  reserved 4;
+  reserved "ADMIN_ROLE_GROUP_ADMIN";
   ADMIN_ROLE_POLICY_ADMIN = 5;
   ADMIN_ROLE_AUDIT_ADMIN = 6;
   ADMIN_ROLE_READ_ONLY = 7;
@@ -1109,7 +1047,9 @@ message UserDataExport {
   UserProfileExport profile = 2;
   repeated SessionExport sessions = 3;
   repeated ConsentExport consents = 4;
-  repeated GroupMembershipExport groups = 5;
+  // groups exported quicbaas group memberships; quicbaas keeps no groups.
+  reserved 5;
+  reserved "groups";
   repeated RoleAssignmentExport roles = 6;
   repeated AuditLogExport audit_logs = 7;
   repeated CredentialExport credentials = 8;
@@ -1157,13 +1097,6 @@ message ConsentExport {
   string version = 3;
   google.protobuf.Timestamp granted_at = 4;
   google.protobuf.Timestamp withdrawn_at = 5;
-}
-
-// GroupMembershipExport contains exportable group membership data
-message GroupMembershipExport {
-  string group_id = 1;
-  string group_name = 2;
-  google.protobuf.Timestamp joined_at = 3;
 }
 
 // RoleAssignmentExport contains exportable role assignment data
@@ -1275,7 +1208,10 @@ message DeletionSummary {
   int32 audit_logs_anonymized = 3;
   int32 consents_deleted = 4;
   int32 credentials_deleted = 5;
-  int32 group_memberships_removed = 6;
+  // group_memberships_removed counted quicbaas group memberships; quicbaas
+  // keeps no groups.
+  reserved 6;
+  reserved "group_memberships_removed";
   int32 role_assignments_removed = 7;
   int32 tokens_revoked = 8;
   map<string, int32> additional_data = 9;
@@ -1636,7 +1572,10 @@ message ExternalProvider {
   bool auto_provision = 14;
   bool allow_linking = 15;
   repeated string default_roles = 16;
-  repeated string default_groups = 17;
+  // default_groups named quicbaas groups a provisioned user joined; quicbaas
+  // keeps no groups, and default_roles is the provisioning grant.
+  reserved 17;
+  reserved "default_groups";
   google.protobuf.Timestamp created_at = 18;
   google.protobuf.Timestamp updated_at = 19;
 }
@@ -1674,7 +1613,10 @@ message CreateProviderRequest {
   bool auto_provision = 14;
   bool allow_linking = 15;
   repeated string default_roles = 16;
-  repeated string default_groups = 17;
+  // default_groups named quicbaas groups a provisioned user joined; quicbaas
+  // keeps no groups, and default_roles is the provisioning grant.
+  reserved 17;
+  reserved "default_groups";
 }
 
 // GetProviderRequest retrieves an external provider by ID
@@ -1701,7 +1643,10 @@ message UpdateProviderRequest {
   bool auto_provision = 14;
   bool allow_linking = 15;
   repeated string default_roles = 16;
-  repeated string default_groups = 17;
+  // default_groups named quicbaas groups a provisioned user joined; quicbaas
+  // keeps no groups, and default_roles is the provisioning grant.
+  reserved 17;
+  reserved "default_groups";
 }
 
 // DeleteProviderRequest removes an external provider

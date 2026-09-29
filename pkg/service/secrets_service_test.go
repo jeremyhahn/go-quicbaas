@@ -27,6 +27,7 @@ import (
 
 	quicbaasErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
 )
 
 // =============================================================================
@@ -121,7 +122,7 @@ func (m *mockSecretsManager) Get(ctx context.Context, path string) (map[string][
 	if secret, ok := m.secrets[path]; ok {
 		return secret.data, secret.metadata, nil
 	}
-	return nil, nil, errors.New("secret not found")
+	return nil, nil, secrets.ErrSecretNotFound
 }
 
 func (m *mockSecretsManager) GetVersion(ctx context.Context, path string, version int) (map[string][]byte, map[string]string, error) {
@@ -137,7 +138,7 @@ func (m *mockSecretsManager) GetVersion(ctx context.Context, path string, versio
 			return v.data, v.metadata, nil
 		}
 	}
-	return nil, nil, errors.New("version not found")
+	return nil, nil, secrets.ErrVersionNotFound
 }
 
 func (m *mockSecretsManager) List(ctx context.Context, prefix string) ([]string, error) {
@@ -2431,7 +2432,7 @@ func TestSecretsService_RotateSecret_WithEmptyMetadata(t *testing.T) {
 func TestSecretsService_RotateSecret_ManagerGetFails(t *testing.T) {
 	mockManager := newMockSecretsManager()
 	mockManager.getFn = func(ctx context.Context, path string) (map[string][]byte, map[string]string, error) {
-		return nil, nil, errors.New("secret not found")
+		return nil, nil, secrets.ErrSecretNotFound
 	}
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)

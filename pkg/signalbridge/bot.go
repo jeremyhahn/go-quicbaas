@@ -31,7 +31,7 @@ type OrchestratorSDK interface {
 	PromptSession(ctx context.Context, req *orchestratorSDK.PromptSessionRequest) (*orchestratorSDK.PromptSessionResponse, error)
 	CloseSession(ctx context.Context, req *orchestratorSDK.CloseSessionRequest) (*orchestratorSDK.CloseSessionResponse, error)
 	ListSessions(ctx context.Context, req *orchestratorSDK.ListSessionsRequest) (*orchestratorSDK.ListSessionsResponse, error)
-	ListAgents(ctx context.Context, req *orchestratorSDK.ListAgentsRequest) (*orchestratorSDK.ListAgentsResponse, error)
+	ListFleetNodes(ctx context.Context, req *orchestratorSDK.ListFleetNodesRequest) (*orchestratorSDK.ListFleetNodesResponse, error)
 	SessionStatus(ctx context.Context, req *orchestratorSDK.SessionStatusRequest) (*orchestratorSDK.SessionStatusResponse, error)
 	StartJob(ctx context.Context, req *orchestratorSDK.StartJobRequest) (*orchestratorSDK.StartJobResponse, error)
 	SubscribeSessionEvents(ctx context.Context, req *orchestratorSDK.SubscribeSessionEventsRequest) (<-chan *orchestratorSDK.SessionEventEnvelope, error)
@@ -348,7 +348,7 @@ func (b *OrchestratorBot) sessionsOrDispatch(ctx context.Context, msg InboundMes
 }
 
 func (b *OrchestratorBot) agentsOrDispatch(ctx context.Context, msg InboundMessage, operator OperatorIdentity, intent Intent) error {
-	resp, err := b.orchestrator.ListAgents(ctx, &orchestratorSDK.ListAgentsRequest{TenantID: operator.TenantID})
+	resp, err := b.orchestrator.ListFleetNodes(ctx, &orchestratorSDK.ListFleetNodesRequest{TenantID: operator.TenantID})
 	if err != nil {
 		return b.replyError(ctx, msg, err.Error())
 	}
@@ -357,7 +357,7 @@ func (b *OrchestratorBot) agentsOrDispatch(ctx context.Context, msg InboundMessa
 	}
 	var sb strings.Builder
 	sb.WriteString("🤖 agents:\n")
-	for _, a := range resp.Agents {
+	for _, a := range resp.Nodes {
 		sb.WriteString(fmt.Sprintf("  • %s @ %s — %s (%s)\n", a.Name, a.Host, a.Status, a.Backend))
 	}
 	return b.reply(ctx, msg, sb.String())

@@ -17,7 +17,9 @@ import (
 	"context"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/agents"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/page"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/spend"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
@@ -43,16 +45,17 @@ type Client interface {
 	// Delete removes a project by ID.
 	Delete(ctx context.Context, tenantID, projectID string) error
 
-	// List returns all projects for a given tenant.
-	List(ctx context.Context, tenantID string) (*ListProjectsResponse, error)
+	// List returns one page of a tenant's projects. The request's
+	// page.Params pick the page; the zero value takes the server default.
+	List(ctx context.Context, req *ListProjectsRequest) (*ListProjectsResponse, error)
 
-	// GrantAgentRole sets or updates the role for agentID in projectID.
-	// Passing ProjectRoleDenied is equivalent to calling RevokeAgentRole.
-	GrantAgentRole(ctx context.Context, req *GrantAgentRoleRequest) (*GrantAgentRoleResponse, error)
+	// GrantFleetNodeRole sets or updates the role for agentID in projectID.
+	// Passing ProjectRoleDenied is equivalent to calling RevokeFleetNodeRole.
+	GrantFleetNodeRole(ctx context.Context, req *GrantFleetNodeRoleRequest) (*GrantFleetNodeRoleResponse, error)
 
-	// RevokeAgentRole sets the agent's role to ProjectRoleDenied, effectively
+	// RevokeFleetNodeRole sets the agent's role to ProjectRoleDenied, effectively
 	// removing the agent's access to the project.
-	RevokeAgentRole(ctx context.Context, req *RevokeAgentRoleRequest) (*RevokeAgentRoleResponse, error)
+	RevokeFleetNodeRole(ctx context.Context, req *RevokeFleetNodeRoleRequest) (*RevokeFleetNodeRoleResponse, error)
 }
 
 // ProjectRole represents the role an agent has within a project.
@@ -75,7 +78,7 @@ const (
 // ProjectWorkspace describes the agent workspace associated with a project.
 type ProjectWorkspace struct {
 	// AgentID is the ID of the agent that owns the workspace.
-	AgentID string `json:"agent_id,omitempty"`
+	FleetNodeID string `json:"agent_id,omitempty"`
 	// Path is the filesystem path to the workspace on the agent host.
 	Path string `json:"path,omitempty"`
 }
@@ -107,6 +110,19 @@ type CommitSigning struct {
 	Algorithm string `json:"algorithm,omitempty"`
 	// Key identifies the KMS-held signing key.
 	Key KMSKeyRef `json:"key,omitzero"`
+	// Retired is the trusted signing history: keys the project signed with
+	// before Key, each trusted only for commits made before its retirement.
+	Retired []RetiredSigningKey `json:"retired,omitempty"`
+}
+
+// RetiredSigningKey is one entry of a project's trusted signing history.
+type RetiredSigningKey struct {
+	// PublicKey is the retired key's public half, one OpenSSH line.
+	PublicKey string `json:"public_key"`
+	// Name is the KMS name the key was held under.
+	Name string `json:"name,omitempty"`
+	// RetiredAt is when the key stopped being the project's signing key.
+	RetiredAt time.Time `json:"retired_at"`
 }
 
 // ProjectGit describes the git repository linked to a project.
@@ -128,18 +144,60 @@ type ProjectGit struct {
 
 // ProjectPermissions defines agent-level access roles for a project.
 type ProjectPermissions struct {
-	// AgentRoles maps agent IDs to their assigned role.
-	AgentRoles map[string]ProjectRole `json:"agent_roles,omitempty"`
+	// FleetNodeRoles maps agent IDs to their assigned role.
+	FleetNodeRoles map[string]ProjectRole `json:"agent_roles,omitempty"`
 }
 
 // ProjectQuotas defines resource limits for a project.
 type ProjectQuotas struct {
-	// TokenBudget is the maximum LLM token budget (0 = unlimited).
-	TokenBudget int64 `json:"token_budget,omitempty"`
 	// GPUMinutes is the maximum GPU compute budget in minutes (0 = unlimited).
 	GPUMinutes int64 `json:"gpu_minutes,omitempty"`
 	// MaxConcurrency is the maximum concurrent workflow runs (0 = unlimited).
 	MaxConcurrency int `json:"max_concurrency,omitempty"`
+}
+
+// WorkspaceTier names the storage tier a project's sandboxed checkout is
+// mounted on. See docs/software-factory/storage-tiers.md.
+type WorkspaceTier string
+
+const (
+	// WorkspaceTierUnset keeps the host bind mount every project has always
+	// had; it behaves exactly like WorkspaceTierPersistent.
+	WorkspaceTierUnset WorkspaceTier = ""
+	// WorkspaceTierPersistent bind-mounts the checkout from the host.
+	WorkspaceTierPersistent WorkspaceTier = "persistent"
+	// WorkspaceTierEphemeral puts the checkout on a sized tmpfs inside the
+	// container; the work survives only by being pushed.
+	WorkspaceTierEphemeral WorkspaceTier = "ephemeral"
+)
+
+// SessionRotationPolicy names what a persistent worker session does when the
+// pooled provider account under it rotates. See
+// docs/software-factory/sdlc.md.
+type SessionRotationPolicy string
+
+const (
+	// SessionRotationUnset is what a project that never chose a policy
+	// stores; it runs SessionRotationResume.
+	SessionRotationUnset SessionRotationPolicy = ""
+	// SessionRotationResume continues the session's conversation in the
+	// replacement session. The default.
+	SessionRotationResume SessionRotationPolicy = "resume"
+	// SessionRotationFresh starts the replacement session on a new
+	// conversation on the same branch.
+	SessionRotationFresh SessionRotationPolicy = "fresh"
+)
+
+// ProjectStorage is the storage tier of a project's sandboxed checkout.
+// Every field is inert at its zero value.
+type ProjectStorage struct {
+	// WorkspaceTier selects the tier; empty keeps the host bind mount.
+	WorkspaceTier WorkspaceTier `json:"workspace_tier,omitempty"`
+	// WorkspaceTmpfsMB sizes the ephemeral tier's tmpfs in MiB (0 = unsized).
+	WorkspaceTmpfsMB int `json:"workspace_tmpfs_mb,omitempty"`
+	// ContainerMemoryMB is the container's memory limit in MiB (0 = the
+	// runtime's default).
+	ContainerMemoryMB int `json:"container_memory_mb,omitempty"`
 }
 
 // ContextRepo names one repository the worker clones beside the project
@@ -161,22 +219,35 @@ type ContextRepo struct {
 // these exact keys, so the type decodes a server response directly instead of
 // each transport re-declaring a parallel wire struct.
 type ProjectInfo struct {
-	ID               string             `json:"id"`
-	TenantID         string             `json:"tenant_id"`
-	Name             string             `json:"name"`
-	Description      string             `json:"description,omitempty"`
-	Workspace        ProjectWorkspace   `json:"workspace"`
-	HostAffinity     string             `json:"host_affinity,omitempty"`
-	DefaultLeadAgent string             `json:"default_lead_agent,omitempty"`
-	DefaultWorkflow  string             `json:"default_workflow,omitempty"`
-	Autonomous       bool               `json:"autonomous,omitempty"`
-	ContextRepos     []ContextRepo      `json:"context_repos,omitempty"`
-	Git              ProjectGit         `json:"git"`
-	Permissions      ProjectPermissions `json:"permissions"`
-	Quotas           ProjectQuotas      `json:"quotas"`
-	Metadata         map[string]string  `json:"metadata,omitempty"`
-	CreatedAt        time.Time          `json:"created_at"`
-	UpdatedAt        time.Time          `json:"updated_at"`
+	ID               string           `json:"id"`
+	TenantID         string           `json:"tenant_id"`
+	Name             string           `json:"name"`
+	Description      string           `json:"description,omitempty"`
+	Workspace        ProjectWorkspace `json:"workspace"`
+	Storage          ProjectStorage   `json:"storage,omitzero"`
+	HostAffinity     string           `json:"host_affinity,omitempty"`
+	DefaultLeadAgent agents.AgentRef  `json:"default_lead_agent,omitzero"`
+	DefaultWorkflow  string           `json:"default_workflow,omitempty"`
+	Autonomous       bool             `json:"autonomous,omitempty"`
+	// Parked says the project's intake is closed: nothing that has not
+	// started is dispatched, adopted or triaged, and work in flight
+	// finishes. ParkedAt and ParkedBy say when and by whom; both are zero
+	// while the project is open.
+	Parked       bool               `json:"parked,omitempty"`
+	ParkedAt     time.Time          `json:"parked_at,omitzero"`
+	ParkedBy     string             `json:"parked_by,omitempty"`
+	ContextRepos []ContextRepo      `json:"context_repos,omitempty"`
+	Git          ProjectGit         `json:"git"`
+	Permissions  ProjectPermissions `json:"permissions"`
+	Quotas       ProjectQuotas      `json:"quotas"`
+	Spend        spend.Limits       `json:"spend,omitzero"`
+	// SessionRotation is the project's session rotation policy: "resume",
+	// "fresh", or empty for a project that never chose one, which runs
+	// "resume".
+	SessionRotation SessionRotationPolicy `json:"session_rotation,omitempty"`
+	Metadata        map[string]string     `json:"metadata,omitempty"`
+	CreatedAt       time.Time             `json:"created_at"`
+	UpdatedAt       time.Time             `json:"updated_at"`
 }
 
 // CreateProjectRequest is a request to create a new project.
@@ -187,20 +258,24 @@ type CreateProjectRequest struct {
 	Name string `json:"name"`
 	// Description is a human-readable description of the project.
 	Description string `json:"description,omitempty"`
-	// WorkspaceAgentID is the ID of the agent that owns the workspace.
-	WorkspaceAgentID string `json:"workspace_agent_id,omitempty"`
+	// WorkspaceFleetNodeID is the ID of the agent that owns the workspace.
+	WorkspaceFleetNodeID string `json:"workspace_agent_id,omitempty"`
 	// WorkspacePath is the filesystem path to the workspace on the agent host.
 	WorkspacePath string `json:"workspace_path,omitempty"`
 	// HostAffinity pins operations to a preferred agent host.
 	HostAffinity string `json:"host_affinity,omitempty"`
-	// DefaultLeadAgent is the default lead agent ID for workflow runs.
-	DefaultLeadAgent string `json:"default_lead_agent,omitempty"`
+	// DefaultLeadAgent is the Agent or pool that leads a job under this
+	// project when the job names none; its Agents must declare the lead role.
+	DefaultLeadAgent agents.AgentRef `json:"default_lead_agent,omitzero"`
 	// GitRepoURL is the remote git repository URL.
 	GitRepoURL string `json:"git_repo_url,omitempty"`
 	// GitDefaultBranch is the default git branch.
 	GitDefaultBranch string `json:"git_default_branch,omitempty"`
-	// TokenBudget is the maximum LLM token budget (0 = unlimited).
-	TokenBudget int64 `json:"token_budget,omitempty"`
+	// Spend is the project's spend limits: sliding windows in tokens and/or
+	// list-price dollars over every turn charged to it. The zero value meters
+	// nothing. The limits are stored; usage reporting against them and
+	// admission enforcement are not wired yet.
+	Spend spend.Limits `json:"spend,omitzero"`
 	// GPUMinutes is the maximum GPU compute budget in minutes (0 = unlimited).
 	GPUMinutes int64 `json:"gpu_minutes,omitempty"`
 	// MaxConcurrency is the maximum concurrent workflow runs (0 = unlimited).
@@ -237,6 +312,18 @@ type CreateProjectRequest struct {
 	GitSSHKeyName  string `json:"git_ssh_key_name,omitempty"`
 	GitSSHKeyScope string `json:"git_ssh_key_scope,omitempty"`
 	GitSSHKeyOwner string `json:"git_ssh_key_owner,omitempty"`
+
+	// WorkspaceTier / WorkspaceTmpfsMB / ContainerMemoryMB configure the
+	// storage tier of the sandboxed checkout. Every one is inert at its zero
+	// value; an unrecognized tier is refused by the server.
+	WorkspaceTier     WorkspaceTier `json:"workspace_tier,omitempty"`
+	WorkspaceTmpfsMB  int           `json:"workspace_tmpfs_mb,omitempty"`
+	ContainerMemoryMB int           `json:"container_memory_mb,omitempty"`
+
+	// SessionRotation is what a persistent worker session does when the
+	// pooled provider account under it rotates. Empty is "resume"; an
+	// unrecognized policy is refused by the server.
+	SessionRotation SessionRotationPolicy `json:"session_rotation,omitempty"`
 }
 
 // UpdateProjectRequest is a request to update an existing project.
@@ -253,30 +340,32 @@ type UpdateProjectRequest struct {
 	Description string `json:"description,omitempty"`
 	// ClearDescription removes the description when true.
 	ClearDescription bool `json:"clear_description,omitempty"`
-	// WorkspaceAgentID updates the workspace agent.
-	WorkspaceAgentID string `json:"workspace_agent_id,omitempty"`
+	// WorkspaceFleetNodeID updates the workspace agent.
+	WorkspaceFleetNodeID string `json:"workspace_agent_id,omitempty"`
 	// WorkspacePath updates the workspace filesystem path.
 	WorkspacePath string `json:"workspace_path,omitempty"`
 	// HostAffinity updates the preferred host.
 	HostAffinity string `json:"host_affinity,omitempty"`
-	// DefaultLeadAgent updates the default lead agent.
-	DefaultLeadAgent string `json:"default_lead_agent,omitempty"`
+	// DefaultLeadAgent updates the default lead Agent or pool; the zero
+	// reference leaves it unchanged.
+	DefaultLeadAgent agents.AgentRef `json:"default_lead_agent,omitzero"`
 	// GitRepoURL updates the remote git repository URL.
 	GitRepoURL string `json:"git_repo_url,omitempty"`
 	// GitDefaultBranch updates the default git branch.
 	GitDefaultBranch string `json:"git_default_branch,omitempty"`
 	// GitCurrentSHA records the latest commit SHA observed by an agent.
 	GitCurrentSHA string `json:"git_current_sha,omitempty"`
-	// AgentRoles replaces the agent role map when non-nil.
-	AgentRoles map[string]ProjectRole `json:"agent_roles,omitempty"`
+	// FleetNodeRoles replaces the agent role map when non-nil.
+	FleetNodeRoles map[string]ProjectRole `json:"agent_roles,omitempty"`
 	// The quotas are POINTERS so zero is expressible. Zero means UNLIMITED
 	// on the project record, so nil ("leave it alone") and zero ("lift the
 	// cap") are different instructions. As plain ints they could only say
 	// the first: an operator lifting a cap watched the save succeed and
 	// stayed capped, while the UI and the docs both called zero unlimited.
 	//
-	// TokenBudget updates the LLM token budget; zero means unlimited.
-	TokenBudget *int64 `json:"token_budget,omitempty"`
+	// Spend replaces the project's spend limits when non-nil; a non-nil
+	// empty value clears them. Nil leaves them unchanged.
+	Spend *spend.Limits `json:"spend,omitempty"`
 	// GPUMinutes updates the GPU compute budget; zero means unlimited.
 	GPUMinutes *int64 `json:"gpu_minutes,omitempty"`
 	// MaxConcurrency updates the concurrent-run cap; zero means unlimited.
@@ -292,6 +381,11 @@ type UpdateProjectRequest struct {
 	// Autonomous updates the autonomous-development switch when non-nil, so
 	// "unchanged" and "off" stay distinct.
 	Autonomous *bool `json:"autonomous,omitempty"`
+
+	// Parked parks (true) or resumes (false) the project when non-nil.
+	// Parking closes the intake and lets work in flight finish; resuming
+	// reopens it. Neither touches Autonomous.
+	Parked *bool `json:"parked,omitempty"`
 
 	// ContextRepos replaces the whole list when non-nil; ClearContextRepos
 	// empties it.
@@ -317,6 +411,28 @@ type UpdateProjectRequest struct {
 	GitSSHKeyName  string `json:"git_ssh_key_name,omitempty"`
 	GitSSHKeyScope string `json:"git_ssh_key_scope,omitempty"`
 	GitSSHKeyOwner string `json:"git_ssh_key_owner,omitempty"`
+
+	// GitSigningRetireKeyName / Scope / Owner name a KMS-held key the
+	// project signed with before its current one; the server records its
+	// public half in the project's trusted signing history, retired at
+	// GitSigningRetiredAt (RFC 3339; empty is now). Commits it signed before
+	// then keep verifying after the rotation.
+	GitSigningRetireKeyName  string `json:"git_signing_retire_key_name,omitempty"`
+	GitSigningRetireKeyScope string `json:"git_signing_retire_key_scope,omitempty"`
+	GitSigningRetireKeyOwner string `json:"git_signing_retire_key_owner,omitempty"`
+	GitSigningRetiredAt      string `json:"git_signing_retired_at,omitempty"`
+
+	// WorkspaceTier updates the storage tier when non-empty.
+	//
+	// The sizes are POINTERS for the reason the quotas are: zero means an
+	// unsized tmpfs / the runtime's default memory limit, so nil ("leave it
+	// alone") and zero ("lift the limit") are different instructions.
+	WorkspaceTier     WorkspaceTier `json:"workspace_tier,omitempty"`
+	WorkspaceTmpfsMB  *int          `json:"workspace_tmpfs_mb,omitempty"`
+	ContainerMemoryMB *int          `json:"container_memory_mb,omitempty"`
+
+	// SessionRotation updates the session rotation policy when non-empty.
+	SessionRotation SessionRotationPolicy `json:"session_rotation,omitempty"`
 }
 
 // ListProjectsResponse is the response from listing projects.
@@ -328,41 +444,41 @@ type ListProjectsResponse struct {
 	page.Envelope
 }
 
-// GrantAgentRoleRequest sets a role for an agent in a project.
-type GrantAgentRoleRequest struct {
+// GrantFleetNodeRoleRequest sets a role for an agent in a project.
+type GrantFleetNodeRoleRequest struct {
 	// TenantID is the owning tenant. Required.
 	TenantID string `json:"tenant_id"`
 	// ProjectID is the target project UUID. Required.
 	ProjectID string `json:"project_id"`
 	// AgentID is the agent to grant the role to. Required.
-	AgentID string `json:"agent_id"`
+	FleetNodeID string `json:"node_id"`
 	// Role is the role to assign. Required. One of: lead, worker, observer, denied.
 	Role ProjectRole `json:"role"`
 }
 
-// GrantAgentRoleResponse confirms the role assignment.
-type GrantAgentRoleResponse struct {
-	ProjectID string      `json:"project_id"`
-	AgentID   string      `json:"agent_id"`
-	Role      ProjectRole `json:"role"`
-	Timestamp time.Time   `json:"timestamp"`
+// GrantFleetNodeRoleResponse confirms the role assignment.
+type GrantFleetNodeRoleResponse struct {
+	ProjectID   string      `json:"project_id"`
+	FleetNodeID string      `json:"node_id"`
+	Role        ProjectRole `json:"role"`
+	Timestamp   time.Time   `json:"timestamp"`
 }
 
-// RevokeAgentRoleRequest removes an agent's access to a project.
-type RevokeAgentRoleRequest struct {
+// RevokeFleetNodeRoleRequest removes an agent's access to a project.
+type RevokeFleetNodeRoleRequest struct {
 	// TenantID is the owning tenant. Required.
 	TenantID string `json:"tenant_id"`
 	// ProjectID is the target project UUID. Required.
 	ProjectID string `json:"project_id"`
 	// AgentID is the agent to revoke. Required.
-	AgentID string `json:"agent_id"`
+	FleetNodeID string `json:"node_id"`
 }
 
-// RevokeAgentRoleResponse confirms the revocation.
-type RevokeAgentRoleResponse struct {
-	ProjectID string    `json:"project_id"`
-	AgentID   string    `json:"agent_id"`
-	Timestamp time.Time `json:"timestamp"`
+// RevokeFleetNodeRoleResponse confirms the revocation.
+type RevokeFleetNodeRoleResponse struct {
+	ProjectID   string    `json:"project_id"`
+	FleetNodeID string    `json:"node_id"`
+	Timestamp   time.Time `json:"timestamp"`
 }
 
 // GetProjectRequest identifies a project by ID for transport dispatch.
@@ -551,18 +667,19 @@ func (c *client) Delete(ctx context.Context, tenantID, projectID string) error {
 	return nil
 }
 
-// List returns all projects for a given tenant.
-func (c *client) List(ctx context.Context, tenantID string) (*ListProjectsResponse, error) {
+// List returns one page of a tenant's projects.
+func (c *client) List(ctx context.Context, req *ListProjectsRequest) (*ListProjectsResponse, error) {
 	if ctx == nil {
 		return nil, errors.NewInvalidInput("project.List", "context is required")
 	}
-	if tenantID == "" {
+	if req == nil {
+		return nil, errors.NewInvalidInput("project.List", "request is required")
+	}
+	if req.TenantID == "" {
 		return nil, errors.NewInvalidInput("project.List", "tenant ID is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "List", &ListProjectsRequest{
-		TenantID: tenantID,
-	})
+	resp, err := c.transport.Request(ctx, serviceName, "List", req)
 	if err != nil {
 		return nil, err
 	}
@@ -577,71 +694,71 @@ func (c *client) List(ctx context.Context, tenantID string) (*ListProjectsRespon
 	return listResp, nil
 }
 
-// GrantAgentRole sets or updates the role for agentID in projectID.
-func (c *client) GrantAgentRole(ctx context.Context, req *GrantAgentRoleRequest) (*GrantAgentRoleResponse, error) {
+// GrantFleetNodeRole sets or updates the role for agentID in projectID.
+func (c *client) GrantFleetNodeRole(ctx context.Context, req *GrantFleetNodeRoleRequest) (*GrantFleetNodeRoleResponse, error) {
 	if ctx == nil {
-		return nil, errors.NewInvalidInput("project.GrantAgentRole", "context is required")
+		return nil, errors.NewInvalidInput("project.GrantFleetNodeRole", "context is required")
 	}
 	if req == nil {
-		return nil, errors.NewInvalidInput("project.GrantAgentRole", "request is required")
+		return nil, errors.NewInvalidInput("project.GrantFleetNodeRole", "request is required")
 	}
 	if req.TenantID == "" {
-		return nil, errors.NewInvalidInput("project.GrantAgentRole", "tenant ID is required")
+		return nil, errors.NewInvalidInput("project.GrantFleetNodeRole", "tenant ID is required")
 	}
 	if req.ProjectID == "" {
-		return nil, errors.NewInvalidInput("project.GrantAgentRole", "project ID is required")
+		return nil, errors.NewInvalidInput("project.GrantFleetNodeRole", "project ID is required")
 	}
-	if req.AgentID == "" {
-		return nil, errors.NewInvalidInput("project.GrantAgentRole", "agent ID is required")
+	if req.FleetNodeID == "" {
+		return nil, errors.NewInvalidInput("project.GrantFleetNodeRole", "agent ID is required")
 	}
 	if req.Role == "" {
-		return nil, errors.NewInvalidInput("project.GrantAgentRole", "role is required")
+		return nil, errors.NewInvalidInput("project.GrantFleetNodeRole", "role is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "GrantAgentRole", req)
+	resp, err := c.transport.Request(ctx, serviceName, "GrantFleetNodeRole", req)
 	if err != nil {
 		return nil, err
 	}
 	if resp == nil {
-		return nil, errors.NewInternal("project.GrantAgentRole", "nil response from server")
+		return nil, errors.NewInternal("project.GrantFleetNodeRole", "nil response from server")
 	}
 
-	result, ok := resp.(*GrantAgentRoleResponse)
+	result, ok := resp.(*GrantFleetNodeRoleResponse)
 	if !ok {
-		return nil, errors.NewInternal("project.GrantAgentRole", "invalid response type")
+		return nil, errors.NewInternal("project.GrantFleetNodeRole", "invalid response type")
 	}
 	return result, nil
 }
 
-// RevokeAgentRole sets the agent's role to ProjectRoleDenied.
-func (c *client) RevokeAgentRole(ctx context.Context, req *RevokeAgentRoleRequest) (*RevokeAgentRoleResponse, error) {
+// RevokeFleetNodeRole sets the agent's role to ProjectRoleDenied.
+func (c *client) RevokeFleetNodeRole(ctx context.Context, req *RevokeFleetNodeRoleRequest) (*RevokeFleetNodeRoleResponse, error) {
 	if ctx == nil {
-		return nil, errors.NewInvalidInput("project.RevokeAgentRole", "context is required")
+		return nil, errors.NewInvalidInput("project.RevokeFleetNodeRole", "context is required")
 	}
 	if req == nil {
-		return nil, errors.NewInvalidInput("project.RevokeAgentRole", "request is required")
+		return nil, errors.NewInvalidInput("project.RevokeFleetNodeRole", "request is required")
 	}
 	if req.TenantID == "" {
-		return nil, errors.NewInvalidInput("project.RevokeAgentRole", "tenant ID is required")
+		return nil, errors.NewInvalidInput("project.RevokeFleetNodeRole", "tenant ID is required")
 	}
 	if req.ProjectID == "" {
-		return nil, errors.NewInvalidInput("project.RevokeAgentRole", "project ID is required")
+		return nil, errors.NewInvalidInput("project.RevokeFleetNodeRole", "project ID is required")
 	}
-	if req.AgentID == "" {
-		return nil, errors.NewInvalidInput("project.RevokeAgentRole", "agent ID is required")
+	if req.FleetNodeID == "" {
+		return nil, errors.NewInvalidInput("project.RevokeFleetNodeRole", "agent ID is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "RevokeAgentRole", req)
+	resp, err := c.transport.Request(ctx, serviceName, "RevokeFleetNodeRole", req)
 	if err != nil {
 		return nil, err
 	}
 	if resp == nil {
-		return nil, errors.NewInternal("project.RevokeAgentRole", "nil response from server")
+		return nil, errors.NewInternal("project.RevokeFleetNodeRole", "nil response from server")
 	}
 
-	result, ok := resp.(*RevokeAgentRoleResponse)
+	result, ok := resp.(*RevokeFleetNodeRoleResponse)
 	if !ok {
-		return nil, errors.NewInternal("project.RevokeAgentRole", "invalid response type")
+		return nil, errors.NewInternal("project.RevokeFleetNodeRole", "invalid response type")
 	}
 	return result, nil
 }

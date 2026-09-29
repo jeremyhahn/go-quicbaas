@@ -56,7 +56,6 @@ func (r *ToolRegistry) registerIAMTools() {
 	// Register all IAM subsystem tools
 	r.registerTenantTools()
 	r.registerUserTools()
-	r.registerGroupTools()
 	r.registerRoleTools()
 	r.registerPolicyTools()
 	r.registerAppTools()
@@ -235,13 +234,6 @@ func (r *ToolRegistry) registerUserTools() {
 						"type": "string",
 					},
 				},
-				"groups": map[string]interface{}{
-					"type":        "array",
-					"description": "List of group IDs",
-					"items": map[string]interface{}{
-						"type": "string",
-					},
-				},
 				"attributes": map[string]interface{}{
 					"type":                 "object",
 					"description":          "Custom user attributes. Values must be strings.",
@@ -308,10 +300,6 @@ func (r *ToolRegistry) registerUserTools() {
 					"description": "Updated display name",
 				},
 				"roles": map[string]interface{}{
-					"type":  "array",
-					"items": map[string]interface{}{"type": "string"},
-				},
-				"groups": map[string]interface{}{
 					"type":  "array",
 					"items": map[string]interface{}{"type": "string"},
 				},
@@ -423,202 +411,6 @@ func (r *ToolRegistry) registerUserTools() {
 				},
 			},
 			"required": []string{"tenant_id", "user_id", "role_id"},
-		},
-	})
-}
-
-// =============================================================================
-// Group Tools
-// =============================================================================
-
-func (r *ToolRegistry) registerGroupTools() {
-	r.addTool(ToolDefinition{
-		Name:        "quicbaas_iam_group_create",
-		Description: "Create a new group in a tenant",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"tenant_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Owning tenant ID",
-				},
-				"name": map[string]interface{}{
-					"type":        "string",
-					"description": "Group display name",
-				},
-				"description": map[string]interface{}{
-					"type":        "string",
-					"description": "Group purpose description",
-				},
-				"members": map[string]interface{}{
-					"type":        "array",
-					"description": "Initial member user IDs",
-					"items": map[string]interface{}{
-						"type": "string",
-					},
-				},
-			},
-			"required": []string{"tenant_id", "name"},
-		},
-	})
-
-	r.addTool(ToolDefinition{
-		Name:        "quicbaas_iam_group_get",
-		Description: "Retrieve a group by ID",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"tenant_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Owning tenant ID",
-				},
-				"group_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Group identifier",
-				},
-			},
-			"required": []string{"tenant_id", "group_id"},
-		},
-	})
-
-	r.addTool(ToolDefinition{
-		Name:        "quicbaas_iam_group_update",
-		Description: "Update an existing group",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"tenant_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Owning tenant ID",
-				},
-				"group_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Group identifier",
-				},
-				"name": map[string]interface{}{
-					"type":        "string",
-					"description": "Updated group name",
-				},
-				"description": map[string]interface{}{
-					"type":        "string",
-					"description": "Updated description",
-				},
-				"members": map[string]interface{}{
-					"type":  "array",
-					"items": map[string]interface{}{"type": "string"},
-				},
-			},
-			"required": []string{"tenant_id", "group_id"},
-		},
-	})
-
-	r.addTool(ToolDefinition{
-		Name:        "quicbaas_iam_group_delete",
-		Description: "Delete a group from a tenant",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"tenant_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Owning tenant ID",
-				},
-				"group_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Group identifier",
-				},
-			},
-			"required": []string{"tenant_id", "group_id"},
-		},
-	})
-
-	r.addTool(ToolDefinition{
-		Name:        "quicbaas_iam_group_list",
-		Description: "List all groups in a tenant with pagination",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"tenant_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Owning tenant ID",
-				},
-				"limit": map[string]interface{}{
-					"type":    "integer",
-					"default": 100,
-				},
-				"offset": map[string]interface{}{
-					"type":    "integer",
-					"default": 0,
-				},
-				"filter": map[string]interface{}{
-					"type": "object",
-				},
-			},
-			"required": []string{"tenant_id"},
-		},
-	})
-
-	r.addTool(ToolDefinition{
-		Name:        "quicbaas_iam_group_add_member",
-		Description: "Add a user to a group",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"tenant_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Owning tenant ID",
-				},
-				"group_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Group identifier",
-				},
-				"user_id": map[string]interface{}{
-					"type":        "string",
-					"description": "User identifier",
-				},
-			},
-			"required": []string{"tenant_id", "group_id", "user_id"},
-		},
-	})
-
-	r.addTool(ToolDefinition{
-		Name:        "quicbaas_iam_group_remove_member",
-		Description: "Remove a user from a group",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"tenant_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Owning tenant ID",
-				},
-				"group_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Group identifier",
-				},
-				"user_id": map[string]interface{}{
-					"type":        "string",
-					"description": "User identifier",
-				},
-			},
-			"required": []string{"tenant_id", "group_id", "user_id"},
-		},
-	})
-
-	r.addTool(ToolDefinition{
-		Name:        "quicbaas_iam_group_list_members",
-		Description: "List all members of a group",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"tenant_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Owning tenant ID",
-				},
-				"group_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Group identifier",
-				},
-			},
-			"required": []string{"tenant_id", "group_id"},
 		},
 	})
 }
@@ -1548,15 +1340,6 @@ func (r *ToolRegistry) executeIAMUserCreate(ctx context.Context, args map[string
 		}
 	}
 
-	if groupsRaw, ok := args["groups"].([]interface{}); ok {
-		req.Groups = make([]string, len(groupsRaw))
-		for i, g := range groupsRaw {
-			if str, ok := g.(string); ok {
-				req.Groups[i] = str
-			}
-		}
-	}
-
 	// Attributes are string-valued in the store. A value that is not a string is
 	// REFUSED, not dropped: accepting the request and persisting less than it
 	// asked for is silent data loss at an API boundary, and these are
@@ -1623,15 +1406,6 @@ func (r *ToolRegistry) executeIAMUserUpdate(ctx context.Context, args map[string
 			}
 		}
 		req.Roles = &roles
-	}
-	if groupsRaw, ok := args["groups"].([]interface{}); ok {
-		groups := make([]string, len(groupsRaw))
-		for i, g := range groupsRaw {
-			if str, ok := g.(string); ok {
-				groups[i] = str
-			}
-		}
-		req.Groups = &groups
 	}
 	// The CONVERTED map is what travels on, not the raw one. Validating the
 	// argument and then forwarding the untyped original left the service layer
@@ -1748,203 +1522,6 @@ func (r *ToolRegistry) executeIAMUserRevokeRole(ctx context.Context, args map[st
 		return nil, err
 	}
 	return marshalResult(resp)
-}
-
-// =============================================================================
-// Execution Handlers - Groups
-// =============================================================================
-
-func (r *ToolRegistry) executeIAMGroupCreate(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	iamSvc, err := r.getIAMService()
-	if err != nil {
-		return nil, err
-	}
-
-	req := &service.CreateGroupRequest{
-		TenantID:    getString(args, "tenant_id"),
-		ID:          getString(args, "id"),
-		Name:        getString(args, "name"),
-		Description: getString(args, "description"),
-	}
-
-	if membersRaw, ok := args["members"].([]interface{}); ok {
-		req.Members = make([]string, len(membersRaw))
-		for i, m := range membersRaw {
-			if str, ok := m.(string); ok {
-				req.Members[i] = str
-			}
-		}
-	}
-
-	resp, err := iamSvc.CreateGroup(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	return marshalResult(resp)
-}
-
-func (r *ToolRegistry) executeIAMGroupGet(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	iamSvc, err := r.getIAMService()
-	if err != nil {
-		return nil, err
-	}
-
-	req := &service.GetGroupRequest{
-		TenantID: getString(args, "tenant_id"),
-		GroupID:  getString(args, "group_id"),
-	}
-
-	resp, err := iamSvc.GetGroup(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	return marshalResult(resp)
-}
-
-func (r *ToolRegistry) executeIAMGroupUpdate(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	iamSvc, err := r.getIAMService()
-	if err != nil {
-		return nil, err
-	}
-
-	req := &service.UpdateGroupRequest{
-		TenantID: getString(args, "tenant_id"),
-		GroupID:  getString(args, "group_id"),
-	}
-
-	if name := getString(args, "name"); name != "" {
-		req.Name = &name
-	}
-	if desc := getString(args, "description"); desc != "" {
-		req.Description = &desc
-	}
-	if membersRaw, ok := args["members"].([]interface{}); ok {
-		members := make([]string, len(membersRaw))
-		for i, m := range membersRaw {
-			if str, ok := m.(string); ok {
-				members[i] = str
-			}
-		}
-		req.Members = &members
-	}
-
-	resp, err := iamSvc.UpdateGroup(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	return marshalResult(resp)
-}
-
-func (r *ToolRegistry) executeIAMGroupDelete(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	iamSvc, err := r.getIAMService()
-	if err != nil {
-		return nil, err
-	}
-
-	req := &service.DeleteGroupRequest{
-		TenantID: getString(args, "tenant_id"),
-		GroupID:  getString(args, "group_id"),
-	}
-
-	resp, err := iamSvc.DeleteGroup(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	return marshalResult(resp)
-}
-
-func (r *ToolRegistry) executeIAMGroupList(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	iamSvc, err := r.getIAMService()
-	if err != nil {
-		return nil, err
-	}
-
-	limit := getUint64(args, "limit")
-	if limit == 0 {
-		limit = 100
-	}
-
-	req := &service.ListGroupsRequest{
-		TenantID: getString(args, "tenant_id"),
-		Limit:    int(limit), //nolint:gosec // G115: limit is bounded by schema default
-		Offset:   int(getUint64(args, "offset")),
-	}
-
-	if filterRaw, ok := args["filter"].(map[string]interface{}); ok {
-		req.Filter = filterRaw
-	}
-
-	resp, err := iamSvc.ListGroups(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	return marshalResult(resp)
-}
-
-func (r *ToolRegistry) executeIAMGroupAddMember(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	iamSvc, err := r.getIAMService()
-	if err != nil {
-		return nil, err
-	}
-
-	req := &service.AddUserToGroupRequest{
-		TenantID: getString(args, "tenant_id"),
-		GroupID:  getString(args, "group_id"),
-		UserID:   getString(args, "user_id"),
-	}
-
-	resp, err := iamSvc.AddUserToGroup(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	return marshalResult(resp)
-}
-
-func (r *ToolRegistry) executeIAMGroupRemoveMember(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	iamSvc, err := r.getIAMService()
-	if err != nil {
-		return nil, err
-	}
-
-	req := &service.RemoveUserFromGroupRequest{
-		TenantID: getString(args, "tenant_id"),
-		GroupID:  getString(args, "group_id"),
-		UserID:   getString(args, "user_id"),
-	}
-
-	resp, err := iamSvc.RemoveUserFromGroup(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	return marshalResult(resp)
-}
-
-func (r *ToolRegistry) executeIAMGroupListMembers(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	// Get the group which contains the member list
-	resp, err := r.executeIAMGroupGet(ctx, args)
-	if err != nil {
-		return nil, err
-	}
-
-	// The GetGroupResponse wraps the group in a "group" field.
-	// Extract members from the nested group object.
-	if respMap, ok := resp.(map[string]interface{}); ok {
-		// Try nested group first (GetGroupResponse wraps as {group: {...}})
-		groupMap, _ := respMap["group"].(map[string]interface{})
-		if groupMap == nil {
-			// Fallback to top-level if group is not wrapped
-			groupMap = respMap
-		}
-		members, _ := groupMap["members"].([]interface{})
-		if members == nil {
-			members = []interface{}{}
-		}
-		return marshalResult(map[string]interface{}{
-			"members": members,
-			"total":   len(members),
-		})
-	}
-	return resp, nil
 }
 
 // =============================================================================

@@ -15,6 +15,8 @@ package grpc
 
 import (
 	"context"
+	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,6 +51,43 @@ var accountMethodMap = map[string]accountHandlerFunc{
 	"SetDefault":       handleAccountSetDefault,
 	"Usage":            handleAccountUsage,
 	"Materialize":      handleAccountMaterialize,
+	"ReserveSession":   handleAccountReserveSession,
+	"ReleaseSession":   handleAccountReleaseSession,
+}
+
+// handleAccountReserveSession claims one session slot on an account.
+func handleAccountReserveSession(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	const op = "grpc.account.ReserveSession"
+	sdkReq, ok := req.(*account.ReserveSessionRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput(op, "invalid request type")
+	}
+	pbReq := &pb.ReserveAccountSessionRequest{TenantId: sdkReq.TenantID, AccountId: sdkReq.AccountID}
+	if sdkReq.ExpectedLive != nil {
+		expected := int32(*sdkReq.ExpectedLive)
+		pbReq.ExpectedLive = &expected
+	}
+	resp, err := pb.NewAccountServiceClient(conn).ReserveAccountSession(ctx, pbReq)
+	if err != nil {
+		return nil, convertGRPCError(err, op)
+	}
+	return &account.SessionReservation{ReservationID: resp.ReservationId}, nil
+}
+
+// handleAccountReleaseSession gives one reservation back.
+func handleAccountReleaseSession(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	const op = "grpc.account.ReleaseSession"
+	sdkReq, ok := req.(*account.ReleaseSessionRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput(op, "invalid request type")
+	}
+	resp, err := pb.NewAccountServiceClient(conn).ReleaseAccountSession(ctx, &pb.ReleaseAccountSessionRequest{
+		TenantId: sdkReq.TenantID, AccountId: sdkReq.AccountID, ReservationId: sdkReq.ReservationID,
+	})
+	if err != nil {
+		return nil, convertGRPCError(err, op)
+	}
+	return &account.SessionReservation{ReservationID: resp.ReservationId}, nil
 }
 
 // accountHandler adapts the SDK account surface to the generated
@@ -81,6 +120,10 @@ func handleAccountCreate(ctx context.Context, conn *grpc.ClientConn, req interfa
 	if !ok {
 		return nil, errors.NewInvalidInput(op, "invalid request type")
 	}
+	sessionCap, err := sessionCapToProto(op, sdkReq.MaxConcurrentSessions)
+	if err != nil {
+		return nil, err
+	}
 	resp, err := pb.NewAccountServiceClient(conn).CreateAccount(ctx, &pb.CreateAccountRequest{
 		TenantId:      sdkReq.TenantID,
 		ProjectId:     sdkReq.ProjectID,
@@ -88,10 +131,13 @@ func handleAccountCreate(ctx context.Context, conn *grpc.ClientConn, req interfa
 		DisplayName:   sdkReq.DisplayName,
 		IsDefault:     sdkReq.Default,
 		RefreshPolicy: string(sdkReq.RefreshPolicy),
+		Billing:       accountBillingToProto(sdkReq.Billing),
+		Spend:         accountSpendPolicyToProto(sdkReq.Spend),
 		Credential:    accountCredentialToProto(sdkReq.Credential),
 
-		CredentialSecretRef:  sdkReq.CredentialSecretRef,
-		CredentialSecretFile: sdkReq.CredentialSecretFile,
+		CredentialSecretRef:   sdkReq.CredentialSecretRef,
+		CredentialSecretFile:  sdkReq.CredentialSecretFile,
+		MaxConcurrentSessions: sessionCap,
 	})
 	if err != nil {
 		return nil, convertGRPCError(err, op)
@@ -121,17 +167,22 @@ func handleAccountList(ctx context.Context, conn *grpc.ClientConn, req interface
 	if !ok {
 		return nil, errors.NewInvalidInput(op, "invalid request type")
 	}
+	paging := pageFieldsFromParams(sdkReq.Params)
 	resp, err := pb.NewAccountServiceClient(conn).ListAccounts(ctx, &pb.ListAccountsRequest{
 		TenantId:  sdkReq.TenantID,
 		Provider:  string(sdkReq.Provider),
 		ProjectId: sdkReq.ProjectID,
+		Limit:     paging.limit,
+		Offset:    paging.offset,
+		Sort:      paging.sort,
+		Q:         paging.q,
 	})
 	if err != nil {
 		return nil, convertGRPCError(err, op)
 	}
 	out := &account.ListAccountsResponse{
 		Accounts: make([]*account.AccountInfo, 0, len(resp.Accounts)),
-		Total:    int(resp.Total),
+		Envelope: pageEnvelopeFromProto(resp.GetTotal(), resp.GetLimit(), resp.GetOffset(), resp.GetNextOffset()),
 	}
 	for _, a := range resp.Accounts {
 		out.Accounts = append(out.Accounts, accountFromProto(a))
@@ -145,6 +196,14 @@ func handleAccountUpdate(ctx context.Context, conn *grpc.ClientConn, req interfa
 	if !ok {
 		return nil, errors.NewInvalidInput(op, "invalid request type")
 	}
+	var sessionCap *int32
+	if sdkReq.MaxConcurrentSessions != nil {
+		checked, capErr := sessionCapToProto(op, *sdkReq.MaxConcurrentSessions)
+		if capErr != nil {
+			return nil, capErr
+		}
+		sessionCap = &checked
+	}
 	resp, err := pb.NewAccountServiceClient(conn).UpdateAccount(ctx, &pb.UpdateAccountRequest{
 		TenantId:       sdkReq.TenantID,
 		AccountId:      sdkReq.AccountID,
@@ -152,9 +211,12 @@ func handleAccountUpdate(ctx context.Context, conn *grpc.ClientConn, req interfa
 		ProjectId:      sdkReq.ProjectID,
 		ClearProjectId: sdkReq.ClearProjectID,
 		RefreshPolicy:  string(sdkReq.RefreshPolicy),
+		Billing:        accountBillingToProto(sdkReq.Billing),
+		Spend:          accountSpendPolicyToProto(sdkReq.Spend),
 
-		CredentialSecretRef:  sdkReq.CredentialSecretRef,
-		CredentialSecretFile: sdkReq.CredentialSecretFile,
+		CredentialSecretRef:   sdkReq.CredentialSecretRef,
+		CredentialSecretFile:  sdkReq.CredentialSecretFile,
+		MaxConcurrentSessions: sessionCap,
 	})
 	if err != nil {
 		return nil, convertGRPCError(err, op)
@@ -245,12 +307,51 @@ func handleAccountUsage(ctx context.Context, conn *grpc.ClientConn, req interfac
 		return nil, errors.NewInternal(op, "server returned no usage report")
 	}
 	return &account.UsageReport{
-		TotalTokens: resp.Usage.TotalTokens,
-		BudgetLimit: resp.Usage.BudgetLimit,
-		PercentUsed: resp.Usage.PercentUsed,
-		ByAgent:     resp.Usage.ByAgent,
-		LastUpdated: resp.Usage.LastUpdatedUnix,
+		TotalTokens:  resp.Usage.TotalTokens,
+		BudgetLimit:  resp.Usage.BudgetLimit,
+		PercentUsed:  resp.Usage.PercentUsed,
+		ByAgent:      resp.Usage.ByAgent,
+		LastUpdated:  resp.Usage.LastUpdatedUnix,
+		LiveSessions: int(resp.LiveSessions),
+		Spend:        spendHeadroomFromProto(resp.GetSpend()),
 	}, nil
+}
+
+// spendHeadroomFromProto converts the spend-gate verdict, leaving an absent
+// one — a server that wires no gate — nil.
+func spendHeadroomFromProto(h *pb.SpendHeadroom) *account.SpendHeadroom {
+	if h == nil {
+		return nil
+	}
+	out := &account.SpendHeadroom{
+		Admits:   h.GetAdmits(),
+		Refusal:  h.GetRefusal(),
+		Window:   h.GetWindow(),
+		Axis:     h.GetAxis(),
+		Used:     h.GetUsed(),
+		Limit:    h.GetLimit(),
+		Failures: int(h.GetFailures()),
+	}
+	if at := h.GetFreesAt(); at != nil {
+		freesAt := at.AsTime()
+		out.FreesAt = &freesAt
+	}
+	return out
+}
+
+// sessionCapToProto narrows a session cap to the wire's int32, refusing one
+// it cannot carry.
+//
+// AN UNCHECKED NARROWING IS A SILENT UNCAP. On a 64-bit client 4294967296
+// narrows to 0, which the server stores as unmetered, and a negative value can
+// wrap past the server's own check. So the range is enforced here, before the
+// value is converted.
+func sessionCapToProto(op string, v int) (int32, error) {
+	if v < 0 || v > math.MaxInt32 {
+		return 0, errors.NewInvalidInput(op, "max_concurrent_sessions must be between 0 (unmetered) and "+
+			strconv.Itoa(math.MaxInt32)+", got "+strconv.Itoa(v))
+	}
+	return int32(v), nil
 }
 
 // =============================================================================
@@ -280,31 +381,51 @@ func accountCredentialToProto(c *account.Credential) *pb.AccountCredential {
 	return out
 }
 
+// accountBillingToProto converts an SDK billing; nil stays absent, which on an
+// update leaves the account's billing unchanged.
+func accountBillingToProto(b *account.Billing) *pb.AccountBilling {
+	if b == nil {
+		return nil
+	}
+	return &pb.AccountBilling{Mode: string(b.Mode), MonthlyFeeMicros: b.MonthlyFeeMicros}
+}
+
+// accountBillingFromProto converts a record's billing; absent is nil.
+func accountBillingFromProto(b *pb.AccountBilling) *account.Billing {
+	if b == nil {
+		return nil
+	}
+	return &account.Billing{Mode: account.BillingMode(b.GetMode()), MonthlyFeeMicros: b.GetMonthlyFeeMicros()}
+}
+
 // accountFromProto converts the proto metadata record to the SDK type.
 func accountFromProto(a *pb.Account) *account.AccountInfo {
 	if a == nil {
 		return nil
 	}
 	return &account.AccountInfo{
-		ID:                   a.Id,
-		TenantID:             a.TenantId,
-		ProjectID:            a.ProjectId,
-		Provider:             account.Provider(a.Provider),
-		DisplayName:          a.DisplayName,
-		Default:              a.IsDefault,
-		Status:               account.Status(a.Status),
-		RefreshPolicy:        account.RefreshPolicy(a.RefreshPolicy),
-		CredentialSecretRef:  a.CredentialSecretRef,
-		CredentialSecretFile: a.CredentialSecretFile,
-		AvailableAt:          timeFromUnix(a.AvailableAtUnix),
-		CredentialExpiresAt:  timeFromUnix(a.CredentialExpiresAtUnix),
-		LastValidatedAt:      timeFromUnix(a.LastValidatedAtUnix),
-		CredentialHealth:     account.CredentialHealth(a.CredentialHealth),
-		CreatedAt:            timeFromUnix(a.CreatedAtUnix),
-		UpdatedAt:            timeFromUnix(a.UpdatedAtUnix),
-		LastUsedAt:           timeFromUnix(a.LastUsedAtUnix),
-		LastRefreshedAt:      timeFromUnix(a.LastRefreshedAtUnix),
-		LastError:            a.LastError,
+		ID:                    a.Id,
+		TenantID:              a.TenantId,
+		ProjectID:             a.ProjectId,
+		Provider:              account.Provider(a.Provider),
+		DisplayName:           a.DisplayName,
+		Default:               a.IsDefault,
+		Status:                account.Status(a.Status),
+		RefreshPolicy:         account.RefreshPolicy(a.RefreshPolicy),
+		CredentialSecretRef:   a.CredentialSecretRef,
+		CredentialSecretFile:  a.CredentialSecretFile,
+		AvailableAt:           timeFromUnix(a.AvailableAtUnix),
+		CredentialExpiresAt:   timeFromUnix(a.CredentialExpiresAtUnix),
+		LastValidatedAt:       timeFromUnix(a.LastValidatedAtUnix),
+		CredentialHealth:      account.CredentialHealth(a.CredentialHealth),
+		CreatedAt:             timeFromUnix(a.CreatedAtUnix),
+		UpdatedAt:             timeFromUnix(a.UpdatedAtUnix),
+		LastUsedAt:            timeFromUnix(a.LastUsedAtUnix),
+		LastRefreshedAt:       timeFromUnix(a.LastRefreshedAtUnix),
+		LastError:             a.LastError,
+		MaxConcurrentSessions: int(a.MaxConcurrentSessions),
+		Billing:               accountBillingFromProto(a.GetBilling()),
+		Spend:                 accountSpendPolicyFromProto(a.GetSpend()),
 	}
 }
 
@@ -365,6 +486,7 @@ func releasedCredentialFromProto(c *pb.MaterializedAccountCredential) *account.R
 		ExpiresAt:         timeFromUnix(c.ExpiresAtUnix),
 		Scopes:            c.Scopes,
 		AccessTokenEnvKey: c.AccessTokenEnvKey,
+		Generation:        c.Generation,
 	}
 	if len(c.Env) > 0 {
 		out.Env = make(map[string]string, len(c.Env))

@@ -32,6 +32,7 @@ import (
 
 	"github.com/jeremyhahn/go-codec"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
 
@@ -433,7 +434,7 @@ func TestIntegration_SnapshotRestoreCycle(t *testing.T) {
 		}
 
 		// Create snapshot
-		snapshot, err := sourceStorage.Snapshot()
+		snapshot, err := sourceStorage.CreateSnapshotMap()
 		require.NoError(t, err)
 		assert.Len(t, snapshot, len(testData))
 
@@ -477,9 +478,9 @@ func TestIntegration_SnapshotRestoreCycle(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		snapshot, err := sourceStorage.Snapshot()
+		snapshot, err := sourceStorage.CreateSnapshotMap()
 		require.NoError(t, err)
-		sourceStorage.Close()
+		require.NoError(t, sourceStorage.Close())
 
 		// Create destination with existing data
 		destDir := t.TempDir()
@@ -527,7 +528,7 @@ func TestIntegration_SnapshotRestoreCycle(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		snapshot, err := sourceStorage.Snapshot()
+		snapshot, err := sourceStorage.CreateSnapshotMap()
 		require.NoError(t, err)
 		assert.Len(t, snapshot, numKeys)
 		sourceStorage.Close()
@@ -757,12 +758,8 @@ func TestIntegration_StressTest(t *testing.T) {
 				for i := 0; i < operationsPerGoroutine; i++ {
 					key := fmt.Sprintf("shared-key-%03d", i%20)
 					_, err := storage.Get([]byte(key))
-					// NotFound is acceptable for keys not yet written
-					if err != nil {
-						var qbErr interface{ Error() string }
-						if ok := err.(interface{ Error() string }); ok != nil && strings.Contains(qbErr.Error(), "not found") {
-							continue
-						}
+					// NotFound is acceptable for keys not yet written.
+					if err != nil && !errors.IsNotFound(err) {
 						readErrors.Add(1)
 					}
 				}
@@ -771,7 +768,7 @@ func TestIntegration_StressTest(t *testing.T) {
 
 		wg.Wait()
 		assert.Equal(t, int64(0), writeErrors.Load(), "Concurrent writes should not fail")
-		// Read errors are acceptable for keys not yet written
+		assert.Equal(t, int64(0), readErrors.Load(), "Concurrent reads should fail only with not-found")
 	})
 
 	t.Run("ConcurrentScans", func(t *testing.T) {

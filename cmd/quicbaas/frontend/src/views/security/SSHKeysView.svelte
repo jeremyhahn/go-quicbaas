@@ -242,7 +242,7 @@
   {/if}
 
   <!-- Scope tab bar -->
-  <div role="tablist" class="tabs tabs-bordered">
+  <div role="tablist" class="tabs tabs-border">
     {#each scopeTabs as tab (tab.id)}
       <button
         role="tab"

@@ -169,13 +169,90 @@ func testBinding() *ProjectBinding {
 			TriggerLabel: "task:ready", WebhookSecretRef: "wh", TokenSecretRef: "tok",
 		},
 		Strategy:     GitHubFlowName,
-		Worker:       WorkerConfig{Backend: "claude", Model: "claude-opus-5"},
+		Worker:       orchestration.AgentRefTo(testCoderAgent),
 		Verification: []string{"make build", "make test"},
 		Review: ReviewPolicy{RequiredApprovals: 1, RequireIndependentReviewer: true, RequireGreenChecks: true,
 			Reviewers: map[string]string{"codex": ModelFamilyOpenAI, "claude-bot": ModelFamilyAnthropic}},
 		MaxReviewRounds: 3,
 	}
 }
+
+// The Agents every fixture binding references.
+const (
+	// testCoderAgent writes code: claude, the Anthropic family.
+	testCoderAgent = "claude-coder"
+
+	// testReviewerAgent reviews: codex, the OpenAI family.
+	testReviewerAgent = "codex-reviewer"
+
+	// testQwenAgent is the advisory alternate: a local qwen model.
+	testQwenAgent = "qwen-reviewer"
+
+	// testTriageAgent triages on the NPU.
+	testTriageAgent = "npu-triage"
+
+	// testClaudeReviewerAgent is a Claude reviewer, which the fleet refuses.
+	testClaudeReviewerAgent = "claude-reviewer"
+
+	// testMysteryAgent writes code on a backend whose family nobody knows.
+	testMysteryAgent = "mystery-coder"
+
+	// testCodexCoderAgent writes code on codex, the OpenAI family.
+	testCodexCoderAgent = "codex-coder"
+
+	// testQwenCoderAgent writes code on a local qwen model.
+	testQwenCoderAgent = "qwen-coder"
+
+	// testBackupReviewerAgent is a second codex reviewer, the failover seat.
+	testBackupReviewerAgent = "codex-reviewer-2"
+
+	// testOpencodeQwenAgent reviews with opencode on the local review model,
+	// the seat that is handed a model server endpoint.
+	testOpencodeQwenAgent = "qwen-opencode-reviewer"
+
+	// testOpencodeHostedAgent reviews with opencode on a hosted model, which
+	// reaches its provider through its own configuration.
+	testOpencodeHostedAgent = "gpt-opencode-reviewer"
+)
+
+// testAgents is the tenant agent catalog the fixtures resolve against.
+func testAgents() orchestration.AgentCatalogue {
+	agent := func(id, backend, model string, roles ...orchestration.AgentRole) orchestration.Agent {
+		return orchestration.Agent{ID: id, Name: id, Backend: backend, Model: model, Roles: roles}
+	}
+	agents := []orchestration.Agent{
+		agent(testCoderAgent, "claude", "claude-opus-5", orchestration.AgentRoleCoding, orchestration.AgentRoleTriage),
+		agent(testReviewerAgent, "codex", "gpt-5.5", orchestration.AgentRoleReview, orchestration.AgentRoleTriage),
+		agent(testQwenAgent, "ollama-agent", "qwen3.8:27b-q4_K_M", orchestration.AgentRoleReview),
+		agent(testTriageAgent, "openvino", "qwen3-8b", orchestration.AgentRoleTriage),
+		agent(testClaudeReviewerAgent, "claude", "claude-opus-5", orchestration.AgentRoleReview),
+		agent(testMysteryAgent, "a-backend-no-family-is-known-for", "mystery", orchestration.AgentRoleCoding),
+		agent(testCodexCoderAgent, "codex", "gpt-5.5", orchestration.AgentRoleCoding),
+		agent(testQwenCoderAgent, "qwen", "qwen3.8:27b-q4_K_M", orchestration.AgentRoleCoding),
+		agent(testBackupReviewerAgent, "codex", "gpt-5.5", orchestration.AgentRoleReview),
+		agent(testOpencodeQwenAgent, "opencode", "ollama/review-q8:latest", orchestration.AgentRoleReview),
+		agent(testOpencodeHostedAgent, "opencode", "openai/gpt-5.5", orchestration.AgentRoleReview),
+	}
+	catalogue := orchestration.AgentCatalogue{Agents: map[string]orchestration.Agent{}, Pools: map[string]orchestration.AgentPool{}}
+	for _, a := range agents {
+		catalogue.Agents[a.ID] = a
+	}
+	catalogue.Pools["coders"] = orchestration.AgentPool{ID: "coders", Name: "Coders", Agents: []string{testCoderAgent}}
+	return catalogue
+}
+
+// fixedAgents is an AgentCatalog answering one catalogue, or one error.
+type fixedAgents struct {
+	catalogue orchestration.AgentCatalogue
+	err       error
+}
+
+func (f fixedAgents) Catalogue(context.Context, string) (orchestration.AgentCatalogue, error) {
+	return f.catalogue, f.err
+}
+
+// testAgentCatalog is the fixtures' catalog.
+func testAgentCatalog() AgentCatalog { return fixedAgents{catalogue: testAgents()} }
 
 func testOrchProject() *orchestration.Project {
 	return &orchestration.Project{
@@ -273,7 +350,40 @@ type fakeForge struct {
 	reruns   []ForgeCheckRun
 	rerunErr error
 
-	getPRNil         bool
+	// branches are the branches CreateBranch cut, by name, holding the
+	// commit they were cut at; a pull request opened from one reports that
+	// commit as its head, as a real forge does.
+	branches        map[string]string
+	deletedBranches []string
+
+	// deleteBranchErr, when set, is what DeleteBranch answers instead of
+	// deleting.
+	deleteBranchErr error
+
+	// onlyKnownBranches makes GetBranch answer NotFound for a branch that is
+	// neither the default branch nor one the test or CreateBranch cut, which
+	// is how a forge answers for a branch that does not exist. Off, every
+	// branch reports the default tip, which is what the tests written before
+	// branches were modelled rely on.
+	onlyKnownBranches bool
+
+	// closedPRs are the pull requests ClosePullRequest closed, and
+	// closePRErr is what it answers instead.
+	closedPRs  []int
+	closePRErr error
+
+	// filed are the issues CreateIssue filed, in order, and createIssueErr
+	// is what it answers instead. collaborators is what ListCollaborators
+	// reports, and collaboratorsErr what it answers instead.
+	filed            []IssueSpec
+	createIssueErr   error
+	collaborators    []ForgeUser
+	collaboratorsErr error
+
+	getPRNil bool
+	// getPRErrs are answered by the next GetPullRequest calls, one each,
+	// before any read succeeds: a forge that fails a few reads and recovers.
+	getPRErrs        []error
 	listReviewsErr   error
 	submitErr        error
 	submitStoredHead string
@@ -291,6 +401,19 @@ type fakeForge struct {
 	// later read sees, which is what makes a moved head durable rather than
 	// one call's illusion.
 	onGetPullRequest func(*ForgePullRequest)
+
+	// onListCheckRuns runs under the forge's own lock each time a commit's
+	// runs are read, so a test can interrupt a run while it waits on CI.
+	onListCheckRuns func(sha string)
+
+	// onListReviews runs under the forge's own lock each time a pull
+	// request's reviews are listed, so a test can have a verdict arrive while
+	// something is waiting on it.
+	onListReviews func(number int)
+
+	// onCommentOnIssue runs under the forge's own lock after a comment is
+	// posted, so a test can interrupt a run between two of its comments.
+	onCommentOnIssue func(number int)
 
 	createPRErr     error
 	listOpenPRsErr  error
@@ -319,6 +442,27 @@ type fakeForge struct {
 	ensureWebhookSpec *WebhookSpec
 	ensureWebhookSeen int
 	deleteWebhookSeen int
+
+	// login is the account AuthenticatedUser reports; empty takes
+	// fakeForgeLogin. authErr is what it answers instead.
+	login   string
+	authErr error
+}
+
+// fakeForgeLogin is the account the fake forge's token authenticates as
+// unless a test names another.
+const fakeForgeLogin = "agent-fake"
+
+func (f *fakeForge) AuthenticatedUser(context.Context) (*TokenIdentity, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.authErr != nil {
+		return nil, f.authErr
+	}
+	if f.login == "" {
+		return &TokenIdentity{Username: fakeForgeLogin}, nil
+	}
+	return &TokenIdentity{Username: f.login}, nil
 }
 
 type mergeCall struct {
@@ -491,6 +635,11 @@ func (f *fakeForge) GetIssue(_ context.Context, _ RepoRef, number int) (*ForgeIs
 	}
 	issue, ok := f.issues[number]
 	if !ok {
+		// A pull request IS an issue on Gitea: reading its number as an
+		// issue answers the pull request's labels.
+		if pr, isPR := f.prs[number]; isPR {
+			return &ForgeIssue{Number: number, Title: pr.Title, State: pr.State, Labels: append([]string(nil), f.prLabels[number]...)}, nil
+		}
 		return nil, &NotFoundError{Entity: "issue", ID: strconv.Itoa(number)}
 	}
 	copied := *issue
@@ -511,6 +660,9 @@ func (f *fakeForge) CommentOnIssue(_ context.Context, _ RepoRef, number int, bod
 	comment := ForgeComment{ID: f.nextCommentID, Body: body, Author: "quicbaas", Created: time.Now()}
 	f.nextCommentID++
 	f.comments[number] = append(f.comments[number], comment)
+	if f.onCommentOnIssue != nil {
+		f.onCommentOnIssue(number)
+	}
 	return &comment, nil
 }
 
@@ -550,6 +702,17 @@ func (f *fakeForge) AddIssueLabels(_ context.Context, _ RepoRef, number int, lab
 		f.prLabels[number] = mergeLabels(f.prLabels[number], labels)
 	}
 	return nil
+}
+
+// withoutLabel returns held minus label.
+func withoutLabel(held []string, label string) []string {
+	kept := make([]string, 0, len(held))
+	for _, l := range held {
+		if l != label {
+			kept = append(kept, l)
+		}
+	}
+	return kept
 }
 
 // mergeLabels adds what is not already there.
@@ -606,13 +769,10 @@ func (f *fakeForge) RemoveIssueLabel(_ context.Context, _ RepoRef, number int, l
 	}
 	f.labelRemovals = append(f.labelRemovals, label)
 	if issue, ok := f.issues[number]; ok {
-		kept := issue.Labels[:0]
-		for _, l := range issue.Labels {
-			if l != label {
-				kept = append(kept, l)
-			}
-		}
-		issue.Labels = kept
+		issue.Labels = withoutLabel(issue.Labels, label)
+	}
+	if _, ok := f.prs[number]; ok {
+		f.prLabels[number] = withoutLabel(f.prLabels[number], label)
 	}
 	return nil
 }
@@ -637,8 +797,14 @@ func (f *fakeForge) GetTag(_ context.Context, repo RepoRef, tag string) (*ForgeT
 	return found, nil
 }
 
-func (f *fakeForge) CreateBranch(_ context.Context, _ RepoRef, name, _ string) (*ForgeBranch, error) {
-	return &ForgeBranch{Name: name}, nil
+func (f *fakeForge) CreateBranch(_ context.Context, _ RepoRef, name, fromRef string) (*ForgeBranch, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.branches == nil {
+		f.branches = map[string]string{}
+	}
+	f.branches[name] = fromRef
+	return &ForgeBranch{Name: name, SHA: fromRef}, nil
 }
 
 // fakeForgeHeadSHA is the tip every branch of the double reports.
@@ -652,13 +818,47 @@ const fakeForgeHeadSHA = "f00dcafe00000000000000000000000000000000"
 func (f *fakeForge) GetBranch(_ context.Context, _ RepoRef, name string) (*ForgeBranch, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if cut, ok := f.branches[name]; ok {
+		return &ForgeBranch{Name: name, SHA: cut}, nil
+	}
+	if f.onlyKnownBranches && name != "main" {
+		return nil, &NotFoundError{Entity: "branch", ID: name}
+	}
 	sha := f.branchSHA
 	if sha == "" {
 		sha = fakeForgeHeadSHA
 	}
 	return &ForgeBranch{Name: name, SHA: sha}, nil
 }
-func (f *fakeForge) DeleteBranch(context.Context, RepoRef, string) error { return nil }
+func (f *fakeForge) DeleteBranch(_ context.Context, _ RepoRef, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.deleteBranchErr != nil {
+		return f.deleteBranchErr
+	}
+	f.deletedBranches = append(f.deletedBranches, name)
+	delete(f.branches, name)
+	return nil
+}
+
+// ClosePullRequest closes a pull request without merging it, recording which.
+func (f *fakeForge) ClosePullRequest(_ context.Context, _ RepoRef, number int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.closePRErr != nil {
+		return f.closePRErr
+	}
+	pr, ok := f.prs[number]
+	if !ok {
+		return &NotFoundError{Entity: "pull request", ID: strconv.Itoa(number)}
+	}
+	if pr.Merged || pr.State == "closed" {
+		return nil
+	}
+	pr.State = "closed"
+	f.closedPRs = append(f.closedPRs, number)
+	return nil
+}
 
 func (f *fakeForge) CreatePullRequest(_ context.Context, _ RepoRef, spec PullRequestSpec) (*ForgePullRequest, error) {
 	f.mu.Lock()
@@ -666,8 +866,12 @@ func (f *fakeForge) CreatePullRequest(_ context.Context, _ RepoRef, spec PullReq
 	if f.createPRErr != nil {
 		return nil, f.createPRErr
 	}
+	head := "head-" + spec.HeadRef
+	if cut, ok := f.branches[spec.HeadRef]; ok {
+		head = cut
+	}
 	pr := &ForgePullRequest{Number: f.nextPR, Title: spec.Title, Body: spec.Body, State: "open", HeadRef: spec.HeadRef,
-		BaseRef: spec.BaseRef, URL: "http://forge.test/acme/api/pulls/" + strconv.Itoa(f.nextPR), HeadSHA: "head-" + spec.HeadRef,
+		BaseRef: spec.BaseRef, URL: "http://forge.test/acme/api/pulls/" + strconv.Itoa(f.nextPR), HeadSHA: head,
 		// A fresh pull request with no conflict settles mergeable, as a real
 		// forge's check does; a test models a conflict by clearing it.
 		Mergeable: true}
@@ -702,6 +906,11 @@ func (f *fakeForge) GetPullRequest(_ context.Context, _ RepoRef, number int) (*F
 	// dereference it.
 	if f.getPRNil {
 		return nil, nil
+	}
+	if len(f.getPRErrs) > 0 {
+		err := f.getPRErrs[0]
+		f.getPRErrs = f.getPRErrs[1:]
+		return nil, err
 	}
 	pr, ok := f.prs[number]
 	if !ok {
@@ -755,6 +964,9 @@ func (f *fakeForge) MergePullRequest(_ context.Context, _ RepoRef, number int, s
 	if pr, ok := f.prs[number]; ok {
 		pr.Merged = true
 		pr.State = "closed"
+		if pr.MergeSHA == "" {
+			pr.MergeSHA = "merged-" + strconv.Itoa(number)
+		}
 	}
 	return nil
 }
@@ -766,6 +978,9 @@ func (f *fakeForge) ListReviews(_ context.Context, _ RepoRef, number int) ([]For
 		return nil, f.listReviewsErr
 	}
 	f.listReviews++
+	if f.onListReviews != nil {
+		f.onListReviews(number)
+	}
 	return append([]ForgeReview(nil), f.reviews[number]...), nil
 }
 
@@ -773,6 +988,9 @@ func (f *fakeForge) ListCheckRuns(_ context.Context, _ RepoRef, sha string) ([]F
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.listChecks++
+	if f.onListCheckRuns != nil {
+		f.onListCheckRuns(sha)
+	}
 	if f.listChecksErr != nil {
 		return nil, f.listChecksErr
 	}
@@ -980,9 +1198,24 @@ func (f *fakeForge) commentsOn(number int) []ForgeComment {
 type fakeForges struct {
 	forge *fakeForge
 	err   error
+
+	// tokenRefs is the token secret every ForgeFor call named, so a test can
+	// see WHOSE identity an adapter was built for.
+	mu        sync.Mutex
+	tokenRefs []string
 }
 
-func (f *fakeForges) ForgeFor(context.Context, string, ForgeConfig) (ForgeBackend, error) {
+// resolvedTokenRefs is every token reference an adapter was built for.
+func (f *fakeForges) resolvedTokenRefs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.tokenRefs...)
+}
+
+func (f *fakeForges) ForgeFor(_ context.Context, _ string, cfg ForgeConfig) (ForgeBackend, error) {
+	f.mu.Lock()
+	f.tokenRefs = append(f.tokenRefs, cfg.TokenSecretRef)
+	f.mu.Unlock()
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -1104,11 +1337,11 @@ func (w *immediateWaiter) Wait(ctx context.Context, _ int) error {
 // executingHost is the host a fake agent service runs its sessions on. It
 // provisions each spawn's named workspace under its own projects root with the
 // WorkspaceManager every real host runs — the daemon's in-process backend and a
-// fleet agent alike — and releases the spec directory when the session closes.
+// fleet node alike — and releases the spec directory when the session closes.
 // That is the whole of the contract a runner may rely on (go-quicbaas#981), so
 // the fakes implement it with the production code rather than a copy of it.
 type executingHost struct {
-	// agentHost is the fleet agent this host is, empty for the daemon.
+	// agentHost is the fleet node this host is, empty for the daemon.
 	agentHost string
 
 	mu sync.Mutex
@@ -1235,6 +1468,29 @@ type outgoingCommit struct {
 	// Signer is the signing key's fingerprint git reports (%GF); empty for
 	// an unsigned commit.
 	Signer string
+
+	// Committer is the committer's address (%ce); empty is the project's
+	// own identity, which is who commits in the container.
+	Committer string
+
+	// Time is the committer time (%ct); zero is testCommitTime.
+	Time time.Time
+}
+
+// testCommitTime is when a scripted commit was made unless it says otherwise.
+var testCommitTime = time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+
+// logLine renders the commit as verifySignedFormat does.
+func (c outgoingCommit) logLine() string {
+	committer := c.Committer
+	if committer == "" {
+		committer = "agent-api@example.test"
+	}
+	when := c.Time
+	if when.IsZero() {
+		when = testCommitTime
+	}
+	return strings.Join([]string{c.SHA, c.Status, strconv.FormatInt(when.Unix(), 10), committer, c.Signer}, "\x1f")
 }
 
 type fakeContainer struct {
@@ -1282,6 +1538,100 @@ type fakeContainer struct {
 	// index probe breaking rather than reporting.
 	diffExit    int
 	diffExecErr error
+	// behind is how many commits the BASE has that the branch does not, which
+	// is the other direction entirely from ahead. It is what
+	// "rev-list --count HEAD..origin/<base>" answers, and it is how a test
+	// models the fault #982 is about: a branch trailing a base that has
+	// already fixed the thing its tests are failing on.
+	behind int
+
+	// worktrees are the throwaway worktrees that currently exist, by the
+	// directory they were added at, holding the ref they were added from. A
+	// second "worktree add" on a live directory is refused the way git
+	// refuses it.
+	worktrees map[string]string
+
+	// worktreeAdds and worktreeRemovals are every worktree the runner made
+	// and every one it removed, which is what proves a merge result never
+	// outlives the verification it was prepared for.
+	worktreeAdds     []worktreeCall
+	worktreeRemovals []string
+
+	// merges is every merge attempted, with the directory it ran in.
+	merges []gitMergeCall
+
+	// baseHead is the commit a fetch of the base lands on, which is what
+	// "rev-parse FETCH_HEAD" answers. It is deliberately NOT the branch's own
+	// head: a fixture that answered one with the other could not tell a merge
+	// of the base from a merge of the branch with itself.
+	baseHead string
+
+	// behindAfterFetch is what the branch is behind by ONCE THE BASE HAS BEEN
+	// REFRESHED — the remote having moved since this container last fetched,
+	// which is the window a count against the stale ref cannot see. Nil
+	// leaves the count alone, which is every container that models a base
+	// standing still.
+	behindAfterFetch *int
+
+	// worktreeRemoveErr makes every "worktree remove" fail, which is the
+	// throwaway worktree that will not go away: the directory stays
+	// registered and the run has to say so rather than report it removed.
+	worktreeRemoveErr error
+
+	// snapshots is every working-tree snapshot that was written: the index it
+	// was staged in, the parent it was given, and the configuration git ran
+	// under. It is what says the worker's uncommitted work reached the tree
+	// that was judged, and that no ref moved to carry it.
+	snapshots []snapshotCall
+
+	// removals is every path removed through the cleanup seam.
+	removals []string
+
+	// removeErr makes every file removal fail, which is the throwaway index
+	// that will not go away beside a checkout the next attempt will use.
+	removeErr error
+
+	// stagedIndex is the index the last "add --all" staged into, and
+	// stagedIndexSeed is what that index had been copied from BEFORE the
+	// staging — empty when it was staged into from nothing. `git add --all`
+	// into an empty index drops every file the repository tracks despite an
+	// ignore rule, so "which index, and was it the worker's own" is the whole
+	// question (#982, round 3).
+	stagedIndex     string
+	stagedIndexSeed string
+
+	// copies is every file copy the publisher made, and copyErr makes them
+	// all fail — the worker's index that could not be read, which must refuse
+	// rather than snapshot a tree missing what an ignore rule matches.
+	copies  []copyCall
+	copyErr error
+
+	// writeTreeErr and commitTreeErr are the halves of the snapshot refusing.
+	writeTreeErr  error
+	commitTreeErr error
+
+	// mergeConflicts are the paths a merge leaves unmerged. Non-empty makes
+	// every merge refuse, which is the branch that cannot be judged on a
+	// merge result at all.
+	mergeConflicts []string
+
+	// mergeErr makes every merge fail WITHOUT leaving an unmerged path,
+	// which is the other half of a non-zero `git merge`: the worktree that
+	// is not there, the configuration git refuses, the disk that filled.
+	// Nothing about such a branch needs reconciling, so a run that reported
+	// it as a conflict would send the worker after one that does not exist.
+	mergeErr error
+
+	// conflictProbeErr makes the unmerged-paths probe itself fail, which is
+	// the container that cannot say WHETHER the merge conflicted. The list
+	// it leaves behind is empty either way, so a run that read the empty list
+	// as an answer could not tell this apart from a clean failure.
+	conflictProbeErr error
+
+	// mergeVerifications scripts what a verification command answers IN A
+	// MERGE-RESULT WORKTREE, when that differs from what it answers in the
+	// checkout. A command with no entry here answers the same either way.
+	mergeVerifications map[string]*orchestration.ExecResult
 
 	// head is what rev-parse HEAD answers. A commit advances it, which is
 	// what makes a second review round land on a NEW head, and so does a
@@ -1318,6 +1668,11 @@ type fakeContainer struct {
 	// plain push of it as non-fast-forward, and so does this container. The
 	// factory never forces past that refusal, so it stays set.
 	diverged bool
+
+	// stopped models a container that has died under its session: the
+	// runtime refuses every exec before a process starts, as docker does with
+	// "container … is not running" (go-quicbaas#932).
+	stopped bool
 
 	// repos is every directory that is already a git repository, as the
 	// container sees it. A clone adds one; the checkout step's probe reads
@@ -1413,6 +1768,48 @@ type checkoutCall struct {
 	Args []string
 }
 
+// defaultBaseHead is the commit a fetch of the base lands on when a test does
+// not say otherwise.
+const defaultBaseHead = "base-head-0"
+
+// snapshotCall is one working-tree snapshot: the index git staged it in, the
+// parent the commit object was given, and the "-c key=value" pairs it ran
+// under.
+type snapshotCall struct {
+	Index string
+
+	// Seed is what that index was copied from before anything was staged
+	// into it, empty when it was staged into from nothing.
+	Seed    string
+	Parent  string
+	Config  []string
+	Commit  string
+	WorkDir string
+}
+
+// worktreeCall is one throwaway worktree the runner added: where it went,
+// the ref it was made from, and the checkout that made it.
+type worktreeCall struct {
+	Dir  string
+	Ref  string
+	From string
+}
+
+// gitMergeCall is one git merge: the worktree it ran in, the ref merged in,
+// and the flags it carried — which is where "no commit" is proved.
+type gitMergeCall struct {
+	Dir  string
+	Ref  string
+	Args []string
+}
+
+// copyCall is one file copy: what was copied where, and from which checkout.
+type copyCall struct {
+	From string
+	To   string
+	Dir  string
+}
+
 // containerExec is one command the runner ran in the container.
 type containerExec struct {
 	ContainerID string
@@ -1447,14 +1844,26 @@ func (c *fakeContainer) exec(containerID string, spec *orchestration.ExecSpec) (
 				", which is outside this container's checkout root " + root},
 		}
 	}
+	if c.stopped {
+		return nil, &orchestration.ContainerNotRunningError{
+			ContainerID: containerID,
+			Message:     "Error response from daemon: container " + containerID + " is not running",
+		}
+	}
 	if len(spec.Cmd) == 0 {
 		return nil, &InvalidInputError{Field: "cmd", Message: "a container was asked to run nothing"}
 	}
 	if spec.Cmd[0] == verificationShell {
-		return c.verify(spec.Cmd)
+		return c.verify(spec.WorkDir, spec.Cmd)
+	}
+	if spec.Cmd[0] == removeCommand {
+		return c.remove(spec.Cmd[1:])
+	}
+	if spec.Cmd[0] == copyCommand {
+		return c.copy(spec.WorkDir, spec.Cmd[1:])
 	}
 	if spec.Cmd[0] != "git" {
-		return nil, &InvalidInputError{Field: "cmd", Message: "this container runs git and verification commands"}
+		return nil, &InvalidInputError{Field: "cmd", Message: "this container runs git, rm, cp and verification commands"}
 	}
 	config, args := splitGitConfig(spec.Cmd[1:])
 	if len(args) == 0 {
@@ -1468,7 +1877,13 @@ func (c *fakeContainer) exec(containerID string, spec *orchestration.ExecSpec) (
 		dir = path.Join(dir, args[1])
 		args = args[2:]
 	}
-	switch args[0] {
+	// Two diffs are modelled: the publisher's "diff --cached --quiet" index
+	// probe and the merge result's unmerged-paths probe.
+	subcommand := args[0]
+	if subcommand == "diff" && slices.Contains(args, "--diff-filter=U") {
+		subcommand = "diff-unmerged"
+	}
+	switch subcommand {
 	case "clone":
 		if c.cloneErr != nil {
 			return &orchestration.ExecResult{ExitCode: 128, Stderr: c.cloneErr.Error()}, nil
@@ -1505,6 +1920,14 @@ func (c *fakeContainer) exec(containerID string, spec *orchestration.ExecSpec) (
 			return nil, &InvalidInputError{Field: "cmd", Message: "git fetch named no remote"}
 		}
 		c.fetches = append(c.fetches, fetchCall{Dir: dir, Remote: args[1], Refs: args[2:], Config: config})
+		// A FETCH IS WHERE THE BASE MOVING BECOMES VISIBLE. Until one runs,
+		// this container answers with whatever it last saw — which is exactly
+		// how a checkout-time fetch leaves a count blind to a base that moved
+		// during the worker's turn.
+		if c.behindAfterFetch != nil {
+			c.behind = *c.behindAfterFetch
+			c.baseHead = "base-head-moved"
+		}
 		return &orchestration.ExecResult{}, nil
 	case "checkout":
 		if c.checkoutErr != nil {
@@ -1541,6 +1964,16 @@ func (c *fakeContainer) exec(containerID string, spec *orchestration.ExecSpec) (
 		}
 		return &orchestration.ExecResult{}, nil
 	case "add":
+		// "add --all" staged into GIT_INDEX_FILE is the snapshot of the
+		// working tree, and the ONE thing it must never do is stage into the
+		// worker's own index.
+		if index := spec.Env[gitIndexFileEnv]; index != "" {
+			if index == path.Join(dir, ".git", "index") {
+				return nil, &InvalidInputError{Field: "env", Message: "a snapshot staged into the worker's own index"}
+			}
+			c.stagedIndex = index
+			c.stagedIndexSeed = c.copiedFrom(index)
+		}
 		return &orchestration.ExecResult{}, nil
 	case "diff":
 		// "diff --cached --quiet" answers whether the index holds anything to
@@ -1557,6 +1990,34 @@ func (c *fakeContainer) exec(containerID string, spec *orchestration.ExecSpec) (
 			return &orchestration.ExecResult{ExitCode: 1}, nil
 		}
 		return &orchestration.ExecResult{}, nil
+	case "write-tree":
+		if spec.Env[gitIndexFileEnv] == "" {
+			return nil, &InvalidInputError{Field: "env", Message: "a tree was written from the worker's own index"}
+		}
+		if c.writeTreeErr != nil {
+			return &orchestration.ExecResult{ExitCode: 128, Stderr: c.writeTreeErr.Error() + "\n"}, nil
+		}
+		return &orchestration.ExecResult{Stdout: "tree-" + itoa(len(c.snapshots)+1) + "\n"}, nil
+	case "commit-tree":
+		// git commit-tree <tree> -p <parent> -m <message>
+		if c.commitTreeErr != nil {
+			return &orchestration.ExecResult{ExitCode: 128, Stderr: c.commitTreeErr.Error() + "\n"}, nil
+		}
+		commit := "snapshot-" + itoa(len(c.snapshots)+1)
+		parent := ""
+		for i, arg := range args {
+			if arg == "-p" && i+1 < len(args) {
+				parent = args[i+1]
+			}
+		}
+		c.snapshots = append(c.snapshots, snapshotCall{
+			Index: c.stagedIndex, Seed: c.stagedIndexSeed, Parent: parent,
+			Config: config, Commit: commit, WorkDir: dir,
+		})
+		// NOTHING ABOUT THE BRANCH MOVES. commit-tree writes an object; a
+		// fixture that advanced HEAD or cleared c.changed here would model a
+		// commit, which is the one thing a snapshot must not be.
+		return &orchestration.ExecResult{Stdout: commit + "\n"}, nil
 	case "commit":
 		if c.commitErr != nil {
 			return &orchestration.ExecResult{ExitCode: 1, Stderr: c.commitErr.Error()}, nil
@@ -1591,14 +2052,49 @@ func (c *fakeContainer) exec(containerID string, spec *orchestration.ExecSpec) (
 		}
 		var out strings.Builder
 		for _, commit := range outgoing {
-			out.WriteString(strings.TrimSpace(commit.SHA+" "+commit.Status+" "+commit.Signer) + "\n")
+			out.WriteString(commit.logLine() + "\n")
 		}
 		return &orchestration.ExecResult{Stdout: out.String()}, nil
 	case "rev-list":
+		// THE RANGE SAYS WHICH QUESTION IS BEING ASKED. "origin/<base>..HEAD"
+		// counts what the branch carries that its base does not;
+		// "HEAD..origin/<base>" counts the other way. Answering one with the
+		// other would make every branch that is merely ahead look behind.
+		if strings.HasPrefix(args[len(args)-1], "HEAD..") {
+			return &orchestration.ExecResult{Stdout: itoa(c.behind) + "\n"}, nil
+		}
 		if c.ahead {
 			return &orchestration.ExecResult{Stdout: "1\n"}, nil
 		}
 		return &orchestration.ExecResult{Stdout: "0\n"}, nil
+	case "worktree":
+		return c.worktree(dir, args[1:])
+	case "merge":
+		ref := args[len(args)-1]
+		c.merges = append(c.merges, gitMergeCall{Dir: dir, Ref: ref, Args: args[1:]})
+		if c.mergeErr != nil {
+			// git's own shape for a merge that never got as far as the
+			// trees: a non-zero exit, a reason on stderr, and NO unmerged
+			// path anywhere.
+			return &orchestration.ExecResult{ExitCode: 128, Stderr: c.mergeErr.Error() + "\n"}, nil
+		}
+		if len(c.mergeConflicts) > 0 {
+			return &orchestration.ExecResult{
+				ExitCode: 1,
+				Stdout:   "Auto-merging " + c.mergeConflicts[0] + "\nCONFLICT (content): Merge conflict in " + c.mergeConflicts[0] + "\n",
+				Stderr:   "Automatic merge failed; fix conflicts and then commit the result.\n",
+			}, nil
+		}
+		return &orchestration.ExecResult{Stdout: "Automatic merge went well; stopped before committing as requested\n"}, nil
+	case "diff-unmerged":
+		// The unmerged-paths probe a refused merge is asked for.
+		if c.conflictProbeErr != nil {
+			return &orchestration.ExecResult{ExitCode: 128, Stderr: c.conflictProbeErr.Error() + "\n"}, nil
+		}
+		if len(c.mergeConflicts) == 0 {
+			return &orchestration.ExecResult{}, nil
+		}
+		return &orchestration.ExecResult{Stdout: strings.Join(c.mergeConflicts, "\n") + "\n"}, nil
 	case "push":
 		for _, arg := range args[1:] {
 			// The factory never force-pushes, leased or not (handbook
@@ -1622,11 +2118,7 @@ func (c *fakeContainer) exec(containerID string, spec *orchestration.ExecSpec) (
 		if c.tree == nil {
 			return nil, &InvalidInputError{Field: "cmd", Message: "this container does not model git ls-files"}
 		}
-		want := args[len(args)-1]
-		if _, ok := c.tree[want]; ok {
-			return &orchestration.ExecResult{Stdout: want + "\n"}, nil
-		}
-		return &orchestration.ExecResult{}, nil
+		return &orchestration.ExecResult{Stdout: lsFiles(c.tree, args[1:])}, nil
 	case "grep":
 		if c.tree == nil {
 			return nil, &InvalidInputError{Field: "cmd", Message: "this container does not model git grep"}
@@ -1645,6 +2137,21 @@ func (c *fakeContainer) exec(containerID string, spec *orchestration.ExecSpec) (
 		}
 		return &orchestration.ExecResult{Stdout: out.String()}, nil
 	case "rev-parse":
+		if len(args) > 1 && args[1] == "FETCH_HEAD" {
+			// The commit the last fetch landed on, which is the base as the
+			// remote holds it — never this checkout's HEAD.
+			if c.baseHead == "" {
+				return &orchestration.ExecResult{Stdout: defaultBaseHead + "\n"}, nil
+			}
+			return &orchestration.ExecResult{Stdout: c.baseHead + "\n"}, nil
+		}
+		if len(args) > 2 && args[1] == "--git-path" {
+			// Where THIS checkout keeps the path it was asked about. It is
+			// not always under ".git/": a checkout that is itself a linked
+			// worktree keeps its index elsewhere, which is why the publisher
+			// asks git rather than assuming.
+			return &orchestration.ExecResult{Stdout: path.Join(".git", args[2]) + "\n"}, nil
+		}
 		if len(args) > 1 && args[1] == "--git-dir" {
 			if c.repos[dir] {
 				return &orchestration.ExecResult{Stdout: ".git\n"}, nil
@@ -1677,6 +2184,109 @@ func (c *fakeContainer) exec(containerID string, spec *orchestration.ExecSpec) (
 		return &orchestration.ExecResult{Stdout: origin + "\n"}, nil
 	}
 	return nil, &InvalidInputError{Field: "cmd", Message: "this container does not model git " + args[0]}
+}
+
+// worktree models "git worktree add" and "git worktree remove", which is how
+// a merge result is prepared and thrown away. The caller holds the lock.
+func (c *fakeContainer) worktree(from string, args []string) (*orchestration.ExecResult, error) {
+	if len(args) < 2 {
+		return nil, &InvalidInputError{Field: "cmd", Message: "git worktree was run without a subcommand and a directory"}
+	}
+	switch args[0] {
+	case "list":
+		// git's own porcelain: one stanza per worktree, the checkout first.
+		var b strings.Builder
+		b.WriteString("worktree " + from + "\nHEAD " + c.headOf(from) + "\n\n")
+		for dir, ref := range c.worktrees {
+			b.WriteString("worktree " + dir + "\nHEAD " + ref + "\ndetached\n\n")
+		}
+		return &orchestration.ExecResult{Stdout: b.String()}, nil
+	case "add":
+		// git worktree add --detach <dir> <ref>
+		if len(args) < 3 {
+			return nil, &InvalidInputError{Field: "cmd", Message: "git worktree add named no directory and ref"}
+		}
+		dir, ref := args[len(args)-2], args[len(args)-1]
+		if _, live := c.worktrees[dir]; live {
+			return &orchestration.ExecResult{
+				ExitCode: 128,
+				Stderr:   "fatal: '" + dir + "' already exists\n",
+			}, nil
+		}
+		if c.worktrees == nil {
+			c.worktrees = map[string]string{}
+		}
+		c.worktrees[dir] = ref
+		c.worktreeAdds = append(c.worktreeAdds, worktreeCall{Dir: dir, Ref: ref, From: from})
+		return &orchestration.ExecResult{}, nil
+	case "remove":
+		dir := args[len(args)-1]
+		c.worktreeRemovals = append(c.worktreeRemovals, dir)
+		if c.worktreeRemoveErr != nil {
+			return &orchestration.ExecResult{ExitCode: 1, Stderr: c.worktreeRemoveErr.Error() + "\n"}, nil
+		}
+		if _, live := c.worktrees[dir]; !live {
+			// git's own answer, and the ordinary one: nothing to remove.
+			return &orchestration.ExecResult{
+				ExitCode: 128,
+				Stderr:   "fatal: '" + dir + "' is not a working tree\n",
+			}, nil
+		}
+		delete(c.worktrees, dir)
+		return &orchestration.ExecResult{}, nil
+	}
+	return nil, &InvalidInputError{Field: "cmd", Message: "this container does not model git worktree " + args[0]}
+}
+
+// remove models "rm -f <path>", the one non-git command the publisher runs.
+// A file that was never there is a SUCCESS, exactly as rm -f answers, which
+// is what makes a real failure distinguishable from an ordinary one.
+func (c *fakeContainer) remove(args []string) (*orchestration.ExecResult, error) {
+	force := false
+	var target string
+	for _, arg := range args {
+		if arg == "-f" {
+			force = true
+			continue
+		}
+		target = arg
+	}
+	if target == "" {
+		return nil, &InvalidInputError{Field: "cmd", Message: "rm named no path"}
+	}
+	c.removals = append(c.removals, target)
+	if c.removeErr != nil {
+		return &orchestration.ExecResult{ExitCode: 1, Stderr: c.removeErr.Error() + "\n"}, nil
+	}
+	if !force {
+		return nil, &InvalidInputError{Field: "cmd", Message: "a cleanup removed a file without -f, so a file that was never there is a failure"}
+	}
+	return &orchestration.ExecResult{}, nil
+}
+
+// copy models "cp <from> <to>", which is how the throwaway index is seeded
+// from the worker's own. Git has no command that copies an index.
+func (c *fakeContainer) copy(dir string, args []string) (*orchestration.ExecResult, error) {
+	if len(args) != 2 {
+		return nil, &InvalidInputError{Field: "cmd", Message: "cp names exactly a source and a destination"}
+	}
+	c.copies = append(c.copies, copyCall{From: args[0], To: args[1], Dir: dir})
+	if c.copyErr != nil {
+		return &orchestration.ExecResult{ExitCode: 1, Stderr: c.copyErr.Error() + "\n"}, nil
+	}
+	return &orchestration.ExecResult{}, nil
+}
+
+// copiedFrom answers what a path was last copied from, empty when nothing
+// was. The caller holds the lock.
+func (c *fakeContainer) copiedFrom(to string) string {
+	from := ""
+	for _, copied := range c.copies {
+		if copied.To == to {
+			from = copied.From
+		}
+	}
+	return from
 }
 
 // resolveStart answers what "checkout -B <name> <start>" puts HEAD on, and
@@ -1805,9 +2415,17 @@ func (c *fakeContainer) setBranch(dir string, operands []string) {
 // they mean in a shell; anything else a test needs is scripted, and a
 // command this container models neither way is refused rather than quietly
 // passed.
-func (c *fakeContainer) verify(cmd []string) (*orchestration.ExecResult, error) {
+func (c *fakeContainer) verify(workDir string, cmd []string) (*orchestration.ExecResult, error) {
 	if len(cmd) != 3 || cmd[1] != "-c" {
 		return nil, &InvalidInputError{Field: "cmd", Message: "a verification command is the shell, -c, and one command line"}
+	}
+	// A MERGE-RESULT WORKTREE IS A DIFFERENT TREE, so a command may answer
+	// differently in it. That is the entire fault #982 is about, and a
+	// fixture that answered identically either way could not show it.
+	if strings.HasPrefix(path.Base(workDir), mergeResultDirPrefix) {
+		if scripted, ok := c.mergeVerifications[cmd[2]]; ok {
+			return scripted, nil
+		}
 	}
 	if scripted, ok := c.verifications[cmd[2]]; ok {
 		return scripted, nil
@@ -1829,6 +2447,17 @@ func (c *fakeContainer) scriptVerification(command string, result *orchestration
 		c.verifications = map[string]*orchestration.ExecResult{}
 	}
 	c.verifications[command] = result
+}
+
+// scriptMergeResultVerification is what one verification command answers when
+// it runs on the MERGE RESULT rather than on the branch as it stands.
+func (c *fakeContainer) scriptMergeResultVerification(command string, result *orchestration.ExecResult) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.mergeVerifications == nil {
+		c.mergeVerifications = map[string]*orchestration.ExecResult{}
+	}
+	c.mergeVerifications[command] = result
 }
 
 // splitGitConfig separates the leading "-c key=value" pairs from the
@@ -2005,4 +2634,92 @@ func (a *fakeSigningAgent) stopCount() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.stops
+}
+
+// memoryClusters is an in-memory IssueClusterStore, for tests that build a
+// triage run by hand rather than through a rig with a store.
+type memoryClusters struct {
+	mu       sync.Mutex
+	clusters map[int]*IssueCluster
+	getErr   error
+	putErr   error
+}
+
+func newMemoryClusters() *memoryClusters {
+	return &memoryClusters{clusters: map[int]*IssueCluster{}}
+}
+
+func (m *memoryClusters) GetIssueCluster(_ context.Context, tenantID, projectID string, issue int) (*IssueCluster, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	cluster, ok := m.clusters[issue]
+	if !ok || cluster.ProjectID != projectID {
+		return nil, &NotFoundError{Entity: issueClusterEntityName, TenantID: tenantID, ID: projectID}
+	}
+	copied := *cluster
+	copied.Issue = issue
+	return &copied, nil
+}
+
+func (m *memoryClusters) PutIssueCluster(_ context.Context, _ string, cluster *IssueCluster) error {
+	if err := cluster.Validate(); err != nil {
+		return err
+	}
+	if m.putErr != nil {
+		return m.putErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, issue := range cluster.Issues() {
+		copied := *cluster
+		m.clusters[issue] = &copied
+	}
+	return nil
+}
+
+func (m *memoryClusters) DeleteIssueCluster(_ context.Context, _ string, cluster *IssueCluster) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, issue := range cluster.Issues() {
+		if held, ok := m.clusters[issue]; ok && held.Anchor == cluster.Anchor {
+			delete(m.clusters, issue)
+		}
+	}
+	return nil
+}
+
+// lsFiles answers "git ls-files -- <pathspec>..." over a tree the way git
+// does for the two pathspec forms the module sends: a path from the root, and
+// ":(glob)**/<path>", the same path under any directory.
+func lsFiles(tree map[string]string, args []string) string {
+	var out strings.Builder
+	specs := args
+	if i := slices.Index(args, "--"); i >= 0 {
+		specs = args[i+1:]
+	}
+	files := make([]string, 0, len(tree))
+	for file := range tree {
+		files = append(files, file)
+	}
+	slices.Sort(files)
+	for _, file := range files {
+		for _, spec := range specs {
+			rest, glob := strings.CutPrefix(spec, ":(glob)**/")
+			if file == spec || (glob && (file == rest || strings.HasSuffix(file, "/"+rest))) {
+				out.WriteString(file + "\n")
+				break
+			}
+		}
+	}
+	return out.String()
+}
+
+// deleted reports the branches DeleteBranch removed, in order.
+func (f *fakeForge) deleted() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.deletedBranches...)
 }

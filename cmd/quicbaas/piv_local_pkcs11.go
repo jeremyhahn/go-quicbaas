@@ -23,14 +23,21 @@ package main
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"strings"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // pkcs11PIVSession is the PKCS#11-backed local PIV session.
 type pkcs11PIVSession struct {
 	store xkmssdk.PIVCertificateStorage
+
+	// pin is the token PIN sealed in a memguard enclave. The certificate
+	// store's session pool reads it whenever it opens a session, so the
+	// session owns it for its lifetime and destroys it on Close.
+	pin *secure.Secret
 }
 
 // newPKCS11PIVSession assembles the PKCS#11 session: certificate storage on
@@ -44,23 +51,33 @@ func newPKCS11PIVSession(cfg *localPIVConfig) (localPIVSession, error) {
 		return nil, &PIVPINRequiredError{}
 	}
 
+	// NewSecret wipes the byte copy it seals, so only the enclave holds the
+	// PIN from here on.
+	pin, err := secure.NewSecret([]byte(cfg.pin))
+	if err != nil {
+		return nil, &PIVLocalSessionError{Op: "seal pkcs11 pin", Cause: err}
+	}
+
 	store, err := xkmssdk.NewPIVPKCS11Backend(&xkmssdk.PIVPKCS11StorageConfig{
 		LibraryPath: cfg.pkcs11Module,
 		TokenLabel:  cfg.pkcs11Token,
 		SlotID:      -1, // resolve by token label
-		PIN:         cfg.pin,
+		PIN:         pin,
 		RequireSO:   strings.Contains(strings.ToLower(cfg.pkcs11Module), "ykcs11"),
 	})
 	if err != nil {
+		pin.Destroy()
 		return nil, &PIVLocalSessionError{Op: "init pkcs11 cert storage", Cause: err}
 	}
+	session := &pkcs11PIVSession{store: store, pin: pin}
 
 	// Refuse to clobber an xkms singleton something else initialized.
 	if xkmssdk.ServiceIsInitialized() && !localPIVOwnsXKMS {
-		_ = store.Close()
-		return nil, &PIVLocalSessionError{Op: "init pkcs11 key backend", Cause: errXKMSServiceInUse}
+		return nil, &PIVLocalSessionError{Op: "init pkcs11 key backend", Cause: errors.Join(errXKMSServiceInUse, session.Close())}
 	}
 	if !xkmssdk.ServiceIsInitialized() {
+		// The xkms pkcs11 backend registration reads the PIN from this
+		// string-keyed map; a plain string is the only shape it accepts.
 		backendConfig := map[string]interface{}{
 			"library": cfg.pkcs11Module,
 			"label":   cfg.pkcs11Token,
@@ -72,17 +89,15 @@ func newPKCS11PIVSession(cfg *localPIVConfig) (localPIVSession, error) {
 				xkmssdk.BackendPKCS11: backendConfig,
 			},
 		}); err != nil {
-			_ = store.Close()
-			return nil, &PIVLocalSessionError{Op: "init pkcs11 key backend", Cause: err}
+			return nil, &PIVLocalSessionError{Op: "init pkcs11 key backend", Cause: errors.Join(err, session.Close())}
 		}
 		localPIVOwnsXKMS = true
 	}
 
 	if err := initLocalPIVManager(localPIVBackendPKCS11, store); err != nil {
-		_ = store.Close()
-		return nil, err
+		return nil, errors.Join(err, session.Close())
 	}
-	return &pkcs11PIVSession{store: store}, nil
+	return session, nil
 }
 
 // Certificate reads the slot certificate from the token.
@@ -96,7 +111,9 @@ func (s *pkcs11PIVSession) SignNonce(ctx context.Context, slot string, nonce []b
 	return localPIVSignNonce(ctx, localPIVBackendPKCS11, slot, nonce)
 }
 
-// Close releases the token session.
+// Close releases the token session and destroys the PIN enclave.
 func (s *pkcs11PIVSession) Close() error {
-	return s.store.Close()
+	err := s.store.Close()
+	s.pin.Destroy()
+	return err
 }

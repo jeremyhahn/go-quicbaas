@@ -21,9 +21,14 @@ import { tick } from 'svelte';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import type { GetSpendReportResponse } from '@quicbaas/sdk';
 
-const { storeMock, getSpendReport } = vi.hoisted(() => ({
+const { storeMock, getSpendReport, getCostSettings, getTenantSpendPolicy, setTenantSpendPolicy, getAgent, updateAgent } = vi.hoisted(() => ({
   storeMock: { activeTenantID: 'acme' },
   getSpendReport: vi.fn(),
+  getCostSettings: vi.fn(),
+  getTenantSpendPolicy: vi.fn(),
+  setTenantSpendPolicy: vi.fn(),
+  getAgent: vi.fn(),
+  updateAgent: vi.fn(),
 }));
 
 vi.mock('../src/stores/orchestrator.svelte.ts', () => ({
@@ -31,7 +36,10 @@ vi.mock('../src/stores/orchestrator.svelte.ts', () => ({
 }));
 
 vi.mock('../src/stores/sdkClient.ts', () => ({
-  getSDKClient: vi.fn().mockResolvedValue({ orchestrator: { getSpendReport } }),
+  getSDKClient: vi.fn().mockResolvedValue({
+    orchestrator: { getSpendReport, getCostSettings, getTenantSpendPolicy, setTenantSpendPolicy },
+    agents: { getAgent, updateAgent },
+  }),
 }));
 
 import CostView from '../src/views/orchestrator/CostView.svelte';
@@ -46,8 +54,11 @@ const tenantReport: GetSpendReportResponse = {
   input_tokens: 120,
   output_tokens: 80,
   total_tokens: 200,
-  cost_micros: 0,
-  cost_measured: false,
+  currency: 'USD',
+  priced_entries: 0,
+  unpriced_entries: 3,
+  billed_entries: 0,
+  unbilled_entries: 3,
   successes: 2,
   failures: 1,
   child_level: 'project',
@@ -71,6 +82,15 @@ const projectReport: GetSpendReportResponse = {
 };
 
 beforeEach(() => {
+  getTenantSpendPolicy.mockReset();
+  setTenantSpendPolicy.mockReset();
+  getAgent.mockReset();
+  updateAgent.mockReset();
+  getCostSettings.mockReset();
+  getCostSettings.mockResolvedValue({
+    settings: { tenant_id: 'acme' },
+    electricity: { price_per_kwh: 0.12, source: 'default' },
+  });
   getSpendReport.mockReset();
   getSpendReport.mockResolvedValue(tenantReport);
   // One test moves the operator to another tenant; the rest start on acme.
@@ -108,7 +128,81 @@ describe('CostView', () => {
     const cost = await screen.findByTestId('scope-cost');
     // Not "0.00". Nothing prices a turn, so the figure is UNMEASURED.
     expect(cost.textContent?.trim()).toBe('—');
-    expect(screen.getByText(/cost unmeasured/i)).toBeTruthy();
+    expect(screen.getByText(/no price for these models/i)).toBeTruthy();
+  });
+
+  // go-quicbaas#1058: the Cost page showed no dollars.
+  it('shows both money figures: the list-price equivalent and what was billed', async () => {
+    getSpendReport.mockResolvedValue({
+      ...tenantReport,
+      equivalent_micros: 42_500_000,
+      priced_entries: 3,
+      unpriced_entries: 0,
+      billed_micros: 0,
+      billed_entries: 3,
+      unbilled_entries: 0,
+      accounts: [
+        {
+          account_id: 'acct-1', display_name: 'alice-work', total_tokens: 200, policy_status: 'none',
+          billing: { mode: 'subscription', monthly_fee_micros: 200_000_000 },
+          equivalent_micros: 42_500_000, priced_entries: 3, billed_micros: 0, billed_entries: 3,
+        },
+      ],
+    });
+    render(CostView);
+    expect((await screen.findByTestId('scope-cost')).textContent?.trim()).toBe('$42.50');
+    // A subscription's turns bill zero, and zero is a measurement here.
+    expect(screen.getByTestId('scope-billed').textContent?.trim()).toBe('$0.00');
+    expect(screen.getByText('Subscription · $200.00/mo')).toBeTruthy();
+  });
+
+  it('marks every breakdown row whose money covers only some of its turns', async () => {
+    // Mixed coverage: priced and billed turns alongside unpriced and unbilled
+    // ones. A row showing the bare figure would read as the row's whole cost.
+    const mixed = {
+      equivalent_micros: 1_200_000, priced_entries: 2, unpriced_entries: 1,
+      billed_micros: 500_000, billed_entries: 1, unbilled_entries: 2,
+    };
+    getSpendReport.mockResolvedValue({
+      ...tenantReport,
+      children: [{ id: 'proj-1', level: 'project', total_tokens: 150, ...mixed }],
+      accounts: [{ account_id: 'acct-1', total_tokens: 200, policy_status: 'none', ...mixed }],
+      models: [{ engine: 'acp', model: 'claude-opus-5', total_tokens: 200, ...mixed }],
+    });
+    render(CostView);
+
+    const rows = [
+      await screen.findByTestId('spend-child-money'),
+      screen.getByTestId('spend-account-money'),
+      screen.getByTestId('spend-model-money'),
+    ];
+    for (const row of rows) {
+      const text = row.textContent?.replace(/\s+/g, ' ') ?? '';
+      expect(text).toContain('equivalent ≥$1.20');
+      expect(text).toContain('billed ≥$0.50');
+      expect(row.getAttribute('title')).toBe(
+        'equivalent: at least — 1 turn unpriced · billed: at least — 2 turns with unknown billing',
+      );
+    }
+  });
+
+  it('shows the energy local inference drew, and a dash when none was costed from electricity', async () => {
+    getSpendReport.mockResolvedValue({
+      ...tenantReport,
+      energy_mwh: 12_000,
+      electricity_entries: 2,
+      models: [{ engine: 'openvino', model: 'qwen3-8b', total_tokens: 200, energy_mwh: 12_000, electricity_entries: 2 }],
+    });
+    render(CostView);
+    expect((await screen.findByTestId('scope-energy')).textContent?.trim()).toBe('12 Wh');
+    expect(screen.getByText('2 local turns costed from electricity · all estimated')).toBeTruthy();
+    expect(screen.getByTestId('spend-model-money').textContent).toContain('12 Wh');
+  });
+
+  it('shows the electricity rate in force for the tenant', async () => {
+    render(CostView);
+    expect((await screen.findByTestId('cost-settings-rate')).textContent).toContain('$0.12/kWh');
+    expect(getCostSettings).toHaveBeenCalledWith({ tenant_id: 'acme' });
   });
 
   it('says "No spend policy" for an account nobody capped', async () => {
@@ -208,6 +302,58 @@ describe('CostView', () => {
     });
   });
 
+  // go-quicbaas#886: a session report's children are rounds. The row rendered
+  // enabled and a click issued no request at all.
+  it('drills from a session into a round and names it in the breadcrumb', async () => {
+    const report = (
+      level: GetSpendReportResponse['level'],
+      child_level: GetSpendReportResponse['child_level'],
+      children: GetSpendReportResponse['children'],
+    ): GetSpendReportResponse => ({ ...tenantReport, level, child_level, children });
+    getSpendReport.mockReset();
+    getSpendReport
+      .mockResolvedValueOnce(report('tenant', 'project', [{ id: 'proj-1', level: 'project', total_tokens: 9 }]))
+      .mockResolvedValueOnce(report('project', 'task', [{ id: 'task-1', level: 'task', total_tokens: 9 }]))
+      .mockResolvedValueOnce(report('task', 'job', [{ id: 'job-1', level: 'job', total_tokens: 9 }]))
+      .mockResolvedValueOnce(report('job', 'session', [{ id: 'sess-1', level: 'session', total_tokens: 9 }]))
+      .mockResolvedValueOnce(
+        report('session', 'round', [
+          { id: '0', level: 'round', total_tokens: 4 },
+          { id: '2', level: 'round', total_tokens: 5 },
+        ]),
+      )
+      .mockResolvedValueOnce({ ...report('round', undefined, []), round: 2 });
+
+    render(CostView);
+    for (const id of ['proj-1', 'task-1', 'job-1', 'sess-1']) {
+      await fireEvent.click(await screen.findByText(id));
+    }
+    await fireEvent.click(await screen.findByText('2'));
+
+    await waitFor(() => expect(getSpendReport).toHaveBeenCalledTimes(6));
+    expect(getSpendReport.mock.calls[5]![0]).toEqual({
+      tenant_id: 'acme',
+      project_id: 'proj-1',
+      task_id: 'task-1',
+      job_id: 'job-1',
+      session_id: 'sess-1',
+      round: 2,
+      round_set: true,
+    });
+    expect(await screen.findByRole('button', { name: 'Round 2' })).toBeTruthy();
+    // No round is sent at any shallower scope: round_set absent means every round.
+    for (const call of getSpendReport.mock.calls.slice(0, 5)) {
+      expect(call[0]).not.toHaveProperty('round_set', true);
+    }
+
+    // Climbing back to the session clears the round.
+    getSpendReport.mockResolvedValueOnce(report('session', 'round', []));
+    await fireEvent.click(screen.getByRole('button', { name: 'sess-1' }));
+    await waitFor(() => expect(getSpendReport).toHaveBeenCalledTimes(7));
+    expect(getSpendReport.mock.calls[6]![0]).toMatchObject({ session_id: 'sess-1', round_set: false });
+    expect(screen.queryByRole('button', { name: 'Round 2' })).toBeNull();
+  });
+
   it('says the deployment records no spend rather than showing zero', async () => {
     getSpendReport.mockRejectedValue({ status: 503, message: 'ledger not available' });
     render(CostView);
@@ -251,6 +397,69 @@ describe('CostView', () => {
     expect(screen.getByText(/Loading spend/i)).toBeTruthy();
   });
 
+  // go-quicbaas#1058, ruling F4: a subscription's fee is pro-rated over the
+  // report's range and shown beside the per-turn billed figure.
+  it('shows the subscription fees pro-rated over the range, scope and account', async () => {
+    getSpendReport.mockResolvedValue({
+      ...tenantReport,
+      subscription_fee_micros: 46_000_000,
+      accounts: [
+        {
+          account_id: 'acct-1', display_name: 'alice-work', total_tokens: 200, policy_status: 'none',
+          billing: { mode: 'subscription', monthly_fee_micros: 200_000_000 },
+          subscription_fee_micros: 46_000_000,
+        },
+      ],
+    });
+    render(CostView);
+    expect((await screen.findByTestId('scope-subscription-fees')).textContent).toContain('$46.00');
+    expect(screen.getByTestId('spend-account-fee').textContent).toContain('$46.00');
+  });
+
+  it('shows no fee line when the report carries no fee share', async () => {
+    render(CostView);
+    await screen.findByTestId('scope-cost');
+    expect(screen.queryByTestId('scope-subscription-fees')).toBeNull();
+    expect(screen.queryByTestId('spend-account-fee')).toBeNull();
+  });
+
+  it('reads the chosen range and reloads when it changes', async () => {
+    render(CostView);
+    await waitFor(() => expect(getSpendReport).toHaveBeenCalledTimes(1));
+    expect(getSpendReport.mock.calls[0]![0].from).toBeUndefined();
+
+    const before = Date.now();
+    await fireEvent.change(screen.getByTestId('spend-range'), { target: { value: '7d' } });
+    await waitFor(() => expect(getSpendReport).toHaveBeenCalledTimes(2));
+    const from = Date.parse(getSpendReport.mock.calls[1]![0].from as string);
+    const week = 7 * 24 * 60 * 60 * 1000;
+    expect(from).toBeGreaterThanOrEqual(before - week - 1000);
+    expect(from).toBeLessThanOrEqual(Date.now() - week + 1000);
+  });
+
+  // go-quicbaas#1058, ruling F6: the scope's own limits, which defer
+  // admission when spent.
+  it('shows the scope limits and marks a spent window as deferring admission', async () => {
+    getSpendReport.mockResolvedValue({
+      ...tenantReport,
+      scope_policy_status: 'metered',
+      scope_windows: [
+        { name: 'weekly', size: 604_800_000_000_000, max_tokens: 1000, used_tokens: 1200, remaining_tokens: 0, exhausted: true },
+      ],
+    });
+    render(CostView);
+    const limits = await screen.findByTestId('scope-limits');
+    expect(limits.textContent).toContain('weekly');
+    expect(limits.textContent).toContain('admission deferred');
+  });
+
+  it('says so when the scope has no spend limits', async () => {
+    getSpendReport.mockResolvedValue({ ...tenantReport, scope_policy_status: 'none' });
+    render(CostView);
+    expect((await screen.findByTestId('scope-limits')).textContent).toContain('No spend limit is set here');
+    expect(screen.queryByTestId('scope-window')).toBeNull();
+  });
+
   it('discards a report that arrives for a tenant the operator has left', async () => {
     let settle: ((value: GetSpendReportResponse) => void) | undefined;
     getSpendReport.mockReset();
@@ -277,5 +486,159 @@ describe('CostView', () => {
 
     // acme's totals must never render as "other"'s.
     expect(screen.queryByTestId('scope-cost')).toBeNull();
+  });
+
+  it('breaks the spend down by host and says how much of its energy was measured', async () => {
+    getSpendReport.mockResolvedValue({
+      ...tenantReport,
+      energy_mwh: 9_000,
+      electricity_entries: 3,
+      measured_energy_entries: 2,
+      hosts: [
+        { host: 'gpu-host:9091', total_tokens: 150, energy_mwh: 9_000, electricity_entries: 3, measured_energy_entries: 2 },
+        { unattributed: true, total_tokens: 50 },
+      ],
+    });
+    render(CostView);
+    const hosts = await screen.findAllByTestId('spend-host');
+    expect(hosts).toHaveLength(2);
+    expect(hosts[0]!.textContent).toContain('gpu-host:9091');
+    expect(screen.getByTestId('spend-host-energy').textContent).toContain('2 of 3 measured');
+    expect(hosts[1]!.textContent).toContain('No host recorded');
+    expect(screen.getByText('3 local turns costed from electricity · 2 of 3 measured')).toBeTruthy();
+  });
+
+  it('narrows the page to a host, keeps it while drilling, and clears it', async () => {
+    getSpendReport.mockImplementation((req: { host?: string; project_id?: string }) =>
+      Promise.resolve({
+        ...(req.project_id ? projectReport : tenantReport),
+        host: req.host,
+        hosts: [{ host: 'gpu-host:9091', total_tokens: 150 }],
+      }),
+    );
+    render(CostView);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Show only gpu-host:9091' }));
+    await waitFor(() => expect(getSpendReport.mock.calls.at(-1)![0]).toMatchObject({ host: 'gpu-host:9091' }));
+    expect((await screen.findByTestId('spend-host-filter')).textContent).toContain('gpu-host:9091');
+
+    // Drilling into a project keeps the host: it is a filter, not a level.
+    await fireEvent.click(await screen.findByText('proj-1'));
+    await waitFor(() =>
+      expect(getSpendReport.mock.calls.at(-1)![0]).toMatchObject({ project_id: 'proj-1', host: 'gpu-host:9091' }),
+    );
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Show every host' }));
+    await waitFor(() => expect(getSpendReport.mock.calls.at(-1)![0].host).toBeUndefined());
+    expect(screen.queryByTestId('spend-host-filter')).toBeNull();
+  });
+
+  it('edits the tenant limits in place and reloads the report after saving', async () => {
+    getSpendReport.mockResolvedValue({ ...tenantReport, scope_policy_status: 'none' });
+    getTenantSpendPolicy.mockResolvedValue({
+      tenant_id: 'acme',
+      limits: { windows: [{ name: 'daily', size: 86_400_000_000_000, max_equivalent_micros: 50_000_000 }] },
+    });
+    setTenantSpendPolicy.mockResolvedValue({ tenant_id: 'acme' });
+    render(CostView);
+
+    await fireEvent.click(await screen.findByTestId('edit-tenant-limits'));
+    await waitFor(() => expect(getTenantSpendPolicy).toHaveBeenCalledWith({ tenant_id: 'acme' }));
+    expect(await screen.findAllByTestId('spend-window-row')).toHaveLength(1);
+
+    const calls = getSpendReport.mock.calls.length;
+    await fireEvent.click(screen.getByRole('button', { name: 'Save limits' }));
+    await waitFor(() => expect(setTenantSpendPolicy).toHaveBeenCalled());
+    expect(setTenantSpendPolicy.mock.calls[0]![0]).toEqual({
+      tenant_id: 'acme',
+      limits: { windows: [{ name: 'daily', size: 86_400_000_000_000, max_equivalent_micros: 50_000_000 }] },
+    });
+    await waitFor(() => expect(getSpendReport.mock.calls.length).toBeGreaterThan(calls));
+    expect(screen.queryByTestId('tenant-limits-editor')).toBeNull();
+  });
+
+  it('refuses to save tenant limits that cap nothing', async () => {
+    getSpendReport.mockResolvedValue({ ...tenantReport, scope_policy_status: 'none' });
+    getTenantSpendPolicy.mockResolvedValue({ tenant_id: 'acme' });
+    render(CostView);
+
+    await fireEvent.click(await screen.findByTestId('edit-tenant-limits'));
+    await fireEvent.click(await screen.findByRole('button', { name: /Add window/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save limits' }));
+    expect((await screen.findByTestId('tenant-limits-error')).textContent).toContain('caps nothing');
+    expect(setTenantSpendPolicy).not.toHaveBeenCalled();
+  });
+
+  it('says why the tenant limits could not be read', async () => {
+    getSpendReport.mockResolvedValue({ ...tenantReport, scope_policy_status: 'none' });
+    getTenantSpendPolicy.mockRejectedValue(Object.assign(new Error('forbidden'), { status: 403 }));
+    render(CostView);
+    await fireEvent.click(await screen.findByTestId('edit-tenant-limits'));
+    expect((await screen.findByTestId('tenant-limits-error')).textContent).toMatch(/permission|forbidden/i);
+    expect(screen.getByRole('button', { name: 'Save limits' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('breaks the spend down by Agent, narrows to one and shows its own limits', async () => {
+    getSpendReport.mockImplementation((req: { agent?: string }) =>
+      Promise.resolve({
+        ...tenantReport,
+        agent: req.agent,
+        agents: [
+          { agent_id: 'claude-coder', name: 'Claude coder', total_tokens: 150 },
+          { unattributed: true, total_tokens: 50 },
+        ],
+        ...(req.agent
+          ? {
+              agent_policy_status: 'metered',
+              agent_windows: [{ name: 'daily', size: 86_400_000_000_000, max_tokens: 100, used_tokens: 150, remaining_tokens: 0, exhausted: true }],
+            }
+          : {}),
+      }),
+    );
+    render(CostView);
+    const agents = await screen.findAllByTestId('spend-agent');
+    expect(agents).toHaveLength(2);
+    expect(agents[1]!.textContent).toContain('No Agent (raw backend)');
+    expect(screen.queryByTestId('agent-limits')).toBeNull();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Show only Claude coder' }));
+    await waitFor(() => expect(getSpendReport.mock.calls.at(-1)![0]).toMatchObject({ agent: 'claude-coder' }));
+    expect((await screen.findByTestId('spend-agent-filter')).textContent).toContain('claude-coder');
+    expect((await screen.findByTestId('agent-window')).textContent).toContain('passed over until it frees');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Show every Agent' }));
+    await waitFor(() => expect(getSpendReport.mock.calls.at(-1)![0].agent).toBeUndefined());
+  });
+
+  it('edits the narrowed-to Agent\'s limits, keeping every other field of the Agent', async () => {
+    const coder = { id: 'claude-coder', name: 'Claude coder', roles: ['coding'], backend: 'claude', model: 'claude-opus-5-5', image: 'worker:1' };
+    getSpendReport.mockResolvedValue({ ...tenantReport, agent: 'claude-coder', agent_policy_status: 'none' });
+    getAgent.mockResolvedValue(coder);
+    updateAgent.mockResolvedValue(coder);
+    render(CostView);
+
+    await fireEvent.click(await screen.findByTestId('edit-agent-limits'));
+    await waitFor(() => expect(getAgent).toHaveBeenCalledWith('claude-coder', 'acme'));
+    await fireEvent.click(await screen.findByRole('button', { name: /Add window/ }));
+    const inputs = screen.getAllByTestId('spend-window-row')[0]!.querySelectorAll('input');
+    // name, hours, tokens: a daily window of 1000 tokens.
+    await fireEvent.input(inputs[0]!, { target: { value: 'daily' } });
+    await fireEvent.input(inputs[1]!, { target: { value: '24' } });
+    await fireEvent.input(inputs[2]!, { target: { value: '1000' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save limits' }));
+    await waitFor(() => expect(updateAgent).toHaveBeenCalled());
+    const [id, saved, tenant] = updateAgent.mock.calls[0]!;
+    expect(id).toBe('claude-coder');
+    expect(tenant).toBe('acme');
+    expect(saved).toMatchObject({ ...coder, spend: { windows: [{ name: 'daily', max_tokens: 1000 }] } });
+  });
+
+  it('says why an Agent\'s limits could not be read and refuses to save', async () => {
+    getSpendReport.mockResolvedValue({ ...tenantReport, agent: 'claude-coder', agent_policy_status: 'none' });
+    getAgent.mockRejectedValue(Object.assign(new Error('forbidden'), { status: 403 }));
+    render(CostView);
+    await fireEvent.click(await screen.findByTestId('edit-agent-limits'));
+    expect((await screen.findByTestId('agent-limits-error')).textContent).toMatch(/permission|forbidden/i);
+    expect(screen.getByRole('button', { name: 'Save limits' }).hasAttribute('disabled')).toBe(true);
+    expect(updateAgent).not.toHaveBeenCalled();
   });
 });

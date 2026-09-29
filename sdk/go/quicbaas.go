@@ -18,9 +18,12 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/spend"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/registry"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/account"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/agents"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/auth"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/backup"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/batch"
@@ -134,13 +137,18 @@ type Client interface {
 	// SDLC operations (the SDLC module: forge bindings and deliveries)
 	SDLC() SDLCClient
 
+	// Agents operations: the tenant's AI agent catalog — the named Agents
+	// (runtime + model + provider) every role slot references, and the
+	// ordered pools a slot fails over along. Not the fleet of daemons.
+	Agents() AgentsClient
+
 	// Account operations (pooled provider accounts — the per-tenant pool of
 	// Anthropic/Claude, Codex, and OpenCode logins an agent session can be
 	// spawned against). This is the single canonical entry point for the
 	// surface; no flat or duplicate accessor exists.
 	Account() AccountClient
 
-	// Orchestrator operations (agent fleet management)
+	// Orchestrator operations (fleet management)
 	Orchestrator() OrchestratorClient
 
 	// Barrier + ceremony moved to Security().Barrier() / .Ceremony() —
@@ -702,8 +710,6 @@ type (
 	IAMTenantClient = iam.TenantClient
 	// IAMUserClient is an alias for iam.UserClient.
 	IAMUserClient = iam.UserClient
-	// IAMGroupClient is an alias for iam.GroupClient.
-	IAMGroupClient = iam.GroupClient
 	// IAMRoleClient is an alias for iam.RoleClient.
 	IAMRoleClient = iam.RoleClient
 	// IAMPolicyClient is an alias for iam.PolicyClient.
@@ -726,8 +732,6 @@ type (
 	Tenant = iam.Tenant
 	// IAMUser is an alias for iam.User.
 	IAMUser = iam.User
-	// IAMGroup is an alias for iam.Group.
-	IAMGroup = iam.Group
 	// IAMRole is an alias for iam.Role.
 	IAMRole = iam.Role
 	// IAMPolicy is an alias for iam.Policy.
@@ -1475,6 +1479,9 @@ type ProjectClient = project.Client
 // SDLCClient is an alias for the sdlc.Client interface.
 type SDLCClient = sdlc.Client
 
+// AgentsClient is an alias for the agents.Client interface.
+type AgentsClient = agents.Client
+
 // =============================================================================
 // Account Client Type Aliases (pooled provider accounts)
 // =============================================================================
@@ -1578,6 +1585,19 @@ type (
 	// ProjectQuotas is an alias for project.ProjectQuotas.
 	ProjectQuotas = project.ProjectQuotas
 
+	// SpendLimits is an alias for spend.Limits: the sliding token and dollar
+	// windows an account, a project and a tenant are metered by.
+	SpendLimits = spend.Limits
+
+	// SpendWindow is an alias for spend.Window.
+	SpendWindow = spend.Window
+
+	// SpendBreakerPolicy is an alias for spend.BreakerPolicy.
+	SpendBreakerPolicy = spend.BreakerPolicy
+
+	// AccountSpendPolicy is an alias for spend.AccountPolicy.
+	AccountSpendPolicy = spend.AccountPolicy
+
 	// ProjectRole is an alias for project.ProjectRole.
 	ProjectRole = project.ProjectRole
 
@@ -1645,6 +1665,7 @@ type client struct {
 	orchestratorClient       OrchestratorClient
 	projectClient            ProjectClient
 	sdlcClient               SDLCClient
+	agentsClient             AgentsClient
 	accountClient            AccountClient
 	qrdb                     qrdbState
 	address                  string
@@ -2492,7 +2513,7 @@ func (c *client) RAG() RAGClient {
 	return c.ragClient
 }
 
-// Orchestrator returns the orchestrator client for agent fleet management operations.
+// Orchestrator returns the orchestrator client for fleet management operations.
 func (c *client) Orchestrator() OrchestratorClient {
 	c.mu.RLock()
 	if c.orchestratorClient != nil {
@@ -2544,6 +2565,25 @@ func (c *client) SDLC() SDLCClient {
 		c.sdlcClient = newSDLCClient(c.transport)
 	}
 	return c.sdlcClient
+}
+
+// Agents returns the client for the tenant AI agent catalog: Agents and the
+// pools role slots fail over along.
+func (c *client) Agents() AgentsClient {
+	c.mu.RLock()
+	if c.agentsClient != nil {
+		c.mu.RUnlock()
+		return c.agentsClient
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.agentsClient == nil {
+		c.agentsClient = newAgentsClient(c.transport)
+	}
+	return c.agentsClient
 }
 
 // Account returns the Account client for managing pooled provider accounts.
@@ -2600,4 +2640,5 @@ func newRAGClient(t Transport) RAGClient                       { return rag.NewC
 func newOrchestratorClient(t Transport) OrchestratorClient     { return orchestrator.NewClient(t) }
 func newProjectClient(t Transport) ProjectClient               { return project.NewClient(t) }
 func newSDLCClient(t Transport) SDLCClient                     { return sdlc.NewClient(t) }
+func newAgentsClient(t Transport) AgentsClient                 { return agents.NewClient(t) }
 func newAccountClient(t Transport) AccountClient               { return account.NewClient(t) }

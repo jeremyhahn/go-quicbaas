@@ -30,6 +30,23 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/netport"
 )
 
+// testTrustDomain is the SPIFFE trust domain these tests configure. First-boot
+// fails closed without one (see ErrNoSPIFFETrustDomain), because the admin
+// certificate would carry no tenant SAN and could not authenticate.
+const testTrustDomain = "quicbaas.example.test"
+
+// stopCatalogStackForTest tears the catalog stack down in the order Shutdown
+// uses: background workers first, then the backend manager, then the catalog
+// store they read. Closing the store while the retention worker is mid-scan
+// leaves that scan iterating a closed PebbleDB, which panics on a goroutine and
+// takes the whole test binary down with it (go-quicbaas#986).
+func stopCatalogStackForTest(t *testing.T, srv *Server) {
+	t.Helper()
+	require.NoError(t, srv.stopWorkerManager())
+	require.NoError(t, srv.stopBackendManager())
+	require.NoError(t, srv.stopCatalogManager())
+}
+
 // getFreePort returns a single port reserved for this test binary.
 func getFreePort(t *testing.T) int {
 	t.Helper()
@@ -108,6 +125,16 @@ func createTestConfig(t *testing.T) *config.Config {
 
 	// Disable MCP for unit tests
 	cfg.Server.MCP.Enabled = false
+
+	// A test server that brings up a CA must be configured like a deployment
+	// that brings up a CA. First-boot issues the platform admin's certificate
+	// through it, and that certificate needs a SPIFFE trust domain to carry a
+	// tenant SAN login can resolve — so first-boot FAILS CLOSED without one
+	// (ErrNoSPIFFETrustDomain), and since #57 that failure refuses the boot
+	// rather than warning. Tests that enable TLS previously got away with the
+	// misconfiguration because the failure was swallowed; setting it here keeps
+	// the fixture honest instead of asking every such test to remember.
+	cfg.IAM.SPIFFETrustDomain = testTrustDomain
 
 	return cfg
 }

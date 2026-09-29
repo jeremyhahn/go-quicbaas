@@ -112,7 +112,7 @@ quicbaas data delete user john --yes
 | Command | Description | Documentation |
 |---------|-------------|---------------|
 | orchestrator | Sessions, prompts, jobs, workflows, **stateless inference** | All transports, streaming, host affinity |
-| agent | Fleet agent management (deploy, list, inspect, update) | mTLS bootstrap, gRPC event ingest |
+| agent | Fleet node management (deploy, list, inspect, update) | mTLS bootstrap, gRPC event ingest |
 | project | Agentic project CRUD + per-agent roles and quotas | Workspace, git, quotas, `grant-role` / `revoke-role` |
 | mcp | Model Context Protocol client | `serve --stdio` bridge for MCP hosts, `tools`, `call` |
 
@@ -587,19 +587,6 @@ This document provides a comprehensive overview of all CLI commands in QuicBaaS,
 | `iam gdpr deletion request` | Y | Y | Y | - | Y | B | Complete |
 | `iam gdpr deletion cancel` | Y | Y | Y | - | Y | B | Complete |
 | `iam gdpr deletion status` | Y | Y | Y | - | Y | B | Complete |
-
-#### IAM Group
-
-| Command | gRPC | REST | QUIC | Unix | MCP | Tests | Status |
-|---------|------|------|------|------|-----|-------|--------|
-| `iam group create` | Y | Y | Y | - | Y | B | Complete |
-| `iam group get` | Y | Y | Y | - | Y | B | Complete |
-| `iam group update` | Y | Y | Y | - | Y | B | Complete |
-| `iam group delete` | Y | Y | Y | - | Y | B | Complete |
-| `iam group list` | Y | Y | Y | - | Y | B | Complete |
-| `iam group add-member` | Y | Y | Y | - | Y | B | Complete |
-| `iam group remove-member` | Y | Y | Y | - | Y | B | Complete |
-| `iam group members` | Y | Y | Y | - | Y | B | Complete |
 
 #### IAM MFA
 

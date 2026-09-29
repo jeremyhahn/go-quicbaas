@@ -49,7 +49,7 @@ func pagedJobFixtures(n int) []*orchestration.JobStatus {
 func listJobsResult(t *testing.T, svc orchestration.AgentService, args map[string]interface{}) map[string]interface{} {
 	t.Helper()
 
-	reg := newAgentRegistry(t, svc)
+	reg := newFleetRegistry(t, svc)
 	ctx := orchestration.ContextWithTenant(context.Background(), "t1")
 	result, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_list_jobs", args)
 	require.NoError(t, err)
@@ -85,7 +85,7 @@ func TestMCPListJobs_PagesAndCounts(t *testing.T) {
 func TestMCPListJobs_RefusesAnUnknownSortField(t *testing.T) {
 	svc := &fleetMockAgentService{}
 	svc.listJobs = pagedJobFixtures(3)
-	reg := newAgentRegistry(t, svc)
+	reg := newFleetRegistry(t, svc)
 	ctx := orchestration.ContextWithTenant(context.Background(), "t1")
 
 	_, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_list_jobs",
@@ -119,7 +119,7 @@ func TestMCPListJobs_SearchComposesWithTheRunnerFilter(t *testing.T) {
 // TestMCPListJobs_DeclaresThePagingArguments proves the tool's schema offers
 // the shared parameters, so a model can page without guessing.
 func TestMCPListJobs_DeclaresThePagingArguments(t *testing.T) {
-	reg := newAgentRegistry(t, &fleetMockAgentService{})
+	reg := newFleetRegistry(t, &fleetMockAgentService{})
 
 	var schema map[string]interface{}
 	for _, tool := range reg.ListTools() {

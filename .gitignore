@@ -158,6 +158,7 @@ __pycache__/
 .coverage
 .coverage.*
 *.egg-info/
+.venv/
 
 # Build output of the integration cert-fixture tooling. A 5 MB unstripped ELF
 # binary was tracked at the repository root from 47f0b37b until go-quicbaas#943;

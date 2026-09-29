@@ -39,6 +39,8 @@ type fakeBlockedTasks struct {
 	readmits   []string
 	listErr    error
 	readmitErr error
+	// unreadable names records ListTaskRecords reports it could not decode.
+	unreadable []string
 }
 
 func (f *fakeBlockedTasks) ListTasks(_ context.Context, tenantID string, filter *orchestration.TaskFilter) ([]*orchestration.Task, error) {
@@ -66,6 +68,18 @@ func (f *fakeBlockedTasks) ListTasks(_ context.Context, tenantID string, filter 
 		matched = append(matched, &copied)
 	}
 	return matched, nil
+}
+
+// ListTaskRecords is ListTasks plus the records the fake was told it could not
+// read, which is the label sweep's port.
+func (f *fakeBlockedTasks) ListTaskRecords(ctx context.Context, tenantID string, filter *orchestration.TaskFilter) (*orchestration.TaskListing, error) {
+	tasks, err := f.ListTasks(ctx, tenantID, filter)
+	if err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return &orchestration.TaskListing{Tasks: tasks, Unreadable: append([]string(nil), f.unreadable...)}, nil
 }
 
 // adopt adds a task to the store while a sweep is in flight, the way the
@@ -125,15 +139,47 @@ func (f *fakeBlockedTasks) ReadmitTask(_ context.Context, tenantID, taskID strin
 	if f.readmitErr != nil {
 		return f.readmitErr
 	}
+	for _, task := range f.tasks {
+		if task.ID == taskID && task.TenantID == tenantID && task.Status != orchestration.TaskStatusBlocked {
+			// The store's transition table: only a parked task readmits.
+			return &orchestration.TaskInvalidStateError{TaskID: taskID, CurrentState: task.Status, TargetState: orchestration.TaskStatusPending}
+		}
+	}
 	f.readmits = append(f.readmits, taskID)
 	for _, task := range f.tasks {
 		if task.ID == taskID && task.TenantID == tenantID {
+			task.StatusChangedAt = time.Now().UnixNano()
 			task.Status = orchestration.TaskStatusPending
 			task.BlockedReason = ""
 			task.BlockKind = ""
 		}
 	}
 	return nil
+}
+
+// SubmitTaskArtifacts records artifacts on the task, overwriting by name
+// the way the real store does.
+func (f *fakeBlockedTasks) SubmitTaskArtifacts(_ context.Context, tenantID, taskID string, artifacts []orchestration.Artifact) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, task := range f.tasks {
+		if task.ID != taskID || task.TenantID != tenantID {
+			continue
+		}
+		for _, artifact := range artifacts {
+			replaced := false
+			for i := range task.OutputArtifacts {
+				if task.OutputArtifacts[i].Name == artifact.Name {
+					task.OutputArtifacts[i], replaced = artifact, true
+				}
+			}
+			if !replaced {
+				task.OutputArtifacts = append(task.OutputArtifacts, artifact)
+			}
+		}
+		return nil
+	}
+	return &orchestration.TaskNotFoundError{TaskID: taskID}
 }
 
 func (f *fakeBlockedTasks) readmitted() []string {
@@ -760,6 +806,10 @@ func (nilListingTasks) ListTasks(context.Context, string, *orchestration.TaskFil
 
 func (nilListingTasks) ReadmitTask(context.Context, string, string) error { return nil }
 
+func (nilListingTasks) SubmitTaskArtifacts(context.Context, string, string, []orchestration.Artifact) error {
+	return nil
+}
+
 // TestVerdictForCheckError_KeepsTheThreeClassesApart tests the
 // classification directly, because two of its branches are defensive: the
 // sweep's own parse catches an unusable kind before a check ever sees it,
@@ -945,10 +995,10 @@ var (
 	errForgeIssueKind  error
 )
 
-func registerForgeIssueKind(t *testing.T, bindings BindingReader, forges ForgeResolver) {
+func registerForgeIssueKind(t *testing.T, bindings BindingReader, forges ForgeResolver, clusters IssueClusterReader) {
 	t.Helper()
 	forgeIssueKindOnce.Do(func() {
-		source, err := NewIssueSource(bindings, forges, 10)
+		source, err := NewIssueSource(bindings, forges, clusters, 10)
 		if err != nil {
 			errForgeIssueKind = err
 			return
@@ -964,7 +1014,7 @@ func newEngineRig(t *testing.T) *engineRig {
 	t.Helper()
 	hooks := newHooksRig(t)
 	watchConclusions(t, testTenant, hooks.hooks)
-	registerForgeIssueKind(t, hooks.store, &fakeForges{forge: hooks.forge})
+	registerForgeIssueKind(t, hooks.store, &fakeForges{forge: hooks.forge}, hooks.store)
 
 	base, err := logger.New(logger.LogConfig{Level: "error", Output: "stdout", Format: "console"})
 	if err != nil {

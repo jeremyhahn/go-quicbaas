@@ -340,7 +340,7 @@ func (s *secretsService) GetSecret(ctx context.Context, req *GetSecretRequest) (
 			}).Warn("Secret not found")
 		}
 		return nil, &errors.QBError{
-			Code: errors.ErrNotFound,
+			Code: secretLookupCode(err),
 			Op:   "secrets.GetSecret",
 			Err:  &api.OperationFailedError{Operation: "find secret", Cause: err},
 		}
@@ -658,7 +658,7 @@ func (s *secretsService) GetSecretVersion(ctx context.Context, req *GetSecretVer
 			s.metrics.operationErrors.With("get_version", "not_found").Inc()
 		}
 		return nil, &errors.QBError{
-			Code: errors.ErrNotFound,
+			Code: secretLookupCode(err),
 			Op:   "secrets.GetSecretVersion",
 			Err:  &api.OperationFailedError{Operation: "find secret version", Cause: err},
 		}
@@ -674,6 +674,21 @@ func (s *secretsService) GetSecretVersion(ctx context.Context, req *GetSecretVer
 		}
 	}
 
+	// The version's author lives in the backend's per-version record, which
+	// GetVersion does not return. An outage reading it fails the call rather
+	// than answering with an empty created_by that reads as "nobody" (#862).
+	createdBy, err := s.secretVersionCreatedBy(ctx, scopedID, req.Version)
+	if err != nil {
+		if s.metrics != nil {
+			s.metrics.operationErrors.With("get_version", "list_failed").Inc()
+		}
+		return nil, &errors.QBError{
+			Code: errors.ErrInternal,
+			Op:   "secrets.GetSecretVersion",
+			Err:  &api.OperationFailedError{Operation: "read secret version author", Cause: err},
+		}
+	}
+
 	// Build version response with original (unscoped) secret ID
 	version := &SecretVersion{
 		SecretID:  req.SecretID,
@@ -681,12 +696,28 @@ func (s *secretsService) GetSecretVersion(ctx context.Context, req *GetSecretVer
 		Data:      secretData,
 		Metadata:  metadata,
 		CreatedAt: time.Now(),
+		CreatedBy: createdBy,
 	}
 
 	return &GetSecretVersionResponse{
 		Version:   version,
 		Timestamp: time.Now(),
 	}, nil
+}
+
+// secretVersionCreatedBy returns the principal recorded as the author of one
+// version of the secret at scopedID, "" when the version records none.
+func (s *secretsService) secretVersionCreatedBy(ctx context.Context, scopedID string, version uint64) (string, error) {
+	versions, err := s.secretsManager.ListVersions(ctx, scopedID)
+	if err != nil {
+		return "", err
+	}
+	for _, vm := range versions {
+		if uint64(vm.Version) == version { //nolint:gosec // G115: Version is bounded by backend
+			return vm.CreatedBy, nil
+		}
+	}
+	return "", nil
 }
 
 // ListSecretVersions returns all versions of a secret.
@@ -749,6 +780,7 @@ func (s *secretsService) ListSecretVersions(ctx context.Context, req *ListSecret
 			SecretID:  req.SecretID,
 			Version:   uint64(vm.Version), //nolint:gosec // G115: Version is bounded by backend
 			CreatedAt: vm.CreatedAt,
+			CreatedBy: vm.CreatedBy,
 		}
 		versions = append(versions, version)
 	}
@@ -874,7 +906,7 @@ func (s *secretsService) RotateSecret(ctx context.Context, req *RotateSecretRequ
 			s.metrics.operationErrors.With("rotate", "not_found").Inc()
 		}
 		return nil, &errors.QBError{
-			Code: errors.ErrNotFound,
+			Code: secretLookupCode(err),
 			Op:   "secrets.RotateSecret",
 			Err:  &api.OperationFailedError{Operation: "find secret", Cause: err},
 		}
@@ -986,7 +1018,7 @@ func (s *secretsService) SetRotationPolicy(ctx context.Context, req *SetRotation
 			s.metrics.operationErrors.With("set_rotation_policy", "not_found").Inc()
 		}
 		return nil, &errors.QBError{
-			Code: errors.ErrNotFound,
+			Code: secretLookupCode(err),
 			Op:   "secrets.SetRotationPolicy",
 			Err:  &api.OperationFailedError{Operation: "find secret", Cause: err},
 		}
@@ -1075,7 +1107,7 @@ func (s *secretsService) GetRotationPolicy(ctx context.Context, req *GetRotation
 			s.metrics.operationErrors.With("get_rotation_policy", "not_found").Inc()
 		}
 		return nil, &errors.QBError{
-			Code: errors.ErrNotFound,
+			Code: secretLookupCode(err),
 			Op:   "secrets.GetRotationPolicy",
 			Err:  &api.OperationFailedError{Operation: "find secret", Cause: err},
 		}
@@ -1155,7 +1187,7 @@ func (s *secretsService) UpdateSecretStatus(ctx context.Context, req *UpdateSecr
 			s.metrics.operationErrors.With("update_status", "not_found").Inc()
 		}
 		return nil, &errors.QBError{
-			Code: errors.ErrNotFound,
+			Code: secretLookupCode(err),
 			Op:   "secrets.UpdateSecretStatus",
 			Err:  &api.OperationFailedError{Operation: "find secret", Cause: err},
 		}
@@ -1867,4 +1899,26 @@ func (s *secretsService) EnsureSecret(ctx context.Context, req *EnsureSecretRequ
 		Version:   1,
 		Timestamp: time.Now(),
 	}, nil
+}
+
+// secretLookupCode classifies a secrets-manager read failure.
+//
+// ONLY A STORE THAT ANSWERED "ABSENT" IS NOT-FOUND. Every read here once
+// reported any failure as ErrNotFound, so a sealed barrier or a failing
+// backend told the caller that a secret it had named correctly did not exist
+// — and a reference check on save then refused a correct reference. A
+// failure that is not an absence keeps its own code, or is unavailable when
+// it carries none.
+func secretLookupCode(err error) errors.ErrorCode {
+	switch {
+	case errors.IsNotFound(err),
+		stderrors.Is(err, secrets.ErrSecretNotFound),
+		stderrors.Is(err, secrets.ErrSecretDeleted),
+		stderrors.Is(err, secrets.ErrVersionNotFound):
+		return errors.ErrNotFound
+	case errors.Code(err) != errors.ErrUnknown:
+		return errors.Code(err)
+	default:
+		return errors.ErrUnavailable
+	}
 }

@@ -439,7 +439,6 @@ type Provider struct {
 	AutoProvision bool      `json:"auto_provision"`
 	AllowLinking  bool      `json:"allow_linking"`
 	DefaultRoles  []string  `json:"default_roles,omitempty"`
-	DefaultGroups []string  `json:"default_groups,omitempty"`
 	Created       time.Time `json:"created"`
 	Updated       time.Time `json:"updated"`
 }
@@ -457,7 +456,6 @@ type CreateProviderOptions struct {
 	AutoProvision bool     `json:"auto_provision"`
 	AllowLinking  bool     `json:"allow_linking"`
 	DefaultRoles  []string `json:"default_roles,omitempty"`
-	DefaultGroups []string `json:"default_groups,omitempty"`
 }
 
 // UpdateProviderOptions represents options for updating an identity provider.
@@ -473,7 +471,6 @@ type UpdateProviderOptions struct {
 	AutoProvision *bool    `json:"auto_provision,omitempty"`
 	AllowLinking  *bool    `json:"allow_linking,omitempty"`
 	DefaultRoles  []string `json:"default_roles,omitempty"`
-	DefaultGroups []string `json:"default_groups,omitempty"`
 }
 
 // ListProvidersResponse represents a list of providers.

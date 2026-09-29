@@ -172,7 +172,7 @@ func TestIntegration_ProjectDiscovery_WithAgentFiles(t *testing.T) {
 
 	root := t.TempDir()
 	agentNames := []string{"golang-pro", "qa-engineer", "backend-architect"}
-	createTestProjectWithAgents(t, filepath.Join(root, "full-project"), agentNames)
+	createTestProjectWithFleetNodes(t, filepath.Join(root, "full-project"), agentNames)
 
 	ctx := context.Background()
 	resp, err := svc.DiscoverProjects(ctx, &orchestration.DiscoverProjectsRequest{
@@ -458,7 +458,7 @@ func TestIntegration_FullWorkflow(t *testing.T) {
 	// Step 1: Discover projects from a temp directory.
 	root := t.TempDir()
 	createTestProject(t, filepath.Join(root, "my-service"))
-	createTestProjectWithAgents(t, filepath.Join(root, "my-cli"), []string{"golang-pro"})
+	createTestProjectWithFleetNodes(t, filepath.Join(root, "my-cli"), []string{"golang-pro"})
 
 	discoverResp, err := svc.DiscoverProjects(ctx, &orchestration.DiscoverProjectsRequest{
 		RootPath: root,

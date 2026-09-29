@@ -48,21 +48,25 @@ const (
 	OrchestratorService_ListBackends_FullMethodName           = "/quicbaas.orchestrator.v1.OrchestratorService/ListBackends"
 	OrchestratorService_ListRunners_FullMethodName            = "/quicbaas.orchestrator.v1.OrchestratorService/ListRunners"
 	OrchestratorService_Health_FullMethodName                 = "/quicbaas.orchestrator.v1.OrchestratorService/Health"
-	OrchestratorService_RegisterAgent_FullMethodName          = "/quicbaas.orchestrator.v1.OrchestratorService/RegisterAgent"
-	OrchestratorService_GetAgent_FullMethodName               = "/quicbaas.orchestrator.v1.OrchestratorService/GetAgent"
-	OrchestratorService_ListAgents_FullMethodName             = "/quicbaas.orchestrator.v1.OrchestratorService/ListAgents"
-	OrchestratorService_RemoveAgent_FullMethodName            = "/quicbaas.orchestrator.v1.OrchestratorService/RemoveAgent"
-	OrchestratorService_AgentHeartbeat_FullMethodName         = "/quicbaas.orchestrator.v1.OrchestratorService/AgentHeartbeat"
+	OrchestratorService_RegisterFleetNode_FullMethodName      = "/quicbaas.orchestrator.v1.OrchestratorService/RegisterFleetNode"
+	OrchestratorService_GetFleetNode_FullMethodName           = "/quicbaas.orchestrator.v1.OrchestratorService/GetFleetNode"
+	OrchestratorService_ListFleetNodes_FullMethodName         = "/quicbaas.orchestrator.v1.OrchestratorService/ListFleetNodes"
+	OrchestratorService_RemoveFleetNode_FullMethodName        = "/quicbaas.orchestrator.v1.OrchestratorService/RemoveFleetNode"
+	OrchestratorService_FleetNodeHeartbeat_FullMethodName     = "/quicbaas.orchestrator.v1.OrchestratorService/FleetNodeHeartbeat"
 	OrchestratorService_PushEvents_FullMethodName             = "/quicbaas.orchestrator.v1.OrchestratorService/PushEvents"
 	OrchestratorService_SubscribeSessionEvents_FullMethodName = "/quicbaas.orchestrator.v1.OrchestratorService/SubscribeSessionEvents"
 	OrchestratorService_GetSessionConversation_FullMethodName = "/quicbaas.orchestrator.v1.OrchestratorService/GetSessionConversation"
 	OrchestratorService_GetSpendReport_FullMethodName         = "/quicbaas.orchestrator.v1.OrchestratorService/GetSpendReport"
+	OrchestratorService_GetTenantSpendPolicy_FullMethodName   = "/quicbaas.orchestrator.v1.OrchestratorService/GetTenantSpendPolicy"
+	OrchestratorService_SetTenantSpendPolicy_FullMethodName   = "/quicbaas.orchestrator.v1.OrchestratorService/SetTenantSpendPolicy"
 	OrchestratorService_Inference_FullMethodName              = "/quicbaas.orchestrator.v1.OrchestratorService/Inference"
 	OrchestratorService_InferenceStream_FullMethodName        = "/quicbaas.orchestrator.v1.OrchestratorService/InferenceStream"
 	OrchestratorService_SpawnChildJob_FullMethodName          = "/quicbaas.orchestrator.v1.OrchestratorService/SpawnChildJob"
 	OrchestratorService_SubmitTaskArtifacts_FullMethodName    = "/quicbaas.orchestrator.v1.OrchestratorService/SubmitTaskArtifacts"
 	OrchestratorService_ListTaskArtifacts_FullMethodName      = "/quicbaas.orchestrator.v1.OrchestratorService/ListTaskArtifacts"
 	OrchestratorService_GetTaskArtifact_FullMethodName        = "/quicbaas.orchestrator.v1.OrchestratorService/GetTaskArtifact"
+	OrchestratorService_GetCostSettings_FullMethodName        = "/quicbaas.orchestrator.v1.OrchestratorService/GetCostSettings"
+	OrchestratorService_SetCostSettings_FullMethodName        = "/quicbaas.orchestrator.v1.OrchestratorService/SetCostSettings"
 )
 
 // OrchestratorServiceClient is the client API for OrchestratorService service.
@@ -112,12 +116,12 @@ type OrchestratorServiceClient interface {
 	ListRunners(ctx context.Context, in *OrchestratorListRunnersRequest, opts ...grpc.CallOption) (*OrchestratorListRunnersResponse, error)
 	// Health Operations
 	Health(ctx context.Context, in *OrchestratorHealthRequest, opts ...grpc.CallOption) (*OrchestratorHealthResponse, error)
-	// Agent Fleet Management
-	RegisterAgent(ctx context.Context, in *RegisterAgentRequest, opts ...grpc.CallOption) (*RegisterAgentResponse, error)
-	GetAgent(ctx context.Context, in *GetAgentRequest, opts ...grpc.CallOption) (*GetAgentResponse, error)
-	ListAgents(ctx context.Context, in *ListAgentsRequest, opts ...grpc.CallOption) (*ListAgentsResponse, error)
-	RemoveAgent(ctx context.Context, in *RemoveAgentRequest, opts ...grpc.CallOption) (*RemoveAgentResponse, error)
-	AgentHeartbeat(ctx context.Context, in *AgentHeartbeatRequest, opts ...grpc.CallOption) (*AgentHeartbeatResponse, error)
+	// Fleet Management
+	RegisterFleetNode(ctx context.Context, in *RegisterFleetNodeRequest, opts ...grpc.CallOption) (*RegisterFleetNodeResponse, error)
+	GetFleetNode(ctx context.Context, in *GetFleetNodeRequest, opts ...grpc.CallOption) (*GetFleetNodeResponse, error)
+	ListFleetNodes(ctx context.Context, in *ListFleetNodesRequest, opts ...grpc.CallOption) (*ListFleetNodesResponse, error)
+	RemoveFleetNode(ctx context.Context, in *RemoveFleetNodeRequest, opts ...grpc.CallOption) (*RemoveFleetNodeResponse, error)
+	FleetNodeHeartbeat(ctx context.Context, in *FleetNodeHeartbeatRequest, opts ...grpc.CallOption) (*FleetNodeHeartbeatResponse, error)
 	// Session event ingest (Phase 3). Daemon-side agents open a bidi stream
 	// and push each session event as PushEventRequest; the control plane acks
 	// with EventAck carrying the accepted sequence. At-least-once delivery:
@@ -152,12 +156,17 @@ type OrchestratorServiceClient interface {
 	// Four RPCs over one scan would be four places for a drill-down's
 	// arithmetic to stop agreeing with itself.
 	//
-	// WHAT IT DOES NOT CLAIM. cost_micros is accompanied by cost_measured,
-	// and today nothing in the tree prices a turn, so the flag is false and
-	// a renderer must show a dash rather than the zero. Likewise
-	// policy_status distinguishes an account with no cap from one this
-	// deployment could not read. See go-quicbaas#791.
+	// WHAT IT DOES NOT CLAIM. Every money figure is accompanied by how many
+	// entries it covers (priced_entries, billed_entries), and zero is a dash
+	// rather than a zero. Likewise policy_status distinguishes an account
+	// with no cap from one this deployment could not read. go-quicbaas#791.
 	GetSpendReport(ctx context.Context, in *GetSpendReportRequest, opts ...grpc.CallOption) (*GetSpendReportResponse, error)
+	// GetTenantSpendPolicy returns the tenant's own spend limits and its
+	// live usage against each window, over every turn charged to it.
+	GetTenantSpendPolicy(ctx context.Context, in *GetTenantSpendPolicyRequest, opts ...grpc.CallOption) (*TenantSpendPolicyResponse, error)
+	// SetTenantSpendPolicy replaces the tenant's own spend limits; limits
+	// with no windows make the tenant unmetered. go-quicbaas#1058.
+	SetTenantSpendPolicy(ctx context.Context, in *SetTenantSpendPolicyRequest, opts ...grpc.CallOption) (*TenantSpendPolicyResponse, error)
 	// Inference runs a stateless prompt against a named backend without
 	// requiring a prior session. The response is aggregated and returned
 	// as a single InferenceResponse. For streaming use InferenceStream.
@@ -180,6 +189,14 @@ type OrchestratorServiceClient interface {
 	// GetTaskArtifact retrieves a single named artifact, resolving kv_key Refs
 	// to their full byte content.
 	GetTaskArtifact(ctx context.Context, in *GetTaskArtifactRequest, opts ...grpc.CallOption) (*GetTaskArtifactResponse, error)
+	// GetCostSettings returns a tenant's runtime cost settings — the
+	// electricity rate and engine draws its local inference is costed from —
+	// and the rates in force once layered over the configuration.
+	// go-quicbaas#1058.
+	GetCostSettings(ctx context.Context, in *GetCostSettingsRequest, opts ...grpc.CallOption) (*CostSettingsResponse, error)
+	// SetCostSettings replaces a tenant's runtime cost settings; settings
+	// that override nothing restore the configuration.
+	SetCostSettings(ctx context.Context, in *SetCostSettingsRequest, opts ...grpc.CallOption) (*CostSettingsResponse, error)
 }
 
 type orchestratorServiceClient struct {
@@ -429,50 +446,50 @@ func (c *orchestratorServiceClient) Health(ctx context.Context, in *Orchestrator
 	return out, nil
 }
 
-func (c *orchestratorServiceClient) RegisterAgent(ctx context.Context, in *RegisterAgentRequest, opts ...grpc.CallOption) (*RegisterAgentResponse, error) {
+func (c *orchestratorServiceClient) RegisterFleetNode(ctx context.Context, in *RegisterFleetNodeRequest, opts ...grpc.CallOption) (*RegisterFleetNodeResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(RegisterAgentResponse)
-	err := c.cc.Invoke(ctx, OrchestratorService_RegisterAgent_FullMethodName, in, out, cOpts...)
+	out := new(RegisterFleetNodeResponse)
+	err := c.cc.Invoke(ctx, OrchestratorService_RegisterFleetNode_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *orchestratorServiceClient) GetAgent(ctx context.Context, in *GetAgentRequest, opts ...grpc.CallOption) (*GetAgentResponse, error) {
+func (c *orchestratorServiceClient) GetFleetNode(ctx context.Context, in *GetFleetNodeRequest, opts ...grpc.CallOption) (*GetFleetNodeResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetAgentResponse)
-	err := c.cc.Invoke(ctx, OrchestratorService_GetAgent_FullMethodName, in, out, cOpts...)
+	out := new(GetFleetNodeResponse)
+	err := c.cc.Invoke(ctx, OrchestratorService_GetFleetNode_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *orchestratorServiceClient) ListAgents(ctx context.Context, in *ListAgentsRequest, opts ...grpc.CallOption) (*ListAgentsResponse, error) {
+func (c *orchestratorServiceClient) ListFleetNodes(ctx context.Context, in *ListFleetNodesRequest, opts ...grpc.CallOption) (*ListFleetNodesResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListAgentsResponse)
-	err := c.cc.Invoke(ctx, OrchestratorService_ListAgents_FullMethodName, in, out, cOpts...)
+	out := new(ListFleetNodesResponse)
+	err := c.cc.Invoke(ctx, OrchestratorService_ListFleetNodes_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *orchestratorServiceClient) RemoveAgent(ctx context.Context, in *RemoveAgentRequest, opts ...grpc.CallOption) (*RemoveAgentResponse, error) {
+func (c *orchestratorServiceClient) RemoveFleetNode(ctx context.Context, in *RemoveFleetNodeRequest, opts ...grpc.CallOption) (*RemoveFleetNodeResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(RemoveAgentResponse)
-	err := c.cc.Invoke(ctx, OrchestratorService_RemoveAgent_FullMethodName, in, out, cOpts...)
+	out := new(RemoveFleetNodeResponse)
+	err := c.cc.Invoke(ctx, OrchestratorService_RemoveFleetNode_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *orchestratorServiceClient) AgentHeartbeat(ctx context.Context, in *AgentHeartbeatRequest, opts ...grpc.CallOption) (*AgentHeartbeatResponse, error) {
+func (c *orchestratorServiceClient) FleetNodeHeartbeat(ctx context.Context, in *FleetNodeHeartbeatRequest, opts ...grpc.CallOption) (*FleetNodeHeartbeatResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(AgentHeartbeatResponse)
-	err := c.cc.Invoke(ctx, OrchestratorService_AgentHeartbeat_FullMethodName, in, out, cOpts...)
+	out := new(FleetNodeHeartbeatResponse)
+	err := c.cc.Invoke(ctx, OrchestratorService_FleetNodeHeartbeat_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -525,6 +542,26 @@ func (c *orchestratorServiceClient) GetSpendReport(ctx context.Context, in *GetS
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetSpendReportResponse)
 	err := c.cc.Invoke(ctx, OrchestratorService_GetSpendReport_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orchestratorServiceClient) GetTenantSpendPolicy(ctx context.Context, in *GetTenantSpendPolicyRequest, opts ...grpc.CallOption) (*TenantSpendPolicyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TenantSpendPolicyResponse)
+	err := c.cc.Invoke(ctx, OrchestratorService_GetTenantSpendPolicy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orchestratorServiceClient) SetTenantSpendPolicy(ctx context.Context, in *SetTenantSpendPolicyRequest, opts ...grpc.CallOption) (*TenantSpendPolicyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TenantSpendPolicyResponse)
+	err := c.cc.Invoke(ctx, OrchestratorService_SetTenantSpendPolicy_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -600,6 +637,26 @@ func (c *orchestratorServiceClient) GetTaskArtifact(ctx context.Context, in *Get
 	return out, nil
 }
 
+func (c *orchestratorServiceClient) GetCostSettings(ctx context.Context, in *GetCostSettingsRequest, opts ...grpc.CallOption) (*CostSettingsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CostSettingsResponse)
+	err := c.cc.Invoke(ctx, OrchestratorService_GetCostSettings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orchestratorServiceClient) SetCostSettings(ctx context.Context, in *SetCostSettingsRequest, opts ...grpc.CallOption) (*CostSettingsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CostSettingsResponse)
+	err := c.cc.Invoke(ctx, OrchestratorService_SetCostSettings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OrchestratorServiceServer is the server API for OrchestratorService service.
 // All implementations should embed UnimplementedOrchestratorServiceServer
 // for forward compatibility.
@@ -647,12 +704,12 @@ type OrchestratorServiceServer interface {
 	ListRunners(context.Context, *OrchestratorListRunnersRequest) (*OrchestratorListRunnersResponse, error)
 	// Health Operations
 	Health(context.Context, *OrchestratorHealthRequest) (*OrchestratorHealthResponse, error)
-	// Agent Fleet Management
-	RegisterAgent(context.Context, *RegisterAgentRequest) (*RegisterAgentResponse, error)
-	GetAgent(context.Context, *GetAgentRequest) (*GetAgentResponse, error)
-	ListAgents(context.Context, *ListAgentsRequest) (*ListAgentsResponse, error)
-	RemoveAgent(context.Context, *RemoveAgentRequest) (*RemoveAgentResponse, error)
-	AgentHeartbeat(context.Context, *AgentHeartbeatRequest) (*AgentHeartbeatResponse, error)
+	// Fleet Management
+	RegisterFleetNode(context.Context, *RegisterFleetNodeRequest) (*RegisterFleetNodeResponse, error)
+	GetFleetNode(context.Context, *GetFleetNodeRequest) (*GetFleetNodeResponse, error)
+	ListFleetNodes(context.Context, *ListFleetNodesRequest) (*ListFleetNodesResponse, error)
+	RemoveFleetNode(context.Context, *RemoveFleetNodeRequest) (*RemoveFleetNodeResponse, error)
+	FleetNodeHeartbeat(context.Context, *FleetNodeHeartbeatRequest) (*FleetNodeHeartbeatResponse, error)
 	// Session event ingest (Phase 3). Daemon-side agents open a bidi stream
 	// and push each session event as PushEventRequest; the control plane acks
 	// with EventAck carrying the accepted sequence. At-least-once delivery:
@@ -687,12 +744,17 @@ type OrchestratorServiceServer interface {
 	// Four RPCs over one scan would be four places for a drill-down's
 	// arithmetic to stop agreeing with itself.
 	//
-	// WHAT IT DOES NOT CLAIM. cost_micros is accompanied by cost_measured,
-	// and today nothing in the tree prices a turn, so the flag is false and
-	// a renderer must show a dash rather than the zero. Likewise
-	// policy_status distinguishes an account with no cap from one this
-	// deployment could not read. See go-quicbaas#791.
+	// WHAT IT DOES NOT CLAIM. Every money figure is accompanied by how many
+	// entries it covers (priced_entries, billed_entries), and zero is a dash
+	// rather than a zero. Likewise policy_status distinguishes an account
+	// with no cap from one this deployment could not read. go-quicbaas#791.
 	GetSpendReport(context.Context, *GetSpendReportRequest) (*GetSpendReportResponse, error)
+	// GetTenantSpendPolicy returns the tenant's own spend limits and its
+	// live usage against each window, over every turn charged to it.
+	GetTenantSpendPolicy(context.Context, *GetTenantSpendPolicyRequest) (*TenantSpendPolicyResponse, error)
+	// SetTenantSpendPolicy replaces the tenant's own spend limits; limits
+	// with no windows make the tenant unmetered. go-quicbaas#1058.
+	SetTenantSpendPolicy(context.Context, *SetTenantSpendPolicyRequest) (*TenantSpendPolicyResponse, error)
 	// Inference runs a stateless prompt against a named backend without
 	// requiring a prior session. The response is aggregated and returned
 	// as a single InferenceResponse. For streaming use InferenceStream.
@@ -715,6 +777,14 @@ type OrchestratorServiceServer interface {
 	// GetTaskArtifact retrieves a single named artifact, resolving kv_key Refs
 	// to their full byte content.
 	GetTaskArtifact(context.Context, *GetTaskArtifactRequest) (*GetTaskArtifactResponse, error)
+	// GetCostSettings returns a tenant's runtime cost settings — the
+	// electricity rate and engine draws its local inference is costed from —
+	// and the rates in force once layered over the configuration.
+	// go-quicbaas#1058.
+	GetCostSettings(context.Context, *GetCostSettingsRequest) (*CostSettingsResponse, error)
+	// SetCostSettings replaces a tenant's runtime cost settings; settings
+	// that override nothing restore the configuration.
+	SetCostSettings(context.Context, *SetCostSettingsRequest) (*CostSettingsResponse, error)
 }
 
 // UnimplementedOrchestratorServiceServer should be embedded to have
@@ -793,20 +863,20 @@ func (UnimplementedOrchestratorServiceServer) ListRunners(context.Context, *Orch
 func (UnimplementedOrchestratorServiceServer) Health(context.Context, *OrchestratorHealthRequest) (*OrchestratorHealthResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Health not implemented")
 }
-func (UnimplementedOrchestratorServiceServer) RegisterAgent(context.Context, *RegisterAgentRequest) (*RegisterAgentResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method RegisterAgent not implemented")
+func (UnimplementedOrchestratorServiceServer) RegisterFleetNode(context.Context, *RegisterFleetNodeRequest) (*RegisterFleetNodeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RegisterFleetNode not implemented")
 }
-func (UnimplementedOrchestratorServiceServer) GetAgent(context.Context, *GetAgentRequest) (*GetAgentResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetAgent not implemented")
+func (UnimplementedOrchestratorServiceServer) GetFleetNode(context.Context, *GetFleetNodeRequest) (*GetFleetNodeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetFleetNode not implemented")
 }
-func (UnimplementedOrchestratorServiceServer) ListAgents(context.Context, *ListAgentsRequest) (*ListAgentsResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ListAgents not implemented")
+func (UnimplementedOrchestratorServiceServer) ListFleetNodes(context.Context, *ListFleetNodesRequest) (*ListFleetNodesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListFleetNodes not implemented")
 }
-func (UnimplementedOrchestratorServiceServer) RemoveAgent(context.Context, *RemoveAgentRequest) (*RemoveAgentResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method RemoveAgent not implemented")
+func (UnimplementedOrchestratorServiceServer) RemoveFleetNode(context.Context, *RemoveFleetNodeRequest) (*RemoveFleetNodeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveFleetNode not implemented")
 }
-func (UnimplementedOrchestratorServiceServer) AgentHeartbeat(context.Context, *AgentHeartbeatRequest) (*AgentHeartbeatResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method AgentHeartbeat not implemented")
+func (UnimplementedOrchestratorServiceServer) FleetNodeHeartbeat(context.Context, *FleetNodeHeartbeatRequest) (*FleetNodeHeartbeatResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FleetNodeHeartbeat not implemented")
 }
 func (UnimplementedOrchestratorServiceServer) PushEvents(grpc.BidiStreamingServer[PushEventRequest, PushEventAck]) error {
 	return status.Error(codes.Unimplemented, "method PushEvents not implemented")
@@ -819,6 +889,12 @@ func (UnimplementedOrchestratorServiceServer) GetSessionConversation(context.Con
 }
 func (UnimplementedOrchestratorServiceServer) GetSpendReport(context.Context, *GetSpendReportRequest) (*GetSpendReportResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetSpendReport not implemented")
+}
+func (UnimplementedOrchestratorServiceServer) GetTenantSpendPolicy(context.Context, *GetTenantSpendPolicyRequest) (*TenantSpendPolicyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetTenantSpendPolicy not implemented")
+}
+func (UnimplementedOrchestratorServiceServer) SetTenantSpendPolicy(context.Context, *SetTenantSpendPolicyRequest) (*TenantSpendPolicyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetTenantSpendPolicy not implemented")
 }
 func (UnimplementedOrchestratorServiceServer) Inference(context.Context, *InferenceRequest) (*InferenceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Inference not implemented")
@@ -837,6 +913,12 @@ func (UnimplementedOrchestratorServiceServer) ListTaskArtifacts(context.Context,
 }
 func (UnimplementedOrchestratorServiceServer) GetTaskArtifact(context.Context, *GetTaskArtifactRequest) (*GetTaskArtifactResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetTaskArtifact not implemented")
+}
+func (UnimplementedOrchestratorServiceServer) GetCostSettings(context.Context, *GetCostSettingsRequest) (*CostSettingsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetCostSettings not implemented")
+}
+func (UnimplementedOrchestratorServiceServer) SetCostSettings(context.Context, *SetCostSettingsRequest) (*CostSettingsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetCostSettings not implemented")
 }
 func (UnimplementedOrchestratorServiceServer) testEmbeddedByValue() {}
 
@@ -1265,92 +1347,92 @@ func _OrchestratorService_Health_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
-func _OrchestratorService_RegisterAgent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(RegisterAgentRequest)
+func _OrchestratorService_RegisterFleetNode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RegisterFleetNodeRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(OrchestratorServiceServer).RegisterAgent(ctx, in)
+		return srv.(OrchestratorServiceServer).RegisterFleetNode(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: OrchestratorService_RegisterAgent_FullMethodName,
+		FullMethod: OrchestratorService_RegisterFleetNode_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(OrchestratorServiceServer).RegisterAgent(ctx, req.(*RegisterAgentRequest))
+		return srv.(OrchestratorServiceServer).RegisterFleetNode(ctx, req.(*RegisterFleetNodeRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _OrchestratorService_GetAgent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetAgentRequest)
+func _OrchestratorService_GetFleetNode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetFleetNodeRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(OrchestratorServiceServer).GetAgent(ctx, in)
+		return srv.(OrchestratorServiceServer).GetFleetNode(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: OrchestratorService_GetAgent_FullMethodName,
+		FullMethod: OrchestratorService_GetFleetNode_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(OrchestratorServiceServer).GetAgent(ctx, req.(*GetAgentRequest))
+		return srv.(OrchestratorServiceServer).GetFleetNode(ctx, req.(*GetFleetNodeRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _OrchestratorService_ListAgents_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListAgentsRequest)
+func _OrchestratorService_ListFleetNodes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFleetNodesRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(OrchestratorServiceServer).ListAgents(ctx, in)
+		return srv.(OrchestratorServiceServer).ListFleetNodes(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: OrchestratorService_ListAgents_FullMethodName,
+		FullMethod: OrchestratorService_ListFleetNodes_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(OrchestratorServiceServer).ListAgents(ctx, req.(*ListAgentsRequest))
+		return srv.(OrchestratorServiceServer).ListFleetNodes(ctx, req.(*ListFleetNodesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _OrchestratorService_RemoveAgent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(RemoveAgentRequest)
+func _OrchestratorService_RemoveFleetNode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveFleetNodeRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(OrchestratorServiceServer).RemoveAgent(ctx, in)
+		return srv.(OrchestratorServiceServer).RemoveFleetNode(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: OrchestratorService_RemoveAgent_FullMethodName,
+		FullMethod: OrchestratorService_RemoveFleetNode_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(OrchestratorServiceServer).RemoveAgent(ctx, req.(*RemoveAgentRequest))
+		return srv.(OrchestratorServiceServer).RemoveFleetNode(ctx, req.(*RemoveFleetNodeRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _OrchestratorService_AgentHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(AgentHeartbeatRequest)
+func _OrchestratorService_FleetNodeHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FleetNodeHeartbeatRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(OrchestratorServiceServer).AgentHeartbeat(ctx, in)
+		return srv.(OrchestratorServiceServer).FleetNodeHeartbeat(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: OrchestratorService_AgentHeartbeat_FullMethodName,
+		FullMethod: OrchestratorService_FleetNodeHeartbeat_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(OrchestratorServiceServer).AgentHeartbeat(ctx, req.(*AgentHeartbeatRequest))
+		return srv.(OrchestratorServiceServer).FleetNodeHeartbeat(ctx, req.(*FleetNodeHeartbeatRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1405,6 +1487,42 @@ func _OrchestratorService_GetSpendReport_Handler(srv interface{}, ctx context.Co
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(OrchestratorServiceServer).GetSpendReport(ctx, req.(*GetSpendReportRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrchestratorService_GetTenantSpendPolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetTenantSpendPolicyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorServiceServer).GetTenantSpendPolicy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorService_GetTenantSpendPolicy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorServiceServer).GetTenantSpendPolicy(ctx, req.(*GetTenantSpendPolicyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrchestratorService_SetTenantSpendPolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetTenantSpendPolicyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorServiceServer).SetTenantSpendPolicy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorService_SetTenantSpendPolicy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorServiceServer).SetTenantSpendPolicy(ctx, req.(*SetTenantSpendPolicyRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1510,6 +1628,42 @@ func _OrchestratorService_GetTaskArtifact_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OrchestratorService_GetCostSettings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetCostSettingsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorServiceServer).GetCostSettings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorService_GetCostSettings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorServiceServer).GetCostSettings(ctx, req.(*GetCostSettingsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrchestratorService_SetCostSettings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetCostSettingsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorServiceServer).SetCostSettings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorService_SetCostSettings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorServiceServer).SetCostSettings(ctx, req.(*SetCostSettingsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // OrchestratorService_ServiceDesc is the grpc.ServiceDesc for OrchestratorService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1606,24 +1760,24 @@ var OrchestratorService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _OrchestratorService_Health_Handler,
 		},
 		{
-			MethodName: "RegisterAgent",
-			Handler:    _OrchestratorService_RegisterAgent_Handler,
+			MethodName: "RegisterFleetNode",
+			Handler:    _OrchestratorService_RegisterFleetNode_Handler,
 		},
 		{
-			MethodName: "GetAgent",
-			Handler:    _OrchestratorService_GetAgent_Handler,
+			MethodName: "GetFleetNode",
+			Handler:    _OrchestratorService_GetFleetNode_Handler,
 		},
 		{
-			MethodName: "ListAgents",
-			Handler:    _OrchestratorService_ListAgents_Handler,
+			MethodName: "ListFleetNodes",
+			Handler:    _OrchestratorService_ListFleetNodes_Handler,
 		},
 		{
-			MethodName: "RemoveAgent",
-			Handler:    _OrchestratorService_RemoveAgent_Handler,
+			MethodName: "RemoveFleetNode",
+			Handler:    _OrchestratorService_RemoveFleetNode_Handler,
 		},
 		{
-			MethodName: "AgentHeartbeat",
-			Handler:    _OrchestratorService_AgentHeartbeat_Handler,
+			MethodName: "FleetNodeHeartbeat",
+			Handler:    _OrchestratorService_FleetNodeHeartbeat_Handler,
 		},
 		{
 			MethodName: "GetSessionConversation",
@@ -1632,6 +1786,14 @@ var OrchestratorService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetSpendReport",
 			Handler:    _OrchestratorService_GetSpendReport_Handler,
+		},
+		{
+			MethodName: "GetTenantSpendPolicy",
+			Handler:    _OrchestratorService_GetTenantSpendPolicy_Handler,
+		},
+		{
+			MethodName: "SetTenantSpendPolicy",
+			Handler:    _OrchestratorService_SetTenantSpendPolicy_Handler,
 		},
 		{
 			MethodName: "Inference",
@@ -1652,6 +1814,14 @@ var OrchestratorService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetTaskArtifact",
 			Handler:    _OrchestratorService_GetTaskArtifact_Handler,
+		},
+		{
+			MethodName: "GetCostSettings",
+			Handler:    _OrchestratorService_GetCostSettings_Handler,
+		},
+		{
+			MethodName: "SetCostSettings",
+			Handler:    _OrchestratorService_SetCostSettings_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

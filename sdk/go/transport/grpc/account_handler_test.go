@@ -53,13 +53,14 @@ func TestAccountMethodMapIsComplete(t *testing.T) {
 	for _, method := range []string{
 		"Create", "Get", "List", "Update", "Delete",
 		"RotateCredential", "Revoke", "SetDefault", "Usage", "Materialize",
+		"ReserveSession", "ReleaseSession",
 	} {
 		if _, ok := accountMethodMap[method]; !ok {
 			t.Errorf("account method %q has no gRPC handler", method)
 		}
 	}
-	if len(accountMethodMap) != 10 {
-		t.Errorf("dispatch table has %d entries, want 10", len(accountMethodMap))
+	if len(accountMethodMap) != 12 {
+		t.Errorf("dispatch table has %d entries, want 12", len(accountMethodMap))
 	}
 }
 
@@ -252,9 +253,13 @@ func TestReleasedCredentialFromProto(t *testing.T) {
 		Env:               map[string]string{"E": "v"},
 		Files:             map[string][]byte{"f": []byte("bytes")},
 		ExpiresAtUnix:     1_800_000_000,
+		Generation:        42,
 	})
 	if out == nil {
 		t.Fatal("converter returned nil for a populated envelope")
+	}
+	if out.Generation != 42 {
+		t.Errorf("Generation = %d, want 42", out.Generation)
 	}
 	if out.AccessToken == "" || out.AccessTokenEnvKey != "K" {
 		t.Error("converted envelope dropped the material a spawn needs")

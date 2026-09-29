@@ -70,3 +70,27 @@ func TestTransport_DeleteTask_WrongRequestType(t *testing.T) {
 		t.Fatalf("err = %v, want the handler's invalid-request-type rejection", err)
 	}
 }
+
+// TestTransport_AttentionVerbs_Delegate proves the Unix transport routes the
+// attention inbox's two verbs through the gRPC handler rather than refusing
+// them locally: with no server listening they fail on the socket.
+func TestTransport_AttentionVerbs_Delegate(t *testing.T) {
+	tr := newWiredTransport(t)
+	defer func() { _ = tr.Close() }()
+
+	for method, req := range map[string]interface{}{
+		"AttentionList":    &orchestratorclient.AttentionListRequest{TenantID: "t1"},
+		"AttentionResolve": &orchestratorclient.AttentionResolveRequest{TenantID: "t1", TaskID: "task-1", Action: "note", Answer: "x"},
+	} {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		_, err := tr.Request(ctx, "quicbaas.Orchestrator", method, req)
+		cancel()
+		if err == nil {
+			t.Fatalf("%s: expected a connection error, no server is listening", method)
+		}
+		msg := err.Error()
+		if strings.Contains(msg, "not supported") || strings.Contains(msg, "unsupported") || strings.Contains(msg, "invalid request type") {
+			t.Fatalf("%s was refused before the socket, dispatch regression: %v", method, err)
+		}
+	}
+}

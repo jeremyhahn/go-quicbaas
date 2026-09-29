@@ -37,40 +37,40 @@ func NewGUISessionIDRequiredError(op string) *errors.QBError {
 	}
 }
 
-// GUIAgentIDRequiredError indicates a binding method was called without
+// GUIFleetNodeIDRequiredError indicates a binding method was called without
 // the required agent ID argument.
-type GUIAgentIDRequiredError struct{}
+type GUIFleetNodeIDRequiredError struct{}
 
 // Error implements the error interface.
-func (e *GUIAgentIDRequiredError) Error() string {
+func (e *GUIFleetNodeIDRequiredError) Error() string {
 	return "agent ID is required"
 }
 
-// NewGUIAgentIDRequiredError wraps GUIAgentIDRequiredError in a QBError.
-func NewGUIAgentIDRequiredError(op string) *errors.QBError {
+// NewGUIFleetNodeIDRequiredError wraps GUIFleetNodeIDRequiredError in a QBError.
+func NewGUIFleetNodeIDRequiredError(op string) *errors.QBError {
 	return &errors.QBError{
 		Code: errors.ErrInvalidInput,
 		Op:   op,
-		Err:  &GUIAgentIDRequiredError{},
+		Err:  &GUIFleetNodeIDRequiredError{},
 	}
 }
 
-// GUIAgentNotFoundError indicates an agent lookup returned an empty record.
-type GUIAgentNotFoundError struct {
+// GUIFleetNodeNotFoundError indicates an agent lookup returned an empty record.
+type GUIFleetNodeNotFoundError struct {
 	AgentID string
 }
 
 // Error implements the error interface.
-func (e *GUIAgentNotFoundError) Error() string {
+func (e *GUIFleetNodeNotFoundError) Error() string {
 	return "agent not found: " + e.AgentID
 }
 
-// NewGUIAgentNotFoundError wraps GUIAgentNotFoundError in a QBError.
-func NewGUIAgentNotFoundError(op, agentID string) *errors.QBError {
+// NewGUIFleetNodeNotFoundError wraps GUIFleetNodeNotFoundError in a QBError.
+func NewGUIFleetNodeNotFoundError(op, agentID string) *errors.QBError {
 	return &errors.QBError{
 		Code: errors.ErrNotFound,
 		Op:   op,
-		Err:  &GUIAgentNotFoundError{AgentID: agentID},
+		Err:  &GUIFleetNodeNotFoundError{AgentID: agentID},
 	}
 }
 

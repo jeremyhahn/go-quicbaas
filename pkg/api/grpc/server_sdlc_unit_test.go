@@ -16,6 +16,7 @@ package grpc
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -97,6 +98,9 @@ func TestSDLCServer_ErrorMapping(t *testing.T) {
 		&sdlc.StrategyNotRegisteredError{Name: "nope"}:     codes.InvalidArgument,
 		&orchestration.WorkflowValidationError{Field: "f"}: codes.InvalidArgument,
 		sdlc.ErrUnavailable:                                codes.Unavailable,
+		&sdlc.AdoptionRefusedError{Subject: "a#1"}:         codes.FailedPrecondition,
+		&sdlc.AdoptionIncompleteError{TaskID: "t"}:         codes.Unavailable,
+		&orchestration.TaskSourceAlreadyAdoptedError{}:     codes.AlreadyExists,
 		errors.New("mystery"):                              codes.Internal,
 	}
 	for err, want := range cases {
@@ -113,7 +117,7 @@ func TestSDLCConverters_RoundTrip(t *testing.T) {
 		Forge: sdlc.ForgeConfig{Type: sdlc.ForgeGitea, BaseURL: "http://f", Owner: "o", Repo: "r",
 			Labels: map[string]string{"merged": "done"}, TriggerLabel: "task:ready", WebhookSecretRef: "wh", TokenSecretRef: "tok"},
 		Strategy:        sdlc.GitFlowName,
-		Worker:          sdlc.WorkerConfig{Backend: "claude", Model: "claude-opus-5"},
+		Worker:          orchestration.AgentRefTo("claude-coder"),
 		Verification:    []string{"make build", "make test"},
 		Review:          sdlc.ReviewPolicy{RequiredApprovals: 2, RequireIndependentReviewer: true, RequireGreenChecks: true, ChecksSettleWindow: time.Minute, Reviewers: map[string]string{"codex": "openai"}},
 		MaxReviewRounds: 4,
@@ -285,9 +289,7 @@ func TestSDLCConverters_ReviewerSurvivesTheWire(t *testing.T) {
 	binding := &sdlc.ProjectBinding{
 		ProjectID: "p1",
 		Reviewer: sdlc.ReviewerConfig{
-			Backend:        "codex",
-			Model:          "gpt-5-codex",
-			Image:          "quicbaas-software-factory-worker:0.7.0-alpha",
+			Agent:          "codex-reviewer",
 			Login:          "codex",
 			TokenSecretRef: "sdlc/reviewer/go-luks2/token",
 			StatusContext:  "quicbaas/review",
@@ -336,5 +338,211 @@ func TestSDLCConverters_UnconfiguredReviewerStaysUnconfigured(t *testing.T) {
 	sparse := bindingFromProto(&pb.ProjectBinding{ProjectId: "p3"})
 	if sparse.Reviewer.Configured() {
 		t.Fatalf("absent reviewer message became configured: %+v", sparse.Reviewer)
+	}
+}
+
+// profiledProtoBinding is a binding with a fully populated default reviewer
+// and two alternates: one advisory by omission, one switched on.
+func profiledProtoBinding() *sdlc.ProjectBinding {
+	advisory, counted := false, true
+	return &sdlc.ProjectBinding{
+		ProjectID: "p1",
+		Reviewer: sdlc.ReviewerConfig{
+			Name: "codex", Agent: "codex-reviewer", Login: "codex",
+			TokenSecretRef: "codex-tok", StatusContext: "quicbaas/review"},
+		Reviewers: []sdlc.ReviewerConfig{
+			{Name: "qwen", Agent: "qwen-reviewer", Login: "qwen-reviewer", TokenSecretRef: "qwen-tok", CountsTowardMerge: &advisory,
+				Endpoint: "http://gpu-host.internal:11434", HostAffinity: "gpu-host"},
+			{Name: "gpt", Agent: "codex-reviewer", Login: "gpt-reviewer", TokenSecretRef: "gpt-tok", CountsTowardMerge: &counted},
+			{Name: "unset", Agent: "codex-reviewer", Login: "unset-reviewer", TokenSecretRef: "unset-tok"},
+		},
+	}
+}
+
+// TestSDLCConverters_ReviewerProfilesSurviveARebind is the regression test the
+// reviewer_not_on_the_wire incident asks of every binding-writing transport: a
+// bind REPLACES the record, so a mapper that dropped the alternates — or the
+// presence of counts_toward_merge, or reasoning_effort — would erase them on
+// the next rebind through gRPC, silently.
+func TestSDLCConverters_ReviewerProfilesSurviveARebind(t *testing.T) {
+	binding := profiledProtoBinding()
+	back := bindingFromProto(bindingToProto(binding))
+	if !reflect.DeepEqual(back.Reviewer, binding.Reviewer) {
+		t.Fatalf("default reviewer: got %+v, want %+v", back.Reviewer, binding.Reviewer)
+	}
+	if !reflect.DeepEqual(back.Reviewers, binding.Reviewers) {
+		t.Fatalf("alternates: got %+v, want %+v", back.Reviewers, binding.Reviewers)
+	}
+	// UNSET STAYS UNSET: nil means "the role's default", and turning it into
+	// an explicit false would flip a default reviewer to advisory.
+	if back.Reviewers[2].CountsTowardMerge != nil {
+		t.Fatal("an unset counts_toward_merge came back set")
+	}
+	if back.Reviewers[0].CountsTowardMerge == nil || *back.Reviewers[0].CountsTowardMerge {
+		t.Fatal("an explicit false did not survive")
+	}
+	// And a rebind of the round-tripped record is the same record again.
+	if again := bindingFromProto(bindingToProto(back)); !reflect.DeepEqual(again.Reviewers, binding.Reviewers) {
+		t.Fatalf("a second rebind changed the alternates: %+v", again.Reviewers)
+	}
+	// No alternates is nil, not an empty slice a JSON reader would render.
+	if none := bindingFromProto(bindingToProto(&sdlc.ProjectBinding{ProjectID: "p"})); none.Reviewers != nil {
+		t.Fatalf("absent alternates became %+v", none.Reviewers)
+	}
+}
+
+func TestSDLCServer_ReviewerVerbsRefuseWithoutTheModuleOrAProject(t *testing.T) {
+	ctx := context.Background()
+	unavailable := NewSDLCServer(nilSDLCProvider{}, sdlcTestLogger(t))
+	if _, err := unavailable.GetReviewerSelection(ctx, &pb.GetReviewerSelectionRequest{ProjectId: "p", PullRequest: 1}); status.Code(err) != codes.Unavailable {
+		t.Fatalf("GetReviewerSelection: %v", err)
+	}
+	if _, err := unavailable.SetReviewerOverride(ctx, &pb.SetReviewerOverrideRequest{ProjectId: "p", PullRequest: 1, Profile: "qwen"}); status.Code(err) != codes.Unavailable {
+		t.Fatalf("SetReviewerOverride: %v", err)
+	}
+	if _, err := unavailable.ClearReviewerOverride(ctx, &pb.ClearReviewerOverrideRequest{ProjectId: "p", PullRequest: 1}); status.Code(err) != codes.Unavailable {
+		t.Fatalf("ClearReviewerOverride: %v", err)
+	}
+	// A nil request names no project, and is refused before a tenant is read.
+	if _, _, err := (&SDLCServer{provider: fixedSDLCProvider{svc: &service.SDLCService{}}}).reviewerRequest(ctx, "t", ""); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("no project: %v", err)
+	}
+	if _, _, err := (&SDLCServer{provider: fixedSDLCProvider{svc: &service.SDLCService{}}}).reviewerRequest(ctx, "", "p"); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("no tenant: %v", err)
+	}
+}
+
+// fixedSDLCProvider hands back one service value.
+type fixedSDLCProvider struct{ svc *service.SDLCService }
+
+func (p fixedSDLCProvider) SDLC() *service.SDLCService { return p.svc }
+
+func TestSDLCConverters_ReviewerSelection(t *testing.T) {
+	if reviewerSelectionToProto(nil) != nil {
+		t.Fatal("a nil selection became a message")
+	}
+	at := time.Unix(1_700_000_000, 0).UTC()
+	got := reviewerSelectionToProto(&sdlc.ReviewerSelection{
+		ProjectID: "p", PullRequest: 41, Profile: "qwen", Overridden: true,
+		StatusContext: "quicbaas/review/qwen", UpdatedAt: at,
+	})
+	if got.ProjectId != "p" || got.PullRequest != 41 || got.Profile != "qwen" || !got.Overridden ||
+		got.CountsTowardMerge || got.StatusContext != "quicbaas/review/qwen" || got.UpdatedAtUnix != at.Unix() {
+		t.Fatalf("selection = %+v", got)
+	}
+}
+
+// TestSDLCServer_AdoptIssueRefusesWithoutTheModuleOrAProject: the verb needs
+// the module and a project, exactly as the other operator verbs do.
+func TestSDLCServer_AdoptIssueRefusesWithoutTheModuleOrAProject(t *testing.T) {
+	ctx := context.Background()
+	unavailable := NewSDLCServer(nilSDLCProvider{}, sdlcTestLogger(t))
+	if _, err := unavailable.AdoptIssue(ctx, &pb.AdoptIssueRequest{ProjectId: "p", Issue: 1}); status.Code(err) != codes.Unavailable {
+		t.Fatalf("AdoptIssue without the module: %v", err)
+	}
+	server := &SDLCServer{provider: fixedSDLCProvider{svc: &service.SDLCService{}}}
+	if _, err := server.AdoptIssue(ctx, &pb.AdoptIssueRequest{TenantId: "t", Issue: 1}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("AdoptIssue without a project: %v", err)
+	}
+}
+
+// TestSDLCServer_AttentionRefusesWithoutTheModule: both inbox verbs answer
+// Unavailable on a node without the module.
+func TestSDLCServer_AttentionRefusesWithoutTheModule(t *testing.T) {
+	ctx := context.Background()
+	unavailable := NewSDLCServer(nilSDLCProvider{}, sdlcTestLogger(t))
+	if _, err := unavailable.ListAttention(ctx, &pb.ListAttentionRequest{TenantId: "t"}); status.Code(err) != codes.Unavailable {
+		t.Fatalf("ListAttention: %v", err)
+	}
+	if _, err := unavailable.ResolveAttention(ctx, &pb.ResolveAttentionRequest{TenantId: "t", TaskId: "x", Action: "readmit"}); status.Code(err) != codes.Unavailable {
+		t.Fatalf("ResolveAttention: %v", err)
+	}
+}
+
+func TestAttentionConverters(t *testing.T) {
+	if attentionItemToProto(nil) != nil || facetsToProto(nil) != nil {
+		t.Fatal("nil must stay nil")
+	}
+	item := attentionItemToProto(&sdlc.AttentionItem{ID: "t1", Kind: sdlc.AttentionKind("parked_task"), Attempts: 2,
+		Actions: []sdlc.AttentionAction{"readmit", "note"}, RulingPosted: true, CreatedAt: 10})
+	if item.GetId() != "t1" || item.GetAttempts() != 2 || len(item.GetActions()) != 2 || !item.GetRulingPosted() || item.GetCreatedAt() != 10 {
+		t.Fatalf("item = %+v", item)
+	}
+	facets := facetsToProto(orchestration.Facets{"kind": {"parked_task": 3}})
+	if facets["kind"].GetCounts()["parked_task"] != 3 {
+		t.Fatalf("facets = %+v", facets)
+	}
+}
+
+// TestSDLCServer_GetOpenWorkRefusesWithoutTheModuleOrAProject keeps a node
+// without the module from answering an empty project, and a request naming no
+// project from reaching it.
+func TestSDLCServer_GetOpenWorkRefusesWithoutTheModuleOrAProject(t *testing.T) {
+	ctx := context.Background()
+	for name, srv := range map[string]*SDLCServer{
+		"nil provider":    NewSDLCServer(nil, sdlcTestLogger(t)),
+		"disabled module": NewSDLCServer(nilSDLCProvider{}, sdlcTestLogger(t)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := srv.GetOpenWork(ctx, &pb.GetOpenWorkRequest{ProjectId: "p"}); status.Code(err) != codes.Unavailable {
+				t.Errorf("GetOpenWork: %v", err)
+			}
+		})
+	}
+	if _, err := (&SDLCServer{provider: fixedSDLCProvider{svc: &service.SDLCService{}}}).GetOpenWork(ctx, &pb.GetOpenWorkRequest{}); status.Code(err) != codes.InvalidArgument {
+		t.Errorf("no project: %v, want InvalidArgument", err)
+	}
+}
+
+// TestSDLCConverters_OpenWorkRoundTrip proves every field of a project's open
+// work reaches the wire.
+func TestSDLCConverters_OpenWorkRoundTrip(t *testing.T) {
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	work := &sdlc.OpenWork{
+		ProjectID: "p1", Repo: "acme/api", Agent: "agent-api", ReadAt: now,
+		PullRequests: []sdlc.OpenPullRequest{{
+			Number: 7, Title: "fix", HeadRef: "issue/7-fix", HeadSHA: "abc", CIState: sdlc.CIFailure,
+			ReviewState: sdlc.ReviewChangesRequested, URL: "https://forge.test/pulls/7", Created: now.Add(-time.Hour), AgeSeconds: 3600,
+		}},
+		Issues: []sdlc.OpenIssue{{
+			Number: 3, Title: "needs info", Labels: []string{"factory:needs-info"}, URL: "https://forge.test/issues/3",
+			Created: now.Add(-2 * time.Hour), AgeSeconds: 7200,
+		}},
+	}
+	out := openWorkToProto(work)
+	if out.ProjectId != "p1" || out.Repo != "acme/api" || out.Agent != "agent-api" || out.ReadAtUnix != now.Unix() {
+		t.Fatalf("work = %+v", out)
+	}
+	pr := out.PullRequests[0]
+	if pr.Number != 7 || pr.Title != "fix" || pr.HeadRef != "issue/7-fix" || pr.HeadSha != "abc" ||
+		pr.CiState != "failure" || pr.ReviewState != "changes_requested" || pr.Url == "" ||
+		pr.CreatedAtUnix != now.Add(-time.Hour).Unix() || pr.AgeSeconds != 3600 {
+		t.Fatalf("pull request = %+v", pr)
+	}
+	issue := out.Issues[0]
+	if issue.Number != 3 || issue.Title != "needs info" || len(issue.Labels) != 1 || issue.Url == "" ||
+		issue.CreatedAtUnix != now.Add(-2*time.Hour).Unix() || issue.AgeSeconds != 7200 {
+		t.Fatalf("issue = %+v", issue)
+	}
+	if openWorkToProto(nil) != nil {
+		t.Fatal("nil open work converted to a message")
+	}
+}
+
+func TestSDLCConverters_SlotAppendsSurviveTheWire(t *testing.T) {
+	binding := &sdlc.ProjectBinding{
+		ProjectID:          "p1",
+		WorkerPromptAppend: "worker material",
+		TriagePromptAppend: "triage material",
+		Reviewer:           sdlc.ReviewerConfig{Agent: "codex-reviewer", Login: "codex", TokenSecretRef: "tok", PromptAppend: "seat material"},
+		Reviewers:          []sdlc.ReviewerConfig{{Name: "qwen", Agent: "qwen-reviewer", PromptAppend: "alternate material"}},
+	}
+	back := bindingFromProto(bindingToProto(binding))
+	if back.WorkerPromptAppend != "worker material" || back.TriagePromptAppend != "triage material" ||
+		back.Reviewer.PromptAppend != "seat material" || len(back.Reviewers) != 1 || back.Reviewers[0].PromptAppend != "alternate material" {
+		t.Fatalf("round trip lost a slot's append: %+v", back)
+	}
+	if empty := bindingFromProto(&pb.ProjectBinding{ProjectId: "p2"}); empty.WorkerPromptAppend != "" || empty.Reviewer.PromptAppend != "" {
+		t.Fatalf("the converters invented an append: %+v", empty)
 	}
 }

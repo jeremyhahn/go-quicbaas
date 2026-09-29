@@ -35,7 +35,7 @@ import (
 // the raw event log. go-quicbaas#793.
 func TestMCPSessionConversationReadsTheTurns(t *testing.T) {
 	agentSvc := newAsyncTurnOrchestrator(t, true)
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 	ctx := context.Background()
 
 	_, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_prompt", map[string]interface{}{
@@ -82,21 +82,21 @@ func TestMCPSessionConversationReadsTheTurns(t *testing.T) {
 // conversation, which an MCP client would read as a session that said nothing.
 func TestMCPSessionConversationRejectsBadInput(t *testing.T) {
 	t.Run("no session id", func(t *testing.T) {
-		reg := newAgentRegistry(t, newAsyncTurnOrchestrator(t, true))
+		reg := newFleetRegistry(t, newAsyncTurnOrchestrator(t, true))
 		_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_session_conversation",
 			map[string]interface{}{"tenant_id": "tenant-1"})
 		require.Error(t, err)
 	})
 
 	t.Run("no tenant id", func(t *testing.T) {
-		reg := newAgentRegistry(t, newAsyncTurnOrchestrator(t, true))
+		reg := newFleetRegistry(t, newAsyncTurnOrchestrator(t, true))
 		_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_session_conversation",
 			map[string]interface{}{"session_id": "sess-1"})
 		require.Error(t, err)
 	})
 
 	t.Run("no transcript configured", func(t *testing.T) {
-		reg := newAgentRegistry(t, newAsyncTurnOrchestrator(t, false))
+		reg := newFleetRegistry(t, newAsyncTurnOrchestrator(t, false))
 		_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_session_conversation",
 			map[string]interface{}{"tenant_id": "tenant-1", "session_id": "sess-1"})
 		require.Error(t, err)
@@ -107,7 +107,7 @@ func TestMCPSessionConversationRejectsBadInput(t *testing.T) {
 // required arguments. A drift here makes the verb unreachable over MCP with
 // "unknown tool" as the only symptom.
 func TestMCPSessionConversationToolIsRegistered(t *testing.T) {
-	reg := newAgentRegistry(t, newAsyncTurnOrchestrator(t, true))
+	reg := newFleetRegistry(t, newAsyncTurnOrchestrator(t, true))
 	tool := toolByName(t, reg, "quicbaas_orchestrator_session_conversation")
 	assert.ElementsMatch(t, []string{"tenant_id", "session_id"}, requiredArgs(t, tool))
 }

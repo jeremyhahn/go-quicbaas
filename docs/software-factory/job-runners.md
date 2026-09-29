@@ -129,7 +129,7 @@ off it), `Project`, `Workflow` (workflow runner only), `StartState`,
 | Verb | What it does |
 |---|---|
 | `SetState` | the single choke point: heartbeat, snapshot and persist, emit `state_change`, fire the state-keyed lifecycle moment (a hook error is `FailureClassHook`) |
-| `Emit`, `Audit` | job events and the audit trail |
+| `Emit`, `Audit` | job events and the audit trail. The event stream never blocks the job: a full buffer (256) coalesces its **oldest** events so the newest is always delivered, and that event carries the running count under `metadata.coalesced_events`. The audit trail is the durable record |
 | `Spawn`, `Prompt`, `Close`, `CloseAll`, `Sessions` | sessions, with `ApplyWorkerSpawnEnvironment` (`AgentConfigDir`, `AccountAuto`, job/project defaults) applied and each session tracked |
 | `RunStage` | run one lifecycle moment directly: the operator's stage timeout, `JobStatus.stage` and the stage event, without the state→moment table |
 | `Decorate` | the runner adds its own recoverable state to every snapshot (the SDLC runner adds its worker session; `ControlLoop` adds its session ids) |
@@ -214,7 +214,7 @@ task is still pending; see
 [Autonomous projects](autonomy-and-dispatch.md).
 
 **What it takes to dispatch depends on the runner.** The `workflow` runner
-assigns work items to fleet agents and runs the project's declared workflow,
+assigns work items to fleet nodes and runs the project's declared workflow,
 so `autoSpawnTask` refuses without a matching online agent (backend → gpu →
 host affinity) and without `Project.DefaultWorkflow`. A module's runner spawns
 its own sessions and owns its own state sequence, so it needs **neither**: its
@@ -237,6 +237,7 @@ conclusion, stall membership, and `JobContext.TaskID`/`Attempt`.
 | `workflow` (`ControlLoop`, registered by the engine's `init`) | a lead agent decomposes a description into a DAG of work items executed by workers | the engine's eleven non-terminal states, unchanged (thirteen with `completed`/`failed`) |
 | `sdlc` (`pkg/sdlc/runner.go`, registered by the module) | one issue, one branch, one worker; no lead, no decomposition | `initializing → executing → validating → reviewing → (re-delegating → executing \| completing) → cleanup`, plus `escalating`. Its recovery answers per state (`runnerResumeStates`); `escalating` resumes at `escalating` so the park is delivered before the job fails |
 | `triage` (`pkg/sdlc/triage_runner.go`, registered by the module) | the front half of the loop: which issues are ready to be worked, and marks them. Per **project**, not per task; one session for however many issues it judges | `initializing → executing → cleanup`. See [triage.md](triage.md) |
+| `merge_train` (`pkg/sdlc/merge_train_runner.go`, registered by the module) | one project's queue of approved changes: builds a train branch, runs CI once on it, bisects a red one, lands the verified prefix. Per **project**, off the worker budget; a container only while it builds | `initializing → executing → validating → completing → cleanup`, and `cleanup → initializing` while the queue holds more. `executing` resumes at `initializing` (the build is abandoned and redone under a new number); the others resume where they were. See [merge-train.md](merge-train.md) |
 | `review` (`pkg/sdlc/review_runner.go`, registered by the module) | one pull request, one head, one verdict; a reviewer that writes no code | `initializing → executing → completing → cleanup`. Every interrupted review resumes at `initializing`: the forge is the record, and the first step asks it whether this head already carries this reviewer's verdict |
 
 `ControlLoop` does **not** itself implement `JobRunner` — its
@@ -326,7 +327,7 @@ The fields come from three different places and the difference is the design:
 
 | Field | Source | Written |
 |---|---|---|
-| `agent_id` | the fleet agent the spawn resolved to (`RemoteACPBackend.ResolvedAgentID`) | by `JobRun.Spawn`, first spawn wins |
+| `agent_id` | the fleet node the spawn resolved to (`RemoteACPBackend.ResolvedAgentID`) | by `JobRun.Spawn`, first spawn wins |
 | `stages[]` | `{stage, entered_at}` per lifecycle moment | by `JobRun.markStage`, a repeated moment recorded again |
 | `verification[]` | the last validator pipeline's results | by `JobRun.Verify` |
 | `attempts[]`, `attempt_budget` | the task's attempt history and budget | derived on read |
@@ -341,7 +342,7 @@ stale for every attempt after it. The published status is immutable — it is
 read by every poll and by the next snapshot — so the enrichment always copies.
 
 **`agent_id` is not `node`.** `node` is the daemon whose control loop drove
-the job; `agent_id` is the fleet agent its worker session was dispatched to.
+the job; `agent_id` is the fleet node its worker session was dispatched to.
 They differ whenever the work runs anywhere but the control plane, which is
 the normal case, and the page links `agent_id` into the fleet.
 

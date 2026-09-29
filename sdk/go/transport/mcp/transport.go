@@ -191,6 +191,10 @@ func (t *Transport) buildBaseURL() {
 
 // Request sends a unary request and returns the response.
 func (t *Transport) Request(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+	// Refused before any I/O: the secret must never be fetched over MCP.
+	if isSecretsGetData(service, method) {
+		return nil, newSecretsGetDataUnsupportedError()
+	}
 	return t.requestWithRetry(ctx, service, method, req)
 }
 
@@ -279,6 +283,11 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		if err := t.ensureAuthenticated(ctx); err != nil {
 			return nil, err
 		}
+	}
+
+	// The Agents catalog is a closed set of tools with typed answers.
+	if isMCPAgentsService(service) {
+		return t.requestAgents(ctx, method, reqBody)
 	}
 
 	// Check if this is a service that needs special handling
@@ -964,7 +973,7 @@ func ToolName(service, method string) string {
 	}
 
 	// Project tools are named after the resource and operation (project_create,
-	// project_grant_agent), not the RPC, and carry no quicbaas_ prefix, so the
+	// project_grant_fleet_node), not the RPC, and carry no quicbaas_ prefix, so the
 	// generic derivation below would never reach them.
 	if isMCPProjectService(service) {
 		if toolName, ok := projectToolName(method); ok {
@@ -973,6 +982,11 @@ func ToolName(service, method string) string {
 	}
 	if isMCPSDLCService(service) {
 		if toolName, ok := sdlcToolName(method); ok {
+			return toolName
+		}
+	}
+	if isMCPAgentsService(service) {
+		if toolName, ok := agentsToolName(method); ok {
 			return toolName
 		}
 	}

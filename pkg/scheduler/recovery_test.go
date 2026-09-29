@@ -129,25 +129,49 @@ func TestRecoverAbandonedRun_ReturnsTheJobToTheQueueWithBackoff(t *testing.T) {
 	}
 }
 
-// TestRecoverAbandonedRun_FailsTheJobOnceTheBudgetIsSpent proves the recovery
-// shares the engine's retry policy rather than carrying its own.
-func TestRecoverAbandonedRun_FailsTheJobOnceTheBudgetIsSpent(t *testing.T) {
-	storage := newMockJobStorage()
-	engine := New(DefaultConfig(), storage)
-	job := runningRecoveryJob()
-	job.MaxRetries = 1
-	job.FailCount = 1 // already spent
-	seedRunningJob(t, storage, job)
+// TestRecoverAbandonedRun_SpentBudgetFollowsTheSharedPolicy proves the
+// recovery shares the engine's retry policy rather than carrying its own: the
+// budget is per firing, so an abandoned run that spends it moves a recurring
+// job on to its next firing with a fresh budget, and fails a job that has no
+// next firing.
+func TestRecoverAbandonedRun_SpentBudgetFollowsTheSharedPolicy(t *testing.T) {
+	tests := []struct {
+		name          string
+		jobType       JobType
+		wantStatus    JobStatus
+		wantFailCount uint64
+	}{
+		{"recurring job moves on to its next firing", JobTypeRecurring, JobStatusPending, 0},
+		{"one-shot job fails", JobTypeOneShot, JobStatusFailed, 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			storage := newMockJobStorage()
+			engine := New(DefaultConfig(), storage)
+			job := runningRecoveryJob()
+			job.Type = tc.jobType
+			job.ExecuteAt = recoveryFiring
+			job.MaxRetries = 1
+			seedRunningJob(t, storage, job)
 
-	status, err := engine.RecoverAbandonedRun(context.Background(), job, goodAttestation())
-	if err != nil {
-		t.Fatalf("RecoverAbandonedRun: %v", err)
-	}
-	if status != JobStatusFailed {
-		t.Fatalf("returned status is %s, want failed", status)
-	}
-	if stored := storedJob(t, storage, job.ID); stored.Status != JobStatusFailed {
-		t.Errorf("STORED status is %s, want failed", stored.Status)
+			status, err := engine.RecoverAbandonedRun(context.Background(), job, goodAttestation())
+			if err != nil {
+				t.Fatalf("RecoverAbandonedRun: %v", err)
+			}
+			if status != tc.wantStatus {
+				t.Fatalf("returned status is %s, want %s", status, tc.wantStatus)
+			}
+			stored := storedJob(t, storage, job.ID)
+			if stored.Status != tc.wantStatus {
+				t.Errorf("STORED status is %s, want %s", stored.Status, tc.wantStatus)
+			}
+			if stored.FailCount != tc.wantFailCount {
+				t.Errorf("STORED fail count is %d, want %d", stored.FailCount, tc.wantFailCount)
+			}
+			if tc.jobType == JobTypeRecurring && !stored.NextRun.After(recoveryFiring) {
+				t.Errorf("STORED next run %s is not after the abandoned firing %s", stored.NextRun, recoveryFiring)
+			}
+		})
 	}
 }
 

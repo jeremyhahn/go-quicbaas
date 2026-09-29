@@ -62,9 +62,8 @@ func newCeremonyProvider(t *testing.T, resolver PermissionResolver) (*OIDCProvid
 		AuthCodeTTL:      10 * time.Minute,
 	}, OIDCDependencies{
 		IdentityStore: NewIdentityStore(IdentityStoreOptions{
-			UserStorage:  storage,
-			GroupStorage: storage,
-			RoleStorage:  storage,
+			UserStorage: storage,
+			RoleStorage: storage,
 		}),
 		AppStorage:         newMockAppStorage(),
 		TokenStorage:       storage,
@@ -95,7 +94,6 @@ func seedCeremonyUser(t *testing.T, storage *MemoryStorage, tenantID, username s
 		Name:      username,
 		Email:     username,
 		Roles:     roles,
-		Groups:    []string{"operators"},
 		Lifecycle: LifecycleActive,
 	}
 	if err := storage.CreateUser(context.Background(), user); err != nil {
@@ -309,7 +307,7 @@ func TestRevokeSessionToken_WorksForABarrierTenantCeremonyBearer(t *testing.T) {
 		AuthCodeTTL:      10 * time.Minute,
 	}, OIDCDependencies{
 		IdentityStore: NewIdentityStore(IdentityStoreOptions{
-			UserStorage: users, GroupStorage: users, RoleStorage: users,
+			UserStorage: users, RoleStorage: users,
 		}),
 		AppStorage:   newMockAppStorage(),
 		TokenStorage: tokenStorage,
@@ -837,7 +835,7 @@ func createRESTUser(t *testing.T, storage *MemoryStorage, store *IdentityStore, 
 func TestCeremonyLoginResolvesASubjectKeyedByEmail(t *testing.T) {
 	provider, storage := newCeremonyProvider(t, nil)
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: storage, GroupStorage: storage, RoleStorage: storage,
+		UserStorage: storage, RoleStorage: storage,
 	})
 	ctx := context.Background()
 
@@ -873,7 +871,7 @@ func TestCeremonyLoginResolvesASubjectKeyedByEmail(t *testing.T) {
 func TestCeremonyLoginStillResolvesANonEmailSubject(t *testing.T) {
 	provider, storage := newCeremonyProvider(t, nil)
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: storage, GroupStorage: storage, RoleStorage: storage,
+		UserStorage: storage, RoleStorage: storage,
 	})
 	ctx := context.Background()
 
@@ -986,7 +984,7 @@ func TestCeremonyLoginRefusesAnEmailOwnedByAnotherTenant(t *testing.T) {
 func TestEmailShapedDisplayNameIsRefusedAtWrite(t *testing.T) {
 	provider, storage := newCeremonyProvider(t, nil)
 	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: storage, GroupStorage: storage, RoleStorage: storage,
+		UserStorage: storage, RoleStorage: storage,
 	})
 	ctx := context.Background()
 	const victimEmail = "victim@automatethethings.com"

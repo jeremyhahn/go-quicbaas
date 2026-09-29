@@ -113,28 +113,61 @@ func buildPKCS11Strategy(cfg *config.Config) (qrdbsdk.SealingStrategy, error) {
 		return nil, &StrategyBuildError{Backend: "pkcs11", Cause: &PKCS11ConfigError{Field: "key_label"}}
 	}
 
-	backendCfg := &xkmssdk.PKCS11BackendConfig{
-		CN:          p11.KeyLabel,
-		Library:     p11.Library,
-		TokenLabel:  p11.TokenLabel,
-		Slot:        p11.Slot,
-		PIN:         p11.PIN,
-		KeyStorage:  xkmssdk.NewStorageMemory(),
-		CertStorage: xkmssdk.NewStorageMemory(),
-	}
+	backendCfg := pkcs11BackendConfig(p11, xkmssdk.NewStorageMemory())
 
 	backend, err := xkmssdk.NewPKCS11Backend(backendCfg)
 	if err != nil {
+		backendCfg.PIN.Clear()
 		return nil, &StrategyBuildError{Backend: "pkcs11", Cause: err}
 	}
 
 	keyAttrs := pkcs11SealKeyAttributes(p11.KeyLabel)
 
 	if err := ensurePKCS11SealKey(backend, keyAttrs); err != nil {
-		return nil, &StrategyBuildError{Backend: "pkcs11", Cause: err}
+		return nil, &StrategyBuildError{Backend: "pkcs11", Cause: errors.Join(err, releasePKCS11Backend(backend))}
 	}
 
 	return xkmssdk.NewPKCS11Strategy(backend, keyAttrs, nil), nil
+}
+
+// pkcs11BackendConfig builds the go-xkms PKCS#11 backend config from the
+// operator's PKCS#11 settings. keyStorage backs the backend's key-metadata
+// store; the key material itself never leaves the token.
+//
+// The PIN is sealed into its own SecretValue enclave here, so the backend
+// holds it only in protected memory. Custody of that SecretValue passes to the
+// backend, which reads it on every login for its whole lifetime; a caller that
+// abandons the config (construction failed) must Clear it, and a caller that
+// abandons a constructed backend must release it with releasePKCS11Backend.
+func pkcs11BackendConfig(p11 config.PKCS11SealConfig, keyStorage xkmssdk.StorageBackend) *xkmssdk.PKCS11BackendConfig {
+	return &xkmssdk.PKCS11BackendConfig{
+		CN:          p11.KeyLabel,
+		Library:     p11.Library,
+		TokenLabel:  p11.TokenLabel,
+		Slot:        p11.Slot,
+		PIN:         sealPKCS11PIN(p11.PIN),
+		KeyStorage:  keyStorage,
+		CertStorage: xkmssdk.NewStorageMemory(),
+	}
+}
+
+// sealPKCS11PIN seals pin into a SecretValue enclave and wipes the transient
+// byte copy it made on the way in. An empty pin yields an empty SecretValue,
+// which the backend treats as "no PIN configured".
+func sealPKCS11PIN(pin string) *xkmssdk.SecretValue {
+	b := []byte(pin)
+	sv := xkmssdk.NewLiteralSecretValue(b)
+	clear(b)
+	return sv
+}
+
+// releasePKCS11Backend closes a backend the caller is abandoning and destroys
+// the PIN enclave the backend held, so a failed build leaves neither an open
+// PKCS#11 context nor the PIN behind. It returns the Close error, if any.
+func releasePKCS11Backend(b *xkmssdk.PKCS11Backend) error {
+	err := b.Close()
+	b.Config().PIN.Clear()
+	return err
 }
 
 // ensurePKCS11SealKey logs in to the token and ensures the operator's

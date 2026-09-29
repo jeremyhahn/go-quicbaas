@@ -232,9 +232,9 @@ func (a *IAMServiceAdapter) CreateUser(ctx context.Context, user *iam.User) (*ia
 		Lifecycle:   user.Lifecycle,
 	}
 
-	// Pre-validate requested role and group references BEFORE creating the
-	// user. Resolving them up front keeps the create atomic from the caller's
-	// perspective: a bad role/group ID fails fast with a typed not-found error
+	// Pre-validate requested role references BEFORE creating the user.
+	// Resolving them up front keeps the create atomic from the caller's
+	// perspective: a bad role ID fails fast with a typed not-found error
 	// and no partially-created user is left behind (which would make a retry
 	// fail with already_exists on the username).
 	for _, role := range user.Roles {
@@ -242,12 +242,6 @@ func (a *IAMServiceAdapter) CreateUser(ctx context.Context, user *iam.User) (*ia
 			return nil, err
 		}
 	}
-	for _, group := range user.Groups {
-		if _, err := a.identityStore.GetGroup(ctx, user.TenantID, group); err != nil {
-			return nil, err
-		}
-	}
-
 	created, err := a.identityStore.CreateUser(ctx, user.TenantID, opts)
 	if err != nil {
 		return nil, err
@@ -265,23 +259,10 @@ func (a *IAMServiceAdapter) CreateUser(ctx context.Context, user *iam.User) (*ia
 		assignedRoles = append(assignedRoles, role)
 	}
 
-	// Track successfully added groups
-	addedGroups := make([]string, 0, len(user.Groups))
-	for _, group := range user.Groups {
-		if err := a.identityStore.AddUserToGroup(ctx, user.TenantID, group, created.ID); err != nil {
-			// If group addition fails, return the created user with partial groups
-			created.Roles = assignedRoles
-			created.Groups = addedGroups
-			return created, err
-		}
-		addedGroups = append(addedGroups, group)
-	}
-
-	// Populate the created user with the successfully assigned roles and groups.
+	// Populate the created user with the successfully assigned roles.
 	// This avoids an unnecessary re-fetch which could fail due to read-your-own-writes
 	// consistency issues with Raft replication.
 	created.Roles = assignedRoles
-	created.Groups = addedGroups
 
 	return created, nil
 }
@@ -375,28 +356,6 @@ func (a *IAMServiceAdapter) UpdateUser(ctx context.Context, user *iam.User) (*ia
 		}
 	}
 
-	// Similar for groups
-	if len(user.Groups) > 0 {
-		groupMap := make(map[string]bool)
-		for _, g := range user.Groups {
-			groupMap[g] = true
-		}
-		for _, oldGroup := range currentUser.Groups {
-			if !groupMap[oldGroup] {
-				_ = a.identityStore.RemoveUserFromGroup(ctx, user.TenantID, oldGroup, user.ID)
-			}
-		}
-		oldGroupMap := make(map[string]bool)
-		for _, g := range currentUser.Groups {
-			oldGroupMap[g] = true
-		}
-		for _, newGroup := range user.Groups {
-			if !oldGroupMap[newGroup] {
-				_ = a.identityStore.AddUserToGroup(ctx, user.TenantID, newGroup, user.ID)
-			}
-		}
-	}
-
 	return updated, nil
 }
 
@@ -433,9 +392,6 @@ func (a *IAMServiceAdapter) ListUsers(ctx context.Context, tenantID string, limi
 	if role, ok := filters["role"]; ok && role != "" {
 		opts.Filter["role"] = role
 	}
-	if group, ok := filters["group"]; ok && group != "" {
-		opts.Filter["group"] = group
-	}
 
 	users, err := a.identityStore.ListUsers(ctx, tenantID, opts)
 	if err != nil {
@@ -443,74 +399,6 @@ func (a *IAMServiceAdapter) ListUsers(ctx context.Context, tenantID string, limi
 	}
 
 	return users, len(users), nil
-}
-
-// =============================================================================
-// Group Operations
-// =============================================================================
-
-// CreateGroup creates a new group.
-func (a *IAMServiceAdapter) CreateGroup(ctx context.Context, group *iam.Group) (*iam.Group, error) {
-	if group == nil {
-		return nil, api.NewNilInputError("iam.grpc.CreateGroup", "group")
-	}
-
-	opts := iam.CreateGroupOptions{
-		ID:          group.ID,
-		Name:        group.Name,
-		Description: group.Description,
-	}
-
-	return a.identityStore.CreateGroup(ctx, group.TenantID, opts)
-}
-
-// GetGroup retrieves a group by ID.
-func (a *IAMServiceAdapter) GetGroup(ctx context.Context, tenantID, groupID string) (*iam.Group, error) {
-	return a.identityStore.GetGroup(ctx, tenantID, groupID)
-}
-
-// UpdateGroup updates an existing group.
-func (a *IAMServiceAdapter) UpdateGroup(ctx context.Context, group *iam.Group) (*iam.Group, error) {
-	if group == nil {
-		return nil, api.NewNilInputError("iam.grpc.UpdateGroup", "group")
-	}
-
-	opts := iam.UpdateGroupOptions{
-		Name:        &group.Name,
-		Description: &group.Description,
-	}
-
-	return a.identityStore.UpdateGroup(ctx, group.TenantID, group.ID, opts)
-}
-
-// DeleteGroup deletes a group.
-func (a *IAMServiceAdapter) DeleteGroup(ctx context.Context, tenantID, groupID string) error {
-	return a.identityStore.DeleteGroup(ctx, tenantID, groupID)
-}
-
-// ListGroups lists groups with pagination.
-func (a *IAMServiceAdapter) ListGroups(ctx context.Context, tenantID string, limit, offset int) ([]*iam.Group, int, error) {
-	opts := iam.ListOptions{
-		Limit:  limit,
-		Offset: offset,
-	}
-
-	groups, err := a.identityStore.ListGroups(ctx, tenantID, opts)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	return groups, len(groups), nil
-}
-
-// AddUserToGroup adds a user to a group.
-func (a *IAMServiceAdapter) AddUserToGroup(ctx context.Context, tenantID, groupID, userID string) error {
-	return a.identityStore.AddUserToGroup(ctx, tenantID, groupID, userID)
-}
-
-// RemoveUserFromGroup removes a user from a group.
-func (a *IAMServiceAdapter) RemoveUserFromGroup(ctx context.Context, tenantID, groupID, userID string) error {
-	return a.identityStore.RemoveUserFromGroup(ctx, tenantID, groupID, userID)
 }
 
 // =============================================================================

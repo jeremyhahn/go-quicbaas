@@ -45,6 +45,9 @@ type grpcTestAgentService struct {
 	// unpaged twin would answer rows with no forge issue on them.
 	listJobsPaged bool
 
+	// listAgents is what ListFleetNodes answers with.
+	listAgents []*orchestration.FleetNode
+
 	createTaskFunc    func(ctx context.Context, req *orchestration.CreateTaskRequest) (*orchestration.Task, error)
 	startJobFunc      func(ctx context.Context, req *orchestration.StartJobRequest) (*orchestration.StartJobResponse, error)
 	blockTaskFunc     func(ctx context.Context, tenantID, taskID string, kind orchestration.TaskBlockKind, reason string) error
@@ -194,6 +197,14 @@ func (m *grpcTestAgentService) ReadmitTask(ctx context.Context, tenantID, taskID
 	return nil
 }
 
+func (*grpcTestAgentService) CloseBlockedTask(_ context.Context, _, _ string, _ *orchestration.TaskResult) error {
+	return nil
+}
+
+func (m *grpcTestAgentService) BumpTaskReviewRoundBudget(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
+}
+
 func (m *grpcTestAgentService) DeleteTask(ctx context.Context, tenantID, taskID string) error {
 	if m.deleteTaskFunc != nil {
 		return m.deleteTaskFunc(ctx, tenantID, taskID)
@@ -203,9 +214,9 @@ func (m *grpcTestAgentService) DeleteTask(ctx context.Context, tenantID, taskID 
 
 func (m *grpcTestAgentService) SetTenantGuard(guard *orchestration.TenantGuard) {}
 
-func (m *grpcTestAgentService) RegisterAgent(ctx context.Context, req *orchestration.RegisterAgentRequest) (*orchestration.RegisterAgentResponse, error) {
-	return &orchestration.RegisterAgentResponse{
-		Agent: &orchestration.AgentRegistration{
+func (m *grpcTestAgentService) RegisterFleetNode(ctx context.Context, req *orchestration.RegisterFleetNodeRequest) (*orchestration.RegisterFleetNodeResponse, error) {
+	return &orchestration.RegisterFleetNodeResponse{
+		Node: &orchestration.FleetNode{
 			ID:       "agent-1",
 			TenantID: req.TenantID,
 			Name:     req.Name,
@@ -213,22 +224,22 @@ func (m *grpcTestAgentService) RegisterAgent(ctx context.Context, req *orchestra
 	}, nil
 }
 
-func (m *grpcTestAgentService) GetAgent(ctx context.Context, tenantID, agentID string) (*orchestration.AgentRegistration, error) {
-	return &orchestration.AgentRegistration{
+func (m *grpcTestAgentService) GetFleetNode(ctx context.Context, tenantID, agentID string) (*orchestration.FleetNode, error) {
+	return &orchestration.FleetNode{
 		ID:       agentID,
 		TenantID: tenantID,
 	}, nil
 }
 
-func (m *grpcTestAgentService) ListAgents(ctx context.Context, tenantID string, filter *orchestration.AgentFilter) ([]*orchestration.AgentRegistration, error) {
-	return nil, nil
+func (m *grpcTestAgentService) ListFleetNodes(ctx context.Context, tenantID string, filter *orchestration.FleetNodeFilter) ([]*orchestration.FleetNode, error) {
+	return m.listAgents, nil
 }
 
-func (m *grpcTestAgentService) RemoveAgent(ctx context.Context, tenantID, agentID string) error {
+func (m *grpcTestAgentService) RemoveFleetNode(ctx context.Context, tenantID, agentID string) error {
 	return nil
 }
 
-func (m *grpcTestAgentService) AgentHeartbeat(ctx context.Context, tenantID, agentID string, _ *orchestration.AgentObservation) error {
+func (m *grpcTestAgentService) FleetNodeHeartbeat(ctx context.Context, tenantID, agentID string, _ *orchestration.FleetNodeObservation) error {
 	return nil
 }
 
@@ -808,12 +819,12 @@ func (m *grpcTestAgentService) ListTasksPage(ctx context.Context, tenantID strin
 	return orchestration.ApplyPage(tasks, page, orchestration.TaskPageSpec())
 }
 
-func (m *grpcTestAgentService) ListAgentsPage(ctx context.Context, tenantID string, filter *orchestration.AgentFilter, page *orchestration.Page) (*orchestration.PageResult[*orchestration.AgentRegistration], error) {
-	agents, err := m.ListAgents(ctx, tenantID, filter)
+func (m *grpcTestAgentService) ListFleetNodesPage(ctx context.Context, tenantID string, filter *orchestration.FleetNodeFilter, page *orchestration.Page) (*orchestration.PageResult[*orchestration.FleetNode], error) {
+	agents, err := m.ListFleetNodes(ctx, tenantID, filter)
 	if err != nil {
 		return nil, err
 	}
-	return orchestration.ApplyPage(agents, page, orchestration.AgentPageSpec())
+	return orchestration.ApplyPage(agents, page, orchestration.FleetNodePageSpec())
 }
 
 func (m *grpcTestAgentService) ListWorkflowsPage(ctx context.Context, filter *orchestration.WorkflowFilter, page *orchestration.Page) (*orchestration.PageResult[*orchestration.WorkflowDefinition], error) {

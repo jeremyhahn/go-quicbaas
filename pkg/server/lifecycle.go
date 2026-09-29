@@ -451,7 +451,7 @@ func (s *Server) initializeCA() error {
 		// the CA key config, which carries it for the CA's lifetime. The
 		// plaintext never becomes a Go string, and sv is not cleared because
 		// the config now owns the same enclave.
-		keyConfig.Password = *sv
+		keyConfig.Password = sv
 	}
 
 	// Handle RSA vs ECDSA config
@@ -479,10 +479,9 @@ func (s *Server) initializeCA() error {
 					CommonName:   s.config.CA.RootCommonName,
 					Organization: s.config.CA.RootOrganization,
 				},
-				Valid:        s.config.CA.RootValidYears,
-				Keys:         []*xkmssdk.KeyConfig{keyConfig},
-				KeystoreType: caStoreType,
-				IsRoot:       true,
+				Valid:  s.config.CA.RootValidYears,
+				Keys:   []*xkmssdk.KeyConfig{keyConfig},
+				IsRoot: true,
 			},
 		},
 		SelectedCA:          0,
@@ -502,28 +501,33 @@ func (s *Server) initializeCA() error {
 		ValidityDays:            issuingIdentity.GetValidityDays(),
 		IsRootCA:                issuingIdentity.IsRoot,
 		MaxPathLength:           1,
-		StoreType:               issuingIdentity.KeystoreType,
+		StoreType:               issuingIdentity.GetStoreType(),
 		DefaultCertValidityDays: caConfig.GetDefaultValidityDays(),
 	}
+	// Revocation state and the CRL derived from it are persisted beside the
+	// CA's certificates. go-xkms requires a durable store and has no in-memory
+	// fallback, so a revocation survives a restart.
+	revocationStorage, err := xkmssdk.NewFileStorageBackend(filepath.Join(dataDir, "revocations"))
+	if err != nil {
+		return api.NewOperationFailedError("create CA revocation storage", err)
+	}
+
+	// Per-key CA backend routing. go-xkms routes every CA key by StoreType and
+	// requires the resolver be supplied. The software StoreType resolves back to
+	// the existing PKCS#8 xkmsBackend, so leaf/TLS keys (which the CA generates
+	// via its software ca.keyStore) are unaffected; any other StoreType goes to
+	// the configured crypto backend through the central BackendResolver — the
+	// same selector that backs KMS, seal and PIN — so an explicit
+	// crypto.subsystems.ca.backend=tpm2 physically places the CA signing key in
+	// the TPM.
 	params := &xkmssdk.TrustedCAParams{
 		Config:        caCAConfig,
 		KeyAttributes: keyAttrs,
 		KeyStore:      xkmsBackend,
 		CertStore:     cs,
-	}
-
-	// Per-key CA backend routing. When the CA signing key resolves to a
-	// non-software store, route it to the configured crypto backend through the
-	// central BackendResolver — the same selector that backs KMS, seal and PIN —
-	// so an explicit crypto.subsystems.ca.backend=tpm2 physically places the CA
-	// signing key in the TPM. The software StoreType always resolves back to the
-	// existing PKCS#8 xkmsBackend, so leaf/TLS keys (which the CA generates via
-	// its software ca.keyStore) are unaffected. For a software CA this block is
-	// skipped: BackendForStore stays nil, the CA's keystoreMap stays nil, and
-	// every key resolves to ca.keyStore — byte-for-byte the legacy path.
-	if caStoreType != xkmssdk.StoreSoftware {
-		params.BackendForStore = s.caBackendForStore(
-			xkmsBackend, s.resolveCASigningSpec(), NewBackendResolver(s.config))
+		BackendForStore: s.caBackendForStore(
+			xkmsBackend, s.resolveCASigningSpec(), NewBackendResolver(s.config)),
+		RevocationStore: revocationStorage,
 	}
 
 	var xkmsCA xkmssdk.TrustedCA
@@ -542,6 +546,10 @@ func (s *Server) initializeCA() error {
 		if resolveErr != nil {
 			return api.NewOperationFailedError("resolve cluster CA keystore", resolveErr)
 		}
+		clusterRevocations, revErr := s.clusterCARevocationStore()
+		if revErr != nil {
+			return api.NewOperationFailedError("resolve cluster CA revocation store", revErr)
+		}
 		serialStorage, serr := xkmssdk.NewFileStorageBackend(filepath.Join(s.clusterCACacheDir(), "ca-serials"))
 		if serr != nil {
 			return api.NewOperationFailedError("create cluster CA serial storage", serr)
@@ -551,6 +559,12 @@ func (s *Server) initializeCA() error {
 			KeyStore:  clusterBackend,
 			CertStore: cs,
 			SerialGen: xkmssdk.NewSerialGenerator(xkmssdk.NewBackendStorage(serialStorage)),
+			// The cluster CA keeps every key in the one runtime keystore its
+			// custody strategy resolved, whatever StoreType a key names.
+			BackendForStore: func(string, xkmssdk.StoreType) (xkmssdk.ServiceBackend, error) {
+				return clusterBackend, nil
+			},
+			RevocationStore: clusterRevocations,
 		})
 	} else {
 		xkmsCA, err = newCAFn(params)
@@ -656,7 +670,7 @@ func (s *Server) initializeCA() error {
 	if hostname, err := os.Hostname(); err == nil && hostname != "" && hostname != "localhost" {
 		dnsNames = append(dnsNames, hostname)
 	}
-	// Operator-supplied additional SANs — required when remote agents
+	// Operator-supplied additional SANs — required when remote fleet nodes
 	// reach the central by an IP or FQDN that differs from Host (e.g.,
 	// a GPU host dialing the central across a LAN).
 	dnsNames = append(dnsNames, s.config.Server.AdditionalSANDNS...)
@@ -1754,8 +1768,6 @@ func (s *Server) startService() error {
 		SchedulerMaxConcurrentJobs: s.config.Scheduler.MaxConcurrentJobs,
 		TimeSeriesShardID:          s.config.TimeSeries.ShardID,
 		TenantIsolation:            s.config.Security.TenantIsolation,
-		XKMS:                       s.config.XKMS,
-		DataDir:                    s.config.Storage.DataDir,
 	}
 
 	// Build the QuicBaaS service using the builder pattern
@@ -2078,8 +2090,23 @@ func (s *Server) startService() error {
 		}
 	}
 
+	// The SSH key store: barrier-sealed, never plaintext on disk. Built
+	// last, after every fallible builder step, and closed if Build fails.
+	sshClient, err := s.buildSSHClient()
+	if err != nil {
+		return err
+	}
+	if sshClient != nil {
+		builder = builder.WithSSHClient(sshClient)
+	}
+
 	svc, err := builder.Build()
 	if err != nil {
+		if sshClient != nil {
+			if closeErr := sshClient.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}
 		return api.NewOperationFailedError("create QuicBaaS", err)
 	}
 
@@ -2417,6 +2444,12 @@ func (s *Server) startGRPCServer() error {
 		orchestratorServer := grpcapi.NewOrchestratorServer(agentSvc, s.logger)
 		pb.RegisterOrchestratorServiceServer(grpcServer, orchestratorServer)
 		s.logger.Info("Registered Orchestrator gRPC service")
+
+		// The tenant AI agent catalog: Agents and the pools slots fail over
+		// along. Served over the same agent service, and carried verbatim by
+		// the Unix transport.
+		pb.RegisterAgentCatalogServiceServer(grpcServer, grpcapi.NewAgentCatalogServer(agentSvc, s.logger))
+		s.logger.Info("Registered AgentCatalog gRPC service")
 	}
 
 	// Register Project service (if enabled). Projects sit between Tenant and

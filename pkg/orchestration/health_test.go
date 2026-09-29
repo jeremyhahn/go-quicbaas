@@ -118,27 +118,35 @@ func (m *healthMockAgentService) ReadmitTask(_ context.Context, _, _ string) err
 	return nil
 }
 
+func (*healthMockAgentService) CloseBlockedTask(_ context.Context, _, _ string, _ *TaskResult) error {
+	return nil
+}
+
+func (m *healthMockAgentService) BumpTaskReviewRoundBudget(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
+}
+
 func (m *healthMockAgentService) DeleteTask(_ context.Context, _, _ string) error {
 	return nil
 }
 
-func (m *healthMockAgentService) RegisterAgent(_ context.Context, _ *RegisterAgentRequest) (*RegisterAgentResponse, error) {
-	return &RegisterAgentResponse{}, nil
+func (m *healthMockAgentService) RegisterFleetNode(_ context.Context, _ *RegisterFleetNodeRequest) (*RegisterFleetNodeResponse, error) {
+	return &RegisterFleetNodeResponse{}, nil
 }
 
-func (m *healthMockAgentService) GetAgent(_ context.Context, _, _ string) (*AgentRegistration, error) {
-	return &AgentRegistration{}, nil
+func (m *healthMockAgentService) GetFleetNode(_ context.Context, _, _ string) (*FleetNode, error) {
+	return &FleetNode{}, nil
 }
 
-func (m *healthMockAgentService) ListAgents(_ context.Context, _ string, _ *AgentFilter) ([]*AgentRegistration, error) {
+func (m *healthMockAgentService) ListFleetNodes(_ context.Context, _ string, _ *FleetNodeFilter) ([]*FleetNode, error) {
 	return nil, nil
 }
 
-func (m *healthMockAgentService) RemoveAgent(_ context.Context, _, _ string) error {
+func (m *healthMockAgentService) RemoveFleetNode(_ context.Context, _, _ string) error {
 	return nil
 }
 
-func (m *healthMockAgentService) AgentHeartbeat(_ context.Context, _, _ string, _ *AgentObservation) error {
+func (m *healthMockAgentService) FleetNodeHeartbeat(_ context.Context, _, _ string, _ *FleetNodeObservation) error {
 	return nil
 }
 
@@ -759,12 +767,12 @@ func (m *healthMockAgentService) ListTasksPage(ctx context.Context, tenantID str
 	return ApplyPage(tasks, page, TaskPageSpec())
 }
 
-func (m *healthMockAgentService) ListAgentsPage(ctx context.Context, tenantID string, filter *AgentFilter, page *Page) (*PageResult[*AgentRegistration], error) {
-	agents, err := m.ListAgents(ctx, tenantID, filter)
+func (m *healthMockAgentService) ListFleetNodesPage(ctx context.Context, tenantID string, filter *FleetNodeFilter, page *Page) (*PageResult[*FleetNode], error) {
+	agents, err := m.ListFleetNodes(ctx, tenantID, filter)
 	if err != nil {
 		return nil, err
 	}
-	return ApplyPage(agents, page, AgentPageSpec())
+	return ApplyPage(agents, page, FleetNodePageSpec())
 }
 
 func (m *healthMockAgentService) ListWorkflowsPage(ctx context.Context, filter *WorkflowFilter, page *Page) (*PageResult[*WorkflowDefinition], error) {

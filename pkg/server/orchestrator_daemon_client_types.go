@@ -17,9 +17,9 @@
 package server
 
 // OrchestratorDaemonClient holds the credentials + scopes the central uses
-// to authenticate to remote agent daemons. Mirrors the credentials the
+// to authenticate to remote fleet node daemons. Mirrors the credentials the
 // daemons themselves hold — the central is just another client of the
-// AgentRuntime service.
+// FleetRuntime service.
 //
 // The concrete provisioning logic lives in pkg/server/iam_init.go; until it
 // runs, callers see a nil *OrchestratorDaemonClient on the Server struct and

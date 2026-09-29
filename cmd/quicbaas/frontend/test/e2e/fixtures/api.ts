@@ -71,17 +71,17 @@ export async function closeTestSession(sessionID: string, tenantID = SYSTEM_TENA
   }
 }
 
-// AgentList mirrors the server's ListAgentsResponse.
-interface AgentList {
-  agents?: Array<{ agent_id: string; name: string; host: string; backend: string }>;
+// FleetList mirrors the server's ListFleetNodesResponse.
+interface FleetList {
+  nodes?: Array<{ id: string; name: string; host: string; backend: string }>;
   count?: number;
 }
 
-// listTestAgents returns all agents registered for the given tenant.
+// listTestFleetNodes returns every fleet node registered for the given tenant.
 // Throws if the daemon is unreachable, so beforeAll will fail fast.
-export async function listTestAgents(tenantID = SYSTEM_TENANT_ID): Promise<AgentList> {
-  return apiFetch<AgentList>(
-    apiURL(`/agents?tenant_id=${encodeURIComponent(tenantID)}`),
+export async function listTestFleetNodes(tenantID = SYSTEM_TENANT_ID): Promise<FleetList> {
+  return apiFetch<FleetList>(
+    `${serverBase()}/api/v1/fleet?tenant_id=${encodeURIComponent(tenantID)}`,
   );
 }
 

@@ -331,6 +331,91 @@ func TestExecContainerRuntime_Exec_MissingContainer(t *testing.T) {
 	}
 }
 
+// TestExecContainerRuntime_Exec_StoppedContainer proves a container that
+// exists and is not running is an error, not an exit status: the runtime
+// refused before any process started, so there is no command whose answer the
+// status could be. The shapes are the ones docker and podman printed on the
+// burn-in node (go-quicbaas#932).
+func TestExecContainerRuntime_Exec_StoppedContainer(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		stderr string
+		code   string
+	}{
+		"DockerDaemon": {
+			stderr: "Error response from daemon: container 41b0eedc is not running",
+			code:   "1",
+		},
+		"OCIRuntime": {
+			stderr: "OCI runtime exec failed: exec failed: cannot exec in a stopped container: unknown",
+			code:   "126",
+		},
+		"Podman": {
+			stderr: "Error: can only create exec sessions on running containers: container state improper",
+			code:   "125",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			rt := execStubRuntime(t, "echo '"+tc.stderr+"' >&2\nexit "+tc.code+"\n")
+
+			result, err := rt.Exec(t.Context(), "41b0eedc", &ExecSpec{Cmd: []string{"git", "rev-parse", "--git-dir"}})
+			if result != nil {
+				t.Errorf("Exec() result = %+v, want nil when nothing ran", result)
+			}
+			var stopped *ContainerNotRunningError
+			if !errors.As(err, &stopped) {
+				t.Fatalf("Exec() error = %T (%v), want *ContainerNotRunningError", err, err)
+			}
+			if stopped.ContainerID != "41b0eedc" {
+				t.Errorf("ContainerID = %q, want the container the caller named", stopped.ContainerID)
+			}
+			if stopped.Message != tc.stderr {
+				t.Errorf("Message = %q, want the runtime's own words %q", stopped.Message, tc.stderr)
+			}
+			if !errors.Is(err, ErrContainerNotRunning) {
+				t.Error("expected errors.Is(err, ErrContainerNotRunning)")
+			}
+			if !strings.Contains(err.Error(), tc.stderr) {
+				t.Errorf("Error() = %q, want it to carry the runtime's message", err.Error())
+			}
+		})
+	}
+}
+
+// TestExecContainerRuntime_Exec_CommandSayingNotRunningIsAnExitStatus is the
+// #970 control for the stopped-container shapes: a command that RAN and
+// mentions a stopped container in its own output — a test suite, a docker
+// client inside the container — is the command's answer, not the runtime's.
+func TestExecContainerRuntime_Exec_CommandSayingNotRunningIsAnExitStatus(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"AfterItsOwnOutput": "echo 'running integration suite' >&2\n" +
+			"echo 'Error response from daemon: container db is not running' >&2\nexit 1\n",
+		"WithStdout": "echo 'starting'\n" +
+			"echo 'Error response from daemon: container db is not running' >&2\nexit 1\n",
+	}
+	for name, script := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			rt := execStubRuntime(t, script)
+
+			result, err := rt.Exec(t.Context(), "ctr-alive", &ExecSpec{Cmd: []string{"make", "integration-test"}})
+			if err != nil {
+				t.Fatalf("Exec() error = %v, want the command's exit status", err)
+			}
+			if result.ExitCode != 1 {
+				t.Errorf("ExitCode = %d, want 1", result.ExitCode)
+			}
+		})
+	}
+}
+
 // TestExecContainerRuntime_Exec_RuntimeUnrunnable covers the runtime binary
 // that cannot be started at all — an uninstalled docker, a PATH that moved
 // under a long-lived daemon. There is no exit status to report, so this is

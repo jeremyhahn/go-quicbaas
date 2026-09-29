@@ -492,7 +492,7 @@ func TestJobStallDetector_SessionBackingIsTheRunnersDeclaration(t *testing.T) {
 				SessionBacked: tc.sessionBacked,
 				IdleThreshold: 20 * time.Minute,
 			}}
-			detector, err := newJobStallDetector(loops, &fakeSessions{}, nil, specs)
+			detector, err := newJobStallDetector(loops, &fakeSessions{}, nil, specs, nil)
 			if err != nil {
 				t.Fatalf("newJobStallDetector: %v", err)
 			}
@@ -527,7 +527,7 @@ func TestJobStallDetector_ReadsTheRunnersDeclaredBound(t *testing.T) {
 	// minute, and a detector still reading the old table would call the job
 	// healthy.
 	specs := []JobStateSpec{{State: JobStateExecuting, Label: "Executing", IdleThreshold: time.Minute}}
-	detector, err := newJobStallDetector(loops, &fakeSessions{}, nil, specs)
+	detector, err := newJobStallDetector(loops, &fakeSessions{}, nil, specs, nil)
 	if err != nil {
 		t.Fatalf("newJobStallDetector: %v", err)
 	}

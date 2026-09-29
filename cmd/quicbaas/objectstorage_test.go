@@ -2674,13 +2674,6 @@ func TestEmbedded91_ShutdownEmbeddedServer_WithServer(t *testing.T) {
 	assert.Nil(t, embeddedServerHolder.Load())
 }
 
-func TestEmbedded91_GetFreePortForEmbedded_Success(t *testing.T) {
-	port, err := getFreePortForEmbedded()
-	assert.NoError(t, err)
-	assert.Greater(t, port, 0)
-	assert.Less(t, port, 65536)
-}
-
 // =============================================================================
 // Rebalance commands - RunE closure coverage through SDK client error
 // =============================================================================

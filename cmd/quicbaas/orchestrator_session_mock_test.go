@@ -36,6 +36,18 @@ type mockSessionOverrides struct {
 	conversation func(ctx context.Context, req *orchestratorSDK.GetSessionConversationRequest) (*orchestratorSDK.GetSessionConversationResponse, error)
 	subscribe    func(ctx context.Context, req *orchestratorSDK.SubscribeSessionEventsRequest) (<-chan *orchestratorSDK.SessionEventEnvelope, error)
 	spend        func(ctx context.Context, req *orchestratorSDK.GetSpendReportRequest) (*orchestratorSDK.GetSpendReportResponse, error)
+	getPolicy    func(ctx context.Context, req *orchestratorSDK.GetTenantSpendPolicyRequest) (*orchestratorSDK.TenantSpendPolicy, error)
+	setPolicy    func(ctx context.Context, req *orchestratorSDK.SetTenantSpendPolicyRequest) (*orchestratorSDK.TenantSpendPolicy, error)
+}
+
+// overridesFor returns the mock's override set, creating it on first use.
+func overridesFor(m *mockOrchestratorClient) *mockSessionOverrides {
+	o, ok := mockSessionOverrideRegistry[m]
+	if !ok {
+		o = &mockSessionOverrides{}
+		mockSessionOverrideRegistry[m] = o
+	}
+	return o
 }
 
 var mockSessionOverrideRegistry = map[*mockOrchestratorClient]*mockSessionOverrides{}
@@ -122,6 +134,24 @@ func (m *mockOrchestratorClient) GetSpendReport(ctx context.Context, req *orches
 	}, nil
 }
 
+// GetTenantSpendPolicy satisfies orchestratorSDK.Client. It answers an
+// unmetered tenant unless a test installed an override.
+func (m *mockOrchestratorClient) GetTenantSpendPolicy(ctx context.Context, req *orchestratorSDK.GetTenantSpendPolicyRequest) (*orchestratorSDK.TenantSpendPolicy, error) {
+	if o, ok := mockSessionOverrideRegistry[m]; ok && o.getPolicy != nil {
+		return o.getPolicy(ctx, req)
+	}
+	return &orchestratorSDK.TenantSpendPolicy{TenantID: req.TenantID}, nil
+}
+
+// SetTenantSpendPolicy satisfies orchestratorSDK.Client. It echoes the limits
+// unless a test installed an override.
+func (m *mockOrchestratorClient) SetTenantSpendPolicy(ctx context.Context, req *orchestratorSDK.SetTenantSpendPolicyRequest) (*orchestratorSDK.TenantSpendPolicy, error) {
+	if o, ok := mockSessionOverrideRegistry[m]; ok && o.setPolicy != nil {
+		return o.setPolicy(ctx, req)
+	}
+	return &orchestratorSDK.TenantSpendPolicy{TenantID: req.TenantID, Limits: req.Limits}, nil
+}
+
 // SubscribeSessionEvents satisfies orchestratorSDK.Client. Returns an error
 // by default to simulate a transport that does not support streaming; tests
 // install overrides via setSubscribeSessionEventsFn.
@@ -184,9 +214,9 @@ func (m *mockOrchestratorClient) DeleteWorkflow(ctx context.Context, req *orches
 	return nil
 }
 
-// EnableAgent satisfies orchestratorSDK.Client.
-func (m *mockOrchestratorClient) EnableAgent(ctx context.Context, req *orchestratorSDK.EnableAgentRequest) (*orchestratorSDK.EnableAgentResponse, error) {
-	return &orchestratorSDK.EnableAgentResponse{}, nil
+// EnableFleetNode satisfies orchestratorSDK.Client.
+func (m *mockOrchestratorClient) EnableFleetNode(ctx context.Context, req *orchestratorSDK.EnableFleetNodeRequest) (*orchestratorSDK.EnableFleetNodeResponse, error) {
+	return &orchestratorSDK.EnableFleetNodeResponse{}, nil
 }
 
 // RotateSessionAccount satisfies orchestratorSDK.Client.
@@ -197,9 +227,9 @@ func (m *mockOrchestratorClient) RotateSessionAccount(ctx context.Context, req *
 	return &orchestratorSDK.RotateSessionAccountResponse{SessionID: req.SessionID}, nil
 }
 
-// DisableAgent satisfies orchestratorSDK.Client.
-func (m *mockOrchestratorClient) DisableAgent(ctx context.Context, req *orchestratorSDK.DisableAgentRequest) (*orchestratorSDK.DisableAgentResponse, error) {
-	return &orchestratorSDK.DisableAgentResponse{}, nil
+// DisableFleetNode satisfies orchestratorSDK.Client.
+func (m *mockOrchestratorClient) DisableFleetNode(ctx context.Context, req *orchestratorSDK.DisableFleetNodeRequest) (*orchestratorSDK.DisableFleetNodeResponse, error) {
+	return &orchestratorSDK.DisableFleetNodeResponse{}, nil
 }
 
 // SubmitTaskArtifacts satisfies orchestratorSDK.Client.

@@ -1,0 +1,103 @@
+# QuicBaaS fleet node spec — the annotated template.
+#
+# One file per node. `quicbaas fleet deploy --spec <file>` reads it, runs the
+# preflight checks, and installs the agent; `fleet stop|start|undeploy --spec
+# <file>` address the same node. A flag set on the command line overrides the
+# value here. See docs/software-factory/fleet.md for the runbook.
+#
+# This repository is published, so the specs for a real fleet — its host
+# names, addresses and users — live in that fleet's private infrastructure
+# repository, not here (docs/release/public-releasability.md). Copy this file
+# there and fill it in.
+
+# --- How to reach the node -------------------------------------------------
+
+# SSH destination, host or host:port.
+host: agent-01.internal
+ssh_user: agent
+
+# The deploy key, by name, from the xkms-backed SSH key store
+# (`quicbaas ssh keys import`). The node's host key must be pinned in the
+# known-hosts store under the same scope/owner (`quicbaas ssh known-hosts
+# add`). A spec never carries a password.
+ssh_key_name: fleet-deploy
+# ssh_key_scope: user
+# ssh_key_owner: <operator>
+
+# --- The control plane -----------------------------------------------------
+
+# The address the agent dials. Preflight checks the NODE can reach it over
+# TLS verified by the CA the deploy installs.
+server: https://quicbaas.example.com:8443
+tenant: acme
+
+# --- What the deploy installs ----------------------------------------------
+
+# The agent's runtime listener. The control plane dials it, and the deploy
+# probes it after the SSH session closes, so it needs a fixed port.
+node_bind: 0.0.0.0:9091
+# What the node serves, each by name: claude, codex, opencode, openvino,
+# ollama-agent, vllm, ollama -- or "acp", every agent backend. The node
+# advertises exactly these, so a GPU node that must never take hosted-model
+# work names only its local ones, e.g. [opencode, openvino, ollama].
+backends: [acp]
+
+# The static CLI binary to upload (make build-static-cli).
+binary: bin/quicbaas-static
+
+# Relative paths are under the SSH user's home directory.
+# install_dir: .quicbaas/bin     # binary, agent.yaml, start script
+# data_dir: .quicbaas/agent      # identity, log, work directory
+
+# Where job workspaces are provisioned. Preflight measures its free space;
+# `fleet undeploy --purge-workspaces` removes it. Empty takes
+# <data_dir>/work/projects.
+projects_root: /srv/quicbaas/projects
+
+# systemd: omit to auto-detect, true to require a systemd --user unit (with
+# lingering), false for the nohup launcher.
+systemd: true
+
+# How long the deploy waits for the agent to come online; 0 skips the wait.
+wait_online: 2m
+
+# Images this node's sandboxed sessions run. Preflight checks each is present
+# or pullable, and that a present one was built for the uid the agent runs as
+# (make build-worker-image on the node builds it that way).
+worker_images:
+  - registry.example.com/quicbaas/software-factory-worker:latest
+
+# --- The daemon ------------------------------------------------------------
+#
+# Exactly the `quicbaas fleet serve --config` schema (fleet.Config). The
+# deploy renders it to <install_dir>/agent.yaml and fills in what it owns:
+# server, tenant, bind address, backends, work and projects directories,
+# identity paths and the MCP endpoint — declare those above, not here.
+node:
+  # REQUIRED. How many jobs this node runs at once: the number of concurrent
+  # agent containers its CPU, memory and disk sustain. A node that declares
+  # none leaves the whole fleet's capacity undeclared.
+  max_concurrent_jobs: 4
+
+  sandbox_policy: required
+  container_runtime: docker
+  # sandbox_network: bridge
+
+  # Images by backend, and the registry unqualified references resolve under.
+  image_registry: registry.example.com/quicbaas
+  image_map:
+    claude-code: software-factory-worker:latest
+    codex: software-factory-worker:latest
+    opencode: software-factory-worker:latest
+  auto_pull: true
+
+  # Local-model backends, when the model runs on another box.
+  # ollama_base_url: http://gpu-host.internal:11434
+  # vllm_base_url: http://gpu-host.internal:11435
+  # vllm_model: qwen3-coder
+  # openvino_base_url: http://npu-host.internal:9000
+
+  # Host directories a sandboxed spawn may mount besides this node's own
+  # workspaces (which projects_root already admits).
+  # allowed_mount_roots:
+  #   - /srv/quicbaas/sockets

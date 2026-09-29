@@ -15,6 +15,7 @@ package sdlc
 
 import (
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -111,7 +112,8 @@ type TriageFact struct {
 	Subject string
 	// Present says whether the checkout has it.
 	Present bool
-	// Matches are the grep lines an identifier was found on, bounded.
+	// Matches are the grep lines an identifier was found on, or the tracked
+	// paths a path was found at, bounded.
 	Matches []string
 }
 
@@ -140,14 +142,33 @@ func MeasureTriageFacts(
 ) (TriageFacts, error) {
 	facts := TriageFacts{Head: head}
 	for _, p := range probes.Paths {
-		result, err := exec(&orchestration.ExecSpec{Cmd: []string{gitCommand, "ls-files", "--", p}, WorkDir: workDir})
+		// THE PATH AS WRITTEN, AND THE SAME PATH AT ANY DEPTH. A pathspec is
+		// read from the repository root, so an issue that names a file by its
+		// base name — "canonicalconformance_integration_test.go", which lives
+		// in pkg/luks2 — was reported ABSENT, and triage parked go-luks2#209
+		// as needs-info on that false fact every pass (2026-09-22, 09-25).
+		// The extracted path holds no glob characters (triagePathPattern), so
+		// the glob form matches only the path itself, under any directory.
+		result, err := exec(&orchestration.ExecSpec{
+			Cmd:     []string{gitCommand, "ls-files", "--", p, triageAnyDepth(p)},
+			WorkDir: workDir,
+		})
 		if err != nil {
 			return TriageFacts{}, err
 		}
 		if !result.Succeeded() {
 			return TriageFacts{}, &CheckoutCommandError{Command: "ls-files -- " + p, ExitCode: result.ExitCode, Output: strings.TrimSpace(result.Stderr)}
 		}
-		facts.Paths = append(facts.Paths, TriageFact{Subject: p, Present: strings.TrimSpace(result.Stdout) != ""})
+		fact := TriageFact{Subject: p}
+		for _, found := range strings.Split(strings.TrimSpace(result.Stdout), "\n") {
+			found = strings.TrimSpace(found)
+			if found == "" || slices.Contains(fact.Matches, found) || len(fact.Matches) >= triageFactMaxMatches {
+				continue
+			}
+			fact.Matches = append(fact.Matches, found)
+		}
+		fact.Present = len(fact.Matches) > 0
+		facts.Paths = append(facts.Paths, fact)
 	}
 	for _, id := range probes.Identifiers {
 		result, err := exec(&orchestration.ExecSpec{
@@ -177,6 +198,12 @@ func MeasureTriageFacts(
 	return facts, nil
 }
 
+// triageAnyDepth is the pathspec matching path under any directory of the
+// checkout, the root included.
+func triageAnyDepth(path string) string {
+	return ":(glob)**/" + strings.TrimPrefix(path, "/")
+}
+
 // Render writes the facts as the prompt section the model reads, bounded to
 // triageFactMaxBytes.
 func (f TriageFacts) Render() string {
@@ -196,7 +223,11 @@ func (f TriageFacts) Render() string {
 		b.WriteString("Files the issue names:\n\n")
 		for _, p := range f.Paths {
 			if p.Present {
-				b.WriteString("- `" + p.Subject + "` — present\n")
+				b.WriteString("- `" + p.Subject + "` — present")
+				if len(p.Matches) > 0 && (len(p.Matches) > 1 || p.Matches[0] != p.Subject) {
+					b.WriteString(" at `" + strings.Join(p.Matches, "`, `") + "`")
+				}
+				b.WriteString("\n")
 			} else {
 				b.WriteString("- `" + p.Subject + "` — ABSENT from the checkout\n")
 			}

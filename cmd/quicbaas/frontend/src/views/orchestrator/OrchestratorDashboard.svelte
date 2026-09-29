@@ -1,31 +1,22 @@
 <!--
-  OrchestratorDashboard shows summary stats, job-state doughnut, agent
-  status bar chart, and the 10 most recent events.
+  OrchestratorDashboard shows summary stats, how jobs and agents split
+  across their states, and the 10 most recent events.
 -->
 <script lang="ts">
-  import * as echarts from 'echarts/core';
-  import { PieChart, BarChart } from 'echarts/charts';
-  import { CanvasRenderer } from 'echarts/renderers';
-  import {
-    TitleComponent,
-    TooltipComponent,
-    LegendComponent,
-    GridComponent,
-  } from 'echarts/components';
   import { orchestratorStore } from '../../stores/orchestrator.svelte.ts';
   import { countLiveSessions } from '../../lib/sessions.ts';
   import StatCard from '../../components/core/StatCard.svelte';
+  import BreakdownBars, { type BreakdownRow } from '../../components/core/BreakdownBars.svelte';
   import PageHeader from '../../components/core/PageHeader.svelte';
   import EventLog from '../../components/orchestrator/EventLog.svelte';
   import {
     Workflow,
-    Bot,
+    ServerCog,
     Terminal,
     ClipboardList,
     LayoutDashboard,
   } from 'lucide-svelte';
 
-  echarts.use([PieChart, BarChart, CanvasRenderer, TitleComponent, TooltipComponent, LegendComponent, GridComponent]);
 
   // ---------------------------------------------------------------------------
   // Derived stats
@@ -59,107 +50,43 @@
   );
 
   // ---------------------------------------------------------------------------
-  // Job state doughnut chart
+  // State breakdowns
   // ---------------------------------------------------------------------------
 
-  let pieEl: HTMLDivElement | undefined = $state();
-  let pieChart: echarts.ECharts | null = null;
+  /** JOB_STATE_ORDER is the job lifecycle, so the breakdown reads in the order a job moves. */
+  const JOB_STATE_ORDER: readonly string[] = [
+    'initializing', 'decomposing', 'scheduling', 'assigning', 'executing', 'validating',
+    'reviewing', 're-delegating', 'completing', 'cleanup', 'escalating', 'completed', 'failed',
+  ];
 
-  function buildPieOption(): echarts.EChartsCoreOption {
-    const counts: Record<string, number> = {};
+  const FLEET_NODE_STATUSES: readonly string[] = ['running', 'idle', 'registered', 'offline', 'error'];
+
+  /** Only the job states that have jobs in them: thirteen rows of mostly zero is noise. */
+  const jobStateRows = $derived.by((): BreakdownRow[] => {
+    const counts = new Map<string, number>();
     for (const job of (Array.isArray(orchestratorStore.jobs) ? orchestratorStore.jobs : [])) {
-      counts[job.state] = (counts[job.state] ?? 0) + 1;
+      counts.set(job.state, (counts.get(job.state) ?? 0) + 1);
     }
-
-    return {
-      backgroundColor: 'transparent',
-      tooltip: { trigger: 'item' },
-      legend: { orient: 'vertical', right: 10, textStyle: { color: 'oklch(0.70 0.01 80)', fontSize: 11 } },
-      series: [
-        {
-          type: 'pie',
-          radius: ['40%', '70%'],
-          center: ['40%', '50%'],
-          avoidLabelOverlap: false,
-          label: { show: false },
-          emphasis: { label: { show: true, fontSize: 14, fontWeight: 'bold' } },
-          data: Object.entries(counts).map(([name, value]) => ({ name, value })),
-        },
-      ],
-    };
-  }
-
-  $effect(() => {
-    if (!pieEl) return;
-    pieChart = echarts.init(pieEl, 'dark', { renderer: 'canvas' });
-    pieChart.setOption(buildPieOption());
-    const ro = new ResizeObserver(() => pieChart?.resize());
-    ro.observe(pieEl);
-    return () => { ro.disconnect(); pieChart?.dispose(); pieChart = null; };
+    const known = JOB_STATE_ORDER.filter((state) => counts.has(state));
+    const unknown = [...counts.keys()].filter((state) => !JOB_STATE_ORDER.includes(state)).sort();
+    return [...known, ...unknown].map((state) => ({ label: state, count: counts.get(state) ?? 0 }));
   });
 
-  $effect(() => { pieChart?.setOption(buildPieOption()); });
-
-  // ---------------------------------------------------------------------------
-  // Agent status bar chart
-  // ---------------------------------------------------------------------------
-
-  let barEl: HTMLDivElement | undefined = $state();
-  let barChart: echarts.ECharts | null = null;
-
-  function buildBarOption(): echarts.EChartsCoreOption {
-    const statuses = ['registered', 'running', 'idle', 'offline', 'error'];
-    const safeAgents = Array.isArray(orchestratorStore.agents) ? orchestratorStore.agents : [];
-    const values = statuses.map((s) => safeAgents.filter((a) => a.status === s).length);
-
-    return {
-      backgroundColor: 'transparent',
-      tooltip: { trigger: 'axis' },
-      grid: { left: '10%', right: '5%', top: '10%', bottom: '15%' },
-      xAxis: {
-        type: 'category',
-        data: statuses,
-        axisLabel: { color: 'oklch(0.70 0.01 80)', fontSize: 11 },
-        axisLine: { lineStyle: { color: 'oklch(0.25 0.02 30)' } },
-      },
-      yAxis: {
-        type: 'value',
-        axisLabel: { color: 'oklch(0.70 0.01 80)', fontSize: 11 },
-        splitLine: { lineStyle: { color: 'oklch(0.18 0.02 30)' } },
-      },
-      series: [
-        {
-          type: 'bar',
-          data: values,
-          itemStyle: {
-            color: (params: { dataIndex: number }) => {
-              const colors = ['#60a5fa', '#22c55e', '#94a3b8', '#6b7280', '#ef4444'];
-              return colors[params.dataIndex] ?? '#ea580c';
-            },
-          },
-          barMaxWidth: 40,
-        },
-      ],
-    };
-  }
-
-  $effect(() => {
-    if (!barEl) return;
-    barChart = echarts.init(barEl, 'dark', { renderer: 'canvas' });
-    barChart.setOption(buildBarOption());
-    const ro = new ResizeObserver(() => barChart?.resize());
-    ro.observe(barEl);
-    return () => { ro.disconnect(); barChart?.dispose(); barChart = null; };
+  /** Every fleet node status, zeros included: "0 in error" is itself the answer an operator wants. */
+  const fleetStatusRows = $derived.by((): BreakdownRow[] => {
+    const nodes = Array.isArray(orchestratorStore.fleetNodes) ? orchestratorStore.fleetNodes : [];
+    return FLEET_NODE_STATUSES.map((status) => ({
+      label: status,
+      count: nodes.filter((node) => node.status === status).length,
+    }));
   });
-
-  $effect(() => { barChart?.setOption(buildBarOption()); });
 </script>
 
-<div class="p-6 space-y-6">
-  <PageHeader title="Dashboard" subtitle="Jobs, agents, sessions and tasks at a glance" icon={LayoutDashboard} />
+<div class="page">
+  <PageHeader title="Dashboard" subtitle="Jobs, fleet nodes, sessions and tasks at a glance" icon={LayoutDashboard} />
 
   <!-- Stat cards -->
-  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+  <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
     <StatCard
       label="Active Jobs"
       value={activeJobs}
@@ -168,10 +95,10 @@
       variant={activeJobs > 0 ? 'primary' : 'default'}
     />
     <StatCard
-      label="Agents"
-      value={(Array.isArray(orchestratorStore.agents) ? orchestratorStore.agents : []).length}
-      description="{(Array.isArray(orchestratorStore.agents) ? orchestratorStore.agents : []).filter((a) => a.status === 'running').length} running"
-      icon={Bot}
+      label="Fleet nodes"
+      value={(Array.isArray(orchestratorStore.fleetNodes) ? orchestratorStore.fleetNodes : []).length}
+      description="{(Array.isArray(orchestratorStore.fleetNodes) ? orchestratorStore.fleetNodes : []).filter((a) => a.status === 'running').length} running"
+      icon={ServerCog}
     />
     <StatCard
       label="Active Sessions"
@@ -189,39 +116,45 @@
     />
   </div>
 
-  <!-- Charts row -->
-  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-    <div class="card bg-base-200 rounded-box">
-      <div class="card-body p-5">
-        <h3 class="text-sm font-semibold text-base-content mb-2">Job States</h3>
-        {#if (Array.isArray(orchestratorStore.jobs) ? orchestratorStore.jobs : []).length === 0}
-          <div class="flex items-center justify-center h-48 text-base-content/30 text-sm">
+  <!-- State breakdowns -->
+  <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+    <div class="card rounded-box bg-base-200">
+      <div class="card-body gap-0 p-5">
+        <div class="mb-4 flex items-baseline justify-between gap-3">
+          <h3 class="text-[0.9375rem] font-semibold">Job states</h3>
+          <a class="link link-hover text-xs text-primary" href="#/jobs">All jobs</a>
+        </div>
+        {#if jobStateRows.length === 0}
+          <div class="flex h-32 items-center justify-center text-sm text-base-content/60">
             No jobs
           </div>
         {:else}
-          <div bind:this={pieEl} class="w-full h-48"></div>
+          <BreakdownBars rows={jobStateRows} ariaLabel="Jobs by state" />
         {/if}
       </div>
     </div>
 
-    <div class="card bg-base-200 rounded-box">
-      <div class="card-body p-5">
-        <h3 class="text-sm font-semibold text-base-content mb-2">Agent Status Breakdown</h3>
-        {#if (Array.isArray(orchestratorStore.agents) ? orchestratorStore.agents : []).length === 0}
-          <div class="flex items-center justify-center h-48 text-base-content/30 text-sm">
-            No agents registered
+    <div class="card rounded-box bg-base-200">
+      <div class="card-body gap-0 p-5">
+        <div class="mb-4 flex items-baseline justify-between gap-3">
+          <h3 class="text-[0.9375rem] font-semibold">Fleet status</h3>
+          <a class="link link-hover text-xs text-primary" href="#/fleet">Fleet</a>
+        </div>
+        {#if (Array.isArray(orchestratorStore.fleetNodes) ? orchestratorStore.fleetNodes : []).length === 0}
+          <div class="flex h-32 items-center justify-center text-sm text-base-content/60">
+            No fleet nodes registered
           </div>
         {:else}
-          <div bind:this={barEl} class="w-full h-48"></div>
+          <BreakdownBars rows={fleetStatusRows} ariaLabel="Fleet nodes by status" />
         {/if}
       </div>
     </div>
   </div>
 
   <!-- Recent events -->
-  <div class="card bg-base-200 rounded-box">
-    <div class="card-body p-5">
-      <h3 class="text-sm font-semibold text-base-content mb-2">Recent Events</h3>
+  <div class="card rounded-box bg-base-200">
+    <div class="card-body gap-0 p-5">
+      <h3 class="mb-3 text-[0.9375rem] font-semibold">Recent events</h3>
       <EventLog events={recentEvents} maxHeight="200px" autoScroll={false} />
     </div>
   </div>

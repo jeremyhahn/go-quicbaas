@@ -38,20 +38,20 @@ import (
 
 // CreateProjectRESTRequest is the JSON body for POST /api/v1/projects.
 type CreateProjectRESTRequest struct {
-	TenantID         string                               `json:"tenant_id"`
-	Name             string                               `json:"name"`
-	Description      string                               `json:"description,omitempty"`
-	WorkspaceAgentID string                               `json:"workspace_agent_id,omitempty"`
-	WorkspacePath    string                               `json:"workspace_path,omitempty"`
-	HostAffinity     string                               `json:"host_affinity,omitempty"`
-	DefaultLeadAgent string                               `json:"default_lead_agent,omitempty"`
-	GitRepoURL       string                               `json:"git_repo_url,omitempty"`
-	GitDefaultBranch string                               `json:"git_default_branch,omitempty"`
-	AgentRoles       map[string]orchestration.ProjectRole `json:"agent_roles,omitempty"`
-	TokenBudget      int64                                `json:"token_budget,omitempty"`
-	GPUMinutes       int64                                `json:"gpu_minutes,omitempty"`
-	MaxConcurrency   int                                  `json:"max_concurrency,omitempty"`
-	Metadata         map[string]string                    `json:"metadata,omitempty"`
+	TenantID             string                               `json:"tenant_id"`
+	Name                 string                               `json:"name"`
+	Description          string                               `json:"description,omitempty"`
+	WorkspaceFleetNodeID string                               `json:"workspace_agent_id,omitempty"`
+	WorkspacePath        string                               `json:"workspace_path,omitempty"`
+	HostAffinity         string                               `json:"host_affinity,omitempty"`
+	DefaultLeadAgent     orchestration.AgentRef               `json:"default_lead_agent,omitzero"`
+	GitRepoURL           string                               `json:"git_repo_url,omitempty"`
+	GitDefaultBranch     string                               `json:"git_default_branch,omitempty"`
+	FleetNodeRoles       map[string]orchestration.ProjectRole `json:"agent_roles,omitempty"`
+	Spend                orchestration.SpendLimits            `json:"spend,omitzero"`
+	GPUMinutes           int64                                `json:"gpu_minutes,omitempty"`
+	MaxConcurrency       int                                  `json:"max_concurrency,omitempty"`
+	Metadata             map[string]string                    `json:"metadata,omitempty"`
 
 	// DefaultWorkflow names the tenant-scoped workflow a Task auto-spawns
 	// into; it must be registered in the tenant.
@@ -74,30 +74,42 @@ type CreateProjectRESTRequest struct {
 	GitSSHKeyName       string `json:"git_ssh_key_name,omitempty"`
 	GitSSHKeyScope      string `json:"git_ssh_key_scope,omitempty"`
 	GitSSHKeyOwner      string `json:"git_ssh_key_owner,omitempty"`
+
+	// Storage tier of the sandboxed checkout; see
+	// docs/software-factory/storage-tiers.md. Flat, like every other field.
+	WorkspaceTier     orchestration.WorkspaceTier `json:"workspace_tier,omitempty"`
+	WorkspaceTmpfsMB  int                         `json:"workspace_tmpfs_mb,omitempty"`
+	ContainerMemoryMB int                         `json:"container_memory_mb,omitempty"`
+
+	// SessionRotation is what a persistent worker session does when the
+	// pooled provider account under it rotates: "resume" or "fresh".
+	SessionRotation orchestration.SessionRotationPolicy `json:"session_rotation,omitempty"`
 }
 
 // UpdateProjectRESTRequest is the JSON body for PUT /api/v1/projects/{id}.
 type UpdateProjectRESTRequest struct {
-	Name             string                               `json:"name,omitempty"`
-	Description      string                               `json:"description,omitempty"`
-	ClearDescription bool                                 `json:"clear_description,omitempty"`
-	WorkspaceAgentID string                               `json:"workspace_agent_id,omitempty"`
-	WorkspacePath    string                               `json:"workspace_path,omitempty"`
-	HostAffinity     string                               `json:"host_affinity,omitempty"`
-	DefaultLeadAgent string                               `json:"default_lead_agent,omitempty"`
-	GitRepoURL       string                               `json:"git_repo_url,omitempty"`
-	GitDefaultBranch string                               `json:"git_default_branch,omitempty"`
-	GitCurrentSHA    string                               `json:"git_current_sha,omitempty"`
-	AgentRoles       map[string]orchestration.ProjectRole `json:"agent_roles,omitempty"`
-	Metadata         map[string]string                    `json:"metadata,omitempty"`
+	Name                 string                               `json:"name,omitempty"`
+	Description          string                               `json:"description,omitempty"`
+	ClearDescription     bool                                 `json:"clear_description,omitempty"`
+	WorkspaceFleetNodeID string                               `json:"workspace_agent_id,omitempty"`
+	WorkspacePath        string                               `json:"workspace_path,omitempty"`
+	HostAffinity         string                               `json:"host_affinity,omitempty"`
+	DefaultLeadAgent     orchestration.AgentRef               `json:"default_lead_agent,omitzero"`
+	GitRepoURL           string                               `json:"git_repo_url,omitempty"`
+	GitDefaultBranch     string                               `json:"git_default_branch,omitempty"`
+	GitCurrentSHA        string                               `json:"git_current_sha,omitempty"`
+	FleetNodeRoles       map[string]orchestration.ProjectRole `json:"agent_roles,omitempty"`
+	Metadata             map[string]string                    `json:"metadata,omitempty"`
 
 	// The quotas are POINTERS so zero is expressible: zero means UNLIMITED
 	// on ProjectQuotas, so treating it as "no value" made lifting a cap
 	// impossible — the save succeeded and the old cap stayed. Absent leaves
 	// the stored value alone, the same rule GitSigningEnabled uses.
-	TokenBudget    *int64 `json:"token_budget,omitempty"`
-	GPUMinutes     *int64 `json:"gpu_minutes,omitempty"`
-	MaxConcurrency *int   `json:"max_concurrency,omitempty"`
+	// Spend replaces the project's spend limits when present; an empty
+	// object clears them.
+	Spend          *orchestration.SpendLimits `json:"spend,omitempty"`
+	GPUMinutes     *int64                     `json:"gpu_minutes,omitempty"`
+	MaxConcurrency *int                       `json:"max_concurrency,omitempty"`
 
 	// DefaultWorkflow sets the auto-spawn workflow when non-empty;
 	// ClearDefaultWorkflow removes it.
@@ -106,6 +118,10 @@ type UpdateProjectRESTRequest struct {
 
 	// Autonomous is a pointer so "unchanged" and "off" are distinct.
 	Autonomous *bool `json:"autonomous,omitempty"`
+
+	// Parked parks (true) or resumes (false) the project; absent leaves it
+	// unchanged. A pointer so "unchanged" and "resume" are distinct.
+	Parked *bool `json:"parked,omitempty"`
 
 	// ContextRepos replaces the whole list when non-nil; ClearContextRepos
 	// empties it.
@@ -124,34 +140,59 @@ type UpdateProjectRESTRequest struct {
 	GitSSHKeyName       string `json:"git_ssh_key_name,omitempty"`
 	GitSSHKeyScope      string `json:"git_ssh_key_scope,omitempty"`
 	GitSSHKeyOwner      string `json:"git_ssh_key_owner,omitempty"`
+
+	// GitSigningRetireKey* name a KMS-held key to record in the project's
+	// trusted signing history, retired at GitSigningRetiredAt (RFC 3339;
+	// empty is now). See docs/software-factory/projects.md#rotating-the-signing-key.
+	GitSigningRetireKeyName  string `json:"git_signing_retire_key_name,omitempty"`
+	GitSigningRetireKeyScope string `json:"git_signing_retire_key_scope,omitempty"`
+	GitSigningRetireKeyOwner string `json:"git_signing_retire_key_owner,omitempty"`
+	GitSigningRetiredAt      string `json:"git_signing_retired_at,omitempty"`
+
+	// Storage tier of the sandboxed checkout. WorkspaceTier updates when
+	// non-empty; the sizes are POINTERS for the reason the quotas are —
+	// zero means unsized / the runtime's default, so absent leaves the
+	// stored value alone and zero lifts the limit.
+	WorkspaceTier     orchestration.WorkspaceTier `json:"workspace_tier,omitempty"`
+	WorkspaceTmpfsMB  *int                        `json:"workspace_tmpfs_mb,omitempty"`
+	ContainerMemoryMB *int                        `json:"container_memory_mb,omitempty"`
+
+	// SessionRotation updates the session rotation policy when non-empty.
+	SessionRotation orchestration.SessionRotationPolicy `json:"session_rotation,omitempty"`
 }
 
 // ProjectRESTResponse mirrors orchestration.Project for JSON serialization.
 type ProjectRESTResponse struct {
-	ID               string                               `json:"id"`
-	TenantID         string                               `json:"tenant_id"`
-	Name             string                               `json:"name"`
-	Description      string                               `json:"description,omitempty"`
-	WorkspaceAgentID string                               `json:"workspace_agent_id,omitempty"`
-	WorkspacePath    string                               `json:"workspace_path,omitempty"`
-	HostAffinity     string                               `json:"host_affinity,omitempty"`
-	DefaultLeadAgent string                               `json:"default_lead_agent,omitempty"`
-	GitRepoURL       string                               `json:"git_repo_url,omitempty"`
-	GitDefaultBranch string                               `json:"git_default_branch,omitempty"`
-	GitCurrentSHA    string                               `json:"git_current_sha,omitempty"`
-	AgentRoles       map[string]orchestration.ProjectRole `json:"agent_roles,omitempty"`
-	TokenBudget      int64                                `json:"token_budget,omitempty"`
-	GPUMinutes       int64                                `json:"gpu_minutes,omitempty"`
-	MaxConcurrency   int                                  `json:"max_concurrency,omitempty"`
-	Metadata         map[string]string                    `json:"metadata,omitempty"`
-	CreatedAt        time.Time                            `json:"created_at"`
-	UpdatedAt        time.Time                            `json:"updated_at"`
+	ID                   string                               `json:"id"`
+	TenantID             string                               `json:"tenant_id"`
+	Name                 string                               `json:"name"`
+	Description          string                               `json:"description,omitempty"`
+	WorkspaceFleetNodeID string                               `json:"workspace_agent_id,omitempty"`
+	WorkspacePath        string                               `json:"workspace_path,omitempty"`
+	HostAffinity         string                               `json:"host_affinity,omitempty"`
+	DefaultLeadAgent     orchestration.AgentRef               `json:"default_lead_agent,omitzero"`
+	GitRepoURL           string                               `json:"git_repo_url,omitempty"`
+	GitDefaultBranch     string                               `json:"git_default_branch,omitempty"`
+	GitCurrentSHA        string                               `json:"git_current_sha,omitempty"`
+	FleetNodeRoles       map[string]orchestration.ProjectRole `json:"agent_roles,omitempty"`
+	Spend                orchestration.SpendLimits            `json:"spend,omitzero"`
+	GPUMinutes           int64                                `json:"gpu_minutes,omitempty"`
+	MaxConcurrency       int                                  `json:"max_concurrency,omitempty"`
+	Metadata             map[string]string                    `json:"metadata,omitempty"`
+	CreatedAt            time.Time                            `json:"created_at"`
+	UpdatedAt            time.Time                            `json:"updated_at"`
 
 	// DefaultWorkflow is the tenant-scoped auto-spawn workflow, if any.
 	DefaultWorkflow string `json:"default_workflow,omitempty"`
 
 	// Autonomous reports whether autonomous development is on.
 	Autonomous bool `json:"autonomous,omitempty"`
+
+	// Parked reports that the project's intake is closed; ParkedAt and
+	// ParkedBy say when and by whom.
+	Parked   bool      `json:"parked,omitempty"`
+	ParkedAt time.Time `json:"parked_at,omitzero"`
+	ParkedBy string    `json:"parked_by,omitempty"`
 
 	// ContextRepos are cloned by the worker beside the project checkout.
 	ContextRepos []orchestration.ContextRepo `json:"context_repos,omitempty"`
@@ -167,6 +208,21 @@ type ProjectRESTResponse struct {
 	GitSSHKeyName       string `json:"git_ssh_key_name,omitempty"`
 	GitSSHKeyScope      string `json:"git_ssh_key_scope,omitempty"`
 	GitSSHKeyOwner      string `json:"git_ssh_key_owner,omitempty"`
+
+	// GitSigningRetired is the project's trusted signing history: keys it
+	// signed with before the current one, each trusted only for commits made
+	// before its retirement.
+	GitSigningRetired []orchestration.RetiredSigningKey `json:"git_signing_retired,omitempty"`
+
+	// Storage tier of the sandboxed checkout; see
+	// docs/software-factory/storage-tiers.md. Flat, like every other field.
+	WorkspaceTier     orchestration.WorkspaceTier `json:"workspace_tier,omitempty"`
+	WorkspaceTmpfsMB  int                         `json:"workspace_tmpfs_mb,omitempty"`
+	ContainerMemoryMB int                         `json:"container_memory_mb,omitempty"`
+
+	// SessionRotation is what a persistent worker session does when the
+	// pooled provider account under it rotates: "resume" or "fresh".
+	SessionRotation orchestration.SessionRotationPolicy `json:"session_rotation,omitempty"`
 }
 
 // CreateProjectRESTResponse is returned on successful project creation.
@@ -258,20 +314,20 @@ func (s *Server) HandleCreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := projectSvc.CreateProject(ctx, &service.CreateProjectRequest{
-		TenantID:         tenantID,
-		Name:             req.Name,
-		Description:      req.Description,
-		WorkspaceAgentID: req.WorkspaceAgentID,
-		WorkspacePath:    req.WorkspacePath,
-		HostAffinity:     req.HostAffinity,
-		DefaultLeadAgent: req.DefaultLeadAgent,
-		GitRepoURL:       req.GitRepoURL,
-		GitDefaultBranch: req.GitDefaultBranch,
-		AgentRoles:       req.AgentRoles,
-		TokenBudget:      req.TokenBudget,
-		GPUMinutes:       req.GPUMinutes,
-		MaxConcurrency:   req.MaxConcurrency,
-		Metadata:         req.Metadata,
+		TenantID:             tenantID,
+		Name:                 req.Name,
+		Description:          req.Description,
+		WorkspaceFleetNodeID: req.WorkspaceFleetNodeID,
+		WorkspacePath:        req.WorkspacePath,
+		HostAffinity:         req.HostAffinity,
+		DefaultLeadAgent:     req.DefaultLeadAgent,
+		GitRepoURL:           req.GitRepoURL,
+		GitDefaultBranch:     req.GitDefaultBranch,
+		FleetNodeRoles:       req.FleetNodeRoles,
+		Spend:                req.Spend,
+		GPUMinutes:           req.GPUMinutes,
+		MaxConcurrency:       req.MaxConcurrency,
+		Metadata:             req.Metadata,
 
 		DefaultWorkflow:     req.DefaultWorkflow,
 		Autonomous:          req.Autonomous,
@@ -286,6 +342,10 @@ func (s *Server) HandleCreateProject(w http.ResponseWriter, r *http.Request) {
 		GitSSHKeyName:       req.GitSSHKeyName,
 		GitSSHKeyScope:      req.GitSSHKeyScope,
 		GitSSHKeyOwner:      req.GitSSHKeyOwner,
+		WorkspaceTier:       req.WorkspaceTier,
+		WorkspaceTmpfsMB:    req.WorkspaceTmpfsMB,
+		ContainerMemoryMB:   req.ContainerMemoryMB,
+		SessionRotation:     req.SessionRotation,
 	})
 	if err != nil {
 		handleProjectError(w, r, err)
@@ -364,6 +424,13 @@ func (s *Server) HandleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	retirement, err := service.ParseGitSigningRetirement(req.GitSigningRetireKeyName,
+		req.GitSigningRetireKeyScope, req.GitSigningRetireKeyOwner, req.GitSigningRetiredAt)
+	if err != nil {
+		handleProjectError(w, r, err)
+		return
+	}
+
 	projectSvc := s.service.Project()
 	if projectSvc == nil {
 		RespondError(w, r, http.StatusInternalServerError, errors.New("project service unavailable"))
@@ -371,27 +438,28 @@ func (s *Server) HandleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := projectSvc.UpdateProject(ctx, &service.UpdateProjectRequest{
-		TenantID:         tenantID,
-		ProjectID:        projectID,
-		Name:             req.Name,
-		Description:      req.Description,
-		ClearDescription: req.ClearDescription,
-		WorkspaceAgentID: req.WorkspaceAgentID,
-		WorkspacePath:    req.WorkspacePath,
-		HostAffinity:     req.HostAffinity,
-		DefaultLeadAgent: req.DefaultLeadAgent,
-		GitRepoURL:       req.GitRepoURL,
-		GitDefaultBranch: req.GitDefaultBranch,
-		GitCurrentSHA:    req.GitCurrentSHA,
-		AgentRoles:       req.AgentRoles,
-		TokenBudget:      req.TokenBudget,
-		GPUMinutes:       req.GPUMinutes,
-		MaxConcurrency:   req.MaxConcurrency,
-		Metadata:         req.Metadata,
+		TenantID:             tenantID,
+		ProjectID:            projectID,
+		Name:                 req.Name,
+		Description:          req.Description,
+		ClearDescription:     req.ClearDescription,
+		WorkspaceFleetNodeID: req.WorkspaceFleetNodeID,
+		WorkspacePath:        req.WorkspacePath,
+		HostAffinity:         req.HostAffinity,
+		DefaultLeadAgent:     req.DefaultLeadAgent,
+		GitRepoURL:           req.GitRepoURL,
+		GitDefaultBranch:     req.GitDefaultBranch,
+		GitCurrentSHA:        req.GitCurrentSHA,
+		FleetNodeRoles:       req.FleetNodeRoles,
+		Spend:                req.Spend,
+		GPUMinutes:           req.GPUMinutes,
+		MaxConcurrency:       req.MaxConcurrency,
+		Metadata:             req.Metadata,
 
 		DefaultWorkflow:      req.DefaultWorkflow,
 		ClearDefaultWorkflow: req.ClearDefaultWorkflow,
 		Autonomous:           req.Autonomous,
+		Parked:               req.Parked,
 		ContextRepos:         req.ContextRepos,
 		ClearContextRepos:    req.ClearContextRepos,
 		GitAuthorName:        req.GitAuthorName,
@@ -404,6 +472,11 @@ func (s *Server) HandleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		GitSSHKeyName:        req.GitSSHKeyName,
 		GitSSHKeyScope:       req.GitSSHKeyScope,
 		GitSSHKeyOwner:       req.GitSSHKeyOwner,
+		GitSigningRetire:     retirement,
+		WorkspaceTier:        req.WorkspaceTier,
+		WorkspaceTmpfsMB:     req.WorkspaceTmpfsMB,
+		ContainerMemoryMB:    req.ContainerMemoryMB,
+		SessionRotation:      req.SessionRotation,
 	})
 	if err != nil {
 		handleProjectError(w, r, err)
@@ -518,26 +591,29 @@ func projectToREST(p *orchestration.Project) *ProjectRESTResponse {
 		return nil
 	}
 	resp := &ProjectRESTResponse{
-		ID:               p.ID,
-		TenantID:         p.TenantID,
-		Name:             p.Name,
-		Description:      p.Description,
-		WorkspaceAgentID: p.Workspace.AgentID,
-		WorkspacePath:    p.Workspace.Path,
-		HostAffinity:     p.HostAffinity,
-		DefaultLeadAgent: p.DefaultLeadAgent,
-		GitRepoURL:       p.Git.RepoURL,
-		GitDefaultBranch: p.Git.DefaultBranch,
-		GitCurrentSHA:    p.Git.CurrentSHA,
-		TokenBudget:      p.Quotas.TokenBudget,
-		GPUMinutes:       p.Quotas.GPUMinutes,
-		MaxConcurrency:   p.Quotas.MaxConcurrency,
-		Metadata:         p.Metadata,
-		CreatedAt:        p.CreatedAt,
-		UpdatedAt:        p.UpdatedAt,
+		ID:                   p.ID,
+		TenantID:             p.TenantID,
+		Name:                 p.Name,
+		Description:          p.Description,
+		WorkspaceFleetNodeID: p.Workspace.FleetNodeID,
+		WorkspacePath:        p.Workspace.Path,
+		HostAffinity:         p.HostAffinity,
+		DefaultLeadAgent:     p.DefaultLeadAgent,
+		GitRepoURL:           p.Git.RepoURL,
+		GitDefaultBranch:     p.Git.DefaultBranch,
+		GitCurrentSHA:        p.Git.CurrentSHA,
+		Spend:                p.Spend,
+		GPUMinutes:           p.Quotas.GPUMinutes,
+		MaxConcurrency:       p.Quotas.MaxConcurrency,
+		Metadata:             p.Metadata,
+		CreatedAt:            p.CreatedAt,
+		UpdatedAt:            p.UpdatedAt,
 
 		DefaultWorkflow:     p.DefaultWorkflow,
 		Autonomous:          p.Autonomous,
+		Parked:              p.Parked,
+		ParkedAt:            p.ParkedAt,
+		ParkedBy:            p.ParkedBy,
 		ContextRepos:        p.ContextRepos,
 		GitAuthorName:       p.Git.Author.Name,
 		GitAuthorEmail:      p.Git.Author.Email,
@@ -549,9 +625,14 @@ func projectToREST(p *orchestration.Project) *ProjectRESTResponse {
 		GitSSHKeyName:       p.Git.SSHKey.Name,
 		GitSSHKeyScope:      p.Git.SSHKey.Scope,
 		GitSSHKeyOwner:      p.Git.SSHKey.Owner,
+		GitSigningRetired:   p.Git.Signing.Retired,
+		WorkspaceTier:       p.Storage.WorkspaceTier,
+		WorkspaceTmpfsMB:    p.Storage.WorkspaceTmpfsMB,
+		ContainerMemoryMB:   p.Storage.ContainerMemoryMB,
+		SessionRotation:     p.SessionRotation,
 	}
-	if p.Permissions.AgentRoles != nil {
-		resp.AgentRoles = p.Permissions.AgentRoles
+	if p.Permissions.FleetNodeRoles != nil {
+		resp.FleetNodeRoles = p.Permissions.FleetNodeRoles
 	}
 	return resp
 }
@@ -560,34 +641,34 @@ func projectToREST(p *orchestration.Project) *ProjectRESTResponse {
 // Agent Role Management REST Request/Response Types
 // =============================================================================
 
-// GrantAgentRoleRESTRequest is the JSON body for
-// PUT /api/v1/projects/{id}/permissions/{agent_id}.
-type GrantAgentRoleRESTRequest struct {
+// GrantFleetNodeRoleRESTRequest is the JSON body for
+// PUT /api/v1/projects/{id}/permissions/{node_id}.
+type GrantFleetNodeRoleRESTRequest struct {
 	Role orchestration.ProjectRole `json:"role"`
 }
 
-// GrantAgentRoleRESTResponse is returned after a successful role grant.
-type GrantAgentRoleRESTResponse struct {
-	ProjectID string                    `json:"project_id"`
-	AgentID   string                    `json:"agent_id"`
-	Role      orchestration.ProjectRole `json:"role"`
-	Timestamp time.Time                 `json:"timestamp"`
+// GrantFleetNodeRoleRESTResponse is returned after a successful role grant.
+type GrantFleetNodeRoleRESTResponse struct {
+	ProjectID   string                    `json:"project_id"`
+	FleetNodeID string                    `json:"node_id"`
+	Role        orchestration.ProjectRole `json:"role"`
+	Timestamp   time.Time                 `json:"timestamp"`
 }
 
-// RevokeAgentRoleRESTResponse is returned after a successful role revocation.
-type RevokeAgentRoleRESTResponse struct {
-	ProjectID string    `json:"project_id"`
-	AgentID   string    `json:"agent_id"`
-	Timestamp time.Time `json:"timestamp"`
+// RevokeFleetNodeRoleRESTResponse is returned after a successful role revocation.
+type RevokeFleetNodeRoleRESTResponse struct {
+	ProjectID   string    `json:"project_id"`
+	FleetNodeID string    `json:"node_id"`
+	Timestamp   time.Time `json:"timestamp"`
 }
 
 // =============================================================================
 // Agent Role Management Handlers
 // =============================================================================
 
-// HandleGrantAgentRole handles PUT /api/v1/projects/{id}/permissions/{agent_id}.
-// Sets or updates the role for an agent within a project.
-func (s *Server) HandleGrantAgentRole(w http.ResponseWriter, r *http.Request) {
+// HandleGrantFleetNodeRole handles PUT /api/v1/projects/{id}/permissions/{node_id}.
+// Sets or updates the role of a fleet node within a project.
+func (s *Server) HandleGrantFleetNodeRole(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	projectID := chi.URLParam(r, "id")
@@ -595,9 +676,9 @@ func (s *Server) HandleGrantAgentRole(w http.ResponseWriter, r *http.Request) {
 		RespondBadRequest(w, r, "project id is required")
 		return
 	}
-	agentID := chi.URLParam(r, "agent_id")
-	if agentID == "" {
-		RespondBadRequest(w, r, "agent_id is required")
+	nodeID := chi.URLParam(r, "node_id")
+	if nodeID == "" {
+		RespondBadRequest(w, r, "node_id is required")
 		return
 	}
 
@@ -614,7 +695,7 @@ func (s *Server) HandleGrantAgentRole(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	var req GrantAgentRoleRESTRequest
+	var req GrantFleetNodeRoleRESTRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		RespondBadRequest(w, r, "invalid JSON body")
 		return
@@ -630,28 +711,28 @@ func (s *Server) HandleGrantAgentRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := projectSvc.GrantAgentRole(ctx, &service.GrantAgentRoleRequest{
-		TenantID:  tenantID,
-		ProjectID: projectID,
-		AgentID:   agentID,
-		Role:      req.Role,
+	resp, err := projectSvc.GrantFleetNodeRole(ctx, &service.GrantFleetNodeRoleRequest{
+		TenantID:    tenantID,
+		ProjectID:   projectID,
+		FleetNodeID: nodeID,
+		Role:        req.Role,
 	})
 	if err != nil {
 		handleProjectError(w, r, err)
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, &GrantAgentRoleRESTResponse{
-		ProjectID: resp.ProjectID,
-		AgentID:   resp.AgentID,
-		Role:      resp.Role,
-		Timestamp: resp.Timestamp,
+	RespondJSON(w, r, http.StatusOK, &GrantFleetNodeRoleRESTResponse{
+		ProjectID:   resp.ProjectID,
+		FleetNodeID: resp.FleetNodeID,
+		Role:        resp.Role,
+		Timestamp:   resp.Timestamp,
 	})
 }
 
-// HandleRevokeAgentRole handles DELETE /api/v1/projects/{id}/permissions/{agent_id}.
-// Sets the agent's role to denied, blocking all project access.
-func (s *Server) HandleRevokeAgentRole(w http.ResponseWriter, r *http.Request) {
+// HandleRevokeFleetNodeRole handles DELETE /api/v1/projects/{id}/permissions/{node_id}.
+// Sets the fleet node's role to denied, blocking all project access.
+func (s *Server) HandleRevokeFleetNodeRole(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	projectID := chi.URLParam(r, "id")
@@ -659,9 +740,9 @@ func (s *Server) HandleRevokeAgentRole(w http.ResponseWriter, r *http.Request) {
 		RespondBadRequest(w, r, "project id is required")
 		return
 	}
-	agentID := chi.URLParam(r, "agent_id")
-	if agentID == "" {
-		RespondBadRequest(w, r, "agent_id is required")
+	nodeID := chi.URLParam(r, "node_id")
+	if nodeID == "" {
+		RespondBadRequest(w, r, "node_id is required")
 		return
 	}
 
@@ -677,25 +758,28 @@ func (s *Server) HandleRevokeAgentRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := projectSvc.RevokeAgentRole(ctx, &service.RevokeAgentRoleRequest{
-		TenantID:  tenantID,
-		ProjectID: projectID,
-		AgentID:   agentID,
+	resp, err := projectSvc.RevokeFleetNodeRole(ctx, &service.RevokeFleetNodeRoleRequest{
+		TenantID:    tenantID,
+		ProjectID:   projectID,
+		FleetNodeID: nodeID,
 	})
 	if err != nil {
 		handleProjectError(w, r, err)
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, &RevokeAgentRoleRESTResponse{
-		ProjectID: resp.ProjectID,
-		AgentID:   resp.AgentID,
-		Timestamp: resp.Timestamp,
+	RespondJSON(w, r, http.StatusOK, &RevokeFleetNodeRoleRESTResponse{
+		ProjectID:   resp.ProjectID,
+		FleetNodeID: resp.FleetNodeID,
+		Timestamp:   resp.Timestamp,
 	})
 }
 
 // handleProjectError maps service-layer project errors to HTTP status codes.
 func handleProjectError(w http.ResponseWriter, r *http.Request, err error) {
+	if respondReferenceError(w, r, err) {
+		return
+	}
 	var notFound *service.ProjectNotFoundError
 	var alreadyExists *service.ProjectAlreadyExistsError
 	var invalid *service.ProjectInvalidError

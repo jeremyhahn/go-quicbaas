@@ -114,6 +114,46 @@ const (
 	// no process, and it requeues rather than parking.
 	FaultAccountsCoolingDown = "accounts_cooling_down"
 
+	// FaultAccountsSaturated is a pool whose selectable accounts are all
+	// serving as many sessions as their MaxConcurrentSessions allows.
+	//
+	// Not a fault either, for the reason a cooldown is not: the operator set
+	// the caps and they are holding. It requeues, uncharged, and admission
+	// defers the project until a session ends; see AccountsSaturatedError.
+	FaultAccountsSaturated = "accounts_saturated"
+
+	// FaultAccountsSpent is a pool whose selectable accounts are all refused
+	// by their own spend policy: a window's allowance spent, or a failure
+	// breaker open (go-quicbaas#1058, ruling F6).
+	//
+	// A DEFERRAL, NOT A PARK. The operator set the allowances and they are
+	// working; the pool frees up at a stated moment. It requeues uncharged
+	// until then however often it repeats, as saturation does: a weekly
+	// window spent on Monday must not reach a person three sweeps later.
+	FaultAccountsSpent = "accounts_spent"
+
+	// FaultAgentOverBudget is a spawn refused because the tenant Agent it
+	// runs as has spent one of its own spend windows (agent_spend.go). A
+	// deferral like FaultAccountsSpent: uncharged, requeued until the window
+	// frees up, never parked for it.
+	FaultAgentOverBudget = "agent_over_budget"
+
+	// FaultAccountLimited is a worker turn the provider refused because its
+	// account hit a rate or usage limit. The account is already held until
+	// the provider's reset; the attempt is refunded and requeued so the next
+	// dispatch runs on another account in the pool. It names no retry
+	// moment: another account may be free now, and when none is, that
+	// dispatch's own spawn reports the cooldown and its time.
+	FaultAccountLimited = "account_limited"
+
+	// FaultAccountAuthRejected is a worker turn the provider refused because
+	// the account's LOGIN is dead (401, an expired or already-used refresh
+	// token). The account is already out of selection with a last_error that
+	// says it needs a re-login; the attempt is refunded and requeued so the
+	// next dispatch runs on another account, or waits in the inbox's account
+	// alert when there is none.
+	FaultAccountAuthRejected = "account_auth_rejected"
+
 	// FaultProjectCapacityExceeded is a project whose concurrency budget was
 	// already held when the job asked for its lease. The job started no
 	// session; the attempt is refunded and the task waits for a lease to
@@ -148,6 +188,24 @@ const (
 	// budget on the forge's load. It requeues, bounded like every other
 	// requeueing class, because a loaded forge recovers on its own.
 	FaultForgeUnreachable = "forge_unreachable"
+
+	// FaultAgentInterrupted is a worker turn the fleet node stopped serving
+	// while it was in flight: the agent shut down or restarted, or the
+	// transport to it was lost (go-quicbaas#1064).
+	//
+	// IT IS THE FLEET'S INFRASTRUCTURE, NOT THE WORK. Measured on the burn-in
+	// node: stopping quicbaas-agent during a deploy closed a live worker's
+	// stream mid-prompt and the job was charged, so every routine agent
+	// restart spent an attempt of whatever it was running. It requeues,
+	// bounded like every other requeueing class, so a task whose own turns
+	// keep taking its host down still reaches a person — and, unlike the
+	// others, the attempt that reaches the bound is refunded too (see
+	// faultsNeverCharged): the park stops the retries, and nothing about an
+	// agent going away is evidence against the work.
+	//
+	// A worker process that exits while its agent is healthy is NOT this
+	// class: the agent reports that as Internal, and it is charged.
+	FaultAgentInterrupted = "agent_interrupted"
 )
 
 // ErrForgeUnreachable reports a forge call the forge never answered.
@@ -215,8 +273,8 @@ const (
 	// mistake go-quicbaas#898 exists to end.
 	FaultCIHostDefect = "ci_host_defect"
 
-	// FaultAgentUnreachable is a spawn the control plane could not deliver
-	// because the agent daemon did not answer at all.
+	// FaultFleetNodeUnreachable is a spawn the control plane could not deliver
+	// because the fleet node daemon did not answer at all.
 	//
 	// THE ONE FAULT THE AGENT CANNOT REPORT ABOUT ITSELF. Every other spawn
 	// fault reaches the control plane as SpawnFaultEvidence attached by the
@@ -230,17 +288,44 @@ const (
 	// in the window between the daemon accepting work and the agent finishing
 	// registration, each was dispatched twice, and all three went from 4 of 6
 	// attempts to 6 of 6 and failed. Nothing about the work was wrong.
-	FaultAgentUnreachable = "agent_unreachable"
+	FaultFleetNodeUnreachable = "agent_unreachable"
+
+	// FaultUntrustedSigner is a push the publisher refused because the
+	// branch carries a commit no key the project trusts signed: unsigned, by
+	// an unknown key, or by a retired key after its retirement.
+	//
+	// It is an operator fault, parked on its first occurrence. The factory
+	// never rewrites a pushed branch to re-sign a commit, so another attempt
+	// refuses identically: before this class, go-luks2 task 143c280a spent
+	// its attempts on PR #194's pre-rotation commits (2026-09-25). A person
+	// records the key in the project's trusted signing history, or replaces
+	// the commit, and readmits.
+	FaultUntrustedSigner = "untrusted_signer"
+
+	// FaultConfigError is work the operator's configuration refuses to run:
+	// the project's binding names a verification command the operator
+	// allowlist (orchestration.verification_commands) does not carry.
+	//
+	// An operator fault, parked for a person. The allowlist is daemon
+	// configuration and the binding is the tenant's, so no attempt can change
+	// either: before this class the guard refused the command only after a
+	// paid worker turn, and charged the attempt for it, three times over
+	// (go-blockstore tasks 41a680e0 and b9f897ca, twelve refusals,
+	// 2026-09-25). The runner now refuses before it spawns anything, and the
+	// guard's refusal is this class wherever it surfaces.
+	FaultConfigError = "config_error"
 )
 
 // operatorFaultClasses are the classes that attribute a failure to the
 // operator's deployment rather than to the work. Written as a set so a park
 // carrying a class nothing produces can be REFUSED rather than believed.
 var operatorFaultClasses = map[string]bool{
-	FaultWorkspaceUnfit:    true,
-	FaultWorkerEnvironment: true,
-	FaultCIHostDefect:      true,
-	FaultAgentUnreachable:  true,
+	FaultWorkspaceUnfit:       true,
+	FaultWorkerEnvironment:    true,
+	FaultCIHostDefect:         true,
+	FaultFleetNodeUnreachable: true,
+	FaultUntrustedSigner:      true,
+	FaultConfigError:          true,
 }
 
 // ParkAwaitsAnAnswer reports whether a park is waiting on a PERSON rather than
@@ -277,10 +362,16 @@ var resolverFaultClasses = map[string]bool{
 	FaultAccountCredentialMissing: true,
 	FaultAccountRefresherMissing:  true,
 	FaultAccountsCoolingDown:      true,
+	FaultAccountsSaturated:        true,
+	FaultAccountsSpent:            true,
+	FaultAgentOverBudget:          true,
+	FaultAccountLimited:           true,
+	FaultAccountAuthRejected:      true,
 	FaultProjectCapacityExceeded:  true,
 	FaultAccountQuotaExhausted:    true,
 	FaultAccountBreakerTripped:    true,
 	FaultForgeUnreachable:         true,
+	FaultAgentInterrupted:         true,
 }
 
 // KnownFaultClass reports whether class is one this engine can actually
@@ -311,16 +402,26 @@ var faultClassMeanings = map[string]string{
 	FaultAccountCredentialMissing: "the selected account's credential is missing from the secrets backend",
 	FaultAccountRefresherMissing:  "the selected account's credential could not be renewed",
 	FaultAccountsCoolingDown:      "every eligible account is on a provider rate-limit cooldown",
+	FaultAccountsSaturated:        "every eligible account is serving its maximum number of concurrent sessions",
+	FaultAccountsSpent:            "every eligible account has spent its configured allowance or is out of service for failing",
+	FaultAgentOverBudget:          "the Agent the work runs as has spent its own configured allowance",
+	FaultAccountLimited:           "the provider refused the worker's account for a rate or usage limit",
+	FaultAccountAuthRejected:      "the provider refused the worker's account login; it needs a person to log it in again",
 	FaultProjectCapacityExceeded:  "the project's concurrency budget was already fully held",
 	FaultAccountQuotaExhausted:    "the account's configured spend cap for the window is spent",
 	FaultAccountBreakerTripped:    "the account's circuit breaker took it out of service after repeated failures",
 	FaultForgeUnreachable:         "the forge did not answer a call the job needed, even after bounded retries",
+	FaultAgentInterrupted:         "the fleet node stopped serving the worker's turn: it shut down, restarted or lost its connection",
 	FaultWorkspaceUnfit: "the workspace the work needed was not fit: no checkout, an empty one, " +
 		"or a declared context repository that is not there",
 	FaultWorkerEnvironment: "the worker reported that its own workspace or tooling made the work impossible",
 	FaultCIHostDefect: "a CI host could not run the job at all: an image it could not pull, a container " +
 		"the runtime refused to create, or a module-resolution environment it never loaded",
-	FaultAgentUnreachable: "the agent daemon did not answer the spawn, so the work never started",
+	FaultFleetNodeUnreachable: "the fleet node daemon did not answer the spawn, so the work never started",
+	FaultUntrustedSigner: "the branch carries a commit no key the project trusts signed, and the factory never " +
+		"rewrites a pushed branch to re-sign it",
+	FaultConfigError: "the project's binding names a verification command the operator's allowlist " +
+		"(orchestration.verification_commands) does not carry",
 }
 
 // FaultClassMeaning returns the one-clause explanation of a fault class, and
@@ -345,6 +446,19 @@ var faultsNeedingAHuman = map[string]bool{
 	FaultNoAccountResolver:        true,
 	FaultAccountCredentialMissing: true,
 	FaultAccountRefresherMissing:  true,
+}
+
+// faultsNeverCharged are the requeueing classes whose attempt is refunded even
+// when it reaches MaxConsecutiveEnvironmentFaults.
+//
+// THE BOUND STILL PARKS THEM. What differs is only the charge. For the other
+// requeueing classes the charge at the bound is the budget's backstop against a
+// condition the work itself may be provoking. For an agent that stopped serving
+// a turn, go-quicbaas#1064 requires that the work is never charged:
+// the park is the backstop, and a person readmits the task once the fleet is
+// healthy with its budget intact.
+var faultsNeverCharged = map[string]bool{
+	FaultAgentInterrupted: true,
 }
 
 // faultRequeues reports whether a fault of this class puts the task back in
@@ -379,6 +493,52 @@ func classifyEnvironmentFault(err error) (EnvironmentFault, bool) {
 			Class:          FaultAccountsCoolingDown,
 			Reason:         coolingDownReason(err),
 			RetryNotBefore: coolingDownUntil(err),
+		}, true
+
+	// AN AGENT OVER ITS OWN BUDGET, before the account classes: a pool whose
+	// last member was refused for it also unwraps to every earlier cause.
+	case errors.Is(err, ErrAgentSpendExhausted):
+		return EnvironmentFault{
+			Class:          FaultAgentOverBudget,
+			Reason:         agentSpendReason(err),
+			RetryNotBefore: agentSpendRetryAt(err),
+		}, true
+
+	// A SPENT POOL BEFORE THE EMPTY POOL, for the cooldown's reason: it
+	// unwraps to ErrNoAccountAvailable as well.
+	case errors.Is(err, ErrAccountsSpent):
+		return EnvironmentFault{
+			Class:          FaultAccountsSpent,
+			Reason:         accountsSpentReason(err),
+			RetryNotBefore: accountsSpentUntil(err),
+		}, true
+
+	// SATURATION BEFORE THE EMPTY POOL, for the cooldown's reason: it unwraps
+	// to ErrNoAccountAvailable as well.
+	case errors.Is(err, ErrAccountsSaturated):
+		return EnvironmentFault{
+			Class: FaultAccountsSaturated,
+			Reason: "every provider account for this job is already serving its maximum number of " +
+				"concurrent sessions, so no process was started and this attempt was not charged. " +
+				"Admission defers the project until a session ends; raise an account's " +
+				"max_concurrent_sessions or add an account to widen the pool.",
+		}, true
+
+	// A LIMITED TURN BEFORE THE PRE-FIRST-TURN TEST. A limit refusal usually
+	// also reads as an api_error before any model turn, and it would be
+	// refunded either way; what this class adds is the name, so the block and
+	// the forge comment say the account was refused rather than that the API
+	// was unreachable.
+	case errors.Is(err, ErrAccountLimited):
+		return EnvironmentFault{
+			Class:  FaultAccountLimited,
+			Reason: accountLimitedReason(err),
+		}, true
+
+	case errors.Is(err, ErrAccountAuthRejected):
+		return EnvironmentFault{
+			Class:  FaultAccountAuthRejected,
+			Reason: accountAuthRejectedReason(err),
 		}, true
 
 	case errors.Is(err, ErrNoAccountAvailable):
@@ -451,10 +611,16 @@ func classifyEnvironmentFault(err error) (EnvironmentFault, bool) {
 				"the work, so this attempt was not charged and the task was requeued.",
 		}, true
 
-	case errors.Is(err, ErrAgentUnreachable):
+	case errors.Is(err, ErrAgentInterrupted), isContainerTransportLoss(err):
 		return EnvironmentFault{
-			Class: FaultAgentUnreachable,
-			Reason: "the agent daemon did not answer this spawn, so no session was created, no " +
+			Class:  FaultAgentInterrupted,
+			Reason: agentInterruptedReason(err),
+		}, true
+
+	case errors.Is(err, ErrFleetNodeUnreachable):
+		return EnvironmentFault{
+			Class: FaultFleetNodeUnreachable,
+			Reason: "the fleet node daemon did not answer this spawn, so no session was created, no " +
 				"container started and no token was spent. This attempt was not charged. It is " +
 				"usually a daemon that is restarting or has stopped: confirm the agent is " +
 				"registered, then readmit the task.",
@@ -496,6 +662,64 @@ func noAccountReason(err error) string {
 	}
 	b.WriteString(". No process was started and this attempt was not charged; " +
 		"register a pooled account for that provider, then readmit the task.")
+	return b.String()
+}
+
+// accountLimitedReason says which account the provider refused and when it
+// returns, from the typed limit rather than from its message.
+func accountLimitedReason(err error) string {
+	reason := "the provider refused the worker's pooled account for a rate or usage limit"
+	if limited, ok := AccountLimitOf(err); ok {
+		if limited.AccountID != "" {
+			reason = "the provider refused pooled account " + limited.AccountID + " for a rate or usage limit"
+		}
+		if !limited.AvailableAt.IsZero() {
+			reason += "; it is held until " + limited.AvailableAt.UTC().Format(time.RFC3339)
+		}
+	}
+	return reason + ". This attempt was not charged, and the task is retried on another account in the pool."
+}
+
+// accountAuthRejectedReason says which account's login died and what clears it.
+func accountAuthRejectedReason(err error) string {
+	reason := "the provider rejected the worker's pooled account login"
+	if rejected, ok := AccountAuthRejectionOf(err); ok && rejected.AccountID != "" {
+		reason = "the provider rejected the login of pooled account " + rejected.AccountID
+	}
+	return reason + "; it is out of selection until an operator logs it in again. This attempt was not " +
+		"charged, and the task is retried on another account in the pool."
+}
+
+// accountsSpentUntil is when the first spent account frees up, or the zero
+// time when the error carried none.
+func accountsSpentUntil(err error) time.Time {
+	var spent *AccountsSpentError
+	if !errors.As(err, &spent) {
+		return time.Time{}
+	}
+	return spent.AvailableAt
+}
+
+// accountsSpentReason states that the pool is waiting on its own allowances,
+// not broken, and says WHEN.
+func accountsSpentReason(err error) string {
+	var b strings.Builder
+	b.WriteString("every provider account")
+	var spent *AccountsSpentError
+	if errors.As(err, &spent) && spent.Candidates > 0 {
+		b.WriteString(" (")
+		b.WriteString(strconv.Itoa(spent.Candidates))
+		b.WriteString(" of them)")
+	}
+	b.WriteString(" for this job has spent the allowance its spend policy sets, or is out of service " +
+		"for failing. Nothing is broken — these are the operator's limits. No session was started " +
+		"and this attempt was not charged")
+	if spent != nil && !spent.AvailableAt.IsZero() {
+		b.WriteString("; the first account frees up at ")
+		b.WriteString(spent.AvailableAt.UTC().Format(time.RFC3339))
+		b.WriteString(" and the task is retried then")
+	}
+	b.WriteString(". Raise an allowance or add an account to widen the pool.")
 	return b.String()
 }
 
@@ -759,11 +983,16 @@ type faultOutcome struct {
 
 	// bounded means the task hit MaxConsecutiveEnvironmentFaults. It parks,
 	// and this attempt is CHARGED — the retries stop being free at the same
-	// moment they stop being tried.
+	// moment they stop being tried — unless its class is in
+	// faultsNeverCharged, where refund stays set alongside it.
 	bounded bool
 
 	// counts means this requeue consumes one of the bound's three.
 	counts bool
+
+	// keepsCount leaves the consecutive count where it was: a capacity
+	// deferral neither advances the bound nor clears the faults before it.
+	keepsCount bool
 
 	// notBefore is when the task may be dispatched again, zero for now.
 	notBefore time.Time
@@ -781,11 +1010,23 @@ func faultOutcomeFor(task *Task, fault EnvironmentFault) faultOutcome {
 		// because nothing was attempted.
 		return faultOutcome{refund: true}
 	}
+	// SATURATION NEVER COUNTS. The caps are the operator's and they are
+	// holding: no process started, and waiting for a session to end is the
+	// designed behaviour, not a futile retry. Charging or parking it would
+	// punish a busy pool, so it requeues uncharged however often it repeats,
+	// and admission paces it by deferring the project until a session ends.
+	//
+	// A SPENT POOL NEVER COUNTS EITHER, and for the same reason: the
+	// allowances are the operator's and they are holding. It waits until the
+	// first account frees up (ruling F6: a deferral, not a park).
+	if fault.Class == FaultAccountsSaturated || fault.Class == FaultAccountsSpent || fault.Class == FaultAgentOverBudget {
+		return faultOutcome{refund: true, requeue: true, keepsCount: true, notBefore: fault.RetryNotBefore}
+	}
 	// EVERY REQUEUE COUNTS, INCLUDING A COOLDOWN. With the wait in place the
 	// bound means what it should: three holds waited OUT is a saturated pool
 	// a human should hear about. Patience is not punished; only futility is.
 	if task != nil && task.ConsecutiveEnvironmentFaults+1 >= MaxConsecutiveEnvironmentFaults {
-		return faultOutcome{bounded: true}
+		return faultOutcome{bounded: true, refund: faultsNeverCharged[fault.Class]}
 	}
 	return faultOutcome{
 		refund: true, requeue: true, counts: true,
@@ -819,9 +1060,13 @@ func boundedFaultReason(task *Task, fault EnvironmentFault) string {
 	if detail := strings.TrimSpace(fault.Reason); detail != "" {
 		reason += "\n\nThe last one: " + detail
 	}
+	charge := "this one IS charged"
+	if faultsNeverCharged[fault.Class] {
+		charge = "this one is not charged either"
+	}
 	return reason + "\n\nEach was a job the environment failed rather than the work, so none was charged " +
 		"against the attempt budget and the task was retried. Three in a row is not a blip; " +
-		"this one IS charged, and nothing will retry it until the condition is resolved and " +
+		charge + ", and nothing will retry it until the condition is resolved and " +
 		"the task readmitted."
 }
 
@@ -1069,7 +1314,7 @@ func applyConclusion(task *Task, c attemptConclusion, now time.Time) TaskConclus
 		},
 	}
 	if c.status.FailureClass != "" {
-		task.Result.Metadata["failure_class"] = c.status.FailureClass
+		task.Result.Metadata[taskResultFailureClassKey] = c.status.FailureClass
 	}
 
 	if c.status.State != JobStateFailed {
@@ -1168,9 +1413,10 @@ func applyConclusion(task *Task, c attemptConclusion, now time.Time) TaskConclus
 	if outcome.refund {
 		task.EnvironmentFaults++
 	}
-	if outcome.counts {
+	switch {
+	case outcome.counts:
 		task.ConsecutiveEnvironmentFaults++
-	} else {
+	case !outcome.keepsCount:
 		task.ConsecutiveEnvironmentFaults = 0
 	}
 	// THE WAIT IS PERSISTED ON THE TASK, not held in the loop, because the

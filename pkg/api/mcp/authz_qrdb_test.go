@@ -56,7 +56,7 @@ func TestGetToolQRDBPermission_Mapped(t *testing.T) {
 		{"quicbaas_dynamic_secrets_generate", "dynamic_secrets", "generate"},
 		{"quicbaas_dynamic_secrets_create_role", "dynamic_secrets", "role_create"},
 		{"project_create", "project", "create"},
-		{"project_grant_agent", "project", "grant"},
+		{"project_grant_fleet_node", "project", "grant"},
 		{"quicbaas_ollama_embed", "ollama", "embed"},
 		{"quicbaas_ollama_model_info", "ollama", "model_info"},
 		// Per-tenant barrier tools (qrdb_tenant_barrier_* prefix).

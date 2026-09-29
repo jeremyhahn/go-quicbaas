@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/agents"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/grpc"
@@ -178,3 +179,9 @@ func (f *Factory) Create(cfg *transport.Config) (transport.Transport, error) {
 // SupportsSDLC declares the SDLC service on the Unix transport: every
 // request delegates to the gRPC transport verbatim, which carries it.
 func (t *Transport) SupportsSDLC() bool { return true }
+
+// SupportsAgents declares the Agents service on the Unix transport: every
+// verb is carried by the gRPC transport it delegates to.
+func (t *Transport) SupportsAgents() bool { return true }
+
+var _ agents.CapableTransport = (*Transport)(nil)

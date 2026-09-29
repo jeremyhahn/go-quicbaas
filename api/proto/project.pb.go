@@ -100,13 +100,12 @@ type Project struct {
 	WorkspaceAgentId string                 `protobuf:"bytes,5,opt,name=workspace_agent_id,json=workspaceAgentId,proto3" json:"workspace_agent_id,omitempty"`
 	WorkspacePath    string                 `protobuf:"bytes,6,opt,name=workspace_path,json=workspacePath,proto3" json:"workspace_path,omitempty"`
 	HostAffinity     string                 `protobuf:"bytes,7,opt,name=host_affinity,json=hostAffinity,proto3" json:"host_affinity,omitempty"`
-	DefaultLeadAgent string                 `protobuf:"bytes,8,opt,name=default_lead_agent,json=defaultLeadAgent,proto3" json:"default_lead_agent,omitempty"`
+	DefaultLeadAgent *AgentRef              `protobuf:"bytes,8,opt,name=default_lead_agent,json=defaultLeadAgent,proto3" json:"default_lead_agent,omitempty"`
 	GitRepoUrl       string                 `protobuf:"bytes,9,opt,name=git_repo_url,json=gitRepoUrl,proto3" json:"git_repo_url,omitempty"`
 	GitDefaultBranch string                 `protobuf:"bytes,10,opt,name=git_default_branch,json=gitDefaultBranch,proto3" json:"git_default_branch,omitempty"`
 	GitCurrentSha    string                 `protobuf:"bytes,11,opt,name=git_current_sha,json=gitCurrentSha,proto3" json:"git_current_sha,omitempty"`
-	// agent_roles maps agent_id → role ("lead"|"worker"|"observer"|"denied")
+	// agent_roles maps a fleet node ID → role ("lead"|"worker"|"observer"|"denied")
 	AgentRoles     map[string]string `protobuf:"bytes,12,rep,name=agent_roles,json=agentRoles,proto3" json:"agent_roles,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	TokenBudget    int64             `protobuf:"varint,13,opt,name=token_budget,json=tokenBudget,proto3" json:"token_budget,omitempty"`
 	GpuMinutes     int64             `protobuf:"varint,14,opt,name=gpu_minutes,json=gpuMinutes,proto3" json:"gpu_minutes,omitempty"`
 	MaxConcurrency int32             `protobuf:"varint,15,opt,name=max_concurrency,json=maxConcurrency,proto3" json:"max_concurrency,omitempty"`
 	Metadata       map[string]string `protobuf:"bytes,16,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
@@ -129,9 +128,36 @@ type Project struct {
 	// adopts work for the project and the dispatcher starts jobs for it.
 	Autonomous bool `protobuf:"varint,30,opt,name=autonomous,proto3" json:"autonomous,omitempty"`
 	// context_repos are cloned by the worker beside the project checkout.
-	ContextRepos  []*ContextRepo `protobuf:"bytes,31,rep,name=context_repos,json=contextRepos,proto3" json:"context_repos,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ContextRepos []*ContextRepo `protobuf:"bytes,31,rep,name=context_repos,json=contextRepos,proto3" json:"context_repos,omitempty"`
+	// spend is the project's own limits: sliding windows in tokens and/or
+	// list-price dollars over every turn charged to the project, pooled or
+	// not. Unset meters nothing.
+	Spend *SpendLimits `protobuf:"bytes,32,opt,name=spend,proto3" json:"spend,omitempty"`
+	// Storage tier of the project's sandboxed checkout; see
+	// docs/software-factory/storage-tiers.md. workspace_tier is "" (host
+	// bind mount), "persistent" or "ephemeral"; the sizes are MiB and zero
+	// is unsized / the runtime's default.
+	WorkspaceTier     string `protobuf:"bytes,33,opt,name=workspace_tier,json=workspaceTier,proto3" json:"workspace_tier,omitempty"`
+	WorkspaceTmpfsMb  int32  `protobuf:"varint,34,opt,name=workspace_tmpfs_mb,json=workspaceTmpfsMb,proto3" json:"workspace_tmpfs_mb,omitempty"`
+	ContainerMemoryMb int32  `protobuf:"varint,35,opt,name=container_memory_mb,json=containerMemoryMb,proto3" json:"container_memory_mb,omitempty"`
+	// session_rotation is what happens to a persistent worker session when
+	// the pooled provider account under it rotates: "resume" continues the
+	// same session on the account's current credential, "fresh" replaces it
+	// with a new session on the same branch. Empty means "resume".
+	SessionRotation string `protobuf:"bytes,36,opt,name=session_rotation,json=sessionRotation,proto3" json:"session_rotation,omitempty"`
+	// parked closes the project's intake: nothing that has not started is
+	// dispatched, adopted or triaged, and everything in flight finishes.
+	// Independent of autonomous. parked_at_unix and parked_by record when
+	// and by whom; both are empty while the project is not parked.
+	Parked       bool   `protobuf:"varint,37,opt,name=parked,proto3" json:"parked,omitempty"`
+	ParkedAtUnix int64  `protobuf:"varint,38,opt,name=parked_at_unix,json=parkedAtUnix,proto3" json:"parked_at_unix,omitempty"`
+	ParkedBy     string `protobuf:"bytes,39,opt,name=parked_by,json=parkedBy,proto3" json:"parked_by,omitempty"`
+	// git_signing_retired is the project's trusted signing history: every
+	// key it signed with before the current one, each trusted only for
+	// commits made before its retirement.
+	GitSigningRetired []*RetiredSigningKey `protobuf:"bytes,40,rep,name=git_signing_retired,json=gitSigningRetired,proto3" json:"git_signing_retired,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *Project) Reset() {
@@ -213,11 +239,11 @@ func (x *Project) GetHostAffinity() string {
 	return ""
 }
 
-func (x *Project) GetDefaultLeadAgent() string {
+func (x *Project) GetDefaultLeadAgent() *AgentRef {
 	if x != nil {
 		return x.DefaultLeadAgent
 	}
-	return ""
+	return nil
 }
 
 func (x *Project) GetGitRepoUrl() string {
@@ -246,13 +272,6 @@ func (x *Project) GetAgentRoles() map[string]string {
 		return x.AgentRoles
 	}
 	return nil
-}
-
-func (x *Project) GetTokenBudget() int64 {
-	if x != nil {
-		return x.TokenBudget
-	}
-	return 0
 }
 
 func (x *Project) GetGpuMinutes() int64 {
@@ -381,6 +400,132 @@ func (x *Project) GetContextRepos() []*ContextRepo {
 	return nil
 }
 
+func (x *Project) GetSpend() *SpendLimits {
+	if x != nil {
+		return x.Spend
+	}
+	return nil
+}
+
+func (x *Project) GetWorkspaceTier() string {
+	if x != nil {
+		return x.WorkspaceTier
+	}
+	return ""
+}
+
+func (x *Project) GetWorkspaceTmpfsMb() int32 {
+	if x != nil {
+		return x.WorkspaceTmpfsMb
+	}
+	return 0
+}
+
+func (x *Project) GetContainerMemoryMb() int32 {
+	if x != nil {
+		return x.ContainerMemoryMb
+	}
+	return 0
+}
+
+func (x *Project) GetSessionRotation() string {
+	if x != nil {
+		return x.SessionRotation
+	}
+	return ""
+}
+
+func (x *Project) GetParked() bool {
+	if x != nil {
+		return x.Parked
+	}
+	return false
+}
+
+func (x *Project) GetParkedAtUnix() int64 {
+	if x != nil {
+		return x.ParkedAtUnix
+	}
+	return 0
+}
+
+func (x *Project) GetParkedBy() string {
+	if x != nil {
+		return x.ParkedBy
+	}
+	return ""
+}
+
+func (x *Project) GetGitSigningRetired() []*RetiredSigningKey {
+	if x != nil {
+		return x.GitSigningRetired
+	}
+	return nil
+}
+
+// RetiredSigningKey is one entry of a project's trusted signing history.
+type RetiredSigningKey struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// public_key is the retired key's public half, one OpenSSH line.
+	PublicKey string `protobuf:"bytes,1,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"`
+	// name is the KMS name the key was held under, for display.
+	Name          string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	RetiredAtUnix int64  `protobuf:"varint,3,opt,name=retired_at_unix,json=retiredAtUnix,proto3" json:"retired_at_unix,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RetiredSigningKey) Reset() {
+	*x = RetiredSigningKey{}
+	mi := &file_api_proto_project_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RetiredSigningKey) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RetiredSigningKey) ProtoMessage() {}
+
+func (x *RetiredSigningKey) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_project_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RetiredSigningKey.ProtoReflect.Descriptor instead.
+func (*RetiredSigningKey) Descriptor() ([]byte, []int) {
+	return file_api_proto_project_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *RetiredSigningKey) GetPublicKey() string {
+	if x != nil {
+		return x.PublicKey
+	}
+	return ""
+}
+
+func (x *RetiredSigningKey) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *RetiredSigningKey) GetRetiredAtUnix() int64 {
+	if x != nil {
+		return x.RetiredAtUnix
+	}
+	return 0
+}
+
 type CreateProjectRequest struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	TenantId         string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
@@ -389,11 +534,10 @@ type CreateProjectRequest struct {
 	WorkspaceAgentId string                 `protobuf:"bytes,4,opt,name=workspace_agent_id,json=workspaceAgentId,proto3" json:"workspace_agent_id,omitempty"`
 	WorkspacePath    string                 `protobuf:"bytes,5,opt,name=workspace_path,json=workspacePath,proto3" json:"workspace_path,omitempty"`
 	HostAffinity     string                 `protobuf:"bytes,6,opt,name=host_affinity,json=hostAffinity,proto3" json:"host_affinity,omitempty"`
-	DefaultLeadAgent string                 `protobuf:"bytes,7,opt,name=default_lead_agent,json=defaultLeadAgent,proto3" json:"default_lead_agent,omitempty"`
+	DefaultLeadAgent *AgentRef              `protobuf:"bytes,7,opt,name=default_lead_agent,json=defaultLeadAgent,proto3" json:"default_lead_agent,omitempty"`
 	GitRepoUrl       string                 `protobuf:"bytes,8,opt,name=git_repo_url,json=gitRepoUrl,proto3" json:"git_repo_url,omitempty"`
 	GitDefaultBranch string                 `protobuf:"bytes,9,opt,name=git_default_branch,json=gitDefaultBranch,proto3" json:"git_default_branch,omitempty"`
 	AgentRoles       map[string]string      `protobuf:"bytes,10,rep,name=agent_roles,json=agentRoles,proto3" json:"agent_roles,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	TokenBudget      int64                  `protobuf:"varint,11,opt,name=token_budget,json=tokenBudget,proto3" json:"token_budget,omitempty"`
 	GpuMinutes       int64                  `protobuf:"varint,12,opt,name=gpu_minutes,json=gpuMinutes,proto3" json:"gpu_minutes,omitempty"`
 	MaxConcurrency   int32                  `protobuf:"varint,13,opt,name=max_concurrency,json=maxConcurrency,proto3" json:"max_concurrency,omitempty"`
 	Metadata         map[string]string      `protobuf:"bytes,14,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
@@ -413,14 +557,27 @@ type CreateProjectRequest struct {
 	// autonomous turns autonomous development on for the new project.
 	Autonomous bool `protobuf:"varint,26,opt,name=autonomous,proto3" json:"autonomous,omitempty"`
 	// context_repos are cloned by the worker beside the project checkout.
-	ContextRepos  []*ContextRepo `protobuf:"bytes,27,rep,name=context_repos,json=contextRepos,proto3" json:"context_repos,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ContextRepos []*ContextRepo `protobuf:"bytes,27,rep,name=context_repos,json=contextRepos,proto3" json:"context_repos,omitempty"`
+	Spend        *SpendLimits   `protobuf:"bytes,28,opt,name=spend,proto3" json:"spend,omitempty"`
+	// Storage tier of the project's sandboxed checkout; see
+	// docs/software-factory/storage-tiers.md. workspace_tier is "" (host
+	// bind mount), "persistent" or "ephemeral"; the sizes are MiB and zero
+	// is unsized / the runtime's default.
+	WorkspaceTier     string `protobuf:"bytes,29,opt,name=workspace_tier,json=workspaceTier,proto3" json:"workspace_tier,omitempty"`
+	WorkspaceTmpfsMb  int32  `protobuf:"varint,30,opt,name=workspace_tmpfs_mb,json=workspaceTmpfsMb,proto3" json:"workspace_tmpfs_mb,omitempty"`
+	ContainerMemoryMb int32  `protobuf:"varint,31,opt,name=container_memory_mb,json=containerMemoryMb,proto3" json:"container_memory_mb,omitempty"`
+	// session_rotation is what happens to a persistent worker session when
+	// the pooled provider account under it rotates: "resume" continues the
+	// same session on the account's current credential, "fresh" replaces it
+	// with a new session on the same branch. Empty means "resume".
+	SessionRotation string `protobuf:"bytes,32,opt,name=session_rotation,json=sessionRotation,proto3" json:"session_rotation,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *CreateProjectRequest) Reset() {
 	*x = CreateProjectRequest{}
-	mi := &file_api_proto_project_proto_msgTypes[2]
+	mi := &file_api_proto_project_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -432,7 +589,7 @@ func (x *CreateProjectRequest) String() string {
 func (*CreateProjectRequest) ProtoMessage() {}
 
 func (x *CreateProjectRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_project_proto_msgTypes[2]
+	mi := &file_api_proto_project_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -445,7 +602,7 @@ func (x *CreateProjectRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateProjectRequest.ProtoReflect.Descriptor instead.
 func (*CreateProjectRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_project_proto_rawDescGZIP(), []int{2}
+	return file_api_proto_project_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *CreateProjectRequest) GetTenantId() string {
@@ -490,11 +647,11 @@ func (x *CreateProjectRequest) GetHostAffinity() string {
 	return ""
 }
 
-func (x *CreateProjectRequest) GetDefaultLeadAgent() string {
+func (x *CreateProjectRequest) GetDefaultLeadAgent() *AgentRef {
 	if x != nil {
 		return x.DefaultLeadAgent
 	}
-	return ""
+	return nil
 }
 
 func (x *CreateProjectRequest) GetGitRepoUrl() string {
@@ -516,13 +673,6 @@ func (x *CreateProjectRequest) GetAgentRoles() map[string]string {
 		return x.AgentRoles
 	}
 	return nil
-}
-
-func (x *CreateProjectRequest) GetTokenBudget() int64 {
-	if x != nil {
-		return x.TokenBudget
-	}
-	return 0
 }
 
 func (x *CreateProjectRequest) GetGpuMinutes() int64 {
@@ -637,6 +787,41 @@ func (x *CreateProjectRequest) GetContextRepos() []*ContextRepo {
 	return nil
 }
 
+func (x *CreateProjectRequest) GetSpend() *SpendLimits {
+	if x != nil {
+		return x.Spend
+	}
+	return nil
+}
+
+func (x *CreateProjectRequest) GetWorkspaceTier() string {
+	if x != nil {
+		return x.WorkspaceTier
+	}
+	return ""
+}
+
+func (x *CreateProjectRequest) GetWorkspaceTmpfsMb() int32 {
+	if x != nil {
+		return x.WorkspaceTmpfsMb
+	}
+	return 0
+}
+
+func (x *CreateProjectRequest) GetContainerMemoryMb() int32 {
+	if x != nil {
+		return x.ContainerMemoryMb
+	}
+	return 0
+}
+
+func (x *CreateProjectRequest) GetSessionRotation() string {
+	if x != nil {
+		return x.SessionRotation
+	}
+	return ""
+}
+
 type CreateProjectResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Project       *Project               `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
@@ -647,7 +832,7 @@ type CreateProjectResponse struct {
 
 func (x *CreateProjectResponse) Reset() {
 	*x = CreateProjectResponse{}
-	mi := &file_api_proto_project_proto_msgTypes[3]
+	mi := &file_api_proto_project_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -659,7 +844,7 @@ func (x *CreateProjectResponse) String() string {
 func (*CreateProjectResponse) ProtoMessage() {}
 
 func (x *CreateProjectResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_project_proto_msgTypes[3]
+	mi := &file_api_proto_project_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -672,7 +857,7 @@ func (x *CreateProjectResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateProjectResponse.ProtoReflect.Descriptor instead.
 func (*CreateProjectResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_project_proto_rawDescGZIP(), []int{3}
+	return file_api_proto_project_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *CreateProjectResponse) GetProject() *Project {
@@ -699,7 +884,7 @@ type GetProjectRequest struct {
 
 func (x *GetProjectRequest) Reset() {
 	*x = GetProjectRequest{}
-	mi := &file_api_proto_project_proto_msgTypes[4]
+	mi := &file_api_proto_project_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -711,7 +896,7 @@ func (x *GetProjectRequest) String() string {
 func (*GetProjectRequest) ProtoMessage() {}
 
 func (x *GetProjectRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_project_proto_msgTypes[4]
+	mi := &file_api_proto_project_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -724,7 +909,7 @@ func (x *GetProjectRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetProjectRequest.ProtoReflect.Descriptor instead.
 func (*GetProjectRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_project_proto_rawDescGZIP(), []int{4}
+	return file_api_proto_project_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *GetProjectRequest) GetTenantId() string {
@@ -751,7 +936,7 @@ type GetProjectByNameRequest struct {
 
 func (x *GetProjectByNameRequest) Reset() {
 	*x = GetProjectByNameRequest{}
-	mi := &file_api_proto_project_proto_msgTypes[5]
+	mi := &file_api_proto_project_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -763,7 +948,7 @@ func (x *GetProjectByNameRequest) String() string {
 func (*GetProjectByNameRequest) ProtoMessage() {}
 
 func (x *GetProjectByNameRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_project_proto_msgTypes[5]
+	mi := &file_api_proto_project_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -776,7 +961,7 @@ func (x *GetProjectByNameRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetProjectByNameRequest.ProtoReflect.Descriptor instead.
 func (*GetProjectByNameRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_project_proto_rawDescGZIP(), []int{5}
+	return file_api_proto_project_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *GetProjectByNameRequest) GetTenantId() string {
@@ -803,7 +988,7 @@ type GetProjectResponse struct {
 
 func (x *GetProjectResponse) Reset() {
 	*x = GetProjectResponse{}
-	mi := &file_api_proto_project_proto_msgTypes[6]
+	mi := &file_api_proto_project_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -815,7 +1000,7 @@ func (x *GetProjectResponse) String() string {
 func (*GetProjectResponse) ProtoMessage() {}
 
 func (x *GetProjectResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_project_proto_msgTypes[6]
+	mi := &file_api_proto_project_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -828,7 +1013,7 @@ func (x *GetProjectResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetProjectResponse.ProtoReflect.Descriptor instead.
 func (*GetProjectResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_project_proto_rawDescGZIP(), []int{6}
+	return file_api_proto_project_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *GetProjectResponse) GetProject() *Project {
@@ -855,18 +1040,14 @@ type UpdateProjectRequest struct {
 	WorkspaceAgentId string                 `protobuf:"bytes,6,opt,name=workspace_agent_id,json=workspaceAgentId,proto3" json:"workspace_agent_id,omitempty"`
 	WorkspacePath    string                 `protobuf:"bytes,7,opt,name=workspace_path,json=workspacePath,proto3" json:"workspace_path,omitempty"`
 	HostAffinity     string                 `protobuf:"bytes,8,opt,name=host_affinity,json=hostAffinity,proto3" json:"host_affinity,omitempty"`
-	DefaultLeadAgent string                 `protobuf:"bytes,9,opt,name=default_lead_agent,json=defaultLeadAgent,proto3" json:"default_lead_agent,omitempty"`
+	DefaultLeadAgent *AgentRef              `protobuf:"bytes,9,opt,name=default_lead_agent,json=defaultLeadAgent,proto3" json:"default_lead_agent,omitempty"`
 	GitRepoUrl       string                 `protobuf:"bytes,10,opt,name=git_repo_url,json=gitRepoUrl,proto3" json:"git_repo_url,omitempty"`
 	GitDefaultBranch string                 `protobuf:"bytes,11,opt,name=git_default_branch,json=gitDefaultBranch,proto3" json:"git_default_branch,omitempty"`
 	GitCurrentSha    string                 `protobuf:"bytes,12,opt,name=git_current_sha,json=gitCurrentSha,proto3" json:"git_current_sha,omitempty"`
 	AgentRoles       map[string]string      `protobuf:"bytes,13,rep,name=agent_roles,json=agentRoles,proto3" json:"agent_roles,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	// The quotas are optional so zero is expressible: zero means UNLIMITED
-	// on the project record, so a plain scalar could not say "lift the cap"
-	// — the update applied only non-zero values and the old cap stayed.
-	TokenBudget    *int64            `protobuf:"varint,14,opt,name=token_budget,json=tokenBudget,proto3,oneof" json:"token_budget,omitempty"`
-	GpuMinutes     *int64            `protobuf:"varint,15,opt,name=gpu_minutes,json=gpuMinutes,proto3,oneof" json:"gpu_minutes,omitempty"`
-	MaxConcurrency *int32            `protobuf:"varint,16,opt,name=max_concurrency,json=maxConcurrency,proto3,oneof" json:"max_concurrency,omitempty"`
-	Metadata       map[string]string `protobuf:"bytes,17,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	GpuMinutes       *int64                 `protobuf:"varint,15,opt,name=gpu_minutes,json=gpuMinutes,proto3,oneof" json:"gpu_minutes,omitempty"`
+	MaxConcurrency   *int32                 `protobuf:"varint,16,opt,name=max_concurrency,json=maxConcurrency,proto3,oneof" json:"max_concurrency,omitempty"`
+	Metadata         map[string]string      `protobuf:"bytes,17,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// default_workflow sets the auto-spawn workflow when non-empty;
 	// clear_default_workflow removes it.
 	DefaultWorkflow      string `protobuf:"bytes,18,opt,name=default_workflow,json=defaultWorkflow,proto3" json:"default_workflow,omitempty"`
@@ -889,13 +1070,35 @@ type UpdateProjectRequest struct {
 	// clear_context_repos empties it.
 	ContextRepos      []*ContextRepo `protobuf:"bytes,31,rep,name=context_repos,json=contextRepos,proto3" json:"context_repos,omitempty"`
 	ClearContextRepos bool           `protobuf:"varint,32,opt,name=clear_context_repos,json=clearContextRepos,proto3" json:"clear_context_repos,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// spend, when present, replaces the project's limits; a present empty
+	// message clears them. Absent leaves them unchanged.
+	Spend *SpendLimits `protobuf:"bytes,33,opt,name=spend,proto3" json:"spend,omitempty"`
+	// Storage tier of the sandboxed checkout. workspace_tier updates when
+	// non-empty. The sizes are optional so zero is expressible: zero means
+	// unsized / the runtime's default, so absent ("leave it alone") and zero
+	// ("lift the limit") are different instructions.
+	WorkspaceTier     string `protobuf:"bytes,34,opt,name=workspace_tier,json=workspaceTier,proto3" json:"workspace_tier,omitempty"`
+	WorkspaceTmpfsMb  *int32 `protobuf:"varint,35,opt,name=workspace_tmpfs_mb,json=workspaceTmpfsMb,proto3,oneof" json:"workspace_tmpfs_mb,omitempty"`
+	ContainerMemoryMb *int32 `protobuf:"varint,36,opt,name=container_memory_mb,json=containerMemoryMb,proto3,oneof" json:"container_memory_mb,omitempty"`
+	// session_rotation updates the rotation policy when non-empty.
+	SessionRotation string `protobuf:"bytes,37,opt,name=session_rotation,json=sessionRotation,proto3" json:"session_rotation,omitempty"`
+	// parked parks (true) or resumes (false) the project; absent leaves it
+	// unchanged. It is optional so "unchanged" and "resume" are distinct.
+	Parked *bool `protobuf:"varint,38,opt,name=parked,proto3,oneof" json:"parked,omitempty"`
+	// git_signing_retire_key_* name a KMS-held key to record in the
+	// project's trusted signing history, retired at git_signing_retired_at
+	// (RFC 3339; empty is now).
+	GitSigningRetireKeyName  string `protobuf:"bytes,39,opt,name=git_signing_retire_key_name,json=gitSigningRetireKeyName,proto3" json:"git_signing_retire_key_name,omitempty"`
+	GitSigningRetireKeyScope string `protobuf:"bytes,40,opt,name=git_signing_retire_key_scope,json=gitSigningRetireKeyScope,proto3" json:"git_signing_retire_key_scope,omitempty"`
+	GitSigningRetireKeyOwner string `protobuf:"bytes,41,opt,name=git_signing_retire_key_owner,json=gitSigningRetireKeyOwner,proto3" json:"git_signing_retire_key_owner,omitempty"`
+	GitSigningRetiredAt      string `protobuf:"bytes,42,opt,name=git_signing_retired_at,json=gitSigningRetiredAt,proto3" json:"git_signing_retired_at,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *UpdateProjectRequest) Reset() {
 	*x = UpdateProjectRequest{}
-	mi := &file_api_proto_project_proto_msgTypes[7]
+	mi := &file_api_proto_project_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -907,7 +1110,7 @@ func (x *UpdateProjectRequest) String() string {
 func (*UpdateProjectRequest) ProtoMessage() {}
 
 func (x *UpdateProjectRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_project_proto_msgTypes[7]
+	mi := &file_api_proto_project_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -920,7 +1123,7 @@ func (x *UpdateProjectRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateProjectRequest.ProtoReflect.Descriptor instead.
 func (*UpdateProjectRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_project_proto_rawDescGZIP(), []int{7}
+	return file_api_proto_project_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *UpdateProjectRequest) GetTenantId() string {
@@ -979,11 +1182,11 @@ func (x *UpdateProjectRequest) GetHostAffinity() string {
 	return ""
 }
 
-func (x *UpdateProjectRequest) GetDefaultLeadAgent() string {
+func (x *UpdateProjectRequest) GetDefaultLeadAgent() *AgentRef {
 	if x != nil {
 		return x.DefaultLeadAgent
 	}
-	return ""
+	return nil
 }
 
 func (x *UpdateProjectRequest) GetGitRepoUrl() string {
@@ -1012,13 +1215,6 @@ func (x *UpdateProjectRequest) GetAgentRoles() map[string]string {
 		return x.AgentRoles
 	}
 	return nil
-}
-
-func (x *UpdateProjectRequest) GetTokenBudget() int64 {
-	if x != nil && x.TokenBudget != nil {
-		return *x.TokenBudget
-	}
-	return 0
 }
 
 func (x *UpdateProjectRequest) GetGpuMinutes() int64 {
@@ -1147,6 +1343,76 @@ func (x *UpdateProjectRequest) GetClearContextRepos() bool {
 	return false
 }
 
+func (x *UpdateProjectRequest) GetSpend() *SpendLimits {
+	if x != nil {
+		return x.Spend
+	}
+	return nil
+}
+
+func (x *UpdateProjectRequest) GetWorkspaceTier() string {
+	if x != nil {
+		return x.WorkspaceTier
+	}
+	return ""
+}
+
+func (x *UpdateProjectRequest) GetWorkspaceTmpfsMb() int32 {
+	if x != nil && x.WorkspaceTmpfsMb != nil {
+		return *x.WorkspaceTmpfsMb
+	}
+	return 0
+}
+
+func (x *UpdateProjectRequest) GetContainerMemoryMb() int32 {
+	if x != nil && x.ContainerMemoryMb != nil {
+		return *x.ContainerMemoryMb
+	}
+	return 0
+}
+
+func (x *UpdateProjectRequest) GetSessionRotation() string {
+	if x != nil {
+		return x.SessionRotation
+	}
+	return ""
+}
+
+func (x *UpdateProjectRequest) GetParked() bool {
+	if x != nil && x.Parked != nil {
+		return *x.Parked
+	}
+	return false
+}
+
+func (x *UpdateProjectRequest) GetGitSigningRetireKeyName() string {
+	if x != nil {
+		return x.GitSigningRetireKeyName
+	}
+	return ""
+}
+
+func (x *UpdateProjectRequest) GetGitSigningRetireKeyScope() string {
+	if x != nil {
+		return x.GitSigningRetireKeyScope
+	}
+	return ""
+}
+
+func (x *UpdateProjectRequest) GetGitSigningRetireKeyOwner() string {
+	if x != nil {
+		return x.GitSigningRetireKeyOwner
+	}
+	return ""
+}
+
+func (x *UpdateProjectRequest) GetGitSigningRetiredAt() string {
+	if x != nil {
+		return x.GitSigningRetiredAt
+	}
+	return ""
+}
+
 type UpdateProjectResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Project       *Project               `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
@@ -1157,7 +1423,7 @@ type UpdateProjectResponse struct {
 
 func (x *UpdateProjectResponse) Reset() {
 	*x = UpdateProjectResponse{}
-	mi := &file_api_proto_project_proto_msgTypes[8]
+	mi := &file_api_proto_project_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1169,7 +1435,7 @@ func (x *UpdateProjectResponse) String() string {
 func (*UpdateProjectResponse) ProtoMessage() {}
 
 func (x *UpdateProjectResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_project_proto_msgTypes[8]
+	mi := &file_api_proto_project_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1182,7 +1448,7 @@ func (x *UpdateProjectResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateProjectResponse.ProtoReflect.Descriptor instead.
 func (*UpdateProjectResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_project_proto_rawDescGZIP(), []int{8}
+	return file_api_proto_project_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *UpdateProjectResponse) GetProject() *Project {
@@ -1209,7 +1475,7 @@ type DeleteProjectRequest struct {
 
 func (x *DeleteProjectRequest) Reset() {
 	*x = DeleteProjectRequest{}
-	mi := &file_api_proto_project_proto_msgTypes[9]
+	mi := &file_api_proto_project_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1221,7 +1487,7 @@ func (x *DeleteProjectRequest) String() string {
 func (*DeleteProjectRequest) ProtoMessage() {}
 
 func (x *DeleteProjectRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_project_proto_msgTypes[9]
+	mi := &file_api_proto_project_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1234,7 +1500,7 @@ func (x *DeleteProjectRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteProjectRequest.ProtoReflect.Descriptor instead.
 func (*DeleteProjectRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_project_proto_rawDescGZIP(), []int{9}
+	return file_api_proto_project_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *DeleteProjectRequest) GetTenantId() string {
@@ -1262,7 +1528,7 @@ type DeleteProjectResponse struct {
 
 func (x *DeleteProjectResponse) Reset() {
 	*x = DeleteProjectResponse{}
-	mi := &file_api_proto_project_proto_msgTypes[10]
+	mi := &file_api_proto_project_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1274,7 +1540,7 @@ func (x *DeleteProjectResponse) String() string {
 func (*DeleteProjectResponse) ProtoMessage() {}
 
 func (x *DeleteProjectResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_project_proto_msgTypes[10]
+	mi := &file_api_proto_project_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1287,7 +1553,7 @@ func (x *DeleteProjectResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteProjectResponse.ProtoReflect.Descriptor instead.
 func (*DeleteProjectResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_project_proto_rawDescGZIP(), []int{10}
+	return file_api_proto_project_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *DeleteProjectResponse) GetProjectId() string {
@@ -1312,15 +1578,25 @@ func (x *DeleteProjectResponse) GetTimestamp() int64 {
 }
 
 type ListProjectsRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TenantId      string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	TenantId string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	// Paging, sorting and search — the contract every list endpoint speaks
+	// (docs/software-factory/api.md). limit 0 takes the default page (25);
+	// anything above 100 is capped. sort is "<field>" or "<field>:desc",
+	// naming a field from the endpoint's allow-list; an unknown field is
+	// refused with InvalidArgument. q is a case-insensitive substring
+	// matched against the endpoint's documented text fields.
+	Limit         int32  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset        int32  `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
+	Sort          string `protobuf:"bytes,4,opt,name=sort,proto3" json:"sort,omitempty"`
+	Q             string `protobuf:"bytes,5,opt,name=q,proto3" json:"q,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ListProjectsRequest) Reset() {
 	*x = ListProjectsRequest{}
-	mi := &file_api_proto_project_proto_msgTypes[11]
+	mi := &file_api_proto_project_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1332,7 +1608,7 @@ func (x *ListProjectsRequest) String() string {
 func (*ListProjectsRequest) ProtoMessage() {}
 
 func (x *ListProjectsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_project_proto_msgTypes[11]
+	mi := &file_api_proto_project_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1345,7 +1621,7 @@ func (x *ListProjectsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListProjectsRequest.ProtoReflect.Descriptor instead.
 func (*ListProjectsRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_project_proto_rawDescGZIP(), []int{11}
+	return file_api_proto_project_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ListProjectsRequest) GetTenantId() string {
@@ -1355,18 +1631,53 @@ func (x *ListProjectsRequest) GetTenantId() string {
 	return ""
 }
 
+func (x *ListProjectsRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *ListProjectsRequest) GetOffset() int32 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *ListProjectsRequest) GetSort() string {
+	if x != nil {
+		return x.Sort
+	}
+	return ""
+}
+
+func (x *ListProjectsRequest) GetQ() string {
+	if x != nil {
+		return x.Q
+	}
+	return ""
+}
+
 type ListProjectsResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Projects      []*Project             `protobuf:"bytes,1,rep,name=projects,proto3" json:"projects,omitempty"`
-	Total         int32                  `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
-	Timestamp     int64                  `protobuf:"varint,3,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Projects  []*Project             `protobuf:"bytes,1,rep,name=projects,proto3" json:"projects,omitempty"`
+	Total     int32                  `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
+	Timestamp int64                  `protobuf:"varint,3,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	// The paging envelope. total counts the records that matched the filters
+	// and the search BEFORE the page was cut; limit and offset are the values
+	// the server APPLIED. next_offset is the offset of the following page and
+	// is zero on the last page.
+	Limit         int32 `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset        int32 `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
+	NextOffset    int32 `protobuf:"varint,6,opt,name=next_offset,json=nextOffset,proto3" json:"next_offset,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ListProjectsResponse) Reset() {
 	*x = ListProjectsResponse{}
-	mi := &file_api_proto_project_proto_msgTypes[12]
+	mi := &file_api_proto_project_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1378,7 +1689,7 @@ func (x *ListProjectsResponse) String() string {
 func (*ListProjectsResponse) ProtoMessage() {}
 
 func (x *ListProjectsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_project_proto_msgTypes[12]
+	mi := &file_api_proto_project_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1391,7 +1702,7 @@ func (x *ListProjectsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListProjectsResponse.ProtoReflect.Descriptor instead.
 func (*ListProjectsResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_project_proto_rawDescGZIP(), []int{12}
+	return file_api_proto_project_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ListProjectsResponse) GetProjects() []*Project {
@@ -1415,32 +1726,53 @@ func (x *ListProjectsResponse) GetTimestamp() int64 {
 	return 0
 }
 
-type GrantAgentRoleRequest struct {
+func (x *ListProjectsResponse) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *ListProjectsResponse) GetOffset() int32 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *ListProjectsResponse) GetNextOffset() int32 {
+	if x != nil {
+		return x.NextOffset
+	}
+	return 0
+}
+
+type GrantFleetNodeRoleRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	TenantId  string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
 	ProjectId string                 `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
-	AgentId   string                 `protobuf:"bytes,3,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	NodeId    string                 `protobuf:"bytes,3,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	// role is one of "lead"|"worker"|"observer"|"denied".
 	Role          string `protobuf:"bytes,4,opt,name=role,proto3" json:"role,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *GrantAgentRoleRequest) Reset() {
-	*x = GrantAgentRoleRequest{}
-	mi := &file_api_proto_project_proto_msgTypes[13]
+func (x *GrantFleetNodeRoleRequest) Reset() {
+	*x = GrantFleetNodeRoleRequest{}
+	mi := &file_api_proto_project_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *GrantAgentRoleRequest) String() string {
+func (x *GrantFleetNodeRoleRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GrantAgentRoleRequest) ProtoMessage() {}
+func (*GrantFleetNodeRoleRequest) ProtoMessage() {}
 
-func (x *GrantAgentRoleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_project_proto_msgTypes[13]
+func (x *GrantFleetNodeRoleRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_project_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1451,64 +1783,64 @@ func (x *GrantAgentRoleRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use GrantAgentRoleRequest.ProtoReflect.Descriptor instead.
-func (*GrantAgentRoleRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_project_proto_rawDescGZIP(), []int{13}
+// Deprecated: Use GrantFleetNodeRoleRequest.ProtoReflect.Descriptor instead.
+func (*GrantFleetNodeRoleRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_project_proto_rawDescGZIP(), []int{14}
 }
 
-func (x *GrantAgentRoleRequest) GetTenantId() string {
+func (x *GrantFleetNodeRoleRequest) GetTenantId() string {
 	if x != nil {
 		return x.TenantId
 	}
 	return ""
 }
 
-func (x *GrantAgentRoleRequest) GetProjectId() string {
+func (x *GrantFleetNodeRoleRequest) GetProjectId() string {
 	if x != nil {
 		return x.ProjectId
 	}
 	return ""
 }
 
-func (x *GrantAgentRoleRequest) GetAgentId() string {
+func (x *GrantFleetNodeRoleRequest) GetNodeId() string {
 	if x != nil {
-		return x.AgentId
+		return x.NodeId
 	}
 	return ""
 }
 
-func (x *GrantAgentRoleRequest) GetRole() string {
+func (x *GrantFleetNodeRoleRequest) GetRole() string {
 	if x != nil {
 		return x.Role
 	}
 	return ""
 }
 
-type GrantAgentRoleResponse struct {
+type GrantFleetNodeRoleResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ProjectId     string                 `protobuf:"bytes,1,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
-	AgentId       string                 `protobuf:"bytes,2,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	NodeId        string                 `protobuf:"bytes,2,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	Role          string                 `protobuf:"bytes,3,opt,name=role,proto3" json:"role,omitempty"`
 	Timestamp     int64                  `protobuf:"varint,4,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *GrantAgentRoleResponse) Reset() {
-	*x = GrantAgentRoleResponse{}
-	mi := &file_api_proto_project_proto_msgTypes[14]
+func (x *GrantFleetNodeRoleResponse) Reset() {
+	*x = GrantFleetNodeRoleResponse{}
+	mi := &file_api_proto_project_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *GrantAgentRoleResponse) String() string {
+func (x *GrantFleetNodeRoleResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GrantAgentRoleResponse) ProtoMessage() {}
+func (*GrantFleetNodeRoleResponse) ProtoMessage() {}
 
-func (x *GrantAgentRoleResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_project_proto_msgTypes[14]
+func (x *GrantFleetNodeRoleResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_project_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1519,63 +1851,63 @@ func (x *GrantAgentRoleResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use GrantAgentRoleResponse.ProtoReflect.Descriptor instead.
-func (*GrantAgentRoleResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_project_proto_rawDescGZIP(), []int{14}
+// Deprecated: Use GrantFleetNodeRoleResponse.ProtoReflect.Descriptor instead.
+func (*GrantFleetNodeRoleResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_project_proto_rawDescGZIP(), []int{15}
 }
 
-func (x *GrantAgentRoleResponse) GetProjectId() string {
+func (x *GrantFleetNodeRoleResponse) GetProjectId() string {
 	if x != nil {
 		return x.ProjectId
 	}
 	return ""
 }
 
-func (x *GrantAgentRoleResponse) GetAgentId() string {
+func (x *GrantFleetNodeRoleResponse) GetNodeId() string {
 	if x != nil {
-		return x.AgentId
+		return x.NodeId
 	}
 	return ""
 }
 
-func (x *GrantAgentRoleResponse) GetRole() string {
+func (x *GrantFleetNodeRoleResponse) GetRole() string {
 	if x != nil {
 		return x.Role
 	}
 	return ""
 }
 
-func (x *GrantAgentRoleResponse) GetTimestamp() int64 {
+func (x *GrantFleetNodeRoleResponse) GetTimestamp() int64 {
 	if x != nil {
 		return x.Timestamp
 	}
 	return 0
 }
 
-type RevokeAgentRoleRequest struct {
+type RevokeFleetNodeRoleRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	TenantId      string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
 	ProjectId     string                 `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
-	AgentId       string                 `protobuf:"bytes,3,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	NodeId        string                 `protobuf:"bytes,3,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *RevokeAgentRoleRequest) Reset() {
-	*x = RevokeAgentRoleRequest{}
-	mi := &file_api_proto_project_proto_msgTypes[15]
+func (x *RevokeFleetNodeRoleRequest) Reset() {
+	*x = RevokeFleetNodeRoleRequest{}
+	mi := &file_api_proto_project_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *RevokeAgentRoleRequest) String() string {
+func (x *RevokeFleetNodeRoleRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*RevokeAgentRoleRequest) ProtoMessage() {}
+func (*RevokeFleetNodeRoleRequest) ProtoMessage() {}
 
-func (x *RevokeAgentRoleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_project_proto_msgTypes[15]
+func (x *RevokeFleetNodeRoleRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_project_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1586,56 +1918,56 @@ func (x *RevokeAgentRoleRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use RevokeAgentRoleRequest.ProtoReflect.Descriptor instead.
-func (*RevokeAgentRoleRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_project_proto_rawDescGZIP(), []int{15}
+// Deprecated: Use RevokeFleetNodeRoleRequest.ProtoReflect.Descriptor instead.
+func (*RevokeFleetNodeRoleRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_project_proto_rawDescGZIP(), []int{16}
 }
 
-func (x *RevokeAgentRoleRequest) GetTenantId() string {
+func (x *RevokeFleetNodeRoleRequest) GetTenantId() string {
 	if x != nil {
 		return x.TenantId
 	}
 	return ""
 }
 
-func (x *RevokeAgentRoleRequest) GetProjectId() string {
+func (x *RevokeFleetNodeRoleRequest) GetProjectId() string {
 	if x != nil {
 		return x.ProjectId
 	}
 	return ""
 }
 
-func (x *RevokeAgentRoleRequest) GetAgentId() string {
+func (x *RevokeFleetNodeRoleRequest) GetNodeId() string {
 	if x != nil {
-		return x.AgentId
+		return x.NodeId
 	}
 	return ""
 }
 
-type RevokeAgentRoleResponse struct {
+type RevokeFleetNodeRoleResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ProjectId     string                 `protobuf:"bytes,1,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
-	AgentId       string                 `protobuf:"bytes,2,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	NodeId        string                 `protobuf:"bytes,2,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	Timestamp     int64                  `protobuf:"varint,3,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *RevokeAgentRoleResponse) Reset() {
-	*x = RevokeAgentRoleResponse{}
-	mi := &file_api_proto_project_proto_msgTypes[16]
+func (x *RevokeFleetNodeRoleResponse) Reset() {
+	*x = RevokeFleetNodeRoleResponse{}
+	mi := &file_api_proto_project_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *RevokeAgentRoleResponse) String() string {
+func (x *RevokeFleetNodeRoleResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*RevokeAgentRoleResponse) ProtoMessage() {}
+func (*RevokeFleetNodeRoleResponse) ProtoMessage() {}
 
-func (x *RevokeAgentRoleResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_project_proto_msgTypes[16]
+func (x *RevokeFleetNodeRoleResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_project_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1646,26 +1978,26 @@ func (x *RevokeAgentRoleResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use RevokeAgentRoleResponse.ProtoReflect.Descriptor instead.
-func (*RevokeAgentRoleResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_project_proto_rawDescGZIP(), []int{16}
+// Deprecated: Use RevokeFleetNodeRoleResponse.ProtoReflect.Descriptor instead.
+func (*RevokeFleetNodeRoleResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_project_proto_rawDescGZIP(), []int{17}
 }
 
-func (x *RevokeAgentRoleResponse) GetProjectId() string {
+func (x *RevokeFleetNodeRoleResponse) GetProjectId() string {
 	if x != nil {
 		return x.ProjectId
 	}
 	return ""
 }
 
-func (x *RevokeAgentRoleResponse) GetAgentId() string {
+func (x *RevokeFleetNodeRoleResponse) GetNodeId() string {
 	if x != nil {
-		return x.AgentId
+		return x.NodeId
 	}
 	return ""
 }
 
-func (x *RevokeAgentRoleResponse) GetTimestamp() int64 {
+func (x *RevokeFleetNodeRoleResponse) GetTimestamp() int64 {
 	if x != nil {
 		return x.Timestamp
 	}
@@ -1676,11 +2008,11 @@ var File_api_proto_project_proto protoreflect.FileDescriptor
 
 const file_api_proto_project_proto_rawDesc = "" +
 	"\n" +
-	"\x17api/proto/project.proto\x12\x13quicbaas.project.v1\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"N\n" +
+	"\x17api/proto/project.proto\x12\x13quicbaas.project.v1\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\x1a\x15api/proto/spend.proto\x1a\x16api/proto/agents.proto\"N\n" +
 	"\vContextRepo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x19\n" +
 	"\brepo_url\x18\x02 \x01(\tR\arepoUrl\x12\x10\n" +
-	"\x03ref\x18\x03 \x01(\tR\x03ref\"\xba\v\n" +
+	"\x03ref\x18\x03 \x01(\tR\x03ref\"\xd4\x0e\n" +
 	"\aProject\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12\x12\n" +
@@ -1688,16 +2020,15 @@ const file_api_proto_project_proto_rawDesc = "" +
 	"\vdescription\x18\x04 \x01(\tR\vdescription\x12,\n" +
 	"\x12workspace_agent_id\x18\x05 \x01(\tR\x10workspaceAgentId\x12%\n" +
 	"\x0eworkspace_path\x18\x06 \x01(\tR\rworkspacePath\x12#\n" +
-	"\rhost_affinity\x18\a \x01(\tR\fhostAffinity\x12,\n" +
-	"\x12default_lead_agent\x18\b \x01(\tR\x10defaultLeadAgent\x12 \n" +
+	"\rhost_affinity\x18\a \x01(\tR\fhostAffinity\x12J\n" +
+	"\x12default_lead_agent\x18\b \x01(\v2\x1c.quicbaas.agents.v1.AgentRefR\x10defaultLeadAgent\x12 \n" +
 	"\fgit_repo_url\x18\t \x01(\tR\n" +
 	"gitRepoUrl\x12,\n" +
 	"\x12git_default_branch\x18\n" +
 	" \x01(\tR\x10gitDefaultBranch\x12&\n" +
 	"\x0fgit_current_sha\x18\v \x01(\tR\rgitCurrentSha\x12M\n" +
 	"\vagent_roles\x18\f \x03(\v2,.quicbaas.project.v1.Project.AgentRolesEntryR\n" +
-	"agentRoles\x12!\n" +
-	"\ftoken_budget\x18\r \x01(\x03R\vtokenBudget\x12\x1f\n" +
+	"agentRoles\x12\x1f\n" +
 	"\vgpu_minutes\x18\x0e \x01(\x03R\n" +
 	"gpuMinutes\x12'\n" +
 	"\x0fmax_concurrency\x18\x0f \x01(\x05R\x0emaxConcurrency\x12F\n" +
@@ -1718,29 +2049,41 @@ const file_api_proto_project_proto_rawDesc = "" +
 	"\n" +
 	"autonomous\x18\x1e \x01(\bR\n" +
 	"autonomous\x12E\n" +
-	"\rcontext_repos\x18\x1f \x03(\v2 .quicbaas.project.v1.ContextRepoR\fcontextRepos\x1a=\n" +
+	"\rcontext_repos\x18\x1f \x03(\v2 .quicbaas.project.v1.ContextRepoR\fcontextRepos\x124\n" +
+	"\x05spend\x18  \x01(\v2\x1e.quicbaas.spend.v1.SpendLimitsR\x05spend\x12%\n" +
+	"\x0eworkspace_tier\x18! \x01(\tR\rworkspaceTier\x12,\n" +
+	"\x12workspace_tmpfs_mb\x18\" \x01(\x05R\x10workspaceTmpfsMb\x12.\n" +
+	"\x13container_memory_mb\x18# \x01(\x05R\x11containerMemoryMb\x12)\n" +
+	"\x10session_rotation\x18$ \x01(\tR\x0fsessionRotation\x12\x16\n" +
+	"\x06parked\x18% \x01(\bR\x06parked\x12$\n" +
+	"\x0eparked_at_unix\x18& \x01(\x03R\fparkedAtUnix\x12\x1b\n" +
+	"\tparked_by\x18' \x01(\tR\bparkedBy\x12V\n" +
+	"\x13git_signing_retired\x18( \x03(\v2&.quicbaas.project.v1.RetiredSigningKeyR\x11gitSigningRetired\x1a=\n" +
 	"\x0fAgentRolesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd9\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\r\x10\x0e\"n\n" +
+	"\x11RetiredSigningKey\x12\x1d\n" +
 	"\n" +
+	"public_key\x18\x01 \x01(\tR\tpublicKey\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12&\n" +
+	"\x0fretired_at_unix\x18\x03 \x01(\x03R\rretiredAtUnix\"\xc0\f\n" +
 	"\x14CreateProjectRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
 	"\vdescription\x18\x03 \x01(\tR\vdescription\x12,\n" +
 	"\x12workspace_agent_id\x18\x04 \x01(\tR\x10workspaceAgentId\x12%\n" +
 	"\x0eworkspace_path\x18\x05 \x01(\tR\rworkspacePath\x12#\n" +
-	"\rhost_affinity\x18\x06 \x01(\tR\fhostAffinity\x12,\n" +
-	"\x12default_lead_agent\x18\a \x01(\tR\x10defaultLeadAgent\x12 \n" +
+	"\rhost_affinity\x18\x06 \x01(\tR\fhostAffinity\x12J\n" +
+	"\x12default_lead_agent\x18\a \x01(\v2\x1c.quicbaas.agents.v1.AgentRefR\x10defaultLeadAgent\x12 \n" +
 	"\fgit_repo_url\x18\b \x01(\tR\n" +
 	"gitRepoUrl\x12,\n" +
 	"\x12git_default_branch\x18\t \x01(\tR\x10gitDefaultBranch\x12Z\n" +
 	"\vagent_roles\x18\n" +
 	" \x03(\v29.quicbaas.project.v1.CreateProjectRequest.AgentRolesEntryR\n" +
-	"agentRoles\x12!\n" +
-	"\ftoken_budget\x18\v \x01(\x03R\vtokenBudget\x12\x1f\n" +
+	"agentRoles\x12\x1f\n" +
 	"\vgpu_minutes\x18\f \x01(\x03R\n" +
 	"gpuMinutes\x12'\n" +
 	"\x0fmax_concurrency\x18\r \x01(\x05R\x0emaxConcurrency\x12S\n" +
@@ -1759,13 +2102,18 @@ const file_api_proto_project_proto_rawDesc = "" +
 	"\n" +
 	"autonomous\x18\x1a \x01(\bR\n" +
 	"autonomous\x12E\n" +
-	"\rcontext_repos\x18\x1b \x03(\v2 .quicbaas.project.v1.ContextRepoR\fcontextRepos\x1a=\n" +
+	"\rcontext_repos\x18\x1b \x03(\v2 .quicbaas.project.v1.ContextRepoR\fcontextRepos\x124\n" +
+	"\x05spend\x18\x1c \x01(\v2\x1e.quicbaas.spend.v1.SpendLimitsR\x05spend\x12%\n" +
+	"\x0eworkspace_tier\x18\x1d \x01(\tR\rworkspaceTier\x12,\n" +
+	"\x12workspace_tmpfs_mb\x18\x1e \x01(\x05R\x10workspaceTmpfsMb\x12.\n" +
+	"\x13container_memory_mb\x18\x1f \x01(\x05R\x11containerMemoryMb\x12)\n" +
+	"\x10session_rotation\x18  \x01(\tR\x0fsessionRotation\x1a=\n" +
 	"\x0fAgentRolesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"m\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\v\x10\f\"m\n" +
 	"\x15CreateProjectResponse\x126\n" +
 	"\aproject\x18\x01 \x01(\v2\x1c.quicbaas.project.v1.ProjectR\aproject\x12\x1c\n" +
 	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\"O\n" +
@@ -1778,7 +2126,7 @@ const file_api_proto_project_proto_rawDesc = "" +
 	"\x04name\x18\x02 \x01(\tR\x04name\"j\n" +
 	"\x12GetProjectResponse\x126\n" +
 	"\aproject\x18\x01 \x01(\v2\x1c.quicbaas.project.v1.ProjectR\aproject\x12\x1c\n" +
-	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\"\xa8\r\n" +
+	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\"\xcd\x11\n" +
 	"\x14UpdateProjectRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1d\n" +
 	"\n" +
@@ -1788,25 +2136,24 @@ const file_api_proto_project_proto_rawDesc = "" +
 	"\x11clear_description\x18\x05 \x01(\bR\x10clearDescription\x12,\n" +
 	"\x12workspace_agent_id\x18\x06 \x01(\tR\x10workspaceAgentId\x12%\n" +
 	"\x0eworkspace_path\x18\a \x01(\tR\rworkspacePath\x12#\n" +
-	"\rhost_affinity\x18\b \x01(\tR\fhostAffinity\x12,\n" +
-	"\x12default_lead_agent\x18\t \x01(\tR\x10defaultLeadAgent\x12 \n" +
+	"\rhost_affinity\x18\b \x01(\tR\fhostAffinity\x12J\n" +
+	"\x12default_lead_agent\x18\t \x01(\v2\x1c.quicbaas.agents.v1.AgentRefR\x10defaultLeadAgent\x12 \n" +
 	"\fgit_repo_url\x18\n" +
 	" \x01(\tR\n" +
 	"gitRepoUrl\x12,\n" +
 	"\x12git_default_branch\x18\v \x01(\tR\x10gitDefaultBranch\x12&\n" +
 	"\x0fgit_current_sha\x18\f \x01(\tR\rgitCurrentSha\x12Z\n" +
 	"\vagent_roles\x18\r \x03(\v29.quicbaas.project.v1.UpdateProjectRequest.AgentRolesEntryR\n" +
-	"agentRoles\x12&\n" +
-	"\ftoken_budget\x18\x0e \x01(\x03H\x00R\vtokenBudget\x88\x01\x01\x12$\n" +
-	"\vgpu_minutes\x18\x0f \x01(\x03H\x01R\n" +
+	"agentRoles\x12$\n" +
+	"\vgpu_minutes\x18\x0f \x01(\x03H\x00R\n" +
 	"gpuMinutes\x88\x01\x01\x12,\n" +
-	"\x0fmax_concurrency\x18\x10 \x01(\x05H\x02R\x0emaxConcurrency\x88\x01\x01\x12S\n" +
+	"\x0fmax_concurrency\x18\x10 \x01(\x05H\x01R\x0emaxConcurrency\x88\x01\x01\x12S\n" +
 	"\bmetadata\x18\x11 \x03(\v27.quicbaas.project.v1.UpdateProjectRequest.MetadataEntryR\bmetadata\x12)\n" +
 	"\x10default_workflow\x18\x12 \x01(\tR\x0fdefaultWorkflow\x124\n" +
 	"\x16clear_default_workflow\x18\x13 \x01(\bR\x14clearDefaultWorkflow\x12&\n" +
 	"\x0fgit_author_name\x18\x14 \x01(\tR\rgitAuthorName\x12(\n" +
 	"\x10git_author_email\x18\x15 \x01(\tR\x0egitAuthorEmail\x123\n" +
-	"\x13git_signing_enabled\x18\x16 \x01(\bH\x03R\x11gitSigningEnabled\x88\x01\x01\x122\n" +
+	"\x13git_signing_enabled\x18\x16 \x01(\bH\x02R\x11gitSigningEnabled\x88\x01\x01\x122\n" +
 	"\x15git_signing_algorithm\x18\x17 \x01(\tR\x13gitSigningAlgorithm\x12/\n" +
 	"\x14git_signing_key_name\x18\x18 \x01(\tR\x11gitSigningKeyName\x121\n" +
 	"\x15git_signing_key_scope\x18\x19 \x01(\tR\x12gitSigningKeyScope\x121\n" +
@@ -1815,21 +2162,33 @@ const file_api_proto_project_proto_rawDesc = "" +
 	"\x11git_ssh_key_scope\x18\x1c \x01(\tR\x0egitSshKeyScope\x12)\n" +
 	"\x11git_ssh_key_owner\x18\x1d \x01(\tR\x0egitSshKeyOwner\x12#\n" +
 	"\n" +
-	"autonomous\x18\x1e \x01(\bH\x04R\n" +
+	"autonomous\x18\x1e \x01(\bH\x03R\n" +
 	"autonomous\x88\x01\x01\x12E\n" +
 	"\rcontext_repos\x18\x1f \x03(\v2 .quicbaas.project.v1.ContextRepoR\fcontextRepos\x12.\n" +
-	"\x13clear_context_repos\x18  \x01(\bR\x11clearContextRepos\x1a=\n" +
+	"\x13clear_context_repos\x18  \x01(\bR\x11clearContextRepos\x124\n" +
+	"\x05spend\x18! \x01(\v2\x1e.quicbaas.spend.v1.SpendLimitsR\x05spend\x12%\n" +
+	"\x0eworkspace_tier\x18\" \x01(\tR\rworkspaceTier\x121\n" +
+	"\x12workspace_tmpfs_mb\x18# \x01(\x05H\x04R\x10workspaceTmpfsMb\x88\x01\x01\x123\n" +
+	"\x13container_memory_mb\x18$ \x01(\x05H\x05R\x11containerMemoryMb\x88\x01\x01\x12)\n" +
+	"\x10session_rotation\x18% \x01(\tR\x0fsessionRotation\x12\x1b\n" +
+	"\x06parked\x18& \x01(\bH\x06R\x06parked\x88\x01\x01\x12<\n" +
+	"\x1bgit_signing_retire_key_name\x18' \x01(\tR\x17gitSigningRetireKeyName\x12>\n" +
+	"\x1cgit_signing_retire_key_scope\x18( \x01(\tR\x18gitSigningRetireKeyScope\x12>\n" +
+	"\x1cgit_signing_retire_key_owner\x18) \x01(\tR\x18gitSigningRetireKeyOwner\x123\n" +
+	"\x16git_signing_retired_at\x18* \x01(\tR\x13gitSigningRetiredAt\x1a=\n" +
 	"\x0fAgentRolesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x0f\n" +
-	"\r_token_budgetB\x0e\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x0e\n" +
 	"\f_gpu_minutesB\x12\n" +
 	"\x10_max_concurrencyB\x16\n" +
 	"\x14_git_signing_enabledB\r\n" +
-	"\v_autonomous\"m\n" +
+	"\v_autonomousB\x15\n" +
+	"\x13_workspace_tmpfs_mbB\x16\n" +
+	"\x14_container_memory_mbB\t\n" +
+	"\a_parkedJ\x04\b\x0e\x10\x0f\"m\n" +
 	"\x15UpdateProjectResponse\x126\n" +
 	"\aproject\x18\x01 \x01(\v2\x1c.quicbaas.project.v1.ProjectR\aproject\x12\x1c\n" +
 	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\"R\n" +
@@ -1841,35 +2200,43 @@ const file_api_proto_project_proto_rawDesc = "" +
 	"\n" +
 	"project_id\x18\x01 \x01(\tR\tprojectId\x12\x18\n" +
 	"\adeleted\x18\x02 \x01(\bR\adeleted\x12\x1c\n" +
-	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\"2\n" +
+	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\"\x82\x01\n" +
 	"\x13ListProjectsRequest\x12\x1b\n" +
-	"\ttenant_id\x18\x01 \x01(\tR\btenantId\"\x84\x01\n" +
+	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x14\n" +
+	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06offset\x18\x03 \x01(\x05R\x06offset\x12\x12\n" +
+	"\x04sort\x18\x04 \x01(\tR\x04sort\x12\f\n" +
+	"\x01q\x18\x05 \x01(\tR\x01q\"\xd3\x01\n" +
 	"\x14ListProjectsResponse\x128\n" +
 	"\bprojects\x18\x01 \x03(\v2\x1c.quicbaas.project.v1.ProjectR\bprojects\x12\x14\n" +
 	"\x05total\x18\x02 \x01(\x05R\x05total\x12\x1c\n" +
-	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\"\x82\x01\n" +
-	"\x15GrantAgentRoleRequest\x12\x1b\n" +
+	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\x12\x14\n" +
+	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06offset\x18\x05 \x01(\x05R\x06offset\x12\x1f\n" +
+	"\vnext_offset\x18\x06 \x01(\x05R\n" +
+	"nextOffset\"\x84\x01\n" +
+	"\x19GrantFleetNodeRoleRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1d\n" +
 	"\n" +
-	"project_id\x18\x02 \x01(\tR\tprojectId\x12\x19\n" +
-	"\bagent_id\x18\x03 \x01(\tR\aagentId\x12\x12\n" +
-	"\x04role\x18\x04 \x01(\tR\x04role\"\x84\x01\n" +
-	"\x16GrantAgentRoleResponse\x12\x1d\n" +
+	"project_id\x18\x02 \x01(\tR\tprojectId\x12\x17\n" +
+	"\anode_id\x18\x03 \x01(\tR\x06nodeId\x12\x12\n" +
+	"\x04role\x18\x04 \x01(\tR\x04role\"\x86\x01\n" +
+	"\x1aGrantFleetNodeRoleResponse\x12\x1d\n" +
 	"\n" +
-	"project_id\x18\x01 \x01(\tR\tprojectId\x12\x19\n" +
-	"\bagent_id\x18\x02 \x01(\tR\aagentId\x12\x12\n" +
+	"project_id\x18\x01 \x01(\tR\tprojectId\x12\x17\n" +
+	"\anode_id\x18\x02 \x01(\tR\x06nodeId\x12\x12\n" +
 	"\x04role\x18\x03 \x01(\tR\x04role\x12\x1c\n" +
-	"\ttimestamp\x18\x04 \x01(\x03R\ttimestamp\"o\n" +
-	"\x16RevokeAgentRoleRequest\x12\x1b\n" +
+	"\ttimestamp\x18\x04 \x01(\x03R\ttimestamp\"q\n" +
+	"\x1aRevokeFleetNodeRoleRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1d\n" +
 	"\n" +
-	"project_id\x18\x02 \x01(\tR\tprojectId\x12\x19\n" +
-	"\bagent_id\x18\x03 \x01(\tR\aagentId\"q\n" +
-	"\x17RevokeAgentRoleResponse\x12\x1d\n" +
+	"project_id\x18\x02 \x01(\tR\tprojectId\x12\x17\n" +
+	"\anode_id\x18\x03 \x01(\tR\x06nodeId\"s\n" +
+	"\x1bRevokeFleetNodeRoleResponse\x12\x1d\n" +
 	"\n" +
-	"project_id\x18\x01 \x01(\tR\tprojectId\x12\x19\n" +
-	"\bagent_id\x18\x02 \x01(\tR\aagentId\x12\x1c\n" +
-	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp2\xea\a\n" +
+	"project_id\x18\x01 \x01(\tR\tprojectId\x12\x17\n" +
+	"\anode_id\x18\x02 \x01(\tR\x06nodeId\x12\x1c\n" +
+	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp2\x83\b\n" +
 	"\x0eProjectService\x12z\n" +
 	"\rCreateProject\x12).quicbaas.project.v1.CreateProjectRequest\x1a*.quicbaas.project.v1.CreateProjectResponse\"\x12\xc2\xf3\x18\x0eproject:create\x12o\n" +
 	"\n" +
@@ -1877,9 +2244,9 @@ const file_api_proto_project_proto_rawDesc = "" +
 	"\x10GetProjectByName\x12,.quicbaas.project.v1.GetProjectByNameRequest\x1a'.quicbaas.project.v1.GetProjectResponse\"\x10\xc2\xf3\x18\fproject:read\x12z\n" +
 	"\rUpdateProject\x12).quicbaas.project.v1.UpdateProjectRequest\x1a*.quicbaas.project.v1.UpdateProjectResponse\"\x12\xc2\xf3\x18\x0eproject:update\x12z\n" +
 	"\rDeleteProject\x12).quicbaas.project.v1.DeleteProjectRequest\x1a*.quicbaas.project.v1.DeleteProjectResponse\"\x12\xc2\xf3\x18\x0eproject:delete\x12u\n" +
-	"\fListProjects\x12(.quicbaas.project.v1.ListProjectsRequest\x1a).quicbaas.project.v1.ListProjectsResponse\"\x10\xc2\xf3\x18\fproject:list\x12|\n" +
-	"\x0eGrantAgentRole\x12*.quicbaas.project.v1.GrantAgentRoleRequest\x1a+.quicbaas.project.v1.GrantAgentRoleResponse\"\x11\xc2\xf3\x18\rproject:grant\x12\x80\x01\n" +
-	"\x0fRevokeAgentRole\x12+.quicbaas.project.v1.RevokeAgentRoleRequest\x1a,.quicbaas.project.v1.RevokeAgentRoleResponse\"\x12\xc2\xf3\x18\x0eproject:revokeB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
+	"\fListProjects\x12(.quicbaas.project.v1.ListProjectsRequest\x1a).quicbaas.project.v1.ListProjectsResponse\"\x10\xc2\xf3\x18\fproject:list\x12\x88\x01\n" +
+	"\x12GrantFleetNodeRole\x12..quicbaas.project.v1.GrantFleetNodeRoleRequest\x1a/.quicbaas.project.v1.GrantFleetNodeRoleResponse\"\x11\xc2\xf3\x18\rproject:grant\x12\x8c\x01\n" +
+	"\x13RevokeFleetNodeRole\x12/.quicbaas.project.v1.RevokeFleetNodeRoleRequest\x1a0.quicbaas.project.v1.RevokeFleetNodeRoleResponse\"\x12\xc2\xf3\x18\x0eproject:revokeB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
 	file_api_proto_project_proto_rawDescOnce sync.Once
@@ -1893,67 +2260,77 @@ func file_api_proto_project_proto_rawDescGZIP() []byte {
 	return file_api_proto_project_proto_rawDescData
 }
 
-var file_api_proto_project_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
+var file_api_proto_project_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_api_proto_project_proto_goTypes = []any{
-	(*ContextRepo)(nil),             // 0: quicbaas.project.v1.ContextRepo
-	(*Project)(nil),                 // 1: quicbaas.project.v1.Project
-	(*CreateProjectRequest)(nil),    // 2: quicbaas.project.v1.CreateProjectRequest
-	(*CreateProjectResponse)(nil),   // 3: quicbaas.project.v1.CreateProjectResponse
-	(*GetProjectRequest)(nil),       // 4: quicbaas.project.v1.GetProjectRequest
-	(*GetProjectByNameRequest)(nil), // 5: quicbaas.project.v1.GetProjectByNameRequest
-	(*GetProjectResponse)(nil),      // 6: quicbaas.project.v1.GetProjectResponse
-	(*UpdateProjectRequest)(nil),    // 7: quicbaas.project.v1.UpdateProjectRequest
-	(*UpdateProjectResponse)(nil),   // 8: quicbaas.project.v1.UpdateProjectResponse
-	(*DeleteProjectRequest)(nil),    // 9: quicbaas.project.v1.DeleteProjectRequest
-	(*DeleteProjectResponse)(nil),   // 10: quicbaas.project.v1.DeleteProjectResponse
-	(*ListProjectsRequest)(nil),     // 11: quicbaas.project.v1.ListProjectsRequest
-	(*ListProjectsResponse)(nil),    // 12: quicbaas.project.v1.ListProjectsResponse
-	(*GrantAgentRoleRequest)(nil),   // 13: quicbaas.project.v1.GrantAgentRoleRequest
-	(*GrantAgentRoleResponse)(nil),  // 14: quicbaas.project.v1.GrantAgentRoleResponse
-	(*RevokeAgentRoleRequest)(nil),  // 15: quicbaas.project.v1.RevokeAgentRoleRequest
-	(*RevokeAgentRoleResponse)(nil), // 16: quicbaas.project.v1.RevokeAgentRoleResponse
-	nil,                             // 17: quicbaas.project.v1.Project.AgentRolesEntry
-	nil,                             // 18: quicbaas.project.v1.Project.MetadataEntry
-	nil,                             // 19: quicbaas.project.v1.CreateProjectRequest.AgentRolesEntry
-	nil,                             // 20: quicbaas.project.v1.CreateProjectRequest.MetadataEntry
-	nil,                             // 21: quicbaas.project.v1.UpdateProjectRequest.AgentRolesEntry
-	nil,                             // 22: quicbaas.project.v1.UpdateProjectRequest.MetadataEntry
+	(*ContextRepo)(nil),                 // 0: quicbaas.project.v1.ContextRepo
+	(*Project)(nil),                     // 1: quicbaas.project.v1.Project
+	(*RetiredSigningKey)(nil),           // 2: quicbaas.project.v1.RetiredSigningKey
+	(*CreateProjectRequest)(nil),        // 3: quicbaas.project.v1.CreateProjectRequest
+	(*CreateProjectResponse)(nil),       // 4: quicbaas.project.v1.CreateProjectResponse
+	(*GetProjectRequest)(nil),           // 5: quicbaas.project.v1.GetProjectRequest
+	(*GetProjectByNameRequest)(nil),     // 6: quicbaas.project.v1.GetProjectByNameRequest
+	(*GetProjectResponse)(nil),          // 7: quicbaas.project.v1.GetProjectResponse
+	(*UpdateProjectRequest)(nil),        // 8: quicbaas.project.v1.UpdateProjectRequest
+	(*UpdateProjectResponse)(nil),       // 9: quicbaas.project.v1.UpdateProjectResponse
+	(*DeleteProjectRequest)(nil),        // 10: quicbaas.project.v1.DeleteProjectRequest
+	(*DeleteProjectResponse)(nil),       // 11: quicbaas.project.v1.DeleteProjectResponse
+	(*ListProjectsRequest)(nil),         // 12: quicbaas.project.v1.ListProjectsRequest
+	(*ListProjectsResponse)(nil),        // 13: quicbaas.project.v1.ListProjectsResponse
+	(*GrantFleetNodeRoleRequest)(nil),   // 14: quicbaas.project.v1.GrantFleetNodeRoleRequest
+	(*GrantFleetNodeRoleResponse)(nil),  // 15: quicbaas.project.v1.GrantFleetNodeRoleResponse
+	(*RevokeFleetNodeRoleRequest)(nil),  // 16: quicbaas.project.v1.RevokeFleetNodeRoleRequest
+	(*RevokeFleetNodeRoleResponse)(nil), // 17: quicbaas.project.v1.RevokeFleetNodeRoleResponse
+	nil,                                 // 18: quicbaas.project.v1.Project.AgentRolesEntry
+	nil,                                 // 19: quicbaas.project.v1.Project.MetadataEntry
+	nil,                                 // 20: quicbaas.project.v1.CreateProjectRequest.AgentRolesEntry
+	nil,                                 // 21: quicbaas.project.v1.CreateProjectRequest.MetadataEntry
+	nil,                                 // 22: quicbaas.project.v1.UpdateProjectRequest.AgentRolesEntry
+	nil,                                 // 23: quicbaas.project.v1.UpdateProjectRequest.MetadataEntry
+	(*AgentRef)(nil),                    // 24: quicbaas.agents.v1.AgentRef
+	(*SpendLimits)(nil),                 // 25: quicbaas.spend.v1.SpendLimits
 }
 var file_api_proto_project_proto_depIdxs = []int32{
-	17, // 0: quicbaas.project.v1.Project.agent_roles:type_name -> quicbaas.project.v1.Project.AgentRolesEntry
-	18, // 1: quicbaas.project.v1.Project.metadata:type_name -> quicbaas.project.v1.Project.MetadataEntry
-	0,  // 2: quicbaas.project.v1.Project.context_repos:type_name -> quicbaas.project.v1.ContextRepo
-	19, // 3: quicbaas.project.v1.CreateProjectRequest.agent_roles:type_name -> quicbaas.project.v1.CreateProjectRequest.AgentRolesEntry
-	20, // 4: quicbaas.project.v1.CreateProjectRequest.metadata:type_name -> quicbaas.project.v1.CreateProjectRequest.MetadataEntry
-	0,  // 5: quicbaas.project.v1.CreateProjectRequest.context_repos:type_name -> quicbaas.project.v1.ContextRepo
-	1,  // 6: quicbaas.project.v1.CreateProjectResponse.project:type_name -> quicbaas.project.v1.Project
-	1,  // 7: quicbaas.project.v1.GetProjectResponse.project:type_name -> quicbaas.project.v1.Project
-	21, // 8: quicbaas.project.v1.UpdateProjectRequest.agent_roles:type_name -> quicbaas.project.v1.UpdateProjectRequest.AgentRolesEntry
-	22, // 9: quicbaas.project.v1.UpdateProjectRequest.metadata:type_name -> quicbaas.project.v1.UpdateProjectRequest.MetadataEntry
-	0,  // 10: quicbaas.project.v1.UpdateProjectRequest.context_repos:type_name -> quicbaas.project.v1.ContextRepo
-	1,  // 11: quicbaas.project.v1.UpdateProjectResponse.project:type_name -> quicbaas.project.v1.Project
-	1,  // 12: quicbaas.project.v1.ListProjectsResponse.projects:type_name -> quicbaas.project.v1.Project
-	2,  // 13: quicbaas.project.v1.ProjectService.CreateProject:input_type -> quicbaas.project.v1.CreateProjectRequest
-	4,  // 14: quicbaas.project.v1.ProjectService.GetProject:input_type -> quicbaas.project.v1.GetProjectRequest
-	5,  // 15: quicbaas.project.v1.ProjectService.GetProjectByName:input_type -> quicbaas.project.v1.GetProjectByNameRequest
-	7,  // 16: quicbaas.project.v1.ProjectService.UpdateProject:input_type -> quicbaas.project.v1.UpdateProjectRequest
-	9,  // 17: quicbaas.project.v1.ProjectService.DeleteProject:input_type -> quicbaas.project.v1.DeleteProjectRequest
-	11, // 18: quicbaas.project.v1.ProjectService.ListProjects:input_type -> quicbaas.project.v1.ListProjectsRequest
-	13, // 19: quicbaas.project.v1.ProjectService.GrantAgentRole:input_type -> quicbaas.project.v1.GrantAgentRoleRequest
-	15, // 20: quicbaas.project.v1.ProjectService.RevokeAgentRole:input_type -> quicbaas.project.v1.RevokeAgentRoleRequest
-	3,  // 21: quicbaas.project.v1.ProjectService.CreateProject:output_type -> quicbaas.project.v1.CreateProjectResponse
-	6,  // 22: quicbaas.project.v1.ProjectService.GetProject:output_type -> quicbaas.project.v1.GetProjectResponse
-	6,  // 23: quicbaas.project.v1.ProjectService.GetProjectByName:output_type -> quicbaas.project.v1.GetProjectResponse
-	8,  // 24: quicbaas.project.v1.ProjectService.UpdateProject:output_type -> quicbaas.project.v1.UpdateProjectResponse
-	10, // 25: quicbaas.project.v1.ProjectService.DeleteProject:output_type -> quicbaas.project.v1.DeleteProjectResponse
-	12, // 26: quicbaas.project.v1.ProjectService.ListProjects:output_type -> quicbaas.project.v1.ListProjectsResponse
-	14, // 27: quicbaas.project.v1.ProjectService.GrantAgentRole:output_type -> quicbaas.project.v1.GrantAgentRoleResponse
-	16, // 28: quicbaas.project.v1.ProjectService.RevokeAgentRole:output_type -> quicbaas.project.v1.RevokeAgentRoleResponse
-	21, // [21:29] is the sub-list for method output_type
-	13, // [13:21] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	24, // 0: quicbaas.project.v1.Project.default_lead_agent:type_name -> quicbaas.agents.v1.AgentRef
+	18, // 1: quicbaas.project.v1.Project.agent_roles:type_name -> quicbaas.project.v1.Project.AgentRolesEntry
+	19, // 2: quicbaas.project.v1.Project.metadata:type_name -> quicbaas.project.v1.Project.MetadataEntry
+	0,  // 3: quicbaas.project.v1.Project.context_repos:type_name -> quicbaas.project.v1.ContextRepo
+	25, // 4: quicbaas.project.v1.Project.spend:type_name -> quicbaas.spend.v1.SpendLimits
+	2,  // 5: quicbaas.project.v1.Project.git_signing_retired:type_name -> quicbaas.project.v1.RetiredSigningKey
+	24, // 6: quicbaas.project.v1.CreateProjectRequest.default_lead_agent:type_name -> quicbaas.agents.v1.AgentRef
+	20, // 7: quicbaas.project.v1.CreateProjectRequest.agent_roles:type_name -> quicbaas.project.v1.CreateProjectRequest.AgentRolesEntry
+	21, // 8: quicbaas.project.v1.CreateProjectRequest.metadata:type_name -> quicbaas.project.v1.CreateProjectRequest.MetadataEntry
+	0,  // 9: quicbaas.project.v1.CreateProjectRequest.context_repos:type_name -> quicbaas.project.v1.ContextRepo
+	25, // 10: quicbaas.project.v1.CreateProjectRequest.spend:type_name -> quicbaas.spend.v1.SpendLimits
+	1,  // 11: quicbaas.project.v1.CreateProjectResponse.project:type_name -> quicbaas.project.v1.Project
+	1,  // 12: quicbaas.project.v1.GetProjectResponse.project:type_name -> quicbaas.project.v1.Project
+	24, // 13: quicbaas.project.v1.UpdateProjectRequest.default_lead_agent:type_name -> quicbaas.agents.v1.AgentRef
+	22, // 14: quicbaas.project.v1.UpdateProjectRequest.agent_roles:type_name -> quicbaas.project.v1.UpdateProjectRequest.AgentRolesEntry
+	23, // 15: quicbaas.project.v1.UpdateProjectRequest.metadata:type_name -> quicbaas.project.v1.UpdateProjectRequest.MetadataEntry
+	0,  // 16: quicbaas.project.v1.UpdateProjectRequest.context_repos:type_name -> quicbaas.project.v1.ContextRepo
+	25, // 17: quicbaas.project.v1.UpdateProjectRequest.spend:type_name -> quicbaas.spend.v1.SpendLimits
+	1,  // 18: quicbaas.project.v1.UpdateProjectResponse.project:type_name -> quicbaas.project.v1.Project
+	1,  // 19: quicbaas.project.v1.ListProjectsResponse.projects:type_name -> quicbaas.project.v1.Project
+	3,  // 20: quicbaas.project.v1.ProjectService.CreateProject:input_type -> quicbaas.project.v1.CreateProjectRequest
+	5,  // 21: quicbaas.project.v1.ProjectService.GetProject:input_type -> quicbaas.project.v1.GetProjectRequest
+	6,  // 22: quicbaas.project.v1.ProjectService.GetProjectByName:input_type -> quicbaas.project.v1.GetProjectByNameRequest
+	8,  // 23: quicbaas.project.v1.ProjectService.UpdateProject:input_type -> quicbaas.project.v1.UpdateProjectRequest
+	10, // 24: quicbaas.project.v1.ProjectService.DeleteProject:input_type -> quicbaas.project.v1.DeleteProjectRequest
+	12, // 25: quicbaas.project.v1.ProjectService.ListProjects:input_type -> quicbaas.project.v1.ListProjectsRequest
+	14, // 26: quicbaas.project.v1.ProjectService.GrantFleetNodeRole:input_type -> quicbaas.project.v1.GrantFleetNodeRoleRequest
+	16, // 27: quicbaas.project.v1.ProjectService.RevokeFleetNodeRole:input_type -> quicbaas.project.v1.RevokeFleetNodeRoleRequest
+	4,  // 28: quicbaas.project.v1.ProjectService.CreateProject:output_type -> quicbaas.project.v1.CreateProjectResponse
+	7,  // 29: quicbaas.project.v1.ProjectService.GetProject:output_type -> quicbaas.project.v1.GetProjectResponse
+	7,  // 30: quicbaas.project.v1.ProjectService.GetProjectByName:output_type -> quicbaas.project.v1.GetProjectResponse
+	9,  // 31: quicbaas.project.v1.ProjectService.UpdateProject:output_type -> quicbaas.project.v1.UpdateProjectResponse
+	11, // 32: quicbaas.project.v1.ProjectService.DeleteProject:output_type -> quicbaas.project.v1.DeleteProjectResponse
+	13, // 33: quicbaas.project.v1.ProjectService.ListProjects:output_type -> quicbaas.project.v1.ListProjectsResponse
+	15, // 34: quicbaas.project.v1.ProjectService.GrantFleetNodeRole:output_type -> quicbaas.project.v1.GrantFleetNodeRoleResponse
+	17, // 35: quicbaas.project.v1.ProjectService.RevokeFleetNodeRole:output_type -> quicbaas.project.v1.RevokeFleetNodeRoleResponse
+	28, // [28:36] is the sub-list for method output_type
+	20, // [20:28] is the sub-list for method input_type
+	20, // [20:20] is the sub-list for extension type_name
+	20, // [20:20] is the sub-list for extension extendee
+	0,  // [0:20] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_project_proto_init() }
@@ -1961,14 +2338,16 @@ func file_api_proto_project_proto_init() {
 	if File_api_proto_project_proto != nil {
 		return
 	}
-	file_api_proto_project_proto_msgTypes[7].OneofWrappers = []any{}
+	file_api_proto_spend_proto_init()
+	file_api_proto_agents_proto_init()
+	file_api_proto_project_proto_msgTypes[8].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_project_proto_rawDesc), len(file_api_proto_project_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   23,
+			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

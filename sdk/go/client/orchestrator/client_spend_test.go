@@ -27,24 +27,20 @@ import (
 
 // TestGetSpendReport_HappyPath asserts the client returns the report the
 // transport produced, typed — including the two fields a renderer must not
-// lose: CostMeasured and the unattributed child row.
+// lose: PricedEntries and the unattributed child row.
 func TestGetSpendReport_HappyPath(t *testing.T) {
 	want := &GetSpendReportResponse{
-		Level:        SpendLevelProject,
-		TenantID:     "t1",
-		ProjectID:    "p1",
-		Entries:      3,
-		InputTokens:  120,
-		OutputTokens: 80,
-		TotalTokens:  200,
-		CostMeasured: false,
-		ChildLevel:   SpendLevelTask,
+		Level:       SpendLevelProject,
+		TenantID:    "t1",
+		ProjectID:   "p1",
+		SpendTotals: SpendTotals{Entries: 3, InputTokens: 120, OutputTokens: 80, TotalTokens: 200},
+		ChildLevel:  SpendLevelTask,
 		Children: []SpendChild{
-			{ID: "w1", Level: SpendLevelTask, TotalTokens: 150},
-			{Level: SpendLevelTask, Unattributed: true, TotalTokens: 50},
+			{ID: "w1", Level: SpendLevelTask, SpendTotals: SpendTotals{TotalTokens: 150}},
+			{Level: SpendLevelTask, Unattributed: true, SpendTotals: SpendTotals{TotalTokens: 50}},
 		},
 		Accounts: []SpendAccount{
-			{AccountID: "a1", TotalTokens: 200, PolicyStatus: SpendPolicyNone},
+			{AccountID: "a1", SpendTotals: SpendTotals{TotalTokens: 200}, PolicyStatus: SpendPolicyNone},
 		},
 	}
 	c := NewClient(okTransport(t, "GetSpendReport", want))
@@ -54,7 +50,7 @@ func TestGetSpendReport_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, SpendLevelProject, resp.Level)
 	assert.Equal(t, int64(200), resp.TotalTokens)
-	assert.False(t, resp.CostMeasured, "an unpriced report must not claim a measured cost")
+	assert.Zero(t, resp.PricedEntries, "an unpriced report must not claim a measured cost")
 	require.Len(t, resp.Children, 2)
 	assert.True(t, resp.Children[1].Unattributed)
 	require.Len(t, resp.Accounts, 1)

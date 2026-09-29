@@ -73,13 +73,6 @@ type ProtocolClient interface {
 	DeleteUser(ctx context.Context, tenantID, userID string) error
 	ListUsers(ctx context.Context, tenantID string) ([]iam.User, error)
 
-	// Group operations
-	CreateGroup(ctx context.Context, tenantID, id, name, description string) (*iam.Group, error)
-	GetGroup(ctx context.Context, tenantID, groupID string) (*iam.Group, error)
-	UpdateGroup(ctx context.Context, tenantID, groupID, name, description string) (*iam.Group, error)
-	DeleteGroup(ctx context.Context, tenantID, groupID string) error
-	ListGroups(ctx context.Context, tenantID string) ([]iam.Group, error)
-
 	// Role operations
 	CreateRole(ctx context.Context, tenantID, id, name, description string, permissions []string) (*iam.Role, error)
 	GetRole(ctx context.Context, tenantID, roleID string) (*iam.Role, error)
@@ -205,47 +198,6 @@ func (c *RESTClient) ListUsers(ctx context.Context, tenantID string) ([]iam.User
 	}
 	err := c.cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), &resp)
 	return resp.Users, err
-}
-
-func (c *RESTClient) CreateGroup(ctx context.Context, tenantID, id, name, description string) (*iam.Group, error) {
-	req := map[string]interface{}{
-		"id":          id,
-		"name":        name,
-		"description": description,
-	}
-
-	var group iam.Group
-	err := c.cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/groups", tenantID), req, &group)
-	return &group, err
-}
-
-func (c *RESTClient) GetGroup(ctx context.Context, tenantID, groupID string) (*iam.Group, error) {
-	var group iam.Group
-	err := c.cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/groups/%s", tenantID, groupID), &group)
-	return &group, err
-}
-
-func (c *RESTClient) UpdateGroup(ctx context.Context, tenantID, groupID, name, description string) (*iam.Group, error) {
-	req := map[string]interface{}{
-		"name":        name,
-		"description": description,
-	}
-
-	var group iam.Group
-	err := c.cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/groups/%s", tenantID, groupID), req, &group)
-	return &group, err
-}
-
-func (c *RESTClient) DeleteGroup(ctx context.Context, tenantID, groupID string) error {
-	return c.cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/groups/%s", tenantID, groupID))
-}
-
-func (c *RESTClient) ListGroups(ctx context.Context, tenantID string) ([]iam.Group, error) {
-	var resp struct {
-		Groups []iam.Group `json:"groups"`
-	}
-	err := c.cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/groups", tenantID), &resp)
-	return resp.Groups, err
 }
 
 func (c *RESTClient) CreateRole(ctx context.Context, tenantID, id, name, description string, permissions []string) (*iam.Role, error) {
@@ -538,80 +490,6 @@ func (c *GRPCClient) ListUsers(ctx context.Context, tenantID string) ([]iam.User
 	return users, nil
 }
 
-func (c *GRPCClient) CreateGroup(ctx context.Context, tenantID, id, name, description string) (*iam.Group, error) {
-	req := &iampb.CreateGroupRequest{
-		TenantId:    tenantID,
-		Id:          id,
-		Name:        name,
-		Description: description,
-	}
-
-	resp, err := c.iamClient.CreateGroup(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	return convertProtoToGroup(resp), nil
-}
-
-func (c *GRPCClient) GetGroup(ctx context.Context, tenantID, groupID string) (*iam.Group, error) {
-	req := &iampb.GetGroupRequest{
-		TenantId: tenantID,
-		GroupId:  groupID,
-	}
-
-	resp, err := c.iamClient.GetGroup(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	return convertProtoToGroup(resp), nil
-}
-
-func (c *GRPCClient) UpdateGroup(ctx context.Context, tenantID, groupID, name, description string) (*iam.Group, error) {
-	req := &iampb.UpdateGroupRequest{
-		TenantId:    tenantID,
-		GroupId:     groupID,
-		Name:        name,
-		Description: description,
-	}
-
-	resp, err := c.iamClient.UpdateGroup(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	return convertProtoToGroup(resp), nil
-}
-
-func (c *GRPCClient) DeleteGroup(ctx context.Context, tenantID, groupID string) error {
-	req := &iampb.DeleteGroupRequest{
-		TenantId: tenantID,
-		GroupId:  groupID,
-	}
-
-	_, err := c.iamClient.DeleteGroup(ctx, req)
-	return err
-}
-
-func (c *GRPCClient) ListGroups(ctx context.Context, tenantID string) ([]iam.Group, error) {
-	req := &iampb.ListGroupsRequest{
-		TenantId: tenantID,
-	}
-
-	resp, err := c.iamClient.ListGroups(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	groups := make([]iam.Group, len(resp.Groups))
-	for i, g := range resp.Groups {
-		groups[i] = *convertProtoToGroup(g)
-	}
-
-	return groups, nil
-}
-
 func (c *GRPCClient) CreateRole(ctx context.Context, tenantID, id, name, description string, permissions []string) (*iam.Role, error) {
 	req := &iampb.CreateRoleRequest{
 		TenantId:    tenantID,
@@ -850,7 +728,6 @@ func convertProtoToUser(pb *iampb.User) *iam.User {
 		Email:    pb.Email,
 		Name:     pb.Name,
 		Roles:    pb.Roles,
-		Groups:   pb.Groups,
 	}
 
 	if pb.CreatedAt != nil {
@@ -865,25 +742,6 @@ func convertProtoToUser(pb *iampb.User) *iam.User {
 	}
 
 	return u
-}
-
-func convertProtoToGroup(pb *iampb.Group) *iam.Group {
-	g := &iam.Group{
-		ID:          pb.Id,
-		TenantID:    pb.TenantId,
-		Name:        pb.Name,
-		Description: pb.Description,
-		Members:     pb.Members,
-	}
-
-	if pb.CreatedAt != nil {
-		g.Created = pb.CreatedAt.AsTime()
-	}
-	if pb.UpdatedAt != nil {
-		g.Updated = pb.UpdatedAt.AsTime()
-	}
-
-	return g
 }
 
 func convertProtoToRole(pb *iampb.Role) *iam.Role {
@@ -1161,75 +1019,6 @@ func (c *QUICClient) ListUsers(ctx context.Context, tenantID string) ([]iam.User
 	return convertQUICResponseToUserList(resp)
 }
 
-func (c *QUICClient) CreateGroup(ctx context.Context, tenantID, id, name, description string) (*iam.Group, error) {
-	req := map[string]interface{}{
-		"tenant_id":   tenantID,
-		"id":          id,
-		"name":        name,
-		"description": description,
-	}
-
-	resp, err := c.transport.Request(ctx, "IAM.Group", "Create", req)
-	if err != nil {
-		return nil, err
-	}
-
-	return convertQUICResponseToGroup(resp)
-}
-
-func (c *QUICClient) GetGroup(ctx context.Context, tenantID, groupID string) (*iam.Group, error) {
-	req := map[string]interface{}{
-		"tenant_id": tenantID,
-		"group_id":  groupID,
-	}
-
-	resp, err := c.transport.Request(ctx, "IAM.Group", "Get", req)
-	if err != nil {
-		return nil, err
-	}
-
-	return convertQUICResponseToGroup(resp)
-}
-
-func (c *QUICClient) UpdateGroup(ctx context.Context, tenantID, groupID, name, description string) (*iam.Group, error) {
-	req := map[string]interface{}{
-		"tenant_id":   tenantID,
-		"group_id":    groupID,
-		"name":        name,
-		"description": description,
-	}
-
-	resp, err := c.transport.Request(ctx, "IAM.Group", "Update", req)
-	if err != nil {
-		return nil, err
-	}
-
-	return convertQUICResponseToGroup(resp)
-}
-
-func (c *QUICClient) DeleteGroup(ctx context.Context, tenantID, groupID string) error {
-	req := map[string]interface{}{
-		"tenant_id": tenantID,
-		"group_id":  groupID,
-	}
-
-	_, err := c.transport.Request(ctx, "IAM.Group", "Delete", req)
-	return err
-}
-
-func (c *QUICClient) ListGroups(ctx context.Context, tenantID string) ([]iam.Group, error) {
-	req := map[string]interface{}{
-		"tenant_id": tenantID,
-	}
-
-	resp, err := c.transport.Request(ctx, "IAM.Group", "List", req)
-	if err != nil {
-		return nil, err
-	}
-
-	return convertQUICResponseToGroupList(resp)
-}
-
 func (c *QUICClient) CreateRole(ctx context.Context, tenantID, id, name, description string, permissions []string) (*iam.Role, error) {
 	req := map[string]interface{}{
 		"tenant_id":   tenantID,
@@ -1483,21 +1272,6 @@ func (c *EmbeddedClient) DeleteUser(ctx context.Context, tenantID, userID string
 func (c *EmbeddedClient) ListUsers(ctx context.Context, tenantID string) ([]iam.User, error) {
 	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
-func (c *EmbeddedClient) CreateGroup(ctx context.Context, tenantID, id, name, description string) (*iam.Group, error) {
-	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
-}
-func (c *EmbeddedClient) GetGroup(ctx context.Context, tenantID, groupID string) (*iam.Group, error) {
-	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
-}
-func (c *EmbeddedClient) UpdateGroup(ctx context.Context, tenantID, groupID, name, description string) (*iam.Group, error) {
-	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
-}
-func (c *EmbeddedClient) DeleteGroup(ctx context.Context, tenantID, groupID string) error {
-	return &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
-}
-func (c *EmbeddedClient) ListGroups(ctx context.Context, tenantID string) ([]iam.Group, error) {
-	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
-}
 func (c *EmbeddedClient) CreateRole(ctx context.Context, tenantID, id, name, description string, permissions []string) (*iam.Role, error) {
 	return nil, &qberrors.MessageError{Message: "embedded IAM requires local server - skipped in integration tests"}
 }
@@ -1652,65 +1426,6 @@ func mapToUserList(data map[string]interface{}) ([]iam.User, error) {
 		}
 	}
 	return users, nil
-}
-
-func mapToGroup(data map[string]interface{}) (*iam.Group, error) {
-	// Check for nested group field (server response format: {group: {...}, timestamp: "..."})
-	if groupData, ok := data["group"].(map[string]interface{}); ok {
-		data = groupData
-	}
-
-	group := &iam.Group{}
-	if id, ok := data["id"].(string); ok {
-		group.ID = id
-	}
-	if tenantID, ok := data["tenant_id"].(string); ok {
-		group.TenantID = tenantID
-	}
-	if name, ok := data["name"].(string); ok {
-		group.Name = name
-	}
-	if desc, ok := data["description"].(string); ok {
-		group.Description = desc
-	}
-	// Parse timestamps - handle both "created"/"updated" and "created_at"/"updated_at" field names
-	if created, ok := data["created"].(string); ok {
-		if t, err := time.Parse(time.RFC3339, created); err == nil {
-			group.Created = t
-		}
-	} else if created, ok := data["created_at"].(string); ok {
-		if t, err := time.Parse(time.RFC3339, created); err == nil {
-			group.Created = t
-		}
-	}
-	if updated, ok := data["updated"].(string); ok {
-		if t, err := time.Parse(time.RFC3339, updated); err == nil {
-			group.Updated = t
-		}
-	} else if updated, ok := data["updated_at"].(string); ok {
-		if t, err := time.Parse(time.RFC3339, updated); err == nil {
-			group.Updated = t
-		}
-	}
-	return group, nil
-}
-
-func mapToGroupList(data map[string]interface{}) ([]iam.Group, error) {
-	groupsRaw, ok := data["groups"].([]interface{})
-	if !ok {
-		return []iam.Group{}, nil
-	}
-	groups := make([]iam.Group, 0, len(groupsRaw))
-	for _, g := range groupsRaw {
-		if gm, ok := g.(map[string]interface{}); ok {
-			group, err := mapToGroup(gm)
-			if err != nil {
-				continue
-			}
-			groups = append(groups, *group)
-		}
-	}
-	return groups, nil
 }
 
 func mapToRole(data map[string]interface{}) (*iam.Role, error) {
@@ -1875,22 +1590,6 @@ func convertQUICResponseToUserList(resp interface{}) ([]iam.User, error) {
 		return nil, &qberrors.MessageError{Message: "invalid response type"}
 	}
 	return mapToUserList(data)
-}
-
-func convertQUICResponseToGroup(resp interface{}) (*iam.Group, error) {
-	data, ok := resp.(map[string]interface{})
-	if !ok {
-		return nil, &qberrors.MessageError{Message: "invalid response type"}
-	}
-	return mapToGroup(data)
-}
-
-func convertQUICResponseToGroupList(resp interface{}) ([]iam.Group, error) {
-	data, ok := resp.(map[string]interface{})
-	if !ok {
-		return nil, &qberrors.MessageError{Message: "invalid response type"}
-	}
-	return mapToGroupList(data)
 }
 
 func convertQUICResponseToRole(resp interface{}) (*iam.Role, error) {
@@ -2152,81 +1851,6 @@ func TestUserCRUD_AllProtocols(t *testing.T) {
 				// Verify deletion
 				_, err = client.GetUser(ctx, tenantID, userID)
 				assert.Error(t, err, "Deleted user should not be found")
-			})
-		})
-	}
-}
-
-// TestGroupCRUD_AllProtocols tests group CRUD operations across all protocols.
-func TestGroupCRUD_AllProtocols(t *testing.T) {
-	cluster := setupTestCluster(t)
-	defer cluster.Close()
-
-	for _, protocol := range allProtocols() {
-		t.Run(string(protocol), func(t *testing.T) {
-			client := requireProtocolClient(t, protocol, cluster)
-			defer client.Close()
-
-			ctx := context.Background()
-			tenantID := fmt.Sprintf("tenant-group-%s-%d", strings.ToLower(string(protocol)), time.Now().UnixNano())
-
-			// Setup: Create tenant
-			_, err := client.CreateTenant(ctx, tenantID, "Group Test Tenant", nil)
-			require.NoError(t, err)
-			defer client.DeleteTenant(ctx, tenantID)
-
-			groupID := fmt.Sprintf("group-%s-%d", strings.ToLower(string(protocol)), time.Now().UnixNano())
-
-			// Create
-			t.Run("Create", func(t *testing.T) {
-				group, err := client.CreateGroup(ctx, tenantID, groupID, "Test Group", "Test Description")
-				require.NoError(t, err, "Failed to create group via %s", protocol)
-				assert.Equal(t, groupID, group.ID)
-				assert.Equal(t, "Test Group", group.Name)
-				assert.Equal(t, "Test Description", group.Description)
-			})
-
-			// Get
-			t.Run("Get", func(t *testing.T) {
-				group, err := client.GetGroup(ctx, tenantID, groupID)
-				require.NoError(t, err, "Failed to get group via %s", protocol)
-				assert.Equal(t, groupID, group.ID)
-			})
-
-			// List
-			t.Run("List", func(t *testing.T) {
-				groups, err := client.ListGroups(ctx, tenantID)
-				require.NoError(t, err, "Failed to list groups via %s", protocol)
-
-				found := false
-				for _, group := range groups {
-					if group.ID == groupID {
-						found = true
-						break
-					}
-				}
-				assert.True(t, found, "Created group should be in list")
-			})
-
-			// Update
-			t.Run("Update", func(t *testing.T) {
-				group, err := client.UpdateGroup(ctx, tenantID, groupID, "Updated Group", "Updated Description")
-				require.NoError(t, err, "Failed to update group via %s", protocol)
-				assert.Equal(t, "Updated Group", group.Name)
-				assert.Equal(t, "Updated Description", group.Description)
-			})
-
-			// Delete
-			t.Run("Delete", func(t *testing.T) {
-				err := client.DeleteGroup(ctx, tenantID, groupID)
-				require.NoError(t, err, "Failed to delete group via %s", protocol)
-
-				// Verify deletion - gRPC/QUIC/Unix return NotFound error,
-				// REST may return success with an empty/zero-value group
-				group, err := client.GetGroup(ctx, tenantID, groupID)
-				if err == nil {
-					assert.Empty(t, group.ID, "Deleted group should have empty ID")
-				}
 			})
 		})
 	}

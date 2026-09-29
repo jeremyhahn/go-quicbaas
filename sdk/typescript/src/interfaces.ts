@@ -12,7 +12,8 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 import type {
-  AgentPageParams,
+  FleetNodePageParams,
+  AttentionPageParams,
   JobPageParams,
   PageResult,
   SessionPageParams,
@@ -26,6 +27,7 @@ import type { SchedulerClient } from './scheduler_sdk.js';
 import type { ProjectsClient } from './projects.js';
 import type { SdlcClient } from './sdlc.js';
 import type { AccountsClient } from './accounts.js';
+import type { AgentsClient } from './agents.js';
 import type { CAClient } from './ca.js';
 import type { TrustClient } from './trust.js';
 import type { CryptoClient } from './crypto.js';
@@ -36,8 +38,8 @@ import type {
   AgentBackendInfo,
   JobRunnerInfo,
   AuthTokenResponse,
-  DeployAgentResult,
-  DeployAgentSpec,
+  DeployFleetNodeResult,
+  DeployFleetNodeSpec,
   InferenceRequest,
   InferenceResponse,
   InferenceChunk,
@@ -61,7 +63,7 @@ import type {
   EmitAuthorizedResponse,
   VerifyAuthorizedRequest,
   VerifyAuthorizedResponse,
-  AgentRegistration,
+  FleetNode,
   SessionStatusResponse,
   CloseSessionRequest,
   CloseSessionResponse,
@@ -77,13 +79,20 @@ import type {
   CreateWorkflowResponse,
   DecomposeTaskRequest,
   DecomposeTaskResponse,
-  GetAgentRequest,
+  GetFleetNodeRequest,
   GetSecretResponse,
   GetSessionHistoryRequest,
   GetSessionConversationRequest,
   GetSessionConversationResponse,
   GetSpendReportRequest,
   GetSpendReportResponse,
+  GetTenantSpendPolicyRequest,
+  SetTenantSpendPolicyRequest,
+  TenantSpendPolicy,
+  GetCostSettingsRequest,
+  SetCostSettingsRequest,
+  CostSettings,
+  WorkerImageStatus,
   GetSessionHistoryResponse,
   GetWorkflowResponse,
   HealthCheckReport,
@@ -98,8 +107,8 @@ import type {
   KMSEncryptRequest,
   KMSEncryptResponse,
   KMSKey,
-  ListAgentsRequest,
-  ListAgentsResponse,
+  ListFleetNodesRequest,
+  ListFleetNodesResponse,
   ListKeysResponse,
   ListPoliciesResponse,
   ListRolesResponse,
@@ -112,13 +121,13 @@ import type {
   PromptSessionRequest,
   PromptSessionResponse,
   ReconcileRolesResponse,
-  RegisterAgentRequest,
-  RegisterAgentResponse,
-  RemoveAgentRequest,
-  DisableAgentRequest,
-  DisableAgentResponse,
-  EnableAgentRequest,
-  EnableAgentResponse,
+  RegisterFleetNodeRequest,
+  RegisterFleetNodeResponse,
+  RemoveFleetNodeRequest,
+  DisableFleetNodeRequest,
+  DisableFleetNodeResponse,
+  EnableFleetNodeRequest,
+  EnableFleetNodeResponse,
   RekeyRequest,
   RekeyResponse,
   RotateKeyResponse,
@@ -186,6 +195,8 @@ import type {
   UnsealRequest,
   UnsealResponse,
   WorkflowDefinition,
+  AttentionItem,
+  AttentionResolveRequest,
 } from './types.js';
 
 // ConnectionClient manages the transport-level connection to the QuicBaaS server.
@@ -243,12 +254,12 @@ export interface OrchestratorClient {
     page?: SessionPageParams,
   ): Promise<PageResult<SessionStatusResponse>>;
 
-  // listAgentsPage returns ONE PAGE of the fleet, most recently registered
+  // listFleetNodesPage returns ONE PAGE of the fleet, most recently registered
   // first.
-  listAgentsPage(
+  listFleetNodesPage(
     tenantID: string,
-    page?: AgentPageParams,
-  ): Promise<PageResult<AgentRegistration>>;
+    page?: FleetNodePageParams,
+  ): Promise<PageResult<FleetNode>>;
 
   // listWorkflowsPage returns ONE PAGE of the tenant's workflow definitions,
   // by name — a workflow carries no timestamp to order by. `page` carries
@@ -275,15 +286,16 @@ export interface OrchestratorClient {
   // cancelJob cancels a running orchestration job.
   cancelJob(tenantID: string, jobID: string): Promise<void>;
 
-  // listAgents returns the registered agents matching the filter criteria —
-  // ONE PAGE of them since paging arrived. Use listAgentsPage for the count.
-  listAgents(req: ListAgentsRequest): Promise<ListAgentsResponse>;
+  // listFleetNodes returns the registered fleet nodes matching the filter criteria —
+  // ONE PAGE of them since paging arrived. Use listFleetNodesPage for the count.
+  listFleetNodes(req: ListFleetNodesRequest): Promise<ListFleetNodesResponse>;
 
-  // getAgentStatus retrieves a single registered agent by ID.
-  getAgentStatus(req: GetAgentRequest): Promise<AgentRegistration>;
+  // getFleetNode retrieves a single registered fleet node by ID.
+  getFleetNode(req: GetFleetNodeRequest): Promise<FleetNode>;
 
-  // listSessions returns the tenant's sessions, optionally filtered — ONE
-  // PAGE of them since paging arrived. Use listSessionsPage for the count.
+  // listSessions returns the tenant's sessions in every state (closed and
+  // error included), optionally filtered by backend or status — ONE PAGE of
+  // them since paging arrived. Use listSessionsPage for the count.
   listSessions(req: ListSessionsRequest): Promise<ListSessionsResponse>;
 
   // listTasks returns the tenant's tasks — ONE PAGE of them, the server's
@@ -302,20 +314,25 @@ export interface OrchestratorClient {
   listRunners(): Promise<JobRunnerInfo[]>;
 
   // listBackendModels returns model names available on the named backend as
-  // seen from the specified agent. For Ollama this enumerates locally-pulled
+  // seen from the specified fleet node. For Ollama this enumerates locally-pulled
   // models; for ACP backends it returns a curated catalog.
-  // Maps to GET /api/v1/orchestrator/agents/{agentID}/backends/{backendName}/models
-  listBackendModels(agentID: string, backendName: string): Promise<string[]>;
+  // Maps to GET /api/v1/fleet/{nodeID}/backends/{backendName}/models
+  listBackendModels(nodeID: string, backendName: string): Promise<string[]>;
 
   // healthCheck performs a health check on all active agent sessions.
   healthCheck(): Promise<HealthCheckReport>;
 
   // subscribeJobEvents subscribes to real-time events for a running job.
   // Returns a cleanup function that unsubscribes and stops the event stream.
+  // onError, when given, is called once if the stream ends for good without
+  // being closed by the caller — the server refused it (a 403), answered
+  // something that is not an event stream, or the connection was given up
+  // on. A transport that cannot tell never calls it.
   subscribeJobEvents(
     tenantID: string,
     jobID: string,
     onEvent: (event: JobEvent) => void,
+    onError?: () => void,
   ): () => void;
 
   // spawnSession creates a new agent session.
@@ -351,6 +368,31 @@ export interface OrchestratorClient {
   // path — tenant/project/task/job/session/round — and a project's spend and
   // a job's spend are the same prefix scan at two depths.
   getSpendReport(req: GetSpendReportRequest): Promise<GetSpendReportResponse>;
+
+  // getTenantSpendPolicy returns the tenant's own spend limits and its live
+  // usage against each window; setTenantSpendPolicy replaces the limits.
+  getTenantSpendPolicy(req: GetTenantSpendPolicyRequest): Promise<TenantSpendPolicy>;
+  setTenantSpendPolicy(req: SetTenantSpendPolicyRequest): Promise<TenantSpendPolicy>;
+
+  // getCostSettings returns the tenant's runtime cost settings — the
+  // electricity rate and engine draws its local inference is costed from —
+  // and the rates in force; setCostSettings replaces them.
+  getCostSettings(req: GetCostSettingsRequest): Promise<CostSettings>;
+  setCostSettings(req: SetCostSettingsRequest): Promise<CostSettings>;
+
+  // getWorkerImageStatus reports the Software Factory worker image refresh:
+  // whether its loop serves on the node, whether a pass is running or queued,
+  // and what the last pass found (bound images and their CLI versions, the
+  // npm registry's latest) and did. A HOST verb: no tenant, and the caller
+  // needs the cross-tenant worker_images:read.
+  // Maps to GET /api/v1/sdlc/worker-image.
+  getWorkerImageStatus(): Promise<WorkerImageStatus>;
+
+  // refreshWorkerImage queues a full refresh pass — "check for updates now" —
+  // and returns the status it left behind; poll getWorkerImageStatus for the
+  // outcome. Needs the cross-tenant worker_images:refresh.
+  // Maps to POST /api/v1/sdlc/worker-image/refresh.
+  refreshWorkerImage(): Promise<WorkerImageStatus>;
 
   // subscribeSession returns an async iterable of session events.
   // When req.fromSequence > 0, the stream begins with a historical replay
@@ -401,32 +443,44 @@ export interface OrchestratorClient {
   // Maps to DELETE /api/v1/orchestrator/tasks/:taskID
   deleteTask(req: DeleteTaskRequest): Promise<DeleteTaskResponse>;
 
+  // listAttention returns one page of the attention inbox: every blocked
+  // task plus environmental alerts, faceted by project and kind — the
+  // factory's inbox for anything only an operator can clear.
+  // Maps to GET /api/v1/orchestrator/attention
+  listAttention(tenantID: string, page?: AttentionPageParams): Promise<PageResult<AttentionItem>>;
+
+  // resolveAttention applies an operator's decision to one blocked task: the
+  // ruling is posted to the task's forge issue, then the task is readmitted
+  // (or, for close_as_done, completed without being readmitted).
+  // Maps to POST /api/v1/orchestrator/attention/:taskID/resolve
+  resolveAttention(req: AttentionResolveRequest): Promise<AttentionItem>;
+
   // decomposeTask asks the orchestrator to decompose a task into sub-tasks.
   // Maps to POST /api/v1/orchestrator/tasks/:taskID/decompose
   decomposeTask(req: DecomposeTaskRequest): Promise<DecomposeTaskResponse>;
 
-  // registerAgent registers a new agent daemon with the fleet.
-  // Maps to POST /api/v1/orchestrator/agents
-  registerAgent(req: RegisterAgentRequest): Promise<RegisterAgentResponse>;
+  // registerFleetNode registers a new node with the fleet.
+  // Maps to POST /api/v1/fleet
+  registerFleetNode(req: RegisterFleetNodeRequest): Promise<RegisterFleetNodeResponse>;
 
-  // removeAgent removes a registered agent from the fleet.
-  // Maps to DELETE /api/v1/orchestrator/agents/:agentID?tenant_id=<tenantID>
-  removeAgent(req: RemoveAgentRequest): Promise<void>;
+  // removeFleetNode removes a registered node from the fleet.
+  // Maps to DELETE /api/v1/fleet/:nodeID?tenant_id=<tenantID>
+  removeFleetNode(req: RemoveFleetNodeRequest): Promise<void>;
 
-  // disableAgent administratively disables an agent globally.
-  // Maps to POST /api/v1/agents/:agentID/disable?tenant_id=<tenantID>
-  disableAgent(req: DisableAgentRequest): Promise<DisableAgentResponse>;
+  // disableFleetNode administratively disables a fleet node globally.
+  // Maps to POST /api/v1/fleet/:nodeID/disable?tenant_id=<tenantID>
+  disableFleetNode(req: DisableFleetNodeRequest): Promise<DisableFleetNodeResponse>;
 
-  // enableAgent re-activates a previously disabled agent.
-  // Maps to POST /api/v1/agents/:agentID/enable?tenant_id=<tenantID>
-  enableAgent(req: EnableAgentRequest): Promise<EnableAgentResponse>;
+  // enableFleetNode re-activates a previously disabled fleet node.
+  // Maps to POST /api/v1/fleet/:nodeID/enable?tenant_id=<tenantID>
+  enableFleetNode(req: EnableFleetNodeRequest): Promise<EnableFleetNodeResponse>;
 
-  // deployAgent provisions a QuicBaaS agent daemon on a remote host over SSH.
+  // deployFleetNode provisions a QuicBaaS fleet node daemon on a remote host over SSH.
   //
   // This operation is only supported by the Wails (desktop) transport. Every
   // other transport rejects the call with DeployNotSupportedError so
   // operators know to invoke the CLI or the desktop app instead.
-  deployAgent(spec: DeployAgentSpec): Promise<DeployAgentResult>;
+  deployFleetNode(spec: DeployFleetNodeSpec): Promise<DeployFleetNodeResult>;
 
   // inference runs a stateless fleet-routed prompt against a named backend
   // without requiring a prior session spawn. Returns the aggregated response.
@@ -728,7 +782,8 @@ export interface ObjectsClient {
 export interface UpdateUserRequest {
   email?: string;
   display_name?: string;
-  enabled?: boolean;
+  /** lifecycle transitions the account; the server refuses an illegal move. */
+  lifecycle?: import('./types.js').UserLifecycle;
   auth_methods?: string[];
 }
 
@@ -1224,7 +1279,7 @@ export interface SSHKeysClient {
 // attacks during SSH connections. Pins are scoped to (scope, owner) pairs.
 // Paths: /api/v1/ssh/known-hosts
 export interface SSHKnownHostsClient {
-  // add pins a host-key fingerprint. Maps to POST /api/v1/ssh/known-hosts.
+  // add pins a host key. Maps to POST /api/v1/ssh/known-hosts.
   add(req: AddSSHPinRequest): Promise<void>;
 
   // list enumerates pinned host keys, optionally filtered by scope/owner.
@@ -1291,6 +1346,11 @@ export interface Client {
    * OpenAI/Codex, OpenCode) an agent session can be spawned against.
    */
   readonly accounts: AccountsClient;
+  /**
+   * agents manages the tenant's AI Agents — named runtime + model + provider
+   * that role slots reference — and the pools slots fail over along.
+   */
+  readonly agents: AgentsClient;
   readonly iam: IAMClient;
   readonly kms: KMSClient;
   readonly secrets: SecretsClient;

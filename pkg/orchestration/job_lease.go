@@ -169,6 +169,20 @@ type JobLease struct {
 	// of them to ask after a slot frees take it (see HoldsSlot).
 	AwaitingSlot bool `json:"awaiting_slot,omitempty"`
 
+	// Dormant marks a lease whose job is waiting on something outside itself
+	// and runs NO WORKER at all: no container and no model session. It is
+	// set in a state its runner declares off the project budget
+	// (JobStateSpec.OffProjectBudget) — an sdlc job in reviewing, whose
+	// container is closed on entry and respawned only if the review asks for
+	// another round (go-quicbaas#938).
+	//
+	// IT IS NOT OffBudget. A triage or review job is off the PROJECT budget
+	// for its whole life, but it runs a container and a model session while
+	// it does; the fleet and backend axes must go on counting it. A dormant
+	// lease holds nothing on any axis, so those two stop counting it as well
+	// (go-quicbaas#1036). See HoldsWorker and ClaimsWorker.
+	Dormant bool `json:"dormant,omitempty"`
+
 	// Released marks a lease the holder gave up. The record stays; a reader
 	// finds a released lease, never a missing one.
 	Released bool `json:"released,omitempty"`
@@ -216,6 +230,33 @@ func (l *JobLease) CountsAgainstBudget(now time.Time, ttl time.Duration) bool {
 // queue (CountsAgainstBudget).
 func (l *JobLease) HoldsSlot(now time.Time, ttl time.Duration) bool {
 	return l != nil && !l.OffBudget && l.Live(now, ttl)
+}
+
+// HoldsWorker reports whether this lease's job is running a worker — a
+// container or a model session — at now: live and not dormant.
+//
+// It is what a dormant job WAKING is counted against on the fleet and backend
+// axes, the counterpart of HoldsSlot on the project axis: a job queued for a
+// worker must not be refused by another job queued beside it.
+func (l *JobLease) HoldsWorker(now time.Time, ttl time.Duration) bool {
+	return l != nil && !l.Dormant && l.Live(now, ttl)
+}
+
+// ClaimsWorker reports whether this lease occupies a worker at now on the
+// fleet and backend axes: it holds one, or it is dormant and queued for one
+// (AwaitingSlot).
+//
+// IT IS THE ONE ANSWER THE FLEET CHECK, THE BACKEND CHECK AND THE ADMISSION
+// PLAN'S FLEET COUNT all give, so a job parked in reviewing is off all three
+// (go-quicbaas#1036) and a triage or review job, which runs a container, is on
+// all three (owner ruling, 2026-09-25). Queued demand counts for the same reason it does on
+// the project axis: without it, new work takes every worker the moment it
+// frees and the waking round waits for ever.
+func (l *JobLease) ClaimsWorker(now time.Time, ttl time.Duration) bool {
+	if l == nil || !l.Live(now, ttl) {
+		return false
+	}
+	return !l.Dormant || l.AwaitingSlot
 }
 
 // Stale reports whether the heartbeat is older than ttl at now. A released
@@ -358,11 +399,12 @@ type JobLeaseStore interface {
 	// end the work of whoever does.
 	Release(ctx context.Context, lease *JobLease) error
 
-	// Rebudget writes lease.OffBudget and lease.AwaitingSlot onto the record
-	// this job holds, moving it off or back onto its project's budget without
-	// giving up the lease. A JobSupersededError means another job holds the
-	// record; a released record is left alone. A capacity decorator refuses a
-	// move BACK ONTO the budget the project has no slot for.
+	// Rebudget writes lease.OffBudget, lease.AwaitingSlot and lease.Dormant
+	// onto the record this job holds, moving it off or back onto its
+	// project's budget without giving up the lease. A JobSupersededError
+	// means another job holds the record; a released record is left alone. A
+	// capacity decorator refuses a move BACK ONTO the budget — or, for a
+	// dormant job, back onto a worker — that its axis has no room for.
 	Rebudget(ctx context.Context, lease *JobLease) error
 
 	// Get reads the lease for one unit of work.
@@ -522,6 +564,7 @@ func rebudgetRewrite(lease *JobLease) leaseRewrite {
 		next := *held
 		next.OffBudget = lease.OffBudget
 		next.AwaitingSlot = lease.AwaitingSlot
+		next.Dormant = lease.Dormant
 		next.HeartbeatAt = now.UnixNano()
 		return &next, true, nil
 	}
@@ -976,14 +1019,38 @@ func (s *fleetCapacityJobLeaseStore) Acquire(ctx context.Context, lease *JobLeas
 	if err := lease.validate(); err != nil {
 		return err
 	}
-	if err := s.admit(ctx, lease); err != nil {
-		return err
+	if !lease.Dormant {
+		if err := s.admit(ctx, lease, (*JobLease).ClaimsWorker); err != nil {
+			return err
+		}
 	}
 	return s.JobLeaseStore.Acquire(ctx, lease)
 }
 
-// admit compares the deployment's live leases against its capacity.
-func (s *fleetCapacityJobLeaseStore) admit(ctx context.Context, lease *JobLease) error {
+// Rebudget implements JobLeaseStore.
+//
+// ONLY A DORMANT JOB WAKING IS ADMITTED. Going dormant frees a worker and is
+// never refused. Waking is counted against the workers other jobs HOLD, not
+// the queue, for the reason projectCapacityJobLeaseStore.Rebudget gives: the
+// job asking may itself be queued (AwaitingSlot).
+func (s *fleetCapacityJobLeaseStore) Rebudget(ctx context.Context, lease *JobLease) error {
+	if err := lease.validate(); err != nil {
+		return err
+	}
+	if !lease.Dormant {
+		if err := s.admit(ctx, lease, (*JobLease).HoldsWorker); err != nil {
+			return err
+		}
+	}
+	return s.JobLeaseStore.Rebudget(ctx, lease)
+}
+
+// admit compares the deployment's leases that occupy a worker — by counts —
+// against its capacity.
+//
+// A DORMANT CONTENDER IS NEVER ASKED HERE: a job that runs no worker cannot be
+// the job that overruns the fleet.
+func (s *fleetCapacityJobLeaseStore) admit(ctx context.Context, lease *JobLease, counts func(*JobLease, time.Time, time.Duration) bool) error {
 	now := s.now()
 	capacity, err := s.capacity.FleetCapacity(ctx, now)
 	if err != nil {
@@ -1001,7 +1068,7 @@ func (s *fleetCapacityJobLeaseStore) admit(ctx context.Context, lease *JobLease)
 		// The lease being renewed is not a second holder of its own slot. The
 		// project check makes the same exclusion for the same reason: a
 		// heartbeat that counted itself would refuse the holder at the limit.
-		if other != nil && other.JobID != lease.JobID && other.Live(now, s.ttl) {
+		if other != nil && other.JobID != lease.JobID && counts(other, now, s.ttl) {
 			live++
 		}
 	}

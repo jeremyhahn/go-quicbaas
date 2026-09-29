@@ -60,7 +60,6 @@ func TestIAMCreateUserRequestValidate(t *testing.T) {
 				Name:       "Test User",
 				Username:   "testuser",
 				Roles:      []string{"admin"},
-				Groups:     []string{"engineering"},
 				Attributes: map[string]string{"dept": "engineering"},
 			},
 			wantErr: false,
@@ -133,115 +132,6 @@ func TestIAMUpdateUserRequestValidate(t *testing.T) {
 		{
 			name:    "valid request with name update",
 			req:     &IAMUpdateUserRequest{TenantID: "tenant-1", UserID: "user-1", Name: strPtr("New Name")},
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.req.Validate()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
-			}
-			if err != nil && tt.errMsg != "" && err.Error() != tt.errMsg {
-				t.Errorf("Validate() error = %v, want %v", err.Error(), tt.errMsg)
-			}
-		})
-	}
-}
-
-// TestCreateGroupRequestValidate tests CreateGroupRequest validation.
-func TestCreateGroupRequestValidate(t *testing.T) {
-	tests := []struct {
-		name    string
-		req     *CreateGroupRequest
-		wantErr bool
-		errMsg  string
-	}{
-		{
-			name:    "missing tenant_id",
-			req:     &CreateGroupRequest{Name: "Engineering"},
-			wantErr: true,
-			errMsg:  "tenant_id is required",
-		},
-		{
-			name:    "missing name",
-			req:     &CreateGroupRequest{TenantID: "tenant-1"},
-			wantErr: true,
-			errMsg:  "name is required",
-		},
-		{
-			name:    "whitespace only name",
-			req:     &CreateGroupRequest{TenantID: "tenant-1", Name: "   "},
-			wantErr: true,
-			errMsg:  "name cannot be empty or whitespace",
-		},
-		{
-			name:    "valid request",
-			req:     &CreateGroupRequest{TenantID: "tenant-1", Name: "Engineering"},
-			wantErr: false,
-		},
-		{
-			name: "valid request with all fields",
-			req: &CreateGroupRequest{
-				TenantID:    "tenant-1",
-				Name:        "Engineering",
-				Description: "Engineering team",
-				Members:     []string{"user-1", "user-2"},
-			},
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.req.Validate()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
-			}
-			if err != nil && tt.errMsg != "" && err.Error() != tt.errMsg {
-				t.Errorf("Validate() error = %v, want %v", err.Error(), tt.errMsg)
-			}
-		})
-	}
-}
-
-// TestUpdateGroupRequestValidate tests UpdateGroupRequest validation.
-func TestUpdateGroupRequestValidate(t *testing.T) {
-	strPtr := func(s string) *string { return &s }
-
-	tests := []struct {
-		name    string
-		req     *UpdateGroupRequest
-		wantErr bool
-		errMsg  string
-	}{
-		{
-			name:    "missing tenant_id",
-			req:     &UpdateGroupRequest{GroupID: "group-1"},
-			wantErr: true,
-			errMsg:  "tenant_id is required",
-		},
-		{
-			name:    "missing group_id",
-			req:     &UpdateGroupRequest{TenantID: "tenant-1"},
-			wantErr: true,
-			errMsg:  "group_id is required",
-		},
-		{
-			name:    "whitespace only name",
-			req:     &UpdateGroupRequest{TenantID: "tenant-1", GroupID: "group-1", Name: strPtr("   ")},
-			wantErr: true,
-			errMsg:  "name cannot be empty or whitespace",
-		},
-		{
-			name:    "valid request with no updates",
-			req:     &UpdateGroupRequest{TenantID: "tenant-1", GroupID: "group-1"},
-			wantErr: false,
-		},
-		{
-			name:    "valid request with name update",
-			req:     &UpdateGroupRequest{TenantID: "tenant-1", GroupID: "group-1", Name: strPtr("New Name")},
 			wantErr: false,
 		},
 	}

@@ -15,6 +15,7 @@ package orchestration
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -162,6 +163,13 @@ type JobRun struct {
 	abortCause atomic.Pointer[abortCause]
 	finished   atomic.Bool
 
+	// leaseSettled is closed once the run's lease question is answered:
+	// taken, refused, or never asked because the run ended first. Job
+	// recovery waits on it so the task dispatcher never sweeps a resumed
+	// job's task before the lease that protects it exists.
+	leaseSettled     chan struct{}
+	leaseSettledOnce sync.Once
+
 	// The terminal failure, classified once so the status carries a class
 	// rather than prose.
 	failureClass   string
@@ -208,6 +216,9 @@ type JobRun struct {
 	// had one, the engine's otherwise.
 	announced atomic.Value // JobState
 
+	// coalesced counts the events a full stream displaced; see publish.
+	coalesced atomic.Int64
+
 	// entered is set by the first SetState. UseHooks is refused after it:
 	// a hook set installed once a moment has already passed would silently
 	// skip that moment.
@@ -242,7 +253,7 @@ type JobRun struct {
 	stageMu sync.Mutex
 	stages  []JobStageRecord
 
-	// agentID is the fleet agent the run's sessions were dispatched to. It
+	// agentID is the fleet node the run's sessions were dispatched to. It
 	// is atomic because Spawn runs on the loop's goroutine while a status
 	// poll reads the run from another.
 	agentID atomic.Value // string
@@ -297,6 +308,7 @@ func newJobRun(cfg JobRunConfig) *JobRun {
 		Logger:            cfg.Logger,
 		CostTracker:       cfg.CostTracker,
 		events:            make(chan JobEvent, defaultEventBufferSize),
+		leaseSettled:      make(chan struct{}),
 		persistFn:         cfg.PersistFn,
 		storeFn:           cfg.StoreFn,
 		auditFn:           cfg.AuditFn,
@@ -447,6 +459,12 @@ func (r *JobRun) Fault() EnvironmentFault {
 // verifies nothing and must not erase the round before it.
 func (r *JobRun) Verify(ctx context.Context, criteria []ReviewCriterion) ([]ValidationResult, bool, error) {
 	results, passed, err := r.Validators().RunPipeline(ctx, r.Context(), criteria)
+	// Each result keeps its tail: it is persisted on the job, and runners
+	// quote it back to the agent as review feedback. See
+	// MaxValidationTextBytes.
+	for i, result := range results {
+		results[i] = result.bounded()
+	}
 	if len(results) > 0 {
 		r.verifyMu.Lock()
 		r.verification = append([]ValidationResult(nil), results...)
@@ -578,6 +596,7 @@ func (r *JobRun) snapshot(state JobState) *JobStatus {
 		WorkflowName: r.workflowName(),
 		TaskID:       r.Config.TaskID,
 		Attempt:      r.Config.Attempt,
+		PromptAppend: r.Config.PromptAppend,
 		Node:         r.node,
 		HeartbeatAt:  r.heartbeatAt.Load(),
 		Stage:        string(r.stage),
@@ -706,8 +725,9 @@ func (r *JobRun) workflowName() string {
 // Events and the audit trail
 // =============================================================================
 
-// Emit announces a state change on the event stream. Events are dropped when
-// the buffer is full: a slow subscriber must not hold the job.
+// Emit announces a state change on the event stream. A full stream makes room
+// by coalescing its oldest events (see publish): a slow subscriber must not
+// hold the job, and must not lose the newest event either.
 func (r *JobRun) Emit(state JobState, message string) {
 	r.announced.Store(state)
 	r.publish(JobEvent{
@@ -731,13 +751,52 @@ func (r *JobRun) emitTransition(state JobState) {
 	r.Emit(state, "entering state "+string(state))
 }
 
-// publish puts one event on the stream, dropping it when the buffer is full.
+// JobEventMetadataCoalesced is the JobEvent.Metadata key carrying how many
+// older events the stream had displaced, in total, when this event was put on
+// it.
+const JobEventMetadataCoalesced = "coalesced_events"
+
+// publish puts one event on the stream, never blocking the job.
+//
+// A FULL STREAM COALESCES; IT DOES NOT DROP THE NEW EVENT. The oldest buffered
+// event makes room, and the event that displaced it carries the running count
+// under JobEventMetadataCoalesced, so a subscriber knows exactly how much of
+// the stream it missed and still reads the newest state. The old behaviour
+// kept the stale events and threw away the new one: a delivery looping on
+// its merge train logged "event channel full, dropping event" for every one
+// of seventy-three ejections, and every one was lost (X15, 2026-09-25). The
+// job's audit trail, not this stream, is the durable record.
+//
+// The first displacement in a run is logged; the count carries the rest.
 func (r *JobRun) publish(event JobEvent) {
-	select {
-	case r.events <- event:
-	default:
-		r.Logger.Warnf("job run: event channel full, dropping event: %s", event.Message)
+	for {
+		select {
+		case r.events <- event:
+			return
+		default:
+		}
+		select {
+		case <-r.events:
+			total := r.coalesced.Add(1)
+			if total == 1 {
+				r.Logger.Warnf("job run %s: event stream full, coalescing its oldest events to deliver: %s", r.JobID, event.Message)
+			}
+			event.Metadata = withCoalesced(event.Metadata, total)
+		default:
+			// A subscriber emptied the stream in between; the send is retried.
+		}
 	}
+}
+
+// withCoalesced returns a copy of metadata carrying the coalesced count, so
+// the caller's map is never written.
+func withCoalesced(metadata map[string]string, total int64) map[string]string {
+	next := make(map[string]string, len(metadata)+1)
+	for key, value := range metadata {
+		next[key] = value
+	}
+	next[JobEventMetadataCoalesced] = strconv.FormatInt(total, 10)
+	return next
 }
 
 // Audit records an event in the job's audit trail and calls the audit
@@ -788,7 +847,25 @@ func (r *JobRun) Spawn(ctx context.Context, req *SpawnSessionRequest) (*SpawnSes
 	if req.ProjectID == "" && r.Config != nil {
 		req.ProjectID = r.Config.ProjectID
 	}
-	ApplyWorkerSpawnEnvironment(req, r.Policy().AgentConfigDir)
+	// THE JOB'S RUN-TIME PROMPT MATERIAL REACHES EVERY SESSION IT SPAWNS,
+	// after whatever the spawning slot added, so the most specific content —
+	// the task's or the caller's — is read last. It goes on the job's trail
+	// once per spawn, by size, so the job page says what a session ran with.
+	if r.Config != nil {
+		req.PromptAppend = ComposePrompt(req.PromptAppend, r.Config.PromptAppend)
+	}
+	if req.PromptAppend != "" {
+		r.Audit("prompt:append", strconv.Itoa(len(req.PromptAppend))+" bytes appended to the session's prompt")
+	}
+	// A SPAWN NAMING AN AGENT DOES NOT KNOW ITS BACKEND YET, and the worker
+	// environment is decided per backend — so it is applied to each Agent the
+	// reference resolves to, as that Agent is tried.
+	configDir := r.Policy().AgentConfigDir
+	if req.AgentRef().IsZero() {
+		ApplyWorkerSpawnEnvironment(req, configDir)
+	} else {
+		req.prepareCandidate = func(candidate *SpawnSessionRequest) { ApplyWorkerSpawnEnvironment(candidate, configDir) }
+	}
 	// A LATER SESSION GOES WHERE THE CHECKOUT IS. The job's first named
 	// workspace was provisioned on one host and cloned into there; a round,
 	// a rolled-over session or a respawn after a restart continues that
@@ -800,6 +877,7 @@ func (r *JobRun) Spawn(ctx context.Context, req *SpawnSessionRequest) (*SpawnSes
 	if err != nil {
 		return nil, err
 	}
+	r.auditAgentFailovers(req, resp)
 	if resp != nil && resp.SessionID != "" {
 		r.trackSession(resp.SessionID)
 		r.RecordAgent(resp.AgentID)
@@ -814,6 +892,19 @@ func (r *JobRun) Spawn(ctx context.Context, req *SpawnSessionRequest) (*SpawnSes
 		}
 	}
 	return resp, nil
+}
+
+// auditAgentFailovers puts every Agent a pooled spawn passed over on the job's
+// own trail, so the job page says why its session runs where it does.
+func (r *JobRun) auditAgentFailovers(req *SpawnSessionRequest, resp *SpawnSessionResponse) {
+	if resp == nil || resp.ResolvedAgentID == "" {
+		return
+	}
+	ref := req.AgentRef().String()
+	for _, attempt := range resp.Failovers {
+		r.Audit("agent:failover", ref+": passed over "+attempt.AgentID+" ("+attempt.Reason+")")
+	}
+	r.Audit("agent:resolved", ref+": session runs as agent "+resp.ResolvedAgentID)
 }
 
 // Prompt sends one turn to a session the job holds.
@@ -835,7 +926,7 @@ func (r *JobRun) Prompt(ctx context.Context, req *PromptSessionRequest) (*Prompt
 		if r.Config != nil {
 			taskID = r.Config.TaskID
 		}
-		ctx = WithTurnAttribution(ctx, TurnAttribution{JobID: r.JobID, TaskID: taskID})
+		ctx = WithTurnAttribution(ctx, TurnAttribution{JobID: r.JobID, TaskID: taskID, Kind: r.Runner})
 	}
 	return r.Agents.PromptSession(ctx, req)
 }
@@ -859,9 +950,17 @@ func (r *JobRun) Exec(ctx context.Context, req *ExecSessionRequest) (*ExecResult
 }
 
 // Close releases one session the job holds.
+//
+// Closing the session the job's container runs in forgets the container too
+// (SetContainer), so nothing judging the job's work afterwards execs into a
+// container that is gone — the sdlc runner closes its worker for the whole of
+// reviewing and spawns a new one only if a round is asked for.
 func (r *JobRun) Close(ctx context.Context, sessionID string) {
 	if sessionID == "" {
 		return
+	}
+	if r.container != nil && r.container.SessionID == sessionID {
+		r.container = nil
 	}
 	r.untrackSession(sessionID)
 	if _, err := r.Agents.CloseSession(ctx, &CloseSessionRequest{SessionID: sessionID}); err != nil {
@@ -1024,14 +1123,14 @@ func (r *JobRun) stageHistory() []JobStageRecord {
 	return append([]JobStageRecord(nil), r.stages...)
 }
 
-// AgentID is the fleet agent the run's sessions were dispatched to, empty
+// AgentID is the fleet node the run's sessions were dispatched to, empty
 // until a spawn resolves one.
 func (r *JobRun) AgentID() string {
 	id, _ := r.agentID.Load().(string)
 	return id
 }
 
-// RecordAgent names the fleet agent the run's work was dispatched to. The
+// RecordAgent names the fleet node the run's work was dispatched to. The
 // FIRST answer wins: a run whose lead and worker land on different agents is
 // attributed to the one that took its work, and a later spawn on a second
 // agent must not silently retitle the whole job.
@@ -1338,4 +1437,18 @@ func (r *JobRun) recordFailure(err error) {
 // the job did not fail.
 func (r *JobRun) FailureClass() string {
 	return r.failureClass
+}
+
+// LeaseSettled is closed once the run has taken its lease, been refused one,
+// or ended before asking.
+func (r *JobRun) LeaseSettled() <-chan struct{} {
+	return r.leaseSettled
+}
+
+// settleLease closes LeaseSettled; every call after the first is a no-op.
+func (r *JobRun) settleLease() {
+	if r.leaseSettled == nil {
+		return
+	}
+	r.leaseSettledOnce.Do(func() { close(r.leaseSettled) })
 }

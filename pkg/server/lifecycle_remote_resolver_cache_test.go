@@ -34,25 +34,25 @@ import (
 // remoteDaemonReg builds a remote daemon registration with the given host and
 // id, serving the backends its capability set names. The primary is the first
 // one, exactly as a daemon's heartbeat reconciliation sets it (see
-// orchestration.reconcileAgentBackends).
-func remoteDaemonReg(id, host string, backends ...string) *orchestration.AgentRegistration {
+// orchestration.reconcileFleetNodeBackends).
+func remoteDaemonReg(id, host string, backends ...string) *orchestration.FleetNode {
 	if len(backends) == 0 {
 		backends = []string{"ollama"}
 	}
-	return &orchestration.AgentRegistration{
+	return &orchestration.FleetNode{
 		ID:           id,
 		Name:         id,
 		Host:         host,
 		Backend:      backends[0],
 		Capabilities: append([]string(nil), backends...),
-		Kind:         orchestration.AgentKindDaemon,
-		Status:       orchestration.AgentStatusIdle,
+		Kind:         orchestration.FleetNodeKindDaemon,
+		Status:       orchestration.FleetNodeStatusIdle,
 	}
 }
 
 // cachePool builds a pool over the given registrations with no embedded
 // dialers, so every lookup takes the remote-daemon construction path.
-func cachePool(regs ...*orchestration.AgentRegistration) *remoteBackendPool {
+func cachePool(regs ...*orchestration.FleetNode) *remoteBackendPool {
 	return &remoteBackendPool{
 		registry:    &strictMockRegistry{agents: regs},
 		centralCred: &OrchestratorDaemonClient{ClientID: "id", ClientSecret: "sec"},
@@ -72,7 +72,7 @@ func cacheCtx() context.Context {
 func remoteBackendOrFail(
 	t *testing.T,
 	pool *remoteBackendPool,
-	reg *orchestration.AgentRegistration,
+	reg *orchestration.FleetNode,
 	backend string,
 ) *orchestration.RemoteACPBackend {
 	t.Helper()
@@ -111,7 +111,7 @@ func TestBackendFor_CacheHit(t *testing.T) {
 func TestBackendFor_BackendsOnOneHostDoNotCollide(t *testing.T) {
 	t.Parallel()
 
-	reg := remoteDaemonReg("vm-host-4-id", "198.51.100.91:9091", "claude", "codex", "opencode")
+	reg := remoteDaemonReg("agent-04-id", "198.51.100.91:9091", "claude", "codex", "opencode")
 	pool := cachePool(reg)
 
 	backends := []string{"claude", "codex", "opencode"}
@@ -146,7 +146,7 @@ func TestBackendFor_BackendsOnOneHostDoNotCollide(t *testing.T) {
 
 // TestBackendFor_RefusesUnservedBackend is the bad-input twin: a registration
 // asked for a backend it does not serve is refused, not served by its primary.
-// The refusal is the typed NoMatchingAgentError the resolver already speaks,
+// The refusal is the typed NoMatchingFleetNodeError the resolver already speaks,
 // stashed on the context so the public API surfaces it rather than the request
 // falling through to a local backend.
 func TestBackendFor_RefusesUnservedBackend(t *testing.T) {
@@ -184,7 +184,7 @@ func TestBackendFor_RefusesUnservedBackend(t *testing.T) {
 }
 
 // TestBackendFor_StashesTheTypedRefusal pins the surfacing half of the refusal:
-// the caller gets the resolver's own NoMatchingAgentError rather than a silent
+// the caller gets the resolver's own NoMatchingFleetNodeError rather than a silent
 // (nil, false) that the dispatcher would read as "fall through to a local
 // backend" — which is how a wrongly-routed session used to start at all.
 func TestBackendFor_StashesTheTypedRefusal(t *testing.T) {
@@ -204,15 +204,15 @@ func TestBackendFor_StashesTheTypedRefusal(t *testing.T) {
 	if stashed == nil {
 		t.Fatal("the refusal must be stashed so the API can surface it, not dropped")
 	}
-	var noMatch *orchestration.NoMatchingAgentError
+	var noMatch *orchestration.NoMatchingFleetNodeError
 	if !errors.As(stashed, &noMatch) {
-		t.Fatalf("stashed error must be *NoMatchingAgentError, got %T: %v", stashed, stashed)
+		t.Fatalf("stashed error must be *NoMatchingFleetNodeError, got %T: %v", stashed, stashed)
 	}
 	if noMatch.Constraint != "backend" {
 		t.Errorf("constraint = %q, want %q", noMatch.Constraint, "backend")
 	}
-	if !errors.Is(stashed, orchestration.ErrNoMatchingAgent) {
-		t.Error("the refusal must unwrap to ErrNoMatchingAgent for the API's error mapping")
+	if !errors.Is(stashed, orchestration.ErrNoMatchingFleetNode) {
+		t.Error("the refusal must unwrap to ErrNoMatchingFleetNode for the API's error mapping")
 	}
 }
 
@@ -270,7 +270,7 @@ func TestBackendFor_StaleEvictionOnNewRegistration(t *testing.T) {
 // store landed.
 func newPooledRemoteBackend(
 	t *testing.T,
-	reg *orchestration.AgentRegistration,
+	reg *orchestration.FleetNode,
 	backend string,
 ) *orchestration.RemoteACPBackend {
 	t.Helper()

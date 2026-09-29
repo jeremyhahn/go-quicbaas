@@ -45,7 +45,7 @@ func TestStartJob_APublicTaskBoundStartHoldsItsAttempt(t *testing.T) {
 
 			seeded := seedUnboundTask(t, store, &Task{Status: tc.status, AttemptBudget: 3})
 			resp, err := svc.StartJob(ctx, &StartJobRequest{
-				TenantID: "acme", Description: "public", LeadBackend: "mock",
+				TenantID: "acme", Description: "public", routedBackend: "mock",
 				TaskID: seeded.ID, MaxIterations: 1,
 			})
 			if err != nil {
@@ -87,7 +87,7 @@ func TestStartJob_APublicStartOnATaskWithAnOpenAttemptIsRefused(t *testing.T) {
 	ctx := ContextWithTenant(context.Background(), "acme")
 
 	held := seedSpawnedTask(t, store, &Task{Status: TaskStatusInProgress, SpawnedJobID: "job-open", Attempts: 1})
-	_, err := svc.StartJob(ctx, &StartJobRequest{TenantID: "acme", Description: "second", LeadBackend: "mock", TaskID: held.ID})
+	_, err := svc.StartJob(ctx, &StartJobRequest{TenantID: "acme", Description: "second", routedBackend: "mock", TaskID: held.ID})
 	var heldErr *TaskAttemptHeldError
 	if !errors.As(err, &heldErr) || heldErr.OpenJobID != "job-open" || !errors.Is(err, ErrTaskAttemptHeld) {
 		t.Fatalf("want TaskAttemptHeldError naming job-open, got %v", err)
@@ -103,7 +103,7 @@ func TestStartJob_APublicStartOnATaskWithAnOpenAttemptIsRefused(t *testing.T) {
 	if err := store.BlockTask(ctx, "acme", parked.ID, TaskBlockKindBlocked, "parked"); err != nil {
 		t.Fatalf("BlockTask: %v", err)
 	}
-	_, err = svc.StartJob(ctx, &StartJobRequest{TenantID: "acme", Description: "parked", LeadBackend: "mock", TaskID: parked.ID})
+	_, err = svc.StartJob(ctx, &StartJobRequest{TenantID: "acme", Description: "parked", routedBackend: "mock", TaskID: parked.ID})
 	if !errors.Is(err, ErrTaskInvalidState) {
 		t.Fatalf("a start for a blocked task must be refused, got %v", err)
 	}
@@ -122,7 +122,7 @@ func TestStartJob_APublicStartThatFailsGivesTheBindingBack(t *testing.T) {
 
 			seeded := seedUnboundTask(t, store, &Task{Status: status})
 			_, err := svc.StartJob(ctx, &StartJobRequest{
-				TenantID: "acme", Description: "refused", LeadBackend: "mock",
+				TenantID: "acme", Description: "refused", routedBackend: "mock",
 				TaskID: seeded.ID, Runner: "no-such-runner",
 			})
 			if !errors.Is(err, ErrUnknownJobRunner) {
@@ -157,7 +157,7 @@ func TestBlockTask_ADelayedBlockLeavesTheReadmittedJobRunning(t *testing.T) {
 		t.Fatalf("ReadmitTask: %v", err)
 	}
 	resp, err := svc.StartJob(ctx, &StartJobRequest{
-		TenantID: "acme", Description: "readmitted", LeadBackend: "mock",
+		TenantID: "acme", Description: "readmitted", routedBackend: "mock",
 		TaskID: seeded.ID, MaxIterations: 1,
 	})
 	if err != nil {

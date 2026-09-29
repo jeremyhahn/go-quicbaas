@@ -176,9 +176,8 @@ func setupActivation(t *testing.T, mode activationWriteMode) (*activationFixture
 	}
 
 	identity := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  users,
-		GroupStorage: mem,
-		RoleStorage:  mem,
+		UserStorage: users,
+		RoleStorage: mem,
 	})
 
 	invites := iamtest.NewMemoryInviteStore()

@@ -98,7 +98,32 @@ func getJSON(ctx context.Context, url string, result interface{}) (*http.Respons
 type agentServiceWirer interface {
 	SetTaskStore(store orchestration.TaskStore)
 	SetTenantGuard(guard *orchestration.TenantGuard)
-	SetAgentRegistry(registry orchestration.AgentRegistry)
+	SetFleetRegistry(registry orchestration.FleetRegistry)
+	SetAgentDirectory(directory *orchestration.AgentDirectory)
+}
+
+// anyModel is a backend model catalog with no curated list, so the tenant
+// agent catalog accepts whatever model a test's Agent names.
+type anyModel struct{}
+
+func (anyModel) ListBackendModels(context.Context, string) ([]string, error) { return nil, nil }
+
+// ollamaLead defines, in tenantID's agent catalog, the lead Agent a job
+// leads with on the test Ollama model, and returns the reference a
+// StartJobRequest names it by.
+func ollamaLead(t *testing.T, svc orchestration.AgentService, tenantID string) orchestration.AgentRef {
+	t.Helper()
+	accessor, ok := svc.(orchestration.AgentDirectoryAccessor)
+	require.True(t, ok, "AgentService must expose its agent catalog")
+	directory := accessor.AgentDirectory()
+	require.NotNil(t, directory, "the agent catalog must be wired")
+	agent := &orchestration.Agent{
+		ID: "ollama-lead", Name: "Ollama lead", Roles: []orchestration.AgentRole{orchestration.AgentRoleLead},
+		Backend: "ollama", Model: env.ollamaModel,
+	}
+	_, err := directory.CreateAgent(context.Background(), tenantID, agent)
+	require.NoError(t, err, "define the ollama lead agent")
+	return orchestration.AgentRefTo(agent.ID)
 }
 
 // newAgentService creates a fully wired AgentService with an in-memory store,
@@ -136,8 +161,15 @@ func newAgentService(t *testing.T) orchestration.AgentService {
 	guard := orchestration.NewTenantGuard(logger)
 	wirer.SetTenantGuard(guard)
 
-	registry := orchestration.NewInMemoryAgentRegistry()
-	wirer.SetAgentRegistry(registry)
+	registry := orchestration.NewInMemoryFleetRegistry()
+	wirer.SetFleetRegistry(registry)
+
+	directory, err := orchestration.NewAgentDirectory(orchestration.AgentDirectoryConfig{
+		Store:  orchestration.NewInMemoryAgentCatalogStore(),
+		Models: anyModel{},
+	})
+	require.NoError(t, err, "failed to create the agent catalog")
+	wirer.SetAgentDirectory(directory)
 
 	return svc
 }

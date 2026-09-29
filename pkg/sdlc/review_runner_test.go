@@ -78,9 +78,7 @@ func newReviewRunnerRig(t *testing.T) *reviewRunnerRig {
 	store := newTestStore(t)
 	binding := testBinding()
 	binding.Reviewer = ReviewerConfig{
-		Backend: "codex", Model: "gpt-5-codex", Image: "reviewer:test",
-		Login: fakeReviewerLogin, TokenSecretRef: "reviewer-tok",
-		ReasoningEffort: "medium",
+		Agent: testReviewerAgent, Login: fakeReviewerLogin, TokenSecretRef: "reviewer-tok",
 	}
 	// The independence rule is on by default in testBinding, so the reviewer
 	// has to be recorded as a family the gate can tell from the worker's.
@@ -103,8 +101,9 @@ func newReviewRunnerRig(t *testing.T) *reviewRunnerRig {
 	forges := &fakeForges{forge: forge}
 	tokens := &fakeTokens{token: []byte("a-reviewer-api-token")}
 	signing := &fakeSigningAgent{}
-	runner, err := NewReviewRunner(ReviewRunnerConfig{
-		Bindings: store, Forges: forges, Tokens: tokens, Signing: signing,
+	runner, err := NewReviewRunner(ReviewRunnerConfig{Agents: testAgentCatalog(),
+		Bindings: store, Forges: forges, Trains: store, Tokens: tokens, Signing: signing,
+		Guard:       testRepoGuard(t),
 		SocketsRoot: testSocketsRoot(t),
 	})
 	if err != nil {
@@ -275,16 +274,11 @@ func TestReviewRunner_TheReviewerIsSpawnedFromTheBindingAndSignsNothing(t *testi
 		t.Fatalf("sessions = %d, want %d", rig.agents.sessionCount(), ReviewSessionCount)
 	}
 	spawn := rig.agents.spawns[0]
-	if spawn.Backend != "codex" || spawn.Model != "gpt-5-codex" || spawn.ContainerImage != "reviewer:test" {
-		t.Fatalf("the reviewer was not spawned from the binding: %+v", spawn)
+	if spawn.AgentID != testReviewerAgent || spawn.Role != orchestration.AgentRoleReview || spawn.Backend != "" {
+		t.Fatalf("the reviewer was not spawned as the seat's agent: %+v", spawn)
 	}
 	if spawn.SystemPrompt != ReviewerCharter() {
 		t.Fatal("the reviewer did not get the reviewer charter")
-	}
-	// THE BINDING'S EFFORT REACHES CODEX AS ITS CONFIG OVERRIDE, and nothing
-	// else on the command line changes for it.
-	if !slices.Contains(spawn.ExtraArgs, "model_reasoning_effort=\"medium\"") {
-		t.Fatalf("the reviewer's reasoning effort did not reach its spawn: %v", spawn.ExtraArgs)
 	}
 	// NOTHING RATIONS THE REVIEWER INSIDE ITS CONTAINER (go-quicbaas#927). Its
 	// whole job is reading a diff, and `git diff` is a command. The grant a
@@ -319,8 +313,8 @@ func TestReviewRunner_TheReviewerIsSpawnedFromTheBindingAndSignsNothing(t *testi
 func TestReviewRunner_RefusesAClaudeReviewer(t *testing.T) {
 	rig := newReviewRunnerRig(t)
 	rig.rebind(func(b *ProjectBinding) {
-		b.Worker.Backend, b.Worker.Model = "codex", "gpt-5-codex"
-		b.Reviewer.Backend, b.Reviewer.Model = "claude", "claude-opus-5"
+		b.Worker = orchestration.AgentRefTo(testCodexCoderAgent)
+		b.Reviewer.Agent = testClaudeReviewerAgent
 		b.Review.Reviewers[fakeReviewerLogin] = ModelFamilyAnthropic
 		// Independence OFF, to prove the refusal does not depend on it.
 		b.Review.RequireIndependentReviewer = false
@@ -331,8 +325,8 @@ func TestReviewRunner_RefusesAClaudeReviewer(t *testing.T) {
 	if !errors.As(err, &refused) {
 		t.Fatalf("want ReviewerFamilyRefusedError, got %v", err)
 	}
-	if refused.Backend != "claude" {
-		t.Errorf("Backend = %q, want claude", refused.Backend)
+	if refused.Agent != testClaudeReviewerAgent {
+		t.Errorf("Agent = %q, want %s", refused.Agent, testClaudeReviewerAgent)
 	}
 	if len(rig.agents.spawns) != 0 {
 		t.Errorf("a refused reviewer must not spawn: %d spawn(s)", len(rig.agents.spawns))
@@ -408,9 +402,9 @@ func TestEvaluateReviewGate_ADraftNeverClears(t *testing.T) {
 	// draft may not land.
 	in := GateInput{
 		Policy: gatePolicy(), PullRequestState: PullRequestOpen, HeadSHA: "h",
-		AuthorModelFamily: ModelFamilyAnthropic,
-		Reviews:           []ReviewRecord{approve("codex", ModelFamilyOpenAI, "h", 1)},
-		Checks:            []CheckRecord{green("ci", "h")},
+		AuthorModelFamilies: []string{ModelFamilyAnthropic},
+		Reviews:             []ReviewRecord{approve("codex", ModelFamilyOpenAI, "h", 1)},
+		Checks:              []CheckRecord{green("ci", "h")},
 	}
 	if got := EvaluateReviewGate(in); !got.Mergeable() {
 		t.Fatalf("the control case does not clear: %+v", got)
@@ -826,8 +820,9 @@ func TestReviewRunner_AReminderThatIsNeverAnsweredIsCancelledAtItsDeadline(t *te
 	// reminder carries a deadline of its own, and a reviewer that goes silent
 	// after being reminded fails the job instead of holding it open.
 	rig := newReviewRunnerRig(t)
-	runner, err := NewReviewRunner(ReviewRunnerConfig{
-		Bindings: rig.store, Forges: rig.forges, Tokens: rig.tokens, Signing: rig.signing,
+	runner, err := NewReviewRunner(ReviewRunnerConfig{Agents: testAgentCatalog(),
+		Bindings: rig.store, Forges: rig.forges, Trains: rig.store, Tokens: rig.tokens, Signing: rig.signing,
+		Guard:           testRepoGuard(t),
 		SocketsRoot:     testSocketsRoot(t),
 		RepromptTimeout: 50 * time.Millisecond,
 	})
@@ -949,7 +944,7 @@ func TestReviewStatuses_EveryVerdictMapsAndNoneDefaultsToGreen(t *testing.T) {
 			t.Fatalf("verdict %s has no status mapping", verdict)
 		}
 	}
-	run := &reviewRun{reviewer: ReviewerConfig{}}
+	run := &reviewRun{reviewer: ReviewerProfile{}}
 	if got := run.statusForVerdict("a-verdict-from-the-future", "body"); got.Status != CheckFailure {
 		t.Fatalf("an unmapped verdict published %s, want failure", got.Status)
 	}
@@ -968,7 +963,7 @@ func TestReviewStatuses_EveryVerdictMapsAndNoneDefaultsToGreen(t *testing.T) {
 // What makes pending safe is the floor's staleness bound, which is why these
 // two tests are a pair: see TestCheckRunPresent_StalePendingIsNotInFlight.
 func TestReviewStatuses_AVerdictlessReviewStaysRetriable(t *testing.T) {
-	run := &reviewRun{reviewer: ReviewerConfig{}}
+	run := &reviewRun{reviewer: ReviewerProfile{}}
 	for _, verdict := range []ReviewVerdict{VerdictComment, VerdictError} {
 		got := run.statusForVerdict(verdict, "read it")
 		if got.Status != CheckPending {
@@ -1017,9 +1012,9 @@ func TestEvaluateReviewGate_ALaterCommentDoesNotRetractARejection(t *testing.T) 
 
 	in := GateInput{
 		Policy: policy, PullRequestState: PullRequestOpen, HeadSHA: "h",
-		AuthorModelFamily: ModelFamilyAnthropic,
-		Reviews:           []ReviewRecord{rejection},
-		Checks:            []CheckRecord{green("ci", "h")},
+		AuthorModelFamilies: []string{ModelFamilyAnthropic},
+		Reviews:             []ReviewRecord{rejection},
+		Checks:              []CheckRecord{green("ci", "h")},
 	}
 	if got := EvaluateReviewGate(in); got.Reason != GateBlockedChangesRequested {
 		t.Fatalf("reason = %s, want %s", got.Reason, GateBlockedChangesRequested)
@@ -1087,8 +1082,11 @@ func TestReviewRunner_RefusesAProjectThatBindsNoReviewer(t *testing.T) {
 func TestReviewRunner_RefusesAReviewerFromTheAuthorsOwnFamily(t *testing.T) {
 	rig := newReviewRunnerRig(t)
 	rig.rebind(func(b *ProjectBinding) {
-		b.Reviewer.Backend = "claude"
-		b.Reviewer.Model = "claude-opus-5"
+		b.Reviewer.Agent = testClaudeReviewerAgent
+		// The fixture's stated family for this login is openai; a configured
+		// reviewer's family is derived from its Agent, so the statement goes
+		// with the Agent it described.
+		delete(b.Review.Reviewers, b.Reviewer.Login)
 	})
 	err := rig.run(41)
 	if !errors.Is(err, ErrReview) {
@@ -1170,20 +1168,22 @@ func TestNewReviewRunner_RefusesIncompleteWiring(t *testing.T) {
 	tokens := &fakeTokens{}
 	signing := &fakeSigningAgent{}
 	sockets := testSocketsRoot(t)
-	complete := ReviewRunnerConfig{
-		Bindings: store, Forges: forges, Tokens: tokens, Signing: signing, SocketsRoot: sockets,
+	complete := ReviewRunnerConfig{Agents: testAgentCatalog(),
+		Bindings: store, Forges: forges, Trains: store, Tokens: tokens, Signing: signing, Guard: testRepoGuard(t), SocketsRoot: sockets,
 	}
 	if _, err := NewReviewRunner(complete); err != nil {
 		t.Fatal(err)
 	}
 	for name, cfg := range map[string]ReviewRunnerConfig{
-		"bindings": {Forges: forges, Tokens: tokens, Signing: signing, SocketsRoot: sockets},
-		"forges":   {Bindings: store, Tokens: tokens, Signing: signing, SocketsRoot: sockets},
-		"tokens":   {Bindings: store, Forges: forges, Signing: signing, SocketsRoot: sockets},
+		"agents":   {Bindings: store, Forges: forges, Trains: store, Tokens: tokens, Signing: signing, Guard: testRepoGuard(t), SocketsRoot: sockets},
+		"bindings": {Agents: testAgentCatalog(), Forges: forges, Trains: store, Tokens: tokens, Signing: signing, Guard: testRepoGuard(t), SocketsRoot: sockets},
+		"forges":   {Agents: testAgentCatalog(), Bindings: store, Trains: store, Tokens: tokens, Signing: signing, Guard: testRepoGuard(t), SocketsRoot: sockets},
+		"trains":   {Agents: testAgentCatalog(), Bindings: store, Forges: forges, Tokens: tokens, Signing: signing, Guard: testRepoGuard(t), SocketsRoot: sockets},
+		"tokens":   {Agents: testAgentCatalog(), Bindings: store, Forges: forges, Trains: store, Signing: signing, Guard: testRepoGuard(t), SocketsRoot: sockets},
 		// The reviewer clones over whatever transport the project names, so
 		// an ssh remote needs an agent and a runner without one is refused
 		// here rather than inside a container (go-quicbaas#929).
-		"signing": {Bindings: store, Forges: forges, Tokens: tokens, SocketsRoot: sockets},
+		"signing": {Agents: testAgentCatalog(), Bindings: store, Forges: forges, Trains: store, Tokens: tokens, Guard: testRepoGuard(t), SocketsRoot: sockets},
 	} {
 		if _, err := NewReviewRunner(cfg); !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("%s nil accepted: %v", name, err)
@@ -1376,7 +1376,8 @@ func TestReviewRunner_RefusesAWorkspaceNoHostCanProvision(t *testing.T) {
 }
 
 // TestReviewRunner_NamesTheReviewWorkspaceForTheHead: the reviewer's spawn
-// names a workspace for the pull request and the head, and carries no path.
+// names a workspace for the pull request, the head and the reviewer, and
+// carries no path.
 func TestReviewRunner_NamesTheReviewWorkspaceForTheHead(t *testing.T) {
 	rig := newReviewRunnerRig(t)
 	rig.reviewerSays(reviewSaying("fine", ReviewCodeApprove))
@@ -1386,7 +1387,7 @@ func TestReviewRunner_NamesTheReviewWorkspaceForTheHead(t *testing.T) {
 	}
 	spawn := rig.agents.spawns[0]
 	if spawn.WorkDir != "" || spawn.Workspace == nil ||
-		spawn.Workspace.Key != "review-41-"+shortSHA(reviewHead) {
+		spawn.Workspace.Key != reviewWorkspaceKey(41, reviewHead, DefaultReviewerProfileName, fakeReviewerLogin) {
 		t.Fatalf("spawn = work_dir %q workspace %+v", spawn.WorkDir, spawn.Workspace)
 	}
 	provisioned := rig.agents.host.workspaces()
@@ -2184,5 +2185,117 @@ func TestTruncateForPrompt_SaysItCut(t *testing.T) {
 	got := truncateForPrompt(strings.Repeat("x", 200), 50)
 	if !strings.Contains(got, "truncated at 50 bytes") {
 		t.Fatalf("a cut value must say so, got %q", got)
+	}
+}
+
+// TestReviewRun_DecorateNamesTheReviewerSessionAsTheLead: the reviewer
+// session is the job's only session, so it is the job's lead. The job page
+// badges and links the lead; a review job that never named one rendered no
+// badge (go-quicbaas#863).
+func TestReviewRun_DecorateNamesTheReviewerSessionAsTheLead(t *testing.T) {
+	run := &reviewRun{}
+	run.decorate(nil)
+	status := &orchestration.JobStatus{}
+	run.decorate(status)
+	if len(status.SessionIDs) != 0 || status.LeadSessionID != "" {
+		t.Fatalf("a run with no session decorated one: %v lead=%q", status.SessionIDs, status.LeadSessionID)
+	}
+	run.sessionID = "reviewer-1"
+	run.decorate(status)
+	if len(status.SessionIDs) != 1 || status.SessionIDs[0] != "reviewer-1" {
+		t.Fatalf("session ids = %v", status.SessionIDs)
+	}
+	if status.LeadSessionID != "reviewer-1" {
+		t.Fatalf("lead session = %q, want the reviewer session", status.LeadSessionID)
+	}
+}
+
+// TestReviewRunner_ASeatWhoseAgentCannotReviewFailsOverToTheNext: seat order is
+// the failover chain. The default seat's Agent is rate-limited, so the review
+// runs as the next counting seat — its own Agent and its own forge identity —
+// and the switch is on the job's audit trail.
+func TestReviewRunner_ASeatWhoseAgentCannotReviewFailsOverToTheNext(t *testing.T) {
+	rig := newReviewRunnerRig(t)
+	rig.rebind(func(b *ProjectBinding) {
+		b.Reviewers = []ReviewerConfig{
+			{Name: "advisor", Agent: testQwenAgent, Login: "qwen-bot", TokenSecretRef: "qwen-tok"},
+			{Name: "backup", Agent: testBackupReviewerAgent, Login: "backup-bot", TokenSecretRef: "backup-tok",
+				CountsTowardMerge: boolPtr(true)},
+		}
+		b.Review.Reviewers["backup-bot"] = ModelFamilyOpenAI
+	})
+	rig.agents.spawnErrFor = map[string]error{testReviewerAgent: &orchestration.AccountLimitedError{AccountID: "acct-1"}}
+	rig.reviewerSays(reviewSaying("fine", ReviewCodeApprove))
+	rig.mustRun(41)
+
+	var spawned []string
+	for _, spawn := range rig.agents.spawns {
+		spawned = append(spawned, spawn.AgentID)
+	}
+	if !slices.Equal(spawned, []string{testReviewerAgent, testBackupReviewerAgent}) {
+		t.Fatalf("spawned %v, want the default seat then the counting backup (never the advisory seat)", spawned)
+	}
+	if refs := rig.forges.resolvedTokenRefs(); !slices.Contains(refs, "backup-tok") {
+		t.Fatalf("the backup seat must post as itself, forge reached as %v", refs)
+	}
+	switches := rig.auditDetails(auditReviewSeatFailover)
+	if len(switches) != 1 || !strings.Contains(switches[0], "default ("+testReviewerAgent+") -> backup") ||
+		!strings.Contains(switches[0], orchestration.AgentFailoverRateLimited) {
+		t.Fatalf("failover audit = %v", switches)
+	}
+}
+
+// TestReviewRunner_ASeatWithNoSuccessorReturnsItsRefusal: the chain ends, and
+// the run fails with the Agent's own refusal rather than a generic one.
+func TestReviewRunner_ASeatWithNoSuccessorReturnsItsRefusal(t *testing.T) {
+	rig := newReviewRunnerRig(t)
+	rig.agents.spawnErrFor = map[string]error{testReviewerAgent: orchestration.ErrAccountsSpent}
+	err := rig.run(41)
+	if !errors.Is(err, orchestration.ErrAccountsSpent) {
+		t.Fatalf("err = %v, want the seat's own refusal", err)
+	}
+	if switches := rig.auditDetails(auditReviewSeatFailover); len(switches) != 1 || !strings.Contains(switches[0], "no seat") {
+		t.Fatalf("the dead end must be audited: %v", switches)
+	}
+}
+
+// TestReviewRunner_ARefusalTheNextSeatWouldShareDoesNotFailOver: a policy
+// denial or a workspace fault would refuse every seat identically.
+func TestReviewRunner_ARefusalTheNextSeatWouldShareDoesNotFailOver(t *testing.T) {
+	rig := newReviewRunnerRig(t)
+	rig.rebind(func(b *ProjectBinding) {
+		b.Reviewers = []ReviewerConfig{{Name: "backup", Agent: testBackupReviewerAgent, Login: "backup-bot",
+			TokenSecretRef: "backup-tok", CountsTowardMerge: boolPtr(true)}}
+	})
+	boom := &orchestration.InputValidationError{Field: "workdir", Message: "refused"}
+	rig.agents.spawnErrFor = map[string]error{testReviewerAgent: boom}
+	if err := rig.run(41); !errors.Is(err, orchestration.ErrInvalidInput) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(rig.agents.spawns) != 1 {
+		t.Fatalf("spawned %d sessions; a shared refusal must not be retried", len(rig.agents.spawns))
+	}
+}
+
+// TestReviewRunner_FailoverPassesOverASeatThatCannotCount: a counting seat
+// from the author's own family is skipped, not taken.
+func TestReviewRunner_FailoverPassesOverASeatThatCannotCount(t *testing.T) {
+	rig := newReviewRunnerRig(t)
+	rig.rebind(func(b *ProjectBinding) {
+		b.Reviewers = []ReviewerConfig{
+			{Name: "claude", Agent: testClaudeReviewerAgent, Login: "claude-bot2", TokenSecretRef: "claude-tok", CountsTowardMerge: boolPtr(true)},
+			{Name: "backup", Agent: testBackupReviewerAgent, Login: "backup-bot", TokenSecretRef: "backup-tok", CountsTowardMerge: boolPtr(true)},
+		}
+		b.Review.Reviewers["backup-bot"] = ModelFamilyOpenAI
+	})
+	rig.agents.spawnErrFor = map[string]error{testReviewerAgent: orchestration.ErrNoAccountAvailable}
+	rig.reviewerSays(reviewSaying("fine", ReviewCodeApprove))
+	rig.mustRun(41)
+	last := rig.agents.spawns[len(rig.agents.spawns)-1]
+	if last.AgentID != testBackupReviewerAgent {
+		t.Fatalf("the run reviewed as %q, want the backup past the refused claude seat", last.AgentID)
+	}
+	if switches := rig.auditDetails(auditReviewSeatFailover); len(switches) != 2 || !strings.Contains(switches[0], "passed over seat claude") {
+		t.Fatalf("failover audit = %v", switches)
 	}
 }

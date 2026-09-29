@@ -19,6 +19,9 @@ import (
 	neturl "net/url"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/spend"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
@@ -62,6 +65,8 @@ func (h *orchestratorHandler) handleRequest(ctx context.Context, service, method
 		"ListSessions":           h.handleListSessions,
 		"GetSessionConversation": h.handleGetSessionConversation,
 		"GetSpendReport":         h.handleGetSpendReport,
+		"GetTenantSpendPolicy":   h.handleGetTenantSpendPolicy,
+		"SetTenantSpendPolicy":   h.handleSetTenantSpendPolicy,
 		"CreateTask":             h.handleCreateTask,
 		"GetTask":                h.handleGetTask,
 		"ListTasks":              h.handleListTasks,
@@ -70,11 +75,13 @@ func (h *orchestratorHandler) handleRequest(ctx context.Context, service, method
 		"BlockTask":              h.handleBlockTask,
 		"DeleteTask":             h.handleDeleteTask,
 		"ReadmitTask":            h.handleReadmitTask,
-		"RegisterAgent":          h.handleRegisterAgent,
-		"GetAgent":               h.handleGetAgent,
-		"ListAgents":             h.handleListAgents,
-		"RemoveAgent":            h.handleRemoveAgent,
-		"AgentHeartbeat":         h.handleAgentHeartbeat,
+		"AttentionList":          h.handleAttentionList,
+		"AttentionResolve":       h.handleAttentionResolve,
+		"RegisterFleetNode":      h.handleRegisterFleetNode,
+		"GetFleetNode":           h.handleGetFleetNode,
+		"ListFleetNodes":         h.handleListFleetNodes,
+		"RemoveFleetNode":        h.handleRemoveFleetNode,
+		"FleetNodeHeartbeat":     h.handleFleetNodeHeartbeat,
 		"DecomposeTask":          h.handleDecomposeTask,
 		"SpawnChildJob":          h.handleSpawnChildJob,
 		"StartJob":               h.handleStartJob,
@@ -83,11 +90,13 @@ func (h *orchestratorHandler) handleRequest(ctx context.Context, service, method
 		"CancelJob":              h.handleCancelJob,
 		"SubscribeJobEvents":     h.handleSubscribeJobEvents,
 		"Inference":              h.handleInference,
-		"DisableAgent":           h.handleDisableAgent,
-		"EnableAgent":            h.handleEnableAgent,
+		"DisableFleetNode":       h.handleDisableFleetNode,
+		"EnableFleetNode":        h.handleEnableFleetNode,
 		"SubmitTaskArtifacts":    h.handleSubmitTaskArtifacts,
 		"GetTaskArtifact":        h.handleGetTaskArtifact,
 		"ListTaskArtifacts":      h.handleListTaskArtifacts,
+		"GetCostSettings":        h.handleGetCostSettings,
+		"SetCostSettings":        h.handleSetCostSettings,
 	}
 
 	handler, ok := handlers[method]
@@ -138,11 +147,11 @@ func (h *orchestratorHandler) handleListBackendModels(ctx context.Context, req i
 	if sdkReq.BackendName == "" {
 		return nil, errors.NewInvalidInput("orchestrator.ListBackendModels", "backend name is required")
 	}
-	agentID := sdkReq.AgentID
+	agentID := sdkReq.NodeID
 	if agentID == "" {
 		agentID = "any"
 	}
-	url := "/api/v1/orchestrator/agents/" + agentID + "/backends/" + sdkReq.BackendName + "/models"
+	url := "/api/v1/fleet/" + agentID + "/backends/" + sdkReq.BackendName + "/models"
 	if sdkReq.TenantID != "" {
 		url += "?tenant_id=" + sdkReq.TenantID
 	}
@@ -251,6 +260,8 @@ func (h *orchestratorHandler) handleGetSpendReport(ctx context.Context, req inte
 		"task_id":    sdkReq.TaskID,
 		"job_id":     sdkReq.JobID,
 		"session_id": sdkReq.SessionID,
+		"host":       sdkReq.Host,
+		"agent":      sdkReq.Agent,
 	} {
 		if value != "" {
 			params.Set(key, value)
@@ -261,12 +272,49 @@ func (h *orchestratorHandler) handleGetSpendReport(ctx context.Context, req inte
 	if sdkReq.RoundSet {
 		params.Set("round", strconv.Itoa(sdkReq.Round))
 	}
+	if sdkReq.From != nil {
+		params.Set("from", sdkReq.From.UTC().Format(time.RFC3339Nano))
+	}
+	if sdkReq.To != nil {
+		params.Set("to", sdkReq.To.UTC().Format(time.RFC3339Nano))
+	}
 	path := "/api/v1/orchestrator/cost"
 	if encoded := params.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
 	var resp orchestrator.GetSpendReportResponse
 	if err := h.transport.doJSONRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// handleGetTenantSpendPolicy handles GET /api/v1/orchestrator/spend-policy.
+func (h *orchestratorHandler) handleGetTenantSpendPolicy(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.GetTenantSpendPolicyRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("orchestrator.GetTenantSpendPolicy", "invalid request type")
+	}
+	path := tenantSpendPolicyPath(sdkReq.TenantID)
+	var resp orchestrator.TenantSpendPolicy
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// handleSetTenantSpendPolicy handles PUT /api/v1/orchestrator/spend-policy.
+func (h *orchestratorHandler) handleSetTenantSpendPolicy(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.SetTenantSpendPolicyRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("orchestrator.SetTenantSpendPolicy", "invalid request type")
+	}
+	path := tenantSpendPolicyPath(sdkReq.TenantID)
+	body := struct {
+		Limits spend.Limits `json:"limits"`
+	}{Limits: sdkReq.Limits}
+	var resp orchestrator.TenantSpendPolicy
+	if err := h.transport.doJSONRequest(ctx, http.MethodPut, path, &body, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -465,6 +513,41 @@ func (h *orchestratorHandler) handleReadmitTask(ctx context.Context, req interfa
 	return &resp, nil
 }
 
+// handleAttentionList handles the AttentionList orchestrator request.
+func (h *orchestratorHandler) handleAttentionList(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.AttentionListRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("orchestrator.AttentionList", "invalid request type")
+	}
+	url := "/api/v1/orchestrator/attention?tenant_id=" + sdkReq.TenantID
+	if sdkReq.ProjectID != "" {
+		url += "&project_id=" + neturl.QueryEscape(sdkReq.ProjectID)
+	}
+	if sdkReq.Kind != "" {
+		url += "&kind=" + neturl.QueryEscape(sdkReq.Kind)
+	}
+	url += pageQuerySuffix(sdkReq.Params)
+	var resp orchestrator.AttentionListResponse
+	if err := h.transport.doJSONRequest(ctx, http.MethodGet, url, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// handleAttentionResolve handles the AttentionResolve orchestrator request.
+func (h *orchestratorHandler) handleAttentionResolve(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.AttentionResolveRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("orchestrator.AttentionResolve", "invalid request type")
+	}
+	url := "/api/v1/orchestrator/attention/" + sdkReq.TaskID + "/resolve?tenant_id=" + sdkReq.TenantID
+	var resp orchestrator.AttentionItem
+	if err := h.transport.doJSONRequest(ctx, http.MethodPost, url, sdkReq, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // handleDeleteTask handles the DeleteTask orchestrator request.
 func (h *orchestratorHandler) handleDeleteTask(ctx context.Context, req interface{}) (interface{}, error) {
 	sdkReq, ok := req.(*orchestrator.DeleteTaskRequest)
@@ -493,83 +576,83 @@ func (h *orchestratorHandler) handleCompleteTask(ctx context.Context, req interf
 	return &resp, nil
 }
 
-// handleRegisterAgent handles the RegisterAgent orchestrator request.
-func (h *orchestratorHandler) handleRegisterAgent(ctx context.Context, req interface{}) (interface{}, error) {
-	sdkReq, ok := req.(*orchestrator.RegisterAgentRequest)
+// handleRegisterFleetNode handles the RegisterFleetNode orchestrator request.
+func (h *orchestratorHandler) handleRegisterFleetNode(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.RegisterFleetNodeRequest)
 	if !ok {
-		return nil, errors.NewInvalidInput("orchestrator.RegisterAgent", "invalid request type")
+		return nil, errors.NewInvalidInput("orchestrator.RegisterFleetNode", "invalid request type")
 	}
-	url := "/api/v1/orchestrator/agents?tenant_id=" + sdkReq.TenantID
-	var resp orchestrator.RegisterAgentResponse
+	url := "/api/v1/fleet?tenant_id=" + sdkReq.TenantID
+	var resp orchestrator.RegisterFleetNodeResponse
 	if err := h.transport.doJSONRequest(ctx, http.MethodPost, url, sdkReq, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
 }
 
-// handleGetAgent handles the GetAgent orchestrator request.
-func (h *orchestratorHandler) handleGetAgent(ctx context.Context, req interface{}) (interface{}, error) {
-	sdkReq, ok := req.(*orchestrator.GetAgentRequest)
+// handleGetFleetNode handles the GetFleetNode orchestrator request.
+func (h *orchestratorHandler) handleGetFleetNode(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.GetFleetNodeRequest)
 	if !ok {
-		return nil, errors.NewInvalidInput("orchestrator.GetAgent", "invalid request type")
+		return nil, errors.NewInvalidInput("orchestrator.GetFleetNode", "invalid request type")
 	}
-	url := "/api/v1/orchestrator/agents/" + sdkReq.AgentID + "?tenant_id=" + sdkReq.TenantID
-	var resp orchestrator.AgentRegistration
+	url := "/api/v1/fleet/" + sdkReq.NodeID + "?tenant_id=" + sdkReq.TenantID
+	var resp orchestrator.FleetNode
 	if err := h.transport.doJSONRequest(ctx, http.MethodGet, url, nil, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
 }
 
-// handleListAgents handles the ListAgents orchestrator request.
-func (h *orchestratorHandler) handleListAgents(ctx context.Context, req interface{}) (interface{}, error) {
-	sdkReq, ok := req.(*orchestrator.ListAgentsRequest)
+// handleListFleetNodes handles the ListFleetNodes orchestrator request.
+func (h *orchestratorHandler) handleListFleetNodes(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.ListFleetNodesRequest)
 	if !ok {
-		return nil, errors.NewInvalidInput("orchestrator.ListAgents", "invalid request type")
+		return nil, errors.NewInvalidInput("orchestrator.ListFleetNodes", "invalid request type")
 	}
-	url := "/api/v1/orchestrator/agents?tenant_id=" + sdkReq.TenantID
+	url := "/api/v1/fleet?tenant_id=" + sdkReq.TenantID
 	if sdkReq.Host != "" {
 		url += "&host=" + sdkReq.Host
 	}
 	if sdkReq.Status != "" {
 		url += "&status=" + sdkReq.Status
 	}
-	if sdkReq.AgentType != "" {
-		url += "&agent_type=" + sdkReq.AgentType
+	if sdkReq.NodeType != "" {
+		url += "&node_type=" + sdkReq.NodeType
 	}
 	if sdkReq.Backend != "" {
 		url += "&backend=" + neturl.QueryEscape(sdkReq.Backend)
 	}
 	url += pageQuerySuffix(sdkReq.Params)
-	var resp orchestrator.ListAgentsResponse
+	var resp orchestrator.ListFleetNodesResponse
 	if err := h.transport.doJSONRequest(ctx, http.MethodGet, url, nil, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
 }
 
-// handleRemoveAgent handles the RemoveAgent orchestrator request.
-func (h *orchestratorHandler) handleRemoveAgent(ctx context.Context, req interface{}) (interface{}, error) {
-	sdkReq, ok := req.(*orchestrator.RemoveAgentRequest)
+// handleRemoveFleetNode handles the RemoveFleetNode orchestrator request.
+func (h *orchestratorHandler) handleRemoveFleetNode(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.RemoveFleetNodeRequest)
 	if !ok {
-		return nil, errors.NewInvalidInput("orchestrator.RemoveAgent", "invalid request type")
+		return nil, errors.NewInvalidInput("orchestrator.RemoveFleetNode", "invalid request type")
 	}
-	url := "/api/v1/orchestrator/agents/" + sdkReq.AgentID + "?tenant_id=" + sdkReq.TenantID
-	var resp orchestrator.RemoveAgentResponse
+	url := "/api/v1/fleet/" + sdkReq.NodeID + "?tenant_id=" + sdkReq.TenantID
+	var resp orchestrator.RemoveFleetNodeResponse
 	if err := h.transport.doJSONRequest(ctx, http.MethodDelete, url, nil, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
 }
 
-// handleAgentHeartbeat handles the AgentHeartbeat orchestrator request.
-func (h *orchestratorHandler) handleAgentHeartbeat(ctx context.Context, req interface{}) (interface{}, error) {
-	sdkReq, ok := req.(*orchestrator.AgentHeartbeatRequest)
+// handleFleetNodeHeartbeat handles the FleetNodeHeartbeat orchestrator request.
+func (h *orchestratorHandler) handleFleetNodeHeartbeat(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.FleetNodeHeartbeatRequest)
 	if !ok {
-		return nil, errors.NewInvalidInput("orchestrator.AgentHeartbeat", "invalid request type")
+		return nil, errors.NewInvalidInput("orchestrator.FleetNodeHeartbeat", "invalid request type")
 	}
-	url := "/api/v1/orchestrator/agents/" + sdkReq.AgentID + "/heartbeat?tenant_id=" + sdkReq.TenantID
-	var resp orchestrator.AgentHeartbeatResponse
+	url := "/api/v1/fleet/" + sdkReq.NodeID + "/heartbeat?tenant_id=" + sdkReq.TenantID
+	var resp orchestrator.FleetNodeHeartbeatResponse
 	if err := h.transport.doJSONRequest(ctx, http.MethodPost, url, nil, &resp); err != nil {
 		return nil, err
 	}
@@ -689,28 +772,28 @@ func (h *orchestratorHandler) handleSubscribeJobEvents(ctx context.Context, req 
 		"streaming not supported over REST transport; use gRPC transport")
 }
 
-// handleDisableAgent handles POST /api/v1/agents/{id}/disable.
-func (h *orchestratorHandler) handleDisableAgent(ctx context.Context, req interface{}) (interface{}, error) {
-	sdkReq, ok := req.(*orchestrator.DisableAgentRequest)
+// handleDisableFleetNode handles POST /api/v1/agents/{id}/disable.
+func (h *orchestratorHandler) handleDisableFleetNode(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.DisableFleetNodeRequest)
 	if !ok {
-		return nil, errors.NewInvalidInput("orchestrator.DisableAgent", "invalid request type")
+		return nil, errors.NewInvalidInput("orchestrator.DisableFleetNode", "invalid request type")
 	}
-	url := "/api/v1/agents/" + sdkReq.AgentID + "/disable?tenant_id=" + sdkReq.TenantID
-	var resp orchestrator.DisableAgentResponse
+	url := "/api/v1/agents/" + sdkReq.NodeID + "/disable?tenant_id=" + sdkReq.TenantID
+	var resp orchestrator.DisableFleetNodeResponse
 	if err := h.transport.doJSONRequest(ctx, http.MethodPost, url, nil, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
 }
 
-// handleEnableAgent handles POST /api/v1/agents/{id}/enable.
-func (h *orchestratorHandler) handleEnableAgent(ctx context.Context, req interface{}) (interface{}, error) {
-	sdkReq, ok := req.(*orchestrator.EnableAgentRequest)
+// handleEnableFleetNode handles POST /api/v1/agents/{id}/enable.
+func (h *orchestratorHandler) handleEnableFleetNode(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.EnableFleetNodeRequest)
 	if !ok {
-		return nil, errors.NewInvalidInput("orchestrator.EnableAgent", "invalid request type")
+		return nil, errors.NewInvalidInput("orchestrator.EnableFleetNode", "invalid request type")
 	}
-	url := "/api/v1/agents/" + sdkReq.AgentID + "/enable?tenant_id=" + sdkReq.TenantID
-	var resp orchestrator.EnableAgentResponse
+	url := "/api/v1/agents/" + sdkReq.NodeID + "/enable?tenant_id=" + sdkReq.TenantID
+	var resp orchestrator.EnableFleetNodeResponse
 	if err := h.transport.doJSONRequest(ctx, http.MethodPost, url, nil, &resp); err != nil {
 		return nil, err
 	}
@@ -790,4 +873,14 @@ func (h *orchestratorHandler) handleInference(ctx context.Context, req interface
 		return nil, err
 	}
 	return &resp, nil
+}
+
+// tenantSpendPolicyPath is the spend-policy route, scoped to tenantID when the
+// caller named one; otherwise the server takes the authenticated principal's.
+func tenantSpendPolicyPath(tenantID string) string {
+	path := "/api/v1/orchestrator/spend-policy"
+	if tenantID != "" {
+		path += "?" + neturl.Values{"tenant_id": {tenantID}}.Encode()
+	}
+	return path
 }

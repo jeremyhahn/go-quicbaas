@@ -66,9 +66,38 @@ type Metrics struct {
 	OrchPeerInboxSize        *prometheus.GaugeVec
 	OrchFileLocksActive      *prometheus.GaugeVec
 	OrchFileLockWaitDuration *prometheus.HistogramVec
-	OrchAgentTokensTotal     *prometheus.CounterVec
 	OrchJobBudgetUtilization *prometheus.GaugeVec
 	OrchAgentRestarts        *prometheus.CounterVec
+
+	// FactoryTokensTotal counts the tokens every recorded turn consumed, by
+	// tenant, project, kind (the job's runner), provider, backend, model and
+	// direction (input, output, cache_read, cache_write). EVERY LABEL IS
+	// BOUNDED (go-quicbaas#1058, ruling F7): model by the price table plus
+	// "other", provider by the price table plus "unknown", backend by the
+	// configured engines, project by the project count. The host and the job
+	// are never labels; they are on the ledger entry and in the API.
+	FactoryTokensTotal *prometheus.CounterVec
+
+	// FactoryCostMicrosTotal counts the money every priced turn cost, in
+	// millionths of a US dollar, under the same labels as FactoryTokensTotal
+	// with basis "equivalent" (list price) or "billed" (what the bill paid).
+	// A turn with no known figure adds nothing to that basis.
+	FactoryCostMicrosTotal *prometheus.CounterVec
+
+	// FactorySpendDeferrals counts admission deferring a project because its
+	// own spend limits, or its tenant's, are spent, by axis
+	// ("project_spend" or "tenant_spend"). Counted when a deferral starts or
+	// changes reason, not on every sweep.
+	FactorySpendDeferrals *prometheus.CounterVec
+
+	// OrchAccountPoolExhausted counts account resolutions that found every
+	// pooled account of a provider unavailable, by why: "cooling_down" (all on
+	// a provider limit hold) or "saturated" (all at their session cap).
+	OrchAccountPoolExhausted *prometheus.CounterVec
+
+	// OrchAccountLimitHolds counts pooled accounts taken out of rotation
+	// because the provider refused them for a rate or usage limit.
+	OrchAccountLimitHolds *prometheus.CounterVec
 
 	// OrchAccountRefreshStampFailures counts account-record writes that
 	// failed to stamp a token-refresh outcome (status, expiry, last_error).
@@ -268,12 +297,28 @@ func InitMetrics() *Metrics {
 				[]string{"project_id"},
 			),
 
-			OrchAgentTokensTotal: promauto.With(Registry).NewCounterVec(
+			FactoryTokensTotal: promauto.With(Registry).NewCounterVec(
 				prometheus.CounterOpts{
-					Name: "quicbaas_orch_agent_tokens_total",
-					Help: "Total tokens consumed by an agent within a job",
+					Name: "quicbaas_factory_tokens_total",
+					Help: "Tokens consumed by recorded turns, by tenant, project, kind, provider, backend, model and direction",
 				},
-				[]string{"agent_id", "job_id", "tenant"},
+				factoryTurnLabelNames("direction"),
+			),
+
+			FactoryCostMicrosTotal: promauto.With(Registry).NewCounterVec(
+				prometheus.CounterOpts{
+					Name: "quicbaas_factory_cost_micros_total",
+					Help: "Cost of priced turns in millionths of a US dollar, by tenant, project, kind, provider, backend, model and basis (equivalent or billed)",
+				},
+				factoryTurnLabelNames("basis"),
+			),
+
+			FactorySpendDeferrals: promauto.With(Registry).NewCounterVec(
+				prometheus.CounterOpts{
+					Name: "quicbaas_factory_spend_deferrals_total",
+					Help: "Admission deferrals of a project whose own or whose tenant's spend limits are spent, by axis",
+				},
+				[]string{"tenant", "project", "axis"},
 			),
 
 			OrchJobBudgetUtilization: promauto.With(Registry).NewGaugeVec(
@@ -290,6 +335,22 @@ func InitMetrics() *Metrics {
 					Help: "Total number of agent restarts by agent and tenant",
 				},
 				[]string{"agent_id", "tenant"},
+			),
+
+			OrchAccountPoolExhausted: promauto.With(Registry).NewCounterVec(
+				prometheus.CounterOpts{
+					Name: "quicbaas_orch_account_pool_exhausted_total",
+					Help: "Account resolutions that found every pooled account of a provider unavailable, by reason",
+				},
+				[]string{"tenant", "provider", "reason"},
+			),
+
+			OrchAccountLimitHolds: promauto.With(Registry).NewCounterVec(
+				prometheus.CounterOpts{
+					Name: "quicbaas_orch_account_limit_holds_total",
+					Help: "Pooled accounts held out of rotation after a provider rate or usage limit",
+				},
+				[]string{"tenant", "provider"},
 			),
 
 			OrchAccountRefreshStampFailures: promauto.With(Registry).NewCounterVec(
@@ -473,14 +534,57 @@ func (m *Metrics) RecordOrchFileLockWaitDuration(projectID string, duration floa
 	m.OrchFileLockWaitDuration.WithLabelValues(projectID).Observe(duration)
 }
 
-// RecordOrchAgentTokens increments the agent token consumption counter.
-func (m *Metrics) RecordOrchAgentTokens(agentID, jobID, tenant string, tokens float64) {
-	m.OrchAgentTokensTotal.WithLabelValues(agentID, jobID, tenant).Add(tokens)
+// FactoryTurnLabels are the bounded labels one recorded turn is counted
+// under. The caller bounds them: see FactoryTokensTotal.
+type FactoryTurnLabels struct {
+	Tenant   string
+	Project  string
+	Kind     string
+	Provider string
+	Backend  string
+	Model    string
+}
+
+// factoryTurnLabelNames is the label set of a factory turn series, with its
+// last label (direction or basis).
+func factoryTurnLabelNames(last string) []string {
+	return []string{"tenant", "project", "kind", "provider", "backend", "model", last}
+}
+
+// values renders the labels in factoryTurnLabelNames order.
+func (l FactoryTurnLabels) values(last string) []string {
+	return []string{l.Tenant, l.Project, l.Kind, l.Provider, l.Backend, l.Model, last}
+}
+
+// RecordFactoryTokens adds a turn's tokens in one direction.
+func (m *Metrics) RecordFactoryTokens(labels FactoryTurnLabels, direction string, tokens float64) {
+	m.FactoryTokensTotal.WithLabelValues(labels.values(direction)...).Add(tokens)
+}
+
+// RecordFactoryCostMicros adds a turn's cost on one basis.
+func (m *Metrics) RecordFactoryCostMicros(labels FactoryTurnLabels, basis string, micros float64) {
+	m.FactoryCostMicrosTotal.WithLabelValues(labels.values(basis)...).Add(micros)
+}
+
+// RecordFactorySpendDeferral counts one admission deferral for spend.
+func (m *Metrics) RecordFactorySpendDeferral(tenant, project, axis string) {
+	m.FactorySpendDeferrals.WithLabelValues(tenant, project, axis).Inc()
 }
 
 // SetOrchJobBudgetUtilization sets the budget utilization ratio for a job.
 func (m *Metrics) SetOrchJobBudgetUtilization(jobID, tenant string, ratio float64) {
 	m.OrchJobBudgetUtilization.WithLabelValues(jobID, tenant).Set(ratio)
+}
+
+// RecordOrchAccountPoolExhausted counts one resolution that found a provider's
+// whole pool unavailable. reason is "cooling_down", "saturated" or "spent".
+func (m *Metrics) RecordOrchAccountPoolExhausted(tenant, provider, reason string) {
+	m.OrchAccountPoolExhausted.WithLabelValues(tenant, provider, reason).Inc()
+}
+
+// RecordOrchAccountLimitHold counts one account held after a provider limit.
+func (m *Metrics) RecordOrchAccountLimitHold(tenant, provider string) {
+	m.OrchAccountLimitHolds.WithLabelValues(tenant, provider).Inc()
 }
 
 // RecordOrchAgentRestart increments the agent restart counter.

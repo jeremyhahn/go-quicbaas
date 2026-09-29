@@ -326,6 +326,13 @@ should be reached through the SDK on any transport. The xkms-prefixed
 endpoints exist as a compatibility surface for clients that still
 import go-xkms directly and have not migrated to the QuicBaaS SDK.
 
+An mtls `FinishLogin` never trusts a network client's `LookupKey`: each
+network transport derives it from the verified TLS peer certificate. An
+embedded (in-process) caller that holds the client's verified certificate
+passes it with `quicbaas.WithVerifiedPeerCert(ctx, cert)`, and the login
+facade derives the same SPKI-first key (with the legacy cert-DER fallback)
+instead of the caller computing one.
+
 ### Protocol support
 
 | Protocol | Supported | Base Path / Namespace |
@@ -570,6 +577,28 @@ not a security boundary — see
 | `pkg/server/baas_transport_ceremony.go` | Native QUIC Barrier + Ceremony handlers |
 | [`cmd/quicbaas/ca.go`](../../cmd/quicbaas/ca.go) | Native CA verb tree (CAInfo + ListCertificates verbs landed Phase 8e) |
 | [`cmd/quicbaas/credential.go`](../../cmd/quicbaas/credential.go) | Native credential verb tree (versioned rotation landed Phase 8e) |
+
+### TPM lifecycle and EK credential challenge re-exports (go-xkms#798)
+
+`sdk/go/xkms` aliases the go-xkms TPM provisioning lifecycle so
+go-trusted-platform needs no private copy. The verbs are methods on the
+already-aliased `TrustedPlatformModule`:
+
+| Verb | Purpose |
+|------|---------|
+| `State() (*ProvisioningState, error)` | Hierarchy auth bits, which configured persistent handles exist, Platform SRK policy match |
+| `ClearForReprovision() (rebootRequired bool, err error)` | `TPM2_Clear` via LOCKOUT, then PLATFORM, then UEFI PPI `ForceClear` (the only path that needs a reboot) |
+| `CreateActivationKey() (*ActivationKey, error)` | Transient null-hierarchy key that answers an EK challenge |
+| `AnswerCredentialChallenge(key, challenge) ([]byte, error)` | Device side of the challenge; returns the recovered secret |
+
+The verifier side runs in software with no TPM: `ActivationKeyName(publicArea)`
+computes the Name of a marshaled `TPMT_PUBLIC` received off the wire, and
+`NewCredentialChallenge(ekPub, name)` returns the `CredentialChallenge` and the
+secret to compare. Refusals are the aliased sentinels `ErrTPMClearLockoutRefused`,
+`ErrTPMClearPlatformRefused`, `ErrTPMProvisioningStateRead`,
+`ErrTPMCredentialChallenge`, `ErrTPMEKPublicRequired`,
+`ErrTPMActivationKeyNameRequired`, `ErrTPMActivationKeyCreate`,
+`ErrTPMActivationKeyRequired` and `ErrTPMCredentialChallengeRequired`.
 
 ### Trust resolver SDK re-exports and quicbaasd trust: config (Phase C)
 

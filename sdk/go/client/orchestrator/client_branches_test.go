@@ -190,69 +190,69 @@ func TestUpdateWorkflow_TypeMismatch(t *testing.T) {
 }
 
 // =============================================================================
-// DisableAgent: missing-agent-id and nil-response branches.
+// DisableFleetNode: missing-agent-id and nil-response branches.
 // =============================================================================
 
 func TestDisableAgent_MissingAgentID_Branch(t *testing.T) {
 	c := NewClient(failTransport())
-	_, err := c.DisableAgent(context.Background(), &DisableAgentRequest{TenantID: "t1"})
+	_, err := c.DisableFleetNode(context.Background(), &DisableFleetNodeRequest{TenantID: "t1"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "agent ID is required")
 }
 
 func TestDisableAgent_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "DisableAgent", &DisableAgentResponse{}))
+	c := NewClient(okTransport(t, "DisableFleetNode", &DisableFleetNodeResponse{}))
 	//nolint:staticcheck // intentionally nil
-	_, err := c.DisableAgent(nil, &DisableAgentRequest{TenantID: "t1", AgentID: "a1"})
+	_, err := c.DisableFleetNode(nil, &DisableFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
 func TestDisableAgent_NilResponse(t *testing.T) {
 	c := NewClient(nilTransport())
-	_, err := c.DisableAgent(context.Background(), &DisableAgentRequest{TenantID: "t1", AgentID: "a1"})
+	_, err := c.DisableFleetNode(context.Background(), &DisableFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
 func TestDisableAgent_TypeMismatch(t *testing.T) {
 	c := NewClient(mismatchTransport())
-	_, err := c.DisableAgent(context.Background(), &DisableAgentRequest{TenantID: "t1", AgentID: "a1"})
+	_, err := c.DisableFleetNode(context.Background(), &DisableFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
 // =============================================================================
-// EnableAgent: nil-context, missing-agent-id, transport-error, nil-response,
+// EnableFleetNode: nil-context, missing-agent-id, transport-error, nil-response,
 // type-mismatch.
 // =============================================================================
 
 func TestEnableAgent_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "EnableAgent", &EnableAgentResponse{}))
+	c := NewClient(okTransport(t, "EnableFleetNode", &EnableFleetNodeResponse{}))
 	//nolint:staticcheck // intentionally nil
-	_, err := c.EnableAgent(nil, &EnableAgentRequest{TenantID: "t1", AgentID: "a1"})
+	_, err := c.EnableFleetNode(nil, &EnableFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
 func TestEnableAgent_MissingAgentID(t *testing.T) {
 	c := NewClient(failTransport())
-	_, err := c.EnableAgent(context.Background(), &EnableAgentRequest{TenantID: "t1"})
+	_, err := c.EnableFleetNode(context.Background(), &EnableFleetNodeRequest{TenantID: "t1"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "agent ID is required")
 }
 
 func TestEnableAgent_TransportError(t *testing.T) {
 	c := NewClient(failTransport())
-	_, err := c.EnableAgent(context.Background(), &EnableAgentRequest{TenantID: "t1", AgentID: "a1"})
+	_, err := c.EnableFleetNode(context.Background(), &EnableFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
 func TestEnableAgent_NilResponse(t *testing.T) {
 	c := NewClient(nilTransport())
-	_, err := c.EnableAgent(context.Background(), &EnableAgentRequest{TenantID: "t1", AgentID: "a1"})
+	_, err := c.EnableFleetNode(context.Background(), &EnableFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
 func TestEnableAgent_TypeMismatch(t *testing.T) {
 	c := NewClient(mismatchTransport())
-	_, err := c.EnableAgent(context.Background(), &EnableAgentRequest{TenantID: "t1", AgentID: "a1"})
+	_, err := c.EnableFleetNode(context.Background(), &EnableFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 

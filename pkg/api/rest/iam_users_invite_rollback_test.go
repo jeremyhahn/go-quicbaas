@@ -73,10 +73,9 @@ func TestCreateUser_InviteFailureRollsBackTheUser(t *testing.T) {
 	require.NoError(t, err)
 
 	identity := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  mem,
-		GroupStorage: mem,
-		RoleStorage:  mem,
-		Tenants:      tenants,
+		UserStorage: mem,
+		RoleStorage: mem,
+		Tenants:     tenants,
 	})
 
 	mock := testutil.NewMockQuicBaaS()
@@ -136,10 +135,9 @@ func TestCreateUser_AttachFailureRollsBackTheUser(t *testing.T) {
 	require.NoError(t, err)
 
 	identity := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  &failingUpdateUserStorage{UserStorage: mem, err: errors.New("user store unavailable")},
-		GroupStorage: mem,
-		RoleStorage:  mem,
-		Tenants:      tenants,
+		UserStorage: &failingUpdateUserStorage{UserStorage: mem, err: errors.New("user store unavailable")},
+		RoleStorage: mem,
+		Tenants:     tenants,
 	})
 
 	invites := &tokenRecordingInviteStore{InviteStore: iamtest.NewMemoryInviteStore()}
@@ -247,10 +245,9 @@ func TestCreateUser_RollbackSurvivesRequestCancellation(t *testing.T) {
 	require.NoError(t, err)
 
 	identity := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  &ctxAwareUserStorage{UserStorage: mem},
-		GroupStorage: mem,
-		RoleStorage:  mem,
-		Tenants:      tenants,
+		UserStorage: &ctxAwareUserStorage{UserStorage: mem},
+		RoleStorage: mem,
+		Tenants:     tenants,
 	})
 
 	reqCtx, cancel := context.WithCancel(context.Background())

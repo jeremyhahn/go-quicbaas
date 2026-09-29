@@ -37,6 +37,7 @@ type mockTaskStore struct {
 	blockCalls    []mockTaskStoreCall
 	readmitCalls  []mockTaskStoreCall
 	deleteCalls   []mockTaskStoreCall
+	bumpCalls     []mockTaskStoreCall
 	mu            sync.Mutex
 
 	createErr   error
@@ -49,6 +50,8 @@ type mockTaskStore struct {
 	blockErr    error
 	readmitErr  error
 	deleteErr   error
+	bumpBonus   int
+	bumpErr     error
 }
 
 type mockTaskStoreCall struct {
@@ -107,6 +110,14 @@ func (m *mockTaskStore) ListTasks(_ context.Context, tenantID string, filter *Ta
 	return m.listTasks, nil
 }
 
+func (m *mockTaskStore) ListTaskRecords(ctx context.Context, tenantID string, filter *TaskFilter) (*TaskListing, error) {
+	tasks, err := m.ListTasks(ctx, tenantID, filter)
+	if err != nil {
+		return nil, err
+	}
+	return &TaskListing{Tasks: tasks}, nil
+}
+
 func (m *mockTaskStore) ClaimTask(_ context.Context, tenantID, taskID, agentID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -133,6 +144,17 @@ func (m *mockTaskStore) ReadmitTask(_ context.Context, tenantID, taskID string) 
 	defer m.mu.Unlock()
 	m.readmitCalls = append(m.readmitCalls, mockTaskStoreCall{TenantID: tenantID, TaskID: taskID})
 	return m.readmitErr
+}
+
+func (*mockTaskStore) CloseBlockedTask(_ context.Context, _, _ string, _ *TaskResult) error {
+	return nil
+}
+
+func (m *mockTaskStore) BumpReviewRoundBudget(_ context.Context, tenantID, taskID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.bumpCalls = append(m.bumpCalls, mockTaskStoreCall{TenantID: tenantID, TaskID: taskID})
+	return m.bumpBonus, m.bumpErr
 }
 
 func (m *mockTaskStore) FailTask(_ context.Context, _, _, _ string) error {
@@ -372,9 +394,9 @@ func TestOrchestrator_SetLeadAgent(t *testing.T) {
 	}
 
 	config := &LeadAgentConfig{
-		Backend:      "claude",
-		Model:        "opus-4",
-		SystemPrompt: "You are a lead agent.",
+		Agent:   AgentRefTo("claude-lead"),
+		Backend: "claude",
+		Model:   "opus-4",
 	}
 	impl := svc.(*agentServiceImpl)
 	impl.SetLeadAgent(config)

@@ -122,7 +122,7 @@ func (m *MockQuicBaaS) Transaction(ctx context.Context, req *service.Transaction
 
 func (m *MockQuicBaaS) SetSignalService(svc interface{})      {}
 func (m *MockQuicBaaS) Signal() interface{}                   { return nil }
-func (m *MockQuicBaaS) AgentAdmin() service.AgentAdminService { return nil }
+func (m *MockQuicBaaS) FleetAdmin() service.FleetAdminService { return nil }
 
 // Compile-time assertion that MockQuicBaaS satisfies service.QuicBaaS.
 var _ service.QuicBaaS = (*MockQuicBaaS)(nil)

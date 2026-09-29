@@ -359,8 +359,8 @@ func (s *projectStore) discardRecord(ctx context.Context, recordKey string, caus
 
 // guarded reports whether the backing store can decide a contested write.
 //
-// Checked by every path that claims or releases a name — create and rename
-// both do — so a store without the capability refuses up front instead of
+// Checked by every path that claims or releases a name — create, rename and
+// delete all do — so a store without the capability refuses up front instead of
 // dereferencing a nil capability partway through a two-key sequence.
 func (s *projectStore) guarded() error {
 	if s.creator == nil || s.deleter == nil {
@@ -779,6 +779,12 @@ func (s *projectStore) remove(ctx context.Context, tenantID, projectID string) e
 		return err
 	}
 
+	// The name release below is guarded, so a store that cannot guard a write
+	// is refused before the record is touched rather than halfway through.
+	if err := s.guarded(); err != nil {
+		return err
+	}
+
 	unlockRecord := s.recordMu.lock(recordKey)
 	defer unlockRecord()
 
@@ -808,7 +814,13 @@ func (s *projectStore) remove(ctx context.Context, tenantID, projectID string) e
 	unlockName := s.nameMu.lock(nameScope)
 	defer unlockName()
 
-	if err := s.kv.Delete(ctx, nameKey); err != nil {
+	// GUARDED, for the reason releaseNameReservation gives. Once the record is
+	// gone a concurrent create correctly heals the reservation naming this
+	// project and claims the name for its own; an unguarded delete here would
+	// then remove that LIVE project's reservation (go-qrdb#41). A false result
+	// means the name already belongs to someone else, which is a no-op success:
+	// this project's record is gone either way.
+	if _, err := s.deleter.CompareAndDelete(ctx, nameKey, []byte(projectID)); err != nil {
 		return &ProjectStoreError{Message: "failed to release project name: " + err.Error()}
 	}
 	return nil

@@ -835,7 +835,6 @@ func TestAdditionalResourceConstants(t *testing.T) {
 		"ResourceIAM":         ResourceIAM,
 		"ResourceIAMTenant":   ResourceIAMTenant,
 		"ResourceIAMUser":     ResourceIAMUser,
-		"ResourceIAMGroup":    ResourceIAMGroup,
 		"ResourceIAMRole":     ResourceIAMRole,
 		"ResourceIAMPolicy":   ResourceIAMPolicy,
 		"ResourceIAMApp":      ResourceIAMApp,
@@ -856,7 +855,6 @@ func TestAdditionalResourceConstants(t *testing.T) {
 	assert.Equal(t, "iam", ResourceIAM)
 	assert.Equal(t, "iam:tenant", ResourceIAMTenant)
 	assert.Equal(t, "iam:user", ResourceIAMUser)
-	assert.Equal(t, "iam:group", ResourceIAMGroup)
 	assert.Equal(t, "iam:role", ResourceIAMRole)
 	assert.Equal(t, "iam:policy", ResourceIAMPolicy)
 	assert.Equal(t, "iam:app", ResourceIAMApp)

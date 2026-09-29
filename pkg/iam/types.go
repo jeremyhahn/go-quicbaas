@@ -197,9 +197,6 @@ type TenantOIDCConfig struct {
 // and enforced exclusively by qrdb's TenantServicer. Only IAM-subsystem concepts
 // that are not engine primitives belong here.
 type TenantQuotas struct {
-	// MaxGroups is the maximum number of IAM groups (BaaS-only concept).
-	MaxGroups int `json:"max_groups,omitempty" yaml:"max_groups,omitempty"`
-
 	// MaxPolicies is the maximum number of ABAC policies (BaaS-only concept).
 	MaxPolicies int `json:"max_policies,omitempty" yaml:"max_policies,omitempty"`
 
@@ -249,11 +246,6 @@ type User struct {
 
 	// Roles is the list of role IDs assigned to this user
 	Roles []string `json:"roles,omitempty" yaml:"roles,omitempty"`
-
-	// Groups is the list of group IDs this user belongs to. qrdb stores the
-	// membership edge as opaque identifiers and owns no Group entity; the Group
-	// record those ids name is this package's.
-	Groups []string `json:"groups,omitempty" yaml:"groups,omitempty"`
 
 	// Attributes contains custom user attributes for policy evaluation. It is
 	// map[string]string because that is qrdb's shape: a map[string]interface{}
@@ -306,30 +298,6 @@ func (u *User) CanAuthenticate() bool {
 		return false
 	}
 	return u.Lifecycle.CanAuthenticate()
-}
-
-// Group represents a collection of users for policy targeting.
-type Group struct {
-	// ID is the unique group identifier within the tenant
-	ID string `json:"id" yaml:"id"`
-
-	// Name is the group display name
-	Name string `json:"name" yaml:"name"`
-
-	// Description explains the group's purpose
-	Description string `json:"description,omitempty" yaml:"description,omitempty"`
-
-	// TenantID is the owning tenant
-	TenantID string `json:"tenant_id" yaml:"tenant_id"`
-
-	// Members is the list of user IDs in this group
-	Members []string `json:"members,omitempty" yaml:"members,omitempty"`
-
-	// Created is the group creation timestamp
-	Created time.Time `json:"created" yaml:"created"`
-
-	// Updated is the last modification timestamp
-	Updated time.Time `json:"updated" yaml:"updated"`
 }
 
 // Role represents a named set of permissions.
@@ -1164,20 +1132,6 @@ func (u *User) SetSPKIThumbprint(thumbprint string) {
 		return
 	}
 	u.CertBindings = kept
-}
-
-// Validate validates a Group for correctness.
-func (g *Group) Validate() error {
-	if g.ID == "" {
-		return NewIAMError(ErrGroupInvalid, "iam.group.validate", "group ID is required", nil)
-	}
-	if g.Name == "" {
-		return NewIAMError(ErrGroupInvalid, "iam.group.validate", "group name is required", nil)
-	}
-	if g.TenantID == "" {
-		return NewIAMError(ErrGroupInvalid, "iam.group.validate", "group tenant ID is required", nil)
-	}
-	return nil
 }
 
 // Validate validates a Role for correctness.

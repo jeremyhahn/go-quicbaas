@@ -290,6 +290,45 @@ type Account struct {
 	// Account.CredentialHealth and docs/orchestration/accounts.md.
 	CredentialExpiresAt time.Time `json:"credential_expires_at,omitempty"`
 
+	// CredentialRotatedAt is when this account's credential ENVELOPE was last
+	// REPLACED: a host-driven rotation through RotateAccountCredential, or an
+	// OAuth renewal the provider honoured and QuicBaaS stored. It is the
+	// account's GENERATION MARKER — credential material handed to a spawn
+	// before this instant is not the material the account holds now.
+	//
+	// It is deliberately not LastRefreshedAt. That timestamp moves on every
+	// refresh ATTEMPT, including one the provider refused, which leaves the
+	// stored envelope exactly as it was; keying "the material changed" off it
+	// would declare a whole fleet stale for a renewal that changed nothing.
+	// This one moves only where a new envelope was actually written.
+	//
+	// It is a timestamp, not secret material, so it is safe on this metadata
+	// record and over every transport — the same rule CredentialExpiresAt
+	// follows. Zero means the account still holds the envelope it was
+	// imported with.
+	CredentialRotatedAt time.Time `json:"credential_rotated_at,omitempty"`
+
+	// CredentialGeneration mirrors AccountCredential.Generation — the identity
+	// of the credential copy this account currently holds — onto the non-secret
+	// record, so "has the material moved under a live session?" can be answered
+	// without opening the envelope on every prompt.
+	//
+	// DERIVED, NOT AUTHORITATIVE. The envelope is the authority; this is a
+	// cache of it, reconciled from the authority by the resolver on each spawn
+	// (accountResolver.Resolve), and consulted by SessionAccountFreshness only
+	// when no AccountCredentialGenerationReader is wired to read the authority
+	// directly. It records inline envelopes only: a referenced account's
+	// secret is rewritten without any account write.
+	//
+	// MONOTONIC. accountStore.touch advances it only forward, so a reader that
+	// raced a rotation can never push it backwards and make a session holding
+	// the NEW material look stale.
+	//
+	// Zero means unknown: no generation-stamped envelope has been observed for
+	// this account yet. See Account.CredentialRotatedAt for the timestamp a
+	// zero generation falls back to.
+	CredentialGeneration int64 `json:"credential_generation,omitempty"`
+
 	// LastValidatedAt is the last time QuicBaaS successfully loaded this
 	// account's credential and projected it into a spawn. For
 	// AccountCredentialModeOAuthRefresh it is additionally advanced by a
@@ -316,7 +355,25 @@ type Account struct {
 	// for an account nobody has configured a limit for; see
 	// AccountSpendPolicy and account_spend_authority.go for where a metered
 	// account is actually refused.
-	Spend AccountSpendPolicy `json:"spend,omitempty"`
+	Spend AccountSpendPolicy `json:"spend,omitzero"`
+
+	// Billing is how this account is billed: a flat subscription or a
+	// metered API key. It decides the BILLED figure every turn on it
+	// carries, beside the list-price equivalent; see AccountBilling. The zero
+	// value bills unknown.
+	Billing AccountBilling `json:"billing,omitzero"`
+
+	// MaxConcurrentSessions is how many live sessions this account may serve
+	// at once. Zero is UNMETERED, the same "zero means nobody configured it"
+	// convention every other account limit uses, so an existing record
+	// behaves exactly as it did before the field existed.
+	//
+	// It is the operator's statement of what the subscription allows
+	// concurrently. QuicBaaS cannot discover it: the provider publishes no
+	// such figure, and it varies by plan. An account at its cap is skipped by
+	// the balancing strategy and counts as having no headroom at admission;
+	// see account_balancing.go.
+	MaxConcurrentSessions int `json:"max_concurrent_sessions,omitempty"`
 
 	// LastError carries the message of the most recent failed refresh, when
 	// Status is AccountStatusError. Cleared on the next successful refresh.
@@ -383,6 +440,29 @@ type AccountCredential struct {
 	// "CLAUDE_CODE_OAUTH_TOKEN"). Left empty for providers that carry their
 	// full credential in Env or Files already.
 	AccessTokenEnvKey string `json:"access_token_env_key,omitempty"`
+
+	// Generation identifies WHICH COPY of this account's material this
+	// envelope is, in Unix nanoseconds of the write that produced it.
+	//
+	// IT IS STAMPED BY THE WRITE ITSELF (AccountSecretStore.Replace), inside
+	// the same Put that persists the material, so the generation and the bytes
+	// it names can never be persisted apart. That is the whole point of
+	// keeping it here rather than only on the metadata record: a metadata
+	// write is a SECOND write that can fail on its own, and a rotation whose
+	// marker was lost leaves every live session holding a credential the
+	// provider has already stopped honouring while the pool still describes it
+	// as current (go-quicbaas#997).
+	//
+	// It is not secret material — an integer naming a write instant tells a
+	// reader nothing about the token — but it lives on the envelope because
+	// the envelope is what it identifies. Account.CredentialGeneration mirrors
+	// it onto the non-secret record for readers that must not open the
+	// envelope at all.
+	//
+	// Zero means the envelope predates generation stamping (imported before
+	// this field existed, and not replaced since). Readers treat zero as
+	// UNKNOWN, never as "generation zero" — see SessionAccountFreshness.
+	Generation int64 `json:"generation,omitempty"`
 }
 
 // AccountStore defines the persistence contract for Account metadata
@@ -457,6 +537,34 @@ type TouchAccountOptions struct {
 
 	// MarkValidated advances Account.LastValidatedAt to now.
 	MarkValidated bool
+
+	// MarkCredentialRotated advances Account.CredentialRotatedAt to now.
+	//
+	// ONLY A CALLER THAT HAS JUST WRITTEN A NEW CREDENTIAL ENVELOPE may set
+	// it. It is what every live session's materialized copy is compared
+	// against, so setting it where nothing was written would roll sessions
+	// holding perfectly good material, and NOT setting it where an envelope
+	// was written would leave them holding a credential the provider has
+	// already stopped honouring.
+	MarkCredentialRotated bool
+
+	// SetCredentialGeneration mirrors AccountCredential.Generation onto the
+	// metadata record. It is applied MONOTONICALLY — a value at or below what
+	// the record already holds is ignored — because it is written from two
+	// kinds of caller with different knowledge:
+	//
+	//   - the path that JUST replaced the envelope, which knows the newest
+	//     generation, and
+	//   - the path that RECONCILES it from an envelope it happens to have
+	//     read (the resolver), which may be holding a copy a rotation has
+	//     already superseded.
+	//
+	// Without the monotonic rule a reconciler that lost that race would push
+	// the mirror backwards, and every session holding the NEW material would
+	// then read as stale and be rolled for nothing. Zero is "say nothing",
+	// which is why there is no SetCredentialGenerationValid flag: a generation
+	// is never legitimately reset.
+	SetCredentialGeneration int64
 
 	// SetCredentialExpiresAt mirrors the credential envelope's expiry onto
 	// the metadata record. It is applied only when SetCredentialExpiryValid

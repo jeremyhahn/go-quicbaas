@@ -10,7 +10,11 @@
 # diagnosis), a job may move back to ci.yml -- that move is deliberate, not
 # automatic.
 #
-# Both jobs are the ones that were in this repo's ci.yml, moved unchanged
+# sdk-go-integration joined on the same terms: it is the sdk/go docker-compose
+# harness that `make test-sdk-go` excludes from the gate, known-red and tracked
+# as #50 (see the comment above test-sdk-go in the Makefile).
+#
+# fips and trivy are the jobs that were in this repo's ci.yml, moved unchanged
 # apart from the fips job's `needs: [build]`, which had no meaning here.
 # Reconciled against software/templates/github-actions/nightly.yml in the
 # automatethethings repo (devops.md §1/§8/§9).
@@ -112,3 +116,33 @@ jobs:
           trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 --format table \
             --skip-dirs test --skip-dirs examples --skip-dirs bin --skip-dirs build --skip-dirs data \
             --skip-files 'pkg/server/certs/*.key' --ignorefile .trivyignore .
+
+  # The sdk/go docker-compose harness (sdk/go/test/integration). Known-red and
+  # tracked as #50: its compose file builds the server from
+  # test/integration/Dockerfile.dev, which still copies sibling repos out of a
+  # `workspace` named build context (the model dependency-resolution.md §2
+  # abolished). A runner's parent directory holds no siblings, so the image
+  # build fails. The harness is excluded from ci.yml's `make test-sdk-go`
+  # (Makefile, grep -v '/test/') and runs here so it is never out of sight.
+  # When #50 lands, moving it back into ci.yml is deliberate, not automatic.
+  sdk-go-integration:
+    name: SDK Go integration (known-red, #50)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      # The harness's TestMain exits 0 when `docker info` fails, so a runner
+      # without Docker would report green and run nothing. This step turns that
+      # into a failure.
+      - name: Require Docker and Compose
+        run: |
+          docker info
+          docker compose version
+
+      - name: Run the Go SDK integration harness
+        run: make integration-test-sdk-go

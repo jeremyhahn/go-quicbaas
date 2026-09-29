@@ -119,7 +119,8 @@ type AgentService interface {
 	//   - error: ErrSessionIDRequired, ErrUnauthorized
 	CloseSession(ctx context.Context, req *CloseSessionRequest) (*CloseSessionResponse, error)
 
-	// ListSessions returns all active sessions, optionally filtered by backend.
+	// ListSessions returns every session, in any state (closed and error
+	// included), optionally filtered by backend or status.
 	// Requires permission: agent:prompt (read access)
 	// Parameters:
 	//   - ctx: Request context with timeout and metadata
@@ -201,31 +202,31 @@ type AgentService interface {
 	//   - error: ErrAgentServiceUnavailable, ErrUnauthorized
 	HealthCheck(ctx context.Context) (*HealthCheckReport, error)
 
-	// RegisterAgent registers an agent with the fleet registry.
+	// RegisterFleetNode registers an agent with the fleet registry.
 	// Requires permission: agent:admin
-	RegisterAgent(ctx context.Context, req *RegisterAgentRequest) (*RegisterAgentResponse, error)
+	RegisterFleetNode(ctx context.Context, req *RegisterFleetNodeRequest) (*RegisterFleetNodeResponse, error)
 
-	// GetAgent retrieves a registered agent by ID.
+	// GetFleetNode retrieves a registered agent by ID.
 	// Requires permission: agent:read
-	GetAgent(ctx context.Context, tenantID, agentID string) (*AgentRegistration, error)
+	GetFleetNode(ctx context.Context, tenantID, agentID string) (*FleetNode, error)
 
-	// ListAgents lists all registered agents for a tenant.
+	// ListFleetNodes lists all registered agents for a tenant.
 	// Requires permission: agent:read
-	ListAgents(ctx context.Context, tenantID string, filter *AgentFilter) ([]*AgentRegistration, error)
+	ListFleetNodes(ctx context.Context, tenantID string, filter *FleetNodeFilter) ([]*FleetNode, error)
 
-	// ListAgentsPage returns ONE PAGE of the tenant's matching agents,
-	// searched and ordered per AgentPageSpec.
+	// ListFleetNodesPage returns ONE PAGE of the tenant's matching agents,
+	// searched and ordered per FleetNodePageSpec.
 	// Requires permission: agent:read
-	ListAgentsPage(ctx context.Context, tenantID string, filter *AgentFilter, page *Page) (*PageResult[*AgentRegistration], error)
+	ListFleetNodesPage(ctx context.Context, tenantID string, filter *FleetNodeFilter, page *Page) (*PageResult[*FleetNode], error)
 
-	// RemoveAgent removes an agent from the fleet registry.
+	// RemoveFleetNode removes an agent from the fleet registry.
 	// Requires permission: agent:admin
-	RemoveAgent(ctx context.Context, tenantID, agentID string) error
+	RemoveFleetNode(ctx context.Context, tenantID, agentID string) error
 
-	// AgentHeartbeat updates an agent's last seen timestamp and reconciles
+	// FleetNodeHeartbeat updates an agent's last seen timestamp and reconciles
 	// the agent's backend axis against observed, what the daemon reports it
 	// is serving right now. A nil observation reconciles nothing.
-	AgentHeartbeat(ctx context.Context, tenantID, agentID string, observed *AgentObservation) error
+	FleetNodeHeartbeat(ctx context.Context, tenantID, agentID string, observed *FleetNodeObservation) error
 
 	// CreateTask creates a new orchestration task.
 	// Requires permission: agent:task
@@ -323,6 +324,35 @@ type AgentService interface {
 	// Returns:
 	//   - error: ErrTaskNotFound, ErrTaskInvalidState
 	ReadmitTask(ctx context.Context, tenantID, taskID string) error
+
+	// CloseBlockedTask completes a blocked task without readmitting it. It is
+	// the verb behind the attention inbox's "close as done" action: the owner
+	// has ruled that no further work is needed.
+	// Requires permission: orchestrator:task_readmit
+	// Parameters:
+	//   - ctx: Request context with timeout and tenant metadata
+	//   - tenantID: The tenant namespace
+	//   - taskID: The task identifier
+	//   - result: The operator's closing note, recorded as the task result
+	// Returns:
+	//   - error: ErrTaskNotFound, ErrTaskInvalidState
+	CloseBlockedTask(ctx context.Context, tenantID, taskID string, result *TaskResult) error
+
+	// BumpTaskReviewRoundBudget raises a blocked task's review-round budget
+	// by one extra round (Task.ReviewRoundBonus), bounded by
+	// MaxReviewRoundBonus, and returns the resulting bonus. It is the verb
+	// behind the attention inbox's "allow another round" action, called
+	// before ReadmitTask so the runner sees the raised budget the moment the
+	// task is dispatched again.
+	// Requires permission: orchestrator:task_readmit
+	// Parameters:
+	//   - ctx: Request context with timeout and tenant metadata
+	//   - tenantID: The tenant namespace
+	//   - taskID: The task identifier
+	// Returns:
+	//   - int: The task's ReviewRoundBonus after the increment
+	//   - error: ErrTaskNotFound, ErrTaskInvalidState, ReviewRoundBudgetExhaustedError
+	BumpTaskReviewRoundBudget(ctx context.Context, tenantID, taskID string) (int, error)
 
 	// StartJob starts an autonomous orchestration control loop.
 	// Requires permission: agent:job
@@ -665,9 +695,13 @@ type MessagingPublisher interface {
 // When set, the lead agent decomposes tasks and delegates to teammates.
 // When nil, tasks are managed programmatically via the API (manual mode).
 type LeadAgentConfig struct {
-	Backend      string // backend name to use for the lead agent
-	Model        string // model to use
-	SystemPrompt string // system prompt for orchestration
+	// Agent is the system tenant's Agent or pool the lead runs as.
+	Agent AgentRef
+
+	// Backend and Model are what Agent resolved to when the lead session
+	// was spawned: the backend a request naming none defaults to.
+	Backend string
+	Model   string
 }
 
 // =============================================================================
@@ -738,11 +772,36 @@ type RegisteredProject struct {
 
 // SpawnSessionRequest contains parameters for spawning a new agent session.
 type SpawnSessionRequest struct {
-	Backend         string            `json:"backend"`
-	ProjectID       string            `json:"project_id"`
-	JobID           string            `json:"job_id,omitempty"` // job the session works for, recorded on its durable record
-	Model           string            `json:"model,omitempty"`
-	SystemPrompt    string            `json:"system_prompt,omitempty"`
+	// AgentID names the tenant Agent this session runs as. The Agent supplies
+	// the backend, the model, the image, the reasoning effort, the provider
+	// endpoint, the account policy and — when the spawn names none — the
+	// system prompt, so a request naming an Agent names no Backend or Model
+	// of its own. Mutually exclusive with PoolID.
+	AgentID string `json:"agent_id,omitempty"`
+
+	// PoolID names the tenant pool this session runs from: its Agents are
+	// tried in order, and the spawn fails over to the next when one's accounts
+	// are exhausted, expired or rate-limited, its backend is unavailable, or
+	// it is at capacity. Every switch is audited. Mutually exclusive with
+	// AgentID.
+	PoolID string `json:"pool_id,omitempty"`
+
+	// Role is the kind of work the session does. It decides whether a pooled
+	// Agent held for another role takes it; see RolePolicy.
+	Role AgentRole `json:"role,omitempty"`
+
+	Backend      string `json:"backend"`
+	ProjectID    string `json:"project_id"`
+	JobID        string `json:"job_id,omitempty"` // job the session works for, recorded on its durable record
+	Model        string `json:"model,omitempty"`
+	SystemPrompt string `json:"system_prompt,omitempty"`
+
+	// PromptAppend is run-time prompt material appended after the prompt the
+	// spawn resolves — SystemPrompt, else the Agent's own prompt — separated
+	// by PromptAppendSeparator. At most MaxPromptAppendBytes; see
+	// prompt_append.go.
+	PromptAppend string `json:"prompt_append,omitempty"`
+
 	MCPServers      []MCPServerConfig `json:"mcp_servers,omitempty"`
 	Env             map[string]string `json:"env,omitempty"`              // env vars for agent
 	WorkDir         string            `json:"work_dir,omitempty"`         // explicit work directory
@@ -762,7 +821,7 @@ type SpawnSessionRequest struct {
 	TrustLevel TrustLevel `json:"trust_level,omitempty"`
 
 	// HostAffinity pins the session to a specific daemon host (Name or Host
-	// field on the AgentRegistration). Empty means "any available daemon"
+	// field on the FleetNode). Empty means "any available daemon"
 	// — the dispatcher picks the first online daemon serving the requested
 	// backend. Required for GPU-bound workloads that must run on a
 	// specific machine.
@@ -775,7 +834,7 @@ type SpawnSessionRequest struct {
 
 	// HostAffinityStrict, when true, forces hard host_affinity semantics for
 	// this request: if HostAffinity names a host that is offline the resolver
-	// returns NoMatchingAgentError instead of falling back to any available
+	// returns NoMatchingFleetNodeError instead of falling back to any available
 	// agent. When false the operator-level orchestration.host_affinity.mode
 	// default applies (soft = warn-and-fallback by default).
 	HostAffinityStrict bool `json:"host_affinity_strict,omitempty"`
@@ -825,10 +884,26 @@ type SpawnSessionRequest struct {
 
 	// Workspace NAMES the directory the session works in, instead of WorkDir
 	// giving a host path. The host that executes the session — this daemon's
-	// in-process backend or a fleet agent — provisions it under its own
+	// in-process backend or a fleet node — provisions it under its own
 	// projects root and reports where on the response. Mutually exclusive
 	// with WorkDir. See session_workspace.go.
 	Workspace *SessionWorkspace `json:"workspace,omitempty"`
+
+	// prepareCandidate is applied to each Agent a reference resolves to,
+	// after the Agent's own settings: the job envelope's per-backend worker
+	// environment, which cannot be decided before the backend is known.
+	prepareCandidate func(*SpawnSessionRequest)
+
+	// resolvedAgentID is the tenant Agent this request spawns as, set by
+	// forAgent once a reference has resolved. Unexported: the Agent a session
+	// is attributed to is the catalog's answer, never a caller's claim.
+	resolvedAgentID string
+}
+
+// AgentRef returns the Agent reference the request names, the zero reference
+// when it names a backend instead.
+func (r *SpawnSessionRequest) AgentRef() AgentRef {
+	return AgentRef{AgentID: r.AgentID, PoolID: r.PoolID}
 }
 
 // EffectiveSandboxMode returns the sandbox mode to be resolved against the
@@ -854,7 +929,7 @@ type SpawnSessionResponse struct {
 	// runs as a host process.
 	ContainerID string `json:"container_id,omitempty"`
 
-	// AgentID is the fleet agent the spawn was dispatched to. Empty when the
+	// AgentID is the fleet node the spawn was dispatched to. Empty when the
 	// session runs on this daemon's own in-process backend rather than on a
 	// registered agent. A job records it so its page can name — and link —
 	// the daemon that did the work (go-quicbaas#796).
@@ -865,6 +940,14 @@ type SpawnSessionResponse struct {
 	// when the spawn named no workspace. A job pins its later sessions to it;
 	// see SessionWorkspace.
 	Workspace *WorkspacePlacement `json:"workspace,omitempty"`
+
+	// ResolvedAgentID is the tenant Agent the session runs as, when the spawn
+	// named an Agent or a pool. Empty for a spawn that named a backend.
+	ResolvedAgentID string `json:"resolved_agent_id,omitempty"`
+
+	// Failovers are the Agents a pooled spawn passed over before this one,
+	// and why, in order.
+	Failovers []AgentAttempt `json:"failovers,omitempty"`
 
 	Timestamp int64 `json:"timestamp"`
 }
@@ -1034,6 +1117,12 @@ type SessionInfo struct {
 	// belongs to none.
 	JobID string `json:"job_id,omitempty"`
 
+	// ContainerID names the container the session's agent runs in, empty
+	// when it runs on the host. Read from the session record at list time,
+	// like JobID, so the session page can show the container without a
+	// second request (go-quicbaas#860).
+	ContainerID string `json:"container_id,omitempty"`
+
 	// Runner is the job runner that drove that job — "sdlc", "review",
 	// "triage", or "workflow" for the engine's own. Empty when the session
 	// belongs to no job, or to one no longer on record.
@@ -1056,7 +1145,7 @@ type SessionInfo struct {
 	CreatedAt    int64 `json:"created_at"`
 	LastActivity int64 `json:"last_activity"`
 
-	// AgentID is the fleet agent the session's job was dispatched to, empty
+	// AgentID is the fleet node the session's job was dispatched to, empty
 	// when the session belongs to no job or the work ran in-process.
 	//
 	// IT IS RESOLVED WITH Runner AND FOR THE SAME REASON. A session record
@@ -1136,7 +1225,7 @@ type CreateTaskRequest struct {
 	Metadata     map[string]string `json:"metadata,omitempty"`
 
 	// ProjectID scopes the task to a registered project. When non-empty,
-	// ClaimTask enforces the project's AgentRoles access matrix against
+	// ClaimTask enforces the project's FleetNodeRoles access matrix against
 	// the claiming agent. Empty means the task is unscoped (legacy — allow all).
 	ProjectID string `json:"project_id,omitempty"`
 
@@ -1154,7 +1243,7 @@ type CreateTaskRequest struct {
 	// one-shot job on the best-matching agent instead of queuing the task for
 	// manual claim. HostAffinity, GpuRequired, and Backend act as routing hints.
 	// If no matching agent is online, the task is persisted with empty SpawnedJobID
-	// and ErrNoMatchingAgent is returned.
+	// and ErrNoMatchingFleetNode is returned.
 	AutoSpawn bool `json:"auto_spawn,omitempty"`
 
 	// Backend filters agent selection during auto-spawn. Only agents whose
@@ -1178,6 +1267,11 @@ type CreateTaskRequest struct {
 	// decomposing the task into work items. A name nothing registered is
 	// refused with UnknownJobRunnerError.
 	Runner string `json:"runner,omitempty"`
+
+	// PromptAppend is run-time prompt material every attempt at the task
+	// carries to the sessions it spawns — the worker's, for a module runner.
+	// At most MaxPromptAppendBytes.
+	PromptAppend string `json:"prompt_append,omitempty"`
 
 	// Park, when set, creates the task ALREADY BLOCKED rather than pending,
 	// and suppresses the auto-spawn that AutoSpawn would otherwise trigger.
@@ -1307,8 +1401,17 @@ func (s JobState) Valid() bool {
 
 // JobConfig configures an orchestration job.
 type JobConfig struct {
-	TenantID      string        `json:"tenant_id"`
-	Description   string        `json:"description"`
+	TenantID    string `json:"tenant_id"`
+	Description string `json:"description"`
+
+	// Lead is the Agent or pool the job's lead runs as: the request's, else
+	// the project's default lead. Zero for a job that names none.
+	Lead AgentRef `json:"lead,omitempty"`
+
+	// LeadBackend and LeadModel are what Lead RESOLVED to when the job
+	// started — the backend the job's lease is counted against and the model
+	// a stateless lead prompt runs on. They are the job's record, set by the
+	// engine, never by a caller.
 	LeadBackend   string        `json:"lead_backend,omitempty"`
 	LeadModel     string        `json:"lead_model,omitempty"`
 	ProjectID     string        `json:"project_id,omitempty"`
@@ -1321,7 +1424,7 @@ type JobConfig struct {
 	// lead agent decomposing the description into a DAG of work items.
 	Runner string `json:"runner,omitempty"`
 
-	// LeadAgentID is the registered fleet agent ID that leads this job.
+	// LeadAgentID is the registered fleet node ID that leads this job.
 	// Set when the job is started via SpawnChildJob or when an agent
 	// authenticates via SpawnChildJob on behalf of a parent. Used to
 	// authorize SpawnChildJob calls: only the lead may fan out children.
@@ -1334,6 +1437,12 @@ type JobConfig struct {
 	// Attempt is the 1-based ordinal of this job among the task's attempts.
 	// Zero when TaskID is empty.
 	Attempt int `json:"attempt,omitempty"`
+
+	// PromptAppend is run-time prompt material appended to every session the
+	// job spawns, after the session's own prompt and any material its slot
+	// adds. It is the job's record of what dynamic content it ran with: the
+	// request's, or the task's for a task attempt. See prompt_append.go.
+	PromptAppend string `json:"prompt_append,omitempty"`
 
 	// Params is the RUNNER's own configuration for this job: the subject it
 	// is about, in the vocabulary of whichever runner drives it.
@@ -1413,6 +1522,11 @@ type JobStatus struct {
 	// are copied from Config so a listing can show them without the config.
 	TaskID  string `json:"task_id,omitempty"`
 	Attempt int    `json:"attempt,omitempty"`
+
+	// PromptAppend is the run-time prompt material the job appends to every
+	// session it spawns, copied from Config: the audit of what the job's
+	// sessions ran with, beyond their resolved prompts.
+	PromptAppend string `json:"prompt_append,omitempty"`
 
 	// Node names the daemon running the job's control loop.
 	Node string `json:"node,omitempty"`
@@ -1698,10 +1812,14 @@ type JobEvent struct {
 
 // StartJobRequest starts an autonomous orchestration job.
 type StartJobRequest struct {
-	TenantID      string `json:"tenant_id"`
-	Description   string `json:"description"`
-	LeadBackend   string `json:"lead_backend,omitempty"`
-	LeadModel     string `json:"lead_model,omitempty"`
+	TenantID    string `json:"tenant_id"`
+	Description string `json:"description"`
+
+	// Lead is the Agent or pool the job's lead runs as. Zero takes the
+	// project's default lead, and a job with neither leads with whatever its
+	// workflow's lead role names.
+	Lead AgentRef `json:"lead,omitempty"`
+
 	LeadAgentID   string `json:"lead_agent_id,omitempty"`
 	ProjectID     string `json:"project_id,omitempty"`
 	MaxIterations int    `json:"max_iterations,omitempty"`
@@ -1718,10 +1836,19 @@ type StartJobRequest struct {
 	TaskID  string `json:"task_id,omitempty"`
 	Attempt int    `json:"attempt,omitempty"`
 
+	// PromptAppend is run-time prompt material appended to every session the
+	// job spawns; copied onto JobConfig. At most MaxPromptAppendBytes.
+	PromptAppend string `json:"prompt_append,omitempty"`
+
 	// Params is the runner's own configuration for this job, copied onto
 	// JobConfig verbatim. See JobConfig.Params — in particular that it is
 	// persisted and displayed, so it carries no secret.
 	Params map[string]string `json:"params,omitempty"`
+
+	// routedBackend is the backend a task's routing restricts its attempt
+	// to. It is the engine's own input to a job it starts for a task, never a
+	// caller's: a caller names a lead by Agent reference.
+	routedBackend string
 }
 
 // StartJobResponse contains the result of starting an orchestration job.
@@ -1796,7 +1923,7 @@ type SpawnChildJobRequest struct {
 	GpuRequired bool `json:"gpu_required,omitempty"`
 
 	// HostAffinityStrict, when true, treats HostAffinity as a hard constraint:
-	// if the named host is offline the request fails with NoMatchingAgentError
+	// if the named host is offline the request fails with NoMatchingFleetNodeError
 	// rather than falling back to any available agent.
 	HostAffinityStrict bool `json:"host_affinity_strict,omitempty"`
 }

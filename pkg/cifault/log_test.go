@@ -96,8 +96,8 @@ func TestFailureLine_RecognisesTheChangesOwnFailure(t *testing.T) {
 	for _, line := range []string{
 		"--- fail: testaccountpool_concurrentspawnsproduceonerelease (0.01s)",
 		"fail",
-		"fail\tgithub.com/jeremyhahn/go-quicbaas/pkg/agent\t1.161s",
-		"fail github.com/jeremyhahn/go-quicbaas/pkg/agent 1.161s",
+		"fail\tgithub.com/jeremyhahn/go-quicbaas/pkg/fleet\t1.161s",
+		"fail github.com/jeremyhahn/go-quicbaas/pkg/fleet 1.161s",
 		"fail: testthing",
 		"panic: runtime error: invalid memory address",
 		"fatal error: concurrent map writes",

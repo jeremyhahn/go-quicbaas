@@ -99,10 +99,10 @@ func TestStashResolveError(t *testing.T) {
 	h := NewResolveErrorHolder()
 	ctx := WithResolveErrorHolder(context.Background(), h)
 
-	want := &NoMatchingAgentError{Constraint: "host_affinity", Detail: "host-x offline"}
+	want := &NoMatchingFleetNodeError{Constraint: "host_affinity", Detail: "host-x offline"}
 	StashResolveError(ctx, want)
-	if !errors.Is(h.Err(), ErrNoMatchingAgent) {
-		t.Fatalf("expected stashed NoMatchingAgentError, got %v", h.Err())
+	if !errors.Is(h.Err(), ErrNoMatchingFleetNode) {
+		t.Fatalf("expected stashed NoMatchingFleetNodeError, got %v", h.Err())
 	}
 
 	// No holder on the context: must be a silent no-op (no panic).
@@ -525,10 +525,10 @@ func TestAgentService_Infer_UnknownBackend(t *testing.T) {
 }
 
 // =============================================================================
-// project_authz.go — AuthorizeAgent (project-ID-only path) & findProject
+// project_authz.go — AuthorizeFleetNode (project-ID-only path) & findProject
 // =============================================================================
 
-// newScopedProjectInternal builds a Project with a non-empty AgentRoles map.
+// newScopedProjectInternal builds a Project with a non-empty FleetNodeRoles map.
 // (project_authz_test.go has an equivalent helper, but it lives in the
 // external orchestration_test package and is not visible here.)
 func newScopedProjectInternal(id, tenantID string, roles map[string]ProjectRole) *Project {
@@ -537,13 +537,13 @@ func newScopedProjectInternal(id, tenantID string, roles map[string]ProjectRole)
 		TenantID: tenantID,
 		Name:     "test-project",
 		Permissions: ProjectPermissions{
-			AgentRoles: roles,
+			FleetNodeRoles: roles,
 		},
 	}
 }
 
 // idOnlyProjectStore is a ProjectStore that supports the empty-tenant
-// "find by project ID" lookup used by ProjectAuthz.AuthorizeAgent. The
+// "find by project ID" lookup used by ProjectAuthz.AuthorizeFleetNode. The
 // in-memory store rejects an empty tenant, so the authz "unscoped find"
 // path needs a store that understands the convention.
 type idOnlyProjectStore struct {
@@ -585,7 +585,7 @@ func TestProjectAuthz_AuthorizeAgent_Allowed(t *testing.T) {
 	}))
 	authz := NewProjectAuthz(store)
 
-	if err := authz.AuthorizeAgent(ctx, "p1", "agent-A", ProjectRoleWorker); err != nil {
+	if err := authz.AuthorizeFleetNode(ctx, "p1", "agent-A", ProjectRoleWorker); err != nil {
 		t.Fatalf("expected authorization to succeed, got %v", err)
 	}
 }
@@ -598,7 +598,7 @@ func TestProjectAuthz_AuthorizeAgent_Denied(t *testing.T) {
 	}))
 	authz := NewProjectAuthz(store)
 
-	err := authz.AuthorizeAgent(ctx, "p2", "agent-B", ProjectRoleLead)
+	err := authz.AuthorizeFleetNode(ctx, "p2", "agent-B", ProjectRoleLead)
 	var denied *ProjectAccessDeniedError
 	if !errors.As(err, &denied) {
 		t.Fatalf("expected ProjectAccessDeniedError, got %T: %v", err, err)
@@ -610,15 +610,15 @@ func TestProjectAuthz_AuthorizeAgent_EmptyArgsAndInvalidRole(t *testing.T) {
 	authz := NewProjectAuthz(&idOnlyProjectStore{})
 
 	// Empty project or agent → unscoped legacy path → nil.
-	if err := authz.AuthorizeAgent(ctx, "", "agent", ProjectRoleLead); err != nil {
+	if err := authz.AuthorizeFleetNode(ctx, "", "agent", ProjectRoleLead); err != nil {
 		t.Fatalf("empty projectID should be a no-op: %v", err)
 	}
-	if err := authz.AuthorizeAgent(ctx, "p", "", ProjectRoleLead); err != nil {
+	if err := authz.AuthorizeFleetNode(ctx, "p", "", ProjectRoleLead); err != nil {
 		t.Fatalf("empty agentID should be a no-op: %v", err)
 	}
 
 	// Invalid required role → ProjectRoleInvalidError.
-	err := authz.AuthorizeAgent(ctx, "p", "a", ProjectRole("root"))
+	err := authz.AuthorizeFleetNode(ctx, "p", "a", ProjectRole("root"))
 	var invalid *ProjectRoleInvalidError
 	if !errors.As(err, &invalid) {
 		t.Fatalf("expected ProjectRoleInvalidError, got %T: %v", err, err)
@@ -631,7 +631,7 @@ func TestProjectAuthz_AuthorizeAgent_MissingProjectRefused(t *testing.T) {
 
 	// Project not found → findProject returns (nil, nil) → refusal. A check
 	// that could not read the role matrix must never answer "allowed".
-	err := authz.AuthorizeAgent(ctx, "no-such", "agent", ProjectRoleLead)
+	err := authz.AuthorizeFleetNode(ctx, "no-such", "agent", ProjectRoleLead)
 	if err == nil {
 		t.Fatal("expected a refusal for a project the store cannot produce, got nil")
 	}
@@ -639,9 +639,9 @@ func TestProjectAuthz_AuthorizeAgent_MissingProjectRefused(t *testing.T) {
 	if !errors.As(err, &unresolved) {
 		t.Fatalf("expected *ProjectUnresolvedError, got %T: %v", err, err)
 	}
-	if unresolved.ProjectID != "no-such" || unresolved.AgentID != "agent" {
+	if unresolved.ProjectID != "no-such" || unresolved.FleetNodeID != "agent" {
 		t.Errorf("refusal names project=%q agent=%q, want project=%q agent=%q",
-			unresolved.ProjectID, unresolved.AgentID, "no-such", "agent")
+			unresolved.ProjectID, unresolved.FleetNodeID, "no-such", "agent")
 	}
 }
 
@@ -667,7 +667,7 @@ func TestProjectAuthz_AuthorizeAgent_StorePropagatesError(t *testing.T) {
 	storeErr := errors.New("store unavailable")
 	authz := NewProjectAuthz(&errProjectStore{err: storeErr})
 
-	if err := authz.AuthorizeAgent(ctx, "p", "a", ProjectRoleWorker); !errors.Is(err, storeErr) {
+	if err := authz.AuthorizeFleetNode(ctx, "p", "a", ProjectRoleWorker); !errors.Is(err, storeErr) {
 		t.Fatalf("expected store error to propagate, got %v", err)
 	}
 }

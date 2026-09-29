@@ -33,7 +33,6 @@ import (
 const (
 	iamUserServicePrefix       = "quicbaas.IAM.User"
 	iamTenantServicePrefix     = "quicbaas.IAM.Tenant"
-	iamGroupServicePrefix      = "quicbaas.IAM.Group"
 	iamRoleServicePrefix       = "quicbaas.IAM.Role"
 	iamPolicyServicePrefix     = "quicbaas.IAM.Policy"
 	iamAppServicePrefix        = "quicbaas.IAM.App"
@@ -70,8 +69,6 @@ func (h *iamRESTHandler) handleRequest(ctx context.Context, service, method stri
 		return h.handleUserRequest(ctx, method, req)
 	case strings.HasPrefix(service, iamTenantServicePrefix):
 		return h.handleTenantRequest(ctx, method, req)
-	case strings.HasPrefix(service, iamGroupServicePrefix):
-		return h.handleGroupRequest(ctx, method, req)
 	case strings.HasPrefix(service, iamRoleServicePrefix):
 		return h.handleRoleRequest(ctx, method, req)
 	case strings.HasPrefix(service, iamPolicyServicePrefix):
@@ -244,85 +241,6 @@ func (h *iamRESTHandler) handleTenantRequest(ctx context.Context, method string,
 
 	default:
 		return nil, errors.NewUnimplemented("iamRESTHandler.handleTenantRequest", "unsupported method: "+method)
-	}
-}
-
-// handleGroupRequest handles Group service requests.
-func (h *iamRESTHandler) handleGroupRequest(ctx context.Context, method string, req interface{}) (interface{}, error) {
-	reqMap, err := toMap(req)
-	if err != nil {
-		return nil, errors.Wrap(err, errors.CodeInvalidInput, "iamRESTHandler.handleGroupRequest", "invalid request")
-	}
-
-	tenantID := getString(reqMap, "tenant_id")
-	if tenantID == "" {
-		return nil, errors.NewInvalidInput("iamRESTHandler.handleGroupRequest", "tenant_id is required")
-	}
-
-	switch method {
-	case "Create":
-		// POST /api/v1/tenants/{tenant_id}/groups
-		innerReq := getMap(reqMap, "request")
-		return h.doRequest(ctx, http.MethodPost, "/api/v1/tenants/"+tenantID+"/groups", innerReq)
-
-	case "Get":
-		// GET /api/v1/tenants/{tenant_id}/groups/{group_id}
-		groupID := getString(reqMap, "group_id")
-		if groupID == "" {
-			return nil, errors.NewInvalidInput("iamRESTHandler.handleGroupRequest", "group_id is required")
-		}
-		return h.doRequest(ctx, http.MethodGet, "/api/v1/tenants/"+tenantID+"/groups/"+groupID, nil)
-
-	case "Update":
-		// PUT /api/v1/tenants/{tenant_id}/groups/{group_id}
-		groupID := getString(reqMap, "group_id")
-		if groupID == "" {
-			return nil, errors.NewInvalidInput("iamRESTHandler.handleGroupRequest", "group_id is required")
-		}
-		innerReq := getMap(reqMap, "request")
-		return h.doRequest(ctx, http.MethodPut, "/api/v1/tenants/"+tenantID+"/groups/"+groupID, innerReq)
-
-	case "Delete":
-		// DELETE /api/v1/tenants/{tenant_id}/groups/{group_id}
-		groupID := getString(reqMap, "group_id")
-		if groupID == "" {
-			return nil, errors.NewInvalidInput("iamRESTHandler.handleGroupRequest", "group_id is required")
-		}
-		return h.doRequest(ctx, http.MethodDelete, "/api/v1/tenants/"+tenantID+"/groups/"+groupID, nil)
-
-	case "List":
-		// GET /api/v1/tenants/{tenant_id}/groups
-		return h.doRequest(ctx, http.MethodGet, "/api/v1/tenants/"+tenantID+"/groups", nil)
-
-	case "AddMember":
-		// POST /api/v1/tenants/{tenant_id}/groups/{group_id}/members
-		groupID := getString(reqMap, "group_id")
-		userID := getString(reqMap, "user_id")
-		if groupID == "" {
-			return nil, errors.NewInvalidInput("iamRESTHandler.handleGroupRequest", "group_id is required")
-		}
-		body := map[string]interface{}{"user_id": userID}
-		return h.doRequest(ctx, http.MethodPost, "/api/v1/tenants/"+tenantID+"/groups/"+groupID+"/members", body)
-
-	case "RemoveMember":
-		// DELETE /api/v1/tenants/{tenant_id}/groups/{group_id}/members/{user_id}
-		groupID := getString(reqMap, "group_id")
-		userID := getString(reqMap, "user_id")
-		if groupID == "" {
-			return nil, errors.NewInvalidInput("iamRESTHandler.handleGroupRequest", "group_id is required")
-		}
-		return h.doRequest(ctx, http.MethodDelete, "/api/v1/tenants/"+tenantID+"/groups/"+groupID+"/members/"+userID, nil)
-
-	case "ListMembers":
-		// GET /api/v1/tenants/{tenant_id}/groups/{group_id}/members
-		groupID := getString(reqMap, "group_id")
-		if groupID == "" {
-			return nil, errors.NewInvalidInput("iamRESTHandler.handleGroupRequest", "group_id is required")
-		}
-		return h.doRequest(ctx, http.MethodGet, "/api/v1/tenants/"+tenantID+"/groups/"+groupID+"/members", nil)
-
-	default:
-		return nil, errors.NewUnimplemented("iamRESTHandler.handleGroupRequest", "unsupported method: "+method)
 	}
 }
 
@@ -1382,8 +1300,8 @@ func (h *iamRESTHandler) doRequest(ctx context.Context, httpMethod, path string,
 }
 
 // mapUserCreateRequest maps SDK CreateUserRequest fields to REST API fields.
-// SDK sends: username, email, display_name, auth_methods, roles, groups, metadata
-// REST expects: email, username, name, auth_methods, lifecycle, roles, groups, attributes, enabled
+// SDK sends: username, email, display_name, auth_methods, roles, metadata
+// REST expects: email, username, name, auth_methods, lifecycle, roles, attributes, enabled
 func mapUserCreateRequest(req map[string]interface{}) map[string]interface{} {
 	if req == nil {
 		return nil
@@ -1424,13 +1342,6 @@ func mapUserCreateRequest(req map[string]interface{}) map[string]interface{} {
 	// before creating the user, so they must not be dropped here.
 	if roles, ok := req["roles"].([]interface{}); ok && len(roles) > 0 {
 		body["roles"] = roles
-	}
-
-	// Map groups (initial group memberships). Like roles, the server
-	// validates the references before creating the user, so they must not
-	// be dropped here.
-	if groups, ok := req["groups"].([]interface{}); ok && len(groups) > 0 {
-		body["groups"] = groups
 	}
 
 	// Map enabled (default to true if not specified)

@@ -78,8 +78,10 @@ type accountDeleteEnvelope struct {
 
 // accountUsageEnvelope is the usage response envelope.
 type accountUsageEnvelope struct {
-	Usage     *account.UsageReport `json:"usage"`
-	Timestamp time.Time            `json:"timestamp"`
+	Usage        *account.UsageReport   `json:"usage"`
+	LiveSessions int                    `json:"live_sessions"`
+	Spend        *account.SpendHeadroom `json:"spend,omitempty"`
+	Timestamp    time.Time              `json:"timestamp"`
 }
 
 // accountMethodHandler handles one SDK account method.
@@ -98,6 +100,8 @@ func (h *accountRESTHandler) handleRequest(ctx context.Context, method string, r
 		"SetDefault":       h.handleSetDefault,
 		"Usage":            h.handleUsage,
 		"Materialize":      h.handleMaterialize,
+		"ReserveSession":   h.handleReserveSession,
+		"ReleaseSession":   h.handleReleaseSession,
 	}
 
 	handler, ok := handlers[method]
@@ -111,6 +115,39 @@ func (h *accountRESTHandler) handleRequest(ctx context.Context, method string, r
 func accountItemPath(accountID, tenantID, suffix string) string {
 	return accountRESTBasePath + "/" + url.PathEscape(accountID) + suffix +
 		"?tenant_id=" + url.QueryEscape(tenantID)
+}
+
+// handleReserveSession handles POST /api/v1/agent-accounts/{id}/reservations.
+func (h *accountRESTHandler) handleReserveSession(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*account.ReserveSessionRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("account.ReserveSession", "invalid request type")
+	}
+	body := struct {
+		ExpectedLive *int `json:"expected_live,omitempty"`
+	}{ExpectedLive: sdkReq.ExpectedLive}
+	var out account.SessionReservation
+	if err := h.transport.doJSONRequest(ctx, http.MethodPost,
+		accountItemPath(sdkReq.AccountID, sdkReq.TenantID, "/reservations"), &body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// handleReleaseSession handles
+// DELETE /api/v1/agent-accounts/{id}/reservations/{rid}.
+func (h *accountRESTHandler) handleReleaseSession(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*account.ReleaseSessionRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("account.ReleaseSession", "invalid request type")
+	}
+	var out account.SessionReservation
+	if err := h.transport.doJSONRequest(ctx, http.MethodDelete,
+		accountItemPath(sdkReq.AccountID, sdkReq.TenantID, "/reservations/"+url.PathEscape(sdkReq.ReservationID)),
+		nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // handleCreate handles POST /api/v1/agent-accounts.
@@ -259,6 +296,8 @@ func (h *accountRESTHandler) handleUsage(ctx context.Context, req interface{}) (
 	if env.Usage == nil {
 		return nil, errors.NewInternal("account.Usage", "server returned no usage report")
 	}
+	env.Usage.LiveSessions = env.LiveSessions
+	env.Usage.Spend = env.Spend
 	return env.Usage, nil
 }
 

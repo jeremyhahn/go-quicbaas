@@ -27,7 +27,7 @@ func withProviderCreateState(t *testing.T) {
 		tenant, preset, id, name string
 		ptype, clientID, secret  string
 		issuer, outputFmt        string
-		scopes, roles, groups    []string
+		scopes, roles            []string
 		auto, linking            bool
 	}{
 		factory:   iamClientFactory,
@@ -42,7 +42,6 @@ func withProviderCreateState(t *testing.T) {
 		outputFmt: iamOutputFormat,
 		scopes:    providerScopes,
 		roles:     defaultRoles,
-		groups:    defaultGroups,
 		auto:      autoProvision,
 		linking:   allowLinking,
 	}
@@ -59,7 +58,6 @@ func withProviderCreateState(t *testing.T) {
 		iamOutputFormat = saved.outputFmt
 		providerScopes = saved.scopes
 		defaultRoles = saved.roles
-		defaultGroups = saved.groups
 		autoProvision = saved.auto
 		allowLinking = saved.linking
 		cleanup()
@@ -74,7 +72,6 @@ func withProviderCreateState(t *testing.T) {
 	providerIssuerURL = ""
 	providerScopes = nil
 	defaultRoles = nil
-	defaultGroups = nil
 	autoProvision = false
 	allowLinking = false
 }
@@ -140,7 +137,6 @@ func TestRunIAMProviderCreate_SuccessDefaultOutput(t *testing.T) {
 			AutoProvision: opts.AutoProvision,
 			AllowLinking:  opts.AllowLinking,
 			DefaultRoles:  []string{"viewer"},
-			DefaultGroups: []string{"staff"},
 			Created:       time.Now(),
 		}, nil
 	}
@@ -152,7 +148,6 @@ func TestRunIAMProviderCreate_SuccessDefaultOutput(t *testing.T) {
 	providerClientID = "client-123"
 	providerIssuerURL = "https://issuer.example.com"
 	defaultRoles = []string{"viewer"}
-	defaultGroups = []string{"staff"}
 	iamOutputFormat = "table"
 
 	require.NoError(t, runIAMProviderCreate(cmd, "iam.provider.create"))

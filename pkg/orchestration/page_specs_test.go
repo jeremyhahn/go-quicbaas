@@ -37,7 +37,7 @@ func TestPageSpecs_DefaultSortIsAllowListed(t *testing.T) {
 		{name: "jobs", defaultSort: jobPageSpec.DefaultSort, fields: JobPageSpec().SortFields()},
 		{name: "tasks", defaultSort: taskPageSpec.DefaultSort, fields: TaskPageSpec().SortFields()},
 		{name: "sessions", defaultSort: sessionPageSpec.DefaultSort, fields: SessionPageSpec().SortFields()},
-		{name: "agents", defaultSort: agentPageSpec.DefaultSort, fields: AgentPageSpec().SortFields()},
+		{name: "agents", defaultSort: fleetNodePageSpec.DefaultSort, fields: FleetNodePageSpec().SortFields()},
 		{name: "workflows", defaultSort: workflowPageSpec.DefaultSort, fields: WorkflowPageSpec().SortFields()},
 		{name: "projects", defaultSort: projectPageSpec.DefaultSort, fields: ProjectPageSpec().SortFields()},
 		{name: "accounts", defaultSort: accountPageSpec.DefaultSort, fields: AccountPageSpec().SortFields()},
@@ -205,12 +205,12 @@ func TestSessionPageSpec_KeepsItsOldestFirstOrder(t *testing.T) {
 func TestAgentPageSpec_SearchesEveryBackendItServes(t *testing.T) {
 	t.Parallel()
 
-	agents := []*AgentRegistration{
+	agents := []*FleetNode{
 		{ID: "agent-1", Name: "burnin-01", Backend: "claude", Capabilities: []string{"codex", "gpu"}, RegisteredAt: 100},
 		{ID: "agent-2", Name: "burnin-02", Backend: "ollama", RegisteredAt: 300},
 	}
 
-	page, err := ApplyPage(agents, nil, agentPageSpec)
+	page, err := ApplyPage(agents, nil, fleetNodePageSpec)
 	if err != nil {
 		t.Fatalf("ApplyPage() error = %v, want nil", err)
 	}
@@ -219,7 +219,7 @@ func TestAgentPageSpec_SearchesEveryBackendItServes(t *testing.T) {
 	}
 
 	for _, query := range []string{"codex", "agent-1", "burnin-01", "claude"} {
-		result, searchErr := ApplyPage(agents, &Page{Query: query}, agentPageSpec)
+		result, searchErr := ApplyPage(agents, &Page{Query: query}, fleetNodePageSpec)
 		if searchErr != nil {
 			t.Fatalf("ApplyPage(q=%q) error = %v", query, searchErr)
 		}

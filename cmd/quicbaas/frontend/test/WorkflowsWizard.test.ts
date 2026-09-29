@@ -28,7 +28,7 @@ vi.mock('../src/stores/sdkClient.ts', () => ({
     orchestrator: {
       listWorkflows: listWorkflowsMock,
       listBackends:  listBackendsMock,
-      listAgents:    listAgentsMock,
+      listFleetNodes:    listAgentsMock,
       createWorkflow: createWorkflowMock,
       startJob: vi.fn().mockResolvedValue({ job_id: 'j1', timestamp: 0 }),
     },

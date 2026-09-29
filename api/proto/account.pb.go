@@ -75,8 +75,16 @@ type Account struct {
 	// credential_secret_file is where a referenced secret is materialized
 	// (relative to the session home) instead of the access token.
 	CredentialSecretFile string `protobuf:"bytes,19,opt,name=credential_secret_file,json=credentialSecretFile,proto3" json:"credential_secret_file,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// max_concurrent_sessions caps how many live sessions the account serves
+	// at once. Zero is unmetered.
+	MaxConcurrentSessions int32 `protobuf:"varint,20,opt,name=max_concurrent_sessions,json=maxConcurrentSessions,proto3" json:"max_concurrent_sessions,omitempty"`
+	// billing is how the account is billed; unset when not configured.
+	Billing *AccountBilling `protobuf:"bytes,21,opt,name=billing,proto3" json:"billing,omitempty"`
+	// spend is what the account may spend and how many failures take it out
+	// of service; unset is unmetered.
+	Spend         *AccountSpendPolicy `protobuf:"bytes,22,opt,name=spend,proto3" json:"spend,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Account) Reset() {
@@ -242,6 +250,85 @@ func (x *Account) GetCredentialSecretFile() string {
 	return ""
 }
 
+func (x *Account) GetMaxConcurrentSessions() int32 {
+	if x != nil {
+		return x.MaxConcurrentSessions
+	}
+	return 0
+}
+
+func (x *Account) GetBilling() *AccountBilling {
+	if x != nil {
+		return x.Billing
+	}
+	return nil
+}
+
+func (x *Account) GetSpend() *AccountSpendPolicy {
+	if x != nil {
+		return x.Spend
+	}
+	return nil
+}
+
+// AccountBilling is how a pooled account is billed, which decides the billed
+// figure each turn on it carries beside its list-price equivalent.
+type AccountBilling struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// mode is "subscription" (a turn adds nothing to the bill) or "api" (a
+	// turn bills its list price). Empty means not configured: billed unknown.
+	Mode string `protobuf:"bytes,1,opt,name=mode,proto3" json:"mode,omitempty"`
+	// monthly_fee_micros is a subscription's flat monthly fee in millionths
+	// of a US dollar. Refused on an api account.
+	MonthlyFeeMicros int64 `protobuf:"varint,2,opt,name=monthly_fee_micros,json=monthlyFeeMicros,proto3" json:"monthly_fee_micros,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *AccountBilling) Reset() {
+	*x = AccountBilling{}
+	mi := &file_api_proto_account_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AccountBilling) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AccountBilling) ProtoMessage() {}
+
+func (x *AccountBilling) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_account_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AccountBilling.ProtoReflect.Descriptor instead.
+func (*AccountBilling) Descriptor() ([]byte, []int) {
+	return file_api_proto_account_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *AccountBilling) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *AccountBilling) GetMonthlyFeeMicros() int64 {
+	if x != nil {
+		return x.MonthlyFeeMicros
+	}
+	return 0
+}
+
 // AccountCredential is the secret envelope. REQUEST-ONLY — it appears in
 // CreateAccountRequest and RotateAccountCredentialRequest and in no response.
 // The one method that returns credential material uses
@@ -264,7 +351,7 @@ type AccountCredential struct {
 
 func (x *AccountCredential) Reset() {
 	*x = AccountCredential{}
-	mi := &file_api_proto_account_proto_msgTypes[1]
+	mi := &file_api_proto_account_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -276,7 +363,7 @@ func (x *AccountCredential) String() string {
 func (*AccountCredential) ProtoMessage() {}
 
 func (x *AccountCredential) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_account_proto_msgTypes[1]
+	mi := &file_api_proto_account_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -289,7 +376,7 @@ func (x *AccountCredential) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AccountCredential.ProtoReflect.Descriptor instead.
 func (*AccountCredential) Descriptor() ([]byte, []int) {
-	return file_api_proto_account_proto_rawDescGZIP(), []int{1}
+	return file_api_proto_account_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *AccountCredential) GetEnv() map[string]string {
@@ -369,7 +456,7 @@ type AccountUsage struct {
 
 func (x *AccountUsage) Reset() {
 	*x = AccountUsage{}
-	mi := &file_api_proto_account_proto_msgTypes[2]
+	mi := &file_api_proto_account_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -381,7 +468,7 @@ func (x *AccountUsage) String() string {
 func (*AccountUsage) ProtoMessage() {}
 
 func (x *AccountUsage) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_account_proto_msgTypes[2]
+	mi := &file_api_proto_account_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -394,7 +481,7 @@ func (x *AccountUsage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AccountUsage.ProtoReflect.Descriptor instead.
 func (*AccountUsage) Descriptor() ([]byte, []int) {
-	return file_api_proto_account_proto_rawDescGZIP(), []int{2}
+	return file_api_proto_account_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *AccountUsage) GetTotalTokens() int64 {
@@ -449,13 +536,18 @@ type CreateAccountRequest struct {
 	// credential_secret_file materializes the referenced secret as this file
 	// (relative to the session home) instead of as the access token.
 	CredentialSecretFile string `protobuf:"bytes,9,opt,name=credential_secret_file,json=credentialSecretFile,proto3" json:"credential_secret_file,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// max_concurrent_sessions caps how many live sessions the account serves
+	// at once. Zero is unmetered.
+	MaxConcurrentSessions int32               `protobuf:"varint,10,opt,name=max_concurrent_sessions,json=maxConcurrentSessions,proto3" json:"max_concurrent_sessions,omitempty"`
+	Billing               *AccountBilling     `protobuf:"bytes,11,opt,name=billing,proto3" json:"billing,omitempty"`
+	Spend                 *AccountSpendPolicy `protobuf:"bytes,12,opt,name=spend,proto3" json:"spend,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *CreateAccountRequest) Reset() {
 	*x = CreateAccountRequest{}
-	mi := &file_api_proto_account_proto_msgTypes[3]
+	mi := &file_api_proto_account_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -467,7 +559,7 @@ func (x *CreateAccountRequest) String() string {
 func (*CreateAccountRequest) ProtoMessage() {}
 
 func (x *CreateAccountRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_account_proto_msgTypes[3]
+	mi := &file_api_proto_account_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -480,7 +572,7 @@ func (x *CreateAccountRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateAccountRequest.ProtoReflect.Descriptor instead.
 func (*CreateAccountRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_account_proto_rawDescGZIP(), []int{3}
+	return file_api_proto_account_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *CreateAccountRequest) GetTenantId() string {
@@ -546,6 +638,27 @@ func (x *CreateAccountRequest) GetCredentialSecretFile() string {
 	return ""
 }
 
+func (x *CreateAccountRequest) GetMaxConcurrentSessions() int32 {
+	if x != nil {
+		return x.MaxConcurrentSessions
+	}
+	return 0
+}
+
+func (x *CreateAccountRequest) GetBilling() *AccountBilling {
+	if x != nil {
+		return x.Billing
+	}
+	return nil
+}
+
+func (x *CreateAccountRequest) GetSpend() *AccountSpendPolicy {
+	if x != nil {
+		return x.Spend
+	}
+	return nil
+}
+
 type CreateAccountResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Account       *Account               `protobuf:"bytes,1,opt,name=account,proto3" json:"account,omitempty"`
@@ -556,7 +669,7 @@ type CreateAccountResponse struct {
 
 func (x *CreateAccountResponse) Reset() {
 	*x = CreateAccountResponse{}
-	mi := &file_api_proto_account_proto_msgTypes[4]
+	mi := &file_api_proto_account_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -568,7 +681,7 @@ func (x *CreateAccountResponse) String() string {
 func (*CreateAccountResponse) ProtoMessage() {}
 
 func (x *CreateAccountResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_account_proto_msgTypes[4]
+	mi := &file_api_proto_account_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -581,7 +694,7 @@ func (x *CreateAccountResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateAccountResponse.ProtoReflect.Descriptor instead.
 func (*CreateAccountResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_account_proto_rawDescGZIP(), []int{4}
+	return file_api_proto_account_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *CreateAccountResponse) GetAccount() *Account {
@@ -608,7 +721,7 @@ type GetAccountRequest struct {
 
 func (x *GetAccountRequest) Reset() {
 	*x = GetAccountRequest{}
-	mi := &file_api_proto_account_proto_msgTypes[5]
+	mi := &file_api_proto_account_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -620,7 +733,7 @@ func (x *GetAccountRequest) String() string {
 func (*GetAccountRequest) ProtoMessage() {}
 
 func (x *GetAccountRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_account_proto_msgTypes[5]
+	mi := &file_api_proto_account_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -633,7 +746,7 @@ func (x *GetAccountRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAccountRequest.ProtoReflect.Descriptor instead.
 func (*GetAccountRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_account_proto_rawDescGZIP(), []int{5}
+	return file_api_proto_account_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *GetAccountRequest) GetTenantId() string {
@@ -660,7 +773,7 @@ type GetAccountResponse struct {
 
 func (x *GetAccountResponse) Reset() {
 	*x = GetAccountResponse{}
-	mi := &file_api_proto_account_proto_msgTypes[6]
+	mi := &file_api_proto_account_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -672,7 +785,7 @@ func (x *GetAccountResponse) String() string {
 func (*GetAccountResponse) ProtoMessage() {}
 
 func (x *GetAccountResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_account_proto_msgTypes[6]
+	mi := &file_api_proto_account_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -685,7 +798,7 @@ func (x *GetAccountResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAccountResponse.ProtoReflect.Descriptor instead.
 func (*GetAccountResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_account_proto_rawDescGZIP(), []int{6}
+	return file_api_proto_account_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *GetAccountResponse) GetAccount() *Account {
@@ -703,17 +816,27 @@ func (x *GetAccountResponse) GetTimestamp() int64 {
 }
 
 type ListAccountsRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TenantId      string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
-	Provider      string                 `protobuf:"bytes,2,opt,name=provider,proto3" json:"provider,omitempty"`
-	ProjectId     string                 `protobuf:"bytes,3,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	TenantId  string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	Provider  string                 `protobuf:"bytes,2,opt,name=provider,proto3" json:"provider,omitempty"`
+	ProjectId string                 `protobuf:"bytes,3,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	// Paging, sorting and search — the contract every list endpoint speaks
+	// (docs/software-factory/api.md). limit 0 takes the default page (25);
+	// anything above 100 is capped. sort is "<field>" or "<field>:desc",
+	// naming a field from the endpoint's allow-list; an unknown field is
+	// refused with InvalidArgument. q is a case-insensitive substring
+	// matched against the endpoint's documented text fields.
+	Limit         int32  `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset        int32  `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
+	Sort          string `protobuf:"bytes,6,opt,name=sort,proto3" json:"sort,omitempty"`
+	Q             string `protobuf:"bytes,7,opt,name=q,proto3" json:"q,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ListAccountsRequest) Reset() {
 	*x = ListAccountsRequest{}
-	mi := &file_api_proto_account_proto_msgTypes[7]
+	mi := &file_api_proto_account_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -725,7 +848,7 @@ func (x *ListAccountsRequest) String() string {
 func (*ListAccountsRequest) ProtoMessage() {}
 
 func (x *ListAccountsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_account_proto_msgTypes[7]
+	mi := &file_api_proto_account_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -738,7 +861,7 @@ func (x *ListAccountsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAccountsRequest.ProtoReflect.Descriptor instead.
 func (*ListAccountsRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_account_proto_rawDescGZIP(), []int{7}
+	return file_api_proto_account_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ListAccountsRequest) GetTenantId() string {
@@ -762,18 +885,53 @@ func (x *ListAccountsRequest) GetProjectId() string {
 	return ""
 }
 
+func (x *ListAccountsRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *ListAccountsRequest) GetOffset() int32 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *ListAccountsRequest) GetSort() string {
+	if x != nil {
+		return x.Sort
+	}
+	return ""
+}
+
+func (x *ListAccountsRequest) GetQ() string {
+	if x != nil {
+		return x.Q
+	}
+	return ""
+}
+
 type ListAccountsResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Accounts      []*Account             `protobuf:"bytes,1,rep,name=accounts,proto3" json:"accounts,omitempty"`
-	Total         int32                  `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
-	Timestamp     int64                  `protobuf:"varint,3,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Accounts  []*Account             `protobuf:"bytes,1,rep,name=accounts,proto3" json:"accounts,omitempty"`
+	Total     int32                  `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
+	Timestamp int64                  `protobuf:"varint,3,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	// The paging envelope. total counts the records that matched the filters
+	// and the search BEFORE the page was cut; limit and offset are the values
+	// the server APPLIED. next_offset is the offset of the following page and
+	// is zero on the last page.
+	Limit         int32 `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset        int32 `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
+	NextOffset    int32 `protobuf:"varint,6,opt,name=next_offset,json=nextOffset,proto3" json:"next_offset,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ListAccountsResponse) Reset() {
 	*x = ListAccountsResponse{}
-	mi := &file_api_proto_account_proto_msgTypes[8]
+	mi := &file_api_proto_account_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -785,7 +943,7 @@ func (x *ListAccountsResponse) String() string {
 func (*ListAccountsResponse) ProtoMessage() {}
 
 func (x *ListAccountsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_account_proto_msgTypes[8]
+	mi := &file_api_proto_account_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -798,7 +956,7 @@ func (x *ListAccountsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAccountsResponse.ProtoReflect.Descriptor instead.
 func (*ListAccountsResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_account_proto_rawDescGZIP(), []int{8}
+	return file_api_proto_account_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ListAccountsResponse) GetAccounts() []*Account {
@@ -822,6 +980,27 @@ func (x *ListAccountsResponse) GetTimestamp() int64 {
 	return 0
 }
 
+func (x *ListAccountsResponse) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *ListAccountsResponse) GetOffset() int32 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *ListAccountsResponse) GetNextOffset() int32 {
+	if x != nil {
+		return x.NextOffset
+	}
+	return 0
+}
+
 type UpdateAccountRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	TenantId       string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
@@ -835,13 +1014,22 @@ type UpdateAccountRequest struct {
 	// secret was missing to service.
 	CredentialSecretRef  string `protobuf:"bytes,7,opt,name=credential_secret_ref,json=credentialSecretRef,proto3" json:"credential_secret_ref,omitempty"`
 	CredentialSecretFile string `protobuf:"bytes,8,opt,name=credential_secret_file,json=credentialSecretFile,proto3" json:"credential_secret_file,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// max_concurrent_sessions, when present, replaces the account's session
+	// cap; zero makes it unmetered. Absent leaves it unchanged.
+	MaxConcurrentSessions *int32 `protobuf:"varint,9,opt,name=max_concurrent_sessions,json=maxConcurrentSessions,proto3,oneof" json:"max_concurrent_sessions,omitempty"`
+	// billing, when present, replaces how the account is billed; a present
+	// empty message clears it. Absent leaves it unchanged.
+	Billing *AccountBilling `protobuf:"bytes,10,opt,name=billing,proto3" json:"billing,omitempty"`
+	// spend, when present, replaces the account's spend policy; a present
+	// empty message makes it unmetered. Absent leaves it unchanged.
+	Spend         *AccountSpendPolicy `protobuf:"bytes,11,opt,name=spend,proto3" json:"spend,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *UpdateAccountRequest) Reset() {
 	*x = UpdateAccountRequest{}
-	mi := &file_api_proto_account_proto_msgTypes[9]
+	mi := &file_api_proto_account_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -853,7 +1041,7 @@ func (x *UpdateAccountRequest) String() string {
 func (*UpdateAccountRequest) ProtoMessage() {}
 
 func (x *UpdateAccountRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_account_proto_msgTypes[9]
+	mi := &file_api_proto_account_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -866,7 +1054,7 @@ func (x *UpdateAccountRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateAccountRequest.ProtoReflect.Descriptor instead.
 func (*UpdateAccountRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_account_proto_rawDescGZIP(), []int{9}
+	return file_api_proto_account_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *UpdateAccountRequest) GetTenantId() string {
@@ -925,6 +1113,27 @@ func (x *UpdateAccountRequest) GetCredentialSecretFile() string {
 	return ""
 }
 
+func (x *UpdateAccountRequest) GetMaxConcurrentSessions() int32 {
+	if x != nil && x.MaxConcurrentSessions != nil {
+		return *x.MaxConcurrentSessions
+	}
+	return 0
+}
+
+func (x *UpdateAccountRequest) GetBilling() *AccountBilling {
+	if x != nil {
+		return x.Billing
+	}
+	return nil
+}
+
+func (x *UpdateAccountRequest) GetSpend() *AccountSpendPolicy {
+	if x != nil {
+		return x.Spend
+	}
+	return nil
+}
+
 type UpdateAccountResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Account       *Account               `protobuf:"bytes,1,opt,name=account,proto3" json:"account,omitempty"`
@@ -935,7 +1144,7 @@ type UpdateAccountResponse struct {
 
 func (x *UpdateAccountResponse) Reset() {
 	*x = UpdateAccountResponse{}
-	mi := &file_api_proto_account_proto_msgTypes[10]
+	mi := &file_api_proto_account_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -947,7 +1156,7 @@ func (x *UpdateAccountResponse) String() string {
 func (*UpdateAccountResponse) ProtoMessage() {}
 
 func (x *UpdateAccountResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_account_proto_msgTypes[10]
+	mi := &file_api_proto_account_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -960,7 +1169,7 @@ func (x *UpdateAccountResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateAccountResponse.ProtoReflect.Descriptor instead.
 func (*UpdateAccountResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_account_proto_rawDescGZIP(), []int{10}
+	return file_api_proto_account_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *UpdateAccountResponse) GetAccount() *Account {
@@ -987,7 +1196,7 @@ type DeleteAccountRequest struct {
 
 func (x *DeleteAccountRequest) Reset() {
 	*x = DeleteAccountRequest{}
-	mi := &file_api_proto_account_proto_msgTypes[11]
+	mi := &file_api_proto_account_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -999,7 +1208,7 @@ func (x *DeleteAccountRequest) String() string {
 func (*DeleteAccountRequest) ProtoMessage() {}
 
 func (x *DeleteAccountRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_account_proto_msgTypes[11]
+	mi := &file_api_proto_account_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1012,7 +1221,7 @@ func (x *DeleteAccountRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteAccountRequest.ProtoReflect.Descriptor instead.
 func (*DeleteAccountRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_account_proto_rawDescGZIP(), []int{11}
+	return file_api_proto_account_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *DeleteAccountRequest) GetTenantId() string {
@@ -1040,7 +1249,7 @@ type DeleteAccountResponse struct {
 
 func (x *DeleteAccountResponse) Reset() {
 	*x = DeleteAccountResponse{}
-	mi := &file_api_proto_account_proto_msgTypes[12]
+	mi := &file_api_proto_account_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1052,7 +1261,7 @@ func (x *DeleteAccountResponse) String() string {
 func (*DeleteAccountResponse) ProtoMessage() {}
 
 func (x *DeleteAccountResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_account_proto_msgTypes[12]
+	mi := &file_api_proto_account_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1065,7 +1274,7 @@ func (x *DeleteAccountResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteAccountResponse.ProtoReflect.Descriptor instead.
 func (*DeleteAccountResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_account_proto_rawDescGZIP(), []int{12}
+	return file_api_proto_account_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *DeleteAccountResponse) GetAccountId() string {
@@ -1100,7 +1309,7 @@ type RotateAccountCredentialRequest struct {
 
 func (x *RotateAccountCredentialRequest) Reset() {
 	*x = RotateAccountCredentialRequest{}
-	mi := &file_api_proto_account_proto_msgTypes[13]
+	mi := &file_api_proto_account_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1112,7 +1321,7 @@ func (x *RotateAccountCredentialRequest) String() string {
 func (*RotateAccountCredentialRequest) ProtoMessage() {}
 
 func (x *RotateAccountCredentialRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_account_proto_msgTypes[13]
+	mi := &file_api_proto_account_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1125,7 +1334,7 @@ func (x *RotateAccountCredentialRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RotateAccountCredentialRequest.ProtoReflect.Descriptor instead.
 func (*RotateAccountCredentialRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_account_proto_rawDescGZIP(), []int{13}
+	return file_api_proto_account_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *RotateAccountCredentialRequest) GetTenantId() string {
@@ -1159,7 +1368,7 @@ type RotateAccountCredentialResponse struct {
 
 func (x *RotateAccountCredentialResponse) Reset() {
 	*x = RotateAccountCredentialResponse{}
-	mi := &file_api_proto_account_proto_msgTypes[14]
+	mi := &file_api_proto_account_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1171,7 +1380,7 @@ func (x *RotateAccountCredentialResponse) String() string {
 func (*RotateAccountCredentialResponse) ProtoMessage() {}
 
 func (x *RotateAccountCredentialResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_account_proto_msgTypes[14]
+	mi := &file_api_proto_account_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1184,7 +1393,7 @@ func (x *RotateAccountCredentialResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RotateAccountCredentialResponse.ProtoReflect.Descriptor instead.
 func (*RotateAccountCredentialResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_account_proto_rawDescGZIP(), []int{14}
+	return file_api_proto_account_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *RotateAccountCredentialResponse) GetAccountId() string {
@@ -1212,7 +1421,7 @@ type RevokeAccountRequest struct {
 
 func (x *RevokeAccountRequest) Reset() {
 	*x = RevokeAccountRequest{}
-	mi := &file_api_proto_account_proto_msgTypes[15]
+	mi := &file_api_proto_account_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1224,7 +1433,7 @@ func (x *RevokeAccountRequest) String() string {
 func (*RevokeAccountRequest) ProtoMessage() {}
 
 func (x *RevokeAccountRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_account_proto_msgTypes[15]
+	mi := &file_api_proto_account_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1237,7 +1446,7 @@ func (x *RevokeAccountRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeAccountRequest.ProtoReflect.Descriptor instead.
 func (*RevokeAccountRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_account_proto_rawDescGZIP(), []int{15}
+	return file_api_proto_account_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *RevokeAccountRequest) GetTenantId() string {
@@ -1271,7 +1480,7 @@ type RevokeAccountResponse struct {
 
 func (x *RevokeAccountResponse) Reset() {
 	*x = RevokeAccountResponse{}
-	mi := &file_api_proto_account_proto_msgTypes[16]
+	mi := &file_api_proto_account_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1283,7 +1492,7 @@ func (x *RevokeAccountResponse) String() string {
 func (*RevokeAccountResponse) ProtoMessage() {}
 
 func (x *RevokeAccountResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_account_proto_msgTypes[16]
+	mi := &file_api_proto_account_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1296,7 +1505,7 @@ func (x *RevokeAccountResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeAccountResponse.ProtoReflect.Descriptor instead.
 func (*RevokeAccountResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_account_proto_rawDescGZIP(), []int{16}
+	return file_api_proto_account_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *RevokeAccountResponse) GetAccount() *Account {
@@ -1323,7 +1532,7 @@ type SetDefaultAccountRequest struct {
 
 func (x *SetDefaultAccountRequest) Reset() {
 	*x = SetDefaultAccountRequest{}
-	mi := &file_api_proto_account_proto_msgTypes[17]
+	mi := &file_api_proto_account_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1335,7 +1544,7 @@ func (x *SetDefaultAccountRequest) String() string {
 func (*SetDefaultAccountRequest) ProtoMessage() {}
 
 func (x *SetDefaultAccountRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_account_proto_msgTypes[17]
+	mi := &file_api_proto_account_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1348,7 +1557,7 @@ func (x *SetDefaultAccountRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetDefaultAccountRequest.ProtoReflect.Descriptor instead.
 func (*SetDefaultAccountRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_account_proto_rawDescGZIP(), []int{17}
+	return file_api_proto_account_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *SetDefaultAccountRequest) GetTenantId() string {
@@ -1375,7 +1584,7 @@ type SetDefaultAccountResponse struct {
 
 func (x *SetDefaultAccountResponse) Reset() {
 	*x = SetDefaultAccountResponse{}
-	mi := &file_api_proto_account_proto_msgTypes[18]
+	mi := &file_api_proto_account_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1387,7 +1596,7 @@ func (x *SetDefaultAccountResponse) String() string {
 func (*SetDefaultAccountResponse) ProtoMessage() {}
 
 func (x *SetDefaultAccountResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_account_proto_msgTypes[18]
+	mi := &file_api_proto_account_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1400,7 +1609,7 @@ func (x *SetDefaultAccountResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetDefaultAccountResponse.ProtoReflect.Descriptor instead.
 func (*SetDefaultAccountResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_account_proto_rawDescGZIP(), []int{18}
+	return file_api_proto_account_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *SetDefaultAccountResponse) GetAccountId() string {
@@ -1427,7 +1636,7 @@ type GetAccountUsageRequest struct {
 
 func (x *GetAccountUsageRequest) Reset() {
 	*x = GetAccountUsageRequest{}
-	mi := &file_api_proto_account_proto_msgTypes[19]
+	mi := &file_api_proto_account_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1439,7 +1648,7 @@ func (x *GetAccountUsageRequest) String() string {
 func (*GetAccountUsageRequest) ProtoMessage() {}
 
 func (x *GetAccountUsageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_account_proto_msgTypes[19]
+	mi := &file_api_proto_account_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1452,7 +1661,7 @@ func (x *GetAccountUsageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAccountUsageRequest.ProtoReflect.Descriptor instead.
 func (*GetAccountUsageRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_account_proto_rawDescGZIP(), []int{19}
+	return file_api_proto_account_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *GetAccountUsageRequest) GetTenantId() string {
@@ -1470,16 +1679,23 @@ func (x *GetAccountUsageRequest) GetAccountId() string {
 }
 
 type GetAccountUsageResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Usage         *AccountUsage          `protobuf:"bytes,1,opt,name=usage,proto3" json:"usage,omitempty"`
-	Timestamp     int64                  `protobuf:"varint,2,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Usage     *AccountUsage          `protobuf:"bytes,1,opt,name=usage,proto3" json:"usage,omitempty"`
+	Timestamp int64                  `protobuf:"varint,2,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	// live_sessions is how many sessions the account is serving now: the
+	// figure the balancing strategy ranks on and the session cap is checked
+	// against.
+	LiveSessions int32 `protobuf:"varint,3,opt,name=live_sessions,json=liveSessions,proto3" json:"live_sessions,omitempty"`
+	// spend is the spend gate's verdict on the account; unset when the
+	// deployment wires no gate, so nothing is metered.
+	Spend         *SpendHeadroom `protobuf:"bytes,4,opt,name=spend,proto3" json:"spend,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GetAccountUsageResponse) Reset() {
 	*x = GetAccountUsageResponse{}
-	mi := &file_api_proto_account_proto_msgTypes[20]
+	mi := &file_api_proto_account_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1491,7 +1707,7 @@ func (x *GetAccountUsageResponse) String() string {
 func (*GetAccountUsageResponse) ProtoMessage() {}
 
 func (x *GetAccountUsageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_account_proto_msgTypes[20]
+	mi := &file_api_proto_account_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1504,7 +1720,7 @@ func (x *GetAccountUsageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAccountUsageResponse.ProtoReflect.Descriptor instead.
 func (*GetAccountUsageResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_account_proto_rawDescGZIP(), []int{20}
+	return file_api_proto_account_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *GetAccountUsageResponse) GetUsage() *AccountUsage {
@@ -1519,6 +1735,20 @@ func (x *GetAccountUsageResponse) GetTimestamp() int64 {
 		return x.Timestamp
 	}
 	return 0
+}
+
+func (x *GetAccountUsageResponse) GetLiveSessions() int32 {
+	if x != nil {
+		return x.LiveSessions
+	}
+	return 0
+}
+
+func (x *GetAccountUsageResponse) GetSpend() *SpendHeadroom {
+	if x != nil {
+		return x.Spend
+	}
+	return nil
 }
 
 // MaterializedAccountCredential is the RELEASED envelope: the short-lived half
@@ -1537,13 +1767,19 @@ type MaterializedAccountCredential struct {
 	ExpiresAtUnix     int64                  `protobuf:"varint,4,opt,name=expires_at_unix,json=expiresAtUnix,proto3" json:"expires_at_unix,omitempty"`
 	Scopes            []string               `protobuf:"bytes,5,rep,name=scopes,proto3" json:"scopes,omitempty"`
 	AccessTokenEnvKey string                 `protobuf:"bytes,6,opt,name=access_token_env_key,json=accessTokenEnvKey,proto3" json:"access_token_env_key,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// generation identifies which copy of the account's credential this is.
+	// A worker host records it on the session it spawns, so the control
+	// plane can tell before a turn that the credential was rotated under
+	// that session. An integer naming a copy, not credential material; zero
+	// means unknown.
+	Generation    int64 `protobuf:"varint,7,opt,name=generation,proto3" json:"generation,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *MaterializedAccountCredential) Reset() {
 	*x = MaterializedAccountCredential{}
-	mi := &file_api_proto_account_proto_msgTypes[21]
+	mi := &file_api_proto_account_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1555,7 +1791,7 @@ func (x *MaterializedAccountCredential) String() string {
 func (*MaterializedAccountCredential) ProtoMessage() {}
 
 func (x *MaterializedAccountCredential) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_account_proto_msgTypes[21]
+	mi := &file_api_proto_account_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1568,7 +1804,7 @@ func (x *MaterializedAccountCredential) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MaterializedAccountCredential.ProtoReflect.Descriptor instead.
 func (*MaterializedAccountCredential) Descriptor() ([]byte, []int) {
-	return file_api_proto_account_proto_rawDescGZIP(), []int{21}
+	return file_api_proto_account_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *MaterializedAccountCredential) GetEnv() map[string]string {
@@ -1613,6 +1849,13 @@ func (x *MaterializedAccountCredential) GetAccessTokenEnvKey() string {
 	return ""
 }
 
+func (x *MaterializedAccountCredential) GetGeneration() int64 {
+	if x != nil {
+		return x.Generation
+	}
+	return 0
+}
+
 type MaterializeAccountCredentialRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	TenantId  string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
@@ -1645,7 +1888,7 @@ type MaterializeAccountCredentialRequest struct {
 
 func (x *MaterializeAccountCredentialRequest) Reset() {
 	*x = MaterializeAccountCredentialRequest{}
-	mi := &file_api_proto_account_proto_msgTypes[22]
+	mi := &file_api_proto_account_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1657,7 +1900,7 @@ func (x *MaterializeAccountCredentialRequest) String() string {
 func (*MaterializeAccountCredentialRequest) ProtoMessage() {}
 
 func (x *MaterializeAccountCredentialRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_account_proto_msgTypes[22]
+	mi := &file_api_proto_account_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1670,7 +1913,7 @@ func (x *MaterializeAccountCredentialRequest) ProtoReflect() protoreflect.Messag
 
 // Deprecated: Use MaterializeAccountCredentialRequest.ProtoReflect.Descriptor instead.
 func (*MaterializeAccountCredentialRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_account_proto_rawDescGZIP(), []int{22}
+	return file_api_proto_account_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *MaterializeAccountCredentialRequest) GetTenantId() string {
@@ -1745,7 +1988,7 @@ type MaterializeAccountCredentialResponse struct {
 
 func (x *MaterializeAccountCredentialResponse) Reset() {
 	*x = MaterializeAccountCredentialResponse{}
-	mi := &file_api_proto_account_proto_msgTypes[23]
+	mi := &file_api_proto_account_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1757,7 +2000,7 @@ func (x *MaterializeAccountCredentialResponse) String() string {
 func (*MaterializeAccountCredentialResponse) ProtoMessage() {}
 
 func (x *MaterializeAccountCredentialResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_account_proto_msgTypes[23]
+	mi := &file_api_proto_account_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1770,7 +2013,7 @@ func (x *MaterializeAccountCredentialResponse) ProtoReflect() protoreflect.Messa
 
 // Deprecated: Use MaterializeAccountCredentialResponse.ProtoReflect.Descriptor instead.
 func (*MaterializeAccountCredentialResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_account_proto_rawDescGZIP(), []int{23}
+	return file_api_proto_account_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *MaterializeAccountCredentialResponse) GetAccountId() string {
@@ -1864,11 +2107,239 @@ func (x *MaterializeAccountCredentialResponse) GetSingleUse() bool {
 	return false
 }
 
+type ReserveAccountSessionRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	TenantId  string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	AccountId string                 `protobuf:"bytes,2,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	// expected_live, when present, makes the claim conditional on the
+	// account's live-session count still being the one the caller selected
+	// on; a moved count answers ABORTED and the caller re-selects. The session
+	// record that names the returned reservation_id satisfies it.
+	ExpectedLive  *int32 `protobuf:"varint,3,opt,name=expected_live,json=expectedLive,proto3,oneof" json:"expected_live,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReserveAccountSessionRequest) Reset() {
+	*x = ReserveAccountSessionRequest{}
+	mi := &file_api_proto_account_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReserveAccountSessionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReserveAccountSessionRequest) ProtoMessage() {}
+
+func (x *ReserveAccountSessionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_account_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReserveAccountSessionRequest.ProtoReflect.Descriptor instead.
+func (*ReserveAccountSessionRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_account_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *ReserveAccountSessionRequest) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *ReserveAccountSessionRequest) GetAccountId() string {
+	if x != nil {
+		return x.AccountId
+	}
+	return ""
+}
+
+func (x *ReserveAccountSessionRequest) GetExpectedLive() int32 {
+	if x != nil && x.ExpectedLive != nil {
+		return *x.ExpectedLive
+	}
+	return 0
+}
+
+type ReserveAccountSessionResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ReservationId string                 `protobuf:"bytes,1,opt,name=reservation_id,json=reservationId,proto3" json:"reservation_id,omitempty"`
+	Timestamp     int64                  `protobuf:"varint,2,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReserveAccountSessionResponse) Reset() {
+	*x = ReserveAccountSessionResponse{}
+	mi := &file_api_proto_account_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReserveAccountSessionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReserveAccountSessionResponse) ProtoMessage() {}
+
+func (x *ReserveAccountSessionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_account_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReserveAccountSessionResponse.ProtoReflect.Descriptor instead.
+func (*ReserveAccountSessionResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_account_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *ReserveAccountSessionResponse) GetReservationId() string {
+	if x != nil {
+		return x.ReservationId
+	}
+	return ""
+}
+
+func (x *ReserveAccountSessionResponse) GetTimestamp() int64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
+type ReleaseAccountSessionRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TenantId      string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	AccountId     string                 `protobuf:"bytes,2,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	ReservationId string                 `protobuf:"bytes,3,opt,name=reservation_id,json=reservationId,proto3" json:"reservation_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReleaseAccountSessionRequest) Reset() {
+	*x = ReleaseAccountSessionRequest{}
+	mi := &file_api_proto_account_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReleaseAccountSessionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReleaseAccountSessionRequest) ProtoMessage() {}
+
+func (x *ReleaseAccountSessionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_account_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReleaseAccountSessionRequest.ProtoReflect.Descriptor instead.
+func (*ReleaseAccountSessionRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_account_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *ReleaseAccountSessionRequest) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *ReleaseAccountSessionRequest) GetAccountId() string {
+	if x != nil {
+		return x.AccountId
+	}
+	return ""
+}
+
+func (x *ReleaseAccountSessionRequest) GetReservationId() string {
+	if x != nil {
+		return x.ReservationId
+	}
+	return ""
+}
+
+type ReleaseAccountSessionResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ReservationId string                 `protobuf:"bytes,1,opt,name=reservation_id,json=reservationId,proto3" json:"reservation_id,omitempty"`
+	Timestamp     int64                  `protobuf:"varint,2,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReleaseAccountSessionResponse) Reset() {
+	*x = ReleaseAccountSessionResponse{}
+	mi := &file_api_proto_account_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReleaseAccountSessionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReleaseAccountSessionResponse) ProtoMessage() {}
+
+func (x *ReleaseAccountSessionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_account_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReleaseAccountSessionResponse.ProtoReflect.Descriptor instead.
+func (*ReleaseAccountSessionResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_account_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *ReleaseAccountSessionResponse) GetReservationId() string {
+	if x != nil {
+		return x.ReservationId
+	}
+	return ""
+}
+
+func (x *ReleaseAccountSessionResponse) GetTimestamp() int64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
 var File_api_proto_account_proto protoreflect.FileDescriptor
 
 const file_api_proto_account_proto_rawDesc = "" +
 	"\n" +
-	"\x17api/proto/account.proto\x12\x13quicbaas.account.v1\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\xf6\x05\n" +
+	"\x17api/proto/account.proto\x12\x13quicbaas.account.v1\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\x1a\x15api/proto/spend.proto\"\xaa\a\n" +
 	"\aAccount\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12\x1d\n" +
@@ -1892,7 +2363,13 @@ const file_api_proto_account_proto_rawDesc = "" +
 	"\x16last_validated_at_unix\x18\x10 \x01(\x03R\x13lastValidatedAtUnix\x12+\n" +
 	"\x11credential_health\x18\x11 \x01(\tR\x10credentialHealth\x122\n" +
 	"\x15credential_secret_ref\x18\x12 \x01(\tR\x13credentialSecretRef\x124\n" +
-	"\x16credential_secret_file\x18\x13 \x01(\tR\x14credentialSecretFile\"\x8e\x04\n" +
+	"\x16credential_secret_file\x18\x13 \x01(\tR\x14credentialSecretFile\x126\n" +
+	"\x17max_concurrent_sessions\x18\x14 \x01(\x05R\x15maxConcurrentSessions\x12=\n" +
+	"\abilling\x18\x15 \x01(\v2#.quicbaas.account.v1.AccountBillingR\abilling\x12;\n" +
+	"\x05spend\x18\x16 \x01(\v2%.quicbaas.spend.v1.AccountSpendPolicyR\x05spend\"R\n" +
+	"\x0eAccountBilling\x12\x12\n" +
+	"\x04mode\x18\x01 \x01(\tR\x04mode\x12,\n" +
+	"\x12monthly_fee_micros\x18\x02 \x01(\x03R\x10monthlyFeeMicros\"\x8e\x04\n" +
 	"\x11AccountCredential\x12A\n" +
 	"\x03env\x18\x01 \x03(\v2/.quicbaas.account.v1.AccountCredential.EnvEntryR\x03env\x12G\n" +
 	"\x05files\x18\x02 \x03(\v21.quicbaas.account.v1.AccountCredential.FilesEntryR\x05files\x12!\n" +
@@ -1918,7 +2395,7 @@ const file_api_proto_account_proto_rawDesc = "" +
 	"\x11last_updated_unix\x18\x05 \x01(\x03R\x0flastUpdatedUnix\x1a:\n" +
 	"\fByAgentEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"\x89\x03\n" +
+	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"\xbd\x04\n" +
 	"\x14CreateAccountRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1d\n" +
 	"\n" +
@@ -1932,7 +2409,11 @@ const file_api_proto_account_proto_rawDesc = "" +
 	"credential\x18\a \x01(\v2&.quicbaas.account.v1.AccountCredentialR\n" +
 	"credential\x122\n" +
 	"\x15credential_secret_ref\x18\b \x01(\tR\x13credentialSecretRef\x124\n" +
-	"\x16credential_secret_file\x18\t \x01(\tR\x14credentialSecretFile\"m\n" +
+	"\x16credential_secret_file\x18\t \x01(\tR\x14credentialSecretFile\x126\n" +
+	"\x17max_concurrent_sessions\x18\n" +
+	" \x01(\x05R\x15maxConcurrentSessions\x12=\n" +
+	"\abilling\x18\v \x01(\v2#.quicbaas.account.v1.AccountBillingR\abilling\x12;\n" +
+	"\x05spend\x18\f \x01(\v2%.quicbaas.spend.v1.AccountSpendPolicyR\x05spend\"m\n" +
 	"\x15CreateAccountResponse\x126\n" +
 	"\aaccount\x18\x01 \x01(\v2\x1c.quicbaas.account.v1.AccountR\aaccount\x12\x1c\n" +
 	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\"O\n" +
@@ -1942,16 +2423,24 @@ const file_api_proto_account_proto_rawDesc = "" +
 	"account_id\x18\x02 \x01(\tR\taccountId\"j\n" +
 	"\x12GetAccountResponse\x126\n" +
 	"\aaccount\x18\x01 \x01(\v2\x1c.quicbaas.account.v1.AccountR\aaccount\x12\x1c\n" +
-	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\"m\n" +
+	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\"\xbd\x01\n" +
 	"\x13ListAccountsRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1a\n" +
 	"\bprovider\x18\x02 \x01(\tR\bprovider\x12\x1d\n" +
 	"\n" +
-	"project_id\x18\x03 \x01(\tR\tprojectId\"\x84\x01\n" +
+	"project_id\x18\x03 \x01(\tR\tprojectId\x12\x14\n" +
+	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06offset\x18\x05 \x01(\x05R\x06offset\x12\x12\n" +
+	"\x04sort\x18\x06 \x01(\tR\x04sort\x12\f\n" +
+	"\x01q\x18\a \x01(\tR\x01q\"\xd3\x01\n" +
 	"\x14ListAccountsResponse\x128\n" +
 	"\baccounts\x18\x01 \x03(\v2\x1c.quicbaas.account.v1.AccountR\baccounts\x12\x14\n" +
 	"\x05total\x18\x02 \x01(\x05R\x05total\x12\x1c\n" +
-	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\"\xcf\x02\n" +
+	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\x12\x14\n" +
+	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06offset\x18\x05 \x01(\x05R\x06offset\x12\x1f\n" +
+	"\vnext_offset\x18\x06 \x01(\x05R\n" +
+	"nextOffset\"\xa4\x04\n" +
 	"\x14UpdateAccountRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1d\n" +
 	"\n" +
@@ -1962,7 +2451,12 @@ const file_api_proto_account_proto_rawDesc = "" +
 	"\x10clear_project_id\x18\x05 \x01(\bR\x0eclearProjectId\x12%\n" +
 	"\x0erefresh_policy\x18\x06 \x01(\tR\rrefreshPolicy\x122\n" +
 	"\x15credential_secret_ref\x18\a \x01(\tR\x13credentialSecretRef\x124\n" +
-	"\x16credential_secret_file\x18\b \x01(\tR\x14credentialSecretFile\"m\n" +
+	"\x16credential_secret_file\x18\b \x01(\tR\x14credentialSecretFile\x12;\n" +
+	"\x17max_concurrent_sessions\x18\t \x01(\x05H\x00R\x15maxConcurrentSessions\x88\x01\x01\x12=\n" +
+	"\abilling\x18\n" +
+	" \x01(\v2#.quicbaas.account.v1.AccountBillingR\abilling\x12;\n" +
+	"\x05spend\x18\v \x01(\v2%.quicbaas.spend.v1.AccountSpendPolicyR\x05spendB\x1a\n" +
+	"\x18_max_concurrent_sessions\"m\n" +
 	"\x15UpdateAccountResponse\x126\n" +
 	"\aaccount\x18\x01 \x01(\v2\x1c.quicbaas.account.v1.AccountR\aaccount\x12\x1c\n" +
 	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\"R\n" +
@@ -2005,17 +2499,22 @@ const file_api_proto_account_proto_rawDesc = "" +
 	"\x16GetAccountUsageRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1d\n" +
 	"\n" +
-	"account_id\x18\x02 \x01(\tR\taccountId\"p\n" +
+	"account_id\x18\x02 \x01(\tR\taccountId\"\xcd\x01\n" +
 	"\x17GetAccountUsageResponse\x127\n" +
 	"\x05usage\x18\x01 \x01(\v2!.quicbaas.account.v1.AccountUsageR\x05usage\x12\x1c\n" +
-	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\"\xc9\x03\n" +
+	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\x12#\n" +
+	"\rlive_sessions\x18\x03 \x01(\x05R\fliveSessions\x126\n" +
+	"\x05spend\x18\x04 \x01(\v2 .quicbaas.spend.v1.SpendHeadroomR\x05spend\"\xe9\x03\n" +
 	"\x1dMaterializedAccountCredential\x12M\n" +
 	"\x03env\x18\x01 \x03(\v2;.quicbaas.account.v1.MaterializedAccountCredential.EnvEntryR\x03env\x12S\n" +
 	"\x05files\x18\x02 \x03(\v2=.quicbaas.account.v1.MaterializedAccountCredential.FilesEntryR\x05files\x12!\n" +
 	"\faccess_token\x18\x03 \x01(\tR\vaccessToken\x12&\n" +
 	"\x0fexpires_at_unix\x18\x04 \x01(\x03R\rexpiresAtUnix\x12\x16\n" +
 	"\x06scopes\x18\x05 \x03(\tR\x06scopes\x12/\n" +
-	"\x14access_token_env_key\x18\x06 \x01(\tR\x11accessTokenEnvKey\x1a6\n" +
+	"\x14access_token_env_key\x18\x06 \x01(\tR\x11accessTokenEnvKey\x12\x1e\n" +
+	"\n" +
+	"generation\x18\a \x01(\x03R\n" +
+	"generation\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a8\n" +
@@ -2050,8 +2549,24 @@ const file_api_proto_account_proto_rawDesc = "" +
 	"\blease_id\x18\v \x01(\tR\aleaseId\x121\n" +
 	"\x15lease_expires_at_unix\x18\f \x01(\x03R\x12leaseExpiresAtUnix\x12\x1d\n" +
 	"\n" +
-	"single_use\x18\r \x01(\bR\tsingleUse2\xed\n" +
+	"single_use\x18\r \x01(\bR\tsingleUse\"\x96\x01\n" +
+	"\x1cReserveAccountSessionRequest\x12\x1b\n" +
+	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1d\n" +
 	"\n" +
+	"account_id\x18\x02 \x01(\tR\taccountId\x12(\n" +
+	"\rexpected_live\x18\x03 \x01(\x05H\x00R\fexpectedLive\x88\x01\x01B\x10\n" +
+	"\x0e_expected_live\"d\n" +
+	"\x1dReserveAccountSessionResponse\x12%\n" +
+	"\x0ereservation_id\x18\x01 \x01(\tR\rreservationId\x12\x1c\n" +
+	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\"\x81\x01\n" +
+	"\x1cReleaseAccountSessionRequest\x12\x1b\n" +
+	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\x02 \x01(\tR\taccountId\x12%\n" +
+	"\x0ereservation_id\x18\x03 \x01(\tR\rreservationId\"d\n" +
+	"\x1dReleaseAccountSessionResponse\x12%\n" +
+	"\x0ereservation_id\x18\x01 \x01(\tR\rreservationId\x12\x1c\n" +
+	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp2\xaf\r\n" +
 	"\x0eAccountService\x12}\n" +
 	"\rCreateAccount\x12).quicbaas.account.v1.CreateAccountRequest\x1a*.quicbaas.account.v1.CreateAccountResponse\"\x15\xc2\xf3\x18\x11credentials:store\x12v\n" +
 	"\n" +
@@ -2063,7 +2578,9 @@ const file_api_proto_account_proto_rawDesc = "" +
 	"\rRevokeAccount\x12).quicbaas.account.v1.RevokeAccountRequest\x1a*.quicbaas.account.v1.RevokeAccountResponse\"\x16\xc2\xf3\x18\x12credentials:delete\x12\x89\x01\n" +
 	"\x11SetDefaultAccount\x12-.quicbaas.account.v1.SetDefaultAccountRequest\x1a..quicbaas.account.v1.SetDefaultAccountResponse\"\x15\xc2\xf3\x18\x11credentials:store\x12\x85\x01\n" +
 	"\x0fGetAccountUsage\x12+.quicbaas.account.v1.GetAccountUsageRequest\x1a,.quicbaas.account.v1.GetAccountUsageResponse\"\x17\xc2\xf3\x18\x13agent_accounts:read\x12\xb3\x01\n" +
-	"\x1cMaterializeAccountCredential\x128.quicbaas.account.v1.MaterializeAccountCredentialRequest\x1a9.quicbaas.account.v1.MaterializeAccountCredentialResponse\"\x1e\xc2\xf3\x18\x1aagent_accounts:materializeB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
+	"\x1cMaterializeAccountCredential\x128.quicbaas.account.v1.MaterializeAccountCredentialRequest\x1a9.quicbaas.account.v1.MaterializeAccountCredentialResponse\"\x1e\xc2\xf3\x18\x1aagent_accounts:materialize\x12\x9e\x01\n" +
+	"\x15ReserveAccountSession\x121.quicbaas.account.v1.ReserveAccountSessionRequest\x1a2.quicbaas.account.v1.ReserveAccountSessionResponse\"\x1e\xc2\xf3\x18\x1aagent_accounts:materialize\x12\x9e\x01\n" +
+	"\x15ReleaseAccountSession\x121.quicbaas.account.v1.ReleaseAccountSessionRequest\x1a2.quicbaas.account.v1.ReleaseAccountSessionResponse\"\x1e\xc2\xf3\x18\x1aagent_accounts:materializeB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
 	file_api_proto_account_proto_rawDescOnce sync.Once
@@ -2077,78 +2594,96 @@ func file_api_proto_account_proto_rawDescGZIP() []byte {
 	return file_api_proto_account_proto_rawDescData
 }
 
-var file_api_proto_account_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
+var file_api_proto_account_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
 var file_api_proto_account_proto_goTypes = []any{
 	(*Account)(nil),                              // 0: quicbaas.account.v1.Account
-	(*AccountCredential)(nil),                    // 1: quicbaas.account.v1.AccountCredential
-	(*AccountUsage)(nil),                         // 2: quicbaas.account.v1.AccountUsage
-	(*CreateAccountRequest)(nil),                 // 3: quicbaas.account.v1.CreateAccountRequest
-	(*CreateAccountResponse)(nil),                // 4: quicbaas.account.v1.CreateAccountResponse
-	(*GetAccountRequest)(nil),                    // 5: quicbaas.account.v1.GetAccountRequest
-	(*GetAccountResponse)(nil),                   // 6: quicbaas.account.v1.GetAccountResponse
-	(*ListAccountsRequest)(nil),                  // 7: quicbaas.account.v1.ListAccountsRequest
-	(*ListAccountsResponse)(nil),                 // 8: quicbaas.account.v1.ListAccountsResponse
-	(*UpdateAccountRequest)(nil),                 // 9: quicbaas.account.v1.UpdateAccountRequest
-	(*UpdateAccountResponse)(nil),                // 10: quicbaas.account.v1.UpdateAccountResponse
-	(*DeleteAccountRequest)(nil),                 // 11: quicbaas.account.v1.DeleteAccountRequest
-	(*DeleteAccountResponse)(nil),                // 12: quicbaas.account.v1.DeleteAccountResponse
-	(*RotateAccountCredentialRequest)(nil),       // 13: quicbaas.account.v1.RotateAccountCredentialRequest
-	(*RotateAccountCredentialResponse)(nil),      // 14: quicbaas.account.v1.RotateAccountCredentialResponse
-	(*RevokeAccountRequest)(nil),                 // 15: quicbaas.account.v1.RevokeAccountRequest
-	(*RevokeAccountResponse)(nil),                // 16: quicbaas.account.v1.RevokeAccountResponse
-	(*SetDefaultAccountRequest)(nil),             // 17: quicbaas.account.v1.SetDefaultAccountRequest
-	(*SetDefaultAccountResponse)(nil),            // 18: quicbaas.account.v1.SetDefaultAccountResponse
-	(*GetAccountUsageRequest)(nil),               // 19: quicbaas.account.v1.GetAccountUsageRequest
-	(*GetAccountUsageResponse)(nil),              // 20: quicbaas.account.v1.GetAccountUsageResponse
-	(*MaterializedAccountCredential)(nil),        // 21: quicbaas.account.v1.MaterializedAccountCredential
-	(*MaterializeAccountCredentialRequest)(nil),  // 22: quicbaas.account.v1.MaterializeAccountCredentialRequest
-	(*MaterializeAccountCredentialResponse)(nil), // 23: quicbaas.account.v1.MaterializeAccountCredentialResponse
-	nil, // 24: quicbaas.account.v1.AccountCredential.EnvEntry
-	nil, // 25: quicbaas.account.v1.AccountCredential.FilesEntry
-	nil, // 26: quicbaas.account.v1.AccountUsage.ByAgentEntry
-	nil, // 27: quicbaas.account.v1.MaterializedAccountCredential.EnvEntry
-	nil, // 28: quicbaas.account.v1.MaterializedAccountCredential.FilesEntry
+	(*AccountBilling)(nil),                       // 1: quicbaas.account.v1.AccountBilling
+	(*AccountCredential)(nil),                    // 2: quicbaas.account.v1.AccountCredential
+	(*AccountUsage)(nil),                         // 3: quicbaas.account.v1.AccountUsage
+	(*CreateAccountRequest)(nil),                 // 4: quicbaas.account.v1.CreateAccountRequest
+	(*CreateAccountResponse)(nil),                // 5: quicbaas.account.v1.CreateAccountResponse
+	(*GetAccountRequest)(nil),                    // 6: quicbaas.account.v1.GetAccountRequest
+	(*GetAccountResponse)(nil),                   // 7: quicbaas.account.v1.GetAccountResponse
+	(*ListAccountsRequest)(nil),                  // 8: quicbaas.account.v1.ListAccountsRequest
+	(*ListAccountsResponse)(nil),                 // 9: quicbaas.account.v1.ListAccountsResponse
+	(*UpdateAccountRequest)(nil),                 // 10: quicbaas.account.v1.UpdateAccountRequest
+	(*UpdateAccountResponse)(nil),                // 11: quicbaas.account.v1.UpdateAccountResponse
+	(*DeleteAccountRequest)(nil),                 // 12: quicbaas.account.v1.DeleteAccountRequest
+	(*DeleteAccountResponse)(nil),                // 13: quicbaas.account.v1.DeleteAccountResponse
+	(*RotateAccountCredentialRequest)(nil),       // 14: quicbaas.account.v1.RotateAccountCredentialRequest
+	(*RotateAccountCredentialResponse)(nil),      // 15: quicbaas.account.v1.RotateAccountCredentialResponse
+	(*RevokeAccountRequest)(nil),                 // 16: quicbaas.account.v1.RevokeAccountRequest
+	(*RevokeAccountResponse)(nil),                // 17: quicbaas.account.v1.RevokeAccountResponse
+	(*SetDefaultAccountRequest)(nil),             // 18: quicbaas.account.v1.SetDefaultAccountRequest
+	(*SetDefaultAccountResponse)(nil),            // 19: quicbaas.account.v1.SetDefaultAccountResponse
+	(*GetAccountUsageRequest)(nil),               // 20: quicbaas.account.v1.GetAccountUsageRequest
+	(*GetAccountUsageResponse)(nil),              // 21: quicbaas.account.v1.GetAccountUsageResponse
+	(*MaterializedAccountCredential)(nil),        // 22: quicbaas.account.v1.MaterializedAccountCredential
+	(*MaterializeAccountCredentialRequest)(nil),  // 23: quicbaas.account.v1.MaterializeAccountCredentialRequest
+	(*MaterializeAccountCredentialResponse)(nil), // 24: quicbaas.account.v1.MaterializeAccountCredentialResponse
+	(*ReserveAccountSessionRequest)(nil),         // 25: quicbaas.account.v1.ReserveAccountSessionRequest
+	(*ReserveAccountSessionResponse)(nil),        // 26: quicbaas.account.v1.ReserveAccountSessionResponse
+	(*ReleaseAccountSessionRequest)(nil),         // 27: quicbaas.account.v1.ReleaseAccountSessionRequest
+	(*ReleaseAccountSessionResponse)(nil),        // 28: quicbaas.account.v1.ReleaseAccountSessionResponse
+	nil,                                          // 29: quicbaas.account.v1.AccountCredential.EnvEntry
+	nil,                                          // 30: quicbaas.account.v1.AccountCredential.FilesEntry
+	nil,                                          // 31: quicbaas.account.v1.AccountUsage.ByAgentEntry
+	nil,                                          // 32: quicbaas.account.v1.MaterializedAccountCredential.EnvEntry
+	nil,                                          // 33: quicbaas.account.v1.MaterializedAccountCredential.FilesEntry
+	(*AccountSpendPolicy)(nil),                   // 34: quicbaas.spend.v1.AccountSpendPolicy
+	(*SpendHeadroom)(nil),                        // 35: quicbaas.spend.v1.SpendHeadroom
 }
 var file_api_proto_account_proto_depIdxs = []int32{
-	24, // 0: quicbaas.account.v1.AccountCredential.env:type_name -> quicbaas.account.v1.AccountCredential.EnvEntry
-	25, // 1: quicbaas.account.v1.AccountCredential.files:type_name -> quicbaas.account.v1.AccountCredential.FilesEntry
-	26, // 2: quicbaas.account.v1.AccountUsage.by_agent:type_name -> quicbaas.account.v1.AccountUsage.ByAgentEntry
-	1,  // 3: quicbaas.account.v1.CreateAccountRequest.credential:type_name -> quicbaas.account.v1.AccountCredential
-	0,  // 4: quicbaas.account.v1.CreateAccountResponse.account:type_name -> quicbaas.account.v1.Account
-	0,  // 5: quicbaas.account.v1.GetAccountResponse.account:type_name -> quicbaas.account.v1.Account
-	0,  // 6: quicbaas.account.v1.ListAccountsResponse.accounts:type_name -> quicbaas.account.v1.Account
-	0,  // 7: quicbaas.account.v1.UpdateAccountResponse.account:type_name -> quicbaas.account.v1.Account
-	1,  // 8: quicbaas.account.v1.RotateAccountCredentialRequest.credential:type_name -> quicbaas.account.v1.AccountCredential
-	0,  // 9: quicbaas.account.v1.RevokeAccountResponse.account:type_name -> quicbaas.account.v1.Account
-	2,  // 10: quicbaas.account.v1.GetAccountUsageResponse.usage:type_name -> quicbaas.account.v1.AccountUsage
-	27, // 11: quicbaas.account.v1.MaterializedAccountCredential.env:type_name -> quicbaas.account.v1.MaterializedAccountCredential.EnvEntry
-	28, // 12: quicbaas.account.v1.MaterializedAccountCredential.files:type_name -> quicbaas.account.v1.MaterializedAccountCredential.FilesEntry
-	21, // 13: quicbaas.account.v1.MaterializeAccountCredentialResponse.credential:type_name -> quicbaas.account.v1.MaterializedAccountCredential
-	3,  // 14: quicbaas.account.v1.AccountService.CreateAccount:input_type -> quicbaas.account.v1.CreateAccountRequest
-	5,  // 15: quicbaas.account.v1.AccountService.GetAccount:input_type -> quicbaas.account.v1.GetAccountRequest
-	7,  // 16: quicbaas.account.v1.AccountService.ListAccounts:input_type -> quicbaas.account.v1.ListAccountsRequest
-	9,  // 17: quicbaas.account.v1.AccountService.UpdateAccount:input_type -> quicbaas.account.v1.UpdateAccountRequest
-	11, // 18: quicbaas.account.v1.AccountService.DeleteAccount:input_type -> quicbaas.account.v1.DeleteAccountRequest
-	13, // 19: quicbaas.account.v1.AccountService.RotateAccountCredential:input_type -> quicbaas.account.v1.RotateAccountCredentialRequest
-	15, // 20: quicbaas.account.v1.AccountService.RevokeAccount:input_type -> quicbaas.account.v1.RevokeAccountRequest
-	17, // 21: quicbaas.account.v1.AccountService.SetDefaultAccount:input_type -> quicbaas.account.v1.SetDefaultAccountRequest
-	19, // 22: quicbaas.account.v1.AccountService.GetAccountUsage:input_type -> quicbaas.account.v1.GetAccountUsageRequest
-	22, // 23: quicbaas.account.v1.AccountService.MaterializeAccountCredential:input_type -> quicbaas.account.v1.MaterializeAccountCredentialRequest
-	4,  // 24: quicbaas.account.v1.AccountService.CreateAccount:output_type -> quicbaas.account.v1.CreateAccountResponse
-	6,  // 25: quicbaas.account.v1.AccountService.GetAccount:output_type -> quicbaas.account.v1.GetAccountResponse
-	8,  // 26: quicbaas.account.v1.AccountService.ListAccounts:output_type -> quicbaas.account.v1.ListAccountsResponse
-	10, // 27: quicbaas.account.v1.AccountService.UpdateAccount:output_type -> quicbaas.account.v1.UpdateAccountResponse
-	12, // 28: quicbaas.account.v1.AccountService.DeleteAccount:output_type -> quicbaas.account.v1.DeleteAccountResponse
-	14, // 29: quicbaas.account.v1.AccountService.RotateAccountCredential:output_type -> quicbaas.account.v1.RotateAccountCredentialResponse
-	16, // 30: quicbaas.account.v1.AccountService.RevokeAccount:output_type -> quicbaas.account.v1.RevokeAccountResponse
-	18, // 31: quicbaas.account.v1.AccountService.SetDefaultAccount:output_type -> quicbaas.account.v1.SetDefaultAccountResponse
-	20, // 32: quicbaas.account.v1.AccountService.GetAccountUsage:output_type -> quicbaas.account.v1.GetAccountUsageResponse
-	23, // 33: quicbaas.account.v1.AccountService.MaterializeAccountCredential:output_type -> quicbaas.account.v1.MaterializeAccountCredentialResponse
-	24, // [24:34] is the sub-list for method output_type
-	14, // [14:24] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	1,  // 0: quicbaas.account.v1.Account.billing:type_name -> quicbaas.account.v1.AccountBilling
+	34, // 1: quicbaas.account.v1.Account.spend:type_name -> quicbaas.spend.v1.AccountSpendPolicy
+	29, // 2: quicbaas.account.v1.AccountCredential.env:type_name -> quicbaas.account.v1.AccountCredential.EnvEntry
+	30, // 3: quicbaas.account.v1.AccountCredential.files:type_name -> quicbaas.account.v1.AccountCredential.FilesEntry
+	31, // 4: quicbaas.account.v1.AccountUsage.by_agent:type_name -> quicbaas.account.v1.AccountUsage.ByAgentEntry
+	2,  // 5: quicbaas.account.v1.CreateAccountRequest.credential:type_name -> quicbaas.account.v1.AccountCredential
+	1,  // 6: quicbaas.account.v1.CreateAccountRequest.billing:type_name -> quicbaas.account.v1.AccountBilling
+	34, // 7: quicbaas.account.v1.CreateAccountRequest.spend:type_name -> quicbaas.spend.v1.AccountSpendPolicy
+	0,  // 8: quicbaas.account.v1.CreateAccountResponse.account:type_name -> quicbaas.account.v1.Account
+	0,  // 9: quicbaas.account.v1.GetAccountResponse.account:type_name -> quicbaas.account.v1.Account
+	0,  // 10: quicbaas.account.v1.ListAccountsResponse.accounts:type_name -> quicbaas.account.v1.Account
+	1,  // 11: quicbaas.account.v1.UpdateAccountRequest.billing:type_name -> quicbaas.account.v1.AccountBilling
+	34, // 12: quicbaas.account.v1.UpdateAccountRequest.spend:type_name -> quicbaas.spend.v1.AccountSpendPolicy
+	0,  // 13: quicbaas.account.v1.UpdateAccountResponse.account:type_name -> quicbaas.account.v1.Account
+	2,  // 14: quicbaas.account.v1.RotateAccountCredentialRequest.credential:type_name -> quicbaas.account.v1.AccountCredential
+	0,  // 15: quicbaas.account.v1.RevokeAccountResponse.account:type_name -> quicbaas.account.v1.Account
+	3,  // 16: quicbaas.account.v1.GetAccountUsageResponse.usage:type_name -> quicbaas.account.v1.AccountUsage
+	35, // 17: quicbaas.account.v1.GetAccountUsageResponse.spend:type_name -> quicbaas.spend.v1.SpendHeadroom
+	32, // 18: quicbaas.account.v1.MaterializedAccountCredential.env:type_name -> quicbaas.account.v1.MaterializedAccountCredential.EnvEntry
+	33, // 19: quicbaas.account.v1.MaterializedAccountCredential.files:type_name -> quicbaas.account.v1.MaterializedAccountCredential.FilesEntry
+	22, // 20: quicbaas.account.v1.MaterializeAccountCredentialResponse.credential:type_name -> quicbaas.account.v1.MaterializedAccountCredential
+	4,  // 21: quicbaas.account.v1.AccountService.CreateAccount:input_type -> quicbaas.account.v1.CreateAccountRequest
+	6,  // 22: quicbaas.account.v1.AccountService.GetAccount:input_type -> quicbaas.account.v1.GetAccountRequest
+	8,  // 23: quicbaas.account.v1.AccountService.ListAccounts:input_type -> quicbaas.account.v1.ListAccountsRequest
+	10, // 24: quicbaas.account.v1.AccountService.UpdateAccount:input_type -> quicbaas.account.v1.UpdateAccountRequest
+	12, // 25: quicbaas.account.v1.AccountService.DeleteAccount:input_type -> quicbaas.account.v1.DeleteAccountRequest
+	14, // 26: quicbaas.account.v1.AccountService.RotateAccountCredential:input_type -> quicbaas.account.v1.RotateAccountCredentialRequest
+	16, // 27: quicbaas.account.v1.AccountService.RevokeAccount:input_type -> quicbaas.account.v1.RevokeAccountRequest
+	18, // 28: quicbaas.account.v1.AccountService.SetDefaultAccount:input_type -> quicbaas.account.v1.SetDefaultAccountRequest
+	20, // 29: quicbaas.account.v1.AccountService.GetAccountUsage:input_type -> quicbaas.account.v1.GetAccountUsageRequest
+	23, // 30: quicbaas.account.v1.AccountService.MaterializeAccountCredential:input_type -> quicbaas.account.v1.MaterializeAccountCredentialRequest
+	25, // 31: quicbaas.account.v1.AccountService.ReserveAccountSession:input_type -> quicbaas.account.v1.ReserveAccountSessionRequest
+	27, // 32: quicbaas.account.v1.AccountService.ReleaseAccountSession:input_type -> quicbaas.account.v1.ReleaseAccountSessionRequest
+	5,  // 33: quicbaas.account.v1.AccountService.CreateAccount:output_type -> quicbaas.account.v1.CreateAccountResponse
+	7,  // 34: quicbaas.account.v1.AccountService.GetAccount:output_type -> quicbaas.account.v1.GetAccountResponse
+	9,  // 35: quicbaas.account.v1.AccountService.ListAccounts:output_type -> quicbaas.account.v1.ListAccountsResponse
+	11, // 36: quicbaas.account.v1.AccountService.UpdateAccount:output_type -> quicbaas.account.v1.UpdateAccountResponse
+	13, // 37: quicbaas.account.v1.AccountService.DeleteAccount:output_type -> quicbaas.account.v1.DeleteAccountResponse
+	15, // 38: quicbaas.account.v1.AccountService.RotateAccountCredential:output_type -> quicbaas.account.v1.RotateAccountCredentialResponse
+	17, // 39: quicbaas.account.v1.AccountService.RevokeAccount:output_type -> quicbaas.account.v1.RevokeAccountResponse
+	19, // 40: quicbaas.account.v1.AccountService.SetDefaultAccount:output_type -> quicbaas.account.v1.SetDefaultAccountResponse
+	21, // 41: quicbaas.account.v1.AccountService.GetAccountUsage:output_type -> quicbaas.account.v1.GetAccountUsageResponse
+	24, // 42: quicbaas.account.v1.AccountService.MaterializeAccountCredential:output_type -> quicbaas.account.v1.MaterializeAccountCredentialResponse
+	26, // 43: quicbaas.account.v1.AccountService.ReserveAccountSession:output_type -> quicbaas.account.v1.ReserveAccountSessionResponse
+	28, // 44: quicbaas.account.v1.AccountService.ReleaseAccountSession:output_type -> quicbaas.account.v1.ReleaseAccountSessionResponse
+	33, // [33:45] is the sub-list for method output_type
+	21, // [21:33] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_account_proto_init() }
@@ -2156,13 +2691,16 @@ func file_api_proto_account_proto_init() {
 	if File_api_proto_account_proto != nil {
 		return
 	}
+	file_api_proto_spend_proto_init()
+	file_api_proto_account_proto_msgTypes[10].OneofWrappers = []any{}
+	file_api_proto_account_proto_msgTypes[25].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_account_proto_rawDesc), len(file_api_proto_account_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   29,
+			NumMessages:   34,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

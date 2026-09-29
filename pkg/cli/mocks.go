@@ -27,7 +27,6 @@ type IAMClient interface {
 	Close() error
 	ListTenants(ctx context.Context) ([]*TenantInfo, error)
 	ListUsers(ctx context.Context, tenantID string, limit int) ([]*UserInfo, error)
-	ListGroups(ctx context.Context, tenantID string, limit int) ([]*GroupInfo, error)
 	ListRoles(ctx context.Context, tenantID string, limit int) ([]*RoleInfo, error)
 	ListSessions(ctx context.Context, tenantID string, limit int) ([]*SessionInfo, error)
 }
@@ -36,7 +35,6 @@ type IAMClient interface {
 type MockIAMClient struct {
 	ListTenantsFunc  func(ctx context.Context) ([]*TenantInfo, error)
 	ListUsersFunc    func(ctx context.Context, tenantID string, limit int) ([]*UserInfo, error)
-	ListGroupsFunc   func(ctx context.Context, tenantID string, limit int) ([]*GroupInfo, error)
 	ListRolesFunc    func(ctx context.Context, tenantID string, limit int) ([]*RoleInfo, error)
 	ListSessionsFunc func(ctx context.Context, tenantID string, limit int) ([]*SessionInfo, error)
 }
@@ -58,14 +56,6 @@ func (m *MockIAMClient) ListTenants(ctx context.Context) ([]*TenantInfo, error) 
 func (m *MockIAMClient) ListUsers(ctx context.Context, tenantID string, limit int) ([]*UserInfo, error) {
 	if m.ListUsersFunc != nil {
 		return m.ListUsersFunc(ctx, tenantID, limit)
-	}
-	return nil, nil
-}
-
-// ListGroups implements IAMClient.
-func (m *MockIAMClient) ListGroups(ctx context.Context, tenantID string, limit int) ([]*GroupInfo, error) {
-	if m.ListGroupsFunc != nil {
-		return m.ListGroupsFunc(ctx, tenantID, limit)
 	}
 	return nil, nil
 }
@@ -109,18 +99,6 @@ type UserInfo struct {
 	DisplayName string    `json:"display_name"`
 	Status      string    `json:"status"`
 	MFAEnabled  bool      `json:"mfa_enabled"`
-	Created     time.Time `json:"created"`
-	Updated     time.Time `json:"updated"`
-}
-
-// GroupInfo represents group information for CLI display.
-type GroupInfo struct {
-	ID          string    `json:"id"`
-	TenantID    string    `json:"tenant_id"`
-	Name        string    `json:"name"`
-	DisplayName string    `json:"display_name"`
-	Description string    `json:"description"`
-	MemberCount int       `json:"member_count"`
 	Created     time.Time `json:"created"`
 	Updated     time.Time `json:"updated"`
 }

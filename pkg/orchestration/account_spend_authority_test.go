@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
@@ -138,8 +139,8 @@ func TestSpendAuthorityRefusesASpentTokenWindow(t *testing.T) {
 	if !stderrors.Is(err, ErrAccountQuotaExhausted) {
 		t.Error("the refusal does not satisfy errors.Is(ErrAccountQuotaExhausted); every consumer keys on the sentinel")
 	}
-	if exhausted.Axis != spendAxisTokens {
-		t.Errorf("Axis = %q, want %q", exhausted.Axis, spendAxisTokens)
+	if exhausted.Axis != QuotaAxisTokens {
+		t.Errorf("Axis = %q, want %q", exhausted.Axis, QuotaAxisTokens)
 	}
 	if exhausted.Window != "five-hour" {
 		t.Errorf("Window = %q, want the window that refused", exhausted.Window)
@@ -326,7 +327,7 @@ func TestSpendAuthorityRefusesAMalformedPolicy(t *testing.T) {
 	// stored around the account store's validation — a hand-built record, a
 	// downgrade. Refusing here too means the gate is not relying on somebody
 	// else having checked.
-	account := spendAccount(AccountSpendPolicy{Quota: AccountQuotaPolicy{Windows: []QuotaWindow{
+	account := spendAccount(AccountSpendPolicy{Quota: SpendLimits{Windows: []QuotaWindow{
 		{Name: "broken", Size: time.Hour},
 	}}})
 
@@ -351,7 +352,7 @@ func TestSpendErrorMessagesNameTheirSubject(t *testing.T) {
 		{
 			name: "a spent window names the window, the axis and the figures",
 			err: &AccountQuotaExhaustedError{
-				AccountID: "a1", Window: "five-hour", Axis: spendAxisTokens,
+				AccountID: "a1", Window: "five-hour", Axis: QuotaAxisTokens,
 				Used: 1200, Limit: 1000, RetryAt: at,
 			},
 			sentinel: ErrAccountQuotaExhausted,
@@ -359,7 +360,7 @@ func TestSpendErrorMessagesNameTheirSubject(t *testing.T) {
 		},
 		{
 			name:     "a spent window with nothing to age out states no moment",
-			err:      &AccountQuotaExhaustedError{AccountID: "a1", Window: "weekly", Axis: spendAxisTokens, Limit: 10},
+			err:      &AccountQuotaExhaustedError{AccountID: "a1", Window: "weekly", Axis: QuotaAxisTokens, Limit: 10},
 			sentinel: ErrAccountQuotaExhausted,
 			contains: []string{"a1", "weekly", "tokens"},
 		},
@@ -426,40 +427,46 @@ func TestQuotaRefusalsCoverEveryRefusingReason(t *testing.T) {
 	}
 }
 
-// TestConsumptionCostIsUnmeasuredAndNotMetered pins the removal of the cost
-// axis to the fact that removed it.
-//
-// wp12 metered tokens and integer micros independently. The micros half was
-// re-homed and then taken out, because NOTHING IN THIS TREE PRICES A TURN:
-// the single production writer of ledger entries (recordConsumption) sets no
-// CostMicros, so every entry carries zero, so a cost window would sum zero
-// and admit every turn forever. An operator setting a "daily spend" cap would
-// get something that looks like protection and is not — this package's own
-// founding failure, reproduced on the money axis.
-//
-// This test fails the day someone re-adds a cost allowance without a price
-// source, which is the only order in which the two may land (#791).
-func TestConsumptionCostIsUnmeasuredAndNotMetered(t *testing.T) {
+// TestConsumptionIsStampedFromThePriceBook asserts the recording path prices a
+// turn from the price book in force — cache tokens at their own rates — and
+// leaves it unpriced, never guessed, when the model is not in the table.
+func TestConsumptionIsStampedFromThePriceBook(t *testing.T) {
 	svc, ledger, _ := newConsumptionRecorder(t)
 	ctx := ContextWithTenant(context.Background(), "t1")
 	pooledSession(svc, "sess-1", "t1", "proj-1", "a1")
 
+	book, err := NewPriceBook(config.PricingConfig{
+		Version: "v1",
+		Models: []config.ModelPriceConfig{{
+			Model: "m", Provider: "anthropic",
+			InputPerMTok: 5, OutputPerMTok: 25, CacheReadPerMTok: 0.5, CacheWritePerMTok: 6.25,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("NewPriceBook: %v", err)
+	}
+	svc.SetPriceBook(book)
+
 	svc.recordTurnUsage(ctx, completedTurn{
 		turnID: "turn-1", sessionID: "sess-1", projectID: "proj-1", engine: "claude", model: "m",
+	}, &TokenUsage{InputTokens: 1_000_000, OutputTokens: 100_000, CacheReadInputTokens: 2_000_000, CacheCreationInputTokens: 10_000})
+	svc.recordTurnUsage(ctx, completedTurn{
+		turnID: "turn-2", sessionID: "sess-1", projectID: "proj-1", engine: "claude", model: "not-in-table",
 	}, &TokenUsage{InputTokens: 10, OutputTokens: 5})
 
 	rollup, err := ledger.Rollup(ctx, ConsumptionScope{TenantID: "t1"})
 	if err != nil {
 		t.Fatalf("Rollup: %v", err)
 	}
-	if rollup.TotalTokens != 15 {
-		t.Fatalf("tokens = %d, want 15 — the axis that IS fed must still work", rollup.TotalTokens)
+	// 1M×$5 + 0.1M×$25 + 2M×$0.50 + 0.01M×$6.25 = $5 + $2.5 + $1 + $0.0625.
+	if rollup.EquivalentMicros != 8_562_500 {
+		t.Fatalf("EquivalentMicros = %d, want 8562500", rollup.EquivalentMicros)
 	}
-	// The evidence for the removal: the recording path prices nothing, so a
-	// cost cap would have nothing to sum.
-	if rollup.CostMicros != 0 {
-		t.Fatalf("cost = %d, want 0 — something now prices a turn, so the cost axis "+
-			"and its reported column can come back together (#791); this test is the reminder",
-			rollup.CostMicros)
+	if rollup.PricedEntries != 1 || rollup.UnpricedEntries != 1 {
+		t.Fatalf("priced=%d unpriced=%d, want 1/1", rollup.PricedEntries, rollup.UnpricedEntries)
+	}
+	if rollup.CacheReadTokens != 2_000_000 || rollup.CacheWriteTokens != 10_000 {
+		t.Fatalf("cache read=%d write=%d, want them kept apart from input",
+			rollup.CacheReadTokens, rollup.CacheWriteTokens)
 	}
 }

@@ -35,6 +35,18 @@ func mergeLanded(pull *ForgePullRequest) bool {
 	return pull != nil && pull.Merged && pull.MergeSHA != ""
 }
 
+// giteaInternalError reports whether err is Gitea's own HTTP 500.
+//
+// A 500 IS AN ANSWER THAT SAYS NOTHING ABOUT A WRITE. Gitea has answered 500
+// for a squash merge it had already landed in the same second
+// (go-quicbaas#1071), so a merge that ends on one is settled by reading the
+// pull request back, exactly as a merge nobody answered is, rather than
+// charged to the work as a refusal.
+func giteaInternalError(err error) bool {
+	var apiErr *GiteaAPIError
+	return errors.As(err, &apiErr) && apiErr.Status == http.StatusInternalServerError
+}
+
 // reconcileMerge settles a merge the forge did not answer by reading the pull
 // request back.
 //

@@ -157,12 +157,12 @@ func TestServer_InitializeAndShutdown_TT_FullStackNetworkGRPC(t *testing.T) {
 	srv.config.Messaging.WatchBridge.Enabled = true
 	srv.config.Orchestration.Enabled = true
 
-	srv.config.Server.EmbeddedAgent.Enabled = true
-	srv.config.Server.EmbeddedAgent.Backends = []string{"ollama"}
-	srv.config.Server.EmbeddedAgent.DataDir = t.TempDir()
+	srv.config.Server.EmbeddedFleetNode.Enabled = true
+	srv.config.Server.EmbeddedFleetNode.Backends = []string{"ollama"}
+	srv.config.Server.EmbeddedFleetNode.DataDir = t.TempDir()
 
 	require.NoError(t, srv.initialize(), "full-stack network initialize must succeed")
-	require.NotNil(t, srv.embeddedAgentState, "embedded agent must be started")
+	require.NotNil(t, srv.embeddedFleetNodeState, "embedded agent must be started")
 	require.NotNil(t, srv.grpcServer, "gRPC server must be constructed in network mode")
 	require.NotNil(t, srv.grpcUnixListener, "gRPC Unix-socket listener must be bound")
 	require.NotNil(t, srv.catalogManager)
@@ -388,33 +388,33 @@ func TestServer_InitializeCA_TT_KeyStorageFailure(t *testing.T) {
 
 // TestServer_StartEmbeddedAgent_TT_NoRegistry covers the no-registry guard:
 // starting the embedded agent without an agent registry returns the typed
-// ErrEmbeddedAgentNoRegistry.
+// ErrEmbeddedFleetNodeNoRegistry.
 func TestServer_StartEmbeddedAgent_TT_NoRegistry(t *testing.T) {
 	saveAndRestoreSeams(t)
 	srv := withTempServer(t)
-	srv.agentRegistry = nil
+	srv.fleetRegistry = nil
 
-	err := srv.startEmbeddedAgent()
+	err := srv.startEmbeddedFleetNode()
 	require.Error(t, err, "starting the embedded agent without a registry must fail")
 }
 
 // TestServer_StartEmbeddedAgent_TT_AlreadyStarted covers the already-started
-// guard: a second start with a populated embeddedAgentState returns the typed
+// guard: a second start with a populated embeddedFleetNodeState returns the typed
 // already-started error.
 func TestServer_StartEmbeddedAgent_TT_AlreadyStarted(t *testing.T) {
 	saveAndRestoreSeams(t)
 	srv := withTempServer(t)
 	srv.config.Server.Embedded = false
-	srv.config.Server.EmbeddedAgent.Enabled = true
-	srv.config.Server.EmbeddedAgent.Backends = []string{"ollama"}
-	srv.config.Server.EmbeddedAgent.DataDir = t.TempDir()
+	srv.config.Server.EmbeddedFleetNode.Enabled = true
+	srv.config.Server.EmbeddedFleetNode.Backends = []string{"ollama"}
+	srv.config.Server.EmbeddedFleetNode.DataDir = t.TempDir()
 
 	require.NoError(t, srv.initialize())
-	require.NotNil(t, srv.embeddedAgentState, "the first start must establish the agent state")
+	require.NotNil(t, srv.embeddedFleetNodeState, "the first start must establish the agent state")
 
-	err := srv.startEmbeddedAgent()
-	require.Error(t, err, "a second embedded-agent start must be rejected")
-	var alreadyErr *EmbeddedAgentAlreadyStartedError
+	err := srv.startEmbeddedFleetNode()
+	require.Error(t, err, "a second embedded-fleet-node start must be rejected")
+	var alreadyErr *EmbeddedFleetNodeAlreadyStartedError
 	require.ErrorAs(t, err, &alreadyErr)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -423,19 +423,19 @@ func TestServer_StartEmbeddedAgent_TT_AlreadyStarted(t *testing.T) {
 }
 
 // TestServer_StartEmbeddedAgent_TT_WithTLSIdentity covers the CA-backed mTLS
-// identity issuance branch of startEmbeddedAgent: with TLS enabled the local CA
+// identity issuance branch of startEmbeddedFleetNode: with TLS enabled the local CA
 // issues the agent's mTLS certificate during startup.
 func TestServer_StartEmbeddedAgent_TT_WithTLSIdentity(t *testing.T) {
 	saveAndRestoreSeams(t)
 	srv := withTempServer(t)
 	srv.config.Server.Embedded = false
 	srv.config.Security.TLSEnabled = true
-	srv.config.Server.EmbeddedAgent.Enabled = true
-	srv.config.Server.EmbeddedAgent.Backends = []string{"ollama"}
-	srv.config.Server.EmbeddedAgent.DataDir = t.TempDir()
+	srv.config.Server.EmbeddedFleetNode.Enabled = true
+	srv.config.Server.EmbeddedFleetNode.Backends = []string{"ollama"}
+	srv.config.Server.EmbeddedFleetNode.DataDir = t.TempDir()
 
-	require.NoError(t, srv.initialize(), "TLS-enabled embedded-agent start must succeed")
-	require.NotNil(t, srv.embeddedAgentState)
+	require.NoError(t, srv.initialize(), "TLS-enabled embedded-fleet-node start must succeed")
+	require.NotNil(t, srv.embeddedFleetNodeState)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

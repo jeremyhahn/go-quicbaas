@@ -48,7 +48,7 @@ type sessionEventLogProvider = orchestration.SessionLogAccessor
 // Authorization: orchestrator:hook, per the method's entry in
 // grpcMethodPermissions (authz_mapping.go) — the table the interceptor
 // actually reads. An enrolled daemon is granted that permission on its OAuth2
-// application so its event stream is admitted (iam.AgentRuntimeGrant,
+// application so its event stream is admitted (iam.FleetRuntimeGrant,
 // go-quicbaas#653). Tenant is extracted from the per-request Context via
 // TenantFromContext.
 func (s *OrchestratorServer) PushEvents(stream pb.OrchestratorService_PushEventsServer) error {

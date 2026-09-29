@@ -12,7 +12,10 @@ APP_NAME := quicbaas
 VERSION := $(shell cat VERSION 2>/dev/null | tr -d '\n' || git describe --tags --always --dirty 2>/dev/null || echo "0.1.0-dev")
 BUILD_TIME := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-GO_VERSION := 1.27.0
+# The toolchain pins (GO_VERSION, GOLANGCI_VERSION, GOSEC_VERSION,
+# GOVULNCHECK_VERSION, SERENA_VERSION, GOPLS_VERSION) live in ONE file that both
+# this Makefile and the Go binaries read — see pkg/version/toolchain.mk for why.
+include pkg/version/toolchain.mk
 
 # Directories
 BIN_DIR := bin
@@ -42,41 +45,14 @@ GOGET := $(GOCMD) get
 GOMOD := $(GOCMD) mod
 GOFMT ?= gofmt
 GOLINT := $(shell go env GOPATH)/bin/golangci-lint
-# Pinned per devops.md §9 and company task #122. $(GOBIN) is shared across
-# checkouts on the build hosts, so an unpinned install in one tree silently
-# changes every other tree's lint verdict.
-#
-# THESE THREE ARE THE REPOSITORY'S ONLY COPY OF THE VERIFICATION TOOLCHAIN'S
-# VERSIONS. `make install-tools` installs them, CI installs them by reading
-# these variables (`make print-GOLANGCI_VERSION`, .github/workflows/ci.yml),
-# and `make build-worker-image` passes them into the Software Factory worker
-# image as build arguments. A worker that linted with a different version than
-# CI would produce review verdicts a merge then contradicts (go-quicbaas#772),
-# so there is one place to change and three consumers that read it.
-GOLANGCI_VERSION := v2.13.2
-# Pinned by the fleet ruling of 2026-08-26: an unpinned gosec self-updated
-# mid-day and turned unrelated branches red, so nobody could say which commit
-# owned the new findings.
-GOSEC_VERSION := v2.29.0
-# Pins the TOOL, not the vulnerability DATABASE -- govulncheck fetches that at
-# run time, which is the point of running it.
-GOVULNCHECK_VERSION := v1.7.0
-# Serena is the semantic code-retrieval MCP server the Software Factory's agents
-# search this codebase with, and gopls is the Go language server it drives. Both
-# are pinned for the same reason as the tools above: an agent whose search
-# behaviour changes under an image rebuild is a change nobody authored.
-SERENA_VERSION := v1.7.0
-GOPLS_VERSION := v0.23.0
-# Workflow linting. The fleet's `make lint` includes actionlint (devops.md
-# lint row), and actionlint delegates every SC* rule to shellcheck -- with
-# shellcheck absent it SILENTLY skips them and still exits 0, so a project's
-# target fails closed without it. The worker image carries both at these pins
-# (go-quicbaas#1039). shellcheck publishes no checksum file, so the SHA-256 of
-# each release tarball is pinned beside the version: change all three together.
-ACTIONLINT_VERSION := v1.7.12
-SHELLCHECK_VERSION := v0.11.0
-SHELLCHECK_SHA256_X86_64 := 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
-SHELLCHECK_SHA256_AARCH64 := 12b331c1d2db6b9eb13cfca64306b1b157a86eb69db83023e261eaa7e7c14588
+# GOLANGCI_VERSION, GOSEC_VERSION, GOVULNCHECK_VERSION, ACTIONLINT_VERSION,
+# SHELLCHECK_VERSION (with its tarball digests), SERENA_VERSION, GOPLS_VERSION,
+# GO_TOOL_DEPENDENCY_FLOORS (what gopls and gosec are built with) and
+# OPENCODE_VERSION (with its tarball digests) are included above from
+# pkg/version/toolchain.mk, the repository's only copy of them. `make install-tools` installs them, CI reads
+# them through `make print-<VAR>` (.github/workflows/ci.yml), and the Software
+# Factory worker image is built with them — by `make build-worker-image` and by
+# the daemon's worker image refresh, which embeds the same file.
 
 # Benchmark configuration
 BENCHTIME ?= 100ms
@@ -1477,6 +1453,127 @@ integration-test-forge-gitea: ## Run the live Gitea forge suite (needs GITEA_ITE
 	$(GOTEST) -tags integration -count=1 -v -timeout=10m -run 'TestLive_' ./pkg/sdlc/
 	@echo "$(GREEN)✓ Live Gitea forge tests passed$(NC)"
 
+# The merge-result snapshot suite. It measures what the tree a verification
+# judges actually HOLDS, which needs real git against a real working tree:
+# `git add --all` into an index that starts empty silently drops every file
+# the repository tracks despite an ignore rule, and a double that records the
+# argument vector sees an identical command either way (go-quicbaas#982). The
+# command plumbing stays in the unit tier, where the fakes hold it.
+#
+# It is tagged `integration` because of what it TOUCHES, not what it costs: it
+# spawns git and writes a working tree, which the unit tier forbids, and it
+# finishes in under a second. That is also why it runs IN A CONTAINER and
+# never on the invoking host: "never run on the host OS" is about what a suite
+# touches, not about how long it takes (AGENTS.md, Integration & Functional
+# Testing; ../handbook/software/conventions/integration-testing.md section 4),
+# and a suite spawning git against a working tree is outside the host either
+# way.
+#
+# THE CONTAINER IS DISPOSABLE AND HAS NOTHING TO REACH. Like the live forge
+# suite this is not part of the blanket `integration-test` aggregate, which
+# brings up a Docker stack this suite has no use for: there is no server, no
+# credential and no network (`--network none`), everything the tests write is
+# under the container's own temp dir, and `--rm` takes that whole tree away
+# afterwards.
+#
+# CI RUNS THIS TARGET on every push and every pull request -- the
+# `Merge-Result Snapshot` job in .github/workflows/ci.yml, which the CI Gate
+# requires. Staying out of the `integration-test` aggregate is why it needs
+# its own job: nothing else in the pipeline executes this suite, since
+# `make test` does not compile the `integration` tag at all and
+# `make vet-integration` only typechecks it. A suite nothing executes
+# measures nothing (integration-testing.md section 8), which is how the only
+# tests of what a snapshot CONTAINS would otherwise have gated nothing.
+#
+# THE SOURCE IS BAKED INTO THE IMAGE AND NOTHING IS BIND-MOUNTED, which is
+# what lets CI run this exact target rather than a second copy of it in a
+# workflow file (devops.md §4). A bind mount cannot work on a Gitea runner:
+# act_runner talks to the HOST's docker daemon over its socket, so
+# `docker run -v $PWD:/workspace` asks that daemon to resolve a path that
+# exists only inside the job container, and it dies with `error while creating
+# mount source path` -- runner-log-proven, and why release.yml's build step
+# uses `docker cp` and test/integration/Dockerfile bakes the CLI in rather
+# than mounting it. A build context is streamed to the daemon over the API
+# instead, so it resolves wherever the two filesystems actually live. That
+# also settles the module cache: it is warmed at image build, where the
+# BuildKit gomodauth secret can reach the private first-party modules, so the
+# run itself needs neither a credential nor a network.
+#
+# This is a `docker build` rather than a `docker exec` into the devcontainer
+# for the same reason: the devcontainer's own `go mod download` is
+# best-effort and credential-free, so the first-party modules are not in it,
+# and reaching the checkout from it means the bind mount above. The suite
+# needs git and nothing else at run time, so the image builds the test binary
+# in a golang-alpine stage and ships it on a bare alpine with git -- the
+# toolchain, the module cache and the source stay behind in the build stage.
+# See test/integration/Dockerfile.merge-result.
+.PHONY: integration-test-merge-result
+integration-test-merge-result: ## Run the merge-result snapshot suite in a container (real git, no services)
+	@echo "$(BLUE)Running merge-result snapshot integration tests in a container...$(NC)"
+	@if ! command -v $(DOCKER) > /dev/null 2>&1; then \
+		echo "$(RED)Error: Docker is not installed$(NC)"; \
+		echo "$(YELLOW)Install Docker: https://docs.docker.com/get-docker/$(NC)"; \
+		exit 1; \
+	fi
+	@$(MAKE) --no-print-directory stage-gomodauth
+	@# THE IMAGE IS NEVER TAGGED. It is identified only by the id the build
+	@# writes to --iidfile. A fixed tag is forbidden outright
+	@# (integration-testing.md section 7, "no fixed image tags shared between
+	@# runs"), for a reason this target hits head-on: two runs on one host are
+	@# routine, and under a `:latest` the second run's build moves the tag
+	@# between the first run's build and its `docker run` -- so that run tests
+	@# another commit's binary and reports the result under this commit. A
+	@# per-run tag would fix that, but it would also be an image identity this
+	@# repository creates and cannot write literally, which
+	@# scripts/internal/dockerinv rejects and `make verify-clean-docker` fails
+	@# on -- rightly, since an image nobody can name cannot be cleaned up by
+	@# name. An id names exactly one image forever, so the scan, the run and
+	@# the removal below are provably the same image, and the EXIT trap takes
+	@# it away on every path out of this recipe.
+	@#
+	@# The id is normalised through the daemon before it is used, so the rest
+	@# of the recipe carries the canonical `sha256:...` form whatever shape the
+	@# BuildKit release wrote, and a build that somehow produced no usable
+	@# image fails here rather than inside Trivy.
+	@#
+	@# NOTHING IS RUN FROM THE IMAGE BEFORE IT IS SCANNED: devops.md section 8
+	@# gates `trivy image` on every image this repository builds, CI images
+	@# included, and `trivy-image-merge-result` is that gate for this one.
+	@#
+	@# `docker build` under BuildKit rather than `docker buildx build`: the
+	@# secret mount needs BuildKit either way, and this form needs no buildx
+	@# plugin and no builder instance. It also cannot hit the trap where a
+	@# container-driver builder leaves the image in its own cache instead of
+	@# the daemon, which would make the `docker run` below fail on an image
+	@# that had just built successfully.
+	@#
+	@# One logical line, because the EXIT trap has to outlive the build: make
+	@# runs every recipe line in a shell of its own.
+	@set -eu; \
+	IIDFILE=$$(mktemp "$${TMPDIR:-/tmp}/quicbaas-merge-result-iid.XXXXXX"); \
+	IMAGE=""; \
+	cleanup() { \
+		ref="$$IMAGE"; \
+		[ -n "$$ref" ] || ref=$$(cat "$$IIDFILE" 2>/dev/null || true); \
+		[ -z "$$ref" ] || $(DOCKER) image rm -f "$$ref" >/dev/null 2>&1 || true; \
+		rm -f "$$IIDFILE"; \
+	}; \
+	trap cleanup EXIT; \
+	DOCKER_BUILDKIT=1 $(DOCKER) build \
+		--secret id=gomodauth,src=$(GOMODAUTH_ENV) \
+		-f test/integration/Dockerfile.merge-result \
+		--iidfile "$$IIDFILE" .; \
+	IID=$$(cat "$$IIDFILE"); \
+	if [ -z "$$IID" ]; then \
+		echo "$(RED)The build wrote no image id to $$IIDFILE$(NC)"; \
+		exit 1; \
+	fi; \
+	IMAGE=$$($(DOCKER) image inspect --format '{{.Id}}' "$$IID"); \
+	echo "$(BLUE)Built the merge-result test image $$IMAGE$(NC)"; \
+	$(MAKE) --no-print-directory trivy-image-merge-result MERGE_RESULT_IMAGE_ID="$$IMAGE"; \
+	$(DOCKER) run --rm --network none "$$IMAGE"
+	@echo "$(GREEN)✓ Merge-result snapshot tests passed$(NC)"
+
 integration-test-session-attach: build-daemon ## Run session attach integration tests (wire-level SSE smoke against live daemon)
 	@echo "$(BLUE)Running session attach integration tests...$(NC)"
 	@$(MAKE) stop-local >/dev/null 2>&1 || true
@@ -1677,11 +1774,14 @@ integration-test-seal: ## Run cloud-backed barrier seal integration tests (awskm
 		echo "$(RED)Error: Docker Compose is not installed$(NC)"; \
 		exit 1; \
 	fi
+	@$(MAKE) --no-print-directory stage-gomodauth
 	@COMPOSE_FILE="test/integration/docker-compose.seal.yml"; \
+	trap '$(GOMODAUTH_CLEAR)' EXIT; \
 	echo "$(YELLOW)Cleaning up any previous seal-test containers...$(NC)"; \
 	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans 2>/dev/null || true; \
 	echo "$(YELLOW)Building seal-test image (quicbaasd + quicbaas built with -tags 'awskms vault')...$(NC)"; \
 	docker compose -f $$COMPOSE_FILE build seal-test 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
+	$(GOMODAUTH_CLEAR); \
 	echo "$(YELLOW)Starting emulators (floci KMS + vault dev server)...$(NC)"; \
 	docker compose -f $$COMPOSE_FILE up -d floci vault; \
 	echo "$(YELLOW)Running seal integration tests...$(NC)"; \
@@ -1703,13 +1803,16 @@ integration-test-tenantbarrier: ## Run per-tenant barrier integration tests agai
 		echo "$(RED)Error: Docker Compose is not installed$(NC)"; \
 		exit 1; \
 	fi
+	@$(MAKE) --no-print-directory stage-gomodauth
 	@COMPOSE_FILE="test/integration/docker-compose.seal.yml"; \
+	trap '$(GOMODAUTH_CLEAR)' EXIT; \
 	echo "$(YELLOW)Issuing integration mTLS/PIV fixtures through the QuicBaaS CA...$(NC)"; \
 	$(GOCMD) run ./test/integration/certfixture/cmd test/integration/certs; \
 	echo "$(YELLOW)Cleaning up any previous tenantbarrier containers...$(NC)"; \
 	docker compose -p tenantbarrier -f $$COMPOSE_FILE down --volumes --remove-orphans 2>/dev/null || true; \
 	echo "$(YELLOW)Building tenantbarrier images (seal-enabled quicbaasd node + test runner)...$(NC)"; \
 	docker compose -p tenantbarrier -f $$COMPOSE_FILE build tenantbarrier-node tenantbarrier-test 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
+	$(GOMODAUTH_CLEAR); \
 	echo "$(YELLOW)Starting seal-enabled node (passphrase auto-unseal)...$(NC)"; \
 	docker compose -p tenantbarrier -f $$COMPOSE_FILE up -d tenantbarrier-node; \
 	echo "$(YELLOW)Running per-tenant barrier integration tests...$(NC)"; \
@@ -1923,9 +2026,41 @@ test-integration-tagged: ## Run integration tests with build tag (in-process)
 GOMODAUTH_ENV ?= /tmp/quicbaas-gomodauth.env
 export GOMODAUTH_ENV
 
+# Where integration-test backs go.mod up while the stack runs, restored after.
+# Overridable so a gate that drives the recipe never touches a real run's copy.
+GOMOD_BACKUP ?= /tmp/quicbaas-gomod-backup
+SDK_GOMOD_BACKUP ?= /tmp/quicbaas-sdk-gomod-backup
+
+# Where stage-gomodauth finds a Gitea read token on a host that is not a Gitea
+# runner (#1031). A runner injects the dependency-resolution.md section-6
+# variables itself; a developer or agent host resolves the private modules
+# through a ~/.gitconfig rewrite a container cannot see, so the variables are
+# built here from a read token instead. The token comes from GITEA_READ_TOKEN
+# in the environment, else from the GOMODAUTH_TOKEN_KEY line of the agent
+# tokens file. It is only ever read inside the recipe's shell -- never into a
+# make variable, a command line, a build arg or the log.
+#
+# GITEA_HTTP_ORIGIN is the forge the token is good for (http:// or https://,
+# host and port). It has no default: the tree names no forge. Set it in the
+# environment, or put a GITEA_HTTP_ORIGIN= line in the tokens file beside the
+# token, which is where a private deployment keeps it. A token with no origin
+# is refused rather than staged against a guess.
+GOMODAUTH_TOKENS_FILE ?= $(HOME)/.agent-identity/tokens.env
+GOMODAUTH_TOKEN_KEY ?= AGENT_TOKEN_GO_QUICBAAS
+GITEA_HTTP_ORIGIN ?=
+GOMODAUTH_OWNER ?= jeremyhahn
+
+# Empties the staged file. Every target that stages it runs this once its
+# images are built, and arms it in an EXIT trap so a failed or cancelled build
+# clears it too. The file is emptied rather than removed: a later compose
+# invocation against the same project still resolves the secret's path.
+# umask applies only to a file this creates; stage-gomodauth chmods an existing
+# one to 0600 before it writes a token into it.
+GOMODAUTH_CLEAR = { umask 077; : > "$(GOMODAUTH_ENV)"; } 2>/dev/null || true
+
 .PHONY: stage-gomodauth
 stage-gomodauth: ## Stage Gitea module-fetch credentials for the image builds
-	@umask 077; : > "$(GOMODAUTH_ENV)"
+	@umask 077; : > "$(GOMODAUTH_ENV)" && chmod 600 "$(GOMODAUTH_ENV)"
 	@if [ -n "$${GIT_CONFIG_KEY_0:-}" ]; then \
 		umask 077; \
 		{ \
@@ -1934,11 +2069,53 @@ stage-gomodauth: ## Stage Gitea module-fetch credentials for the image builds
 			printf 'export GIT_CONFIG_KEY_0=%s\n' "$${GIT_CONFIG_KEY_0}"; \
 			printf 'export GIT_CONFIG_VALUE_0=%s\n' "$${GIT_CONFIG_VALUE_0:-}"; \
 		} > "$(GOMODAUTH_ENV)"; \
-		echo "$(GREEN)Staged Gitea module credentials for the image build$(NC)"; \
-	else \
-		echo "$(YELLOW)No GIT_CONFIG_KEY_0 in the environment; image builds resolve modules from the public proxy$(NC)"; \
-		echo "$(YELLOW)  (dependency-resolution.md section 6 -- the Gitea runners inject it)$(NC)"; \
-	fi
+		echo "$(GREEN)Staged Gitea module credentials for the image build (runner environment)$(NC)"; \
+		exit 0; \
+	fi; \
+	token="$${GITEA_READ_TOKEN:-}"; source=GITEA_READ_TOKEN; \
+	if [ -z "$$token" ] && [ -r "$(GOMODAUTH_TOKENS_FILE)" ]; then \
+		token=$$(sed -n 's/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}$(GOMODAUTH_TOKEN_KEY)=//p' "$(GOMODAUTH_TOKENS_FILE)" | tail -n 1 | tr -d "\"' \r"); \
+		source="$(GOMODAUTH_TOKEN_KEY) in $(GOMODAUTH_TOKENS_FILE)"; \
+	fi; \
+	if [ -z "$$token" ]; then \
+		echo "$(YELLOW)No Gitea module credentials: no GIT_CONFIG_KEY_0 (Gitea runner), no GITEA_READ_TOKEN,$(NC)"; \
+		echo "$(YELLOW)  and no $(GOMODAUTH_TOKEN_KEY) in $(GOMODAUTH_TOKENS_FILE).$(NC)"; \
+		echo "$(YELLOW)  Image builds resolve modules from the public proxy, where private first-party$(NC)"; \
+		echo "$(YELLOW)  modules not yet mirrored fail with 'unknown revision' (docs/testing/private-modules.md)$(NC)"; \
+		exit 0; \
+	fi; \
+	case "$$token" in \
+		*[!A-Za-z0-9_-]*) \
+			echo "$(RED)Error: the Gitea read token from $$source is not token-shaped (expected [A-Za-z0-9_-]); nothing staged$(NC)"; \
+			exit 1 ;; \
+	esac; \
+	origin="$(GITEA_HTTP_ORIGIN)"; \
+	if [ -z "$$origin" ] && [ -r "$(GOMODAUTH_TOKENS_FILE)" ]; then \
+		origin=$$(sed -n 's/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}GITEA_HTTP_ORIGIN=//p' "$(GOMODAUTH_TOKENS_FILE)" | tail -n 1 | tr -d "\"' \r"); \
+	fi; \
+	if [ -z "$$origin" ]; then \
+		echo "$(RED)Error: a Gitea read token was found ($$source) but no Gitea origin is set; nothing staged$(NC)"; \
+		echo "$(RED)  Set GITEA_HTTP_ORIGIN (e.g. https://gitea.example.com:3000) in the environment or in $(GOMODAUTH_TOKENS_FILE)$(NC)"; \
+		exit 1; \
+	fi; \
+	origin="$${origin%/}"; \
+	case "$$origin" in \
+		http://*|https://*) ;; \
+		*) echo "$(RED)Error: GITEA_HTTP_ORIGIN must be an http:// or https:// origin; nothing staged$(NC)"; exit 1 ;; \
+	esac; \
+	scheme="$${origin%%://*}"; hostport="$${origin#*://}"; \
+	umask 077; \
+	{ \
+		printf 'export GOPRIVATE=%s\n' "$${GOPRIVATE:-github.com/$(GOMODAUTH_OWNER)/*}"; \
+		printf 'export GIT_CONFIG_COUNT=1\n'; \
+		printf 'export GIT_CONFIG_KEY_0=url.%s://x:%s@%s/%s/.insteadOf\n' "$$scheme" "$$token" "$$hostport" "$(GOMODAUTH_OWNER)"; \
+		printf 'export GIT_CONFIG_VALUE_0=https://github.com/%s/\n' "$(GOMODAUTH_OWNER)"; \
+	} > "$(GOMODAUTH_ENV)"; \
+	echo "$(GREEN)Staged Gitea module credentials for the image build (token from $$source, origin $$origin)$(NC)"
+
+.PHONY: clear-gomodauth
+clear-gomodauth: ## Empty the staged Gitea module-fetch credentials file
+	@$(GOMODAUTH_CLEAR)
 
 # Teardown is armed by an EXIT trap before the first container exists, because
 # the workflow no longer prunes the runner behind this job (#3): what this stack
@@ -2011,9 +2188,9 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	if [ $$START_LOCAL_OLLAMA -eq 1 ]; then OLLAMA_UP_SERVICES="ollama ollama-setup"; fi; \
 	echo "$(BLUE)  Ollama mode: enabled=$$OLLAMA_ENABLED gpu=$$TEST_GPU local-container=$$START_LOCAL_OLLAMA url=$$OLLAMA_URL$(NC)"; \
 	TORN_DOWN=0; \
-	trap 'if [ $$TORN_DOWN -eq 0 ]; then echo "$(YELLOW)Tearing down the integration stack...$(NC)"; docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans >/dev/null 2>&1 || true; fi' EXIT; \
-	cp go.mod /tmp/quicbaas-gomod-backup; \
-	cp sdk/go/go.mod /tmp/quicbaas-sdk-gomod-backup; \
+	trap '$(GOMODAUTH_CLEAR); if [ $$TORN_DOWN -eq 0 ]; then echo "$(YELLOW)Tearing down the integration stack...$(NC)"; docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans >/dev/null 2>&1 || true; fi' EXIT; \
+	cp go.mod "$(GOMOD_BACKUP)"; \
+	cp sdk/go/go.mod "$(SDK_GOMOD_BACKUP)"; \
 	echo "$(YELLOW)CLI binary and mTLS certificates are produced inside the stack$(NC)"; \
 	echo "$(YELLOW)  CLI: baked into the test-runner image from tracked source$(NC)"; \
 	echo "$(YELLOW)  certs: generated per run by the certs-init service into the$(NC)"; \
@@ -2034,6 +2211,7 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 		echo "$(RED)Image build FAILED — refusing to run integration tests against stale images.$(NC)"; \
 		exit 1; \
 	fi; \
+	$(GOMODAUTH_CLEAR); \
 	echo ""; \
 	echo "$(YELLOW)Starting integration test cluster...$(NC)"; \
 	docker compose -f $$COMPOSE_FILE up -d test-node1 test-node2 test-node3 floci minio azurite fake-gcs-server $$OLLAMA_UP_SERVICES; \
@@ -2214,9 +2392,9 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans; \
 	TORN_DOWN=1; \
 	echo "$(YELLOW)Restoring go.mod files (if modified by container)...$(NC)"; \
-	if [ -f /tmp/quicbaas-gomod-backup ]; then cp /tmp/quicbaas-gomod-backup go.mod; fi; \
-	if [ -f /tmp/quicbaas-sdk-gomod-backup ]; then cp /tmp/quicbaas-sdk-gomod-backup sdk/go/go.mod; fi; \
-	rm -f /tmp/quicbaas-gomod-backup /tmp/quicbaas-sdk-gomod-backup; \
+	if [ -f "$(GOMOD_BACKUP)" ]; then cp "$(GOMOD_BACKUP)" go.mod; fi; \
+	if [ -f "$(SDK_GOMOD_BACKUP)" ]; then cp "$(SDK_GOMOD_BACKUP)" sdk/go/go.mod; fi; \
+	rm -f "$(GOMOD_BACKUP)" "$(SDK_GOMOD_BACKUP)"; \
 	if [ -d test/integration/certs ] && [ ! -w test/integration/certs ]; then \
 		sudo rm -rf test/integration/certs; \
 	else \
@@ -2525,7 +2703,7 @@ test-e2e: build-ui build-daemon ## Run Playwright E2E tests — no ACP backend r
 	@nohup ./bin/quicbaasd start --http-port 18080 --grpc-port 0 \
 		--unix-socket /tmp/quicbaas-chrometest.sock \
 		--data-dir /tmp/quicbaas-chrometest-data --log-level warn \
-		--embedded-agent --embedded-agent-backend ollama \
+		--embedded-fleet-node --embedded-fleet-node-backend ollama \
 		>/tmp/quicbaasd-e2e.log 2>&1 & \
 	echo $$! > /tmp/quicbaasd-e2e.pid
 	@echo "$(YELLOW)Waiting for daemon readiness (up to 75s cold boot)...$(NC)"
@@ -2563,7 +2741,7 @@ test-e2e-acp: build-ui build-daemon ## Run Playwright session lifecycle tests �
 	@nohup ./bin/quicbaasd start --http-port 18080 --grpc-port 0 \
 		--unix-socket /tmp/quicbaas-chrometest.sock \
 		--data-dir /tmp/quicbaas-chrometest-data --log-level info \
-		--embedded-agent --embedded-agent-backend claude \
+		--embedded-fleet-node --embedded-fleet-node-backend claude \
 		>/tmp/quicbaasd-e2e-acp.log 2>&1 & \
 	echo $$! > /tmp/quicbaasd-e2e-acp.pid
 	@echo "$(YELLOW)Waiting for daemon readiness (up to 75s cold boot)...$(NC)"
@@ -2621,12 +2799,15 @@ test-e2e-live: ## Run Playwright E2E against an ALREADY-RUNNING node as an exist
 .PHONY: test-e2e-docker
 test-e2e-docker: ## Run the Playwright e2e suite fully in Docker (host needs only Docker)
 	@echo "$(BLUE)Running dockerized Playwright e2e (chromium-no-backend)...$(NC)"
+	@$(MAKE) --no-print-directory stage-gomodauth
 	@COMPOSE_FILE="test/e2e/docker-compose.e2e.yml"; \
+	trap '$(GOMODAUTH_CLEAR)' EXIT; \
 	set -o pipefail; \
 	if ! docker compose -f $$COMPOSE_FILE build e2e 2>&1 | while IFS= read -r line; do echo "  $$line"; done; then \
 		echo "$(RED)Image build FAILED — refusing to run e2e against a stale cached image.$(NC)"; \
 		exit 1; \
 	fi; \
+	$(GOMODAUTH_CLEAR); \
 	docker compose -f $$COMPOSE_FILE run --rm e2e; \
 	RESULT=$$?; \
 	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans >/dev/null 2>&1 || true; \
@@ -2635,7 +2816,7 @@ test-e2e-docker: ## Run the Playwright e2e suite fully in Docker (host needs onl
 .PHONY: test-e2e-acp-docker
 test-e2e-acp-docker: ## Run the Playwright ACP live suite in Docker (opencode + ollama on a GPU host). Requires GPU_HOST=<host>.
 	@if [ -z "$(strip $(GPU_HOST))" ]; then \
-		echo "$(RED)Error: GPU_HOST is required (e.g. GPU_HOST=198.51.100.91). The ACP suite runs opencode against a remote ollama.$(NC)"; \
+		echo "$(RED)Error: GPU_HOST is required (e.g. GPU_HOST=198.51.100.10). The ACP suite runs opencode against a remote ollama.$(NC)"; \
 		exit 1; \
 	fi; \
 	GPU_HOST="$(strip $(GPU_HOST))"; \
@@ -2653,8 +2834,11 @@ test-e2e-acp-docker: ## Run the Playwright ACP live suite in Docker (opencode + 
 			2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
 	fi; \
 	COMPOSE_FILE="test/e2e/docker-compose.e2e.yml"; \
+	$(MAKE) --no-print-directory stage-gomodauth || exit 1; \
+	trap '$(GOMODAUTH_CLEAR)' EXIT; \
 	E2E_PROJECT=chromium-acp E2E_BACKEND=opencode E2E_OLLAMA_URL="http://$$GPU_HOST" \
 	docker compose -f $$COMPOSE_FILE -f test/e2e/docker-compose.e2e-acp.yml build e2e 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
+	$(GOMODAUTH_CLEAR); \
 	E2E_PROJECT=chromium-acp E2E_BACKEND=opencode E2E_OLLAMA_URL="http://$$GPU_HOST" \
 	docker compose -f $$COMPOSE_FILE -f test/e2e/docker-compose.e2e-acp.yml run --rm e2e; \
 	RESULT=$$?; \
@@ -2694,7 +2878,11 @@ benchmark-fips: ## Run benchmarks in FIPS mode
 
 ##@ Code Quality
 
-INTEGRATION_VET_TAGS := integration $(strip $(INTEGRATION_BUILD_TAGS)) $(TEST_EXTRA_TAGS)
+# fleet_runtime gates only test/integration/fleet_runtime, which runs from its
+# own compose stack (integration-test-fleet-runtime) and so is in no other tag
+# set; without it here nothing typechecked the suite and it rotted unseen
+# (go-quicbaas#733).
+INTEGRATION_VET_TAGS := integration fleet_runtime $(strip $(INTEGRATION_BUILD_TAGS)) $(TEST_EXTRA_TAGS)
 
 # The scan that finds every package carrying an integration-tagged file. It is
 # a text scan of the tracked files (milliseconds, no build, no network), the
@@ -2711,23 +2899,44 @@ INTEGRATION_VET_TAGS := integration $(strip $(INTEGRATION_BUILD_TAGS)) $(TEST_EX
 # bare `go vet ./...`.
 INTEGRATION_VET_SCAN = git grep -lE '^//go:build integration([ &]|$$)' -- '*.go'
 
-# Packages whose integration-tagged files do not compile today. They are
-# excluded so this gate reports the rot a change introduces instead of a wall
-# of rot that predates it; tracked by go-quicbaas#690, and a name leaves this
-# list with its fix, at which point this gate holds it.
-INTEGRATION_VET_ROT := pkg/backup pkg/sdlc pkg/server pkg/storage/file
+# The hardware tags gate code that needs a device to RUN but nothing to
+# compile: pkcs11 (the HSM backend, seal strategy and local PIV session), tpm2
+# (the swtpm seal suite) and gpu (the GPU control-loop suite). No other tag set
+# names them, so no gate compiled that code and it rotted unseen through a
+# go-xkms SecretValue migration and a control-loop API change. They are vetted
+# together over the packages that carry a file enabled by one of them --
+# derived by the same text scan as above, so a new hardware-gated package is
+# covered without editing this list -- in the configuration each package ships
+# in: the unit tag set outside ./test, the integration tag set inside it. The
+# scan matches a POSITIVE use of a tag only; a `!gpu` stub is the default
+# configuration and is already vetted by every other pass.
+HARDWARE_VET_TAGS := pkcs11 gpu tpm2
+HARDWARE_VET_SCAN = git grep -lE '^//go:build(.*[ (&|])?(pkcs11|gpu|tpm2)([ )&|]|$$)' -- '*.go'
+
+# Every integration-tagged package is vetted; there is no exclusion list. The
+# last excluded packages (pkg/backup, pkg/server, pkg/storage/file; pkg/sdlc
+# before them, go-quicbaas#982) left it with their fixes (go-quicbaas#690), so a
+# change that breaks one of them now fails this gate instead of rotting unseen.
 
 .PHONY: vet-integration
-vet-integration: ## Typecheck every integration-tagged package (the tag no unit gate compiles)
+vet-integration: ## Typecheck every integration- and hardware-tagged package (the tags no unit gate compiles)
 	@echo "$(BLUE)Running go vet (integration tree)...$(NC)"
 	$(GOCMD) vet -tags '$(INTEGRATION_VET_TAGS)' ./test/...
 	@echo "$(BLUE)Running go vet (integration-tagged packages outside ./test)...$(NC)"
 	@pkgs=$$($(INTEGRATION_VET_SCAN) | xargs -n1 dirname | sort -u | grep -v '^test/' | grep -v '^sdk/'); \
-	for rot in $(INTEGRATION_VET_ROT); do pkgs=$$(printf '%s\n' "$$pkgs" | grep -vx "$$rot"); done; \
 	test -n "$$pkgs" || { echo "$(RED)vet-integration: the build-tag scan matched no package -- it has rotted$(NC)"; exit 1; }; \
 	scope=$$(printf '%s\n' "$$pkgs" | sed 's|^|./|; s|$$|/...|' | tr '\n' ' '); \
 	echo "  $$scope"; \
 	$(GOCMD) vet -tags '$(INTEGRATION_VET_TAGS)' $$scope
+	@echo "$(BLUE)Running go vet (hardware tags: $(HARDWARE_VET_TAGS))...$(NC)"
+	@pkgs=$$($(HARDWARE_VET_SCAN) | xargs -n1 dirname | sort -u); \
+	unit=$$(printf '%s\n' "$$pkgs" | grep -v '^test/' | sed 's|^|./|' | tr '\n' ' '); \
+	integ=$$(printf '%s\n' "$$pkgs" | grep '^test/' | sed 's|^|./|' | tr '\n' ' '); \
+	test -n "$$unit" -a -n "$$integ" || { echo "$(RED)vet-integration: the hardware-tag scan lost a tier (unit: '$$unit', integration: '$$integ') -- it has rotted$(NC)"; exit 1; }; \
+	echo "  unit: $$unit"; \
+	$(GOCMD) vet -tags '$(TEST_TAGS) $(HARDWARE_VET_TAGS)' $$unit || exit 1; \
+	echo "  integration: $$integ"; \
+	$(GOCMD) vet -tags '$(INTEGRATION_VET_TAGS) $(HARDWARE_VET_TAGS)' $$integ
 	@echo "$(BLUE)Running go vet (Go SDK integration tree)...$(NC)"
 	@# sdk/go is its own module, so its integration tree needs its own pass:
 	@# the main module's `./...` cannot name it, and `make test-sdk-go` runs
@@ -2987,6 +3196,66 @@ trivy-image: docker-build docker-build-fips ## Build the shipped images and scan
 		echo "$(YELLOW)Install with: make install-trivy$(NC)"; \
 	fi
 
+# THE MERGE-RESULT TEST IMAGE'S SCAN. devops.md section 8 gates `trivy image`
+# on EVERY image this repository builds -- "CI, release, builder", not only the
+# ones that ship -- so the image `integration-test-merge-result` builds is
+# scanned before anything is run from it.
+#
+# It is not in TRIVY_IMAGES and cannot be. That list names two images that
+# persist under a fixed tag, and `trivy-image` builds them itself; this one
+# carries no tag at all, exists only for the length of the target that builds
+# it, and is removed by that target's EXIT trap. So the image arrives here as
+# the id that build wrote, which is also what makes the scan and the run
+# provably the same image. Trivy resolves a bare image id through its own
+# <image_id> fallback, so the scan needs no name either.
+#
+# --ignore-unfixed on the OS layer is the 2026-08-14 ratification in section 8:
+# an alpine base carries advisories with no fix to take, and a gate that is
+# permanently red trains people to ignore it. A CRITICAL or HIGH that HAS a fix
+# still fails this target, and with it `integration-test-merge-result` and the
+# CI job that runs it.
+#
+# Trivy runs from its own image over the daemon socket when no CLI is
+# installed, for the reason ci.yml's docker job records: trivy-action installs
+# itself through a nested checkout that a self-hosted runner resolves against
+# its own server. That socket bind is NOT the act_runner mount trap
+# `integration-test-merge-result` describes -- /var/run/docker.sock is the same
+# path on the host and inside the job container, which is why the docker job's
+# own Trivy gate already works this way.
+#
+# IT FAILS WHEN NO SCANNER CAN BE REACHED. `trivy-image` above warns and
+# returns 0, which is survivable for a target a human runs on purpose; this one
+# is a mandatory gate in a CI job's path, and a gate that skips itself when its
+# tool is missing reports green over an image nothing read.
+MERGE_RESULT_IMAGE_ID ?=
+
+.PHONY: trivy-image-merge-result
+trivy-image-merge-result: ## Scan the merge-result test image (MERGE_RESULT_IMAGE_ID=<image id>, set by integration-test-merge-result)
+	@if [ -z "$(MERGE_RESULT_IMAGE_ID)" ]; then \
+		echo "$(RED)MERGE_RESULT_IMAGE_ID is required$(NC)"; \
+		echo "$(YELLOW)Run 'make integration-test-merge-result', which builds the image and passes its id here$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)Scanning the merge-result test image with Trivy...$(NC)"
+	@if command -v trivy >/dev/null 2>&1; then \
+		trivy image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 \
+			--no-progress --format table "$(MERGE_RESULT_IMAGE_ID)"; \
+	elif command -v $(DOCKER) >/dev/null 2>&1; then \
+		$(DOCKER) run --rm \
+			-v /var/run/docker.sock:/var/run/docker.sock \
+			aquasec/trivy:latest image \
+				--severity CRITICAL,HIGH \
+				--ignore-unfixed \
+				--exit-code 1 \
+				--no-progress \
+				--format table \
+				"$(MERGE_RESULT_IMAGE_ID)"; \
+	else \
+		echo "$(RED)No scanner available: install Trivy with 'make install-trivy', or install Docker$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)✓ Merge-result test image scan clean (no fixable CRITICAL/HIGH)$(NC)"
+
 .PHONY: modverify
 modverify: ## Verify module integrity against go.sum
 	@echo "$(BLUE)Verifying module integrity...$(NC)"
@@ -3070,8 +3339,8 @@ endif
 # The image a project binding's `worker.image` names: where an sdlc job's one
 # worker session runs, and where the runner's checkout, verification and
 # publish commands are exec'd. See deployments/agents/software-factory-worker/
-# Dockerfile for what is in it and why, and docs/sdlc/configuration.md for how
-# a binding names it.
+# Dockerfile for what is in it and why, and docs/software-factory/
+# worker-image.md for how it is kept current.
 #
 # IT IS BUILT FOR THE UID THAT WILL RUN IT. The ACP spawn runs a sandboxed
 # session as the daemon's own uid:gid, and musl resolves users from
@@ -3080,24 +3349,39 @@ endif
 # ids; an operator building for a daemon that runs as someone else overrides
 # WORKER_IMAGE_UID / WORKER_IMAGE_GID.
 #
-# IT IS BUILT WITH THIS REPOSITORY'S TOOL PINS. The binding's verification
-# commands are the project's own `make lint`, `make check` and `make security`,
-# which need golangci-lint, gosec and govulncheck -- and, where `make lint`
-# lints workflows, actionlint and shellcheck (#1039); the build passes
-# GOLANGCI_VERSION / GOSEC_VERSION / GOVULNCHECK_VERSION / ACTIONLINT_VERSION /
-# SHELLCHECK_VERSION so the worker reaches the same verdict as CI rather than a
-# differently-versioned one (#772).
+# IT IS BUILT WITH THIS REPOSITORY'S TOOL PINS (pkg/version/toolchain.mk), so
+# the worker reaches the same lint and scan verdicts as CI (#772) -- including
+# actionlint and shellcheck, where a project's `make lint` lints workflows
+# (#1039).
+#
+# THE AGENT CLIS ARE PINNED TOO, and these two pins are the ones that MOVE. A
+# manual build installs exactly CLAUDE_CODE_VERSION and CODEX_VERSION; the
+# daemon's worker image refresh (pkg/sdlc/workerimage) rebuilds the same
+# Dockerfile with whatever newer versions the npm registry publishes, gates
+# the result and rebinds projects to it. Override them on the command line to
+# build a newer image by hand:
+#
+#   make build-worker-image CLAUDE_CODE_VERSION=2.1.281 CODEX_VERSION=0.157.0
+#
+# THE TAG NAMES THE CONTENTS: <version>-cc<claude-code>-cx<codex>, the same
+# content tag the refresh uses (softwarefactoryworker.Build.Tag), so a manual
+# build and a refresh of the same inputs are the same image name, and a newer
+# CLI never overwrites the tag a binding may be rolled back to. The plain
+# :$(DOCKER_TAG) tag is kept alongside as "the last image built by hand".
 WORKER_IMAGE_DIR := deployments/agents/software-factory-worker
+WORKER_IMAGE_REPO := $(DOCKER_IMAGE)-software-factory-worker
 WORKER_IMAGE_UID ?= $(shell id -u)
 WORKER_IMAGE_GID ?= $(shell id -g)
-# The --pids-limit the fork probe in test-worker-image runs under: small, so the
-# probe reaches it without starting thousands of processes. Production's bound
-# is orchestration.DefaultSandboxPidsLimit, rendered by scripts/sandboxargs.
-WORKER_PIDS_PROBE_LIMIT ?= 64
+CLAUDE_CODE_VERSION ?= 2.1.280
+CODEX_VERSION ?= 0.156.0
+WORKER_IMAGE_TAG := $(DOCKER_TAG)-cc$(CLAUDE_CODE_VERSION)-cx$(CODEX_VERSION)
+# WORKER_IMAGE_REGISTRY is where `make push-worker-image` publishes, as
+# host[:port]/owner/name. It has no default: the registry is the operator's.
+WORKER_IMAGE_REGISTRY ?=
 
 .PHONY: build-worker-image
-build-worker-image: ## Build the Software Factory worker image (quicbaas-software-factory-worker:$(VERSION))
-	@echo "$(BLUE)Building the Software Factory worker image ($(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG))...$(NC)"
+build-worker-image: ## Build the Software Factory worker image (quicbaas-software-factory-worker:<version>-cc<claude>-cx<codex>)
+	@echo "$(BLUE)Building the Software Factory worker image ($(WORKER_IMAGE_REPO):$(WORKER_IMAGE_TAG))...$(NC)"
 	$(DOCKER) build \
 		--build-arg GO_VERSION=$(GO_VERSION) \
 		--build-arg GOLANGCI_VERSION=$(GOLANGCI_VERSION) \
@@ -3108,215 +3392,93 @@ build-worker-image: ## Build the Software Factory worker image (quicbaas-softwar
 		--build-arg SHELLCHECK_SHA256_X86_64=$(SHELLCHECK_SHA256_X86_64) \
 		--build-arg SHELLCHECK_SHA256_AARCH64=$(SHELLCHECK_SHA256_AARCH64) \
 		--build-arg GOPLS_VERSION=$(GOPLS_VERSION) \
+		--build-arg GO_TOOL_DEPENDENCY_FLOORS="$(GO_TOOL_DEPENDENCY_FLOORS)" \
 		--build-arg SERENA_VERSION=$(SERENA_VERSION) \
+		--build-arg OPENCODE_VERSION=$(OPENCODE_VERSION) \
+		--build-arg OPENCODE_SHA256_X86_64=$(OPENCODE_SHA256_X86_64) \
+		--build-arg OPENCODE_SHA256_AARCH64=$(OPENCODE_SHA256_AARCH64) \
+		--build-arg CLAUDE_CODE_VERSION=$(CLAUDE_CODE_VERSION) \
+		--build-arg CODEX_VERSION=$(CODEX_VERSION) \
+		--build-arg QUICBAAS_VERSION=$(VERSION) \
 		--build-arg AGENT_UID=$(WORKER_IMAGE_UID) \
 		--build-arg AGENT_GID=$(WORKER_IMAGE_GID) \
 		-f $(WORKER_IMAGE_DIR)/Dockerfile \
-		-t $(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
+		-t $(WORKER_IMAGE_REPO):$(WORKER_IMAGE_TAG) \
+		-t $(WORKER_IMAGE_REPO):$(DOCKER_TAG) \
 		$(WORKER_IMAGE_DIR)
-	@echo "$(GREEN)✓ $(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG)$(NC)"
+	@echo "$(GREEN)✓ $(WORKER_IMAGE_REPO):$(WORKER_IMAGE_TAG)$(NC)"
 
+# THE PROBES ARE GO, AND THEY ARE THE REFRESH GATE'S PROBES. Each one — the
+# toolchain on the login PATH and a signed commit, serena's MCP handshake and a
+# Go symbol lookup with no network, a real lint, full control of the container,
+# and a bind-mounted write owned by the spawning uid — is defined once, with
+# the reason it exists, in deployments/agents/software-factory-worker/
+# probes.go. This target and the daemon's worker image refresh both run that
+# one list, so an image certified here and an image the factory promotes by
+# itself pass the same bar.
 .PHONY: test-worker-image
-test-worker-image: build-worker-image ## Build the worker image and check it carries every tool the sdlc runner needs
-	@# EVERY PROBE BELOW RUNS `sh -lec`, AND THE -l IS LOad-BEARING.
-	@#
-	@# The agent execs tools in this image as `sh -lc <command>`. A LOGIN shell
-	@# sources /etc/profile, whose first line on this base image unconditionally
-	@# overwrites PATH -- discarding the Dockerfile's ENV PATH and with it the
-	@# Go toolchain. These probes used `sh -euc`, which is NOT a login shell, so
-	@# they asserted a PATH that production never saw: the gate reported the
-	@# toolchain present while `go` was unreachable to every real invocation.
-	@# Five delivery jobs stalled on that before it was found. Probe the shell
-	@# the spawn uses, or the gate certifies an image that does not work.
-	@echo "$(BLUE)Checking the worker image as the uid the spawn runs it with...$(NC)"
-	@$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp \
-		$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
-		sh -lec 'git --version; ssh -V; go version; make --version | head -1; rsync --version | head -1; \
-			grep --version | head -1; cryptsetup --version; pkg-config --exists webkit2gtk-4.1 || { echo "webkit2gtk-4.1 dev headers missing: make build cannot link the client"; exit 1; }; \
-			case "$$(npm config get omit)" in dev*) echo "npm omits devDependencies: NODE_ENV must not be production"; exit 1;; esac; \
-			claude --version; codex --version; \
-			ssh-keygen -t ed25519 -N "" -f /tmp/signing-key -q; \
-			git init -q /tmp/probe; cd /tmp/probe; \
-			git -c user.name=worker -c user.email=worker@invalid \
-				-c gpg.format=ssh -c user.signingkey=/tmp/signing-key -c commit.gpgsign=true \
-				commit -q --allow-empty -m "the image can sign"; \
-			git config gpg.ssh.allowedSignersFile /tmp/allowed; \
-			printf "worker@invalid %s" "$$(cat /tmp/signing-key.pub)" > /tmp/allowed; \
-			git verify-commit HEAD'
-	@echo "$(GREEN)✓ the image carries git, ssh, ssh signing, make, cryptsetup, the Go toolchain and both agents$(NC)"
-	@# SERENA IS A TOOL THE RUNNER DEPENDS ON, so the image gate proves it runs
-	@# rather than merely that a package was installed. The charters tell every
-	@# role to search with serena; an image that carries the binary but cannot
-	@# start the server leaves an agent calling a tool that is not there, which
-	@# looks to the agent like the codebase being unreadable.
-	@#
-	@# THE PROBE IS AN MCP HANDSHAKE, not `--version`. psutil is compiled from
-	@# source here (no musl wheel), so the failure mode worth catching is a
-	@# native extension that builds and then will not import -- which a version
-	@# string does not exercise and an initialize request does.
-	@#
-	@# THE PROJECT ROOT IS A DIRECTORY HOLDING REPOSITORIES, not a repository,
-	@# because that is what a real spawn gives it: the project and its context
-	@# repos are cloned side by side under the checkout root. `--project` is
-	@# proved to accept such a root here; which root it is handed in production
-	@# comes from one Go constant (TestSerenaMCPConfig_*).
-	@#
-	@# --network none because a spawned agent's egress is the operator's to
-	@# decide: serena must come up without reaching the internet.
-	@echo "$(BLUE)Checking the worker image can start serena and register it...$(NC)"
-	@$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp --network none \
-		$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
-		sh -lec 'serena --version; gopls version | head -1; \
-			gopls version | grep -q "$(GOPLS_VERSION)" \
-				|| { echo "gopls is not the pinned $(GOPLS_VERSION); serena cannot read Go at the version CI lints"; exit 1; }; \
-			mkdir -p /tmp/wsroot/a-repo /tmp/wsroot/a-context-repo; \
-			printf "%s\\n" "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"probe\",\"version\":\"0\"}}}" \
-				| timeout 120 serena start-mcp-server --transport stdio --context claude-code --project /tmp/wsroot 2>/dev/null \
-				| head -c 2000 | grep -q "\"name\":\"Serena\"" \
-				|| { echo "serena did not answer an MCP initialize request"; exit 1; }'
-	@echo "$(GREEN)✓ the worker image starts serena (MCP initialize answered) with gopls $(GOPLS_VERSION)$(NC)"
-	@# AND IT MUST RESOLVE A GO SYMBOL, not merely answer a handshake.
-	@#
-	@# The handshake above passed for weeks while serena could not read Go at
-	@# all. It starts the MCP server against a project root holding no code, so
-	@# no language server is ever resolved -- and resolving one is where the
-	@# failure was: solidlsp cannot detect musl, computed the platform id
-	@# "linux--x64", and raised before gopls was reached. Every review lost
-	@# symbol and reference lookup and returned a verdict that decided nothing.
-	@#
-	@# A GO MODULE IS THEREFORE BUILT AND A SYMBOL LOOKED UP. --network none
-	@# because a spawned agent's egress is the operator's to decide, and
-	@# because the point is that this image already carries everything the
-	@# lookup needs.
-	@echo "$(BLUE)Checking the worker image can resolve a Go symbol with serena...$(NC)"
-	@$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp --network none \
-		$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
-		sh -lec 'mkdir -p /tmp/goprobe; cd /tmp/goprobe; \
-			printf "module example.com/probe\n\ngo 1.26\n" > go.mod; \
-			printf "package probe\n\nfunc ProbeSymbol() string { return \"found\" }\n" > probe.go; \
-			python3 -c "import sys; sys.path.insert(0, \"/opt/uv/tools/serena-agent/lib/python3.12/site-packages\"); \
-from solidlsp.ls_config import LanguageServerConfig, LanguageServerId; \
-from solidlsp import SolidLanguageServer; \
-from solidlsp.settings import SolidLSPSettings; \
-ls = SolidLanguageServer.create(LanguageServerConfig(ls_id=LanguageServerId.GO), \"/tmp/goprobe\", solidlsp_settings=SolidLSPSettings()); \
-print(\"go language server:\", type(ls).__name__)"' \
-		|| { echo "serena cannot resolve Go in this image; the reviewer would lose symbol lookup"; exit 1; }
-	@echo "$(GREEN)✓ serena resolves Go in the worker image$(NC)"
-	@# The verification half (#772). A worker that cannot run `make lint` fails
-	@# every review round on a clean tree, so the tools are checked the way a
-	@# project's Makefile finds them -- at $$(go env GOPATH)/bin, not merely on
-	@# the PATH -- and at the version this repository pins, because a worker
-	@# that lints with a different version than CI produces a verdict the merge
-	@# then contradicts. --network none proves the lint needs no network: a
-	@# sandboxed worker's network policy is the operator's to decide.
-	@echo "$(BLUE)Checking the worker image can lint and scan a Go module...$(NC)"
-	@$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp --network none \
-		$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
-		sh -lec 'golangci-lint --version; gosec -version; govulncheck -version; \
-			test -x "$$(go env GOPATH)/bin/golangci-lint" \
-				|| { echo "golangci-lint is not where a project Makefile looks for it"; exit 1; }; \
-			golangci-lint --version | grep -q "version $(GOLANGCI_VERSION:v%=%) " \
-				|| { echo "golangci-lint is not the pinned $(GOLANGCI_VERSION)"; exit 1; }; \
-			mkdir -p /tmp/lintprobe; cd /tmp/lintprobe; \
-			printf "%s\n" "module lintprobe" "" "go 1.26" > go.mod; \
-			printf "%s\n" "version: \"2\"" "linters:" "  enable:" "    - misspell" "    - gocritic" > .golangci.yml; \
-			printf "%s\n" "// Package lintprobe proves this image can lint a Go module." "package lintprobe" "" "// Sum returns a plus b." "func Sum(a, b int) int { return a + b }" > sum.go; \
-			golangci-lint run ./...; \
-			printf "%s\n" "package lintprobe" "" "func unusedHelper() int { return 0 }" > unused.go; \
-			if golangci-lint run ./... >/dev/null 2>&1; then \
-				echo "golangci-lint passed a package with an unused function -- it is not linting"; exit 1; \
-			fi'
-	@echo "$(GREEN)✓ the worker image lints ($(GOLANGCI_VERSION)) and carries gosec + govulncheck$(NC)"
-	@# WORKFLOW LINTING (#1039). A project whose `make lint` runs actionlint
-	@# fails closed when shellcheck is missing, because actionlint would
-	@# otherwise skip every SC* rule and still exit 0. So the probe proves the
-	@# PAIR works, not that two binaries exist: a workflow whose run step
-	@# word-splits an unquoted command substitution must be REPORTED as SC2046,
-	@# which only happens when actionlint actually reaches shellcheck. Both are
-	@# checked at the pinned versions, --network none.
-	@echo "$(BLUE)Checking the worker image can lint GitHub Actions workflows...$(NC)"
-	@$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp --network none \
-		$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
-		sh -lec 'actionlint --version; shellcheck --version; \
-			actionlint --version | head -1 | grep -qx "$(ACTIONLINT_VERSION)" \
-				|| { echo "actionlint is not the pinned $(ACTIONLINT_VERSION)"; exit 1; }; \
-			shellcheck --version | grep -qx "version: $(SHELLCHECK_VERSION:v%=%)" \
-				|| { echo "shellcheck is not the pinned $(SHELLCHECK_VERSION)"; exit 1; }; \
-			mkdir -p /tmp/wfprobe/.github/workflows; cd /tmp/wfprobe; \
-			printf "%s\n" "on: push" "jobs:" "  probe:" "    runs-on: ubuntu-latest" "    steps:" "      - run: echo ok" > .github/workflows/ok.yml; \
-			actionlint .github/workflows/ok.yml; \
-			printf "%s\n" "on: push" "jobs:" "  probe:" "    runs-on: ubuntu-latest" "    steps:" "      - run: ls \$$(pwd)" > .github/workflows/bad.yml; \
-			if out="$$(actionlint .github/workflows/bad.yml 2>&1)"; then \
-				echo "actionlint passed a workflow with an SC2046 word-split -- shellcheck is not being reached"; exit 1; \
-			fi; \
-			echo "$$out" | grep -q SC2046 \
-				|| { echo "actionlint failed without reporting SC2046: $$out"; exit 1; }'
-	@echo "$(GREEN)✓ the worker image lints workflows (actionlint $(ACTIONLINT_VERSION) + shellcheck $(SHELLCHECK_VERSION))$(NC)"
-	@# THE CONTAINER IS THE BOUNDARY, so the worker has full control inside it
-	@# (#927). A worker that cannot install a package cannot finish a task whose
-	@# toolchain the image does not carry, and it does not fail usefully -- it
-	@# narrates a plan and spends an attempt. Proved as the uid the spawn runs
-	@# as, because sudo resolves the invoking user through getpwuid and refuses
-	@# outright for a uid with no /etc/passwd entry.
-	@#
-	@# AND IT IS PROVED UNDER THE BOUNDARY PRODUCTION DRAWS AROUND IT (#1040):
-	@# --cap-drop ALL, the add-back set, and the pids limit. The flags are not
-	@# written here; scripts/sandboxargs renders them with the same two calls the
-	@# spawn makes, so this gate cannot certify a capability set no worker runs
-	@# with. A missing add-back fails here as the command it breaks -- sudo's
-	@# setresuid, apk's chown -- rather than as a stalled delivery.
-	@echo "$(BLUE)Checking the worker has full control of its container, under the production boundary...$(NC)"
-	@sandbox_args="$$($(GOCMD) run ./scripts/sandboxargs)" && test -n "$$sandbox_args" \
-		|| { echo "scripts/sandboxargs did not render the production sandbox flags"; exit 1; }; \
-	echo "  $$sandbox_args"; \
-	$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp $$sandbox_args \
-		$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
-		sh -lec 'sudo -n true; \
-			test "$$(sudo -n id -u)" = "0" \
-				|| { echo "sudo did not reach root"; exit 1; }; \
-			sudo -n apk add --no-cache jq; jq --version; \
-			sudo -n sh -c "echo arbitrary > /etc/quicbaas-full-control-probe"; \
-			test -f /etc/quicbaas-full-control-probe; \
-			eff="$$(sudo -n awk "/^CapEff:/ {print \$$2}" /proc/self/status)"; \
-			echo "root CapEff: $$eff"; \
-			test "$$(( 0x$$eff & (1 << 13) ))" -eq 0 || { echo "root in the worker holds CAP_NET_RAW"; exit 1; }; \
-			test "$$(( 0x$$eff & (1 << 27) ))" -eq 0 || { echo "root in the worker holds CAP_MKNOD"; exit 1; }; \
-			test "$$(( 0x$$eff ))" -eq "$$(( 0xcb ))" \
-				|| { echo "root CapEff $$eff is not exactly CHOWN,DAC_OVERRIDE,FOWNER,SETGID,SETUID (0xcb)"; exit 1; }; \
-			if sudo -n mknod /tmp/quicbaas-mknod-probe c 1 3 2>/dev/null; then \
-				echo "root in the worker created a device node"; exit 1; \
-			fi'
-	@echo "$(GREEN)✓ the worker can escalate, install a package and run an arbitrary command, and root holds only CHOWN,DAC_OVERRIDE,FOWNER,SETGID,SETUID$(NC)"
-	@# THE PIDS BOUND HOLDS, AND FAILS CLEANLY. A fork past the limit must be
-	@# refused inside the container (EAGAIN), not take the host's pid space --
-	@# and the container must run a command again once those processes are
-	@# gone. The bound is lowered to WORKER_PIDS_PROBE_LIMIT for this probe
-	@# alone so it need not start thousands of processes; the capability flags
-	@# are still the production ones. The probe is a script piped on stdin,
-	@# not a shell loop: see pids-limit-probe.py for why.
-	@echo "$(BLUE)Checking a fork past the pids limit fails cleanly...$(NC)"
-	@sandbox_args="$$($(GOCMD) run ./scripts/sandboxargs -pids-limit $(WORKER_PIDS_PROBE_LIMIT))" && test -n "$$sandbox_args" \
-		|| { echo "scripts/sandboxargs did not render the sandbox flags"; exit 1; }; \
-	$(DOCKER) run --rm -i --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp $$sandbox_args \
-		$(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
-		sh -lec 'python3 - $(WORKER_PIDS_PROBE_LIMIT)' < deployments/agents/software-factory-worker/pids-limit-probe.py
-	@echo "$(GREEN)✓ a fork past the pids limit is refused inside the container and the container recovers$(NC)"
-	@# And the cost of that privilege is NOT paid on the host. The spawn runs as
-	@# the daemon's uid rather than root precisely so a write through a bind
-	@# mount lands owned by the daemon; a root-owned tree left in the workspace
-	@# root is one the daemon can neither clean up nor re-clone into. The
-	@# ephemeral storage tier narrows this by moving the checkout to a tmpfs, but
-	@# the tier is per project, so the property is asserted for the bind mount.
-	@echo "$(BLUE)Checking a bind-mounted write stays owned by the spawning uid...$(NC)"
-	@probe="$$(mktemp -d)"; \
-	$(DOCKER) run --rm --user "$(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)" -e HOME=/tmp \
-		-v "$$probe:/workspace" $(DOCKER_IMAGE)-software-factory-worker:$(DOCKER_TAG) \
-		sh -lec 'echo work > /workspace/written-by-the-agent; sudo -n true' >/dev/null; \
-	owner="$$(stat -c %u "$$probe/written-by-the-agent")"; \
-	rm -rf "$$probe"; \
-	test "$$owner" = "$(WORKER_IMAGE_UID)" \
-		|| { echo "a bind-mounted write landed owned by uid $$owner, not $(WORKER_IMAGE_UID)"; exit 1; }
-	@echo "$(GREEN)✓ nothing the worker writes to a bind mount becomes root-owned on the host$(NC)"
+test-worker-image: build-worker-image ## Build the worker image and run its probes (the refresh gate's probes)
+	@echo "$(BLUE)Probing $(WORKER_IMAGE_REPO):$(WORKER_IMAGE_TAG) as uid $(WORKER_IMAGE_UID):$(WORKER_IMAGE_GID)...$(NC)"
+	$(GOCMD) run ./$(WORKER_IMAGE_DIR)/probe \
+		-image $(WORKER_IMAGE_REPO):$(WORKER_IMAGE_TAG) \
+		-base $(VERSION) \
+		-claude-code $(CLAUDE_CODE_VERSION) \
+		-codex $(CODEX_VERSION) \
+		-uid $(WORKER_IMAGE_UID) \
+		-gid $(WORKER_IMAGE_GID)
+	@echo "$(GREEN)✓ $(WORKER_IMAGE_REPO):$(WORKER_IMAGE_TAG) passed every probe$(NC)"
+
+# Publish a worker image built by hand to the fleet's registry, so every node
+# can pull it rather than having it copied to it. Log in first with the
+# engine's own client, or point DOCKER at a private configuration:
+#
+#   make push-worker-image WORKER_IMAGE_REGISTRY=<host>[:port]/<owner>/<name> \
+#       DOCKER="docker --config $$cfg"
+#
+# For a plain-HTTP registry the engine's insecure-registries entry is what
+# permits it, and nothing here weakens TLS. WORKER_IMAGE_REGISTRY has no
+# default: the registry is the deployment's to name, never this repository's.
+#
+# THE SCAN GATES THE PUSH. devops.md section 8 requires `trivy image` on every
+# image this repository builds, blocking, before it is published; a fixable
+# CRITICAL or HIGH fails the target and nothing is tagged or pushed. The
+# --ignore-unfixed policy is the section 8 ratification trivy-image-merge-result
+# records. TRIVY is resolved from PATH; override it to name another binary.
+#
+# THE DIGEST COMES FROM THE PUSH ITSELF ("<tag>: digest: sha256:... size: N"),
+# not from RepoDigests, which some engines leave empty for an image built
+# locally. The last line is the one callers read, and the only one they need:
+#
+#   WORKER_IMAGE_REF=<registry>:<tag>@sha256:<digest>
+#
+# The daemon's worker image refresh publishes the images it promotes itself
+# (sdlc.worker_image.registry); this target is for the image a person built.
+TRIVY ?= trivy
+WORKER_IMAGE_LOCAL_REF = $(WORKER_IMAGE_REPO):$(WORKER_IMAGE_TAG)
+WORKER_IMAGE_REMOTE_REF = $(WORKER_IMAGE_REGISTRY):$(WORKER_IMAGE_TAG)
+
+.PHONY: push-worker-image
+push-worker-image: ## Scan, then push the worker image to WORKER_IMAGE_REGISTRY (host[:port]/owner/name); prints WORKER_IMAGE_REF=<ref>@<digest>
+	@if [ -z "$(WORKER_IMAGE_REGISTRY)" ]; then \
+		echo "$(RED)WORKER_IMAGE_REGISTRY is required, e.g. make push-worker-image WORKER_IMAGE_REGISTRY=registry.example.com/owner/software-factory-worker$(NC)" >&2; \
+		exit 1; \
+	fi
+	@if ! command -v $(firstword $(TRIVY)) >/dev/null 2>&1; then \
+		echo "$(RED)trivy not found ($(TRIVY)): the scan gates the push; install it with 'make install-trivy' or set TRIVY=<path>$(NC)" >&2; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)Scanning $(WORKER_IMAGE_LOCAL_REF) before it is published...$(NC)"
+	$(TRIVY) image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 $(WORKER_IMAGE_LOCAL_REF)
+	$(DOCKER) tag $(WORKER_IMAGE_LOCAL_REF) $(WORKER_IMAGE_REMOTE_REF)
+	@set -e; \
+	out=$$($(DOCKER) push $(WORKER_IMAGE_REMOTE_REF)); \
+	printf '%s\n' "$$out"; \
+	digest=$$(printf '%s\n' "$$out" | sed -n 's/^.*digest: \(sha256:[0-9a-f]\{64\}\).*$$/\1/p' | tail -n 1); \
+	if [ -z "$$digest" ]; then \
+		echo "$(RED)the push reported no manifest digest; nothing to pin to$(NC)" >&2; \
+		exit 1; \
+	fi; \
+	echo "WORKER_IMAGE_REF=$(WORKER_IMAGE_REMOTE_REF)@$$digest"
 
 .PHONY: docker-run
 docker-run: ## Run Docker container
@@ -3446,15 +3608,30 @@ deploy-prod: ## Deploy to production environment
 
 ##@ Tools
 
+# gosec is BUILT, not `go install`ed, and always: its newest release requires a
+# vulnerable google.golang.org/grpc, so it is built from a throwaway module that
+# raises the GO_TOOL_DEPENDENCY_FLOORS it depends on (toolchain.mk says which
+# CVEs they close) -- the same build the worker image ships and CI scans with,
+# so all three run one gosec. It is rebuilt even when a gosec is on the PATH,
+# because an installed gosec of another version or build is exactly the drift
+# the pin exists to stop. main.Version is stamped because a bare build reports
+# "Version: dev" (go-luks2#21).
 .PHONY: install-gosec
-install-gosec: ## Install gosec security scanner (pinned -- see GOSEC_VERSION)
-	@echo "$(BLUE)Installing gosec $(GOSEC_VERSION)...$(NC)"
-	@if ! command -v gosec >/dev/null 2>&1; then \
-		go install github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION); \
-		echo "$(GREEN)gosec installed$(NC)"; \
-	else \
-		echo "$(GREEN)gosec already installed$(NC)"; \
-	fi
+install-gosec: ## Build and install gosec at GOSEC_VERSION with GO_TOOL_DEPENDENCY_FLOORS
+	@echo "$(BLUE)Building gosec $(GOSEC_VERSION) with $(GO_TOOL_DEPENDENCY_FLOORS)...$(NC)"
+	@set -e; \
+	gobin="$$(go env GOBIN)"; gobin="$${gobin:-$$(go env GOPATH)/bin}"; \
+	dir="$$(mktemp -d)"; trap 'rm -rf "$$dir"' EXIT; \
+	cd "$$dir"; \
+	export GOWORK=off; \
+	go mod init build.local/gosec >/dev/null 2>&1; \
+	go get github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION); \
+	for floor in $(GO_TOOL_DEPENDENCY_FLOORS); do \
+		if go list -m "$${floor%@*}" >/dev/null 2>&1; then go get "$$floor"; fi; \
+	done; \
+	CGO_ENABLED=0 go build -ldflags "-X main.Version=$(GOSEC_VERSION)" -o "$$gobin/gosec" github.com/securego/gosec/v2/cmd/gosec; \
+	"$$gobin/gosec" -version
+	@echo "$(GREEN)gosec installed$(NC)"
 
 .PHONY: install-govulncheck
 install-govulncheck: ## Install govulncheck vulnerability scanner (pinned -- see GOVULNCHECK_VERSION)
@@ -3592,6 +3769,13 @@ clean: ## Clean build artifacts and test data
 # with `--volumes --remove-orphans` and removes those six images by name before
 # it rebuilds them, and an EXIT trap brings the stack down again on every way
 # out of that recipe.
+#
+# The merge-result snapshot test image is absent for a related reason: it has
+# no name at all. `integration-test-merge-result` builds it with --iidfile and
+# no `-t`, because integration-testing.md section 7 forbids a fixed tag shared
+# between runs and a per-run tag would be an identity this Makefile cannot
+# write literally. It is removed by that target's own EXIT trap, by the id it
+# just built, on every path out of that recipe.
 DOCKER_LOCAL_IMAGES := \
 	$(DOCKER_IMAGE):$(DOCKER_TAG) \
 	$(DOCKER_IMAGE):latest \
@@ -3711,8 +3895,11 @@ watch: ## Watch for changes and rebuild
 ci: deps fmt-check vet lint security build test test-minimal test-standard test-lean race check-coverage ## Run CI pipeline locally (matches GitHub CI)
 	@echo "$(GREEN)CI pipeline completed successfully$(NC)"
 
+# integration-test-merge-result joins this list rather than `ci` above: `ci`
+# is the Docker-free pipeline, and this suite runs in a container by
+# construction. In GitHub CI it is its own job (go-quicbaas#982).
 .PHONY: ci-full
-ci-full: deps fmt-check vet lint security build test test-minimal test-standard test-lean test-desktop race coverage integration-test ## Run full CI pipeline with integration tests
+ci-full: deps fmt-check vet lint security build test test-minimal test-standard test-lean test-desktop race coverage integration-test integration-test-merge-result ## Run full CI pipeline with integration tests
 	@echo "$(GREEN)Full CI pipeline completed successfully$(NC)"
 
 .PHONY: pre-commit
@@ -3772,7 +3959,10 @@ all: clean deps lint test build ## Run all major targets
 integration-bench: ## Run integration benchmarks
 	@echo "$(BLUE)Running integration benchmarks...$(NC)"
 	@echo "$(YELLOW)Starting integration test cluster...$(NC)"
-	@$(DOCKER_COMPOSE) -f test/integration/docker-compose.integration.yml up -d
+	@$(MAKE) --no-print-directory stage-gomodauth
+	@trap '$(GOMODAUTH_CLEAR)' EXIT; \
+	$(DOCKER_COMPOSE) -f test/integration/docker-compose.integration.yml up -d; \
+	RC=$$?; $(GOMODAUTH_CLEAR); exit $$RC
 	@echo "$(YELLOW)Waiting for services to be ready...$(NC)"
 	@sleep 10
 	@echo "$(BLUE)Running benchmarks...$(NC)"
@@ -3858,11 +4048,11 @@ test-acp: ## Run ACP/agent backend unit tests
 	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -tags 'rag $(BUILD_TAGS)' ./pkg/acp/...
 	@echo "$(GREEN)ACP unit tests passed$(NC)"
 
-.PHONY: test-agent
-test-agent: ## Run agent daemon unit tests (pkg/agent/*)
-	@echo "$(BLUE)Running agent daemon tests...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -count=1 -tags 'rag mcp $(BUILD_TAGS)' ./pkg/agent/...
-	@echo "$(GREEN)Agent daemon tests passed$(NC)"
+.PHONY: test-fleet
+test-fleet: ## Run fleet node daemon unit tests (pkg/fleet/*)
+	@echo "$(BLUE)Running fleet node daemon tests...$(NC)"
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -count=1 -tags 'rag mcp $(BUILD_TAGS)' ./pkg/fleet/...
+	@echo "$(GREEN)Fleet node daemon tests passed$(NC)"
 
 .PHONY: coverage-acp
 coverage-acp: ## Generate coverage report for ACP package
@@ -3871,20 +4061,20 @@ coverage-acp: ## Generate coverage report for ACP package
 	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-acp.out -o $(COVERAGE_DIR)/coverage-acp.html
 	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-acp.out | grep total
 
-.PHONY: bench-agent
-bench-agent: ## Run agent daemon benchmarks
-	@echo "$(BLUE)Running agent daemon benchmarks...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -bench=. -benchmem -benchtime=$(BENCHTIME) -run=^$$ -tags 'rag mcp $(BUILD_TAGS)' ./pkg/agent/...
-	@echo "$(GREEN)Agent daemon benchmarks completed$(NC)"
+.PHONY: bench-fleet
+bench-fleet: ## Run fleet node daemon benchmarks
+	@echo "$(BLUE)Running fleet node daemon benchmarks...$(NC)"
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -bench=. -benchmem -benchtime=$(BENCHTIME) -run=^$$ -tags 'rag mcp $(BUILD_TAGS)' ./pkg/fleet/...
+	@echo "$(GREEN)Fleet node daemon benchmarks completed$(NC)"
 
-.PHONY: coverage-agent
-coverage-agent: ## Generate coverage report for agent daemon package
-	@echo "$(BLUE)Generating agent daemon coverage report...$(NC)"
+.PHONY: coverage-fleet
+coverage-fleet: ## Generate coverage report for the fleet node daemon package
+	@echo "$(BLUE)Generating fleet node daemon coverage report...$(NC)"
 	@mkdir -p $(COVERAGE_DIR)
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -count=1 -tags 'rag mcp $(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-agent.out -covermode=atomic ./pkg/agent/...
-	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-agent.out -o $(COVERAGE_DIR)/coverage-agent.html
-	@echo "$(YELLOW)Coverage report: file://$(COVERAGE_DIR)/coverage-agent.html$(NC)"
-	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-agent.out | grep total
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -count=1 -tags 'rag mcp $(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-fleet.out -covermode=atomic ./pkg/fleet/...
+	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-fleet.out -o $(COVERAGE_DIR)/coverage-fleet.html
+	@echo "$(YELLOW)Coverage report: file://$(COVERAGE_DIR)/coverage-fleet.html$(NC)"
+	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-fleet.out | grep total
 
 # Special integration tests with custom build flags (not covered by dynamic pattern)
 .PHONY: integration-test-rag
@@ -3922,11 +4112,11 @@ integration-test-factors: ## Run cross-vendor hardware factor integration tests 
 	@echo "$(BLUE)Running cross-vendor factor integration tests...$(NC)"
 	@go test -v -tags integration -timeout 60s ./test/integration/factors/...
 
-.PHONY: integration-test-agent-enrollment
-integration-test-agent-enrollment: ## Run the agent enrollment E2E (register -> heartbeat with peer cert + bearer -> listed -> dispatch)
-	@echo "$(BLUE)Running agent enrollment E2E...$(NC)"
-	@go test -v -count=1 -timeout 5m -tags 'integration $(strip $(INTEGRATION_BUILD_TAGS)) rest' ./test/integration/agent_enrollment/...
-	@echo "$(GREEN)Agent enrollment E2E passed$(NC)"
+.PHONY: integration-test-fleet-enrollment
+integration-test-fleet-enrollment: ## Run the fleet enrollment E2E (register -> heartbeat with peer cert + bearer -> listed -> dispatch)
+	@echo "$(BLUE)Running fleet enrollment E2E...$(NC)"
+	@go test -v -count=1 -timeout 5m -tags 'integration $(strip $(INTEGRATION_BUILD_TAGS)) rest' ./test/integration/fleet_enrollment/...
+	@echo "$(GREEN)Fleet enrollment E2E passed$(NC)"
 
 .PHONY: integration-test-init
 integration-test-init: build-daemon ## Run canonical init/start/transport matrix (15 software-only cells + negative)
@@ -3960,10 +4150,10 @@ integration-test-agent: ## Run agent orchestration integration tests (requires D
 	@docker compose -f test/integration/agent/docker-compose.yml down --remove-orphans
 	@echo "$(GREEN)Agent integration tests passed$(NC)"
 
-.PHONY: integration-test-agent-runtime
-integration-test-agent-runtime: ## Run agent daemon integration tests in Docker (central + Ollama qwen3:1.7b)
-	@echo "$(BLUE)Running agent runtime integration tests...$(NC)"
-	@COMPOSE_FILE="test/integration/agent_runtime/docker-compose.yml"; \
+.PHONY: integration-test-fleet-runtime
+integration-test-fleet-runtime: ## Run fleet node daemon integration tests in Docker (central + Ollama qwen3:1.7b)
+	@echo "$(BLUE)Running fleet runtime integration tests...$(NC)"
+	@COMPOSE_FILE="test/integration/fleet_runtime/docker-compose.yml"; \
 	if command -v nvidia-smi > /dev/null 2>&1 && nvidia-smi > /dev/null 2>&1; then \
 		GPU_NAME=$$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1); \
 		GPU_MEM=$$(nvidia-smi --query-gpu=memory.total --format=csv,noheader | head -1); \
@@ -3971,7 +4161,7 @@ integration-test-agent-runtime: ## Run agent daemon integration tests in Docker 
 	else \
 		echo "$(YELLOW)  ⚠ No NVIDIA GPU detected - Ollama will use CPU inference$(NC)"; \
 	fi; \
-	echo "$(YELLOW)Starting agent runtime test environment...$(NC)"; \
+	echo "$(YELLOW)Starting fleet runtime test environment...$(NC)"; \
 	docker compose -f $$COMPOSE_FILE up -d --wait central ollama 2>&1 | tail -5; \
 	echo "$(YELLOW)Pulling qwen3:1.7b model (fastest for CI)...$(NC)"; \
 	docker compose -f $$COMPOSE_FILE exec -T ollama ollama pull qwen3:1.7b 2>&1 | tail -3; \
@@ -3983,16 +4173,16 @@ integration-test-agent-runtime: ## Run agent daemon integration tests in Docker 
 		-e OLLAMA_MODEL=qwen3:1.7b \
 		-e QUICBAAS_TEST_FILTER="$(QUICBAAS_TEST_FILTER)" \
 		integration-test \
-		go test -tags 'integration agent_runtime' -v -count=1 -timeout 5m \
-			$${QUICBAAS_TEST_FILTER:-./test/integration/agent_runtime/...} 2>&1 | while IFS= read -r line; do echo "$$line"; done; \
+		go test -tags 'integration fleet_runtime' -v -count=1 -timeout 5m \
+			$${QUICBAAS_TEST_FILTER:-./test/integration/fleet_runtime/...} 2>&1 | while IFS= read -r line; do echo "$$line"; done; \
 	RESULT=$${PIPESTATUS[0]}; \
-	echo "$(BLUE)Stopping agent runtime test environment...$(NC)"; \
+	echo "$(BLUE)Stopping fleet runtime test environment...$(NC)"; \
 	docker compose -f $$COMPOSE_FILE down --volumes --remove-orphans; \
 	if [ "$$RESULT" -ne 0 ]; then \
-		echo "$(RED)Agent runtime integration tests FAILED$(NC)"; \
+		echo "$(RED)Fleet runtime integration tests FAILED$(NC)"; \
 		exit 1; \
 	fi; \
-	echo "$(GREEN)Agent runtime integration tests passed$(NC)"
+	echo "$(GREEN)Fleet runtime integration tests passed$(NC)"
 
 # =============================================================================
 # Embedding Provider Tests
@@ -4037,29 +4227,54 @@ bench-embedding: ## Run embedding provider benchmarks
 # =============================================================================
 
 NPU_SIDECAR_DIR := sidecar/npu-embedding
+# PYTHON is the interpreter used to BUILD the sidecar's virtualenv, so a caller
+# can still select a version (make test-npu-sidecar PYTHON=python3.13). The
+# tests themselves always run inside that venv, never against ambient
+# interpreter state, so a clean checkout needs nothing installed by hand.
 PYTHON ?= python3
+NPU_SIDECAR_VENV := $(NPU_SIDECAR_DIR)/.venv
+NPU_SIDECAR_PY := $(CURDIR)/$(NPU_SIDECAR_VENV)/bin/python
+# One stamp per installed extra set, rebuilt whenever pyproject.toml changes.
+NPU_SIDECAR_DEV_STAMP := $(NPU_SIDECAR_VENV)/.stamp-dev
+NPU_SIDECAR_DEVICE_STAMP := $(NPU_SIDECAR_VENV)/.stamp-device
+
+$(NPU_SIDECAR_VENV)/bin/python:
+	@echo "$(BLUE)Creating NPU sidecar virtualenv with $(PYTHON)...$(NC)"
+	@$(PYTHON) -m venv $(NPU_SIDECAR_VENV)
+	@$(NPU_SIDECAR_PY) -m pip install -q --upgrade pip
+
+$(NPU_SIDECAR_DEV_STAMP): $(NPU_SIDECAR_DIR)/pyproject.toml | $(NPU_SIDECAR_VENV)/bin/python
+	@echo "$(BLUE)Installing NPU sidecar with the dev extra...$(NC)"
+	@cd $(NPU_SIDECAR_DIR) && $(NPU_SIDECAR_PY) -m pip install -q -e '.[dev]'
+	@touch $@
+
+$(NPU_SIDECAR_DEVICE_STAMP): $(NPU_SIDECAR_DIR)/pyproject.toml | $(NPU_SIDECAR_VENV)/bin/python
+	@echo "$(BLUE)Installing NPU sidecar with the device and dev extras...$(NC)"
+	@cd $(NPU_SIDECAR_DIR) && $(NPU_SIDECAR_PY) -m pip install -q -e '.[device,dev]'
+	@touch $@
 
 .PHONY: test-npu-sidecar
-test-npu-sidecar: ## Run NPU embedding sidecar tests (no device required)
+test-npu-sidecar: $(NPU_SIDECAR_DEV_STAMP) ## Run NPU embedding sidecar tests (no device required)
 	@echo "$(BLUE)Running NPU embedding sidecar tests...$(NC)"
-	@cd $(NPU_SIDECAR_DIR) && PYTHONPATH="$$PWD:$$PWD/tests" \
-		$(PYTHON) -m pytest tests/ -q -p no:warnings
+	@cd $(NPU_SIDECAR_DIR) && $(NPU_SIDECAR_PY) -m pytest tests/ -q -p no:warnings
 	@echo "$(GREEN)✓ NPU sidecar tests passed$(NC)"
 
 .PHONY: coverage-npu-sidecar
-coverage-npu-sidecar: ## Generate NPU embedding sidecar coverage report
+coverage-npu-sidecar: $(NPU_SIDECAR_DEV_STAMP) ## Generate NPU embedding sidecar coverage report
 	@echo "$(BLUE)Running NPU sidecar tests with coverage...$(NC)"
-	@cd $(NPU_SIDECAR_DIR) && PYTHONPATH="$$PWD:$$PWD/tests" \
-		$(PYTHON) -m pytest tests/ -q -p no:warnings \
+	@cd $(NPU_SIDECAR_DIR) && $(NPU_SIDECAR_PY) -m pytest tests/ -q -p no:warnings \
 		--cov=npu_embedding --cov-report=term-missing
 
 .PHONY: test-npu-sidecar-device
-test-npu-sidecar-device: ## Run NPU sidecar tests against real OpenVINO (needs the `device` extra)
+test-npu-sidecar-device: $(NPU_SIDECAR_DEVICE_STAMP) ## Run NPU sidecar tests against real OpenVINO (installs the `device` extra into the sidecar venv)
 	@echo "$(BLUE)Running NPU sidecar device tests (real OpenVINO)...$(NC)"
 	@echo "$(YELLOW)Set NPU_EMBEDDING_TEST_DEVICE=NPU on the NPU host to exercise the device.$(NC)"
-	@cd $(NPU_SIDECAR_DIR) && PYTHONPATH="$$PWD:$$PWD/tests_device" \
-		$(PYTHON) -m pytest tests_device/ -q -p no:warnings
+	@cd $(NPU_SIDECAR_DIR) && $(NPU_SIDECAR_PY) -m pytest tests_device/ -q -p no:warnings
 	@echo "$(GREEN)✓ NPU sidecar device tests passed$(NC)"
+
+.PHONY: clean-npu-sidecar
+clean-npu-sidecar: ## Remove the NPU sidecar virtualenv (rebuilt on next use)
+	@rm -rf $(NPU_SIDECAR_VENV)
 
 .PHONY: integration-test-embedding
 integration-test-embedding: ## Run embedding integration tests in Docker (Ollama via local CPU container; pass GPU_HOST=<host> for a remote GPU)
@@ -4143,7 +4358,7 @@ bench-orchestration: ## Run orchestration package benchmarks
 	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -race -tags 'rag mcp $(BUILD_TAGS)' -bench=. -benchmem -run=^$$ ./pkg/orchestration/...
 
 # =============================================================================
-# Pooled Provider Account Tests (the `quicbaas agent account` surface)
+# Pooled Provider Account Tests (the `quicbaas account` surface)
 #
 # The account surface spans six transports plus the SDK and CLI, so its
 # targets fan out across every package that carries a piece of it rather than
@@ -4202,6 +4417,18 @@ bench-kvstore: ## Run kvstore package benchmarks
 # Go SDK Tests
 # =============================================================================
 
+# The `grep -v '/test/'` in test-sdk-go and test-sdk-go-coverage is a tracked
+# exclusion, not an oversight: it keeps sdk/go/test/integration -- the
+# docker-compose harness -- out of the per-push gate because the harness is
+# known-red. Tracker: #50. Cause: its compose file builds the server from
+# test/integration/Dockerfile.dev, which still copies sibling repos out of a
+# `workspace` named build context and generates a go.work. That is the model
+# dependency-resolution.md §2 abolished and that test/integration/Dockerfile
+# already left behind. On a runner, the parent directory has no siblings, so the
+# image build fails before a single test runs. The harness still runs, off the
+# gate, in the `sdk-go-integration` job of .github/workflows/nightly.yml
+# (schedule + workflow_dispatch) via `make integration-test-sdk-go`. When #50
+# lands, moving it back into ci.yml is a deliberate change, not an automatic one.
 .PHONY: test-sdk-go
 test-sdk-go: ## Run Go SDK unit tests (excludes integration tests)
 	@echo "$(BLUE)Running Go SDK unit tests...$(NC)"
@@ -4285,7 +4512,7 @@ test-dynamic-secrets: ## Run dynamic secrets + credential lease unit tests
 	@echo "$(BLUE)Running the service handler and the delivery-grant surface...$(NC)"
 	@$(GOTEST) -race -count=1 -tags '$(TEST_TAGS)' \
 		-run 'DynamicSecret|Lease|Grant|Materialize' \
-		./pkg/service/... ./pkg/server/... ./pkg/orchestration/... ./pkg/agent/...
+		./pkg/service/... ./pkg/server/... ./pkg/orchestration/... ./pkg/fleet/...
 	@echo "$(GREEN)✓ Dynamic secrets tests passed$(NC)"
 
 .PHONY: coverage-dynamic-secrets
@@ -4609,8 +4836,13 @@ verify-integration-teardown: ## Fail if the integration stack can outlive a run 
 	@echo "$(BLUE)verify-integration-teardown: checking the stack comes down on the early-exit path...$(NC)"
 	@$(GOCMD) run ./scripts/verifyteardown
 
+.PHONY: verify-gomodauth
+verify-gomodauth: ## Fail if the Docker test builds cannot fetch private modules off a runner, or keep the token after the build
+	@echo "$(BLUE)verify-gomodauth: checking module credentials are staged on any host and cleared after the build...$(NC)"
+	@$(GOCMD) run ./scripts/verifygomodauth
+
 .PHONY: verify
-verify: verify-naming verify-cli-flags verify-api-shapes verify-clean-docker verify-integration-teardown ## Run all cross-project verifications
+verify: verify-naming verify-cli-flags verify-api-shapes verify-clean-docker verify-integration-teardown verify-gomodauth ## Run all cross-project verifications
 	@echo "$(GREEN)All verifications OK$(NC)"
 
 # =============================================================================

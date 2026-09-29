@@ -35,8 +35,8 @@ func quotaAccount() *Account {
 }
 
 // fiveHourTokens is a single-window policy metering tokens only.
-func fiveHourTokens(max int64) AccountQuotaPolicy {
-	return AccountQuotaPolicy{Windows: []QuotaWindow{
+func fiveHourTokens(max int64) SpendLimits {
+	return SpendLimits{Windows: []QuotaWindow{
 		{Name: "five-hour", Size: 5 * time.Hour, MaxTokens: max},
 	}}
 }
@@ -48,7 +48,7 @@ func spend(t *testing.T, ledger ConsumptionLedger, tokens int64, at time.Time, i
 	entry.EntryID = id
 	entry.InputTokens = tokens
 	entry.OutputTokens = 0
-	entry.CostMicros = tokens // one micro per token keeps the two axes separable
+	entry.EquivalentMicros = tokens // one micro per token keeps the two axes separable
 	entry.OccurredAt = at
 	if err := ledger.Record(context.Background(), entry); err != nil {
 		t.Fatalf("seed %s: %v", id, err)
@@ -204,7 +204,7 @@ func TestQuotaAuthorityWindowIsSliding(t *testing.T) {
 
 	weekly, err := authority.Admit(context.Background(), QuotaAdmitRequest{
 		Account: quotaAccount(),
-		Policy: AccountQuotaPolicy{Windows: []QuotaWindow{
+		Policy: SpendLimits{Windows: []QuotaWindow{
 			{Name: "weekly", Size: 7 * 24 * time.Hour, MaxTokens: 1000},
 		}},
 	}, quotaNow)
@@ -222,7 +222,7 @@ func TestQuotaAuthorityReturnsTheFirstRefusingWindow(t *testing.T) {
 
 	decision, err := NewQuotaAuthority(ledger).Admit(context.Background(), QuotaAdmitRequest{
 		Account: quotaAccount(),
-		Policy: AccountQuotaPolicy{Windows: []QuotaWindow{
+		Policy: SpendLimits{Windows: []QuotaWindow{
 			{Name: "five-hour", Size: 5 * time.Hour, MaxTokens: 1000},
 			{Name: "weekly", Size: 7 * 24 * time.Hour, MaxTokens: 2000},
 		}},
@@ -244,7 +244,7 @@ func TestQuotaAuthorityChecksEveryWindow(t *testing.T) {
 
 	decision, err := NewQuotaAuthority(ledger).Admit(context.Background(), QuotaAdmitRequest{
 		Account: quotaAccount(),
-		Policy: AccountQuotaPolicy{Windows: []QuotaWindow{
+		Policy: SpendLimits{Windows: []QuotaWindow{
 			{Name: "five-hour", Size: 5 * time.Hour, MaxTokens: 1000},
 			{Name: "weekly", Size: 7 * 24 * time.Hour, MaxTokens: 1500},
 		}},
@@ -388,31 +388,31 @@ func TestQuotaAuthorityRefusesMalformedRequests(t *testing.T) {
 func TestQuotaPolicyValidation(t *testing.T) {
 	refused := []struct {
 		name   string
-		policy AccountQuotaPolicy
+		policy SpendLimits
 		field  string
 		// names is the window name the message must carry. Empty for the
 		// unnamed-window case, which is refused precisely because there is no
 		// name to report.
 		names string
 	}{
-		{"unnamed window", AccountQuotaPolicy{Windows: []QuotaWindow{
+		{"unnamed window", SpendLimits{Windows: []QuotaWindow{
 			{Size: time.Hour, MaxTokens: 1},
 		}}, "window.name", ""},
-		{"duplicate name", AccountQuotaPolicy{Windows: []QuotaWindow{
+		{"duplicate name", SpendLimits{Windows: []QuotaWindow{
 			{Name: "five-hour", Size: time.Hour, MaxTokens: 1},
 			{Name: "five-hour", Size: 2 * time.Hour, MaxTokens: 2},
 		}}, "window.name", "five-hour"},
-		{"zero size", AccountQuotaPolicy{Windows: []QuotaWindow{
+		{"zero size", SpendLimits{Windows: []QuotaWindow{
 			{Name: "five-hour", Size: 0, MaxTokens: 1},
 		}}, "window.size", "five-hour"},
-		{"negative size", AccountQuotaPolicy{Windows: []QuotaWindow{
+		{"negative size", SpendLimits{Windows: []QuotaWindow{
 			{Name: "five-hour", Size: -time.Hour, MaxTokens: 1},
 		}}, "window.size", "five-hour"},
-		{"negative token limit", AccountQuotaPolicy{Windows: []QuotaWindow{
+		{"negative token limit", SpendLimits{Windows: []QuotaWindow{
 			{Name: "five-hour", Size: time.Hour, MaxTokens: -1},
 		}}, "window.max_tokens", "five-hour"},
 		// A window with no allowance reads as a limit and is not one.
-		{"meters nothing", AccountQuotaPolicy{Windows: []QuotaWindow{
+		{"meters nothing", SpendLimits{Windows: []QuotaWindow{
 			{Name: "five-hour", Size: time.Hour},
 		}}, "window.max_tokens", "five-hour"},
 	}
@@ -443,17 +443,17 @@ func TestQuotaPolicyValidation(t *testing.T) {
 	// above, so a validation tightened into refusing everything fails here.
 	accepted := []struct {
 		name   string
-		policy AccountQuotaPolicy
+		policy SpendLimits
 	}{
 		{"a token allowance", fiveHourTokens(1000)},
-		{"two distinctly named windows", AccountQuotaPolicy{Windows: []QuotaWindow{
+		{"two distinctly named windows", SpendLimits{Windows: []QuotaWindow{
 			{Name: "a", Size: time.Hour, MaxTokens: 1000},
 			{Name: "b", Size: 2 * time.Hour, MaxTokens: 2000},
 		}}},
 		// No windows at all: nothing is metered, and admitting is the honest
 		// answer for an account nobody has configured a limit for. Refusing
 		// would take the whole pool down the moment a policy went missing.
-		{"no windows", AccountQuotaPolicy{}},
+		{"no windows", SpendLimits{}},
 	}
 	for _, tc := range accepted {
 		t.Run(tc.name, func(t *testing.T) {

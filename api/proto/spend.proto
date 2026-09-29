@@ -1,0 +1,67 @@
+// QuicBaaS Spend Limit Protocol Buffer Definitions v1
+// The one limits shape an account, a project and a tenant carry.
+//
+// Copyright (c) 2025 QuicBaaS Project
+// Licensed under MIT License
+
+syntax = "proto3";
+
+package quicbaas.spend.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+import "google/protobuf/timestamp.proto";
+
+// SpendLimitWindow is one sliding allowance: [now-size, now). At least one of
+// max_tokens and max_equivalent_micros must be positive; zero leaves that axis
+// unmetered.
+message SpendLimitWindow {
+    string name                  = 1;
+    // size_nanos is the window's length (a Go time.Duration).
+    int64  size_nanos            = 2;
+    int64  max_tokens            = 3;
+    // max_equivalent_micros caps the list-price equivalent, in millionths of
+    // a US dollar, of the window's priced turns.
+    int64  max_equivalent_micros = 4;
+}
+
+// SpendLimits is an ordered set of windows, every one binding where enforced.
+message SpendLimits {
+    repeated SpendLimitWindow windows = 1;
+}
+
+// SpendBreakerPolicy takes an account out of service after
+// failure_threshold failures within window, for cooldown.
+message SpendBreakerPolicy {
+    int64 window_nanos      = 1;
+    int32 failure_threshold = 2;
+    int64 cooldown_nanos    = 3;
+}
+
+// AccountSpendPolicy is what an account may spend and how many failures take
+// it out of service.
+message AccountSpendPolicy {
+    SpendLimits        quota   = 1;
+    // breaker is unset when the account is never taken out of service for
+    // failing.
+    SpendBreakerPolicy breaker = 2;
+}
+
+// SpendHeadroom is the spend gate's read-only verdict on one account: whether
+// its own spend policy admits more work and, if not, why and until when. A
+// worker daemon reads it from the usage call so its account selection fails
+// over past a spent account exactly as the control plane's does.
+message SpendHeadroom {
+    bool   admits = 1;
+    // refusal is "quota_exhausted" or "breaker_open" when admits is false.
+    string refusal = 2;
+    // window, axis, used and limit describe a spent window.
+    string window = 3;
+    string axis = 4;
+    int64  used = 5;
+    int64  limit = 6;
+    // failures is how many failures tripped an open breaker.
+    int32  failures = 7;
+    // frees_at is when the refusal lifts; unset when nothing can say.
+    google.protobuf.Timestamp frees_at = 8;
+}

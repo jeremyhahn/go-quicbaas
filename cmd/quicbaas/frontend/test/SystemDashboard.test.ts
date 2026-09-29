@@ -8,7 +8,7 @@
  *  - Marks Scheduler as 'ok' when client.scheduler.listJobs() succeeds
  *  - Marks Daemon as 'down' when the liveness probe fails
  *  - Marks KMS as 'ok' when listKeys returns 401 (up but auth required)
- *  - Populates Agent Daemons count from agentStore
+ *  - Populates Agent Daemons count from fleetStore
  *  - Counts only LIVE sessions on the Active Sessions tile (go-quicbaas#850)
  *  - Renders clickable stat tiles
  *  - Shows "All systems operational" banner when all services are ok
@@ -65,20 +65,20 @@ vi.mock('../src/stores/sdkClient.ts', () => ({
 }));
 
 // Use hoisted references so the mock factory closure can reference them.
-const { agentStoreMock } = vi.hoisted(() => ({
-  agentStoreMock: {
-    agents: [] as Array<{ id: string; status: string }>,
-    get onlineAgents() {
-      return (Array.isArray(this.agents) ? this.agents : []).filter(
+const { fleetStoreMock } = vi.hoisted(() => ({
+  fleetStoreMock: {
+    nodes: [] as Array<{ id: string; status: string }>,
+    get onlineNodes() {
+      return (Array.isArray(this.nodes) ? this.nodes : []).filter(
         (a) => a.status === 'running' || a.status === 'idle' || a.status === 'registered',
       );
     },
-    agentsLoading: false,
+    nodesLoading: false,
   },
 }));
 
-vi.mock('../src/stores/agentStore.svelte.ts', () => ({
-  agentStore: agentStoreMock,
+vi.mock('../src/stores/fleetStore.svelte.ts', () => ({
+  fleetStore: fleetStoreMock,
 }));
 
 const { sessionStoreMock } = vi.hoisted(() => ({
@@ -98,13 +98,13 @@ vi.mock('../src/stores/sessionStore.svelte.ts', () => ({
 const { orchestratorStoreMock } = vi.hoisted(() => ({
   orchestratorStoreMock: {
     jobs: [] as Array<{ state: string }>,
-    agents: [] as unknown[],
+    fleetNodes: [] as unknown[],
     sessions: [] as unknown[],
     activeTenantID: 'default',
     health: null,
     selectedJob: null,
     jobsLoading: false,
-    agentsLoading: false,
+    fleetNodesLoading: false,
     sessionsLoading: false,
     tasksLoading: false,
     tasks: [],
@@ -115,6 +115,23 @@ const { orchestratorStoreMock } = vi.hoisted(() => ({
 
 vi.mock('../src/stores/orchestrator.svelte.ts', () => ({
   orchestratorStore: orchestratorStoreMock,
+}));
+
+const { attentionStoreMock } = vi.hoisted(() => ({
+  attentionStoreMock: {
+    items: [] as unknown[],
+    total: 0,
+    facets: {} as Record<string, Record<string, number>>,
+    loading: false,
+    resolvingID: null,
+    oldestAgeInstant: undefined,
+    visibleAlerts: [] as unknown[],
+  },
+}));
+
+vi.mock('../src/stores/attentionStore.svelte.ts', () => ({
+  attentionStore: attentionStoreMock,
+  refreshAttention: vi.fn(),
 }));
 
 const { connectionStoreMock } = vi.hoisted(() => ({
@@ -207,7 +224,7 @@ describe('SystemDashboard — daemon liveness wiring', () => {
     mockListJobs.mockResolvedValue({ jobs: [], total_count: 0 });
     mockSealStatus.mockResolvedValue({ sealed: false, version: '1.2.3' });
 
-    agentStoreMock.agents = [];
+    fleetStoreMock.nodes = [];
     sessionStoreMock.sessions = [];
     orchestratorStoreMock.jobs = [];
     connectionStoreMock.connected = true;
@@ -319,8 +336,8 @@ describe('SystemDashboard — resource counts', () => {
     connectionStoreMock.connected = true;
   });
 
-  it('shows correct agent count from agentStore', async () => {
-    agentStoreMock.agents = [
+  it('shows correct agent count from fleetStore', async () => {
+    fleetStoreMock.nodes = [
       { id: 'a1', status: 'running' },
       { id: 'a2', status: 'idle' },
     ];
@@ -396,7 +413,7 @@ describe('SystemDashboard — resource counts', () => {
   });
 
   it('shows 0 for all counts when stores are empty', async () => {
-    agentStoreMock.agents = [];
+    fleetStoreMock.nodes = [];
     sessionStoreMock.sessions = [];
     orchestratorStoreMock.jobs = [];
 
@@ -555,7 +572,7 @@ describe('SystemDashboard — #85 overview dashboard sections', () => {
     connectionStoreMock.connected = true;
 
     // One agent
-    agentStoreMock.agents = [{ id: 'a1', status: 'running' }];
+    fleetStoreMock.nodes = [{ id: 'a1', status: 'running' }];
 
     // Two sessions
     orchestratorStoreMock.sessions = [
@@ -736,7 +753,7 @@ describe('SystemDashboard — orchestrator probe failure classification (#219)',
     mockListJobs.mockResolvedValue({ jobs: [], total_count: 0 });
     mockSealStatus.mockResolvedValue({ sealed: false, version: '1.2.3' });
 
-    agentStoreMock.agents = [];
+    fleetStoreMock.nodes = [];
     sessionStoreMock.sessions = [];
     orchestratorStoreMock.jobs = [];
     connectionStoreMock.connected = true;

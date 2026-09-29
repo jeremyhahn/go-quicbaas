@@ -121,7 +121,7 @@ func NewSealedBootTestConfig(t *testing.T) *config.Config {
 	cfg.Orchestration.Enabled = false
 	cfg.TimeSeries.Enabled = false
 	cfg.Raft.EnableBootstrap = false
-	cfg.Server.EmbeddedAgent.Enabled = false
+	cfg.Server.EmbeddedFleetNode.Enabled = false
 	cfg.Scheduler.Enabled = false
 
 	cfg.Logging.Level = "error"

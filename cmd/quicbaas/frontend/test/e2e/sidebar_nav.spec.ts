@@ -14,7 +14,7 @@
  *   ORCHESTRATION
  *     Dashboard          → #/orchestration
  *     Jobs               → #/jobs
- *     Agent Fleet        → #/fleet
+ *     Fleet              → #/fleet
  *     Sessions           → #/sessions
  *     Tasks              → #/tasks
  *     Live Events        → #/events
@@ -47,7 +47,7 @@ const sidebarItems = [
   // SOFTWARE FACTORY section
   { section: 'SOFTWARE FACTORY', label: 'Software Factory', hash: '#/orchestration', breadcrumb: 'Dashboard', buttonIndex: 0 },
   { section: 'SOFTWARE FACTORY', label: 'Jobs',          hash: '#/jobs',          breadcrumb: 'Jobs',           buttonIndex: 0 },
-  { section: 'SOFTWARE FACTORY', label: 'Agent Fleet',   hash: '#/fleet',         breadcrumb: 'Agent Fleet',    buttonIndex: 0 },
+  { section: 'SOFTWARE FACTORY', label: 'Fleet',         hash: '#/fleet',         breadcrumb: 'Fleet',          buttonIndex: 0 },
   { section: 'SOFTWARE FACTORY', label: 'Sessions',      hash: '#/sessions',      breadcrumb: 'Sessions',       buttonIndex: 0 },
   { section: 'SOFTWARE FACTORY', label: 'Tasks',         hash: '#/tasks',         breadcrumb: 'Tasks',          buttonIndex: 0 },
   { section: 'SOFTWARE FACTORY', label: 'Workflows',     hash: '#/workflows',     breadcrumb: 'Workflows',      buttonIndex: 0 },
@@ -100,7 +100,7 @@ test.describe('Sidebar navigation — hash routing', () => {
 
   test('each implemented sidebar item has no "soon" badge', async ({ page }) => {
     // Only the items we have marked as implemented should lack the badge.
-    const implementedLabels = ['Jobs', 'Agent Fleet', 'Sessions', 'Tasks', 'Workflows', 'Projects', 'Live Events', 'Cost Tracking'];
+    const implementedLabels = ['Jobs', 'Fleet', 'Sessions', 'Tasks', 'Workflows', 'Projects', 'Live Events', 'Cost Tracking'];
     for (const label of implementedLabels) {
       const btn = page.locator('aside nav button', { hasText: label }).first();
       const soonBadge = btn.locator('.badge', { hasText: 'soon' });
@@ -118,24 +118,21 @@ test.describe('Sidebar navigation — hash routing', () => {
   });
 
   /**
-   * Regression: bookmark-friendly hashes (#/agents, #/live-events) used to
-   * fall through to the placeholder "feature is under development" view
-   * because the router did not register them as aliases. Direct navigation
-   * via either alias must now land on the canonical Fleet/Live-Events view.
+   * Regression: the bookmark-friendly hash #/live-events used to fall through
+   * to the placeholder "feature is under development" view because the router
+   * did not register it as an alias. #/fleet is the fleet's only route: the
+   * retired #/agents alias is kept free for AI agent definitions.
    */
-  test('direct-nav to #/agents lands on the Agent Fleet view', async ({ page }) => {
-    await page.evaluate(() => { window.location.hash = '#/agents'; });
+  test('direct-nav to #/fleet lands on the Fleet view', async ({ page }) => {
+    await page.evaluate(() => { window.location.hash = '#/fleet'; });
     await page.waitForLoadState('networkidle');
 
-    // Breadcrumb reflects the canonical Agent Fleet label.
     const breadcrumbEl = page.locator('.breadcrumbs li').last();
-    await expect(breadcrumbEl).toContainText('Agent Fleet');
+    await expect(breadcrumbEl).toContainText('Fleet');
 
-    // Sidebar marks "Agent Fleet" active.
-    const btn = page.locator('aside nav button', { hasText: 'Agent Fleet' }).first();
+    const btn = page.locator('aside nav button', { hasText: 'Fleet' }).first();
     await expect(btn).toHaveAttribute('aria-current', 'page');
 
-    // Placeholder text must NOT appear.
     await expect(page.locator('main')).not.toContainText(/under development/i);
   });
 

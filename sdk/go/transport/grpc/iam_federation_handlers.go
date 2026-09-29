@@ -61,7 +61,6 @@ func (h *iamHandler) handleCreateProvider(ctx context.Context, client iampb.Fede
 	autoProvision, _ := getBool(reqMap, "auto_provision")
 	allowLinking, _ := getBool(reqMap, "allow_linking")
 	defaultRoles, _ := getStringSlice(reqMap, "default_roles")
-	defaultGroups, _ := getStringSlice(reqMap, "default_groups")
 
 	pbReq := &iampb.CreateProviderRequest{
 		Id:            providerID,
@@ -75,7 +74,6 @@ func (h *iamHandler) handleCreateProvider(ctx context.Context, client iampb.Fede
 		AutoProvision: autoProvision,
 		AllowLinking:  allowLinking,
 		DefaultRoles:  defaultRoles,
-		DefaultGroups: defaultGroups,
 	}
 
 	resp, err := client.CreateProvider(ctx, pbReq)
@@ -155,9 +153,6 @@ func (h *iamHandler) handleUpdateProvider(ctx context.Context, client iampb.Fede
 	}
 	if defaultRoles, ok := getStringSlice(reqMap, "default_roles"); ok {
 		pbReq.DefaultRoles = defaultRoles
-	}
-	if defaultGroups, ok := getStringSlice(reqMap, "default_groups"); ok {
-		pbReq.DefaultGroups = defaultGroups
 	}
 
 	resp, err := client.UpdateProvider(ctx, pbReq)
@@ -260,7 +255,6 @@ func convertProtoProviderToSDK(p *iampb.ExternalProvider) *cli.Provider {
 		AutoProvision: p.AutoProvision,
 		AllowLinking:  p.AllowLinking,
 		DefaultRoles:  p.DefaultRoles,
-		DefaultGroups: p.DefaultGroups,
 	}
 
 	if p.CreatedAt != nil {

@@ -464,7 +464,7 @@ func buildInitConfig(dataDir string, f *inlineInitFlags, barrierEnabled bool) *c
 	cfg.Orchestration.Enabled = false
 	cfg.TimeSeries.Enabled = false
 	cfg.Raft.EnableBootstrap = false
-	cfg.Server.EmbeddedAgent.Enabled = false
+	cfg.Server.EmbeddedFleetNode.Enabled = false
 
 	// Logging: keep it quiet so init produces a clean summary; the server
 	// emits its own structured logs anyway.

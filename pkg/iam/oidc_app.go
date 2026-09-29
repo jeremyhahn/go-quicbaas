@@ -50,7 +50,7 @@ func (m *AppManager) RegisterApp(ctx context.Context, tenantID string, opts Regi
 	return app, err
 }
 
-// RegisterAgentApp registers the OAuth2 client an agent daemon authenticates
+// RegisterAgentApp registers the OAuth2 client a fleet node daemon authenticates
 // with, keyed on the agent's identity (tenant + certificate Common Name) so the
 // call is IDEMPOTENT: a daemon that enrolls again -- after a restart, a dropped
 // response, or a supervisor retry loop -- gets the client it already has, with
@@ -74,7 +74,7 @@ func (m *AppManager) RegisterAgentApp(ctx context.Context, tenantID, commonName 
 		return nil, &IAMMessageError{Message: "certificate common name is required"}
 	}
 
-	clientID := AgentClientID(tenantID, commonName)
+	clientID := FleetNodeClientID(tenantID, commonName)
 	if _, err := m.storage.GetAppByTenant(ctx, tenantID, clientID); err == nil {
 		return m.rotateAgentCredential(ctx, clientID, opts.Scopes)
 	} else if !dberrors.IsNotFound(err) {
@@ -148,7 +148,7 @@ func (m *AppManager) registerApp(ctx context.Context, tenantID string, opts Regi
 // registerAppWithClientID is registerApp with the client identifier supplied by
 // the caller. An empty clientID mints a random one, which is the path every
 // public registration verb takes; a non-empty one is a DERIVED identifier the
-// manager itself computed (AgentClientID), which is what makes an enrollment
+// manager itself computed (FleetNodeClientID), which is what makes an enrollment
 // idempotent. It is deliberately unexported and absent from
 // RegisterAppOptions: a transport that could name its own client id could
 // squat another tenant's identifier space.

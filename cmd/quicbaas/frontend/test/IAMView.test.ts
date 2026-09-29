@@ -27,7 +27,7 @@ const mockUsers: IAMUser[] = [
     username: 'alice',
     email: 'alice@example.com',
     roles: ['role-1'],   // UUID, not name
-    groups: [],
+    lifecycle: 'active',
     created_at: '2025-01-01T00:00:00Z',
     updated_at: '2025-01-01T00:00:00Z',
   },
@@ -37,7 +37,7 @@ const mockUsers: IAMUser[] = [
     username: 'bob',
     email: 'bob@example.com',
     roles: ['role-2'],   // UUID, not name
-    groups: [],
+    lifecycle: 'pending',
     created_at: '2025-01-02T00:00:00Z',
     updated_at: '2025-01-02T00:00:00Z',
   },
@@ -156,6 +156,17 @@ describe('IAMView', () => {
       expect(screen.getByText('alice')).toBeInTheDocument();
       expect(screen.getByText('bob')).toBeInTheDocument();
     });
+  });
+
+  it('shows each account\'s lifecycle as its status, not a derived enabled flag', async () => {
+    render(IAMView);
+    await waitFor(() => {
+      expect(screen.getByText('alice')).toBeInTheDocument();
+    });
+    // A pending account must read as pending: the old boolean rendered every
+    // account without an explicit false as "active".
+    expect(screen.getByText('active')).toBeInTheDocument();
+    expect(screen.getByText('pending')).toBeInTheDocument();
   });
 
   it('shows "Invite User" button on the Users tab', async () => {

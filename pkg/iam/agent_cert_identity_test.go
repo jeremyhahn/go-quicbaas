@@ -32,9 +32,8 @@ func newAgentEnrollmentStore(t *testing.T) (*iam.IdentityStore, *iam.MemoryStora
 	t.Helper()
 	memory := iam.NewMemoryStorage()
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  memory,
-		GroupStorage: memory,
-		RoleStorage:  memory,
+		UserStorage: memory,
+		RoleStorage: memory,
 	})
 	return store, memory
 }
@@ -50,21 +49,21 @@ func TestEnrollAgentCertIdentity_ConfersTheGrantOnTheCertPrincipal(t *testing.T)
 	t.Parallel()
 
 	store, memory := newAgentEnrollmentStore(t)
-	cert := newTestCert(t, "agent-vm-host-4", nil)
+	cert := newTestCert(t, "agent-agent-04", nil)
 
-	user, err := store.EnrollAgentCertIdentity(context.Background(), "automatethethings",
-		iam.AgentCertIdentityOptions{
+	user, err := store.EnrollFleetNodeCertIdentity(context.Background(), "automatethethings",
+		iam.FleetNodeCertIdentityOptions{
 			Certificate: cert,
-			Permissions: iam.AgentRuntimeGrant(),
+			Permissions: iam.FleetRuntimeGrant(),
 		})
 	if err != nil {
-		t.Fatalf("EnrollAgentCertIdentity() error = %v", err)
+		t.Fatalf("EnrollFleetNodeCertIdentity() error = %v", err)
 	}
 
 	// The username MUST be the certificate CN verbatim: that is the subject
 	// go-qrdb's mTLS authenticator resolves the user record by.
-	if user.Username != "agent-vm-host-4" {
-		t.Fatalf("username = %q, want the certificate CN %q", user.Username, "agent-vm-host-4")
+	if user.Username != "agent-agent-04" {
+		t.Fatalf("username = %q, want the certificate CN %q", user.Username, "agent-agent-04")
 	}
 	if user.TenantID != "automatethethings" {
 		t.Fatalf("tenant = %q, want automatethethings", user.TenantID)
@@ -95,7 +94,7 @@ func TestEnrollAgentCertIdentity_ConfersTheGrantOnTheCertPrincipal(t *testing.T)
 	}
 
 	// The role the record holds carries the grant and nothing else.
-	roleID := iam.AgentRuntimeRoleID("automatethethings")
+	roleID := iam.FleetRuntimeRoleID("automatethethings")
 	if len(user.Roles) != 1 || user.Roles[0] != roleID {
 		t.Fatalf("roles = %v, want exactly [%s]", user.Roles, roleID)
 	}
@@ -103,7 +102,7 @@ func TestEnrollAgentCertIdentity_ConfersTheGrantOnTheCertPrincipal(t *testing.T)
 	if err != nil {
 		t.Fatalf("GetRole() error = %v", err)
 	}
-	assertSamePermissions(t, role.Permissions, iam.AgentRuntimeGrant())
+	assertSamePermissions(t, role.Permissions, iam.FleetRuntimeGrant())
 }
 
 // TestEnrollAgentCertIdentity_GrantsNothingBeyondTheAgentRuntimeGrant is the
@@ -114,20 +113,20 @@ func TestEnrollAgentCertIdentity_GrantsNothingBeyondTheAgentRuntimeGrant(t *test
 	t.Parallel()
 
 	store, memory := newAgentEnrollmentStore(t)
-	if _, err := store.EnrollAgentCertIdentity(context.Background(), "acme",
-		iam.AgentCertIdentityOptions{
+	if _, err := store.EnrollFleetNodeCertIdentity(context.Background(), "acme",
+		iam.FleetNodeCertIdentityOptions{
 			Certificate: newTestCert(t, "agent-runner-1", nil),
-			Permissions: iam.AgentRuntimeGrant(),
+			Permissions: iam.FleetRuntimeGrant(),
 		}); err != nil {
-		t.Fatalf("EnrollAgentCertIdentity() error = %v", err)
+		t.Fatalf("EnrollFleetNodeCertIdentity() error = %v", err)
 	}
 
-	role, err := memory.GetRole(context.Background(), "acme", iam.AgentRuntimeRoleID("acme"))
+	role, err := memory.GetRole(context.Background(), "acme", iam.FleetRuntimeRoleID("acme"))
 	if err != nil {
 		t.Fatalf("GetRole() error = %v", err)
 	}
-	if role.Name != iam.AgentRuntimeRoleName {
-		t.Fatalf("role name = %q, want %q", role.Name, iam.AgentRuntimeRoleName)
+	if role.Name != iam.FleetRuntimeRoleName {
+		t.Fatalf("role name = %q, want %q", role.Name, iam.FleetRuntimeRoleName)
 	}
 
 	granted := make(map[string]bool, len(role.Permissions))
@@ -161,14 +160,14 @@ func TestEnrollAgentCertIdentity_Idempotent(t *testing.T) {
 	t.Parallel()
 
 	store, memory := newAgentEnrollmentStore(t)
-	cert := newTestCert(t, "agent-vm-host-4", nil)
-	opts := iam.AgentCertIdentityOptions{Certificate: cert, Permissions: iam.AgentRuntimeGrant()}
+	cert := newTestCert(t, "agent-agent-04", nil)
+	opts := iam.FleetNodeCertIdentityOptions{Certificate: cert, Permissions: iam.FleetRuntimeGrant()}
 
-	first, err := store.EnrollAgentCertIdentity(context.Background(), "automatethethings", opts)
+	first, err := store.EnrollFleetNodeCertIdentity(context.Background(), "automatethethings", opts)
 	if err != nil {
 		t.Fatalf("first enrollment: %v", err)
 	}
-	second, err := store.EnrollAgentCertIdentity(context.Background(), "automatethethings", opts)
+	second, err := store.EnrollFleetNodeCertIdentity(context.Background(), "automatethethings", opts)
 	if err != nil {
 		t.Fatalf("second enrollment: %v", err)
 	}
@@ -193,9 +192,9 @@ func TestEnrollAgentCertIdentity_RenewedCertificateRePins(t *testing.T) {
 	t.Parallel()
 
 	store, _ := newAgentEnrollmentStore(t)
-	original := newTestCert(t, "agent-vm-host-4", nil)
-	if _, err := store.EnrollAgentCertIdentity(context.Background(), "automatethethings",
-		iam.AgentCertIdentityOptions{Certificate: original, Permissions: iam.AgentRuntimeGrant()}); err != nil {
+	original := newTestCert(t, "agent-agent-04", nil)
+	if _, err := store.EnrollFleetNodeCertIdentity(context.Background(), "automatethethings",
+		iam.FleetNodeCertIdentityOptions{Certificate: original, Permissions: iam.FleetRuntimeGrant()}); err != nil {
 		t.Fatalf("first enrollment: %v", err)
 	}
 
@@ -204,10 +203,10 @@ func TestEnrollAgentCertIdentity_RenewedCertificateRePins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
-	renewed := newTestCert(t, "agent-vm-host-4", renewedKey)
+	renewed := newTestCert(t, "agent-agent-04", renewedKey)
 
-	user, err := store.EnrollAgentCertIdentity(context.Background(), "automatethethings",
-		iam.AgentCertIdentityOptions{Certificate: renewed, Permissions: iam.AgentRuntimeGrant()})
+	user, err := store.EnrollFleetNodeCertIdentity(context.Background(), "automatethethings",
+		iam.FleetNodeCertIdentityOptions{Certificate: renewed, Permissions: iam.FleetRuntimeGrant()})
 	if err != nil {
 		t.Fatalf("re-enrollment: %v", err)
 	}
@@ -234,26 +233,26 @@ func TestEnrollAgentCertIdentity_ConvergesADriftedGrant(t *testing.T) {
 
 	// A role from an older build: only the heartbeat half of the grant.
 	if err := memory.CreateRole(ctx, &iam.Role{
-		ID:          iam.AgentRuntimeRoleID("acme"),
+		ID:          iam.FleetRuntimeRoleID("acme"),
 		TenantID:    "acme",
-		Name:        iam.AgentRuntimeRoleName,
-		Permissions: []string{iam.AgentScopeControlHeartbeat},
+		Name:        iam.FleetRuntimeRoleName,
+		Permissions: []string{iam.FleetScopeControlHeartbeat},
 	}); err != nil {
 		t.Fatalf("seed role: %v", err)
 	}
 
-	if _, err := store.EnrollAgentCertIdentity(ctx, "acme", iam.AgentCertIdentityOptions{
+	if _, err := store.EnrollFleetNodeCertIdentity(ctx, "acme", iam.FleetNodeCertIdentityOptions{
 		Certificate: newTestCert(t, "agent-runner-1", nil),
-		Permissions: iam.AgentRuntimeGrant(),
+		Permissions: iam.FleetRuntimeGrant(),
 	}); err != nil {
-		t.Fatalf("EnrollAgentCertIdentity() error = %v", err)
+		t.Fatalf("EnrollFleetNodeCertIdentity() error = %v", err)
 	}
 
-	role, err := memory.GetRole(ctx, "acme", iam.AgentRuntimeRoleID("acme"))
+	role, err := memory.GetRole(ctx, "acme", iam.FleetRuntimeRoleID("acme"))
 	if err != nil {
 		t.Fatalf("GetRole() error = %v", err)
 	}
-	assertSamePermissions(t, role.Permissions, iam.AgentRuntimeGrant())
+	assertSamePermissions(t, role.Permissions, iam.FleetRuntimeGrant())
 }
 
 // TestEnrollAgentCertIdentity_TwoDaemonsShareTheTenantRole proves a tenant can
@@ -266,15 +265,15 @@ func TestEnrollAgentCertIdentity_TwoDaemonsShareTheTenantRole(t *testing.T) {
 	store, memory := newAgentEnrollmentStore(t)
 	ctx := context.Background()
 
-	for _, cn := range []string{"agent-vm-host-4", "agent-gpu-host"} {
-		user, err := store.EnrollAgentCertIdentity(ctx, "automatethethings", iam.AgentCertIdentityOptions{
+	for _, cn := range []string{"agent-agent-04", "agent-gpu-host"} {
+		user, err := store.EnrollFleetNodeCertIdentity(ctx, "automatethethings", iam.FleetNodeCertIdentityOptions{
 			Certificate: newTestCert(t, cn, nil),
-			Permissions: iam.AgentRuntimeGrant(),
+			Permissions: iam.FleetRuntimeGrant(),
 		})
 		if err != nil {
 			t.Fatalf("enrolling %s: %v", cn, err)
 		}
-		if user.Roles[0] != iam.AgentRuntimeRoleID("automatethethings") {
+		if user.Roles[0] != iam.FleetRuntimeRoleID("automatethethings") {
 			t.Fatalf("%s holds role %v, want the tenant's agent runtime role", cn, user.Roles)
 		}
 	}
@@ -296,17 +295,17 @@ func TestEnrollAgentCertIdentity_TenantIsolation(t *testing.T) {
 	store, memory := newAgentEnrollmentStore(t)
 	ctx := context.Background()
 
-	if _, err := store.EnrollAgentCertIdentity(ctx, "acme", iam.AgentCertIdentityOptions{
+	if _, err := store.EnrollFleetNodeCertIdentity(ctx, "acme", iam.FleetNodeCertIdentityOptions{
 		Certificate: newTestCert(t, "agent-runner-1", nil),
-		Permissions: iam.AgentRuntimeGrant(),
+		Permissions: iam.FleetRuntimeGrant(),
 	}); err != nil {
-		t.Fatalf("EnrollAgentCertIdentity() error = %v", err)
+		t.Fatalf("EnrollFleetNodeCertIdentity() error = %v", err)
 	}
 
 	if _, err := memory.GetUserByUsername(ctx, "other", "agent-runner-1"); err == nil {
 		t.Fatal("an agent enrolled in one tenant must not resolve in another")
 	}
-	if _, err := memory.GetRole(ctx, "other", iam.AgentRuntimeRoleID("other")); err == nil {
+	if _, err := memory.GetRole(ctx, "other", iam.FleetRuntimeRoleID("other")); err == nil {
 		t.Fatal("enrolling in one tenant must not create a role in another")
 	}
 }
@@ -320,40 +319,40 @@ func TestEnrollAgentCertIdentity_RejectsBadInput(t *testing.T) {
 	cases := []struct {
 		name     string
 		tenantID string
-		opts     iam.AgentCertIdentityOptions
+		opts     iam.FleetNodeCertIdentityOptions
 	}{
 		{
 			name:     "no tenant",
 			tenantID: "",
-			opts: iam.AgentCertIdentityOptions{
+			opts: iam.FleetNodeCertIdentityOptions{
 				Certificate: newTestCert(t, "agent-runner-1", nil),
-				Permissions: iam.AgentRuntimeGrant(),
+				Permissions: iam.FleetRuntimeGrant(),
 			},
 		},
 		{
 			name:     "no certificate",
 			tenantID: "acme",
-			opts:     iam.AgentCertIdentityOptions{Permissions: iam.AgentRuntimeGrant()},
+			opts:     iam.FleetNodeCertIdentityOptions{Permissions: iam.FleetRuntimeGrant()},
 		},
 		{
 			name:     "certificate carries no common name",
 			tenantID: "acme",
-			opts: iam.AgentCertIdentityOptions{
+			opts: iam.FleetNodeCertIdentityOptions{
 				Certificate: newTestCert(t, "", nil),
-				Permissions: iam.AgentRuntimeGrant(),
+				Permissions: iam.FleetRuntimeGrant(),
 			},
 		},
 		{
 			name:     "empty grant",
 			tenantID: "acme",
-			opts: iam.AgentCertIdentityOptions{
+			opts: iam.FleetNodeCertIdentityOptions{
 				Certificate: newTestCert(t, "agent-runner-1", nil),
 			},
 		},
 		{
 			name:     "blank permission",
 			tenantID: "acme",
-			opts: iam.AgentCertIdentityOptions{
+			opts: iam.FleetNodeCertIdentityOptions{
 				Certificate: newTestCert(t, "agent-runner-1", nil),
 				Permissions: []string{"  "},
 			},
@@ -361,7 +360,7 @@ func TestEnrollAgentCertIdentity_RejectsBadInput(t *testing.T) {
 		{
 			name:     "wildcard grant",
 			tenantID: "acme",
-			opts: iam.AgentCertIdentityOptions{
+			opts: iam.FleetNodeCertIdentityOptions{
 				Certificate: newTestCert(t, "agent-runner-1", nil),
 				Permissions: []string{"orchestrator:*"},
 			},
@@ -373,7 +372,7 @@ func TestEnrollAgentCertIdentity_RejectsBadInput(t *testing.T) {
 			t.Parallel()
 
 			store, memory := newAgentEnrollmentStore(t)
-			if _, err := store.EnrollAgentCertIdentity(context.Background(), tc.tenantID, tc.opts); err == nil {
+			if _, err := store.EnrollFleetNodeCertIdentity(context.Background(), tc.tenantID, tc.opts); err == nil {
 				t.Fatal("expected the enrollment to be refused")
 			}
 
@@ -426,10 +425,10 @@ func TestEnrollAgentCertIdentity_WillNotResurrectAWithdrawnIdentity(t *testing.T
 
 	store, memory := newAgentEnrollmentStore(t)
 	ctx := context.Background()
-	cert := newTestCert(t, "agent-vm-host-4", nil)
-	opts := iam.AgentCertIdentityOptions{Certificate: cert, Permissions: iam.AgentRuntimeGrant()}
+	cert := newTestCert(t, "agent-agent-04", nil)
+	opts := iam.FleetNodeCertIdentityOptions{Certificate: cert, Permissions: iam.FleetRuntimeGrant()}
 
-	enrolled, err := store.EnrollAgentCertIdentity(ctx, "automatethethings", opts)
+	enrolled, err := store.EnrollFleetNodeCertIdentity(ctx, "automatethethings", opts)
 	if err != nil {
 		t.Fatalf("first enrollment: %v", err)
 	}
@@ -440,11 +439,11 @@ func TestEnrollAgentCertIdentity_WillNotResurrectAWithdrawnIdentity(t *testing.T
 		t.Fatalf("disable: %v", err)
 	}
 
-	if _, err := store.EnrollAgentCertIdentity(ctx, "automatethethings", opts); err == nil {
+	if _, err := store.EnrollFleetNodeCertIdentity(ctx, "automatethethings", opts); err == nil {
 		t.Fatal("re-registration re-enabled an identity an administrator disabled")
 	}
 
-	after, err := memory.GetUserByUsername(ctx, "automatethethings", "agent-vm-host-4")
+	after, err := memory.GetUserByUsername(ctx, "automatethethings", "agent-agent-04")
 	if err != nil {
 		t.Fatalf("GetUserByUsername() error = %v", err)
 	}

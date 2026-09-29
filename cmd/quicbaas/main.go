@@ -232,14 +232,18 @@ func init() {
 	// Add Orchestrator command for AI agent orchestration
 	rootCmd.AddCommand(newOrchestratorCommand())
 
-	// Add Agent command for fleet management
-	rootCmd.AddCommand(newAgentCommand())
+	// Add Fleet command for fleet node management
+	rootCmd.AddCommand(newFleetCommand())
+
+	// Add Account command for the provider subscription accounts agents run on
+	rootCmd.AddCommand(newAccountCommand())
 
 	// Add Project command for agentic project management
 	rootCmd.AddCommand(newProjectCommand())
 
 	// Add the SDLC module command group (forge bindings)
 	rootCmd.AddCommand(newSDLCCommand())
+	rootCmd.AddCommand(newAgentsCommand())
 
 	// Add MCP command group (stdio bridge, tool discovery, tool invocation)
 	rootCmd.AddCommand(newMCPCommand())

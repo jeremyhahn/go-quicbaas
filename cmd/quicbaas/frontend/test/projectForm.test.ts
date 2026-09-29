@@ -57,7 +57,7 @@ const REST_PROJECT_BODY = `{
   "git_ssh_key_scope": "service",
   "git_ssh_key_owner": "ci",
   "agent_roles": { "agent-1": "lead" },
-  "token_budget": 1000,
+  "spend": { "windows": [{ "name": "weekly", "size": 604800000000000, "max_equivalent_micros": 250000000 }] },
   "gpu_minutes": 30,
   "max_concurrency": 2,
   "created_at": "2026-09-01T00:00:00Z",
@@ -111,7 +111,7 @@ describe('projectFormFrom', () => {
     expect(form.gitSshKeyScope).toBe('service');
     expect(form.gitSshKeyOwner).toBe('ci');
     expect(form.workspacePath).toBe('/work/go-truststrap');
-    expect(form.tokenBudget).toBe(1000);
+    expect(form.spend).toEqual([{ name: 'weekly', hours: 168, tokens: 0, usd: 250 }]);
     expect(form.gpuMinutes).toBe(30);
     expect(form.maxConcurrency).toBe(2);
   });
@@ -215,7 +215,7 @@ describe('createProjectRequestFrom', () => {
     expect(req.autonomous).toBeUndefined();
     expect(req.context_repos).toBeUndefined();
     expect(req.max_concurrency).toBeUndefined();
-    expect(req.token_budget).toBeUndefined();
+    expect(req.spend).toBeUndefined();
   });
 
   it('trims whitespace off every text field it sends', () => {
@@ -268,20 +268,43 @@ describe('updateProjectRequestFrom', () => {
     const project = fullProject();
     const form = projectFormFrom(project);
     form.maxConcurrency = 0;
-    form.tokenBudget = 0;
     form.gpuMinutes = 0;
     const req = updateProjectRequestFrom('default', project, form);
     expect(req.max_concurrency).toBe(0);
-    expect(req.token_budget).toBe(0);
     expect(req.gpu_minutes).toBe(0);
   });
 
   it('omits a quota that did not move, including one already at zero', () => {
-    const project: Project = { ...fullProject(), token_budget: 0 };
+    const project: Project = { ...fullProject(), max_concurrency: 0 };
     const form = projectFormFrom(project);
     const req = updateProjectRequestFrom('default', project, form);
-    expect(req.token_budget).toBeUndefined();
+    expect(req.spend).toBeUndefined();
     expect(req.max_concurrency).toBeUndefined();
+  });
+
+  // go-quicbaas#1058: spend limits replaced the unenforced token budget.
+  it('sends the spend limits whole when they changed, and an explicit clear', () => {
+    const project = fullProject();
+    const form = projectFormFrom(project);
+    form.spend[0]!.usd = 100;
+    form.spend.push({ name: 'five-hour', hours: 5, tokens: 2_000_000, usd: 0 });
+    const req = updateProjectRequestFrom('default', project, form);
+    expect(req.spend).toEqual({
+      windows: [
+        { name: 'weekly', size: 604_800_000_000_000, max_equivalent_micros: 100_000_000 },
+        { name: 'five-hour', size: 18_000_000_000_000, max_tokens: 2_000_000 },
+      ],
+    });
+
+    const cleared = projectFormFrom(project);
+    cleared.spend = [];
+    expect(updateProjectRequestFrom('default', project, cleared).spend).toEqual({ windows: [] });
+  });
+
+  it('refuses a spend window that caps nothing', () => {
+    const form = projectFormFrom(fullProject());
+    form.spend.push({ name: 'daily', hours: 24, tokens: 0, usd: 0 });
+    expect(validateProjectForm(form, false)).toMatch(/caps nothing/);
   });
 
   it('refuses a negative quota rather than sending it', () => {
@@ -349,5 +372,41 @@ describe('positiveOrUndefined', () => {
     expect(positiveOrUndefined(3)).toBe(3);
     expect(positiveOrUndefined(0)).toBeUndefined();
     expect(positiveOrUndefined(-1)).toBeUndefined();
+  });
+});
+
+describe('session rotation', () => {
+  it('opens a project that never chose a policy on the default, resume', () => {
+    // REST_PROJECT_BODY carries no session_rotation: the server omits the key
+    // for a project that never set one.
+    expect(projectFormFrom(fullProject()).sessionRotation).toBe('resume');
+    expect(emptyProjectForm().sessionRotation).toBe('resume');
+  });
+
+  it('reads a chosen policy off the record', () => {
+    const project: Project = { ...fullProject(), session_rotation: 'fresh' };
+    expect(projectFormFrom(project).sessionRotation).toBe('fresh');
+  });
+
+  it('sends a departure from the default on create, and nothing for the default', () => {
+    const fresh = createProjectRequestFrom('default', { ...emptyProjectForm(), name: 'p', sessionRotation: 'fresh' });
+    expect(fresh.session_rotation).toBe('fresh');
+    const resume = createProjectRequestFrom('default', { ...emptyProjectForm(), name: 'p' });
+    expect(resume.session_rotation).toBeUndefined();
+  });
+
+  it('sends the policy on update whenever it moved, either way, and omits it when unmoved', () => {
+    const project = fullProject();
+    const unchanged = projectFormFrom(project);
+    expect(updateProjectRequestFrom('default', project, unchanged).session_rotation).toBeUndefined();
+
+    const toFresh = projectFormFrom(project);
+    toFresh.sessionRotation = 'fresh';
+    expect(updateProjectRequestFrom('default', project, toFresh).session_rotation).toBe('fresh');
+
+    const wasFresh: Project = { ...project, session_rotation: 'fresh' };
+    const back = projectFormFrom(wasFresh);
+    back.sessionRotation = 'resume';
+    expect(updateProjectRequestFrom('default', wasFresh, back).session_rotation).toBe('resume');
   });
 });

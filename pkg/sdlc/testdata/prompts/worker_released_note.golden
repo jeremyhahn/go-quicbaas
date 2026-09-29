@@ -1,0 +1,3 @@
+## This is a new session: the previous one was closed while your pull request was reviewed
+
+The session that did round 1 pushed its work and was closed, so that its container did not sit idle for the whole review. This is a fresh session on the same branch: everything that session committed and pushed is checked out here. Read the branch before you write, then address the findings above.

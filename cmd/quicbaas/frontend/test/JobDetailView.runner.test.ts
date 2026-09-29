@@ -34,7 +34,7 @@ vi.mock('../src/stores/orchestrator.svelte.ts', () => ({
 }));
 
 vi.mock('../src/stores/router.svelte.ts', () => ({
-  routeAgentDetail: vi.fn(),
+  routeFleetNode: vi.fn(),
   routeJobs: vi.fn(),
   routeSessionDetail: vi.fn(),
   routeTaskDetail: vi.fn(),
@@ -44,6 +44,8 @@ vi.mock('../src/stores/router.svelte.ts', () => ({
 vi.mock('../src/stores/job-events.svelte.ts', () => ({
   startEventStream: vi.fn(),
   stopEventStream: vi.fn(),
+  retryEventStream: vi.fn(),
+  eventSubStore: { liveUpdatesUnavailable: () => false },
 }));
 
 vi.mock('../src/stores/toast.svelte.ts', () => ({ showToast: vi.fn() }));
@@ -66,7 +68,7 @@ vi.mock('../src/components/orchestrator/EventLog.svelte', () => ({ default: vi.f
 vi.mock('../src/components/orchestrator/BudgetGauge.svelte', () => ({ default: vi.fn() }));
 
 import JobDetailView from '../src/views/orchestrator/JobDetailView.svelte';
-import { routeAgentDetail } from '../src/stores/router.svelte.ts';
+import { routeFleetNode, routeSessionDetail } from '../src/stores/router.svelte.ts';
 
 /** MS is one millisecond in the server's Unix nanoseconds. */
 const MS = 1_000_000;
@@ -166,7 +168,7 @@ describe('JobDetailView — an sdlc job', () => {
     storeMock.jobs = [];
     storeMock.tasks = [];
     readmitTaskMock.mockClear();
-    vi.mocked(routeAgentDetail).mockClear();
+    vi.mocked(routeFleetNode).mockClear();
   });
 
   it('names the attempt and its budget instead of an iteration gauge', () => {
@@ -185,7 +187,7 @@ describe('JobDetailView — an sdlc job', () => {
     expect(link.getAttribute('href')).toBe('#/agents/agent-worker-04');
     link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     await Promise.resolve();
-    expect(vi.mocked(routeAgentDetail)).toHaveBeenCalledWith('agent-worker-04');
+    expect(vi.mocked(routeFleetNode)).toHaveBeenCalledWith('agent-worker-04');
   });
 
   it('falls back to the daemon when the work ran in-process', () => {
@@ -311,6 +313,20 @@ describe('JobDetailView — an sdlc job', () => {
     });
     const { container } = render(JobDetailView);
     expect(container.querySelector('[data-testid="worker-reply"]')).toBeNull();
+  });
+
+  it('badges its worker session as the lead and links it (go-quicbaas#863)', () => {
+    // The sdlc runner names its one session the lead, as the workflow runner
+    // names its lead agent's; before #863 it named none and the badge was
+    // structurally absent on every factory job.
+    render(JobDetailView);
+    const chips = screen.getByLabelText('Job sessions').querySelectorAll('a');
+    expect(chips.length).toBe(1);
+    expect(chips[0].getAttribute('href')).toBe('#/sessions/sess-worker-0001');
+    expect(chips[0].getAttribute('title')).toBe('Lead session sess-worker-0001');
+    expect(chips[0].textContent).toContain('lead');
+    (chips[0] as HTMLAnchorElement).click();
+    expect(vi.mocked(routeSessionDetail)).toHaveBeenCalledWith('sess-worker-0001');
   });
 
   it('offers no DAG tab, which belongs to the workflow runner', () => {

@@ -24,7 +24,10 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // registerAgentTools registers all agent orchestration tools with the registry.
@@ -100,7 +103,8 @@ func (r *ToolRegistry) registerAgentTools() {
 
 	r.addTool(ToolDefinition{
 		Name: "quicbaas_orchestrator_spawn",
-		Description: "Spawn a persistent, multi-turn ACP agent session on a backend with project context. " +
+		Description: "Spawn a persistent, multi-turn ACP agent session as a tenant Agent (agent_id), from a pool " +
+			"(pool_id, failing over along its Agents), or on a raw backend, with project context. " +
 			"Returns the session_id used by quicbaas_orchestrator_prompt / _status / _close.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -109,9 +113,21 @@ func (r *ToolRegistry) registerAgentTools() {
 					"type":        "string",
 					"description": "Tenant the session belongs to. Required.",
 				},
+				"agent_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant Agent the session runs as; it supplies backend, model and image. One of agent_id, pool_id or backend.",
+				},
+				"pool_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant pool the session runs from, failing over along its Agents. One of agent_id, pool_id or backend.",
+				},
+				"role": map[string]interface{}{
+					"type":        "string",
+					"description": "The kind of work the session does (general, coding, review, triage, lead, project_manager) for a pooled Agent's placement policy.",
+				},
 				"backend": map[string]interface{}{
 					"type":        "string",
-					"description": "Backend name to spawn the session on (e.g., 'claude', 'ollama'). Required.",
+					"description": "Backend name to spawn the session on (e.g., 'claude', 'ollama'). One of agent_id, pool_id or backend.",
 				},
 				"project_id": map[string]interface{}{
 					"type":        "string",
@@ -125,6 +141,10 @@ func (r *ToolRegistry) registerAgentTools() {
 					"type":        "string",
 					"description": "System prompt to configure the agent (optional)",
 				},
+				"prompt_append": map[string]interface{}{
+					"type":        "string",
+					"description": "Prompt material appended after the session's resolved prompt (system_prompt, else the Agent's, else its role's built-in charter). At most 64 KiB. Optional.",
+				},
 				"work_dir": map[string]interface{}{
 					"type":        "string",
 					"description": "Working directory for the agent process (optional, defaults to the project path)",
@@ -136,7 +156,7 @@ func (r *ToolRegistry) registerAgentTools() {
 				},
 				"host_affinity": map[string]interface{}{
 					"type":        "string",
-					"description": "Pin the session to a specific agent daemon by Name or Host. Optional.",
+					"description": "Pin the session to a specific fleet node daemon by Name or Host. Optional.",
 				},
 				"host_affinity_strict": map[string]interface{}{
 					"type":        "boolean",
@@ -186,7 +206,7 @@ func (r *ToolRegistry) registerAgentTools() {
 					"description": "MCP servers to attach to the session (optional)",
 				},
 			},
-			"required": []string{"tenant_id", "backend", "project_id"},
+			"required": []string{"tenant_id", "project_id"},
 		},
 	})
 
@@ -293,12 +313,40 @@ func (r *ToolRegistry) registerAgentTools() {
 	})
 
 	r.addTool(ToolDefinition{
+		Name: "quicbaas_orchestrator_spend_policy_get",
+		Description: "Read a tenant's own spend limits — sliding windows in tokens and/or list-price dollars over every " +
+			"turn charged to the tenant — and its live usage against each window. A tenant with no limits is unmetered.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{"type": "string", "description": "Tenant whose limits to read. Required."},
+			},
+			"required": []string{"tenant_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name: "quicbaas_orchestrator_spend_policy_set",
+		Description: "Replace a tenant's own spend limits. Limits with no windows make the tenant unmetered. " +
+			"The limits are stored and reported against the tenant's usage; admission does not enforce them yet.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{"type": "string", "description": "Tenant whose limits to set. Required."},
+				"limits":    spendLimitsSchema("The tenant's limits, replacing the stored ones"),
+			},
+			"required": []string{"tenant_id", "limits"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
 		Name: "quicbaas_orchestrator_cost",
-		Description: "Read one scope of the CONSUMPTION LEDGER: the tokens spent under it, the drill-down to the level below, " +
-			"and the spend policy of every pooled account that paid. The attribution chain is a PATH — " +
-			"tenant/project/task/job/session/round — so each level may be supplied only if every level above it is. " +
-			"cost_micros is accompanied by cost_measured, and while nothing prices a turn the flag is false and the figure " +
-			"is UNMEASURED, not free; report it as unavailable rather than as zero.",
+		Description: "Read one scope of the CONSUMPTION LEDGER: the tokens spent under it, their list-price equivalent and " +
+			"billed cost, the drill-down to the level below, and the spend policy of every pooled account that paid. The " +
+			"attribution chain is a PATH — tenant/project/task/job/session/round — so each level may be supplied only if " +
+			"every level above it is. from/to narrow it to a time range. Money is in micro-dollars: consult priced_entries " +
+			"and billed_entries before reporting a figure — none priced is UNMEASURED, not free. A tenant-level report " +
+			"also carries each subscription's monthly fee pro-rated over the range (subscription_fee_micros).",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -325,6 +373,22 @@ func (r *ToolRegistry) registerAgentTools() {
 				"round": map[string]interface{}{
 					"type":        "integer",
 					"description": "Narrow to one round (optional; requires session_id)",
+				},
+				"from": map[string]interface{}{
+					"type":        "string",
+					"description": "Only turns at or after this RFC 3339 instant (optional)",
+				},
+				"to": map[string]interface{}{
+					"type":        "string",
+					"description": "Only turns before this RFC 3339 instant (optional; requires from, which alone ranges up to now)",
+				},
+				"host": map[string]interface{}{
+					"type":        "string",
+					"description": "Only turns that ran on this host, as the report's hosts breakdown names it (optional; \"-\" for turns that name none)",
+				},
+				"agent": map[string]interface{}{
+					"type":        "string",
+					"description": "Only turns of sessions that ran as this tenant Agent (optional; \"-\" for raw-backend sessions). The report then carries the Agent's own spend limits and usage against each window",
 				},
 			},
 			"required": []string{"tenant_id"},
@@ -427,7 +491,7 @@ func (r *ToolRegistry) registerAgentTools() {
 				"project_id": filterSchemaProperty("Narrow the listing to one project's sessions."),
 				"job_id":     filterSchemaProperty("Narrow the listing to the sessions one job spawned."),
 				"runner":     filterSchemaProperty("Narrow the listing to the sessions whose job one runner drove — sdlc, review, triage, workflow — which is the ROLE the session played."),
-				"agent_id":   filterSchemaProperty("Narrow the listing to the sessions running on one fleet agent."),
+				"agent_id":   filterSchemaProperty("Narrow the listing to the sessions running on one fleet node."),
 			}, strings.Join(orchestration.SessionPageSpec().SortFields(), ", ")),
 			"required": []string{"tenant_id"},
 		},
@@ -520,8 +584,8 @@ func (r *ToolRegistry) registerAgentTools() {
 	// =========================================================================
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_agent_fleet_register",
-		Description: "Register an agent with the fleet for tracking and management",
+		Name:        "quicbaas_fleet_register",
+		Description: "Register a fleet node for tracking and management",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -531,15 +595,15 @@ func (r *ToolRegistry) registerAgentTools() {
 				},
 				"name": map[string]interface{}{
 					"type":        "string",
-					"description": "Agent name",
+					"description": "Fleet node name",
 				},
 				"host": map[string]interface{}{
 					"type":        "string",
 					"description": "Host address",
 				},
-				"agent_type": map[string]interface{}{
+				"node_type": map[string]interface{}{
 					"type":        "string",
-					"description": "Agent type (claude-code, codex, opencode)",
+					"description": "Fleet node type (e.g. agent-runtime, embedded)",
 				},
 				"backend": map[string]interface{}{
 					"type":        "string",
@@ -550,13 +614,13 @@ func (r *ToolRegistry) registerAgentTools() {
 					"description": "Working directory",
 				},
 			},
-			"required": []string{"tenant_id", "name", "host", "agent_type"},
+			"required": []string{"tenant_id", "name", "host", "node_type"},
 		},
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_agent_fleet_list",
-		Description: "List all agents registered in the fleet for a tenant with optional filters",
+		Name:        "quicbaas_fleet_list",
+		Description: "List every fleet node registered for a tenant, with optional filters",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": withPageProperties(map[string]interface{}{
@@ -570,21 +634,21 @@ func (r *ToolRegistry) registerAgentTools() {
 				},
 				"status": map[string]interface{}{
 					"type":        "string",
-					"description": "Filter by agent status (optional)",
+					"description": "Filter by fleet node status (optional)",
 				},
-				"agent_type": map[string]interface{}{
+				"node_type": map[string]interface{}{
 					"type":        "string",
-					"description": "Filter by agent type (optional)",
+					"description": "Filter by fleet node type (optional)",
 				},
-				"backend": filterSchemaProperty("Narrow the listing to the agents that SERVE this backend, as their primary or as one of their capabilities."),
-			}, strings.Join(orchestration.AgentPageSpec().SortFields(), ", ")),
+				"backend": filterSchemaProperty("Narrow the listing to the fleet nodes that SERVE this backend, as their primary or as one of their capabilities."),
+			}, strings.Join(orchestration.FleetNodePageSpec().SortFields(), ", ")),
 			"required": []string{"tenant_id"},
 		},
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_agent_fleet_status",
-		Description: "Get the status of a specific agent in the fleet",
+		Name:        "quicbaas_fleet_status",
+		Description: "Get the status of one fleet node",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -592,18 +656,18 @@ func (r *ToolRegistry) registerAgentTools() {
 					"type":        "string",
 					"description": "Tenant ID",
 				},
-				"agent_id": map[string]interface{}{
+				"node_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Agent ID",
+					"description": "Fleet node ID",
 				},
 			},
-			"required": []string{"tenant_id", "agent_id"},
+			"required": []string{"tenant_id", "node_id"},
 		},
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_agent_fleet_remove",
-		Description: "Remove an agent from the fleet registry",
+		Name:        "quicbaas_fleet_remove",
+		Description: "Remove a fleet node from the fleet registry",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -611,18 +675,18 @@ func (r *ToolRegistry) registerAgentTools() {
 					"type":        "string",
 					"description": "Tenant ID",
 				},
-				"agent_id": map[string]interface{}{
+				"node_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Agent ID",
+					"description": "Fleet node ID",
 				},
 			},
-			"required": []string{"tenant_id", "agent_id"},
+			"required": []string{"tenant_id", "node_id"},
 		},
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "quicbaas_agent_fleet_heartbeat",
-		Description: "Send a heartbeat for an agent to update its last-seen timestamp",
+		Name:        "quicbaas_fleet_heartbeat",
+		Description: "Send a heartbeat for a fleet node to update its last-seen timestamp",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -630,12 +694,12 @@ func (r *ToolRegistry) registerAgentTools() {
 					"type":        "string",
 					"description": "Tenant ID",
 				},
-				"agent_id": map[string]interface{}{
+				"node_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Agent ID",
+					"description": "Fleet node ID",
 				},
 			},
-			"required": []string{"tenant_id", "agent_id"},
+			"required": []string{"tenant_id", "node_id"},
 		},
 	})
 
@@ -653,14 +717,7 @@ func (r *ToolRegistry) registerAgentTools() {
 					"type":        "string",
 					"description": "High-level description of the work to be orchestrated",
 				},
-				"lead_backend": map[string]interface{}{
-					"type":        "string",
-					"description": "Backend for the lead orchestrator agent (optional)",
-				},
-				"lead_model": map[string]interface{}{
-					"type":        "string",
-					"description": "Model for the lead orchestrator agent (optional)",
-				},
+				"lead": agentRefSchema("The Agent or pool the lead runs as (optional; unset takes the project's default lead)."),
 				"project_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Project ID to scope the orchestration job (optional)",
@@ -673,6 +730,10 @@ func (r *ToolRegistry) registerAgentTools() {
 					"type":        "string",
 					"description": "Job runner that drives the job's states (optional, default: workflow)",
 				},
+				"prompt_append": map[string]interface{}{
+					"type":        "string",
+					"description": "Prompt material appended to every session the job spawns, the lead's included. At most 64 KiB. Optional.",
+				},
 			},
 			"required": []string{"description"},
 		},
@@ -684,6 +745,10 @@ func (r *ToolRegistry) registerAgentTools() {
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID. Optional; defaults to the caller's tenant.",
+				},
 				"job_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Job ID to query",
@@ -699,6 +764,10 @@ func (r *ToolRegistry) registerAgentTools() {
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID. Optional; defaults to the caller's tenant.",
+				},
 				"job_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Job ID to cancel",
@@ -714,6 +783,10 @@ func (r *ToolRegistry) registerAgentTools() {
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": withPageProperties(map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID. Optional; defaults to the caller's tenant.",
+				},
 				"task_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Narrow the listing to the attempts at one task. Optional; omit to list every job.",
@@ -736,7 +809,7 @@ func (r *ToolRegistry) registerAgentTools() {
 					"items":       map[string]interface{}{"type": "string"},
 					"description": "Narrow the listing to the named jobs — how a caller holding a page of sessions or tasks resolves the jobs they name in one call. Optional.",
 				},
-				"agent_id": filterSchemaProperty("Narrow the listing to the jobs dispatched to one fleet agent."),
+				"agent_id": filterSchemaProperty("Narrow the listing to the jobs dispatched to one fleet node."),
 			}, strings.Join(orchestration.JobPageSpec().SortFields(), ", ")),
 		},
 	})
@@ -747,6 +820,10 @@ func (r *ToolRegistry) registerAgentTools() {
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID. Optional; defaults to the caller's tenant.",
+				},
 				"subject": map[string]interface{}{
 					"type":        "string",
 					"description": "Short description of the work to be done. Required.",
@@ -777,11 +854,54 @@ func (r *ToolRegistry) registerAgentTools() {
 				},
 				"host_affinity": map[string]interface{}{
 					"type":        "string",
-					"description": "Pin auto-spawn to a specific agent daemon by Name or Host. Ignored when auto_spawn is false. Optional.",
+					"description": "Pin auto-spawn to a specific fleet node daemon by Name or Host. Ignored when auto_spawn is false. Optional.",
 				},
 				"runner": map[string]interface{}{
 					"type":        "string",
 					"description": "JobRunner that drives an attempt at the task. Empty means the engine's lead-driven 'workflow' runner; an unregistered name is refused. Optional.",
+				},
+				"prompt_append": map[string]interface{}{
+					"type":        "string",
+					"description": "Prompt material every attempt at the task carries to the sessions it spawns (the worker's, for a module runner). At most 64 KiB. Optional.",
+				},
+				"project_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The project the task belongs to, by ID (never its name). Optional.",
+				},
+				"source": map[string]interface{}{
+					"type":        "object",
+					"description": "Where the task came from, e.g. {kind: forge_issue, ref: owner/repo#N, url}. A source is held by one live task; a finished holder is superseded. Optional.",
+					"properties": map[string]interface{}{
+						"kind": map[string]interface{}{"type": "string"},
+						"ref":  map[string]interface{}{"type": "string"},
+						"url":  map[string]interface{}{"type": "string"},
+					},
+				},
+				"metadata": map[string]interface{}{
+					"type":                 "object",
+					"description":          "String metadata carried on the task. Optional.",
+					"additionalProperties": map[string]interface{}{"type": "string"},
+				},
+				"dependencies": map[string]interface{}{
+					"type":        "array",
+					"description": "Task IDs this task waits on. Optional.",
+					"items":       map[string]interface{}{"type": "string"},
+				},
+				"priority": map[string]interface{}{
+					"type":        "integer",
+					"description": "Dispatch priority; higher runs first. Optional.",
+				},
+				"attempt_budget": map[string]interface{}{
+					"type":        "integer",
+					"description": "How many attempts the task may spend; zero takes the default. Optional.",
+				},
+				"park": map[string]interface{}{
+					"type":        "object",
+					"description": "Create the task already parked for a person: {kind: needs_info|blocked|escalated, message}. Optional.",
+					"properties": map[string]interface{}{
+						"kind":    map[string]interface{}{"type": "string"},
+						"message": map[string]interface{}{"type": "string"},
+					},
 				},
 			},
 			"required": []string{"subject"},
@@ -794,6 +914,10 @@ func (r *ToolRegistry) registerAgentTools() {
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID. Optional; defaults to the caller's tenant.",
+				},
 				"task_id": map[string]interface{}{
 					"type":        "string",
 					"description": "ID of the task. Required.",
@@ -818,6 +942,10 @@ func (r *ToolRegistry) registerAgentTools() {
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID. Optional; defaults to the caller's tenant.",
+				},
 				"task_id": map[string]interface{}{
 					"type":        "string",
 					"description": "ID of the task. Required.",
@@ -828,11 +956,83 @@ func (r *ToolRegistry) registerAgentTools() {
 	})
 
 	r.addTool(ToolDefinition{
+		Name:        "quicbaas_orchestrator_attention_list",
+		Description: "List the attention inbox: every blocked task plus environmental alerts (agent offline, pooled credential erroring, barrier sealed, project idle) — everything only an operator can clear. Paged and faceted by project and kind.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID. Required.",
+				},
+				"project_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Restrict the listing to one project. Optional.",
+				},
+				"kind": map[string]interface{}{
+					"type":        "string",
+					"description": "Restrict the listing to one attention kind. Optional.",
+					"enum":        []string{"parked_task", "agent_offline", "account_error", "barrier_sealed", "project_idle"},
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Page size. Optional; server default 25, max 100.",
+				},
+				"offset": map[string]interface{}{
+					"type":        "integer",
+					"description": "How many records to skip. Optional.",
+				},
+				"sort": map[string]interface{}{
+					"type":        "string",
+					"description": "\"<field>\" or \"<field>:desc\". Optional.",
+				},
+				"q": map[string]interface{}{
+					"type":        "string",
+					"description": "Case-insensitive substring search. Optional.",
+				},
+			},
+			"required": []string{"tenant_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_orchestrator_attention_resolve",
+		Description: "Apply an operator's decision to one blocked task from the attention inbox: the ruling is posted to the task's forge issue, then the task is readmitted to the queue with its issue handed back to the factory (park labels off, trigger label on), closed and completed without being readmitted, park labels off (close_as_done), or left where it is (note). A note alone is also accepted on a live task that is not parked (pending, claimed, in progress): it posts the ruling and changes no state.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID. Required.",
+				},
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "ID of the blocked task. Required.",
+				},
+				"action": map[string]interface{}{
+					"type":        "string",
+					"description": "The resolution: approve_recommendation, answer, allow_another_round, close_as_done, readmit, note. Required.",
+					"enum":        []string{"approve_recommendation", "answer", "allow_another_round", "close_as_done", "readmit", "note"},
+				},
+				"answer": map[string]interface{}{
+					"type":        "string",
+					"description": "Free text ruling. Required for \"answer\" and \"note\"; optional context for \"close_as_done\" and optional round scope for \"allow_another_round\"; ignored otherwise.",
+				},
+			},
+			"required": []string{"tenant_id", "task_id", "action"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
 		Name:        "quicbaas_orchestrator_task_delete",
 		Description: "Delete an orchestration task, its artifacts, its claim mark and its source reservation, so the issue or ticket it was adopted from can be adopted again. Refused while a job holds a live lease on the task.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID. Optional; defaults to the caller's tenant.",
+				},
 				"task_id": map[string]interface{}{
 					"type":        "string",
 					"description": "ID of the task. Required.",
@@ -848,6 +1048,10 @@ func (r *ToolRegistry) registerAgentTools() {
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID. Optional; defaults to the caller's tenant.",
+				},
 				"task_id": map[string]interface{}{
 					"type":        "string",
 					"description": "ID of the task. Required.",
@@ -867,6 +1071,10 @@ func (r *ToolRegistry) registerAgentTools() {
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"tenant_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Tenant ID. Optional; defaults to the caller's tenant.",
+				},
 				"task_id": map[string]interface{}{
 					"type":        "string",
 					"description": "ID of the task. Required.",
@@ -878,7 +1086,7 @@ func (r *ToolRegistry) registerAgentTools() {
 
 	r.addTool(ToolDefinition{
 		Name: "quicbaas_orchestrator_inference",
-		Description: "Run a stateless inference call against a fleet-resident agent daemon. " +
+		Description: "Run a stateless inference call against a fleet-resident fleet node daemon. " +
 			"Routes the prompt to the named backend without requiring a prior session. " +
 			"Returns the aggregated text response.",
 		InputSchema: map[string]interface{}{
@@ -902,7 +1110,7 @@ func (r *ToolRegistry) registerAgentTools() {
 				},
 				"host_affinity": map[string]interface{}{
 					"type":        "string",
-					"description": "Pin the call to a specific agent daemon by Name or Host. Optional.",
+					"description": "Pin the call to a specific fleet node daemon by Name or Host. Optional.",
 				},
 				"gpu_required": map[string]interface{}{
 					"type":        "boolean",
@@ -1029,8 +1237,9 @@ func (r *ToolRegistry) executeAgentSpawn(ctx context.Context, args map[string]in
 	}
 
 	backend := getString(args, "backend")
-	if backend == "" {
-		return nil, api.NewRequiredFieldError("backend")
+	agentID, poolID := getString(args, "agent_id"), getString(args, "pool_id")
+	if backend == "" && agentID == "" && poolID == "" {
+		return nil, api.NewRequiredFieldError("agent_id, pool_id or backend")
 	}
 
 	projectID := getString(args, "project_id")
@@ -1042,10 +1251,14 @@ func (r *ToolRegistry) executeAgentSpawn(ctx context.Context, args map[string]in
 	gpuRequired := getBool(args, "gpu_required")
 
 	req := &orchestration.SpawnSessionRequest{
+		AgentID:            agentID,
+		PoolID:             poolID,
+		Role:               orchestration.AgentRole(getString(args, "role")),
 		Backend:            backend,
 		ProjectID:          projectID,
 		Model:              getString(args, "model"),
 		SystemPrompt:       getString(args, "system_prompt"),
+		PromptAppend:       getString(args, "prompt_append"),
 		WorkDir:            getString(args, "work_dir"),
 		HostAffinity:       hostAffinity,
 		HostAffinityStrict: getBool(args, "host_affinity_strict"),
@@ -1314,13 +1527,19 @@ func (r *ToolRegistry) executeAgentRotateAccount(ctx context.Context, args map[s
 // because silently dropping a hold window would leave the exhausted account
 // back in the pool immediately.
 func parseRotateAvailableAt(args map[string]interface{}) (time.Time, error) {
-	raw := getString(args, "available_at")
+	return parseOptionalInstant(args, "available_at")
+}
+
+// parseOptionalInstant reads an optional RFC 3339 argument: absent or empty is
+// the zero time, and a malformed value is refused rather than ignored.
+func parseOptionalInstant(args map[string]interface{}, name string) (time.Time, error) {
+	raw := getString(args, name)
 	if raw == "" {
 		return time.Time{}, nil
 	}
-	parsed, parseErr := time.Parse(time.RFC3339, raw)
+	parsed, parseErr := time.Parse(time.RFC3339Nano, raw)
 	if parseErr != nil {
-		return time.Time{}, api.NewInvalidFormatError("available_at", parseErr)
+		return time.Time{}, api.NewInvalidFormatError(name, parseErr)
 	}
 	return parsed.UTC(), nil
 }
@@ -1526,8 +1745,8 @@ func (r *ToolRegistry) executeAgentBroadcast(ctx context.Context, args map[strin
 // Fleet Management Execution Handlers
 // =============================================================================
 
-// executeAgentFleetRegister registers an agent with the fleet registry.
-func (r *ToolRegistry) executeAgentFleetRegister(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+// executeFleetRegister registers a node in the fleet registry.
+func (r *ToolRegistry) executeFleetRegister(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	agentSvc, err := r.getAgentService()
 	if err != nil {
 		return nil, err
@@ -1548,35 +1767,35 @@ func (r *ToolRegistry) executeAgentFleetRegister(ctx context.Context, args map[s
 		return nil, api.NewRequiredFieldError("host")
 	}
 
-	agentType := getString(args, "agent_type")
-	if agentType == "" {
-		return nil, api.NewRequiredFieldError("agent_type")
+	nodeType := getString(args, "node_type")
+	if nodeType == "" {
+		return nil, api.NewRequiredFieldError("node_type")
 	}
 
-	req := &orchestration.RegisterAgentRequest{
-		TenantID:  tenantID,
-		Name:      name,
-		Host:      host,
-		AgentType: agentType,
-		Backend:   getString(args, "backend"),
-		WorkDir:   getString(args, "work_dir"),
+	req := &orchestration.RegisterFleetNodeRequest{
+		TenantID: tenantID,
+		Name:     name,
+		Host:     host,
+		NodeType: nodeType,
+		Backend:  getString(args, "backend"),
+		WorkDir:  getString(args, "work_dir"),
 	}
 
 	ctx = orchestration.ContextWithTenant(ctx, tenantID)
 
-	resp, err := agentSvc.RegisterAgent(ctx, req)
+	resp, err := agentSvc.RegisterFleetNode(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 
 	return marshalResult(map[string]interface{}{
-		"agent":     resp.Agent,
+		"node":      resp.Node,
 		"timestamp": time.Now().Format(time.RFC3339Nano),
 	})
 }
 
-// executeAgentFleetList lists all agents in the fleet for a tenant.
-func (r *ToolRegistry) executeAgentFleetList(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+// executeFleetList lists every fleet node for a tenant.
+func (r *ToolRegistry) executeFleetList(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	agentSvc, err := r.getAgentService()
 	if err != nil {
 		return nil, err
@@ -1587,32 +1806,32 @@ func (r *ToolRegistry) executeAgentFleetList(ctx context.Context, args map[strin
 		return nil, api.NewRequiredFieldError("tenant_id")
 	}
 
-	filter := &orchestration.AgentFilter{
-		Host:      getString(args, "host"),
-		AgentType: getString(args, "agent_type"),
-		Backend:   getString(args, "backend"),
+	filter := &orchestration.FleetNodeFilter{
+		Host:     getString(args, "host"),
+		NodeType: getString(args, "node_type"),
+		Backend:  getString(args, "backend"),
 	}
 
 	if status := getString(args, "status"); status != "" {
-		filter.Status = orchestration.AgentStatus(status)
+		filter.Status = orchestration.FleetNodeStatus(status)
 	}
 
 	ctx = orchestration.ContextWithTenant(ctx, tenantID)
 
-	agents, err := agentSvc.ListAgentsPage(ctx, tenantID, filter, pageFromArgs(args))
+	nodes, err := agentSvc.ListFleetNodesPage(ctx, tenantID, filter, pageFromArgs(args))
 	if err != nil {
 		return nil, err
 	}
 
-	return marshalResult(pageResultFields(agents, map[string]interface{}{
-		"agents":    agents.Items,
-		"count":     len(agents.Items),
+	return marshalResult(pageResultFields(nodes, map[string]interface{}{
+		"nodes":     nodes.Items,
+		"count":     len(nodes.Items),
 		"timestamp": time.Now().Format(time.RFC3339Nano),
 	}))
 }
 
-// executeAgentFleetStatus retrieves the status of a specific fleet agent.
-func (r *ToolRegistry) executeAgentFleetStatus(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+// executeFleetStatus retrieves the status of one fleet node.
+func (r *ToolRegistry) executeFleetStatus(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	agentSvc, err := r.getAgentService()
 	if err != nil {
 		return nil, err
@@ -1623,26 +1842,26 @@ func (r *ToolRegistry) executeAgentFleetStatus(ctx context.Context, args map[str
 		return nil, api.NewRequiredFieldError("tenant_id")
 	}
 
-	agentID := getString(args, "agent_id")
-	if agentID == "" {
-		return nil, api.NewRequiredFieldError("agent_id")
+	nodeID := getString(args, "node_id")
+	if nodeID == "" {
+		return nil, api.NewRequiredFieldError("node_id")
 	}
 
 	ctx = orchestration.ContextWithTenant(ctx, tenantID)
 
-	agent, err := agentSvc.GetAgent(ctx, tenantID, agentID)
+	node, err := agentSvc.GetFleetNode(ctx, tenantID, nodeID)
 	if err != nil {
 		return nil, err
 	}
 
 	return marshalResult(map[string]interface{}{
-		"agent":     agent,
+		"node":      node,
 		"timestamp": time.Now().Format(time.RFC3339Nano),
 	})
 }
 
-// executeAgentFleetRemove removes an agent from the fleet registry.
-func (r *ToolRegistry) executeAgentFleetRemove(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+// executeFleetRemove removes a node from the fleet registry.
+func (r *ToolRegistry) executeFleetRemove(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	agentSvc, err := r.getAgentService()
 	if err != nil {
 		return nil, err
@@ -1653,27 +1872,27 @@ func (r *ToolRegistry) executeAgentFleetRemove(ctx context.Context, args map[str
 		return nil, api.NewRequiredFieldError("tenant_id")
 	}
 
-	agentID := getString(args, "agent_id")
-	if agentID == "" {
-		return nil, api.NewRequiredFieldError("agent_id")
+	nodeID := getString(args, "node_id")
+	if nodeID == "" {
+		return nil, api.NewRequiredFieldError("node_id")
 	}
 
 	ctx = orchestration.ContextWithTenant(ctx, tenantID)
 
-	err = agentSvc.RemoveAgent(ctx, tenantID, agentID)
+	err = agentSvc.RemoveFleetNode(ctx, tenantID, nodeID)
 	if err != nil {
 		return nil, err
 	}
 
 	return marshalResult(map[string]interface{}{
 		"removed":   true,
-		"agent_id":  agentID,
+		"node_id":   nodeID,
 		"timestamp": time.Now().Format(time.RFC3339Nano),
 	})
 }
 
-// executeAgentFleetHeartbeat sends a heartbeat for a fleet agent.
-func (r *ToolRegistry) executeAgentFleetHeartbeat(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+// executeFleetHeartbeat sends a heartbeat for a fleet node.
+func (r *ToolRegistry) executeFleetHeartbeat(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	agentSvc, err := r.getAgentService()
 	if err != nil {
 		return nil, err
@@ -1684,23 +1903,23 @@ func (r *ToolRegistry) executeAgentFleetHeartbeat(ctx context.Context, args map[
 		return nil, api.NewRequiredFieldError("tenant_id")
 	}
 
-	agentID := getString(args, "agent_id")
-	if agentID == "" {
-		return nil, api.NewRequiredFieldError("agent_id")
+	nodeID := getString(args, "node_id")
+	if nodeID == "" {
+		return nil, api.NewRequiredFieldError("node_id")
 	}
 
 	ctx = orchestration.ContextWithTenant(ctx, tenantID)
 
 	// The MCP heartbeat tool carries no served-backend list, so it observes
 	// nothing and reconciles nothing.
-	err = agentSvc.AgentHeartbeat(ctx, tenantID, agentID, nil)
+	err = agentSvc.FleetNodeHeartbeat(ctx, tenantID, nodeID, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	return marshalResult(map[string]interface{}{
 		"acknowledged": true,
-		"agent_id":     agentID,
+		"node_id":      nodeID,
 		"timestamp":    time.Now().Format(time.RFC3339Nano),
 	})
 }
@@ -1723,11 +1942,11 @@ func (r *ToolRegistry) executeOrchestratorStartJob(ctx context.Context, args map
 
 	req := &orchestration.StartJobRequest{
 		Description:   description,
-		LeadBackend:   getString(args, "lead_backend"),
-		LeadModel:     getString(args, "lead_model"),
+		Lead:          getAgentRef(args, "lead"),
 		ProjectID:     getString(args, "project_id"),
 		MaxIterations: getInt(args, "max_iterations"),
 		Runner:        getString(args, "runner"),
+		PromptAppend:  getString(args, "prompt_append"),
 	}
 
 	resp, err := agentSvc.StartJob(ctx, req)
@@ -1753,7 +1972,10 @@ func (r *ToolRegistry) executeOrchestratorGetJobStatus(ctx context.Context, args
 		return nil, api.NewRequiredFieldError("job_id")
 	}
 
-	tenantID := orchestration.TenantFromContext(ctx)
+	ctx, tenantID, err := orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
 
 	jobStatus, err := agentSvc.GetJobStatus(ctx, tenantID, jobID)
 	if err != nil {
@@ -1829,7 +2051,10 @@ func (r *ToolRegistry) executeOrchestratorTaskBlock(ctx context.Context, args ma
 		return nil, api.NewRequiredFieldError("reason")
 	}
 
-	tenantID := orchestration.TenantFromContext(ctx)
+	ctx, tenantID, err := orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
 
 	if err := agentSvc.BlockTask(ctx, tenantID, taskID, orchestration.TaskBlockKind(kind), reason); err != nil {
 		return nil, err
@@ -1855,7 +2080,10 @@ func (r *ToolRegistry) executeOrchestratorTaskReadmit(ctx context.Context, args 
 		return nil, api.NewRequiredFieldError("task_id")
 	}
 
-	tenantID := orchestration.TenantFromContext(ctx)
+	ctx, tenantID, err := orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
 
 	if err := agentSvc.ReadmitTask(ctx, tenantID, taskID); err != nil {
 		return nil, err
@@ -1866,6 +2094,74 @@ func (r *ToolRegistry) executeOrchestratorTaskReadmit(ctx context.Context, args 
 		"readmitted": true,
 		"timestamp":  time.Now().Format(time.RFC3339Nano),
 	})
+}
+
+// executeOrchestratorAttentionList handles the
+// quicbaas_orchestrator_attention_list tool.
+func (r *ToolRegistry) executeOrchestratorAttentionList(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	svc, err := r.getSDLCService()
+	if err != nil {
+		return nil, err
+	}
+	attention := svc.Attention()
+	if attention == nil {
+		return nil, api.NewServiceUnavailableError("sdlc")
+	}
+
+	ctx, tenantID, err := orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	filter := sdlc.AttentionFilter{
+		ProjectID: getString(args, "project_id"),
+		Kind:      sdlc.AttentionKind(getString(args, "kind")),
+	}
+	page := &orchestration.Page{
+		Limit: getInt(args, "limit"), Offset: getInt(args, "offset"),
+		Sort: getString(args, "sort"), Query: getString(args, "q"),
+	}
+
+	result, err := attention.List(ctx, tenantID, filter, page)
+	if err != nil {
+		return nil, err
+	}
+	envelope := result.Envelope("items")
+	envelope["count"] = len(result.Items)
+	return marshalResult(envelope)
+}
+
+// executeOrchestratorAttentionResolve handles the
+// quicbaas_orchestrator_attention_resolve tool.
+func (r *ToolRegistry) executeOrchestratorAttentionResolve(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	svc, err := r.getSDLCService()
+	if err != nil {
+		return nil, err
+	}
+	attention := svc.Attention()
+	if attention == nil {
+		return nil, api.NewServiceUnavailableError("sdlc")
+	}
+
+	taskID := getString(args, "task_id")
+	if taskID == "" {
+		return nil, api.NewRequiredFieldError("task_id")
+	}
+	action := getString(args, "action")
+	if action == "" {
+		return nil, api.NewRequiredFieldError("action")
+	}
+
+	ctx, tenantID, err := orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	item, err := attention.Resolve(ctx, tenantID, taskID, sdlc.AttentionResolution{
+		Action: sdlc.AttentionAction(action), Answer: getString(args, "answer"),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(item)
 }
 
 // executeOrchestratorTaskDelete handles the quicbaas_orchestrator_task_delete tool.
@@ -1880,7 +2176,10 @@ func (r *ToolRegistry) executeOrchestratorTaskDelete(ctx context.Context, args m
 		return nil, api.NewRequiredFieldError("task_id")
 	}
 
-	tenantID := orchestration.TenantFromContext(ctx)
+	ctx, tenantID, err := orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
 
 	if err := agentSvc.DeleteTask(ctx, tenantID, taskID); err != nil {
 		return nil, err
@@ -1905,7 +2204,10 @@ func (r *ToolRegistry) executeOrchestratorCancelJob(ctx context.Context, args ma
 		return nil, api.NewRequiredFieldError("job_id")
 	}
 
-	tenantID := orchestration.TenantFromContext(ctx)
+	ctx, tenantID, err := orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
 
 	err = agentSvc.CancelJob(ctx, tenantID, jobID)
 	if err != nil {
@@ -1927,7 +2229,10 @@ func (r *ToolRegistry) executeOrchestratorListJobs(ctx context.Context, args map
 		return nil, err
 	}
 
-	tenantID := orchestration.TenantFromContext(ctx)
+	ctx, tenantID, err := orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
 
 	// A STATE THE ENGINE DOES NOT HAVE IS REFUSED HERE TOO. The model sends
 	// the same names REST does and must meet the same refusal, or a tool call
@@ -1988,6 +2293,35 @@ func (r *ToolRegistry) executeOrchestratorListJobs(ctx context.Context, args map
 
 // executeOrchestratorTaskCreate creates an orchestration task, optionally
 // dispatching it as a one-shot job via auto-spawn.
+// taskCreateObjects decodes task_create's object arguments — the source and
+// the park — into req, the same shapes the REST body carries. A present
+// argument that is not an object is refused rather than dropped.
+func taskCreateObjects(args map[string]interface{}, req *orchestration.CreateTaskRequest) error {
+	if raw, present := args["source"]; present && raw != nil {
+		obj, ok := raw.(map[string]interface{})
+		if !ok {
+			return api.NewValidationError("source", "must be an object {kind, ref, url}")
+		}
+		var source orchestration.TaskSourceRef
+		if err := parseJSONObject(obj, &source); err != nil {
+			return api.NewValidationError("source", err.Error())
+		}
+		req.Source = &source
+	}
+	if raw, present := args["park"]; present && raw != nil {
+		obj, ok := raw.(map[string]interface{})
+		if !ok {
+			return api.NewValidationError("park", "must be an object {kind, message}")
+		}
+		var park orchestration.BlockReason
+		if err := parseJSONObject(obj, &park); err != nil {
+			return api.NewValidationError("park", err.Error())
+		}
+		req.Park = &park
+	}
+	return nil
+}
+
 func (r *ToolRegistry) executeOrchestratorTaskCreate(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	agentSvc, err := r.getAgentService()
 	if err != nil {
@@ -1999,7 +2333,10 @@ func (r *ToolRegistry) executeOrchestratorTaskCreate(ctx context.Context, args m
 		return nil, api.NewRequiredFieldError("subject")
 	}
 
-	tenantID := orchestration.TenantFromContext(ctx)
+	ctx, tenantID, err := orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
 
 	req := &orchestration.CreateTaskRequest{
 		TenantID:     tenantID,
@@ -2012,6 +2349,16 @@ func (r *ToolRegistry) executeOrchestratorTaskCreate(ctx context.Context, args m
 		GpuRequired:  getBool(args, "gpu_required"),
 		HostAffinity: getString(args, "host_affinity"),
 		Runner:       getString(args, "runner"),
+		PromptAppend: getString(args, "prompt_append"),
+
+		ProjectID:     getString(args, "project_id"),
+		Metadata:      getStringMap(args, "metadata"),
+		Dependencies:  getStringSlice(args, "dependencies"),
+		Priority:      getInt(args, "priority"),
+		AttemptBudget: getInt(args, "attempt_budget"),
+	}
+	if err := taskCreateObjects(args, req); err != nil {
+		return nil, err
 	}
 
 	task, createErr := agentSvc.CreateTask(ctx, req)
@@ -2054,7 +2401,10 @@ func (r *ToolRegistry) executeTaskGetArtifact(ctx context.Context, args map[stri
 		return nil, api.NewRequiredFieldError("name")
 	}
 
-	tenantID := orchestration.TenantFromContext(ctx)
+	ctx, tenantID, err := orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
 	artifact, getErr := agentSvc.GetTaskArtifact(ctx, tenantID, taskID, name)
 	if getErr != nil {
 		return nil, getErr
@@ -2087,7 +2437,10 @@ func (r *ToolRegistry) executeTaskListArtifacts(ctx context.Context, args map[st
 		return nil, api.NewRequiredFieldError("task_id")
 	}
 
-	tenantID := orchestration.TenantFromContext(ctx)
+	ctx, tenantID, err := orchestratorTenantContext(ctx, args)
+	if err != nil {
+		return nil, err
+	}
 	artifacts, listErr := agentSvc.ListTaskArtifacts(ctx, tenantID, taskID)
 	if listErr != nil {
 		return nil, listErr
@@ -2124,10 +2477,32 @@ func (r *ToolRegistry) executeTaskListArtifacts(ctx context.Context, args map[st
 // which the orchestrator's tenant guard does not read. Every session tool
 // therefore takes an explicit tenant_id argument, exactly as the fleet and
 // project tools do, and re-stamps it with orchestration.ContextWithTenant so
-// the guard (and the embedded-agent gRPC backend behind it) observes a
+// the guard (and the embedded-fleet-node gRPC backend behind it) observes a
 // non-empty tenant on every code path.
 func sessionTenantContext(ctx context.Context, args map[string]interface{}) (context.Context, string, error) {
 	tenantID := getString(args, "tenant_id")
+	if tenantID == "" {
+		return ctx, "", api.NewRequiredFieldError("tenant_id")
+	}
+	return orchestration.ContextWithTenant(ctx, tenantID), tenantID, nil
+}
+
+// orchestratorTenantContext resolves the tenant of a task, job, artifact or
+// attention tool the way REST's resolveOrchestratorTenant does: an explicit
+// tenant_id argument names it, and without one the caller's own tenant
+// binding does. The result is stamped with orchestration.ContextWithTenant,
+// because the MCP gate injects the caller's tenant under the iam key only and
+// the orchestrator's tenant guard reads neither the argument nor that key —
+// reading the orchestration key alone left these tools answering "tenant ID
+// required" for every caller, even one that passed tenant_id.
+func orchestratorTenantContext(ctx context.Context, args map[string]interface{}) (context.Context, string, error) {
+	tenantID := getString(args, "tenant_id")
+	if tenantID == "" {
+		tenantID = iam.TenantFromContext(ctx)
+	}
+	if tenantID == "" {
+		tenantID = orchestration.TenantFromContext(ctx)
+	}
 	if tenantID == "" {
 		return ctx, "", api.NewRequiredFieldError("tenant_id")
 	}
@@ -2276,6 +2651,8 @@ func (r *ToolRegistry) executeAgentCost(ctx context.Context, args map[string]int
 		TaskID:    getString(args, "task_id"),
 		JobID:     getString(args, "job_id"),
 		SessionID: getString(args, "session_id"),
+		Host:      getString(args, "host"),
+		Agent:     getString(args, "agent"),
 	}
 	// Presence, not value: round 0 is a real level, and getInt alone cannot
 	// tell it from "every round".
@@ -2283,8 +2660,63 @@ func (r *ToolRegistry) executeAgentCost(ctx context.Context, args map[string]int
 		req.Round = getInt(args, "round")
 		req.RoundSet = true
 	}
+	if req.From, err = parseOptionalInstant(args, "from"); err != nil {
+		return nil, err
+	}
+	if req.To, err = parseOptionalInstant(args, "to"); err != nil {
+		return nil, err
+	}
 
 	report, err := orchestration.ReadSpendReport(ctx, orchestration.SpendSourcesOf(accessor), req)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(report)
+}
+
+func (r *ToolRegistry) tenantSpendSources(ctx context.Context, args map[string]interface{}) (context.Context, string, service.TenantSpendPolicySource, error) {
+	agentSvc, err := r.getAgentService()
+	if err != nil {
+		return ctx, "", nil, err
+	}
+	ctx, tenantID, err := sessionTenantContext(ctx, args)
+	if err != nil {
+		return ctx, "", nil, err
+	}
+	accessor, ok := agentSvc.(service.TenantSpendPolicySource)
+	if !ok {
+		return ctx, "", nil, api.NewServiceUnavailableError("tenant spend policy")
+	}
+	return ctx, tenantID, accessor, nil
+}
+
+// executeTenantSpendPolicyGet handles quicbaas_orchestrator_spend_policy_get.
+func (r *ToolRegistry) executeTenantSpendPolicyGet(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	ctx, tenantID, accessor, err := r.tenantSpendSources(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	report, err := service.GetTenantSpendPolicy(ctx, accessor, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	return marshalResult(report)
+}
+
+// executeTenantSpendPolicySet handles quicbaas_orchestrator_spend_policy_set.
+func (r *ToolRegistry) executeTenantSpendPolicySet(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	ctx, tenantID, accessor, err := r.tenantSpendSources(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	limits, present, err := getSpendLimits(args, "limits")
+	if err != nil {
+		return nil, err
+	}
+	if !present {
+		return nil, api.NewRequiredFieldError("limits")
+	}
+	report, err := service.SetTenantSpendPolicy(ctx, accessor, tenantID, limits)
 	if err != nil {
 		return nil, err
 	}
@@ -2312,6 +2744,8 @@ func isAgentTool(name string) bool {
 		"quicbaas_orchestrator_session_history",
 		"quicbaas_orchestrator_session_conversation",
 		"quicbaas_orchestrator_cost",
+		"quicbaas_orchestrator_spend_policy_get",
+		"quicbaas_orchestrator_spend_policy_set",
 		"quicbaas_orchestrator_close",
 		"quicbaas_orchestrator_rotate_account",
 		"quicbaas_orchestrator_list_sessions",
@@ -2320,11 +2754,11 @@ func isAgentTool(name string) bool {
 		"quicbaas_orchestrator_decompose",
 		"quicbaas_orchestrator_health",
 		"quicbaas_orchestrator_broadcast",
-		"quicbaas_agent_fleet_register",
-		"quicbaas_agent_fleet_list",
-		"quicbaas_agent_fleet_status",
-		"quicbaas_agent_fleet_remove",
-		"quicbaas_agent_fleet_heartbeat",
+		"quicbaas_fleet_register",
+		"quicbaas_fleet_list",
+		"quicbaas_fleet_status",
+		"quicbaas_fleet_remove",
+		"quicbaas_fleet_heartbeat",
 		"quicbaas_orchestrator_start_job",
 		"quicbaas_orchestrator_get_job_status",
 		"quicbaas_orchestrator_cancel_job",
@@ -2333,6 +2767,8 @@ func isAgentTool(name string) bool {
 		"quicbaas_orchestrator_task_block",
 		"quicbaas_orchestrator_task_readmit",
 		"quicbaas_orchestrator_task_delete",
+		"quicbaas_orchestrator_attention_list",
+		"quicbaas_orchestrator_attention_resolve",
 		"quicbaas_task_get_artifact",
 		"quicbaas_task_list_artifacts",
 		"quicbaas_orchestrator_inference":
@@ -2363,6 +2799,10 @@ func (r *ToolRegistry) executeAgentTool(ctx context.Context, name string, args m
 		return r.executeAgentSessionConversation(ctx, args)
 	case "quicbaas_orchestrator_cost":
 		return r.executeAgentCost(ctx, args)
+	case "quicbaas_orchestrator_spend_policy_get":
+		return r.executeTenantSpendPolicyGet(ctx, args)
+	case "quicbaas_orchestrator_spend_policy_set":
+		return r.executeTenantSpendPolicySet(ctx, args)
 	case "quicbaas_orchestrator_close":
 		return r.executeAgentClose(ctx, args)
 	case "quicbaas_orchestrator_rotate_account":
@@ -2379,16 +2819,16 @@ func (r *ToolRegistry) executeAgentTool(ctx context.Context, name string, args m
 		return r.executeAgentHealth(ctx, args)
 	case "quicbaas_orchestrator_broadcast":
 		return r.executeAgentBroadcast(ctx, args)
-	case "quicbaas_agent_fleet_register":
-		return r.executeAgentFleetRegister(ctx, args)
-	case "quicbaas_agent_fleet_list":
-		return r.executeAgentFleetList(ctx, args)
-	case "quicbaas_agent_fleet_status":
-		return r.executeAgentFleetStatus(ctx, args)
-	case "quicbaas_agent_fleet_remove":
-		return r.executeAgentFleetRemove(ctx, args)
-	case "quicbaas_agent_fleet_heartbeat":
-		return r.executeAgentFleetHeartbeat(ctx, args)
+	case "quicbaas_fleet_register":
+		return r.executeFleetRegister(ctx, args)
+	case "quicbaas_fleet_list":
+		return r.executeFleetList(ctx, args)
+	case "quicbaas_fleet_status":
+		return r.executeFleetStatus(ctx, args)
+	case "quicbaas_fleet_remove":
+		return r.executeFleetRemove(ctx, args)
+	case "quicbaas_fleet_heartbeat":
+		return r.executeFleetHeartbeat(ctx, args)
 	case "quicbaas_orchestrator_start_job":
 		return r.executeOrchestratorStartJob(ctx, args)
 	case "quicbaas_orchestrator_get_job_status":
@@ -2405,6 +2845,10 @@ func (r *ToolRegistry) executeAgentTool(ctx context.Context, name string, args m
 		return r.executeOrchestratorTaskReadmit(ctx, args)
 	case "quicbaas_orchestrator_task_delete":
 		return r.executeOrchestratorTaskDelete(ctx, args)
+	case "quicbaas_orchestrator_attention_list":
+		return r.executeOrchestratorAttentionList(ctx, args)
+	case "quicbaas_orchestrator_attention_resolve":
+		return r.executeOrchestratorAttentionResolve(ctx, args)
 	case "quicbaas_task_get_artifact":
 		return r.executeTaskGetArtifact(ctx, args)
 	case "quicbaas_task_list_artifacts":

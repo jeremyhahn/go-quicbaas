@@ -468,7 +468,7 @@
 {#snippet pagerControls(place: 'top' | 'bottom')}
   {@const suffix = place === 'top' ? '' : ' (bottom)'}
   <div
-    class="flex items-center justify-between gap-2 flex-wrap text-xs text-base-content/50"
+    class="flex flex-wrap items-center justify-between gap-2 text-xs tabular-nums text-base-content/60"
     data-testid="data-table-pager-{place}"
   >
     <span data-testid={place === 'top' ? 'data-table-range' : 'data-table-range-bottom'}>
@@ -480,7 +480,7 @@
         <label class="flex items-center gap-1">
           <span>Rows</span>
           <select
-            class="select select-bordered select-xs"
+            class="select select-xs w-16"
             aria-label="Rows per page"
             data-testid="data-table-page-size"
             value={size}
@@ -542,7 +542,7 @@
       {#if searchable}
         <input
           type="search"
-          class="input input-bordered input-sm w-full max-w-xs"
+          class="input input-sm w-full bg-base-100 sm:max-w-xs"
           placeholder={searchPlaceholder}
           aria-label={searchLabel}
           data-testid="data-table-search"
@@ -568,17 +568,17 @@
 
   {@render pagerControls('top')}
 
-  <div class="overflow-x-auto rounded-box border border-base-300/50">
-    <table class="table table-sm table-zebra w-full" aria-label={ariaLabel || undefined}>
+  <div class="overflow-x-auto rounded-box border border-base-300/80 bg-base-100">
+    <table class="table table-sm table-zebra w-full" aria-label={ariaLabel || undefined} aria-busy={busy}>
       <thead>
-        <tr class="bg-base-200/80 text-xs uppercase tracking-wider text-base-content/50">
+        <tr class="bg-base-200/70">
           {#each columns as column (column.key)}
             {@const direction = sortState(column.key)}
             <th class={column.headerClass ?? ''} aria-sort={ariaSort(column.key)}>
               {#if column.sortable}
                 <button
                   type="button"
-                  class="inline-flex items-center gap-1 font-semibold uppercase tracking-wider hover:text-base-content group"
+                  class="group inline-flex items-center gap-1 font-semibold hover:text-primary"
                   class:text-base-content={direction !== 'none'}
                   onclick={() => toggleSort(column.key)}
                   aria-label="Sort by {column.label}"
@@ -609,11 +609,23 @@
       </thead>
       <tbody>
         {#if busy}
+          <!-- A few placeholder rows the shape of the real ones, so the table
+               does not collapse and re-expand when the answer arrives. -->
           <tr>
-            <td colspan={columns.length} class="text-center py-8">
-              <span class="loading loading-spinner loading-sm text-primary"></span>
+            <td colspan={columns.length} class="py-3">
+              <span class="flex items-center gap-2 text-xs text-base-content/60">
+                <span class="loading loading-spinner loading-xs text-primary"></span>
+                Loading…
+              </span>
             </td>
           </tr>
+          {#each [0, 1, 2] as placeholder (placeholder)}
+            <tr aria-hidden="true">
+              {#each columns as column (column.key)}
+                <td><div class="skeleton h-3 rounded-sm {placeholder === 1 ? 'w-2/3' : 'w-4/5'}"></div></td>
+              {/each}
+            </tr>
+          {/each}
         {:else if visible.length === 0}
           <tr>
             <td colspan={columns.length}>
@@ -624,11 +636,11 @@
                   here, or inviting them to create their first one, would be a
                   claim about data nobody managed to read.
                 -->
-                <div class="text-center py-8 text-sm text-base-content/40" data-testid="data-table-unread">
+                <div class="py-10 text-center text-sm text-base-content/60" data-testid="data-table-unread">
                   Nothing loaded.
                 </div>
               {:else if hasRows || filtered || narrowed}
-                <div class="text-center py-8 text-sm text-base-content/40" data-testid="data-table-no-match">
+                <div class="py-10 text-center text-sm text-base-content/60" data-testid="data-table-no-match">
                   {noMatchText}
                 </div>
               {:else if empty}

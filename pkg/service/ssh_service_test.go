@@ -116,7 +116,7 @@ func TestSSHService_KnownHostLifecycle(t *testing.T) {
 
 	require.NoError(t, svc.AddKnownHost(ctx, xkmsssh.AddKnownHostRequest{
 		Scope: "user", Owner: "alice", Host: "git.example.com",
-		Fingerprint: host.Fingerprint,
+		PublicKey: host.AuthorizedLine,
 	}))
 
 	pins, err := svc.ListKnownHosts(ctx, xkmsssh.ListKnownHostsRequest{Scope: "user", Owner: "alice"})

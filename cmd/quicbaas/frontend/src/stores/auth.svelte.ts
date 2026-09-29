@@ -429,6 +429,25 @@ export const authStore = {
 // first render already addresses the right tenant instead of a placeholder.
 syncSessionClaims();
 
+// Seed generationCredential/generationSID from that SAME survived session,
+// not just the claims cache above. Both default to '' and are otherwise
+// updated ONLY by a write this tab itself performs (persistAccessToken) or a
+// reconciliation that already found a mismatch — so a tab that inherits an
+// already-valid session from localStorage (a reload, or simply opening the
+// app in a tab that never itself logged in) started every one of its own
+// reconcileSessionIdentity() calls believing '' was its own credential. The
+// very first such call — inside refreshAccessToken, or from validateSession
+// on mount — therefore ALWAYS found a "mismatch" against the real, unchanged
+// token already in storage, and treated an ordinary page load as a brand new
+// session: an unwarranted generation bump plus announceSessionScopeChange()
+// discarding every tenant-scoped cache for no reason, on every reload
+// (go-quicbaas UI-login-refused investigation, 2026-09-25). Seeding here,
+// the same way persistAccessToken seeds it after a write, means the FIRST
+// reconciliation in an inherited tab finds the credential it should: its own,
+// unchanged since the module loaded.
+generationCredential = credentialFingerprint(readAuthToken());
+generationSID = sessionSID;
+
 /**
  * Clear the session-end explanation. The login view calls it once the message
  * has been shown and the operator starts a fresh sign-in, so a stale reason
@@ -451,7 +470,11 @@ export function readAuthToken(): string {
  * through here, so the cached tenant can never be one token behind the
  * credential actually being sent — which is exactly the class of bug #309 was.
  */
-function persistAccessToken(token: string, forGeneration: number): boolean {
+function persistAccessToken(
+  token: string,
+  forGeneration: number,
+  requireCurrentCredential = false,
+): boolean {
   // A credential is always FOR a session, and the caller has to say which. A
   // decision made before an await is not a decision about the session that
   // exists after it: a renewal that started under session A and returns after
@@ -463,6 +486,23 @@ function persistAccessToken(token: string, forGeneration: number): boolean {
   // holding and the test is trivially true; only a caller that crossed an await
   // can fail it, which is exactly the caller that should.
   if (generation !== forGeneration) return false;
+  // The generation check above is THIS TAB'S bookkeeping and cannot see a
+  // SIBLING tab (or window) replacing the session in SHARED storage while a
+  // renewal's round trip was in flight — a renewal that started under a dead
+  // session and only succeeds server-side well after a sibling tab's fresh
+  // login would otherwise overwrite that fresh login with a rotated bearer
+  // for the session it is not attached to. requireCurrentCredential — passed
+  // only by the renewal path (commitRenewal), never by a login — closes that:
+  // generationCredential moves only when THIS tab itself writes, so it still
+  // names the pre-renewal credential throughout the round trip, and a mismatch
+  // against what is ACTUALLY in storage right now means someone else already
+  // replaced it. A login skips this check on purpose: it is the operator's own
+  // deliberate action in THIS tab and must always win, cross-tab replacement
+  // included — that is what "signing in starts a new session" means
+  // (go-quicbaas UI-login-refused investigation, 2026-09-25).
+  if (requireCurrentCredential && credentialFingerprint(readAuthToken()) !== generationCredential) {
+    return false;
+  }
   if (typeof window !== 'undefined') {
     window.localStorage.setItem(TOKEN_KEY, token);
   }
@@ -527,7 +567,7 @@ function commitRenewal(
   next: string,
   rotated: string | undefined,
 ): string {
-  if (!persistAccessToken(next, forGeneration)) return '';
+  if (!persistAccessToken(next, forGeneration, /* requireCurrentCredential */ true)) return '';
   persistRefreshToken(rotated);
   endReason = '';
   applyStatus('authenticated');
@@ -695,8 +735,8 @@ function reconcileSessionIdentity(): boolean {
 
 /**
  * Snapshot the current session generation. Pair with endSessionIfCurrent to
- * make an async decision that belongs to THIS session unable to affect a later
- * one.
+ * make an async decision that belongs to THIS session unable to affect a
+ * later one.
  */
 export function sessionGeneration(): number {
   return generation;
@@ -707,22 +747,50 @@ export function sessionGeneration(): number {
  *
  * The request interceptor decides "this credential is refused on arrival, so
  * the session is over" only AFTER two awaited round trips (a renewal and a
- * replay). Three things can have happened meanwhile, and the generation check
- * is what separates them:
+ * replay). Four things can have happened meanwhile, and the two checks below
+ * are what separate them:
  *
- *   • nothing — generation matches, the session ends with the reason attached.
- *   • the user signed in again — setAuthenticated bumped generation, so the
- *     verdict belongs to a dead session and must not clear the live one.
- *   • a sibling request already ended it — setUnauthenticated bumped
- *     generation, so this is exactly-once for free, with no flag to reset.
+ *   • nothing — both checks pass, the session ends with the reason attached.
+ *   • the user signed in again IN THIS TAB — setAuthenticated bumped
+ *     generation, so the verdict belongs to a dead session and must not
+ *     clear the live one.
+ *   • a sibling request in this tab already ended it — setUnauthenticated
+ *     bumped generation, so this is exactly-once for free, with no flag to
+ *     reset.
+ *   • a SIBLING TAB (or this tab's own operator, signing in a second time)
+ *     replaced the credential in shared storage while this verdict's round
+ *     trip was in flight — this tab's generation cannot see that at all (it
+ *     is purely this tab's own bookkeeping), but generationCredential can:
+ *     it is updated by EVERY write this tab itself makes (a login or a
+ *     renewal alike), so it names exactly the credential this tab still
+ *     believes is its own. Comparing what is ACTUALLY in storage right now
+ *     against that belief — not against a value frozen before the round
+ *     trip — is what lets a verdict correctly survive this tab's OWN
+ *     renewal rotating the credential (generationCredential moves WITH it)
+ *     while still catching a sibling's replacement (generationCredential
+ *     stays put, storage does not).
  *
- * Guarding on "is a refresh token still stored" instead would get all three
- * wrong: it cannot see a re-login, and it silently skips the cleanup when the
- * server answered a renewal 2xx WITHOUT a replacement credential (see
- * refreshAccessToken), which is precisely a session that needs ending.
+ * Without the credential check, a renewal this tab began against a dead
+ * refresh token could resolve 401 after a sibling tab — or this tab's own
+ * operator, signing in again — had already written a live session; "the
+ * generation hasn't moved" would still read true for THIS tab, and the
+ * stale verdict would end the session that just started, wiping
+ * localStorage out from under a login the failed renewal had nothing to do
+ * with (go-quicbaas UI-login-refused investigation, 2026-09-25: the owner
+ * signed in with a hardware key and every orchestrator/scheduler request
+ * went out with no Authorization header at all, because a sibling tab's
+ * dead-session renewal had wiped the credential moments after it was
+ * written).
+ *
+ * Guarding on "is a refresh token still stored" instead would get the first
+ * three cases wrong: it cannot see a re-login, and it silently skips the
+ * cleanup when the server answered a renewal 2xx WITHOUT a replacement
+ * credential (see refreshAccessToken), which is precisely a session that
+ * needs ending.
  */
 export function endSessionIfCurrent(snapshot: number, reason: string): void {
   if (generation !== snapshot) return;
+  if (credentialFingerprint(readAuthToken()) !== generationCredential) return;
   setUnauthenticated(reason);
 }
 
@@ -782,6 +850,52 @@ let _refreshGeneration = -1;
  */
 let _refreshID = 0;
 let _nextRefreshID = 1;
+
+/**
+ * Name of the cross-tab mutex guarding refresh-token redemption. One name for
+ * the whole origin is correct, not a narrowing: the refresh token being
+ * redeemed already scopes the critical section to one session, because two
+ * DIFFERENT sessions' tabs are never trying to spend the same single-use
+ * credential at once.
+ */
+const REFRESH_LOCK_NAME = 'quicbaas-refresh-token';
+
+/**
+ * Run `fn` under a cross-tab mutex when the browser offers one, or run it
+ * directly when it does not.
+ *
+ * _refreshInFlight (above) serializes callers WITHIN one tab's own module
+ * instance; it cannot see a SIBLING tab's concurrent redemption of the same
+ * refresh token, because every open tab loads its own independent copy of
+ * this module with its own copy of that variable — shared only through
+ * localStorage, which two tabs can both read the SAME still-valid credential
+ * from before either has written its rotation. The server treats that second
+ * presentation as reuse and revokes the WHOLE token family, including the
+ * fresh access token the FIRST tab's redemption just received a moment
+ * earlier — which is what "the session was renewed but the server rejected
+ * the new credentials" actually was: not a bad credential, a credential
+ * whose sibling had already spent the refresh token it was rotated from
+ * (go-quicbaas UI-login-refused investigation, 2026-09-25). Two tabs open on
+ * the same dashboard poll the SAME access token's exp claim, so they cross
+ * the refresh-skew boundary within moments of each other — this is the
+ * ordinary shape of an operator running the dashboard in two windows, not a
+ * rare interleaving.
+ *
+ * The Web Locks API is the browser's own cross-tab mutex: `navigator.locks
+ * .request` holds the named lock for exactly the lifetime of the callback
+ * and releases it automatically on return OR throw, including when the tab
+ * is killed mid-redemption — no polling, no manually-cleared flag, and no
+ * abandoned lock that survives a crash. Where it is unavailable (older
+ * browsers, or an environment with no `navigator.locks`), redemption falls
+ * back to running directly — exactly the behavior every caller already had
+ * before this function existed, so the absence of the API degrades to the
+ * status quo rather than to a new failure mode.
+ */
+async function withRefreshLock<T>(fn: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator === 'undefined' ? undefined : navigator.locks;
+  if (!locks) return fn();
+  return locks.request(REFRESH_LOCK_NAME, fn);
+}
 
 /**
  * Read the server's own explanation out of a rejected renewal, falling back to
@@ -901,7 +1015,30 @@ async function performRenewal(
   forGeneration: number,
   refreshToken: string,
 ): Promise<string> {
-  {
+  return withRefreshLock(async (): Promise<string> => {
+    // Re-adopt storage now that the lock is held: a SIBLING TAB may have
+    // redeemed and rotated this exact refresh token while this tab waited
+    // its turn for the lock. Presenting `refreshToken` anyway would be a
+    // SECOND redemption of an already-rotated credential — reuse, by the
+    // server's own definition — which revokes the whole family, undoing the
+    // sibling's successful renewal along with this one. Comparing against
+    // the LIVE refresh token (not the one captured before the lock request)
+    // is what lets this tab recognise "someone already did this" and adopt
+    // the result instead of repeating the redemption.
+    if (readRefreshToken() !== refreshToken) {
+      // reconcileSessionIdentity is the existing answer to "did shared
+      // storage move while I wasn't looking": it updates this tab's
+      // generationCredential/generationSID to match what a sibling's
+      // renewal just wrote (recognising it as the SAME session via the
+      // sid claim, so the generation does not bump) or, for a genuinely
+      // different session, moves the generation the normal way. Either
+      // answer is correct here; this call is what lets the CALLER's own
+      // generation/credential check (refreshAccessToken, just below where
+      // this resolves) accept the adopted token on the first try instead of
+      // waiting for the next poll to notice.
+      reconcileSessionIdentity();
+      return readAuthToken();
+    }
     try {
       // ONLY the round trip is inside the transient-failure guard. Once the
       // server has answered, the rotation has already happened on its side and
@@ -962,7 +1099,7 @@ async function performRenewal(
       );
       return '';
     }
-  }
+  });
 }
 
 /**

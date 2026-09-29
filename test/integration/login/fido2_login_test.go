@@ -117,7 +117,7 @@ func registerPasskey(
 		return "", fmt.Errorf("registration/begin returned no %s header", xkmsSessionHeader)
 	}
 
-	attestation, err := adapter.MakeCredential(optionsJSON)
+	attestation, err := adapter.MakeCredential(ctx, &webauthnclient.CeremonyOptions{OptionsJSON: optionsJSON})
 	if err != nil {
 		return "", fmt.Errorf("software authenticator MakeCredential: %w", err)
 	}
@@ -162,13 +162,16 @@ func credentialIDFromWebAuthnDocument(doc []byte) (string, error) {
 // and assembles the (lookup key, assertion, metadata) triple under the exact
 // keys the server's WebAuthn verifier reads.
 func assertWithSoftwareAuthenticator(
+	ctx context.Context,
 	adapter *webauthnclient.SoftwareAdapter,
 	begin *qrdbtransport.BeginLoginResponse,
 ) (lookupKey, assertion []byte, meta map[string]string, err error) {
 	if begin == nil || begin.ChallengeMetadata["options"] == "" {
 		return nil, nil, nil, fmt.Errorf("begin carries no WebAuthn request options")
 	}
-	assertion, err = adapter.GetAssertion([]byte(begin.ChallengeMetadata["options"]))
+	assertion, err = adapter.GetAssertion(ctx, &webauthnclient.CeremonyOptions{
+		OptionsJSON: []byte(begin.ChallengeMetadata["options"]),
+	})
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("software authenticator GetAssertion: %w", err)
 	}
@@ -212,7 +215,7 @@ func TestFIDO2_RegisterThenUnifiedLogin(t *testing.T) {
 	require.NoError(t, berr, "tenant-scoped fido2 begin must succeed")
 	require.NotNil(t, begin)
 
-	lookupKey, assertion, meta, aerr := assertWithSoftwareAuthenticator(adapter, begin)
+	lookupKey, assertion, meta, aerr := assertWithSoftwareAuthenticator(ctx, adapter, begin)
 	require.NoError(t, aerr, "the registered authenticator must produce an assertion")
 	require.Equal(t, credentialID, string(lookupKey),
 		"the assertion must be produced by the credential the registration minted")
@@ -316,7 +319,7 @@ func TestFIDO2_ReRegistrationIsIdempotent(t *testing.T) {
 	})
 	require.NoError(t, berr)
 
-	lookupKey, assertion, meta, aerr := assertWithSoftwareAuthenticator(adapter, begin)
+	lookupKey, assertion, meta, aerr := assertWithSoftwareAuthenticator(ctx, adapter, begin)
 	require.NoError(t, aerr)
 	require.Contains(t, []string{first, second}, string(lookupKey),
 		"the assertion must come from one of the registered credentials")

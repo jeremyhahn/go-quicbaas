@@ -40,7 +40,7 @@ func TestWriteSSEError(t *testing.T) {
 }
 
 // TestProjectToREST_Branches covers the nil-input guard and the populated
-// conversion path including the AgentRoles permission matrix branch.
+// conversion path including the FleetNodeRoles permission matrix branch.
 func TestProjectToREST_Branches(t *testing.T) {
 	t.Run("nil project returns nil", func(t *testing.T) {
 		assert.Nil(t, projectToREST(nil))
@@ -53,15 +53,15 @@ func TestProjectToREST_Branches(t *testing.T) {
 			Name:             "Demo",
 			Description:      "demo project",
 			HostAffinity:     "host-a",
-			DefaultLeadAgent: "agent-lead",
+			DefaultLeadAgent: orchestration.AgentRefTo("agent-lead"),
 			Metadata:         map[string]string{"k": "v"},
 			Permissions: orchestration.ProjectPermissions{
-				AgentRoles: map[string]orchestration.ProjectRole{
+				FleetNodeRoles: map[string]orchestration.ProjectRole{
 					"agent-1": orchestration.ProjectRoleLead,
 				},
 			},
 		}
-		p.Workspace.AgentID = "agent-ws"
+		p.Workspace.FleetNodeID = "agent-ws"
 		p.Workspace.Path = "/work"
 		p.Git.RepoURL = "https://example.com/repo.git"
 		p.Git.DefaultBranch = "main"
@@ -71,11 +71,11 @@ func TestProjectToREST_Branches(t *testing.T) {
 		assert.Equal(t, "proj-1", resp.ID)
 		assert.Equal(t, "tenant-1", resp.TenantID)
 		assert.Equal(t, "Demo", resp.Name)
-		assert.Equal(t, "agent-ws", resp.WorkspaceAgentID)
+		assert.Equal(t, "agent-ws", resp.WorkspaceFleetNodeID)
 		assert.Equal(t, "/work", resp.WorkspacePath)
 		assert.Equal(t, "https://example.com/repo.git", resp.GitRepoURL)
-		require.NotNil(t, resp.AgentRoles)
-		assert.Equal(t, orchestration.ProjectRoleLead, resp.AgentRoles["agent-1"])
+		require.NotNil(t, resp.FleetNodeRoles)
+		assert.Equal(t, orchestration.ProjectRoleLead, resp.FleetNodeRoles["agent-1"])
 	})
 }
 

@@ -106,7 +106,7 @@ func storedStatus(t *testing.T, store AgentStore, tenantID, sessionID string) (S
 func TestSessionConclusionReason_Valid(t *testing.T) {
 	for _, reason := range []SessionConclusionReason{
 		ConcludedByOperator, ConcludedByProcessExit, ConcludedByReconcile,
-		ConcludedByNodeRestart, ConcludedByJobConcluded, ConcludedByAgentGone,
+		ConcludedByNodeRestart, ConcludedByJobConcluded, ConcludedByFleetNodeGone,
 	} {
 		if !reason.Valid() {
 			t.Errorf("reason %q reports invalid; every reason the daemon writes must be recognisable "+
@@ -348,24 +348,24 @@ func TestConcludeSessionsForJob_RejectsAnUnnamedJob(t *testing.T) {
 
 func TestConcludeSessionsForAgent_ConcludesSessionsPinnedToIt(t *testing.T) {
 	svc, store := reconcileHarness(t)
-	agent := &AgentRegistration{ID: "agent-1", TenantID: "t1", Name: "worker-a", Host: "10.0.0.9:7000"}
+	agent := &FleetNode{ID: "agent-1", TenantID: "t1", Name: "worker-a", Host: "10.0.0.9:7000"}
 
 	seedSession(t, store, &SessionRecord{SessionID: "s-by-name", TenantID: "t1", HostAffinity: "worker-a"})
 	seedSession(t, store, &SessionRecord{SessionID: "s-by-host", TenantID: "t1", HostAffinity: "10.0.0.9:7000"})
 	seedSession(t, store, &SessionRecord{SessionID: "s-elsewhere", TenantID: "t1", HostAffinity: "worker-b"})
 	seedSession(t, store, &SessionRecord{SessionID: "s-here", TenantID: "t1"})
 
-	report, err := svc.ConcludeSessionsForAgent(context.Background(), "t1", agent, "agent removed")
+	report, err := svc.ConcludeSessionsForFleetNode(context.Background(), "t1", agent, "agent removed")
 	if err != nil {
-		t.Fatalf("ConcludeSessionsForAgent: %v", err)
+		t.Fatalf("ConcludeSessionsForFleetNode: %v", err)
 	}
 	if got := report.Count(SessionReconcileConcluded); got != 2 {
 		t.Fatalf("concluded %d session(s), want 2", got)
 	}
 	for _, id := range []string{"s-by-name", "s-by-host"} {
 		state, reason := storedStatus(t, store, "t1", id)
-		if state != SessionStateClosed || reason != ConcludedByAgentGone {
-			t.Errorf("%s: status=%q reason=%q, want closed/%s", id, state, reason, ConcludedByAgentGone)
+		if state != SessionStateClosed || reason != ConcludedByFleetNodeGone {
+			t.Errorf("%s: status=%q reason=%q, want closed/%s", id, state, reason, ConcludedByFleetNodeGone)
 		}
 	}
 	for _, id := range []string{"s-elsewhere", "s-here"} {
@@ -380,7 +380,7 @@ func TestConcludeSessionsForAgent_RejectsANilRegistration(t *testing.T) {
 	svc, store := reconcileHarness(t)
 	seedSession(t, store, &SessionRecord{SessionID: "s-1", TenantID: "t1", HostAffinity: "worker-a"})
 
-	if _, err := svc.ConcludeSessionsForAgent(context.Background(), "t1", nil, "gone"); err == nil {
+	if _, err := svc.ConcludeSessionsForFleetNode(context.Background(), "t1", nil, "gone"); err == nil {
 		t.Fatal("a nil registration was accepted; there is nothing to match a pin against")
 	} else if !errors.Is(err, ErrAgentIDRequired) {
 		t.Errorf("error = %v, want ErrAgentIDRequired", err)
@@ -392,25 +392,25 @@ func TestConcludeSessionsForAgent_RejectsANilRegistration(t *testing.T) {
 
 func TestRemoveAgent_TakesItsSessionsWithIt(t *testing.T) {
 	svc, store := reconcileHarness(t)
-	registry := NewInMemoryAgentRegistry()
-	svc.SetAgentRegistry(registry)
+	registry := NewInMemoryFleetRegistry()
+	svc.SetFleetRegistry(registry)
 	ctx := ContextWithTenant(context.Background(), "t1")
 
-	if err := registry.RegisterAgent(ctx, &AgentRegistration{
+	if err := registry.RegisterFleetNode(ctx, &FleetNode{
 		ID: "agent-1", TenantID: "t1", Name: "worker-a", Host: "10.0.0.9:7000",
-		Backend: "mock", AgentType: "worker", Status: AgentStatusIdle,
+		Backend: "mock", NodeType: "worker", Status: FleetNodeStatusIdle,
 	}); err != nil {
-		t.Fatalf("RegisterAgent: %v", err)
+		t.Fatalf("RegisterFleetNode: %v", err)
 	}
 	seedSession(t, store, &SessionRecord{SessionID: "s-pinned", TenantID: "t1", HostAffinity: "worker-a"})
 
-	if err := svc.RemoveAgent(ctx, "t1", "agent-1"); err != nil {
-		t.Fatalf("RemoveAgent: %v", err)
+	if err := svc.RemoveFleetNode(ctx, "t1", "agent-1"); err != nil {
+		t.Fatalf("RemoveFleetNode: %v", err)
 	}
 	state, reason := storedStatus(t, store, "t1", "s-pinned")
-	if state != SessionStateClosed || reason != ConcludedByAgentGone {
+	if state != SessionStateClosed || reason != ConcludedByFleetNodeGone {
 		t.Errorf("status=%q reason=%q, want closed/%s; an operator who removed a daemon must not "+
-			"still see sessions running on it", state, reason, ConcludedByAgentGone)
+			"still see sessions running on it", state, reason, ConcludedByFleetNodeGone)
 	}
 }
 
@@ -463,16 +463,16 @@ func TestSweepSessions_NeedsBothTheClockAndASecondFact(t *testing.T) {
 
 func TestSweepSessions_ConcludesASessionWhosePinnedDaemonIsGone(t *testing.T) {
 	svc, store := reconcileHarness(t)
-	registry := NewInMemoryAgentRegistry()
-	svc.SetAgentRegistry(registry)
+	registry := NewInMemoryFleetRegistry()
+	svc.SetFleetRegistry(registry)
 	ctx := ContextWithTenant(context.Background(), "t1")
 	stale := time.Now().Add(-72 * time.Hour).UnixNano()
 
-	if err := registry.RegisterAgent(ctx, &AgentRegistration{
+	if err := registry.RegisterFleetNode(ctx, &FleetNode{
 		ID: "agent-live", TenantID: "t1", Name: "worker-live", Host: "10.0.0.1:7000",
-		Backend: "mock", AgentType: "worker", Status: AgentStatusIdle,
+		Backend: "mock", NodeType: "worker", Status: FleetNodeStatusIdle,
 	}); err != nil {
-		t.Fatalf("RegisterAgent: %v", err)
+		t.Fatalf("RegisterFleetNode: %v", err)
 	}
 	seedSession(t, store, &SessionRecord{
 		SessionID: "s-dangling", TenantID: "t1", HostAffinity: "worker-dead", LastActivity: stale})
@@ -483,8 +483,8 @@ func TestSweepSessions_ConcludesASessionWhosePinnedDaemonIsGone(t *testing.T) {
 		t.Fatalf("SweepSessions: %v", err)
 	}
 	state, reason := storedStatus(t, store, "t1", "s-dangling")
-	if state != SessionStateClosed || reason != ConcludedByAgentGone {
-		t.Errorf("s-dangling: status=%q reason=%q, want closed/%s", state, reason, ConcludedByAgentGone)
+	if state != SessionStateClosed || reason != ConcludedByFleetNodeGone {
+		t.Errorf("s-dangling: status=%q reason=%q, want closed/%s", state, reason, ConcludedByFleetNodeGone)
 	}
 	if state, _ := storedStatus(t, store, "t1", "s-attached"); state != SessionStateActive {
 		t.Errorf("s-attached: status = %q, want active; its daemon is still in the fleet", state)
@@ -740,18 +740,18 @@ func TestSessionRecord_ConclusionReasonSurvivesTheWire(t *testing.T) {
 func TestSweepSessions_ASilentDaemonIsAGoneDaemon(t *testing.T) {
 	svc, store := reconcileHarness(t)
 	kv := kvstore.NewMemory()
-	svc.SetAgentRegistry(NewAgentRegistry(kv))
-	svc.SetAgentHeartbeatTimeout(time.Minute)
+	svc.SetFleetRegistry(NewFleetRegistry(kv))
+	svc.SetFleetHeartbeatTimeout(time.Minute)
 	ctx := ContextWithTenant(context.Background(), "t1")
 	stale := time.Now().Add(-72 * time.Hour).UnixNano()
 
-	// The heartbeat stamp belongs to the registry — RegisterAgent and
-	// UpdateAgent both set it to now — so an ancient one is seeded through the
+	// The heartbeat stamp belongs to the registry — RegisterFleetNode and
+	// UpdateFleetNode both set it to now — so an ancient one is seeded through the
 	// KV the registry reads rather than through an API that would overwrite
 	// the very fact under test.
-	seedAgentRecord(t, kv, &AgentRegistration{
+	seedAgentRecord(t, kv, &FleetNode{
 		ID: "agent-silent", TenantID: "t1", Name: "worker-silent", Host: "10.0.0.2:7000",
-		Backend: "mock", AgentType: "worker", Status: AgentStatusIdle,
+		Backend: "mock", NodeType: "worker", Status: FleetNodeStatusIdle,
 		LastSeen: time.Now().Add(-2 * time.Hour).UnixNano(),
 	})
 	seedSession(t, store, &SessionRecord{
@@ -761,24 +761,24 @@ func TestSweepSessions_ASilentDaemonIsAGoneDaemon(t *testing.T) {
 		t.Fatalf("SweepSessions: %v", err)
 	}
 	state, reason := storedStatus(t, store, "t1", "s-on-silent")
-	if state != SessionStateClosed || reason != ConcludedByAgentGone {
+	if state != SessionStateClosed || reason != ConcludedByFleetNodeGone {
 		t.Errorf("status=%q reason=%q, want closed/%s; a registration that survives its daemon is "+
-			"a record, not liveness", state, reason, ConcludedByAgentGone)
+			"a record, not liveness", state, reason, ConcludedByFleetNodeGone)
 	}
 }
 
 func TestSweepSessions_ARecentlyHeardDaemonKeepsItsSessions(t *testing.T) {
 	svc, store := reconcileHarness(t)
-	registry := NewInMemoryAgentRegistry()
-	svc.SetAgentRegistry(registry)
-	svc.SetAgentHeartbeatTimeout(time.Hour)
+	registry := NewInMemoryFleetRegistry()
+	svc.SetFleetRegistry(registry)
+	svc.SetFleetHeartbeatTimeout(time.Hour)
 	ctx := ContextWithTenant(context.Background(), "t1")
 
-	if err := registry.RegisterAgent(ctx, &AgentRegistration{
+	if err := registry.RegisterFleetNode(ctx, &FleetNode{
 		ID: "agent-live", TenantID: "t1", Name: "worker-live", Host: "10.0.0.3:7000",
-		Backend: "mock", AgentType: "worker", Status: AgentStatusIdle,
+		Backend: "mock", NodeType: "worker", Status: FleetNodeStatusIdle,
 	}); err != nil {
-		t.Fatalf("RegisterAgent: %v", err)
+		t.Fatalf("RegisterFleetNode: %v", err)
 	}
 	seedSession(t, store, &SessionRecord{
 		SessionID: "s-on-live", TenantID: "t1", HostAffinity: "worker-live",
@@ -795,16 +795,16 @@ func TestSweepSessions_ARecentlyHeardDaemonKeepsItsSessions(t *testing.T) {
 
 func TestAgentHeartbeatTimeout_DefaultsWhenUnset(t *testing.T) {
 	svc, _ := reconcileHarness(t)
-	if got := svc.effectiveAgentHeartbeatTimeout(); got != DefaultAgentHeartbeatTimeout {
-		t.Errorf("timeout = %s, want the default %s", got, DefaultAgentHeartbeatTimeout)
+	if got := svc.effectiveFleetHeartbeatTimeout(); got != DefaultFleetHeartbeatTimeout {
+		t.Errorf("timeout = %s, want the default %s", got, DefaultFleetHeartbeatTimeout)
 	}
-	svc.SetAgentHeartbeatTimeout(-time.Second)
-	if got := svc.effectiveAgentHeartbeatTimeout(); got != DefaultAgentHeartbeatTimeout {
+	svc.SetFleetHeartbeatTimeout(-time.Second)
+	if got := svc.effectiveFleetHeartbeatTimeout(); got != DefaultFleetHeartbeatTimeout {
 		t.Errorf("timeout = %s after a non-positive setting, want the default %s",
-			got, DefaultAgentHeartbeatTimeout)
+			got, DefaultFleetHeartbeatTimeout)
 	}
-	svc.SetAgentHeartbeatTimeout(5 * time.Minute)
-	if got := svc.effectiveAgentHeartbeatTimeout(); got != 5*time.Minute {
+	svc.SetFleetHeartbeatTimeout(5 * time.Minute)
+	if got := svc.effectiveFleetHeartbeatTimeout(); got != 5*time.Minute {
 		t.Errorf("timeout = %s, want 5m", got)
 	}
 }
@@ -812,9 +812,9 @@ func TestAgentHeartbeatTimeout_DefaultsWhenUnset(t *testing.T) {
 // seedAgentRecord writes one registration straight into the KV the registry
 // reads, so a test can state a heartbeat age the registry's own writers would
 // overwrite.
-func seedAgentRecord(t *testing.T, kv interfaces.KVStore, agent *AgentRegistration) {
+func seedAgentRecord(t *testing.T, kv interfaces.KVStore, agent *FleetNode) {
 	t.Helper()
-	key, err := agentKey(agent.TenantID, agent.ID)
+	key, err := fleetNodeKey(agent.TenantID, agent.ID)
 	if err != nil {
 		t.Fatalf("agentKey: %v", err)
 	}
@@ -822,7 +822,7 @@ func seedAgentRecord(t *testing.T, kv interfaces.KVStore, agent *AgentRegistrati
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	if err := kv.Put(agentTenantContext(context.Background(), agent.TenantID), key, data); err != nil {
+	if err := kv.Put(fleetTenantContext(context.Background(), agent.TenantID), key, data); err != nil {
 		t.Fatalf("Put(%s): %v", key, err)
 	}
 }
@@ -1020,7 +1020,7 @@ func TestLoadPersistedSessions_ReconcilesEveryTenantOnARoutedStore(t *testing.T)
 // remoteSessionHarness wires a service whose LOCAL backend table deliberately
 // does NOT serve the remote session's backend, which is the shape that
 // produced the bug.
-func remoteSessionHarness(t *testing.T) (*agentServiceImpl, AgentStore, AgentRegistry) {
+func remoteSessionHarness(t *testing.T) (*agentServiceImpl, AgentStore, FleetRegistry) {
 	t.Helper()
 	store := NewInMemoryAgentStore()
 	svc, err := NewAgentService(store,
@@ -1033,8 +1033,8 @@ func remoteSessionHarness(t *testing.T) (*agentServiceImpl, AgentStore, AgentReg
 	if !ok {
 		t.Fatalf("service is %T", svc)
 	}
-	registry := NewInMemoryAgentRegistry()
-	impl.SetAgentRegistry(registry)
+	registry := NewInMemoryFleetRegistry()
+	impl.SetFleetRegistry(registry)
 	return impl, store, registry
 }
 
@@ -1042,11 +1042,11 @@ func TestLoadPersistedSessions_ARemoteSessionWhoseDaemonIsRegisteredSurvives(t *
 	svc, store, registry := remoteSessionHarness(t)
 	ctx := ContextWithTenant(context.Background(), "t1")
 
-	if err := registry.RegisterAgent(ctx, &AgentRegistration{
+	if err := registry.RegisterFleetNode(ctx, &FleetNode{
 		ID: "agent-remote", TenantID: "t1", Name: "worker-remote", Host: "10.0.0.7:7000",
-		Backend: "remote-acp", AgentType: "worker", Status: AgentStatusIdle,
+		Backend: "remote-acp", NodeType: "worker", Status: FleetNodeStatusIdle,
 	}); err != nil {
-		t.Fatalf("RegisterAgent: %v", err)
+		t.Fatalf("RegisterFleetNode: %v", err)
 	}
 	seedSession(t, store, &SessionRecord{
 		SessionID: "s-remote-live", TenantID: "t1", Backend: "remote-acp",
@@ -1083,9 +1083,9 @@ func TestLoadPersistedSessions_ARemoteSessionWhoseDaemonIsGoneIsConcludedAgentGo
 	if state != SessionStateClosed {
 		t.Fatalf("status = %q, want closed: the daemon holding the session has left the fleet", state)
 	}
-	if reason != ConcludedByAgentGone {
+	if reason != ConcludedByFleetNodeGone {
 		t.Errorf("reason = %q, want %q; attributing another node's departure to this node's "+
-			"restart is the wrong fact", reason, ConcludedByAgentGone)
+			"restart is the wrong fact", reason, ConcludedByFleetNodeGone)
 	}
 	if _, live := svc.liveSessionRecord("s-remote-dead"); live {
 		t.Error("a concluded session was registered as live")
@@ -1115,12 +1115,12 @@ func TestLoadPersistedSessions_ARemoteDaemonSilentSinceTheRestartIsNotGone(t *te
 	// would close every remote worker's session on every restart.
 	svc, store, _ := remoteSessionHarness(t)
 	kv := kvstore.NewMemory()
-	svc.SetAgentRegistry(NewAgentRegistry(kv))
-	svc.SetAgentHeartbeatTimeout(time.Minute)
+	svc.SetFleetRegistry(NewFleetRegistry(kv))
+	svc.SetFleetHeartbeatTimeout(time.Minute)
 
-	seedAgentRecord(t, kv, &AgentRegistration{
+	seedAgentRecord(t, kv, &FleetNode{
 		ID: "agent-quiet", TenantID: "t1", Name: "worker-quiet", Host: "10.0.0.8:7000",
-		Backend: "remote-acp", AgentType: "worker", Status: AgentStatusIdle,
+		Backend: "remote-acp", NodeType: "worker", Status: FleetNodeStatusIdle,
 		LastSeen: time.Now().Add(-6 * time.Hour).UnixNano(),
 	})
 	seedSession(t, store, &SessionRecord{

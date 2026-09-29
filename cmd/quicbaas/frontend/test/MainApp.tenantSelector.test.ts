@@ -36,7 +36,7 @@ import { render, cleanup, screen } from '@testing-library/svelte';
 
 const mockAuthValidate = vi.fn().mockResolvedValue(true);
 const mockListTenants = vi.fn().mockResolvedValue({ tenants: [] });
-const mockListAgents = vi.fn().mockResolvedValue({ agents: [] });
+const mockListAgents = vi.fn().mockResolvedValue({ nodes: [] });
 const mockListSessions = vi.fn().mockResolvedValue({ sessions: [] });
 const mockListJobs = vi.fn().mockResolvedValue([]);
 
@@ -44,7 +44,7 @@ function makeMockClient() {
   return {
     orchestrator: {
       listJobs:           mockListJobs,
-      listAgents:         mockListAgents,
+      listFleetNodes:         mockListAgents,
       listSessions:       mockListSessions,
       listTasks:          vi.fn().mockResolvedValue([]),
       healthCheck:        vi.fn().mockResolvedValue({ status: 'ok' }),
@@ -80,7 +80,7 @@ vi.mock('@quicbaas/sdk', async (importOriginal) => {
   };
 });
 
-// agentStore and sessionStore are deliberately NOT mocked here. They are the
+// fleetStore and sessionStore are deliberately NOT mocked here. They are the
 // stores the tenant-switch cases below are about: mocking them away leaves
 // those cases asserting only that the ORCHESTRATOR store was refreshed, which
 // was already true before the fix and proves nothing about the defect.
@@ -90,7 +90,7 @@ vi.mock('../src/views/SystemDashboard.svelte', () => ({
 }));
 
 import MainApp from '../src/views/MainApp.svelte';
-import { agentStore } from '../src/stores/agentStore.svelte.ts';
+import { fleetStore } from '../src/stores/fleetStore.svelte.ts';
 import { sessionStore } from '../src/stores/sessionStore.svelte.ts';
 import { resetOrchestratorStore } from '../src/stores/orchestrator.svelte.ts';
 import { navigateTo, routerStore } from '../src/stores/router.svelte.ts';
@@ -152,7 +152,7 @@ describe('MainApp — tenant chip reflects the session, not a literal', () => {
     vi.clearAllMocks();
     mockAuthValidate.mockResolvedValue(true);
     mockListTenants.mockResolvedValue({ tenants: [] });
-    mockListAgents.mockResolvedValue({ agents: [] });
+    mockListAgents.mockResolvedValue({ nodes: [] });
     mockListSessions.mockResolvedValue({ sessions: [] });
     mockListJobs.mockResolvedValue([]);
     resetOrchestratorStore();
@@ -266,7 +266,7 @@ describe('MainApp — tenant chip reflects the session, not a literal', () => {
 // could not see that the handler notified only its own store.
 //
 // These are a FLOW check, not the proof of the mechanism. Inside a mounted
-// MainApp the sibling stores also refresh by accident: refreshAgents reads
+// MainApp the sibling stores also refresh by accident: refreshFleet reads
 // activeTenantID synchronously, so the auxiliary $effect that calls it re-runs
 // on a tenant change. These cases therefore pass even with the scope-change
 // listeners removed. The guarantee itself is pinned in
@@ -278,7 +278,7 @@ describe('MainApp — switching tenant refills every view, not just the jobs lis
   beforeEach(async () => {
     vi.clearAllMocks();
     mockAuthValidate.mockResolvedValue(true);
-    mockListAgents.mockResolvedValue({ agents: [] });
+    mockListAgents.mockResolvedValue({ nodes: [] });
     mockListSessions.mockResolvedValue({ sessions: [] });
     mockListJobs.mockResolvedValue([]);
     mockListTenants.mockResolvedValue({
@@ -335,7 +335,7 @@ describe('MainApp — switching tenant refills every view, not just the jobs lis
     await settle();
 
     mockListAgents.mockResolvedValue({
-      agents: [{ id: 'agent-burnin', tenant_id: 'burnin', status: 'running' }],
+      nodes: [{ id: 'agent-burnin', tenant_id: 'burnin', status: 'running' }],
     });
     mockListSessions.mockResolvedValue({
       sessions: [{ session_id: 'sess-burnin', backend: 'claude' }],
@@ -347,7 +347,7 @@ describe('MainApp — switching tenant refills every view, not just the jobs lis
 
     // Not empty: the switch refilled them, in the same tick rather than 30
     // seconds later.
-    expect(agentStore.agents.map((a) => a.id)).toEqual(['agent-burnin']);
+    expect(fleetStore.nodes.map((a) => a.id)).toEqual(['agent-burnin']);
     expect(sessionStore.sessions.map((x) => x.session_id)).toEqual(['sess-burnin']);
   });
 });

@@ -25,7 +25,7 @@ import (
 //
 // The client composes all IAM functionality into a single interface:
 //   - Tenant management (multi-tenant architecture)
-//   - User management (CRUD, roles, groups)
+//   - User management (CRUD, roles)
 //   - Group management (user organization)
 //   - Role management (permission bundles)
 //   - Policy management (ABAC policies)
@@ -54,9 +54,6 @@ type Client interface {
 
 	// User returns the user management client.
 	User() UserClient
-
-	// Group returns the group management client.
-	Group() GroupClient
 
 	// Role returns the role management client.
 	Role() RoleClient
@@ -156,7 +153,6 @@ type client struct {
 	transport transport.Transport
 	tenant    TenantClient
 	user      UserClient
-	group     GroupClient
 	role      RoleClient
 	policy    PolicyClient
 	pep       PEPClient
@@ -189,7 +185,6 @@ func NewClient(t transport.Transport) Client {
 		transport: t,
 		tenant:    NewTenantClient(t),
 		user:      NewUserClient(t),
-		group:     NewGroupClient(t),
 		role:      NewRoleClient(t),
 		policy:    NewPolicyClient(t),
 		pep:       NewPEPClient(t),
@@ -210,11 +205,6 @@ func (c *client) Tenant() TenantClient {
 // User returns the user management client.
 func (c *client) User() UserClient {
 	return c.user
-}
-
-// Group returns the group management client.
-func (c *client) Group() GroupClient {
-	return c.group
 }
 
 // Role returns the role management client.

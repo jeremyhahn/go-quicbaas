@@ -669,3 +669,67 @@ func TestHandleCreateProject_RefusesInvalidContextRepos(t *testing.T) {
 		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+// TestHandleProject_ParkAndResumeRoundTrip drives park and resume through the
+// REST update: the switch stays tri-state on the way in, and the park record
+// is on the project that comes back.
+func TestHandleProject_ParkAndResumeRoundTrip(t *testing.T) {
+	stored := &orchestration.Project{ID: "proj-1", TenantID: "tenant-1", Name: "api"}
+	parkedAt := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	var updateReq *service.UpdateProjectRequest
+	srv := newProjectTestServer(&mocks.MockProjectService{
+		UpdateProjectFunc: func(ctx context.Context, req *service.UpdateProjectRequest) (*service.UpdateProjectResponse, error) {
+			updateReq = req
+			if req.Parked != nil {
+				if *req.Parked {
+					stored.Park("ops", parkedAt)
+				} else {
+					stored.Resume()
+				}
+			}
+			return &service.UpdateProjectResponse{Project: stored, Timestamp: time.Now()}, nil
+		},
+	})
+
+	update := func(body string) *ProjectRESTResponse {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/projects/proj-1?tenant_id=tenant-1", bytes.NewReader([]byte(body)))
+		req.Header.Set("Content-Type", "application/json")
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", "proj-1")
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		w := httptest.NewRecorder()
+		srv.HandleUpdateProject(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("update: expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			Project *ProjectRESTResponse `json:"project"`
+		}
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode update: %v", err)
+		}
+		return resp.Project
+	}
+
+	update(`{"name": "renamed"}`)
+	if updateReq.Parked != nil {
+		t.Error("an absent parked reached the service as a value")
+	}
+
+	got := update(`{"parked": true}`)
+	if updateReq.Parked == nil || !*updateReq.Parked {
+		t.Fatal("parked: true did not reach the service")
+	}
+	if got == nil || !got.Parked || !got.ParkedAt.Equal(parkedAt) || got.ParkedBy != "ops" {
+		t.Fatalf("parked response = %+v, want the park record", got)
+	}
+
+	got = update(`{"parked": false}`)
+	if updateReq.Parked == nil || *updateReq.Parked {
+		t.Fatal("parked: false did not reach the service as false")
+	}
+	if got.Parked || !got.ParkedAt.IsZero() || got.ParkedBy != "" {
+		t.Fatalf("resumed response = %+v, want an open project", got)
+	}
+}

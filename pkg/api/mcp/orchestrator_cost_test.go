@@ -39,11 +39,17 @@ type ledgerAgentService struct {
 	ledger   orchestration.ConsumptionLedger
 	accounts orchestration.AccountStore
 	projects orchestration.ProjectStore
+	tenant   orchestration.TenantSpendPolicyStore
+}
+
+func (s *ledgerAgentService) TenantSpendPolicies() orchestration.TenantSpendPolicyStore {
+	return s.tenant
 }
 
 func (s *ledgerAgentService) ConsumptionLedger() orchestration.ConsumptionLedger { return s.ledger }
 func (s *ledgerAgentService) AccountStore() orchestration.AccountStore           { return s.accounts }
 func (s *ledgerAgentService) ProjectStore() orchestration.ProjectStore           { return s.projects }
+func (s *ledgerAgentService) AgentDirectory() *orchestration.AgentDirectory      { return nil }
 
 var _ orchestration.SpendLedgerAccessor = (*ledgerAgentService)(nil)
 
@@ -70,7 +76,7 @@ func newCostRegistry(t *testing.T, tenantID string) *ToolRegistry {
 		ID: "a1", TenantID: tenantID, Provider: orchestration.AccountProviderClaude,
 		DisplayName: "alice-work",
 	}))
-	return newAgentRegistry(t, &ledgerAgentService{
+	return newFleetRegistry(t, &ledgerAgentService{
 		mockAgentService: &mockAgentService{}, ledger: ledger, accounts: accounts,
 	})
 }
@@ -92,7 +98,7 @@ func TestMCPCostReportsTokensAndTheAccount(t *testing.T) {
 
 	// The honesty rule: nothing prices a turn, so the tool must say the cost
 	// is unmeasured rather than letting a client read the zero. #791.
-	assert.Equal(t, false, report["cost_measured"])
+	assert.Equal(t, float64(0), report["priced_entries"])
 
 	accounts, ok := report["accounts"].([]interface{})
 	require.True(t, ok, "a report must name the accounts that paid")
@@ -123,6 +129,25 @@ func TestMCPCostDrillsDownToARound(t *testing.T) {
 		"round 0 must narrow the scope; a truthiness check would have widened it to every round")
 }
 
+// TestMCPCostNarrowsToARange asserts from/to reach the ledger and are echoed.
+// The fixture's turns are one and two minutes old; a range starting 90
+// seconds ago holds only the newer.
+func TestMCPCostNarrowsToARange(t *testing.T) {
+	reg := newCostRegistry(t, "tenant-1")
+	from := time.Now().UTC().Add(-90 * time.Second)
+
+	raw, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_cost",
+		map[string]interface{}{"tenant_id": "tenant-1", "from": from.Format(time.RFC3339Nano)})
+	require.NoError(t, err)
+
+	report, ok := raw.(map[string]interface{})
+	require.True(t, ok, "result type = %T", raw)
+	assert.Equal(t, float64(1), report["entries"])
+	assert.Equal(t, float64(15), report["total_tokens"])
+	assert.NotEmpty(t, report["from"])
+	assert.NotEmpty(t, report["to"], "a range given only its start closes at now")
+}
+
 // TestMCPCostRejectsBadInput asserts an unaddressed request, a malformed
 // scope, and a deployment that records no spend are typed refusals rather
 // than an empty report an MCP client would read as no spend.
@@ -134,6 +159,20 @@ func TestMCPCostRejectsBadInput(t *testing.T) {
 		require.Error(t, err)
 	})
 
+	t.Run("malformed from", func(t *testing.T) {
+		reg := newCostRegistry(t, "tenant-1")
+		_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_cost",
+			map[string]interface{}{"tenant_id": "tenant-1", "from": "last week"})
+		require.Error(t, err)
+	})
+
+	t.Run("to without from", func(t *testing.T) {
+		reg := newCostRegistry(t, "tenant-1")
+		_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_cost",
+			map[string]interface{}{"tenant_id": "tenant-1", "to": time.Now().UTC().Format(time.RFC3339)})
+		require.Error(t, err, "an open start is the whole history, not a range")
+	})
+
 	t.Run("skipped chain level", func(t *testing.T) {
 		reg := newCostRegistry(t, "tenant-1")
 		_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_cost",
@@ -142,7 +181,7 @@ func TestMCPCostRejectsBadInput(t *testing.T) {
 	})
 
 	t.Run("no ledger configured", func(t *testing.T) {
-		reg := newAgentRegistry(t, &mockAgentService{})
+		reg := newFleetRegistry(t, &mockAgentService{})
 		_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_cost",
 			map[string]interface{}{"tenant_id": "tenant-1"})
 		require.Error(t, err, "a deployment that records no spend must say so, not report zero")
@@ -156,4 +195,49 @@ func TestMCPCostToolIsRegistered(t *testing.T) {
 	reg := newCostRegistry(t, "tenant-1")
 	tool := toolByName(t, reg, "quicbaas_orchestrator_cost")
 	assert.ElementsMatch(t, []string{"tenant_id"}, requiredArgs(t, tool))
+}
+
+// TestMCPCostNarrowsToAHost asserts the host argument reaches the ledger. The
+// fixture's turns name no host, so "-" selects both and a named host neither.
+func TestMCPCostNarrowsToAHost(t *testing.T) {
+	reg := newCostRegistry(t, "tenant-1")
+	tests := map[string]struct {
+		host    string
+		entries float64
+	}{
+		"the unattributed host": {"-", 2},
+		"a host that ran none":  {"gpu-host:9091", 0},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			raw, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_cost",
+				map[string]interface{}{"tenant_id": "tenant-1", "host": tc.host})
+			require.NoError(t, err)
+			report, ok := raw.(map[string]interface{})
+			require.True(t, ok, "result type = %T", raw)
+			assert.Equal(t, tc.entries, report["entries"])
+			assert.Equal(t, tc.host, report["host"])
+		})
+	}
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_cost",
+		map[string]interface{}{"tenant_id": "tenant-1", "host": "  "})
+	assert.Error(t, err, "a blank host is refused, not read as every host")
+}
+
+// TestMCPCostNarrowsToAnAgent asserts the agent argument reaches the ledger.
+// The fixture's turns ran on raw backends, so "-" selects both.
+func TestMCPCostNarrowsToAnAgent(t *testing.T) {
+	reg := newCostRegistry(t, "tenant-1")
+	for agent, entries := range map[string]float64{"-": 2, "claude-coder": 0} {
+		raw, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_cost",
+			map[string]interface{}{"tenant_id": "tenant-1", "agent": agent})
+		require.NoError(t, err)
+		report, ok := raw.(map[string]interface{})
+		require.True(t, ok, "result type = %T", raw)
+		assert.Equal(t, entries, report["entries"], agent)
+		assert.Equal(t, agent, report["agent"])
+	}
+	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_cost",
+		map[string]interface{}{"tenant_id": "tenant-1", "agent": "Bad ID"})
+	assert.Error(t, err, "a malformed Agent is refused, not read as every Agent")
 }

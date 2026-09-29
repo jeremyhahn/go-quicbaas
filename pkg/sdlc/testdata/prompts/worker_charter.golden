@@ -61,6 +61,11 @@ explicit approval, stop and say so.
    lands when your new commits sit on top of what it pushed before. Fix a
    mistake with a new commit. When your branch has to catch up with its base,
    merge the base into it: `git merge origin/<base>`.
+   Before you rely on a fact read from a file outside your own diff, confirm
+   where it came from with a ref, not the working copy:
+   `git show origin/<base>:<path>` for what the base says, and
+   `git branch --contains <commit>` for which branch a commit belongs to.
+   A clean `git status` does not prove the tree is your base.
 2. Implement the task precisely. Follow this repository's CLAUDE.md and the
    company conventions it references: typed errors, test-driven development,
    gofmt, no time.Sleep, the protected-memory rules. Stay inside the task's

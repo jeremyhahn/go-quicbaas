@@ -18,9 +18,10 @@ package config
 // transport selection for the xkms SSH SDK client (`xkmsssh.Client`)
 // used by the agent deploy service and the REST/Wails/CLI surfaces.
 //
-// When URL is empty the service falls back to the embedded transport
-// with a file-backed store rooted under `$DataDir/xkms-ssh` so the
-// zero-config deployment keeps working.
+// When URL is empty quicbaasd serves SSH from an embedded store in the
+// qrdb node's barrier-sealed keyspace. A node whose seal is disabled has
+// no SSH key store at all: private keys are never kept on the
+// filesystem.
 type XKMSConfig struct {
 	// URL is the base URL of a remote xkmsd instance. When non-empty
 	// the REST transport is used. Example:

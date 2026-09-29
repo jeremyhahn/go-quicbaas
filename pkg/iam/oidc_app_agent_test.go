@@ -19,11 +19,11 @@ import (
 	"testing"
 )
 
-// agentAppOptions are the registration options POST /api/v1/agents/register
+// agentAppOptions are the registration options POST /api/v1/fleet/enroll
 // supplies for a daemon's client-credentials application.
 func agentAppOptions(tenantID, commonName string) RegisterAppOptions {
 	return RegisterAppOptions{
-		Name:           AgentAppName(tenantID, commonName),
+		Name:           FleetNodeAppName(tenantID, commonName),
 		GrantTypes:     []string{GrantTypeClientCredentials},
 		ResponseTypes:  []string{},
 		ResourcePrefix: "agent-runtime",
@@ -47,17 +47,17 @@ func newAgentAppManager(t *testing.T, tenantID string) (*AppManager, *BackendSto
 func TestAgentClientID_IsDerivedAndParseable(t *testing.T) {
 	const tenantID = "automatethethings"
 
-	first := AgentClientID(tenantID, "agent-gpu-host")
-	if second := AgentClientID(tenantID, "agent-gpu-host"); first != second {
-		t.Fatalf("AgentClientID is not stable: %q then %q", first, second)
+	first := FleetNodeClientID(tenantID, "agent-gpu-host")
+	if second := FleetNodeClientID(tenantID, "agent-gpu-host"); first != second {
+		t.Fatalf("FleetNodeClientID is not stable: %q then %q", first, second)
 	}
 	if got := TenantFromClientID(first); got != tenantID {
 		t.Fatalf("TenantFromClientID(%q) = %q, want %q", first, got, tenantID)
 	}
-	if other := AgentClientID(tenantID, "agent-other"); other == first {
+	if other := FleetNodeClientID(tenantID, "agent-other"); other == first {
 		t.Fatalf("two agents share the client id %q", first)
 	}
-	if crossTenant := AgentClientID("acme", "agent-gpu-host"); crossTenant == first {
+	if crossTenant := FleetNodeClientID("acme", "agent-gpu-host"); crossTenant == first {
 		t.Fatalf("two tenants share the client id %q", first)
 	}
 	suffix := strings.TrimPrefix(first, ClientIDPrefix+tenantID+ClientIDSeparator)
@@ -81,7 +81,7 @@ func TestAgentClientID_DegenerateIdentityNamesNoTenant(t *testing.T) {
 		{"neither", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			clientID := AgentClientID(tc.tenantID, tc.commonName)
+			clientID := FleetNodeClientID(tc.tenantID, tc.commonName)
 			if got := TenantFromClientID(clientID); got != tc.tenantID {
 				t.Fatalf("TenantFromClientID(%q) = %q, want %q", clientID, got, tc.tenantID)
 			}

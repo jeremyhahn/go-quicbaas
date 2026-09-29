@@ -63,18 +63,19 @@ import (
 // named by nothing.
 
 const (
-	loopE2EForge    sdlc.ForgeType = "gitea-e2e"
-	loopE2ETenant                  = "sdlc-loop-e2e-tenant"
-	loopE2EProject                 = "sdlc-loop-e2e-project"
-	loopE2EBackend                 = "e2e-agent"
-	loopE2EKeyName                 = "agent-sdlc-loop-e2e"
-	loopE2EKeyScope                = "service"
-	loopE2EKeyOwner                = "sdlc-e2e"
-	e2eOwner                       = "jeremyhahn"
-	e2eRepo                        = "go-quicbaas"
-	e2eWebhookRef                  = "sdlc-e2e-webhook-secret"
-	e2eTokenRef                    = "sdlc-e2e-forge-token"
-	e2eSecretValue                 = "a-webhook-secret-the-forge-also-holds"
+	loopE2EForge       sdlc.ForgeType = "gitea-e2e"
+	loopE2ETenant                     = "sdlc-loop-e2e-tenant"
+	loopE2EProject                    = "sdlc-loop-e2e-project"
+	loopE2EBackend                    = "e2e-agent"
+	loopE2EWorkerAgent                = "e2e-coder"
+	loopE2EKeyName                    = "agent-sdlc-loop-e2e"
+	loopE2EKeyScope                   = "service"
+	loopE2EKeyOwner                   = "sdlc-e2e"
+	e2eOwner                          = "jeremyhahn"
+	e2eRepo                           = "go-quicbaas"
+	e2eWebhookRef                     = "sdlc-e2e-webhook-secret"
+	e2eTokenRef                       = "sdlc-e2e-forge-token"
+	e2eSecretValue                    = "a-webhook-secret-the-forge-also-holds"
 )
 
 var registerLoopForgeOnce sync.Once
@@ -146,6 +147,10 @@ func (f *e2eForge) Capabilities() sdlc.ForgeCapabilities {
 	return sdlc.ForgeCapabilities{}
 }
 
+func (f *e2eForge) AuthenticatedUser(context.Context) (*sdlc.TokenIdentity, error) {
+	return &sdlc.TokenIdentity{Username: "agent-e2e"}, nil
+}
+
 func (f *e2eForge) ListIssues(_ context.Context, _ sdlc.RepoRef, filter sdlc.IssueFilter) ([]sdlc.ForgeIssue, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -181,6 +186,27 @@ func (f *e2eForge) GetIssue(_ context.Context, _ sdlc.RepoRef, number int) (*sdl
 	copied := *issue
 	copied.Labels = append([]string(nil), issue.Labels...)
 	return &copied, nil
+}
+
+// CreateIssue files an issue in the fake, numbered after every issue it holds.
+// The loop never files one; the method completes the forge contract.
+func (f *e2eForge) CreateIssue(_ context.Context, _ sdlc.RepoRef, spec sdlc.IssueSpec) (*sdlc.ForgeIssue, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	number := 1
+	for existing := range f.issues {
+		number = max(number, existing+1)
+	}
+	issue := &sdlc.ForgeIssue{Number: number, Title: spec.Title, Body: spec.Body, State: "open", Labels: append([]string(nil), spec.Labels...)}
+	f.issues[number] = issue
+	copied := *issue
+	return &copied, nil
+}
+
+// ListCollaborators reports no collaborators: the loop's bindings name no
+// rulers of their own.
+func (f *e2eForge) ListCollaborators(context.Context, sdlc.RepoRef) ([]sdlc.ForgeUser, error) {
+	return nil, nil
 }
 
 // CloseIssue records a close so the loop test can assert triage closed what it
@@ -407,6 +433,17 @@ func (f *e2eForge) SetCommitStatus(_ context.Context, _ sdlc.RepoRef, sha string
 
 func (f *e2eForge) ListPullRequestFiles(context.Context, sdlc.RepoRef, int) ([]sdlc.ForgeChangedFile, error) {
 	return []sdlc.ForgeChangedFile{{Path: "pkg/widget/widget.go", Status: "modified", Additions: 4, Deletions: 1}}, nil
+}
+
+func (f *e2eForge) ClosePullRequest(_ context.Context, _ sdlc.RepoRef, number int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	pr, ok := f.prs[number]
+	if !ok {
+		return &sdlc.NotFoundError{Entity: "pull request", ID: strconv.Itoa(number)}
+	}
+	pr.State = "closed"
+	return nil
 }
 
 func (f *e2eForge) CancelCheckRun(context.Context, sdlc.RepoRef, string) error { return nil }
@@ -1129,6 +1166,31 @@ func ensureFactoryTenant(t *testing.T, srv *server.Server) {
 // node's KMS-backed SSH store, registers the scripted backend and a fleet
 // agent for it, creates the orchestration Project with the sdlc workflow
 // as its default, and binds the forge. It returns the project id.
+// defineFactoryWorker defines, in the factory tenant's agent catalog, the
+// coding Agent the project binding names as its worker, and returns the
+// reference to it. The Agent runs on the scripted backend and answers for a
+// model of a known family, so the review policy's independence rule has a
+// family to compare an approval against. A node reused across scenarios
+// already has it.
+func defineFactoryWorker(t *testing.T, ctx context.Context, agents orchestration.AgentService) orchestration.AgentRef {
+	t.Helper()
+	accessor, ok := agents.(orchestration.AgentDirectoryAccessor)
+	require.True(t, ok, "the agent service does not expose its agent catalog")
+	directory := accessor.AgentDirectory()
+	require.NotNil(t, directory, "the agent catalog is not wired")
+	ref := orchestration.AgentRefTo(loopE2EWorkerAgent)
+	if _, err := directory.GetAgent(ctx, loopE2ETenant, loopE2EWorkerAgent); err == nil {
+		return ref
+	}
+	_, err := directory.CreateAgent(ctx, loopE2ETenant, &orchestration.Agent{
+		ID: loopE2EWorkerAgent, Name: "Factory e2e coder",
+		Roles:   []orchestration.AgentRole{orchestration.AgentRoleCoding},
+		Backend: loopE2EBackend, Model: "claude-opus-5",
+	})
+	require.NoError(t, err, "defining the worker Agent")
+	return ref
+}
+
 func registerFactoryProject(t *testing.T, srv *server.Server, backend *e2eAgentBackend, repo string) string {
 	t.Helper()
 	ctx := iam.ContextWithTenant(context.Background(), loopE2ETenant)
@@ -1153,6 +1215,7 @@ func registerFactoryProject(t *testing.T, srv *server.Server, backend *e2eAgentB
 	agents := srv.Service().Agent()
 	require.NotNil(t, agents)
 	require.NoError(t, agents.RegisterBackend(orchCtx, &orchestration.RegisterBackendRequest{Name: loopE2EBackend, Backend: backend}))
+	workerRef := defineFactoryWorker(t, orchCtx, agents)
 	// The node's own runtime is whatever docker it found; this test's worker
 	// runs in the scripted container the backend owns, so the engine is
 	// pointed at that one. Without it the runner has nowhere to commit — which
@@ -1164,7 +1227,7 @@ func registerFactoryProject(t *testing.T, srv *server.Server, backend *e2eAgentB
 	runtimeSetter.SetContainerRuntime(backend.runtime)
 	// NO FLEET AGENT IS REGISTERED. A module runner spawns its own sessions
 	// and its job lease is the capacity check, so auto-spawn needs neither a
-	// matched fleet agent nor a default workflow. A dispatch that refused
+	// matched fleet node nor a default workflow. A dispatch that refused
 	// here would say so on the Task.
 
 	projects := srv.Service().Project()
@@ -1196,11 +1259,10 @@ func registerFactoryProject(t *testing.T, srv *server.Server, backend *e2eAgentB
 			WebhookSecretRef: e2eWebhookRef, TokenSecretRef: e2eTokenRef,
 		},
 		Strategy: sdlc.GitHubFlowName,
-		// The worker's MODEL is what the independence rule is decided
+		// The worker Agent's MODEL is what the independence rule is decided
 		// against: an approval from the family that wrote the code is not an
-		// independent review. The scripted backend answers for a model of a
-		// known family so the rule has something to compare.
-		Worker:       sdlc.WorkerConfig{Backend: loopE2EBackend, Model: "claude-opus-5"},
+		// independent review. See defineFactoryWorker.
+		Worker:       workerRef,
 		Verification: []string{"test -f WORK.md"},
 		Review: sdlc.ReviewPolicy{RequiredApprovals: 1, RequireIndependentReviewer: true, RequireGreenChecks: true,
 			Reviewers: map[string]string{"codex": sdlc.ModelFamilyOpenAI}},
@@ -1274,7 +1336,7 @@ func awaitJob(t *testing.T, srv *server.Server, want orchestration.JobState) *or
 // distinguish this runner from the lead-driven loop it replaced:
 //
 //   - EXACTLY ONE session. No lead, so nothing decomposes and nothing is
-//     assigned to a fleet — no fleet agent is even registered.
+//     assigned to a fleet — no fleet node is even registered.
 //   - The worker's prompt contains the ISSUE BODY VERBATIM. The loop this
 //     replaced handed the worker an LLM's paraphrase framed "Execute the
 //     following task", and the worker never saw what a person wrote.
@@ -1484,7 +1546,7 @@ func plantKilledSigningSession(t *testing.T, root string) string {
 	dir := filepath.Join(root, "df769f4a7dd5")
 	require.NoError(t, os.Mkdir(dir, 0o700))
 	socket := filepath.Join(dir, orchestration.WorkspaceSigningAgentSocketFile)
-	require.LessOrEqual(t, len(socket), sdlc.MaxSigningSocketPath,
+	require.LessOrEqual(t, len(socket), orchestration.MaxSigningSocketPath,
 		"the staged socket path is over the kernel's sun_path budget")
 	ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: socket, Net: "unix"})
 	require.NoError(t, err)
@@ -1604,7 +1666,7 @@ func TestSDLCRunner_TheContainerCommitsSignsAndPushes(t *testing.T) {
 		"SSH_AUTH_SOCK does not name the socket inside the container")
 	require.Equal(t, factorySocketsRoot(t), filepath.Dir(filepath.Dir(socket)),
 		"the socket was bound outside the daemon's sockets root: %s", socket)
-	require.LessOrEqual(t, len(socket), sdlc.MaxSigningSocketPath,
+	require.LessOrEqual(t, len(socket), orchestration.MaxSigningSocketPath,
 		"the socket path is over the kernel's sun_path budget")
 	_, statErr := os.Stat(filepath.Dir(socket))
 	require.True(t, os.IsNotExist(statErr),

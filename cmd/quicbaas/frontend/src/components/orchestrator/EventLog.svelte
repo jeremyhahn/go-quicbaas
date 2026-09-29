@@ -38,19 +38,19 @@
 
 <div
   bind:this={scrollEl}
-  class="overflow-y-auto font-mono text-xs space-y-1 pr-1"
+  class="overflow-y-auto pr-1 text-xs"
   style:max-height={maxHeight}
 >
   {#each events as event (`${event.timestamp}:${event.job_id}:${event.type}:${event.iteration}`)}
-    <div class="flex items-start gap-2 py-1 border-b border-base-300/30">
-      <span class="text-base-content/40 shrink-0 w-20">{formatTime(event.timestamp)}</span>
+    <div class="flex items-center gap-2 border-b border-base-300/60 py-1.5 last:border-b-0">
+      <span class="w-20 shrink-0 font-mono tabular-nums text-base-content/60">{formatTime(event.timestamp)}</span>
       <StatusBadge text={event.type} variant={eventTypeVariant(event.type)} />
       {#if event.state}
         <StatusBadge text={event.state} variant="ghost" />
       {/if}
-      <span class="text-base-content/80 break-all">{event.message}</span>
+      <span class="min-w-0 break-words text-base-content/80">{event.message}</span>
     </div>
   {:else}
-    <div class="text-base-content/30 text-center py-8">No events yet</div>
+    <div class="py-8 text-center text-sm text-base-content/60">No events yet</div>
   {/each}
 </div>

@@ -110,10 +110,12 @@ func newTriageRig(t *testing.T) *triageRig {
 	}
 	runner, err := NewTriageRunner(TriageRunnerConfig{
 		Bindings:     store,
+		Clusters:     store,
 		Forges:       &fakeForges{forge: forge},
 		Tokens:       tokens,
 		Signing:      signing,
 		CheckoutRoot: orchestration.WorkspaceCheckoutRoot,
+		Guard:        testRepoGuard(t),
 		SocketsRoot:  testSocketsRoot(t),
 	})
 	if err != nil {
@@ -835,17 +837,17 @@ func TestNewTriageRunner_RefusesAnIncompleteWiring(t *testing.T) {
 	}{
 		{
 			name:  "no bindings",
-			cfg:   TriageRunnerConfig{Forges: forges, Tokens: tokens, Signing: signing, SocketsRoot: sockets},
+			cfg:   TriageRunnerConfig{Forges: forges, Tokens: tokens, Signing: signing, Guard: testRepoGuard(t), SocketsRoot: sockets},
 			field: "bindings",
 		},
 		{
 			name:  "no forges",
-			cfg:   TriageRunnerConfig{Bindings: store, Tokens: tokens, Signing: signing, SocketsRoot: sockets},
+			cfg:   TriageRunnerConfig{Bindings: store, Tokens: tokens, Signing: signing, Guard: testRepoGuard(t), SocketsRoot: sockets},
 			field: "forges",
 		},
 		{
 			name:  "no tokens",
-			cfg:   TriageRunnerConfig{Bindings: store, Forges: forges, Signing: signing, SocketsRoot: sockets},
+			cfg:   TriageRunnerConfig{Bindings: store, Forges: forges, Clusters: store, Signing: signing, Guard: testRepoGuard(t), SocketsRoot: sockets},
 			field: "tokens",
 		},
 		{
@@ -854,8 +856,15 @@ func TestNewTriageRunner_RefusesAnIncompleteWiring(t *testing.T) {
 			// only place that became visible was a container it had already
 			// spawned. It is refused at construction instead.
 			name:  "no signing agent",
-			cfg:   TriageRunnerConfig{Bindings: store, Forges: forges, Tokens: tokens, SocketsRoot: sockets},
+			cfg:   TriageRunnerConfig{Bindings: store, Forges: forges, Clusters: store, Tokens: tokens, Guard: testRepoGuard(t), SocketsRoot: sockets},
 			field: "signing",
+		},
+		{
+			// Clustering is on by default, and a runner that could not record
+			// a cluster would adopt its members one by one on the next pass.
+			name:  "no cluster store",
+			cfg:   TriageRunnerConfig{Bindings: store, Forges: forges, Tokens: tokens, Signing: signing, Guard: testRepoGuard(t), SocketsRoot: sockets},
+			field: "clusters",
 		},
 	}
 	for _, tc := range tests {
@@ -1185,10 +1194,12 @@ func newTriageRigOver(t *testing.T, first *triageRig) *triageRig {
 	signing := &fakeSigningAgent{}
 	runner, err := NewTriageRunner(TriageRunnerConfig{
 		Bindings:     first.store,
+		Clusters:     first.store,
 		Forges:       &fakeForges{forge: first.forge},
 		Tokens:       &fakeTokens{token: []byte("t0ken")},
 		Signing:      signing,
 		CheckoutRoot: orchestration.WorkspaceCheckoutRoot,
+		Guard:        testRepoGuard(t),
 		SocketsRoot:  testSocketsRoot(t),
 	})
 	if err != nil {
@@ -1349,12 +1360,6 @@ func TestTriageRunner_PublishesItsSessionOnSnapshots(t *testing.T) {
 // already-stated grant alone.
 func TestTriageRunner_KeepsTheNarrowGrantInItsContainer(t *testing.T) {
 	rig := newTriageRig(t)
-	// An image on the binding is what makes the spawn containerized, which is
-	// the configuration every real worker and reviewer runs in.
-	rig.binding.Worker.Image = "quicbaas-software-factory-worker:test"
-	if err := rig.store.PutBinding(context.Background(), testTenant, rig.binding); err != nil {
-		t.Fatalf("put binding: %v", err)
-	}
 	rig.forge.putIssue(801, "an issue to triage")
 	rig.answers("read it\n\nSDLC-TRIAGE: needs-info")
 
@@ -1367,10 +1372,12 @@ func TestTriageRunner_KeepsTheNarrowGrantInItsContainer(t *testing.T) {
 	if len(spawns) != 1 {
 		t.Fatalf("triage spawned %d sessions, want 1", len(spawns))
 	}
-	// The spawn is containerized, which is what makes the grant a real choice
-	// rather than a consequence of running on the daemon.
-	if spawns[0].EffectiveSandboxMode() != orchestration.SandboxModeRequired {
-		t.Fatalf("triage spawn is not containerized: %v", spawns[0].EffectiveSandboxMode())
+	// The container is the Agent's to decide — its image makes the spawn
+	// sandboxed once the reference resolves — so what this runner owns is
+	// that the spawn names the agent and states the narrow grant, which
+	// ApplyWorkerSpawnEnvironment leaves alone on every candidate.
+	if !spawns[0].AgentRef().Names(orchestration.AgentRefTo(testCoderAgent)) || spawns[0].Role != orchestration.AgentRoleTriage {
+		t.Fatalf("triage did not spawn as the project's agent: %+v", spawns[0])
 	}
 	if !slices.Contains(spawns[0].ExtraArgs, orchestration.WorkerPermissionMode) {
 		t.Fatalf("triage did not state the narrow grant: %v", spawns[0].ExtraArgs)
@@ -1532,7 +1539,14 @@ func TestTriageRunner_ARefusedCredentialCostsNoContainer(t *testing.T) {
 // triageRunFor builds a bare triageRun over a forge and binding, enough to
 // exercise the verdict-application paths directly.
 func triageRunFor(forge ForgeBackend, binding *ProjectBinding) *triageRun {
-	return &triageRun{forge: forge, binding: binding, repo: binding.Repo()}
+	return &triageRun{
+		runner: &TriageRunner{clusters: newMemoryClusters()},
+		job: orchestration.NewJobRun(orchestration.JobRunConfig{
+			JobID: "job-triage-bare", Runner: TriageRunnerName,
+			Config: &orchestration.JobConfig{TenantID: testTenant, ProjectID: testProject},
+		}),
+		forge: forge, binding: binding, repo: binding.Repo(),
+	}
 }
 
 // TestApplyNotActionable_ClosesOnlyWhenBothConditionsHold is the gate on the
@@ -1617,61 +1631,82 @@ func TestApplyNotActionable_AFailedCloseIsReported(t *testing.T) {
 // Which agent triage runs on
 // =============================================================================
 
+// triageRunWith is a run whose runner triages with policy.
+func triageRunWith(policy TriageAgentPolicy, binding *ProjectBinding) *triageRun {
+	return &triageRun{
+		runner:  &TriageRunner{triageAgents: policy},
+		job:     &orchestration.JobRun{TenantID: testTenant},
+		binding: binding,
+	}
+}
+
 // TestTriageAgent_TheNodeDefaultOutranksTheWorker is the regression that cost
 // real money: with no node default, every project fell straight through to its
 // worker, so a fleet writing code with a frontier model also re-read its whole
 // backlog with that model on every sweep.
 func TestTriageAgent_TheNodeDefaultOutranksTheWorker(t *testing.T) {
-	run := &triageRun{
-		runner:  &TriageRunner{defaultAgent: WorkerConfig{Backend: "openvino", Model: "qwen3-8b"}},
-		binding: &ProjectBinding{Worker: WorkerConfig{Backend: "claude", Model: "claude-opus-5"}},
-	}
-	agent := run.triageAgent()
-	if agent.Backend != "openvino" || agent.Model != "qwen3-8b" {
-		t.Fatalf("triage took the worker over the node default: backend=%q model=%q", agent.Backend, agent.Model)
+	run := triageRunWith(
+		TriageAgentPolicy{Default: orchestration.AgentRefTo(testTriageAgent), Agents: testAgentCatalog()},
+		&ProjectBinding{Worker: orchestration.AgentRefTo(testCoderAgent)},
+	)
+	agent, err := run.triageAgent(context.Background())
+	if err != nil || agent.AgentID != testTriageAgent {
+		t.Fatalf("triage took the worker over the node default: %+v, %v", agent, err)
 	}
 }
 
 // TestTriageAgent_TheBindingOutranksTheNodeDefault keeps the node default a
 // DEFAULT: a project that names its own triage agent still gets it.
 func TestTriageAgent_TheBindingOutranksTheNodeDefault(t *testing.T) {
-	run := &triageRun{
-		runner: &TriageRunner{defaultAgent: WorkerConfig{Backend: "openvino", Model: "qwen3-8b"}},
-		binding: &ProjectBinding{
-			Triage: WorkerConfig{Backend: "codex", Model: "gpt-5.5"},
-			Worker: WorkerConfig{Backend: "claude", Model: "claude-opus-5"},
-		},
-	}
-	if agent := run.triageAgent(); agent.Backend != "codex" || agent.Model != "gpt-5.5" {
-		t.Fatalf("the binding's own triage agent was ignored: backend=%q model=%q", agent.Backend, agent.Model)
+	run := triageRunWith(
+		TriageAgentPolicy{Default: orchestration.AgentRefTo(testTriageAgent), Agents: testAgentCatalog()},
+		&ProjectBinding{Triage: orchestration.AgentRefTo(testReviewerAgent), Worker: orchestration.AgentRefTo(testCoderAgent)},
+	)
+	if agent, err := run.triageAgent(context.Background()); err != nil || agent.AgentID != testReviewerAgent {
+		t.Fatalf("the binding's own triage agent was ignored: %+v, %v", agent, err)
 	}
 }
 
 // TestTriageAgent_NoDefaultStillFallsBackToTheWorker pins the behaviour an
 // install with no locally served model keeps: empty config changes nothing.
 func TestTriageAgent_NoDefaultStillFallsBackToTheWorker(t *testing.T) {
-	run := &triageRun{
-		runner:  &TriageRunner{},
-		binding: &ProjectBinding{Worker: WorkerConfig{Backend: "claude", Model: "claude-opus-5"}},
-	}
-	if agent := run.triageAgent(); agent.Backend != "claude" || agent.Model != "claude-opus-5" {
-		t.Fatalf("an unset node default broke the worker fallback: backend=%q model=%q", agent.Backend, agent.Model)
+	run := triageRunWith(TriageAgentPolicy{}, &ProjectBinding{Worker: orchestration.AgentRefTo(testCoderAgent)})
+	if agent, err := run.triageAgent(context.Background()); err != nil || agent.AgentID != testCoderAgent {
+		t.Fatalf("an unset node default broke the worker fallback: %+v, %v", agent, err)
 	}
 }
 
-// TestTriageAgent_AModelWithNoBackendIsNotASelection guards the rung rule: a
-// half-filled default must not win, or the spawn gets the wrong runtime
-// carrying the right model name.
-func TestTriageAgent_AModelWithNoBackendIsNotASelection(t *testing.T) {
-	run := &triageRun{
-		runner: &TriageRunner{defaultAgent: WorkerConfig{Model: "qwen3-8b"}},
-		binding: &ProjectBinding{
-			Triage: WorkerConfig{Model: "gpt-5.5"},
-			Worker: WorkerConfig{Backend: "claude", Model: "claude-opus-5"},
-		},
+// TestTriageAgent_ADefaultTheTenantDoesNotDefineIsPassedOver: the default is
+// the node's and names one tenant's Agent; a tenant without it triages with
+// its worker rather than failing every sweep.
+func TestTriageAgent_ADefaultTheTenantDoesNotDefineIsPassedOver(t *testing.T) {
+	run := triageRunWith(
+		TriageAgentPolicy{Default: orchestration.AgentRefTo("elsewhere"), Agents: testAgentCatalog()},
+		&ProjectBinding{Worker: orchestration.AgentRefTo(testCoderAgent)},
+	)
+	if agent, err := run.triageAgent(context.Background()); err != nil || agent.AgentID != testCoderAgent {
+		t.Fatalf("an undefined default must fall through to the worker: %+v, %v", agent, err)
 	}
-	if agent := run.triageAgent(); agent.Backend != "claude" {
-		t.Fatalf("a model with no backend was treated as a selection: backend=%q", agent.Backend)
+	// A default that exists but is not a triage agent is passed over too.
+	run = triageRunWith(
+		TriageAgentPolicy{Default: orchestration.AgentRefTo(testQwenAgent), Agents: testAgentCatalog()},
+		&ProjectBinding{Worker: orchestration.AgentRefTo(testCoderAgent)},
+	)
+	if agent, _ := run.triageAgent(context.Background()); agent.AgentID != testCoderAgent {
+		t.Fatalf("a non-triage default must not be taken: %+v", agent)
+	}
+}
+
+// TestTriageAgent_AnUnreadableCatalogIsAnError: the default cannot be judged,
+// and guessing would spend a frontier model on a sweep that should be local.
+func TestTriageAgent_AnUnreadableCatalogIsAnError(t *testing.T) {
+	boom := errors.New("catalog unreadable")
+	run := triageRunWith(
+		TriageAgentPolicy{Default: orchestration.AgentRefTo(testTriageAgent), Agents: fixedAgents{err: boom}},
+		&ProjectBinding{Worker: orchestration.AgentRefTo(testCoderAgent)},
+	)
+	if _, err := run.triageAgent(context.Background()); !errors.Is(err, boom) {
+		t.Fatalf("an unreadable catalog = %v", err)
 	}
 }
 
@@ -1740,47 +1775,31 @@ func TestApplyNotActionable_AClosedIssueIsNotAlsoEscalated(t *testing.T) {
 	}
 }
 
-// TestIsCandidate_EscalatedIsAskingAndComesBackWhenAnswered pins the other
-// half: escalating a not-actionable verdict is only safe because an escalated
-// issue is re-read once somebody replies. Without the exemption the new label
-// would trade an issue nothing looks at for an issue nothing CAN look at.
-func TestIsCandidate_EscalatedIsAskingAndComesBackWhenAnswered(t *testing.T) {
+// TestIsCandidate_EscalatedIsNotACandidateEvenWhenAnswered pins #1060:
+// escalated names a person as the next step, and a comment is not that person
+// removing the label, so the issue is never re-judged while it carries it.
+// (It was once exempt, so an answer re-judged it; that let a verdict promote
+// an issue a person had been asked to rule on.)
+func TestIsCandidate_EscalatedIsNotACandidateEvenWhenAnswered(t *testing.T) {
 	forge := newFakeForge()
 	binding := testBinding()
 	binding.Forge.Labels[LabelEscalated] = "factory:escalated"
 	escalated := binding.Forge.Label(LabelEscalated)
 	issue := &ForgeIssue{Number: 9, Title: "needs a ruling", Labels: []string{escalated}}
 	forge.issues[9] = issue
+	forge.comments[9] = []ForgeComment{
+		{Created: time.Now().Add(-time.Minute), Body: "the verdict\n<!-- " + triageCommentMarker + " -->"},
+		{Created: time.Now(), Body: "ruling: ext2 is out of scope"},
+	}
 
 	run := triageRunFor(forge, binding)
 	run.discussions = map[int][]ForgeComment{}
-	owned := binding.Forge.OwnedLabels()
-
-	// Triage spoke last AGAINST THE TREE THAT IS STILL THERE: nothing new to
-	// judge. The stamp is what makes that decidable — an unstamped verdict is
-	// re-examinable, because a verdict whose tree cannot be identified is not
-	// evidence that the tree has not moved.
-	run.headSHA = "aaaa1111"
-	forge.comments[9] = []ForgeComment{
-		{Created: time.Now().Add(-time.Hour), Body: "a person's report"},
-		{Created: time.Now().Add(-time.Minute), Body: "the verdict\n<!-- " + triageCommentMarker + " " + triageHeadMarker + "aaaa1111 -->"},
-	}
-	got, err := run.isCandidate(context.Background(), issue, owned)
+	got, err := run.isCandidate(context.Background(), issue, binding.Forge.OwnedLabels())
 	if err != nil {
 		t.Fatalf("isCandidate: %v", err)
 	}
 	if got {
-		t.Fatal("an escalated issue triage spoke last on is a candidate; it would re-judge itself every sweep")
-	}
-
-	// The owner answered: the request was the point, so judge it again.
-	forge.comments[9] = append(forge.comments[9], ForgeComment{Created: time.Now(), Body: "ruling: ext2 is out of scope"})
-	got, err = run.isCandidate(context.Background(), issue, owned)
-	if err != nil {
-		t.Fatalf("isCandidate: %v", err)
-	}
-	if !got {
-		t.Fatal("an escalated issue somebody answered is not a candidate; the ruling would never be acted on")
+		t.Fatal("an escalated issue is a candidate; a verdict could clear a person's hold")
 	}
 }
 
@@ -1861,8 +1880,10 @@ func TestHeadMovedSince_ReopensAParkedBacklog(t *testing.T) {
 // every fifteen minutes finding nothing to do.
 func TestTriageRunner_AMergeReopensAParkedIssue(t *testing.T) {
 	rig := newTriageRig(t)
-	escalated := rig.binding.Forge.Label(LabelEscalated)
-	issue := rig.forge.putIssue(703, "blocked on the dependency", escalated)
+	// No escalated label: the default fixture displays none, so the verdict
+	// leaves the issue unlabelled. An escalated issue is a hold (#1060) and a
+	// merge does not reopen it; only a person removing the label does.
+	issue := rig.forge.putIssue(703, "blocked on the dependency")
 
 	asked := time.Now().Add(-time.Hour)
 	rig.forge.putComment(703,
@@ -1897,10 +1918,11 @@ func TestTriageRunner_AMergeReopensAParkedIssue(t *testing.T) {
 // TestTriageRunner_AVerdictReplacesThePreviousDisposition proves an issue
 // carries one answer, not a pile of them.
 //
-// Each disposition only ever ADDED its label, so an issue judged needs-info
-// after being escalated ended up carrying both — two contradictory answers,
-// and an operator scanning the queue cannot tell which is current. Six of
-// eleven open go-luks2 issues were in that state after one re-triage pass.
+// Each disposition only ever ADDED its label, so an issue judged escalated
+// after being asked for information ended up carrying both — two
+// contradictory answers, and an operator scanning the queue cannot tell which
+// is current. Six of eleven open go-luks2 issues were in that state after one
+// re-triage pass.
 func TestTriageRunner_AVerdictReplacesThePreviousDisposition(t *testing.T) {
 	rig := newTriageRig(t)
 	// The default fixture declares no escalated label; this test is about two
@@ -1915,10 +1937,12 @@ func TestTriageRunner_AVerdictReplacesThePreviousDisposition(t *testing.T) {
 	if escalated == "" || needsInfo == "" {
 		t.Fatal("both disposition labels must be declared for this test to mean anything")
 	}
-	issue := rig.forge.putIssue(704, "already escalated", escalated)
+	// Starts from needs-info: an escalated issue is a hold (#1060) and is not
+	// re-judged, so the collision is reachable only in this direction.
+	issue := rig.forge.putIssue(704, "asked for information", needsInfo)
 	issue.Updated = time.Now()
 
-	rig.answers("the body does not say which cipher\n\nSDLC-TRIAGE: needs-info")
+	rig.answers("a person must rule on scope first\n\nSDLC-TRIAGE: not-actionable")
 	if err := rig.run(); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -1927,10 +1951,207 @@ func TestTriageRunner_AVerdictReplacesThePreviousDisposition(t *testing.T) {
 	for _, l := range labels {
 		got[l] = true
 	}
-	if !got[needsInfo] {
+	if !got[escalated] {
 		t.Fatalf("the new verdict's label was not applied: %v", labels)
 	}
-	if got[escalated] {
+	if got[needsInfo] {
 		t.Fatalf("the superseded disposition still stands: %v", labels)
+	}
+}
+
+// TestTriageRunner_AnIdenticalVerdictIsNotPostedAgain is go-quicbaas#1013's
+// thread: every merge reopened the parked issue, triage reached the same
+// "duplicate of #981" each time, and posted it again — sixteen identical
+// comments. A merge still reopens the issue; a re-judgement that reaches the
+// verdict triage already gave says nothing new and posts nothing. A different
+// verdict — another duplicate target — is news, and is posted.
+func TestTriageRunner_AnIdenticalVerdictIsNotPostedAgain(t *testing.T) {
+	rig := newTriageRig(t)
+	trigger := rig.binding.Forge.TriggerLabel
+	rig.forge.putIssue(981, "agent-side workspaces", trigger)
+	rig.forge.putIssue(982, "agent-side sockets", trigger)
+	rig.forge.putIssue(1013, "relay the signing agent")
+	duplicateOf := func(number string) string {
+		return "The same work as " + number + ".\n\nSDLC-TRIAGE-DUPLICATE: " + number + "\nSDLC-TRIAGE: duplicate"
+	}
+	merge := func(sha string) {
+		rig.forge.mu.Lock()
+		rig.forge.branchSHA = sha
+		rig.forge.mu.Unlock()
+	}
+
+	rig.answers(duplicateOf("#981"))
+	if err := rig.run(); err != nil {
+		t.Fatalf("first pass: %v", err)
+	}
+	if got := rig.comments(1013); len(got) != 1 || !strings.Contains(got[0], "#981") {
+		t.Fatalf("first pass posted %v, want the one duplicate verdict", got)
+	}
+
+	merge("1111222233334444555566667777888899990000")
+	rig.answers(duplicateOf("#981"))
+	if err := rig.run(); err != nil {
+		t.Fatalf("second pass: %v", err)
+	}
+	if prompts := rig.agents.promptTexts(); len(prompts) == 0 {
+		t.Fatal("the merge did not reopen the issue at all")
+	}
+	if got := rig.comments(1013); len(got) != 1 {
+		t.Fatalf("an identical verdict was posted again: %d comments", len(got))
+	}
+
+	merge("aaaabbbbccccddddeeeeffff0000111122223333")
+	rig.answers(duplicateOf("#982"))
+	if err := rig.run(); err != nil {
+		t.Fatalf("third pass: %v", err)
+	}
+	if got := rig.comments(1013); len(got) != 2 || !strings.Contains(got[1], "#982") {
+		t.Fatalf("a changed verdict was not posted: %v", got)
+	}
+}
+
+// TestSameTriageVerdict_ComparesOutcomeAndHeadline covers the comparison on its
+// own: the agent's prose around a verdict differs every time and does not make
+// it a new one; the outcome or the headline does.
+func TestSameTriageVerdict_ComparesOutcomeAndHeadline(t *testing.T) {
+	verdict := TriageVerdict{Outcome: TriageOutcomeDuplicate, Comments: true, DuplicateOf: 981,
+		Headline: "Triage found this already covered by another open issue."}
+	posted := TriageComment(verdict, "some evidence") +
+		"\n<!-- " + triageCommentMarker + " " + triageHeadMarker + "abc " + triageVerdictMarker + string(TriageOutcomeDuplicate) + " -->\n"
+
+	if !sameTriageVerdict(posted, verdict, "other evidence, reworded") {
+		t.Fatal("the same duplicate with different evidence was treated as new")
+	}
+	other := verdict
+	other.DuplicateOf = 982
+	if sameTriageVerdict(posted, other, "some evidence") {
+		t.Fatal("a different duplicate target was treated as the same verdict")
+	}
+	ready := TriageVerdict{Outcome: TriageOutcomeReady, Comments: true, Headline: verdict.Headline}
+	if sameTriageVerdict(posted, ready, "some evidence") {
+		t.Fatal("a different outcome was treated as the same verdict")
+	}
+	if sameTriageVerdict("an unmarked human comment", verdict, "some evidence") {
+		t.Fatal("a comment with no recorded verdict matched")
+	}
+
+	// Any other outcome is its body: a different question is a new verdict,
+	// the same question re-wrapped is not.
+	question := TriageVerdict{Outcome: TriageOutcomeNeedsInfo, Comments: true, Headline: "Triage needs more information."}
+	asked := TriageComment(question, "Which of the three Encode overloads?") +
+		"\n<!-- " + triageCommentMarker + " " + triageHeadMarker + "abc " + triageVerdictMarker + string(TriageOutcomeNeedsInfo) + " -->\n"
+	if !sameTriageVerdict(asked, question, "Which of the three\n  Encode overloads?") {
+		t.Fatal("the same question re-wrapped was treated as new")
+	}
+	if sameTriageVerdict(asked, question, "What should the threshold be?") {
+		t.Fatal("a different needs-info question was treated as the same verdict")
+	}
+
+	older := ForgeComment{Body: "old <!-- " + triageCommentMarker + " -->", Created: time.Unix(100, 0)}
+	newer := ForgeComment{Body: "new <!-- " + triageCommentMarker + " -->", Created: time.Unix(200, 0)}
+	human := ForgeComment{Body: "a person", Created: time.Unix(300, 0)}
+	if last, ok := lastTriageComment([]ForgeComment{newer, human, older}); !ok || last.Body != newer.Body {
+		t.Fatalf("lastTriageComment = %+v, %v; want the newest triage comment", last, ok)
+	}
+	if _, ok := lastTriageComment([]ForgeComment{human}); ok {
+		t.Fatal("a thread triage never spoke on has a last triage comment")
+	}
+}
+
+// TestTriageRunner_ASuppressedVerdictRecordsTheHeadItJudged: a merge reopens the
+// issue and triage reaches the verdict it already posted, so nothing is posted
+// — and the head it judged is remembered, so the next sweep at that same head
+// spends no model turn re-reaching it.
+func TestTriageRunner_ASuppressedVerdictRecordsTheHeadItJudged(t *testing.T) {
+	rig := newTriageRig(t)
+	rig.forge.putIssue(981, "agent-side workspaces", rig.binding.Forge.TriggerLabel)
+	rig.forge.putIssue(1013, "relay the signing agent")
+	duplicate := "The same work as #981.\n\nSDLC-TRIAGE-DUPLICATE: #981\nSDLC-TRIAGE: duplicate"
+
+	rig.answers(duplicate)
+	if err := rig.run(); err != nil {
+		t.Fatalf("first pass: %v", err)
+	}
+	rig.forge.mu.Lock()
+	rig.forge.branchSHA = "1111222233334444555566667777888899990000"
+	rig.forge.mu.Unlock()
+	rig.answers(duplicate)
+	if err := rig.run(); err != nil {
+		t.Fatalf("pass after the merge: %v", err)
+	}
+	if got := rig.comments(1013); len(got) != 1 {
+		t.Fatalf("the unchanged verdict was posted again: %d comments", len(got))
+	}
+	if !rig.audited("sdlc:triage_unchanged") {
+		t.Fatal("the suppression was not audited")
+	}
+
+	turns := len(rig.agents.promptTexts())
+	rig.answers(duplicate)
+	if err := rig.run(); err != nil {
+		t.Fatalf("pass at the same head: %v", err)
+	}
+	if got := len(rig.agents.promptTexts()); got != turns {
+		t.Fatalf("a sweep at the head already judged spent %d more turn(s)", got-turns)
+	}
+
+	// A person speaking is still new information at that head.
+	rig.forge.putComment(1013, "It is not a duplicate: #981 never touched the socket.", time.Now().Add(time.Hour))
+	rig.answers(duplicate)
+	if err := rig.run(); err != nil {
+		t.Fatalf("pass after a comment: %v", err)
+	}
+	if got := len(rig.agents.promptTexts()); got == turns {
+		t.Fatal("a human comment did not reopen the issue")
+	}
+}
+
+// TestTriageRunner_TwoDifferentQuestionsAreBothPosted: needs-info asks one
+// question, a person answers, and triage asks a different one. The second
+// question is a new verdict — its headline is the same, its question is not —
+// and it is posted.
+func TestTriageRunner_TwoDifferentQuestionsAreBothPosted(t *testing.T) {
+	rig := newTriageRig(t)
+	rig.forge.putIssue(40, "Encode is slow")
+
+	rig.answers("The issue does not say which of the three Encode overloads is affected.\n\nSDLC-TRIAGE: needs-info")
+	if err := rig.run(); err != nil {
+		t.Fatalf("first pass: %v", err)
+	}
+	rig.forge.putComment(40, "The streaming one.", time.Now().Add(time.Hour))
+	rig.answers("What latency should the streaming Encode meet?\n\nSDLC-TRIAGE: needs-info")
+	if err := rig.run(); err != nil {
+		t.Fatalf("second pass: %v", err)
+	}
+	var questions []string
+	for _, comment := range rig.comments(40) {
+		if strings.Contains(comment, triageCommentMarker) {
+			questions = append(questions, comment)
+		}
+	}
+	if len(questions) != 2 || !strings.Contains(questions[0], "overloads") || !strings.Contains(questions[1], "latency") {
+		t.Fatalf("triage's questions = %q, want both, in order", questions)
+	}
+}
+
+// TestTriageRun_DecorateNamesTheTriageSessionAsTheLead: the triage session
+// is the job's only session, so it is the job's lead. The job page badges
+// and links the lead; a triage job that never named one rendered no badge
+// (go-quicbaas#863).
+func TestTriageRun_DecorateNamesTheTriageSessionAsTheLead(t *testing.T) {
+	run := &triageRun{}
+	run.decorate(nil)
+	status := &orchestration.JobStatus{}
+	run.decorate(status)
+	if len(status.SessionIDs) != 0 || status.LeadSessionID != "" {
+		t.Fatalf("a run with no session decorated one: %v lead=%q", status.SessionIDs, status.LeadSessionID)
+	}
+	run.sessionID = "triage-1"
+	run.decorate(status)
+	if len(status.SessionIDs) != 1 || status.SessionIDs[0] != "triage-1" {
+		t.Fatalf("session ids = %v", status.SessionIDs)
+	}
+	if status.LeadSessionID != "triage-1" {
+		t.Fatalf("lead session = %q, want the triage session", status.LeadSessionID)
 	}
 }

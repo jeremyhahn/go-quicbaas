@@ -137,8 +137,19 @@ type SessionRecord struct {
 
 	// --- Spawn configuration, replayed on resume ---------------------------
 
-	// SystemPrompt is the agent's system prompt.
+	// SystemPrompt is the prompt the spawn resolved: the caller's, the role's
+	// charter or the Agent's own. It does not include PromptAppend.
 	SystemPrompt string `json:"system_prompt,omitempty"`
+
+	// PromptAppend is the run-time material appended after SystemPrompt. The
+	// two are kept apart so the audit shows which content ran, and a resume
+	// composes exactly the same system prompt again.
+	PromptAppend string `json:"prompt_append,omitempty"`
+
+	// ResolvedAgentID is the tenant Agent the session runs as, empty for a
+	// session spawned on a raw backend. Kept so a restored or resumed session
+	// still attributes its turns to that Agent's spend.
+	ResolvedAgentID string `json:"resolved_agent_id,omitempty"`
 
 	// WorkDir is the agent's working directory.
 	WorkDir string `json:"work_dir"`
@@ -200,6 +211,21 @@ type SessionRecord struct {
 	// selection input on resume.
 	AccountStrategy string `json:"account_strategy,omitempty"`
 
+	// AccountGeneration identifies which copy of AccountID's credential the
+	// session currently holds (AccountCredential.Generation), captured at the
+	// instant the material was produced for it.
+	//
+	// It is the session half of the freshness question. Account.CredentialGeneration
+	// is the pool half; when the two disagree the pool has replaced the
+	// material under a live session, whose next prompt would die against a
+	// provider that no longer honours the copy it is still presenting
+	// (go-quicbaas#997). Kept in step with the open segment of AccountHistory by
+	// OpenAccountSegment, the same way AccountID is.
+	//
+	// Zero means unknown, and the freshness check falls back to timestamps
+	// rather than guessing — see SessionAccountFreshness.
+	AccountGeneration int64 `json:"account_generation,omitempty"`
+
 	// AccountAuto records that the spawn asked for STRATEGY-BASED selection
 	// rather than naming an account. It is the rotation policy's resolve scope:
 	// together with Backend (which yields the provider) and ProjectID it is
@@ -246,6 +272,14 @@ type SessionRecord struct {
 	// Empty for a session that used no pooled account, and for one spawned
 	// before delivery grants existed; both conclude with nothing to withdraw.
 	CredentialLeaseIDs []string `json:"credential_lease_ids,omitempty"`
+
+	// ReservationIDs are the session-slot reservations (account_balancing.go)
+	// this session's spawn, resumes and rotations were resolved under. A
+	// reservation named here is SATISFIED: the reservation table stops
+	// counting it, because this record now counts the session itself. The
+	// correlation is by ID and nothing else, so two spawns on one account and
+	// one job can never satisfy each other's reservations.
+	ReservationIDs []string `json:"reservation_ids,omitempty"`
 
 	// --- Placement ---------------------------------------------------------
 
@@ -322,6 +356,16 @@ type AccountAssignment struct {
 	// Reason states why the segment ended (e.g. the redacted provider limit
 	// signal). Empty on the open segment.
 	Reason string `json:"reason,omitempty"`
+
+	// Generation identifies which copy of the account's credential this
+	// segment materialized (AccountCredential.Generation). It is per-segment
+	// rather than per-record because a rotation takes a FRESH copy — of a
+	// different account, with its own generation — and the freshness question
+	// is always asked of the segment currently in force.
+	//
+	// Zero means unknown: a segment opened before generations existed, or one
+	// whose account still holds an envelope that predates stamping.
+	Generation int64 `json:"generation,omitempty"`
 }
 
 // CanRotateAccount reports whether the session may be moved onto a different
@@ -367,6 +411,20 @@ func (r *SessionRecord) AddCredentialLease(leaseID string) {
 	r.CredentialLeaseIDs = append(r.CredentialLeaseIDs, leaseID)
 }
 
+// AddReservation records a session-slot reservation this session was resolved
+// under. Empty and repeated IDs are ignored.
+func (r *SessionRecord) AddReservation(reservationID string) {
+	if r == nil || reservationID == "" {
+		return
+	}
+	for _, existing := range r.ReservationIDs {
+		if existing == reservationID {
+			return
+		}
+	}
+	r.ReservationIDs = append(r.ReservationIDs, reservationID)
+}
+
 // OpenAccountSegment closes the account segment currently in force at endedAt
 // and opens a new one for accountID. It is the single place AccountID and
 // AccountHistory move together, so the scalar and the history can never
@@ -376,7 +434,14 @@ func (r *SessionRecord) AddCredentialLease(leaseID string) {
 // starting at the session's creation time — that is the truth for every session
 // spawned before rotation existed, and it keeps a first rotation from silently
 // dropping the original account's segment.
-func (r *SessionRecord) OpenAccountSegment(accountID, strategy, reason string, at int64) {
+//
+// generation is the credential copy the NEW segment materialized
+// (AccountCredential.Generation), zero when the rotation could not learn one.
+// It moves with AccountID for the same reason the scalar does: a session that
+// has rotated is holding the replacement account's material, and comparing it
+// against the account it left would report every rotated session as stale
+// forever.
+func (r *SessionRecord) OpenAccountSegment(accountID, strategy, reason string, at, generation int64) {
 	if r == nil || accountID == "" {
 		return
 	}
@@ -386,9 +451,10 @@ func (r *SessionRecord) OpenAccountSegment(accountID, strategy, reason string, a
 			from = at
 		}
 		r.AccountHistory = append(r.AccountHistory, AccountAssignment{
-			AccountID: r.AccountID,
-			Strategy:  r.AccountStrategy,
-			From:      from,
+			AccountID:  r.AccountID,
+			Strategy:   r.AccountStrategy,
+			From:       from,
+			Generation: r.AccountGeneration,
 		})
 	}
 	for i := range r.AccountHistory {
@@ -398,12 +464,41 @@ func (r *SessionRecord) OpenAccountSegment(accountID, strategy, reason string, a
 		}
 	}
 	r.AccountHistory = append(r.AccountHistory, AccountAssignment{
-		AccountID: accountID,
-		Strategy:  strategy,
-		From:      at,
+		AccountID:  accountID,
+		Strategy:   strategy,
+		From:       at,
+		Generation: generation,
 	})
 	r.AccountID = accountID
 	r.AccountStrategy = strategy
+	r.AccountGeneration = generation
+}
+
+// SetAccountGeneration records which copy of the account currently in force
+// the session now holds, on both the scalar and the open account segment.
+//
+// It exists for the one event that changes the answer WITHOUT changing the
+// account: a resume. Resuming re-materializes the same account's credential, so
+// the restored process presents whatever the pool holds at that moment, not
+// what the record was written with. Left unrecorded, the record would keep
+// naming a superseded copy and the next freshness check would roll a session
+// that had just been restored holding perfectly current material
+// (go-quicbaas#997).
+//
+// A generation that does not advance the record is ignored: the caller either
+// learned nothing (zero) or is holding an older copy than the record already
+// names, and overwriting a known generation with either would lose the only
+// evidence the check has.
+func (r *SessionRecord) SetAccountGeneration(generation int64) {
+	if r == nil || generation <= r.AccountGeneration {
+		return
+	}
+	r.AccountGeneration = generation
+	for i := range r.AccountHistory {
+		if r.AccountHistory[i].To == 0 {
+			r.AccountHistory[i].Generation = generation
+		}
+	}
 }
 
 // Resumable reports whether the record describes a session that this daemon

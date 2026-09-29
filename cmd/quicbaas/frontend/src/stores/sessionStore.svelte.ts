@@ -340,7 +340,7 @@ function releaseDepartedScope(): void {
 
 onSessionScopeChange(() => {
   releaseDepartedScope();
-  // Same reason as agentStore: the session list belongs to the scope, so a
+  // Same reason as fleetStore: the session list belongs to the scope, so a
   // switch must refill it rather than blank it until the auxiliary poll.
   if (authStore.status === 'authenticated') void refreshSessions();
 });

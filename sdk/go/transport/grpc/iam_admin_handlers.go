@@ -31,7 +31,6 @@ var adminRoleFromString = map[string]int{
 	"super_admin":  1,
 	"tenant_admin": 2,
 	"user_admin":   3,
-	"group_admin":  4,
 	"policy_admin": 5,
 	"audit_admin":  6,
 	"read_only":    7,

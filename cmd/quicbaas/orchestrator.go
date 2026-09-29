@@ -31,7 +31,9 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	agentsSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/agents"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/page"
 	sdktransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
@@ -47,6 +49,19 @@ var (
 	orchProjectID    string
 	orchSandbox      string
 	orchHostAffinity string
+
+	// Agent references: the Agent or pool a spawned session runs as, the
+	// role it plays, and the Agent or pool a job's lead runs as.
+	orchSpawnAgent string
+	orchSpawnPool  string
+	orchSpawnRole  string
+	orchJobLead    string
+
+	// Run-time prompt material appended to what a spawn, a job or a task's
+	// attempts run with.
+	orchSpawnPromptAppend promptAppendFlags
+	orchJobPromptAppend   promptAppendFlags
+	orchTaskPromptAppend  promptAppendFlags
 
 	// Task flags.
 	orchTaskSubject     string
@@ -68,6 +83,11 @@ var (
 	orchJobMaxIterations int
 	orchJobPollInterval  string
 	orchJobTaskID        string
+
+	// List paging flags, one set per list command.
+	orchSessionsPage pageFlags
+	orchTaskListPage pageFlags
+	orchJobListPage  pageFlags
 
 	// Workflow flags.
 	orchWorkflowName string
@@ -123,6 +143,7 @@ Examples:
 	cmd.AddCommand(newOrchAttachCommand())
 	cmd.AddCommand(newOrchBackendsCommand())
 	cmd.AddCommand(newOrchHealthCommand())
+	cmd.AddCommand(newOrchSpendPolicyCommand())
 
 	// Task command group.
 	cmd.AddCommand(newOrchTaskCommand())
@@ -139,6 +160,8 @@ Examples:
 
 	// Stateless inference command.
 	cmd.AddCommand(newOrchInferenceCommand())
+	cmd.AddCommand(newOrchCostSettingsCommand())
+	cmd.AddCommand(newOrchCostCommand())
 
 	return cmd
 }
@@ -165,23 +188,30 @@ func newOrchSpawnCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "spawn",
 		Short: "Spawn a new agent session",
-		Long: `Create a persistent agent session on a specified backend.
+		Long: `Create a persistent agent session as a tenant Agent, from a pool, or on a raw
+backend. An Agent supplies the backend, model and image; a pool fails over
+along its Agents when one's accounts are spent or its backend is unavailable.
 
 Examples:
-  quicbaas orchestrator spawn --backend claude
+  quicbaas orchestrator spawn --agent claude-coder
+  quicbaas orchestrator spawn --pool reviewers --role review
+  quicbaas orchestrator spawn --agent claude-coder --prompt-append-file ./context.md
   quicbaas orchestrator spawn --backend ollama --model llama3
   quicbaas orchestrator spawn --backend claude --project proj_123`,
 		RunE: runOrchSpawn,
 	}
 
-	cmd.Flags().StringVar(&orchBackend, "backend", "", "Agent backend name (required)")
+	cmd.Flags().StringVar(&orchSpawnAgent, "agent", "", "Tenant Agent the session runs as")
+	cmd.Flags().StringVar(&orchSpawnPool, "pool", "", "Tenant pool the session runs from, failing over along its Agents")
+	cmd.Flags().StringVar(&orchSpawnRole, "role", "", "The kind of work the session does (general, coding, review, triage, lead, project_manager)")
+	cmd.Flags().StringVar(&orchBackend, "backend", "", "Agent backend name, when no --agent or --pool is named")
 	cmd.Flags().StringVar(&orchModel, "model", "", "Model to use for the session")
 	cmd.Flags().StringVar(&orchSystemPrmpt, "system-prompt", "", "System prompt for the session")
 	cmd.Flags().StringVar(&orchProjectID, "project", "", "Project ID to associate with the session")
 	cmd.Flags().StringVar(&orchSandbox, "sandbox", "default",
 		"Sandbox selector: default (server policy), required (force container), none (force raw exec)")
 	cmd.Flags().StringVar(&orchHostAffinity, "host-affinity", "",
-		"Pin the session to a specific agent daemon by Name or Host (e.g. 'agent-01' or 'agent-01.example.com:9091'). Empty = any available daemon.")
+		"Pin the session to a specific fleet node daemon by Name or Host (e.g. 'agent-01' or 'agent-01.example.com:9091'). Empty = any available daemon.")
 	cmd.Flags().StringVar(&orchAccountID, "account-id", "",
 		"Pin the session to a specific pooled provider account. A bare pin is honored: the session is never rotated off it.")
 	cmd.Flags().BoolVar(&orchAccountAuto, "account-auto", false,
@@ -191,9 +221,10 @@ Examples:
 	cmd.Flags().StringSliceVar(&orchAccountAllow, "account-allow", nil,
 		"Restrict the session to these pooled account IDs and authorize it to rotate between them. Repeatable.")
 
-	if err := cmd.MarkFlagRequired("backend"); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to mark backend flag as required: %v\n", err)
-	}
+	orchSpawnPromptAppend.register(cmd, "the session's resolved prompt (the Agent's own, else its role's built-in charter)")
+
+	cmd.MarkFlagsOneRequired("agent", "pool", "backend")
+	cmd.MarkFlagsMutuallyExclusive("agent", "pool", "backend")
 
 	return cmd
 }
@@ -228,13 +259,21 @@ func runOrchSpawn(cmd *cobra.Command, args []string) error {
 	if parseErr != nil {
 		return formatError(parseErr)
 	}
+	promptAppend, err := orchSpawnPromptAppend.value(cmd.InOrStdin())
+	if err != nil {
+		return formatError(err)
+	}
 
 	req := &orchestratorSDK.SpawnSessionRequest{
+		AgentID:      orchSpawnAgent,
+		PoolID:       orchSpawnPool,
+		Role:         orchSpawnRole,
 		Backend:      orchBackend,
 		ProjectID:    orchProjectID,
 		Model:        orchModel,
 		SandboxMode:  mode,
 		HostAffinity: orchHostAffinity,
+		PromptAppend: promptAppend,
 
 		// Pooled provider account selection. --account-auto and
 		// --account-allow are the two things that authorize a later
@@ -470,17 +509,21 @@ func runOrchRotateAccount(cmd *cobra.Command, args []string) error {
 
 // newOrchSessionsCommand creates the sessions subcommand.
 func newOrchSessionsCommand() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "sessions",
 		Short: "List active agent sessions",
-		Long: `List all active agent sessions across backends.
+		Long: `List active agent sessions across backends, one page at a time.
 
 Examples:
   quicbaas orchestrator sessions
-  quicbaas orchestrator sessions --output json`,
+  quicbaas orchestrator sessions --limit 50 --offset 50
+  quicbaas orchestrator sessions --search claude --sort last_active:desc
+  quicbaas orchestrator sessions --all --output json`,
 		Args: cobra.NoArgs,
 		RunE: runOrchSessions,
 	}
+	orchSessionsPage.bind(cmd)
+	return cmd
 }
 
 // runOrchSessions executes the sessions command.
@@ -494,12 +537,19 @@ func runOrchSessions(cmd *cobra.Command, args []string) error {
 	ctx, cancel := orchContext()
 	defer cancel()
 
-	resp, err := client.ListSessions(ctx, &orchestratorSDK.ListSessionsRequest{})
+	sessions, env, err := fetchPages(&orchSessionsPage, func(params page.Params) ([]*orchestratorSDK.SessionStatusResponse, page.Envelope, error) {
+		resp, err := client.ListSessions(ctx, &orchestratorSDK.ListSessionsRequest{Params: params})
+		if err != nil || resp == nil {
+			return nil, page.Envelope{}, err
+		}
+		return resp.Sessions, resp.Envelope, nil
+	})
 	if err != nil {
 		return formatError(err)
 	}
 
-	return formatOrchSessionsResponse(resp, orchOutputFmt, os.Stdout)
+	resp := &orchestratorSDK.ListSessionsResponse{Sessions: sessions, Count: len(sessions), Envelope: env}
+	return formatOrchSessionsResponse(resp, orchOutputFmt, cmd.OutOrStdout())
 }
 
 // =============================================================================
@@ -634,6 +684,7 @@ Examples:
 	cmd.Flags().BoolVar(&orchTaskAutoSpawn, "auto-spawn", false, "Dispatch a one-shot job immediately on the best-matching agent")
 	cmd.Flags().StringVar(&orchTaskBackend, "backend", "", "Restrict auto-spawn agent selection to this backend (e.g. ollama, acp)")
 	cmd.Flags().BoolVar(&orchTaskGpuRequired, "gpu", false, "Restrict auto-spawn to GPU-capable agents")
+	orchTaskPromptAppend.register(cmd, "the prompt of every session an attempt at the task spawns")
 
 	if err := cmd.MarkFlagRequired("subject"); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to mark subject flag as required: %v\n", err)
@@ -653,15 +704,20 @@ func runOrchTaskCreate(cmd *cobra.Command, args []string) error {
 	ctx, cancel := orchContext()
 	defer cancel()
 
+	promptAppend, err := orchTaskPromptAppend.value(cmd.InOrStdin())
+	if err != nil {
+		return formatError(err)
+	}
 	req := &orchestratorSDK.CreateTaskRequest{
-		TenantID:    globalTenantID,
-		Subject:     orchTaskSubject,
-		Description: orchTaskDescription,
-		TeamName:    orchTaskTeamName,
-		AssignedTo:  orchTaskAssignedTo,
-		AutoSpawn:   orchTaskAutoSpawn,
-		Backend:     orchTaskBackend,
-		GpuRequired: orchTaskGpuRequired,
+		TenantID:     globalTenantID,
+		Subject:      orchTaskSubject,
+		Description:  orchTaskDescription,
+		TeamName:     orchTaskTeamName,
+		AssignedTo:   orchTaskAssignedTo,
+		AutoSpawn:    orchTaskAutoSpawn,
+		Backend:      orchTaskBackend,
+		GpuRequired:  orchTaskGpuRequired,
+		PromptAppend: promptAppend,
 	}
 
 	resp, err := client.CreateTask(ctx, req)
@@ -729,10 +785,13 @@ func newOrchTaskListCommand() *cobra.Command {
 Examples:
   quicbaas orchestrator task list
   quicbaas orchestrator task list --status pending
-  quicbaas orchestrator task list --team backend --output json`,
+  quicbaas orchestrator task list --team backend --output json
+  quicbaas orchestrator task list --search login --sort created_at:desc --limit 50
+  quicbaas orchestrator task list --all`,
 		Args: cobra.NoArgs,
 		RunE: runOrchTaskList,
 	}
+	orchTaskListPage.bind(cmd)
 
 	cmd.Flags().StringVar(&orchTaskStatus, "status", "", "Filter by task status (pending, claimed, in_progress, completed, failed, cancelled)")
 	cmd.Flags().StringVar(&orchTaskProjectID, "project", "", "Filter by project ID")
@@ -754,21 +813,27 @@ func runOrchTaskList(cmd *cobra.Command, args []string) error {
 	ctx, cancel := orchContext()
 	defer cancel()
 
-	req := &orchestratorSDK.ListTasksRequest{
-		TenantID:   globalTenantID,
-		Status:     orchTaskStatus,
-		TeamName:   orchTaskTeamName,
-		AssignedTo: orchTaskAssignedTo,
-		ProjectID:  orchTaskProjectID,
-		Statuses:   orchTaskStatuses,
-	}
-
-	resp, err := client.ListTasks(ctx, req)
+	tasks, env, err := fetchPages(&orchTaskListPage, func(params page.Params) ([]*orchestratorSDK.Task, page.Envelope, error) {
+		resp, err := client.ListTasks(ctx, &orchestratorSDK.ListTasksRequest{
+			TenantID:   globalTenantID,
+			Status:     orchTaskStatus,
+			TeamName:   orchTaskTeamName,
+			AssignedTo: orchTaskAssignedTo,
+			ProjectID:  orchTaskProjectID,
+			Statuses:   orchTaskStatuses,
+			Params:     params,
+		})
+		if err != nil || resp == nil {
+			return nil, page.Envelope{}, err
+		}
+		return resp.Tasks, resp.Envelope, nil
+	})
 	if err != nil {
 		return formatError(err)
 	}
 
-	return formatOrchTaskListResponse(resp, orchOutputFmt, os.Stdout)
+	resp := &orchestratorSDK.ListTasksResponse{Tasks: tasks, Count: len(tasks), Envelope: env}
+	return formatOrchTaskListResponse(resp, orchOutputFmt, cmd.OutOrStdout())
 }
 
 // =============================================================================
@@ -1340,13 +1405,17 @@ func formatOrchSessionsResponse(resp *orchestratorSDK.ListSessionsResponse, form
 			}
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", s.SessionID, s.Backend, s.Status, lastActive)
 		}
-		fmt.Fprintf(tw, "\nTotal: %d sessions\n", resp.Count)
-		return tw.Flush()
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+		writePageFooter(w, len(resp.Sessions), resp.Envelope)
+		return nil
 
 	default:
 		for _, s := range resp.Sessions {
 			fmt.Fprintf(w, "%s: %s (%s)\n", s.SessionID, s.Backend, s.Status)
 		}
+		writePageFooter(w, len(resp.Sessions), resp.Envelope)
 		return nil
 	}
 }
@@ -1511,13 +1580,17 @@ func formatOrchTaskListResponse(resp *orchestratorSDK.ListTasksResponse, format 
 			}
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", t.ID, t.Subject, t.Status, teamName, assignedTo)
 		}
-		fmt.Fprintf(tw, "\nTotal: %d tasks\n", resp.Count)
-		return tw.Flush()
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+		writePageFooter(w, len(resp.Tasks), resp.Envelope)
+		return nil
 
 	default:
 		for _, t := range resp.Tasks {
 			fmt.Fprintf(w, "%s: %s (%s)\n", t.ID, t.Subject, t.Status)
 		}
+		writePageFooter(w, len(resp.Tasks), resp.Envelope)
 		return nil
 	}
 }
@@ -1716,8 +1789,9 @@ Press Ctrl+C to cancel the running job.
 
 Examples:
   quicbaas orchestrator run "Build a tic-tac-toe game"
-  quicbaas orchestrator run "Implement user authentication" --backend claude
-  quicbaas orchestrator run "Add caching layer" --backend ollama --model llama3
+  quicbaas orchestrator run "Implement user authentication" --lead claude-lead
+  quicbaas orchestrator run "Add caching layer" --lead pool:leads
+  quicbaas orchestrator run "Fix the flaky test" --lead claude-lead --prompt-append "Touch only pkg/cache"
   quicbaas orchestrator run "Build the REST API" --project proj_123 --max-iterations 5
   quicbaas orchestrator run "Build a game" --workflow software-dev
   quicbaas orchestrator run "Custom task" --workflow-file ./my-workflow.yaml`,
@@ -1725,8 +1799,7 @@ Examples:
 		RunE: runOrchRun,
 	}
 
-	cmd.Flags().StringVar(&orchBackend, "backend", "", "Lead agent backend name")
-	cmd.Flags().StringVar(&orchModel, "model", "", "Lead agent model override")
+	cmd.Flags().StringVar(&orchJobLead, "lead", "", "The Agent or pool the lead runs as: <agent-id>, agent:<id> or pool:<id> (default: the project's default lead)")
 	cmd.Flags().StringVar(&orchProjectID, "project", "", "Project ID to scope the job")
 	cmd.Flags().IntVar(&orchJobMaxIterations, "max-iterations", 10, "Maximum re-delegation iterations")
 	cmd.Flags().StringVar(&orchJobPollInterval, "poll-interval", "5s", "Interval between status polls")
@@ -1734,6 +1807,7 @@ Examples:
 	cmd.Flags().StringVar(&orchWorkflowFile, "workflow-file", "", "Path to a custom workflow YAML file")
 	cmd.Flags().StringVar(&orchJobRunner, "runner", "", "Job runner driving the job's states (default: workflow)")
 	cmd.Flags().StringVar(&orchVerbosity, "verbosity", "info", "Display verbosity (info, verbose, debug)")
+	orchJobPromptAppend.register(cmd, "the prompt of every session the job spawns, the lead's included")
 
 	return cmd
 }
@@ -1751,17 +1825,25 @@ func runOrchRun(cmd *cobra.Command, args []string) error {
 	ctx, cancel := orchContext()
 	defer cancel()
 
+	lead, err := agentsSDK.ParseAgentRef(orchJobLead)
+	if err != nil {
+		return formatError(err)
+	}
+	promptAppend, err := orchJobPromptAppend.value(cmd.InOrStdin())
+	if err != nil {
+		return formatError(err)
+	}
 	req := &orchestratorSDK.StartJobRequest{
 		TenantID:      globalTenantID,
 		Description:   description,
-		LeadBackend:   orchBackend,
-		LeadModel:     orchModel,
+		Lead:          lead,
 		ProjectID:     orchProjectID,
 		MaxIterations: orchJobMaxIterations,
 		PollInterval:  orchJobPollInterval,
 		WorkflowName:  orchWorkflowName,
 		WorkflowFile:  orchWorkflowFile,
 		Runner:        orchJobRunner,
+		PromptAppend:  promptAppend,
 	}
 
 	resp, err := client.StartJob(ctx, req)
@@ -1921,11 +2003,14 @@ Examples:
   quicbaas orchestrator job list
   quicbaas orchestrator job list --task 8bf2fb5f30e2f0c87223ed219d1418c7
   quicbaas orchestrator job list --output json
-  quicbaas orchestrator job list --output yaml`,
+  quicbaas orchestrator job list --output yaml
+  quicbaas orchestrator job list --search deploy --sort started_at --limit 50
+  quicbaas orchestrator job list --all`,
 		Args: cobra.NoArgs,
 		RunE: runOrchJobList,
 	}
 	cmd.Flags().StringVar(&orchJobTaskID, "task", "", "Narrow the listing to the attempts at one task")
+	orchJobListPage.bind(cmd)
 	return cmd
 }
 
@@ -1940,15 +2025,23 @@ func runOrchJobList(cmd *cobra.Command, args []string) error {
 	ctx, cancel := orchContext()
 	defer cancel()
 
-	resp, err := client.ListJobs(ctx, &orchestratorSDK.ListJobsRequest{
-		TenantID: globalTenantID,
-		TaskID:   orchJobTaskID,
+	jobs, env, err := fetchPages(&orchJobListPage, func(params page.Params) ([]orchestratorSDK.JobSummary, page.Envelope, error) {
+		resp, err := client.ListJobs(ctx, &orchestratorSDK.ListJobsRequest{
+			TenantID: globalTenantID,
+			TaskID:   orchJobTaskID,
+			Params:   params,
+		})
+		if err != nil || resp == nil {
+			return nil, page.Envelope{}, err
+		}
+		return resp.Jobs, resp.Envelope, nil
 	})
 	if err != nil {
 		return formatError(err)
 	}
 
-	return formatOrchListJobsResponse(resp, orchOutputFmt, os.Stdout)
+	resp := &orchestratorSDK.ListJobsResponse{Jobs: jobs, Envelope: env}
+	return formatOrchListJobsResponse(resp, orchOutputFmt, cmd.OutOrStdout())
 }
 
 // formatOrchListJobsResponse formats a list jobs response for output.
@@ -1970,6 +2063,7 @@ func formatOrchListJobsResponse(resp *orchestratorSDK.ListJobsResponse, format s
 	case cli.OutputFormatTable:
 		if len(resp.Jobs) == 0 {
 			fmt.Fprintf(w, "No jobs found.\n")
+			writePageFooter(w, 0, resp.Envelope)
 			return nil
 		}
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
@@ -1984,11 +2078,16 @@ func formatOrchListJobsResponse(resp *orchestratorSDK.ListJobsResponse, format s
 				j.TaskCount, j.Completed, j.Failed,
 				j.EventCount, desc)
 		}
-		return tw.Flush()
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+		writePageFooter(w, len(resp.Jobs), resp.Envelope)
+		return nil
 
 	default:
 		if len(resp.Jobs) == 0 {
 			fmt.Fprintf(w, "No jobs found.\n")
+			writePageFooter(w, 0, resp.Envelope)
 			return nil
 		}
 		for _, j := range resp.Jobs {
@@ -2007,6 +2106,7 @@ func formatOrchListJobsResponse(resp *orchestratorSDK.ListJobsResponse, format s
 			fmt.Fprintf(w, "Updated:     %s\n", time.Unix(0, j.UpdatedAt).Format(time.RFC3339))
 			fmt.Fprintln(w)
 		}
+		writePageFooter(w, len(resp.Jobs), resp.Envelope)
 		return nil
 	}
 }

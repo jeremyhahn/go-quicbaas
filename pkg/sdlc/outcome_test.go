@@ -153,8 +153,8 @@ func TestRenderOutcome_ReadmittedSaysNothingIsRequired(t *testing.T) {
 	if strings.Contains(body, "recorded no reason") {
 		t.Fatalf("a readmission has no park reason to invent:\n%s", body)
 	}
-	if !strings.Contains(body, "**Labels:** `task:ready` removed") {
-		t.Fatalf("a readmission clears what the park left:\n%s", body)
+	if !strings.Contains(body, "**Labels:** `task:ready` kept until the next attempt starts") {
+		t.Fatalf("a readmission keeps the trigger, the display state of queued work:\n%s", body)
 	}
 }
 
@@ -306,8 +306,9 @@ func TestHooks_TaskConcluded_ExhaustedPostsOnceAndSwapsTheLabel(t *testing.T) {
 }
 
 // TestHooks_TaskConcluded_ReadmitClearsTheTerminalLabel proves the undoing of
-// a park is announced too, and leaves the issue with none of the module's
-// labels until the next attempt's Prepare.
+// a park is announced too, and moves the issue from its park label to the
+// trigger — the display state of queued work — until the next attempt's
+// Prepare labels it in progress.
 func TestHooks_TaskConcluded_ReadmitClearsTheTerminalLabel(t *testing.T) {
 	rig := concludedRig(t)
 	rig.forge.putIssue(25, "Fix the thing", "factory:escalated", "bug")
@@ -331,6 +332,51 @@ func TestHooks_TaskConcluded_ReadmitClearsTheTerminalLabel(t *testing.T) {
 	}
 	if !containsLabel(labels, "bug") {
 		t.Fatalf("a label the module does not own must be left alone: %v", labels)
+	}
+	if !containsLabel(labels, "task:ready") {
+		t.Fatalf("a queued task's issue must show the trigger: %v", labels)
+	}
+}
+
+// TestHooks_TaskConcluded_ReadmitKeepsTheTriggerAHandBackApplied is X11
+// (go-luks2#211 and five more, 2026-09-25): a Needs-you ruling handed the
+// issue back — trigger on, park label off — and the readmission comment
+// posted the same second said "`task:ready` removed" and removed it, leaving
+// a pending task's issue with no state label at all. The readmission must
+// leave the trigger exactly where the hand-back put it.
+func TestHooks_TaskConcluded_ReadmitKeepsTheTriggerAHandBackApplied(t *testing.T) {
+	rig := concludedRig(t)
+	rig.forge.putIssue(25, "Fix the thing", "task:ready", "bug")
+	task := exhaustedTask()
+	task.Status = orchestration.TaskStatusPending
+	rig.tasks.replace(task)
+
+	if err := rig.hooks.TaskConcluded(context.Background(), orchestration.TaskConclusion{
+		TenantID: testTenant, Reason: orchestration.TaskConcludedReadmitted, Task: task,
+	}); err != nil {
+		t.Fatalf("TaskConcluded: %v", err)
+	}
+	if labels := rig.forge.issueLabels(25); !containsLabel(labels, "task:ready") {
+		t.Fatalf("the readmission stripped the trigger the hand-back applied: %v", labels)
+	}
+	if removed := rig.forge.labelRemovals; len(removed) != 0 {
+		t.Fatalf("labels removed = %v, want none: nothing but the trigger was owned", removed)
+	}
+	comments := rig.forge.commentsOn(25)
+	if len(comments) != 1 || strings.Contains(comments[0].Body, "removed") {
+		t.Fatalf("the readmission comment still announces a removal: %+v", comments)
+	}
+}
+
+// TestForgeConfig_LabelNamesTheTriggerByItsKey: the trigger is reachable by
+// its label key like every display label, and a binding without one answers
+// empty.
+func TestForgeConfig_LabelNamesTheTriggerByItsKey(t *testing.T) {
+	if got := (ForgeConfig{TriggerLabel: " task:ready "}).Label(TriggerLabelKey); got != "task:ready" {
+		t.Fatalf("Label(trigger) = %q", got)
+	}
+	if got := (ForgeConfig{Labels: map[string]string{LabelBlocked: "factory:blocked"}}).Label(TriggerLabelKey); got != "" {
+		t.Fatalf("Label(trigger) = %q, want empty for a binding with no trigger", got)
 	}
 }
 

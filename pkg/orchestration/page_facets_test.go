@@ -112,11 +112,11 @@ func TestApplyFacetedPage_RefusesAnUnknownSortBeforeCountingAnything(t *testing.
 func TestCountFacets_CountsARecordOncePerValue(t *testing.T) {
 	t.Parallel()
 
-	agents := []*AgentRegistration{
+	agents := []*FleetNode{
 		{ID: "a1", Backend: "claude", Capabilities: []string{"claude", "codex"}},
 		{ID: "a2", Backend: "codex"},
 	}
-	counted := countFacets(agents, agentFacetSpec)
+	counted := countFacets(agents, fleetNodeFacetSpec)
 
 	want := map[string]int{"claude": 1, "codex": 2}
 	if !reflect.DeepEqual(counted["backend"], want) {
@@ -149,7 +149,7 @@ func TestFacetKeys_AreTheDocumentedContract(t *testing.T) {
 		{"tasks", TaskFacetSpec().FacetKeys()},
 		{"jobs", JobFacetSpec().FacetKeys()},
 		{"sessions", SessionFacetSpec().FacetKeys()},
-		{"agents", AgentFacetSpec().FacetKeys()},
+		{"agents", FleetNodeFacetSpec().FacetKeys()},
 		{"workflows", WorkflowFacetSpec().FacetKeys()},
 		{"projects", ProjectFacetSpec().FacetKeys()},
 		{"accounts", AccountFacetSpec().FacetKeys()},
@@ -277,25 +277,25 @@ func TestJobFilter_MatchesFacets(t *testing.T) {
 func TestAgentFilter_MatchesFacetsServesBackendRatherThanEqualsIt(t *testing.T) {
 	t.Parallel()
 
-	agent := &AgentRegistration{
+	agent := &FleetNode{
 		ID:           "a1",
 		Backend:      "acp",
 		Capabilities: []string{"claude", "codex"},
-		Status:       AgentStatusRunning,
+		Status:       FleetNodeStatusRunning,
 	}
-	if !(&AgentFilter{Backend: "codex"}).MatchesFacets(agent) {
+	if !(&FleetNodeFilter{Backend: "codex"}).MatchesFacets(agent) {
 		t.Error("a daemon serving codex as a capability did not match the codex filter")
 	}
-	if (&AgentFilter{Backend: "opencode"}).MatchesFacets(agent) {
+	if (&FleetNodeFilter{Backend: "opencode"}).MatchesFacets(agent) {
 		t.Error("a daemon that serves no opencode matched the opencode filter")
 	}
-	if (&AgentFilter{Status: AgentStatusOffline}).MatchesFacets(agent) {
+	if (&FleetNodeFilter{Status: FleetNodeStatusOffline}).MatchesFacets(agent) {
 		t.Error("an online daemon matched the offline filter")
 	}
-	if (&AgentFilter{}).MatchesFacets(nil) {
+	if (&FleetNodeFilter{}).MatchesFacets(nil) {
 		t.Error("matchesFacets(nil agent) = true, want false")
 	}
-	base := (&AgentFilter{Host: "h", Backend: "codex", Status: AgentStatusRunning, Model: "m"}).FacetBase()
+	base := (&FleetNodeFilter{Host: "h", Backend: "codex", Status: FleetNodeStatusRunning, Model: "m"}).FacetBase()
 	if base.Host != "h" || base.Model != "m" || base.Backend != "" || base.Status != "" {
 		t.Errorf("facetBase() = %+v, want the counted narrowings removed", base)
 	}

@@ -103,6 +103,30 @@ func sessionBackedFromSpecs(specs []JobStateSpec) map[JobState]bool {
 	return backed
 }
 
+// runnerSessionBackedIn is each registered runner's OWN answer to which of its
+// states are session-backed, keyed by runner name.
+//
+// THE MERGED ANSWER IS THE WRONG ONE FOR A JOB WHOSE RUNNER IS KNOWN. Two
+// runners may name the same state and mean different things by it: the
+// workflow runner's reviewing is a lead session reviewing work, and the sdlc
+// runner's reviewing is a wait on a forge with the worker's container closed
+// (go-quicbaas#938). The disjunction mergeJobStateSpec takes would end every
+// sdlc job that waited in reviewing past its bound, for lacking a session it
+// was never meant to hold.
+func runnerSessionBackedIn(registry *JobRunnerRegistry) map[string]map[JobState]bool {
+	runners := registry.All()
+	backed := make(map[string]map[JobState]bool, len(runners))
+	for _, runner := range runners {
+		states := runner.States()
+		own := make(map[JobState]bool, len(states))
+		for _, spec := range states {
+			own[spec.State] = spec.SessionBacked
+		}
+		backed[runner.Name()] = own
+	}
+	return backed
+}
+
 // Resolved fills every unset state from the defaults, keeping explicit
 // negatives as off switches.
 func (t JobIdleThresholds) Resolved() JobIdleThresholds {
@@ -252,6 +276,7 @@ type JobStallDetector struct {
 	sessions      SessionAddresser
 	thresholds    JobIdleThresholds
 	sessionBacked map[JobState]bool
+	runnerBacked  map[string]map[JobState]bool
 	longest       time.Duration
 	now           jobLeaseClock
 	ledger        *idleLedger
@@ -265,13 +290,15 @@ type JobStallDetector struct {
 // sweep must not depend on what registered since it started, and re-deriving
 // per job would put a registry walk on the per-job path.
 func NewJobStallDetector(runs JobRunSource, sessions SessionAddresser, thresholds JobIdleThresholds) (*JobStallDetector, error) {
-	return newJobStallDetector(runs, sessions, thresholds, KnownJobStates())
+	return newJobStallDetector(runs, sessions, thresholds, KnownJobStates(), runnerSessionBackedIn(jobRunners))
 }
 
 // newJobStallDetector is NewJobStallDetector over explicit runner specs, so
 // the derivation can be exercised against states a test declares rather than
-// the engine's process-wide registry.
-func newJobStallDetector(runs JobRunSource, sessions SessionAddresser, thresholds JobIdleThresholds, specs []JobStateSpec) (*JobStallDetector, error) {
+// the engine's process-wide registry. runnerBacked is each runner's own
+// session-backed answer (runnerSessionBackedIn); nil leaves every job to the
+// merged one.
+func newJobStallDetector(runs JobRunSource, sessions SessionAddresser, thresholds JobIdleThresholds, specs []JobStateSpec, runnerBacked map[string]map[JobState]bool) (*JobStallDetector, error) {
 	if runs == nil {
 		return nil, &JobLeaseError{Sentinel: ErrJobLeaseInvalidInput, Message: "a stall detector needs the jobs it examines"}
 	}
@@ -284,6 +311,7 @@ func newJobStallDetector(runs JobRunSource, sessions SessionAddresser, threshold
 		sessions:      sessions,
 		thresholds:    resolved,
 		sessionBacked: sessionBackedFromSpecs(specs),
+		runnerBacked:  runnerBacked,
 		longest:       longestOf(resolved),
 		now:           utcNow,
 		ledger:        newIdleLedger(),
@@ -332,7 +360,7 @@ func (d *JobStallDetector) examine(ctx context.Context, run *JobRun, now time.Ti
 
 	idle := "job has been " + string(status.State) + " for " + finding.Idle.String() +
 		", past its " + threshold.String() + " bound"
-	if !d.sessionBacked[status.State] {
+	if !d.backed(run.Runner, status.State) {
 		finding.Verdict = JobStallIdle
 		finding.Evidence = idle + "; the state is not session-backed, so the wait is reported and the job left running"
 		return finding, d.ledger.shouldReport(idleKey(finding.TenantID, finding.JobID), now, threshold)
@@ -356,6 +384,15 @@ func (d *JobStallDetector) examine(ctx context.Context, run *JobRun, now time.Ti
 		now.Format(time.RFC3339) + ")"
 	run.Abort(&JobStalledError{JobID: status.JobID, State: status.State, Idle: finding.Idle, Evidence: finding.Evidence})
 	return finding, true
+}
+
+// backed reports whether a job of runner must be backed by a session in state:
+// the runner's own declaration when it made one, the merged answer otherwise.
+func (d *JobStallDetector) backed(runner string, state JobState) bool {
+	if own, ok := d.runnerBacked[runner][state]; ok {
+		return own
+	}
+	return d.sessionBacked[state]
 }
 
 // watch returns the bound on one state and whether it is watched at all. It

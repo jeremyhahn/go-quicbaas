@@ -35,7 +35,7 @@ type errOrchestrator struct {
 	jobErr     error
 
 	sessions []*orchestratorSDK.SessionStatusResponse
-	agents   []*orchestratorSDK.AgentRegistration
+	agents   []*orchestratorSDK.FleetNode
 
 	spawns  int
 	prompts int
@@ -79,11 +79,11 @@ func (m *errOrchestrator) ListSessions(ctx context.Context, req *orchestratorSDK
 	}
 	return &orchestratorSDK.ListSessionsResponse{Sessions: m.sessions, Count: len(m.sessions)}, nil
 }
-func (m *errOrchestrator) ListAgents(ctx context.Context, req *orchestratorSDK.ListAgentsRequest) (*orchestratorSDK.ListAgentsResponse, error) {
+func (m *errOrchestrator) ListFleetNodes(ctx context.Context, req *orchestratorSDK.ListFleetNodesRequest) (*orchestratorSDK.ListFleetNodesResponse, error) {
 	if m.listAgtErr != nil {
 		return nil, m.listAgtErr
 	}
-	return &orchestratorSDK.ListAgentsResponse{Agents: m.agents, Count: len(m.agents)}, nil
+	return &orchestratorSDK.ListFleetNodesResponse{Nodes: m.agents, Count: len(m.agents)}, nil
 }
 func (m *errOrchestrator) SessionStatus(ctx context.Context, req *orchestratorSDK.SessionStatusRequest) (*orchestratorSDK.SessionStatusResponse, error) {
 	if m.statusErr != nil {
@@ -310,7 +310,7 @@ func TestBot_AgentsEmpty(t *testing.T) {
 // TestBot_AgentsList renders the agents table.
 func TestBot_AgentsList(t *testing.T) {
 	bot, signal, orch, _ := newDispatchBot(t)
-	orch.agents = []*orchestratorSDK.AgentRegistration{
+	orch.agents = []*orchestratorSDK.FleetNode{
 		{Name: "alpha", Host: "h1", Status: "ready", Backend: "claude"},
 	}
 	if err := bot.agentsOrDispatch(context.Background(), dmMsg("agents"), testOperator, Intent{Kind: IntentAgents}); err != nil {

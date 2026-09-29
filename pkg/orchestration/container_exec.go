@@ -172,6 +172,9 @@ func (r *ExecContainerRuntime) Exec(ctx context.Context, containerID string, spe
 		if isNotFoundOutput(trimmed) {
 			return nil, &ContainerNotFoundError{ContainerID: containerID}
 		}
+		if refusal, stopped := notRunningRefusal(result); stopped {
+			return nil, &ContainerNotRunningError{ContainerID: containerID, Message: refusal}
+		}
 		// A negative code means the process was signalled rather than
 		// exiting; there is no status to report and it is not the command's
 		// answer.
@@ -192,6 +195,39 @@ func (r *ExecContainerRuntime) Exec(ctx context.Context, containerID string, spe
 	// operator gets "no such file or directory" instead of a bare "exec
 	// failed", and errors.Is against fs.ErrNotExist works.
 	return nil, &ContainerExecError{ContainerID: containerID, Cause: runErr}
+}
+
+// notRunningPrefixes pair the line a runtime begins its refusal to exec into a
+// stopped container with the words that make it that refusal: docker's daemon,
+// the OCI runtime docker hands the exec to, and podman.
+var notRunningPrefixes = []struct{ prefix, says string }{
+	{"error response from daemon: container ", " is not running"},
+	{"oci runtime exec failed: ", "cannot exec in a stopped container"},
+	{"error: ", "container state improper"},
+}
+
+// notRunningRefusal reports whether an exec's output is the runtime refusing
+// to start the command because the container has stopped, and answers the
+// runtime's refusal line.
+//
+// IT IS MATCHED STRICTLY, for the reason isNotFoundOutput spells out: stderr
+// is mostly the COMMAND's, and a test suite that drives docker can print these
+// very words about a container of its own. A refusal is the FIRST thing on
+// stderr and nothing is on stdout, because no process ran to write either; a
+// command that said anything before these words ran.
+func notRunningRefusal(result *ExecResult) (string, bool) {
+	if strings.TrimSpace(result.Stdout) != "" {
+		return "", false
+	}
+	first, _, _ := strings.Cut(strings.TrimSpace(result.Stderr), "\n")
+	first = strings.TrimSpace(first)
+	lower := strings.ToLower(first)
+	for _, shape := range notRunningPrefixes {
+		if strings.HasPrefix(lower, shape.prefix) && strings.Contains(lower, shape.says) {
+			return first, true
+		}
+	}
+	return "", false
 }
 
 // buildExecArgs constructs the argument list for a docker/podman exec.

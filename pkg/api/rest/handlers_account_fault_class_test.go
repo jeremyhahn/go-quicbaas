@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/agent"
+	"github.com/jeremyhahn/go-quicbaas/pkg/fleet"
 	"github.com/jeremyhahn/go-quicbaas/pkg/lease"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -70,7 +70,7 @@ func materializeThroughTheDaemonClient(t *testing.T, refusal error) error {
 	if err != nil {
 		t.Fatalf("logger.New() error = %v", err)
 	}
-	client, err := agent.NewAccountAPIClient(agent.AccountAPIClientConfig{
+	client, err := fleet.NewAccountAPIClient(fleet.AccountAPIClientConfig{
 		ServerAddr: ts.URL,
 		TenantID:   "tenant-1",
 		HTTPClient: ts.Client(),
@@ -84,7 +84,7 @@ func materializeThroughTheDaemonClient(t *testing.T, refusal error) error {
 	if _, err = client.MaterializeCredential(context.Background(), "acct-1", "project-x", ""); err == nil {
 		t.Fatal("a refused release succeeded")
 	}
-	var apiErr *agent.AccountAPIError
+	var apiErr *fleet.AccountAPIError
 	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusConflict {
 		t.Fatalf("error = %v, want the control plane's 409 as an AccountAPIError", err)
 	}
@@ -135,7 +135,7 @@ func TestAccountFaultClass_SurvivesAnErrorBodyLongerThanTheDetailBound(t *testin
 	if got := orchestration.SpawnFaultClass(err); got == "" {
 		t.Error("a long refusal lost its fault class")
 	}
-	var apiErr *agent.AccountAPIError
+	var apiErr *fleet.AccountAPIError
 	if errors.As(err, &apiErr) && len(apiErr.Message) > 600 {
 		t.Errorf("error detail is %d bytes, want it bounded", len(apiErr.Message))
 	}

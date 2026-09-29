@@ -57,12 +57,6 @@ type UserClient interface {
 	// RevokeRole revokes a role from a user.
 	RevokeRole(ctx context.Context, tenantID, userID, roleID string) error
 
-	// AddToGroup adds a user to a group.
-	AddToGroup(ctx context.Context, tenantID, userID, groupID string) error
-
-	// RemoveFromGroup removes a user from a group.
-	RemoveFromGroup(ctx context.Context, tenantID, userID, groupID string) error
-
 	// Suspend suspends a user account.
 	Suspend(ctx context.Context, tenantID, userID string) error
 
@@ -105,9 +99,6 @@ type CreateUserRequest struct {
 
 	// Roles are initial role IDs to assign.
 	Roles []string `json:"roles,omitempty"`
-
-	// Groups are initial group IDs to add the user to.
-	Groups []string `json:"groups,omitempty"`
 
 	// Metadata contains additional user metadata.
 	Metadata map[string]string `json:"metadata,omitempty"`
@@ -157,9 +148,6 @@ type ListUsersRequest struct {
 
 	// RoleID filters users by role.
 	RoleID string `json:"role_id,omitempty"`
-
-	// GroupID filters users by group.
-	GroupID string `json:"group_id,omitempty"`
 
 	// Status filters users by status.
 	Status *UserStatus `json:"status,omitempty"`
@@ -221,14 +209,6 @@ type userRoleRequest struct {
 }
 
 type userRoleResponse struct{}
-
-type userGroupRequest struct {
-	TenantID string `json:"tenant_id"`
-	UserID   string `json:"user_id"`
-	GroupID  string `json:"group_id"`
-}
-
-type userGroupResponse struct{}
 
 type suspendUserRequest struct {
 	TenantID string `json:"tenant_id"`
@@ -332,20 +312,6 @@ func convertToUser(resp interface{}) (*User, bool) {
 		}
 	}
 
-	// Handle groups slice.
-	if groupsRaw, ok := respMap["groups"]; ok {
-		switch groups := groupsRaw.(type) {
-		case []string:
-			user.Groups = groups
-		case []interface{}:
-			for _, g := range groups {
-				if s, ok := g.(string); ok {
-					user.Groups = append(user.Groups, s)
-				}
-			}
-		}
-	}
-
 	// Handle metadata map (arbitrary key-value pairs).
 	if metaRaw, ok := respMap["metadata"]; ok {
 		switch meta := metaRaw.(type) {
@@ -424,7 +390,7 @@ func isUserSuccessResponse(resp interface{}) bool {
 
 	// Check for typed response structs.
 	switch resp.(type) {
-	case *deleteUserResponse, *userRoleResponse, *userGroupResponse, *suspendUserResponse, *unsuspendUserResponse:
+	case *deleteUserResponse, *userRoleResponse, *suspendUserResponse, *unsuspendUserResponse:
 		return true
 	}
 
@@ -825,76 +791,6 @@ func (c *userClient) RevokeRole(ctx context.Context, tenantID, userID, roleID st
 	// Accept nil response or success response.
 	if !isUserSuccessResponse(resp) {
 		return errors.NewInternal("iam.user.RevokeRole", "revoke role operation failed")
-	}
-
-	return nil
-}
-
-// AddToGroup adds a user to a group.
-func (c *userClient) AddToGroup(ctx context.Context, tenantID, userID, groupID string) error {
-	if tenantID == "" {
-		return errors.NewInvalidInput("iam.user.AddToGroup", "tenant ID is required")
-	}
-
-	if userID == "" {
-		return errors.NewInvalidInput("iam.user.AddToGroup", "user ID is required")
-	}
-
-	if groupID == "" {
-		return errors.NewInvalidInput("iam.user.AddToGroup", "group ID is required")
-	}
-
-	if ctx == nil {
-		return errors.NewInvalidInput("iam.user.AddToGroup", "context is required")
-	}
-
-	resp, err := c.transport.Request(ctx, userServiceName, "AddToGroup", &userGroupRequest{
-		TenantID: tenantID,
-		UserID:   userID,
-		GroupID:  groupID,
-	})
-	if err != nil {
-		return err
-	}
-
-	// Accept nil response or success response.
-	if !isUserSuccessResponse(resp) {
-		return errors.NewInternal("iam.user.AddToGroup", "add to group operation failed")
-	}
-
-	return nil
-}
-
-// RemoveFromGroup removes a user from a group.
-func (c *userClient) RemoveFromGroup(ctx context.Context, tenantID, userID, groupID string) error {
-	if tenantID == "" {
-		return errors.NewInvalidInput("iam.user.RemoveFromGroup", "tenant ID is required")
-	}
-
-	if userID == "" {
-		return errors.NewInvalidInput("iam.user.RemoveFromGroup", "user ID is required")
-	}
-
-	if groupID == "" {
-		return errors.NewInvalidInput("iam.user.RemoveFromGroup", "group ID is required")
-	}
-
-	if ctx == nil {
-		return errors.NewInvalidInput("iam.user.RemoveFromGroup", "context is required")
-	}
-
-	resp, err := c.transport.Request(ctx, userServiceName, "RemoveFromGroup", &userGroupRequest{
-		TenantID: tenantID,
-		UserID:   userID,
-		GroupID:  groupID,
-	})
-	if err != nil {
-		return err
-	}
-
-	// Accept nil response or success response.
-	if !isUserSuccessResponse(resp) {
-		return errors.NewInternal("iam.user.RemoveFromGroup", "remove from group operation failed")
 	}
 
 	return nil

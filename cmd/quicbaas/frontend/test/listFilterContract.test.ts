@@ -30,7 +30,7 @@ import { describe, it, expect } from 'vitest';
 import { apiParam, facetKey, type FilterField } from '../src/lib/filters.ts';
 import {
   accountFilters,
-  agentFilters,
+  fleetNodeFilters,
   jobFilters,
   projectFilters,
   sessionFilters,
@@ -56,7 +56,7 @@ describe('list filter fields against the server contract', () => {
       status: ['statuses', 'status'],
       dispatch: ['auto_spawn', 'dispatch'],
       project: ['project_id', 'project_id'],
-      agent: ['agent_id', 'agent_id'],
+      node: ['agent_id', 'agent_id'],
     });
   });
 
@@ -67,7 +67,7 @@ describe('list filter fields against the server contract', () => {
       state: ['statuses', 'state'],
       runner: ['runner', 'runner'],
       project: ['project_id', 'project_id'],
-      agent: ['agent_id', 'agent_id'],
+      node: ['agent_id', 'agent_id'],
     });
   });
 
@@ -79,12 +79,12 @@ describe('list filter fields against the server contract', () => {
       backend: ['backend', 'backend'],
       runner: ['runner', 'runner'],
       project: ['project_id', 'project_id'],
-      agent: ['agent_id', 'agent_id'],
+      node: ['agent_id', 'agent_id'],
     });
   });
 
   it('sends and counts the fleet, workflows, projects and accounts listings', () => {
-    expect(pairs(agentFilters(noValue, noValue, NONE))).toEqual({
+    expect(pairs(fleetNodeFilters(noValue, noValue, NONE))).toEqual({
       status: ['status', 'status'],
       backend: ['backend', 'backend'],
     });
@@ -106,7 +106,7 @@ describe('list filter fields against the server contract', () => {
     // link names, `project_id` and `agent_id` are what the answer counts.
     for (const fields of [taskFilters(NONE, NONE), jobFilters(NONE, NONE), sessionFilters(NONE, NONE, NONE)]) {
       for (const field of fields) {
-        if (field.key !== 'project' && field.key !== 'agent') continue;
+        if (field.key !== 'project' && field.key !== 'node') continue;
         expect(facetKey(field)).toBe(apiParam(field));
       }
     }

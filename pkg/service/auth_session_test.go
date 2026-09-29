@@ -59,9 +59,8 @@ func newSessionAuthServiceWithUsers(t *testing.T) (*authService, *iam.OIDCProvid
 
 	storage := iam.NewMemoryStorage()
 	identityStore := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
+		UserStorage: storage,
+		RoleStorage: storage,
 	})
 
 	provider, err := iam.NewOIDCProvider(&iam.OIDCConfig{
@@ -227,6 +226,9 @@ func TestAuthService_ValidateTokenAcceptsIssuedBearer(t *testing.T) {
 	assert.True(t, resp.Valid)
 	assert.Equal(t, "user-1", resp.UserID)
 	assert.Equal(t, []string{"admin"}, resp.Roles)
+	// The tenant the bearer was issued into survives validation: an inbound
+	// seam scopes the request by it (go-quicbaas#955).
+	assert.Equal(t, sessionTenant, resp.TenantID)
 	// Unix seconds, so the REST layer's time.Unix(expiresAt, 0) is correct.
 	assert.InDelta(t, time.Now().Add(15*time.Minute).Unix(), resp.ExpiresAt, 5)
 }

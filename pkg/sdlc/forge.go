@@ -194,6 +194,20 @@ type ForgeCapabilities struct {
 	// without it can still be reviewed — the module's own gate is unaffected
 	// — but nothing outside the module will honour the verdict.
 	CommitStatuses bool `json:"commit_statuses"`
+
+	// NativeMergeQueue reports whether the platform can queue approved pull
+	// requests and verify them together on its own — GitHub's merge queue,
+	// GitLab's merge trains (a paid tier).
+	//
+	// NOTHING READS IT YET, and that is deliberate rather than unfinished.
+	// Every project is trained by quicbaas's own merge train
+	// (merge_train.go), which needs nothing a forge does not already offer
+	// — branches, pull requests, check runs, commit statuses and a merge
+	// call — and so behaves identically on every platform. The flag exists
+	// so a later change can hand a project's queue to the platform where one
+	// exists without first having to discover which platforms have one.
+	// Gitea has none.
+	NativeMergeQueue bool `json:"native_merge_queue"`
 }
 
 // =============================================================================
@@ -263,6 +277,9 @@ type ForgePullRequest struct {
 	// pull request to a branch must match this too. Zero when the forge
 	// reports no head repository (a deleted fork).
 	HeadRepo RepoRef `json:"head_repo"`
+
+	// Author is the forge account that opened the pull request.
+	Author string `json:"author,omitempty"`
 
 	Draft     bool      `json:"draft"`
 	Merged    bool      `json:"merged"`
@@ -485,6 +502,12 @@ const (
 	// EventUnsupported, so nothing woke for them at all.
 	EventIssueLabeled ForgeEventKind = "issue_labeled"
 
+	// EventIssueCommented is a comment created on an issue. It is how an
+	// owner's ruling on a parked task reaches the factory at once rather than
+	// on the next unblock sweep (go-quicbaas#1020); the comment itself is
+	// re-read from the forge, never taken from the delivery.
+	EventIssueCommented ForgeEventKind = "issue_commented"
+
 	// EventPullRequestOpened, EventPullRequestUpdated, EventPullRequestMerged
 	// and EventPullRequestClosed cover pull-request lifecycle deliveries.
 	EventPullRequestOpened  ForgeEventKind = "pull_request_opened"
@@ -586,11 +609,27 @@ type ForgeBackend interface {
 	// Capabilities reports what the PLATFORM can do. See ForgeCapabilities.
 	Capabilities() ForgeCapabilities
 
+	// AuthenticatedUser reports the forge account this adapter's own token
+	// authenticates as: for a project's binding, the project's agent. It is
+	// how a reader tells the pull requests the factory opened from everyone
+	// else's without the binding recording a login that could drift from
+	// the token it actually holds.
+	AuthenticatedUser(ctx context.Context) (*TokenIdentity, error)
+
 	// ListIssues returns issues matching filter.
 	ListIssues(ctx context.Context, repo RepoRef, filter IssueFilter) ([]ForgeIssue, error)
 
 	// GetIssue returns one issue, or a NotFoundError.
 	GetIssue(ctx context.Context, repo RepoRef, number int) (*ForgeIssue, error)
+
+	// CreateIssue files a new issue and returns it as stored, verified by
+	// read-back: the title and every requested label must come back.
+	//
+	// SENT ONCE. A second create is a second issue, so an unanswered create
+	// is reported as unconfirmed and never repeated; an operator who files
+	// again has made that decision knowingly. A label the repository does not
+	// define is refused before anything is written. See IssueSpec.
+	CreateIssue(ctx context.Context, repo RepoRef, spec IssueSpec) (*ForgeIssue, error)
 
 	// CommentOnIssue posts a comment and returns it as stored.
 	CommentOnIssue(ctx context.Context, repo RepoRef, number int, body string) (*ForgeComment, error)
@@ -704,6 +743,18 @@ type ForgeBackend interface {
 	// a listing that carried the repository's whole history would grow without
 	// bound against a question that only concerns what is still in flight.
 	ListOpenPullRequests(ctx context.Context, repo RepoRef) ([]ForgePullRequest, error)
+
+	// ClosePullRequest closes one pull request WITHOUT merging it, verified
+	// by read-back.
+	//
+	// THE MERGE TRAIN IS ITS CALLER. A change the train landed arrives on the
+	// target inside the train's own pull request, so the pull request it was
+	// offered in is closed with a comment naming where it landed rather than
+	// merged a second time. So are the train's own probe pull requests once
+	// their verdict is read. Closing a pull request that is already closed or
+	// merged is not an error: a pass that crashed after the close must be
+	// able to finish.
+	ClosePullRequest(ctx context.Context, repo RepoRef, number int) error
 
 	// MergePullRequest merges according to spec, verified by read-back.
 	//
@@ -842,6 +893,7 @@ type ForgeBackend interface {
 	// protection. Embedded rather than kept apart so an adapter is still
 	// complete or not registered at all; declared in forge_onboarding.go.
 	ForgeOnboarding
+	ForgeCollaborators
 }
 
 // =============================================================================

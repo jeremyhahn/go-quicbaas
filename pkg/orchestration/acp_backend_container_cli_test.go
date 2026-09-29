@@ -48,9 +48,19 @@ type containerCLIRuntime struct {
 	notRunning   bool
 	isRunningErr error
 
-	mu    sync.Mutex
-	specs []*ContainerSpec
-	ctxs  []context.Context
+	// removeErr, when set, is what Remove fails with.
+	removeErr error
+
+	// exit, when set, is what the launched process's Wait reports. Nil
+	// reports an unknown exit, as a runtime that cannot say how its
+	// container ended does.
+	exit *ContainerExit
+
+	mu      sync.Mutex
+	specs   []*ContainerSpec
+	ctxs    []context.Context
+	removed []string
+	waits   int
 }
 
 func (r *containerCLIRuntime) RunInteractive(ctx context.Context, spec *ContainerSpec) (*InteractiveProcess, error) {
@@ -100,7 +110,24 @@ func (r *containerCLIRuntime) RunInteractive(ctx context.Context, spec *Containe
 		ContainerID: r.containerID,
 		Stdin:       backendStdin,
 		Stdout:      backendStdout,
+		Wait: func(context.Context) ContainerExit {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			r.waits++
+			if r.exit == nil {
+				return ContainerExit{}
+			}
+			return *r.exit
+		},
 	}, nil
+}
+
+// removals returns the containers Remove was asked for, and how many times
+// the runtime client was reaped.
+func (r *containerCLIRuntime) removals() ([]string, int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.removed...), r.waits
 }
 
 // lastSpec returns the spec of the most recent launch, failing the test when
@@ -125,8 +152,13 @@ func (r *containerCLIRuntime) launches() int {
 func (r *containerCLIRuntime) Run(context.Context, *ContainerSpec) (string, error) {
 	return r.containerID, nil
 }
-func (r *containerCLIRuntime) Stop(context.Context, string) error   { return nil }
-func (r *containerCLIRuntime) Remove(context.Context, string) error { return nil }
+func (r *containerCLIRuntime) Stop(context.Context, string) error { return nil }
+func (r *containerCLIRuntime) Remove(_ context.Context, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.removed = append(r.removed, id)
+	return r.removeErr
+}
 func (r *containerCLIRuntime) Exec(context.Context, string, *ExecSpec) (*ExecResult, error) {
 	return nil, &ContainerExecError{ContainerID: r.containerID, Cause: errNoExecInThisTest}
 }
@@ -366,6 +398,73 @@ func TestSpawnContainerCLI_CloseTearsDownTheContainer(t *testing.T) {
 	if containerCtx.Err() == nil {
 		t.Fatal("Close left the container context live: `docker run` keeps running and --rm never fires")
 	}
+	// Killing the client is not enough: an agent that ignores EOF keeps the
+	// container alive, so Close removes it by name and reaps the client.
+	removed, waits := rt.removals()
+	if len(removed) != 1 || removed[0] != "ctr-close" {
+		t.Fatalf("Close removed %v, want exactly the session's container", removed)
+	}
+	// Wait is idempotent (the stream-loss path may read the exit first), so
+	// what matters is that teardown waited at all.
+	if waits < 1 {
+		t.Fatal("the runtime client was never reaped (an unreaped client is a zombie)")
+	}
+	if backend.HoldsSession(sess.ID) {
+		t.Fatal("a closed session is still held")
+	}
+}
+
+// TestSpawnContainerCLI_CloseReportsAContainerThatWouldNotGo is the failure
+// twin: a removal the runtime refused is the leak, so Close must say so — and
+// must still reap the client and release the session.
+func TestSpawnContainerCLI_CloseReportsAContainerThatWouldNotGo(t *testing.T) {
+	rt := &containerCLIRuntime{t: t, containerID: "ctr-stuck", removeErr: errors.New("device or resource busy")}
+	backend := newContainerCLIBackend(t, rt)
+
+	sess, err := backend.Spawn(t.Context(), requiredCLISpawn(t.TempDir()))
+	if err != nil {
+		t.Fatalf("required CLI spawn failed: %v", err)
+	}
+	closeErr := backend.Close(t.Context(), sess.ID)
+	var stopErr *ContainerStopError
+	if !errors.As(closeErr, &stopErr) || stopErr.ContainerID != "ctr-stuck" {
+		t.Fatalf("Close = %v, want a ContainerStopError naming the container", closeErr)
+	}
+	if _, waits := rt.removals(); waits < 1 {
+		t.Fatal("the runtime client was never reaped")
+	}
+	if backend.HoldsSession(sess.ID) {
+		t.Fatal("a closed session is still held; the reaper would never claim its container")
+	}
+}
+
+// TestSpawnContainerCLI_LabelsTheContainerWithItsRealSession is the label
+// contract: the container carries the session ID the session is registered
+// under, the job it serves and its tenant — never a placeholder.
+func TestSpawnContainerCLI_LabelsTheContainerWithItsRealSession(t *testing.T) {
+	rt := &containerCLIRuntime{t: t, containerID: "ctr-labels"}
+	backend := newContainerCLIBackend(t, rt)
+	req := requiredCLISpawn(t.TempDir())
+	req.JobID = "job-42"
+
+	sess, err := backend.Spawn(ContextWithTenant(t.Context(), "acme"), req)
+	if err != nil {
+		t.Fatalf("required CLI spawn failed: %v", err)
+	}
+	labels := rt.lastSpec().Labels
+	if labels[ContainerSessionLabel] != sess.ID || sess.ID == "" || sess.ID == "pending" {
+		t.Fatalf("session label = %q, session = %q; the label must be the registered ID",
+			labels[ContainerSessionLabel], sess.ID)
+	}
+	if labels[ContainerJobLabel] != "job-42" {
+		t.Errorf("job label = %q, want job-42", labels[ContainerJobLabel])
+	}
+	if labels[ContainerTenantLabel] != "acme" {
+		t.Errorf("tenant label = %q, want acme", labels[ContainerTenantLabel])
+	}
+	if !backend.HoldsSession(sess.ID) {
+		t.Fatal("the backend does not hold the session its container is labelled with")
+	}
 }
 
 // TestSpawnContainerCLI_OneShotRequestIsAlsoContainerized covers the
@@ -464,6 +563,23 @@ func TestSpawnContainerCLI_SilentContainer_ReportsTheContainerNotAnExitCode(t *t
 	var exited *StreamJSONProcessExitedError
 	if errors.As(err, &exited) {
 		t.Errorf("a containerized failure reported a host process exit code %d it cannot know", exited.ExitCode)
+	}
+}
+
+// TestSpawnContainerCLI_SilentContainer_CarriesTheRuntimesExit: when the
+// runtime can say how the container ended, the report carries it, so a worker
+// that crashed is told apart from a stream that was cut (go-quicbaas#1064).
+func TestSpawnContainerCLI_SilentContainer_CarriesTheRuntimesExit(t *testing.T) {
+	rt := &containerCLIRuntime{t: t, containerID: "ctr-crashed", silent: true, exit: &ContainerExit{Known: true, Code: 1}}
+	backend := newContainerCLIBackend(t, rt)
+
+	_, err := backend.Spawn(t.Context(), requiredCLISpawn(t.TempDir()))
+	var closed *ContainerStreamClosedError
+	if !errors.As(err, &closed) {
+		t.Fatalf("error %[1]T(%[1]v) is not *ContainerStreamClosedError", err)
+	}
+	if !closed.WorkerCrashed() || closed.Exit.Code != 1 {
+		t.Errorf("exit = %+v, want the container's own status 1", closed.Exit)
 	}
 }
 

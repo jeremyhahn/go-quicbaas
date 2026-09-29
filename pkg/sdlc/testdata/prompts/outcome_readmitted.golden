@@ -5,7 +5,7 @@
 **Attempt:** 1 of 3
 **Task:** `task-1`
 **Attempt history:** `job-1`
-**Labels:** `task:ready` removed
+**Labels:** `task:ready` kept until the next attempt starts
 
 **Nothing is required of you.** The task is back in the queue and the next attempt reads this discussion.
 

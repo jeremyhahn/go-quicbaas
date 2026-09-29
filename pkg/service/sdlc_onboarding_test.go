@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/giteafake"
 )
 
 // =============================================================================
@@ -176,6 +177,128 @@ func TestSDLCService_UnbindRefusesWhenTheDeliveryCannotBeRemoved(t *testing.T) {
 	}
 	if hooks := rig.forge.HookURLs(); len(hooks) != 0 {
 		t.Errorf("hooks = %v, want none", hooks)
+	}
+}
+
+// =============================================================================
+// Rebinding to different forge coordinates offboards the old repository
+// =============================================================================
+//
+// Once the replacement is stored, the old repository and forge are recorded
+// nowhere: Conformance and Unbind resolve only the new binding, so a webhook
+// the old binding provisioned would deliver to this node, answered 401, for
+// ever, with no verb able to find it.
+
+// rebindTarget is a second repository, on a second forge, for project P to
+// move to.
+func rebindTarget(t *testing.T, rig *sdlcServiceRig) (*giteafake.Server, *sdlc.ProjectBinding) {
+	t.Helper()
+	other := giteafake.New(t, "acme", "web")
+	binding := rig.binding()
+	binding.Forge.BaseURL = other.APIURL()
+	binding.Forge.Repo = "web"
+	return other, binding
+}
+
+// TestSDLCService_RebindToAnotherRepositoryRemovesTheOldDelivery is the
+// headline: P bound to A, rebound to B, and A holds no delivery.
+func TestSDLCService_RebindToAnotherRepositoryRemovesTheOldDelivery(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	ctx := context.Background()
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding()); err != nil {
+		t.Fatalf("Bind A: %v", err)
+	}
+	other, rebound := rebindTarget(t, rig)
+
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rebound); err != nil {
+		t.Fatalf("Bind B: %v", err)
+	}
+	if hooks := rig.forge.HookURLs(); len(hooks) != 0 {
+		t.Fatalf("repo A hooks = %v, want none after rebinding to B", hooks)
+	}
+	if hooks := other.HookURLs(); len(hooks) != 1 || hooks[0] != expectedWebhookURL {
+		t.Fatalf("repo B hooks = %v, want [%s]", hooks, expectedWebhookURL)
+	}
+}
+
+// TestSDLCService_RebindIsRefusedWhenTheOldDeliveryCannotBeRemoved: the old
+// binding stays stored, and so stays the one record naming the hook, and a
+// retry completes the rebind.
+func TestSDLCService_RebindIsRefusedWhenTheOldDeliveryCannotBeRemoved(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	ctx := context.Background()
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding()); err != nil {
+		t.Fatalf("Bind A: %v", err)
+	}
+	other, rebound := rebindTarget(t, rig)
+	rig.forge.FailOnce("GET /hooks")
+
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rebound); !errors.Is(err, sdlc.ErrBackend) {
+		t.Fatalf("error = %v, want ErrBackend", err)
+	}
+	got, err := rig.svc.Binding(ctx, sdlcTestTenant, sdlcTestProject)
+	if err != nil {
+		t.Fatalf("the old binding is not readable after the refusal: %v", err)
+	}
+	if got.Forge.Repo != "api" || got.Forge.BaseURL != rig.forge.APIURL() {
+		t.Fatalf("stored binding = %+v, want repo A left in place", got.Forge)
+	}
+	if hooks := other.HookURLs(); len(hooks) != 0 {
+		t.Fatalf("repo B hooks = %v, want nothing provisioned by a refused rebind", hooks)
+	}
+
+	// Retryable, which is the point of refusing.
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rebound); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if hooks := rig.forge.HookURLs(); len(hooks) != 0 {
+		t.Errorf("repo A hooks = %v, want none", hooks)
+	}
+	if hooks := other.HookURLs(); len(hooks) != 1 {
+		t.Errorf("repo B hooks = %v, want one", hooks)
+	}
+}
+
+// TestSDLCService_RebindToPollOnlyRemovesTheDelivery: a binding with no
+// webhook secret provisions no webhook, so without an offboard the one it
+// replaced keeps delivering.
+func TestSDLCService_RebindToPollOnlyRemovesTheDelivery(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	ctx := context.Background()
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding()); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	pollOnly := rig.binding()
+	pollOnly.Forge.WebhookSecretRef = ""
+
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, pollOnly); err != nil {
+		t.Fatalf("rebind poll-only: %v", err)
+	}
+	if hooks := rig.forge.HookURLs(); len(hooks) != 0 {
+		t.Fatalf("hooks = %v, want none once the binding is poll-only", hooks)
+	}
+}
+
+// TestSDLCService_RebindToTheSameRepositoryDoesNotOffboard: the replacement's
+// onboarding reconciles the existing hook in place, so deleting it first
+// would only open a window with no delivery.
+func TestSDLCService_RebindToTheSameRepositoryDoesNotOffboard(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	ctx := context.Background()
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding()); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	replacement := rig.binding()
+	replacement.Review.RequiredApprovals = 2
+
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, replacement); err != nil {
+		t.Fatalf("rebind: %v", err)
+	}
+	if created := rig.forge.Calls("POST /hooks"); created != 1 {
+		t.Errorf("created %d hooks over a same-repository rebind, want 1 (reconciled in place)", created)
+	}
+	if hooks := rig.forge.HookURLs(); len(hooks) != 1 {
+		t.Fatalf("hooks = %v, want the one delivery kept", hooks)
 	}
 }
 

@@ -288,6 +288,10 @@ func (g *GiteaBackend) Capabilities() ForgeCapabilities {
 		BranchProtectionContexts: true,
 		SubmitReviews:            true,
 		CommitStatuses:           true,
+
+		// Gitea has no merge queue of any kind; the merge train is
+		// quicbaas's own (merge_train.go).
+		NativeMergeQueue: false,
 	}
 }
 
@@ -1495,13 +1499,14 @@ type giteaPull struct {
 	Base struct {
 		Ref string `json:"ref"`
 	} `json:"base"`
-	Draft     bool      `json:"draft"`
-	Merged    bool      `json:"merged"`
-	MergeSHA  string    `json:"merge_commit_sha"`
-	Mergeable bool      `json:"mergeable"`
-	HTMLURL   string    `json:"html_url"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	User      *giteaUser `json:"user"`
+	Draft     bool       `json:"draft"`
+	Merged    bool       `json:"merged"`
+	MergeSHA  string     `json:"merge_commit_sha"`
+	Mergeable bool       `json:"mergeable"`
+	HTMLURL   string     `json:"html_url"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 // toForgePullRequest converts Gitea's shape to the module's.
@@ -1510,8 +1515,13 @@ func (p *giteaPull) toForgePullRequest() *ForgePullRequest {
 	if p.Head.Repo != nil && p.Head.Repo.Owner != nil {
 		headRepo = RepoRef{Owner: p.Head.Repo.Owner.Login, Repo: p.Head.Repo.Name}
 	}
+	var author string
+	if p.User != nil {
+		author = p.User.Login
+	}
 	return &ForgePullRequest{
 		HeadRepo:  headRepo,
+		Author:    author,
 		Number:    p.Number,
 		Title:     p.Title,
 		Body:      p.Body,
@@ -1738,6 +1748,47 @@ func (g *GiteaBackend) ListPullRequestFiles(ctx context.Context, repo RepoRef, n
 	return nil, backendError("ListPullRequestFiles", errPullFilePagesExhausted)
 }
 
+// ClosePullRequest closes a pull request without merging it, verified by
+// read-back. A pull request that is already closed or merged is left as it is.
+//
+// Gitea edits a pull request's state through the pulls route, not the issues
+// one: the issue PATCH would close the conversation and leave a pull request
+// whose own state some Gitea versions report as still open.
+func (g *GiteaBackend) ClosePullRequest(ctx context.Context, repo RepoRef, number int) error {
+	if number <= 0 {
+		return &InvalidInputError{Field: "pull_request", Message: "pull requests are numbered from one"}
+	}
+	current, err := g.GetPullRequest(ctx, repo, number)
+	if err != nil {
+		return err
+	}
+	if pullRequestStateFor(current) != PullRequestOpen {
+		return nil
+	}
+	if err := g.do(ctx, giteaRequest{
+		method:    http.MethodPatch,
+		path:      repoPath(repo) + "/pulls/" + strconv.Itoa(number),
+		body:      map[string]string{"state": "closed"},
+		operation: "ClosePullRequest",
+	}); err != nil {
+		return err
+	}
+	closed, err := g.GetPullRequest(ctx, repo, number)
+	if err != nil {
+		return err
+	}
+	if pullRequestStateFor(closed) == PullRequestOpen {
+		return &ForgeWriteNotAppliedError{
+			Type:      ForgeGitea,
+			Operation: "ClosePullRequest",
+			Subject:   fmt.Sprintf("%s#%d", repo, number),
+			Want:      "closed",
+			Got:       "state " + closed.State,
+		}
+	}
+	return nil
+}
+
 // MergePullRequest merges according to spec, refusing when the head has moved
 // past the tree the caller approved.
 //
@@ -1802,7 +1853,7 @@ func (g *GiteaBackend) MergePullRequest(ctx context.Context, repo RepoRef, numbe
 		body:      body,
 		operation: "MergePullRequest",
 	})
-	if errors.Is(err, ErrForgeUnanswered) {
+	if errors.Is(err, ErrForgeUnanswered) || giteaInternalError(err) {
 		return g.reconcileMerge(ctx, repo, number, err)
 	}
 	if err != nil {
@@ -2573,6 +2624,13 @@ func (g *GiteaBackend) ParseWebhook(eventType string, payload []byte) (*ForgeEve
 		case "label_updated", "label_cleared":
 			event.Kind = EventIssueLabeled
 		}
+	case "issue_comment":
+		// Only a NEW comment can be a ruling; an edit or a deletion of an
+		// old one must not readmit anything. A comment on a pull request is
+		// delivered as pull_request_comment, so this is always an issue.
+		if body.Action == "created" && event.IssueNumber > 0 {
+			event.Kind = EventIssueCommented
+		}
 	case "pull_request":
 		switch {
 		case body.Action == "opened":
@@ -2914,6 +2972,28 @@ func (g *GiteaBackend) VerifyToken(ctx context.Context, token []byte) (*TokenIde
 		}
 	}
 
+	return &TokenIdentity{Username: out.Login}, nil
+}
+
+// AuthenticatedUser implements ForgeBackend: the account the adapter's own
+// token authenticates as.
+func (g *GiteaBackend) AuthenticatedUser(ctx context.Context) (*TokenIdentity, error) {
+	var out giteaUser
+	if err := g.do(ctx, giteaRequest{
+		method:    http.MethodGet,
+		path:      "/user",
+		out:       &out,
+		operation: "gitea.AuthenticatedUser",
+	}); err != nil {
+		return nil, err
+	}
+	if out.Login == "" {
+		return nil, &TokenVerificationError{
+			Name:     "(adapter token)",
+			Expected: "an authenticated account",
+			Actual:   "none",
+		}
+	}
 	return &TokenIdentity{Username: out.Login}, nil
 }
 

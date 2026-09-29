@@ -726,27 +726,29 @@ type MessagingConfig struct {
 	WatchBridge WatchBridgeConfig `mapstructure:"watch_bridge"`
 }
 
-// LeadAgentConfig configures the optional LLM lead agent for intelligent orchestration.
-// This mirrors orchestration.LeadAgentConfig to avoid import cycles.
-type LeadAgentConfig struct {
-	// Backend is the backend name to use for the lead agent (e.g. "claude", "ollama").
-	Backend string `mapstructure:"backend"`
-
-	// Model is the model identifier to use for the lead agent.
-	Model string `mapstructure:"model"`
-
-	// SystemPrompt is the system prompt for orchestration behavior.
-	SystemPrompt string `mapstructure:"system_prompt"`
+// AgentRefConfig names a tenant Agent or pool from configuration: exactly one
+// of AgentID and PoolID, or neither for "not configured". It mirrors
+// orchestration.AgentRef to avoid an import cycle.
+type AgentRefConfig struct {
+	AgentID string `mapstructure:"agent_id"`
+	PoolID  string `mapstructure:"pool_id"`
 }
 
-// EmbeddedAgentConfig configures the optional in-process agent that
+// LeadAgentConfig configures the optional LLM lead agent for intelligent
+// orchestration: the system tenant's Agent or pool it runs as. The Agent
+// supplies the backend, the model and the system prompt.
+type LeadAgentConfig struct {
+	AgentRefConfig `mapstructure:",squash"`
+}
+
+// EmbeddedFleetNodeConfig configures the optional in-process agent that
 // quicbaasd can boot alongside the orchestrator. When Enabled is true,
-// quicbaasd starts a full agent runtime (identical to `quicbaas agent serve`)
-// and registers it through the same fleet registry that remote agents use.
+// quicbaasd starts a full agent runtime (identical to `quicbaas fleet serve`)
+// and registers it through the same fleet registry that remote fleet nodes use.
 // The runtime communicates with the orchestrator via a bufconn loopback — no
 // network round-trip — while retaining a proper mTLS identity issued by the
 // local CA.
-type EmbeddedAgentConfig struct {
+type EmbeddedFleetNodeConfig struct {
 	// Enabled starts an in-process agent runtime at quicbaasd boot.
 	// Default: false. When false, quicbaasd is a pure orchestrator.
 	Enabled bool `mapstructure:"enabled"`
@@ -801,6 +803,13 @@ type EmbeddedAgentConfig struct {
 	// negative is refused.
 	SandboxPidsLimit int64 `mapstructure:"sandbox_pids_limit"`
 
+	// SandboxUlimits overrides or adds a sandboxed container's resource
+	// limits, each in the runtime's own "name=soft[:hard]" form. The default
+	// is a memlock of orchestration.DefaultSandboxMemlockBytes (4 GiB, what
+	// the CI runners give); an entry naming memlock replaces it. An unknown
+	// name, a negative value or a resource named twice is refused at startup.
+	SandboxUlimits []string `mapstructure:"sandbox_ulimits"`
+
 	// SandboxImage is a convenience setting that supplies the OCI image used
 	// for sandboxed sessions across every configured backend when ImageMap
 	// does not already name one. The image must have the backend agent binary
@@ -817,8 +826,10 @@ type EmbeddedAgentConfig struct {
 	ImageRegistry string `mapstructure:"image_registry"`
 
 	// AutoPull instructs the embedded agent to `docker pull` each sandbox
-	// image at startup. Leave false for images that exist only in the local
-	// daemon image store (e.g. CI-built e2e images that were never pushed).
+	// image at startup, and to pull an image a spawn names (a project
+	// binding's worker image) that this host does not hold before starting
+	// it. Leave false for images that exist only in the local daemon image
+	// store (e.g. CI-built e2e images that were never pushed).
 	AutoPull bool `mapstructure:"auto_pull"`
 }
 
@@ -870,33 +881,19 @@ type SDLCConfig struct {
 	// whose worker image lays its filesystem out differently names it here.
 	CheckoutRoot string `mapstructure:"checkout_root"`
 
-	// TriageBackend and TriageModel are the NODE's default triage agent: the
-	// agent every bound project triages with unless its own binding names one.
+	// TriageAgent is the NODE's default triage agent: the Agent or pool every
+	// bound project triages with unless its own binding names one.
 	//
 	// TRIAGE IS A READING TASK AND IT IS THE HIGHEST-VOLUME ONE. Every open
 	// issue on every bound project is re-read on every sweep, and nothing
-	// triage does writes code — it decides whether an issue is already
-	// satisfied, duplicated or moot. Before this default existed the fallback
-	// was the project's WORKER, so a fleet that wrote its code with a
-	// frontier model also re-read its entire backlog with one, every sweep,
-	// forever. That is the single largest avoidable cost the factory has.
+	// triage does writes code. Without this default the fallback is the
+	// project's WORKER, so a fleet that wrote its code with a frontier model
+	// also re-read its entire backlog with one, every sweep, forever.
 	//
-	// SET AT THE NODE, NOT PER PROJECT, because the reason to run triage
-	// somewhere cheap is a property of the hardware the node can reach — a
-	// locally served model on an NPU or a GPU host — and repeating it in
-	// every binding means a new project silently costs frontier money until
-	// somebody remembers. A binding that genuinely needs a different triage
-	// agent still overrides it.
-	//
-	// Default: empty, which falls back to the project's worker exactly as
-	// before. It is empty rather than a backend name because a default naming
-	// a backend this node never registered would fail at the spawn, and an
-	// install with no local model must keep working.
-	TriageBackend string `mapstructure:"triage_backend"`
-
-	// TriageModel is the model TriageBackend thinks with. Empty takes the
-	// backend's own default.
-	TriageModel string `mapstructure:"triage_model"`
+	// IT NAMES AN AGENT OF THE PROJECT'S TENANT, and is taken only where that
+	// tenant defines it for the triage role; a tenant that does not triages
+	// with its worker. Default: empty, which falls back to the worker.
+	TriageAgent AgentRefConfig `mapstructure:"triage_agent"`
 
 	// RepoHosts is the allowlist of forge hosts a bound project's repository
 	// may live on, matched by hostname or host:port. A project whose
@@ -916,6 +913,11 @@ type SDLCConfig struct {
 	//
 	// Default: 6. Must be positive.
 	MergeAttempts int `mapstructure:"merge_attempts"`
+
+	// Rulers are the forge logins, beyond a repository's owner and its
+	// binding's own rulers, whose comment on a parked issue is an owner
+	// ruling that readmits the task. See SDLCRulers.
+	Rulers SDLCRulers `mapstructure:"rulers"`
 
 	// Surfacing bounds the Blocked hook's delivery of a parked task's reason
 	// to its forge issue. Only the retry is configured here.
@@ -963,6 +965,123 @@ type SDLCConfig struct {
 	//
 	// Default: sdlc.DefaultUnblockSweepInterval (10m). Zero takes the default.
 	UnblockSweepInterval time.Duration `mapstructure:"unblock_sweep_interval"`
+
+	// TrainSweepInterval is how often the merge-train backstop visits every
+	// trained project and starts a train where a change waits in the queue
+	// with no train running. A queued change ordinarily wakes its train at
+	// once; this pass closes the window in which that wake is refused because
+	// a finishing train still holds the project.
+	//
+	// Default: sdlc.DefaultTrainSweepInterval (5m). Zero takes the default.
+	TrainSweepInterval time.Duration `mapstructure:"train_sweep_interval"`
+
+	// WorkerImage configures the scheduled, gated refresh of the Software
+	// Factory worker image (pkg/sdlc/workerimage).
+	WorkerImage SDLCWorkerImage `mapstructure:"worker_image"`
+}
+
+// SDLCWorkerImage configures the worker image refresh: how often it looks for
+// newer agent CLIs, where it publishes the image it builds, and which model
+// its gate must prove works. See docs/software-factory/worker-image.md.
+//
+// IT RUNS ONLY WHERE IT CAN. The refresh needs the SDLC module (sdlc.enabled)
+// and a container engine on this node; without either it is not started, and
+// the boot log says which was missing.
+type SDLCWorkerImage struct {
+	// Enabled runs the refresh loop.
+	//
+	// Default: true. A module that binds projects to a worker image and never
+	// refreshes it strands every project the day a model it names needs a
+	// newer CLI; opting OUT is the deliberate act.
+	Enabled bool `mapstructure:"enabled"`
+
+	// Repository is the local repository candidates are built into, and one
+	// of the two repositories whose bound images the refresh keeps current.
+	//
+	// Default: quicbaas-software-factory-worker (what `make
+	// build-worker-image` builds).
+	Repository string `mapstructure:"repository"`
+
+	// Registry is the repository promoted images are pushed to, as
+	// host[:port]/owner/name — e.g. a Gitea container registry. Bindings are
+	// then rebound to the pushed, digest-pinned reference, which every node
+	// can pull.
+	//
+	// Default: empty — LOCAL MODE. Bindings are rebound to the local tag,
+	// which only this host's engine holds; right for a single-host install,
+	// wrong for a fleet.
+	Registry string `mapstructure:"registry"`
+
+	// RegistryUsername, RegistryTokenSecret and RegistryTokenTenant are the
+	// push credential: the registry account, and the QuicBaaS secret holding
+	// its token — a short, tenant-relative secret name (e.g.
+	// sdlc/registry/worker-image/token) in the secrets of
+	// RegistryTokenTenant, the tenant that owns the factory. The secret is
+	// read only when a pass pushes, so rotating the token is a new version of
+	// the secret and needs no restart. The token reaches the engine's login
+	// on stdin under a private, temporary client configuration, never the
+	// node-wide one.
+	//
+	// All three, or none: none pushes with the engine's own configuration (a
+	// prior `docker login`).
+	RegistryUsername    string `mapstructure:"registry_username"`
+	RegistryTokenSecret string `mapstructure:"registry_token_secret"`
+	RegistryTokenTenant string `mapstructure:"registry_token_tenant"`
+
+	// NPMRegistryURL is where the latest agent CLI versions are read.
+	//
+	// Default: https://registry.npmjs.org. An operator behind a mirror names
+	// the mirror.
+	NPMRegistryURL string `mapstructure:"npm_registry_url"`
+
+	// RefreshInterval is how often a pass runs by itself. A pass is also the
+	// only thing that reads the npm registry, so this is the registry check's
+	// cadence too; an operator who knows a CLI shipped requests a pass (CLI,
+	// API or the web UI's "Check for updates now").
+	//
+	// Default: workerimage.DefaultRefreshInterval (24h). Zero takes the
+	// default.
+	RefreshInterval time.Duration `mapstructure:"refresh_interval"`
+
+	// PassTimeout bounds one pass, build and gate included.
+	//
+	// Default: workerimage.DefaultPassTimeout (1h). Zero takes the default.
+	PassTimeout time.Duration `mapstructure:"pass_timeout"`
+
+	// SmokeModel is the Claude model the gate always proves the new image can
+	// run, whatever the bindings name.
+	//
+	// Default: claude-opus-5-5.
+	SmokeModel string `mapstructure:"smoke_model"`
+
+	// SmokeHost pins the gate's smoke sessions to the fleet node whose
+	// engine built the candidate (matched against an agent's name or host).
+	//
+	// Default: empty, which resolves, per smoke, the agent registered from
+	// THIS node — the embedded agent, or a daemon whose registered host is
+	// this node's hostname. Name one explicitly when the local agent
+	// registers under another name (e.g. it runs in a container).
+	SmokeHost string `mapstructure:"smoke_host"`
+}
+
+// SDLCRulers is the node's ruler policy, per tenant. A project's binding can
+// add rulers of its own on top; it cannot remove these.
+//
+// FILE-ONLY, like every list setting here: viper does not decode a list or a
+// map from the environment reliably. A malformed login is refused when the
+// SDLC module starts (sdlc.RulerPolicy.Validate), so the daemon never runs
+// with a ruler set that silently matches nobody.
+type SDLCRulers struct {
+	// Default applies to every tenant without an entry in Tenants.
+	//
+	// Default: unset, which takes sdlc.DefaultRulers (the company's
+	// administrative agent, agent-company). An explicit empty list leaves
+	// each repository's owner and its binding's rulers as the only ones.
+	Default []string `mapstructure:"default"`
+
+	// Tenants replaces Default for the tenants it names, keyed by tenant ID.
+	// An empty list gives that tenant no node-configured rulers.
+	Tenants map[string][]string `mapstructure:"tenants"`
 }
 
 // SDLCWebhook bounds the forge webhook ingress.
@@ -1093,13 +1212,14 @@ var SDLCKeys = []string{
 	"sdlc.enabled",
 	"sdlc.issue_page_limit",
 	"sdlc.checkout_root",
-	"sdlc.triage_backend",
-	"sdlc.triage_model",
+	"sdlc.triage_agent.agent_id",
+	"sdlc.triage_agent.pool_id",
 	"sdlc.allow_local_repos",
 	"sdlc.merge_attempts",
 	"sdlc.triage_sweep_interval",
 	"sdlc.review_sweep_interval",
 	"sdlc.unblock_sweep_interval",
+	"sdlc.train_sweep_interval",
 	"sdlc.webhook.max_body",
 	"sdlc.webhook.public_url",
 	"sdlc.forge.read_timeout",
@@ -1139,26 +1259,64 @@ func BindSDLCLabelReconcileEnv(v *viper.Viper) {
 	}
 }
 
-// RemovedSDLCKeys are the sdlc: keys the module no longer reads, each
-// mapped to where the setting went. A configuration that sets one is
-// refused at load (RefuseRemovedSDLCKeys) — pre-v1, no migration: the key
-// is renamed by hand.
-var RemovedSDLCKeys = map[string]string{
-	"sdlc.attempt_budget":            "the engine's per-task budget (Task.AttemptBudget; default orchestration.DefaultAttemptBudget)",
-	"sdlc.reap_lease_ttl":            "orchestration.reap_lease_ttl",
-	"sdlc.stage_timeouts":            "orchestration.stage_timeouts",
-	"sdlc.idle_thresholds":           "orchestration.idle_thresholds",
-	"sdlc.dispatch_cap":              "the project's quotas.max_concurrency (live job leases per project)",
-	"sdlc.run_timeout":               "orchestration.idle_thresholds",
-	"sdlc.sweep_interval":            "orchestration.sweep_interval",
-	"sdlc.mirror_lease_ttl":          "nothing; adoption is decided by the task store's guarded source index",
-	"sdlc.queue_capacity":            "nothing; a verified webhook delivery nudges the task-source poller",
-	"sdlc.delivery_memory":           "nothing; re-polling is idempotent by construction",
-	"sdlc.max_webhook_body":          "sdlc.webhook.max_body",
-	"sdlc.stage_event_flush_timeout": "nothing; job events are the engine's own stream",
-	"sdlc.agent_config_dir":          "orchestration.agent_config_dir",
-	"sdlc.companions":                workerClonesItsOwnWorkspace,
-	"sdlc.worktree_root":             workerClonesItsOwnWorkspace,
+// SDLCWorkerImageKeys are the worker image refresh's configuration keys,
+// bound to the environment by BindSDLCWorkerImageEnv for the reason
+// SDLCLabelReconcileKeys gives: a key no file names is otherwise read from
+// the file and never from the environment.
+var SDLCWorkerImageKeys = []string{
+	"sdlc.worker_image.enabled",
+	"sdlc.worker_image.repository",
+	"sdlc.worker_image.registry",
+	"sdlc.worker_image.registry_username",
+	"sdlc.worker_image.registry_token_secret",
+	"sdlc.worker_image.registry_token_tenant",
+	"sdlc.worker_image.npm_registry_url",
+	"sdlc.worker_image.refresh_interval",
+	"sdlc.worker_image.pass_timeout",
+	"sdlc.worker_image.smoke_model",
+	"sdlc.worker_image.smoke_host",
+}
+
+// BindSDLCWorkerImageEnv binds the worker image refresh keys to their
+// environment variables (QUICBAAS_SDLC_WORKER_IMAGE_*).
+func BindSDLCWorkerImageEnv(v *viper.Viper) {
+	for _, key := range SDLCWorkerImageKeys {
+		_ = v.BindEnv(key)
+	}
+}
+
+// RemovedKeys are the configuration keys nothing reads any more, each mapped
+// to where the setting went. A configuration that sets one is refused at load
+// (RefuseRemovedKeys) — pre-v1, no migration: the key is renamed by hand.
+var RemovedKeys = map[string]string{
+	"sdlc.triage_backend":                    agentReplacesTuple("sdlc.triage_agent"),
+	"sdlc.triage_model":                      agentReplacesTuple("sdlc.triage_agent"),
+	"orchestration.lead_agent.backend":       agentReplacesTuple("orchestration.lead_agent"),
+	"orchestration.lead_agent.model":         agentReplacesTuple("orchestration.lead_agent"),
+	"orchestration.lead_agent.system_prompt": "the lead Agent's prompt (orchestration.lead_agent names the Agent)",
+	"sdlc.attempt_budget":                    "the engine's per-task budget (Task.AttemptBudget; default orchestration.DefaultAttemptBudget)",
+	"sdlc.reap_lease_ttl":                    "orchestration.reap_lease_ttl",
+	"sdlc.stage_timeouts":                    "orchestration.stage_timeouts",
+	"sdlc.idle_thresholds":                   "orchestration.idle_thresholds",
+	"sdlc.dispatch_cap":                      "the project's quotas.max_concurrency (live job leases per project)",
+	"sdlc.run_timeout":                       "orchestration.idle_thresholds",
+	"sdlc.sweep_interval":                    "orchestration.sweep_interval",
+	"sdlc.mirror_lease_ttl":                  "nothing; adoption is decided by the task store's guarded source index",
+	"sdlc.queue_capacity":                    "nothing; a verified webhook delivery nudges the task-source poller",
+	"sdlc.delivery_memory":                   "nothing; re-polling is idempotent by construction",
+	"sdlc.max_webhook_body":                  "sdlc.webhook.max_body",
+	"sdlc.stage_event_flush_timeout":         "nothing; job events are the engine's own stream",
+	"sdlc.agent_config_dir":                  "orchestration.agent_config_dir",
+	"sdlc.companions":                        workerClonesItsOwnWorkspace,
+	"sdlc.worker_image.registry_token_file": "sdlc.worker_image.registry_token_secret and registry_token_tenant: " +
+		"the push token is a QuicBaaS tenant secret, never a plaintext file",
+	"sdlc.worktree_root": workerClonesItsOwnWorkspace,
+}
+
+// agentReplacesTuple is where a backend/model tuple went: a reference to a
+// tenant Agent or pool, which carries the backend, the model and the image.
+func agentReplacesTuple(key string) string {
+	return key + ".agent_id or " + key + ".pool_id: a tenant Agent or pool, which carries the backend and the model"
 }
 
 // workerClonesItsOwnWorkspace is where the daemon-side workspace settings
@@ -1167,36 +1325,35 @@ var RemovedSDLCKeys = map[string]string{
 // daemon-side worktree root and no companion copy to configure.
 const workerClonesItsOwnWorkspace = "nothing; the worker's container clones the project and the project's context_repos itself, so there is no daemon-side worktree or companion copy"
 
-// ErrRemovedSDLCKey indicates a configuration sets an sdlc: key the module
-// no longer reads.
-var ErrRemovedSDLCKey = errors.New("config: sdlc key no longer exists")
+// ErrRemovedKey indicates a configuration sets a key nothing reads any more.
+var ErrRemovedKey = errors.New("config: key no longer exists")
 
-// RemovedSDLCKeyError names the removed key and where its setting went.
-type RemovedSDLCKeyError struct {
+// RemovedKeyError names the removed key and where its setting went.
+type RemovedKeyError struct {
 	Key         string
 	Replacement string
 }
 
 // Error implements the error interface.
-func (e *RemovedSDLCKeyError) Error() string {
-	return ErrRemovedSDLCKey.Error() + ": " + e.Key + " is no longer read; it moved to " + e.Replacement
+func (e *RemovedKeyError) Error() string {
+	return ErrRemovedKey.Error() + ": " + e.Key + " is no longer read; it moved to " + e.Replacement
 }
 
 // Unwrap returns the sentinel for errors.Is support.
-func (e *RemovedSDLCKeyError) Unwrap() error { return ErrRemovedSDLCKey }
+func (e *RemovedKeyError) Unwrap() error { return ErrRemovedKey }
 
-// RefuseRemovedSDLCKeys returns a typed error for the first removed sdlc:
-// key the loaded configuration (file or environment) sets, in key order so
-// the refusal is deterministic.
-func RefuseRemovedSDLCKeys(v *viper.Viper) error {
-	keys := make([]string, 0, len(RemovedSDLCKeys))
-	for key := range RemovedSDLCKeys {
+// RefuseRemovedKeys returns a typed error for the first removed key the
+// loaded configuration (file or environment) sets, in key order so the
+// refusal is deterministic.
+func RefuseRemovedKeys(v *viper.Viper) error {
+	keys := make([]string, 0, len(RemovedKeys))
+	for key := range RemovedKeys {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
 		if v.IsSet(key) {
-			return &RemovedSDLCKeyError{Key: key, Replacement: RemovedSDLCKeys[key]}
+			return &RemovedKeyError{Key: key, Replacement: RemovedKeys[key]}
 		}
 	}
 	return nil
@@ -1426,6 +1583,10 @@ type OrchestrationConfig struct {
 	// Fleet bounds the whole deployment, across every tenant and project.
 	// See OrchestrationFleetConfig.
 	Fleet OrchestrationFleetConfig `mapstructure:"fleet"`
+
+	// Pricing is the model price table every recorded turn is priced from.
+	// See PricingConfig; an absent table leaves every turn unpriced.
+	Pricing PricingConfig `mapstructure:"pricing"`
 }
 
 // OrchestrationFleetConfig is the deployment-wide bound on orchestrated work.
@@ -1539,6 +1700,27 @@ type OrchestrationSandboxConfig struct {
 	// operator named them explicitly and every tenant may mount from them.
 	// Do not list a directory holding one tenant's data.
 	AllowedMountRoots []string `mapstructure:"allowed_mount_roots"`
+
+	// GoCacheDir is the host directory holding the Go module and build
+	// caches every sandbox container this daemon launches shares, one pair
+	// per tenant: <go_cache_dir>/<tenant_id>/{mod,build}. Empty takes
+	// <data_dir>/cache/go (EffectiveGoCacheDir). It must be absolute and lie
+	// outside the projects root and every allowed mount root, so no spawn can
+	// name a cache as a bind mount of its own; the daemon refuses to start
+	// otherwise.
+	GoCacheDir string `mapstructure:"go_cache_dir"`
+}
+
+// EffectiveGoCacheDir returns GoCacheDir when set, defaulting to
+// "<dataDir>/cache/go". Empty when neither is known.
+func (c OrchestrationSandboxConfig) EffectiveGoCacheDir(dataDir string) string {
+	if c.GoCacheDir != "" {
+		return c.GoCacheDir
+	}
+	if dataDir == "" {
+		return ""
+	}
+	return filepath.Join(dataDir, "cache", "go")
 }
 
 // OrchestrationTrustPolicies lists the accepted orchestration.trust_policy
@@ -1671,7 +1853,7 @@ type SchedulerHostAffinityConfig struct {
 	// Mode selects the enforcement mode when a request supplies host_affinity
 	// but the named host is offline:
 	//   "soft" (default): warn and fall back to any available agent.
-	//   "hard": return a NoMatchingAgentError so callers know the request was
+	//   "hard": return a NoMatchingFleetNodeError so callers know the request was
 	//   not satisfied.
 	// Empty defaults to "soft".
 	Mode string `mapstructure:"mode"`
@@ -1900,9 +2082,9 @@ type ServerConfig struct {
 	// Default: false.
 	Embedded bool `mapstructure:"embedded"`
 
-	// EmbeddedAgent configures the optional co-located agent runtime.
-	// See EmbeddedAgentConfig for field semantics.
-	EmbeddedAgent EmbeddedAgentConfig `mapstructure:"embedded_agent"`
+	// EmbeddedFleetNode configures the optional co-located agent runtime.
+	// See EmbeddedFleetNodeConfig for field semantics.
+	EmbeddedFleetNode EmbeddedFleetNodeConfig `mapstructure:"embedded_fleet_node"`
 
 	// Protocol-specific configurations. Network serving runs exclusively on
 	// the embedded qrdb node's unified multi-protocol server (see

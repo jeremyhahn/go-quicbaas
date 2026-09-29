@@ -16,6 +16,7 @@ package iam
 import (
 	"context"
 	"encoding/base64"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -94,12 +95,12 @@ func (c *renameTestUserClient) CreateUser(_ context.Context, req *qrdbtransport.
 	id := c.nextID
 	c.nextID++
 	user := &qrdbtransport.User{
-		ID:       id,
-		Username: req.Username,
-		Email:    req.Email,
-		Name:     req.Name,
-		TenantID: req.TenantID,
-		Enabled:  true,
+		ID:        id,
+		Username:  req.Username,
+		Email:     req.Email,
+		Name:      req.Name,
+		TenantID:  req.TenantID,
+		Lifecycle: string(LifecycleActive),
 	}
 	c.users[id] = user
 	return cloneRenameTestUser(user), nil
@@ -177,21 +178,21 @@ func (c *renameTestUserClient) ListUsers(_ context.Context, req *qrdbtransport.L
 }
 
 func (c *renameTestUserClient) EnableUser(_ context.Context, id uint64) error {
-	return c.setEnabled(id, true)
+	return c.setLifecycle(id, LifecycleActive)
 }
 
 func (c *renameTestUserClient) DisableUser(_ context.Context, id uint64) error {
-	return c.setEnabled(id, false)
+	return c.setLifecycle(id, LifecycleDisabled)
 }
 
-func (c *renameTestUserClient) setEnabled(id uint64, enabled bool) error {
+func (c *renameTestUserClient) setLifecycle(id uint64, state Lifecycle) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	user, ok := c.users[id]
 	if !ok {
 		return &renameTestUserNotFoundError{}
 	}
-	user.Enabled = enabled
+	user.Lifecycle = string(state)
 	return nil
 }
 
@@ -482,13 +483,13 @@ func TestRename_NameOnlyKeepsBothCredentials(t *testing.T) {
 
 	f.rename(t, &qrdbtransport.UpdateUserRequest{Name: "Alice Smith"})
 
-	if got := f.listedCredentialIDs(t, "alice@example.com"); !equalStrings(got, want) {
+	if got := f.listedCredentialIDs(t, "alice@example.com"); !slices.Equal(got, want) {
 		t.Errorf("listed credentials after a name change = %v, want %v", got, want)
 	}
-	if got := f.offeredCredentialIDs(t, "alice@example.com"); !equalStrings(got, want) {
+	if got := f.offeredCredentialIDs(t, "alice@example.com"); !slices.Equal(got, want) {
 		t.Errorf("login/begin offered %v after a name change, want %v", got, want)
 	}
-	if got := f.factorCredentialIDs(t); !equalStrings(got, want) {
+	if got := f.factorCredentialIDs(t); !slices.Equal(got, want) {
 		t.Errorf("qrdb fido2 factors after a name change = %v, want %v", got, want)
 	}
 }
@@ -511,13 +512,13 @@ func TestRename_EmailChangeCarriesCredentialOwnership(t *testing.T) {
 		Name:     "Alice Smith",
 	})
 
-	if got := f.listedCredentialIDs(t, "new@example.com"); !equalStrings(got, want) {
+	if got := f.listedCredentialIDs(t, "new@example.com"); !slices.Equal(got, want) {
 		t.Errorf("listed credentials under the new address = %v, want %v", got, want)
 	}
-	if got := f.offeredCredentialIDs(t, "new@example.com"); !equalStrings(got, want) {
+	if got := f.offeredCredentialIDs(t, "new@example.com"); !slices.Equal(got, want) {
 		t.Errorf("login/begin under the new address offered %v, want %v", got, want)
 	}
-	if got := f.factorCredentialIDs(t); !equalStrings(got, want) {
+	if got := f.factorCredentialIDs(t); !slices.Equal(got, want) {
 		t.Errorf("qrdb fido2 factors after an email change = %v, want %v", got, want)
 	}
 	if got := f.listedCredentialIDs(t, "old@example.com"); len(got) != 0 {

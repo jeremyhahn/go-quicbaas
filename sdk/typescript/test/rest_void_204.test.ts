@@ -79,26 +79,26 @@ function make200JSON(payload: unknown): { ok: boolean; status: number; json: () 
 }
 
 // ---------------------------------------------------------------------------
-// BUG 2 regression: disableAgent + enableAgent on 204
+// BUG 2 regression: disableFleetNode + enableFleetNode on 204
 // ---------------------------------------------------------------------------
 
 describe('fetchJSON — 204 No Content (void operations)', () => {
-  it('disableAgent resolves without throwing on a 204 response', async () => {
+  it('disableFleetNode resolves without throwing on a 204 response', async () => {
     fetchMock.mockResolvedValue(make204());
 
     const client = new RestClient('http://localhost');
     // Must resolve without throwing "Unexpected end of JSON input".
     await expect(
-      client.orchestrator.disableAgent({ agent_id: 'a1', tenant_id: 'system' }),
+      client.orchestrator.disableFleetNode({ node_id: 'a1', tenant_id: 'system' }),
     ).resolves.not.toThrow();
   });
 
-  it('enableAgent resolves without throwing on a 204 response', async () => {
+  it('enableFleetNode resolves without throwing on a 204 response', async () => {
     fetchMock.mockResolvedValue(make204());
 
     const client = new RestClient('http://localhost');
     await expect(
-      client.orchestrator.enableAgent({ agent_id: 'a1', tenant_id: 'system' }),
+      client.orchestrator.enableFleetNode({ node_id: 'a1', tenant_id: 'system' }),
     ).resolves.not.toThrow();
   });
 
@@ -117,22 +117,22 @@ describe('fetchJSON — 204 No Content (void operations)', () => {
 // ---------------------------------------------------------------------------
 
 describe('fetchJSON — 200 with empty body', () => {
-  it('disableAgent resolves without throwing on a 200 empty-body response', async () => {
+  it('disableFleetNode resolves without throwing on a 200 empty-body response', async () => {
     fetchMock.mockResolvedValue(make200Empty());
 
     const client = new RestClient('http://localhost');
     // The old code called resp.json() which would throw; the fix uses text() first.
     await expect(
-      client.orchestrator.disableAgent({ agent_id: 'a1', tenant_id: 'system' }),
+      client.orchestrator.disableFleetNode({ node_id: 'a1', tenant_id: 'system' }),
     ).resolves.not.toThrow();
   });
 
-  it('enableAgent resolves without throwing on a 200 empty-body response', async () => {
+  it('enableFleetNode resolves without throwing on a 200 empty-body response', async () => {
     fetchMock.mockResolvedValue(make200Empty());
 
     const client = new RestClient('http://localhost');
     await expect(
-      client.orchestrator.enableAgent({ agent_id: 'a1', tenant_id: 'system' }),
+      client.orchestrator.enableFleetNode({ node_id: 'a1', tenant_id: 'system' }),
     ).resolves.not.toThrow();
   });
 });
@@ -142,26 +142,26 @@ describe('fetchJSON — 200 with empty body', () => {
 // ---------------------------------------------------------------------------
 
 describe('fetchJSON — 200 with JSON body (happy path not regressed)', () => {
-  it('disableAgent returns parsed JSON on a 200 body response', async () => {
+  it('disableFleetNode returns parsed JSON on a 200 body response', async () => {
     const now = new Date().toISOString();
     fetchMock.mockResolvedValue(
-      make200JSON({ agent_id: 'a1', disabled: true, disabled_at: now, timestamp: now }),
+      make200JSON({ node_id: 'a1', disabled: true, disabled_at: now, timestamp: now }),
     );
 
     const client = new RestClient('http://localhost');
-    const result = await client.orchestrator.disableAgent({ agent_id: 'a1', tenant_id: 'system' });
+    const result = await client.orchestrator.disableFleetNode({ node_id: 'a1', tenant_id: 'system' });
     expect(result).toBeDefined();
     expect((result as { disabled?: boolean }).disabled).toBe(true);
   });
 
-  it('enableAgent returns parsed JSON on a 200 body response', async () => {
+  it('enableFleetNode returns parsed JSON on a 200 body response', async () => {
     const now = new Date().toISOString();
     fetchMock.mockResolvedValue(
-      make200JSON({ agent_id: 'a1', enabled: true, timestamp: now }),
+      make200JSON({ node_id: 'a1', enabled: true, timestamp: now }),
     );
 
     const client = new RestClient('http://localhost');
-    const result = await client.orchestrator.enableAgent({ agent_id: 'a1', tenant_id: 'system' });
+    const result = await client.orchestrator.enableFleetNode({ node_id: 'a1', tenant_id: 'system' });
     expect(result).toBeDefined();
     expect((result as { enabled?: boolean }).enabled).toBe(true);
   });
@@ -246,7 +246,7 @@ describe('SSH known-host add — previously-unfixed fetchSSH client', () => {
 
     const client = new RestClient('http://localhost');
     await expect(
-      client.ssh.knownHosts.add({ fingerprint: 'SHA256:abc', host: 'host.example.com' }),
+      client.ssh.knownHosts.add({ public_key: 'ssh-ed25519 AAAAabc', host: 'host.example.com' }),
     ).resolves.not.toThrow();
   });
 
@@ -255,7 +255,7 @@ describe('SSH known-host add — previously-unfixed fetchSSH client', () => {
 
     const client = new RestClient('http://localhost');
     await expect(
-      client.ssh.knownHosts.add({ fingerprint: 'SHA256:abc', host: 'host.example.com' }),
+      client.ssh.knownHosts.add({ public_key: 'ssh-ed25519 AAAAabc', host: 'host.example.com' }),
     ).resolves.not.toThrow();
   });
 });

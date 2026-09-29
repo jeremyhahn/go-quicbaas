@@ -1,3 +1,4 @@
+import type { AccountSpendPolicy } from './spend.js';
 import type { AccountPageParams, PageResult } from './page.js';
 /** AccountProvider identifies which CLI/backend a pooled account authenticates. */
 export type AccountProvider = 'claude' | 'codex' | 'opencode';
@@ -38,6 +39,16 @@ export interface AccountCredential {
     /** access_token_env_key is the environment variable access_token is projected into. */
     access_token_env_key?: string;
 }
+/**
+ * AccountBilling is how a pooled account is billed, which decides the billed
+ * figure every turn on it carries beside its list-price equivalent.
+ */
+export interface AccountBilling {
+    /** mode is 'subscription' (a turn adds nothing to the bill) or 'api' (a turn bills its list price). */
+    mode?: 'subscription' | 'api';
+    /** monthly_fee_micros is a subscription's flat monthly fee in millionths of a US dollar. */
+    monthly_fee_micros?: number;
+}
 /** Account is the non-secret metadata record for one pooled provider account. */
 export interface Account {
     id: string;
@@ -50,6 +61,10 @@ export interface Account {
     default: boolean;
     status: AccountStatus;
     refresh_policy: AccountRefreshPolicy;
+    /** billing is how the account is billed; absent when not configured. */
+    billing?: AccountBilling;
+    /** spend is what the account may spend and how failures take it out of service; absent is unmetered. */
+    spend?: AccountSpendPolicy;
     /**
      * credential_secret_ref names the tenant secret the credential is read from
      * on every spawn, when the account is reference-sourced. A name, never the value.
@@ -63,6 +78,8 @@ export interface Account {
     last_refreshed_at?: string;
     /** last_error carries the most recent failed-refresh message when status is "error". */
     last_error?: string;
+    /** max_concurrent_sessions caps the account's live sessions; absent or 0 is unmetered. */
+    max_concurrent_sessions?: number;
 }
 /** CreateAccountRequest provisions a new pooled account. */
 export interface CreateAccountRequest {
@@ -77,6 +94,10 @@ export interface CreateAccountRequest {
     default?: boolean;
     /** refresh_policy selects how the credential is renewed. Required. */
     refresh_policy: AccountRefreshPolicy;
+    /** billing is how the account is billed; absent leaves it not configured. */
+    billing?: AccountBilling;
+    /** spend is the account's spend policy; absent is unmetered. */
+    spend?: AccountSpendPolicy;
     /**
      * credential is the initial secret envelope, held inline; never echoed back.
      * Exactly one of credential and credential_secret_ref is required.
@@ -90,6 +111,8 @@ export interface CreateAccountRequest {
     credential_secret_ref?: string;
     /** credential_secret_file, with credential_secret_ref, materializes the secret as this file (e.g. ".codex/auth.json"). */
     credential_secret_file?: string;
+    /** max_concurrent_sessions caps the account's live sessions; 0 is unmetered. */
+    max_concurrent_sessions?: number;
 }
 /** CreateAccountResponse is the server response after account creation. */
 export interface CreateAccountResponse {
@@ -124,6 +147,10 @@ export interface UpdateAccountRequest {
     /** clear_project_id removes the project scope when true. */
     clear_project_id?: boolean;
     refresh_policy?: AccountRefreshPolicy;
+    /** billing, when present, replaces how the account is billed; an empty object clears it. */
+    billing?: AccountBilling;
+    /** spend, when present, replaces the spend policy; an empty object makes the account unmetered. */
+    spend?: AccountSpendPolicy;
     /**
      * credential_secret_ref switches the account to (or re-points it at) a tenant
      * secret; re-applying the current one returns an account whose secret was
@@ -131,6 +158,8 @@ export interface UpdateAccountRequest {
      */
     credential_secret_ref?: string;
     credential_secret_file?: string;
+    /** max_concurrent_sessions replaces the session cap (0 is unmetered); omit to leave it unchanged. */
+    max_concurrent_sessions?: number;
 }
 /** UpdateAccountResponse is the server response after an account update. */
 export interface UpdateAccountResponse {
@@ -177,9 +206,29 @@ export interface AccountUsage {
     by_agent?: Record<string, number>;
     last_updated: number;
 }
+/**
+ * SpendHeadroom is the spend gate's read-only verdict on one account: whether
+ * its own spend policy admits more work and, if not, why and until when.
+ */
+export interface SpendHeadroom {
+    admits: boolean;
+    /** refusal is 'quota_exhausted' or 'breaker_open' when admits is false. */
+    refusal?: string;
+    window?: string;
+    axis?: string;
+    used?: number;
+    limit?: number;
+    failures?: number;
+    /** frees_at (RFC 3339) is when the refusal lifts. */
+    frees_at?: string;
+}
 /** GetAccountUsageResponse carries an account's usage report. */
 export interface GetAccountUsageResponse {
     usage: AccountUsage;
+    /** live_sessions is how many sessions the account is serving now. */
+    live_sessions: number;
+    /** spend is the spend gate's verdict; absent when the server wires no gate. */
+    spend?: SpendHeadroom;
 }
 /**
  * AccountsClient exposes pooled provider account lifecycle management.

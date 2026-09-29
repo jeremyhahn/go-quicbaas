@@ -63,9 +63,8 @@ func newTenantRoutedOIDCProvider(t *testing.T, tenantID string) (*OIDCProvider, 
 		AuthCodeTTL:      10 * time.Minute,
 	}, OIDCDependencies{
 		IdentityStore: NewIdentityStore(IdentityStoreOptions{
-			UserStorage:  NewMemoryStorage(),
-			GroupStorage: NewMemoryStorage(),
-			RoleStorage:  NewMemoryStorage(),
+			UserStorage: NewMemoryStorage(),
+			RoleStorage: NewMemoryStorage(),
 		}),
 		AppStorage:   storage,
 		TokenStorage: storage,
@@ -129,7 +128,7 @@ func TestClientCredentialsGrant_RefusesAWrongSecret(t *testing.T) {
 	}
 	unknownClient, err2 := provider.Token(tokenCtx, &TokenRequest{
 		GrantType:    GrantTypeClientCredentials,
-		ClientID:     AgentClientID(tenantID, "agent-that-never-enrolled"),
+		ClientID:     FleetNodeClientID(tenantID, "agent-that-never-enrolled"),
 		ClientSecret: app.ClientSecret,
 	})
 	if err2 == nil {

@@ -117,6 +117,7 @@ type mockQuicBaaS struct {
 	queryFunc            func(ctx context.Context, req *service.QueryRequest, stream chan<- *service.QueryResponse) error
 	scanIndexFunc        func(ctx context.Context, req *service.ScanRequest, stream chan<- *service.ScanResponse) error
 	timeSeriesQueryFunc  func(ctx context.Context, req *service.TimeSeriesQueryRequest, stream chan<- *service.TimeSeriesQueryResponse) error
+	validateTokenFunc    func(ctx context.Context, req *service.ValidateTokenRequest) (*service.ValidateTokenResponse, error)
 	kmsService           service.KMSService
 	secretsService       service.SecretsService
 	objectStorageService service.ObjectStorageService
@@ -319,6 +320,9 @@ func (m *mockQuicBaaS) RefreshToken(ctx context.Context, req *service.RefreshTok
 }
 
 func (m *mockQuicBaaS) ValidateToken(ctx context.Context, req *service.ValidateTokenRequest) (*service.ValidateTokenResponse, error) {
+	if m.validateTokenFunc != nil {
+		return m.validateTokenFunc(ctx, req)
+	}
 	return &service.ValidateTokenResponse{Valid: true}, nil
 }
 
@@ -481,7 +485,7 @@ func (m *mockQuicBaaS) WatchManager() *watch.Manager                            
 func (m *mockQuicBaaS) SetQRDBClient(provider service.QRDBClientProvider)            {}
 func (m *mockQuicBaaS) Database() service.DatabaseService                            { return nil }
 func (m *mockQuicBaaS) SetDatabaseService(ds service.DatabaseService)                {}
-func (m *mockQuicBaaS) AgentAdmin() service.AgentAdminService                        { return nil }
+func (m *mockQuicBaaS) FleetAdmin() service.FleetAdminService                        { return nil }
 func (m *mockQuicBaaS) Project() service.ProjectService                              { return nil }
 func (m *mockQuicBaaS) Account() service.AccountService                              { return nil }
 func (m *mockQuicBaaS) SecretRegistry() *qrdbsecret.ResolverRegistry                 { return nil }
@@ -2375,13 +2379,13 @@ func TestUnaryHandlers_OrchestratorAndProjectKeysRegistered(t *testing.T) {
 		"quicbaas.Orchestrator/SubmitTaskArtifacts",
 		"quicbaas.Orchestrator/GetTaskArtifact",
 		"quicbaas.Orchestrator/ListTaskArtifacts",
-		"quicbaas.Orchestrator/RegisterAgent",
-		"quicbaas.Orchestrator/GetAgent",
-		"quicbaas.Orchestrator/ListAgents",
-		"quicbaas.Orchestrator/RemoveAgent",
-		"quicbaas.Orchestrator/AgentHeartbeat",
-		"quicbaas.Orchestrator/DisableAgent",
-		"quicbaas.Orchestrator/EnableAgent",
+		"quicbaas.Orchestrator/RegisterFleetNode",
+		"quicbaas.Orchestrator/GetFleetNode",
+		"quicbaas.Orchestrator/ListFleetNodes",
+		"quicbaas.Orchestrator/RemoveFleetNode",
+		"quicbaas.Orchestrator/FleetNodeHeartbeat",
+		"quicbaas.Orchestrator/DisableFleetNode",
+		"quicbaas.Orchestrator/EnableFleetNode",
 		"quicbaas.Orchestrator/StartJob",
 		"quicbaas.Orchestrator/GetJobStatus",
 		"quicbaas.Orchestrator/ListJobs",
@@ -2398,8 +2402,8 @@ func TestUnaryHandlers_OrchestratorAndProjectKeysRegistered(t *testing.T) {
 		"quicbaas.Project/Update",
 		"quicbaas.Project/Delete",
 		"quicbaas.Project/List",
-		"quicbaas.Project/GrantAgentRole",
-		"quicbaas.Project/RevokeAgentRole",
+		"quicbaas.Project/GrantFleetNodeRole",
+		"quicbaas.Project/RevokeFleetNodeRole",
 	}
 
 	allKeys := append(orchestratorKeys, projectKeys...)

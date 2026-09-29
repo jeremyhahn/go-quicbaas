@@ -8,23 +8,46 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  agentFilterLabel,
+  agentLabel,
+  agentScopeValue,
   reportProjectName,
   SPEND_UNATTRIBUTED_LEVEL,
   UNMEASURED,
   childIsDrillable,
   childIsNamed,
   childLabel,
+  childRound,
   childScopeValue,
-  costIsMeasured,
-  formatCost,
+  billedNote,
+  billingLabel,
+  costSettingsForm,
+  costSettingsRequest,
+  electricitySourceLabel,
+  energyNote,
+  measuredShare,
+  hostLabel,
+  hostScopeValue,
+  hostFilterLabel,
+  equivalentNote,
+  formatBilled,
+  formatBilledFloor,
+  formatEquivalent,
+  formatEquivalentFloor,
+  formatEnergy,
+  formatFeeShare,
+  formatMoney,
   formatDurationNanos,
   formatTokens,
   levelLabel,
+  moneyNote,
   noIterationBudgetNotice,
   policyLabel,
   policyVariant,
+  roundLabel,
   scopeLabel,
   spendErrorMessage,
+  spendRangeFrom,
   windowPercent,
   windowSummary,
 } from '../src/lib/cost.ts';
@@ -71,34 +94,207 @@ describe('formatTokens', () => {
   });
 });
 
-describe('formatCost', () => {
-  it('is a dash when the server says the cost was never measured', () => {
-    // Nothing prices a turn (go-quicbaas#791), so this is EVERY production
-    // report today. Rendering the zero would claim the work was free.
-    expect(formatCost({ cost_micros: 0, cost_measured: false })).toBe(UNMEASURED);
+describe('formatMoney', () => {
+  it('renders micro-units as currency', () => {
+    expect(formatMoney(1_500_000)).toBe('$1.50');
+    expect(formatMoney(1_234_567_890)).toBe('$1,234.57');
+    expect(formatMoney(0)).toBe('$0.00');
   });
 
-  it('is still a dash when an unmeasured report carries a non-zero figure', () => {
-    expect(formatCost({ cost_micros: 12_000_000, cost_measured: false })).toBe(UNMEASURED);
+  it('never renders a sub-cent charge as free', () => {
+    expect(formatMoney(20)).toBe('<$0.01');
   });
 
-  it('renders the figure once the server says it was measured', () => {
-    expect(formatCost({ cost_micros: 1_500_000, cost_measured: true })).toBe('1.50');
-  });
-
-  it('is a dash for no report at all', () => {
-    expect(formatCost(null)).toBe(UNMEASURED);
+  it('is a dash for a figure that is not a number', () => {
+    expect(formatMoney(Number.NaN)).toBe(UNMEASURED);
   });
 });
 
-describe('costIsMeasured', () => {
-  it('is false for an unmeasured report and for no report', () => {
-    expect(costIsMeasured({ cost_measured: false })).toBe(false);
-    expect(costIsMeasured(null)).toBe(false);
+describe('formatEquivalent / equivalentNote', () => {
+  // go-quicbaas#1058: the Cost page showed no dollars at all.
+  it('is a dash when nothing in the scope was priced, never a zero', () => {
+    expect(formatEquivalent({ equivalent_micros: 0, priced_entries: 0, unpriced_entries: 4 })).toBe(UNMEASURED);
+    expect(equivalentNote({ equivalent_micros: 0, priced_entries: 0, unpriced_entries: 4 })).toBe('no price for these models');
+    expect(formatEquivalent(null)).toBe(UNMEASURED);
   });
 
-  it('is true only when the server said so', () => {
-    expect(costIsMeasured({ cost_measured: true })).toBe(true);
+  it('renders the priced figure and says when it is a floor', () => {
+    const totals = { equivalent_micros: 42_500_000, priced_entries: 10, unpriced_entries: 2 };
+    expect(formatEquivalent(totals)).toBe('$42.50');
+    expect(equivalentNote(totals)).toBe('at least — 2 turns unpriced');
+    expect(equivalentNote({ ...totals, unpriced_entries: 0 })).toBe('at list price');
+  });
+
+  it('renders a priced zero as a measured zero', () => {
+    expect(formatEquivalent({ equivalent_micros: 0, priced_entries: 3 })).toBe('$0.00');
+  });
+});
+
+describe('formatBilled / billedNote', () => {
+  it('shows a subscription scope as billed zero, which is a measurement', () => {
+    const totals = { billed_micros: 0, billed_entries: 5, unbilled_entries: 0 };
+    expect(formatBilled(totals)).toBe('$0.00');
+    expect(billedNote(totals)).toBe('actually billed');
+  });
+
+  it('is a dash when no turn has a known bill', () => {
+    expect(formatBilled({ billed_micros: 0, billed_entries: 0, unbilled_entries: 3 })).toBe(UNMEASURED);
+    expect(billedNote({ billed_micros: 0, billed_entries: 0, unbilled_entries: 3 })).toBe('billing not configured');
+    expect(formatBilled(undefined)).toBe(UNMEASURED);
+  });
+
+  it('says when the billed figure is a floor', () => {
+    expect(billedNote({ billed_micros: 5, billed_entries: 1, unbilled_entries: 1 })).toBe(
+      'at least — 1 turn with unknown billing',
+    );
+  });
+});
+
+describe('formatEquivalentFloor / formatBilledFloor / moneyNote', () => {
+  it('marks a partially covered row as a floor', () => {
+    const totals = {
+      equivalent_micros: 1_200_000, priced_entries: 2, unpriced_entries: 1,
+      billed_micros: 500_000, billed_entries: 1, unbilled_entries: 2,
+    };
+    expect(formatEquivalentFloor(totals)).toBe('≥$1.20');
+    expect(formatBilledFloor(totals)).toBe('≥$0.50');
+    expect(moneyNote(totals)).toBe(
+      'equivalent: at least — 1 turn unpriced · billed: at least — 2 turns with unknown billing',
+    );
+  });
+
+  it('leaves a fully covered row exact and an uncovered one a dash', () => {
+    expect(formatEquivalentFloor({ equivalent_micros: 1_200_000, priced_entries: 2, unpriced_entries: 0 })).toBe('$1.20');
+    expect(formatBilledFloor({ billed_micros: 0, billed_entries: 2, unbilled_entries: 0 })).toBe('$0.00');
+    expect(formatEquivalentFloor({ equivalent_micros: 0, priced_entries: 0, unpriced_entries: 3 })).toBe(UNMEASURED);
+    expect(formatBilledFloor({ billed_micros: 0, billed_entries: 0, unbilled_entries: 3 })).toBe(UNMEASURED);
+    expect(formatEquivalentFloor(undefined)).toBe(UNMEASURED);
+  });
+});
+
+describe('formatFeeShare', () => {
+  it('renders a fee share as money, a zero share as zero', () => {
+    expect(formatFeeShare(46_000_000)).toBe('$46.00');
+    expect(formatFeeShare(0)).toBe('$0.00');
+  });
+
+  it('renders an absent share as a dash, never as zero', () => {
+    expect(formatFeeShare(undefined)).toBe(UNMEASURED);
+    expect(formatFeeShare(null)).toBe(UNMEASURED);
+  });
+});
+
+describe('spendRangeFrom', () => {
+  const now = new Date('2026-09-24T12:00:00Z');
+
+  it('starts each range its length before now', () => {
+    expect(spendRangeFrom('24h', now)).toBe('2026-09-23T12:00:00.000Z');
+    expect(spendRangeFrom('7d', now)).toBe('2026-09-17T12:00:00.000Z');
+    expect(spendRangeFrom('30d', now)).toBe('2026-08-25T12:00:00.000Z');
+  });
+
+  it('sends no start for every turn', () => {
+    expect(spendRangeFrom('all', now)).toBeUndefined();
+  });
+});
+
+describe('formatEnergy / energyNote', () => {
+  it('renders Wh below a kWh and kWh above', () => {
+    expect(formatEnergy({ energy_mwh: 12_000, electricity_entries: 1 })).toBe('12 Wh');
+    expect(formatEnergy({ energy_mwh: 6_250, electricity_entries: 1 })).toBe('6.25 Wh');
+    expect(formatEnergy({ energy_mwh: 2_500_000, electricity_entries: 3 })).toBe('2.5 kWh');
+    expect(formatEnergy({ energy_mwh: 4, electricity_entries: 1 })).toBe('<0.01 Wh');
+  });
+
+  it('is a dash when no turn was costed from electricity', () => {
+    expect(formatEnergy({ energy_mwh: 0, electricity_entries: 0 })).toBe(UNMEASURED);
+    expect(formatEnergy(undefined)).toBe(UNMEASURED);
+    expect(energyNote({ electricity_entries: 0 })).toBe('no turn costed from electricity');
+    expect(energyNote({ electricity_entries: 1 })).toBe('1 local turn costed from electricity · all estimated');
+  });
+
+  it('says how much of the energy was measured rather than estimated', () => {
+    expect(energyNote({ electricity_entries: 5, measured_energy_entries: 3 })).toBe(
+      '5 local turns costed from electricity · 3 of 5 measured',
+    );
+    expect(measuredShare({ electricity_entries: 2, measured_energy_entries: 2 })).toBe('all measured');
+    expect(measuredShare({ electricity_entries: 2 })).toBe('all estimated');
+    expect(measuredShare({ electricity_entries: 0, measured_energy_entries: 0 })).toBe(UNMEASURED);
+    // A count the server over-reports is clamped, never shown as 3 of 2.
+    expect(measuredShare({ electricity_entries: 2, measured_energy_entries: 3 })).toBe('all measured');
+  });
+});
+
+describe('host rows', () => {
+  it('labels an unattributed host as an absence and addresses it by the sentinel', () => {
+    expect(hostLabel({ host: 'gpu-host:9091' })).toBe('gpu-host:9091');
+    expect(hostLabel({ unattributed: true })).toBe('No host recorded');
+    expect(hostScopeValue({ host: 'gpu-host:9091' })).toBe('gpu-host:9091');
+    expect(hostScopeValue({ unattributed: true })).toBe(SPEND_UNATTRIBUTED_LEVEL);
+    expect(hostFilterLabel(SPEND_UNATTRIBUTED_LEVEL)).toBe('No host recorded');
+    expect(hostFilterLabel('vm-host:9091')).toBe('vm-host:9091');
+  });
+});
+
+describe('electricitySourceLabel', () => {
+  it('names every source, and an unknown one as unknown', () => {
+    expect(electricitySourceLabel('default')).toBe('the default');
+    expect(electricitySourceLabel('tenant_settings')).toBe('set for this tenant');
+    expect(electricitySourceLabel('tenant_config')).toContain('tenant');
+    expect(electricitySourceLabel('deployment_config')).toContain('deployment');
+    expect(electricitySourceLabel('nonsense')).toBe('unknown source');
+  });
+});
+
+describe('costSettingsForm / costSettingsRequest', () => {
+  const settings = {
+    settings: { tenant_id: 'acme', electricity_price_per_kwh: 0.2, engine_power_watts: { ollama: 250, openvino: 12 } },
+    electricity: { price_per_kwh: 0.2, source: 'tenant_settings' as const },
+  };
+
+  it('round-trips what the tenant set, and only that', () => {
+    const form = costSettingsForm(settings);
+    expect(form.price).toBe('0.2');
+    expect(form.engines).toEqual([{ engine: 'ollama', watts: '250' }, { engine: 'openvino', watts: '12' }]);
+    const built = costSettingsRequest('acme', form);
+    expect(built).toEqual({
+      request: { tenant_id: 'acme', electricity_price_per_kwh: 0.2, engine_power_watts: { ollama: 250, openvino: 12 } },
+    });
+    expect(costSettingsForm(null)).toEqual({ price: '', engines: [] });
+  });
+
+  it('leaves a blank price and blank rows out, which inherits the configuration', () => {
+    expect(costSettingsRequest('acme', { price: ' ', engines: [{ engine: '', watts: '' }] })).toEqual({
+      request: { tenant_id: 'acme' },
+    });
+  });
+
+  it('refuses what the server would refuse, before the round trip', () => {
+    const bad = [
+      { price: '-1', engines: [] },
+      { price: 'cheap', engines: [] },
+      { price: '', engines: [{ engine: '', watts: '5' }] },
+      { price: '', engines: [{ engine: 'a/b', watts: '5' }] },
+      { price: '', engines: [{ engine: 'ollama', watts: '' }] },
+      { price: '', engines: [{ engine: 'ollama', watts: '-3' }] },
+      { price: '', engines: [{ engine: 'ollama', watts: '1' }, { engine: 'ollama', watts: '2' }] },
+    ];
+    for (const form of bad) {
+      expect('error' in costSettingsRequest('acme', form)).toBe(true);
+    }
+  });
+});
+
+describe('billingLabel', () => {
+  it('names each mode, with a subscription\'s fee', () => {
+    expect(billingLabel({ mode: 'subscription', monthly_fee_micros: 200_000_000 })).toBe('Subscription · $200.00/mo');
+    expect(billingLabel({ mode: 'subscription' })).toBe('Subscription');
+    expect(billingLabel({ mode: 'api' })).toBe('Metered API');
+  });
+
+  it('says billing is not configured rather than guessing', () => {
+    expect(billingLabel(undefined)).toBe('Billing not configured');
+    expect(billingLabel({})).toBe('Billing not configured');
   });
 });
 
@@ -164,11 +360,24 @@ describe('windowPercent', () => {
     expect(windowPercent({ max_tokens: 0, used_tokens: 10 })).toBeNull();
     expect(windowPercent({ max_tokens: Number.NaN, used_tokens: 10 })).toBeNull();
   });
+  it('is as full as the fullest metered axis when a window meters dollars too', () => {
+    expect(windowPercent({ max_tokens: 1000, used_tokens: 100, max_equivalent_micros: 10_000_000, used_equivalent_micros: 8_000_000 })).toBe(80);
+    expect(windowPercent({ max_tokens: 0, used_tokens: 0, max_equivalent_micros: 4, used_equivalent_micros: 1 })).toBe(25);
+  });
 });
 
 describe('windowSummary', () => {
   it('reads as spent-of-allowance over the window length', () => {
     expect(windowSummary(fiveHour)).toBe('250 / 1,000 tokens per 5h');
+  });
+
+  it('names each metered axis, dollars at list price', () => {
+    expect(
+      windowSummary({ ...fiveHour, max_equivalent_micros: 10_000_000, used_equivalent_micros: 2_500_000 }),
+    ).toBe('250 / 1,000 tokens · $2.50 / $10.00 per 5h');
+    expect(
+      windowSummary({ ...fiveHour, max_tokens: 0, max_equivalent_micros: 10_000_000, used_equivalent_micros: 0 }),
+    ).toBe('$0.00 / $10.00 per 5h');
   });
 });
 
@@ -255,6 +464,41 @@ describe('childScopeValue / childIsDrillable', () => {
   });
 });
 
+// go-quicbaas#886: a round is the terminal level and is addressed by a NUMBER,
+// so a round row is drillable only when its id is one.
+describe('childRound', () => {
+  it('reads a round row as the number it addresses, including round 0', () => {
+    expect(childRound({ id: '3', level: 'round', total_tokens: 1 })).toBe(3);
+    expect(childRound({ id: '0', level: 'round', total_tokens: 1 })).toBe(0);
+    expect(childIsDrillable({ id: '0', level: 'round', total_tokens: 1 })).toBe(true);
+  });
+
+  it('refuses a round row that is not a non-negative integer', () => {
+    for (const id of ['', 'x', '-1', '1.5', '2e3', ' 4']) {
+      const child: SpendChild = { id, level: 'round', total_tokens: 1 };
+      expect(childRound(child)).toBeNull();
+      expect(childIsDrillable(child)).toBe(false);
+    }
+  });
+
+  it('refuses an unattributed round, which no number can address', () => {
+    const child: SpendChild = { level: 'round', unattributed: true, total_tokens: 1 };
+    expect(childRound(child)).toBeNull();
+    expect(childIsDrillable(child)).toBe(false);
+  });
+
+  it('is not a round for a row at another level', () => {
+    expect(childRound({ id: '3', level: 'session', total_tokens: 1 })).toBeNull();
+  });
+});
+
+describe('roundLabel', () => {
+  it('names the round for the breadcrumb', () => {
+    expect(roundLabel(0)).toBe('Round 0');
+    expect(roundLabel(12)).toBe('Round 12');
+  });
+});
+
 describe('scopeLabel', () => {
   it('renders the sentinel as the absence it stands for', () => {
     expect(scopeLabel('project', SPEND_UNATTRIBUTED_LEVEL)).toBe('No project');
@@ -326,5 +570,20 @@ describe('reportProjectName', () => {
     expect(name).toBe('');
     name = reportProjectName({ project_name: 'beta' });
     expect(name).toBe('beta');
+  });
+});
+
+describe('Agent rows', () => {
+  it('names an Agent by its name, then its ID, and the raw-backend row as an absence', () => {
+    expect(agentLabel({ agent_id: 'claude-coder', name: 'Claude coder' })).toBe('Claude coder');
+    expect(agentLabel({ agent_id: 'claude-coder' })).toBe('claude-coder');
+    expect(agentLabel({ unattributed: true })).toBe('No Agent (raw backend)');
+  });
+
+  it('narrows to the Agent, or to the sentinel for raw-backend sessions', () => {
+    expect(agentScopeValue({ agent_id: 'claude-coder' })).toBe('claude-coder');
+    expect(agentScopeValue({ unattributed: true })).toBe(SPEND_UNATTRIBUTED_LEVEL);
+    expect(agentFilterLabel(SPEND_UNATTRIBUTED_LEVEL)).toBe('No Agent (raw backend)');
+    expect(agentFilterLabel('claude-coder')).toBe('claude-coder');
   });
 });

@@ -20,24 +20,24 @@
   } = $props();
 
   const valueClasses: Readonly<Record<string, string>> = {
-    default: 'stat-value',
-    primary: 'stat-value text-primary',
-    success: 'stat-value text-success',
-    warning: 'stat-value text-warning',
-    error: 'stat-value text-error',
+    default: 'stat-value display text-[2rem]',
+    primary: 'stat-value display text-[2rem] text-primary',
+    success: 'stat-value display text-[2rem] text-success',
+    warning: 'stat-value display text-[2rem] text-warning',
+    error: 'stat-value display text-[2rem] text-error',
   };
 </script>
 
-<div class="stat bg-base-200 rounded-box p-5 border border-base-300 shadow-sm">
+<div class="stat rounded-box border border-base-300/80 bg-base-200 px-5 py-4">
   {#if icon}
     {@const Icon = icon}
-    <div class="stat-figure text-base-content/25">
-      <Icon class="h-6 w-6" strokeWidth={1.5} />
+    <div class="stat-figure self-start text-base-content/40">
+      <Icon class="h-5 w-5" strokeWidth={1.75} />
     </div>
   {/if}
-  <div class="stat-title text-xs uppercase tracking-wider text-base-content/50">{label}</div>
-  <div class={valueClasses[variant] ?? 'stat-value text-2xl'}>{value}</div>
+  <div class="stat-title text-xs font-medium text-base-content/60">{label}</div>
+  <div class={valueClasses[variant] ?? 'stat-value display text-[2rem]'}>{value}</div>
   {#if description}
-    <div class="stat-desc text-base-content/40 mt-1">{description}</div>
+    <div class="stat-desc mt-1 text-xs text-base-content/60">{description}</div>
   {/if}
 </div>

@@ -104,9 +104,8 @@ func TestTokenMTLS_Success(t *testing.T) {
 		AuthCodeTTL:      10 * time.Minute,
 	}, iam.OIDCDependencies{
 		IdentityStore: iam.NewIdentityStore(iam.IdentityStoreOptions{
-			UserStorage:  iam.NewMemoryStorage(),
-			GroupStorage: iam.NewMemoryStorage(),
-			RoleStorage:  iam.NewMemoryStorage(),
+			UserStorage: iam.NewMemoryStorage(),
+			RoleStorage: iam.NewMemoryStorage(),
 		}),
 		AppStorage:   backend,
 		TokenStorage: backend,
@@ -229,7 +228,7 @@ func setupMTLSFullHandler(t *testing.T, tenant, clientID string, cert *x509.Cert
 		AuthCodeTTL:      10 * time.Minute,
 	}, iam.OIDCDependencies{
 		IdentityStore: iam.NewIdentityStore(iam.IdentityStoreOptions{
-			UserStorage: iam.NewMemoryStorage(), GroupStorage: iam.NewMemoryStorage(), RoleStorage: iam.NewMemoryStorage(),
+			UserStorage: iam.NewMemoryStorage(), RoleStorage: iam.NewMemoryStorage(),
 		}),
 		AppStorage: backend, TokenStorage: backend,
 	})

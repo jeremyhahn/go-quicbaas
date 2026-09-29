@@ -136,9 +136,9 @@ describe('KnownHostsPanel', () => {
     });
 
     const hostInput = document.getElementById('add-pin-host') as HTMLInputElement;
-    const fingerprintInput = document.getElementById('add-pin-fingerprint') as HTMLInputElement;
+    const keyInput = document.getElementById('add-pin-key') as HTMLTextAreaElement;
     await fireEvent.input(hostInput, { target: { value: 'bitbucket.org' } });
-    await fireEvent.input(fingerprintInput, { target: { value: 'SHA256:zzz...' } });
+    await fireEvent.input(keyInput, { target: { value: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample' } });
 
     // Use the dialog cancel button's sibling — target by the dialog element.
     const dialog = screen.getByRole('dialog', { name: /Add host pin dialog/i });
@@ -149,11 +149,28 @@ describe('KnownHostsPanel', () => {
       expect(mockAddPin).toHaveBeenCalledWith(
         expect.objectContaining({
           host: 'bitbucket.org',
-          fingerprint: 'SHA256:zzz...',
+          public_key: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample',
           scope: 'user',
         }),
       );
     });
+  });
+
+  it('refuses an add-pin form with no host key', async () => {
+    render(KnownHostsPanel, { props: { scope: 'user', owner: 'default' } });
+    await fireEvent.click(screen.getByText('Known Hosts'));
+    await waitFor(() => screen.getByRole('button', { name: /Add host pin/i }));
+    await fireEvent.click(screen.getByRole('button', { name: /Add host pin/i }));
+
+    const hostInput = document.getElementById('add-pin-host') as HTMLInputElement;
+    await fireEvent.input(hostInput, { target: { value: 'bitbucket.org' } });
+    const dialog = screen.getByRole('dialog', { name: /Add host pin dialog/i });
+    await fireEvent.click(dialog.querySelector('button[aria-label="Add host pin"]') as HTMLButtonElement);
+
+    await waitFor(() => {
+      expect(screen.getByText('Host key is required')).toBeInTheDocument();
+    });
+    expect(mockAddPin).not.toHaveBeenCalled();
   });
 
   it('shows Remove button for each pin', async () => {

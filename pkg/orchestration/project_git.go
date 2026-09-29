@@ -13,7 +13,12 @@
 
 package orchestration
 
-import "strings"
+import (
+	"strings"
+	"time"
+
+	"golang.org/x/crypto/ssh"
+)
 
 // =============================================================================
 // Git workspace identity — author, signing, access key
@@ -120,6 +125,116 @@ type CommitSigning struct {
 	// Key identifies the KMS-held signing key. The private half never leaves
 	// the KMS and never reaches disk.
 	Key KMSKeyRef `json:"key,omitzero" yaml:"key,omitempty"`
+
+	// Retired is the project's trusted signing history: every key it signed
+	// with before Key, each trusted only for commits made before it was
+	// retired. See RetiredSigningKey.
+	Retired []RetiredSigningKey `json:"retired,omitempty" yaml:"retired,omitempty"`
+}
+
+// RetiredSigningKey is a signing key a project signed with before its current
+// one.
+//
+// A ROTATION MUST NOT ORPHAN THE HISTORY THE OLD KEY SIGNED. A pull request
+// opened before the rotation still carries commits the old key signed, and
+// the factory never rewrites a pushed branch, so a verifier that trusted only
+// the current key would refuse that pull request for ever. The old key stays
+// trusted, but only for commits made BEFORE RetiredAt: the SSH allowed_signers
+// "valid-before" option, which git checks against the commit's own time.
+//
+// The PUBLIC half is kept, not a KMS reference: retiring a key is the moment
+// its private half may be destroyed, and verifying what it signed must not
+// depend on the private half still existing.
+type RetiredSigningKey struct {
+	// PublicKey is the retired key's public half, one OpenSSH public-key
+	// line.
+	PublicKey string `json:"public_key" yaml:"public_key"`
+
+	// Name is the KMS name the key was held under, for the person reading
+	// the history. It is never resolved.
+	Name string `json:"name,omitempty" yaml:"name,omitempty"`
+
+	// RetiredAt is when the key stopped being the project's signing key. A
+	// commit it signed at or after this instant is not trusted.
+	RetiredAt time.Time `json:"retired_at" yaml:"retired_at"`
+}
+
+// Fingerprint is the key's SHA-256 fingerprint ("SHA256:<base64>"), which is
+// how git names an SSH signer (%GF).
+func (k RetiredSigningKey) Fingerprint() (string, error) {
+	key, err := k.parse()
+	if err != nil {
+		return "", err
+	}
+	return ssh.FingerprintSHA256(key), nil
+}
+
+// AllowedSignersKey is the key in the canonical form an allowed_signers line
+// carries: the algorithm and the base64 blob, with no comment.
+//
+// CANONICAL, NEVER THE STORED TEXT. The stored line is re-rendered from the
+// parsed key, so nothing written beside the key — a comment, a second line —
+// can reach the allowed_signers file and admit a key nobody retired.
+func (k RetiredSigningKey) AllowedSignersKey() (string, error) {
+	key, err := k.parse()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))), nil
+}
+
+// parse reads PublicKey as exactly one OpenSSH public-key line.
+func (k RetiredSigningKey) parse() (ssh.PublicKey, error) {
+	key, _, _, rest, err := ssh.ParseAuthorizedKey([]byte(k.PublicKey))
+	if err != nil {
+		return nil, &ProjectInvalidError{Field: "git.signing.retired.public_key", Message: "does not parse: " + err.Error()}
+	}
+	if strings.TrimSpace(string(rest)) != "" {
+		return nil, &ProjectInvalidError{Field: "git.signing.retired.public_key", Message: "must be exactly one public-key line"}
+	}
+	return key, nil
+}
+
+// Validate reports a retired key that could not be verified against.
+func (k RetiredSigningKey) Validate() error {
+	if _, err := k.Fingerprint(); err != nil {
+		return err
+	}
+	if k.RetiredAt.IsZero() {
+		return &ProjectInvalidError{
+			Field:   "git.signing.retired.retired_at",
+			Message: "a retired key without a retirement time would be trusted for ever",
+		}
+	}
+	return nil
+}
+
+// Retire records key as retired at the given time. A key already in the
+// history keeps its EARLIER retirement: trust is never extended by retiring a
+// key twice.
+func (s *CommitSigning) Retire(key RetiredSigningKey) error {
+	if err := key.Validate(); err != nil {
+		return err
+	}
+	fingerprint, err := key.Fingerprint()
+	if err != nil {
+		return err
+	}
+	for i, existing := range s.Retired {
+		have, err := existing.Fingerprint()
+		if err != nil {
+			return err
+		}
+		if have == fingerprint {
+			if key.RetiredAt.Before(existing.RetiredAt) {
+				s.Retired[i].RetiredAt = key.RetiredAt
+			}
+			return nil
+		}
+	}
+	key.RetiredAt = key.RetiredAt.UTC()
+	s.Retired = append(s.Retired, key)
+	return nil
 }
 
 // SigningAlgorithm returns the effective algorithm.
@@ -149,6 +264,11 @@ func (s CommitSigning) Validate() error {
 		return &ProjectInvalidError{
 			Field:   "git.signing.algorithm",
 			Message: "unsupported signing algorithm " + s.SigningAlgorithm() + " (ed25519 default, ECDSA-P256 under FIPS)",
+		}
+	}
+	for _, retired := range s.Retired {
+		if err := retired.Validate(); err != nil {
+			return err
 		}
 	}
 	return nil

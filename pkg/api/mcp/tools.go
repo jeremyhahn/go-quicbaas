@@ -225,6 +225,8 @@ func (r *ToolRegistry) registerTools() {
 
 	// Register pooled provider account tools
 	r.registerAccountTools()
+	r.registerCostSettingsTools()
+	r.registerAgentCatalogTools()
 	r.registerSSHTools()
 
 	// Register Scheduler tools
@@ -246,7 +248,7 @@ func (r *ToolRegistry) registerTools() {
 	r.registerAgentCacheTools()
 
 	// Register Agent Admin tools (global disable/enable)
-	r.registerAgentAdminTools()
+	r.registerFleetAdminTools()
 
 	// Register Barrier lifecycle tools (mirrors REST /api/v1/barrier surface)
 	r.registerBarrierTools()
@@ -1264,6 +1266,12 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		if isAccountTool(name) {
 			return r.executeAccountTool(ctx, name, args)
 		}
+		if isCostSettingsTool(name) {
+			return r.executeCostSettingsTool(ctx, name, args)
+		}
+		if isAgentCatalogTool(name) {
+			return r.executeAgentCatalogTool(ctx, name, args)
+		}
 
 		// Check if it's a Scheduler tool
 		if isSchedulerTool(name) {
@@ -1347,8 +1355,8 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		}
 
 		// Check if it is an Agent Admin tool (disable/enable globally)
-		if isAgentAdminTool(name) {
-			return r.executeAgentAdminTool(ctx, name, args)
+		if isFleetAdminTool(name) {
+			return r.executeFleetAdminTool(ctx, name, args)
 		}
 
 		// Check if it is a Barrier lifecycle tool.

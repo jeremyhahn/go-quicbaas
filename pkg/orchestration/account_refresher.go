@@ -244,26 +244,34 @@ func (m *AccountTokenManager) renew(ctx context.Context, account *Account) (*Acc
 	// is unrecoverable on the next call (the presented refresh_token is
 	// already dead server-side) — so a persist failure must fail the whole
 	// renewal rather than silently handing out a token we cannot renew again.
-	if putErr := m.secrets.Put(ctx, account.TenantID, account.ID, applyRenewal(stored, effective, renewed)); putErr != nil {
+	generation, putErr := m.secrets.Replace(ctx, account.TenantID, account.ID, applyRenewal(stored, effective, renewed))
+	if putErr != nil {
 		stampErr := m.recordRefreshFailure(ctx, account, "failed to persist renewed credential: "+putErr.Error())
 		return nil, &AccountRefreshFailedError{AccountID: account.ID, Cause: withStampFailure(putErr, stampErr)}
 	}
 
+	// THE CALLER LEAVES HOLDING THE IDENTITY OF WHAT WAS STORED, not just its
+	// bytes. recordRefreshSuccess below mirrors the same generation onto the
+	// metadata record; carrying the stamp out on the envelope is what lets the
+	// resolution above this one record it on the session it spawns
+	// (go-quicbaas#997).
+	renewed.Generation = generation
+
 	// The success stamp is conditional on the account STILL holding its
 	// credential inline. A switch to a secret reference can commit while the
 	// provider round trip is in flight; it destroys the inline envelope, which
-	// the Put above has then re-written. Stamping regardless would put the
+	// the Replace above has then re-written. Stamping regardless would put the
 	// retired expiry back on a reference account and leave the envelope
 	// behind, so a refused stamp removes the envelope instead and the renewed
 	// credential is not used: the account now reads its secret.
 	//
 	// Any other stamp failure is not reported as a success either: the record
 	// would otherwise go on describing the previous credential (its expiry,
-	// and any error status from an earlier failed refresh) with no trace of
-	// why. The renewed envelope IS persisted, so the next Resolve finds it
-	// usable and hands it out without another round trip to the token
-	// endpoint.
-	if stampErr := m.recordRefreshSuccess(ctx, account, renewed.ExpiresAt); stampErr != nil {
+	// its generation, and any error status from an earlier failed refresh)
+	// with no trace of why. The renewed envelope IS persisted, so the next
+	// Resolve finds it usable and hands it out without another round trip to
+	// the token endpoint, and reconciles the generation mirror from it.
+	if stampErr := m.recordRefreshSuccess(ctx, account, renewed.ExpiresAt, generation); stampErr != nil {
 		var switched *AccountCredentialSourceChangedError
 		if errors.As(stampErr, &switched) {
 			if cleanupErr := m.secrets.Delete(ctx, account.TenantID, account.ID); cleanupErr != nil {
@@ -326,18 +334,26 @@ func equalScopes(a, b []string) bool {
 // expires_in genuinely leaves the expiry unknown, and carrying the PREVIOUS
 // cycle's expiry forward would describe a credential that no longer exists.
 //
+// generation is the stamp AccountSecretStore.Replace wrote onto the envelope
+// that is now stored; mirroring it is what lets SessionAccountFreshness see
+// the rotation without reading secret material.
+//
 // It is conditional on the account still being inline (see renew) and not
 // revoked. A switch to a secret reference is returned as the store's
 // *AccountCredentialSourceChangedError so renew can act on it; a refusal
 // because the account was revoked meanwhile is the intended outcome and is not
 // an error; any other failure is an *AccountRefreshStampFailedError.
-func (m *AccountTokenManager) recordRefreshSuccess(ctx context.Context, account *Account, expiresAt time.Time) error {
+func (m *AccountTokenManager) recordRefreshSuccess(
+	ctx context.Context, account *Account, expiresAt time.Time, generation int64,
+) error {
 	return m.touchRefreshOutcome(ctx, account, AccountRefreshOutcomeSuccess, TouchAccountOptions{
 		MarkRefreshed:            true,
+		MarkCredentialRotated:    true,
 		MarkValidated:            true,
 		SetStatusValid:           true,
 		SetStatus:                AccountStatusActive,
 		ClearLastError:           true,
+		SetCredentialGeneration:  generation,
 		SetCredentialExpiresAt:   expiresAt,
 		SetCredentialExpiryValid: true,
 		RequireInlineCredential:  true,

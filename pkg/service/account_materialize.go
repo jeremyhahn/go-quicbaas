@@ -30,7 +30,7 @@ import (
 // credential has to reach the host that actually runs the agent, and in a
 // fleet deployment that host is not the one holding the pool.
 //
-// The central owns the pool; an enrolled agent daemon owns the worker host.
+// The central owns the pool; an enrolled fleet node daemon owns the worker host.
 // The daemon asks for exactly one account's envelope over its own
 // mTLS + bearer channel, caches it in its own secret store, and injects it into
 // the subprocess it spawns. The Spawn RPC itself still carries only account
@@ -81,7 +81,7 @@ type MaterializeAccountCredentialRequest struct {
 	// so a job's releases can be listed and revoked as a set.
 	//
 	// AN ENROLLED DAEMON LEAVES IT EMPTY, deliberately. A daemon's credential
-	// cache is keyed by account (pkg/agent/account_secrets.go), so one release
+	// cache is keyed by account (pkg/fleet/account_secrets.go), so one release
 	// serves every job running on that host; a grant naming one of them would be
 	// false, and validating a later refresh against it would refuse the daemon
 	// its own copy. A caller that releases for a single job — the control
@@ -149,7 +149,7 @@ type MaterializeAccountCredentialResponse struct {
 	// rotate, or an oauth renewal here. It is the CACHE INVALIDATION SIGNAL: a
 	// caller that later observes a newer LastRefreshedAt than the one it
 	// materialized under knows its copy is superseded, without asking for the
-	// secret again. See pkg/agent's accountCredentialCache.Observe.
+	// secret again. See pkg/fleet's accountCredentialCache.Observe.
 	LastRefreshedAt time.Time `json:"last_refreshed_at,omitempty"`
 
 	// SingleUse says the envelope is good for the spawn that asked for it and

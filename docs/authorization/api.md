@@ -164,7 +164,7 @@ type Subject struct {
     Username      string                 // Human-readable name
     TenantID      string                 // Multi-tenant context
     Roles         []string               // RBAC roles
-    Groups        []string               // Group memberships
+    Groups        []string               // The `groups` claim: names of the bound roles
     Attributes    map[string]interface{} // ABAC attributes
     Authenticated bool                   // Auth status
 }

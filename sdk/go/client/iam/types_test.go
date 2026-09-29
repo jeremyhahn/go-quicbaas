@@ -45,7 +45,6 @@ func TestAdminRole_String(t *testing.T) {
 		{AdminRoleSuperAdmin, "super_admin"},
 		{AdminRoleTenantAdmin, "tenant_admin"},
 		{AdminRoleUserAdmin, "user_admin"},
-		{AdminRoleGroupAdmin, "group_admin"},
 		{AdminRolePolicyAdmin, "policy_admin"},
 		{AdminRoleAppAdmin, "app_admin"},
 		{AdminRoleAuditViewer, "audit_viewer"},

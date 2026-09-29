@@ -35,7 +35,6 @@ package durability
 
 import (
 	"context"
-	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -48,20 +47,20 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/netport"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // bootTimeout bounds how long a server may take to report started.
 const bootTimeout = 60 * time.Second
 
-// freePort reserves an ephemeral TCP port and releases it, returning the
-// number. Used for the embedded node's Raft address, which must be unique per
-// process even though no traffic crosses it in standalone mode.
+// freePort reserves a loopback port for the test's server to bind. It is
+// reserved through netport rather than drawn from :0 and released, so nothing
+// else can be handed it before the bind (go-quicbaas#721), and it is released
+// after the test's own cleanups.
 func freePort(t *testing.T) int {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err, "reserve ephemeral port")
-	defer listener.Close()
-	return listener.Addr().(*net.TCPAddr).Port
+	return netport.MustReserveOne(t)
 }
 
 // durabilityConfig builds an embedded, pebble-backed server configuration
@@ -71,6 +70,7 @@ func durabilityConfig(t *testing.T, dataDir string) *config.Config {
 	t.Helper()
 
 	cfg := config.EmbeddedConfig()
+	cfg.IAM.SPIFFETrustDomain = helpers.SPIFFETrustDomain
 	cfg.Storage.Backend = config.StorageBackendPebble
 	cfg.Storage.DataDir = dataDir
 	cfg.Storage.WALDir = filepath.Join(dataDir, "wal")

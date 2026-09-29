@@ -15,13 +15,17 @@ package sdlc
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/prompts"
 )
 
 // =============================================================================
@@ -123,6 +127,10 @@ const auditReviewReprompted = "sdlc:review_reprompted"
 // auditReviewGate is the audit event the gate's answer is recorded under.
 const auditReviewGate = "sdlc:review_gate"
 
+// auditReviewSeatFailover is the audit event a review's move from one seat to
+// the next is recorded under.
+const auditReviewSeatFailover = "sdlc:review_seat_failover"
+
 // ReviewRunnerConfig wires the runner to what it borrows.
 type ReviewRunnerConfig struct {
 	// Bindings supplies the project's reviewer and review policy.
@@ -137,6 +145,11 @@ type ReviewRunnerConfig struct {
 	// container's clone.
 	Tokens ForgeTokenReader
 
+	// Trains is the merge train ledger. A train's pull request is reviewed
+	// only while its train is waiting on that verdict, and the ledger is the
+	// record that says so.
+	Trains TrainStore
+
 	// Signing starts the ephemeral, KMS-backed ssh agent the reviewer's
 	// container AUTHENTICATES ITS CLONE against when the project's remote is
 	// ssh. It is required, for the reason go-quicbaas#929 records: a reader
@@ -149,10 +162,18 @@ type ReviewRunnerConfig struct {
 	// as the CONTAINER sees it. Empty takes the engine's default.
 	CheckoutRoot string
 
+	// Guard is the operator's repository allowlist; see RunnerConfig.Guard.
+	Guard RepoHostGuard
+
 	// SocketsRoot is the DAEMON's root for per-session agent sockets
 	// (orchestration.sockets_root, resolved by the host). It is required and
 	// has no default here; see RunnerConfig.SocketsRoot.
 	SocketsRoot string
+
+	// Agents is the tenant agent catalog a seat's Agent is read from, for the
+	// independence rule and the refusal of a reviewer from the author's
+	// family. Required.
+	Agents AgentCatalog
 
 	// RepromptTimeout is the deadline on the one reminder turn a reviewer
 	// that stated no verdict is given (MaxReviewReprompts). Zero takes
@@ -166,6 +187,8 @@ type ReviewRunnerConfig struct {
 type ReviewRunner struct {
 	bindings BindingReader
 	forges   ForgeResolver
+	trains   TrainStore
+	agents   AgentCatalog
 
 	// access is the one seam every runner's container reaches the forge
 	// through — the same one the delivery runner and triage hold — so the
@@ -190,8 +213,12 @@ func NewReviewRunner(cfg ReviewRunnerConfig) (*ReviewRunner, error) {
 		return nil, &InvalidInputError{Field: "bindings", Message: "the reviewer and the review policy live on the binding"}
 	case cfg.Forges == nil:
 		return nil, &InvalidInputError{Field: "forges", Message: "the verdict is read from and written to the forge"}
+	case cfg.Trains == nil:
+		return nil, &InvalidInputError{Field: "trains", Message: "whether a merge train is waiting on this review is on its ledger"}
+	case cfg.Agents == nil:
+		return nil, &InvalidInputError{Field: "agents", Message: "a review seat's model family is read from its Agent"}
 	}
-	access, err := newForgeAccess(cfg.Tokens, cfg.Signing, cfg.CheckoutRoot, cfg.SocketsRoot)
+	access, err := newForgeAccess(cfg.Tokens, cfg.Signing, cfg.Guard, cfg.CheckoutRoot, cfg.SocketsRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +226,10 @@ func NewReviewRunner(cfg ReviewRunnerConfig) (*ReviewRunner, error) {
 	if repromptTimeout <= 0 {
 		repromptTimeout = ReviewTurnTimeout
 	}
-	return &ReviewRunner{bindings: cfg.Bindings, forges: cfg.Forges, access: access, repromptTimeout: repromptTimeout}, nil
+	return &ReviewRunner{
+		bindings: cfg.Bindings, forges: cfg.Forges, trains: cfg.Trains, agents: cfg.Agents, access: access,
+		repromptTimeout: repromptTimeout,
+	}, nil
 }
 
 // Name implements orchestration.JobRunner.
@@ -339,7 +369,11 @@ type reviewRun struct {
 	files    []ForgeChangedFile
 	reviews  []ForgeReview
 	headSHA  string
-	reviewer ReviewerConfig
+	reviewer ReviewerProfile
+
+	// agents is what the binding's references resolved to when the run
+	// started: the families behind the worker slot and each seat.
+	agents bindingAgents
 
 	// issue is the issue this change claims to close, and discussion is its
 	// comments. Both are read on the control plane and RENDERED INTO THE
@@ -358,6 +392,11 @@ type reviewRun struct {
 	// pretending the criteria were checked.
 	issue      *ForgeIssue
 	discussion []ForgeComment
+
+	// train is the merge train this pull request is, when it is one whose
+	// train is waiting on this verdict. Its changes, not an issue, are what
+	// the prompt describes.
+	train *MergeTrain
 
 	// issueUnavailable says why the issue is absent, empty when it is not.
 	// It is RENDERED INTO THE PROMPT: a reviewer that knows the criteria could
@@ -454,12 +493,14 @@ func (s *reviewRun) drive(ctx context.Context) error {
 }
 
 // decorate adds the reviewer session to every snapshot, so a person and the
-// reaper can both find it.
+// reaper can both find it. It is the job's only session and so its lead
+// (go-quicbaas#863).
 func (s *reviewRun) decorate(status *orchestration.JobStatus) {
 	if status == nil || s.sessionID == "" {
 		return
 	}
 	status.SessionIDs = []string{s.sessionID}
+	status.LeadSessionID = s.sessionID
 }
 
 // release runs the run's teardown in reverse order and closes the reviewer.
@@ -511,26 +552,39 @@ func (s *reviewRun) initialize(ctx context.Context) (orchestration.JobState, err
 		}
 	}
 
-	skip, err := s.skipDecision(ctx)
-	if err != nil {
-		return "", err
-	}
-	if skip.skip {
-		s.skipReason = skip.reason
-		s.published = skip.status
-		s.job.Emit(orchestration.JobStateCompleting, skip.reason)
-		return orchestration.JobStateCompleting, nil
-	}
-
-	files, err := s.forge.ListPullRequestFiles(ctx, s.repo(), pr.Number)
-	if err != nil {
-		return "", err
-	}
-	s.files = files
-	s.loadIssue(ctx)
-
-	if err := s.spawnReviewer(ctx); err != nil {
-		return "", err
+	// ONE PASS PER SEAT. A seat whose Agent cannot take the work — its
+	// accounts spent or rate-limited, its backend unserved — hands the review
+	// to the next seat of the same standing, and that seat's own standing
+	// verdict is asked about afresh, because it posts under its own login.
+	prepared := false
+	for {
+		skip, err := s.skipDecision(ctx)
+		if err != nil {
+			return "", err
+		}
+		if skip.skip {
+			s.skipReason = skip.reason
+			s.published = skip.status
+			s.job.Emit(orchestration.JobStateCompleting, skip.reason)
+			return orchestration.JobStateCompleting, nil
+		}
+		if !prepared {
+			if err := s.prepareReading(ctx, pr); err != nil {
+				return "", err
+			}
+			prepared = true
+		}
+		spawnErr := s.spawnReviewer(ctx)
+		if spawnErr == nil {
+			break
+		}
+		switched, err := s.failOverSeat(ctx, spawnErr)
+		if err != nil {
+			return "", err
+		}
+		if !switched {
+			return "", spawnErr
+		}
 	}
 	if err := s.openCheckout(ctx); err != nil {
 		return "", err
@@ -555,43 +609,38 @@ func (s *reviewRun) resolve(ctx context.Context) error {
 		return err
 	}
 	s.binding = binding
-	s.reviewer = binding.Reviewer
-	if !s.reviewer.Configured() {
+	if !binding.Reviewer.Configured() {
 		return &ReviewerNotConfiguredError{ProjectID: binding.ProjectID}
 	}
-	// INDEPENDENCE IS CHECKED BEFORE A MODEL IS SPENT. The gate discards a
-	// same-family approval, so a review run under this configuration could
-	// only ever produce a verdict the gate ignores.
-	if binding.Review.RequireIndependentReviewer {
-		family := s.reviewer.ModelFamily()
-		if family == "" || family == ModelFamily(binding.Worker.Backend, binding.Worker.Model) {
-			return &ReviewerNotIndependentError{ProjectID: binding.ProjectID, Family: family}
-		}
+	// THE PROFILE THE DISPATCHER CHOSE, RESOLVED AGAINST THE BINDING AS IT IS
+	// NOW. A profile removed since the job was started is refused rather than
+	// replaced by the default: the operator asked for that reviewer, and a
+	// verdict from another would answer a question nobody asked.
+	reviewer, err := binding.ReviewerProfile(subject.Profile)
+	if err != nil {
+		return err
 	}
-
-	// CLAUDE REVIEWS NOTHING, WHATEVER THE POLICY SAYS. Owner ruling
-	// 2026-09-13: a review runs on codex or on the local qwen model.
-	//
-	// This is deliberately OUTSIDE the RequireIndependentReviewer branch above.
-	// That check is a policy an operator may switch off, and switching it off
-	// would then admit a Claude Code reviewer over Claude Code work — the
-	// binding would look configured, the gate would count the approval, and the
-	// author's own family would have judged the change. The ruling is not a
-	// policy, so it is not behind one.
-	if ModelFamily(s.reviewer.Backend, s.reviewer.Model) == ModelFamilyAnthropic {
-		return &ReviewerFamilyRefusedError{
-			ProjectID: binding.ProjectID,
-			Backend:   s.reviewer.Backend,
-			Family:    ModelFamilyAnthropic,
-		}
+	agents, err := resolveBindingAgents(ctx, s.runner.agents, s.job.TenantID, binding)
+	if err != nil {
+		return err
 	}
+	s.agents = agents
+	return s.takeSeat(ctx, reviewer)
+}
 
-	forge, err := s.runner.forges.ForgeFor(ctx, s.job.TenantID, s.reviewer.ForgeConfigFor(binding.Forge))
+// takeSeat makes seat the one this run reviews as: it is checked, and the
+// forge adapter is rebuilt with the seat's own token.
+func (s *reviewRun) takeSeat(ctx context.Context, seat ReviewerProfile) error {
+	if err := s.checkSeat(seat); err != nil {
+		return err
+	}
+	s.reviewer = seat
+	forge, err := s.runner.forges.ForgeFor(ctx, s.job.TenantID, s.reviewer.ForgeConfigFor(s.binding.Forge))
 	if err != nil {
 		return err
 	}
 	if forge == nil {
-		return NewForgeNotRegisteredError(binding.Forge.Type)
+		return NewForgeNotRegisteredError(s.binding.Forge.Type)
 	}
 	// CAPABILITIES, NOT THE PLATFORM'S NAME. A forge that cannot be told a
 	// verdict cannot be reviewed by this module, whichever forge it is, and
@@ -600,6 +649,32 @@ func (s *reviewRun) resolve(ctx context.Context) error {
 		return &ForgeUnsupportedError{Type: forge.Type(), Capability: "submitting a review"}
 	}
 	s.forge = forge
+	return nil
+}
+
+// checkSeat refuses a seat whose review could only produce a verdict nobody
+// may count.
+//
+// INDEPENDENCE IS CHECKED BEFORE A MODEL IS SPENT. The gate discards a
+// same-family approval, so a review run under this configuration could only
+// ever produce a verdict the gate ignores. An ADVISORY seat is exempt: the
+// gate reads past its verdict whatever its family, and hearing a second
+// opinion from the author's own family is a legitimate reason to have chosen
+// it.
+//
+// CLAUDE REVIEWS NOTHING, WHATEVER THE POLICY SAYS. Owner ruling 2026-09-13: a
+// review runs on codex or on the local qwen model. This is deliberately
+// OUTSIDE the independence branch: that is a policy an operator may switch
+// off, and the ruling is not a policy, so it is not behind one.
+func (s *reviewRun) checkSeat(seat ReviewerProfile) error {
+	family := s.agents.seatFamilies[seat.Name]
+	if s.binding.Review.RequireIndependentReviewer && seat.Counts &&
+		(family == "" || slices.Contains(s.agents.authorFamilies, family)) {
+		return &ReviewerNotIndependentError{ProjectID: s.binding.ProjectID, Family: family}
+	}
+	if family == ModelFamilyAnthropic {
+		return &ReviewerFamilyRefusedError{ProjectID: s.binding.ProjectID, Agent: seat.Agent, Family: ModelFamilyAnthropic}
+	}
 	return nil
 }
 
@@ -642,6 +717,17 @@ func (s *reviewRun) skipDecision(ctx context.Context) (reviewSkip, error) {
 	if state := pullRequestStateFor(s.pr); state != PullRequestOpen {
 		return reviewSkip{skip: true, reason: s.subject.String() + " is " + state.String() + "; there is nothing to review"}, nil
 	}
+	// A MERGE TRAIN'S PULL REQUEST IS REVIEWED WHEN ITS TRAIN ASKS, AND ONLY
+	// THEN. The train verifies prefixes of itself in CI while it bisects a
+	// red, and only the one it decided to land is ever waiting on a verdict;
+	// reviewing any other would be a bill for a head that will never land.
+	// The ledger, not the payload that started this job, says which it is.
+	if IsTrainBranch(s.pr.HeadRef) && sameRepo(s.pr.HeadRepo, s.repo()) {
+		skip, err := s.trainSkip(ctx)
+		if err != nil || skip.skip {
+			return skip, err
+		}
+	}
 	if s.pr.Draft {
 		return reviewSkip{
 			skip:   true,
@@ -666,6 +752,57 @@ func (s *reviewRun) skipDecision(ctx context.Context) (reviewSkip, error) {
 			shortSHA(s.headSHA) + "; the standing verdict is re-asserted, not replaced",
 		status: s.statusForVerdict(verdict, standing.Body),
 	}, nil
+}
+
+// trainSkip decides whether a merge train's pull request is this run's to
+// review, and records the train when it is.
+//
+// NO STATUS IS WRITTEN ON A SKIP. A prefix the train is not landing has no
+// verdict to wait for, and a status there would be read by nothing but a
+// person wondering why a pull request that is about to be closed was judged.
+func (s *reviewRun) trainSkip(ctx context.Context) (reviewSkip, error) {
+	train, err := s.awaitedTrain(ctx)
+	if err != nil {
+		return reviewSkip{}, err
+	}
+	if train == nil {
+		return reviewSkip{
+			skip: true,
+			reason: s.subject.String() + " is merge train branch " + s.pr.HeadRef + " at " + shortSHA(s.headSHA) +
+				", which its train is not waiting to have reviewed",
+		}, nil
+	}
+	// THE TRAIN'S REVIEWER, NOT ANY REVIEWER. The train lands on the verdict
+	// of the profile it asked (ProjectBinding.TrainReviewer); an operator's
+	// override or an advisory profile reviewing it would be a verdict the
+	// train does not read.
+	if wanted, ok := s.binding.TrainReviewer(); !ok || wanted.Name != s.reviewer.Name {
+		return reviewSkip{
+			skip: true,
+			reason: s.subject.String() + " is merge train #" + strconv.Itoa(train.Number) + ", which is reviewed by " +
+				"the project's counting reviewer profile, not " + s.reviewer.Name,
+		}, nil
+	}
+	s.train = train
+	return reviewSkip{}, nil
+}
+
+// awaitedTrain returns the merge train waiting on a verdict for this pull
+// request at this head, nil when none is.
+func (s *reviewRun) awaitedTrain(ctx context.Context) (*MergeTrain, error) {
+	ledger, err := s.runner.trains.GetTrainLedger(ctx, s.job.TenantID, s.binding.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	train := ledger.Active
+	if train == nil || train.Phase != TrainReviewing {
+		return nil, nil
+	}
+	probe := train.ProbeOf(train.Land)
+	if probe == nil || probe.PullRequest != s.pr.Number || !strings.EqualFold(probe.HeadSHA, s.headSHA) {
+		return nil, nil
+	}
+	return train, nil
 }
 
 // standingVerdict returns the reviewer's own operative DECISION on one head,
@@ -705,6 +842,52 @@ func standingVerdict(reviews []ForgeReview, login, headSHA string) (ForgeReview,
 
 // String names the pull request under review.
 func (s ReviewJobSubject) String() string { return "pull request #" + strconv.Itoa(s.PullRequest) }
+
+// prepareReading loads what the reviewer reads besides the checkout: the
+// changed files, and the issue the change claims to close.
+func (s *reviewRun) prepareReading(ctx context.Context, pr *ForgePullRequest) error {
+	files, err := s.forge.ListPullRequestFiles(ctx, s.repo(), pr.Number)
+	if err != nil {
+		return err
+	}
+	s.files = files
+	if s.train == nil {
+		s.loadIssue(ctx)
+	}
+	return nil
+}
+
+// failOverSeat moves the run to the next review seat when cause is a refusal
+// the next seat's Agent might not share, and reports whether it did. Seat
+// order is the failover chain and never crosses the gate (NextReviewerSeat);
+// a seat the independence rule or the family ruling would refuse is passed
+// over, and every switch is on the job's audit trail.
+func (s *reviewRun) failOverSeat(ctx context.Context, cause error) (bool, error) {
+	reason, ok := orchestration.AgentFailoverReason(cause)
+	if !ok {
+		return false, nil
+	}
+	from := s.reviewer
+	for current := from; ; {
+		next, found := s.binding.NextReviewerSeat(current)
+		if !found {
+			s.job.Audit(auditReviewSeatFailover, s.subject.String()+": seat "+from.Name+" ("+from.Agent+
+				") cannot review ("+reason+") and no seat of the same standing follows it")
+			return false, nil
+		}
+		if err := s.checkSeat(next); err != nil {
+			s.job.Audit(auditReviewSeatFailover, s.subject.String()+": passed over seat "+next.Name+": "+err.Error())
+			current = next
+			continue
+		}
+		if err := s.takeSeat(ctx, next); err != nil {
+			return false, err
+		}
+		s.job.Audit(auditReviewSeatFailover, s.subject.String()+": seat "+from.Name+" ("+from.Agent+") -> "+
+			next.Name+" ("+next.Agent+"): "+reason)
+		return true, nil
+	}
+}
 
 // =============================================================================
 // The reviewer's session
@@ -747,12 +930,28 @@ func (s *reviewRun) spawnReviewer(ctx context.Context) error {
 	return s.job.SetContainer(s.sessionID, s.containerDir)
 }
 
-// workspaceKey names the reviewer's workspace for the pull request and the
-// head, so two reviews of different heads never share a directory and a
-// re-review of the same head on the same host reuses the clone the last one
-// made.
+// workspaceKey names the reviewer's workspace for the pull request, the head
+// AND the reviewer, so two reviews of different heads never share a directory
+// and a re-review of the same head by the same reviewer on the same host
+// reuses the clone the last one made.
+//
+// THE REVIEWER IS PART OF THE NAME because two reviewers of one head may be
+// placed on the same host — the default profile and an operator's override,
+// or a reviewer whose run outlives the override that replaced it. Sharing a
+// directory would race their clone, fetch, checkout and git configuration
+// against each other.
 func (s *reviewRun) workspaceKey() string {
-	return "review-" + strconv.Itoa(s.subject.PullRequest) + "-" + shortSHA(s.headSHA)
+	return reviewWorkspaceKey(s.subject.PullRequest, s.headSHA, s.reviewer.ProfileName(), s.reviewer.Login)
+}
+
+// reviewWorkspaceKey renders the workspace key for one reviewer of one head.
+// The profile name is already a safe path segment (validReviewerProfileName);
+// a digest of the normalized login keeps two profiles of one name — a profile
+// deleted and re-added under another identity — apart.
+func reviewWorkspaceKey(pullRequest int, headSHA, profile, login string) string {
+	sum := sha256.Sum256([]byte(normalizeLogin(login)))
+	return "review-" + strconv.Itoa(pullRequest) + "-" + shortSHA(headSHA) + "-" +
+		profile + "-" + hex.EncodeToString(sum[:4])
 }
 
 // spawnRequest builds the reviewer's spawn: the reviewer charter as its
@@ -772,17 +971,18 @@ func (s *reviewRun) workspaceKey() string {
 // configuration over the binding's, which is how the verdict is posted as the
 // reviewer rather than as the author.
 func (s *reviewRun) spawnRequest(ctx context.Context) (*orchestration.SpawnSessionRequest, error) {
+	// THE SEAT'S AGENT SUPPLIES THE RUNTIME, THE MODEL, THE IMAGE AND THE
+	// REASONING EFFORT; the seat supplies only the identity it posts as.
 	req := &orchestration.SpawnSessionRequest{
-		Backend:      s.reviewer.Backend,
-		Model:        s.reviewer.Model,
+		AgentID:      s.reviewer.Agent,
+		Role:         orchestration.AgentRoleReview,
 		ProjectID:    s.job.Project.ID,
 		SystemPrompt: ReviewerCharter(),
+		PromptAppend: s.reviewer.PromptAppend,
 		Persistent:   true,
-		ExtraArgs:    s.reviewer.ExtraArgs(),
 	}
-	if image := strings.TrimSpace(s.reviewer.Image); image != "" {
-		req.ContainerImage = image
-		req.SandboxMode = orchestration.SandboxModeRequired
+	if err := placeReviewer(req, s.reviewer.ReviewerConfig, s.agents.seatAgents[s.reviewer.Name]); err != nil {
+		return nil, err
 	}
 	// Create is false and stays false: the branch exists — the author pushed
 	// it — and the reviewer reads it rather than cutting anything.
@@ -815,6 +1015,41 @@ func (s *reviewRun) spawnRequest(ctx context.Context) (*orchestration.SpawnSessi
 	// both sides act on one description and neither invents a sibling file.
 	s.spec = workspace.Spec
 	return req, nil
+}
+
+// placeReviewer applies where the reviewer may run and what it runs against.
+//
+// PLACEMENT IS THE FLEET'S, AND THIS ONLY NARROWS IT. The dispatcher still
+// picks an online node that serves the backend and that the project admits; a
+// reviewer pinned to a host makes that pin STRICT, because the pin exists to
+// reach a model server, and a node chosen instead might not
+// (orchestration.strictAffinityRefusal).
+//
+// AN OPENCODE REVIEWER ON A LOCAL MODEL IS HANDED ITS ENDPOINT. Whether the
+// seat is one is the seat's Agent's to say — its backend and model — and the
+// endpoint is the seat's. The provider is declared in an inline configuration
+// pointing at the endpoint with the Agent's model pinned on it, so the model
+// that answers is the one the verdict is attributed to, not whatever the node
+// configures. The spawn names the Agent, which supplies that same model, and a
+// local model presents no provider credential, so the spawn skips the account
+// pool (orchestration.SpawnNeedsNoAccount).
+func placeReviewer(req *orchestration.SpawnSessionRequest, seat ReviewerConfig, agent orchestration.Agent) error {
+	if affinity := strings.TrimSpace(seat.HostAffinity); affinity != "" {
+		req.HostAffinity = affinity
+		req.HostAffinityStrict = true
+	}
+	if !ReviewsOnLocalModel(agent) {
+		return nil
+	}
+	config, err := opencodeProviderConfig(seat.Endpoint, agent.Model)
+	if err != nil {
+		return err
+	}
+	if req.Env == nil {
+		req.Env = make(map[string]string, 1)
+	}
+	req.Env[opencodeConfigEnv] = config
+	return nil
 }
 
 // checkout is this review's checkout, driven through the one seam the delivery
@@ -1052,7 +1287,11 @@ func (s *reviewRun) reviewPrompt() string {
 	b.WriteString("Checkout: " + s.containerDir + ", already on the head under review.\n")
 	b.WriteString("Its diff against the base is `git diff " + gitRemote + "/" + s.pr.BaseRef + "...HEAD`.\n")
 
-	b.WriteString(s.issueSection())
+	if s.train != nil {
+		b.WriteString(s.trainSection())
+	} else {
+		b.WriteString(s.issueSection())
+	}
 
 	b.WriteString("\n## What the author wrote\n\n")
 	if body := strings.TrimSpace(s.pr.Body); body != "" {
@@ -1077,6 +1316,33 @@ func (s *reviewRun) reviewPrompt() string {
 	}
 	b.WriteString("\nThat list is the whole change. Review all of it, then declare your verdict.\n")
 	return b.String()
+}
+
+// trainSection renders what a merge train's reviewer is asked to judge: which
+// changes the train carries, that each was already approved on its own, and
+// that what is left to review is how they combine.
+func (s *reviewRun) trainSection() string {
+	cars := s.train.Cars[:s.train.Land]
+	var members strings.Builder
+	for _, car := range cars {
+		members.WriteString("- #" + strconv.Itoa(car.PullRequest) + " " + strings.TrimSpace(car.Title) +
+			" (branch " + car.Branch + "), approved at `" + car.HeadSHA + "`\n")
+	}
+	issues := "none"
+	if closes := trainCloses(cars); len(closes) > 0 {
+		refs := make([]string, 0, len(closes))
+		for _, issue := range closes {
+			refs = append(refs, "#"+strconv.Itoa(issue))
+		}
+		issues = strings.Join(refs, ", ")
+	}
+	return "\n" + sdlcPrompts.MustRender("train_review", prompts.Vars{
+		"train":   strconv.Itoa(s.train.Number),
+		"target":  s.train.Target,
+		"base":    s.train.BaseSHA,
+		"members": strings.TrimRight(members.String(), "\n"),
+		"issues":  issues,
+	})
 }
 
 // maxIssueBodyBytes and maxCommentBytes bound what one issue may contribute to
@@ -1256,6 +1522,7 @@ func (s *reviewRun) resetForNextRound(ctx context.Context) {
 	s.reviews = nil
 	s.issue = nil
 	s.discussion = nil
+	s.train = nil
 	s.issueUnavailable = ""
 	s.headSHA = ""
 	s.outcome = ReviewOutcome{}
@@ -1469,6 +1736,10 @@ func (s *reviewRun) setStatusOn(ctx context.Context, headSHA string, status Comm
 	return s.forge.SetCommitStatus(ctx, s.repo(), headSHA, status)
 }
 
+// advisoryNote marks an advisory review in the gate audit line, so a reader
+// sees why a rejection from this reviewer did not hold the change back.
+var advisoryNote = map[bool]string{true: " (advisory: not counted toward merge)", false: ""}
+
 // recordGate says what the pull request's state now IS, through the module's
 // one gate.
 //
@@ -1491,22 +1762,25 @@ func (s *reviewRun) recordGate(ctx context.Context) error {
 		}
 	}
 	now := time.Now().UTC()
+	policy := s.binding.reviewPolicy(s.agents)
 	records := make([]ReviewRecord, 0, len(reviews))
 	for _, review := range reviews {
-		if record, acted := reviewRecordFor(review, s.binding.Review, s.job.Iteration()); acted {
+		if record, acted := reviewRecordFor(review, policy, s.job.Iteration()); acted {
 			records = append(records, record)
 		}
 	}
 	decision := EvaluateReviewGate(GateInput{
-		Policy:            s.binding.Review,
-		PullRequestState:  pullRequestStateFor(s.pr),
-		HeadSHA:           s.headSHA,
-		Reviews:           records,
-		Checks:            checkRecordsFor(checks, s.headSHA, now),
-		AuthorModelFamily: ModelFamily(s.binding.Worker.Backend, s.binding.Worker.Model),
-		Draft:             s.pr.Draft,
+		Policy:              s.binding.Review,
+		PullRequestState:    pullRequestStateFor(s.pr),
+		HeadSHA:             s.headSHA,
+		Reviews:             records,
+		Checks:              checkRecordsFor(checks, s.headSHA, now),
+		AuthorModelFamilies: s.agents.authorFamilies,
+		Draft:               s.pr.Draft,
+		Advisory:            s.binding.AdvisoryReviewers(),
 	})
-	s.job.Audit(auditReviewGate, s.subject.String()+" at "+shortSHA(s.headSHA)+": "+
+	s.job.Audit(auditReviewGate, s.subject.String()+" at "+shortSHA(s.headSHA)+" reviewed as "+
+		s.reviewer.Name+advisoryNote[s.reviewer.Advisory()]+": "+
 		decision.Reason.String()+" ("+decision.Detail+"), "+strconv.Itoa(decision.Approvals)+" independent approval(s)")
 	return nil
 }

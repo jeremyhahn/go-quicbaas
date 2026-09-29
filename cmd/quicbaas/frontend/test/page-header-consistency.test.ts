@@ -11,7 +11,7 @@
  *
  * A static-source check is intentionally simpler than module-rendering for
  * this assertion — every view either uses the shared `PageHeader.svelte`
- * (and therefore inherits the icon-tile + subtitle layout for free) or it
+ * (and therefore inherits the icon + subtitle layout for free) or it
  * doesn't. There is no need to spin up a full Svelte renderer.
  */
 
@@ -33,7 +33,7 @@ interface ViewEntry {
 }
 
 // All top-level views shown in the sidebar. Every entry must use the shared
-// PageHeader component so the icon-tile + subtitle layout stays consistent
+// PageHeader component so the icon + subtitle layout stays consistent
 // across the app.
 const views: ViewEntry[] = [
   { name: 'SystemDashboard',       path: 'src/views/SystemDashboard.svelte',                       title: 'System Status' },
@@ -104,7 +104,7 @@ describe('Page header consistency across all top-level views', () => {
         expect(tagMatch![0]).toMatch(/subtitle\s*=/);
       });
 
-      it('passes an icon prop to PageHeader (icon-tile prefix)', () => {
+      it('passes an icon prop to PageHeader (icon prefix)', () => {
         const src = read(view.path);
         const tagMatch = src.match(/<PageHeader\b[^>]*?>/s);
         expect(tagMatch).not.toBeNull();
@@ -125,8 +125,7 @@ describe('Shared PageHeader component', () => {
     expect(headerSrc).toMatch(/<p[^>]*text-base-content\/60[^>]*>\s*\{subtitle\}\s*<\/p>/);
   });
 
-  it('renders the icon inside a primary tinted square tile', () => {
-    expect(headerSrc).toMatch(/bg-primary\/10\s+text-primary/);
-    expect(headerSrc).toMatch(/<Icon\s+/);
+  it('renders the icon beside the title in the accent colour', () => {
+    expect(headerSrc).toMatch(/<Icon\s+[^>]*text-primary/);
   });
 });

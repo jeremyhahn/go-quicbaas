@@ -93,6 +93,17 @@ type HooksConfig struct {
 
 	// Surfacing bounds the Blocked hook's post to the issue.
 	Surfacing SurfacePolicy
+
+	// Trains is the merge train's queue. Nil builds a hook set that cannot
+	// train: a project whose binding enables the train is then refused at
+	// the moment its change would have been queued, rather than merged one at
+	// a time behind the operator's back.
+	Trains TrainStore
+
+	// TrainNudger wakes the project's train when a change is queued. Required
+	// when Trains is set: a change queued with nothing to wake the train waits
+	// for the backstop sweep.
+	TrainNudger TrainNudger
 }
 
 // Hooks is the module's orchestration.JobLifecycleHooks.
@@ -106,6 +117,9 @@ type Hooks struct {
 	waiter     RetryWaiter
 	surfacing  SurfacePolicy
 	now        func() time.Time
+
+	trains      TrainStore
+	trainNudger TrainNudger
 }
 
 var _ orchestration.JobLifecycleHooks = (*Hooks)(nil)
@@ -125,6 +139,8 @@ func NewHooks(cfg HooksConfig) (*Hooks, error) {
 		return nil, &InvalidInputError{Field: "forges", Message: "pull requests and labels are written through the forge adapter"}
 	case cfg.MergeAttempts < 0:
 		return nil, &InvalidInputError{Field: "merge_attempts", Message: "must not be negative"}
+	case cfg.Trains != nil && cfg.TrainNudger == nil:
+		return nil, &InvalidInputError{Field: "train_nudger", Message: "a change queued for a train has to wake the train"}
 	}
 	if err := cfg.Surfacing.Validate(); err != nil {
 		return nil, err
@@ -141,6 +157,7 @@ func NewHooks(cfg HooksConfig) (*Hooks, error) {
 		projects: cfg.Projects, bindings: cfg.Bindings, deliveries: cfg.Deliveries, tasks: cfg.Tasks,
 		forges: cfg.Forges, attempts: attempts, waiter: waiter,
 		surfacing: cfg.Surfacing.Resolved(), now: func() time.Time { return time.Now().UTC() },
+		trains: cfg.Trains, trainNudger: cfg.TrainNudger,
 	}, nil
 }
 
@@ -152,6 +169,26 @@ type attempt struct {
 	repo    RepoRef
 	issue   int
 	forge   ForgeBackend
+
+	// members are the issues triage clustered into this task's, which its
+	// pull request closes as well (MetadataClusterIssues). Empty for a task
+	// that covers its own issue only.
+	members []int
+}
+
+// closes is every issue the attempt's pull request closes: its own first,
+// then each clustered member.
+func (a *attempt) closes() []int {
+	return append([]int{a.issue}, a.members...)
+}
+
+// closingLines renders one closing keyword per issue, one per line.
+func closingLines(issues []int) string {
+	lines := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		lines = append(lines, closesLine(issue))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // resolve loads the project, binding, task and forge for a bound job.
@@ -190,6 +227,10 @@ func (h *Hooks) resolve(ctx context.Context, job *orchestration.JobContext) (*at
 	if err != nil {
 		return nil, err
 	}
+	members, err := clusterOfTask(task.Metadata)
+	if err != nil {
+		return nil, err
+	}
 	forge, err := h.forges.ForgeFor(ctx, job.TenantID, binding.Forge)
 	if err != nil {
 		return nil, err
@@ -197,7 +238,7 @@ func (h *Hooks) resolve(ctx context.Context, job *orchestration.JobContext) (*at
 	if forge == nil {
 		return nil, NewForgeNotRegisteredError(binding.Forge.Type)
 	}
-	return &attempt{project: project, binding: binding, task: task, repo: repo, issue: issue, forge: forge}, nil
+	return &attempt{project: project, binding: binding, task: task, repo: repo, issue: issue, forge: forge, members: members}, nil
 }
 
 // branchPlanFor plans the attempt's branch from the binding's strategy.
@@ -222,7 +263,7 @@ func branchPlanFor(a *attempt, issue *ForgeIssue) (BranchPlan, error) {
 	if err != nil {
 		return BranchPlan{}, err
 	}
-	return plan.Resolve(a.project.Git.DefaultBranch), nil
+	return pinnedBranch(plan, a.task).Resolve(a.project.Git.DefaultBranch), nil
 }
 
 // loadIssue reads the forge issue the attempt mirrors.
@@ -273,6 +314,16 @@ func (h *Hooks) Prepare(ctx context.Context, job *orchestration.JobContext) (str
 	prior, err := h.deliveries.GetDelivery(ctx, job.TenantID, job.TaskID)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return "", err
+	}
+	// A RESPAWN INSIDE THE SAME ATTEMPT KEEPS THE ATTEMPT'S DELIVERY WHOLE.
+	// Initializing is re-entered without a new attempt whenever the worker's
+	// container is replaced — a session rolled over, or one closed for the
+	// wait in reviewing and spawned again for a review round
+	// (go-quicbaas#938). Rebuilding the record here would drop what the
+	// attempt has already accumulated on the forge: the CI runs its own
+	// rounds displaced and the reruns it asked for.
+	if prior != nil && prior.Attempt == job.Attempt && prior.Branch == plan.Branch {
+		return "", h.moveLabelsOn(ctx, a, issue, LabelInProgress)
 	}
 	// A later attempt continues the branch an earlier one pushed, so the
 	// pull request and its reviews carry over.
@@ -331,7 +382,8 @@ func (h *Hooks) Reviewable(ctx context.Context, job *orchestration.JobContext) e
 		return h.landDirect(ctx, job, a, delivery)
 	}
 	var pr *ForgePullRequest
-	if delivery.PullRequest.Opened() {
+	resumed := delivery.PullRequest.Opened()
+	if resumed {
 		pr, err = a.forge.GetPullRequest(ctx, a.repo, delivery.PullRequest.Number)
 	} else {
 		// RE-READ HERE, NOT ONLY AT resolve ABOVE. Opening the pull request is
@@ -367,7 +419,31 @@ func (h *Hooks) Reviewable(ctx context.Context, job *orchestration.JobContext) e
 	if err := h.publish(ctx, job, delivery); err != nil {
 		return err
 	}
+	if resumed && pullRequestStateFor(pr) == PullRequestOpen {
+		if err := h.unparkPullRequest(ctx, a, pr.Number); err != nil {
+			return err
+		}
+	}
 	return h.moveLabels(ctx, a, LabelInReview)
+}
+
+// unparkPullRequest takes the park labels a previous attempt's markParked put
+// on the pull request off it, now that a new attempt owns the change again.
+// Without it a readmitted task's pull request goes on reading "escalated"
+// through a live review, which is the opposite of the lie markParked exists
+// to prevent. Only the module's park labels come off: anything a person put
+// there stays (see stripParkLabels).
+func (h *Hooks) unparkPullRequest(ctx context.Context, a *attempt, number int) error {
+	// A pull request IS an issue on the forge: its labels are read and
+	// removed through the issue routes, as labelPullRequest adds them.
+	pr, err := a.forge.GetIssue(ctx, a.repo, number)
+	if err != nil {
+		return err
+	}
+	if pr == nil {
+		return &NotFoundError{Entity: "pull request", ID: IssueRefString(a.repo, number)}
+	}
+	return stripParkLabels(ctx, a.forge, a.binding, a.repo, pr)
 }
 
 // landDirect is the carve-out path: a change class the strategy exempted from
@@ -381,20 +457,24 @@ func (h *Hooks) landDirect(ctx context.Context, job *orchestration.JobContext, a
 	if err := h.publish(ctx, job, delivery); err != nil {
 		return err
 	}
-	return h.moveLabels(ctx, a, LabelMerged)
+	if err := h.moveLabels(ctx, a, LabelMerged); err != nil {
+		return err
+	}
+	return h.moveMemberLabels(ctx, a, LabelMerged)
 }
 
 // deliveryCommitMessage is the one commit the attempt's changes land as. It
 // is built on the daemon and run in the container: the message is the record
 // of what the attempt was, and the issue it closes is the contract.
 func deliveryCommitMessage(a *attempt, job *orchestration.JobContext) string {
-	return strings.TrimSpace(a.task.Subject) + "\n\nCloses #" + strconv.Itoa(a.issue) +
+	return strings.TrimSpace(a.task.Subject) + "\n\n" + closingLines(a.closes()) +
 		"\n\nTask: " + job.TaskID + " (attempt " + strconv.Itoa(job.Attempt) + ")"
 }
 
-// pullRequestBody closes the issue and names the task.
+// pullRequestBody closes the issue — and every issue clustered into it — and
+// names the task.
 func pullRequestBody(a *attempt, job *orchestration.JobContext) string {
-	return "Closes #" + strconv.Itoa(a.issue) + "\n\nOpened by the Software Factory for task `" + job.TaskID +
+	return closingLines(a.closes()) + "\n\nOpened by the Software Factory for task `" + job.TaskID +
 		"` (attempt " + strconv.Itoa(job.Attempt) + ").\n"
 }
 
@@ -531,7 +611,18 @@ func (h *Hooks) Complete(ctx context.Context, job *orchestration.JobContext) err
 	if pr == nil {
 		return &NotFoundError{Entity: "pull request", TenantID: job.TenantID, ID: subject}
 	}
-	if !pr.Merged {
+	landed, err := h.trainLanding(ctx, job, delivery)
+	if err != nil {
+		return err
+	}
+	if landed != nil {
+		if err := h.closeLanded(ctx, a, pr, landed); err != nil {
+			return err
+		}
+		if err := h.deleteLandedBranch(ctx, a, delivery); err != nil {
+			return err
+		}
+	} else if !pr.Merged {
 		if delivery.HeadSHA == "" {
 			return &HeadMovedError{Subject: subject, Reviewed: "", Current: pr.HeadSHA}
 		}
@@ -551,6 +642,11 @@ func (h *Hooks) Complete(ctx context.Context, job *orchestration.JobContext) err
 		// Branch lifecycle is the BRANCH plan's decision, made once when the
 		// branch was cut; the merge spec only carries it to the forge.
 		spec.ExpectSourceDeleted = delivery.DeleteAfterMerge
+		// A clustered task's merge closes every issue in the cluster, as its
+		// pull request body says it will.
+		if len(a.members) > 0 {
+			spec.CommitMessage = closingLines(a.closes())
+		}
 		if err := h.merge(ctx, a.forge, a.repo, pr.Number, spec, delivery.HeadSHA); err != nil {
 			return err
 		}
@@ -563,7 +659,19 @@ func (h *Hooks) Complete(ctx context.Context, job *orchestration.JobContext) err
 	if err := h.publish(ctx, job, delivery); err != nil {
 		return err
 	}
-	return h.moveLabels(ctx, a, LabelMerged)
+	if err := h.moveLabels(ctx, a, LabelMerged); err != nil {
+		return err
+	}
+	if err := h.moveMemberLabels(ctx, a, LabelMerged); err != nil {
+		return err
+	}
+	if landed != nil {
+		// THE ENTRY'S WORK IS DONE: the delivery now records the landing
+		// itself. Removed last, so a Complete that fails above finds the
+		// entry again on its retry and finishes the same way.
+		return h.trains.DeleteTrainEntry(ctx, job.TenantID, job.ProjectID, job.TaskID)
+	}
+	return nil
 }
 
 // merge issues the merge, retrying only while the forge reports itself
@@ -716,9 +824,10 @@ func (h *Hooks) deliveryOrNil(ctx context.Context, job *orchestration.JobContext
 //
 // ADD-ONLY ON THE PULL REQUEST, deliberately. The issue's labels are a display
 // STATE the module owns and moves; a pull request never carried the trigger
-// label and may carry labels a person put there, so there is nothing of the
-// module's to remove and removing anything else would be destroying a human's
-// annotation. AddIssueLabels is idempotent, which is what lets an interrupted
+// label and may carry labels a person put there, so removing anything but the
+// module's own park label would be destroying a human's annotation. That park
+// label comes off in exactly one place: when a readmitted task's next attempt
+// publishes to the same pull request (unparkPullRequest). AddIssueLabels is idempotent, which is what lets an interrupted
 // escalation re-run this without doubling anything.
 func (h *Hooks) markParked(ctx context.Context, a *attempt, delivery *Delivery, key string) error {
 	if err := h.moveLabels(ctx, a, key); err != nil {
@@ -804,12 +913,36 @@ func (h *Hooks) moveLabelsOn(ctx context.Context, a *attempt, issue *ForgeIssue,
 	// which is what labelsAgree is for. Over-labelled is recoverable;
 	// unlabelled is not.
 	if desired != "" && !present {
-		if err := a.forge.AddIssueLabels(ctx, a.repo, a.issue, []string{desired}); err != nil {
+		if err := a.forge.AddIssueLabels(ctx, a.repo, issue.Number, []string{desired}); err != nil {
 			return err
 		}
 	}
 	for _, label := range stale {
-		if err := a.forge.RemoveIssueLabel(ctx, a.repo, a.issue, label); err != nil {
+		if err := a.forge.RemoveIssueLabel(ctx, a.repo, issue.Number, label); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// moveMemberLabels moves every clustered member's display label to key, the
+// way moveLabels moves the task's own issue.
+//
+// ONLY AT THE ENDING THAT CLOSES THEM. A member carries the clustered label
+// while its anchor's task runs and never a lifecycle label: a member claiming
+// in-progress with no task of its own would read to the label reconciliation
+// sweep as a lost hand-over. When the pull request lands it closes every
+// member, and the member is then labelled with the same ending as its anchor.
+func (h *Hooks) moveMemberLabels(ctx context.Context, a *attempt, key string) error {
+	for _, number := range a.members {
+		issue, err := a.forge.GetIssue(ctx, a.repo, number)
+		if err != nil {
+			return err
+		}
+		if issue == nil {
+			return &NotFoundError{Entity: "issue", ID: IssueRefString(a.repo, number)}
+		}
+		if err := h.moveLabelsOn(ctx, a, issue, key); err != nil {
 			return err
 		}
 	}

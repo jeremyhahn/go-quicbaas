@@ -39,7 +39,6 @@ func startParentJob(t *testing.T, ctx context.Context, tenantID, leadAgentID str
 		TenantID:    tenantID,
 		Description: "parent job " + uniqueSuffix(),
 		LeadAgentID: leadAgentID,
-		LeadBackend: "ollama",
 	})
 	require.NoError(t, err, "StartJob")
 	require.NotEmpty(t, resp.JobID)

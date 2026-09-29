@@ -20,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 )
 
 // MemoryBackend is an in-memory secrets backend for development and testing.
@@ -95,6 +97,7 @@ func (mb *MemoryBackend) Store(ctx context.Context, path string, data map[string
 		Deleted:   false,
 		CreatedAt: now,
 		UpdatedAt: now,
+		CreatedBy: auth.PrincipalFromContext(ctx),
 	}
 
 	store.versions = append(store.versions, entry)
@@ -273,6 +276,7 @@ func (mb *MemoryBackend) ListVersions(ctx context.Context, path string) ([]*Vers
 		versions[i] = &VersionMetadata{
 			Version:   entry.Version,
 			CreatedAt: entry.CreatedAt,
+			CreatedBy: entry.CreatedBy,
 			Deleted:   entry.Deleted,
 			DeletedAt: entry.DeletedAt,
 		}
@@ -319,6 +323,7 @@ func (mb *MemoryBackend) Rollback(ctx context.Context, path string, version int)
 		Deleted:   false,
 		CreatedAt: now,
 		UpdatedAt: now,
+		CreatedBy: auth.PrincipalFromContext(ctx),
 	}
 
 	store.versions = append(store.versions, newEntry)

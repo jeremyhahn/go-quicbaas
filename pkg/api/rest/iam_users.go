@@ -139,7 +139,6 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		Enabled           *bool             `json:"enabled,omitempty"`
 		AuthMethods       []string          `json:"auth_methods,omitempty"`
 		Roles             []string          `json:"roles,omitempty"`
-		Groups            []string          `json:"groups,omitempty"`
 		Lifecycle         iam.Lifecycle     `json:"lifecycle,omitempty"`
 		InviteExpiryHours int               `json:"invite_expiry_hours,omitempty"`
 	}
@@ -232,12 +231,10 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		// set would have suspended the user the moment CreateUser started
 		// honouring it.
 		Enabled: req.Enabled,
-		// Roles and Groups are validated against the tenant's role and
-		// group stores by IdentityStore.CreateUser BEFORE the user record
-		// is written (validate-before-create), matching the gRPC/Unix
-		// adapter contract.
+		// Roles are validated against the tenant's role store by
+		// IdentityStore.CreateUser BEFORE the user record is written
+		// (validate-before-create), matching the gRPC/Unix adapter contract.
 		Roles:       req.Roles,
-		Groups:      req.Groups,
 		AuthMethods: req.AuthMethods,
 		Lifecycle:   lifecycle,
 	}
@@ -598,7 +595,6 @@ func (h *IAMHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		Attributes  *map[string]string `json:"attributes,omitempty"`
 		Enabled     *bool              `json:"enabled,omitempty"`
 		Roles       *[]string          `json:"roles,omitempty"`
-		Groups      *[]string          `json:"groups,omitempty"`
 		AuthMethods *[]string          `json:"auth_methods,omitempty"`
 		Lifecycle   *iam.Lifecycle     `json:"lifecycle,omitempty"`
 	}
@@ -647,7 +643,6 @@ func (h *IAMHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		AuthMethods: req.AuthMethods,
 		Lifecycle:   req.Lifecycle,
 		Roles:       req.Roles,
-		Groups:      req.Groups,
 	}
 
 	user, err := store.UpdateUser(ctx, tenantID, userID, opts)

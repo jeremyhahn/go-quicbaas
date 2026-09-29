@@ -101,6 +101,7 @@ func (s *Server) ValidateToken(ctx context.Context, req *pb.ValidateTokenRequest
 		Valid:     serviceResp.Valid,
 		UserId:    serviceResp.UserID,
 		Username:  serviceResp.Username,
+		TenantId:  serviceResp.TenantID,
 		Roles:     serviceResp.Roles,
 		ExpiresAt: serviceResp.ExpiresAt,
 	}, nil

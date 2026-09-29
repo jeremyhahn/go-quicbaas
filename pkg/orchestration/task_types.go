@@ -16,6 +16,8 @@ package orchestration
 import (
 	"context"
 	"errors"
+	"strconv"
+	"strings"
 )
 
 // TaskStatus represents the lifecycle state of a task.
@@ -207,7 +209,7 @@ type Task struct {
 	CompletedAt  int64             `json:"completed_at,omitempty"`
 	Version      uint64            `json:"version"`
 
-	// AgentID is the fleet agent the task's LATEST ATTEMPT ran on, empty
+	// AgentID is the fleet node the task's LATEST ATTEMPT ran on, empty
 	// when it has had none or when the attempt ran in-process.
 	//
 	// DERIVED ON READ, NEVER PERSISTED. It is the job's fact, not the task's
@@ -219,7 +221,7 @@ type Task struct {
 	AgentID string `json:"agent_id,omitempty"`
 
 	// ProjectID scopes this task to a registered project. When non-empty,
-	// ClaimTask enforces the project's AgentRoles access matrix.
+	// ClaimTask enforces the project's FleetNodeRoles access matrix.
 	// Empty means the task is unscoped (legacy behaviour — allow all).
 	ProjectID string `json:"project_id,omitempty"`
 
@@ -255,8 +257,12 @@ type Task struct {
 	// Priority orders tasks for dispatch; a higher value is dispatched first.
 	Priority int `json:"priority,omitempty"`
 
+	// PromptAppend is run-time prompt material every attempt at the task
+	// carries to the sessions it spawns (JobConfig.PromptAppend).
+	PromptAppend string `json:"prompt_append,omitempty"`
+
 	// Attempts counts the jobs dispatched for this task so far.
-	Attempts int `json:"attempts,omitempty"`
+	Attempts int `json:"attempts"`
 
 	// AttemptBudget bounds Attempts. Zero means the engine default applies.
 	AttemptBudget int `json:"attempt_budget,omitempty"`
@@ -264,7 +270,7 @@ type Task struct {
 	// EnvironmentFaults counts attempts that ended because of the
 	// environment rather than the work; such attempts are refunded against
 	// the budget.
-	EnvironmentFaults int `json:"environment_faults,omitempty"`
+	EnvironmentFaults int `json:"environment_faults"`
 
 	// QuestionAttempts counts attempts that ended with the agent asking a
 	// person a question rather than judging the work; such attempts are
@@ -275,7 +281,7 @@ type Task struct {
 	// faults, not charged", so folding questions into that counter would
 	// describe a worker that stopped to ask the owner a ruling as a broken
 	// deployment. Both are refunded; only one is the factory's fault.
-	QuestionAttempts int `json:"question_attempts,omitempty"`
+	QuestionAttempts int `json:"question_attempts"`
 
 	// ConsecutiveEnvironmentFaults counts environment faults since the last
 	// attempt that got past the environment. It resets on any other outcome.
@@ -286,10 +292,10 @@ type Task struct {
 	RetryNotBefore int64 `json:"retry_not_before,omitempty"`
 
 	// BlockedReason says why the task is blocked. Set with Status blocked.
-	BlockedReason string `json:"blocked_reason,omitempty"`
+	BlockedReason string `json:"blocked_reason"`
 
 	// BlockKind classifies the block. Set with Status blocked.
-	BlockKind TaskBlockKind `json:"block_kind,omitempty"`
+	BlockKind TaskBlockKind `json:"block_kind"`
 
 	// BlockFaultClass names the environment fault class a block came from —
 	// one of the classes classifyEnvironmentFault produces — and is empty for
@@ -297,7 +303,7 @@ type Task struct {
 	// with Status blocked and BlockKind blocked. It is what lets a re-adoption
 	// tell a transient environment hold, which a person resolves and re-arms
 	// by re-labelling, from a deliberate operator hold, which stays held.
-	BlockFaultClass string `json:"block_fault_class,omitempty"`
+	BlockFaultClass string `json:"block_fault_class"`
 
 	// StatusChangedAt is the Unix-nanosecond instant of the last Status
 	// transition.
@@ -329,8 +335,27 @@ type Task struct {
 	// reads the task, and a reader guessing it back from the resting status
 	// would confuse an abandoned attempt with an operator's hold — the two
 	// differ only in what produced them. go-quicbaas#796.
-	ConclusionReason TaskConclusionReason `json:"conclusion_reason,omitempty"`
+	ConclusionReason TaskConclusionReason `json:"conclusion_reason"`
+
+	// ReviewRoundBonus extends the review-round budget pkg/sdlc's runner
+	// checks (binding.MaxReviewRounds) by this many rounds for THIS task
+	// only. It is how a person's "allow another round" — granted from the
+	// attention inbox after a review that did not converge — reaches the
+	// runner without changing the project's binding for every other task.
+	//
+	// BOUNDED (see MaxReviewRoundBonus) and ADDITIVE: it is never decreased,
+	// so a task granted two extra rounds across two separate escalations
+	// keeps both. It is NOT cleared by ReadmitTask — the round it bought is
+	// spent by the runner reaching it, not by the readmit that unparked the
+	// task for it.
+	ReviewRoundBonus int `json:"review_round_bonus,omitempty"`
 }
+
+// MaxReviewRoundBonus bounds ReviewRoundBonus. A person may grant a task
+// extra review rounds one at a time from the attention inbox; this is the
+// ceiling past which "allow another round" is refused rather than turning
+// into an unbounded budget nothing ever exhausts.
+const MaxReviewRoundBonus = 5
 
 // TaskRouting are the placement hints a dispatch reads when it decides where
 // an attempt at a task runs: the backend that may run it, the host it is
@@ -385,7 +410,7 @@ type TaskFilter struct {
 	JobID string `json:"job_id,omitempty"`
 
 	// AgentID restricts the listing to the tasks whose latest attempt ran on
-	// one fleet agent.
+	// one fleet node.
 	//
 	// THE AGENT IS THE JOB'S, NOT THE TASK'S. A task record names no agent —
 	// AssignedTo is filled only when an agent CLAIMS a task, and the engine
@@ -411,8 +436,16 @@ type TaskStore interface {
 	// DeleteTask removes a task.
 	DeleteTask(ctx context.Context, tenantID, taskID string) error
 
-	// ListTasks lists tasks matching the filter within a tenant.
+	// ListTasks lists tasks matching the filter within a tenant. A record
+	// that cannot be decoded is left out so it cannot hide the rest of the
+	// work queue; a caller that decides anything from a task's ABSENCE must
+	// use ListTaskRecords instead, which reports what it could not read.
 	ListTasks(ctx context.Context, tenantID string, filter *TaskFilter) ([]*Task, error)
+
+	// ListTaskRecords lists tasks matching the filter within a tenant, as
+	// ListTasks does, and names every record it could not decode. The
+	// readable records are always returned; see TaskListing.
+	ListTaskRecords(ctx context.Context, tenantID string, filter *TaskFilter) (*TaskListing, error)
 
 	// ClaimTask atomically claims a task for an agent using compare-and-swap.
 	// Returns error if task is already claimed by another agent.
@@ -432,6 +465,18 @@ type TaskStore interface {
 	// ReadmitTask returns a blocked task to pending, clearing its block,
 	// assignment and retry hold so it can be claimed again.
 	ReadmitTask(ctx context.Context, tenantID, taskID string) error
+
+	// CloseBlockedTask completes a blocked task without readmitting it — an
+	// operator ruling that no further work is needed. Any status other than
+	// blocked is a TaskInvalidStateError; CompleteTask refuses a blocked task.
+	CloseBlockedTask(ctx context.Context, tenantID, taskID string, result *TaskResult) error
+
+	// BumpReviewRoundBudget raises a blocked task's ReviewRoundBonus by one,
+	// bounded by MaxReviewRoundBonus, and returns the resulting value. The
+	// task must be blocked; any other status is a TaskInvalidStateError. It
+	// does not readmit — see AgentService.BumpTaskReviewRoundBudget for the
+	// verb the attention inbox's "allow another round" actually calls.
+	BumpReviewRoundBudget(ctx context.Context, tenantID, taskID string) (int, error)
 
 	// SubmitTaskArtifacts appends output artifacts to a task. Artifacts
 	// larger than the configured InlineLimit are stored in the KV store and
@@ -607,6 +652,58 @@ func (e *TaskStoreError) Unwrap() error {
 	return e.Sentinel
 }
 
+// ErrTaskListingIncomplete indicates a task listing met records it could not
+// decode, so a task missing from it may exist.
+var ErrTaskListingIncomplete = errors.New("task store: listing incomplete")
+
+// TaskListing is the result of ListTaskRecords: the readable records that
+// matched the filter and the IDs of the records that could not be read at all.
+//
+// AN UNREADABLE RECORD IS NOT AN ABSENT ONE. Its fields cannot be decoded, so
+// the filter cannot be applied to it: Unreadable names every undecodable record
+// the scan met under the tenant, whichever project or status it may belong to.
+// A caller that concludes something from a task NOT being listed — an orphan, a
+// free slot, a count — must refuse when Unreadable is non-empty; a caller that
+// only acts on the tasks it can see may use Tasks regardless. A listing cut
+// short by filter.Limit reports only the unreadable records met before it
+// stopped.
+type TaskListing struct {
+	Tasks      []*Task
+	Unreadable []string
+}
+
+// Complete reports whether every record the scan met could be read.
+func (l *TaskListing) Complete() bool {
+	return l == nil || len(l.Unreadable) == 0
+}
+
+// Err returns a *TaskListingIncompleteError when the listing is not complete,
+// and nil when it is, for a caller that fails closed on an incomplete listing.
+func (l *TaskListing) Err(tenantID string) error {
+	if l.Complete() {
+		return nil
+	}
+	return &TaskListingIncompleteError{TenantID: tenantID, TaskIDs: append([]string(nil), l.Unreadable...)}
+}
+
+// TaskListingIncompleteError reports a task listing that met records it could
+// not decode. TaskIDs names them so an operator can repair or remove them.
+type TaskListingIncompleteError struct {
+	TenantID string
+	TaskIDs  []string
+}
+
+// Error implements the error interface.
+func (e *TaskListingIncompleteError) Error() string {
+	return ErrTaskListingIncomplete.Error() + ": tenant " + e.TenantID + " has " +
+		strconv.Itoa(len(e.TaskIDs)) + " unreadable task record(s): " + strings.Join(e.TaskIDs, ", ")
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *TaskListingIncompleteError) Unwrap() error {
+	return ErrTaskListingIncomplete
+}
+
 // TaskSourceAlreadyAdoptedError indicates a task already exists for the same
 // (Kind, Ref) source within the tenant and project. TaskID names the holder so
 // a caller can attach to the existing task instead of creating a second one,
@@ -660,6 +757,23 @@ func (e *InvalidTaskSourceKindError) Error() string {
 func (e *InvalidTaskSourceKindError) Unwrap() error {
 	return ErrTaskStoreInvalidInput
 }
+
+// ReviewRoundBudgetExhaustedError reports a task whose ReviewRoundBonus is
+// already at MaxReviewRoundBonus: granting another round is refused rather
+// than turning the bonus into a budget nothing ever exhausts.
+type ReviewRoundBudgetExhaustedError struct {
+	TaskID string
+	Max    int
+}
+
+// Error implements the error interface.
+func (e *ReviewRoundBudgetExhaustedError) Error() string {
+	return "task store: review round bonus already at its maximum (" +
+		strconv.Itoa(e.Max) + "): task=" + e.TaskID
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *ReviewRoundBudgetExhaustedError) Unwrap() error { return ErrTaskStoreInvalidInput }
 
 // InvalidTaskBlockKindError reports a TaskBlockKind outside the closed enum.
 type InvalidTaskBlockKindError struct {

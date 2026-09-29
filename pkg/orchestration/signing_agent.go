@@ -31,11 +31,12 @@ import (
 // A spawn that signs commits — the delivery worker — or clones an ssh remote
 // mounts the KMS-backed ssh agent's socket, which the daemon binds under its
 // OWN sockets root. Only an agent that can see that directory can mount it; any
-// other refuses the spawn at its mount check, and the job is parked rather than
-// re-placed (go-quicbaas#1013 is the relay that would lift this).
+// other refuses the spawn at its mount check.
 //
-// SO THE DISPATCHER ONLY PLACES SUCH A SPAWN WHERE THE SOCKET IS LOCAL, and
-// "local" is proved, not configured. The daemon writes a random identifier into
+// SO THE DISPATCHER PLACES SUCH A SPAWN WHERE THE SOCKET IS LOCAL, OR RELAYED.
+// An agent that advertises FleetNodeTraitSigningRelay is served the socket over its
+// FleetRuntime link (signing_relay.go, go-quicbaas#1013); every other agent
+// must be one where the socket is local, and "local" is proved, not configured. The daemon writes a random identifier into
 // its sockets root (EnsureSigningRootID). An agent looks for that marker under
 // the directories its mount policy admits (DiscoverSigningRootIDs) and reports
 // every identifier it finds, as the trait signing-agent:<id>, on registration
@@ -55,18 +56,18 @@ const signingRootMarkerMode os.FileMode = 0o400
 // signingRootIDBytes is the identifier's entropy.
 const signingRootIDBytes = 16
 
-// AgentTraitSigningAgentPrefix prefixes the trait an agent advertises for each
-// daemon sockets root it can mount from. Like AgentTraitGPU it rides in
+// FleetNodeTraitSigningAgentPrefix prefixes the trait an agent advertises for each
+// daemon sockets root it can mount from. Like FleetNodeTraitGPU it rides in
 // Capabilities and names a property of the HOST, never a backend.
-const AgentTraitSigningAgentPrefix = "signing-agent:"
+const FleetNodeTraitSigningAgentPrefix = "signing-agent:"
 
 // SigningAgentTrait is the capability an agent advertises for the sockets root
 // identified by id.
-func SigningAgentTrait(id string) string { return AgentTraitSigningAgentPrefix + id }
+func SigningAgentTrait(id string) string { return FleetNodeTraitSigningAgentPrefix + id }
 
 // isSigningAgentTrait reports whether capability is a signing-agent trait.
 func isSigningAgentTrait(capability string) bool {
-	return strings.HasPrefix(capability, AgentTraitSigningAgentPrefix)
+	return strings.HasPrefix(capability, FleetNodeTraitSigningAgentPrefix)
 }
 
 // EnsureSigningRootID returns the identifier in root's marker, writing a fresh
@@ -201,11 +202,11 @@ func spawnNeedsSigningAgent(req *SpawnSessionRequest) bool {
 
 // ErrSigningAgentUnavailable is the sentinel for a spawn that mounts the
 // daemon's signing socket and has nowhere it could be mounted.
-var ErrSigningAgentUnavailable = errors.New("signing agent: no host can mount the daemon's signing socket")
+var ErrSigningAgentUnavailable = errors.New("signing agent: no agent can mount or relay the daemon's signing socket")
 
 // SigningAgentUnavailableError reports a spawn that needs the daemon's signing
-// socket for which no fleet agent co-located with the daemon — and no
-// in-process backend on the daemon itself — serves the backend.
+// socket for which no agent that can reach it serves the backend: none embedded
+// in the daemon, none co-located with it, and none that relays it.
 type SigningAgentUnavailableError struct {
 	// Backend is the backend the spawn asked for.
 	Backend string
@@ -216,8 +217,9 @@ type SigningAgentUnavailableError struct {
 
 // Error implements the error interface.
 func (e *SigningAgentUnavailableError) Error() string {
-	msg := ErrSigningAgentUnavailable.Error() + " for a " + e.Backend + " spawn: no agent advertising this " +
-		"daemon's " + AgentTraitSigningAgentPrefix + "<id> trait serves it (go-quicbaas#1013)"
+	msg := ErrSigningAgentUnavailable.Error() + " for a " + e.Backend + " spawn: no embedded agent, no agent " +
+		"advertising this daemon's " + FleetNodeTraitSigningAgentPrefix + "<id> trait and no agent advertising " +
+		FleetNodeTraitSigningRelay + " serves it"
 	if e.Cause != nil {
 		msg += ": " + e.Cause.Error()
 	}

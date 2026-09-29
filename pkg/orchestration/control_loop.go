@@ -90,7 +90,7 @@ type ControlLoop struct {
 	// hostAffinityStrictDefault is the operator-level default applied to
 	// host_affinity hints when the per-WorkItem HostAffinityStrict bit is
 	// not set. When true, an offline host_affinity causes scheduling to
-	// fail with NoMatchingAgentError; when false the loop falls back to any
+	// fail with NoMatchingFleetNodeError; when false the loop falls back to any
 	// eligible agent. Wired via SetHostAffinityStrictDefault.
 	hostAffinityStrictDefault bool
 
@@ -410,7 +410,7 @@ func (cl *ControlLoop) handleAssign(ctx context.Context) (JobState, error) {
 		return JobStateFailed, err
 	}
 
-	agents, err := cl.job.Agents.ListAgents(ctx, cl.job.Config.TenantID, nil)
+	agents, err := cl.job.Agents.ListFleetNodes(ctx, cl.job.Config.TenantID, nil)
 	if err != nil {
 		return JobStateFailed, err
 	}
@@ -418,13 +418,13 @@ func (cl *ControlLoop) handleAssign(ctx context.Context) (JobState, error) {
 	// In constrained/canned workflow mode, the fleet registry may be empty
 	// because agents are defined as workflow role specs, not fleet registrations.
 	// Synthesize virtual agent registrations from the workflow so that
-	// matchAgentForTask can resolve them.
+	// matchFleetNodeForTask can resolve them.
 	if len(agents) == 0 && cl.workflow != nil && cl.isConstrainedWorkflowMode() {
 		agents = cl.synthesizeWorkflowAgents()
 	}
 
 	if len(agents) == 0 {
-		return JobStateFailed, &NoAgentsAvailableError{
+		return JobStateFailed, &NoFleetNodesAvailableError{
 			TaskTitle: "all work items",
 		}
 	}
@@ -463,7 +463,7 @@ func (cl *ControlLoop) handleAssign(ctx context.Context) (JobState, error) {
 		if _, exists := cl.workerSessions[sessionKey]; !exists {
 			if cl.backendSupportsSessions(backendName, backends) {
 				mcpServers := cl.buildMCPConfig(cl.resolveScopes(role))
-				agentSpec := cl.resolveAgentSpec(role)
+				agentSpec := cl.resolveNodeSpec(role)
 				spawnReq := &SpawnSessionRequest{
 					Backend:     backendName,
 					Model:       cl.resolveModelForRole(role),
@@ -478,6 +478,7 @@ func (cl *ControlLoop) handleAssign(ctx context.Context) (JobState, error) {
 				if agentSpec != nil {
 					spawnReq.WorkDir = cl.spawnWorkDir(agentSpec)
 					spawnReq.SystemPrompt = agentSpec.SystemPrompt
+					spawnReq.PromptAppend = agentSpec.PromptAppend
 					if agentSpec.SkipPermissions {
 						spawnReq.ExtraArgs = append(spawnReq.ExtraArgs, "--dangerously-skip-permissions")
 					}
@@ -498,7 +499,7 @@ func (cl *ControlLoop) handleAssign(ctx context.Context) (JobState, error) {
 					// Host affinity: pin this session to a specific daemon.
 					if agentSpec.HostAffinity != "" {
 						spawnReq.HostAffinity = agentSpec.HostAffinity
-						// Copy onto the work item so matchAgentForTask can
+						// Copy onto the work item so matchFleetNodeForTask can
 						// filter fleet candidates by the same affinity.
 						item.HostAffinity = agentSpec.HostAffinity
 					}
@@ -536,12 +537,12 @@ func (cl *ControlLoop) handleAssign(ctx context.Context) (JobState, error) {
 		}
 
 		// Match an agent for task assignment.
-		agentID, _, matchErr := cl.matchAgentForTask(item, agents, backends)
+		agentID, _, matchErr := cl.matchFleetNodeForTask(item, agents, backends)
 		if matchErr != nil {
 			return JobStateFailed, matchErr
 		}
 		if agentID == "" {
-			return JobStateFailed, &NoAgentsAvailableError{
+			return JobStateFailed, &NoFleetNodesAvailableError{
 				TaskTitle:            item.Title,
 				RequiredCapabilities: item.RequiredCapabilities,
 			}
@@ -638,7 +639,7 @@ func (cl *ControlLoop) handleExecute(ctx context.Context) (JobState, error) {
 					}
 					cl.audit("worker:prompt_start", "role="+promptRole+" task="+iw.item.Title+" backend="+iw.item.Backend+" session="+sessionID)
 
-					agentSpec := cl.resolveAgentSpec(iw.item.RequiredRole)
+					agentSpec := cl.resolveNodeSpec(iw.item.RequiredRole)
 					workspacePath := cl.job.workDir
 					if agentSpec != nil && agentSpec.WorkspacePath != "" {
 						// For sandboxed agents, use /workspace (container mount point)
@@ -1142,12 +1143,12 @@ func (cl *ControlLoop) isConstrainedWorkflowMode() bool {
 	return cl.workflow.Mode == WorkflowModeCanned || cl.workflow.Mode == WorkflowModeConstrained
 }
 
-// synthesizeWorkflowAgents creates virtual AgentRegistration entries from the
-// workflow's AgentRoleSpec entries. This allows matchAgentForTask to resolve
+// synthesizeWorkflowAgents creates virtual FleetNode entries from the
+// workflow's AgentRoleSpec entries. This allows matchFleetNodeForTask to resolve
 // agents when the fleet registry is empty but the workflow defines agent roles.
 // The lead role is excluded because it handles decomposition, not work execution.
-func (cl *ControlLoop) synthesizeWorkflowAgents() []*AgentRegistration {
-	agents := make([]*AgentRegistration, 0, len(cl.workflow.Agents))
+func (cl *ControlLoop) synthesizeWorkflowAgents() []*FleetNode {
+	agents := make([]*FleetNode, 0, len(cl.workflow.Agents))
 	for i := range cl.workflow.Agents {
 		spec := &cl.workflow.Agents[i]
 		if spec.Role == "lead" {
@@ -1164,14 +1165,14 @@ func (cl *ControlLoop) synthesizeWorkflowAgents() []*AgentRegistration {
 			_, _ = rand.Read(idBuf)
 			agentID := "wf-" + spec.Role + "-" + hex.EncodeToString(idBuf)
 
-			agents = append(agents, &AgentRegistration{
+			agents = append(agents, &FleetNode{
 				ID:           agentID,
 				TenantID:     cl.job.Config.TenantID,
 				Name:         spec.Role,
 				Backend:      spec.Backend,
 				Model:        spec.Model,
-				AgentType:    "workflow",
-				Status:       AgentStatusIdle,
+				NodeType:     "workflow",
+				Status:       FleetNodeStatusIdle,
 				Capabilities: spec.Capabilities,
 			})
 		}
@@ -1225,10 +1226,16 @@ func (cl *ControlLoop) turnAttribution(role string) TurnAttribution {
 	if cl.job.Config != nil {
 		taskID = cl.job.Config.TaskID
 	}
-	if identity, ok := cl.agentIdentities[role]; ok && identity != nil && identity.AgentID != "" {
-		return TurnAttribution{JobID: cl.job.JobID, TaskID: taskID, AgentID: identity.AgentID}
+	// The job's kind travels with the agent, so a control-loop turn is
+	// broken down by runner like every other (go-quicbaas#1058).
+	kind := cl.job.Runner
+	if kind == "" {
+		kind = JobRunnerWorkflow
 	}
-	return TurnAttribution{JobID: cl.job.JobID, TaskID: taskID, AgentID: "agent-" + role + "-" + cl.job.JobID}
+	if identity, ok := cl.agentIdentities[role]; ok && identity != nil && identity.AgentID != "" {
+		return TurnAttribution{JobID: cl.job.JobID, TaskID: taskID, AgentID: identity.AgentID, Kind: kind}
+	}
+	return TurnAttribution{JobID: cl.job.JobID, TaskID: taskID, AgentID: "agent-" + role + "-" + cl.job.JobID, Kind: kind}
 }
 
 // resolveWorkerSession returns the persistent session ID for a work item,
@@ -1280,9 +1287,9 @@ func (cl *ControlLoop) spawnWorkDir(spec *AgentRoleSpec) string {
 }
 
 // resolveModelForRole determines the model to use for a given role.
-// resolveAgentSpec returns the AgentRoleSpec for the given role from the
+// resolveNodeSpec returns the AgentRoleSpec for the given role from the
 // workflow definition, or nil if no workflow is set or the role is not found.
-func (cl *ControlLoop) resolveAgentSpec(role string) *AgentRoleSpec {
+func (cl *ControlLoop) resolveNodeSpec(role string) *AgentRoleSpec {
 	if cl.workflow == nil {
 		return nil
 	}
@@ -1421,18 +1428,18 @@ func (cl *ControlLoop) pollTaskCompletion(ctx context.Context) (bool, error) {
 	return done, nil
 }
 
-// matchAgentForTask finds the best agent for a work item based on capabilities.
+// matchFleetNodeForTask finds the best agent for a work item based on capabilities.
 // Filtering is applied in priority order: backend → GPU requirement → host
 // affinity → persistent sessions → best available.
 //
 // matchErr is non-nil only when host_affinity is strict (per-item override or
 // operator-level default) AND no online agent matches the named host. In
 // that case the caller must surface the typed error rather than substitute
-// a generic NoAgentsAvailableError, so operators see "host X is offline"
+// a generic NoFleetNodesAvailableError, so operators see "host X is offline"
 // instead of "no agents".
-func (cl *ControlLoop) matchAgentForTask(
+func (cl *ControlLoop) matchFleetNodeForTask(
 	item *WorkItem,
-	agents []*AgentRegistration,
+	agents []*FleetNode,
 	backends []*AgentBackendInfo,
 ) (agentID string, backendName string, matchErr error) {
 	// Build a backend capabilities lookup map.
@@ -1447,19 +1454,19 @@ func (cl *ControlLoop) matchAgentForTask(
 	gpuRequired := workItemRequiresGPU(item)
 	candidates := agents
 	if gpuRequired {
-		candidates = filterAgentsByCapability(agents, "gpu")
+		candidates = filterFleetNodesByCapability(agents, "gpu")
 	}
 
 	// Apply host-affinity filter: restrict candidates to agents whose Name
 	// or Host field matches the requested affinity. When strict (per-item
 	// override OR operator default), an empty result becomes a typed
-	// NoMatchingAgentError so the loop can fail loudly rather than silently
+	// NoMatchingFleetNodeError so the loop can fail loudly rather than silently
 	// fall back to any eligible agent.
 	if item.HostAffinity != "" {
 		strict := item.HostAffinityStrict || cl.hostAffinityStrictDefault
-		filtered, ok := filterAgentsByHostAffinity(candidates, item.HostAffinity, strict)
+		filtered, ok := filterFleetNodesByHostAffinity(candidates, item.HostAffinity, strict)
 		if !ok {
-			return "", "", &NoMatchingAgentError{
+			return "", "", &NoMatchingFleetNodeError{
 				Constraint: "host_affinity",
 				Detail:     "host " + item.HostAffinity + " is offline",
 			}
@@ -1469,12 +1476,12 @@ func (cl *ControlLoop) matchAgentForTask(
 
 	// If the work item specifies a backend, find an agent using that backend.
 	// When a backend is requested and no candidate agent uses it, return a
-	// typed NoMatchingAgentError so callers can surface a meaningful diagnostic
+	// typed NoMatchingFleetNodeError so callers can surface a meaningful diagnostic
 	// instead of silently dispatching to an incompatible agent.
 	if item.Backend != "" {
-		id, name := cl.findAgentByBackend(item.Backend, candidates)
+		id, name := cl.findFleetNodeByBackend(item.Backend, candidates)
 		if id == "" {
-			return "", "", &NoMatchingAgentError{
+			return "", "", &NoMatchingFleetNodeError{
 				Constraint: "backend",
 				Detail:     "no online agent uses backend " + item.Backend,
 			}
@@ -1497,7 +1504,7 @@ func (cl *ControlLoop) matchAgentForTask(
 	}
 
 	// Default: prefer idle agents, then any available.
-	id, name := cl.findBestAvailableAgent(candidates)
+	id, name := cl.findBestAvailableFleetNode(candidates)
 	return id, name, nil
 }
 
@@ -1515,19 +1522,19 @@ func workItemRequiresGPU(item *WorkItem) bool {
 	return false
 }
 
-// filterAgentsByHostAffinity returns agents whose Name or Host field matches
+// filterFleetNodesByHostAffinity returns agents whose Name or Host field matches
 // the requested affinity string. The comparison is case-sensitive and exact.
 //
 // The ok return distinguishes the two failure modes:
 //   - strict=false, no match: returns (agents, true) — soft fallback to the
 //     full candidate list, preserving existing behavior.
 //   - strict=true, no match: returns (nil, false) — caller MUST surface a
-//     typed NoMatchingAgentError instead of dispatching to a random agent.
+//     typed NoMatchingFleetNodeError instead of dispatching to a random agent.
 //
 // When at least one agent matches, returns (filtered, true) regardless of
 // strictness; strictness only changes the empty-set behavior.
-func filterAgentsByHostAffinity(agents []*AgentRegistration, affinity string, strict bool) (out []*AgentRegistration, ok bool) {
-	out = make([]*AgentRegistration, 0, len(agents))
+func filterFleetNodesByHostAffinity(agents []*FleetNode, affinity string, strict bool) (out []*FleetNode, ok bool) {
+	out = make([]*FleetNode, 0, len(agents))
 	for _, a := range agents {
 		if a == nil {
 			continue
@@ -1545,10 +1552,10 @@ func filterAgentsByHostAffinity(agents []*AgentRegistration, affinity string, st
 	return out, true
 }
 
-// filterAgentsByCapability returns the subset of agents whose Capabilities
+// filterFleetNodesByCapability returns the subset of agents whose Capabilities
 // slice contains the named capability.
-func filterAgentsByCapability(agents []*AgentRegistration, capability string) []*AgentRegistration {
-	out := make([]*AgentRegistration, 0, len(agents))
+func filterFleetNodesByCapability(agents []*FleetNode, capability string) []*FleetNode {
+	out := make([]*FleetNode, 0, len(agents))
 	for _, a := range agents {
 		if a == nil {
 			continue
@@ -1563,20 +1570,20 @@ func filterAgentsByCapability(agents []*AgentRegistration, capability string) []
 	return out
 }
 
-// findAgentByBackend finds the best agent that uses the specified backend.
+// findFleetNodeByBackend finds the best agent that uses the specified backend.
 // Matches against either agent.Backend (primary) or agent.Capabilities (all
 // registered backend kinds), since the embedded agent and remote daemons can
 // expose multiple backends (e.g. ollama + claude + codex).
-func (cl *ControlLoop) findAgentByBackend(
+func (cl *ControlLoop) findFleetNodeByBackend(
 	backend string,
-	agents []*AgentRegistration,
+	agents []*FleetNode,
 ) (agentID string, backendName string) {
-	var fallback *AgentRegistration
+	var fallback *FleetNode
 	for _, agent := range agents {
-		if !AgentServesBackend(agent, backend) {
+		if !FleetNodeServesBackend(agent, backend) {
 			continue
 		}
-		if agent.Status == AgentStatusIdle {
+		if agent.Status == FleetNodeStatusIdle {
 			return agent.ID, backend
 		}
 		if fallback == nil {
@@ -1591,16 +1598,16 @@ func (cl *ControlLoop) findAgentByBackend(
 
 // findAgentWithPersistentSessions finds an agent whose backend supports persistent sessions.
 func (cl *ControlLoop) findAgentWithPersistentSessions(
-	agents []*AgentRegistration,
+	agents []*FleetNode,
 	backendCaps map[string]BackendCapabilities,
 ) (agentID string, backendName string) {
-	var fallback *AgentRegistration
+	var fallback *FleetNode
 	for _, agent := range agents {
 		caps, exists := backendCaps[agent.Backend]
 		if !exists || !caps.PersistentSessions {
 			continue
 		}
-		if agent.Status == AgentStatusIdle {
+		if agent.Status == FleetNodeStatusIdle {
 			return agent.ID, agent.Backend
 		}
 		if fallback == nil {
@@ -1613,13 +1620,13 @@ func (cl *ControlLoop) findAgentWithPersistentSessions(
 	return "", ""
 }
 
-// findBestAvailableAgent returns the best available agent, preferring idle status.
-func (cl *ControlLoop) findBestAvailableAgent(
-	agents []*AgentRegistration,
+// findBestAvailableFleetNode returns the best available agent, preferring idle status.
+func (cl *ControlLoop) findBestAvailableFleetNode(
+	agents []*FleetNode,
 ) (agentID string, backendName string) {
-	var fallback *AgentRegistration
+	var fallback *FleetNode
 	for _, agent := range agents {
-		if agent.Status == AgentStatusIdle {
+		if agent.Status == FleetNodeStatusIdle {
 			return agent.ID, agent.Backend
 		}
 		if fallback == nil {
@@ -1655,18 +1662,26 @@ func (cl *ControlLoop) trySpawnLeadSession(ctx context.Context) error {
 		return nil
 	}
 
-	agentSpec := cl.resolveAgentSpec("lead")
+	agentSpec := cl.resolveNodeSpec("lead")
 
 	req := &SpawnSessionRequest{
-		Backend:    cl.job.Config.LeadBackend,
-		Model:      cl.job.Config.LeadModel,
 		JobID:      cl.job.JobID,
 		Persistent: true,
+		Role:       AgentRoleLead,
+	}
+	// A LEAD NAMED BY REFERENCE IS SPAWNED BY REFERENCE, so the session fails
+	// over along the pool at the moment it starts rather than being fixed to
+	// whatever the job resolved when it was queued.
+	if lead := cl.job.Config.Lead; !lead.IsZero() {
+		req.AgentID, req.PoolID = lead.AgentID, lead.PoolID
+	} else {
+		req.Backend, req.Model = cl.job.Config.LeadBackend, cl.job.Config.LeadModel
 	}
 
 	// Apply sandbox config from the workflow agent spec.
 	req.WorkDir = cl.spawnWorkDir(agentSpec)
 	if agentSpec != nil {
+		req.PromptAppend = agentSpec.PromptAppend
 		if agentSpec.SkipPermissions {
 			req.ExtraArgs = append(req.ExtraArgs, "--dangerously-skip-permissions")
 		}
@@ -1714,7 +1729,7 @@ func (cl *ControlLoop) trySpawnReviewerSession(ctx context.Context) error {
 		return nil
 	}
 
-	agentSpec := cl.resolveAgentSpec("reviewer")
+	agentSpec := cl.resolveNodeSpec("reviewer")
 	if agentSpec == nil {
 		return nil
 	}
@@ -1723,10 +1738,11 @@ func (cl *ControlLoop) trySpawnReviewerSession(ctx context.Context) error {
 	cl.reviewerModel = agentSpec.Model
 
 	req := &SpawnSessionRequest{
-		Backend:    agentSpec.Backend,
-		Model:      agentSpec.Model,
-		JobID:      cl.job.JobID,
-		Persistent: true,
+		Backend:      agentSpec.Backend,
+		Model:        agentSpec.Model,
+		JobID:        cl.job.JobID,
+		Persistent:   true,
+		PromptAppend: agentSpec.PromptAppend,
 	}
 
 	req.WorkDir = cl.spawnWorkDir(agentSpec)

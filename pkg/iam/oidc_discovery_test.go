@@ -44,9 +44,8 @@ func newDiscoveryProvider(t *testing.T) *iam.OIDCProvider {
 
 	memStorage := iam.NewMemoryStorage()
 	identityStore := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
+		UserStorage: memStorage,
+		RoleStorage: memStorage,
 	})
 
 	provider, err := iam.NewOIDCProvider(cfg, iam.OIDCDependencies{

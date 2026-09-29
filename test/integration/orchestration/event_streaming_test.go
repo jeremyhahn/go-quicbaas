@@ -46,8 +46,7 @@ func TestEventStreaming_SubscribeJobEvents(t *testing.T) {
 	resp, err := svc.StartJob(ctx, &orchestration.StartJobRequest{
 		TenantID:      tenantID,
 		Description:   "Write a function that adds two integers",
-		LeadBackend:   "ollama",
-		LeadModel:     env.ollamaModel,
+		Lead:          ollamaLead(t, svc, tenantID),
 		MaxIterations: 2,
 		PollInterval:  "2s",
 	})
@@ -128,8 +127,7 @@ func TestEventStreaming_SubscribeJobEvents_ContextCancellation(t *testing.T) {
 	resp, err := svc.StartJob(ctx, &orchestration.StartJobRequest{
 		TenantID:      tenantID,
 		Description:   "Write a function that multiplies two integers",
-		LeadBackend:   "ollama",
-		LeadModel:     env.ollamaModel,
+		Lead:          ollamaLead(t, svc, tenantID),
 		MaxIterations: 3,
 		PollInterval:  "2s",
 	})

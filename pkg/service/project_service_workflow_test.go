@@ -16,6 +16,7 @@ package service
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -74,7 +75,7 @@ func TestProjectService_CreateProject_UnknownDefaultWorkflowIsRefused(t *testing
 	_, err := svc.CreateProject(context.Background(), &CreateProjectRequest{
 		TenantID: "tenant-1", Name: "api", DefaultWorkflow: "ghost",
 	})
-	requireProjectInvalidField(t, err, "default_workflow")
+	requireReferenceNotFound(t, err, "default_workflow")
 }
 
 // TestProjectService_CreateProject_DefaultWorkflowIsTenantScoped: the name
@@ -84,7 +85,7 @@ func TestProjectService_CreateProject_DefaultWorkflowIsTenantScoped(t *testing.T
 	_, err := svc.CreateProject(context.Background(), &CreateProjectRequest{
 		TenantID: "tenant-2", Name: "api", DefaultWorkflow: "sdlc",
 	})
-	requireProjectInvalidField(t, err, "default_workflow")
+	requireReferenceNotFound(t, err, "default_workflow")
 }
 
 // TestProjectService_CreateProject_NoRegistryRefusesADefaultWorkflow pins the
@@ -95,7 +96,7 @@ func TestProjectService_CreateProject_NoRegistryRefusesADefaultWorkflow(t *testi
 	_, err := svc.CreateProject(context.Background(), &CreateProjectRequest{
 		TenantID: "tenant-1", Name: "api", DefaultWorkflow: "sdlc",
 	})
-	requireProjectInvalidField(t, err, "default_workflow")
+	requireReferenceUnavailable(t, err, "default_workflow")
 
 	// An empty DefaultWorkflow never consults the registry.
 	if _, err := svc.CreateProject(context.Background(), &CreateProjectRequest{TenantID: "tenant-1", Name: "plain"}); err != nil {
@@ -114,7 +115,7 @@ func TestProjectService_UpdateProject_DefaultWorkflow(t *testing.T) {
 
 	t.Run("unknown name refused", func(t *testing.T) {
 		_, err := svc.UpdateProject(ctx, &UpdateProjectRequest{TenantID: "tenant-1", ProjectID: id, DefaultWorkflow: "ghost"})
-		requireProjectInvalidField(t, err, "default_workflow")
+		requireReferenceNotFound(t, err, "default_workflow")
 	})
 
 	t.Run("known name stored", func(t *testing.T) {
@@ -152,7 +153,7 @@ func TestProjectService_UpdateProject_DefaultWorkflow(t *testing.T) {
 			t.Fatalf("Delete: %v", err)
 		}
 		_, err := svc.UpdateProject(ctx, &UpdateProjectRequest{TenantID: "tenant-1", ProjectID: id, DefaultWorkflow: "sdlc"})
-		requireProjectInvalidField(t, err, "default_workflow")
+		requireReferenceNotFound(t, err, "default_workflow")
 	})
 }
 
@@ -160,8 +161,16 @@ func TestProjectService_UpdateProject_DefaultWorkflow(t *testing.T) {
 // Project.Git — author, signing, access key
 // =============================================================================
 
-func TestProjectService_CreateProject_GitIdentityIsStored(t *testing.T) {
+// newProjectServiceWithKeys is a project service whose SSH key references
+// resolve against keys, addressed "scope/owner/name".
+func newProjectServiceWithKeys(keys ...string) ProjectService {
 	svc := newTestProjectService()
+	svc.(*projectServiceImpl).SetSSHKeys(newFakeSSHKeys(keys...))
+	return svc
+}
+
+func TestProjectService_CreateProject_GitIdentityIsStored(t *testing.T) {
+	svc := newProjectServiceWithKeys("tenant/tenant-1/api-signing", "service/deploy/api-access")
 	resp, err := svc.CreateProject(context.Background(), &CreateProjectRequest{
 		TenantID:            "tenant-1",
 		Name:                "api",
@@ -190,7 +199,7 @@ func TestProjectService_CreateProject_GitIdentityIsStored(t *testing.T) {
 		},
 		SSHKey: orchestration.KMSKeyRef{Name: "api-access", Scope: "service", Owner: "deploy"},
 	}
-	if resp.Project.Git != want {
+	if !reflect.DeepEqual(resp.Project.Git, want) {
 		t.Fatalf("Git = %+v\nwant %+v", resp.Project.Git, want)
 	}
 	if got := resp.Project.Git.AccessKey(); got != want.SSHKey {
@@ -202,7 +211,7 @@ func TestProjectService_CreateProject_GitIdentityIsStored(t *testing.T) {
 // SSH key reference is a property of the workspace, persisted on the record,
 // not a clone-only credential.
 func TestProjectService_CreateProject_SSHKeyNoLongerNeedsAManagedWorkspace(t *testing.T) {
-	svc := newTestProjectService()
+	svc := newProjectServiceWithKeys("user/tenant-1/api-access")
 	resp, err := svc.CreateProject(context.Background(), &CreateProjectRequest{
 		TenantID:      "tenant-1",
 		Name:          "api",
@@ -240,7 +249,7 @@ func TestProjectService_CreateProject_GitIdentityRefusals(t *testing.T) {
 }
 
 func TestProjectService_UpdateProject_GitIdentity(t *testing.T) {
-	svc := newTestProjectService()
+	svc := newProjectServiceWithKeys("user/tenant-1/signing", "tenant/tenant-1/signing", "service/deploy/access")
 	ctx := context.Background()
 	created, err := svc.CreateProject(ctx, &CreateProjectRequest{
 		TenantID:          "tenant-1",

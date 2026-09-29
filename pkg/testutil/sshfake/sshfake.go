@@ -22,6 +22,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"strings"
 
 	gossh "golang.org/x/crypto/ssh"
 
@@ -224,9 +225,19 @@ func (k *knownHostsClient) Add(_ context.Context, req xkmsssh.AddKnownHostReques
 	if k.c.Err != nil {
 		return k.c.Err
 	}
+	// Mirrors go-xkms: the pin is the full key, and its fingerprint and
+	// algorithm are derived from that key rather than taken from the caller.
+	if strings.TrimSpace(req.PublicKey) == "" {
+		return &xkmsssh.MissingPublicKeyError{Host: req.Host}
+	}
+	pub, _, _, _, err := gossh.ParseAuthorizedKey([]byte(req.PublicKey))
+	if err != nil {
+		return &xkmsssh.InvalidPublicKeyError{Host: req.Host, Err: err}
+	}
 	k.c.PinsByHost[req.Host] = &xkmsssh.Pin{
 		Scope: req.Scope, Owner: req.Owner, Host: req.Host,
-		Fingerprint: req.Fingerprint, Algorithm: req.Algorithm, Source: req.Source,
+		Fingerprint: gossh.FingerprintSHA256(pub), Algorithm: pub.Type(), Source: req.Source,
+		PublicKey: strings.TrimSpace(string(gossh.MarshalAuthorizedKey(pub))),
 	}
 	return nil
 }

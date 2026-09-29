@@ -268,7 +268,7 @@ func TestIssueSource_ADepartedPullRequestIsNotRead(t *testing.T) {
 			}
 			fake := newFakeForge()
 			forge := &unreadablePullRequests{fakeForge: fake, err: readErr}
-			source, err := NewIssueSource(store, staticForge{forge: forge}, 10)
+			source, err := NewIssueSource(store, staticForge{forge: forge}, store, 10)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -177,7 +177,19 @@ func (s *agentServiceImpl) concludeLoop(tenantID string, run *JobRun, status *Jo
 // applied, so no attribution was made, and the failure is already reported by
 // the caller.
 func (s *agentServiceImpl) logAttribution(status *JobStatus, loopErr, concludeErr error) {
-	if loopErr == nil || concludeErr != nil || status.FailureClass != "" {
+	if loopErr == nil || concludeErr != nil {
+		return
+	}
+	// A TURN THE FLEET AGENT CUT OFF NAMES ITS HOST (go-quicbaas#1064). The
+	// class already decides the accounting; this line is what an operator
+	// greps to see WHICH agent's restart interrupted the work, and the error
+	// carries the host the backend was bound to.
+	if status.FailureClass == FaultAgentInterrupted {
+		s.logger.Infof("orchestration: job %s interrupted by its fleet node, attributed to the infrastructure, not the work (%s): %s",
+			status.JobID, status.FailureClass, loopErr.Error())
+		return
+	}
+	if status.FailureClass != "" {
 		return
 	}
 	if park := status.Park; park != nil && OperatorFaultClass(park.FaultClass) {

@@ -45,6 +45,8 @@ func newDurableSessionRecord(
 		Backend:         req.Backend,
 		Model:           model,
 		SystemPrompt:    req.SystemPrompt,
+		PromptAppend:    req.PromptAppend,
+		ResolvedAgentID: req.resolvedAgentID,
 		WorkDir:         workDir,
 		ExtraArgs:       append([]string(nil), req.ExtraArgs...),
 		MCPServers:      append([]MCPServerConfig(nil), req.MCPServers...),
@@ -100,7 +102,7 @@ func spawnRequestFromRecord(record *SessionRecord) *SpawnRequest {
 		WorkDir:        record.WorkDir,
 		Model:          record.Model,
 		MCPServers:     append([]MCPServerConfig(nil), record.MCPServers...),
-		SystemPrompt:   record.SystemPrompt,
+		SystemPrompt:   record.EffectiveSystemPrompt(),
 		Env:            record.Clone().Env,
 		ExtraArgs:      append([]string(nil), record.ExtraArgs...),
 		Persistent:     record.Persistent,
@@ -116,6 +118,9 @@ func spawnRequestFromRecord(record *SessionRecord) *SpawnRequest {
 		// would take out a job-less grant that the job's own revocation sweep
 		// could not find.
 		JobID: record.JobID,
+		// The session this request reconstitutes: its own record already holds
+		// the account slot the resume re-claims (SessionReservationRequest).
+		ReplacesSessionID: record.SessionID,
 	}
 }
 
@@ -194,7 +199,7 @@ func (s *agentServiceImpl) LoadPersistedSessions(ctx context.Context) error {
 		// POSITIVE evidence of the daemon's departure concludes the session.
 		if !record.BackendLocal {
 			if host, gone := s.remoteSessionGone(tenantCtx, record); gone {
-				s.concludeStartupSession(tenantCtx, record, ConcludedByAgentGone,
+				s.concludeStartupSession(tenantCtx, record, ConcludedByFleetNodeGone,
 					"the daemon the session ran on ("+host+") is no longer in the fleet, "+
 						"so nothing here can reach the process it holds")
 				return
@@ -281,6 +286,8 @@ func (s *agentServiceImpl) restorePersistedSession(
 		HostAffinity: record.HostAffinity,
 		BackendLocal: record.BackendLocal,
 		Persistent:   record.Persistent,
+
+		ResolvedAgentID: record.ResolvedAgentID,
 	}
 	mem.SetAccountID(record.AccountID)
 	// A restored session must be able to withdraw the grants it was handed
@@ -377,7 +384,7 @@ func (s *agentServiceImpl) resumeSession(
 	}
 
 	transcript, err := buildReplayTranscript(
-		ctx, s.sessionLog, record.TenantID, sessionID, record.SystemPrompt, s.replayBudget())
+		ctx, s.sessionLog, record.TenantID, sessionID, record.EffectiveSystemPrompt(), s.replayBudget())
 	if err != nil {
 		return err
 	}
@@ -414,6 +421,20 @@ func (s *agentServiceImpl) markSessionResumed(ctx context.Context, record *Sessi
 	record.ResumeMode = result.Mode
 	record.ResumeError = ""
 	record.LastActivity = time.Now().UnixNano()
+	// A resume re-resolves its account and reserves a slot for it; the
+	// resumed record names that reservation, which satisfies it.
+	if result.Session != nil {
+		record.AddReservation(result.Session.ReservationID)
+	}
+	// A RESUME RE-MATERIALIZES THE ACCOUNT'S CREDENTIAL, so the restored
+	// process presents whatever copy the pool holds now — which may be a
+	// rotation newer than the one the record was written with. Recording it is
+	// what keeps the freshness check answering about the material actually in
+	// the container instead of reporting a session that was just restored with
+	// current material as stale (go-quicbaas#997).
+	if result.Session != nil && result.Session.AccountID == record.AccountID {
+		record.SetAccountGeneration(result.Session.AccountGeneration)
+	}
 	if err := s.store.PutSession(ctx, record); err != nil {
 		s.logger.Warnf("orchestration: failed to persist resumed session %s: %s",
 			record.SessionID, err.Error())

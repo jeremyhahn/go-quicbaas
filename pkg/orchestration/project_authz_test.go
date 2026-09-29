@@ -21,14 +21,14 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
-// newScopedProject returns a Project with a non-empty AgentRoles map.
+// newScopedProject returns a Project with a non-empty FleetNodeRoles map.
 func newScopedProject(id, tenantID string, roles map[string]orchestration.ProjectRole) *orchestration.Project {
 	return &orchestration.Project{
 		ID:       id,
 		TenantID: tenantID,
 		Name:     "test-project",
 		Permissions: orchestration.ProjectPermissions{
-			AgentRoles: roles,
+			FleetNodeRoles: roles,
 		},
 	}
 }
@@ -74,7 +74,7 @@ func TestRoleAtLeast_OrderCorrect(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ProjectAuthz.AuthorizeAgentForTenant — happy paths
+// ProjectAuthz.AuthorizeFleetNodeForTenant — happy paths
 // ---------------------------------------------------------------------------
 
 func TestProjectAuthz_WorkerCanClaimWorkerTask(t *testing.T) {
@@ -84,7 +84,7 @@ func TestProjectAuthz_WorkerCanClaimWorkerTask(t *testing.T) {
 	})
 	authz := orchestration.NewProjectAuthz(seedStore(ctx, t, project))
 
-	err := authz.AuthorizeAgentForTenant(ctx, "tenant-1", "proj-1", "agent-A", orchestration.ProjectRoleWorker)
+	err := authz.AuthorizeFleetNodeForTenant(ctx, "tenant-1", "proj-1", "agent-A", orchestration.ProjectRoleWorker)
 	if err != nil {
 		t.Fatalf("expected nil, got %v", err)
 	}
@@ -97,7 +97,7 @@ func TestProjectAuthz_LeadCanClaimLeadTask(t *testing.T) {
 	})
 	authz := orchestration.NewProjectAuthz(seedStore(ctx, t, project))
 
-	err := authz.AuthorizeAgentForTenant(ctx, "tenant-1", "proj-2", "agent-B", orchestration.ProjectRoleLead)
+	err := authz.AuthorizeFleetNodeForTenant(ctx, "tenant-1", "proj-2", "agent-B", orchestration.ProjectRoleLead)
 	if err != nil {
 		t.Fatalf("expected nil, got %v", err)
 	}
@@ -105,7 +105,7 @@ func TestProjectAuthz_LeadCanClaimLeadTask(t *testing.T) {
 
 func TestProjectAuthz_LegacyUnscopedProjectAllowsAll(t *testing.T) {
 	ctx := context.Background()
-	// Project with empty AgentRoles map — legacy unscoped.
+	// Project with empty FleetNodeRoles map — legacy unscoped.
 	project := &orchestration.Project{
 		ID:       "proj-3",
 		TenantID: "tenant-1",
@@ -114,7 +114,7 @@ func TestProjectAuthz_LegacyUnscopedProjectAllowsAll(t *testing.T) {
 	authz := orchestration.NewProjectAuthz(seedStore(ctx, t, project))
 
 	// Any agent should be allowed even with the strictest role requirement.
-	err := authz.AuthorizeAgentForTenant(ctx, "tenant-1", "proj-3", "agent-X", orchestration.ProjectRoleLead)
+	err := authz.AuthorizeFleetNodeForTenant(ctx, "tenant-1", "proj-3", "agent-X", orchestration.ProjectRoleLead)
 	if err != nil {
 		t.Fatalf("legacy project should allow all agents: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestProjectAuthz_MissingProjectRefused(t *testing.T) {
 	store := orchestration.NewInMemoryProjectStore()
 	authz := orchestration.NewProjectAuthz(store)
 
-	err := authz.AuthorizeAgentForTenant(ctx, "tenant-1", "no-such-project", "agent-A", orchestration.ProjectRoleWorker)
+	err := authz.AuthorizeFleetNodeForTenant(ctx, "tenant-1", "no-such-project", "agent-A", orchestration.ProjectRoleWorker)
 	if err == nil {
 		t.Fatal("expected a refusal for a project the store cannot produce, got nil")
 	}
@@ -140,14 +140,14 @@ func TestProjectAuthz_MissingProjectRefused(t *testing.T) {
 	if !errors.As(err, &unresolved) {
 		t.Fatalf("expected *ProjectUnresolvedError, got %T", err)
 	}
-	if unresolved.TenantID != "tenant-1" || unresolved.ProjectID != "no-such-project" || unresolved.AgentID != "agent-A" {
+	if unresolved.TenantID != "tenant-1" || unresolved.ProjectID != "no-such-project" || unresolved.FleetNodeID != "agent-A" {
 		t.Errorf("refusal names tenant=%q project=%q agent=%q, want tenant-1/no-such-project/agent-A",
-			unresolved.TenantID, unresolved.ProjectID, unresolved.AgentID)
+			unresolved.TenantID, unresolved.ProjectID, unresolved.FleetNodeID)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// ProjectAuthz.AuthorizeAgentForTenant — denial paths
+// ProjectAuthz.AuthorizeFleetNodeForTenant — denial paths
 // ---------------------------------------------------------------------------
 
 func TestProjectAuthz_DeniedRoleRejected(t *testing.T) {
@@ -157,7 +157,7 @@ func TestProjectAuthz_DeniedRoleRejected(t *testing.T) {
 	})
 	authz := orchestration.NewProjectAuthz(seedStore(ctx, t, project))
 
-	err := authz.AuthorizeAgentForTenant(ctx, "tenant-1", "proj-4", "agent-C", orchestration.ProjectRoleObserver)
+	err := authz.AuthorizeFleetNodeForTenant(ctx, "tenant-1", "proj-4", "agent-C", orchestration.ProjectRoleObserver)
 	if err == nil {
 		t.Fatal("expected error for denied agent, got nil")
 	}
@@ -178,7 +178,7 @@ func TestProjectAuthz_AbsentAgentInScopedProjectRejected(t *testing.T) {
 	})
 	authz := orchestration.NewProjectAuthz(seedStore(ctx, t, project))
 
-	err := authz.AuthorizeAgentForTenant(ctx, "tenant-1", "proj-5", "agent-E", orchestration.ProjectRoleObserver)
+	err := authz.AuthorizeFleetNodeForTenant(ctx, "tenant-1", "proj-5", "agent-E", orchestration.ProjectRoleObserver)
 	if err == nil {
 		t.Fatal("expected error for absent agent, got nil")
 	}
@@ -195,7 +195,7 @@ func TestProjectAuthz_WorkerCannotClaimLeadTask(t *testing.T) {
 	})
 	authz := orchestration.NewProjectAuthz(seedStore(ctx, t, project))
 
-	err := authz.AuthorizeAgentForTenant(ctx, "tenant-1", "proj-6", "agent-F", orchestration.ProjectRoleLead)
+	err := authz.AuthorizeFleetNodeForTenant(ctx, "tenant-1", "proj-6", "agent-F", orchestration.ProjectRoleLead)
 	if err == nil {
 		t.Fatal("expected denial for worker claiming lead task, got nil")
 	}
@@ -212,7 +212,7 @@ func TestProjectAuthz_ObserverCannotClaimWorkerTask(t *testing.T) {
 	})
 	authz := orchestration.NewProjectAuthz(seedStore(ctx, t, project))
 
-	err := authz.AuthorizeAgentForTenant(ctx, "tenant-1", "proj-7", "agent-G", orchestration.ProjectRoleWorker)
+	err := authz.AuthorizeFleetNodeForTenant(ctx, "tenant-1", "proj-7", "agent-G", orchestration.ProjectRoleWorker)
 	if err == nil {
 		t.Fatal("expected denial for observer claiming worker task, got nil")
 	}
@@ -223,7 +223,7 @@ func TestProjectAuthz_InvalidRequiredRoleReturnsError(t *testing.T) {
 	store := orchestration.NewInMemoryProjectStore()
 	authz := orchestration.NewProjectAuthz(store)
 
-	err := authz.AuthorizeAgentForTenant(ctx, "tenant-1", "proj-1", "agent-A", orchestration.ProjectRole("superuser"))
+	err := authz.AuthorizeFleetNodeForTenant(ctx, "tenant-1", "proj-1", "agent-A", orchestration.ProjectRole("superuser"))
 	if err == nil {
 		t.Fatal("expected error for invalid role, got nil")
 	}
@@ -239,7 +239,7 @@ func TestProjectAuthz_EmptyProjectIDSkipsCheck(t *testing.T) {
 	authz := orchestration.NewProjectAuthz(store)
 
 	// Empty projectID → legacy unscoped path → nil.
-	err := authz.AuthorizeAgentForTenant(ctx, "tenant-1", "", "agent-A", orchestration.ProjectRoleLead)
+	err := authz.AuthorizeFleetNodeForTenant(ctx, "tenant-1", "", "agent-A", orchestration.ProjectRoleLead)
 	if err != nil {
 		t.Fatalf("empty projectID should be a no-op: %v", err)
 	}

@@ -256,19 +256,19 @@ func TestFileLock_ListLocks_SkipsStaleAndEmpty(t *testing.T) {
 // =============================================================================
 
 func TestFilterAgentsByCapability(t *testing.T) {
-	agents := []*AgentRegistration{
+	agents := []*FleetNode{
 		{ID: "a1", Capabilities: []string{"claude", "ollama"}},
 		{ID: "a2", Capabilities: []string{"codex"}},
 		nil, // must be skipped without panicking
 		{ID: "a3", Capabilities: []string{"ollama"}},
 	}
 
-	got := filterAgentsByCapability(agents, "ollama")
+	got := filterFleetNodesByCapability(agents, "ollama")
 	if len(got) != 2 {
 		t.Fatalf("expected 2 agents with ollama capability, got %d", len(got))
 	}
 
-	none := filterAgentsByCapability(agents, "nonexistent")
+	none := filterFleetNodesByCapability(agents, "nonexistent")
 	if len(none) != 0 {
 		t.Fatalf("expected no agents, got %d", len(none))
 	}
@@ -276,17 +276,17 @@ func TestFilterAgentsByCapability(t *testing.T) {
 
 func TestAgentExposesBackend(t *testing.T) {
 	// Primary backend match.
-	primary := &AgentRegistration{ID: "a1", Backend: "claude"}
-	if !AgentServesBackend(primary, "claude") {
+	primary := &FleetNode{ID: "a1", Backend: "claude"}
+	if !FleetNodeServesBackend(primary, "claude") {
 		t.Fatal("expected primary backend match")
 	}
 	// Capability match.
-	viaCap := &AgentRegistration{ID: "a2", Backend: "claude", Capabilities: []string{"ollama"}}
-	if !AgentServesBackend(viaCap, "ollama") {
+	viaCap := &FleetNode{ID: "a2", Backend: "claude", Capabilities: []string{"ollama"}}
+	if !FleetNodeServesBackend(viaCap, "ollama") {
 		t.Fatal("expected capability backend match")
 	}
 	// No match.
-	if AgentServesBackend(viaCap, "codex") {
+	if FleetNodeServesBackend(viaCap, "codex") {
 		t.Fatal("expected no match for codex")
 	}
 }

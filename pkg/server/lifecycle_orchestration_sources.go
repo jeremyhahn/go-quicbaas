@@ -18,6 +18,9 @@ import (
 	"errors"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	quicbaaserrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -28,7 +31,7 @@ import (
 // and the per-moment bounds (orchestration.stage_timeouts).
 func (s *Server) jobLifecyclePolicy() (orchestration.JobLifecyclePolicy, error) {
 	cfg := s.config.Orchestration
-	guard, err := orchestration.NewExecutionGuard(cfg.VerificationCommands)
+	guard, err := s.executionGuard()
 	if err != nil {
 		return orchestration.JobLifecyclePolicy{}, err
 	}
@@ -43,6 +46,13 @@ func (s *Server) jobLifecyclePolicy() (orchestration.JobLifecyclePolicy, error) 
 			Blocked:    cfg.StageTimeouts.Blocked,
 		}.WithDefaults(),
 	}, nil
+}
+
+// executionGuard builds the operator's command allowlist
+// (orchestration.verification_commands): the one guard the job policy
+// enforces at validation and the SDLC module checks bindings against.
+func (s *Server) executionGuard() (orchestration.ExecutionGuard, error) {
+	return orchestration.NewExecutionGuard(s.config.Orchestration.VerificationCommands)
 }
 
 // orchestrationSweepCollaborators are the stores a sweep over projects needs:
@@ -102,6 +112,7 @@ func (s *Server) orchestrationAdmission(what string, tenants orchestration.Tenan
 		LeaseTTL: s.orchLeaseTTL,
 		Capacity: capacity,
 		Headroom: s.orchPoolHeadroom,
+		Spend:    s.orchScopeSpend,
 	})
 	if err != nil {
 		s.logger.Warnf("%s: admission controller not built, falling back to per-project quotas only: %v", what, err)
@@ -119,8 +130,8 @@ func (s *Server) orchestrationAdmission(what string, tenants orchestration.Tenan
 	if readErr != nil {
 		s.logger.Warnf("%s: admission wired, but the fleet capacity could not be read at start-up: %v", what, readErr)
 	} else {
-		s.logger.Infof("%s: admission bounded by project quota, fleet capacity (%s) and provider usage headroom (%v)",
-			what, reading.Describe(), s.orchPoolHeadroom != nil)
+		s.logger.Infof("%s: admission bounded by project quota, fleet capacity (%s), provider usage headroom (%v) and project/tenant spend limits (%v)",
+			what, reading.Describe(), s.orchPoolHeadroom != nil, s.orchScopeSpend != nil)
 	}
 	return admission
 }
@@ -145,10 +156,10 @@ func (s *Server) orchestrationFleetCapacity() orchestration.FleetCapacityReader 
 	declared := s.config.Orchestration.Fleet.MaxConcurrentJobs
 
 	var measured orchestration.FleetCapacityReader
-	if s.agentRegistry != nil && s.iamComponents != nil && s.iamComponents.GetTenantManager() != nil {
-		reader, err := orchestration.NewAgentFleetCapacity(
+	if s.fleetRegistry != nil && s.iamComponents != nil && s.iamComponents.GetTenantManager() != nil {
+		reader, err := orchestration.NewRegistryFleetCapacity(
 			&iamTenantLister{tenants: s.iamComponents.GetTenantManager()},
-			s.agentRegistry,
+			s.fleetRegistry,
 			s.config.Orchestration.HeartbeatTimeout)
 		if err != nil {
 			s.logger.Warnf("Fleet capacity: the daemons' own reports are unavailable, leaving only the operator's declaration: %v", err)
@@ -261,13 +272,39 @@ func (s *Server) startTaskDispatcher(spawner orchestration.TaskSpawner) {
 	s.taskDispatcherStop = cancel
 	s.taskDispatcherDone = done
 	interval := s.config.Orchestration.EffectiveSweepInterval()
+	gate := s.dispatchGate
 	go func() {
 		defer close(done)
+		if !awaitDispatchGate(ctx, gate, s.logger) {
+			return
+		}
 		if runErr := dispatcher.Run(ctx, interval); runErr != nil && !errors.Is(runErr, context.Canceled) {
 			s.logger.Warnf("Task dispatcher stopped: %v", runErr)
 		}
 	}()
 	s.logger.Infof("Task dispatcher started (sweep=%s)", interval)
+}
+
+// awaitDispatchGate holds the dispatcher's first sweep until every resumed
+// job has settled its lease. It reports false when ctx ended first, and the
+// dispatcher never sweeps. A nil gate is open.
+func awaitDispatchGate(ctx context.Context, gate <-chan struct{}, log *logger.Logger) bool {
+	if gate == nil {
+		return true
+	}
+	select {
+	case <-gate:
+		return true
+	default:
+	}
+	log.Info("Task dispatcher waiting: resumed jobs have not all taken their leases yet")
+	select {
+	case <-gate:
+		log.Info("Task dispatcher released: every resumed job holds its lease")
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // stopTaskDispatcher ends the dispatcher and waits for it to return.
@@ -291,22 +328,32 @@ func (s *Server) stopTaskDispatcher() {
 // polling first and dispatching second turns that one call into a running job,
 // where dispatching first would start whatever was already queued and leave
 // the new issue for the next tick.
+//
+// A parked project answers *orchestration.ProjectParkedError once its queue
+// has been swept: its intake is closed, its work in flight is not.
 func (s *Server) NudgeProject(ctx context.Context, tenantID, projectID string) error {
 	poller := s.taskSourcePoller
 	if poller == nil {
 		return &orchestration.TaskSourcePollerConfigError{Field: "poller", Message: "is not running on this node"}
 	}
-	if err := poller.SweepProject(ctx, tenantID, projectID); err != nil {
-		return err
+	// A PARKED PROJECT'S QUEUE IS STILL SWEPT. The poller refuses to adopt
+	// new work for it, but the tasks it has already started keep draining
+	// (orchestration/project_park.go), so the refusal is reported only after
+	// the dispatcher has had its turn.
+	adoptErr := poller.SweepProject(ctx, tenantID, projectID)
+	if adoptErr != nil && !errors.Is(adoptErr, orchestration.ErrProjectParked) {
+		return adoptErr
 	}
-	dispatcher := s.taskDispatcher
-	if dispatcher == nil {
-		return nil
+	if dispatcher := s.taskDispatcher; dispatcher != nil {
+		if err := dispatcher.SweepProject(ctx, tenantID, projectID); err != nil {
+			return err
+		}
 	}
-	return dispatcher.SweepProject(ctx, tenantID, projectID)
+	return adoptErr
 }
 
-// iamTenantLister enumerates tenants through the IAM tenant manager.
+// iamTenantLister enumerates tenants through the IAM tenant manager, and
+// answers whether one exists (orchestration.TenantResolver).
 type iamTenantLister struct {
 	tenants iam.TenantManager
 }
@@ -325,4 +372,23 @@ func (l *iamTenantLister) ListTenantIDs(ctx context.Context) ([]string, error) {
 		ids = append(ids, t.ID)
 	}
 	return ids, nil
+}
+
+// TenantExists implements orchestration.TenantResolver. The system tenant
+// always exists: it is qrdb's reserved scope, not an IAM record. An ID IAM
+// would refuse as malformed names no tenant; any other failure is the tenant
+// directory failing to answer, and is returned as such.
+func (l *iamTenantLister) TenantExists(ctx context.Context, tenantID string) (bool, error) {
+	if qrdbsdk.IsSystemTenant(tenantID) {
+		return true, nil
+	}
+	_, err := l.tenants.GetTenant(ctx, tenantID)
+	switch {
+	case err == nil:
+		return true, nil
+	case quicbaaserrors.IsNotFound(err), quicbaaserrors.IsInvalidInput(err):
+		return false, nil
+	default:
+		return false, err
+	}
 }

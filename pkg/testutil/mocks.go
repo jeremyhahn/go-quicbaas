@@ -635,10 +635,10 @@ func (m *MockQuicBaaS) Account() service.AccountService {
 	return nil
 }
 
-// AgentAdmin delegates to testify mock infrastructure.
-func (m *MockQuicBaaS) AgentAdmin() service.AgentAdminService {
+// FleetAdmin delegates to testify mock infrastructure.
+func (m *MockQuicBaaS) FleetAdmin() service.FleetAdminService {
 	args := m.Called()
-	result, _ := args.Get(0).(service.AgentAdminService)
+	result, _ := args.Get(0).(service.FleetAdminService)
 	return result
 }
 

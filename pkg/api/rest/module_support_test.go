@@ -21,6 +21,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -46,6 +48,42 @@ func newModuleSupportServer(t *testing.T) *Server {
 		t.Fatal(err)
 	}
 	return srv
+}
+
+// newModuleSupportServerWithFileLogger builds a server exactly like
+// newModuleSupportServer, but at "warn" level with its log routed to a file
+// this test can read back — the only way to assert a log LINE was written
+// (rather than merely that a typed error came back), which is the entire
+// point of the AuthenticateHTTP silent-branch defect these tests guard
+// against: a caller cannot tell "refused, and it says why in the log" from
+// "refused, silently" by inspecting the returned error alone.
+func newModuleSupportServerWithFileLogger(t *testing.T) (*Server, string) {
+	t.Helper()
+	logPath := filepath.Join(t.TempDir(), "auth.log")
+	log, err := logger.New(logger.LogConfig{Level: "warn", Format: "json", Output: "file", File: logPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := DefaultConfig()
+	srv, err := NewServer(testutil.NewMockQuicBaaS(), cfg, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return srv, logPath
+}
+
+// readLog returns the log file's contents, or "" if it has not been written
+// yet (a logger that buffers may not have flushed before the caller reads).
+func readLog(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ""
+		}
+		t.Fatalf("read log file: %v", err)
+	}
+	return string(data)
 }
 
 // fakeModuleTokenAuthorizer is a ModuleTokenAuthorizer test double. Validate
@@ -404,6 +442,58 @@ func TestServer_AuthenticateHTTP_NoAuthorizerWired(t *testing.T) {
 	}
 	if identity != nil {
 		t.Errorf("identity = %+v, want nil", identity)
+	}
+}
+
+// TestServer_AuthenticateHTTP_NoAuthorizerWired_Logs proves the
+// no-moduleAuthorizer rejection is logged exactly like a refused bearer.
+// Before this, a deployment running with no fallback wired (RequireAuthz
+// off, or the gate never finished construction) 401ed every platform-token
+// caller — the entire UI, since a browser bearer never satisfies qrdb's own
+// mTLS chain — and left quicbaasd.out silent for every single one of them,
+// so "the WARN log never fires" could not distinguish this misconfiguration
+// from any other rejection reason.
+func TestServer_AuthenticateHTTP_NoAuthorizerWired_Logs(t *testing.T) {
+	srv, logPath := newModuleSupportServerWithFileLogger(t)
+
+	req := httptest.NewRequest("GET", "/api/v1/orchestrator/status", nil)
+	req.Header.Set("Authorization", "Bearer anything")
+
+	if _, err := srv.AuthenticateHTTP(req); err == nil {
+		t.Fatal("expected an error with no authorizer wired")
+	}
+
+	got := readLog(t, logPath)
+	if !strings.Contains(got, "rest: bearer token refused") {
+		t.Errorf("log = %q, want it to contain %q", got, "rest: bearer token refused")
+	}
+	if !strings.Contains(got, "/api/v1/orchestrator/status") {
+		t.Errorf("log = %q, want it to contain the request path", got)
+	}
+	if !strings.Contains(got, "module platform-token authorizer is not configured") {
+		t.Errorf("log = %q, want it to name the ModuleAuthorizerRequiredError reason", got)
+	}
+}
+
+// TestServer_AuthenticateHTTP_MissingBearer_Logs proves a missing/malformed
+// Authorization header is logged exactly like a refused bearer, not only a
+// validator failure — the same silence gap TestServer_AuthenticateHTTP_
+// NoAuthorizerWired_Logs closes for the no-authorizer branch.
+func TestServer_AuthenticateHTTP_MissingBearer_Logs(t *testing.T) {
+	srv, logPath := newModuleSupportServerWithFileLogger(t)
+	srv.moduleAuthorizer = &fakeModuleTokenAuthorizer{wantToken: "good-token", subject: "alice", tenant: "tenant-a"}
+
+	req := httptest.NewRequest("GET", "/api/v1/orchestrator/status", nil)
+	if _, err := srv.AuthenticateHTTP(req); err == nil {
+		t.Fatal("expected an error for a missing Authorization header")
+	}
+
+	got := readLog(t, logPath)
+	if !strings.Contains(got, "rest: bearer token refused") {
+		t.Errorf("log = %q, want it to contain %q", got, "rest: bearer token refused")
+	}
+	if !strings.Contains(got, "authorization header is missing") {
+		t.Errorf("log = %q, want it to name the MissingAuthHeaderError reason", got)
 	}
 }
 

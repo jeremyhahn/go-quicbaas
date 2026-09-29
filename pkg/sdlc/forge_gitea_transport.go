@@ -76,6 +76,7 @@ type giteaWritePolicy struct {
 //	AddIssueLabels      write     replay      Gitea's POST is a set union; the method reads it back
 //	RemoveIssueLabel    write     replay      a replayed DELETE answers 404, which the method accepts
 //	CloseIssue          write     replay      PATCH to a state; the response is checked
+//	ClosePullRequest    write     replay      PATCH to a state; the method reads the pull request back
 //	DeleteBranch        write     replay      a replayed DELETE answers 404, which the method accepts
 //	SetCommitStatus     write     replay      the latest status per context wins; read back
 //	UpdateWebhook       write     replay      PATCH to a configuration; EnsureWebhook reads it back
@@ -83,6 +84,7 @@ type giteaWritePolicy struct {
 //	CommentOnIssue      write     once        a second post is a second comment; the Blocked hook's own
 //	                                          bounded post retry is the one place a duplicate is accepted
 //	CreateBranch        write     once        a second create is refused as a conflict, not reconciled
+//	CreateIssue         write     once        a second create is a second issue
 //	SubmitReview        write     once        a second review is a second verdict
 //	RerunCheckRun       write     once        a second rerun is a second pipeline
 //	CreateWebhook       write     once        a second hook doubles every delivery
@@ -96,12 +98,14 @@ var giteaWritePolicies = map[string]giteaWritePolicy{
 	"AddIssueLabels":    {recovery: recoverReplay},
 	"RemoveIssueLabel":  {recovery: recoverReplay},
 	"CloseIssue":        {recovery: recoverReplay},
+	"ClosePullRequest":  {recovery: recoverReplay},
 	"DeleteBranch":      {recovery: recoverReplay},
 	"SetCommitStatus":   {recovery: recoverReplay},
 	"UpdateWebhook":     {recovery: recoverReplay},
 	"DeleteWebhook":     {recovery: recoverReplay},
 	"CommentOnIssue":    {recovery: recoverUnconfirmed},
 	"CreateBranch":      {recovery: recoverUnconfirmed},
+	"CreateIssue":       {recovery: recoverUnconfirmed},
 	"SubmitReview":      {recovery: recoverUnconfirmed},
 	"RerunCheckRun":     {recovery: recoverUnconfirmed},
 	"CreateWebhook":     {recovery: recoverUnconfirmed},

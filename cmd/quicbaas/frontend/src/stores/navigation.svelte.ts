@@ -23,9 +23,10 @@ import { navigateTo, routerStore, type RouteName } from './router.svelte.ts';
 
 export type ViewID =
   | 'dashboard'
+  | 'attention'
   | 'orchestration'
   | 'jobs'
-  | 'agents'
+  | 'fleet'
   | 'sessions'
   | 'tasks'
   | 'workflows'
@@ -64,9 +65,10 @@ export type ViewID =
 /** Map each sidebar ViewID to its canonical hash path. */
 const viewHashPaths: Partial<Record<ViewID, string>> = {
   dashboard:     '/dashboard',
+  attention:     '/attention',
   orchestration: '/orchestration',
   jobs:          '/jobs',
-  agents:        '/fleet',
+  fleet:         '/fleet',
   sessions:      '/sessions',
   tasks:         '/tasks',
   workflows:     '/workflows',
@@ -112,9 +114,11 @@ const viewHashPaths: Partial<Record<ViewID, string>> = {
  */
 const routeToViewID: Partial<Record<RouteName, ViewID>> = {
   dashboard:        'dashboard',
+  attention:        'attention',
   orchestration:    'orchestration',
   jobs:             'jobs',
-  fleet:            'agents',
+  fleet:            'fleet',
+  'fleet-node':     'fleet',
   sessions:         'sessions',
   'session-detail': 'sessions',
   tasks:            'tasks',

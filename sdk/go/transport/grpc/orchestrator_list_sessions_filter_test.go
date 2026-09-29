@@ -351,3 +351,46 @@ func TestGRPCSpawnSession_PersistentCrossesTheWire(t *testing.T) {
 		})
 	}
 }
+
+// jobBoundListSessionsServer answers one session a job spawned into a
+// container and one an operator opened directly.
+type jobBoundListSessionsServer struct {
+	pb.UnimplementedOrchestratorServiceServer
+}
+
+func (jobBoundListSessionsServer) ListSessions(context.Context, *pb.ListSessionsRequest) (*pb.ListSessionsResponse, error) {
+	return &pb.ListSessionsResponse{Sessions: []*pb.SessionInfo{
+		{SessionId: "s-job", JobId: "job-1", ContainerId: "ctr-1"},
+		{SessionId: "s-direct"},
+	}}, nil
+}
+
+// TestGRPCListSessions_CarriesTheJobAndTheContainer proves the gRPC (and so
+// the Unix) transport keeps what the session page links back to the job with
+// and shows as the container (go-quicbaas#860), and leaves both empty for a
+// session no job spawned.
+func TestGRPCListSessions_CarriesTheJobAndTheContainer(t *testing.T) {
+	srv := newHandlerServer(t, func(s *grpc.Server) {
+		pb.RegisterOrchestratorServiceServer(s, jobBoundListSessionsServer{})
+	})
+	conn := srv.dial(t)
+
+	out, err := handleOrchestratorListSessions(context.Background(), conn,
+		&orchestrator.ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("handleOrchestratorListSessions: %v", err)
+	}
+	list, ok := out.(*orchestrator.ListSessionsResponse)
+	if !ok {
+		t.Fatalf("returned %T, want *orchestrator.ListSessionsResponse", out)
+	}
+	if len(list.Sessions) != 2 {
+		t.Fatalf("listed %d sessions, want 2", len(list.Sessions))
+	}
+	if got := list.Sessions[0]; got.JobID != "job-1" || got.ContainerID != "ctr-1" {
+		t.Errorf("s-job = job %q container %q, want job-1/ctr-1", got.JobID, got.ContainerID)
+	}
+	if got := list.Sessions[1]; got.JobID != "" || got.ContainerID != "" {
+		t.Errorf("s-direct = job %q container %q, want neither", got.JobID, got.ContainerID)
+	}
+}

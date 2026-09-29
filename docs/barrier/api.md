@@ -161,7 +161,7 @@ both route tables carry `/api/v1/barrier/*`. go-qrdb's registrar gives a path
 to the FIRST claimant and logs the loser at debug level, so precedence is
 silent unless the composer states it. It is stated in
 `pkg/apimodule/route_precedence.go`: the xkms module is wrapped in
-`NewRouteExcludingModule(..., XKMSBarrierRouteExclusions)` before
+`NewRouteExcludingModule(..., XKMSRouteExclusions)` before
 `qrdbsdk.WithModule`, so quicbaas owns the canonical barrier mount.
 
 That is not a preference. The barrier is go-qrdb's, and quicbaas's handlers

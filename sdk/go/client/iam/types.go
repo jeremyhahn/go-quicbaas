@@ -197,9 +197,6 @@ type TenantSettings struct {
 	// DefaultRoles are roles assigned to new users.
 	DefaultRoles []string `json:"default_roles,omitempty"`
 
-	// DefaultGroups are groups assigned to new users.
-	DefaultGroups []string `json:"default_groups,omitempty"`
-
 	// EnableAuditLogging enables audit logging for this tenant.
 	EnableAuditLogging bool `json:"enable_audit_logging"`
 
@@ -211,9 +208,6 @@ type TenantSettings struct {
 type TenantQuotas struct {
 	// MaxUsers is the maximum number of users.
 	MaxUsers int `json:"max_users"`
-
-	// MaxGroups is the maximum number of groups.
-	MaxGroups int `json:"max_groups"`
 
 	// MaxRoles is the maximum number of roles.
 	MaxRoles int `json:"max_roles"`
@@ -261,9 +255,6 @@ type User struct {
 	// Roles are the role IDs assigned to the user.
 	Roles []string `json:"roles,omitempty"`
 
-	// Groups are the group IDs the user belongs to.
-	Groups []string `json:"groups,omitempty"`
-
 	// Attributes contains custom user attributes for ABAC.
 	Attributes *UserAttributes `json:"attributes,omitempty"`
 
@@ -308,39 +299,6 @@ type UserAttributes struct {
 
 	// Custom contains arbitrary custom attributes.
 	Custom map[string]string `json:"custom,omitempty"`
-}
-
-// Group represents a group of users.
-type Group struct {
-	// ID is the unique identifier for the group.
-	ID string `json:"id"`
-
-	// TenantID is the tenant this group belongs to.
-	TenantID string `json:"tenant_id"`
-
-	// Name is the unique name within the tenant.
-	Name string `json:"name"`
-
-	// DisplayName is the human-readable display name.
-	DisplayName string `json:"display_name,omitempty"`
-
-	// Description is an optional description.
-	Description string `json:"description,omitempty"`
-
-	// Roles are the role IDs assigned to the group.
-	Roles []string `json:"roles,omitempty"`
-
-	// MemberCount is the number of members in the group.
-	MemberCount int `json:"member_count"`
-
-	// Metadata contains additional group metadata.
-	Metadata map[string]string `json:"metadata,omitempty"`
-
-	// CreatedAt is when the group was created.
-	CreatedAt time.Time `json:"created_at"`
-
-	// UpdatedAt is when the group was last updated.
-	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Role represents a role with permissions.
@@ -496,8 +454,6 @@ const (
 	AdminRoleTenantAdmin
 	// AdminRoleUserAdmin can manage users within a tenant.
 	AdminRoleUserAdmin
-	// AdminRoleGroupAdmin can manage groups within a tenant.
-	AdminRoleGroupAdmin
 	// AdminRolePolicyAdmin can manage policies within a tenant.
 	AdminRolePolicyAdmin
 	// AdminRoleAppAdmin can manage applications within a tenant.
@@ -517,8 +473,6 @@ func (r AdminRole) String() string {
 		return "tenant_admin"
 	case AdminRoleUserAdmin:
 		return "user_admin"
-	case AdminRoleGroupAdmin:
-		return "group_admin"
 	case AdminRolePolicyAdmin:
 		return "policy_admin"
 	case AdminRoleAppAdmin:

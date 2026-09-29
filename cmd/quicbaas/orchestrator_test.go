@@ -27,6 +27,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/page"
 )
 
 // =============================================================================
@@ -51,13 +52,15 @@ type mockOrchestratorClient struct {
 	claimTaskFn          func(ctx context.Context, req *orchestratorSDK.ClaimTaskRequest) (*orchestratorSDK.ClaimTaskResponse, error)
 	blockTaskFn          func(ctx context.Context, req *orchestratorSDK.BlockTaskRequest) (*orchestratorSDK.BlockTaskResponse, error)
 	readmitTaskFn        func(ctx context.Context, req *orchestratorSDK.ReadmitTaskRequest) (*orchestratorSDK.ReadmitTaskResponse, error)
+	attentionListFn      func(ctx context.Context, req *orchestratorSDK.AttentionListRequest) (*orchestratorSDK.AttentionListResponse, error)
+	attentionResolveFn   func(ctx context.Context, req *orchestratorSDK.AttentionResolveRequest) (*orchestratorSDK.AttentionItem, error)
 	deleteTaskFn         func(ctx context.Context, req *orchestratorSDK.DeleteTaskRequest) (*orchestratorSDK.DeleteTaskResponse, error)
 	completeTaskFn       func(ctx context.Context, req *orchestratorSDK.CompleteTaskRequest) (*orchestratorSDK.CompleteTaskResponse, error)
-	registerAgentFn      func(ctx context.Context, req *orchestratorSDK.RegisterAgentRequest) (*orchestratorSDK.RegisterAgentResponse, error)
-	getAgentFn           func(ctx context.Context, req *orchestratorSDK.GetAgentRequest) (*orchestratorSDK.AgentRegistration, error)
-	listAgentsFn         func(ctx context.Context, req *orchestratorSDK.ListAgentsRequest) (*orchestratorSDK.ListAgentsResponse, error)
-	removeAgentFn        func(ctx context.Context, req *orchestratorSDK.RemoveAgentRequest) (*orchestratorSDK.RemoveAgentResponse, error)
-	agentHeartFn         func(ctx context.Context, req *orchestratorSDK.AgentHeartbeatRequest) (*orchestratorSDK.AgentHeartbeatResponse, error)
+	registerAgentFn      func(ctx context.Context, req *orchestratorSDK.RegisterFleetNodeRequest) (*orchestratorSDK.RegisterFleetNodeResponse, error)
+	getAgentFn           func(ctx context.Context, req *orchestratorSDK.GetFleetNodeRequest) (*orchestratorSDK.FleetNode, error)
+	listAgentsFn         func(ctx context.Context, req *orchestratorSDK.ListFleetNodesRequest) (*orchestratorSDK.ListFleetNodesResponse, error)
+	removeAgentFn        func(ctx context.Context, req *orchestratorSDK.RemoveFleetNodeRequest) (*orchestratorSDK.RemoveFleetNodeResponse, error)
+	agentHeartFn         func(ctx context.Context, req *orchestratorSDK.FleetNodeHeartbeatRequest) (*orchestratorSDK.FleetNodeHeartbeatResponse, error)
 	decomposeTaskFn      func(ctx context.Context, req *orchestratorSDK.DecomposeTaskRequest) (*orchestratorSDK.DecomposeTaskResponse, error)
 	startJobFn           func(ctx context.Context, req *orchestratorSDK.StartJobRequest) (*orchestratorSDK.StartJobResponse, error)
 	getJobStatusFn       func(ctx context.Context, req *orchestratorSDK.GetJobStatusRequest) (*orchestratorSDK.JobStatus, error)
@@ -170,6 +173,20 @@ func (m *mockOrchestratorClient) ReadmitTask(ctx context.Context, req *orchestra
 	return &orchestratorSDK.ReadmitTaskResponse{TaskID: req.TaskID, Readmitted: true}, nil
 }
 
+func (m *mockOrchestratorClient) AttentionList(ctx context.Context, req *orchestratorSDK.AttentionListRequest) (*orchestratorSDK.AttentionListResponse, error) {
+	if m.attentionListFn != nil {
+		return m.attentionListFn(ctx, req)
+	}
+	return &orchestratorSDK.AttentionListResponse{Items: []*orchestratorSDK.AttentionItem{}}, nil
+}
+
+func (m *mockOrchestratorClient) AttentionResolve(ctx context.Context, req *orchestratorSDK.AttentionResolveRequest) (*orchestratorSDK.AttentionItem, error) {
+	if m.attentionResolveFn != nil {
+		return m.attentionResolveFn(ctx, req)
+	}
+	return &orchestratorSDK.AttentionItem{ID: req.TaskID}, nil
+}
+
 func (m *mockOrchestratorClient) DeleteTask(ctx context.Context, req *orchestratorSDK.DeleteTaskRequest) (*orchestratorSDK.DeleteTaskResponse, error) {
 	if m.deleteTaskFn != nil {
 		return m.deleteTaskFn(ctx, req)
@@ -191,43 +208,43 @@ func (m *mockOrchestratorClient) CompleteTask(ctx context.Context, req *orchestr
 	return &orchestratorSDK.CompleteTaskResponse{TaskID: req.TaskID, Completed: true}, nil
 }
 
-func (m *mockOrchestratorClient) RegisterAgent(ctx context.Context, req *orchestratorSDK.RegisterAgentRequest) (*orchestratorSDK.RegisterAgentResponse, error) {
+func (m *mockOrchestratorClient) RegisterFleetNode(ctx context.Context, req *orchestratorSDK.RegisterFleetNodeRequest) (*orchestratorSDK.RegisterFleetNodeResponse, error) {
 	if m.registerAgentFn != nil {
 		return m.registerAgentFn(ctx, req)
 	}
-	return &orchestratorSDK.RegisterAgentResponse{
-		Agent: &orchestratorSDK.AgentRegistration{
-			ID: "agent_mock", Name: req.Name, Host: req.Host, AgentType: req.AgentType, Status: "registered",
+	return &orchestratorSDK.RegisterFleetNodeResponse{
+		Node: &orchestratorSDK.FleetNode{
+			ID: "agent_mock", Name: req.Name, Host: req.Host, NodeType: req.NodeType, Status: "registered",
 		},
 	}, nil
 }
 
-func (m *mockOrchestratorClient) GetAgent(ctx context.Context, req *orchestratorSDK.GetAgentRequest) (*orchestratorSDK.AgentRegistration, error) {
+func (m *mockOrchestratorClient) GetFleetNode(ctx context.Context, req *orchestratorSDK.GetFleetNodeRequest) (*orchestratorSDK.FleetNode, error) {
 	if m.getAgentFn != nil {
 		return m.getAgentFn(ctx, req)
 	}
-	return &orchestratorSDK.AgentRegistration{ID: req.AgentID, Name: "test-agent", Status: "running"}, nil
+	return &orchestratorSDK.FleetNode{ID: req.NodeID, Name: "test-agent", Status: "running"}, nil
 }
 
-func (m *mockOrchestratorClient) ListAgents(ctx context.Context, req *orchestratorSDK.ListAgentsRequest) (*orchestratorSDK.ListAgentsResponse, error) {
+func (m *mockOrchestratorClient) ListFleetNodes(ctx context.Context, req *orchestratorSDK.ListFleetNodesRequest) (*orchestratorSDK.ListFleetNodesResponse, error) {
 	if m.listAgentsFn != nil {
 		return m.listAgentsFn(ctx, req)
 	}
-	return &orchestratorSDK.ListAgentsResponse{Agents: []*orchestratorSDK.AgentRegistration{}, Count: 0}, nil
+	return &orchestratorSDK.ListFleetNodesResponse{Nodes: []*orchestratorSDK.FleetNode{}, Count: 0}, nil
 }
 
-func (m *mockOrchestratorClient) RemoveAgent(ctx context.Context, req *orchestratorSDK.RemoveAgentRequest) (*orchestratorSDK.RemoveAgentResponse, error) {
+func (m *mockOrchestratorClient) RemoveFleetNode(ctx context.Context, req *orchestratorSDK.RemoveFleetNodeRequest) (*orchestratorSDK.RemoveFleetNodeResponse, error) {
 	if m.removeAgentFn != nil {
 		return m.removeAgentFn(ctx, req)
 	}
-	return &orchestratorSDK.RemoveAgentResponse{AgentID: req.AgentID, Removed: true}, nil
+	return &orchestratorSDK.RemoveFleetNodeResponse{NodeID: req.NodeID, Removed: true}, nil
 }
 
-func (m *mockOrchestratorClient) AgentHeartbeat(ctx context.Context, req *orchestratorSDK.AgentHeartbeatRequest) (*orchestratorSDK.AgentHeartbeatResponse, error) {
+func (m *mockOrchestratorClient) FleetNodeHeartbeat(ctx context.Context, req *orchestratorSDK.FleetNodeHeartbeatRequest) (*orchestratorSDK.FleetNodeHeartbeatResponse, error) {
 	if m.agentHeartFn != nil {
 		return m.agentHeartFn(ctx, req)
 	}
-	return &orchestratorSDK.AgentHeartbeatResponse{AgentID: req.AgentID, Heartbeat: true}, nil
+	return &orchestratorSDK.FleetNodeHeartbeatResponse{NodeID: req.NodeID, Heartbeat: true}, nil
 }
 
 func (m *mockOrchestratorClient) DecomposeTask(ctx context.Context, req *orchestratorSDK.DecomposeTaskRequest) (*orchestratorSDK.DecomposeTaskResponse, error) {
@@ -1151,7 +1168,8 @@ func TestFormatOrchSessionsResponse(t *testing.T) {
 			{SessionID: "sess_1", Backend: "claude", Status: "active", LastActive: time.Now().UnixNano()},
 			{SessionID: "sess_2", Backend: "ollama", Status: "idle"},
 		},
-		Count: 2,
+		Count:    2,
+		Envelope: page.Envelope{Total: 9, Limit: 2, NextOffset: 2},
 	}
 
 	t.Run("JSON", func(t *testing.T) {
@@ -1167,7 +1185,7 @@ func TestFormatOrchSessionsResponse(t *testing.T) {
 		err := formatOrchSessionsResponse(resp, "table", &buf)
 		require.NoError(t, err)
 		assert.Contains(t, buf.String(), "SESSION ID")
-		assert.Contains(t, buf.String(), "Total: 2 sessions")
+		assert.Contains(t, buf.String(), "Showing 1–2 of 9. Next page: --offset 2")
 	})
 
 	t.Run("Default", func(t *testing.T) {
@@ -1309,7 +1327,8 @@ func TestFormatOrchTaskListResponse(t *testing.T) {
 			{ID: "task_1", Subject: "Build the project", Status: "pending", TeamName: "backend"},
 			{ID: "task_2", Subject: "Run all tests", Status: "claimed", AssignedTo: "agent_001"},
 		},
-		Count: 2,
+		Count:    2,
+		Envelope: page.Envelope{Total: 2, Limit: 25},
 	}
 
 	t.Run("JSON", func(t *testing.T) {
@@ -1324,7 +1343,7 @@ func TestFormatOrchTaskListResponse(t *testing.T) {
 		err := formatOrchTaskListResponse(resp, "table", &buf)
 		require.NoError(t, err)
 		assert.Contains(t, buf.String(), "ID")
-		assert.Contains(t, buf.String(), "Total: 2 tasks")
+		assert.Contains(t, buf.String(), "Showing 1–2 of 2.")
 	})
 
 	t.Run("Default", func(t *testing.T) {

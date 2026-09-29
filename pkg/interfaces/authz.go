@@ -240,9 +240,6 @@ const (
 	// ResourceIAMUser represents IAM user operations.
 	ResourceIAMUser = "iam:user"
 
-	// ResourceIAMGroup represents IAM group operations.
-	ResourceIAMGroup = "iam:group"
-
 	// ResourceIAMRole represents IAM role operations.
 	ResourceIAMRole = "iam:role"
 

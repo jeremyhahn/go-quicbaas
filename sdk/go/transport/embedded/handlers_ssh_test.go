@@ -126,7 +126,7 @@ func TestEmbeddedSSHHandlers_KnownHostsAndAuthorized(t *testing.T) {
 
 	_, err := handleSSHAddKnownHost(ctx, svc, &sshclient.AddKnownHostRequest{
 		Scope: "user", Owner: "alice", Host: "git.example.com",
-		Fingerprint: host.Fingerprint,
+		PublicKey: host.AuthorizedLine,
 	})
 	require.NoError(t, err)
 

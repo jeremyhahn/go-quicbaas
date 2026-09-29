@@ -141,7 +141,10 @@ export function installAuthFetch(): void {
 
     // Snapshot BEFORE the renewal: everything below is a verdict about the
     // session as it stands now, and two awaits separate it from acting on that
-    // verdict.
+    // verdict. endSessionIfCurrent additionally re-checks storage against the
+    // LIVE generationCredential at decision time — not a value frozen here —
+    // so it survives this tab's OWN renewal rotating the credential while
+    // still catching a sibling tab replacing it (see endSessionIfCurrent).
     const snapshot = sessionGeneration();
 
     // Single-flight: concurrent 401s all await the same renewal.

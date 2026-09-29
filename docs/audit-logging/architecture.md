@@ -9,7 +9,7 @@ The QuicBaaS IAM module includes comprehensive audit logging capabilities to tra
 
 ## Features
 
-- **Event Types**: Authentication, authorization, user/group/role/policy management, MFA, sessions, tenants, applications
+- **Event Types**: Authentication, authorization, user/role/policy management, MFA, sessions, tenants, applications
 - **Categories**: Authentication, authorization, administration, security
 - **Outcomes**: Success, failure, denied
 - **Storage**: Thread-safe in-memory with configurable retention
@@ -282,7 +282,6 @@ tenant.Settings.AuditPolicy = &iam.AuditPolicy{
 
 ### Administrative Events
 - User creation/modification/deletion
-- Group membership changes
 - Role assignments/revocations
 - Policy creation/updates/deletion
 - Tenant configuration changes
@@ -484,7 +483,6 @@ logger.LogAdminAction(ctx, tenantID,
     "create_user",
     map[string]interface{}{
         "roles": newUser.Roles,
-        "groups": newUser.Groups,
     },
 )
 ```

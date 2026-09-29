@@ -141,6 +141,9 @@ type TriageRunnerConfig struct {
 	// CONTAINER sees it. Empty takes the engine's default.
 	CheckoutRoot string
 
+	// Guard is the operator's repository allowlist; see RunnerConfig.Guard.
+	Guard RepoHostGuard
+
 	// SocketsRoot is the DAEMON's root for per-session agent sockets
 	// (orchestration.sockets_root, resolved by the host). It is required and
 	// has no default here; see RunnerConfig.SocketsRoot.
@@ -149,24 +152,22 @@ type TriageRunnerConfig struct {
 	// IssueLimit bounds one job's issue listing; zero takes the default.
 	IssueLimit int
 
-	// DefaultAgent is the NODE's triage agent — what every project triages
-	// with unless its own binding names one.
-	//
-	// IT SITS BETWEEN THE BINDING AND THE WORKER, and the order is the whole
-	// point. Before it existed the only fallback was the project's worker, so
-	// a fleet that wrote its code with a frontier model also re-read its
-	// entire backlog with one on every sweep. Triage writes no code; it is the
-	// task most worth running on a model the node serves itself.
-	//
-	// Empty keeps the old behaviour exactly — fall back to the worker — so an
-	// install with no local model is unaffected.
-	DefaultAgent WorkerConfig
+	// TriageAgents decides the Agent or pool each project triages with: its
+	// binding's own, then the node's default where the tenant defines it,
+	// then its worker. See TriageAgentPolicy.
+	TriageAgents TriageAgentPolicy
+
+	// Clusters records which ready issues triage adopted as one task, and is
+	// read back to keep a clustered member out of every later pass. Required:
+	// see triage_cluster.go.
+	Clusters IssueClusterStore
 }
 
 // TriageRunner is the module's triage orchestration.JobRunner.
 type TriageRunner struct {
 	bindings BindingReader
 	forges   ForgeResolver
+	clusters IssueClusterStore
 
 	// access is the one seam every runner's container reaches the forge
 	// through — the same one the delivery runner and the reviewer hold — so
@@ -181,8 +182,15 @@ type TriageRunner struct {
 	unusable   map[string]int
 	unusableMu sync.Mutex
 
-	// defaultAgent is the node's triage agent; see TriageRunnerConfig.
-	defaultAgent WorkerConfig
+	// evaluated maps repo#issue -> the head at which triage last judged the
+	// issue and reached the verdict it had already posted, so that verdict is
+	// not re-judged at the same head. See comment.
+	evaluated   map[string]string
+	evaluatedMu sync.Mutex
+
+	// triageAgents decides each project's triage agent; see
+	// TriageRunnerConfig.
+	triageAgents TriageAgentPolicy
 }
 
 var (
@@ -197,8 +205,10 @@ func NewTriageRunner(cfg TriageRunnerConfig) (*TriageRunner, error) {
 		return nil, &InvalidInputError{Field: "bindings", Message: "triage reads the trigger label and the repository from the binding"}
 	case cfg.Forges == nil:
 		return nil, &InvalidInputError{Field: "forges", Message: "triage reads and labels issues through the forge adapter"}
+	case cfg.Clusters == nil:
+		return nil, &InvalidInputError{Field: "clusters", Message: "triage records the issues it adopts as one task, and reads the record back"}
 	}
-	access, err := newForgeAccess(cfg.Tokens, cfg.Signing, cfg.CheckoutRoot, cfg.SocketsRoot)
+	access, err := newForgeAccess(cfg.Tokens, cfg.Signing, cfg.Guard, cfg.CheckoutRoot, cfg.SocketsRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -209,9 +219,10 @@ func NewTriageRunner(cfg TriageRunnerConfig) (*TriageRunner, error) {
 	return &TriageRunner{
 		bindings:     cfg.Bindings,
 		forges:       cfg.Forges,
+		clusters:     cfg.Clusters,
 		access:       access,
 		issueLimit:   limit,
-		defaultAgent: cfg.DefaultAgent,
+		triageAgents: cfg.TriageAgents,
 	}, nil
 }
 
@@ -342,6 +353,14 @@ type triageRun struct {
 	// checkout authenticated with. The agent is stopped as soon as the
 	// checkout is made; the spec directory lives until the session ends.
 	workspace *containerWorkspace
+
+	// footprints are each judged issue's measured footprint (TriageFootprint),
+	// which is what clustering groups the ready issues by.
+	footprints map[int][]string
+
+	// ready are the issues judged ready this pass, admitted together once
+	// every candidate is judged so related ones can share a task.
+	ready []ForgeIssue
 
 	// teardown releases the materialized workspace spec.
 	teardown []func()
@@ -486,6 +505,16 @@ func (s *triageRun) listCandidates(ctx context.Context) error {
 	owned := s.binding.Forge.OwnedLabels()
 	for i := range issues {
 		issue := issues[i]
+		// A HOLD IS CHECKED FIRST AND RECORDED. The owned-label rule already
+		// passes over the binding's own blocked label, but it knows nothing of
+		// the portfolio hold — which is how a `task:blocked` issue reached a
+		// verdict on go-quicbaas#1058. Skipping it with nothing written would
+		// leave an operator unable to tell a held issue from an unread one.
+		if hold := triageHold(s.binding, &issue); hold != "" {
+			s.job.Audit("sdlc:triage_skipped", "issue="+strconv.Itoa(issue.Number)+
+				" reason=held label="+hold)
+			continue
+		}
 		candidate, err := s.isCandidate(ctx, &issue, owned)
 		if err != nil {
 			// ONE ISSUE'S UNREADABLE THREAD IS NOT THE SWEEP'S FAILURE, and
@@ -525,22 +554,24 @@ func (s *triageRun) isCandidate(ctx context.Context, issue *ForgeIssue, owned ma
 	if issueTriggered(s.binding, issue) {
 		return false, nil
 	}
-	// needs-info and escalated do NOT settle the question. Both verdicts are
-	// REQUESTS -- one for a missing fact, one for a ruling -- and the whole
-	// point of making them is that somebody answers; the answer arrives as a
-	// comment, which is what spokenToSinceTriage looks for. Every other owned
-	// label marks work the engine itself is carrying, and re-judging that
-	// would race the runner that owns it.
+	clustered, err := s.clusteredElsewhere(ctx, issue.Number)
+	if err != nil || clustered {
+		return false, err
+	}
+	// needs-info does NOT settle the question. The verdict is a REQUEST for a
+	// missing fact, and the whole point of making it is that somebody
+	// answers; the answer arrives as a comment, which is what
+	// spokenToSinceTriage looks for. Every other owned label marks work the
+	// engine itself is carrying, and re-judging that would race the runner
+	// that owns it.
 	//
-	// ESCALATED WAS NOT EXEMPT AND HAD TO BECOME SO. applyNotActionable now
-	// escalates rather than leaving the issue unlabelled; without this, the
-	// label it applies would make the issue permanently invisible instead of
-	// permanently unmarked, which trades one silent limbo for another.
+	// ESCALATED IS NOT EXEMPT (#1060). It was, so that a comment or a merge
+	// re-judged an escalated issue; but escalated names a person as the next
+	// step, and a verdict is not that person, so it is a hold (triageHold)
+	// and stays out of triage until a person removes the label.
 	asking := map[string]bool{}
-	for _, key := range []string{LabelNeedsInfo, LabelEscalated} {
-		if label := s.binding.Forge.Label(key); label != "" {
-			asking[label] = true
-		}
+	if label := s.binding.Forge.Label(LabelNeedsInfo); label != "" {
+		asking[label] = true
 	}
 	for _, label := range issue.Labels {
 		if asking[label] {
@@ -599,7 +630,11 @@ func (s *triageRun) spokenToSinceTriage(ctx context.Context, issue *ForgeIssue) 
 		return true, nil
 	}
 	// Triage spoke last. Its verdict stands only while the tree it judged is
-	// still the tree that is there.
+	// still the tree that is there — or while this runner has already
+	// re-judged it at this head and found the same verdict (see comment).
+	if s.runner != nil && s.runner.evaluatedAt(s.evaluatedKey(*issue), strings.TrimSpace(s.headSHA)) {
+		return false, nil
+	}
 	return s.headMovedSince(newest), nil
 }
 
@@ -758,12 +793,14 @@ func (s *triageRun) checkout() containerCheckout {
 }
 
 // decorate adds the triage session to every snapshot, so the stall detector
-// and a person watching the job see the session the turns run on.
+// and a person watching the job see the session the turns run on. It is the
+// job's only session and so its lead (go-quicbaas#863).
 func (s *triageRun) decorate(status *orchestration.JobStatus) {
 	if status == nil || s.sessionID == "" {
 		return
 	}
 	status.SessionIDs = []string{s.sessionID}
+	status.LeadSessionID = s.sessionID
 }
 
 // spawnRequest builds the session's spawn: a read-only checkout of the
@@ -784,17 +821,21 @@ func (s *triageRun) spawnRequest(ctx context.Context) (*orchestration.SpawnSessi
 			Message: "triage reads the repository at its default branch and the project names none",
 		}
 	}
-	agent := s.triageAgent()
+	agent, err := s.triageAgent(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// THE AGENT SUPPLIES THE RUNTIME, THE MODEL AND THE IMAGE, and a pool
+	// fails over at the spawn: a saturated NPU spills to the next Agent
+	// rather than stalling the sweep.
 	req := &orchestration.SpawnSessionRequest{
-		Backend:      agent.Backend,
-		Model:        agent.Model,
+		AgentID:      agent.AgentID,
+		PoolID:       agent.PoolID,
+		Role:         orchestration.AgentRoleTriage,
 		ProjectID:    project.ID,
 		SystemPrompt: charter,
+		PromptAppend: s.binding.TriagePromptAppend,
 		Persistent:   true,
-	}
-	if image := strings.TrimSpace(agent.Image); image != "" {
-		req.ContainerImage = image
-		req.SandboxMode = orchestration.SandboxModeRequired
 	}
 	// TRIAGE STATES ITS OWN GRANT, AND IT STATES THE NARROWER ONE. A
 	// sandboxed spawn otherwise takes full control of its container
@@ -897,17 +938,35 @@ func (s *triageRun) judge(ctx context.Context) (orchestration.JobState, error) {
 			continue
 		}
 		if err := s.judgeIssue(ctx, issue); err != nil {
+			var held *TriageHeldError
+			if errors.As(err, &held) {
+				s.job.Audit("sdlc:triage_skipped", "issue="+strconv.Itoa(issue.Number)+
+					" reason=held label="+held.Label)
+				s.job.Emit(orchestration.JobStateExecuting,
+					"issue #"+strconv.Itoa(issue.Number)+" is held by "+held.Label+"; the verdict was not applied")
+				continue
+			}
 			s.job.Audit("sdlc:triage_failed", "issue="+strconv.Itoa(issue.Number)+" error="+err.Error())
 			s.job.Emit(orchestration.JobStateExecuting,
 				"issue #"+strconv.Itoa(issue.Number)+" could not be triaged: "+err.Error())
 		}
 	}
+	s.admitReady(ctx)
 	return orchestration.JobStateCleanup, nil
 }
 
 // judgeIssue prompts for one issue, classifies the reply and applies the
 // verdict.
 func (s *triageRun) judgeIssue(ctx context.Context, issue ForgeIssue) error {
+	facts, measured := s.measureFacts(ctx, issue)
+	rendered := ""
+	if measured {
+		rendered = facts.Render()
+		if s.footprints == nil {
+			s.footprints = map[int][]string{}
+		}
+		s.footprints[issue.Number] = TriageFootprint(facts)
+	}
 	prompt, err := TriagePrompt(TriagePromptSpec{
 		Repo:         s.repo,
 		Issue:        issue,
@@ -915,7 +974,7 @@ func (s *triageRun) judgeIssue(ctx context.Context, issue ForgeIssue) error {
 		OpenIssues:   s.open,
 		Verification: s.binding.Verification,
 		MayClose:     s.binding.TriageMayClose,
-		Facts:        s.measureFacts(ctx, issue),
+		Facts:        rendered,
 	})
 	if err != nil {
 		return err
@@ -1003,27 +1062,28 @@ func (s *triageRun) recordUnusable(issue ForgeIssue, verdict TriageVerdict, turn
 			"); nothing was written to the issue and the next pass judges it again")
 }
 
-// measureFacts asks the checkout about what the issue names and renders the
-// answer for the prompt, or renders nothing when the measurement failed.
+// measureFacts asks the checkout about what the issue names, and reports
+// whether there is anything to render: nothing named, or a measurement that
+// failed, answers false.
 //
 // FAIL-SOFT, AND AUDITED. The facts are evidence the model would otherwise
 // have to fetch; a checkout that will not answer leaves the model where it
 // was, which is worse than before only if the failure is silent. So the
 // failure is written to the audit trail and the prompt goes out without the
 // section, rather than the issue going unjudged.
-func (s *triageRun) measureFacts(ctx context.Context, issue ForgeIssue) string {
+func (s *triageRun) measureFacts(ctx context.Context, issue ForgeIssue) (TriageFacts, bool) {
 	probes := ExtractTriageProbes(issue.Title, issue.Body)
 	if len(probes.Paths) == 0 && len(probes.Identifiers) == 0 {
-		return ""
+		return TriageFacts{}, false
 	}
 	facts, err := MeasureTriageFacts(sessionExec(ctx, s.job, s.sessionID), s.containerDir, s.headSHA, probes)
 	if err != nil {
 		s.job.Audit("sdlc:triage_facts_failed", "issue="+strconv.Itoa(issue.Number)+" error="+err.Error())
-		return ""
+		return TriageFacts{}, false
 	}
 	s.job.Audit("sdlc:triage_facts", "issue="+strconv.Itoa(issue.Number)+
 		" paths="+strconv.Itoa(len(facts.Paths))+" identifiers="+strconv.Itoa(len(facts.Identifiers)))
-	return facts.Render()
+	return facts, true
 }
 
 // recordVerdict writes the verdict to the job's audit trail and its event
@@ -1049,12 +1109,20 @@ func (s *triageRun) recordVerdict(issue ForgeIssue, verdict TriageVerdict, turn 
 // things triage may do to an issue is data a reader can enumerate — there are
 // three, and none of them closes anything.
 var triageAppliers = map[TriageDisposition]func(*triageRun, context.Context, ForgeIssue, TriageVerdict, string) error{
-	TriageDispositionReady:         (*triageRun).applyReady,
+	TriageDispositionReady:         (*triageRun).deferReady,
 	TriageDispositionNeedsInfo:     (*triageRun).applyNeedsInfo,
 	TriageDispositionNotActionable: (*triageRun).applyNotActionable,
 }
 
 // apply carries out the verdict.
+//
+// A HELD ISSUE IS NEVER WRITTEN TO, whatever the verdict. Candidate selection
+// already passes held issues over; this is the second line, because a turn
+// takes minutes and a hold applied while the model was reading is a hold all
+// the same. The issue is therefore re-read here, immediately before the first
+// write, and a hold on either the listed or the fresh copy refuses the whole
+// verdict — no comment, no label. A re-read that fails refuses it too: a
+// verdict that cannot prove the issue is not held is not applied.
 func (s *triageRun) apply(ctx context.Context, issue ForgeIssue, verdict TriageVerdict, reply string) error {
 	applier, ok := triageAppliers[verdict.Disposition]
 	if !ok {
@@ -1063,7 +1131,29 @@ func (s *triageRun) apply(ctx context.Context, issue ForgeIssue, verdict TriageV
 			Reason: "disposition " + verdict.Disposition.String() + " has no applier",
 		}
 	}
+	if err := s.refuseHeld(ctx, issue); err != nil {
+		return err
+	}
 	return applier(s, ctx, issue, verdict, reply)
+}
+
+// refuseHeld returns a TriageHeldError when the issue carries a hold, as
+// listed or as the forge holds it now.
+func (s *triageRun) refuseHeld(ctx context.Context, issue ForgeIssue) error {
+	if hold := triageHold(s.binding, &issue); hold != "" {
+		return &TriageHeldError{Issue: issue.Number, Label: hold}
+	}
+	fresh, err := s.forge.GetIssue(ctx, s.repo, issue.Number)
+	if err != nil {
+		return &TriageVerdictError{Issue: issue.Number, Reason: "the issue could not be re-read to rule out a hold", Cause: err}
+	}
+	if fresh == nil {
+		return &TriageVerdictError{Issue: issue.Number, Reason: "the forge returned no issue to rule out a hold"}
+	}
+	if hold := triageHold(s.binding, fresh); hold != "" {
+		return &TriageHeldError{Issue: issue.Number, Label: hold}
+	}
+	return nil
 }
 
 // applyReady admits the issue to the factory: the trigger label goes on, and
@@ -1073,7 +1163,7 @@ func (s *triageRun) apply(ctx context.Context, issue ForgeIssue, verdict TriageV
 // two writes leaves an issue with neither label — untriaged, and picked up
 // again by the next pass, which is the recoverable order. The other way round
 // leaves an issue that is both ready and blocked.
-func (s *triageRun) applyReady(ctx context.Context, issue ForgeIssue, _ TriageVerdict, _ string) error {
+func (s *triageRun) applyReady(ctx context.Context, issue ForgeIssue) error {
 	if needsInfo := s.binding.Forge.Label(LabelNeedsInfo); needsInfo != "" && issueHasLabel(issue, needsInfo) {
 		if err := s.forge.RemoveIssueLabel(ctx, s.repo, issue.Number, needsInfo); err != nil {
 			return &TriageVerdictError{Issue: issue.Number, Reason: "the needs-info label could not be cleared", Cause: err}
@@ -1164,9 +1254,8 @@ func (s *triageRun) clearOtherDispositions(ctx context.Context, issue ForgeIssue
 // ESCALATED IS THE HONEST NAME FOR WHAT THIS VERDICT IS. "Not actionable by a
 // worker" and "a person must decide" are the same sentence from two ends; the
 // verdicts say so themselves ("needs one ruling before a worker should touch
-// it"). Escalated is exempted from the owned-label skip alongside needs-info
-// for the same reason it is: the label records a REQUEST, and the answer
-// arrives as a comment, which is what makes the issue a candidate again.
+// it"). Escalated is a triage hold (#1060): the issue is out of triage's
+// reach until a person removes the label, which is the person's answer.
 //
 // BOTH CONDITIONS ARE REQUIRED. A not-actionable that named no reason is never
 // closed however permissive the binding, and a binding that has not opted in
@@ -1208,9 +1297,34 @@ func (s *triageRun) applyNotActionable(ctx context.Context, issue ForgeIssue, ve
 
 // comment posts the verdict a person reads, tagged so a later pass can find
 // triage's own last word on the issue.
+//
+// A VERDICT MATERIALLY IDENTICAL TO TRIAGE'S LAST ONE IS NOT POSTED AGAIN.
+// A merge reopens a parked verdict (headMovedSince), which is right — the tree
+// it judged is gone — but a re-judgement that reaches the same verdict has
+// nothing to tell the reader, and posting it anyway put the same "duplicate of
+// #981" on go-quicbaas#1013 once per merge, sixteen times over. "The same" is
+// deliberately narrow (sameTriageVerdict): a duplicate of the same issue, or
+// any other outcome with the same body — so a new needs-info question is
+// always posted.
+//
+// A SUPPRESSED VERDICT STILL RECORDS THE HEAD IT WAS FORMED AGAINST. Posting is
+// what normally records it (the comment's head marker); without a comment the
+// next sweep would see the head still "moved" and spend a model turn reaching
+// the same verdict again, every sweep. The runner remembers the evaluated head
+// instead (TriageRunner.noteEvaluated), which spokenToSinceTriage consults.
 func (s *triageRun) comment(ctx context.Context, issue ForgeIssue, verdict TriageVerdict, reply string) error {
-	body := TriageComment(verdict, triageEvidence(reply))
+	evidence := triageEvidence(reply)
+	body := TriageComment(verdict, evidence)
 	if strings.TrimSpace(body) == "" {
+		return nil
+	}
+	if last, ok := lastTriageComment(s.discussions[issue.Number]); ok && sameTriageVerdict(last.Body, verdict, evidence) {
+		if s.runner != nil {
+			s.runner.noteEvaluated(s.evaluatedKey(issue), strings.TrimSpace(s.headSHA))
+		}
+		s.job.Audit("sdlc:triage_unchanged", "issue="+strconv.Itoa(issue.Number)+
+			" outcome="+verdict.Outcome.String()+" head="+s.headSHA+
+			" reason=the verdict is the one already posted; not posted again")
 		return nil
 	}
 	body += "\n<!-- " + triageCommentMarker +
@@ -1220,6 +1334,76 @@ func (s *triageRun) comment(ctx context.Context, issue ForgeIssue, verdict Triag
 		return &TriageVerdictError{Issue: issue.Number, Reason: "the verdict could not be posted", Cause: err}
 	}
 	return nil
+}
+
+// evaluatedKey names one issue of this run's repository, whatever the head.
+func (s *triageRun) evaluatedKey(issue ForgeIssue) string {
+	return s.repo.String() + "#" + strconv.Itoa(issue.Number)
+}
+
+// noteEvaluated records that the issue at key was judged at head and its
+// verdict was the one already posted. One entry per issue, overwritten as the
+// head moves, so the record is bounded by the backlog, not by history.
+func (r *TriageRunner) noteEvaluated(key, head string) {
+	r.evaluatedMu.Lock()
+	defer r.evaluatedMu.Unlock()
+	if r.evaluated == nil {
+		r.evaluated = map[string]string{}
+	}
+	r.evaluated[key] = head
+}
+
+// evaluatedAt reports whether the issue at key was last judged at head.
+func (r *TriageRunner) evaluatedAt(key, head string) bool {
+	r.evaluatedMu.Lock()
+	defer r.evaluatedMu.Unlock()
+	return head != "" && r.evaluated[key] == head
+}
+
+// lastTriageComment returns the newest comment triage posted on a thread.
+func lastTriageComment(comments []ForgeComment) (ForgeComment, bool) {
+	var last ForgeComment
+	found := false
+	for _, comment := range comments {
+		if !strings.Contains(comment.Body, triageCommentMarker) {
+			continue
+		}
+		if found && comment.Created.Before(last.Created) {
+			continue
+		}
+		last = comment
+		found = true
+	}
+	return last, found
+}
+
+// sameTriageVerdict reports whether a posted triage comment is materially the
+// verdict about to be posted, given its evidence:
+//
+//   - a DUPLICATE is the same when it names the same issue — the headline line
+//     carries the target — because the prose around "this is #981's work" is
+//     not news;
+//   - every other outcome is the same only when its whole body is, compared
+//     with whitespace normalised. A needs-info comment IS its question, so two
+//     different questions are two verdicts and both are posted.
+func sameTriageVerdict(posted string, verdict TriageVerdict, evidence string) bool {
+	if triageVerdictCode(posted) != string(verdict.Outcome) {
+		return false
+	}
+	postedBody, _, _ := strings.Cut(posted, "<!-- "+triageCommentMarker)
+	if verdict.Outcome == TriageOutcomeDuplicate {
+		headline, _, _ := strings.Cut(TriageComment(verdict, ""), "\n")
+		postedHeadline, _, _ := strings.Cut(postedBody, "\n")
+		return strings.TrimSpace(headline) != "" && strings.TrimSpace(headline) == strings.TrimSpace(postedHeadline)
+	}
+	want := normalizeTriageBody(TriageComment(verdict, evidence))
+	return want != "" && want == normalizeTriageBody(postedBody)
+}
+
+// normalizeTriageBody collapses whitespace so a re-wrapped line is not a new
+// verdict.
+func normalizeTriageBody(body string) string {
+	return strings.Join(strings.Fields(body), " ")
 }
 
 // triageEvidence is the agent's own text with its declaration lines removed:
@@ -1255,26 +1439,12 @@ func (s *triageRun) cleanup(ctx context.Context) (orchestration.JobState, error)
 	return "", nil
 }
 
-// triageAgent picks the agent this project triages with, most specific first:
-// the project's own Triage, then the NODE's default, then the project's
-// worker.
-//
-// THE NODE DEFAULT IS THE RUNG THAT WAS MISSING, and its absence had one
-// consequence: every project fell straight through to its worker, so a fleet
-// that writes code with a frontier model also re-read every open issue on
-// every sweep with that model. Triage writes nothing — it decides whether an
-// issue is already satisfied, duplicated or moot — and it is by volume the
-// most-run job the factory has.
-//
-// A RUNG IS TAKEN ONLY IF IT NAMES A BACKEND. A model with no backend is not a
-// selection, and treating it as one would spawn the wrong runtime with the
-// right model name.
-func (s *triageRun) triageAgent() WorkerConfig {
-	if strings.TrimSpace(s.binding.Triage.Backend) != "" {
-		return s.binding.Triage
+// triageAgent picks the Agent or pool this project triages with; see
+// TriageAgentPolicy.For for the order and why the node default matters.
+func (s *triageRun) triageAgent(ctx context.Context) (orchestration.AgentRef, error) {
+	var policy TriageAgentPolicy
+	if s.runner != nil {
+		policy = s.runner.triageAgents
 	}
-	if s.runner != nil && strings.TrimSpace(s.runner.defaultAgent.Backend) != "" {
-		return s.runner.defaultAgent
-	}
-	return s.binding.Worker
+	return policy.For(ctx, s.job.TenantID, s.binding)
 }

@@ -28,50 +28,50 @@ import (
 // rather than by how long the test took to run.
 var fleetClock = time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
 
-// erroringAgentRegistry answers every listing with one failure. It is the
+// erroringFleetRegistry answers every listing with one failure. It is the
 // undecidable case: a registry that cannot be read has not reported an empty
 // fleet.
-type erroringAgentRegistry struct {
-	AgentRegistry
+type erroringFleetRegistry struct {
+	FleetRegistry
 	err error
 }
 
-func (r *erroringAgentRegistry) ListAgents(context.Context, string, *AgentFilter) ([]*AgentRegistration, error) {
+func (r *erroringFleetRegistry) ListFleetNodes(context.Context, string, *FleetNodeFilter) ([]*FleetNode, error) {
 	return nil, r.err
 }
 
-// staticAgentRegistry answers listings from records the test wrote verbatim.
+// staticFleetRegistry answers listings from records the test wrote verbatim.
 //
 // A DOUBLE RATHER THAN THE REAL REGISTRY, and for one specific reason: both
-// RegisterAgent and UpdateAgent stamp LastSeen with the wall clock, so a record
+// RegisterFleetNode and UpdateFleetNode stamp LastSeen with the wall clock, so a record
 // whose heartbeat age is the thing under test cannot be written through them.
 // The liveness rule is what these cases exercise, and it reads the field.
-type staticAgentRegistry struct {
-	AgentRegistry
-	byTenant map[string][]*AgentRegistration
+type staticFleetRegistry struct {
+	FleetRegistry
+	byTenant map[string][]*FleetNode
 }
 
-func (r *staticAgentRegistry) ListAgents(_ context.Context, tenantID string, _ *AgentFilter) ([]*AgentRegistration, error) {
+func (r *staticFleetRegistry) ListFleetNodes(_ context.Context, tenantID string, _ *FleetNodeFilter) ([]*FleetNode, error) {
 	return r.byTenant[tenantID], nil
 }
 
 // fleetDaemonRecord is one daemon's registration with a reported slot count and
 // a heartbeat age relative to fleetClock.
-func fleetDaemonRecord(tenantID, agentID string, slots int, lastSeenAgo time.Duration) *AgentRegistration {
-	agent := enrolledAgent(tenantID, agentID, "cn-"+agentID, "10.0.0.1:9090", "claude")
+func fleetDaemonRecord(tenantID, nodeID string, slots int, lastSeenAgo time.Duration) *FleetNode {
+	agent := enrolledAgent(tenantID, nodeID, "cn-"+nodeID, "10.0.0.1:9090", "claude")
 	agent.MaxConcurrentJobs = slots
-	agent.Status = AgentStatusIdle
+	agent.Status = FleetNodeStatusIdle
 	agent.LastSeen = fleetClock.Add(-lastSeenAgo).UnixNano()
 	return agent
 }
 
 // staticFleet assembles a registry over the records given, keyed by tenant.
-func staticFleet(agents ...*AgentRegistration) AgentRegistry {
-	byTenant := make(map[string][]*AgentRegistration, len(agents))
+func staticFleet(agents ...*FleetNode) FleetRegistry {
+	byTenant := make(map[string][]*FleetNode, len(agents))
 	for _, agent := range agents {
 		byTenant[agent.TenantID] = append(byTenant[agent.TenantID], agent)
 	}
-	return &staticAgentRegistry{byTenant: byTenant}
+	return &staticFleetRegistry{byTenant: byTenant}
 }
 
 // =============================================================================
@@ -137,7 +137,7 @@ func TestAgentFleetCapacity_SumsTheLiveDaemonsSlots(t *testing.T) {
 		fleetDaemonRecord("t2", "agent-3", 1, time.Second),
 	)
 
-	reader, err := NewAgentFleetCapacity(&fakeTenantLister{ids: []string{"t1", "t2"}}, registry, time.Minute)
+	reader, err := NewRegistryFleetCapacity(&fakeTenantLister{ids: []string{"t1", "t2"}}, registry, time.Minute)
 	require.NoError(t, err)
 
 	got, err := reader.FleetCapacity(context.Background(), fleetClock)
@@ -161,7 +161,7 @@ func TestAgentFleetCapacity_ADaemonThatReportedNothingLeavesTheAxisUndeclared(t 
 		fleetDaemonRecord("t1", "agent-2", 0, time.Second),
 	)
 
-	reader, err := NewAgentFleetCapacity(&fakeTenantLister{ids: []string{"t1"}}, registry, time.Minute)
+	reader, err := NewRegistryFleetCapacity(&fakeTenantLister{ids: []string{"t1"}}, registry, time.Minute)
 	require.NoError(t, err)
 
 	got, err := reader.FleetCapacity(context.Background(), fleetClock)
@@ -177,7 +177,7 @@ func TestAgentFleetCapacity_ADaemonThatReportedNothingLeavesTheAxisUndeclared(t 
 func TestAgentFleetCapacity_AnEmptyRegistryIsUndeclaredNotZero(t *testing.T) {
 	t.Parallel()
 
-	reader, err := NewAgentFleetCapacity(&fakeTenantLister{ids: []string{"t1"}}, NewInMemoryAgentRegistry(), 0)
+	reader, err := NewRegistryFleetCapacity(&fakeTenantLister{ids: []string{"t1"}}, NewInMemoryFleetRegistry(), 0)
 	require.NoError(t, err)
 
 	got, err := reader.FleetCapacity(context.Background(), fleetClock)
@@ -192,13 +192,13 @@ func TestAgentFleetCapacity_AnEmptyRegistryIsUndeclaredNotZero(t *testing.T) {
 func TestAgentFleetCapacity_StopsCountingADaemonThatLeft(t *testing.T) {
 	t.Parallel()
 
-	cases := map[string]func(*AgentRegistration){
-		"stale heartbeat": func(a *AgentRegistration) { a.LastSeen = fleetClock.Add(-time.Hour).UnixNano() },
-		"never seen":      func(a *AgentRegistration) { a.LastSeen = 0 },
-		"disabled":        func(a *AgentRegistration) { a.Status = AgentStatusDisabled },
-		"disabled_at":     func(a *AgentRegistration) { a.DisabledAt = fleetClock.UnixNano() },
-		"offline":         func(a *AgentRegistration) { a.Status = AgentStatusOffline },
-		"errored":         func(a *AgentRegistration) { a.Status = AgentStatusError },
+	cases := map[string]func(*FleetNode){
+		"stale heartbeat": func(a *FleetNode) { a.LastSeen = fleetClock.Add(-time.Hour).UnixNano() },
+		"never seen":      func(a *FleetNode) { a.LastSeen = 0 },
+		"disabled":        func(a *FleetNode) { a.Status = FleetNodeStatusDisabled },
+		"disabled_at":     func(a *FleetNode) { a.DisabledAt = fleetClock.UnixNano() },
+		"offline":         func(a *FleetNode) { a.Status = FleetNodeStatusOffline },
+		"errored":         func(a *FleetNode) { a.Status = FleetNodeStatusError },
 	}
 	for name, leave := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -207,7 +207,7 @@ func TestAgentFleetCapacity_StopsCountingADaemonThatLeft(t *testing.T) {
 			gone := fleetDaemonRecord("t1", "agent-2", 9, time.Second)
 			leave(gone)
 
-			reader, err := NewAgentFleetCapacity(&fakeTenantLister{ids: []string{"t1"}},
+			reader, err := NewRegistryFleetCapacity(&fakeTenantLister{ids: []string{"t1"}},
 				staticFleet(alive, gone), time.Minute)
 			require.NoError(t, err)
 
@@ -226,8 +226,8 @@ func TestAgentFleetCapacity_FailsClosedOnAnUnreadableStore(t *testing.T) {
 	t.Parallel()
 
 	broken := errors.New("registry down")
-	reader, err := NewAgentFleetCapacity(&fakeTenantLister{ids: []string{"t1"}},
-		&erroringAgentRegistry{err: broken}, time.Minute)
+	reader, err := NewRegistryFleetCapacity(&fakeTenantLister{ids: []string{"t1"}},
+		&erroringFleetRegistry{err: broken}, time.Minute)
 	require.NoError(t, err)
 
 	got, err := reader.FleetCapacity(context.Background(), fleetClock)
@@ -243,7 +243,7 @@ func TestAgentFleetCapacity_FailsClosedOnAnUnreadableTenantList(t *testing.T) {
 	t.Parallel()
 
 	broken := errors.New("tenants down")
-	reader, err := NewAgentFleetCapacity(&fakeTenantLister{err: broken}, NewInMemoryAgentRegistry(), time.Minute)
+	reader, err := NewRegistryFleetCapacity(&fakeTenantLister{err: broken}, NewInMemoryFleetRegistry(), time.Minute)
 	require.NoError(t, err)
 
 	_, err = reader.FleetCapacity(context.Background(), fleetClock)
@@ -257,7 +257,7 @@ func TestAgentFleetCapacity_FailsClosedOnAnUnreadableTenantList(t *testing.T) {
 func TestAgentFleetCapacity_HonoursACancelledContext(t *testing.T) {
 	t.Parallel()
 
-	reader, err := NewAgentFleetCapacity(&fakeTenantLister{ids: []string{"t1", "t2"}}, NewInMemoryAgentRegistry(), time.Minute)
+	reader, err := NewRegistryFleetCapacity(&fakeTenantLister{ids: []string{"t1", "t2"}}, NewInMemoryFleetRegistry(), time.Minute)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -273,13 +273,13 @@ func TestNewAgentFleetCapacity_RefusesAnUnusableWiring(t *testing.T) {
 	t.Parallel()
 
 	tenants := &fakeTenantLister{ids: []string{"t1"}}
-	registry := NewInMemoryAgentRegistry()
+	registry := NewInMemoryFleetRegistry()
 
 	cases := map[string]func() (FleetCapacityReader, error){
-		"no tenants":  func() (FleetCapacityReader, error) { return NewAgentFleetCapacity(nil, registry, time.Minute) },
-		"no registry": func() (FleetCapacityReader, error) { return NewAgentFleetCapacity(tenants, nil, time.Minute) },
+		"no tenants":  func() (FleetCapacityReader, error) { return NewRegistryFleetCapacity(nil, registry, time.Minute) },
+		"no registry": func() (FleetCapacityReader, error) { return NewRegistryFleetCapacity(tenants, nil, time.Minute) },
 		"negative staleness": func() (FleetCapacityReader, error) {
-			return NewAgentFleetCapacity(tenants, registry, -time.Second)
+			return NewRegistryFleetCapacity(tenants, registry, -time.Second)
 		},
 	}
 	for name, build := range cases {
@@ -301,7 +301,7 @@ func TestNewFleetCapacity_TheTighterBoundBinds(t *testing.T) {
 	t.Parallel()
 
 	registry := staticFleet(fleetDaemonRecord("t1", "agent-1", 6, time.Second))
-	measured, err := NewAgentFleetCapacity(&fakeTenantLister{ids: []string{"t1"}}, registry, time.Minute)
+	measured, err := NewRegistryFleetCapacity(&fakeTenantLister{ids: []string{"t1"}}, registry, time.Minute)
 	require.NoError(t, err)
 
 	t.Run("the operator asked for less than the hardware could serve", func(t *testing.T) {
@@ -344,7 +344,7 @@ func TestNewFleetCapacity_OneSourceIsEnough(t *testing.T) {
 	t.Run("no operator ceiling", func(t *testing.T) {
 		t.Parallel()
 		registry := staticFleet(fleetDaemonRecord("t1", "agent-1", 4, time.Second))
-		measured, err := NewAgentFleetCapacity(&fakeTenantLister{ids: []string{"t1"}}, registry, time.Minute)
+		measured, err := NewRegistryFleetCapacity(&fakeTenantLister{ids: []string{"t1"}}, registry, time.Minute)
 		require.NoError(t, err)
 
 		combined, err := NewFleetCapacity(0, measured)
@@ -357,7 +357,7 @@ func TestNewFleetCapacity_OneSourceIsEnough(t *testing.T) {
 
 	t.Run("neither answers", func(t *testing.T) {
 		t.Parallel()
-		measured, err := NewAgentFleetCapacity(&fakeTenantLister{ids: []string{"t1"}}, NewInMemoryAgentRegistry(), time.Minute)
+		measured, err := NewRegistryFleetCapacity(&fakeTenantLister{ids: []string{"t1"}}, NewInMemoryFleetRegistry(), time.Minute)
 		require.NoError(t, err)
 		combined, err := NewFleetCapacity(0, measured)
 		require.NoError(t, err)
@@ -374,7 +374,7 @@ func TestNewFleetCapacity_AnUnmeasurableFleetFallsBackToTheOperatorsNumber(t *te
 	t.Parallel()
 
 	registry := staticFleet(fleetDaemonRecord("t1", "agent-1", 0, time.Second))
-	measured, err := NewAgentFleetCapacity(&fakeTenantLister{ids: []string{"t1"}}, registry, time.Minute)
+	measured, err := NewRegistryFleetCapacity(&fakeTenantLister{ids: []string{"t1"}}, registry, time.Minute)
 	require.NoError(t, err)
 
 	combined, err := NewFleetCapacity(7, measured)
@@ -393,8 +393,8 @@ func TestNewFleetCapacity_PropagatesAMeasurementFailure(t *testing.T) {
 	t.Parallel()
 
 	broken := errors.New("registry down")
-	measured, err := NewAgentFleetCapacity(&fakeTenantLister{ids: []string{"t1"}},
-		&erroringAgentRegistry{err: broken}, time.Minute)
+	measured, err := NewRegistryFleetCapacity(&fakeTenantLister{ids: []string{"t1"}},
+		&erroringFleetRegistry{err: broken}, time.Minute)
 	require.NoError(t, err)
 
 	combined, err := NewFleetCapacity(7, measured)
@@ -421,16 +421,16 @@ func TestNewFleetCapacity_RefusesANegativeCeiling(t *testing.T) {
 func TestHeartbeat_ReconcilesTheReportedCapacity(t *testing.T) {
 	t.Parallel()
 
-	registry := NewInMemoryAgentRegistry()
+	registry := NewInMemoryFleetRegistry()
 	ctx := context.Background()
 	agent := enrolledAgent("t", "agent-1", "cn-1", "10.0.0.1:9090", "claude")
 	agent.MaxConcurrentJobs = 2
-	require.NoError(t, registry.RegisterAgent(ctx, agent))
+	require.NoError(t, registry.RegisterFleetNode(ctx, agent))
 
 	require.NoError(t, registry.Heartbeat(ctx, "t", "agent-1",
-		&AgentObservation{Backends: []string{"claude"}, MaxConcurrentJobs: 5}))
+		&FleetNodeObservation{Backends: []string{"claude"}, MaxConcurrentJobs: 5}))
 
-	stored, err := registry.GetAgent(ctx, "t", "agent-1")
+	stored, err := registry.GetFleetNode(ctx, "t", "agent-1")
 	require.NoError(t, err)
 	assert.Equal(t, 5, stored.MaxConcurrentJobs)
 }
@@ -442,16 +442,16 @@ func TestHeartbeat_ReconcilesTheReportedCapacity(t *testing.T) {
 func TestHeartbeat_AnUnreportedCapacityLeavesTheRecordAlone(t *testing.T) {
 	t.Parallel()
 
-	registry := NewInMemoryAgentRegistry()
+	registry := NewInMemoryFleetRegistry()
 	ctx := context.Background()
 	agent := enrolledAgent("t", "agent-1", "cn-1", "10.0.0.1:9090", "claude")
 	agent.MaxConcurrentJobs = 3
-	require.NoError(t, registry.RegisterAgent(ctx, agent))
+	require.NoError(t, registry.RegisterFleetNode(ctx, agent))
 
 	require.NoError(t, registry.Heartbeat(ctx, "t", "agent-1",
-		&AgentObservation{Backends: []string{"claude"}}))
+		&FleetNodeObservation{Backends: []string{"claude"}}))
 
-	stored, err := registry.GetAgent(ctx, "t", "agent-1")
+	stored, err := registry.GetFleetNode(ctx, "t", "agent-1")
 	require.NoError(t, err)
 	assert.Equal(t, 3, stored.MaxConcurrentJobs, "an unreported count must not erase a reported one")
 }
@@ -462,12 +462,12 @@ func TestHeartbeat_AnUnreportedCapacityLeavesTheRecordAlone(t *testing.T) {
 func TestReconcileAgentCapacity_IgnoresWhatItCannotAct(t *testing.T) {
 	t.Parallel()
 
-	assert.False(t, reconcileAgentCapacity(nil, &AgentObservation{MaxConcurrentJobs: 4}))
-	assert.False(t, reconcileAgentCapacity(&AgentRegistration{}, nil))
-	assert.False(t, reconcileAgentCapacity(&AgentRegistration{MaxConcurrentJobs: 4},
-		&AgentObservation{MaxConcurrentJobs: -1}), "a negative count is not a capacity")
-	assert.False(t, reconcileAgentCapacity(&AgentRegistration{MaxConcurrentJobs: 4},
-		&AgentObservation{MaxConcurrentJobs: 4}), "reporting the count already held changes nothing")
+	assert.False(t, reconcileFleetNodeCapacity(nil, &FleetNodeObservation{MaxConcurrentJobs: 4}))
+	assert.False(t, reconcileFleetNodeCapacity(&FleetNode{}, nil))
+	assert.False(t, reconcileFleetNodeCapacity(&FleetNode{MaxConcurrentJobs: 4},
+		&FleetNodeObservation{MaxConcurrentJobs: -1}), "a negative count is not a capacity")
+	assert.False(t, reconcileFleetNodeCapacity(&FleetNode{MaxConcurrentJobs: 4},
+		&FleetNodeObservation{MaxConcurrentJobs: 4}), "reporting the count already held changes nothing")
 }
 
 // TestAgentObservation_RefusesANegativeCapacity: the contract's own refusal. A
@@ -476,8 +476,8 @@ func TestReconcileAgentCapacity_IgnoresWhatItCannotAct(t *testing.T) {
 func TestAgentObservation_RefusesANegativeCapacity(t *testing.T) {
 	t.Parallel()
 
-	observed := &AgentObservation{Backends: []string{"claude"}, MaxConcurrentJobs: -2}
-	assert.ErrorIs(t, observed.Validate(), ErrAgentRegistryInvalidInput)
+	observed := &FleetNodeObservation{Backends: []string{"claude"}, MaxConcurrentJobs: -2}
+	assert.ErrorIs(t, observed.Validate(), ErrFleetRegistryInvalidInput)
 }
 
 // TestAgentObservation_AcceptsAnUnreportedCapacity is the other half: zero is the
@@ -485,7 +485,7 @@ func TestAgentObservation_RefusesANegativeCapacity(t *testing.T) {
 func TestAgentObservation_AcceptsAnUnreportedCapacity(t *testing.T) {
 	t.Parallel()
 
-	observed := &AgentObservation{Backends: []string{"claude"}}
+	observed := &FleetNodeObservation{Backends: []string{"claude"}}
 	assert.NoError(t, observed.Validate())
 }
 
@@ -516,7 +516,7 @@ func TestFleetCapacitySource_String(t *testing.T) {
 func TestFleetAgentAlive_ToleratesANilRecord(t *testing.T) {
 	t.Parallel()
 
-	assert.False(t, AgentAlive(nil, fleetClock, time.Minute))
+	assert.False(t, FleetNodeAlive(nil, fleetClock, time.Minute))
 }
 
 // TestFleetAgentAlive_CountsADaemonHeartbeatingNow is the positive case the
@@ -525,7 +525,7 @@ func TestFleetAgentAlive_ToleratesANilRecord(t *testing.T) {
 func TestFleetAgentAlive_CountsADaemonHeartbeatingNow(t *testing.T) {
 	t.Parallel()
 
-	assert.True(t, AgentAlive(
+	assert.True(t, FleetNodeAlive(
 		fleetDaemonRecord("t1", "agent-1", 2, time.Second), fleetClock, time.Minute))
 }
 

@@ -142,6 +142,120 @@ func handleSDLCConformance(ctx context.Context, svc service.QuicBaaS, req interf
 	return sdlcConformanceFromDomain(report), nil
 }
 
+// handleSDLCOpenWork reads a bound project's open work from its forge.
+func handleSDLCOpenWork(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*sdlc.OpenWorkRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "OpenWork", "*sdlc.OpenWorkRequest", reflect.TypeOf(req).String())
+	}
+	sdlcSvc, err := sdlcServiceOf(svc, "OpenWork")
+	if err != nil {
+		return nil, err
+	}
+	work, err := sdlcSvc.OpenWork(ctx, r.TenantID, r.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	return sdlcOpenWorkFromDomain(work), nil
+}
+
+// handleSDLCReviewer reads which reviewer profile reviews one pull request.
+func handleSDLCReviewer(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*sdlc.ReviewerRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "Reviewer", "*sdlc.ReviewerRequest", reflect.TypeOf(req).String())
+	}
+	sdlcSvc, err := sdlcServiceOf(svc, "Reviewer")
+	if err != nil {
+		return nil, err
+	}
+	selection, err := sdlcSvc.ReviewerSelection(ctx, r.TenantID, r.ProjectID, r.PullRequest)
+	if err != nil {
+		return nil, err
+	}
+	return sdlcReviewerSelectionFromDomain(selection), nil
+}
+
+// handleSDLCSetReviewer records an operator's reviewer choice for one pull
+// request.
+func handleSDLCSetReviewer(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*sdlc.SetReviewerRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "SetReviewer", "*sdlc.SetReviewerRequest", reflect.TypeOf(req).String())
+	}
+	sdlcSvc, err := sdlcServiceOf(svc, "SetReviewer")
+	if err != nil {
+		return nil, err
+	}
+	selection, err := sdlcSvc.SetReviewerOverride(ctx, r.TenantID, r.ProjectID, r.PullRequest, r.Profile)
+	if err != nil {
+		return nil, err
+	}
+	return sdlcReviewerSelectionFromDomain(selection), nil
+}
+
+// handleSDLCClearReviewer removes one pull request's reviewer override.
+func handleSDLCClearReviewer(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*sdlc.ReviewerRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "ClearReviewer", "*sdlc.ReviewerRequest", reflect.TypeOf(req).String())
+	}
+	sdlcSvc, err := sdlcServiceOf(svc, "ClearReviewer")
+	if err != nil {
+		return nil, err
+	}
+	selection, err := sdlcSvc.ClearReviewerOverride(ctx, r.TenantID, r.ProjectID, r.PullRequest)
+	if err != nil {
+		return nil, err
+	}
+	return sdlcReviewerSelectionFromDomain(selection), nil
+}
+
+// handleSDLCFileIssue files an issue on a bound project's repository: an
+// audited operator verb.
+func handleSDLCFileIssue(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*sdlc.FileIssueRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "FileIssue", "*sdlc.FileIssueRequest", reflect.TypeOf(req).String())
+	}
+	sdlcSvc, err := sdlcServiceOf(svc, "FileIssue")
+	if err != nil {
+		return nil, err
+	}
+	issue, err := sdlcSvc.FileIssue(ctx, r.TenantID, r.ProjectID, pkgsdlc.IssueFiling{
+		Title: r.Title, Body: r.Body, Labels: append([]string(nil), r.Labels...), Parent: r.Parent,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &sdlc.ForgeIssue{
+		Number: issue.Number, Title: issue.Title, Body: issue.Body, State: issue.State,
+		Labels: append([]string(nil), issue.Labels...), Author: issue.Author, URL: issue.URL,
+	}, nil
+}
+
+// handleSDLCCollaborators lists the accounts that may rule on a bound
+// project's repository.
+func handleSDLCCollaborators(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*sdlc.CollaboratorsRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "Collaborators", "*sdlc.CollaboratorsRequest", reflect.TypeOf(req).String())
+	}
+	sdlcSvc, err := sdlcServiceOf(svc, "Collaborators")
+	if err != nil {
+		return nil, err
+	}
+	listed, err := sdlcSvc.Collaborators(ctx, r.TenantID, r.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	users := make([]sdlc.ForgeUser, 0, len(listed))
+	for _, user := range listed {
+		users = append(users, sdlc.ForgeUser{Login: user.Login, FullName: user.FullName})
+	}
+	return &sdlc.CollaboratorsResponse{Users: users, Count: len(users)}, nil
+}
+
 // handleSDLCForges answers the forge adapters this build carries. Build
 // capability, not tenant data, so the request carries nothing and no tenant is
 // derived; the module-not-running answer stays ErrUnavailable, distinct from
@@ -174,17 +288,19 @@ func sdlcBindingToDomain(b *sdlc.ProjectBinding) *pkgsdlc.ProjectBinding {
 			TriggerLabel: b.Forge.TriggerLabel, WebhookSecretRef: b.Forge.WebhookSecretRef, TokenSecretRef: b.Forge.TokenSecretRef,
 			SSHHostKey: b.Forge.SSHHostKey,
 		},
-		Reviewer: pkgsdlc.ReviewerConfig{
-			Backend: b.Reviewer.Backend, Model: b.Reviewer.Model, Image: b.Reviewer.Image,
-			Login: b.Reviewer.Login, TokenSecretRef: b.Reviewer.TokenSecretRef,
-			StatusContext: b.Reviewer.StatusContext,
-		},
-		Discovery:      pkgsdlc.DiscoveryMode(b.Discovery),
-		TriageMayClose: b.TriageMayClose,
-		Triage:         pkgsdlc.WorkerConfig{Backend: b.Triage.Backend, Model: b.Triage.Model, Image: b.Triage.Image},
-		Strategy:       b.Strategy,
-		Worker:         pkgsdlc.WorkerConfig{Backend: b.Worker.Backend, Model: b.Worker.Model, Image: b.Worker.Image},
-		Verification:   append([]string(nil), b.Verification...),
+		Reviewer:           sdlcReviewerToDomain(b.Reviewer),
+		Reviewers:          sdlcReviewersToDomain(b.Reviewers),
+		Discovery:          pkgsdlc.DiscoveryMode(b.Discovery),
+		TriageMayClose:     b.TriageMayClose,
+		WorkerPromptAppend: b.WorkerPromptAppend,
+		TriagePromptAppend: b.TriagePromptAppend,
+		Rulers:             append([]string(nil), b.Rulers...),
+		MergeTrain:         pkgsdlc.MergeTrainPolicy{Disabled: b.MergeTrain.Disabled, MaxSize: b.MergeTrain.MaxSize},
+		Clustering:         pkgsdlc.ClusteringPolicy{Disabled: b.Clustering.Disabled, MaxSize: b.Clustering.MaxSize},
+		Triage:             agentRefToDomain(b.Triage),
+		Strategy:           b.Strategy,
+		Worker:             agentRefToDomain(b.Worker),
+		Verification:       append([]string(nil), b.Verification...),
 		Review: pkgsdlc.ReviewPolicy{
 			RequiredApprovals: b.Review.RequiredApprovals, RequireIndependentReviewer: b.Review.RequireIndependentReviewer,
 			RequireGreenChecks: b.Review.RequireGreenChecks, ChecksSettleWindow: b.Review.ChecksSettleWindow, Reviewers: b.Review.Reviewers,
@@ -216,17 +332,19 @@ func sdlcBindingFromDomain(b *pkgsdlc.ProjectBinding) *sdlc.ProjectBinding {
 			TriggerLabel: b.Forge.TriggerLabel, WebhookSecretRef: b.Forge.WebhookSecretRef, TokenSecretRef: b.Forge.TokenSecretRef,
 			SSHHostKey: b.Forge.SSHHostKey,
 		},
-		Reviewer: sdlc.ReviewerConfig{
-			Backend: b.Reviewer.Backend, Model: b.Reviewer.Model, Image: b.Reviewer.Image,
-			Login: b.Reviewer.Login, TokenSecretRef: b.Reviewer.TokenSecretRef,
-			StatusContext: b.Reviewer.StatusContext,
-		},
-		Discovery:      string(b.Discovery),
-		TriageMayClose: b.TriageMayClose,
-		Triage:         sdlc.WorkerConfig{Backend: b.Triage.Backend, Model: b.Triage.Model, Image: b.Triage.Image},
-		Strategy:       b.Strategy,
-		Worker:         sdlc.WorkerConfig{Backend: b.Worker.Backend, Model: b.Worker.Model, Image: b.Worker.Image},
-		Verification:   append([]string(nil), b.Verification...),
+		Reviewer:           sdlcReviewerFromDomain(b.Reviewer),
+		Reviewers:          sdlcReviewersFromDomain(b.Reviewers),
+		Discovery:          string(b.Discovery),
+		TriageMayClose:     b.TriageMayClose,
+		WorkerPromptAppend: b.WorkerPromptAppend,
+		TriagePromptAppend: b.TriagePromptAppend,
+		Rulers:             append([]string(nil), b.Rulers...),
+		MergeTrain:         sdlc.MergeTrainPolicy{Disabled: b.MergeTrain.Disabled, MaxSize: b.MergeTrain.MaxSize},
+		Clustering:         sdlc.ClusteringPolicy{Disabled: b.Clustering.Disabled, MaxSize: b.Clustering.MaxSize},
+		Triage:             agentRefFromDomain(b.Triage),
+		Strategy:           b.Strategy,
+		Worker:             agentRefFromDomain(b.Worker),
+		Verification:       append([]string(nil), b.Verification...),
 		Review: sdlc.ReviewPolicy{
 			RequiredApprovals: b.Review.RequiredApprovals, RequireIndependentReviewer: b.Review.RequireIndependentReviewer,
 			RequireGreenChecks: b.Review.RequireGreenChecks, ChecksSettleWindow: b.Review.ChecksSettleWindow, Reviewers: b.Review.Reviewers,
@@ -244,6 +362,68 @@ func sdlcBindingFromDomain(b *pkgsdlc.ProjectBinding) *sdlc.ProjectBinding {
 			LabelColors:            b.Onboarding.LabelColors,
 		},
 		CreatedAt: b.CreatedAt, UpdatedAt: b.UpdatedAt,
+	}
+}
+
+// sdlcReviewerToDomain maps one reviewer profile, every field of it: a bind
+// replaces the record, so a field dropped here is erased by every rebind.
+func sdlcReviewerToDomain(r sdlc.ReviewerConfig) pkgsdlc.ReviewerConfig {
+	return pkgsdlc.ReviewerConfig{
+		Name: r.Name, CountsTowardMerge: copyBoolPtr(r.CountsTowardMerge), Agent: r.Agent,
+		Login: r.Login, TokenSecretRef: r.TokenSecretRef, StatusContext: r.StatusContext,
+		Endpoint: r.Endpoint, HostAffinity: r.HostAffinity, PromptAppend: r.PromptAppend,
+	}
+}
+
+func sdlcReviewerFromDomain(r pkgsdlc.ReviewerConfig) sdlc.ReviewerConfig {
+	return sdlc.ReviewerConfig{
+		Name: r.Name, CountsTowardMerge: copyBoolPtr(r.CountsTowardMerge), Agent: r.Agent,
+		Login: r.Login, TokenSecretRef: r.TokenSecretRef, StatusContext: r.StatusContext,
+		Endpoint: r.Endpoint, HostAffinity: r.HostAffinity, PromptAppend: r.PromptAppend,
+	}
+}
+
+func sdlcReviewersToDomain(rs []sdlc.ReviewerConfig) []pkgsdlc.ReviewerConfig {
+	if len(rs) == 0 {
+		return nil
+	}
+	out := make([]pkgsdlc.ReviewerConfig, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, sdlcReviewerToDomain(r))
+	}
+	return out
+}
+
+func sdlcReviewersFromDomain(rs []pkgsdlc.ReviewerConfig) []sdlc.ReviewerConfig {
+	if len(rs) == 0 {
+		return nil
+	}
+	out := make([]sdlc.ReviewerConfig, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, sdlcReviewerFromDomain(r))
+	}
+	return out
+}
+
+// copyBoolPtr copies a presence-carrying flag, so the two records never share
+// one pointer.
+func copyBoolPtr(b *bool) *bool {
+	if b == nil {
+		return nil
+	}
+	v := *b
+	return &v
+}
+
+func sdlcReviewerSelectionFromDomain(s *pkgsdlc.ReviewerSelection) *sdlc.ReviewerSelection {
+	if s == nil {
+		return nil
+	}
+	return &sdlc.ReviewerSelection{
+		ProjectID: s.ProjectID, PullRequest: s.PullRequest, Profile: s.Profile,
+		Overridden: s.Overridden, CountsTowardMerge: s.CountsTowardMerge,
+		StatusContext: s.StatusContext, UpdatedAt: s.UpdatedAt,
+		Redispatched: s.Redispatched,
 	}
 }
 
@@ -282,6 +462,31 @@ func sdlcConformanceFromDomain(r *pkgsdlc.ConformanceReport) *sdlc.ConformanceRe
 	return out
 }
 
+func sdlcOpenWorkFromDomain(w *pkgsdlc.OpenWork) *sdlc.OpenWork {
+	if w == nil {
+		return nil
+	}
+	out := &sdlc.OpenWork{
+		ProjectID: w.ProjectID, Repo: w.Repo, Agent: w.Agent, ReadAt: w.ReadAt,
+		PullRequests: make([]sdlc.OpenPullRequest, 0, len(w.PullRequests)),
+		Issues:       make([]sdlc.OpenIssue, 0, len(w.Issues)),
+	}
+	for _, pr := range w.PullRequests {
+		out.PullRequests = append(out.PullRequests, sdlc.OpenPullRequest{
+			Number: pr.Number, Title: pr.Title, HeadRef: pr.HeadRef, HeadSHA: pr.HeadSHA,
+			CIState: string(pr.CIState), ReviewState: string(pr.ReviewState), URL: pr.URL,
+			Created: pr.Created, AgeSeconds: pr.AgeSeconds,
+		})
+	}
+	for _, issue := range w.Issues {
+		out.Issues = append(out.Issues, sdlc.OpenIssue{
+			Number: issue.Number, Title: issue.Title, Labels: append([]string(nil), issue.Labels...),
+			URL: issue.URL, Created: issue.Created, AgeSeconds: issue.AgeSeconds,
+		})
+	}
+	return out
+}
+
 func sdlcDeliveryFromDomain(d *pkgsdlc.Delivery) *sdlc.Delivery {
 	if d == nil {
 		return nil
@@ -313,4 +518,26 @@ func sdlcDeliveryFromDomain(d *pkgsdlc.Delivery) *sdlc.Delivery {
 		})
 	}
 	return out
+}
+
+// handleSDLCAdoptIssue hands one forge issue back to the factory.
+func handleSDLCAdoptIssue(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*sdlc.AdoptIssueRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.SDLC", "AdoptIssue", "*sdlc.AdoptIssueRequest", reflect.TypeOf(req).String())
+	}
+	sdlcSvc, err := sdlcServiceOf(svc, "AdoptIssue")
+	if err != nil {
+		return nil, err
+	}
+	adoption, err := sdlcSvc.AdoptIssue(ctx, r.TenantID, pkgsdlc.AdoptIssueRequest{
+		ProjectID: r.ProjectID, Issue: r.Issue, PullRequest: r.PullRequest, Ruling: r.Ruling,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &sdlc.Adoption{
+		TaskID: adoption.TaskID, Issue: adoption.Issue, PullRequest: adoption.PullRequest,
+		Branch: adoption.Branch, Superseded: adoption.Superseded,
+	}, nil
 }

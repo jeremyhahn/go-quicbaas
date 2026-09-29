@@ -48,4 +48,15 @@ var (
 	// drift the shared primitive exists to remove, and a caller matching on
 	// either would otherwise miss half the cases.
 	ErrUnreadableClaimMark = cas.ErrUnreadable
+
+	// ErrUnreadableJobIDCounter indicates the job ID counter record exists
+	// but reads as nothing. Allocation fails closed: an ID allocated past a
+	// counter that cannot be read is an ID allocated from a guess, and a
+	// guess can land on a live job.
+	ErrUnreadableJobIDCounter = errors.New("job ID counter exists but could not be read")
+
+	// ErrJobIDSpaceExhausted indicates the allocatable job ID range — every
+	// ID below scheduler.SystemJobIDFloor — has been used up. Allocating past
+	// it would hand out an ID reserved for a system job.
+	ErrJobIDSpaceExhausted = errors.New("job ID space below the system job floor is exhausted")
 )

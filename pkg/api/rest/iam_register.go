@@ -34,7 +34,7 @@ func (s *Server) registerIAMRoutes(r chi.Router) {
 	// authentication bootstrap itself: the caller authenticates via
 	// its mTLS client certificate on the TLS handshake, and the
 	// handler mints OAuth2 client credentials in return.
-	s.registerAgentRegistrationPublicRoutes(r)
+	s.registerFleetEnrollmentPublicRoutes(r)
 }
 
 // IAMHandler returns the IAMHandler registered on this server, or nil when no

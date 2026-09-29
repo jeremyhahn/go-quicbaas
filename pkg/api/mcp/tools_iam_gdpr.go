@@ -211,7 +211,7 @@ func (r *ToolRegistry) registerGDPRTools() {
 					"description": "Data categories to include (empty means all)",
 					"items": map[string]interface{}{
 						"type": "string",
-						"enum": []string{"profile", "sessions", "consents", "groups", "roles", "audit_logs", "credentials", "mfa"},
+						"enum": []string{"profile", "sessions", "consents", "roles", "audit_logs", "credentials", "mfa"},
 					},
 				},
 				"exclude_categories": map[string]interface{}{
@@ -219,7 +219,7 @@ func (r *ToolRegistry) registerGDPRTools() {
 					"description": "Data categories to exclude",
 					"items": map[string]interface{}{
 						"type": "string",
-						"enum": []string{"profile", "sessions", "consents", "groups", "roles", "audit_logs", "credentials", "mfa"},
+						"enum": []string{"profile", "sessions", "consents", "roles", "audit_logs", "credentials", "mfa"},
 					},
 				},
 			},
@@ -285,7 +285,7 @@ func (r *ToolRegistry) registerGDPRTools() {
 					"description": "Data categories to delete (empty means complete deletion)",
 					"items": map[string]interface{}{
 						"type": "string",
-						"enum": []string{"profile", "sessions", "consents", "groups", "roles", "audit_logs", "credentials", "mfa"},
+						"enum": []string{"profile", "sessions", "consents", "roles", "audit_logs", "credentials", "mfa"},
 					},
 				},
 				"preserve_categories": map[string]interface{}{
@@ -293,7 +293,7 @@ func (r *ToolRegistry) registerGDPRTools() {
 					"description": "Data categories to preserve (for legal holds or compliance)",
 					"items": map[string]interface{}{
 						"type": "string",
-						"enum": []string{"profile", "sessions", "consents", "groups", "roles", "audit_logs", "credentials", "mfa"},
+						"enum": []string{"profile", "sessions", "consents", "roles", "audit_logs", "credentials", "mfa"},
 					},
 				},
 				"grace_period_days": map[string]interface{}{

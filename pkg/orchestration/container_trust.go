@@ -405,6 +405,13 @@ func ContainerConfigDigest(spec *ContainerSpec) (string, error) {
 	w.number("pids_limit", spec.PidsLimit)
 	w.sortedSlice("cap_add", spec.CapAdd)
 	w.sortedSlice("cap_drop", spec.CapDrop)
+	ulimits := sortedUlimits(spec.Ulimits)
+	w.count("ulimits", len(ulimits))
+	for _, u := range ulimits {
+		w.field("ulimit.name", u.Name)
+		w.number("ulimit.soft", u.Soft)
+		w.number("ulimit.hard", u.Hard)
+	}
 	w.slice("entrypoint", spec.Entrypoint)
 	w.slice("command", spec.Command)
 	w.slice("args", spec.Args)

@@ -53,12 +53,14 @@ The only state triage changes is **labels**.
 
 | Verdict | What it does |
 |---|---|
-| **ready** | applies the binding's `TriggerLabel`, and clears a `needs_info` label an earlier pass left. No comment — the label is the message. |
+| **ready** | applies the binding's `TriggerLabel`, and clears a `needs_info` label an earlier pass left. No comment — the label is the message. Held until the pass has judged every candidate, so related ready issues can share a task; see [clustering](#clustering--related-ready-issues-become-one-task). |
 | **needs-info** | comments with exactly what is missing, then applies the binding's `needs_info` label. The comment goes **first**: if only one write lands it must be the one carrying the question. |
 | **not-actionable** | comments with the evidence and leaves the issue alone. No label. |
 
-An issue is **ready** when it states a verifiable objective, is scoped to one
-pull request, has no unresolved dependency on another open issue, is not a
+An issue is **ready** when it states a verifiable objective, is work rather
+than a tracker (a tracking checklist or epic — child issues, checkboxes over
+several changes, or a body that calls itself a tracker — is always
+**not-actionable**), is scoped to one pull request, has no unresolved dependency on another open issue, is not a
 duplicate, is not already done, and the binding's verification commands apply
 to it.
 
@@ -187,6 +189,32 @@ position taken on it, and re-triaging would fight the runner that owns it.
 `needs_info` is not one of those: that verdict is a **question**, and the point
 of asking is that somebody answers.
 
+**A held issue is never judged, and never written to.** An issue carrying the
+portfolio hold `task:blocked` (handbook `labels.md` §3), or the binding's own
+`blocked` or `escalated` label, is passed over before its thread is read, and
+the skip is audited as `sdlc:triage_skipped reason=held label=<label>`. Only the party
+named on the issue clears a hold, and a model's verdict is not that party
+(go-quicbaas#1058: a `task:blocked` issue was judged ready, relabelled
+`task:ready`, adopted, and charged an attempt the worker rightly refused). The
+verdict writer re-reads the issue before its first write and refuses the whole
+verdict — comment and label — when a hold has appeared since the issue was
+listed, or when the re-read fails. The task source refuses a held issue too,
+with readiness verdict `held`, even when it also carries the trigger.
+
+`escalated` is a hold, not a question. It names a person as the next step, so
+a new comment or a moved head does not return the issue to triage; the person
+does, by removing the label. It used to be exempt like `needs_info`, which is
+how a verdict could promote an issue a person had been asked to rule on.
+
+The attempt charged on #1058 (task `b7a8eb05`) stands on the ledger. The
+factory has no path to refund an attempt after it has been charged; refunds
+happen only when the conclusion is applied. This fix also does not reach into
+the running factory's task store. The charge cannot recur: #1058 is held, so
+the task source no longer adopts it, and the task's attempt budget is never
+spent on it again. If an operator wants the ledger corrected, the task record
+is the place to do it, and the cause to cite is a triage fault
+(go-quicbaas#1060).
+
 Labels are not the whole rule, because **two of the three verdicts apply no
 label**. not-actionable and duplicate comment and leave the issue alone by
 design, so a label-only rule would see a bare open issue on the next pass,
@@ -213,6 +241,15 @@ timestamp. needs-info writes a comment and then a **label**, which advances
 triage's own second write as the reporter's answer and re-asks the question on
 the very next pass. Who spoke last cannot be moved by triage's own labelling.
 
+**A merge reopens a verdict; an identical verdict is not posted again.** A
+verdict records the head it was formed against, and a merge makes an answer
+about the old tree stale, so the issue is judged again. When that judgement
+reaches the **same verdict** — the same outcome and the same headline, which
+names the duplicate target when there is one — nothing is posted: the agent's
+prose around it differs every time and is not news. go-quicbaas#1013 collected
+sixteen identical "duplicate of #981" comments before this, one per merge. A
+different verdict, or a different duplicate target, is posted as before.
+
 The cost of the narrowing is a body-only edit with no comment, which is not
 noticed until somebody comments. That is the right way round: a missed
 re-triage costs one human nudge, and the alternative costs a model turn and a
@@ -222,6 +259,85 @@ The thread is read **once** per issue. The candidate filter needs it and so
 does the prompt, so the comments the filter read are the comments the prompt
 renders — two reads would be two forge calls per issue and two views of one
 thread a concurrent comment can make disagree.
+
+## Clustering — related ready issues become one task
+
+Every pull request pays a pipeline, a review and a merge, and each one merged
+makes the next stale. A backlog of small issues against one package paid all
+three once per issue. So triage batches at planning time: the issues a pass
+finds **ready** are admitted together, and related ones become ONE task, one
+branch and one pull request that closes every one of them
+(`pkg/sdlc/triage_cluster.go`, `triage_cluster_apply.go`).
+
+### How related is decided — no model turn
+
+Triage already measures, in its own checkout, the files an issue names and
+the files its backticked identifiers are defined in (the repository facts).
+Those files and the directories that hold them are the issue's **footprint**
+(`TriageFootprint`): the part of the tree its change will most likely touch.
+Two ready issues whose footprints share a file or a package are related. The
+repository root is not a package — every top-level file sits in it — though
+two issues naming the same top-level file still share that file. An issue
+whose text names no code has no footprint and stays alone.
+
+`PlanClusters` takes the ready issues in number order; each joins the first
+group it overlaps that still has room, or starts its own. The lowest-numbered
+issue of a group is therefore its **anchor**, every node plans the same groups
+from the same input, and no chain of overlaps grows a group past `max_size` —
+the issue that would starts the next group.
+
+### What a cluster is on the forge
+
+| Issue | Gets |
+| --- | --- |
+| the anchor | a comment naming its members and the shared code, then the trigger label, **last** |
+| each member | a comment naming the anchor, `needs_info` cleared, the `clustered` display label (when the binding maps one) — **never** the trigger |
+
+The order is the recovery. The cluster **record** (`IssueCluster`, filed under
+every issue it covers) is written first, so the moment the trigger lands —
+which is when the issue source may adopt the anchor — the anchor's contract
+already carries its members. The trigger goes last, so a pass that dies half
+way leaves an anchor that is not yet triggered, which the next pass re-judges
+and re-clusters. A cluster whose record cannot be written admits nothing of
+itself; an unrelated issue is admitted regardless.
+
+### What a cluster is to the rest of the factory
+
+- **The issue source** adopts only the anchor. Its task's description is the
+  anchor's contract, then every OPEN member's contract verbatim
+  (`issue_contract_cluster`), and its metadata carries
+  `cluster_issues: "12,15"`. A member closed since triage is left out. A member
+  somebody triggered by hand is not adopted on its own — its work is the
+  anchor's task.
+- **The delivery's** pull request body, commit message and merge message close
+  every issue in the cluster; the merge train carries all of them; and when it
+  lands each member is labelled with the anchor's ending.
+- **Triage** does not judge a member while its anchor is open. A member still
+  open after its anchor closed was left behind — the change was abandoned, or
+  the anchor closed by hand — so the cluster is dissolved and the member is
+  judged on its own.
+- **Members never carry a lifecycle label.** A member claiming `in_progress`
+  with no task of its own would read to the label reconciliation sweep as a
+  lost hand-over.
+
+### Configuration
+
+`clustering` on the binding, **on by default**:
+
+```json
+"clustering": {"disabled": false, "max_size": 4}
+```
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `disabled` | `false` | every ready issue becomes its own task |
+| `max_size` | `0` → 4 | issues per task, the anchor included, at most 10 |
+
+Four, because a cluster is still one change a reviewer must hold in their head
+and one change a red pipeline sends back whole.
+
+Audit: `sdlc:triage_clustered` (anchor, members, shared keys) and
+`sdlc:triage_cluster_dissolved`.
 
 ## Bounding: one per project, and off the worker budget
 
@@ -366,12 +482,13 @@ no inheritance mechanism of its own to unpick.
 | `sdlc.triage_sweep_interval` | `15m` | how often the backstop visits every bound project |
 | `sdlc.review_sweep_interval` | `5m` | how often the REVIEW floor visits every bound project — the same goroutine, its own ticker (see `docs/software-factory/review.md`) |
 | `sdlc.unblock_sweep_interval` | `10m` | how often the UNBLOCK sweep re-examines every blocked task — the same goroutine, its own ticker (see `docs/software-factory/admission-and-readiness.md`) |
+| `sdlc.train_sweep_interval` | `5m` | how often the MERGE TRAIN backstop visits every trained project — the same goroutine, its own ticker (see `docs/software-factory/merge-train.md`) |
 | `sdlc.issue_page_limit` | `50` | also bounds one triage job's issue listing |
 | `sdlc.checkout_root` | `/workspace` | where the read-only checkout is mounted in the container |
 
-Triage reads the trigger label, the `needs_info` display label, the worker
-backend/model/image and the verification commands from the project's existing
-`ProjectBinding`. It adds no configuration of its own to the binding.
+Triage reads the trigger label, the `needs_info` and `clustered` display
+labels, the worker backend/model/image, the verification commands and the
+`clustering` policy from the project's existing `ProjectBinding`.
 
 ## How the checkout authenticates
 

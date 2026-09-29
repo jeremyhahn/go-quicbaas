@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
@@ -58,6 +59,11 @@ type ExecContainerRuntime struct {
 	// be exercised without a container runtime installed; nil means use
 	// the real exec-backed implementation.
 	inspect inspectFunc
+
+	// runImageCommand runs the image lifecycle's engine invocations (see
+	// container_image.go). A field for the same reason inspect is one; nil
+	// means exec the real engine.
+	runImageCommand imageCommandRunner
 }
 
 // inspectFunc runs a docker/podman inspect query and returns its trimmed
@@ -276,7 +282,48 @@ func (r *ExecContainerRuntime) RunInteractive(ctx context.Context, spec *Contain
 		Stdin:       stdinPipe,
 		Stdout:      stdoutPipe,
 		Cleanup:     envFile.Cleanup,
+		Wait:        newInteractiveExitWaiter(cmd).wait,
 	}, nil
+}
+
+// interactiveExitWaiter reaps an interactive container's foreground runtime
+// process, once, and reports how it ended.
+//
+// `docker run -i` (and podman's) exits with the container process's own status,
+// or 125 for a failure of the runtime itself, so its ProcessState is the
+// container's exit. The reap is started lazily on the first wait, because
+// exec.Cmd.Wait closes the stdout pipe and must not run while that pipe is
+// still being read; callers wait only once stdout has reached EOF.
+type interactiveExitWaiter struct {
+	cmd   *exec.Cmd
+	start sync.Once
+	done  chan struct{}
+	exit  ContainerExit
+}
+
+func newInteractiveExitWaiter(cmd *exec.Cmd) *interactiveExitWaiter {
+	return &interactiveExitWaiter{cmd: cmd, done: make(chan struct{})}
+}
+
+// wait returns the process's exit, or an unknown exit if ctx ends first.
+func (w *interactiveExitWaiter) wait(ctx context.Context) ContainerExit {
+	w.start.Do(func() {
+		go func() {
+			defer close(w.done)
+			// The wait error restates the status read below, or says the
+			// process was signalled; either way ProcessState is the answer.
+			_ = w.cmd.Wait()
+			if state := w.cmd.ProcessState; state != nil && state.Exited() {
+				w.exit = ContainerExit{Known: true, Code: state.ExitCode()}
+			}
+		}()
+	})
+	select {
+	case <-w.done:
+		return w.exit
+	case <-ctx.Done():
+		return ContainerExit{}
+	}
 }
 
 // Stop stops a running container.
@@ -414,6 +461,43 @@ func (r *ExecContainerRuntime) Pull(ctx context.Context, image string) error {
 	return nil
 }
 
+// ImageLister is a container runtime that can list the images on its host.
+// An agent reports the list so placement sends a spawn only to a host that
+// has the spawn's image.
+type ImageLister interface {
+	ListImages(ctx context.Context) ([]string, error)
+}
+
+// Compile-time interface satisfaction check.
+var _ ImageLister = (*ExecContainerRuntime)(nil)
+
+// ListImages returns every tagged image on the host as repository:tag.
+// Untagged (<none>) images are left out: nothing can name them.
+func (r *ExecContainerRuntime) ListImages(ctx context.Context) ([]string, error) {
+	cmd := exec.CommandContext(ctx, r.command, "images", "--format", "{{.Repository}}:{{.Tag}}")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, &CommandError{Command: r.command, Op: "images", Output: strings.TrimSpace(stderr.String())}
+	}
+	return parseImageList(stdout.String()), nil
+}
+
+// parseImageList turns `images --format {{.Repository}}:{{.Tag}}` output into
+// a list of names, dropping blank lines and untagged images.
+func parseImageList(out string) []string {
+	images := []string{}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.Contains(line, "<none>") {
+			continue
+		}
+		images = append(images, line)
+	}
+	return images
+}
+
 // buildRunArgs constructs the argument list for a detached docker/podman run
 // command. envFile is the path of the private file holding spec.Env, as
 // produced by writeContainerEnvFile; it is empty for a spec with no
@@ -531,15 +615,17 @@ func (r *ExecContainerRuntime) appendCommonRunArgs(args []string, spec *Containe
 }
 
 // PrivilegeRunArgs returns the run flags that bound what the container may do:
-// --pids-limit, --privileged, --cap-add and --cap-drop, in that order. It is
+// --pids-limit, --privileged, --cap-add, --cap-drop and --ulimit, in that
+// order. It is
 // the ONE renderer of those flags — the runtime launches with it, and
-// `make test-worker-image` probes the worker image with it (scripts/sandboxargs)
+// the worker image probes run with it (ImageRunSpec.Security), both under
+// `make test-worker-image` and in the refresh gate
 // — so the probe cannot certify a boundary the spawn does not use.
 //
 // Privilege is emitted so the launched container matches the spec
-// ContainerConfigDigest measured. Capabilities are sorted by the same helper
-// the digest uses: if the two orderings could differ, a spec could measure one
-// way and launch another.
+// ContainerConfigDigest measured. Capabilities and ulimits are sorted by the
+// same helpers the digest uses: if the two orderings could differ, a spec
+// could measure one way and launch another.
 func (s *ContainerSpec) PrivilegeRunArgs() []string {
 	var args []string
 	if s.PidsLimit > 0 {
@@ -553,6 +639,9 @@ func (s *ContainerSpec) PrivilegeRunArgs() []string {
 	}
 	for _, capability := range sortedCopy(s.CapDrop) {
 		args = append(args, "--cap-drop", capability)
+	}
+	for _, u := range sortedUlimits(s.Ulimits) {
+		args = append(args, "--ulimit", u.RunArg())
 	}
 	return args
 }

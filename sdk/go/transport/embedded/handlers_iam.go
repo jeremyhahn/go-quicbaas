@@ -298,12 +298,10 @@ func handleIAMUserCreate(ctx context.Context, svc service.QuicBaaS, req interfac
 		Name:        sdkReq.DisplayName,
 		AuthMethods: sdkReq.AuthMethods,
 		Attributes:  metadataToAttributes(sdkReq.Metadata),
-		// Roles and Groups are validated against the tenant's role and
-		// group stores by IdentityStore.CreateUser BEFORE the user record
-		// is written (validate-before-create), matching the gRPC/Unix
-		// adapter contract.
-		Roles:  sdkReq.Roles,
-		Groups: sdkReq.Groups,
+		// Roles are validated against the tenant's role store by
+		// IdentityStore.CreateUser BEFORE the user record is written
+		// (validate-before-create), matching the gRPC/Unix adapter contract.
+		Roles: sdkReq.Roles,
 		// Enabled is left unset: nil means enabled, so saying so adds nothing.
 		Lifecycle: iam.Lifecycle(sdkReq.Lifecycle),
 	})
@@ -400,160 +398,11 @@ func userToSDK(u *iam.User) *iamsdk.User {
 		Username:    u.Username,
 		DisplayName: u.Name,
 		Roles:       u.Roles,
-		Groups:      u.Groups,
 		AuthMethods: u.AuthMethods,
 		Lifecycle:   string(u.Lifecycle),
 		CreatedAt:   u.Created,
 		UpdatedAt:   u.Updated,
 	}
-}
-
-// =============================================================================
-// Group handlers (quicbaas.IAM.Group/*)
-// =============================================================================
-
-func handleIAMGroupList(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	store, err := identityStoreFor(ctx, svc)
-	if err != nil {
-		return nil, err
-	}
-	tenantID, _ := iamRequestField(req, "TenantID")
-	limit := 0
-	if r, ok := req.(*iamsdk.ListGroupsRequest); ok {
-		limit = r.PageSize
-	}
-	groups, err := store.ListGroups(ctx, tenantID, iam.ListOptions{Limit: limit})
-	if err != nil {
-		return nil, err
-	}
-	out := &iamsdk.ListGroupsResponse{Groups: make([]iamsdk.Group, 0, len(groups))}
-	for _, g := range groups {
-		out.Groups = append(out.Groups, iamsdk.Group{
-			ID:          g.ID,
-			Name:        g.Name,
-			TenantID:    g.TenantID,
-			MemberCount: len(g.Members),
-			CreatedAt:   g.Created,
-			UpdatedAt:   g.Updated,
-		})
-	}
-	return out, nil
-}
-
-func handleIAMGroupGet(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	store, err := identityStoreFor(ctx, svc)
-	if err != nil {
-		return nil, err
-	}
-	tenantID, _ := iamRequestField(req, "TenantID")
-	groupID, _ := iamRequestField(req, "GroupID")
-	if groupID == "" {
-		groupID, _ = iamRequestField(req, "ID")
-	}
-	g, err := store.GetGroup(ctx, tenantID, groupID)
-	if err != nil {
-		return nil, err
-	}
-	return &iamsdk.Group{
-		ID:          g.ID,
-		Name:        g.Name,
-		TenantID:    g.TenantID,
-		MemberCount: len(g.Members),
-		CreatedAt:   g.Created,
-		UpdatedAt:   g.Updated,
-	}, nil
-}
-
-func handleIAMGroupCreate(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	store, err := identityStoreFor(ctx, svc)
-	if err != nil {
-		return nil, err
-	}
-	tenantID, _ := iamRequestField(req, "TenantID")
-	var sdkReq *iamsdk.CreateGroupRequest
-	if r := iamRequestStructPtr(req, "Request"); r != nil {
-		if cr, ok := r.(*iamsdk.CreateGroupRequest); ok {
-			sdkReq = cr
-		}
-	}
-	if sdkReq == nil {
-		if r, ok := req.(*iamsdk.CreateGroupRequest); ok {
-			sdkReq = r
-		}
-	}
-	if sdkReq == nil {
-		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Group", "Create",
-			"*iam.CreateGroupRequest", reflect.TypeOf(req).String())
-	}
-	g, err := store.CreateGroup(ctx, tenantID, iam.CreateGroupOptions{
-		ID:          sdkReq.ID,
-		Name:        sdkReq.Name,
-		Description: sdkReq.Description,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &iamsdk.Group{
-		ID:          g.ID,
-		Name:        g.Name,
-		TenantID:    g.TenantID,
-		Description: g.Description,
-		MemberCount: len(g.Members),
-		CreatedAt:   g.Created,
-		UpdatedAt:   g.Updated,
-	}, nil
-}
-
-func handleIAMGroupUpdate(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	store, err := identityStoreFor(ctx, svc)
-	if err != nil {
-		return nil, err
-	}
-	tenantID, _ := iamRequestField(req, "TenantID")
-	groupID, _ := iamRequestField(req, "GroupID")
-	var sdkReq *iamsdk.UpdateGroupRequest
-	if r := iamRequestStructPtr(req, "Request"); r != nil {
-		if ur, ok := r.(*iamsdk.UpdateGroupRequest); ok {
-			sdkReq = ur
-		}
-	}
-	opts := iam.UpdateGroupOptions{}
-	if sdkReq != nil {
-		if sdkReq.Name != "" {
-			n := sdkReq.Name
-			opts.Name = &n
-		}
-		if sdkReq.Description != "" {
-			d := sdkReq.Description
-			opts.Description = &d
-		}
-	}
-	g, err := store.UpdateGroup(ctx, tenantID, groupID, opts)
-	if err != nil {
-		return nil, err
-	}
-	return &iamsdk.Group{
-		ID:          g.ID,
-		Name:        g.Name,
-		TenantID:    g.TenantID,
-		Description: g.Description,
-		MemberCount: len(g.Members),
-		CreatedAt:   g.Created,
-		UpdatedAt:   g.Updated,
-	}, nil
-}
-
-func handleIAMGroupDelete(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	store, err := identityStoreFor(ctx, svc)
-	if err != nil {
-		return nil, err
-	}
-	tenantID, _ := iamRequestField(req, "TenantID")
-	groupID, _ := iamRequestField(req, "GroupID")
-	if err := store.DeleteGroup(ctx, tenantID, groupID); err != nil {
-		return nil, err
-	}
-	return nil, nil
 }
 
 func handleIAMUserUpdate(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -801,7 +650,7 @@ func handleIAMRoleReconcile(ctx context.Context, svc service.QuicBaaS, req inter
 //
 // The SDK PolicyClient internal request types are unexported, so handlers
 // extract TenantID / PolicyName / Request via reflection — same pattern
-// the Tenant/User/Group/Role handlers above use. The underlying
+// the Tenant/User/Role handlers above use. The underlying
 // *iam.PolicyEngine is shared with REST/CLI/gRPC; this just gives the
 // embedded transport access to the same engine.
 

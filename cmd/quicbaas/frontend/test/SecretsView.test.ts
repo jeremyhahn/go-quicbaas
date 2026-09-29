@@ -80,9 +80,9 @@ describe('SecretsView', () => {
   it('renders the Lock icon prefix in the page header (#33)', async () => {
     const { container } = render(SecretsView);
     await waitFor(() => {
-      // The PageHeader icon is rendered inside a `bg-primary/10` square tile.
-      const tile = container.querySelector('div.bg-primary\\/10');
-      expect(tile, 'Secrets header must include the icon-tile prefix').not.toBeNull();
+      // The PageHeader icon is rendered beside the title in the page header.
+      const tile = container.querySelector('header.page-header');
+      expect(tile, 'Secrets header must include the icon prefix').not.toBeNull();
       expect(tile!.querySelector('svg')).not.toBeNull();
     });
   });

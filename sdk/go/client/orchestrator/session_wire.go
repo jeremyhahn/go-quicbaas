@@ -210,7 +210,7 @@ type SessionStatusWire struct {
 	// the job list to find out (see SessionInfo in pkg/orchestration).
 	Runner string `json:"runner"`
 
-	// AgentID is the fleet agent the session's job was dispatched to, and is
+	// AgentID is the fleet node the session's job was dispatched to, and is
 	// resolved for the listing beside Runner and from the same record.
 	AgentID string `json:"agent_id"`
 }

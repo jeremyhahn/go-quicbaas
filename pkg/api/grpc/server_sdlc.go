@@ -204,6 +204,144 @@ func (s *SDLCServer) GetConformance(ctx context.Context, req *pb.GetConformanceR
 	return &pb.GetConformanceResponse{Report: conformanceToProto(report)}, nil
 }
 
+// GetOpenWork implements pb.SDLCServiceServer: read-only.
+func (s *SDLCServer) GetOpenWork(ctx context.Context, req *pb.GetOpenWorkRequest) (*pb.GetOpenWorkResponse, error) {
+	svc, err := s.sdlcService()
+	if err != nil {
+		return nil, err
+	}
+	if req == nil || req.ProjectId == "" {
+		return nil, status.Error(codes.InvalidArgument, "project_id is required")
+	}
+	tenantID, err := sdlcTenant(ctx, req.TenantId)
+	if err != nil {
+		return nil, err
+	}
+	work, err := svc.OpenWork(ctx, tenantID, req.ProjectId)
+	if err != nil {
+		return nil, convertSDLCError(err)
+	}
+	return &pb.GetOpenWorkResponse{Work: openWorkToProto(work)}, nil
+}
+
+// GetReviewerSelection implements pb.SDLCServiceServer: read-only.
+func (s *SDLCServer) GetReviewerSelection(ctx context.Context, req *pb.GetReviewerSelectionRequest) (*pb.ReviewerSelectionResponse, error) {
+	svc, tenantID, err := s.reviewerRequest(ctx, req.GetTenantId(), req.GetProjectId())
+	if err != nil {
+		return nil, err
+	}
+	selection, err := svc.ReviewerSelection(ctx, tenantID, req.GetProjectId(), int(req.GetPullRequest()))
+	if err != nil {
+		return nil, convertSDLCError(err)
+	}
+	return &pb.ReviewerSelectionResponse{Selection: reviewerSelectionToProto(selection)}, nil
+}
+
+// SetReviewerOverride implements pb.SDLCServiceServer: an operator verb.
+func (s *SDLCServer) SetReviewerOverride(ctx context.Context, req *pb.SetReviewerOverrideRequest) (*pb.ReviewerSelectionResponse, error) {
+	svc, tenantID, err := s.reviewerRequest(ctx, req.GetTenantId(), req.GetProjectId())
+	if err != nil {
+		return nil, err
+	}
+	selection, err := svc.SetReviewerOverride(ctx, tenantID, req.GetProjectId(), int(req.GetPullRequest()), req.GetProfile())
+	if err != nil {
+		return nil, convertSDLCError(err)
+	}
+	return &pb.ReviewerSelectionResponse{Selection: reviewerSelectionToProto(selection)}, nil
+}
+
+// ClearReviewerOverride implements pb.SDLCServiceServer: an operator verb.
+func (s *SDLCServer) ClearReviewerOverride(ctx context.Context, req *pb.ClearReviewerOverrideRequest) (*pb.ReviewerSelectionResponse, error) {
+	svc, tenantID, err := s.reviewerRequest(ctx, req.GetTenantId(), req.GetProjectId())
+	if err != nil {
+		return nil, err
+	}
+	selection, err := svc.ClearReviewerOverride(ctx, tenantID, req.GetProjectId(), int(req.GetPullRequest()))
+	if err != nil {
+		return nil, convertSDLCError(err)
+	}
+	return &pb.ReviewerSelectionResponse{Selection: reviewerSelectionToProto(selection)}, nil
+}
+
+// FileIssue implements pb.SDLCServiceServer: an audited operator verb.
+func (s *SDLCServer) FileIssue(ctx context.Context, req *pb.FileIssueRequest) (*pb.FileIssueResponse, error) {
+	svc, tenantID, err := s.reviewerRequest(ctx, req.GetTenantId(), req.GetProjectId())
+	if err != nil {
+		return nil, err
+	}
+	issue, err := svc.FileIssue(ctx, tenantID, req.GetProjectId(), sdlc.IssueFiling{
+		Title: req.GetTitle(), Body: req.GetBody(), Labels: append([]string(nil), req.GetLabels()...), Parent: int(req.GetParent()),
+	})
+	if err != nil {
+		return nil, convertSDLCError(err)
+	}
+	return &pb.FileIssueResponse{Issue: forgeIssueToProto(issue)}, nil
+}
+
+// ListCollaborators implements pb.SDLCServiceServer: read-only.
+func (s *SDLCServer) ListCollaborators(ctx context.Context, req *pb.ListCollaboratorsRequest) (*pb.ListCollaboratorsResponse, error) {
+	svc, tenantID, err := s.reviewerRequest(ctx, req.GetTenantId(), req.GetProjectId())
+	if err != nil {
+		return nil, err
+	}
+	users, err := svc.Collaborators(ctx, tenantID, req.GetProjectId())
+	if err != nil {
+		return nil, convertSDLCError(err)
+	}
+	out := make([]*pb.ForgeUser, 0, len(users))
+	for _, user := range users {
+		out = append(out, &pb.ForgeUser{Login: user.Login, FullName: user.FullName})
+	}
+	return &pb.ListCollaboratorsResponse{Users: out}, nil
+}
+
+// forgeIssueToProto maps a filed issue onto the wire.
+func forgeIssueToProto(issue *sdlc.ForgeIssue) *pb.ForgeIssue {
+	if issue == nil {
+		return nil
+	}
+	return &pb.ForgeIssue{
+		Number: int32(issue.Number), Title: issue.Title, Body: issue.Body, State: issue.State,
+		Labels: append([]string(nil), issue.Labels...), Author: issue.Author, Url: issue.URL,
+	}
+}
+
+// reviewerRequest resolves the module and the tenant every reviewer-override
+// verb needs, refusing a request that names no project.
+func (s *SDLCServer) reviewerRequest(ctx context.Context, requestedTenant, projectID string) (*service.SDLCService, string, error) {
+	svc, err := s.sdlcService()
+	if err != nil {
+		return nil, "", err
+	}
+	if projectID == "" {
+		return nil, "", status.Error(codes.InvalidArgument, "project_id is required")
+	}
+	tenantID, err := sdlcTenant(ctx, requestedTenant)
+	if err != nil {
+		return nil, "", err
+	}
+	return svc, tenantID, nil
+}
+
+// AdoptIssue implements pb.SDLCServiceServer: an operator verb that creates
+// the task for one forge issue and hands the issue back to the factory.
+func (s *SDLCServer) AdoptIssue(ctx context.Context, req *pb.AdoptIssueRequest) (*pb.AdoptIssueResponse, error) {
+	svc, tenantID, err := s.reviewerRequest(ctx, req.GetTenantId(), req.GetProjectId())
+	if err != nil {
+		return nil, err
+	}
+	adoption, err := svc.AdoptIssue(ctx, tenantID, sdlc.AdoptIssueRequest{
+		ProjectID: req.GetProjectId(), Issue: int(req.GetIssue()), PullRequest: int(req.GetPullRequest()), Ruling: req.GetRuling(),
+	})
+	if err != nil {
+		return nil, convertSDLCError(err)
+	}
+	return &pb.AdoptIssueResponse{
+		TaskId: adoption.TaskID, Issue: int32(adoption.Issue), PullRequest: int32(adoption.PullRequest),
+		Branch: adoption.Branch, Superseded: adoption.Superseded,
+	}, nil
+}
+
 // ListForges implements pb.SDLCServiceServer.
 //
 // The forge adapters this build actually carries, so a caller can show an
@@ -227,18 +365,32 @@ func (s *SDLCServer) ListForges(_ context.Context, _ *pb.ListForgesRequest) (*pb
 
 // convertSDLCError maps the module's typed errors onto gRPC codes.
 func convertSDLCError(err error) error {
+	if mapped, ok := referenceStatus(err); ok {
+		return mapped
+	}
 	var (
 		notRegistered  *sdlc.ForgeNotRegisteredError
 		strategy       *sdlc.StrategyNotRegisteredError
 		projectMissing *service.ProjectNotFoundError
 	)
+	if isAgentCatalogError(err) {
+		return agentCatalogStatusError(err)
+	}
 	switch {
-	case stderrors.Is(err, sdlc.ErrNotFound), stderrors.As(err, &projectMissing), stderrors.Is(err, orchestration.ErrProjectNotFound):
+	case stderrors.Is(err, sdlc.ErrNotFound), stderrors.As(err, &projectMissing), stderrors.Is(err, orchestration.ErrProjectNotFound),
+		stderrors.Is(err, orchestration.ErrTaskNotFound):
 		return status.Error(codes.NotFound, err.Error())
-	case stderrors.Is(err, sdlc.ErrAlreadyExists), stderrors.Is(err, sdlc.ErrVersionConflict), stderrors.Is(err, sdlc.ErrWebhookRouteConflict):
+	case stderrors.Is(err, sdlc.ErrAlreadyExists), stderrors.Is(err, sdlc.ErrVersionConflict), stderrors.Is(err, sdlc.ErrWebhookRouteConflict),
+		stderrors.Is(err, orchestration.ErrTaskSourceAlreadyAdopted):
 		return status.Error(codes.AlreadyExists, err.Error())
+	case stderrors.Is(err, sdlc.ErrAdoptionRefused), stderrors.Is(err, orchestration.ErrTaskInvalidState):
+		return status.Error(codes.FailedPrecondition, err.Error())
+	case stderrors.Is(err, sdlc.ErrAdoptionIncomplete):
+		// The task exists and runs; a forge write after it did not land.
+		return status.Error(codes.Unavailable, err.Error())
 	case stderrors.Is(err, sdlc.ErrInvalidInput), stderrors.As(err, &notRegistered), stderrors.As(err, &strategy),
-		stderrors.Is(err, orchestration.ErrWorkflowValidation):
+		stderrors.Is(err, orchestration.ErrWorkflowValidation), stderrors.Is(err, sdlc.ErrReview),
+		stderrors.Is(err, orchestration.ErrInvalidInput):
 		return status.Error(codes.InvalidArgument, err.Error())
 	case stderrors.Is(err, sdlc.ErrUnavailable):
 		return status.Error(codes.Unavailable, err.Error())
@@ -258,9 +410,8 @@ func bindingFromProto(p *pb.ProjectBinding) *sdlc.ProjectBinding {
 		Verification:    append([]string(nil), p.Verification...),
 		MaxReviewRounds: int(p.MaxReviewRounds),
 	}
-	if p.Worker != nil {
-		b.Worker = sdlc.WorkerConfig{Backend: p.Worker.Backend, Model: p.Worker.Model, Image: p.Worker.Image}
-	}
+	b.Worker = AgentRefFromProto(p.GetWorker())
+	b.Triage = AgentRefFromProto(p.GetTriage())
 	if p.Forge != nil {
 		b.Forge = sdlc.ForgeConfig{
 			Type: sdlc.ForgeType(p.Forge.Type), BaseURL: p.Forge.BaseUrl, Owner: p.Forge.Owner, Repo: p.Forge.Repo,
@@ -276,17 +427,18 @@ func bindingFromProto(p *pb.ProjectBinding) *sdlc.ProjectBinding {
 			Reviewers: copyStringMap(p.Review.Reviewers),
 		}
 	}
-	if p.Reviewer != nil {
-		b.Reviewer = sdlc.ReviewerConfig{
-			Backend: p.Reviewer.Backend, Model: p.Reviewer.Model, Image: p.Reviewer.Image,
-			Login: p.Reviewer.Login, TokenSecretRef: p.Reviewer.TokenSecretRef,
-			StatusContext: p.Reviewer.StatusContext,
-		}
-	}
+	b.Reviewer = reviewerFromProto(p.Reviewer)
+	b.Reviewers = reviewersFromProto(p.Reviewers)
 	b.Discovery = sdlc.DiscoveryMode(p.Discovery)
 	b.TriageMayClose = p.TriageMayClose
-	if p.Triage != nil {
-		b.Triage = sdlc.WorkerConfig{Backend: p.Triage.Backend, Model: p.Triage.Model, Image: p.Triage.Image}
+	b.WorkerPromptAppend = p.WorkerPromptAppend
+	b.TriagePromptAppend = p.TriagePromptAppend
+	b.Rulers = append([]string(nil), p.Rulers...)
+	if p.MergeTrain != nil {
+		b.MergeTrain = sdlc.MergeTrainPolicy{Disabled: p.MergeTrain.Disabled, MaxSize: int(p.MergeTrain.MaxSize)}
+	}
+	if p.Clustering != nil {
+		b.Clustering = sdlc.ClusteringPolicy{Disabled: p.Clustering.Disabled, MaxSize: int(p.Clustering.MaxSize)}
 	}
 	if p.Ranking != nil {
 		b.Ranking = sdlc.RankingPolicy{
@@ -324,18 +476,20 @@ func bindingToProto(b *sdlc.ProjectBinding) *pb.ProjectBinding {
 			RequireGreenChecks: b.Review.RequireGreenChecks, ChecksSettleWindowNs: int64(b.Review.ChecksSettleWindow),
 			Reviewers: copyStringMap(b.Review.Reviewers),
 		},
-		Reviewer: &pb.ReviewerConfig{
-			Backend: b.Reviewer.Backend, Model: b.Reviewer.Model, Image: b.Reviewer.Image,
-			Login: b.Reviewer.Login, TokenSecretRef: b.Reviewer.TokenSecretRef,
-			StatusContext: b.Reviewer.StatusContext,
-		},
-		Discovery:       string(b.Discovery),
-		TriageMayClose:  b.TriageMayClose,
-		Triage:          &pb.WorkerConfig{Backend: b.Triage.Backend, Model: b.Triage.Model, Image: b.Triage.Image},
-		Strategy:        b.Strategy,
-		Worker:          &pb.WorkerConfig{Backend: b.Worker.Backend, Model: b.Worker.Model, Image: b.Worker.Image},
-		Verification:    append([]string(nil), b.Verification...),
-		MaxReviewRounds: int32(b.MaxReviewRounds),
+		Reviewer:           reviewerToProto(b.Reviewer),
+		Reviewers:          reviewersToProto(b.Reviewers),
+		Discovery:          string(b.Discovery),
+		TriageMayClose:     b.TriageMayClose,
+		WorkerPromptAppend: b.WorkerPromptAppend,
+		TriagePromptAppend: b.TriagePromptAppend,
+		Rulers:             append([]string(nil), b.Rulers...),
+		MergeTrain:         &pb.MergeTrainPolicy{Disabled: b.MergeTrain.Disabled, MaxSize: int32(b.MergeTrain.MaxSize)},
+		Clustering:         &pb.ClusteringPolicy{Disabled: b.Clustering.Disabled, MaxSize: int32(b.Clustering.MaxSize)},
+		Triage:             AgentRefToProto(b.Triage),
+		Strategy:           b.Strategy,
+		Worker:             AgentRefToProto(b.Worker),
+		Verification:       append([]string(nil), b.Verification...),
+		MaxReviewRounds:    int32(b.MaxReviewRounds),
 		Ranking: &pb.RankingPolicy{
 			DefaultPriority: int32(b.Ranking.DefaultPriority), AnalyzerName: b.Ranking.AnalyzerName,
 			DeclaredDependents: append([]string(nil), b.Ranking.DeclaredDependents...),
@@ -350,6 +504,73 @@ func bindingToProto(b *sdlc.ProjectBinding) *pb.ProjectBinding {
 		},
 		CreatedAtUnix: unixOrZero(b.CreatedAt),
 		UpdatedAtUnix: unixOrZero(b.UpdatedAt),
+	}
+}
+
+// reviewerFromProto maps one reviewer profile off the wire. Every field is
+// carried, because a bind replaces the whole record and a field this dropped
+// would be erased by every rebind through this transport.
+func reviewerFromProto(p *pb.ReviewerConfig) sdlc.ReviewerConfig {
+	if p == nil {
+		return sdlc.ReviewerConfig{}
+	}
+	r := sdlc.ReviewerConfig{
+		Name: p.Name, Agent: p.AgentId,
+		Login: p.Login, TokenSecretRef: p.TokenSecretRef, StatusContext: p.StatusContext,
+		Endpoint: p.Endpoint, HostAffinity: p.HostAffinity, PromptAppend: p.PromptAppend,
+	}
+	if p.CountsTowardMerge != nil {
+		counts := p.GetCountsTowardMerge()
+		r.CountsTowardMerge = &counts
+	}
+	return r
+}
+
+// reviewerToProto maps one reviewer profile onto the wire.
+func reviewerToProto(r sdlc.ReviewerConfig) *pb.ReviewerConfig {
+	p := &pb.ReviewerConfig{
+		Name: r.Name, AgentId: r.Agent,
+		Login: r.Login, TokenSecretRef: r.TokenSecretRef, StatusContext: r.StatusContext,
+		Endpoint: r.Endpoint, HostAffinity: r.HostAffinity, PromptAppend: r.PromptAppend,
+	}
+	if r.CountsTowardMerge != nil {
+		counts := *r.CountsTowardMerge
+		p.CountsTowardMerge = &counts
+	}
+	return p
+}
+
+func reviewersFromProto(ps []*pb.ReviewerConfig) []sdlc.ReviewerConfig {
+	if len(ps) == 0 {
+		return nil
+	}
+	out := make([]sdlc.ReviewerConfig, 0, len(ps))
+	for _, p := range ps {
+		out = append(out, reviewerFromProto(p))
+	}
+	return out
+}
+
+func reviewersToProto(rs []sdlc.ReviewerConfig) []*pb.ReviewerConfig {
+	if len(rs) == 0 {
+		return nil
+	}
+	out := make([]*pb.ReviewerConfig, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, reviewerToProto(r))
+	}
+	return out
+}
+
+func reviewerSelectionToProto(s *sdlc.ReviewerSelection) *pb.ReviewerSelection {
+	if s == nil {
+		return nil
+	}
+	return &pb.ReviewerSelection{
+		ProjectId: s.ProjectID, PullRequest: int32(s.PullRequest), Profile: s.Profile,
+		Overridden: s.Overridden, CountsTowardMerge: s.CountsTowardMerge,
+		StatusContext: s.StatusContext, UpdatedAtUnix: unixOrZero(s.UpdatedAt),
+		Redispatched: s.Redispatched,
 	}
 }
 
@@ -385,6 +606,32 @@ func conformanceToProto(r *sdlc.ConformanceReport) *pb.ConformanceReport {
 		out.Findings = append(out.Findings, &pb.ConformanceFinding{
 			Class: string(finding.Class), Check: finding.Check, Subject: finding.Subject,
 			Detail: finding.Detail, Remedy: finding.Remedy,
+		})
+	}
+	return out
+}
+
+func openWorkToProto(w *sdlc.OpenWork) *pb.OpenWork {
+	if w == nil {
+		return nil
+	}
+	out := &pb.OpenWork{
+		ProjectId: w.ProjectID, Repo: w.Repo, Agent: w.Agent,
+		ReadAtUnix:   unixOrZero(w.ReadAt),
+		PullRequests: make([]*pb.OpenPullRequest, 0, len(w.PullRequests)),
+		Issues:       make([]*pb.OpenIssue, 0, len(w.Issues)),
+	}
+	for _, pr := range w.PullRequests {
+		out.PullRequests = append(out.PullRequests, &pb.OpenPullRequest{
+			Number: int32(pr.Number), Title: pr.Title, HeadRef: pr.HeadRef, HeadSha: pr.HeadSHA,
+			CiState: string(pr.CIState), ReviewState: string(pr.ReviewState), Url: pr.URL,
+			CreatedAtUnix: unixOrZero(pr.Created), AgeSeconds: pr.AgeSeconds,
+		})
+	}
+	for _, issue := range w.Issues {
+		out.Issues = append(out.Issues, &pb.OpenIssue{
+			Number: int32(issue.Number), Title: issue.Title, Labels: append([]string(nil), issue.Labels...),
+			Url: issue.URL, CreatedAtUnix: unixOrZero(issue.Created), AgeSeconds: issue.AgeSeconds,
 		})
 	}
 	return out

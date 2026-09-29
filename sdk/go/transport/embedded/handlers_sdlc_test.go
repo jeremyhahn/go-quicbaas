@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/agents"
+
 	pkgsdlc "github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/sdlc"
@@ -64,7 +66,7 @@ func TestSDLCConverters_RoundTrip(t *testing.T) {
 		Forge: sdlc.ForgeConfig{Type: "gitea", BaseURL: "u", Owner: "o", Repo: "r",
 			Labels: map[string]string{"merged": "done"}, TriggerLabel: "task:ready", WebhookSecretRef: "wh", TokenSecretRef: "tok"},
 		Strategy:        "trunk-based",
-		Worker:          sdlc.WorkerConfig{Backend: "claude", Model: "claude-opus-5"},
+		Worker:          agents.AgentRef{AgentID: "claude-coder"},
 		Verification:    []string{"make test"},
 		Review:          sdlc.ReviewPolicy{RequiredApprovals: 1, RequireGreenChecks: true, ChecksSettleWindow: time.Minute, Reviewers: map[string]string{"codex": "openai"}},
 		MaxReviewRounds: 2,
@@ -195,12 +197,12 @@ func TestSDLCBindingDomainConverters_ReviewerSurvivesTheHop(t *testing.T) {
 	in := &sdlc.ProjectBinding{
 		ProjectID: "p1",
 		Reviewer: sdlc.ReviewerConfig{
-			Backend:        "codex",
-			Model:          "gpt-5-codex",
-			Image:          "quicbaas-software-factory-worker:0.7.0-alpha",
+			Agent:          "codex-reviewer",
 			Login:          "codex",
 			TokenSecretRef: "sdlc/reviewer/go-luks2/token",
 			StatusContext:  "quicbaas/review",
+			Endpoint:       "http://gpu-host.internal:11434",
+			HostAffinity:   "gpu-host",
 		},
 		Discovery: "poll",
 	}
@@ -230,7 +232,67 @@ func TestSDLCBindingDomainConverters_UnconfiguredReviewerStaysUnconfigured(t *te
 		t.Fatalf("empty reviewer became configured: %+v", domain.Reviewer)
 	}
 	out := sdlcBindingFromDomain(domain)
-	if out.Reviewer.Backend != "" || out.Discovery != "" {
+	if out.Reviewer.Agent != "" || out.Discovery != "" {
 		t.Fatalf("zero values did not survive: reviewer=%+v discovery=%q", out.Reviewer, out.Discovery)
+	}
+}
+
+// TestSDLCOpenWorkHandler_RefusesWithoutTheModuleAndOnBadTypes is the error
+// half of the open-work verb.
+func TestSDLCOpenWorkHandler_RefusesWithoutTheModuleAndOnBadTypes(t *testing.T) {
+	ctx := context.Background()
+	if _, err := handleSDLCOpenWork(ctx, nil, &sdlc.OpenWorkRequest{ProjectID: "p1"}); err == nil {
+		t.Error("OpenWork answered without the module")
+	}
+	if _, err := handleSDLCOpenWork(ctx, nil, &sdlc.ConformanceRequest{ProjectID: "p1"}); err == nil {
+		t.Error("OpenWork accepted the wrong request type")
+	}
+}
+
+// TestSDLCOpenWorkConverter_RoundTrip proves every field of a project's open
+// work crosses the domain/SDK boundary.
+func TestSDLCOpenWorkConverter_RoundTrip(t *testing.T) {
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	domain := &pkgsdlc.OpenWork{
+		ProjectID: "p1", Repo: "acme/api", Agent: "agent-api", ReadAt: now,
+		PullRequests: []pkgsdlc.OpenPullRequest{{
+			Number: 7, Title: "fix", HeadRef: "issue/7-fix", HeadSHA: "abc", CIState: pkgsdlc.CISuccess,
+			ReviewState: pkgsdlc.ReviewApproved, URL: "https://forge.test/pulls/7", Created: now, AgeSeconds: 60,
+		}},
+		Issues: []pkgsdlc.OpenIssue{{Number: 3, Title: "held", Labels: []string{"task:blocked"}, URL: "u", Created: now, AgeSeconds: 120}},
+	}
+	out := sdlcOpenWorkFromDomain(domain)
+	if out.ProjectID != "p1" || out.Repo != "acme/api" || out.Agent != "agent-api" || !out.ReadAt.Equal(now) {
+		t.Fatalf("work = %+v", out)
+	}
+	pr := out.PullRequests[0]
+	if pr.Number != 7 || pr.Title != "fix" || pr.HeadRef != "issue/7-fix" || pr.HeadSHA != "abc" || pr.CIState != "success" ||
+		pr.ReviewState != "approved" || pr.URL == "" || !pr.Created.Equal(now) || pr.AgeSeconds != 60 {
+		t.Fatalf("pull request = %+v", pr)
+	}
+	issue := out.Issues[0]
+	if issue.Number != 3 || issue.Title != "held" || len(issue.Labels) != 1 || issue.URL != "u" || issue.AgeSeconds != 120 {
+		t.Fatalf("issue = %+v", issue)
+	}
+	if sdlcOpenWorkFromDomain(nil) != nil {
+		t.Error("nil open work converted to a non-nil one")
+	}
+}
+
+func TestSDLCConverters_SlotAppendsSurviveTheDomain(t *testing.T) {
+	in := &sdlc.ProjectBinding{
+		ProjectID:          "p1",
+		WorkerPromptAppend: "worker material",
+		TriagePromptAppend: "triage material",
+		Reviewer:           sdlc.ReviewerConfig{Agent: "codex-reviewer", Login: "codex", TokenSecretRef: "tok", PromptAppend: "seat material"},
+		Reviewers:          []sdlc.ReviewerConfig{{Name: "qwen", Agent: "qwen-reviewer", PromptAppend: "alternate material"}},
+	}
+	out := sdlcBindingFromDomain(sdlcBindingToDomain(in))
+	if out.WorkerPromptAppend != "worker material" || out.TriagePromptAppend != "triage material" ||
+		out.Reviewer.PromptAppend != "seat material" || len(out.Reviewers) != 1 || out.Reviewers[0].PromptAppend != "alternate material" {
+		t.Fatalf("round trip lost a slot's append: %+v", out)
+	}
+	if empty := sdlcBindingFromDomain(sdlcBindingToDomain(&sdlc.ProjectBinding{ProjectID: "p2"})); empty.WorkerPromptAppend != "" {
+		t.Fatalf("the converters invented an append: %+v", empty)
 	}
 }

@@ -638,11 +638,6 @@ func TestConvertProtoTenantToSDK_Nil(t *testing.T) {
 	assert.Nil(t, result)
 }
 
-func TestConvertProtoGroupToSDK_Nil(t *testing.T) {
-	result := convertProtoGroupToSDK(nil)
-	assert.Nil(t, result)
-}
-
 func TestConvertProtoRoleToSDK_Nil(t *testing.T) {
 	result := convertProtoRoleToSDK(nil)
 	assert.Nil(t, result)

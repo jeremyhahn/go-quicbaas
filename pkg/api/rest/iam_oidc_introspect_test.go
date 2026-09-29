@@ -149,9 +149,8 @@ func setupIntrospectHandler(t *testing.T) (*IAMHandler, *iam.OIDCProvider, iam.A
 	kv := newIntrospectMemKV()
 	backend := iam.NewBackendStorage(kv)
 	identityStore := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  iam.NewMemoryStorage(),
-		GroupStorage: iam.NewMemoryStorage(),
-		RoleStorage:  iam.NewMemoryStorage(),
+		UserStorage: iam.NewMemoryStorage(),
+		RoleStorage: iam.NewMemoryStorage(),
 	})
 
 	provider, err := iam.NewOIDCProvider(&iam.OIDCConfig{
@@ -186,7 +185,7 @@ func setupIntrospectHandler(t *testing.T) (*IAMHandler, *iam.OIDCProvider, iam.A
 		// permissions its application record was granted, never the ones the
 		// client asked for (go-quicbaas#653), so a fixture that requests a
 		// permission must be granted it.
-		Scopes: iam.DefaultAgentRuntimeScopes(),
+		Scopes: iam.DefaultFleetRuntimeScopes(),
 	}))
 
 	auditLogger, err := iam.NewAuditLogger()

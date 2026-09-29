@@ -30,7 +30,7 @@ func TestExportImportRoundTrip_PreservesTheHandle(t *testing.T) {
 	ctx := context.Background()
 	source := NewMemoryStorage()
 	sourceStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: source, GroupStorage: source, RoleStorage: source,
+		UserStorage: source, RoleStorage: source,
 	})
 
 	created, err := sourceStore.CreateUser(ctx, "acme", CreateUserOptions{
@@ -57,7 +57,7 @@ func TestExportImportRoundTrip_PreservesTheHandle(t *testing.T) {
 
 	target := NewMemoryStorage()
 	targetStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: target, GroupStorage: target, RoleStorage: target,
+		UserStorage: target, RoleStorage: target,
 	})
 	bm := NewBatchManager(BatchManagerOptions{IdentityStore: targetStore})
 	if _, err := bm.ImportUsers(ctx, "target", req.Users, BatchImportOptions{}); err != nil {
@@ -81,7 +81,7 @@ func TestImportUsers_UpdateExistingAppliesTheHandle(t *testing.T) {
 	ctx := context.Background()
 	mem := NewMemoryStorage()
 	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: mem, GroupStorage: mem, RoleStorage: mem,
+		UserStorage: mem, RoleStorage: mem,
 	})
 
 	if _, err := store.CreateUser(ctx, "acme", CreateUserOptions{

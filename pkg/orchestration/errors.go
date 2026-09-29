@@ -499,12 +499,12 @@ var (
 	// ErrMaxIterationsExceeded indicates the control loop exceeded its maximum iteration count.
 	ErrMaxIterationsExceeded = errors.New("orchestration: max iterations exceeded")
 
-	// ErrNoAgentsAvailable indicates no agents are available for a task assignment.
-	ErrNoAgentsAvailable = errors.New("orchestration: no agents available for task")
+	// ErrNoFleetNodesAvailable indicates no agents are available for a task assignment.
+	ErrNoFleetNodesAvailable = errors.New("orchestration: no agents available for task")
 
-	// ErrNoMatchingAgent indicates no online agent satisfies the combined
+	// ErrNoMatchingFleetNode indicates no online agent satisfies the combined
 	// backend, GPU, and host-affinity constraints for the request.
-	ErrNoMatchingAgent = errors.New("orchestration: no online agent matches constraints")
+	ErrNoMatchingFleetNode = errors.New("orchestration: no online agent matches constraints")
 
 	// ErrReviewParseFailed indicates the lead agent's review response could not be parsed.
 	ErrReviewParseFailed = errors.New("orchestration: failed to parse review response")
@@ -554,15 +554,15 @@ func (e *MaxIterationsError) Unwrap() error {
 	return ErrMaxIterationsExceeded
 }
 
-// NoAgentsAvailableError indicates no agents are available for a task assignment.
-type NoAgentsAvailableError struct {
+// NoFleetNodesAvailableError indicates no agents are available for a task assignment.
+type NoFleetNodesAvailableError struct {
 	TaskTitle            string
 	RequiredCapabilities []string
 }
 
 // Error implements the error interface.
-func (e *NoAgentsAvailableError) Error() string {
-	msg := ErrNoAgentsAvailable.Error() + ": task=" + e.TaskTitle
+func (e *NoFleetNodesAvailableError) Error() string {
+	msg := ErrNoFleetNodesAvailable.Error() + ": task=" + e.TaskTitle
 	if len(e.RequiredCapabilities) > 0 {
 		msg += " capabilities=["
 		for i, cap := range e.RequiredCapabilities {
@@ -577,13 +577,13 @@ func (e *NoAgentsAvailableError) Error() string {
 }
 
 // Unwrap returns the sentinel error for errors.Is support.
-func (e *NoAgentsAvailableError) Unwrap() error {
-	return ErrNoAgentsAvailable
+func (e *NoFleetNodesAvailableError) Unwrap() error {
+	return ErrNoFleetNodesAvailable
 }
 
-// NoMatchingAgentError indicates no online agent satisfies the combined
+// NoMatchingFleetNodeError indicates no online agent satisfies the combined
 // backend, GPU, and host-affinity constraints for the request.
-type NoMatchingAgentError struct {
+type NoMatchingFleetNodeError struct {
 	// Constraint describes which constraint failed (e.g. "gpu", "host_affinity", "backend").
 	Constraint string
 	// Detail provides a human-readable summary of the unsatisfied constraint.
@@ -591,13 +591,13 @@ type NoMatchingAgentError struct {
 }
 
 // Error implements the error interface.
-func (e *NoMatchingAgentError) Error() string {
-	return ErrNoMatchingAgent.Error() + ": " + e.Detail
+func (e *NoMatchingFleetNodeError) Error() string {
+	return ErrNoMatchingFleetNode.Error() + ": " + e.Detail
 }
 
 // Unwrap returns the sentinel error for errors.Is support.
-func (e *NoMatchingAgentError) Unwrap() error {
-	return ErrNoMatchingAgent
+func (e *NoMatchingFleetNodeError) Unwrap() error {
+	return ErrNoMatchingFleetNode
 }
 
 // ReviewParseError indicates the lead agent review response was not valid JSON.

@@ -59,10 +59,9 @@ func setupInviteActivationHandler(t *testing.T) (*IAMHandler, string, iam.Invite
 	t.Helper()
 	memStorage := iam.NewMemoryStorage()
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
-		Tenants:      &testTenantManager{storage: memStorage},
+		UserStorage: memStorage,
+		RoleStorage: memStorage,
+		Tenants:     &testTenantManager{storage: memStorage},
 	})
 	require.NoError(t, memStorage.CreateUser(context.Background(), &iam.User{
 		ID: inviteUserID, TenantID: inviteTenant, Email: "invitee@example.com",

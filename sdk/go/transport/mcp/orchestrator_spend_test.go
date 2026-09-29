@@ -32,11 +32,11 @@ func TestGetSpendReportToolName(t *testing.T) {
 
 // TestDecodeMCPSpendReport decodes the report the server's executeAgentCost
 // marshals, including the two fields a renderer must not lose:
-// cost_measured and an unattributed child row.
+// priced_entries and an unattributed child row.
 func TestDecodeMCPSpendReport(t *testing.T) {
 	raw := []byte(`{"level":"project","tenant_id":"t1","project_id":"p1",
 		"entries":3,"input_tokens":120,"output_tokens":80,"total_tokens":200,
-		"cost_micros":0,"cost_measured":false,"successes":2,"failures":1,
+		"equivalent_micros":0,"priced_entries":0,"successes":2,"failures":1,
 		"child_level":"task",
 		"children":[{"id":"task-1","level":"task","total_tokens":150},
 		            {"level":"task","unattributed":true,"total_tokens":50}],
@@ -54,7 +54,7 @@ func TestDecodeMCPSpendReport(t *testing.T) {
 	if report.Level != orchestrator.SpendLevelProject || report.TotalTokens != 200 {
 		t.Fatalf("report = %+v, want project/200", report)
 	}
-	if report.CostMeasured {
+	if report.PricedEntries != 0 {
 		t.Fatal("an unpriced report must not decode as a measured cost")
 	}
 	if len(report.Children) != 2 || !report.Children[1].Unattributed {
@@ -81,7 +81,7 @@ func TestGetSpendReportTransformIsRegistered(t *testing.T) {
 	h := newOrchestratorMCPHandler()
 
 	got, err := h.transformResponse("GetSpendReport",
-		`{"level":"tenant","tenant_id":"t1","cost_measured":false}`)
+		`{"level":"tenant","tenant_id":"t1","priced_entries":0}`)
 	if err != nil {
 		t.Fatalf("transformResponse: %v", err)
 	}
@@ -103,11 +103,46 @@ func TestGetSpendReportArgumentsAreSnakeCase(t *testing.T) {
 		SessionID: "s1",
 		Round:     2,
 		RoundSet:  true,
+		Host:      "gpu-host:9091",
 	})
 
-	for _, key := range []string{"tenant_id", "project_id", "task_id", "job_id", "session_id", "round"} {
+	for _, key := range []string{"tenant_id", "project_id", "task_id", "job_id", "session_id", "round", "host"} {
 		if _, ok := args[key]; !ok {
 			t.Fatalf("tool arguments %v are missing %q", args, key)
 		}
+	}
+}
+
+// TestTenantSpendPolicyToolNames pins the tools the two tenant spend-policy
+// verbs dispatch to (go-quicbaas#1058).
+func TestTenantSpendPolicyToolNames(t *testing.T) {
+	for method, want := range map[string]string{
+		"GetTenantSpendPolicy": "quicbaas_orchestrator_spend_policy_get",
+		"SetTenantSpendPolicy": "quicbaas_orchestrator_spend_policy_set",
+	} {
+		if got := (&Transport{}).mapToToolName("quicbaas.Orchestrator", method); got != want {
+			t.Fatalf("%s maps to %q, want %q", method, got, want)
+		}
+		if _, ok := orchestratorMCPTransforms[method]; !ok {
+			t.Fatalf("%s has no result decoder", method)
+		}
+	}
+}
+
+// TestDecodeMCPTenantSpendPolicy decodes the report the server's tools marshal.
+func TestDecodeMCPTenantSpendPolicy(t *testing.T) {
+	raw := []byte(`{"tenant_id":"t1","limits":{"windows":[{"name":"monthly","size":2592000000000000,
+		"max_equivalent_micros":2000000000}]},"updated_at":"2026-09-23T06:00:00Z",
+		"windows":[{"name":"monthly","used_equivalent_micros":7,"exhausted":false}]}`)
+	got, err := decodeMCPTenantSpendPolicy(raw)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	policy, ok := got.(*orchestrator.TenantSpendPolicy)
+	if !ok || policy.TenantID != "t1" || len(policy.Limits.Windows) != 1 || policy.UpdatedAt == nil || policy.Windows[0].UsedEquivalentMicros != 7 {
+		t.Fatalf("policy = %+v", got)
+	}
+	if _, err := decodeMCPTenantSpendPolicy([]byte("{bad")); err == nil {
+		t.Fatal("invalid JSON decoded")
 	}
 }

@@ -94,6 +94,11 @@ func (p *OIDCProvider) IssueSessionToken(ctx context.Context, identity SessionId
 		return "", time.Time{}, err
 	}
 
+	groups, err := p.identityStore.RoleNames(ctx, user)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+
 	now := time.Now()
 	expiresAt := now.Add(p.config.AccessTokenTTL)
 	// The user record is authoritative for roles and groups, so it REPLACES
@@ -116,7 +121,7 @@ func (p *OIDCProvider) IssueSessionToken(ctx context.Context, identity SessionId
 		TenantID:     identity.TenantID,
 		UserID:       user.ID,
 		Roles:        user.Roles,
-		Groups:       user.Groups,
+		Groups:       groups,
 		Email:        user.Email,
 		Name:         user.Name,
 		AuthMethod:   identity.AuthMethod,

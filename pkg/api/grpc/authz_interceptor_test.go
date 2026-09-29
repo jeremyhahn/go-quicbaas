@@ -79,7 +79,7 @@ func TestGRPCResourceAndAction_Mapped(t *testing.T) {
 	}{
 		{"/quicbaas.v1.QuicBaaS/Put", "kv", "put"},
 		{"/quicbaas.v1.QuicBaaS/Get", "kv", "get"},
-		{"/quicbaas.v1.QuicBaaS/CreateUser", "users", "create"},
+		{"/quicbaas.v1.QuicBaaS/CreateRole", "roles", "create"},
 		{"/quicbaas.kms.v1.Crypto/Sign", "keys", "sign"},
 		{"/quicbaas.barrier.v1.Barrier/BarrierStatus", "tenant_barrier", "status"},
 		{"/quicbaas.vector.v1.VectorDB/SearchSimilar", "vector", "search_similar"},
@@ -122,7 +122,7 @@ func TestGRPCResourceAndAction_Unmapped(t *testing.T) {
 	// embedding, agent runtime, and RAG remain unregistered after Stage 0.5.
 	for _, m := range []string{
 		"/quicbaas.embedding.v1.EmbeddingService/Generate",
-		"/quicbaas.agent.v1.AgentRuntime/DoThing",
+		"/quicbaas.fleet.v1.FleetRuntime/DoThing",
 		"/quicbaas.rag.v1.RAGService/Query",
 		"/quicbaas.unknown.v1.Mystery/DoThing",
 	} {

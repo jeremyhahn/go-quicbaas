@@ -37,7 +37,7 @@ func TestSDLCTools_RegisteredAndDispatched(t *testing.T) {
 	}
 	for _, want := range []string{
 		"sdlc_bind", "sdlc_unbind", "sdlc_binding", "sdlc_delivery", "sdlc_forges",
-		"sdlc_onboard", "sdlc_conformance",
+		"sdlc_onboard", "sdlc_conformance", "sdlc_open_work",
 	} {
 		if !names[want] {
 			t.Fatalf("%s not registered", want)
@@ -59,6 +59,7 @@ func TestSDLCTools_RegisteredAndDispatched(t *testing.T) {
 		"sdlc_forges":      nil,
 		"sdlc_onboard":     {"project_id": "p"},
 		"sdlc_conformance": {"project_id": "p"},
+		"sdlc_open_work":   {"project_id": "p"},
 	} {
 		if _, err := registry.executeSDLCTool(ctx, name, args); err == nil {
 			t.Fatalf("%s answered without the module", name)

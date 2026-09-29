@@ -284,9 +284,6 @@ type DeletionSummary struct {
 	// CredentialsDeleted is the number of credentials deleted.
 	CredentialsDeleted int `json:"credentials_deleted" yaml:"credentials_deleted"`
 
-	// GroupMembershipsRemoved is the number of group memberships removed.
-	GroupMembershipsRemoved int `json:"group_memberships_removed" yaml:"group_memberships_removed"`
-
 	// RoleAssignmentsRemoved is the number of role assignments removed.
 	RoleAssignmentsRemoved int `json:"role_assignments_removed" yaml:"role_assignments_removed"`
 
@@ -310,9 +307,6 @@ type UserDataExport struct {
 
 	// Consents contains consent records.
 	Consents []*ConsentExport `json:"consents,omitempty" yaml:"consents,omitempty"`
-
-	// Groups contains group memberships.
-	Groups []*GroupMembershipExport `json:"groups,omitempty" yaml:"groups,omitempty"`
 
 	// Roles contains role assignments.
 	Roles []*RoleAssignmentExport `json:"roles,omitempty" yaml:"roles,omitempty"`
@@ -381,13 +375,6 @@ type ConsentExport struct {
 	Version     string         `json:"version" yaml:"version"`
 	GrantedAt   *time.Time     `json:"granted_at,omitempty" yaml:"granted_at,omitempty"`
 	WithdrawnAt *time.Time     `json:"withdrawn_at,omitempty" yaml:"withdrawn_at,omitempty"`
-}
-
-// GroupMembershipExport contains exportable group membership data.
-type GroupMembershipExport struct {
-	GroupID   string    `json:"group_id" yaml:"group_id"`
-	GroupName string    `json:"group_name" yaml:"group_name"`
-	JoinedAt  time.Time `json:"joined_at" yaml:"joined_at"`
 }
 
 // RoleAssignmentExport contains exportable role assignment data.
@@ -543,7 +530,6 @@ var DataCategories = []string{
 	"profile",
 	"sessions",
 	"consents",
-	"groups",
 	"roles",
 	"audit_logs",
 	"credentials",

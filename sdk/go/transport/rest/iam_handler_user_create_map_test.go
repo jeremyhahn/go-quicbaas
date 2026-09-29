@@ -59,10 +59,10 @@ func TestMapUserCreateRequest_NoRolesOmitted(t *testing.T) {
 	}
 }
 
-// TestMapUserCreateRequest_GroupsForwarded proves the SDK REST mapper no
-// longer drops the "groups" field: groups must reach the REST body so the
-// server can validate-before-create (transport parity with gRPC/Unix/QUIC).
-func TestMapUserCreateRequest_GroupsForwarded(t *testing.T) {
+// TestMapUserCreateRequest_GroupsAreNotAUserField proves the SDK REST mapper
+// forwards no "groups" key: a user carries no group list, and quicbaas keeps
+// no groups at all.
+func TestMapUserCreateRequest_GroupsAreNotAUserField(t *testing.T) {
 	body := mapUserCreateRequest(map[string]interface{}{
 		"email":        "groups@example.com",
 		"username":     "groupuser",
@@ -70,12 +70,11 @@ func TestMapUserCreateRequest_GroupsForwarded(t *testing.T) {
 		"groups":       []interface{}{"group-a", "group-b"},
 	})
 
-	groups, ok := body["groups"].([]interface{})
-	if !ok {
-		t.Fatalf("Expected groups in mapped body, got %v", body)
+	if groups, exists := body["groups"]; exists {
+		t.Fatalf("Expected no groups in mapped body, got %v", groups)
 	}
-	if len(groups) != 2 || groups[0] != "group-a" || groups[1] != "group-b" {
-		t.Fatalf("Expected groups [group-a group-b], got %v", groups)
+	if body["email"] != "groups@example.com" {
+		t.Fatalf("Expected the rest of the user to map, got %v", body)
 	}
 }
 

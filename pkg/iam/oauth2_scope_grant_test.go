@@ -333,7 +333,7 @@ func TestAppManager_GrantScopes(t *testing.T) {
 		t.Fatalf("RegisterApp: %v", err)
 	}
 
-	grant := AgentRuntimeGrant()
+	grant := FleetRuntimeGrant()
 	if _, err := mgr.GrantScopes(ctx, tenantID, app.ClientID, grant); err != nil {
 		t.Fatalf("GrantScopes: %v", err)
 	}
@@ -370,16 +370,16 @@ func TestAppManager_GrantScopes(t *testing.T) {
 // three service-surface permissions its own spawn server checks inbound, and
 // nothing else.
 func TestAgentRuntimeGrant_IsTheAdvertisedLeastPrivilegeSet(t *testing.T) {
-	grant := AgentRuntimeGrant()
+	grant := FleetRuntimeGrant()
 	want := map[string]struct{}{
 		"agent:runtime:spawn":        {},
 		"agent:runtime:prompt":       {},
 		"agent:runtime:status":       {},
-		AgentScopeControlHeartbeat:   {},
-		AgentScopeControlHook:        {},
-		AgentScopeAccountMaterialize: {},
-		AgentScopeAccountRead:        {},
-		AgentScopeAccountList:        {},
+		FleetScopeControlHeartbeat:   {},
+		FleetScopeControlHook:        {},
+		FleetScopeAccountMaterialize: {},
+		FleetScopeAccountRead:        {},
+		FleetScopeAccountList:        {},
 	}
 	if len(grant) != len(want) {
 		t.Fatalf("grant = %v, want exactly %d permissions", grant, len(want))
@@ -395,9 +395,9 @@ func TestAgentRuntimeGrant_IsTheAdvertisedLeastPrivilegeSet(t *testing.T) {
 	}
 
 	// A caller must not be able to widen the shared grant in place.
-	AgentRuntimeGrant()[0] = "*:*"
-	if AgentRuntimeGrant()[0] == "*:*" {
-		t.Fatal("AgentRuntimeGrant returns aliased backing storage a caller can widen")
+	FleetRuntimeGrant()[0] = "*:*"
+	if FleetRuntimeGrant()[0] == "*:*" {
+		t.Fatal("FleetRuntimeGrant returns aliased backing storage a caller can widen")
 	}
 }
 
@@ -408,7 +408,7 @@ func TestTokenMTLS_IssuesTheApplicationGrant(t *testing.T) {
 	const tenantID = "automatethethings"
 	provider, mgr, _ := newTenantRoutedOIDCProvider(t, tenantID)
 
-	grant := AgentRuntimeGrant()
+	grant := FleetRuntimeGrant()
 	app, err := mgr.RegisterApp(context.Background(), tenantID, grantedAppOptions("mtls-agent", grant))
 	if err != nil {
 		t.Fatalf("RegisterApp: %v", err)

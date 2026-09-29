@@ -15,7 +15,7 @@
 // NAMES its workspace, the host that executes the session provisions it, and a
 // job's later sessions are pinned to that host. It drives the public
 // AgentService and JobRun against two backend instances — the daemon's own
-// in-process backend and a fleet agent behind the resolver — so every assertion
+// in-process backend and a fleet node behind the resolver — so every assertion
 // is about where a session actually landed and which host's filesystem holds
 // its checkout.
 
@@ -33,7 +33,7 @@ import (
 
 // workspaceBackend is a backend instance that records the spawn it was handed.
 // A fleet instance (host != "") provisions the named workspace under its OWN
-// projects root with the same WorkspaceManager an agent daemon runs, and
+// projects root with the same WorkspaceManager a fleet node daemon runs, and
 // reports the directory as the session's WorkDir — or, with agentRoot nil,
 // behaves as an agent that predates named workspaces and reports nothing.
 type workspaceBackend struct {
@@ -56,7 +56,7 @@ type workspaceBackend struct {
 }
 
 // ExecInSession runs a command in a session container on THIS host — the
-// agent's own container runtime, as a fleet agent's ExecSession RPC does.
+// agent's own container runtime, as a fleet node's ExecSession RPC does.
 func (b *workspaceBackend) ExecInSession(_ context.Context, sessionID string, spec *ExecSpec) (*ExecResult, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -194,34 +194,34 @@ func workspaceSpawn() *SpawnSessionRequest {
 }
 
 // TestSpawnSession_FleetAgentProvisionsTheNamedWorkspace is the defect's
-// shape inverted: the spawn reaches the fleet agent naming the workspace and
+// shape inverted: the spawn reaches the fleet node naming the workspace and
 // carrying its spec, the AGENT provisions it under its own root, and the daemon
 // records and reports the agent's directory. Nothing is made on the daemon.
 func TestSpawnSession_FleetAgentProvisionsTheNamedWorkspace(t *testing.T) {
 	t.Parallel()
-	omega := newWorkspaceBackend("omega", "omega:9091", newTestWorkspaceManager(t))
-	impl, daemonRoot := workspaceSvc(t, newWorkspaceBackend("local", "", nil), &fleet{agents: []*workspaceBackend{omega}})
+	agent09 := newWorkspaceBackend("agent-09", "agent-09:9091", newTestWorkspaceManager(t))
+	impl, daemonRoot := workspaceSvc(t, newWorkspaceBackend("local", "", nil), &fleet{agents: []*workspaceBackend{agent09}})
 
 	resp, err := impl.SpawnSession(tenantCtx("t1"), workspaceSpawn())
 	if err != nil {
 		t.Fatalf("SpawnSession: %v", err)
 	}
-	got := omega.lastSpawn()
+	got := agent09.lastSpawn()
 	if got == nil || got.Workspace == nil || got.WorkDir != "" {
 		t.Fatalf("the agent must be handed the workspace by name and no host path: %+v", got)
 	}
-	if len(omega.tokens) != 1 || omega.tokens[0] != "forge-secret" {
-		t.Fatalf("the spec must travel to the agent that writes it: %q", omega.tokens)
+	if len(agent09.tokens) != 1 || agent09.tokens[0] != "forge-secret" {
+		t.Fatalf("the spec must travel to the agent that writes it: %q", agent09.tokens)
 	}
 	// AND NOTHING ON THE DAEMON HOLDS IT AFTERWARDS: the request's copy is
 	// wiped once the spawn is over.
 	if got.Workspace.Spec != nil && len(got.Workspace.Spec.Files) != 0 {
 		t.Fatalf("the daemon still holds the spec after the spawn: %v", got.Workspace.Spec.Files)
 	}
-	wantDir := filepath.Join(omega.agentRoot.Root(), "t1", "p1", workspaceDirName, "task-a1")
-	if resp.Workspace == nil || resp.Workspace.AgentHost != "omega:9091" || resp.Workspace.Dir != wantDir ||
+	wantDir := filepath.Join(agent09.agentRoot.Root(), "t1", "p1", workspaceDirName, "task-a1")
+	if resp.Workspace == nil || resp.Workspace.AgentHost != "agent-09:9091" || resp.Workspace.Dir != wantDir ||
 		resp.Workspace.Key != "task-a1" {
-		t.Fatalf("placement = %+v, want omega at %s", resp.Workspace, wantDir)
+		t.Fatalf("placement = %+v, want agent09 at %s", resp.Workspace, wantDir)
 	}
 	record, err := impl.store.GetSession(tenantCtx("t1"), "t1", resp.SessionID)
 	if err != nil {
@@ -241,24 +241,24 @@ func TestSpawnSession_FleetAgentProvisionsTheNamedWorkspace(t *testing.T) {
 func TestSpawnSession_PinnedSpawnLandsOnTheAgentHoldingTheCheckout(t *testing.T) {
 	t.Parallel()
 	vs04 := newWorkspaceBackend("vs04", "vs04:9092", newTestWorkspaceManager(t))
-	omega := newWorkspaceBackend("omega", "omega:9091", newTestWorkspaceManager(t))
-	f := &fleet{agents: []*workspaceBackend{vs04, omega}}
+	agent09 := newWorkspaceBackend("agent-09", "agent-09:9091", newTestWorkspaceManager(t))
+	f := &fleet{agents: []*workspaceBackend{vs04, agent09}}
 	impl, _ := workspaceSvc(t, newWorkspaceBackend("local", "", nil), f)
 
-	first, err := omega.agentRoot.ProvisionSession(namedWorkspace())
+	first, err := agent09.agentRoot.ProvisionSession(namedWorkspace())
 	if err != nil {
 		t.Fatal(err)
 	}
 	first.Release()
 
 	req := workspaceSpawn()
-	req.Workspace.Pin = &WorkspacePlacement{AgentHost: "omega:9091", Key: "task-a1", Dir: first.Dir}
+	req.Workspace.Pin = &WorkspacePlacement{AgentHost: "agent-09:9091", Key: "task-a1", Dir: first.Dir}
 	resp, err := impl.SpawnSession(tenantCtx("t1"), req)
 	if err != nil {
 		t.Fatalf("SpawnSession: %v", err)
 	}
-	if omega.spawnCount() != 1 || vs04.spawnCount() != 0 {
-		t.Fatalf("the pinned spawn must land on omega: omega=%d vs04=%d", omega.spawnCount(), vs04.spawnCount())
+	if agent09.spawnCount() != 1 || vs04.spawnCount() != 0 {
+		t.Fatalf("the pinned spawn must land on agent09: agent09=%d vs04=%d", agent09.spawnCount(), vs04.spawnCount())
 	}
 	if resp.Workspace.Dir != first.Dir {
 		t.Fatalf("the pinned spawn must continue the same checkout: %q", resp.Workspace.Dir)
@@ -281,13 +281,13 @@ func TestSpawnSession_PinnedAgentGoneIsRefusedNotRehomed(t *testing.T) {
 	impl, daemonRoot := workspaceSvc(t, local, &fleet{offline: true})
 
 	req := workspaceSpawn()
-	req.Workspace.Pin = &WorkspacePlacement{AgentHost: "omega:9091", Key: "task-a1", Dir: "/omega/projects/t1/p1/workspace/task-a1"}
+	req.Workspace.Pin = &WorkspacePlacement{AgentHost: "agent-09:9091", Key: "task-a1", Dir: "/agent-09/projects/t1/p1/workspace/task-a1"}
 	resp, err := impl.SpawnSession(tenantCtx("t1"), req)
-	var gone *WorkspaceAgentUnavailableError
+	var gone *WorkspaceFleetNodeUnavailableError
 	if !errors.As(err, &gone) || !errors.Is(err, ErrSessionWorkspace) || resp != nil {
-		t.Fatalf("got %v, %v; want *WorkspaceAgentUnavailableError", resp, err)
+		t.Fatalf("got %v, %v; want *WorkspaceFleetNodeUnavailableError", resp, err)
 	}
-	if gone.AgentHost != "omega:9091" || gone.Key != "task-a1" {
+	if gone.AgentHost != "agent-09:9091" || gone.Key != "task-a1" {
 		t.Fatalf("the refusal must name the pinned agent: %+v", gone)
 	}
 	if local.spawnCount() != 0 {
@@ -307,9 +307,9 @@ func TestSpawnSession_PinnedResolvedElsewhereIsRefused(t *testing.T) {
 	impl.SetRemoteBackendResolver(func(context.Context, string, string) (AgentBackend, bool) { return vs04, true })
 
 	req := workspaceSpawn()
-	req.Workspace.Pin = &WorkspacePlacement{AgentHost: "omega:9091", Key: "task-a1", Dir: "/d"}
+	req.Workspace.Pin = &WorkspacePlacement{AgentHost: "agent-09:9091", Key: "task-a1", Dir: "/d"}
 	_, err := impl.SpawnSession(tenantCtx("t1"), req)
-	var gone *WorkspaceAgentUnavailableError
+	var gone *WorkspaceFleetNodeUnavailableError
 	if !errors.As(err, &gone) || gone.ResolvedHost != "vs04:9092" {
 		t.Fatalf("got %v, want a refusal naming where it resolved", err)
 	}
@@ -341,7 +341,7 @@ func TestSpawnSession_AgentThatDidNotProvisionIsRefusedAndUnwound(t *testing.T) 
 }
 
 // TestSpawnSession_DaemonBackendProvisionsUnderTheDaemonRoot is the
-// unchanged path: with no fleet agent serving the backend, the daemon's own
+// unchanged path: with no fleet node serving the backend, the daemon's own
 // backend runs the session, the daemon provisions the workspace under its
 // projects root, the spec directory is mounted read-only, and the session's
 // close releases the spec while the checkout stays.
@@ -391,13 +391,13 @@ func TestSpawnSession_DaemonBackendProvisionsUnderTheDaemonRoot(t *testing.T) {
 }
 
 // TestSpawnSession_DaemonPinStaysOnTheDaemon: a workspace the daemon holds
-// keeps its job on the daemon even after a fleet agent that serves the backend
+// keeps its job on the daemon even after a fleet node that serves the backend
 // has appeared.
 func TestSpawnSession_DaemonPinStaysOnTheDaemon(t *testing.T) {
 	t.Parallel()
 	local := newWorkspaceBackend("local", "", nil)
-	omega := newWorkspaceBackend("omega", "omega:9091", newTestWorkspaceManager(t))
-	impl, daemonRoot := workspaceSvc(t, local, &fleet{agents: []*workspaceBackend{omega}})
+	agent09 := newWorkspaceBackend("agent-09", "agent-09:9091", newTestWorkspaceManager(t))
+	impl, daemonRoot := workspaceSvc(t, local, &fleet{agents: []*workspaceBackend{agent09}})
 
 	first, err := daemonRoot.ProvisionSession(namedWorkspace())
 	if err != nil {
@@ -410,8 +410,8 @@ func TestSpawnSession_DaemonPinStaysOnTheDaemon(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SpawnSession: %v", err)
 	}
-	if local.spawnCount() != 1 || omega.spawnCount() != 0 || resp.Workspace.Dir != first.Dir {
-		t.Fatalf("the daemon-pinned spawn must stay local: local=%d omega=%d", local.spawnCount(), omega.spawnCount())
+	if local.spawnCount() != 1 || agent09.spawnCount() != 0 || resp.Workspace.Dir != first.Dir {
+		t.Fatalf("the daemon-pinned spawn must stay local: local=%d agent09=%d", local.spawnCount(), agent09.spawnCount())
 	}
 }
 
@@ -496,9 +496,9 @@ func TestSpawnSession_NamedWorkspaceAdmission(t *testing.T) {
 // same directory, even though the dispatcher would now pick another.
 func TestJobRun_PinsLaterSessionsToTheWorkspaceHost(t *testing.T) {
 	t.Parallel()
-	omega := newWorkspaceBackend("omega", "omega:9091", newTestWorkspaceManager(t))
+	agent09 := newWorkspaceBackend("agent-09", "agent-09:9091", newTestWorkspaceManager(t))
 	vs04 := newWorkspaceBackend("vs04", "vs04:9092", newTestWorkspaceManager(t))
-	f := &fleet{agents: []*workspaceBackend{omega, vs04}}
+	f := &fleet{agents: []*workspaceBackend{agent09, vs04}}
 	impl, _ := workspaceSvc(t, newWorkspaceBackend("local", "", nil), f)
 	run := NewJobRun(JobRunConfig{
 		JobID:  "job-981",
@@ -512,20 +512,20 @@ func TestJobRun_PinsLaterSessionsToTheWorkspaceHost(t *testing.T) {
 		t.Fatalf("first spawn: %v", err)
 	}
 	pin := run.WorkspacePin()
-	if pin == nil || pin.AgentHost != "omega:9091" || pin.Dir != first.Workspace.Dir {
-		t.Fatalf("pin = %+v, want omega at %s", pin, first.Workspace.Dir)
+	if pin == nil || pin.AgentHost != "agent-09:9091" || pin.Dir != first.Workspace.Dir {
+		t.Fatalf("pin = %+v, want agent09 at %s", pin, first.Workspace.Dir)
 	}
 
 	// The dispatcher's preference moves; the job does not.
 	f.mu.Lock()
-	f.agents = []*workspaceBackend{vs04, omega}
+	f.agents = []*workspaceBackend{vs04, agent09}
 	f.mu.Unlock()
 	second, err := run.Spawn(tenantCtx("t1"), workspaceSpawn())
 	if err != nil {
 		t.Fatalf("second spawn: %v", err)
 	}
-	if omega.spawnCount() != 2 || vs04.spawnCount() != 0 || second.Workspace.Dir != first.Workspace.Dir {
-		t.Fatalf("the second session must continue on omega: omega=%d vs04=%d", omega.spawnCount(), vs04.spawnCount())
+	if agent09.spawnCount() != 2 || vs04.spawnCount() != 0 || second.Workspace.Dir != first.Workspace.Dir {
+		t.Fatalf("the second session must continue on agent09: agent09=%d vs04=%d", agent09.spawnCount(), vs04.spawnCount())
 	}
 
 	if err := run.SetState(context.Background(), JobStateExecuting); err != nil {
@@ -541,13 +541,13 @@ func TestJobRun_PinsLaterSessionsToTheWorkspaceHost(t *testing.T) {
 // host is gone.
 func TestJobRun_ResumedRunKeepsItsPin(t *testing.T) {
 	t.Parallel()
-	omegaRoot := newTestWorkspaceManager(t)
-	checkout, err := omegaRoot.ProvisionSession(namedWorkspace())
+	agent09Root := newTestWorkspaceManager(t)
+	checkout, err := agent09Root.ProvisionSession(namedWorkspace())
 	if err != nil {
 		t.Fatal(err)
 	}
 	checkout.Release()
-	pin := &WorkspacePlacement{AgentHost: "omega:9091", Key: "task-a1", Dir: checkout.Dir}
+	pin := &WorkspacePlacement{AgentHost: "agent-09:9091", Key: "task-a1", Dir: checkout.Dir}
 
 	resumed := func(f *fleet) (*JobRun, *workspaceBackend) {
 		local := newWorkspaceBackend("local", "", nil)
@@ -563,14 +563,14 @@ func TestJobRun_ResumedRunKeepsItsPin(t *testing.T) {
 
 	t.Run("agent present", func(t *testing.T) {
 		t.Parallel()
-		omega := newWorkspaceBackend("omega", "omega:9091", omegaRoot)
+		agent09 := newWorkspaceBackend("agent-09", "agent-09:9091", agent09Root)
 		vs04 := newWorkspaceBackend("vs04", "vs04:9092", newTestWorkspaceManager(t))
-		run, _ := resumed(&fleet{agents: []*workspaceBackend{vs04, omega}})
+		run, _ := resumed(&fleet{agents: []*workspaceBackend{vs04, agent09}})
 		resp, err := run.Spawn(tenantCtx("t1"), workspaceSpawn())
 		if err != nil {
 			t.Fatalf("resumed spawn: %v", err)
 		}
-		if omega.spawnCount() != 1 || resp.Workspace.Dir != checkout.Dir {
+		if agent09.spawnCount() != 1 || resp.Workspace.Dir != checkout.Dir {
 			t.Fatalf("the resumed job must respawn where its checkout is: %+v", resp.Workspace)
 		}
 	})
@@ -578,7 +578,7 @@ func TestJobRun_ResumedRunKeepsItsPin(t *testing.T) {
 		t.Parallel()
 		run, local := resumed(&fleet{offline: true})
 		_, err := run.Spawn(tenantCtx("t1"), workspaceSpawn())
-		var gone *WorkspaceAgentUnavailableError
+		var gone *WorkspaceFleetNodeUnavailableError
 		if !errors.As(err, &gone) || local.spawnCount() != 0 {
 			t.Fatalf("got %v (local spawns %d), want a refusal and no fresh clone", err, local.spawnCount())
 		}
@@ -588,23 +588,23 @@ func TestJobRun_ResumedRunKeepsItsPin(t *testing.T) {
 // TestSpawnSession_APinnedAgentThatDiesAfterResolvingIsTheWorkspaceRefusal:
 // the pinned agent's heartbeat is still fresh, so it resolves — and then the
 // spawn RPC never reaches it. For a pinned spawn that is the pinned host being
-// gone: WorkspaceAgentUnavailableError, which parks the job, and NOT the
+// gone: WorkspaceFleetNodeUnavailableError, which parks the job, and NOT the
 // transient unreachability that would requeue it onto a fresh clone elsewhere.
 // An unpinned spawn keeps the ordinary refusal.
 func TestSpawnSession_APinnedAgentThatDiesAfterResolvingIsTheWorkspaceRefusal(t *testing.T) {
 	t.Parallel()
-	omega := newWorkspaceBackend("omega", "omega:9091", newTestWorkspaceManager(t))
-	omega.spawnErr = &RemoteSpawnFaultError{Op: "Spawn", Sentinel: ErrAgentUnreachable, Err: errors.New("connection refused")}
-	impl, _ := workspaceSvc(t, newWorkspaceBackend("local", "", nil), &fleet{agents: []*workspaceBackend{omega}})
+	agent09 := newWorkspaceBackend("agent-09", "agent-09:9091", newTestWorkspaceManager(t))
+	agent09.spawnErr = &RemoteSpawnFaultError{Op: "Spawn", Sentinel: ErrFleetNodeUnreachable, Err: errors.New("connection refused")}
+	impl, _ := workspaceSvc(t, newWorkspaceBackend("local", "", nil), &fleet{agents: []*workspaceBackend{agent09}})
 
 	pinned := workspaceSpawn()
-	pinned.Workspace.Pin = &WorkspacePlacement{AgentHost: "omega:9091", Key: "task-a1", Dir: "/omega/p"}
+	pinned.Workspace.Pin = &WorkspacePlacement{AgentHost: "agent-09:9091", Key: "task-a1", Dir: "/agent-09/p"}
 	_, err := impl.SpawnSession(tenantCtx("t1"), pinned)
-	var gone *WorkspaceAgentUnavailableError
-	if !errors.As(err, &gone) || gone.AgentHost != "omega:9091" || gone.ResolvedHost != "omega:9091" {
-		t.Fatalf("err = %v, want *WorkspaceAgentUnavailableError for omega", err)
+	var gone *WorkspaceFleetNodeUnavailableError
+	if !errors.As(err, &gone) || gone.AgentHost != "agent-09:9091" || gone.ResolvedHost != "agent-09:9091" {
+		t.Fatalf("err = %v, want *WorkspaceFleetNodeUnavailableError for agent09", err)
 	}
-	if errors.Is(err, ErrAgentUnreachable) {
+	if errors.Is(err, ErrFleetNodeUnreachable) {
 		t.Fatal("the refusal must not classify as the transient unreachability it was observed as")
 	}
 	if !strings.Contains(err.Error(), "connection refused") {
@@ -612,7 +612,7 @@ func TestSpawnSession_APinnedAgentThatDiesAfterResolvingIsTheWorkspaceRefusal(t 
 	}
 
 	_, err = impl.SpawnSession(tenantCtx("t1"), workspaceSpawn())
-	if !errors.Is(err, ErrAgentUnreachable) || errors.Is(err, ErrSessionWorkspace) {
+	if !errors.Is(err, ErrFleetNodeUnreachable) || errors.Is(err, ErrSessionWorkspace) {
 		t.Fatalf("unpinned: %v, want the ordinary unreachable refusal", err)
 	}
 }
@@ -627,8 +627,8 @@ func TestSpawnSession_APinnedAgentThatDiesAfterResolvingIsTheWorkspaceRefusal(t 
 func TestCloseSession_ARemoteSessionWhoseHostCannotBeReachedIsNotConcluded(t *testing.T) {
 	t.Parallel()
 	local := newWorkspaceBackend("local", "", nil)
-	omega := newWorkspaceBackend("omega", "omega:9091", newTestWorkspaceManager(t))
-	f := &fleet{agents: []*workspaceBackend{omega}}
+	agent09 := newWorkspaceBackend("agent-09", "agent-09:9091", newTestWorkspaceManager(t))
+	f := &fleet{agents: []*workspaceBackend{agent09}}
 	impl, _ := workspaceSvc(t, local, f)
 
 	resp, err := impl.SpawnSession(tenantCtx("t1"), workspaceSpawn())
@@ -641,8 +641,8 @@ func TestCloseSession_ARemoteSessionWhoseHostCannotBeReachedIsNotConcluded(t *te
 	f.mu.Unlock()
 	_, err = impl.CloseSession(tenantCtx("t1"), &CloseSessionRequest{SessionID: resp.SessionID})
 	var unavailable *SessionHostUnavailableError
-	if !errors.As(err, &unavailable) || unavailable.Host != "omega:9091" || unavailable.SessionID != resp.SessionID {
-		t.Fatalf("err = %v, want *SessionHostUnavailableError naming omega", err)
+	if !errors.As(err, &unavailable) || unavailable.Host != "agent-09:9091" || unavailable.SessionID != resp.SessionID {
+		t.Fatalf("err = %v, want *SessionHostUnavailableError naming agent09", err)
 	}
 	local.mu.Lock()
 	localCloses := len(local.closed)
@@ -664,11 +664,11 @@ func TestCloseSession_ARemoteSessionWhoseHostCannotBeReachedIsNotConcluded(t *te
 	if _, err := impl.CloseSession(tenantCtx("t1"), &CloseSessionRequest{SessionID: resp.SessionID}); err != nil {
 		t.Fatalf("close once the agent answers: %v", err)
 	}
-	omega.mu.Lock()
-	closed := len(omega.closed)
-	omega.mu.Unlock()
+	agent09.mu.Lock()
+	closed := len(agent09.closed)
+	agent09.mu.Unlock()
 	if closed != 1 {
-		t.Fatalf("omega closes = %d, want the one that reached it", closed)
+		t.Fatalf("agent-09 closes = %d, want the one that reached it", closed)
 	}
 }
 
@@ -678,12 +678,12 @@ func TestCloseSession_ARemoteSessionWhoseHostCannotBeReachedIsNotConcluded(t *te
 // agent that holds it).
 func TestSpawnSession_PlacementIsMarkedOnTheResolverContext(t *testing.T) {
 	t.Parallel()
-	omega := newWorkspaceBackend("omega", "omega:9091", newTestWorkspaceManager(t))
+	agent09 := newWorkspaceBackend("agent-09", "agent-09:9091", newTestWorkspaceManager(t))
 	var marks []bool
 	impl, _ := workspaceSvc(t, newWorkspaceBackend("local", "", nil), nil)
 	impl.SetRemoteBackendResolver(func(ctx context.Context, _, _ string) (AgentBackend, bool) {
 		marks = append(marks, SpawnPlacementFromContext(ctx))
-		return omega, true
+		return agent09, true
 	})
 	resp, err := impl.SpawnSession(tenantCtx("t1"), workspaceSpawn())
 	if err != nil {
@@ -708,10 +708,10 @@ func TestSpawnSession_PlacementIsMarkedOnTheResolverContext(t *testing.T) {
 // refused when it is gone, never placed afresh elsewhere.
 func TestJobRun_TheWorkspacePinIsDurableBeforeTheSessionIsUsed(t *testing.T) {
 	t.Parallel()
-	omegaRoot := newTestWorkspaceManager(t)
-	omega := newWorkspaceBackend("omega", "omega:9091", omegaRoot)
+	agent09Root := newTestWorkspaceManager(t)
+	agent09 := newWorkspaceBackend("agent-09", "agent-09:9091", agent09Root)
 	vs04 := newWorkspaceBackend("vs04", "vs04:9092", newTestWorkspaceManager(t))
-	impl, _ := workspaceSvc(t, newWorkspaceBackend("local", "", nil), &fleet{agents: []*workspaceBackend{omega, vs04}})
+	impl, _ := workspaceSvc(t, newWorkspaceBackend("local", "", nil), &fleet{agents: []*workspaceBackend{agent09, vs04}})
 
 	var mu sync.Mutex
 	var stored *JobStatus
@@ -754,19 +754,19 @@ func TestJobRun_TheWorkspacePinIsDurableBeforeTheSessionIsUsed(t *testing.T) {
 	}
 
 	t.Run("pinned agent present", func(t *testing.T) {
-		recovered, _ := recoverJob(&fleet{agents: []*workspaceBackend{vs04, omega}})
+		recovered, _ := recoverJob(&fleet{agents: []*workspaceBackend{vs04, agent09}})
 		again, err := recovered.Spawn(tenantCtx("t1"), workspaceSpawn())
 		if err != nil {
 			t.Fatalf("recovered spawn: %v", err)
 		}
-		if again.Workspace.AgentHost != "omega:9091" || again.Workspace.Dir != resp.Workspace.Dir {
-			t.Fatalf("recovered on %+v, want omega at %s", again.Workspace, resp.Workspace.Dir)
+		if again.Workspace.AgentHost != "agent-09:9091" || again.Workspace.Dir != resp.Workspace.Dir {
+			t.Fatalf("recovered on %+v, want agent09 at %s", again.Workspace, resp.Workspace.Dir)
 		}
 	})
 	t.Run("pinned agent gone", func(t *testing.T) {
 		recovered, local := recoverJob(&fleet{agents: []*workspaceBackend{vs04}})
 		_, err := recovered.Spawn(tenantCtx("t1"), workspaceSpawn())
-		var gone *WorkspaceAgentUnavailableError
+		var gone *WorkspaceFleetNodeUnavailableError
 		if !errors.As(err, &gone) || local.spawnCount() != 0 {
 			t.Fatalf("err = %v, want a refusal and no placement elsewhere", err)
 		}
@@ -796,12 +796,12 @@ func TestJobRun_ALaterPlacementIsNotPersistedAgain(t *testing.T) {
 
 // TestExecSession_ARemoteSessionRunsOnTheAgentThatOwnsItsContainer is round
 // 6's P1: a review's checkout runs through JobRun.Exec, and for a session on a
-// fleet agent it must run in that agent's container runtime — the daemon's
+// fleet node it must run in that agent's container runtime — the daemon's
 // own runtime does not know the container and must never be asked.
 func TestExecSession_ARemoteSessionRunsOnTheAgentThatOwnsItsContainer(t *testing.T) {
 	t.Parallel()
-	omega := newWorkspaceBackend("omega", "omega:9091", newTestWorkspaceManager(t))
-	f := &fleet{agents: []*workspaceBackend{omega}}
+	agent09 := newWorkspaceBackend("agent-09", "agent-09:9091", newTestWorkspaceManager(t))
+	f := &fleet{agents: []*workspaceBackend{agent09}}
 	impl, _ := workspaceSvc(t, newWorkspaceBackend("local", "", nil), f)
 	daemonRuntime := &mockContainerRuntime{available: true}
 	impl.SetContainerRuntime(daemonRuntime)
@@ -820,8 +820,8 @@ func TestExecSession_ARemoteSessionRunsOnTheAgentThatOwnsItsContainer(t *testing
 	if err != nil {
 		t.Fatalf("Exec: %v", err)
 	}
-	if result.Stdout != "omega" || len(omega.execs) != 1 || omega.execs[0] != resp.SessionID+":git clone repo" {
-		t.Fatalf("the checkout did not run on omega: result=%+v execs=%v", result, omega.execs)
+	if result.Stdout != "agent-09" || len(agent09.execs) != 1 || agent09.execs[0] != resp.SessionID+":git clone repo" {
+		t.Fatalf("the checkout did not run on agent09: result=%+v execs=%v", result, agent09.execs)
 	}
 	daemonRuntime.mu.Lock()
 	daemonExecs := len(daemonRuntime.execCalls)
@@ -862,8 +862,8 @@ func TestExecSession_ARemoteSessionRunsOnTheAgentThatOwnsItsContainer(t *testing
 // be told of a placement no durable record made.
 func TestJobRun_APinThatCannotBeStoredHandsOutNoSession(t *testing.T) {
 	t.Parallel()
-	omega := newWorkspaceBackend("omega", "omega:9091", newTestWorkspaceManager(t))
-	impl, _ := workspaceSvc(t, newWorkspaceBackend("local", "", nil), &fleet{agents: []*workspaceBackend{omega}})
+	agent09 := newWorkspaceBackend("agent-09", "agent-09:9091", newTestWorkspaceManager(t))
+	impl, _ := workspaceSvc(t, newWorkspaceBackend("local", "", nil), &fleet{agents: []*workspaceBackend{agent09}})
 	storeFailure := errors.New("kv: quorum lost")
 	var stored []*JobStatus
 	run := NewJobRun(JobRunConfig{
@@ -889,9 +889,9 @@ func TestJobRun_APinThatCannotBeStoredHandsOutNoSession(t *testing.T) {
 	if !errors.As(err, &persist) || resp != nil || !errors.Is(err, ErrSessionWorkspace) || !errors.Is(err, storeFailure) {
 		t.Fatalf("Spawn = %+v, %v; want *WorkspacePinPersistError and no session", resp, err)
 	}
-	omega.mu.Lock()
-	closed := len(omega.closed)
-	omega.mu.Unlock()
+	agent09.mu.Lock()
+	closed := len(agent09.closed)
+	agent09.mu.Unlock()
 	if closed != 1 {
 		t.Fatalf("the spawned session was not closed: closes=%d", closed)
 	}

@@ -37,11 +37,6 @@ type BatchResourceManager interface {
 	GetRole(ctx context.Context, tenantID, roleID string) (*Role, error)
 	UpdateRole(ctx context.Context, role *Role) error
 
-	// Group operations
-	CreateGroup(ctx context.Context, group *Group) error
-	GetGroup(ctx context.Context, tenantID, groupID string) (*Group, error)
-	UpdateGroup(ctx context.Context, group *Group) error
-
 	// Policy operations
 	CreatePolicy(ctx context.Context, policy *Policy) error
 	GetPolicy(ctx context.Context, tenantID, name string) (*Policy, error)
@@ -93,21 +88,6 @@ func (bp *IAMBatchProcessor) ImportRoles(ctx context.Context, tenantID string, i
 	return op, nil
 }
 
-// ImportGroups imports groups in batch.
-func (bp *IAMBatchProcessor) ImportGroups(ctx context.Context, tenantID string, items []GroupImportItem, opts BatchOptions) (*BatchOperation, error) {
-	op := bp.createOperation(tenantID, BatchOperationTypeGroups, len(items), opts)
-
-	if err := bp.storage.SaveOperation(ctx, op); err != nil {
-		return nil, err
-	}
-
-	// Start async processing. The import must outlive the request that
-	// started it, so it detaches from the caller context deliberately.
-	go bp.processGroups(context.Background(), op, items, opts) // #nosec G118 -- the work must outlive the caller; a request-scoped context would cancel it.
-
-	return op, nil
-}
-
 // ImportPolicies imports policies in batch.
 func (bp *IAMBatchProcessor) ImportPolicies(ctx context.Context, tenantID string, items []PolicyImportItem, opts BatchOptions) (*BatchOperation, error) {
 	op := bp.createOperation(tenantID, BatchOperationTypePolicies, len(items), opts)
@@ -144,13 +124,6 @@ func (bp *IAMBatchProcessor) ImportFromJSON(ctx context.Context, tenantID string
 			return nil, err
 		}
 		return bp.ImportRoles(ctx, tenantID, items, opts)
-
-	case BatchOperationTypeGroups:
-		var items []GroupImportItem
-		if err := json.Unmarshal(data, &items); err != nil {
-			return nil, err
-		}
-		return bp.ImportGroups(ctx, tenantID, items, opts)
 
 	case BatchOperationTypePolicies:
 		var items []PolicyImportItem
@@ -216,23 +189,6 @@ func (bp *IAMBatchProcessor) ImportFromCSV(ctx context.Context, tenantID string,
 			items = append(items, item)
 		}
 		return bp.ImportRoles(ctx, tenantID, items, opts)
-
-	case BatchOperationTypeGroups:
-		items := make([]GroupImportItem, 0, len(records)-1)
-		for _, row := range records[1:] {
-			item := GroupImportItem{}
-			if idx, ok := headerMap["id"]; ok && idx < len(row) {
-				item.ID = row[idx]
-			}
-			if idx, ok := headerMap["name"]; ok && idx < len(row) {
-				item.Name = row[idx]
-			}
-			if idx, ok := headerMap["description"]; ok && idx < len(row) {
-				item.Description = row[idx]
-			}
-			items = append(items, item)
-		}
-		return bp.ImportGroups(ctx, tenantID, items, opts)
 
 	case BatchOperationTypePolicies:
 		return nil, &BatchCSVNotSupportedError{OperationType: "policies"}
@@ -384,7 +340,6 @@ func (bp *IAMBatchProcessor) processUsers(ctx context.Context, op *BatchOperatio
 		if existingUser != nil && opts.UpdateExisting {
 			existingUser.Name = item.Name
 			existingUser.Roles = item.Roles
-			existingUser.Groups = item.Groups
 			if err := bp.tenantMgr.UpdateUser(ctx, existingUser); err != nil {
 				op.Progress.Failed++
 				op.Progress.Processed++
@@ -417,7 +372,6 @@ func (bp *IAMBatchProcessor) processUsers(ctx context.Context, op *BatchOperatio
 			Name:     item.Name,
 			TenantID: op.TenantID,
 			Roles:    item.Roles,
-			Groups:   item.Groups,
 		}
 
 		if err := bp.tenantMgr.CreateUser(ctx, user); err != nil {
@@ -505,83 +459,6 @@ func (bp *IAMBatchProcessor) processRoles(ctx context.Context, op *BatchOperatio
 				op.Errors = append(op.Errors, BatchError{
 					Index: i,
 					Type:  "role",
-					ID:    item.Name,
-					Error: err,
-				})
-				if !opts.ContinueOnError {
-					break
-				}
-				continue
-			}
-		}
-
-		op.Progress.Processed++
-		op.Progress.Succeeded++
-		op.ProcessedItems++
-		op.SuccessCount++
-	}
-
-	bp.finalizeOperation(ctx, op)
-}
-
-// processGroups processes group import items.
-func (bp *IAMBatchProcessor) processGroups(ctx context.Context, op *BatchOperation, items []GroupImportItem, opts BatchOptions) {
-	ctx, cancel := context.WithCancel(ctx)
-	bp.cancelFuncs.Store(op.ID, cancel)
-	defer bp.cancelFuncs.Delete(op.ID)
-
-	op.Status = BatchStatusProcessing
-	_ = bp.storage.UpdateOperation(ctx, op)
-
-	for i, item := range items {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		if opts.RateLimit > 0 {
-			limiter := time.NewTimer(time.Second / time.Duration(opts.RateLimit))
-			select {
-			case <-limiter.C:
-			case <-ctx.Done():
-				limiter.Stop()
-				return
-			}
-		}
-
-		if err := item.Validate(); err != nil {
-			op.Progress.Failed++
-			op.FailureCount++
-			op.Errors = append(op.Errors, BatchError{
-				Index: i,
-				Type:  "group",
-				ID:    item.Name,
-				Error: err,
-			})
-			if !opts.ContinueOnError && !opts.ValidateOnly {
-				break
-			}
-			continue
-		}
-
-		if !opts.DryRun && !opts.ValidateOnly {
-			group := &Group{
-				ID:          item.ID,
-				Name:        item.Name,
-				Description: item.Description,
-				TenantID:    op.TenantID,
-			}
-			if group.ID == "" {
-				group.ID = uuid.New().String()
-			}
-
-			if err := bp.tenantMgr.CreateGroup(ctx, group); err != nil {
-				op.Progress.Failed++
-				op.FailureCount++
-				op.Errors = append(op.Errors, BatchError{
-					Index: i,
-					Type:  "group",
 					ID:    item.Name,
 					Error: err,
 				})

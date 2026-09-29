@@ -74,8 +74,8 @@ type sdlcBackstop struct {
 // path still works — it carries its own tenant in the route index — so the
 // module degrades to delivery-driven rather than stopping, and the log says
 // which of the two a reader is looking at.
-func (s *Server) startSDLCBackstops(triage, review, unblock sdlcBackstopSweeper) {
-	if triage == nil && review == nil && unblock == nil {
+func (s *Server) startSDLCBackstops(triage, review, unblock, train sdlcBackstopSweeper) {
+	if triage == nil && review == nil && unblock == nil && train == nil {
 		return
 	}
 	tenants, ok := s.sdlcBackstopTenants()
@@ -94,6 +94,10 @@ func (s *Server) startSDLCBackstops(triage, review, unblock sdlcBackstopSweeper)
 		sdlcBackstop{
 			what: "unblock sweep", counted: "returned to the queue",
 			interval: s.config.SDLC.UnblockSweepInterval, sweeper: unblock,
+		},
+		sdlcBackstop{
+			what: "merge train backstop", counted: "started a train for",
+			interval: s.config.SDLC.TrainSweepInterval, sweeper: train,
 		},
 		tenants,
 	)
@@ -120,10 +124,11 @@ func (s *Server) sdlcBackstopTenants() (orchestration.TenantLister, bool) {
 // A BACKSTOP WITH NO SWEEPER IS LEFT OUT RATHER THAN FAKED: its ticker channel
 // stays nil, which a select never chooses, so a node that mounts one half of
 // the module runs one backstop and does not pretend to run the other.
-func (s *Server) runSDLCBackstops(triage, review, unblock sdlcBackstop, tenants orchestration.TenantLister) {
+func (s *Server) runSDLCBackstops(triage, review, unblock, train sdlcBackstop, tenants orchestration.TenantLister) {
 	triage.interval = backstopInterval(triage.interval, sdlc.DefaultTriageSweepInterval)
 	review.interval = backstopInterval(review.interval, sdlc.DefaultReviewSweepInterval)
 	unblock.interval = backstopInterval(unblock.interval, sdlc.DefaultUnblockSweepInterval)
+	train.interval = backstopInterval(train.interval, sdlc.DefaultTrainSweepInterval)
 
 	ctx, stop := context.WithCancel(context.Background())
 	backstops := &sdlcBackstops{stop: stop, done: make(chan struct{})}
@@ -136,10 +141,13 @@ func (s *Server) runSDLCBackstops(triage, review, unblock sdlcBackstop, tenants 
 		defer stopReview()
 		unblockTicks, stopUnblock := backstopTicker(unblock)
 		defer stopUnblock()
+		trainTicks, stopTrain := backstopTicker(train)
+		defer stopTrain()
 
 		s.sweepSDLCBackstop(ctx, triage, tenants)
 		s.sweepSDLCBackstop(ctx, review, tenants)
 		s.sweepSDLCBackstop(ctx, unblock, tenants)
+		s.sweepSDLCBackstop(ctx, train, tenants)
 		for {
 			select {
 			case <-ctx.Done():
@@ -150,11 +158,13 @@ func (s *Server) runSDLCBackstops(triage, review, unblock sdlcBackstop, tenants 
 				s.sweepSDLCBackstop(ctx, review, tenants)
 			case <-unblockTicks:
 				s.sweepSDLCBackstop(ctx, unblock, tenants)
+			case <-trainTicks:
+				s.sweepSDLCBackstop(ctx, train, tenants)
 			}
 		}
 	}()
-	s.logger.Infof("sdlc: backstops started (triage=%s review=%s unblock=%s)",
-		triage.interval, review.interval, unblock.interval)
+	s.logger.Infof("sdlc: backstops started (triage=%s review=%s unblock=%s train=%s)",
+		triage.interval, review.interval, unblock.interval, train.interval)
 }
 
 // backstopInterval takes the module's default for an interval an operator

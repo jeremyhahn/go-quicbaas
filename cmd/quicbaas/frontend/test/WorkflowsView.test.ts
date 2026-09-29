@@ -149,12 +149,14 @@ describe('WorkflowsView', () => {
     const runBtn = screen.getByRole('button', { name: /Run workflow dev-sprint-v1/i });
     await fireEvent.click(runBtn);
 
-    // The StartJobDialog renders a readonly Workflow Name input prefilled.
+    // The StartJobDialog renders a disabled Workflow Name RefPicker prefilled
+    // — disabled rather than readOnly, so it cannot be reopened and searched
+    // away from the workflow Run was clicked for.
     await waitFor(() => {
       const wfInputs = screen.getAllByLabelText(/Workflow Name/i) as HTMLInputElement[];
-      const readonlyInput = wfInputs.find((i) => i.readOnly);
-      expect(readonlyInput).toBeDefined();
-      expect(readonlyInput!.value).toBe('dev-sprint-v1');
+      const disabledInput = wfInputs.find((i) => i.disabled);
+      expect(disabledInput).toBeDefined();
+      expect(disabledInput!.value).toBe('dev-sprint-v1');
     });
   });
 

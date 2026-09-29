@@ -73,7 +73,7 @@ sides. Two invariants follow, and both are enforced in `pkg/iam`:
    (`pkg/api/rest` `tenantFromOAuthClientID` delegates to the same parser —
    there is one implementation of the grammar).
 
-Violating either one produces the same symptom: `POST /api/v1/agents/register`
+Violating either one produces the same symptom: `POST /api/v1/fleet/enroll`
 succeeds, and the credential it just issued is refused by `POST /oauth2/token`
 with `401 invalid_client`, forever, because the write and the read resolved to
 different namespaces (go-quicbaas#644; the same defect class as #535 for pooled
@@ -83,7 +83,7 @@ accounts and #634 for projects).
 
 `AppManager.RegisterAgentApp` keys the daemon's client on the agent identity the
 request already authenticated — tenant plus certificate Common Name — via
-`iam.AgentClientID`, a digest-derived identifier rather than a random one. A
+`iam.FleetNodeClientID`, a digest-derived identifier rather than a random one. A
 daemon that enrolls again gets **the client it already has**, with a rotated
 secret it can use. The secret is rotated rather than returned because it is
 stored as a PBKDF2 digest and cannot be recovered; the caller is the register
@@ -161,7 +161,7 @@ kinds resolve it two ways:
   grant therefore receives no permissions, whatever it names (go-quicbaas#653).
 
 A grant is conferred only by a server-side path that speaks for a grantor —
-agent enrollment (`iam.AgentRuntimeGrant`), the orchestrator dispatch-client bootstrap —
+agent enrollment (`iam.FleetRuntimeGrant`), the orchestrator dispatch-client bootstrap —
 via `AppManager.GrantScopes`. No client-facing registration or update surface carries a
 scope field, because one would turn "register my app" into "grant my app anything".
 

@@ -122,6 +122,9 @@ export type {
   Project,
   ProjectRole,
   ContextRepo,
+  RetiredSigningKey,
+  WorkspaceTier,
+  SessionRotationPolicy,
   CreateProjectRequest,
   CreateProjectResponse,
   GetProjectResponse,
@@ -129,18 +132,27 @@ export type {
   UpdateProjectResponse,
   DeleteProjectResponse,
   ListProjectsResponse,
-  GrantAgentRoleRequest,
-  GrantAgentRoleResponse,
-  RevokeAgentRoleRequest,
-  RevokeAgentRoleResponse,
+  GrantFleetNodeRoleRequest,
+  GrantFleetNodeRoleResponse,
+  RevokeFleetNodeRoleRequest,
+  RevokeFleetNodeRoleResponse,
 } from './projects.js';
 export type {
   SdlcClient,
   ForgeConfig,
   ReviewPolicy,
-  WorkerConfig,
   RankingPolicy,
+  ReviewerConfig,
+  ReviewerSelection,
+  AdoptIssueRequest,
+  Adoption,
+  MergeTrainPolicy,
+  ClusteringPolicy,
   ProjectBinding,
+  FileIssueRequest,
+  ForgeIssue,
+  ForgeUser,
+  CollaboratorsResponse,
   DeliveryPullRequest,
   ReviewRecord,
   CheckRecord,
@@ -150,6 +162,9 @@ export type {
   ConformanceReport,
   ConformanceFinding,
   ConformanceCheckResult,
+  OpenWork,
+  OpenPullRequest,
+  OpenIssue,
 } from './sdlc.js';
 export type {
   AccountsClient,
@@ -158,6 +173,7 @@ export type {
   AccountStatus,
   AccountRefreshPolicy,
   AccountCredential,
+  AccountBilling,
   CreateAccountRequest,
   CreateAccountResponse,
   GetAccountResponse,
@@ -173,7 +189,22 @@ export type {
   SetDefaultAccountResponse,
   AccountUsage,
   GetAccountUsageResponse,
+  SpendHeadroom,
 } from './accounts.js';
+export type {
+  AgentsClient,
+  Agent,
+  AgentRole,
+  AgentRef,
+  AgentPool,
+  AgentUsage,
+  AgentAttempt,
+  ProviderEndpoint,
+  AgentAccountPolicy,
+  AgentPrompt,
+  AgentPlacement,
+} from './agents.js';
+export { formatAgentRef, parseAgentRef } from './agents.js';
 export {
   parseJSONPreservingLargeIntegers,
   quoteUnrepresentableIntegers,
@@ -265,6 +296,12 @@ export type {
 
 // All domain types.
 export type * from './types.js';
+export type {
+  SpendLimits,
+  SpendLimitWindow,
+  SpendBreakerPolicy,
+  AccountSpendPolicy,
+} from './spend.js';
 
 // SandboxMode const object (not a type — must be a named export, not type-only).
 export { SandboxMode } from './types.js';
@@ -283,7 +320,7 @@ export type {
   JobPageParams,
   TaskPageParams,
   SessionPageParams,
-  AgentPageParams,
+  FleetNodePageParams,
   WorkflowPageParams,
   ProjectPageParams,
   AccountPageParams,

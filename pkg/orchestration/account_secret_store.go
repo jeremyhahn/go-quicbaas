@@ -17,6 +17,8 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	qerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -51,8 +53,8 @@ const accountSecretPathPrefix = "orchestration/agent-accounts/"
 // map[string][]byte; one key keeps the envelope atomic (no partial reads).
 //
 // It is exported because a SecretsManager written specifically to back an
-// AccountSecretStore — the agent daemon's read-through materializing store
-// (pkg/agent, go-quicbaas#734) — has to answer with the same key this store
+// AccountSecretStore — the fleet node daemon's read-through materializing store
+// (pkg/fleet, go-quicbaas#734) — has to answer with the same key this store
 // asks for. Restating the literal there would make a rename silently return
 // "envelope present but empty" on the worker host.
 const AccountSecretDataKey = "credential"
@@ -101,6 +103,31 @@ func ParseAccountSecretPath(path string) (tenantID, accountID string, ok bool) {
 // AccountSecretStore stores and retrieves AccountCredential envelopes.
 type AccountSecretStore struct {
 	mgr interfaces.SecretsManager
+
+	// lastGeneration is the highest generation stamp this process has issued.
+	// It makes Replace's stamps STRICTLY INCREASING regardless of what the
+	// wall clock does, so two replacements inside one nanosecond — or one
+	// across a clock that stepped backwards — can never mint the same, or a
+	// descending, generation. Atomic rather than mutex-guarded: the stamp is a
+	// single integer and the contention is a compare-and-swap loop that almost
+	// never spins.
+	lastGeneration atomic.Int64
+}
+
+// nextGeneration mints the stamp for one envelope write: now, or one past the
+// last stamp issued, whichever is greater.
+func (s *AccountSecretStore) nextGeneration() int64 {
+	now := time.Now().UTC().UnixNano()
+	for {
+		last := s.lastGeneration.Load()
+		next := now
+		if next <= last {
+			next = last + 1
+		}
+		if s.lastGeneration.CompareAndSwap(last, next) {
+			return next
+		}
+	}
 }
 
 // NewAccountSecretStore returns an AccountSecretStore backed by mgr.
@@ -121,21 +148,43 @@ func (s *AccountSecretStore) path(tenantID, accountID string) (string, error) {
 }
 
 // Put stores or overwrites cred for tenantID/accountID, encrypted under a
-// tenant-specific DEK.
+// tenant-specific DEK. It is Replace for callers with no use for the
+// generation stamp.
 func (s *AccountSecretStore) Put(ctx context.Context, tenantID, accountID string, cred *AccountCredential) error {
+	_, err := s.Replace(ctx, tenantID, accountID, cred)
+	return err
+}
+
+// Replace stores or overwrites cred for tenantID/accountID and reports the
+// GENERATION it stamped onto the stored envelope.
+//
+// EVERY WRITE IS A NEW GENERATION, and the stamp goes into the same encrypted
+// body as the material it names. A caller therefore cannot publish material
+// without publishing its identity, and cannot lose the identity while keeping
+// the material: the two are one Put. That is what makes the generation the
+// AUTHORITY on "which copy is this?", and everything else — the mirror on the
+// metadata record, the generation recorded on a session — a derivative of it
+// that can be reconciled back from here (go-quicbaas#997).
+//
+// cred itself is NOT mutated: the stamp is applied to the copy that is
+// serialized, so a caller's envelope never silently acquires a generation it
+// did not ask for.
+func (s *AccountSecretStore) Replace(ctx context.Context, tenantID, accountID string, cred *AccountCredential) (int64, error) {
 	if err := s.ready(); err != nil {
-		return err
+		return 0, err
 	}
 	if cred == nil {
-		return &AccountInvalidError{Field: "credential", Message: "must not be nil"}
+		return 0, &AccountInvalidError{Field: "credential", Message: "must not be nil"}
 	}
 	path, err := s.path(tenantID, accountID)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	body, err := json.Marshal(cred)
+	stamped := *cred
+	stamped.Generation = s.nextGeneration()
+	body, err := json.Marshal(&stamped)
 	if err != nil {
-		return &AccountStoreError{Message: "failed to marshal account credential: " + err.Error()}
+		return 0, &AccountStoreError{Message: "failed to marshal account credential: " + err.Error()}
 	}
 	// Metadata carries non-secret bookkeeping only — never any field from
 	// cred itself — so the SecretsManager's own audit/versioning surface
@@ -144,9 +193,9 @@ func (s *AccountSecretStore) Put(ctx context.Context, tenantID, accountID string
 	storeErr := s.mgr.StoreWithOptions(ctx, path, map[string][]byte{AccountSecretDataKey: body}, metadata,
 		&interfaces.StoreOptions{TenantID: tenantID})
 	if storeErr != nil {
-		return &AccountStoreError{Message: "failed to store account credential: " + storeErr.Error(), Cause: storeErr}
+		return 0, &AccountStoreError{Message: "failed to store account credential: " + storeErr.Error(), Cause: storeErr}
 	}
-	return nil
+	return stamped.Generation, nil
 }
 
 // Get retrieves the credential envelope for tenantID/accountID.

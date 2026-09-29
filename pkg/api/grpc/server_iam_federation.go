@@ -351,7 +351,6 @@ func convertProtoToExternalProvider(req *iampb.CreateProviderRequest) *iam.Exter
 		AutoProvision: req.AutoProvision,
 		AllowLinking:  req.AllowLinking,
 		DefaultRoles:  req.DefaultRoles,
-		DefaultGroups: req.DefaultGroups,
 	}
 
 	if req.ClaimMappings != nil {
@@ -420,9 +419,6 @@ func mergeProtoUpdateToExternalProvider(req *iampb.UpdateProviderRequest, existi
 	if len(req.DefaultRoles) > 0 {
 		provider.DefaultRoles = req.DefaultRoles
 	}
-	if len(req.DefaultGroups) > 0 {
-		provider.DefaultGroups = req.DefaultGroups
-	}
 	if req.ClaimMappings != nil {
 		provider.ClaimMappings = &iam.ClaimMappings{
 			Subject:    req.ClaimMappings.Subject,
@@ -458,7 +454,6 @@ func convertExternalProviderToProto(p *iam.ExternalProvider) *iampb.ExternalProv
 		AutoProvision: p.AutoProvision,
 		AllowLinking:  p.AllowLinking,
 		DefaultRoles:  p.DefaultRoles,
-		DefaultGroups: p.DefaultGroups,
 		CreatedAt:     timestamppb.New(p.Created),
 		UpdatedAt:     timestamppb.New(p.Updated),
 	}

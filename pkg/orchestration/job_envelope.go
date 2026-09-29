@@ -250,12 +250,18 @@ func (s *agentServiceImpl) loadJobProject(ctx context.Context, config *JobConfig
 
 // resolveJobWorkflow finds the definition a workflow job runs and derives the
 // lead's backend and model from it when the caller named neither. A job that
-// names no workflow, or names one the loader does not hold, runs without a
-// definition exactly as it does today.
-// A workflow a fresh job names and the loader does not hold is a refusal; a
-// resumed job whose definition has since gone runs without one, because
-// refusing it would strand work already in flight.
+// names no workflow runs without a definition.
+//
+// A workflow a fresh job names must exist: a missing one is a
+// ReferenceNotFoundError and a registry that cannot answer (none attached) is
+// a ReferenceUnavailableError. A resumed job whose definition has since gone
+// runs without one, because refusing it would strand work already in flight.
 func (s *agentServiceImpl) resolveJobWorkflow(config *JobConfig, resumed bool) (*WorkflowDefinition, error) {
+	if config.WorkflowName != "" && !resumed {
+		if err := RequireWorkflow(s.workflowGetter(), "workflow_name", config.TenantID, config.WorkflowName); err != nil {
+			return nil, err
+		}
+	}
 	if s.workflowLoader == nil {
 		if config.WorkflowName != "" {
 			s.logger.Warnf("orchestration: workflow %q requested but no workflow loader available", config.WorkflowName)
@@ -266,12 +272,6 @@ func (s *agentServiceImpl) resolveJobWorkflow(config *JobConfig, resumed bool) (
 	if config.WorkflowName != "" {
 		wf, err := s.workflowLoader.Get(config.TenantID, config.WorkflowName)
 		if err != nil {
-			if !resumed {
-				return nil, &AgentServiceError{
-					Sentinel: ErrInvalidInput,
-					Message:  "workflow not found: " + config.WorkflowName,
-				}
-			}
 			s.logger.Warnf("orchestration: could not reload workflow %q for resumed job: %s",
 				config.WorkflowName, err.Error())
 			return nil, nil
@@ -311,6 +311,16 @@ func (s *agentServiceImpl) resolveJobWorkflow(config *JobConfig, resumed bool) (
 	s.logger.Infof("orchestration: auto-matched workflow %q from lead backend=%s model=%s (score=%d)",
 		best.Name, config.LeadBackend, config.LeadModel, bestScore)
 	return best, nil
+}
+
+// workflowGetter returns the loader as a WorkflowGetter, or a nil interface
+// when none is attached, so RequireWorkflow sees "no store" rather than a
+// typed nil it would call through.
+func (s *agentServiceImpl) workflowGetter() WorkflowGetter {
+	if s.workflowLoader == nil {
+		return nil
+	}
+	return s.workflowLoader
 }
 
 // applyWorkflowLead fills the lead's backend and model from the workflow's
@@ -386,6 +396,7 @@ func (r *JobRun) execute(ctx context.Context, runner JobRunner) (runErr error) {
 	runCtx, cancelRun := context.WithCancel(ctx)
 	r.cancelRun.Store(&cancelRun)
 	defer r.finished.Store(true)
+	defer r.settleLease()
 	defer r.releaseOwnLease()
 	defer r.stopHeartbeat()
 
@@ -440,8 +451,10 @@ func (r *JobRun) execute(ctx context.Context, runner JobRunner) (runErr error) {
 	// one that has any — it plans a branch, it labels an issue. Taking the
 	// lease first means the capacity gate is enforced before anything
 	// outside the daemon has changed.
-	if err := r.acquireJobLease(runCtx, runner); err != nil {
-		return err
+	leaseErr := r.acquireJobLease(runCtx, runner)
+	r.settleLease()
+	if leaseErr != nil {
+		return leaseErr
 	}
 
 	if err := r.SetState(runCtx, r.StartState); err != nil {

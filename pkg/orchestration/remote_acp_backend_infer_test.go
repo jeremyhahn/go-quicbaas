@@ -22,12 +22,12 @@ import (
 )
 
 // =============================================================================
-// inferDaemonServer — minimal gRPC AgentRuntime implementing only Infer
+// inferDaemonServer — minimal gRPC FleetRuntime implementing only Infer
 // =============================================================================
 
 // inferDaemonServer is a minimal in-memory server for exercising Infer.
 type inferDaemonServer struct {
-	proto.UnimplementedAgentRuntimeServer
+	proto.UnimplementedFleetRuntimeServer
 
 	frames          []*proto.InferResponse
 	inferErr        error
@@ -56,7 +56,7 @@ func startInferBufconnDaemon(t *testing.T, svc *inferDaemonServer) func(ctx cont
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
 	srv := grpc.NewServer()
-	proto.RegisterAgentRuntimeServer(srv, svc)
+	proto.RegisterFleetRuntimeServer(srv, svc)
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(func() { srv.Stop() })
 	return func(ctx context.Context, target string) (*grpc.ClientConn, error) {
@@ -73,14 +73,14 @@ func startInferBufconnDaemon(t *testing.T, svc *inferDaemonServer) func(ctx cont
 // newInferBackend constructs a RemoteACPBackend wired to the given dialer.
 func newInferBackend(t *testing.T, dialer func(ctx context.Context, target string) (*grpc.ClientConn, error)) *RemoteACPBackend {
 	t.Helper()
-	reg := &AgentRegistration{
+	reg := &FleetNode{
 		ID:       "infer-agent",
 		TenantID: "tenant-infer",
 		Name:     "infer-daemon",
 		Host:     "daemon.infer:9091",
 		Backend:  "ollama",
-		Kind:     AgentKindDaemon,
-		Status:   AgentStatusRunning,
+		Kind:     FleetNodeKindDaemon,
+		Status:   FleetNodeStatusRunning,
 	}
 	b, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: reg,

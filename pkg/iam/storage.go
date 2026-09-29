@@ -131,53 +131,6 @@ type UserStorage interface {
 	ListUsers(ctx context.Context, tenantID string, opts ListOptions) ([]*User, error)
 }
 
-// GroupStorage defines the interface for group persistence operations.
-type GroupStorage interface {
-	// CreateGroup stores a new group.
-	CreateGroup(ctx context.Context, group *Group) error
-
-	// GetGroup retrieves a group by ID.
-	GetGroup(ctx context.Context, tenantID, groupID string) (*Group, error)
-
-	// UpdateGroup updates an existing group. It REPLACES the whole record,
-	// including the member list, so it expresses "the membership is now
-	// exactly this" — an operation a caller sometimes means, and never the
-	// right one for adding or removing a single member. Use AddGroupMember /
-	// RemoveGroupMember for that.
-	UpdateGroup(ctx context.Context, group *Group) error
-
-	// AddGroupMember adds userID to the group's member list ATOMICALLY with
-	// respect to other membership changes, and reports no error when the user
-	// is already a member.
-	//
-	// It exists because read-append-write is a lost update, and the losing
-	// write is silent. Two concurrent CreateUser calls naming one group each
-	// read the same member list, each append their own user, and the second
-	// write erases the first: both users hold the group in User.Groups while
-	// only one appears in Group.Members, and nothing reports it. Membership is
-	// an authorization input, so the half of the pair that vanished is a grant
-	// the system believes it made.
-	//
-	// Idempotence is part of the contract, not a convenience: a failed create
-	// compensates by removing the member it added, and a retry must be able to
-	// add it again without an "already a member" error deciding the retry
-	// failed.
-	AddGroupMember(ctx context.Context, tenantID, groupID, userID string) error
-
-	// RemoveGroupMember removes userID from the group's member list, atomically
-	// against concurrent membership changes, and reports no error when the user
-	// is not a member. Same reasoning as AddGroupMember in both respects: a
-	// removal built from read-filter-write loses a concurrent addition, and a
-	// compensating removal has to be safe to repeat.
-	RemoveGroupMember(ctx context.Context, tenantID, groupID, userID string) error
-
-	// DeleteGroup removes a group.
-	DeleteGroup(ctx context.Context, tenantID, groupID string) error
-
-	// ListGroups retrieves groups with pagination and filtering.
-	ListGroups(ctx context.Context, tenantID string, opts ListOptions) ([]*Group, error)
-}
-
 // RoleStorage defines the interface for role persistence operations.
 type RoleStorage interface {
 	// CreateRole stores a new role.
@@ -364,7 +317,7 @@ type CreateTenantOptions struct {
 	// Settings contains tenant settings
 	Settings *TenantSettings
 
-	// Quotas contains the BaaS-layer IAM quotas (max groups, policies, apps)
+	// Quotas contains the BaaS-layer IAM quotas (max policies, apps)
 	// for the tenant. These are distinct from EngineQuotas.
 	Quotas *TenantQuotas
 
@@ -399,9 +352,6 @@ type UpdateTenantOptions struct {
 type IdentityStoreOptions struct {
 	// UserStorage is the user storage backend
 	UserStorage UserStorage
-
-	// GroupStorage is the group storage backend
-	GroupStorage GroupStorage
 
 	// RoleStorage is the role storage backend
 	RoleStorage RoleStorage
@@ -458,11 +408,6 @@ type CreateUserOptions struct {
 
 	// Roles is the list of role IDs to assign to the new user.
 	Roles []string
-
-	// Groups is the list of group IDs the new user is added to. Each
-	// reference is validated before the user record is written, and each
-	// group's member list is updated to include the new user.
-	Groups []string
 }
 
 // UpdateUserOptions contains options for updating a user.
@@ -484,9 +429,6 @@ type UpdateUserOptions struct {
 
 	// Roles is the list of role IDs assigned to the user
 	Roles *[]string
-
-	// Groups is the list of group IDs the user belongs to
-	Groups *[]string
 
 	// Lifecycle, when non-empty, transitions the account to that state. The
 	// move is checked against qrdb's transition table, so an illegal one is
@@ -516,36 +458,6 @@ type UpdateUserOptions struct {
 	// other kinds are preserved. This is the identifier the admin-mTLS
 	// first-boot enrollment binds and that qrdb resolves natively.
 	SPKICertThumbprint *string
-}
-
-// CreateGroupOptions contains options for creating a group.
-type CreateGroupOptions struct {
-	// ID is an optional group ID. If empty, a UUID will be generated.
-	ID string
-
-	// Name is the group name
-	Name string
-
-	// Description is the group description
-	Description string
-
-	// Attributes contains custom attributes
-	Attributes map[string]interface{}
-}
-
-// UpdateGroupOptions contains options for updating a group.
-type UpdateGroupOptions struct {
-	// Name is the group name
-	Name *string
-
-	// Description is the group description
-	Description *string
-
-	// Attributes contains custom attributes
-	Attributes *map[string]interface{}
-
-	// Members is the list of user IDs that are members of this group
-	Members *[]string
 }
 
 // CreateRoleOptions contains options for creating a role.
@@ -586,17 +498,11 @@ type UpdateRoleOptions struct {
 // roles, storage bytes, etc.) are authoritative in qrdb's TenantServicer; only
 // IAM-subsystem concepts not tracked by the engine belong here.
 type TenantQuota struct {
-	// MaxGroups is the maximum number of IAM groups allowed.
-	MaxGroups int64
-
 	// MaxPolicies is the maximum number of ABAC policies allowed.
 	MaxPolicies int64
 
 	// MaxApps is the maximum number of OAuth2/OIDC applications allowed.
 	MaxApps int64
-
-	// CurrentGroups is the current number of IAM groups.
-	CurrentGroups int64
 
 	// CurrentPolicies is the current number of ABAC policies.
 	CurrentPolicies int64

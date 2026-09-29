@@ -119,7 +119,7 @@ func TestSigningAgentPlacementPrimitives(t *testing.T) {
 	if got := SigningAgentTrait("abc"); got != "signing-agent:abc" || !isSigningAgentTrait(got) {
 		t.Fatalf("trait = %q", got)
 	}
-	if isSigningAgentTrait(AgentTraitGPU) {
+	if isSigningAgentTrait(FleetNodeTraitGPU) {
 		t.Fatal("gpu is not a signing-agent trait")
 	}
 	if SigningAgentRequiredFromContext(context.Background()) || SigningAgentRequiredFromContext(nil) { //nolint:staticcheck // nil is the case under test
@@ -151,29 +151,29 @@ func TestSigningAgentPlacementPrimitives(t *testing.T) {
 func TestReconcileAgentBackends_SigningTraits(t *testing.T) {
 	t.Parallel()
 	const oldID, newID = "0123456789abcdef0123456789abcdef", "fedcba9876543210fedcba9876543210"
-	record := func() *AgentRegistration {
-		return &AgentRegistration{Backend: "codex", Capabilities: []string{"codex", AgentTraitGPU, SigningAgentTrait(oldID)}}
+	record := func() *FleetNode {
+		return &FleetNode{Backend: "codex", Capabilities: []string{"codex", FleetNodeTraitGPU, SigningAgentTrait(oldID)}}
 	}
 	cases := map[string]struct {
 		signing []string
 		want    []string
 	}{
-		"unreported keeps": {signing: nil, want: []string{"codex", AgentTraitGPU, SigningAgentTrait(oldID)}},
-		"empty clears":     {signing: []string{}, want: []string{"codex", AgentTraitGPU}},
-		"list replaces":    {signing: []string{newID}, want: []string{"codex", AgentTraitGPU, SigningAgentTrait(newID)}},
+		"unreported keeps": {signing: nil, want: []string{"codex", FleetNodeTraitGPU, SigningAgentTrait(oldID)}},
+		"empty clears":     {signing: []string{}, want: []string{"codex", FleetNodeTraitGPU}},
+		"list replaces":    {signing: []string{newID}, want: []string{"codex", FleetNodeTraitGPU, SigningAgentTrait(newID)}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			agent := record()
-			reconcileAgentBackends(agent, &AgentObservation{Backends: []string{"codex"}, SigningAgents: tc.signing})
+			reconcileFleetNodeBackends(agent, &FleetNodeObservation{Backends: []string{"codex"}, SigningAgents: tc.signing})
 			if strings.Join(agent.Capabilities, ",") != strings.Join(tc.want, ",") {
 				t.Fatalf("capabilities = %v, want %v", agent.Capabilities, tc.want)
 			}
 		})
 	}
-	bad := &AgentObservation{Backends: []string{"codex"}, SigningAgents: []string{"not-an-id"}}
-	if err := bad.Validate(); !errors.Is(err, ErrAgentRegistryInvalidInput) {
+	bad := &FleetNodeObservation{Backends: []string{"codex"}, SigningAgents: []string{"not-an-id"}}
+	if err := bad.Validate(); !errors.Is(err, ErrFleetRegistryInvalidInput) {
 		t.Fatalf("a malformed signing identifier: %v, want refused", err)
 	}
 }

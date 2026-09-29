@@ -37,9 +37,8 @@ func newSessionRefreshProvider(t *testing.T, accessTTL, refreshTTL time.Duration
 
 	storage := NewMemoryStorage()
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
+		UserStorage: storage,
+		RoleStorage: storage,
 	})
 
 	// The principal these sessions name. It has to EXIST: a refresh is redeemed

@@ -22,11 +22,13 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	qerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/prompts"
@@ -45,29 +47,43 @@ type agentServiceImpl struct {
 	messaging        MessagingPublisher // pub/sub for cross-host coordination
 	leadAgent        *LeadAgentConfig   // optional lead agent for auto-orchestration
 	leadSessionID    string             // session ID for the lead agent
-	agentRegistry    AgentRegistry      // fleet agent registry
+	fleetRegistry    FleetRegistry      // fleet node registry
 	jobs             sync.Map           // map[string]*runningJob
+
+	// resumedSettled closes once every job the last recovery resumed has
+	// settled its lease; see ResumedJobsSettled. Nil before any recovery.
+	resumedSettled   atomic.Pointer[chan struct{}]
 	kvStore          interfaces.KVStore // KV store for job persistence
 	workflowLoader   *WorkflowLoader    // workflow loader for job resumption
 	logger           interfaces.Logger
 	eventSubscribers sync.Map // map[string]*subscriberList keyed by tenantID/jobID
 	sandboxPolicy    SandboxPolicy
-	trustPolicy      TrustPolicy           // integrity floor every spawn resolves against
-	tenantPolicies   TenantPolicyProvider  // optional resolver for per-tenant overrides
-	remoteResolver   RemoteBackendResolver // optional: routes daemon-kind registrations to RemoteACPBackend
-	sessionLog       SessionEventLog       // optional: append-only per-session event log for attach/replay
-	projectAuthz     *ProjectAuthz         // optional: enforces per-project agent role matrix
-	costTracker      CostTracker           // optional: per-tenant/account/project/job token counters
-	ledger           ConsumptionLedger     // optional: the append-only spend authority every cap is decided from
-	lifecyclePolicy  JobLifecyclePolicy    // operator command allowlist + per-stage bounds handed to every control loop
-	projectStore     ProjectStore          // optional: durable project records for managed workspaces
-	mountPolicy      *MountPolicy          // optional: bind-mount policy; nil denies every host mount
-	workspaces       WorkspaceProvisioner  // optional: provisions named workspaces for in-process spawns; nil refuses them
+	trustPolicy      TrustPolicy            // integrity floor every spawn resolves against
+	tenantPolicies   TenantPolicyProvider   // optional resolver for per-tenant overrides
+	remoteResolver   RemoteBackendResolver  // optional: routes daemon-kind registrations to RemoteACPBackend
+	sessionLog       SessionEventLog        // optional: append-only per-session event log for attach/replay
+	projectAuthz     *ProjectAuthz          // optional: enforces per-project agent role matrix
+	costTracker      CostTracker            // optional: per-tenant/account/project/job token counters
+	ledger           ConsumptionLedger      // optional: the append-only spend authority every cap is decided from
+	telemetry        *FleetTelemetryStore   // optional: fleet device telemetry turn energy is measured from; nil estimates every turn
+	occupancy        turnOccupancy          // which turns shared which device, for splitting measured energy
+	prices           *PriceBook             // optional: the list-price table every ledger entry is stamped from; nil prices nothing
+	tenantSpend      TenantSpendPolicyStore // optional: each tenant's own spend limits; nil means none are wired
+	costSettings     CostSettingsStore      // optional: each tenant's runtime electricity rate and engine draws
+	agentDirectory   *AgentDirectory        // optional: the tenant agent catalog a spawn naming an Agent or pool resolves against
+	lifecyclePolicy  JobLifecyclePolicy     // operator command allowlist + per-stage bounds handed to every control loop
+	projectStore     ProjectStore           // optional: durable project records for managed workspaces
+	mountPolicy      *MountPolicy           // optional: bind-mount policy; nil denies every host mount
+	workspaces       WorkspaceProvisioner   // optional: provisions named workspaces for in-process spawns; nil refuses them
 
 	// accountStore is the pooled provider account metadata store. Optional:
 	// without it rotation still selects a replacement, but the limit hold on
 	// the account it left is not durable. See SetAccountStore.
 	accountStore AccountStore
+
+	// accountAvailability answers whether an Agent can draw a usable pooled
+	// account. Optional; see SetAccountAvailability.
+	accountAvailability AccountAvailabilityReader
 
 	// accountLeases withdraws a pooled credential's DELIVERY GRANT when the
 	// session that held it ends, and when a rotation supersedes it. Optional:
@@ -75,6 +91,12 @@ type agentServiceImpl struct {
 	// the credential the session was handed is never revoked. See
 	// SetAccountCredentialLeaser and account_lease.go.
 	accountLeases AccountCredentialLeaser
+
+	// accountGenerations reads an account's CURRENT credential generation from
+	// its authority — the envelope, or a referenced account's secret — for
+	// SessionAccountFreshness. Optional: without it the metadata record's
+	// mirror answers. See SetAccountCredentialGenerations.
+	accountGenerations AccountCredentialGenerationReader
 
 	// limitClassifier decides whether a failed turn was a provider limit.
 	// Nil selects the built-in heuristic (see NewAccountLimitClassifier).
@@ -132,10 +154,15 @@ type agentServiceImpl struct {
 	// store. See SetTenantLister.
 	tenants TenantLister
 
-	// agentHeartbeatTimeout is how long a registered agent may stay silent
+	// tenantResolver verifies the tenant a fleet registration names exists.
+	// Nil on a node with no IAM (embedded, standalone), where there is no
+	// tenant directory to check against. See SetTenantResolver.
+	tenantResolver TenantResolver
+
+	// fleetHeartbeatTimeout is how long a registered agent may stay silent
 	// before the session sweep reads its silence as absence. Zero selects
-	// DefaultAgentHeartbeatTimeout; see SetAgentHeartbeatTimeout.
-	agentHeartbeatTimeout time.Duration
+	// DefaultFleetHeartbeatTimeout; see SetFleetHeartbeatTimeout.
+	fleetHeartbeatTimeout time.Duration
 
 	// reconcileMu serializes the DURABLE-ONLY conclusion of one session — the
 	// path taken when no live record exists to arbitrate on (see
@@ -174,7 +201,7 @@ type TenantTrustPolicyProvider interface {
 // remote daemon (e.g., RemoteACPBackend) before falling back to locally
 // registered backends. Returning (backend, true) wins; (nil, false) defers
 // to the local lookup. Implementations are typically driven by the
-// AgentRegistry, matching registrations where kind=daemon and backend=name.
+// FleetRegistry, matching registrations where kind=daemon and backend=name.
 //
 // Routing hints beyond backend+projectID (e.g. host affinity) are threaded
 // via the context using WithHostAffinity / HostAffinityFromContext so this
@@ -204,6 +231,41 @@ func HostAffinityFromContext(ctx context.Context) string {
 		return v
 	}
 	return ""
+}
+
+// containerImageKey threads the container image a spawn will run in to the
+// RemoteBackendResolver, which places the spawn only on an agent that has it.
+type containerImageKey struct{}
+
+// WithContainerImage returns a context naming the image a spawn runs in. An
+// empty image returns ctx unchanged.
+func WithContainerImage(ctx context.Context, image string) context.Context {
+	if image == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, containerImageKey{}, image)
+}
+
+// ContainerImageFromContext returns the image WithContainerImage set, or "".
+func ContainerImageFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	image, _ := ctx.Value(containerImageKey{}).(string)
+	return image
+}
+
+// spawnImage is the image a spawn names: a full container spec's image wins
+// over the image override, as it does when the backend builds the container.
+// Empty when the request names none and the backend picks its own default.
+func spawnImage(req *SpawnSessionRequest) string {
+	if req == nil {
+		return ""
+	}
+	if req.ContainerConfig != nil && req.ContainerConfig.Image != "" {
+		return req.ContainerConfig.Image
+	}
+	return req.ContainerImage
 }
 
 // gpuRequiredKey is the unexported context key used to thread a GPU
@@ -381,6 +443,10 @@ type sessionRecord struct {
 	// resolution via the localBackendPin context marker. HostAffinity is empty
 	// in this case because local backends are not host-bound.
 	BackendLocal bool
+
+	// ResolvedAgentID mirrors the durable record's: the tenant Agent the
+	// session runs as, which every turn's ledger entry is attributed to.
+	ResolvedAgentID string
 }
 
 // AccountID returns the pooled provider account currently serving the session,
@@ -453,7 +519,7 @@ type resolvedAgentBackend interface {
 	ResolvedAgentID() string
 }
 
-// spawnAgentID returns the fleet agent a resolved backend is bound to, empty
+// spawnAgentID returns the fleet node a resolved backend is bound to, empty
 // for a local in-process backend that is bound to none.
 func spawnAgentID(backend AgentBackend) string {
 	if ab, ok := backend.(resolvedAgentBackend); ok {
@@ -587,11 +653,11 @@ func (s *agentServiceImpl) SetLeadSessionID(id string) {
 	s.leadSessionID = id
 }
 
-// SetAgentRegistry configures the agent fleet registry for tracking
+// SetFleetRegistry configures the fleet registry for tracking
 // and managing agents across hosts. When set, agent registration,
 // heartbeat, and fleet management operations become available.
-func (s *agentServiceImpl) SetAgentRegistry(registry AgentRegistry) {
-	s.agentRegistry = registry
+func (s *agentServiceImpl) SetFleetRegistry(registry FleetRegistry) {
+	s.fleetRegistry = registry
 }
 
 // SetKVStore configures the KV store for durable job persistence.
@@ -720,7 +786,10 @@ func (s *agentServiceImpl) SpawnChildJob(ctx context.Context, req *SpawnChildJob
 		WorkflowName: req.WorkflowID,
 	}
 
-	resp, startErr := s.StartJob(ctx, childReq)
+	// THROUGH startJob, NOT StartJob. A child is part of its parent's run,
+	// which is work already in flight, so a parked project must not refuse
+	// it: parking drains what has started (project_park.go).
+	resp, startErr := s.startJob(ctx, childReq, "")
 	if startErr != nil {
 		return nil, startErr
 	}
@@ -826,7 +895,7 @@ func (s *agentServiceImpl) SetRemoteBackendResolver(r RemoteBackendResolver) {
 }
 
 // SetProjectAuthz configures the project-level authorization helper. When set,
-// ClaimTask enforces the project's AgentRoles matrix for scoped tasks.
+// ClaimTask enforces the project's FleetNodeRoles matrix for scoped tasks.
 // Unscoped tasks (empty ProjectID) bypass authorization unchanged.
 func (s *agentServiceImpl) SetProjectAuthz(authz *ProjectAuthz) {
 	s.projectAuthz = authz
@@ -891,6 +960,41 @@ func (s *agentServiceImpl) CostTracker() CostTracker {
 // hides which of the two is missing.
 func (s *agentServiceImpl) SetConsumptionLedger(ledger ConsumptionLedger) {
 	s.ledger = ledger
+}
+
+// SetTenantSpendPolicyStore installs the store each tenant's own spend limits
+// are kept in.
+func (s *agentServiceImpl) SetTenantSpendPolicyStore(store TenantSpendPolicyStore) {
+	s.tenantSpend = store
+}
+
+// TenantSpendPolicies returns the tenant spend-policy store, or nil when none
+// is wired. It implements TenantSpendPolicyAccessor.
+func (s *agentServiceImpl) TenantSpendPolicies() TenantSpendPolicyStore {
+	return s.tenantSpend
+}
+
+// SetPriceBook installs the list-price table every ledger entry is stamped
+// from when its turn is recorded. Nil leaves every turn unpriced.
+func (s *agentServiceImpl) SetPriceBook(prices *PriceBook) {
+	s.prices = prices
+}
+
+// PriceBook returns the installed price book, or nil.
+func (s *agentServiceImpl) PriceBook() *PriceBook {
+	return s.prices
+}
+
+// SetCostSettingsStore installs the store of each tenant's runtime cost
+// settings, which every recorded turn is priced with. Nil prices from the
+// configuration alone.
+func (s *agentServiceImpl) SetCostSettingsStore(store CostSettingsStore) {
+	s.costSettings = store
+}
+
+// CostSettingsStore returns the installed cost settings store, or nil.
+func (s *agentServiceImpl) CostSettingsStore() CostSettingsStore {
+	return s.costSettings
 }
 
 // ConsumptionLedger returns the configured spend authority's record, or nil
@@ -1308,6 +1412,15 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 	if err := s.validateTenant(ctx); err != nil {
 		return nil, err
 	}
+	if req == nil {
+		return nil, &AgentServiceError{Sentinel: ErrBackendRequired}
+	}
+	if err := ValidatePromptAppend("prompt_append", req.PromptAppend); err != nil {
+		return nil, err
+	}
+	if !req.AgentRef().IsZero() {
+		return s.spawnByAgentRef(ctx, req)
+	}
 
 	if req.Backend == "" {
 		return nil, &AgentServiceError{Sentinel: ErrBackendRequired}
@@ -1316,9 +1429,19 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 	// Thread host-affinity and GPU requirement into the context so the
 	// remote-backend resolver can filter candidate daemons accordingly.
 	ctx = WithHostAffinity(ctx, req.HostAffinity)
+	// A STRICT PIN TRAVELS WITH THE REQUEST, whoever built it. The public
+	// handlers mark the context from the wire field too, but an in-process
+	// caller — a job runner spawning a reviewer pinned to the host that can
+	// reach its model server — has only the request, and a pin whose
+	// strictness was dropped here would be honoured as a hint.
+	if req.HostAffinityStrict {
+		ctx = WithHostAffinityStrict(ctx)
+	}
 	if req.GpuRequired {
 		ctx = WithGpuRequired(ctx)
 	}
+	// And the image, so the spawn is placed only on an agent that has it.
+	ctx = WithContainerImage(ctx, spawnImage(req))
 
 	// A NAMED WORKSPACE IS ADMITTED BEFORE ANYTHING RESOLVES, and a pinned one
 	// resolves only to the host that holds it. See orchestrator_workspace.go.
@@ -1384,7 +1507,7 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 	// A NAMED WORKSPACE REPLACES THE CHAIN. On this daemon's own backend it is
 	// provisioned here, under this daemon's projects root, and its spec
 	// directory joins the extra mounts so it is authorized with them; on a
-	// fleet agent it is provisioned there, and workDir stays empty until the
+	// fleet node it is provisioned there, and workDir stays empty until the
 	// agent reports the directory.
 	workDir := req.WorkDir
 	var provisioned *ProvisionedWorkspace
@@ -1401,7 +1524,7 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 			WorkspaceSpecMounts(p.SpecDir, "")...)
 		req = &local
 	case req.Workspace != nil:
-		// Provisioned by the fleet agent the spawn resolved to, under that
+		// Provisioned by the fleet node the spawn resolved to, under that
 		// agent's own root; requireAgentWorkspace reads its answer below.
 	default:
 		if workDir == "" && req.ProjectID != "" {
@@ -1444,7 +1567,7 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 	// by THAT agent's own runtime (its SandboxPolicy + container runtime +
 	// image map). The control plane must not also spawn a local detached
 	// container for it: that container carries no interactive ACP transport,
-	// so the follow-up Prompt — pinned to the remote agent — would never find
+	// so the follow-up Prompt — pinned to the remote fleet node — would never find
 	// the session. Treat remote spawns as "backend handles containers" so the
 	// local container path below is skipped and the spawn is dispatched to the
 	// agent over the wire.
@@ -1547,6 +1670,8 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 			BackendLocal: backendLocal,
 			Persistent:   req.Persistent,
 			workspace:    provisioned,
+
+			ResolvedAgentID: req.resolvedAgentID,
 		})
 
 		// The same race, on the branch that has no backend session to ask
@@ -1592,7 +1717,7 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 		WorkDir:         workDir,
 		Model:           model,
 		MCPServers:      req.MCPServers,
-		SystemPrompt:    req.SystemPrompt,
+		SystemPrompt:    ComposePrompt(req.SystemPrompt, req.PromptAppend),
 		Env:             req.Env,
 		ExtraArgs:       req.ExtraArgs,
 		ExtraMounts:     append([]ContainerMount(nil), req.ExtraMounts...),
@@ -1613,7 +1738,7 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 
 	session, err := backend.Spawn(ctx, spawnReq)
 	if err != nil {
-		return nil, pinnedAgentUnreachable(req, sessionHost, err)
+		return nil, pinnedFleetNodeUnreachable(req, sessionHost, err)
 	}
 	// THE AGENT PROVISIONED THE WORKSPACE, AND ONLY IT KNOWS WHERE. Its
 	// answer is the session's work directory, recorded on the durable record
@@ -1653,6 +1778,8 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 		BackendLocal: backendLocal,
 		Persistent:   req.Persistent,
 		workspace:    provisioned,
+
+		ResolvedAgentID: req.resolvedAgentID,
 	}
 	mem.SetAccountID(session.AccountID)
 	mem.AddCredentialLease(session.CredentialLeaseID)
@@ -1685,12 +1812,21 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 	if session.AccountID != "" {
 		durable.AccountID = session.AccountID
 		durable.AccountStrategy = session.AccountStrategy
+		// AND WHICH COPY OF THAT ACCOUNT'S CREDENTIAL IT TOOK. The backend read
+		// the generation out of the envelope it materialized, BEFORE the agent
+		// process was started; recording that number rather than re-reading the
+		// account here is what makes a rotation landing mid-spawn visible. A
+		// session that spawned slowly through a rotation would otherwise be
+		// stamped with the generation it does not hold, and would then be
+		// judged fresh right up until its first prompt failed (#997).
+		durable.AccountGeneration = session.AccountGeneration
 		// Open the first account segment so cost attribution is a history from
 		// the very first turn rather than becoming one only after a rotation.
 		durable.AccountHistory = []AccountAssignment{{
-			AccountID: session.AccountID,
-			Strategy:  session.AccountStrategy,
-			From:      session.CreatedAt,
+			AccountID:  session.AccountID,
+			Strategy:   session.AccountStrategy,
+			From:       session.CreatedAt,
+			Generation: session.AccountGeneration,
 		}}
 		// AND THE DELIVERY GRANT, on the record that outlives this process. A
 		// grant recorded only in memory is one a node restart loses, which is
@@ -1698,6 +1834,9 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 		// in a container nothing is watching.
 		durable.AddCredentialLease(session.CredentialLeaseID)
 	}
+	// AND THE RESERVATION THE SPAWN WAS RESOLVED UNDER: naming it here is
+	// what satisfies it, so the slot is counted once — by this record.
+	durable.AddReservation(session.ReservationID)
 	// A backend that launched its own sandbox reports the container it put the
 	// agent in. Recording it here is what lets the engine act INSIDE that
 	// container afterwards — the delivery's commit and push run there — and
@@ -1856,7 +1995,7 @@ func (s *agentServiceImpl) SpawnSession(ctx context.Context, req *SpawnSessionRe
 // names the daemon's own working directory, is never a host bind-mount source,
 // and is the one work-directory value the mount policy does not apply to.
 //
-// It is exported because the remote agent daemon (pkg/agent) authorizes the
+// It is exported because the remote fleet node daemon (pkg/fleet) authorizes the
 // same field against the same policy and must recognize the same sentinel; a
 // second copy of the literal in that package could drift from this one.
 const WorkDirCurrent = "."
@@ -2166,18 +2305,43 @@ func (s *agentServiceImpl) planPromptTurn(ctx context.Context, req *PromptSessio
 // only honest if it names what served the turn. A CLI that silently substitutes
 // a model — a quota fallback, an alias resolving to a dated snapshot — would
 // otherwise have its spend filed under a model that never ran.
-func (p *promptTurnPlan) completedTurn(sessionID, servedModel string) completedTurn {
-	model := p.model
-	if servedModel != "" {
-		model = servedModel
-	}
+func (p *promptTurnPlan) completedTurn(sessionID, servedModel string, duration time.Duration) completedTurn {
 	return completedTurn{
 		turnID:    p.turnID,
 		sessionID: sessionID,
 		projectID: p.request.ProjectID,
 		engine:    p.backendName,
-		model:     model,
+		model:     resolveTurnModel(servedModel, p.model, p.backend),
+		duration:  duration,
 	}
+}
+
+// defaultModeler is a backend that runs a configured model when a request
+// names none (ACPBackend.DefaultModel).
+type defaultModeler interface {
+	DefaultModel() string
+}
+
+// Compile-time check that the ACP backend declares its configured model.
+var _ defaultModeler = (*ACPBackend)(nil)
+
+// resolveTurnModel names the model a turn is recorded under, most
+// authoritative first: the model the backend reports it served, the model the
+// turn was planned with (the request's, the project's default, or the
+// session's), and the model the backend is configured to run when nothing
+// names one. Empty when none resolves; the recorder then files the turn under
+// ConsumptionModelUnknown rather than dropping it (recordConsumption).
+func resolveTurnModel(served, planned string, backend AgentBackend) string {
+	if served != "" {
+		return served
+	}
+	if planned != "" {
+		return planned
+	}
+	if configured, ok := backend.(defaultModeler); ok {
+		return configured.DefaultModel()
+	}
+	return ""
 }
 
 // appendPromptSubmitted records the operator's prompt on the session log
@@ -2257,7 +2421,14 @@ func (s *agentServiceImpl) runPromptTurn(ctx context.Context, plan *promptTurnPl
 		}
 	}
 
+	started := time.Now()
+	// The turn occupies its device from here until its answer is back, so a
+	// concurrent turn on the same device is charged its share of the draw
+	// rather than all of it (turn_energy.go).
+	endOccupancy := s.beginTurnOccupancy(plan.turnID, plan.backendName, plan.request.SessionID, started)
 	resp, err := plan.backend.Prompt(ctx, plan.request)
+	elapsed := time.Since(started)
+	endOccupancy(started.Add(elapsed))
 	if err != nil {
 		// A FAILED TURN IS A LEDGER ENTRY TOO. Its tokens were spent if the
 		// backend reported any, and its OCCURRENCE is what the account's
@@ -2265,8 +2436,9 @@ func (s *agentServiceImpl) runPromptTurn(ctx context.Context, plan *promptTurnPl
 		// says every account is healthy, however hard it is failing. Recorded
 		// before the error is returned so the breaker sees it whether the
 		// caller retries, rotates, or gives up.
-		s.recordFailedTurn(ctx, plan.completedTurn(plan.request.SessionID, ""), failedTurnUsage(err))
-		return nil, err
+		s.recordFailedTurn(ctx, plan.completedTurn(plan.request.SessionID, failedTurnModel(err), elapsed), failedTurnUsage(err))
+		return nil, s.errorOnAccountAuthRejection(ctx, plan.request.SessionID,
+			s.holdOnAccountLimit(ctx, plan.request.SessionID, err))
 	}
 
 	// Update last activity in the store for persistent sessions.
@@ -2315,7 +2487,7 @@ func (s *agentServiceImpl) runPromptTurn(ctx context.Context, plan *promptTurnPl
 	// account, project, and (inside a control-loop job) job/agent. This is the
 	// single point where a completed turn becomes cost data: it runs on both
 	// the synchronous and asynchronous paths because both funnel through here.
-	s.recordTurnUsage(ctx, plan.completedTurn(sessionID, resp.Model), resp.Usage)
+	s.recordTurnUsage(ctx, plan.completedTurn(sessionID, resp.Model, elapsed), resp.Usage)
 
 	return &PromptSessionResponse{
 		SessionID:  resp.SessionID,
@@ -2829,13 +3001,14 @@ func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRe
 			state = SessionStateResumable
 		}
 		info := &SessionInfo{
-			SessionID: sessionID,
-			ProjectID: rec.ProjectID,
-			Backend:   rec.Backend,
-			Model:     rec.Model,
-			State:     state,
-			CreatedAt: rec.CreatedAt,
-			JobID:     rec.JobID,
+			SessionID:   sessionID,
+			ProjectID:   rec.ProjectID,
+			Backend:     rec.Backend,
+			Model:       rec.Model,
+			State:       state,
+			CreatedAt:   rec.CreatedAt,
+			JobID:       rec.JobID,
+			ContainerID: rec.ContainerID,
 		}
 
 		// Enrich with store data if available.
@@ -2865,6 +3038,11 @@ func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRe
 			// reads.
 			if info.JobID == "" {
 				info.JobID = record.JobID
+			}
+			// The container too, for the same reason: a reconstituted entry
+			// may not carry the container its agent was spawned into.
+			if info.ContainerID == "" {
+				info.ContainerID = record.ContainerID
 			}
 			// A STATE THE DAEMON OBSERVED BEATS ONE IT ASSUMED. Closed is
 			// such a state, and so is ERROR: recordResumeFailure writes it
@@ -2954,6 +3132,7 @@ func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRe
 			CreatedAt:    record.CreatedAt,
 			LastActivity: record.LastActivity,
 			JobID:        record.JobID,
+			ContainerID:  record.ContainerID,
 		})
 	}
 
@@ -2962,8 +3141,8 @@ func (s *agentServiceImpl) ListSessions(ctx context.Context, req *ListSessionsRe
 	// the agent are now FILTERS and FACETS: a listing that resolved them for
 	// the page could not narrow to the reviewer's sessions — the matches that
 	// fell off page one would never be found — and could not count them. The
-	// cost is one pass over the tenant's jobs however many sessions name one
-	// (resolveJobFacts), not one read per row.
+	// cost is one keyed read per distinct job the sessions name
+	// (resolveJobFacts), never a scan of the tenant's job history.
 	s.resolveSessionJobs(ctx, sessionTenants, sessions)
 
 	// PAGING IS THE LAST STEP, after both halves of the merge are in hand:
@@ -2999,13 +3178,12 @@ func (s *agentServiceImpl) listStoredSessions(ctx context.Context, tenantID stri
 }
 
 // resolveSessionJobs names the runner that drove each session's job and the
-// fleet agent it ran on.
+// fleet node it ran on.
 //
-// THE READS ARE GROUPED BY TENANT AND DONE IN ONE PASS EACH. A job spawns
-// several sessions — a worker, a reviewer, a lead — and they all resolve to
-// the same record, so the answer is memoised by job; and a tenant's whole job
-// space is scanned once however many jobs are asked about, so a listing of two
-// thousand sessions costs what a listing of twenty does. A session naming no
+// THE READS ARE GROUPED BY TENANT AND ASKED ONCE EACH. A job spawns several
+// sessions — a worker, a reviewer, a lead — and they all resolve to the same
+// record, so each job is read once however many sessions name it, and by key
+// rather than by scanning the tenant's job history. A session naming no
 // job, or one whose job is no longer on record, is left with no runner and no
 // agent: the consumer renders no badge rather than a guess, which is the same
 // rule the listing follows for every other field it cannot observe.
@@ -3236,7 +3414,7 @@ func (s *agentServiceImpl) HealthCheck(ctx context.Context) (*HealthCheckReport,
 // When req.AutoSpawn is true, the task is immediately dispatched as a
 // one-shot job on the best-matching agent. The task is always persisted first;
 // if no matching agent exists, it is returned with empty SpawnedJobID and
-// ErrNoMatchingAgent is returned.
+// ErrNoMatchingFleetNode is returned.
 func (s *agentServiceImpl) CreateTask(ctx context.Context, req *CreateTaskRequest) (*Task, error) {
 	if err := s.validateTenant(ctx); err != nil {
 		return nil, err
@@ -3263,6 +3441,9 @@ func (s *agentServiceImpl) CreateTask(ctx context.Context, req *CreateTaskReques
 	if err := ValidateJobRunnerName(req.Runner); err != nil {
 		return nil, err
 	}
+	if err := ValidatePromptAppend("prompt_append", req.PromptAppend); err != nil {
+		return nil, err
+	}
 
 	taskID, err := GenerateTaskID()
 	if err != nil {
@@ -3272,6 +3453,8 @@ func (s *agentServiceImpl) CreateTask(ctx context.Context, req *CreateTaskReques
 		}
 	}
 
+	// CREATED_BY IS THE VERIFIED PRINCIPAL, not a request field: the server
+	// knows who asked, and it is the only party that does (#862).
 	task := &Task{
 		ID:            taskID,
 		TenantID:      req.TenantID,
@@ -3279,6 +3462,7 @@ func (s *agentServiceImpl) CreateTask(ctx context.Context, req *CreateTaskReques
 		Subject:       req.Subject,
 		Description:   req.Description,
 		AssignedTo:    req.AssignedTo,
+		CreatedBy:     auth.PrincipalFromContext(ctx),
 		Dependencies:  req.Dependencies,
 		Metadata:      req.Metadata,
 		Status:        TaskStatusPending,
@@ -3288,6 +3472,7 @@ func (s *agentServiceImpl) CreateTask(ctx context.Context, req *CreateTaskReques
 		Priority:      req.Priority,
 		AttemptBudget: req.AttemptBudget,
 		Runner:        ResolveJobRunnerName(req.Runner),
+		PromptAppend:  req.PromptAppend,
 		Routing: TaskRouting{
 			Backend:      req.Backend,
 			HostAffinity: req.HostAffinity,
@@ -3378,7 +3563,7 @@ func applyCreateTaskPark(task *Task, park *BlockReason) error {
 // autoSpawnTask dispatches a task immediately as a one-shot orchestration job.
 //
 // WHAT IT TAKES TO DISPATCH DEPENDS ON THE RUNNER. The engine's lead-driven
-// "workflow" runner assigns work items to fleet agents and runs the pipeline
+// "workflow" runner assigns work items to fleet nodes and runs the pipeline
 // the project declared, so it needs a matching online agent (backend → gpu →
 // host_affinity) and the project's default workflow, and refuses without
 // either. A module's runner spawns its own sessions and owns its own state
@@ -3404,6 +3589,11 @@ func (s *agentServiceImpl) autoSpawnTask(ctx context.Context, task *Task) error 
 	// BEFORE THE CLAIM, because the claim charges the task an attempt. A task
 	// refused for capacity has not been attempted, and a refusal that had
 	// already spent an attempt would exhaust a budget on jobs that never ran.
+	// The park gate first, for the same reason: a task a parked project
+	// refuses has not been attempted either.
+	if err := s.admitTaskDispatch(ctx, task); err != nil {
+		return err
+	}
 	if err := s.checkProjectConcurrency(ctx, task); err != nil {
 		return err
 	}
@@ -3418,15 +3608,19 @@ func (s *agentServiceImpl) autoSpawnTask(ctx context.Context, task *Task) error 
 	jobReq := &StartJobRequest{
 		TenantID:    task.TenantID,
 		Description: taskJobDescription(task),
-		LeadBackend: task.Routing.Backend,
 		ProjectID:   task.ProjectID,
 		Runner:      runnerName,
 		TaskID:      task.ID,
+		// The task's run-time prompt material is carried to every session
+		// its attempt spawns — the worker's, for a module runner.
+		PromptAppend: task.PromptAppend,
+
+		routedBackend: task.Routing.Backend,
 	}
 
 	agentID := ""
 	if runnerName == JobRunnerWorkflow {
-		matched, matchErr := s.matchFleetAgentForTask(ctx, task)
+		matched, matchErr := s.matchFleetNodeForTaskScoped(ctx, task)
 		if matchErr != nil {
 			return matchErr
 		}
@@ -3500,12 +3694,12 @@ func taskJobDescription(task *Task) string {
 	return task.Subject + ": " + task.Description
 }
 
-// matchFleetAgentForTask picks the online fleet agent a lead-driven attempt
+// matchFleetNodeForTaskScoped picks the online fleet node a lead-driven attempt
 // at the task assigns work to, applying the same filters as the control loop
 // (backend → gpu → host_affinity) to the task's persisted routing hints.
-func (s *agentServiceImpl) matchFleetAgentForTask(ctx context.Context, task *Task) (string, error) {
-	if s.agentRegistry == nil {
-		return "", &NoMatchingAgentError{
+func (s *agentServiceImpl) matchFleetNodeForTaskScoped(ctx context.Context, task *Task) (string, error) {
+	if s.fleetRegistry == nil {
+		return "", &NoMatchingFleetNodeError{
 			Constraint: "agent_registry",
 			Detail:     "agent registry not configured for auto-spawn",
 		}
@@ -3522,24 +3716,24 @@ func (s *agentServiceImpl) matchFleetAgentForTask(ctx context.Context, task *Tas
 		item.RequiredCapabilities = []string{"gpu"}
 	}
 
-	agents, listErr := s.agentRegistry.ListAgents(ctx, task.TenantID, &AgentFilter{})
+	agents, listErr := s.fleetRegistry.ListFleetNodes(ctx, task.TenantID, &FleetNodeFilter{})
 	if listErr != nil {
-		return "", &NoMatchingAgentError{
+		return "", &NoMatchingFleetNodeError{
 			Constraint: "agent_list",
 			Detail:     "failed to list agents: " + listErr.Error(),
 		}
 	}
 
 	// Filter to online agents only.
-	online := make([]*AgentRegistration, 0, len(agents))
+	online := make([]*FleetNode, 0, len(agents))
 	for _, a := range agents {
-		if a.Status != AgentStatusOffline && a.Status != AgentStatusError {
+		if a.Status != FleetNodeStatusOffline && a.Status != FleetNodeStatusError {
 			online = append(online, a)
 		}
 	}
 
 	// Only agents the task's project admits are candidates. A dispatch hands
-	// the project's work to a fleet agent that never has to claim it, so
+	// the project's work to a fleet node that never has to claim it, so
 	// without this the role matrix would govern the claim path and nothing
 	// else, and a denied agent would simply be given the work instead
 	// (go-quicbaas#634).
@@ -3553,12 +3747,12 @@ func (s *agentServiceImpl) matchFleetAgentForTask(ctx context.Context, task *Tas
 	cl := NewControlLoop(s, s.logger)
 	backends, _ := s.ListBackends(ctx)
 
-	agentID, _, matchErr := cl.matchAgentForTask(item, eligible, backends)
+	agentID, _, matchErr := cl.matchFleetNodeForTask(item, eligible, backends)
 	if matchErr != nil {
 		return "", matchErr
 	}
 	if agentID == "" {
-		return "", &NoMatchingAgentError{
+		return "", &NoMatchingFleetNodeError{
 			Constraint: "agent_selection",
 			Detail:     "no online agents satisfy backend/gpu/host_affinity constraints",
 		}
@@ -3577,21 +3771,21 @@ func (s *agentServiceImpl) matchFleetAgentForTask(ctx context.Context, task *Tas
 // An empty result is a refusal with a reason, not a silent "no agent". A
 // project the store cannot produce surfaces ProjectUnresolvedError unchanged,
 // because a dispatcher that cannot read the rule must not dispatch; a project
-// that simply admits none of the online agents surfaces a NoMatchingAgentError
+// that simply admits none of the online agents surfaces a NoMatchingFleetNodeError
 // naming that constraint, so the task's recorded dispatch reason says the role
 // matrix refused rather than blaming routing.
-func (s *agentServiceImpl) projectEligibleAgents(ctx context.Context, task *Task, online []*AgentRegistration) ([]*AgentRegistration, error) {
+func (s *agentServiceImpl) projectEligibleAgents(ctx context.Context, task *Task, online []*FleetNode) ([]*FleetNode, error) {
 	if s.projectAuthz == nil || task.ProjectID == "" {
 		return online, nil
 	}
 
-	eligible := make([]*AgentRegistration, 0, len(online))
+	eligible := make([]*FleetNode, 0, len(online))
 	var unresolved *ProjectUnresolvedError
 	for _, agent := range online {
 		if agent == nil {
 			continue
 		}
-		err := s.authorizeAgentForProject(ctx, task.TenantID, task.ProjectID, agent.ID, ProjectRoleWorker)
+		err := s.authorizeFleetNodeForProject(ctx, task.TenantID, task.ProjectID, agent.ID, ProjectRoleWorker)
 		switch {
 		case err == nil:
 			eligible = append(eligible, agent)
@@ -3605,7 +3799,7 @@ func (s *agentServiceImpl) projectEligibleAgents(ctx context.Context, task *Task
 	}
 
 	if len(eligible) == 0 && len(online) > 0 {
-		return nil, &NoMatchingAgentError{
+		return nil, &NoMatchingFleetNodeError{
 			Constraint: "project_role",
 			Detail: "no online agent holds the " + string(ProjectRoleWorker) +
 				" role in project " + task.ProjectID,
@@ -3728,7 +3922,7 @@ func (s *agentServiceImpl) projectDefaultWorkflow(ctx context.Context, tenantID,
 // spawnStateProbeTimeout bounds the post-persist liveness probe.
 //
 // SHORT, BECAUSE IT SITS ON THE SPAWN RETURN PATH. For a local backend the
-// probe is a sync.Map read and costs nothing; for a remote agent it is a gRPC
+// probe is a sync.Map read and costs nothing; for a remote fleet node it is a gRPC
 // call that may also mint a token over HTTP, and a best-effort check must not
 // be able to hold a caller's spawn open on remote I/O. Exceeding this bound is
 // not a failure — the probe simply did not answer in time, which is the same
@@ -3928,7 +4122,7 @@ func (s *agentServiceImpl) ListTasks(ctx context.Context, tenantID string, filte
 // ProjectAuthz helper is configured, the claiming agent must hold at least
 // the worker role in that project. Agents with the denied or observer role,
 // or agents absent from a scoped project's role matrix, are rejected with
-// ProjectAccessDeniedError. Empty AgentRoles (legacy unscoped project) allows all.
+// ProjectAccessDeniedError. Empty FleetNodeRoles (legacy unscoped project) allows all.
 func (s *agentServiceImpl) ClaimTask(ctx context.Context, tenantID, taskID, agentID string) error {
 	if err := s.validateTenant(ctx); err != nil {
 		return err
@@ -3954,7 +4148,7 @@ func (s *agentServiceImpl) ClaimTask(ctx context.Context, tenantID, taskID, agen
 		if err != nil {
 			return err
 		}
-		if authzErr := s.authorizeAgentForProject(
+		if authzErr := s.authorizeFleetNodeForProject(
 			ctx, tenantID, task.ProjectID, agentID, ProjectRoleWorker,
 		); authzErr != nil {
 			return authzErr
@@ -3975,7 +4169,7 @@ func (s *agentServiceImpl) ClaimTask(ctx context.Context, tenantID, taskID, agen
 	return nil
 }
 
-// authorizeAgentForProject refuses work done on an agent's behalf when the
+// authorizeFleetNodeForProject refuses work done on an agent's behalf when the
 // task's project does not grant that agent at least requiredRole.
 //
 // IT IS THE ONE PLACE THE PER-PROJECT ROLE MATRIX IS CONSULTED on a task
@@ -3985,11 +4179,11 @@ func (s *agentServiceImpl) ClaimTask(ctx context.Context, tenantID, taskID, agen
 // authorizer wired are unchanged — there is no matrix to consult. Everything
 // else is ProjectAuthz's decision, and a project it cannot read is a refusal
 // there, never a pass.
-func (s *agentServiceImpl) authorizeAgentForProject(ctx context.Context, tenantID, projectID, agentID string, requiredRole ProjectRole) error {
+func (s *agentServiceImpl) authorizeFleetNodeForProject(ctx context.Context, tenantID, projectID, agentID string, requiredRole ProjectRole) error {
 	if s.projectAuthz == nil || projectID == "" {
 		return nil
 	}
-	return s.projectAuthz.AuthorizeAgentForTenant(ctx, tenantID, projectID, agentID, requiredRole)
+	return s.projectAuthz.AuthorizeFleetNodeForTenant(ctx, tenantID, projectID, agentID, requiredRole)
 }
 
 // BlockTask parks a task until a person readmits it.
@@ -4079,6 +4273,65 @@ func (s *agentServiceImpl) ReadmitTask(ctx context.Context, tenantID, taskID str
 	s.surfaceTaskVerb(ctx, tenantID, taskID, TaskConcludedReadmitted)
 
 	return nil
+}
+
+// CloseBlockedTask completes a blocked task without readmitting it.
+func (s *agentServiceImpl) CloseBlockedTask(ctx context.Context, tenantID, taskID string, result *TaskResult) error {
+	if err := s.validateTenant(ctx); err != nil {
+		return err
+	}
+	if s.taskStore == nil {
+		return &AgentServiceError{Sentinel: ErrTaskStoreRequired}
+	}
+	if tenantID == "" {
+		return &AgentServiceError{Sentinel: ErrTenantIDRequired}
+	}
+	if taskID == "" {
+		return &AgentServiceError{Sentinel: ErrTaskIDRequired}
+	}
+
+	if err := s.taskStore.CloseBlockedTask(ctx, tenantID, taskID, result); err != nil {
+		return err
+	}
+
+	s.logger.Debugf("closed blocked task as done: id=%s tenant=%s", taskID, tenantID)
+
+	s.publishEvent(ctx, tenantID, "task_completed", map[string]string{
+		"task_id": taskID,
+	})
+
+	return nil
+}
+
+// BumpTaskReviewRoundBudget raises a blocked task's review-round bonus by
+// one, bounded by MaxReviewRoundBonus.
+func (s *agentServiceImpl) BumpTaskReviewRoundBudget(ctx context.Context, tenantID, taskID string) (int, error) {
+	if err := s.validateTenant(ctx); err != nil {
+		return 0, err
+	}
+	if s.taskStore == nil {
+		return 0, &AgentServiceError{Sentinel: ErrTaskStoreRequired}
+	}
+	if tenantID == "" {
+		return 0, &AgentServiceError{Sentinel: ErrTenantIDRequired}
+	}
+	if taskID == "" {
+		return 0, &AgentServiceError{Sentinel: ErrTaskIDRequired}
+	}
+
+	bonus, err := s.taskStore.BumpReviewRoundBudget(ctx, tenantID, taskID)
+	if err != nil {
+		return 0, err
+	}
+
+	s.logger.Debugf("raised review round budget: id=%s tenant=%s bonus=%d", taskID, tenantID, bonus)
+
+	s.publishEvent(ctx, tenantID, "task_review_round_extended", map[string]string{
+		"task_id": taskID,
+		"bonus":   strconv.Itoa(bonus),
+	})
+
+	return bonus, nil
 }
 
 // CompleteTask marks a task as completed with a result.
@@ -4384,7 +4637,8 @@ func (s *agentServiceImpl) recoverJobs(ctx context.Context) error {
 	}
 
 	prefix := "job:"
-	var recoveredCount int
+	var recoveredCount, compacted int
+	var resumed []string
 
 	// The restart scan runs in the job-record scope for the same reason
 	// every other job-record read does: it must see every tenant's
@@ -4406,6 +4660,11 @@ func (s *agentServiceImpl) recoverJobs(ctx context.Context) error {
 			s.logger.Warnf("orchestration: skipping corrupted job record: key=%s: %s",
 				key, unmarshalErr.Error())
 			return nil
+		}
+
+		if status.boundVerification() {
+			s.compactJobRecord(scanCtx, key, &status)
+			compacted++
 		}
 
 		// Skip jobs that already reached a terminal state.
@@ -4447,6 +4706,7 @@ func (s *agentServiceImpl) recoverJobs(ctx context.Context) error {
 		}
 
 		recoveredCount++
+		resumed = append(resumed, status.Config.TenantID+"/"+status.JobID)
 		return nil
 	})
 
@@ -4456,12 +4716,99 @@ func (s *agentServiceImpl) recoverJobs(ctx context.Context) error {
 			Cause:   scanErr,
 		}
 	}
+	if err := s.awaitResumedLeases(ctx, resumed); err != nil {
+		return err
+	}
 
 	if recoveredCount > 0 {
 		s.logger.Infof("orchestration: resumed %d interrupted jobs", recoveredCount)
 	}
+	if compacted > 0 {
+		s.logger.Infof("orchestration: cut the verification output of %d job records to its tail", compacted)
+	}
 
 	return nil
+}
+
+// compactJobRecord rewrites one job record whose verification output was cut
+// to its tail. Records written before MaxValidationTextBytes carried whole
+// test logs, and every job listing paid to decode them. A record that cannot
+// be rewritten is left as it was: it is still correct, only large.
+func (s *agentServiceImpl) compactJobRecord(ctx context.Context, key string, status *JobStatus) {
+	data, err := json.Marshal(status)
+	if err != nil {
+		s.logger.Warnf("orchestration: failed to marshal compacted job record: job=%s: %s", status.JobID, err.Error())
+		return
+	}
+	if err := s.kvStore.Put(ctx, key, data); err != nil {
+		s.logger.Warnf("orchestration: failed to persist compacted job record: job=%s: %s", status.JobID, err.Error())
+	}
+}
+
+// awaitResumedLeases waits until every resumed job has settled its lease, or
+// until ctx ends.
+//
+// RECOVERY IS NOT DONE WHEN THE GOROUTINES START. launchJob returns before the
+// run takes its lease, and the task dispatcher releases a bound task it finds
+// no live lease for. Returning early let the dispatcher's first sweep release
+// a resumed job's task and dispatch a duplicate beside it (go-quicbaas#1064).
+//
+// The wait itself has NO deadline and is published as ResumedJobsSettled, so
+// a recovery that gives up at ctx's deadline still leaves the dispatcher
+// something to wait on: the resumed job keeps running past the boot budget,
+// and so must the gate that protects it.
+func (s *agentServiceImpl) awaitResumedLeases(ctx context.Context, keys []string) error {
+	settled := make(chan struct{})
+	s.resumedSettled.Store(&settled)
+	go func() {
+		defer close(settled)
+		for _, key := range keys {
+			if run := s.runningJobRun(key); run != nil {
+				<-run.LeaseSettled()
+			}
+		}
+	}()
+	select {
+	case <-settled:
+		return nil
+	case <-ctx.Done():
+		return &JobRecoveryError{
+			Message: "resumed jobs had not taken their leases when the boot budget ran out",
+			Cause:   ctx.Err(),
+		}
+	}
+}
+
+// runningJobRun returns the run of a job still in the table, or nil for one
+// that has already finished — which has settled its lease too.
+func (s *agentServiceImpl) runningJobRun(key string) *JobRun {
+	value, ok := s.jobs.Load(key)
+	if !ok {
+		return nil
+	}
+	job, ok := value.(*runningJob)
+	if !ok {
+		return nil
+	}
+	return job.run
+}
+
+// closedSignal is a channel that is always closed: "nothing to wait for".
+var closedSignal = func() chan struct{} {
+	c := make(chan struct{})
+	close(c)
+	return c
+}()
+
+// ResumedJobsSettled is closed once every job the last recovery resumed has
+// taken its lease, been refused one, or ended — however long that takes. It
+// is closed already when no recovery has run. The task dispatcher waits on it
+// before its first sweep.
+func (s *agentServiceImpl) ResumedJobsSettled() <-chan struct{} {
+	if settled := s.resumedSettled.Load(); settled != nil {
+		return *settled
+	}
+	return closedSignal
 }
 
 // RecoverJobs is the exported entry point for job recovery on startup.
@@ -4583,12 +4930,43 @@ func (s *agentServiceImpl) resolveBackendForSpawn(ctx context.Context, name, pro
 		if b, ok := s.remoteResolver(WithSpawnPlacement(ctx), name, projectID); ok && b != nil {
 			return b, true, nil
 		}
+		if err := strictAffinityRefusal(ctx, name); err != nil {
+			return nil, false, err
+		}
 	}
 	b, lookupErr := s.lookupBackend(name)
 	if lookupErr != nil {
 		return nil, false, lookupErr
 	}
 	return b, false, nil
+}
+
+// strictAffinityRefusal is the refusal a spawn under STRICT host affinity gets
+// when the fleet resolver placed it nowhere: the resolver's own typed account
+// when it recorded one, a NoMatchingAgentError naming the pin when it did not.
+// It returns nil for a spawn with no strict pin, which keeps the local
+// fall-through.
+//
+// A STRICT PIN NEVER FALLS THROUGH TO THIS DAEMON'S OWN BACKEND. The pin exists
+// because the spawn must run on that host — to reach a model server only it
+// can reach, say — and a local backend that happens to serve the same name is
+// not that host. This daemon's own in-process agent is registered like any
+// other (FleetNodeKindEmbedded), so a pin naming this host still resolves through
+// the fleet.
+func strictAffinityRefusal(ctx context.Context, backend string) error {
+	affinity := strings.TrimSpace(HostAffinityFromContext(ctx))
+	if affinity == "" || !HostAffinityStrictFromContext(ctx) {
+		return nil
+	}
+	if recorded := ResolveErrorHolderFromContext(ctx).Err(); recorded != nil {
+		return recorded
+	}
+	refusal := &NoMatchingFleetNodeError{
+		Constraint: "host_affinity",
+		Detail:     "no online agent serves backend=" + backend + " on host " + affinity,
+	}
+	StashResolveError(ctx, refusal)
+	return refusal
 }
 
 // defaultBackendName returns the name of the default backend to use when none
@@ -4745,7 +5123,7 @@ func (s *agentServiceImpl) pinSessionBackend(ctx context.Context, sessionID stri
 	if rec.HostAffinity == "" {
 		return ctx
 	}
-	// The session lives on a fleet agent: its operations reach that agent or
+	// The session lives on a fleet node: its operations reach that agent or
 	// fail, never the local backend table (session_routing.go).
 	ctx = withRemoteSessionPin(ctx, sessionID, rec.HostAffinity)
 	// Do not override an explicit per-request affinity — an operator may be
@@ -4877,22 +5255,25 @@ func extractJSON(text string) string {
 	return extractBalanced(text, '[', ']')
 }
 
-// RegisterAgent registers an agent with the fleet registry.
-func (s *agentServiceImpl) RegisterAgent(ctx context.Context, req *RegisterAgentRequest) (*RegisterAgentResponse, error) {
+// RegisterFleetNode registers an agent with the fleet registry.
+func (s *agentServiceImpl) RegisterFleetNode(ctx context.Context, req *RegisterFleetNodeRequest) (*RegisterFleetNodeResponse, error) {
 	if err := s.validateTenant(ctx); err != nil {
 		return nil, err
 	}
-	if s.agentRegistry == nil {
-		return nil, &AgentServiceError{Sentinel: ErrAgentRegistryRequired, Message: "agent registry not configured"}
+	if s.fleetRegistry == nil {
+		return nil, &AgentServiceError{Sentinel: ErrFleetRegistryRequired, Message: "agent registry not configured"}
 	}
 	if req.Name == "" {
-		return nil, &AgentServiceError{Sentinel: ErrAgentNameRequired}
+		return nil, &AgentServiceError{Sentinel: ErrFleetNodeNameRequired}
 	}
 	if req.Host == "" {
-		return nil, &AgentServiceError{Sentinel: ErrAgentHostRequired}
+		return nil, &AgentServiceError{Sentinel: ErrFleetNodeHostRequired}
 	}
-	if req.AgentType == "" {
-		return nil, &AgentServiceError{Sentinel: ErrAgentTypeRequired}
+	if req.NodeType == "" {
+		return nil, &AgentServiceError{Sentinel: ErrFleetNodeTypeRequired}
+	}
+	if err := s.requireRegistrationTenant(ctx, req.TenantID); err != nil {
+		return nil, err
 	}
 
 	id, err := generateID()
@@ -4903,76 +5284,92 @@ func (s *agentServiceImpl) RegisterAgent(ctx context.Context, req *RegisterAgent
 		}
 	}
 
-	agent := &AgentRegistration{
+	agent := &FleetNode{
 		ID:           id,
 		TenantID:     req.TenantID,
 		Name:         req.Name,
 		Host:         req.Host,
 		Backend:      req.Backend,
 		Model:        req.Model,
-		AgentType:    req.AgentType,
+		NodeType:     req.NodeType,
 		Capabilities: req.Capabilities,
 		WorkDir:      req.WorkDir,
-		Status:       AgentStatusRegistered,
+		Status:       FleetNodeStatusRegistered,
 		Metadata:     req.Metadata,
 	}
 
-	if err := s.agentRegistry.RegisterAgent(ctx, agent); err != nil {
+	if err := s.fleetRegistry.RegisterFleetNode(ctx, agent); err != nil {
 		return nil, err
 	}
 
 	s.logger.Infof("registered agent: id=%s tenant=%s name=%s host=%s type=%s",
-		agent.ID, agent.TenantID, agent.Name, agent.Host, agent.AgentType)
+		agent.ID, agent.TenantID, agent.Name, agent.Host, agent.NodeType)
 
 	s.publishEvent(ctx, agent.TenantID, "agent_registered", map[string]string{
 		"agent_id":   agent.ID,
 		"agent_name": agent.Name,
 		"host":       agent.Host,
-		"agent_type": agent.AgentType,
+		"agent_type": agent.NodeType,
 	})
 
-	return &RegisterAgentResponse{Agent: agent}, nil
+	return &RegisterFleetNodeResponse{Node: agent}, nil
 }
 
-// GetAgent retrieves a registered agent by ID.
-func (s *agentServiceImpl) GetAgent(ctx context.Context, tenantID, agentID string) (*AgentRegistration, error) {
+// SetTenantResolver attaches the tenant directory a fleet registration's
+// tenant_id is verified against. Optional: a node with no IAM has no tenant
+// directory, and its registrations are scoped by the caller's context alone.
+func (s *agentServiceImpl) SetTenantResolver(tenants TenantResolver) {
+	s.tenantResolver = tenants
+}
+
+// requireRegistrationTenant refuses a registration naming a tenant that does
+// not exist, so no fleet node is filed under a tenant nobody can act as.
+func (s *agentServiceImpl) requireRegistrationTenant(ctx context.Context, tenantID string) error {
+	if tenantID == "" || s.tenantResolver == nil {
+		return nil
+	}
+	return RequireTenant(ctx, s.tenantResolver, "tenant_id", tenantID)
+}
+
+// GetFleetNode retrieves a registered agent by ID.
+func (s *agentServiceImpl) GetFleetNode(ctx context.Context, tenantID, agentID string) (*FleetNode, error) {
 	if err := s.validateTenant(ctx); err != nil {
 		return nil, err
 	}
-	if s.agentRegistry == nil {
-		return nil, &AgentServiceError{Sentinel: ErrAgentRegistryRequired, Message: "agent registry not configured"}
+	if s.fleetRegistry == nil {
+		return nil, &AgentServiceError{Sentinel: ErrFleetRegistryRequired, Message: "agent registry not configured"}
 	}
-	return s.agentRegistry.GetAgent(ctx, tenantID, agentID)
+	return s.fleetRegistry.GetFleetNode(ctx, tenantID, agentID)
 }
 
-// ListAgents lists all registered agents for a tenant.
-func (s *agentServiceImpl) ListAgents(ctx context.Context, tenantID string, filter *AgentFilter) ([]*AgentRegistration, error) {
+// ListFleetNodes lists all registered agents for a tenant.
+func (s *agentServiceImpl) ListFleetNodes(ctx context.Context, tenantID string, filter *FleetNodeFilter) ([]*FleetNode, error) {
 	if err := s.validateTenant(ctx); err != nil {
 		return nil, err
 	}
-	if s.agentRegistry == nil {
-		return nil, &AgentServiceError{Sentinel: ErrAgentRegistryRequired, Message: "agent registry not configured"}
+	if s.fleetRegistry == nil {
+		return nil, &AgentServiceError{Sentinel: ErrFleetRegistryRequired, Message: "agent registry not configured"}
 	}
-	return s.agentRegistry.ListAgents(ctx, tenantID, filter)
+	return s.fleetRegistry.ListFleetNodes(ctx, tenantID, filter)
 }
 
-// RemoveAgent removes an agent from the fleet registry.
-func (s *agentServiceImpl) RemoveAgent(ctx context.Context, tenantID, agentID string) error {
+// RemoveFleetNode removes an agent from the fleet registry.
+func (s *agentServiceImpl) RemoveFleetNode(ctx context.Context, tenantID, agentID string) error {
 	if err := s.validateTenant(ctx); err != nil {
 		return err
 	}
-	if s.agentRegistry == nil {
-		return &AgentServiceError{Sentinel: ErrAgentRegistryRequired, Message: "agent registry not configured"}
+	if s.fleetRegistry == nil {
+		return &AgentServiceError{Sentinel: ErrFleetRegistryRequired, Message: "agent registry not configured"}
 	}
 	// The registration is read BEFORE it is removed: the sessions pinned to an
 	// agent are found by the host names the registration carries, and once it
 	// is gone there is nothing left to match them against.
-	agent, lookupErr := s.agentRegistry.GetAgent(ctx, tenantID, agentID)
+	agent, lookupErr := s.fleetRegistry.GetFleetNode(ctx, tenantID, agentID)
 	if lookupErr != nil {
 		agent = nil
 	}
 
-	if err := s.agentRegistry.RemoveAgent(ctx, tenantID, agentID); err != nil {
+	if err := s.fleetRegistry.RemoveFleetNode(ctx, tenantID, agentID); err != nil {
 		return err
 	}
 
@@ -4994,21 +5391,27 @@ func (s *agentServiceImpl) RemoveAgent(ctx context.Context, tenantID, agentID st
 	return nil
 }
 
-// AgentHeartbeat updates an agent's last seen timestamp and reconciles its
+// FleetNodeHeartbeat updates an agent's last seen timestamp and reconciles its
 // record against what the daemon reports it is serving.
 //
 // observed is what the daemon said about itself on this heartbeat; nil when
 // the transport carries no served list, which reconciles nothing. See
-// AgentObservation for why an observation that reports NO served backend is
+// FleetNodeObservation for why an observation that reports NO served backend is
 // refused rather than applied.
-func (s *agentServiceImpl) AgentHeartbeat(ctx context.Context, tenantID, agentID string, observed *AgentObservation) error {
+func (s *agentServiceImpl) FleetNodeHeartbeat(ctx context.Context, tenantID, agentID string, observed *FleetNodeObservation) error {
 	if err := s.validateTenant(ctx); err != nil {
 		return err
 	}
-	if s.agentRegistry == nil {
-		return &AgentServiceError{Sentinel: ErrAgentRegistryRequired, Message: "agent registry not configured"}
+	if s.fleetRegistry == nil {
+		return &AgentServiceError{Sentinel: ErrFleetRegistryRequired, Message: "agent registry not configured"}
 	}
-	return s.agentRegistry.Heartbeat(ctx, tenantID, agentID, observed)
+	if err := s.fleetRegistry.Heartbeat(ctx, tenantID, agentID, observed); err != nil {
+		return err
+	}
+	if observed != nil {
+		s.recordFleetTelemetry(ctx, tenantID, agentID, observed.Devices)
+	}
+	return nil
 }
 
 // =============================================================================
@@ -5026,6 +5429,12 @@ func (s *agentServiceImpl) AgentHeartbeat(ctx context.Context, tenantID, agentID
 func (s *agentServiceImpl) StartJob(ctx context.Context, req *StartJobRequest) (*StartJobResponse, error) {
 	if req != nil && req.TaskID != "" {
 		return s.startTaskBoundJob(ctx, req)
+	}
+	// A job bound to no task passes the park gate here, on the public
+	// door, rather than in startJob: a child a running job spawns is work
+	// already in flight and enters through startJob directly.
+	if err := s.admitUnboundJob(ctx, req); err != nil {
+		return nil, err
 	}
 	return s.startJob(ctx, req, "")
 }
@@ -5070,6 +5479,9 @@ func (s *agentServiceImpl) startJob(ctx context.Context, req *StartJobRequest, j
 	if err := ValidateProjectID("project_id", req.ProjectID); err != nil {
 		return nil, err
 	}
+	if err := ValidatePromptAppend("prompt_append", req.PromptAppend); err != nil {
+		return nil, err
+	}
 
 	// Parse poll interval, defaulting to 5s.
 	var pollInterval time.Duration
@@ -5104,11 +5516,17 @@ func (s *agentServiceImpl) startJob(ctx context.Context, req *StartJobRequest, j
 		}
 	}
 
+	lead, err := s.jobLead(ctx, tenantID, req)
+	if err != nil {
+		return nil, err
+	}
+
 	config := &JobConfig{
 		TenantID:      tenantID,
 		Description:   req.Description,
-		LeadBackend:   req.LeadBackend,
-		LeadModel:     req.LeadModel,
+		Lead:          lead.Ref,
+		LeadBackend:   lead.Backend,
+		LeadModel:     lead.Model,
 		LeadAgentID:   req.LeadAgentID,
 		ProjectID:     req.ProjectID,
 		PollInterval:  pollInterval,
@@ -5117,6 +5535,7 @@ func (s *agentServiceImpl) startJob(ctx context.Context, req *StartJobRequest, j
 		Runner:        ResolveJobRunnerName(req.Runner),
 		TaskID:        req.TaskID,
 		Attempt:       req.Attempt,
+		PromptAppend:  req.PromptAppend,
 		Params:        copyJobParams(req.Params),
 	}
 
@@ -5280,11 +5699,25 @@ func (s *agentServiceImpl) collectJobs(ctx context.Context, tenantID string, fil
 	})
 
 	// Merge persisted jobs from KV store.
-	if s.kvStore != nil {
+	//
+	// A FILTER THAT NAMES ITS JOBS IS ANSWERED BY KEY, NOT BY SCAN. The job
+	// records live in the shared store, whose prefix enumeration costs the
+	// whole store rather than the prefix (go-qrdb's MVCC engine walks every
+	// key to find the ones under it) — 3.5 s for the burn-in tenant's 3,648
+	// jobs. The pages that resolve jobs for their rows ask for a few dozen to
+	// a few hundred ids: a page of tasks naming each one's latest attempt, a
+	// page of sessions naming each one's role. Paying a whole-tenant scan for
+	// them made each of those pages as slow as the full job history. See
+	// readPersistedJobs.
+	if s.kvStore != nil && filter != nil && len(filter.JobIDs) > 0 {
+		jobs = append(jobs, s.readPersistedJobs(ctx, tenantID, filter, seen)...)
+	} else if s.kvStore != nil {
 		scanCtx, cancel := jobRecordScope(ctx)
 		defer cancel()
 		kvPrefix := jobPersistencePrefix(tenantID)
+		scan := newScanTimer()
 		scanErr := s.kvStore.Scan(scanCtx, kvPrefix, func(key string, value []byte) error {
+			scan.observe(len(value))
 			var status JobStatus
 			if unmarshalErr := json.Unmarshal(value, &status); unmarshalErr != nil {
 				s.logger.Warnf("orchestration: failed to unmarshal persisted job %s: %s", key, unmarshalErr.Error())
@@ -5301,6 +5734,7 @@ func (s *agentServiceImpl) collectJobs(ctx context.Context, tenantID string, fil
 		if scanErr != nil {
 			s.logger.Warnf("orchestration: KV scan for tenant %s jobs failed: %s", tenantID, scanErr.Error())
 		}
+		scan.warnIfSlow(s.logger, "jobs", tenantID)
 	}
 
 	// Sort by start time descending (most recent first).
@@ -5312,26 +5746,26 @@ func (s *agentServiceImpl) collectJobs(ctx context.Context, tenantID string, fil
 }
 
 // jobFacts are what a listing of something ELSE needs from the job its rows
-// name: which runner drove it, and which fleet agent ran it.
+// name: which runner drove it, and which fleet node ran it.
 type jobFacts struct {
 	// Runner is the job's runner, resolved through ResolveJobRunnerName, so
 	// a job that names none reads as the engine's own "workflow" rather than
 	// as unknown.
 	Runner string
 
-	// AgentID is the fleet agent the job's work was dispatched to, empty
+	// AgentID is the fleet node the job's work was dispatched to, empty
 	// when it ran on the daemon's own in-process backend.
 	AgentID string
 }
 
-// resolveJobFacts reads the runner and the agent of every named job IN ONE
-// PASS over the tenant's jobs.
+// resolveJobFacts reads the runner and the agent of every named job, BY KEY.
 //
-// ONE PASS, NOT ONE READ PER ROW. A page of twenty-five sessions names up to
-// twenty-five jobs and a tenant's task list names one per task; resolving them
-// with a point read each is what the job_ids filter was added to stop
-// (JobFilter.JobIDs). The merge scans the tenant's job space once whatever is
-// asked of it, so asking for four hundred costs what asking for four does.
+// BY KEY, NOT BY SCAN. It asks collectJobs for exactly these jobs (JobFilter.
+// JobIDs), which reads each one's record directly with bounded concurrency. It
+// once scanned the tenant's whole job history on the theory that one pass is
+// cheaper than many reads; on a qrdb-backed node the pass costs the whole
+// store — 3.5 s for the burn-in tenant — while a few hundred keyed reads cost
+// milliseconds. See readPersistedJobs.
 //
 // A job that cannot be read is ABSENT from the result rather than present with
 // empty facts, so a caller can tell "this job says no agent" from "this job is

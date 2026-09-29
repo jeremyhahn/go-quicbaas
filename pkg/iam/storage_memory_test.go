@@ -21,7 +21,7 @@ func TestMemoryStorage_TenantOperations(t *testing.T) {
 		Created: time.Now(),
 		Updated: time.Now(),
 		Quotas: TenantQuotas{
-			MaxGroups: 50, // MaxUsers is engine-level, owned by qrdb TenantServicer
+			MaxPolicies: 50, // MaxUsers is engine-level, owned by qrdb TenantServicer
 		},
 	}
 
@@ -114,9 +114,9 @@ func TestMemoryStorage_QuotaOperations(t *testing.T) {
 	}
 	storage.CreateTenant(ctx, tenant)
 
-	// Use BaaS-layer IAM quota (groups); users are engine-level owned by qrdb
+	// Use BaaS-layer IAM quota (policies); users are engine-level owned by qrdb
 	quota := &TenantQuota{
-		MaxGroups: 5,
+		MaxPolicies: 5,
 	}
 	err := storage.UpdateQuota(ctx, tenant.ID, quota)
 	if err != nil {
@@ -124,31 +124,31 @@ func TestMemoryStorage_QuotaOperations(t *testing.T) {
 	}
 
 	// Test quota increment within limits
-	err = storage.IncrementQuotaUsage(ctx, tenant.ID, "groups", 3)
+	err = storage.IncrementQuotaUsage(ctx, tenant.ID, "policies", 3)
 	if err != nil {
 		t.Fatalf("IncrementQuotaUsage failed: %v", err)
 	}
 
 	retrieved, _ := storage.GetQuota(ctx, tenant.ID)
-	if retrieved.CurrentGroups != 3 {
-		t.Errorf("Expected CurrentGroups=3, got %d", retrieved.CurrentGroups)
+	if retrieved.CurrentPolicies != 3 {
+		t.Errorf("Expected CurrentPolicies=3, got %d", retrieved.CurrentPolicies)
 	}
 
 	// Test quota exceeded
-	err = storage.IncrementQuotaUsage(ctx, tenant.ID, "groups", 10)
+	err = storage.IncrementQuotaUsage(ctx, tenant.ID, "policies", 10)
 	if err == nil {
 		t.Error("Expected quota exceeded error")
 	}
 
 	// Test quota decrement
-	err = storage.DecrementQuotaUsage(ctx, tenant.ID, "groups", 2)
+	err = storage.DecrementQuotaUsage(ctx, tenant.ID, "policies", 2)
 	if err != nil {
 		t.Fatalf("DecrementQuotaUsage failed: %v", err)
 	}
 
 	retrieved, _ = storage.GetQuota(ctx, tenant.ID)
-	if retrieved.CurrentGroups != 1 {
-		t.Errorf("Expected CurrentGroups=1, got %d", retrieved.CurrentGroups)
+	if retrieved.CurrentPolicies != 1 {
+		t.Errorf("Expected CurrentPolicies=1, got %d", retrieved.CurrentPolicies)
 	}
 }
 
@@ -230,71 +230,6 @@ func TestMemoryStorage_UserOperations(t *testing.T) {
 	_, err = storage.GetUser(ctx, user.TenantID, user.ID)
 	if err == nil {
 		t.Error("Expected error for deleted user")
-	}
-}
-
-func TestMemoryStorage_GroupOperations(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	// Create tenant first
-	tenant := &Tenant{ID: "group-tenant", Name: "Group Test", Created: time.Now(), Updated: time.Now()}
-	storage.CreateTenant(ctx, tenant)
-
-	group := &Group{
-		ID:       "group1",
-		TenantID: tenant.ID,
-		Name:     "Group One",
-		Members:  []string{"user1", "user2"},
-		Created:  time.Now(),
-		Updated:  time.Now(),
-	}
-
-	// Test CreateGroup
-	err := storage.CreateGroup(ctx, group)
-	if err != nil {
-		t.Fatalf("CreateGroup failed: %v", err)
-	}
-
-	// Test GetGroup
-	retrieved, err := storage.GetGroup(ctx, group.TenantID, group.ID)
-	if err != nil {
-		t.Fatalf("GetGroup failed: %v", err)
-	}
-	if retrieved.Name != group.Name {
-		t.Errorf("Expected group name %s, got %s", group.Name, retrieved.Name)
-	}
-
-	// Test UpdateGroup
-	group.Name = "Updated Group"
-	err = storage.UpdateGroup(ctx, group)
-	if err != nil {
-		t.Fatalf("UpdateGroup failed: %v", err)
-	}
-
-	retrieved, _ = storage.GetGroup(ctx, group.TenantID, group.ID)
-	if retrieved.Name != "Updated Group" {
-		t.Errorf("Group name not updated: %s", retrieved.Name)
-	}
-
-	// Test ListGroups
-	groups, err := storage.ListGroups(ctx, tenant.ID, ListOptions{})
-	if err != nil {
-		t.Fatalf("ListGroups failed: %v", err)
-	}
-	if len(groups) != 1 {
-		t.Errorf("Expected 1 group, got %d", len(groups))
-	}
-
-	// Test DeleteGroup
-	err = storage.DeleteGroup(ctx, group.TenantID, group.ID)
-	if err != nil {
-		t.Fatalf("DeleteGroup failed: %v", err)
-	}
-
-	_, err = storage.GetGroup(ctx, group.TenantID, group.ID)
-	if err == nil {
-		t.Error("Expected error for deleted group")
 	}
 }
 
@@ -833,7 +768,6 @@ func TestMemoryStorage_IncrementQuotaUsage_Comprehensive(t *testing.T) {
 
 	// BaaS-layer IAM quotas only; users and roles are engine-level (qrdb-owned).
 	quota := &TenantQuota{
-		MaxGroups:   5,
 		MaxPolicies: 8,
 		MaxApps:     4,
 	}
@@ -847,12 +781,11 @@ func TestMemoryStorage_IncrementQuotaUsage_Comprehensive(t *testing.T) {
 		expectedUsed int64
 	}{
 		{"users no-op (engine-level)", "users", 5, false, 0}, // no-op: engine-owned
-		{"groups within limit", "groups", 3, false, 3},
 		{"roles no-op (engine-level)", "roles", 2, false, 0}, // no-op: engine-owned
 		{"policies within limit", "policies", 4, false, 4},
 		{"apps within limit", "apps", 2, false, 2},
-		{"groups exceed limit", "groups", 5, true, 3}, // Would go to 8, exceeds 5
-		{"unknown resource", "unknown", 1, false, 0},  // Unknown resources don't trigger quota
+		{"policies exceed limit", "policies", 5, true, 4}, // Would go to 9, exceeds 8
+		{"unknown resource", "unknown", 1, false, 0},      // Unknown resources don't trigger quota
 	}
 
 	for _, tt := range tests {
@@ -870,8 +803,6 @@ func TestMemoryStorage_IncrementQuotaUsage_Comprehensive(t *testing.T) {
 				retrieved, _ := storage.GetQuota(ctx, tenant.ID)
 				var currentUsage int64
 				switch tt.resource {
-				case "groups":
-					currentUsage = retrieved.CurrentGroups
 				case "policies":
 					currentUsage = retrieved.CurrentPolicies
 				case "apps":
@@ -898,15 +829,15 @@ func TestMemoryStorage_IncrementQuotaUsage_NoQuota(t *testing.T) {
 	}
 	storage.CreateTenant(ctx, tenant)
 
-	// Don't set any quota; increment a BaaS-layer resource (groups)
-	err := storage.IncrementQuotaUsage(ctx, tenant.ID, "groups", 5)
+	// Don't set any quota; increment a BaaS-layer resource (policies)
+	err := storage.IncrementQuotaUsage(ctx, tenant.ID, "policies", 5)
 	if err != nil {
 		t.Fatalf("IncrementQuotaUsage failed when quota doesn't exist: %v", err)
 	}
 
 	retrieved, _ := storage.GetQuota(ctx, tenant.ID)
-	if retrieved.CurrentGroups != 5 {
-		t.Errorf("Expected CurrentGroups=5, got %d", retrieved.CurrentGroups)
+	if retrieved.CurrentPolicies != 5 {
+		t.Errorf("Expected CurrentPolicies=5, got %d", retrieved.CurrentPolicies)
 	}
 }
 
@@ -925,8 +856,6 @@ func TestMemoryStorage_DecrementQuotaUsage_Comprehensive(t *testing.T) {
 
 	// BaaS-layer IAM quotas only; users and roles are engine-level (qrdb-owned).
 	quota := &TenantQuota{
-		MaxGroups:       5,
-		CurrentGroups:   4,
 		MaxPolicies:     8,
 		CurrentPolicies: 6,
 		MaxApps:         4,
@@ -941,11 +870,10 @@ func TestMemoryStorage_DecrementQuotaUsage_Comprehensive(t *testing.T) {
 		expectedUsed int64
 	}{
 		{"users no-op (engine-level)", "users", 3, 0},
-		{"groups decrement", "groups", 2, 2},
 		{"roles no-op (engine-level)", "roles", 1, 0},
 		{"policies decrement", "policies", 4, 2},
 		{"apps decrement", "apps", 2, 1},
-		{"groups decrement below zero", "groups", 10, 0}, // Clamped to 0
+		{"policies decrement below zero", "policies", 10, 0}, // Clamped to 0
 		{"unknown resource", "unknown", 1, 0},
 	}
 
@@ -960,8 +888,6 @@ func TestMemoryStorage_DecrementQuotaUsage_Comprehensive(t *testing.T) {
 				retrieved, _ := storage.GetQuota(ctx, tenant.ID)
 				var currentUsage int64
 				switch tt.resource {
-				case "groups":
-					currentUsage = retrieved.CurrentGroups
 				case "policies":
 					currentUsage = retrieved.CurrentPolicies
 				case "apps":
@@ -989,15 +915,15 @@ func TestMemoryStorage_DecrementQuotaUsage_NoQuota(t *testing.T) {
 	storage.CreateTenant(ctx, tenant)
 
 	// Don't set any quota, should not error (no-op for engine-level resources)
-	err := storage.DecrementQuotaUsage(ctx, tenant.ID, "groups", 5)
+	err := storage.DecrementQuotaUsage(ctx, tenant.ID, "policies", 5)
 	if err != nil {
 		t.Errorf("DecrementQuotaUsage should not error when quota doesn't exist: %v", err)
 	}
 
-	// Verify quota was not created (or current groups is still 0)
+	// Verify quota was not created (or current policies is still 0)
 	retrieved, _ := storage.GetQuota(ctx, tenant.ID)
-	if retrieved.CurrentGroups != 0 {
-		t.Errorf("Expected CurrentGroups=0 (quota should not exist), got %d", retrieved.CurrentGroups)
+	if retrieved.CurrentPolicies != 0 {
+		t.Errorf("Expected CurrentPolicies=0 (quota should not exist), got %d", retrieved.CurrentPolicies)
 	}
 }
 
@@ -1344,26 +1270,6 @@ func TestMemoryStorage_DeleteUser_PIVThumbprintCleanup(t *testing.T) {
 	}
 	if _, err := storage.GetUserByPIVThumbprint(ctx, "thumb-1"); err == nil {
 		t.Fatal("expected PIV index to be cleared after DeleteUser")
-	}
-}
-
-func TestMemoryStorage_UpdateGroup_NotFound(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	err := storage.UpdateGroup(ctx, &Group{ID: "none", TenantID: "t1", Name: "Test"})
-	if err == nil {
-		t.Fatal("expected error updating nonexistent group")
-	}
-}
-
-func TestMemoryStorage_DeleteGroup_NotFound(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	err := storage.DeleteGroup(ctx, "t1", "nonexistent")
-	if err == nil {
-		t.Fatal("expected error deleting nonexistent group")
 	}
 }
 
@@ -1955,33 +1861,6 @@ func TestMemoryDeletionStorage_ListDeletionRequests_NoMatchingTenant(t *testing.
 // =============================================================================
 // BatchProcessor - ImportGroups and ImportPolicies path coverage
 // =============================================================================
-
-func TestBatchProcessor_ImportGroups_RateLimitPath(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	items := []GroupImportItem{
-		{ID: "group-1", Name: "Group One", Description: "First group"},
-	}
-
-	op, err := bp.ImportGroups(ctx, tenantID, items, BatchOptions{
-		RateLimit: 10, // Rate limiting enabled
-	})
-	if err != nil {
-		t.Fatalf("ImportGroups failed: %v", err)
-	}
-
-	time.Sleep(300 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
-	if saved.Status == BatchStatusPending {
-		t.Error("expected operation to complete with rate limiting")
-	}
-}
 
 func TestBatchProcessor_ImportPolicies_NoPolicyObject(t *testing.T) {
 	storage := newMockBatchStorage()

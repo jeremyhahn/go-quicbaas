@@ -28,7 +28,8 @@ import (
 // tells the forge as little as it can: every authentication failure —
 // unknown project, missing secret, bad signature — is the same 401, so an
 // anonymous caller cannot tell which it hit. What the OPERATOR is told is
-// everything, through onError.
+// everything, through onError — including a failure on an ACCEPTED
+// delivery, such as a triage wake that could not start.
 
 // WebhookPathParams extracts the project id from the request path. Injected
 // so the module holds no router.
@@ -63,6 +64,7 @@ func NewWebhookHTTPHandler(ingestor *WebhookIngestor, params WebhookPathParams, 
 type webhookAcceptedResponse struct {
 	Accepted bool `json:"accepted"`
 	Nudged   bool `json:"nudged"`
+	Parked   bool `json:"parked,omitempty"`
 }
 
 type webhookRefusedResponse struct {
@@ -98,9 +100,23 @@ func (h *WebhookHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.refuse(w, r, status, reason, err)
 		return
 	}
+	// A triage wake that failed did not fail the delivery — the forge must
+	// not retry it — but the operator is told, or webhook-driven triage
+	// could be down with nothing anywhere saying so.
+	if result.TriageErr != nil && h.onError != nil {
+		h.onError(r, result.TriageErr)
+	}
+	if result.RulingError != nil && h.onError != nil {
+		h.onError(r, result.RulingError)
+	}
+	// A parked project's refusal is acknowledged, not retried, and logged so
+	// the deliveries it declined are on record.
+	if result.Parked != nil && h.onError != nil {
+		h.onError(r, result.Parked)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	if encodeErr := json.NewEncoder(w).Encode(webhookAcceptedResponse{Accepted: true, Nudged: result.Nudged}); encodeErr != nil && h.onError != nil {
+	if encodeErr := json.NewEncoder(w).Encode(webhookAcceptedResponse{Accepted: true, Nudged: result.Nudged, Parked: result.Parked != nil}); encodeErr != nil && h.onError != nil {
 		h.onError(r, encodeErr)
 	}
 }

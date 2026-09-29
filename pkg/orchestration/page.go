@@ -125,7 +125,7 @@ type FacetSpec[T any] struct {
 	//
 	// IT RETURNS A SLICE BECAUSE A RECORD CAN BELONG UNDER SEVERAL. One
 	// daemon serving claude, codex and opencode matches the backend filter
-	// on all three (AgentServesBackend), so counting it once under its
+	// on all three (FleetNodeServesBackend), so counting it once under its
 	// primary would print a number the filter contradicts. Empty values are
 	// not counted: "no project" is the absence of a choice, not a choice.
 	Values map[string]func(T) []string

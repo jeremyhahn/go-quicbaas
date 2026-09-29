@@ -35,7 +35,7 @@ import (
 //
 //	orch/project/{tenant}/{projectID}          -> Project (JSON)
 //	orch/projectname/{tenant}/{name}           -> projectID (name index)
-//	orch/agent/{tenant}/{agentID}              -> AgentRegistration (JSON)
+//	orch/agent/{tenant}/{agentID}              -> FleetNode (JSON)
 //	orch/task/{tenant}/{taskID}                -> Task (JSON)
 //	orch/taskartifact/{tenant}/{taskID}/{name} -> artifact payload (bytes)
 //	orch/session/{tenant}/{sessionID}          -> SessionRecord (JSON)
@@ -54,8 +54,8 @@ const (
 	// projectNameKeyspace holds the tenant-scoped name -> projectID index.
 	projectNameKeyspace = "orch/projectname/"
 
-	// agentKeyspace holds AgentRegistration records.
-	agentKeyspace = "orch/agent/"
+	// fleetNodeKeyspace holds FleetNode records.
+	fleetNodeKeyspace = "orch/agent/"
 
 	// taskKeyspace holds Task records.
 	taskKeyspace = "orch/task/"
@@ -82,12 +82,12 @@ const (
 	// default-selection pointer.
 	accountDefaultKeyspace = "orch/accountdefault/"
 
-	// agentProfileKeyspace holds AgentProfile records — one runnable
-	// combination of runtime, model and provider endpoint.
-	agentProfileKeyspace = "orch/agentprofile/"
+	// agentDefinitionKeyspace holds Agent records — a tenant's named AI agent
+	// definitions: one runnable combination of runtime, model and provider.
+	agentDefinitionKeyspace = "orch/agentdef/"
 
-	// agentPoolKeyspace holds AgentPool records — an ordered preference list
-	// of profile names.
+	// agentPoolKeyspace holds AgentPool records — an ordered failover list of
+	// Agent IDs.
 	agentPoolKeyspace = "orch/agentpool/"
 )
 
@@ -191,7 +191,7 @@ func idFromKey(key, prefix string) string {
 //   - task_store.go create — "the existence probe and the write are one atomic
 //     sequence, so two concurrent creates of the same ID cannot both observe an
 //     empty key"
-//   - agent_registry.go Register — "presence is checked under the key lock
+//   - fleet_registry.go Register — "presence is checked under the key lock
 //     rather than by a blind Put"
 //   - task_store.go claim — the version counter described as preventing a
 //     cross-node overwrite when it only DETECTS one
@@ -246,7 +246,7 @@ const (
 
 	// AuditActionReregister records that an already-registered agent
 	// registered again and had its record converged onto what it reported
-	// (RefreshAgent). Distinct from AuditActionUpdate because the actor is
+	// (RefreshFleetNode). Distinct from AuditActionUpdate because the actor is
 	// the agent itself rather than an operator, and because its refusals --
 	// a principal that does not own the record, an agent an operator
 	// disabled -- are the identity-takeover trail an auditor reviews.
@@ -259,6 +259,26 @@ const (
 	// action lets an auditor distinguish routine use from an operator
 	// changing the record itself.
 	AuditActionUse = "use"
+
+	// AuditActionPoolExhausted records that a resolution found every pooled
+	// account of a provider unavailable at once: all on a provider limit hold,
+	// or all at their session cap. The event's ResourceID names the pool
+	// (poolAuditResourceID), not an account, because no account was chosen.
+	AuditActionPoolExhausted = "pool_exhausted"
+
+	// AuditActionSpendDeferred records that admission deferred a project
+	// because its own spend limits, or its tenant's, are spent. The event's
+	// ResourceID names the spender, the refusal and the window
+	// (spendDeferralResourceID); it is recorded when the deferral starts or
+	// changes reason, not on every sweep.
+	AuditActionSpendDeferred = "spend_deferred"
+
+	// AuditActionAgentFailover records that a spawn resolved through an
+	// Agent reference moved past one Agent to the next: its accounts were
+	// exhausted, expired or rate-limited, its backend was unavailable, or it
+	// was at capacity. The event's ResourceID names the Agent passed over and
+	// the reason (agentFailoverResourceID).
+	AuditActionAgentFailover = "agent_failover"
 )
 
 // Resource types reported on store audit events.
@@ -266,8 +286,8 @@ const (
 	// AuditResourceProject identifies a Project record.
 	AuditResourceProject = "orchestration_project"
 
-	// AuditResourceAgent identifies an AgentRegistration record.
-	AuditResourceAgent = "orchestration_agent"
+	// AuditResourceFleetNode identifies a FleetNode record.
+	AuditResourceFleetNode = "orchestration_agent"
 
 	// AuditResourceTask identifies a Task record.
 	AuditResourceTask = "orchestration_task"
@@ -278,8 +298,9 @@ const (
 	// AuditResourceAccount identifies an Account record.
 	AuditResourceAccount = "orchestration_account"
 
-	// AuditResourceAgentProfile identifies an AgentProfile record.
-	AuditResourceAgentProfile = "orchestration_agent_profile"
+	// AuditResourceAgentDefinition identifies an Agent record (a tenant's AI
+	// agent definition, not a fleet node).
+	AuditResourceAgentDefinition = "orchestration_agent_definition"
 
 	// AuditResourceAgentPool identifies an AgentPool record.
 	AuditResourceAgentPool = "orchestration_agent_pool"
@@ -336,6 +357,7 @@ type storeConfig struct {
 	inlineLimit int64
 	spend       SpendAuthority
 	grantor     AccountDeliveryGrantor
+	sessions    AccountSessionReserver
 }
 
 // StoreOption configures a durable orchestration store.
@@ -376,6 +398,15 @@ func WithSpendAuthority(spend SpendAuthority) StoreOption {
 // credential nothing can revoke is the state the mechanism exists to remove.
 func WithAccountDeliveryGrantor(grantor AccountDeliveryGrantor) StoreOption {
 	return func(c *storeConfig) { c.grantor = grantor }
+}
+
+// WithAccountSessionReserver installs the live-session count and reservation
+// table a resolution checks the session cap against (see account_balancing.go).
+// Nil, the default, enforces no MaxConcurrentSessions, which is what a
+// deployment with no session store has; the server always wires one, and a
+// worker daemon wires the control plane's through its account client.
+func WithAccountSessionReserver(sessions AccountSessionReserver) StoreOption {
+	return func(c *storeConfig) { c.sessions = sessions }
 }
 
 // WithInlineArtifactLimit sets the maximum artifact size, in bytes, embedded

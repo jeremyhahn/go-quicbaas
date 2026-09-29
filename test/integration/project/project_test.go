@@ -19,10 +19,12 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	quicbaaserrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	svcpkg "github.com/jeremyhahn/go-quicbaas/pkg/service"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	projectSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/project"
@@ -53,18 +55,18 @@ func TestProjectLifecycle_CreateGetUpdateDelete(t *testing.T) {
 	// fields (workspace, host_affinity, default_lead_agent, git, quotas) are
 	// dropped on the wire. We assert the wire-supported fields here.
 	created, err := client.Project().Create(ctx, &quicbaas.CreateProjectRequest{
-		TenantID:         tenantID,
-		Name:             name,
-		Description:      "lifecycle test project",
-		WorkspaceAgentID: "agent-1",
-		WorkspacePath:    "/tmp/proj",
-		HostAffinity:     "host-a",
-		DefaultLeadAgent: "agent-1",
-		GitRepoURL:       "https://example.com/repo.git",
-		GitDefaultBranch: "main",
-		TokenBudget:      100000,
-		GPUMinutes:       60,
-		MaxConcurrency:   4,
+		TenantID:             tenantID,
+		Name:                 name,
+		Description:          "lifecycle test project",
+		WorkspaceFleetNodeID: "agent-1",
+		WorkspacePath:        "/tmp/proj",
+		GitRepoURL:           "https://example.com/repo.git",
+		GitDefaultBranch:     "main",
+		Spend: quicbaas.SpendLimits{Windows: []quicbaas.SpendWindow{
+			{Name: "daily", Size: 24 * time.Hour, MaxTokens: 100000},
+		}},
+		GPUMinutes:     60,
+		MaxConcurrency: 4,
 		Metadata: map[string]string{
 			"team": "alpha",
 		},
@@ -135,14 +137,14 @@ func TestProjectLifecycle_ListFiltersByTenant(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	listA, err := client.Project().List(ctx, tenantA)
+	listA, err := client.Project().List(ctx, &projectSDK.ListProjectsRequest{TenantID: tenantA})
 	require.NoError(t, err)
 	require.NotNil(t, listA)
 	idsA := projectIDs(listA.Projects)
 	assert.Contains(t, idsA, pA.ID, "tenant A should see its own project")
 	assert.NotContains(t, idsA, pB.ID, "tenant A must not see tenant B's project")
 
-	listB, err := client.Project().List(ctx, tenantB)
+	listB, err := client.Project().List(ctx, &projectSDK.ListProjectsRequest{TenantID: tenantB})
 	require.NoError(t, err)
 	require.NotNil(t, listB)
 	idsB := projectIDs(listB.Projects)
@@ -150,12 +152,12 @@ func TestProjectLifecycle_ListFiltersByTenant(t *testing.T) {
 	assert.NotContains(t, idsB, pA.ID, "tenant B must not see tenant A's project")
 }
 
-// TestProjectLifecycle_PermissionsMatrix exercises GrantAgentRole and
-// RevokeAgentRole. After a grant, the project's AgentRoles must reflect the
+// TestProjectLifecycle_PermissionsMatrix exercises GrantFleetNodeRole and
+// RevokeFleetNodeRole. After a grant, the project's FleetNodeRoles must reflect the
 // assignment; after a revoke, the role flips to "denied".
 //
 // NOTE: The embedded transport's convertProjectToSDK helper does not currently
-// propagate the Permissions.AgentRoles map back to SDK callers, so Get/List
+// propagate the Permissions.FleetNodeRoles map back to SDK callers, so Get/List
 // will not surface the assignment. We therefore validate the side effect by
 // reaching into the service layer (a same-process embedded test is allowed
 // to observe authoritative state) for state assertions.
@@ -174,13 +176,13 @@ func TestProjectLifecycle_PermissionsMatrix(t *testing.T) {
 	require.NoError(t, err)
 
 	// Grant worker role.
-	grantResp, err := client.Project().GrantAgentRole(ctx, &projectSDK.GrantAgentRoleRequest{
-		TenantID:  tenantID,
-		ProjectID: created.ID,
-		AgentID:   agentID,
-		Role:      quicbaas.ProjectRoleWorker,
+	grantResp, err := client.Project().GrantFleetNodeRole(ctx, &projectSDK.GrantFleetNodeRoleRequest{
+		TenantID:    tenantID,
+		ProjectID:   created.ID,
+		FleetNodeID: agentID,
+		Role:        quicbaas.ProjectRoleWorker,
 	})
-	require.NoError(t, err, "GrantAgentRole worker should succeed")
+	require.NoError(t, err, "GrantFleetNodeRole worker should succeed")
 	require.NotNil(t, grantResp)
 	assert.Equal(t, quicbaas.ProjectRoleWorker, grantResp.Role)
 
@@ -191,16 +193,16 @@ func TestProjectLifecycle_PermissionsMatrix(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, getResp.Project)
-	assert.Equal(t, "worker", string(getResp.Project.Permissions.AgentRoles[agentID]),
+	assert.Equal(t, "worker", string(getResp.Project.Permissions.FleetNodeRoles[agentID]),
 		"worker role should be persisted on the project record")
 
 	// Revoke flips the role to "denied".
-	revokeResp, err := client.Project().RevokeAgentRole(ctx, &projectSDK.RevokeAgentRoleRequest{
-		TenantID:  tenantID,
-		ProjectID: created.ID,
-		AgentID:   agentID,
+	revokeResp, err := client.Project().RevokeFleetNodeRole(ctx, &projectSDK.RevokeFleetNodeRoleRequest{
+		TenantID:    tenantID,
+		ProjectID:   created.ID,
+		FleetNodeID: agentID,
 	})
-	require.NoError(t, err, "RevokeAgentRole should succeed")
+	require.NoError(t, err, "RevokeFleetNodeRole should succeed")
 	require.NotNil(t, revokeResp)
 
 	getResp2, err := testService.Project().GetProject(ctx, &svcpkg.GetProjectRequest{
@@ -209,12 +211,35 @@ func TestProjectLifecycle_PermissionsMatrix(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, getResp2.Project)
-	assert.Equal(t, "denied", string(getResp2.Project.Permissions.AgentRoles[agentID]),
+	assert.Equal(t, "denied", string(getResp2.Project.Permissions.FleetNodeRoles[agentID]),
 		"revoked role should be 'denied'")
 }
 
 // TestProjectLifecycle_ErrorHandling covers the key invalid-input paths so
 // that callers receive typed errors they can match on.
+// TestProjectLifecycle_RefusesADanglingReference proves a reference field is
+// checked on save through the SDK: a host affinity naming no fleet node in the
+// tenant is refused with the typed reference error, and nothing is stored.
+func TestProjectLifecycle_RefusesADanglingReference(t *testing.T) {
+	client := newProjectClient(t)
+	ctx := context.Background()
+	tenantID := "tenant-refs-" + uniqueSuffix()
+
+	_, err := client.Project().Create(ctx, &quicbaas.CreateProjectRequest{
+		TenantID:     tenantID,
+		Name:         "proj-refs-" + uniqueSuffix(),
+		HostAffinity: "no-such-node",
+	})
+	require.Error(t, err, "a host affinity naming no fleet node must be refused")
+	var notFound *quicbaaserrors.ReferenceNotFoundError
+	require.True(t, errors.As(err, &notFound), "want *ReferenceNotFoundError, got %T: %v", err, err)
+	assert.Equal(t, "host_affinity", notFound.Field)
+
+	listed, err := client.Project().List(ctx, &projectSDK.ListProjectsRequest{TenantID: tenantID})
+	require.NoError(t, err)
+	assert.Empty(t, listed.Projects, "a refused create must store nothing")
+}
+
 func TestProjectLifecycle_ErrorHandling(t *testing.T) {
 	client := newProjectClient(t)
 	ctx := context.Background()

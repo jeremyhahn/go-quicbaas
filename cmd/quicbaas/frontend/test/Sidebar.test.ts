@@ -64,7 +64,7 @@ const navItems = [
   { viewId: 'dashboard'     as const, expectedHash: '#/dashboard',     label: 'System Dashboard' },
   { viewId: 'orchestration' as const, expectedHash: '#/orchestration', label: 'Dashboard' },
   { viewId: 'jobs'          as const, expectedHash: '#/jobs',          label: 'Jobs' },
-  { viewId: 'agents'        as const, expectedHash: '#/fleet',         label: 'Agent Fleet' },
+  { viewId: 'fleet'         as const, expectedHash: '#/fleet',         label: 'Fleet' },
   { viewId: 'sessions'      as const, expectedHash: '#/sessions',      label: 'Sessions' },
   { viewId: 'tasks'         as const, expectedHash: '#/tasks',         label: 'Tasks' },
   { viewId: 'workflows'     as const, expectedHash: '#/workflows',     label: 'Workflows' },
@@ -125,7 +125,7 @@ const hashToActiveViewID = [
   { hash: '#/dashboard',     viewId: 'dashboard' },
   { hash: '#/orchestration', viewId: 'orchestration' },
   { hash: '#/jobs',          viewId: 'jobs' },
-  { hash: '#/fleet',         viewId: 'agents' },
+  { hash: '#/fleet',         viewId: 'fleet' },
   { hash: '#/sessions',      viewId: 'sessions' },
   { hash: '#/tasks',         viewId: 'tasks' },
   { hash: '#/workflows',     viewId: 'workflows' },
@@ -257,8 +257,8 @@ describe('header no longer contains Sessions/Fleet/Spawn nav links', () => {
     expect(window.location.hash).toBe('#/sessions');
   });
 
-  it('navigate("agents") routes to #/fleet via sidebar', () => {
-    navigate('agents');
+  it('navigate("fleet") routes to #/fleet via sidebar', () => {
+    navigate('fleet');
     expect(window.location.hash).toBe('#/fleet');
   });
 });

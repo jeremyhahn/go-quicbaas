@@ -233,13 +233,11 @@ func setupTestFederationManager(t *testing.T) (*DefaultFederationManager, *Memor
 	stateStorage := NewMemoryStateStorage()
 
 	userStorage := newMockUserStorage()
-	groupStorage := newMockGroupStorage()
 	roleStorage := newMockRoleStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  userStorage,
-		GroupStorage: groupStorage,
-		RoleStorage:  roleStorage,
+		UserStorage: userStorage,
+		RoleStorage: roleStorage,
 	})
 
 	auditLogger := newFederationTestAuditLogger()
@@ -286,9 +284,8 @@ func TestNewFederationManager(t *testing.T) {
 		linkStorage := NewMemoryFederationStorage()
 		stateStorage := NewMemoryStateStorage()
 		identityStore := NewIdentityStore(IdentityStoreOptions{
-			UserStorage:  newMockUserStorage(),
-			GroupStorage: newMockGroupStorage(),
-			RoleStorage:  newMockRoleStorage(),
+			UserStorage: newMockUserStorage(),
+			RoleStorage: newMockRoleStorage(),
 		})
 
 		manager, err := NewFederationManager(
@@ -318,9 +315,8 @@ func TestNewFederationManager(t *testing.T) {
 		linkStorage := NewMemoryFederationStorage()
 		stateStorage := NewMemoryStateStorage()
 		identityStore := NewIdentityStore(IdentityStoreOptions{
-			UserStorage:  newMockUserStorage(),
-			GroupStorage: newMockGroupStorage(),
-			RoleStorage:  newMockRoleStorage(),
+			UserStorage: newMockUserStorage(),
+			RoleStorage: newMockRoleStorage(),
 		})
 
 		_, err := NewFederationManager(
@@ -338,9 +334,8 @@ func TestNewFederationManager(t *testing.T) {
 		providerStorage := NewMemoryProviderStorage()
 		stateStorage := NewMemoryStateStorage()
 		identityStore := NewIdentityStore(IdentityStoreOptions{
-			UserStorage:  newMockUserStorage(),
-			GroupStorage: newMockGroupStorage(),
-			RoleStorage:  newMockRoleStorage(),
+			UserStorage: newMockUserStorage(),
+			RoleStorage: newMockRoleStorage(),
 		})
 
 		_, err := NewFederationManager(
@@ -358,9 +353,8 @@ func TestNewFederationManager(t *testing.T) {
 		providerStorage := NewMemoryProviderStorage()
 		linkStorage := NewMemoryFederationStorage()
 		identityStore := NewIdentityStore(IdentityStoreOptions{
-			UserStorage:  newMockUserStorage(),
-			GroupStorage: newMockGroupStorage(),
-			RoleStorage:  newMockRoleStorage(),
+			UserStorage: newMockUserStorage(),
+			RoleStorage: newMockRoleStorage(),
 		})
 
 		_, err := NewFederationManager(
@@ -1948,9 +1942,8 @@ func TestFederationManagerWithErrorStorage(t *testing.T) {
 		linkStorage := NewMemoryFederationStorage()
 		stateStorage := NewMemoryStateStorage()
 		identityStore := NewIdentityStore(IdentityStoreOptions{
-			UserStorage:  newMockUserStorage(),
-			GroupStorage: newMockGroupStorage(),
-			RoleStorage:  newMockRoleStorage(),
+			UserStorage: newMockUserStorage(),
+			RoleStorage: newMockRoleStorage(),
 		})
 
 		manager, _ := NewFederationManager(
@@ -1980,9 +1973,8 @@ func TestFederationManagerWithErrorStorage(t *testing.T) {
 		linkStorage := NewMemoryFederationStorage()
 		stateStorage := NewMemoryStateStorage()
 		identityStore := NewIdentityStore(IdentityStoreOptions{
-			UserStorage:  newMockUserStorage(),
-			GroupStorage: newMockGroupStorage(),
-			RoleStorage:  newMockRoleStorage(),
+			UserStorage: newMockUserStorage(),
+			RoleStorage: newMockRoleStorage(),
 		})
 
 		manager, _ := NewFederationManager(
@@ -2006,9 +1998,8 @@ func TestFederationManagerWithErrorStorage(t *testing.T) {
 		linkStorage := NewMemoryFederationStorage()
 		stateStorage := NewMemoryStateStorage()
 		identityStore := NewIdentityStore(IdentityStoreOptions{
-			UserStorage:  newMockUserStorage(),
-			GroupStorage: newMockGroupStorage(),
-			RoleStorage:  newMockRoleStorage(),
+			UserStorage: newMockUserStorage(),
+			RoleStorage: newMockRoleStorage(),
 		})
 
 		manager, _ := NewFederationManager(
@@ -2036,9 +2027,8 @@ func TestFederationManagerWithErrorStorage(t *testing.T) {
 			saveErr: errors.New("storage error"),
 		}
 		identityStore := NewIdentityStore(IdentityStoreOptions{
-			UserStorage:  newMockUserStorage(),
-			GroupStorage: newMockGroupStorage(),
-			RoleStorage:  newMockRoleStorage(),
+			UserStorage: newMockUserStorage(),
+			RoleStorage: newMockRoleStorage(),
 		})
 
 		manager, _ := NewFederationManager(
@@ -2062,9 +2052,8 @@ func TestFederationManagerWithErrorStorage(t *testing.T) {
 		}
 		stateStorage := NewMemoryStateStorage()
 		identityStore := NewIdentityStore(IdentityStoreOptions{
-			UserStorage:  newMockUserStorage(),
-			GroupStorage: newMockGroupStorage(),
-			RoleStorage:  newMockRoleStorage(),
+			UserStorage: newMockUserStorage(),
+			RoleStorage: newMockRoleStorage(),
 		})
 
 		manager, _ := NewFederationManager(
@@ -2088,9 +2077,8 @@ func TestFederationManagerWithNilAuditLogger(t *testing.T) {
 	linkStorage := NewMemoryFederationStorage()
 	stateStorage := NewMemoryStateStorage()
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  newMockUserStorage(),
-		GroupStorage: newMockGroupStorage(),
-		RoleStorage:  newMockRoleStorage(),
+		UserStorage: newMockUserStorage(),
+		RoleStorage: newMockRoleStorage(),
 	})
 
 	manager, _ := NewFederationManager(
@@ -2130,9 +2118,8 @@ func TestFederationManagerOptions(t *testing.T) {
 		linkStorage := NewMemoryFederationStorage()
 		stateStorage := NewMemoryStateStorage()
 		identityStore := NewIdentityStore(IdentityStoreOptions{
-			UserStorage:  newMockUserStorage(),
-			GroupStorage: newMockGroupStorage(),
-			RoleStorage:  newMockRoleStorage(),
+			UserStorage: newMockUserStorage(),
+			RoleStorage: newMockRoleStorage(),
 		})
 
 		manager, _ := NewFederationManager(
@@ -2153,9 +2140,8 @@ func TestFederationManagerOptions(t *testing.T) {
 		linkStorage := NewMemoryFederationStorage()
 		stateStorage := NewMemoryStateStorage()
 		identityStore := NewIdentityStore(IdentityStoreOptions{
-			UserStorage:  newMockUserStorage(),
-			GroupStorage: newMockGroupStorage(),
-			RoleStorage:  newMockRoleStorage(),
+			UserStorage: newMockUserStorage(),
+			RoleStorage: newMockRoleStorage(),
 		})
 
 		oidcProvider := &OIDCProvider{} // Mock OIDC provider
@@ -2914,7 +2900,9 @@ func TestProvisionUser_LongUsername_Truncated(t *testing.T) {
 	assert.NotEmpty(t, user.ID)
 }
 
-func TestProvisionUser_WithDefaultRolesAndGroups(t *testing.T) {
+// TestProvisionUser_WithDefaultRoles: DefaultRoles is the whole provisioning
+// grant. quicbaas keeps no groups, so there is nothing else to join.
+func TestProvisionUser_WithDefaultRoles(t *testing.T) {
 	manager, _, _, _, identityStore, _ := setupTestFederationManager(t)
 	ctx := context.Background()
 
@@ -2924,21 +2912,27 @@ func TestProvisionUser_WithDefaultRolesAndGroups(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	group, err := identityStore.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name:        "default-group",
-		Description: "A default group",
-	})
-	require.NoError(t, err)
-
 	provider := createTestProvider("tenant1", "okta")
 	provider.ApplyDefaults()
 	provider.ID = "provider-with-defaults"
 	provider.DefaultRoles = []string{role.ID}
-	provider.DefaultGroups = []string{group.ID}
+	if provider.ClaimMappings != nil {
+		provider.ClaimMappings.GroupRoleMappings = nil
+	}
 
-	user, err := manager.provisionUser(ctx, provider, "tenant1", "ext-with-defaults", "defaults@example.com", "Defaults User", nil)
+	// With no claim mappings the provider's DefaultRoles are the resolution,
+	// exactly as the login flow resolves them.
+	resolution, err := resolveRoles(provider, map[string]interface{}{})
+	require.NoError(t, err)
+	require.True(t, resolution.UsedDefaults)
+
+	user, err := manager.provisionUser(ctx, provider, "tenant1", "ext-with-defaults", "defaults@example.com", "Defaults User", resolution)
 	require.NoError(t, err)
 	require.NotNil(t, user)
+
+	stored, err := identityStore.GetUser(ctx, "tenant1", user.ID)
+	require.NoError(t, err)
+	assert.Contains(t, stored.Roles, role.ID)
 }
 
 // =============================================================================

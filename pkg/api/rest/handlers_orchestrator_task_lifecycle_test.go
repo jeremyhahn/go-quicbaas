@@ -145,6 +145,21 @@ func TestOrchestratorReadmitTask_Errors(t *testing.T) {
 		server.HandleOrchestratorReadmitTask(rec, taskLifecycleRequest(t, http.MethodPost, "/api/v1/orchestrator/tasks/task-1/readmit", "task-1", nil))
 		assert.Equal(t, http.StatusNotFound, rec.Code)
 	})
+	// A REFUSED TRANSITION IS A 409 NAMING BOTH STATES, NEVER A 500. The bare
+	// 500 is how go-quicbaas#945 stayed invisible: the operator readmitting a
+	// task was told nothing about why the store would not move it.
+	t.Run("refused transition is a conflict naming both states", func(t *testing.T) {
+		server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+		defer cleanup()
+		agentSvc.readmitTaskFunc = func(context.Context, string, string) error {
+			return &orchestration.TaskInvalidStateError{TaskID: "task-1", CurrentState: orchestration.TaskStatusCompleted, TargetState: orchestration.TaskStatusPending}
+		}
+		rec := httptest.NewRecorder()
+		server.HandleOrchestratorReadmitTask(rec, taskLifecycleRequest(t, http.MethodPost, "/api/v1/orchestrator/tasks/task-1/readmit", "task-1", nil))
+		assert.Equal(t, http.StatusConflict, rec.Code)
+		assert.Contains(t, rec.Body.String(), "current=completed")
+		assert.Contains(t, rec.Body.String(), "target=pending")
+	})
 }
 
 func TestOrchestratorListTasks_ProjectAndStatusesFilters(t *testing.T) {

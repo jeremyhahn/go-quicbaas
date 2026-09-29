@@ -51,6 +51,8 @@ func TestTransport_Account_Delegates(t *testing.T) {
 		{"revoke", "Revoke", &accountclient.RevokeAccountRequest{TenantID: "t1", AccountID: "a1"}},
 		{"set-default", "SetDefault", &accountclient.SetDefaultAccountRequest{TenantID: "t1", AccountID: "a1"}},
 		{"usage", "Usage", &accountclient.GetAccountUsageRequest{TenantID: "t1", AccountID: "a1"}},
+		{"reserve-session", "ReserveSession", &accountclient.ReserveSessionRequest{TenantID: "t1", AccountID: "a1"}},
+		{"release-session", "ReleaseSession", &accountclient.ReleaseSessionRequest{TenantID: "t1", AccountID: "a1", ReservationID: "r1"}},
 	}
 
 	for _, tc := range cases {

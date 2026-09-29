@@ -527,6 +527,86 @@ func TestLabelReconciler_UnreadableRecordDefersATerminalTaskToo(t *testing.T) {
 	}
 }
 
+// TestLabelReconciler_CorruptTaskRecordDefersRatherThanOrphans is the
+// go-quicbaas#848 regression, driven through the REAL task store: a record the
+// store cannot decode is absent from a plain listing exactly as a deleted one
+// is, so an issue whose task record is corrupt used to be declared an orphan
+// and announced `abandoned` over live work. The listing now reports the record
+// it could not read, and the sweep defers exactly as it does for a store that
+// refuses outright.
+func TestLabelReconciler_CorruptTaskRecordDefersRatherThanOrphans(t *testing.T) {
+	ctx := context.Background()
+	rig := newReconcileRig(t, []string{"factory:in-progress"})
+
+	kv := orchestration.NewMemoryTaskKV()
+	if err := kv.Put(ctx, "orch/task/"+testTenant+"/"+testTask, []byte("{not json")); err != nil {
+		t.Fatalf("plant corrupt record: %v", err)
+	}
+	store := orchestration.NewTaskStore(kv, orchestration.NewProcessClaimArbiter())
+	reconciler, err := NewLabelReconciler(LabelReconcilerConfig{
+		Tenants: rig.tenants, Bindings: rig.store, Tasks: store, Hooks: rig.reconciler.hooks, Pacer: rig.pacer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rig.reconciler = reconciler
+
+	finding := only(t, rig.sweep(t))
+	if finding.Verdict != LabelReconcileDeferred {
+		t.Fatalf("verdict = %q (%s), want deferred", finding.Verdict, finding.Evidence)
+	}
+	for _, want := range []string{
+		ErrLabelReconcileRecord.Error(), orchestration.ErrTaskListingIncomplete.Error(), testTask,
+	} {
+		if !strings.Contains(finding.Evidence, want) {
+			t.Fatalf("the evidence does not carry %q: %s", want, finding.Evidence)
+		}
+	}
+	if got := rig.outcomeComments(); len(got) != 0 {
+		t.Fatalf("a corrupt record produced an announcement: %+v", got)
+	}
+	if got := rig.forge.issueLabels(reconcileIssue); !hasAll(got, []string{"factory:in-progress"}) ||
+		hasAll(got, []string{"factory:escalated"}) {
+		t.Fatalf("labels = %v, want the issue untouched", got)
+	}
+
+	// AND ONCE THE RECORD IS GONE THE ISSUE IS THE ORPHAN IT THEN IS: the
+	// deferral is on the unreadable record, not a standing refusal.
+	if err := kv.Delete(ctx, "orch/task/"+testTenant+"/"+testTask); err != nil {
+		t.Fatalf("remove corrupt record: %v", err)
+	}
+	if retried := only(t, rig.sweep(t)); retried.Verdict != LabelReconcileSurfaced ||
+		retried.Outcome != OutcomeAbandoned {
+		t.Fatalf("the retry = %+v, want the orphan surfaced", retried)
+	}
+}
+
+// TestLabelReconciler_UnreadableRecordBesideASpentTaskDefers proves the
+// incomplete listing stops the TERMINAL answer too: the record the store could
+// not read may be the fresh task a re-label adopted, which would supersede the
+// spent one the listing did return, so posting the spent task's ending would
+// announce one over a live run.
+func TestLabelReconciler_UnreadableRecordBesideASpentTaskDefers(t *testing.T) {
+	rig := newReconcileRig(t, []string{"factory:in-progress"},
+		parkedTask(orchestration.TaskBlockKindBlocked, "the account pool is empty"))
+	rig.tasks.unreadable = []string{"task-successor"}
+
+	finding := only(t, rig.sweep(t))
+	if finding.Verdict != LabelReconcileDeferred {
+		t.Fatalf("verdict = %q (%s), want deferred", finding.Verdict, finding.Evidence)
+	}
+	if !strings.Contains(finding.Evidence, "task-successor") {
+		t.Fatalf("the evidence does not name the unreadable record: %s", finding.Evidence)
+	}
+	if got := rig.outcomeComments(); len(got) != 0 {
+		t.Fatalf("an incomplete listing produced an announcement: %+v", got)
+	}
+	if got := rig.forge.issueLabels(reconcileIssue); !hasAll(got, []string{"factory:in-progress"}) ||
+		hasAll(got, []string{"factory:blocked"}) {
+		t.Fatalf("labels = %v, want the issue untouched", got)
+	}
+}
+
 // TestLabelReconciler_TaskConcludedDuringThePassIsSurfacedNotOrphaned is the
 // other half of the same re-read: a task that both starts and stops inside the
 // window is answered from ITS OWN record, so the issue gets the ending the
@@ -1008,9 +1088,9 @@ func readmittedTask() *orchestration.Task {
 // TestLabelReconciler_ReadmittedTaskHasItsParkLabelCleared is the third face of
 // this sweep's one defect, and it was invisible to both other directions.
 //
-// A readmission IS a conclusion: the readmitted row's label key is empty so the
-// park label comes off and the next attempt's Prepare can label the issue
-// afresh. When that forge write fails, the record says the task is queued again
+// A readmission IS a conclusion: the readmitted row's label key is the trigger,
+// so the park label comes off, the issue shows queued work again, and the next
+// attempt's Prepare labels it in progress. When that forge write fails, the record says the task is queued again
 // and the issue still says `factory:blocked`. The claim direction lists only
 // `in_progress` and `in_review`, so it never sees it; the hand-over direction
 // skips pending tasks, so it never sees it either.
@@ -1027,8 +1107,8 @@ func TestLabelReconciler_ReadmittedTaskHasItsParkLabelCleared(t *testing.T) {
 	if got := rig.forge.issueLabels(reconcileIssue); hasAll(got, []string{"factory:blocked"}) {
 		t.Fatalf("labels = %v, want the park label gone", got)
 	}
-	if got := rig.forge.issueLabels(reconcileIssue); !hasAll(got, []string{"bug"}) {
-		t.Fatalf("labels = %v, want the unowned label left alone", got)
+	if got := rig.forge.issueLabels(reconcileIssue); !hasAll(got, []string{"bug", "task:ready"}) {
+		t.Fatalf("labels = %v, want the unowned label left alone and the trigger showing queued work", got)
 	}
 
 	// NOTHING IS ANNOUNCED. The readmission's own surfacing posts the comment;
@@ -1037,7 +1117,8 @@ func TestLabelReconciler_ReadmittedTaskHasItsParkLabelCleared(t *testing.T) {
 		t.Fatalf("the repair announced an ending: %d comment(s)", got)
 	}
 
-	// AND IT IS IDEMPOTENT: with no owned label left, the issue agrees.
+	// AND IT IS IDEMPOTENT: with the trigger and nothing else owned, the
+	// issue agrees.
 	second := only(t, rig.sweep(t))
 	if second.Verdict != LabelReconcileConsistent {
 		t.Fatalf("second sweep verdict = %q (%s), want consistent", second.Verdict, second.Evidence)
@@ -1121,10 +1202,10 @@ func TestLabelReconciler_HandoversAndReadmissionsCannotBothFire(t *testing.T) {
 }
 
 // TestLabelReconciler_ReadmittedTaskWithACleanIssueIsConsistent is the healthy
-// state: the readmission's label move landed, so there is nothing this module
-// owns on the issue and nothing to do.
+// state: the readmission's label move landed, so the issue carries the trigger
+// and nothing else this module owns, and there is nothing to do.
 func TestLabelReconciler_ReadmittedTaskWithACleanIssueIsConsistent(t *testing.T) {
-	rig := newReconcileRig(t, []string{"bug"}, readmittedTask())
+	rig := newReconcileRig(t, []string{"bug", "task:ready"}, readmittedTask())
 
 	finding := only(t, rig.sweep(t))
 	if finding.Verdict != LabelReconcileConsistent {
@@ -2227,5 +2308,24 @@ func TestLabelReconcileErrors_WithoutACauseStillReadAsThemselves(t *testing.T) {
 		if tc.err.Error() == "" {
 			t.Fatalf("%s renders nothing", name)
 		}
+	}
+}
+
+// TestLabelReconciler_AQueuedReadmissionWithNoStateLabelGetsTheTrigger is X11
+// (go-luks2#211, 2026-09-25) as the sweep sees it: a readmitted task queued
+// behind a stripped trigger carried no factory label at all. The sweep puts
+// the trigger back, the display state of queued work.
+func TestLabelReconciler_AQueuedReadmissionWithNoStateLabelGetsTheTrigger(t *testing.T) {
+	rig := newReconcileRig(t, []string{"bug"}, readmittedTask())
+
+	finding := only(t, rig.sweep(t))
+	if finding.Verdict != LabelReconcileRelabelled {
+		t.Fatalf("verdict = %q (%s), want relabelled", finding.Verdict, finding.Evidence)
+	}
+	if got := rig.forge.issueLabels(reconcileIssue); !hasAll(got, []string{"bug", "task:ready"}) {
+		t.Fatalf("labels = %v, want the trigger back beside the unowned label", got)
+	}
+	if len(rig.forge.labelRemovals) != 0 {
+		t.Fatalf("nothing owned was on the issue, yet labels were removed: -%v", rig.forge.labelRemovals)
 	}
 }

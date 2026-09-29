@@ -116,8 +116,8 @@ func TestOrchestratorAgentAdmin(t *testing.T) {
 		method string
 		req    interface{}
 	}{
-		{"DisableAgent", &orchestratorSDK.DisableAgentRequest{AgentID: "a1"}},
-		{"EnableAgent", &orchestratorSDK.EnableAgentRequest{AgentID: "a1"}},
+		{"DisableFleetNode", &orchestratorSDK.DisableFleetNodeRequest{NodeID: "a1"}},
+		{"EnableFleetNode", &orchestratorSDK.EnableFleetNodeRequest{NodeID: "a1"}},
 	}
 
 	t.Run("success", func(t *testing.T) {

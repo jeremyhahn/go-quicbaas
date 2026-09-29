@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/agents"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/page"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
@@ -46,7 +47,8 @@ type Client interface {
 	// CloseSession terminates a session.
 	CloseSession(ctx context.Context, req *CloseSessionRequest) (*CloseSessionResponse, error)
 
-	// ListSessions returns all active sessions.
+	// ListSessions returns every session, in any state (closed and error
+	// included), optionally filtered by backend or status.
 	ListSessions(ctx context.Context, req *ListSessionsRequest) (*ListSessionsResponse, error)
 
 	// RotateSessionAccount moves a session onto a different pooled provider
@@ -79,6 +81,17 @@ type Client interface {
 	// ReadmitTask returns a blocked task to the pending queue.
 	ReadmitTask(ctx context.Context, req *ReadmitTaskRequest) (*ReadmitTaskResponse, error)
 
+	// AttentionList returns one page of the tenant's attention items: every
+	// blocked task, plus whatever environmental alerts this node reports —
+	// "the factory's inbox for anything only an operator can clear.
+	AttentionList(ctx context.Context, req *AttentionListRequest) (*AttentionListResponse, error)
+
+	// AttentionResolve applies an operator's decision to one blocked task:
+	// the ruling is posted to the task's forge issue, and the task is either
+	// readmitted to the queue or (close_as_done) completed without being
+	// readmitted.
+	AttentionResolve(ctx context.Context, req *AttentionResolveRequest) (*AttentionItem, error)
+
 	// DeleteTask removes a task and releases its source reservation, so the
 	// task's source can be adopted again. Refused while a job holds a live
 	// lease on the task.
@@ -104,20 +117,20 @@ type Client interface {
 	// Health returns the orchestrator health check report.
 	Health(ctx context.Context) (*HealthCheckReport, error)
 
-	// RegisterAgent registers a new agent with the fleet.
-	RegisterAgent(ctx context.Context, req *RegisterAgentRequest) (*RegisterAgentResponse, error)
+	// RegisterFleetNode registers a new agent with the fleet.
+	RegisterFleetNode(ctx context.Context, req *RegisterFleetNodeRequest) (*RegisterFleetNodeResponse, error)
 
-	// GetAgent returns an agent by ID.
-	GetAgent(ctx context.Context, req *GetAgentRequest) (*AgentRegistration, error)
+	// GetFleetNode returns an agent by ID.
+	GetFleetNode(ctx context.Context, req *GetFleetNodeRequest) (*FleetNode, error)
 
-	// ListAgents returns agents matching the filter criteria.
-	ListAgents(ctx context.Context, req *ListAgentsRequest) (*ListAgentsResponse, error)
+	// ListFleetNodes returns agents matching the filter criteria.
+	ListFleetNodes(ctx context.Context, req *ListFleetNodesRequest) (*ListFleetNodesResponse, error)
 
-	// RemoveAgent removes an agent from the fleet.
-	RemoveAgent(ctx context.Context, req *RemoveAgentRequest) (*RemoveAgentResponse, error)
+	// RemoveFleetNode removes an agent from the fleet.
+	RemoveFleetNode(ctx context.Context, req *RemoveFleetNodeRequest) (*RemoveFleetNodeResponse, error)
 
-	// AgentHeartbeat sends a heartbeat for an agent.
-	AgentHeartbeat(ctx context.Context, req *AgentHeartbeatRequest) (*AgentHeartbeatResponse, error)
+	// FleetNodeHeartbeat sends a heartbeat for an agent.
+	FleetNodeHeartbeat(ctx context.Context, req *FleetNodeHeartbeatRequest) (*FleetNodeHeartbeatResponse, error)
 
 	// DecomposeTask decomposes a task into structured work items using an agent.
 	DecomposeTask(ctx context.Context, req *DecomposeTaskRequest) (*DecomposeTaskResponse, error)
@@ -161,6 +174,14 @@ type Client interface {
 	// and a job's spend are the same prefix scan at two depths.
 	GetSpendReport(ctx context.Context, req *GetSpendReportRequest) (*GetSpendReportResponse, error)
 
+	// GetTenantSpendPolicy returns a tenant's own spend limits and its live
+	// usage against each window (go-quicbaas#1058).
+	GetTenantSpendPolicy(ctx context.Context, req *GetTenantSpendPolicyRequest) (*TenantSpendPolicy, error)
+
+	// SetTenantSpendPolicy replaces a tenant's own spend limits; no windows
+	// makes the tenant unmetered.
+	SetTenantSpendPolicy(ctx context.Context, req *SetTenantSpendPolicyRequest) (*TenantSpendPolicy, error)
+
 	// SubscribeSessionEvents returns a live stream of session events. When
 	// req.FromSequence > 0 the stream begins with a historical replay
 	// from that sequence, then transitions to live tail when Follow is
@@ -195,12 +216,12 @@ type Client interface {
 	// Returns ErrNotFound if the workflow does not exist.
 	DeleteWorkflow(ctx context.Context, req *DeleteWorkflowRequest) error
 
-	// DisableAgent administratively disables an agent globally. Revokes the
+	// DisableFleetNode administratively disables an agent globally. Revokes the
 	// agent's OAuth2 credentials and mTLS pin so subsequent token requests fail.
-	DisableAgent(ctx context.Context, req *DisableAgentRequest) (*DisableAgentResponse, error)
+	DisableFleetNode(ctx context.Context, req *DisableFleetNodeRequest) (*DisableFleetNodeResponse, error)
 
-	// EnableAgent re-activates a previously disabled agent.
-	EnableAgent(ctx context.Context, req *EnableAgentRequest) (*EnableAgentResponse, error)
+	// EnableFleetNode re-activates a previously disabled agent.
+	EnableFleetNode(ctx context.Context, req *EnableFleetNodeRequest) (*EnableFleetNodeResponse, error)
 
 	// SubmitTaskArtifacts stores typed output artifacts for a task.
 	SubmitTaskArtifacts(ctx context.Context, req *SubmitTaskArtifactsRequest) (*SubmitTaskArtifactsResponse, error)
@@ -210,6 +231,15 @@ type Client interface {
 
 	// ListTaskArtifacts returns all output artifact metadata for a task.
 	ListTaskArtifacts(ctx context.Context, req *ListTaskArtifactsRequest) (*ListTaskArtifactsResponse, error)
+
+	// GetCostSettings returns a tenant's runtime cost settings — the
+	// electricity rate and engine draws its local inference is costed from —
+	// and the rates in force. go-quicbaas#1058.
+	GetCostSettings(ctx context.Context, req *GetCostSettingsRequest) (*CostSettings, error)
+
+	// SetCostSettings replaces a tenant's runtime cost settings; settings
+	// that override nothing restore the configuration.
+	SetCostSettings(ctx context.Context, req *SetCostSettingsRequest) (*CostSettings, error)
 }
 
 // GetSessionHistoryRequest pages through historical session events.
@@ -359,7 +389,13 @@ type SpendWindowStatus struct {
 	MaxTokens       int64 `json:"max_tokens"`
 	UsedTokens      int64 `json:"used_tokens"`
 	RemainingTokens int64 `json:"remaining_tokens"`
-	Exhausted       bool  `json:"exhausted"`
+	// The dollar axis, in millionths of a US dollar at list price over the
+	// window's priced turns; MaxEquivalentMicros is 0 when the window does not
+	// meter dollars (and MaxTokens 0 when it does not meter tokens).
+	MaxEquivalentMicros       int64 `json:"max_equivalent_micros,omitempty"`
+	UsedEquivalentMicros      int64 `json:"used_equivalent_micros"`
+	RemainingEquivalentMicros int64 `json:"remaining_equivalent_micros"`
+	Exhausted                 bool  `json:"exhausted"`
 	// FreesAt is when the window's oldest entry ages out. NIL when the
 	// window holds nothing, because there is nothing to age out.
 	//
@@ -387,27 +423,95 @@ type SpendBreakerVerdict struct {
 	OpenUntil *time.Time `json:"open_until,omitempty"`
 }
 
+// SpendTotals is what a set of consumption entries sums to: the shape of a
+// report's own totals and of every breakdown row under it. Mirrors
+// orchestration.ConsumptionTotals, and is embedded so its fields sit flat on
+// the JSON wire.
+type SpendTotals struct {
+	Entries int `json:"entries"`
+
+	// InputTokens is the FRESH prompt; the two cache dimensions are prompt
+	// tokens served from and written into the provider's cache.
+	InputTokens      int64 `json:"input_tokens"`
+	OutputTokens     int64 `json:"output_tokens"`
+	CacheReadTokens  int64 `json:"cache_read_tokens"`
+	CacheWriteTokens int64 `json:"cache_write_tokens"`
+	TotalTokens      int64 `json:"total_tokens"`
+
+	// EquivalentMicros is the list-price equivalent of the PRICED entries, in
+	// millionths of the report's Currency — what the tokens would have cost
+	// on the provider's metered API.
+	//
+	// CONSULT PricedEntries BEFORE RENDERING IT. Zero priced entries means
+	// nothing was priced — the models are not in the server's price table —
+	// and the figure is a dash, never a zero. UnpricedEntries > 0 beside
+	// priced ones means the figure is a floor.
+	EquivalentMicros int64 `json:"equivalent_micros"`
+	PricedEntries    int   `json:"priced_entries"`
+	UnpricedEntries  int   `json:"unpriced_entries"`
+
+	// BilledMicros is what the turns added to the bill actually paid: zero
+	// per turn on a subscription, the list price on a metered key, the
+	// operator's rate for an unpooled turn. Consult BilledEntries the same
+	// way as PricedEntries.
+	BilledMicros    int64 `json:"billed_micros"`
+	BilledEntries   int   `json:"billed_entries"`
+	UnbilledEntries int   `json:"unbilled_entries"`
+
+	DurationMillis int64 `json:"duration_ms"`
+
+	// EnergyMilliWh is the energy drawn by the turns costed from electricity,
+	// in milliwatt-hours (a kWh is 1e6), and ElectricityEntries counts them.
+	// Consult ElectricityEntries before rendering it: none is a dash.
+	EnergyMilliWh      int64 `json:"energy_mwh"`
+	ElectricityEntries int   `json:"electricity_entries"`
+
+	// MeasuredEnergyEntries counts the electricity entries whose energy came
+	// from fleet device telemetry rather than a configured draw; the rest of
+	// ElectricityEntries were estimated.
+	MeasuredEnergyEntries int `json:"measured_energy_entries"`
+
+	Successes int `json:"successes"`
+	Failures  int `json:"failures"`
+}
+
+// SpendAccountBilling is how a pooled account is billed. Mirrors
+// orchestration.AccountBilling.
+type SpendAccountBilling struct {
+	// Mode is "subscription", "api", or empty when not configured.
+	Mode string `json:"mode,omitempty"`
+	// MonthlyFeeMicros is a subscription's flat monthly fee; 0 when not
+	// configured.
+	MonthlyFeeMicros int64 `json:"monthly_fee_micros,omitempty"`
+}
+
 // SpendAccount is one pooled account's contribution to a scope, and the
 // allowance it draws against. Mirrors orchestration.SpendAccount.
 type SpendAccount struct {
-	AccountID   string `json:"account_id"`
-	DisplayName string `json:"display_name,omitempty"`
-	Provider    string `json:"provider,omitempty"`
-	TotalTokens int64  `json:"total_tokens"`
+	AccountID   string              `json:"account_id"`
+	DisplayName string              `json:"display_name,omitempty"`
+	Provider    string              `json:"provider,omitempty"`
+	Billing     SpendAccountBilling `json:"billing,omitempty"`
+	SpendTotals
 
 	PolicyStatus SpendPolicyStatus   `json:"policy_status"`
 	Windows      []SpendWindowStatus `json:"windows,omitempty"`
 	// Breaker is nil when the account carries no breaker rule, which is not
 	// the same as a closed breaker.
 	Breaker *SpendBreakerVerdict `json:"breaker,omitempty"`
+
+	// SubscriptionFeeMicros is the part of a subscription's monthly fee that
+	// falls in the report's range. Set only on a tenant-level report and only
+	// for a subscription whose fee is configured; nil renders as a dash.
+	SubscriptionFeeMicros *int64 `json:"subscription_fee_micros,omitempty"`
 }
 
-// SpendModel is one engine/model pair's share of a scope's tokens.
+// SpendModel is one engine/model pair's share of a scope's spend.
 // Mirrors orchestration.SpendModel.
 type SpendModel struct {
-	Engine      string `json:"engine"`
-	Model       string `json:"model"`
-	TotalTokens int64  `json:"total_tokens"`
+	Engine string `json:"engine"`
+	Model  string `json:"model"`
+	SpendTotals
 }
 
 // SpendChild is one drill-down row: the next chain level below the scope.
@@ -422,8 +526,8 @@ type SpendChild struct {
 	Unattributed bool `json:"unattributed,omitempty"`
 	// Name is the child's human name where the level has one (a project),
 	// empty when unattributed or when the entity no longer exists.
-	Name        string `json:"name,omitempty"`
-	TotalTokens int64  `json:"total_tokens"`
+	Name string `json:"name,omitempty"`
+	SpendTotals
 }
 
 // GetSpendReportRequest addresses one scope of the attribution chain.
@@ -442,6 +546,42 @@ type GetSpendReportRequest struct {
 	// round".
 	Round    int  `json:"round,omitempty"`
 	RoundSet bool `json:"round_set,omitempty"`
+
+	// From and To narrow the report to the turns that occurred in
+	// [From, To). From alone ranges up to now; To alone is refused. Both nil
+	// report the scope's whole history.
+	From *time.Time `json:"from,omitempty"`
+	To   *time.Time `json:"to,omitempty"`
+
+	// Host narrows the report to the turns that ran on one host, as the
+	// report's Hosts breakdown names it; "-" selects the turns that name
+	// none. Empty reports every host.
+	Host string `json:"host,omitempty"`
+
+	// Agent narrows the report to the turns of the sessions one tenant Agent
+	// ran, as the report's Agents breakdown names it; "-" selects the
+	// raw-backend sessions. Empty reports every Agent.
+	Agent string `json:"agent,omitempty"`
+}
+
+// SpendAgent is one tenant Agent's share of a scope's spend.
+type SpendAgent struct {
+	// AgentID is the Agent's catalog ID, empty when Unattributed.
+	AgentID string `json:"agent_id,omitempty"`
+	// Name is the Agent's name when it still exists.
+	Name string `json:"name,omitempty"`
+	// Unattributed marks the turns of raw-backend sessions.
+	Unattributed bool `json:"unattributed,omitempty"`
+	SpendTotals
+}
+
+// SpendHost is one host's share of a scope's spend.
+type SpendHost struct {
+	// Host is the host the turns ran on, empty when Unattributed.
+	Host string `json:"host,omitempty"`
+	// Unattributed marks the turns that name no host.
+	Unattributed bool `json:"unattributed,omitempty"`
+	SpendTotals
 }
 
 // GetSpendReportResponse is one scope's consumption and its drill-down.
@@ -458,31 +598,25 @@ type GetSpendReportResponse struct {
 	// still exists.
 	ProjectName string `json:"project_name,omitempty"`
 
-	Entries int `json:"entries"`
-	// InputTokens is the fresh prompt; the two cache dimensions are prompt
-	// tokens served from and written into the provider's cache.
-	InputTokens      int64 `json:"input_tokens"`
-	OutputTokens     int64 `json:"output_tokens"`
-	CacheReadTokens  int64 `json:"cache_read_tokens"`
-	CacheWriteTokens int64 `json:"cache_write_tokens"`
-	TotalTokens      int64 `json:"total_tokens"`
+	SpendTotals
 
-	// CostMicros is the summed charge in millionths of a currency unit, and
-	// CostMeasured says whether ANY of it was priced.
-	//
-	// CONSULT CostMeasured BEFORE RENDERING CostMicros. Nothing in the server
-	// prices a turn yet, so today the flag is false and the figure is
-	// UNMEASURED — not free. A renderer shows a dash. See go-quicbaas#791.
-	CostMicros   int64 `json:"cost_micros"`
-	CostMeasured bool  `json:"cost_measured"`
-
-	Successes int `json:"successes"`
-	Failures  int `json:"failures"`
+	// Currency is what every money figure on the report is denominated in.
+	Currency string `json:"currency"`
 
 	// FirstAt and LastAt bound the entries summed; both nil when Entries is
 	// zero. Pointers for the reason SpendWindowStatus.FreesAt is one.
 	FirstAt *time.Time `json:"first_at,omitempty"`
 	LastAt  *time.Time `json:"last_at,omitempty"`
+
+	// From and To echo the range the report was narrowed to; both nil for a
+	// report over the scope's whole history.
+	From *time.Time `json:"from,omitempty"`
+	To   *time.Time `json:"to,omitempty"`
+
+	// SubscriptionFeeMicros sums the accounts' fee shares: what the tenant's
+	// subscriptions cost over the range. Nil below the tenant level or when
+	// no subscription carries a fee.
+	SubscriptionFeeMicros *int64 `json:"subscription_fee_micros,omitempty"`
 
 	Accounts []SpendAccount `json:"accounts,omitempty"`
 	Models   []SpendModel   `json:"models,omitempty"`
@@ -491,6 +625,29 @@ type GetSpendReportResponse struct {
 	// where there is nothing below to attribute to.
 	ChildLevel SpendLevel   `json:"child_level,omitempty"`
 	Children   []SpendChild `json:"children,omitempty"`
+
+	// ScopePolicyStatus and ScopeWindows are the scope's OWN spend limits —
+	// a project's at the project level, the tenant's at the tenant level —
+	// with live usage against each window. A spent one defers admission.
+	// Both are empty at the deeper levels, which carry no limits.
+	ScopePolicyStatus SpendPolicyStatus   `json:"scope_policy_status,omitempty"`
+	ScopeWindows      []SpendWindowStatus `json:"scope_windows,omitempty"`
+
+	// Host echoes the host the report was narrowed to, empty for every host;
+	// Hosts breaks the totals down by the host each turn ran on.
+	Host  string      `json:"host,omitempty"`
+	Hosts []SpendHost `json:"hosts,omitempty"`
+
+	// Agent echoes the tenant Agent the report was narrowed to; Agents breaks
+	// the totals down by the Agent each turn's session ran as.
+	Agent  string       `json:"agent,omitempty"`
+	Agents []SpendAgent `json:"agents,omitempty"`
+
+	// AgentPolicyStatus and AgentWindows are the narrowed-to Agent's own
+	// spend limits with live usage against each window — what a spawn of the
+	// Agent is checked against. Empty when not narrowed to one Agent.
+	AgentPolicyStatus SpendPolicyStatus   `json:"agent_policy_status,omitempty"`
+	AgentWindows      []SpendWindowStatus `json:"agent_windows,omitempty"`
 }
 
 // SubscribeSessionEventsRequest opens a live stream over an existing
@@ -533,17 +690,32 @@ const (
 
 // SpawnSessionRequest is a request to create a new agent session.
 type SpawnSessionRequest struct {
-	Backend      string            `json:"backend"`
+	// AgentID or PoolID names the tenant Agent or pool the session runs as.
+	// The Agent supplies backend, model, image and arguments, so a request
+	// naming one names no Backend or Model; a pool fails over along its
+	// Agents.
+	AgentID string `json:"agent_id,omitempty"`
+	PoolID  string `json:"pool_id,omitempty"`
+	// Role is the kind of work the session does ("general" for an
+	// interactive session), for a pooled Agent's placement policy.
+	Role string `json:"role,omitempty"`
+
+	// PromptAppend is run-time prompt material appended after the prompt the
+	// spawn resolves: the Agent's own, else its role's built-in charter. At
+	// most 64 KiB.
+	PromptAppend string `json:"prompt_append,omitempty"`
+
+	Backend      string            `json:"backend,omitempty"`
 	ProjectID    string            `json:"project_id,omitempty"`
 	Model        string            `json:"model,omitempty"`
 	WorkDir      string            `json:"work_dir,omitempty"`
 	Env          map[string]string `json:"env,omitempty"`
 	SandboxMode  SandboxMode       `json:"sandbox_mode,omitempty"`
 	Sandboxed    bool              `json:"sandboxed,omitempty"`     // deprecated: use SandboxMode
-	HostAffinity string            `json:"host_affinity,omitempty"` // pin to a specific agent daemon (Name or Host)
+	HostAffinity string            `json:"host_affinity,omitempty"` // pin to a specific fleet node daemon (Name or Host)
 
 	// HostAffinityStrict, when true, forces hard host_affinity semantics:
-	// the server returns NoMatchingAgentError (HTTP 400) if the named host
+	// the server returns NoMatchingFleetNodeError (HTTP 400) if the named host
 	// is offline rather than falling back to any available daemon. Defers
 	// to the operator-level orchestration.host_affinity.mode default when
 	// false.
@@ -661,7 +833,13 @@ type MCPServerConfig struct {
 type SpawnSessionResponse struct {
 	SessionID   string `json:"session_id"`
 	Backend     string `json:"backend"`
+	Model       string `json:"model,omitempty"`
 	ContainerID string `json:"container_id,omitempty"`
+	// ResolvedAgentID is the tenant Agent the session runs as when the spawn
+	// named an Agent or a pool; Failovers are the Agents a pooled spawn
+	// passed over first, in order.
+	ResolvedAgentID string           `json:"resolved_agent_id,omitempty"`
+	Failovers       []agents.Attempt `json:"failovers,omitempty"`
 }
 
 // PromptSessionRequest is a request to send a prompt to a session.
@@ -743,7 +921,7 @@ type SessionStatusResponse struct {
 	// when the session belongs to no job, or to one no longer on record.
 	Runner string `json:"runner,omitempty"`
 
-	// AgentID is the fleet agent the session's job was dispatched to, empty
+	// AgentID is the fleet node the session's job was dispatched to, empty
 	// when it belongs to no job or the work ran in-process.
 	AgentID string `json:"agent_id,omitempty"`
 }
@@ -879,6 +1057,10 @@ type Task struct {
 	// means the engine's lead-driven "workflow" runner.
 	Runner string `json:"runner,omitempty"`
 
+	// PromptAppend is run-time prompt material every attempt at the task
+	// carries to the sessions it spawns.
+	PromptAppend string `json:"prompt_append,omitempty"`
+
 	// Routing are the placement hints a dispatch reads, kept on the record
 	// so a requeue dispatches under the same constraints.
 	Routing TaskRouting `json:"routing,omitzero"`
@@ -886,6 +1068,36 @@ type Task struct {
 	// DispatchReason says why the last dispatch produced no job. A
 	// successful dispatch clears it.
 	DispatchReason string `json:"dispatch_reason,omitempty"`
+
+	// BlockFaultClass names the environment fault class a block came from;
+	// empty for an operator hold, a question, or an unclassified escalation.
+	BlockFaultClass string `json:"block_fault_class"`
+
+	// ConclusionReason is the typed reason the task stopped — completed,
+	// budget_exhausted, abandoned, fault_bounded, fault_held,
+	// parked_needs_info, parked_blocked, parked_escalated, runner_parked,
+	// readmitted, already_satisfied or superseded. Empty while it is open.
+	ConclusionReason string `json:"conclusion_reason"`
+
+	// ChargedAttempts is Attempts less those refunded as environment faults
+	// or questions. Derived by the server on read.
+	ChargedAttempts int `json:"charged_attempts"`
+
+	// EffectiveBudget is AttemptBudget, or the engine default the task runs
+	// under when it declares none. Derived by the server on read.
+	EffectiveBudget int `json:"effective_budget"`
+
+	// FaultClass names the class of the fault behind the task's latest
+	// concluded attempt; for a blocked task, the block's own class. Derived
+	// by the server on read.
+	FaultClass string `json:"fault_class"`
+
+	// FaultOrigin says whose failure stopped the task: "environment" (the
+	// fleet, an account pool, a forge), "work" (the task failed on its own
+	// merits) or "undiagnosed" (its node stopped and nothing diagnosed why).
+	// Empty for a task that did not stop on a failure. Derived by the server
+	// on read.
+	FaultOrigin string `json:"fault_origin"`
 }
 
 // TaskRouting are the placement hints a dispatch reads when it decides where
@@ -921,13 +1133,13 @@ type CreateTaskRequest struct {
 	Metadata     map[string]string `json:"metadata,omitempty"`
 
 	// ProjectID scopes the task to a registered project. When non-empty,
-	// ClaimTask enforces the project's AgentRoles access matrix against the
+	// ClaimTask enforces the project's FleetNodeRoles access matrix against the
 	// claiming agent. Empty means the task is unscoped (legacy: allow all).
 	ProjectID string `json:"project_id,omitempty"`
 
 	// AutoSpawn, when true, dispatches a one-shot job on the best-matching
 	// agent immediately. The task is persisted regardless; if no agent matches
-	// the routing constraints, ErrNoMatchingAgent is returned with an empty
+	// the routing constraints, ErrNoMatchingFleetNode is returned with an empty
 	// SpawnedJobID on the returned task.
 	AutoSpawn bool `json:"auto_spawn,omitempty"`
 
@@ -957,6 +1169,11 @@ type CreateTaskRequest struct {
 	// resolves to the engine's own "workflow" runner; a name nothing
 	// registered is refused.
 	Runner string `json:"runner,omitempty"`
+
+	// PromptAppend is run-time prompt material every attempt at the task
+	// carries to the sessions it spawns — the worker's, for a module
+	// runner. At most 64 KiB.
+	PromptAppend string `json:"prompt_append,omitempty"`
 }
 
 // GetTaskRequest is a request to get a task by ID.
@@ -985,7 +1202,7 @@ type ListTasksRequest struct {
 	AutoSpawn *bool `json:"auto_spawn,omitempty"`
 
 	// AgentID restricts the listing to the tasks whose LATEST ATTEMPT ran on
-	// one fleet agent. The agent is the attempt's job's, not the task's; the
+	// one fleet node. The agent is the attempt's job's, not the task's; the
 	// server resolves it for the listing.
 	AgentID string `json:"agent_id,omitempty"`
 
@@ -1066,6 +1283,82 @@ type ReadmitTaskResponse struct {
 	Readmitted bool   `json:"readmitted"`
 }
 
+// AttentionItem is one thing only an operator can clear: a parked task, or
+// an environmental alert (a fleet node offline, a pooled credential
+// erroring, the node's barrier sealed). Mirrors sdlc.AttentionItem.
+type AttentionItem struct {
+	ID   string `json:"id"`
+	Kind string `json:"kind"`
+
+	ProjectID   string `json:"project_id,omitempty"`
+	ProjectName string `json:"project_name,omitempty"`
+
+	Subject string `json:"subject"`
+
+	IssueRef string `json:"issue_ref,omitempty"`
+	IssueURL string `json:"issue_url,omitempty"`
+
+	BlockKind string `json:"block_kind,omitempty"`
+	Condition string `json:"condition,omitempty"`
+
+	Question       string `json:"question,omitempty"`
+	Recommendation string `json:"recommendation,omitempty"`
+	Truncated      bool   `json:"truncated,omitempty"`
+
+	// RulingPosted is true when the parked task's issue carries an
+	// authorized ruler's comment newer than the park.
+	RulingPosted bool `json:"ruling_posted,omitempty"`
+
+	Message  string `json:"message,omitempty"`
+	Severity string `json:"severity,omitempty"`
+
+	CreatedAt       int64 `json:"created_at,omitempty"`
+	StatusChangedAt int64 `json:"status_changed_at,omitempty"`
+	Attempts        int   `json:"attempts,omitempty"`
+
+	Actions []string `json:"actions,omitempty"`
+}
+
+// AttentionListRequest is a request to list the tenant's attention items.
+type AttentionListRequest struct {
+	TenantID string `json:"tenant_id"`
+
+	// ProjectID restricts the listing to one project.
+	ProjectID string `json:"project_id,omitempty"`
+
+	// Kind restricts the listing to one AttentionKind (parked_task,
+	// agent_offline, account_error, barrier_sealed, project_idle).
+	Kind string `json:"kind,omitempty"`
+
+	// Params pages, orders and searches the listing; see package page.
+	page.Params
+}
+
+// AttentionListResponse is the response from listing attention items.
+type AttentionListResponse struct {
+	Items []*AttentionItem `json:"items"`
+	Count int              `json:"count"`
+
+	// Envelope carries how many records matched and where the next page
+	// starts; see package page.
+	page.Envelope
+}
+
+// AttentionResolveRequest applies an operator's decision to one blocked task.
+type AttentionResolveRequest struct {
+	TenantID string `json:"tenant_id"`
+	TaskID   string `json:"task_id"`
+
+	// Action is one of approve_recommendation, answer, allow_another_round,
+	// close_as_done, readmit, note. Required.
+	Action string `json:"action"`
+
+	// Answer carries the operator's free text. Required for "answer" and
+	// "note"; optional context for "close_as_done" and optional round scope
+	// for "allow_another_round"; ignored otherwise.
+	Answer string `json:"answer,omitempty"`
+}
+
 // DeleteTaskRequest removes a task and releases its source reservation.
 type DeleteTaskRequest struct {
 	TenantID string `json:"tenant_id"`
@@ -1133,7 +1426,7 @@ type ListJobRunnersResponse struct {
 // omitted; setting it explicitly is required when the resolver dispatches
 // to a multi-tenant fleet daemon.
 type ListBackendModelsRequest struct {
-	AgentID     string `json:"agent_id,omitempty"`
+	NodeID      string `json:"node_id,omitempty"`
 	BackendName string `json:"backend_name"`
 	TenantID    string `json:"tenant_id,omitempty"`
 }
@@ -1157,32 +1450,32 @@ type HealthCheckReport struct {
 
 // Fleet management types
 
-// RegisterAgentRequest is a request to register a new agent.
-type RegisterAgentRequest struct {
-	TenantID  string            `json:"tenant_id"`
-	Name      string            `json:"name"`
-	Host      string            `json:"host"`
-	AgentType string            `json:"agent_type"`
-	Backend   string            `json:"backend,omitempty"`
-	Model     string            `json:"model,omitempty"`
-	WorkDir   string            `json:"work_dir,omitempty"`
-	Metadata  map[string]string `json:"metadata,omitempty"`
+// RegisterFleetNodeRequest is a request to register a new agent.
+type RegisterFleetNodeRequest struct {
+	TenantID string            `json:"tenant_id"`
+	Name     string            `json:"name"`
+	Host     string            `json:"host"`
+	NodeType string            `json:"node_type"`
+	Backend  string            `json:"backend,omitempty"`
+	Model    string            `json:"model,omitempty"`
+	WorkDir  string            `json:"work_dir,omitempty"`
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
-// RegisterAgentResponse is the response from registering an agent.
-type RegisterAgentResponse struct {
-	Agent *AgentRegistration `json:"agent"`
+// RegisterFleetNodeResponse is the response from registering an agent.
+type RegisterFleetNodeResponse struct {
+	Node *FleetNode `json:"node"`
 }
 
-// AgentRegistration represents a registered agent.
-type AgentRegistration struct {
+// FleetNode represents a registered agent.
+type FleetNode struct {
 	ID           string            `json:"id"`
 	TenantID     string            `json:"tenant_id"`
 	Name         string            `json:"name"`
 	Host         string            `json:"host"`
 	Backend      string            `json:"backend"`
 	Model        string            `json:"model,omitempty"`
-	AgentType    string            `json:"agent_type"`
+	NodeType     string            `json:"node_type"`
 	Status       string            `json:"status"`
 	WorkDir      string            `json:"work_dir,omitempty"`
 	LastSeen     int64             `json:"last_seen"`
@@ -1191,57 +1484,57 @@ type AgentRegistration struct {
 	Metadata     map[string]string `json:"metadata,omitempty"`
 }
 
-// GetAgentRequest is a request to get an agent by ID.
-type GetAgentRequest struct {
+// GetFleetNodeRequest is a request to get an agent by ID.
+type GetFleetNodeRequest struct {
 	TenantID string `json:"tenant_id"`
-	AgentID  string `json:"agent_id"`
+	NodeID   string `json:"node_id"`
 }
 
-// ListAgentsRequest is a request to list agents.
-type ListAgentsRequest struct {
-	TenantID  string `json:"tenant_id"`
-	Host      string `json:"host,omitempty"`
-	Status    string `json:"status,omitempty"`
-	AgentType string `json:"agent_type,omitempty"`
-	Backend   string `json:"backend,omitempty"`
-	Model     string `json:"model,omitempty"`
+// ListFleetNodesRequest is a request to list agents.
+type ListFleetNodesRequest struct {
+	TenantID string `json:"tenant_id"`
+	Host     string `json:"host,omitempty"`
+	Status   string `json:"status,omitempty"`
+	NodeType string `json:"node_type,omitempty"`
+	Backend  string `json:"backend,omitempty"`
+	Model    string `json:"model,omitempty"`
 
 	// Params pages, orders and searches the listing. The zero value takes
 	// the server's default page; see package page.
 	page.Params
 }
 
-// ListAgentsResponse is the response from listing agents.
-type ListAgentsResponse struct {
-	Agents []*AgentRegistration `json:"agents"`
-	Count  int                  `json:"count"`
+// ListFleetNodesResponse is the response from listing agents.
+type ListFleetNodesResponse struct {
+	Nodes []*FleetNode `json:"nodes"`
+	Count int          `json:"count"`
 
 	// Envelope carries how many records matched and where the next page
 	// starts; see package page.
 	page.Envelope
 }
 
-// RemoveAgentRequest is a request to remove an agent.
-type RemoveAgentRequest struct {
+// RemoveFleetNodeRequest is a request to remove an agent.
+type RemoveFleetNodeRequest struct {
 	TenantID string `json:"tenant_id"`
-	AgentID  string `json:"agent_id"`
+	NodeID   string `json:"node_id"`
 }
 
-// RemoveAgentResponse is the response from removing an agent.
-type RemoveAgentResponse struct {
-	AgentID string `json:"agent_id"`
+// RemoveFleetNodeResponse is the response from removing an agent.
+type RemoveFleetNodeResponse struct {
+	NodeID  string `json:"node_id"`
 	Removed bool   `json:"removed"`
 }
 
-// AgentHeartbeatRequest is a request to send an agent heartbeat.
-type AgentHeartbeatRequest struct {
+// FleetNodeHeartbeatRequest is a request to send an agent heartbeat.
+type FleetNodeHeartbeatRequest struct {
 	TenantID string `json:"tenant_id"`
-	AgentID  string `json:"agent_id"`
+	NodeID   string `json:"node_id"`
 }
 
-// AgentHeartbeatResponse is the response from sending an agent heartbeat.
-type AgentHeartbeatResponse struct {
-	AgentID   string `json:"agent_id"`
+// FleetNodeHeartbeatResponse is the response from sending an agent heartbeat.
+type FleetNodeHeartbeatResponse struct {
+	NodeID    string `json:"node_id"`
 	Heartbeat bool   `json:"heartbeat"`
 }
 
@@ -1287,11 +1580,11 @@ type InferenceRequest struct {
 	// SystemPrompt is an optional system message.
 	SystemPrompt string `json:"system_prompt,omitempty"`
 
-	// HostAffinity pins the call to a specific agent daemon by Name or Host.
+	// HostAffinity pins the call to a specific fleet node daemon by Name or Host.
 	HostAffinity string `json:"host_affinity,omitempty"`
 
 	// HostAffinityStrict, when true, forces hard host_affinity semantics:
-	// the server returns NoMatchingAgentError (HTTP 400) if the named host
+	// the server returns NoMatchingFleetNodeError (HTTP 400) if the named host
 	// is offline. Defers to the operator-level
 	// orchestration.host_affinity.mode default when false.
 	HostAffinityStrict bool `json:"host_affinity_strict,omitempty"`
@@ -1366,6 +1659,11 @@ type AgentRoleSpec struct {
 	Capabilities []string          `json:"capabilities,omitempty"`
 	Env          map[string]string `json:"env,omitempty"`
 	Instructions string            `json:"instructions,omitempty"`
+
+	// PromptAppend is run-time prompt material appended to every session of
+	// this role, after the role's system prompt or its Agent's. At most
+	// 64 KiB.
+	PromptAppend string `json:"prompt_append,omitempty"`
 }
 
 // WorkflowSettings holds operational tuning parameters for a workflow.
@@ -1593,7 +1891,8 @@ func (c *client) RotateSessionAccount(ctx context.Context, req *RotateSessionAcc
 	return result, nil
 }
 
-// ListSessions returns all active sessions.
+// ListSessions returns every session, in any state (closed and error
+// included), optionally filtered by backend or status.
 func (c *client) ListSessions(ctx context.Context, req *ListSessionsRequest) (*ListSessionsResponse, error) {
 	if req == nil {
 		return nil, errors.NewInvalidInput("orchestrator.ListSessions", "request is required")
@@ -1782,6 +2081,54 @@ func (c *client) ReadmitTask(ctx context.Context, req *ReadmitTaskRequest) (*Rea
 	return result, nil
 }
 
+// AttentionList returns one page of the tenant's attention items.
+func (c *client) AttentionList(ctx context.Context, req *AttentionListRequest) (*AttentionListResponse, error) {
+	if err := validateAttentionListRequest(req); err != nil {
+		return nil, err
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.AttentionList", "context is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "AttentionList", req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return &AttentionListResponse{Items: []*AttentionItem{}, Count: 0}, nil
+	}
+
+	result, ok := resp.(*AttentionListResponse)
+	if !ok {
+		return nil, errors.NewInternal("orchestrator.AttentionList", "invalid response type")
+	}
+	return result, nil
+}
+
+// AttentionResolve applies an operator's decision to one blocked task.
+func (c *client) AttentionResolve(ctx context.Context, req *AttentionResolveRequest) (*AttentionItem, error) {
+	if err := validateAttentionResolveRequest(req); err != nil {
+		return nil, err
+	}
+	if ctx == nil {
+		return nil, errors.NewInvalidInput("orchestrator.AttentionResolve", "context is required")
+	}
+
+	resp, err := c.transport.Request(ctx, serviceName, "AttentionResolve", req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, errors.NewInternal("orchestrator.AttentionResolve", "nil response from server")
+	}
+
+	result, ok := resp.(*AttentionItem)
+	if !ok {
+		return nil, errors.NewInternal("orchestrator.AttentionResolve", "invalid response type")
+	}
+	return result, nil
+}
+
 // DeleteTask removes a task and releases its source reservation.
 func (c *client) DeleteTask(ctx context.Context, req *DeleteTaskRequest) (*DeleteTaskResponse, error) {
 	if err := validateDeleteTaskRequest(req); err != nil {
@@ -1884,7 +2231,7 @@ func (c *client) ListRunners(ctx context.Context) (*ListJobRunnersResponse, erro
 
 // ListBackendModels returns the model names available on the named backend
 // as seen from the specified agent. The transport layer translates this into
-// a REST GET against /api/v1/orchestrator/agents/{agent_id}/backends/{backend_name}/models
+// a REST GET against /api/v1/fleet/{agent_id}/backends/{backend_name}/models
 // or the equivalent gRPC RPC; both paths return an empty slice (not an error)
 // when the agent is unknown or the backend exposes no model lister.
 func (c *client) ListBackendModels(ctx context.Context, req *ListBackendModelsRequest) (*ListBackendModelsResponse, error) {
@@ -1942,136 +2289,136 @@ func (c *client) Health(ctx context.Context) (*HealthCheckReport, error) {
 	return result, nil
 }
 
-// RegisterAgent registers a new agent with the fleet.
-func (c *client) RegisterAgent(ctx context.Context, req *RegisterAgentRequest) (*RegisterAgentResponse, error) {
-	if err := validateRegisterAgentRequest(req); err != nil {
+// RegisterFleetNode registers a new agent with the fleet.
+func (c *client) RegisterFleetNode(ctx context.Context, req *RegisterFleetNodeRequest) (*RegisterFleetNodeResponse, error) {
+	if err := validateRegisterFleetNodeRequest(req); err != nil {
 		return nil, err
 	}
 
 	if ctx == nil {
-		return nil, errors.NewInvalidInput("orchestrator.RegisterAgent", "context is required")
+		return nil, errors.NewInvalidInput("orchestrator.RegisterFleetNode", "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "RegisterAgent", req)
+	resp, err := c.transport.Request(ctx, serviceName, "RegisterFleetNode", req)
 	if err != nil {
 		return nil, err
 	}
 
 	if resp == nil {
-		return nil, errors.NewInternal("orchestrator.RegisterAgent", "nil response from server")
+		return nil, errors.NewInternal("orchestrator.RegisterFleetNode", "nil response from server")
 	}
 
-	result, ok := resp.(*RegisterAgentResponse)
+	result, ok := resp.(*RegisterFleetNodeResponse)
 	if !ok {
-		return nil, errors.NewInternal("orchestrator.RegisterAgent", "invalid response type")
+		return nil, errors.NewInternal("orchestrator.RegisterFleetNode", "invalid response type")
 	}
 
 	return result, nil
 }
 
-// GetAgent returns an agent by ID.
-func (c *client) GetAgent(ctx context.Context, req *GetAgentRequest) (*AgentRegistration, error) {
-	if err := validateGetAgentRequest(req); err != nil {
+// GetFleetNode returns an agent by ID.
+func (c *client) GetFleetNode(ctx context.Context, req *GetFleetNodeRequest) (*FleetNode, error) {
+	if err := validateGetFleetNodeRequest(req); err != nil {
 		return nil, err
 	}
 
 	if ctx == nil {
-		return nil, errors.NewInvalidInput("orchestrator.GetAgent", "context is required")
+		return nil, errors.NewInvalidInput("orchestrator.GetFleetNode", "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "GetAgent", req)
+	resp, err := c.transport.Request(ctx, serviceName, "GetFleetNode", req)
 	if err != nil {
 		return nil, err
 	}
 
 	if resp == nil {
-		return nil, errors.NewInternal("orchestrator.GetAgent", "nil response from server")
+		return nil, errors.NewInternal("orchestrator.GetFleetNode", "nil response from server")
 	}
 
-	result, ok := resp.(*AgentRegistration)
+	result, ok := resp.(*FleetNode)
 	if !ok {
-		return nil, errors.NewInternal("orchestrator.GetAgent", "invalid response type")
+		return nil, errors.NewInternal("orchestrator.GetFleetNode", "invalid response type")
 	}
 
 	return result, nil
 }
 
-// ListAgents returns agents matching the filter criteria.
-func (c *client) ListAgents(ctx context.Context, req *ListAgentsRequest) (*ListAgentsResponse, error) {
-	if err := validateListAgentsRequest(req); err != nil {
+// ListFleetNodes returns agents matching the filter criteria.
+func (c *client) ListFleetNodes(ctx context.Context, req *ListFleetNodesRequest) (*ListFleetNodesResponse, error) {
+	if err := validateListFleetNodesRequest(req); err != nil {
 		return nil, err
 	}
 
 	if ctx == nil {
-		return nil, errors.NewInvalidInput("orchestrator.ListAgents", "context is required")
+		return nil, errors.NewInvalidInput("orchestrator.ListFleetNodes", "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "ListAgents", req)
+	resp, err := c.transport.Request(ctx, serviceName, "ListFleetNodes", req)
 	if err != nil {
 		return nil, err
 	}
 
 	if resp == nil {
-		return &ListAgentsResponse{Agents: []*AgentRegistration{}, Count: 0}, nil
+		return &ListFleetNodesResponse{Nodes: []*FleetNode{}, Count: 0}, nil
 	}
 
-	result, ok := resp.(*ListAgentsResponse)
+	result, ok := resp.(*ListFleetNodesResponse)
 	if !ok {
-		return nil, errors.NewInternal("orchestrator.ListAgents", "invalid response type")
+		return nil, errors.NewInternal("orchestrator.ListFleetNodes", "invalid response type")
 	}
 
 	return result, nil
 }
 
-// RemoveAgent removes an agent from the fleet.
-func (c *client) RemoveAgent(ctx context.Context, req *RemoveAgentRequest) (*RemoveAgentResponse, error) {
-	if err := validateRemoveAgentRequest(req); err != nil {
+// RemoveFleetNode removes an agent from the fleet.
+func (c *client) RemoveFleetNode(ctx context.Context, req *RemoveFleetNodeRequest) (*RemoveFleetNodeResponse, error) {
+	if err := validateRemoveFleetNodeRequest(req); err != nil {
 		return nil, err
 	}
 
 	if ctx == nil {
-		return nil, errors.NewInvalidInput("orchestrator.RemoveAgent", "context is required")
+		return nil, errors.NewInvalidInput("orchestrator.RemoveFleetNode", "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "RemoveAgent", req)
+	resp, err := c.transport.Request(ctx, serviceName, "RemoveFleetNode", req)
 	if err != nil {
 		return nil, err
 	}
 
 	if resp == nil {
-		return nil, errors.NewInternal("orchestrator.RemoveAgent", "nil response from server")
+		return nil, errors.NewInternal("orchestrator.RemoveFleetNode", "nil response from server")
 	}
 
-	result, ok := resp.(*RemoveAgentResponse)
+	result, ok := resp.(*RemoveFleetNodeResponse)
 	if !ok {
-		return nil, errors.NewInternal("orchestrator.RemoveAgent", "invalid response type")
+		return nil, errors.NewInternal("orchestrator.RemoveFleetNode", "invalid response type")
 	}
 
 	return result, nil
 }
 
-// AgentHeartbeat sends a heartbeat for an agent.
-func (c *client) AgentHeartbeat(ctx context.Context, req *AgentHeartbeatRequest) (*AgentHeartbeatResponse, error) {
-	if err := validateAgentHeartbeatRequest(req); err != nil {
+// FleetNodeHeartbeat sends a heartbeat for an agent.
+func (c *client) FleetNodeHeartbeat(ctx context.Context, req *FleetNodeHeartbeatRequest) (*FleetNodeHeartbeatResponse, error) {
+	if err := validateFleetNodeHeartbeatRequest(req); err != nil {
 		return nil, err
 	}
 
 	if ctx == nil {
-		return nil, errors.NewInvalidInput("orchestrator.AgentHeartbeat", "context is required")
+		return nil, errors.NewInvalidInput("orchestrator.FleetNodeHeartbeat", "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "AgentHeartbeat", req)
+	resp, err := c.transport.Request(ctx, serviceName, "FleetNodeHeartbeat", req)
 	if err != nil {
 		return nil, err
 	}
 
 	if resp == nil {
-		return nil, errors.NewInternal("orchestrator.AgentHeartbeat", "nil response from server")
+		return nil, errors.NewInternal("orchestrator.FleetNodeHeartbeat", "nil response from server")
 	}
 
-	result, ok := resp.(*AgentHeartbeatResponse)
+	result, ok := resp.(*FleetNodeHeartbeatResponse)
 	if !ok {
-		return nil, errors.NewInternal("orchestrator.AgentHeartbeat", "invalid response type")
+		return nil, errors.NewInternal("orchestrator.FleetNodeHeartbeat", "invalid response type")
 	}
 
 	return result, nil
@@ -2242,62 +2589,62 @@ func (c *client) DeleteWorkflow(ctx context.Context, req *DeleteWorkflowRequest)
 	return err
 }
 
-// DisableAgent administratively disables an agent globally.
-func (c *client) DisableAgent(ctx context.Context, req *DisableAgentRequest) (*DisableAgentResponse, error) {
+// DisableFleetNode administratively disables an agent globally.
+func (c *client) DisableFleetNode(ctx context.Context, req *DisableFleetNodeRequest) (*DisableFleetNodeResponse, error) {
 	if ctx == nil {
-		return nil, errors.NewInvalidInput("orchestrator.DisableAgent", "context is required")
+		return nil, errors.NewInvalidInput("orchestrator.DisableFleetNode", "context is required")
 	}
 	if req == nil {
-		return nil, errors.NewInvalidInput("orchestrator.DisableAgent", "request is required")
+		return nil, errors.NewInvalidInput("orchestrator.DisableFleetNode", "request is required")
 	}
 	if req.TenantID == "" {
-		return nil, errors.NewInvalidInput("orchestrator.DisableAgent", "tenant ID is required")
+		return nil, errors.NewInvalidInput("orchestrator.DisableFleetNode", "tenant ID is required")
 	}
-	if req.AgentID == "" {
-		return nil, errors.NewInvalidInput("orchestrator.DisableAgent", "agent ID is required")
+	if req.NodeID == "" {
+		return nil, errors.NewInvalidInput("orchestrator.DisableFleetNode", "agent ID is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "DisableAgent", req)
+	resp, err := c.transport.Request(ctx, serviceName, "DisableFleetNode", req)
 	if err != nil {
 		return nil, err
 	}
 	if resp == nil {
-		return nil, errors.NewInternal("orchestrator.DisableAgent", "nil response from server")
+		return nil, errors.NewInternal("orchestrator.DisableFleetNode", "nil response from server")
 	}
 
-	result, ok := resp.(*DisableAgentResponse)
+	result, ok := resp.(*DisableFleetNodeResponse)
 	if !ok {
-		return nil, errors.NewInternal("orchestrator.DisableAgent", "invalid response type")
+		return nil, errors.NewInternal("orchestrator.DisableFleetNode", "invalid response type")
 	}
 	return result, nil
 }
 
-// EnableAgent re-activates a previously disabled agent.
-func (c *client) EnableAgent(ctx context.Context, req *EnableAgentRequest) (*EnableAgentResponse, error) {
+// EnableFleetNode re-activates a previously disabled agent.
+func (c *client) EnableFleetNode(ctx context.Context, req *EnableFleetNodeRequest) (*EnableFleetNodeResponse, error) {
 	if ctx == nil {
-		return nil, errors.NewInvalidInput("orchestrator.EnableAgent", "context is required")
+		return nil, errors.NewInvalidInput("orchestrator.EnableFleetNode", "context is required")
 	}
 	if req == nil {
-		return nil, errors.NewInvalidInput("orchestrator.EnableAgent", "request is required")
+		return nil, errors.NewInvalidInput("orchestrator.EnableFleetNode", "request is required")
 	}
 	if req.TenantID == "" {
-		return nil, errors.NewInvalidInput("orchestrator.EnableAgent", "tenant ID is required")
+		return nil, errors.NewInvalidInput("orchestrator.EnableFleetNode", "tenant ID is required")
 	}
-	if req.AgentID == "" {
-		return nil, errors.NewInvalidInput("orchestrator.EnableAgent", "agent ID is required")
+	if req.NodeID == "" {
+		return nil, errors.NewInvalidInput("orchestrator.EnableFleetNode", "agent ID is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "EnableAgent", req)
+	resp, err := c.transport.Request(ctx, serviceName, "EnableFleetNode", req)
 	if err != nil {
 		return nil, err
 	}
 	if resp == nil {
-		return nil, errors.NewInternal("orchestrator.EnableAgent", "nil response from server")
+		return nil, errors.NewInternal("orchestrator.EnableFleetNode", "nil response from server")
 	}
 
-	result, ok := resp.(*EnableAgentResponse)
+	result, ok := resp.(*EnableFleetNodeResponse)
 	if !ok {
-		return nil, errors.NewInternal("orchestrator.EnableAgent", "invalid response type")
+		return nil, errors.NewInternal("orchestrator.EnableFleetNode", "invalid response type")
 	}
 	return result, nil
 }
@@ -2401,8 +2748,17 @@ func validateSpawnSessionRequest(req *SpawnSessionRequest) error {
 	if req == nil {
 		return errors.NewInvalidInput("orchestrator.SpawnSession", "request is required")
 	}
-	if req.Backend == "" {
-		return errors.NewInvalidInput("orchestrator.SpawnSession", "backend is required")
+	named := 0
+	for _, field := range []string{req.Backend, req.AgentID, req.PoolID} {
+		if field != "" {
+			named++
+		}
+	}
+	switch {
+	case named == 0:
+		return errors.NewInvalidInput("orchestrator.SpawnSession", "an agent, a pool or a backend is required")
+	case named > 1:
+		return errors.NewInvalidInput("orchestrator.SpawnSession", "name one of an agent, a pool or a backend")
 	}
 	return nil
 }
@@ -2534,6 +2890,32 @@ func validateReadmitTaskRequest(req *ReadmitTaskRequest) error {
 	return nil
 }
 
+func validateAttentionListRequest(req *AttentionListRequest) error {
+	if req == nil {
+		return errors.NewInvalidInput("orchestrator.AttentionList", "request is required")
+	}
+	if req.TenantID == "" {
+		return errors.NewInvalidInput("orchestrator.AttentionList", "tenant ID is required")
+	}
+	return nil
+}
+
+func validateAttentionResolveRequest(req *AttentionResolveRequest) error {
+	if req == nil {
+		return errors.NewInvalidInput("orchestrator.AttentionResolve", "request is required")
+	}
+	if req.TenantID == "" {
+		return errors.NewInvalidInput("orchestrator.AttentionResolve", "tenant ID is required")
+	}
+	if req.TaskID == "" {
+		return errors.NewInvalidInput("orchestrator.AttentionResolve", "task ID is required")
+	}
+	if req.Action == "" {
+		return errors.NewInvalidInput("orchestrator.AttentionResolve", "action is required")
+	}
+	return nil
+}
+
 func validateDeleteTaskRequest(req *DeleteTaskRequest) error {
 	if req == nil {
 		return errors.NewInvalidInput("orchestrator.DeleteTask", "request is required")
@@ -2560,44 +2942,44 @@ func validateCompleteTaskRequest(req *CompleteTaskRequest) error {
 	return nil
 }
 
-func validateRegisterAgentRequest(req *RegisterAgentRequest) error {
+func validateRegisterFleetNodeRequest(req *RegisterFleetNodeRequest) error {
 	if req == nil {
-		return errors.NewInvalidInput("orchestrator.RegisterAgent", "request is required")
+		return errors.NewInvalidInput("orchestrator.RegisterFleetNode", "request is required")
 	}
 	if req.TenantID == "" {
-		return errors.NewInvalidInput("orchestrator.RegisterAgent", "tenant ID is required")
+		return errors.NewInvalidInput("orchestrator.RegisterFleetNode", "tenant ID is required")
 	}
 	if req.Name == "" {
-		return errors.NewInvalidInput("orchestrator.RegisterAgent", "name is required")
+		return errors.NewInvalidInput("orchestrator.RegisterFleetNode", "name is required")
 	}
 	if req.Host == "" {
-		return errors.NewInvalidInput("orchestrator.RegisterAgent", "host is required")
+		return errors.NewInvalidInput("orchestrator.RegisterFleetNode", "host is required")
 	}
-	if req.AgentType == "" {
-		return errors.NewInvalidInput("orchestrator.RegisterAgent", "agent type is required")
-	}
-	return nil
-}
-
-func validateGetAgentRequest(req *GetAgentRequest) error {
-	if req == nil {
-		return errors.NewInvalidInput("orchestrator.GetAgent", "request is required")
-	}
-	if req.TenantID == "" {
-		return errors.NewInvalidInput("orchestrator.GetAgent", "tenant ID is required")
-	}
-	if req.AgentID == "" {
-		return errors.NewInvalidInput("orchestrator.GetAgent", "agent ID is required")
+	if req.NodeType == "" {
+		return errors.NewInvalidInput("orchestrator.RegisterFleetNode", "agent type is required")
 	}
 	return nil
 }
 
-func validateListAgentsRequest(req *ListAgentsRequest) error {
+func validateGetFleetNodeRequest(req *GetFleetNodeRequest) error {
 	if req == nil {
-		return errors.NewInvalidInput("orchestrator.ListAgents", "request is required")
+		return errors.NewInvalidInput("orchestrator.GetFleetNode", "request is required")
 	}
 	if req.TenantID == "" {
-		return errors.NewInvalidInput("orchestrator.ListAgents", "tenant ID is required")
+		return errors.NewInvalidInput("orchestrator.GetFleetNode", "tenant ID is required")
+	}
+	if req.NodeID == "" {
+		return errors.NewInvalidInput("orchestrator.GetFleetNode", "agent ID is required")
+	}
+	return nil
+}
+
+func validateListFleetNodesRequest(req *ListFleetNodesRequest) error {
+	if req == nil {
+		return errors.NewInvalidInput("orchestrator.ListFleetNodes", "request is required")
+	}
+	if req.TenantID == "" {
+		return errors.NewInvalidInput("orchestrator.ListFleetNodes", "tenant ID is required")
 	}
 	return nil
 }
@@ -2612,28 +2994,28 @@ func validateListBackendModelsRequest(req *ListBackendModelsRequest) error {
 	return nil
 }
 
-func validateRemoveAgentRequest(req *RemoveAgentRequest) error {
+func validateRemoveFleetNodeRequest(req *RemoveFleetNodeRequest) error {
 	if req == nil {
-		return errors.NewInvalidInput("orchestrator.RemoveAgent", "request is required")
+		return errors.NewInvalidInput("orchestrator.RemoveFleetNode", "request is required")
 	}
 	if req.TenantID == "" {
-		return errors.NewInvalidInput("orchestrator.RemoveAgent", "tenant ID is required")
+		return errors.NewInvalidInput("orchestrator.RemoveFleetNode", "tenant ID is required")
 	}
-	if req.AgentID == "" {
-		return errors.NewInvalidInput("orchestrator.RemoveAgent", "agent ID is required")
+	if req.NodeID == "" {
+		return errors.NewInvalidInput("orchestrator.RemoveFleetNode", "agent ID is required")
 	}
 	return nil
 }
 
-func validateAgentHeartbeatRequest(req *AgentHeartbeatRequest) error {
+func validateFleetNodeHeartbeatRequest(req *FleetNodeHeartbeatRequest) error {
 	if req == nil {
-		return errors.NewInvalidInput("orchestrator.AgentHeartbeat", "request is required")
+		return errors.NewInvalidInput("orchestrator.FleetNodeHeartbeat", "request is required")
 	}
 	if req.TenantID == "" {
-		return errors.NewInvalidInput("orchestrator.AgentHeartbeat", "tenant ID is required")
+		return errors.NewInvalidInput("orchestrator.FleetNodeHeartbeat", "tenant ID is required")
 	}
-	if req.AgentID == "" {
-		return errors.NewInvalidInput("orchestrator.AgentHeartbeat", "agent ID is required")
+	if req.NodeID == "" {
+		return errors.NewInvalidInput("orchestrator.FleetNodeHeartbeat", "agent ID is required")
 	}
 	return nil
 }
@@ -3147,11 +3529,10 @@ func validateSubscribeJobEventsRequest(req *SubscribeJobEventsRequest) error {
 type StartJobRequest struct {
 	TenantID    string `json:"tenant_id"`
 	Description string `json:"description"`
-	LeadBackend string `json:"lead_backend,omitempty"`
-	LeadModel   string `json:"lead_model,omitempty"`
-	// LeadAgentID pins the job's lead agent to a specific registered agent.
-	// Empty means the orchestrator selects a lead based on backend/model and
-	// the project's DefaultLeadAgent.
+	// Lead is the Agent or pool the job's lead runs as. Zero takes the
+	// project's default lead.
+	Lead agents.AgentRef `json:"lead,omitzero"`
+	// LeadAgentID pins the job's lead to a specific registered fleet node.
 	LeadAgentID   string `json:"lead_agent_id,omitempty"`
 	ProjectID     string `json:"project_id,omitempty"`
 	MaxIterations int    `json:"max_iterations,omitempty"`
@@ -3163,6 +3544,10 @@ type StartJobRequest struct {
 	// the engine's own "workflow" runner: a lead agent decomposing the
 	// description into a DAG of work items.
 	Runner string `json:"runner,omitempty"`
+
+	// PromptAppend is run-time prompt material appended to every session
+	// the job spawns, the lead's included. At most 64 KiB.
+	PromptAppend string `json:"prompt_append,omitempty"`
 
 	// TaskID binds the job to the task it is an attempt at; Attempt is the
 	// 1-based ordinal of that attempt.
@@ -3221,6 +3606,10 @@ type JobStatus struct {
 
 	// Runner names the JobRunner that drove the job's states.
 	Runner string `json:"runner,omitempty"`
+
+	// PromptAppend is the run-time prompt material the job appended to
+	// every session it spawned: the request's, or its task's.
+	PromptAppend string `json:"prompt_append,omitempty"`
 
 	// --- Provenance: who ran the attempt, and what it left behind ---------
 	//
@@ -3359,7 +3748,7 @@ type ListJobsRequest struct {
 	// instead of one request per row. Empty lists every job.
 	JobIDs []string `json:"job_ids,omitempty"`
 
-	// AgentID narrows the listing to the jobs dispatched to one fleet agent.
+	// AgentID narrows the listing to the jobs dispatched to one fleet node.
 	// A job that ran in-process carries none and matches no agent name.
 	AgentID string `json:"agent_id,omitempty"`
 
@@ -3428,7 +3817,7 @@ type TaskSpec struct {
 type SpawnChildJobRequest struct {
 	// ParentJobID is the job whose lead agent is initiating the spawn. Required.
 	ParentJobID string `json:"parent_job_id"`
-	// CallerAgentID is the fleet agent ID of the calling agent. Required.
+	// CallerAgentID is the fleet node ID of the calling agent. Required.
 	CallerAgentID string `json:"caller_agent_id,omitempty"`
 	// WorkflowID optionally names an existing workflow definition.
 	WorkflowID string `json:"workflow_id,omitempty"`
@@ -3436,7 +3825,7 @@ type SpawnChildJobRequest struct {
 	ProjectID string `json:"project_id,omitempty"`
 	// Tasks provides inline task specs when no workflow is referenced.
 	Tasks []*TaskSpec `json:"tasks,omitempty"`
-	// HostAffinity pins the child to a specific agent daemon.
+	// HostAffinity pins the child to a specific fleet node daemon.
 	HostAffinity string `json:"host_affinity,omitempty"`
 	// GpuRequired restricts dispatch to GPU-capable daemons.
 	GpuRequired bool `json:"gpu_required,omitempty"`
@@ -3453,29 +3842,29 @@ type SpawnChildJobResponse struct {
 // Agent Admin Types
 // =============================================================================
 
-// DisableAgentRequest is a request to administratively disable an agent.
-type DisableAgentRequest struct {
+// DisableFleetNodeRequest is a request to administratively disable an agent.
+type DisableFleetNodeRequest struct {
 	TenantID string `json:"tenant_id"`
-	AgentID  string `json:"agent_id"`
+	NodeID   string `json:"node_id"`
 }
 
-// DisableAgentResponse is returned after an agent has been disabled.
-type DisableAgentResponse struct {
-	AgentID    string    `json:"agent_id"`
+// DisableFleetNodeResponse is returned after an agent has been disabled.
+type DisableFleetNodeResponse struct {
+	NodeID     string    `json:"node_id"`
 	Disabled   bool      `json:"disabled"`
 	DisabledAt time.Time `json:"disabled_at"`
 	Timestamp  time.Time `json:"timestamp"`
 }
 
-// EnableAgentRequest is a request to re-enable a previously disabled agent.
-type EnableAgentRequest struct {
+// EnableFleetNodeRequest is a request to re-enable a previously disabled agent.
+type EnableFleetNodeRequest struct {
 	TenantID string `json:"tenant_id"`
-	AgentID  string `json:"agent_id"`
+	NodeID   string `json:"node_id"`
 }
 
-// EnableAgentResponse is returned after an agent has been re-enabled.
-type EnableAgentResponse struct {
-	AgentID   string    `json:"agent_id"`
+// EnableFleetNodeResponse is returned after an agent has been re-enabled.
+type EnableFleetNodeResponse struct {
+	NodeID    string    `json:"node_id"`
 	Enabled   bool      `json:"enabled"`
 	Timestamp time.Time `json:"timestamp"`
 }

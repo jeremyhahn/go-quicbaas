@@ -213,6 +213,40 @@ func TestPrivilegeFieldsCrossBoundaryAndMeasure(t *testing.T) {
 	}
 }
 
+// TestUlimitsCrossBoundaryAndMeasure: a consumer can raise a container's
+// locked-memory limit through the SDK spelling, the upstream validation refuses
+// a limit the runtime would, and the limit changes the measurement.
+func TestUlimitsCrossBoundaryAndMeasure(t *testing.T) {
+	base := &sdkorch.ContainerSpec{Image: "agent", ImageDigest: testDigest}
+	memlock := &sdkorch.ContainerSpec{
+		Image:       "agent",
+		ImageDigest: testDigest,
+		Ulimits:     []sdkorch.ContainerUlimit{{Name: "memlock", Soft: 4 << 30, Hard: 4 << 30}},
+	}
+	if err := memlock.Validate(); err != nil {
+		t.Fatalf("Validate() on a memlock spec: %v", err)
+	}
+	baseDigest, err := sdkorch.ContainerConfigDigest(base)
+	if err != nil {
+		t.Fatalf("ContainerConfigDigest(base): %v", err)
+	}
+	memlockDigest, err := sdkorch.ContainerConfigDigest(memlock)
+	if err != nil {
+		t.Fatalf("ContainerConfigDigest(memlock): %v", err)
+	}
+	if baseDigest == memlockDigest {
+		t.Fatal("a raised memlock limit must change the measurement")
+	}
+
+	invalid := &sdkorch.ContainerSpec{
+		Image:   "agent",
+		Ulimits: []sdkorch.ContainerUlimit{{Name: "memlock", Soft: 2, Hard: 1}},
+	}
+	if err := invalid.Validate(); !errors.Is(err, pkgorch.ErrInvalidInput) {
+		t.Fatalf("Validate() with soft above hard = %v, want ErrInvalidInput", err)
+	}
+}
+
 // TestQuoteBindingErrorsCrossBoundary keeps the quote-binding failures usable
 // through the SDK spelling: a consumer must be able to tell "the host drifted"
 // from "the evidence does not hang together".

@@ -63,6 +63,12 @@ type ContainerSweep struct {
 	// Removed lists the containers it removed, in the order the runtime
 	// reported them.
 	Removed []string
+
+	// Removals is the audit record of a running reaper's pass: each removed
+	// container with its identity labels and the reason it was removed. The
+	// startup sweep leaves it empty — at startup every owned container is an
+	// orphan by construction.
+	Removals []ContainerRemoval
 }
 
 // ContainerOwnerSweeper is a container runtime that can find and remove the

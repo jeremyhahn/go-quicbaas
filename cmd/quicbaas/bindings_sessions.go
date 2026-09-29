@@ -52,7 +52,15 @@ type SessionBinding struct {
 	ctx    context.Context
 
 	subsMu sync.Mutex
-	subs   map[string]context.CancelFunc
+	subs   map[string]*sessionSubscription
+}
+
+// sessionSubscription is one registered live stream. The registry stores
+// it by pointer so a releaser can tell whether the entry under a sessionID
+// is still the one it registered: a forwarder that exits after a
+// resubscribe must not remove (and cancel) its replacement.
+type sessionSubscription struct {
+	cancel context.CancelFunc
 }
 
 // NewSessionBinding creates a SessionBinding that reuses the SDK client
@@ -63,7 +71,7 @@ func NewSessionBinding(log *logger.Logger, conn *ConnectionBinding) *SessionBind
 	return &SessionBinding{
 		logger: log,
 		conn:   conn,
-		subs:   make(map[string]context.CancelFunc),
+		subs:   make(map[string]*sessionSubscription),
 	}
 }
 
@@ -78,8 +86,8 @@ func (b *SessionBinding) startup(ctx context.Context) {
 func (b *SessionBinding) shutdown(ctx context.Context) {
 	b.subsMu.Lock()
 	defer b.subsMu.Unlock()
-	for id, cancel := range b.subs {
-		cancel()
+	for id, sub := range b.subs {
+		sub.cancel()
 		delete(b.subs, id)
 	}
 }
@@ -274,12 +282,20 @@ func (b *SessionBinding) Subscribe(sessionID string, fromSeq uint64) ([]orchestr
 		return nil, NewGUITransportError("SessionBinding.Subscribe", err)
 	}
 
+	sub := &sessionSubscription{cancel: cancel}
 	b.subsMu.Lock()
-	b.subs[sessionID] = cancel
+	displaced := b.subs[sessionID]
+	b.subs[sessionID] = sub
 	b.subsMu.Unlock()
+	// A concurrent Subscribe for the same session may have registered
+	// between the teardown above and this registration; cancel it rather
+	// than orphan its forwarder, so exactly one stream stays live.
+	if displaced != nil {
+		displaced.cancel()
+	}
 
 	topic := "session-event:" + sessionID
-	go b.forwardEvents(streamCtx, sessionID, topic, events)
+	go b.forwardEvents(streamCtx, sessionID, sub, topic, events)
 
 	// Historical replay is delivered over the same stream when
 	// fromSeq > 0; the SDK dispatches replay events with FromReplay=true.
@@ -298,25 +314,41 @@ func (b *SessionBinding) Unsubscribe(sessionID string) error {
 	return nil
 }
 
-// cancelSubscription cancels and forgets any subscription for sessionID.
-// Safe to call concurrently.
+// cancelSubscription cancels and forgets whatever subscription is
+// registered for sessionID. It is the caller-initiated teardown used by
+// Unsubscribe and by Subscribe's replace step. Safe to call concurrently.
 func (b *SessionBinding) cancelSubscription(sessionID string) {
 	b.subsMu.Lock()
-	cancel, ok := b.subs[sessionID]
+	sub, ok := b.subs[sessionID]
 	if ok {
 		delete(b.subs, sessionID)
 	}
 	b.subsMu.Unlock()
 	if ok {
-		cancel()
+		sub.cancel()
 	}
+}
+
+// releaseSubscription is the forwarder's own teardown: it cancels sub and
+// removes the registry entry only if that entry is still sub. A forwarder
+// whose stream was replaced by a later Subscribe exits after the
+// replacement has registered; an unguarded delete-by-key here would remove
+// and cancel the live replacement stream.
+func (b *SessionBinding) releaseSubscription(sessionID string, sub *sessionSubscription) {
+	b.subsMu.Lock()
+	if b.subs[sessionID] == sub {
+		delete(b.subs, sessionID)
+	}
+	b.subsMu.Unlock()
+	sub.cancel()
 }
 
 // forwardEvents drains the SDK event channel and republishes each event
 // to the Wails frontend. When the channel closes or ctx fires, the
-// subscription is removed from the registry.
-func (b *SessionBinding) forwardEvents(ctx context.Context, sessionID, topic string, events <-chan *orchestratorSDK.SessionEventEnvelope) {
-	defer b.cancelSubscription(sessionID)
+// subscription is removed from the registry — but only if the registry
+// still holds sub, so a replaced forwarder never tears down its successor.
+func (b *SessionBinding) forwardEvents(ctx context.Context, sessionID string, sub *sessionSubscription, topic string, events <-chan *orchestratorSDK.SessionEventEnvelope) {
+	defer b.releaseSubscription(sessionID, sub)
 	for {
 		select {
 		case <-ctx.Done():

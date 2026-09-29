@@ -16,7 +16,7 @@
  * DataTable.
  *
  * DataTable owns this for every table in the app, and most lists are tables.
- * Three are not — the agent fleet is a card grid, projects and accounts are
+ * Three are not — the fleet is a card grid, projects and accounts are
  * expandable rows — and they are lists all the same: the operator arrives
  * wanting the offline agents, the autonomous projects, the exhausted
  * accounts. Rebuilding them as tables to get a filter would throw away the

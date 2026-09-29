@@ -667,11 +667,10 @@ func TestIdentityStoreUpdateUser_LogsAnUnknownCredentialCount(t *testing.T) {
 func newLoggingCascadeIdentityStore(t *testing.T, buf *bytes.Buffer) (*IdentityStore, string) {
 	t.Helper()
 	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  newMockUserStorage(),
-		GroupStorage: newMockGroupStorage(),
-		RoleStorage:  newMockRoleStorage(),
-		Tenants:      &mockIdentityTenantManager{},
-		Logger:       slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		UserStorage: newMockUserStorage(),
+		RoleStorage: newMockRoleStorage(),
+		Tenants:     &mockIdentityTenantManager{},
+		Logger:      slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	})
 	return store, "tenant1"
 }

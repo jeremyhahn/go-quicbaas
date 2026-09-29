@@ -53,11 +53,11 @@ function mockClient(projects: Project[] = [], sdlc: unknown = undefined): void {
       createProject: mockCreateProject,
       updateProject: mockUpdateProject,
       deleteProject: vi.fn(),
-      grantAgentRole: vi.fn(),
-      revokeAgentRole: vi.fn(),
+      grantFleetNodeRole: vi.fn(),
+      revokeFleetNodeRole: vi.fn(),
     },
     orchestrator: {
-      listAgents: vi.fn().mockResolvedValue({ agents: [] }),
+      listFleetNodes: vi.fn().mockResolvedValue({ nodes: [] }),
     },
     sdlc,
   } as never);
@@ -99,7 +99,7 @@ describe('ProjectsView', () => {
       expect(h1!.textContent).toContain('Projects');
 
       // Icon is wrapped in the primary-tinted square tile.
-      const tile = container.querySelector('div.bg-primary\\/10');
+      const tile = container.querySelector('header.page-header');
       expect(tile).not.toBeNull();
       expect(tile!.querySelector('svg')).not.toBeNull();
 
@@ -198,7 +198,7 @@ describe('ProjectsView — create dialog', () => {
 
     await waitFor(() => expect(mockCreateProject).toHaveBeenCalled());
     const req = mockCreateProject.mock.calls[0][0];
-    expect(req.token_budget).toBeUndefined();
+    expect(req.spend).toBeUndefined();
     expect(req.gpu_minutes).toBeUndefined();
     expect(req.max_concurrency).toBeUndefined();
     expect(req.host_affinity).toBeUndefined();
@@ -210,9 +210,6 @@ describe('ProjectsView — create dialog', () => {
 
     await fireEvent.input(container.querySelector('#proj-name') as HTMLInputElement, {
       target: { value: 'my-proj' },
-    });
-    await fireEvent.input(container.querySelector('#proj-token-budget') as HTMLInputElement, {
-      target: { value: '5000' },
     });
     await fireEvent.input(container.querySelector('#proj-gpu-minutes') as HTMLInputElement, {
       target: { value: '60' },
@@ -228,7 +225,6 @@ describe('ProjectsView — create dialog', () => {
 
     await waitFor(() => expect(mockCreateProject).toHaveBeenCalled());
     const req = mockCreateProject.mock.calls[0][0];
-    expect(req.token_budget).toBe(5000);
     expect(req.gpu_minutes).toBe(60);
     expect(req.max_concurrency).toBe(3);
   });
@@ -259,7 +255,7 @@ describe('ProjectsView — edit dialog', () => {
     workspace_path: '/work/alpha',
     git_repo_url: 'https://github.com/org/alpha.git',
     git_default_branch: 'main',
-    token_budget: 1000,
+    spend: { windows: [{ name: 'weekly', size: 604_800_000_000_000, max_equivalent_micros: 250_000_000 }] },
     gpu_minutes: 30,
     max_concurrency: 2,
     created_at: '',
@@ -293,7 +289,8 @@ describe('ProjectsView — edit dialog', () => {
       'https://github.com/org/alpha.git',
     );
     expect((container.querySelector('#edit-proj-git-branch') as HTMLInputElement).value).toBe('main');
-    expect((container.querySelector('#edit-proj-token-budget') as HTMLInputElement).value).toBe('1000');
+    expect((container.querySelector('#edit-proj-spend-name-0') as HTMLInputElement).value).toBe('weekly');
+    expect((container.querySelector('#edit-proj-spend-usd-0') as HTMLInputElement).value).toBe('250');
   });
 
   it('submits updateProject with only the changed field when one value is edited', async () => {
@@ -316,7 +313,7 @@ describe('ProjectsView — edit dialog', () => {
     expect(req.description).toBe('updated desc');
     expect(req.workspace_path).toBeUndefined();
     expect(req.git_repo_url).toBeUndefined();
-    expect(req.token_budget).toBeUndefined();
+    expect(req.spend).toBeUndefined();
   });
 
   it('sends clear_description when the description is cleared', async () => {
@@ -582,6 +579,20 @@ describe('ProjectsView — edit dialog, git identity and autonomy', () => {
     expect(req.context_repos).toBeUndefined();
   });
 
+  it('shows the default session rotation and sends a change to it', async () => {
+    const { container } = render(ProjectsView);
+    await openEditDialog(container);
+
+    const select = container.querySelector('#edit-proj-session-rotation') as HTMLSelectElement;
+    expect(select).not.toBeNull();
+    expect(select.value).toBe('resume');
+    await fireEvent.change(select, { target: { value: 'fresh' } });
+    await save(container);
+
+    await waitFor(() => expect(mockUpdateProject).toHaveBeenCalled());
+    expect(mockUpdateProject.mock.calls[0][0].session_rotation).toBe('fresh');
+  });
+
   it('sends the autonomy switch when it is turned off', async () => {
     const { container } = render(ProjectsView);
     await openEditDialog(container);
@@ -623,6 +634,65 @@ describe('ProjectsView — edit dialog, git identity and autonomy', () => {
 });
 
 // ===========================================================================
+// Park / resume: a one-field update that closes or reopens the intake.
+// ===========================================================================
+
+describe('ProjectsView park control', () => {
+  const open: Project = { id: 'p-open', tenant_id: 'default', name: 'open-one' };
+  const parked: Project = {
+    id: 'p-parked',
+    tenant_id: 'default',
+    name: 'parked-one',
+    parked: true,
+    parked_at: '2026-09-25T12:00:00Z',
+    parked_by: 'ops',
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUpdateProject.mockResolvedValue({ project: {} });
+  });
+
+  it('parks an open project with a request carrying only the park switch', async () => {
+    mockClient([open]);
+    render(ProjectsView);
+    const button = await screen.findByRole('button', { name: 'Park project' });
+    await fireEvent.click(button);
+    await waitFor(() => expect(mockUpdateProject).toHaveBeenCalled());
+    expect(mockUpdateProject.mock.calls[0][0]).toEqual({
+      tenant_id: 'default',
+      project_id: 'p-open',
+      parked: true,
+    });
+  });
+
+  it('shows the parked badge and resumes a parked project', async () => {
+    mockClient([parked]);
+    render(ProjectsView);
+    const badge = await waitFor(() => {
+      const onRow = screen.getAllByText('parked').find((el) => el.closest('.card') !== null);
+      expect(onRow).toBeDefined();
+      return onRow as HTMLElement;
+    });
+    expect(badge.getAttribute('title')).toContain('by ops');
+    await fireEvent.click(screen.getByRole('button', { name: 'Resume project' }));
+    await waitFor(() => expect(mockUpdateProject).toHaveBeenCalled());
+    expect(mockUpdateProject.mock.calls[0][0].parked).toBe(false);
+  });
+
+  it('reports a refused park rather than swallowing it', async () => {
+    mockClient([open]);
+    mockUpdateProject.mockRejectedValueOnce(apiError(403, 'forbidden'));
+    const { showToast } = await import('../src/stores/toast.svelte.ts');
+    render(ProjectsView);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Park project' }));
+    await waitFor(() =>
+      expect(vi.mocked(showToast)).toHaveBeenCalledWith('error', expect.stringContaining('Park failed')),
+    );
+  });
+});
+
+// ===========================================================================
 // The SDLC binding section: shown only where the module answers, and edited
 // in place through the module's own endpoints.
 // ===========================================================================
@@ -647,7 +717,7 @@ describe('ProjectsView — SDLC binding section', () => {
       token_secret_ref: 'forge-token',
     },
     strategy: 'github-flow',
-    worker: { backend: 'claude', model: 'claude-opus-5' },
+    worker: { agent_id: 'claude-coder' },
     verification: ['make build'],
     review: {
       required_approvals: 1,
@@ -730,8 +800,7 @@ describe('ProjectsView — SDLC binding section', () => {
     expect(value('#edit-proj-sdlc-repo')).toBe('go-truststrap');
     expect(value('#edit-proj-sdlc-trigger-label')).toBe('task:ready');
     expect(value('#edit-proj-sdlc-token-secret-ref')).toBe('forge-token');
-    expect(value('#edit-proj-sdlc-worker-backend')).toBe('claude');
-    expect(value('#edit-proj-sdlc-worker-model')).toBe('claude-opus-5');
+    expect(value('#edit-proj-sdlc-worker')).toBe('agent:claude-coder');
     expect(value('#edit-proj-sdlc-verification-0')).toBe('make build');
     expect(value('#edit-proj-sdlc-required-approvals')).toBe('1');
     expect(value('#edit-proj-sdlc-max-review-rounds')).toBe('3');
@@ -796,7 +865,7 @@ describe('ProjectsView — SDLC binding section', () => {
     expect(projectID).toBe('proj-1');
     expect(sent.forge.trigger_label).toBe('task:go');
     expect(sent.strategy).toBe('github-flow');
-    expect(sent.worker.backend).toBe('claude');
+    expect(sent.worker).toEqual({ agent_id: 'claude-coder' });
   });
 
   it('unbinds when a bound project is switched off', async () => {
@@ -821,16 +890,16 @@ describe('ProjectsView — SDLC binding section', () => {
     const { container } = render(ProjectsView);
     await openEditDialog(container);
     await waitFor(() =>
-      expect(container.querySelector('#edit-proj-sdlc-worker-backend')).not.toBeNull(),
+      expect(container.querySelector('#edit-proj-sdlc-worker')).not.toBeNull(),
     );
 
-    await fireEvent.input(container.querySelector('#edit-proj-sdlc-worker-backend') as HTMLInputElement, {
+    await fireEvent.input(container.querySelector('#edit-proj-sdlc-worker') as HTMLInputElement, {
       target: { value: '' },
     });
     await save(container);
 
     await waitFor(() =>
-      expect(screen.getByText(/worker backend is required/i)).toBeInTheDocument(),
+      expect(screen.getByText(/worker Agent or pool is required/i)).toBeInTheDocument(),
     );
     expect(mockBind).not.toHaveBeenCalled();
     expect(mockUpdateProject).not.toHaveBeenCalled();

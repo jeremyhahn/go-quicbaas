@@ -46,7 +46,7 @@ import (
 //     new envelope, and the next delivery of it takes its own lease;
 //   - what a lapsed or revoked lease DOES stop is the next delivery. A daemon
 //     whose lease has been revoked cannot materialize the credential again, so
-//     its in-memory copy ages out (pkg/agent bounds it at
+//     its in-memory copy ages out (pkg/fleet bounds it at
 //     accountCacheMaxTTL) and cannot be replaced.
 //
 // That is the honest boundary of server-side enforcement for a credential
@@ -163,7 +163,7 @@ type AccountCredentialLease struct {
 //   - on a worker daemon, the grant has already been created. A daemon's
 //     credential release IS the control plane's materialize verb, and that verb
 //     issues the grant; the daemon's grantor REPORTS the one its release was
-//     served under (pkg/agent/account_grant.go) so the resolution can carry it
+//     served under (pkg/fleet/account_grant.go) so the resolution can carry it
 //     back to the control plane's session record, where the conclusion that
 //     withdraws it can find it.
 //

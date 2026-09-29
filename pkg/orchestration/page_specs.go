@@ -99,18 +99,18 @@ var sessionPageSpec = PageSpec[*SessionInfo]{
 // SessionPageSpec returns how the sessions listing is ordered and searched.
 func SessionPageSpec() PageSpec[*SessionInfo] { return sessionPageSpec }
 
-// agentPageSpec orders and searches the fleet registry. The natural order is
+// fleetNodePageSpec orders and searches the fleet registry. The natural order is
 // the most recently registered daemon first, which is the one an operator who
 // just brought a host up is looking for.
-var agentPageSpec = PageSpec[*AgentRegistration]{
-	Sorts: map[string]func(a, b *AgentRegistration) int{
-		"id":            func(a, b *AgentRegistration) int { return compareStrings(a.ID, b.ID) },
-		"name":          func(a, b *AgentRegistration) int { return compareStrings(a.Name, b.Name) },
-		"host":          func(a, b *AgentRegistration) int { return compareStrings(a.Host, b.Host) },
-		"backend":       func(a, b *AgentRegistration) int { return compareStrings(a.Backend, b.Backend) },
-		"status":        func(a, b *AgentRegistration) int { return compareStrings(string(a.Status), string(b.Status)) },
-		"last_seen":     func(a, b *AgentRegistration) int { return compareInt64(a.LastSeen, b.LastSeen) },
-		"registered_at": func(a, b *AgentRegistration) int { return compareInt64(a.RegisteredAt, b.RegisteredAt) },
+var fleetNodePageSpec = PageSpec[*FleetNode]{
+	Sorts: map[string]func(a, b *FleetNode) int{
+		"id":            func(a, b *FleetNode) int { return compareStrings(a.ID, b.ID) },
+		"name":          func(a, b *FleetNode) int { return compareStrings(a.Name, b.Name) },
+		"host":          func(a, b *FleetNode) int { return compareStrings(a.Host, b.Host) },
+		"backend":       func(a, b *FleetNode) int { return compareStrings(a.Backend, b.Backend) },
+		"status":        func(a, b *FleetNode) int { return compareStrings(string(a.Status), string(b.Status)) },
+		"last_seen":     func(a, b *FleetNode) int { return compareInt64(a.LastSeen, b.LastSeen) },
+		"registered_at": func(a, b *FleetNode) int { return compareInt64(a.RegisteredAt, b.RegisteredAt) },
 	},
 	DefaultSort:       "registered_at",
 	DefaultDescending: true,
@@ -118,15 +118,15 @@ var agentPageSpec = PageSpec[*AgentRegistration]{
 	// primary backend: a daemon serving claude, codex and opencode carries
 	// the other two in Capabilities, and a search for "codex" that missed it
 	// would contradict what dispatch does with the same record.
-	Text: func(agent *AgentRegistration) []string {
+	Text: func(agent *FleetNode) []string {
 		text := make([]string, 0, len(agent.Capabilities)+3)
 		text = append(text, agent.ID, agent.Name, agent.Backend)
 		return append(text, agent.Capabilities...)
 	},
 }
 
-// AgentPageSpec returns how the agents listing is ordered and searched.
-func AgentPageSpec() PageSpec[*AgentRegistration] { return agentPageSpec }
+// FleetNodePageSpec returns how the agents listing is ordered and searched.
+func FleetNodePageSpec() PageSpec[*FleetNode] { return fleetNodePageSpec }
 
 // workflowPageSpec orders and searches registered workflow definitions.
 //

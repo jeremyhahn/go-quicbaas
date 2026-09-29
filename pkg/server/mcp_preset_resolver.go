@@ -104,10 +104,10 @@ const agentSessionRevokeTimeout = 15 * time.Second
 // mlocked secure.Buffer, copied to a 0600 file, and the buffer is destroyed
 // immediately.
 //
-// This is the embedded-agent wiring. A remote agent daemon would implement the
+// This is the embedded-fleet-node wiring. A remote fleet node daemon would implement the
 // same seam with its own issuer and MCP endpoint.
 type AgentMCPPresetResolver struct {
-	issuer            service.AgentCertIssuer
+	issuer            service.FleetNodeCertIssuer
 	identities        AgentSessionIdentityStoreResolver
 	endpointURL       string
 	hostname          string
@@ -127,7 +127,7 @@ type AgentMCPPresetResolverConfig struct {
 	// Issuer mints the ephemeral certificates. Reuse the same issuer that
 	// signs the embedded agent identity so the certificate chains to the
 	// platform CA the MCP listener trusts for client auth.
-	Issuer service.AgentCertIssuer
+	Issuer service.FleetNodeCertIssuer
 
 	// Identities resolves the identity store each session principal is
 	// enrolled into.
@@ -223,13 +223,13 @@ func (r *AgentMCPPresetResolver) Resolve(ctx context.Context, sessionID, tenantI
 		return "", nil, nil, &MCPPresetResolveError{Op: "resolve identity store", Cause: ErrMCPPresetResolverNoIdentityStore}
 	}
 
-	issued, err := r.issuer.IssueAgentCertificate(ctx, &service.AgentCertificateRequest{
+	issued, err := r.issuer.IssueFleetNodeCertificate(ctx, &service.FleetNodeCertificateRequest{
 		TenantID: tenant,
 		Hostname: r.hostname,
-		Subject: service.AgentCertificateSubject{
+		Subject: service.FleetNodeCertificateSubject{
 			CommonName:         cn,
 			Organization:       tenant,
-			OrganizationalUnit: service.DefaultAgentCertOU,
+			OrganizationalUnit: service.DefaultFleetNodeCertOU,
 		},
 		ExtraDNSNames:     []string{"localhost"},
 		ValidityDays:      ephemeralAgentCertValidityDays,
@@ -357,7 +357,7 @@ func createAgentSessionDir() (string, error) {
 // It returns partial material on no path — a caller that gets an error has
 // nothing to read — but it does NOT remove dir, because it did not create it.
 // The caller owns the directory and removes it on failure.
-func writeAgentSessionMaterial(dir string, issued *service.IssuedAgentCertificate) (*agentSessionMaterial, error) {
+func writeAgentSessionMaterial(dir string, issued *service.IssuedFleetNodeCertificate) (*agentSessionMaterial, error) {
 	material := &agentSessionMaterial{
 		dir:      dir,
 		certPath: filepath.Join(dir, "cert.pem"),

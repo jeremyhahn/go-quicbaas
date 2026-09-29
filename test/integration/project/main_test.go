@@ -22,7 +22,6 @@ package project_test
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -33,6 +32,8 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/netport"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // ErrEmbeddedBootTimeout indicates the in-process server failed to become
@@ -56,7 +57,7 @@ var (
 )
 
 // TestMain boots the embedded server once for the package and tears it down
-// when the suite finishes. The server has Project, AgentAdmin, and (lazily)
+// when the suite finishes. The server has Project, FleetAdmin, and (lazily)
 // AgentService wired so the tests can exercise the orchestration surface.
 func TestMain(m *testing.M) {
 	if err := bootEmbeddedServer(); err != nil {
@@ -84,6 +85,7 @@ func bootEmbeddedServer() error {
 	}
 
 	cfg := config.EmbeddedConfig()
+	cfg.IAM.SPIFFETrustDomain = helpers.SPIFFETrustDomain
 	cfg.Storage.DataDir = filepath.Join(tempDir, "data")
 	cfg.Storage.WALDir = filepath.Join(tempDir, "wal")
 	cfg.Raft.NodeID = 1
@@ -174,13 +176,16 @@ func waitForServerReady(srv *server.Server, timeout time.Duration) error {
 	}
 }
 
+// findFreePort reserves a loopback port for a server that binds it later. It is
+// reserved through netport rather than drawn from :0 and released, so nothing
+// else can be handed it in between (go-quicbaas#721). The reservation lasts
+// for the life of the test process.
 func findFreePort() (int, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	ports, err := netport.Reserve(1)
 	if err != nil {
 		return 0, err
 	}
-	defer listener.Close()
-	return listener.Addr().(*net.TCPAddr).Port, nil
+	return ports[0], nil
 }
 
 // uniqueSuffix returns a process-unique suffix for naming projects and tenants

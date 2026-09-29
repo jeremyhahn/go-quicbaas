@@ -377,30 +377,6 @@ func TestIAMServiceAdapter_UpdateUser_NilInput(t *testing.T) {
 	assert.Contains(t, err.Error(), "user cannot be nil")
 }
 
-func TestIAMServiceAdapter_CreateGroup_NilInput(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-
-	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
-	result, err := adapter.CreateGroup(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "group cannot be nil")
-}
-
-func TestIAMServiceAdapter_UpdateGroup_NilInput(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-
-	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
-	result, err := adapter.UpdateGroup(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "group cannot be nil")
-}
-
 func TestIAMServiceAdapter_CreateRole_NilInput(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -853,10 +829,9 @@ func createTestIAMAdapter91(t *testing.T) *IAMServiceAdapter {
 	storage := iam.NewMemoryStorage()
 	tenantMgr := &adapter91MockTenantManager{}
 	identityStore := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
-		Tenants:      tenantMgr,
+		UserStorage: storage,
+		RoleStorage: storage,
+		Tenants:     tenantMgr,
 	})
 	policyCache := iam.NewPolicyCache(&iam.CacheConfig{
 		TTL:               5 * time.Minute,
@@ -882,7 +857,6 @@ func createTestIAMAdapter91(t *testing.T) *IAMServiceAdapter {
 		DeletionStorage:   &adapter91MockDeletionStorage{},
 		UserStorage:       storage,
 		SessionStorage:    newAdapter91MockSessionStorage(),
-		GroupStorage:      storage,
 		RoleStorage:       storage,
 	})
 	require.NoError(t, err)
@@ -1047,20 +1021,15 @@ func TestAdapter91_CreateUser_EmailWithoutAt(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestAdapter91_CreateUser_WithRolesAndGroups(t *testing.T) {
+func TestAdapter91_CreateUser_WithRoles(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	adapter := createTestIAMAdapter91(t)
 
-	// Pre-create the role and group so the create-time references resolve.
+	// Pre-create the role so the create-time reference resolves.
 	_, err := adapter.identityStore.CreateRole(ctx, "tenant-1", iam.CreateRoleOptions{
 		ID:   "admin",
 		Name: "Admin",
-	})
-	require.NoError(t, err)
-	_, err = adapter.identityStore.CreateGroup(ctx, "tenant-1", iam.CreateGroupOptions{
-		ID:   "dev-team",
-		Name: "Dev Team",
 	})
 	require.NoError(t, err)
 
@@ -1069,13 +1038,11 @@ func TestAdapter91_CreateUser_WithRolesAndGroups(t *testing.T) {
 		Email:    "bob@example.com",
 		Name:     "Bob",
 		Roles:    []string{"admin"},
-		Groups:   []string{"dev-team"},
 	}
 	result, err := adapter.CreateUser(ctx, user)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, []string{"admin"}, result.Roles)
-	assert.Equal(t, []string{"dev-team"}, result.Groups)
 }
 
 func TestAdapter91_CreateUser_UnknownRoleFailsWithoutPartialUser(t *testing.T) {
@@ -1097,25 +1064,6 @@ func TestAdapter91_CreateUser_UnknownRoleFailsWithoutPartialUser(t *testing.T) {
 	assert.Nil(t, result)
 
 	_, getErr := adapter.GetUser(ctx, "tenant-1", "bob2@example.com")
-	assert.Error(t, getErr, "no partial user must remain after a failed create")
-}
-
-func TestAdapter91_CreateUser_UnknownGroupFailsWithoutPartialUser(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	user := &iam.User{
-		TenantID: "tenant-1",
-		Email:    "bob3@example.com",
-		Name:     "Bob Three",
-		Groups:   []string{"no-such-group"},
-	}
-	result, err := adapter.CreateUser(ctx, user)
-	require.Error(t, err)
-	assert.Nil(t, result)
-
-	_, getErr := adapter.GetUser(ctx, "tenant-1", "bob3@example.com")
 	assert.Error(t, getErr, "no partial user must remain after a failed create")
 }
 
@@ -1201,21 +1149,6 @@ func TestAdapter91_UpdateUser_WithRoles(t *testing.T) {
 	_ = err
 }
 
-func TestAdapter91_UpdateUser_WithGroups(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	user := &iam.User{TenantID: "tenant-1", Email: "hank@example.com", Name: "Hank"}
-	created, err := adapter.CreateUser(ctx, user)
-	require.NoError(t, err)
-
-	created.Groups = []string{"ops-team"}
-	result, err := adapter.UpdateUser(ctx, created)
-	assert.NotNil(t, result)
-	_ = err
-}
-
 func TestAdapter91_DeleteUser_ByID(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -1271,146 +1204,6 @@ func TestAdapter91_ListUsers_WithFilters(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, users)
 	assert.Equal(t, len(users), total)
-}
-
-// =============================================================================
-// Group Operations
-// =============================================================================
-
-func TestAdapter91_CreateGroup_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	result, err := adapter.CreateGroup(ctx, &iam.Group{TenantID: "tenant-1", Name: "Engineering", Description: "Engineering team"})
-	require.NoError(t, err)
-	assert.Equal(t, "Engineering", result.Name)
-}
-
-func TestAdapter91_CreateGroup_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	group := &iam.Group{ID: "dup-group", TenantID: "tenant-1", Name: "Duplicate"}
-	_, err := adapter.CreateGroup(ctx, group)
-	require.NoError(t, err)
-	_, err = adapter.CreateGroup(ctx, group)
-	assert.Error(t, err)
-}
-
-func TestAdapter91_GetGroup_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	created, err := adapter.CreateGroup(ctx, &iam.Group{TenantID: "tenant-1", Name: "DevOps"})
-	require.NoError(t, err)
-
-	result, err := adapter.GetGroup(ctx, "tenant-1", created.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "DevOps", result.Name)
-}
-
-func TestAdapter91_GetGroup_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	result, err := adapter.GetGroup(ctx, "tenant-1", "nonexistent-group")
-	assert.Error(t, err)
-	assert.Nil(t, result)
-}
-
-func TestAdapter91_UpdateGroup_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	created, err := adapter.CreateGroup(ctx, &iam.Group{TenantID: "tenant-1", Name: "Original"})
-	require.NoError(t, err)
-
-	created.Name = "Updated"
-	result, err := adapter.UpdateGroup(ctx, created)
-	require.NoError(t, err)
-	assert.NotNil(t, result)
-}
-
-func TestAdapter91_UpdateGroup_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	result, err := adapter.UpdateGroup(ctx, &iam.Group{TenantID: "tenant-1", ID: "nonexistent", Name: "X"})
-	assert.Error(t, err)
-	assert.Nil(t, result)
-}
-
-func TestAdapter91_DeleteGroup_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	created, err := adapter.CreateGroup(ctx, &iam.Group{TenantID: "tenant-1", Name: "ToDelete"})
-	require.NoError(t, err)
-	assert.NoError(t, adapter.DeleteGroup(ctx, "tenant-1", created.ID))
-}
-
-func TestAdapter91_DeleteGroup_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-	assert.Error(t, adapter.DeleteGroup(ctx, "tenant-1", "nonexistent-group"))
-}
-
-func TestAdapter91_ListGroups_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	groups, total, err := adapter.ListGroups(ctx, "tenant-1", 10, 0)
-	require.NoError(t, err)
-	assert.NotNil(t, groups)
-	assert.Equal(t, len(groups), total)
-}
-
-func TestAdapter91_AddUserToGroup_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	createdGroup, err := adapter.CreateGroup(ctx, &iam.Group{TenantID: "tenant-1", Name: "GroupForAdd"})
-	require.NoError(t, err)
-	createdUser, err := adapter.CreateUser(ctx, &iam.User{TenantID: "tenant-1", Email: "addtogroup@example.com", Name: "AddToGroup"})
-	require.NoError(t, err)
-	assert.NoError(t, adapter.AddUserToGroup(ctx, "tenant-1", createdGroup.ID, createdUser.ID))
-}
-
-func TestAdapter91_AddUserToGroup_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-	assert.Error(t, adapter.AddUserToGroup(ctx, "tenant-1", "nonexistent-group", "nonexistent-user"))
-}
-
-func TestAdapter91_RemoveUserFromGroup_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	createdGroup, err := adapter.CreateGroup(ctx, &iam.Group{TenantID: "tenant-1", Name: "RemoveGroup"})
-	require.NoError(t, err)
-	createdUser, err := adapter.CreateUser(ctx, &iam.User{TenantID: "tenant-1", Email: "removefromgroup@example.com", Name: "Remove"})
-	require.NoError(t, err)
-	require.NoError(t, adapter.AddUserToGroup(ctx, "tenant-1", createdGroup.ID, createdUser.ID))
-	assert.NoError(t, adapter.RemoveUserFromGroup(ctx, "tenant-1", createdGroup.ID, createdUser.ID))
-}
-
-func TestAdapter91_RemoveUserFromGroup_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-	assert.Error(t, adapter.RemoveUserFromGroup(ctx, "tenant-1", "nonexistent-group", "nonexistent-user"))
 }
 
 // =============================================================================
@@ -1581,10 +1374,9 @@ func newAdapter91ReconcilingAdapter(t *testing.T, storage *adapter91ReconcilingR
 
 	tenantMgr := &adapter91MockTenantManager{}
 	identityStore := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  storage.MemoryStorage,
-		GroupStorage: storage.MemoryStorage,
-		RoleStorage:  storage,
-		Tenants:      tenantMgr,
+		UserStorage: storage.MemoryStorage,
+		RoleStorage: storage,
+		Tenants:     tenantMgr,
 	})
 
 	return NewIAMServiceAdapter(tenantMgr, identityStore, nil, nil, nil, nil)

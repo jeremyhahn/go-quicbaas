@@ -79,7 +79,7 @@ func TestEmbeddedCoverage_ProjectMethods(t *testing.T) {
 		assertNotUnknownMethod(t, err, "Project.GetByName")
 	})
 
-	listResp, err := client.Project().List(ctx, tenantID)
+	listResp, err := client.Project().List(ctx, &projectSDK.ListProjectsRequest{TenantID: tenantID})
 	require.NoError(t, err)
 	require.NotNil(t, listResp)
 	require.NotEmpty(t, listResp.Projects, "expected at least one project")
@@ -100,27 +100,27 @@ func TestEmbeddedCoverage_ProjectMethods(t *testing.T) {
 	})
 
 	t.Run("List", func(t *testing.T) {
-		_, err := client.Project().List(ctx, tenantID)
+		_, err := client.Project().List(ctx, &projectSDK.ListProjectsRequest{TenantID: tenantID})
 		assertNotUnknownMethod(t, err, "Project.List")
 	})
 
-	t.Run("GrantAgentRole", func(t *testing.T) {
-		_, err := client.Project().GrantAgentRole(ctx, &projectSDK.GrantAgentRoleRequest{
-			TenantID:  tenantID,
-			ProjectID: projectID,
-			AgentID:   "agent-cov",
-			Role:      quicbaas.ProjectRoleWorker,
+	t.Run("GrantFleetNodeRole", func(t *testing.T) {
+		_, err := client.Project().GrantFleetNodeRole(ctx, &projectSDK.GrantFleetNodeRoleRequest{
+			TenantID:    tenantID,
+			ProjectID:   projectID,
+			FleetNodeID: "agent-cov",
+			Role:        quicbaas.ProjectRoleWorker,
 		})
-		assertNotUnknownMethod(t, err, "Project.GrantAgentRole")
+		assertNotUnknownMethod(t, err, "Project.GrantFleetNodeRole")
 	})
 
-	t.Run("RevokeAgentRole", func(t *testing.T) {
-		_, err := client.Project().RevokeAgentRole(ctx, &projectSDK.RevokeAgentRoleRequest{
-			TenantID:  tenantID,
-			ProjectID: projectID,
-			AgentID:   "agent-cov",
+	t.Run("RevokeFleetNodeRole", func(t *testing.T) {
+		_, err := client.Project().RevokeFleetNodeRole(ctx, &projectSDK.RevokeFleetNodeRoleRequest{
+			TenantID:    tenantID,
+			ProjectID:   projectID,
+			FleetNodeID: "agent-cov",
 		})
-		assertNotUnknownMethod(t, err, "Project.RevokeAgentRole")
+		assertNotUnknownMethod(t, err, "Project.RevokeFleetNodeRole")
 	})
 
 	t.Run("Delete", func(t *testing.T) {
@@ -153,43 +153,43 @@ func TestEmbeddedCoverage_OrchestratorMethods(t *testing.T) {
 		assertNotUnknownMethod(t, err, "Orchestrator.ListBackends")
 	})
 
-	t.Run("RegisterAgent", func(t *testing.T) {
-		_, err := client.Orchestrator().RegisterAgent(ctx, &orchestratorSDK.RegisterAgentRequest{
-			TenantID:  tenantID,
-			Name:      "agent-cov-" + uniqueSuffix(),
-			Host:      "host-cov",
-			AgentType: "worker",
-			Backend:   "ollama",
+	t.Run("RegisterFleetNode", func(t *testing.T) {
+		_, err := client.Orchestrator().RegisterFleetNode(ctx, &orchestratorSDK.RegisterFleetNodeRequest{
+			TenantID: tenantID,
+			Name:     "agent-cov-" + uniqueSuffix(),
+			Host:     "host-cov",
+			NodeType: "worker",
+			Backend:  "ollama",
 		})
-		assertNotUnknownMethod(t, err, "Orchestrator.RegisterAgent")
+		assertNotUnknownMethod(t, err, "Orchestrator.RegisterFleetNode")
 	})
 
-	t.Run("ListAgents", func(t *testing.T) {
-		_, err := client.Orchestrator().ListAgents(ctx, &orchestratorSDK.ListAgentsRequest{
+	t.Run("ListFleetNodes", func(t *testing.T) {
+		_, err := client.Orchestrator().ListFleetNodes(ctx, &orchestratorSDK.ListFleetNodesRequest{
 			TenantID: tenantID,
 		})
-		assertNotUnknownMethod(t, err, "Orchestrator.ListAgents")
+		assertNotUnknownMethod(t, err, "Orchestrator.ListFleetNodes")
 	})
 
-	t.Run("GetAgent", func(t *testing.T) {
-		_, err := client.Orchestrator().GetAgent(ctx, &orchestratorSDK.GetAgentRequest{
-			TenantID: tenantID, AgentID: "missing",
+	t.Run("GetFleetNode", func(t *testing.T) {
+		_, err := client.Orchestrator().GetFleetNode(ctx, &orchestratorSDK.GetFleetNodeRequest{
+			TenantID: tenantID, NodeID: "missing",
 		})
-		assertNotUnknownMethod(t, err, "Orchestrator.GetAgent")
+		assertNotUnknownMethod(t, err, "Orchestrator.GetFleetNode")
 	})
 
-	t.Run("AgentHeartbeat", func(t *testing.T) {
-		_, err := client.Orchestrator().AgentHeartbeat(ctx, &orchestratorSDK.AgentHeartbeatRequest{
-			TenantID: tenantID, AgentID: "missing",
+	t.Run("FleetNodeHeartbeat", func(t *testing.T) {
+		_, err := client.Orchestrator().FleetNodeHeartbeat(ctx, &orchestratorSDK.FleetNodeHeartbeatRequest{
+			TenantID: tenantID, NodeID: "missing",
 		})
-		assertNotUnknownMethod(t, err, "Orchestrator.AgentHeartbeat")
+		assertNotUnknownMethod(t, err, "Orchestrator.FleetNodeHeartbeat")
 	})
 
-	t.Run("RemoveAgent", func(t *testing.T) {
-		_, err := client.Orchestrator().RemoveAgent(ctx, &orchestratorSDK.RemoveAgentRequest{
-			TenantID: tenantID, AgentID: "missing",
+	t.Run("RemoveFleetNode", func(t *testing.T) {
+		_, err := client.Orchestrator().RemoveFleetNode(ctx, &orchestratorSDK.RemoveFleetNodeRequest{
+			TenantID: tenantID, NodeID: "missing",
 		})
-		assertNotUnknownMethod(t, err, "Orchestrator.RemoveAgent")
+		assertNotUnknownMethod(t, err, "Orchestrator.RemoveFleetNode")
 	})
 
 	t.Run("CreateTask", func(t *testing.T) {
@@ -250,18 +250,18 @@ func TestEmbeddedCoverage_OrchestratorMethods(t *testing.T) {
 		assertNotUnknownMethod(t, err, "Orchestrator.ListTaskArtifacts")
 	})
 
-	t.Run("DisableAgent", func(t *testing.T) {
-		_, err := client.Orchestrator().DisableAgent(ctx, &orchestratorSDK.DisableAgentRequest{
-			TenantID: tenantID, AgentID: "missing",
+	t.Run("DisableFleetNode", func(t *testing.T) {
+		_, err := client.Orchestrator().DisableFleetNode(ctx, &orchestratorSDK.DisableFleetNodeRequest{
+			TenantID: tenantID, NodeID: "missing",
 		})
-		assertNotUnknownMethod(t, err, "Orchestrator.DisableAgent")
+		assertNotUnknownMethod(t, err, "Orchestrator.DisableFleetNode")
 	})
 
-	t.Run("EnableAgent", func(t *testing.T) {
-		_, err := client.Orchestrator().EnableAgent(ctx, &orchestratorSDK.EnableAgentRequest{
-			TenantID: tenantID, AgentID: "missing",
+	t.Run("EnableFleetNode", func(t *testing.T) {
+		_, err := client.Orchestrator().EnableFleetNode(ctx, &orchestratorSDK.EnableFleetNodeRequest{
+			TenantID: tenantID, NodeID: "missing",
 		})
-		assertNotUnknownMethod(t, err, "Orchestrator.EnableAgent")
+		assertNotUnknownMethod(t, err, "Orchestrator.EnableFleetNode")
 	})
 
 	t.Run("StartJob", func(t *testing.T) {

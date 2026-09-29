@@ -19,7 +19,8 @@
 
   Features:
     - List pinned hosts: Host · Fingerprint (truncated + copy) · Algorithm · Source · Added · Actions
-    - "Add Pin" button opens an inline modal with host + fingerprint + algorithm fields
+    - "Add Pin" button opens an inline modal with host + host-key fields; the
+      server derives the fingerprint and algorithm from the key
     - Remove pin with a confirmation dialog
 
   Props:
@@ -69,22 +70,13 @@
   // Add pin modal
   let showAdd = $state(false);
   let addHost = $state('');
-  let addFingerprint = $state('');
-  let addAlgorithm = $state('ecdsa-sha2-nistp256');
+  let addPublicKey = $state('');
   let addError: string | null = $state(null);
   let adding = $state(false);
 
   // Delete confirmation
   let pinToRemove: SSHPin | null = $state(null);
   let removing = $state(false);
-
-  const algorithms = [
-    'ecdsa-sha2-nistp256',
-    'ecdsa-sha2-nistp384',
-    'ecdsa-sha2-nistp521',
-    'ssh-ed25519',
-    'ssh-rsa',
-  ] as const;
 
   // ---------------------------------------------------------------------------
   // Data loading
@@ -132,8 +124,8 @@
       addError = 'Host is required';
       return;
     }
-    if (!addFingerprint.trim()) {
-      addError = 'Fingerprint is required';
+    if (!addPublicKey.trim()) {
+      addError = 'Host key is required';
       return;
     }
     adding = true;
@@ -141,16 +133,14 @@
       const client = await getSDKClient();
       await client.ssh.knownHosts.add({
         host: addHost.trim(),
-        fingerprint: addFingerprint.trim(),
-        algorithm: addAlgorithm,
+        public_key: addPublicKey.trim(),
         scope,
         owner: owner || undefined,
       });
       showToast('success', `Host "${addHost.trim()}" pinned`);
       showAdd = false;
       addHost = '';
-      addFingerprint = '';
-      addAlgorithm = 'ecdsa-sha2-nistp256';
+      addPublicKey = '';
       void loadPins();
     } catch (e) {
       addError = e instanceof Error ? e.message : 'Failed to add host pin';
@@ -321,42 +311,29 @@
         </div>
 
         <div class="form-control">
-          <label class="label label-text" for="add-pin-fingerprint">
-            Fingerprint <span class="text-error ml-0.5" aria-hidden="true">*</span>
+          <label class="label label-text" for="add-pin-key">
+            Host key <span class="text-error ml-0.5" aria-hidden="true">*</span>
           </label>
-          <input
-            id="add-pin-fingerprint"
-            class="input input-bordered input-sm font-mono text-xs"
-            type="text"
-            placeholder="SHA256:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-            bind:value={addFingerprint}
+          <textarea
+            id="add-pin-key"
+            class="textarea textarea-bordered textarea-sm font-mono text-xs"
+            rows="3"
+            placeholder="ssh-ed25519 AAAAC3Nza…"
+            bind:value={addPublicKey}
             aria-required="true"
-          />
+          ></textarea>
           <div class="label">
             <span class="label-text-alt text-base-content/40">
-              Obtain with: <code class="font-mono">ssh-keyscan -t ecdsa hostname | ssh-keygen -lf -</code>
+              Obtain with: <code class="font-mono">ssh-keyscan -t ed25519 hostname | cut -d' ' -f2-</code>
             </span>
           </div>
-        </div>
-
-        <div class="form-control">
-          <label class="label label-text" for="add-pin-algo">Algorithm</label>
-          <select
-            id="add-pin-algo"
-            class="select select-bordered select-sm"
-            bind:value={addAlgorithm}
-          >
-            {#each algorithms as algo}
-              <option value={algo}>{algo}</option>
-            {/each}
-          </select>
         </div>
       </div>
 
       <div class="modal-action">
         <button
           class="btn btn-ghost btn-sm"
-          onclick={() => { showAdd = false; addError = null; addHost = ''; addFingerprint = ''; }}
+          onclick={() => { showAdd = false; addError = null; addHost = ''; addPublicKey = ''; }}
           aria-label="Cancel adding host pin"
         >
           Cancel

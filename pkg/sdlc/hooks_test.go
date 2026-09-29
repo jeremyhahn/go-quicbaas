@@ -150,6 +150,75 @@ func TestHooks_PrepareContinuesAPushedBranchOnTheNextAttempt(t *testing.T) {
 	}
 }
 
+// TestHooks_PrepareKeepsTheAttemptsDeliveryOnARespawn: initializing is
+// re-entered inside one attempt whenever the worker's container is replaced —
+// a rolled session, or one closed for the wait in reviewing and spawned again
+// for a round (go-quicbaas#938). The attempt's record must come through whole,
+// including what its rounds accumulated on the forge; a new attempt still
+// starts its own.
+func TestHooks_PrepareKeepsTheAttemptsDeliveryOnARespawn(t *testing.T) {
+	rig := newHooksRig(t)
+	ctx := context.Background()
+	if _, err := rig.hooks.Prepare(ctx, testJob(1)); err != nil {
+		t.Fatal(err)
+	}
+	prior, err := rig.store.GetDelivery(ctx, testTenant, testTask)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prior.HeadSHA = "h2"
+	prior.PullRequest = DeliveryPullRequest{Number: 100, State: PullRequestOpen}
+	prior.SupersededRuns = []SupersessionRecord{{Name: "ci", ForgeRunID: "7", HeadSHA: "h1", SupersededBy: "h2"}}
+	prior.CIReruns = []CIRerunRecord{{HeadSHA: "h1", Check: "ci"}}
+	if err := rig.store.UpdateDelivery(ctx, testTenant, prior); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := rig.hooks.Prepare(ctx, testJob(1)); err != nil {
+		t.Fatalf("Prepare on a respawn: %v", err)
+	}
+	kept, err := rig.store.GetDelivery(ctx, testTenant, testTask)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept.HeadSHA != "h2" || kept.PullRequest.Number != 100 ||
+		len(kept.SupersededRuns) != 1 || len(kept.CIReruns) != 1 || kept.Version != prior.Version {
+		t.Fatalf("a respawn rewrote the attempt's delivery: %+v", kept)
+	}
+	if labels := strings.Join(rig.forge.issueLabels(25), ","); !strings.Contains(labels, "factory:in-progress") {
+		t.Fatalf("labels after a respawn = %s, want the worker's in-progress label back", labels)
+	}
+
+	if _, err := rig.hooks.Prepare(ctx, testJob(2)); err != nil {
+		t.Fatal(err)
+	}
+	next, err := rig.store.GetDelivery(ctx, testTenant, testTask)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Attempt != 2 || next.HeadSHA != "h2" || len(next.SupersededRuns) != 0 {
+		t.Fatalf("a new attempt did not start its own delivery on the carried branch: %+v", next)
+	}
+}
+
+// TestHooks_PrepareOnARespawnReportsALabelFailure is the error half: the
+// respawn still moves the issue back to in-progress, and a forge that refuses
+// the move fails the stage rather than leaving a label that lies.
+func TestHooks_PrepareOnARespawnReportsALabelFailure(t *testing.T) {
+	rig := newHooksRig(t)
+	ctx := context.Background()
+	if _, err := rig.hooks.Prepare(ctx, testJob(1)); err != nil {
+		t.Fatal(err)
+	}
+	rig.forge.mu.Lock()
+	rig.forge.issues[25].Labels = []string{"bug", "factory:reviewing"}
+	rig.forge.addLabelErr = errors.New("the forge refused")
+	rig.forge.mu.Unlock()
+	if _, err := rig.hooks.Prepare(ctx, testJob(1)); err == nil {
+		t.Fatal("a respawn whose label move failed reported success")
+	}
+}
+
 // TestHooks_ReviewableOpensThePullRequestOnThePublishedHead: the container
 // already committed, signed and pushed, and recorded the head it produced.
 // What is left for the daemon is the forge — open or refresh the pull
@@ -213,6 +282,72 @@ func TestHooks_ReviewableOpensThePullRequestOnThePublishedHead(t *testing.T) {
 	delivery, _ = rig.store.GetDelivery(ctx, testTenant, testTask)
 	if delivery.HeadSHA != "head-2" {
 		t.Fatalf("head not advanced: %q", delivery.HeadSHA)
+	}
+}
+
+// TestHooks_ReviewableTakesTheParkLabelsOffAResumedPullRequest: a park
+// labels the open pull request so it stops reading as reviewable. When a
+// readmitted task's next attempt publishes to the same pull request, the
+// engine owns the change again, and the park label must come off. It must
+// not stay behind reading "a person owns this" over a live review
+// (go-truststrap PR #76, attempt 2, 2026-09-28). A label a person put on the
+// pull request stays.
+func TestHooks_ReviewableTakesTheParkLabelsOffAResumedPullRequest(t *testing.T) {
+	rig := newHooksRig(t)
+	ctx := context.Background()
+	if err := rig.rebind(ctx, func(b *ProjectBinding) {
+		b.Forge.Labels[LabelEscalated] = "factory:escalated"
+	}); err != nil {
+		t.Fatal(err)
+	}
+	job := testJob(1)
+	if _, err := rig.hooks.Prepare(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	rig.publishHead(t, ctx, "head-1")
+	if err := rig.hooks.Reviewable(ctx, job); err != nil {
+		t.Fatalf("Reviewable: %v", err)
+	}
+	rig.forge.mu.Lock()
+	rig.forge.prLabels[100] = []string{"factory:escalated", HoldLabel, "kind:docs"}
+	rig.forge.mu.Unlock()
+
+	rig.publishHead(t, ctx, "head-2")
+	if err := rig.hooks.Reviewable(ctx, job); err != nil {
+		t.Fatalf("Reviewable on the resumed pull request: %v", err)
+	}
+	if labels := rig.forge.pullRequestLabels(100); strings.Join(labels, ",") != "kind:docs" {
+		t.Fatalf("pull request labels = %v, want only [kind:docs]", labels)
+	}
+}
+
+// TestHooks_ReviewableReportsAParkLabelThatWontComeOff is the error half: a
+// pull request that goes on saying "escalated" while it is reviewed is the
+// lie the label exists to prevent, so a refused removal fails the stage.
+func TestHooks_ReviewableReportsAParkLabelThatWontComeOff(t *testing.T) {
+	rig := newHooksRig(t)
+	ctx := context.Background()
+	if err := rig.rebind(ctx, func(b *ProjectBinding) {
+		b.Forge.Labels[LabelEscalated] = "factory:escalated"
+	}); err != nil {
+		t.Fatal(err)
+	}
+	job := testJob(1)
+	if _, err := rig.hooks.Prepare(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	rig.publishHead(t, ctx, "head-1")
+	if err := rig.hooks.Reviewable(ctx, job); err != nil {
+		t.Fatalf("Reviewable: %v", err)
+	}
+	rig.forge.mu.Lock()
+	rig.forge.prLabels[100] = []string{"factory:escalated"}
+	rig.forge.removeLabelErr = errors.New("the forge refused the removal")
+	rig.forge.mu.Unlock()
+
+	rig.publishHead(t, ctx, "head-2")
+	if err := rig.hooks.Reviewable(ctx, job); err == nil || !strings.Contains(err.Error(), "the forge refused the removal") {
+		t.Fatalf("a refused park-label removal was not reported: %v", err)
 	}
 }
 

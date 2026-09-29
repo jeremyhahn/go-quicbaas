@@ -23,8 +23,8 @@ import (
 // Which ROLE gets a scarce accelerator
 // =============================================================================
 //
-// A POOL ANSWERS "WHICH PROFILE", AND THAT IS ONLY HALF THE QUESTION. Ordering
-// profiles by preference decides where work goes when several places could take
+// A POOL ANSWERS "WHICH AGENT", AND THAT IS ONLY HALF THE QUESTION. Ordering
+// agents by preference decides where work goes when several places could take
 // it. It cannot decide who goes FIRST when one place is worth more to one kind
 // of work than another — and on a fleet with one large accelerator and several
 // small ones, that is the question that matters. The large card is where code
@@ -32,51 +32,29 @@ import (
 // bought for.
 //
 // THE POLICY IS DATA AND IT IS TUNABLE WHILE THE FLEET RUNS. It rides on the
-// profile, which is a stored, editable record — so "reserve the big card for
+// agent, which is a stored, editable record — so "reserve the big card for
 // review, but let triage use it when review is idle" is an edit, not a
 // redeploy. That is the whole point: the right split depends on the queue, and
 // the queue changes hourly.
 //
-// IDLE CAPACITY IS NOT RESERVED CAPACITY. A profile preferred by review does
+// IDLE CAPACITY IS NOT RESERVED CAPACITY. An agent preferred by review does
 // not sit empty while triage queues: it yields whatever review is not asking
 // for. Reserving unconditionally would trade one starvation for another, and
 // the measured cost of an idle accelerator is the same whichever role is not
 // using it.
 
-// Role names the kind of work a job does. They are the module's runner names,
-// because the runner IS the role: what a job does and which code drives it are
-// the same fact, and a second vocabulary for it would drift from the first.
-type Role string
-
-// Roles the factory schedules. A role this package does not know is still a
-// valid policy subject — the names come from the runner registry, which
-// modules extend — so these are the common ones, not the closed set.
-const (
-	// RoleDelivery writes the change: the SDLC runner.
-	RoleDelivery Role = "sdlc"
-
-	// RoleTriage judges open issues and writes no code.
-	RoleTriage Role = "triage"
-
-	// RoleReview judges a pull request.
-	RoleReview Role = "review"
-)
-
-// String returns the role's name.
-func (r Role) String() string { return string(r) }
-
-// RolePolicy says who a profile is FOR, and on what terms it helps everybody
-// else.
+// RolePolicy says who an Agent is FOR, and on what terms it helps everybody
+// else when it sits in a pool shared between roles.
 //
 // The zero value is "no preference": every role competes on equal terms, which
-// is how every profile behaved before this existed.
+// is how every Agent behaves unless an operator says otherwise.
 type RolePolicy struct {
-	// Prefer is the role this profile is held for. Empty prefers nobody.
-	Prefer Role `json:"prefer,omitempty"`
+	// Prefer is the role this agent is held for. Empty prefers nobody.
+	Prefer AgentRole `json:"prefer,omitempty"`
 
-	// Reserve is how many of the profile's slots are held for Prefer even
+	// Reserve is how many of the agent's slots are held for Prefer even
 	// when it has no queued work. Zero — the useful default — holds none, so
-	// an idle profile is fully available to other roles.
+	// an idle agent is fully available to other roles.
 	//
 	// IT EXISTS FOR LATENCY, NOT FOR FAIRNESS. A review that must start within
 	// seconds cannot wait for a triage turn to finish on a model that takes
@@ -88,7 +66,7 @@ type RolePolicy struct {
 	// Exclusive refuses every role but Prefer, queue or no queue.
 	//
 	// THE ESCAPE HATCH, AND THE WASTEFUL ONE. It is right when sharing is
-	// impossible rather than merely undesirable — a profile whose model takes
+	// impossible rather than merely undesirable — an agent whose model takes
 	// minutes to swap, or an accelerator that cannot hold two models at once —
 	// and wrong whenever the cost is only preference, because it idles the
 	// hardware for a role that is not asking.
@@ -109,6 +87,9 @@ func (p RolePolicy) Validate() error {
 			Message: "reserving or excluding needs a role to reserve FOR; name one or drop the terms",
 		}
 	}
+	if !p.PrefersNobody() && !p.Prefer.Valid() {
+		return &InputValidationError{Field: "role_policy.prefer", Message: "unknown role " + strconv.Quote(string(p.Prefer))}
+	}
 	return nil
 }
 
@@ -117,22 +98,22 @@ func (p RolePolicy) Validate() error {
 // IT IS "WAITING", NOT "RUNNING", and the difference is the whole mechanism.
 // Live jobs are already counted by ProfileLoadReader against the concurrency
 // cap; what this adds is whether the preferred role is ASKING for more. A
-// profile yields to another role exactly when its preferred role's queue is
+// agent yields to another role exactly when its preferred role's queue is
 // empty, so the signal has to be the queue.
 type RoleDemandReader interface {
 	// QueuedForRole returns how many jobs of this role are waiting to start
 	// across the tenant. Zero means the role is not asking for anything.
-	QueuedForRole(ctx context.Context, tenantID string, role Role) (int, error)
+	QueuedForRole(ctx context.Context, tenantID string, role AgentRole) (int, error)
 }
 
-// admits reports whether a profile will take work of this role right now,
+// admits reports whether an agent will take work of this role right now,
 // given how loaded it is and what its preferred role is waiting on.
 //
 // A NIL DEMAND READER MEANS "NOBODY IS WAITING", which makes every non-
-// exclusive profile shareable. That is the correct degradation: a deployment
+// exclusive agent shareable. That is the correct degradation: a deployment
 // that cannot measure its queues should not have its accelerators idled by a
 // policy it cannot evaluate.
-func (p RolePolicy) admits(ctx context.Context, demand RoleDemandReader, tenantID string, role Role, capacity, live int) (bool, string) {
+func (p RolePolicy) admits(ctx context.Context, demand RoleDemandReader, tenantID string, role AgentRole, capacity, live int) (bool, string) {
 	if p.PrefersNobody() || role == p.Prefer {
 		return true, ""
 	}

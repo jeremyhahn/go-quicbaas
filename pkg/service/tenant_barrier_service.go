@@ -79,6 +79,9 @@ type TenantBarrierServicer interface {
 // a pure delegation facade, mirroring databaseService.
 type tenantBarrierService struct {
 	qrdb qrdbtransport.TenantClient
+
+	// unsealed is told after every successful unseal; nil tells no one.
+	unsealed *TenantUnsealHooks
 }
 
 // Compile-time interface check.
@@ -87,8 +90,12 @@ var _ TenantBarrierServicer = (*tenantBarrierService)(nil)
 // NewTenantBarrierService creates a TenantBarrierServicer backed by the embedded
 // qrdb node's TenantClient. The client MUST be non-nil; callers gate
 // construction on a live platform-shard client.
-func NewTenantBarrierService(qrdb qrdbtransport.TenantClient) TenantBarrierServicer {
-	return &tenantBarrierService{qrdb: qrdb}
+func NewTenantBarrierService(qrdb qrdbtransport.TenantClient, opts ...TenantBarrierOption) TenantBarrierServicer {
+	svc := &tenantBarrierService{qrdb: qrdb}
+	for _, opt := range opts {
+		opt(svc)
+	}
+	return svc
 }
 
 // enforceTenantBinding is the MUTATION gate: it ensures the authenticated
@@ -177,10 +184,14 @@ func (s *tenantBarrierService) TenantBarrierUnseal(ctx context.Context, tenantID
 	if err := enforceTenantBinding(ctx, "tenant_barrier.unseal", tenantID); err != nil {
 		return err
 	}
-	return s.qrdb.TenantBarrierUnseal(ctx, &qrdbtransport.TenantBarrierUnsealRequest{
+	if err := s.qrdb.TenantBarrierUnseal(ctx, &qrdbtransport.TenantBarrierUnsealRequest{
 		TenantID: tenantID,
 		Key:      key,
-	})
+	}); err != nil {
+		return err
+	}
+	s.unsealed.notify(ctx, tenantID)
+	return nil
 }
 
 // TenantBarrierUnsealShare delegates a single Shamir share to qrdb and returns
@@ -189,10 +200,17 @@ func (s *tenantBarrierService) TenantBarrierUnsealShare(ctx context.Context, ten
 	if err := enforceTenantBinding(ctx, "tenant_barrier.unseal_share", tenantID); err != nil {
 		return nil, err
 	}
-	return s.qrdb.TenantBarrierUnsealShare(ctx, &qrdbtransport.TenantBarrierUnsealShareRequest{
+	progress, err := s.qrdb.TenantBarrierUnsealShare(ctx, &qrdbtransport.TenantBarrierUnsealShareRequest{
 		TenantID: tenantID,
 		Share:    share,
 	})
+	if err != nil {
+		return nil, err
+	}
+	if progress != nil && progress.Complete {
+		s.unsealed.notify(ctx, tenantID)
+	}
+	return progress, nil
 }
 
 // TenantBarrierSeal delegates a seal to qrdb.

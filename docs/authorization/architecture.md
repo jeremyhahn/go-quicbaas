@@ -11,7 +11,7 @@ QuicBaaS implements enterprise-grade ABAC authorization through the IAM module, 
 
 Attribute-Based Access Control (ABAC) is an authorization model that evaluates access requests based on attributes rather than static role assignments. ABAC policies can incorporate:
 
-- **Subject attributes**: User properties like department, clearance level, or group membership
+- **Subject attributes**: User properties like department, clearance level, or the roles the user is bound to
 - **Resource attributes**: Properties of the data being accessed like owner, classification, or age
 - **Action**: The operation being performed (read, write, delete, admin)
 - **Context**: Environmental factors like time of day, IP address, or MFA status
@@ -125,7 +125,7 @@ type Subject struct {
     // Roles contains RBAC roles assigned to the subject
     Roles []string
 
-    // Groups contains group memberships
+    // Groups is the `groups` claim: the names of the roles the user is bound to
     Groups []string
 
     // Attributes contains custom attributes for ABAC evaluation
@@ -963,19 +963,19 @@ Success: agent is disabled; all subsequent operations fail with `PERMISSION_DENI
 **Errors:**
 
 - `404 Not Found`: Agent does not exist
-- `409 Conflict`: Agent is already disabled (`AgentAlreadyDisabledError`)
+- `409 Conflict`: Agent is already disabled (`FleetNodeAlreadyDisabledError`)
 
 #### gRPC RPC
 
 ```protobuf
-rpc DisableAgent(DisableAgentRequest) returns (DisableAgentResponse) {}
+rpc DisableFleetNode(DisableFleetNodeRequest) returns (DisableFleetNodeResponse) {}
 
-message DisableAgentRequest {
+message DisableFleetNodeRequest {
     string tenant_id = 1;   // Tenant owning the agent
     string agent_id = 2;    // Agent to disable
 }
 
-message DisableAgentResponse {
+message DisableFleetNodeResponse {
     string agent_id = 1;           // Echoed from request
     bool disabled = 2;             // True if successfully disabled
     int64 disabled_at_unix = 3;    // Timestamp
@@ -984,19 +984,19 @@ message DisableAgentResponse {
 
 #### Service Implementation
 
-From `pkg/service/agent_admin_service.go`:
+From `pkg/service/fleet_admin_service.go`:
 
 ```go
-type AgentAdminService interface {
-    DisableAgent(ctx context.Context, req *DisableAgentRequest) (*DisableAgentResponse, error)
+type FleetAdminService interface {
+    DisableFleetNode(ctx context.Context, req *DisableFleetNodeRequest) (*DisableFleetNodeResponse, error)
 }
 
-type DisableAgentRequest struct {
+type DisableFleetNodeRequest struct {
     TenantID string
     AgentID  string
 }
 
-type DisableAgentResponse struct {
+type DisableFleetNodeResponse struct {
     AgentID    string
     Disabled   bool
     DisabledAt time.Time
@@ -1011,7 +1011,7 @@ The service:
 3. Removes mTLS certificate thumbprint pin from IAM
 4. Emits `agent.disabled` audit event
 5. Force-closes all active gRPC streams (context cancellation)
-6. Sets `AgentRegistration.Status = disabled`
+6. Sets `FleetNode.Status = disabled`
 
 After disable, the agent cannot:
 - Register or re-register
@@ -1036,19 +1036,19 @@ Authorization: Bearer <token>
 **Errors:**
 
 - `404 Not Found`: Agent does not exist
-- `409 Conflict`: Agent is not disabled (`AgentNotDisabledError`)
+- `409 Conflict`: Agent is not disabled (`FleetNodeNotDisabledError`)
 
 #### gRPC RPC
 
 ```protobuf
-rpc EnableAgent(EnableAgentRequest) returns (EnableAgentResponse) {}
+rpc EnableFleetNode(EnableFleetNodeRequest) returns (EnableFleetNodeResponse) {}
 
-message EnableAgentRequest {
+message EnableFleetNodeRequest {
     string tenant_id = 1;
     string agent_id = 2;
 }
 
-message EnableAgentResponse {
+message EnableFleetNodeResponse {
     string agent_id = 1;
     bool enabled = 2;
     int64 timestamp_unix = 3;
@@ -1057,15 +1057,15 @@ message EnableAgentResponse {
 
 #### Service Implementation
 
-From `pkg/service/agent_admin_service.go`:
+From `pkg/service/fleet_admin_service.go`:
 
 ```go
-type EnableAgentRequest struct {
+type EnableFleetNodeRequest struct {
     TenantID string
     AgentID  string
 }
 
-type EnableAgentResponse struct {
+type EnableFleetNodeResponse struct {
     AgentID   string
     Enabled   bool
     Timestamp time.Time
@@ -1078,7 +1078,7 @@ The service:
 2. Issues new OAuth2 client credentials
 3. Re-activates mTLS certificate (if TLS enabled)
 4. Emits `agent.enabled` audit event
-5. Sets `AgentRegistration.Status = online`
+5. Sets `FleetNode.Status = online`
 
 The agent must re-register to obtain new credentials. The daemon watches for enable events and triggers a registration refresh.
 
@@ -1089,7 +1089,7 @@ Removes an agent's access to a single project by setting its role to `denied`.
 #### REST API
 
 ```
-PUT /api/v1/projects/{project_id}/permissions/{agent_id}
+PUT /api/v1/projects/{project_id}/permissions/{node_id}
 Authorization: Bearer <token>
 Content-Type: application/json
 
@@ -1109,7 +1109,7 @@ Content-Type: application/json
 **Alternative: DELETE endpoint (shorthand for "revoke")**
 
 ```
-DELETE /api/v1/projects/{project_id}/permissions/{agent_id}
+DELETE /api/v1/projects/{project_id}/permissions/{node_id}
 
 204 No Content
 ```
@@ -1119,15 +1119,15 @@ This is equivalent to `PUT` with `role=denied`.
 #### gRPC RPC
 
 ```protobuf
-rpc RevokeAgentRole(RevokeAgentRoleRequest) returns (RevokeAgentRoleResponse) {}
+rpc RevokeFleetNodeRole(RevokeFleetNodeRoleRequest) returns (RevokeFleetNodeRoleResponse) {}
 
-message RevokeAgentRoleRequest {
+message RevokeFleetNodeRoleRequest {
     string tenant_id = 1;
     string project_id = 2;
     string agent_id = 3;
 }
 
-message RevokeAgentRoleResponse {
+message RevokeFleetNodeRoleResponse {
     string agent_id = 1;
     string project_id = 2;
     string role = 3;                   // "denied"
@@ -1138,9 +1138,9 @@ message RevokeAgentRoleResponse {
 Semantically equivalent to:
 
 ```protobuf
-rpc GrantAgentRole(GrantAgentRoleRequest) returns (GrantAgentRoleResponse) {}
+rpc GrantFleetNodeRole(GrantFleetNodeRoleRequest) returns (GrantFleetNodeRoleResponse) {}
 
-message GrantAgentRoleRequest {
+message GrantFleetNodeRoleRequest {
     string tenant_id = 1;
     string project_id = 2;
     string agent_id = 3;
@@ -1153,10 +1153,10 @@ message GrantAgentRoleRequest {
 From `pkg/service/project_service.go`:
 
 ```go
-// RevokeAgentRole sets project role to "denied" for an agent.
-func (s *ProjectService) RevokeAgentRole(ctx context.Context, req *RevokeAgentRoleRequest) (*RevokeAgentRoleResponse, error) {
+// RevokeFleetNodeRole sets project role to "denied" for an agent.
+func (s *ProjectService) RevokeFleetNodeRole(ctx context.Context, req *RevokeFleetNodeRoleRequest) (*RevokeFleetNodeRoleResponse, error) {
     // 1. Validate project exists and belongs to tenant
-    // 2. Set role to "denied" in Permissions.AgentRoles map
+    // 2. Set role to "denied" in Permissions.FleetNodeRoles map
     // 3. Cancel active claims for this agent in this project
     // 4. Emit "project.access.revoked" audit event
     // 5. Return response
@@ -1166,7 +1166,7 @@ func (s *ProjectService) RevokeAgentRole(ctx context.Context, req *RevokeAgentRo
 The service:
 
 1. Validates project and agent exist
-2. Sets `Permissions.AgentRoles[agent_id] = "denied"`
+2. Sets `Permissions.FleetNodeRoles[agent_id] = "denied"`
 3. Cancels all active task claims for the agent in that project
 4. Emits `project.access.revoked` audit event (includes agent_id, project_id, reason)
 5. Returns response
@@ -1185,7 +1185,7 @@ Grants or updates an agent's role in a project.
 #### REST API
 
 ```
-PUT /api/v1/projects/{project_id}/permissions/{agent_id}
+PUT /api/v1/projects/{project_id}/permissions/{node_id}
 Authorization: Bearer <token>
 Content-Type: application/json
 
@@ -1207,16 +1207,16 @@ Valid roles: `lead`, `worker`, `observer`, `denied`.
 #### gRPC RPC
 
 ```protobuf
-rpc GrantAgentRole(GrantAgentRoleRequest) returns (GrantAgentRoleResponse) {}
+rpc GrantFleetNodeRole(GrantFleetNodeRoleRequest) returns (GrantFleetNodeRoleResponse) {}
 
-message GrantAgentRoleRequest {
+message GrantFleetNodeRoleRequest {
     string tenant_id = 1;
     string project_id = 2;
     string agent_id = 3;
     string role = 4;                   // "lead" | "worker" | "observer" | "denied"
 }
 
-message GrantAgentRoleResponse {
+message GrantFleetNodeRoleResponse {
     string agent_id = 1;
     string project_id = 2;
     string role = 3;
@@ -1230,10 +1230,10 @@ Four MCP tools manage agent access:
 
 | Tool | Purpose |
 |------|---------|
-| `agent_disable` | Disable an agent globally |
-| `agent_enable` | Enable a previously disabled agent |
-| `project_grant_agent` | Grant an agent a role in a project |
-| `project_revoke_agent` | Revoke an agent's project access (role=denied) |
+| `quicbaas_fleet_disable` | Disable an agent globally |
+| `quicbaas_fleet_enable` | Enable a previously disabled agent |
+| `project_grant_fleet_node` | Grant an agent a role in a project |
+| `project_revoke_fleet_node` | Revoke an agent's project access (role=denied) |
 
 All tools enforce authorization. Callers must have appropriate IAM scopes.
 
@@ -1241,14 +1241,14 @@ Example (Python):
 
 ```python
 # Disable agent globally
-result = client.call_tool("agent_disable", {
+result = client.call_tool("quicbaas_fleet_disable", {
     "tenant_id": "acme",
     "agent_id": "agent-prod-01"
 })
 # → {"agent_id": "agent-prod-01", "disabled": true}
 
 # Revoke project access
-result = client.call_tool("project_revoke_agent", {
+result = client.call_tool("project_revoke_fleet_node", {
     "tenant_id": "acme",
     "project_id": "proj-uuid",
     "agent_id": "agent-prod-01"
@@ -1256,7 +1256,7 @@ result = client.call_tool("project_revoke_agent", {
 # → {"agent_id": "agent-prod-01", "role": "denied"}
 
 # Re-enable agent after remediation
-result = client.call_tool("agent_enable", {
+result = client.call_tool("quicbaas_fleet_enable", {
     "tenant_id": "acme",
     "agent_id": "agent-prod-01"
 })
@@ -1267,11 +1267,11 @@ result = client.call_tool("agent_enable", {
 
 ```bash
 # Disable agent globally
-quicbaas agent disable --tenant acme --agent agent-prod-01
+quicbaas fleet disable --tenant acme --agent agent-prod-01
 # → Agent disabled. Active claims cancelled.
 
 # Enable agent after remediation
-quicbaas agent enable --tenant acme --agent agent-prod-01
+quicbaas fleet enable --tenant acme --agent agent-prod-01
 # → Agent enabled. Re-register to obtain new credentials.
 
 # Revoke project access
@@ -1290,17 +1290,17 @@ quicbaas project grant-role \
 # → Role granted.
 
 # List agent registrations with status
-quicbaas agent list --tenant acme
+quicbaas fleet list --tenant acme
 # Shows status: online | offline | disabled | error
 
 # Check agent status
-quicbaas agent get --tenant acme --agent agent-prod-01
+quicbaas fleet get --tenant acme --agent agent-prod-01
 # Shows: status, last_heartbeat, registration_time, permissions
 ```
 
 ### UI Integration
 
-#### AgentDetailView (Agents Page)
+#### FleetNodeDetailView (Agents Page)
 
 - **Disable/Enable buttons** in agent detail card
   - Click "Disable" → confirmation modal → agent status changes to "disabled"
@@ -1321,10 +1321,10 @@ All access-control operations emit audit events for compliance and forensics:
 
 | Event Type | Payload | Trigger |
 |------------|---------|---------|
-| `agent.disabled` | `{agent_id, tenant_id, timestamp}` | DisableAgent RPC |
-| `agent.enabled` | `{agent_id, tenant_id, timestamp}` | EnableAgent RPC |
-| `project.access.revoked` | `{agent_id, project_id, tenant_id, timestamp}` | RevokeAgentRole RPC |
-| `project.access.granted` | `{agent_id, project_id, role, tenant_id, timestamp}` | GrantAgentRole RPC |
+| `agent.disabled` | `{agent_id, tenant_id, timestamp}` | DisableFleetNode RPC |
+| `agent.enabled` | `{agent_id, tenant_id, timestamp}` | EnableFleetNode RPC |
+| `project.access.revoked` | `{agent_id, project_id, tenant_id, timestamp}` | RevokeFleetNodeRole RPC |
+| `project.access.granted` | `{agent_id, project_id, role, tenant_id, timestamp}` | GrantFleetNodeRole RPC |
 
 All events include the calling principal (user, service account, or agent) and are logged to the audit trail. See `docs/security/audit.md` for retention and query details.
 
@@ -1337,7 +1337,7 @@ All events include the calling principal (user, service account, or agent) and a
      ↓
 [Compromised / Audit Trigger]
      ↓
-[DisableAgent] → Revoke OAuth2, mTLS pin
+[DisableFleetNode] → Revoke OAuth2, mTLS pin
                  Force-close streams
                  Cancel all claims
      ↓
@@ -1345,7 +1345,7 @@ All events include the calling principal (user, service account, or agent) and a
      ↓
 [Remediation: Re-certificate, Key rotation, etc.]
      ↓
-[EnableAgent] → Issue new OAuth2, mTLS pin
+[EnableFleetNode] → Issue new OAuth2, mTLS pin
                 Set status=online
                 Agent re-registers with new creds
      ↓
@@ -1359,7 +1359,7 @@ All events include the calling principal (user, service account, or agent) and a
      ↓
 [Need to limit scope]
      ↓
-[RevokeAgentRole] → Set role=denied
+[RevokeFleetNodeRole] → Set role=denied
                      Cancel active claims in Project A
                      Agent remains online, other projects unaffected
      ↓
@@ -1367,7 +1367,7 @@ All events include the calling principal (user, service account, or agent) and a
      ↓
 [Later: New team member joins]
      ↓
-[GrantAgentRole] → Set role=worker
+[GrantFleetNodeRole] → Set role=worker
                     Agent can claim tasks in Project A again
      ↓
 [Agent can work in Project A]
@@ -1377,15 +1377,15 @@ All events include the calling principal (user, service account, or agent) and a
 
 - Authorization & RBAC: `docs/security/authorization.md`
 - Audit logging: `docs/security/audit.md`
-- Agent registration: `docs/agents/daemon.md#identity--registration`
+- Fleet node registration: `docs/agents/daemon.md#identity--registration`
 - Project permissions: `docs/orchestration/projects.md#permission-roles`
 - mTLS setup: `docs/security/tls-setup.md`
 
 ### Source Files
 
-- `pkg/service/agent_admin_service.go` — AgentAdminService interface and types
-- `pkg/service/agent_admin_service_impl.go` — Implementation
-- `pkg/service/project_service.go` — GrantAgentRole, RevokeAgentRole RPCs
+- `pkg/service/fleet_admin_service.go` — FleetAdminService interface and types
+- `pkg/service/fleet_admin_service_impl.go` — Implementation
+- `pkg/service/project_service.go` — GrantFleetNodeRole, RevokeFleetNodeRole RPCs
 - `pkg/api/rest/handlers_agent.go` — REST endpoints for disable/enable
 - `pkg/api/rest/handlers_project.go:451-560` — REST endpoints for grant/revoke
 - `pkg/api/grpc/server_agent.go` — gRPC service for agent admin

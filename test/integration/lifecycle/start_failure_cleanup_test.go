@@ -52,7 +52,6 @@ package lifecycle
 import (
 	"context"
 	"log/slog"
-	"net"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -67,25 +66,21 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/netport"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // seededDatabaseName is the tenant database every test here leaves on disk
 // for the server to recover.
 const seededDatabaseName = "recovered-tenant-db"
 
-// freePort reserves a kernel-assigned port and hands it back. The listener is
-// closed before the port is used, which is the standard race every server in
-// this suite already accepts; a fixed port would be the worse trade, because
-// two packages running in parallel would collide on it deterministically
-// rather than improbably.
+// freePort reserves a loopback port for the test's server to bind. It is
+// reserved through netport rather than drawn from :0 and released, so nothing
+// else can be handed it before the bind (go-quicbaas#721), and it is released
+// after the test's own cleanups.
 func freePort(t *testing.T) int {
 	t.Helper()
-
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err, "reserving a free port must succeed")
-	defer listener.Close()
-
-	return listener.Addr().(*net.TCPAddr).Port
+	return netport.MustReserveOne(t)
 }
 
 // embeddedConfig builds an embedded-mode server configuration whose tenant
@@ -97,6 +92,7 @@ func embeddedConfig(t *testing.T, dbRoot string) *config.Config {
 
 	tempDir := t.TempDir()
 	cfg := config.EmbeddedConfig()
+	cfg.IAM.SPIFFETrustDomain = helpers.SPIFFETrustDomain
 	cfg.Storage.DataDir = filepath.Join(tempDir, "data")
 	cfg.Storage.WALDir = filepath.Join(tempDir, "wal")
 	cfg.Logging.Level = "error"

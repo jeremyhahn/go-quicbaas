@@ -147,7 +147,7 @@ func TestHooks_UpdateDeliveryReappliesOnConflictAndGivesUp(t *testing.T) {
 func TestReviewValidator_RecordGivesUpOnAPermanentConflict(t *testing.T) {
 	rig := newReviewRig(t)
 	rig.approveBy("codex", "h1", 1)
-	validator, err := NewReviewValidator(&alwaysConflicts{Store: rig.store}, rig.store, &fakeForges{forge: rig.forge})
+	validator, err := NewReviewValidator(&alwaysConflicts{Store: rig.store}, rig.store, &fakeForges{forge: rig.forge}, testAgentCatalog())
 	if err != nil {
 		t.Fatal(err)
 	}

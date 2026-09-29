@@ -98,6 +98,41 @@ func TestClassify_RealJobLogs(t *testing.T) {
 			wantEvidence:  "Job succeeded",
 		},
 		{
+			name: "runner failed tearing down a job that passed",
+			source: "go-luks2 PR #203 \"CI / Unit Tests\" of 2026-09-22 (go-quicbaas#1011). The three " +
+				"teardown lines are quoted verbatim from the issue, elisions included; the green " +
+				"tail before them is status-raced-shutdown.log's own, the run log having been " +
+				"replaced when an operator re-ran the job.",
+			file:          "runner-teardown.log",
+			conclusion:    ConclusionFailure,
+			wantVerdict:   VerdictVoid,
+			wantSignature: SignatureRunnerTeardown,
+			wantEvidence:  "Error while stop job container",
+		},
+		{
+			name: "runner failed tearing down a job that passed, with its finally error trailing",
+			source: "go-quicbaas PR for #1011, \"CI / Unit Tests\" of 2026-09-23 (task 79769), last 31 " +
+				"lines as the forge review quoted them, the lab forge address replaced by " +
+				"198.51.100.50. The runner writes one more line after \"Job failed\": the " +
+				"teardown error again, from its finally block.",
+			file:          "runner-teardown-finally.log",
+			conclusion:    ConclusionFailure,
+			wantVerdict:   VerdictVoid,
+			wantSignature: SignatureRunnerTeardown,
+			wantEvidence:  "Error occurred running finally",
+		},
+		{
+			name: "a failed step stays genuine however the runner tore the job down",
+			source: "genuine-test-failure.log with the go-luks2 teardown lines inserted between its " +
+				"cleanup marker and its \"Job failed\": a step ended \"Process completed with exit " +
+				"code 1\", and that is the change's answer.",
+			file:          "genuine-failure-with-teardown.log",
+			conclusion:    ConclusionFailure,
+			owners:        ownersOfThisFleet,
+			wantVerdict:   VerdictGenuine,
+			wantSignature: SignatureUnrecognised,
+		},
+		{
 			name: "registry unreachable over TLS",
 			source: "go-quicbaas Actions job 77520 (task 67425, job \"base\", runner ci-runner-01), whole log " +
 				"(20 lines). The host had no insecure-registries entry for the forge's own registry.",
@@ -131,7 +166,7 @@ func TestClassify_RealJobLogs(t *testing.T) {
 		{
 			name: "genuine test failure",
 			source: "go-quicbaas race-detector job of 2026-09-09, last 45 of 540 lines. A real " +
-				"--- FAIL in pkg/agent.",
+				"--- FAIL in pkg/fleet.",
 			file:          "genuine-test-failure.log",
 			conclusion:    ConclusionFailure,
 			owners:        ownersOfThisFleet,
@@ -233,6 +268,7 @@ var genuineFixtures = []struct {
 	{"genuine-test-failure.log", true},
 	{"genuine-make-error.log", true},
 	{"genuine-marker-only.log", false},
+	{"genuine-failure-with-teardown.log", true},
 }
 
 // hostileRunnerStates are every runner state a caller could plausibly hand the
@@ -314,7 +350,7 @@ func TestClassify_FailureEvidenceVetoesVoid(t *testing.T) {
 
 	evidence := map[string]string{
 		"a failed go test":      "--- FAIL: TestSomethingReal (0.01s)",
-		"a failed package":      "FAIL\tgithub.com/jeremyhahn/go-quicbaas/pkg/agent\t1.161s",
+		"a failed package":      "FAIL\tgithub.com/jeremyhahn/go-quicbaas/pkg/fleet\t1.161s",
 		"a bare FAIL":           "FAIL",
 		"a panic":               "panic: runtime error: invalid memory address",
 		"a fatal runtime error": "fatal error: concurrent map writes",

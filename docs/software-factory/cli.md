@@ -2,8 +2,8 @@
 
 > **Status: NORMATIVE** · Last verified: 2026-09-10
 > Every verb and flag of the Software Factory command groups, with runnable
-> examples: `quicbaas orchestrator`, `quicbaas agent`,
-> `quicbaas agent account`, `quicbaas project`, `quicbaas sdlc` and the
+> examples: `quicbaas orchestrator`, `quicbaas fleet`,
+> `quicbaas account`, `quicbaas project`, `quicbaas sdlc` and the
 > planned `quicbaas prompts`. Feature folder: `docs/software-factory/`.
 > Conflicts with this document are defects.
 
@@ -15,7 +15,7 @@ All commands support `--output` flag with values: `table` (default), `json`, `ya
 
 ```bash
 quicbaas orchestrator <command> --output json
-quicbaas agent <command> --output yaml
+quicbaas fleet <command> --output yaml
 ```
 
 ## Global Flags
@@ -23,6 +23,38 @@ quicbaas agent <command> --output yaml
 - `--tenant <tenant>` - Tenant ID (default: "default")
 - `--output <format>` - Output format: json, yaml, table (default: table)
 - `--timeout <duration>` - Command timeout (default: 30s)
+
+## Paging, Sorting and Search
+
+Every server-backed list command — `orchestrator job list`, `orchestrator task
+list`, `orchestrator sessions`, `fleet list`, `project list` and `account
+list` — reads one page at a time and takes the same flags, which map onto the
+list endpoints' `limit`, `offset`, `sort` and `q` parameters
+([api.md](api.md)):
+
+- `--limit <n>` - Page size. Omitted, the server answers 25; it caps any
+  request at 100.
+- `--offset <n>` - Records to skip.
+- `--sort <field>` / `--sort <field>:desc` - Order by a field the endpoint
+  documents. An unknown field is refused by the server with a 400, which the
+  command reports as an invalid-input error.
+- `--search <text>` - Case-insensitive substring match over the endpoint's
+  text fields.
+- `--all` - Follow `next_offset` from `--offset` to the last page and print
+  every record. Without `--limit` it asks for the server's maximum page.
+
+Table and text output end with a footer read from the response envelope:
+
+```
+Showing 26–50 of 132. Next page: --offset 50 (or --all for every page).
+```
+
+JSON and YAML output keep the envelope (`total`, `limit`, `offset`,
+`next_offset`, `facets`) beside the records. With `--all` the envelope
+describes the whole walk and names no next page.
+
+`orchestrator workflow list` reads the local `./workflows/` directory, not the
+server, and takes none of these flags.
 
 ---
 
@@ -36,8 +68,8 @@ The CLI auto-subscribes to real-time event streaming via `SubscribeJobEvents`. E
 
 ```bash
 quicbaas orchestrator run "Build a tic-tac-toe game"
-quicbaas orchestrator run "Implement user authentication" --backend claude
-quicbaas orchestrator run "Add caching layer" --backend ollama --model llama3
+quicbaas orchestrator run "Implement user authentication" --lead agent:claude-lead
+quicbaas orchestrator run "Add caching layer" --lead pool:leads
 quicbaas orchestrator run "Build the REST API" --project proj_123 --max-iterations 5
 quicbaas orchestrator run "Build a game" --workflow software-dev
 quicbaas orchestrator run "Custom task" --workflow-file ./my-workflow.yaml
@@ -47,13 +79,17 @@ Arguments:
 - `<description>` - Task description (required)
 
 Flags:
-- `--backend <name>` - Lead agent backend name
-- `--model <model>` - Lead agent model override
+- `--lead <ref>` - The [Agent or pool](agents.md) the lead runs as:
+  `<agent-id>`, `agent:<id>` or `pool:<id>`. The default is the project's
+  default lead.
 - `--project <id>` - Project ID to scope the job
 - `--workflow <name>` - Use a built-in workflow by name (e.g., software-dev)
 - `--workflow-file <path>` - Path to a custom workflow YAML file
 - `--max-iterations <int>` - Maximum re-delegation iterations (default: 10)
 - `--poll-interval <duration>` - Interval between status polls (default: 5s)
+- `--prompt-append <text>` / `--prompt-append-file <path>` - Prompt material
+  appended to every session the job spawns, the lead's included. `-` reads
+  stdin. At most 64 KiB. See [agents.md](agents.md#run-time-prompt-material).
 
 Press Ctrl+C to cancel a running job.
 
@@ -77,9 +113,11 @@ List the tenant's orchestration jobs, newest first.
 quicbaas orchestrator job list
 quicbaas orchestrator job list --task 8bf2fb5f30e2f0c87223ed219d1418c7
 quicbaas orchestrator job list --output json
+quicbaas orchestrator job list --search deploy --limit 50
+quicbaas orchestrator job list --all
 ```
 
-Flags:
+Flags (plus the [paging flags](#paging-sorting-and-search)):
 - `--task <id>` - Narrow the listing to the attempts at one task — every job
   that ran it, concluded ones included. That is the task's attempt history.
   The server applies the narrowing; see
@@ -97,6 +135,14 @@ Arguments:
 - `<jobID>` - Job ID to cancel (required)
 
 ---
+
+## Agents
+
+`quicbaas agents list|get|create -f|update <id> -f|delete|used-by` and
+`quicbaas agents pools list|get|create -f|update <id> -f|delete|used-by`
+manage the tenant's [Agents and pools](agents.md). Definitions are YAML or
+JSON. Deleting an Agent or pool that something still references is refused,
+and the refusal lists every user.
 
 ## Workflow Management
 
@@ -125,6 +171,52 @@ Arguments:
 ---
 
 ## Health & Backends
+
+### orchestrator spend-policy
+
+Show or replace the tenant's own spend limits (go-quicbaas#1058): sliding
+windows, in tokens and/or list-price dollars, over every turn charged to the
+tenant. `get` shows each window's usage; `set` takes the shared
+`--spend-window` flags (the set replaces the limits) or `--clear-spend`.
+Setting requires `spend_policy:write`.
+
+```bash
+quicbaas orchestrator spend-policy get
+quicbaas orchestrator spend-policy set --spend-window name=monthly,size=720h,usd=2000
+quicbaas orchestrator spend-policy set --clear-spend
+```
+
+### orchestrator cost
+
+Show one scope of the consumption ledger: tokens, list-price equivalent and
+billed cost, local energy (and how much was measured), and a breakdown by host.
+The scope is a path — each flag needs every one above it. `--host` narrows to
+the turns one host ran (`-` for turns that name none). `--agent` narrows to the
+turns of the sessions one tenant Agent ran (`-` for raw-backend sessions) and
+prints that Agent's own spend windows. See
+[cost-enforcement.md](cost-enforcement.md#reading-the-ledger-the-spend-report).
+
+```bash
+quicbaas orchestrator cost
+quicbaas orchestrator cost --host gpu-host:9091
+quicbaas orchestrator cost --agent claude-coder
+quicbaas orchestrator cost --project p1 --task t1 --from 2026-09-01T00:00:00Z --output json
+```
+
+### orchestrator cost-settings
+
+Show or replace how the tenant's local inference is costed: the electricity
+price and each engine's device draw. A local turn costs `watts × seconds /
+3.6e6 kWh × $/kWh`. See
+[cost-enforcement.md](cost-enforcement.md#local-inference-is-costed-from-electricity).
+
+```bash
+quicbaas orchestrator cost-settings get
+quicbaas orchestrator cost-settings set --electricity-price 0.15 --engine-watts openvino=12 --engine-watts ollama=250
+quicbaas orchestrator cost-settings set --clear   # back to the configuration
+```
+
+`set` replaces the settings. Give every value you want kept.
 
 ### orchestrator health
 
@@ -172,22 +264,31 @@ Total: 4 backends
 
 ### orchestrator spawn
 
-Create a persistent agent session on a specified backend.
+Create a persistent agent session from a tenant [Agent or pool](agents.md),
+or on a raw backend.
 
 ```bash
+quicbaas orchestrator spawn --agent claude-coder --role coding
+quicbaas orchestrator spawn --pool reviewers --role review
 quicbaas orchestrator spawn --backend claude
 quicbaas orchestrator spawn --backend ollama --model llama3
 quicbaas orchestrator spawn --backend claude --project proj_123
 quicbaas orchestrator spawn --backend claude --system-prompt "You are a Go expert"
+quicbaas orchestrator spawn --agent claude-coder --prompt-append-file ./context.md
 ```
 
 Flags:
-- `--backend <name>` (required) - Backend name (e.g., "claude", "ollama")
-- `--model <model>` - Model identifier (overrides backend default)
+- `--agent <id>` / `--pool <id>` / `--backend <name>` - Exactly one is
+  required. A pool fails over along its Agents.
+- `--role <role>` - The slot the session fills; an Agent must declare it
+- `--model <model>` - Model identifier, used with `--backend` only
 - `--system-prompt <text>` - Custom system prompt
+- `--prompt-append <text>` / `--prompt-append-file <path>` - Prompt material
+  appended after the session's resolved prompt. `-` reads stdin. At most
+  64 KiB.
 - `--project <id>` - Project ID to associate with session
 - `--sandbox <mode>` - `default` (server policy) | `required` | `none`
-- `--host-affinity <name|host>` - Pin the session to one agent daemon
+- `--host-affinity <name|host>` - Pin the session to one fleet node daemon
 - `--account-id <id>` - Pin the session to a pooled provider account. A bare
   pin is deliberate: the session is never rotated off it.
 - `--account-auto` - Select a pooled account with the configured strategy and
@@ -332,11 +433,14 @@ Closed:         true
 
 ### orchestrator sessions
 
-List all active sessions across all backends.
+List every session across all backends, in any state — closed and errored
+sessions included — one page at a time; takes the
+[paging flags](#paging-sorting-and-search).
 
 ```bash
 quicbaas orchestrator sessions
 quicbaas orchestrator sessions --output json
+quicbaas orchestrator sessions --all
 ```
 
 Response (table format):
@@ -344,8 +448,7 @@ Response (table format):
 SESSION ID          BACKEND     STATUS      LAST ACTIVE
 sess_abc123         claude      idle        2026-03-31T14:22:30Z
 sess_def456         ollama      active      2026-03-31T14:23:15Z
-
-Total: 2 sessions
+Showing 1–2 of 2.
 ```
 
 ---
@@ -367,6 +470,9 @@ Flags:
 - `--description <text>` - Task description
 - `--team <name>` - Team name
 - `--assigned-to <agentID>` - Assign to specific agent
+- `--prompt-append <text>` / `--prompt-append-file <path>` - Prompt material
+  every attempt at the task carries to the sessions it spawns (the worker's,
+  for a module runner). `-` reads stdin. At most 64 KiB.
 
 Response (table format):
 ```
@@ -401,9 +507,10 @@ quicbaas orchestrator task list
 quicbaas orchestrator task list --status pending
 quicbaas orchestrator task list --team backend --output json
 quicbaas orchestrator task list --assigned-to agent_001
+quicbaas orchestrator task list --search login --sort created_at:desc
 ```
 
-Flags:
+Flags (plus the [paging flags](#paging-sorting-and-search)):
 - `--status <status>` - Filter by status: pending, claimed, in_progress, completed, failed, cancelled, blocked
 - `--statuses <a,b,...>` - Filter by any of several statuses (e.g. `blocked,pending`); composes with `--status`
 - `--project <projectID>` - Filter by project
@@ -551,17 +658,17 @@ Flags:
 
 ---
 
-## Agent Fleet Management
+## Fleet Management
 
 ### agent register
 
 Register a new agent with the fleet registry.
 
 ```bash
-quicbaas agent register --name worker-1 --host node01:9090 --type claude
-quicbaas agent register --name worker-2 --host node02:9090 --type ollama --backend ollama --model llama3
-quicbaas agent register --name worker-3 --host node03:9090 --type claude --tenant my-tenant --output json
-quicbaas agent register --name worker-4 --host node04:9090 --type claude --work-dir /data/agents
+quicbaas fleet register --name worker-1 --host node01:9090 --type claude
+quicbaas fleet register --name worker-2 --host node02:9090 --type ollama --backend ollama --model llama3
+quicbaas fleet register --name worker-3 --host node03:9090 --type claude --tenant my-tenant --output json
+quicbaas fleet register --name worker-4 --host node04:9090 --type claude --work-dir /data/agents
 ```
 
 Flags:
@@ -575,16 +682,17 @@ Flags:
 
 ### agent list
 
-List registered agents with optional filters.
+List registered fleet nodes with optional filters.
 
 ```bash
-quicbaas agent list --tenant dev-team
-quicbaas agent list --tenant dev-team --status running
-quicbaas agent list --tenant dev-team --host node01:9090 --output json
-quicbaas agent list --tenant dev-team --type claude --backend claude
+quicbaas fleet list --tenant dev-team
+quicbaas fleet list --tenant dev-team --status running
+quicbaas fleet list --tenant dev-team --host node01:9090 --output json
+quicbaas fleet list --tenant dev-team --type claude --backend claude
+quicbaas fleet list --tenant dev-team --all
 ```
 
-Flags:
+Flags (plus the [paging flags](#paging-sorting-and-search)):
 - `--host <address>` - Filter by host address
 - `--status <status>` - Filter by status: registered, running, idle, offline, error
 - `--type <type>` - Filter by agent type
@@ -596,8 +704,8 @@ Flags:
 Get detailed status for a specific agent.
 
 ```bash
-quicbaas agent status agent_abc123 --tenant dev-team
-quicbaas agent status agent_abc123 --tenant dev-team --output json
+quicbaas fleet status agent_abc123 --tenant dev-team
+quicbaas fleet status agent_abc123 --tenant dev-team --output json
 ```
 
 Arguments:
@@ -608,7 +716,7 @@ Arguments:
 Remove an agent from the fleet registry.
 
 ```bash
-quicbaas agent remove agent_abc123 --tenant dev-team
+quicbaas fleet remove agent_abc123 --tenant dev-team
 ```
 
 Arguments:
@@ -619,7 +727,7 @@ Arguments:
 Send a heartbeat to keep an agent marked as running.
 
 ```bash
-quicbaas agent heartbeat agent_abc123 --tenant dev-team
+quicbaas fleet heartbeat agent_abc123 --tenant dev-team
 ```
 
 Arguments:
@@ -649,7 +757,7 @@ curl http://localhost:8080/api/v1/orchestrator/backends \
 
 ```bash
 # Register agent
-curl -X POST http://localhost:8080/api/v1/orchestrator/agents \
+curl -X POST http://localhost:8080/api/v1/fleet \
   -H "X-Tenant-ID: dev-team" \
   -H "Content-Type: application/json" \
   -d '{
@@ -660,19 +768,19 @@ curl -X POST http://localhost:8080/api/v1/orchestrator/agents \
   }'
 
 # List agents
-curl http://localhost:8080/api/v1/orchestrator/agents \
+curl http://localhost:8080/api/v1/fleet \
   -H "X-Tenant-ID: dev-team"
 
 # Get agent details
-curl http://localhost:8080/api/v1/orchestrator/agents/agent_abc123 \
+curl http://localhost:8080/api/v1/fleet/agent_abc123 \
   -H "X-Tenant-ID: dev-team"
 
 # Send heartbeat
-curl -X POST http://localhost:8080/api/v1/orchestrator/agents/agent_abc123/heartbeat \
+curl -X POST http://localhost:8080/api/v1/fleet/agent_abc123/heartbeat \
   -H "X-Tenant-ID: dev-team"
 
 # Remove agent
-curl -X DELETE http://localhost:8080/api/v1/orchestrator/agents/agent_abc123 \
+curl -X DELETE http://localhost:8080/api/v1/fleet/agent_abc123 \
   -H "X-Tenant-ID: dev-team"
 ```
 
@@ -746,8 +854,8 @@ gRPC, QUIC, MCP, Unix socket).
 | Command | Description |
 |---------|-------------|
 | `backends list` | List backends registered with the orchestrator |
-| `agents list` | List agent daemons currently in the fleet registry |
-| `agents register` | Register an agent (mTLS-bootstrapped, normally via `agent deploy`) |
+| `agents list` | List fleet node daemons currently in the fleet registry |
+| `agents register` | Register an agent (mTLS-bootstrapped, normally via `fleet deploy`) |
 | `session spawn` | Open a persistent ACP session against a session-based backend |
 | `session prompt` | Send a prompt into an existing session |
 | `session attach` | Replay history + tail live events for a session |
@@ -759,7 +867,7 @@ gRPC, QUIC, MCP, Unix socket).
 ### quicbaas orchestrator inference
 
 Stateless prompt routed to a fleet-resident backend (e.g., the Ollama
-instance bundled with each agent daemon). The orchestrator picks an
+instance bundled with each fleet node daemon). The orchestrator picks an
 online agent serving the chosen backend, forwards the prompt over an
 mTLS-authenticated gRPC channel, and streams the response back.
 
@@ -868,7 +976,7 @@ quicbaas orchestrator backends list --output json
 
 ### quicbaas orchestrator agents list
 
-List the agent daemons currently registered in the fleet:
+List the fleet node daemons currently registered in the fleet:
 
 ```
 ID                  NAME         HOST                  TYPE   STATUS   LAST SEEN
@@ -876,14 +984,14 @@ agt_abc123def456    gpu-node-01  gpu-host.example.com  acp    running  2026-04-2
 ```
 
 The same data is rendered live by the GUI under **Orchestration →
-Agent Fleet**.
+Fleet**.
 
 
 ---
 
-## quicbaas agent
+## quicbaas fleet
 
-Operate against the fleet agent layer: deploy daemons to remote
+Operate against the fleet node layer: deploy daemons to remote
 hosts, list registered daemons, inspect agent identity and
 capabilities, and roll out updates.
 
@@ -897,15 +1005,15 @@ gRPC channel.
 | Command | Description |
 |---------|-------------|
 | `deploy` | Provision a new agent on a remote host over SSH (full mTLS bootstrap) |
-| `list` | List registered agent daemons (alias for `orchestrator agents list`) |
+| `list` | List registered fleet node daemons (alias for `orchestrator agents list`) |
 | `inspect <id>` | Show identity, certificate serial, last heartbeat, served backends |
 | `events <id>` | Stream the agent's event log live |
 | `update <id>` | Push a new static CLI binary and restart the daemon |
 | `delete <id>` | Deregister and tear down a remote daemon |
 
-### quicbaas agent deploy
+### quicbaas fleet deploy
 
-Provisions a QuicBaaS agent daemon on a remote host. See the
+Provisions a QuicBaaS fleet node daemon on a remote host. See the
 [deploy reference](cli.md) for the full step-by-step
 breakdown of what this command does on the wire.
 
@@ -913,20 +1021,29 @@ breakdown of what this command does on the wire.
 
 | Flag | Description |
 |------|-------------|
-| `--ssh user@host[:port]` | SSH target (required) |
+| `--spec <file>` | Node spec (YAML) naming the node and the daemon's whole config; flags set on the command line override it. See [fleet.md](fleet.md) |
+| `--ssh user@host[:port]` | SSH target (required without `--spec`) |
 | `--ssh-key-name <name>` | xkms-stored SSH key (required) |
 | `--ssh-key-scope user\|tenant\|service` | Defaults to `user` |
 | `--ssh-key-owner <id>` | Defaults to `$USER` for `user` scope |
 | `--ssh-insecure-host-key` | Skip remote host-key verification (operator opt-in) |
 | `--server https://host:port` | URL the agent will dial (required) — must be LAN-routable from the target |
 | `--tenant <id>` | Tenant the agent serves; defaults to `default` |
-| `--backend <kind>` (repeatable) | Backends to enable (`ollama`, `acp`) |
+| `--backend <kind>` (repeatable) | Backends the node serves, by name (`claude`, `codex`, `opencode`, `openvino`, `ollama-agent`, `vllm`, `ollama`) or the `acp` group; see [fleet](fleet.md#the-node-spec) |
 | `--binary <path>` | Local path to the static CLI (default `bin/quicbaas-static`) |
 | `--install-dir <dir>` | Remote install dir (default `~/.quicbaas/bin`) |
 | `--data-dir <dir>` | Remote data dir (default `~/.quicbaas/agent`) |
 | `--bind <addr:port>` | Local bind on the remote host (default `0.0.0.0:9091`); needs a fixed numeric port whenever `--wait-online` is non-zero |
 | `--systemd auto\|yes\|no` | Supervisor selection |
 | `--wait-online <duration>` | Max time to wait for online status (default `2m`) |
+| `--max-concurrent-jobs <n>` | The node's declared capacity (`agent.max_concurrent_jobs`); required unless the spec declares it |
+| `--projects-root <dir>` | Remote directory job workspaces are provisioned under |
+| `--preflight` | Run the preflight checks only; change nothing |
+| `--skip-preflight` | Deploy without running the preflight checks first |
+
+`quicbaas fleet stop`, `fleet start` and `fleet undeploy` take the same
+`--spec` / `--ssh` / credential / directory flags; see
+[fleet.md](fleet.md#lifecycle).
 
 #### Example
 
@@ -937,7 +1054,7 @@ quicbaas ssh keys export-public --name fleet-deploy --scope user --owner "$USER"
 # → copy the printed public key to ~/.ssh/authorized_keys on the target.
 
 # 2. Deploy.
-quicbaas agent deploy \
+quicbaas fleet deploy \
   --ssh deploy@gpu-node-01 \
   --ssh-key-name fleet-deploy \
   --server https://quicbaas.example.com:18080 \
@@ -952,10 +1069,10 @@ visible in the fleet registry.
 ### What the agent does on first start
 
 1. **Loads identity** — reads its mTLS keypair from `~/.quicbaas/agent/agent.{crt,key}` and the server CA from `server-ca.crt`.
-2. **Registers** — `POST /api/v1/agents/register` with the client cert. The server returns OAuth2 credentials AND the **gRPC event-ingest URL** (e.g., `https://server-host:19090`). Both are persisted to `credentials.json`.
+2. **Registers** — `POST /api/v1/fleet/enroll` with the client cert. The server returns OAuth2 credentials AND the **gRPC event-ingest URL** (e.g., `https://server-host:19090`). Both are persisted to `credentials.json`.
 3. **Opens the event-forwarding gRPC stream** — dials the gRPC ingest URL learned at registration, NOT the REST URL. This guarantees `h2` ALPN succeeds without dual-publishing gRPC behind the REST listener.
 4. **Heartbeats** — periodic OAuth2 token refresh + status update.
-5. **Serves prompts/inference** — exposes the `proto.AgentRuntime` gRPC service on its bind address (`0.0.0.0:9091` by default) for the central to dial.
+5. **Serves prompts/inference** — exposes the `proto.FleetRuntime` gRPC service on its bind address (`0.0.0.0:9091` by default) for the central to dial.
 
 The agent has **no** outbound listener for its embedded Ollama; that
 process binds to `127.0.0.1:11434` only.
@@ -973,18 +1090,18 @@ whole response.
 See [OAuth 2.1 / OIDC architecture §2a](../oauth2-oidc/architecture.md) for the
 client-identifier grammar and the tenant-homing rule the credentials depend on.
 
-### Embedded agent vs. standalone daemon
+### Embedded fleet node vs. standalone daemon
 
-`quicbaas agent serve` starts a **standalone** agent daemon — a separate process
+`quicbaas fleet serve` starts a **standalone** fleet node daemon — a separate process
 that connects to a remote quicbaasd over the network using mTLS.
 
-`quicbaasd --embedded-agent` starts an **embedded** agent inside the quicbaasd
+`quicbaasd --embedded-fleet-node` starts an **embedded** agent inside the quicbaasd
 process itself. It registers through the same fleet registry as standalone daemons
 but communicates via an in-process bufconn transport (no network hop). Use this
 when the orchestrator host itself has Ollama and you want zero-latency inference
 without deploying a separate process.
 
-See [embedded agent mode](engineering.md#embedded-agent-mode) for full details.
+See [embedded fleet node mode](engineering.md#embedded-fleet-node-mode) for full details.
 
 ### Enrollment retry
 
@@ -1002,6 +1119,12 @@ unrecognized) exit 1 immediately, naming the class and reason.
 | `--enroll-retry-base <dur>` | `1s` | First backoff wait; doubles per attempt |
 | `--enroll-retry-max <dur>` | `1m` | Ceiling on a single backoff wait |
 
+`fleet serve --config <file>` reads every setting from an `agent.Config`
+YAML file (the file `fleet deploy` renders); a flag set explicitly on the
+command line overrides the file, and keys the file omits take the flag
+defaults. `--max-concurrent-jobs` declares the host's share of fleet
+capacity.
+
 There is no attempt budget: an agent that gave up would only be restarted
 by its supervisor into the same wait. See
 [troubleshooting](engineering.md#the-daemon-is-waiting-to-enroll).
@@ -1011,23 +1134,23 @@ by its supervisor into the same wait. See
 - [Fleet quick start](user.md) — full E2E walkthrough
 - [Daemon design](engineering.md) — agent runtime internals
 - [Deploy reference](cli.md) — every flag, every step
-- [Inference reference](user.md) — what `agent deploy --backend ollama` enables
+- [Inference reference](user.md) — what `fleet deploy --backend ollama` enables
 
 
 ---
 
-## Remote Agent Deploy
+## Remote Fleet Node Deploy
 
-`quicbaas agent deploy` provisions a QuicBaaS agent daemon on a remote
+`quicbaas fleet deploy` provisions a QuicBaaS fleet node daemon on a remote
 host over SSH. It mints an mTLS client certificate for the daemon via
 the server's embedded CA, uploads the static CLI and identity material
 over SFTP, installs a systemd `--user` unit (or a nohup fallback), and
 waits for the agent to appear online in the fleet registry.
 
 The same workflow is available from the Wails desktop GUI
-(`Orchestrator → Agents → Deploy Remote Agent`) and the Go SDK
-(`AgentDeployService`). Every transport other than Wails rejects the
-TypeScript SDK `orchestrator.deployAgent` call with
+(`Orchestrator → Agents → Deploy Remote Fleet Node`) and the Go SDK
+(`FleetDeployService`). Every transport other than Wails rejects the
+TypeScript SDK `orchestrator.deployFleetNode` call with
 `DeployNotSupportedError` — deploys are operator-side and must be run
 from the CLI or the desktop app.
 
@@ -1085,19 +1208,17 @@ The deploy verifies the remote host's SSH host key against the pins in
 the SSH known-hosts store before it dials. Pin the target once:
 
 ```sh
-ssh-keyscan -t ed25519 node01 | ssh-keygen -lf -   # read the fingerprint
-quicbaas ssh known-hosts add \
-  --host node01 \
-  --algorithm ssh-ed25519 \
-  --fingerprint SHA256:mq9…
+ssh-keyscan -t ed25519 node01 | cut -d' ' -f2- > node01.pub   # the host key
+quicbaas ssh known-hosts add --host node01 --file node01.pub
 ```
 
 `quicbaas ssh known-hosts list` shows the pins. The deploy reads that
 same store, under the **same scope/owner as the SSH key**: pins default
-to `--scope user` and `--owner $USER`, and `agent deploy` looks them up
+to `--scope user` and `--owner $USER`, and `fleet deploy` looks them up
 with `--ssh-key-scope` / `--ssh-key-owner` (which default the same way).
-A key is accepted only when its algorithm and SHA256 fingerprint match a
-pin; a pin added without `--algorithm` constrains the fingerprint alone.
+A pin stores the full host key (`--key` takes an authorized_keys-format
+line, `--file` reads one); its algorithm and SHA256 fingerprint are derived
+from that key, and a presented key is accepted only when both match a pin.
 Several pins may exist for one host — that is how a host key is rotated
 without a deploy window — and any of them is sufficient.
 
@@ -1106,8 +1227,8 @@ responses:
 
 - **Unpinned host** — the deploy stops before dialing with
   `service: no ssh host-key pin for node01 in scope=user owner=alice;
-  pin it first: quicbaas ssh known-hosts add --host node01 --algorithm
-  <a> --fingerprint <f> (or pass --ssh-insecure-host-key to deploy
+  pin it first: quicbaas ssh known-hosts add --host node01 --key
+  '<authorized_keys line>' (or pass --ssh-insecure-host-key to deploy
   without verification)`.
 - **Key does not match the pin** — the handshake fails with
   `service: ssh host-key mismatch for node01: presented ssh-ed25519
@@ -1140,7 +1261,7 @@ the operator's machine.
 ### Run the deploy
 
 ```sh
-quicbaas agent deploy \
+quicbaas fleet deploy \
   --ssh alice@node01 \
   --ssh-key-name alice-laptop \
   --server https://quicbaas.example.com:8443 \
@@ -1151,6 +1272,10 @@ quicbaas agent deploy \
 
 The deploy executes the following steps in order:
 
+0. **Preflight** — on an SSH session of its own, checks the node without
+   changing it and stops with every failure and its fix if any check fails
+   (skip with `--skip-preflight`; run alone with `--preflight`). The checks
+   are listed in [fleet.md](fleet.md#preflight).
 1. **Issue agent certificate** — requests a fresh mTLS identity from
    the server's CA with `OU=agents, O=<tenant>, EKU=ClientAuth` and
    365-day default validity. Fails fast if the CA rejects the
@@ -1161,7 +1286,10 @@ The deploy executes the following steps in order:
    here, before any connection is made.
 3. **SFTP upload** — streams `bin/quicbaas-static` to
    `$HOME/.quicbaas/bin/quicbaas` and installs `agent.crt`,
-   `agent.key`, `server-ca.crt` into `$HOME/.quicbaas/agent`.
+   `agent.key`, `server-ca.crt` into `$HOME/.quicbaas/agent`, then writes
+   the daemon config rendered from the spec's `agent:` section to
+   `$HOME/.quicbaas/bin/agent.yaml` (0600). The unit and the start script
+   run `quicbaas fleet serve --config` on that file.
 4. **Supervisor install**
    - With `--systemd yes` the workflow writes
      `$HOME/.config/systemd/user/quicbaas-agent.service`, reloads,
@@ -1187,7 +1315,7 @@ port. A named port (`0.0.0.0:grpc`), a unix socket, or the ephemeral
 refused up front with
 
 ```
-deploy: invalid spec field=agent_bind: waiting for the agent to come
+deploy: invalid spec field=node_bind: waiting for the agent to come
 online requires a bind address the deploy can dial back, i.e. host:port
 with a fixed numeric port such as 0.0.0.0:9091; got "0.0.0.0:0"
 ```
@@ -1205,7 +1333,7 @@ certificate store.
 Once installed, the daemon authenticates to the server over mTLS on
 every call:
 
-- **Registration** (first start): `POST /api/v1/agents/register`
+- **Registration** (first start): `POST /api/v1/fleet/enroll`
   using the client certificate. The server returns OAuth2 client
   credentials the daemon caches at `$HOME/.quicbaas/agent/credentials.json`,
   along with the **gRPC event-ingest URL** the agent should dial for the
@@ -1225,7 +1353,8 @@ installed. There is no shared-secret bootstrap token at any stage.
 
 | Flag | Description |
 | --- | --- |
-| `--ssh user@host[:port]` | SSH target (required) |
+| `--spec file` | Node spec; flags set on the command line override it |
+| `--ssh user@host[:port]` | SSH target (required without `--spec`) |
 | `--ssh-key-name name` | Name of an xkms-stored SSH key (required) |
 | `--ssh-key-scope scope` | Scope for the key **and host-key pin** lookup (default `user`) |
 | `--ssh-key-owner owner` | Owner for the key **and host-key pin** lookup (default `$USER`) |
@@ -1238,6 +1367,9 @@ installed. There is no shared-secret bootstrap token at any stage.
 | `--data-dir dir` | Remote data dir (default `~/.quicbaas/agent`) |
 | `--systemd auto\|yes\|no` | Supervisor selection |
 | `--wait-online dur` | Max time to wait for online status |
+| `--max-concurrent-jobs n` | Declared capacity; required unless the spec declares it |
+| `--projects-root dir` | Remote workspace root |
+| `--preflight` / `--skip-preflight` | Check only / deploy without checking |
 
 ## quicbaas project
 
@@ -1258,6 +1390,8 @@ GUI.
 | `get [projectID]` | Show one project by ID, or by name with `--name` |
 | `update <projectID>` | Update a project (only the flags you pass are applied) |
 | `delete <projectID>` | Delete a project |
+| `park <projectID>` | Close the project's intake; work in flight finishes ([projects.md](projects.md#parking-a-project)) |
+| `resume <projectID>` | Reopen a parked project's intake |
 | `grant-role <projectID>` | Set an agent's role in the project |
 | `revoke-role <projectID>` | Remove an agent's access (sets role `denied`) |
 
@@ -1269,7 +1403,7 @@ GUI.
 |------|------|---------|-------------|
 | `--name <name>` | string | — | Project name, unique within the tenant (**required**) |
 | `--description <text>` | string | `""` | Human-readable description |
-| `--workspace-agent <id>` | string | `""` | ID of the agent that owns the workspace |
+| `--workspace-node <id>` | string | `""` | ID of the fleet node that owns the workspace |
 | `--workspace-path <path>` | string | `""` | Filesystem path to the workspace on the agent host |
 | `--host-affinity <host>` | string | `""` | Pin project operations to a preferred agent host |
 | `--default-lead-agent <id>` | string | `""` | Default lead agent ID for workflow runs |
@@ -1288,16 +1422,21 @@ GUI.
 | `--git-ssh-key <name>` | string | `""` | KMS SSH key an `ssh://` repository is reached with (defaults to the signing key) |
 | `--git-ssh-key-scope <scope>` | string | `""` | KMS SSH key scope: `user`, `tenant`, `service` |
 | `--git-ssh-key-owner <owner>` | string | `""` | KMS SSH key owner |
-| `--token-budget <n>` | int | `0` | Maximum LLM token budget (0 = unlimited) |
+| `--spend-window name=N,size=D[,tokens=T][,usd=X]` | string (repeatable) | — | A spend window over every turn charged to the project; the set replaces the limits (go-quicbaas#1058) |
+| `--clear-spend` | bool | `false` | Remove every spend window |
 | `--gpu-minutes <n>` | int | `0` | Maximum GPU compute budget in minutes (0 = unlimited) |
 | `--max-concurrency <n>` | int | `0` | Maximum concurrent workflow runs (0 = unlimited) |
+| `--workspace-tier <tier>` | string | `""` | Storage tier of the sandboxed checkout: `persistent` or `ephemeral` ([storage-tiers.md](storage-tiers.md)); empty keeps the host bind mount |
+| `--workspace-tmpfs-mb <n>` | int | `0` | Size of the ephemeral tier's tmpfs checkout in MiB (0 = unsized; ephemeral tier only) |
+| `--container-memory-mb <n>` | int | `0` | Container memory limit in MiB (0 = the runtime's default) |
+| `--session-rotation <policy>` | string | `""` | What a persistent worker session does when its pooled provider account rotates: `resume` (continue the same conversation; the default) or `fresh` (start a new conversation on the same branch). On update, not passing it leaves the policy unchanged. See [projects.md](projects.md#session-rotation) |
 | `--metadata k=v` | key=value (repeatable) | — | Caller-defined annotations |
 
 ```bash
 quicbaas project create --name web-api \
   --description "Public API service" \
   --git-repo https://git.example.com/acme/web-api.git --git-branch main \
-  --token-budget 1000000
+  --spend-window name=daily,size=24h,tokens=1000000
 ```
 
 `--git-signing` is the switch and `--git-signing-key` is the key: naming the
@@ -1318,12 +1457,16 @@ Accepts every `create` flag plus:
 | `--clear-context-repos` | bool | Remove every context repository from the project |
 
 Fields you do not pass keep their current value. `--git-signing` is
-tri-state: not passing it leaves signing unchanged.
+tri-state: not passing it leaves signing unchanged. The quota and storage-size
+flags are presence-based: not passing one leaves it unchanged, and passing `0`
+lifts the cap or limit.
 
 ```bash
-quicbaas project update proj_abc123 --token-budget 500000 --gpu-minutes 120
+quicbaas project update proj_abc123 --gpu-minutes 120 --spend-window name=monthly,size=720h,usd=500
 quicbaas project update proj_abc123 --clear-description
 quicbaas project update proj_abc123 --git-signing=false --clear-default-workflow
+quicbaas project update proj_abc123 --workspace-tier ephemeral \
+  --workspace-tmpfs-mb 4096 --container-memory-mb 8192
 ```
 
 ### quicbaas project get
@@ -1369,9 +1512,12 @@ transport matrix in [api.md](api.md) agrees.*
 
 ```bash
 quicbaas --address https://quicbaas.example.com:8443 project list
+quicbaas project list --search web --sort name:desc --limit 50
 ```
 
-## quicbaas agent account
+`project list` takes the [paging flags](#paging-sorting-and-search).
+
+## quicbaas account
 
 Pooled provider accounts — one provider login an agent session can be spawned
 against instead of the host's shared identity. The full model, the selection
@@ -1380,9 +1526,9 @@ strategies and the credential path are in [accounts.md](accounts.md).
 | Command | Description |
 |---------|-------------|
 | `create` | Create an account over a tenant secret (`--credential-secret-ref`, `--credential-secret-file`) or an inline credential (`--credential-file`); `--provider`, `--display-name` |
-| `list` | List the tenant's accounts, filterable by `--provider` |
+| `list` | List the tenant's accounts, filterable by `--provider`; takes the [paging flags](#paging-sorting-and-search) |
 | `get <accountID>` | Show one account (identifiers only; never the credential) |
-| `update <accountID>` | Change the display name, the project scope (`--project` / `--clear-project`) or the refresh policy |
+| `update <accountID>` | Change the display name, the project scope (`--project` / `--clear-project`), the refresh policy, the billing (`--billing`, `--monthly-fee`) or the spend policy (below) |
 | `set-default <accountID>` | Make this the provider's default account |
 | `rotate <accountID>` | Replace the stored credential |
 | `usage <accountID>` | Token and cost attribution for the account |
@@ -1394,9 +1540,22 @@ from a flag value: a command-line secret lands in shell history and the
 process table.
 
 ```bash
-quicbaas agent account create --provider claude --display-name alice-work \
+quicbaas account create --provider claude --display-name alice-work \
   --refresh-policy oauth2 --credential-file -
-quicbaas agent account list --provider claude --output json
+quicbaas account list --provider claude --output json
+```
+
+An account's **spend policy** (go-quicbaas#781) is set on `create` and
+`update` with the shared `--spend-window name=N,size=D[,tokens=T][,usd=X]`
+(repeatable; the set replaces the windows) and `--clear-spend`, plus the
+failure breaker `--breaker-failures N --breaker-window D --breaker-cooldown D`
+(all three together) and `--clear-breaker`. On `update` the flags change only
+what they name: new windows keep the breaker and a new breaker keeps the
+windows.
+
+```bash
+quicbaas account update acct_abc123 --spend-window name=five-hour,size=5h,tokens=2000000
+quicbaas account update acct_abc123 --breaker-failures 3 --breaker-window 1h --breaker-cooldown 30m
 ```
 
 ## quicbaas sdlc
@@ -1417,11 +1576,14 @@ the global `--tenant` flag.
 | `unbind <project-id>` | exactly 1 | Detach a project's forge binding |
 | `binding <project-id>` | exactly 1 | Show a project's forge binding |
 | `delivery <task-id>` | exactly 1 | Show what a task's attempt delivered |
+| `adopt <project-id> <issue>` | exactly 2 | Hand an issue back to the factory, optionally resuming its open pull request |
 
 | Flag | Scope | Type | Default | Description |
 |------|-------|------|---------|-------------|
 | `--output` | group | string | `table` | `json`, `yaml` or `table` |
 | `--file`, `-f` | `bind` | string | — | The project binding as YAML or JSON (**required** for `bind`) |
+| `--pull-request` | `adopt` | int | — | An open pull request the task resumes, on its own head branch |
+| `--ruling` | `adopt` | string | — | Appended to the task's contract and posted on the issue |
 
 Omitting `--file` on `bind` fails locally with `BindingFileRequiredError`
 before any request is sent; an unreadable or unparseable file fails with
@@ -1431,12 +1593,41 @@ before any request is sent; an unreadable or unparseable file fails with
 quicbaas sdlc bind go-truststrap --file go-truststrap-binding.yaml
 quicbaas sdlc binding go-truststrap --output json
 quicbaas sdlc delivery 1788567351228350294
+quicbaas sdlc reviewer go-truststrap 42
+quicbaas sdlc reviewer set go-truststrap 42 qwen
+quicbaas sdlc reviewer clear go-truststrap 42
+quicbaas sdlc issue create go-truststrap --title "Split: codec half" --label task:ready --parent 41
+quicbaas sdlc collaborators go-truststrap
+quicbaas sdlc adopt go-luks2 141 --pull-request 194 --ruling "Land #194 as it stands."
 quicbaas sdlc unbind go-truststrap
 ```
 
+`issue create` files an issue on the bound repository through the binding's
+token (`sdlc:issue_create`, audited). `--title` is required; `--body` and
+`--body-file` are exclusive; `--label` repeats and each label must exist on
+the repository; `--parent` links the issue it was split out of. Bad flags fail
+locally with `IssueTitleRequiredError`, `IssueBodyConflictError`,
+`IssueParentError` or `IssueBodyFileError` before any request is sent.
+`collaborators` lists the repository's owner and collaborators — the accounts a
+binding's `rulers` may name.
+
+`adopt` is for an issue no live task holds — its task completed, or triage
+holds it — and is documented in
+[user.md](user.md#adopting-an-issue-no-task-holds). An issue argument that is
+not a positive integer fails with `IssueNumberError` before any request is sent.
+
+`reviewer` shows which reviewer profile reviews a pull request, whether an
+operator chose it, whether its verdict counts toward merge, and the status
+context it publishes under. `set` records an operator override naming one of
+the binding's profiles, and `clear` returns the pull request to the project
+default. A pull request number that is not a positive integer fails with
+`PullRequestNumberError` before any request is sent. See
+[review.md](review.md#the-per-pull-request-override).
+
 The `table` rendering of a binding is one line per decision an operator
 checks — forge, trigger label, strategy, worker (`backend/model in image`),
-verification commands, review policy, review rounds, whether a webhook secret
+verification commands, review policy, the default reviewer and each
+alternate profile with its merge role, review rounds, whether a webhook secret
 is configured, and the pinned SSH host key rendered as its algorithm and
 comment only. `delivery` prints the branch, the base, the head SHA, the pull
 request, then one line per review (reviewer, verdict, head, round) and one

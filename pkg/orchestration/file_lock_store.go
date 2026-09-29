@@ -40,8 +40,13 @@ type fileLockStore struct {
 	raftNode     interfaces.RaftNode
 	shardID      uint64
 	settings     FileLockSettings
-	isolation    WorkspaceIsolation
 	logger       interfaces.Logger
+
+	// isolation is the workflow's workspace isolation mode. It is RECORDED
+	// on every lock it grants as provenance and is never consulted to decide
+	// whether to grant one: enforcement is mandatory in every mode (see
+	// Acquire).
+	isolation WorkspaceIsolation
 }
 
 // NewFileLockService creates a new FileLockService backed by a KV store and lease manager.
@@ -91,26 +96,39 @@ func (s *fileLockStore) Acquire(ctx context.Context, tenantID, projectID, filePa
 		existingLease, leaseErr := s.leaseManager.GetLease(ctx, existing.LeaseID)
 		leaseValid := leaseErr == nil && existingLease != nil && existingLease.IsValid()
 
-		if leaseValid {
-			// Lock exists with a valid lease.
-			if s.isolation == IsolationWorktree {
-				// Worktree mode: advisory only, log warning but allow re-acquire.
-				s.logger.WithFields(map[string]interface{}{
-					"lock_key": lockKey,
-					"holder":   existing.AgentID,
-					"agent_id": agentID,
-				}).Warn("Worktree mode: acquiring advisory lock over existing holder")
-			} else if existing.AgentID != agentID {
-				// Shared mode: reject if another agent holds the lock. The
-				// same agent re-acquiring is allowed (idempotent).
-				return nil, &FileLockedError{
-					AgentID:    existing.AgentID,
-					FilePath:   existing.FilePath,
-					AcquiredAt: existing.AcquiredAt,
-				}
+		// A live lease held by ANOTHER agent is refused in EVERY isolation
+		// mode. Worktree isolation does not make the lock redundant:
+		//
+		//   - This service locks an opaque (tenant, project, path) triple.
+		//     It cannot tell a path that a per-agent worktree privatises
+		//     from one that stays shared, and the shared ones are not
+		//     marginal: the refs, the object database and a submodule's
+		//     checkout are shared by construction even when the working
+		//     directories are not, and a lock is exactly how two workers
+		//     avoid racing on them.
+		//   - Overriding rebinds the lock key to the newcomer's lease while
+		//     the original holder still believes it holds the lock. The
+		//     original holder's Release then revokes the NEWCOMER's lease
+		//     and deletes its lock mid-edit; its Renew extends a lease it
+		//     does not hold; and the fencing token recorded for the key
+		//     describes only the last writer. A warning in the log is not a
+		//     recovery from any of that.
+		//   - Nothing in this daemon provisions a worktree. The workspace
+		//     spec hands a container a description of the checkout to make
+		//     and the container clones it (workspace_spec.go), so a workflow
+		//     declaring "worktree" gets the name and no mechanism. Weakening
+		//     a lock on that promise is the worse of the two failure modes,
+		//     because it is silent.
+		//
+		// The same agent re-acquiring is allowed (idempotent), and an
+		// expired lease is a stale lock this Acquire overwrites.
+		if leaseValid && existing.AgentID != agentID {
+			return nil, &FileLockedError{
+				AgentID:    existing.AgentID,
+				FilePath:   existing.FilePath,
+				AcquiredAt: existing.AcquiredAt,
 			}
 		}
-		// Expired lease: proceed to overwrite the stale lock.
 	}
 
 	// Get fencing token from Raft state if available.

@@ -847,6 +847,10 @@ func TestFT2_StartCatalogManager_WorkerStartError(t *testing.T) {
 	if err != nil {
 		assert.Contains(t, err.Error(), "worker")
 	}
+
+	// Whatever startCatalogManager left wired up is torn down workers-first,
+	// so no worker outlives the catalog store it reads (go-quicbaas#986).
+	stopCatalogStackForTest(t, srv)
 }
 
 // =============================================================================

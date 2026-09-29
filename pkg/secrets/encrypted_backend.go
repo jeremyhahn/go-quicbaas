@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
@@ -141,6 +142,9 @@ type encryptedEntry struct {
 
 	// CreatedAt is when this version was created
 	CreatedAt time.Time `json:"created_at"`
+
+	// CreatedBy is the authenticated principal that minted this version
+	CreatedBy string `json:"created_by,omitempty"`
 
 	// DeletedAt is when this version was deleted (if applicable)
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
@@ -324,6 +328,7 @@ func (eb *EncryptedBackend) StoreWithOptions(ctx context.Context, path string, d
 		Version:       newVersion,
 		Deleted:       false,
 		CreatedAt:     now,
+		CreatedBy:     auth.PrincipalFromContext(ctx),
 	}
 
 	versions.Versions = append(versions.Versions, entry)
@@ -535,6 +540,7 @@ func (eb *EncryptedBackend) ListVersions(ctx context.Context, path string) ([]*V
 		result[i] = &VersionMetadata{
 			Version:   entry.Version,
 			CreatedAt: entry.CreatedAt,
+			CreatedBy: entry.CreatedBy,
 			Deleted:   entry.Deleted,
 			DeletedAt: entry.DeletedAt,
 		}
@@ -585,6 +591,7 @@ func (eb *EncryptedBackend) Rollback(ctx context.Context, path string, version i
 		Version:       newVersion,
 		Deleted:       false,
 		CreatedAt:     now,
+		CreatedBy:     auth.PrincipalFromContext(ctx),
 	}
 
 	versions.Versions = append(versions.Versions, newEntry)

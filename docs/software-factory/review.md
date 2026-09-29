@@ -101,6 +101,39 @@ first step re-asserts a standing verdict rather than re-deriving one
 (`skipDecision`). Starting a job that turns out not to be needed is cheap; it
 decides against the forge before a model is spent.
 
+### A reviewer with no usable account is held, not started
+
+Before starting a review job, the dispatcher asks whether the selected
+seat's Agent can draw any usable pooled account
+(`AgentService.AgentAccountAvailability`, over the admission reader's pool).
+For a pool reference it asks each Agent, and one usable Agent is enough. When
+every account the Agent could use is errored, revoked or over budget, no job is
+created. Such a job's only outcome would be a failed spawn, and on
+2026-09-28 the sweep started one every five minutes against a dead codex
+login.
+
+An account that returns by itself is still usable, and the review is
+dispatched: a busy account at its session cap, or one on a limit hold. An Agent
+that draws on no pool, such as a local model, is always usable.
+
+The held pull request says why on its head: a `pending` status under the
+seat's review context (`quicbaas/review` for the default seat), whose
+description is the reason, such as "no usable codex account: re-login needed on
+1". It is written only when the reason for that head changes. The last reason
+is kept in process memory, so a restart posts it once more. It is never posted
+over a verdict the head already carries.
+
+A merge train asks the same check before it requests its review. While no
+account is usable, the train starts no review job and counts no ask. It audits
+`sdlc:train_review_held` and posts the same pending status on the train's head,
+once per reason. It ejects nobody, because an account nobody can use is the
+environment's fault, not any change's. It asks again on every pass and reviews
+once an account is usable. The account's own Needs-you item says
+what to fix ("needs a re-login" for a rejected login) and that reviews on it are
+held. The sweep re-checks on every
+pass, so review resumes by itself once an account is usable. An availability
+that cannot be read is an error, never read as usable.
+
 ## The floor — a green pull request is reviewed with no delivery at all
 
 Everything above is the **delivery** path. It is not the only one, and until
@@ -203,14 +236,20 @@ nothing forbids it.
 
 ```go
 type ReviewerConfig struct {
-    Backend        string // ACP backend; EMPTY means this project is not self-reviewed
-    Model          string
-    Image          string // the reviewer reads the change in a real checkout
-    Login          string // the forge account the reviewer's token authenticates as
-    TokenSecretRef string // the REVIEWER's own forge token, not the worker's
-    StatusContext  string // default "quicbaas/review"
+    Name              string // the profile's name; empty on the default reads as "default"
+    CountsTowardMerge *bool  // unset: true on the default, false on an alternate
+    Backend           string // ACP backend; EMPTY on the default means not self-reviewed
+    Model             string
+    Image             string // the reviewer reads the change in a real checkout
+    Login             string // the forge account the reviewer's token authenticates as
+    TokenSecretRef    string // the REVIEWER's own forge token, not the worker's
+    StatusContext     string // empty takes the role's default (see below)
+    ReasoningEffort   string // codex: minimal|low|medium|high|xhigh
 }
 ```
+
+`reviewer` is the project's **default** profile and `reviewers` its
+**alternates** — see [reviewer profiles](#reviewer-profiles--a-default-alternates-and-whose-verdict-counts).
 
 **The reviewer is decided once, on the binding.** Routing by label made every
 question about the reviewer a question about the state of a mutable,
@@ -249,6 +288,168 @@ which read as the stronger posture and in fact meant it could not clone an ssh
 remote: `git` offers no client key and the forge answers `Permission denied
 (publickey)`. The two keys a project's git identity holds are now named
 separately rather than bundled into one socket.
+
+## Reviewer profiles — a default, alternates, and whose verdict counts
+
+A binding names one **default** reviewer (`reviewer`) and any number of
+**alternates** (`reviewers`). The default reviews every pull request. An
+alternate reviews one only when an **operator** has chosen it for that pull
+request. The code is in `pkg/sdlc/reviewer_profiles.go` and
+`pkg/sdlc/reviewer_override.go`.
+
+**Only a profile that counts toward merge can land a change, or hold one
+back.** `counts_toward_merge` is a pointer because its default depends on the
+role. Unset on the default means `true`, so every binding written before
+profiles existed still means the same thing. Unset on an alternate means
+`false`, so a newly added reviewer is **advisory** until somebody decides its
+approvals should merge code. An advisory profile's verdict is posted to the
+forge and shown in the delivery. The gate ignores it both ways: it cannot
+approve a change and it cannot block one. Its status is ignored the same way.
+
+**One required status context, however many reviewers.** Every profile that
+counts publishes under the default's context (`quicbaas/review` unless the
+binding says otherwise). Branch protection therefore requires one name and
+never changes when a reviewer is added. An advisory profile publishes under
+its own context, `quicbaas/review/<name>` by default. It can't satisfy the
+required check, and both review dispatch paths skip it when they ask whether
+a head is green enough to review.
+
+| profile | status context | the gate |
+|---|---|---|
+| default, counting (the usual case) | `quicbaas/review` | counts its approval and its refusal |
+| alternate, `counts_toward_merge: true` | `quicbaas/review` (must not set another) | counts its approval and its refusal |
+| alternate, unset or `false` | `quicbaas/review/<name>` or its own | ignores its verdict and its status |
+| default, `counts_toward_merge: false` | `quicbaas/review/<name>` or its own | ignores it; the required context stays `quicbaas/review` |
+
+**Every profile is its own forge identity.** Bind refuses two profiles that
+share a name, a login, a token secret or an advisory status context, with a
+typed `DuplicateReviewerIdentityError`. It also resolves every profile's token
+secret, alternates included: a dangling ref fails at bind, not after a model
+run. Distinct logins let the runner recognise its own standing verdict, let
+the gate tell an advisory verdict from a counting one, and let the
+independence rule assign a model family to each approval. A profile's login
+is mapped to the family of its Agent's backend and model automatically, and
+**that derived family wins**: a `review.reviewers` entry that maps a configured
+profile's login to another family is refused at bind (it would let the
+author's family pass the independence rule under another name). Entries still
+attribute logins no profile uses — a person, an external bot — and a profile
+whose family cannot be derived. Logins compare case-insensitively everywhere:
+a binding naming `CODEX` and a forge reporting `codex` are one account. The
+local review models (`review-bf16`, `review-q8`, `review-q4_K_M`) are the qwen
+builds, so `ollama/review-q8:latest` is family `qwen`.
+
+**The independence rule applies to counting profiles.** A counting profile
+from the worker's own model family is still refused before a model is spent.
+An advisory profile is exempt: the gate ignores its verdict anyway, so a
+second opinion from the author's own family is a legitimate choice. The
+refusal of Claude as a reviewer is unconditional, as before.
+
+### A reviewer on a local model — opencode on ollama
+
+A seat whose Agent runs `backend: opencode` on a model on the ollama provider
+(`ollama/review-q8:latest`) reviews on a model server the fleet runs, not a
+hosted API. The Agent supplies the runtime, model and image; the seat carries
+the endpoint and the pin:
+
+```yaml
+# The tenant Agent (see agents.md):
+#   id: qwen-opencode-reviewer, roles: [review], backend: opencode,
+#   model: ollama/review-q8:latest, image: <the software-factory-worker image>
+reviewers:
+  - name: qwen
+    agent_id: qwen-opencode-reviewer
+    endpoint: http://<gpu-host>:11434   # as the reviewer's CONTAINER reaches it
+    host_affinity: gpu-host               # strict
+    login: qwen-reviewer
+    token_secret_ref: sdlc/reviewer/<project>/qwen-token
+    # counts_toward_merge unset: advisory, publishes quicbaas/review/qwen
+```
+
+- **`endpoint` is required when the seat's Agent is such a reviewer and
+  refused for any other**, checked against the tenant's agent catalog when the
+  binding is saved; on its own a seat's endpoint must only be an http(s) root.
+  The runner hands opencode an inline configuration (`OPENCODE_CONFIG_CONTENT`)
+  whose only enabled provider is that endpoint, with `model`, `small_model` and
+  every built-in agent pinned to the Agent's model and the `task` tool
+  denied. opencode ignores the model an ACP `session/new` names, so without
+  this a host default — or an inherited subagent on Claude — could answer
+  under the review model's name.
+- **No account can undo that.** An account whose credential environment names
+  a variable the spawn already sets is refused (`AccountEnvConflictError`), so
+  a pooled account carrying `OPENCODE_CONFIG_CONTENT` cannot swap the pinned
+  configuration after validation.
+- **No account is needed.** An opencode spawn on an `ollama/` model resolves
+  no pooled provider account (`orchestration.SpawnNeedsNoAccount`); an empty
+  opencode pool does not block it.
+- **`host_affinity` is strict.** When the named node is offline the spawn is
+  refused (`NoMatchingFleetNodeError` on `host_affinity`); it never falls through
+  to the control plane's own backend, which may not reach the endpoint.
+- **Each reviewer has its own checkout.** The workspace key names the pull
+  request, the head, the profile and a digest of its login, so two reviewers
+  of one head placed on one host never share a directory.
+
+### The per-pull-request override
+
+The override is a record the SDLC module owns, keyed by (tenant, project,
+pull request) and naming one profile. It is written only through the
+operator verbs below, under the same `sdlc:bind` permission as the binding.
+**It is never read from a label, a comment, a title or anything a webhook
+carries**, for the reasons [above](#who-reviews--project-configuration-never-a-label).
+
+| transport | read | set | clear |
+|---|---|---|---|
+| REST | `GET …/pulls/{n}/reviewer` | `PUT …/pulls/{n}/reviewer` `{"profile":"qwen"}` | `DELETE …/pulls/{n}/reviewer` |
+| gRPC / Unix | `GetReviewerSelection` | `SetReviewerOverride` | `ClearReviewerOverride` |
+| MCP | `sdlc_reviewer` | `sdlc_reviewer_set` | `sdlc_reviewer_clear` |
+| Go SDK | `SDLC().Reviewer` | `SDLC().SetReviewer` | `SDLC().ClearReviewer` |
+| TS SDK | `sdlc.reviewer` | `sdlc.setReviewer` | `sdlc.clearReviewer` |
+| CLI | `quicbaas sdlc reviewer <project> <pr>` | `… reviewer set <project> <pr> <profile>` | `… reviewer clear <project> <pr>` |
+
+The REST paths are under `/api/v1/sdlc/projects/{projectID}`. QUIC carries
+the REST routes and the embedded transport calls the service directly. All
+three verbs answer the **selection that now holds**: the profile, whether an
+operator chose it, whether it counts toward merge, and its status context.
+
+**Switching reviewer never cancels anything** (owner ruling, 2026-09-25).
+Setting an override records it and asks for a review by the chosen profile
+now. A review that is already running holds the pull request's lease, so it
+runs on and publishes normally, and the answer says `redispatched: false`.
+Every later dispatch (the next push, delivery or sweep) is by the chosen
+profile. `redispatched: true` means a review by the chosen profile started
+now, because none was running. The lease is not widened so that both can run
+at once: every counting profile publishes under the one required status
+context, and two concurrent reviews there would let whichever finished last
+decide the gate. In
+the UI, the job view's delivery card has a reviewer select for its pull
+request, and the project's SDLC section edits the profiles.
+
+Dispatch and the review sweep both select **the override, otherwise the
+default**. The choice travels on the job as the `review.profile` parameter,
+and the backend and model are declared on the job start so the lease that
+bounds a shared model server applies to the reviewer that actually runs. The
+runner resolves the name against the binding again. **A profile removed after
+it was chosen is refused, never replaced by the default**: an operator asked
+for that reviewer, and a verdict from another would answer a question nobody
+asked. The sweep reports it as a `SelectReviewer` failure until the override
+is cleared. Unbinding a project deletes its overrides, so a later binding with
+different profiles does not inherit them.
+
+**"Already judged" depends on the chosen reviewer.** For a counting profile,
+any counting verdict on the head answers the question, exactly as before; an
+advisory verdict does not. For an advisory profile, only its own verdict
+answers it, because the operator picked it to hear what it has to say. A
+review in flight is detected from the chosen profile's own status context.
+
+**The verdict is still bound to the reviewed head.** Profiles change who
+reviews, not what a verdict is about. The checkout is pinned to the captured
+head, the verdict names it, and the gate discards one about any other head.
+
+**One forge setting to check.** An advisory login posts real `APPROVED` and
+`REQUEST_CHANGES` reviews, because that is how the runner recognises its own
+standing verdict. The module's gate ignores them. The forge's own branch
+protection should not count them either: keep advisory logins out of the
+protected branch's approval whitelist, so an advisory `REQUEST_CHANGES` is not
+an official review.
 
 ## The forge write surface
 
@@ -569,13 +770,10 @@ the duplication that let the shell automation merge over its own rejection.
 
 ```yaml
 reviewer:
-  backend: codex
-  model: gpt-5-codex
-  image: ghcr.io/automatethethings/software-factory-reviewer:latest
+  agent_id: codex-reviewer            # an Agent with the review role: runtime, model, image, effort
   login: agent-reviewer
   token_secret_ref: forge/agent-reviewer/token
   status_context: quicbaas/review     # optional
-  reasoning_effort: medium            # optional; codex's model_reasoning_effort: minimal|low|medium|high|xhigh
 discovery: both                       # poll | webhook | both (default)
 review:
   required_approvals: 1
@@ -583,6 +781,28 @@ review:
   require_green_checks: true
   reviewers:
     agent-reviewer: openai            # the family behind the login, for the independence rule
+```
+
+An advisory alternate, the owner's reference profile for a local Qwen model
+next to codex:
+
+```yaml
+reviewer:                             # the default: counts toward merge
+  agent_id: codex-reviewer
+  login: codex
+  token_secret_ref: sdlc/reviewer/go-quicbaas/token
+reviewers:
+  - name: qwen                        # chosen per pull request by an operator
+    agent_id: qwen-reviewer           # an ollama-agent Agent against the node's ollama
+    login: qwen-reviewer              # its own forge account
+    token_secret_ref: sdlc/reviewer/go-quicbaas/qwen-token
+    # counts_toward_merge unset: advisory. It publishes quicbaas/review/qwen,
+    # and the gate ignores its verdict until this is set to true.
+```
+
+```bash
+quicbaas sdlc reviewer set go-quicbaas 1075 qwen   # this PR is reviewed by qwen, advisory
+quicbaas sdlc reviewer clear go-quicbaas 1075      # back to the project default
 ```
 
 With `require_independent_reviewer`, a reviewer drawn from the worker's own
@@ -625,6 +845,7 @@ Node-level, in `sdlc:`:
 | `review_sweep_interval` | `5m` | how often the review floor visits every bound project |
 | `triage_sweep_interval` | `15m` | how often the triage backstop visits every bound project |
 | `unblock_sweep_interval` | `10m` | how often the unblock sweep re-examines every blocked task and returns the ones whose condition has cleared |
+| `train_sweep_interval` | `5m` | how often the merge-train backstop starts a train for a project with a change queued or a train in flight (see [merge-train.md](merge-train.md)) |
 
 The three share one goroutine and keep separate intervals: a triage pass starts
 a job per bound project, a review pass makes forge reads and starts work only

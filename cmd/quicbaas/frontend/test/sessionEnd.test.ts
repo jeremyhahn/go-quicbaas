@@ -46,7 +46,7 @@ import {
   refresh,
   resetOrchestratorStore,
 } from '../src/stores/orchestrator.svelte.ts';
-import { agentStore, refreshAgents } from '../src/stores/agentStore.svelte.ts';
+import { fleetStore, refreshFleet } from '../src/stores/fleetStore.svelte.ts';
 import { sessionStore, refreshSessions } from '../src/stores/sessionStore.svelte.ts';
 
 // ---------------------------------------------------------------------------
@@ -91,7 +91,7 @@ function stubFetch(validAnswer: boolean | 'throw'): void {
       return new Response(
         JSON.stringify({
           jobs: [PROTECTED_ROW],
-          agents: [PROTECTED_ROW],
+          nodes: [PROTECTED_ROW],
           sessions: [PROTECTED_ROW],
           tasks: [PROTECTED_ROW],
         }),
@@ -105,9 +105,9 @@ function stubFetch(validAnswer: boolean | 'throw'): void {
 async function signInAndLoad(): Promise<void> {
   setAuthenticated({ access_token: sessionToken(), refresh_token: 'refresh-1' });
   await refresh();
-  await Promise.all([refreshAgents(), refreshSessions()]);
+  await Promise.all([refreshFleet(), refreshSessions()]);
   expect(orchestratorStore.jobs).toHaveLength(1);
-  expect(agentStore.agents).toHaveLength(1);
+  expect(fleetStore.nodes).toHaveLength(1);
   expect(sessionStore.sessions).toHaveLength(1);
 }
 
@@ -197,11 +197,11 @@ describe('however a session ends, it ends completely', () => {
       expect(orchestratorStore.activeTenantID).toBe(SYSTEM_TENANT_ID);
       // 5. No scoped store will hand out the previous principal's data.
       expect(orchestratorStore.jobs).toEqual([]);
-      expect(orchestratorStore.agents).toEqual([]);
+      expect(orchestratorStore.fleetNodes).toEqual([]);
       expect(orchestratorStore.sessions).toEqual([]);
       expect(orchestratorStore.tasks).toEqual([]);
-      expect(agentStore.agents).toEqual([]);
-      expect(agentStore.onlineAgents).toEqual([]);
+      expect(fleetStore.nodes).toEqual([]);
+      expect(fleetStore.onlineNodes).toEqual([]);
       expect(sessionStore.sessions).toEqual([]);
       expect(sessionStore.activeSession).toBeNull();
       expect(sessionStore.events).toEqual([]);
@@ -293,7 +293,7 @@ describe("a validation verdict cannot be applied to a different session", () => 
             headers: { 'Content-Type': 'application/json' },
           });
         }
-        return new Response(JSON.stringify({ jobs: [], agents: [], sessions: [], tasks: [] }), {
+        return new Response(JSON.stringify({ jobs: [], nodes: [], sessions: [], tasks: [] }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
@@ -338,7 +338,7 @@ describe("a validation verdict cannot be applied to a different session", () => 
             headers: { 'Content-Type': 'application/json' },
           });
         }
-        return new Response(JSON.stringify({ jobs: [], agents: [], sessions: [], tasks: [] }), {
+        return new Response(JSON.stringify({ jobs: [], nodes: [], sessions: [], tasks: [] }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
@@ -385,7 +385,7 @@ describe("a validation verdict cannot be applied to a different session", () => 
             headers: { 'Content-Type': 'application/json' },
           });
         }
-        return new Response(JSON.stringify({ jobs: [], agents: [], sessions: [], tasks: [] }), {
+        return new Response(JSON.stringify({ jobs: [], nodes: [], sessions: [], tasks: [] }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
@@ -731,7 +731,7 @@ describe('a renewal cannot commit for a session that is no longer there', () => 
       // their own orchestrator requests on every sign-in, and counting those
       // would drown the signal.
       if (!String(input).includes('/api/v1/iam/refresh')) {
-        return new Response(JSON.stringify({ jobs: [], agents: [], sessions: [], tasks: [] }), {
+        return new Response(JSON.stringify({ jobs: [], nodes: [], sessions: [], tasks: [] }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
@@ -986,7 +986,7 @@ describe('the credential fingerprint separates tokens a 32-bit hash cannot', () 
       writable: true,
       configurable: true,
       value: vi.fn(async (): Promise<Response> => {
-        return new Response(JSON.stringify({ valid: true, jobs: [], agents: [], sessions: [], tasks: [] }), {
+        return new Response(JSON.stringify({ valid: true, jobs: [], nodes: [], sessions: [], tasks: [] }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });

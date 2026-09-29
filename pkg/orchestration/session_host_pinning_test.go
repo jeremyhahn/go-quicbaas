@@ -345,7 +345,7 @@ func TestPromptSession_LocalSpawnNotHijackedByLateRemote(t *testing.T) {
 	t.Parallel()
 
 	local := newInstanceBackend("LOCAL", "")
-	remote := newInstanceBackend("REMOTE", "embedded-vm-host-1")
+	remote := newInstanceBackend("REMOTE", "embedded-agent-01")
 	impl, res := newLocalSpawnSvc(t, local, remote)
 
 	ctx := ContextWithTenant(context.Background(), "system")
@@ -388,7 +388,7 @@ func TestSessionStatusAndClose_LocalSpawnPinned(t *testing.T) {
 	t.Parallel()
 
 	local := newInstanceBackend("LOCAL", "")
-	remote := newInstanceBackend("REMOTE", "embedded-vm-host-1")
+	remote := newInstanceBackend("REMOTE", "embedded-agent-01")
 	impl, res := newLocalSpawnSvc(t, local, remote)
 
 	ctx := ContextWithTenant(context.Background(), "system")

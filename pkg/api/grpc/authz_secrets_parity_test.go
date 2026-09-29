@@ -177,13 +177,13 @@ func authorizeVaultPermission(t *testing.T, perm permission.Permission, identity
 // matters, proven against qrdb's own authorizer rather than restated: for every
 // verb this transport serves, the permission it now requires admits a tenant
 // acting in its OWN vault, refuses that same tenant naming ANOTHER tenant, and
-// refuses the system tenant.
+// never lifts the system tenant across tenants — while admitting the system
+// tenant to its own vault.
 //
-// The system-tenant denial is qrdb's deliberate ScopeTenantOnly posture — "a
-// platform (system) operator must not exercise them on a tenant's behalf"
-// (go-qrdb/pkg/permission/broker_scope.go) — not an oversight here. Restoring
-// a system-tenant vault is go-quicbaas#689 and waits on a new upstream scope;
-// a credentials:* fallback for the system tenant would reopen exactly the
+// That is qrdb's ScopeSelfStrict posture for secrets:* (go-qrdb#372): every
+// identity, system tenant included, reaches its own tenant's vault and no
+// other. It closes go-quicbaas#689 upstream — the system tenant has its own
+// vault again — without the credentials:* fallback that would reopen the
 // cross-tenant reach #534 closed.
 //
 // Under the old credentials:* mapping every case inverts: credentials:* is
@@ -219,13 +219,17 @@ func TestSecretsVaultGRPCPermissions_TenantScopeOutcomes(t *testing.T) {
 				"the refusal must name the cross-tenant reason: %v", err)
 		})
 
-		t.Run(name+"/system_tenant_denied", func(t *testing.T) {
+		t.Run(name+"/system_tenant_not_lifted", func(t *testing.T) {
 			err := authorizeVaultPermission(t, perm, tenant.SystemTenantID, ownTenant)
 			require.Error(t, err,
-				"%s requires %s, which qrdb registers ScopeTenantOnly; the system tenant must be denied "+
-					"(go-quicbaas#689 tracks giving it its own vault upstream)", method, perm)
-			assert.Contains(t, err.Error(), "denied to system tenant",
-				"the denial must name the ScopeTenantOnly reason: %v", err)
+				"%s requires %s, which qrdb registers self-strict; the system tenant must not reach a tenant's vault", method, perm)
+			assert.Contains(t, err.Error(), "system tenant is not lifted",
+				"the denial must name the self-strict reason: %v", err)
+		})
+
+		t.Run(name+"/system_tenant_own_vault_admitted", func(t *testing.T) {
+			assert.NoError(t, authorizeVaultPermission(t, perm, tenant.SystemTenantID, tenant.SystemTenantID),
+				"%s requires %s, which must admit the system tenant acting in its own vault", method, perm)
 		})
 	}
 }

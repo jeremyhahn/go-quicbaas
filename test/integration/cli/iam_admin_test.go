@@ -272,7 +272,7 @@ func TestIAMAdminAssignmentGet(t *testing.T) {
 		}
 
 		userID := UniqueKey("get-admin-user")
-		role := "group_admin"
+		role := "policy_admin"
 		grantedBy := "admin"
 
 		result := createAssignmentJSON(t, runner, userID, role, grantedBy)

@@ -29,21 +29,25 @@ import (
 type memorySecretResolver struct {
 	mu      sync.Mutex
 	secrets map[string][]byte
-	reads   int
-	failErr error
+	// generations is each secret's version stamp, advanced on every put, as
+	// a secrets store stamps the version it writes.
+	generations map[string]int64
+	reads       int
+	failErr     error
 }
 
 func newMemorySecretResolver() *memorySecretResolver {
-	return &memorySecretResolver{secrets: make(map[string][]byte)}
+	return &memorySecretResolver{secrets: make(map[string][]byte), generations: make(map[string]int64)}
 }
 
 func (r *memorySecretResolver) put(tenantID, ref, value string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.secrets[tenantID+"|"+ref] = []byte(value)
+	r.generations[tenantID+"|"+ref]++
 }
 
-func (r *memorySecretResolver) ResolveAccountSecret(_ context.Context, tenantID, ref string) ([]byte, error) {
+func (r *memorySecretResolver) ResolveAccountSecret(_ context.Context, tenantID, ref string) (*AccountSecretValue, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.reads++
@@ -54,7 +58,7 @@ func (r *memorySecretResolver) ResolveAccountSecret(_ context.Context, tenantID,
 	if !ok {
 		return nil, qerrors.New(qerrors.ErrNotFound, "secrets.GetSecret", "secret not found")
 	}
-	return value, nil
+	return &AccountSecretValue{Data: value, Generation: r.generations[tenantID+"|"+ref]}, nil
 }
 
 // refAccountFixture creates a reference-sourced account in an in-memory store

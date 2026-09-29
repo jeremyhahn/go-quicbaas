@@ -19,6 +19,9 @@
 // JobState represents the lifecycle state of an orchestration job.
 // Wails auto-converts Go PascalCase JSON tags to camelCase; all fields use
 // the snake_case JSON tags from Go, received as-is from the REST API.
+import type { SpendLimits } from './spend.js';
+import type { AgentRef, AgentRole, AgentAttempt } from './agents.js';
+
 export type JobState =
   | 'initializing'
   | 'decomposing'
@@ -83,8 +86,11 @@ export interface WorkItem {
 export interface JobConfig {
   tenant_id: string;
   description: string;
-  lead_backend: string;
-  lead_model: string;
+  /** lead is the Agent or pool the job's lead runs as; absent for a job that names none. */
+  lead?: AgentRef;
+  /** lead_backend and lead_model are what lead resolved to when the job started. */
+  lead_backend?: string;
+  lead_model?: string;
   project_id: string;
   poll_interval: number;
   max_iterations: number;
@@ -127,6 +133,8 @@ export interface JobStatus {
   stage?: string;
   /** runner names the JobRunner that drove the job's states; absent means the "workflow" runner. */
   runner?: string;
+  /** prompt_append is the run-time prompt material the job appended to every session it spawned. */
+  prompt_append?: string;
   /** node names the daemon running the job's control loop. */
   node?: string;
   /** heartbeat_at is the nanosecond Unix instant the loop last proved alive. */
@@ -138,7 +146,7 @@ export interface JobStatus {
   // by the run; the rest are the task's facts, laid over the status when the
   // server reads it.
 
-  /** agent_id is the fleet agent the work was dispatched to; absent when it ran in-process. */
+  /** agent_id is the fleet node the work was dispatched to; absent when it ran in-process. */
   agent_id?: string;
   /** stages is every lifecycle moment the job entered, in order. */
   stages?: JobStageRecord[];
@@ -246,14 +254,19 @@ export interface StartJobRequest {
   tenant_id: string;
   description: string;
   workflow_name: string;
-  lead_backend: string;
-  lead_model: string;
+  /** lead is the Agent or pool the lead runs as; absent takes the project's default lead. */
+  lead?: AgentRef;
   project_id: string;
   max_iterations: number;
   poll_interval?: string;
   workflow_file?: string;
   /** runner names the JobRunner that drives the job's states; omit for the "workflow" runner. */
   runner?: string;
+  /**
+   * prompt_append is run-time prompt material appended to every session the
+   * job spawns, the lead's included. At most 64 KiB.
+   */
+  prompt_append?: string;
 }
 
 // StartJobResponse contains the result of starting an orchestration job.
@@ -295,7 +308,7 @@ export interface ListJobsRequest {
    */
   job_ids?: string[];
 
-  /** agent_id narrows the listing to the jobs dispatched to one fleet agent. */
+  /** agent_id narrows the listing to the jobs dispatched to one fleet node. */
   agent_id?: string;
 
   /** The shared paging parameters; see PageParams in page.ts. */
@@ -356,7 +369,7 @@ export interface ListTasksRequest {
 
   /**
    * agent_id narrows the listing to the tasks whose LATEST ATTEMPT ran on one
-   * fleet agent. The agent is the attempt's job's, not the task's; the server
+   * fleet node. The agent is the attempt's job's, not the task's; the server
    * resolves it for the listing.
    */
   agent_id?: string;
@@ -380,11 +393,11 @@ export interface ListTasksResponse {
 
 // =============================================================================
 // Agent Registry Types
-// Mirrors pkg/orchestration/agent_registry_types.go
+// Mirrors pkg/orchestration/fleet_registry_types.go
 // =============================================================================
 
-// AgentStatus represents the lifecycle state of a registered agent.
-export type AgentStatus =
+// FleetNodeStatus represents the lifecycle state of a registered fleet node.
+export type FleetNodeStatus =
   | 'registered'
   | 'running'
   | 'idle'
@@ -392,19 +405,18 @@ export type AgentStatus =
   | 'error'
   | 'disabled';
 
-// AgentRegistration represents a registered agent in the fleet registry.
-// Mirrors orchestration.AgentRegistration.
-export interface AgentRegistration {
+// FleetNode represents a node registered in the fleet registry.
+// Mirrors orchestration.FleetNode.
+export interface FleetNode {
   id: string;
   tenant_id: string;
   name: string;
   host: string;
   backend: string;
   model: string;
-  agent_type: string;
-  status: AgentStatus;
+  node_type: string;
+  status: FleetNodeStatus;
   capabilities: string[];
-  container_id: string;
   work_dir: string;
   last_seen: number;
   registered_at: number;
@@ -413,29 +425,29 @@ export interface AgentRegistration {
   metadata: Record<string, string>;
 }
 
-// DisableAgentRequest identifies an agent to disable globally.
-export interface DisableAgentRequest {
+// DisableFleetNodeRequest identifies a fleet node to disable globally.
+export interface DisableFleetNodeRequest {
   tenant_id: string;
-  agent_id: string;
+  node_id: string;
 }
 
-// DisableAgentResponse is returned after a successful agent disable.
-export interface DisableAgentResponse {
-  agent_id: string;
+// DisableFleetNodeResponse is returned after a successful fleet node disable.
+export interface DisableFleetNodeResponse {
+  node_id: string;
   disabled: boolean;
   disabled_at: string;
   timestamp: string;
 }
 
-// EnableAgentRequest identifies a disabled agent to re-enable.
-export interface EnableAgentRequest {
+// EnableFleetNodeRequest identifies a disabled fleet node to re-enable.
+export interface EnableFleetNodeRequest {
   tenant_id: string;
-  agent_id: string;
+  node_id: string;
 }
 
-// EnableAgentResponse is returned after a successful agent enable.
-export interface EnableAgentResponse {
-  agent_id: string;
+// EnableFleetNodeResponse is returned after a successful fleet node enable.
+export interface EnableFleetNodeResponse {
+  node_id: string;
   enabled: boolean;
   timestamp: string;
 }
@@ -503,6 +515,12 @@ export interface TaskSource {
 // Mirrors orchestration.TaskBlockKind.
 export type TaskBlockKind = 'needs_info' | 'blocked' | 'escalated';
 
+// TaskFaultOrigin says whose failure stopped a task: the environment (the
+// fleet, an account pool, a forge), the work itself, or an attempt whose node
+// stopped with nothing to diagnose it. '' for a task that did not stop on a
+// failure. Mirrors orchestration.TaskFaultOrigin.
+export type TaskFaultOrigin = 'environment' | 'work' | 'undiagnosed' | '';
+
 // ArtifactKind classifies how an artifact's content is stored and referenced.
 // Mirrors orchestration.ArtifactKind.
 export type ArtifactKind = 'inline' | 'file' | 'commit' | 'kv_key' | 'url';
@@ -558,7 +576,7 @@ export interface Task {
   /** project_id scopes the task to a Project; empty for unscoped tasks. */
   project_id?: string;
   /**
-   * agent_id is the fleet agent the task's LATEST ATTEMPT ran on, resolved by
+   * agent_id is the fleet node the task's LATEST ATTEMPT ran on, resolved by
    * the server when the listing is paged. Absent for a task that has had no
    * attempt, or whose attempt ran in-process.
    */
@@ -589,10 +607,31 @@ export interface Task {
   status_changed_at?: number;
   /** runner names the JobRunner that drives an attempt; absent means the lead-driven 'workflow' runner. */
   runner?: string;
+  /** prompt_append is run-time prompt material every attempt carries to the sessions it spawns. */
+  prompt_append?: string;
   /** routing are the placement hints a dispatch reads, kept so a requeue keeps them. */
   routing?: TaskRouting;
   /** dispatch_reason says why the last dispatch produced no job; cleared when one does. */
   dispatch_reason?: string;
+  /** question_attempts counts attempts refunded because the worker stopped to ask a person. */
+  question_attempts?: number;
+  /** block_fault_class names the environment fault class a block came from; '' for a hold or a question. */
+  block_fault_class?: string;
+  /**
+   * conclusion_reason is the typed reason the task stopped; '' while it is
+   * open. Open to strings because the server's vocabulary is wider than the
+   * reasons TaskConclusionReason renders (runner_parked, already_satisfied,
+   * superseded).
+   */
+  conclusion_reason?: TaskConclusionReason | string;
+  /** charged_attempts is attempts less the refunded ones. Derived by the server. */
+  charged_attempts?: number;
+  /** effective_budget is attempt_budget, or the engine default when none is declared. Derived by the server. */
+  effective_budget?: number;
+  /** fault_class names the fault behind the latest concluded attempt; for a blocked task, its block's class. Derived by the server. */
+  fault_class?: string;
+  /** fault_origin says whose failure stopped the task. Derived by the server. */
+  fault_origin?: TaskFaultOrigin;
 }
 
 // TaskRouting are the placement hints a dispatch reads when it decides where
@@ -604,6 +643,69 @@ export interface TaskRouting {
   host_affinity?: string;
   /** gpu_required restricts the attempt to agents advertising "gpu". */
   gpu_required?: boolean;
+}
+
+// =============================================================================
+// Attention inbox — everything only an operator can clear
+// =============================================================================
+//
+// Mirrors sdlc.AttentionItem / sdlc.AttentionKind / sdlc.AttentionAction.
+
+// AttentionKind classifies one attention item.
+export type AttentionKind = 'parked_task' | 'agent_offline' | 'account_error' | 'barrier_sealed' | 'project_idle';
+
+// AttentionAction is one thing an operator may do to resolve an item.
+export type AttentionAction =
+  | 'approve_recommendation'
+  | 'answer'
+  | 'allow_another_round'
+  | 'close_as_done'
+  | 'readmit'
+  | 'note';
+
+// AttentionItem is one thing the operator, and only the operator, can clear:
+// a parked task, or an environmental alert.
+export interface AttentionItem {
+  id: string;
+  kind: AttentionKind;
+  project_id?: string;
+  project_name?: string;
+  subject: string;
+  issue_ref?: string;
+  issue_url?: string;
+  block_kind?: TaskBlockKind;
+  /** condition is the typed unblock condition the park names — see
+   * sdlc.UnblockKind: pipeline_green, forge_issue_state, release_tag,
+   * owner_ruling, operator_repair. */
+  condition?: string;
+  question?: string;
+  recommendation?: string;
+  /** truncated is true when the underlying reply was capped before it was
+   * stored, so recommendation may end mid-sentence. */
+  truncated?: boolean;
+  /** ruling_posted is true when the parked task's issue carries an
+   * authorized ruler's comment newer than the park — the owner has already
+   * answered, and the unblock sweep readmits the task. */
+  ruling_posted?: boolean;
+  /** message is an environmental alert's own explanation. */
+  message?: string;
+  /** severity is "warning" or "critical", set only on environmental alerts. */
+  severity?: string;
+  created_at?: number;
+  status_changed_at?: number;
+  attempts?: number;
+  actions?: AttentionAction[];
+}
+
+// AttentionResolveRequest applies an operator's decision to one blocked task.
+// Mirrors orchestrator.AttentionResolveRequest.
+export interface AttentionResolveRequest {
+  tenant_id: string;
+  task_id: string;
+  action: AttentionAction;
+  /** answer carries the operator's free text. Required for "answer";
+   * optional context for "close_as_done"; ignored otherwise. */
+  answer?: string;
 }
 
 // =============================================================================
@@ -773,6 +875,10 @@ export interface AgentRoleSpec {
   sandboxed: boolean;
   container_image: string;
   num_ctx: number;
+  /** system_prompt is the role's standing instruction; empty leaves the Agent's or the runtime's. */
+  system_prompt?: string;
+  /** prompt_append is run-time prompt material appended to every session of this role. At most 64 KiB. */
+  prompt_append?: string;
 }
 
 // PeerMessagingSettings controls peer-to-peer messaging behavior.
@@ -955,9 +1061,16 @@ export interface SpendWindowStatus {
   // size is the window's length in NANOSECONDS, as Go's time.Duration is
   // encoded by encoding/json.
   size: number;
+  // max_tokens is 0 when the window does not meter tokens.
   max_tokens: number;
   used_tokens: number;
   remaining_tokens: number;
+  // The dollar axis, in millionths of a US dollar at list price over the
+  // window's priced turns; absent or 0 when the window does not meter dollars.
+  max_equivalent_micros?: number;
+  used_equivalent_micros?: number;
+  remaining_equivalent_micros?: number;
+  // exhausted is true when either metered axis has nothing left.
   exhausted: boolean;
   // frees_at is RFC 3339, absent when the window holds nothing.
   frees_at?: string;
@@ -975,29 +1088,80 @@ export interface SpendBreakerVerdict {
   open_until?: string;
 }
 
+// SpendTotals is what a set of consumption entries sums to: the shape of a
+// report's own totals and of every breakdown row under it. Mirrors
+// orchestration.ConsumptionTotals; its fields sit flat on each row.
+export interface SpendTotals {
+  entries?: number;
+  // input_tokens is the fresh prompt; the two cache dimensions are prompt
+  // tokens served from and written into the provider's cache.
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+  total_tokens: number;
+  // equivalent_micros is the list-price equivalent of the PRICED entries in
+  // millionths of the report's currency: what the tokens would have cost on
+  // the provider's metered API. CONSULT priced_entries BEFORE RENDERING IT —
+  // zero priced entries is a dash, never a zero; unpriced_entries > 0 beside
+  // priced ones makes the figure a floor.
+  equivalent_micros?: number;
+  priced_entries?: number;
+  unpriced_entries?: number;
+  // billed_micros is what the turns added to the bill actually paid: zero
+  // per turn on a subscription, the list price on a metered key. Consult
+  // billed_entries the same way.
+  billed_micros?: number;
+  billed_entries?: number;
+  unbilled_entries?: number;
+  duration_ms?: number;
+  // energy_mwh is the energy drawn by the turns costed from electricity, in
+  // milliwatt-hours (a kWh is 1e6); electricity_entries counts them. Consult
+  // electricity_entries before rendering the energy: none is a dash.
+  energy_mwh?: number;
+  electricity_entries?: number;
+  // measured_energy_entries counts the electricity entries whose energy came
+  // from fleet device telemetry (measured or derived) rather than from a
+  // configured draw; the rest of electricity_entries were estimated.
+  measured_energy_entries?: number;
+  successes?: number;
+  failures?: number;
+}
+
+// SpendAccountBilling is how a pooled account is billed.
+export interface SpendAccountBilling {
+  // mode is 'subscription' or 'api'; absent when not configured.
+  mode?: string;
+  // monthly_fee_micros is a subscription's flat monthly fee.
+  monthly_fee_micros?: number;
+}
+
 // SpendAccount is one pooled account's contribution to a scope, and the
 // allowance it draws against.
-export interface SpendAccount {
+export interface SpendAccount extends SpendTotals {
   account_id: string;
   display_name?: string;
   provider?: string;
-  total_tokens: number;
+  billing?: SpendAccountBilling;
   policy_status: SpendPolicyStatus;
   windows?: SpendWindowStatus[];
   // breaker is absent when the account carries no breaker rule, which is not
   // the same as a closed breaker.
   breaker?: SpendBreakerVerdict;
+  // subscription_fee_micros is the part of a subscription's monthly fee that
+  // falls in the report's range. Present only on a tenant-level report and
+  // only for a subscription whose fee is configured; absent renders as a dash.
+  subscription_fee_micros?: number;
 }
 
 // SpendModel is one engine/model pair's share of a scope's tokens.
-export interface SpendModel {
+export interface SpendModel extends SpendTotals {
   engine: string;
   model: string;
-  total_tokens: number;
 }
 
 // SpendChild is one drill-down row: the next chain level below the scope.
-export interface SpendChild {
+export interface SpendChild extends SpendTotals {
   // id is the child's identifier, absent when unattributed.
   id?: string;
   level: SpendLevel;
@@ -1008,7 +1172,6 @@ export interface SpendChild {
   // name is the child's human name where the level has one (a project),
   // absent when unattributed or when the entity no longer exists.
   name?: string;
-  total_tokens: number;
 }
 
 // GetSpendReportRequest addresses one scope of the attribution chain.
@@ -1025,10 +1188,40 @@ export interface GetSpendReportRequest {
   // true so round 0 — a real level — is distinguishable from "every round".
   round?: number;
   round_set?: boolean;
+  // from and to (RFC 3339) narrow the report to the turns that occurred in
+  // [from, to). from alone ranges up to now; to alone is refused.
+  from?: string;
+  to?: string;
+  // host narrows the report to the turns that ran on one host, as the
+  // report's hosts breakdown names it; SPEND_UNATTRIBUTED selects the turns
+  // that name none. Absent reports every host.
+  host?: string;
+  // agent narrows the report to the turns of the sessions one tenant Agent
+  // ran; SPEND_UNATTRIBUTED selects raw-backend sessions. The report then
+  // carries that Agent's own limits.
+  agent?: string;
+}
+
+// SpendAgent is one tenant Agent's share of a scope's spend.
+export interface SpendAgent extends SpendTotals {
+  // agent_id is the Agent's catalog ID, absent when unattributed.
+  agent_id?: string;
+  // name is the Agent's name when it still exists.
+  name?: string;
+  // unattributed marks the turns of raw-backend sessions.
+  unattributed?: boolean;
+}
+
+// SpendHost is one host's share of a scope's spend.
+export interface SpendHost extends SpendTotals {
+  // host is the host the turns ran on, absent when unattributed.
+  host?: string;
+  // unattributed marks the turns that name no host.
+  unattributed?: boolean;
 }
 
 // GetSpendReportResponse is one scope's consumption and its drill-down.
-export interface GetSpendReportResponse {
+export interface GetSpendReportResponse extends SpendTotals {
   level: SpendLevel;
   tenant_id: string;
   project_id?: string;
@@ -1041,29 +1234,21 @@ export interface GetSpendReportResponse {
   // still exists.
   project_name?: string;
 
-  entries: number;
-  // input_tokens is the fresh prompt; the two cache dimensions are prompt
-  // tokens served from and written into the provider's cache.
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens?: number;
-  cache_write_tokens?: number;
-  total_tokens: number;
-
-  // cost_micros is the summed charge in millionths of a currency unit, and
-  // cost_measured says whether ANY of it was priced.
-  //
-  // CONSULT cost_measured BEFORE RENDERING cost_micros. Nothing in the server
-  // prices a turn yet, so today the flag is false and the figure is
-  // UNMEASURED — not free. Render a dash. See go-quicbaas#791.
-  cost_micros: number;
-  cost_measured: boolean;
-
-  successes: number;
-  failures: number;
+  // currency is what every money figure on the report is denominated in.
+  currency?: string;
 
   first_at?: string;
   last_at?: string;
+
+  // from and to echo the range the report was narrowed to; absent for a
+  // report over the scope's whole history.
+  from?: string;
+  to?: string;
+
+  // subscription_fee_micros sums the accounts' fee shares: what the tenant's
+  // subscriptions cost over the range, beside the per-turn billed figure.
+  // Absent below the tenant level or when no subscription carries a fee.
+  subscription_fee_micros?: number;
 
   accounts?: SpendAccount[];
   models?: SpendModel[];
@@ -1071,6 +1256,51 @@ export interface GetSpendReportResponse {
   // child_level names the level children are at, absent at the deepest level.
   child_level?: SpendLevel;
   children?: SpendChild[];
+
+  // scope_policy_status and scope_windows are the scope's OWN spend limits —
+  // a project's at the project level, the tenant's at the tenant level — with
+  // live usage against each window. A spent one defers admission. Absent at
+  // the deeper levels.
+  scope_policy_status?: SpendPolicyStatus;
+  scope_windows?: SpendWindowStatus[];
+
+  // host echoes the host the report was narrowed to, absent for every host;
+  // hosts breaks the totals down by the host each turn ran on.
+  host?: string;
+  hosts?: SpendHost[];
+
+  // agent echoes the Agent the report was narrowed to; agents breaks the
+  // totals down by the Agent each turn's session ran as.
+  agent?: string;
+  agents?: SpendAgent[];
+
+  // agent_policy_status and agent_windows are the narrowed-to Agent's own
+  // spend limits with live usage — what a spawn of the Agent is checked
+  // against. Absent when the report is not narrowed to one Agent.
+  agent_policy_status?: SpendPolicyStatus;
+  agent_windows?: SpendWindowStatus[];
+}
+
+// GetTenantSpendPolicyRequest names the tenant whose limits to read.
+export interface GetTenantSpendPolicyRequest {
+  tenant_id: string;
+}
+
+// SetTenantSpendPolicyRequest replaces a tenant's limits; no windows makes the
+// tenant unmetered.
+export interface SetTenantSpendPolicyRequest {
+  tenant_id: string;
+  limits: SpendLimits;
+}
+
+// TenantSpendPolicy is a tenant's own limits and its live usage against each
+// window, over every turn charged to it (go-quicbaas#1058).
+export interface TenantSpendPolicy {
+  tenant_id: string;
+  limits?: SpendLimits;
+  // updated_at is absent for a tenant that never set limits.
+  updated_at?: string;
+  windows?: SpendWindowStatus[];
 }
 
 // SessionTurnRole names who produced a turn.
@@ -1197,7 +1427,14 @@ export interface SpawnSessionRequest {
   // tenantID threads the orchestrator tenant into the request. Required —
   // the server rejects spawns without a tenant context.
   tenantID: string;
-  backend: string;
+  // agent_id or pool_id names what to spawn from the tenant's catalog; a pool
+  // fails over along its members. With neither, backend (and model) are raw.
+  agent_id?: string;
+  pool_id?: string;
+  // role is the slot the session fills; a spawn by Agent checks the Agent
+  // declares it.
+  role?: AgentRole;
+  backend?: string;
   project_id?: string;
   model?: string;
   work_dir?: string;
@@ -1207,7 +1444,7 @@ export interface SpawnSessionRequest {
   // sandboxed is deprecated in favour of sandbox_mode; kept for server
   // compatibility with older daemons.
   sandboxed?: boolean;
-  // host_affinity pins the session to a specific agent daemon (by Name or Host).
+  // host_affinity pins the session to a specific fleet node daemon (by Name or Host).
   host_affinity?: string;
   // host_affinity_strict, when true, forces hard host_affinity semantics:
   // the server returns no_matching_agent (HTTP 400) if the named host is
@@ -1236,6 +1473,10 @@ export interface SpawnSessionRequest {
   // Together with account_auto it is what authorizes rotation. A session with
   // neither is treated as a deliberate pin and is never moved off its account.
   account_allow?: string[];
+  // prompt_append is run-time prompt material appended after the session's
+  // resolved prompt: the Agent's own, else its role's built-in charter. At
+  // most 64 KiB.
+  prompt_append?: string;
 }
 
 // SpawnSessionResponse is the response from creating a new session.
@@ -1244,6 +1485,11 @@ export interface SpawnSessionResponse {
   session_id: string;
   backend: string;
   container_id?: string;
+  // resolved_agent_id is the catalog Agent the session runs as, for a spawn
+  // by Agent or pool.
+  resolved_agent_id?: string;
+  // failovers are the pool members passed over before resolved_agent_id, and why.
+  failovers?: AgentAttempt[];
 }
 
 // PromptSessionRequest sends a prompt to an existing session.
@@ -1329,7 +1575,7 @@ export interface ListSessionsRequest {
    * which is the ROLE the session played.
    */
   runner?: string;
-  /** agent_id narrows the listing to the sessions on one fleet agent. */
+  /** agent_id narrows the listing to the sessions on one fleet node. */
   agent_id?: string;
 
   /** The shared paging parameters; see PageParams in page.ts. */
@@ -1361,7 +1607,7 @@ export interface SessionStatusResponse {
    */
   runner?: string;
   /**
-   * agent_id is the fleet agent the session's job was dispatched to, resolved
+   * agent_id is the fleet node the session's job was dispatched to, resolved
    * beside `runner` and from the same record. Absent when the session belongs
    * to no job or the work ran in-process.
    */
@@ -1375,20 +1621,20 @@ export interface ListSessionsResponse {
   count: number;
 }
 
-// GetAgentRequest retrieves a single agent by ID.
-// Mirrors orchestrator.GetAgentRequest.
-export interface GetAgentRequest {
+// GetFleetNodeRequest retrieves a single fleet node by ID.
+// Mirrors orchestrator.GetFleetNodeRequest.
+export interface GetFleetNodeRequest {
   tenant_id: string;
-  agent_id: string;
+  node_id: string;
 }
 
-// ListAgentsRequest filters the agent list.
-// Mirrors orchestrator.ListAgentsRequest.
-export interface ListAgentsRequest {
+// ListFleetNodesRequest filters the fleet listing.
+// Mirrors orchestrator.ListFleetNodesRequest.
+export interface ListFleetNodesRequest {
   tenant_id: string;
   host?: string;
   status?: string;
-  agent_type?: string;
+  node_type?: string;
   backend?: string;
   model?: string;
 
@@ -1399,10 +1645,10 @@ export interface ListAgentsRequest {
   q?: string;
 }
 
-// ListAgentsResponse is the response from listing agents.
-// Mirrors orchestrator.ListAgentsResponse.
-export interface ListAgentsResponse {
-  agents: AgentRegistration[];
+// ListFleetNodesResponse is the response from listing fleet nodes.
+// Mirrors orchestrator.ListFleetNodesResponse.
+export interface ListFleetNodesResponse {
+  nodes: FleetNode[];
   count: number;
 }
 
@@ -1475,6 +1721,11 @@ export interface CreateTaskRequest {
   // decomposing the task into work items. A name nothing registered is
   // refused.
   runner?: string;
+
+  // prompt_append is run-time prompt material every attempt at the task
+  // carries to the sessions it spawns (the worker's, for a module runner).
+  // At most 64 KiB.
+  prompt_append?: string;
 }
 
 // ListBackendModelsResponse is the response from listing models for a backend.
@@ -1552,28 +1803,28 @@ export interface CompleteTaskRequest {
 // Agent Registration Mutation Types
 // =============================================================================
 
-// RegisterAgentRequest registers a new agent daemon with the fleet.
-// Mirrors orchestrator.RegisterAgentRequest.
-export interface RegisterAgentRequest {
+// RegisterFleetNodeRequest registers a new node with the fleet.
+// Mirrors orchestrator.RegisterFleetNodeRequest.
+export interface RegisterFleetNodeRequest {
   tenant_id: string;
   name: string;
   host: string;
   backend: string;
-  agent_type: string;
+  node_type: string;
   model?: string;
   metadata?: Record<string, string>;
 }
 
-// RegisterAgentResponse contains the registered agent.
-export interface RegisterAgentResponse {
-  agent: AgentRegistration;
+// RegisterFleetNodeResponse contains the registered fleet node.
+export interface RegisterFleetNodeResponse {
+  node: FleetNode;
 }
 
-// RemoveAgentRequest removes a registered agent by ID.
-// Mirrors orchestrator.RemoveAgentRequest.
-export interface RemoveAgentRequest {
+// RemoveFleetNodeRequest removes a registered fleet node by ID.
+// Mirrors orchestrator.RemoveFleetNodeRequest.
+export interface RemoveFleetNodeRequest {
   tenant_id: string;
-  agent_id: string;
+  node_id: string;
 }
 
 // =============================================================================
@@ -1608,7 +1859,7 @@ export interface ClientConfig {
 
 // =============================================================================
 // Agent Deploy Types
-// Mirrors pkg/agent/deploy/spec.go — fields are snake_case to match the
+// Mirrors pkg/fleet/deploy/spec.go — fields are snake_case to match the
 // JSON tags the Go-side primitives use.
 // =============================================================================
 
@@ -1755,10 +2006,13 @@ export interface SSHPin {
   added_at: string;
   /** Provenance tag: 'manual', 'imported:<path>', 'first-contact', etc. */
   source?: string;
+  /** The pinned host key as an authorized_keys-format line. */
+  public_key?: string;
 }
 
 // AddSSHPinRequest is the body for POST /api/v1/ssh/known-hosts.
-// Mirrors xkmsssh.AddKnownHostRequest.
+// Mirrors xkmsssh.AddKnownHostRequest. The pin is the full host key; the
+// server derives its fingerprint and algorithm from it.
 export interface AddSSHPinRequest {
   /** Scope that owns this pin. */
   scope?: SSHScope;
@@ -1766,10 +2020,8 @@ export interface AddSSHPinRequest {
   owner?: string;
   /** Hostname or IP address to pin. */
   host: string;
-  /** OpenSSH SHA256 fingerprint. */
-  fingerprint: string;
-  /** Algorithm of the host key. */
-  algorithm?: string;
+  /** Host key as an authorized_keys-format line, e.g. "ssh-ed25519 AAAA…". */
+  public_key: string;
   /** Provenance tag. */
   source?: string;
 }
@@ -1851,12 +2103,12 @@ export interface VerifyAuthorizedResponse {
   entry: SSHAuthorizedEntry;
 }
 
-// DeployAgentSpec describes how to deploy a QuicBaaS agent to a remote host.
-// Required fields: host, ssh_user, server, tenant, agent_bind, backends,
+// DeployFleetNodeSpec describes how to deploy a QuicBaaS fleet node to a remote host.
+// Required fields: host, ssh_user, server, tenant, node_bind, backends,
 // binary. The mTLS identity for the daemon is minted by the server-side
 // deploy flow — no bootstrap token is required. Optional fields fall back
 // to server-side defaults.
-export interface DeployAgentSpec {
+export interface DeployFleetNodeSpec {
   host: string;
   ssh_user: string;
   ssh_key_name?: string;
@@ -1868,7 +2120,7 @@ export interface DeployAgentSpec {
 
   server: string;
   tenant: string;
-  agent_bind: string;
+  node_bind: string;
   backends: string[];
 
   binary: string;
@@ -1882,17 +2134,17 @@ export interface DeployAgentSpec {
   wait_online?: number;
 }
 
-// DeployAgentResult is returned by the deploy workflow on success.
-export interface DeployAgentResult {
+// DeployFleetNodeResult is returned by the deploy workflow on success.
+export interface DeployFleetNodeResult {
   host: string;
   installed_path: string;
   service_status: string;
-  agent_id?: string;
+  node_id?: string;
   online_at?: string;
   /** Path to the mTLS client certificate installed on the remote host. */
-  agent_cert_path?: string;
-  /** Hex-encoded serial number of the issued agent certificate. */
-  agent_cert_serial?: string;
+  node_cert_path?: string;
+  /** Hex-encoded serial number of the issued fleet node certificate. */
+  node_cert_serial?: string;
 }
 
 // =============================================================================
@@ -1900,15 +2152,20 @@ export interface DeployAgentResult {
 // Mirrors /api/v1/tenants and /api/v1/iam REST routes.
 // =============================================================================
 
-// IAMUser represents a user identity managed by the IAM service.
+// UserLifecycle is an account's state. It is the only account-state field:
+// only `active` may authenticate.
+export type UserLifecycle = 'pending' | 'active' | 'suspended' | 'locked' | 'disabled' | 'deleting';
+
+// IAMUser represents a user identity managed by the IAM service. An account
+// carries no group list: quicbaas keeps no groups, and the OIDC `groups` claim
+// carries the names of the roles the account is bound to.
 export interface IAMUser {
   id: string;
   tenant_id: string;
   username: string;
   email: string;
-  enabled?: boolean;
+  lifecycle?: UserLifecycle;
   roles: string[];
-  groups: string[];
   created_at: string;
   updated_at: string;
 }
@@ -2811,7 +3068,7 @@ export interface InferenceRequest {
   prompt: string;
   // system_prompt is an optional system message prepended to the conversation.
   system_prompt?: string;
-  // host_affinity pins the call to a specific agent daemon by Name or Host.
+  // host_affinity pins the call to a specific fleet node daemon by Name or Host.
   host_affinity?: string;
   // host_affinity_strict, when true, forces hard host_affinity semantics:
   // the server returns no_matching_agent (HTTP 400) if the named host is
@@ -2956,3 +3213,117 @@ export interface WebAuthnLoginChallenge {
   options: CredentialAssertionJSON;
 }
 
+
+// =============================================================================
+// Cost settings (go-quicbaas#1058)
+// =============================================================================
+//
+// Local inference is costed from electricity:
+//   power_watts × turn seconds / 3.6e6 kWh × electricity_price_per_kwh
+// These are the two inputs a tenant can set at runtime. Each beats the
+// tenant's configured override, which beats the deployment's; the rate
+// defaults to $0.12/kWh.
+
+// GetCostSettingsRequest names the tenant whose cost settings to read.
+export interface GetCostSettingsRequest {
+  tenant_id?: string;
+}
+
+// SetCostSettingsRequest replaces a tenant's cost settings. An absent rate and
+// an engine not named inherit the configuration; an engine named with 0 watts
+// is not costed from electricity for the tenant.
+export interface SetCostSettingsRequest {
+  tenant_id?: string;
+  electricity_price_per_kwh?: number;
+  engine_power_watts?: Record<string, number>;
+}
+
+// ElectricityRateSource names where the rate in force came from.
+export type ElectricityRateSource = 'tenant_settings' | 'tenant_config' | 'deployment_config' | 'default';
+
+// CostSettings is a tenant's runtime settings and the rates in force once
+// layered over the configuration.
+export interface CostSettings {
+  settings: {
+    tenant_id: string;
+    electricity_price_per_kwh?: number;
+    engine_power_watts?: Record<string, number>;
+    updated_at?: string;
+  };
+  electricity: { price_per_kwh: number; source: ElectricityRateSource };
+  // engine_power_watts is every per-engine draw in force, in watts.
+  engine_power_watts?: Record<string, number>;
+}
+
+// =============================================================================
+// The Software Factory worker image refresh (docs/software-factory/worker-image.md)
+// =============================================================================
+
+// WorkerImageAgents are the two agent CLI versions an image carries.
+export interface WorkerImageAgents {
+  claude_code: string;
+  codex: string;
+}
+
+// WorkerImageCheck is one probe or smoke the refresh gate ran.
+export interface WorkerImageCheck {
+  name: string;
+  passed: boolean;
+  detail?: string;
+}
+
+// WorkerImageBound is one managed image bindings name, as a pass found it.
+export interface WorkerImageBound {
+  image: string;
+  // agents are the CLI versions its labels declare; empty when unreadable.
+  agents: WorkerImageAgents;
+  // uses counts the Agents naming it that a binding slot (worker, reviewer, triage) references.
+  uses: number;
+  stale: boolean;
+}
+
+// WorkerImagePromotion is one Agent a pass repointed at the new image, or tried to.
+export interface WorkerImagePromotion {
+  tenant_id: string;
+  agent_id: string;
+  from: string[] | null;
+  to: string;
+  // error is why the Agent was NOT updated; absent on success.
+  error?: string;
+}
+
+// WorkerImageOutcome is how a pass ended.
+export type WorkerImageOutcome = 'current' | 'promoted' | 'partial' | 'failed';
+
+// WorkerImageReport is what one refresh pass did.
+export interface WorkerImageReport {
+  // trigger is "schedule" (the daily pass) or "manual".
+  trigger: string;
+  outcome: WorkerImageOutcome;
+  started_at: string;
+  finished_at: string;
+  // latest are the npm registry versions the pass read.
+  latest: WorkerImageAgents;
+  bound?: WorkerImageBound[];
+  stale?: string[];
+  skipped?: string[];
+  candidate?: string;
+  image_id?: string;
+  // reference is what bindings were rebound to.
+  reference?: string;
+  digest?: string;
+  probes?: WorkerImageCheck[];
+  smokes?: WorkerImageCheck[];
+  promotions?: WorkerImagePromotion[];
+  error?: string;
+}
+
+// WorkerImageStatus is the refresh loop's state as an operator reads it.
+export interface WorkerImageStatus {
+  serving: boolean;
+  running: boolean;
+  running_since?: string;
+  queued: boolean;
+  // last is the most recent pass that finished; absent before the first.
+  last?: WorkerImageReport;
+}

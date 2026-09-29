@@ -206,3 +206,68 @@ func TestACPBackend_Spawn_AccountAuto_LeastUsage(t *testing.T) {
 		t.Fatalf("subprocess env = %v, want the idle account's token", lastEnv())
 	}
 }
+
+// TestACPBackend_Spawn_AccountCannotOverrideTheSpawnsEnvironment drives the
+// real resolution path: an opencode account whose credential names
+// OPENCODE_CONFIG_CONTENT must not replace the reviewer's pinned configuration.
+// The spawn is refused, and nothing reaches a subprocess.
+func TestACPBackend_Spawn_AccountCannotOverrideTheSpawnsEnvironment(t *testing.T) {
+	backend, store, secretStore, lastEnv, cleanup := newTestACPBackendForProvider(t, "opencode")
+	defer cleanup()
+	ctx := context.Background()
+
+	if err := store.Create(ctx, &Account{ID: "acct-oc", TenantID: "system", Provider: AccountProvider("opencode")}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if err := secretStore.Put(ctx, "system", "acct-oc", &AccountCredential{
+		AccessTokenEnvKey: "OPENCODE_CONFIG_CONTENT", AccessToken: `{"model":"anthropic/claude-opus-5-5"}`,
+	}); err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+
+	pinned := `{"model":"ollama/review-q8:latest"}`
+	spawnCtx, cancel := context.WithTimeout(ContextWithTenant(ctx, "system"), 2*time.Second)
+	defer cancel()
+	req := &SpawnRequest{WorkDir: "/tmp", AccountAuto: true, Env: map[string]string{"OPENCODE_CONFIG_CONTENT": pinned}}
+	_, err := backend.Spawn(spawnCtx, req)
+
+	var conflict *AccountEnvConflictError
+	if !errors.As(err, &conflict) || conflict.Key != "OPENCODE_CONFIG_CONTENT" || !errors.Is(err, ErrAccountEnvConflict) {
+		t.Fatalf("Spawn() error = %v (%T), want *AccountEnvConflictError naming OPENCODE_CONFIG_CONTENT", err, err)
+	}
+	if req.Env["OPENCODE_CONFIG_CONTENT"] != pinned {
+		t.Fatalf("the refused spawn's environment was rewritten to %q", req.Env["OPENCODE_CONFIG_CONTENT"])
+	}
+	if len(lastEnv()) != 0 {
+		t.Fatalf("a refused spawn reached a subprocess with env %v", lastEnv())
+	}
+}
+
+// TestACPBackend_Spawn_AccountMayRestateTheSameValue: a credential variable
+// equal to the spawn's own is no override, and the spawn proceeds.
+func TestACPBackend_Spawn_AccountMayRestateTheSameValue(t *testing.T) {
+	backend, store, secretStore, lastEnv, cleanup := newTestACPBackendWithAccountPool(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	if err := store.Create(ctx, &Account{ID: "acct-same", TenantID: "system", Provider: AccountProviderClaude}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if err := secretStore.Put(ctx, "system", "acct-same", &AccountCredential{
+		AccessTokenEnvKey: "CLAUDE_CODE_OAUTH_TOKEN", AccessToken: "tok",
+	}); err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+	spawnCtx, cancel := context.WithTimeout(ContextWithTenant(ctx, "system"), 2*time.Second)
+	defer cancel()
+	sess, err := backend.Spawn(spawnCtx, &SpawnRequest{
+		WorkDir: "/tmp", AccountID: "acct-same", Env: map[string]string{"CLAUDE_CODE_OAUTH_TOKEN": "tok"},
+	})
+	if err != nil {
+		t.Fatalf("Spawn() error = %v", err)
+	}
+	defer backend.Close(context.Background(), sess.ID)
+	if !envContains(lastEnv(), "CLAUDE_CODE_OAUTH_TOKEN=tok") {
+		t.Fatalf("subprocess env = %v", lastEnv())
+	}
+}

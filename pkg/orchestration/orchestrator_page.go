@@ -77,8 +77,9 @@ func (s *agentServiceImpl) ListTasksPage(ctx context.Context, tenantID string, f
 // IT RESOLVES OVER THE WHOLE MATCHING SET, NOT THE PAGE, because the agent is
 // both a facet and a filter: counts taken over a page would say "3" about a
 // tenant with two hundred, and a narrowing applied to a page would hide the
-// matches that fell off it. The cost is one pass over the tenant's jobs,
-// however many tasks name one — see resolveJobFacts.
+// matches that fell off it. The cost is one keyed read per distinct job the
+// matching tasks name, never a scan of the tenant's job history — see
+// resolveJobFacts.
 //
 // IT IS SKIPPED WHEN NOBODY WILL READ IT. A nil page is an internal caller
 // asking for the raw collection — the dispatcher's queue sweep, a CLI listing
@@ -111,14 +112,14 @@ func (s *agentServiceImpl) resolveTaskAgents(ctx context.Context, tenantID strin
 	}
 }
 
-// ListAgentsPage returns one page of the tenant's matching agents, with the
+// ListFleetNodesPage returns one page of the tenant's matching agents, with the
 // facet counts for its status and served backends.
-func (s *agentServiceImpl) ListAgentsPage(ctx context.Context, tenantID string, filter *AgentFilter, page *Page) (*PageResult[*AgentRegistration], error) {
-	agents, err := s.ListAgents(ctx, tenantID, filter.FacetBase())
+func (s *agentServiceImpl) ListFleetNodesPage(ctx context.Context, tenantID string, filter *FleetNodeFilter, page *Page) (*PageResult[*FleetNode], error) {
+	agents, err := s.ListFleetNodes(ctx, tenantID, filter.FacetBase())
 	if err != nil {
 		return nil, err
 	}
-	return ApplyFacetedPage(agents, page, agentPageSpec, agentFacetSpec, filter.MatchesFacets)
+	return ApplyFacetedPage(agents, page, fleetNodePageSpec, fleetNodeFacetSpec, filter.MatchesFacets)
 }
 
 // ListWorkflowsPage returns one page of the context tenant's matching

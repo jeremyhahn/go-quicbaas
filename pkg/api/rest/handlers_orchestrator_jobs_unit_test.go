@@ -69,11 +69,11 @@ func TestOrchestratorHandlers_ServiceUnavailable(t *testing.T) {
 		{http.MethodGet, "/api/v1/orchestrator/jobs/j1", ""},
 		{http.MethodDelete, "/api/v1/orchestrator/jobs/j1", ""},
 		{http.MethodPost, "/api/v1/orchestrator/jobs/j1/children", `{}`},
-		{http.MethodPost, "/api/v1/orchestrator/agents", `{"name":"a","host":"h","agent_type":"t"}`},
-		{http.MethodGet, "/api/v1/orchestrator/agents", ""},
-		{http.MethodGet, "/api/v1/orchestrator/agents/a1", ""},
-		{http.MethodDelete, "/api/v1/orchestrator/agents/a1", ""},
-		{http.MethodPost, "/api/v1/orchestrator/agents/a1/heartbeat", `{}`},
+		{http.MethodPost, "/api/v1/fleet", `{"name":"a","host":"h","node_type":"t"}`},
+		{http.MethodGet, "/api/v1/fleet", ""},
+		{http.MethodGet, "/api/v1/fleet/a1", ""},
+		{http.MethodDelete, "/api/v1/fleet/a1", ""},
+		{http.MethodPost, "/api/v1/fleet/a1/heartbeat", `{}`},
 		{http.MethodPost, "/api/v1/orchestrator/tasks/t1/artifacts", `[]`},
 		{http.MethodGet, "/api/v1/orchestrator/tasks/t1/artifacts", ""},
 		{http.MethodGet, "/api/v1/orchestrator/tasks/t1/artifacts/n1", ""},
@@ -201,14 +201,14 @@ func TestHandleOrchestratorSubscribeJobEvents_ClosedStream(t *testing.T) {
 }
 
 // =============================================================================
-// Agent fleet management
+// Fleet management
 // =============================================================================
 
 func TestHandleOrchestratorRegisterAgent_OK(t *testing.T) {
 	s, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
-	body := `{"name":"agent-a","host":"node-1","agent_type":"worker","backend":"ollama"}`
-	w := doOrchReq(t, s, http.MethodPost, "/api/v1/orchestrator/agents", body)
+	body := `{"name":"agent-a","host":"node-1","node_type":"worker","backend":"ollama"}`
+	w := doOrchReq(t, s, http.MethodPost, "/api/v1/fleet", body)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d", w.Code)
 	}
@@ -221,12 +221,12 @@ func TestHandleOrchestratorRegisterAgent_Validation(t *testing.T) {
 		name, body string
 	}{
 		{"bad json", `{bad`},
-		{"missing name", `{"host":"h","agent_type":"t"}`},
-		{"missing host", `{"name":"a","agent_type":"t"}`},
+		{"missing name", `{"host":"h","node_type":"t"}`},
+		{"missing host", `{"name":"a","node_type":"t"}`},
 		{"missing type", `{"name":"a","host":"h"}`},
 	}
 	for _, c := range cases {
-		w := doOrchReq(t, s, http.MethodPost, "/api/v1/orchestrator/agents", c.body)
+		w := doOrchReq(t, s, http.MethodPost, "/api/v1/fleet", c.body)
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("%s: expected 400, got %d", c.name, w.Code)
 		}
@@ -236,7 +236,7 @@ func TestHandleOrchestratorRegisterAgent_Validation(t *testing.T) {
 func TestHandleOrchestratorListAgents_OK(t *testing.T) {
 	s, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
-	w := doOrchReq(t, s, http.MethodGet, "/api/v1/orchestrator/agents?status=idle&host=node-1&backend=ollama", "")
+	w := doOrchReq(t, s, http.MethodGet, "/api/v1/fleet?status=idle&host=node-1&backend=ollama", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
@@ -245,7 +245,7 @@ func TestHandleOrchestratorListAgents_OK(t *testing.T) {
 func TestHandleOrchestratorGetAgent_OK(t *testing.T) {
 	s, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
-	w := doOrchReq(t, s, http.MethodGet, "/api/v1/orchestrator/agents/agent-1", "")
+	w := doOrchReq(t, s, http.MethodGet, "/api/v1/fleet/agent-1", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
@@ -254,7 +254,7 @@ func TestHandleOrchestratorGetAgent_OK(t *testing.T) {
 func TestHandleOrchestratorRemoveAgent_OK(t *testing.T) {
 	s, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
-	w := doOrchReq(t, s, http.MethodDelete, "/api/v1/orchestrator/agents/agent-1", "")
+	w := doOrchReq(t, s, http.MethodDelete, "/api/v1/fleet/agent-1", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
@@ -263,7 +263,7 @@ func TestHandleOrchestratorRemoveAgent_OK(t *testing.T) {
 func TestHandleOrchestratorAgentHeartbeat_OK(t *testing.T) {
 	s, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
-	w := doOrchReq(t, s, http.MethodPost, "/api/v1/orchestrator/agents/agent-1/heartbeat", `{"bind_addr":"1.2.3.4:9000"}`)
+	w := doOrchReq(t, s, http.MethodPost, "/api/v1/fleet/agent-1/heartbeat", `{"bind_addr":"1.2.3.4:9000"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}

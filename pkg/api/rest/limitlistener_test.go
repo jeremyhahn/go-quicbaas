@@ -98,9 +98,12 @@ func TestLimitListener_EnforcesMaxConnections(t *testing.T) {
 		// Expected: no new accept
 	}
 
-	// Close one server-side connection to free a semaphore slot
-	serverConns[0].Close()
+	// Close one server-side connection to free a semaphore slot. The count
+	// drops BEFORE the Close: Close releases the slot, and the acceptor may
+	// take the blocked connection and count it before this goroutine runs
+	// again, which read as a peak of maxConns+1 the listener never allowed.
 	atomic.AddInt64(&active, -1)
+	serverConns[0].Close()
 
 	// Now the extra connection should be accepted
 	select {

@@ -18,6 +18,7 @@ package mcp
 import (
 	"context"
 	"strconv"
+	"strings"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -56,10 +57,7 @@ func (r *ToolRegistry) registerProjectTools() {
 					"type":        "string",
 					"description": "Preferred agent host for project operations (optional)",
 				},
-				"default_lead_agent": map[string]interface{}{
-					"type":        "string",
-					"description": "Default lead agent ID for workflow runs (optional)",
-				},
+				"default_lead_agent": agentRefSchema("The Agent or pool that leads a job under this project when the job names none (optional)."),
 				"git_repo_url": map[string]interface{}{
 					"type":        "string",
 					"description": "Remote git repository URL",
@@ -112,10 +110,7 @@ func (r *ToolRegistry) registerProjectTools() {
 					"type":        "string",
 					"description": "KMS SSH key owner",
 				},
-				"token_budget": map[string]interface{}{
-					"type":        "integer",
-					"description": "Maximum LLM token budget (0 = unlimited)",
-				},
+				"spend": spendLimitsSchema("The project's spend limits, over every turn charged to it, stored with the project (usage reporting and admission enforcement are not wired yet). On update, an empty object clears them"),
 				"gpu_minutes": map[string]interface{}{
 					"type":        "integer",
 					"description": "Maximum GPU compute budget in minutes (0 = unlimited)",
@@ -127,6 +122,23 @@ func (r *ToolRegistry) registerProjectTools() {
 				"autonomous": map[string]interface{}{
 					"type":        "boolean",
 					"description": "Turn autonomous development on: the poller adopts work for this project and the dispatcher starts jobs for it",
+				},
+				"workspace_tier": map[string]interface{}{
+					"type":        "string",
+					"description": "Storage tier of the sandboxed checkout: persistent (host bind mount) or ephemeral (sized tmpfs inside the container); empty keeps the host bind mount",
+				},
+				"session_rotation": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"resume", "fresh"},
+					"description": "What a persistent worker session does when the pooled provider account under it rotates: resume (continue the same conversation; the default) or fresh (start a new conversation on the same branch)",
+				},
+				"workspace_tmpfs_mb": map[string]interface{}{
+					"type":        "integer",
+					"description": "Size of the ephemeral tier's tmpfs checkout in MiB (0 = unsized; only on the ephemeral tier)",
+				},
+				"container_memory_mb": map[string]interface{}{
+					"type":        "integer",
+					"description": "Container memory limit in MiB (0 = the runtime's default)",
 				},
 				"context_repos": map[string]interface{}{
 					"type":        "array",
@@ -167,15 +179,15 @@ func (r *ToolRegistry) registerProjectTools() {
 
 	r.addTool(ToolDefinition{
 		Name:        "project_list",
-		Description: "List all projects for a given tenant.",
+		Description: "List one page of a tenant's projects, newest first. Answers with the projects plus total, limit, offset and, when more remain, next_offset; limit defaults to 25 (capped at 100) and q searches the project ID and name.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
-			"properties": map[string]interface{}{
+			"properties": withPageProperties(map[string]interface{}{
 				"tenant_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Tenant ID whose projects to list",
 				},
-			},
+			}, strings.Join(orchestration.ProjectPageSpec().SortFields(), ", ")),
 			"required": []string{"tenant_id"},
 		},
 	})
@@ -258,6 +270,22 @@ func (r *ToolRegistry) registerProjectTools() {
 					"type":        "string",
 					"description": "KMS SSH key owner",
 				},
+				"git_signing_retire_key_name": map[string]interface{}{
+					"type":        "string",
+					"description": "KMS key the project signed with before its current one; its public half is kept in the trusted signing history so commits it signed before git_signing_retired_at still verify",
+				},
+				"git_signing_retire_key_scope": map[string]interface{}{
+					"type":        "string",
+					"description": "Scope of the key being retired (user, tenant, service)",
+				},
+				"git_signing_retire_key_owner": map[string]interface{}{
+					"type":        "string",
+					"description": "Owner of the key being retired (defaults to the project's tenant)",
+				},
+				"git_signing_retired_at": map[string]interface{}{
+					"type":        "string",
+					"description": "When the retired key stopped being the project's signing key, RFC 3339 (default now; never in the future)",
+				},
 				"clear_default_workflow": map[string]interface{}{
 					"type":        "boolean",
 					"description": "Remove the default workflow so Tasks are never auto-spawned",
@@ -265,6 +293,27 @@ func (r *ToolRegistry) registerProjectTools() {
 				"autonomous": map[string]interface{}{
 					"type":        "boolean",
 					"description": "Turn autonomous development on: the poller adopts work for this project and the dispatcher starts jobs for it",
+				},
+				"parked": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Park (true) or resume (false) the project. Parking closes the intake — nothing that has not started is dispatched, adopted or triaged — and lets work in flight finish; omit to leave it unchanged",
+				},
+				"workspace_tier": map[string]interface{}{
+					"type":        "string",
+					"description": "Updated storage tier of the sandboxed checkout: persistent or ephemeral (omit to leave it unchanged)",
+				},
+				"session_rotation": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"resume", "fresh"},
+					"description": "Updated session rotation policy: resume or fresh (omit to leave it unchanged)",
+				},
+				"workspace_tmpfs_mb": map[string]interface{}{
+					"type":        "integer",
+					"description": "Size of the ephemeral tier's tmpfs checkout in MiB (0 = unsized; only on the ephemeral tier); omit to leave it unchanged, 0 clears it",
+				},
+				"container_memory_mb": map[string]interface{}{
+					"type":        "integer",
+					"description": "Container memory limit in MiB (0 = the runtime's default); omit to leave it unchanged, 0 clears it",
 				},
 				"context_repos": map[string]interface{}{
 					"type":        "array",
@@ -327,20 +376,24 @@ func (r *ToolRegistry) executeProjectCreate(ctx context.Context, args map[string
 	if err != nil {
 		return nil, err
 	}
+	spend, _, err := getSpendLimits(args, "spend")
+	if err != nil {
+		return nil, err
+	}
 
 	resp, err := projectSvc.CreateProject(ctx, &service.CreateProjectRequest{
-		TenantID:         getString(args, "tenant_id"),
-		Name:             getString(args, "name"),
-		Description:      getString(args, "description"),
-		WorkspaceAgentID: getString(args, "workspace_agent_id"),
-		WorkspacePath:    getString(args, "workspace_path"),
-		HostAffinity:     getString(args, "host_affinity"),
-		DefaultLeadAgent: getString(args, "default_lead_agent"),
-		GitRepoURL:       getString(args, "git_repo_url"),
-		GitDefaultBranch: getString(args, "git_default_branch"),
-		TokenBudget:      int64(getInt(args, "token_budget")),
-		GPUMinutes:       int64(getInt(args, "gpu_minutes")),
-		MaxConcurrency:   getInt(args, "max_concurrency"),
+		TenantID:             getString(args, "tenant_id"),
+		Name:                 getString(args, "name"),
+		Description:          getString(args, "description"),
+		WorkspaceFleetNodeID: getString(args, "workspace_agent_id"),
+		WorkspacePath:        getString(args, "workspace_path"),
+		HostAffinity:         getString(args, "host_affinity"),
+		DefaultLeadAgent:     getAgentRef(args, "default_lead_agent"),
+		GitRepoURL:           getString(args, "git_repo_url"),
+		GitDefaultBranch:     getString(args, "git_default_branch"),
+		Spend:                spend,
+		GPUMinutes:           int64(getInt(args, "gpu_minutes")),
+		MaxConcurrency:       getInt(args, "max_concurrency"),
 
 		DefaultWorkflow:     getString(args, "default_workflow"),
 		Autonomous:          getBool(args, "autonomous"),
@@ -355,6 +408,10 @@ func (r *ToolRegistry) executeProjectCreate(ctx context.Context, args map[string
 		GitSSHKeyName:       getString(args, "git_ssh_key_name"),
 		GitSSHKeyScope:      getString(args, "git_ssh_key_scope"),
 		GitSSHKeyOwner:      getString(args, "git_ssh_key_owner"),
+		WorkspaceTier:       orchestration.WorkspaceTier(getString(args, "workspace_tier")),
+		WorkspaceTmpfsMB:    getInt(args, "workspace_tmpfs_mb"),
+		ContainerMemoryMB:   getInt(args, "container_memory_mb"),
+		SessionRotation:     orchestration.SessionRotationPolicy(getString(args, "session_rotation")),
 	})
 	if err != nil {
 		return nil, err
@@ -388,11 +445,15 @@ func (r *ToolRegistry) executeProjectList(ctx context.Context, args map[string]i
 
 	resp, err := projectSvc.ListProjects(ctx, &service.ListProjectsRequest{
 		TenantID: getString(args, "tenant_id"),
+		Page:     pageFromArgs(args),
 	})
 	if err != nil {
 		return nil, err
 	}
-	return resp, nil
+	envelope := servicePageEnvelope("projects", resp.Projects,
+		resp.Total, resp.Limit, resp.Offset, resp.NextOffset, resp.Facets)
+	envelope["timestamp"] = resp.Timestamp
+	return marshalResult(envelope)
 }
 
 // executeProjectUpdate handles the project_update MCP tool call.
@@ -403,12 +464,12 @@ func (r *ToolRegistry) executeProjectUpdate(ctx context.Context, args map[string
 	}
 
 	// Convert agent_roles from map[string]interface{} to map[string]ProjectRole.
-	var agentRoles map[string]orchestration.ProjectRole
+	var fleetNodeRoles map[string]orchestration.ProjectRole
 	if raw, ok := args["agent_roles"].(map[string]interface{}); ok {
-		agentRoles = make(map[string]orchestration.ProjectRole, len(raw))
+		fleetNodeRoles = make(map[string]orchestration.ProjectRole, len(raw))
 		for k, v := range raw {
 			if s, ok := v.(string); ok {
-				agentRoles[k] = orchestration.ProjectRole(s)
+				fleetNodeRoles[k] = orchestration.ProjectRole(s)
 			}
 		}
 	}
@@ -417,27 +478,39 @@ func (r *ToolRegistry) executeProjectUpdate(ctx context.Context, args map[string
 	if err != nil {
 		return nil, err
 	}
+	spend, err := optionalSpendLimits(args, "spend")
+	if err != nil {
+		return nil, err
+	}
+
+	retirement, err := service.ParseGitSigningRetirement(getString(args, "git_signing_retire_key_name"),
+		getString(args, "git_signing_retire_key_scope"), getString(args, "git_signing_retire_key_owner"),
+		getString(args, "git_signing_retired_at"))
+	if err != nil {
+		return nil, err
+	}
 
 	resp, err := projectSvc.UpdateProject(ctx, &service.UpdateProjectRequest{
-		TenantID:         getString(args, "tenant_id"),
-		ProjectID:        getString(args, "project_id"),
-		Name:             getString(args, "name"),
-		Description:      getString(args, "description"),
-		WorkspaceAgentID: getString(args, "workspace_agent_id"),
-		WorkspacePath:    getString(args, "workspace_path"),
-		HostAffinity:     getString(args, "host_affinity"),
-		DefaultLeadAgent: getString(args, "default_lead_agent"),
-		GitRepoURL:       getString(args, "git_repo_url"),
-		GitDefaultBranch: getString(args, "git_default_branch"),
-		GitCurrentSHA:    getString(args, "git_current_sha"),
-		AgentRoles:       agentRoles,
-		TokenBudget:      getOptionalInt64(args, "token_budget"),
-		GPUMinutes:       getOptionalInt64(args, "gpu_minutes"),
-		MaxConcurrency:   getOptionalInt(args, "max_concurrency"),
+		TenantID:             getString(args, "tenant_id"),
+		ProjectID:            getString(args, "project_id"),
+		Name:                 getString(args, "name"),
+		Description:          getString(args, "description"),
+		WorkspaceFleetNodeID: getString(args, "workspace_agent_id"),
+		WorkspacePath:        getString(args, "workspace_path"),
+		HostAffinity:         getString(args, "host_affinity"),
+		DefaultLeadAgent:     getAgentRef(args, "default_lead_agent"),
+		GitRepoURL:           getString(args, "git_repo_url"),
+		GitDefaultBranch:     getString(args, "git_default_branch"),
+		GitCurrentSHA:        getString(args, "git_current_sha"),
+		FleetNodeRoles:       fleetNodeRoles,
+		Spend:                spend,
+		GPUMinutes:           getOptionalInt64(args, "gpu_minutes"),
+		MaxConcurrency:       getOptionalInt(args, "max_concurrency"),
 
 		DefaultWorkflow:      getString(args, "default_workflow"),
 		ClearDefaultWorkflow: getBool(args, "clear_default_workflow"),
 		Autonomous:           getOptionalBool(args, "autonomous"),
+		Parked:               getOptionalBool(args, "parked"),
 		ContextRepos:         contextRepos,
 		ClearContextRepos:    getBool(args, "clear_context_repos"),
 		GitAuthorName:        getString(args, "git_author_name"),
@@ -450,6 +523,11 @@ func (r *ToolRegistry) executeProjectUpdate(ctx context.Context, args map[string
 		GitSSHKeyName:        getString(args, "git_ssh_key_name"),
 		GitSSHKeyScope:       getString(args, "git_ssh_key_scope"),
 		GitSSHKeyOwner:       getString(args, "git_ssh_key_owner"),
+		GitSigningRetire:     retirement,
+		WorkspaceTier:        orchestration.WorkspaceTier(getString(args, "workspace_tier")),
+		WorkspaceTmpfsMB:     getOptionalInt(args, "workspace_tmpfs_mb"),
+		ContainerMemoryMB:    getOptionalInt(args, "container_memory_mb"),
+		SessionRotation:      orchestration.SessionRotationPolicy(getString(args, "session_rotation")),
 	})
 	if err != nil {
 		return nil, err
@@ -547,8 +625,8 @@ func getOptionalInt64(args map[string]interface{}, key string) *int64 {
 	}
 }
 
-// getOptionalInt is getOptionalInt64 narrowed to int, for the one quota the
-// project record keeps as an int.
+// getOptionalInt is getOptionalInt64 narrowed to int, for the quota and the
+// storage sizes the project record keeps as an int.
 func getOptionalInt(args map[string]interface{}, key string) *int {
 	v := getOptionalInt64(args, key)
 	if v == nil {

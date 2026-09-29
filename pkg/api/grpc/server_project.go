@@ -53,29 +53,29 @@ func (s *ProjectServer) CreateProject(ctx context.Context, req *pb.CreateProject
 		return nil, status.Error(codes.InvalidArgument, "name is required")
 	}
 
-	var agentRoles map[string]orchestration.ProjectRole
+	var fleetNodeRoles map[string]orchestration.ProjectRole
 	if len(req.AgentRoles) > 0 {
-		agentRoles = make(map[string]orchestration.ProjectRole, len(req.AgentRoles))
+		fleetNodeRoles = make(map[string]orchestration.ProjectRole, len(req.AgentRoles))
 		for k, v := range req.AgentRoles {
-			agentRoles[k] = orchestration.ProjectRole(v)
+			fleetNodeRoles[k] = orchestration.ProjectRole(v)
 		}
 	}
 
 	resp, err := s.projectSvc.CreateProject(ctx, &service.CreateProjectRequest{
-		TenantID:         req.TenantId,
-		Name:             req.Name,
-		Description:      req.Description,
-		WorkspaceAgentID: req.WorkspaceAgentId,
-		WorkspacePath:    req.WorkspacePath,
-		HostAffinity:     req.HostAffinity,
-		DefaultLeadAgent: req.DefaultLeadAgent,
-		GitRepoURL:       req.GitRepoUrl,
-		GitDefaultBranch: req.GitDefaultBranch,
-		AgentRoles:       agentRoles,
-		TokenBudget:      req.TokenBudget,
-		GPUMinutes:       req.GpuMinutes,
-		MaxConcurrency:   int(req.MaxConcurrency),
-		Metadata:         req.Metadata,
+		TenantID:             req.TenantId,
+		Name:                 req.Name,
+		Description:          req.Description,
+		WorkspaceFleetNodeID: req.WorkspaceAgentId,
+		WorkspacePath:        req.WorkspacePath,
+		HostAffinity:         req.HostAffinity,
+		DefaultLeadAgent:     AgentRefFromProto(req.GetDefaultLeadAgent()),
+		GitRepoURL:           req.GitRepoUrl,
+		GitDefaultBranch:     req.GitDefaultBranch,
+		FleetNodeRoles:       fleetNodeRoles,
+		Spend:                spendLimitsFromProto(req.GetSpend()),
+		GPUMinutes:           req.GpuMinutes,
+		MaxConcurrency:       int(req.MaxConcurrency),
+		Metadata:             req.Metadata,
 
 		DefaultWorkflow:     req.DefaultWorkflow,
 		Autonomous:          req.Autonomous,
@@ -90,6 +90,10 @@ func (s *ProjectServer) CreateProject(ctx context.Context, req *pb.CreateProject
 		GitSSHKeyName:       req.GitSshKeyName,
 		GitSSHKeyScope:      req.GitSshKeyScope,
 		GitSSHKeyOwner:      req.GitSshKeyOwner,
+		WorkspaceTier:       orchestration.WorkspaceTier(req.WorkspaceTier),
+		WorkspaceTmpfsMB:    int(req.WorkspaceTmpfsMb),
+		ContainerMemoryMB:   int(req.ContainerMemoryMb),
+		SessionRotation:     orchestration.SessionRotationPolicy(req.SessionRotation),
 	})
 	if err != nil {
 		return nil, convertProjectError(err)
@@ -162,36 +166,43 @@ func (s *ProjectServer) UpdateProject(ctx context.Context, req *pb.UpdateProject
 		return nil, status.Error(codes.InvalidArgument, "project_id is required")
 	}
 
-	var agentRoles map[string]orchestration.ProjectRole
+	var fleetNodeRoles map[string]orchestration.ProjectRole
 	if len(req.AgentRoles) > 0 {
-		agentRoles = make(map[string]orchestration.ProjectRole, len(req.AgentRoles))
+		fleetNodeRoles = make(map[string]orchestration.ProjectRole, len(req.AgentRoles))
 		for k, v := range req.AgentRoles {
-			agentRoles[k] = orchestration.ProjectRole(v)
+			fleetNodeRoles[k] = orchestration.ProjectRole(v)
 		}
 	}
 
+	retirement, err := service.ParseGitSigningRetirement(req.GitSigningRetireKeyName,
+		req.GitSigningRetireKeyScope, req.GitSigningRetireKeyOwner, req.GitSigningRetiredAt)
+	if err != nil {
+		return nil, convertProjectError(err)
+	}
+
 	resp, err := s.projectSvc.UpdateProject(ctx, &service.UpdateProjectRequest{
-		TenantID:         req.TenantId,
-		ProjectID:        req.ProjectId,
-		Name:             req.Name,
-		Description:      req.Description,
-		ClearDescription: req.ClearDescription,
-		WorkspaceAgentID: req.WorkspaceAgentId,
-		WorkspacePath:    req.WorkspacePath,
-		HostAffinity:     req.HostAffinity,
-		DefaultLeadAgent: req.DefaultLeadAgent,
-		GitRepoURL:       req.GitRepoUrl,
-		GitDefaultBranch: req.GitDefaultBranch,
-		GitCurrentSHA:    req.GitCurrentSha,
-		AgentRoles:       agentRoles,
-		TokenBudget:      req.TokenBudget,
-		GPUMinutes:       req.GpuMinutes,
-		MaxConcurrency:   intPtrFromInt32(req.MaxConcurrency),
-		Metadata:         req.Metadata,
+		TenantID:             req.TenantId,
+		ProjectID:            req.ProjectId,
+		Name:                 req.Name,
+		Description:          req.Description,
+		ClearDescription:     req.ClearDescription,
+		WorkspaceFleetNodeID: req.WorkspaceAgentId,
+		WorkspacePath:        req.WorkspacePath,
+		HostAffinity:         req.HostAffinity,
+		DefaultLeadAgent:     AgentRefFromProto(req.GetDefaultLeadAgent()),
+		GitRepoURL:           req.GitRepoUrl,
+		GitDefaultBranch:     req.GitDefaultBranch,
+		GitCurrentSHA:        req.GitCurrentSha,
+		FleetNodeRoles:       fleetNodeRoles,
+		Spend:                optionalSpendLimits(req.GetSpend()),
+		GPUMinutes:           req.GpuMinutes,
+		MaxConcurrency:       intPtrFromInt32(req.MaxConcurrency),
+		Metadata:             req.Metadata,
 
 		DefaultWorkflow:      req.DefaultWorkflow,
 		ClearDefaultWorkflow: req.ClearDefaultWorkflow,
 		Autonomous:           req.Autonomous,
+		Parked:               req.Parked,
 		ContextRepos:         contextReposFromProto(req.ContextRepos),
 		ClearContextRepos:    req.ClearContextRepos,
 		GitAuthorName:        req.GitAuthorName,
@@ -204,6 +215,11 @@ func (s *ProjectServer) UpdateProject(ctx context.Context, req *pb.UpdateProject
 		GitSSHKeyName:        req.GitSshKeyName,
 		GitSSHKeyScope:       req.GitSshKeyScope,
 		GitSSHKeyOwner:       req.GitSshKeyOwner,
+		GitSigningRetire:     retirement,
+		WorkspaceTier:        orchestration.WorkspaceTier(req.WorkspaceTier),
+		WorkspaceTmpfsMB:     intPtrFromInt32(req.WorkspaceTmpfsMb),
+		ContainerMemoryMB:    intPtrFromInt32(req.ContainerMemoryMb),
+		SessionRotation:      orchestration.SessionRotationPolicy(req.SessionRotation),
 	})
 	if err != nil {
 		return nil, convertProjectError(err)
@@ -249,11 +265,17 @@ func (s *ProjectServer) ListProjects(ctx context.Context, req *pb.ListProjectsRe
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
 
+	page, err := pageFromRPC(req.GetLimit(), req.GetOffset(), req.GetSort(), req.GetQ())
+	if err != nil {
+		return nil, err
+	}
+
 	resp, err := s.projectSvc.ListProjects(ctx, &service.ListProjectsRequest{
 		TenantID: req.TenantId,
+		Page:     page,
 	})
 	if err != nil {
-		return nil, convertProjectError(err)
+		return nil, convertListError(err, convertProjectError)
 	}
 
 	projects := make([]*pb.Project, 0, len(resp.Projects))
@@ -262,19 +284,22 @@ func (s *ProjectServer) ListProjects(ctx context.Context, req *pb.ListProjectsRe
 	}
 
 	return &pb.ListProjectsResponse{
-		Projects:  projects,
-		Total:     int32(resp.Total),
-		Timestamp: time.Now().Unix(),
+		Projects:   projects,
+		Total:      pageInt32(resp.Total),
+		Timestamp:  time.Now().Unix(),
+		Limit:      pageInt32(resp.Limit),
+		Offset:     pageInt32(resp.Offset),
+		NextOffset: pageInt32(resp.NextOffset),
 	}, nil
 }
 
-// GrantAgentRole handles the GrantAgentRole RPC. It sets one agent's role
+// GrantFleetNodeRole handles the GrantFleetNodeRole RPC. It sets one agent's role
 // without replacing the rest of the project's role map, which is what an
 // UpdateProject-based emulation would do.
-func (s *ProjectServer) GrantAgentRole(ctx context.Context, req *pb.GrantAgentRoleRequest) (*pb.GrantAgentRoleResponse, error) {
+func (s *ProjectServer) GrantFleetNodeRole(ctx context.Context, req *pb.GrantFleetNodeRoleRequest) (*pb.GrantFleetNodeRoleResponse, error) {
 	s.logger.WithField("project_id", req.ProjectId).
-		WithField("agent_id", req.AgentId).
-		Debug("Processing GrantAgentRole request")
+		WithField("agent_id", req.NodeId).
+		Debug("Processing GrantFleetNodeRole request")
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
@@ -282,37 +307,37 @@ func (s *ProjectServer) GrantAgentRole(ctx context.Context, req *pb.GrantAgentRo
 	if req.ProjectId == "" {
 		return nil, status.Error(codes.InvalidArgument, "project_id is required")
 	}
-	if req.AgentId == "" {
+	if req.NodeId == "" {
 		return nil, status.Error(codes.InvalidArgument, "agent_id is required")
 	}
 	if req.Role == "" {
 		return nil, status.Error(codes.InvalidArgument, "role is required")
 	}
 
-	resp, err := s.projectSvc.GrantAgentRole(ctx, &service.GrantAgentRoleRequest{
-		TenantID:  req.TenantId,
-		ProjectID: req.ProjectId,
-		AgentID:   req.AgentId,
-		Role:      orchestration.ProjectRole(req.Role),
+	resp, err := s.projectSvc.GrantFleetNodeRole(ctx, &service.GrantFleetNodeRoleRequest{
+		TenantID:    req.TenantId,
+		ProjectID:   req.ProjectId,
+		FleetNodeID: req.NodeId,
+		Role:        orchestration.ProjectRole(req.Role),
 	})
 	if err != nil {
 		return nil, convertProjectError(err)
 	}
 
-	return &pb.GrantAgentRoleResponse{
+	return &pb.GrantFleetNodeRoleResponse{
 		ProjectId: resp.ProjectID,
-		AgentId:   resp.AgentID,
+		NodeId:    resp.FleetNodeID,
 		Role:      string(resp.Role),
 		Timestamp: resp.Timestamp.Unix(),
 	}, nil
 }
 
-// RevokeAgentRole handles the RevokeAgentRole RPC. It denies one agent and
+// RevokeFleetNodeRole handles the RevokeFleetNodeRole RPC. It denies one agent and
 // leaves every other agent's role intact.
-func (s *ProjectServer) RevokeAgentRole(ctx context.Context, req *pb.RevokeAgentRoleRequest) (*pb.RevokeAgentRoleResponse, error) {
+func (s *ProjectServer) RevokeFleetNodeRole(ctx context.Context, req *pb.RevokeFleetNodeRoleRequest) (*pb.RevokeFleetNodeRoleResponse, error) {
 	s.logger.WithField("project_id", req.ProjectId).
-		WithField("agent_id", req.AgentId).
-		Debug("Processing RevokeAgentRole request")
+		WithField("agent_id", req.NodeId).
+		Debug("Processing RevokeFleetNodeRole request")
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
@@ -320,22 +345,22 @@ func (s *ProjectServer) RevokeAgentRole(ctx context.Context, req *pb.RevokeAgent
 	if req.ProjectId == "" {
 		return nil, status.Error(codes.InvalidArgument, "project_id is required")
 	}
-	if req.AgentId == "" {
+	if req.NodeId == "" {
 		return nil, status.Error(codes.InvalidArgument, "agent_id is required")
 	}
 
-	resp, err := s.projectSvc.RevokeAgentRole(ctx, &service.RevokeAgentRoleRequest{
-		TenantID:  req.TenantId,
-		ProjectID: req.ProjectId,
-		AgentID:   req.AgentId,
+	resp, err := s.projectSvc.RevokeFleetNodeRole(ctx, &service.RevokeFleetNodeRoleRequest{
+		TenantID:    req.TenantId,
+		ProjectID:   req.ProjectId,
+		FleetNodeID: req.NodeId,
 	})
 	if err != nil {
 		return nil, convertProjectError(err)
 	}
 
-	return &pb.RevokeAgentRoleResponse{
+	return &pb.RevokeFleetNodeRoleResponse{
 		ProjectId: resp.ProjectID,
-		AgentId:   resp.AgentID,
+		NodeId:    resp.FleetNodeID,
 		Timestamp: resp.Timestamp.Unix(),
 	}, nil
 }
@@ -354,14 +379,14 @@ func projectToProto(p *orchestration.Project) *pb.Project {
 		TenantId:         p.TenantID,
 		Name:             p.Name,
 		Description:      p.Description,
-		WorkspaceAgentId: p.Workspace.AgentID,
+		WorkspaceAgentId: p.Workspace.FleetNodeID,
 		WorkspacePath:    p.Workspace.Path,
 		HostAffinity:     p.HostAffinity,
-		DefaultLeadAgent: p.DefaultLeadAgent,
+		DefaultLeadAgent: AgentRefToProto(p.DefaultLeadAgent),
 		GitRepoUrl:       p.Git.RepoURL,
 		GitDefaultBranch: p.Git.DefaultBranch,
 		GitCurrentSha:    p.Git.CurrentSHA,
-		TokenBudget:      p.Quotas.TokenBudget,
+		Spend:            spendLimitsToProto(p.Spend),
 		GpuMinutes:       p.Quotas.GPUMinutes,
 		MaxConcurrency:   int32(p.Quotas.MaxConcurrency),
 		Metadata:         p.Metadata,
@@ -381,10 +406,20 @@ func projectToProto(p *orchestration.Project) *pb.Project {
 		GitSshKeyName:       p.Git.SSHKey.Name,
 		GitSshKeyScope:      p.Git.SSHKey.Scope,
 		GitSshKeyOwner:      p.Git.SSHKey.Owner,
+		WorkspaceTier:       string(p.Storage.WorkspaceTier),
+		WorkspaceTmpfsMb:    int32(p.Storage.WorkspaceTmpfsMB),
+		ContainerMemoryMb:   int32(p.Storage.ContainerMemoryMB),
+		SessionRotation:     string(p.SessionRotation),
+		Parked:              p.Parked,
+		ParkedBy:            p.ParkedBy,
+		GitSigningRetired:   retiredSigningKeysToProto(p.Git.Signing.Retired),
 	}
-	if p.Permissions.AgentRoles != nil {
-		pb.AgentRoles = make(map[string]string, len(p.Permissions.AgentRoles))
-		for k, v := range p.Permissions.AgentRoles {
+	if !p.ParkedAt.IsZero() {
+		pb.ParkedAtUnix = p.ParkedAt.Unix()
+	}
+	if p.Permissions.FleetNodeRoles != nil {
+		pb.AgentRoles = make(map[string]string, len(p.Permissions.FleetNodeRoles))
+		for k, v := range p.Permissions.FleetNodeRoles {
 			pb.AgentRoles[k] = string(v)
 		}
 	}
@@ -393,6 +428,18 @@ func projectToProto(p *orchestration.Project) *pb.Project {
 
 // contextReposToProto converts the domain context repository list to proto.
 // A nil list stays nil so an empty project carries no repeated field.
+// retiredSigningKeysToProto renders a project's trusted signing history.
+func retiredSigningKeysToProto(keys []orchestration.RetiredSigningKey) []*pb.RetiredSigningKey {
+	if len(keys) == 0 {
+		return nil
+	}
+	out := make([]*pb.RetiredSigningKey, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, &pb.RetiredSigningKey{PublicKey: key.PublicKey, Name: key.Name, RetiredAtUnix: key.RetiredAt.Unix()})
+	}
+	return out
+}
+
 func contextReposToProto(repos []orchestration.ContextRepo) []*pb.ContextRepo {
 	if repos == nil {
 		return nil
@@ -422,10 +469,16 @@ func contextReposFromProto(repos []*pb.ContextRepo) []orchestration.ContextRepo 
 
 // convertProjectError maps service-layer project errors to gRPC status codes.
 func convertProjectError(err error) error {
+	if mapped, ok := referenceStatus(err); ok {
+		return mapped
+	}
 	var notFound *service.ProjectNotFoundError
 	var alreadyExists *service.ProjectAlreadyExistsError
 	var invalid *service.ProjectInvalidError
 
+	if isAgentCatalogError(err) {
+		return agentCatalogStatusError(err)
+	}
 	switch {
 	case stderrors.As(err, &notFound):
 		return status.Error(codes.NotFound, err.Error())
@@ -442,9 +495,10 @@ func convertProjectError(err error) error {
 var _ pb.ProjectServiceServer = (*ProjectServer)(nil)
 
 // intPtrFromInt32 narrows an optional proto int32 to the optional int the
-// project record keeps, preserving absence. A quota of zero means UNLIMITED,
-// so absent and zero are different instructions and must stay different all
-// the way to the service.
+// project record keeps, preserving absence. A quota of zero means UNLIMITED
+// and a storage size of zero means unsized / the runtime's default, so absent
+// and zero are different instructions and must stay different all the way to
+// the service.
 func intPtrFromInt32(v *int32) *int {
 	if v == nil {
 		return nil

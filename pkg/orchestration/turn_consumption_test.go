@@ -102,11 +102,42 @@ func TestRecordTurnUsageWritesTheLedgerAndTheCounters(t *testing.T) {
 		t.Errorf("ledger total = %d, want 17; the two records must not contradict each other", rollup.TotalTokens)
 	}
 	if rollup.InputTokens != 10 || rollup.OutputTokens != 5 || rollup.CacheReadTokens != 2 {
-		t.Errorf("input/output/cache-read = %d/%d/%d, want 10/5/2 — a cache read prices apart from a fresh prompt token",
+		t.Errorf("input/output/cache-read = %d/%d/%d, want 10/5/2 — cache tokens price apart from a fresh prompt",
 			rollup.InputTokens, rollup.OutputTokens, rollup.CacheReadTokens)
 	}
 	if rollup.Successes != 1 {
 		t.Errorf("successes = %d, want 1", rollup.Successes)
+	}
+}
+
+// TestRecordTurnUsageLedgersAProviderQualifiedModel is the regression for the
+// go-quicbaas#1058 review: opencode reports its model as
+// "ollama/review-q8:latest", and the ledger refused the separator, so every
+// such turn reached the counters but never the ledger or the report.
+func TestRecordTurnUsageLedgersAProviderQualifiedModel(t *testing.T) {
+	svc, ledger, _ := newConsumptionRecorder(t)
+	ctx := ContextWithTenant(context.Background(), "t1")
+	ctx = WithTurnAttribution(ctx, TurnAttribution{JobID: "job-1", TaskID: "task-1"})
+	pooledSession(svc, "sess-1", "t1", "proj-1", "a1")
+
+	svc.recordTurnUsage(ctx, completedTurn{
+		turnID:    "turn-1",
+		sessionID: "sess-1",
+		projectID: "proj-1",
+		engine:    "opencode",
+		model:     "ollama/review-q8:latest",
+	}, &TokenUsage{InputTokens: 10, OutputTokens: 5})
+
+	report, err := ReadSpendReport(ctx, SpendSources{Ledger: ledger, Accounts: nil}, &SpendReportRequest{TenantID: "t1"})
+	if err != nil {
+		t.Fatalf("ReadSpendReport: %v", err)
+	}
+	if len(report.Models) != 1 {
+		t.Fatalf("Models = %+v, want the opencode turn ledgered", report.Models)
+	}
+	row := report.Models[0]
+	if row.Engine != "opencode" || row.Model != "ollama/review-q8:latest" || row.TotalTokens != 15 {
+		t.Fatalf("model row = %+v, want opencode / ollama/review-q8:latest with 15 tokens", row)
 	}
 }
 
@@ -132,34 +163,101 @@ func TestRecordTurnUsageIsIdempotentOnTheTurnIdentity(t *testing.T) {
 	}
 }
 
-func TestRecordTurnUsageLeavesAnUnpooledTurnOutOfTheLedger(t *testing.T) {
+// TestRecordTurnUsageLedgersAnUnpooledTurnOffTheQuotaPlane is the owner's
+// 2026-09-23 requirement (go-quicbaas#1058): local inference draws on no pooled
+// account and must still be tracked. It is attributed and reported, and it is
+// never counted against an account's allowance.
+func TestRecordTurnUsageLedgersAnUnpooledTurnOffTheQuotaPlane(t *testing.T) {
 	svc, ledger, _ := newConsumptionRecorder(t)
 	ctx := ContextWithTenant(context.Background(), "t1")
 	pooledSession(svc, "sess-1", "t1", "proj-1", "")
 
 	svc.recordTurnUsage(ctx, completedTurn{
-		turnID: "turn-1", sessionID: "sess-1", projectID: "proj-1", engine: "claude", model: "m",
+		turnID: "turn-1", sessionID: "sess-1", projectID: "proj-1", engine: "openvino", model: "qwen3-8b",
 	}, &TokenUsage{InputTokens: 10})
 
-	// The counters still see it — spend is spend.
 	usage, err := svc.costTracker.GetProjectUsage(ctx, "t1", "proj-1")
 	if err != nil {
 		t.Fatalf("GetProjectUsage: %v", err)
 	}
 	if usage.TotalTokens != 10 {
-		t.Errorf("counter total = %d, want 10; an unpooled turn is still reported", usage.TotalTokens)
+		t.Errorf("counter total = %d, want 10", usage.TotalTokens)
 	}
 
-	// The ledger does not: its quota plane is keyed by account, and filing a
-	// turn that drew on no allowance under a placeholder would make a
-	// fictional account the tenant's largest spender.
 	rollup, err := ledger.Rollup(ctx, ConsumptionScope{TenantID: "t1"})
 	if err != nil {
 		t.Fatalf("Rollup: %v", err)
 	}
-	if rollup.Entries != 0 {
-		t.Errorf("ledger entries = %d, want 0 for a turn that drew on no pooled account", rollup.Entries)
+	if rollup.Entries != 1 || rollup.TotalTokens != 10 {
+		t.Fatalf("entries=%d tokens=%d, want the local turn attributed with its 10 tokens", rollup.Entries, rollup.TotalTokens)
 	}
+	if len(rollup.ByAccount) != 0 {
+		t.Errorf("ByAccount = %v, want no account — a placeholder would make local inference a pooled spender", rollup.ByAccount)
+	}
+	if rollup.ByModel["openvino/qwen3-8b"] == nil {
+		t.Errorf("ByModel = %v, want the local model broken out", rollup.ByModel)
+	}
+}
+
+// TestRecordTurnUsageRecordsKindHostAgentAndDuration asserts every per-turn
+// dimension the insights read reaches the entry: the runner that drove the
+// job, the host the session ran on, the agent, and how long the turn took.
+func TestRecordTurnUsageRecordsKindHostAgentAndDuration(t *testing.T) {
+	svc, ledger, _ := newConsumptionRecorder(t)
+	ctx := ContextWithTenant(context.Background(), "t1")
+	ctx = WithTurnAttribution(ctx, TurnAttribution{JobID: "job-1", TaskID: "task-1", Kind: "review", AgentID: "agent-1"})
+	pooledSession(svc, "sess-1", "t1", "proj-1", "a1")
+	record, _ := svc.liveSessionRecord("sess-1")
+	record.HostAffinity = "gpu-host"
+
+	svc.recordTurnUsage(ctx, completedTurn{
+		turnID: "turn-1", sessionID: "sess-1", projectID: "proj-1", engine: "codex", model: "gpt-5",
+		duration: 1500 * time.Millisecond,
+	}, &TokenUsage{InputTokens: 10, OutputTokens: 1})
+
+	entry := onlyLedgerEntry(t, ledger, "t1")
+	if entry.Kind != "review" || entry.Host != "gpu-host" || entry.AgentID != "agent-1" || entry.DurationMillis != 1500 {
+		t.Fatalf("entry = %+v, want kind=review host=gpu-host agent=agent-1 duration=1500ms", entry)
+	}
+}
+
+// TestRecordTurnUsageAttributesALocalSessionToThisNode asserts a session with
+// no named worker host is attributed to the node that ran it, never to an
+// empty host.
+func TestRecordTurnUsageAttributesALocalSessionToThisNode(t *testing.T) {
+	svc, ledger, _ := newConsumptionRecorder(t)
+	svc.SetNode("node-a")
+	ctx := ContextWithTenant(context.Background(), "t1")
+	pooledSession(svc, "sess-1", "t1", "proj-1", "a1")
+
+	svc.recordTurnUsage(ctx, completedTurn{
+		turnID: "turn-1", sessionID: "sess-1", projectID: "proj-1", engine: "claude", model: "m",
+	}, &TokenUsage{InputTokens: 1})
+
+	if entry := onlyLedgerEntry(t, ledger, "t1"); entry.Host != "node-a" {
+		t.Fatalf("Host = %q, want node-a", entry.Host)
+	}
+}
+
+// onlyLedgerEntry reads back the single entry a test recorded for tenantID.
+func onlyLedgerEntry(t *testing.T, ledger ConsumptionLedger, tenantID string) ConsumptionEntry {
+	t.Helper()
+	kv, ok := ledger.(*kvConsumptionLedger)
+	if !ok {
+		t.Fatalf("ledger is %T, want the KV ledger", ledger)
+	}
+	var entries []ConsumptionEntry
+	if err := kv.scanEntries(context.Background(), consumptionChainKeyspace+tenantID+keySeparator,
+		func(_ string, entry ConsumptionEntry) error {
+			entries = append(entries, entry)
+			return nil
+		}); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %+v, want exactly one", entries)
+	}
+	return entries[0]
 }
 
 func TestRecordTurnUsageWithoutALedgerStillCounts(t *testing.T) {
@@ -215,21 +313,24 @@ func TestRecordFailedTurnIsWhatMakesABreakerPossible(t *testing.T) {
 	}
 }
 
-func TestRecordFailedTurnWithoutAnAccountRecordsNothing(t *testing.T) {
+func TestRecordFailedTurnWithoutAnAccountIsAttributedButTripsNoAccount(t *testing.T) {
 	svc, ledger, _ := newConsumptionRecorder(t)
 	ctx := ContextWithTenant(context.Background(), "t1")
 	pooledSession(svc, "sess-1", "t1", "proj-1", "")
 
 	svc.recordFailedTurn(ctx, completedTurn{
-		turnID: "turn-1", sessionID: "sess-1", projectID: "proj-1", engine: "claude", model: "m",
+		turnID: "turn-1", sessionID: "sess-1", projectID: "proj-1", engine: "openvino", model: "m",
 	}, &TokenUsage{InputTokens: 3})
 
 	rollup, err := ledger.Rollup(ctx, ConsumptionScope{TenantID: "t1"})
 	if err != nil {
 		t.Fatalf("Rollup: %v", err)
 	}
-	if rollup.Entries != 0 {
-		t.Errorf("entries = %d, want 0; a failure on no pooled account trips no account's breaker", rollup.Entries)
+	if rollup.Failures != 1 || rollup.TotalTokens != 3 {
+		t.Errorf("failures=%d tokens=%d, want the failed local turn recorded with its 3 tokens", rollup.Failures, rollup.TotalTokens)
+	}
+	if len(rollup.ByAccount) != 0 {
+		t.Errorf("ByAccount = %v, want none; a failure on no pooled account trips no account's breaker", rollup.ByAccount)
 	}
 }
 
@@ -288,10 +389,10 @@ func TestFailedTurnUsageReportsNothingWhenNothingWasReported(t *testing.T) {
 	}
 }
 
-// TestRecordTurnUsageKeepsEveryDimensionApart is the go-quicbaas#1058
-// regression: the cache dimensions used to be folded into InputTokens, which
-// left a cached turn impossible to price. Each dimension now has its own field
-// and the total is unchanged, so no quota window moves.
+// TestRecordTurnUsageKeepsEveryDimensionApart: the cache dimensions used to
+// be folded into InputTokens, which left a cached turn impossible to price.
+// Each dimension has its own field and the total is unchanged, so no quota
+// window moves. go-quicbaas#1058.
 func TestRecordTurnUsageKeepsEveryDimensionApart(t *testing.T) {
 	svc, ledger, _ := newConsumptionRecorder(t)
 	ctx := ContextWithTenant(context.Background(), "t1")
@@ -311,13 +412,14 @@ func TestRecordTurnUsageKeepsEveryDimensionApart(t *testing.T) {
 			rollup.InputTokens, rollup.OutputTokens, rollup.CacheWriteTokens, rollup.CacheReadTokens)
 	}
 	if rollup.TotalTokens != usage.Total() {
-		t.Fatalf("ledger total = %d, want Total() = %d — the cap and the dashboard must agree", rollup.TotalTokens, usage.Total())
+		t.Fatalf("ledger total = %d, want Total() = %d", rollup.TotalTokens, usage.Total())
 	}
 }
 
-// TestRecordFailedTurnWithNoAccountingRecordsNoTokens asserts a nil usage — a
-// backend that reported nothing — still records the occurrence, with zero on
-// every dimension rather than a panic or an invented figure.
+// TestRecordFailedTurnWithNoAccountingRecordsNoTokens asserts a nil usage
+// still records the occurrence, with zero on every dimension, marked
+// unmeasured: nobody knows what the failed turn cost, so it counts against
+// money coverage rather than reading as free (go-quicbaas#1058 review).
 func TestRecordFailedTurnWithNoAccountingRecordsNoTokens(t *testing.T) {
 	svc, ledger, _ := newConsumptionRecorder(t)
 	ctx := ContextWithTenant(context.Background(), "t1")
@@ -331,8 +433,43 @@ func TestRecordFailedTurnWithNoAccountingRecordsNoTokens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Rollup: %v", err)
 	}
-	if rollup.Entries != 1 || rollup.TotalTokens != 0 || rollup.CacheReadTokens != 0 || rollup.CacheWriteTokens != 0 {
-		t.Fatalf("rollup = %+v, want one entry with no tokens", rollup)
+	if rollup.Entries != 1 || rollup.TotalTokens != 0 || rollup.UnpricedEntries != 1 || rollup.UnbilledEntries != 1 {
+		t.Fatalf("rollup = %+v, want one entry with no tokens, counted unpriced and unbilled", rollup.ConsumptionTotals)
+	}
+}
+
+// TestRecordFailedTurnKeepsAMeasuredZeroApartFromNoAccounting is the
+// go-quicbaas#1058 review regression, through the recorder: a failure whose
+// backend REPORTED zero tokens is a measurement — no request reached the
+// model — while one that reported nothing is unmeasured. Only the second may
+// count against the report's coverage.
+func TestRecordFailedTurnKeepsAMeasuredZeroApartFromNoAccounting(t *testing.T) {
+	tests := []struct {
+		name         string
+		usage        *TokenUsage
+		wantUnpriced int
+	}{
+		{"no accounting is missing coverage", nil, 1},
+		{"a reported zero is a measurement", &TokenUsage{}, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, ledger, _ := newConsumptionRecorder(t)
+			ctx := ContextWithTenant(context.Background(), "t1")
+			pooledSession(svc, "sess-1", "t1", "proj-1", "a1")
+
+			svc.recordFailedTurn(ctx, completedTurn{
+				turnID: "turn-1", sessionID: "sess-1", projectID: "proj-1", engine: "claude", model: "m",
+			}, tc.usage)
+
+			rollup, err := ledger.Rollup(ctx, ConsumptionScope{TenantID: "t1"})
+			if err != nil {
+				t.Fatalf("Rollup: %v", err)
+			}
+			if rollup.Failures != 1 || rollup.UnpricedEntries != tc.wantUnpriced || rollup.UnbilledEntries != tc.wantUnpriced {
+				t.Fatalf("rollup = %+v, want one failure with %d unpriced and unbilled", rollup.ConsumptionTotals, tc.wantUnpriced)
+			}
+		})
 	}
 }
 
@@ -371,6 +508,7 @@ func TestJobRunPromptAttributesTurnsToItsJob(t *testing.T) {
 	captured := make(chan TurnAttribution, 1)
 	run := &JobRun{
 		JobID:  "job-1",
+		Runner: "sdlc",
 		Config: &JobConfig{TaskID: "task-1"},
 		Agents: &attributionCapturingAgents{seen: captured},
 	}
@@ -379,8 +517,8 @@ func TestJobRunPromptAttributesTurnsToItsJob(t *testing.T) {
 	}
 	select {
 	case got := <-captured:
-		if got.JobID != "job-1" || got.TaskID != "task-1" {
-			t.Errorf("attribution = %+v, want job-1/task-1 attached by the envelope", got)
+		if got.JobID != "job-1" || got.TaskID != "task-1" || got.Kind != "sdlc" {
+			t.Errorf("attribution = %+v, want job-1/task-1/sdlc attached by the envelope", got)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("the agent service was never called")
@@ -448,6 +586,10 @@ func TestRecordTurnUsageLedgersAnUnmeasuredSuccess(t *testing.T) {
 	if rollup.TotalTokens != 0 {
 		t.Errorf("tokens = %d, want 0 — the occurrence is recorded, a figure nobody measured is not", rollup.TotalTokens)
 	}
+	if rollup.UnpricedEntries != 1 || rollup.PricedEntries != 0 {
+		t.Errorf("priced/unpriced = %d/%d, want 0/1 — an unmeasured turn is missing coverage, not a free one",
+			rollup.PricedEntries, rollup.UnpricedEntries)
+	}
 
 	// The counters must NOT see it: they are a quantity, and
 	// LeastUsageAccountStrategy balances a pool on them, so a zero there
@@ -498,5 +640,34 @@ func TestUnmeasuredSuccessUntripsTheBreaker(t *testing.T) {
 	if !verdict.Admits() {
 		t.Fatalf("the breaker is still %s after an unmeasured success; a recovered account stays "+
 			"parked for the whole failure window", verdict.State)
+	}
+}
+
+// TestControlLoopTurnsCarryTheirJobKind is the go-quicbaas#1058 review
+// finding: control-loop agents prompt the agent service directly with the
+// loop's own attribution, so the kind must travel on it — with the agent's
+// identity preserved — or those turns land in the ledger with no kind.
+func TestControlLoopTurnsCarryTheirJobKind(t *testing.T) {
+	cl := NewControlLoop(nil, &capturingLogger{})
+	cl.job.JobID = "job-1"
+	cl.agentIdentities["reviewer"] = &AgentIdentity{AgentID: "agent-rev"}
+
+	if got := cl.turnAttribution("reviewer"); got.Kind != JobRunnerWorkflow || got.AgentID != "agent-rev" {
+		t.Fatalf("attribution = %+v, want kind workflow and the minted agent", got)
+	}
+	cl.job.Runner = "sdlc"
+	attribution := cl.turnAttribution("worker")
+	if attribution.Kind != "sdlc" || attribution.AgentID != "agent-worker-job-1" {
+		t.Fatalf("attribution = %+v, want kind sdlc and the role-derived agent", attribution)
+	}
+
+	svc, ledger, _ := newConsumptionRecorder(t)
+	ctx := WithTurnAttribution(ContextWithTenant(context.Background(), "t1"), attribution)
+	pooledSession(svc, "sess-1", "t1", "proj-1", "a1")
+	svc.recordTurnUsage(ctx, completedTurn{
+		turnID: "turn-1", sessionID: "sess-1", projectID: "proj-1", engine: "claude", model: "m",
+	}, &TokenUsage{InputTokens: 3})
+	if entry := onlyLedgerEntry(t, ledger, "t1"); entry.Kind != "sdlc" || entry.AgentID != "agent-worker-job-1" {
+		t.Fatalf("entry = %+v, want kind sdlc and the agent", entry)
 	}
 }

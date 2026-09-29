@@ -126,10 +126,44 @@ const (
 	SDLCBind   qrdbsdk.Permission = "sdlc:bind"
 	SDLCUnbind qrdbsdk.Permission = "sdlc:unbind"
 
+	// SDLCIssueCreate ("sdlc:issue_create") authorizes filing an issue on a
+	// bound project's forge through the binding's own token — how the lead
+	// splits an issue into follow-ups. It is an operator verb, not an
+	// administrative one: it changes no binding and no policy, and every
+	// filing is audited.
+	SDLCIssueCreate qrdbsdk.Permission = "sdlc:issue_create"
+
+	// AgentsRead and AgentsWrite govern a tenant's AI agent catalog: the named
+	// Agents (runtime + model + provider) every role slot references, and the
+	// ordered pools a slot fails over along. Reading is Admin and Operator;
+	// changing an Agent changes what every slot bound to it runs and what it
+	// costs, so it is Admin alone. The family is not "orchestrator", which
+	// go-qrdb owns outright.
+	AgentsRead  qrdbsdk.Permission = "agents:read"
+	AgentsWrite qrdbsdk.Permission = "agents:write"
+
+	// CostSettingsWrite ("cost_settings:write") authorizes REPLACING a
+	// tenant's runtime cost settings: the electricity rate and per-engine
+	// device draws its local inference is costed from (go-quicbaas#1058).
+	// Reading them is orchestrator:status, like the spend report. It is its
+	// own family because go-qrdb owns the "orchestrator" family outright
+	// (TestAll_DoesNotShadowAQRDBPermission).
+	CostSettingsWrite qrdbsdk.Permission = "cost_settings:write"
+
+	// The Software Factory worker image refresh (pkg/sdlc/workerimage). It
+	// is a HOST operation, not a tenant one: a pass builds on the node's own
+	// container engine and rebinds the managed image in EVERY tenant's
+	// bindings, so both verbs are cross-tenant — held only by the system
+	// tenant's operators. Reading the status is Admin and Operator; asking
+	// for a pass, which builds, smokes on a pooled credential and rebinds
+	// projects, is Admin alone.
+	WorkerImageRead    qrdbsdk.Permission = "worker_images:read"
+	WorkerImageRefresh qrdbsdk.Permission = "worker_images:refresh"
+
 	// AgentAccountMaterialize ("agent_accounts:materialize") authorizes
 	// RELEASING one pooled provider account's credential envelope to the
 	// caller — the single verb in this stack whose response body is secret
-	// material. An enrolled agent daemon holds it so it can resolve a pooled
+	// material. An enrolled fleet node daemon holds it so it can resolve a pooled
 	// account on the worker host that actually runs the agent, which is where
 	// the credential has to be (go-quicbaas#734).
 	//
@@ -152,6 +186,14 @@ const (
 	// thereby be able to extract every login in it.
 	AgentAccountMaterialize qrdbsdk.Permission = "agent_accounts:materialize"
 
+	// SpendPolicyWrite ("spend_policy:write") authorizes REPLACING a tenant's
+	// own spend limits: the sliding token and dollar windows over every turn
+	// charged to the tenant, which defer the tenant's new work at admission
+	// once spent (go-quicbaas#1058). Reading them is orchestrator:status,
+	// like the spend report. It is its own family because go-qrdb owns the
+	// "orchestrator" family outright (TestAll_DoesNotShadowAQRDBPermission).
+	SpendPolicyWrite qrdbsdk.Permission = "spend_policy:write"
+
 	// AgentAccountRead ("agent_accounts:read") and AgentAccountList
 	// ("agent_accounts:list") authorize the METADATA half of the pooled
 	// provider account surface: one account's non-secret record, its usage
@@ -166,7 +208,7 @@ const (
 	// accounts are the opposite: every record is written into the requesting
 	// tenant's own orchestration keyspace. So the RBAC cross-scope rule denied
 	// every tenant identity a surface that is tenant data, and an enrolled
-	// agent daemon — a tenant principal by construction — could not list the
+	// fleet node daemon — a tenant principal by construction — could not list the
 	// pool it was supposed to draw from (go-quicbaas#734).
 	//
 	// This is the same correction go-quicbaas#534 made for /api/v1/secrets, for
@@ -257,10 +299,16 @@ const (
 	// identity. It is the reach every permission below already had before
 	// go-qrdb#504 removed the implicit default.
 	//
-	// qrdb defines three further reaches — cross, tenant-only and
-	// self-strict. None is listed here because no contribution needs one yet;
-	// the entry and its qrdbScopes row are added together when one does.
+	// qrdb defines two further reaches — tenant-only and self-strict. Neither
+	// is listed here because no contribution needs one yet; the entry and its
+	// qrdbScopes row are added together when one does.
 	scopeSelf
+
+	// scopeCross maps to qrdbsdk.PermissionScopeCross: the permission acts
+	// across tenants and is exercisable only by a system-tenant identity. The
+	// worker image refresh is the first contribution that needs it — one
+	// pass rebinds bindings in every tenant.
+	scopeCross
 )
 
 // qrdbScopes maps this package's scope statements onto qrdb's. A scope absent
@@ -268,7 +316,8 @@ const (
 // permission undeclared and therefore denied — the fail-closed half of the
 // pair with the guard test.
 var qrdbScopes = map[scope]qrdbsdk.PermissionScope{
-	scopeSelf: qrdbsdk.PermissionScopeSelf,
+	scopeSelf:  qrdbsdk.PermissionScopeSelf,
+	scopeCross: qrdbsdk.PermissionScopeCross,
 }
 
 // contribution pairs one contributed permission with the built-in roles that
@@ -421,6 +470,24 @@ var contributions = []contribution{
 	{permission: SDLCRead, roles: []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
 	{permission: SDLCBind, roles: []string{qrdbsdk.PermissionRoleAdmin}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
 	{permission: SDLCUnbind, roles: []string{qrdbsdk.PermissionRoleAdmin}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
+	// Filing an issue is day-to-day operation — the lead splitting work — so
+	// Operator holds it beside Admin. It writes to the forge, never to key
+	// material or module governance.
+	{permission: SDLCIssueCreate, roles: []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
+	// cost_settings:write changes what every local turn of a tenant is
+	// costed at, so it is administrative: Admin alone among the built-ins.
+	// It touches no key material and no module governance.
+	{permission: CostSettingsWrite, roles: []string{qrdbsdk.PermissionRoleAdmin}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
+	// The AI agent catalog. Reads to Admin and Operator, writes to Admin: an
+	// Agent decides what every slot bound to it runs. No key material, no
+	// module governance.
+	{permission: AgentsRead, roles: []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
+	{permission: AgentsWrite, roles: []string{qrdbsdk.PermissionRoleAdmin}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
+	// The worker image refresh. Cross-tenant, so only a system-tenant identity
+	// holding the role exercises either. Neither touches key material or
+	// module governance: outside the Security Officer's duties.
+	{permission: WorkerImageRead, roles: []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator}, duty: dutyOutsideSecurityOfficer, scope: scopeCross},
+	{permission: WorkerImageRefresh, roles: []string{qrdbsdk.PermissionRoleAdmin}, duty: dutyOutsideSecurityOfficer, scope: scopeCross},
 	{
 		// agent_accounts:materialize releases a pooled login's plaintext
 		// credential envelope. Admin alone among the built-ins, by the same
@@ -430,7 +497,7 @@ var contributions = []contribution{
 		//
 		// The identity that actually exercises it in production is not a
 		// built-in role at all — it is the tenant-scoped "agent-runtime" role
-		// an enrolled daemon holds (iam.AgentRuntimeGrant), which names this
+		// an enrolled daemon holds (iam.FleetRuntimeGrant), which names this
 		// permission explicitly. Built-in placement therefore only decides
 		// which HUMAN role may release a credential by hand.
 		//
@@ -447,6 +514,10 @@ var contributions = []contribution{
 		roles: []string{qrdbsdk.PermissionRoleAdmin},
 		duty:  dutyOutsideSecurityOfficer,
 	},
+	// spend_policy:write caps a whole tenant's consumption, so it is
+	// administrative, like sdlc:bind: Admin alone among the built-ins. It
+	// touches no key material and no module governance.
+	{permission: SpendPolicyWrite, roles: []string{qrdbsdk.PermissionRoleAdmin}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
 	// The metadata reads follow the read/write split every family here takes:
 	// Admin and Operator both hold them, because listing the pool and reading
 	// an account's health is the day-to-day operational question, and neither

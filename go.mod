@@ -27,21 +27,22 @@ require (
 	github.com/jeremyhahn/go-codec v1.4.0
 	github.com/jeremyhahn/go-libsignal v0.2.0-alpha
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha
-	github.com/jeremyhahn/go-qrdb v0.19.0-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.19.0-alpha
-	github.com/jeremyhahn/go-quicbaas/sdk/go v0.12.0-alpha
+	github.com/jeremyhahn/go-qrdb v0.20.6-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.20.6-alpha
+	github.com/jeremyhahn/go-quicbaas/sdk/go v0.13.0-alpha
 	github.com/jeremyhahn/go-signal v0.2.0-alpha
-	github.com/jeremyhahn/go-xkms v0.17.0-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.17.0-alpha
+	github.com/jeremyhahn/go-xkms v0.31.0-alpha
+	github.com/jeremyhahn/go-xkms/sdk/go v0.31.0-alpha
 	github.com/klauspost/compress v1.19.1
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/minio/blake2b-simd v0.0.0-20160723061019-3f5f724cb5b1
 	github.com/mochi-mqtt/server/v2 v2.7.9
+	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/pkg/sftp v1.13.9
 	github.com/pquerna/otp v1.5.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.3
-	github.com/quic-go/quic-go v0.62.0
+	github.com/quic-go/quic-go v0.63.0
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
@@ -56,6 +57,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.45.0
 	go.opentelemetry.io/otel/trace v1.45.0
 	golang.org/x/crypto v0.57.0
+	golang.org/x/mod v0.41.0
 	golang.org/x/net v0.58.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sys v0.48.0
@@ -185,11 +187,12 @@ require (
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/jackc/pgx/v5 v5.10.0 // indirect
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
-	github.com/jeremyhahn/go-enclave v0.5.0-alpha // indirect
+	github.com/jeremyhahn/arduino-generic/sdk/go v0.3.0-alpha // indirect
+	github.com/jeremyhahn/go-enclave v0.6.0-alpha // indirect
 	github.com/jeremyhahn/go-frost v0.3.0-alpha // indirect
-	github.com/jeremyhahn/go-quicraft v0.13.1-alpha // indirect
+	github.com/jeremyhahn/go-quicraft v0.13.1-alpha // indirect; held below v0.14.1-alpha: go-qrdb v0.20.6-alpha sdk/go/node builds its quicraft host with no WithBarrier/WithoutEncryption choice, so v0.14 refuses every in-process node (ErrAtRestEncryptionUnspecified). Unpin when a go-qrdb tag declares the at-rest choice (go-qrdb#566).
 	github.com/jeremyhahn/go-truststrap v0.4.0-alpha // indirect
-	github.com/jeremyhahn/go-xkms/xkey v0.17.0-alpha // indirect
+	github.com/jeremyhahn/go-xkms/xkey v0.31.0-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
@@ -219,7 +222,6 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/pingcap/errors v0.11.5-0.20211224045212-9687c2b0f87c // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
@@ -252,6 +254,7 @@ require (
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/wailsapp/go-webview2 v1.0.23 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
+	github.com/weppos/publicsuffix-go v0.50.3 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
@@ -272,7 +275,6 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/arch v0.30.0 // indirect
 	golang.org/x/exp v0.0.0-20260529124908-c761662dc8c9 // indirect
-	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260811182544-a038080d80e5 // indirect
 	golang.org/x/text v0.42.0 // indirect

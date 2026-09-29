@@ -42,6 +42,53 @@ type mockSDLCClient struct {
 	conformed  string
 	conformant bool
 	findings   []sdlcSDK.ConformanceFinding
+
+	// reviewerCall records the last reviewer-override verb and its request.
+	reviewerCall string
+	reviewerPR   int
+	reviewerSet  *sdlcSDK.SetReviewerRequest
+	// adopted is the last adoption request.
+	adopted *sdlcSDK.AdoptIssueRequest
+	// The worker image verbs: statuses answers successive status reads (the
+	// last one repeats), refreshes counts requests.
+	statuses  []*sdlcSDK.WorkerImageStatus
+	refreshes int
+
+	// filed is the last issue filing the CLI asked for.
+	filed *sdlcSDK.FileIssueRequest
+}
+
+func (m *mockSDLCClient) Reviewer(_ context.Context, tenantID, projectID string, pullRequest int) (*sdlcSDK.ReviewerSelection, error) {
+	m.reviewerCall, m.tenant, m.got, m.reviewerPR = "Reviewer", tenantID, projectID, pullRequest
+	if m.err != nil {
+		return nil, m.err
+	}
+	return &sdlcSDK.ReviewerSelection{ProjectID: projectID, PullRequest: pullRequest, Profile: "default", CountsTowardMerge: true, StatusContext: "quicbaas/review"}, nil
+}
+
+func (m *mockSDLCClient) SetReviewer(_ context.Context, req *sdlcSDK.SetReviewerRequest) (*sdlcSDK.ReviewerSelection, error) {
+	m.reviewerCall, m.tenant, m.reviewerSet = "SetReviewer", req.TenantID, req
+	if m.err != nil {
+		return nil, m.err
+	}
+	return &sdlcSDK.ReviewerSelection{ProjectID: req.ProjectID, PullRequest: req.PullRequest, Profile: req.Profile, Overridden: true,
+		StatusContext: "quicbaas/review/" + req.Profile, UpdatedAt: time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)}, nil
+}
+
+func (m *mockSDLCClient) AdoptIssue(_ context.Context, req *sdlcSDK.AdoptIssueRequest) (*sdlcSDK.Adoption, error) {
+	m.adopted, m.tenant = req, req.TenantID
+	if m.err != nil {
+		return nil, m.err
+	}
+	return &sdlcSDK.Adoption{TaskID: "task-1", Issue: req.Issue, PullRequest: req.PullRequest, Branch: "issue/141-coverage-gate"}, nil
+}
+
+func (m *mockSDLCClient) ClearReviewer(_ context.Context, tenantID, projectID string, pullRequest int) (*sdlcSDK.ReviewerSelection, error) {
+	m.reviewerCall, m.tenant, m.got, m.reviewerPR = "ClearReviewer", tenantID, projectID, pullRequest
+	if m.err != nil {
+		return nil, m.err
+	}
+	return &sdlcSDK.ReviewerSelection{ProjectID: projectID, PullRequest: pullRequest, Profile: "default", CountsTowardMerge: true}, nil
 }
 
 func (m *mockSDLCClient) Bind(_ context.Context, req *sdlcSDK.BindRequest) (*sdlcSDK.ProjectBinding, error) {
@@ -97,6 +144,19 @@ func (m *mockSDLCClient) Conformance(_ context.Context, tenantID, projectID stri
 		return nil, m.err
 	}
 	return m.report(projectID, tenantID), nil
+}
+
+func (m *mockSDLCClient) OpenWork(_ context.Context, tenantID, projectID string) (*sdlcSDK.OpenWork, error) {
+	m.got, m.tenant = projectID, tenantID
+	if m.err != nil {
+		return nil, m.err
+	}
+	return &sdlcSDK.OpenWork{
+		ProjectID: projectID, Repo: "acme/api", Agent: "agent-api",
+		PullRequests: []sdlcSDK.OpenPullRequest{{Number: 7, Title: "fix the thing", HeadRef: "issue/7-fix",
+			CIState: "failure", ReviewState: "changes_requested", AgeSeconds: 26 * 3600}},
+		Issues: []sdlcSDK.OpenIssue{{Number: 3, Title: "needs an answer", Labels: []string{"factory:needs-info"}, AgeSeconds: 90}},
+	}, nil
 }
 
 func (m *mockSDLCClient) report(projectID, tenantID string) *sdlcSDK.ConformanceReport {
@@ -385,25 +445,19 @@ func TestReviewerLabel_NamesAnUnconfiguredReviewer(t *testing.T) {
 	if !strings.Contains(got, "none") || !strings.Contains(got, "not self-reviewed") {
 		t.Fatalf("an unconfigured reviewer must be named in words, got %q", got)
 	}
-	if got := reviewerLabel(sdlcSDK.ReviewerConfig{Backend: "   "}); !strings.Contains(got, "none") {
-		t.Fatalf("a blank backend is unconfigured, got %q", got)
+	if got := reviewerLabel(sdlcSDK.ReviewerConfig{Agent: "   "}); !strings.Contains(got, "none") {
+		t.Fatalf("a blank agent is unconfigured, got %q", got)
 	}
 }
 
 // TestReviewerLabel_RendersAConfiguredReviewer covers the populated case,
 // including the partial shapes the row has to survive.
 func TestReviewerLabel_RendersAConfiguredReviewer(t *testing.T) {
-	full := reviewerLabel(sdlcSDK.ReviewerConfig{Backend: "codex", Model: "gpt-5-codex", Login: "codex"})
-	for _, want := range []string{"codex", "gpt-5-codex", "as codex"} {
-		if !strings.Contains(full, want) {
-			t.Fatalf("reviewer row %q is missing %q", full, want)
-		}
+	if got := reviewerLabel(sdlcSDK.ReviewerConfig{Agent: "codex-reviewer", Login: "codex"}); got != "agent:codex-reviewer as codex" {
+		t.Fatalf("agent and login, got %q", got)
 	}
-	if got := reviewerLabel(sdlcSDK.ReviewerConfig{Backend: "codex"}); got != "codex" {
-		t.Fatalf("backend alone must render as the backend, got %q", got)
-	}
-	if got := reviewerLabel(sdlcSDK.ReviewerConfig{Backend: "codex", Login: "codex"}); got != "codex as codex" {
-		t.Fatalf("backend and login without a model, got %q", got)
+	if got := reviewerLabel(sdlcSDK.ReviewerConfig{Agent: "codex-reviewer"}); got != "agent:codex-reviewer" {
+		t.Fatalf("an agent alone renders as its reference, got %q", got)
 	}
 }
 
@@ -418,5 +472,84 @@ func TestDiscoveryLabel_NamesTheDefault(t *testing.T) {
 	}
 	if got := discoveryLabel("poll"); got != "poll" {
 		t.Fatalf("an explicit mode is shown verbatim, got %q", got)
+	}
+}
+
+// TestMergeTrainLabel_SaysWhyATrainIsOff keeps a train that is on in the
+// binding but cannot run from reading as running: a train's pull request lands
+// only on a verdict from a reviewer profile that counts toward merge, so a
+// project with none cannot run one.
+func TestMergeTrainLabel_SaysWhyATrainIsOff(t *testing.T) {
+	no, yes := false, true
+	reviewer := sdlcSDK.ReviewerConfig{Agent: "codex-reviewer", Login: "codex"}
+	advisory := sdlcSDK.ReviewerConfig{Agent: "codex-reviewer", Login: "codex", CountsTowardMerge: &no}
+	counting := sdlcSDK.ReviewerConfig{Name: "qwen", Agent: "vllm-reviewer", Login: "qwen", CountsTowardMerge: &yes}
+	const off = "off (no reviewer profile that counts toward merge to review a train)"
+	cases := []struct {
+		name       string
+		policy     sdlcSDK.MergeTrainPolicy
+		reviewer   sdlcSDK.ReviewerConfig
+		alternates []sdlcSDK.ReviewerConfig
+		want       string
+	}{
+		{"default size", sdlcSDK.MergeTrainPolicy{}, reviewer, nil, "on, default size"},
+		{"bounded", sdlcSDK.MergeTrainPolicy{MaxSize: 3}, reviewer, nil, "on, up to 3 change(s)"},
+		{"disabled", sdlcSDK.MergeTrainPolicy{Disabled: true}, reviewer, nil, "off"},
+		{"no reviewer", sdlcSDK.MergeTrainPolicy{}, sdlcSDK.ReviewerConfig{}, nil, off},
+		{"advisory only", sdlcSDK.MergeTrainPolicy{}, advisory, []sdlcSDK.ReviewerConfig{{Name: "other", Agent: "vllm-reviewer"}}, off},
+		{"counting alternate", sdlcSDK.MergeTrainPolicy{}, advisory, []sdlcSDK.ReviewerConfig{counting}, "on, default size"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := mergeTrainLabel(tc.policy, tc.reviewer, tc.alternates); got != tc.want {
+				t.Fatalf("mergeTrainLabel(%+v) = %q, want %q", tc.policy, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestClusteringLabel_NamesTheDefaultAndTheBound(t *testing.T) {
+	for policy, want := range map[sdlcSDK.ClusteringPolicy]string{
+		{}:               "on, default size",
+		{MaxSize: 2}:     "on, up to 2 issue(s)",
+		{Disabled: true}: "off",
+	} {
+		if got := clusteringLabel(policy); got != want {
+			t.Fatalf("clusteringLabel(%+v) = %q, want %q", policy, got, want)
+		}
+	}
+}
+
+// TestSDLCOpenWork_ReadsTheProjectInTheCallersTenant pins the verb's subject
+// and the table an operator reads.
+func TestSDLCOpenWork_ReadsTheProjectInTheCallersTenant(t *testing.T) {
+	mc := &mockSDLCClient{}
+	withSDLCMock(t, mc)
+
+	require.NoError(t, runSDLCOpenWork(nil, []string{"go-luks2"}))
+	assert.Equal(t, "go-luks2", mc.got)
+	assert.Equal(t, "tenant-a", mc.tenant)
+
+	work, err := mc.OpenWork(context.Background(), "tenant-a", "go-luks2")
+	require.NoError(t, err)
+	var out bytes.Buffer
+	require.NoError(t, formatSDLCOpenWork(work, "table", &out))
+	table := out.String()
+	for _, want := range []string{"Agent: agent-api", "Pull requests (1)", "issue/7-fix", "failure", "changes_requested", "1d2h",
+		"Issues (1)", "factory:needs-info", "1m"} {
+		assert.Contains(t, table, want)
+	}
+}
+
+// TestSDLCOpenWork_ReportsFailuresAndBadFormats is the error half.
+func TestSDLCOpenWork_ReportsFailuresAndBadFormats(t *testing.T) {
+	withSDLCMock(t, &mockSDLCClient{err: errors.New("forge down")})
+	assert.Error(t, runSDLCOpenWork(nil, []string{"go-luks2"}))
+	assert.Error(t, formatSDLCOpenWork(&sdlcSDK.OpenWork{}, "xml", &bytes.Buffer{}))
+}
+
+func TestAgeLabel(t *testing.T) {
+	for seconds, want := range map[int64]string{0: "0m", 59: "0m", 90: "1m", 3*3600 + 120: "3h2m", 49 * 3600: "2d1h"} {
+		assert.Equal(t, want, ageLabel(seconds), "%d seconds", seconds)
 	}
 }

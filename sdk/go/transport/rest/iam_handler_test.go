@@ -99,32 +99,6 @@ func TestIAMHandlerHappyPaths(t *testing.T) {
 			map[string]interface{}{},
 			http.MethodGet, "/api/v1/tenants"},
 
-		// Group
-		{"GroupCreate", iamGroupServicePrefix, "Create",
-			map[string]interface{}{"tenant_id": "t1", "request": map[string]interface{}{"name": "g"}},
-			http.MethodPost, "/api/v1/tenants/t1/groups"},
-		{"GroupGet", iamGroupServicePrefix, "Get",
-			map[string]interface{}{"tenant_id": "t1", "group_id": "g1"},
-			http.MethodGet, "/api/v1/tenants/t1/groups/g1"},
-		{"GroupUpdate", iamGroupServicePrefix, "Update",
-			map[string]interface{}{"tenant_id": "t1", "group_id": "g1", "request": map[string]interface{}{"name": "g2"}},
-			http.MethodPut, "/api/v1/tenants/t1/groups/g1"},
-		{"GroupDelete", iamGroupServicePrefix, "Delete",
-			map[string]interface{}{"tenant_id": "t1", "group_id": "g1"},
-			http.MethodDelete, "/api/v1/tenants/t1/groups/g1"},
-		{"GroupList", iamGroupServicePrefix, "List",
-			map[string]interface{}{"tenant_id": "t1"},
-			http.MethodGet, "/api/v1/tenants/t1/groups"},
-		{"GroupAddMember", iamGroupServicePrefix, "AddMember",
-			map[string]interface{}{"tenant_id": "t1", "group_id": "g1", "user_id": "u1"},
-			http.MethodPost, "/api/v1/tenants/t1/groups/g1/members"},
-		{"GroupRemoveMember", iamGroupServicePrefix, "RemoveMember",
-			map[string]interface{}{"tenant_id": "t1", "group_id": "g1", "user_id": "u1"},
-			http.MethodDelete, "/api/v1/tenants/t1/groups/g1/members/u1"},
-		{"GroupListMembers", iamGroupServicePrefix, "ListMembers",
-			map[string]interface{}{"tenant_id": "t1", "group_id": "g1"},
-			http.MethodGet, "/api/v1/tenants/t1/groups/g1/members"},
-
 		// Role
 		{"RoleCreate", iamRoleServicePrefix, "Create",
 			map[string]interface{}{"tenant_id": "t1", "request": map[string]interface{}{"name": "admin"}},
@@ -424,7 +398,7 @@ func TestIAMHandlerMissingTenantID(t *testing.T) {
 	ctx := context.Background()
 
 	services := []string{
-		iamUserServicePrefix, iamGroupServicePrefix, iamRoleServicePrefix,
+		iamUserServicePrefix, iamRoleServicePrefix,
 		iamPolicyServicePrefix, iamAppServicePrefix, iamMFAServicePrefix,
 		iamGDPRServicePrefix, iamFederationServicePrefix, iamIdentityServicePrefix,
 	}
@@ -450,7 +424,6 @@ func TestIAMHandlerMissingResourceID(t *testing.T) {
 		req     map[string]interface{}
 	}{
 		{"UserGetNoID", iamUserServicePrefix, "Get", map[string]interface{}{"tenant_id": "t1"}},
-		{"GroupGetNoID", iamGroupServicePrefix, "Get", map[string]interface{}{"tenant_id": "t1"}},
 		{"RoleGetNoID", iamRoleServicePrefix, "Get", map[string]interface{}{"tenant_id": "t1"}},
 		{"PolicyGetNoName", iamPolicyServicePrefix, "Get", map[string]interface{}{"tenant_id": "t1"}},
 		{"AppGetNoClientID", iamAppServicePrefix, "Get", map[string]interface{}{"tenant_id": "t1"}},
@@ -647,4 +620,19 @@ func TestIAMSessionParameterizedContract(t *testing.T) {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
+}
+
+// TestIAMHandlerRefusesTheGroupService pins that quicbaas keeps no groups: the
+// REST transport routes no quicbaas.IAM.Group request to the server.
+func TestIAMHandlerRefusesTheGroupService(t *testing.T) {
+	rec := newIAMRecorder(t)
+	tr := newTestTransport(t, rec.server)
+	_, err := tr.Request(context.Background(), "quicbaas.IAM.Group", "List",
+		map[string]interface{}{"tenant_id": "t1"})
+	if err == nil {
+		t.Fatal("a group request was served; quicbaas keeps no groups")
+	}
+	if rec.gotPath != "" {
+		t.Fatalf("a group request reached the server at %s", rec.gotPath)
+	}
 }

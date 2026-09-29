@@ -56,11 +56,11 @@ func TestEnsureOrchestratorDaemonClient_GrantsTheDispatchScopes(t *testing.T) {
 
 	client, err := srv.ensureOrchestratorDaemonClient(context.Background(), mgr)
 	require.NoError(t, err)
-	require.ElementsMatch(t, iam.DefaultAgentRuntimeScopes(), client.Scopes)
+	require.ElementsMatch(t, iam.DefaultFleetRuntimeScopes(), client.Scopes)
 
 	app, err := storage.GetApp(context.Background(), client.ClientID)
 	require.NoError(t, err)
-	require.ElementsMatch(t, iam.DefaultAgentRuntimeScopes(), app.Scopes,
+	require.ElementsMatch(t, iam.DefaultFleetRuntimeScopes(), app.Scopes,
 		"the central's dispatch client holds no grant, so its tokens authorize nothing")
 }
 
@@ -87,7 +87,7 @@ func TestEnsureOrchestratorDaemonClient_ConvergesAnUngrantedCachedApp(t *testing
 
 	converged, err := storage.GetApp(context.Background(), client.ClientID)
 	require.NoError(t, err)
-	require.ElementsMatch(t, iam.DefaultAgentRuntimeScopes(), converged.Scopes,
+	require.ElementsMatch(t, iam.DefaultFleetRuntimeScopes(), converged.Scopes,
 		"a restart left the dispatch client without the grant it needs")
 }
 
@@ -103,7 +103,7 @@ func TestEnsureOrchestratorDaemonClient_CachedPathToleratesNoAppManager(t *testi
 	require.NoError(t, writeOrchestratorDaemonClient(cachePath, &OrchestratorDaemonClient{
 		ClientID:     "app_system_cached",
 		ClientSecret: "sk_cached",
-		Scopes:       iam.DefaultAgentRuntimeScopes(),
+		Scopes:       iam.DefaultFleetRuntimeScopes(),
 		TenantID:     qrdbsdk.SystemTenantID,
 	}))
 

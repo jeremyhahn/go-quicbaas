@@ -16,6 +16,7 @@ package embedded
 import (
 	"context"
 	"reflect"
+	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	healthclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/health"
@@ -261,7 +262,26 @@ func handleValidateToken(ctx context.Context, svc service.QuicBaaS, req interfac
 	if !ok {
 		return nil, NewInvalidRequestTypeError("quicbaas.Auth", "ValidateToken", "*service.ValidateTokenRequest", reflect.TypeOf(req).String())
 	}
-	return svc.ValidateToken(ctx, r)
+	resp, err := svc.ValidateToken(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		// No claims to convert; the auth client reports a nil response.
+		return nil, nil
+	}
+	// Answer with *service.TokenClaims, the type the gRPC and REST transports
+	// produce and the auth client asserts. Returning the service's
+	// *service.ValidateTokenResponse unchanged failed that assertion on every
+	// in-process call (go-quicbaas#955). ExpiresAt is Unix seconds.
+	return &service.TokenClaims{
+		Valid:     resp.Valid,
+		UserID:    resp.UserID,
+		Username:  resp.Username,
+		TenantID:  resp.TenantID,
+		Roles:     resp.Roles,
+		ExpiresAt: time.Unix(resp.ExpiresAt, 0),
+	}, nil
 }
 
 // =============================================================================

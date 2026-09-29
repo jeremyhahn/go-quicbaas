@@ -44,21 +44,22 @@ func newLedgerFixture() (ConsumptionLedger, interfaces.KVStore) {
 // of a guard test that is easy to leave out.
 func validEntry() ConsumptionEntry {
 	return ConsumptionEntry{
-		EntryID:      "e1",
-		TenantID:     "t1",
-		ProjectID:    "p1",
-		TaskID:       "w1",
-		JobID:        "pr1",
-		SessionID:    "s1",
-		Round:        1,
-		AccountID:    "a1",
-		Engine:       "acp",
-		Model:        "claude-opus-5",
-		Outcome:      ConsumptionOutcomeSuccess,
-		InputTokens:  1,
-		OutputTokens: 2,
-		CostMicros:   500,
-		OccurredAt:   ledgerBase,
+		EntryID:          "e1",
+		TenantID:         "t1",
+		ProjectID:        "p1",
+		TaskID:           "w1",
+		JobID:            "pr1",
+		SessionID:        "s1",
+		Round:            1,
+		AccountID:        "a1",
+		Engine:           "acp",
+		Model:            "claude-opus-5",
+		Outcome:          ConsumptionOutcomeSuccess,
+		InputTokens:      1,
+		OutputTokens:     2,
+		EquivalentMicros: 500,
+		PriceRef:         "v1:default:*/claude-opus-5",
+		OccurredAt:       ledgerBase,
 	}
 }
 
@@ -92,7 +93,7 @@ func TestConsumptionLedgerRecordWritesBothPlanes(t *testing.T) {
 		if err := json.Unmarshal(raw, &stored); err != nil {
 			t.Fatalf("stored record at %s does not decode: %v", key, err)
 		}
-		if stored.EntryID != entry.EntryID || stored.TotalTokens() != 3 || stored.CostMicros != 500 {
+		if stored.EntryID != entry.EntryID || stored.TotalTokens() != 3 || stored.EquivalentMicros != 500 {
 			t.Fatalf("stored record at %s is not the entry recorded: %+v", key, stored)
 		}
 	}
@@ -271,7 +272,7 @@ func TestConsumptionLedgerRecordValidation(t *testing.T) {
 		{"entry id with separator", func(e *ConsumptionEntry) { e.EntryID = "a/b" }, "entry_id", true},
 		{"missing tenant", func(e *ConsumptionEntry) { e.TenantID = "" }, "tenant_id", true},
 		{"tenant with separator", func(e *ConsumptionEntry) { e.TenantID = "t/1" }, "tenant_id", true},
-		{"missing account", func(e *ConsumptionEntry) { e.AccountID = "" }, "account_id", true},
+		{"account with separator", func(e *ConsumptionEntry) { e.AccountID = "a/1" }, "account_id", true},
 		{"missing engine", func(e *ConsumptionEntry) { e.Engine = "" }, "engine", true},
 		{"missing model", func(e *ConsumptionEntry) { e.Model = "" }, "model", true},
 		{"engine with separator", func(e *ConsumptionEntry) { e.Engine = "a/b" }, "engine", true},
@@ -283,9 +284,11 @@ func TestConsumptionLedgerRecordValidation(t *testing.T) {
 		{"negative round", func(e *ConsumptionEntry) { e.Round = -1 }, "round", true},
 		{"negative input tokens", func(e *ConsumptionEntry) { e.InputTokens = -1 }, "input_tokens", true},
 		{"negative output tokens", func(e *ConsumptionEntry) { e.OutputTokens = -1 }, "output_tokens", true},
-		{"negative cache read tokens", func(e *ConsumptionEntry) { e.CacheReadTokens = -1 }, "cache_read_tokens", true},
-		{"negative cache write tokens", func(e *ConsumptionEntry) { e.CacheWriteTokens = -1 }, "cache_write_tokens", true},
-		{"negative cost", func(e *ConsumptionEntry) { e.CostMicros = -1 }, "cost_micros", true},
+		{"negative cost", func(e *ConsumptionEntry) { e.EquivalentMicros = -1 }, "equivalent_micros", true},
+		{"cost without its price", func(e *ConsumptionEntry) { e.PriceRef = "" }, "price_ref", true},
+		{"negative cache read", func(e *ConsumptionEntry) { e.CacheReadTokens = -1 }, "cache_read_tokens", true},
+		{"negative cache write", func(e *ConsumptionEntry) { e.CacheWriteTokens = -1 }, "cache_write_tokens", true},
+		{"negative duration", func(e *ConsumptionEntry) { e.DurationMillis = -1 }, "duration_ms", true},
 		{"zero occurred at", func(e *ConsumptionEntry) { e.OccurredAt = time.Time{} }, "occurred_at", true},
 
 		// The permitting direction. Each of these sits on the other side of a
@@ -295,8 +298,9 @@ func TestConsumptionLedgerRecordValidation(t *testing.T) {
 		{"failure outcome", func(e *ConsumptionEntry) { e.Outcome = ConsumptionOutcomeFailure }, "", false},
 		{"round zero", func(e *ConsumptionEntry) { e.Round = 0 }, "", false},
 		{"zero tokens", func(e *ConsumptionEntry) { e.InputTokens, e.OutputTokens = 0, 0 }, "", false},
-		{"cache tokens", func(e *ConsumptionEntry) { e.CacheReadTokens, e.CacheWriteTokens = 5, 6 }, "", false},
-		{"zero cost", func(e *ConsumptionEntry) { e.CostMicros = 0 }, "", false},
+		{"zero cost", func(e *ConsumptionEntry) { e.EquivalentMicros = 0 }, "", false},
+		{"unpriced", func(e *ConsumptionEntry) { e.EquivalentMicros, e.PriceRef = 0, "" }, "", false},
+		{"no account (unpooled)", func(e *ConsumptionEntry) { e.AccountID = "" }, "", false},
 		{"no project", func(e *ConsumptionEntry) { e.ProjectID = "" }, "", false},
 		{"no session", func(e *ConsumptionEntry) { e.SessionID = "" }, "", false},
 		{"sentinel-adjacent id", func(e *ConsumptionEntry) { e.TaskID = "--" }, "", false},
@@ -356,28 +360,28 @@ func seedRollupFixture(t *testing.T, ledger ConsumptionLedger) {
 	entries := []ConsumptionEntry{
 		{EntryID: "e1", TenantID: "t1", ProjectID: "p1", TaskID: "w1", JobID: "pr1", SessionID: "s1", Round: 1,
 			AccountID: "a1", Engine: "acp", Model: "opus", Outcome: ConsumptionOutcomeSuccess,
-			InputTokens: 1, OutputTokens: 2, CostMicros: 10, OccurredAt: ledgerBase},
+			InputTokens: 1, OutputTokens: 2, EquivalentMicros: 10, PriceRef: "ref", OccurredAt: ledgerBase},
 		{EntryID: "e2", TenantID: "t1", ProjectID: "p1", TaskID: "w1", JobID: "pr1", SessionID: "s1", Round: 2,
 			AccountID: "a1", Engine: "acp", Model: "opus", Outcome: ConsumptionOutcomeFailure,
-			InputTokens: 4, OutputTokens: 6, CostMicros: 20, OccurredAt: ledgerBase.Add(time.Minute)},
+			InputTokens: 4, OutputTokens: 6, EquivalentMicros: 20, PriceRef: "ref", OccurredAt: ledgerBase.Add(time.Minute)},
 		{EntryID: "e3", TenantID: "t1", ProjectID: "p1", TaskID: "w1", JobID: "pr1", SessionID: "s2", Round: 1,
 			AccountID: "a1", Engine: "codex", Model: "gpt", Outcome: ConsumptionOutcomeSuccess,
-			InputTokens: 10, OutputTokens: 20, CostMicros: 30, OccurredAt: ledgerBase.Add(2 * time.Minute)},
+			InputTokens: 10, OutputTokens: 20, EquivalentMicros: 30, PriceRef: "ref", OccurredAt: ledgerBase.Add(2 * time.Minute)},
 		{EntryID: "e4", TenantID: "t1", ProjectID: "p1", TaskID: "w1", JobID: "pr2", SessionID: "s3", Round: 0,
 			AccountID: "a2", Engine: "acp", Model: "opus", Outcome: ConsumptionOutcomeSuccess,
-			InputTokens: 100, OutputTokens: 0, CostMicros: 40, OccurredAt: ledgerBase.Add(3 * time.Minute)},
+			InputTokens: 100, OutputTokens: 0, EquivalentMicros: 40, PriceRef: "ref", OccurredAt: ledgerBase.Add(3 * time.Minute)},
 		{EntryID: "e5", TenantID: "t1", ProjectID: "p1", TaskID: "w2", Round: 0,
 			AccountID: "a1", Engine: "acp", Model: "opus", Outcome: ConsumptionOutcomeSuccess,
-			InputTokens: 1000, OutputTokens: 0, CostMicros: 50, OccurredAt: ledgerBase.Add(4 * time.Minute)},
+			InputTokens: 1000, OutputTokens: 0, EquivalentMicros: 50, PriceRef: "ref", OccurredAt: ledgerBase.Add(4 * time.Minute)},
 		{EntryID: "e6", TenantID: "t1", ProjectID: "p2", Round: 0,
 			AccountID: "a3", Engine: "codex", Model: "gpt", Outcome: ConsumptionOutcomeSuccess,
-			InputTokens: 10000, OutputTokens: 0, CostMicros: 60, OccurredAt: ledgerBase.Add(5 * time.Minute)},
+			InputTokens: 10000, OutputTokens: 0, EquivalentMicros: 60, PriceRef: "ref", OccurredAt: ledgerBase.Add(5 * time.Minute)},
 		{EntryID: "e7", TenantID: "t2", ProjectID: "p1", Round: 0,
 			AccountID: "a1", Engine: "acp", Model: "opus", Outcome: ConsumptionOutcomeSuccess,
-			InputTokens: 100000, OutputTokens: 0, CostMicros: 70, OccurredAt: ledgerBase},
+			InputTokens: 100000, OutputTokens: 0, EquivalentMicros: 70, PriceRef: "ref", OccurredAt: ledgerBase},
 		{EntryID: "e8", TenantID: "t1x", ProjectID: "p1", Round: 0,
 			AccountID: "a1", Engine: "acp", Model: "opus", Outcome: ConsumptionOutcomeSuccess,
-			InputTokens: 7, OutputTokens: 0, CostMicros: 80, OccurredAt: ledgerBase},
+			InputTokens: 7, OutputTokens: 0, EquivalentMicros: 80, PriceRef: "ref", OccurredAt: ledgerBase},
 	}
 	for _, entry := range entries {
 		if err := ledger.Record(ctx, entry); err != nil {
@@ -418,8 +422,8 @@ func TestConsumptionLedgerRollupAtEveryLevel(t *testing.T) {
 			if rollup.TotalTokens != tc.wantTokens {
 				t.Fatalf("tokens: got %d, want %d", rollup.TotalTokens, tc.wantTokens)
 			}
-			if rollup.CostMicros != tc.wantCost {
-				t.Fatalf("cost: got %d, want %d", rollup.CostMicros, tc.wantCost)
+			if rollup.EquivalentMicros != tc.wantCost {
+				t.Fatalf("cost: got %d, want %d", rollup.EquivalentMicros, tc.wantCost)
 			}
 			if rollup.Entries != tc.wantCount {
 				t.Fatalf("entries: got %d, want %d", rollup.Entries, tc.wantCount)
@@ -447,7 +451,7 @@ func TestConsumptionLedgerRollupUnattributedLevelStaysDistinct(t *testing.T) {
 	if item.TotalTokens != 1000 {
 		t.Fatalf("unattributed-level spend lost: got %d, want 1000", item.TotalTokens)
 	}
-	if got := item.ByChild[consumptionUnattributed]; got != 1000 {
+	if got := item.ByChild[consumptionUnattributed].TotalTokens; got != 1000 {
 		t.Fatalf("child breakdown must attribute to the sentinel: got %d, want 1000", got)
 	}
 }
@@ -515,8 +519,8 @@ func TestConsumptionLedgerRollupChildBreakdown(t *testing.T) {
 				t.Fatalf("child breakdown: got %v, want %v", rollup.ByChild, tc.want)
 			}
 			for child, tokens := range tc.want {
-				if rollup.ByChild[child] != tokens {
-					t.Fatalf("child %q: got %d, want %d (full: %v)", child, rollup.ByChild[child], tokens, rollup.ByChild)
+				if rollup.ByChild[child] == nil || rollup.ByChild[child].TotalTokens != tokens {
+					t.Fatalf("child %q: got %+v, want %d tokens (full: %v)", child, rollup.ByChild[child], tokens, rollup.ByChild)
 				}
 			}
 		})
@@ -554,8 +558,8 @@ func TestConsumptionLedgerRollupBreaksDownByAccountAndModel(t *testing.T) {
 
 	wantAccounts := map[string]int64{"a1": 1043, "a2": 100}
 	for account, tokens := range wantAccounts {
-		if rollup.ByAccount[account] != tokens {
-			t.Fatalf("account %q: got %d, want %d (full: %v)", account, rollup.ByAccount[account], tokens, rollup.ByAccount)
+		if rollup.ByAccount[account] == nil || rollup.ByAccount[account].TotalTokens != tokens {
+			t.Fatalf("account %q: got %+v, want %d tokens (full: %v)", account, rollup.ByAccount[account], tokens, rollup.ByAccount)
 		}
 	}
 	if len(rollup.ByAccount) != len(wantAccounts) {
@@ -566,8 +570,8 @@ func TestConsumptionLedgerRollupBreaksDownByAccountAndModel(t *testing.T) {
 	// name are different products with different prices.
 	wantModels := map[string]int64{"acp/opus": 1113, "codex/gpt": 30}
 	for model, tokens := range wantModels {
-		if rollup.ByModel[model] != tokens {
-			t.Fatalf("model %q: got %d, want %d (full: %v)", model, rollup.ByModel[model], tokens, rollup.ByModel)
+		if rollup.ByModel[model] == nil || rollup.ByModel[model].TotalTokens != tokens {
+			t.Fatalf("model %q: got %+v, want %d tokens (full: %v)", model, rollup.ByModel[model], tokens, rollup.ByModel)
 		}
 	}
 }
@@ -1126,4 +1130,122 @@ func (k *plainKV) List(ctx context.Context, prefix string) ([]string, error) {
 }
 func (k *plainKV) Exists(ctx context.Context, key string) (bool, error) {
 	return k.inner.Exists(ctx, key)
+}
+
+// =============================================================================
+// The project and tenant quota planes (go-quicbaas#1058, ruling F2)
+// =============================================================================
+
+func TestConsumptionLedgerRecordWritesTheProjectAndTenantPlanes(t *testing.T) {
+	ledger, kv := newLedgerFixture()
+	ctx := context.Background()
+	if err := ledger.Record(ctx, validEntry()); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	// Spelled out, not recomputed from the code under test.
+	suffix := nanosSegment(ledgerBase.Truncate(time.Hour)) + "/" + nanosSegment(ledgerBase) + "/e1"
+	for _, key := range []string{
+		"orch/costproject/t1/p1/" + suffix,
+		"orch/costtenant/t1/" + suffix,
+	} {
+		if _, err := kv.Get(ctx, key); err != nil {
+			t.Fatalf("record missing at %s: %v", key, err)
+		}
+	}
+}
+
+func TestConsumptionLedgerKeepsUnattributedAndUnpooledEntriesOffTheirPlanes(t *testing.T) {
+	ledger, kv := newLedgerFixture()
+	ctx := context.Background()
+	entry := validEntry()
+	entry.ProjectID, entry.TaskID, entry.JobID, entry.SessionID = "", "", "", ""
+	entry.AccountID = ""
+	if err := ledger.Record(ctx, entry); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	var keys []string
+	if err := kv.Scan(ctx, "orch/", func(key string, _ []byte) error {
+		keys = append(keys, key)
+		return nil
+	}); err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	for _, key := range keys {
+		if strings.HasPrefix(key, "orch/costwindow/") || strings.HasPrefix(key, "orch/costproject/") {
+			t.Fatalf("key %s written: an unpooled entry draws on no account and an unattributed one on no project", key)
+		}
+	}
+	if len(keys) != 2 {
+		t.Fatalf("keys = %v, want the tenant plane and the chain", keys)
+	}
+}
+
+func TestConsumptionLedgerProjectAndTenantWindows(t *testing.T) {
+	ledger, _ := newLedgerFixture()
+	seedRollupFixture(t, ledger)
+	ctx := context.Background()
+	from, to := ledgerBase.Add(-time.Hour), ledgerBase.Add(time.Hour)
+
+	project, err := ledger.ProjectWindowUsage(ctx, "t1", "p1", from, to)
+	if err != nil {
+		t.Fatalf("ProjectWindowUsage: %v", err)
+	}
+	if project.TotalTokens != 1143 {
+		t.Fatalf("project p1 = %d tokens, want 1143 (every p1 entry in the window)", project.TotalTokens)
+	}
+	tenant, err := ledger.TenantWindowUsage(ctx, "t1", from, to)
+	if err != nil {
+		t.Fatalf("TenantWindowUsage: %v", err)
+	}
+	if tenant.TotalTokens != 11143 {
+		t.Fatalf("tenant t1 = %d tokens, want 11143 — and not t1x's", tenant.TotalTokens)
+	}
+	// The window is honoured: nothing before the first entry.
+	early, err := ledger.TenantWindowUsage(ctx, "t1", ledgerBase.Add(-2*time.Hour), ledgerBase)
+	if err != nil {
+		t.Fatalf("TenantWindowUsage(early): %v", err)
+	}
+	if early.Entries != 0 {
+		t.Fatalf("early window = %d entries, want 0", early.Entries)
+	}
+}
+
+func TestConsumptionLedgerProjectAndTenantWindowsRefuseBadInput(t *testing.T) {
+	ledger, _ := newLedgerFixture()
+	ctx := context.Background()
+	from, to := ledgerBase, ledgerBase.Add(time.Hour)
+	tests := []struct {
+		name  string
+		read  func() error
+		field string
+	}{
+		{"project window with no project", func() error {
+			_, err := ledger.ProjectWindowUsage(ctx, "t1", "", from, to)
+			return err
+		}, "project_id"},
+		{"project window naming the sentinel", func() error {
+			_, err := ledger.ProjectWindowUsage(ctx, "t1", consumptionUnattributed, from, to)
+			return err
+		}, "project_id"},
+		{"project window with no tenant", func() error {
+			_, err := ledger.ProjectWindowUsage(ctx, "", "p1", from, to)
+			return err
+		}, "tenant_id"},
+		{"tenant window with no tenant", func() error {
+			_, err := ledger.TenantWindowUsage(ctx, "", from, to)
+			return err
+		}, "tenant_id"},
+		{"an inverted window", func() error {
+			_, err := ledger.TenantWindowUsage(ctx, "t1", to, from)
+			return err
+		}, "window"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var invalid *ConsumptionInvalidError
+			if err := tc.read(); !stderrors.As(err, &invalid) || invalid.Field != tc.field {
+				t.Fatalf("err = %v, want a ConsumptionInvalidError on %s", err, tc.field)
+			}
+		})
+	}
 }

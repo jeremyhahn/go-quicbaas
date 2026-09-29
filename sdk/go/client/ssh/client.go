@@ -281,7 +281,9 @@ type knownHostsClient struct {
 	t transport.Transport
 }
 
-// Add pins a host-key fingerprint.
+// Add pins a host key. PublicKey (an authorized_keys-format line) is
+// required: the store trusts only the full key and derives the pin's
+// fingerprint and algorithm from it.
 func (k *knownHostsClient) Add(ctx context.Context, req AddKnownHostRequest) error {
 	const op = "ssh.KnownHosts.Add"
 	if err := requireContext(ctx, op); err != nil {
@@ -290,8 +292,8 @@ func (k *knownHostsClient) Add(ctx context.Context, req AddKnownHostRequest) err
 	if req.Host == "" {
 		return errors.NewInvalidInput(op, "host is required")
 	}
-	if req.Fingerprint == "" {
-		return errors.NewInvalidInput(op, "fingerprint is required")
+	if req.PublicKey == "" {
+		return errors.NewInvalidInput(op, "public key is required")
 	}
 	_, err := k.t.Request(ctx, ServiceName, MethodAddKnownHost, &req)
 	return err

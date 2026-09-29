@@ -31,8 +31,8 @@ vi.mock('../src/stores/orchestrator.svelte.ts', () => ({
   orchestratorStore: { activeTenantID: 'default' },
 }));
 
-vi.mock('../src/stores/agentStore.svelte.ts', () => ({
-  agentStore: { onlineAgents: [] },
+vi.mock('../src/stores/fleetStore.svelte.ts', () => ({
+  fleetStore: { onlineNodes: [] },
 }));
 
 vi.mock('../src/stores/router.svelte.ts', () => ({
@@ -502,5 +502,42 @@ describe('SpawnDialog — account_allow rotation list', () => {
     const arg = mockSpawn.mock.calls[0][0] as { account_auto?: boolean; account_allow?: string[] };
     expect(arg.account_auto).toBe(true);
     expect(arg.account_allow).toBeUndefined();
+  });
+});
+
+describe('SpawnDialog — run-time prompt material', () => {
+  const mockSpawn = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSpawn.mockResolvedValue({ session_id: 'sess-append' });
+    mockListBackends.mockResolvedValue([{ name: 'claude', type: 'acp', healthy: true } as AgentBackendInfo]);
+    mockListProjects.mockResolvedValue({ projects: [] });
+    mockListAccounts.mockResolvedValue({ accounts: [], total: 0 });
+    mockGetSDKClient.mockResolvedValue({
+      orchestrator: { listBackends: mockListBackends, spawnSession: mockSpawn, promptSession: vi.fn() },
+      projects: { listProjects: mockListProjects },
+      accounts: { listAccounts: mockListAccounts },
+    });
+  });
+
+  async function spawn(container: HTMLElement): Promise<Record<string, unknown>> {
+    await fireEvent.click(container.querySelector('button[aria-label="Spawn session"]') as HTMLButtonElement);
+    await waitFor(() => expect(mockSpawn).toHaveBeenCalled());
+    return mockSpawn.mock.calls[0][0] as Record<string, unknown>;
+  }
+
+  it('sends what the operator typed as prompt_append', async () => {
+    const { container } = render(SpawnDialog, { props: { open: true } });
+    await waitFor(() => screen.getByLabelText(/Select backend/i));
+    await fireEvent.input(screen.getByLabelText(/Prompt to append/i), { target: { value: 'work on pkg/cache only' } });
+    expect((await spawn(container)).prompt_append).toBe('work on pkg/cache only');
+  });
+
+  it('sends no prompt_append when the field is blank', async () => {
+    const { container } = render(SpawnDialog, { props: { open: true } });
+    await waitFor(() => screen.getByLabelText(/Select backend/i));
+    await fireEvent.input(screen.getByLabelText(/Prompt to append/i), { target: { value: '   ' } });
+    expect((await spawn(container)).prompt_append).toBeUndefined();
   });
 });

@@ -14,7 +14,7 @@
 /**
  * Orchestrator state store.
  *
- * Central reactive state for the orchestration subsystem: jobs, agents,
+ * Central reactive state for the orchestration subsystem: jobs, fleet nodes,
  * sessions, tasks, backends, health, and the live event stream.
  *
  * Polling design
@@ -34,6 +34,7 @@
  *   the staleness check. Used by Refresh buttons.
  */
 
+import { untrack } from 'svelte';
 import type {
   Artifact,
   JobAttemptRecord,
@@ -42,6 +43,7 @@ import type {
   JobVerificationResult,
   TaskBlockKind,
   TaskConclusionReason,
+  TaskFaultOrigin,
   TaskSource,
 } from '@quicbaas/sdk';
 import { getSDKClient } from './sdkClient.ts';
@@ -93,7 +95,7 @@ export const ACTIVE_JOB_STATES: readonly JobState[] = [
   'escalating',
 ];
 
-export type AgentStatus = 'registered' | 'running' | 'idle' | 'offline' | 'error';
+export type FleetNodeStatus = 'registered' | 'running' | 'idle' | 'offline' | 'error' | 'disabled';
 export type TaskStatus = 'pending' | 'claimed' | 'in_progress' | 'completed' | 'failed' | 'cancelled' | 'blocked';
 export type SessionState = string;
 
@@ -126,6 +128,9 @@ export interface JobMemory {
 export interface JobConfig {
   tenant_id: string;
   description: string;
+  /** lead is the Agent or pool the job's lead runs as; absent for a job that names none. */
+  lead?: { agent_id?: string; pool_id?: string };
+  /** lead_backend and lead_model are what lead resolved to when the job started. */
   lead_backend?: string;
   lead_model?: string;
   project_id?: string;
@@ -170,11 +175,13 @@ export interface JobStatus {
   runner?: string;
   /** node names the daemon that ran the job's control loop. */
   node?: string;
+  /** prompt_append is the run-time prompt material the job appended to every session it spawned. */
+  prompt_append?: string;
 
   // Provenance — mirrors pkg/orchestration/job_provenance.go. The nested
   // shapes come from the SDK: one declaration, not a second copy that drifts.
 
-  /** agent_id is the fleet agent the work was dispatched to. */
+  /** agent_id is the fleet node the work was dispatched to. */
   agent_id?: string;
   /** stages is every lifecycle moment the job entered, in order. */
   stages?: JobStageRecord[];
@@ -208,17 +215,16 @@ export interface JobEvent {
   timestamp: number;
 }
 
-export interface AgentRegistration {
+export interface FleetNode {
   id: string;
   tenant_id: string;
   name: string;
   host: string;
   backend: string;
   model?: string;
-  agent_type: string;
-  status: AgentStatus;
+  node_type: string;
+  status: FleetNodeStatus;
   capabilities?: string[];
-  container_id?: string;
   work_dir?: string;
   last_seen: number;
   registered_at: number;
@@ -280,6 +286,15 @@ export interface Task {
   blocked_reason?: string;
   block_kind?: TaskBlockKind;
   status_changed_at?: number;
+  // Why the task stopped (go-quicbaas#947). charged_attempts, effective_budget,
+  // fault_class and fault_origin are derived by the server on every read.
+  question_attempts?: number;
+  block_fault_class?: string;
+  conclusion_reason?: TaskConclusionReason | string;
+  charged_attempts?: number;
+  effective_budget?: number;
+  fault_class?: string;
+  fault_origin?: TaskFaultOrigin;
 }
 
 export interface BackendCapabilities {
@@ -322,7 +337,7 @@ export const STALE_AFTER_MS = 15_000;
 // Resource type
 // ---------------------------------------------------------------------------
 
-export type OrchestratorResource = 'jobs' | 'agents' | 'sessions' | 'tasks';
+export type OrchestratorResource = 'jobs' | 'fleet' | 'sessions' | 'tasks';
 
 // ---------------------------------------------------------------------------
 // State
@@ -348,8 +363,8 @@ let taskJobs: JobStatus[] = $state([]);
 let taskJobsTaskID = $state('');
 let taskJobsLoading = $state(false);
 
-let agents: AgentRegistration[] = $state([]);
-let agentsLoading = $state(false);
+let fleetNodes: FleetNode[] = $state([]);
+let fleetNodesLoading = $state(false);
 
 let sessions: SessionInfo[] = $state([]);
 let sessionsLoading = $state(false);
@@ -421,7 +436,7 @@ function currentScope(): string {
 /**
  * The scope key anything tenant-scoped should be tagged with.
  *
- * Exported because the two sibling stores (agentStore, sessionStore) keep their
+ * Exported because the two sibling stores (fleetStore, sessionStore) keep their
  * own SDK-typed caches of the same data and read their tenant from here. They
  * need the SAME key, not a second definition of it: a store that computed its
  * own notion of "whose data is this" would drift from this one, and the whole
@@ -429,6 +444,26 @@ function currentScope(): string {
  */
 export function tenantScope(): string {
   return currentScope();
+}
+
+/**
+ * readyScope is the scope a route-driven read may be issued under, or '' while
+ * no session has been validated.
+ *
+ * A detail page opened from a deep link (`#/jobs/:id`, `#/sessions/:id`,
+ * `#/tasks/:id`) issues its read as soon as the shell mounts, and start-up
+ * validation can move the session scope while that read is in flight — the
+ * session is adopted and its generation moves, although nobody signed in
+ * again. Every such read correctly DROPS an answer asked under a scope that is
+ * no longer in effect, so the page stayed empty ("No job selected") because
+ * the effect that asked was keyed on the route alone and never asked again.
+ *
+ * The effect that follows a route reads this, so it re-runs on every scope
+ * change and asks again under the scope now in effect — and asks nothing at
+ * all until there is a session to ask for.
+ */
+export function readyScope(): string {
+  return authStore.status === 'authenticated' ? currentScope() : '';
 }
 
 /**
@@ -468,7 +503,7 @@ onSessionScopeChange(() => {
  * or $effect comparing it would re-run forever.
  */
 const NO_JOBS: JobStatus[] = [];
-const NO_AGENTS: AgentRegistration[] = [];
+const NO_FLEET_NODES: FleetNode[] = [];
 const NO_SESSIONS: SessionInfo[] = [];
 const NO_TASKS: Task[] = [];
 const NO_EVENTS: JobEvent[] = [];
@@ -492,13 +527,13 @@ function _enforceScope(): void {
   selectedJob = null;
   taskJobs = [];
   taskJobsTaskID = '';
-  agents = [];
+  fleetNodes = [];
   sessions = [];
   tasks = [];
   tasksError = null;
   events = [];
   _jobsFetchedAt = 0;
-  _agentsFetchedAt = 0;
+  _fleetFetchedAt = 0;
   _sessionsFetchedAt = 0;
   _tasksFetchedAt = 0;
 }
@@ -509,7 +544,7 @@ function _enforceScope(): void {
  * The session's `tenant_id` claim is the source of truth, re-derived from the
  * bearer on every load rather than remembered (go-quicbaas#309: this was pinned
  * to the literal 'system', so an operator authenticated into any other tenant
- * queried a tenant they are not in and got 403s and empty Agent Fleet, Sessions,
+ * queried a tenant they are not in and got 403s and empty Fleet, Sessions,
  * Tasks, Workflows and Jobs views).
  */
 function currentTenantID(): string {
@@ -523,7 +558,7 @@ function currentTenantID(): string {
 // Per-resource timestamps of the last successful fetch (ms since epoch).
 // 0 means never fetched.
 let _jobsFetchedAt = 0;
-let _agentsFetchedAt = 0;
+let _fleetFetchedAt = 0;
 let _sessionsFetchedAt = 0;
 let _tasksFetchedAt = 0;
 let _healthFetchedAt = 0;
@@ -553,8 +588,8 @@ export const orchestratorStore = {
   /** The task taskJobs belongs to; '' when none has been read. */
   get taskJobsTaskID() { return _inScope() ? taskJobsTaskID : ''; },
   get taskJobsLoading() { return taskJobsLoading; },
-  get agents() { return _inScope() ? agents : NO_AGENTS; },
-  get agentsLoading() { return agentsLoading; },
+  get fleetNodes() { return _inScope() ? fleetNodes : NO_FLEET_NODES; },
+  get fleetNodesLoading() { return fleetNodesLoading; },
   get sessions() { return _inScope() ? sessions : NO_SESSIONS; },
   get sessionsLoading() { return sessionsLoading; },
   get tasks() { return _inScope() ? tasks : NO_TASKS; },
@@ -625,9 +660,39 @@ export function selectJob(j: JobStatus | null): void {
   _selectedJobRequest = j?.job_id ?? '';
   selectedJob = j;
 }
-export function setAgents(a: AgentRegistration[] | null | undefined): void {
-  agents = Array.isArray(a) ? dedupeBy(a, (x) => x.id) : [];
-  _agentsFetchedAt = Date.now();
+
+/**
+ * followJobRoute makes the job a `#/jobs/:id` route names the selection.
+ *
+ * TWO READS, and the second is the one that matters. The list record
+ * (ListJobs) is the placeholder: it paints the page immediately and, on a
+ * fresh load at #/jobs/:id where the poller has not answered yet, may not
+ * exist at all. The AUTHORITATIVE record is GetJobStatus, because only that
+ * path lays the task's provenance over the status — attempts, budget,
+ * terminal reason, readmit state, delivery and review rounds.
+ *
+ * Call it from the route effect after reading `readyScope()`, so a scope
+ * change re-runs it (see readyScope). It reads the store untracked: the
+ * effect must depend on the route and the scope, never on the selection it
+ * writes, or it would re-run on its own write forever.
+ */
+export function followJobRoute(jobID: string): void {
+  if (jobID === '') return;
+  untrack(() => {
+    const found = orchestratorStore.jobs.find((j) => j.job_id === jobID) ?? null;
+    if (found !== null) {
+      selectJob(found);
+    } else {
+      // Nothing to paint yet; refresh the list so the row exists for the
+      // back navigation, bounded by network latency not the poll cadence.
+      void loadJobs();
+    }
+    void loadSelectedJob(jobID);
+  });
+}
+export function setFleetNodes(a: FleetNode[] | null | undefined): void {
+  fleetNodes = Array.isArray(a) ? dedupeBy(a, (x) => x.id) : [];
+  _fleetFetchedAt = Date.now();
 }
 export function setSessions(s: SessionInfo[] | null | undefined): void {
   sessions = Array.isArray(s) ? dedupeBy(s, (x) => x.session_id) : [];
@@ -668,7 +733,7 @@ export function setActiveTenant(id: string): void {
   announceSessionScopeChange();
 }
 export function setJobsLoading(v: boolean): void { jobsLoading = v; }
-export function setAgentsLoading(v: boolean): void { agentsLoading = v; }
+export function setFleetNodesLoading(v: boolean): void { fleetNodesLoading = v; }
 export function setSessionsLoading(v: boolean): void { sessionsLoading = v; }
 export function setTasksLoading(v: boolean): void { tasksLoading = v; }
 
@@ -869,19 +934,19 @@ async function _fetchJobs(): Promise<void> {
   }
 }
 
-async function _fetchAgents(): Promise<void> {
+async function _fetchFleet(): Promise<void> {
   const scope = currentScope();
   const tenantID = currentTenantID();
-  agentsLoading = true;
+  fleetNodesLoading = true;
   try {
     const client = await getSDKClient();
-    const resp = await client.orchestrator.listAgents({ tenant_id: tenantID });
+    const resp = await client.orchestrator.listFleetNodes({ tenant_id: tenantID });
     if (scope !== currentScope()) return;
-    setAgents(resp.agents ?? []);
+    setFleetNodes(resp.nodes ?? []);
   } catch {
     // Silently ignore.
   } finally {
-    agentsLoading = false;
+    fleetNodesLoading = false;
   }
 }
 
@@ -995,11 +1060,11 @@ export async function loadSelectedJob(jobID: string): Promise<void> {
   }
 }
 
-/** loadAgents fetches agents only when cached data is stale. */
-export async function loadAgents(): Promise<void> {
+/** loadFleet fetches the fleet only when cached data is stale. */
+export async function loadFleet(): Promise<void> {
   _enforceScope();
-  if (Date.now() - _agentsFetchedAt < STALE_AFTER_MS) return;
-  await _fetchAgents();
+  if (Date.now() - _fleetFetchedAt < STALE_AFTER_MS) return;
+  await _fetchFleet();
 }
 
 /** loadSessions fetches sessions only when cached data is stale. */
@@ -1069,11 +1134,11 @@ export async function refresh(resource?: OrchestratorResource): Promise<void> {
   _enforceScope();
   switch (resource) {
     case 'jobs':     return _fetchJobs();
-    case 'agents':   return _fetchAgents();
+    case 'fleet':    return _fetchFleet();
     case 'sessions': return _fetchSessions();
     case 'tasks':    return _fetchTasks();
     default:
-      await Promise.allSettled([_fetchJobs(), _fetchAgents(), _fetchSessions(), _fetchTasks()]);
+      await Promise.allSettled([_fetchJobs(), _fetchFleet(), _fetchSessions(), _fetchTasks()]);
   }
 }
 
@@ -1092,7 +1157,7 @@ let _initialPollDone = false;
 function _pollTick(): void {
   if (!_tabVisible && _initialPollDone) return;
   _initialPollDone = true;
-  void Promise.allSettled([loadJobs(), loadAgents(), loadSessions(), loadTasks()]);
+  void Promise.allSettled([loadJobs(), loadFleet(), loadSessions(), loadTasks()]);
 }
 
 function _onVisibilityChange(): void {
@@ -1179,7 +1244,7 @@ export function resetOrchestratorStore(): void {
   selectedJob = null;
   taskJobs = [];
   taskJobsTaskID = '';
-  agents = [];
+  fleetNodes = [];
   sessions = [];
   tasks = [];
   tasksError = null;
@@ -1187,7 +1252,7 @@ export function resetOrchestratorStore(): void {
   health = null;
   events = [];
   _jobsFetchedAt = 0;
-  _agentsFetchedAt = 0;
+  _fleetFetchedAt = 0;
   _sessionsFetchedAt = 0;
   _tasksFetchedAt = 0;
   _healthFetchedAt = 0;
@@ -1206,7 +1271,7 @@ export function _isPollActive(): boolean { return _pollActive; }
 /** Resets all fetch timestamps. Test use only — allows staleness to be re-tested. */
 export function _resetFetchTimestamps(): void {
   _jobsFetchedAt = 0;
-  _agentsFetchedAt = 0;
+  _fleetFetchedAt = 0;
   _sessionsFetchedAt = 0;
   _tasksFetchedAt = 0;
   _healthFetchedAt = 0;

@@ -233,16 +233,37 @@ func (e *ModuleAuthorizerRequiredError) Error() string {
 // a validator error (bad signature, expired, revoked, DPoP mismatch).
 func (s *Server) AuthenticateHTTP(r *http.Request) (*qrdbsdk.Identity, error) {
 	if s.moduleAuthorizer == nil {
-		return nil, &ModuleAuthorizerRequiredError{}
+		// Fails closed exactly like a refused bearer below, and MUST be
+		// logged exactly like one: from the browser's side this is
+		// indistinguishable from any other 401, but its cause is a
+		// deployment-configuration gap (RequireAuthz=false, or the gate
+		// never finished construction) rather than anything about the
+		// token presented. Before this line the two were impossible to
+		// tell apart from quicbaasd.out: every AuthenticateHTTP rejection
+		// on this branch was silent, so a session that died on every
+		// protected route (this one included) left no trace pointing back
+		// here (go-quicbaas UI-login-refused investigation, 2026-09-25).
+		err := &ModuleAuthorizerRequiredError{}
+		s.logBearerRefusal(r, err)
+		return nil, err
 	}
 	token, err := extractBearerToken(r)
 	if err != nil {
+		// A missing/malformed Authorization header is refused before the
+		// validator ever runs, and is just as worth tracing as a validator
+		// refusal: logging only the branch below made "no header" and "bad
+		// signature" equally silent from the log's point of view.
+		s.logBearerRefusal(r, err)
 		return nil, err
 	}
 	dpopProof := r.Header.Get("DPoP")
 	htu := requestAbsoluteURI(r)
 	ac, err := s.moduleAuthorizer.Validate(r.Context(), token, dpopProof, r.Method, htu)
 	if err != nil {
+		// A PRESENTED bearer that is refused is logged with its route and
+		// reason. The browser only sees "401"; without this line a session
+		// that dies on one endpoint cannot be traced to that endpoint.
+		s.logBearerRefusal(r, err)
 		return nil, err
 	}
 	return &qrdbsdk.Identity{
@@ -295,4 +316,17 @@ func (e *ForbiddenError) Error() string {
 		return "access denied: " + e.Reason
 	}
 	return "access denied"
+}
+
+// logBearerRefusal records why a presented bearer token was refused. The token
+// itself is never logged.
+func (s *Server) logBearerRefusal(r *http.Request, err error) {
+	if s.logger == nil {
+		return
+	}
+	s.logger.Warn("rest: bearer token refused",
+		"method", r.Method,
+		"path", r.URL.Path,
+		"request_id", GetRequestID(r.Context()),
+		"error", err.Error())
 }

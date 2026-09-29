@@ -33,7 +33,7 @@ import (
 func TestClassifyEnvironmentFaultNamesASpentQuota(t *testing.T) {
 	retryAt := time.Date(2026, 8, 22, 15, 0, 0, 0, time.UTC)
 	fault, classified := classifyEnvironmentFault(&AccountQuotaExhaustedError{
-		AccountID: "a1", Window: "five-hour", Axis: spendAxisTokens,
+		AccountID: "a1", Window: "five-hour", Axis: QuotaAxisTokens,
 		Used: 1200, Limit: 1000, RetryAt: retryAt,
 	})
 	if !classified {
@@ -59,7 +59,7 @@ func TestClassifyEnvironmentFaultNamesASpentQuota(t *testing.T) {
 
 func TestClassifyEnvironmentFaultQuotaWithNoRetryTimeAsksForAction(t *testing.T) {
 	fault, classified := classifyEnvironmentFault(&AccountQuotaExhaustedError{
-		AccountID: "a1", Window: "weekly", Axis: spendAxisTokens, Used: 10, Limit: 5,
+		AccountID: "a1", Window: "weekly", Axis: QuotaAxisTokens, Used: 10, Limit: 5,
 	})
 	if !classified {
 		t.Fatal("a spent quota with no retry time was not classified")
@@ -171,7 +171,7 @@ func TestFaultClassMeaningRefusesToInventOne(t *testing.T) {
 
 func TestDispatchReasonRendersAClassifiedRefusal(t *testing.T) {
 	reason := dispatchReasonSpawnFailed(&AccountQuotaExhaustedError{
-		AccountID: "a1", Window: "five-hour", Axis: spendAxisTokens, Used: 1200, Limit: 1000,
+		AccountID: "a1", Window: "five-hour", Axis: QuotaAxisTokens, Used: 1200, Limit: 1000,
 	})
 	if !strings.Contains(reason, "five-hour") {
 		t.Errorf("dispatch reason %q does not name the window that refused", reason)

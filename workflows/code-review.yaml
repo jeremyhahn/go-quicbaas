@@ -4,12 +4,10 @@ mode: constrained
 agents:
   - role: lead
     backend: claude
-    model: claude-sonnet-4-5-20250514
     capabilities: [persistent_sessions, tool_use]
     mcp_scopes: [orchestrator:read, orchestrator:write]
   - role: reviewer
     backend: claude
-    model: claude-sonnet-4-5-20250514
     capabilities: [persistent_sessions, tool_use]
     mcp_scopes: [orchestrator:read]
 settings:

@@ -218,13 +218,13 @@ func TestFlattenIAMArguments(t *testing.T) {
 			input: map[string]interface{}{
 				"tenant_id": "test-tenant",
 				"request": map[string]interface{}{
-					"name":        "test-group",
+					"name":        "test-role",
 					"description": "test description",
 				},
 			},
 			expected: map[string]interface{}{
 				"tenant_id":   "test-tenant",
-				"name":        "test-group",
+				"name":        "test-role",
 				"description": "test description",
 			},
 		},
@@ -433,19 +433,19 @@ func TestIAMHandler_TransformRequest(t *testing.T) {
 	require.NoError(t, err)
 	handler := newIAMHandler(transport)
 
-	t.Run("flattens nested request for group create", func(t *testing.T) {
+	t.Run("flattens nested request for role create", func(t *testing.T) {
 		req := map[string]interface{}{
 			"tenant_id": "test-tenant",
 			"request": map[string]interface{}{
-				"name":        "test-group",
-				"description": "a test group",
+				"name":        "test-role",
+				"description": "a test role",
 			},
 		}
-		args, err := handler.transformRequest("quicbaas.IAM.Group", "Create", req)
+		args, err := handler.transformRequest("quicbaas.IAM.Role", "Create", req)
 		require.NoError(t, err)
 		assert.Equal(t, "test-tenant", args["tenant_id"])
-		assert.Equal(t, "test-group", args["name"])
-		assert.Equal(t, "a test group", args["description"])
+		assert.Equal(t, "test-role", args["name"])
+		assert.Equal(t, "a test role", args["description"])
 		assert.Nil(t, args["request"])
 	})
 

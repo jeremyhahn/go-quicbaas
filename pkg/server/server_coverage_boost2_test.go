@@ -221,14 +221,14 @@ func TestBoost2_LoopbackTrustedClient_BadPEMReturnsError(t *testing.T) {
 // =============================================================================
 // installRemoteBackendResolver — covers the two early-return guard branches
 //
-// installRemoteBackendResolver short-circuits when agentRegistry or
+// installRemoteBackendResolver short-circuits when fleetRegistry or
 // orchestratorDaemonClient is missing. Both branches log a warning and
 // return without touching the agent service.
 // =============================================================================
 
 func TestBoost2_InstallRemoteBackendResolver_NilRegistryShortCircuits(t *testing.T) {
 	srv := withTempServer(t)
-	srv.agentRegistry = nil
+	srv.fleetRegistry = nil
 	srv.orchestratorDaemonClient = nil
 
 	// The agent service is irrelevant when the registry is missing; we pass

@@ -362,7 +362,7 @@ func (h *iamHandler) handleProcessDeletion(ctx context.Context, client iampb.IAM
 	return &iam.DataDeletionRequest{
 		ID:                 deletionID,
 		Status:             iam.DeletionStatusCompleted,
-		DeletedRecordCount: int64(resp.SessionsDeleted + resp.ConsentsDeleted + resp.CredentialsDeleted + resp.GroupMembershipsRemoved + resp.RoleAssignmentsRemoved + resp.TokensRevoked),
+		DeletedRecordCount: int64(resp.SessionsDeleted + resp.ConsentsDeleted + resp.CredentialsDeleted + resp.RoleAssignmentsRemoved + resp.TokensRevoked),
 	}, nil
 }
 

@@ -46,7 +46,7 @@ func TestTransport_SSH_Delegates(t *testing.T) {
 		{"export", sshclient.MethodExportPublicKey, &sshclient.ExportRequest{Scope: "user", Owner: "alice", Name: "laptop"}},
 		{"sign", sshclient.MethodSignDigest, &sshclient.SignRequest{Name: "laptop", Digest: []byte("d")}},
 		{"known-host-add", sshclient.MethodAddKnownHost, &sshclient.AddKnownHostRequest{
-			Host: "h", Fingerprint: sshfixture.HostFingerprint}},
+			Host: "h", PublicKey: sshfixture.Host(t).AuthorizedLine}},
 		{"known-host-list", sshclient.MethodListKnownHosts, &sshclient.ListKnownHostsRequest{}},
 		{"known-host-remove", sshclient.MethodRemoveKnownHost, &sshclient.RemoveKnownHostRequest{Host: "h"}},
 		{"authorized-add", sshclient.MethodAddAuthorizedKey, &sshclient.AddAuthorizedKeyRequest{Name: "n", Line: "l"}},

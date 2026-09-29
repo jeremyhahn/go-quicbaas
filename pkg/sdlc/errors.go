@@ -17,6 +17,8 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 // =============================================================================
@@ -194,6 +196,48 @@ func (e *RepoURLRefusedError) Error() string {
 
 // Unwrap returns the sentinel for errors.Is support.
 func (e *RepoURLRefusedError) Unwrap() error { return ErrInvalidInput }
+
+// VerificationCommandRefusedError reports a binding verification command the
+// operator's allowlist (orchestration.verification_commands) does not carry.
+//
+// THE COMMAND IS RENDERED, deliberately: it is the binding's own text, the
+// caller who wrote it is the one refused, and "which command" is the whole of
+// what they need to fix. It is the same text the guard already renders as the
+// criterion's name when it refuses the command at validation.
+type VerificationCommandRefusedError struct {
+	// Index is the command's position in the binding's verification list.
+	Index int
+
+	// Command is the refused command, trimmed.
+	Command string
+}
+
+// Error implements the error interface.
+func (e *VerificationCommandRefusedError) Error() string {
+	return "sdlc: verification[" + strconv.Itoa(e.Index) + "] " + strconv.Quote(e.Command) +
+		" is not in the operator allowlist (orchestration.verification_commands)"
+}
+
+// Unwrap returns both sentinels: the binding is refused input, and the refusal
+// is the execution guard's.
+func (e *VerificationCommandRefusedError) Unwrap() []error {
+	return []error{ErrInvalidInput, orchestration.ErrCommandRefused}
+}
+
+// ContextRepoRefusedError reports a project context repository the worker
+// could not clone, naming it; Err says why.
+type ContextRepoRefusedError struct {
+	Name string
+	Err  error
+}
+
+// Error implements the error interface.
+func (e *ContextRepoRefusedError) Error() string {
+	return "sdlc: context repository " + strconv.Quote(e.Name) + " refused: " + e.Err.Error()
+}
+
+// Unwrap returns the cause, which carries ErrInvalidInput.
+func (e *ContextRepoRefusedError) Unwrap() error { return e.Err }
 
 // TriggerLabelCollisionError reports a trigger label that is also one of the
 // binding's display labels. The trigger is how a person hands an issue over;
@@ -452,6 +496,23 @@ func (e *WebhookRepoMismatchError) Error() string {
 
 // Unwrap returns the sentinel for errors.Is support.
 func (e *WebhookRepoMismatchError) Unwrap() error { return ErrWebhookRepoMismatch }
+
+// TriageWakeError reports a triage pass a verified webhook delivery could not
+// start. It never fails the delivery — the periodic backstop still triages
+// the project — so it travels on WebhookIngestResult for the caller to log.
+type TriageWakeError struct {
+	TenantID  string
+	ProjectID string
+	Cause     error
+}
+
+// Error implements the error interface.
+func (e *TriageWakeError) Error() string {
+	return "sdlc: webhook could not wake triage for project " + e.ProjectID + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the sentinel and the cause for errors.Is/As support.
+func (e *TriageWakeError) Unwrap() []error { return []error{ErrBackend, e.Cause} }
 
 // MergeNotReadyExhaustedError reports a merge that stayed not-ready past the
 // retry bound.
@@ -767,6 +828,35 @@ func (e *WorkspaceCredentialError) Unwrap() []error {
 	return []error{ErrRunner, ErrWorkspaceUnfit, e.Cause}
 }
 
+// WorkspaceRepoRefusedError reports a workspace whose project or context
+// repository the operator's allowlist refuses, found when the workspace was
+// opened rather than at bind: the project was edited after it was bound, or
+// the allowlist changed under it.
+//
+// IT IS ErrWorkspaceUnfit, for the reason WorkspaceCredentialError is: the fix
+// is a configuration, so the task is parked for an operator instead of
+// spending its attempts on a refusal that repeats. Cause is the guard's
+// refusal -- a *ContextRepoRefusedError naming the context repository, or a
+// *RepoURLRefusedError for the project's own remote.
+type WorkspaceRepoRefusedError struct {
+	// ProjectID is the project whose workspace was refused.
+	ProjectID string
+
+	// Cause is the guard's refusal.
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *WorkspaceRepoRefusedError) Error() string {
+	return ErrRunner.Error() + ": project " + e.ProjectID + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the sentinels and the cause, so a caller may test whether the
+// workspace is unfit or read which repository was refused and why.
+func (e *WorkspaceRepoRefusedError) Unwrap() []error {
+	return []error{ErrRunner, ErrWorkspaceUnfit, e.Cause}
+}
+
 // ProjectRecordMissingError reports a job whose project record the daemon does
 // not hold. Everything an attempt needs to describe itself — the repository,
 // the identity, the workspace root — hangs off it.
@@ -986,6 +1076,70 @@ func (e *CheckoutCommandError) Error() string {
 // be charged against the task; it is an operator's to repair.
 func (e *CheckoutCommandError) Unwrap() []error { return []error{ErrRunner, ErrWorkspaceUnfit} }
 
+// ErrSessionContainerGone indicates a git command the runner asked a session's
+// container to run, and the container was no longer there to run it in.
+var ErrSessionContainerGone = errors.New("sdlc: the session's container is gone")
+
+// SessionContainerGoneError reports a checkout or pre-flight command that never
+// ran, because the container of the session it was sent to has stopped or no
+// longer exists.
+//
+// IT IS NOT A CheckoutCommandError, and that distinction is the whole of why it
+// exists. The container runtime's CLI exits non-zero when it refuses an exec,
+// and reported as a git exit status that read `git clone … exited 128: Error
+// response from daemon: container … is not running` — the shape of a clone
+// the forge refused, when no git ran at all. A reading of exactly that log
+// concluded a real credential fault was not real (go-quicbaas#932). So this
+// names the SESSION and the CONTAINER, and carries the runtime's own refusal as
+// its cause, rather than a command line.
+//
+// It is still a WORKSPACE FAULT for the runner: it happens before anything is
+// prompted, and no retry of git in the same session can succeed, so it parks
+// for an operator with no attempt charged — as a workspace whose host is gone
+// already does (workspaceSpawnFault).
+type SessionContainerGoneError struct {
+	// TaskID is the attempt whose checkout was being made.
+	TaskID string
+
+	// SessionID is the session the command was sent to.
+	SessionID string
+
+	// ContainerID is the container the runtime reported gone.
+	ContainerID string
+
+	// Cause is the runtime's own report: a stopped container, or none at all.
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *SessionContainerGoneError) Error() string {
+	return ErrRunner.Error() + ": task " + e.TaskID + ": " + e.Subject()
+}
+
+// Subject names what happened without the attempt: the session, its container,
+// and the runtime's refusal. It is what the job's evidence records in place of
+// a git command that never ran.
+func (e *SessionContainerGoneError) Subject() string {
+	container := e.ContainerID
+	if container == "" {
+		container = "(unnamed)"
+	}
+	msg := "session " + e.SessionID + ": container " + container + " is gone, so no git ran"
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+// Unwrap returns the sentinels and the runtime's cause for errors.Is/As support.
+func (e *SessionContainerGoneError) Unwrap() []error {
+	errs := []error{ErrRunner, ErrWorkspaceUnfit, ErrSessionContainerGone}
+	if e.Cause != nil {
+		errs = append(errs, e.Cause)
+	}
+	return errs
+}
+
 // CheckoutHeadMismatchError reports a checkout that was pinned to one commit
 // and ended on another.
 //
@@ -1102,118 +1256,6 @@ func (e *SigningSocketPathError) Error() string {
 // Unwrap returns the sentinel error for errors.Is support.
 func (e *SigningSocketPathError) Unwrap() error { return ErrRunner }
 
-// SigningSocketRootError reports a configured sockets root under which no
-// session could ever bind a socket, because the socket's absolute path would
-// exceed the kernel's limit.
-//
-// It is raised AT STARTUP rather than at the first delivery: the arithmetic
-// is fixed — the session directory and the socket's name are constant widths
-// — so the root alone decides it, and an operator can fix a refusal that
-// names the root and the limit.
-type SigningSocketRootError struct {
-	// Root is the effective orchestration.sockets_root.
-	Root string
-
-	// Longest is the length of the longest socket path Root can yield.
-	Longest int
-
-	// Limit is the longest path this platform accepts.
-	Limit int
-}
-
-// Error implements the error interface.
-func (e *SigningSocketRootError) Error() string {
-	return ErrRunner.Error() + ": the signing agent's sockets root " + e.Root +
-		" yields socket paths of up to " + strconv.Itoa(e.Longest) +
-		" bytes and the limit is " + strconv.Itoa(e.Limit) +
-		"; set orchestration.sockets_root to a shorter absolute path"
-}
-
-// Unwrap returns the sentinel error for errors.Is support.
-func (e *SigningSocketRootError) Unwrap() error { return ErrRunner }
-
-// SigningSocketRootUnusableError reports a sockets root that exists but
-// cannot hold an agent socket safely, or one the daemon could not create.
-//
-// A unix socket's own mode does not protect its pathname: the containing
-// directory decides who may unlink and re-bind it, so the root every session
-// directory is created in must be private to the daemon's own user.
-type SigningSocketRootUnusableError struct {
-	// Root is the effective orchestration.sockets_root.
-	Root string
-
-	// Reason states what is wrong with it.
-	Reason string
-
-	// Cause is the underlying filesystem error, when there was one.
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *SigningSocketRootUnusableError) Error() string {
-	msg := ErrRunner.Error() + ": the signing agent's sockets root " + e.Root + " " + e.Reason +
-		"; an agent socket needs a directory private to the daemon's user"
-	if e.Cause != nil {
-		msg += ": " + e.Cause.Error()
-	}
-	return msg
-}
-
-// Unwrap returns the sentinel and the cause for errors.Is/As support.
-func (e *SigningSocketRootUnusableError) Unwrap() []error {
-	if e.Cause == nil {
-		return []error{ErrRunner}
-	}
-	return []error{ErrRunner, e.Cause}
-}
-
-// SigningSocketSweepError reports a startup sweep of the signing agent's
-// sockets root that could not be completed.
-//
-// The sweep DECLINES what it cannot positively identify as one of its own
-// session directories, so this is never "something under the root looked
-// odd": it is the root itself refusing to be enumerated, or a directory the
-// sweep did identify as an orphan and could not probe or remove. Either
-// leaves the root in a state the daemon cannot vouch for before it binds a
-// socket under it, which is a startup failure for the same reason an
-// unusable root is.
-type SigningSocketSweepError struct {
-	// Root is the effective orchestration.sockets_root.
-	Root string
-
-	// Entry is the session directory that failed, when one did. It is empty
-	// when the root itself is the subject.
-	Entry string
-
-	// Reason states what could not be done.
-	Reason string
-
-	// Cause is the underlying error.
-	Cause error
-}
-
-// Error implements the error interface.
-func (e *SigningSocketSweepError) Error() string {
-	subject := "the signing agent's sockets root " + e.Root
-	if e.Entry != "" {
-		subject = "the orphaned signing session " + e.Entry + " under " + e.Root
-	}
-	msg := ErrRunner.Error() + ": " + subject + " " + e.Reason +
-		"; the daemon sweeps the sessions a killed process left before it binds a new one"
-	if e.Cause != nil {
-		msg += ": " + e.Cause.Error()
-	}
-	return msg
-}
-
-// Unwrap returns the sentinel and the cause for errors.Is/As support.
-func (e *SigningSocketSweepError) Unwrap() []error {
-	if e.Cause == nil {
-		return []error{ErrRunner}
-	}
-	return []error{ErrRunner, e.Cause}
-}
-
 // NoPublishedHeadError reports a delivery asked to become reviewable before
 // anything was published for it.
 //
@@ -1263,6 +1305,61 @@ func (e *VerificationNotContainerizedError) Error() string {
 // Unwrap returns the sentinel error for errors.Is support.
 func (e *VerificationNotContainerizedError) Unwrap() error { return ErrRunner }
 
+// MergeResultConflictError reports that the branch could not be merged with
+// its base, so there is no merge result for verification to judge.
+//
+// IT IS A REFUSAL, NOT A VERIFICATION FAILURE. A verification failure says
+// the work is wrong and sends the worker a round of feedback about its own
+// commands; a branch that will not merge says nothing about the work at all,
+// and the only thing that resolves it is the worker's hands on the branch.
+// Reporting it as a failed build would send the worker looking for a defect
+// that is not there.
+//
+// THE PATHS ARE THE POINT, AND THEY ARE ALSO WHAT MAKES IT A CONFLICT.
+// "merge conflict" with no path is a sentence a person has to reproduce the
+// merge to act on; the paths git left unmerged are what says where the work
+// is. They are equally what tells a conflict apart from a merge that failed
+// for a reason having nothing to do with the branch — a missing worktree, a
+// git configuration the image refuses, a full disk — which is a
+// PublishCommandError and not something the worker can reconcile. The runner
+// therefore raises this type only when git NAMED at least one unmerged path.
+type MergeResultConflictError struct {
+	// TaskID is the attempt whose work was to be verified.
+	TaskID string
+
+	// Branch is the attempt's branch.
+	Branch string
+
+	// Base is the ref that would not merge into it, as git names it.
+	Base string
+
+	// Paths are the files git left unmerged. The runner raises this error
+	// only when git named at least one, so it is never empty from that path;
+	// Error() stays defensive about it for a value built anywhere else.
+	Paths []string
+
+	// Output is what the merge said, verbatim. Error() renders a scrubbed
+	// tail of it; everything else that reads it must scrub it too.
+	Output string
+}
+
+// Error implements the error interface. It names the branch, the base and the
+// conflicting paths, and falls back to the scrubbed tail of what git said when
+// git named no path.
+func (e *MergeResultConflictError) Error() string {
+	msg := ErrRunner.Error() + ": task " + e.TaskID + ": branch " + e.Branch +
+		" does not merge with " + e.Base + ", so there is no merge result to verify"
+	if len(e.Paths) > 0 {
+		msg += ": conflicting paths: " + strings.Join(e.Paths, ", ")
+	} else if tail := diagnosticTail(e.Output); tail != "" {
+		msg += ": " + tail
+	}
+	return msg
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *MergeResultConflictError) Unwrap() error { return ErrRunner }
+
 // ReviewArtifactError reports review rounds that could not be encoded for
 // publication as a Task artifact.
 //
@@ -1293,3 +1390,54 @@ func (e *ReviewArtifactError) Unwrap() []error {
 	}
 	return []error{ErrRunner, e.Cause}
 }
+
+// ErrTaskHeldForLead is the sentinel TaskHeldForLeadError unwraps to.
+var ErrTaskHeldForLead = errors.New("sdlc: the issue is held for the lead")
+
+// TaskHeldForLeadError refuses to return a parked task to the factory's
+// queue because its issue carries the hold label: the issue is the lead's to
+// deliver, whatever ruling or condition would otherwise release it.
+type TaskHeldForLeadError struct {
+	TaskID string
+	Issue  int
+	Label  string
+}
+
+// Error implements error.
+func (e *TaskHeldForLeadError) Error() string {
+	return "sdlc: task " + e.TaskID + " stays blocked: issue #" + strconv.Itoa(e.Issue) +
+		" carries " + e.Label + ", so the lead delivers it and the factory does not readmit it"
+}
+
+// Unwrap returns ErrTaskHeldForLead.
+func (e *TaskHeldForLeadError) Unwrap() error { return ErrTaskHeldForLead }
+
+// RulerNotCollaboratorError reports a binding ruler the bound repository
+// grants no access to: neither its owner nor a collaborator.
+type RulerNotCollaboratorError struct {
+	Login string
+}
+
+// Error implements the error interface.
+func (e *RulerNotCollaboratorError) Error() string {
+	return "sdlc: invalid rulers: " + strconv.Quote(e.Login) +
+		" is neither the repository's owner nor one of its collaborators"
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *RulerNotCollaboratorError) Unwrap() error { return ErrInvalidInput }
+
+// AuditUnavailableError reports an operator write refused because no audit
+// sink is wired to record it. It unwraps to ErrUnavailable: the verb exists,
+// and this node cannot perform it accountably.
+type AuditUnavailableError struct {
+	Operation string
+}
+
+// Error implements the error interface.
+func (e *AuditUnavailableError) Error() string {
+	return "sdlc: " + e.Operation + " refused: no audit sink is wired to record it"
+}
+
+// Unwrap returns the sentinel for errors.Is support.
+func (e *AuditUnavailableError) Unwrap() error { return ErrUnavailable }

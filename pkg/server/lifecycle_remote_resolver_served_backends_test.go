@@ -23,7 +23,7 @@
 //
 // These tests deliberately use the REAL registry rather than a mock, because
 // the defect lived in the registry's own backend filter: the resolver
-// pre-filters candidates with ListAgents(&AgentFilter{Backend: name}), so a
+// pre-filters candidates with ListFleetNodes(&FleetNodeFilter{Backend: name}), so a
 // mock that reimplements the filter would test the mock.
 
 package server
@@ -41,32 +41,32 @@ import (
 const servedBackendsTenant = "automatethethings"
 
 // liveFleetPool builds a resolver over the real registry holding the two
-// daemons the burn-in had online: vm-host-4 started with --backends acp
+// daemons the burn-in had online: agent-04 started with --backends acp
 // (serving claude, codex and opencode) and gpu-host serving ollama on a GPU.
 func liveFleetPool(t *testing.T) *remoteBackendPool {
 	t.Helper()
 
-	registry := orchestration.NewInMemoryAgentRegistry()
+	registry := orchestration.NewInMemoryFleetRegistry()
 	ctx := context.Background()
 
-	require.NoError(t, registry.RegisterAgent(ctx, &orchestration.AgentRegistration{
-		ID:           "vm-host-4-id",
+	require.NoError(t, registry.RegisterFleetNode(ctx, &orchestration.FleetNode{
+		ID:           "agent-04-id",
 		TenantID:     servedBackendsTenant,
-		Name:         "vm-host-4",
+		Name:         "agent-04",
 		Host:         "198.51.100.91:9091",
 		Backend:      "claude",
-		Kind:         orchestration.AgentKindDaemon,
-		Status:       orchestration.AgentStatusRunning,
+		Kind:         orchestration.FleetNodeKindDaemon,
+		Status:       orchestration.FleetNodeStatusRunning,
 		Capabilities: []string{"claude", "codex", "opencode"},
 	}))
-	require.NoError(t, registry.RegisterAgent(ctx, &orchestration.AgentRegistration{
+	require.NoError(t, registry.RegisterFleetNode(ctx, &orchestration.FleetNode{
 		ID:           "gpu-host-id",
 		TenantID:     servedBackendsTenant,
 		Name:         "gpu-host",
 		Host:         "198.51.100.92:9091",
 		Backend:      "ollama",
-		Kind:         orchestration.AgentKindDaemon,
-		Status:       orchestration.AgentStatusRunning,
+		Kind:         orchestration.FleetNodeKindDaemon,
+		Status:       orchestration.FleetNodeStatusRunning,
 		Capabilities: []string{"ollama", "gpu"},
 	}))
 
@@ -80,7 +80,7 @@ func liveFleetPool(t *testing.T) *remoteBackendPool {
 
 // TestResolve_RoutesEveryServedBackendToItsDaemon is the live case. A worker
 // session routed on "claude" — and equally on "codex" or "opencode" — must
-// reach vm-host-4, because that is the daemon that can run it.
+// reach agent-04, because that is the daemon that can run it.
 func TestResolve_RoutesEveryServedBackendToItsDaemon(t *testing.T) {
 	t.Parallel()
 
@@ -153,7 +153,7 @@ func TestResolve_GpuAndHostConstraintsStillNarrow(t *testing.T) {
 			orchestration.ContextWithTenant(context.Background(), servedBackendsTenant))
 
 		backend, ok := pool.resolve(ctx, "codex", "")
-		require.False(t, ok, "vm-host-4 serves codex but has no gpu")
+		require.False(t, ok, "agent-04 serves codex but has no gpu")
 		require.Nil(t, backend)
 	})
 
@@ -161,7 +161,7 @@ func TestResolve_GpuAndHostConstraintsStillNarrow(t *testing.T) {
 		t.Parallel()
 		pool := liveFleetPool(t)
 		ctx := orchestration.WithHostAffinity(
-			orchestration.ContextWithTenant(context.Background(), servedBackendsTenant), "vm-host-4")
+			orchestration.ContextWithTenant(context.Background(), servedBackendsTenant), "agent-04")
 
 		backend, ok := pool.resolve(ctx, "opencode", "")
 		require.True(t, ok)

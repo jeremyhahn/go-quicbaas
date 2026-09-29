@@ -62,11 +62,13 @@ var orchestratorMethodMap = map[string]orchestratorHandlerFunc{
 	"BlockTask":              handleOrchestratorBlockTask,
 	"DeleteTask":             handleOrchestratorDeleteTask,
 	"ReadmitTask":            handleOrchestratorReadmitTask,
-	"RegisterAgent":          handleOrchestratorRegisterAgent,
-	"GetAgent":               handleOrchestratorGetAgent,
-	"ListAgents":             handleOrchestratorListAgents,
-	"RemoveAgent":            handleOrchestratorRemoveAgent,
-	"AgentHeartbeat":         handleOrchestratorAgentHeartbeat,
+	"AttentionList":          handleOrchestratorAttentionList,
+	"AttentionResolve":       handleOrchestratorAttentionResolve,
+	"RegisterFleetNode":      handleFleetRegister,
+	"GetFleetNode":           handleFleetGet,
+	"ListFleetNodes":         handleFleetList,
+	"RemoveFleetNode":        handleFleetRemove,
+	"FleetNodeHeartbeat":     handleFleetHeartbeat,
 	"DecomposeTask":          handleOrchestratorDecomposeTask,
 	"SpawnChildJob":          handleOrchestratorSpawnChildJob,
 	"StartJob":               handleOrchestratorStartJob,
@@ -76,7 +78,11 @@ var orchestratorMethodMap = map[string]orchestratorHandlerFunc{
 	"GetSessionHistory":      handleOrchestratorGetSessionHistory,
 	"GetSessionConversation": handleOrchestratorGetSessionConversation,
 	"GetSpendReport":         handleOrchestratorGetSpendReport,
+	"GetTenantSpendPolicy":   handleOrchestratorGetTenantSpendPolicy,
+	"SetTenantSpendPolicy":   handleOrchestratorSetTenantSpendPolicy,
 	"Inference":              handleOrchestratorInference,
+	"GetCostSettings":        handleOrchestratorGetCostSettings,
+	"SetCostSettings":        handleOrchestratorSetCostSettings,
 }
 
 // handleOrchestratorGetSessionHistory is the one-shot gRPC handler for a
@@ -277,6 +283,9 @@ func handleOrchestratorSpawnSession(ctx context.Context, conn *grpc.ClientConn, 
 	tenantID := transport.TenantFromContext(ctx)
 
 	protoReq := &pb.SpawnSessionRequest{
+		AgentId:            sdkReq.AgentID,
+		PoolId:             sdkReq.PoolID,
+		Role:               sdkReq.Role,
 		Backend:            sdkReq.Backend,
 		ProjectId:          sdkReq.ProjectID,
 		Model:              sdkReq.Model,
@@ -300,6 +309,7 @@ func handleOrchestratorSpawnSession(ctx context.Context, conn *grpc.ClientConn, 
 		// AccountAllow is the second thing that authorizes rotation, so it has
 		// to cross the wire alongside AccountAuto.
 		AccountAllow: sdkReq.AccountAllow,
+		PromptAppend: sdkReq.PromptAppend,
 	}
 	protoResp := &pb.SpawnSessionResponse{}
 
@@ -309,9 +319,12 @@ func handleOrchestratorSpawnSession(ctx context.Context, conn *grpc.ClientConn, 
 	}
 
 	return &orchestrator.SpawnSessionResponse{
-		SessionID:   protoResp.GetSessionId(),
-		Backend:     protoResp.GetBackend(),
-		ContainerID: protoResp.GetContainerId(),
+		SessionID:       protoResp.GetSessionId(),
+		Backend:         protoResp.GetBackend(),
+		Model:           protoResp.GetModel(),
+		ContainerID:     protoResp.GetContainerId(),
+		ResolvedAgentID: protoResp.GetResolvedAgentId(),
+		Failovers:       agentAttemptsFromProto(protoResp.GetFailovers()),
 	}, nil
 }
 
@@ -507,10 +520,15 @@ func handleOrchestratorListSessions(ctx context.Context, conn *grpc.ClientConn, 
 	// here) caller's filtered list arrive unfiltered, so closed and error
 	// records came back mixed in with the live ones -- the false liveness
 	// this filter exists to remove (go-quicbaas#792).
+	paging := pageFieldsFromParams(sdkReq.Params)
 	protoReq := &pb.ListSessionsRequest{
 		Backend:  sdkReq.Backend,
 		TenantId: tenantID,
 		Status:   sdkReq.Status,
+		Limit:    paging.limit,
+		Offset:   paging.offset,
+		Sort:     paging.sort,
+		Q:        paging.q,
 	}
 	protoResp := &pb.ListSessionsResponse{}
 
@@ -522,17 +540,20 @@ func handleOrchestratorListSessions(ctx context.Context, conn *grpc.ClientConn, 
 	sessions := make([]*orchestrator.SessionStatusResponse, 0, len(protoResp.GetSessions()))
 	for _, s := range protoResp.GetSessions() {
 		sessions = append(sessions, &orchestrator.SessionStatusResponse{
-			SessionID:  s.GetSessionId(),
-			Backend:    s.GetBackend(),
-			Status:     sessionStateName(s.GetState()),
-			CreatedAt:  timestampToUnixNano(s.GetCreatedAt()),
-			LastActive: timestampToUnixNano(s.GetLastActivity()),
+			SessionID:   s.GetSessionId(),
+			Backend:     s.GetBackend(),
+			Status:      sessionStateName(s.GetState()),
+			ContainerID: s.GetContainerId(),
+			CreatedAt:   timestampToUnixNano(s.GetCreatedAt()),
+			LastActive:  timestampToUnixNano(s.GetLastActivity()),
+			JobID:       s.GetJobId(),
 		})
 	}
 
 	return &orchestrator.ListSessionsResponse{
 		Sessions: sessions,
 		Count:    len(sessions),
+		Envelope: pageEnvelopeFromProto(protoResp.GetTotal(), protoResp.GetLimit(), protoResp.GetOffset(), protoResp.GetNextOffset()),
 	}, nil
 }
 
@@ -563,6 +584,7 @@ func handleOrchestratorCreateTask(ctx context.Context, conn *grpc.ClientConn, re
 		Priority:      int64(sdkReq.Priority),
 		AttemptBudget: int64(sdkReq.AttemptBudget),
 		Runner:        sdkReq.Runner,
+		PromptAppend:  sdkReq.PromptAppend,
 	}
 	protoResp := &pb.CreateTaskResponse{}
 
@@ -600,8 +622,13 @@ func handleOrchestratorListTasks(ctx context.Context, conn *grpc.ClientConn, req
 		return nil, errors.NewInvalidInput("grpc.orchestrator.ListTasks", "invalid request type")
 	}
 
+	paging := pageFieldsFromParams(sdkReq.Params)
 	protoReq := &pb.ListTasksRequest{
 		TenantId: sdkReq.TenantID,
+		Limit:    paging.limit,
+		Offset:   paging.offset,
+		Sort:     paging.sort,
+		Q:        paging.q,
 	}
 
 	// Build filter if any filter fields are set.
@@ -637,8 +664,9 @@ func handleOrchestratorListTasks(ctx context.Context, conn *grpc.ClientConn, req
 	}
 
 	return &orchestrator.ListTasksResponse{
-		Tasks: tasks,
-		Count: len(tasks),
+		Tasks:    tasks,
+		Count:    len(tasks),
+		Envelope: pageEnvelopeFromProto(protoResp.GetTotal(), protoResp.GetLimit(), protoResp.GetOffset(), protoResp.GetNextOffset()),
 	}, nil
 }
 
@@ -773,138 +801,144 @@ func handleOrchestratorCompleteTask(ctx context.Context, conn *grpc.ClientConn, 
 // Agent Fleet Operations
 // =============================================================================
 
-func handleOrchestratorRegisterAgent(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
-	sdkReq, ok := req.(*orchestrator.RegisterAgentRequest)
+func handleFleetRegister(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.RegisterFleetNodeRequest)
 	if !ok {
-		return nil, errors.NewInvalidInput("grpc.orchestrator.RegisterAgent", "invalid request type")
+		return nil, errors.NewInvalidInput("grpc.orchestrator.RegisterFleetNode", "invalid request type")
 	}
 
-	protoReq := &pb.RegisterAgentRequest{
-		TenantId:  sdkReq.TenantID,
-		Name:      sdkReq.Name,
-		Host:      sdkReq.Host,
-		Backend:   sdkReq.Backend,
-		AgentType: sdkReq.AgentType,
-		WorkDir:   sdkReq.WorkDir,
-		Metadata:  sdkReq.Metadata,
+	protoReq := &pb.RegisterFleetNodeRequest{
+		TenantId: sdkReq.TenantID,
+		Name:     sdkReq.Name,
+		Host:     sdkReq.Host,
+		Backend:  sdkReq.Backend,
+		NodeType: sdkReq.NodeType,
+		WorkDir:  sdkReq.WorkDir,
+		Metadata: sdkReq.Metadata,
 	}
-	protoResp := &pb.RegisterAgentResponse{}
+	protoResp := &pb.RegisterFleetNodeResponse{}
 
-	invokeErr := conn.Invoke(ctx, pb.OrchestratorService_RegisterAgent_FullMethodName, protoReq, protoResp)
+	invokeErr := conn.Invoke(ctx, pb.OrchestratorService_RegisterFleetNode_FullMethodName, protoReq, protoResp)
 	if invokeErr != nil {
-		return nil, convertGRPCError(invokeErr, "grpc.orchestrator.RegisterAgent")
+		return nil, convertGRPCError(invokeErr, "grpc.orchestrator.RegisterFleetNode")
 	}
 
-	return &orchestrator.RegisterAgentResponse{
-		Agent: agentRegistrationFromProto(protoResp.GetAgent()),
+	return &orchestrator.RegisterFleetNodeResponse{
+		Node: fleetNodeFromProto(protoResp.GetNode()),
 	}, nil
 }
 
-func handleOrchestratorGetAgent(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
-	sdkReq, ok := req.(*orchestrator.GetAgentRequest)
+func handleFleetGet(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.GetFleetNodeRequest)
 	if !ok {
-		return nil, errors.NewInvalidInput("grpc.orchestrator.GetAgent", "invalid request type")
+		return nil, errors.NewInvalidInput("grpc.orchestrator.GetFleetNode", "invalid request type")
 	}
 
-	protoReq := &pb.GetAgentRequest{
+	protoReq := &pb.GetFleetNodeRequest{
 		TenantId: sdkReq.TenantID,
-		AgentId:  sdkReq.AgentID,
+		NodeId:   sdkReq.NodeID,
 	}
-	protoResp := &pb.GetAgentResponse{}
+	protoResp := &pb.GetFleetNodeResponse{}
 
-	invokeErr := conn.Invoke(ctx, pb.OrchestratorService_GetAgent_FullMethodName, protoReq, protoResp)
+	invokeErr := conn.Invoke(ctx, pb.OrchestratorService_GetFleetNode_FullMethodName, protoReq, protoResp)
 	if invokeErr != nil {
-		return nil, convertGRPCError(invokeErr, "grpc.orchestrator.GetAgent")
+		return nil, convertGRPCError(invokeErr, "grpc.orchestrator.GetFleetNode")
 	}
 
-	return agentRegistrationFromProto(protoResp.GetAgent()), nil
+	return fleetNodeFromProto(protoResp.GetNode()), nil
 }
 
-func handleOrchestratorListAgents(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
-	sdkReq, ok := req.(*orchestrator.ListAgentsRequest)
+func handleFleetList(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.ListFleetNodesRequest)
 	if !ok {
-		return nil, errors.NewInvalidInput("grpc.orchestrator.ListAgents", "invalid request type")
+		return nil, errors.NewInvalidInput("grpc.orchestrator.ListFleetNodes", "invalid request type")
 	}
 
-	protoReq := &pb.ListAgentsRequest{
+	paging := pageFieldsFromParams(sdkReq.Params)
+	protoReq := &pb.ListFleetNodesRequest{
 		TenantId: sdkReq.TenantID,
+		Limit:    paging.limit,
+		Offset:   paging.offset,
+		Sort:     paging.sort,
+		Q:        paging.q,
 	}
 
 	// Build filter if any filter fields are set.
-	if sdkReq.Host != "" || sdkReq.Status != "" || sdkReq.AgentType != "" || sdkReq.Backend != "" {
-		filter := &pb.AgentFilter{
-			Host:      sdkReq.Host,
-			AgentType: sdkReq.AgentType,
-			Backend:   sdkReq.Backend,
+	if sdkReq.Host != "" || sdkReq.Status != "" || sdkReq.NodeType != "" || sdkReq.Backend != "" {
+		filter := &pb.FleetNodeFilter{
+			Host:     sdkReq.Host,
+			NodeType: sdkReq.NodeType,
+			Backend:  sdkReq.Backend,
 		}
 		if sdkReq.Status != "" {
-			if val, exists := pb.AgentStatus_value[agentStatusToProtoEnum(sdkReq.Status)]; exists {
-				filter.Status = pb.AgentStatus(val)
+			if val, exists := pb.FleetNodeStatus_value[fleetNodeStatusToProtoEnum(sdkReq.Status)]; exists {
+				filter.Status = pb.FleetNodeStatus(val)
 			}
 		}
 		protoReq.Filter = filter
 	}
 
-	protoResp := &pb.ListAgentsResponse{}
+	protoResp := &pb.ListFleetNodesResponse{}
 
-	invokeErr := conn.Invoke(ctx, pb.OrchestratorService_ListAgents_FullMethodName, protoReq, protoResp)
+	invokeErr := conn.Invoke(ctx, pb.OrchestratorService_ListFleetNodes_FullMethodName, protoReq, protoResp)
 	if invokeErr != nil {
-		return nil, convertGRPCError(invokeErr, "grpc.orchestrator.ListAgents")
+		return nil, convertGRPCError(invokeErr, "grpc.orchestrator.ListFleetNodes")
 	}
 
-	agents := make([]*orchestrator.AgentRegistration, 0, len(protoResp.GetAgents()))
-	for _, a := range protoResp.GetAgents() {
-		agents = append(agents, agentRegistrationFromProto(a))
+	agents := make([]*orchestrator.FleetNode, 0, len(protoResp.GetNodes()))
+	for _, a := range protoResp.GetNodes() {
+		agents = append(agents, fleetNodeFromProto(a))
 	}
 
-	return &orchestrator.ListAgentsResponse{
-		Agents: agents,
-		Count:  len(agents),
+	return &orchestrator.ListFleetNodesResponse{
+		Nodes:    agents,
+		Count:    len(agents),
+		Envelope: pageEnvelopeFromProto(protoResp.GetTotal(), protoResp.GetLimit(), protoResp.GetOffset(), protoResp.GetNextOffset()),
 	}, nil
 }
 
-func handleOrchestratorRemoveAgent(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
-	sdkReq, ok := req.(*orchestrator.RemoveAgentRequest)
+func handleFleetRemove(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.RemoveFleetNodeRequest)
 	if !ok {
-		return nil, errors.NewInvalidInput("grpc.orchestrator.RemoveAgent", "invalid request type")
+		return nil, errors.NewInvalidInput("grpc.orchestrator.RemoveFleetNode", "invalid request type")
 	}
 
-	protoReq := &pb.RemoveAgentRequest{
+	protoReq := &pb.RemoveFleetNodeRequest{
 		TenantId: sdkReq.TenantID,
-		AgentId:  sdkReq.AgentID,
+		NodeId:   sdkReq.NodeID,
 	}
-	protoResp := &pb.RemoveAgentResponse{}
+	protoResp := &pb.RemoveFleetNodeResponse{}
 
-	invokeErr := conn.Invoke(ctx, pb.OrchestratorService_RemoveAgent_FullMethodName, protoReq, protoResp)
+	invokeErr := conn.Invoke(ctx, pb.OrchestratorService_RemoveFleetNode_FullMethodName, protoReq, protoResp)
 	if invokeErr != nil {
-		return nil, convertGRPCError(invokeErr, "grpc.orchestrator.RemoveAgent")
+		return nil, convertGRPCError(invokeErr, "grpc.orchestrator.RemoveFleetNode")
 	}
 
-	return &orchestrator.RemoveAgentResponse{
-		AgentID: protoResp.GetAgentId(),
+	return &orchestrator.RemoveFleetNodeResponse{
+		NodeID:  protoResp.GetNodeId(),
 		Removed: protoResp.GetRemoved(),
 	}, nil
 }
 
-func handleOrchestratorAgentHeartbeat(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
-	sdkReq, ok := req.(*orchestrator.AgentHeartbeatRequest)
+func handleFleetHeartbeat(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.FleetNodeHeartbeatRequest)
 	if !ok {
-		return nil, errors.NewInvalidInput("grpc.orchestrator.AgentHeartbeat", "invalid request type")
+		return nil, errors.NewInvalidInput("grpc.orchestrator.FleetNodeHeartbeat", "invalid request type")
 	}
 
-	protoReq := &pb.AgentHeartbeatRequest{
+	protoReq := &pb.FleetNodeHeartbeatRequest{
 		TenantId: sdkReq.TenantID,
-		AgentId:  sdkReq.AgentID,
+		NodeId:   sdkReq.NodeID,
 	}
-	protoResp := &pb.AgentHeartbeatResponse{}
+	protoResp := &pb.FleetNodeHeartbeatResponse{}
 
-	invokeErr := conn.Invoke(ctx, pb.OrchestratorService_AgentHeartbeat_FullMethodName, protoReq, protoResp)
+	invokeErr := conn.Invoke(ctx, pb.OrchestratorService_FleetNodeHeartbeat_FullMethodName, protoReq, protoResp)
 	if invokeErr != nil {
-		return nil, convertGRPCError(invokeErr, "grpc.orchestrator.AgentHeartbeat")
+		return nil, convertGRPCError(invokeErr, "grpc.orchestrator.FleetNodeHeartbeat")
 	}
 
-	return &orchestrator.AgentHeartbeatResponse{
-		AgentID:   protoResp.GetAgentId(),
+	return &orchestrator.FleetNodeHeartbeatResponse{
+		NodeID:    protoResp.GetNodeId(),
 		Heartbeat: protoResp.GetAcknowledged(),
 	}, nil
 }
@@ -1010,8 +1044,7 @@ func handleOrchestratorStartJob(ctx context.Context, conn *grpc.ClientConn, req 
 	protoReq := &pb.OrchestratorStartJobRequest{
 		TenantId:      tenantID,
 		Description:   sdkReq.Description,
-		LeadBackend:   sdkReq.LeadBackend,
-		LeadModel:     sdkReq.LeadModel,
+		Lead:          agentRefToProto(sdkReq.Lead),
 		LeadAgentId:   sdkReq.LeadAgentID,
 		ProjectId:     sdkReq.ProjectID,
 		MaxIterations: int32(sdkReq.MaxIterations), //nolint:gosec // G115: bounded count
@@ -1021,6 +1054,7 @@ func handleOrchestratorStartJob(ctx context.Context, conn *grpc.ClientConn, req 
 		Runner:        sdkReq.Runner,
 		TaskId:        sdkReq.TaskID,
 		Attempt:       int64(sdkReq.Attempt),
+		PromptAppend:  sdkReq.PromptAppend,
 	}
 	protoResp := &pb.OrchestratorStartJobResponse{}
 
@@ -1092,6 +1126,7 @@ func handleOrchestratorGetJobStatus(ctx context.Context, conn *grpc.ClientConn, 
 		SessionIDs:    protoResp.GetSessionIds(),
 		Stage:         protoResp.GetStage(),
 		Runner:        protoResp.GetRunner(),
+		PromptAppend:  protoResp.GetPromptAppend(),
 
 		// Provenance — the same facts the REST transport decodes straight
 		// off the JSON body. A converter that stops here hands the caller a
@@ -1199,9 +1234,14 @@ func handleOrchestratorListJobs(ctx context.Context, conn *grpc.ClientConn, req 
 
 	// The tenant comes from the context, the narrowing from the request:
 	// the caller cannot choose its tenant, but it does choose its filter.
+	paging := pageFieldsFromParams(sdkReq.Params)
 	protoReq := &pb.OrchestratorListJobsRequest{
 		TenantId: tenantID,
 		TaskId:   sdkReq.TaskID,
+		Limit:    paging.limit,
+		Offset:   paging.offset,
+		Sort:     paging.sort,
+		Q:        paging.q,
 	}
 
 	protoResp := &pb.OrchestratorListJobsResponse{}
@@ -1232,7 +1272,8 @@ func handleOrchestratorListJobs(ctx context.Context, conn *grpc.ClientConn, req 
 	}
 
 	return &orchestrator.ListJobsResponse{
-		Jobs: jobs,
+		Jobs:     jobs,
+		Envelope: pageEnvelopeFromProto(protoResp.GetTotal(), protoResp.GetLimit(), protoResp.GetOffset(), protoResp.GetNextOffset()),
 	}, nil
 }
 
@@ -1316,6 +1357,7 @@ func taskFromProto(t *pb.Task) *orchestrator.Task {
 	sdkTask.BlockKind = t.GetBlockKind()
 	sdkTask.StatusChangedAt = t.GetStatusChangedAt()
 	sdkTask.Runner = t.GetRunner()
+	sdkTask.PromptAppend = t.GetPromptAppend()
 	if routing := t.GetRouting(); routing != nil {
 		sdkTask.Routing = orchestrator.TaskRouting{
 			Backend:      routing.GetBackend(),
@@ -1324,6 +1366,12 @@ func taskFromProto(t *pb.Task) *orchestrator.Task {
 		}
 	}
 	sdkTask.DispatchReason = t.GetDispatchReason()
+	sdkTask.BlockFaultClass = t.GetBlockFaultClass()
+	sdkTask.ConclusionReason = t.GetConclusionReason()
+	sdkTask.ChargedAttempts = int(t.GetChargedAttempts())
+	sdkTask.EffectiveBudget = int(t.GetEffectiveBudget())
+	sdkTask.FaultClass = t.GetFaultClass()
+	sdkTask.FaultOrigin = t.GetFaultOrigin()
 
 	return sdkTask
 }
@@ -1346,19 +1394,19 @@ func taskSourceFromProto(src *pb.TaskSource) *orchestrator.TaskSource {
 	return &orchestrator.TaskSource{Kind: src.GetKind(), Ref: src.GetRef(), URL: src.GetUrl()}
 }
 
-// agentRegistrationFromProto converts a proto AgentRegistration to an SDK AgentRegistration.
-func agentRegistrationFromProto(a *pb.AgentRegistration) *orchestrator.AgentRegistration {
+// fleetNodeFromProto converts a proto FleetNode to an SDK FleetNode.
+func fleetNodeFromProto(a *pb.FleetNode) *orchestrator.FleetNode {
 	if a == nil {
 		return nil
 	}
 
-	return &orchestrator.AgentRegistration{
+	return &orchestrator.FleetNode{
 		ID:           a.GetId(),
 		TenantID:     a.GetTenantId(),
 		Name:         a.GetName(),
 		Host:         a.GetHost(),
 		Backend:      a.GetBackend(),
-		AgentType:    a.GetAgentType(),
+		NodeType:     a.GetNodeType(),
 		Status:       a.GetStatus().String(),
 		WorkDir:      a.GetWorkDir(),
 		LastSeen:     timestampToUnix(a.GetLastSeen()),
@@ -1440,8 +1488,8 @@ func taskStatusToProtoEnum(status string) string {
 	return "TASK_STATUS_" + strings.ToUpper(strings.ReplaceAll(status, " ", "_"))
 }
 
-// agentStatusToProtoEnum converts an SDK status string to a proto enum name.
-func agentStatusToProtoEnum(status string) string {
+// fleetNodeStatusToProtoEnum converts an SDK status string to a proto enum name.
+func fleetNodeStatusToProtoEnum(status string) string {
 	return "AGENT_STATUS_" + strings.ToUpper(strings.ReplaceAll(status, " ", "_"))
 }
 
@@ -1885,6 +1933,10 @@ func handleOrchestratorGetSpendReport(ctx context.Context, conn *grpc.ClientConn
 		SessionId: sdkReq.SessionID,
 		Round:     int32(sdkReq.Round),
 		RoundSet:  sdkReq.RoundSet,
+		From:      spendTimeToProto(sdkReq.From),
+		To:        spendTimeToProto(sdkReq.To),
+		Host:      sdkReq.Host,
+		Agent:     sdkReq.Agent,
 	})
 	if err != nil {
 		return nil, convertGRPCError(err, "grpc.orchestrator.GetSpendReport")
@@ -1895,27 +1947,48 @@ func handleOrchestratorGetSpendReport(ctx context.Context, conn *grpc.ClientConn
 // spendReportFromProto converts the wire report into the SDK type.
 func spendReportFromProto(resp *pb.GetSpendReportResponse) *orchestrator.GetSpendReportResponse {
 	out := &orchestrator.GetSpendReportResponse{
-		Level:            orchestrator.SpendLevel(resp.GetLevel()),
-		TenantID:         resp.GetTenantId(),
-		ProjectID:        resp.GetProjectId(),
-		TaskID:           resp.GetTaskId(),
-		JobID:            resp.GetJobId(),
-		SessionID:        resp.GetSessionId(),
-		Round:            int(resp.GetRound()),
-		Entries:          int(resp.GetEntries()),
-		InputTokens:      resp.GetInputTokens(),
-		OutputTokens:     resp.GetOutputTokens(),
-		TotalTokens:      resp.GetTotalTokens(),
-		ProjectName:      resp.GetProjectName(),
-		CacheReadTokens:  resp.GetCacheReadTokens(),
-		CacheWriteTokens: resp.GetCacheWriteTokens(),
-		CostMicros:       resp.GetCostMicros(),
-		CostMeasured:     resp.GetCostMeasured(),
-		Successes:        int(resp.GetSuccesses()),
-		Failures:         int(resp.GetFailures()),
-		FirstAt:          spendTimeFromProto(resp.GetFirstAt()),
-		LastAt:           spendTimeFromProto(resp.GetLastAt()),
-		ChildLevel:       orchestrator.SpendLevel(resp.GetChildLevel()),
+		Level:       orchestrator.SpendLevel(resp.GetLevel()),
+		TenantID:    resp.GetTenantId(),
+		ProjectID:   resp.GetProjectId(),
+		TaskID:      resp.GetTaskId(),
+		JobID:       resp.GetJobId(),
+		SessionID:   resp.GetSessionId(),
+		Round:       int(resp.GetRound()),
+		ProjectName: resp.GetProjectName(),
+		SpendTotals: spendTotalsFromProto(resp.GetTotals()),
+		Currency:    resp.GetCurrency(),
+		FirstAt:     spendTimeFromProto(resp.GetFirstAt()),
+		LastAt:      spendTimeFromProto(resp.GetLastAt()),
+		From:        spendTimeFromProto(resp.GetFrom()),
+		To:          spendTimeFromProto(resp.GetTo()),
+		ChildLevel:  orchestrator.SpendLevel(resp.GetChildLevel()),
+
+		SubscriptionFeeMicros: resp.SubscriptionFeeMicros,
+		ScopePolicyStatus:     orchestrator.SpendPolicyStatus(resp.GetScopePolicyStatus()),
+		Host:                  resp.GetHost(),
+	}
+	for _, host := range resp.GetHosts() {
+		out.Hosts = append(out.Hosts, orchestrator.SpendHost{
+			Host:         host.GetHost(),
+			Unattributed: host.GetUnattributed(),
+			SpendTotals:  spendTotalsFromProto(host.GetTotals()),
+		})
+	}
+	for _, window := range resp.GetScopeWindows() {
+		out.ScopeWindows = append(out.ScopeWindows, spendWindowFromProto(window))
+	}
+	out.Agent = resp.GetAgent()
+	out.AgentPolicyStatus = orchestrator.SpendPolicyStatus(resp.GetAgentPolicyStatus())
+	for _, agent := range resp.GetAgents() {
+		out.Agents = append(out.Agents, orchestrator.SpendAgent{
+			AgentID:      agent.GetAgentId(),
+			Name:         agent.GetName(),
+			Unattributed: agent.GetUnattributed(),
+			SpendTotals:  spendTotalsFromProto(agent.GetTotals()),
+		})
+	}
+	for _, window := range resp.GetAgentWindows() {
+		out.AgentWindows = append(out.AgentWindows, spendWindowFromProto(window))
 	}
 	for _, account := range resp.GetAccounts() {
 		out.Accounts = append(out.Accounts, spendAccountFromProto(account))
@@ -1924,7 +1997,7 @@ func spendReportFromProto(resp *pb.GetSpendReportResponse) *orchestrator.GetSpen
 		out.Models = append(out.Models, orchestrator.SpendModel{
 			Engine:      model.GetEngine(),
 			Model:       model.GetModel(),
-			TotalTokens: model.GetTotalTokens(),
+			SpendTotals: spendTotalsFromProto(model.GetTotals()),
 		})
 	}
 	for _, child := range resp.GetChildren() {
@@ -1933,10 +2006,36 @@ func spendReportFromProto(resp *pb.GetSpendReportResponse) *orchestrator.GetSpen
 			Level:        orchestrator.SpendLevel(child.GetLevel()),
 			Unattributed: child.GetUnattributed(),
 			Name:         child.GetName(),
-			TotalTokens:  child.GetTotalTokens(),
+			SpendTotals:  spendTotalsFromProto(child.GetTotals()),
 		})
 	}
 	return out
+}
+
+// spendTotalsFromProto converts one set of consumption totals. An absent
+// message converts to zero totals, which every renderer reads as unpriced.
+func spendTotalsFromProto(totals *pb.SpendTotals) orchestrator.SpendTotals {
+	return orchestrator.SpendTotals{
+		Entries:            int(totals.GetEntries()),
+		InputTokens:        totals.GetInputTokens(),
+		OutputTokens:       totals.GetOutputTokens(),
+		CacheReadTokens:    totals.GetCacheReadTokens(),
+		CacheWriteTokens:   totals.GetCacheWriteTokens(),
+		TotalTokens:        totals.GetTotalTokens(),
+		EquivalentMicros:   totals.GetEquivalentMicros(),
+		PricedEntries:      int(totals.GetPricedEntries()),
+		UnpricedEntries:    int(totals.GetUnpricedEntries()),
+		BilledMicros:       totals.GetBilledMicros(),
+		BilledEntries:      int(totals.GetBilledEntries()),
+		UnbilledEntries:    int(totals.GetUnbilledEntries()),
+		DurationMillis:     totals.GetDurationMs(),
+		EnergyMilliWh:      totals.GetEnergyMwh(),
+		ElectricityEntries: int(totals.GetElectricityEntries()),
+		Successes:          int(totals.GetSuccesses()),
+		Failures:           int(totals.GetFailures()),
+
+		MeasuredEnergyEntries: int(totals.GetMeasuredEnergyEntries()),
+	}
 }
 
 // spendAccountFromProto converts one account's contribution and allowance.
@@ -1945,19 +2044,14 @@ func spendAccountFromProto(account *pb.SpendAccount) orchestrator.SpendAccount {
 		AccountID:    account.GetAccountId(),
 		DisplayName:  account.GetDisplayName(),
 		Provider:     account.GetProvider(),
-		TotalTokens:  account.GetTotalTokens(),
+		SpendTotals:  spendTotalsFromProto(account.GetTotals()),
+		Billing:      orchestrator.SpendAccountBilling{Mode: account.GetBillingMode(), MonthlyFeeMicros: account.GetMonthlyFeeMicros()},
 		PolicyStatus: orchestrator.SpendPolicyStatus(account.GetPolicyStatus()),
+
+		SubscriptionFeeMicros: account.SubscriptionFeeMicros,
 	}
 	for _, window := range account.GetWindows() {
-		out.Windows = append(out.Windows, orchestrator.SpendWindowStatus{
-			Name:            window.GetName(),
-			Size:            window.GetSizeNanos(),
-			MaxTokens:       window.GetMaxTokens(),
-			UsedTokens:      window.GetUsedTokens(),
-			RemainingTokens: window.GetRemainingTokens(),
-			Exhausted:       window.GetExhausted(),
-			FreesAt:         spendTimeFromProto(window.GetFreesAt()),
-		})
+		out.Windows = append(out.Windows, spendWindowFromProto(window))
 	}
 	if breaker := account.GetBreaker(); breaker != nil {
 		out.Breaker = &orchestrator.SpendBreakerVerdict{
@@ -1972,6 +2066,15 @@ func spendAccountFromProto(account *pb.SpendAccount) orchestrator.SpendAccount {
 	return out
 }
 
+// spendTimeToProto converts an optional SDK instant, leaving an absent one
+// unset.
+func spendTimeToProto(at *time.Time) *timestamppb.Timestamp {
+	if at == nil {
+		return nil
+	}
+	return timestamppb.New(*at)
+}
+
 // spendTimeFromProto converts an optional wire timestamp, leaving an absent
 // one NIL. An absent moment must not become the year 1, which a renderer would
 // show as a date — and because the SDK type is re-marshalled by the desktop
@@ -1982,4 +2085,76 @@ func spendTimeFromProto(ts *timestamppb.Timestamp) *time.Time {
 	}
 	at := ts.AsTime()
 	return &at
+}
+
+// handleOrchestratorGetTenantSpendPolicy calls the unary
+// OrchestratorService.GetTenantSpendPolicy RPC.
+func handleOrchestratorGetTenantSpendPolicy(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.GetTenantSpendPolicyRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.GetTenantSpendPolicy", "invalid request type")
+	}
+	if sdkReq.TenantID == "" {
+		sdkReq.TenantID = transport.TenantFromContext(ctx)
+	}
+	resp, err := pb.NewOrchestratorServiceClient(conn).GetTenantSpendPolicy(ctx, &pb.GetTenantSpendPolicyRequest{
+		TenantId: sdkReq.TenantID,
+	})
+	if err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.GetTenantSpendPolicy")
+	}
+	return tenantSpendPolicyFromProto(resp), nil
+}
+
+// handleOrchestratorSetTenantSpendPolicy calls the unary
+// OrchestratorService.SetTenantSpendPolicy RPC.
+func handleOrchestratorSetTenantSpendPolicy(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*orchestrator.SetTenantSpendPolicyRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("grpc.orchestrator.SetTenantSpendPolicy", "invalid request type")
+	}
+	if sdkReq.TenantID == "" {
+		sdkReq.TenantID = transport.TenantFromContext(ctx)
+	}
+	limits := spendLimitsToProto(sdkReq.Limits)
+	if limits == nil {
+		limits = &pb.SpendLimits{}
+	}
+	resp, err := pb.NewOrchestratorServiceClient(conn).SetTenantSpendPolicy(ctx, &pb.SetTenantSpendPolicyRequest{
+		TenantId: sdkReq.TenantID,
+		Limits:   limits,
+	})
+	if err != nil {
+		return nil, convertGRPCError(err, "grpc.orchestrator.SetTenantSpendPolicy")
+	}
+	return tenantSpendPolicyFromProto(resp), nil
+}
+
+// tenantSpendPolicyFromProto converts a tenant's limits and window usage.
+func tenantSpendPolicyFromProto(resp *pb.TenantSpendPolicyResponse) *orchestrator.TenantSpendPolicy {
+	out := &orchestrator.TenantSpendPolicy{
+		TenantID:  resp.GetTenantId(),
+		Limits:    spendLimitsFromProto(resp.GetLimits()),
+		UpdatedAt: spendTimeFromProto(resp.GetUpdatedAt()),
+	}
+	for _, window := range resp.GetWindows() {
+		out.Windows = append(out.Windows, spendWindowFromProto(window))
+	}
+	return out
+}
+
+// spendWindowFromProto converts one window and the usage against it.
+func spendWindowFromProto(window *pb.SpendWindowStatus) orchestrator.SpendWindowStatus {
+	return orchestrator.SpendWindowStatus{
+		Name:                      window.GetName(),
+		Size:                      window.GetSizeNanos(),
+		MaxTokens:                 window.GetMaxTokens(),
+		UsedTokens:                window.GetUsedTokens(),
+		RemainingTokens:           window.GetRemainingTokens(),
+		MaxEquivalentMicros:       window.GetMaxEquivalentMicros(),
+		UsedEquivalentMicros:      window.GetUsedEquivalentMicros(),
+		RemainingEquivalentMicros: window.GetRemainingEquivalentMicros(),
+		Exhausted:                 window.GetExhausted(),
+		FreesAt:                   spendTimeFromProto(window.GetFreesAt()),
+	}
 }

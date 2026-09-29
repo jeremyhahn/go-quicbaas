@@ -28,10 +28,18 @@
  * go-quicbaas#797. Read and write now name the same keys.
  */
 
+import {
+  spendLimitsFromRows,
+  spendRowsEqual,
+  spendRowsFrom,
+  spendRowsProblem,
+  type SpendWindowRow,
+} from './spendLimits.ts';
 import type {
   ContextRepo,
   CreateProjectRequest,
   Project,
+  SessionRotationPolicy,
   UpdateProjectRequest,
 } from '@quicbaas/sdk';
 
@@ -40,6 +48,19 @@ export const SIGNING_ALGORITHMS = ['ED25519', 'ECDSA-P256'] as const;
 
 /** KEY_SCOPES are the key store scopes a KMS key reference may name. */
 export const KEY_SCOPES = ['', 'user', 'tenant', 'service'] as const;
+
+/**
+ * SESSION_ROTATION_POLICIES are what a worker session may do when the pooled
+ * provider account under it rotates, with the words the dialog offers them in.
+ * The first is the default a project that never chose one runs.
+ */
+export const SESSION_ROTATION_POLICIES: ReadonlyArray<{ value: SessionRotationPolicy; label: string }> = [
+  { value: 'resume', label: 'Resume the conversation (default)' },
+  { value: 'fresh', label: 'Start a fresh session' },
+];
+
+/** DEFAULT_SESSION_ROTATION is the policy a project that never chose one runs. */
+export const DEFAULT_SESSION_ROTATION: SessionRotationPolicy = 'resume';
 
 /** ContextRepoRow is one editable context-repository row. */
 export interface ContextRepoRow {
@@ -70,10 +91,16 @@ export interface ProjectFormState {
   gitSshKeyOwner: string;
   defaultWorkflow: string;
   hostAffinity: string;
-  tokenBudget: number;
+  /** spend is the project's spend-limit windows, as editable rows. */
+  spend: SpendWindowRow[];
   gpuMinutes: number;
   maxConcurrency: number;
   autonomous: boolean;
+  /**
+   * sessionRotation is what a worker session does when its pooled account
+   * rotates. A project that never chose one opens as the default.
+   */
+  sessionRotation: SessionRotationPolicy;
   contextRepos: ContextRepoRow[];
 }
 
@@ -97,10 +124,11 @@ export function emptyProjectForm(): ProjectFormState {
     gitSshKeyOwner: '',
     defaultWorkflow: '',
     hostAffinity: '',
-    tokenBudget: 0,
+    spend: [],
     gpuMinutes: 0,
     maxConcurrency: 0,
     autonomous: false,
+    sessionRotation: DEFAULT_SESSION_ROTATION,
     contextRepos: [],
   };
 }
@@ -125,10 +153,11 @@ export function projectFormFrom(project: Project): ProjectFormState {
     gitSshKeyOwner: project.git_ssh_key_owner ?? '',
     defaultWorkflow: project.default_workflow ?? '',
     hostAffinity: project.host_affinity ?? '',
-    tokenBudget: project.token_budget ?? 0,
+    spend: spendRowsFrom(project.spend),
     gpuMinutes: project.gpu_minutes ?? 0,
     maxConcurrency: project.max_concurrency ?? 0,
     autonomous: project.autonomous ?? false,
+    sessionRotation: project.session_rotation ?? DEFAULT_SESSION_ROTATION,
     contextRepos: (project.context_repos ?? []).map((repo) => ({
       name: repo.name,
       repo_url: repo.repo_url,
@@ -164,7 +193,7 @@ export function validateProjectForm(form: ProjectFormState, requireName: boolean
   if (form.gitSigningEnabled && form.gitSigningKeyName.trim() === '') {
     return 'Signing is enabled but names no key; an enabled policy must never degrade to unsigned.';
   }
-  return validateContextRepos(form.contextRepos);
+  return spendRowsProblem(form.spend) ?? validateContextRepos(form.contextRepos);
 }
 
 /**
@@ -248,7 +277,6 @@ export function createProjectRequestFrom(
     git_ssh_key_owner: textOrUndefined(form.gitSshKeyOwner),
     default_workflow: textOrUndefined(form.defaultWorkflow),
     host_affinity: textOrUndefined(form.hostAffinity),
-    token_budget: positiveOrUndefined(form.tokenBudget),
     gpu_minutes: positiveOrUndefined(form.gpuMinutes),
     max_concurrency: positiveOrUndefined(form.maxConcurrency),
   };
@@ -256,7 +284,11 @@ export function createProjectRequestFrom(
   // "off", and sending it would be indistinguishable from asking for it.
   if (form.gitSigningEnabled) req.git_signing_enabled = true;
   if (form.autonomous) req.autonomous = true;
+  // The default is what an unset project already runs, so it is not sent;
+  // only a departure from it is.
+  if (form.sessionRotation !== DEFAULT_SESSION_ROTATION) req.session_rotation = form.sessionRotation;
   if (form.contextRepos.length > 0) req.context_repos = trimmedContextRepos(form.contextRepos);
+  if (form.spend.length > 0) req.spend = spendLimitsFromRows(form.spend);
   return req;
 }
 
@@ -324,7 +356,11 @@ export function updateProjectRequestFrom(
   setIfChanged(req, 'git_ssh_key_owner', form.gitSshKeyOwner, was.gitSshKeyOwner);
   setIfChanged(req, 'host_affinity', form.hostAffinity, was.hostAffinity);
 
-  numberIfChanged(req, 'token_budget', form.tokenBudget, was.tokenBudget);
+  // The limits are replaced whole when they changed; no windows at all is an
+  // explicit, present clear (go-quicbaas#1058).
+  if (!spendRowsEqual(form.spend, project.spend)) {
+    req.spend = spendLimitsFromRows(form.spend);
+  }
   numberIfChanged(req, 'gpu_minutes', form.gpuMinutes, was.gpuMinutes);
   numberIfChanged(req, 'max_concurrency', form.maxConcurrency, was.maxConcurrency);
 
@@ -335,6 +371,11 @@ export function updateProjectRequestFrom(
   }
   if (form.autonomous !== was.autonomous) {
     req.autonomous = form.autonomous;
+  }
+  // Sent whenever it moved, either way: naming "resume" is how a project
+  // returns to the default.
+  if (form.sessionRotation !== was.sessionRotation) {
+    req.session_rotation = form.sessionRotation;
   }
 
   if (!contextReposEqual(form.contextRepos, project.context_repos ?? [])) {

@@ -63,7 +63,7 @@ type remoteSessionPin struct {
 }
 
 // withRemoteSessionPin marks ctx as routing an operation of a session that
-// lives on a fleet agent: it reaches that agent or fails, and never falls back
+// lives on a fleet node: it reaches that agent or fails, and never falls back
 // to this daemon's backend table.
 func withRemoteSessionPin(ctx context.Context, sessionID, host string) context.Context {
 	return context.WithValue(ctx, remoteSessionPinKey{}, remoteSessionPin{sessionID: sessionID, host: host})
@@ -83,7 +83,7 @@ func remoteSessionPinFrom(ctx context.Context) (remoteSessionPin, bool) {
 var ErrSessionHostUnavailable = errors.New("orchestration: the session's host is unavailable")
 
 // SessionHostUnavailableError reports an operation on a session that lives on
-// a fleet agent the resolver cannot reach. The session is NOT treated as gone:
+// a fleet node the resolver cannot reach. The session is NOT treated as gone:
 // the agent may be alive behind a missed heartbeat, and only its own answer —
 // or the reconciler's positive evidence of absence — may conclude it.
 type SessionHostUnavailableError struct {

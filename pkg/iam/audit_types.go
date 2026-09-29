@@ -76,9 +76,6 @@ const (
 	// AuditEventUserManagement represents user CRUD operations.
 	AuditEventUserManagement AuditEventType = "user_management"
 
-	// AuditEventGroupManagement represents group CRUD operations.
-	AuditEventGroupManagement AuditEventType = "group_management"
-
 	// AuditEventRoleManagement represents role CRUD operations.
 	AuditEventRoleManagement AuditEventType = "role_management"
 

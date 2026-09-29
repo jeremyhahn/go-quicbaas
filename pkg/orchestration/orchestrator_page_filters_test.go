@@ -237,22 +237,22 @@ func TestListAgentsPage_NarrowsOnServedBackendAndCountsThemAll(t *testing.T) {
 	t.Parallel()
 
 	svc := pagedTestService(t)
-	registry := NewAgentRegistry(NewMemoryTaskKV())
-	svc.SetAgentRegistry(registry)
+	registry := NewFleetRegistry(NewMemoryTaskKV())
+	svc.SetFleetRegistry(registry)
 	ctx := ContextWithTenant(context.Background(), "tenant-1")
-	agents := []*AgentRegistration{
-		{ID: "a1", TenantID: "tenant-1", Name: "one", Backend: "acp", Capabilities: []string{"claude", "codex"}, Status: AgentStatusRunning},
-		{ID: "a2", TenantID: "tenant-1", Name: "two", Backend: "codex", Status: AgentStatusOffline},
+	agents := []*FleetNode{
+		{ID: "a1", TenantID: "tenant-1", Name: "one", Backend: "acp", Capabilities: []string{"claude", "codex"}, Status: FleetNodeStatusRunning},
+		{ID: "a2", TenantID: "tenant-1", Name: "two", Backend: "codex", Status: FleetNodeStatusOffline},
 	}
 	for _, agent := range agents {
-		if err := registry.RegisterAgent(ctx, agent); err != nil {
-			t.Fatalf("RegisterAgent(%s) error = %v", agent.ID, err)
+		if err := registry.RegisterFleetNode(ctx, agent); err != nil {
+			t.Fatalf("RegisterFleetNode(%s) error = %v", agent.ID, err)
 		}
 	}
 
-	page, err := svc.ListAgentsPage(ctx, "tenant-1", &AgentFilter{Backend: "codex"}, &Page{})
+	page, err := svc.ListFleetNodesPage(ctx, "tenant-1", &FleetNodeFilter{Backend: "codex"}, &Page{})
 	if err != nil {
-		t.Fatalf("ListAgentsPage() error = %v, want nil", err)
+		t.Fatalf("ListFleetNodesPage() error = %v, want nil", err)
 	}
 	if page.Total != 2 {
 		t.Errorf("matched %d agents, want both — one by capability, one by primary", page.Total)
@@ -264,10 +264,10 @@ func TestListAgentsPage_NarrowsOnServedBackendAndCountsThemAll(t *testing.T) {
 		t.Errorf("status facet = %v, want one of each", page.Facets["status"])
 	}
 
-	offline, err := svc.ListAgentsPage(ctx, "tenant-1",
-		&AgentFilter{Backend: "codex", Status: AgentStatusOffline}, &Page{})
+	offline, err := svc.ListFleetNodesPage(ctx, "tenant-1",
+		&FleetNodeFilter{Backend: "codex", Status: FleetNodeStatusOffline}, &Page{})
 	if err != nil {
-		t.Fatalf("ListAgentsPage() error = %v, want nil", err)
+		t.Fatalf("ListFleetNodesPage() error = %v, want nil", err)
 	}
 	if offline.Total != 1 || offline.Items[0].ID != "a2" {
 		t.Errorf("matched %v, want only the offline daemon", offline.Items)

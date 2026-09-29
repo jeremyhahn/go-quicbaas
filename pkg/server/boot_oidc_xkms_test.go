@@ -1,4 +1,4 @@
-//go:build mcp
+//go:build mcp && !integration
 
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
@@ -91,6 +91,13 @@ func productionPostureConfig(t *testing.T, kmsEnabled bool) *config.Config {
 	cfg.Server.Embedded = true
 	cfg.Auth.AllowPasswordAuth = false
 	cfg.Auth.InsecureDevMode = false
+	// A production posture includes the SPIFFE trust domain. First-boot issues
+	// the platform admin's certificate through the CA this boot brings up, and it
+	// FAILS CLOSED without a trust domain (ErrNoSPIFFETrustDomain) because the
+	// certificate would carry no tenant SAN for login to resolve. Since #57 that
+	// failure refuses the boot instead of warning, so a config claiming a
+	// production posture has to actually be one.
+	cfg.IAM.SPIFFETrustDomain = testTrustDomain
 	return cfg
 }
 

@@ -151,7 +151,7 @@ func TestStartJob_TakesALeaseAndCancelJobReleasesIt(t *testing.T) {
 	svc := newHoldingService(t, backend)
 	ctx := ContextWithTenant(context.Background(), "acme")
 
-	resp, err := svc.StartJob(ctx, &StartJobRequest{TenantID: "acme", Description: "leased", LeadBackend: "mock", MaxIterations: 1})
+	resp, err := svc.StartJob(ctx, &StartJobRequest{TenantID: "acme", Description: "leased", routedBackend: "mock", MaxIterations: 1})
 	if err != nil {
 		t.Fatalf("StartJob: %v", err)
 	}
@@ -219,14 +219,14 @@ func TestStartJob_RefusesASecondJobOnAHeldSubjectBeforeCreatingIt(t *testing.T) 
 	ctx := ContextWithTenant(context.Background(), "acme")
 	defer cancelAllJobs(svc)
 
-	first, err := svc.StartJob(ctx, &StartJobRequest{TenantID: "acme", Runner: runner.name, Description: "holder", LeadBackend: "mock"})
+	first, err := svc.StartJob(ctx, &StartJobRequest{TenantID: "acme", Runner: runner.name, Description: "holder", routedBackend: "mock"})
 	if err != nil {
 		t.Fatalf("StartJob (holder): %v", err)
 	}
 	loop := runningLoop(t, svc, "acme", first.JobID)
 	awaitLease(t, loop)
 
-	second, err := svc.StartJob(ctx, &StartJobRequest{TenantID: "acme", Runner: runner.name, Description: "duplicate", LeadBackend: "mock"})
+	second, err := svc.StartJob(ctx, &StartJobRequest{TenantID: "acme", Runner: runner.name, Description: "duplicate", routedBackend: "mock"})
 	if !errors.Is(err, ErrJobLeaseTaken) {
 		t.Fatalf("a duplicate on a held subject was not refused at StartJob: resp=%+v err=%v", second, err)
 	}
@@ -242,7 +242,7 @@ func TestStartJob_RefusesASecondJobOnAHeldSubjectBeforeCreatingIt(t *testing.T) 
 		t.Fatalf("CancelJob: %v", err)
 	}
 	awaitFinished(t, loop)
-	third, err := svc.StartJob(ctx, &StartJobRequest{TenantID: "acme", Runner: runner.name, Description: "after release", LeadBackend: "mock"})
+	third, err := svc.StartJob(ctx, &StartJobRequest{TenantID: "acme", Runner: runner.name, Description: "after release", routedBackend: "mock"})
 	if err != nil {
 		t.Fatalf("StartJob after the holder released: %v", err)
 	}
@@ -293,14 +293,14 @@ func TestStartJob_RefusesTheJobOverProjectCapacity(t *testing.T) {
 	}
 	svc.SetJobLeaseStore(capped, 0)
 
-	first, err := svc.StartJob(ctx, &StartJobRequest{TenantID: "acme", Description: "one", LeadBackend: "mock", ProjectID: testProjectID, MaxIterations: 1})
+	first, err := svc.StartJob(ctx, &StartJobRequest{TenantID: "acme", Description: "one", routedBackend: "mock", ProjectID: testProjectID, MaxIterations: 1})
 	if err != nil {
 		t.Fatalf("StartJob first: %v", err)
 	}
 	defer cancelAllJobs(svc)
 	awaitArrival(t, backend)
 
-	second, err := svc.StartJob(ctx, &StartJobRequest{TenantID: "acme", Description: "two", LeadBackend: "mock", ProjectID: testProjectID, MaxIterations: 1})
+	second, err := svc.StartJob(ctx, &StartJobRequest{TenantID: "acme", Description: "two", routedBackend: "mock", ProjectID: testProjectID, MaxIterations: 1})
 	if err != nil {
 		t.Fatalf("StartJob second: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestStartJob_RefusesTheJobOverProjectCapacity(t *testing.T) {
 	if err := svc.CancelJob(ctx, "acme", first.JobID); err != nil {
 		t.Fatalf("CancelJob: %v", err)
 	}
-	third, err := svc.StartJob(ctx, &StartJobRequest{TenantID: "acme", Description: "three", LeadBackend: "mock", ProjectID: testProjectID, MaxIterations: 1})
+	third, err := svc.StartJob(ctx, &StartJobRequest{TenantID: "acme", Description: "three", routedBackend: "mock", ProjectID: testProjectID, MaxIterations: 1})
 	if err != nil {
 		t.Fatalf("StartJob third: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestStartJob_BoundJobConcludesItsTaskSynchronously(t *testing.T) {
 	// the job runs; the job is then cancelled so it fails: a charged failure
 	// with budget left requeues.
 	seeded := seedSpawnedTask(t, store, &Task{Status: TaskStatusPending, Attempts: 1})
-	resp := startBoundJob(ctx, t, svc, store, seeded.ID, &StartJobRequest{TenantID: "acme", Description: "bound", LeadBackend: "mock", Attempt: 1, MaxIterations: 1})
+	resp := startBoundJob(ctx, t, svc, store, seeded.ID, &StartJobRequest{TenantID: "acme", Description: "bound", routedBackend: "mock", Attempt: 1, MaxIterations: 1})
 	defer cancelAllJobs(svc)
 	awaitArrival(t, backend)
 
@@ -623,7 +623,7 @@ func TestSweep_ConcludesAJobWhoseWorkerSessionIsGone(t *testing.T) {
 	ctx := ContextWithTenant(context.Background(), "acme")
 	seeded := seedUnboundTask(t, tasks, &Task{Status: TaskStatusClaimed, Attempts: 1})
 	started, err := impl.StartJob(ctx, &StartJobRequest{
-		TenantID: "acme", Description: "remote worker", LeadBackend: "mock",
+		TenantID: "acme", Description: "remote worker", routedBackend: "mock",
 		TaskID: seeded.ID, Attempt: 1, MaxIterations: 1,
 	})
 	if err != nil {
@@ -671,4 +671,118 @@ func TestSweep_ConcludesAJobWhoseWorkerSessionIsGone(t *testing.T) {
 		t.Fatal("a stalled job is no longer running")
 	}
 	awaitLeaseReleased(ctx, t, impl.jobLeases, "acme", "", JobRunnerWorkflow, seeded.ID)
+}
+
+// gatedLeaseStore holds every Acquire until released, and signals each
+// arrival, so a test can hold a resumed job between launch and lease.
+type gatedLeaseStore struct {
+	JobLeaseStore
+	arrived  chan struct{}
+	release  chan struct{}
+	acquired chan struct{}
+}
+
+func newGatedLeaseStore(t *testing.T) *gatedLeaseStore {
+	t.Helper()
+	inner, err := NewProcessJobLeaseStore(DefaultJobLeaseTTL)
+	if err != nil {
+		t.Fatalf("NewProcessJobLeaseStore: %v", err)
+	}
+	return &gatedLeaseStore{
+		JobLeaseStore: inner,
+		arrived:       make(chan struct{}, 1),
+		release:       make(chan struct{}),
+		acquired:      make(chan struct{}, 1),
+	}
+}
+
+func (g *gatedLeaseStore) Acquire(ctx context.Context, lease *JobLease) error {
+	g.arrived <- struct{}{}
+	select {
+	case <-g.release:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	err := g.JobLeaseStore.Acquire(ctx, lease)
+	g.acquired <- struct{}{}
+	return err
+}
+
+// TestRecoverJobs_ReturnsOnlyOnceResumedJobsHoldTheirLeases is the regression
+// for the dispatcher-vs-recovery race (go-quicbaas#1064): launchJob returns
+// before the run takes its lease, so a recovery that returned on launch let
+// the dispatcher's first sweep find no live lease and duplicate the job.
+func TestRecoverJobs_ReturnsOnlyOnceResumedJobsHoldTheirLeases(t *testing.T) {
+	kv := newMockKVStore()
+	svc := &agentServiceImpl{store: NewInMemoryAgentStore(), kvStore: kv, logger: &controlLoopMockLogger{}, node: "node-a"}
+	gate := newGatedLeaseStore(t)
+	svc.jobLeases, svc.leaseTTL = gate, DefaultJobLeaseTTL
+	persistStatus(t, kv, &JobStatus{JobID: "job-mine", TenantID: "test-tenant", State: JobStateExecuting, Node: "node-a", Config: newTestConfig()})
+	defer cancelAllJobs(svc)
+
+	done := make(chan error, 1)
+	go func() { done <- svc.recoverJobs(context.Background()) }()
+
+	<-gate.arrived
+	select {
+	case err := <-done:
+		t.Fatalf("recovery returned (%v) while the resumed job was still waiting for its lease", err)
+	default:
+	}
+
+	close(gate.release)
+	if err := <-done; err != nil {
+		t.Fatalf("recoverJobs: %v", err)
+	}
+	select {
+	case <-gate.acquired:
+	default:
+		t.Fatal("recovery returned before the resumed job's lease was taken")
+	}
+}
+
+// TestRecoverJobs_ALeaseThatNeverSettlesFailsWithinTheBootBudget proves the
+// wait is bounded by the caller's context and reported, not endless.
+func TestRecoverJobs_ALeaseThatNeverSettlesFailsWithinTheBootBudget(t *testing.T) {
+	kv := newMockKVStore()
+	svc := &agentServiceImpl{store: NewInMemoryAgentStore(), kvStore: kv, logger: &controlLoopMockLogger{}, node: "node-a"}
+	gate := newGatedLeaseStore(t)
+	svc.jobLeases, svc.leaseTTL = gate, DefaultJobLeaseTTL
+	persistStatus(t, kv, &JobStatus{JobID: "job-mine", TenantID: "test-tenant", State: JobStateExecuting, Node: "node-a", Config: newTestConfig()})
+	defer cancelAllJobs(svc)
+	defer close(gate.release)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- svc.recoverJobs(ctx) }()
+	<-gate.arrived
+	cancel()
+
+	err := <-done
+	var recoveryErr *JobRecoveryError
+	if !errors.As(err, &recoveryErr) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want a JobRecoveryError caused by the expired budget", err)
+	}
+
+	// THE GATE OUTLIVES THE BUDGET: the resumed job is still waiting for its
+	// lease, so the signal the dispatcher waits on must still be open.
+	select {
+	case <-svc.ResumedJobsSettled():
+		t.Fatal("ResumedJobsSettled closed while a resumed job still had no lease")
+	default:
+	}
+	gate.release <- struct{}{}
+	<-gate.acquired
+	<-svc.ResumedJobsSettled()
+}
+
+// TestResumedJobsSettled_IsClosedBeforeAnyRecovery proves a node that
+// recovered nothing gates nothing.
+func TestResumedJobsSettled_IsClosedBeforeAnyRecovery(t *testing.T) {
+	svc := &agentServiceImpl{}
+	select {
+	case <-svc.ResumedJobsSettled():
+	default:
+		t.Fatal("with no recovery there is nothing to wait for")
+	}
 }

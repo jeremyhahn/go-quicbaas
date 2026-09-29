@@ -381,98 +381,6 @@ func TestIAMServiceWrapper_ListUsers_IdentityStoreUnavailable(t *testing.T) {
 	assert.Nil(t, resp)
 }
 
-func TestIAMServiceWrapper_CreateGroup_IdentityStoreUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{identityStore: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.CreateGroup(context.Background(), &CreateGroupRequest{
-		TenantID: "t-1",
-		Name:     "admins",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_GetGroup_IdentityStoreUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{identityStore: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.GetGroup(context.Background(), &GetGroupRequest{
-		TenantID: "t-1",
-		GroupID:  "g-1",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_UpdateGroup_IdentityStoreUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{identityStore: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.UpdateGroup(context.Background(), &UpdateGroupRequest{
-		TenantID: "t-1",
-		GroupID:  "g-1",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_DeleteGroup_IdentityStoreUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{identityStore: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.DeleteGroup(context.Background(), &DeleteGroupRequest{
-		TenantID: "t-1",
-		GroupID:  "g-1",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_ListGroups_IdentityStoreUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{identityStore: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.ListGroups(context.Background(), &ListGroupsRequest{
-		TenantID: "t-1",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_AddUserToGroup_IdentityStoreUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{identityStore: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.AddUserToGroup(context.Background(), &AddUserToGroupRequest{
-		TenantID: "t-1",
-		GroupID:  "g-1",
-		UserID:   "u-1",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestIAMServiceWrapper_RemoveUserFromGroup_IdentityStoreUnavailable(t *testing.T) {
-	provider := &mockIAMServiceProvider{identityStore: nil}
-	wrapper := &iamServiceWrapper{provider: provider}
-
-	resp, err := wrapper.RemoveUserFromGroup(context.Background(), &RemoveUserFromGroupRequest{
-		TenantID: "t-1",
-		GroupID:  "g-1",
-		UserID:   "u-1",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
 func TestIAMServiceWrapper_CreateRole_IdentityStoreUnavailable(t *testing.T) {
 	provider := &mockIAMServiceProvider{identityStore: nil}
 	wrapper := &iamServiceWrapper{provider: provider}
@@ -778,9 +686,8 @@ func (e *testIAMError) Error() string {
 func newRoleTestIdentityStore() (*iam.IdentityStore, *iam.MemoryStorage) {
 	mem := iam.NewMemoryStorage()
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  mem,
-		GroupStorage: mem,
-		RoleStorage:  mem,
+		UserStorage: mem,
+		RoleStorage: mem,
 	})
 	return store, mem
 }
@@ -841,70 +748,9 @@ func TestIAMServiceWrapper_CreateUser_UnknownRole_NoUserCreated(t *testing.T) {
 }
 
 // =============================================================================
-// CreateUser group + attribute forwarding (QUIC + MCP transports converge on
+// CreateUser attribute forwarding (QUIC + MCP transports converge on
 // this wrapper)
 // =============================================================================
-
-// TestIAMServiceWrapper_CreateUser_ForwardsGroups proves the wrapper no longer
-// drops IAMCreateUserRequest.Groups: the groups reach the identity store, are
-// persisted on the created user, and the group's member list references the
-// user back.
-func TestIAMServiceWrapper_CreateUser_ForwardsGroups(t *testing.T) {
-	store, _ := newRoleTestIdentityStore()
-	ctx := context.Background()
-
-	group, err := store.CreateGroup(ctx, "t-1", iam.CreateGroupOptions{Name: "ops-team"})
-	require.NoError(t, err)
-
-	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
-
-	resp, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{
-		TenantID: "t-1",
-		Email:    "groups@example.com",
-		Name:     "Group User",
-		Groups:   []string{group.ID},
-	})
-
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	require.NotNil(t, resp.User)
-	assert.Equal(t, []string{group.ID}, resp.User.Groups)
-
-	// Persisted record carries the groups too.
-	stored, err := store.GetUser(ctx, "t-1", resp.User.ID)
-	require.NoError(t, err)
-	assert.Equal(t, []string{group.ID}, stored.Groups)
-
-	// Bidirectional membership: the group's member list references the user.
-	storedGroup, err := store.GetGroup(ctx, "t-1", group.ID)
-	require.NoError(t, err)
-	assert.Equal(t, []string{resp.User.ID}, storedGroup.Members)
-}
-
-// TestIAMServiceWrapper_CreateUser_UnknownGroup_NoUserCreated proves the
-// validate-before-create contract on the wrapper path (QUIC/MCP): an unknown
-// group reference fails with a typed not-found error and no user is written.
-func TestIAMServiceWrapper_CreateUser_UnknownGroup_NoUserCreated(t *testing.T) {
-	store, _ := newRoleTestIdentityStore()
-	ctx := context.Background()
-
-	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
-
-	resp, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{
-		TenantID: "t-1",
-		Email:    "phantomgroup@example.com",
-		Name:     "Phantom Group User",
-		Groups:   []string{"no-such-group"},
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.True(t, dberrors.IsNotFound(err), "expected typed not-found, got %T: %v", err, err)
-
-	// Zero side effects: the user must NOT exist.
-	_, err = store.GetUserByEmail(ctx, "t-1", "phantomgroup@example.com")
-	require.Error(t, err, "no user must be created after failed group validation")
-}
 
 // TestIAMServiceWrapper_CreateUser_ForwardsAttributes proves the wrapper no
 // longer drops IAMCreateUserRequest.Attributes: custom attributes reach the
@@ -981,21 +827,18 @@ func TestIAMServiceWrapper_UpdateUser_ForwardsAttributes(t *testing.T) {
 	assert.Equal(t, tightened, stored.Attributes)
 }
 
-// TestIAMServiceWrapper_UpdateUser_ForwardsRolesAndGroups covers the two
-// sibling fields found by auditing the rest of IAMUpdateUserRequest after the
-// attribute defect: Roles and Groups were dropped by the same wrapper, in the
-// same way, and they feed RBAC rather than ABAC. REST forwards all three
-// through this identity store, so dropping them here also made one SDK verb
-// mean two different things depending on the transport underneath it.
-func TestIAMServiceWrapper_UpdateUser_ForwardsRolesAndGroups(t *testing.T) {
+// TestIAMServiceWrapper_UpdateUser_ForwardsRoles covers the sibling field found
+// by auditing the rest of IAMUpdateUserRequest after the attribute defect:
+// Roles was dropped by the same wrapper, in the same way, and it feeds RBAC
+// rather than ABAC. REST forwards both through this identity store, so
+// dropping it here also made one SDK verb mean two different things depending
+// on the transport underneath it.
+func TestIAMServiceWrapper_UpdateUser_ForwardsRoles(t *testing.T) {
 	store, _ := newRoleTestIdentityStore()
 	ctx := context.Background()
 
 	role, err := store.CreateRole(ctx, "t-1", iam.CreateRoleOptions{Name: "auditor"})
 	require.NoError(t, err)
-	group, err := store.CreateGroup(ctx, "t-1", iam.CreateGroupOptions{Name: "analysts"})
-	require.NoError(t, err)
-
 	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
 
 	created, err := wrapper.CreateUser(ctx, &IAMCreateUserRequest{
@@ -1006,22 +849,18 @@ func TestIAMServiceWrapper_UpdateUser_ForwardsRolesAndGroups(t *testing.T) {
 	require.NoError(t, err)
 
 	roles := []string{role.ID}
-	groups := []string{group.ID}
 	resp, err := wrapper.UpdateUser(ctx, &IAMUpdateUserRequest{
 		TenantID: "t-1",
 		UserID:   created.User.ID,
 		Roles:    &roles,
-		Groups:   &groups,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, resp.User)
 	assert.Equal(t, roles, resp.User.Roles)
-	assert.Equal(t, groups, resp.User.Groups)
 
 	stored, err := store.GetUser(ctx, "t-1", created.User.ID)
 	require.NoError(t, err)
 	assert.Equal(t, roles, stored.Roles, "the role grant was reported and not stored")
-	assert.Equal(t, groups, stored.Groups, "the group membership was reported and not stored")
 }
 
 // TestIAMServiceWrapper_UpdateUser_OmittedFieldsAreLeftAlone is the other half
@@ -1061,65 +900,6 @@ func TestIAMServiceWrapper_UpdateUser_OmittedFieldsAreLeftAlone(t *testing.T) {
 	assert.Equal(t, []string{role.ID}, stored.Roles, "a rename revoked the user's roles")
 	assert.Equal(t, map[string]string{"clearance": "secret"}, stored.Attributes,
 		"a rename cleared the user's ABAC attributes")
-}
-
-// TestIAMServiceWrapper_UpdateGroup_ForwardsMembers is the sibling defect the
-// UpdateUser audit turned up: UpdateGroupRequest.Members was accepted by the
-// request type, populated by the MCP tool, honoured by the store — and never
-// copied into iam.UpdateGroupOptions by this wrapper. The call answered
-// success and the membership did not change.
-//
-// Membership is an authorization input, since permissions resolve through the
-// groups a user belongs to. An administrator who removes someone from a group
-// and is told it worked has been handed a revocation that never happened.
-func TestIAMServiceWrapper_UpdateGroup_ForwardsMembers(t *testing.T) {
-	store, _ := newRoleTestIdentityStore()
-	ctx := context.Background()
-
-	wrapper := &iamServiceWrapper{provider: &mockIAMServiceProvider{identityStore: store}}
-
-	group, err := store.CreateGroup(ctx, "t-1", iam.CreateGroupOptions{Name: "analysts"})
-	require.NoError(t, err)
-
-	// Real users: a membership names an account, and the store now refuses one
-	// that names nothing rather than writing an unresolvable id where
-	// authorization looks.
-	first, err := store.CreateUser(ctx, "t-1", iam.CreateUserOptions{
-		Email: "ana@t1.test", Username: "ana", Name: "Ana",
-	})
-	require.NoError(t, err)
-	second, err := store.CreateUser(ctx, "t-1", iam.CreateUserOptions{
-		Email: "bo@t1.test", Username: "bobby", Name: "Bo",
-	})
-	require.NoError(t, err)
-
-	members := []string{first.ID, second.ID}
-	resp, err := wrapper.UpdateGroup(ctx, &UpdateGroupRequest{
-		TenantID: "t-1",
-		GroupID:  group.ID,
-		Members:  &members,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, resp.Group)
-	assert.Equal(t, members, resp.Group.Members)
-
-	stored, err := store.GetGroup(ctx, "t-1", group.ID)
-	require.NoError(t, err)
-	assert.Equal(t, members, stored.Members, "the membership change was reported and not stored")
-
-	// A later update that names only the description must not empty the
-	// membership: presence, not value, drives the copy.
-	desc := "analysts group"
-	_, err = wrapper.UpdateGroup(ctx, &UpdateGroupRequest{
-		TenantID:    "t-1",
-		GroupID:     group.ID,
-		Description: &desc,
-	})
-	require.NoError(t, err)
-
-	stored, err = store.GetGroup(ctx, "t-1", group.ID)
-	require.NoError(t, err)
-	assert.Equal(t, members, stored.Members, "a description edit emptied the group")
 }
 
 // TestIAMServiceWrapper_UpdateUser_RefusesTheTerminalDeletingState covers the

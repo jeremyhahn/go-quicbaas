@@ -70,3 +70,19 @@ func IsSystemContext(ctx context.Context) bool {
 	v, _ := ctx.Value(systemCtxKey{}).(bool)
 	return v
 }
+
+// PrincipalFromContext returns the ID of the authenticated Subject the
+// transport middleware injected into ctx, or "" when the request carries no
+// authenticated Subject.
+//
+// It is the value a server stamps into a record's created_by: the identity the
+// server VERIFIED, never one the caller supplied in the request body. An empty
+// result is an honest "no principal" (an in-process system call, a poller)
+// rather than a guess.
+func PrincipalFromContext(ctx context.Context) string {
+	subject, ok := SubjectFromContext(ctx)
+	if !ok || !subject.Authenticated {
+		return ""
+	}
+	return subject.ID
+}

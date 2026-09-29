@@ -21,12 +21,12 @@
  *   #/               → system dashboard (OVERVIEW)
  *   #/login          → login view
  *   #/dashboard      → system dashboard (OVERVIEW)
+ *   #/attention      → the attention inbox — everything only an operator can clear
  *   #/orchestration  → orchestration dashboard (ORCHESTRATION)
  *   #/jobs           → jobs list
  *   #/jobs/:id       → job detail
- *   #/fleet          → agent fleet
- *   #/agents         → bookmark-friendly alias for /fleet
- *   #/agents/:id     → agent detail
+ *   #/fleet          → the fleet of nodes that host agent sessions
+ *   #/fleet/:id      → fleet node detail
  *   #/sessions       → session list
  *   #/sessions/:id   → session detail
  *   #/tasks          → tasks view
@@ -69,7 +69,7 @@ export type RouteName =
   | 'jobs'
   | 'job-detail'
   | 'fleet'
-  | 'agent-detail'
+  | 'fleet-node'
   | 'sessions'
   | 'session-detail'
   | 'tasks'
@@ -107,6 +107,8 @@ export type RouteName =
   | 'projects'
   // ORCHESTRATION — pooled provider accounts
   | 'accounts'
+  // OVERVIEW — the attention inbox
+  | 'attention'
   // CLUSTER
   | 'cluster'
   | 'invite-activate'
@@ -162,15 +164,16 @@ function matchPath(path: string, hash: string): Route {
   if (path === '/dashboard') {
     return { name: 'dashboard', params: {}, hash };
   }
+  if (path === '/attention') {
+    return { name: 'attention', params: {}, hash };
+  }
   if (path === '/orchestration') {
     return { name: 'orchestration', params: {}, hash };
   }
   if (path === '/jobs') {
     return { name: 'jobs', params: {}, hash };
   }
-  // /fleet is canonical; /agents is a bookmark-friendly alias that
-  // resolves to the same Agent Fleet view.
-  if (path === '/fleet' || path === '/agents') {
+  if (path === '/fleet') {
     return { name: 'fleet', params: {}, hash };
   }
   if (path === '/sessions') {
@@ -187,12 +190,12 @@ function matchPath(path: string, hash: string): Route {
     };
   }
 
-  // Parameterised: /agents/:id
-  const agentDetailMatch = /^\/agents\/([^/]+)/.exec(path);
-  if (agentDetailMatch !== null) {
+  // Parameterised: /fleet/:id
+  const fleetNodeMatch = /^\/fleet\/([^/]+)/.exec(path);
+  if (fleetNodeMatch !== null) {
     return {
-      name: 'agent-detail',
-      params: { id: decodeURIComponent(agentDetailMatch[1] ?? '') },
+      name: 'fleet-node',
+      params: { id: decodeURIComponent(fleetNodeMatch[1] ?? '') },
       hash,
     };
   }
@@ -504,14 +507,15 @@ export function routeScheduler(): void { navigateTo('/scheduler'); }
 export function routeInference(): void { navigateTo('/inference'); }
 export function routeProjects(): void { navigateTo('/projects'); }
 export function routeAccounts(): void { navigateTo('/accounts'); }
+export function routeAttention(): void { navigateTo('/attention'); }
 export function routeSessionDetail(id: string): void {
   navigateTo(`/sessions/${encodeURIComponent(id)}`);
 }
 export function routeJobDetail(id: string): void {
   navigateTo(`/jobs/${encodeURIComponent(id)}`);
 }
-export function routeAgentDetail(id: string): void {
-  navigateTo(`/agents/${encodeURIComponent(id)}`);
+export function routeFleetNode(id: string): void {
+  navigateTo(`/fleet/${encodeURIComponent(id)}`);
 }
 // routeInviteActivate is DELETED, not repaired (found while fixing #532's
 // gates). It built `/invite/{token}` — the tenant-less shape 1f95595c removed,

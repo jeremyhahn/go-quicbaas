@@ -32,7 +32,33 @@ type Client interface {
 	Store(ctx context.Context, req *StoreSecretRequest) (*StoreSecretResponse, error)
 
 	// Get retrieves a secret from the given path.
+	//
+	// Get returns the secret's fields as ordinary Go values in Secret.Data,
+	// which cannot be wiped. To read a key, password or other secret
+	// material use GetWithBytes, which keeps the plaintext in protected
+	// storage (security-review.md §6); Get remains for non-sensitive fields
+	// until the coordinated signature change retires the plain path.
 	Get(ctx context.Context, path string, opts ...GetOption) (*Secret, error)
+
+	// GetWithBytes lends one field of the secret at path to fn without the
+	// plaintext ever existing as an ordinary Go string or unwiped []byte.
+	//
+	// field names a top-level member of the stored JSON object (the Data
+	// map Store was given); its value must be a JSON string, and fn
+	// receives its unescaped bytes. An empty field lends the whole stored
+	// payload verbatim — the form for a secret written as raw bytes (e.g.
+	// by Rotate).
+	//
+	// The value is held in protected storage from the moment it is decoded,
+	// every intermediate buffer is wiped before fn runs, and the protected
+	// storage is destroyed when GetWithBytes returns. The slice fn receives
+	// is valid only during the call: fn must not retain it, and must copy
+	// out only into storage it wipes itself. fn's error is returned as is.
+	//
+	// The MCP transport refuses this method with CodeUnimplemented: MCP
+	// delivers every tool result as a text string, so the plaintext would be
+	// an ordinary Go string before the SDK could protect it.
+	GetWithBytes(ctx context.Context, path, field string, fn func([]byte) error, opts ...GetOption) error
 
 	// List lists secrets under a path prefix.
 	List(ctx context.Context, prefix string) (*ListSecretsResponse, error)

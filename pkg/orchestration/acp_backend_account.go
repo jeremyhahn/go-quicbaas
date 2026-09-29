@@ -56,6 +56,21 @@ type resolvedSpawnAccount struct {
 	// record, because the session's ending is what withdraws it.
 	LeaseID string
 
+	// TenantID and ReservationID name the session slot the resolution
+	// reserved on a capped account (empty when none was). A spawn that fails
+	// gives it back; one that succeeds leaves it to be satisfied by the
+	// session record.
+	TenantID      string
+	ReservationID string
+
+	// Generation identifies which copy of the account's material this
+	// resolution projected (AccountCredential.Generation). It rides onto the
+	// Session and from there onto the durable record, because the question it
+	// answers — "is the credential this session holds still the one its
+	// account holds?" — is asked of the record, turns later, by a runner about
+	// to spend twenty minutes on a prompt (go-quicbaas#997).
+	Generation int64
+
 	// HomeDir is the materialized per-spawn credential directory, empty when
 	// the account carries no file-based material.
 	HomeDir string
@@ -67,7 +82,8 @@ type resolvedSpawnAccount struct {
 // resolveAccount resolves req's pooled provider account (if any) and folds
 // the result into req in place:
 //
-//   - Env-based credential material is merged into req.Env, which every
+//   - Env-based credential material is merged into req.Env — never over a
+//     variable the request already sets (AccountEnvConflictError) — which every
 //     dispatch path (spawnCLI, spawnJSONRPC, spawnOneShotCLI,
 //     spawnContainerJSONRPC) already forwards to the subprocess/container
 //     verbatim.
@@ -95,6 +111,7 @@ func (b *ACPBackend) resolveAccount(ctx context.Context, req *SpawnRequest) (*re
 		Provider:          b.accountProvider(),
 		JobID:             req.JobID,
 		AccountID:         req.AccountID,
+		ReplacesSessionID: req.ReplacesSessionID,
 		Auto:              req.AccountAuto,
 		StrategyName:      req.AccountStrategy,
 		AllowedAccountIDs: req.AccountAllow,
@@ -105,11 +122,24 @@ func (b *ACPBackend) resolveAccount(ctx context.Context, req *SpawnRequest) (*re
 	}
 
 	out := &resolvedSpawnAccount{
-		AccountID: resolved.AccountID,
-		Strategy:  resolved.Strategy,
-		LeaseID:   resolved.LeaseID,
+		AccountID:     resolved.AccountID,
+		Strategy:      resolved.Strategy,
+		LeaseID:       resolved.LeaseID,
+		TenantID:      TenantFromContext(ctx),
+		ReservationID: resolved.ReservationID,
+		Generation:    resolved.Generation,
 	}
 
+	// THE SPAWN'S OWN ENVIRONMENT IS AUTHORITATIVE. An account supplies a
+	// credential; it never replaces a variable the caller stated — see
+	// AccountEnvConflictError. Checked before anything is merged, so a refusal
+	// leaves the request exactly as the caller built it.
+	for k, v := range resolved.Env {
+		if held, stated := req.Env[k]; stated && held != v {
+			b.releaseAccountReservation(ctx, out)
+			return nil, &AccountEnvConflictError{AccountID: resolved.AccountID, Key: k}
+		}
+	}
 	if req.Env == nil {
 		req.Env = make(map[string]string, len(resolved.Env)+2)
 	}
@@ -127,6 +157,7 @@ func (b *ACPBackend) resolveAccount(ctx context.Context, req *SpawnRequest) (*re
 	if len(resolved.Files) > 0 {
 		dir, cleanup, matErr := materializeAccountFiles(resolved.Files)
 		if matErr != nil {
+			b.releaseAccountReservation(ctx, out)
 			return nil, matErr
 		}
 		req.AccountHomeDir = dir

@@ -396,12 +396,106 @@ type FirstBootBootstrapError struct {
 
 // Error implements the error interface.
 func (e *FirstBootBootstrapError) Error() string {
+	if e.Cause == nil {
+		return "first-boot bootstrap: " + e.Op
+	}
 	return "first-boot bootstrap: " + e.Op + ": " + e.Cause.Error()
 }
 
+// Unwrap returns BOTH the sentinel and the cause.
+//
+// It used to return the sentinel alone, which silently swallowed the cause:
+// errors.Is(err, ErrNoSPIFFETrustDomain) could never resolve through this
+// wrapper even though the message printed the trust-domain text, so the failure
+// was legible to a human and invisible to a program. Returning a slice keeps
+// every existing errors.Is(err, ErrFirstBootBootstrap) working and makes the
+// specific cause reachable as well.
+func (e *FirstBootBootstrapError) Unwrap() []error {
+	if e.Cause == nil {
+		return []error{ErrFirstBootBootstrap}
+	}
+	return []error{ErrFirstBootBootstrap, e.Cause}
+}
+
+// NoAdministratorError reports that first-boot could not create an
+// administrator, so the server has nobody who can administer it. It is what
+// initializeIAMComponents returns when firstBootBootstrap fails, and it refuses
+// the boot: attachIAMComponents aborts startup on any IAM initialization error.
+//
+// The message is assembled from a fixed preamble, the WRAPPED cause, and a
+// fixed closing line. The cause carries its own remedy — see
+// ErrNoSPIFFETrustDomain for the shape — because each cause needs a different
+// one and a hardcoded example would be wrong for every other cause.
+//
+// The closing line tells the operator that restarting resumes rather than
+// corrupts, and it is there because an operator who believes a failed boot
+// poisoned their state will wipe it — worse than the misconfiguration they
+// started with. It holds because the super-admin grant is written strictly
+// LAST: a bootstrap that failed anywhere earlier left no grant behind, so the
+// next boot re-enters the (idempotent) sequence.
+//
+// It is WITHHELD for the one cause it would be false for. A bundle that was
+// never delivered (ErrAdminBundleNotDelivered) is not resumable by restarting:
+// the certificate is already bound, qrdb's idempotent first-boot will not
+// reissue it, so every restart reaches the same refusal. That cause states its
+// own terminal remedy, and appending "will resume from where it stopped" after
+// it told the operator to wipe and re-bootstrap gave them two contradictory
+// instructions in one sentence with the wrong one last — an operator following
+// it restarts forever.
+type NoAdministratorError struct {
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *NoAdministratorError) Error() string {
+	msg := "server refuses to start: first-boot created no administrator, so nobody can administer this server"
+	if e.Cause != nil {
+		msg += ". cause: " + e.Cause.Error()
+		if errors.Is(e.Cause, ErrAdminBundleNotDelivered) {
+			// The cause owns the remedy here, and it is not "restart". Saying
+			// otherwise would contradict it — see the type comment.
+			return msg
+		}
+	}
+	return msg + ". Fix the cause and start again — first-boot has not completed and will resume from where it stopped."
+}
+
+// Unwrap exposes the cause so errors.Is and errors.As reach the underlying
+// failure. Without it the refusal would be a dead end: a program could tell
+// that the boot failed but not why, which is the whole reason the cause is
+// carried rather than formatted into a string.
+func (e *NoAdministratorError) Unwrap() error { return e.Cause }
+
+// ErrAdminBundleNotDelivered is the sentinel AdminBundleNotDeliveredError
+// unwraps to.
+var ErrAdminBundleNotDelivered = errors.New("first-boot admin bundle was not delivered")
+
+// AdminBundleNotDeliveredError reports a bootstrap that reached bundle delivery
+// with a certificate authority configured and delivered nothing.
+//
+// This is the RE-ENTRY case. qrdb's first-boot is idempotent and returns no
+// certificate once the admin user exists, so a second pass has nothing to write
+// and the operator would be left without the private key for a certificate that
+// is already bound to them. Reporting it is what keeps the re-entry from
+// completing into a server whose administrator holds an unusable credential —
+// the same fail-open this refusal exists to remove, reached by a longer route.
+//
+// A CA-less deployment is a different case and a supported one: there was never
+// a certificate to deliver, the banner tells the operator how to finish
+// enrollment, and that IS its completed state. Hence the caller's CA check
+// rather than a bare empty-path check.
+type AdminBundleNotDeliveredError struct{}
+
+// Error implements the error interface.
+func (e *AdminBundleNotDeliveredError) Error() string {
+	return "first-boot: the admin bundle was not delivered, so the operator has " +
+		"no private key for the bound certificate; reissue-on-re-entry is not " +
+		"implemented — wipe and re-bootstrap"
+}
+
 // Unwrap returns the sentinel error for errors.Is support.
-func (e *FirstBootBootstrapError) Unwrap() error {
-	return ErrFirstBootBootstrap
+func (e *AdminBundleNotDeliveredError) Unwrap() error {
+	return ErrAdminBundleNotDelivered
 }
 
 // UpdateCANotReadyError is returned by Server.UpdateCA when the CA adapter

@@ -51,14 +51,14 @@ func (m *agentMockQuicBaaS) Messaging() messaging.Service {
 	return m.msgSvc
 }
 
-func newAgentRegistry(t *testing.T, agentSvc orchestration.AgentService) *ToolRegistry {
+func newFleetRegistry(t *testing.T, agentSvc orchestration.AgentService) *ToolRegistry {
 	t.Helper()
 	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
 	svc := &agentMockQuicBaaS{agentSvc: agentSvc}
 	return NewToolRegistry(svc, log)
 }
 
-func newAgentRegistryWithMessaging(t *testing.T, agentSvc orchestration.AgentService, msgSvc messaging.Service) *ToolRegistry {
+func newFleetRegistryWithMessaging(t *testing.T, agentSvc orchestration.AgentService, msgSvc messaging.Service) *ToolRegistry {
 	t.Helper()
 	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
 	svc := &agentMockQuicBaaS{agentSvc: agentSvc, msgSvc: msgSvc}
@@ -78,7 +78,7 @@ func TestExecuteAgentDiscover_Success(t *testing.T) {
 			}, nil
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_discover", map[string]interface{}{
 		"root_path": "/home/user/projects",
@@ -89,7 +89,7 @@ func TestExecuteAgentDiscover_Success(t *testing.T) {
 
 func TestExecuteAgentDiscover_MissingRootPath(t *testing.T) {
 	agentSvc := &mockAgentService{}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_discover", map[string]interface{}{})
 	require.Error(t, err)
@@ -102,7 +102,7 @@ func TestExecuteAgentDiscover_ServiceError(t *testing.T) {
 			return nil, errors.New("discovery failed")
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_discover", map[string]interface{}{
 		"root_path": "/tmp",
@@ -116,7 +116,7 @@ func TestExecuteAgentDiscover_ServiceError(t *testing.T) {
 
 func TestExecuteAgentRegister_Success(t *testing.T) {
 	agentSvc := &mockAgentService{}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_register", map[string]interface{}{
 		"name":            "my-project",
@@ -132,7 +132,7 @@ func TestExecuteAgentRegister_Success(t *testing.T) {
 
 func TestExecuteAgentRegister_MissingName(t *testing.T) {
 	agentSvc := &mockAgentService{}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_register", map[string]interface{}{
 		"path": "/tmp",
@@ -143,7 +143,7 @@ func TestExecuteAgentRegister_MissingName(t *testing.T) {
 
 func TestExecuteAgentRegister_MissingPath(t *testing.T) {
 	agentSvc := &mockAgentService{}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_register", map[string]interface{}{
 		"name": "proj",
@@ -158,7 +158,7 @@ func TestExecuteAgentRegister_ServiceError(t *testing.T) {
 			return nil, errors.New("register failed")
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_register", map[string]interface{}{
 		"name": "proj", "path": "/tmp",
@@ -172,7 +172,7 @@ func TestExecuteAgentRegister_ServiceError(t *testing.T) {
 
 func TestExecuteAgentList_Success(t *testing.T) {
 	agentSvc := &mockAgentService{}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_list", map[string]interface{}{
 		"page_size":  float64(10),
@@ -188,7 +188,7 @@ func TestExecuteAgentList_ServiceError(t *testing.T) {
 			return nil, errors.New("list failed")
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_list", map[string]interface{}{})
 	require.Error(t, err)
@@ -209,7 +209,7 @@ func TestExecuteAgentSpawn_Success(t *testing.T) {
 			}, nil
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_spawn", map[string]interface{}{
 		"tenant_id":     "t1",
@@ -231,19 +231,19 @@ func TestExecuteAgentSpawn_Success(t *testing.T) {
 
 func TestExecuteAgentSpawn_MissingBackend(t *testing.T) {
 	agentSvc := &mockAgentService{}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_spawn", map[string]interface{}{
 		"tenant_id":  "t1",
 		"project_id": "proj-1",
 	})
 	require.Error(t, err)
-	assert.True(t, isRequiredFieldError(err, "backend"))
+	assert.True(t, isRequiredFieldError(err, "agent_id, pool_id or backend"))
 }
 
 func TestExecuteAgentSpawn_MissingProjectID(t *testing.T) {
 	agentSvc := &mockAgentService{}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_spawn", map[string]interface{}{
 		"tenant_id": "t1",
@@ -259,7 +259,7 @@ func TestExecuteAgentSpawn_ServiceError(t *testing.T) {
 			return nil, errors.New("spawn failed")
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_spawn", map[string]interface{}{
 		"tenant_id": "t1", "backend": "claude", "project_id": "proj-1",
@@ -283,7 +283,7 @@ func TestExecuteAgentPrompt_Success(t *testing.T) {
 			}, nil
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_prompt", map[string]interface{}{
 		"tenant_id":  "t1",
@@ -299,7 +299,7 @@ func TestExecuteAgentPrompt_Success(t *testing.T) {
 
 func TestExecuteAgentPrompt_MissingPrompt(t *testing.T) {
 	agentSvc := &mockAgentService{}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_prompt", map[string]interface{}{"tenant_id": "t1"})
 	require.Error(t, err)
@@ -312,7 +312,7 @@ func TestExecuteAgentPrompt_ServiceError(t *testing.T) {
 			return nil, errors.New("prompt failed")
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_prompt", map[string]interface{}{
 		"tenant_id": "t1", "prompt": "test",
@@ -326,7 +326,7 @@ func TestExecuteAgentPrompt_ServiceError(t *testing.T) {
 
 func TestExecuteAgentStatus_Success(t *testing.T) {
 	agentSvc := &mockAgentService{}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_status", map[string]interface{}{
 		"tenant_id": "t1", "session_id": "sess-1",
@@ -337,7 +337,7 @@ func TestExecuteAgentStatus_Success(t *testing.T) {
 
 func TestExecuteAgentStatus_MissingSessionID(t *testing.T) {
 	agentSvc := &mockAgentService{}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_status", map[string]interface{}{"tenant_id": "t1"})
 	require.Error(t, err)
@@ -350,7 +350,7 @@ func TestExecuteAgentStatus_ServiceError(t *testing.T) {
 			return nil, errors.New("status check failed")
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_status", map[string]interface{}{
 		"tenant_id": "t1", "session_id": "sess-1",
@@ -364,7 +364,7 @@ func TestExecuteAgentStatus_ServiceError(t *testing.T) {
 
 func TestExecuteAgentClose_Success(t *testing.T) {
 	agentSvc := &mockAgentService{}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_close", map[string]interface{}{
 		"tenant_id": "t1", "session_id": "sess-1",
@@ -375,7 +375,7 @@ func TestExecuteAgentClose_Success(t *testing.T) {
 
 func TestExecuteAgentClose_MissingSessionID(t *testing.T) {
 	agentSvc := &mockAgentService{}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_close", map[string]interface{}{"tenant_id": "t1"})
 	require.Error(t, err)
@@ -388,7 +388,7 @@ func TestExecuteAgentClose_ServiceError(t *testing.T) {
 			return nil, errors.New("close failed")
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_close", map[string]interface{}{
 		"tenant_id": "t1", "session_id": "sess-1",
@@ -402,7 +402,7 @@ func TestExecuteAgentClose_ServiceError(t *testing.T) {
 
 func TestExecuteAgentListSessions_Success(t *testing.T) {
 	agentSvc := &mockAgentService{}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_list_sessions", map[string]interface{}{
 		"tenant_id": "t1", "backend": "claude",
@@ -417,7 +417,7 @@ func TestExecuteAgentListSessions_ServiceError(t *testing.T) {
 			return nil, errors.New("list sessions failed")
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_list_sessions", map[string]interface{}{"tenant_id": "t1"})
 	require.Error(t, err)
@@ -435,7 +435,7 @@ func TestExecuteAgentListBackends_Success(t *testing.T) {
 			}, nil
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_list_backends", map[string]interface{}{})
 	require.NoError(t, err)
@@ -448,7 +448,7 @@ func TestExecuteAgentListBackends_Error(t *testing.T) {
 			return nil, errors.New("list backends failed")
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_list_backends", map[string]interface{}{})
 	require.Error(t, err)
@@ -462,7 +462,7 @@ func TestExecuteAgentListBackends_Error(t *testing.T) {
 // tool answers from the orchestration registry rather than from a service:
 // the runners a build can drive are the same for every caller.
 func TestExecuteOrchestratorListRunners_ReportsTheRegisteredRunners(t *testing.T) {
-	reg := newAgentRegistry(t, &mockAgentService{})
+	reg := newFleetRegistry(t, &mockAgentService{})
 
 	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_list_runners", map[string]interface{}{})
 	require.NoError(t, err)
@@ -521,7 +521,7 @@ func TestExecuteOrchestratorListRunners_ReportsTheRegisteredRunners(t *testing.T
 // orchestrator drives no jobs, so it must not answer with a runner list that
 // describes a capability it does not have.
 func TestExecuteOrchestratorListRunners_RefusesWithoutAnOrchestrator(t *testing.T) {
-	reg := newAgentRegistry(t, nil)
+	reg := newFleetRegistry(t, nil)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_list_runners", map[string]interface{}{})
 	require.Error(t, err)
@@ -540,7 +540,7 @@ func TestExecuteAgentDecompose_Success(t *testing.T) {
 			}, nil
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_decompose", map[string]interface{}{
 		"backend":     "claude",
@@ -555,7 +555,7 @@ func TestExecuteAgentDecompose_Success(t *testing.T) {
 
 func TestExecuteAgentDecompose_MissingBackend(t *testing.T) {
 	agentSvc := &mockAgentService{}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_decompose", map[string]interface{}{
 		"task": "test",
@@ -566,7 +566,7 @@ func TestExecuteAgentDecompose_MissingBackend(t *testing.T) {
 
 func TestExecuteAgentDecompose_MissingTask(t *testing.T) {
 	agentSvc := &mockAgentService{}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_decompose", map[string]interface{}{
 		"backend": "claude",
@@ -581,7 +581,7 @@ func TestExecuteAgentDecompose_ServiceError(t *testing.T) {
 			return nil, errors.New("decompose failed")
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_decompose", map[string]interface{}{
 		"backend": "claude", "task": "test",
@@ -595,7 +595,7 @@ func TestExecuteAgentDecompose_ServiceError(t *testing.T) {
 
 func TestExecuteAgentHealth_Success(t *testing.T) {
 	agentSvc := &mockAgentService{}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_health", map[string]interface{}{})
 	require.NoError(t, err)
@@ -608,7 +608,7 @@ func TestExecuteAgentHealth_Success(t *testing.T) {
 
 func TestExecuteAgentBroadcast_Success(t *testing.T) {
 	msgSvc := &mockMessagingService{}
-	reg := newAgentRegistryWithMessaging(t, nil, msgSvc)
+	reg := newFleetRegistryWithMessaging(t, nil, msgSvc)
 
 	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_broadcast", map[string]interface{}{
 		"channel":  "events",
@@ -625,7 +625,7 @@ func TestExecuteAgentBroadcast_Success(t *testing.T) {
 }
 
 func TestExecuteAgentBroadcast_NilMessagingService(t *testing.T) {
-	reg := newAgentRegistryWithMessaging(t, nil, nil)
+	reg := newFleetRegistryWithMessaging(t, nil, nil)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_broadcast", map[string]interface{}{
 		"channel": "events",
@@ -640,7 +640,7 @@ func TestExecuteAgentBroadcast_PublishError(t *testing.T) {
 			return nil, errors.New("publish failed")
 		},
 	}
-	reg := newAgentRegistryWithMessaging(t, nil, msgSvc)
+	reg := newFleetRegistryWithMessaging(t, nil, msgSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_broadcast", map[string]interface{}{
 		"channel": "events",
@@ -760,7 +760,7 @@ func (m *healthCheckErrorAgent) HealthCheck(_ context.Context) (*orchestration.H
 
 func TestExecuteAgentHealth_Error(t *testing.T) {
 	agentSvc := &healthCheckErrorAgent{}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_health", map[string]interface{}{})
 	require.Error(t, err)
@@ -768,7 +768,7 @@ func TestExecuteAgentHealth_Error(t *testing.T) {
 
 func TestExecuteAgentBroadcast_WithoutMetadata(t *testing.T) {
 	msgSvc := &mockMessagingService{}
-	reg := newAgentRegistryWithMessaging(t, nil, msgSvc)
+	reg := newFleetRegistryWithMessaging(t, nil, msgSvc)
 
 	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_broadcast", map[string]interface{}{
 		"channel": "events",
@@ -804,7 +804,7 @@ func TestExecuteOrchestratorInference_Success(t *testing.T) {
 			return ch, nil
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_inference", map[string]interface{}{
 		"backend": "ollama",
@@ -844,7 +844,7 @@ func TestExecuteOrchestratorInference_NoTenantDefaultsToSystem(t *testing.T) {
 			return ch, nil
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	// No tenant_id arg → fallback path.
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_inference", map[string]interface{}{
@@ -861,7 +861,7 @@ func TestExecuteOrchestratorInference_NoTenantDefaultsToSystem(t *testing.T) {
 func TestExecuteOrchestratorInference_MissingBackend(t *testing.T) {
 	t.Parallel()
 
-	reg := newAgentRegistry(t, &mockAgentService{})
+	reg := newFleetRegistry(t, &mockAgentService{})
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_inference", map[string]interface{}{
 		"prompt": "hello",
@@ -873,7 +873,7 @@ func TestExecuteOrchestratorInference_MissingBackend(t *testing.T) {
 func TestExecuteOrchestratorInference_MissingPrompt(t *testing.T) {
 	t.Parallel()
 
-	reg := newAgentRegistry(t, &mockAgentService{})
+	reg := newFleetRegistry(t, &mockAgentService{})
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_inference", map[string]interface{}{
 		"backend": "ollama",
@@ -885,8 +885,8 @@ func TestExecuteOrchestratorInference_MissingPrompt(t *testing.T) {
 func TestExecuteOrchestratorInference_NoAgentService(t *testing.T) {
 	t.Parallel()
 
-	// newAgentRegistry with nil agent service
-	reg := newAgentRegistry(t, nil)
+	// newFleetRegistry with nil agent service
+	reg := newFleetRegistry(t, nil)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_inference", map[string]interface{}{
 		"backend": "ollama",
@@ -903,7 +903,7 @@ func TestExecuteOrchestratorInference_InferError(t *testing.T) {
 			return nil, errors.New("backend unavailable")
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_inference", map[string]interface{}{
 		"backend": "ollama",
@@ -929,7 +929,7 @@ func TestExecuteOrchestratorInference_WithMetadata(t *testing.T) {
 			return ch, nil
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_inference", map[string]interface{}{
 		"backend":       "ollama",

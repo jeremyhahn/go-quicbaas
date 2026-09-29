@@ -42,7 +42,7 @@ func TestNewIAMCommand(t *testing.T) {
 
 	// Verify subcommands are registered
 	subcommands := cmd.Commands()
-	expectedSubcommands := []string{"tenant", "user", "group", "role", "app", "policy", "mfa", "webauthn", "session", "pep", "audit", "admin", "gdpr", "provider", "identity"}
+	expectedSubcommands := []string{"tenant", "user", "role", "app", "policy", "mfa", "webauthn", "session", "pep", "audit", "admin", "gdpr", "provider", "identity"}
 
 	assert.Len(t, subcommands, len(expectedSubcommands))
 
@@ -133,12 +133,6 @@ func TestIAMTenantIDRequired(t *testing.T) {
 		{
 			name:        "user list without tenant",
 			commandFunc: newIAMUserListCommand,
-			args:        []string{},
-			expectError: true,
-		},
-		{
-			name:        "group list without tenant",
-			commandFunc: newIAMGroupListCommand,
 			args:        []string{},
 			expectError: true,
 		},
@@ -1780,154 +1774,6 @@ func TestIAMGDPRDeletionStatusCommand_FactoryError(t *testing.T) {
 // IAM Group Command Tests - Factory Error Paths
 // =============================================================================
 
-func TestIAMGroupCreateCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMGroupCreateCommand()
-	iamGroupName = "test-group"
-	globalTenantID = "tenant_test"
-
-	err := runIAMGroupCreateCommand(cmd, []string{"group_test"})
-	assert.Error(t, err)
-}
-
-func TestIAMGroupGetCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMGroupGetCommand()
-	iamGroupID = "group_test123"
-
-	err := runIAMGroupGetCommand(cmd, []string{"group_test123"})
-	assert.Error(t, err)
-}
-
-func TestIAMGroupUpdateCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMGroupUpdateCommand()
-	iamGroupID = "group_test123"
-
-	err := runIAMGroupUpdateCommand(cmd, []string{"group_test123"})
-	assert.Error(t, err)
-}
-
-func TestIAMGroupDeleteCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMGroupDeleteCommand()
-	iamGroupID = "group_test123"
-	iamForce = true
-
-	err := runIAMGroupDeleteCommand(cmd, []string{"group_test123"})
-	assert.Error(t, err)
-}
-
-func TestIAMGroupListCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMGroupListCommand()
-	globalTenantID = "tenant_test"
-
-	err := runIAMGroupListCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMGroupAddMemberCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMGroupAddMemberCommand()
-	iamGroupID = "group_test123"
-	iamGroupUserID = "user_test123"
-
-	err := runIAMGroupAddMemberCommand(cmd, []string{"group_test123", "user_test123"})
-	assert.Error(t, err)
-}
-
-func TestIAMGroupRemoveMemberCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMGroupRemoveMemberCommand()
-	iamGroupID = "group_test123"
-	iamGroupUserID = "user_test123"
-
-	err := runIAMGroupRemoveMemberCommand(cmd, []string{"group_test123", "user_test123"})
-	assert.Error(t, err)
-}
-
-func TestIAMGroupMembersCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMGroupMembersCommand()
-	iamGroupID = "group_test123"
-
-	err := runIAMGroupMembersCommand(cmd, []string{"group_test123"})
-	assert.Error(t, err)
-}
-
 // =============================================================================
 // IAM Role Command Tests - Factory Error Paths
 // =============================================================================
@@ -2596,14 +2442,6 @@ func TestNewIAMGDPRCommand_StructureComplete(t *testing.T) {
 	cmd := newIAMGDPRCommand()
 	require.NotNil(t, cmd)
 	assert.Equal(t, "gdpr", cmd.Use)
-	assert.NotEmpty(t, cmd.Short)
-	assert.Greater(t, len(cmd.Commands()), 0)
-}
-
-func TestNewIAMGroupCommand_StructureComplete(t *testing.T) {
-	cmd := newIAMGroupCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "group", cmd.Use)
 	assert.NotEmpty(t, cmd.Short)
 	assert.Greater(t, len(cmd.Commands()), 0)
 }
@@ -5709,73 +5547,9 @@ func TestIAMProviderGet_MissingTenant(t *testing.T) {
 // Group Delete - Confirmation Prompt Paths
 // =============================================================================
 
-func TestIAMGroupDelete_ConfirmYes(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "y\n")
-	defer restoreStdin()
-
-	cmd := newIAMGroupDeleteCommand()
-	globalTenantID = "tenant_test"
-	iamForce = false
-
-	err := runIAMGroupDeleteCommand(cmd, []string{"group_test"})
-	assert.NoError(t, err)
-}
-
-func TestIAMGroupDelete_ConfirmNo(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "n\n")
-	defer restoreStdin()
-
-	cmd := newIAMGroupDeleteCommand()
-	globalTenantID = "tenant_test"
-	iamForce = false
-
-	err := runIAMGroupDeleteCommand(cmd, []string{"group_test"})
-	assert.NoError(t, err)
-}
-
 // =============================================================================
 // Group List - JSON & Empty
 // =============================================================================
-
-func TestIAMGroupList_JSONOutput(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGroupListCommand()
-	globalTenantID = "tenant_test"
-	iamOutputFormat = "json"
-
-	err := runIAMGroupListCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestIAMGroupList_EmptyResults(t *testing.T) {
-	mockClient, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	mockClient.groupClient.ListFunc = func(ctx context.Context, tenantID string, req *iam.ListGroupsRequest) (*iam.ListGroupsResponse, error) {
-		return &iam.ListGroupsResponse{Groups: []iam.Group{}}, nil
-	}
-
-	cmd := newIAMGroupListCommand()
-	globalTenantID = "tenant_test"
-	iamOutputFormat = "table"
-
-	err := runIAMGroupListCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
 
 // =============================================================================
 // Role Delete - Confirmation Prompt Paths
@@ -6134,7 +5908,6 @@ func TestIAMUserCreate_Success(t *testing.T) {
 	globalTenantID = "tenant_test"
 	iamOutputFormat = "table"
 	iamUserRoles = nil
-	iamUserGroups = nil
 
 	err := runIAMUserCreateCommand(cmd, []string{"user@example.com"})
 	assert.NoError(t, err)
@@ -6151,7 +5924,6 @@ func TestIAMUserCreate_SuccessJSON(t *testing.T) {
 	globalTenantID = "tenant_test"
 	iamOutputFormat = "json"
 	iamUserRoles = []string{"admin"}
-	iamUserGroups = []string{"engineering"}
 
 	err := runIAMUserCreateCommand(cmd, []string{"user@example.com"})
 	assert.NoError(t, err)
@@ -6290,212 +6062,6 @@ func TestIAMUserRoleRevoke_Success(t *testing.T) {
 // =============================================================================
 // Group Commands - Success Paths
 // =============================================================================
-
-func TestIAMGroupCreate_Success(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGroupCreateCommand()
-	iamGroupName = "Engineering Team"
-	iamGroupDescription = "All engineering staff"
-	globalTenantID = "tenant_test"
-	iamOutputFormat = "table"
-
-	err := runIAMGroupCreateCommand(cmd, []string{"engineering"})
-	assert.NoError(t, err)
-}
-
-func TestIAMGroupCreate_SuccessJSON(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGroupCreateCommand()
-	iamGroupName = "Engineering Team"
-	iamGroupDescription = ""
-	globalTenantID = "tenant_test"
-	iamOutputFormat = "json"
-
-	err := runIAMGroupCreateCommand(cmd, []string{"engineering"})
-	assert.NoError(t, err)
-}
-
-func TestIAMGroupGet_Success(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGroupGetCommand()
-	globalTenantID = "tenant_test"
-	iamOutputFormat = "table"
-
-	err := runIAMGroupGetCommand(cmd, []string{"engineering"})
-	assert.NoError(t, err)
-}
-
-func TestIAMGroupGet_SuccessJSON(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGroupGetCommand()
-	globalTenantID = "tenant_test"
-	iamOutputFormat = "json"
-
-	err := runIAMGroupGetCommand(cmd, []string{"engineering"})
-	assert.NoError(t, err)
-}
-
-func TestIAMGroupUpdate_Success(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGroupUpdateCommand()
-	cmd.Flags().Set("name", "Updated Engineering")
-	globalTenantID = "tenant_test"
-	iamOutputFormat = "table"
-
-	err := runIAMGroupUpdateCommand(cmd, []string{"engineering"})
-	assert.NoError(t, err)
-}
-
-func TestIAMGroupUpdate_SuccessJSON(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGroupUpdateCommand()
-	cmd.Flags().Set("description", "Updated description")
-	globalTenantID = "tenant_test"
-	iamOutputFormat = "json"
-
-	err := runIAMGroupUpdateCommand(cmd, []string{"engineering"})
-	assert.NoError(t, err)
-}
-
-func TestIAMGroupDelete_Success(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGroupDeleteCommand()
-	globalTenantID = "tenant_test"
-	iamForce = true
-
-	err := runIAMGroupDeleteCommand(cmd, []string{"engineering"})
-	assert.NoError(t, err)
-}
-
-func TestIAMGroupList_Success(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGroupListCommand()
-	globalTenantID = "tenant_test"
-	iamOutputFormat = "table"
-
-	err := runIAMGroupListCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestIAMGroupList_SuccessJSON(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGroupListCommand()
-	globalTenantID = "tenant_test"
-	iamOutputFormat = "json"
-
-	err := runIAMGroupListCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestIAMGroupAddMember_Success(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGroupAddMemberCommand()
-	iamGroupID = "engineering"
-	iamGroupUserID = "user_001"
-	globalTenantID = "tenant_test"
-
-	err := runIAMGroupAddMemberCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestIAMGroupAddMember_SuccessWithArgs(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGroupAddMemberCommand()
-	iamGroupID = ""
-	iamGroupUserID = ""
-	globalTenantID = "tenant_test"
-
-	err := runIAMGroupAddMemberCommand(cmd, []string{"engineering", "user_001"})
-	assert.NoError(t, err)
-}
-
-func TestIAMGroupRemoveMember_Success(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGroupRemoveMemberCommand()
-	iamGroupID = "engineering"
-	iamGroupUserID = "user_001"
-	globalTenantID = "tenant_test"
-	iamForce = true
-
-	err := runIAMGroupRemoveMemberCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestIAMGroupMembers_Success(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGroupMembersCommand()
-	globalTenantID = "tenant_test"
-	iamOutputFormat = "table"
-
-	err := runIAMGroupMembersCommand(cmd, []string{"engineering"})
-	assert.NoError(t, err)
-}
-
-func TestIAMGroupMembers_SuccessJSON(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGroupMembersCommand()
-	globalTenantID = "tenant_test"
-	iamOutputFormat = "json"
-
-	err := runIAMGroupMembersCommand(cmd, []string{"engineering"})
-	assert.NoError(t, err)
-}
 
 // =============================================================================
 // Role Commands - Success Paths
@@ -6703,7 +6269,6 @@ func TestIAMProviderCreate_Success(t *testing.T) {
 	autoProvision = true
 	allowLinking = true
 	defaultRoles = []string{"user"}
-	defaultGroups = []string{"default"}
 	globalTenantID = "tenant_test"
 	iamOutputFormat = "table"
 
@@ -6731,7 +6296,6 @@ func TestIAMProviderCreate_SuccessJSON(t *testing.T) {
 	autoProvision = false
 	allowLinking = false
 	defaultRoles = nil
-	defaultGroups = nil
 	globalTenantID = "tenant_test"
 	iamOutputFormat = "json"
 

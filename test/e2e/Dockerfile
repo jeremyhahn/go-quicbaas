@@ -134,7 +134,7 @@ RUN chmod +x /usr/local/bin/run-e2e.sh
 
 # Defaults (overridable via compose/Make):
 #   E2E_PROJECT   — Playwright project (chromium-no-backend | chromium-acp)
-#   E2E_BACKEND   — daemon embedded-agent backend (ollama | opencode)
+#   E2E_BACKEND   — daemon embedded-fleet-node backend (ollama | opencode)
 #   E2E_OLLAMA_URL— ollama endpoint for the backend
 ENV E2E_PROJECT=chromium-no-backend \
     E2E_BACKEND=ollama \

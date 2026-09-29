@@ -20,6 +20,7 @@ package quicbaas.account.v1;
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
 import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+import "api/proto/spend.proto";
 
 // =============================================================================
 // AccountService — pooled provider account lifecycle
@@ -70,6 +71,18 @@ service AccountService {
     rpc MaterializeAccountCredential(MaterializeAccountCredentialRequest) returns (MaterializeAccountCredentialResponse) {
         option (qrdb.v1.permission) = "agent_accounts:materialize";
     }
+    // ReserveAccountSession claims one session slot on a capped account in the
+    // control plane's reservation table, the claim that makes
+    // max_concurrent_sessions hold when several hosts spawn at once. It is the
+    // credential release's companion and carries its permission. An account
+    // at its cap answers RESOURCE_EXHAUSTED.
+    rpc ReserveAccountSession(ReserveAccountSessionRequest) returns (ReserveAccountSessionResponse) {
+        option (qrdb.v1.permission) = "agent_accounts:materialize";
+    }
+    // ReleaseAccountSession gives a reservation back, for a spawn that failed.
+    rpc ReleaseAccountSession(ReleaseAccountSessionRequest) returns (ReleaseAccountSessionResponse) {
+        option (qrdb.v1.permission) = "agent_accounts:materialize";
+    }
 }
 
 // =============================================================================
@@ -113,6 +126,25 @@ message Account {
     // credential_secret_file is where a referenced secret is materialized
     // (relative to the session home) instead of the access token.
     string credential_secret_file = 19;
+    // max_concurrent_sessions caps how many live sessions the account serves
+    // at once. Zero is unmetered.
+    int32  max_concurrent_sessions = 20;
+    // billing is how the account is billed; unset when not configured.
+    AccountBilling billing        = 21;
+    // spend is what the account may spend and how many failures take it out
+    // of service; unset is unmetered.
+    quicbaas.spend.v1.AccountSpendPolicy spend = 22;
+}
+
+// AccountBilling is how a pooled account is billed, which decides the billed
+// figure each turn on it carries beside its list-price equivalent.
+message AccountBilling {
+    // mode is "subscription" (a turn adds nothing to the bill) or "api" (a
+    // turn bills its list price). Empty means not configured: billed unknown.
+    string mode               = 1;
+    // monthly_fee_micros is a subscription's flat monthly fee in millionths
+    // of a US dollar. Refused on an api account.
+    int64  monthly_fee_micros = 2;
 }
 
 // AccountCredential is the secret envelope. REQUEST-ONLY — it appears in
@@ -157,6 +189,11 @@ message CreateAccountRequest {
     // credential_secret_file materializes the referenced secret as this file
     // (relative to the session home) instead of as the access token.
     string credential_secret_file    = 9;
+    // max_concurrent_sessions caps how many live sessions the account serves
+    // at once. Zero is unmetered.
+    int32             max_concurrent_sessions = 10;
+    AccountBilling    billing        = 11;
+    quicbaas.spend.v1.AccountSpendPolicy spend = 12;
 }
 
 message CreateAccountResponse {
@@ -178,12 +215,31 @@ message ListAccountsRequest {
     string tenant_id  = 1;
     string provider   = 2;
     string project_id = 3;
+
+    // Paging, sorting and search — the contract every list endpoint speaks
+    // (docs/software-factory/api.md). limit 0 takes the default page (25);
+    // anything above 100 is capped. sort is "<field>" or "<field>:desc",
+    // naming a field from the endpoint's allow-list; an unknown field is
+    // refused with InvalidArgument. q is a case-insensitive substring
+    // matched against the endpoint's documented text fields.
+    int32 limit = 4;
+    int32 offset = 5;
+    string sort = 6;
+    string q = 7;
 }
 
 message ListAccountsResponse {
     repeated Account accounts  = 1;
     int32            total     = 2;
     int64            timestamp = 3;
+
+    // The paging envelope. total counts the records that matched the filters
+    // and the search BEFORE the page was cut; limit and offset are the values
+    // the server APPLIED. next_offset is the offset of the following page and
+    // is zero on the last page.
+    int32 limit = 4;
+    int32 offset = 5;
+    int32 next_offset = 6;
 }
 
 message UpdateAccountRequest {
@@ -198,6 +254,15 @@ message UpdateAccountRequest {
     // secret was missing to service.
     string credential_secret_ref  = 7;
     string credential_secret_file = 8;
+    // max_concurrent_sessions, when present, replaces the account's session
+    // cap; zero makes it unmetered. Absent leaves it unchanged.
+    optional int32 max_concurrent_sessions = 9;
+    // billing, when present, replaces how the account is billed; a present
+    // empty message clears it. Absent leaves it unchanged.
+    AccountBilling billing  = 10;
+    // spend, when present, replaces the account's spend policy; a present
+    // empty message makes it unmetered. Absent leaves it unchanged.
+    quicbaas.spend.v1.AccountSpendPolicy spend = 11;
 }
 
 message UpdateAccountResponse {
@@ -256,6 +321,13 @@ message GetAccountUsageRequest {
 message GetAccountUsageResponse {
     AccountUsage usage     = 1;
     int64        timestamp = 2;
+    // live_sessions is how many sessions the account is serving now: the
+    // figure the balancing strategy ranks on and the session cap is checked
+    // against.
+    int32        live_sessions = 3;
+    // spend is the spend gate's verdict on the account; unset when the
+    // deployment wires no gate, so nothing is metered.
+    quicbaas.spend.v1.SpendHeadroom spend = 4;
 }
 
 // MaterializedAccountCredential is the RELEASED envelope: the short-lived half
@@ -273,6 +345,12 @@ message MaterializedAccountCredential {
     int64               expires_at_unix      = 4;
     repeated string     scopes               = 5;
     string              access_token_env_key = 6;
+    // generation identifies which copy of the account's credential this is.
+    // A worker host records it on the session it spawns, so the control
+    // plane can tell before a turn that the credential was rotated under
+    // that session. An integer naming a copy, not credential material; zero
+    // means unknown.
+    int64               generation           = 7;
 }
 
 message MaterializeAccountCredentialRequest {
@@ -337,4 +415,30 @@ message MaterializeAccountCredentialResponse {
     // which rotates with no account write a caching caller could observe, so
     // the caller re-releases for every spawn.
     bool single_use = 13;
+}
+
+message ReserveAccountSessionRequest {
+    string tenant_id  = 1;
+    string account_id = 2;
+    // expected_live, when present, makes the claim conditional on the
+    // account's live-session count still being the one the caller selected
+    // on; a moved count answers ABORTED and the caller re-selects. The session
+    // record that names the returned reservation_id satisfies it.
+    optional int32 expected_live = 3;
+}
+
+message ReserveAccountSessionResponse {
+    string reservation_id = 1;
+    int64  timestamp      = 2;
+}
+
+message ReleaseAccountSessionRequest {
+    string tenant_id      = 1;
+    string account_id     = 2;
+    string reservation_id = 3;
+}
+
+message ReleaseAccountSessionResponse {
+    string reservation_id = 1;
+    int64  timestamp      = 2;
 }

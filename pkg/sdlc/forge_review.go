@@ -45,6 +45,15 @@ const ValidatorKindForgeReview = "forge_review"
 // names no poll_interval.
 const DefaultReviewPollInterval = 30 * time.Second
 
+// reviewReadFailureBound is how many consecutive poll rounds may fail to
+// read the forge before a review wait gives up. A wait is a poll, and its
+// next tick is a free retry, so one failed read must not end hours of
+// waiting: on 2026-09-28 a single 401 ended four waits at once, the longest
+// 8h52m in, and charged each task an attempt. A forge that keeps failing (a
+// revoked credential) still ends the wait, after about five minutes at the
+// default poll interval.
+const reviewReadFailureBound = 10
+
 // deliveryWriteAttempts bounds the re-read on a guarded-write conflict.
 const deliveryWriteAttempts = 3
 
@@ -53,6 +62,7 @@ type ReviewValidator struct {
 	deliveries DeliveryStore
 	bindings   BindingReader
 	forges     ForgeResolver
+	agents     AgentCatalog
 	now        func() time.Time
 
 	// logBytes is what a failed check's log is QUOTED at; classifyBytes is
@@ -65,8 +75,10 @@ type ReviewValidator struct {
 }
 
 // NewReviewValidator builds the validator.
-func NewReviewValidator(deliveries DeliveryStore, bindings BindingReader, forges ForgeResolver) (*ReviewValidator, error) {
+func NewReviewValidator(deliveries DeliveryStore, bindings BindingReader, forges ForgeResolver, agents AgentCatalog) (*ReviewValidator, error) {
 	switch {
+	case agents == nil:
+		return nil, &InvalidInputError{Field: "agents", Message: "the independence rule is decided on the model families behind the binding's agents"}
 	case deliveries == nil:
 		return nil, &InvalidInputError{Field: "deliveries", Message: "the review is recorded on the delivery"}
 	case bindings == nil:
@@ -75,7 +87,7 @@ func NewReviewValidator(deliveries DeliveryStore, bindings BindingReader, forges
 		return nil, &InvalidInputError{Field: "forges", Message: "verdicts and checks are read from the forge"}
 	}
 	return &ReviewValidator{
-		deliveries: deliveries, bindings: bindings, forges: forges,
+		deliveries: deliveries, bindings: bindings, forges: forges, agents: agents,
 		now:           func() time.Time { return time.Now().UTC() },
 		logBytes:      DefaultChecksLogBytes,
 		classifyBytes: DefaultChecksClassifyBytes,
@@ -101,15 +113,29 @@ func (v *ReviewValidator) Validate(ctx context.Context, job *orchestration.JobCo
 		return failed, NewForgeNotRegisteredError(binding.Forge.Type)
 	}
 	interval := reviewPollInterval(job.Workflow)
-	// The independence rule is decided against the model that WROTE the
-	// code, and the binding is where that now lives: the canonical sdlc
-	// workflow whose worker role once carried it is gone.
-	authorFamily := ModelFamily(binding.Worker.Backend, binding.Worker.Model)
+	// The independence rule is decided against the models that may have
+	// WRITTEN the code: every Agent the binding's worker slot resolves to.
+	agents, err := resolveBindingAgents(ctx, v.agents, job.TenantID, binding)
+	if err != nil {
+		return failed, err
+	}
 
+	failedReads := 0
 	for {
-		result, decisive, err := v.round(ctx, job, criterion, binding, forge, authorFamily)
-		if err != nil {
+		result, decisive, err := v.round(ctx, job, criterion, binding, forge, agents)
+		var readErr *reviewReadError
+		switch {
+		case errors.As(err, &readErr) && ctx.Err() == nil:
+			failedReads++
+			if failedReads >= reviewReadFailureBound {
+				return failed, readErr.Cause
+			}
+		case errors.As(err, &readErr):
+			return failed, readErr.Cause
+		case err != nil:
 			return failed, err
+		default:
+			failedReads = 0
 		}
 		if decisive {
 			return result, nil
@@ -126,7 +152,7 @@ func (v *ReviewValidator) Validate(ctx context.Context, job *orchestration.JobCo
 
 // round reads the forge once, records what it saw, and answers the gate.
 // decisive is false when only time can change the answer.
-func (v *ReviewValidator) round(ctx context.Context, job *orchestration.JobContext, criterion orchestration.ReviewCriterion, binding *ProjectBinding, forge ForgeBackend, authorFamily string) (orchestration.ValidationResult, bool, error) {
+func (v *ReviewValidator) round(ctx context.Context, job *orchestration.JobContext, criterion orchestration.ReviewCriterion, binding *ProjectBinding, forge ForgeBackend, agents bindingAgents) (orchestration.ValidationResult, bool, error) {
 	result := orchestration.ValidationResult{Name: criterion.Name}
 	delivery, err := v.deliveries.GetDelivery(ctx, job.TenantID, job.TaskID)
 	if err != nil {
@@ -141,20 +167,20 @@ func (v *ReviewValidator) round(ctx context.Context, job *orchestration.JobConte
 	repo := binding.Repo()
 	pr, err := forge.GetPullRequest(ctx, repo, delivery.PullRequest.Number)
 	if err != nil {
-		return result, false, err
+		return result, false, &reviewReadError{Cause: err}
 	}
 	if pr == nil {
 		return result, false, &NotFoundError{Entity: "pull request", TenantID: job.TenantID, ID: delivery.Subject(repo)}
 	}
 	reviews, err := forge.ListReviews(ctx, repo, pr.Number)
 	if err != nil {
-		return result, false, err
+		return result, false, &reviewReadError{Cause: err}
 	}
 	var checks []ForgeCheckRun
 	if binding.Review.RequireGreenChecks && pr.HeadSHA != "" {
 		checks, err = forge.ListCheckRuns(ctx, repo, pr.HeadSHA)
 		if err != nil {
-			return result, false, err
+			return result, false, &reviewReadError{Cause: err}
 		}
 	}
 	// THE DISPLACEMENT IS OBSERVED HERE, BEFORE THE WRITE THAT ERASES IT.
@@ -164,19 +190,21 @@ func (v *ReviewValidator) round(ctx context.Context, job *orchestration.JobConte
 	// applyForgeState because the cancel attempt needs the forge and
 	// applyForgeState is deliberately a pure fold.
 	superseded := supersedeChecks(ctx, forge, repo, delivery, pr.HeadSHA, v.now())
-	delivery, err = v.record(ctx, job, binding, delivery, pr, reviews, checks, superseded)
+	delivery, err = v.record(ctx, job, binding, agents, delivery, pr, reviews, checks, superseded)
 	if err != nil {
 		return result, false, err
 	}
 
+	advisory := binding.AdvisoryReviewers()
 	decision := EvaluateReviewGate(GateInput{
-		Policy:            binding.Review,
-		PullRequestState:  delivery.PullRequest.State,
-		HeadSHA:           delivery.HeadSHA,
-		Reviews:           delivery.Reviews,
-		Checks:            delivery.Checks,
-		AuthorModelFamily: authorFamily,
-		Draft:             delivery.PullRequest.Draft,
+		Policy:              binding.Review,
+		PullRequestState:    delivery.PullRequest.State,
+		HeadSHA:             delivery.HeadSHA,
+		Reviews:             delivery.Reviews,
+		Checks:              delivery.Checks,
+		AuthorModelFamilies: agents.authorFamilies,
+		Draft:               delivery.PullRequest.Draft,
+		Advisory:            advisory,
 	})
 	result.Details = decision.Reason.String()
 	switch {
@@ -185,7 +213,9 @@ func (v *ReviewValidator) round(ctx context.Context, job *orchestration.JobConte
 		result.Message = "approved on " + decision.HeadSHA + " by " + itoa(decision.Approvals) + " independent reviewer(s)"
 		return result, true, nil
 	case decision.Reason == GateBlockedChangesRequested:
-		result.Message = findingsFor(delivery.Reviews, delivery.HeadSHA)
+		// Only a binding verdict sends the work back, so only binding
+		// findings are the worker's to answer.
+		result.Message = findingsFor(advisory.Binding(delivery.Reviews), delivery.HeadSHA)
 		return result, true, nil
 	case decision.Reason == GateBlockedChecksFailed:
 		return v.checksFailed(ctx, job, binding, forge, repo, delivery, checks, result)
@@ -242,7 +272,10 @@ func (v *ReviewValidator) checksFailed(
 	checks []ForgeCheckRun,
 	result orchestration.ValidationResult,
 ) (orchestration.ValidationResult, bool, error) {
-	failure, settled := evaluateChecksFailure(delivery.Checks, delivery.HeadSHA, v.now(), binding.Review.SettleWindow())
+	// An advisory reviewer's red status is not the pipeline's, and must not be
+	// triaged, quoted to the worker, or re-run as if it were.
+	checksJudged := binding.AdvisoryReviewers().BindingChecks(delivery.Checks)
+	failure, settled := evaluateChecksFailure(checksJudged, delivery.HeadSHA, v.now(), binding.Review.SettleWindow())
 	if !settled {
 		return result, false, nil
 	}
@@ -332,6 +365,7 @@ func (v *ReviewValidator) rerunVoid(
 			record.Failure = publicOutput(err.Error())
 		}
 		delivery.RecordRerun(record)
+		auditRerun(ctx, record, delivery.RerunAttempts(record.HeadSHA, record.Check), v.rerunBudget)
 		asked++
 	}
 	if asked > 0 {
@@ -396,9 +430,9 @@ func mergeRerunRecords(held, pending []CIRerunRecord) []CIRerunRecord {
 // record merges what the forge reported into the delivery with one guarded
 // write. A conflict re-reads and merges again, bounded; a review already
 // recorded is never recorded twice, so a lost race records nothing extra.
-func (v *ReviewValidator) record(ctx context.Context, job *orchestration.JobContext, binding *ProjectBinding, delivery *Delivery, pr *ForgePullRequest, reviews []ForgeReview, checks []ForgeCheckRun, superseded []SupersessionRecord) (*Delivery, error) {
+func (v *ReviewValidator) record(ctx context.Context, job *orchestration.JobContext, binding *ProjectBinding, agents bindingAgents, delivery *Delivery, pr *ForgePullRequest, reviews []ForgeReview, checks []ForgeCheckRun, superseded []SupersessionRecord) (*Delivery, error) {
 	for attempt := 1; ; attempt++ {
-		changed := applyForgeState(delivery, binding, pr, reviews, checks, superseded, job.Iteration, v.now())
+		changed := applyForgeState(delivery, binding, agents, pr, reviews, checks, superseded, job.Iteration, v.now())
 		if !changed {
 			return delivery, nil
 		}
@@ -418,7 +452,7 @@ func (v *ReviewValidator) record(ctx context.Context, job *orchestration.JobCont
 
 // applyForgeState folds the forge's view into the delivery and reports
 // whether anything changed.
-func applyForgeState(delivery *Delivery, binding *ProjectBinding, pr *ForgePullRequest, reviews []ForgeReview, checks []ForgeCheckRun, superseded []SupersessionRecord, round int, now time.Time) bool {
+func applyForgeState(delivery *Delivery, binding *ProjectBinding, agents bindingAgents, pr *ForgePullRequest, reviews []ForgeReview, checks []ForgeCheckRun, superseded []SupersessionRecord, round int, now time.Time) bool {
 	changed := false
 	if state := pullRequestStateFor(pr); state != delivery.PullRequest.State {
 		delivery.PullRequest.State = state
@@ -442,8 +476,9 @@ func applyForgeState(delivery *Delivery, binding *ProjectBinding, pr *ForgePullR
 		delivery.HeadSHA = pr.HeadSHA
 		changed = true
 	}
+	policy := binding.reviewPolicy(agents)
 	for _, review := range reviews {
-		record, acted := reviewRecordFor(review, binding.Review, round)
+		record, acted := reviewRecordFor(review, policy, round)
 		if !acted || delivery.ReviewRecorded(record) {
 			continue
 		}
@@ -484,6 +519,23 @@ func sameChecks(a, b []CheckRecord) bool {
 	}
 	return true
 }
+
+// reviewReadError marks a round that failed only because a forge READ did:
+// the pull request, its reviews or its checks. Validate polls again on one,
+// up to reviewReadFailureBound in a row, and returns Cause when it stops, so
+// the engine attributes the failure exactly as it would the forge's own
+// error. It never leaves Validate.
+type reviewReadError struct {
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *reviewReadError) Error() string {
+	return "sdlc: review poll could not read the forge: " + e.Cause.Error()
+}
+
+// Unwrap returns the forge's error for errors.Is/As support.
+func (e *reviewReadError) Unwrap() error { return e.Cause }
 
 // reviewPollInterval is the workflow's poll_interval or the default.
 func reviewPollInterval(workflow *orchestration.WorkflowDefinition) time.Duration {

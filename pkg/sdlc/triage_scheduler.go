@@ -71,12 +71,17 @@ type TriageSchedulerConfig struct {
 
 	// Jobs is the engine the triage job is started on.
 	Jobs TriageJobStarter
+
+	// TriageAgents decides the Agent or pool a project triages with, which
+	// the job declares as its lead. See TriageAgentPolicy.
+	TriageAgents TriageAgentPolicy
 }
 
 // TriageScheduler turns a nudge into a triage job.
 type TriageScheduler struct {
-	bindings BindingReader
-	jobs     TriageJobStarter
+	bindings     BindingReader
+	jobs         TriageJobStarter
+	triageAgents TriageAgentPolicy
 
 	// failures are the per-tenant and per-project failures a sweep deferred,
 	// drained by SweepFailures. Only the sweep goroutine touches them, and
@@ -95,7 +100,7 @@ func NewTriageScheduler(cfg TriageSchedulerConfig) (*TriageScheduler, error) {
 	case cfg.Jobs == nil:
 		return nil, &InvalidInputError{Field: "jobs", Message: "a nudge that starts no job changes nothing"}
 	}
-	return &TriageScheduler{bindings: cfg.Bindings, jobs: cfg.Jobs}, nil
+	return &TriageScheduler{bindings: cfg.Bindings, jobs: cfg.Jobs, triageAgents: cfg.TriageAgents}, nil
 }
 
 // NudgeProject implements ProjectNudger: a verified delivery asks for the
@@ -126,39 +131,45 @@ func (s *TriageScheduler) TriageProject(ctx context.Context, tenantID, projectID
 	if binding == nil {
 		return nil
 	}
-	// THE JOB SAYS WHAT IT WILL RUN ON. Without these the job record carries
-	// no backend and no model at all, so an operator watching the queue sees a
+	// THE JOB SAYS WHAT IT WILL RUN ON. Without it the job record carries no
+	// backend and no model at all, so an operator watching the queue sees a
 	// row that cannot tell them whether it is about to spend a local GPU turn
 	// or a frontier-model one — which is the difference between a triage sweep
 	// that costs nothing and one that costs real money.
-	agent := binding.Triage
-	if strings.TrimSpace(agent.Backend) == "" {
-		agent = binding.Worker
+	agent, err := s.triageAgents.For(ctx, tenantID, binding)
+	if err != nil {
+		return err
 	}
 	_, err = s.jobs.StartJob(ctx, &orchestration.StartJobRequest{
 		TenantID:    tenantID,
 		ProjectID:   projectID,
 		Runner:      TriageRunnerName,
 		Description: "Triage the open issues of " + binding.Repo().String(),
-		LeadBackend: strings.TrimSpace(agent.Backend),
-		LeadModel:   strings.TrimSpace(agent.Model),
+		Lead:        agent,
 	})
 	if err == nil {
 		return nil
 	}
-	if triageAlreadyRunning(err) {
+	if jobAlreadyRunning(err) {
 		// The project is already being triaged. That is the per-project
 		// bound doing its job, not a failure: the run in flight will see
 		// whatever this delivery was about, because it lists the issues
 		// when it starts.
 		return nil
 	}
+	if errors.Is(err, orchestration.ErrProjectParked) {
+		// Triage is intake, and a parked project takes none. The refusal is
+		// the engine's own typed error, returned as it is so a caller can
+		// tell a closed intake from a broken backend.
+		return err
+	}
 	return backendError("StartJob", err)
 }
 
-// triageAlreadyRunning reports whether a refusal means another triage job
-// already holds this project's lease.
-func triageAlreadyRunning(err error) bool {
+// jobAlreadyRunning reports whether a refusal means another job already holds
+// the lease the start asked for: the project's, for a triage or a train, or
+// the pull request's, for a review.
+func jobAlreadyRunning(err error) bool {
 	return errors.Is(err, orchestration.ErrJobLeaseTaken) ||
 		errors.Is(err, orchestration.ErrJobSuperseded)
 }
@@ -224,7 +235,13 @@ func (s *TriageScheduler) Sweep(ctx context.Context, tenants orchestration.Tenan
 				return nudged, err
 			}
 			if err := s.TriageProject(tenantCtx, tenantID, binding.ProjectID); err != nil {
-				s.failures = append(s.failures, err)
+				// A PARKED PROJECT IS NOT A FAILED PASS. The engine logged the
+				// refusal where it made it; reporting it here as well would
+				// raise a warning every pass for as long as the project stays
+				// parked, which is the owner's choice rather than a fault.
+				if !errors.Is(err, orchestration.ErrProjectParked) {
+					s.failures = append(s.failures, err)
+				}
 				continue
 			}
 			nudged++

@@ -133,6 +133,10 @@ type (
 	// SDLC module turns it autonomous, and that has to be written back.
 	ProjectWriter = pkgservice.ProjectWriter
 
+	// WorkerImageRefresher is the Software Factory worker image refresh loop
+	// as the SDLC service reaches it (SDLCService.SetWorkerImageRefresher).
+	WorkerImageRefresher = pkgservice.WorkerImageRefresher
+
 	// FIDO2Service provides the tenant-scoped FIDO2/WebAuthn ceremony surface.
 	FIDO2Service = pkgservice.FIDO2Service
 
@@ -1213,10 +1217,19 @@ type (
 	// agent (go-quicbaas#734).
 	MaterializeAccountCredentialRequest  = pkgservice.MaterializeAccountCredentialRequest
 	MaterializeAccountCredentialResponse = pkgservice.MaterializeAccountCredentialResponse
-	SetDefaultAccountRequest             = pkgservice.SetDefaultAccountRequest
-	SetDefaultAccountResponse            = pkgservice.SetDefaultAccountResponse
-	UpdateAccountRequest                 = pkgservice.UpdateAccountRequest
-	UpdateAccountResponse                = pkgservice.UpdateAccountResponse
+
+	// ReserveAccountSessionRequest / ...Response and ReleaseAccountSession...
+	// are the session-slot reservation shapes a worker daemon uses to make
+	// max_concurrent_sessions hold across hosts (go-quicbaas#1047).
+	ReserveAccountSessionRequest  = pkgservice.ReserveAccountSessionRequest
+	ReserveAccountSessionResponse = pkgservice.ReserveAccountSessionResponse
+	ReleaseAccountSessionRequest  = pkgservice.ReleaseAccountSessionRequest
+	ReleaseAccountSessionResponse = pkgservice.ReleaseAccountSessionResponse
+
+	SetDefaultAccountRequest  = pkgservice.SetDefaultAccountRequest
+	SetDefaultAccountResponse = pkgservice.SetDefaultAccountResponse
+	UpdateAccountRequest      = pkgservice.UpdateAccountRequest
+	UpdateAccountResponse     = pkgservice.UpdateAccountResponse
 )
 
 // =============================================================================
@@ -1224,15 +1237,15 @@ type (
 // =============================================================================
 
 type (
-	AgentAdminService              = pkgservice.AgentAdminService
-	DisableAgentRequest            = pkgservice.DisableAgentRequest
-	DisableAgentResponse           = pkgservice.DisableAgentResponse
-	EnableAgentRequest             = pkgservice.EnableAgentRequest
-	EnableAgentResponse            = pkgservice.EnableAgentResponse
-	GetAgentRegistrationRequest    = pkgservice.GetAgentRegistrationRequest
-	GetAgentRegistrationResponse   = pkgservice.GetAgentRegistrationResponse
-	ListAgentRegistrationsRequest  = pkgservice.ListAgentRegistrationsRequest
-	ListAgentRegistrationsResponse = pkgservice.ListAgentRegistrationsResponse
+	FleetAdminService                  = pkgservice.FleetAdminService
+	DisableFleetNodeRequest            = pkgservice.DisableFleetNodeRequest
+	DisableFleetNodeResponse           = pkgservice.DisableFleetNodeResponse
+	EnableFleetNodeRequest             = pkgservice.EnableFleetNodeRequest
+	EnableFleetNodeResponse            = pkgservice.EnableFleetNodeResponse
+	GetFleetNodeRegistrationRequest    = pkgservice.GetFleetNodeRegistrationRequest
+	GetFleetNodeRegistrationResponse   = pkgservice.GetFleetNodeRegistrationResponse
+	ListFleetNodeRegistrationsRequest  = pkgservice.ListFleetNodeRegistrationsRequest
+	ListFleetNodeRegistrationsResponse = pkgservice.ListFleetNodeRegistrationsResponse
 )
 
 // =============================================================================
@@ -1485,23 +1498,24 @@ type (
 // =============================================================================
 
 type (
-	AuthorizeAgentRequest   = pkgservice.AuthorizeAgentRequest
-	CreateProjectRequest    = pkgservice.CreateProjectRequest
-	CreateProjectResponse   = pkgservice.CreateProjectResponse
-	DeleteProjectRequest    = pkgservice.DeleteProjectRequest
-	DeleteProjectResponse   = pkgservice.DeleteProjectResponse
-	GetProjectByNameRequest = pkgservice.GetProjectByNameRequest
-	GetProjectRequest       = pkgservice.GetProjectRequest
-	GetProjectResponse      = pkgservice.GetProjectResponse
-	GrantAgentRoleRequest   = pkgservice.GrantAgentRoleRequest
-	GrantAgentRoleResponse  = pkgservice.GrantAgentRoleResponse
-	ListProjectsRequest     = pkgservice.ListProjectsRequest
-	ListProjectsResponse    = pkgservice.ListProjectsResponse
-	ProjectService          = pkgservice.ProjectService
-	RevokeAgentRoleRequest  = pkgservice.RevokeAgentRoleRequest
-	RevokeAgentRoleResponse = pkgservice.RevokeAgentRoleResponse
-	UpdateProjectRequest    = pkgservice.UpdateProjectRequest
-	UpdateProjectResponse   = pkgservice.UpdateProjectResponse
+	AuthorizeFleetNodeRequest   = pkgservice.AuthorizeFleetNodeRequest
+	CreateProjectRequest        = pkgservice.CreateProjectRequest
+	CreateProjectResponse       = pkgservice.CreateProjectResponse
+	DeleteProjectRequest        = pkgservice.DeleteProjectRequest
+	DeleteProjectResponse       = pkgservice.DeleteProjectResponse
+	GetProjectByNameRequest     = pkgservice.GetProjectByNameRequest
+	GitSigningRetirement        = pkgservice.GitSigningRetirement
+	GetProjectRequest           = pkgservice.GetProjectRequest
+	GetProjectResponse          = pkgservice.GetProjectResponse
+	GrantFleetNodeRoleRequest   = pkgservice.GrantFleetNodeRoleRequest
+	GrantFleetNodeRoleResponse  = pkgservice.GrantFleetNodeRoleResponse
+	ListProjectsRequest         = pkgservice.ListProjectsRequest
+	ListProjectsResponse        = pkgservice.ListProjectsResponse
+	ProjectService              = pkgservice.ProjectService
+	RevokeFleetNodeRoleRequest  = pkgservice.RevokeFleetNodeRoleRequest
+	RevokeFleetNodeRoleResponse = pkgservice.RevokeFleetNodeRoleResponse
+	UpdateProjectRequest        = pkgservice.UpdateProjectRequest
+	UpdateProjectResponse       = pkgservice.UpdateProjectResponse
 )
 
 // =============================================================================

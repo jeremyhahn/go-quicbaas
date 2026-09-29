@@ -32,7 +32,7 @@ import (
 // Agent certificate identity
 // =============================================================================
 //
-// An agent daemon holds TWO credentials for one identity: the OAuth2
+// A fleet node daemon holds TWO credentials for one identity: the OAuth2
 // application registration mints (bearer / token-mtls), and the mTLS client
 // certificate the deploy service issued it. go-qrdb authenticates with the
 // CERTIFICATE whenever one is presented -- its authenticator chain is
@@ -49,19 +49,19 @@ import (
 // heartbeat was refused 403 "agent-node-04 cannot agent_heartbeat on
 // orchestrator" (go-quicbaas#663).
 //
-// EnrollAgentCertIdentity closes that by performing, for an agent daemon, the
+// EnrollFleetNodeCertIdentity closes that by performing, for a fleet node daemon, the
 // same enrollment go-qrdb performs for the platform admin certificate at first
 // boot (pkg/firstboot: create the user, grant it a role, bind the certificate's
 // SPKI thumbprint). It is the ONLY way a certificate principal can hold
 // authority in this stack -- qrdb resolves roles from the store and never from
 // the credential -- so it is the seam, not a workaround for one.
 
-// AgentRuntimeRoleName is the tenant-scoped role an enrolled agent daemon
+// FleetRuntimeRoleName is the tenant-scoped role an enrolled fleet node daemon
 // holds. It carries the agent runtime grant and nothing else; an agent must
 // not be able to administer the platform that runs it, so it is deliberately
 // NOT one of qrdb's built-in roles (the narrowest of those, operator, carries
 // the whole orchestrator surface).
-const AgentRuntimeRoleName = "agent-runtime"
+const FleetRuntimeRoleName = "agent-runtime"
 
 // AgentSessionRoleName is the tenant-scoped role an enrolled agent SESSION
 // holds. A session is not a daemon: it is one spawned agent process, alive for
@@ -80,14 +80,14 @@ const AgentSessionRoleName = "agent-session"
 // It is deliberately absent from supportedAuthMethods, the closed set the
 // human create/update surface accepts: QuicBaaS accounts are passwordless and
 // activated by WebAuthn or PIV, and this is a MACHINE identity's method,
-// conferred only by EnrollAgentCertIdentity.
+// conferred only by EnrollFleetNodeCertIdentity.
 const AuthMethodMTLS = "mtls"
 
 // MCP permissions a spawned agent session exercises. They are the
 // qrdb-canonical "resource:action" names of the four MCP tools a session needs
 // -- quicbaas_orchestrator_inference, qrdb_get, qrdb_put and qrdb_list -- and
 // they are restated here rather than imported for the same reason
-// DefaultAgentRuntimeScopes is: pkg/iam does not depend on the orchestration or
+// DefaultFleetRuntimeScopes is: pkg/iam does not depend on the orchestration or
 // permission packages. pkg/server TestAgentSessionGrant_* pins the literals
 // against orchestration.AgentMCPScopes and against the MCP tool table that
 // enforces them.
@@ -149,10 +149,10 @@ func AgentRoleID(roleName, tenantID string) string {
 	return "role-" + roleName + "-" + tenantID
 }
 
-// AgentRuntimeRoleID returns the deterministic role ID for a tenant's agent
+// FleetRuntimeRoleID returns the deterministic role ID for a tenant's agent
 // runtime role.
-func AgentRuntimeRoleID(tenantID string) string {
-	return AgentRoleID(AgentRuntimeRoleName, tenantID)
+func FleetRuntimeRoleID(tenantID string) string {
+	return AgentRoleID(FleetRuntimeRoleName, tenantID)
 }
 
 // AgentSessionRoleID returns the deterministic role ID for a tenant's agent
@@ -163,8 +163,8 @@ func AgentSessionRoleID(tenantID string) string {
 	return AgentRoleID(AgentSessionRoleName, tenantID)
 }
 
-// AgentCertIdentityOptions describes the certificate principal to enroll.
-type AgentCertIdentityOptions struct {
+// FleetNodeCertIdentityOptions describes the certificate principal to enroll.
+type FleetNodeCertIdentityOptions struct {
 	// Certificate is the daemon's verified mTLS client certificate. Every
 	// identifying value is derived FROM it rather than supplied beside it --
 	// the username from its Subject CommonName (the subject go-qrdb's mTLS
@@ -181,20 +181,20 @@ type AgentCertIdentityOptions struct {
 
 	// Permissions is the grant the identity holds, in qrdb's canonical
 	// "resource:action" vocabulary. The register endpoint passes
-	// AgentRuntimeGrant() -- the one definition of what a daemon may do.
+	// FleetRuntimeGrant() -- the one definition of what a daemon may do.
 	Permissions []string
 }
 
 // username returns the subject go-qrdb's mTLS authenticator derives from the
 // certificate.
-func (o AgentCertIdentityOptions) username() string {
+func (o FleetNodeCertIdentityOptions) username() string {
 	if o.Certificate == nil {
 		return ""
 	}
 	return strings.TrimSpace(o.Certificate.Subject.CommonName)
 }
 
-// agentCertUsernameRegex is the charset a certificate CommonName may carry as
+// fleetNodeCertUsernameRegex is the charset a certificate CommonName may carry as
 // an agent identity's username.
 //
 // It is deliberately NOT the human-handle rule (validateUsername): the qrdb
@@ -205,16 +205,16 @@ func (o AgentCertIdentityOptions) username() string {
 // part that is load-bearing: an identifier that is bounded, printable, and
 // free of the separators a store composes its index keys from, so a CN can
 // never address another tenant's keyspace.
-var agentCertUsernameRegex = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$`)
+var fleetNodeCertUsernameRegex = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$`)
 
-// validateAgentCertUsername checks the certificate CommonName is usable as the
+// validateFleetNodeCertUsername checks the certificate CommonName is usable as the
 // qrdb subject the mTLS authenticator will resolve.
-func validateAgentCertUsername(username string) error {
+func validateFleetNodeCertUsername(username string) error {
 	if username == "" {
 		return fieldValidationError("certificate",
 			"an agent certificate must carry a CommonName: it is the subject qrdb authenticates it as")
 	}
-	if !agentCertUsernameRegex.MatchString(username) {
+	if !fleetNodeCertUsernameRegex.MatchString(username) {
 		return fieldValidationError("certificate",
 			"certificate CommonName "+strconv.Quote(username)+
 				" is not usable as an identity: 3-64 characters of letters, digits, dot, dash or underscore")
@@ -236,9 +236,9 @@ type agentRole struct {
 }
 
 var (
-	// agentRuntimeRole is the role an enrolled agent daemon holds.
+	// agentRuntimeRole is the role an enrolled fleet node daemon holds.
 	agentRuntimeRole = agentRole{
-		name:        AgentRuntimeRoleName,
+		name:        FleetRuntimeRoleName,
 		description: "Agent runtime daemons enrolled in this tenant.",
 	}
 
@@ -249,7 +249,7 @@ var (
 	}
 )
 
-// EnrollAgentCertIdentity ensures the identity an agent's client certificate
+// EnrollFleetNodeCertIdentity ensures the identity an agent's client certificate
 // authenticates as exists in tenantID and holds exactly opts.Permissions.
 //
 // It is idempotent: a re-registration converges the existing record rather
@@ -263,15 +263,15 @@ var (
 // The record it writes is a MACHINE identity: active, restricted to mTLS
 // authentication, holding one narrow role and no group membership. It is not
 // reachable by any human login ceremony.
-func (s *IdentityStore) EnrollAgentCertIdentity(ctx context.Context, tenantID string, opts AgentCertIdentityOptions) (*User, error) {
-	return s.enrollAgentCertIdentity(ctx, tenantID, agentRuntimeRole, opts)
+func (s *IdentityStore) EnrollFleetNodeCertIdentity(ctx context.Context, tenantID string, opts FleetNodeCertIdentityOptions) (*User, error) {
+	return s.enrollFleetNodeCertIdentity(ctx, tenantID, agentRuntimeRole, opts)
 }
 
 // EnrollAgentSessionIdentity ensures the identity ONE spawned agent session's
 // ephemeral certificate authenticates as exists in tenantID and holds exactly
 // the MCP floor (AgentSessionGrant).
 //
-// It is the session half of the seam EnrollAgentCertIdentity opened for
+// It is the session half of the seam EnrollFleetNodeCertIdentity opened for
 // daemons, and it exists because a per-session certificate was minted and
 // delivered to every spawned agent while nothing enrolled it: go-qrdb resolves
 // a certificate principal's roles from the user record its Subject CommonName
@@ -289,21 +289,21 @@ func (s *IdentityStore) EnrollAgentCertIdentity(ctx context.Context, tenantID st
 // (pkg/server AgentMCPPresetResolver); this function cannot, because a
 // certificate alone does not say which trust domain is pinned.
 func (s *IdentityStore) EnrollAgentSessionIdentity(ctx context.Context, tenantID string, cert *x509.Certificate) (*User, error) {
-	return s.enrollAgentCertIdentity(ctx, tenantID, agentSessionRole, AgentCertIdentityOptions{
+	return s.enrollFleetNodeCertIdentity(ctx, tenantID, agentSessionRole, FleetNodeCertIdentityOptions{
 		Certificate: cert,
 		Permissions: AgentSessionGrant(),
 	})
 }
 
-// enrollAgentCertIdentity is the one implementation both enrollments run. The
+// enrollFleetNodeCertIdentity is the one implementation both enrollments run. The
 // role is a parameter and the grant travels in opts, so a daemon and a session
 // share every validation, every convergence rule and every race resolution --
 // there is no second copy of this to keep in step.
-func (s *IdentityStore) enrollAgentCertIdentity(
+func (s *IdentityStore) enrollFleetNodeCertIdentity(
 	ctx context.Context,
 	tenantID string,
 	role agentRole,
-	opts AgentCertIdentityOptions,
+	opts FleetNodeCertIdentityOptions,
 ) (*User, error) {
 	if err := validateTenantID(tenantID); err != nil {
 		return nil, err
@@ -312,10 +312,10 @@ func (s *IdentityStore) enrollAgentCertIdentity(
 		return nil, fieldValidationError("certificate",
 			"an agent certificate identity must be enrolled from the certificate it authenticates with")
 	}
-	if err := validateAgentCertUsername(opts.username()); err != nil {
+	if err := validateFleetNodeCertUsername(opts.username()); err != nil {
 		return nil, err
 	}
-	permissions, err := validateAgentGrant(opts.Permissions)
+	permissions, err := validateFleetNodeGrant(opts.Permissions)
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +332,7 @@ func (s *IdentityStore) enrollAgentCertIdentity(
 	if err != nil {
 		return nil, err
 	}
-	return s.ensureAgentCertUser(ctx, tenantID, roleID, opts)
+	return s.ensureFleetNodeCertUser(ctx, tenantID, roleID, opts)
 }
 
 // RevokeAgentSessionIdentity removes the principal EnrollAgentSessionIdentity
@@ -347,7 +347,7 @@ func (s *IdentityStore) enrollAgentCertIdentity(
 // nothing, which is default-deny at AuthorizeMCP. A disabled record would also
 // deny, but it would linger for the life of the tenant, one per session, and
 // EnrollAgentSessionIdentity refuses to converge an out-of-service record
-// (assertAgentIdentityMayBeConverged), so a CommonName collision would become
+// (assertFleetNodeIdentityMayBeConverged), so a CommonName collision would become
 // an unspawnable session.
 //
 // It is idempotent: a principal that is already gone is the state this asked
@@ -359,7 +359,7 @@ func (s *IdentityStore) enrollAgentCertIdentity(
 // It refuses to delete anything that is not a session principal. The username
 // comes from a certificate CommonName, and a CommonName is not a capability:
 // without this guard a session whose CN collided with a human account or an
-// agent daemon would delete that account on close. The record must hold the
+// fleet node daemon would delete that account on close. The record must hold the
 // tenant's session role and nothing else, and must be restricted to mTLS --
 // which is exactly and only what this enrollment writes.
 func (s *IdentityStore) RevokeAgentSessionIdentity(ctx context.Context, tenantID, username string) error {
@@ -367,7 +367,7 @@ func (s *IdentityStore) RevokeAgentSessionIdentity(ctx context.Context, tenantID
 		return err
 	}
 	subject := strings.TrimSpace(username)
-	if err := validateAgentCertUsername(subject); err != nil {
+	if err := validateFleetNodeCertUsername(subject); err != nil {
 		return err
 	}
 	if TenantFromContext(ctx) == "" {
@@ -477,12 +477,12 @@ func (s *IdentityStore) ensureAgentRole(
 	return roleID, nil
 }
 
-// ensureAgentCertUser creates or converges the certificate principal's user
+// ensureFleetNodeCertUser creates or converges the certificate principal's user
 // record and returns it.
-func (s *IdentityStore) ensureAgentCertUser(
+func (s *IdentityStore) ensureFleetNodeCertUser(
 	ctx context.Context,
 	tenantID, roleID string,
-	opts AgentCertIdentityOptions,
+	opts FleetNodeCertIdentityOptions,
 ) (*User, error) {
 	displayName := strings.TrimSpace(opts.DisplayName)
 	if displayName == "" {
@@ -500,7 +500,7 @@ func (s *IdentityStore) ensureAgentCertUser(
 		return nil, err
 	}
 	if err == nil && existing != nil {
-		return s.convergeAgentCertUser(ctx, existing, displayName, roleID, binding)
+		return s.convergeFleetNodeCertUser(ctx, existing, displayName, roleID, binding)
 	}
 
 	user := &User{
@@ -508,7 +508,7 @@ func (s *IdentityStore) ensureAgentCertUser(
 		Username: opts.username(),
 		Name:     displayName,
 		Roles:    []string{roleID},
-		// No email. An agent daemon has no mailbox and must not occupy a
+		// No email. A fleet node daemon has no mailbox and must not occupy a
 		// tenant's email login-key index; qrdb's user store carries an
 		// explicit no-email-login-key mode for exactly this.
 		AuthMethods:  []string{AuthMethodMTLS},
@@ -521,42 +521,42 @@ func (s *IdentityStore) ensureAgentCertUser(
 		// Lost a race with a concurrent registration of the same daemon: the
 		// record now exists and is this identity's own, so converge onto it.
 		if isAlreadyExistsError(createErr) {
-			return s.convergeExistingAgentCertUser(ctx, tenantID, roleID, displayName, binding, opts)
+			return s.convergeExistingFleetNodeCertUser(ctx, tenantID, roleID, displayName, binding, opts)
 		}
 		return nil, createErr
 	}
 	return user, nil
 }
 
-// convergeExistingAgentCertUser re-reads the record a concurrent enrollment
+// convergeExistingFleetNodeCertUser re-reads the record a concurrent enrollment
 // committed and applies this enrollment's state to it.
-func (s *IdentityStore) convergeExistingAgentCertUser(
+func (s *IdentityStore) convergeExistingFleetNodeCertUser(
 	ctx context.Context,
 	tenantID, roleID, displayName string,
 	binding qrdbsdk.CertBinding,
-	opts AgentCertIdentityOptions,
+	opts FleetNodeCertIdentityOptions,
 ) (*User, error) {
 	existing, err := s.userStorage.GetUserByUsername(ctx, tenantID, opts.username())
 	if err != nil {
 		return nil, err
 	}
-	return s.convergeAgentCertUser(ctx, existing, displayName, roleID, binding)
+	return s.convergeFleetNodeCertUser(ctx, existing, displayName, roleID, binding)
 }
 
-// convergeAgentCertUser brings an existing record to the state this enrollment
+// convergeFleetNodeCertUser brings an existing record to the state this enrollment
 // asserts and commits it. It is the ONE place that state is written, so the
 // ordinary re-registration and the lost-race path cannot drift apart.
 //
 // The binding list is REPLACED rather than appended to: a daemon holds exactly
 // one certificate, and leaving the superseded thumbprint bound would keep a
 // rotated-out credential naming this identity for as long as the record lives.
-func (s *IdentityStore) convergeAgentCertUser(
+func (s *IdentityStore) convergeFleetNodeCertUser(
 	ctx context.Context,
 	existing *User,
 	displayName, roleID string,
 	binding qrdbsdk.CertBinding,
 ) (*User, error) {
-	if err := assertAgentIdentityMayBeConverged(existing); err != nil {
+	if err := assertFleetNodeIdentityMayBeConverged(existing); err != nil {
 		return nil, err
 	}
 	existing.Name = displayName
@@ -571,7 +571,7 @@ func (s *IdentityStore) convergeAgentCertUser(
 	return existing, nil
 }
 
-// assertAgentIdentityMayBeConverged refuses to re-activate an identity an
+// assertFleetNodeIdentityMayBeConverged refuses to re-activate an identity an
 // administrator (or a lockout) took out of service.
 //
 // A registration is authenticated by a CA-issued agent certificate alone, so
@@ -579,7 +579,7 @@ func (s *IdentityStore) convergeAgentCertUser(
 // make "disable this agent" undone by the agent itself at its next restart.
 // Pending is converged, not refused: that is a record awaiting activation, not
 // one withdrawn from service.
-func assertAgentIdentityMayBeConverged(existing *User) error {
+func assertFleetNodeIdentityMayBeConverged(existing *User) error {
 	switch existing.Lifecycle {
 	case LifecycleActive, LifecyclePending, "":
 		return nil
@@ -610,12 +610,12 @@ func (e *AgentIdentityNotInServiceError) Error() string {
 		strconv.Quote(e.TenantID) + " is " + e.Lifecycle + " and will not be re-enrolled"
 }
 
-// validateAgentGrant returns the trimmed, de-duplicated grant, refusing an
+// validateFleetNodeGrant returns the trimmed, de-duplicated grant, refusing an
 // empty set and a wildcard. An identity enrolled with no permissions would be
 // authenticated and refused everything, which is the defect this exists to fix
 // rather than a state worth writing; a wildcard would hand a daemon the
 // platform that runs it.
-func validateAgentGrant(permissions []string) ([]string, error) {
+func validateFleetNodeGrant(permissions []string) ([]string, error) {
 	out := make([]string, 0, len(permissions))
 	seen := make(map[string]struct{}, len(permissions))
 	for _, permission := range permissions {

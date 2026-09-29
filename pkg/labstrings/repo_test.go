@@ -69,6 +69,11 @@ func TestThePlantedViolationIsCaught(t *testing.T) {
 		"cmd/quicbaas/help.go": "const help = \"--server https://198.51.100.51:8443\"\n",
 		"docs/guide.md":        "Deploy it on gpu-host, then check " + ownerPathFixture + "/sources.\n",
 		"pkg/api/rest/ui/dist/assets/index-DEADBEEF.js": "const p=\"agent on vm-host-4\";\n",
+		// The Makefile once carried a whole-file allowance, which let a
+		// private forge default land unreported (go-quicbaas#1130). It is
+		// scanned like any other file now; this keeps it that way.
+		"Makefile":  "GITEA_HTTP_ORIGIN ?= http://git.example.internal\n",
+		"README.md": "Questions go to jhahn.\n",
 	}
 	root, files := writeTree(t, planted)
 
@@ -81,7 +86,7 @@ func TestThePlantedViolationIsCaught(t *testing.T) {
 	for _, f := range findings {
 		byClass[f.Class]++
 	}
-	for _, want := range []Class{ClassLabAddress, ClassLabHost, ClassOwnerPath} {
+	for _, want := range []Class{ClassLabAddress, ClassLabHost, ClassOwnerPath, ClassOwnerAccount} {
 		if byClass[want] == 0 {
 			t.Errorf("no %s finding in %v", want, findings)
 		}
@@ -153,7 +158,7 @@ func TestTheGateWouldHaveCaughtIssue944(t *testing.T) {
 		},
 		{
 			name:    "the fleet address in exported godoc",
-			file:    "pkg/agent/config.go",
+			file:    "pkg/fleet/config.go",
 			content: "\t// (e.g., \"https://198.51.100.51:8443\"). Required.\n",
 			want:    ClassLabAddress,
 		},

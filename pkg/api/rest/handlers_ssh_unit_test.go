@@ -39,7 +39,7 @@ func TestSSHRemoveKnownHost(t *testing.T) {
 	server, _, cleanup := newSSHTestServer(t)
 	defer cleanup()
 
-	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","fingerprint":"` + testKnownHostFingerprint + `"}`
+	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","public_key":"` + sshfixture.Host(t).AuthorizedLine + `"}`
 	addReq := httptest.NewRequest(http.MethodPost, "/api/v1/ssh/known-hosts", strings.NewReader(addBody))
 	addReq.Header.Set("Content-Type", "application/json")
 	server.HandleAddKnownHost(httptest.NewRecorder(), addReq)

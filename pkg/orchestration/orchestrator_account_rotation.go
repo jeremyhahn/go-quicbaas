@@ -17,6 +17,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/metrics"
 )
 
 // =============================================================================
@@ -102,8 +104,25 @@ type RotateSessionAccountResult struct {
 	// handed over under, empty when the deployment wired no leaser.
 	CredentialLeaseID string `json:"credential_lease_id,omitempty"`
 
+	// ReservationID is the session-slot reservation the replacement account
+	// was resolved under; the rotated record names it.
+	ReservationID string `json:"reservation_id,omitempty"`
+
 	// Mode reports which mechanism was used.
 	Mode AccountRotationMode `json:"mode"`
+
+	// accountGeneration is which copy of the replacement account's credential
+	// the rotation materialized (AccountCredential.Generation), carried from
+	// the backend to commitRotation so the session's open account segment
+	// records it.
+	//
+	// DELIBERATELY UNEXPORTED, and therefore deliberately off every wire. It
+	// is internal bookkeeping between two halves of one rotation, not
+	// something an operator or an SDK caller has any use for: the generation
+	// is meaningful only against the account record it is compared with, and
+	// publishing it would add a field to five transports plus the proto to say
+	// nothing a caller can act on.
+	accountGeneration int64
 }
 
 // SessionAccountRotationService is the orchestrator-side rotation verb. It is
@@ -122,7 +141,7 @@ var _ SessionAccountRotationService = (*agentServiceImpl)(nil)
 //
 // Rotation is not on AgentService itself: the pooled account subsystem is
 // optional, and widening the interface every transport already depends on
-// would force every AgentService implementation — including the remote agent
+// would force every AgentService implementation — including the remote fleet node
 // daemon proxy — to grow a method most of them cannot honour. Each transport
 // therefore asks for the capability here, and a deployment whose agent service
 // does not have it answers with one typed error instead of five ad-hoc ones.
@@ -212,6 +231,49 @@ func (s *agentServiceImpl) classifier() AccountLimitClassifier {
 // =============================================================================
 // Automatic rotation on a limited turn
 // =============================================================================
+
+// holdOnAccountLimit takes the session's account out of rotation when the
+// turn failed because the provider refused it for a limit, and returns the
+// turn's error marked as such.
+//
+// EVERY TURN PATH, NOT ONLY THE ASYNCHRONOUS ONE. Rotation below answers an
+// operator's session by moving it; a job's runner answers by rolling its
+// worker (pkg/sdlc). Both need the same two things first: the account held
+// until the provider's stated reset, so no other spawn selects it in the
+// meantime, and an error that SAYS the account was refused, so the caller does
+// not have to re-derive it from a string. Doing it here, where the turn failed
+// and the session's account is known, is what gives every caller both.
+//
+// A turn that failed for any other reason is returned untouched.
+func (s *agentServiceImpl) holdOnAccountLimit(ctx context.Context, sessionID string, turnErr error) error {
+	if sessionID == "" || turnErr == nil {
+		return turnErr
+	}
+	mem, ok := s.liveSessionRecord(sessionID)
+	if !ok || mem.AccountID() == "" {
+		return turnErr
+	}
+	provider := AccountProvider(mem.Backend)
+	signal, limited := s.classifier().Classify(provider, turnErr)
+	if !limited {
+		return turnErr
+	}
+	availableAt := signal.AvailableAt(time.Now().UTC(), s.limitBackoff())
+	accountID := mem.AccountID()
+	s.holdAccount(ctx, mem.TenantID, accountID, availableAt, signal.Matched)
+	metrics.GetMetrics().RecordOrchAccountLimitHold(mem.TenantID, string(provider))
+	return &TurnAccountLimitedError{
+		SessionID: sessionID,
+		Limit: &AccountLimitedError{
+			AccountID:   accountID,
+			Provider:    provider,
+			RetryAfter:  signal.RetryAfter,
+			AvailableAt: availableAt,
+			Signal:      signal.Matched,
+		},
+		Cause: turnErr,
+	}
+}
 
 // rotateOnAccountLimit answers a failed turn that the classifier attributes to
 // a provider limit by moving the session to another account.
@@ -359,7 +421,9 @@ func (s *agentServiceImpl) rotateInPlace(
 		AccountID:         rotated.AccountID,
 		Strategy:          rotated.Strategy,
 		CredentialLeaseID: rotated.CredentialLeaseID,
+		ReservationID:     rotated.ReservationID,
 		Mode:              AccountRotationModeInPlace,
+		accountGeneration: rotated.AccountGeneration,
 	}, nil
 }
 
@@ -390,7 +454,7 @@ func (s *agentServiceImpl) rotateByResume(
 	// transcript in the process cannot lose it, and so a read failure aborts
 	// the rotation while the session is still serving its old account.
 	transcript, err := buildReplayTranscript(
-		ctx, s.sessionLog, record.TenantID, record.SessionID, record.SystemPrompt, s.replayBudget())
+		ctx, s.sessionLog, record.TenantID, record.SessionID, record.EffectiveSystemPrompt(), s.replayBudget())
 	if err != nil {
 		return nil, err
 	}
@@ -433,7 +497,9 @@ func (s *agentServiceImpl) rotateByResume(
 		AccountID:         resumed.Session.AccountID,
 		Strategy:          resumed.Session.AccountStrategy,
 		CredentialLeaseID: resumed.Session.CredentialLeaseID,
+		ReservationID:     resumed.Session.ReservationID,
 		Mode:              AccountRotationModeResume,
+		accountGeneration: resumed.Session.AccountGeneration,
 	}, nil
 }
 
@@ -507,7 +573,8 @@ func (s *agentServiceImpl) commitRotation(
 	// conclusion withdraws every grant the session ever held.
 	s.supersedeCredentialLease(ctx, mem, record, result.CredentialLeaseID)
 
-	record.OpenAccountSegment(result.AccountID, result.Strategy, reason, now.UnixNano())
+	record.OpenAccountSegment(result.AccountID, result.Strategy, reason, now.UnixNano(), result.accountGeneration)
+	record.AddReservation(result.ReservationID)
 	record.Status = SessionStateActive
 	record.ResumeError = ""
 	record.LastActivity = now.UnixNano()

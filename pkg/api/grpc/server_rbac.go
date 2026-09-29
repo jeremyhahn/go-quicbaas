@@ -27,14 +27,12 @@ import (
 // =============================================================================
 // RBAC User Operations
 //
-// There are none. The QuicBaaS gRPC service still DECLARES CreateUser,
-// DeleteUser and ListUsers (api/proto/quicbaas.proto), but Server embeds
-// pb.UnimplementedQuicBaaSServer, so they now answer codes.Unimplemented
-// instead of routing to a service-layer auth manager production never wired —
-// which failed every call with "authentication manager not configured". Users
-// are qrdb's: administer them over quicbaas.iam.v1.IAMService (the same surface
-// REST serves at /api/v1/iam and the SDK exposes as Identity().IAM().User()).
-// See issue #905.
+// There are none, and the QuicBaaS gRPC service no longer declares any: the
+// CreateUser, DeleteUser and ListUsers RPCs were removed from
+// api/proto/quicbaas.proto (issue #919) after their handlers were deleted in
+// issue #905. Users are qrdb's: administer them over quicbaas.iam.v1.IAMService
+// (the same surface REST serves at /api/v1/iam and the SDK exposes as
+// Identity().IAM().User()).
 // =============================================================================
 
 // =============================================================================

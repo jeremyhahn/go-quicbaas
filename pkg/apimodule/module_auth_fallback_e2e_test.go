@@ -68,7 +68,7 @@ func TestModuleAuthFallback_EndToEnd(t *testing.T) {
 		"viewer": {"keys:get"},
 	}}
 	users := &fakeUserServicer{users: map[string]*user.User{
-		"tenant-a/alice": {Username: "alice", TenantID: "tenant-a", RoleIDs: []string{"viewer"}, Enabled: true},
+		"tenant-a/alice": {Username: "alice", TenantID: "tenant-a", RoleIDs: []string{"viewer"}, Lifecycle: user.LifecycleActive},
 	}}
 
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})

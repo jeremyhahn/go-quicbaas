@@ -33,16 +33,16 @@ import (
 
 func TestHandleGrantAgentRole_Success(t *testing.T) {
 	mockSvc := &mocks.MockProjectService{
-		GrantAgentRoleFunc: func(_ context.Context, req *service.GrantAgentRoleRequest) (*service.GrantAgentRoleResponse, error) {
-			return &service.GrantAgentRoleResponse{
-				ProjectID: req.ProjectID, AgentID: req.AgentID, Role: req.Role, Timestamp: time.Now(),
+		GrantFleetNodeRoleFunc: func(_ context.Context, req *service.GrantFleetNodeRoleRequest) (*service.GrantFleetNodeRoleResponse, error) {
+			return &service.GrantFleetNodeRoleResponse{
+				ProjectID: req.ProjectID, FleetNodeID: req.FleetNodeID, Role: req.Role, Timestamp: time.Now(),
 			}, nil
 		},
 	}
 	srv := newProjectTestServer(mockSvc)
 
 	r := chi.NewRouter()
-	r.Post("/projects/{id}/permissions/{agent_id}", srv.HandleGrantAgentRole)
+	r.Post("/projects/{id}/permissions/{node_id}", srv.HandleGrantFleetNodeRole)
 
 	req := httptest.NewRequest(http.MethodPost, "/projects/p1/permissions/a1?tenant_id=t1",
 		bytes.NewReader([]byte(`{"role":"lead"}`)))
@@ -55,7 +55,7 @@ func TestHandleGrantAgentRole_Success(t *testing.T) {
 func TestHandleGrantAgentRole_Validation(t *testing.T) {
 	srv := newProjectTestServer(&mocks.MockProjectService{})
 	r := chi.NewRouter()
-	r.Post("/projects/{id}/permissions/{agent_id}", srv.HandleGrantAgentRole)
+	r.Post("/projects/{id}/permissions/{node_id}", srv.HandleGrantFleetNodeRole)
 
 	// Missing tenant_id
 	w := httptest.NewRecorder()
@@ -78,13 +78,13 @@ func TestHandleGrantAgentRole_Validation(t *testing.T) {
 
 func TestHandleGrantAgentRole_NotFound(t *testing.T) {
 	mockSvc := &mocks.MockProjectService{
-		GrantAgentRoleFunc: func(_ context.Context, _ *service.GrantAgentRoleRequest) (*service.GrantAgentRoleResponse, error) {
+		GrantFleetNodeRoleFunc: func(_ context.Context, _ *service.GrantFleetNodeRoleRequest) (*service.GrantFleetNodeRoleResponse, error) {
 			return nil, &service.ProjectNotFoundError{ProjectID: "p1"}
 		},
 	}
 	srv := newProjectTestServer(mockSvc)
 	r := chi.NewRouter()
-	r.Post("/projects/{id}/permissions/{agent_id}", srv.HandleGrantAgentRole)
+	r.Post("/projects/{id}/permissions/{node_id}", srv.HandleGrantFleetNodeRole)
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/projects/p1/permissions/a1?tenant_id=t1",
@@ -94,13 +94,13 @@ func TestHandleGrantAgentRole_NotFound(t *testing.T) {
 
 func TestHandleRevokeAgentRole_Success(t *testing.T) {
 	mockSvc := &mocks.MockProjectService{
-		RevokeAgentRoleFunc: func(_ context.Context, req *service.RevokeAgentRoleRequest) (*service.RevokeAgentRoleResponse, error) {
-			return &service.RevokeAgentRoleResponse{ProjectID: req.ProjectID, AgentID: req.AgentID, Timestamp: time.Now()}, nil
+		RevokeFleetNodeRoleFunc: func(_ context.Context, req *service.RevokeFleetNodeRoleRequest) (*service.RevokeFleetNodeRoleResponse, error) {
+			return &service.RevokeFleetNodeRoleResponse{ProjectID: req.ProjectID, FleetNodeID: req.FleetNodeID, Timestamp: time.Now()}, nil
 		},
 	}
 	srv := newProjectTestServer(mockSvc)
 	r := chi.NewRouter()
-	r.Delete("/projects/{id}/permissions/{agent_id}", srv.HandleRevokeAgentRole)
+	r.Delete("/projects/{id}/permissions/{node_id}", srv.HandleRevokeFleetNodeRole)
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/projects/p1/permissions/a1?tenant_id=t1", nil))
@@ -110,7 +110,7 @@ func TestHandleRevokeAgentRole_Success(t *testing.T) {
 func TestHandleRevokeAgentRole_Validation(t *testing.T) {
 	srv := newProjectTestServer(&mocks.MockProjectService{})
 	r := chi.NewRouter()
-	r.Delete("/projects/{id}/permissions/{agent_id}", srv.HandleRevokeAgentRole)
+	r.Delete("/projects/{id}/permissions/{node_id}", srv.HandleRevokeFleetNodeRole)
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/projects/p1/permissions/a1", nil))
@@ -159,6 +159,11 @@ func TestHandleDeleteProject_Cover(t *testing.T) {
 func TestHandleUpdateProject_AllFields(t *testing.T) {
 	mockSvc := &mocks.MockProjectService{
 		UpdateProjectFunc: func(_ context.Context, req *service.UpdateProjectRequest) (*service.UpdateProjectResponse, error) {
+			// go-quicbaas#1058: the project's spend limits reach the service.
+			if req.Spend == nil || len(req.Spend.Windows) != 1 || req.Spend.Windows[0].Size != 24*time.Hour ||
+				req.Spend.Windows[0].MaxTokens != 100 {
+				t.Errorf("spend = %+v, want the daily window", req.Spend)
+			}
 			return &service.UpdateProjectResponse{
 				Project:   &orchestration.Project{ID: req.ProjectID, TenantID: req.TenantID, Name: "n"},
 				Timestamp: time.Now(),
@@ -169,7 +174,7 @@ func TestHandleUpdateProject_AllFields(t *testing.T) {
 	r := chi.NewRouter()
 	r.Put("/projects/{id}", srv.HandleUpdateProject)
 
-	body := `{"name":"n","description":"d","clear_description":false,"workspace_agent_id":"a","workspace_path":"/w","host_affinity":"strict","default_lead_agent":"lead","git_repo_url":"https://g","git_default_branch":"main","git_current_sha":"abc","token_budget":100,"gpu_minutes":5,"max_concurrency":3}`
+	body := `{"name":"n","description":"d","clear_description":false,"workspace_agent_id":"a","workspace_path":"/w","host_affinity":"strict","default_lead_agent":{"agent_id":"lead"},"git_repo_url":"https://g","git_default_branch":"main","git_current_sha":"abc","spend":{"windows":[{"name":"daily","size":86400000000000,"max_tokens":100}]},"gpu_minutes":5,"max_concurrency":3}`
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/projects/p1?tenant_id=t1", bytes.NewReader([]byte(body))))
 	assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())

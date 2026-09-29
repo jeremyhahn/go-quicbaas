@@ -33,9 +33,9 @@ func isMCPProjectService(service string) bool {
 
 // projectMethodTools maps SDK Project methods to the MCP tool names the server
 // registers. The lifecycle tools live in pkg/api/mcp/project_tools.go and the
-// two role tools in pkg/api/mcp/agent_admin_tools.go. Both groups name the tool
-// after the resource and operation (project_grant_agent), not the RPC
-// (GrantAgentRole), and neither carries the quicbaas_ prefix, so the
+// two role tools in pkg/api/mcp/fleet_admin_tools.go. Both groups name the tool
+// after the resource and operation (project_grant_fleet_node), not the RPC
+// (GrantFleetNodeRole), and neither carries the quicbaas_ prefix, so the
 // transport's generic service_method derivation would ask for tools that do
 // not exist.
 //
@@ -43,13 +43,13 @@ func isMCPProjectService(service string) bool {
 // tool, so the transport reports Unimplemented rather than calling a tool that
 // is not there. Every other transport (REST, gRPC, QUIC, embedded) supports it.
 var projectMethodTools = map[string]string{
-	"Create":          "project_create",
-	"Get":             "project_get",
-	"List":            "project_list",
-	"Update":          "project_update",
-	"Delete":          "project_delete",
-	"GrantAgentRole":  "project_grant_agent",
-	"RevokeAgentRole": "project_revoke_agent",
+	"Create":              "project_create",
+	"Get":                 "project_get",
+	"List":                "project_list",
+	"Update":              "project_update",
+	"Delete":              "project_delete",
+	"GrantFleetNodeRole":  "project_grant_fleet_node",
+	"RevokeFleetNodeRole": "project_revoke_fleet_node",
 }
 
 // projectToolName returns the MCP tool backing an SDK Project method and
@@ -73,7 +73,7 @@ func newProjectUnsupportedError(method string) error {
 // types carry no JSON tags, so their Go field names ARE the wire keys:
 // {"Project": {...}, "Timestamp": ...}. Single-word keys (Project, Projects,
 // Total, Deleted) decode through encoding/json's case-insensitive field match,
-// but the multi-word ones (ProjectID, AgentID) do not — "projectid" is not
+// but the multi-word ones (ProjectID, FleetNodeID) do not — "projectid" is not
 // "project_id" — so the role envelope names them exactly as emitted. The
 // nested project object is a pkg/orchestration.Project, which IS tagged
 // snake_case at source and therefore decodes straight into
@@ -90,13 +90,13 @@ type projectMCPTransform func(raw []byte) (interface{}, error)
 
 // projectMCPTransforms gives O(1) dispatch from method to result decoder.
 var projectMCPTransforms = map[string]projectMCPTransform{
-	"Create":          decodeMCPProjectEnvelope,
-	"Get":             decodeMCPProjectEnvelope,
-	"Update":          decodeMCPProjectEnvelope,
-	"List":            decodeMCPProjectList,
-	"Delete":          decodeMCPProjectDelete,
-	"GrantAgentRole":  decodeMCPProjectGrant,
-	"RevokeAgentRole": decodeMCPProjectRevoke,
+	"Create":              decodeMCPProjectEnvelope,
+	"Get":                 decodeMCPProjectEnvelope,
+	"Update":              decodeMCPProjectEnvelope,
+	"List":                decodeMCPProjectList,
+	"Delete":              decodeMCPProjectDelete,
+	"GrantFleetNodeRole":  decodeMCPProjectGrant,
+	"RevokeFleetNodeRole": decodeMCPProjectRevoke,
 }
 
 // transformResponse converts the raw MCP tool result to the SDK type for
@@ -157,43 +157,43 @@ func decodeMCPProjectDelete(raw []byte) (interface{}, error) {
 	return &project.DeleteProjectResponse{Deleted: env.Deleted}, nil
 }
 
-// projectAgentRoleWire mirrors service.GrantAgentRoleResponse and
-// service.RevokeAgentRoleResponse, which the role tools return verbatim. The
+// projectFleetNodeRoleWire mirrors service.GrantFleetNodeRoleResponse and
+// service.RevokeFleetNodeRoleResponse, which the role tools return verbatim. The
 // tags spell the untagged Go field names those types emit.
-type projectAgentRoleWire struct {
-	ProjectID string              `json:"ProjectID"`
-	AgentID   string              `json:"AgentID"`
-	Role      project.ProjectRole `json:"Role"`
-	Timestamp time.Time           `json:"Timestamp"`
+type projectFleetNodeRoleWire struct {
+	ProjectID   string              `json:"ProjectID"`
+	FleetNodeID string              `json:"FleetNodeID"`
+	Role        project.ProjectRole `json:"Role"`
+	Timestamp   time.Time           `json:"Timestamp"`
 }
 
 func decodeMCPProjectGrant(raw []byte) (interface{}, error) {
-	wire, err := decodeProjectAgentRoleWire(raw)
+	wire, err := decodeProjectFleetNodeRoleWire(raw)
 	if err != nil {
 		return nil, err
 	}
-	return &project.GrantAgentRoleResponse{
-		ProjectID: wire.ProjectID,
-		AgentID:   wire.AgentID,
-		Role:      wire.Role,
-		Timestamp: wire.Timestamp,
+	return &project.GrantFleetNodeRoleResponse{
+		ProjectID:   wire.ProjectID,
+		FleetNodeID: wire.FleetNodeID,
+		Role:        wire.Role,
+		Timestamp:   wire.Timestamp,
 	}, nil
 }
 
 func decodeMCPProjectRevoke(raw []byte) (interface{}, error) {
-	wire, err := decodeProjectAgentRoleWire(raw)
+	wire, err := decodeProjectFleetNodeRoleWire(raw)
 	if err != nil {
 		return nil, err
 	}
-	return &project.RevokeAgentRoleResponse{
-		ProjectID: wire.ProjectID,
-		AgentID:   wire.AgentID,
-		Timestamp: wire.Timestamp,
+	return &project.RevokeFleetNodeRoleResponse{
+		ProjectID:   wire.ProjectID,
+		FleetNodeID: wire.FleetNodeID,
+		Timestamp:   wire.Timestamp,
 	}, nil
 }
 
-func decodeProjectAgentRoleWire(raw []byte) (*projectAgentRoleWire, error) {
-	var wire projectAgentRoleWire
+func decodeProjectFleetNodeRoleWire(raw []byte) (*projectFleetNodeRoleWire, error) {
+	var wire projectFleetNodeRoleWire
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.project",
 			"failed to decode project agent role result")

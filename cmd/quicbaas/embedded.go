@@ -15,10 +15,8 @@ package main
 
 import (
 	"context"
-	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,6 +39,22 @@ type embeddedServer struct {
 // embeddedServerHolder holds the singleton embedded server for the CLI.
 var embeddedServerHolder atomic.Pointer[embeddedServer]
 
+// embeddedCLITrustDomain is the SPIFFE trust domain the CLI's own embedded node
+// issues its platform-admin certificate under.
+//
+// A trust domain is REQUIRED of any node that has a CA — first-boot fails closed
+// without one and the boot is refused (go-quicbaas#57) — and EmbeddedConfig keeps
+// TLS on precisely so that certificate is issued. Declaring one here does not
+// synthesize a deployment identifier, which is forbidden because configuring a
+// real trust domain later would silently invalidate every certificate issued
+// under the guessed one. Nothing can be invalidated here: this node lives in a
+// throwaway os.MkdirTemp directory that is removed on shutdown, binds no
+// listener, and its admin credential is never presented to anything.
+//
+// `.invalid` is reserved by RFC 2606, so the value cannot collide with a real
+// deployment's trust domain or resolve anywhere.
+const embeddedCLITrustDomain = "cli.embedded.quicbaas.invalid"
+
 // EmbeddedServerFailedError is returned when the embedded server fails to start.
 type EmbeddedServerFailedError struct {
 	Reason string
@@ -57,6 +71,28 @@ type EmbeddedPortError struct{}
 // Error implements the error interface.
 func (e *EmbeddedPortError) Error() string {
 	return "listener address is not a TCP address"
+}
+
+// embeddedServerConfig returns the configuration the CLI's in-process server
+// boots with, its data and WAL under tempDir.
+//
+// It reserves no port. The server runs in standalone mode, where the qrdb node
+// is built without a Raft host and binds no listener at all, so a Raft address
+// here would never be bound. The CLI used to pick one anyway -- by listening on
+// ":0" and closing the listener -- which left a release-then-rebind window for
+// a port nothing then used.
+func embeddedServerConfig(tempDir string) *config.Config {
+	cfg := config.EmbeddedConfig()
+	cfg.Storage.DataDir = filepath.Join(tempDir, "data")
+	cfg.Storage.WALDir = filepath.Join(tempDir, "wal")
+	cfg.Raft.NodeID = 1
+	cfg.Logging.Level = "error" // Reduce noise
+	cfg.Server.Embedded = true
+	// Without this the node has a CA and no trust domain, so first-boot cannot
+	// issue a usable admin certificate and refuses the boot — see
+	// embeddedCLITrustDomain.
+	cfg.IAM.SPIFFETrustDomain = embeddedCLITrustDomain
+	return cfg
 }
 
 // ErrEmbeddedServerNotStarted is returned when operations are attempted before the server starts.
@@ -97,22 +133,7 @@ func createEmbeddedServer() (*embeddedServer, error) {
 		return nil, &EmbeddedServerFailedError{Reason: "failed to create temp dir: " + err.Error()}
 	}
 
-	// Get a free port for Raft
-	raftPort, err := getFreePortForEmbedded()
-	if err != nil {
-		os.RemoveAll(tempDir)
-		return nil, &EmbeddedServerFailedError{Reason: "failed to get free port: " + err.Error()}
-	}
-
-	// Create embedded config
-	cfg := config.EmbeddedConfig()
-	cfg.Storage.DataDir = filepath.Join(tempDir, "data")
-	cfg.Storage.WALDir = filepath.Join(tempDir, "wal")
-	cfg.Raft.NodeID = 1
-	cfg.Raft.RaftAddress = "127.0.0.1:" + strconv.Itoa(raftPort)
-	cfg.Raft.ListenAddress = "127.0.0.1:" + strconv.Itoa(raftPort)
-	cfg.Logging.Level = "error" // Reduce noise
-	cfg.Server.Embedded = true
+	cfg := embeddedServerConfig(tempDir)
 
 	// Create server
 	srv, err := server.NewServer(cfg)
@@ -232,18 +253,4 @@ func shutdownEmbeddedServer() error {
 		return nil
 	}
 	return srv.shutdown()
-}
-
-// getFreePortForEmbedded returns a free TCP port for the embedded server.
-func getFreePortForEmbedded() (int, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
-	}
-	defer listener.Close()
-	addr, ok := listener.Addr().(*net.TCPAddr)
-	if !ok {
-		return 0, &EmbeddedPortError{}
-	}
-	return addr.Port, nil
 }

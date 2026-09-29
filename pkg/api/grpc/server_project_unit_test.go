@@ -41,8 +41,8 @@ type grpcMockProjectService struct {
 	updateFunc func(context.Context, *service.UpdateProjectRequest) (*service.UpdateProjectResponse, error)
 	deleteFunc func(context.Context, *service.DeleteProjectRequest) (*service.DeleteProjectResponse, error)
 	listFunc   func(context.Context, *service.ListProjectsRequest) (*service.ListProjectsResponse, error)
-	grantFunc  func(context.Context, *service.GrantAgentRoleRequest) (*service.GrantAgentRoleResponse, error)
-	revokeFunc func(context.Context, *service.RevokeAgentRoleRequest) (*service.RevokeAgentRoleResponse, error)
+	grantFunc  func(context.Context, *service.GrantFleetNodeRoleRequest) (*service.GrantFleetNodeRoleResponse, error)
+	revokeFunc func(context.Context, *service.RevokeFleetNodeRoleRequest) (*service.RevokeFleetNodeRoleResponse, error)
 
 	// roles is the mock's agent role map. The default grant/revoke behaviour
 	// mutates a single entry, mirroring the real service, so tests can prove
@@ -56,8 +56,8 @@ func sampleProject() *orchestration.Project {
 		TenantID: "tenant-1",
 		Name:     "demo",
 	}
-	p.Workspace.AgentID = "agent-1"
-	p.Permissions.AgentRoles = map[string]orchestration.ProjectRole{"agent-1": orchestration.ProjectRole("lead")}
+	p.Workspace.FleetNodeID = "agent-1"
+	p.Permissions.FleetNodeRoles = map[string]orchestration.ProjectRole{"agent-1": orchestration.ProjectRole("lead")}
 	p.CreatedAt = time.Now()
 	p.UpdatedAt = time.Now()
 	return p
@@ -105,38 +105,38 @@ func (m *grpcMockProjectService) ListProjects(ctx context.Context, req *service.
 	return &service.ListProjectsResponse{Projects: []*orchestration.Project{sampleProject()}, Total: 1, Timestamp: time.Now()}, nil
 }
 
-func (m *grpcMockProjectService) AuthorizeAgent(context.Context, *service.AuthorizeAgentRequest) error {
+func (m *grpcMockProjectService) AuthorizeFleetNode(context.Context, *service.AuthorizeFleetNodeRequest) error {
 	return nil
 }
 
-func (m *grpcMockProjectService) GrantAgentRole(ctx context.Context, req *service.GrantAgentRoleRequest) (*service.GrantAgentRoleResponse, error) {
+func (m *grpcMockProjectService) GrantFleetNodeRole(ctx context.Context, req *service.GrantFleetNodeRoleRequest) (*service.GrantFleetNodeRoleResponse, error) {
 	if m.grantFunc != nil {
 		return m.grantFunc(ctx, req)
 	}
 	if m.roles == nil {
 		m.roles = make(map[string]orchestration.ProjectRole)
 	}
-	m.roles[req.AgentID] = req.Role
-	return &service.GrantAgentRoleResponse{
-		ProjectID: req.ProjectID,
-		AgentID:   req.AgentID,
-		Role:      req.Role,
-		Timestamp: time.Now(),
+	m.roles[req.FleetNodeID] = req.Role
+	return &service.GrantFleetNodeRoleResponse{
+		ProjectID:   req.ProjectID,
+		FleetNodeID: req.FleetNodeID,
+		Role:        req.Role,
+		Timestamp:   time.Now(),
 	}, nil
 }
 
-func (m *grpcMockProjectService) RevokeAgentRole(ctx context.Context, req *service.RevokeAgentRoleRequest) (*service.RevokeAgentRoleResponse, error) {
+func (m *grpcMockProjectService) RevokeFleetNodeRole(ctx context.Context, req *service.RevokeFleetNodeRoleRequest) (*service.RevokeFleetNodeRoleResponse, error) {
 	if m.revokeFunc != nil {
 		return m.revokeFunc(ctx, req)
 	}
 	if m.roles == nil {
 		m.roles = make(map[string]orchestration.ProjectRole)
 	}
-	m.roles[req.AgentID] = orchestration.ProjectRoleDenied
-	return &service.RevokeAgentRoleResponse{
-		ProjectID: req.ProjectID,
-		AgentID:   req.AgentID,
-		Timestamp: time.Now(),
+	m.roles[req.FleetNodeID] = orchestration.ProjectRoleDenied
+	return &service.RevokeFleetNodeRoleResponse{
+		ProjectID:   req.ProjectID,
+		FleetNodeID: req.FleetNodeID,
+		Timestamp:   time.Now(),
 	}, nil
 }
 
@@ -246,31 +246,31 @@ func TestProjectServer_ValidationErrors(t *testing.T) {
 			return err
 		}},
 		{"grant-no-tenant", func() error {
-			_, err := srv.GrantAgentRole(ctx, &pb.GrantAgentRoleRequest{ProjectId: "p", AgentId: "a", Role: "lead"})
+			_, err := srv.GrantFleetNodeRole(ctx, &pb.GrantFleetNodeRoleRequest{ProjectId: "p", NodeId: "a", Role: "lead"})
 			return err
 		}},
 		{"grant-no-project", func() error {
-			_, err := srv.GrantAgentRole(ctx, &pb.GrantAgentRoleRequest{TenantId: "t", AgentId: "a", Role: "lead"})
+			_, err := srv.GrantFleetNodeRole(ctx, &pb.GrantFleetNodeRoleRequest{TenantId: "t", NodeId: "a", Role: "lead"})
 			return err
 		}},
 		{"grant-no-agent", func() error {
-			_, err := srv.GrantAgentRole(ctx, &pb.GrantAgentRoleRequest{TenantId: "t", ProjectId: "p", Role: "lead"})
+			_, err := srv.GrantFleetNodeRole(ctx, &pb.GrantFleetNodeRoleRequest{TenantId: "t", ProjectId: "p", Role: "lead"})
 			return err
 		}},
 		{"grant-no-role", func() error {
-			_, err := srv.GrantAgentRole(ctx, &pb.GrantAgentRoleRequest{TenantId: "t", ProjectId: "p", AgentId: "a"})
+			_, err := srv.GrantFleetNodeRole(ctx, &pb.GrantFleetNodeRoleRequest{TenantId: "t", ProjectId: "p", NodeId: "a"})
 			return err
 		}},
 		{"revoke-no-tenant", func() error {
-			_, err := srv.RevokeAgentRole(ctx, &pb.RevokeAgentRoleRequest{ProjectId: "p", AgentId: "a"})
+			_, err := srv.RevokeFleetNodeRole(ctx, &pb.RevokeFleetNodeRoleRequest{ProjectId: "p", NodeId: "a"})
 			return err
 		}},
 		{"revoke-no-project", func() error {
-			_, err := srv.RevokeAgentRole(ctx, &pb.RevokeAgentRoleRequest{TenantId: "t", AgentId: "a"})
+			_, err := srv.RevokeFleetNodeRole(ctx, &pb.RevokeFleetNodeRoleRequest{TenantId: "t", NodeId: "a"})
 			return err
 		}},
 		{"revoke-no-agent", func() error {
-			_, err := srv.RevokeAgentRole(ctx, &pb.RevokeAgentRoleRequest{TenantId: "t", ProjectId: "p"})
+			_, err := srv.RevokeFleetNodeRole(ctx, &pb.RevokeFleetNodeRoleRequest{TenantId: "t", ProjectId: "p"})
 			return err
 		}},
 	}
@@ -358,33 +358,33 @@ func TestProjectServer_ServiceErrorMapping(t *testing.T) {
 // TestProjectServer_GrantAgentRole asserts the RPC threads every field into the
 // service request and converts the response back faithfully.
 func TestProjectServer_GrantAgentRole(t *testing.T) {
-	var seen *service.GrantAgentRoleRequest
+	var seen *service.GrantFleetNodeRoleRequest
 	stamp := time.Unix(1_700_003_600, 0).UTC()
 	srv := newProjectServer(t, &grpcMockProjectService{
-		grantFunc: func(_ context.Context, req *service.GrantAgentRoleRequest) (*service.GrantAgentRoleResponse, error) {
+		grantFunc: func(_ context.Context, req *service.GrantFleetNodeRoleRequest) (*service.GrantFleetNodeRoleResponse, error) {
 			seen = req
-			return &service.GrantAgentRoleResponse{
-				ProjectID: req.ProjectID,
-				AgentID:   req.AgentID,
-				Role:      req.Role,
-				Timestamp: stamp,
+			return &service.GrantFleetNodeRoleResponse{
+				ProjectID:   req.ProjectID,
+				FleetNodeID: req.FleetNodeID,
+				Role:        req.Role,
+				Timestamp:   stamp,
 			}, nil
 		},
 	})
 
-	resp, err := srv.GrantAgentRole(context.Background(), &pb.GrantAgentRoleRequest{
-		TenantId: "tenant-1", ProjectId: "proj-1", AgentId: "agent-3", Role: "worker",
+	resp, err := srv.GrantFleetNodeRole(context.Background(), &pb.GrantFleetNodeRoleRequest{
+		TenantId: "tenant-1", ProjectId: "proj-1", NodeId: "agent-3", Role: "worker",
 	})
 	require.NoError(t, err)
 
 	require.NotNil(t, seen)
 	assert.Equal(t, "tenant-1", seen.TenantID)
 	assert.Equal(t, "proj-1", seen.ProjectID)
-	assert.Equal(t, "agent-3", seen.AgentID)
+	assert.Equal(t, "agent-3", seen.FleetNodeID)
 	assert.Equal(t, orchestration.ProjectRole("worker"), seen.Role)
 
 	assert.Equal(t, "proj-1", resp.ProjectId)
-	assert.Equal(t, "agent-3", resp.AgentId)
+	assert.Equal(t, "agent-3", resp.NodeId)
 	assert.Equal(t, "worker", resp.Role)
 	assert.Equal(t, stamp.Unix(), resp.Timestamp)
 }
@@ -408,8 +408,8 @@ func TestProjectServer_GrantAgentRole_PreservesOtherAgents(t *testing.T) {
 	}
 	srv := newProjectServer(t, mock)
 
-	_, err := srv.GrantAgentRole(context.Background(), &pb.GrantAgentRoleRequest{
-		TenantId: "tenant-1", ProjectId: "proj-1", AgentId: "agent-3", Role: "worker",
+	_, err := srv.GrantFleetNodeRole(context.Background(), &pb.GrantFleetNodeRoleRequest{
+		TenantId: "tenant-1", ProjectId: "proj-1", NodeId: "agent-3", Role: "worker",
 	})
 	require.NoError(t, err)
 
@@ -432,12 +432,12 @@ func TestProjectServer_RevokeAgentRole(t *testing.T) {
 	}
 	srv := newProjectServer(t, mock)
 
-	resp, err := srv.RevokeAgentRole(context.Background(), &pb.RevokeAgentRoleRequest{
-		TenantId: "tenant-1", ProjectId: "proj-1", AgentId: "agent-2",
+	resp, err := srv.RevokeFleetNodeRole(context.Background(), &pb.RevokeFleetNodeRoleRequest{
+		TenantId: "tenant-1", ProjectId: "proj-1", NodeId: "agent-2",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "proj-1", resp.ProjectId)
-	assert.Equal(t, "agent-2", resp.AgentId)
+	assert.Equal(t, "agent-2", resp.NodeId)
 	assert.NotZero(t, resp.Timestamp)
 
 	assert.Equal(t, orchestration.ProjectRole("lead"), mock.roles["agent-1"],
@@ -452,45 +452,45 @@ func TestProjectServer_AgentRoleErrorMapping(t *testing.T) {
 
 	t.Run("grant-not-found", func(t *testing.T) {
 		srv := newProjectServer(t, &grpcMockProjectService{
-			grantFunc: func(context.Context, *service.GrantAgentRoleRequest) (*service.GrantAgentRoleResponse, error) {
+			grantFunc: func(context.Context, *service.GrantFleetNodeRoleRequest) (*service.GrantFleetNodeRoleResponse, error) {
 				return nil, &service.ProjectNotFoundError{TenantID: "t", ProjectID: "p"}
 			},
 		})
-		_, err := srv.GrantAgentRole(ctx, &pb.GrantAgentRoleRequest{
-			TenantId: "t", ProjectId: "p", AgentId: "a", Role: "lead",
+		_, err := srv.GrantFleetNodeRole(ctx, &pb.GrantFleetNodeRoleRequest{
+			TenantId: "t", ProjectId: "p", NodeId: "a", Role: "lead",
 		})
 		assert.Equal(t, codes.NotFound, status.Code(err))
 	})
 
 	t.Run("grant-internal", func(t *testing.T) {
 		srv := newProjectServer(t, &grpcMockProjectService{
-			grantFunc: func(context.Context, *service.GrantAgentRoleRequest) (*service.GrantAgentRoleResponse, error) {
+			grantFunc: func(context.Context, *service.GrantFleetNodeRoleRequest) (*service.GrantFleetNodeRoleResponse, error) {
 				return nil, errors.New("db down")
 			},
 		})
-		_, err := srv.GrantAgentRole(ctx, &pb.GrantAgentRoleRequest{
-			TenantId: "t", ProjectId: "p", AgentId: "a", Role: "lead",
+		_, err := srv.GrantFleetNodeRole(ctx, &pb.GrantFleetNodeRoleRequest{
+			TenantId: "t", ProjectId: "p", NodeId: "a", Role: "lead",
 		})
 		assert.Equal(t, codes.Internal, status.Code(err))
 	})
 
 	t.Run("revoke-not-found", func(t *testing.T) {
 		srv := newProjectServer(t, &grpcMockProjectService{
-			revokeFunc: func(context.Context, *service.RevokeAgentRoleRequest) (*service.RevokeAgentRoleResponse, error) {
+			revokeFunc: func(context.Context, *service.RevokeFleetNodeRoleRequest) (*service.RevokeFleetNodeRoleResponse, error) {
 				return nil, &service.ProjectNotFoundError{TenantID: "t", ProjectID: "p"}
 			},
 		})
-		_, err := srv.RevokeAgentRole(ctx, &pb.RevokeAgentRoleRequest{TenantId: "t", ProjectId: "p", AgentId: "a"})
+		_, err := srv.RevokeFleetNodeRole(ctx, &pb.RevokeFleetNodeRoleRequest{TenantId: "t", ProjectId: "p", NodeId: "a"})
 		assert.Equal(t, codes.NotFound, status.Code(err))
 	})
 
 	t.Run("revoke-invalid", func(t *testing.T) {
 		srv := newProjectServer(t, &grpcMockProjectService{
-			revokeFunc: func(context.Context, *service.RevokeAgentRoleRequest) (*service.RevokeAgentRoleResponse, error) {
+			revokeFunc: func(context.Context, *service.RevokeFleetNodeRoleRequest) (*service.RevokeFleetNodeRoleResponse, error) {
 				return nil, &service.ProjectInvalidError{Field: "agent_id", Message: "bad"}
 			},
 		})
-		_, err := srv.RevokeAgentRole(ctx, &pb.RevokeAgentRoleRequest{TenantId: "t", ProjectId: "p", AgentId: "a"})
+		_, err := srv.RevokeFleetNodeRole(ctx, &pb.RevokeFleetNodeRoleRequest{TenantId: "t", ProjectId: "p", NodeId: "a"})
 		assert.Equal(t, codes.InvalidArgument, status.Code(err))
 	})
 }
@@ -711,4 +711,134 @@ func TestContextRepoProtoConverters_EdgeCases(t *testing.T) {
 	assert.Nil(t, contextReposFromProto(nil))
 	assert.Empty(t, contextReposToProto([]orchestration.ContextRepo{}))
 	assert.Empty(t, contextReposFromProto([]*pb.ContextRepo{nil}))
+}
+
+// =============================================================================
+// Session rotation — crosses the proto boundary both ways
+// =============================================================================
+
+// TestProjectServer_ForwardsSessionRotation: the policy reaches the service on
+// create and update, an update that omits it reaches the service as "leave it",
+// and the stored policy comes back on the project.
+func TestProjectServer_ForwardsSessionRotation(t *testing.T) {
+	var created *service.CreateProjectRequest
+	var updated *service.UpdateProjectRequest
+	srv := newProjectServer(t, &grpcMockProjectService{
+		createFunc: func(_ context.Context, req *service.CreateProjectRequest) (*service.CreateProjectResponse, error) {
+			created = req
+			return &service.CreateProjectResponse{Project: &orchestration.Project{
+				ID: "proj-1", TenantID: req.TenantID, Name: req.Name, SessionRotation: req.SessionRotation,
+			}, Timestamp: time.Now()}, nil
+		},
+		updateFunc: func(_ context.Context, req *service.UpdateProjectRequest) (*service.UpdateProjectResponse, error) {
+			updated = req
+			return &service.UpdateProjectResponse{Project: sampleProject(), Timestamp: time.Now()}, nil
+		},
+	})
+	ctx := context.Background()
+
+	resp, err := srv.CreateProject(ctx, &pb.CreateProjectRequest{TenantId: "tenant-1", Name: "api", SessionRotation: "fresh"})
+	require.NoError(t, err)
+	require.NotNil(t, created)
+	assert.Equal(t, orchestration.SessionRotationFresh, created.SessionRotation)
+	assert.Equal(t, "fresh", resp.Project.SessionRotation)
+
+	_, err = srv.UpdateProject(ctx, &pb.UpdateProjectRequest{TenantId: "tenant-1", ProjectId: "proj-1", Description: "renamed"})
+	require.NoError(t, err)
+	assert.Empty(t, updated.SessionRotation, "an absent session_rotation must reach the service as unchanged")
+
+	_, err = srv.UpdateProject(ctx, &pb.UpdateProjectRequest{TenantId: "tenant-1", ProjectId: "proj-1", SessionRotation: "resume"})
+	require.NoError(t, err)
+	assert.Equal(t, orchestration.SessionRotationResume, updated.SessionRotation)
+}
+
+// TestProjectServer_AnUnknownSessionRotationIsInvalidArgument: the service's
+// refusal of an unknown policy is an InvalidArgument on the wire.
+func TestProjectServer_AnUnknownSessionRotationIsInvalidArgument(t *testing.T) {
+	srv := newProjectServer(t, service.NewProjectService(orchestration.NewInMemoryProjectStore()))
+	_, err := srv.CreateProject(context.Background(), &pb.CreateProjectRequest{
+		TenantId: "tenant-1", Name: "api", SessionRotation: "restart",
+	})
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+// =============================================================================
+// Park / resume — the switch and its record cross the proto boundary
+// =============================================================================
+
+// TestProjectServer_ForwardsParkAndResume drives park and resume through
+// UpdateProject: an absent switch reaches the service as nil (unchanged), an
+// explicit one as a pointer, and the park record comes back on the project.
+func TestProjectServer_ForwardsParkAndResume(t *testing.T) {
+	stored := sampleProject()
+	parkedAt := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	var updated *service.UpdateProjectRequest
+	srv := newProjectServer(t, &grpcMockProjectService{
+		updateFunc: func(_ context.Context, req *service.UpdateProjectRequest) (*service.UpdateProjectResponse, error) {
+			updated = req
+			if req.Parked != nil {
+				if *req.Parked {
+					stored.Park("ops", parkedAt)
+				} else {
+					stored.Resume()
+				}
+			}
+			return &service.UpdateProjectResponse{Project: stored, Timestamp: time.Now()}, nil
+		},
+	})
+	ctx := context.Background()
+
+	_, err := srv.UpdateProject(ctx, &pb.UpdateProjectRequest{TenantId: "tenant-1", ProjectId: "proj-1", Name: "renamed"})
+	require.NoError(t, err)
+	assert.Nil(t, updated.Parked, "an absent parked must reach the service as nil")
+
+	park := true
+	resp, err := srv.UpdateProject(ctx, &pb.UpdateProjectRequest{TenantId: "tenant-1", ProjectId: "proj-1", Parked: &park})
+	require.NoError(t, err)
+	require.NotNil(t, updated.Parked)
+	assert.True(t, *updated.Parked)
+	assert.True(t, resp.Project.Parked)
+	assert.Equal(t, parkedAt.Unix(), resp.Project.ParkedAtUnix)
+	assert.Equal(t, "ops", resp.Project.ParkedBy)
+
+	resume := false
+	resp, err = srv.UpdateProject(ctx, &pb.UpdateProjectRequest{TenantId: "tenant-1", ProjectId: "proj-1", Parked: &resume})
+	require.NoError(t, err)
+	assert.False(t, resp.Project.Parked)
+	assert.Zero(t, resp.Project.ParkedAtUnix, "an open project carries no park time, not the zero time's Unix value")
+	assert.Empty(t, resp.Project.ParkedBy)
+}
+
+// TestProjectServer_ForwardsASigningKeyRetirement: the flat retirement fields
+// reach the service as one retirement and the history comes back on the
+// project; an unreadable time is refused before the service is asked.
+func TestProjectServer_ForwardsASigningKeyRetirement(t *testing.T) {
+	at := time.Date(2026, 9, 24, 22, 15, 0, 0, time.UTC)
+	var updated *service.UpdateProjectRequest
+	srv := newProjectServer(t, &grpcMockProjectService{
+		updateFunc: func(_ context.Context, req *service.UpdateProjectRequest) (*service.UpdateProjectResponse, error) {
+			updated = req
+			stored := sampleProject()
+			stored.Git.Signing.Retired = []orchestration.RetiredSigningKey{{PublicKey: "ssh-ed25519 AAAA", Name: "old", RetiredAt: at}}
+			return &service.UpdateProjectResponse{Project: stored, Timestamp: time.Now()}, nil
+		},
+	})
+	ctx := context.Background()
+
+	resp, err := srv.UpdateProject(ctx, &pb.UpdateProjectRequest{TenantId: "tenant-1", ProjectId: "proj-1",
+		GitSigningRetireKeyName: "old", GitSigningRetireKeyScope: "service", GitSigningRetiredAt: "2026-09-24T22:15:00Z"})
+	require.NoError(t, err)
+	require.NotNil(t, updated.GitSigningRetire)
+	assert.Equal(t, orchestration.KMSKeyRef{Name: "old", Scope: "service"}, updated.GitSigningRetire.Key)
+	assert.True(t, updated.GitSigningRetire.RetiredAt.Equal(at))
+	require.Len(t, resp.Project.GitSigningRetired, 1)
+	assert.Equal(t, at.Unix(), resp.Project.GitSigningRetired[0].RetiredAtUnix)
+	assert.Equal(t, "old", resp.Project.GitSigningRetired[0].Name)
+
+	updated = nil
+	_, err = srv.UpdateProject(ctx, &pb.UpdateProjectRequest{TenantId: "tenant-1", ProjectId: "proj-1",
+		GitSigningRetireKeyName: "old", GitSigningRetiredAt: "yesterday"})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Nil(t, updated, "an unreadable retirement reached the service")
 }

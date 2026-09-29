@@ -62,6 +62,16 @@ func (r *ToolRegistry) registerSSHTools() {
 		for k, v := range extra {
 			props[k] = v
 		}
+		// A variadic parameter called with zero arguments (every *_list tool
+		// below: scopeOwner(nil) with no required names) is a nil []string,
+		// not an empty one, and encoding/json marshals a nil slice as JSON
+		// "null" rather than "[]". The MCP JSON-Schema "required" keyword
+		// must be an array when present; a client enforcing that (Claude
+		// Code among them) rejects the whole tools/list response on the
+		// first tool with "required": null (go-quicbaas#1024).
+		if required == nil {
+			required = []string{}
+		}
 		return map[string]interface{}{
 			"type":       "object",
 			"properties": props,
@@ -128,13 +138,12 @@ func (r *ToolRegistry) registerSSHTools() {
 
 	r.addTool(ToolDefinition{
 		Name:        "quicbaas_ssh_known_host_add",
-		Description: "Pin an SSH host-key fingerprint.",
+		Description: "Pin an SSH host key. The fingerprint and algorithm are derived from the key.",
 		InputSchema: scopeOwner(map[string]interface{}{
-			"host":        map[string]interface{}{"type": "string", "description": "Target host"},
-			"fingerprint": map[string]interface{}{"type": "string", "description": "OpenSSH SHA256 fingerprint"},
-			"algorithm":   map[string]interface{}{"type": "string", "description": "Host-key algorithm, e.g. ssh-ed25519"},
-			"source":      map[string]interface{}{"type": "string", "description": "Provenance tag, e.g. manual or cert"},
-		}, "scope", "owner", "host", "fingerprint"),
+			"host":       map[string]interface{}{"type": "string", "description": "Target host"},
+			"public_key": map[string]interface{}{"type": "string", "description": "Host key as an authorized_keys-format line, e.g. ssh-ed25519 AAAA..."},
+			"source":     map[string]interface{}{"type": "string", "description": "Provenance tag, e.g. manual or cert"},
+		}, "scope", "owner", "host", "public_key"),
 	})
 
 	r.addTool(ToolDefinition{
@@ -328,12 +337,11 @@ func (r *ToolRegistry) executeSSHKeySign(ctx context.Context, args map[string]in
 
 func (r *ToolRegistry) executeSSHKnownHostAdd(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	if err := r.sshService().AddKnownHost(ctx, xkmsssh.AddKnownHostRequest{
-		Scope:       getString(args, "scope"),
-		Owner:       getString(args, "owner"),
-		Host:        getString(args, "host"),
-		Fingerprint: getString(args, "fingerprint"),
-		Algorithm:   getString(args, "algorithm"),
-		Source:      getString(args, "source"),
+		Scope:     getString(args, "scope"),
+		Owner:     getString(args, "owner"),
+		Host:      getString(args, "host"),
+		Source:    getString(args, "source"),
+		PublicKey: getString(args, "public_key"),
 	}); err != nil {
 		return nil, err
 	}

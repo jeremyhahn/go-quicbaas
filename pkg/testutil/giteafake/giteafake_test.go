@@ -258,3 +258,100 @@ func get(t *testing.T, server *Server, path string) []byte {
 	}
 	return raw
 }
+
+func TestServer_FilesIssuesWithKnownLabelsOnly(t *testing.T) {
+	server := New(t, "acme", "api")
+	server.PutLabel("task:ready", "00ff00", "")
+	server.PutIssue(7, "seeded")
+	label, _ := server.Label("task:ready")
+
+	if status := postJSON(t, server.APIURL()+"/repos/acme/api/issues", map[string]any{"title": "new", "labels": []int64{label.ID}}); status != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", status)
+	}
+	issue, ok := server.Issue(8)
+	if !ok || issue.Title != "new" || len(issue.Labels) != 1 {
+		t.Fatalf("issue = %+v, %v; want #8 labelled task:ready, numbered after the seeded one", issue, ok)
+	}
+
+	status := postJSON(t, server.APIURL()+"/repos/acme/api/issues", map[string]any{"title": "bad", "labels": []int64{999}})
+	if status != http.StatusUnprocessableEntity || server.IssueCount() != 2 {
+		t.Fatalf("status = %d, count = %d; want 422 and nothing filed", status, server.IssueCount())
+	}
+}
+
+func TestServer_ListsCollaborators(t *testing.T) {
+	server := New(t, "acme", "api")
+	server.PutCollaborator("lead-agent")
+	resp, err := http.Get(server.APIURL() + "/repos/acme/api/collaborators")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var listed []Collaborator
+	if err := json.NewDecoder(resp.Body).Decode(&listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].Login != "lead-agent" {
+		t.Fatalf("listed = %+v, want [lead-agent]", listed)
+	}
+	absent, err := http.Get(server.APIURL() + "/repos/acme/api/issues/404")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer absent.Body.Close()
+	if absent.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET an absent issue = %d, want 404", absent.StatusCode)
+	}
+}
+
+// postJSON posts payload as JSON and returns the response status.
+func postJSON(t *testing.T, url string, payload any) int {
+	t.Helper()
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Post(url, "application/json", strings.NewReader(string(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode
+}
+
+// TestListIssues_PaginatesAndFiltersByState proves the issue listing pages the
+// way the pull request listing does, so an adapter reading one page only fails.
+func TestListIssues_PaginatesAndFiltersByState(t *testing.T) {
+	server := New(t, "acme", "api")
+	server.PutIssue(1, "one", "factory:blocked")
+	server.PutIssue(2, "two")
+
+	var open []Issue
+	if err := json.Unmarshal(get(t, server, "/api/v1/repos/acme/api/issues?state=open&limit=1&page=1"), &open); err != nil {
+		t.Fatalf("first page: %v", err)
+	}
+	if len(open) != 1 || open[0].Number != 1 || len(open[0].Labels) != 1 || open[0].Labels[0].Name != "factory:blocked" {
+		t.Fatalf("first page = %+v", open)
+	}
+	var closed []Issue
+	if err := json.Unmarshal(get(t, server, "/api/v1/repos/acme/api/issues?state=closed"), &closed); err != nil {
+		t.Fatalf("closed listing: %v", err)
+	}
+	if len(closed) != 0 {
+		t.Fatalf("closed = %+v, want none", closed)
+	}
+}
+
+// TestUser_AnswersTheConfiguredLogin proves the identity route, outside the
+// repository prefix, answers the login a test names.
+func TestUser_AnswersTheConfiguredLogin(t *testing.T) {
+	server := New(t, "acme", "api")
+	var user User
+	if err := json.Unmarshal(get(t, server, "/api/v1/user"), &user); err != nil || user.Login != DefaultLogin {
+		t.Fatalf("user = %+v, %v; want %s", user, err, DefaultLogin)
+	}
+	server.SetLogin("agent-other")
+	if err := json.Unmarshal(get(t, server, "/api/v1/user"), &user); err != nil || user.Login != "agent-other" {
+		t.Fatalf("user = %+v, %v; want agent-other", user, err)
+	}
+}

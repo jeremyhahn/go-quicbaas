@@ -1663,8 +1663,7 @@ iam := client.Identity().IAM()
 ```go
 type IAMClient interface {
     Tenant() TenantClient   // Multi-tenant management
-    User() UserClient       // User CRUD and role/group assignment
-    Group() GroupClient     // Group CRUD and membership
+    User() UserClient       // User CRUD and role assignment
     Role() RoleClient       // Role CRUD with permissions
     Policy() PolicyClient   // ABAC policy management
     PEP() PEPClient         // Policy Enforcement Point (authorization)
@@ -1794,7 +1793,7 @@ func List(ctx context.Context, opts ...ListOption) (*ListTenantsResponse, error)
 
 ### UserClient
 
-Manages user operations and role/group assignments.
+Manages user operations and role assignments.
 
 ```go
 user := client.Identity().IAM().User()
@@ -1874,128 +1873,6 @@ Lists roles assigned to a user.
 
 ```go
 func ListRoles(ctx context.Context, userID string) (*ListRolesResponse, error)
-```
-
-#### AddToGroup
-
-Adds a user to a group.
-
-```go
-func AddToGroup(ctx context.Context, userID, groupID string) error
-```
-
-#### RemoveFromGroup
-
-Removes a user from a group.
-
-```go
-func RemoveFromGroup(ctx context.Context, userID, groupID string) error
-```
-
-#### ListGroups
-
-Lists groups a user belongs to.
-
-```go
-func ListGroups(ctx context.Context, userID string) (*ListGroupsResponse, error)
-```
-
----
-
-### GroupClient
-
-Manages group operations and membership.
-
-```go
-group := client.Identity().IAM().Group()
-```
-
-#### Create
-
-Creates a new group.
-
-```go
-func Create(ctx context.Context, req *CreateGroupRequest) (*Group, error)
-```
-
-**CreateGroupRequest:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| Name | string | Group name |
-| Description | string | Description |
-| TenantID | string | Tenant ID |
-
-#### Get
-
-Retrieves a group by ID.
-
-```go
-func Get(ctx context.Context, groupID string) (*Group, error)
-```
-
-#### Update
-
-Updates an existing group.
-
-```go
-func Update(ctx context.Context, groupID string, req *UpdateGroupRequest) (*Group, error)
-```
-
-#### Delete
-
-Deletes a group.
-
-```go
-func Delete(ctx context.Context, groupID string) error
-```
-
-#### List
-
-Lists groups with pagination.
-
-```go
-func List(ctx context.Context, opts ...ListOption) (*ListGroupsResponse, error)
-```
-
-#### AddMember
-
-Adds a user to the group.
-
-```go
-func AddMember(ctx context.Context, groupID, userID string) error
-```
-
-#### RemoveMember
-
-Removes a user from the group.
-
-```go
-func RemoveMember(ctx context.Context, groupID, userID string) error
-```
-
-#### ListMembers
-
-Lists members of a group.
-
-```go
-func ListMembers(ctx context.Context, groupID string) (*ListMembersResponse, error)
-```
-
-#### AssignRole
-
-Assigns a role to a group (all members inherit).
-
-```go
-func AssignRole(ctx context.Context, groupID, roleID string) error
-```
-
-#### RemoveRole
-
-Removes a role from a group.
-
-```go
-func RemoveRole(ctx context.Context, groupID, roleID string) error
 ```
 
 ---
@@ -2118,7 +1995,7 @@ func Create(ctx context.Context, req *CreatePolicyRequest) (*Policy, error)
 | Field | Type | Description |
 |-------|------|-------------|
 | Users | []string | User IDs |
-| Groups | []string | Group IDs |
+| Groups | []string | Names matched against the subject's `groups` claim (the names of its roles) |
 | Roles | []string | Role IDs |
 | Attributes | map[string]string | Attribute requirements |
 

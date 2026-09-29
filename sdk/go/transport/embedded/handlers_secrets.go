@@ -161,6 +161,51 @@ func handleSecretsGet(ctx context.Context, svc service.QuicBaaS, req interface{}
 	}, nil
 }
 
+// handleSecretsGetData backs Client.GetWithBytes. It returns the service
+// response untouched, so the stored payload reaches the client as the []byte
+// the secrets service produced — never decoded into a map of strings — and the
+// client, which takes ownership of it, wipes it. The service returns a fresh
+// copy per call (the backends deep-copy), so wiping it cannot disturb stored
+// state.
+func handleSecretsGetData(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	secretsSvc := svc.Secrets()
+	if secretsSvc == nil {
+		return nil, NewServiceNotConfiguredError("Secrets")
+	}
+
+	// The SDK client sends the same unexported getSecretRequest as Get.
+	reqVal := reflect.ValueOf(req)
+	if reqVal.Kind() == reflect.Ptr {
+		reqVal = reqVal.Elem()
+	}
+	if reqVal.Kind() != reflect.Struct {
+		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "GetData", "struct{Path string, Version int}", reflect.TypeOf(req).String())
+	}
+	pathField := reqVal.FieldByName("Path")
+	versionField := reqVal.FieldByName("Version")
+	if !pathField.IsValid() || pathField.Kind() != reflect.String ||
+		!versionField.IsValid() || versionField.Kind() != reflect.Int {
+		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "GetData", "struct{Path string, Version int}", reflect.TypeOf(req).String())
+	}
+	version := versionField.Int()
+	if version < 0 {
+		version = 0
+	}
+
+	svcResp, err := secretsSvc.GetSecret(ctx, &service.GetSecretRequest{
+		SecretID: pathField.String(),
+		Version:  uint64(version),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if svcResp == nil {
+		// A typed nil would reach the client as a non-nil interface.
+		return nil, nil
+	}
+	return svcResp, nil
+}
+
 func handleSecretsList(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	secretsSvc := svc.Secrets()
 	if secretsSvc == nil {

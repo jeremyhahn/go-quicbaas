@@ -15,7 +15,7 @@ apart is what keeps the engine generic:
 
 | Piece | Package | Documented in |
 |---|---|---|
-| **The engine** — sessions, the job envelope and its runners, workflows, tasks and autonomy, fleet, inference backends, container trust and sandboxing | `pkg/orchestration` | this file, plus [job-runners.md](job-runners.md), [job-admission.md](job-admission.md), [autonomy-and-dispatch.md](autonomy-and-dispatch.md), [sandbox.md](sandbox.md) |
+| **The engine** — sessions, the job envelope and its runners, workflows, tasks and autonomy, fleet, inference backends, container trust and sandboxing | `pkg/orchestration` | this file, plus [job-runners.md](job-runners.md), [job-admission.md](job-admission.md), [autonomy-and-dispatch.md](autonomy-and-dispatch.md), [sandbox.md](sandbox.md), [fleet.md](fleet.md) |
 | **Projects** — the tenant-scoped record that binds a workspace, a repository, per-agent roles and quotas | `pkg/orchestration/project.go`, `pkg/service/project_service.go` | [projects.md](projects.md) |
 | **Pooled provider accounts** — a tenant's pool of provider logins a spawn can be bound to instead of the host identity | `pkg/orchestration/account_*.go` | [accounts.md](accounts.md) |
 | **The SDLC module** — git delivery against a forge: a labelled issue becomes a branch, a pull request, a review and a merge | `pkg/sdlc` | [sdlc.md](sdlc.md) |
@@ -169,7 +169,7 @@ pkg/api/mcp/
     orchestrator_tools.go        27 orchestration and fleet MCP tools
     account_tools.go             9 pooled-account MCP tools
     project_tools.go             5 project MCP tools
-    agent_admin_tools.go         4 project/agent grant MCP tools
+    fleet_admin_tools.go         4 project/agent grant MCP tools
     orchestrator_cache_tools.go  2 agent cache MCP tools (KV-backed)
     rag_index_tools.go           3 RAG indexing MCP tools (vector-backed)
 
@@ -217,11 +217,11 @@ Registered by `pkg/api/mcp/orchestrator_tools.go`.
 | `quicbaas_orchestrator_task_create`     | Create a task, optionally dispatching it at once |
 | `quicbaas_task_get_artifact`            | Retrieve a named output artifact from a task     |
 | `quicbaas_task_list_artifacts`          | List a task's output artifact metadata           |
-| `quicbaas_agent_fleet_register`         | Register an agent with the fleet                 |
-| `quicbaas_agent_fleet_list`             | List fleet agents for a tenant                   |
-| `quicbaas_agent_fleet_status`           | Get one fleet agent's status                     |
-| `quicbaas_agent_fleet_remove`           | Remove an agent from the fleet registry          |
-| `quicbaas_agent_fleet_heartbeat`        | Update an agent's last-seen timestamp            |
+| `quicbaas_fleet_register`         | Register an agent with the fleet                 |
+| `quicbaas_fleet_list`             | List fleet nodes for a tenant                   |
+| `quicbaas_fleet_status`           | Get one fleet node's status                     |
+| `quicbaas_fleet_remove`           | Remove an agent from the fleet registry          |
+| `quicbaas_fleet_heartbeat`        | Update an agent's last-seen timestamp            |
 
 ### Pooled Provider Accounts (9 tools)
 
@@ -241,7 +241,7 @@ Registered by `pkg/api/mcp/account_tools.go`. See accounts.md.
 
 ### Projects and Agent Grants (9 tools)
 
-Registered by `pkg/api/mcp/project_tools.go` and `agent_admin_tools.go`.
+Registered by `pkg/api/mcp/project_tools.go` and `fleet_admin_tools.go`.
 
 | Tool                    | Description                                              |
 |-------------------------|----------------------------------------------------------|
@@ -250,10 +250,10 @@ Registered by `pkg/api/mcp/project_tools.go` and `agent_admin_tools.go`.
 | `project_list`          | List a tenant's projects                                 |
 | `project_update`        | Update a project; only supplied fields change            |
 | `project_delete`        | Delete a project by ID                                   |
-| `project_grant_agent`   | Grant an agent a project role (lead/worker/observer/denied) |
-| `project_revoke_agent`  | Set an agent's project role to denied                    |
-| `agent_disable`         | Disable an agent globally; blocks claims and auth        |
-| `agent_enable`          | Re-activate a disabled agent                             |
+| `project_grant_fleet_node`   | Grant an agent a project role (lead/worker/observer/denied) |
+| `project_revoke_fleet_node`  | Set an agent's project role to denied                    |
+| `quicbaas_fleet_disable`         | Disable an agent globally; blocks claims and auth        |
+| `quicbaas_fleet_enable`          | Re-activate a disabled agent                             |
 
 ### RAG Indexing (3 tools)
 
@@ -434,7 +434,7 @@ The rename is complete: the old `quicbaas_agent_*` names are NOT registered and
 carry no alias. The stack is pre-v1 with a no-cruft policy, and the old names
 were never reachable under `RequireAuthz` (they had no qrdb permission mapping,
 so the default-deny gate filtered them out of `tools/list`). The fleet surface
-keeps its `quicbaas_agent_fleet_*` names.
+keeps its `quicbaas_fleet_*` names.
 
 ##### CLI subcommand
 
@@ -511,18 +511,22 @@ Claude Code ←stdio→ QuicBaaS Channel Proxy ←gRPC→ Remote QuicBaaS Server
 **How workspaces work remotely** (go-quicbaas#981): a factory spawn *names*
 its workspace (tenant, project, key) instead of giving a server path. The agent
 that runs the session provisions it under **its own** projects root
-(`quicbaas agent serve --projects-root`, default `<--work-dir>/projects`),
+(`quicbaas fleet serve --projects-root`, default `<--work-dir>/projects`),
 writes the workspace spec and forge token beside it, and reports the directory
 back; the server records it on the session. The job's later sessions — review
 rounds, a rolled-over worker, the respawn after a restart — are pinned to that
 agent with strict host affinity, and a pinned agent that is gone is a typed
-refusal (`WorkspaceAgentUnavailableError`), never a fresh clone elsewhere. The
+refusal (`WorkspaceFleetNodeUnavailableError`), never a fresh clone elsewhere. The
 checkout, commit and push all run inside the session's container on that
 agent. See [sandbox.md § Agent-local workspaces](sandbox.md#agent-local-workspaces);
-the KMS signing agent is still daemon-local, so a spawn that signs or clones
-over ssh is placed only on an agent advertising this daemon's `signing-agent`
-trait (go-quicbaas#1013). An agent silent past `orchestration.heartbeat_timeout`
-is not dispatched to.
+the KMS signing agent stays daemon-local: a spawn that signs or clones over
+ssh mounts it on an agent co-located with the daemon, and on any other agent
+advertising `signing-relay` it is served over the agent's FleetRuntime link
+(`SigningRelay` stream), the key never leaving the daemon host
+(go-quicbaas#1013; [sandbox.md](sandbox.md#agent-local-workspaces)). Placement
+ranks every eligible agent by live jobs against its `max_concurrent_jobs` and
+takes the least loaded, skipping a full one; host affinity stays strict. An
+agent silent past `orchestration.heartbeat_timeout` is not dispatched to.
 
 #### Mode 3: Multi-Node Raft Cluster
 
@@ -549,16 +553,16 @@ Full distributed mode with Raft consensus. Multiple QuicBaaS nodes, agents on an
 
 #### Mode 4: Remote Daemon with Container Sandboxing (DEFAULT)
 
-A long-lived daemon (`quicbaas agent serve`) runs on remote GPU hosts and exposes an AgentRuntime gRPC service. The central orchestrator calls this service to spawn sandboxed (containerized) sessions. This is the **sandbox-first** default.
+A long-lived daemon (`quicbaas fleet serve`) runs on remote GPU hosts and exposes a FleetRuntime gRPC service. The central orchestrator calls this service to spawn sandboxed (containerized) sessions. This is the **sandbox-first** default.
 
 ```
   CENTRAL QUICBAAS               REMOTE GPU HOST (gpu-host.example.com)
 ┌────────────────────────┐     ┌──────────────────────────────────────┐
 │                        │     │                                       │
-│ BackendDispatcher      │     │  quicbaas agent serve                 │
+│ BackendDispatcher      │     │  quicbaas fleet serve                 │
 │  │                     │     │  (daemon process)                     │
 │  ├─ LocalACPBackend    │     │  ┌─────────────────────────────────┐ │
-│  │  (local spawn)      │     │  │ AgentRuntime gRPC Service       │ │
+│  │  (local spawn)      │     │  │ FleetRuntime gRPC Service       │ │
 │  │                     │     │  │ (port 9091)                     │ │
 │  ├─ RemoteACPBackend   │────────→│ ┌─────────────────────────────┐│ │
 │  │  (call daemon)      │gRPC+QUIC││ Runtime (reuses pkg/orch):    ││ │
@@ -587,12 +591,12 @@ A long-lived daemon (`quicbaas agent serve`) runs on remote GPU hosts and expose
 **Key features:**
 - Daemon enrolls with central using OAuth2 Client Credentials (one-shot enrollment token)
 - Enrollment **grants** the permission set onto the daemon's OAuth2 application
-  record (`iam.AgentRuntimeGrant`). A `client_credentials` token carries that
+  record (`iam.FleetRuntimeGrant`). A `client_credentials` token carries that
   grant; the daemon sends no `scope` parameter, so it cannot name authority it
   was not given, and a grant change reaches it on its next token refresh
   without re-enrollment.
 - Enrollment **also grants the same set to the identity the daemon's CLIENT
-  CERTIFICATE authenticates as** (`iam.IdentityStore.EnrollAgentCertIdentity`).
+  CERTIFICATE authenticates as** (`iam.IdentityStore.EnrollFleetNodeCertIdentity`).
   A daemon holds two credentials for one identity, and go-qrdb's authenticator
   chain is first-success-wins with mTLS FIRST: any request carrying a client
   certificate is authenticated as the certificate's subject, and the bearer
@@ -621,13 +625,13 @@ A long-lived daemon (`quicbaas agent serve`) runs on remote GPU hosts and expose
   a route to the other's authority. See `docs/software-factory/engineering.md`
   §MCP Preconfiguration for Spawned Agents.
 - The fleet-registry record is written under the **record's own tenant**
-  (`orchestration.agentTenantContext`). `POST /api/v1/agents/register` is a
+  (`orchestration.fleetTenantContext`). `POST /api/v1/fleet/enroll` is a
   public route — the mTLS handshake is the authentication — so it carries no
   identity and its context names no tenant, while every read of the registry is
   made under the tenant the request names. Without the scoping the row landed in
   the system namespace and no tenant-scoped read could see it: registration
   reported `agent already exists` while the heartbeat got
-  `agent registry: not found` for the same agent (go-quicbaas#663).
+  `fleet registry: not found` for the same agent (go-quicbaas#663).
 - Heartbeats into fleet registry; central can spawn sessions remotely
 - Sandbox policy: **required** (default; container-only) — raw exec forbidden unless explicitly allowed
 - Reuses existing `ACPBackend`, `OllamaBackend`, `ContainerRuntime` (no parallel spawn logic)
@@ -646,11 +650,11 @@ Same architecture as Mode 4, but with sandbox policy `opt-in` or `preferred`, al
   CENTRAL QUICBAAS               REMOTE HOST
 ┌────────────────────────┐     ┌──────────────────────────────────────┐
 │                        │     │                                       │
-│ BackendDispatcher      │     │  quicbaas agent serve                 │
+│ BackendDispatcher      │     │  quicbaas fleet serve                 │
 │  │                     │     │  --sandbox-policy=opt-in              │
 │  ├─ LocalACPBackend    │     │  (daemon process)                     │
 │  │                     │     │  ┌─────────────────────────────────┐ │
-│  ├─ RemoteACPBackend   │────────→│ AgentRuntime gRPC Service       │ │
+│  ├─ RemoteACPBackend   │────────→│ FleetRuntime gRPC Service       │ │
 │  │  (call daemon)      │     │  │ ┌─────────────────────────────┐│ │
 │  │                     │     │  │ │ SandboxResolver:            ││ │
 │  └─ OllamaBackend      │     │  │ │ - DEFAULT → raw exec        ││ │
@@ -751,7 +755,7 @@ the other two, and proves cross-backend orchestration works.
 **Key insight from claude-code-teams-mcp**: The spawning mechanism uses tmux for local agents and HTTP API for OpenCode. We can adapt this:
 - **Local agents**: tmux spawning (same as claude-code-teams-mcp)
 - **Containerized agents**: Docker exec / API spawning
-- **Remote agents**: QuicBaaS gRPC/QUIC session management
+- **Remote fleet nodes**: QuicBaaS gRPC/QUIC session management
 
 The containers are ALSO usable in production for sandboxed agent execution with strict security controls.
 
@@ -1126,7 +1130,7 @@ orchestration:
 | Method | Use Case | Mechanism |
 |--------|----------|-----------|
 | `auto` | Default - auto-detect best method | Try device cert → fall back to OAuth2 |
-| `oauth2` | Standard for cloud/remote agents | OAuth 2.1 Client Credentials + JWT |
+| `oauth2` | Standard for cloud/remote fleet nodes | OAuth 2.1 Client Credentials + JWT |
 | `device_cert` | Hardware-bound identity (TPM, Secure Enclave) | mTLS with device cert → maps to service account |
 | `mtls` | Mutual TLS without device binding | Client cert + server cert verification |
 | `api_key` | Simple auth for local/trusted agents | API key in header (for Ollama, dev environments) |
@@ -2288,7 +2292,7 @@ Bind mounts are deny-by-default: only sources under the requesting tenant's
 subtree of the managed projects root, or under an operator-configured allowlist
 root, are permitted.
 
-Full operator reference: [Remote Agent Daemon](engineering.md) —
+Full operator reference: [Remote Fleet Node Daemon](engineering.md) —
 [Sandbox Policy](engineering.md#sandbox-policy-reference),
 [Sandbox Network](engineering.md#sandbox-network-reference),
 [Bind-Mount Allowlist](engineering.md#bind-mount-allowlist-reference).
@@ -2299,7 +2303,7 @@ Full operator reference: [Remote Agent Daemon](engineering.md) —
   document expands on.
 - Agent Orchestration Overview — the orchestration layer as a
   whole.
-- [Remote Agent Daemon](engineering.md) — operator reference for the
+- [Remote Fleet Node Daemon](engineering.md) — operator reference for the
   sandbox axis.
 
 
@@ -2460,10 +2464,10 @@ Operator notes:
 - A workflow agent spec that pairs `sandboxed: true` with a `workspace_path`
   outside the projects root needs that path in `allowed_mount_roots`, otherwise
   the spawn is refused.
-- A spawn dispatched to a remote agent daemon is authorized **twice**: against
+- A spawn dispatched to a remote fleet node daemon is authorized **twice**: against
   the control plane's roots here, and again on the daemon against its own
   `allowed_mount_roots` (see
-  [agent daemon](engineering.md#bind-mount-allowlist-reference)). Both must
+  [fleet node daemon](engineering.md#bind-mount-allowlist-reference)). Both must
   permit the path. The daemon's check is not a duplicate — a spawn whose
   control-plane-resolved mode is not `required` skips the `work_dir`
   authorization above, while the daemon's own `sandbox_policy` may still
@@ -2485,7 +2489,7 @@ decision about the request, not a server fault, and every transport says so.
 | gRPC | `PermissionDenied` | The typed error's own text |
 | QUIC | `StatusPermissionDenied` | The typed error's own text |
 | MCP | `OperationNotAllowed` (-32010) | The typed error's own text |
-| Agent daemon (gRPC) | `PermissionDenied` for a refused mount; the control plane re-surfaces it as 403 | The typed error's own text |
+| Fleet node daemon (gRPC) | `PermissionDenied` for a refused mount; the control plane re-surfaces it as 403 | The typed error's own text |
 
 The message names the offending field (`work_dir`, `extra_mounts`,
 `container_config.mounts`), the tenant, the path, and the reason, so an operator
@@ -2574,9 +2578,9 @@ A sandboxed agent session is isolated along three independent dimensions:
 
 | Dimension | Control | Default |
 |---|---|---|
-| Process/filesystem | `sandbox_policy` (`pkg/orchestration/sandbox_policy.go`) | container-sandboxed on agent daemons |
+| Process/filesystem | `sandbox_policy` (`pkg/orchestration/sandbox_policy.go`) | container-sandboxed on fleet node daemons |
 | Network namespace | `sandbox_network` (`pkg/orchestration/sandbox_network.go`) | `bridge` — own namespace with egress |
-| Privilege | `sandbox_cap_add` / `sandbox_pids_limit` (`pkg/orchestration/sandbox_security.go`) | `--cap-drop ALL` + CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID; `--pids-limit 4096` |
+| Privilege | `sandbox_cap_add` / `sandbox_pids_limit` / `sandbox_ulimits` (`pkg/orchestration/sandbox_security.go`) | `--cap-drop ALL` + CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID; `--pids-limit 4096`; `--ulimit memlock=4294967296:4294967296` |
 
 No dimension is caller-selectable in the unsafe direction: a spawn request
 can ask for a *stricter* sandbox mode but carries no network field at all, so no
@@ -2621,10 +2625,37 @@ Source: `pkg/orchestration/workflow_types.go`
 
 | Mode | Constant | Description |
 |------|----------|-------------|
-| `shared` | `IsolationShared` | All agents edit the same files in a single workspace. File locks are mandatory. |
-| `worktree` | `IsolationWorktree` | Each agent gets an isolated git worktree. File locks are advisory. |
+| `shared` | `IsolationShared` | All agents edit the same files in a single workspace. |
+| `worktree` | `IsolationWorktree` | Each agent works in its own checkout, merged back on completion. |
 
 Default: `shared` (applied by `ApplyDefaults()`).
+
+**File locks are mandatory in every mode.** `Acquire` refuses a path whose
+lease is live and held by another agent whoever asks, and the isolation mode
+is recorded on the lock as provenance rather than consulted to decide it
+(`pkg/orchestration/file_lock_store.go`). Worktree mode once made the lock
+advisory — a second agent took it with only a warning logged — on the
+reasoning that separate worktrees cannot collide on a file. Three things are
+wrong with that reasoning:
+
+- The service locks an opaque `(tenant, project, path)` triple. It cannot tell
+  a path a per-agent worktree privatises from one that stays shared, and the
+  shared surfaces are not marginal: refs, the object database and a
+  submodule's checkout are shared by construction however the working
+  directories are split.
+- An override rebound the lock key to the newcomer's lease while the original
+  holder, told nothing, still believed it held the lock. The original holder's
+  `Release` then revoked the *newcomer's* lease and deleted the newcomer's
+  lock mid-edit; its `Renew` extended a lease it did not hold; and the fencing
+  token recorded for the key described only the last writer.
+- Nothing in the daemon provisions a worktree. The daemon hands a container a
+  workspace spec and the container clones (`pkg/orchestration/workspace_spec.go`),
+  so `isolation: worktree` names a mechanism that is not there. Weakening a
+  lock against that promise is the worse failure, because it is silent.
+
+The semantics are asserted under both modes in
+`pkg/orchestration/file_lock_test.go`; reintroducing the mode-check fails
+`TestFileLock_Acquire_LiveLockOfAnotherAgentIsRefusedInEveryIsolationMode`.
 
 ### Shared Mode
 
@@ -2652,7 +2683,7 @@ All agents operate on the same filesystem directory. Concurrent edits to the sam
 Each agent receives its own git worktree branched from the main working tree. Changes are merged back after task completion.
 
 **Behavior:**
-- File locks are advisory only -- agents can override each other's locks with a warning
+- File locks are enforced exactly as in shared mode (see above)
 - Each agent's edits are isolated until merge
 - Merge conflicts are surfaced at merge time, not during editing
 
@@ -2697,7 +2728,7 @@ settings:
 | Factor | Shared | Worktree |
 |--------|--------|----------|
 | File conflict risk | High (mitigated by locks) | Low (isolated until merge) |
-| Lock enforcement | Mandatory | Advisory |
+| Lock enforcement | Mandatory | Mandatory |
 | Disk usage | 1x | Nx (one copy per agent) |
 | Merge step required | No | Yes |
 | Agent count | 2-3 recommended | Any |
@@ -2779,13 +2810,13 @@ Point hook URLs to the remote QuicBaaS server:
 }
 ```
 
-#### Workspace Configuration (Remote Agent)
+#### Workspace Configuration (Remote Fleet Node)
 
-A fleet agent provisions every job workspace it runs under its own projects
+A fleet node provisions every job workspace it runs under its own projects
 root; the server never names a path on the agent's host.
 
 ```bash
-quicbaas agent serve ... \
+quicbaas fleet serve ... \
   --work-dir /var/lib/quicbaas-agent \
   --projects-root /srv/quicbaas/projects   # optional; default <work-dir>/projects
 ```
@@ -2897,7 +2928,7 @@ This means an agent on Host B benefits from codebase indexing performed by an ag
 | Scale | Mode | Nodes | Notes |
 |---|---|---|---|
 | Solo developer | Standalone | 1 | No network, minimal config |
-| Small team, mixed hardware | Remote agents | 1 | Single QuicBaaS server, agents on any machine |
+| Small team, mixed hardware | Remote fleet nodes | 1 | Single QuicBaaS server, agents on any machine |
 | Production, HA | Raft cluster | 3+ | Odd number of nodes for quorum |
 | Multi-datacenter | Raft cluster | 5+ | Cross-region replication, latency-aware routing |
 
@@ -3131,11 +3162,11 @@ implement a storage engine of its own.
 | Constructor | Backing |
 | --- | --- |
 | `NewProjectStore(kv, opts...)` | caller's KV |
-| `NewAgentRegistry(kv, opts...)` | caller's KV |
+| `NewFleetRegistry(kv, opts...)` | caller's KV |
 | `NewTaskStore(kv, opts...)` | caller's KV |
 | `NewAgentStore(kv, opts...)` | caller's KV |
 | `NewInMemoryProjectStore()` | `kvstore.NewMemory()` |
-| `NewInMemoryAgentRegistry()` | `kvstore.NewMemory()` |
+| `NewInMemoryFleetRegistry()` | `kvstore.NewMemory()` |
 | `NewInMemoryTaskStore()` | `kvstore.NewMemory()` |
 | `NewInMemoryAgentStore()` | `kvstore.NewMemory()` |
 | `NewInMemoryTaskStoreWithKV(kv, limit)` | caller's KV, custom inline limit |
@@ -3150,7 +3181,7 @@ Every record's key puts the owning tenant in the first variable segment:
 ```
 orch/project/{tenant}/{projectID}            -> Project (JSON)
 orch/projectname/{tenant}/{name}             -> projectID (name index)
-orch/agent/{tenant}/{agentID}                -> AgentRegistration (JSON)
+orch/agent/{tenant}/{agentID}                -> FleetNode (JSON)
 orch/task/{tenant}/{taskID}                  -> Task (JSON)
 orch/taskartifact/{tenant}/{taskID}/{name}   -> artifact payload (bytes)
 orch/session/{tenant}/{sessionID}            -> SessionRecord (JSON)

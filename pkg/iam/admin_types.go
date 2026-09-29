@@ -57,9 +57,6 @@ const (
 	// AdminRoleUserAdmin can manage users within their assigned tenant(s).
 	AdminRoleUserAdmin AdminRole = "user_admin"
 
-	// AdminRoleGroupAdmin can manage groups within their assigned tenant(s).
-	AdminRoleGroupAdmin AdminRole = "group_admin"
-
 	// AdminRolePolicyAdmin can manage policies within their assigned tenant(s).
 	AdminRolePolicyAdmin AdminRole = "policy_admin"
 
@@ -98,12 +95,6 @@ const (
 	PermUserResetMFA    AdminPermission = "user:reset_mfa"
 	PermUserSuspend     AdminPermission = "user:suspend"
 	PermUserUnlock      AdminPermission = "user:unlock"
-
-	// Group permissions.
-	PermGroupCreate AdminPermission = "group:create"
-	PermGroupRead   AdminPermission = "group:read"
-	PermGroupUpdate AdminPermission = "group:update"
-	PermGroupDelete AdminPermission = "group:delete"
 
 	// Role permissions.
 	PermRoleCreate AdminPermission = "role:create"
@@ -334,7 +325,6 @@ func GetDefaultPermissions(role AdminRole) []AdminPermission {
 		return []AdminPermission{
 			PermTenantCreate, PermTenantRead, PermTenantUpdate, PermTenantDelete,
 			PermUserCreate, PermUserRead, PermUserUpdate, PermUserDelete, PermUserImpersonate, PermUserResetMFA, PermUserSuspend, PermUserUnlock,
-			PermGroupCreate, PermGroupRead, PermGroupUpdate, PermGroupDelete,
 			PermRoleCreate, PermRoleRead, PermRoleUpdate, PermRoleDelete, PermRoleAssign,
 			PermPolicyCreate, PermPolicyRead, PermPolicyUpdate, PermPolicyDelete, PermPolicySimulate,
 			PermAuditRead, PermAuditExport, PermAuditDelete,
@@ -348,7 +338,6 @@ func GetDefaultPermissions(role AdminRole) []AdminPermission {
 		return []AdminPermission{
 			PermTenantRead, PermTenantUpdate,
 			PermUserCreate, PermUserRead, PermUserUpdate, PermUserDelete, PermUserResetMFA, PermUserSuspend, PermUserUnlock,
-			PermGroupCreate, PermGroupRead, PermGroupUpdate, PermGroupDelete,
 			PermRoleCreate, PermRoleRead, PermRoleUpdate, PermRoleDelete, PermRoleAssign,
 			PermPolicyCreate, PermPolicyRead, PermPolicyUpdate, PermPolicyDelete, PermPolicySimulate,
 			PermAuditRead,
@@ -358,13 +347,7 @@ func GetDefaultPermissions(role AdminRole) []AdminPermission {
 	case AdminRoleUserAdmin:
 		return []AdminPermission{
 			PermUserCreate, PermUserRead, PermUserUpdate, PermUserDelete, PermUserResetMFA, PermUserSuspend, PermUserUnlock,
-			PermGroupRead,
 			PermRoleRead, PermRoleAssign,
-		}
-	case AdminRoleGroupAdmin:
-		return []AdminPermission{
-			PermUserRead,
-			PermGroupCreate, PermGroupRead, PermGroupUpdate, PermGroupDelete,
 		}
 	case AdminRolePolicyAdmin:
 		return []AdminPermission{
@@ -378,7 +361,6 @@ func GetDefaultPermissions(role AdminRole) []AdminPermission {
 		return []AdminPermission{
 			PermTenantRead,
 			PermUserRead,
-			PermGroupRead,
 			PermRoleRead,
 			PermPolicyRead,
 			PermAuditRead,
@@ -409,7 +391,7 @@ func GetDefaultPermissions(role AdminRole) []AdminPermission {
 func IsValidAdminRole(role AdminRole) bool {
 	switch role {
 	case AdminRoleSuperAdmin, AdminRoleTenantAdmin, AdminRoleUserAdmin,
-		AdminRoleGroupAdmin, AdminRolePolicyAdmin, AdminRoleAuditAdmin, AdminRoleReadOnly,
+		AdminRolePolicyAdmin, AdminRoleAuditAdmin, AdminRoleReadOnly,
 		AdminRoleAgentAdmin, AdminRoleAgentOperator, AdminRoleAgentViewer:
 		return true
 	default:

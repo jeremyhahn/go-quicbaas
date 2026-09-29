@@ -99,7 +99,7 @@ func TestMCPListJobs_AnswersTheFacetCounts(t *testing.T) {
 func TestMCPListJobs_RefusesAStateOutsideTheEnum(t *testing.T) {
 	svc := &fleetMockAgentService{}
 	svc.listJobs = filterJobFixtures()
-	reg := newAgentRegistry(t, svc)
+	reg := newFleetRegistry(t, svc)
 	ctx := orchestration.ContextWithTenant(context.Background(), "t1")
 
 	_, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_list_jobs",
@@ -128,21 +128,21 @@ func TestMCPListJobs_AcceptsAStateTheEngineHas(t *testing.T) {
 // equality — a daemon serving claude as a capability must match.
 func TestMCPFleetList_NarrowsOnServedBackend(t *testing.T) {
 	svc := &fleetMockAgentService{}
-	svc.listAgents = []*orchestration.AgentRegistration{
-		{ID: "a1", Name: "one", Backend: "acp", Capabilities: []string{"claude", "codex"}, Status: orchestration.AgentStatusRunning},
-		{ID: "a2", Name: "two", Backend: "codex", Status: orchestration.AgentStatusOffline},
+	svc.listAgents = []*orchestration.FleetNode{
+		{ID: "a1", Name: "one", Backend: "acp", Capabilities: []string{"claude", "codex"}, Status: orchestration.FleetNodeStatusRunning},
+		{ID: "a2", Name: "two", Backend: "codex", Status: orchestration.FleetNodeStatusOffline},
 	}
-	reg := newAgentRegistry(t, svc)
+	reg := newFleetRegistry(t, svc)
 
-	result, err := reg.executeAgentTool(context.Background(), "quicbaas_agent_fleet_list",
+	result, err := reg.executeAgentTool(context.Background(), "quicbaas_fleet_list",
 		map[string]interface{}{"tenant_id": "t1", "backend": "claude"})
 	require.NoError(t, err)
 
 	decoded, ok := result.(map[string]interface{})
 	require.True(t, ok, "tool result is %T, want a JSON object", result)
 	require.Equal(t, float64(1), decoded["total"], "want the one daemon that serves claude")
-	require.NotNil(t, svc.listAgentsPageFilter, "the backend argument never reached the service")
-	require.Equal(t, "claude", svc.listAgentsPageFilter.Backend)
+	require.NotNil(t, svc.listFleetNodesPageFilter, "the backend argument never reached the service")
+	require.Equal(t, "claude", svc.listFleetNodesPageFilter.Backend)
 	require.Equal(t, float64(2), facetCounts(t, decoded, "backend")["codex"],
 		"both codex-serving daemons must be counted")
 }
@@ -157,7 +157,7 @@ func TestMCPListSessions_CarriesTheNewNarrowings(t *testing.T) {
 		got = req
 		return &orchestration.ListSessionsResponse{Facets: orchestration.Facets{"runner": {"review": 1}}}, nil
 	}
-	reg := newAgentRegistry(t, svc)
+	reg := newFleetRegistry(t, svc)
 
 	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_list_sessions", map[string]interface{}{
 		"tenant_id":  "t1",
@@ -182,12 +182,12 @@ func TestMCPListSessions_CarriesTheNewNarrowings(t *testing.T) {
 // TestMCPListTools_DeclareTheNewArguments proves the model is TOLD about the
 // narrowings: an argument the schema omits is one no model will ever send.
 func TestMCPListTools_DeclareTheNewArguments(t *testing.T) {
-	reg := newAgentRegistry(t, &fleetMockAgentService{})
+	reg := newFleetRegistry(t, &fleetMockAgentService{})
 
 	want := map[string][]string{
 		"quicbaas_orchestrator_list_jobs":     {"agent_id", "runner", "project_id", "statuses", "job_ids"},
 		"quicbaas_orchestrator_list_sessions": {"project_id", "job_id", "runner", "agent_id", "backend", "status"},
-		"quicbaas_agent_fleet_list":           {"backend", "status", "host"},
+		"quicbaas_fleet_list":                 {"backend", "status", "host"},
 	}
 	schemas := make(map[string]map[string]interface{}, len(want))
 	for _, tool := range reg.ListTools() {

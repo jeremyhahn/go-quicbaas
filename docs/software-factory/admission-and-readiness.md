@@ -1,6 +1,6 @@
-# Admission and readiness — three inputs to start, five predicates to be ready
+# Admission and readiness — four inputs to start, five predicates to be ready
 
-> **Status: NORMATIVE** · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Last verified: 2026-09-24
 > Supplement to the Software Factory feature folder: what bounds how much work
 > runs at once, and what an issue must satisfy before it becomes a Task.
 > Conflicts with this document are defects.
@@ -17,18 +17,19 @@ failures were observed on the burn-in fleet the same day.
 
 ## Admission
 
-### The three inputs
+### The four inputs
 
 Concurrency used to be bounded **per project only**. Ten autonomous projects
 each permitted three concurrent jobs will run thirty of them on a fleet with
 eight worker slots, and every per-project check will have been satisfied.
-Admission therefore reads three inputs and decides once:
+Admission therefore reads four inputs and decides once:
 
 | Input | Where it comes from | Zero / absent means |
 |---|---|---|
 | the project's own quota | `Project.Quotas.MaxConcurrency` | unlimited for that project |
 | fleet worker capacity | the daemons' reported slots, and/or `orchestration.fleet.max_concurrent_jobs` | the axis is left out — **not** "no slots" |
 | provider usage headroom | `Account.Selectable` + `QuotaAuthority.Admit` over the project's pooled accounts | the axis is left out (nothing is pooled) |
+| the project's and tenant's own spend limits | `Project.Spend` + the tenant's `TenantSpendPolicy`, judged by `QuotaAuthority.AdmitScope` over the project and tenant quota planes | unmetered (no limits set) |
 
 The project quota is a **ceiling**: no redistribution below ever lifts a project
 above what its operator set.
@@ -73,24 +74,70 @@ conclusion. One job per task, the reaper and the heartbeat are unchanged. A
 job resumed into `reviewing` takes its lease off the budget from the start, so
 a project that filled while the daemon was down does not refuse it.
 
-The fleet axis and the backend axis are unchanged. They count every live lease.
+### A job waiting in reviewing holds no worker on any axis
 
-The provider axis is **subscription usage, never a price.** The owner's ruling is
-subscription-based accounts only, so no turn has a cost, `ConsumptionEntry.CostMicros`
-has no production writer, and a money axis summing zeroes would admit forever
-while looking like a cap. What is read is the sliding token window and the
-`AvailableAt` cooldown a provider refusal wrote — the same two authorities the
-spawn path consults, asked one step earlier. A project whose whole pool is spent
-is **deferred**, with a `RetryAt`, rather than spawning an agent whose first turn
+The owner ruled on go-quicbaas#938 (2026-09-24) that a job in `reviewing` closes
+its worker container, frees its slot, and stops counting against fleet
+capacity (go-quicbaas#1036).
+
+| Piece | What it does |
+|---|---|
+| `sdlc` `releaseWorker` | once the branch is pushed, closes the worker's session and container on entry to `reviewing`. The workspace stays: it is keyed per attempt |
+| `JobLease.Dormant` | set with `OffBudget` whenever the job is in a state its runner declares off the budget. It means that no container and no model session are running |
+| `JobLease.ClaimsWorker` | what the fleet and backend checks, and the admission plan's fleet count, count against new work: a worker held, or a dormant job queued for one |
+| `JobLease.HoldsWorker` | what a waking job is counted against, the counterpart of `HoldsSlot` |
+| fleet and backend `Rebudget` | admit a dormant job **waking**. Going dormant is never refused |
+
+A review round that asks for changes goes through `re-delegating` and wakes the
+lease. Waking is admitted on all three axes, and a refusal on any of them makes
+the round wait (`AwaitingSlot`). It does not fail. Then `executing` finds no
+session and returns through `initializing`. That path spawns a new
+container on the same branch and workspace, the same path a replaced session
+takes. The new session follows the project's `session_rotation`: on `resume`
+(the default) its first prompt carries `worker_resumed_note` with the released
+session's conversation, read before the release closed it; on `fresh` it
+carries `worker_released_note`.
+`Hooks.Prepare` keeps the attempt's `Delivery` whole on such a respawn.
+
+The fleet axis counts a review or triage job, which is off the project budget
+for its whole life but runs a container while it does (owner ruling,
+2026-09-25). The admission plan's fleet count (`countFleetInflight`) and the
+fleet check both read `ClaimsWorker`, so the plan never hands out a slot the
+check then refuses. Only a dormant job is off it. The backend axis counts both
+kinds for the same reason. A job
+resumed into `reviewing` after a restart acquires its lease dormant.
+
+Because the sdlc worker holds no session in `reviewing`, the stall detector
+reads each job's **own** runner declaration (`runnerSessionBackedIn`) rather
+than the merged one. The workflow runner's `reviewing` stays session-backed.
+The sdlc runner's is not, so a slow review is reported and never ended.
+
+The provider axis reads each pooled account's own sliding windows (tokens and
+list-price dollars, see
+[cost-enforcement.md](cost-enforcement.md#spend-limits)) and the `AvailableAt`
+cooldown a provider refusal wrote — the same two authorities the spawn path
+consults, asked one step earlier. A project whose whole pool is spent is
+**deferred**, with a `RetryAt`, rather than spawning an agent whose first turn
 the provider will refuse.
+
+The spend axis (`admission_spend.go`, go-quicbaas#1058 ruling F6) reads the
+project's own `Spend` windows and its tenant's. A spent one **defers** the
+project with axis `project_spend` or `tenant_spend`, the window's usage in the
+reason, and `RetryAt` when the window's oldest turn ages out. The tenant is
+asked first, because its limits stop every project it owns. The deferral is on
+the audit trail (`orchestration_project:spend_deferred`, resource
+`{project}/{axis}/{token_limit|cost_limit}/{window}`) when it starts or changes,
+not on every sweep. A limit that cannot be read fails the plan, never admits.
+A deployment that declares no fleet capacity and pools no accounts still plans
+when this axis is wired.
 
 ### Fleet capacity: two sources, one answer
 
 `pkg/orchestration/fleet_capacity.go` reduces two honest sources to one:
 
 - **the fleet itself** — every daemon reports `max_concurrent_jobs` on every
-  heartbeat (`pkg/agent` `Config.MaxConcurrentJobs` → `AgentObservation` →
-  `AgentRegistration.MaxConcurrentJobs`), and the capacity is the sum over the
+  heartbeat (`pkg/fleet` `Config.MaxConcurrentJobs` → `FleetNodeObservation` →
+  `FleetNode.MaxConcurrentJobs`), and the capacity is the sum over the
   daemons alive at that instant. It shrinks when a host is drained and grows when
   one is added, with nothing to keep in step by hand;
 - **the operator** — `orchestration.fleet.max_concurrent_jobs`, a ceiling below
@@ -140,7 +187,7 @@ The division is **max-min fair with a least-served residual**, and it guarantees
 
 | Where | What it does |
 |---|---|
-| `AdmissionController.Plan` | reads all three inputs once per sweep and divides the fleet; both sweeps consult the one plan |
+| `AdmissionController.Plan` | reads all four inputs once per sweep and divides the fleet; both sweeps consult the one plan |
 | `TaskSourcePoller.sweepProject` | adopts at most `AdoptionSlots()` new specs, in priority order |
 | `TaskDispatcher.sweepProject` | starts at most `DispatchSlots()` queued Tasks, in priority order |
 | `projectCapacityJobLeaseStore.Acquire` | refuses a lease over the **project's** quota |
@@ -173,7 +220,7 @@ orchestration:
 ```
 
 ```yaml
-# the agent daemon, per host
+# the fleet node daemon, per host
 max_concurrent_jobs: 4       # 0 = this host reports no count (default)
 ```
 
@@ -314,6 +361,8 @@ The properties proved, with the tests that prove them:
 | an issue owned by a live session is not adopted twice | `TestReadiness_AnIssueOwnedByALiveSessionIsNotAdoptedTwice` |
 | an issue an open pull request closes is skipped, audited once, and offered again when the pull request closes unmerged | `TestIssueSource_AnIssueAnOpenPullRequestClosesIsNotAdopted`, `TestIssueSource_AnIssueTheForgeLinksToAnOpenPullRequestIsNotAdopted`, `TestIssueSource_AReopenedIssueWhosePullRequestMergedIsAdopted`, `TestIssueSource_AReopenedIssueTheForgeLinksToAMergedPullRequestIsAdopted`, `TestClosingIssueNumbers_AURLCountsOnlyOnTheBoundForge` |
 | a job in reviewing frees its slot, and its round waits for one | `TestJobRun_AReviewingJobFreesItsSlotAndItsRoundWaitsForOne`, `TestProjectCapacity_AJobOffTheBudgetAdmitsASecondTask` |
+| a job in reviewing is off the fleet and backend axes, and its round waits for a worker | `TestFleetCapacity_NDormantJobsAtCapacityNStillAdmitNewWork`, `TestBackendCapacity_ADormantJobHoldsNoBackend`, `TestJobRun_AReviewingJobIsDormantAndItsRoundWaitsForTheFleet` |
+| the worker's container is closed for the review and respawned for a round | `TestRunner_ReviewingHoldsNoWorkerAndIsNotDeclaredSessionBacked`, `TestRunner_ChangesRequestedRunsAnotherRound`, `TestRunner_AWorkerWhoseWorkDidNotReachTheForgeIsNotReleased` |
 | queued rounds do not block each other, and a waiting round ends with its run | `TestProjectCapacity_QueuedRoundsDoNotBlockEachOther`, `TestJobRun_AWaitingRoundEndsWithItsRun` |
 | only the worker-bearing sdlc states spend the budget | `TestRunner_OnlyTheWorkerBearingStatesSpendTheProjectBudget` |
 

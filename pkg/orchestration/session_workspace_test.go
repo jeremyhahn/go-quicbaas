@@ -386,7 +386,7 @@ func TestWorkspacePlacement_OnDaemon(t *testing.T) {
 	if !(WorkspacePlacement{Dir: "/d"}).OnDaemon() {
 		t.Fatal("an empty agent host is the daemon")
 	}
-	if (WorkspacePlacement{AgentHost: "omega:9091"}).OnDaemon() {
+	if (WorkspacePlacement{AgentHost: "agent-09:9091"}).OnDaemon() {
 		t.Fatal("a named agent host is not the daemon")
 	}
 	if (*SessionWorkspace)(nil).Pinned() || (&SessionWorkspace{}).Pinned() {
@@ -406,9 +406,9 @@ func TestSessionWorkspaceErrors_NameTheFaultAndUnwrap(t *testing.T) {
 		"tenant": {&SessionWorkspaceTenantError{SpawnTenant: "a", WorkspaceTenant: "b"},
 			[]string{`"a"`, `"b"`}},
 		"unsupported": {&SessionWorkspaceUnsupportedError{Host: "agent /w"}, []string{"agent /w", "projects root"}},
-		"agent pinned": {&WorkspaceAgentUnavailableError{AgentHost: "omega:9091", Key: "k", Backend: "codex",
-			ResolvedHost: "vs04:9092"}, []string{`"omega:9091"`, "codex", `"vs04:9092"`, "not moved"}},
-		"daemon pinned": {&WorkspaceAgentUnavailableError{Key: "k", Backend: "codex"},
+		"agent pinned": {&WorkspaceFleetNodeUnavailableError{AgentHost: "agent-09:9091", Key: "k", Backend: "codex",
+			ResolvedHost: "vs04:9092"}, []string{`"agent-09:9091"`, "codex", `"vs04:9092"`, "not moved"}},
+		"daemon pinned": {&WorkspaceFleetNodeUnavailableError{Key: "k", Backend: "codex"},
 			[]string{"in-process backend"}},
 		"stale": {&WorkspaceStaleError{Key: "k", Expected: "/d", Reason: "gone"}, []string{`"k"`, `"/d"`, "gone"}},
 	}

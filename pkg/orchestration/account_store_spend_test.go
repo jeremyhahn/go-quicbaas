@@ -33,7 +33,7 @@ func TestAccountStoreRoundTripsASpendPolicy(t *testing.T) {
 	store := NewInMemoryAccountStore()
 	ctx := context.Background()
 	policy := AccountSpendPolicy{
-		Quota: AccountQuotaPolicy{Windows: []QuotaWindow{
+		Quota: SpendLimits{Windows: []QuotaWindow{
 			{Name: "five-hour", Size: 5 * time.Hour, MaxTokens: 1000},
 			{Name: "weekly", Size: 7 * 24 * time.Hour, MaxTokens: 500_000},
 		}},
@@ -65,7 +65,7 @@ func TestAccountStoreRefusesAMalformedSpendPolicyOnCreate(t *testing.T) {
 	store := NewInMemoryAccountStore()
 	err := store.Create(context.Background(), &Account{
 		ID: "a1", TenantID: "t1", Provider: AccountProviderClaude,
-		Spend: AccountSpendPolicy{Quota: AccountQuotaPolicy{Windows: []QuotaWindow{
+		Spend: AccountSpendPolicy{Quota: SpendLimits{Windows: []QuotaWindow{
 			{Name: "five-hour", Size: 5 * time.Hour},
 		}}},
 	})

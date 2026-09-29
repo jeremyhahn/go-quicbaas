@@ -99,10 +99,9 @@ func setupPIVFullHandler(t *testing.T, leaf *x509.Certificate, tenant string, re
 
 	memStorage := iam.NewMemoryStorage()
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
-		Tenants:      &testTenantManager{storage: memStorage},
+		UserStorage: memStorage,
+		RoleStorage: memStorage,
+		Tenants:     &testTenantManager{storage: memStorage},
 	})
 
 	if registerUser {
@@ -255,10 +254,9 @@ func setupPIVFullHandlerSPKI(t *testing.T, leaf *x509.Certificate, tenant string
 
 	memStorage := iam.NewMemoryStorage()
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
-		Tenants:      &testTenantManager{storage: memStorage},
+		UserStorage: memStorage,
+		RoleStorage: memStorage,
+		Tenants:     &testTenantManager{storage: memStorage},
 	})
 
 	pivUser := &iam.User{
@@ -419,10 +417,9 @@ func TestPIVLogin_OIDCProviderUnavailable(t *testing.T) {
 
 	memStorage := iam.NewMemoryStorage()
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
-		Tenants:      &testTenantManager{storage: memStorage},
+		UserStorage: memStorage,
+		RoleStorage: memStorage,
+		Tenants:     &testTenantManager{storage: memStorage},
 	})
 	thumb := sha256.Sum256(leaf.Raw)
 	pivUser := &iam.User{ID: "78", TenantID: "tenant-piv", Email: "piv@example.com"}

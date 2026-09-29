@@ -49,31 +49,11 @@ type AllowRule struct {
 // either legitimately provenance, or sits in a tree another change owns.
 var DefaultAllowList = []AllowRule{
 	{
-		Path:    "**/*_test.go",
-		Classes: []Class{ClassLabAddress, ClassLabHost},
-		Reason: "Go test fixtures. A test uses an address or a daemon name as an " +
-			"opaque literal -- nothing is dialed and no behaviour depends on the " +
-			"value -- and the fleet's own strings are how the cases were captured " +
-			"from real traffic. Owner paths are NOT allowed here: those break the " +
-			"test on any other machine.",
-	},
-	{
-		Path:    "**/*.test.ts",
-		Classes: []Class{ClassLabAddress, ClassLabHost},
-		Reason: "Frontend test fixtures, same reasoning as the Go ones: the agent " +
-			"fleet views are asserted against captured registry payloads.",
-	},
-	{
-		Path:    "test/integration/orchestration/control_loop_stateless_test.go",
-		Classes: []Class{ClassOwnerPath},
-		Reason: "An absolute projects-root literal. test/integration is owned by the " +
-			"integration-fixture change; folded in there rather than conflicting " +
-			"with it.",
-	},
-	{
-		Path:    "test/integration/docker-compose.cluster.yml",
-		Classes: []Class{ClassOwnerPath},
-		Reason:  "A `cd` in the how-to-run comment. Same owner as the entry above.",
+		Path:    "pkg/labstrings/*_test.go",
+		Classes: []Class{ClassLabAddress, ClassLabHost, ClassOwnerPath, ClassOwnerAccount},
+		Reason: "The gate's own fixtures: a planted violation and a sample per " +
+			"rule are the values the rules exist to find. Every other test file " +
+			"is scanned and uses neutral fixtures.",
 	},
 	{
 		Path:    "scripts/e2e-remote-agent.sh",
@@ -87,25 +67,6 @@ var DefaultAllowList = []AllowRule{
 		Classes: []Class{ClassLabHost, ClassOwnerPath},
 		Reason: "Default paths to a sibling checkout on the lab's NFS mount. Same " +
 			"owner as the entry above.",
-	},
-	{
-		Path:    "Makefile",
-		Classes: []Class{ClassLabAddress},
-		Reason: "The GPU_HOST example in the ACP e2e target's error message. The " +
-			"Makefile is the owner's call (go-quicbaas#944 out of scope).",
-	},
-	{
-		Path:    ".github/workflows/integration.yml",
-		Classes: []Class{ClassLabHost},
-		Reason: "A comment recording which runners a CI defect was observed on -- " +
-			"provenance for the guard below it.",
-	},
-	{
-		Path:    ".serena/memories/**",
-		Classes: []Class{ClassOwnerPath},
-		Reason: "Agent working notes, tracked so the next session inherits them. " +
-			"They record where a file was read from; they are not instructions " +
-			"anybody follows.",
 	},
 }
 

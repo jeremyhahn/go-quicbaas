@@ -76,7 +76,7 @@ func newSpawnTestService(t *testing.T, tenantID, leadAgentID string) (AgentServi
 	resp, err := svc.StartJob(ctx, &StartJobRequest{
 		TenantID:      tenantID,
 		Description:   "parent job for spawn tests",
-		LeadBackend:   "spawn",
+		routedBackend: "spawn",
 		LeadAgentID:   leadAgentID,
 		MaxIterations: 1,
 	})

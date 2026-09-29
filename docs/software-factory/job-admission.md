@@ -89,6 +89,15 @@ arbiter. A record still on the budget proceeds on the slot it never gave up.
 Anything else goes through admission. See
 [admission-and-readiness.md](admission-and-readiness.md).
 
+**Dormant.** The same move marks the lease `Dormant`: a job in an off-budget
+state of such a runner runs no worker at all, and the sdlc runner closes its
+container on entry to `reviewing` (go-quicbaas#938). The fleet and backend
+checks count `JobLease.ClaimsWorker`, so a dormant job is off both
+(go-quicbaas#1036). Their `Rebudget` admits a dormant job waking, counted
+against `HoldsWorker`, and a refusal there makes the round wait exactly as a
+full project does. A review or triage job is off the budget for its whole life
+and is never dormant, so it still counts on both.
+
 **Subject.** A lease is named after the work it holds, not the job holding
 it: the task's source reference for task-bound work, and otherwise whatever
 `JobLeasePolicy.LeaseSubject` answers. Without a policy a job bound to no
@@ -137,8 +146,10 @@ prose:
 |---|---|---|
 | an environmental terminal reason (`api_error`, …) | `PreFirstTurnFault` | refunded, requeued (bounded) |
 | `accounts_cooling_down` | `AccountsCoolingDownError` | refunded, requeued at `AvailableAt` (clamped to 24h) |
+| `accounts_spent` | `AccountsSpentError` — every selectable account refused by its own spend policy | refunded, requeued at `AvailableAt` (clamped to 24h); **never counts** toward the park bound, as saturation does not |
 | `project_capacity_exceeded` | `ProjectCapacityExceededError` | refunded, requeued at `RetryAt` |
 | `forge_unreachable` | any error unwrapping to `ErrForgeUnreachable` — a forge call unanswered after the adapter's retries and reconciliation ([sdlc.md](sdlc.md#forge-transport-deadlines-retries-and-unanswered-writes)) | refunded, requeued (bounded) |
+| `agent_interrupted` | any error unwrapping to `ErrAgentInterrupted` — a worker turn whose Prompt the fleet node stopped serving: `Unavailable` (the agent drained or its transport was lost) or `Canceled` on a stream this side did not cancel — or a `ContainerStreamClosedError` whose container reported no exit of the worker's own (killed, pipe cut, or the runtime's own status 125). The agent answers a lost container stream `Unavailable` whether or not it is draining. The job's error names the agent's host. A worker process that exits non-zero under a healthy agent arrives `Internal` and is **not** this class | refunded, requeued (bounded); **never charged** — the third in a row blocks the task for a person but is refunded too |
 | `no_provider_account`, `no_account_resolver`, `account_credential_missing`, `account_refresher_missing` | resolver errors | refunded, **blocked** for a human |
 | `superseded` | `JobSupersededError`, `JobLeaseTakenError` | nothing written; the lease holder owns the Task |
 | `stalled` | stall detector | charged |
@@ -156,6 +167,8 @@ judgement a runner makes **while it holds the job**, carried on
 |---|---|---|
 | `workspace_unfit` | the project names no workspace path; the daemon could not make the mount point; the checkout is absent, empty, holding another repository, or missing a declared context repository; any git command of the checkout failed | refunded, **blocked** for an operator |
 | `worker_environment` | the worker declared `SDLC-STOP: environment`, declared a stop code this binary does not know, or answered with no text on every turn of the attempt | refunded, **blocked** for an operator |
+| `config_error` | the project's binding names a verification command the operator allowlist (`orchestration.verification_commands`) does not carry: the runner refuses before it spawns a worker, and the execution guard's refusal at validation is classed the same way | refunded, **blocked** for an operator: add the command to the allowlist or rebind the project, then readmit |
+| `untrusted_signer` | the publisher refused a push because the branch carries a commit no key the project trusts signed (unsigned, an unknown key, or a retired key after its retirement), or the merge train ejected such a change; the factory never rewrites a pushed branch, so another attempt would refuse identically | refunded, **escalated** for an operator: record the key in the project's trusted signing history ([projects.md](projects.md#rotating-the-signing-key)) or replace the commit, then readmit |
 
 The park still stops the Task — nothing retries it until a person acts — and
 the class adds three things:
@@ -294,8 +307,11 @@ past the Job, is `orphaned` and released.
 
 **Stall detector** (`JobStallDetector`) examines this node's running,
 Task-bound loops against per-state bounds (`orchestration.idle_thresholds`,
-defaults in `DefaultJobIdleThresholds`). A Job past its bound in a
-session-backed state (`executing`, `reviewing`) is asked whether any of
+defaults in `DefaultJobIdleThresholds`). Whether a state is session-backed is
+the Job's **own runner's** declaration when the runner is registered, and the
+merged one otherwise: the sdlc runner holds no session in `reviewing`, and the
+workflow runner does. A Job past its bound in a
+session-backed state (`executing`, the workflow runner's `reviewing`) is asked whether any of
 its `SessionIDs` is still addressable via `SessionStatus`; if none is, the
 loop is aborted with `JobStalledError` and concluded as a charged failure.
 A Job past its bound in any other state, or with an addressable session,

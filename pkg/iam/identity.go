@@ -18,6 +18,7 @@ import (
 	"errors"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -34,12 +35,11 @@ var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]
 // Username validation: alphanumeric, dash, underscore, 3-64 chars.
 var usernameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{3,64}$`)
 
-// IdentityStore manages users, groups, and roles with multi-tenant support.
+// IdentityStore manages users and roles with multi-tenant support.
 type IdentityStore struct {
-	userStorage  UserStorage
-	groupStorage GroupStorage
-	roleStorage  RoleStorage
-	tenants      TenantManager
+	userStorage UserStorage
+	roleStorage RoleStorage
+	tenants     TenantManager
 
 	// webauthnCredentials is the cascade seam DeleteUser tears a user's
 	// WebAuthn credentials down through. Late-bound because the WebAuthn
@@ -78,11 +78,10 @@ func (s *IdentityStore) SetWebAuthnCredentialReaper(reaper WebAuthnCredentialRea
 // NewIdentityStore creates a new identity store with the provided options.
 func NewIdentityStore(opts IdentityStoreOptions) *IdentityStore {
 	return &IdentityStore{
-		userStorage:  opts.UserStorage,
-		groupStorage: opts.GroupStorage,
-		roleStorage:  opts.RoleStorage,
-		tenants:      opts.Tenants,
-		logger:       opts.Logger,
+		userStorage: opts.UserStorage,
+		roleStorage: opts.RoleStorage,
+		tenants:     opts.Tenants,
+		logger:      opts.Logger,
 	}
 }
 
@@ -168,14 +167,6 @@ func validateUserID(userID string) error {
 	return nil
 }
 
-// validateGroupID checks if a group ID is valid and not empty.
-func validateGroupID(groupID string) error {
-	if groupID == "" {
-		return &ValidationError{Field: "group_id", Message: "group ID cannot be empty"}
-	}
-	return nil
-}
-
 // validateRoleID checks if a role ID is valid and not empty.
 func validateRoleID(roleID string) error {
 	if roleID == "" {
@@ -218,7 +209,7 @@ var supportedCreateLifecycles = []Lifecycle{LifecyclePending, LifecycleActive, L
 // lifecycle as an ordinary update field therefore let a caller start a deletion
 // that never runs one. `deleting` is terminal, so the record could not be
 // repaired by a later update: the account was permanently unable to
-// authenticate while its credentials, group memberships and sessions stayed
+// authenticate while its credentials and sessions stayed
 // live, because the cascade that removes them lives in DeleteUser.
 //
 // The deletion workflow does not go through here. It claims the record with
@@ -246,8 +237,8 @@ func validateUpdateUserLifecycle(state Lifecycle) error {
 	if state == LifecycleDeleting {
 		return fieldValidationError("lifecycle",
 			"deleting is not an assignable state; it is claimed by the deletion "+
-				"workflow, which then removes the credentials, group memberships "+
-				"and sessions the account owns. Asserting it here would strand "+
+				"workflow, which then removes the credentials and sessions "+
+				"the account owns. Asserting it here would strand "+
 				"the account in a terminal state with those still live: delete "+
 				"the user instead")
 	}
@@ -385,27 +376,6 @@ func (s *IdentityStore) CreateUser(ctx context.Context, tenantID string, opts Cr
 		}
 	}
 
-	// Deduplicate requested group references while preserving order so a
-	// repeated ID cannot double-register the user in a group's member list.
-	groupIDs := make([]string, 0, len(opts.Groups))
-	seenGroups := make(map[string]struct{}, len(opts.Groups))
-	for _, groupID := range opts.Groups {
-		if _, dup := seenGroups[groupID]; dup {
-			continue
-		}
-		seenGroups[groupID] = struct{}{}
-		groupIDs = append(groupIDs, groupID)
-	}
-
-	// Pre-validate requested group references BEFORE any write, mirroring
-	// the role validation above: a bad group ID fails fast with the storage
-	// backend's typed not-found error and no user record is written.
-	for _, groupID := range groupIDs {
-		if _, err := s.GetGroup(ctx, tenantID, groupID); err != nil {
-			return nil, err
-		}
-	}
-
 	// Check tenant quota
 	if s.tenants != nil {
 		if err := s.tenants.CheckQuota(ctx, tenantID, QuotaResourceUsers); err != nil {
@@ -444,8 +414,6 @@ func (s *IdentityStore) CreateUser(ctx context.Context, tenantID string, opts Cr
 	if len(opts.Roles) > 0 {
 		roles = append(roles, opts.Roles...)
 	}
-	groups := make([]string, 0)
-	groups = append(groups, groupIDs...)
 	// Every option this function accepts is written to the record. It used to
 	// build the user from nine fields and silently drop the rest, so a caller
 	// setting AuthMethods got none, and State was left empty on every user in
@@ -487,7 +455,6 @@ func (s *IdentityStore) CreateUser(ctx context.Context, tenantID string, opts Cr
 		Username:    strings.TrimSpace(opts.Username),
 		Name:        displayName,
 		Attributes:  opts.Attributes,
-		Groups:      groups,
 		Roles:       roles,
 		AuthMethods: authMethods,
 		Lifecycle:   lifecycle,
@@ -499,119 +466,11 @@ func (s *IdentityStore) CreateUser(ctx context.Context, tenantID string, opts Cr
 		return nil, api.NewOperationFailedError("create user", err)
 	}
 
-	// Register the new user in each requested group's member list. Group
-	// membership is bidirectional: user.Groups was persisted with the user
-	// record above, and each group's Members must reference the user back.
-	// On failure the whole create is rolled back so the operation stays
-	// atomic from the caller's perspective.
-	for i, groupID := range groupIDs {
-		if err := s.addMemberToGroup(ctx, tenantID, groupID, user.ID); err != nil {
-			s.rollbackCreateUserGroups(ctx, tenantID, user.ID, groupIDs[:i])
-			return nil, api.NewOperationFailedError("add user to group", err)
-		}
-	}
-
 	// A user is created before any invite is issued, so there is nothing to
 	// strip here yet. Redacting anyway keeps the rule "no user leaves this
 	// store carrying a token" true of every method, rather than true of the
 	// ones that happen to need it today.
 	return user, nil
-}
-
-// addMemberToGroup adds userID to the group's member list through the store's
-// guarded membership op.
-//
-// It used to read the group, append, and write the WHOLE record back, which is
-// a lost update with no error attached to it: two concurrent CreateUser calls
-// naming one group each read the same list and each wrote their own user over
-// the other's, so both users held the group in User.Groups while only one
-// appeared in Group.Members. Re-fetching the group first narrowed the window
-// and could not close it — the window is between the read and the write, which
-// is exactly what a compare-and-swap is for.
-func (s *IdentityStore) addMemberToGroup(ctx context.Context, tenantID, groupID, userID string) error {
-	return s.groupStorage.AddGroupMember(ctx, tenantID, groupID, userID)
-}
-
-// rollbackCreateUserGroups compensates a failed CreateUser after the user
-// record was written: it removes the user from every group member list that
-// was already updated and deletes the user record. Compensation writes are
-// best-effort (mirroring AddUserToGroup's rollback) because the primary
-// error has already been captured and is what the caller receives.
-func (s *IdentityStore) rollbackCreateUserGroups(ctx context.Context, tenantID, userID string, groupIDs []string) {
-	for _, groupID := range groupIDs {
-		// Guarded, like the addition it compensates: a rollback that rewrote
-		// the whole member list would drop whatever another create committed in
-		// the meantime, turning a failed create into somebody else's lost
-		// membership.
-		_ = s.groupStorage.RemoveGroupMember(ctx, tenantID, groupID, userID)
-	}
-	_ = s.userStorage.DeleteUser(ctx, tenantID, userID)
-}
-
-// diffGroupMembership returns the groups to join and the groups to leave to move
-// an account from one membership set to another. Both inputs are treated as
-// SETS: a repeated id in either does not produce a repeated operation, because
-// the membership verbs are idempotent and a duplicate would only be noise.
-func diffGroupMembership(current, desired []string) (join, leave []string) {
-	currentSet := make(map[string]struct{}, len(current))
-	for _, groupID := range current {
-		currentSet[groupID] = struct{}{}
-	}
-	desiredSet := make(map[string]struct{}, len(desired))
-	for _, groupID := range desired {
-		desiredSet[groupID] = struct{}{}
-	}
-
-	// Iterate the slices rather than the maps so the operations come out in the
-	// caller's order, which makes a failure and its compensation reproducible.
-	// The emitted sets guard against a repeated id producing a repeated write.
-	emitted := make(map[string]struct{}, len(desired))
-	for _, groupID := range desired {
-		if _, held := currentSet[groupID]; held {
-			continue
-		}
-		if _, already := emitted[groupID]; already {
-			continue
-		}
-		emitted[groupID] = struct{}{}
-		join = append(join, groupID)
-	}
-
-	dropped := make(map[string]struct{}, len(current))
-	for _, groupID := range current {
-		if _, wanted := desiredSet[groupID]; wanted {
-			continue
-		}
-		if _, already := dropped[groupID]; already {
-			continue
-		}
-		dropped[groupID] = struct{}{}
-		leave = append(leave, groupID)
-	}
-	return join, leave
-}
-
-// rollbackMembershipDelta compensates a partially-applied membership change: it
-// reverses the joins and leaves that succeeded and restores the account's own
-// group list. Compensation writes are best-effort, mirroring
-// rollbackCreateUserGroups — the primary error is already captured and is what
-// the caller receives, and the membership verbs are idempotent, so a failed
-// compensation leaves the same state a retry converges from.
-func (s *IdentityStore) rollbackMembershipDelta(
-	ctx context.Context,
-	tenantID string,
-	user *User,
-	priorGroups []string,
-	joined, left []string,
-) {
-	for _, groupID := range joined {
-		_ = s.groupStorage.RemoveGroupMember(ctx, tenantID, groupID, user.ID)
-	}
-	for _, groupID := range left {
-		_ = s.groupStorage.AddGroupMember(ctx, tenantID, groupID, user.ID)
-	}
-	user.Groups = priorGroups
-	_ = s.userStorage.UpdateUser(ctx, user)
 }
 
 // GetUser retrieves a user by ID within a tenant.
@@ -704,8 +563,8 @@ func (s *IdentityStore) UpdateUser(ctx context.Context, tenantID, userID string,
 		return nil, err
 	}
 
-	// Role and group references are resolved BEFORE any write, exactly as
-	// CreateUser resolves them. Assigning a role through AssignRole checks that
+	// Role references are resolved BEFORE any write, exactly as CreateUser
+	// resolves them. Assigning a role through AssignRole checks that
 	// the role exists; assigning the same role by writing the slice through
 	// here did not, so an update could leave an account holding a role id that
 	// names nothing — an authorization input that grants nothing today and
@@ -717,14 +576,6 @@ func (s *IdentityStore) UpdateUser(ctx context.Context, tenantID, userID string,
 			}
 		}
 	}
-	if opts.Groups != nil {
-		for _, groupID := range *opts.Groups {
-			if _, err := s.GetGroup(ctx, tenantID, groupID); err != nil {
-				return nil, err
-			}
-		}
-	}
-
 	// Get existing user
 	user, err := s.userStorage.GetUser(ctx, tenantID, userID)
 	if err != nil {
@@ -802,28 +653,6 @@ func (s *IdentityStore) UpdateUser(ctx context.Context, tenantID, userID string,
 		user.Roles = *opts.Roles
 	}
 
-	// Group membership is BIDIRECTIONAL: user.Groups and the group's Members
-	// are two halves of one fact. Writing the user's half and leaving the
-	// group's alone is the defect this package just fixed on the create path —
-	// a write that updates one side of a relationship and reports success,
-	// after which GetGroup and a user-centric read disagree with nothing to
-	// detect it.
-	//
-	// The delta is computed against the STORED membership and applied through
-	// the store's atomic membership verbs, which are idempotent: adding a
-	// member the group already holds, or removing one it does not, is a no-op,
-	// so a retried update converges instead of duplicating or erasing.
-	//
-	// A nil Groups leaves membership untouched; a non-nil one means "this
-	// account's groups are now exactly these", which is why an empty slice
-	// removes the account from every group it was in.
-	var groupsToJoin, groupsToLeave []string
-	priorGroups := append([]string(nil), user.Groups...)
-	if opts.Groups != nil {
-		groupsToJoin, groupsToLeave = diffGroupMembership(user.Groups, *opts.Groups)
-		user.Groups = *opts.Groups
-	}
-
 	// An explicit lifecycle wins over the Enabled shorthand: a caller that
 	// named the state meant that state — provided it is one this surface may
 	// assert at all.
@@ -881,23 +710,6 @@ func (s *IdentityStore) UpdateUser(ctx context.Context, tenantID, userID string,
 
 	if previousEmail != "" {
 		s.logEmailChangeCredentialCarry(ctx, tenantID, userID, previousEmail, user.Email, credentialsBefore)
-	}
-
-	// The group side, once the user record is committed. A failure here undoes
-	// the memberships already applied and puts the user's own list back, so the
-	// two halves cannot be left disagreeing — which is the whole reason this
-	// lives here rather than in each caller.
-	for i, groupID := range groupsToJoin {
-		if err := s.groupStorage.AddGroupMember(ctx, tenantID, groupID, userID); err != nil {
-			s.rollbackMembershipDelta(ctx, tenantID, user, priorGroups, groupsToJoin[:i], nil)
-			return nil, api.NewOperationFailedError("add user to group "+groupID, err)
-		}
-	}
-	for i, groupID := range groupsToLeave {
-		if err := s.groupStorage.RemoveGroupMember(ctx, tenantID, groupID, userID); err != nil {
-			s.rollbackMembershipDelta(ctx, tenantID, user, priorGroups, groupsToJoin, groupsToLeave[:i])
-			return nil, api.NewOperationFailedError("remove user from group "+groupID, err)
-		}
 	}
 
 	// Redacted like every other read. The update that ATTACHES an invite is the
@@ -1028,7 +840,7 @@ func (s *IdentityStore) DeleteUser(ctx context.Context, tenantID, userID string)
 
 	// Re-read AFTER the claim. The read above happened before the account was
 	// closed, so a concurrent update could have committed a new email, cert
-	// binding or group membership in between — and sweeping the pre-claim
+	// binding in between — and sweeping the pre-claim
 	// snapshot would remove the record while leaving those behind. Nothing can
 	// change the record after the claim, because `deleting` is terminal, so this
 	// snapshot is the last one and it is complete.
@@ -1051,18 +863,6 @@ func (s *IdentityStore) DeleteUser(ctx context.Context, tenantID, userID string)
 		}
 	}
 
-	// Remove user from all groups, through the guarded op: a deletion that
-	// rewrote each member list wholesale would erase any membership committed
-	// between its read and its write.
-	for _, groupID := range user.Groups {
-		if err := s.groupStorage.RemoveGroupMember(ctx, tenantID, groupID, userID); err != nil {
-			if dberrors.IsNotFound(err) {
-				continue // Group might have been deleted
-			}
-			return api.NewOperationFailedError("update group "+groupID, err)
-		}
-	}
-
 	if err := s.userStorage.DeleteUser(ctx, tenantID, userID); err != nil {
 		return api.NewOperationFailedError("delete user", err)
 	}
@@ -1081,392 +881,6 @@ func (s *IdentityStore) ListUsers(ctx context.Context, tenantID string, opts Lis
 		return nil, api.NewOperationFailedError("list users", err)
 	}
 
-	return users, nil
-}
-
-// CreateGroup creates a new group in the specified tenant.
-func (s *IdentityStore) CreateGroup(ctx context.Context, tenantID string, opts CreateGroupOptions) (*Group, error) {
-	if err := validateTenantID(tenantID); err != nil {
-		return nil, err
-	}
-	if opts.Name == "" {
-		return nil, &ValidationError{Field: "name", Message: "group name cannot be empty"}
-	}
-
-	// Check tenant quota
-	if s.tenants != nil {
-		if err := s.tenants.CheckQuota(ctx, tenantID, QuotaResourceGroups); err != nil {
-			return nil, err
-		}
-	}
-
-	now := time.Now().UTC()
-	groupID := opts.ID
-	if groupID == "" {
-		groupID = uuid.New().String()
-	}
-	group := &Group{
-		ID:          groupID,
-		TenantID:    tenantID,
-		Name:        strings.TrimSpace(opts.Name),
-		Description: strings.TrimSpace(opts.Description),
-		Members:     []string{},
-		Created:     now,
-		Updated:     now,
-	}
-
-	if err := s.groupStorage.CreateGroup(ctx, group); err != nil {
-		return nil, api.NewOperationFailedError("create group", err)
-	}
-
-	return group, nil
-}
-
-// GetGroup retrieves a group by ID within a tenant.
-func (s *IdentityStore) GetGroup(ctx context.Context, tenantID, groupID string) (*Group, error) {
-	if err := validateTenantID(tenantID); err != nil {
-		return nil, err
-	}
-	if err := validateGroupID(groupID); err != nil {
-		return nil, err
-	}
-
-	group, err := s.groupStorage.GetGroup(ctx, tenantID, groupID)
-	if err != nil {
-		return nil, err
-	}
-
-	return group, nil
-}
-
-// UpdateGroup updates an existing group.
-func (s *IdentityStore) UpdateGroup(ctx context.Context, tenantID, groupID string, opts UpdateGroupOptions) (*Group, error) {
-	if err := validateTenantID(tenantID); err != nil {
-		return nil, err
-	}
-	if err := validateGroupID(groupID); err != nil {
-		return nil, err
-	}
-
-	group, err := s.groupStorage.GetGroup(ctx, tenantID, groupID)
-	if err != nil {
-		return nil, err
-	}
-
-	if opts.Name != nil {
-		name := strings.TrimSpace(*opts.Name)
-		if name == "" {
-			return nil, &ValidationError{Field: "name", Message: "group name cannot be empty"}
-		}
-		group.Name = name
-	}
-
-	if opts.Description != nil {
-		group.Description = strings.TrimSpace(*opts.Description)
-	}
-
-	// Membership is the same bidirectional fact UpdateUser reconciles from the
-	// other end, and it was written here from one end only: replacing
-	// group.Members left every affected account's own Groups list untouched, so
-	// GetGroupMembers and a user-centric read disagreed and the update reported
-	// success. Whichever side a caller changes, both sides move.
-	//
-	// Members are resolved BEFORE any write — a membership naming a user that
-	// does not exist is a grant to nobody, and writing it would put an
-	// unresolvable id where authorization looks.
-	var joined, left []string
-	priorMembers := append([]string(nil), group.Members...)
-	if opts.Members != nil {
-		for _, userID := range *opts.Members {
-			if _, err := s.userStorage.GetUser(ctx, tenantID, userID); err != nil {
-				return nil, err
-			}
-		}
-		joined, left = diffGroupMembership(group.Members, *opts.Members)
-		group.Members = *opts.Members
-	}
-
-	group.Updated = time.Now().UTC()
-
-	if err := s.groupStorage.UpdateGroup(ctx, group); err != nil {
-		return nil, api.NewOperationFailedError("update group", err)
-	}
-
-	// The user side. On failure the accounts already moved are put back and the
-	// group's own list is restored, so a partial application cannot outlive the
-	// error the caller receives.
-	for i, userID := range joined {
-		if err := s.setUserGroupMembership(ctx, tenantID, userID, groupID, true); err != nil {
-			s.rollbackGroupMemberDelta(ctx, tenantID, group, priorMembers, joined[:i], nil)
-			return nil, api.NewOperationFailedError("add group to user "+userID, err)
-		}
-	}
-	for i, userID := range left {
-		if err := s.setUserGroupMembership(ctx, tenantID, userID, groupID, false); err != nil {
-			s.rollbackGroupMemberDelta(ctx, tenantID, group, priorMembers, joined, left[:i])
-			return nil, api.NewOperationFailedError("remove group from user "+userID, err)
-		}
-	}
-
-	return group, nil
-}
-
-// setUserGroupMembership adds or removes one group id on one user's own group
-// list. It is the user-side half of a membership change driven from the group,
-// and it is idempotent in both directions so a retry converges.
-func (s *IdentityStore) setUserGroupMembership(ctx context.Context, tenantID, userID, groupID string, member bool) error {
-	user, err := s.userStorage.GetUser(ctx, tenantID, userID)
-	if err != nil {
-		return err
-	}
-
-	groups := make([]string, 0, len(user.Groups)+1)
-	held := false
-	for _, id := range user.Groups {
-		if id == groupID {
-			held = true
-			continue
-		}
-		groups = append(groups, id)
-	}
-	if member {
-		if held {
-			return nil
-		}
-		groups = append(groups, groupID)
-	} else if !held {
-		return nil
-	}
-
-	user.Groups = groups
-	user.Updated = time.Now().UTC()
-	return s.userStorage.UpdateUser(ctx, user)
-}
-
-// rollbackGroupMemberDelta compensates a partially-applied membership change
-// driven from the group: it puts every account it moved back and restores the
-// group's own member list. Best-effort for the same reason
-// rollbackMembershipDelta is.
-func (s *IdentityStore) rollbackGroupMemberDelta(
-	ctx context.Context,
-	tenantID string,
-	group *Group,
-	priorMembers []string,
-	joined, left []string,
-) {
-	for _, userID := range joined {
-		_ = s.setUserGroupMembership(ctx, tenantID, userID, group.ID, false)
-	}
-	for _, userID := range left {
-		_ = s.setUserGroupMembership(ctx, tenantID, userID, group.ID, true)
-	}
-	group.Members = priorMembers
-	group.Updated = time.Now().UTC()
-	_ = s.groupStorage.UpdateGroup(ctx, group)
-}
-
-// DeleteGroup deletes a group from the tenant.
-func (s *IdentityStore) DeleteGroup(ctx context.Context, tenantID, groupID string) error {
-	if err := validateTenantID(tenantID); err != nil {
-		return err
-	}
-	if err := validateGroupID(groupID); err != nil {
-		return err
-	}
-
-	// Get group to remove from users
-	group, err := s.groupStorage.GetGroup(ctx, tenantID, groupID)
-	if err != nil {
-		return err
-	}
-
-	// Remove group from all member users
-	for _, userID := range group.Members {
-		user, err := s.userStorage.GetUser(ctx, tenantID, userID)
-		if err != nil {
-			continue // User might have been deleted
-		}
-
-		// Remove group from user's groups
-		newGroupIDs := make([]string, 0, len(user.Groups))
-		for _, gid := range user.Groups {
-			if gid != groupID {
-				newGroupIDs = append(newGroupIDs, gid)
-			}
-		}
-		user.Groups = newGroupIDs
-		user.Updated = time.Now().UTC()
-
-		if err := s.userStorage.UpdateUser(ctx, user); err != nil {
-			return api.NewOperationFailedError("update user "+userID, err)
-		}
-	}
-
-	if err := s.groupStorage.DeleteGroup(ctx, tenantID, groupID); err != nil {
-		return api.NewOperationFailedError("delete group", err)
-	}
-
-	return nil
-}
-
-// ListGroups returns a list of groups in the tenant.
-func (s *IdentityStore) ListGroups(ctx context.Context, tenantID string, opts ListOptions) ([]*Group, error) {
-	if err := validateTenantID(tenantID); err != nil {
-		return nil, err
-	}
-
-	groups, err := s.groupStorage.ListGroups(ctx, tenantID, opts)
-	if err != nil {
-		return nil, api.NewOperationFailedError("list groups", err)
-	}
-
-	return groups, nil
-}
-
-// AddUserToGroup adds a user to a group.
-func (s *IdentityStore) AddUserToGroup(ctx context.Context, tenantID, groupID, userID string) error {
-	if err := validateTenantID(tenantID); err != nil {
-		return err
-	}
-	if err := validateGroupID(groupID); err != nil {
-		return err
-	}
-	if err := validateUserID(userID); err != nil {
-		return err
-	}
-
-	// Get user and group
-	user, err := s.userStorage.GetUser(ctx, tenantID, userID)
-	if err != nil {
-		return err
-	}
-
-	// The group is read to prove it EXISTS before the user record is written:
-	// the membership op below would report the same not-found, but only after
-	// the user had already been given the group. The record itself is not used
-	// — the member list is edited through the guarded op, never rewritten from
-	// a snapshot.
-	if _, err := s.groupStorage.GetGroup(ctx, tenantID, groupID); err != nil {
-		return err
-	}
-
-	// Check if user is already in group
-	for _, gid := range user.Groups {
-		if gid == groupID {
-			return ErrUserAlreadyInGroup
-		}
-	}
-
-	// Add group to user
-	user.Groups = append(user.Groups, groupID)
-	user.Updated = time.Now().UTC()
-
-	if err := s.userStorage.UpdateUser(ctx, user); err != nil {
-		return api.NewOperationFailedError("update user", err)
-	}
-
-	// Add user to group through the guarded op, for the same reason
-	// addMemberToGroup uses it: appending to a list read a moment ago erases
-	// any membership committed in between.
-	if err := s.groupStorage.AddGroupMember(ctx, tenantID, groupID, userID); err != nil {
-		// Rollback user update
-		user.Groups = user.Groups[:len(user.Groups)-1]
-		_ = s.userStorage.UpdateUser(ctx, user)
-		return api.NewOperationFailedError("update group", err)
-	}
-
-	return nil
-}
-
-// RemoveUserFromGroup removes a user from a group.
-func (s *IdentityStore) RemoveUserFromGroup(ctx context.Context, tenantID, groupID, userID string) error {
-	if err := validateTenantID(tenantID); err != nil {
-		return err
-	}
-	if err := validateGroupID(groupID); err != nil {
-		return err
-	}
-	if err := validateUserID(userID); err != nil {
-		return err
-	}
-
-	// Get user and group
-	user, err := s.userStorage.GetUser(ctx, tenantID, userID)
-	if err != nil {
-		return err
-	}
-
-	// Read for existence only, as in AddUserToGroup: the member list is edited
-	// through the guarded op rather than rewritten from this snapshot.
-	if _, err := s.groupStorage.GetGroup(ctx, tenantID, groupID); err != nil {
-		return err
-	}
-
-	// Check if user is in group
-	found := false
-	newGroupIDs := make([]string, 0, len(user.Groups))
-	for _, gid := range user.Groups {
-		if gid == groupID {
-			found = true
-		} else {
-			newGroupIDs = append(newGroupIDs, gid)
-		}
-	}
-
-	if !found {
-		return ErrUserNotInGroup
-	}
-
-	// Remove group from user
-	user.Groups = newGroupIDs
-	user.Updated = time.Now().UTC()
-
-	if err := s.userStorage.UpdateUser(ctx, user); err != nil {
-		return api.NewOperationFailedError("update user", err)
-	}
-
-	// Remove user from group through the guarded op: filtering a list read a
-	// moment ago drops any membership added in between.
-	if err := s.groupStorage.RemoveGroupMember(ctx, tenantID, groupID, userID); err != nil {
-		return api.NewOperationFailedError("update group", err)
-	}
-
-	return nil
-}
-
-// GetGroupMembers retrieves all users that are members of a group.
-func (s *IdentityStore) GetGroupMembers(ctx context.Context, tenantID, groupID string) ([]*User, error) {
-	if err := validateTenantID(tenantID); err != nil {
-		return nil, err
-	}
-	if err := validateGroupID(groupID); err != nil {
-		return nil, err
-	}
-
-	group, err := s.groupStorage.GetGroup(ctx, tenantID, groupID)
-	if err != nil {
-		return nil, err
-	}
-
-	users := make([]*User, 0, len(group.Members))
-	for _, userID := range group.Members {
-		user, err := s.userStorage.GetUser(ctx, tenantID, userID)
-		if err != nil {
-			// coded-sentinel-ok: the CLASS is the intent. A member whose record
-			// the store cannot produce is skipped however it went missing, and
-			// the direction is fail-safe: a dropped member can only narrow the
-			// listing, never widen it.
-			if errors.Is(err, ErrUserNotFound) {
-				continue // Skip deleted users
-			}
-			return nil, api.NewOperationFailedError("get user "+userID, err)
-		}
-		users = append(users, user)
-	}
-
-	// Reads the user store directly rather than through GetUser, so it needs
-	// the redaction applied explicitly — a group listing hands out whole user
-	// records just as ListUsers does.
 	return users, nil
 }
 
@@ -1527,6 +941,35 @@ func (s *IdentityStore) GetRole(ctx context.Context, tenantID, roleID string) (*
 	}
 
 	return role, nil
+}
+
+// RoleNames returns the names of the roles user is bound to, in assignment
+// order and without repeats. It is what the OIDC `groups` claim carries: the
+// account record holds no group list of its own, so the groups a token states
+// are the roles the identity store binds the user to.
+//
+// A bound role that no longer exists is skipped — it grants nothing, so it
+// names nothing. Any other lookup failure is returned, because a claim built
+// from a partial read would under-state the account without saying so.
+func (s *IdentityStore) RoleNames(ctx context.Context, user *User) ([]string, error) {
+	if user == nil || len(user.Roles) == 0 {
+		return nil, nil
+	}
+	names := make([]string, 0, len(user.Roles))
+	for _, roleID := range user.Roles {
+		role, err := s.GetRole(ctx, user.TenantID, roleID)
+		if err != nil {
+			if dberrors.IsNotFound(err) {
+				continue
+			}
+			return nil, err
+		}
+		if role.Name == "" || slices.Contains(names, role.Name) {
+			continue
+		}
+		names = append(names, role.Name)
+	}
+	return names, nil
 }
 
 // GetRoleByName retrieves a role by its tenant-scoped name.

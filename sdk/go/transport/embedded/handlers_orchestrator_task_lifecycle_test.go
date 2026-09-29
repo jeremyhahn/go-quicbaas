@@ -124,6 +124,32 @@ func TestEmbedded_ConvertTask_CarriesLifecycleFields(t *testing.T) {
 	assert.Nil(t, convertTask(nil))
 }
 
+// TestEmbedded_ConvertTask_CarriesFaultAccounting: the in-process transport
+// must answer "why did this stop" exactly as REST and gRPC do
+// (go-quicbaas#947), so it reads the same derivations rather than its own.
+func TestEmbedded_ConvertTask_CarriesFaultAccounting(t *testing.T) {
+	held := convertTask(&orchestration.Task{
+		ID: "t1", Status: orchestration.TaskStatusBlocked, Attempts: 3, EnvironmentFaults: 1, QuestionAttempts: 1,
+		BlockKind: orchestration.TaskBlockKindBlocked, BlockedReason: "no checkout",
+		BlockFaultClass:  orchestration.FaultWorkspaceUnfit,
+		ConclusionReason: orchestration.TaskConcludedRunnerParked,
+	})
+	assert.Equal(t, "workspace_unfit", held.BlockFaultClass)
+	assert.Equal(t, "runner_parked", held.ConclusionReason)
+	assert.Equal(t, 1, held.ChargedAttempts)
+	assert.Equal(t, orchestration.DefaultAttemptBudget, held.EffectiveBudget)
+	assert.Equal(t, "workspace_unfit", held.FaultClass)
+	assert.Equal(t, "environment", held.FaultOrigin)
+
+	failed := convertTask(&orchestration.Task{
+		ID: "t2", Status: orchestration.TaskStatusFailed, Attempts: 2, AttemptBudget: 2,
+		ConclusionReason: orchestration.TaskConcludedBudgetExhausted,
+	})
+	assert.Equal(t, "work", failed.FaultOrigin)
+	assert.Equal(t, "", failed.FaultClass)
+	assert.Equal(t, 2, failed.EffectiveBudget)
+}
+
 func TestEmbedded_ConvertJobStatus_CarriesTaskBindingAndSessions(t *testing.T) {
 	got := convertJobStatus(&orchestration.JobStatus{
 		JobID: "j1", TaskID: "task-1", Attempt: 2, Node: "n", HeartbeatAt: 5, FailureClass: "environment",

@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"math"
 	"strings"
 
 	"google.golang.org/grpc"
@@ -38,18 +39,18 @@ func isProjectService(svc string) bool {
 type projectHandlerFunc func(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error)
 
 // projectMethodMap gives O(1) dispatch from SDK method name to handler.
-// GrantAgentRole and RevokeAgentRole are dedicated RPCs rather than
+// GrantFleetNodeRole and RevokeFleetNodeRole are dedicated RPCs rather than
 // UpdateProject calls: UpdateProject.agent_roles replaces the whole role map,
 // so emulating a single-agent grant there would drop every other agent's role.
 var projectMethodMap = map[string]projectHandlerFunc{
-	"Create":          handleProjectCreate,
-	"Get":             handleProjectGet,
-	"GetByName":       handleProjectGetByName,
-	"Update":          handleProjectUpdate,
-	"Delete":          handleProjectDelete,
-	"List":            handleProjectList,
-	"GrantAgentRole":  handleProjectGrantAgentRole,
-	"RevokeAgentRole": handleProjectRevokeAgentRole,
+	"Create":              handleProjectCreate,
+	"Get":                 handleProjectGet,
+	"GetByName":           handleProjectGetByName,
+	"Update":              handleProjectUpdate,
+	"Delete":              handleProjectDelete,
+	"List":                handleProjectList,
+	"GrantFleetNodeRole":  handleProjectGrantFleetNodeRole,
+	"RevokeFleetNodeRole": handleProjectRevokeFleetNodeRole,
 }
 
 // projectHandler adapts the SDK project surface to the generated
@@ -83,17 +84,25 @@ func handleProjectCreate(ctx context.Context, conn *grpc.ClientConn, req interfa
 	if !ok {
 		return nil, errors.NewInvalidInput(op, "invalid request type")
 	}
+	tmpfsMB, err := storageMBToProto(op, "workspace_tmpfs_mb", sdkReq.WorkspaceTmpfsMB)
+	if err != nil {
+		return nil, err
+	}
+	memoryMB, err := storageMBToProto(op, "container_memory_mb", sdkReq.ContainerMemoryMB)
+	if err != nil {
+		return nil, err
+	}
 	resp, err := pb.NewProjectServiceClient(conn).CreateProject(ctx, &pb.CreateProjectRequest{
 		TenantId:         sdkReq.TenantID,
 		Name:             sdkReq.Name,
 		Description:      sdkReq.Description,
-		WorkspaceAgentId: sdkReq.WorkspaceAgentID,
+		WorkspaceAgentId: sdkReq.WorkspaceFleetNodeID,
 		WorkspacePath:    sdkReq.WorkspacePath,
 		HostAffinity:     sdkReq.HostAffinity,
-		DefaultLeadAgent: sdkReq.DefaultLeadAgent,
+		DefaultLeadAgent: agentRefToProto(sdkReq.DefaultLeadAgent),
 		GitRepoUrl:       sdkReq.GitRepoURL,
 		GitDefaultBranch: sdkReq.GitDefaultBranch,
-		TokenBudget:      sdkReq.TokenBudget,
+		Spend:            spendLimitsToProto(sdkReq.Spend),
 		GpuMinutes:       sdkReq.GPUMinutes,
 		MaxConcurrency:   int32(sdkReq.MaxConcurrency),
 		Metadata:         sdkReq.Metadata,
@@ -111,6 +120,10 @@ func handleProjectCreate(ctx context.Context, conn *grpc.ClientConn, req interfa
 		GitSshKeyName:       sdkReq.GitSSHKeyName,
 		GitSshKeyScope:      sdkReq.GitSSHKeyScope,
 		GitSshKeyOwner:      sdkReq.GitSSHKeyOwner,
+		WorkspaceTier:       string(sdkReq.WorkspaceTier),
+		WorkspaceTmpfsMb:    tmpfsMB,
+		ContainerMemoryMb:   memoryMB,
+		SessionRotation:     string(sdkReq.SessionRotation),
 	})
 	if err != nil {
 		return nil, convertGRPCError(err, op)
@@ -156,40 +169,57 @@ func handleProjectUpdate(ctx context.Context, conn *grpc.ClientConn, req interfa
 	if !ok {
 		return nil, errors.NewInvalidInput(op, "invalid request type")
 	}
+	tmpfsMB, err := optionalStorageMBToProto(op, "workspace_tmpfs_mb", sdkReq.WorkspaceTmpfsMB)
+	if err != nil {
+		return nil, err
+	}
+	memoryMB, err := optionalStorageMBToProto(op, "container_memory_mb", sdkReq.ContainerMemoryMB)
+	if err != nil {
+		return nil, err
+	}
 	resp, err := pb.NewProjectServiceClient(conn).UpdateProject(ctx, &pb.UpdateProjectRequest{
 		TenantId:         sdkReq.TenantID,
 		ProjectId:        sdkReq.ProjectID,
 		Name:             sdkReq.Name,
 		Description:      sdkReq.Description,
 		ClearDescription: sdkReq.ClearDescription,
-		WorkspaceAgentId: sdkReq.WorkspaceAgentID,
+		WorkspaceAgentId: sdkReq.WorkspaceFleetNodeID,
 		WorkspacePath:    sdkReq.WorkspacePath,
 		HostAffinity:     sdkReq.HostAffinity,
-		DefaultLeadAgent: sdkReq.DefaultLeadAgent,
+		DefaultLeadAgent: agentRefToProto(sdkReq.DefaultLeadAgent),
 		GitRepoUrl:       sdkReq.GitRepoURL,
 		GitDefaultBranch: sdkReq.GitDefaultBranch,
 		GitCurrentSha:    sdkReq.GitCurrentSHA,
-		AgentRoles:       projectRolesToProto(sdkReq.AgentRoles),
-		TokenBudget:      sdkReq.TokenBudget,
+		AgentRoles:       projectRolesToProto(sdkReq.FleetNodeRoles),
+		Spend:            optionalSpendLimitsToProto(sdkReq.Spend),
 		GpuMinutes:       sdkReq.GPUMinutes,
 		MaxConcurrency:   int32PtrFromInt(sdkReq.MaxConcurrency),
 		Metadata:         sdkReq.Metadata,
 
-		DefaultWorkflow:      sdkReq.DefaultWorkflow,
-		ClearDefaultWorkflow: sdkReq.ClearDefaultWorkflow,
-		Autonomous:           sdkReq.Autonomous,
-		ContextRepos:         contextReposToProto(sdkReq.ContextRepos),
-		ClearContextRepos:    sdkReq.ClearContextRepos,
-		GitAuthorName:        sdkReq.GitAuthorName,
-		GitAuthorEmail:       sdkReq.GitAuthorEmail,
-		GitSigningEnabled:    sdkReq.GitSigningEnabled,
-		GitSigningAlgorithm:  sdkReq.GitSigningAlgorithm,
-		GitSigningKeyName:    sdkReq.GitSigningKeyName,
-		GitSigningKeyScope:   sdkReq.GitSigningKeyScope,
-		GitSigningKeyOwner:   sdkReq.GitSigningKeyOwner,
-		GitSshKeyName:        sdkReq.GitSSHKeyName,
-		GitSshKeyScope:       sdkReq.GitSSHKeyScope,
-		GitSshKeyOwner:       sdkReq.GitSSHKeyOwner,
+		DefaultWorkflow:          sdkReq.DefaultWorkflow,
+		ClearDefaultWorkflow:     sdkReq.ClearDefaultWorkflow,
+		Autonomous:               sdkReq.Autonomous,
+		Parked:                   sdkReq.Parked,
+		ContextRepos:             contextReposToProto(sdkReq.ContextRepos),
+		ClearContextRepos:        sdkReq.ClearContextRepos,
+		GitAuthorName:            sdkReq.GitAuthorName,
+		GitAuthorEmail:           sdkReq.GitAuthorEmail,
+		GitSigningEnabled:        sdkReq.GitSigningEnabled,
+		GitSigningAlgorithm:      sdkReq.GitSigningAlgorithm,
+		GitSigningKeyName:        sdkReq.GitSigningKeyName,
+		GitSigningKeyScope:       sdkReq.GitSigningKeyScope,
+		GitSigningKeyOwner:       sdkReq.GitSigningKeyOwner,
+		GitSshKeyName:            sdkReq.GitSSHKeyName,
+		GitSshKeyScope:           sdkReq.GitSSHKeyScope,
+		GitSshKeyOwner:           sdkReq.GitSSHKeyOwner,
+		GitSigningRetireKeyName:  sdkReq.GitSigningRetireKeyName,
+		GitSigningRetireKeyScope: sdkReq.GitSigningRetireKeyScope,
+		GitSigningRetireKeyOwner: sdkReq.GitSigningRetireKeyOwner,
+		GitSigningRetiredAt:      sdkReq.GitSigningRetiredAt,
+		WorkspaceTier:            string(sdkReq.WorkspaceTier),
+		WorkspaceTmpfsMb:         tmpfsMB,
+		ContainerMemoryMb:        memoryMB,
+		SessionRotation:          string(sdkReq.SessionRotation),
 	})
 	if err != nil {
 		return nil, convertGRPCError(err, op)
@@ -219,15 +249,20 @@ func handleProjectList(ctx context.Context, conn *grpc.ClientConn, req interface
 	if !ok {
 		return nil, errors.NewInvalidInput(op, "invalid request type")
 	}
+	paging := pageFieldsFromParams(sdkReq.Params)
 	resp, err := pb.NewProjectServiceClient(conn).ListProjects(ctx, &pb.ListProjectsRequest{
 		TenantId: sdkReq.TenantID,
+		Limit:    paging.limit,
+		Offset:   paging.offset,
+		Sort:     paging.sort,
+		Q:        paging.q,
 	})
 	if err != nil {
 		return nil, convertGRPCError(err, op)
 	}
 	out := &project.ListProjectsResponse{
 		Projects: make([]*project.ProjectInfo, 0, len(resp.Projects)),
-		Total:    int(resp.Total),
+		Envelope: pageEnvelopeFromProto(resp.GetTotal(), resp.GetLimit(), resp.GetOffset(), resp.GetNextOffset()),
 	}
 	for _, p := range resp.Projects {
 		out.Projects = append(out.Projects, projectInfoFromProto(p))
@@ -235,51 +270,51 @@ func handleProjectList(ctx context.Context, conn *grpc.ClientConn, req interface
 	return out, nil
 }
 
-// handleProjectGrantAgentRole sets one agent's role through the dedicated RPC,
+// handleProjectGrantFleetNodeRole sets one agent's role through the dedicated RPC,
 // leaving the project's other role entries untouched.
-func handleProjectGrantAgentRole(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
-	const op = "grpc.project.GrantAgentRole"
-	sdkReq, ok := req.(*project.GrantAgentRoleRequest)
+func handleProjectGrantFleetNodeRole(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	const op = "grpc.project.GrantFleetNodeRole"
+	sdkReq, ok := req.(*project.GrantFleetNodeRoleRequest)
 	if !ok {
 		return nil, errors.NewInvalidInput(op, "invalid request type")
 	}
-	resp, err := pb.NewProjectServiceClient(conn).GrantAgentRole(ctx, &pb.GrantAgentRoleRequest{
+	resp, err := pb.NewProjectServiceClient(conn).GrantFleetNodeRole(ctx, &pb.GrantFleetNodeRoleRequest{
 		TenantId:  sdkReq.TenantID,
 		ProjectId: sdkReq.ProjectID,
-		AgentId:   sdkReq.AgentID,
+		NodeId:    sdkReq.FleetNodeID,
 		Role:      string(sdkReq.Role),
 	})
 	if err != nil {
 		return nil, convertGRPCError(err, op)
 	}
-	return &project.GrantAgentRoleResponse{
-		ProjectID: resp.ProjectId,
-		AgentID:   resp.AgentId,
-		Role:      project.ProjectRole(resp.Role),
-		Timestamp: timeFromUnix(resp.Timestamp),
+	return &project.GrantFleetNodeRoleResponse{
+		ProjectID:   resp.ProjectId,
+		FleetNodeID: resp.NodeId,
+		Role:        project.ProjectRole(resp.Role),
+		Timestamp:   timeFromUnix(resp.Timestamp),
 	}, nil
 }
 
-// handleProjectRevokeAgentRole denies one agent through the dedicated RPC.
-// See handleProjectGrantAgentRole.
-func handleProjectRevokeAgentRole(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
-	const op = "grpc.project.RevokeAgentRole"
-	sdkReq, ok := req.(*project.RevokeAgentRoleRequest)
+// handleProjectRevokeFleetNodeRole denies one agent through the dedicated RPC.
+// See handleProjectGrantFleetNodeRole.
+func handleProjectRevokeFleetNodeRole(ctx context.Context, conn *grpc.ClientConn, req interface{}) (interface{}, error) {
+	const op = "grpc.project.RevokeFleetNodeRole"
+	sdkReq, ok := req.(*project.RevokeFleetNodeRoleRequest)
 	if !ok {
 		return nil, errors.NewInvalidInput(op, "invalid request type")
 	}
-	resp, err := pb.NewProjectServiceClient(conn).RevokeAgentRole(ctx, &pb.RevokeAgentRoleRequest{
+	resp, err := pb.NewProjectServiceClient(conn).RevokeFleetNodeRole(ctx, &pb.RevokeFleetNodeRoleRequest{
 		TenantId:  sdkReq.TenantID,
 		ProjectId: sdkReq.ProjectID,
-		AgentId:   sdkReq.AgentID,
+		NodeId:    sdkReq.FleetNodeID,
 	})
 	if err != nil {
 		return nil, convertGRPCError(err, op)
 	}
-	return &project.RevokeAgentRoleResponse{
-		ProjectID: resp.ProjectId,
-		AgentID:   resp.AgentId,
-		Timestamp: timeFromUnix(resp.Timestamp),
+	return &project.RevokeFleetNodeRoleResponse{
+		ProjectID:   resp.ProjectId,
+		FleetNodeID: resp.NodeId,
+		Timestamp:   timeFromUnix(resp.Timestamp),
 	}, nil
 }
 
@@ -353,13 +388,22 @@ func projectInfoFromProto(p *pb.Project) *project.ProjectInfo {
 		Name:        p.Name,
 		Description: p.Description,
 		Workspace: project.ProjectWorkspace{
-			AgentID: p.WorkspaceAgentId,
-			Path:    p.WorkspacePath,
+			FleetNodeID: p.WorkspaceAgentId,
+			Path:        p.WorkspacePath,
 		},
+		Storage: project.ProjectStorage{
+			WorkspaceTier:     project.WorkspaceTier(p.WorkspaceTier),
+			WorkspaceTmpfsMB:  int(p.WorkspaceTmpfsMb),
+			ContainerMemoryMB: int(p.ContainerMemoryMb),
+		},
+		SessionRotation:  project.SessionRotationPolicy(p.SessionRotation),
 		HostAffinity:     p.HostAffinity,
-		DefaultLeadAgent: p.DefaultLeadAgent,
+		DefaultLeadAgent: agentRefFromProto(p.GetDefaultLeadAgent()),
 		DefaultWorkflow:  p.DefaultWorkflow,
 		Autonomous:       p.Autonomous,
+		Parked:           p.Parked,
+		ParkedAt:         timeFromUnix(p.ParkedAtUnix),
+		ParkedBy:         p.ParkedBy,
 		ContextRepos:     contextReposFromProto(p.ContextRepos),
 		Git: project.ProjectGit{
 			RepoURL:       p.GitRepoUrl,
@@ -370,17 +414,18 @@ func projectInfoFromProto(p *pb.Project) *project.ProjectInfo {
 				Enabled:   p.GitSigningEnabled,
 				Algorithm: p.GitSigningAlgorithm,
 				Key:       project.KMSKeyRef{Name: p.GitSigningKeyName, Scope: p.GitSigningKeyScope, Owner: p.GitSigningKeyOwner},
+				Retired:   retiredSigningKeysFromProto(p.GitSigningRetired),
 			},
 			SSHKey: project.KMSKeyRef{Name: p.GitSshKeyName, Scope: p.GitSshKeyScope, Owner: p.GitSshKeyOwner},
 		},
 		Permissions: project.ProjectPermissions{
-			AgentRoles: projectRolesFromProto(p.AgentRoles),
+			FleetNodeRoles: projectRolesFromProto(p.AgentRoles),
 		},
 		Quotas: project.ProjectQuotas{
-			TokenBudget:    p.TokenBudget,
 			GPUMinutes:     p.GpuMinutes,
 			MaxConcurrency: int(p.MaxConcurrency),
 		},
+		Spend:     spendLimitsFromProto(p.GetSpend()),
 		Metadata:  p.Metadata,
 		CreatedAt: timeFromUnix(p.CreatedAtUnix),
 		UpdatedAt: timeFromUnix(p.UpdatedAtUnix),
@@ -396,4 +441,44 @@ func int32PtrFromInt(v *int) *int32 {
 	}
 	n := int32(*v) //nolint:gosec // G115: a concurrency cap is small by construction
 	return &n
+}
+
+// storageMBToProto narrows a storage size in MiB to the int32 the wire
+// carries. A size outside that range is refused rather than truncated: a
+// wrapped value could land on a plausible limit the operator never asked for.
+// A negative size passes through so the server's validation refuses it with
+// the same error every transport returns.
+func storageMBToProto(op, field string, v int) (int32, error) {
+	if v > math.MaxInt32 || v < math.MinInt32 {
+		return 0, errors.NewInvalidInput(op, field+" is out of range")
+	}
+	return int32(v), nil
+}
+
+// optionalStorageMBToProto is storageMBToProto preserving absence: zero means
+// unsized / the runtime's default, so nil ("leave it alone") and zero ("lift
+// the limit") must stay different across the transport.
+func optionalStorageMBToProto(op, field string, v *int) (*int32, error) {
+	if v == nil {
+		return nil, nil
+	}
+	n, err := storageMBToProto(op, field, *v)
+	if err != nil {
+		return nil, err
+	}
+	return &n, nil
+}
+
+// retiredSigningKeysFromProto reads a project's trusted signing history.
+func retiredSigningKeysFromProto(keys []*pb.RetiredSigningKey) []project.RetiredSigningKey {
+	if len(keys) == 0 {
+		return nil
+	}
+	out := make([]project.RetiredSigningKey, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, project.RetiredSigningKey{
+			PublicKey: key.GetPublicKey(), Name: key.GetName(), RetiredAt: timeFromUnix(key.GetRetiredAtUnix()),
+		})
+	}
+	return out
 }

@@ -15,7 +15,10 @@ package sdlc
 
 import (
 	"context"
+	"errors"
 	"strings"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 // =============================================================================
@@ -56,14 +59,46 @@ type WebhookIngestResult struct {
 	// Nudged says the poller was asked to sweep the project.
 	Nudged bool
 
+	// Parked is the refusal a PARKED project gave the delivery's new work,
+	// as an *orchestration.ProjectParkedError; nil while the project is
+	// open. It does NOT fail the delivery: the forge must not retry it, and
+	// nothing is queued to replay it — the first sweep after a resume reads
+	// the forge afresh. No triage pass is started for it, while the parts of
+	// a delivery that serve work already started (an owner's ruling, a
+	// review) still act. Carried for the caller to log.
+	Parked error
+
 	// Triaged says a triage pass was started for the project, which happens
 	// only for the issue deliveries that can change a verdict.
 	Triaged bool
 
+	// TriageErr is why a triage pass the delivery should have started was
+	// not, as a *TriageWakeError; nil when triage was woken or had no reason
+	// to be. It does NOT fail the delivery, so it is carried here for the
+	// caller to log rather than returned.
+	TriageErr error
+
 	// ReviewStarted says a review job was started for the delivery's pull
 	// request.
 	ReviewStarted bool
+
+	// RulingReadmitted says an issue comment was an owner's ruling on the
+	// issue's parked task, and the task was readmitted.
+	RulingReadmitted bool
+
+	// RulingError is why an issue comment could not be examined as a
+	// ruling. It does not fail the delivery: the unblock sweep reads the
+	// same comments on its next pass. Carried for the caller to log.
+	RulingError error
 }
+
+// RulingReadmitter readmits the parked task an issue's owner ruling clears.
+// UnblockSweeper satisfies it.
+type RulingReadmitter interface {
+	ReadmitOnRuling(ctx context.Context, tenantID, projectID string, issue int) (bool, error)
+}
+
+var _ RulingReadmitter = (*UnblockSweeper)(nil)
 
 // WebhookIngestor verifies deliveries and nudges the poller.
 type WebhookIngestor struct {
@@ -81,6 +116,12 @@ type WebhookIngestor struct {
 	// issue now ready". A node with no triage runtime still ingests
 	// deliveries and still feeds the poller.
 	triage ProjectNudger
+
+	// rulings readmits a parked task when a verified issue-comment delivery
+	// is an owner's ruling on it. Set rather than constructed, for the same
+	// reason as triage: a node without it still ingests every delivery, and
+	// the unblock sweep still finds the ruling on its own pass.
+	rulings RulingReadmitter
 }
 
 // NewWebhookIngestor wires the ingestor.
@@ -112,6 +153,12 @@ func NewWebhookIngestor(routes WebhookRouter, bindings BindingReader, secrets We
 // correct behaviour on a node whose triage runtime is not mounted.
 func (i *WebhookIngestor) SetTriageNudger(triage ProjectNudger) {
 	i.triage = triage
+}
+
+// SetRulingReadmitter gives the ingestor the ruling path to call for a
+// verified issue-comment delivery. nil leaves rulings to the unblock sweep.
+func (i *WebhookIngestor) SetRulingReadmitter(rulings RulingReadmitter) {
+	i.rulings = rulings
 }
 
 // Ingest verifies one delivery and nudges the poller for its project.
@@ -165,15 +212,23 @@ func (i *WebhookIngestor) Ingest(ctx context.Context, delivery WebhookDelivery) 
 	if event.Kind == EventUnsupported {
 		return result, nil
 	}
-	if err := i.nudger.NudgeProject(ctx, tenantID, binding.ProjectID); err != nil {
+	switch err := i.nudger.NudgeProject(ctx, tenantID, binding.ProjectID); {
+	case err == nil:
+		result.Nudged = true
+	case errors.Is(err, orchestration.ErrProjectParked):
+		result.Parked = err
+	default:
 		return nil, backendError("NudgeProject", err)
 	}
-	result.Nudged = true
-	// Triage is woken BEFORE the review is dispatched, because waking it
-	// cannot fail and dispatching a review can: ordered the other way, a
-	// review trigger that is down would also suppress an unrelated triage
-	// pass on the same delivery.
-	result.Triaged = i.wakeTriage(ctx, tenantID, binding.ProjectID, event.Kind)
+	// Triage is woken BEFORE the review is dispatched, because a failed wake
+	// does not fail the delivery and a failed review dispatch does: ordered
+	// the other way, a review trigger that is down would also suppress an
+	// unrelated triage pass on the same delivery. A parked project is not
+	// triaged at all: judging new issues is intake.
+	if result.Parked == nil {
+		result.Triaged, result.TriageErr = i.wakeTriage(ctx, tenantID, binding.ProjectID, event.Kind)
+	}
+	result.RulingReadmitted, result.RulingError = i.readmitOnRuling(ctx, tenantID, binding.ProjectID, event)
 
 	// THE REVIEW IS DISPATCHED AFTER THE NUDGE AND NEVER INSTEAD OF IT. The
 	// poller stays the single path an issue becomes a Task through, whatever
@@ -188,20 +243,32 @@ func (i *WebhookIngestor) Ingest(ctx context.Context, delivery WebhookDelivery) 
 }
 
 // wakeTriage starts a triage pass for the deliveries that can change a
-// verdict, and reports whether it did.
+// verdict, and reports whether it did and, if it could not, why.
 //
 // A FAILURE HERE DOES NOT FAIL THE DELIVERY. The forge retries a delivery
 // this handler rejects, and re-verifying and re-nudging the poller to reach
 // a triage pass that the periodic backstop will make anyway is a poor trade.
 // The failure is carried on the result for the caller to log.
-func (i *WebhookIngestor) wakeTriage(ctx context.Context, tenantID, projectID string, kind ForgeEventKind) bool {
+func (i *WebhookIngestor) wakeTriage(ctx context.Context, tenantID, projectID string, kind ForgeEventKind) (bool, error) {
 	if i.triage == nil || !TriageWakesOn(kind) {
-		return false
+		return false, nil
 	}
 	if err := i.triage.NudgeProject(ctx, tenantID, projectID); err != nil {
-		return false
+		return false, &TriageWakeError{TenantID: tenantID, ProjectID: projectID, Cause: err}
 	}
-	return true
+	return true, nil
+}
+
+// readmitOnRuling hands a verified issue comment to the ruling path.
+//
+// A FAILURE HERE DOES NOT FAIL THE DELIVERY, for the reason wakeTriage gives:
+// the forge would retry it, and the unblock sweep reads the same comments on
+// its next pass anyway.
+func (i *WebhookIngestor) readmitOnRuling(ctx context.Context, tenantID, projectID string, event *ForgeEvent) (bool, error) {
+	if i.rulings == nil || event.Kind != EventIssueCommented || event.IssueNumber <= 0 {
+		return false, nil
+	}
+	return i.rulings.ReadmitOnRuling(ctx, tenantID, projectID, event.IssueNumber)
 }
 
 // validateDelivery refuses a delivery the ingestor cannot act on.

@@ -46,7 +46,6 @@ const (
 
 	// Identity keys (scoped by tenant). User keys are absent: the user record
 	// lives in qrdb (qrdbadapter.QRDBUserStorage), not the BaaS KVStore.
-	KeyPrefixGroup  = ":group:"
 	KeyPrefixRole   = ":role:"
 	KeyPrefixPolicy = ":policy:"
 
@@ -71,7 +70,7 @@ const (
 )
 
 // BackendStorage implements the BaaS-owned IAM storage interfaces using
-// interfaces.KVStore: TenantStorage, GroupStorage, RoleStorage, PolicyStorage,
+// interfaces.KVStore: TenantStorage, RoleStorage, PolicyStorage,
 // AppStorage, and TokenStorage. It works with any backend (memory, pebble,
 // raft) via the clean KVStore interface, providing an abstraction layer that
 // hides backend implementation details.
@@ -102,7 +101,6 @@ func NewBackendStorage(kv interfaces.KVStore, opts ...StorageOption) *BackendSto
 // BackendStorage no longer persists users (qrdb owns the user record).
 var (
 	_ TenantStorage = (*BackendStorage)(nil)
-	_ GroupStorage  = (*BackendStorage)(nil)
 	_ RoleStorage   = (*BackendStorage)(nil)
 	_ AppStorage    = (*BackendStorage)(nil)
 	_ TokenStorage  = (*BackendStorage)(nil)
@@ -126,11 +124,6 @@ func tenantSettingsKey(tenantID string) string {
 // tenantQuotaKey returns the key for tenant quota.
 func tenantQuotaKey(tenantID string) string {
 	return KeyPrefixTenant + tenantID + KeyPrefixTenantQuota
-}
-
-// groupKey returns the key for a group record.
-func groupKey(tenantID, groupID string) string {
-	return KeyPrefixTenant + tenantID + KeyPrefixGroup + groupID
 }
 
 // roleKey returns the key for a role record.
@@ -171,7 +164,7 @@ func legacyAppKey(clientID string) string {
 // has to be addressed under its OWN tenant on both sides, or the write and the
 // read pick different namespaces.
 //
-// That divergence is go-quicbaas#644: POST /api/v1/agents/register is a public
+// That divergence is go-quicbaas#644: POST /api/v1/fleet/enroll is a public
 // route, so it carries no identity and its context named no tenant, while POST
 // /oauth2/token scopes its context to the tenant encoded in the client id. The
 // record was written into the shared store and looked for in the tenant's, so
@@ -401,7 +394,7 @@ func (s *BackendStorage) UpdateTenant(ctx context.Context, tenant *Tenant) error
 }
 
 // DeleteTenant removes a tenant and all associated BaaS-owned data (cascade
-// delete): groups, roles, policies, apps, sessions, settings, and quotas.
+// delete): roles, policies, apps, sessions, settings, and quotas.
 // User records live in qrdb and are deprovisioned by
 // DefaultTenantManager.DeleteTenant through the routed UserStorage before this
 // storage-level cascade runs.
@@ -417,17 +410,7 @@ func (s *BackendStorage) DeleteTenant(ctx context.Context, id string) error {
 	// Cascade delete all tenant data
 	tenantPrefix := KeyPrefixTenant + id
 
-	// 1. Delete groups
-	groupPrefix := tenantPrefix + KeyPrefixGroup
-	if err := s.deleteByPrefix(ctx, groupPrefix); err != nil {
-		return &dberrors.QBError{
-			Code: dberrors.ErrInternal,
-			Op:   "iam.tenant.delete.groups",
-			Err:  err,
-		}
-	}
-
-	// 2. Delete roles, and the name index that points at them — an index entry
+	// 1. Delete roles, and the name index that points at them — an index entry
 	// left behind would make a recreated tenant's role name look taken.
 	rolePrefix := tenantPrefix + KeyPrefixRole
 	if err := s.deleteByPrefix(ctx, rolePrefix); err != nil {
@@ -445,7 +428,7 @@ func (s *BackendStorage) DeleteTenant(ctx context.Context, id string) error {
 		}
 	}
 
-	// 3. Delete policies
+	// 2. Delete policies
 	policyPrefix := tenantPrefix + KeyPrefixPolicy
 	if err := s.deleteByPrefix(ctx, policyPrefix); err != nil {
 		return &dberrors.QBError{
@@ -455,7 +438,7 @@ func (s *BackendStorage) DeleteTenant(ctx context.Context, id string) error {
 		}
 	}
 
-	// 4. Delete apps and their global indexes
+	// 3. Delete apps and their global indexes
 	appPrefix := tenantPrefix + KeyPrefixApp
 	if err := s.deleteAppsWithIndexes(ctx, appPrefix); err != nil {
 		return &dberrors.QBError{
@@ -465,7 +448,7 @@ func (s *BackendStorage) DeleteTenant(ctx context.Context, id string) error {
 		}
 	}
 
-	// 5. Delete sessions
+	// 4. Delete sessions
 	sessionPrefix := tenantPrefix + KeyPrefixSession
 	if err := s.deleteByPrefix(ctx, sessionPrefix); err != nil {
 		return &dberrors.QBError{
@@ -475,10 +458,10 @@ func (s *BackendStorage) DeleteTenant(ctx context.Context, id string) error {
 		}
 	}
 
-	// 6. Delete tenant settings (ignore not found)
+	// 5. Delete tenant settings (ignore not found)
 	_ = s.delete(ctx, tenantSettingsKey(id))
 
-	// 7. Delete tenant quota (ignore not found)
+	// 6. Delete tenant quota (ignore not found)
 	_ = s.delete(ctx, tenantQuotaKey(id))
 
 	// 8. Finally delete the tenant record
@@ -487,21 +470,21 @@ func (s *BackendStorage) DeleteTenant(ctx context.Context, id string) error {
 
 // ListTenants retrieves tenants with pagination.
 // Uses key-based filtering to only include actual tenant records, excluding
-// sub-resource keys (settings, quotas, users, groups, roles, etc.) that share
+// sub-resource keys (settings, quotas, users, roles, etc.) that share
 // the same key prefix.
 func (s *BackendStorage) ListTenants(ctx context.Context, opts ListOptions) ([]*Tenant, error) {
 	prefix := KeyPrefixTenant
 
 	// Scan with key filtering: only include keys that represent actual tenant
 	// records. Tenant keys are "__iam:tenant:<tenantID>" with no additional
-	// colon-separated segments. Sub-resource keys like settings, quotas, users,
-	// groups, and roles all contain additional ":" separators after the tenant ID.
+	// colon-separated segments. Sub-resource keys like settings, quotas, users
+	// and roles all contain additional ":" separators after the tenant ID.
 	var tenants []*Tenant
 	err := s.kv.Scan(ctx, prefix, func(key string, value []byte) error {
 		// Extract the portion after the prefix (the tenant ID portion)
 		suffix := strings.TrimPrefix(key, prefix)
 
-		// Skip sub-resource keys: settings, quotas, users, groups, roles, etc.
+		// Skip sub-resource keys: settings, quotas, users, roles, etc.
 		// These keys contain additional ":" after the tenant ID.
 		// Valid tenant IDs contain only [a-z0-9-] and never ":" characters.
 		if strings.Contains(suffix, ":") {
@@ -651,8 +634,6 @@ func (s *BackendStorage) IncrementQuotaUsage(ctx context.Context, tenantID, reso
 	// Apply increment based on resource type. Users and roles are tracked by
 	// qrdb's TenantServicer (engine-level) and are not tracked here.
 	switch resource {
-	case QuotaResourceGroups:
-		quota.CurrentGroups += delta
 	case QuotaResourcePolicies:
 		quota.CurrentPolicies += delta
 	case QuotaResourceApps:
@@ -677,209 +658,6 @@ func (s *BackendStorage) DecrementQuotaUsage(ctx context.Context, tenantID, reso
 // source of truth for the user record. Tenant teardown deprovisions users
 // through the routed UserStorage (DefaultTenantManager.DeleteTenant).
 // -----------------------------------------------------------------------------
-
-// -----------------------------------------------------------------------------
-// GroupStorage implementation
-// -----------------------------------------------------------------------------
-
-// CreateGroup stores a new group.
-func (s *BackendStorage) CreateGroup(ctx context.Context, group *Group) error {
-	key := groupKey(group.TenantID, group.ID)
-
-	_, err := s.get(ctx, key)
-	if err == nil {
-		return ErrAlreadyExists
-	}
-
-	data, err := json.Marshal(group)
-	if err != nil {
-		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.group.create", Err: err}
-	}
-
-	return s.put(ctx, key, data)
-}
-
-// GetGroup retrieves a group by ID.
-func (s *BackendStorage) GetGroup(ctx context.Context, tenantID, groupID string) (*Group, error) {
-	data, err := s.get(ctx, groupKey(tenantID, groupID))
-	if err != nil {
-		return nil, err
-	}
-
-	var group Group
-	if err := json.Unmarshal(data, &group); err != nil {
-		return nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.group.get", Err: err}
-	}
-
-	return &group, nil
-}
-
-// UpdateGroup updates an existing group.
-func (s *BackendStorage) UpdateGroup(ctx context.Context, group *Group) error {
-	key := groupKey(group.TenantID, group.ID)
-
-	_, err := s.get(ctx, key)
-	if err != nil {
-		return err
-	}
-
-	data, err := json.Marshal(group)
-	if err != nil {
-		return &dberrors.QBError{Code: dberrors.ErrInternal, Op: "iam.group.update", Err: err}
-	}
-
-	return s.put(ctx, key, data)
-}
-
-// atomicKVStore is the guarded-write half of the backing store: the one
-// operation a member-list edit needs and the six-verb KVStore does not offer.
-//
-// It is discovered by type assertion, which is go-qrdb's own pattern for this
-// (sdk.AtomicKVStore) and the reason the assertion can be written at all
-// without importing qrdb's kvstore package here. A store that does not provide
-// it fails closed — see ErrAtomicMembershipUnsupported.
-type atomicKVStore interface {
-	CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error)
-}
-
-// membershipSwapAttempts bounds the compare-and-swap retry loop.
-//
-// Each lost swap means another writer committed a membership change to the SAME
-// group between this read and this write, so the loop only spins under real
-// contention on one group — and every lost attempt is another writer making
-// progress, so the system advances even when one caller does not. The bound is
-// generous rather than tight because an unlucky writer can lose to each of its
-// contenders in turn: a bulk import adding a hundred users to one group is the
-// shape that produces the fan-in, and refusing it would turn a fixed race into a
-// spurious failure. Exhausting it is reported as a retryable conflict rather
-// than silently dropping the edit.
-const membershipSwapAttempts = 64
-
-// AddGroupMember adds userID to the group's member list with a compare-and-swap
-// on the stored record, so a concurrent membership change cannot be erased.
-// Adding an existing member is a no-op.
-func (s *BackendStorage) AddGroupMember(ctx context.Context, tenantID, groupID, userID string) error {
-	return s.swapGroupMembers(ctx, tenantID, groupID, "iam.group.member.add",
-		func(members []string) ([]string, bool) {
-			for _, memberID := range members {
-				if memberID == userID {
-					return nil, false
-				}
-			}
-			return append(append([]string(nil), members...), userID), true
-		})
-}
-
-// RemoveGroupMember removes userID from the group's member list with the same
-// guarded write. Removing a user that is not a member is a no-op.
-func (s *BackendStorage) RemoveGroupMember(ctx context.Context, tenantID, groupID, userID string) error {
-	return s.swapGroupMembers(ctx, tenantID, groupID, "iam.group.member.remove",
-		func(members []string) ([]string, bool) {
-			next := make([]string, 0, len(members))
-			for _, memberID := range members {
-				if memberID != userID {
-					next = append(next, memberID)
-				}
-			}
-			if len(next) == len(members) {
-				return nil, false
-			}
-			return next, true
-		})
-}
-
-// swapGroupMembers applies mutate to the group's member list and commits it
-// with CompareAndSwap against the exact bytes it read, retrying when another
-// writer got there first. mutate reports changed=false when the record already
-// says what the caller wants, which is committed as a no-op rather than as a
-// write that could lose a concurrent edit for no reason.
-func (s *BackendStorage) swapGroupMembers(
-	ctx context.Context,
-	tenantID, groupID, op string,
-	mutate func(members []string) (next []string, changed bool),
-) error {
-	atomic, ok := s.kv.(atomicKVStore)
-	if !ok {
-		return ErrAtomicMembershipUnsupported
-	}
-
-	key := groupKey(tenantID, groupID)
-	for attempt := 0; attempt < membershipSwapAttempts; attempt++ {
-		current, err := s.get(ctx, key)
-		if err != nil {
-			return err
-		}
-
-		var group Group
-		if err := json.Unmarshal(current, &group); err != nil {
-			return &dberrors.QBError{Code: dberrors.ErrInternal, Op: op, Err: err}
-		}
-
-		members, changed := mutate(group.Members)
-		if !changed {
-			return nil
-		}
-		group.Members = members
-		group.Updated = time.Now().UTC()
-
-		next, err := json.Marshal(&group)
-		if err != nil {
-			return &dberrors.QBError{Code: dberrors.ErrInternal, Op: op, Err: err}
-		}
-
-		swapped, err := atomic.CompareAndSwap(ctx, key, current, next)
-		if err != nil {
-			return err
-		}
-		if swapped {
-			return nil
-		}
-		// Lost the race: another writer changed this group between the read and
-		// the swap. Re-read and re-apply, so this edit composes with theirs
-		// instead of overwriting it.
-	}
-	return ErrGroupMembershipContended
-}
-
-// DeleteGroup removes a group.
-func (s *BackendStorage) DeleteGroup(ctx context.Context, tenantID, groupID string) error {
-	_, err := s.get(ctx, groupKey(tenantID, groupID))
-	if err != nil {
-		return err
-	}
-	return s.delete(ctx, groupKey(tenantID, groupID))
-}
-
-// ListGroups retrieves groups for a tenant.
-func (s *BackendStorage) ListGroups(ctx context.Context, tenantID string, opts ListOptions) ([]*Group, error) {
-	prefix := KeyPrefixTenant + tenantID + KeyPrefixGroup
-	values, err := s.list(ctx, prefix)
-	if err != nil {
-		return nil, err
-	}
-
-	groups := make([]*Group, 0, len(values))
-	for _, data := range values {
-		var group Group
-		if err := json.Unmarshal(data, &group); err != nil {
-			continue
-		}
-		groups = append(groups, &group)
-	}
-
-	// Apply pagination
-	if opts.Offset > 0 && opts.Offset < len(groups) {
-		groups = groups[opts.Offset:]
-	} else if opts.Offset >= len(groups) {
-		return []*Group{}, nil
-	}
-
-	if opts.Limit > 0 && opts.Limit < len(groups) {
-		groups = groups[:opts.Limit]
-	}
-
-	return groups, nil
-}
 
 // -----------------------------------------------------------------------------
 // RoleStorage implementation

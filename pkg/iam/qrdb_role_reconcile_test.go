@@ -246,9 +246,8 @@ type nonReconcilingRoleStorage struct{ RoleStorage }
 func TestIdentityStore_ReconcileBuiltInRoles_RefusesAStorageThatCannotReconcile(t *testing.T) {
 	mem := NewMemoryStorage()
 	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  mem,
-		GroupStorage: mem,
-		RoleStorage:  &nonReconcilingRoleStorage{RoleStorage: mem},
+		UserStorage: mem,
+		RoleStorage: &nonReconcilingRoleStorage{RoleStorage: mem},
 	})
 
 	_, err := store.ReconcileBuiltInRoles(context.Background(), "burnin")

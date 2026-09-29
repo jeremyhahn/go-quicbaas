@@ -15,8 +15,13 @@ package grpc
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/agents"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/spend"
 
 	"google.golang.org/grpc"
 
@@ -43,12 +48,12 @@ func sampleProtoProject() *pb.Project {
 		WorkspaceAgentId: "agent-1",
 		WorkspacePath:    "/home/agent/src/go-quicbaas",
 		HostAffinity:     "host-a",
-		DefaultLeadAgent: "agent-lead",
+		DefaultLeadAgent: &pb.AgentRef{AgentId: "agent-lead"},
 		GitRepoUrl:       "https://git.example.test/go-quicbaas.git",
 		GitDefaultBranch: "main",
 		GitCurrentSha:    "abc123",
 		AgentRoles:       map[string]string{"agent-1": "lead", "agent-2": "observer"},
-		TokenBudget:      1000,
+		Spend:            &pb.SpendLimits{Windows: []*pb.SpendLimitWindow{{Name: "daily", SizeNanos: int64(24 * time.Hour), MaxTokens: 1000}}},
 		GpuMinutes:       60,
 		MaxConcurrency:   4,
 		Metadata:         map[string]string{"team": "platform"},
@@ -70,8 +75,8 @@ type fakeProjectServer struct {
 	lastUpdate *pb.UpdateProjectRequest
 	lastDelete *pb.DeleteProjectRequest
 	lastList   *pb.ListProjectsRequest
-	lastGrant  *pb.GrantAgentRoleRequest
-	lastRevoke *pb.RevokeAgentRoleRequest
+	lastGrant  *pb.GrantFleetNodeRoleRequest
+	lastRevoke *pb.RevokeFleetNodeRoleRequest
 
 	// roles is the server-side agent role map. Grant/Revoke mutate a single
 	// entry so the tests can prove the other entries survive.
@@ -130,29 +135,29 @@ func (f *fakeProjectServer) ListProjects(_ context.Context, req *pb.ListProjects
 	}, nil
 }
 
-func (f *fakeProjectServer) GrantAgentRole(_ context.Context, req *pb.GrantAgentRoleRequest) (*pb.GrantAgentRoleResponse, error) {
+func (f *fakeProjectServer) GrantFleetNodeRole(_ context.Context, req *pb.GrantFleetNodeRoleRequest) (*pb.GrantFleetNodeRoleResponse, error) {
 	f.lastGrant = req
 	if err := failErr(f.fail); err != nil {
 		return nil, err
 	}
-	f.roles[req.AgentId] = req.Role
-	return &pb.GrantAgentRoleResponse{
+	f.roles[req.NodeId] = req.Role
+	return &pb.GrantFleetNodeRoleResponse{
 		ProjectId: req.ProjectId,
-		AgentId:   req.AgentId,
+		NodeId:    req.NodeId,
 		Role:      req.Role,
 		Timestamp: projectUpdatedAt.Unix(),
 	}, nil
 }
 
-func (f *fakeProjectServer) RevokeAgentRole(_ context.Context, req *pb.RevokeAgentRoleRequest) (*pb.RevokeAgentRoleResponse, error) {
+func (f *fakeProjectServer) RevokeFleetNodeRole(_ context.Context, req *pb.RevokeFleetNodeRoleRequest) (*pb.RevokeFleetNodeRoleResponse, error) {
 	f.lastRevoke = req
 	if err := failErr(f.fail); err != nil {
 		return nil, err
 	}
-	f.roles[req.AgentId] = string(project.ProjectRoleDenied)
-	return &pb.RevokeAgentRoleResponse{
+	f.roles[req.NodeId] = string(project.ProjectRoleDenied)
+	return &pb.RevokeFleetNodeRoleResponse{
 		ProjectId: req.ProjectId,
-		AgentId:   req.AgentId,
+		NodeId:    req.NodeId,
 		Timestamp: projectUpdatedAt.Unix(),
 	}, nil
 }
@@ -222,7 +227,7 @@ func TestIsProjectServiceGRPC(t *testing.T) {
 func TestProjectMethodMapIsComplete(t *testing.T) {
 	for _, method := range []string{
 		"Create", "Get", "GetByName", "Update", "Delete", "List",
-		"GrantAgentRole", "RevokeAgentRole",
+		"GrantFleetNodeRole", "RevokeFleetNodeRole",
 	} {
 		if _, ok := projectMethodMap[method]; !ok {
 			t.Errorf("project method %q has no gRPC handler", method)
@@ -264,19 +269,19 @@ func TestProjectHandler_Create(t *testing.T) {
 	h, fake := newProjectHandlerWithServer(t, false)
 	resp, err := h.handleRequest(context.Background(), "quicbaas.Project", "Create",
 		&project.CreateProjectRequest{
-			TenantID:         "tenant-1",
-			Name:             "quicbaas",
-			Description:      "self hosting",
-			WorkspaceAgentID: "agent-1",
-			WorkspacePath:    "/home/agent/src/go-quicbaas",
-			HostAffinity:     "host-a",
-			DefaultLeadAgent: "agent-lead",
-			GitRepoURL:       "https://git.example.test/go-quicbaas.git",
-			GitDefaultBranch: "main",
-			TokenBudget:      1000,
-			GPUMinutes:       60,
-			MaxConcurrency:   4,
-			Metadata:         map[string]string{"team": "platform"},
+			TenantID:             "tenant-1",
+			Name:                 "quicbaas",
+			Description:          "self hosting",
+			WorkspaceFleetNodeID: "agent-1",
+			WorkspacePath:        "/home/agent/src/go-quicbaas",
+			HostAffinity:         "host-a",
+			DefaultLeadAgent:     agents.AgentRef{AgentID: "agent-lead"},
+			GitRepoURL:           "https://git.example.test/go-quicbaas.git",
+			GitDefaultBranch:     "main",
+			Spend:                spend.Limits{Windows: []spend.Window{{Name: "daily", Size: 24 * time.Hour, MaxEquivalentMicros: 5_000_000}}},
+			GPUMinutes:           60,
+			MaxConcurrency:       4,
+			Metadata:             map[string]string{"team": "platform"},
 		})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -297,7 +302,7 @@ func TestProjectHandler_Create(t *testing.T) {
 	if got.GitRepoUrl != "https://git.example.test/go-quicbaas.git" || got.GitDefaultBranch != "main" {
 		t.Errorf("git config lost on the wire: %+v", got)
 	}
-	if got.TokenBudget != 1000 || got.GpuMinutes != 60 || got.MaxConcurrency != 4 {
+	if got.GetSpend().GetWindows()[0].GetMaxEquivalentMicros() != 5_000_000 || got.GpuMinutes != 60 || got.MaxConcurrency != 4 {
 		t.Errorf("quotas lost on the wire: %+v", got)
 	}
 	if got.Metadata["team"] != "platform" {
@@ -372,7 +377,7 @@ func TestProjectHandler_Update(t *testing.T) {
 			ClearDescription: true,
 			WorkspacePath:    "/srv/ws",
 			GitCurrentSHA:    "abc123",
-			AgentRoles:       map[string]project.ProjectRole{"agent-2": project.ProjectRoleWorker},
+			FleetNodeRoles:   map[string]project.ProjectRole{"agent-2": project.ProjectRoleWorker},
 			// Presence-carrying: zero means unlimited, so the pointer is
 			// what keeps "lift the cap" distinct from "leave it alone".
 			MaxConcurrency: grpcPtrTo(8),
@@ -467,19 +472,19 @@ func TestProjectHandler_List_ServerError(t *testing.T) {
 // response conversion for the dedicated grant RPC.
 func TestProjectHandler_GrantAgentRole(t *testing.T) {
 	h, fake := newProjectHandlerWithServer(t, false)
-	resp, err := h.handleRequest(context.Background(), "quicbaas.Project", "GrantAgentRole",
-		&project.GrantAgentRoleRequest{
+	resp, err := h.handleRequest(context.Background(), "quicbaas.Project", "GrantFleetNodeRole",
+		&project.GrantFleetNodeRoleRequest{
 			TenantID: "tenant-1", ProjectID: "proj-1",
-			AgentID: "agent-3", Role: project.ProjectRoleWorker,
+			FleetNodeID: "agent-3", Role: project.ProjectRoleWorker,
 		})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	out, ok := resp.(*project.GrantAgentRoleResponse)
+	out, ok := resp.(*project.GrantFleetNodeRoleResponse)
 	if !ok {
 		t.Fatalf("wrong response type: %T", resp)
 	}
-	if out.ProjectID != "proj-1" || out.AgentID != "agent-3" || out.Role != project.ProjectRoleWorker {
+	if out.ProjectID != "proj-1" || out.FleetNodeID != "agent-3" || out.Role != project.ProjectRoleWorker {
 		t.Errorf("response fields lost: %+v", out)
 	}
 	if !out.Timestamp.Equal(projectUpdatedAt) {
@@ -488,7 +493,7 @@ func TestProjectHandler_GrantAgentRole(t *testing.T) {
 
 	got := fake.lastGrant
 	if got.TenantId != "tenant-1" || got.ProjectId != "proj-1" ||
-		got.AgentId != "agent-3" || got.Role != "worker" {
+		got.NodeId != "agent-3" || got.Role != "worker" {
 		t.Errorf("request fields lost on the wire: %+v", got)
 	}
 }
@@ -500,10 +505,10 @@ func TestProjectHandler_GrantAgentRole(t *testing.T) {
 func TestProjectHandler_GrantAgentRole_PreservesOtherAgents(t *testing.T) {
 	h, fake := newProjectHandlerWithServer(t, false)
 
-	if _, err := h.handleRequest(context.Background(), "quicbaas.Project", "GrantAgentRole",
-		&project.GrantAgentRoleRequest{
+	if _, err := h.handleRequest(context.Background(), "quicbaas.Project", "GrantFleetNodeRole",
+		&project.GrantFleetNodeRoleRequest{
 			TenantID: "tenant-1", ProjectID: "proj-1",
-			AgentID: "agent-3", Role: project.ProjectRoleWorker,
+			FleetNodeID: "agent-3", Role: project.ProjectRoleWorker,
 		}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -525,10 +530,10 @@ func TestProjectHandler_GrantAgentRole_PreservesOtherAgents(t *testing.T) {
 
 func TestProjectHandler_GrantAgentRole_ServerError(t *testing.T) {
 	h, _ := newProjectHandlerWithServer(t, true)
-	_, err := h.handleRequest(context.Background(), "quicbaas.Project", "GrantAgentRole",
-		&project.GrantAgentRoleRequest{
+	_, err := h.handleRequest(context.Background(), "quicbaas.Project", "GrantFleetNodeRole",
+		&project.GrantFleetNodeRoleRequest{
 			TenantID: "tenant-1", ProjectID: "proj-1",
-			AgentID: "agent-1", Role: project.ProjectRoleLead,
+			FleetNodeID: "agent-1", Role: project.ProjectRoleLead,
 		})
 	if err == nil {
 		t.Fatal("expected error from server")
@@ -536,8 +541,8 @@ func TestProjectHandler_GrantAgentRole_ServerError(t *testing.T) {
 }
 
 func TestProjectHandler_GrantAgentRole_WrongRequestType(t *testing.T) {
-	_, err := handleProjectGrantAgentRole(context.Background(), nil,
-		&project.RevokeAgentRoleRequest{TenantID: "tenant-1"})
+	_, err := handleProjectGrantFleetNodeRole(context.Background(), nil,
+		&project.RevokeFleetNodeRoleRequest{TenantID: "tenant-1"})
 	if err == nil {
 		t.Fatal("expected an error for a wrong-typed request")
 	}
@@ -550,16 +555,16 @@ func TestProjectHandler_GrantAgentRole_WrongRequestType(t *testing.T) {
 // response conversion for the dedicated revoke RPC.
 func TestProjectHandler_RevokeAgentRole(t *testing.T) {
 	h, fake := newProjectHandlerWithServer(t, false)
-	resp, err := h.handleRequest(context.Background(), "quicbaas.Project", "RevokeAgentRole",
-		&project.RevokeAgentRoleRequest{TenantID: "tenant-1", ProjectID: "proj-1", AgentID: "agent-2"})
+	resp, err := h.handleRequest(context.Background(), "quicbaas.Project", "RevokeFleetNodeRole",
+		&project.RevokeFleetNodeRoleRequest{TenantID: "tenant-1", ProjectID: "proj-1", FleetNodeID: "agent-2"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	out, ok := resp.(*project.RevokeAgentRoleResponse)
+	out, ok := resp.(*project.RevokeFleetNodeRoleResponse)
 	if !ok {
 		t.Fatalf("wrong response type: %T", resp)
 	}
-	if out.ProjectID != "proj-1" || out.AgentID != "agent-2" {
+	if out.ProjectID != "proj-1" || out.FleetNodeID != "agent-2" {
 		t.Errorf("response fields lost: %+v", out)
 	}
 	if !out.Timestamp.Equal(projectUpdatedAt) {
@@ -567,7 +572,7 @@ func TestProjectHandler_RevokeAgentRole(t *testing.T) {
 	}
 
 	got := fake.lastRevoke
-	if got.TenantId != "tenant-1" || got.ProjectId != "proj-1" || got.AgentId != "agent-2" {
+	if got.TenantId != "tenant-1" || got.ProjectId != "proj-1" || got.NodeId != "agent-2" {
 		t.Errorf("request fields lost on the wire: %+v", got)
 	}
 
@@ -582,16 +587,16 @@ func TestProjectHandler_RevokeAgentRole(t *testing.T) {
 
 func TestProjectHandler_RevokeAgentRole_ServerError(t *testing.T) {
 	h, _ := newProjectHandlerWithServer(t, true)
-	_, err := h.handleRequest(context.Background(), "quicbaas.Project", "RevokeAgentRole",
-		&project.RevokeAgentRoleRequest{TenantID: "tenant-1", ProjectID: "proj-1", AgentID: "agent-1"})
+	_, err := h.handleRequest(context.Background(), "quicbaas.Project", "RevokeFleetNodeRole",
+		&project.RevokeFleetNodeRoleRequest{TenantID: "tenant-1", ProjectID: "proj-1", FleetNodeID: "agent-1"})
 	if err == nil {
 		t.Fatal("expected error from server")
 	}
 }
 
 func TestProjectHandler_RevokeAgentRole_WrongRequestType(t *testing.T) {
-	_, err := handleProjectRevokeAgentRole(context.Background(), nil,
-		&project.GrantAgentRoleRequest{TenantID: "tenant-1"})
+	_, err := handleProjectRevokeFleetNodeRole(context.Background(), nil,
+		&project.GrantFleetNodeRoleRequest{TenantID: "tenant-1"})
 	if err == nil {
 		t.Fatal("expected an error for a wrong-typed request")
 	}
@@ -613,22 +618,23 @@ func TestProjectInfoFromProto_Fidelity(t *testing.T) {
 	}
 	if info.ID != "proj-1" || info.TenantID != "tenant-1" || info.Name != "quicbaas" ||
 		info.Description != "self hosting" || info.HostAffinity != "host-a" ||
-		info.DefaultLeadAgent != "agent-lead" {
+		info.DefaultLeadAgent.AgentID != "agent-lead" {
 		t.Fatalf("scalar fields lost: %+v", info)
 	}
-	if info.Workspace.AgentID != "agent-1" || info.Workspace.Path != "/home/agent/src/go-quicbaas" {
+	if info.Workspace.FleetNodeID != "agent-1" || info.Workspace.Path != "/home/agent/src/go-quicbaas" {
 		t.Errorf("workspace lost: %+v", info.Workspace)
 	}
 	if info.Git.RepoURL != "https://git.example.test/go-quicbaas.git" ||
 		info.Git.DefaultBranch != "main" || info.Git.CurrentSHA != "abc123" {
 		t.Errorf("git lost: %+v", info.Git)
 	}
-	if info.Quotas.TokenBudget != 1000 || info.Quotas.GPUMinutes != 60 || info.Quotas.MaxConcurrency != 4 {
+	if len(info.Spend.Windows) != 1 || info.Spend.Windows[0].MaxTokens != 1000 || info.Spend.Windows[0].Size != 24*time.Hour ||
+		info.Quotas.GPUMinutes != 60 || info.Quotas.MaxConcurrency != 4 {
 		t.Errorf("quotas lost: %+v", info.Quotas)
 	}
-	if info.Permissions.AgentRoles["agent-1"] != project.ProjectRoleLead ||
-		info.Permissions.AgentRoles["agent-2"] != project.ProjectRoleObserver {
-		t.Errorf("permissions lost: %+v", info.Permissions.AgentRoles)
+	if info.Permissions.FleetNodeRoles["agent-1"] != project.ProjectRoleLead ||
+		info.Permissions.FleetNodeRoles["agent-2"] != project.ProjectRoleObserver {
+		t.Errorf("permissions lost: %+v", info.Permissions.FleetNodeRoles)
 	}
 	if info.Metadata["team"] != "platform" {
 		t.Errorf("metadata lost: %+v", info.Metadata)
@@ -646,13 +652,13 @@ func TestProjectInfoFromProto_NilSafety(t *testing.T) {
 		t.Fatal("nil project must convert to nil")
 	}
 	info := projectInfoFromProto(&pb.Project{Id: "proj-1"})
-	if info.Permissions.AgentRoles != nil {
-		t.Errorf("absent agent roles became %v, want nil", info.Permissions.AgentRoles)
+	if info.Permissions.FleetNodeRoles != nil {
+		t.Errorf("absent agent roles became %v, want nil", info.Permissions.FleetNodeRoles)
 	}
 	if info.Metadata != nil {
 		t.Errorf("absent metadata became %v, want nil", info.Metadata)
 	}
-	if info.Workspace != (project.ProjectWorkspace{}) || info.Git != (project.ProjectGit{}) ||
+	if info.Workspace != (project.ProjectWorkspace{}) || !reflect.DeepEqual(info.Git, project.ProjectGit{}) ||
 		info.Quotas != (project.ProjectQuotas{}) {
 		t.Errorf("absent nested structs are not zero: %+v", info)
 	}
@@ -768,7 +774,7 @@ func TestProjectHandler_DefaultWorkflowAndGitIdentityCrossTheWire(t *testing.T) 
 		},
 		SSHKey: project.KMSKeyRef{Name: "api-access", Scope: "service", Owner: "deploy"},
 	}
-	if info.DefaultWorkflow != "sdlc" || info.Git != wantGit {
+	if info.DefaultWorkflow != "sdlc" || !reflect.DeepEqual(info.Git, wantGit) {
 		t.Errorf("inbound conversion lost fields:\n got %+v\nwant %+v", info.Git, wantGit)
 	}
 }
@@ -932,3 +938,117 @@ func TestContextRepoConverters_NilFidelity(t *testing.T) {
 
 // grpcPtrTo is the presence-carrying form of a quota value.
 func grpcPtrTo[T any](v T) *T { return &v }
+
+// parkProjectServer is a stateful ProjectService backend that applies the park
+// switch the way the service does: a park stamps the record, a resume clears
+// it.
+type parkProjectServer struct {
+	pb.UnimplementedProjectServiceServer
+	stored     *pb.Project
+	lastUpdate *pb.UpdateProjectRequest
+}
+
+func (f *parkProjectServer) UpdateProject(_ context.Context, req *pb.UpdateProjectRequest) (*pb.UpdateProjectResponse, error) {
+	f.lastUpdate = req
+	if req.Parked != nil {
+		f.stored.Parked = req.GetParked()
+		f.stored.ParkedAtUnix, f.stored.ParkedBy = 0, ""
+		if f.stored.Parked {
+			f.stored.ParkedAtUnix, f.stored.ParkedBy = projectUpdatedAt.Unix(), "ops"
+		}
+	}
+	return &pb.UpdateProjectResponse{Project: f.stored, Timestamp: projectUpdatedAt.Unix()}, nil
+}
+
+// TestProjectHandler_ParkAndResume drives park and resume through the real
+// gRPC stack: the switch is tri-state on the wire and the park record comes
+// back on the project.
+func TestProjectHandler_ParkAndResume(t *testing.T) {
+	fake := &parkProjectServer{stored: &pb.Project{Id: "proj-1", TenantId: "tenant-1", Name: "api"}}
+	srv := newHandlerServer(t, func(s *grpc.Server) {
+		pb.RegisterProjectServiceServer(s, fake)
+	})
+	h := newProjectHandler(srv.dial(t))
+	ctx := context.Background()
+
+	update := func(req *project.UpdateProjectRequest) *project.ProjectInfo {
+		t.Helper()
+		resp, err := h.handleRequest(ctx, "quicbaas.Project", "Update", req)
+		if err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		info, ok := resp.(*project.ProjectInfo)
+		if !ok {
+			t.Fatalf("wrong response type: %T", resp)
+		}
+		return info
+	}
+
+	update(&project.UpdateProjectRequest{TenantID: "tenant-1", ProjectID: "proj-1", Name: "renamed"})
+	if fake.lastUpdate.Parked != nil {
+		t.Error("an unset parked was sent as a value")
+	}
+
+	park := true
+	info := update(&project.UpdateProjectRequest{TenantID: "tenant-1", ProjectID: "proj-1", Parked: &park})
+	if !info.Parked || !info.ParkedAt.Equal(time.Unix(projectUpdatedAt.Unix(), 0)) || info.ParkedBy != "ops" {
+		t.Fatalf("parked info = %v %v %q, want the park record", info.Parked, info.ParkedAt, info.ParkedBy)
+	}
+
+	resume := false
+	info = update(&project.UpdateProjectRequest{TenantID: "tenant-1", ProjectID: "proj-1", Parked: &resume})
+	if fake.lastUpdate.Parked == nil || fake.lastUpdate.GetParked() {
+		t.Fatal("an explicit resume was not sent as false")
+	}
+	if info.Parked || !info.ParkedAt.IsZero() || info.ParkedBy != "" {
+		t.Fatalf("resumed info = %v %v %q, want an open project", info.Parked, info.ParkedAt, info.ParkedBy)
+	}
+}
+
+// retireProjectServer records the update it was sent and answers a project
+// carrying one retired signing key.
+type retireProjectServer struct {
+	pb.UnimplementedProjectServiceServer
+	lastUpdate *pb.UpdateProjectRequest
+}
+
+func (f *retireProjectServer) UpdateProject(_ context.Context, req *pb.UpdateProjectRequest) (*pb.UpdateProjectResponse, error) {
+	f.lastUpdate = req
+	return &pb.UpdateProjectResponse{Project: &pb.Project{Id: "proj-1", TenantId: "tenant-1", Name: "api",
+		GitSigningRetired: []*pb.RetiredSigningKey{{PublicKey: "ssh-ed25519 AAAA", Name: "old", RetiredAtUnix: projectUpdatedAt.Unix()}},
+	}, Timestamp: projectUpdatedAt.Unix()}, nil
+}
+
+// TestProjectHandler_RetiresASigningKey: the retirement fields ride the wire
+// unchanged and the history comes back on the project.
+func TestProjectHandler_RetiresASigningKey(t *testing.T) {
+	fake := &retireProjectServer{}
+	srv := newHandlerServer(t, func(s *grpc.Server) {
+		pb.RegisterProjectServiceServer(s, fake)
+	})
+	h := newProjectHandler(srv.dial(t))
+	resp, err := h.handleRequest(context.Background(), "quicbaas.Project", "Update", &project.UpdateProjectRequest{
+		TenantID: "tenant-1", ProjectID: "proj-1",
+		GitSigningRetireKeyName: "old", GitSigningRetireKeyScope: "service", GitSigningRetireKeyOwner: "agent",
+		GitSigningRetiredAt: "2026-09-24T22:15:00Z",
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	sent := fake.lastUpdate
+	if sent.GetGitSigningRetireKeyName() != "old" || sent.GetGitSigningRetireKeyScope() != "service" ||
+		sent.GetGitSigningRetireKeyOwner() != "agent" || sent.GetGitSigningRetiredAt() != "2026-09-24T22:15:00Z" {
+		t.Fatalf("sent %+v", sent)
+	}
+	info := resp.(*project.ProjectInfo)
+	retired := info.Git.Signing.Retired
+	if len(retired) != 1 || retired[0].Name != "old" || !retired[0].RetiredAt.Equal(time.Unix(projectUpdatedAt.Unix(), 0)) {
+		t.Fatalf("history = %+v", retired)
+	}
+}
+
+func TestRetiredSigningKeysFromProto_EmptyIsNil(t *testing.T) {
+	if got := retiredSigningKeysFromProto(nil); got != nil {
+		t.Fatalf("got %+v, want nil", got)
+	}
+}

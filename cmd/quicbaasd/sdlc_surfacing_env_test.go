@@ -114,13 +114,13 @@ func TestInitConfig_RefusesARemovedSDLCKeyOnTheDaemonsOwnViper(t *testing.T) {
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	bindEnvVars()
 
-	if err := config.RefuseRemovedSDLCKeys(viper.GetViper()); err != nil {
+	if err := config.RefuseRemovedKeys(viper.GetViper()); err != nil {
 		t.Fatalf("a daemon viper setting no removed key was refused: %v", err)
 	}
 
 	// One removed key, set the way an operator's stale configuration sets it.
 	var removed string
-	for key := range config.RemovedSDLCKeys {
+	for key := range config.RemovedKeys {
 		if removed == "" || key < removed {
 			removed = key
 		}
@@ -130,7 +130,7 @@ func TestInitConfig_RefusesARemovedSDLCKeyOnTheDaemonsOwnViper(t *testing.T) {
 	}
 	viper.Set(removed, "5m")
 
-	err := config.RefuseRemovedSDLCKeys(viper.GetViper())
+	err := config.RefuseRemovedKeys(viper.GetViper())
 	if err == nil {
 		t.Fatalf("the daemon's viper accepted the removed key %q", removed)
 	}

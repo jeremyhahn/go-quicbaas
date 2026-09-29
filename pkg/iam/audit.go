@@ -221,8 +221,6 @@ func (l *DefaultAuditLogger) LogAdminAction(ctx context.Context, tenantID string
 	// Determine event type based on resource type
 	eventType := AuditEventUserManagement
 	switch resource.Type {
-	case "group":
-		eventType = AuditEventGroupManagement
 	case "role":
 		eventType = AuditEventRoleManagement
 	case "policy":

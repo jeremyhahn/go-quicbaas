@@ -48,46 +48,46 @@ func chiCtxWith(params map[string]string) *chi.Context {
 }
 
 // =============================================================================
-// HandleGrantAgentRole
+// HandleGrantFleetNodeRole
 // =============================================================================
 
 func TestHandleGrantAgentRole_HappyPath(t *testing.T) {
 	now := time.Now()
 	projectSvc := &mocks.MockProjectService{
-		GrantAgentRoleFunc: func(ctx context.Context, req *service.GrantAgentRoleRequest) (*service.GrantAgentRoleResponse, error) {
-			return &service.GrantAgentRoleResponse{
-				ProjectID: req.ProjectID,
-				AgentID:   req.AgentID,
-				Role:      req.Role,
-				Timestamp: now,
+		GrantFleetNodeRoleFunc: func(ctx context.Context, req *service.GrantFleetNodeRoleRequest) (*service.GrantFleetNodeRoleResponse, error) {
+			return &service.GrantFleetNodeRoleResponse{
+				ProjectID:   req.ProjectID,
+				FleetNodeID: req.FleetNodeID,
+				Role:        req.Role,
+				Timestamp:   now,
 			}, nil
 		},
 	}
 
-	body, _ := json.Marshal(GrantAgentRoleRESTRequest{Role: orchestration.ProjectRoleWorker})
+	body, _ := json.Marshal(GrantFleetNodeRoleRESTRequest{Role: orchestration.ProjectRoleWorker})
 	r := httptest.NewRequest(http.MethodPut, "/api/v1/projects/proj-1/permissions/agent-A?tenant_id=t1", bytes.NewReader(body))
 	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, chiCtxWith(map[string]string{
-		"id":       "proj-1",
-		"agent_id": "agent-A",
+		"id":      "proj-1",
+		"node_id": "agent-A",
 	})))
 	w := httptest.NewRecorder()
 
 	s := newPermTestServer(projectSvc)
-	s.HandleGrantAgentRole(w, r)
+	s.HandleGrantFleetNodeRole(w, r)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
 	}
 
-	var resp GrantAgentRoleRESTResponse
+	var resp GrantFleetNodeRoleRESTResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
 	if resp.Role != orchestration.ProjectRoleWorker {
 		t.Errorf("role = %q, want %q", resp.Role, orchestration.ProjectRoleWorker)
 	}
-	if resp.AgentID != "agent-A" {
-		t.Errorf("agent_id = %q, want %q", resp.AgentID, "agent-A")
+	if resp.FleetNodeID != "agent-A" {
+		t.Errorf("agent_id = %q, want %q", resp.FleetNodeID, "agent-A")
 	}
 }
 
@@ -95,12 +95,12 @@ func TestHandleGrantAgentRole_MissingProjectID(t *testing.T) {
 	s := newPermTestServer(&mocks.MockProjectService{})
 	r := httptest.NewRequest(http.MethodPut, "/api/v1/projects//permissions/agent-A?tenant_id=t1", nil)
 	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, chiCtxWith(map[string]string{
-		"id":       "",
-		"agent_id": "agent-A",
+		"id":      "",
+		"node_id": "agent-A",
 	})))
 	w := httptest.NewRecorder()
 
-	s.HandleGrantAgentRole(w, r)
+	s.HandleGrantFleetNodeRole(w, r)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
@@ -112,12 +112,12 @@ func TestHandleGrantAgentRole_MissingRole(t *testing.T) {
 	body, _ := json.Marshal(map[string]string{}) // no role field
 	r := httptest.NewRequest(http.MethodPut, "/api/v1/projects/proj-1/permissions/agent-A?tenant_id=t1", bytes.NewReader(body))
 	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, chiCtxWith(map[string]string{
-		"id":       "proj-1",
-		"agent_id": "agent-A",
+		"id":      "proj-1",
+		"node_id": "agent-A",
 	})))
 	w := httptest.NewRecorder()
 
-	s.HandleGrantAgentRole(w, r)
+	s.HandleGrantFleetNodeRole(w, r)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
@@ -126,21 +126,21 @@ func TestHandleGrantAgentRole_MissingRole(t *testing.T) {
 
 func TestHandleGrantAgentRole_ProjectNotFound(t *testing.T) {
 	projectSvc := &mocks.MockProjectService{
-		GrantAgentRoleFunc: func(ctx context.Context, req *service.GrantAgentRoleRequest) (*service.GrantAgentRoleResponse, error) {
+		GrantFleetNodeRoleFunc: func(ctx context.Context, req *service.GrantFleetNodeRoleRequest) (*service.GrantFleetNodeRoleResponse, error) {
 			return nil, &service.ProjectNotFoundError{TenantID: req.TenantID, ProjectID: req.ProjectID}
 		},
 	}
 
-	body, _ := json.Marshal(GrantAgentRoleRESTRequest{Role: orchestration.ProjectRoleWorker})
+	body, _ := json.Marshal(GrantFleetNodeRoleRESTRequest{Role: orchestration.ProjectRoleWorker})
 	r := httptest.NewRequest(http.MethodPut, "/api/v1/projects/no-such/permissions/agent-A?tenant_id=t1", bytes.NewReader(body))
 	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, chiCtxWith(map[string]string{
-		"id":       "no-such",
-		"agent_id": "agent-A",
+		"id":      "no-such",
+		"node_id": "agent-A",
 	})))
 	w := httptest.NewRecorder()
 
 	s := newPermTestServer(projectSvc)
-	s.HandleGrantAgentRole(w, r)
+	s.HandleGrantFleetNodeRole(w, r)
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
@@ -148,41 +148,41 @@ func TestHandleGrantAgentRole_ProjectNotFound(t *testing.T) {
 }
 
 // =============================================================================
-// HandleRevokeAgentRole
+// HandleRevokeFleetNodeRole
 // =============================================================================
 
 func TestHandleRevokeAgentRole_HappyPath(t *testing.T) {
 	now := time.Now()
 	projectSvc := &mocks.MockProjectService{
-		RevokeAgentRoleFunc: func(ctx context.Context, req *service.RevokeAgentRoleRequest) (*service.RevokeAgentRoleResponse, error) {
-			return &service.RevokeAgentRoleResponse{
-				ProjectID: req.ProjectID,
-				AgentID:   req.AgentID,
-				Timestamp: now,
+		RevokeFleetNodeRoleFunc: func(ctx context.Context, req *service.RevokeFleetNodeRoleRequest) (*service.RevokeFleetNodeRoleResponse, error) {
+			return &service.RevokeFleetNodeRoleResponse{
+				ProjectID:   req.ProjectID,
+				FleetNodeID: req.FleetNodeID,
+				Timestamp:   now,
 			}, nil
 		},
 	}
 
 	r := httptest.NewRequest(http.MethodDelete, "/api/v1/projects/proj-1/permissions/agent-A?tenant_id=t1", nil)
 	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, chiCtxWith(map[string]string{
-		"id":       "proj-1",
-		"agent_id": "agent-A",
+		"id":      "proj-1",
+		"node_id": "agent-A",
 	})))
 	w := httptest.NewRecorder()
 
 	s := newPermTestServer(projectSvc)
-	s.HandleRevokeAgentRole(w, r)
+	s.HandleRevokeFleetNodeRole(w, r)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
 	}
 
-	var resp RevokeAgentRoleRESTResponse
+	var resp RevokeFleetNodeRoleRESTResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if resp.AgentID != "agent-A" {
-		t.Errorf("agent_id = %q, want %q", resp.AgentID, "agent-A")
+	if resp.FleetNodeID != "agent-A" {
+		t.Errorf("agent_id = %q, want %q", resp.FleetNodeID, "agent-A")
 	}
 }
 
@@ -190,12 +190,12 @@ func TestHandleRevokeAgentRole_MissingAgentID(t *testing.T) {
 	s := newPermTestServer(&mocks.MockProjectService{})
 	r := httptest.NewRequest(http.MethodDelete, "/api/v1/projects/proj-1/permissions/?tenant_id=t1", nil)
 	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, chiCtxWith(map[string]string{
-		"id":       "proj-1",
-		"agent_id": "",
+		"id":      "proj-1",
+		"node_id": "",
 	})))
 	w := httptest.NewRecorder()
 
-	s.HandleRevokeAgentRole(w, r)
+	s.HandleRevokeFleetNodeRole(w, r)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
@@ -204,20 +204,20 @@ func TestHandleRevokeAgentRole_MissingAgentID(t *testing.T) {
 
 func TestHandleRevokeAgentRole_ProjectNotFound(t *testing.T) {
 	projectSvc := &mocks.MockProjectService{
-		RevokeAgentRoleFunc: func(ctx context.Context, req *service.RevokeAgentRoleRequest) (*service.RevokeAgentRoleResponse, error) {
+		RevokeFleetNodeRoleFunc: func(ctx context.Context, req *service.RevokeFleetNodeRoleRequest) (*service.RevokeFleetNodeRoleResponse, error) {
 			return nil, &service.ProjectNotFoundError{TenantID: req.TenantID, ProjectID: req.ProjectID}
 		},
 	}
 
 	r := httptest.NewRequest(http.MethodDelete, "/api/v1/projects/no-such/permissions/agent-A?tenant_id=t1", nil)
 	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, chiCtxWith(map[string]string{
-		"id":       "no-such",
-		"agent_id": "agent-A",
+		"id":      "no-such",
+		"node_id": "agent-A",
 	})))
 	w := httptest.NewRecorder()
 
 	s := newPermTestServer(projectSvc)
-	s.HandleRevokeAgentRole(w, r)
+	s.HandleRevokeFleetNodeRole(w, r)
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)

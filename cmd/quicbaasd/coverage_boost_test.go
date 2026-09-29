@@ -205,6 +205,18 @@ func TestBuildInitConfig_NoHostname(t *testing.T) {
 // directly so its happy path (construct, start, shutdown) is covered
 // without going through the full runInlineInit wrapper.
 func TestRunInitEmbeddedServer_StartsAndShutsDown(t *testing.T) {
+	// buildInitConfig reads the operator config for the SPIFFE trust domain, and
+	// this test calls runInitEmbeddedServer directly — bypassing
+	// validateInlineInitFlags, which is what guarantees a non-empty value on the
+	// CLI path. Supply it here: an init with a CA and no trust domain cannot issue
+	// a usable admin certificate, so first-boot refuses the boot
+	// (go-quicbaas#57) and this test would be asserting a state the CLI cannot
+	// produce.
+	origCfg := cfg
+	t.Cleanup(func() { cfg = origCfg })
+	cfg = config.Default()
+	cfg.IAM.SPIFFETrustDomain = "quicbaas.example.test"
+
 	dataDir := t.TempDir()
 	f := &inlineInitFlags{barrierStrategy: "none", credentialStrategy: "barrier"}
 	require.NoError(t, runInitEmbeddedServer(dataDir, f, false))
@@ -568,7 +580,7 @@ func TestRunDaemon_RefusesInvalidConfig(t *testing.T) {
 }
 
 // =============================================================================
-// applyServerFlags embedded-agent branches
+// applyServerFlags embedded-fleet-node branches
 // =============================================================================
 
 // TestApplyServerFlags_EmbeddedAgentFlags exercises every embedded-agent
@@ -578,35 +590,35 @@ func TestApplyServerFlags_EmbeddedAgentFlags(t *testing.T) {
 	cfg = config.Default()
 	cmd := newServerFlagCmd()
 
-	require.NoError(t, cmd.Flags().Set("embedded-agent", "true"))
-	require.NoError(t, cmd.Flags().Set("embedded-agent-backend", "ollama"))
-	require.NoError(t, cmd.Flags().Set("embedded-agent-ollama-url", "http://127.0.0.1:9999"))
-	require.NoError(t, cmd.Flags().Set("embedded-agent-host-affinity", "node-a"))
-	require.NoError(t, cmd.Flags().Set("embedded-agent-gpu", "true"))
-	require.NoError(t, cmd.Flags().Set("embedded-agent-data-dir", "/tmp/agent-data"))
+	require.NoError(t, cmd.Flags().Set("embedded-fleet-node", "true"))
+	require.NoError(t, cmd.Flags().Set("embedded-fleet-node-backend", "ollama"))
+	require.NoError(t, cmd.Flags().Set("embedded-fleet-node-ollama-url", "http://127.0.0.1:9999"))
+	require.NoError(t, cmd.Flags().Set("embedded-fleet-node-host-affinity", "node-a"))
+	require.NoError(t, cmd.Flags().Set("embedded-fleet-node-gpu", "true"))
+	require.NoError(t, cmd.Flags().Set("embedded-fleet-node-data-dir", "/tmp/agent-data"))
 
 	applyServerFlags(cmd)
 
-	assert.True(t, cfg.Server.EmbeddedAgent.Enabled)
-	assert.Equal(t, "http://127.0.0.1:9999", cfg.Server.EmbeddedAgent.OllamaURL)
-	assert.Equal(t, "node-a", cfg.Server.EmbeddedAgent.HostAffinity)
-	assert.True(t, cfg.Server.EmbeddedAgent.GPUAvailable)
-	assert.Equal(t, "/tmp/agent-data", cfg.Server.EmbeddedAgent.DataDir)
+	assert.True(t, cfg.Server.EmbeddedFleetNode.Enabled)
+	assert.Equal(t, "http://127.0.0.1:9999", cfg.Server.EmbeddedFleetNode.OllamaURL)
+	assert.Equal(t, "node-a", cfg.Server.EmbeddedFleetNode.HostAffinity)
+	assert.True(t, cfg.Server.EmbeddedFleetNode.GPUAvailable)
+	assert.Equal(t, "/tmp/agent-data", cfg.Server.EmbeddedFleetNode.DataDir)
 }
 
 // TestApplyServerFlags_EmbeddedAgentDefaultDataDir covers the else branch
-// that derives the embedded-agent data dir from the storage data dir when
+// that derives the embedded-fleet-node data dir from the storage data dir when
 // the flag is not set and the config field is empty.
 func TestApplyServerFlags_EmbeddedAgentDefaultDataDir(t *testing.T) {
 	log = createTestLogger(t)
 	cfg = config.Default()
 	cfg.Storage.DataDir = "/srv/data"
-	cfg.Server.EmbeddedAgent.DataDir = ""
+	cfg.Server.EmbeddedFleetNode.DataDir = ""
 
 	cmd := newServerFlagCmd()
 	applyServerFlags(cmd)
 
-	assert.Equal(t, "/srv/data/embedded-agent", cfg.Server.EmbeddedAgent.DataDir)
+	assert.Equal(t, "/srv/data/embedded-agent", cfg.Server.EmbeddedFleetNode.DataDir)
 }
 
 // =============================================================================

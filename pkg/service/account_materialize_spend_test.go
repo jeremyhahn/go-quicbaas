@@ -63,7 +63,7 @@ func meterAccount(t *testing.T, f *materializeFixture, tenantID, accountID strin
 		t.Fatalf("Get() error = %v", err)
 	}
 	account.Spend = orchestration.AccountSpendPolicy{
-		Quota: orchestration.AccountQuotaPolicy{Windows: []orchestration.QuotaWindow{
+		Quota: orchestration.SpendLimits{Windows: []orchestration.QuotaWindow{
 			{Name: "five-hour", Size: 5 * time.Hour, MaxTokens: maxTokens},
 		}},
 	}

@@ -79,16 +79,6 @@ var iamToolMap = map[string]string{
 	"User.AssignRole":     "quicbaas_iam_user_assign_role",
 	"User.RevokeRole":     "quicbaas_iam_user_revoke_role",
 
-	// Group Operations
-	"Group.Create":       "quicbaas_iam_group_create",
-	"Group.Get":          "quicbaas_iam_group_get",
-	"Group.Update":       "quicbaas_iam_group_update",
-	"Group.Delete":       "quicbaas_iam_group_delete",
-	"Group.List":         "quicbaas_iam_group_list",
-	"Group.AddMember":    "quicbaas_iam_group_add_member",
-	"Group.RemoveMember": "quicbaas_iam_group_remove_member",
-	"Group.ListMembers":  "quicbaas_iam_group_list_members",
-
 	// Role Operations
 	"Role.Create": "quicbaas_iam_role_create",
 	"Role.Get":    "quicbaas_iam_role_get",

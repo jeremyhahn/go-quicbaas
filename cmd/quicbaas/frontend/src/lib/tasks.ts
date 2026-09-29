@@ -21,11 +21,19 @@
 
 import type { Artifact, TaskSource } from '@quicbaas/sdk';
 
-/** The attempt-accounting fields of a Task. All absent until stage 1a lands. */
+/**
+ * The attempt-accounting fields of a Task. `charged_attempts` and
+ * `effective_budget` are derived by the server from the others
+ * (go-quicbaas#947); they are preferred here so the page never re-derives the
+ * engine's refund rules and disagrees with it.
+ */
 export interface TaskAttemptFields {
   attempts?: number;
   attempt_budget?: number;
   environment_faults?: number;
+  question_attempts?: number;
+  charged_attempts?: number;
+  effective_budget?: number;
 }
 
 /** The fields that say whether, and why, a Task is waiting on a person. */
@@ -68,10 +76,22 @@ export function dispatchedAttempts(task: TaskAttemptFields): number {
 
 /**
  * chargedAttempts is what counts against the budget: dispatched attempts less
- * the ones refunded because the environment, not the work, failed.
+ * the ones refunded because the environment failed or the worker stopped to
+ * ask a person. The server's own figure wins when it sent one.
  */
 export function chargedAttempts(task: TaskAttemptFields): number {
-  return Math.max(0, dispatchedAttempts(task) - Math.max(0, task.environment_faults ?? 0));
+  if (task.charged_attempts !== undefined) return Math.max(0, task.charged_attempts);
+  const refunded = Math.max(0, task.environment_faults ?? 0) + Math.max(0, task.question_attempts ?? 0);
+  return Math.max(0, dispatchedAttempts(task) - refunded);
+}
+
+/**
+ * attemptBudget is the budget the task runs under: the server's effective
+ * budget (its own, or the engine default) when sent, else the declared one.
+ * 0 means nothing says.
+ */
+export function attemptBudget(task: TaskAttemptFields): number {
+  return Math.max(0, task.effective_budget ?? task.attempt_budget ?? 0);
 }
 
 /**
@@ -81,10 +101,12 @@ export function chargedAttempts(task: TaskAttemptFields): number {
  * accounting at all renders as an em-dash rather than an invented "0 / 0".
  */
 export function budgetLabel(task: TaskAttemptFields): string {
-  if (task.attempts === undefined && task.attempt_budget === undefined) return '—';
+  if (task.attempts === undefined && task.attempt_budget === undefined && task.effective_budget === undefined) {
+    return '—';
+  }
   const charged = chargedAttempts(task);
   const dispatched = dispatchedAttempts(task);
-  const budget = task.attempt_budget ?? 0;
+  const budget = attemptBudget(task);
   const base = budget > 0 ? `${charged} / ${budget}` : `${charged}`;
   return dispatched === charged ? base : `${base} (${dispatched} dispatched)`;
 }
@@ -100,6 +122,122 @@ export function blockedReason(task: { blocked_reason?: string }): string {
  */
 export function isWaitingOnPerson(task: TaskBlockFields): boolean {
   return task.status === 'blocked' || task.status === 'failed';
+}
+
+// =============================================================================
+// Why a task stopped
+// =============================================================================
+//
+// `failed, attempts: 3` SAID NOTHING ABOUT WHOSE FAILURE IT WAS. Nine tasks a
+// deploy killed and two that genuinely failed read identically, and a task
+// parked on a question for the owner read the same as one waiting for an
+// operator to mount a workspace (go-quicbaas#947). The server classifies the
+// stop — `fault_origin` from its own fault-class tables, `block_kind` from the
+// park — and this reads those fields. It never classifies `result.output`:
+// that prose is the detail behind the typed reason, not the reason.
+
+/** The fields a stop is classified from. */
+export interface TaskStopFields {
+  status: string;
+  block_kind?: string;
+  fault_class?: string;
+  fault_origin?: string;
+  conclusion_reason?: string;
+}
+
+/**
+ * The distinct ways a task can be stopped, as a reader must tell them apart.
+ * `none` is a task that is not stopped on anything: open, or completed.
+ */
+export type TaskStopKind =
+  /** The environment failed — the fleet, an account pool, a forge. An operator repairs it. */
+  | 'environment'
+  /** The task failed on its own merits. */
+  | 'work'
+  /** Its node stopped and nothing diagnosed why; a person readmits it. */
+  | 'undiagnosed'
+  /** Parked on a question or a decision only the owner may make. */
+  | 'owner'
+  /** Parked on a condition or an operator's hold no fault classified. */
+  | 'held'
+  /** Escalated to a person for a reason no fault classified. */
+  | 'escalated'
+  | 'none';
+
+/** taskStopKind classifies why a task is stopped. */
+export function taskStopKind(task: TaskStopFields): TaskStopKind {
+  switch (task.fault_origin) {
+    case 'environment':
+      return 'environment';
+    case 'work':
+      return 'work';
+    case 'undiagnosed':
+      return 'undiagnosed';
+  }
+  if (task.status !== 'blocked') return 'none';
+  switch (task.block_kind) {
+    case 'needs_info':
+      return 'owner';
+    case 'escalated':
+      return 'escalated';
+    default:
+      return 'held';
+  }
+}
+
+/** How one stop kind is presented: a short label, a badge tone, and a sentence. */
+export interface TaskStopPresentation {
+  label: string;
+  variant: 'error' | 'warning' | 'info' | 'neutral';
+  detail: string;
+}
+
+/** The presentation of every stop kind, keyed for O(1) lookup. */
+const TASK_STOP_PRESENTATION: Record<Exclude<TaskStopKind, 'none'>, TaskStopPresentation> = {
+  environment: {
+    label: 'Environment fault',
+    variant: 'warning',
+    detail: 'The environment failed, not the work; awaiting operator repair. Refunded attempts are not charged.',
+  },
+  work: {
+    label: 'Failed on the work',
+    variant: 'error',
+    detail: 'Every charged attempt failed on the work itself.',
+  },
+  undiagnosed: {
+    label: 'Node lost',
+    variant: 'neutral',
+    detail: 'The node running the attempt stopped and nothing diagnosed why; readmit once the cause is known.',
+  },
+  owner: {
+    label: 'Awaiting owner ruling',
+    variant: 'info',
+    detail: 'The worker stopped on a question or a decision only the owner may make.',
+  },
+  held: {
+    label: 'Held',
+    variant: 'neutral',
+    detail: 'Parked on a condition or an operator’s hold.',
+  },
+  escalated: {
+    label: 'Escalated',
+    variant: 'warning',
+    detail: 'Escalated to a person.',
+  },
+};
+
+/**
+ * taskStopPresentation is how a stopped task's reason is shown, or null for a
+ * task that is not stopped on anything. An environment fault names its class,
+ * so the badge reads e.g. "Environment fault: forge_unreachable".
+ */
+export function taskStopPresentation(task: TaskStopFields): TaskStopPresentation | null {
+  const kind = taskStopKind(task);
+  if (kind === 'none') return null;
+  const base = TASK_STOP_PRESENTATION[kind];
+  const cls = (task.fault_class ?? '').trim();
+  if (kind === 'environment' && cls !== '') return { ...base, label: `${base.label}: ${cls}` };
+  return base;
 }
 
 /** The text shown when a task is waiting on a person and nothing says why. */
@@ -309,7 +447,7 @@ export function taskHasDispatched(task: TaskJobFields & TaskAttemptFields): bool
 //
 // So for the whole life of an auto-spawned task the field is legitimately
 // empty, and the Assigned column rendered an em-dash that reads as "nobody
-// ran this" for work that ran on a named fleet agent. The agent is recorded
+// ran this" for work that ran on a named fleet node. The node is recorded
 // on the JOB, as `agent_id` (pkg/orchestration/orchestrator_types.go), which
 // is where this looks when the task names no claimant.
 
@@ -321,20 +459,27 @@ export interface TaskAgentJob {
 
 /**
  * taskAgentID is the agent the task is being worked by: its claimant when it
- * has one, otherwise the fleet agent its most recent attempt ran on, read
- * from that attempt's job record. '' when neither is known — which is an
- * honest "not recorded", not "nobody".
+ * has one, otherwise the fleet node its most recent attempt ran on. '' when
+ * neither is known — which is an honest "not recorded", not "nobody".
  *
- * `jobs` is whatever job records the caller already holds; only the record of
- * the latest attempt is consulted, so an older attempt's agent is never
- * presented as the current one.
+ * The attempt's agent comes from the task's own `agent_id` when the server
+ * resolved it — every task listing does, from the latest attempt's job — and
+ * otherwise from `jobs`, whatever job records the caller already holds. Only
+ * the latest attempt's record is consulted, so an older attempt's agent is
+ * never presented as the current one.
+ *
+ * READING THE LISTING'S OWN FIELD IS WHAT SPARES A PAGE ITS SECOND REQUEST.
+ * The Tasks page used to follow every page of tasks with a job listing for
+ * their attempts, only to re-derive the agent the task rows already carried.
  */
 export function taskAgentID(
-  task: { assigned_to?: string } & TaskJobFields,
-  jobs: readonly TaskAgentJob[],
+  task: { assigned_to?: string; agent_id?: string } & TaskJobFields,
+  jobs: readonly TaskAgentJob[] = [],
 ): string {
   const claimant = (task.assigned_to ?? '').trim();
   if (claimant !== '') return claimant;
+  const resolved = (task.agent_id ?? '').trim();
+  if (resolved !== '') return resolved;
   const latest = latestTaskJobID(task);
   if (latest === '') return '';
   for (const job of jobs) {

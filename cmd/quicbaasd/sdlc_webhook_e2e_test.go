@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -69,7 +70,7 @@ func bindGiteaProject(t *testing.T, srv *server.Server, repo string) string {
 			WebhookSecretRef: e2eWebhookRef, TokenSecretRef: e2eTokenRef,
 		},
 		Strategy: sdlc.GitHubFlowName,
-		Worker:   sdlc.WorkerConfig{Backend: loopE2EBackend},
+		Worker:   orchestration.AgentRefTo(loopE2EWorkerAgent),
 		Review:   sdlc.ReviewPolicy{RequiredApprovals: 1},
 	})
 	require.NoError(t, err)

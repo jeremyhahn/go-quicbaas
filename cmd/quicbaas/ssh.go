@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/term"
 
 	sshSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
@@ -49,13 +50,43 @@ var (
 	// ErrSSHMissingHost is returned when a host argument is absent.
 	ErrSSHMissingHost = errors.New("ssh: host is required")
 
-	// ErrSSHMissingFingerprint is returned when a fingerprint is absent.
-	ErrSSHMissingFingerprint = errors.New("ssh: fingerprint is required")
+	// ErrSSHMissingHostKey is returned when known-hosts add names no host
+	// key: go-xkms pins the full public key, never a bare fingerprint.
+	ErrSSHMissingHostKey = errors.New("ssh: host key is required (--key or --file)")
 
 	// ErrSSHInvalidKeyType is returned when --type is outside the
 	// supported algorithm set.
 	ErrSSHInvalidKeyType = errors.New("ssh: invalid key type")
 )
+
+// SSHReadHostKeyError wraps a filesystem failure reading the host key passed
+// to `quicbaas ssh known-hosts add --file`.
+type SSHReadHostKeyError struct {
+	Path string
+	Err  error
+}
+
+// Error implements the error interface.
+func (e *SSHReadHostKeyError) Error() string {
+	return "ssh: read host key " + e.Path + ": " + e.Err.Error()
+}
+
+// Unwrap exposes the underlying filesystem error.
+func (e *SSHReadHostKeyError) Unwrap() error { return e.Err }
+
+// SSHParseHostKeyError reports a host key that is not an authorized_keys-format
+// line.
+type SSHParseHostKeyError struct {
+	Err error
+}
+
+// Error implements the error interface.
+func (e *SSHParseHostKeyError) Error() string {
+	return "ssh: parse host key: " + e.Err.Error()
+}
+
+// Unwrap exposes the parse failure.
+func (e *SSHParseHostKeyError) Unwrap() error { return e.Err }
 
 // SSHReadPEMError wraps a filesystem failure reading a PEM file
 // passed to `quicbaas ssh keys import --from-file`. Kept as a typed
@@ -95,6 +126,7 @@ one work unchanged against the others.`,
 	cmd.AddCommand(newSSHKeysCommand())
 	cmd.AddCommand(newSSHKnownHostsCommand())
 	cmd.AddCommand(newSSHAuthorizedCommand())
+	cmd.AddCommand(newSSHAgentCmd())
 	return cmd
 }
 
@@ -204,13 +236,13 @@ func newSSHKnownHostsCommand() *cobra.Command {
 func newSSHKnownHostsAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add",
-		Short: "Add (pin) a host-key fingerprint",
+		Short: "Add (pin) a host key",
 		RunE:  runSSHKnownHostsAdd,
 	}
 	addKnownHostsSelectorFlags(cmd)
 	cmd.Flags().String("host", "", "Target host (required)")
-	cmd.Flags().String("fingerprint", "", "SSH SHA256 fingerprint (required)")
-	cmd.Flags().String("algorithm", "", "Host-key algorithm (e.g. ssh-ed25519)")
+	cmd.Flags().String("key", "", "Host key as an authorized_keys-format line (required unless --file)")
+	cmd.Flags().String("file", "", "Read the host key from a file instead of --key")
 	cmd.Flags().String("source", "", "Provenance tag (manual, cert, ...)")
 	return cmd
 }
@@ -487,28 +519,51 @@ func runSSHKeysExport(cmd *cobra.Command, _ []string) error {
 func runSSHKnownHostsAdd(cmd *cobra.Command, _ []string) error {
 	scope, owner := defaultScopeAndOwner(cmd)
 	host, _ := cmd.Flags().GetString("host")
-	fp, _ := cmd.Flags().GetString("fingerprint")
-	algo, _ := cmd.Flags().GetString("algorithm")
 	src, _ := cmd.Flags().GetString("source")
 	if host == "" {
 		return ErrSSHMissingHost
 	}
-	if fp == "" {
-		return ErrSSHMissingFingerprint
+	pub, err := sshHostKeyFromFlags(cmd)
+	if err != nil {
+		return err
 	}
 	client, closer, err := sshClientWithCloser()
 	if err != nil {
 		return err
 	}
 	defer closer()
+	// The pin carries the full key; go-xkms derives the fingerprint and
+	// algorithm from it rather than trusting either from the caller.
+	line := strings.TrimSpace(string(gossh.MarshalAuthorizedKey(pub)))
 	if err := client.KnownHosts().Add(context.Background(), sshSDK.AddKnownHostRequest{
-		Scope: scope, Owner: owner, Host: host,
-		Fingerprint: fp, Algorithm: algo, Source: src,
+		Scope: scope, Owner: owner, Host: host, PublicKey: line, Source: src,
 	}); err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Pinned %s -> %s\n", host, fp)
+	fmt.Fprintf(cmd.OutOrStdout(), "Pinned %s -> %s\n", host, gossh.FingerprintSHA256(pub))
 	return nil
+}
+
+// sshHostKeyFromFlags reads the host key from --key, or from the file named by
+// --file, and parses it as an authorized_keys-format line.
+func sshHostKeyFromFlags(cmd *cobra.Command) (gossh.PublicKey, error) {
+	key, _ := cmd.Flags().GetString("key")
+	path, _ := cmd.Flags().GetString("file")
+	if key == "" && path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, &SSHReadHostKeyError{Path: path, Err: err}
+		}
+		key = string(data)
+	}
+	if strings.TrimSpace(key) == "" {
+		return nil, ErrSSHMissingHostKey
+	}
+	pub, _, _, _, err := gossh.ParseAuthorizedKey([]byte(key))
+	if err != nil {
+		return nil, &SSHParseHostKeyError{Err: err}
+	}
+	return pub, nil
 }
 
 func runSSHKnownHostsList(cmd *cobra.Command, _ []string) error {

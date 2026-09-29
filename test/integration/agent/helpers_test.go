@@ -52,10 +52,10 @@ func createTestProject(t *testing.T, path string) string {
 	return path
 }
 
-// createTestProjectWithAgents creates a directory at the given path with a
+// createTestProjectWithFleetNodes creates a directory at the given path with a
 // CLAUDE.md file and a .claude/agents/ directory containing agent definition
 // files.
-func createTestProjectWithAgents(t *testing.T, path string, agentNames []string) string {
+func createTestProjectWithFleetNodes(t *testing.T, path string, agentNames []string) string {
 	t.Helper()
 
 	dir := createTestProject(t, path)

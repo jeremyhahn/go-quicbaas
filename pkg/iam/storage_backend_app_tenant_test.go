@@ -27,7 +27,7 @@ import (
 //
 // The IAM KVStore routes every read and write by the tenant bound to the
 // operation's CONTEXT (pkg/server/tenant_kvstore.go tenantFromAnyContext), and
-// a barrier-isolated tenant has its own store. POST /api/v1/agents/register is
+// a barrier-isolated tenant has its own store. POST /api/v1/fleet/enroll is
 // a public route: it carries no identity, so its context names no tenant and
 // the app landed in the SHARED store, while POST /oauth2/token scopes its
 // context to the tenant encoded in the client_id and read the TENANT's store.
@@ -38,12 +38,12 @@ import (
 // that mirrors production routing. A flat store cannot reproduce the defect.
 // =============================================================================
 
-// agentApp builds the application record POST /api/v1/agents/register creates.
+// agentApp builds the application record POST /api/v1/fleet/enroll creates.
 func agentApp(tenantID, clientID string) *Application {
 	return &Application{
 		ClientID:     clientID,
 		ClientSecret: "hashed-secret",
-		Name:         AgentAppName(tenantID, "agent-gpu-host"),
+		Name:         FleetNodeAppName(tenantID, "agent-gpu-host"),
 		TenantID:     tenantID,
 		GrantTypes:   []string{GrantTypeClientCredentials},
 	}

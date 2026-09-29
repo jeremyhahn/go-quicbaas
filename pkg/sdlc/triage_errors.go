@@ -38,6 +38,10 @@ var (
 	// ErrTriageSession indicates the triage run could not hold the session
 	// it reads the repository through.
 	ErrTriageSession = errors.New("sdlc: triage session unavailable")
+
+	// ErrTriageHeld indicates a verdict was refused because the issue carries
+	// a hold only a person may clear.
+	ErrTriageHeld = errors.New("sdlc: issue is held; triage does not act on it")
 )
 
 // TriageVerdictError reports one issue the run could not conclude about.
@@ -105,3 +109,22 @@ func (e *TriageSessionError) Error() string {
 
 // Unwrap returns the sentinel error for errors.Is support.
 func (e *TriageSessionError) Unwrap() error { return ErrTriageSession }
+
+// TriageHeldError reports a verdict refused because the issue is held. It is
+// not a failure of the sweep: the hold is the answer, and the issue is left
+// exactly as it was.
+type TriageHeldError struct {
+	// Issue is the issue number.
+	Issue int
+
+	// Label is the hold the issue carries, as the forge spells it.
+	Label string
+}
+
+// Error implements the error interface.
+func (e *TriageHeldError) Error() string {
+	return ErrTriageHeld.Error() + ": issue #" + strconv.Itoa(e.Issue) + " carries " + strconv.Quote(e.Label)
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *TriageHeldError) Unwrap() error { return ErrTriageHeld }

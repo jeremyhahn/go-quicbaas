@@ -239,6 +239,19 @@ func TestSDLCWebhookPathParams(t *testing.T) {
 	}
 }
 
+// TestSDLCWebhookFailure_TellsAnAcceptedTriageFailureFromARefusal proves the
+// operator's log does not call a delivery refused when it was accepted and
+// only its triage wake failed.
+func TestSDLCWebhookFailure_TellsAnAcceptedTriageFailureFromARefusal(t *testing.T) {
+	wake := &sdlc.TriageWakeError{TenantID: "t", ProjectID: "p", Cause: errors.New("scheduler down")}
+	if got := sdlcWebhookFailure(wake); got != "delivery accepted but triage was not woken" {
+		t.Fatalf("triage wake failure logged as %q", got)
+	}
+	if got := sdlcWebhookFailure(&sdlc.WebhookUnverifiedError{Type: sdlc.ForgeGitea, Reason: "hmac"}); got != "delivery refused" {
+		t.Fatalf("refusal logged as %q", got)
+	}
+}
+
 // runnerNames is what the registry holds, for a refusal that says what it
 // found instead of only what it wanted.
 func runnerNames() []string {
@@ -261,7 +274,7 @@ func runnerNames() []string {
 // the derivation the host actually calls yields a socket that fits no matter
 // how deep the projects root is.
 func TestSDLCSocketsRoot_TheDefaultFitsUnderAnyRealisticProjectsRoot(t *testing.T) {
-	dataDir := "/var/lib/quicbaas-burnin/go-truststrap-run2/data"
+	dataDir := "/var/lib/quicbaas/go-truststrap-run2/data"
 	deepProjects := "/" + strings.Repeat("p", 199)
 
 	for name, runtimeDir := range map[string]string{
@@ -278,9 +291,9 @@ func TestSDLCSocketsRoot_TheDefaultFitsUnderAnyRealisticProjectsRoot(t *testing.
 			if root == "" {
 				t.Fatal("the host derived no sockets root")
 			}
-			if got := sdlc.LongestSigningSocketPath(root); got > sdlc.MaxSigningSocketPath {
+			if got := orchestration.LongestSigningSocketPath(root); got > orchestration.MaxSigningSocketPath {
 				t.Fatalf("sockets root %q yields %d-byte socket paths, over the %d-byte limit",
-					root, got, sdlc.MaxSigningSocketPath)
+					root, got, orchestration.MaxSigningSocketPath)
 			}
 		})
 	}
@@ -289,9 +302,9 @@ func TestSDLCSocketsRoot_TheDefaultFitsUnderAnyRealisticProjectsRoot(t *testing.
 	// workspace could not hold one, which is why the root had to move rather
 	// than be shortened.
 	workspace := filepath.Join(deepProjects, "automatethethings", "0f8c1f26-2a1e-4a7e-9f0a-3b7c5d9e1a24", "workspace")
-	if sdlc.LongestSigningSocketPath(workspace) <= sdlc.MaxSigningSocketPath {
+	if orchestration.LongestSigningSocketPath(workspace) <= orchestration.MaxSigningSocketPath {
 		t.Fatalf("the workspace placement fits after all (%d bytes); this test no longer proves anything",
-			sdlc.LongestSigningSocketPath(workspace))
+			orchestration.LongestSigningSocketPath(workspace))
 	}
 }
 
@@ -334,9 +347,9 @@ func TestServer_SocketsRootIsPerDaemon(t *testing.T) {
 		t.Fatalf("the accessor derived %q and then %q for one daemon", first, again)
 	}
 	// And it must fit: the runner refuses a root no socket could bind under.
-	if got := sdlc.LongestSigningSocketPath(first); got > sdlc.MaxSigningSocketPath {
+	if got := orchestration.LongestSigningSocketPath(first); got > orchestration.MaxSigningSocketPath {
 		t.Fatalf("the per-daemon root %q yields %d-byte socket paths, over %d",
-			first, got, sdlc.MaxSigningSocketPath)
+			first, got, orchestration.MaxSigningSocketPath)
 	}
 
 	// An operator's explicit root is still exactly what they wrote: it names

@@ -13,9 +13,9 @@
 2026-09-12T17:56:43.9846052Z workflow prepared
 2026-09-12T17:56:44.0014359Z ::group::Starting job container
 2026-09-12T17:56:44.0015182Z image: forge.internal:3001/jeremyhahn/ci-runner:latest
-2026-09-12T17:56:44.0015451Z name: GITEA-ACTIONS-TASK-67425-WORKFLOW-PR-Base-Guard-JOB-PR-Base-Gua-a090b615f95e7294219dab7d68abb4e778448ddcbfb47f6bb5cdea830b4976cd
-2026-09-12T17:56:44.0016016Z network: GITEA-ACTIONS-TASK-67425-WORKFLOW-PR-Base-Guard-JOB-PR-Base-Gua-a090b615f95e7294219dab7d68abb4e778448ddcbfb47f6bb5cdea830b4976cd-base-network
+2026-09-12T17:56:44.0015451Z name: GITEA-ACTIONS-TASK-67425-WORKFLOW-CI-JOB-Lint-a090b615f95e7294219dab7d68abb4e778448ddcbfb47f6bb5cdea830b4976cd
+2026-09-12T17:56:44.0016016Z network: GITEA-ACTIONS-TASK-67425-WORKFLOW-CI-JOB-Lint-a090b615f95e7294219dab7d68abb4e778448ddcbfb47f6bb5cdea830b4976cd-base-network
 2026-09-12T17:56:44.0016561Z docker pull image=forge.internal:3001/jeremyhahn/ci-runner:latest platform= username= forcePull=false
 2026-09-12T17:56:44.0151888Z ::endgroup::
-2026-09-12T17:56:44.0324158Z Cleaning up network for job PR Base Guard, and network name is: GITEA-ACTIONS-TASK-67425-WORKFLOW-PR-Base-Guard-JOB-PR-Base-Gua-a090b615f95e7294219dab7d68abb4e778448ddcbfb47f6bb5cdea830b4976cd-base-network
+2026-09-12T17:56:44.0324158Z Cleaning up network for job Lint, and network name is: GITEA-ACTIONS-TASK-67425-WORKFLOW-CI-JOB-Lint-a090b615f95e7294219dab7d68abb4e778448ddcbfb47f6bb5cdea830b4976cd-base-network
 2026-09-12T17:56:44.0337489Z failed to pull image 'forge.internal:3001/jeremyhahn/ci-runner:latest' (): Error response from daemon: failed to resolve reference "forge.internal:3001/jeremyhahn/ci-runner:latest": failed to do request: Head "https://forge.internal:3001/v2/jeremyhahn/ci-runner/manifests/latest": http: server gave HTTP response to HTTPS client

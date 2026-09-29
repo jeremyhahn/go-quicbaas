@@ -69,6 +69,16 @@ func (s *agentServiceImpl) startTaskBoundJob(ctx context.Context, req *StartJobR
 		}
 	}
 
+	// THE PARK GATE READS THE TASK BEFORE THE BINDING CHARGES IT, because a
+	// charged attempt is what makes a task started (Task.Started).
+	current, err := s.taskStore.GetTask(ctx, tenantID, req.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.admitTaskDispatch(ctx, current); err != nil {
+		return nil, err
+	}
+
 	jobID, err := generateJobID()
 	if err != nil {
 		return nil, &ControlLoopError{

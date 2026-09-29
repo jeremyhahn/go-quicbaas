@@ -211,44 +211,66 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_orchestrator_session_history":      {"orchestrator", "status"},
 	"quicbaas_orchestrator_session_conversation": {"orchestrator", "status"},
 	"quicbaas_orchestrator_cost":                 {"orchestrator", "status"},
-	"quicbaas_orchestrator_close":                {"orchestrator", "close"},
+	"quicbaas_orchestrator_spend_policy_get":     {"orchestrator", "status"},
+	"quicbaas_orchestrator_spend_policy_set":     {"spend_policy", "write"},
+	// A tenant's runtime cost settings (go-quicbaas#1058). Replacing them is
+	// a QuicBaaS family: go-qrdb owns the orchestrator family outright.
+	"quicbaas_orchestrator_cost_settings_get": {"orchestrator", "status"},
+	"quicbaas_orchestrator_cost_settings_set": {"cost_settings", "write"},
+	// The tenant AI agent catalog, mirroring /api/v1/agents and
+	// /api/v1/agent-pools: reads agents:read, every change agents:write.
+	"quicbaas_agents_list":         {"agents", "read"},
+	"quicbaas_agents_get":          {"agents", "read"},
+	"quicbaas_agents_used_by":      {"agents", "read"},
+	"quicbaas_agents_create":       {"agents", "write"},
+	"quicbaas_agents_update":       {"agents", "write"},
+	"quicbaas_agents_delete":       {"agents", "write"},
+	"quicbaas_agent_pools_list":    {"agents", "read"},
+	"quicbaas_agent_pools_get":     {"agents", "read"},
+	"quicbaas_agent_pools_used_by": {"agents", "read"},
+	"quicbaas_agent_pools_create":  {"agents", "write"},
+	"quicbaas_agent_pools_update":  {"agents", "write"},
+	"quicbaas_agent_pools_delete":  {"agents", "write"},
+	"quicbaas_orchestrator_close":  {"orchestrator", "close"},
 	// Rotation closes the session's agent process and reconstitutes it against
 	// a newly selected pooled credential — a spawn's authority, not a close's.
 	// Mirrors the gRPC canon (RotateSessionAccount), the REST PEP rule
 	// ("/rotate-account") and the QUIC sub-op table (rotateSubOpPermissions).
-	"quicbaas_orchestrator_rotate_account": {"orchestrator", "spawn"},
-	"quicbaas_orchestrator_list":           {"orchestrator", "list"},
-	"quicbaas_orchestrator_list_sessions":  {"orchestrator", "list"},
-	"quicbaas_orchestrator_task_create":    {"orchestrator", "task_create"},
-	"quicbaas_orchestrator_task_block":     {"orchestrator", "task_block"},
-	"quicbaas_orchestrator_task_readmit":   {"orchestrator", "task_readmit"},
-	"quicbaas_orchestrator_task_delete":    {"orchestrator", "task_create"},
-	"quicbaas_orchestrator_decompose":      {"orchestrator", "task_decompose"},
-	"quicbaas_orchestrator_start_job":      {"orchestrator", "job_start"},
-	"quicbaas_orchestrator_get_job_status": {"orchestrator", "job_read"},
-	"quicbaas_orchestrator_list_jobs":      {"orchestrator", "job_list"},
-	"quicbaas_orchestrator_cancel_job":     {"orchestrator", "job_cancel"},
-	"quicbaas_orchestrator_list_backends":  {"orchestrator", "backend_list"},
-	"quicbaas_orchestrator_list_runners":   {"orchestrator", "status"},
-	"quicbaas_orchestrator_discover":       {"orchestrator", "discover"},
-	"quicbaas_orchestrator_health":         {"orchestrator", "health"},
-	"quicbaas_orchestrator_inference":      {"orchestrator", "inference"},
-	"quicbaas_orchestrator_register":       {"orchestrator", "agent_register"},
-	"quicbaas_orchestrator_cache_get":      {"orchestrator", "cache_read"},
-	"quicbaas_orchestrator_cache_put":      {"orchestrator", "cache_write"},
-	"quicbaas_orchestrator_broadcast":      {"orchestrator", "broadcast"},
+	"quicbaas_orchestrator_rotate_account":    {"orchestrator", "spawn"},
+	"quicbaas_orchestrator_list":              {"orchestrator", "list"},
+	"quicbaas_orchestrator_list_sessions":     {"orchestrator", "list"},
+	"quicbaas_orchestrator_task_create":       {"orchestrator", "task_create"},
+	"quicbaas_orchestrator_task_block":        {"orchestrator", "task_block"},
+	"quicbaas_orchestrator_task_readmit":      {"orchestrator", "task_readmit"},
+	"quicbaas_orchestrator_task_delete":       {"orchestrator", "task_create"},
+	"quicbaas_orchestrator_attention_list":    {"orchestrator", "task_list"},
+	"quicbaas_orchestrator_attention_resolve": {"orchestrator", "task_readmit"},
+	"quicbaas_orchestrator_decompose":         {"orchestrator", "task_decompose"},
+	"quicbaas_orchestrator_start_job":         {"orchestrator", "job_start"},
+	"quicbaas_orchestrator_get_job_status":    {"orchestrator", "job_read"},
+	"quicbaas_orchestrator_list_jobs":         {"orchestrator", "job_list"},
+	"quicbaas_orchestrator_cancel_job":        {"orchestrator", "job_cancel"},
+	"quicbaas_orchestrator_list_backends":     {"orchestrator", "backend_list"},
+	"quicbaas_orchestrator_list_runners":      {"orchestrator", "status"},
+	"quicbaas_orchestrator_discover":          {"orchestrator", "discover"},
+	"quicbaas_orchestrator_health":            {"orchestrator", "health"},
+	"quicbaas_orchestrator_inference":         {"orchestrator", "inference"},
+	"quicbaas_orchestrator_register":          {"orchestrator", "agent_register"},
+	"quicbaas_orchestrator_cache_get":         {"orchestrator", "cache_read"},
+	"quicbaas_orchestrator_cache_put":         {"orchestrator", "cache_write"},
+	"quicbaas_orchestrator_broadcast":         {"orchestrator", "broadcast"},
 
-	// Fleet + task-artifact tools keep their historical quicbaas_agent_fleet_* /
+	// Fleet + task-artifact tools keep their historical quicbaas_fleet_* /
 	// quicbaas_task_* names but belong to the same orchestrator surface, so they
 	// map onto the qrdb-registered orchestrator agent_* / artifact_read family.
 	// Without an entry they were default-denied and never appeared in tools/list.
-	"quicbaas_agent_fleet_register":  {"orchestrator", "agent_register"},
-	"quicbaas_agent_fleet_list":      {"orchestrator", "agent_list"},
-	"quicbaas_agent_fleet_status":    {"orchestrator", "agent_read"},
-	"quicbaas_agent_fleet_remove":    {"orchestrator", "agent_remove"},
-	"quicbaas_agent_fleet_heartbeat": {"orchestrator", "agent_heartbeat"},
-	"quicbaas_task_get_artifact":     {"orchestrator", "artifact_read"},
-	"quicbaas_task_list_artifacts":   {"orchestrator", "artifact_read"},
+	"quicbaas_fleet_register":      {"orchestrator", "agent_register"},
+	"quicbaas_fleet_list":          {"orchestrator", "agent_list"},
+	"quicbaas_fleet_status":        {"orchestrator", "agent_read"},
+	"quicbaas_fleet_remove":        {"orchestrator", "agent_remove"},
+	"quicbaas_fleet_heartbeat":     {"orchestrator", "agent_heartbeat"},
+	"quicbaas_task_get_artifact":   {"orchestrator", "artifact_read"},
+	"quicbaas_task_list_artifacts": {"orchestrator", "artifact_read"},
 
 	// SSH -> keys. SSH assets are cryptographic keys, so they authorize with
 	// the qrdb keys:* family — byte-for-byte the same (resource, action)
@@ -305,13 +327,13 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_dynamic_secrets_list_leases":  {"dynamic_secrets", "lease_list"},
 
 	// Project -> project (tools are registered without a quicbaas_ prefix)
-	"project_create":       {"project", "create"},
-	"project_get":          {"project", "read"},
-	"project_list":         {"project", "list"},
-	"project_update":       {"project", "update"},
-	"project_delete":       {"project", "delete"},
-	"project_grant_agent":  {"project", "grant"},
-	"project_revoke_agent": {"project", "revoke"},
+	"project_create":            {"project", "create"},
+	"project_get":               {"project", "read"},
+	"project_list":              {"project", "list"},
+	"project_update":            {"project", "update"},
+	"project_delete":            {"project", "delete"},
+	"project_grant_fleet_node":  {"project", "grant"},
+	"project_revoke_fleet_node": {"project", "revoke"},
 
 	// SDLC module -> sdlc (tools are registered without a quicbaas_ prefix).
 	// Mirrors the REST rules for /api/v1/sdlc/projects/{projectID}/binding,
@@ -327,6 +349,25 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// being able to change it.
 	"sdlc_onboard":     {"sdlc", "bind"},
 	"sdlc_conformance": {"sdlc", "read"},
+	"sdlc_open_work":   {"sdlc", "read"},
+	// Choosing which reviewer judges a pull request is a decision about the
+	// project's review: writing an override carries sdlc:bind like the
+	// binding it refines, reading one sdlc:read.
+	"sdlc_reviewer":       {"sdlc", "read"},
+	"sdlc_reviewer_set":   {"sdlc", "bind"},
+	"sdlc_reviewer_clear": {"sdlc", "bind"},
+	// Filing an issue on the bound forge is an audited operator write with
+	// its own action, as POST .../issues is; the collaborator listing reads.
+	"sdlc_issue_create":  {"sdlc", "issue_create"},
+	"sdlc_collaborators": {"sdlc", "read"},
+	// Adopting an issue creates its task, and is gated as task creation is,
+	// mirroring POST /api/v1/sdlc/projects/{projectID}/adopt.
+	"sdlc_adopt_issue": {"orchestrator", "task_create"},
+	// The worker image refresh: a host verb over every tenant's bindings,
+	// gated on the cross-tenant worker_images:* family exactly as
+	// GET /api/v1/sdlc/worker-image and POST .../refresh are.
+	"quicbaas_sdlc_worker_image":         {"worker_images", "read"},
+	"quicbaas_sdlc_worker_image_refresh": {"worker_images", "refresh"},
 
 	// Pooled provider accounts -> credentials. An account custodies credential
 	// material (an Anthropic / Codex / OpenCode login), so it authorizes with
@@ -343,11 +384,15 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// Materializing RELEASES the envelope, so it takes QuicBaaS's own
 	// agent_accounts:materialize rather than a credentials:* grant — which is
 	// registered ScopeCross (system tenant only) and would deny the
-	// tenant-scoped agent daemon this verb exists for.
+	// tenant-scoped fleet node daemon this verb exists for.
 	"quicbaas_agent_account_materialize": {"agent_accounts", "materialize"},
-	"quicbaas_agent_account_revoke":      {"credentials", "delete"},
-	"quicbaas_agent_account_set_default": {"credentials", "store"},
-	"quicbaas_agent_account_usage":       {"agent_accounts", "read"},
+	// The session reservation is the release's companion; see
+	// pkg/api/grpc/authz_mapping.go.
+	"quicbaas_agent_account_reserve_session": {"agent_accounts", "materialize"},
+	"quicbaas_agent_account_release_session": {"agent_accounts", "materialize"},
+	"quicbaas_agent_account_revoke":          {"credentials", "delete"},
+	"quicbaas_agent_account_set_default":     {"credentials", "store"},
+	"quicbaas_agent_account_usage":           {"agent_accounts", "read"},
 
 	// Certificate extensions -> ca / certs. The mapping MUST match the gRPC
 	// mapping (pkg/api/grpc/authz_mapping.go), the REST PEP mapping
@@ -439,13 +484,12 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_cache_config_get":    {"admin", "status"},
 	"quicbaas_cache_config_update": {"admin", "capabilities"},
 
-	// Agent lifecycle admin (registered without a quicbaas_ prefix). Mirrors
-	// the REST rules for POST /api/v1/orchestrator/disable and /enable
-	// (pkg/api/rest/authz_pep_mapping.go): qrdb registers no
-	// orchestrator:agent_disable / agent_enable, so both transports use the
-	// nearest registered pair.
-	"agent_disable": {"orchestrator", "agent_remove"},
-	"agent_enable":  {"orchestrator", "agent_register"},
+	// Fleet node lifecycle admin. Mirrors the REST rules for
+	// POST /api/v1/fleet/{nodeID}/disable and /enable: qrdb registers no
+	// orchestrator:agent_disable / orchestrator:agent_enable, so both
+	// transports use the nearest registered pair.
+	"quicbaas_fleet_disable": {"orchestrator", "agent_remove"},
+	"quicbaas_fleet_enable":  {"orchestrator", "agent_register"},
 
 	// PEP access checks -> permissions:resolve, matching the REST rules for
 	// POST /api/v1/iam/check and /check/batch.

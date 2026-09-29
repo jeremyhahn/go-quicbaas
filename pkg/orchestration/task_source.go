@@ -404,6 +404,14 @@ func (p *TaskSourcePoller) Sweep(ctx context.Context) error {
 			if project == nil || !project.Autonomous {
 				continue
 			}
+			// Adoption is intake: every task it creates is new work. A
+			// parked project is passed over quietly on the interval sweep,
+			// which would otherwise say so once a tick for as long as the
+			// project stays parked; the push path below says so out loud.
+			if refusal := project.RefuseIntake("adoption of new work"); refusal != nil {
+				p.logger.Debugf("task sources: %s", refusal.Error())
+				continue
+			}
 			p.sweepProject(ContextWithTenant(ctx, tenantID), project, sources, plan)
 		}
 	}
@@ -414,7 +422,9 @@ func (p *TaskSourcePoller) Sweep(ctx context.Context) error {
 // what a module's push path (a verified webhook delivery, say) calls so the
 // poller stays the single path a source's work becomes a Task through; the
 // interval sweep is unaffected. A project that is not autonomous is swept for
-// nothing, exactly as the interval sweep treats it.
+// nothing, exactly as the interval sweep treats it. A parked project adopts
+// nothing and is refused with a *ProjectParkedError, so the caller can tell
+// a closed intake from an empty one.
 func (p *TaskSourcePoller) SweepProject(ctx context.Context, tenantID, projectID string) error {
 	if tenantID == "" || projectID == "" {
 		return &TaskSourcePollerConfigError{Field: "project", Message: "a project sweep names its tenant and project"}
@@ -438,6 +448,10 @@ func (p *TaskSourcePoller) SweepProject(ctx context.Context, tenantID, projectID
 		}
 		if !project.Autonomous {
 			return nil
+		}
+		if refusal := project.RefuseIntake("adoption of new work"); refusal != nil {
+			p.logger.Infof("task sources: %s", refusal.Error())
+			return refusal
 		}
 		p.sweepProject(tenantCtx, project, sources, plan)
 		return nil
@@ -490,18 +504,28 @@ func (p *TaskSourcePoller) sweepProject(ctx context.Context, project *Project, s
 		return offered[i].spec.Priority > offered[j].spec.Priority
 	})
 
-	adopted, reserved, refused := 0, 0, 0
+	adopted, parkedAdopted, reserved, refused := 0, 0, 0, 0
 	for _, offer := range offered {
 		if ctx.Err() != nil {
 			return
 		}
-		if bounded && adopted >= capacity {
+		// A PARKED SPEC SPENDS NO SLOT. It is adopted blocked and runs
+		// nothing until a person readmits it, so counting it against the cap
+		// would let a backlog of questions starve the ready work behind it —
+		// and refusing it would leave the question with no task, which is
+		// exactly the state that hid it from the attention inbox.
+		parked := offer.spec.Park != nil
+		if bounded && !parked && adopted >= capacity {
 			refused++
 			continue
 		}
 		switch p.adopt(ctx, project, offer.reg, offer.spec) {
 		case adoptCreated:
-			adopted++
+			if parked {
+				parkedAdopted++
+			} else {
+				adopted++
+			}
 		case adoptReserved:
 			reserved++
 		case adoptFailed:
@@ -512,8 +536,8 @@ func (p *TaskSourcePoller) sweepProject(ctx context.Context, project *Project, s
 		// operator nothing: neither counter covered "a task already holds this
 		// origin", so a sweep working exactly as designed read as a poller
 		// that had silently stopped (#652).
-		p.logger.Infof("task sources: project %s: seen=%d adopted=%d reserved=%d refused=%d",
-			project.ID, len(offered), adopted, reserved, refused)
+		p.logger.Infof("task sources: project %s: seen=%d adopted=%d parked=%d reserved=%d refused=%d",
+			project.ID, len(offered), adopted, parkedAdopted, reserved, refused)
 	}
 }
 

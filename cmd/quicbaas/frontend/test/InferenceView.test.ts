@@ -40,7 +40,7 @@ vi.mock('../src/stores/sdkClient.ts', () => ({
   getSDKClient: vi.fn().mockResolvedValue({
     orchestrator: {
       listBackends: mockListBackends,
-      listAgents: mockListAgents,
+      listFleetNodes: mockListAgents,
       listBackendModels: mockListBackendModels,
       inference: mockInference,
       inferenceStream: mockInferenceStream,
@@ -83,7 +83,7 @@ const AGENTS = [
   {
     id: 'agent-1',
     name: 'gpu-host',
-    host: '10.0.0.1',
+    host: '198.51.100.10',
     backend: 'ollama',
     capabilities: ['ollama'],
     status: 'running',
@@ -100,7 +100,7 @@ describe('InferenceView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockListBackends.mockResolvedValue(BACKENDS);
-    mockListAgents.mockResolvedValue({ agents: AGENTS });
+    mockListAgents.mockResolvedValue({ nodes: AGENTS });
     mockListBackendModels.mockResolvedValue(OLLAMA_MODELS);
   });
 
@@ -122,7 +122,7 @@ describe('InferenceView', () => {
     });
   });
 
-  it('populates the host affinity selector from listAgents', async () => {
+  it('populates the host affinity selector from listFleetNodes', async () => {
     render(InferenceView);
     await waitFor(() => {
       const select = screen.getByLabelText('Select host affinity (optional)') as HTMLSelectElement;
@@ -131,7 +131,7 @@ describe('InferenceView', () => {
     });
   });
 
-  it('calls listBackends and listAgents on mount', async () => {
+  it('calls listBackends and listFleetNodes on mount', async () => {
     render(InferenceView);
     await waitFor(() => {
       expect(mockListBackends).toHaveBeenCalledOnce();
@@ -308,11 +308,11 @@ describe('InferenceView', () => {
   });
 
   it('shows empty-state when no agents match the selected backend', async () => {
-    mockListAgents.mockResolvedValue({ agents: [] });
+    mockListAgents.mockResolvedValue({ nodes: [] });
 
     render(InferenceView);
     await waitFor(() => {
-      expect(screen.getByText(/No agents found for this backend/)).toBeTruthy();
+      expect(screen.getByText(/No fleet nodes found for this backend/)).toBeTruthy();
     });
   });
 

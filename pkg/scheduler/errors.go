@@ -162,6 +162,17 @@ func (e SchedulerStoppedError) Error() string {
 	return "scheduler is stopped"
 }
 
+// RunInterruptedError is what the execution record of a run cut short by the
+// scheduler's own shutdown carries. It is not a failure of the job: the run is
+// treated as not having happened and the firing runs again.
+type RunInterruptedError struct {
+	JobID uint64
+}
+
+func (e RunInterruptedError) Error() string {
+	return fmt.Sprintf("job %d: run interrupted by scheduler shutdown; the firing will run again", e.JobID)
+}
+
 // UnauthorizedError indicates the caller lacks permission for the operation.
 type UnauthorizedError struct {
 	TenantID string

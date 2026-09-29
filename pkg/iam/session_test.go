@@ -1430,9 +1430,8 @@ func TestOIDCProvider_Token_ClientCredentialsGrantFinal(t *testing.T) {
 	// Create dependencies
 	memStorage := NewMemoryStorage()
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
+		UserStorage: memStorage,
+		RoleStorage: memStorage,
 	})
 
 	appStorage := newMockAppStorage()
@@ -1513,9 +1512,8 @@ func TestOIDCProvider_Token_ClientCredentialsGrant_InvalidClientFinal(t *testing
 
 	memStorage := NewMemoryStorage()
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
+		UserStorage: memStorage,
+		RoleStorage: memStorage,
 	})
 
 	appStorage := newMockAppStorage()
@@ -1560,9 +1558,8 @@ func TestOIDCProvider_Token_ClientCredentialsGrant_GrantNotAllowedFinal(t *testi
 
 	memStorage := NewMemoryStorage()
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
+		UserStorage: memStorage,
+		RoleStorage: memStorage,
 	})
 
 	appStorage := newMockAppStorage()
@@ -2006,42 +2003,6 @@ func TestBackendStorage_CountTenantsFinal(t *testing.T) {
 	count, err = storage.CountTenants(ctx, ListOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, initialCount+3, count)
-}
-
-func TestBackendStorage_ListGroupsFinal(t *testing.T) {
-	ctx := context.Background()
-
-	kv := newMockKVStore()
-	storage := NewBackendStorage(kv)
-	tenantID := "groups-tenant-final"
-
-	// Create tenant first
-	tenant := &Tenant{ID: tenantID, Name: "Groups Tenant", Created: time.Now(), Updated: time.Now()}
-	err := storage.CreateTenant(ctx, tenant)
-	require.NoError(t, err)
-
-	// Create groups
-	for i := 0; i < 4; i++ {
-		group := &Group{
-			ID:       "group-final-" + uuid.New().String()[:8],
-			TenantID: tenantID,
-			Name:     "Test Group",
-			Created:  time.Now(),
-			Updated:  time.Now(),
-		}
-		err := storage.CreateGroup(ctx, group)
-		require.NoError(t, err)
-	}
-
-	// List all groups
-	groups, err := storage.ListGroups(ctx, tenantID, ListOptions{})
-	require.NoError(t, err)
-	assert.Len(t, groups, 4)
-
-	// Test pagination
-	groups, err = storage.ListGroups(ctx, tenantID, ListOptions{Limit: 2})
-	require.NoError(t, err)
-	assert.Len(t, groups, 2)
 }
 
 func TestBackendStorage_ListRolesFinal(t *testing.T) {

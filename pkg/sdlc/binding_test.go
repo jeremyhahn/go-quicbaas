@@ -17,6 +17,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 func TestProjectBinding_ValidateAcceptsACompleteBinding(t *testing.T) {
@@ -31,28 +33,30 @@ func TestProjectBinding_ValidateRefusesEachMissingPart(t *testing.T) {
 		want   error
 		field  string
 	}{
-		"nil":                 {func(b *ProjectBinding) {}, ErrInvalidInput, "binding"},
-		"project id":          {func(b *ProjectBinding) { b.ProjectID = "" }, ErrInvalidKeySegment, "project_id"},
-		"project id with /":   {func(b *ProjectBinding) { b.ProjectID = "a/b" }, ErrInvalidKeySegment, "project_id"},
-		"forge type":          {func(b *ProjectBinding) { b.Forge.Type = "" }, ErrInvalidInput, "forge.type"},
-		"base url":            {func(b *ProjectBinding) { b.Forge.BaseURL = " " }, ErrInvalidInput, "forge.base_url"},
-		"owner":               {func(b *ProjectBinding) { b.Forge.Owner = "" }, ErrInvalidInput, "forge.owner/repo"},
-		"trigger label":       {func(b *ProjectBinding) { b.Forge.TriggerLabel = "" }, ErrInvalidInput, "forge.trigger_label"},
-		"token ref":           {func(b *ProjectBinding) { b.Forge.TokenSecretRef = "" }, ErrInvalidInput, "forge.token_secret_ref"},
-		"unknown strategy":    {func(b *ProjectBinding) { b.Strategy = "nope" }, ErrStrategyNotRegistered, "nope"},
-		"no strategy":         {func(b *ProjectBinding) { b.Strategy = "" }, ErrStrategyNotRegistered, "available"},
-		"no worker backend":   {func(b *ProjectBinding) { b.Worker.Backend = " " }, ErrInvalidInput, "worker.backend"},
-		"blank verification":  {func(b *ProjectBinding) { b.Verification = []string{"make test", " "} }, ErrInvalidInput, "verification[1]"},
-		"negative rounds":     {func(b *ProjectBinding) { b.MaxReviewRounds = -1 }, ErrInvalidInput, "max_review_rounds"},
-		"no model is fine":    {func(b *ProjectBinding) { b.Worker.Model = "" }, nil, ""},
-		"no verification ok":  {func(b *ProjectBinding) { b.Verification = nil }, nil, ""},
-		"zero rounds is fine": {func(b *ProjectBinding) { b.MaxReviewRounds = 0 }, nil, ""},
-		"trigger collides":    {func(b *ProjectBinding) { b.Forge.Labels[LabelInProgress] = "Task:Ready" }, ErrInvalidInput, "trigger label"},
-		"zero approvals":      {func(b *ProjectBinding) { b.Review.RequiredApprovals = 0 }, ErrInvalidInput, "review.required_approvals"},
-		"negative settle":     {func(b *ProjectBinding) { b.Review.ChecksSettleWindow = -1 }, ErrInvalidInput, "review.checks_settle_window"},
-		"blank reviewer":      {func(b *ProjectBinding) { b.Review.Reviewers = map[string]string{"codex": " "} }, ErrInvalidInput, "review.reviewers"},
-		"unknown analyzer":    {func(b *ProjectBinding) { b.Ranking.AnalyzerName = "nope" }, ErrAnalyzerNotRegistered, "nope"},
-		"known analyzer okay": {func(b *ProjectBinding) { b.Ranking.AnalyzerName = DeclaredAnalyzerName }, nil, ""},
+		"nil":                   {func(b *ProjectBinding) {}, ErrInvalidInput, "binding"},
+		"project id":            {func(b *ProjectBinding) { b.ProjectID = "" }, ErrInvalidKeySegment, "project_id"},
+		"project id with /":     {func(b *ProjectBinding) { b.ProjectID = "a/b" }, ErrInvalidKeySegment, "project_id"},
+		"forge type":            {func(b *ProjectBinding) { b.Forge.Type = "" }, ErrInvalidInput, "forge.type"},
+		"base url":              {func(b *ProjectBinding) { b.Forge.BaseURL = " " }, ErrInvalidInput, "forge.base_url"},
+		"owner":                 {func(b *ProjectBinding) { b.Forge.Owner = "" }, ErrInvalidInput, "forge.owner/repo"},
+		"trigger label":         {func(b *ProjectBinding) { b.Forge.TriggerLabel = "" }, ErrInvalidInput, "forge.trigger_label"},
+		"token ref":             {func(b *ProjectBinding) { b.Forge.TokenSecretRef = "" }, ErrInvalidInput, "forge.token_secret_ref"},
+		"unknown strategy":      {func(b *ProjectBinding) { b.Strategy = "nope" }, ErrStrategyNotRegistered, "nope"},
+		"no strategy":           {func(b *ProjectBinding) { b.Strategy = "" }, ErrStrategyNotRegistered, "available"},
+		"no worker agent":       {func(b *ProjectBinding) { b.Worker = orchestration.AgentRef{} }, ErrInvalidInput, "worker"},
+		"worker agent and pool": {func(b *ProjectBinding) { b.Worker = orchestration.AgentRef{AgentID: "a", PoolID: "p"} }, ErrInvalidInput, "worker"},
+		"malformed triage":      {func(b *ProjectBinding) { b.Triage = orchestration.AgentRef{AgentID: "Bad Agent"} }, ErrInvalidInput, "triage"},
+		"a worker pool is fine": {func(b *ProjectBinding) { b.Worker = orchestration.PoolRefTo("coders") }, nil, ""},
+		"blank verification":    {func(b *ProjectBinding) { b.Verification = []string{"make test", " "} }, ErrInvalidInput, "verification[1]"},
+		"negative rounds":       {func(b *ProjectBinding) { b.MaxReviewRounds = -1 }, ErrInvalidInput, "max_review_rounds"},
+		"no verification ok":    {func(b *ProjectBinding) { b.Verification = nil }, nil, ""},
+		"zero rounds is fine":   {func(b *ProjectBinding) { b.MaxReviewRounds = 0 }, nil, ""},
+		"trigger collides":      {func(b *ProjectBinding) { b.Forge.Labels[LabelInProgress] = "Task:Ready" }, ErrInvalidInput, "trigger label"},
+		"zero approvals":        {func(b *ProjectBinding) { b.Review.RequiredApprovals = 0 }, ErrInvalidInput, "review.required_approvals"},
+		"negative settle":       {func(b *ProjectBinding) { b.Review.ChecksSettleWindow = -1 }, ErrInvalidInput, "review.checks_settle_window"},
+		"blank reviewer":        {func(b *ProjectBinding) { b.Review.Reviewers = map[string]string{"codex": " "} }, ErrInvalidInput, "review.reviewers"},
+		"unknown analyzer":      {func(b *ProjectBinding) { b.Ranking.AnalyzerName = "nope" }, ErrAnalyzerNotRegistered, "nope"},
+		"known analyzer okay":   {func(b *ProjectBinding) { b.Ranking.AnalyzerName = DeclaredAnalyzerName }, nil, ""},
 		"host key not a key": {
 			func(b *ProjectBinding) { b.Forge.SSHHostKey = "ssh-ed25519 not-base64" },
 			ErrInvalidInput, "forge.ssh_host_key",

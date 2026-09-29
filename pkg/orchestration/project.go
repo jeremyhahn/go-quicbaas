@@ -52,9 +52,10 @@ type Project struct {
 	// HostAffinity is the preferred agent host for project operations (optional).
 	HostAffinity string `json:"host_affinity,omitempty" yaml:"host_affinity,omitempty"`
 
-	// DefaultLeadAgent is the default agent ID for leading workflow runs
-	// under this project. Individual jobs may override this.
-	DefaultLeadAgent string `json:"default_lead_agent,omitempty" yaml:"default_lead_agent,omitempty"`
+	// DefaultLeadAgent is the Agent or pool that leads a job started under
+	// this project when the job names no lead of its own. Its Agents must
+	// declare the lead role.
+	DefaultLeadAgent AgentRef `json:"default_lead_agent,omitempty" yaml:"default_lead_agent,omitempty"`
 
 	// DefaultWorkflow names the tenant-scoped workflow a Task created under
 	// this project is auto-spawned into. Empty means a Task is never
@@ -66,6 +67,19 @@ type Project struct {
 	// for it, bounded by Quotas.MaxConcurrency. False leaves the project
 	// entirely operator-driven — tasks are created and started by hand.
 	Autonomous bool `json:"autonomous,omitempty" yaml:"autonomous,omitempty"`
+
+	// Parked closes the project's intake while leaving everything already in
+	// flight to finish: no task that has not started is dispatched, no issue
+	// is adopted or triaged, and every job serving started work runs to its
+	// normal end. It is independent of Autonomous; see project_park.go.
+	Parked bool `json:"parked,omitempty" yaml:"parked,omitempty"`
+
+	// ParkedAt is when the project was parked, zero while it is not.
+	ParkedAt time.Time `json:"parked_at,omitzero" yaml:"parked_at,omitempty"`
+
+	// ParkedBy names the principal that parked the project, empty while it
+	// is not parked or when the request carried no identity.
+	ParkedBy string `json:"parked_by,omitempty" yaml:"parked_by,omitempty"`
 
 	// Git contains the repository metadata.
 	Git ProjectGit `json:"git" yaml:"git"`
@@ -85,6 +99,19 @@ type Project struct {
 	// Quotas defines resource limits for work done under this project.
 	Quotas ProjectQuotas `json:"quotas" yaml:"quotas"`
 
+	// Spend is the project's own limits: sliding windows, in tokens and/or
+	// list-price dollars, over every turn charged to the project — pooled and
+	// unpooled alike, from the project quota plane. The zero value meters
+	// nothing. A project over a window is DEFERRED at admission rather than
+	// refused mid-job (go-quicbaas#1058, ruling F5).
+	Spend SpendLimits `json:"spend,omitzero" yaml:"spend,omitempty"`
+
+	// SessionRotation is what a persistent worker session does when the
+	// pooled provider account under it rotates: resume the same conversation,
+	// or start a fresh one on the same branch. Empty is
+	// SessionRotationResume; see session_rotation.go.
+	SessionRotation SessionRotationPolicy `json:"session_rotation,omitempty" yaml:"session_rotation,omitempty"`
+
 	// Metadata holds arbitrary key-value pairs for extension.
 	Metadata map[string]string `json:"metadata,omitempty" yaml:"metadata,omitempty"`
 
@@ -98,7 +125,7 @@ type Project struct {
 // ProjectWorkspace describes the filesystem location of the project.
 type ProjectWorkspace struct {
 	// AgentID is the primary agent that owns the workspace.
-	AgentID string `json:"agent_id" yaml:"agent_id"`
+	FleetNodeID string `json:"agent_id" yaml:"agent_id"`
 
 	// Path is the filesystem path on the owning agent.
 	Path string `json:"path" yaml:"path"`
@@ -196,8 +223,8 @@ func (e *ProjectWorkspaceNotReadyError) Error() string {
 
 // ProjectPermissions holds the per-agent role matrix for a project.
 type ProjectPermissions struct {
-	// AgentRoles maps agent_id to its ProjectRole within the project.
-	AgentRoles map[string]ProjectRole `json:"agent_roles,omitempty" yaml:"agent_roles,omitempty"`
+	// FleetNodeRoles maps agent_id to its ProjectRole within the project.
+	FleetNodeRoles map[string]ProjectRole `json:"agent_roles,omitempty" yaml:"agent_roles,omitempty"`
 }
 
 // ProjectRole defines the level of access an agent has to a project.
@@ -225,11 +252,11 @@ var validProjectRoles = map[ProjectRole]struct{}{
 	ProjectRoleDenied:   {},
 }
 
-// ProjectQuotas defines resource limits for work done under a project.
+// ProjectQuotas defines resource limits for work done under a project. The
+// project's SPEND limits are Project.Spend: sliding token and dollar windows
+// the ledger enforces (go-quicbaas#1058). The lifetime TokenBudget that used to
+// live here was never enforced by anything and was removed.
 type ProjectQuotas struct {
-	// TokenBudget is the total LLM token budget (0 = unlimited).
-	TokenBudget int64 `json:"token_budget,omitempty" yaml:"token_budget,omitempty"`
-
 	// GPUMinutes is the total GPU compute budget in minutes (0 = unlimited).
 	GPUMinutes int64 `json:"gpu_minutes,omitempty" yaml:"gpu_minutes,omitempty"`
 

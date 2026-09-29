@@ -33,7 +33,7 @@ import (
 // #235 taught the SDLC module to refund an attempt that never reached a model,
 // on the CLI's own structured account of the failure. That works in-process,
 // where the typed error travels by pointer. Over a remote daemon it did not:
-// the daemon mapped the failure to a gRPC status (pkg/agent, mapRuntimeError),
+// the daemon mapped the failure to a gRPC status (pkg/fleet, mapRuntimeError),
 // the client wrapped the transport error, and the evidence was gone. A
 // distributed worker went on burning its attempt on exactly the pre-model
 // failure a local one has refunded since #235 — the same local-fixed,
@@ -104,12 +104,27 @@ func (e *RemoteTurnFailureError) Unwrap() error { return e.Err }
 // between "reported nothing" and "reported zeros" has to survive the trip, and
 // an always-attached message would erase it.
 func turnFailureEvidenceToProto(e TurnFailureEvidence) *proto.TurnFailureEvidence {
-	if e.TerminalReason == "" && e.Usage == nil && e.NumTurns == 0 {
+	if e.TerminalReason == "" && e.Usage == nil && e.NumTurns == 0 && e.ProviderLimit == nil && e.ProviderAuth == nil {
 		return nil
 	}
 	out := &proto.TurnFailureEvidence{
 		TerminalReason: e.TerminalReason,
 		NumTurns:       int32(e.NumTurns),
+	}
+	// THE LIMIT VERDICT TRAVELS, because only this side read the stream it
+	// was drawn from. Its signal is redacted again on the way out: it is the
+	// one piece of result text that crosses, and it crosses clean.
+	if limit := e.ProviderLimit.canonical(); limit != nil {
+		out.ProviderLimitSource = string(limit.Source)
+		out.ProviderLimitSignal = limit.Signal
+		if !limit.ResetsAt.IsZero() {
+			out.ProviderLimitResetsAtUnix = limit.ResetsAt.Unix()
+		}
+	}
+	// THE LOGIN VERDICT TRAVELS TOO, redacted again on the way out.
+	if auth := e.ProviderAuth.canonical(); auth != nil {
+		out.ProviderAuthRejected = true
+		out.ProviderAuthSignal = auth.Signal
 	}
 	if e.Usage != nil {
 		out.UsageReported = true
@@ -133,6 +148,21 @@ func turnFailureEvidenceFromProto(m *proto.TurnFailureEvidence) (TurnFailureEvid
 	out := TurnFailureEvidence{
 		TerminalReason: m.GetTerminalReason(),
 		NumTurns:       int(m.GetNumTurns()),
+	}
+	// An empty source is "no limit reported". A source this build does not
+	// know is still a limit — canonical renames it rather than dropping it.
+	if source := m.GetProviderLimitSource(); source != "" {
+		limit := &ProviderLimitEvidence{
+			Source: ProviderLimitSource(source),
+			Signal: m.GetProviderLimitSignal(),
+		}
+		if at := m.GetProviderLimitResetsAtUnix(); at > 0 {
+			limit.ResetsAt = time.Unix(at, 0).UTC()
+		}
+		out.ProviderLimit = limit.canonical()
+	}
+	if m.GetProviderAuthRejected() {
+		out.ProviderAuth = (&ProviderAuthEvidence{Signal: m.GetProviderAuthSignal()}).canonical()
 	}
 	if m.GetUsageReported() {
 		out.Usage = &TokenUsage{
@@ -259,6 +289,16 @@ const (
 	// work that clears itself. See AccountsCoolingDownError.
 	spawnFaultCoolingDown = "accounts_cooling_down"
 
+	// spawnFaultSaturated is the cooldown's sibling: a pool whose selectable
+	// accounts are all at their session cap. Busy, not empty, and it clears
+	// when a session ends. See AccountsSaturatedError.
+	spawnFaultSaturated = "accounts_saturated"
+
+	// spawnFaultSpent is a pool whose selectable accounts have all spent
+	// their own allowance. Busy, not empty, and it names when it frees up.
+	// See AccountsSpentError.
+	spawnFaultSpent = "accounts_spent"
+
 	// spawnFaultSessionWorkspace is a named workspace the daemon could not
 	// provision or find (go-quicbaas#981): a pinned checkout that is gone or
 	// moved, a daemon with no projects root, a workspace of another tenant.
@@ -278,6 +318,8 @@ var spawnFaultSentinels = map[string]error{
 	spawnFaultCredentialNotFound:     ErrAccountCredentialNotFound,
 	spawnFaultRefresherNotConfigured: ErrAccountRefresherNotConfigured,
 	spawnFaultCoolingDown:            ErrAccountsCoolingDown,
+	spawnFaultSaturated:              ErrAccountsSaturated,
+	spawnFaultSpent:                  ErrAccountsSpent,
 	spawnFaultSessionWorkspace:       ErrSessionWorkspace,
 }
 
@@ -331,6 +373,10 @@ func spawnFaultClassOf(err error) string {
 	// labelled as an empty one and parks.
 	case errors.Is(err, ErrAccountsCoolingDown):
 		return spawnFaultCoolingDown
+	case errors.Is(err, ErrAccountsSaturated):
+		return spawnFaultSaturated
+	case errors.Is(err, ErrAccountsSpent):
+		return spawnFaultSpent
 	case errors.Is(err, ErrNoAccountAvailable):
 		return spawnFaultNoAccountAvailable
 	case errors.Is(err, ErrAccountResolverNotConfigured):
@@ -415,6 +461,17 @@ func AttachSpawnFaultEvidence(rpcErr error, err error) error {
 			detail.AvailableAtUnix = cooling.AvailableAt.UTC().Unix()
 		}
 	}
+	var saturated *AccountsSaturatedError
+	if errors.As(err, &saturated) {
+		detail.Candidates = int32(saturated.Candidates)
+	}
+	var spent *AccountsSpentError
+	if errors.As(err, &spent) {
+		detail.Candidates = int32(spent.Candidates)
+		if !spent.AvailableAt.IsZero() {
+			detail.AvailableAtUnix = spent.AvailableAt.UTC().Unix()
+		}
+	}
 	withDetail, attachErr := st.WithDetails(detail)
 	if attachErr != nil {
 		return rpcErr
@@ -455,6 +512,21 @@ func wrapRemoteSpawnFault(op string, err error) error {
 			}
 			return &RemoteSpawnFaultError{Op: op, Sentinel: cooling, Err: err}
 		}
+		// Saturation is rebuilt as its typed error for the same reason: it
+		// unwraps to ErrNoAccountAvailable too, and a bare sentinel would not.
+		if m.GetFaultClass() == spawnFaultSaturated {
+			saturated := &AccountsSaturatedError{Candidates: int(m.GetCandidates())}
+			return &RemoteSpawnFaultError{Op: op, Sentinel: saturated, Err: err}
+		}
+		// A spent pool is rebuilt with its return time, for the cooldown's
+		// reason: the task waits exactly that long.
+		if m.GetFaultClass() == spawnFaultSpent {
+			spent := &AccountsSpentError{Candidates: int(m.GetCandidates())}
+			if at := m.GetAvailableAtUnix(); at > 0 {
+				spent.AvailableAt = time.Unix(at, 0).UTC()
+			}
+			return &RemoteSpawnFaultError{Op: op, Sentinel: spent, Err: err}
+		}
 		return &RemoteSpawnFaultError{Op: op, Sentinel: sentinel, Err: err}
 	}
 
@@ -470,17 +542,17 @@ func wrapRemoteSpawnFault(op string, err error) error {
 	// calling that unreached would refund an attempt that did run. Everything
 	// else keeps the pre-existing answer, which is to charge.
 	if st.Code() == codes.Unavailable {
-		return &RemoteSpawnFaultError{Op: op, Sentinel: ErrAgentUnreachable, Err: err}
+		return &RemoteSpawnFaultError{Op: op, Sentinel: ErrFleetNodeUnreachable, Err: err}
 	}
 	return err
 }
 
-// ErrAgentUnreachable reports a spawn the agent daemon never received.
+// ErrFleetNodeUnreachable reports a spawn the fleet node daemon never received.
 //
 // A SENTINEL RATHER THAN A TYPE because it carries nothing beyond itself: the
 // transport error it wraps already names the address that refused, and the
 // class it maps to already carries the explanation an operator reads.
-var ErrAgentUnreachable = errors.New("orchestration: the agent daemon did not answer the spawn")
+var ErrFleetNodeUnreachable = errors.New("orchestration: the fleet node daemon did not answer the spawn")
 
 // WrapRemoteSpawnFaultForTest exposes wrapRemoteSpawnFault to the daemon
 // package's tests, which drive a real gRPC server and need the control plane's

@@ -467,7 +467,7 @@ func TestE2E_gRPC(t *testing.T) {
 ### API Integration
 - **gRPC Server** - `pkg/api/grpc/server.go`
 - **REST Server** - `pkg/api/rest/server.go`
-- **QUIC Server** - `pkg/api/quic/server.go`
+- **QUIC client transport** - `sdk/go/transport/quic/transport.go` (no server; see [architecture.md](architecture.md#quic-sdk-client-only))
 - **MCP Server** - `pkg/api/mcp/server.go`
 
 ---

@@ -952,13 +952,6 @@ func TestEmbeddedServerErrorMessages(t *testing.T) {
 	})
 }
 
-func TestGetFreePortForEmbeddedCoverage(t *testing.T) {
-	port, err := getFreePortForEmbedded()
-	require.NoError(t, err)
-	assert.Greater(t, port, 0)
-	assert.Less(t, port, 65536)
-}
-
 func TestShutdownEmbeddedServerNoServer(t *testing.T) {
 	// Ensure no server is running
 	embeddedServerHolder.Store(nil)
@@ -1323,6 +1316,7 @@ func (m *testSDKClientForVector) CustodianGroup() (quicbaas.QRDBCustodianGroupCl
 func (m *testSDKClientForVector) Share() (quicbaas.QRDBShareClient, error) { return nil, nil }
 func (m *testSDKClientForVector) Project() quicbaas.ProjectClient          { return nil }
 func (m *testSDKClientForVector) SDLC() quicbaas.SDLCClient                { return nil }
+func (m *testSDKClientForVector) Agents() quicbaas.AgentsClient            { return nil }
 func (m *testSDKClientForVector) Account() quicbaas.AccountClient          { return nil }
 
 func (m *testSDKClientForVector) Orchestrator() quicbaas.OrchestratorClient { return nil }

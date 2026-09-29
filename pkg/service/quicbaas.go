@@ -180,7 +180,7 @@ type quicBaaS struct {
 	schedulerService          SchedulerService
 	projectService            ProjectService
 	accountService            AccountService
-	agentAdminService         AgentAdminService
+	fleetAdminService         FleetAdminService
 	agentService              orchestration.AgentService
 	sdlcService               *SDLCService
 	messagingService          messaging.Service
@@ -188,10 +188,6 @@ type quicBaaS struct {
 	schedulerEngine           interfaces.SchedulerEngine
 	sshClient                 xkmsssh.Client
 	iamService                *iamServiceProvider
-
-	// kmsRotationScheduler drives cryptoperiod-based auto-rotation (PCI DSS 3.6).
-	// Nil when KMS is not configured or auto-rotation is disabled.
-	kmsRotationScheduler *KMSRotationScheduler
 
 	// sealService handles database seal/unseal operations.
 	// Nil when seal is disabled.
@@ -445,16 +441,10 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	// Initialize watch manager for key change notifications
 	svc.watchManager = watch.NewManager()
 
-	// Initialize SSH client. Transport is selected by the XKMS config:
-	// non-empty URL → REST client pointed at xkmsd; empty URL → file-
-	// backed embedded store rooted at SSHStoreDir (derived from DataDir
-	// when empty). Construction failures surface to the caller — SSH is
-	// a core service surface and silent downgrade would mask a misconfig.
-	sshClient, err := newSSHClient(b.config)
-	if err != nil {
-		return nil, err
-	}
-	svc.sshClient = sshClient
+	// The SSH client is composed by the server (see WithSSHClient). Nil
+	// leaves the SSH surface absent: every verb fails closed with
+	// *SSHNotConfiguredError.
+	svc.sshClient = b.sshClient
 
 	// Initialize KMS service if KMS manager is provided
 	if kmsManager != nil {
@@ -520,15 +510,10 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 				// Wire KVStore for persistent version status replication across cluster nodes
 				kmsImpl.SetKVStore(kvStore)
 
-				// Start KMS auto-rotation scheduler for PCI DSS 3.6 cryptoperiod enforcement.
-				// The scheduler scans all keys and rotates those whose RotationPolicy.AutoRotate
-				// is true and whose NextRotation timestamp has passed.
-				rotSched := newKMSRotationScheduler(kmsImpl, logger, b.config.KMSRotationScanInterval)
-				rotSched.Start(context.Background())
-				svc.kmsRotationScheduler = rotSched
-
-				if logger != nil {
-					logger.Info("KMS auto-rotation scheduler started")
+				// Cryptoperiod enforcement (PCI DSS 3.6) is a scheduler
+				// system job, so a cluster rotates each due key exactly once.
+				if err := registerKMSRotation(schedulerEngine, kmsImpl, b.config.KMSRotationScanInterval); err != nil {
+					return nil, err
 				}
 			}
 
@@ -728,7 +713,8 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	orchOpts := []orchestration.StoreOption{orchestration.WithStoreAuditor(b.orchestrationAuditor)}
 
 	svc.projectService = NewProjectService(orchestration.NewProjectStore(orchKV, orchOpts...))
-	svc.agentAdminService = NewAgentAdminService(orchestration.NewAgentRegistry(orchKV, orchOpts...))
+	svc.fleetAdminService = NewFleetAdminService(orchestration.NewFleetRegistry(orchKV, orchOpts...))
+	svc.wireProjectReferences()
 
 	// Pooled provider accounts. Metadata lives in the same orchestration KV
 	// as projects/agents; the credential envelope lives behind the platform
@@ -2899,6 +2885,7 @@ func (a *authService) ValidateToken(ctx context.Context, req *ValidateTokenReque
 		Valid:     true,
 		UserID:    claims.Subject,
 		Username:  claims.Email,
+		TenantID:  claims.TenantID,
 		Roles:     claims.Roles,
 		ExpiresAt: claims.ExpiresAt.Unix(),
 	}, nil
@@ -3594,21 +3581,16 @@ func (t *timeSeriesService) WritePoint(ctx context.Context, req *WritePointReque
 		}
 	}
 
+	_, scopedMetric, err := tenantScopedMetric(ctx, "timeSeriesService.WritePoint", req.Metric)
+	if err != nil {
+		return nil, err
+	}
+
 	// Build storage data point for routing and local fallback
-	point := toTimeSeriesDataPoint(req.Metric, req.Tags, req.Value, req.Timestamp)
+	point := toTimeSeriesDataPoint(scopedMetric, req.Tags, req.Value, req.Timestamp)
 
 	// Delegate through qrdb SDK if raft is available, otherwise write directly to storage
 	if t.svc.qrdbClient != nil {
-		// Tenant-scope the metric name for the Raft path so writes match reads
-		tenantID, err := prepareTimeSeriesTenantContext(ctx)
-		if err != nil {
-			return nil, &errors.QBError{
-				Code: errors.ErrInvalidInput,
-				Op:   "timeSeriesService.WritePoint",
-				Err:  err,
-			}
-		}
-		scopedMetric := tsTenantScopedMetric(tenantID, req.Metric)
 		sdkPoint := toSDKDataPointFromRequest(scopedMetric, req.Tags, req.Value, point.Timestamp)
 
 		client, err := t.svc.qrdbForShard(t.shardID)
@@ -3668,6 +3650,15 @@ func (t *timeSeriesService) WriteBatch(ctx context.Context, req *WriteBatchReque
 		}, nil
 	}
 
+	tenantID, err := prepareTimeSeriesTenantContext(ctx)
+	if err != nil {
+		return nil, &errors.QBError{
+			Code: errors.ErrInvalidInput,
+			Op:   "timeSeriesService.WriteBatch",
+			Err:  err,
+		}
+	}
+
 	// Convert to storage data points for routing and local fallback
 	points := make([]*tsDataPoint, len(req.Points))
 	for i, p := range req.Points {
@@ -3690,7 +3681,7 @@ func (t *timeSeriesService) WriteBatch(ctx context.Context, req *WriteBatchReque
 			ts = time.Now()
 		}
 		points[i] = &tsDataPoint{
-			Metric:    p.Metric,
+			Metric:    tsTenantScopedMetric(tenantID, p.Metric),
 			Tags:      p.Tags,
 			Value:     p.Value,
 			Timestamp: ts,
@@ -3796,12 +3787,17 @@ func (t *timeSeriesService) TSQuery(ctx context.Context, req *TSQueryRequest) (*
 		}
 	}
 
+	tenantID, scopedMetric, err := tenantScopedMetric(ctx, "timeSeriesService.TSQuery", req.Metric)
+	if err != nil {
+		return nil, err
+	}
+
 	// Convert aggregation string to AggFunc
 	agg := parseAggFunc(req.Aggregation)
 
 	// Build storage query request and execute
 	storageReq := newTimeSeriesQueryRequest(
-		req.Metric, req.Tags, req.StartTime, req.EndTime,
+		scopedMetric, req.Tags, req.StartTime, req.EndTime,
 		agg, time.Duration(req.IntervalSec)*time.Second,
 		req.GroupBy, req.Limit, req.Percentile,
 	)
@@ -3816,9 +3812,10 @@ func (t *timeSeriesService) TSQuery(ctx context.Context, req *TSQueryRequest) (*
 		}
 	}
 
-	// Convert result to service response
+	// Convert result to service response. Metric names are returned as the
+	// tenant wrote them, without the internal scope.
 	resp := &TSQueryResponse{
-		Metric:          result.Metric,
+		Metric:          tsTenantStripMetric(tenantID, result.Metric),
 		Tags:            result.Tags,
 		AggregatedValue: result.AggregatedValue,
 		Timestamp:       time.Now(),
@@ -3829,7 +3826,7 @@ func (t *timeSeriesService) TSQuery(ctx context.Context, req *TSQueryRequest) (*
 		resp.Points = make([]*TSDataPoint, len(result.Points))
 		for i, p := range result.Points {
 			resp.Points[i] = &TSDataPoint{
-				Metric:    p.Metric,
+				Metric:    tsTenantStripMetric(tenantID, p.Metric),
 				Tags:      p.Tags,
 				Value:     p.Value,
 				Timestamp: p.Timestamp,
@@ -3849,7 +3846,7 @@ func (t *timeSeriesService) TSQuery(ctx context.Context, req *TSQueryRequest) (*
 				resp.GroupedResults[i].Points = make([]*TSDataPoint, len(g.Points))
 				for j, p := range g.Points {
 					resp.GroupedResults[i].Points[j] = &TSDataPoint{
-						Metric:    p.Metric,
+						Metric:    tsTenantStripMetric(tenantID, p.Metric),
 						Tags:      p.Tags,
 						Value:     p.Value,
 						Timestamp: p.Timestamp,
@@ -3887,8 +3884,13 @@ func (t *timeSeriesService) DeleteSeries(ctx context.Context, req *TSDeleteReque
 		}
 	}
 
+	_, scopedMetric, err := tenantScopedMetric(ctx, "timeSeriesService.DeleteSeries", req.Metric)
+	if err != nil {
+		return nil, err
+	}
+
 	// Build storage delete request
-	storageReq := newTimeSeriesDeleteRequest(req.Metric, req.Tags, req.StartTime, req.EndTime)
+	storageReq := newTimeSeriesDeleteRequest(scopedMetric, req.Tags, req.StartTime, req.EndTime)
 
 	// Execute delete
 	if err := t.tsStorage.DeleteSeries(ctx, storageReq); err != nil {
@@ -3906,8 +3908,6 @@ func (t *timeSeriesService) DeleteSeries(ctx context.Context, req *TSDeleteReque
 }
 
 func (t *timeSeriesService) GetRetentionPolicy(ctx context.Context, req *TSGetRetentionPolicyRequest) (*TSGetRetentionPolicyResponse, error) {
-	_ = ctx // Context not needed for this operation
-
 	if t.tsStorage == nil {
 		return nil, &errors.QBError{
 			Code: errors.ErrNotImplemented,
@@ -3932,8 +3932,13 @@ func (t *timeSeriesService) GetRetentionPolicy(ctx context.Context, req *TSGetRe
 		}
 	}
 
+	_, scopedMetric, err := tenantScopedMetric(ctx, "timeSeriesService.GetRetentionPolicy", req.Metric)
+	if err != nil {
+		return nil, err
+	}
+
 	// Get retention policy from storage
-	policy, err := t.tsStorage.GetRetentionPolicy(req.Metric)
+	policy, err := t.tsStorage.GetRetentionPolicy(scopedMetric)
 	if err != nil {
 		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
@@ -3960,8 +3965,6 @@ func (t *timeSeriesService) GetRetentionPolicy(ctx context.Context, req *TSGetRe
 }
 
 func (t *timeSeriesService) SetRetentionPolicy(ctx context.Context, req *TSSetRetentionPolicyRequest) (*TSSetRetentionPolicyResponse, error) {
-	_ = ctx // Context not needed for this operation
-
 	if t.tsStorage == nil {
 		return nil, &errors.QBError{
 			Code: errors.ErrNotImplemented,
@@ -3993,11 +3996,16 @@ func (t *timeSeriesService) SetRetentionPolicy(ctx context.Context, req *TSSetRe
 		}
 	}
 
+	_, scopedMetric, err := tenantScopedMetric(ctx, "timeSeriesService.SetRetentionPolicy", req.Metric)
+	if err != nil {
+		return nil, err
+	}
+
 	// Convert to storage policy and set
 	storagePolicy := newTimeSeriesRetentionPolicy(req.Policy.Duration, req.Policy.Resolution, parseAggFunc(req.Policy.Aggregation))
 
 	// Set retention policy in storage
-	if err := t.tsStorage.SetRetentionPolicy(req.Metric, storagePolicy); err != nil {
+	if err := t.tsStorage.SetRetentionPolicy(scopedMetric, storagePolicy); err != nil {
 		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "timeSeriesService.SetRetentionPolicy",
@@ -4788,10 +4796,9 @@ func (s *quicBaaS) SchedulerEngine() *scheduler.SchedulerEngine {
 }
 
 // SSHClient returns the SSH key, known-hosts, and authorized-keys
-// client. Transport is selected at construction time based on the
-// ServiceConfig.XKMS fields: a non-empty URL selects the REST
-// transport; otherwise a file-backed embedded store is used. The
-// returned Client is owned by the service and closed during Close.
+// client supplied through WithSSHClient, or nil when the node has no
+// SSH key store. The returned Client is owned by the service and
+// closed during Close.
 func (s *quicBaaS) SSHClient() xkmsssh.Client {
 	return s.sshClient
 }
@@ -4806,9 +4813,9 @@ func (s *quicBaaS) Account() AccountService {
 	return s.accountService
 }
 
-// AgentAdmin returns the Agent Admin service for global agent lifecycle management.
-func (s *quicBaaS) AgentAdmin() AgentAdminService {
-	return s.agentAdminService
+// FleetAdmin returns the Agent Admin service for global agent lifecycle management.
+func (s *quicBaaS) FleetAdmin() FleetAdminService {
+	return s.fleetAdminService
 }
 
 // Agent returns the Agent service (returns nil if not configured).
@@ -5139,12 +5146,6 @@ func (s *quicBaaS) Close() error {
 
 	// Close components in reverse dependency order
 
-	// Stop KMS auto-rotation scheduler before the scheduler engine so no new
-	// rotation scans are triggered while the engine is shutting down.
-	if s.kmsRotationScheduler != nil {
-		s.kmsRotationScheduler.Stop()
-	}
-
 	// Stop scheduler first to prevent new job executions
 	if s.schedulerEngine != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -5362,4 +5363,22 @@ func parseAggFunc(name string) qrdbtransport.AggFunc {
 		return agg
 	}
 	return qrdbtransport.AggNone
+}
+
+// wireProjectReferences binds the stores a project's saved references are
+// verified against — the git credential secret and the git signing and access
+// keys — onto the project service. A store this facade was built without is
+// left unbound, and a save naming a reference into it is refused as
+// unavailable rather than stored unverified.
+func (s *quicBaaS) wireProjectReferences() {
+	projects, ok := s.projectService.(*projectServiceImpl)
+	if !ok {
+		return
+	}
+	if s.secretsService != nil {
+		projects.SetSecrets(s.secretsService)
+	}
+	if s.sshClient != nil {
+		projects.SetSSHKeys(NewSSHService(s.sshClient))
+	}
 }

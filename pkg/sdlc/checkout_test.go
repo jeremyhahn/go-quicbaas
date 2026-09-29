@@ -720,3 +720,154 @@ func containsString(list []string, want string) bool {
 	}
 	return false
 }
+
+// =============================================================================
+// A session whose container is gone (go-quicbaas#932)
+// =============================================================================
+
+// goneSteps builds the shared git seam over an exec that the runtime refuses
+// with err, for the session and container a gone-container error must name.
+func goneSteps(err error) gitSteps {
+	return gitSteps{
+		exec:      func(*orchestration.ExecSpec) (*orchestration.ExecResult, error) { return nil, err },
+		taskID:    testTask,
+		sessionID: "session-7",
+	}
+}
+
+// assertContainerGone asserts err is the typed gone-container error naming the
+// session and the container and carrying the runtime's own message — and is
+// NOT a git command that ran and failed.
+func assertContainerGone(t *testing.T, err error, wantContainer, wantMessage string) {
+	t.Helper()
+	var gone *SessionContainerGoneError
+	if !errors.As(err, &gone) {
+		t.Fatalf("err = %T (%v), want *SessionContainerGoneError", err, err)
+	}
+	var command *CheckoutCommandError
+	if errors.As(err, &command) {
+		t.Fatalf("a container that ran nothing was reported as a git command: %v", err)
+	}
+	if gone.SessionID != "session-7" || gone.ContainerID != wantContainer || gone.TaskID != testTask {
+		t.Errorf("gone = %+v, want session-7, container %s, task %s", gone, wantContainer, testTask)
+	}
+	for _, want := range []string{"session-7", wantContainer, wantMessage} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Error() = %q, want it to name %q", err.Error(), want)
+		}
+	}
+	if strings.Contains(err.Error(), "git clone") || strings.Contains(err.Error(), "exited") {
+		t.Errorf("Error() = %q names a git command that never ran", err.Error())
+	}
+	if !errors.Is(err, ErrSessionContainerGone) || !errors.Is(err, ErrWorkspaceUnfit) {
+		t.Error("the error does not unwrap to the gone-container and workspace sentinels")
+	}
+}
+
+// TestGitSteps_AProbeOfAStoppedContainerIsTheContainerGone: the probe's
+// non-zero exit is an answer, but a runtime that refused to start git is no
+// answer at all. It used to read as "not a repository" and send the checkout
+// on to a clone into the same dead container.
+func TestGitSteps_AProbeOfAStoppedContainerIsTheContainerGone(t *testing.T) {
+	message := "Error response from daemon: container 41b0eedc is not running"
+	steps := goneSteps(&orchestration.ContainerNotRunningError{ContainerID: "41b0eedc", Message: message})
+
+	result, err := steps.probe(orchestration.WorkspaceCheckoutRoot, "-C", "api", "rev-parse", "--git-dir")
+	if result != nil {
+		t.Errorf("result = %+v, want none for a command that never ran", result)
+	}
+	assertContainerGone(t, err, "41b0eedc", message)
+	if !errors.Is(err, orchestration.ErrContainerNotRunning) {
+		t.Error("the runtime's own error is not kept as the cause")
+	}
+}
+
+// TestGitSteps_ARunAgainstAMissingContainerIsTheContainerGone: the run's
+// refusal of a non-zero exit must not fire either, and a container the
+// runtime cannot find at all is the same condition as one that stopped.
+func TestGitSteps_ARunAgainstAMissingContainerIsTheContainerGone(t *testing.T) {
+	steps := goneSteps(&orchestration.ContainerNotFoundError{ContainerID: "quicbaas-acp-56e2"})
+
+	_, err := steps.run(orchestration.WorkspaceCheckoutRoot, "clone", "--origin", "origin", "ssh://forge/acme/api.git", "api")
+	assertContainerGone(t, err, "quicbaas-acp-56e2", orchestration.ErrContainerNotFound.Error())
+	if !errors.Is(err, orchestration.ErrContainerNotFound) {
+		t.Error("the runtime's own error is not kept as the cause")
+	}
+}
+
+// TestCloner_EvidenceSaysTheContainerWasGoneNotAGitCommand: the job's evidence
+// is what a person reads, and a git command line printed for a command that
+// never ran is the misreading go-quicbaas#932 is about.
+func TestCloner_EvidenceSaysTheContainerWasGoneNotAGitCommand(t *testing.T) {
+	container := &fakeContainer{stopped: true}
+	c := testCloner(container, testWorkspaceSpec(t, true))
+	c.sessionID = "session-7"
+
+	assertContainerGone(t, c.Checkout(), "container-1", "is not running")
+	evidence := c.Evidence()
+	if strings.Contains(evidence, "$ git") {
+		t.Errorf("the evidence prints a git command that never ran:\n%s", evidence)
+	}
+	for _, want := range []string{"session-7", "container-1", "is gone", "is not running"} {
+		if !strings.Contains(evidence, want) {
+			t.Errorf("the evidence does not say %q:\n%s", want, evidence)
+		}
+	}
+	if clones := container.clonesMade(); len(clones) != 0 {
+		t.Errorf("the checkout went on to clone into a dead container: %+v", clones)
+	}
+}
+
+// TestPreflight_AStoppedContainerIsTheContainerGone: the pre-flight's probes go
+// through the same seam, so a container that died between the clone and the
+// proof is reported the same way.
+func TestPreflight_AStoppedContainerIsTheContainerGone(t *testing.T) {
+	spec := testWorkspaceSpec(t, true)
+	container := materializedCheckout(spec)
+	container.stopped = true
+	p := testPreflight(container, spec)
+	p.sessionID = "session-7"
+
+	assertContainerGone(t, p.Verify(), "container-1", "is not running")
+	if strings.Contains(p.Evidence(), "$ git") {
+		t.Errorf("the evidence prints a git command that never ran:\n%s", p.Evidence())
+	}
+}
+
+// TestRunner_ADeadContainerIsNamedOnTheJobNotAFailedClone: through the whole
+// runner, the job's evidence line and its park say the container was gone.
+// The park itself is unchanged — a workspace fault, no attempt charged —
+// because nothing was prompted and no retry in that session can succeed.
+func TestRunner_ADeadContainerIsNamedOnTheJobNotAFailedClone(t *testing.T) {
+	rig := newRunnerRig(t)
+	rig.container.stopped = true
+
+	job := rig.job(t)
+	err := rig.runner.Run(context.Background(), job)
+	var escalated *EscalatedError
+	if !errors.As(err, &escalated) {
+		t.Fatalf("err = %v, want the run to end parked", err)
+	}
+	parked := job.Parked()
+	if parked == nil || parked.FaultClass != orchestration.FaultWorkspaceUnfit {
+		t.Fatalf("parked = %+v, want the workspace fault class", parked)
+	}
+	if !strings.Contains(parked.Message, "is gone") || strings.Contains(parked.Message, "git clone") {
+		t.Errorf("the park does not name the dead container: %q", parked.Message)
+	}
+	if len(rig.agents.promptTexts()) != 0 {
+		t.Error("the worker was prompted against a container that is gone")
+	}
+	details := rig.auditDetails(auditCheckout)
+	if len(details) == 0 {
+		t.Fatal("the dead container left no evidence on the job")
+	}
+	for _, d := range details {
+		if strings.Contains(d, "$ git") {
+			t.Errorf("the evidence prints a git command that never ran:\n%s", d)
+		}
+		if !strings.Contains(d, "is gone") {
+			t.Errorf("the evidence does not say the container was gone:\n%s", d)
+		}
+	}
+}

@@ -79,9 +79,8 @@ func newReconcilingIAMTestService(roles *driftingRoleStorage) (*mockQuicBaaSForI
 	mem := iam.NewMemoryStorage()
 	roles.RoleStorage = mem
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  mem,
-		GroupStorage: mem,
-		RoleStorage:  roles,
+		UserStorage: mem,
+		RoleStorage: roles,
 	})
 	return &mockQuicBaaSForIAM{store: store}, store
 }

@@ -210,7 +210,7 @@ func (a *xkmsCAServicer) signOptionsWithSPIFFE(profile string, validityDays int,
 //
 // A caller that needs to hold the private key uses the CSR-sign route
 // (/api/v1/xkms/ca/sign-csr) with a key it generated itself, which is what
-// `quicbaas agent deploy` does, or the quicbaas certificate service
+// `quicbaas fleet deploy` does, or the quicbaas certificate service
 // (Security().Certificate().IssueCertificate), which owns the
 // generate-and-distribute contract. See pkg/xkms/keygen.go for why the split
 // exists (go-quicbaas#910).

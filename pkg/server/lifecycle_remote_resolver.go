@@ -46,13 +46,13 @@ import (
 // + daemon-side gRPC server into a working remote execution path.
 //
 // Prerequisites:
-//   - s.agentRegistry is non-nil (set during IAM init; see iam_init.go)
+//   - s.fleetRegistry is non-nil (set during IAM init; see iam_init.go)
 //   - s.orchestratorDaemonClient is non-nil (bootstrapped during IAM init)
 //
 // When either is missing we log and skip resolver installation — the central
 // continues to run with only local backends.
 func (s *Server) installRemoteBackendResolver(agentSvc orchestration.AgentService) {
-	if s.agentRegistry == nil {
+	if s.fleetRegistry == nil {
 		s.logger.Warn("Remote backend resolver not installed: agent registry unavailable")
 		return
 	}
@@ -70,14 +70,23 @@ func (s *Server) installRemoteBackendResolver(agentSvc orchestration.AgentServic
 
 	adapter := logger.NewAdapter(s.logger)
 	caCertPath := filepath.Join(s.config.Storage.DataDir, "certs", "ca-chain.crt")
-	pool := newRemoteBackendPool(s.agentRegistry, s.orchestratorDaemonClient, s.centralTokenEndpoint(), caCertPath, s.config.Orchestration.HostAffinity, adapter)
+	pool := newRemoteBackendPool(s.fleetRegistry, s.orchestratorDaemonClient, s.centralTokenEndpoint(), caCertPath, s.config.Orchestration.HostAffinity, adapter)
 	// A daemon silent past the heartbeat bound is not dispatched to, and a
 	// spawn that mounts this daemon's signing socket is placed only on an agent
 	// that proved it can reach this daemon's sockets root (go-quicbaas#981).
 	pool.staleAfter = s.config.Orchestration.HeartbeatTimeout
+	pool.auditor = newOrchestrationStoreAuditor(s.auditLoggerForStores)
 	if socketsRoot, rootErr := s.socketsRoot(); rootErr == nil {
 		pool.signingRoot = socketsRoot
 	}
+	// Placement ranks eligible agents by the jobs live on each, so work
+	// spreads across the fleet rather than onto the first agent listed.
+	if reporter, ok := agentSvc.(orchestration.FleetLoadReporter); ok {
+		pool.liveLoad = reporter.LiveJobsByHost
+	}
+	// Every signature relayed to a fleet node lands on the platform audit
+	// trail, beside the orchestration stores' own records.
+	pool.signingAudit = newSigningRelayAuditor(s.auditLoggerForStores)
 
 	// Wire the embedded dialer registry so in-process agents bypass TCP.
 	// Initialized here so the pool is ready before embedded agent startup;
@@ -121,7 +130,7 @@ func (s *Server) centralTokenEndpoint() string {
 // backing registration goes offline (via heartbeat expiry detected on next
 // resolve call) or is replaced by a new registration on the same host.
 type remoteBackendPool struct {
-	registry    orchestration.AgentRegistry
+	registry    orchestration.FleetRegistry
 	centralCred *OrchestratorDaemonClient
 	tokenURL    string
 	caCertPath  string
@@ -132,23 +141,40 @@ type remoteBackendPool struct {
 	// context still take precedence; this is the fall-through default.
 	hostAffinityCfg config.SchedulerHostAffinityConfig
 
-	// embeddedDialers maps AgentRegistration.Host to a bufconn dialer for
+	// embeddedDialers maps FleetNode.Host to a bufconn dialer for
 	// embedded agents. When non-nil and a dialer is found for a host, the
 	// pool bypasses the TCP/TLS dial path entirely.
 	embeddedDialers *EmbeddedDialerRegistry
 
 	// staleAfter is the heartbeat bound past which a registration is not
 	// dispatched to, whatever its status says. Non-positive selects
-	// orchestration.DefaultAgentHeartbeatTimeout.
+	// orchestration.DefaultFleetHeartbeatTimeout.
 	staleAfter time.Duration
 
 	// now is the clock liveness is judged against; nil is time.Now.
 	now func() time.Time
 
+	// auditor records remote spawns a daemon refused for an exhausted
+	// account pool; nil records nothing.
+	auditor orchestration.StoreAuditor
+
 	// signingRoot is this daemon's signing sockets root. Its marker names the
 	// identifier a signing spawn requires of an agent; empty (or a root with
 	// no marker yet) means no agent can be proved to reach it.
 	signingRoot string
+
+	// liveLoad reports the jobs live on each agent host, which placement ranks
+	// eligible agents by. Nil counts every agent as idle.
+	liveLoad func() map[string]int
+
+	// signingAudit records every signature relayed to a fleet node.
+	signingAudit orchestration.SigningRelayAuditor
+
+	// placeMu guards placements.
+	placeMu sync.Mutex
+	// placements maps agent host -> when spawns were placed there, pruned to
+	// recentPlacementWindow on read.
+	placements map[string][]time.Time
 
 	mu sync.Mutex
 	// entries maps daemon host -> the backends constructed for it.
@@ -169,7 +195,7 @@ type pooledDaemon struct {
 }
 
 func newRemoteBackendPool(
-	registry orchestration.AgentRegistry,
+	registry orchestration.FleetRegistry,
 	cred *OrchestratorDaemonClient,
 	tokenURL string,
 	caCertPath string,
@@ -194,13 +220,13 @@ func newRemoteBackendPool(
 //
 // Filtering rules applied in order:
 //  1. Backend filter: agent must serve the named backend, primary or capability
-//     (orchestration.AgentServesBackend — the one predicate every backend
+//     (orchestration.FleetNodeServesBackend — the one predicate every backend
 //     filter in the stack shares).
 //  2. Host-affinity filter (when non-empty): Name, Host exact match, or Host prefix match.
 //  3. GPU filter (when GpuRequired): agent Capabilities must contain "gpu".
 //
 // When all online agents exist but none survives filtering, a
-// NoMatchingAgentError is logged; (nil, false) is still returned so the
+// NoMatchingFleetNodeError is logged; (nil, false) is still returned so the
 // dispatcher can surface BackendNotFoundError to the caller.
 func (p *remoteBackendPool) resolve(ctx context.Context, backend, projectID string) (orchestration.AgentBackend, bool) {
 	tenantID := orchestration.TenantFromContext(ctx)
@@ -209,17 +235,18 @@ func (p *remoteBackendPool) resolve(ctx context.Context, backend, projectID stri
 	}
 	hostAffinity := orchestration.HostAffinityFromContext(ctx)
 	gpuRequired := orchestration.GpuRequiredFromContext(ctx)
+	image := orchestration.ContainerImageFromContext(ctx)
 
 	// Pull all tenant+backend matches across multiple status values; a
-	// just-enrolled daemon is in AgentStatusRegistered until its first
+	// just-enrolled daemon is in FleetNodeStatusRegistered until its first
 	// heartbeat, which would otherwise hide it from dispatch.
-	var allRegs []*orchestration.AgentRegistration
-	for _, status := range []orchestration.AgentStatus{
-		orchestration.AgentStatusRunning,
-		orchestration.AgentStatusIdle,
-		orchestration.AgentStatusRegistered,
+	var allRegs []*orchestration.FleetNode
+	for _, status := range []orchestration.FleetNodeStatus{
+		orchestration.FleetNodeStatusRunning,
+		orchestration.FleetNodeStatusIdle,
+		orchestration.FleetNodeStatusRegistered,
 	} {
-		regs, err := p.registry.ListAgents(ctx, tenantID, &orchestration.AgentFilter{
+		regs, err := p.registry.ListFleetNodes(ctx, tenantID, &orchestration.FleetNodeFilter{
 			Backend: backend,
 			Status:  status,
 		})
@@ -245,7 +272,11 @@ func (p *remoteBackendPool) resolve(ctx context.Context, backend, projectID stri
 	if signingErr != nil {
 		p.logger.Warnf("remote resolver: signing placement: %v", signingErr)
 	}
-	reg, constraint := p.pickDaemon(allRegs, backend, hostAffinity, gpuRequired, signingTrait)
+	// SELECTION AND ITS RECORD ARE ONE DECISION for a new session: made
+	// separately, a burst of concurrent spawns all ranked the fleet before any
+	// of them was recorded, and all chose the same agent.
+	placing := orchestration.SpawnPlacementFromContext(ctx)
+	reg, constraint := p.chooseDaemon(allRegs, backend, hostAffinity, gpuRequired, signingTrait, image, placing)
 	if reg == nil {
 		noMatchErr := buildNoMatchError(backend, hostAffinity, gpuRequired, constraint)
 		// In hard mode (operator default OR per-request override) and when
@@ -260,39 +291,88 @@ func (p *remoteBackendPool) resolve(ctx context.Context, backend, projectID stri
 		p.logger.Warnf("remote resolver: %s tenant=%s strict=%v", noMatchErr.Error(), tenantID, strict)
 		return nil, false
 	}
-	return p.backendFor(ctx, reg, backend)
+	built, ok := p.backendFor(ctx, reg, backend)
+	if placing && !ok {
+		// Nothing was placed after all; the reservation would only skew the
+		// next ranking.
+		p.forgetPlacement(reg.Host)
+	}
+	return built, ok
 }
 
-// pickDaemon filters a registration slice to the first daemon-kind agent
-// that satisfies all three constraints: backend, host affinity, and GPU.
-// It returns the matching registration and an empty constraint name on
-// success. On failure it returns (nil, <constraint>) where constraint names
-// the first filter that eliminated all candidates, helping callers build
-// actionable error messages.
+// chooseDaemon is pickDaemon made atomic with its record: under the placement
+// lock it ranks the fleet and, when place is set, records the choice before
+// any concurrent placement can rank.
+func (p *remoteBackendPool) chooseDaemon(
+	regs []*orchestration.FleetNode,
+	backend, hostAffinity string,
+	gpuRequired bool,
+	signingTrait string,
+	image string,
+	place bool,
+) (*orchestration.FleetNode, string) {
+	p.placeMu.Lock()
+	defer p.placeMu.Unlock()
+	reg, constraint := p.pickDaemonLocked(regs, backend, hostAffinity, gpuRequired, signingTrait, image)
+	if reg != nil && place {
+		p.notePlacementLocked(reg.Host)
+	}
+	return reg, constraint
+}
+
+// pickDaemon chooses, among every daemon-kind or embedded agent that
+// satisfies the spawn's constraints, the least-loaded one. It returns the
+// chosen registration and an empty constraint name on success. On failure it
+// returns (nil, <constraint>) where constraint names the first filter that
+// eliminated all candidates, helping callers build actionable error messages.
 //
 // Constraint evaluation order mirrors the priority operators expect:
 //  1. backend — the agent must serve the named backend
 //  2. host_affinity — Name, Host exact match, or Host prefix match
 //  3. gpu — Capabilities must contain "gpu"
+//  4. signing_agent — for a spawn that mounts this daemon's signing socket,
+//     the agent is embedded, advertises this daemon's signing-agent trait, or
+//     advertises the signing relay (go-quicbaas#1013)
+//  5. image — a spawn that names a container image goes only to an agent
+//     that has reported having it (or has never reported its images)
+//  6. capacity — an unpinned spawn skips an agent already at its advertised
+//     MaxConcurrentJobs
+//
+// THE FIRST ELIGIBLE AGENT IS NOT THE ANSWER. It was, and every spawn landed on
+// whichever agent the registry listed first while the rest of the fleet sat
+// registered, online and idle. See leastLoaded for the ranking.
 func (p *remoteBackendPool) pickDaemon(
-	regs []*orchestration.AgentRegistration,
+	regs []*orchestration.FleetNode,
 	backend, hostAffinity string,
 	gpuRequired bool,
 	signingTrait string,
-) (reg *orchestration.AgentRegistration, failedConstraint string) {
+) (reg *orchestration.FleetNode, failedConstraint string) {
+	return p.chooseDaemon(regs, backend, hostAffinity, gpuRequired, signingTrait, "", false)
+}
+
+// pickDaemonLocked is pickDaemon; the caller holds placeMu.
+func (p *remoteBackendPool) pickDaemonLocked(
+	regs []*orchestration.FleetNode,
+	backend, hostAffinity string,
+	gpuRequired bool,
+	signingTrait string,
+	image string,
+) (reg *orchestration.FleetNode, failedConstraint string) {
 	passedBackend := false
 	passedAffinity := false
 	passedGPU := false
+	passedSigning := false
+	eligible := make([]*orchestration.FleetNode, 0, len(regs))
 
 	for _, r := range regs {
 		if r == nil {
 			continue
 		}
 		kind := r.EffectiveKind()
-		if kind != orchestration.AgentKindDaemon && kind != orchestration.AgentKindEmbedded {
+		if kind != orchestration.FleetNodeKindDaemon && kind != orchestration.FleetNodeKindEmbedded {
 			continue
 		}
-		if !orchestration.AgentServesBackend(r, backend) {
+		if !orchestration.FleetNodeServesBackend(r, backend) {
 			continue
 		}
 		passedBackend = true
@@ -307,28 +387,175 @@ func (p *remoteBackendPool) pickDaemon(
 		}
 		passedGPU = true
 
-		// An EMBEDDED agent runs inside this daemon, so this daemon's signing
-		// socket is local to it by construction (its mount policy admits the
-		// sockets root); only a daemon-kind agent has to prove it.
-		if signingTrait != "" && kind != orchestration.AgentKindEmbedded &&
-			!capabilityContains(r.Capabilities, signingTrait) {
+		if signingTrait != "" && !canServeSigningSocket(r, signingTrait) {
 			continue
 		}
+		passedSigning = true
 
-		return r, ""
+		// THE IMAGE IS ON THE HOST, OR THE SPAWN FAILS THERE. Worker images
+		// are loaded onto hosts rather than pulled, so an agent without the
+		// spawn's image fails it at image pull (measured 2026-09-23: every
+		// review placed on a fleet node without the reviewer image failed).
+		if !orchestration.FleetNodeHasImage(r, image) {
+			continue
+		}
+		eligible = append(eligible, r)
 	}
 
-	// Identify the earliest constraint that blocked all candidates.
-	if !passedBackend {
-		return nil, "backend"
+	if len(eligible) == 0 {
+		// Identify the earliest constraint that blocked all candidates.
+		switch {
+		case !passedBackend:
+			return nil, "backend"
+		case hostAffinity != "" && !passedAffinity:
+			return nil, "host_affinity"
+		case gpuRequired && !passedGPU:
+			return nil, "gpu"
+		case signingTrait != "" && !passedSigning:
+			return nil, "signing_agent"
+		default:
+			return nil, "image"
+		}
 	}
-	if hostAffinity != "" && !passedAffinity {
-		return nil, "host_affinity"
+	chosen := p.leastLoaded(eligible, hostAffinity != "")
+	if chosen == nil {
+		return nil, "capacity"
 	}
-	if gpuRequired && !passedGPU {
-		return nil, "gpu"
+	return chosen, ""
+}
+
+// canServeSigningSocket reports whether a spawn that mounts this daemon's
+// signing socket can run on r. An EMBEDDED agent runs inside this daemon, so
+// the socket is local to it by construction (its mount policy admits the
+// sockets root); a daemon-kind agent either proves it reaches the root — this
+// daemon's signing-agent trait — or serves the socket from a relay over its
+// FleetRuntime link.
+func canServeSigningSocket(r *orchestration.FleetNode, signingTrait string) bool {
+	return r.EffectiveKind() == orchestration.FleetNodeKindEmbedded ||
+		capabilityContains(r.Capabilities, signingTrait) ||
+		capabilityContains(r.Capabilities, orchestration.FleetNodeTraitSigningRelay)
+}
+
+// recentPlacementWindow is how long a placement counts as recent when two
+// agents are otherwise equally loaded. A burst of spawns is placed before any
+// of them has a live session record to count, and without this tie-break the
+// whole burst would go to the one agent the name order favours.
+const recentPlacementWindow = 10 * time.Minute
+
+// leastLoaded returns the eligible agent with the lowest load relative to its
+// capacity, or nil when every one is full.
+//
+// THE RANKING, in order:
+//  1. live jobs on the agent (orchestration.FleetLoadReporter) over its
+//     advertised MaxConcurrentJobs — compared as cross products, so no
+//     division and no floating point; an agent reporting no capacity is
+//     ranked as a capacity of one and is never skipped as full;
+//  2. fewest placements within recentPlacementWindow;
+//  3. name, then host, so the choice is deterministic.
+//
+// A PINNED SPAWN IS NEVER SKIPPED FOR CAPACITY. Host affinity names the host
+// that holds the job's workspace, and the job's later sessions must reach it;
+// the job already holds its slot there.
+//
+// The caller holds placeMu.
+func (p *remoteBackendPool) leastLoaded(eligible []*orchestration.FleetNode, pinned bool) *orchestration.FleetNode {
+	load := map[string]int{}
+	if p.liveLoad != nil {
+		load = p.liveLoad()
 	}
-	return nil, "signing_agent"
+	recent := p.recentPlacementsLocked()
+	var best *orchestration.FleetNode
+	for _, r := range eligible {
+		if !pinned && r.MaxConcurrentJobs > 0 && load[r.Host] >= r.MaxConcurrentJobs {
+			p.logger.Debugf("remote resolver: skipping agent %s (%s): at capacity %d/%d",
+				r.ID, r.Host, load[r.Host], r.MaxConcurrentJobs)
+			continue
+		}
+		if best == nil || lessLoaded(r, best, load, recent) {
+			best = r
+		}
+	}
+	return best
+}
+
+// lessLoaded reports whether a ranks before b. See leastLoaded.
+func lessLoaded(a, b *orchestration.FleetNode, load, recent map[string]int) bool {
+	left := load[a.Host] * rankingCapacity(b)
+	right := load[b.Host] * rankingCapacity(a)
+	if left != right {
+		return left < right
+	}
+	if recent[a.Host] != recent[b.Host] {
+		return recent[a.Host] < recent[b.Host]
+	}
+	if a.Name != b.Name {
+		return a.Name < b.Name
+	}
+	return a.Host < b.Host
+}
+
+// rankingCapacity is the capacity an agent is ranked against: its advertised
+// MaxConcurrentJobs, or one when it advertises none.
+func rankingCapacity(r *orchestration.FleetNode) int {
+	if r.MaxConcurrentJobs > 0 {
+		return r.MaxConcurrentJobs
+	}
+	return 1
+}
+
+// notePlacementLocked records that a spawn was placed on host. The caller
+// holds placeMu.
+func (p *remoteBackendPool) notePlacementLocked(host string) {
+	if p.placements == nil {
+		p.placements = map[string][]time.Time{}
+	}
+	p.placements[host] = append(p.placements[host], p.clock())
+}
+
+// forgetPlacement drops the newest placement recorded on host: one reserved
+// for a spawn that then went nowhere.
+func (p *remoteBackendPool) forgetPlacement(host string) {
+	p.placeMu.Lock()
+	defer p.placeMu.Unlock()
+	times := p.placements[host]
+	switch len(times) {
+	case 0:
+	case 1:
+		delete(p.placements, host)
+	default:
+		p.placements[host] = times[:len(times)-1]
+	}
+}
+
+// recentPlacementsLocked counts, per host, the placements within
+// recentPlacementWindow, dropping the older ones as it goes. The caller holds
+// placeMu.
+func (p *remoteBackendPool) recentPlacementsLocked() map[string]int {
+	cutoff := p.clock().Add(-recentPlacementWindow)
+	counts := make(map[string]int, len(p.placements))
+	for host, times := range p.placements {
+		kept := times[:0]
+		for _, at := range times {
+			if at.After(cutoff) {
+				kept = append(kept, at)
+			}
+		}
+		if len(kept) == 0 {
+			delete(p.placements, host)
+			continue
+		}
+		p.placements[host] = kept
+		counts[host] = len(kept)
+	}
+	return counts
+}
+
+// clock is the pool's notion of now.
+func (p *remoteBackendPool) clock() time.Time {
+	if p.now != nil {
+		return p.now()
+	}
+	return time.Now()
 }
 
 // liveRegistrations drops every registration that is not a daemon that will
@@ -336,27 +563,24 @@ func (p *remoteBackendPool) pickDaemon(
 //
 // A CRASHED DAEMON CANNOT MARK ITSELF OFFLINE, so its record keeps saying
 // "running" until something decides otherwise, and nothing else did: the
-// dispatcher routed omega's reviews to a daemon that had been dead for hours,
+// dispatcher routed the remote fleet node's reviews to a daemon that had been dead for hours,
 // and every one failed on a refused connection. The same predicate the fleet's
-// capacity sum uses decides it here (orchestration.AgentAlive).
-func (p *remoteBackendPool) liveRegistrations(regs []*orchestration.AgentRegistration) []*orchestration.AgentRegistration {
+// capacity sum uses decides it here (orchestration.FleetNodeAlive).
+func (p *remoteBackendPool) liveRegistrations(regs []*orchestration.FleetNode) []*orchestration.FleetNode {
 	staleAfter := p.staleAfter
 	if staleAfter <= 0 {
-		staleAfter = orchestration.DefaultAgentHeartbeatTimeout
+		staleAfter = orchestration.DefaultFleetHeartbeatTimeout
 	}
-	now := time.Now()
-	if p.now != nil {
-		now = p.now()
-	}
-	live := make([]*orchestration.AgentRegistration, 0, len(regs))
+	now := p.clock()
+	live := make([]*orchestration.FleetNode, 0, len(regs))
 	for _, r := range regs {
 		// An embedded agent is this process: it is alive exactly when the
 		// resolver asking is, and it heartbeats nothing to prove it.
-		if r != nil && r.EffectiveKind() == orchestration.AgentKindEmbedded {
+		if r != nil && r.EffectiveKind() == orchestration.FleetNodeKindEmbedded {
 			live = append(live, r)
 			continue
 		}
-		if orchestration.AgentAlive(r, now, staleAfter) {
+		if orchestration.FleetNodeAlive(r, now, staleAfter) {
 			live = append(live, r)
 			continue
 		}
@@ -387,14 +611,28 @@ func (p *remoteBackendPool) requiredSigningTrait(ctx context.Context) (string, e
 	return orchestration.SigningAgentTrait(id), nil
 }
 
+// localSigningTrait is this daemon's signing-agent trait, or "" when its
+// sockets root carries no identifier: what a remote backend compares an
+// agent's capabilities against to decide between a direct mount and a relay.
+func (p *remoteBackendPool) localSigningTrait() string {
+	if p.signingRoot == "" {
+		return ""
+	}
+	id, err := orchestration.ReadSigningRootID(p.signingRoot)
+	if err != nil {
+		return ""
+	}
+	return orchestration.SigningAgentTrait(id)
+}
+
 // unreachableSigningTrait is a trait no agent can advertise — its identifier
 // is not the shape DiscoverSigningRootIDs reports — so a signing spawn this
 // daemon cannot identify is placed on no agent.
-const unreachableSigningTrait = orchestration.AgentTraitSigningAgentPrefix + "unidentified"
+const unreachableSigningTrait = orchestration.FleetNodeTraitSigningAgentPrefix + "unidentified"
 
-// buildNoMatchError constructs a NoMatchingAgentError that names the
+// buildNoMatchError constructs a NoMatchingFleetNodeError that names the
 // unsatisfied constraint and all active filters for clear operator messaging.
-func buildNoMatchError(backend, hostAffinity string, gpuRequired bool, constraint string) *orchestration.NoMatchingAgentError {
+func buildNoMatchError(backend, hostAffinity string, gpuRequired bool, constraint string) *orchestration.NoMatchingFleetNodeError {
 	detail := "no online agents serve backend=" + backend
 	if hostAffinity != "" {
 		detail += " and host_affinity=" + hostAffinity
@@ -402,10 +640,15 @@ func buildNoMatchError(backend, hostAffinity string, gpuRequired bool, constrain
 	if gpuRequired {
 		detail += " and have capability=gpu"
 	}
-	if constraint == "signing_agent" {
-		detail += " and can mount this daemon's signing socket"
+	switch constraint {
+	case "signing_agent":
+		detail += " and can mount or relay this daemon's signing socket"
+	case "image":
+		detail += " and has the spawn's container image loaded"
+	case "capacity":
+		detail += " and have a free job slot"
 	}
-	return &orchestration.NoMatchingAgentError{
+	return &orchestration.NoMatchingFleetNodeError{
 		Constraint: constraint,
 		Detail:     detail,
 	}
@@ -413,7 +656,7 @@ func buildNoMatchError(backend, hostAffinity string, gpuRequired bool, constrain
 
 // capabilityContains reports whether the capabilities slice advertises the
 // named trait. The backend axis is answered by
-// orchestration.AgentServesBackend; this is the trait axis — "gpu" — which a
+// orchestration.FleetNodeServesBackend; this is the trait axis — "gpu" — which a
 // registration carries beside its backends rather than as one of them.
 func capabilityContains(caps []string, backend string) bool {
 	for _, c := range caps {
@@ -435,11 +678,11 @@ func capabilityContains(caps []string, backend string) bool {
 //
 // A registration that does not serve the requested backend is refused rather
 // than served by its primary: NewRemoteACPBackend returns a typed
-// NoMatchingAgentError, which is stashed on the context so the public API
+// NoMatchingFleetNodeError, which is stashed on the context so the public API
 // surfaces the refusal instead of silently falling through to a local backend.
 func (p *remoteBackendPool) backendFor(
 	ctx context.Context,
-	reg *orchestration.AgentRegistration,
+	reg *orchestration.FleetNode,
 	backend string,
 ) (orchestration.AgentBackend, bool) {
 	if cached, ok := p.cachedBackend(reg, backend); ok {
@@ -461,7 +704,7 @@ func (p *remoteBackendPool) backendFor(
 	}
 
 	// Embedded agents run in-process with a synthetic identity set on their
-	// GRPCSpawnServer (see embedded_agent.go buildEmbeddedAgentIdentity).
+	// GRPCSpawnServer (see embedded_fleet_node.go buildEmbeddedFleetNodeIdentity).
 	// Their bufconn gRPC server has no bearer-token interceptor, so the token
 	// fetch is unnecessary and causes TLS handshake noise when the loopback
 	// client tries to hit /oauth2/token. Skip the token source for embedded
@@ -477,13 +720,16 @@ func (p *remoteBackendPool) backendFor(
 		TokenSource:  tokenSource,
 		ConnDialer:   connDialer,
 		Logger:       p.logger,
+		Auditor:      p.auditor,
+		SigningTrait: p.localSigningTrait,
+		SigningAudit: p.signingAudit,
 	})
 	if err != nil {
 		p.logger.Warnf("remote resolver: build RemoteACPBackend failed: host=%s backend=%s err=%v",
 			reg.Host, backend, err)
 		// A refusal the caller can act on travels; a construction fault does
 		// not become a silent fall-through to some other backend.
-		var noMatch *orchestration.NoMatchingAgentError
+		var noMatch *orchestration.NoMatchingFleetNodeError
 		if errors.As(err, &noMatch) {
 			orchestration.StashResolveError(ctx, noMatch)
 		}
@@ -506,7 +752,7 @@ func (p *remoteBackendPool) backendFor(
 // underneath it would fail a live turn. They are released when the holder
 // calls CloseAll.
 func (p *remoteBackendPool) cachedBackend(
-	reg *orchestration.AgentRegistration,
+	reg *orchestration.FleetNode,
 	backend string,
 ) (*orchestration.RemoteACPBackend, bool) {
 	p.mu.Lock()
@@ -527,7 +773,7 @@ func (p *remoteBackendPool) cachedBackend(
 // pool now holds. A concurrent caller that constructed the same pair first
 // wins, so every caller for one (daemon, backend) shares a single conn pool.
 func (p *remoteBackendPool) storeBackend(
-	reg *orchestration.AgentRegistration,
+	reg *orchestration.FleetNode,
 	backend string,
 	built *orchestration.RemoteACPBackend,
 ) *orchestration.RemoteACPBackend {

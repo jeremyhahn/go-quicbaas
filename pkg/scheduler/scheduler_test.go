@@ -85,6 +85,13 @@ type mockJobStorage struct {
 	saveExecutionErr          error
 
 	getExecutionsErr error
+	initIDsErr       error
+
+	// honorCancel makes job and execution reads and writes refuse a done
+	// context, the way a Raft-backed store does. Off by default because most
+	// tests drive outcome paths with contexts they never cancel.
+	honorCancel atomic.Bool
+
 	// Track call counts for verification
 	createJobCount              atomic.Int32
 	getJobCount                 atomic.Int32
@@ -117,14 +124,29 @@ func (m *mockJobStorage) CreateJob(ctx context.Context, job *Job) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	job.ID = m.nextID
-	m.nextID++
+	// Honor a caller-chosen ID the way the real store does; system jobs
+	// carry a reserved one.
+	if job.ID == 0 {
+		job.ID = m.nextID
+		m.nextID++
+	}
 	// Store a copy to prevent race conditions
 	m.jobs[job.ID] = copyJob(job)
 	return nil
 }
 
+// InitializeJobIDCounter reports the injected initialisation error, if any.
+// The mock's in-memory counter needs no loading.
+func (m *mockJobStorage) InitializeJobIDCounter(context.Context) error {
+	m.errMu.RLock()
+	defer m.errMu.RUnlock()
+	return m.initIDsErr
+}
+
 func (m *mockJobStorage) GetJob(ctx context.Context, id uint64, tenantID string) (*Job, error) {
+	if m.honorCancel.Load() && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	m.getJobCount.Add(1)
 	m.errMu.RLock()
 	getJobErr := m.getJobErr
@@ -145,6 +167,9 @@ func (m *mockJobStorage) GetJob(ctx context.Context, id uint64, tenantID string)
 }
 
 func (m *mockJobStorage) UpdateJob(ctx context.Context, job *Job) error {
+	if m.honorCancel.Load() && ctx.Err() != nil {
+		return ctx.Err()
+	}
 	m.updateJobCount.Add(1)
 	m.errMu.RLock()
 	updateJobErr := m.updateJobErr
@@ -245,6 +270,9 @@ func (m *mockJobStorage) GetJobsDueForExecution(ctx context.Context, before time
 }
 
 func (m *mockJobStorage) SaveExecution(ctx context.Context, exec *JobExecution) error {
+	if m.honorCancel.Load() && ctx.Err() != nil {
+		return ctx.Err()
+	}
 	m.saveExecutionCount.Add(1)
 	m.errMu.RLock()
 	saveExecutionErr := m.saveExecutionErr

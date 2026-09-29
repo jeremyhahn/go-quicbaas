@@ -1,0 +1,29 @@
+# Rendered by `quicbaas fleet deploy` from this node's spec.
+# Edit the spec and redeploy; changes made here are lost on the next deploy.
+server_addr: https://quicbaas.example.com:8443
+tenant_id: acme
+bind_addr: 0.0.0.0:9091
+backends:
+  - acp
+  - ollama
+sandbox_policy: required
+container_runtime: docker
+image_map:
+  claude-code: software-factory-worker:latest
+  codex: software-factory-worker:latest
+image_registry: registry.example.com/quicbaas
+auto_pull: true
+work_dir: /home/agent/.quicbaas/agent/work
+projects_root: /srv/quicbaas/projects
+node_cert_file: /home/agent/.quicbaas/agent/agent.crt
+node_key_file: /home/agent/.quicbaas/agent/agent.key
+server_ca_file: /home/agent/.quicbaas/agent/server-ca.crt
+heartbeat_interval: 15s
+max_concurrent_jobs: 4
+sandbox_network: bridge
+ollama_base_url: http://gpu-host.internal:11434
+vllm_base_url: http://gpu-host.internal:11435
+vllm_model: qwen3-coder
+vllm_context_tokens: 32768
+allowed_mount_roots:
+  - /srv/quicbaas/sockets

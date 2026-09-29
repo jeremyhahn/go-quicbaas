@@ -55,9 +55,8 @@ func createTestOIDCProvider(t *testing.T) (*OIDCProvider, *rsa.PrivateKey, *mock
 	memStorage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
+		UserStorage: memStorage,
+		RoleStorage: memStorage,
 	})
 
 	deps := OIDCDependencies{
@@ -93,9 +92,8 @@ func TestOIDCNewOIDCProvider(t *testing.T) {
 
 	memStorage := NewMemoryStorage()
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
+		UserStorage: memStorage,
+		RoleStorage: memStorage,
 	})
 
 	tests := []struct {
@@ -529,7 +527,6 @@ func TestOIDCTokenAuthorizationCode(t *testing.T) {
 		Lifecycle: LifecycleActive,
 		Name:      "Test User",
 		Roles:     []string{"user"},
-		Groups:    []string{"developers"},
 	}
 	addUserToMemStorage(ctx, memStorage, user)
 
@@ -634,7 +631,6 @@ func TestOIDCRefresh(t *testing.T) {
 		Lifecycle: LifecycleActive,
 		Name:      "Test User",
 		Roles:     []string{"user"},
-		Groups:    []string{"developers"},
 	}
 	addUserToMemStorage(ctx, memStorage, user)
 
@@ -831,7 +827,6 @@ func TestOIDCUserInfo(t *testing.T) {
 		Lifecycle:  LifecycleActive,
 		Name:       "Test User",
 		Roles:      []string{"admin", "user"},
-		Groups:     []string{"developers", "team-a"},
 		Attributes: map[string]string{"department": "engineering"},
 		Created:    now,
 		Updated:    now,
@@ -1357,7 +1352,6 @@ func TestOIDCTokenWithResourceIndicator(t *testing.T) {
 		Lifecycle: LifecycleActive,
 		Name:      "Test User",
 		Roles:     []string{"user"},
-		Groups:    []string{"developers"},
 	}
 	addUserToMemStorage(ctx, memStorage, user)
 

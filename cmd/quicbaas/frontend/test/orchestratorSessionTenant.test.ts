@@ -36,7 +36,7 @@ import {
   validateSession,
 } from '../src/stores/auth.svelte.ts';
 import { resetSDKClient } from '../src/stores/sdkClient.ts';
-import { agentStore, refreshAgents } from '../src/stores/agentStore.svelte.ts';
+import { fleetStore, refreshFleet } from '../src/stores/fleetStore.svelte.ts';
 import {
   sessionStore,
   openSession,
@@ -173,7 +173,7 @@ function stubFetch(): void {
     const gate = holdByTenant[tenant];
     if (gate !== undefined) await gate;
     return new Response(
-      JSON.stringify({ jobs: rows, agents: rows, sessions: rows, tasks: rows, valid: true }),
+      JSON.stringify({ jobs: rows, nodes: rows, sessions: rows, tasks: rows, valid: true }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
     );
   });
@@ -198,7 +198,7 @@ function row(tenant: string): Record<string, unknown> {
 function visibleIDs(): Record<string, string[]> {
   return {
     jobs: orchestratorStore.jobs.map((j) => j.job_id),
-    agents: orchestratorStore.agents.map((a) => a.id),
+    agents: orchestratorStore.fleetNodes.map((a) => a.id),
     sessions: orchestratorStore.sessions.map((x) => x.session_id),
     tasks: orchestratorStore.tasks.map((t) => t.id),
   };
@@ -267,13 +267,14 @@ describe('orchestrator queries are scoped to the session tenant', () => {
     expect(tenants).not.toContain(SYSTEM_TENANT_ID);
   });
 
-  it('reaches jobs, agents, sessions and tasks each scoped to that tenant', async () => {
+  it('reaches jobs, the fleet, sessions and tasks each scoped to that tenant', async () => {
     signIn('burnin');
 
     await refresh();
 
-    for (const resource of ['jobs', 'agents', 'sessions', 'tasks']) {
-      const hit = requested.find((u) => u.includes(`/api/v1/orchestrator/${resource}?`));
+    for (const path of ['orchestrator/jobs', 'fleet', 'orchestrator/sessions', 'orchestrator/tasks']) {
+      const resource = path;
+      const hit = requested.find((u) => u.includes(`/api/v1/${path}?`));
       expect(hit, `no request for ${resource}`).toBeDefined();
       expect(new URL(hit as string, window.location.origin).searchParams.get('tenant_id')).toBe(
         'burnin',
@@ -365,7 +366,7 @@ describe('orchestrator queries are scoped to the session tenant', () => {
     setUnauthenticated();
     signIn('acme');
     expect(orchestratorStore.jobs).toEqual([]);
-    expect(orchestratorStore.agents).toEqual([]);
+    expect(orchestratorStore.fleetNodes).toEqual([]);
     expect(orchestratorStore.sessions).toEqual([]);
     expect(orchestratorStore.tasks).toEqual([]);
 
@@ -764,8 +765,8 @@ describe('orchestrator queries are scoped to the session tenant', () => {
 
 // ---------------------------------------------------------------------------
 // The sibling stores keep their own SDK-typed caches of the same data and read
-// their tenant from orchestratorStore. They are what AgentFleet, SessionList,
-// AgentDetailView and SystemDashboard actually render, so a scope gate that
+// their tenant from orchestratorStore. They are what FleetList, SessionList,
+// FleetNodeDetailView and SystemDashboard actually render, so a scope gate that
 // stopped at orchestratorStore would leave the leak plainly visible in the very
 // views #309 is about.
 // ---------------------------------------------------------------------------
@@ -796,13 +797,13 @@ describe('the sibling agent and session caches are scoped to the same session', 
   it("never shows a new session the previous session's agents or sessions", async () => {
     rowsByTenant = { burnin: [row('burnin')], acme: [] };
     signIn('burnin');
-    await Promise.all([refreshAgents(), refreshSessions()]);
-    expect(agentStore.agents.map((a) => a.id)).toEqual(['row-burnin']);
+    await Promise.all([refreshFleet(), refreshSessions()]);
+    expect(fleetStore.nodes.map((a) => a.id)).toEqual(['row-burnin']);
     expect(sessionStore.sessions.map((x) => x.session_id)).toEqual(['row-burnin']);
 
     signIn('acme');
-    expect(agentStore.agents).toEqual([]);
-    expect(agentStore.onlineAgents).toEqual([]);
+    expect(fleetStore.nodes).toEqual([]);
+    expect(fleetStore.onlineNodes).toEqual([]);
     expect(sessionStore.sessions).toEqual([]);
   });
 
@@ -830,36 +831,36 @@ describe('the sibling agent and session caches are scoped to the same session', 
 
   it('refills the sibling caches when the tenant switches, with no component mounted', async () => {
     // Isolated from MainApp on purpose. Inside the mounted app this also happens
-    // by accident: refreshAgents reads activeTenantID synchronously, so the
+    // by accident: refreshFleet reads activeTenantID synchronously, so the
     // auxiliary $effect that calls it re-runs on a tenant change. That accident
     // is not the mechanism being relied on — it would evaporate the moment that
     // read moved back after an await — so the guarantee is pinned here, where
     // only the scope-change bus can produce it.
     rowsByTenant = { system: [row('system')], burnin: [row('burnin')] };
     setAuthenticated({ access_token: sessionToken('system', ['admin'], 'usr_A') });
-    await Promise.all([refreshAgents(), refreshSessions()]);
+    await Promise.all([refreshFleet(), refreshSessions()]);
     await settle();
-    expect(agentStore.agents.map((a) => a.id)).toEqual(['row-system']);
+    expect(fleetStore.nodes.map((a) => a.id)).toEqual(['row-system']);
 
     setActiveTenant('burnin');
     await settle();
 
-    expect(agentStore.agents.map((a) => a.id)).toEqual(['row-burnin']);
+    expect(fleetStore.nodes.map((a) => a.id)).toEqual(['row-burnin']);
     expect(sessionStore.sessions.map((x) => x.session_id)).toEqual(['row-burnin']);
   });
 
   it('gives the same person signing back in an empty fleet and session list', async () => {
     rowsByTenant = { burnin: [row('burnin')] };
     setAuthenticated({ access_token: sessionToken('burnin', ['operator'], 'usr_A') });
-    await Promise.all([refreshAgents(), refreshSessions()]);
-    expect(agentStore.agents).toHaveLength(1);
+    await Promise.all([refreshFleet(), refreshSessions()]);
+    expect(fleetStore.nodes).toHaveLength(1);
     expect(sessionStore.sessions).toHaveLength(1);
 
     setUnauthenticated();
     setAuthenticated({ access_token: sessionToken('burnin', ['operator'], 'usr_A') });
 
-    expect(agentStore.agents).toEqual([]);
-    expect(agentStore.onlineAgents).toEqual([]);
+    expect(fleetStore.nodes).toEqual([]);
+    expect(fleetStore.onlineNodes).toEqual([]);
     expect(sessionStore.sessions).toEqual([]);
   });
 
@@ -879,16 +880,16 @@ describe('the sibling agent and session caches are scoped to the same session', 
     holdByTenant['burnin'] = new Promise<void>((resolve) => {
       releaseBurnin = resolve;
     });
-    const stale = refreshAgents();
+    const stale = refreshFleet();
 
     signIn('acme');
-    await refreshAgents();
-    expect(agentStore.agents.map((a) => a.id)).toEqual(['row-acme']);
+    await refreshFleet();
+    expect(fleetStore.nodes.map((a) => a.id)).toEqual(['row-acme']);
 
     releaseBurnin();
     await stale;
 
-    expect(agentStore.agents.map((a) => a.id)).toEqual(['row-acme']);
+    expect(fleetStore.nodes.map((a) => a.id)).toEqual(['row-acme']);
   });
 
   it('cannot let a departed session\'s session listing overwrite the live one', async () => {

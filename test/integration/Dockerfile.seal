@@ -90,6 +90,18 @@ WORKDIR /workspace/go-quicbaas
 RUN rm -f pkg/api/rest/debug_integration.go pkg/api/rest/debug_noop.go || true
 RUN rm -f go.sum sdk/go/go.sum
 
+# Modules outside the go.work workspace -- private first-party ones such as
+# go-auth included -- are fetched here, behind the gomodauth BuildKit secret:
+# mounted on tmpfs for this RUN alone and sourced rather than exported, so the
+# token reaches neither a layer, image metadata, nor a command line
+# (dependency-resolution.md §6). The mount is optional, as in the other
+# Dockerfiles. The runtime stage copies this module cache, so the seal tests
+# compile at run time without credentials.
+RUN --mount=type=secret,id=gomodauth \
+    set -eu; \
+    if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
+    GOSUMDB=off go mod download
+
 # Build the daemon WITH the cloud seal tags so the seal factories compile in.
 RUN CGO_ENABLED=0 GOOS=linux GOSUMDB=off GOFLAGS=-insecure \
     go build -tags "${BUILD_TAGS}" -buildvcs=false -ldflags "-w -s" -o bin/quicbaasd ./cmd/quicbaasd
@@ -161,6 +173,9 @@ RUN { \
         echo '	github.com/jeremyhahn/go-xkms v0.2.2-alpha    => ./go-xkms'; \
         echo ')'; \
     } > go.work
+
+# The module cache the builder fetched behind the secret; see above.
+COPY --from=builder /go/pkg/mod /go/pkg/mod
 
 COPY --from=builder /workspace/go-quicbaas/bin/quicbaasd /usr/local/bin/quicbaasd
 COPY --from=builder /workspace/go-quicbaas/bin/quicbaas  /usr/local/bin/quicbaas

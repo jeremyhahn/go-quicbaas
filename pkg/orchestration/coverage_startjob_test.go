@@ -121,9 +121,9 @@ func TestStartJob_AutoMatchesWorkflowByLeadBackend(t *testing.T) {
 
 	// No WorkflowName, but LeadBackend matches → auto-match branch runs.
 	resp, err := svc.StartJob(context.Background(), &StartJobRequest{
-		TenantID:    "tenant-1",
-		Description: "auto match",
-		LeadBackend: "mock",
+		TenantID:      "tenant-1",
+		Description:   "auto match",
+		routedBackend: "mock",
 	})
 	if err != nil {
 		t.Fatalf("StartJob: %v", err)
@@ -189,7 +189,7 @@ func TestSpawnChildJob_EmptyTenant(t *testing.T) {
 
 func TestCodexExecBackend_PromptUsesSessionModel(t *testing.T) {
 	ctx := context.Background()
-	b := NewCodexExecBackend(CodexExecBackendConfig{Command: "/bin/echo"})
+	b := NewCodexExecBackend(CodexExecBackendConfig{Command: fakeCodex(t, codexTurnJSONL).path})
 
 	// Spawn with an explicit model; Prompt omits Model so the session model wins.
 	sess, err := b.Spawn(ctx, &SpawnRequest{WorkDir: t.TempDir(), Model: "session-model"})

@@ -17,7 +17,8 @@
 //
 // WHY THIS IS A GATE AND NOT A CONVENTION. go-quicbaas ships publicly — a
 // module zip, a release tarball, two container images and an embedded web UI
-// built from the tree. Anything committed here is published. go-quicbaas#944
+// built from the tree. Anything committed here is published unless
+// .gitattributes marks it export-ignore (see PublishedFiles). go-quicbaas#944
 // audited the tree and found a symlink into the lab's NFS mount at the repo
 // root, the private forge in the release workflow's REGISTRY, the private forge
 // in seven documentation links, the private registry in captured CI logs, the
@@ -34,6 +35,8 @@
 //     attacker would go looking for.
 //   - ClassOwnerPath — a path under the owner's home directory or the lab's NFS
 //     mount. Meaningless off that one machine, and it leaks the account name.
+//   - ClassOwnerAccount — the owner's account name on its own. It identifies a
+//     person, and it is how the paths above get rebuilt by hand.
 //
 // WHAT TO DO WITH A FINDING. In order of preference:
 //
@@ -96,6 +99,9 @@ const (
 	// ClassOwnerPath is a filesystem path that exists only on the owner's
 	// machine or on the lab's network mount.
 	ClassOwnerPath Class = "owner-path"
+
+	// ClassOwnerAccount is the owner's account name outside a path.
+	ClassOwnerAccount Class = "owner-account"
 )
 
 // waiverPrefix marks a line whose lab value is the point of the line. The text
@@ -157,6 +163,12 @@ var patterns = []Pattern{
 		Guidance: "name the role, not the machine: gpu-host.internal, npu-host.internal",
 	},
 	{
+		Class:    ClassLabHost,
+		Expr:     regexp.MustCompile(`(?i)\bomega\b`), // lab-string-ok: the hostname this rule exists to find
+		Needle:   "omega",
+		Guidance: "name the role, not the machine: agent-01, remote-agent.internal",
+	},
+	{
 		Class:    ClassOwnerPath,
 		Expr:     regexp.MustCompile(`/home/jhahn\b`), // lab-string-ok: the path prefix this rule exists to find
 		Needle:   "/home/jhahn",
@@ -167,6 +179,20 @@ var patterns = []Pattern{
 		Expr:     regexp.MustCompile(`/mnt/vstation`), // lab-string-ok: the mount prefix this rule exists to find
 		Needle:   "/mnt/vstation",
 		Guidance: "the lab's NFS mount does not exist anywhere else; use a repository-relative path",
+	},
+	{
+		Class:    ClassOwnerPath,
+		Expr:     regexp.MustCompile(`quicbaas-burnin`), // lab-string-ok: the deployment directory this rule exists to find
+		Needle:   "quicbaas-burnin",
+		Guidance: "the burn-in node's deployment directory is private; use /var/lib/quicbaas or a repository-relative path",
+	},
+	{
+		// Last on purpose: a match inside a span an earlier rule already
+		// reported (the account inside an owner path) is not reported twice.
+		Class:    ClassOwnerAccount,
+		Expr:     regexp.MustCompile(`(?i)\bjhahn\b`), // lab-string-ok: the account name this rule exists to find
+		Needle:   "jhahn",
+		Guidance: "name a role, not a person: operator, agent, or the project's own module path",
 	},
 }
 
@@ -237,11 +263,11 @@ const maxFileSize = 32 << 20
 // it is binary. It matches what git itself uses.
 const binarySniff = 8000
 
-// ScanRepo is the gate: it enumerates the tracked files under root and reports
-// every one that names a lab value and is neither waived in place nor covered by
-// DefaultAllowList.
+// ScanRepo is the gate: it enumerates the published files under root (see
+// PublishedFiles) and reports every one that names a lab value and is neither
+// waived in place nor covered by DefaultAllowList.
 func ScanRepo(root string) ([]Finding, error) {
-	files, err := TrackedFiles(root)
+	files, err := PublishedFiles(root)
 	if err != nil {
 		return nil, err
 	}
@@ -249,8 +275,9 @@ func ScanRepo(root string) ([]Finding, error) {
 }
 
 // TrackedFiles lists the files git has in the index at root, slash-separated and
-// relative to it. The index is the right manifest: a file is published because
-// it is tracked, and untracked working-tree litter is nobody's release problem.
+// relative to it. The index is where the published manifest starts: untracked
+// working-tree litter is nobody's release problem, and PublishedFiles removes
+// what .gitattributes keeps out of every archive.
 func TrackedFiles(root string) ([]string, error) {
 	cmd := exec.Command("git", "-C", root, "ls-files", "-z", "--cached")
 	var stderr bytes.Buffer
@@ -360,16 +387,21 @@ func scanContent(name string, content []byte, accepted map[Class]bool) []Finding
 		if waived(line) || (i > 0 && waived(lines[i-1])) {
 			continue
 		}
+		var reported [][]int
 		for _, p := range patterns {
 			if accepted[p.Class] {
 				continue
 			}
-			for _, match := range p.Expr.FindAllString(line, -1) {
+			for _, span := range p.Expr.FindAllStringIndex(line, -1) {
+				if within(span, reported) {
+					continue
+				}
+				reported = append(reported, span)
 				findings = append(findings, Finding{
 					Path:     name,
 					Line:     i + 1,
 					Class:    p.Class,
-					Match:    match,
+					Match:    line[span[0]:span[1]],
 					Excerpt:  excerpt(line),
 					Guidance: p.Guidance,
 				})
@@ -377,6 +409,17 @@ func scanContent(name string, content []byte, accepted map[Class]bool) []Finding
 		}
 	}
 	return findings
+}
+
+// within reports whether span lies inside one of the spans already reported on
+// its line, so one value is reported once, by the most specific rule.
+func within(span []int, reported [][]int) bool {
+	for _, r := range reported {
+		if span[0] >= r[0] && span[1] <= r[1] {
+			return true
+		}
+	}
+	return false
 }
 
 // waived reports whether a line carries an inline waiver with a reason. The

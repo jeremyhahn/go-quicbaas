@@ -46,9 +46,6 @@ type MemoryStorage struct {
 	// second identifier space for anything to reconcile against.
 	nextUserID atomic.Uint64
 
-	// Group storage
-	groups map[string]*Group // key: tenantID:groupID
-
 	// Role storage
 	roles map[string]*Role // key: tenantID:roleID
 
@@ -82,7 +79,6 @@ func NewMemoryStorage(opts ...StorageOption) *MemoryStorage {
 		users:                make(map[string]*User),
 		usersByEmail:         make(map[string]*User),
 		usersByPIVThumbprint: make(map[string]*User),
-		groups:               make(map[string]*Group),
 		roles:                make(map[string]*Role),
 		policies:             make(map[string]*Policy),
 		apps:                 make(map[string]*Application),
@@ -124,7 +120,6 @@ func (m *MemoryStorage) CreateTenant(ctx context.Context, tenant *Tenant) error 
 	// Initialize BaaS-layer IAM quotas (0 means unlimited).
 	// Engine-level quotas (users, roles, storage) are owned by qrdb TenantServicer.
 	quota := &TenantQuota{
-		MaxGroups:   int64(tenant.Quotas.MaxGroups),
 		MaxPolicies: int64(tenant.Quotas.MaxPolicies),
 		MaxApps:     int64(tenant.Quotas.MaxApps),
 	}
@@ -180,13 +175,6 @@ func (m *MemoryStorage) DeleteTenant(ctx context.Context, id string) error {
 			if user.Email != "" {
 				delete(m.usersByEmail, makeKey(user.TenantID, user.Email))
 			}
-		}
-	}
-
-	// Cascade delete groups
-	for key := range m.groups {
-		if len(key) > len(prefix) && key[:len(prefix)] == prefix {
-			delete(m.groups, key)
 		}
 	}
 
@@ -337,11 +325,6 @@ func (m *MemoryStorage) IncrementQuotaUsage(ctx context.Context, tenantID string
 	// Users and roles are engine-level quotas owned by qrdb TenantServicer.
 	// Only BaaS-layer IAM quotas are tracked here.
 	switch resource {
-	case "groups":
-		if quota.MaxGroups > 0 && quota.CurrentGroups+delta > quota.MaxGroups {
-			return NewQuotaExceededError(tenantID, resource, quota.MaxGroups, quota.CurrentGroups)
-		}
-		quota.CurrentGroups += delta
 	case "policies":
 		if quota.MaxPolicies > 0 && quota.CurrentPolicies+delta > quota.MaxPolicies {
 			return NewQuotaExceededError(tenantID, resource, quota.MaxPolicies, quota.CurrentPolicies)
@@ -368,11 +351,6 @@ func (m *MemoryStorage) DecrementQuotaUsage(ctx context.Context, tenantID string
 
 	// Users and roles are engine-level quotas owned by qrdb TenantServicer.
 	switch resource {
-	case "groups":
-		quota.CurrentGroups -= delta
-		if quota.CurrentGroups < 0 {
-			quota.CurrentGroups = 0
-		}
 	case "policies":
 		quota.CurrentPolicies -= delta
 		if quota.CurrentPolicies < 0 {
@@ -688,137 +666,6 @@ func (m *MemoryStorage) ListUsers(ctx context.Context, tenantID string, opts Lis
 	start := opts.Offset
 	if start >= len(result) {
 		return []*User{}, nil
-	}
-	end := start + opts.Limit
-	if opts.Limit == 0 || end > len(result) {
-		end = len(result)
-	}
-
-	return result[start:end], nil
-}
-
-// GroupStorage implementation
-
-func (m *MemoryStorage) CreateGroup(ctx context.Context, group *Group) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	key := makeKey(group.TenantID, group.ID)
-	if _, exists := m.groups[key]; exists {
-		return &dberrors.QBError{Code: dberrors.ErrAlreadyExists, Op: "iam.group.create"}
-	}
-
-	// Create a copy
-	g := *group
-	m.groups[key] = &g
-
-	return nil
-}
-
-func (m *MemoryStorage) GetGroup(ctx context.Context, tenantID, groupID string) (*Group, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	key := makeKey(tenantID, groupID)
-	group, exists := m.groups[key]
-	if !exists {
-		return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.group.get"}
-	}
-
-	// Return a copy
-	g := *group
-	return &g, nil
-}
-
-func (m *MemoryStorage) UpdateGroup(ctx context.Context, group *Group) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	key := makeKey(group.TenantID, group.ID)
-	if _, exists := m.groups[key]; !exists {
-		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.group.update"}
-	}
-
-	// Create a copy
-	g := *group
-	g.Updated = time.Now()
-	m.groups[key] = &g
-
-	return nil
-}
-
-// AddGroupMember adds userID to the group's member list under the store's own
-// lock, so the read and the write cannot be interleaved by another membership
-// change. Adding an existing member is a no-op.
-func (m *MemoryStorage) AddGroupMember(ctx context.Context, tenantID, groupID, userID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	group, exists := m.groups[makeKey(tenantID, groupID)]
-	if !exists {
-		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.group.member.add"}
-	}
-	for _, memberID := range group.Members {
-		if memberID == userID {
-			return nil
-		}
-	}
-	group.Members = append(group.Members, userID)
-	group.Updated = time.Now().UTC()
-	return nil
-}
-
-// RemoveGroupMember removes userID from the group's member list under the
-// store's own lock. Removing a user that is not a member is a no-op.
-func (m *MemoryStorage) RemoveGroupMember(ctx context.Context, tenantID, groupID, userID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	group, exists := m.groups[makeKey(tenantID, groupID)]
-	if !exists {
-		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.group.member.remove"}
-	}
-	members := make([]string, 0, len(group.Members))
-	for _, memberID := range group.Members {
-		if memberID != userID {
-			members = append(members, memberID)
-		}
-	}
-	group.Members = members
-	group.Updated = time.Now().UTC()
-	return nil
-}
-
-func (m *MemoryStorage) DeleteGroup(ctx context.Context, tenantID, groupID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	key := makeKey(tenantID, groupID)
-	if _, exists := m.groups[key]; !exists {
-		return &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.group.delete"}
-	}
-
-	delete(m.groups, key)
-	return nil
-}
-
-func (m *MemoryStorage) ListGroups(ctx context.Context, tenantID string, opts ListOptions) ([]*Group, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	var result []*Group
-	prefix := tenantID + ":"
-	for key, group := range m.groups {
-		if len(key) >= len(prefix) && key[:len(prefix)] == prefix {
-			g := *group
-			result = append(result, &g)
-		}
-	}
-
-	// Apply pagination
-	start := opts.Offset
-	if start >= len(result) {
-		return []*Group{}, nil
 	}
 	end := start + opts.Limit
 	if opts.Limit == 0 || end > len(result) {

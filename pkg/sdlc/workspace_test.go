@@ -51,6 +51,16 @@ type accessRig struct {
 	forge   ForgeConfig
 }
 
+// testRepoGuard is the operator allowlist every test project's forge is on.
+func testRepoGuard(t *testing.T) RepoHostGuard {
+	t.Helper()
+	guard, err := NewRepoHostGuard([]string{"forge.test"}, false)
+	if err != nil {
+		t.Fatalf("NewRepoHostGuard: %v", err)
+	}
+	return guard
+}
+
 // testWorkspaceKey is the workspace key the rig's plans name.
 const testWorkspaceKey = "attempt-1"
 
@@ -59,7 +69,7 @@ func newAccessRig(t *testing.T) *accessRig {
 	t.Helper()
 	signing := &fakeSigningAgent{}
 	tokens := &fakeTokens{token: []byte("t0ken")}
-	access, err := newForgeAccess(tokens, signing, orchestration.WorkspaceCheckoutRoot, testSocketsRoot(t))
+	access, err := newForgeAccess(tokens, signing, testRepoGuard(t), orchestration.WorkspaceCheckoutRoot, testSocketsRoot(t))
 	if err != nil {
 		t.Fatalf("newForgeAccess: %v", err)
 	}
@@ -233,7 +243,7 @@ func TestForgeAccess_RefusesAnAgentThatCameBackUnusable(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			access, err := newForgeAccess(&fakeTokens{token: []byte("t")}, tc.agent,
+			access, err := newForgeAccess(&fakeTokens{token: []byte("t")}, tc.agent, testRepoGuard(t),
 				orchestration.WorkspaceCheckoutRoot, testSocketsRoot(t))
 			if err != nil {
 				t.Fatalf("newForgeAccess: %v", err)
@@ -376,18 +386,25 @@ func TestNewForgeAccess_RefusesAWiringNoContainerCouldCloneWith(t *testing.T) {
 	tokens := &fakeTokens{token: []byte("t")}
 	signing := &fakeSigningAgent{}
 
-	if _, err := newForgeAccess(nil, signing, "", sockets); !fieldRefused(err, "tokens") {
+	guard := testRepoGuard(t)
+
+	if _, err := newForgeAccess(nil, signing, guard, "", sockets); !fieldRefused(err, "tokens") {
 		t.Fatalf("a nil token reader: %v", err)
 	}
-	if _, err := newForgeAccess(tokens, nil, "", sockets); !fieldRefused(err, "signing") {
+	if _, err := newForgeAccess(tokens, nil, guard, "", sockets); !fieldRefused(err, "signing") {
 		t.Fatalf("a nil signing agent: %v", err)
 	}
-	if _, err := newForgeAccess(tokens, signing, "", "relative/sockets"); err == nil {
+	// The zero guard admits no host, so a runner holding one would refuse
+	// every workspace it opened; it is refused here, at startup, instead.
+	if _, err := newForgeAccess(tokens, signing, RepoHostGuard{}, "", sockets); !fieldRefused(err, "sdlc.repo_hosts") {
+		t.Fatalf("an unconfigured repository guard: %v", err)
+	}
+	if _, err := newForgeAccess(tokens, signing, guard, "", "relative/sockets"); err == nil {
 		t.Fatal("a relative sockets root was accepted")
 	}
 	// An empty checkout root takes the engine's default rather than producing
 	// a git command with an empty operand.
-	access, err := newForgeAccess(tokens, signing, "  ", sockets)
+	access, err := newForgeAccess(tokens, signing, guard, "  ", sockets)
 	if err != nil {
 		t.Fatalf("newForgeAccess: %v", err)
 	}
@@ -626,5 +643,91 @@ func TestForgeAccess_AMissingCredentialIsAWorkspaceFault(t *testing.T) {
 	}
 	if !strings.Contains(reason, "no credential") {
 		t.Errorf("the park reason does not say what was wrong: %q", reason)
+	}
+}
+
+// TestForgeAccess_RefusesARepositoryEditedOnAfterBind is go-quicbaas#770 at
+// the seam every runner opens a workspace through. Bind checked the project's
+// repositories once; a context repository added to the project record
+// afterwards, or a remote moved off the allowlist, reaches here instead. Each
+// is refused before an agent is started or a spawn names a workspace, as the
+// workspace fault a runner parks for an operator, naming the repository.
+func TestForgeAccess_RefusesARepositoryEditedOnAfterBind(t *testing.T) {
+	for name, tc := range map[string]struct {
+		edit        func(p *orchestration.Project)
+		contextRepo string
+	}{
+		"an http context repository": {
+			edit: func(p *orchestration.Project) {
+				p.ContextRepos = append(p.ContextRepos, orchestration.ContextRepo{Name: "handbook", RepoURL: "http://forge.test/acme/handbook.git", Ref: "main"})
+			},
+			contextRepo: "handbook",
+		},
+		"a context repository on a foreign ssh host": {
+			edit: func(p *orchestration.Project) {
+				p.ContextRepos = append(p.ContextRepos, orchestration.ContextRepo{Name: "specs", RepoURL: "ssh://git@elsewhere.test/acme/specs.git", Ref: "main"})
+			},
+			contextRepo: "specs",
+		},
+		"a context repository off the allowlist": {
+			edit: func(p *orchestration.Project) {
+				p.ContextRepos = append(p.ContextRepos, orchestration.ContextRepo{Name: "vendor", RepoURL: "https://elsewhere.test/acme/vendor.git", Ref: "main"})
+			},
+			contextRepo: "vendor",
+		},
+		"a project remote moved off the allowlist": {
+			edit: func(p *orchestration.Project) { p.Git.RepoURL = "https://elsewhere.test/acme/api.git" },
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rig := newAccessRig(t)
+			project := sshAccessProject()
+			tc.edit(project)
+
+			req, workspace, err := rig.open(t, project, SigningScopeDelivery)
+
+			if workspace != nil {
+				t.Fatal("a workspace was opened over a refused repository")
+			}
+			var refused *WorkspaceRepoRefusedError
+			if !errors.As(err, &refused) || refused.ProjectID != project.ID {
+				t.Fatalf("err = %v, want a *WorkspaceRepoRefusedError for the project", err)
+			}
+			if !errors.Is(err, ErrWorkspaceUnfit) || !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("err = %v, want ErrWorkspaceUnfit (parked, not charged) wrapping the guard's ErrInvalidInput", err)
+			}
+			var contextErr *ContextRepoRefusedError
+			if tc.contextRepo == "" {
+				var urlErr *RepoURLRefusedError
+				if !errors.As(err, &urlErr) || errors.As(err, &contextErr) {
+					t.Fatalf("err = %v, want the project's own remote refused", err)
+				}
+			} else if !errors.As(err, &contextErr) || contextErr.Name != tc.contextRepo {
+				t.Fatalf("err = %v, want context repository %q named", err, tc.contextRepo)
+			}
+			if len(rig.signing.scopes) != 0 {
+				t.Fatal("a signing agent was started for a workspace that was refused")
+			}
+			if req.Workspace != nil {
+				t.Fatal("the spawn request names a workspace that was refused")
+			}
+		})
+	}
+}
+
+// TestForgeAccess_OpensAContextRepositoryTheGuardAdmits is the other half: a
+// context repository on the project's own forge, over https beside an ssh
+// project, passes the same check and reaches the spec.
+func TestForgeAccess_OpensAContextRepositoryTheGuardAdmits(t *testing.T) {
+	rig := newAccessRig(t)
+	project := sshAccessProject()
+	project.ContextRepos = []orchestration.ContextRepo{{Name: "handbook", RepoURL: "https://forge.test/acme/handbook.git", Ref: "main"}}
+
+	_, workspace, err := rig.open(t, project, SigningScopeCheckout)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if len(workspace.Spec.ContextRepos) != 1 || workspace.Spec.ContextRepos[0].Name != "handbook" {
+		t.Fatalf("spec context repositories = %+v, want the handbook", workspace.Spec.ContextRepos)
 	}
 }

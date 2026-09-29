@@ -28,35 +28,35 @@ var placementClock = time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 
 // seenAgo is a daemon-kind registration whose last heartbeat was ago before
 // placementClock.
-func seenAgo(name, host string, ago time.Duration, capabilities ...string) *orchestration.AgentRegistration {
+func seenAgo(name, host string, ago time.Duration, capabilities ...string) *orchestration.FleetNode {
 	r := onlineDaemon(name, host, "codex")
 	r.LastSeen = placementClock.Add(-ago).UnixNano()
 	r.Capabilities = append([]string{"codex"}, capabilities...)
 	return r
 }
 
-func placementPool(agents ...*orchestration.AgentRegistration) *remoteBackendPool {
+func placementPool(agents ...*orchestration.FleetNode) *remoteBackendPool {
 	pool := newStrictTestPool(config.HostAffinityModeSoft, agents...)
 	pool.now = func() time.Time { return placementClock }
 	pool.staleAfter = 90 * time.Second
 	return pool
 }
 
-// TestRemoteResolver_ADaemonSilentPastTheBoundIsNotDispatchedTo is omega's
+// TestRemoteResolver_ADaemonSilentPastTheBoundIsNotDispatchedTo is the remote fleet node's
 // failure: its daemon died, its record kept saying "running", and every review
 // routed to it was refused at the connection. A registration silent past the
 // heartbeat bound is not a candidate, whatever its status says; an embedded
 // agent, which heartbeats nothing because it is this process, always is.
 func TestRemoteResolver_ADaemonSilentPastTheBoundIsNotDispatchedTo(t *testing.T) {
 	t.Parallel()
-	dead := seenAgo("omega", "omega:9091", 3*time.Hour)
-	dead.Status = orchestration.AgentStatusRunning
+	dead := seenAgo("agent-09", "agent-09:9091", 3*time.Hour)
+	dead.Status = orchestration.FleetNodeStatusRunning
 	fresh := seenAgo("vs04", "vs04:9092", 10*time.Second)
-	embedded := onlineDaemon("embedded", "vm-host-4", "codex")
-	embedded.Kind = orchestration.AgentKindEmbedded
+	embedded := onlineDaemon("embedded", "agent-04", "codex")
+	embedded.Kind = orchestration.FleetNodeKindEmbedded
 	embedded.LastSeen = placementClock.Add(-24 * time.Hour).UnixNano()
 
-	live := placementPool().liveRegistrations([]*orchestration.AgentRegistration{dead, fresh, embedded, nil})
+	live := placementPool().liveRegistrations([]*orchestration.FleetNode{dead, fresh, embedded, nil})
 	if len(live) != 2 || live[0] != fresh || live[1] != embedded {
 		t.Fatalf("live = %v, want the fresh daemon and the embedded agent only", live)
 	}
@@ -84,7 +84,7 @@ func TestRemoteResolver_ADaemonSilentPastTheBoundIsNotDispatchedTo(t *testing.T)
 	// The default bound applies when none is configured.
 	pool := placementPool()
 	pool.staleAfter = 0
-	if got := pool.liveRegistrations([]*orchestration.AgentRegistration{seenAgo("a", "a:1", 2*time.Minute)}); len(got) != 0 {
+	if got := pool.liveRegistrations([]*orchestration.FleetNode{seenAgo("a", "a:1", 2*time.Minute)}); len(got) != 0 {
 		t.Fatalf("a daemon silent past the default bound was kept: %v", got)
 	}
 }
@@ -113,19 +113,19 @@ func TestRemoteResolver_ASigningSpawnGoesOnlyWhereTheSocketIs(t *testing.T) {
 		t.Fatalf("an unsigned spawn requires %q", none)
 	}
 
-	remote := seenAgo("omega", "omega:9091", time.Second)
+	remote := seenAgo("agent-09", "agent-09:9091", time.Second)
 	other := seenAgo("vs03", "vs03:9091", time.Second, orchestration.SigningAgentTrait("ffffffffffffffffffffffffffffffff"))
 	colocated := seenAgo("vs04", "vs04:9092", time.Second, orchestration.SigningAgentTrait(id))
-	embedded := onlineDaemon("embedded", "vm-host-4", "codex")
-	embedded.Kind = orchestration.AgentKindEmbedded
+	embedded := onlineDaemon("embedded", "agent-04", "codex")
+	embedded.Kind = orchestration.FleetNodeKindEmbedded
 
-	if got, _ := pool.pickDaemon([]*orchestration.AgentRegistration{remote, other, colocated}, "codex", "", false, trait); got != colocated {
+	if got, _ := pool.pickDaemon([]*orchestration.FleetNode{remote, other, colocated}, "codex", "", false, trait); got != colocated {
 		t.Fatalf("picked %v, want the co-located daemon", got)
 	}
-	if got, _ := pool.pickDaemon([]*orchestration.AgentRegistration{remote, embedded}, "codex", "", false, trait); got != embedded {
+	if got, _ := pool.pickDaemon([]*orchestration.FleetNode{remote, embedded}, "codex", "", false, trait); got != embedded {
 		t.Fatalf("picked %v, want the embedded agent", got)
 	}
-	got, constraint := pool.pickDaemon([]*orchestration.AgentRegistration{remote, other}, "codex", "", false, trait)
+	got, constraint := pool.pickDaemon([]*orchestration.FleetNode{remote, other}, "codex", "", false, trait)
 	if got != nil || constraint != "signing_agent" {
 		t.Fatalf("picked %v (%q), want none on the signing_agent constraint", got, constraint)
 	}
@@ -133,7 +133,7 @@ func TestRemoteResolver_ASigningSpawnGoesOnlyWhereTheSocketIs(t *testing.T) {
 		t.Fatalf("the refusal must name the signing socket: %q", detail)
 	}
 	// An unsigned spawn still takes the first daemon serving the backend.
-	if got, _ := pool.pickDaemon([]*orchestration.AgentRegistration{remote, colocated}, "codex", "", false, ""); got != remote {
+	if got, _ := pool.pickDaemon([]*orchestration.FleetNode{remote, colocated}, "codex", "", false, ""); got != remote {
 		t.Fatalf("an unsigned spawn picked %v, want the first daemon", got)
 	}
 }
@@ -153,7 +153,7 @@ func TestRemoteResolver_AnUnidentifiedDaemonPlacesNoSigningSpawn(t *testing.T) {
 		if trait != unreachableSigningTrait {
 			t.Fatalf("%s: trait = %q, want the unreachable one", name, trait)
 		}
-		if got, _ := pool.pickDaemon([]*orchestration.AgentRegistration{candidate}, "codex", "", false, trait); got != nil {
+		if got, _ := pool.pickDaemon([]*orchestration.FleetNode{candidate}, "codex", "", false, trait); got != nil {
 			t.Fatalf("%s: placed a signing spawn on %v", name, got)
 		}
 	}

@@ -141,20 +141,23 @@ describe('SessionList', () => {
     expect(h1).not.toBeNull();
     expect(h1!.textContent).toContain('Sessions');
 
-    const tile = container.querySelector('div.bg-primary\\/10');
-    expect(tile).not.toBeNull();
-    expect(tile!.querySelector('svg')).not.toBeNull();
+    const header = container.querySelector('header.page-header');
+    expect(header).not.toBeNull();
+    expect(header!.querySelector('svg')).not.toBeNull();
 
     const subtitle = container.querySelector('p.text-base-content\\/60');
     expect(subtitle).not.toBeNull();
     expect(subtitle!.textContent ?? '').toMatch(/persistent backends/i);
   });
 
-  it('uppercases column headers via the uppercase tracking-wider class (#30)', () => {
+  it('sets column headers in sentence case rather than tracked capitals', () => {
+    // The table rhythm in app.css styles every header; a row that forces
+    // uppercase back on reads as shouting and breaks the header scale.
     const { container } = render(SessionList);
     const headerRow = container.querySelector('thead tr');
     expect(headerRow).not.toBeNull();
-    expect(headerRow!.className).toContain('uppercase');
+    expect(headerRow!.className).not.toContain('uppercase');
+    expect(headerRow!.textContent).toContain('Session ID');
   });
 
   // -------------------------------------------------------------------------

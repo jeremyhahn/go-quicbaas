@@ -85,8 +85,14 @@ decodes into a typed `NPUSidecarError`.
 
 ```sh
 make test-npu-sidecar          # logic; no device required
-make test-npu-sidecar-device   # real OpenVINO; needs the `device` extra
+make test-npu-sidecar-device   # real OpenVINO; installs the `device` extra
 ```
+
+The targets need nothing installed beforehand: on first use they create
+`.venv/` here with `$(PYTHON)` (default `python3`, override with
+`make test-npu-sidecar PYTHON=python3.13`) and install the package with the
+extras they need. Repeat runs reuse it; editing `pyproject.toml` triggers a
+reinstall, and `make clean-npu-sidecar` removes it.
 
 The device tier is a separate suite rather than a skipped part of the first, so
 nothing is ever silently not run. On the NPU host, set

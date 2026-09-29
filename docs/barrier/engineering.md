@@ -485,7 +485,7 @@ This page is the operator-facing migration table.
 | `POST /api/v1/seal/rekey` | `POST /api/v1/barrier/rekey` | legacy retained |
 
 The alias surface is exhaustively listed in
-`scripts/verify-naming.sh`. Any new code path that introduces a
+`scripts/verifynaming`. Any new code path that introduces a
 `Seal*` identifier outside that list fails CI.
 
 That script carries a second, unrelated rule: the retired product-area word

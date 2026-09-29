@@ -869,7 +869,7 @@ The JWT issued by QuicBaaS IAM contains:
   // QuicBaaS IAM claims (used by ABAC)
   "tenant_id": "acme-corp",
   "roles": ["developer", "team-lead"],
-  "groups": ["engineering", "project-alpha"],
+  "groups": ["Developers", "Team Leads"],   // names of the bound roles
   "team_id": "team-eng-west",
   "department": "engineering",
 
@@ -2871,7 +2871,6 @@ Exports can include or exclude specific data categories:
 | `profile` | User profile data (email, name, attributes) |
 | `sessions` | Session history |
 | `consents` | Consent records |
-| `groups` | Group memberships |
 | `roles` | Role assignments |
 | `audit_logs` | User's audit log entries |
 | `credentials` | Credential metadata (not secrets) |
@@ -3010,7 +3009,6 @@ After processing, a summary is provided:
   "audit_logs_anonymized": 150,
   "consents_deleted": 3,
   "credentials_deleted": 2,
-  "group_memberships_removed": 4,
   "role_assignments_removed": 2,
   "tokens_revoked": 3
 }

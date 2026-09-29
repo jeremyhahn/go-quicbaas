@@ -1,0 +1,29 @@
+# Fixture for the golden rendering tests: a node spec using every section.
+host: agent-01.internal
+ssh_user: agent
+ssh_key_name: fleet-deploy
+server: https://quicbaas.example.com:8443
+tenant: acme
+node_bind: 0.0.0.0:9091
+backends: [acp, ollama]
+binary: bin/quicbaas-static
+projects_root: /srv/quicbaas/projects
+worker_images:
+  - registry.example.com/quicbaas/software-factory-worker:latest
+wait_online: 2m
+node:
+  max_concurrent_jobs: 4
+  container_runtime: docker
+  sandbox_network: bridge
+  image_registry: registry.example.com/quicbaas
+  image_map:
+    claude-code: software-factory-worker:latest
+    codex: software-factory-worker:latest
+  auto_pull: true
+  ollama_base_url: http://gpu-host.internal:11434
+  vllm_base_url: http://gpu-host.internal:11435
+  vllm_model: qwen3-coder
+  vllm_context_tokens: 32768
+  allowed_mount_roots:
+    - /srv/quicbaas/sockets
+  heartbeat_interval: 15s

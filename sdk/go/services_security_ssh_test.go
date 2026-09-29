@@ -134,7 +134,7 @@ func TestSSHServiceRoutesEveryVerb(t *testing.T) {
 	assert.Equal(t, sshclient.MethodExportPublicKey, tr.last().method)
 
 	require.NoError(t, ssh.KnownHosts().Add(ctx,
-		sshclient.AddKnownHostRequest{Host: "h", Fingerprint: sshfixture.HostFingerprint}))
+		sshclient.AddKnownHostRequest{Host: "h", PublicKey: sshfixture.Host(t).AuthorizedLine}))
 	assert.Equal(t, sshclient.MethodAddKnownHost, tr.last().method)
 
 	_, err = ssh.KnownHosts().List(ctx, sshclient.ListKnownHostsRequest{})
@@ -340,9 +340,10 @@ func TestSSHClientValidatesRequests(t *testing.T) {
 
 	assert.Equal(t, sdkerrors.CodeInvalidInput,
 		sdkerrors.Code(ssh.KnownHosts().Add(ctx,
-			sshclient.AddKnownHostRequest{Fingerprint: sshfixture.HostFingerprint})), "host is required")
+			sshclient.AddKnownHostRequest{PublicKey: sshfixture.Host(t).AuthorizedLine})), "host is required")
 	assert.Equal(t, sdkerrors.CodeInvalidInput,
-		sdkerrors.Code(ssh.KnownHosts().Add(ctx, sshclient.AddKnownHostRequest{Host: "h"})), "fingerprint is required")
+		sdkerrors.Code(ssh.KnownHosts().Add(ctx, sshclient.AddKnownHostRequest{
+			Host: "h", Fingerprint: sshfixture.HostFingerprint})), "a fingerprint alone does not pin a host")
 	assert.Equal(t, sdkerrors.CodeInvalidInput,
 		sdkerrors.Code(ssh.KnownHosts().Remove(ctx, sshclient.RemoveKnownHostRequest{})))
 	assert.Equal(t, sdkerrors.CodeInvalidInput,

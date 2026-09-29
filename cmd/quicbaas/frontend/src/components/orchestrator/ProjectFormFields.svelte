@@ -25,11 +25,14 @@
 <script lang="ts">
   import {
     KEY_SCOPES,
+    SESSION_ROTATION_POLICIES,
     SIGNING_ALGORITHMS,
     emptyContextRepoRow,
     type ProjectFormState,
   } from '../../lib/projectForm.ts';
   import { Plus, Trash2 } from 'lucide-svelte';
+  import RefPicker from '../core/RefPicker.svelte';
+  import SpendLimitsEditor from './SpendLimitsEditor.svelte';
 
   // `form` is $bindable so the dialog that owns the state stays its owner:
   // this component writes into it (a context-repository row added or removed)
@@ -40,6 +43,7 @@
     form = $bindable(),
     nameEditable = false,
     editing = false,
+    tenantID,
   }: {
     idPrefix: string;
     form: ProjectFormState;
@@ -49,6 +53,8 @@
     // the create rule on the edit dialog promised an operation the API does
     // not offer — see the note rendered below.
     editing?: boolean;
+    /** tenantID scopes the workflow/SSH-key pickers; defaults to the signed-in tenant. */
+    tenantID?: string;
   } = $props();
 
   function addContextRepo(): void {
@@ -227,10 +233,11 @@
           <label class="label py-1" for="{idPrefix}-git-signing-key-name">
             <span class="label-text text-xs">Signing Key Name</span>
           </label>
-          <input
+          <RefPicker
             id="{idPrefix}-git-signing-key-name"
-            type="text"
-            class="input input-bordered input-sm w-full font-mono"
+            kind="sshKey"
+            {tenantID}
+            context={{ scope: form.gitSigningKeyScope, owner: form.gitSigningKeyOwner }}
             placeholder="commit-signing"
             bind:value={form.gitSigningKeyName}
           />
@@ -276,10 +283,11 @@
           <label class="label py-1" for="{idPrefix}-git-ssh-key-name">
             <span class="label-text text-xs">SSH Key Name</span>
           </label>
-          <input
+          <RefPicker
             id="{idPrefix}-git-ssh-key-name"
-            type="text"
-            class="input input-bordered input-sm w-full font-mono"
+            kind="sshKey"
+            {tenantID}
+            context={{ scope: form.gitSshKeyScope, owner: form.gitSshKeyOwner }}
             placeholder="deploy-key"
             bind:value={form.gitSshKeyName}
           />
@@ -346,6 +354,25 @@
         />
         <p class="text-xs text-base-content/40 mt-1">
           How many jobs may run for this project at once. It is the one concurrency number.
+        </p>
+      </div>
+
+      <div>
+        <label class="label py-1" for="{idPrefix}-session-rotation">
+          <span class="label-text text-xs">When a Worker's Account Rotates</span>
+        </label>
+        <select
+          id="{idPrefix}-session-rotation"
+          class="select select-bordered select-sm w-full"
+          bind:value={form.sessionRotation}
+        >
+          {#each SESSION_ROTATION_POLICIES as policy (policy.value)}
+            <option value={policy.value}>{policy.label}</option>
+          {/each}
+        </select>
+        <p class="text-xs text-base-content/40 mt-1">
+          A worker session is moved to a new container when its pooled account's credential is replaced.
+          Resume carries its conversation across; fresh starts over from the branch.
         </p>
       </div>
 
@@ -432,10 +459,10 @@
         <label class="label py-1" for="{idPrefix}-default-workflow">
           <span class="label-text text-xs">Default Workflow</span>
         </label>
-        <input
+        <RefPicker
           id="{idPrefix}-default-workflow"
-          type="text"
-          class="input input-bordered input-sm w-full font-mono"
+          kind="workflow"
+          {tenantID}
           placeholder="Registered workflow name"
           bind:value={form.defaultWorkflow}
         />
@@ -448,25 +475,12 @@
         <label class="label py-1" for="{idPrefix}-host-affinity">
           <span class="label-text text-xs">Host Affinity</span>
         </label>
-        <input
+        <RefPicker
           id="{idPrefix}-host-affinity"
-          type="text"
-          class="input input-bordered input-sm w-full"
+          kind="fleetNode"
+          {tenantID}
           placeholder="Optional daemon host/name"
           bind:value={form.hostAffinity}
-        />
-      </div>
-      <div>
-        <label class="label py-1" for="{idPrefix}-token-budget">
-          <span class="label-text text-xs">Token Budget</span>
-        </label>
-        <input
-          id="{idPrefix}-token-budget"
-          type="number"
-          min="0"
-          class="input input-bordered input-sm w-full"
-          placeholder="0 = unlimited"
-          bind:value={form.tokenBudget}
         />
       </div>
       <div>
@@ -482,6 +496,13 @@
           bind:value={form.gpuMinutes}
         />
       </div>
+    </div>
+    <div class="mt-3">
+      <SpendLimitsEditor
+        idPrefix={idPrefix}
+        bind:rows={form.spend}
+        help="Sliding windows over every turn charged to this project, pooled or local. They are stored with the project; usage reporting against them and admission enforcement are not wired yet."
+      />
     </div>
   </details>
 </div>

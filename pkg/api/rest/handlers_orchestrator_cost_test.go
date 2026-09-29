@@ -43,7 +43,11 @@ type agentWithLedger struct {
 	ledger   orchestration.ConsumptionLedger
 	accounts orchestration.AccountStore
 	projects orchestration.ProjectStore
+	tenant   orchestration.TenantSpendPolicyStore
 }
+
+func (a *agentWithLedger) TenantSpendPolicies() orchestration.TenantSpendPolicyStore { return a.tenant }
+func (a *agentWithLedger) AgentDirectory() *orchestration.AgentDirectory             { return nil }
 
 func (a *agentWithLedger) ConsumptionLedger() orchestration.ConsumptionLedger { return a.ledger }
 func (a *agentWithLedger) AccountStore() orchestration.AccountStore           { return a.accounts }
@@ -116,7 +120,7 @@ func TestHandleOrchestratorCost_ReportsTenantSpend(t *testing.T) {
 
 	// The honesty rule: nothing prices a turn, so the cost is unmeasured and
 	// a renderer must show a dash rather than this zero. go-quicbaas#791.
-	assert.False(t, report.CostMeasured, "no production writer prices a turn")
+	assert.Zero(t, report.PricedEntries, "no turn in the fixture was priced; the cost is a dash")
 }
 
 // TestHandleOrchestratorCost_NamesProjects is the go-quicbaas#1058 regression
@@ -197,7 +201,7 @@ func TestHandleOrchestratorCost_ReportsTheSpendPolicy(t *testing.T) {
 	require.NoError(t, accounts.Create(context.Background(), &orchestration.Account{
 		ID: "acct-1", TenantID: qrdbsdk.SystemTenantID, Provider: orchestration.AccountProviderClaude,
 		DisplayName: "alice-work",
-		Spend: orchestration.AccountSpendPolicy{Quota: orchestration.AccountQuotaPolicy{
+		Spend: orchestration.AccountSpendPolicy{Quota: orchestration.SpendLimits{
 			Windows: []orchestration.QuotaWindow{{Name: "five-hour", Size: 5 * time.Hour, MaxTokens: 1000}},
 		}},
 	}))
@@ -239,7 +243,49 @@ func TestHandleOrchestratorCost_TenantIsolation(t *testing.T) {
 // TestHandleOrchestratorCost_RefusalPaths asserts each way the read fails is
 // distinguishable. "You asked badly" and "this cluster records no spend" must
 // not both render as an empty report.
+// TestHandleOrchestratorCost_NarrowsToARange asserts from/to reach the ledger:
+// a range holding only the second turn reports only its tokens, and is echoed.
+func TestHandleOrchestratorCost_NarrowsToARange(t *testing.T) {
+	server, ledger, _, cleanup := setupCostServer(t, true)
+	defer cleanup()
+	seedCostFixture(t, ledger, qrdbsdk.SystemTenantID)
+
+	from := costBase.Add(30 * time.Second).Format(time.RFC3339)
+	to := costBase.Add(time.Hour).Format(time.RFC3339)
+	w := httptest.NewRecorder()
+	server.HandleOrchestratorCost(w, httptest.NewRequest(http.MethodGet,
+		"/api/v1/orchestrator/cost?from="+from+"&to="+to, nil))
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var report orchestration.SpendReport
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &report))
+	assert.Equal(t, 1, report.Entries)
+	assert.Equal(t, int64(30), report.TotalTokens)
+	require.NotNil(t, report.From)
+	assert.Equal(t, costBase.Add(30*time.Second), *report.From)
+}
+
 func TestHandleOrchestratorCost_RefusalPaths(t *testing.T) {
+	t.Run("malformed from", func(t *testing.T) {
+		server, _, _, cleanup := setupCostServer(t, true)
+		defer cleanup()
+
+		w := httptest.NewRecorder()
+		server.HandleOrchestratorCost(w,
+			httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/cost?from=yesterday", nil))
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("to without from", func(t *testing.T) {
+		server, _, _, cleanup := setupCostServer(t, true)
+		defer cleanup()
+
+		w := httptest.NewRecorder()
+		server.HandleOrchestratorCost(w, httptest.NewRequest(http.MethodGet,
+			"/api/v1/orchestrator/cost?to="+costBase.Format(time.RFC3339), nil))
+		assert.Equal(t, http.StatusBadRequest, w.Code, "an open start is the whole history, not a range")
+	})
+
 	t.Run("malformed round", func(t *testing.T) {
 		server, _, _, cleanup := setupCostServer(t, true)
 		defer cleanup()
@@ -286,4 +332,65 @@ func TestHandleOrchestratorCost_LedgerAccessorWithNoLedger(t *testing.T) {
 	w := httptest.NewRecorder()
 	server.HandleOrchestratorCost(w, httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/cost", nil))
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+// TestHandleOrchestratorCost_NarrowsToAHost asserts ?host= reaches the report:
+// the totals are narrowed to the named host and the breakdown is its row. The
+// fixture's turns name no host, so they sit in the unattributed row, which "-"
+// addresses.
+func TestHandleOrchestratorCost_NarrowsToAHost(t *testing.T) {
+	server, ledger, _, cleanup := setupCostServer(t, true)
+	defer cleanup()
+	seedCostFixture(t, ledger, qrdbsdk.SystemTenantID)
+
+	tests := map[string]struct {
+		host    string
+		entries int
+	}{
+		"unattributed": {"-", 2},
+		"elsewhere":    {"gpu-host:9091", 0},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			server.HandleOrchestratorCost(w, httptest.NewRequest(http.MethodGet,
+				"/api/v1/orchestrator/cost?host="+tc.host, nil))
+			require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+			var report orchestration.SpendReport
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &report))
+			assert.Equal(t, tc.entries, report.Entries)
+			assert.Equal(t, tc.host, report.Host)
+		})
+	}
+
+	w := httptest.NewRecorder()
+	server.HandleOrchestratorCost(w, httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/cost", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	var report orchestration.SpendReport
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &report))
+	require.Len(t, report.Hosts, 1)
+	assert.True(t, report.Hosts[0].Unattributed)
+}
+
+// TestHandleOrchestratorCost_NarrowsToAnAgent asserts ?agent= reaches the
+// report. The fixture's turns ran on raw backends, so "-" selects both and a
+// named Agent neither; a malformed Agent is the caller's to correct.
+func TestHandleOrchestratorCost_NarrowsToAnAgent(t *testing.T) {
+	server, ledger, _, cleanup := setupCostServer(t, true)
+	defer cleanup()
+	seedCostFixture(t, ledger, qrdbsdk.SystemTenantID)
+
+	for agent, entries := range map[string]int{"-": 2, "claude-coder": 0} {
+		w := httptest.NewRecorder()
+		server.HandleOrchestratorCost(w, httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/cost?agent="+agent, nil))
+		require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+		var report orchestration.SpendReport
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &report))
+		assert.Equal(t, entries, report.Entries, agent)
+		assert.Equal(t, agent, report.Agent)
+	}
+
+	w := httptest.NewRecorder()
+	server.HandleOrchestratorCost(w, httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/cost?agent=Bad%20ID", nil))
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }

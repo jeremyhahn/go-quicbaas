@@ -132,7 +132,6 @@ func (s *QRDBUserStorage) CreateUser(ctx context.Context, u *iam.User) error {
 		Name:                 core.Name,
 		TenantID:             core.TenantID,
 		RoleIDs:              core.RoleIDs,
-		GroupIDs:             core.GroupIDs,
 		AuthMethods:          core.AuthMethods,
 		Lifecycle:            core.Lifecycle,
 	})
@@ -334,7 +333,6 @@ func (s *QRDBUserStorage) UpdateUser(ctx context.Context, u *iam.User) error {
 		Email:        core.Email,
 		Name:         core.Name,
 		RoleIDs:      orEmptySlice(core.RoleIDs),
-		GroupIDs:     orEmptySlice(core.GroupIDs),
 		AuthMethods:  orEmptySlice(core.AuthMethods),
 		Attributes:   orEmptyMap(core.Attributes),
 		CertBindings: orEmptyCertBindings(core.CertBindings),

@@ -35,6 +35,13 @@ func (a *recoveringAgent) RecoverJobs(context.Context) error {
 	return nil
 }
 
+// ResumedJobsSettled reports nothing resumed, so nothing to wait for.
+func (a *recoveringAgent) ResumedJobsSettled() <-chan struct{} {
+	settled := make(chan struct{})
+	close(settled)
+	return settled
+}
+
 // agentOnlyService answers the agent service and nothing else.
 type agentOnlyService struct {
 	service.QuicBaaS

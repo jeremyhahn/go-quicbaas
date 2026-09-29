@@ -395,7 +395,7 @@ func TestLive_MergeRefusesAStaleApprovedHead(t *testing.T) {
 	if err == nil {
 		t.Fatal("a merge against a stale approved head succeeded")
 	}
-	if !errors.Is(err, ErrInvalidTransition) {
+	if !errors.Is(err, ErrHeadMoved) {
 		t.Fatalf("error = %v, want the moved-head refusal", err)
 	}
 

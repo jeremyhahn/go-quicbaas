@@ -16,7 +16,10 @@ package sdlc
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 func TestRepoHostGuard_AllowsListedHostsOnly(t *testing.T) {
@@ -68,6 +71,68 @@ func TestRepoHostGuard_LocalReposAreOptIn(t *testing.T) {
 	if _, err := NewRepoHostGuard([]string{" "}, false); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("empty host entry accepted: %v", err)
 	}
+}
+
+func TestRepoHostGuard_HTTPNamesTheCleartextReason(t *testing.T) {
+	g, err := NewRepoHostGuard([]string{"forge.example.test"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = g.CheckRepoURL("http://forge.example.test/acme/handbook")
+	var refused *RepoURLRefusedError
+	if !errors.As(err, &refused) {
+		t.Fatalf("http accepted or wrongly typed: %v", err)
+	}
+	if !strings.Contains(refused.Reason, "cleartext") || !strings.Contains(refused.Reason, "ssh://") {
+		t.Fatalf("reason does not say why http fails or what to use instead: %q", refused.Reason)
+	}
+}
+
+func TestRepoHostGuard_CheckContextRepos(t *testing.T) {
+	g, err := NewRepoHostGuard([]string{"forge.example.test", "other.example.test"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const sshProject = "ssh://git@forge.example.test:2222/acme/api.git"
+	const httpsProject = "https://forge.example.test/acme/api.git"
+	repo := func(url string) []orchestration.ContextRepo {
+		return []orchestration.ContextRepo{{Name: "handbook", RepoURL: url, Ref: "main"}}
+	}
+
+	t.Run("accepted", func(t *testing.T) {
+		for name, tc := range map[string]struct{ project, context string }{
+			"https beside an ssh project":   {sshProject, "https://forge.example.test/acme/handbook.git"},
+			"ssh on the project's ssh host": {sshProject, "ssh://git@forge.example.test:2222/acme/handbook.git"},
+			"https beside an https project": {httpsProject, "https://other.example.test/acme/handbook.git"},
+		} {
+			if err := g.CheckContextRepos(tc.project, repo(tc.context)); err != nil {
+				t.Errorf("%s: refused: %v", name, err)
+			}
+		}
+		if err := g.CheckContextRepos(sshProject, nil); err != nil {
+			t.Errorf("no context repos: %v", err)
+		}
+	})
+
+	t.Run("refused", func(t *testing.T) {
+		for name, tc := range map[string]struct{ project, context, text string }{
+			"http":                     {sshProject, "http://forge.example.test/acme/handbook", "cleartext"},
+			"host off the allowlist":   {sshProject, "https://github.com/acme/handbook.git", "not an allowed forge host"},
+			"ssh on another host":      {sshProject, "ssh://git@other.example.test/acme/handbook.git", "pins only the project's ssh host"},
+			"ssh on another port":      {sshProject, "ssh://git@forge.example.test/acme/handbook.git", "cannot be verified"},
+			"ssh beside https project": {httpsProject, "git@forge.example.test:acme/handbook.git", "no host key is pinned"},
+		} {
+			err := g.CheckContextRepos(tc.project, repo(tc.context))
+			var refused *ContextRepoRefusedError
+			if !errors.As(err, &refused) || !errors.Is(err, ErrInvalidInput) {
+				t.Errorf("%s: accepted or wrongly typed: %v", name, err)
+				continue
+			}
+			if refused.Name != "handbook" || !strings.Contains(err.Error(), tc.text) {
+				t.Errorf("%s: error %q does not name the repository and %q", name, err.Error(), tc.text)
+			}
+		}
+	})
 }
 
 func TestModelFamily_ByBackendThenModel(t *testing.T) {
@@ -161,5 +226,38 @@ func TestRanker_BlastRadiusFromDeclaredDependents(t *testing.T) {
 	failing, _ := NewRanker(&staticBindings{err: errors.New("down")})
 	if _, err := failing.Inputs(context.Background(), testTenant, api); err == nil {
 		t.Fatal("listing failure swallowed")
+	}
+}
+
+// TestRepoHostGuard_CheckProject covers the one check bind and every
+// workspace open share: the project's own remote first, then each context
+// repository against it.
+func TestRepoHostGuard_CheckProject(t *testing.T) {
+	g, err := NewRepoHostGuard([]string{"forge.example.test"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := func(remote, contextURL string) *orchestration.Project {
+		p := &orchestration.Project{Git: orchestration.ProjectGit{RepoURL: remote}}
+		if contextURL != "" {
+			p.ContextRepos = []orchestration.ContextRepo{{Name: "handbook", RepoURL: contextURL, Ref: "main"}}
+		}
+		return p
+	}
+
+	if err := g.CheckProject(project("ssh://git@forge.example.test:2222/acme/api.git", "https://forge.example.test/acme/handbook.git")); err != nil {
+		t.Fatalf("an admissible project was refused: %v", err)
+	}
+
+	err = g.CheckProject(project("https://github.com/acme/api.git", ""))
+	var urlErr *RepoURLRefusedError
+	if !errors.As(err, &urlErr) || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("a project remote off the allowlist: err = %v, want *RepoURLRefusedError", err)
+	}
+
+	err = g.CheckProject(project("https://forge.example.test/acme/api.git", "http://forge.example.test/acme/handbook.git"))
+	var contextErr *ContextRepoRefusedError
+	if !errors.As(err, &contextErr) || contextErr.Name != "handbook" {
+		t.Fatalf("an http context repository: err = %v, want *ContextRepoRefusedError naming it", err)
 	}
 }

@@ -64,20 +64,20 @@ class UnixOrchestratorClient {
         const resp = await this.listSessions(req);
         return wholeSetPage(resp.sessions ?? []);
     }
-    async listAgentsPage(tenantID, page) {
+    async listFleetNodesPage(tenantID, page) {
         const req = { tenant_id: tenantID };
         if (page?.host !== undefined)
             req.host = page.host;
         if (page?.status !== undefined)
             req.status = page.status;
-        if (page?.agent_type !== undefined)
-            req.agent_type = page.agent_type;
+        if (page?.node_type !== undefined)
+            req.node_type = page.node_type;
         if (page?.backend !== undefined)
             req.backend = page.backend;
         if (page?.model !== undefined)
             req.model = page.model;
-        const resp = await this.listAgents(req);
-        return wholeSetPage(resp.agents ?? []);
+        const resp = await this.listFleetNodes(req);
+        return wholeSetPage(resp.nodes ?? []);
     }
     async listWorkflowsPage(tenantID, _page) {
         const resp = await this.listWorkflows(tenantID);
@@ -87,8 +87,8 @@ class UnixOrchestratorClient {
     async getJobStatus(_tenantID, _jobID) { return notImpl('getJobStatus'); }
     async startJob(_req) { return notImpl('startJob'); }
     async cancelJob(_tenantID, _jobID) { return notImpl('cancelJob'); }
-    async listAgents(_req) { return notImpl('listAgents'); }
-    async getAgentStatus(_req) { return notImpl('getAgentStatus'); }
+    async listFleetNodes(_req) { return notImpl('listFleetNodes'); }
+    async getFleetNode(_req) { return notImpl('getFleetNode'); }
     async listSessions(_req) { return notImpl('listSessions'); }
     async listTasks(_tenantID) { return notImpl('listTasks'); }
     async getTask(_tenantID, _taskID) { return notImpl('getTask'); }
@@ -104,9 +104,15 @@ class UnixOrchestratorClient {
     async getSessionHistory(_req) { return notImpl('getSessionHistory'); }
     async getSessionConversation(_req) { return notImpl('getSessionConversation'); }
     async getSpendReport(_req) { return notImpl('getSpendReport'); }
+    async getTenantSpendPolicy(_req) { return notImpl('getTenantSpendPolicy'); }
+    async setTenantSpendPolicy(_req) { return notImpl('setTenantSpendPolicy'); }
+    async getCostSettings(_req) { return notImpl('getCostSettings'); }
+    async setCostSettings(_req) { return notImpl('setCostSettings'); }
+    async getWorkerImageStatus() { return notImpl('getWorkerImageStatus'); }
+    async refreshWorkerImage() { return notImpl('refreshWorkerImage'); }
     // eslint-disable-next-line @typescript-eslint/require-await
     async *subscribeSession(_req) { return notImpl('subscribeSession'); }
-    async deployAgent(_spec) { throw new DeployNotSupportedError('unix'); }
+    async deployFleetNode(_spec) { throw new DeployNotSupportedError('unix'); }
     async inference(_req) { return notImpl('inference'); }
     // eslint-disable-next-line @typescript-eslint/require-await
     async *inferenceStream(_req, _signal) { return notImpl('inferenceStream'); }
@@ -120,11 +126,13 @@ class UnixOrchestratorClient {
     async completeTask(_req) { return notImpl('completeTask'); }
     async readmitTask(_tenantID, _taskID) { return notImpl('readmitTask'); }
     async deleteTask(_req) { return notImpl('deleteTask'); }
+    async listAttention(_tenantID, _page) { return notImpl('listAttention'); }
+    async resolveAttention(_req) { return notImpl('resolveAttention'); }
     async decomposeTask(_req) { return notImpl('decomposeTask'); }
-    async registerAgent(_req) { return notImpl('registerAgent'); }
-    async removeAgent(_req) { return notImpl('removeAgent'); }
-    async disableAgent(_req) { return notImpl('disableAgent'); }
-    async enableAgent(_req) { return notImpl('enableAgent'); }
+    async registerFleetNode(_req) { return notImpl('registerFleetNode'); }
+    async removeFleetNode(_req) { return notImpl('removeFleetNode'); }
+    async disableFleetNode(_req) { return notImpl('disableFleetNode'); }
+    async enableFleetNode(_req) { return notImpl('enableFleetNode'); }
 }
 class UnixAuthClient {
     async authValidate(_token) { return notImpl('authValidate'); }
@@ -162,6 +170,8 @@ export class UnixClient {
     sdlc = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     accounts = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    agents = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     iam = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

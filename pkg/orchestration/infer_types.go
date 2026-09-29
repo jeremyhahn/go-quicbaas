@@ -116,7 +116,7 @@ type InferRequest struct {
 
 	// HostAffinityStrict, when true, forces hard host_affinity semantics for
 	// this inference call: if HostAffinity is set but the named host is
-	// offline the resolver returns NoMatchingAgentError rather than falling
+	// offline the resolver returns NoMatchingFleetNodeError rather than falling
 	// back to any available daemon. Empty / false defers to the operator
 	// orchestration.host_affinity.mode default (soft by default).
 	HostAffinityStrict bool `json:"host_affinity_strict,omitempty"`

@@ -100,10 +100,9 @@ func TestPIVLogin_OIDCGetterUnavailable(t *testing.T) {
 
 	memStorage := iam.NewMemoryStorage()
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
-		Tenants:      &testTenantManager{storage: memStorage},
+		UserStorage: memStorage,
+		RoleStorage: memStorage,
+		Tenants:     &testTenantManager{storage: memStorage},
 	})
 	thumb := sha256.Sum256(leaf.Raw)
 	pivUser := &iam.User{ID: "78", TenantID: "tenant-piv", Email: "piv@example.com"}
@@ -157,10 +156,9 @@ func TestPIVLogin_TokenIssuanceFailure(t *testing.T) {
 
 	memStorage := iam.NewMemoryStorage()
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
-		Tenants:      &testTenantManager{storage: memStorage},
+		UserStorage: memStorage,
+		RoleStorage: memStorage,
+		Tenants:     &testTenantManager{storage: memStorage},
 	})
 	thumb := sha256.Sum256(leaf.Raw)
 	pivUser := &iam.User{ID: "78", TenantID: "tenant-piv", Email: "piv@example.com"}

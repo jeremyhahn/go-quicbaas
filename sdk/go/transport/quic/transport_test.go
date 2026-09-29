@@ -32,6 +32,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/netport"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
@@ -264,11 +265,11 @@ func TestRequest_NonSuccessStatusMapsToError(t *testing.T) {
 }
 
 func TestRequest_ConnectionRefused(t *testing.T) {
-	// Nothing is listening on this loopback port.
-	udpConn, err := net.ListenPacket("udp", "127.0.0.1:0")
-	require.NoError(t, err)
-	addr := udpConn.LocalAddr().String()
-	require.NoError(t, udpConn.Close())
+	// Nothing is listening on this loopback port. It is reserved rather than
+	// drawn from :0 and released, so nothing else can be handed it before the
+	// dial: netport holds a host-wide lock on it and draws only from outside
+	// the kernel's ephemeral range.
+	addr := netport.MustReserveLoopbackAddr(t)
 
 	cfg := testTransportConfig(addr)
 	cfg.Timeout = 500 * time.Millisecond

@@ -46,7 +46,7 @@ func issueSourceFixture() *orchestration.TaskSourceRef {
 func jobStatusResult(t *testing.T, svc orchestration.AgentService) map[string]interface{} {
 	t.Helper()
 
-	reg := newAgentRegistry(t, svc)
+	reg := newFleetRegistry(t, svc)
 	ctx := orchestration.ContextWithTenant(context.Background(), "t1")
 	result, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_get_job_status",
 		map[string]interface{}{"job_id": "job-1"})

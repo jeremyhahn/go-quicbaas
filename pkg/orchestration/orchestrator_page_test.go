@@ -188,12 +188,12 @@ func TestListAgentsPage_PropagatesTheRegistryRefusal(t *testing.T) {
 
 	svc := pagedTestService(t)
 
-	page, err := svc.ListAgentsPage(context.Background(), "tenant-1", nil, nil)
+	page, err := svc.ListFleetNodesPage(context.Background(), "tenant-1", nil, nil)
 	if page != nil {
-		t.Error("ListAgentsPage() returned a page with no registry configured")
+		t.Error("ListFleetNodesPage() returned a page with no registry configured")
 	}
-	if !errors.Is(err, ErrAgentRegistryRequired) {
-		t.Errorf("error = %v, want ErrAgentRegistryRequired", err)
+	if !errors.Is(err, ErrFleetRegistryRequired) {
+		t.Errorf("error = %v, want ErrFleetRegistryRequired", err)
 	}
 }
 

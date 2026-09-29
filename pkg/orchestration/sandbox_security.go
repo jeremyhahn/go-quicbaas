@@ -14,6 +14,7 @@
 package orchestration
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -32,8 +33,8 @@ import (
 // Docker daemon inside itself (#1040).
 //
 // The policy is: drop EVERY capability, add back only what sudo and apk are
-// demonstrated to need, and bound the process count. Two things are
-// deliberately NOT done:
+// demonstrated to need, bound the process count, and give locked memory the
+// limit the CI runners give it (#1038). Two things are deliberately NOT done:
 //
 //   - no --security-opt of any kind: the runtime's default seccomp and
 //     AppArmor profiles stay in force, and nothing here may loosen them;
@@ -65,13 +66,25 @@ var DefaultSandboxCapAdd = []string{"CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID",
 // sitting just above it.
 const DefaultSandboxPidsLimit int64 = 4096
 
+// DefaultSandboxMemlockBytes is the locked-memory limit (RLIMIT_MEMLOCK, soft
+// and hard) a sandboxed container gets when none is configured: 4 GiB, what
+// the company's CI runners pass as `--ulimit memlock=4294967296`.
+//
+// Docker's own default is 8 MiB. A suite that holds its secrets in mlocked
+// memory exhausts that after a few hundred keys and fails in the worker while
+// it passes in CI (#1038) — and the worker cannot raise the hard limit from
+// inside the container, because that takes CAP_SYS_RESOURCE, which the policy
+// drops. Matching CI means a verification that passes in the worker passes in
+// CI, and one that fails fails in both.
+const DefaultSandboxMemlockBytes int64 = 4 << 30
+
 // sandboxCapDropAll is the --cap-drop value that removes every capability.
 const sandboxCapDropAll = "ALL"
 
 // SandboxSecurity is the operator's privilege policy for sandboxed agent
-// containers. Its zero value is the secure default: DefaultSandboxCapAdd and
-// DefaultSandboxPidsLimit. It is operator configuration only; a spawn request
-// can never widen it (see Apply).
+// containers. Its zero value is the secure default: DefaultSandboxCapAdd,
+// DefaultSandboxPidsLimit and a memlock of DefaultSandboxMemlockBytes. It is
+// operator configuration only; a spawn request can never widen it (see Apply).
 type SandboxSecurity struct {
 	// CapAdd REPLACES DefaultSandboxCapAdd when non-empty: the capabilities
 	// given back after --cap-drop ALL. Either spelling ("CAP_NET_RAW" or
@@ -83,10 +96,17 @@ type SandboxSecurity struct {
 	// DefaultSandboxPidsLimit; a negative value is refused — the policy has no
 	// "unlimited".
 	PidsLimit int64 `json:"pids_limit,omitempty"`
+
+	// Ulimits overrides or adds per-process resource limits by name over the
+	// default set, which is a memlock of DefaultSandboxMemlockBytes: an entry
+	// naming "memlock" replaces it, any other name is added. Parse operator
+	// configuration with ParseContainerUlimits.
+	Ulimits []ContainerUlimit `json:"ulimits,omitempty"`
 }
 
 // Validate reports a policy that cannot be applied: a negative pids limit, an
-// empty or malformed capability name, or "ALL" among the add-backs.
+// empty or malformed capability name, "ALL" among the add-backs, or a ulimit
+// the runtime would refuse.
 func (p SandboxSecurity) Validate() error {
 	if p.PidsLimit < 0 {
 		return &InputValidationError{
@@ -99,15 +119,17 @@ func (p SandboxSecurity) Validate() error {
 			return err
 		}
 	}
-	return nil
+	return validateUlimits(p.Ulimits)
 }
 
 // Apply sets the policy on spec: every capability dropped, the policy's
-// add-back set granted, the pids limit bounded, and privileged mode off.
+// add-back set granted, the pids limit bounded, the ulimits set, and
+// privileged mode off.
 //
 // It OVERRIDES whatever the spec carried, exactly as the resolved network
 // does: a caller-supplied ContainerConfig must not be able to name a wider
-// capability set, lift the pids bound, or ask for --privileged. It is
+// capability set, lift the pids bound, name its own ulimits, or ask for
+// --privileged. It is
 // called while the spec is being built, before ContainerConfigDigest
 // measures it, so the measured configuration is the launched one.
 //
@@ -128,6 +150,7 @@ func (p SandboxSecurity) Apply(spec *ContainerSpec) error {
 	spec.CapDrop = []string{sandboxCapDropAll}
 	spec.CapAdd = capAdd
 	spec.PidsLimit = p.EffectivePidsLimit()
+	spec.Ulimits = p.EffectiveUlimits()
 	return nil
 }
 
@@ -162,6 +185,22 @@ func (p SandboxSecurity) EffectivePidsLimit() int64 {
 		return p.PidsLimit
 	}
 	return DefaultSandboxPidsLimit
+}
+
+// EffectiveUlimits returns the default ulimit set — a memlock of
+// DefaultSandboxMemlockBytes — with every configured entry applied over it by
+// name, sorted by name. The result is a fresh slice the caller may keep.
+func (p SandboxSecurity) EffectiveUlimits() []ContainerUlimit {
+	out := []ContainerUlimit{{Name: UlimitMemlock, Soft: DefaultSandboxMemlockBytes, Hard: DefaultSandboxMemlockBytes}}
+	for _, configured := range p.Ulimits {
+		i := slices.IndexFunc(out, func(u ContainerUlimit) bool { return u.Name == configured.Name })
+		if i < 0 {
+			out = append(out, configured)
+			continue
+		}
+		out[i] = configured
+	}
+	return sortedUlimits(out)
 }
 
 // sandboxSecurityHolder is implemented by every backend that carries an

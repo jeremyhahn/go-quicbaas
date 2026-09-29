@@ -36,7 +36,7 @@ import (
 //
 // EXACTLY ONE method returns an AccountCredential:
 // MaterializeAccountCredential, which releases one envelope to an enrolled
-// agent daemon so a pooled credential can reach the worker host that runs the
+// fleet node daemon so a pooled credential can reach the worker host that runs the
 // agent. It carries its own permission, its own refusal rules and its own
 // audit event; see account_materialize.go. Every other method still returns
 // metadata only, and the transports' structural leak guards enumerate them.
@@ -94,6 +94,15 @@ type AccountService interface {
 	// credential before releasing it, and records one audit event per attempt.
 	// See account_materialize.go.
 	MaterializeAccountCredential(ctx context.Context, req *MaterializeAccountCredentialRequest) (*MaterializeAccountCredentialResponse, error)
+
+	// ReserveAccountSession claims one session slot on a capped account in
+	// the control plane's reservation table, refusing with
+	// orchestration.AccountsSaturatedError when the account is at its cap.
+	// See account_reservation.go.
+	ReserveAccountSession(ctx context.Context, req *ReserveAccountSessionRequest) (*ReserveAccountSessionResponse, error)
+
+	// ReleaseAccountSession gives a reservation back, for a spawn that failed.
+	ReleaseAccountSession(ctx context.Context, req *ReleaseAccountSessionRequest) (*ReleaseAccountSessionResponse, error)
 }
 
 // =============================================================================
@@ -108,6 +117,20 @@ type CreateAccountRequest struct {
 	DisplayName   string                             `json:"display_name,omitempty"`
 	Default       bool                               `json:"default,omitempty"`
 	RefreshPolicy orchestration.AccountRefreshPolicy `json:"refresh_policy,omitempty"`
+
+	// MaxConcurrentSessions caps how many live sessions the account serves at
+	// once. Zero is unmetered.
+	MaxConcurrentSessions int `json:"max_concurrent_sessions,omitempty"`
+
+	// Billing is how the account is billed — a flat subscription or a
+	// metered API key — which decides the billed figure every turn on it
+	// carries. The zero value is "not configured" and bills unknown.
+	Billing orchestration.AccountBilling `json:"billing,omitzero"`
+
+	// Spend is what the account may spend — sliding windows in tokens and/or
+	// list-price dollars — and how many failures take it out of service
+	// (go-quicbaas#781). The zero value is unmetered.
+	Spend orchestration.AccountSpendPolicy `json:"spend,omitzero"`
 
 	// Credential is the account's initial secret envelope, held inline. Never
 	// echoed back by any AccountService method. Exactly one of Credential and
@@ -194,6 +217,14 @@ type UpdateAccountRequest struct {
 	ClearProjectID bool                               `json:"clear_project_id,omitempty"`
 	RefreshPolicy  orchestration.AccountRefreshPolicy `json:"refresh_policy,omitempty"`
 
+	// Billing, when present, replaces how the account is billed; a present
+	// zero value clears it back to "not configured". Absent (nil) leaves it
+	// unchanged.
+	Billing *orchestration.AccountBilling `json:"billing,omitempty"`
+
+	// Spend, when present, replaces the account's spend policy; a present
+	// zero value makes it unmetered. Absent (nil) leaves it unchanged.
+	Spend *orchestration.AccountSpendPolicy `json:"spend,omitempty"`
 	// CredentialSecretRef, when set, points the account's credential at this
 	// tenant secret: an inline account SWITCHES to the reference (its inline
 	// envelope is destroyed), a reference account is re-pointed. The secret
@@ -206,6 +237,10 @@ type UpdateAccountRequest struct {
 	// CreateAccountRequest.CredentialSecretFile. An update that sets a
 	// reference without it projects the secret as the access token.
 	CredentialSecretFile string `json:"credential_secret_file,omitempty"`
+	// MaxConcurrentSessions, when non-nil, replaces the account's session cap;
+	// zero makes it unmetered. Nil leaves it unchanged, which is why it is a
+	// pointer: zero is a value an operator sets on purpose.
+	MaxConcurrentSessions *int `json:"max_concurrent_sessions,omitempty"`
 }
 
 // UpdateAccountResponse wraps the updated account.
@@ -273,8 +308,22 @@ type GetAccountUsageRequest struct {
 
 // GetAccountUsageResponse wraps the usage report.
 type GetAccountUsageResponse struct {
-	Usage     *orchestration.UsageReport `json:"usage"`
-	Timestamp time.Time                  `json:"timestamp"`
+	Usage *orchestration.UsageReport `json:"usage"`
+
+	// LiveSessions is how many sessions the account is serving now: the
+	// figure balancing ranks on and the account's session cap is checked
+	// against. A worker daemon reads it from here to balance on the same
+	// count the control plane does.
+	LiveSessions int `json:"live_sessions"`
+
+	// Spend is the spend gate's read-only verdict on the account: whether its
+	// own spend policy admits more work and, if not, why and until when
+	// (go-quicbaas#1058, ruling F6). A worker daemon reads it here so its
+	// resolver fails over past a spent account exactly as the control plane's
+	// does. Nil when the deployment wires no spend gate: nothing is metered.
+	Spend *orchestration.SpendHeadroom `json:"spend,omitempty"`
+
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // =============================================================================
@@ -441,6 +490,11 @@ type accountServiceImpl struct {
 	// releases unleased, which is the behaviour every deployment had before
 	// delivery grants existed. See SetAccountCredentialLeaser.
 	leases orchestration.AccountCredentialLeaser
+
+	// sessions answers GetAccountUsage's live-session count and is the
+	// reservation table the reserve/release verbs write. Optional for the
+	// reason usage is; see SetSessionReserver.
+	sessions orchestration.AccountSessionReserver
 }
 
 // NewAccountService creates a new AccountService backed by store and
@@ -465,6 +519,14 @@ func NewAccountService(store orchestration.AccountStore, secrets *orchestration.
 // SetUsageTracker wires the CostTracker GetAccountUsage reports from.
 func (s *accountServiceImpl) SetUsageTracker(tracker orchestration.CostTracker) {
 	s.usage = tracker
+}
+
+// SetSessionReserver wires the live-session count GetAccountUsage reports and
+// the reservation table ReserveAccountSession writes: the SAME table the
+// control plane's resolver, balancing strategy and admission read, so a worker
+// daemon balances on, and reserves against, one count.
+func (s *accountServiceImpl) SetSessionReserver(sessions orchestration.AccountSessionReserver) {
+	s.sessions = sessions
 }
 
 // SetLogger wires the logger non-fatal bookkeeping failures are reported on.
@@ -511,6 +573,11 @@ func (s *accountServiceImpl) CreateAccount(ctx context.Context, req *CreateAccou
 		RefreshPolicy:        effectiveRefreshPolicy(req.RefreshPolicy),
 		CredentialSecretRef:  req.CredentialSecretRef,
 		CredentialSecretFile: req.CredentialSecretFile,
+		// The operator's statement of how many sessions the subscription
+		// serves at once. Zero is unmetered; the store rejects a negative.
+		MaxConcurrentSessions: req.MaxConcurrentSessions,
+		Billing:               req.Billing,
+		Spend:                 req.Spend,
 	}
 
 	if account.UsesSecretRef() {
@@ -528,9 +595,15 @@ func (s *accountServiceImpl) CreateAccount(ctx context.Context, req *CreateAccou
 	// the two writes never leaves a listable account with no credential —
 	// the opposite ordering (metadata first) is the one that could hand
 	// AccountResolver an account whose Get(secrets) then fails.
-	if err := s.secrets.Put(ctx, req.TenantID, account.ID, req.Credential); err != nil {
+	generation, err := s.secrets.Replace(ctx, req.TenantID, account.ID, req.Credential)
+	if err != nil {
 		return nil, err
 	}
+	// The import IS the account's first generation, mirrored onto the record
+	// it is about to be created with. Writing it here rather than through a
+	// follow-up Touch keeps the create atomic: there is no window in which a
+	// listable account describes material whose identity nobody recorded.
+	account.CredentialGeneration = generation
 	if err := s.store.Create(ctx, account); err != nil {
 		createErr := convertAccountStoreError(err)
 		if cleanupErr := s.secrets.Delete(ctx, req.TenantID, account.ID); cleanupErr != nil {
@@ -696,6 +769,15 @@ func (s *accountServiceImpl) applyAccountUpdate(ctx context.Context, existing *o
 	if req.RefreshPolicy != "" {
 		existing.RefreshPolicy = req.RefreshPolicy
 	}
+	if req.MaxConcurrentSessions != nil {
+		existing.MaxConcurrentSessions = *req.MaxConcurrentSessions
+	}
+	if req.Billing != nil {
+		existing.Billing = *req.Billing
+	}
+	if req.Spend != nil {
+		existing.Spend = *req.Spend
+	}
 	if req.CredentialSecretRef != "" {
 		return s.applySecretRef(ctx, existing, req.CredentialSecretRef, req.CredentialSecretFile)
 	}
@@ -747,7 +829,13 @@ func (s *accountServiceImpl) RotateAccountCredential(ctx context.Context, req *R
 		existing.Provider, effectiveRefreshPolicy(existing.RefreshPolicy), req.Credential); validateErr != nil {
 		return nil, convertAccountStoreError(validateErr)
 	}
-	if err := s.secrets.Put(ctx, req.TenantID, req.AccountID, req.Credential); err != nil {
+	// THE REPLACEMENT IS A NEW GENERATION, stamped into the same encrypted
+	// write as the material. Every live session that materialized the previous
+	// one is now holding a credential the provider will stop honouring, and
+	// the generation is how each of them finds that out before spending a turn
+	// on it (SessionAccountFreshness, go-quicbaas#997).
+	generation, err := s.secrets.Replace(ctx, req.TenantID, req.AccountID, req.Credential)
+	if err != nil {
 		return nil, err
 	}
 	// The replacement envelope's expiry supersedes the old one, including when
@@ -762,6 +850,8 @@ func (s *accountServiceImpl) RotateAccountCredential(ctx context.Context, req *R
 	// writes nothing to the record — and then removes the envelope it wrote.
 	touchErr := s.store.Touch(ctx, req.TenantID, req.AccountID, orchestration.TouchAccountOptions{
 		MarkRefreshed:            true,
+		MarkCredentialRotated:    true,
+		SetCredentialGeneration:  generation,
 		SetStatusValid:           true,
 		SetStatus:                orchestration.AccountStatusActive,
 		ClearLastError:           true,
@@ -857,7 +947,8 @@ func (s *accountServiceImpl) GetAccountUsage(ctx context.Context, req *GetAccoun
 	ctx = accountTenantContext(ctx, req.TenantID)
 	// Confirm the account exists within the tenant first so usage cannot be
 	// probed for an account ID belonging to another tenant.
-	if _, err := s.store.Get(ctx, req.TenantID, req.AccountID); err != nil {
+	account, err := s.store.Get(ctx, req.TenantID, req.AccountID)
+	if err != nil {
 		return nil, convertAccountStoreError(err)
 	}
 	if s.usage == nil {
@@ -867,7 +958,46 @@ func (s *accountServiceImpl) GetAccountUsage(ctx context.Context, req *GetAccoun
 	if err != nil {
 		return nil, err
 	}
-	return &GetAccountUsageResponse{Usage: report, Timestamp: time.Now().UTC()}, nil
+	live, err := s.liveSessions(ctx, req.TenantID, req.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	spend, err := s.spendHeadroom(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	return &GetAccountUsageResponse{Usage: report, LiveSessions: live, Spend: spend, Timestamp: time.Now().UTC()}, nil
+}
+
+// spendHeadroom asks the spend gate about the account without claiming a
+// half-open trial, or answers nil when no gate is wired. A gate that could
+// not establish its answer fails the call: a verdict of "admits" invented
+// over an unreadable ledger is the headroom the gate exists to refuse.
+func (s *accountServiceImpl) spendHeadroom(ctx context.Context, account *orchestration.Account) (*orchestration.SpendHeadroom, error) {
+	if s.spend == nil {
+		return nil, nil
+	}
+	headroom, err := orchestration.SpendHeadroomOf(
+		s.spend.Check(ctx, orchestration.SpendAuthorizeRequest{Account: account}, time.Now().UTC()))
+	if err != nil {
+		return nil, err
+	}
+	return &headroom, nil
+}
+
+// liveSessions counts the account's live sessions, or zero when no session
+// lookup is wired (a deployment with no session store has none to count).
+// A lookup that fails is an error, not a zero: a daemon balancing on a zero it
+// was never told was a guess would put every session on this account.
+func (s *accountServiceImpl) liveSessions(ctx context.Context, tenantID, accountID string) (int, error) {
+	if s.sessions == nil {
+		return 0, nil
+	}
+	counts, err := s.sessions.LiveSessions(ctx, tenantID, []string{accountID})
+	if err != nil {
+		return 0, err
+	}
+	return counts[accountID], nil
 }
 
 // AccountUsageTrackerNotConfiguredError indicates this AccountService
@@ -930,6 +1060,9 @@ func convertAccountStoreError(err error) error {
 		refreshNeeded *orchestration.AccountRefreshTokenRequiredError
 		staticRefresh *orchestration.AccountStaticTokenRefreshableError
 		endpointUnres *orchestration.AccountProviderEndpointUnresolvedError
+		billing       *orchestration.AccountBillingInvalidError
+		quota         *orchestration.QuotaInvalidError
+		breaker       *orchestration.BreakerInvalidError
 		sourceInvalid *orchestration.AccountCredentialSourceError
 	)
 	switch {
@@ -957,6 +1090,12 @@ func convertAccountStoreError(err error) error {
 			Message: "a static (none) account must not supply a refresh token",
 			Cause:   err,
 		}
+	case stderrors.As(err, &quota):
+		return &AccountInvalidError{Field: "spend.quota." + quota.Field, Message: quota.Message, Cause: err}
+	case stderrors.As(err, &breaker):
+		return &AccountInvalidError{Field: "spend.breaker." + breaker.Field, Message: breaker.Message, Cause: err}
+	case stderrors.As(err, &billing):
+		return &AccountInvalidError{Field: billing.Field, Message: billing.Message, Cause: err}
 	case stderrors.As(err, &endpointUnres):
 		return &AccountInvalidError{
 			Field:   "credential.token_endpoint",

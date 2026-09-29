@@ -222,7 +222,7 @@
         <div class="space-y-2">
           {#each namespaces as ns (ns.name)}
             <div
-              class="card card-compact bg-base-200 cursor-pointer"
+              class="card card-sm bg-base-200 cursor-pointer"
               class:ring-2={searchNamespace === ns.name}
               class:ring-primary={searchNamespace === ns.name}
               role="button"

@@ -123,8 +123,8 @@ func TenantFromContext(ctx context.Context) string {
 //
 // The value is duplicated as a literal (rather than imported from
 // qrdbsdk.SystemTenantID) because this package is reachable from the
-// dependency-light standalone agent binary (cmd/quicbaas agent-serve ->
-// pkg/agent -> pkg/orchestration), which deliberately imports neither
+// dependency-light standalone agent binary (cmd/quicbaas fleet serve ->
+// pkg/fleet -> pkg/orchestration), which deliberately imports neither
 // go-qrdb/sdk/go nor pkg/iam. A drift between the two literals is caught by
 // TestOrchestrationSystemTenantIDMatchesQRDB in tenant_guard_test.go.
 const SystemTenantID = "system"

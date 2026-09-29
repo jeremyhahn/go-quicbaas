@@ -222,9 +222,8 @@ func TestTokenLiveness_GetUserError(t *testing.T) {
 	// Swap in an identity store whose GetUser always errors with a non-not-found
 	// error so the fail-closed path (not the service-token path) is exercised.
 	provider.identityStore = NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  &erroringUserStorage{MemoryStorage: NewMemoryStorage()},
-		GroupStorage: NewMemoryStorage(),
-		RoleStorage:  NewMemoryStorage(),
+		UserStorage: &erroringUserStorage{MemoryStorage: NewMemoryStorage()},
+		RoleStorage: NewMemoryStorage(),
 	})
 
 	live, gerr := provider.TokenLiveness(context.Background(), "tenant-a", "", "user-x", "", "jti-y")

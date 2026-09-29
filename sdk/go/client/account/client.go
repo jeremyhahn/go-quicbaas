@@ -25,6 +25,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/spend"
+
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/page"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
@@ -82,6 +84,40 @@ type Client interface {
 	// caller-controlled secret store; ExpiresAt bounds how long it may be
 	// cached and UpdatedAt tells a cache when a central rotation superseded it.
 	Materialize(ctx context.Context, req *MaterializeCredentialRequest) (*MaterializedCredential, error)
+
+	// ReserveSession claims one session slot on an account in the control
+	// plane's reservation table, for the CALLER'S OWN tenant. Every account is
+	// reserved (occupancy is counted for balancing); an account at its
+	// MaxConcurrentSessions cap is refused. The session record naming the
+	// reservation satisfies it; a spawn that fails must ReleaseSession it. It
+	// carries Materialize's permission, whose companion it is.
+	ReserveSession(ctx context.Context, req *ReserveSessionRequest) (*SessionReservation, error)
+
+	// ReleaseSession gives a reservation back, for a spawn that failed.
+	ReleaseSession(ctx context.Context, req *ReleaseSessionRequest) (*SessionReservation, error)
+}
+
+// ReserveSessionRequest asks for one session slot on an account.
+type ReserveSessionRequest struct {
+	TenantID  string `json:"tenant_id"`
+	AccountID string `json:"account_id"`
+	// ExpectedLive, when set, makes the claim conditional on the account's
+	// live-session count still being this; a moved count is refused and the
+	// caller re-selects.
+	ExpectedLive *int `json:"expected_live,omitempty"`
+}
+
+// ReleaseSessionRequest gives one reservation back.
+type ReleaseSessionRequest struct {
+	TenantID      string `json:"tenant_id"`
+	AccountID     string `json:"account_id"`
+	ReservationID string `json:"reservation_id"`
+}
+
+// SessionReservation names a reservation. The session record naming
+// ReservationID satisfies it.
+type SessionReservation struct {
+	ReservationID string `json:"reservation_id"`
 }
 
 // =============================================================================
@@ -174,6 +210,28 @@ type Credential struct {
 	AccessTokenEnvKey string `json:"access_token_env_key,omitempty"`
 }
 
+// BillingMode is how a pooled account is billed.
+type BillingMode string
+
+const (
+	// BillingSubscription is a flat-fee plan: a turn adds nothing to the
+	// bill. The monthly fee is recorded on the account; reports do not
+	// pro-rate it yet.
+	BillingSubscription BillingMode = "subscription"
+	// BillingAPI is a metered API key: a turn bills its list price.
+	BillingAPI BillingMode = "api"
+)
+
+// Billing is how a pooled account is billed. The zero value is "not
+// configured", which bills every turn on the account as unknown.
+type Billing struct {
+	// Mode is BillingSubscription or BillingAPI.
+	Mode BillingMode `json:"mode,omitempty"`
+	// MonthlyFeeMicros is a subscription's flat monthly fee in millionths
+	// of a US dollar. Refused on an api account.
+	MonthlyFeeMicros int64 `json:"monthly_fee_micros,omitempty"`
+}
+
 // AccountInfo is the non-secret metadata record for one pooled account.
 type AccountInfo struct {
 	ID            string        `json:"id"`
@@ -185,6 +243,8 @@ type AccountInfo struct {
 	Status        Status        `json:"status"`
 	RefreshPolicy RefreshPolicy `json:"refresh_policy"`
 
+	// Billing is how the account is billed; nil when not configured.
+	Billing *Billing `json:"billing,omitempty"`
 	// CredentialSecretRef names the tenant secret the credential is read from,
 	// when the account is reference-sourced. A name, never the value.
 	CredentialSecretRef string `json:"credential_secret_ref,omitempty"`
@@ -192,6 +252,10 @@ type AccountInfo struct {
 	// CredentialSecretFile is where a referenced secret is materialized
 	// (relative to the session home) instead of the access token.
 	CredentialSecretFile string `json:"credential_secret_file,omitempty"`
+
+	// Spend is what the account may spend and how many failures take it out
+	// of service; the zero value is unmetered.
+	Spend spend.AccountPolicy `json:"spend,omitzero"`
 
 	// AvailableAt is when a StatusLimited account rejoins the selectable pool.
 	// Zero on every other status.
@@ -213,6 +277,10 @@ type AccountInfo struct {
 	LastUsedAt      time.Time `json:"last_used_at,omitempty"`
 	LastRefreshedAt time.Time `json:"last_refreshed_at,omitempty"`
 	LastError       string    `json:"last_error,omitempty"`
+
+	// MaxConcurrentSessions caps how many live sessions the account serves at
+	// once. Zero is unmetered.
+	MaxConcurrentSessions int `json:"max_concurrent_sessions,omitempty"`
 }
 
 // UsageReport is the cumulative token usage recorded against an account.
@@ -222,6 +290,35 @@ type UsageReport struct {
 	PercentUsed float64          `json:"percent_used"`
 	ByAgent     map[string]int64 `json:"by_agent,omitempty"`
 	LastUpdated int64            `json:"last_updated"`
+
+	// LiveSessions is how many sessions the account is serving now: what
+	// the balancing strategy ranks on and MaxConcurrentSessions caps. The
+	// server reports it beside the usage figures rather than inside them.
+	LiveSessions int `json:"live_sessions"`
+
+	// Spend is the server's spend-gate verdict on the account: whether its
+	// own spend policy admits more work and, if not, why and until when.
+	// Nil when the server wires no spend gate. Reported beside the usage
+	// figures, like LiveSessions.
+	Spend *SpendHeadroom `json:"spend,omitempty"`
+}
+
+// SpendHeadroom is the spend gate's read-only verdict on one account.
+// Mirrors orchestration.SpendHeadroom.
+type SpendHeadroom struct {
+	// Admits is true when the account's spend policy admits more work.
+	Admits bool `json:"admits"`
+	// Refusal is "quota_exhausted" or "breaker_open" when Admits is false.
+	Refusal string `json:"refusal,omitempty"`
+	// Window, Axis, Used and Limit describe a spent window.
+	Window string `json:"window,omitempty"`
+	Axis   string `json:"axis,omitempty"`
+	Used   int64  `json:"used,omitempty"`
+	Limit  int64  `json:"limit,omitempty"`
+	// Failures is how many failures tripped an open breaker.
+	Failures int `json:"failures,omitempty"`
+	// FreesAt is when the refusal lifts; nil when nothing can say.
+	FreesAt *time.Time `json:"frees_at,omitempty"`
 }
 
 // CreateAccountRequest provisions a new pooled account.
@@ -238,6 +335,11 @@ type CreateAccountRequest struct {
 	Default bool `json:"default,omitempty"`
 	// RefreshPolicy selects how the credential is renewed.
 	RefreshPolicy RefreshPolicy `json:"refresh_policy,omitempty"`
+	// Billing is how the account is billed; nil leaves it not configured.
+	Billing *Billing `json:"billing,omitempty"`
+	// Spend is what the account may spend (go-quicbaas#781); nil is
+	// unmetered.
+	Spend *spend.AccountPolicy `json:"spend,omitempty"`
 	// Credential is the initial secret envelope, held inline; never echoed
 	// back. Exactly one of Credential and CredentialSecretRef is required.
 	Credential *Credential `json:"credential,omitempty"`
@@ -250,6 +352,9 @@ type CreateAccountRequest struct {
 	// as this file relative to the session home (e.g. ".codex/auth.json")
 	// instead of as the access token.
 	CredentialSecretFile string `json:"credential_secret_file,omitempty"`
+	// MaxConcurrentSessions caps how many live sessions the account serves at
+	// once. Zero is unmetered.
+	MaxConcurrentSessions int `json:"max_concurrent_sessions,omitempty"`
 }
 
 // GetAccountRequest identifies an account for transport dispatch.
@@ -293,6 +398,12 @@ type UpdateAccountRequest struct {
 	ProjectID      string        `json:"project_id,omitempty"`
 	ClearProjectID bool          `json:"clear_project_id,omitempty"`
 	RefreshPolicy  RefreshPolicy `json:"refresh_policy,omitempty"`
+	// Billing, when non-nil, replaces how the account is billed; a non-nil
+	// zero value clears it. Nil leaves it unchanged.
+	Billing *Billing `json:"billing,omitempty"`
+	// Spend, when non-nil, replaces the account's spend policy; a non-nil
+	// zero value makes it unmetered. Nil leaves it unchanged.
+	Spend *spend.AccountPolicy `json:"spend,omitempty"`
 
 	// CredentialSecretRef switches the account's credential to (or re-points
 	// it at) this tenant secret. Re-applying the current one returns an
@@ -300,6 +411,9 @@ type UpdateAccountRequest struct {
 	CredentialSecretRef string `json:"credential_secret_ref,omitempty"`
 	// CredentialSecretFile is applied together with CredentialSecretRef.
 	CredentialSecretFile string `json:"credential_secret_file,omitempty"`
+	// MaxConcurrentSessions, when non-nil, replaces the account's session cap;
+	// zero makes it unmetered. Nil leaves it unchanged.
+	MaxConcurrentSessions *int `json:"max_concurrent_sessions,omitempty"`
 }
 
 // DeleteAccountRequest identifies an account to delete.
@@ -365,7 +479,7 @@ type MaterializeCredentialRequest struct {
 	// DELIVERY GRANT this release takes out, so a job's releases can be listed
 	// and revoked as a set through Security().DynamicSecrets().
 	//
-	// Name it only when this release serves ONE job. An enrolled agent daemon
+	// Name it only when this release serves ONE job. An enrolled fleet node daemon
 	// leaves it empty because its credential cache is keyed by account, so one
 	// release serves every job on that host — and a later refresh presented
 	// against a job-scoped grant would then be refused its own copy.
@@ -412,6 +526,13 @@ type ReleasedCredential struct {
 	// AccessTokenEnvKey is the environment variable AccessToken is projected
 	// into at materialization time.
 	AccessTokenEnvKey string `json:"access_token_env_key,omitempty"`
+
+	// Generation identifies which copy of the account's credential this
+	// envelope is. A worker host records it on the session it spawns, so the
+	// control plane can tell before a turn that the credential was rotated
+	// under that session. An integer naming a copy, not credential material;
+	// zero means unknown.
+	Generation int64 `json:"generation,omitempty"`
 }
 
 // MaterializedCredential is one released envelope plus the non-secret metadata
@@ -666,6 +787,46 @@ func (c *client) Materialize(ctx context.Context, req *MaterializeCredentialRequ
 	// discover it as an unexplained provider rejection minutes later.
 	if out.Credential == nil {
 		return nil, errors.NewInternal(op, "server released no credential envelope")
+	}
+	return out, nil
+}
+
+// ReserveSession claims one session slot on an account.
+func (c *client) ReserveSession(ctx context.Context, req *ReserveSessionRequest) (*SessionReservation, error) {
+	const op = "account.ReserveSession"
+	if req == nil {
+		return nil, errors.NewInvalidInput(op, "request is required")
+	}
+	return c.sessionReservation(ctx, op, "ReserveSession", req, req.TenantID, req.AccountID)
+}
+
+// ReleaseSession gives one reservation back.
+func (c *client) ReleaseSession(ctx context.Context, req *ReleaseSessionRequest) (*SessionReservation, error) {
+	const op = "account.ReleaseSession"
+	if req == nil {
+		return nil, errors.NewInvalidInput(op, "request is required")
+	}
+	if req.ReservationID == "" {
+		return nil, errors.NewInvalidInput(op, "reservation_id is required")
+	}
+	return c.sessionReservation(ctx, op, "ReleaseSession", req, req.TenantID, req.AccountID)
+}
+
+// sessionReservation issues a request whose response is a SessionReservation.
+func (c *client) sessionReservation(ctx context.Context, op, method string, req interface{}, tenantID, accountID string) (*SessionReservation, error) {
+	if err := requireContext(ctx, op); err != nil {
+		return nil, err
+	}
+	if err := requireIdentifiers(ctx, op, tenantID, accountID); err != nil {
+		return nil, err
+	}
+	resp, err := c.transport.Request(ctx, serviceName, method, req)
+	if err != nil {
+		return nil, err
+	}
+	out, ok := resp.(*SessionReservation)
+	if !ok || out == nil {
+		return nil, errors.NewInternal(op, "invalid response type")
 	}
 	return out, nil
 }

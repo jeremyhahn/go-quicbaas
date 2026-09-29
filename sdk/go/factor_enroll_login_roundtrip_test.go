@@ -165,10 +165,10 @@ func newDirectory(users ...testUser) *directoryUserServicer {
 
 func (d *directoryUserServicer) toSDK(u testUser) *qrdbsdk.User {
 	return &qrdbsdk.User{
-		ID:       u.id,
-		Username: u.username,
-		TenantID: u.tenantID,
-		Enabled:  true,
+		ID:        u.id,
+		Username:  u.username,
+		TenantID:  u.tenantID,
+		Lifecycle: qrdbsdk.LifecycleActive,
 	}
 }
 

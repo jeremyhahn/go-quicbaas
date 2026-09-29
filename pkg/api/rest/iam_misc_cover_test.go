@@ -43,13 +43,14 @@ func TestValidateToken_Branches(t *testing.T) {
 
 	// Success
 	mockSvc.On("ValidateToken", mock.Anything, mock.Anything).Return(
-		&service.ValidateTokenResponse{Valid: true, UserID: "u1", ExpiresAt: 1 << 40}, nil).Once()
+		&service.ValidateTokenResponse{Valid: true, UserID: "u1", TenantID: "acme", ExpiresAt: 1 << 40}, nil).Once()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/validate", nil)
 	req.Header.Set("Authorization", "Bearer tok")
 	w = httptest.NewRecorder()
 	handler.ValidateToken(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), `"valid":true`)
+	assert.Contains(t, w.Body.String(), `"tenant_id":"acme"`)
 }
 
 func TestUpdateRole_Success(t *testing.T) {
@@ -64,21 +65,6 @@ func TestUpdateRole_Success(t *testing.T) {
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1", "role_id": "role1"})
 	w := httptest.NewRecorder()
 	handler.UpdateRole(w, req)
-	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
-}
-
-func TestUpdateGroup_Success(t *testing.T) {
-	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-	ctx := context.Background()
-	require.NoError(t, memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "T"}))
-	require.NoError(t, memStorage.CreateGroup(ctx, &iam.Group{ID: "group1", TenantID: "tenant1", Name: "G"}))
-
-	body := `{"description":"updated"}`
-	req := httptest.NewRequest(http.MethodPut, "/x", bytes.NewReader([]byte(body)))
-	req = withChiParams(req, map[string]string{"tenant_id": "tenant1", "group_id": "group1"})
-	w := httptest.NewRecorder()
-	handler.UpdateGroup(w, req)
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 }
 
@@ -116,18 +102,4 @@ func TestUpdatePolicy_NotFound(t *testing.T) {
 	handler.UpdatePolicy(w, policyRequest(t, http.MethodPut, "/x", validPolicyDoc("missing"),
 		map[string]string{"tenant_id": policyTenant, "policy_name": "missing"}))
 	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-func TestCreateGroup_DuplicateAndDeleteGroup_NotFound(t *testing.T) {
-	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-	ctx := context.Background()
-	require.NoError(t, memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "T"}))
-
-	// Delete a non-existent group -> non-204.
-	w := httptest.NewRecorder()
-	req := withChiParams(httptest.NewRequest(http.MethodDelete, "/x", nil),
-		map[string]string{"tenant_id": "tenant1", "group_id": "missing"})
-	handler.DeleteGroup(w, req)
-	assert.NotEqual(t, http.StatusNoContent, w.Code)
 }

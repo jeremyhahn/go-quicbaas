@@ -1358,7 +1358,6 @@ func TestAdmin_CreateAssignment_AllRoles(t *testing.T) {
 		"super_admin",
 		"tenant_admin",
 		"user_admin",
-		"group_admin",
 		"policy_admin",
 		"audit_admin",
 		"read_only",

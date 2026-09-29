@@ -384,19 +384,19 @@ func TestListSessions_AnswersTheFacetCounts(t *testing.T) {
 func TestListAgents_NarrowsOnServedBackendAndCountsThem(t *testing.T) {
 	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
-	agentSvc.listAgents = []*orchestration.AgentRegistration{
-		{ID: "a1", Name: "one", Backend: "acp", Capabilities: []string{"claude", "codex"}, Status: orchestration.AgentStatusRunning},
-		{ID: "a2", Name: "two", Backend: "codex", Status: orchestration.AgentStatusOffline},
+	agentSvc.listAgents = []*orchestration.FleetNode{
+		{ID: "a1", Name: "one", Backend: "acp", Capabilities: []string{"claude", "codex"}, Status: orchestration.FleetNodeStatusRunning},
+		{ID: "a2", Name: "two", Backend: "codex", Status: orchestration.FleetNodeStatusOffline},
 	}
 
 	w := httptest.NewRecorder()
-	server.HandleOrchestratorListAgents(w,
-		orchReq(http.MethodGet, "/api/v1/orchestrator/agents?tenant_id=acme&backend=claude", nil, nil))
+	server.HandleListFleetNodes(w,
+		orchReq(http.MethodGet, "/api/v1/fleet?tenant_id=acme&backend=claude", nil, nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	envelope, items := decodePageEnvelope(t, w.Body.Bytes(), "agents")
+	envelope, items := decodePageEnvelope(t, w.Body.Bytes(), "nodes")
 	if envelope.Total != 1 || items[0]["id"] != "a1" {
 		t.Errorf("matched %v, want the daemon that serves claude as a capability", items)
 	}

@@ -267,6 +267,37 @@ func TestWebhookHTTP_AcceptsAndRefuses(t *testing.T) {
 	}
 }
 
+// TestWebhookHTTP_ReportsATriageWakeFailureAndStillAccepts proves the
+// handler accepts a delivery whose triage wake failed — the forge must not
+// retry it — and hands the failure to the operator's error hook, so an
+// outage of webhook-driven triage is logged rather than silent.
+func TestWebhookHTTP_ReportsATriageWakeFailureAndStillAccepts(t *testing.T) {
+	rig := newWebhookRig(t)
+	cause := errors.New("the triage scheduler is unavailable")
+	rig.ingestor.SetTriageNudger(&fakeNudger{err: cause})
+	h, seen := newWebhookHTTP(t, rig, 64)
+	rec := post(h, testProject, `{"action":"opened"}`, "sig")
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("a failed triage wake still accepts: %d %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), cause.Error()) {
+		t.Fatalf("the forge is not told the internal failure: %s", rec.Body.String())
+	}
+	if len(*seen) != 1 {
+		t.Fatalf("the operator sees the triage failure once, got %d: %v", len(*seen), *seen)
+	}
+	var wake *TriageWakeError
+	if !errors.As((*seen)[0], &wake) || !errors.Is((*seen)[0], cause) {
+		t.Fatalf("the operator sees the typed failure, got %T: %v", (*seen)[0], (*seen)[0])
+	}
+
+	rig.ingestor.SetTriageNudger(&fakeNudger{})
+	*seen = nil
+	if rec := post(h, testProject, `{"action":"opened"}`, "sig"); rec.Code != http.StatusAccepted || len(*seen) != 0 {
+		t.Fatalf("a healthy wake reports nothing: %d %v", rec.Code, *seen)
+	}
+}
+
 func TestWebhookRefusal_Mapping(t *testing.T) {
 	for err, want := range map[error]int{
 		&WebhookUnverifiedError{}:          http.StatusUnauthorized,

@@ -15,7 +15,11 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 // int64Ptr and intPtr build the presence-carrying quota values an update
@@ -24,15 +28,22 @@ import (
 func int64Ptr(v int64) *int64 { return &v }
 func intPtr(v int) *int       { return &v }
 
+// weeklySpend is a one-window spend limit.
+func weeklySpend() orchestration.SpendLimits {
+	return orchestration.SpendLimits{Windows: []orchestration.QuotaWindow{
+		{Name: "weekly", Size: 7 * 24 * time.Hour, MaxEquivalentMicros: 250_000_000},
+	}}
+}
+
 // newCappedProject creates a project with every quota capped.
 func newCappedProject(t *testing.T, svc ProjectService) string {
 	t.Helper()
 	resp, err := svc.CreateProject(context.Background(), &CreateProjectRequest{
 		TenantID:       "tenant-1",
 		Name:           "api",
-		TokenBudget:    1_000_000,
 		GPUMinutes:     600,
 		MaxConcurrency: 2,
+		Spend:          weeklySpend(),
 	})
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
@@ -54,16 +65,19 @@ func TestProjectService_UpdateProject_ZeroQuotaLiftsTheCap(t *testing.T) {
 	resp, err := svc.UpdateProject(context.Background(), &UpdateProjectRequest{
 		TenantID:       "tenant-1",
 		ProjectID:      id,
-		TokenBudget:    int64Ptr(0),
 		GPUMinutes:     int64Ptr(0),
+		Spend:          &orchestration.SpendLimits{},
 		MaxConcurrency: intPtr(0),
 	})
 	if err != nil {
 		t.Fatalf("UpdateProject: %v", err)
 	}
 	quotas := resp.Project.Quotas
-	if quotas.TokenBudget != 0 || quotas.GPUMinutes != 0 || quotas.MaxConcurrency != 0 {
+	if quotas.GPUMinutes != 0 || quotas.MaxConcurrency != 0 {
 		t.Fatalf("quotas = %+v, want every cap lifted to unlimited", quotas)
+	}
+	if resp.Project.Spend.Metered() {
+		t.Fatalf("spend = %+v, want an empty value to clear the limits", resp.Project.Spend)
 	}
 }
 
@@ -82,8 +96,11 @@ func TestProjectService_UpdateProject_AbsentQuotaLeavesTheCap(t *testing.T) {
 		t.Fatalf("UpdateProject: %v", err)
 	}
 	quotas := resp.Project.Quotas
-	if quotas.TokenBudget != 1_000_000 || quotas.GPUMinutes != 600 || quotas.MaxConcurrency != 2 {
+	if quotas.GPUMinutes != 600 || quotas.MaxConcurrency != 2 {
 		t.Fatalf("quotas = %+v, want the caps untouched", quotas)
+	}
+	if len(resp.Project.Spend.Windows) != 1 {
+		t.Fatalf("spend = %+v, want the limits untouched", resp.Project.Spend)
 	}
 }
 
@@ -105,7 +122,43 @@ func TestProjectService_UpdateProject_QuotaMovesToANewCap(t *testing.T) {
 	if quotas.MaxConcurrency != 8 {
 		t.Errorf("MaxConcurrency = %d, want 8", quotas.MaxConcurrency)
 	}
-	if quotas.TokenBudget != 1_000_000 || quotas.GPUMinutes != 600 {
+	if quotas.GPUMinutes != 600 {
 		t.Errorf("quotas = %+v, want the untouched caps kept", quotas)
+	}
+}
+
+// TestProjectService_SpendLimitsAreValidatedAtTheWrite is go-quicbaas#1058:
+// a project's spend limits are refused where the operator wrote them, with
+// the field named, on create and on update.
+func TestProjectService_SpendLimitsAreValidatedAtTheWrite(t *testing.T) {
+	svc := newAutonomyProjectService()
+	bad := orchestration.SpendLimits{Windows: []orchestration.QuotaWindow{{Name: "w", Size: time.Hour}}}
+
+	_, err := svc.CreateProject(context.Background(), &CreateProjectRequest{TenantID: "tenant-1", Name: "api", Spend: bad})
+	var invalid *ProjectInvalidError
+	if !errors.As(err, &invalid) || invalid.Field != "spend.window.max_tokens" {
+		t.Fatalf("CreateProject = %v, want ProjectInvalidError on spend.window.max_tokens", err)
+	}
+
+	id := newCappedProject(t, svc)
+	_, err = svc.UpdateProject(context.Background(), &UpdateProjectRequest{TenantID: "tenant-1", ProjectID: id, Spend: &bad})
+	if !errors.As(err, &invalid) || invalid.Field != "spend.window.max_tokens" {
+		t.Fatalf("UpdateProject = %v, want ProjectInvalidError on spend.window.max_tokens", err)
+	}
+}
+
+// TestProjectService_SpendLimitsAreReplacedOnUpdate asserts a present value
+// replaces the limits.
+func TestProjectService_SpendLimitsAreReplacedOnUpdate(t *testing.T) {
+	svc := newAutonomyProjectService()
+	id := newCappedProject(t, svc)
+	daily := orchestration.SpendLimits{Windows: []orchestration.QuotaWindow{{Name: "daily", Size: 24 * time.Hour, MaxTokens: 5}}}
+
+	resp, err := svc.UpdateProject(context.Background(), &UpdateProjectRequest{TenantID: "tenant-1", ProjectID: id, Spend: &daily})
+	if err != nil {
+		t.Fatalf("UpdateProject: %v", err)
+	}
+	if len(resp.Project.Spend.Windows) != 1 || resp.Project.Spend.Windows[0].Name != "daily" {
+		t.Fatalf("spend = %+v, want the daily window", resp.Project.Spend)
 	}
 }

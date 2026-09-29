@@ -40,7 +40,6 @@ func TestConvertToUser(t *testing.T) {
 				"name":           "Alice",
 				"email_verified": true,
 				"roles":          []interface{}{"r1", "r2"},
-				"groups":         []interface{}{"g1"},
 				"metadata":       map[string]interface{}{"k": "v"},
 				"attributes": map[string]interface{}{
 					"department":     "eng",
@@ -66,7 +65,7 @@ func TestConvertToUser(t *testing.T) {
 		if !got.EmailVerified {
 			t.Error("bool fields wrong")
 		}
-		if len(got.Roles) != 2 || len(got.Groups) != 1 {
+		if len(got.Roles) != 2 {
 			t.Errorf("slices wrong: %+v", got)
 		}
 		if got.Metadata["k"] != "v" {
@@ -125,90 +124,6 @@ func TestIsUserSuccessResponse(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := isUserSuccessResponse(tt.resp); got != tt.want {
-				t.Errorf("got %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestConvertToGroup(t *testing.T) {
-	t.Run("nil", func(t *testing.T) {
-		if _, ok := convertToGroup(nil); ok {
-			t.Error("expected ok=false")
-		}
-	})
-	t.Run("pointer pass-through", func(t *testing.T) {
-		g := &Group{ID: "g1"}
-		got, ok := convertToGroup(g)
-		if !ok || got != g {
-			t.Error("expected pass-through")
-		}
-	})
-	t.Run("wrong type", func(t *testing.T) {
-		if _, ok := convertToGroup(3.14); ok {
-			t.Error("expected ok=false")
-		}
-	})
-	t.Run("nested map", func(t *testing.T) {
-		now := time.Now().UTC().Format(time.RFC3339)
-		resp := map[string]interface{}{
-			"group": map[string]interface{}{
-				"id":           "g1",
-				"tenant_id":    "t1",
-				"name":         "admins",
-				"description":  "desc",
-				"member_count": float64(5),
-				"roles":        []interface{}{"r1"},
-				"metadata":     map[string]interface{}{"k": "v"},
-				"created_at":   now,
-				"updated_at":   now,
-			},
-		}
-		got, ok := convertToGroup(resp)
-		if !ok {
-			t.Fatal("expected ok=true")
-		}
-		if got.ID != "g1" || got.MemberCount != 5 {
-			t.Errorf("wrong: %+v", got)
-		}
-		if got.DisplayName != "admins" {
-			t.Error("display name should fall back to name")
-		}
-		if len(got.Roles) != 1 || got.Metadata["k"] != "v" {
-			t.Error("roles/metadata wrong")
-		}
-	})
-	t.Run("typed slices and member_count variants", func(t *testing.T) {
-		got, ok := convertToGroup(map[string]interface{}{
-			"id":           "g2",
-			"member_count": int64(7),
-			"roles":        []string{"r"},
-			"metadata":     map[string]string{"a": "b"},
-		})
-		if !ok || got.MemberCount != 7 {
-			t.Errorf("wrong: %+v", got)
-		}
-	})
-}
-
-func TestIsSuccessResponse(t *testing.T) {
-	tests := []struct {
-		name string
-		resp interface{}
-		want bool
-	}{
-		{"nil", nil, true},
-		{"delete resp", &deleteGroupResponse{}, true},
-		{"member resp", &groupMemberResponse{}, true},
-		{"map bool true", map[string]bool{"success": true}, true},
-		{"map bool false", map[string]bool{"success": false}, false},
-		{"map iface false", map[string]interface{}{"success": false}, false},
-		{"map iface no key", map[string]interface{}{"x": 1}, true},
-		{"unexpected", "str", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := isSuccessResponse(tt.resp); got != tt.want {
 				t.Errorf("got %v, want %v", got, tt.want)
 			}
 		})

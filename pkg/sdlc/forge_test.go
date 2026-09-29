@@ -37,6 +37,9 @@ func registerStub(t ForgeType) {
 
 func (s *stubForge) Type() ForgeType                 { return s.forgeType }
 func (s *stubForge) Capabilities() ForgeCapabilities { return s.caps }
+func (s *stubForge) AuthenticatedUser(context.Context) (*TokenIdentity, error) {
+	return nil, nil
+}
 
 func (s *stubForge) ListIssues(context.Context, RepoRef, IssueFilter) ([]ForgeIssue, error) {
 	return nil, nil
@@ -68,6 +71,12 @@ func (s *stubForge) ListOpenPullRequests(context.Context, RepoRef) ([]ForgePullR
 	return nil, nil
 }
 func (s *stubForge) CloseIssue(context.Context, RepoRef, int) error { return nil }
+func (s *stubForge) CreateIssue(context.Context, RepoRef, IssueSpec) (*ForgeIssue, error) {
+	return nil, nil
+}
+func (s *stubForge) ListCollaborators(context.Context, RepoRef) ([]ForgeUser, error) {
+	return nil, nil
+}
 
 func (s *stubForge) GetPullRequest(context.Context, RepoRef, int) (*ForgePullRequest, error) {
 	return nil, nil
@@ -93,6 +102,7 @@ func (s *stubForge) SetCommitStatus(context.Context, RepoRef, string, CommitStat
 func (s *stubForge) ListPullRequestFiles(context.Context, RepoRef, int) ([]ForgeChangedFile, error) {
 	return nil, nil
 }
+func (s *stubForge) ClosePullRequest(context.Context, RepoRef, int) error        { return nil }
 func (s *stubForge) CancelCheckRun(context.Context, RepoRef, string) error       { return nil }
 func (s *stubForge) RerunCheckRun(context.Context, RepoRef, ForgeCheckRun) error { return nil }
 func (s *stubForge) VerifyWebhook([]byte, string, []byte) error                  { return nil }

@@ -555,7 +555,7 @@ func TestTaskSourcePoller_RefusesASpecOfAnotherKind(t *testing.T) {
 func TestTaskSourcePoller_CreatedButNotSpawnedIsReported(t *testing.T) {
 	t.Parallel()
 	f := newPollerFixture(t)
-	f.creator.spawnErr = &NoMatchingAgentError{Constraint: "agent_selection"}
+	f.creator.spawnErr = &NoMatchingFleetNodeError{Constraint: "agent_selection"}
 	f.register(t, "poller-test-unplaced", &fakeTaskSource{name: "unplaced", specs: []TaskSourceSpec{{
 		Source: TaskSourceRef{Kind: "poller-test-unplaced", Ref: "7"}, Subject: "waits for an agent",
 	}}})
@@ -805,6 +805,40 @@ func TestTaskSourcePoller_AdoptsAtMostTheProjectsCapacity(t *testing.T) {
 	}
 	if n := countLines(f.logger.infoLines(), "seen="); n != 1 {
 		t.Fatalf("one summary line per sweep per project, got %d: %v", n, f.logger.infoLines())
+	}
+}
+
+// TestTaskSourcePoller_AParkedSpecSpendsNoSlot: a project allowed one job
+// adopts every parked spec it is offered AND its one ready spec, because a
+// parked task runs nothing — while the ready spec beyond the cap is still
+// refused.
+func TestTaskSourcePoller_AParkedSpecSpendsNoSlot(t *testing.T) {
+	t.Parallel()
+	f := newPollerFixture(t)
+	f.setMaxConcurrency(t, "proj-flow", 1)
+	const kind TaskSourceKind = "cap-parked-kind"
+	specs := capSpecs(kind, 4)
+	// The two highest priorities are parked, so a cap that counted them
+	// would spend its one slot before reaching the ready work.
+	for i := 2; i < 4; i++ {
+		specs[i].Park = &BlockReason{Kind: TaskBlockKindNeedsInfo, Message: "which key size?"}
+	}
+	f.register(t, kind, &fakeTaskSource{name: "parked", specs: specs})
+
+	if err := f.poller.Sweep(context.Background()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	blocked, ready := 0, 0
+	for _, task := range f.tasks(t) {
+		switch task.Status {
+		case TaskStatusBlocked:
+			blocked++
+		default:
+			ready++
+		}
+	}
+	if blocked != 2 || ready != 1 {
+		t.Fatalf("adopted %d parked and %d ready, want 2 parked and 1 ready under a cap of one", blocked, ready)
 	}
 }
 

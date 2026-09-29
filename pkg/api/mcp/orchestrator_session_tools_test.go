@@ -85,7 +85,7 @@ func schemaProperties(t *testing.T, tool ToolDefinition) map[string]interface{} 
 func TestSessionToolsRegistered(t *testing.T) {
 	t.Parallel()
 
-	reg := newAgentRegistry(t, &mockAgentService{})
+	reg := newFleetRegistry(t, &mockAgentService{})
 
 	for _, name := range sessionToolNames {
 		t.Run(name, func(t *testing.T) {
@@ -102,7 +102,7 @@ func TestSessionToolsRegistered(t *testing.T) {
 func TestSessionToolsNotRegisteredUnderLegacyAgentNames(t *testing.T) {
 	t.Parallel()
 
-	reg := newAgentRegistry(t, &mockAgentService{})
+	reg := newFleetRegistry(t, &mockAgentService{})
 
 	legacy := map[string]bool{
 		"quicbaas_agent_spawn":         true,
@@ -126,7 +126,7 @@ func TestSessionToolsNotRegisteredUnderLegacyAgentNames(t *testing.T) {
 func TestSessionToolsRequireTenantArgument(t *testing.T) {
 	t.Parallel()
 
-	reg := newAgentRegistry(t, &mockAgentService{})
+	reg := newFleetRegistry(t, &mockAgentService{})
 
 	for _, name := range sessionToolNames {
 		t.Run(name, func(t *testing.T) {
@@ -143,18 +143,18 @@ func TestSessionToolsRequireTenantArgument(t *testing.T) {
 func TestSpawnToolSchemaExposesDispatchControls(t *testing.T) {
 	t.Parallel()
 
-	reg := newAgentRegistry(t, &mockAgentService{})
+	reg := newFleetRegistry(t, &mockAgentService{})
 	tool := toolByName(t, reg, "quicbaas_orchestrator_spawn")
 	props := schemaProperties(t, tool)
 
 	for _, key := range []string{
-		"tenant_id", "backend", "project_id", "model", "system_prompt",
+		"tenant_id", "agent_id", "pool_id", "role", "backend", "project_id", "model", "system_prompt",
 		"work_dir", "sandbox_mode", "host_affinity", "host_affinity_strict",
 		"gpu_required", "persistent", "mcp_servers",
 	} {
 		assert.Containsf(t, props, key, "spawn schema must declare %q", key)
 	}
-	assert.ElementsMatch(t, []string{"tenant_id", "backend", "project_id"}, requiredArgs(t, tool))
+	assert.ElementsMatch(t, []string{"tenant_id", "project_id"}, requiredArgs(t, tool))
 }
 
 // =============================================================================
@@ -167,7 +167,7 @@ func TestSpawnToolSchemaExposesDispatchControls(t *testing.T) {
 func TestSessionToolsMissingRequiredArgs(t *testing.T) {
 	t.Parallel()
 
-	reg := newAgentRegistry(t, &mockAgentService{})
+	reg := newFleetRegistry(t, &mockAgentService{})
 	ctx := context.Background()
 
 	cases := []struct {
@@ -179,7 +179,7 @@ func TestSessionToolsMissingRequiredArgs(t *testing.T) {
 		{"spawn without tenant", "quicbaas_orchestrator_spawn",
 			map[string]interface{}{"backend": "claude", "project_id": "p1"}, "tenant_id"},
 		{"spawn without backend", "quicbaas_orchestrator_spawn",
-			map[string]interface{}{"tenant_id": "t1", "project_id": "p1"}, "backend"},
+			map[string]interface{}{"tenant_id": "t1", "project_id": "p1"}, "agent_id, pool_id or backend"},
 		{"spawn without project", "quicbaas_orchestrator_spawn",
 			map[string]interface{}{"tenant_id": "t1", "backend": "claude"}, "project_id"},
 		{"prompt without tenant", "quicbaas_orchestrator_prompt",
@@ -220,7 +220,7 @@ func TestSpawnToolRejectsInvalidSandboxMode(t *testing.T) {
 			return &orchestration.SpawnSessionResponse{SessionID: "s1"}, nil
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_spawn", map[string]interface{}{
 		"tenant_id":    "t1",
@@ -263,7 +263,7 @@ func TestSpawnToolDispatch(t *testing.T) {
 			}, nil
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_spawn", map[string]interface{}{
 		"tenant_id":            "acme",
@@ -320,7 +320,7 @@ func TestSpawnToolHonorsExplicitNonPersistent(t *testing.T) {
 			return &orchestration.SpawnSessionResponse{SessionID: "s1"}, nil
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_spawn", map[string]interface{}{
 		"tenant_id":  "acme",
@@ -358,7 +358,7 @@ func TestPromptToolDispatch(t *testing.T) {
 			}, nil
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_prompt", map[string]interface{}{
 		"tenant_id":  "acme",
@@ -410,7 +410,7 @@ func TestSessionInspectionToolsDispatch(t *testing.T) {
 			return &orchestration.ListSessionsResponse{Timestamp: time.Now().UnixNano()}, nil
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 	ctx := context.Background()
 
 	statusResult, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_status", map[string]interface{}{
@@ -479,10 +479,18 @@ func TestSessionToolsQRDBPermissionMapping(t *testing.T) {
 // Reverse: every orchestrator-resource entry in the permission map must belong
 // to a registered tool, so a rename cannot leave a stale mapping behind that
 // makes the surface look wired when it is not.
+// orchestratorToolsOutsideTheFamily are orchestrator tools whose verb lives in
+// a QuicBaaS permission family, because go-qrdb owns the orchestrator family
+// outright and QuicBaaS may not add an action to it.
+var orchestratorToolsOutsideTheFamily = map[string]string{
+	// Replacing a tenant's spend limits (go-quicbaas#1058).
+	"quicbaas_orchestrator_spend_policy_set": "spend_policy",
+}
+
 func TestOrchestratorSurfacePermissionMappingIsComplete(t *testing.T) {
 	t.Parallel()
 
-	reg := newAgentRegistry(t, &mockAgentService{})
+	reg := newFleetRegistry(t, &mockAgentService{})
 
 	registered := make(map[string]bool, len(reg.tools))
 	for _, tool := range reg.tools {
@@ -501,7 +509,13 @@ func TestOrchestratorSurfacePermissionMappingIsComplete(t *testing.T) {
 		resource, action, ok := getToolQRDBPermission(name)
 		assert.Truef(t, ok, "registered orchestrator tool %q has no qrdb permission mapping; the default-deny gate will hide it", name)
 		if ok {
-			assert.Equalf(t, "orchestrator", resource, "tool %q must map onto the orchestrator resource", name)
+			// A tool whose verb go-qrdb's orchestrator family does not own maps
+			// onto the QuicBaaS family that does, and says so here.
+			want := "orchestrator"
+			if family, owned := orchestratorToolsOutsideTheFamily[name]; owned {
+				want = family
+			}
+			assert.Equalf(t, want, resource, "tool %q must map onto the %s resource", name, want)
 			assert.NotEmptyf(t, action, "tool %q maps to an empty action", name)
 		}
 	}

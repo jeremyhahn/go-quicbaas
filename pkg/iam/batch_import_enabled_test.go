@@ -22,9 +22,8 @@ func newImportEnabledFixture(t *testing.T) (*BatchManager, *IdentityStore, *Memo
 	t.Helper()
 	mem := NewMemoryStorage()
 	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  mem,
-		GroupStorage: mem,
-		RoleStorage:  mem,
+		UserStorage: mem,
+		RoleStorage: mem,
 	})
 	return NewBatchManager(BatchManagerOptions{IdentityStore: store}), store, mem
 }

@@ -71,6 +71,15 @@ const (
 
 	// LabelEscalated marks an issue the engine gave up on.
 	LabelEscalated = "escalated"
+
+	// LabelClustered marks an issue triage adopted INTO another issue's task:
+	// one pull request covers both, and the issue it names in its comment
+	// carries the work.
+	LabelClustered = "clustered"
+
+	// LabelTrainEjected marks a pull request the merge train ejected: its
+	// change failed on top of the target, or no longer merged into it.
+	LabelTrainEjected = "train_ejected"
 )
 
 // ForgeConfig names the repository a project delivers to and how the module
@@ -121,8 +130,12 @@ type ForgeConfig struct {
 func (c ForgeConfig) RepoRef() RepoRef { return RepoRef{Owner: c.Owner, Repo: c.Repo} }
 
 // Label returns the forge label displaying key, or empty when the binding
-// names none.
+// names none. TriggerLabelKey names the trigger label, which is the display
+// state of queued work.
 func (c ForgeConfig) Label(key string) string {
+	if key == TriggerLabelKey {
+		return strings.TrimSpace(c.TriggerLabel)
+	}
 	return strings.TrimSpace(c.Labels[key])
 }
 
@@ -225,8 +238,27 @@ type ReviewPolicy struct {
 }
 
 // ReviewerModelFamily returns the model family recorded for a reviewer login.
+//
+// FORGE LOGINS ARE CASE-INSENSITIVE, so the lookup is too: a binding naming
+// "CODEX" and a forge reporting "codex" are one account, and an exact-match
+// miss would leave that account's approval with no family — never counted,
+// holding the independence gate shut for good.
 func (p ReviewPolicy) ReviewerModelFamily(login string) string {
-	return p.Reviewers[login]
+	if family, ok := p.Reviewers[login]; ok {
+		return family
+	}
+	key := normalizeLogin(login)
+	for candidate, family := range p.Reviewers {
+		if normalizeLogin(candidate) == key {
+			return family
+		}
+	}
+	return ""
+}
+
+// normalizeLogin is the one spelling of a forge login used for comparison.
+func normalizeLogin(login string) string {
+	return strings.ToLower(strings.TrimSpace(login))
 }
 
 // SettleWindow returns the configured settle window or the default.
@@ -254,42 +286,6 @@ func (p ReviewPolicy) Validate() error {
 				Field:   "review.reviewers",
 				Message: "every entry maps a non-empty login to a non-empty model family",
 			}
-		}
-	}
-	return nil
-}
-
-// WorkerConfig names the agent that writes the code for this project.
-//
-// It lives on the binding rather than the Project because it is an SDLC
-// decision: the same repository could be worked by a different model under a
-// different SDLC, and the review policy's independence rule is decided against
-// this backend's model family.
-type WorkerConfig struct {
-	// Backend is the ACP agent backend the worker session runs on, e.g.
-	// "claude". Required: a binding with no backend cannot spawn a worker.
-	Backend string `json:"backend"`
-
-	// Model is the model that backend runs, e.g. "claude-opus-5". Empty
-	// takes the backend's own default.
-	Model string `json:"model"`
-
-	// Image is the container image the worker session runs in. Naming one
-	// requires the sandbox for this project's workers, and the image must
-	// carry what the runner's checkout and the binding's verification
-	// commands need — git, make and the project's toolchain
-	// (deployments/agents/software-factory-worker). Empty leaves the sandbox
-	// decision to the operator's own policy, which is deny-by-default on a
-	// node that serves tenants.
-	Image string `json:"image,omitempty"`
-}
-
-// Validate checks a worker could be spawned from this configuration.
-func (w WorkerConfig) Validate() error {
-	if strings.TrimSpace(w.Backend) == "" {
-		return &InvalidInputError{
-			Field:   "worker.backend",
-			Message: "required; autonomous development has no worker to spawn without one",
 		}
 	}
 	return nil
@@ -341,8 +337,20 @@ type ProjectBinding struct {
 	// what follows. Required, and resolved fail-closed.
 	Strategy string `json:"strategy"`
 
-	// Worker is the agent that writes the code.
-	Worker WorkerConfig `json:"worker"`
+	// Worker is the Agent or pool that writes the code. Required, and every
+	// Agent it resolves to declares the coding role.
+	//
+	// It lives on the binding rather than the Project because it is an SDLC
+	// decision: the same repository could be worked by a different Agent
+	// under a different SDLC, and the review policy's independence rule is
+	// decided against this slot's model families.
+	Worker orchestration.AgentRef `json:"worker"`
+
+	// WorkerPromptAppend is run-time prompt material appended after the
+	// worker's charter for every worker session of this project: the
+	// project's own conventions, say, on a worker Agent shared between
+	// projects. At most orchestration.MaxPromptAppendBytes.
+	WorkerPromptAppend string `json:"worker_prompt_append,omitempty"`
 
 	// Verification are the shell commands that must pass before the work is
 	// offered for review, run in the worker's checkout in order. Empty means
@@ -357,6 +365,12 @@ type ProjectBinding struct {
 	// ReviewerConfig.
 	Reviewer ReviewerConfig `json:"reviewer,omitempty"`
 
+	// Reviewers are the project's ALTERNATE reviewer profiles: named,
+	// each its own forge identity, and advisory unless they say otherwise.
+	// Reviewer stays the default; an operator's per-pull-request override
+	// is the only thing that selects an alternate. See reviewer_profiles.go.
+	Reviewers []ReviewerConfig `json:"reviewers,omitempty"`
+
 	// Modules says how the worker reaches this project's private Go modules.
 	// Empty for a project with none. See ModulePolicy.
 	Modules ModulePolicy `json:"modules,omitempty"`
@@ -369,14 +383,20 @@ type ProjectBinding struct {
 	// Ranking is this project's contribution to task ordering.
 	Ranking RankingPolicy `json:"ranking"`
 
-	// Triage names the agent that triages this project's open issues.
+	// Triage is the Agent or pool that triages this project's open issues.
+	// Every Agent it resolves to declares the triage role.
 	//
-	// EMPTY FALLS BACK TO Worker, which is what every project did before this
-	// existed. Triage is a READING task — it decides whether an issue is
+	// EMPTY TAKES THE NODE'S DEFAULT TRIAGE AGENT when this tenant defines
+	// it, and the project's Worker otherwise. Triage is a READING task — it decides whether an issue is
 	// already satisfied, duplicated or moot — and nothing it does writes code,
 	// so a project can point it at a cheaper or locally hosted model without
 	// changing who writes the code. Owner direction 2026-09-15.
-	Triage WorkerConfig `json:"triage,omitempty"`
+	Triage orchestration.AgentRef `json:"triage,omitempty"`
+
+	// TriagePromptAppend is run-time prompt material appended after the
+	// triage charter for every triage session of this project. At most
+	// orchestration.MaxPromptAppendBytes.
+	TriagePromptAppend string `json:"triage_prompt_append,omitempty"`
 
 	// TriageMayClose lets triage CLOSE an issue it found is already done or
 	// otherwise not work, rather than commenting and leaving it.
@@ -409,6 +429,25 @@ type ProjectBinding struct {
 	// nothing about onboarding still onboards correctly.
 	Onboarding OnboardingConfig `json:"onboarding,omitempty"`
 
+	// MergeTrain decides whether approved pull requests land through the
+	// project's merge train rather than one at a time. The zero value is ON
+	// with DefaultMergeTrainMaxSize; see MergeTrainPolicy and TrainEnabled.
+	MergeTrain MergeTrainPolicy `json:"merge_train,omitempty"`
+
+	// Clustering decides whether triage adopts related ready issues as one
+	// task and one pull request. The zero value is ON with
+	// DefaultClusterMaxSize; see ClusteringPolicy.
+	Clustering ClusteringPolicy `json:"clustering,omitempty"`
+
+	// Rulers are the forge logins, beyond the repository's owner and the
+	// node's configured rulers, whose comment on a parked issue is an owner
+	// ruling for this project. See ruling.go and RulerPolicy.
+	//
+	// THEY ONLY WIDEN THE SET. A ruler clears an owner decision, so every one
+	// is validated at bind time as a collaborator of the bound repository: a
+	// login that cannot see the repository is nobody the owner delegated to.
+	Rulers []string `json:"rulers,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -418,6 +457,13 @@ func (b *ProjectBinding) EntityID() uint64 { return b.ID }
 
 // SetEntityID implements the DAO entity contract.
 func (b *ProjectBinding) SetEntityID(id uint64) { b.ID = id }
+
+// GetCreatedAt implements the DAO's Timestamped contract.
+func (b *ProjectBinding) GetCreatedAt() time.Time { return b.CreatedAt }
+
+// GetUpdatedAt implements the DAO's Timestamped contract, which is what lets
+// UpdateBinding guard a write on the stored modification stamp.
+func (b *ProjectBinding) GetUpdatedAt() time.Time { return b.UpdatedAt }
 
 // Repo returns the bound repository.
 func (b *ProjectBinding) Repo() RepoRef { return b.Forge.RepoRef() }
@@ -436,7 +482,13 @@ func (b *ProjectBinding) Validate() error {
 	if _, err := LookupStrategy(b.Strategy); err != nil {
 		return err
 	}
-	if err := b.Worker.Validate(); err != nil {
+	if err := orchestration.RequireAgentRef(b.Worker, "worker"); err != nil {
+		return &InvalidInputError{Field: "worker", Message: "required; autonomous development has no worker to spawn without an agent or a pool: " + err.Error()}
+	}
+	if err := b.Triage.Validate("triage"); err != nil {
+		return &InvalidInputError{Field: "triage", Message: err.Error()}
+	}
+	if err := b.validatePromptAppends(); err != nil {
 		return err
 	}
 	if err := b.validateVerification(); err != nil {
@@ -445,7 +497,7 @@ func (b *ProjectBinding) Validate() error {
 	if err := b.Review.Validate(); err != nil {
 		return err
 	}
-	if err := b.Reviewer.Validate(); err != nil {
+	if err := b.validateReviewers(); err != nil {
 		return err
 	}
 	if b.MaxReviewRounds < 0 {
@@ -463,7 +515,25 @@ func (b *ProjectBinding) Validate() error {
 	if err := b.Onboarding.Validate(); err != nil {
 		return err
 	}
+	if err := b.MergeTrain.Validate(); err != nil {
+		return err
+	}
+	if err := b.Clustering.Validate(); err != nil {
+		return err
+	}
+	if err := validateRulerList("rulers", b.Rulers); err != nil {
+		return err
+	}
 	return b.Ranking.Validate()
+}
+
+// validatePromptAppends bounds the prompt material each slot appends; a
+// reviewer seat's is bounded with the rest of the seat.
+func (b *ProjectBinding) validatePromptAppends() error {
+	if err := orchestration.ValidatePromptAppend("worker_prompt_append", b.WorkerPromptAppend); err != nil {
+		return err
+	}
+	return orchestration.ValidatePromptAppend("triage_prompt_append", b.TriagePromptAppend)
 }
 
 // validateVerification refuses a blank command: a step that runs nothing
@@ -475,6 +545,26 @@ func (b *ProjectBinding) validateVerification() error {
 				Field:   "verification[" + strconv.Itoa(i) + "]",
 				Message: "must be a command; a blank step would pass without running anything",
 			}
+		}
+	}
+	return nil
+}
+
+// CheckVerification refuses a binding whose verification names a command the
+// operator's allowlist does not carry, naming the first such command.
+//
+// IT IS CHECKED WHERE THE BINDING IS SAVED AND WHERE ITS WORK STARTS, not only
+// where the command would run. The guard refuses the command at validation
+// either way, but by then a worker turn has been paid for and an attempt
+// charged: go-blockstore's binding named "make fmt-check vet golangci-lint
+// guards" and twelve turns were refused one after another (X14, 2026-09-25).
+// Validate cannot make this check, because the allowlist is DAEMON
+// configuration and a binding is valid or not without it.
+func (b *ProjectBinding) CheckVerification(guard orchestration.ExecutionGuard) error {
+	for i, command := range b.Verification {
+		trimmed := strings.TrimSpace(command)
+		if err := guard.CheckCommand(trimmed, trimmed); err != nil {
+			return &VerificationCommandRefusedError{Index: i, Command: trimmed}
 		}
 	}
 	return nil

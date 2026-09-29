@@ -14,8 +14,11 @@
  *     That is a fact, and it is not "0% of budget used"; it is also not the
  *     same as 'unknown', which is what the server says when it could not read
  *     the account at all.
- *   - NO PRICE. Nothing in the stack prices a turn (go-quicbaas#791), so the
- *     ledger's cost is UNMEASURED, not free. It renders as a dash.
+ *   - NO PRICE. A turn on a model the operator's price table does not name is
+ *     UNPRICED, not free. A scope with no priced turn renders its money as a
+ *     dash; a scope with some unpriced turns renders a floor and says so
+ *     (go-quicbaas#791, #1058). The billed figure follows the same rule: an
+ *     account whose billing nobody configured bills unknown, not zero.
  *
  * Pure functions only: no stores, no fetch. Everything here is directly
  * testable, which is what keeps the rules from being re-derived inline in a
@@ -23,10 +26,17 @@
  */
 
 import type {
+  CostSettings,
+  ElectricityRateSource,
   GetSpendReportResponse,
+  SetCostSettingsRequest,
   SpendAccount,
+  SpendAccountBilling,
+  SpendAgent,
   SpendChild,
+  SpendHost,
   SpendLevel,
+  SpendTotals,
   SpendWindowStatus,
 } from '@quicbaas/sdk';
 import { SPEND_UNATTRIBUTED } from '@quicbaas/sdk';
@@ -71,20 +81,311 @@ export function formatTokens(tokens: number | undefined | null): string {
   return tokens.toLocaleString();
 }
 
+/** MICROS_PER_UNIT converts the ledger's integer micro-units to currency units. */
+const MICROS_PER_UNIT = 1_000_000;
+
 /**
- * formatCost renders the ledger's cost ONLY when the server says it was
- * measured. Nothing prices a turn today, so this returns a dash on every
- * production report — which is the point: a rendered 0 would claim the work
- * was free. go-quicbaas#791.
+ * formatMoney renders an integer amount of micro-units as currency. Amounts
+ * below one cent that are not zero render as "<$0.01", so a local model priced
+ * at a fraction of a cent never reads as free.
  */
-export function formatCost(report: Pick<GetSpendReportResponse, 'cost_micros' | 'cost_measured'> | null): string {
-  if (report === null || !report.cost_measured) return UNMEASURED;
-  return `${(report.cost_micros / 1_000_000).toFixed(2)}`;
+export function formatMoney(micros: number, currency = 'USD'): string {
+  if (!Number.isFinite(micros)) return UNMEASURED;
+  if (micros > 0 && micros < MICROS_PER_UNIT / 100) {
+    return `<${formatMoney(MICROS_PER_UNIT / 100, currency)}`;
+  }
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(micros / MICROS_PER_UNIT);
 }
 
-/** costIsMeasured says whether a cost figure may be shown at all. */
-export function costIsMeasured(report: Pick<GetSpendReportResponse, 'cost_measured'> | null): boolean {
-  return report !== null && report.cost_measured === true;
+type Priced = Pick<SpendTotals, 'equivalent_micros' | 'priced_entries' | 'unpriced_entries'>;
+type Billed = Pick<SpendTotals, 'billed_micros' | 'billed_entries' | 'unbilled_entries'>;
+
+/**
+ * formatEquivalent renders the list-price equivalent — what the tokens would
+ * have cost on the provider's metered API — ONLY when at least one turn in
+ * the scope was priced. Otherwise it is a dash: a rendered 0 would claim the
+ * work was free.
+ */
+export function formatEquivalent(totals: Priced | null | undefined, currency?: string): string {
+  if (!totals || (totals.priced_entries ?? 0) === 0) return UNMEASURED;
+  return formatMoney(totals.equivalent_micros ?? 0, currency);
+}
+
+/**
+ * formatBilled renders what the scope added to the bill actually paid, under
+ * the same rule: no turn with a known bill is a dash.
+ */
+export function formatBilled(totals: Billed | null | undefined, currency?: string): string {
+  if (!totals || (totals.billed_entries ?? 0) === 0) return UNMEASURED;
+  return formatMoney(totals.billed_micros ?? 0, currency);
+}
+
+/**
+ * equivalentNote says how complete the equivalent is: unpriced entirely, a
+ * floor over some unpriced turns, or complete.
+ */
+export function equivalentNote(totals: Priced | null | undefined): string {
+  const priced = totals?.priced_entries ?? 0;
+  const unpriced = totals?.unpriced_entries ?? 0;
+  if (priced === 0) return unpriced > 0 ? 'no price for these models' : 'nothing priced';
+  if (unpriced > 0) return `at least — ${unpriced.toLocaleString()} turn${unpriced === 1 ? '' : 's'} unpriced`;
+  return 'at list price';
+}
+
+/**
+ * billedNote says how complete the billed figure is, in the same terms.
+ */
+export function billedNote(totals: Billed | null | undefined): string {
+  const billed = totals?.billed_entries ?? 0;
+  const unbilled = totals?.unbilled_entries ?? 0;
+  if (billed === 0) return unbilled > 0 ? 'billing not configured' : 'nothing billed';
+  if (unbilled > 0) return `at least — ${unbilled.toLocaleString()} turn${unbilled === 1 ? '' : 's'} with unknown billing`;
+  return 'actually billed';
+}
+
+/**
+ * formatEquivalentFloor is formatEquivalent for a breakdown row, where there
+ * is no room for equivalentNote: a figure that covers only some of the row's
+ * turns is marked "≥", because it is a floor, not the row's cost.
+ */
+export function formatEquivalentFloor(totals: Priced | null | undefined, currency?: string): string {
+  const figure = formatEquivalent(totals, currency);
+  if (figure === UNMEASURED || (totals?.unpriced_entries ?? 0) === 0) return figure;
+  return `≥${figure}`;
+}
+
+/**
+ * formatBilledFloor is formatBilled for a breakdown row, under the same rule:
+ * a billed figure over some turns of unknown billing is marked "≥".
+ */
+export function formatBilledFloor(totals: Billed | null | undefined, currency?: string): string {
+  const figure = formatBilled(totals, currency);
+  if (figure === UNMEASURED || (totals?.unbilled_entries ?? 0) === 0) return figure;
+  return `≥${figure}`;
+}
+
+/**
+ * moneyNote is both coverage notes on one line — the tooltip a breakdown row
+ * carries so its "≥" and dashes explain themselves.
+ */
+export function moneyNote(totals: (Priced & Billed) | null | undefined): string {
+  return `equivalent: ${equivalentNote(totals)} · billed: ${billedNote(totals)}`;
+}
+
+type Energy = Pick<SpendTotals, 'energy_mwh' | 'electricity_entries' | 'measured_energy_entries'>;
+
+/**
+ * formatEnergy renders the energy local inference drew, from milliwatt-hours:
+ * Wh below a kilowatt-hour, kWh above. A scope with no turn costed from
+ * electricity is a dash — no measurement, not zero energy.
+ */
+export function formatEnergy(totals: Energy | null | undefined): string {
+  if (!totals || (totals.electricity_entries ?? 0) === 0) return UNMEASURED;
+  const milliWh = totals.energy_mwh ?? 0;
+  if (milliWh >= 1_000_000) {
+    return `${(milliWh / 1_000_000).toLocaleString('en-US', { maximumFractionDigits: 2 })} kWh`;
+  }
+  if (milliWh > 0 && milliWh < 10) return '<0.01 Wh';
+  return `${(milliWh / 1000).toLocaleString('en-US', { maximumFractionDigits: 2 })} Wh`;
+}
+
+/**
+ * energyNote says how many turns the energy covers, and how many of them were
+ * MEASURED — costed from the fleet's device telemetry — rather than estimated
+ * from a configured draw. The split is the honest part: an estimated watt-hour
+ * reads the same as a measured one unless something says which it is.
+ */
+export function energyNote(totals: Energy | null | undefined): string {
+  const turns = totals?.electricity_entries ?? 0;
+  if (turns === 0) return 'no turn costed from electricity';
+  return `${turns.toLocaleString()} local turn${turns === 1 ? '' : 's'} costed from electricity · ${measuredShare(totals)}`;
+}
+
+/**
+ * measuredShare says how much of a scope's energy was measured: "all
+ * measured", "all estimated", or "3 of 5 measured".
+ */
+export function measuredShare(totals: Energy | null | undefined): string {
+  const turns = totals?.electricity_entries ?? 0;
+  const measured = Math.min(totals?.measured_energy_entries ?? 0, turns);
+  if (turns === 0) return UNMEASURED;
+  if (measured === turns) return 'all measured';
+  if (measured === 0) return 'all estimated';
+  return `${measured.toLocaleString()} of ${turns.toLocaleString()} measured`;
+}
+
+/**
+ * hostLabel names a host row. Turns that named no host are an absence, and
+ * read as one rather than as a host called "-".
+ */
+export function hostLabel(host: SpendHost): string {
+  return host.unattributed === true ? 'No host recorded' : (host.host ?? '');
+}
+
+/**
+ * hostScopeValue is what narrowing the report to a host row supplies: the
+ * host, or the ledger's no-value sentinel for the turns that named none.
+ */
+export function hostScopeValue(host: SpendHost): string {
+  return host.unattributed === true ? SPEND_UNATTRIBUTED : (host.host ?? '');
+}
+
+/** hostFilterLabel names the host a report is narrowed to, for its chip. */
+export function hostFilterLabel(value: string): string {
+  return value === SPEND_UNATTRIBUTED ? 'No host recorded' : value;
+}
+
+/**
+ * agentLabel names an Agent row: the Agent's name, else its ID. The turns of
+ * raw-backend sessions are an absence and read as one.
+ */
+export function agentLabel(agent: SpendAgent): string {
+  if (agent.unattributed === true) return 'No Agent (raw backend)';
+  return agent.name || agent.agent_id || '';
+}
+
+/**
+ * agentScopeValue is what narrowing the report to an Agent row supplies: the
+ * Agent's ID, or the ledger's no-value sentinel for raw-backend sessions.
+ */
+export function agentScopeValue(agent: SpendAgent): string {
+  return agent.unattributed === true ? SPEND_UNATTRIBUTED : (agent.agent_id ?? '');
+}
+
+/** agentFilterLabel names the Agent a report is narrowed to, for its chip. */
+export function agentFilterLabel(value: string): string {
+  return value === SPEND_UNATTRIBUTED ? 'No Agent (raw backend)' : value;
+}
+
+/**
+ * electricitySourceLabel is how the source of the electricity rate in force
+ * reads.
+ */
+export function electricitySourceLabel(source: ElectricityRateSource | string | undefined): string {
+  switch (source) {
+    case 'tenant_settings':
+      return 'set for this tenant';
+    case 'tenant_config':
+      return "from the tenant's configuration";
+    case 'deployment_config':
+      return "from the deployment's configuration";
+    case 'default':
+      return 'the default';
+    default:
+      return 'unknown source';
+  }
+}
+
+/** CostSettingsForm is the editable state of the cost settings control. */
+export type CostSettingsForm = {
+  // price is the $/kWh as typed; blank inherits the configuration.
+  price: string;
+  engines: { engine: string; watts: string }[];
+};
+
+/**
+ * costSettingsForm is the form for a tenant's settings as they stand: only
+ * what the tenant set, so saving it unchanged changes nothing.
+ */
+export function costSettingsForm(settings: CostSettings | null | undefined): CostSettingsForm {
+  const set = settings?.settings;
+  const engines = Object.entries(set?.engine_power_watts ?? {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([engine, watts]) => ({ engine, watts: String(watts) }));
+  return {
+    price: set?.electricity_price_per_kwh === undefined ? '' : String(set.electricity_price_per_kwh),
+    engines,
+  };
+}
+
+/**
+ * costSettingsRequest turns the form into the replacing request, or explains
+ * why it cannot: the server refuses the same things, and saying so before the
+ * round trip keeps a typo from silently becoming "inherit".
+ */
+export function costSettingsRequest(
+  tenantID: string,
+  form: CostSettingsForm,
+): { request: SetCostSettingsRequest } | { error: string } {
+  const request: SetCostSettingsRequest = { tenant_id: tenantID };
+  const price = form.price.trim();
+  if (price !== '') {
+    const rate = Number(price);
+    if (!Number.isFinite(rate) || rate < 0) return { error: 'The electricity price must be a non-negative number of dollars per kWh.' };
+    request.electricity_price_per_kwh = rate;
+  }
+  const seen = new Set<string>();
+  for (const row of form.engines) {
+    const engine = row.engine.trim();
+    const wattsText = row.watts.trim();
+    if (engine === '' && wattsText === '') continue;
+    if (engine === '') return { error: 'Every engine draw needs an engine name.' };
+    if (!/^[A-Za-z0-9._-]+$/.test(engine)) return { error: `"${engine}" is not an engine name.` };
+    if (seen.has(engine)) return { error: `"${engine}" is listed twice.` };
+    const watts = Number(wattsText);
+    if (wattsText === '' || !Number.isFinite(watts) || watts < 0) {
+      return { error: `The draw for "${engine}" must be a non-negative number of watts.` };
+    }
+    seen.add(engine);
+    request.engine_power_watts = { ...(request.engine_power_watts ?? {}), [engine]: watts };
+  }
+  return { request };
+}
+
+/**
+ * billingLabel is how an account's billing reads: its mode and, for a
+ * subscription, its monthly fee.
+ */
+export function billingLabel(billing: SpendAccountBilling | null | undefined, currency?: string): string {
+  const mode = (billing?.mode ?? '').trim();
+  if (mode === '') return 'Billing not configured';
+  if (mode === 'subscription') {
+    const fee = billing?.monthly_fee_micros ?? 0;
+    return fee > 0 ? `Subscription · ${formatMoney(fee, currency)}/mo` : 'Subscription';
+  }
+  if (mode === 'api') return 'Metered API';
+  return mode;
+}
+
+/**
+ * formatFeeShare renders the part of a subscription's monthly fee that falls
+ * in a report's range (go-quicbaas#1058, ruling F4). The server sends it only
+ * for a tenant-level report and only for a subscription whose fee is
+ * configured, so an absent figure is a dash, never a zero.
+ */
+export function formatFeeShare(micros: number | undefined | null, currency?: string): string {
+  if (typeof micros !== 'number') return UNMEASURED;
+  return formatMoney(micros, currency);
+}
+
+/**
+ * SpendRange is how far back the Cost page reads: every turn the ledger holds,
+ * or the last day, week or thirty days.
+ */
+export type SpendRange = 'all' | '24h' | '7d' | '30d';
+
+/** SPEND_RANGES lists the choices in the order the page offers them. */
+export const SPEND_RANGES: { value: SpendRange; label: string }[] = [
+  { value: 'all', label: 'All time' },
+  { value: '24h', label: 'Last 24 hours' },
+  { value: '7d', label: 'Last 7 days' },
+  { value: '30d', label: 'Last 30 days' },
+];
+
+const SPEND_RANGE_MILLIS: Record<Exclude<SpendRange, 'all'>, number> = {
+  '24h': 24 * 60 * 60 * 1000,
+  '7d': 7 * 24 * 60 * 60 * 1000,
+  '30d': 30 * 24 * 60 * 60 * 1000,
+};
+
+/**
+ * spendRangeFrom is the RFC 3339 start of a range ending now, or undefined for
+ * every turn. Only the start is sent: the server closes a range at its own now,
+ * so a client clock that is off does not move the end.
+ */
+export function spendRangeFrom(range: SpendRange, now: Date): string | undefined {
+  if (range === 'all') return undefined;
+  return new Date(now.getTime() - SPEND_RANGE_MILLIS[range]).toISOString();
 }
 
 /**
@@ -127,17 +428,37 @@ export function policyVariant(account: Pick<SpendAccount, 'policy_status'>): 'su
  * server refuses to store one; if one ever arrives, this returns null rather
  * than dividing by zero into Infinity or claiming 0%.
  */
-export function windowPercent(window: Pick<SpendWindowStatus, 'max_tokens' | 'used_tokens'>): number | null {
-  if (!Number.isFinite(window.max_tokens) || window.max_tokens <= 0) return null;
-  return Math.min(100, (window.used_tokens / window.max_tokens) * 100);
+export function windowPercent(
+  window: Pick<SpendWindowStatus, 'max_tokens' | 'used_tokens' | 'max_equivalent_micros' | 'used_equivalent_micros'>,
+): number | null {
+  // The window is as full as its fullest metered axis: that is the one that
+  // refuses first.
+  const ratios: number[] = [];
+  if (Number.isFinite(window.max_tokens) && window.max_tokens > 0) {
+    ratios.push(window.used_tokens / window.max_tokens);
+  }
+  const maxMicros = window.max_equivalent_micros ?? 0;
+  if (Number.isFinite(maxMicros) && maxMicros > 0) {
+    ratios.push((window.used_equivalent_micros ?? 0) / maxMicros);
+  }
+  if (ratios.length === 0) return null;
+  return Math.min(100, Math.max(...ratios) * 100);
 }
 
 /**
  * windowSummary renders one window as a sentence: what is spent, out of what,
- * over how long.
+ * over how long — on each axis the window meters.
  */
 export function windowSummary(window: SpendWindowStatus): string {
-  return `${formatTokens(window.used_tokens)} / ${formatTokens(window.max_tokens)} tokens per ${formatDurationNanos(window.size)}`;
+  const parts: string[] = [];
+  if (window.max_tokens > 0) {
+    parts.push(`${formatTokens(window.used_tokens)} / ${formatTokens(window.max_tokens)} tokens`);
+  }
+  const maxMicros = window.max_equivalent_micros ?? 0;
+  if (maxMicros > 0) {
+    parts.push(`${formatMoney(window.used_equivalent_micros ?? 0)} / ${formatMoney(maxMicros)}`);
+  }
+  return `${parts.join(' · ')} per ${formatDurationNanos(window.size)}`;
 }
 
 /**
@@ -209,9 +530,33 @@ export function childScopeValue(child: SpendChild): string {
   return child.unattributed === true ? SPEND_UNATTRIBUTED : (child.id ?? '');
 }
 
+/**
+ * childRound is the round a round-level row addresses, or null when the row is
+ * not one or addresses no round.
+ *
+ * A ROUND IS A NUMBER, NOT AN ID (go-quicbaas#886). The server un-pads the
+ * ledger's round segment to its decimal, and a segment it could not read comes
+ * through as stored; only a non-negative integer is a round the server will
+ * accept, so anything else — and the unattributed bucket, which no number can
+ * address — is not a round a drill step can open.
+ */
+export function childRound(child: SpendChild): number | null {
+  if (child.level !== 'round' || child.unattributed === true) return null;
+  const id = child.id ?? '';
+  if (!/^\d+$/.test(id)) return null;
+  const round = Number(id);
+  return Number.isSafeInteger(round) ? round : null;
+}
+
 /** childIsDrillable says whether a row addresses something that can be opened. */
 export function childIsDrillable(child: SpendChild): boolean {
+  if (child.level === 'round') return childRound(child) !== null;
   return childScopeValue(child) !== '';
+}
+
+/** roundLabel names a round for the breadcrumb: a bare number reads as nothing. */
+export function roundLabel(round: number): string {
+  return `${levelLabel('round')} ${round}`;
 }
 
 /**

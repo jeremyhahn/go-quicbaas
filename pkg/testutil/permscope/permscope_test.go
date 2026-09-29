@@ -40,8 +40,8 @@ func TestResolver_Scope_ReadsTheProcessGlobalDeclaration(t *testing.T) {
 		// The credential store has no tenant namespacing, so qrdb confines
 		// the whole family to the system tenant.
 		{"credentials:store", qrdbsdk.PermissionScopeCross},
-		// A tenant's secret material is denied to the platform operator.
-		{"secrets:read", qrdbsdk.PermissionScopeTenantOnly},
+		// A tenant's stored objects are denied to the platform operator.
+		{"objstore:put", qrdbsdk.PermissionScopeTenantOnly},
 		// An ordinary self-scoped built-in, for contrast.
 		{"keys:sign", qrdbsdk.PermissionScopeSelf},
 	}

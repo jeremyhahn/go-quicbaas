@@ -6,7 +6,7 @@
   Columns: Subject (with the forge issue `#N` when the task came from one) ·
   Project · Status (a blocked task carries its reason) · Attempts
   (`charged / budget`, with refunds called out) · Assigned (the claimant, or
-  the fleet agent the latest attempt ran on) · Job (the latest attempt,
+  the fleet node the latest attempt ran on) · Job (the latest attempt,
   linked) · Updated. A row opens the task's detail page.
 
   `#/tasks?tasks_status=pending,blocked&tasks_project=<id>` narrows the list,
@@ -28,7 +28,7 @@
   do not claim to sort.
 -->
 <script lang="ts">
-  import { orchestratorStore, loadJobs, refresh, type JobStatus, type Task, type TaskStatus } from '../../stores/orchestrator.svelte.ts';
+  import { orchestratorStore, refresh, type Task, type TaskStatus } from '../../stores/orchestrator.svelte.ts';
   import { routeTaskDetail } from '../../stores/router.svelte.ts';
   import {
     loadReferenceOptions,
@@ -56,6 +56,7 @@
     loadErrorMessage,
     taskAgentID,
     taskHasDispatched,
+    taskStopPresentation,
     NO_REASON_RECORDED,
   } from '../../lib/tasks.ts';
 
@@ -101,27 +102,11 @@
     ),
   );
 
-  // THE AGENT IS ON THE JOB, NOT ON THE TASK. `assigned_to` is the claimant,
-  // and the dispatcher's own path never writes one, so it is empty for the
-  // whole life of every auto-spawned task (see taskAgentID in lib/tasks.ts).
-  //
-  // The jobs are read ONCE PER PAGE, for exactly the jobs this page's rows
-  // name (`job_ids`), rather than once per row or by listing the tenant. The
-  // tenant's job list used to serve this, and cannot any more: it is a page
-  // itself now, so the Assigned column would blank for every task whose
-  // attempt is not among the twenty-five jobs the store happens to hold.
-  let pageJobs = $state<JobStatus[]>([]);
-
-  // The BOARD is a different question. It renders the collection the store
-  // holds, not a page, so it names its agents from the store's jobs — read
-  // only while the board is the layout in front of the operator.
-  $effect(() => {
-    if (layout !== 'kanban') return;
-    void orchestratorStore.activeTenantID;
-    void loadJobs();
-  });
-
-  const boardJobs = $derived(Array.isArray(orchestratorStore.jobs) ? orchestratorStore.jobs : []);
+  // THE AGENT IS READ OFF THE TASK ROW. `assigned_to` is the claimant, and the
+  // dispatcher's own path never writes one, so the fleet node an attempt ran
+  // on is resolved by the SERVER from the task's latest attempt and carried on
+  // every listed task as `agent_id` (see taskAgentID in lib/tasks.ts). Neither
+  // the table nor the board needs a job listing of its own to name it.
 
   /** The project the operator narrowed to, or '' for every project. */
   const projectFilter = $derived(selected(chosen, 'project')[0] ?? '');
@@ -141,12 +126,12 @@
     const all = Array.isArray(orchestratorStore.tasks) ? orchestratorStore.tasks : [];
     const statuses = selected(chosen, 'status');
     const dispatch = selected(chosen, 'dispatch')[0] ?? '';
-    const agentID = selected(chosen, 'agent')[0] ?? '';
+    const agentID = selected(chosen, 'node')[0] ?? '';
     return all.filter((task) => {
       if (projectFilter !== '' && task.project_id !== projectFilter) return false;
       if (statuses.length > 0 && !statuses.includes(task.status)) return false;
       if (dispatch !== '' && String(task.auto_spawn === true) !== dispatch) return false;
-      if (agentID !== '' && taskAgentID(task, boardJobs) !== agentID) return false;
+      if (agentID !== '' && taskAgentID(task) !== agentID) return false;
       return true;
     });
   }
@@ -174,7 +159,7 @@
     {
       key: 'assigned_to',
       label: 'Assigned',
-      value: (t) => taskAgentID(t, pageJobs),
+      value: (t) => taskAgentID(t),
     },
     { key: 'job', label: 'Job', value: (t) => latestTaskJobID(t) },
     { key: 'updated_at', label: 'Updated', sortable: true },
@@ -204,7 +189,7 @@
     const statuses = selected(chosen, 'status') as TaskStatus[];
     const dispatch = selected(chosen, 'dispatch')[0] ?? '';
     const projectID = selected(chosen, 'project')[0] ?? '';
-    const agentID = selected(chosen, 'agent')[0] ?? '';
+    const agentID = selected(chosen, 'node')[0] ?? '';
     try {
       const client = await getSDKClient();
       const page = await client.orchestrator.listTasksPage(orchestratorStore.activeTenantID, {
@@ -218,36 +203,11 @@
         ...(agentID === '' ? {} : { agent_id: agentID }),
       });
       pageTotal = page.total;
-      await loadPageJobs(page.items as unknown as Task[]);
       return page;
     } catch (err: unknown) {
       // A 403 names the permission the account lacks rather than reading as a
       // transport failure — the table renders whatever message it is given.
       throw new Error(loadErrorMessage(err, 'tasks', TASKS_READ_PERMISSION));
-    }
-  }
-
-  /**
-   * loadPageJobs reads the jobs this page's rows name — ONE request for the
-   * whole page, narrowed to those ids. A page whose rows have never dispatched
-   * asks for nothing at all.
-   */
-  async function loadPageJobs(tasks: readonly Task[]): Promise<void> {
-    const ids = [...new Set(tasks.map((t) => latestTaskJobID(t)).filter((id) => id !== ''))];
-    if (ids.length === 0) {
-      pageJobs = [];
-      return;
-    }
-    try {
-      const client = await getSDKClient();
-      const page = await client.orchestrator.listJobsPage(orchestratorStore.activeTenantID, {
-        job_ids: ids,
-        limit: ids.length,
-      });
-      pageJobs = page.items as unknown as JobStatus[];
-    } catch {
-      // The Assigned column falls back to the claimant; the tasks still render.
-      pageJobs = [];
     }
   }
 
@@ -372,7 +332,7 @@
 <!-- Create Task dialog -->
 <CreateTaskDialog bind:open={createTaskOpen} onCreated={() => { refreshTasks(); }} />
 
-<div class="p-6 space-y-6">
+<div class="page">
   <PageHeader title="Tasks" subtitle="{taskCount()} tasks" icon={ClipboardList}>
     {#snippet children()}
       <div class="flex items-center gap-2">
@@ -436,7 +396,7 @@
         <EmptyState
           icon={ClipboardList}
           title="No tasks tracked — New Task is how you start."
-          description="Tasks represent units of work dispatched to your agent fleet."
+          description="Tasks represent units of work dispatched to your fleet."
           actionLabel="New Task"
           onaction={() => { createTaskOpen = true; }}
         />
@@ -445,10 +405,11 @@
       {#snippet row(task: Task)}
         {@const ref = issueRef(task)}
         {@const reason = blockedReason(task)}
+        {@const stop = taskStopPresentation(task)}
         {@const jobID = latestTaskJobID(task)}
-        {@const agentID = taskAgentID(task, pageJobs)}
+        {@const agentID = taskAgentID(task)}
         <tr
-          class="cursor-pointer hover:bg-base-300/40 transition-colors"
+          class="cursor-pointer transition-colors"
           onclick={() => openTask(task)}
           onkeydown={(e) => { if (e.key === 'Enter') openTask(task); }}
           tabindex="0"
@@ -460,7 +421,7 @@
               {#if ref !== null}
                 {#if ref.href !== ''}
                   <a
-                    class="badge badge-sm badge-outline font-mono shrink-0"
+                    class="ref-chip"
                     href={ref.href}
                     target="_blank"
                     rel="noopener noreferrer"
@@ -468,13 +429,13 @@
                     title="Open issue {ref.label} on the forge"
                   >{ref.label}</a>
                 {:else}
-                  <span class="badge badge-sm badge-outline font-mono shrink-0" title="Forge issue {ref.label}">{ref.label}</span>
+                  <span class="ref-chip" title="Forge issue {ref.label}">{ref.label}</span>
                 {/if}
               {/if}
-              <span class="font-medium text-sm truncate">{task.subject}</span>
+              <span class="truncate font-medium">{task.subject}</span>
             </div>
             {#if task.description}
-              <div class="text-xs text-base-content/40 truncate">{task.description}</div>
+              <div class="mt-0.5 truncate text-xs text-base-content/60">{task.description}</div>
             {/if}
           </td>
           <!--
@@ -497,6 +458,17 @@
           </td>
           <td>
             <StatusBadge text={statusLabel(task.status)} variant={statusToVariant(task.status)} />
+            <!--
+              WHY IT STOPPED, from the server's typed fields: an environment
+              fault, a failure of the work, a lost node, and a park on the
+              owner each read differently without opening the task
+              (go-quicbaas#947).
+            -->
+            {#if stop}
+              <div class="mt-1" title={stop.detail} data-testid="task-stop">
+                <StatusBadge text={stop.label} variant={stop.variant} />
+              </div>
+            {/if}
             {#if task.status === 'blocked'}
               <div
                 class="flex items-center gap-1 mt-1 text-xs text-warning max-w-xs"
@@ -508,7 +480,7 @@
               </div>
             {/if}
           </td>
-          <td class="text-xs font-mono whitespace-nowrap">
+          <td class="whitespace-nowrap tabular-nums">
             {budgetLabel(task)}
             {#if (task.environment_faults ?? 0) > 0}
               <span class="text-base-content/40" title="Attempts refunded because the environment failed, not the work">
@@ -537,14 +509,14 @@
                 title="View job {jobID}"
               >{jobID.slice(0, 8)}…</a>
             {:else if task.auto_spawn && !taskHasDispatched(task)}
-              <span class="text-base-content/30 italic">no agent matched</span>
+              <span class="italic text-base-content/60">no agent matched</span>
             {:else}
               <span class="text-base-content/25">—</span>
             {/if}
           </td>
-          <td class="text-xs text-base-content/50" title={formatDateTime(task.updated_at)}>{formatRelative(task.updated_at)}</td>
+          <td class="whitespace-nowrap text-xs text-base-content/60" title={formatDateTime(task.updated_at)}>{formatRelative(task.updated_at)}</td>
           <td>
-            <div class="flex items-center gap-1">
+            <div class="flex items-center justify-end gap-1">
               {#if task.status === 'pending'}
                 <button
                   class="btn btn-ghost btn-xs gap-1"
@@ -556,7 +528,7 @@
                   {#if claimingID === task.id}
                     <span class="loading loading-spinner loading-xs"></span>
                   {:else}
-                    <UserCheck class="h-3 w-3" />
+                    <UserCheck class="h-3.5 w-3.5" />
                   {/if}
                 </button>
               {/if}
@@ -571,12 +543,12 @@
                   {#if completingID === task.id}
                     <span class="loading loading-spinner loading-xs"></span>
                   {:else}
-                    <CheckCircle class="h-3 w-3" />
+                    <CheckCircle class="h-3.5 w-3.5" />
                   {/if}
                 </button>
               {/if}
               <button
-                class="btn btn-ghost btn-xs"
+                class="btn btn-ghost btn-xs font-medium text-base-content/80"
                 onclick={(e) => { void handleDecompose(task.id, e); }}
                 disabled={decomposingID === task.id}
                 aria-label="Decompose task {task.subject}"
@@ -600,8 +572,9 @@
       <span>{loadError}</span>
     </div>
   {:else if orchestratorStore.tasksLoading && filteredTasks().length === 0}
-    <div class="flex justify-center py-8">
-      <span class="loading loading-spinner loading-md text-primary"></span>
+    <div class="flex items-center justify-center gap-2 py-14 text-sm text-base-content/60">
+      <span class="loading loading-spinner loading-sm text-primary"></span>
+      Loading tasks…
     </div>
 
   {:else}
@@ -609,16 +582,17 @@
     <div class="flex gap-4 overflow-x-auto pb-4">
       {#each COLUMNS as col (col)}
         {@const colTasks = tasksByStatus(col)}
-        <div class="flex-none w-64">
-          <div class="flex items-center gap-2 mb-3">
+        <div class="w-72 flex-none rounded-box border border-base-300/80 bg-base-200/60 p-2.5">
+          <div class="mb-2.5 flex items-center justify-between gap-2 px-0.5">
             <StatusBadge text={statusLabel(col)} variant={statusToVariant(col)} />
-            <span class="text-xs text-base-content/40">({colTasks.length})</span>
+            <span class="text-xs tabular-nums text-base-content/60">{colTasks.length}</span>
           </div>
           <div class="space-y-2">
             {#each colTasks as task (task.id)}
-              {@const agentID = taskAgentID(task, boardJobs)}
+              {@const agentID = taskAgentID(task)}
+              {@const stop = taskStopPresentation(task)}
               <div
-                class="card bg-base-200 rounded-box p-3 shadow-sm cursor-pointer hover:bg-base-300/40"
+                class="card cursor-pointer rounded-field border border-base-300/80 bg-base-100 p-3 transition-colors hover:border-primary/50"
                 onclick={() => openTask(task)}
                 onkeydown={(e) => { if (e.key === 'Enter') openTask(task); }}
                 tabindex="0"
@@ -627,10 +601,15 @@
               >
                 <div class="font-medium text-sm">{task.subject}</div>
                 {#if task.project_id}
-                  <div class="text-xs text-base-content/40 mt-1">{projectLabel(task.project_id)}</div>
+                  <div class="mt-1 text-xs text-base-content/60">{projectLabel(task.project_id)}</div>
                 {/if}
                 {#if agentID !== ''}
-                  <div class="text-xs text-primary mt-1">{agentID}</div>
+                  <div class="mt-1 font-mono text-xs text-primary">{agentID}</div>
+                {/if}
+                {#if stop}
+                  <div class="mt-1" title={stop.detail} data-testid="task-stop">
+                    <StatusBadge text={stop.label} variant={stop.variant} />
+                  </div>
                 {/if}
                 {#if task.status === 'blocked'}
                   <div class="text-xs text-warning mt-1 truncate" title={blockedReason(task) || NO_REASON_RECORDED}>
@@ -652,8 +631,8 @@
                 </div>
               </div>
             {:else}
-              <div class="text-xs text-base-content/25 text-center py-4 border border-dashed border-base-300/30 rounded-box">
-                Empty
+              <div class="rounded-field border border-dashed border-base-300 py-5 text-center text-xs text-base-content/60">
+                No tasks
               </div>
             {/each}
           </div>

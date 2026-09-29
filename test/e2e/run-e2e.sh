@@ -8,7 +8,7 @@
 #
 # Environment (set by the image / compose / Make):
 #   E2E_PROJECT     Playwright project: chromium-no-backend | chromium-acp
-#   E2E_BACKEND     embedded-agent backend: ollama | opencode
+#   E2E_BACKEND     embedded-fleet-node backend: ollama | opencode
 #   E2E_OLLAMA_URL  ollama endpoint for the backend
 #   E2E_EXTRA_ARGS  optional extra args appended to the daemon start command
 set -uo pipefail
@@ -50,13 +50,13 @@ fi
 # When QUICBAAS_E2E_SANDBOX=1, run the embedded agent in container-sandbox mode:
 # each session is spawned as a SIBLING container (via the mounted host docker
 # socket) running the prebuilt sandbox agent image. The daemon resolves the
-# image from --embedded-agent-sandbox-image (QUICBAAS_E2E_SANDBOX_IMAGE) and the
+# image from --embedded-fleet-node-sandbox-image (QUICBAAS_E2E_SANDBOX_IMAGE) and the
 # policy to "required" so an explicit sandbox_mode=1 is honored. The image is
 # built locally on the host docker (never pushed) so auto-pull stays OFF.
 SANDBOX_ARGS=""
 if [ "${QUICBAAS_E2E_SANDBOX:-0}" = "1" ]; then
   SANDBOX_IMAGE="${QUICBAAS_E2E_SANDBOX_IMAGE:-quicbaas-e2e-sandbox-agent:latest}"
-  SANDBOX_ARGS="--embedded-agent-sandbox-policy required --embedded-agent-sandbox-image ${SANDBOX_IMAGE}"
+  SANDBOX_ARGS="--embedded-fleet-node-sandbox-policy required --embedded-fleet-node-sandbox-image ${SANDBOX_IMAGE}"
   echo "[run-e2e] container-sandbox mode ON (image=${SANDBOX_IMAGE})"
   if ! command -v docker >/dev/null 2>&1; then
     echo "[run-e2e] ERROR: QUICBAAS_E2E_SANDBOX=1 but the docker CLI is missing in the runner image" >&2
@@ -70,8 +70,8 @@ quicbaasd start \
   --unix-socket "$SOCK" \
   --data-dir "$DATA_DIR" \
   --log-level warn \
-  --embedded-agent --embedded-agent-backend "$BACKEND" \
-  --embedded-agent-ollama-url "$OLLAMA_URL" \
+  --embedded-fleet-node --embedded-fleet-node-backend "$BACKEND" \
+  --embedded-fleet-node-ollama-url "$OLLAMA_URL" \
   ${SANDBOX_ARGS} \
   ${E2E_EXTRA_ARGS:-} \
   > "$LOG" 2>&1 &

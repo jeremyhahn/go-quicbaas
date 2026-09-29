@@ -106,7 +106,7 @@ func TestModuleSessionVerbs_MintedBearerAccepted(t *testing.T) {
 		"viewer": {"keys:get"},
 	}}
 	users := &fakeUserServicer{users: map[string]*user.User{
-		"tenant-a/alice": {Username: "alice", TenantID: "tenant-a", RoleIDs: []string{"viewer"}, Enabled: true},
+		"tenant-a/alice": {Username: "alice", TenantID: "tenant-a", RoleIDs: []string{"viewer"}, Lifecycle: user.LifecycleActive},
 	}}
 
 	log := newTestLogger(t)

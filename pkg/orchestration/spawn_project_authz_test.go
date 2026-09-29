@@ -32,7 +32,7 @@ import (
 // spawnAuthzService builds an agent service wired the way a dispatch needs:
 // a task store, an agent registry holding the given agents, and the project
 // authorizer over a store seeded with project (nil for "no such project").
-func spawnAuthzService(t *testing.T, project *Project, agents ...*AgentRegistration) (*agentServiceImpl, *mockTaskStore) {
+func spawnAuthzService(t *testing.T, project *Project, agents ...*FleetNode) (*agentServiceImpl, *mockTaskStore) {
 	t.Helper()
 
 	projectStore := NewInMemoryProjectStore()
@@ -42,9 +42,9 @@ func spawnAuthzService(t *testing.T, project *Project, agents ...*AgentRegistrat
 		}
 	}
 
-	registry := NewInMemoryAgentRegistry()
+	registry := NewInMemoryFleetRegistry()
 	for _, agent := range agents {
-		if err := registry.RegisterAgent(context.Background(), agent); err != nil {
+		if err := registry.RegisterFleetNode(context.Background(), agent); err != nil {
 			t.Fatalf("register agent %s: %v", agent.ID, err)
 		}
 	}
@@ -57,7 +57,7 @@ func spawnAuthzService(t *testing.T, project *Project, agents ...*AgentRegistrat
 
 	taskStore := &mockTaskStore{}
 	impl.SetTaskStore(taskStore)
-	impl.SetAgentRegistry(registry)
+	impl.SetFleetRegistry(registry)
 	impl.SetProjectAuthz(NewProjectAuthz(projectStore))
 
 	return impl, taskStore
@@ -69,20 +69,20 @@ func scopedProject(tenantID, projectID string, roles map[string]ProjectRole) *Pr
 		ID:          projectID,
 		TenantID:    tenantID,
 		Name:        "proj-" + projectID,
-		Permissions: ProjectPermissions{AgentRoles: roles},
+		Permissions: ProjectPermissions{FleetNodeRoles: roles},
 	}
 }
 
-// fleetAgent returns an online agent on the given backend.
-func fleetAgent(tenantID, agentID string) *AgentRegistration {
-	return &AgentRegistration{
-		ID:        agentID,
-		TenantID:  tenantID,
-		Name:      agentID,
-		Host:      "host-" + agentID,
-		Backend:   "ollama",
-		AgentType: "worker",
-		Status:    AgentStatusIdle,
+// fleetNode returns an online agent on the given backend.
+func fleetNode(tenantID, agentID string) *FleetNode {
+	return &FleetNode{
+		ID:       agentID,
+		TenantID: tenantID,
+		Name:     agentID,
+		Host:     "host-" + agentID,
+		Backend:  "ollama",
+		NodeType: "worker",
+		Status:   FleetNodeStatusIdle,
 	}
 }
 
@@ -111,16 +111,16 @@ func TestSpawnTask_DeniedAgentIsNotDispatched(t *testing.T) {
 
 	svc, _ := spawnAuthzService(t,
 		scopedProject(tenantID, projectID, map[string]ProjectRole{agentID: ProjectRoleDenied}),
-		fleetAgent(tenantID, agentID),
+		fleetNode(tenantID, agentID),
 	)
 
 	_, err := svc.SpawnTask(context.Background(), scopedTask(tenantID, "task-denied", projectID))
 	if err == nil {
 		t.Fatal("expected the dispatch to be refused for a denied agent, got nil")
 	}
-	var noAgent *NoMatchingAgentError
+	var noAgent *NoMatchingFleetNodeError
 	if !errors.As(err, &noAgent) {
-		t.Fatalf("expected *NoMatchingAgentError, got %T: %v", err, err)
+		t.Fatalf("expected *NoMatchingFleetNodeError, got %T: %v", err, err)
 	}
 	if noAgent.Constraint != "project_role" {
 		t.Errorf("Constraint = %q, want %q", noAgent.Constraint, "project_role")
@@ -140,13 +140,13 @@ func TestSpawnTask_ObserverAgentIsNotDispatched(t *testing.T) {
 
 	svc, _ := spawnAuthzService(t,
 		scopedProject(tenantID, projectID, map[string]ProjectRole{agentID: ProjectRoleObserver}),
-		fleetAgent(tenantID, agentID),
+		fleetNode(tenantID, agentID),
 	)
 
 	_, err := svc.SpawnTask(context.Background(), scopedTask(tenantID, "task-observer", projectID))
-	var noAgent *NoMatchingAgentError
+	var noAgent *NoMatchingFleetNodeError
 	if !errors.As(err, &noAgent) {
-		t.Fatalf("expected *NoMatchingAgentError, got %T: %v", err, err)
+		t.Fatalf("expected *NoMatchingFleetNodeError, got %T: %v", err, err)
 	}
 	if noAgent.Constraint != "project_role" {
 		t.Errorf("Constraint = %q, want %q", noAgent.Constraint, "project_role")
@@ -165,13 +165,13 @@ func TestSpawnTask_AgentAbsentFromScopedProjectIsNotDispatched(t *testing.T) {
 
 	svc, _ := spawnAuthzService(t,
 		scopedProject(tenantID, projectID, map[string]ProjectRole{"agent-elsewhere": ProjectRoleWorker}),
-		fleetAgent(tenantID, "agent-stranger"),
+		fleetNode(tenantID, "agent-stranger"),
 	)
 
 	_, err := svc.SpawnTask(context.Background(), scopedTask(tenantID, "task-absent", projectID))
-	var noAgent *NoMatchingAgentError
+	var noAgent *NoMatchingFleetNodeError
 	if !errors.As(err, &noAgent) {
-		t.Fatalf("expected *NoMatchingAgentError, got %T: %v", err, err)
+		t.Fatalf("expected *NoMatchingFleetNodeError, got %T: %v", err, err)
 	}
 	if noAgent.Constraint != "project_role" {
 		t.Errorf("Constraint = %q, want %q", noAgent.Constraint, "project_role")
@@ -195,15 +195,15 @@ func TestSpawnTask_EligibleAgentSurvivesADeniedPeer(t *testing.T) {
 			"agent-denied": ProjectRoleDenied,
 			"agent-worker": ProjectRoleWorker,
 		}),
-		fleetAgent(tenantID, "agent-denied"),
-		fleetAgent(tenantID, "agent-worker"),
+		fleetNode(tenantID, "agent-denied"),
+		fleetNode(tenantID, "agent-worker"),
 	)
 
 	// The job itself cannot run (no backend is registered), so the spawn
 	// still fails — but never on the project boundary, which is what this
 	// pins.
 	_, err := svc.SpawnTask(context.Background(), scopedTask(tenantID, "task-mixed", projectID))
-	var noAgent *NoMatchingAgentError
+	var noAgent *NoMatchingFleetNodeError
 	if errors.As(err, &noAgent) && noAgent.Constraint == "project_role" {
 		t.Fatalf("an eligible worker was online; dispatch must not be refused on the role matrix: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestSpawnTask_UnresolvableProjectRefused(t *testing.T) {
 
 	const tenantID = "tenant-spawn-unresolved"
 
-	svc, _ := spawnAuthzService(t, nil, fleetAgent(tenantID, "agent-any"))
+	svc, _ := spawnAuthzService(t, nil, fleetNode(tenantID, "agent-any"))
 
 	_, err := svc.SpawnTask(context.Background(), scopedTask(tenantID, "task-unresolved", "no-such-project"))
 	if !errors.Is(err, ErrProjectUnresolved) {
@@ -243,14 +243,14 @@ func TestSpawnTask_UnscopedTaskUnaffected(t *testing.T) {
 
 	const tenantID = "tenant-spawn-unscoped"
 
-	svc, _ := spawnAuthzService(t, nil, fleetAgent(tenantID, "agent-any"))
+	svc, _ := spawnAuthzService(t, nil, fleetNode(tenantID, "agent-any"))
 
 	task := scopedTask(tenantID, "task-unscoped", "")
 	_, err := svc.SpawnTask(context.Background(), task)
 	if errors.Is(err, ErrProjectAccessDenied) || errors.Is(err, ErrProjectUnresolved) {
 		t.Fatalf("an unscoped task must not meet the project boundary: %v", err)
 	}
-	var noAgent *NoMatchingAgentError
+	var noAgent *NoMatchingFleetNodeError
 	if errors.As(err, &noAgent) && noAgent.Constraint == "project_role" {
 		t.Fatalf("an unscoped task must not be refused on the role matrix: %v", err)
 	}
@@ -263,8 +263,8 @@ func TestSpawnTask_NoProjectAuthzUnaffected(t *testing.T) {
 
 	const tenantID = "tenant-spawn-noauthz"
 
-	registry := NewInMemoryAgentRegistry()
-	if err := registry.RegisterAgent(context.Background(), fleetAgent(tenantID, "agent-any")); err != nil {
+	registry := NewInMemoryFleetRegistry()
+	if err := registry.RegisterFleetNode(context.Background(), fleetNode(tenantID, "agent-any")); err != nil {
 		t.Fatalf("register agent: %v", err)
 	}
 	svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
@@ -273,11 +273,11 @@ func TestSpawnTask_NoProjectAuthzUnaffected(t *testing.T) {
 	}
 	impl := svc.(*agentServiceImpl)
 	impl.SetTaskStore(&mockTaskStore{})
-	impl.SetAgentRegistry(registry)
+	impl.SetFleetRegistry(registry)
 	// No SetProjectAuthz: projectAuthz stays nil.
 
 	_, spawnErr := impl.SpawnTask(context.Background(), scopedTask(tenantID, "task-noauthz", "proj-any"))
-	var noAgent *NoMatchingAgentError
+	var noAgent *NoMatchingFleetNodeError
 	if errors.As(spawnErr, &noAgent) && noAgent.Constraint == "project_role" {
 		t.Fatalf("without a project authorizer there is no matrix to refuse on: %v", spawnErr)
 	}

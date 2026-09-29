@@ -157,10 +157,13 @@ func (b *ACPBackend) resumeStarter(ctx context.Context, req *ResumeRequest) (fun
 func (b *ACPBackend) planResume(req *ResumeRequest) (spawnPlan, *ResumeResult, error) {
 	plan := spawnPlan{registerID: req.SessionID}
 
-	// Native resume is the agent CLI's own "--resume <id>" flag. A container
-	// JSON-RPC agent has no equivalent and its on-disk session store died with
-	// the previous container, so a sandboxed session always replays.
-	if b.config.NativeSessionResume && b.config.isStreamJSON() {
+	// Native resume is the agent CLI's own "--resume <id>" flag. A sandboxed
+	// session's on-disk session store died with the previous container, and
+	// the ID it is registered under is the one QuicBaaS assigned before the
+	// launch rather than the CLI's own (newContainerIdentity), so a
+	// sandboxed session always replays — whichever protocol it speaks.
+	sandboxed := req.Spawn != nil && req.Spawn.EffectiveSandboxMode() == SandboxModeRequired
+	if b.config.NativeSessionResume && b.config.isStreamJSON() && !sandboxed {
 		plan.resumeID = req.SessionID
 		return plan, &ResumeResult{Mode: ResumeModeNative}, nil
 	}

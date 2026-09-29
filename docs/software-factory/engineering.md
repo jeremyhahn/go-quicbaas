@@ -296,7 +296,7 @@ atomic store mutation (`AgentStore.ConcludeSession`), and is never overwritten
    whose node died) conclude every session still bound to the job. The binding
    is read from the DURABLE records, not from the `JobRun`, so it survives a
    run that never reached its discard hook.
-3. **Agent unregister.** `RemoveAgent` concludes every session whose
+3. **Agent unregister.** `RemoveFleetNode` concludes every session whose
    `HostAffinity` names the removed registration (by ID, name or host).
 4. **The maintenance sweep.** `Sweep` runs the reaper, the stall detector and
    then `SweepSessions`, on the same ticker (a third of the lease TTL).
@@ -994,7 +994,7 @@ The `SpawnChildJob` RPC is implemented in `pkg/orchestration/orchestrator.go`. T
 
 Error scenarios:
 
-- `NoMatchingAgentError`: scheduler found no available agent matching constraints
+- `NoMatchingFleetNodeError`: scheduler found no available agent matching constraints
 - `InvalidParentJobError`: parent job not found or in terminal state
 - `UnauthorizedError`: caller is not the lead agent (mTLS/OAuth2 mismatch)
 
@@ -1088,7 +1088,7 @@ If no matching agent is available:
 If all matching agents are unavailable and `HostAffinityStrict=true`:
 
 - Task transitions to `failed` status
-- Error reason: `NoMatchingAgentError`
+- Error reason: `NoMatchingFleetNodeError`
 
 ### Status Mirroring
 
@@ -1143,9 +1143,9 @@ The QuicBaaS UI (Svelte) includes auto-spawn controls:
 #### TasksView
 
 - **Filter buttons**: "All", "Auto-spawned", "Queued"; `#/tasks?project=<id>` narrows to one project
-- **Columns**: Subject (with the forge issue `#N` from `source`) · Project · Status (blocked marker + `blocked_reason`) · Attempts (`charged / budget (N dispatched)` from `attempts`, `attempt_budget`, `environment_faults`) · Assigned · Job (`#/jobs/{spawned_job_id}`) · Updated
+- **Columns**: Subject (with the forge issue `#N` from `source`) · Project · Status (blocked marker + `blocked_reason`, and a stop badge from `fault_origin` / `block_kind` — "Environment fault: <class>", "Failed on the work", "Node lost", "Awaiting owner ruling") · Attempts (`charged / budget (N dispatched)` from the server's `charged_attempts` and `effective_budget`) · Assigned · Job (`#/jobs/{spawned_job_id}`) · Updated
 - A row opens `#/tasks/{id}` (`TaskDetailView`), which also lists prior attempts through `job.config.task_id`, `retry_not_before`, and `output_artifacts` of kind `pull_request`
-- The pure helpers live in `src/lib/tasks.ts` (`budgetLabel`, `chargedAttempts`, `blockedReason`, `isWaitingOnPerson`, `issueRef`, `loadErrorMessage`)
+- The pure helpers live in `src/lib/tasks.ts` (`budgetLabel`, `chargedAttempts`, `blockedReason`, `isWaitingOnPerson`, `issueRef`, `loadErrorMessage`, `taskStopKind`, `taskStopPresentation`)
 
 ### REST API
 
@@ -1279,7 +1279,7 @@ The orchestrator decomposes high-level tasks into discrete work items using an A
 
 ### Task Decomposition
 
-`quicbaas_orchestrator_decompose` sends a structured prompt to any registered agent backend, asking it to break a task into work items.
+`quicbaas_orchestrator_decompose` sends a structured prompt to any registered fleet node backend, asking it to break a task into work items.
 
 #### Request
 
@@ -1605,7 +1605,7 @@ two callers arriving together produce exactly one replacement process.
 
 ### Scope: local sessions only
 
-A session dispatched to a remote agent daemon is owned by that daemon's
+A session dispatched to a remote fleet node daemon is owned by that daemon's
 process, not by the control plane's. When the control plane restarts, the
 session record is restored as `active` and follow-up prompts route to the same
 daemon by host affinity — which is correct, because the agent there is still
@@ -1614,7 +1614,7 @@ running.
 If the **remote daemon** restarts, its own in-process registry is lost and the
 prompt fails with `acp: session not found` from that host. Reconstituting a
 session on a remote daemon needs the same durable record and resume path inside
-`pkg/agent`'s runtime; that is not implemented. Until it is, a remote daemon
+`pkg/fleet`'s runtime; that is not implemented. Until it is, a remote daemon
 restart still ends its sessions.
 
 ### Related
@@ -2151,7 +2151,7 @@ Three hook types are supported:
 
 #### `.claude/settings.json`
 
-Configure hooks to POST to QuicBaaS. For local (standalone) mode, use `localhost`. For remote agents, use the QuicBaaS server address.
+Configure hooks to POST to QuicBaaS. For local (standalone) mode, use `localhost`. For remote fleet nodes, use the QuicBaaS server address.
 
 **Local hooks:**
 
@@ -2341,9 +2341,8 @@ Agent                     FileLockService                 KV Store / LeaseManage
   |                           |<-- (existing lock or nil) -----|
   |                           |                                |
   |                           |   [if exists & lease valid]:   |
-  |                           |     shared mode: reject if     |
-  |                           |       different agent          |
-  |                           |     worktree mode: warn, allow |
+  |                           |     reject if different agent  |
+  |                           |     (every isolation mode)     |
   |                           |                                |
   |                           |-- GetShardRaftState() -------->|  (fencing token)
   |                           |-- CreateLease(key, TTL) ------>|
@@ -2354,9 +2353,9 @@ Agent                     FileLockService                 KV Store / LeaseManage
 
 1. Build deterministic lock key from `sha256(filePath)`
 2. Check KV store for existing lock
-3. If lock exists with valid lease:
-   - **Shared mode**: Reject with `FileLockedError` if held by different agent. Same-agent re-acquire is idempotent.
-   - **Worktree mode**: Log warning, allow override (advisory lock).
+3. If lock exists with valid lease: reject with `FileLockedError` if held by a
+   different agent, in **every** isolation mode. Same-agent re-acquire is
+   idempotent.
 4. If lock exists with expired lease: overwrite (crash recovery).
 5. Obtain fencing token from Raft term (or 0 in standalone mode).
 6. Create lease with configurable TTL.
@@ -2376,10 +2375,15 @@ Total maximum hold time: `lease_ttl + (heartbeat_interval * max_renewals)` = 5m 
 
 | Behavior | Shared Mode | Worktree Mode |
 |----------|-------------|---------------|
-| Lock enforcement | Mandatory (reject) | Advisory (warn + allow) |
-| Re-acquire by different agent | `FileLockedError` | Allowed with warning |
+| Lock enforcement | Mandatory (reject) | Mandatory (reject) |
+| Re-acquire by different agent | `FileLockedError` | `FileLockedError` |
 | Same-agent re-acquire | Idempotent | Idempotent |
-| Use case | All agents edit same files | Each agent has isolated git worktree |
+| Use case | All agents edit same files | Each agent has its own checkout |
+
+The isolation mode is recorded on the lock as provenance and is not consulted
+to decide whether to grant it. Worktree mode once made the lock advisory; why
+that was withdrawn is set out under [Workspace
+Isolation](architecture.md#workspace-isolation).
 
 ### Raft vs Standalone Compatibility
 
@@ -2954,7 +2958,7 @@ So `Resolve` also **enrolls** the certificate, through
 | Email / groups | none — a session is a machine identity with no mailbox and no membership |
 
 This is the same seam registration uses for agent **daemons**
-(`EnrollAgentCertIdentity`, the `agent-runtime` role); one implementation is
+(`EnrollFleetNodeCertIdentity`, the `agent-runtime` role); one implementation is
 parameterized over the role, so a session and a daemon share every validation,
 convergence rule and race resolution. They do **not** share a role or a grant.
 
@@ -2980,7 +2984,7 @@ The revocation is idempotent (Close can fire twice, and a crashed spawn's cleanu
 can run late) and it refuses to delete anything that is not one of this build's
 session principals: the record must hold exactly the tenant's `agent-session`
 role and be restricted to `mtls`. A CommonName is not a capability, and without
-that guard a session whose CN collided with a human account or an agent daemon
+that guard a session whose CN collided with a human account or a fleet node daemon
 would delete that account on close.
 
 #### What an agent session may do
@@ -3228,79 +3232,98 @@ The lead agent has full control over task decomposition, agent spawning, and exe
 
 ### Built-in Workflows
 
+The workflows shipped in `workflows/` are shown below exactly as they ship.
+No role names a `model:`, so each role runs its backend's configured default
+model (`ACPBackendConfig.DefaultModel`). That keeps the coding tier's version in
+one place: the backend configuration, not every workflow file. Name a model only when a role
+really wants a different tier, and name the current one: it must appear in the
+backend's advertised catalog (its `ListModels()`).
+`TestShippedWorkflows_ModelsAreInTheBackendCatalog` fails on any shipped
+workflow that names a model its backend no longer offers.
+
 #### software-dev (constrained)
 
-Full software development pipeline with lead architect, coder, and QA reviewer.
+Multi-agent software development with lead, coder, and reviewer roles.
 
 ```yaml
 name: software-dev
-description: "Full software development with lead architect, coder, and QA reviewer"
+description: "Multi-agent software development workflow with lead, coder, and reviewer roles"
 mode: constrained
 agents:
   - role: lead
     backend: claude
-    model: claude-sonnet-4-5-20250514
     capabilities: [persistent_sessions, tool_use]
-    mcp_scopes: [orchestrator:read, orchestrator:write, agent:spawn, agent:prompt, agent:close]
+    mcp_scopes: [orchestrator:read, orchestrator:write]
   - role: coder
     backend: claude
-    model: claude-sonnet-4-5-20250514
     capabilities: [persistent_sessions, tool_use, file_access]
-    mcp_scopes: [kms:read, secrets:read, orchestrator:read]
+    mcp_scopes: [kms:read]
+    count: 2
   - role: reviewer
-    backend: codex
-    model: o4-mini
+    backend: claude
     capabilities: [persistent_sessions, tool_use]
     mcp_scopes: [orchestrator:read]
 settings:
   max_iterations: 10
-  max_parallelism: 2
+  max_parallelism: 3
   poll_interval: 5s
+  timeout_per_item: 10m
   total_timeout: 30m
+  review_criteria:
+    - name: tests_pass
+      validator: command
+      config: "make test"
+      required: true
 ```
 
 #### code-review (constrained)
 
-Lightweight code review workflow with Ollama lead and Codex reviewer.
+Code review with lead and reviewer agents, gated on `make lint`.
 
 ```yaml
 name: code-review
-description: "Code review and QA workflow"
+description: "Code review workflow with lead and reviewer agents"
 mode: constrained
 agents:
   - role: lead
-    backend: ollama
-    model: llama3
-    capabilities: []
+    backend: claude
+    capabilities: [persistent_sessions, tool_use]
+    mcp_scopes: [orchestrator:read, orchestrator:write]
   - role: reviewer
-    backend: codex
-    model: o4-mini
+    backend: claude
     capabilities: [persistent_sessions, tool_use]
     mcp_scopes: [orchestrator:read]
 settings:
-  max_iterations: 3
+  max_iterations: 5
+  max_parallelism: 2
   poll_interval: 5s
-  total_timeout: 15m
+  timeout_per_item: 10m
+  total_timeout: 20m
+  review_criteria:
+    - name: lint_pass
+      validator: command
+      config: "make lint"
+      required: true
 ```
 
 #### autonomous
 
-Lead agent manages everything with broad permissions.
+A single lead agent with full control over task decomposition and execution.
 
 ```yaml
 name: autonomous
-description: "Fully autonomous - lead agent manages everything"
+description: "Autonomous single-agent workflow with full control over task decomposition and execution"
 mode: autonomous
 agents:
   - role: lead
     backend: claude
-    model: claude-sonnet-4-5-20250514
-    capabilities: [persistent_sessions, tool_use]
-    mcp_scopes: [orchestrator:read, orchestrator:write, agent:spawn, agent:prompt, agent:close, agent:admin]
+    capabilities: [persistent_sessions, tool_use, file_access]
+    mcp_scopes: [orchestrator:read, orchestrator:write, kms:read]
 settings:
   max_iterations: 20
-  max_parallelism: 4
+  max_parallelism: 1
   poll_interval: 5s
+  timeout_per_item: 15m
   total_timeout: 60m
 ```
 
@@ -3401,13 +3424,13 @@ Validation rules:
 
 ---
 
-## Agent Fleet Management
+## Fleet Management
 
 Centralized registration, tracking, deployment, and lifecycle management of AI agents across distributed hosts.
 
 ### Architecture
 
-- **Agent Registry** - Server-side, in-memory store backed by `sync.Map` for lock-free concurrent access.
+- **Fleet Registry** - Server-side, in-memory store backed by `sync.Map` for lock-free concurrent access.
 - **Self-Registration** - Agents register themselves on startup via CLI or REST API, providing name, host, type, and tenant.
 - **Heartbeat Monitoring** - Agents send heartbeats every 30 seconds. Registry marks agents offline after configurable timeout (default: 90s).
 - **Tenant Isolation** - Every operation requires a tenant ID. Agents from one tenant are invisible to another.
@@ -3438,13 +3461,13 @@ running     -->  error  -->  offline
 Register a new agent with the fleet:
 
 ```bash
-quicbaas agent register --name "worker-1" --host 203.0.113.10:9090 --type claude --tenant dev-team
+quicbaas fleet register --name "worker-1" --host 203.0.113.10:9090 --type claude --tenant dev-team
 
-quicbaas agent register --name "worker-2" --host 203.0.113.11:9090 --type claude \
+quicbaas fleet register --name "worker-2" --host 203.0.113.11:9090 --type claude \
   --model claude-3-opus-20250219 \
   --tenant dev-team
 
-quicbaas agent register --name "local-agent" --host localhost:9090 --type ollama \
+quicbaas fleet register --name "local-agent" --host localhost:9090 --type ollama \
   --backend ollama --model llama3 --tenant dev-team
 ```
 
@@ -3463,22 +3486,22 @@ List all agents with optional filters:
 
 ```bash
 # All agents for a tenant
-quicbaas agent list --tenant dev-team
+quicbaas fleet list --tenant dev-team
 
 # Filter by host
-quicbaas agent list --tenant dev-team --host 203.0.113.10:9090
+quicbaas fleet list --tenant dev-team --host 203.0.113.10:9090
 
 # Filter by status
-quicbaas agent list --tenant dev-team --status running
+quicbaas fleet list --tenant dev-team --status running
 
 # Filter by type
-quicbaas agent list --tenant dev-team --type claude
+quicbaas fleet list --tenant dev-team --type claude
 
 # Filter by backend
-quicbaas agent list --tenant dev-team --backend claude
+quicbaas fleet list --tenant dev-team --backend claude
 
 # JSON output for scripting
-quicbaas agent list --tenant dev-team --output json
+quicbaas fleet list --tenant dev-team --output json
 ```
 
 #### Get Agent Status
@@ -3486,9 +3509,9 @@ quicbaas agent list --tenant dev-team --output json
 Get detailed information for a specific agent:
 
 ```bash
-quicbaas agent status agent_abc123 --tenant dev-team
+quicbaas fleet status agent_abc123 --tenant dev-team
 
-quicbaas agent status agent_abc123 --tenant dev-team --output json
+quicbaas fleet status agent_abc123 --tenant dev-team --output json
 ```
 
 #### Send Heartbeat
@@ -3496,7 +3519,7 @@ quicbaas agent status agent_abc123 --tenant dev-team --output json
 Manually send a heartbeat to keep agent alive (normally done by agent):
 
 ```bash
-quicbaas agent heartbeat agent_abc123 --tenant dev-team
+quicbaas fleet heartbeat agent_abc123 --tenant dev-team
 ```
 
 #### Remove an Agent
@@ -3504,7 +3527,7 @@ quicbaas agent heartbeat agent_abc123 --tenant dev-team
 Remove an agent from the registry:
 
 ```bash
-quicbaas agent remove agent_abc123 --tenant dev-team
+quicbaas fleet remove agent_abc123 --tenant dev-team
 ```
 
 ### Model Configuration Per Agent
@@ -3513,11 +3536,11 @@ Agents can be registered with specific models that override backend defaults:
 
 ```bash
 # Agent uses specific Claude model
-quicbaas agent register --name worker-opus --host node01:9090 --type claude \
+quicbaas fleet register --name worker-opus --host node01:9090 --type claude \
   --model claude-3-opus-20250219
 
 # Agent uses specific Ollama model
-quicbaas agent register --name worker-local --host localhost:9090 --type ollama \
+quicbaas fleet register --name worker-local --host localhost:9090 --type ollama \
   --backend ollama --model mistral:7b
 ```
 
@@ -3551,12 +3574,12 @@ If an agent crashes without proper deregistration, heartbeat timeout causes the 
 
 All endpoints require the `X-Tenant-ID` header for tenant isolation.
 
-#### POST /api/v1/orchestrator/agents
+#### POST /api/v1/fleet
 
 Register a new agent:
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/orchestrator/agents \
+curl -X POST http://localhost:8080/api/v1/fleet \
   -H "X-Tenant-ID: dev-team" \
   -H "Content-Type: application/json" \
   -d '{
@@ -3585,21 +3608,21 @@ Response `201 Created`:
 }
 ```
 
-#### GET /api/v1/orchestrator/agents
+#### GET /api/v1/fleet
 
 List agents with optional filters:
 
 ```bash
-curl http://localhost:8080/api/v1/orchestrator/agents?status=running \
+curl http://localhost:8080/api/v1/fleet?status=running \
   -H "X-Tenant-ID: dev-team"
 
-curl http://localhost:8080/api/v1/orchestrator/agents?host=203.0.113.10:9090 \
+curl http://localhost:8080/api/v1/fleet?host=203.0.113.10:9090 \
   -H "X-Tenant-ID: dev-team"
 
-curl http://localhost:8080/api/v1/orchestrator/agents?type=claude \
+curl http://localhost:8080/api/v1/fleet?type=claude \
   -H "X-Tenant-ID: dev-team"
 
-curl http://localhost:8080/api/v1/orchestrator/agents?backend=claude \
+curl http://localhost:8080/api/v1/fleet?backend=claude \
   -H "X-Tenant-ID: dev-team"
 ```
 
@@ -3623,12 +3646,12 @@ Response `200 OK`:
 }
 ```
 
-#### GET /api/v1/orchestrator/agents/{agentID}
+#### GET /api/v1/fleet/{nodeID}
 
 Get a single agent's details:
 
 ```bash
-curl http://localhost:8080/api/v1/orchestrator/agents/a1b2c3d4 \
+curl http://localhost:8080/api/v1/fleet/a1b2c3d4 \
   -H "X-Tenant-ID: dev-team"
 ```
 
@@ -3654,12 +3677,12 @@ Response `200 OK`:
 }
 ```
 
-#### POST /api/v1/orchestrator/agents/{agentID}/heartbeat
+#### POST /api/v1/fleet/{nodeID}/heartbeat
 
 Send a heartbeat to update last-seen timestamp:
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/orchestrator/agents/a1b2c3d4/heartbeat \
+curl -X POST http://localhost:8080/api/v1/fleet/a1b2c3d4/heartbeat \
   -H "X-Tenant-ID: dev-team"
 ```
 
@@ -3672,12 +3695,12 @@ Response `200 OK`:
 }
 ```
 
-#### DELETE /api/v1/orchestrator/agents/{agentID}
+#### DELETE /api/v1/fleet/{nodeID}
 
 Remove an agent from the registry:
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/orchestrator/agents/a1b2c3d4 \
+curl -X DELETE http://localhost:8080/api/v1/fleet/a1b2c3d4 \
   -H "X-Tenant-ID: dev-team"
 ```
 
@@ -3685,15 +3708,15 @@ Response `204 No Content`.
 
 ### MCP Tools
 
-Agent fleet operations also available via MCP (Model Context Protocol):
+Fleet operations also available via MCP (Model Context Protocol):
 
 | Tool | Description |
 |------|-------------|
-| `quicbaas_agent_fleet_register` | Register a new agent |
-| `quicbaas_agent_fleet_list` | List agents with filters |
-| `quicbaas_agent_fleet_status` | Get agent status |
-| `quicbaas_agent_fleet_remove` | Remove agent from registry |
-| `quicbaas_agent_fleet_heartbeat` | Send heartbeat |
+| `quicbaas_fleet_register` | Register a new agent |
+| `quicbaas_fleet_list` | List agents with filters |
+| `quicbaas_fleet_status` | Get agent status |
+| `quicbaas_fleet_remove` | Remove agent from registry |
+| `quicbaas_fleet_heartbeat` | Send heartbeat |
 
 ### Agent Lifecycle
 
@@ -3701,9 +3724,9 @@ Agent fleet operations also available via MCP (Model Context Protocol):
 
 Containerized agents follow this lifecycle:
 
-1. **Startup** - Agent sends `POST /api/v1/orchestrator/agents` with metadata
+1. **Startup** - Agent sends `POST /api/v1/fleet` with metadata
 2. **Heartbeat Loop** - Background goroutine sends heartbeat every 30 seconds
-3. **Shutdown** - On `SIGTERM`/`SIGINT`, agent sends `DELETE /api/v1/orchestrator/agents/{agentID}` before exiting
+3. **Shutdown** - On `SIGTERM`/`SIGINT`, agent sends `DELETE /api/v1/fleet/{nodeID}` before exiting
 
 If the agent crashes without deregistration, heartbeat timeout (90s default) causes the registry to mark it offline.
 
@@ -3713,13 +3736,13 @@ Check registry for offline agents:
 
 ```bash
 # List only running agents
-quicbaas agent list --tenant dev-team --status running
+quicbaas fleet list --tenant dev-team --status running
 
 # List offline agents for recovery
-quicbaas agent list --tenant dev-team --status offline
+quicbaas fleet list --tenant dev-team --status offline
 
 # Remove stuck agents
-quicbaas agent remove offline_agent_id --tenant dev-team
+quicbaas fleet remove offline_agent_id --tenant dev-team
 ```
 
 ### Multi-Protocol Support
@@ -3743,23 +3766,23 @@ All use the same SDK client abstraction. Multi-protocol support is transparent.
 |----------|-------------|---------|
 | `QUICBAAS_ORCHESTRATION_ENABLED` | Enable orchestration service | `true` |
 | `QUICBAAS_ORCHESTRATION_HEARTBEAT_TIMEOUT` | Timeout before marking offline | `90s` |
-| `QUICBAAS_ORCHESTRATION_LEAD_AGENT_BACKEND` | Backend for decomposition/orchestration | (none) |
-| `QUICBAAS_ORCHESTRATION_LEAD_AGENT_MODEL` | Model for lead agent | (backend default) |
-| `QUICBAAS_TENANT_ID` | Default tenant for agent registration | `"default"` |
+| `QUICBAAS_ORCHESTRATION_LEAD_AGENT_AGENT_ID` | System-tenant [Agent](agents.md) the lead agent runs as | (none) |
+| `QUICBAAS_ORCHESTRATION_LEAD_AGENT_POOL_ID` | Or the pool it fails over along | (none) |
+| `QUICBAAS_TENANT_ID` | Default tenant for fleet node registration | `"default"` |
 
 ### Debugging
 
-View agent registry state (admin only):
+View fleet registry state (admin only):
 
 ```bash
 # Get all agents (all tenants)
-quicbaas agent list --tenant admin
+quicbaas fleet list --tenant admin
 
 # Check specific agent health
-quicbaas agent status agent_id --tenant dev-team --output json
+quicbaas fleet status agent_id --tenant dev-team --output json
 
 # Remove problematic agents
-quicbaas agent remove offline_agent --tenant dev-team
+quicbaas fleet remove offline_agent --tenant dev-team
 ```
 
 Check orchestrator health:
@@ -3776,11 +3799,11 @@ Register multiple agents and rotate task assignment:
 
 ```bash
 for i in {1..5}; do
-  quicbaas agent register --name "worker-$i" --host "node-$i:9090" --type claude
+  quicbaas fleet register --name "worker-$i" --host "node-$i:9090" --type claude
 done
 
 # View pool
-quicbaas agent list | grep worker
+quicbaas fleet list | grep worker
 
 # Assign tasks round-robin
 quicbaas orchestrator task claim task_1 --agent worker-1
@@ -3794,9 +3817,9 @@ Agent deregistration on shutdown:
 
 ```bash
 #!/bin/bash
-AGENT_ID=$(quicbaas agent register ... --output json | jq -r '.id')
+AGENT_ID=$(quicbaas fleet register ... --output json | jq -r '.id')
 
-trap "quicbaas agent remove $AGENT_ID; exit" SIGTERM SIGINT
+trap "quicbaas fleet remove $AGENT_ID; exit" SIGTERM SIGINT
 
 # Run agent
 quicbaas orchestrator spawn &
@@ -3830,13 +3853,13 @@ Each role receives IAM scopes that filter which MCP tools are visible. See MCP P
 
 ---
 
-## QuicBaaS Remote Agent Daemon — Operator's Guide
+## QuicBaaS Remote Fleet Node Daemon — Operator's Guide
 
-This guide covers deployment, configuration, and troubleshooting of the QuicBaaS remote agent daemon (`quicbaas agent serve`).
+This guide covers deployment, configuration, and troubleshooting of the QuicBaaS remote fleet node daemon (`quicbaas fleet serve`).
 
 ### Overview
 
-The QuicBaaS agent daemon is a long-lived service that runs on remote hosts (GPU machines, development workstations, edge devices) and exposes a gRPC `AgentRuntime` service. The QuicBaaS control plane calls this service to spawn AI agent sessions (Claude Code, Codex, Ollama) with full sandbox enforcement and tenant isolation.
+The QuicBaaS fleet node daemon is a long-lived service that runs on remote hosts (GPU machines, development workstations, edge devices) and exposes a gRPC `FleetRuntime` service. The QuicBaaS control plane calls this service to spawn AI agent sessions (Claude Code, Codex, Ollama) with full sandbox enforcement and tenant isolation.
 
 **When to use the daemon (this guide):**
 - You need to run agent sessions on remote hosts controlled by the control plane
@@ -3855,7 +3878,7 @@ The daemon is **sandbox-first** by default: all spawn requests resolve to contai
 
 The daemon authenticates to the QuicBaaS server via **mTLS** on every
 call. Identity material (certificate, private key, CA bundle) is
-provisioned by `quicbaas agent deploy` — operators never handle a
+provisioned by `quicbaas fleet deploy` — operators never handle a
 pre-shared bootstrap token.
 
 #### Identity Files
@@ -3877,11 +3900,11 @@ certificate missing these stamps.
 Point the daemon at the three files plus the server address:
 
 ```bash
-quicbaas agent serve \
+quicbaas fleet serve \
   --server https://quicbaas.example.com:8443 \
   --tenant acme \
-  --agent-cert /var/lib/quicbaas-agent/agent.crt \
-  --agent-key  /var/lib/quicbaas-agent/agent.key \
+  --node-cert /var/lib/quicbaas-agent/agent.crt \
+  --node-key  /var/lib/quicbaas-agent/agent.key \
   --server-ca  /var/lib/quicbaas-agent/server-ca.crt \
   --allowed-mount-root /srv/agent-workspaces
 ```
@@ -3901,7 +3924,7 @@ may mount (a sockets root, a models directory). See
    `OU=agents` and `ClientAuth`, and extracts the tenant claim from
    the certificate Organization field.
 3. The daemon POSTs its declared capabilities to
-   `/api/v1/agents/register` over the mTLS connection.
+   `/api/v1/fleet/enroll` over the mTLS connection.
 4. The server mints an OAuth2 client (`client_id` / `client_secret`)
    scoped to `agent:runtime:spawn|prompt|status` and returns the
    credentials in the response body.
@@ -3982,8 +4005,8 @@ no container can reach them.
 operator decision recorded in configuration:
 
 ```bash
-quicbaas agent serve --sandbox-network host ...      # remote agent daemon
-quicbaasd start --embedded-agent-sandbox-network host  # embedded agent
+quicbaas fleet serve --sandbox-network host ...      # remote fleet node daemon
+quicbaasd start --embedded-fleet-node-sandbox-network host  # embedded fleet node
 ```
 
 A spawn request cannot select the network: there is no network field on the
@@ -3994,8 +4017,8 @@ the host namespace. Choosing `host` is logged once per backend at WARN.
 a sandboxed agent dials resolves to `127.0.0.1` — which is what the *embedded*
 agent's resolver produces, because control plane and agent share a host — a
 bridged container cannot reach it. Either give the agent a routable MCP endpoint
-(`--mcp-endpoint https://<host>:<port>/mcp`, which is how a remote agent daemon
-is always configured) or set `--embedded-agent-sandbox-network host` and accept
+(`--mcp-endpoint https://<host>:<port>/mcp`, which is how a remote fleet node daemon
+is always configured) or set `--embedded-fleet-node-sandbox-network host` and accept
 that the container shares the host namespace. Reaching a *provider* API needs no
 special handling: `bridge` has egress.
 
@@ -4007,7 +4030,7 @@ gets its own network namespace, and `--allowed-mount-root` decides how much of
 **this host's filesystem** the container can see.
 
 ```bash
-quicbaas agent serve \
+quicbaas fleet serve \
   --allowed-mount-root /srv/agent-workspaces \
   --allowed-mount-root /srv/models ...
 ```
@@ -4023,13 +4046,24 @@ allowed_mount_roots:
 | omitted (default) | Only the workspaces this daemon provisioned under its own `--projects-root`, for the requesting tenant, are accepted |
 | one or more absolute roots | Those, plus sources resolving under a listed root |
 
+The daemon's own relayed signing sockets (`--sockets-root`, go-quicbaas#1013)
+are admitted as well — each socket file one directory below that root, read-only,
+and nothing else under it — so a relay needs no allowlist entry either.
+
+The shared per-tenant Go cache (`--go-cache-dir`, default
+`<--work-dir>/cache/go`) is the opposite case. The daemon mounts it itself, and
+no allowlist entry may reach it. The daemon refuses to start when a
+`--allowed-mount-root` or the projects root contains the cache root or lies
+inside it. Otherwise a spawn could name another tenant's cache as an extra
+mount. See [sandbox.md § The shared Go cache](sandbox.md#the-shared-go-cache).
+
 Deny-by-default is deliberate. The daemon's Spawn RPC takes `work_dir` straight
 off the wire, and the ACP backend bind-mounts it into the container **read-write
 as the daemon's own uid**. An unchecked `work_dir` of `/` is therefore this
 host's root filesystem, writable, for the agent — reachable by any principal
 holding `agent:runtime:spawn`. There is no setting that turns the check off.
 
-`pkg/agent.Runtime.Spawn` enforces it through the same
+`pkg/fleet.Runtime.Spawn` enforces it through the same
 `orchestration.MountPolicy` the control plane uses, so both enforcement points
 behave identically:
 
@@ -4105,7 +4139,7 @@ The daemon's client JWT must include these scopes to authorize each RPC type:
 | `Prompt` | `agent:runtime:prompt` | Send prompts to existing sessions |
 | `Status` | `agent:runtime:status` | Query session status |
 | `Close` | `agent:runtime:status` | Terminate sessions (grouped with status for simplicity) |
-| `Heartbeat` | implicit (registered agents) | Bidirectional heartbeat stream |
+| `Heartbeat` | implicit (registered fleet nodes) | Bidirectional heartbeat stream |
 
 These scopes are issued by the enrollment token exchange. If a token is missing any scope, that RPC is denied with a 403 Unauthenticated error.
 
@@ -4156,7 +4190,7 @@ unsandboxed sessions.
 
 | Port | Direction | Purpose |
 |------|-----------|---------|
-| 9091 | Inbound | AgentRuntime gRPC service (default bind; configurable) |
+| 9091 | Inbound | FleetRuntime gRPC service (default bind; configurable) |
 | 8443 | Outbound | Central QuicBaaS orchestrator (gRPC/QUIC) |
 | 53 | Outbound | DNS (for control plane hostname resolution) |
 
@@ -4244,7 +4278,7 @@ quicbaas iam tenant list --filter acme
 #### The Daemon Is Waiting to Enroll
 
 **Symptom:** The journal repeats
-`agent daemon enrollment attempt N failed, class=transient (connection refused); retrying in 32s`
+`fleet node daemon enrollment attempt N failed, class=transient (connection refused); retrying in 32s`
 and the unit stays `active (running)`.
 
 This is the daemon working as designed. The control plane it was pointed at
@@ -4275,9 +4309,9 @@ If nothing answers, the daemon is waiting for a server that is not running
 **Step 3: Tune the wait if the default does not suit the site**
 ```bash
 # First wait, doubling per attempt (default 1s)
-quicbaas agent serve --enroll-retry-base 5s ...
+quicbaas fleet serve --enroll-retry-base 5s ...
 # Ceiling on a single wait (default 1m)
-quicbaas agent serve --enroll-retry-max 5m ...
+quicbaas fleet serve --enroll-retry-max 5m ...
 ```
 There is no attempt budget on purpose: a daemon that gave up would only be
 restarted by systemd straight back into the same wait, with the backoff
@@ -4366,7 +4400,7 @@ quicbaas orchestrator list-sessions --tenant <tenant>
 **Step 3: Verify control plane has correct daemon registration**
 ```bash
 # On the server, check daemon is registered under correct tenant
-quicbaas agent list --tenant acme
+quicbaas fleet list --tenant acme
 # Should show the daemon with agent_kind=daemon, status=running
 ```
 
@@ -4405,7 +4439,7 @@ sudo systemctl restart quicbaas-agent
 **Step 4: Check control plane is healthy**
 ```bash
 # From any client, verify control plane is responding
-quicbaas agent list --server <addr>
+quicbaas fleet list --server <addr>
 # If control plane is down, restart it first
 ```
 
@@ -4428,7 +4462,7 @@ Allow active sessions to complete:
 ```bash
 # Set daemon to read-only (no new spawns accepted)
 # This is typically done by the control plane:
-quicbaas agent update <daemon-id> --drain
+quicbaas fleet update <daemon-id> --drain
 # Or, wait for sessions to complete naturally (max ~5 minutes)
 ```
 
@@ -4479,7 +4513,7 @@ sudo journalctl -u quicbaas-agent -f --lines=20
 On the control plane, confirm the daemon is back online:
 
 ```bash
-quicbaas agent list --tenant acme | grep daemon-id
+quicbaas fleet list --tenant acme | grep daemon-id
 # Should show status=running and recent heartbeat timestamp
 ```
 
@@ -4525,65 +4559,65 @@ sudo mount -o bind,ro /var/lib/quicbaas-agent /var/lib/quicbaas-agent
 
 ### References
 
-- **Environment file reference**: `deployments/agent-daemon/agent.env.sample` (the daemon takes flags; this is the `EnvironmentFile=` the packaged unit expands into them)
-- **Systemd unit**: `deployments/agent-daemon/quicbaas-agent.service`
-- **Docker image**: `deployments/agent-daemon/Dockerfile`
-- **CLI flags**: `quicbaas agent serve --help`
+- **Environment file reference**: `deployments/fleet-node/agent.env.sample` (the daemon takes flags; this is the `EnvironmentFile=` the packaged unit expands into them)
+- **Systemd unit**: `deployments/fleet-node/quicbaas-agent.service`
+- **Docker image**: `deployments/fleet-node/Dockerfile`
+- **CLI flags**: `quicbaas fleet serve --help`
 - **Policy semantics**: `pkg/orchestration/sandbox_policy.go`
 - **Bind-mount policy**: `pkg/orchestration/mount_policy.go` (shared with the control plane)
 - **Network isolation**: `pkg/orchestration/sandbox_network.go`
 - **Capabilities and pids limit**: `pkg/orchestration/sandbox_security.go` (see `sandbox.md`, "The boundary around root")
 - **Container environment transport**: `pkg/orchestration/container_env_file.go`
-- **Daemon API types**: `pkg/agent/config.go`
-- **Registration flow**: `pkg/agent/enrollment.go`
-- **Enrollment failure triage / retry backoff**: `pkg/agent/enroll_retry.go`
+- **Daemon API types**: `pkg/fleet/config.go`
+- **Registration flow**: `pkg/fleet/enrollment.go`
+- **Enrollment failure triage / retry backoff**: `pkg/fleet/enroll_retry.go`
 
 ---
 
-### Embedded Agent Mode
+### Embedded Fleet Node Mode
 
-In addition to the standalone `quicbaas agent serve` daemon, quicbaasd can run an
-**embedded agent** in-process. This is convenient when the orchestrator host itself
+In addition to the standalone `quicbaas fleet serve` daemon, quicbaasd can run an
+**embedded fleet node** in-process. This is convenient when the orchestrator host itself
 has Ollama installed and you want zero-latency inference without deploying a separate
 daemon process.
 
 #### How it differs from the standalone daemon
 
-| Aspect | Standalone (`quicbaas agent serve`) | Embedded (`quicbaasd --embedded-agent`) |
+| Aspect | Standalone (`quicbaas fleet serve`) | Embedded (`quicbaasd --embedded-fleet-node`) |
 |---|---|---|
 | Process | Separate | Same process as quicbaasd |
 | Transport | TCP gRPC + mTLS | In-process bufconn (no network) |
 | Identity | Operator-provided cert files | Issued from local CA at boot |
-| Registration | POST /api/v1/agents/register | Direct fleet registry insertion |
+| Registration | POST /api/v1/fleet/enroll | Direct fleet registry insertion |
 | Heartbeat | HTTP heartbeat loop | Always alive while process runs |
 | SSH/SFTP boot | Yes (deploy workflow) | No |
 
-The embedded agent is a first-class fleet member. It appears in
+The embedded fleet node is a first-class fleet member. It appears in
 `GET /api/v1/agents` with `kind: embedded` and can receive inference
 requests via the same orchestrator dispatch path as remote daemons.
 
-#### Starting the embedded agent
+#### Starting the embedded fleet node
 
 ```bash
 # Start with embedded Ollama agent (default URL: http://127.0.0.1:11434)
-quicbaasd start --embedded-agent
+quicbaasd start --embedded-fleet-node
 
 # Specify Ollama URL and advertise GPU capability
 quicbaasd start \
-  --embedded-agent \
-  --embedded-agent-backend ollama \
-  --embedded-agent-ollama-url http://127.0.0.1:11434 \
-  --embedded-agent-gpu \
-  --embedded-agent-host-affinity gpu-node-01
+  --embedded-fleet-node \
+  --embedded-fleet-node-backend ollama \
+  --embedded-fleet-node-ollama-url http://127.0.0.1:11434 \
+  --embedded-fleet-node-gpu \
+  --embedded-fleet-node-host-affinity gpu-node-01
 ```
 
 #### Configuration keys
 
-These map to `Server.EmbeddedAgent.*` in the YAML config:
+These map to `Server.EmbeddedFleetNode.*` in the YAML config:
 
 ```yaml
 server:
-  embedded_agent:
+  embedded_fleet_node:
     enabled: true
     backends: [ollama]
     ollama_url: http://127.0.0.1:11434
@@ -4594,9 +4628,10 @@ server:
     sandbox_network: bridge    # bridge (default) | none | host | <network name>
     sandbox_cap_add: []        # empty keeps CHOWN,DAC_OVERRIDE,FOWNER,SETGID,SETUID after --cap-drop ALL
     sandbox_pids_limit: 0      # 0 takes the default (4096)
+    sandbox_ulimits: []        # name=soft[:hard]; empty keeps memlock=4294967296 (4 GiB)
 ```
 
-The embedded agent has **no** bind-mount key of its own: it shares a host with
+The embedded fleet node has **no** bind-mount key of its own: it shares a host with
 the orchestrator, so it enforces the orchestrator's policy —
 `orchestration.projects_root` (tenant-scoped) plus
 `orchestration.sandbox.allowed_mount_roots`. Without that, a spawn dispatched
@@ -4606,24 +4641,24 @@ over the bufconn would bypass the control plane's mount check.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--embedded-agent` | false | Enable the embedded agent |
-| `--embedded-agent-backend` | ollama | Backend kind (repeatable) |
-| `--embedded-agent-ollama-url` | http://127.0.0.1:11434 | Ollama API endpoint |
-| `--embedded-agent-host-affinity` | hostname | Affinity tag for routing |
-| `--embedded-agent-gpu` | false | Advertise GPU capability |
-| `--embedded-agent-data-dir` | `<data-dir>/embedded-agent` | Session state directory |
-| `--embedded-agent-sandbox-policy` | opt-in | How `DEFAULT` sandbox requests resolve |
-| `--embedded-agent-sandbox-network` | bridge | Container network for sandboxed sessions; `host` removes network isolation |
+| `--embedded-fleet-node` | false | Enable the embedded fleet node |
+| `--embedded-fleet-node-backend` | ollama | Backend kind (repeatable) |
+| `--embedded-fleet-node-ollama-url` | http://127.0.0.1:11434 | Ollama API endpoint |
+| `--embedded-fleet-node-host-affinity` | hostname | Affinity tag for routing |
+| `--embedded-fleet-node-gpu` | false | Advertise GPU capability |
+| `--embedded-fleet-node-data-dir` | `<data-dir>/embedded-agent` | Session state directory |
+| `--embedded-fleet-node-sandbox-policy` | opt-in | How `DEFAULT` sandbox requests resolve |
+| `--embedded-fleet-node-sandbox-network` | bridge | Container network for sandboxed sessions; `host` removes network isolation |
 
 #### Agent ID
 
-The embedded agent registers with a synthetic ID of the form
+The embedded fleet node registers with a synthetic ID of the form
 `embedded-<hostname>-<8-char-uuid>`. This ensures multiple quicbaasd
 instances on different hosts never collide in the shared fleet registry.
 
 #### Transport: bufconn loopback
 
-Inference RPCs to the embedded agent use `google.golang.org/grpc/test/bufconn`
+Inference RPCs to the embedded fleet node use `google.golang.org/grpc/test/bufconn`
 — gRPC's official in-memory transport. This preserves full gRPC semantics
 (interceptors, error types, streaming) while eliminating marshal/unmarshal
 overhead for in-process calls. Latency is approximately 1 µs per RPC vs.
@@ -4631,15 +4666,15 @@ overhead for in-process calls. Latency is approximately 1 µs per RPC vs.
 
 #### mTLS identity
 
-When TLS is enabled, the embedded agent issues its own X.509 client
-certificate from the local CA using the same `XKMSAgentCertIssuer` path as
-remote agent deployment. The cert is not needed for transport security
+When TLS is enabled, the embedded fleet node issues its own X.509 client
+certificate from the local CA using the same `XKMSFleetNodeCertIssuer` path as
+remote fleet node deployment. The cert is not needed for transport security
 (bufconn is in-process only) but is recorded in registration metadata for
 audit purposes.
 
 #### Shutdown
 
-The embedded agent stops before quicbaasd's external-facing servers
+The embedded fleet node stops before quicbaasd's external-facing servers
 (gRPC, REST, QUIC). The stop sequence:
 
 1. Deregister from the fleet registry (in-flight dispatchers stop routing).
@@ -4660,15 +4695,15 @@ QuicBaaS as a Backend-as-a-Service spans two planes; the same `quicbaasd` proces
 | Plane | What it does | Who calls it |
 |-------|--------------|--------------|
 | **Data plane** | KV / vector / secrets / KMS / messaging / object storage / time-series CRUD. The actual BaaS workload. | Application clients via the SDK |
-| **Control plane** | IAM (tenants, users, roles, policies, sessions), agent fleet (enroll, heartbeat, dispatch), orchestrator (jobs, sessions, projects), event log, certificate authority. | `quicbaas agent serve`, the desktop/web GUI, go-trusted-platform, operator CLI |
+| **Control plane** | IAM (tenants, users, roles, policies, sessions), fleet (enroll, heartbeat, dispatch), orchestrator (jobs, sessions, projects), event log, certificate authority. | `quicbaas fleet serve`, the desktop/web GUI, go-trusted-platform, operator CLI |
 
-The CLI flag is `--server` (it covers both planes — one process, one endpoint). Architecturally, internal narrative uses **control plane** when describing the role the agent fleet and orchestrator subsystems play, and **server** or **QuicBaaS server** for the addressable endpoint. The server may be a single `quicbaasd` process or a Raft-replicated cluster (via go-qrdb); from the agent's perspective the address is the same.
+The CLI flag is `--server` (it covers both planes — one process, one endpoint). Architecturally, internal narrative uses **control plane** when describing the role the fleet and orchestrator subsystems play, and **server** or **QuicBaaS server** for the addressable endpoint. The server may be a single `quicbaasd` process or a Raft-replicated cluster (via go-qrdb); from the agent's perspective the address is the same.
 
 ### Definitions
 
 | Term | Meaning | Examples |
 |------|---------|---------|
-| **QuicBaaS agent** (daemon) | The infrastructure daemon (`quicbaas agent serve`) that runs on remote systems. Handles enrollment with the control plane, fleet heartbeat, and gRPC AgentRuntime service for spawn/prompt/status/close RPCs. Self-enrolls using OAuth2 Client Credentials, reuses pkg/orchestration backends (ACPBackend, OllamaBackend, ContainerRuntime), and enforces sandbox-first execution with tenant isolation. | `quicbaas agent serve` CLI, `pkg/agent/daemon.go`, AgentRuntime gRPC service on port 9091, heartbeat into fleet registry |
+| **QuicBaaS agent** (daemon) | The infrastructure daemon (`quicbaas fleet serve`) that runs on remote systems. Handles enrollment with the control plane, fleet heartbeat, and gRPC FleetRuntime service for spawn/prompt/status/close RPCs. Self-enrolls using OAuth2 Client Credentials, reuses pkg/orchestration backends (ACPBackend, OllamaBackend, ContainerRuntime), and enforces sandbox-first execution with tenant isolation. | `quicbaas fleet serve` CLI, `pkg/fleet/daemon.go`, FleetRuntime gRPC service on port 9091, heartbeat into fleet registry |
 | **AI agent** / **orchestrated agent** | An AI coding tool (Claude Code, Codex, OpenCode) managed by the QuicBaaS orchestrator. Runs inside a container or on a developer machine. | Claude Code CLI, Codex CLI, OpenCode CLI |
 
 ### Why This Distinction Matters
@@ -4685,10 +4720,10 @@ Using precise terms prevents miscommunication in docs, code reviews, incident re
 
 #### QuicBaaS Agent (Infrastructure)
 
-- `pkg/orchestration/agent_registry.go` -- Fleet registry for QuicBaaS agent instances
+- `pkg/orchestration/fleet_registry.go` -- Fleet registry for QuicBaaS agent instances
 - `pkg/orchestration/agent_identity.go` -- Agent identity and attestation
-- REST API: `/api/v1/orchestrator/agents` -- Register/deregister QuicBaaS agents
-- MCP tools: `quicbaas_agent_fleet_*` prefix -- Operations on the infrastructure layer
+- REST API: `/api/v1/fleet` -- Register/deregister QuicBaaS agents
+- MCP tools: `quicbaas_fleet_*` prefix -- Operations on the infrastructure layer
 - Entrypoint scripts: Fleet registration and heartbeat loops
 - Docker healthchecks: Verify the infrastructure agent is responsive
 

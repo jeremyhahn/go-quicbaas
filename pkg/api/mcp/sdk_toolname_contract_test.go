@@ -67,6 +67,13 @@ const (
 	// pairing crosses a service boundary or is not a clean 1:1, so wiring it is
 	// a product decision rather than a mechanical fix.
 	gapAmbiguous = "candidate tool needs a product decision: "
+
+	// gapRefusedOverMCP: the SDK's MCP transport refuses the verb before any
+	// I/O, by design rather than as debt. Secrets.GetData backs
+	// GetWithBytes (go-quicbaas#954): MCP tool results are text strings, so a
+	// secret fetched over MCP would already be an unwipeable Go string, and
+	// registering a tool would defeat the protected read it exists for.
+	gapRefusedOverMCP = "refused by the SDK MCP transport: MCP results are text strings, so protected-memory reads fail closed"
 )
 
 // sdkCallsWithoutMCPTool is the ledger of SDK verbs that cannot currently be
@@ -143,12 +150,10 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	{"quicbaas.IAM.Policy", "GetEffectivePermissions"}: gapNoTool,
 	{"quicbaas.IAM.Policy", "Validate"}:                gapAmbiguous + "quicbaas_iam_policy_test",
 
-	{"quicbaas.IAM.User", "Approve"}:         gapNoTool,
-	{"quicbaas.IAM.User", "Reject"}:          gapNoTool,
-	{"quicbaas.IAM.User", "Suspend"}:         gapNoTool,
-	{"quicbaas.IAM.User", "Unsuspend"}:       gapNoTool,
-	{"quicbaas.IAM.User", "AddToGroup"}:      gapAmbiguous + "quicbaas_iam_group_add_member",
-	{"quicbaas.IAM.User", "RemoveFromGroup"}: gapAmbiguous + "quicbaas_iam_group_remove_member",
+	{"quicbaas.IAM.User", "Approve"}:   gapNoTool,
+	{"quicbaas.IAM.User", "Reject"}:    gapNoTool,
+	{"quicbaas.IAM.User", "Suspend"}:   gapNoTool,
+	{"quicbaas.IAM.User", "Unsuspend"}: gapNoTool,
 
 	// --- KMS ---------------------------------------------------------------
 	{"quicbaas.KMS", "ListKeyVersions"}: gapNameDrift + "quicbaas_kms_key_versions",
@@ -189,21 +194,20 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	{"quicbaas.Operations", "GetUpgradeStatus"}:     gapNoTool,
 
 	// --- Orchestrator ------------------------------------------------------
-	// The fleet registry is registered under quicbaas_agent_fleet_* and the
-	// global disable/enable under agent_*; the SDK derives
+	// Every fleet verb is registered under quicbaas_fleet_*; the SDK derives
 	// quicbaas_orchestrator_* for all of them.
-	{"quicbaas.Orchestrator", "RegisterAgent"}:       gapNameDrift + "quicbaas_agent_fleet_register",
-	{"quicbaas.Orchestrator", "ListAgents"}:          gapNameDrift + "quicbaas_agent_fleet_list",
-	{"quicbaas.Orchestrator", "RemoveAgent"}:         gapNameDrift + "quicbaas_agent_fleet_remove",
-	{"quicbaas.Orchestrator", "AgentHeartbeat"}:      gapNameDrift + "quicbaas_agent_fleet_heartbeat",
-	{"quicbaas.Orchestrator", "DisableAgent"}:        gapNameDrift + "agent_disable",
-	{"quicbaas.Orchestrator", "EnableAgent"}:         gapNameDrift + "agent_enable",
+	{"quicbaas.Orchestrator", "RegisterFleetNode"}:   gapNameDrift + "quicbaas_fleet_register",
+	{"quicbaas.Orchestrator", "ListFleetNodes"}:      gapNameDrift + "quicbaas_fleet_list",
+	{"quicbaas.Orchestrator", "RemoveFleetNode"}:     gapNameDrift + "quicbaas_fleet_remove",
+	{"quicbaas.Orchestrator", "FleetNodeHeartbeat"}:  gapNameDrift + "quicbaas_fleet_heartbeat",
+	{"quicbaas.Orchestrator", "DisableFleetNode"}:    gapNameDrift + "quicbaas_fleet_disable",
+	{"quicbaas.Orchestrator", "EnableFleetNode"}:     gapNameDrift + "quicbaas_fleet_enable",
 	{"quicbaas.Orchestrator", "CreateTask"}:          gapNameDrift + "quicbaas_orchestrator_task_create",
 	{"quicbaas.Orchestrator", "DecomposeTask"}:       gapNameDrift + "quicbaas_orchestrator_decompose",
 	{"quicbaas.Orchestrator", "ListBackendModels"}:   gapNameDrift + "quicbaas_orchestrator_list_backends",
 	{"quicbaas.Orchestrator", "GetTaskArtifact"}:     gapNameDrift + "quicbaas_task_get_artifact",
 	{"quicbaas.Orchestrator", "ListTaskArtifacts"}:   gapNameDrift + "quicbaas_task_list_artifacts",
-	{"quicbaas.Orchestrator", "GetAgent"}:            gapAmbiguous + "quicbaas_agent_fleet_status",
+	{"quicbaas.Orchestrator", "GetFleetNode"}:        gapAmbiguous + "quicbaas_fleet_status",
 	{"quicbaas.Orchestrator", "ClaimTask"}:           gapNoTool,
 	{"quicbaas.Orchestrator", "CompleteTask"}:        gapNoTool,
 	{"quicbaas.Orchestrator", "GetTask"}:             gapNoTool,
@@ -240,6 +244,7 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	// --- Secrets -----------------------------------------------------------
 	{"quicbaas.Secrets", "ListVersions"}: gapNameDrift + "quicbaas_secrets_versions",
 	{"quicbaas.Secrets", "GetVersion"}:   gapNoTool,
+	{"quicbaas.Secrets", "GetData"}:      gapRefusedOverMCP,
 
 	// --- Vector ------------------------------------------------------------
 	{"quicbaas.Vector", "Compact"}:               gapNameDrift + "quicbaas_vector_admin_compact_namespace",

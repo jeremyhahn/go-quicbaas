@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sort"
 	"testing"
 	"time"
 
@@ -30,7 +31,8 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/storage/memory"
 )
 
-// TestBackupManager_ListBackups tests listing backups with time.Sleep
+// TestBackupManager_ListBackups tests that every created backup is listed,
+// in backup-ID order, with its metadata persisted in the backend.
 func TestBackupManager_ListBackups(t *testing.T) {
 	manager, _, mockBackend := setupTestBackupManager(t)
 
@@ -39,8 +41,6 @@ func TestBackupManager_ListBackups(t *testing.T) {
 	// Create multiple backups
 	backup1, err := manager.CreateBackup(ctx, BackupTypeFull)
 	require.NoError(t, err)
-
-	time.Sleep(10 * time.Millisecond) // Ensure different timestamps
 
 	backup2, err := manager.CreateBackup(ctx, BackupTypeIncremental)
 	require.NoError(t, err)
@@ -52,25 +52,33 @@ func TestBackupManager_ListBackups(t *testing.T) {
 	assert.Len(t, list.Backups, 2)
 	assert.Equal(t, 2, list.TotalCount)
 
-	// Verify backups are sorted by timestamp (newest first)
-	assert.Equal(t, backup2.ID, list.Backups[0].ID)
-	assert.Equal(t, backup1.ID, list.Backups[1].ID)
+	// listBackups orders by backup ID, not by timestamp.
+	assert.True(t, sort.SliceIsSorted(list.Backups, func(i, j int) bool {
+		return list.Backups[i].ID < list.Backups[j].ID
+	}))
+	listed := []string{list.Backups[0].ID, list.Backups[1].ID}
+	assert.ElementsMatch(t, []string{backup1.ID, backup2.ID}, listed)
 
-	// Verify backup details
-	assert.NotEmpty(t, mockBackend.backups)
+	// Verify the metadata landed in the backend.
+	for _, id := range listed {
+		exists, err := mockBackend.Exists(ctx, id+"/metadata.json")
+		require.NoError(t, err)
+		assert.True(t, exists, "metadata for %s", id)
+	}
 }
 
-// TestBackupManager_ApplyRetentionPolicy tests retention policy with time.Sleep
+// TestBackupManager_ApplyRetentionPolicy tests MaxBackups retention.
 func TestBackupManager_ApplyRetentionPolicy(t *testing.T) {
 	manager, _, mockBackend := setupTestBackupManager(t)
 
 	ctx := context.Background()
 
-	// Create multiple backups
+	// Create 5 backups, each an hour older than the next.
+	now := time.Now()
 	for i := 0; i < 5; i++ {
-		_, err := manager.CreateBackup(ctx, BackupTypeFull)
+		backup, err := manager.CreateBackup(ctx, BackupTypeFull)
 		require.NoError(t, err)
-		time.Sleep(10 * time.Millisecond)
+		updateBackupTimestamp(t, mockBackend, backup.ID, now.Add(-time.Duration(5-i)*time.Hour))
 	}
 
 	// Set retention policy
@@ -85,12 +93,12 @@ func TestBackupManager_ApplyRetentionPolicy(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should only have 3 backups
-	list, err := mockBackend.List(ctx, 0, "")
+	list, err := manager.ListBackups(ctx, 100)
 	require.NoError(t, err)
 	assert.Len(t, list.Backups, 3)
 }
 
-// TestBackupManager_ApplyRetentionPolicyMaxAge tests max age retention with time.Sleep
+// TestBackupManager_ApplyRetentionPolicyMaxAge tests MaxAge retention.
 func TestBackupManager_ApplyRetentionPolicyMaxAge(t *testing.T) {
 	manager, _, mockBackend := setupTestBackupManager(t)
 
@@ -101,9 +109,7 @@ func TestBackupManager_ApplyRetentionPolicyMaxAge(t *testing.T) {
 	require.NoError(t, err)
 
 	// Modify timestamp to be old
-	metadata, _ := mockBackend.GetMetadata(ctx, backup.ID)
-	metadata.Timestamp = time.Now().Add(-48 * time.Hour)
-	mockBackend.backups[backup.ID] = metadata
+	updateBackupTimestamp(t, mockBackend, backup.ID, time.Now().Add(-48*time.Hour))
 
 	// Set retention policy with max age
 	manager.config.Schedule = &ScheduleConfig{
@@ -117,14 +123,15 @@ func TestBackupManager_ApplyRetentionPolicyMaxAge(t *testing.T) {
 	require.NoError(t, err)
 
 	// Old backup should be deleted
-	list, err := mockBackend.List(ctx, 0, "")
+	list, err := manager.ListBackups(ctx, 100)
 	require.NoError(t, err)
 	assert.Empty(t, list.Backups)
 }
 
-// TestBackupManager_ApplyRetentionPolicyDeleteWarning tests retention policy deletion with time.Sleep
+// TestBackupManager_ApplyRetentionPolicyDeleteWarning tests that MaxBackups
+// retention deletes the oldest backup.
 func TestBackupManager_ApplyRetentionPolicyDeleteWarning(t *testing.T) {
-	manager, memStorage, _ := setupTestBackupManager(t)
+	manager, memStorage, mockBackend := setupTestBackupManager(t)
 	ctx := context.Background()
 
 	// Add test data
@@ -142,15 +149,17 @@ func TestBackupManager_ApplyRetentionPolicyDeleteWarning(t *testing.T) {
 	backup1, err := manager.CreateBackup(ctx, BackupTypeFull)
 	require.NoError(t, err)
 
-	time.Sleep(10 * time.Millisecond)
-
 	backup2, err := manager.CreateBackup(ctx, BackupTypeFull)
 	require.NoError(t, err)
 
-	time.Sleep(10 * time.Millisecond)
-
 	backup3, err := manager.CreateBackup(ctx, BackupTypeFull)
 	require.NoError(t, err)
+
+	// Order the three explicitly, all inside MaxAge, backup1 oldest.
+	now := time.Now()
+	updateBackupTimestamp(t, mockBackend, backup1.ID, now.Add(-3*time.Minute))
+	updateBackupTimestamp(t, mockBackend, backup2.ID, now.Add(-2*time.Minute))
+	updateBackupTimestamp(t, mockBackend, backup3.ID, now.Add(-1*time.Minute))
 
 	// Apply retention policy - should delete oldest backup
 	err = manager.ApplyRetentionPolicy(ctx)
@@ -225,7 +234,7 @@ func TestBackupManager_LargeBackup(t *testing.T) {
 	// Clear storage
 	for i := 0; i < 1000; i++ {
 		key := []byte(fmt.Sprintf("key-%d", i))
-		memStorage.Delete(key)
+		require.NoError(t, memStorage.Delete(key))
 	}
 
 	// Restore
@@ -244,10 +253,11 @@ func TestBackupManager_LargeBackup(t *testing.T) {
 		assert.Equal(t, value, actual)
 	}
 
-	manager.Close()
+	require.NoError(t, manager.Close())
 }
 
-// TestNewBackupManager_WithSchedule tests creating manager with schedule (has goroutine)
+// TestNewBackupManager_WithSchedule tests that a manager with a schedule
+// starts its scheduler goroutine and closes it cleanly.
 func TestNewBackupManager_WithSchedule(t *testing.T) {
 	memStorage := &mockStorage{
 		MemoryStorage: memory.New(nil),
@@ -285,9 +295,6 @@ func TestNewBackupManager_WithSchedule(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, manager)
 
-	// Give the scheduler goroutine a moment to start
-	time.Sleep(10 * time.Millisecond)
-
 	err = manager.Close()
 	require.NoError(t, err)
 }
@@ -302,7 +309,6 @@ func TestBackupManager_ListBackupsLimit(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		_, err := manager.CreateBackup(ctx, BackupTypeFull)
 		require.NoError(t, err)
-		time.Sleep(10 * time.Millisecond)
 	}
 
 	// List with limit

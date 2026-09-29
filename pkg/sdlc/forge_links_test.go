@@ -59,7 +59,7 @@ func newLinkingSource(t *testing.T) (*IssueSource, *linkingForge, *recordingAdop
 		t.Fatal(err)
 	}
 	forge := &linkingForge{fakeForge: newFakeForge(), links: map[int][]ForgeIssueLink{}}
-	source, err := NewIssueSource(store, staticForge{forge: forge}, 10)
+	source, err := NewIssueSource(store, staticForge{forge: forge}, store, 10)
 	if err != nil {
 		t.Fatal(err)
 	}

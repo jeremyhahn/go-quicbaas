@@ -53,6 +53,11 @@ import (
 // must not queue behind the work it unblocks. It does not say the job is free:
 // a review occupies the model exactly as a worker does. Reading OffBudget here
 // would reproduce the bug this file exists to fix.
+//
+// A DORMANT LEASE IS NOT COUNTED (JobLease.Dormant). An sdlc job parked in
+// reviewing has closed its container and holds no model session, so it is off
+// this axis exactly as it is off the fleet's — and it is admitted here again,
+// through Rebudget, when a review round wakes it (go-quicbaas#1036).
 
 // BackendCapacityExceededError reports a backend at its concurrency limit.
 type BackendCapacityExceededError struct {
@@ -114,17 +119,36 @@ func (s *backendCapacityJobLeaseStore) Acquire(ctx context.Context, lease *JobLe
 	if err := lease.validate(); err != nil {
 		return err
 	}
-	if err := s.admit(ctx, lease); err != nil {
-		return err
+	if !lease.Dormant {
+		if err := s.admit(ctx, lease, (*JobLease).ClaimsWorker); err != nil {
+			return err
+		}
 	}
 	return s.JobLeaseStore.Acquire(ctx, lease)
+}
+
+// Rebudget implements JobLeaseStore.
+//
+// ONLY A DORMANT JOB WAKING IS ADMITTED, counted against the leases that hold
+// the backend rather than the queue for it: see
+// fleetCapacityJobLeaseStore.Rebudget.
+func (s *backendCapacityJobLeaseStore) Rebudget(ctx context.Context, lease *JobLease) error {
+	if err := lease.validate(); err != nil {
+		return err
+	}
+	if !lease.Dormant {
+		if err := s.admit(ctx, lease, (*JobLease).HoldsWorker); err != nil {
+			return err
+		}
+	}
+	return s.JobLeaseStore.Rebudget(ctx, lease)
 }
 
 // admit counts this backend's live leases across every project of the tenant.
 //
 // ACROSS PROJECTS, DELIBERATELY: the model server is shared, so counting only
 // the contender's own project would let N projects each run the limit.
-func (s *backendCapacityJobLeaseStore) admit(ctx context.Context, lease *JobLease) error {
+func (s *backendCapacityJobLeaseStore) admit(ctx context.Context, lease *JobLease, counts func(*JobLease, time.Time, time.Duration) bool) error {
 	backend := strings.ToLower(strings.TrimSpace(lease.Backend))
 	if backend == "" {
 		return nil
@@ -148,8 +172,8 @@ func (s *backendCapacityJobLeaseStore) admit(ctx context.Context, lease *JobLeas
 		}
 		// NOT CountsAgainstBudget: that answers the PROJECT budget question
 		// and excludes an off-budget lease, which is every review. A review
-		// occupies the model like anything else.
-		if held.Live(now, s.ttl) {
+		// occupies the model like anything else; only a dormant job does not.
+		if counts(held, now, s.ttl) {
 			live++
 		}
 	}
@@ -188,7 +212,7 @@ func (s *backendCapacityJobLeaseStore) LiveJobsForBackend(ctx context.Context, t
 		if !strings.EqualFold(strings.TrimSpace(held.Backend), name) {
 			continue
 		}
-		if held.Live(now, s.ttl) {
+		if held.ClaimsWorker(now, s.ttl) {
 			live++
 		}
 	}

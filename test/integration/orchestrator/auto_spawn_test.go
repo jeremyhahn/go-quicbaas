@@ -29,25 +29,25 @@ import (
 // registerOnlineAgent registers an agent so the auto-spawn matcher can find
 // it. The agent's status remains "registered" by default which counts as
 // online. Returns the registered agent.
-func registerOnlineAgent(t *testing.T, ctx context.Context, tenantID, name, backend string, capabilities []string) *orchestration.AgentRegistration {
+func registerOnlineAgent(t *testing.T, ctx context.Context, tenantID, name, backend string, capabilities []string) *orchestration.FleetNode {
 	t.Helper()
-	resp, err := testService.Agent().RegisterAgent(ctx, &orchestration.RegisterAgentRequest{
+	resp, err := testService.Agent().RegisterFleetNode(ctx, &orchestration.RegisterFleetNodeRequest{
 		TenantID:     tenantID,
 		Name:         name,
 		Host:         "host-" + name,
-		AgentType:    "worker",
+		NodeType:     "worker",
 		Backend:      backend,
 		Capabilities: capabilities,
 	})
 	require.NoError(t, err, "register agent")
-	require.NotNil(t, resp.Agent)
-	return resp.Agent
+	require.NotNil(t, resp.Node)
+	return resp.Node
 }
 
 // TestAutoSpawn_DefaultFalse verifies that when AutoSpawn is omitted (false)
 // the task is queued without spawning a job. SpawnedJobID must be empty.
 func TestAutoSpawn_DefaultFalse(t *testing.T) {
-	tenantID := "tenant-noas-" + uniqueSuffix()
+	tenantID := newTenant(t, "tenant-noas-")
 	ctx := tenantCtx(tenantID)
 
 	task, err := testService.Agent().CreateTask(ctx, &orchestration.CreateTaskRequest{
@@ -61,10 +61,10 @@ func TestAutoSpawn_DefaultFalse(t *testing.T) {
 }
 
 // TestAutoSpawn_NoMatchingAgent verifies that AutoSpawn=true with no
-// registered agents returns *NoMatchingAgentError and persists the task with
+// registered agents returns *NoMatchingFleetNodeError and persists the task with
 // an empty SpawnedJobID.
 func TestAutoSpawn_NoMatchingAgent(t *testing.T) {
-	tenantID := "tenant-as-noagent-" + uniqueSuffix()
+	tenantID := newTenant(t, "tenant-as-noagent-")
 	ctx := tenantCtx(tenantID)
 
 	task, err := testService.Agent().CreateTask(ctx, &orchestration.CreateTaskRequest{
@@ -75,9 +75,9 @@ func TestAutoSpawn_NoMatchingAgent(t *testing.T) {
 	require.Error(t, err, "AutoSpawn with no agents should error")
 	require.NotNil(t, task, "task is persisted even when spawn fails")
 
-	var noMatch *orchestration.NoMatchingAgentError
+	var noMatch *orchestration.NoMatchingFleetNodeError
 	assert.True(t, errors.As(err, &noMatch),
-		"expected *orchestration.NoMatchingAgentError, got %T: %v", err, err)
+		"expected *orchestration.NoMatchingFleetNodeError, got %T: %v", err, err)
 	assert.Empty(t, task.SpawnedJobID, "SpawnedJobID empty on no-match")
 
 	// Verify task is queryable via GetTask.
@@ -88,9 +88,9 @@ func TestAutoSpawn_NoMatchingAgent(t *testing.T) {
 }
 
 // TestAutoSpawn_GpuRequired_NoGpuAgent verifies that AutoSpawn with
-// GpuRequired=true and only non-GPU agents online returns NoMatchingAgentError.
+// GpuRequired=true and only non-GPU agents online returns NoMatchingFleetNodeError.
 func TestAutoSpawn_GpuRequired_NoGpuAgent(t *testing.T) {
-	tenantID := "tenant-as-gpu-" + uniqueSuffix()
+	tenantID := newTenant(t, "tenant-as-gpu-")
 	ctx := tenantCtx(tenantID)
 
 	// Register a non-GPU agent.
@@ -103,16 +103,16 @@ func TestAutoSpawn_GpuRequired_NoGpuAgent(t *testing.T) {
 		GpuRequired: true,
 	})
 	require.Error(t, err)
-	var noMatch *orchestration.NoMatchingAgentError
+	var noMatch *orchestration.NoMatchingFleetNodeError
 	assert.True(t, errors.As(err, &noMatch),
-		"expected NoMatchingAgentError for GPU-required, got %T: %v", err, err)
+		"expected NoMatchingFleetNodeError for GPU-required, got %T: %v", err, err)
 }
 
 // TestAutoSpawn_BackendFilter verifies the just-fixed Backend propagation in
 // autoSpawnTask. With Backend="ollama" but no ollama-capable agent, dispatch
-// must be rejected with NoMatchingAgentError.
+// must be rejected with NoMatchingFleetNodeError.
 func TestAutoSpawn_BackendFilter(t *testing.T) {
-	tenantID := "tenant-as-backend-" + uniqueSuffix()
+	tenantID := newTenant(t, "tenant-as-backend-")
 	ctx := tenantCtx(tenantID)
 
 	// Register an agent on a different backend.
@@ -126,9 +126,9 @@ func TestAutoSpawn_BackendFilter(t *testing.T) {
 	})
 	require.Error(t, err, "Backend filter should reject when no agent matches")
 
-	var noMatch *orchestration.NoMatchingAgentError
+	var noMatch *orchestration.NoMatchingFleetNodeError
 	assert.True(t, errors.As(err, &noMatch),
-		"expected NoMatchingAgentError for Backend filter mismatch, got %T: %v", err, err)
+		"expected NoMatchingFleetNodeError for Backend filter mismatch, got %T: %v", err, err)
 }
 
 // TestAutoSpawn_HappyPath verifies that AutoSpawn=true with a matching agent
@@ -137,7 +137,7 @@ func TestAutoSpawn_BackendFilter(t *testing.T) {
 // real backends aren't reachable in the test) — we only assert the spawn
 // metadata is populated synchronously.
 func TestAutoSpawn_HappyPath(t *testing.T) {
-	tenantID := "tenant-as-happy-" + uniqueSuffix()
+	tenantID := newTenant(t, "tenant-as-happy-")
 	ctx := tenantCtx(tenantID)
 
 	registerOnlineAgent(t, ctx, tenantID, "ollama-agent-"+uniqueSuffix(), "ollama", nil)

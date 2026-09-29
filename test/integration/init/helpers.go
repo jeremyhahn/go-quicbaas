@@ -55,6 +55,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/netport"
 )
 
 // ---------------------------------------------------------------------------
@@ -164,18 +166,6 @@ func findRepoRoot() (string, error) {
 // Port allocator
 // ---------------------------------------------------------------------------
 
-// allocatedPorts tracks every port handed out to a subtest. The global is
-// guarded by a mutex so parallel subtests cannot collide. We bind the
-// listener exclusively during allocation and close it immediately; the
-// daemon re-binds the same port a few hundred ms later. Race-window
-// collisions are tolerated by re-allocating up to maxPortRetries times.
-var (
-	allocatedPortsMu sync.Mutex
-	allocatedPorts   = map[int]struct{}{}
-)
-
-const maxPortRetries = 50
-
 // PortBundle holds every port the daemon needs to bring up the requested
 // transport. Each field is unique per subtest. Zero indicates "the
 // transport is disabled for this combination".
@@ -188,60 +178,6 @@ type PortBundle struct {
 	QUIC int
 	MCP  int
 	Unix string
-}
-
-// allocPort reserves a free TCP port and remembers it so subsequent
-// allocations cannot return the same value while a subtest still holds
-// the daemon process that bound to it.
-func allocPort(t *testing.T) int {
-	t.Helper()
-	for attempt := 0; attempt < maxPortRetries; attempt++ {
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			continue
-		}
-		port := ln.Addr().(*net.TCPAddr).Port
-		if cerr := ln.Close(); cerr != nil {
-			t.Fatalf("close port-allocation listener: %v", cerr)
-		}
-		allocatedPortsMu.Lock()
-		_, already := allocatedPorts[port]
-		if !already {
-			allocatedPorts[port] = struct{}{}
-			allocatedPortsMu.Unlock()
-			return port
-		}
-		allocatedPortsMu.Unlock()
-	}
-	t.Fatalf("failed to allocate a unique TCP port after %d retries", maxPortRetries)
-	return 0
-}
-
-// allocUDPPort reserves a free UDP port for the QUIC listener. Mirrors
-// allocPort but binds UDP because the kernel keeps TCP and UDP port
-// spaces distinct on the same address.
-func allocUDPPort(t *testing.T) int {
-	t.Helper()
-	for attempt := 0; attempt < maxPortRetries; attempt++ {
-		conn, err := net.ListenPacket("udp", "127.0.0.1:0")
-		if err != nil {
-			continue
-		}
-		port := conn.LocalAddr().(*net.UDPAddr).Port
-		if cerr := conn.Close(); cerr != nil {
-			t.Fatalf("close port-allocation packet conn: %v", cerr)
-		}
-		allocatedPortsMu.Lock()
-		_, already := allocatedPorts[port]
-		if !already {
-			allocatedPorts[port] = struct{}{}
-			allocatedPortsMu.Unlock()
-			return port
-		}
-		allocatedPortsMu.Unlock()
-	}
-	t.Fatalf("failed to allocate a unique UDP port after %d retries", maxPortRetries)
-	return 0
 }
 
 // allocPortBundle reserves every port the daemon listener stack needs
@@ -257,6 +193,14 @@ func allocUDPPort(t *testing.T) int {
 // unconditional gives every row a deterministic gRPC anchor without the
 // caller having to remember which transports carry gRPC natively.
 //
+// Ports are RESERVED through netport, not observed free: drawing :0, closing
+// the listener and handing the number to a daemon that binds it later leaves a
+// window in which anything else can take it (go-quicbaas#721). A reservation
+// is a host-wide lock under os.TempDir(), which the daemons this suite execs
+// share with it -- they run in the same container -- and it is proven free on
+// TCP and UDP alike, so one call serves the QUIC listener too. The lock is
+// released by t.Cleanup after the daemon's own cleanup has stopped it.
+//
 // Unix socket lives under the per-subtest tmpdir so cleanup removes it
 // transparently when the data dir is torn down. We use a short basename
 // ("d.sock") to stay under the AF_UNIX 108-byte path limit on Linux
@@ -264,18 +208,18 @@ func allocUDPPort(t *testing.T) int {
 func allocPortBundle(t *testing.T, transport string, dataDir string) PortBundle {
 	t.Helper()
 	bundle := PortBundle{
-		REST: allocPort(t),
+		REST: netport.MustReserveOne(t),
 		Unix: filepath.Join(dataDir, "d.sock"),
 	}
 	switch transport {
 	case "rest", "unix":
 		// Both already covered: REST + unix anchor are unconditional.
 	case "grpc":
-		bundle.GRPC = allocPort(t)
+		bundle.GRPC = netport.MustReserveOne(t)
 	case "quic":
-		bundle.QUIC = allocUDPPort(t)
+		bundle.QUIC = netport.MustReserveOne(t)
 	case "mcp":
-		bundle.MCP = allocPort(t)
+		bundle.MCP = netport.MustReserveOne(t)
 	default:
 		t.Fatalf("allocPortBundle: unknown transport %q", transport)
 	}

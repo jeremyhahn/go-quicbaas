@@ -27,22 +27,22 @@ var (
 	ErrAgentIdentityInvalidScope = errors.New("orchestration: agent identity invalid scope format")
 )
 
-// Agent runtime scope constants define the OAuth2 scopes that a remote agent
-// daemon (pkg/agent) is authorized to exercise against the central
-// orchestrator's AgentRuntime gRPC service. They follow the three-segment
+// Agent runtime scope constants define the OAuth2 scopes that a remote fleet node
+// daemon (pkg/fleet) is authorized to exercise against the central
+// orchestrator's FleetRuntime gRPC service. They follow the three-segment
 // "resource:subresource:action" naming convention so they slot into the
 // same HasScope / wildcard rules as existing scopes.
 const (
 	// AgentScopeRuntimeSpawn authorizes the caller to start a sandboxed agent
-	// session (ACP/Ollama/container spawn) on a remote agent host.
+	// session (ACP/Ollama/container spawn) on a remote fleet node host.
 	AgentScopeRuntimeSpawn = "agent:runtime:spawn"
 
 	// AgentScopeRuntimePrompt authorizes the caller to send a prompt to an
-	// already-spawned session on a remote agent host.
+	// already-spawned session on a remote fleet node host.
 	AgentScopeRuntimePrompt = "agent:runtime:prompt"
 
 	// AgentScopeRuntimeStatus authorizes the caller to poll session status
-	// and retrieve heartbeat/telemetry from a remote agent host.
+	// and retrieve heartbeat/telemetry from a remote fleet node host.
 	AgentScopeRuntimeStatus = "agent:runtime:status"
 
 	// AgentScopeRuntimeInfer authorizes the caller to run a stateless
@@ -52,10 +52,10 @@ const (
 	AgentScopeRuntimeInfer = "agent:runtime:infer"
 )
 
-// AgentRuntimeScopes returns the full set of scopes a freshly enrolled agent
+// FleetRuntimeScopes returns the full set of scopes a freshly enrolled agent
 // daemon is expected to receive. Callers can compare against this list when
 // validating token issuance or documenting bootstrap expectations.
-func AgentRuntimeScopes() []string {
+func FleetRuntimeScopes() []string {
 	return []string{
 		AgentScopeRuntimeSpawn,
 		AgentScopeRuntimePrompt,
@@ -64,10 +64,10 @@ func AgentRuntimeScopes() []string {
 	}
 }
 
-// AgentRuntimeRole is the role name carried by an agent runtime identity
+// FleetRuntimeRole is the role name carried by an agent runtime identity
 // (embedded or cert-authenticated). It exists for audit/display purposes;
 // authorization decisions are made from the scope set, not the role name.
-const AgentRuntimeRole = "agent-runtime"
+const FleetRuntimeRole = "agent-runtime"
 
 // Agent MCP scope constants define the least-privilege, qrdb-canonical
 // "resource:action" permissions a cert-authenticated agent may exercise over
@@ -147,9 +147,9 @@ func (e *AgentIdentityInvalidScopeError) Unwrap() error {
 }
 
 // AgentIdentity is an agent DAEMON's enrollment result: the OAuth2 application
-// the control plane registered for a remote agent host, plus the grant that
-// application carries. pkg/agent ProductionEnroller builds it from the response
-// to POST /api/v1/agents/register and the token exchange that follows, and the
+// the control plane registered for a remote fleet node host, plus the grant that
+// application carries. pkg/fleet ProductionEnroller builds it from the response
+// to POST /api/v1/fleet/enroll and the token exchange that follows, and the
 // daemon's own gRPC spawn server authorizes the central's inbound dispatch
 // against its Scopes (GRPCSpawnServer.authorize). That is where it is a
 // security control, and the only place.

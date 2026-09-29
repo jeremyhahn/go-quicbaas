@@ -250,7 +250,7 @@ func TestSSHAddAndListKnownHosts(t *testing.T) {
 	server, _, cleanup := newSSHTestServer(t)
 	defer cleanup()
 
-	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","fingerprint":"` + testKnownHostFingerprint + `","algorithm":"ssh-ed25519"}`
+	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","public_key":"` + sshfixture.Host(t).AuthorizedLine + `"}`
 	addReq := httptest.NewRequest(http.MethodPost, "/api/v1/ssh/known-hosts", strings.NewReader(addBody))
 	addReq.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -267,13 +267,28 @@ func TestSSHAddAndListKnownHosts(t *testing.T) {
 	require.Equal(t, "bastion.example.com", resp.Items[0].Host)
 }
 
+// TestSSHAddKnownHost_RequiresThePublicKey pins that a fingerprint-only pin is
+// refused: go-xkms trusts only the full host key.
+func TestSSHAddKnownHost_RequiresThePublicKey(t *testing.T) {
+	t.Parallel()
+	server, _, cleanup := newSSHTestServer(t)
+	defer cleanup()
+
+	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","fingerprint":"` + testKnownHostFingerprint + `"}`
+	addReq := httptest.NewRequest(http.MethodPost, "/api/v1/ssh/known-hosts", strings.NewReader(addBody))
+	addReq.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	server.HandleAddKnownHost(w, addReq)
+	require.Equal(t, http.StatusBadRequest, w.Code, "body=%s", w.Body.String())
+}
+
 // TestSSHVerifyKnownHost_Match returns 204 when fingerprints match.
 func TestSSHVerifyKnownHost_Match(t *testing.T) {
 	t.Parallel()
 	server, _, cleanup := newSSHTestServer(t)
 	defer cleanup()
 
-	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","fingerprint":"` + testKnownHostFingerprint + `"}`
+	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","public_key":"` + sshfixture.Host(t).AuthorizedLine + `"}`
 	addReq := httptest.NewRequest(http.MethodPost, "/api/v1/ssh/known-hosts", strings.NewReader(addBody))
 	addReq.Header.Set("Content-Type", "application/json")
 	server.HandleAddKnownHost(httptest.NewRecorder(), addReq)
@@ -296,7 +311,7 @@ func TestSSHVerifyKnownHost_Mismatch(t *testing.T) {
 	server, _, cleanup := newSSHTestServer(t)
 	defer cleanup()
 
-	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","fingerprint":"` + testKnownHostFingerprintExpected + `"}`
+	addBody := `{"scope":"user","owner":"alice","host":"bastion.example.com","public_key":"` + sshfixture.Host(t).AuthorizedLine + `"}`
 	addReq := httptest.NewRequest(http.MethodPost, "/api/v1/ssh/known-hosts", strings.NewReader(addBody))
 	addReq.Header.Set("Content-Type", "application/json")
 	server.HandleAddKnownHost(httptest.NewRecorder(), addReq)

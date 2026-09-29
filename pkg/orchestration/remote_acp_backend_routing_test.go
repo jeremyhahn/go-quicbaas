@@ -43,23 +43,23 @@ import (
 // multiBackendRegistration is the fleet daemon #937 was measured on: it
 // registers with claude as its primary and advertises codex and opencode
 // beside it, exactly as a daemon started with several ACP backends heartbeats
-// (see reconcileAgentBackends).
-func multiBackendRegistration() *AgentRegistration {
-	return &AgentRegistration{
-		ID:           "vm-host-4-id",
+// (see reconcileFleetNodeBackends).
+func multiBackendRegistration() *FleetNode {
+	return &FleetNode{
+		ID:           "agent-04-id",
 		TenantID:     "tenant-a",
-		Name:         "vm-host-4",
+		Name:         "agent-04",
 		Host:         "daemon.test:9091",
 		Backend:      "claude",
 		Capabilities: []string{"claude", "codex", "opencode"},
-		Kind:         AgentKindDaemon,
-		Status:       AgentStatusRunning,
+		Kind:         FleetNodeKindDaemon,
+		Status:       FleetNodeStatusRunning,
 	}
 }
 
 // routedBackend builds a RemoteACPBackend bound to the given backend name and
 // wired to a bufconn daemon whose captured requests the caller inspects.
-func routedBackend(t *testing.T, reg *AgentRegistration, backend string) (*RemoteACPBackend, *fakeDaemonServer) {
+func routedBackend(t *testing.T, reg *FleetNode, backend string) (*RemoteACPBackend, *fakeDaemonServer) {
 	t.Helper()
 
 	daemon := startBufconnDaemon(t, &fakeDaemonServer{})
@@ -128,7 +128,7 @@ func TestNewRemoteACPBackend_RequiresServedBackend(t *testing.T) {
 
 // TestNewRemoteACPBackend_RefusesUnservedBackend is the refusal itself: a
 // registration asked for a backend it does not serve yields a typed
-// NoMatchingAgentError and no backend, instead of an instance that would have
+// NoMatchingFleetNodeError and no backend, instead of an instance that would have
 // asked the daemon for something else.
 func TestNewRemoteACPBackend_RefusesUnservedBackend(t *testing.T) {
 	t.Parallel()
@@ -146,15 +146,15 @@ func TestNewRemoteACPBackend_RefusesUnservedBackend(t *testing.T) {
 			if backend != nil {
 				t.Fatal("a backend the registration does not serve must not be constructed")
 			}
-			var noMatch *NoMatchingAgentError
+			var noMatch *NoMatchingFleetNodeError
 			if !errors.As(err, &noMatch) {
-				t.Fatalf("error = %T (%v), want *NoMatchingAgentError", err, err)
+				t.Fatalf("error = %T (%v), want *NoMatchingFleetNodeError", err, err)
 			}
 			if noMatch.Constraint != "backend" {
 				t.Errorf("Constraint = %q, want %q", noMatch.Constraint, "backend")
 			}
-			if !errors.Is(err, ErrNoMatchingAgent) {
-				t.Error("the refusal must unwrap to ErrNoMatchingAgent")
+			if !errors.Is(err, ErrNoMatchingFleetNode) {
+				t.Error("the refusal must unwrap to ErrNoMatchingFleetNode")
 			}
 		})
 	}

@@ -39,7 +39,7 @@ export interface JobPageParams extends PageParams {
     runner?: string;
     /** project_id lists one project's jobs. */
     project_id?: string;
-    /** agent_id lists the jobs one fleet agent ran. */
+    /** agent_id lists the jobs one fleet node ran. */
     agent_id?: string;
     /** statuses lists the jobs in any of these states. */
     statuses?: JobState[];
@@ -63,7 +63,7 @@ export interface TaskPageParams extends PageParams {
      * why it is optional rather than defaulting to false.
      */
     auto_spawn?: boolean;
-    /** agent_id lists the tasks whose latest attempt ran on one fleet agent. */
+    /** agent_id lists the tasks whose latest attempt ran on one fleet node. */
     agent_id?: string;
     /** job_id lists the tasks one job is an attempt at. */
     job_id?: string;
@@ -78,14 +78,14 @@ export interface SessionPageParams extends PageParams {
     job_id?: string;
     /** runner lists the sessions by the role they played — sdlc, triage, review. */
     runner?: string;
-    /** agent_id lists the sessions that ran on one fleet agent. */
+    /** agent_id lists the sessions that ran on one fleet node. */
     agent_id?: string;
 }
-/** AgentPageParams adds the fleet listing's own narrowings. */
-export interface AgentPageParams extends PageParams {
+/** FleetNodePageParams adds the fleet listing's own narrowings. */
+export interface FleetNodePageParams extends PageParams {
     host?: string;
     status?: string;
-    agent_type?: string;
+    node_type?: string;
     backend?: string;
     model?: string;
 }
@@ -107,6 +107,14 @@ export interface AccountPageParams extends PageParams {
     project_id?: string;
     /** status lists the accounts in one pool state — available, in_use, cooldown. */
     status?: string;
+}
+/** AttentionPageParams adds the attention inbox's own narrowings. */
+export interface AttentionPageParams extends PageParams {
+    /** project_id lists one project's attention items. */
+    project_id?: string;
+    /** kind lists one attention kind: parked_task, agent_offline,
+     * account_error, barrier_sealed. */
+    kind?: string;
 }
 /**
  * PageFacets is what a listing counted, per filterable field, over the set its

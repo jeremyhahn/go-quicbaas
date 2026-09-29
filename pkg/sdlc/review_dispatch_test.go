@@ -88,7 +88,7 @@ func newDispatchRig(t *testing.T) *dispatchRig {
 	t.Helper()
 	store := newTestStore(t)
 	binding := testBinding()
-	binding.Reviewer = ReviewerConfig{Backend: "codex", Login: fakeReviewerLogin, TokenSecretRef: "reviewer-tok"}
+	binding.Reviewer = ReviewerConfig{Agent: testReviewerAgent, Login: fakeReviewerLogin, TokenSecretRef: "reviewer-tok"}
 	if err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func newDispatchRig(t *testing.T) *dispatchRig {
 		Number: 41, State: "open", HeadRef: "issue/41-thing", BaseRef: "main", HeadSHA: dispatchHead,
 	}
 	jobs := &fakeJobStarter{}
-	dispatcher, err := NewReviewDispatcher(store, jobs, &fakeForges{forge: forge})
+	dispatcher, err := NewReviewDispatcher(store, store, jobs, &fakeForges{forge: forge})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,20 +453,20 @@ func TestReviewDispatcher_RefusesAPullRequestTheForgeDoesNotHave(t *testing.T) {
 func TestReviewDispatcher_RefusesAForgeItCannotResolve(t *testing.T) {
 	store := newTestStore(t)
 	binding := testBinding()
-	binding.Reviewer = ReviewerConfig{Backend: "codex", Login: fakeReviewerLogin, TokenSecretRef: "reviewer-tok"}
+	binding.Reviewer = ReviewerConfig{Agent: testReviewerAgent, Login: fakeReviewerLogin, TokenSecretRef: "reviewer-tok"}
 	if err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
 	// A resolver that registers no adapter for the binding's forge answers
 	// nil, nil — a gated dispatch must refuse rather than proceed blind.
-	dispatcher, err := NewReviewDispatcher(store, &fakeJobStarter{}, &fakeForges{})
+	dispatcher, err := NewReviewDispatcher(store, store, &fakeJobStarter{}, &fakeForges{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := dispatcher.TriggerReview(context.Background(), prRequest(41)); err == nil {
 		t.Fatal("an unregistered forge was accepted")
 	}
-	failing, err := NewReviewDispatcher(store, &fakeJobStarter{}, &fakeForges{err: errors.New("no token")})
+	failing, err := NewReviewDispatcher(store, store, &fakeJobStarter{}, &fakeForges{err: errors.New("no token")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,16 +479,19 @@ func TestNewReviewDispatcher_RefusesIncompleteWiring(t *testing.T) {
 	store := newTestStore(t)
 	jobs := &fakeJobStarter{}
 	forges := &fakeForges{forge: newFakeForge()}
-	if _, err := NewReviewDispatcher(store, jobs, forges); err != nil {
+	if _, err := NewReviewDispatcher(store, store, jobs, forges); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewReviewDispatcher(nil, jobs, forges); !errors.Is(err, ErrInvalidInput) {
+	if _, err := NewReviewDispatcher(nil, store, jobs, forges); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("nil bindings accepted: %v", err)
 	}
-	if _, err := NewReviewDispatcher(store, nil, forges); !errors.Is(err, ErrInvalidInput) {
+	if _, err := NewReviewDispatcher(store, nil, jobs, forges); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("nil overrides accepted: %v", err)
+	}
+	if _, err := NewReviewDispatcher(store, store, nil, forges); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("nil jobs accepted: %v", err)
 	}
-	if _, err := NewReviewDispatcher(store, jobs, nil); !errors.Is(err, ErrInvalidInput) {
+	if _, err := NewReviewDispatcher(store, store, jobs, nil); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("nil forges accepted: %v", err)
 	}
 }

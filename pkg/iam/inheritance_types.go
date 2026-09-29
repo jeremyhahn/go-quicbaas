@@ -103,49 +103,6 @@ func (h *RoleHierarchy) Validate() error {
 	return nil
 }
 
-// GroupHierarchy represents a parent-child relationship between groups.
-// Child groups can inherit members from their parent groups.
-type GroupHierarchy struct {
-	// ID is the unique hierarchy relationship identifier.
-	ID string `json:"id"`
-
-	// TenantID is the owning tenant.
-	TenantID string `json:"tenant_id"`
-
-	// ParentGroupID is the parent group.
-	ParentGroupID string `json:"parent_group_id"`
-
-	// ChildGroupID is the child group.
-	ChildGroupID string `json:"child_group_id"`
-
-	// InheritMembers indicates whether child inherits parent's members.
-	// When true, all members of parent are considered members of child.
-	InheritMembers bool `json:"inherit_members"`
-
-	// Created is the hierarchy creation timestamp.
-	Created time.Time `json:"created"`
-}
-
-// Validate validates a GroupHierarchy for correctness.
-func (h *GroupHierarchy) Validate() error {
-	if h.ID == "" {
-		return NewIAMError(ErrHierarchyInvalid, "iam.inheritance.group.validate", "hierarchy ID is required", nil)
-	}
-	if h.TenantID == "" {
-		return NewIAMError(ErrHierarchyInvalid, "iam.inheritance.group.validate", "tenant ID is required", nil)
-	}
-	if h.ParentGroupID == "" {
-		return NewIAMError(ErrHierarchyInvalid, "iam.inheritance.group.validate", "parent group ID is required", nil)
-	}
-	if h.ChildGroupID == "" {
-		return NewIAMError(ErrHierarchyInvalid, "iam.inheritance.group.validate", "child group ID is required", nil)
-	}
-	if h.ParentGroupID == h.ChildGroupID {
-		return NewIAMError(ErrHierarchyInvalid, "iam.inheritance.group.validate", "group cannot be its own parent", nil)
-	}
-	return nil
-}
-
 // EffectivePermissions represents the computed permissions for a subject.
 // This includes both directly assigned permissions and inherited ones.
 type EffectivePermissions struct {
@@ -158,7 +115,7 @@ type EffectivePermissions struct {
 	// DirectPermissions are permissions directly assigned to the subject.
 	DirectPermissions []string `json:"direct_permissions"`
 
-	// InheritedPermissions maps source role/group IDs to their permissions.
+	// InheritedPermissions maps source role IDs to their permissions.
 	// Key is the source ID, value is the list of permissions from that source.
 	InheritedPermissions map[string][]string `json:"inherited_permissions"`
 

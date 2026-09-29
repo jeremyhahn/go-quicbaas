@@ -224,11 +224,11 @@ func (s *Server) buildRESTServer() (*restapi.Server, error) {
 
 	// Wire the agent registrar so the mTLS register handler can
 	// publish freshly-registered daemons into the fleet registry.
-	// The adapter forwards to the same orchestration.AgentRegistry
+	// The adapter forwards to the same orchestration.FleetRegistry
 	// the dispatcher consults for routing.
-	if s.agentRegistry != nil {
-		registrar := newAgentRegistrarAdapter(s.agentRegistry)
-		restServer.SetAgentRegistrar(registrar)
+	if s.fleetRegistry != nil {
+		registrar := newFleetRegistrarAdapter(s.fleetRegistry)
+		restServer.SetFleetRegistrar(registrar)
 
 		// Wire the heartbeat self-healing recoverer. When the central
 		// daemon restarts and loses its in-memory agent registry, an
@@ -246,7 +246,7 @@ func (s *Server) buildRESTServer() (*restapi.Server, error) {
 		if recErr != nil {
 			s.logger.Warnf("agent heartbeat recoverer disabled: %v", recErr)
 		} else {
-			restServer.SetAgentHeartbeatRecoverer(recoverer)
+			restServer.SetFleetHeartbeatRecoverer(recoverer)
 		}
 	}
 

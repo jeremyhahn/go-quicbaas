@@ -16,6 +16,8 @@
 package server
 
 import (
+	"errors"
+
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -32,20 +34,17 @@ import (
 // key material never leaves the token, the backend's key-metadata store is
 // backed by keyStore so per-key references survive restarts.
 func buildPKCS11ServiceBackend(cfg *config.Config, spec BackendSpec, keyStore xkmssdk.StorageBackend) (xkmssdk.ServiceBackend, error) {
-	p11 := cfg.Seal.PKCS11
-	backend, err := xkmssdk.NewPKCS11Backend(&xkmssdk.PKCS11BackendConfig{
-		CN:          p11.KeyLabel,
-		Library:     p11.Library,
-		TokenLabel:  p11.TokenLabel,
-		Slot:        p11.Slot,
-		PIN:         p11.PIN,
-		KeyStorage:  keyStore,
-		CertStorage: xkmssdk.NewStorageMemory(),
-	})
+	backendCfg := pkcs11BackendConfig(cfg.Seal.PKCS11, keyStore)
+	backend, err := xkmssdk.NewPKCS11Backend(backendCfg)
 	if err != nil {
+		backendCfg.PIN.Clear()
 		return nil, &BackendConstructError{Backend: config.BackendTypePKCS11, Cause: err}
 	}
-	return wrapServiceBackend(config.BackendTypePKCS11, backend)
+	sb, err := wrapServiceBackend(config.BackendTypePKCS11, backend)
+	if err != nil {
+		return nil, errors.Join(err, releasePKCS11Backend(backend))
+	}
+	return sb, nil
 }
 
 // init registers the PKCS#11 factory. Reached only under -tags pkcs11.

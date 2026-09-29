@@ -479,7 +479,7 @@ func TestNewIAMUserCreateCommand_Flags(t *testing.T) {
 	assert.NotNil(t, cmd.Flags().Lookup("name"))
 	assert.NotNil(t, cmd.Flags().Lookup("roles"))
 	assert.NotNil(t, cmd.Flags().Lookup("role"))
-	assert.NotNil(t, cmd.Flags().Lookup("groups"))
+	assert.Nil(t, cmd.Flags().Lookup("groups"), "--groups must not exist; an account carries no group membership (go-quicbaas#1027)")
 	assert.Nil(t, cmd.Flags().Lookup("password"), "--password flag must not exist; QuicBaaS uses invite-based FIDO2/PIV activation")
 }
 
@@ -500,7 +500,8 @@ func TestNewIAMUserListCommand_Flags(t *testing.T) {
 
 	// Check filter flags exist
 	assert.NotNil(t, cmd.Flags().Lookup("role"))
-	assert.NotNil(t, cmd.Flags().Lookup("group"))
+	// quicbaas keeps no groups, so there is no group filter.
+	assert.Nil(t, cmd.Flags().Lookup("group"))
 }
 
 func TestNewIAMUserRoleCommand_Structure(t *testing.T) {

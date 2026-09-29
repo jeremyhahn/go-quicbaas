@@ -14,6 +14,7 @@ export declare class WailsClient implements Client {
     readonly projects: any;
     readonly sdlc: any;
     readonly accounts: any;
+    readonly agents: any;
     readonly iam: any;
     readonly kms: any;
     readonly secrets: any;

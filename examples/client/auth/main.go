@@ -333,7 +333,6 @@ func demonstrateOAuth2Flow(ctx context.Context, client quicbaas.Client) {
 		fmt.Printf("  Auto Provision: %v\n", provider.AutoProvision)
 		fmt.Printf("  Allow Linking:  %v\n", provider.AllowLinking)
 		fmt.Printf("  Default Roles:  %v\n", provider.DefaultRoles)
-		fmt.Printf("  Default Groups: %v\n", provider.DefaultGroups)
 		fmt.Println()
 	}
 

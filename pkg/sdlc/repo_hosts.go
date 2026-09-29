@@ -16,6 +16,8 @@ package sdlc
 import (
 	"net/url"
 	"strings"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
 // =============================================================================
@@ -76,6 +78,11 @@ func (g RepoHostGuard) CheckRepoURL(repoURL string) error {
 	switch u.Scheme {
 	case "ssh", "https":
 		return g.checkHost(raw, u.Hostname(), strings.ToLower(u.Host))
+	case "http":
+		return &RepoURLRefusedError{
+			RepoURL: raw,
+			Reason:  "http:// carries no credential -- the forge token is never sent in cleartext, so the worker could clone only a public repository and would fail on a private one; register the https:// or ssh:// URL",
+		}
 	case "file":
 		if g.allowLocalRepos {
 			return nil
@@ -100,4 +107,59 @@ func (g RepoHostGuard) checkHost(raw, hostname, hostport string) error {
 		}
 	}
 	return &RepoURLRefusedError{RepoURL: raw, Reason: "host " + hostname + " is not an allowed forge host"}
+}
+
+// CheckProject reports whether the worker can clone project: its own
+// repository and every context repository, under the same rules bind applies.
+//
+// It is called at bind AND every time a workspace is opened. The project
+// record is editable after it is bound -- a context repository added, a
+// remote moved -- and the operator's allowlist can shrink under it, so a
+// check made once at bind proves nothing about the checkout a later job
+// asks for (go-quicbaas#770).
+func (g RepoHostGuard) CheckProject(project *orchestration.Project) error {
+	if err := g.CheckRepoURL(project.Git.RepoURL); err != nil {
+		return err
+	}
+	return g.CheckContextRepos(project.Git.RepoURL, project.ContextRepos)
+}
+
+// configured reports whether the guard was built by NewRepoHostGuard. The
+// zero value admits no host at all, so a runner handed one would refuse
+// every workspace; it is refused at construction instead.
+func (g RepoHostGuard) configured() bool { return g.hosts != nil }
+
+// CheckContextRepos reports whether the worker can clone every context
+// repository of a project whose own repository is projectRepoURL.
+//
+// A context repository is cloned by the same container, with the same
+// credentials, as the project, so it answers to the same allowlist -- and to
+// one more rule: the spawn pins exactly one ssh host key, the binding's, for
+// the project's ssh host. A context repository on any other ssh host would
+// fail host-key verification inside the worker, so it is refused here, where
+// the operator reads the reason, rather than three attempts later in a
+// container nobody can see into (go-quicbaas#770).
+func (g RepoHostGuard) CheckContextRepos(projectRepoURL string, repos []orchestration.ContextRepo) error {
+	projectHost := orchestration.SSHRepoHost(projectRepoURL)
+	for _, repo := range repos {
+		if err := g.CheckRepoURL(repo.RepoURL); err != nil {
+			return &ContextRepoRefusedError{Name: repo.Name, Err: err}
+		}
+		host := orchestration.SSHRepoHost(repo.RepoURL)
+		if host == "" || host == projectHost {
+			continue
+		}
+		pinned := "the project is not cloned over ssh, so no host key is pinned at all"
+		if projectHost != "" {
+			pinned = "the worker pins only the project's ssh host, " + projectHost
+		}
+		return &ContextRepoRefusedError{
+			Name: repo.Name,
+			Err: &InvalidInputError{
+				Field:   "repo_url",
+				Message: "ssh host " + host + " cannot be verified: " + pinned + "; register its https:// URL, or host it beside the project",
+			},
+		}
+	}
+	return nil
 }

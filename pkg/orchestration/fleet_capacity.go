@@ -29,8 +29,8 @@ import (
 // sources that this file reduces to ONE answer:
 //
 //   - THE FLEET ITSELF. Every daemon reports how many orchestration jobs it can
-//     run at once (AgentRegistration.MaxConcurrentJobs, refreshed on every
-//     heartbeat through AgentObservation), and the fleet's capacity is the sum
+//     run at once (FleetNode.MaxConcurrentJobs, refreshed on every
+//     heartbeat through FleetNodeObservation), and the fleet's capacity is the sum
 //     over the daemons that are still alive. This is the honest number: it
 //     shrinks when a host is drained and grows when one is added, with nothing
 //     to keep in step by hand.
@@ -83,7 +83,7 @@ type FleetCapacity struct {
 	// nothing could answer.
 	Source FleetCapacitySource `json:"source"`
 
-	// Agents is how many live daemons the fleet sum was taken over, and
+	// Fleet nodes is how many live daemons the fleet sum was taken over, and
 	// Unreported how many of them named no slot count. Both are zero for an
 	// operator-declared capacity, which is taken over no daemons at all.
 	Agents     int `json:"agents,omitempty"`
@@ -160,37 +160,37 @@ func (c *declaredFleetCapacity) FleetCapacity(_ context.Context, _ time.Time) (F
 // The fleet's own report
 // =============================================================================
 
-// DefaultFleetAgentStaleAfter is the age past which a daemon's last heartbeat
+// DefaultFleetNodeStaleAfter is the age past which a daemon's last heartbeat
 // stops counting its slots towards the fleet's capacity. It is the same bound
-// session reconciliation uses to decide an agent has left, so "alive" means one
+// session reconciliation uses to decide a fleet node has left, so "alive" means one
 // thing across the engine.
-const DefaultFleetAgentStaleAfter = DefaultAgentHeartbeatTimeout
+const DefaultFleetNodeStaleAfter = DefaultFleetHeartbeatTimeout
 
-// agentFleetCapacity sums the slots the live daemons of every tenant report.
-type agentFleetCapacity struct {
+// registryFleetCapacity sums the slots the live daemons of every tenant report.
+type registryFleetCapacity struct {
 	tenants    TenantLister
-	agents     AgentRegistry
+	agents     FleetRegistry
 	staleAfter time.Duration
 }
 
 // Compile-time interface satisfaction check.
-var _ FleetCapacityReader = (*agentFleetCapacity)(nil)
+var _ FleetCapacityReader = (*registryFleetCapacity)(nil)
 
-// NewAgentFleetCapacity returns the reader that measures the fleet from its own
-// daemons. A zero staleAfter takes DefaultFleetAgentStaleAfter.
-func NewAgentFleetCapacity(tenants TenantLister, agents AgentRegistry, staleAfter time.Duration) (FleetCapacityReader, error) {
+// NewRegistryFleetCapacity returns the reader that measures the fleet from its own
+// daemons. A zero staleAfter takes DefaultFleetNodeStaleAfter.
+func NewRegistryFleetCapacity(tenants TenantLister, agents FleetRegistry, staleAfter time.Duration) (FleetCapacityReader, error) {
 	switch {
 	case tenants == nil:
 		return nil, &AdmissionConfigError{Field: "tenants", Message: "the fleet is measured across every tenant's daemons"}
 	case agents == nil:
 		return nil, &AdmissionConfigError{Field: "agents", Message: "the slots a daemon reports are read from the agent registry"}
 	case staleAfter < 0:
-		return nil, &AdmissionConfigError{Field: "stale_after", Message: "must not be negative; zero takes DefaultFleetAgentStaleAfter"}
+		return nil, &AdmissionConfigError{Field: "stale_after", Message: "must not be negative; zero takes DefaultFleetNodeStaleAfter"}
 	}
 	if staleAfter == 0 {
-		staleAfter = DefaultFleetAgentStaleAfter
+		staleAfter = DefaultFleetNodeStaleAfter
 	}
-	return &agentFleetCapacity{tenants: tenants, agents: agents, staleAfter: staleAfter}, nil
+	return &registryFleetCapacity{tenants: tenants, agents: agents, staleAfter: staleAfter}, nil
 }
 
 // FleetCapacity implements FleetCapacityReader.
@@ -198,7 +198,7 @@ func NewAgentFleetCapacity(tenants TenantLister, agents AgentRegistry, staleAfte
 // A TENANT OR A REGISTRY THAT CANNOT BE READ FAILS THE WHOLE MEASUREMENT. A
 // partial sum is a smaller fleet than the real one, and enforcing it would
 // refuse work precisely when a store is already struggling.
-func (c *agentFleetCapacity) FleetCapacity(ctx context.Context, now time.Time) (FleetCapacity, error) {
+func (c *registryFleetCapacity) FleetCapacity(ctx context.Context, now time.Time) (FleetCapacity, error) {
 	tenantIDs, err := c.tenants.ListTenantIDs(ctx)
 	if err != nil {
 		return FleetCapacity{}, &AdmissionUndecidableError{Input: "tenants", Cause: err}
@@ -208,12 +208,12 @@ func (c *agentFleetCapacity) FleetCapacity(ctx context.Context, now time.Time) (
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return FleetCapacity{}, ctxErr
 		}
-		registered, listErr := c.agents.ListAgents(agentTenantContext(ctx, tenantID), tenantID, nil)
+		registered, listErr := c.agents.ListFleetNodes(fleetTenantContext(ctx, tenantID), tenantID, nil)
 		if listErr != nil {
 			return FleetCapacity{}, &AdmissionUndecidableError{Input: "agents of tenant " + tenantID, Cause: listErr}
 		}
 		for _, agent := range registered {
-			if !AgentAlive(agent, now, c.staleAfter) {
+			if !FleetNodeAlive(agent, now, c.staleAfter) {
 				continue
 			}
 			capacity.Agents++
@@ -239,7 +239,7 @@ func (c *agentFleetCapacity) FleetCapacity(ctx context.Context, now time.Time) (
 	return capacity, nil
 }
 
-// AgentAlive reports whether a registration is a daemon that will take work:
+// FleetNodeAlive reports whether a registration is a daemon that will take work:
 // its slots count towards the fleet, and the dispatcher may place a session on
 // it.
 //
@@ -253,13 +253,13 @@ func (c *agentFleetCapacity) FleetCapacity(ctx context.Context, now time.Time) (
 // crashed daemon offline — it cannot say so itself — so a record whose last
 // heartbeat is older than the bound still reads "running"; the dispatcher that
 // trusted the status routed every review to a connection that was refused.
-func AgentAlive(agent *AgentRegistration, now time.Time, staleAfter time.Duration) bool {
+func FleetNodeAlive(agent *FleetNode, now time.Time, staleAfter time.Duration) bool {
 	switch {
 	case agent == nil:
 		return false
-	case agent.DisabledAt != 0, agent.Status == AgentStatusDisabled:
+	case agent.DisabledAt != 0, agent.Status == FleetNodeStatusDisabled:
 		return false
-	case agent.Status == AgentStatusOffline, agent.Status == AgentStatusError:
+	case agent.Status == FleetNodeStatusOffline, agent.Status == FleetNodeStatusError:
 		return false
 	case agent.LastSeen <= 0:
 		return false

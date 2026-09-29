@@ -91,6 +91,14 @@ type SpendAuthority interface {
 	// operator seeing work stop needs to tell "the cap is spent" from "the
 	// ledger could not be read".
 	Authorize(ctx context.Context, req SpendAuthorizeRequest, now time.Time) error
+
+	// Check answers the same question WITHOUT TAKING ANYTHING: a half-open
+	// breaker admits rather than claiming its single trial. It is what a
+	// selection asks of every candidate before a strategy ranks them
+	// (go-quicbaas#1058, ruling F6); claiming a trial for each candidate
+	// would hold the probe on every account the strategy then passed over.
+	// Authorize, asked of the one account selected, is still the gate.
+	Check(ctx context.Context, req SpendAuthorizeRequest, now time.Time) error
 }
 
 // spendAuthority composes the quota authority and the breaker over one ledger.
@@ -135,6 +143,18 @@ func NewSpendAuthority(ledger ConsumptionLedger, kv interfaces.KVStore, holder s
 
 // Authorize implements SpendAuthority.
 func (a *spendAuthority) Authorize(ctx context.Context, req SpendAuthorizeRequest, now time.Time) error {
+	return a.decide(ctx, req, now, true)
+}
+
+// Check implements SpendAuthority.
+func (a *spendAuthority) Check(ctx context.Context, req SpendAuthorizeRequest, now time.Time) error {
+	return a.decide(ctx, req, now, false)
+}
+
+// decide is Authorize and Check. claimTrial says whether a half-open breaker
+// is admitted by winning its single trial (Authorize) or simply admitted as a
+// candidate that may be tried (Check).
+func (a *spendAuthority) decide(ctx context.Context, req SpendAuthorizeRequest, now time.Time, claimTrial bool) error {
 	if req.Account == nil {
 		return &SpendAuthorityConfigError{Field: "account", Message: "must not be nil"}
 	}
@@ -149,7 +169,7 @@ func (a *spendAuthority) Authorize(ctx context.Context, req SpendAuthorizeReques
 	if err := a.authorizeQuota(ctx, req, policy, now); err != nil {
 		return err
 	}
-	return a.authorizeBreaker(ctx, req.Account, policy, now)
+	return a.authorizeBreaker(ctx, req.Account, policy, now, claimTrial)
 }
 
 // authorizeQuota asks the quota authority and turns its refusal into this
@@ -201,7 +221,10 @@ var quotaRefusalsByReason = map[QuotaReason]func(account *Account, decision *Quo
 		}
 	},
 	QuotaReasonTokenLimit: func(account *Account, decision *QuotaDecision) error {
-		return newQuotaExhaustedError(account, decision, spendAxisTokens)
+		return newQuotaExhaustedError(account, decision, QuotaAxisTokens)
+	},
+	QuotaReasonCostLimit: func(account *Account, decision *QuotaDecision) error {
+		return newQuotaExhaustedError(account, decision, QuotaAxisEquivalentMicros)
 	},
 }
 
@@ -218,17 +241,10 @@ func newQuotaExhaustedError(account *Account, decision *QuotaDecision, axis stri
 	}
 }
 
-// spendAxisTokens names the metered axis in a refusal.
-//
-// ONE AXIS TODAY, and the constant outlives the removal of the second on
-// purpose: a refusal has to say what ran out, and "tokens" spelled inline at
-// the call sites is how the message and the field drift apart when a cost
-// axis is added back (go-quicbaas#791).
-const spendAxisTokens = "tokens"
-
 // authorizeBreaker derives the account's breaker state and admits a half-open
-// account only to the single probe holder.
-func (a *spendAuthority) authorizeBreaker(ctx context.Context, account *Account, policy AccountSpendPolicy, now time.Time) error {
+// account only to the single probe holder — or, when claimTrial is false, to
+// any caller, which takes nothing.
+func (a *spendAuthority) authorizeBreaker(ctx context.Context, account *Account, policy AccountSpendPolicy, now time.Time, claimTrial bool) error {
 	if policy.Breaker == nil {
 		return nil
 	}
@@ -246,6 +262,10 @@ func (a *spendAuthority) authorizeBreaker(ctx context.Context, account *Account,
 			Failures:  verdict.Failures,
 			OpenUntil: verdict.OpenUntil,
 		}
+	}
+
+	if !claimTrial {
+		return nil
 	}
 
 	// Half-open: exactly one caller finds out whether the account works

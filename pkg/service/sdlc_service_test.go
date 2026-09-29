@@ -119,6 +119,22 @@ func (a *sdlcFakeAgents) GetWorkflow(ctx context.Context, name string) (*orchest
 	return nil, &orchestration.WorkflowNotFoundError{TenantID: orchestration.TenantFromContext(ctx), Name: name}
 }
 
+// ListTasksPage answers the empty page: no test in this file seeds a
+// blocked task, but the attention inbox always pages tasks to build its
+// facets, and the embedded orchestration.AgentService is nil — without an
+// override here every Attention().List call panics on a nil interface.
+func (a *sdlcFakeAgents) ListTasksPage(context.Context, string, *orchestration.TaskFilter, *orchestration.Page) (*orchestration.PageResult[*orchestration.Task], error) {
+	return &orchestration.PageResult[*orchestration.Task]{Items: []*orchestration.Task{}}, nil
+}
+
+// ListFleetNodesPage answers ErrFleetRegistryRequired, exactly what the real
+// agentServiceImpl answers when no fleet registry is configured — this rig
+// wires no fleet, and the attention inbox's agent_offline alert already
+// degrades on that sentinel (see AttentionService.agentOfflineAlerts).
+func (a *sdlcFakeAgents) ListFleetNodesPage(context.Context, string, *orchestration.FleetNodeFilter, *orchestration.Page) (*orchestration.PageResult[*orchestration.FleetNode], error) {
+	return nil, orchestration.ErrFleetRegistryRequired
+}
+
 func (a *sdlcFakeAgents) RegisterWorkflow(ctx context.Context, def *orchestration.WorkflowDefinition) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -134,15 +150,22 @@ type sdlcFakeSecrets struct {
 	SecretsService
 	secrets map[string][]byte
 	err     error
+	// errFor fails the read of one secret only, as a store that cannot
+	// answer for it.
+	errFor map[string]error
 }
 
 func (s *sdlcFakeSecrets) GetSecret(_ context.Context, req *GetSecretRequest) (*GetSecretResponse, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
+	if err := s.errFor[req.SecretID]; err != nil {
+		return nil, err
+	}
 	data, ok := s.secrets[req.SecretID]
 	if !ok {
-		return nil, nil
+		// What the real secrets service answers for an absent secret.
+		return nil, &quicbaaserrors.QBError{Code: quicbaaserrors.ErrNotFound, Op: "secrets.GetSecret"}
 	}
 	return &GetSecretResponse{Data: data}, nil
 }
@@ -166,17 +189,21 @@ func ensureSDLCSeams(t *testing.T) {
 }
 
 type sdlcServiceRig struct {
-	svc      *SDLCService
-	projects *sdlcFakeProjects
-	agents   *sdlcFakeAgents
-	secrets  *sdlcFakeSecrets
-	store    *sdlc.Store
+	svc          *SDLCService
+	projects     *sdlcFakeProjects
+	agents       *sdlcFakeAgents
+	agentCatalog orchestration.AgentCatalogStore
+	secrets      *sdlcFakeSecrets
+	store        *sdlc.Store
 
 	// forge is a STATEFUL in-memory Gitea, not a double: binding a project
 	// now provisions that repository's webhook and labels, so a rig whose
 	// forge answered canned values would prove nothing about whether the
 	// bind actually onboarded anything. See pkg/testutil/giteafake.
 	forge *giteafake.Server
+
+	// audit records every issue filing the service audits.
+	audit *recordingIssueAuditor
 }
 
 // sdlcTestPublicURL is the node origin the rig's onboarder provisions
@@ -201,6 +228,44 @@ func sdlcTestProjectRecord() *orchestration.Project {
 	}
 }
 
+// The Agents the service tests' bindings reference.
+const (
+	serviceCoderAgent    = "claude-coder"
+	serviceReviewerAgent = "codex-reviewer"
+	serviceQwenAgent     = "qwen-reviewer"
+)
+
+// serviceAgentCatalog is a real in-memory catalog seeded with the Agents the
+// service tests' bindings reference.
+func serviceAgentCatalog(t *testing.T, tenants ...string) orchestration.AgentCatalogStore {
+	t.Helper()
+	store := orchestration.NewInMemoryAgentCatalogStore()
+	for _, tenantID := range append([]string{sdlcTestTenant}, tenants...) {
+		if _, err := store.GetAgent(context.Background(), tenantID, serviceCoderAgent); err == nil {
+			continue
+		}
+		seedServiceAgents(t, store, tenantID)
+	}
+	return store
+}
+
+// seedServiceAgents creates the service tests' Agents in tenantID.
+func seedServiceAgents(t *testing.T, store orchestration.AgentCatalogStore, tenantID string) {
+	t.Helper()
+	for _, agent := range []orchestration.Agent{
+		{ID: serviceCoderAgent, Name: "Claude coder", Backend: "claude", Model: "claude-opus-5",
+			Roles: []orchestration.AgentRole{orchestration.AgentRoleCoding, orchestration.AgentRoleTriage}},
+		{ID: serviceReviewerAgent, Name: "Codex reviewer", Backend: "codex", Model: "gpt-5.5",
+			Roles: []orchestration.AgentRole{orchestration.AgentRoleReview}},
+		{ID: serviceQwenAgent, Name: "Qwen reviewer", Backend: "ollama-agent", Model: "qwen3.8:27b-q4_K_M",
+			Roles: []orchestration.AgentRole{orchestration.AgentRoleReview}},
+	} {
+		if err := store.CreateAgent(context.Background(), tenantID, &agent); err != nil {
+			t.Fatalf("seed agent %s: %v", agent.ID, err)
+		}
+	}
+}
+
 func sdlcTestBinding() *sdlc.ProjectBinding {
 	return &sdlc.ProjectBinding{
 		ProjectID: sdlcTestProject,
@@ -209,7 +274,7 @@ func sdlcTestBinding() *sdlc.ProjectBinding {
 			TriggerLabel: "task:ready", WebhookSecretRef: "wh", TokenSecretRef: "tok",
 		},
 		Strategy:        sdlc.GitHubFlowName,
-		Worker:          sdlc.WorkerConfig{Backend: "claude", Model: "claude-opus-5"},
+		Worker:          orchestration.AgentRefTo(serviceCoderAgent),
 		Verification:    []string{"make build", "make test"},
 		Review:          sdlc.ReviewPolicy{RequiredApprovals: 1},
 		MaxReviewRounds: 3,
@@ -233,21 +298,36 @@ func newSDLCServiceRig(t *testing.T) *sdlcServiceRig {
 		t.Fatal(err)
 	}
 	rig := &sdlcServiceRig{
-		projects: &sdlcFakeProjects{projects: map[string]*orchestration.Project{sdlcTestProject: sdlcTestProjectRecord()}},
-		agents:   &sdlcFakeAgents{},
-		secrets:  &sdlcFakeSecrets{secrets: map[string][]byte{"tok": []byte("token"), "wh": []byte("secret")}},
-		store:    store,
-		forge:    giteafake.New(t, "acme", "api"),
+		projects:     &sdlcFakeProjects{projects: map[string]*orchestration.Project{sdlcTestProject: sdlcTestProjectRecord()}},
+		agents:       &sdlcFakeAgents{},
+		secrets:      &sdlcFakeSecrets{secrets: map[string][]byte{"tok": []byte("token"), "wh": []byte("secret")}},
+		store:        store,
+		forge:        giteafake.New(t, "acme", "api"),
+		audit:        &recordingIssueAuditor{},
+		agentCatalog: serviceAgentCatalog(t),
 	}
 	svc, err := NewSDLCService(SDLCServiceConfig{
 		Store: store, Routes: routes, Projects: rig.projects, ProjectWriter: rig.projects,
-		Secrets: rig.secrets, Guard: guard, WebhookPublicURL: sdlcTestPublicURL,
+		Secrets: rig.secrets, Guard: guard, Verification: sdlcTestVerificationGuard(t),
+		WebhookPublicURL: sdlcTestPublicURL, Tasks: rig.agents,
+		Auditor: rig.audit, Agents: rig.agentCatalog,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	rig.svc = svc
 	return rig
+}
+
+// sdlcTestVerificationGuard is the operator allowlist the test bindings'
+// verification commands are admitted by.
+func sdlcTestVerificationGuard(t *testing.T) orchestration.ExecutionGuard {
+	t.Helper()
+	guard, err := orchestration.NewExecutionGuard([]string{"make build", "make test", "make lint"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return guard
 }
 
 // =============================================================================
@@ -315,15 +395,35 @@ func TestSDLCService_BindRefusesWhatThePipelineCannotDeliver(t *testing.T) {
 		"repo host": {func(r *sdlcServiceRig, _ *sdlc.ProjectBinding) {
 			r.projects.projects[sdlcTestProject].Git.RepoURL = "https://github.com/acme/api.git"
 		}, sdlc.ErrInvalidInput, "github.com"},
+		"http context repo": {func(r *sdlcServiceRig, _ *sdlc.ProjectBinding) {
+			r.projects.projects[sdlcTestProject].ContextRepos = []orchestration.ContextRepo{
+				{Name: "handbook", RepoURL: "http://forge.test/acme/handbook", Ref: "main"},
+			}
+		}, sdlc.ErrInvalidInput, `context repository "handbook" refused`},
+		"context repo on an unpinned ssh host": {func(r *sdlcServiceRig, _ *sdlc.ProjectBinding) {
+			r.projects.projects[sdlcTestProject].ContextRepos = []orchestration.ContextRepo{
+				{Name: "handbook", RepoURL: "ssh://git@forge.test/acme/handbook.git", Ref: "main"},
+			}
+		}, sdlc.ErrInvalidInput, "cannot be verified"},
 		"unsigned": {func(r *sdlcServiceRig, _ *sdlc.ProjectBinding) {
 			r.projects.projects[sdlcTestProject].Git.Signing.Enabled = false
 		}, sdlc.ErrInvalidInput, "unsigned"},
 		"signing without key": {func(r *sdlcServiceRig, _ *sdlc.ProjectBinding) {
 			r.projects.projects[sdlcTestProject].Git.Signing.Key = orchestration.KMSKeyRef{}
 		}, nil, "signing"},
-		"token missing":   {func(r *sdlcServiceRig, _ *sdlc.ProjectBinding) { delete(r.secrets.secrets, "tok") }, sdlc.ErrInvalidInput, "token_secret_ref"},
-		"webhook missing": {func(r *sdlcServiceRig, _ *sdlc.ProjectBinding) { delete(r.secrets.secrets, "wh") }, sdlc.ErrWebhookSecretMissing, "resolved empty"},
-		"secrets down":    {func(r *sdlcServiceRig, _ *sdlc.ProjectBinding) { r.secrets.err = errors.New("sealed") }, nil, "sealed"},
+		"token empty":   {func(r *sdlcServiceRig, _ *sdlc.ProjectBinding) { r.secrets.secrets["tok"] = nil }, sdlc.ErrInvalidInput, "token_secret_ref"},
+		"webhook empty": {func(r *sdlcServiceRig, _ *sdlc.ProjectBinding) { r.secrets.secrets["wh"] = nil }, sdlc.ErrWebhookSecretMissing, "resolved empty"},
+		"token missing": {func(r *sdlcServiceRig, _ *sdlc.ProjectBinding) { delete(r.secrets.secrets, "tok") }, nil,
+			`forge.token_secret_ref: secret "tok" does not exist`},
+		"webhook missing": {func(r *sdlcServiceRig, _ *sdlc.ProjectBinding) { delete(r.secrets.secrets, "wh") }, nil,
+			`forge.webhook_secret_ref: secret "wh" does not exist`},
+		"secrets down": {func(r *sdlcServiceRig, _ *sdlc.ProjectBinding) { r.secrets.err = errors.New("sealed") }, nil,
+			`forge.token_secret_ref: secret "tok" cannot be verified: sealed`},
+		// X14: go-blockstore's binding was accepted with this command and
+		// every attempt was refused after a paid worker turn.
+		"verification off the allowlist": {func(_ *sdlcServiceRig, b *sdlc.ProjectBinding) {
+			b.Verification = []string{"make build", "make fmt-check vet golangci-lint guards"}
+		}, orchestration.ErrCommandRefused, `verification[1] "make fmt-check vet golangci-lint guards"`},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -351,6 +451,19 @@ func TestSDLCService_BindRefusesWhatThePipelineCannotDeliver(t *testing.T) {
 	}
 }
 
+// TestSDLCService_BindAcceptsASameForgeContextRepo proves the context-repo
+// check refuses only what the worker could not clone: an https context
+// repository on the project's own forge binds.
+func TestSDLCService_BindAcceptsASameForgeContextRepo(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	rig.projects.projects[sdlcTestProject].ContextRepos = []orchestration.ContextRepo{
+		{Name: "handbook", RepoURL: "https://forge.test/acme/handbook.git", Ref: "main"},
+	}
+	if _, err := rig.svc.Bind(context.Background(), sdlcTestTenant, rig.binding()); err != nil {
+		t.Fatalf("bind refused a same-forge https context repository: %v", err)
+	}
+}
+
 func TestSDLCService_PortsAndNudge(t *testing.T) {
 	rig := newSDLCServiceRig(t)
 	ctx := context.Background()
@@ -374,7 +487,7 @@ func TestSDLCService_PortsAndNudge(t *testing.T) {
 	if s, err := rig.svc.WebhookSecret(ctx, sdlcTestTenant, ""); err != nil || s != nil {
 		t.Fatalf("empty ref: %q %v", s, err)
 	}
-	if s, err := rig.svc.WebhookSecret(ctx, sdlcTestTenant, "absent"); err != nil || s != nil {
+	if s, err := rig.svc.WebhookSecret(ctx, sdlcTestTenant, "absent"); !quicbaaserrors.IsNotFound(err) || s != nil {
 		t.Fatalf("absent secret: %q %v", s, err)
 	}
 	if _, err := rig.svc.Delivery(ctx, sdlcTestTenant, "task-x"); !errors.Is(err, sdlc.ErrNotFound) {
@@ -415,6 +528,7 @@ func TestNewSDLCService_RefusesIncompleteWiring(t *testing.T) {
 	base := SDLCServiceConfig{
 		Store: rig.store, Routes: rig.svc.Routes(), Projects: rig.projects,
 		ProjectWriter: rig.projects, Secrets: rig.secrets, WebhookPublicURL: sdlcTestPublicURL,
+		Tasks: rig.agents,
 	}
 	for name, mutate := range map[string]func(*SDLCServiceConfig){
 		"store":          func(c *SDLCServiceConfig) { c.Store = nil },
@@ -422,6 +536,7 @@ func TestNewSDLCService_RefusesIncompleteWiring(t *testing.T) {
 		"projects":       func(c *SDLCServiceConfig) { c.Projects = nil },
 		"secrets":        func(c *SDLCServiceConfig) { c.Secrets = nil },
 		"project writer": func(c *SDLCServiceConfig) { c.ProjectWriter = nil },
+		"tasks":          func(c *SDLCServiceConfig) { c.Tasks = nil },
 		// A node that cannot say where it lives would bind projects whose
 		// forge webhooks point nowhere, and report each one provisioned.
 		"public url":          func(c *SDLCServiceConfig) { c.WebhookPublicURL = "" },
@@ -449,7 +564,7 @@ func TestNewSDLCService_TheForgeTransportReachesTheAdapter(t *testing.T) {
 	transport := sdlc.ForgeTransport{ReadTimeout: 7 * time.Second, WriteTimeout: 8 * time.Second}
 	svc, err := NewSDLCService(SDLCServiceConfig{
 		Store: rig.store, Routes: rig.svc.Routes(), Projects: rig.projects, ProjectWriter: rig.projects,
-		Secrets: rig.secrets, WebhookPublicURL: sdlcTestPublicURL, ForgeTransport: transport,
+		Secrets: rig.secrets, WebhookPublicURL: sdlcTestPublicURL, ForgeTransport: transport, Tasks: rig.agents, Agents: rig.agentCatalog,
 	})
 	if err != nil {
 		t.Fatalf("NewSDLCService: %v", err)
@@ -552,12 +667,14 @@ func newSDLCServiceRigForTenant(t *testing.T, ownerTenant, projectID string, log
 		secrets:  &sdlcFakeSecrets{secrets: map[string][]byte{"tok": []byte("token"), "wh": []byte("secret")}},
 		store:    store,
 		forge:    giteafake.New(t, "acme", "api"),
+
+		agentCatalog: serviceAgentCatalog(t, ownerTenant),
 	}
 	logger := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	svc, err := NewSDLCService(SDLCServiceConfig{
 		Store: store, Routes: routes, Projects: rig.projects, ProjectWriter: rig.projects,
-		Secrets: rig.secrets, Guard: guard, Logger: logger,
-		WebhookPublicURL: sdlcTestPublicURL,
+		Secrets: rig.secrets, Guard: guard, Logger: logger, Tasks: rig.agents, Agents: rig.agentCatalog,
+		WebhookPublicURL: sdlcTestPublicURL, Verification: sdlcTestVerificationGuard(t),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -643,7 +760,7 @@ func TestSDLCService_BindRefusesReviewerWithUnresolvableToken(t *testing.T) {
 	binding := rig.binding()
 	binding.ProjectID = projectID
 	binding.Reviewer = sdlc.ReviewerConfig{
-		Backend:        "codex",
+		Agent:          serviceReviewerAgent,
 		Login:          "codex",
 		TokenSecretRef: "sdlc/reviewer/absent/token",
 	}
@@ -655,6 +772,7 @@ func TestSDLCService_BindRefusesReviewerWithUnresolvableToken(t *testing.T) {
 	if !strings.Contains(err.Error(), "sdlc/reviewer/absent/token") {
 		t.Fatalf("the refusal must name the secret that could not be resolved, got: %v", err)
 	}
+	requireReferenceNotFound(t, err, "reviewer.token_secret_ref")
 }
 
 // TestSDLCService_BindRefusesReviewerWithNoTokenRef covers the other way to
@@ -667,7 +785,7 @@ func TestSDLCService_BindRefusesReviewerWithNoTokenRef(t *testing.T) {
 
 	binding := rig.binding()
 	binding.ProjectID = projectID
-	binding.Reviewer = sdlc.ReviewerConfig{Backend: "codex", Login: "codex"}
+	binding.Reviewer = sdlc.ReviewerConfig{Agent: serviceReviewerAgent, Login: "codex"}
 
 	_, err := rig.svc.Bind(context.Background(), sdlcTestTenant, binding)
 	if err == nil {
@@ -711,7 +829,7 @@ func TestSDLCService_BindAcceptsReviewerWithResolvableToken(t *testing.T) {
 	binding := rig.binding()
 	binding.ProjectID = projectID
 	binding.Reviewer = sdlc.ReviewerConfig{
-		Backend:        "codex",
+		Agent:          serviceReviewerAgent,
 		Login:          "codex",
 		TokenSecretRef: "sdlc/reviewer/go-luks2/token",
 	}
@@ -839,5 +957,118 @@ func TestSDLCService_UnbindSurvivesAForgeThatRefusesTheAccount(t *testing.T) {
 	}
 	if _, err := rig.svc.Binding(ctx, sdlcTestTenant, projectID); !errors.Is(err, sdlc.ErrNotFound) {
 		t.Fatalf("the binding must be gone after Unbind, got: %v", err)
+	}
+}
+
+// =============================================================================
+// Attention inbox — account_error wiring
+// =============================================================================
+
+// TestSDLCService_AttentionReportsAccountErrorWhenAccountsIsWired proves the
+// SDLCServiceConfig.Accounts wiring reaches the attention inbox: a pooled
+// account whose last credential refresh failed shows up as an
+// account_error alert once an orchestration.AccountStore is handed to the
+// service.
+func TestSDLCService_AttentionReportsAccountErrorWhenAccountsIsWired(t *testing.T) {
+	ensureSDLCSeams(t)
+	store, err := sdlc.NewStore(&sdlcMemoryResolver{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := qrdbnode.Shared(t)
+	routes, err := sdlc.NewWebhookRouteIndex(n.Transaction, n.KV)
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard, err := sdlc.NewRepoHostGuard([]string{"forge.test"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projects := &sdlcFakeProjects{projects: map[string]*orchestration.Project{sdlcTestProject: sdlcTestProjectRecord()}}
+	secrets := &sdlcFakeSecrets{secrets: map[string][]byte{"tok": []byte("token"), "wh": []byte("secret")}}
+	accounts := orchestration.NewInMemoryAccountStore()
+	ctx := context.Background()
+	if err := accounts.Create(ctx, &orchestration.Account{
+		ID: "acct-1", TenantID: sdlcTestTenant, Provider: orchestration.AccountProviderClaude,
+		DisplayName: "team-max", Status: orchestration.AccountStatusError, LastError: "refresh: 401",
+	}); err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+
+	svc, err := NewSDLCService(SDLCServiceConfig{
+		Store: store, Routes: routes, Projects: projects, ProjectWriter: projects,
+		Secrets: secrets, Guard: guard, WebhookPublicURL: sdlcTestPublicURL, Tasks: &sdlcFakeAgents{},
+		Accounts: accounts, Agents: serviceAgentCatalog(t), Verification: sdlcTestVerificationGuard(t),
+	})
+	if err != nil {
+		t.Fatalf("NewSDLCService: %v", err)
+	}
+
+	page, err := svc.Attention().List(ctx, sdlcTestTenant, sdlc.AttentionFilter{Kind: sdlc.AttentionAccountError}, &orchestration.Page{})
+	if err != nil {
+		t.Fatalf("Attention().List: %v", err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("len(Items) = %d, want 1 erroring account", len(page.Items))
+	}
+	if !strings.Contains(page.Items[0].Message, "refresh: 401") {
+		t.Errorf("Message = %q, want it to carry the account's last error", page.Items[0].Message)
+	}
+}
+
+// TestSDLCService_AttentionOmitsAccountErrorWhenAccountsIsNil proves an
+// unwired Accounts is an honest "no pooled accounts on this node", not a
+// refusal to start or an error on every List call.
+func TestSDLCService_AttentionOmitsAccountErrorWhenAccountsIsNil(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	ctx := context.Background()
+
+	page, err := rig.svc.Attention().List(ctx, sdlcTestTenant, sdlc.AttentionFilter{Kind: sdlc.AttentionAccountError}, &orchestration.Page{})
+	if err != nil {
+		t.Fatalf("Attention().List: %v", err)
+	}
+	if len(page.Items) != 0 {
+		t.Fatalf("Items = %v, want none: no Accounts store was wired", page.Items)
+	}
+}
+
+// TestSDLCService_AdoptIssue_RefusesBeforeTouchingAnything: the verb reaches
+// the adopter, which refuses a request naming no issue and a project with no
+// binding, and no task is created for either.
+func TestSDLCService_AdoptIssue_RefusesBeforeTouchingAnything(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	ctx := context.Background()
+	if _, err := rig.svc.AdoptIssue(ctx, sdlcTestTenant, sdlc.AdoptIssueRequest{ProjectID: sdlcTestProject}); !errors.Is(err, sdlc.ErrInvalidInput) {
+		t.Fatalf("err = %v, want ErrInvalidInput for no issue", err)
+	}
+	if _, err := rig.svc.AdoptIssue(ctx, sdlcTestTenant, sdlc.AdoptIssueRequest{ProjectID: sdlcTestProject, Issue: 7}); !errors.Is(err, sdlc.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound for an unbound project", err)
+	}
+}
+
+// TestSDLCService_OnboardRefusesABindingOffTheAllowlist: a binding written
+// before the allowlist narrowed is refused by Onboard, naming the command,
+// and one the allowlist admits onboards.
+func TestSDLCService_OnboardRefusesABindingOffTheAllowlist(t *testing.T) {
+	rig := newSDLCServiceRig(t)
+	ctx := context.Background()
+	if _, err := rig.svc.Bind(ctx, sdlcTestTenant, rig.binding()); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if _, err := rig.svc.Onboard(ctx, sdlcTestTenant, sdlcTestProject); err != nil {
+		t.Fatalf("Onboard of an allowlisted binding: %v", err)
+	}
+	stale, err := rig.store.GetBinding(ctx, sdlcTestTenant, sdlcTestProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale.Verification = []string{"make lint-everything"}
+	if err := rig.store.PutBinding(ctx, sdlcTestTenant, stale); err != nil {
+		t.Fatal(err)
+	}
+	_, err = rig.svc.Onboard(ctx, sdlcTestTenant, sdlcTestProject)
+	var refused *sdlc.VerificationCommandRefusedError
+	if !errors.As(err, &refused) || refused.Command != "make lint-everything" {
+		t.Fatalf("Onboard = %v, want the refused command named", err)
 	}
 }

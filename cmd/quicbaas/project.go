@@ -25,10 +25,14 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/spend"
+
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
+	agentsSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/agents"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/page"
 	projectSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/project"
 )
 
@@ -37,38 +41,48 @@ import (
 // =============================================================================
 
 var (
-	projectOutputFmt        string
-	projectName             string
-	projectDescription      string
-	projectClearDescription bool
-	projectWorkspaceAgentID string
-	projectWorkspacePath    string
-	projectHostAffinity     string
-	projectDefaultLeadAgent string
-	projectGitRepoURL       string
-	projectGitBranch        string
-	projectGitCurrentSHA    string
-	projectDefaultWorkflow  string
-	projectClearDefaultWF   bool
-	projectAutonomous       bool
-	projectContextRepos     []string
-	projectClearContextRepo bool
-	projectGitAuthorName    string
-	projectGitAuthorEmail   string
-	projectGitSigningOn     bool
-	projectGitSigningAlg    string
-	projectGitSigningKey    string
-	projectGitSigningScope  string
-	projectGitSigningOwner  string
-	projectGitSSHKey        string
-	projectGitSSHKeyScope   string
-	projectGitSSHKeyOwner   string
-	projectTokenBudget      int64
-	projectGPUMinutes       int64
-	projectMaxConcurrency   int
-	projectMetadata         map[string]string
-	projectAgentID          string
-	projectRole             string
+	// projectListPage pages, orders and searches `project list`.
+	projectListPage pageFlags
+
+	projectOutputFmt            string
+	projectName                 string
+	projectDescription          string
+	projectClearDescription     bool
+	projectWorkspaceFleetNodeID string
+	projectWorkspacePath        string
+	projectHostAffinity         string
+	projectDefaultLeadAgent     string
+	projectGitRepoURL           string
+	projectGitBranch            string
+	projectGitCurrentSHA        string
+	projectDefaultWorkflow      string
+	projectClearDefaultWF       bool
+	projectAutonomous           bool
+	projectContextRepos         []string
+	projectClearContextRepo     bool
+	projectGitAuthorName        string
+	projectGitAuthorEmail       string
+	projectGitSigningOn         bool
+	projectGitSigningAlg        string
+	projectGitSigningKey        string
+	projectGitSigningScope      string
+	projectGitSigningOwner      string
+	projectGitSSHKey            string
+	projectGitSSHKeyScope       string
+	projectGitSSHKeyOwner       string
+	projectGitRetireKey         string
+	projectGitRetireScope       string
+	projectGitRetireOwner       string
+	projectGitRetiredAt         string
+	projectGPUMinutes           int64
+	projectMaxConcurrency       int
+	projectWorkspaceTier        string
+	projectWorkspaceTmpfsMB     int
+	projectContainerMemMB       int
+	projectSessionRotation      string
+	projectMetadata             map[string]string
+	projectFleetNodeID          string
+	projectRole                 string
 )
 
 // =============================================================================
@@ -211,8 +225,8 @@ Examples:
   quicbaas project list --output json
   quicbaas project get proj_abc123
   quicbaas project get --name web-api
-  quicbaas project update proj_abc123 --token-budget 500000
-  quicbaas project grant-role proj_abc123 --agent agent_abc --role lead
+  quicbaas project update proj_abc123 --spend-window name=weekly,size=168h,usd=250
+  quicbaas project grant-role proj_abc123 --node node_abc --role lead
   quicbaas project delete proj_abc123`,
 	}
 
@@ -223,6 +237,8 @@ Examples:
 	cmd.AddCommand(newProjectGetCommand())
 	cmd.AddCommand(newProjectUpdateCommand())
 	cmd.AddCommand(newProjectDeleteCommand())
+	cmd.AddCommand(newProjectParkCommand())
+	cmd.AddCommand(newProjectResumeCommand())
 	cmd.AddCommand(newProjectGrantRoleCommand())
 	cmd.AddCommand(newProjectRevokeRoleCommand())
 
@@ -232,10 +248,10 @@ Examples:
 // addProjectMutationFlags registers the flags shared by create and update.
 func addProjectMutationFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&projectDescription, "description", "", "Human-readable project description")
-	cmd.Flags().StringVar(&projectWorkspaceAgentID, "workspace-agent", "", "ID of the agent that owns the workspace")
+	cmd.Flags().StringVar(&projectWorkspaceFleetNodeID, "workspace-node", "", "ID of the fleet node that owns the workspace")
 	cmd.Flags().StringVar(&projectWorkspacePath, "workspace-path", "", "Filesystem path to the workspace on the agent host")
 	cmd.Flags().StringVar(&projectHostAffinity, "host-affinity", "", "Pin project operations to a preferred agent host")
-	cmd.Flags().StringVar(&projectDefaultLeadAgent, "default-lead-agent", "", "Default lead agent ID for workflow runs")
+	cmd.Flags().StringVar(&projectDefaultLeadAgent, "default-lead-agent", "", "The Agent or pool that leads a job under this project: <agent-id>, agent:<id> or pool:<id>")
 	cmd.Flags().StringVar(&projectGitRepoURL, "git-repo", "", "Remote git repository URL")
 	cmd.Flags().StringVar(&projectGitBranch, "git-branch", "", "Default git branch (e.g. main)")
 	cmd.Flags().StringVar(&projectDefaultWorkflow, "default-workflow", "", "Tenant-scoped workflow a Task auto-spawns into (must be registered)")
@@ -251,9 +267,13 @@ func addProjectMutationFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&projectGitSSHKey, "git-ssh-key", "", "KMS SSH key an ssh:// repository is reached with (defaults to the signing key)")
 	cmd.Flags().StringVar(&projectGitSSHKeyScope, "git-ssh-key-scope", "", "KMS SSH key scope (user, tenant, service)")
 	cmd.Flags().StringVar(&projectGitSSHKeyOwner, "git-ssh-key-owner", "", "KMS SSH key owner")
-	cmd.Flags().Int64Var(&projectTokenBudget, "token-budget", 0, "Maximum LLM token budget (0 = unlimited)")
+	addSpendFlags(cmd)
 	cmd.Flags().Int64Var(&projectGPUMinutes, "gpu-minutes", 0, "Maximum GPU compute budget in minutes (0 = unlimited)")
 	cmd.Flags().IntVar(&projectMaxConcurrency, "max-concurrency", 0, "Maximum concurrent workflow runs (0 = unlimited)")
+	cmd.Flags().StringVar(&projectWorkspaceTier, "workspace-tier", "", "Storage tier of the sandboxed checkout: persistent (host bind mount) or ephemeral (sized tmpfs in the container)")
+	cmd.Flags().IntVar(&projectWorkspaceTmpfsMB, "workspace-tmpfs-mb", 0, "Size of the ephemeral tier's tmpfs checkout in MiB (0 = unsized; ephemeral tier only)")
+	cmd.Flags().IntVar(&projectContainerMemMB, "container-memory-mb", 0, "Container memory limit in MiB (0 = the runtime's default)")
+	cmd.Flags().StringVar(&projectSessionRotation, "session-rotation", "", "What a persistent worker session does when its pooled provider account rotates: resume (continue the same conversation; the default) or fresh (start a new conversation on the same branch)")
 	cmd.Flags().StringToStringVar(&projectMetadata, "metadata", nil, "Project metadata as key=value pairs (repeatable)")
 }
 
@@ -272,8 +292,8 @@ Examples:
   quicbaas project create --name web-api
   quicbaas project create --name web-api --description "Public API service" \
     --git-repo https://github.com/acme/web-api --git-branch main
-  quicbaas project create --name ml-train --workspace-agent agent_abc \
-    --workspace-path /data/projects/ml-train --token-budget 1000000 --output json`,
+  quicbaas project create --name ml-train --workspace-node node_abc \
+    --workspace-path /data/projects/ml-train --spend-window name=daily,size=24h,tokens=1000000 --output json`,
 		Args: cobra.NoArgs,
 		RunE: runProjectCreate,
 	}
@@ -299,24 +319,36 @@ func runProjectCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return formatError(err)
 	}
+	spendLimits, err := spendLimitsFromFlags(cmd)
+	if err != nil {
+		return formatError(err)
+	}
+	var projectSpendOnCreate spend.Limits
+	if spendLimits != nil {
+		projectSpendOnCreate = *spendLimits
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
+	defaultLead, err := agentsSDK.ParseAgentRef(projectDefaultLeadAgent)
+	if err != nil {
+		return formatError(err)
+	}
 	info, err := client.Create(ctx, &projectSDK.CreateProjectRequest{
-		TenantID:         globalTenantID,
-		Name:             projectName,
-		Description:      projectDescription,
-		WorkspaceAgentID: projectWorkspaceAgentID,
-		WorkspacePath:    projectWorkspacePath,
-		HostAffinity:     projectHostAffinity,
-		DefaultLeadAgent: projectDefaultLeadAgent,
-		GitRepoURL:       projectGitRepoURL,
-		GitDefaultBranch: projectGitBranch,
-		TokenBudget:      projectTokenBudget,
-		GPUMinutes:       projectGPUMinutes,
-		MaxConcurrency:   projectMaxConcurrency,
-		Metadata:         projectMetadata,
+		TenantID:             globalTenantID,
+		Name:                 projectName,
+		Description:          projectDescription,
+		WorkspaceFleetNodeID: projectWorkspaceFleetNodeID,
+		WorkspacePath:        projectWorkspacePath,
+		HostAffinity:         projectHostAffinity,
+		DefaultLeadAgent:     defaultLead,
+		GitRepoURL:           projectGitRepoURL,
+		GitDefaultBranch:     projectGitBranch,
+		Spend:                projectSpendOnCreate,
+		GPUMinutes:           projectGPUMinutes,
+		MaxConcurrency:       projectMaxConcurrency,
+		Metadata:             projectMetadata,
 
 		DefaultWorkflow:     projectDefaultWorkflow,
 		Autonomous:          projectAutonomous,
@@ -331,6 +363,10 @@ func runProjectCreate(cmd *cobra.Command, args []string) error {
 		GitSSHKeyName:       projectGitSSHKey,
 		GitSSHKeyScope:      projectGitSSHKeyScope,
 		GitSSHKeyOwner:      projectGitSSHKeyOwner,
+		WorkspaceTier:       projectSDK.WorkspaceTier(projectWorkspaceTier),
+		SessionRotation:     projectSDK.SessionRotationPolicy(projectSessionRotation),
+		WorkspaceTmpfsMB:    projectWorkspaceTmpfsMB,
+		ContainerMemoryMB:   projectContainerMemMB,
 	})
 	if err != nil {
 		return formatError(err)
@@ -345,17 +381,21 @@ func runProjectCreate(cmd *cobra.Command, args []string) error {
 
 // newProjectListCommand creates the project list subcommand.
 func newProjectListCommand() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List projects",
-		Long: `List every project in the tenant named by --tenant.
+		Long: `List the projects in the tenant named by --tenant, one page at a time.
 
 Examples:
   quicbaas project list
-  quicbaas project list --tenant acme --output json`,
+  quicbaas project list --tenant acme --output json
+  quicbaas project list --search web --sort name:desc --limit 50
+  quicbaas project list --all`,
 		Args: cobra.NoArgs,
 		RunE: runProjectList,
 	}
+	projectListPage.bind(cmd)
+	return cmd
 }
 
 // runProjectList executes the project list command.
@@ -368,12 +408,19 @@ func runProjectList(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	resp, err := client.List(ctx, globalTenantID)
+	projects, env, err := fetchPages(&projectListPage, func(params page.Params) ([]*projectSDK.ProjectInfo, page.Envelope, error) {
+		resp, err := client.List(ctx, &projectSDK.ListProjectsRequest{TenantID: globalTenantID, Params: params})
+		if err != nil || resp == nil {
+			return nil, page.Envelope{}, err
+		}
+		return resp.Projects, resp.Envelope, nil
+	})
 	if err != nil {
 		return formatError(err)
 	}
 
-	return formatProjectList(resp, projectOutputFmt, os.Stdout)
+	resp := &projectSDK.ListProjectsResponse{Projects: projects, Envelope: env}
+	return formatProjectList(resp, projectOutputFmt, cmd.OutOrStdout())
 }
 
 // =============================================================================
@@ -444,9 +491,12 @@ Use --clear-description to remove the description (passing an empty
 
 Examples:
   quicbaas project update proj_abc123 --description "Now with GPUs"
-  quicbaas project update proj_abc123 --token-budget 500000 --gpu-minutes 120
+  quicbaas project update proj_abc123 --gpu-minutes 120 --spend-window name=monthly,size=720h,usd=500
+  quicbaas project update proj_abc123 --clear-spend
   quicbaas project update proj_abc123 --clear-description
-  quicbaas project update proj_abc123 --git-sha 3f1a9c2 --output json`,
+  quicbaas project update proj_abc123 --git-sha 3f1a9c2 --output json
+  quicbaas project update proj_abc123 --git-signing-key signing-kms \
+      --git-signing-retire-key signing --git-signing-retired-at 2026-09-24T22:15:00Z`,
 		Args: cobra.ExactArgs(1),
 		RunE: runProjectUpdate,
 	}
@@ -456,6 +506,10 @@ Examples:
 	cmd.Flags().StringVar(&projectGitCurrentSHA, "git-sha", "", "Record the latest observed commit SHA")
 	cmd.Flags().BoolVar(&projectClearDefaultWF, "clear-default-workflow", false, "Remove the default workflow so Tasks are never auto-spawned")
 	cmd.Flags().BoolVar(&projectClearContextRepo, "clear-context-repos", false, "Remove every context repository from the project")
+	cmd.Flags().StringVar(&projectGitRetireKey, "git-signing-retire-key", "", "KMS key the project signed with before its current one; kept in the trusted signing history so commits it signed before its retirement still verify")
+	cmd.Flags().StringVar(&projectGitRetireScope, "git-signing-retire-key-scope", "", "Scope of the key being retired (user, tenant, service)")
+	cmd.Flags().StringVar(&projectGitRetireOwner, "git-signing-retire-key-owner", "", "Owner of the key being retired (defaults to the project's tenant)")
+	cmd.Flags().StringVar(&projectGitRetiredAt, "git-signing-retired-at", "", "When the retired key stopped being the project's signing key, RFC 3339 (default now)")
 	addProjectMutationFlags(cmd)
 
 	return cmd
@@ -486,8 +540,8 @@ func autonomousFlag(cmd *cobra.Command) *bool {
 // flag, so an update leaves it unchanged unless told otherwise.
 //
 // PRESENCE, NOT NON-ZERO, because zero is a real value here: a quota of zero
-// means UNLIMITED. Reading the variable alone could not tell "--token-budget
-// 0" from "flag not given", so lifting a cap was unexpressible.
+// means UNLIMITED. Reading the variable alone could not tell "--gpu-minutes 0"
+// from "flag not given", so lifting a cap was unexpressible.
 func quotaFlagInt64(cmd *cobra.Command, name string, value int64) *int64 {
 	if cmd == nil || !cmd.Flags().Changed(name) {
 		return nil
@@ -496,7 +550,9 @@ func quotaFlagInt64(cmd *cobra.Command, name string, value int64) *int64 {
 	return &v
 }
 
-// quotaFlagInt is quotaFlagInt64 for the one quota the record keeps as int.
+// quotaFlagInt is quotaFlagInt64 for the int-valued quota and storage sizes,
+// where zero is likewise real: an unsized tmpfs, the runtime's default memory
+// limit.
 func quotaFlagInt(cmd *cobra.Command, name string, value int) *int {
 	if cmd == nil || !cmd.Flags().Changed(name) {
 		return nil
@@ -516,49 +572,145 @@ func runProjectUpdate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return formatError(err)
 	}
+	spendUpdate, err := spendLimitsFromFlags(cmd)
+	if err != nil {
+		return formatError(err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
+	defaultLead, err := agentsSDK.ParseAgentRef(projectDefaultLeadAgent)
+	if err != nil {
+		return formatError(err)
+	}
 	info, err := client.Update(ctx, &projectSDK.UpdateProjectRequest{
-		TenantID:         globalTenantID,
-		ProjectID:        args[0],
-		Name:             projectName,
-		Description:      projectDescription,
-		ClearDescription: projectClearDescription,
-		WorkspaceAgentID: projectWorkspaceAgentID,
-		WorkspacePath:    projectWorkspacePath,
-		HostAffinity:     projectHostAffinity,
-		DefaultLeadAgent: projectDefaultLeadAgent,
-		GitRepoURL:       projectGitRepoURL,
-		GitDefaultBranch: projectGitBranch,
-		GitCurrentSHA:    projectGitCurrentSHA,
-		TokenBudget:      quotaFlagInt64(cmd, "token-budget", projectTokenBudget),
-		GPUMinutes:       quotaFlagInt64(cmd, "gpu-minutes", projectGPUMinutes),
-		MaxConcurrency:   quotaFlagInt(cmd, "max-concurrency", projectMaxConcurrency),
-		Metadata:         projectMetadata,
+		TenantID:             globalTenantID,
+		ProjectID:            args[0],
+		Name:                 projectName,
+		Description:          projectDescription,
+		ClearDescription:     projectClearDescription,
+		WorkspaceFleetNodeID: projectWorkspaceFleetNodeID,
+		WorkspacePath:        projectWorkspacePath,
+		HostAffinity:         projectHostAffinity,
+		DefaultLeadAgent:     defaultLead,
+		GitRepoURL:           projectGitRepoURL,
+		GitDefaultBranch:     projectGitBranch,
+		GitCurrentSHA:        projectGitCurrentSHA,
+		Spend:                spendUpdate,
+		GPUMinutes:           quotaFlagInt64(cmd, "gpu-minutes", projectGPUMinutes),
+		MaxConcurrency:       quotaFlagInt(cmd, "max-concurrency", projectMaxConcurrency),
+		Metadata:             projectMetadata,
 
-		DefaultWorkflow:      projectDefaultWorkflow,
-		ClearDefaultWorkflow: projectClearDefaultWF,
-		Autonomous:           autonomousFlag(cmd),
-		ContextRepos:         contextRepos,
-		ClearContextRepos:    projectClearContextRepo,
-		GitAuthorName:        projectGitAuthorName,
-		GitAuthorEmail:       projectGitAuthorEmail,
-		GitSigningEnabled:    gitSigningFlag(cmd),
-		GitSigningAlgorithm:  projectGitSigningAlg,
-		GitSigningKeyName:    projectGitSigningKey,
-		GitSigningKeyScope:   projectGitSigningScope,
-		GitSigningKeyOwner:   projectGitSigningOwner,
-		GitSSHKeyName:        projectGitSSHKey,
-		GitSSHKeyScope:       projectGitSSHKeyScope,
-		GitSSHKeyOwner:       projectGitSSHKeyOwner,
+		DefaultWorkflow:          projectDefaultWorkflow,
+		ClearDefaultWorkflow:     projectClearDefaultWF,
+		Autonomous:               autonomousFlag(cmd),
+		ContextRepos:             contextRepos,
+		ClearContextRepos:        projectClearContextRepo,
+		GitAuthorName:            projectGitAuthorName,
+		GitAuthorEmail:           projectGitAuthorEmail,
+		GitSigningEnabled:        gitSigningFlag(cmd),
+		GitSigningAlgorithm:      projectGitSigningAlg,
+		GitSigningKeyName:        projectGitSigningKey,
+		GitSigningKeyScope:       projectGitSigningScope,
+		GitSigningKeyOwner:       projectGitSigningOwner,
+		GitSSHKeyName:            projectGitSSHKey,
+		GitSSHKeyScope:           projectGitSSHKeyScope,
+		GitSSHKeyOwner:           projectGitSSHKeyOwner,
+		GitSigningRetireKeyName:  projectGitRetireKey,
+		GitSigningRetireKeyScope: projectGitRetireScope,
+		GitSigningRetireKeyOwner: projectGitRetireOwner,
+		GitSigningRetiredAt:      projectGitRetiredAt,
+		WorkspaceTier:            projectSDK.WorkspaceTier(projectWorkspaceTier),
+		SessionRotation:          projectSDK.SessionRotationPolicy(projectSessionRotation),
+		WorkspaceTmpfsMB:         quotaFlagInt(cmd, "workspace-tmpfs-mb", projectWorkspaceTmpfsMB),
+		ContainerMemoryMB:        quotaFlagInt(cmd, "container-memory-mb", projectContainerMemMB),
 	})
 	if err != nil {
 		return formatError(err)
 	}
 
 	return formatProjectDetail(info, projectOutputFmt, os.Stdout)
+}
+
+// =============================================================================
+// Park / Resume Commands
+// =============================================================================
+
+// newProjectParkCommand creates the project park subcommand.
+func newProjectParkCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "park <projectID>",
+		Short: "Close a project's intake and let its work in flight finish",
+		Long: `Park a project: no task that has not started is dispatched, no issue is
+adopted or triaged, and every task already started runs through work, pull
+request, review and merge train to its normal end. Nothing is cancelled and
+nothing is deleted. Autonomous development is left as it is.
+
+Resume the project to reopen its intake.
+
+Examples:
+  quicbaas project park proj_abc123
+  quicbaas project park proj_abc123 --output json`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runProjectSetParked(args[0], true)
+		},
+	}
+}
+
+// newProjectResumeCommand creates the project resume subcommand.
+func newProjectResumeCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "resume <projectID>",
+		Short: "Reopen a parked project's intake",
+		Long: `Resume a parked project: the next sweep dispatches its queued tasks and
+adopts and triages new work again. Autonomous development is left as it is.
+
+Examples:
+  quicbaas project resume proj_abc123`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runProjectSetParked(args[0], false)
+		},
+	}
+}
+
+// runProjectSetParked parks or resumes one project through the project update
+// path, which is the one verb every transport carries.
+func runProjectSetParked(projectID string, parked bool) error {
+	client, err := projectClientFactory()
+	if err != nil {
+		return formatError(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
+	defer cancel()
+
+	info, err := client.Update(ctx, &projectSDK.UpdateProjectRequest{
+		TenantID:  globalTenantID,
+		ProjectID: projectID,
+		Parked:    &parked,
+	})
+	if err != nil {
+		return formatError(err)
+	}
+	return formatProjectDetail(info, projectOutputFmt, os.Stdout)
+}
+
+// formatProjectParked renders a project's park state for the detail view.
+func formatProjectParked(info *projectSDK.ProjectInfo) string {
+	if !info.Parked {
+		return "no"
+	}
+	state := "yes"
+	if !info.ParkedAt.IsZero() {
+		state += ", since " + info.ParkedAt.Format(time.RFC3339)
+	}
+	if info.ParkedBy != "" {
+		state += " by " + info.ParkedBy
+	}
+	return state
 }
 
 // =============================================================================
@@ -605,22 +757,22 @@ func runProjectDelete(cmd *cobra.Command, args []string) error {
 func newProjectGrantRoleCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "grant-role <projectID>",
-		Short: "Grant an agent a role in a project",
-		Long: `Set or update the role an agent holds within a project.
+		Short: "Grant a fleet node a role in a project",
+		Long: `Set or update the role a fleet node holds within a project.
 
 Granting the "denied" role is equivalent to revoke-role.
 
 Examples:
-  quicbaas project grant-role proj_abc123 --agent agent_abc --role lead
-  quicbaas project grant-role proj_abc123 --agent agent_xyz --role observer`,
+  quicbaas project grant-role proj_abc123 --node node_abc --role lead
+  quicbaas project grant-role proj_abc123 --node node_xyz --role observer`,
 		Args: cobra.ExactArgs(1),
 		RunE: runProjectGrantRole,
 	}
 
-	cmd.Flags().StringVar(&projectAgentID, "agent", "", "Agent ID to grant the role to (required)")
+	cmd.Flags().StringVar(&projectFleetNodeID, "node", "", "Fleet node ID to grant the role to (required)")
 	cmd.Flags().StringVar(&projectRole, "role", "", "Role to assign: "+strings.Join(projectRoleNames(), ", ")+" (required)")
 
-	for _, name := range []string{"agent", "role"} {
+	for _, name := range []string{"node", "role"} {
 		if err := cmd.MarkFlagRequired(name); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to mark %s flag as required: %v\n", name, err)
 		}
@@ -644,11 +796,11 @@ func runProjectGrantRole(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	resp, err := client.GrantAgentRole(ctx, &projectSDK.GrantAgentRoleRequest{
-		TenantID:  globalTenantID,
-		ProjectID: args[0],
-		AgentID:   projectAgentID,
-		Role:      role,
+	resp, err := client.GrantFleetNodeRole(ctx, &projectSDK.GrantFleetNodeRoleRequest{
+		TenantID:    globalTenantID,
+		ProjectID:   args[0],
+		FleetNodeID: projectFleetNodeID,
+		Role:        role,
 	})
 	if err != nil {
 		return formatError(err)
@@ -661,19 +813,19 @@ func runProjectGrantRole(cmd *cobra.Command, args []string) error {
 func newProjectRevokeRoleCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "revoke-role <projectID>",
-		Short: "Revoke an agent's role in a project",
-		Long: `Remove an agent's access to a project by setting its role to "denied".
+		Short: "Revoke a fleet node's role in a project",
+		Long: `Remove a fleet node's access to a project by setting its role to "denied".
 
 Examples:
-  quicbaas project revoke-role proj_abc123 --agent agent_abc`,
+  quicbaas project revoke-role proj_abc123 --node node_abc`,
 		Args: cobra.ExactArgs(1),
 		RunE: runProjectRevokeRole,
 	}
 
-	cmd.Flags().StringVar(&projectAgentID, "agent", "", "Agent ID to revoke (required)")
+	cmd.Flags().StringVar(&projectFleetNodeID, "node", "", "Fleet node ID to revoke (required)")
 
-	if err := cmd.MarkFlagRequired("agent"); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to mark agent flag as required: %v\n", err)
+	if err := cmd.MarkFlagRequired("node"); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to mark node flag as required: %v\n", err)
 	}
 
 	return cmd
@@ -689,10 +841,10 @@ func runProjectRevokeRole(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	resp, err := client.RevokeAgentRole(ctx, &projectSDK.RevokeAgentRoleRequest{
-		TenantID:  globalTenantID,
-		ProjectID: args[0],
-		AgentID:   projectAgentID,
+	resp, err := client.RevokeFleetNodeRole(ctx, &projectSDK.RevokeFleetNodeRoleRequest{
+		TenantID:    globalTenantID,
+		ProjectID:   args[0],
+		FleetNodeID: projectFleetNodeID,
 	})
 	if err != nil {
 		return formatError(err)
@@ -729,8 +881,8 @@ func formatProjectDetail(info *projectSDK.ProjectInfo, format string, w io.Write
 		if info.Description != "" {
 			fmt.Fprintf(tw, "Description:\t%s\n", info.Description)
 		}
-		if info.Workspace.AgentID != "" {
-			fmt.Fprintf(tw, "Workspace Agent:\t%s\n", info.Workspace.AgentID)
+		if info.Workspace.FleetNodeID != "" {
+			fmt.Fprintf(tw, "Workspace Agent:\t%s\n", info.Workspace.FleetNodeID)
 		}
 		if info.Workspace.Path != "" {
 			fmt.Fprintf(tw, "Workspace Path:\t%s\n", info.Workspace.Path)
@@ -738,8 +890,8 @@ func formatProjectDetail(info *projectSDK.ProjectInfo, format string, w io.Write
 		if info.HostAffinity != "" {
 			fmt.Fprintf(tw, "Host Affinity:\t%s\n", info.HostAffinity)
 		}
-		if info.DefaultLeadAgent != "" {
-			fmt.Fprintf(tw, "Default Lead Agent:\t%s\n", info.DefaultLeadAgent)
+		if !info.DefaultLeadAgent.IsZero() {
+			fmt.Fprintf(tw, "Default Lead Agent:\t%s\n", info.DefaultLeadAgent.String())
 		}
 		if info.Git.RepoURL != "" {
 			fmt.Fprintf(tw, "Git Repo:\t%s\n", info.Git.RepoURL)
@@ -754,6 +906,7 @@ func formatProjectDetail(info *projectSDK.ProjectInfo, format string, w io.Write
 			fmt.Fprintf(tw, "Default Workflow:\t%s\n", info.DefaultWorkflow)
 		}
 		fmt.Fprintf(tw, "Autonomous:\t%v\n", info.Autonomous)
+		fmt.Fprintf(tw, "Parked:\t%s\n", formatProjectParked(info))
 		if info.Git.Author.Name != "" || info.Git.Author.Email != "" {
 			fmt.Fprintf(tw, "Git Author:\t%s <%s>\n", info.Git.Author.Name, info.Git.Author.Email)
 		}
@@ -763,19 +916,29 @@ func formatProjectDetail(info *projectSDK.ProjectInfo, format string, w io.Write
 		if info.Git.SSHKey.Name != "" {
 			fmt.Fprintf(tw, "Git SSH Key:\t%s\n", info.Git.SSHKey.Name)
 		}
-		fmt.Fprintf(tw, "Token Budget:\t%s\n", formatProjectQuota(info.Quotas.TokenBudget))
+		fmt.Fprintf(tw, "Spend Limits:\t%s\n", formatSpendLimits(info.Spend))
 		fmt.Fprintf(tw, "GPU Minutes:\t%s\n", formatProjectQuota(info.Quotas.GPUMinutes))
 		fmt.Fprintf(tw, "Max Concurrency:\t%s\n", formatProjectQuota(int64(info.Quotas.MaxConcurrency)))
+		if info.Storage.WorkspaceTier != "" {
+			fmt.Fprintf(tw, "Workspace Tier:\t%s\n", info.Storage.WorkspaceTier)
+		}
+		if info.Storage.WorkspaceTmpfsMB != 0 {
+			fmt.Fprintf(tw, "Workspace Tmpfs:\t%d MiB\n", info.Storage.WorkspaceTmpfsMB)
+		}
+		if info.Storage.ContainerMemoryMB != 0 {
+			fmt.Fprintf(tw, "Container Memory:\t%d MiB\n", info.Storage.ContainerMemoryMB)
+		}
+		fmt.Fprintf(tw, "Session Rotation:\t%s\n", formatSessionRotation(info.SessionRotation))
 		if !info.CreatedAt.IsZero() {
 			fmt.Fprintf(tw, "Created:\t%s\n", info.CreatedAt.Format(time.RFC3339))
 		}
 		if !info.UpdatedAt.IsZero() {
 			fmt.Fprintf(tw, "Updated:\t%s\n", info.UpdatedAt.Format(time.RFC3339))
 		}
-		if len(info.Permissions.AgentRoles) > 0 {
+		if len(info.Permissions.FleetNodeRoles) > 0 {
 			fmt.Fprintf(tw, "\nAgent Roles:\n")
-			for _, agentID := range sortedAgentIDs(info.Permissions.AgentRoles) {
-				fmt.Fprintf(tw, "  %s:\t%s\n", agentID, info.Permissions.AgentRoles[agentID])
+			for _, agentID := range sortedAgentIDs(info.Permissions.FleetNodeRoles) {
+				fmt.Fprintf(tw, "  %s:\t%s\n", agentID, info.Permissions.FleetNodeRoles[agentID])
 			}
 		}
 		if len(info.ContextRepos) > 0 {
@@ -823,15 +986,19 @@ func formatProjectList(resp *projectSDK.ListProjectsResponse, format string, w i
 				updated = p.UpdatedAt.Format(time.RFC3339)
 			}
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-				p.ID, p.Name, orDash(p.DefaultLeadAgent), orDash(p.Git.RepoURL), updated)
+				p.ID, p.Name, orDash(p.DefaultLeadAgent.String()), orDash(p.Git.RepoURL), updated)
 		}
-		fmt.Fprintf(tw, "\nTotal: %d projects\n", resp.Total)
-		return tw.Flush()
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+		writePageFooter(w, len(resp.Projects), resp.Envelope)
+		return nil
 
 	default:
 		for _, p := range resp.Projects {
 			fmt.Fprintf(w, "%s: %s\n", p.ID, p.Name)
 		}
+		writePageFooter(w, len(resp.Projects), resp.Envelope)
 		return nil
 	}
 }
@@ -867,7 +1034,7 @@ func formatProjectDeleted(projectID, format string, w io.Writer) error {
 }
 
 // formatProjectRoleGrant renders a grant-role response for output.
-func formatProjectRoleGrant(resp *projectSDK.GrantAgentRoleResponse, format string, w io.Writer) error {
+func formatProjectRoleGrant(resp *projectSDK.GrantFleetNodeRoleResponse, format string, w io.Writer) error {
 	outputFmt, err := cli.ParseOutputFormat(format)
 	if err != nil {
 		return err
@@ -885,7 +1052,7 @@ func formatProjectRoleGrant(resp *projectSDK.GrantAgentRoleResponse, format stri
 	case cli.OutputFormatTable:
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		fmt.Fprintf(tw, "Project ID:\t%s\n", resp.ProjectID)
-		fmt.Fprintf(tw, "Agent ID:\t%s\n", resp.AgentID)
+		fmt.Fprintf(tw, "Agent ID:\t%s\n", resp.FleetNodeID)
 		fmt.Fprintf(tw, "Role:\t%s\n", resp.Role)
 		if !resp.Timestamp.IsZero() {
 			fmt.Fprintf(tw, "Timestamp:\t%s\n", resp.Timestamp.Format(time.RFC3339))
@@ -893,13 +1060,13 @@ func formatProjectRoleGrant(resp *projectSDK.GrantAgentRoleResponse, format stri
 		return tw.Flush()
 
 	default:
-		fmt.Fprintf(w, "Agent %s granted role %s in project %s\n", resp.AgentID, resp.Role, resp.ProjectID)
+		fmt.Fprintf(w, "Agent %s granted role %s in project %s\n", resp.FleetNodeID, resp.Role, resp.ProjectID)
 		return nil
 	}
 }
 
 // formatProjectRoleRevoke renders a revoke-role response for output.
-func formatProjectRoleRevoke(resp *projectSDK.RevokeAgentRoleResponse, format string, w io.Writer) error {
+func formatProjectRoleRevoke(resp *projectSDK.RevokeFleetNodeRoleResponse, format string, w io.Writer) error {
 	outputFmt, err := cli.ParseOutputFormat(format)
 	if err != nil {
 		return err
@@ -917,7 +1084,7 @@ func formatProjectRoleRevoke(resp *projectSDK.RevokeAgentRoleResponse, format st
 	case cli.OutputFormatTable:
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		fmt.Fprintf(tw, "Project ID:\t%s\n", resp.ProjectID)
-		fmt.Fprintf(tw, "Agent ID:\t%s\n", resp.AgentID)
+		fmt.Fprintf(tw, "Agent ID:\t%s\n", resp.FleetNodeID)
 		fmt.Fprintf(tw, "Revoked:\t%v\n", true)
 		if !resp.Timestamp.IsZero() {
 			fmt.Fprintf(tw, "Timestamp:\t%s\n", resp.Timestamp.Format(time.RFC3339))
@@ -925,7 +1092,7 @@ func formatProjectRoleRevoke(resp *projectSDK.RevokeAgentRoleResponse, format st
 		return tw.Flush()
 
 	default:
-		fmt.Fprintf(w, "Agent %s revoked from project %s\n", resp.AgentID, resp.ProjectID)
+		fmt.Fprintf(w, "Agent %s revoked from project %s\n", resp.FleetNodeID, resp.ProjectID)
 		return nil
 	}
 }
@@ -965,4 +1132,13 @@ func sortedAgentIDs(m map[string]projectSDK.ProjectRole) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// formatSessionRotation renders a project's session rotation policy, naming
+// the default for a project that never chose one.
+func formatSessionRotation(policy projectSDK.SessionRotationPolicy) string {
+	if policy == projectSDK.SessionRotationUnset {
+		return string(projectSDK.SessionRotationResume) + " (default)"
+	}
+	return string(policy)
 }

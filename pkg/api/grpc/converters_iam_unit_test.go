@@ -194,7 +194,6 @@ func TestConvertProtoToUser(t *testing.T) {
 				Email:    "test@example.com",
 				Name:     "Test User",
 				Roles:    []string{"admin", "user"},
-				Groups:   []string{"group-1", "group-2"},
 				Attributes: map[string]string{
 					"department": "engineering",
 				},
@@ -209,7 +208,6 @@ func TestConvertProtoToUser(t *testing.T) {
 				assert.Equal(t, "test@example.com", result.Email)
 				assert.Equal(t, "Test User", result.Name)
 				assert.Equal(t, []string{"admin", "user"}, result.Roles)
-				assert.Equal(t, []string{"group-1", "group-2"}, result.Groups)
 				assert.Equal(t, "engineering", result.Attributes["department"])
 				require.NotNil(t, result.LastAuth)
 			},
@@ -261,7 +259,6 @@ func TestConvertUserToProto(t *testing.T) {
 				Email:    "test@example.com",
 				Name:     "Test User",
 				Roles:    []string{"admin"},
-				Groups:   []string{"group-1"},
 				// Attributes are string-valued on both sides now, so nothing is
 				// skipped on the way across: a value the wire could not carry is
 				// refused by the type rather than dropped in the converter.
@@ -304,113 +301,6 @@ func TestConvertUserToProto(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := convertUserToProto(tt.input)
-			tt.validate(t, result)
-		})
-	}
-}
-
-// =============================================================================
-// Group Conversion Tests
-// =============================================================================
-
-func TestConvertProtoToGroup(t *testing.T) {
-	now := time.Now()
-
-	tests := []struct {
-		name     string
-		input    *iampb.Group
-		validate func(t *testing.T, result *iam.Group)
-	}{
-		{
-			name:  "nil_input",
-			input: nil,
-			validate: func(t *testing.T, result *iam.Group) {
-				assert.Nil(t, result)
-			},
-		},
-		{
-			name: "full_group",
-			input: &iampb.Group{
-				Id:          "group-1",
-				TenantId:    "tenant-1",
-				Name:        "Admins",
-				Description: "Administrator group",
-				Members:     []string{"user-1", "user-2"},
-				CreatedAt:   timestamppb.New(now),
-				UpdatedAt:   timestamppb.New(now),
-			},
-			validate: func(t *testing.T, result *iam.Group) {
-				require.NotNil(t, result)
-				assert.Equal(t, "group-1", result.ID)
-				assert.Equal(t, "tenant-1", result.TenantID)
-				assert.Equal(t, "Admins", result.Name)
-				assert.Equal(t, "Administrator group", result.Description)
-				assert.Equal(t, []string{"user-1", "user-2"}, result.Members)
-			},
-		},
-		{
-			name: "group_without_timestamps",
-			input: &iampb.Group{
-				Id:   "group-2",
-				Name: "Users",
-			},
-			validate: func(t *testing.T, result *iam.Group) {
-				require.NotNil(t, result)
-				assert.Equal(t, "group-2", result.ID)
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := convertProtoToGroup(tt.input)
-			tt.validate(t, result)
-		})
-	}
-}
-
-func TestConvertGroupToProto(t *testing.T) {
-	now := time.Now()
-
-	tests := []struct {
-		name     string
-		input    *iam.Group
-		validate func(t *testing.T, result *iampb.Group)
-	}{
-		{
-			name:  "nil_input",
-			input: nil,
-			validate: func(t *testing.T, result *iampb.Group) {
-				assert.Nil(t, result)
-			},
-		},
-		{
-			name: "full_group",
-			input: &iam.Group{
-				ID:          "group-1",
-				TenantID:    "tenant-1",
-				Name:        "Admins",
-				Description: "Administrator group",
-				Members:     []string{"user-1", "user-2"},
-				Created:     now,
-				Updated:     now,
-			},
-			validate: func(t *testing.T, result *iampb.Group) {
-				require.NotNil(t, result)
-				assert.Equal(t, "group-1", result.Id)
-				assert.Equal(t, "tenant-1", result.TenantId)
-				assert.Equal(t, "Admins", result.Name)
-				assert.Equal(t, "Administrator group", result.Description)
-				assert.Equal(t, []string{"user-1", "user-2"}, result.Members)
-				assert.NotNil(t, result.CreatedAt)
-				assert.NotNil(t, result.UpdatedAt)
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := convertGroupToProto(tt.input)
 			tt.validate(t, result)
 		})
 	}
@@ -888,7 +778,6 @@ func TestConvertProtoAdminRole(t *testing.T) {
 		{"super_admin", iampb.AdminRole_ADMIN_ROLE_SUPER_ADMIN, iam.AdminRoleSuperAdmin},
 		{"tenant_admin", iampb.AdminRole_ADMIN_ROLE_TENANT_ADMIN, iam.AdminRoleTenantAdmin},
 		{"user_admin", iampb.AdminRole_ADMIN_ROLE_USER_ADMIN, iam.AdminRoleUserAdmin},
-		{"group_admin", iampb.AdminRole_ADMIN_ROLE_GROUP_ADMIN, iam.AdminRoleGroupAdmin},
 		{"policy_admin", iampb.AdminRole_ADMIN_ROLE_POLICY_ADMIN, iam.AdminRolePolicyAdmin},
 		{"audit_admin", iampb.AdminRole_ADMIN_ROLE_AUDIT_ADMIN, iam.AdminRoleAuditAdmin},
 		{"read_only", iampb.AdminRole_ADMIN_ROLE_READ_ONLY, iam.AdminRoleReadOnly},
@@ -913,7 +802,6 @@ func TestConvertAdminRoleToProto(t *testing.T) {
 		{"super_admin", iam.AdminRoleSuperAdmin, iampb.AdminRole_ADMIN_ROLE_SUPER_ADMIN},
 		{"tenant_admin", iam.AdminRoleTenantAdmin, iampb.AdminRole_ADMIN_ROLE_TENANT_ADMIN},
 		{"user_admin", iam.AdminRoleUserAdmin, iampb.AdminRole_ADMIN_ROLE_USER_ADMIN},
-		{"group_admin", iam.AdminRoleGroupAdmin, iampb.AdminRole_ADMIN_ROLE_GROUP_ADMIN},
 		{"policy_admin", iam.AdminRolePolicyAdmin, iampb.AdminRole_ADMIN_ROLE_POLICY_ADMIN},
 		{"audit_admin", iam.AdminRoleAuditAdmin, iampb.AdminRole_ADMIN_ROLE_AUDIT_ADMIN},
 		{"read_only", iam.AdminRoleReadOnly, iampb.AdminRole_ADMIN_ROLE_READ_ONLY},
@@ -1002,7 +890,6 @@ func TestConvertProtoToUser_Full(t *testing.T) {
 		Email:      "test@example.com",
 		Name:       "Test User",
 		Roles:      []string{"admin"},
-		Groups:     []string{"developers"},
 		Attributes: map[string]string{"key": "value"},
 		CreatedAt:  timestamppb.New(now),
 		UpdatedAt:  timestamppb.New(now),
@@ -1028,7 +915,6 @@ func TestConvertUserToProto_Full(t *testing.T) {
 		Email:      "test@example.com",
 		Name:       "Test User",
 		Roles:      []string{"admin"},
-		Groups:     []string{"devs"},
 		Attributes: map[string]string{"key": "value", "num": "42"},
 		Created:    now,
 		Updated:    now,
@@ -1040,47 +926,6 @@ func TestConvertUserToProto_Full(t *testing.T) {
 	assert.Equal(t, "value", result.Attributes["key"])
 	assert.Equal(t, "42", result.Attributes["num"])
 	assert.NotNil(t, result.LastAuth)
-}
-
-// =============================================================================
-// Group Conversions
-// =============================================================================
-
-func TestConvertProtoToGroup_Nil(t *testing.T) {
-	assert.Nil(t, convertProtoToGroup(nil))
-}
-
-func TestConvertProtoToGroup_Full(t *testing.T) {
-	now := time.Now()
-	pb := &iampb.Group{
-		Id:          "group-1",
-		TenantId:    "tenant-1",
-		Name:        "Developers",
-		Description: "Dev team",
-		Members:     []string{"user-1", "user-2"},
-		CreatedAt:   timestamppb.New(now),
-		UpdatedAt:   timestamppb.New(now),
-	}
-
-	result := convertProtoToGroup(pb)
-	assert.Equal(t, "group-1", result.ID)
-	assert.Equal(t, "Developers", result.Name)
-	assert.Len(t, result.Members, 2)
-}
-
-func TestConvertGroupToProto_Nil(t *testing.T) {
-	assert.Nil(t, convertGroupToProto(nil))
-}
-
-func TestConvertGroupToProto_Full(t *testing.T) {
-	group := &iam.Group{
-		ID: "group-1", TenantID: "tenant-1", Name: "Devs",
-		Description: "Dev team", Members: []string{"u1"},
-		Created: time.Now(), Updated: time.Now(),
-	}
-	result := convertGroupToProto(group)
-	assert.Equal(t, "group-1", result.Id)
-	assert.Equal(t, "Devs", result.Name)
 }
 
 // =============================================================================
@@ -1332,7 +1177,6 @@ func TestConvertProtoAdminRole_AllTypes(t *testing.T) {
 		{iampb.AdminRole_ADMIN_ROLE_SUPER_ADMIN, iam.AdminRoleSuperAdmin},
 		{iampb.AdminRole_ADMIN_ROLE_TENANT_ADMIN, iam.AdminRoleTenantAdmin},
 		{iampb.AdminRole_ADMIN_ROLE_USER_ADMIN, iam.AdminRoleUserAdmin},
-		{iampb.AdminRole_ADMIN_ROLE_GROUP_ADMIN, iam.AdminRoleGroupAdmin},
 		{iampb.AdminRole_ADMIN_ROLE_POLICY_ADMIN, iam.AdminRolePolicyAdmin},
 		{iampb.AdminRole_ADMIN_ROLE_AUDIT_ADMIN, iam.AdminRoleAuditAdmin},
 		{iampb.AdminRole_ADMIN_ROLE_READ_ONLY, iam.AdminRoleReadOnly},
@@ -1351,7 +1195,6 @@ func TestConvertAdminRoleToProto_AllTypes(t *testing.T) {
 		{iam.AdminRoleSuperAdmin, iampb.AdminRole_ADMIN_ROLE_SUPER_ADMIN},
 		{iam.AdminRoleTenantAdmin, iampb.AdminRole_ADMIN_ROLE_TENANT_ADMIN},
 		{iam.AdminRoleUserAdmin, iampb.AdminRole_ADMIN_ROLE_USER_ADMIN},
-		{iam.AdminRoleGroupAdmin, iampb.AdminRole_ADMIN_ROLE_GROUP_ADMIN},
 		{iam.AdminRolePolicyAdmin, iampb.AdminRole_ADMIN_ROLE_POLICY_ADMIN},
 		{iam.AdminRoleAuditAdmin, iampb.AdminRole_ADMIN_ROLE_AUDIT_ADMIN},
 		{iam.AdminRoleReadOnly, iampb.AdminRole_ADMIN_ROLE_READ_ONLY},
@@ -1880,9 +1723,6 @@ func TestConvertUserDataExportToProto_Full(t *testing.T) {
 				Version: "v1", GrantedAt: &granted, WithdrawnAt: &withdrawn,
 			},
 		},
-		Groups: []*iam.GroupMembershipExport{
-			{GroupID: "g1", GroupName: "devs", JoinedAt: now},
-		},
 		Roles: []*iam.RoleAssignmentExport{
 			{RoleID: "r1", RoleName: "admin", AssignedAt: now},
 		},
@@ -1907,7 +1747,6 @@ func TestConvertUserDataExportToProto_Full(t *testing.T) {
 	assert.NotNil(t, result.Profile)
 	assert.Len(t, result.Sessions, 1)
 	assert.Len(t, result.Consents, 1)
-	assert.Len(t, result.Groups, 1)
 	assert.Len(t, result.Roles, 1)
 	assert.Len(t, result.AuditLogs, 1)
 	assert.Len(t, result.Credentials, 1)
@@ -3329,13 +3168,6 @@ func TestConvertUserDataExportToProtoComplete(t *testing.T) {
 				WithdrawnAt: &withdrawnAt,
 			},
 		},
-		Groups: []*iam.GroupMembershipExport{
-			{
-				GroupID:   "group-1",
-				GroupName: "Engineers",
-				JoinedAt:  now.Add(-15 * 24 * time.Hour),
-			},
-		},
 		Roles: []*iam.RoleAssignmentExport{
 			{
 				RoleID:     "role-1",
@@ -3376,7 +3208,6 @@ func TestConvertUserDataExportToProtoComplete(t *testing.T) {
 	assert.NotNil(t, result.Profile)
 	assert.Len(t, result.Sessions, 1)
 	assert.Len(t, result.Consents, 1)
-	assert.Len(t, result.Groups, 1)
 	assert.Len(t, result.Roles, 1)
 	assert.Len(t, result.AuditLogs, 1)
 	assert.Len(t, result.Credentials, 1)
@@ -3400,11 +3231,6 @@ func TestConvertSessionExportToProtoNilInput(t *testing.T) {
 
 func TestConvertConsentExportToProtoNilInput(t *testing.T) {
 	result := convertConsentExportToProto(nil)
-	assert.Nil(t, result)
-}
-
-func TestConvertGroupMembershipExportToProtoNilInput(t *testing.T) {
-	result := convertGroupMembershipExportToProto(nil)
 	assert.Nil(t, result)
 }
 
@@ -3563,14 +3389,13 @@ func TestConvertDeletionSummaryToProtoNilInput(t *testing.T) {
 
 func TestConvertDeletionSummaryToProtoComplete(t *testing.T) {
 	summary := &iam.DeletionSummary{
-		ProfileDeleted:          true,
-		SessionsDeleted:         10,
-		AuditLogsAnonymized:     50,
-		ConsentsDeleted:         5,
-		CredentialsDeleted:      2,
-		GroupMembershipsRemoved: 3,
-		RoleAssignmentsRemoved:  4,
-		TokensRevoked:           8,
+		ProfileDeleted:         true,
+		SessionsDeleted:        10,
+		AuditLogsAnonymized:    50,
+		ConsentsDeleted:        5,
+		CredentialsDeleted:     2,
+		RoleAssignmentsRemoved: 4,
+		TokensRevoked:          8,
 		AdditionalData: map[string]int{
 			"custom_data": 100,
 		},
@@ -3584,7 +3409,6 @@ func TestConvertDeletionSummaryToProtoComplete(t *testing.T) {
 	assert.Equal(t, int32(50), result.AuditLogsAnonymized)
 	assert.Equal(t, int32(5), result.ConsentsDeleted)
 	assert.Equal(t, int32(2), result.CredentialsDeleted)
-	assert.Equal(t, int32(3), result.GroupMembershipsRemoved)
 	assert.Equal(t, int32(4), result.RoleAssignmentsRemoved)
 	assert.Equal(t, int32(8), result.TokensRevoked)
 	assert.Contains(t, result.AdditionalData, "custom_data")
@@ -3597,14 +3421,13 @@ func TestConvertProtoToDeletionSummaryNilInput(t *testing.T) {
 
 func TestConvertProtoToDeletionSummaryComplete(t *testing.T) {
 	pb := &iampb.DeletionSummary{
-		ProfileDeleted:          true,
-		SessionsDeleted:         10,
-		AuditLogsAnonymized:     50,
-		ConsentsDeleted:         5,
-		CredentialsDeleted:      2,
-		GroupMembershipsRemoved: 3,
-		RoleAssignmentsRemoved:  4,
-		TokensRevoked:           8,
+		ProfileDeleted:         true,
+		SessionsDeleted:        10,
+		AuditLogsAnonymized:    50,
+		ConsentsDeleted:        5,
+		CredentialsDeleted:     2,
+		RoleAssignmentsRemoved: 4,
+		TokensRevoked:          8,
 		AdditionalData: map[string]int32{
 			"custom_data": 100,
 		},
@@ -3618,7 +3441,6 @@ func TestConvertProtoToDeletionSummaryComplete(t *testing.T) {
 	assert.Equal(t, 50, result.AuditLogsAnonymized)
 	assert.Equal(t, 5, result.ConsentsDeleted)
 	assert.Equal(t, 2, result.CredentialsDeleted)
-	assert.Equal(t, 3, result.GroupMembershipsRemoved)
 	assert.Equal(t, 4, result.RoleAssignmentsRemoved)
 	assert.Equal(t, 8, result.TokensRevoked)
 	assert.Contains(t, result.AdditionalData, "custom_data")

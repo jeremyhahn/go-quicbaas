@@ -116,6 +116,35 @@ func IssueContract(spec IssueContractSpec) (string, error) {
 // is not a prompt of its own.
 const noDiscussion = "(none)"
 
+// ClusterContract is the description of a CLUSTERED task: the anchor issue's
+// contract first and whole, then every member's, each verbatim.
+//
+// THE MEMBERS ARE CONTRACTS TOO, not a summary of them. The rule the anchor's
+// contract follows — the worker reads what a person wrote, never a paraphrase —
+// is the rule for every issue the task closes, because every one of them is
+// closed by the pull request this worker opens.
+func ClusterContract(anchor string, members []int, shared []string, memberContracts []string) (string, error) {
+	if strings.TrimSpace(anchor) == "" {
+		return "", &InvalidInputError{Field: "anchor_contract", Message: "a clustered task is its anchor issue first"}
+	}
+	if len(members) == 0 || len(members) != len(memberContracts) {
+		return "", &InvalidInputError{Field: "member_contracts", Message: "every member issue carries its own contract"}
+	}
+	names := make([]string, 0, len(shared))
+	for _, key := range shared {
+		names = append(names, "`"+strings.TrimPrefix(strings.TrimPrefix(key, footprintFile), footprintPackage)+"`")
+	}
+	if len(names) == 0 {
+		names = append(names, "the same code")
+	}
+	return sdlcPrompts.MustRender("issue_contract_cluster", prompts.Vars{
+		"anchor_contract":  strings.TrimSpace(anchor),
+		"members":          issueList(members),
+		"shared":           strings.Join(names, ", "),
+		"member_contracts": strings.Join(memberContracts, "\n\n"),
+	}), nil
+}
+
 // commentAttribution renders who wrote a comment and when.
 func commentAttribution(comment ForgeComment) string {
 	var parts []string

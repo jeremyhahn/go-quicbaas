@@ -67,7 +67,7 @@ func newRotatingOrchTransport(t *testing.T, fail bool) (*Transport, *rotatingFak
 		mockQuicBaaS: &mockQuicBaaS{},
 		agent:        agent,
 		proj:         &fakeProjectService{fail: fail},
-		admin:        &fakeAgentAdminService{fail: fail},
+		admin:        &fakeFleetAdminService{fail: fail},
 	})
 	require.NoError(t, err)
 	return tr, agent
@@ -136,7 +136,7 @@ func TestEmbeddedSpawnSession_CarriesAccountAllow(t *testing.T) {
 		mockQuicBaaS: &mockQuicBaaS{},
 		agent:        agent,
 		proj:         &fakeProjectService{},
-		admin:        &fakeAgentAdminService{},
+		admin:        &fakeFleetAdminService{},
 	})
 	require.NoError(t, err)
 
@@ -336,7 +336,7 @@ func TestEmbeddedRotateSessionAccount_EndToEnd(t *testing.T) {
 		mockQuicBaaS: &mockQuicBaaS{},
 		agent:        agentSvc,
 		proj:         &fakeProjectService{},
-		admin:        &fakeAgentAdminService{},
+		admin:        &fakeFleetAdminService{},
 	})
 	require.NoError(t, err)
 

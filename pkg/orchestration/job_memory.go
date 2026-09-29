@@ -95,8 +95,17 @@ func (m *JobMemory) AddConstraint(constraint string) {
 	m.Constraints = append(m.Constraints, constraint)
 }
 
-// AddFeedback records reviewer feedback. Duplicate entries are ignored.
+// MaxFeedbackBytes bounds one review-feedback entry. Feedback quotes the
+// verification results it answers, each already cut to
+// MaxValidationTextBytes; the entry bound keeps a runner that quotes several
+// of them, or quotes something else whole, from carrying megabytes into the
+// job record and the agent's next prompt.
+const MaxFeedbackBytes = 4 * MaxValidationTextBytes
+
+// AddFeedback records reviewer feedback, cut to its last MaxFeedbackBytes.
+// Duplicate entries are ignored.
 func (m *JobMemory) AddFeedback(feedback string) {
+	feedback = elideHeadTo(feedback, len(feedback), MaxFeedbackBytes)
 	if _, exists := m.feedbackSet[feedback]; exists {
 		return
 	}
@@ -188,4 +197,18 @@ func (m *JobMemory) RebuildDedupSets() {
 	for _, f := range m.ReviewFeedback {
 		m.feedbackSet[f] = struct{}{}
 	}
+}
+
+// boundFeedback cuts every oversized feedback entry to its tail, and reports
+// whether it changed anything. Records written before MaxFeedbackBytes
+// carried whole test logs.
+func (m *JobMemory) boundFeedback() bool {
+	changed := false
+	for i, feedback := range m.ReviewFeedback {
+		if len(feedback) > MaxFeedbackBytes {
+			m.ReviewFeedback[i] = elideHeadTo(feedback, len(feedback), MaxFeedbackBytes)
+			changed = true
+		}
+	}
+	return changed
 }

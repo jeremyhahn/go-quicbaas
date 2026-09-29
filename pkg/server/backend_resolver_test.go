@@ -75,23 +75,44 @@ func TestBackendResolver_ResolveUnknownBackend(t *testing.T) {
 	}
 }
 
+// tagGatedBackends lists every backend whose factory is compiled only under
+// its build tag, with that tag.
+var tagGatedBackends = []struct {
+	backend config.BackendType
+	tag     string
+}{
+	{config.BackendTypePKCS11, "pkcs11"},
+	{config.BackendTypeAWSKMS, "awskms"},
+	{config.BackendTypeGCPKMS, "gcpkms"},
+	{config.BackendTypeAzureKV, "azurekv"},
+	{config.BackendTypeVault, "vault"},
+}
+
+// uncompiledBackend returns a tag-gated backend whose factory this test binary
+// does not register, so the not-compiled tests hold under any tag set (a
+// `-tags pkcs11` binary registers pkcs11 but not the cloud backends).
+func uncompiledBackend(t *testing.T) config.BackendType {
+	t.Helper()
+	for _, tc := range tagGatedBackends {
+		if _, compiled := backendFactories[tc.backend]; !compiled {
+			return tc.backend
+		}
+	}
+	t.Fatal("every tag-gated backend is compiled into this binary; none is left to exercise the not-compiled path")
+	return ""
+}
+
 func TestBackendResolver_NotCompiledBackend(t *testing.T) {
-	// In the default test binary the pkcs11/cloud tags are absent, so their
-	// factories are unregistered: Resolve must return BackendNotCompiledError
-	// (NOT a silent software fallback, NOT a panic).
+	// A tag-gated backend whose tag is absent has no registered factory:
+	// Resolve must return BackendNotCompiledError (NOT a silent software
+	// fallback, NOT a panic). Backends this binary does compile are covered
+	// by their own tagged tests.
 	r := NewBackendResolver(noHardwareConfig())
 
-	cases := []struct {
-		backend config.BackendType
-		tag     string
-	}{
-		{config.BackendTypePKCS11, "pkcs11"},
-		{config.BackendTypeAWSKMS, "awskms"},
-		{config.BackendTypeGCPKMS, "gcpkms"},
-		{config.BackendTypeAzureKV, "azurekv"},
-		{config.BackendTypeVault, "vault"},
-	}
-	for _, tc := range cases {
+	for _, tc := range tagGatedBackends {
+		if _, compiled := backendFactories[tc.backend]; compiled {
+			continue
+		}
 		_, err := r.Resolve(BackendSpec{Backend: tc.backend})
 		var notCompiled *BackendNotCompiledError
 		if !errors.As(err, &notCompiled) {
@@ -121,13 +142,14 @@ func TestBackendResolver_ServiceBackendSoftware(t *testing.T) {
 func TestBackendResolver_ServiceBackendNotCompiled(t *testing.T) {
 	r := NewBackendResolver(noHardwareConfig())
 
-	sb, err := r.ServiceBackend(BackendSpec{Backend: config.BackendTypePKCS11})
+	backend := uncompiledBackend(t)
+	sb, err := r.ServiceBackend(BackendSpec{Backend: backend})
 	if sb != nil {
-		t.Fatal("ServiceBackend(pkcs11) returned a backend; want nil with not-compiled error")
+		t.Fatalf("ServiceBackend(%s) returned a backend; want nil with not-compiled error", backend)
 	}
 	var notCompiled *BackendNotCompiledError
 	if !errors.As(err, &notCompiled) {
-		t.Fatalf("ServiceBackend(pkcs11) error = %v, want *BackendNotCompiledError", err)
+		t.Fatalf("ServiceBackend(%s) error = %v, want *BackendNotCompiledError", backend, err)
 	}
 }
 
@@ -166,12 +188,13 @@ func TestBackendResolver_StoreTypeUnsupported(t *testing.T) {
 func TestBackendResolver_StoreTypeNotCompiled(t *testing.T) {
 	r := NewBackendResolver(noHardwareConfig())
 
-	// pkcs11 has a store type mapping but its backend is not compiled in the
-	// default binary: the not-compiled check must win (security-correct).
-	_, err := r.StoreType(BackendSpec{Backend: config.BackendTypePKCS11})
+	// A backend that is not compiled into this binary must report so before
+	// any store-type mapping is consulted (security-correct).
+	backend := uncompiledBackend(t)
+	_, err := r.StoreType(BackendSpec{Backend: backend})
 	var notCompiled *BackendNotCompiledError
 	if !errors.As(err, &notCompiled) {
-		t.Fatalf("StoreType(pkcs11) error = %v, want *BackendNotCompiledError", err)
+		t.Fatalf("StoreType(%s) error = %v, want *BackendNotCompiledError", backend, err)
 	}
 }
 

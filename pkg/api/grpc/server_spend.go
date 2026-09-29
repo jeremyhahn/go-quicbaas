@@ -66,6 +66,10 @@ func (s *OrchestratorServer) GetSpendReport(ctx context.Context, req *pb.GetSpen
 			SessionID: req.GetSessionId(),
 			Round:     int(req.GetRound()),
 			RoundSet:  req.GetRoundSet(),
+			From:      spendInstant(req.GetFrom()),
+			To:        spendInstant(req.GetTo()),
+			Host:      req.GetHost(),
+			Agent:     req.GetAgent(),
 		})
 	if err != nil {
 		return nil, spendStatusError(err)
@@ -99,36 +103,57 @@ func spendStatusError(err error) error {
 // to parse JSON out of a protobuf has no schema for the thing it is reading.
 func spendReportToProto(report *orchestration.SpendReport) *pb.GetSpendReportResponse {
 	out := &pb.GetSpendReportResponse{
-		Level:            string(report.Level),
-		TenantId:         report.TenantID,
-		ProjectId:        report.ProjectID,
-		TaskId:           report.TaskID,
-		JobId:            report.JobID,
-		SessionId:        report.SessionID,
-		Round:            int32(report.Round),
-		Entries:          int32(report.Entries),
-		InputTokens:      report.InputTokens,
-		OutputTokens:     report.OutputTokens,
-		TotalTokens:      report.TotalTokens,
-		ProjectName:      report.ProjectName,
-		CacheReadTokens:  report.CacheReadTokens,
-		CacheWriteTokens: report.CacheWriteTokens,
-		CostMicros:       report.CostMicros,
-		CostMeasured:     report.CostMeasured,
-		Successes:        int32(report.Successes),
-		Failures:         int32(report.Failures),
-		FirstAt:          spendTimestamp(report.FirstAt),
-		LastAt:           spendTimestamp(report.LastAt),
-		ChildLevel:       string(report.ChildLevel),
+		Level:       string(report.Level),
+		TenantId:    report.TenantID,
+		ProjectId:   report.ProjectID,
+		TaskId:      report.TaskID,
+		JobId:       report.JobID,
+		SessionId:   report.SessionID,
+		Round:       int32(report.Round),
+		ProjectName: report.ProjectName,
+		Totals:      spendTotalsToProto(report.ConsumptionTotals),
+		Currency:    report.Currency,
+		FirstAt:     spendTimestamp(report.FirstAt),
+		LastAt:      spendTimestamp(report.LastAt),
+		From:        spendTimestamp(report.From),
+		To:          spendTimestamp(report.To),
+		ChildLevel:  string(report.ChildLevel),
+
+		SubscriptionFeeMicros: report.SubscriptionFeeMicros,
+		ScopePolicyStatus:     string(report.ScopePolicyStatus),
+		Host:                  report.Host,
+	}
+	for _, host := range report.Hosts {
+		out.Hosts = append(out.Hosts, &pb.SpendHost{
+			Host:         host.Host,
+			Unattributed: host.Unattributed,
+			Totals:       spendTotalsToProto(host.ConsumptionTotals),
+		})
+	}
+	for _, window := range report.ScopeWindows {
+		out.ScopeWindows = append(out.ScopeWindows, spendWindowStatusToProto(window))
+	}
+	out.Agent = report.Agent
+	out.AgentPolicyStatus = string(report.AgentPolicyStatus)
+	for _, agent := range report.Agents {
+		out.Agents = append(out.Agents, &pb.SpendAgent{
+			AgentId:      agent.AgentID,
+			Name:         agent.Name,
+			Unattributed: agent.Unattributed,
+			Totals:       spendTotalsToProto(agent.ConsumptionTotals),
+		})
+	}
+	for _, window := range report.AgentWindows {
+		out.AgentWindows = append(out.AgentWindows, spendWindowStatusToProto(window))
 	}
 	for _, account := range report.Accounts {
 		out.Accounts = append(out.Accounts, spendAccountToProto(account))
 	}
 	for _, model := range report.Models {
 		out.Models = append(out.Models, &pb.SpendModel{
-			Engine:      model.Engine,
-			Model:       model.Model,
-			TotalTokens: model.TotalTokens,
+			Engine: model.Engine,
+			Model:  model.Model,
+			Totals: spendTotalsToProto(model.ConsumptionTotals),
 		})
 	}
 	for _, child := range report.Children {
@@ -137,31 +162,52 @@ func spendReportToProto(report *orchestration.SpendReport) *pb.GetSpendReportRes
 			Level:        string(child.Level),
 			Unattributed: child.Unattributed,
 			Name:         child.Name,
-			TotalTokens:  child.TotalTokens,
+			Totals:       spendTotalsToProto(child.ConsumptionTotals),
 		})
 	}
 	return out
 }
 
+// spendTotalsToProto renders one set of consumption totals.
+func spendTotalsToProto(totals orchestration.ConsumptionTotals) *pb.SpendTotals {
+	return &pb.SpendTotals{
+		Entries:            int32(totals.Entries),
+		InputTokens:        totals.InputTokens,
+		OutputTokens:       totals.OutputTokens,
+		CacheReadTokens:    totals.CacheReadTokens,
+		CacheWriteTokens:   totals.CacheWriteTokens,
+		TotalTokens:        totals.TotalTokens,
+		EquivalentMicros:   totals.EquivalentMicros,
+		PricedEntries:      int32(totals.PricedEntries),
+		UnpricedEntries:    int32(totals.UnpricedEntries),
+		DurationMs:         totals.DurationMillis,
+		Successes:          int32(totals.Successes),
+		Failures:           int32(totals.Failures),
+		BilledMicros:       totals.BilledMicros,
+		BilledEntries:      int32(totals.BilledEntries),
+		UnbilledEntries:    int32(totals.UnbilledEntries),
+		EnergyMwh:          totals.EnergyMilliWh,
+		ElectricityEntries: int32(totals.ElectricityEntries),
+
+		MeasuredEnergyEntries: int32(totals.MeasuredEnergyEntries),
+	}
+}
+
 // spendAccountToProto renders one account's contribution and allowance.
 func spendAccountToProto(account orchestration.SpendAccount) *pb.SpendAccount {
 	out := &pb.SpendAccount{
-		AccountId:    account.AccountID,
-		DisplayName:  account.DisplayName,
-		Provider:     account.Provider,
-		TotalTokens:  account.TotalTokens,
-		PolicyStatus: string(account.PolicyStatus),
+		AccountId:        account.AccountID,
+		DisplayName:      account.DisplayName,
+		Provider:         account.Provider,
+		Totals:           spendTotalsToProto(account.ConsumptionTotals),
+		PolicyStatus:     string(account.PolicyStatus),
+		BillingMode:      string(account.Billing.Mode),
+		MonthlyFeeMicros: account.Billing.MonthlyFeeMicros,
+
+		SubscriptionFeeMicros: account.SubscriptionFeeMicros,
 	}
 	for _, window := range account.Windows {
-		out.Windows = append(out.Windows, &pb.SpendWindowStatus{
-			Name:            window.Name,
-			SizeNanos:       int64(window.Size),
-			MaxTokens:       window.MaxTokens,
-			UsedTokens:      window.UsedTokens,
-			RemainingTokens: window.RemainingTokens,
-			Exhausted:       window.Exhausted,
-			FreesAt:         spendTimestamp(window.FreesAt),
-		})
+		out.Windows = append(out.Windows, spendWindowStatusToProto(window))
 	}
 	if account.Breaker != nil {
 		out.Breaker = &pb.SpendBreakerVerdict{
@@ -176,6 +222,15 @@ func spendAccountToProto(account orchestration.SpendAccount) *pb.SpendAccount {
 	return out
 }
 
+// spendInstant reads an optional request instant: unset is the zero time,
+// which the report reads as "no bound".
+func spendInstant(at *timestamppb.Timestamp) time.Time {
+	if at == nil {
+		return time.Time{}
+	}
+	return at.AsTime().UTC()
+}
+
 // spendTimestamp renders an instant, leaving an unset one UNSET.
 //
 // timestamppb.New of a zero time.Time is the year 1 — a real instant on the
@@ -187,4 +242,20 @@ func spendTimestamp(at *time.Time) *timestamppb.Timestamp {
 		return nil
 	}
 	return timestamppb.New(*at)
+}
+
+// spendWindowStatusToProto renders one window and the usage against it.
+func spendWindowStatusToProto(window orchestration.SpendWindowStatus) *pb.SpendWindowStatus {
+	return &pb.SpendWindowStatus{
+		Name:                      window.Name,
+		SizeNanos:                 int64(window.Size),
+		MaxTokens:                 window.MaxTokens,
+		UsedTokens:                window.UsedTokens,
+		RemainingTokens:           window.RemainingTokens,
+		MaxEquivalentMicros:       window.MaxEquivalentMicros,
+		UsedEquivalentMicros:      window.UsedEquivalentMicros,
+		RemainingEquivalentMicros: window.RemainingEquivalentMicros,
+		Exhausted:                 window.Exhausted,
+		FreesAt:                   spendTimestamp(window.FreesAt),
+	}
 }

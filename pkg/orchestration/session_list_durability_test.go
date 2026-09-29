@@ -467,7 +467,7 @@ func TestRemoteSessionGone_ProbesThePinnedDaemonNotJustTheBackend(t *testing.T) 
 	// pinned daemon is not registered at all. Without a registry the sweep
 	// correctly declines to decide, which would make the assertion below pass
 	// for the wrong reason.
-	svc.SetAgentRegistry(NewAgentRegistry(kvstore.NewMemory()))
+	svc.SetFleetRegistry(NewFleetRegistry(kvstore.NewMemory()))
 
 	record := &SessionRecord{
 		SessionID:    "s-pinned",

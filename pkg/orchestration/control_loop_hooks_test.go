@@ -945,7 +945,7 @@ func (s *credentialRefusingService) SpawnSession(ctx context.Context, req *Spawn
 	s.mu.Lock()
 	s.spawns = append(s.spawns, req)
 	s.mu.Unlock()
-	if WorkerSpawnAccountAuto(req.Backend) && !req.AccountAuto && req.AccountID == "" {
+	if WorkerSpawnAccountAuto(req.Backend, req.Model) && !req.AccountAuto && req.AccountID == "" {
 		return nil, &AccountResolverNotConfiguredError{Backend: req.Backend}
 	}
 	return s.controlLoopMockService.SpawnSession(ctx, req)

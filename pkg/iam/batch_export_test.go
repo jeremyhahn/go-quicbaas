@@ -15,9 +15,8 @@ func setupTestBatchManager(t *testing.T) (*BatchManager, *MemoryStorage) {
 
 	// Create identity store
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
+		UserStorage: storage,
+		RoleStorage: storage,
 	})
 
 	// Create policy engine
@@ -58,29 +57,12 @@ func populateTestData(t *testing.T, storage *MemoryStorage, tenantID string) {
 			Email:    generateTestEmail(i),
 			Name:     generateTestName(i),
 			TenantID: tenantID,
-			Groups:   []string{},
 			Roles:    []string{},
 			Created:  now.Add(-time.Duration(i) * time.Hour),
 			Updated:  now.Add(-time.Duration(i) * time.Minute),
 		}
 		if err := storage.CreateUser(ctx, user); err != nil {
 			t.Fatalf("failed to create user: %v", err)
-		}
-	}
-
-	// Create groups
-	for i := 0; i < 3; i++ {
-		group := &Group{
-			ID:          generateTestGroupID(i),
-			Name:        generateTestGroupName(i),
-			Description: "Test group description",
-			TenantID:    tenantID,
-			Members:     []string{},
-			Created:     now.Add(-time.Duration(i) * time.Hour),
-			Updated:     now.Add(-time.Duration(i) * time.Minute),
-		}
-		if err := storage.CreateGroup(ctx, group); err != nil {
-			t.Fatalf("failed to create group: %v", err)
 		}
 	}
 
@@ -180,7 +162,6 @@ func TestExportAll(t *testing.T) {
 		req := &BatchExportRequest{
 			TenantID:        tenantID,
 			IncludeUsers:    true,
-			IncludeGroups:   true,
 			IncludeRoles:    true,
 			IncludePolicies: true,
 		}
@@ -195,9 +176,6 @@ func TestExportAll(t *testing.T) {
 		}
 		if len(result.Users) != 5 {
 			t.Errorf("expected 5 users, got %d", len(result.Users))
-		}
-		if len(result.Groups) != 3 {
-			t.Errorf("expected 3 groups, got %d", len(result.Groups))
 		}
 		if len(result.Roles) != 3 {
 			t.Errorf("expected 3 roles, got %d", len(result.Roles))
@@ -228,37 +206,11 @@ func TestExportAll(t *testing.T) {
 		if len(result.Users) != 5 {
 			t.Errorf("expected 5 users, got %d", len(result.Users))
 		}
-		if len(result.Groups) != 0 {
-			t.Errorf("expected 0 groups, got %d", len(result.Groups))
-		}
 		if len(result.Roles) != 0 {
 			t.Errorf("expected 0 roles, got %d", len(result.Roles))
 		}
 		if len(result.Policies) != 0 {
 			t.Errorf("expected 0 policies, got %d", len(result.Policies))
-		}
-	})
-
-	t.Run("export only groups", func(t *testing.T) {
-		bm, storage := setupTestBatchManager(t)
-		populateTestData(t, storage, tenantID)
-
-		ctx := context.Background()
-		req := &BatchExportRequest{
-			TenantID:      tenantID,
-			IncludeGroups: true,
-		}
-
-		result, err := bm.ExportAll(ctx, req)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if len(result.Users) != 0 {
-			t.Errorf("expected 0 users, got %d", len(result.Users))
-		}
-		if len(result.Groups) != 3 {
-			t.Errorf("expected 3 groups, got %d", len(result.Groups))
 		}
 	})
 
@@ -321,7 +273,6 @@ func TestExportAll(t *testing.T) {
 		req := &BatchExportRequest{
 			TenantID:        emptyTenant,
 			IncludeUsers:    true,
-			IncludeGroups:   true,
 			IncludeRoles:    true,
 			IncludePolicies: true,
 		}
@@ -333,9 +284,6 @@ func TestExportAll(t *testing.T) {
 
 		if len(result.Users) != 0 {
 			t.Errorf("expected 0 users, got %d", len(result.Users))
-		}
-		if len(result.Groups) != 0 {
-			t.Errorf("expected 0 groups, got %d", len(result.Groups))
 		}
 	})
 
@@ -377,7 +325,6 @@ func TestExportAll(t *testing.T) {
 		req := &BatchExportRequest{
 			TenantID:        tenantID,
 			IncludeUsers:    true,
-			IncludeGroups:   true,
 			IncludeRoles:    true,
 			IncludePolicies: true,
 		}
@@ -396,12 +343,10 @@ func TestExportAll(t *testing.T) {
 		req := &BatchExportRequest{
 			TenantID:        tenantID,
 			IncludeUsers:    true,
-			IncludeGroups:   true,
 			IncludeRoles:    true,
 			IncludePolicies: true,
 			Filter: ExportFilter{
 				UserIDs:     []string{"1"},
-				GroupIDs:    []string{"group-a"},
 				RoleIDs:     []string{"role-a"},
 				PolicyNames: []string{"policy-a"},
 			},
@@ -414,9 +359,6 @@ func TestExportAll(t *testing.T) {
 
 		if len(result.Users) != 1 {
 			t.Errorf("expected 1 user, got %d", len(result.Users))
-		}
-		if len(result.Groups) != 1 {
-			t.Errorf("expected 1 group, got %d", len(result.Groups))
 		}
 		if len(result.Roles) != 1 {
 			t.Errorf("expected 1 role, got %d", len(result.Roles))
@@ -584,149 +526,6 @@ func TestExportUsersWithFilters(t *testing.T) {
 		_, err := bm.ExportUsers(ctx, tenantID, ExportFilter{})
 		if err == nil {
 			t.Error("expected cancellation error")
-		}
-	})
-}
-
-// TestExportGroupsWithFilters tests ExportGroups with various filter combinations.
-func TestExportGroupsWithFilters(t *testing.T) {
-	tenantID := "test-tenant"
-
-	t.Run("export all groups without filter", func(t *testing.T) {
-		bm, storage := setupTestBatchManager(t)
-		populateTestData(t, storage, tenantID)
-
-		ctx := context.Background()
-		groups, err := bm.ExportGroups(ctx, tenantID, ExportFilter{})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if len(groups) != 3 {
-			t.Errorf("expected 3 groups, got %d", len(groups))
-		}
-	})
-
-	t.Run("export groups with ID filter", func(t *testing.T) {
-		bm, storage := setupTestBatchManager(t)
-		populateTestData(t, storage, tenantID)
-
-		ctx := context.Background()
-		filter := ExportFilter{
-			GroupIDs: []string{"group-a"},
-		}
-
-		groups, err := bm.ExportGroups(ctx, tenantID, filter)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if len(groups) != 1 {
-			t.Errorf("expected 1 group, got %d", len(groups))
-		}
-	})
-
-	t.Run("export groups with time filter", func(t *testing.T) {
-		bm, storage := setupTestBatchManager(t)
-		populateTestData(t, storage, tenantID)
-
-		ctx := context.Background()
-		oneHourAgo := time.Now().Add(-1 * time.Hour)
-		tomorrow := time.Now().Add(24 * time.Hour)
-		filter := ExportFilter{
-			CreatedAfter:  &oneHourAgo,
-			CreatedBefore: &tomorrow,
-		}
-
-		groups, err := bm.ExportGroups(ctx, tenantID, filter)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if len(groups) == 0 {
-			t.Error("expected at least 1 group matching time filter")
-		}
-	})
-
-	t.Run("export groups with updated time filter", func(t *testing.T) {
-		bm, storage := setupTestBatchManager(t)
-		populateTestData(t, storage, tenantID)
-
-		ctx := context.Background()
-		twoMinutesAgo := time.Now().Add(-2 * time.Minute)
-		tomorrow := time.Now().Add(24 * time.Hour)
-		filter := ExportFilter{
-			UpdatedAfter:  &twoMinutesAgo,
-			UpdatedBefore: &tomorrow,
-		}
-
-		groups, err := bm.ExportGroups(ctx, tenantID, filter)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Should include at least some groups
-		if len(groups) == 0 {
-			t.Error("expected at least 1 group matching updated time filter")
-		}
-	})
-
-	t.Run("export groups with non-matching ID filter", func(t *testing.T) {
-		bm, storage := setupTestBatchManager(t)
-		populateTestData(t, storage, tenantID)
-
-		ctx := context.Background()
-		filter := ExportFilter{
-			GroupIDs: []string{"nonexistent-group"},
-		}
-
-		groups, err := bm.ExportGroups(ctx, tenantID, filter)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if len(groups) != 0 {
-			t.Errorf("expected 0 groups, got %d", len(groups))
-		}
-	})
-
-	t.Run("export groups with created before filter that excludes all", func(t *testing.T) {
-		bm, storage := setupTestBatchManager(t)
-		populateTestData(t, storage, tenantID)
-
-		ctx := context.Background()
-		longTimeAgo := time.Now().Add(-1000 * time.Hour)
-		filter := ExportFilter{
-			CreatedBefore: &longTimeAgo,
-		}
-
-		groups, err := bm.ExportGroups(ctx, tenantID, filter)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if len(groups) != 0 {
-			t.Errorf("expected 0 groups, got %d", len(groups))
-		}
-	})
-
-	t.Run("export groups with updated before filter that excludes all", func(t *testing.T) {
-		bm, storage := setupTestBatchManager(t)
-		populateTestData(t, storage, tenantID)
-
-		ctx := context.Background()
-		longTimeAgo := time.Now().Add(-1000 * time.Hour)
-		filter := ExportFilter{
-			UpdatedBefore: &longTimeAgo,
-		}
-
-		groups, err := bm.ExportGroups(ctx, tenantID, filter)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if len(groups) != 0 {
-			t.Errorf("expected 0 groups, got %d", len(groups))
 		}
 	})
 }
@@ -1013,33 +812,6 @@ func TestFilterMatchFunctions(t *testing.T) {
 		}
 	})
 
-	t.Run("groupMatchesFilter with combined filters", func(t *testing.T) {
-		group := &Group{
-			ID:      "group-1",
-			Created: now,
-			Updated: now,
-		}
-
-		// Should match - ID in list
-		filter := ExportFilter{
-			GroupIDs:      []string{"group-1"},
-			CreatedAfter:  &yesterday,
-			UpdatedBefore: &tomorrow,
-		}
-		if !bm.groupMatchesFilter(group, filter) {
-			t.Error("group should match combined filter")
-		}
-
-		// Should not match - created before filter
-		createdAfterTomorrow := tomorrow
-		filter = ExportFilter{
-			CreatedAfter: &createdAfterTomorrow,
-		}
-		if bm.groupMatchesFilter(group, filter) {
-			t.Error("group should not match filter - created before filter time")
-		}
-	})
-
 	t.Run("roleMatchesFilter with all filter types", func(t *testing.T) {
 		role := &Role{
 			ID:      "role-1",
@@ -1217,56 +989,6 @@ func TestFilterMatchFunctions(t *testing.T) {
 			})
 		}
 	})
-
-	t.Run("groupMatchesFilter with all filter types", func(t *testing.T) {
-		group := &Group{
-			ID:      "group-1",
-			Created: now,
-			Updated: now,
-		}
-
-		// Test additional group filter combinations
-		tests := []struct {
-			name     string
-			filter   ExportFilter
-			expected bool
-		}{
-			{
-				name:     "empty filter matches",
-				filter:   ExportFilter{},
-				expected: true,
-			},
-			{
-				name:     "matching ID filter",
-				filter:   ExportFilter{GroupIDs: []string{"group-1"}},
-				expected: true,
-			},
-			{
-				name:     "non-matching ID filter",
-				filter:   ExportFilter{GroupIDs: []string{"group-2"}},
-				expected: false,
-			},
-			{
-				name:     "updated after tomorrow does not match",
-				filter:   ExportFilter{UpdatedAfter: &tomorrow},
-				expected: false,
-			},
-			{
-				name:     "updated before yesterday does not match",
-				filter:   ExportFilter{UpdatedBefore: &yesterday},
-				expected: false,
-			},
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				result := bm.groupMatchesFilter(group, tt.filter)
-				if result != tt.expected {
-					t.Errorf("expected %v, got %v", tt.expected, result)
-				}
-			})
-		}
-	})
 }
 
 // TestConvertToImportRequest tests conversion of export results to import requests.
@@ -1283,7 +1005,6 @@ func TestConvertToImportRequest(t *testing.T) {
 					Name:       "User One",
 					TenantID:   "source-tenant",
 					Lifecycle:  LifecycleActive,
-					Groups:     []string{"g1"},
 					Roles:      []string{"r1"},
 					Attributes: map[string]string{"dept": "engineering"},
 					Created:    now,
@@ -1297,17 +1018,6 @@ func TestConvertToImportRequest(t *testing.T) {
 					Created:   now,
 					Updated:   now,
 					Lifecycle: LifecycleSuspended,
-				},
-			},
-			Groups: []*Group{
-				{
-					ID:          "g1",
-					Name:        "Group One",
-					Description: "First group",
-					TenantID:    "source-tenant",
-					Members:     []string{"u1"},
-					Created:     now,
-					Updated:     now,
 				},
 			},
 			Roles: []*Role{
@@ -1373,17 +1083,6 @@ func TestConvertToImportRequest(t *testing.T) {
 		}
 		assertEnabledStated(t, importReq.Users[0].Enabled, true, "first user")
 		assertEnabledStated(t, importReq.Users[1].Enabled, false, "second user (suspended)")
-		if len(importReq.Users[0].Groups) != 1 {
-			t.Errorf("expected 1 group, got %d", len(importReq.Users[0].Groups))
-		}
-
-		// Verify groups
-		if len(importReq.Groups) != 1 {
-			t.Errorf("expected 1 group, got %d", len(importReq.Groups))
-		}
-		if importReq.Groups[0].Name != "Group One" {
-			t.Errorf("expected group name 'Group One', got '%s'", importReq.Groups[0].Name)
-		}
 
 		// Verify roles
 		if len(importReq.Roles) != 1 {
@@ -1417,9 +1116,6 @@ func TestConvertToImportRequest(t *testing.T) {
 		}
 		if importReq.Users != nil {
 			t.Error("expected nil users")
-		}
-		if importReq.Groups != nil {
-			t.Error("expected nil groups")
 		}
 		if importReq.Roles != nil {
 			t.Error("expected nil roles")
@@ -1485,19 +1181,6 @@ func TestConvertToImportRequest(t *testing.T) {
 func TestExportWithContextCancellation(t *testing.T) {
 	tenantID := "test-tenant"
 
-	t.Run("cancel during groups export", func(t *testing.T) {
-		bm, storage := setupTestBatchManager(t)
-		populateTestData(t, storage, tenantID)
-
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-
-		_, err := bm.ExportGroups(ctx, tenantID, ExportFilter{})
-		if err == nil {
-			t.Error("expected cancellation error")
-		}
-	})
-
 	t.Run("cancel during roles export", func(t *testing.T) {
 		bm, storage := setupTestBatchManager(t)
 		populateTestData(t, storage, tenantID)
@@ -1537,16 +1220,6 @@ func TestExportErrorCases(t *testing.T) {
 		}
 	})
 
-	t.Run("export groups with nil identity store", func(t *testing.T) {
-		bm := NewBatchManager(BatchManagerOptions{})
-		ctx := context.Background()
-
-		_, err := bm.ExportGroups(ctx, "tenant", ExportFilter{})
-		if err == nil {
-			t.Error("expected error for nil identity store")
-		}
-	})
-
 	t.Run("export roles with nil identity store", func(t *testing.T) {
 		bm := NewBatchManager(BatchManagerOptions{})
 		ctx := context.Background()
@@ -1572,16 +1245,6 @@ func TestExportErrorCases(t *testing.T) {
 		ctx := context.Background()
 
 		_, err := bm.ExportUsers(ctx, "", ExportFilter{})
-		if err == nil {
-			t.Error("expected validation error for empty tenant ID")
-		}
-	})
-
-	t.Run("export groups with empty tenant ID", func(t *testing.T) {
-		bm, _ := setupTestBatchManager(t)
-		ctx := context.Background()
-
-		_, err := bm.ExportGroups(ctx, "", ExportFilter{})
 		if err == nil {
 			t.Error("expected validation error for empty tenant ID")
 		}
@@ -1616,9 +1279,8 @@ func TestBatchManager_ExportAll_AllIncludes(t *testing.T) {
 	storage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
+		UserStorage: storage,
+		RoleStorage: storage,
 	})
 
 	policyEngine := NewPolicyEngine(PolicyEngineOptions{
@@ -1645,11 +1307,6 @@ func TestBatchManager_ExportAll_AllIncludes(t *testing.T) {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
 
-	group := &Group{ID: "group-1", TenantID: tenantID, Name: "Group One", Created: time.Now(), Updated: time.Now()}
-	if err := storage.CreateGroup(ctx, group); err != nil {
-		t.Fatalf("CreateGroup failed: %v", err)
-	}
-
 	role := &Role{ID: "role-1", TenantID: tenantID, Name: "Role One", Created: time.Now(), Updated: time.Now()}
 	if err := storage.CreateRole(ctx, role); err != nil {
 		t.Fatalf("CreateRole failed: %v", err)
@@ -1669,7 +1326,6 @@ func TestBatchManager_ExportAll_AllIncludes(t *testing.T) {
 	result, err := bm.ExportAll(ctx, &BatchExportRequest{
 		TenantID:        tenantID,
 		IncludeUsers:    true,
-		IncludeGroups:   true,
 		IncludeRoles:    true,
 		IncludePolicies: true,
 	})
@@ -1678,9 +1334,6 @@ func TestBatchManager_ExportAll_AllIncludes(t *testing.T) {
 	}
 	if len(result.Users) != 1 {
 		t.Errorf("expected 1 user, got %d", len(result.Users))
-	}
-	if len(result.Groups) != 1 {
-		t.Errorf("expected 1 group, got %d", len(result.Groups))
 	}
 	if len(result.Roles) != 1 {
 		t.Errorf("expected 1 role, got %d", len(result.Roles))
@@ -1694,9 +1347,8 @@ func TestBatchManager_ExportAll_ValidationError(t *testing.T) {
 	storage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
+		UserStorage: storage,
+		RoleStorage: storage,
 	})
 
 	policyEngine := NewPolicyEngine(PolicyEngineOptions{
@@ -1728,9 +1380,8 @@ func TestBatchManager_ImportAll_ValidationError(t *testing.T) {
 	storage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
+		UserStorage: storage,
+		RoleStorage: storage,
 	})
 
 	policyEngine := NewPolicyEngine(PolicyEngineOptions{
@@ -1760,9 +1411,8 @@ func TestBatchManager_ImportAll_NoItems(t *testing.T) {
 	storage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
+		UserStorage: storage,
+		RoleStorage: storage,
 	})
 
 	policyEngine := NewPolicyEngine(PolicyEngineOptions{
@@ -1982,39 +1632,6 @@ func TestAdminManager_StartImpersonation_MissingReason(t *testing.T) {
 // BatchProcessor - more rate limit and error paths
 // =============================================================================
 
-func TestBatchProcessor_ProcessGroups_WithRateLimit(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "groups-tenant"
-
-	items := []GroupImportItem{
-		{ID: "group-1", Name: "Group One"},
-		{ID: "group-2", Name: "Group Two"},
-	}
-
-	// Verify we can create an operation with rate limit option
-	op, err := bp.ImportGroups(ctx, tenantID, items, BatchOptions{
-		RateLimit: 5,
-	})
-	if err != nil {
-		t.Fatalf("ImportGroups failed: %v", err)
-	}
-
-	// Verify operation was created with correct attributes
-	if op.ID == "" {
-		t.Error("expected operation to have ID")
-	}
-	if op.TenantID != tenantID {
-		t.Errorf("expected tenantID %s, got %s", tenantID, op.TenantID)
-	}
-	if op.TotalItems != 2 {
-		t.Errorf("expected 2 total items, got %d", op.TotalItems)
-	}
-}
-
 func TestBatchProcessor_ProcessPolicies_WithRateLimit(t *testing.T) {
 	storage := newMockBatchStorage()
 	tenantMgr := newMockTenantManager()
@@ -2063,9 +1680,8 @@ func TestBatchManager_ImportRoles_WithPermissions(t *testing.T) {
 	storage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
+		UserStorage: storage,
+		RoleStorage: storage,
 	})
 
 	policyEngine := NewPolicyEngine(PolicyEngineOptions{
@@ -2102,51 +1718,6 @@ func TestBatchManager_ImportRoles_WithPermissions(t *testing.T) {
 }
 
 // =============================================================================
-// ImportGroups - more coverage
-// =============================================================================
-
-func TestBatchManager_ImportGroups_WithDescription(t *testing.T) {
-	storage := NewMemoryStorage()
-
-	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
-	})
-
-	policyEngine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	bm := NewBatchManager(BatchManagerOptions{
-		IdentityStore: identityStore,
-		PolicyEngine:  policyEngine,
-	})
-
-	ctx := context.Background()
-	tenantID := "group-import-tenant"
-
-	tenant := &Tenant{ID: tenantID, Name: "Group Import Tenant", Created: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	result, err := bm.ImportGroups(ctx, tenantID, []*GroupImport{
-		{
-			ID:          "group-1",
-			Name:        "Engineering Group",
-			Description: "Engineering team group",
-		},
-	}, BatchImportOptions{})
-	if err != nil {
-		t.Fatalf("ImportGroups failed: %v", err)
-	}
-	if result.SuccessCount != 1 {
-		t.Errorf("expected 1 success, got %d", result.SuccessCount)
-	}
-}
-
-// =============================================================================
 // ExportUsers - context cancellation
 // =============================================================================
 
@@ -2154,9 +1725,8 @@ func TestBatchManager_ExportUsers_ContextCanceled(t *testing.T) {
 	storage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
+		UserStorage: storage,
+		RoleStorage: storage,
 	})
 
 	policyEngine := NewPolicyEngine(PolicyEngineOptions{

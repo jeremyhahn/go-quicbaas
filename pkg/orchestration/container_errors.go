@@ -13,7 +13,10 @@
 
 package orchestration
 
-import "errors"
+import (
+	"errors"
+	"strconv"
+)
 
 // Sentinel errors for container runtime operations.
 var (
@@ -44,6 +47,10 @@ var (
 	// is an exit status on ExecResult.
 	ErrContainerExec = errors.New("container: exec failed")
 
+	// ErrContainerNotRunning indicates a container that exists but is not
+	// running, so a command could not be started inside it.
+	ErrContainerNotRunning = errors.New("container: not running")
+
 	// ErrContainerStreamClosed indicates a containerized agent stopped
 	// answering on its stdio before the exchange in flight completed.
 	ErrContainerStreamClosed = errors.New("container: agent stream closed")
@@ -51,6 +58,10 @@ var (
 	// ErrContainerSweep indicates the startup sweep of the containers a
 	// previous run left behind could not be completed.
 	ErrContainerSweep = errors.New("container: orphan sweep failed")
+
+	// ErrGoBuildCache indicates the shared Go build cache could not be
+	// configured or prepared for a sandbox container.
+	ErrGoBuildCache = errors.New("container: go build cache")
 )
 
 // ContainerRuntimeNotAvailableError indicates no docker or podman binary was found.
@@ -128,6 +139,35 @@ func (e *ContainerNotFoundError) Error() string {
 func (e *ContainerNotFoundError) Unwrap() error {
 	return ErrContainerNotFound
 }
+
+// ContainerNotRunningError reports a command the runtime would not start
+// because its container has stopped.
+//
+// IT IS NOT AN EXIT STATUS. The runtime refused before any process existed
+// inside the container, so the code the runtime's own CLI exited with is not
+// the answer of the command the caller asked for. Reporting it on ExecResult
+// made a stopped container read as a git that ran and failed
+// (go-quicbaas#932).
+type ContainerNotRunningError struct {
+	// ContainerID is the container the command was asked to run in.
+	ContainerID string
+
+	// Message is the runtime's own refusal. It is the runtime's text, not the
+	// command's — no command ran to print anything — so it is rendered.
+	Message string
+}
+
+// Error implements the error interface.
+func (e *ContainerNotRunningError) Error() string {
+	msg := ErrContainerNotRunning.Error() + ": " + e.ContainerID
+	if e.Message != "" {
+		msg += ": " + e.Message
+	}
+	return msg
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *ContainerNotRunningError) Unwrap() error { return ErrContainerNotRunning }
 
 // ContainerImagePullError indicates the image could not be pulled.
 type ContainerImagePullError struct {
@@ -245,13 +285,20 @@ func (e *ContainerExecError) Unwrap() []error {
 // before the exchange the caller was waiting for completed — the container is
 // gone, or its command never started.
 //
-// IT CARRIES NO EXIT CODE, deliberately. The `docker run -i` process belongs to
-// the container runtime, not to this backend, so unlike the host subprocess
-// path (StreamJSONProcessExitedError) there is no ProcessState here to read one
-// from. Reporting a zero would be a guess, and "the agent exited successfully"
-// is the single most misleading guess available. What IS known is the
-// container, the image, and the exchange that was in flight, and that is what
-// an operator needs to go read `docker logs` for the rest.
+// ITS EXIT CODE IS ONLY WHAT THE RUNTIME REPORTED. The `docker run -i` process
+// belongs to the container runtime, not to this backend, so the status is read
+// from the runtime's foreground process when it offers one (InteractiveProcess
+// .Wait) and is otherwise left unknown. Reporting a zero would be a guess, and
+// "the agent exited successfully" is the single most misleading guess
+// available. What IS always known is the container, the image, and the
+// exchange that was in flight, and that is what an operator needs to go read
+// `docker logs` for the rest.
+//
+// The exit is also the line between the work and the infrastructure
+// (go-quicbaas#1064): a stream that closed with the worker's own non-zero exit
+// is a crash and is charged; a stream that closed without one — the container
+// was killed, the runtime failed, the pipe was cut — is transport loss, and
+// the fleet node reports it as its interruption. See WorkerCrashed.
 type ContainerStreamClosedError struct {
 	// ContainerID is the container whose stdio ended.
 	ContainerID string
@@ -261,6 +308,15 @@ type ContainerStreamClosedError struct {
 
 	// Operation names the exchange in flight ("handshake", "prompt").
 	Operation string
+
+	// Exit is how the container's process ended, when the runtime could say.
+	Exit ContainerExit
+}
+
+// WorkerCrashed reports whether the stream closed because the worker process
+// itself exited non-zero, rather than because its transport was lost.
+func (e *ContainerStreamClosedError) WorkerCrashed() bool {
+	return e.Exit.WorkerCrashed()
 }
 
 // Error implements the error interface.
@@ -271,6 +327,9 @@ func (e *ContainerStreamClosedError) Error() string {
 	}
 	if e.Operation != "" {
 		msg += ": " + e.Operation
+	}
+	if e.Exit.Known {
+		msg += " (exit code " + strconv.Itoa(e.Exit.Code) + ")"
 	}
 	return msg
 }
@@ -335,4 +394,34 @@ func (e *ContainerSweepError) Unwrap() []error {
 		return []error{ErrContainerSweep, e.Cause}
 	}
 	return []error{ErrContainerSweep}
+}
+
+// GoBuildCacheError reports a shared Go build cache that is misconfigured or
+// could not be prepared for a spawn.
+type GoBuildCacheError struct {
+	// Root is the configured cache root.
+	Root string
+
+	// Reason says what is wrong with it.
+	Reason string
+
+	// Cause is the underlying failure, when there is one.
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *GoBuildCacheError) Error() string {
+	msg := ErrGoBuildCache.Error() + ": " + e.Root + ": " + e.Reason
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+// Unwrap returns both the sentinel and cause for errors.Is/As support.
+func (e *GoBuildCacheError) Unwrap() []error {
+	if e.Cause != nil {
+		return []error{ErrGoBuildCache, e.Cause}
+	}
+	return []error{ErrGoBuildCache}
 }

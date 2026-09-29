@@ -618,6 +618,62 @@ func TestSessionBinding_Subscribe_ReplacesPreviousSubscription(t *testing.T) {
 	require.NoError(t, binding.Unsubscribe("sess-dup"))
 }
 
+// TestSessionBinding_Subscribe_LateForwarderKeepsReplacement pins go-quicbaas#849:
+// the first stream's forwarder finishing its teardown AFTER a resubscribe has
+// registered the replacement must neither remove the replacement from the
+// registry nor cancel its stream. The late teardown is driven synchronously,
+// so the ordering is deterministic rather than left to the scheduler.
+func TestSessionBinding_Subscribe_LateForwarderKeepsReplacement(t *testing.T) {
+	var streamCtxs []context.Context
+	mock := &mockOrchestratorClient{}
+	setSubscribeSessionEventsFn(mock, func(ctx context.Context, req *orchestratorSDK.SubscribeSessionEventsRequest) (<-chan *orchestratorSDK.SessionEventEnvelope, error) {
+		streamCtxs = append(streamCtxs, ctx)
+		ch := make(chan *orchestratorSDK.SessionEventEnvelope)
+		go func() {
+			<-ctx.Done()
+			close(ch)
+		}()
+		return ch, nil
+	})
+	binding, _ := newTestSessionBinding(t, mock)
+
+	_, err := binding.Subscribe("sess-late", 0)
+	require.NoError(t, err)
+	binding.subsMu.Lock()
+	first := binding.subs["sess-late"]
+	binding.subsMu.Unlock()
+	require.NotNil(t, first)
+
+	_, err = binding.Subscribe("sess-late", 0)
+	require.NoError(t, err)
+	binding.subsMu.Lock()
+	second := binding.subs["sess-late"]
+	binding.subsMu.Unlock()
+	require.NotNil(t, second)
+	require.NotSame(t, first, second)
+	require.Len(t, streamCtxs, 2)
+	require.Error(t, streamCtxs[0].Err(), "the replaced stream must be cancelled")
+
+	// Replay the first forwarder's exit after the replacement registered:
+	// its stream has ended, so forwardEvents returns and runs its deferred
+	// teardown against the registry that now holds the replacement.
+	closed := make(chan *orchestratorSDK.SessionEventEnvelope)
+	close(closed)
+	binding.forwardEvents(streamCtxs[0], "sess-late", first, "session-event:sess-late", closed)
+
+	binding.subsMu.Lock()
+	current, ok := binding.subs["sess-late"]
+	size := len(binding.subs)
+	binding.subsMu.Unlock()
+	require.True(t, ok, "late forwarder removed the replacement subscription")
+	assert.Same(t, second, current)
+	assert.Equal(t, 1, size)
+	assert.NoError(t, streamCtxs[1].Err(), "late forwarder cancelled the replacement stream")
+
+	require.NoError(t, binding.Unsubscribe("sess-late"))
+	assert.Error(t, streamCtxs[1].Err(), "Unsubscribe must cancel the live stream")
+}
+
 func TestSessionBinding_Unsubscribe_EmptyID(t *testing.T) {
 	binding, _ := newTestSessionBinding(t, &mockOrchestratorClient{})
 	err := binding.Unsubscribe("")

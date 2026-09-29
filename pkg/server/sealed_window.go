@@ -192,7 +192,6 @@ func (s *Server) buildSealedWindowFacade() (service.QuicBaaS, *ShardedClient, er
 		EnableAuth:      false,
 		EnableMetrics:   false,
 		EnableScheduler: false,
-		DataDir:         s.config.Storage.DataDir,
 	}
 
 	svc, err := service.NewServiceBuilder().

@@ -33,7 +33,7 @@ vi.mock('../src/stores/orchestrator.svelte.ts', () => ({
 }));
 
 vi.mock('../src/stores/router.svelte.ts', () => ({
-  routeAgentDetail: vi.fn(),
+  routeFleetNode: vi.fn(),
   routeJobs: vi.fn(),
   routeSessionDetail: vi.fn(),
   routeTaskDetail: vi.fn(),
@@ -43,6 +43,8 @@ vi.mock('../src/stores/router.svelte.ts', () => ({
 vi.mock('../src/stores/job-events.svelte.ts', () => ({
   startEventStream: vi.fn(),
   stopEventStream: vi.fn(),
+  retryEventStream: vi.fn(),
+  eventSubStore: { liveUpdatesUnavailable: () => false },
 }));
 
 vi.mock('../src/stores/toast.svelte.ts', () => ({ showToast: vi.fn() }));
@@ -113,8 +115,11 @@ const jobSpend: GetSpendReportResponse = {
   input_tokens: 4000,
   output_tokens: 1200,
   total_tokens: 5200,
-  cost_micros: 0,
-  cost_measured: false,
+  currency: 'USD',
+  priced_entries: 0,
+  unpriced_entries: 3,
+  billed_entries: 0,
+  unbilled_entries: 3,
   successes: 4,
   failures: 0,
   accounts: [
@@ -176,7 +181,7 @@ describe('JobDetailView Cost tab', () => {
 
     const cost = await screen.findByTestId('job-cost');
     expect(cost.textContent?.trim()).toBe('—');
-    expect(screen.getByText(/cost unmeasured/i)).toBeTruthy();
+    expect(screen.getByText(/no price for these models/i)).toBeTruthy();
   });
 
   it('addresses a job with no project or task by the ledger sentinel', async () => {

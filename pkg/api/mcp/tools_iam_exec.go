@@ -53,24 +53,6 @@ func (r *ToolRegistry) executeIAMTool(ctx context.Context, name string, args map
 	case "quicbaas_iam_user_revoke_role":
 		return r.executeIAMUserRevokeRole(ctx, args)
 
-	// Group Operations
-	case "quicbaas_iam_group_create":
-		return r.executeIAMGroupCreate(ctx, args)
-	case "quicbaas_iam_group_get":
-		return r.executeIAMGroupGet(ctx, args)
-	case "quicbaas_iam_group_update":
-		return r.executeIAMGroupUpdate(ctx, args)
-	case "quicbaas_iam_group_delete":
-		return r.executeIAMGroupDelete(ctx, args)
-	case "quicbaas_iam_group_list":
-		return r.executeIAMGroupList(ctx, args)
-	case "quicbaas_iam_group_add_member":
-		return r.executeIAMGroupAddMember(ctx, args)
-	case "quicbaas_iam_group_remove_member":
-		return r.executeIAMGroupRemoveMember(ctx, args)
-	case "quicbaas_iam_group_list_members":
-		return r.executeIAMGroupListMembers(ctx, args)
-
 	// Role Operations
 	case "quicbaas_iam_role_create":
 		return r.executeIAMRoleCreate(ctx, args)

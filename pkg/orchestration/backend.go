@@ -193,6 +193,11 @@ type SpawnRequest struct {
 	// behavior.
 	AccountAllow []string `json:"account_allow,omitempty"`
 
+	// ReplacesSessionID names the session a respawn reconstitutes, so the
+	// account slot the session already holds is not counted against its own
+	// resume. Set by spawnRequestFromRecord; never sent over the wire.
+	ReplacesSessionID string `json:"-"`
+
 	// AccountExclude removes accounts from selection for this one spawn.
 	// Rotation sets it to the account that just hit a limit so a replacement
 	// can never be the same account, independently of when its hold lapses.
@@ -213,6 +218,13 @@ type SpawnRequest struct {
 	// mount when non-empty. Not serialized: it is spawn-time wiring state,
 	// not caller-supplied configuration.
 	AccountHomeDir string `json:"-"`
+
+	// SigningRelay, when set, asks the agent runtime to serve the session's
+	// signing socket from a relay over its FleetRuntime link rather than from
+	// a mount of the control plane's socket (go-quicbaas#1013). Only the
+	// agent's spawn server sets it, from the wire; a local backend never reads
+	// it. Not serialized: it is spawn-time wiring, not configuration.
+	SigningRelay *SigningRelaySpec `json:"-"`
 }
 
 // EffectiveSandboxMode returns the sandbox mode the backend should honor,
@@ -286,6 +298,29 @@ type Session struct {
 	AccountID       string `json:"account_id,omitempty"`
 	AccountStrategy string `json:"account_strategy,omitempty"`
 
+	// AccountGeneration identifies WHICH COPY of the pooled account's
+	// credential this session materialized (AccountCredential.Generation),
+	// read from the envelope at the instant the material was produced — before
+	// the agent process was started, not after it answered.
+	//
+	// A caller that persists a durable session record is expected to copy it
+	// through. It is what lets the daemon ask, from the record alone, whether
+	// the pool has moved under a live session and roll the session BEFORE its
+	// next prompt fails against a credential the provider has stopped
+	// honouring (SessionAccountFreshness, go-quicbaas#997).
+	//
+	// It travels the remote-daemon boundary too (SpawnSessionResponse's
+	// account_generation): a remote session materializes its credential on the
+	// daemon, so the daemon is the only party that can say which copy it took,
+	// and a remote session that reported none would be left on the timestamp
+	// comparison this field exists to replace.
+	//
+	// Zero when the spawn used no pooled account, or when the account's
+	// envelope predates generation stamping; both are read as UNKNOWN by the
+	// freshness check, which then falls back to the account's rotation
+	// timestamp rather than declaring anything stale.
+	AccountGeneration int64 `json:"account_generation,omitempty"`
+
 	// CredentialLeaseID is the DELIVERY GRANT the spawn took out over the
 	// pooled account's credential material (see account_lease.go). Empty when
 	// the spawn used no pooled account, or when the deployment wired no leaser.
@@ -294,6 +329,14 @@ type Session struct {
 	// the session's ending revokes the grants named on the record, and a grant
 	// that reached no record is one no reaper can withdraw.
 	CredentialLeaseID string `json:"credential_lease_id,omitempty"`
+
+	// ReservationID is the session-slot reservation the spawn's account
+	// resolution took (account_balancing.go). A caller that persists a
+	// durable session record MUST copy it through (SessionRecord.
+	// AddReservation): the record naming it is what satisfies the
+	// reservation, and one that reaches no record holds its slot until it
+	// expires.
+	ReservationID string `json:"reservation_id,omitempty"`
 
 	// ContainerID names the container this session's agent runs in, when the
 	// BACKEND owns that container's lifecycle. It is empty for a session

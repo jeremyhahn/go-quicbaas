@@ -101,7 +101,7 @@ on:
 # every run of this workflow is keyed by refs/pull/<n>/head (or refs/heads/main
 # on a push), so a group never spans two pull requests. The group leads with
 # ${{ github.workflow }}, so this `CI` group cannot reach the separate
-# `Code Review` workflow that gates the merge, nor `PR Base Guard`. A cancelled
+# `Code Review` workflow that gates the merge. A cancelled
 # run writes `failure` to its contexts, but only ever against the superseded
 # SHA, which is not the head a merge is evaluated on.
 #
@@ -243,7 +243,7 @@ jobs:
           go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$version"
 
       # `make lint` also runs the repository's naming gate
-      # (scripts/verify-naming.sh, a milliseconds-long text scan of the
+      # (scripts/verifynaming, a milliseconds-long text scan of the
       # tracked files) ahead of golangci-lint, so a naming regression reports
       # before the 20-minute linter pass rather than after it. There is
       # deliberately no separate step for it: two invocations of the same
@@ -344,8 +344,9 @@ jobs:
       # -- had no CI coverage at all: a dependency bump or a compilation
       # regression confined to it could merge with this gate green. The target
       # already existed and was simply never wired in. It runs with -race and
-      # excludes sdk/go/test/, whose docker-compose harness is a separate
-      # known-broken concern.
+      # excludes sdk/go/test/, whose docker-compose harness is known-red and
+      # tracked as #50; it runs off the gate in nightly.yml's
+      # sdk-go-integration job.
       - name: Run SDK module unit tests
         run: make test-sdk-go
 
@@ -556,12 +557,13 @@ jobs:
       # binary still reports today's CVEs.
       # The pins live in the Makefile (GOSEC_VERSION, GOVULNCHECK_VERSION) and
       # are read from it, so this job, `make install-tools` and the Software
-      # Factory worker image all scan with one version (#772).
+      # Factory worker image all scan with one version (#772). gosec is built
+      # by `make install-gosec`, not `go install`ed: its release requires a
+      # vulnerable grpc, so it is built with GO_TOOL_DEPENDENCY_FLOORS
+      # (pkg/version/toolchain.mk), exactly as the worker image builds it.
       - name: Run gosec Security Scanner
         run: |
-          version="$(make -s print-GOSEC_VERSION)"
-          test -n "$version" || { echo "Makefile GOSEC_VERSION is empty"; exit 1; }
-          go install "github.com/securego/gosec/v2/cmd/gosec@$version"
+          make install-gosec
           make gosec
 
       - name: Upload gosec results to GitHub Security
@@ -571,9 +573,7 @@ jobs:
           sarif_file: build/gosec.sarif
           category: gosec
 
-      # Pinned for the same reason, and v1.7.0 is what the last green runs
-      # already resolved -- this records the version in use, it does not change
-      # it.
+      # Pinned for the same reason.
       #
       # This pins the TOOL, not the vulnerability DATABASE. govulncheck fetches
       # its data from the Go vulnerability database at every run, so the scan
@@ -719,6 +719,85 @@ jobs:
 
       - name: Run the frontend tests (make test-frontend)
         run: make test-frontend
+
+  # THE MERGE-RESULT SNAPSHOT SUITE (#982). It is the only thing that measures
+  # what the tree a verification judges actually HOLDS: `git add --all` staged
+  # into an index that starts EMPTY silently drops every file the repository
+  # tracks despite an ignore rule (seven here, the vector-store markers), and a
+  # double that records the argument vector sees an identical command either
+  # way -- so only real git against a real working tree can tell the two apart.
+  #
+  # Nothing else in this pipeline runs it. `make test` never compiles it: the
+  # suite is `integration`-tagged, for what it TOUCHES rather than what it
+  # costs -- it spawns git and writes a working tree, which the unit tier
+  # forbids, and it finishes in well under a second. The Lint job's
+  # `make vet-integration` only TYPECHECKS it, and a suite that is only
+  # typechecked is a dark suite (integration-testing.md §8).
+  #
+  # It is here rather than in integration.yml because it is neither slow nor
+  # service-dependent (devops.md §5): no server, no credential, no network,
+  # and an image that is one alpine, one git and one static test binary. The
+  # regression it catches -- a snapshot that silently loses tracked files --
+  # is one a pull request introduces, so it belongs on the gate that judges
+  # pull requests.
+  #
+  # `make` is the contract (devops.md §4): the target bakes the source into
+  # the image and bind-mounts nothing, which is what lets this job run the
+  # same command a developer runs. A bind mount would not work here at all --
+  # act_runner talks to the host daemon, which cannot resolve a path inside
+  # this job container (see the Build Binaries step in release.yml).
+  #
+  # The job id is one word on purpose: every other job here is, and a
+  # hyphenated id has to survive `needs.<id>.result` in the gate's expression
+  # parser -- which is act_runner's, not GitHub's, on the forge this actually
+  # runs on.
+  snapshot:
+    name: Merge-Result Snapshot
+    runs-on: ubuntu-latest
+    # STAGED FAIL-FAST (ci-template v1.9): the expensive tier starts only once
+    # the fast tier is green. `merge` joins the list so the job can read
+    # needs.merge.outputs.base_sha (#436).
+    needs: [merge, lint, build]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          # fetch-depth: 0 -- required by the merge-result step below (#436).
+          fetch-depth: 0
+
+      # #436: build merge(base, head), not head. The base commit is the one the
+      # `merge` job pinned, so every job validates the same tree.
+      - name: Validate the merge result, not the head
+        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ needs.merge.outputs.base_sha }}"
+
+      # THE IMAGE THIS JOB BUILDS IS SCANNED BEFORE ANYTHING RUNS FROM IT.
+      # devops.md §8 gates `trivy image` on every image this repository
+      # builds, CI images included, and the gate is inside the `make` target
+      # rather than a step here (§4) so a developer's run is the same run:
+      # `integration-test-merge-result` hands the id it just built to
+      # `trivy-image-merge-result`, which fails the target -- and therefore
+      # this job -- on a fixable CRITICAL or HIGH. The image carries no tag, so
+      # a concurrent run on this host cannot substitute another commit's image
+      # between the scan and the test (integration-testing.md §7).
+      #
+      # No `actions/setup-go`: everything compiles inside the image, from the
+      # module cache the build warms. The target's own `stage-gomodauth` reads
+      # the Gitea module-fetch credentials straight out of this job's shell
+      # environment, where the runner injects them (dependency-resolution.md
+      # §6), and hands them to the build as a BuildKit secret -- never a build
+      # arg, which `docker history` would recover. On GitHub none of those
+      # variables exist, the file is written empty, the Dockerfile's mount is
+      # optional, and the same build resolves from the public proxy.
+      - name: Run the merge-result snapshot suite (make integration-test-merge-result)
+        run: make integration-test-merge-result
+
+      # The staged file lives in this job container's /tmp and dies with it,
+      # but a credential is removed when it stops being needed rather than
+      # when its container happens to exit.
+      - name: Remove staged credentials
+        if: always()
+        run: rm -f "$(make -s print-GOMODAUTH_ENV)"
 
   docker:
     name: Docker Build & Security Scan
@@ -903,7 +982,7 @@ jobs:
     name: CI Gate
     runs-on: ubuntu-latest
     if: always()
-    needs: [merge, lint, test, race, security, build, web, docker]
+    needs: [merge, lint, test, race, security, build, web, snapshot, docker]
     steps:
       - name: Fail closed on any non-success
         run: |
@@ -937,6 +1016,10 @@ jobs:
           # skips legitimately nor causes anyone else to skip; it is a plain
           # required input (#551).
           check web      "${{ needs.web.result }}"
+          # snapshot carries no `if:` either: it runs on every event, so a
+          # skip here means the fast tier failed and nothing measured what a
+          # verification's tree holds (#982).
+          check snapshot "${{ needs.snapshot.result }}"
           # docker carries `if: github.event_name == 'push'`, so a skip is
           # legitimate on a pull_request and only there. Everywhere else a
           # skip means either the job never ran or the fast tier failed --

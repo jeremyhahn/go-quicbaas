@@ -76,7 +76,7 @@ type matrixCase struct {
 func newMatrixHarness(t *testing.T, state SessionState, jobID string) (*agentServiceImpl, AgentStore) {
 	t.Helper()
 	svc, store := reconcileHarness(t)
-	svc.SetAgentRegistry(NewAgentRegistry(kvstore.NewMemory()))
+	svc.SetFleetRegistry(NewFleetRegistry(kvstore.NewMemory()))
 	// Every idle bound is zero, so the sweep's quiet gate admits the record and
 	// the verdict below it is what decides. The record is stamped old anyway.
 	seedSession(t, store, &SessionRecord{
@@ -140,11 +140,11 @@ func TestSessionStateMatrix_EveryStateAgainstEveryConclusionPath(t *testing.T) {
 		{
 			name: "agent gone",
 			run: func(t *testing.T, svc *agentServiceImpl, tenantID, jobID string) {
-				if _, err := svc.ConcludeSessionsForAgent(
+				if _, err := svc.ConcludeSessionsForFleetNode(
 					ContextWithTenant(context.Background(), tenantID), tenantID,
-					&AgentRegistration{ID: "a1", Name: "daemon-gone", Host: "daemon-gone"},
+					&FleetNode{ID: "a1", Name: "daemon-gone", Host: "daemon-gone"},
 					"the daemon left the fleet"); err != nil {
-					t.Fatalf("ConcludeSessionsForAgent: %v", err)
+					t.Fatalf("ConcludeSessionsForFleetNode: %v", err)
 				}
 			},
 		},

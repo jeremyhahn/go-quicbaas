@@ -783,7 +783,8 @@ func (c *sdkOrchestratorClient) RotateSessionAccount(ctx context.Context, req *o
 	return c.sdk.Orchestrator().RotateSessionAccount(ctx, req)
 }
 
-// ListSessions returns all active sessions.
+// ListSessions returns every session, in any state, optionally filtered by
+// backend or status.
 func (c *sdkOrchestratorClient) ListSessions(ctx context.Context, req *orchestratorSDK.ListSessionsRequest) (*orchestratorSDK.ListSessionsResponse, error) {
 	return c.sdk.Orchestrator().ListSessions(ctx, req)
 }
@@ -828,29 +829,29 @@ func (c *sdkOrchestratorClient) CompleteTask(ctx context.Context, req *orchestra
 	return c.sdk.Orchestrator().CompleteTask(ctx, req)
 }
 
-// RegisterAgent registers a new agent with the fleet.
-func (c *sdkOrchestratorClient) RegisterAgent(ctx context.Context, req *orchestratorSDK.RegisterAgentRequest) (*orchestratorSDK.RegisterAgentResponse, error) {
-	return c.sdk.Orchestrator().RegisterAgent(ctx, req)
+// RegisterFleetNode registers a new agent with the fleet.
+func (c *sdkOrchestratorClient) RegisterFleetNode(ctx context.Context, req *orchestratorSDK.RegisterFleetNodeRequest) (*orchestratorSDK.RegisterFleetNodeResponse, error) {
+	return c.sdk.Orchestrator().RegisterFleetNode(ctx, req)
 }
 
-// GetAgent returns an agent by ID.
-func (c *sdkOrchestratorClient) GetAgent(ctx context.Context, req *orchestratorSDK.GetAgentRequest) (*orchestratorSDK.AgentRegistration, error) {
-	return c.sdk.Orchestrator().GetAgent(ctx, req)
+// GetFleetNode returns an agent by ID.
+func (c *sdkOrchestratorClient) GetFleetNode(ctx context.Context, req *orchestratorSDK.GetFleetNodeRequest) (*orchestratorSDK.FleetNode, error) {
+	return c.sdk.Orchestrator().GetFleetNode(ctx, req)
 }
 
-// ListAgents returns agents matching the filter criteria.
-func (c *sdkOrchestratorClient) ListAgents(ctx context.Context, req *orchestratorSDK.ListAgentsRequest) (*orchestratorSDK.ListAgentsResponse, error) {
-	return c.sdk.Orchestrator().ListAgents(ctx, req)
+// ListFleetNodes returns agents matching the filter criteria.
+func (c *sdkOrchestratorClient) ListFleetNodes(ctx context.Context, req *orchestratorSDK.ListFleetNodesRequest) (*orchestratorSDK.ListFleetNodesResponse, error) {
+	return c.sdk.Orchestrator().ListFleetNodes(ctx, req)
 }
 
-// RemoveAgent removes an agent from the fleet.
-func (c *sdkOrchestratorClient) RemoveAgent(ctx context.Context, req *orchestratorSDK.RemoveAgentRequest) (*orchestratorSDK.RemoveAgentResponse, error) {
-	return c.sdk.Orchestrator().RemoveAgent(ctx, req)
+// RemoveFleetNode removes an agent from the fleet.
+func (c *sdkOrchestratorClient) RemoveFleetNode(ctx context.Context, req *orchestratorSDK.RemoveFleetNodeRequest) (*orchestratorSDK.RemoveFleetNodeResponse, error) {
+	return c.sdk.Orchestrator().RemoveFleetNode(ctx, req)
 }
 
-// AgentHeartbeat sends a heartbeat for an agent.
-func (c *sdkOrchestratorClient) AgentHeartbeat(ctx context.Context, req *orchestratorSDK.AgentHeartbeatRequest) (*orchestratorSDK.AgentHeartbeatResponse, error) {
-	return c.sdk.Orchestrator().AgentHeartbeat(ctx, req)
+// FleetNodeHeartbeat sends a heartbeat for an agent.
+func (c *sdkOrchestratorClient) FleetNodeHeartbeat(ctx context.Context, req *orchestratorSDK.FleetNodeHeartbeatRequest) (*orchestratorSDK.FleetNodeHeartbeatResponse, error) {
+	return c.sdk.Orchestrator().FleetNodeHeartbeat(ctx, req)
 }
 
 // DecomposeTask decomposes a task into structured work items.
@@ -887,6 +888,14 @@ func (c *sdkOrchestratorClient) GetSessionHistory(ctx context.Context, req *orch
 	return c.sdk.Orchestrator().GetSessionHistory(ctx, req)
 }
 
+func (c *sdkOrchestratorClient) GetTenantSpendPolicy(ctx context.Context, req *orchestratorSDK.GetTenantSpendPolicyRequest) (*orchestratorSDK.TenantSpendPolicy, error) {
+	return c.sdk.Orchestrator().GetTenantSpendPolicy(ctx, req)
+}
+
+func (c *sdkOrchestratorClient) SetTenantSpendPolicy(ctx context.Context, req *orchestratorSDK.SetTenantSpendPolicyRequest) (*orchestratorSDK.TenantSpendPolicy, error) {
+	return c.sdk.Orchestrator().SetTenantSpendPolicy(ctx, req)
+}
+
 func (c *sdkOrchestratorClient) SubscribeSessionEvents(ctx context.Context, req *orchestratorSDK.SubscribeSessionEventsRequest) (<-chan *orchestratorSDK.SessionEventEnvelope, error) {
 	return c.sdk.Orchestrator().SubscribeSessionEvents(ctx, req)
 }
@@ -904,6 +913,18 @@ func (c *sdkOrchestratorClient) InferenceStream(ctx context.Context, req *orches
 }
 
 // Close closes the underlying SDK client.
+func (c *sdkOrchestratorClient) GetCostSettings(ctx context.Context, req *orchestratorSDK.GetCostSettingsRequest) (*orchestratorSDK.CostSettings, error) {
+	return c.sdk.Orchestrator().GetCostSettings(ctx, req)
+}
+
+func (c *sdkOrchestratorClient) SetCostSettings(ctx context.Context, req *orchestratorSDK.SetCostSettingsRequest) (*orchestratorSDK.CostSettings, error) {
+	return c.sdk.Orchestrator().SetCostSettings(ctx, req)
+}
+
+func (c *sdkOrchestratorClient) GetSpendReport(ctx context.Context, req *orchestratorSDK.GetSpendReportRequest) (*orchestratorSDK.GetSpendReportResponse, error) {
+	return c.sdk.Orchestrator().GetSpendReport(ctx, req)
+}
+
 func (c *sdkOrchestratorClient) Close() error {
 	return c.sdk.Close()
 }

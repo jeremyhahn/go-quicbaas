@@ -44,11 +44,11 @@ func TestTransport_Project_Delegates(t *testing.T) {
 		{"update", "Update", &projectclient.UpdateProjectRequest{TenantID: "t1", ProjectID: "p1"}},
 		{"delete", "Delete", &projectclient.DeleteProjectRequest{TenantID: "t1", ProjectID: "p1"}},
 		{"list", "List", &projectclient.ListProjectsRequest{TenantID: "t1"}},
-		{"grant-agent-role", "GrantAgentRole", &projectclient.GrantAgentRoleRequest{
-			TenantID: "t1", ProjectID: "p1", AgentID: "a1", Role: projectclient.ProjectRoleLead,
+		{"grant-agent-role", "GrantFleetNodeRole", &projectclient.GrantFleetNodeRoleRequest{
+			TenantID: "t1", ProjectID: "p1", FleetNodeID: "a1", Role: projectclient.ProjectRoleLead,
 		}},
-		{"revoke-agent-role", "RevokeAgentRole", &projectclient.RevokeAgentRoleRequest{
-			TenantID: "t1", ProjectID: "p1", AgentID: "a1",
+		{"revoke-agent-role", "RevokeFleetNodeRole", &projectclient.RevokeFleetNodeRoleRequest{
+			TenantID: "t1", ProjectID: "p1", FleetNodeID: "a1",
 		}},
 	}
 

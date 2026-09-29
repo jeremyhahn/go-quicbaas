@@ -77,8 +77,8 @@ func (r *ToolRegistry) registerAdminTools() {
 				},
 				"admin_role": map[string]interface{}{
 					"type":        "string",
-					"description": "Admin role type (super_admin, tenant_admin, user_admin, group_admin, policy_admin, audit_admin, read_only)",
-					"enum":        []string{"super_admin", "tenant_admin", "user_admin", "group_admin", "policy_admin", "audit_admin", "read_only"},
+					"description": "Admin role type (super_admin, tenant_admin, user_admin, policy_admin, audit_admin, read_only)",
+					"enum":        []string{"super_admin", "tenant_admin", "user_admin", "policy_admin", "audit_admin", "read_only"},
 				},
 				"tenant_ids": map[string]interface{}{
 					"type":        "array",
@@ -158,7 +158,7 @@ func (r *ToolRegistry) registerAdminTools() {
 				"admin_role": map[string]interface{}{
 					"type":        "string",
 					"description": "New admin role type",
-					"enum":        []string{"super_admin", "tenant_admin", "user_admin", "group_admin", "policy_admin", "audit_admin", "read_only"},
+					"enum":        []string{"super_admin", "tenant_admin", "user_admin", "policy_admin", "audit_admin", "read_only"},
 				},
 				"tenant_ids": map[string]interface{}{
 					"type":        "array",
@@ -238,7 +238,7 @@ func (r *ToolRegistry) registerAdminTools() {
 				"admin_role": map[string]interface{}{
 					"type":        "string",
 					"description": "Filter by admin role",
-					"enum":        []string{"super_admin", "tenant_admin", "user_admin", "group_admin", "policy_admin", "audit_admin", "read_only"},
+					"enum":        []string{"super_admin", "tenant_admin", "user_admin", "policy_admin", "audit_admin", "read_only"},
 				},
 				"active_only": map[string]interface{}{
 					"type":        "boolean",

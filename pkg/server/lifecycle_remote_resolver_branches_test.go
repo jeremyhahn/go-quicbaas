@@ -28,7 +28,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
 
-// erroringRegistry is an AgentRegistry whose ListAgents always fails, driving
+// erroringRegistry is a FleetRegistry whose ListFleetNodes always fails, driving
 // the list-error continue branch of resolve(). The remaining methods embed the
 // strictMockRegistry stubs so the interface stays satisfied.
 type erroringRegistry struct {
@@ -36,7 +36,7 @@ type erroringRegistry struct {
 	err error
 }
 
-func (e *erroringRegistry) ListAgents(context.Context, string, *orchestration.AgentFilter) ([]*orchestration.AgentRegistration, error) {
+func (e *erroringRegistry) ListFleetNodes(context.Context, string, *orchestration.FleetNodeFilter) ([]*orchestration.FleetNode, error) {
 	return nil, e.err
 }
 
@@ -57,7 +57,7 @@ func TestResolve_EmptyTenant_ShortCircuits(t *testing.T) {
 }
 
 // TestResolve_ListAgentsError_FallsThrough covers the list-error continue
-// branch: when ListAgents fails for every status value, resolve collects no
+// branch: when ListFleetNodes fails for every status value, resolve collects no
 // registrations and returns (nil, false) so the dispatcher falls back to local
 // backends.
 func TestResolve_ListAgentsError_FallsThrough(t *testing.T) {
@@ -86,7 +86,7 @@ func TestPickDaemon_SkipsNilAndBackendMismatch(t *testing.T) {
 
 	pool := newStrictTestPool(config.HostAffinityModeSoft)
 
-	regs := []*orchestration.AgentRegistration{
+	regs := []*orchestration.FleetNode{
 		nil, // skipped: nil entry
 		onlineDaemon("beta", "10.0.0.2:9090", "vllm"), // skipped: different backend
 	}

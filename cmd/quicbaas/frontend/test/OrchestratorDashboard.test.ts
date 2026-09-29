@@ -4,7 +4,7 @@
  * Regression test for TypeError: jobs.filter is not a function.
  * Verifies that the dashboard renders without error when the store
  * returns undefined/null/non-array values, and shows the correct
- * "No jobs" and "No agents registered" empty states.
+ * "No jobs" and "No fleet nodes registered" empty states.
  */
 
 import { beforeEach, describe, it, expect, vi } from 'vitest';
@@ -23,12 +23,12 @@ const { orchestratorStoreMock } = vi.hoisted(() => ({
   orchestratorStoreMock: {
     jobs: [] as unknown,
     tasks: [] as unknown,
-    agents: [] as unknown,
+    fleetNodes: [] as unknown,
     sessions: [] as unknown,
     events: [] as unknown,
     activeTenantID: 'default',
     jobsLoading: false,
-    agentsLoading: false,
+    fleetNodesLoading: false,
     sessionsLoading: false,
     tasksLoading: false,
     health: null,
@@ -68,7 +68,7 @@ describe('OrchestratorDashboard — array guard regression', () => {
   it('renders without throwing when jobs is undefined', () => {
     orchestratorStoreMock.jobs = undefined;
     orchestratorStoreMock.tasks = undefined;
-    orchestratorStoreMock.agents = undefined;
+    orchestratorStoreMock.fleetNodes = undefined;
     orchestratorStoreMock.events = undefined;
     orchestratorStoreMock.sessions = undefined;
 
@@ -78,7 +78,7 @@ describe('OrchestratorDashboard — array guard regression', () => {
   it('renders without throwing when jobs is null', () => {
     orchestratorStoreMock.jobs = null;
     orchestratorStoreMock.tasks = null;
-    orchestratorStoreMock.agents = null;
+    orchestratorStoreMock.fleetNodes = null;
     orchestratorStoreMock.events = null;
     orchestratorStoreMock.sessions = null;
 
@@ -88,7 +88,7 @@ describe('OrchestratorDashboard — array guard regression', () => {
   it('shows "No jobs" empty state when jobs is empty array', () => {
     orchestratorStoreMock.jobs = [];
     orchestratorStoreMock.tasks = [];
-    orchestratorStoreMock.agents = [];
+    orchestratorStoreMock.fleetNodes = [];
     orchestratorStoreMock.events = [];
     orchestratorStoreMock.sessions = [];
 
@@ -96,21 +96,21 @@ describe('OrchestratorDashboard — array guard regression', () => {
     expect(screen.getByText('No jobs')).toBeTruthy();
   });
 
-  it('shows "No agents registered" empty state when agents is empty', () => {
+  it('shows "No fleet nodes registered" empty state when the fleet is empty', () => {
     orchestratorStoreMock.jobs = [];
-    orchestratorStoreMock.agents = [];
+    orchestratorStoreMock.fleetNodes = [];
     orchestratorStoreMock.tasks = [];
     orchestratorStoreMock.events = [];
     orchestratorStoreMock.sessions = [];
 
     render(OrchestratorDashboard);
-    expect(screen.getByText('No agents registered')).toBeTruthy();
+    expect(screen.getByText('No fleet nodes registered')).toBeTruthy();
   });
 
   it('shows 0 active jobs stat when jobs is undefined', () => {
     orchestratorStoreMock.jobs = undefined;
     orchestratorStoreMock.tasks = undefined;
-    orchestratorStoreMock.agents = undefined;
+    orchestratorStoreMock.fleetNodes = undefined;
     orchestratorStoreMock.events = undefined;
     orchestratorStoreMock.sessions = undefined;
 
@@ -136,7 +136,7 @@ describe('OrchestratorDashboard — a card that claims live state counts live st
   beforeEach(() => {
     orchestratorStoreMock.jobs = [];
     orchestratorStoreMock.tasks = [];
-    orchestratorStoreMock.agents = [];
+    orchestratorStoreMock.fleetNodes = [];
     orchestratorStoreMock.events = [];
     orchestratorStoreMock.sessions = [];
   });
@@ -222,7 +222,7 @@ describe('OrchestratorDashboard — Recent Events renders the history the jobs c
   beforeEach(() => {
     orchestratorStoreMock.jobs = [];
     orchestratorStoreMock.tasks = [];
-    orchestratorStoreMock.agents = [];
+    orchestratorStoreMock.fleetNodes = [];
     orchestratorStoreMock.events = [];
     orchestratorStoreMock.sessions = [];
   });

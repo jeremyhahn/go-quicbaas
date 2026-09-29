@@ -49,9 +49,7 @@ If backends are not auto-discovered, add to your config file or environment:
 orchestration:
   enabled: true
   lead_agent:
-    backend: "claude"
-    model: "claude-3-5-sonnet-20241022"
-    system_prompt: "You are an expert software engineer"
+    agent_id: "claude-lead"     # a system-tenant Agent with the lead role, or pool_id: <pool>
   heartbeat_timeout: 90s
 ```
 
@@ -59,8 +57,7 @@ Or via environment variables:
 
 ```bash
 export QUICBAAS_ORCHESTRATION_ENABLED=true
-export QUICBAAS_ORCHESTRATION_LEAD_AGENT_BACKEND=claude
-export QUICBAAS_ORCHESTRATION_LEAD_AGENT_MODEL=claude-3-5-sonnet-20241022
+export QUICBAAS_ORCHESTRATION_LEAD_AGENT_AGENT_ID=claude-lead
 export QUICBAAS_ORCHESTRATION_HEARTBEAT_TIMEOUT=90s
 ```
 
@@ -154,23 +151,23 @@ Register agent workers on remote machines:
 
 ```bash
 # Register agent with default model
-quicbaas agent register --name worker-1 --host 203.0.113.10:9090 --type claude
+quicbaas fleet register --name worker-1 --host 203.0.113.10:9090 --type claude
 
 # Register with custom model
-quicbaas agent register --name worker-2 --host 203.0.113.11:9090 --type claude \
+quicbaas fleet register --name worker-2 --host 203.0.113.11:9090 --type claude \
   --model claude-3-opus-20250219
 
 # Register Ollama agent for local inference
-quicbaas agent register --name worker-local --host localhost:9090 --type ollama \
+quicbaas fleet register --name worker-local --host localhost:9090 --type ollama \
   --backend ollama --model llama3
 ```
 
 ## 8. List Fleet Agents
 
-View registered agents:
+View registered fleet nodes:
 
 ```bash
-quicbaas agent list
+quicbaas fleet list
 
 # Output:
 # ID                                      NAME            HOST                TYPE        STATUS
@@ -251,6 +248,22 @@ record of what ran. Attempt accounting (`attempts`, `attempt_budget`,
 `environment_faults`, `retry_not_before`) and the job binding
 (`spawned_job_id`; on the job, `task_id` and `attempt`) are visible on the
 task and job records over every transport.
+
+Why a task stopped is typed, not prose. Every task representation (REST, gRPC,
+the Go and TypeScript SDKs) carries:
+
+| Field | Meaning |
+|-------|---------|
+| `charged_attempts` | `attempts` less the refunded ones (`environment_faults` + `question_attempts`). Derived on read. |
+| `effective_budget` | `attempt_budget`, or the engine default when the task declares none. Derived on read. |
+| `conclusion_reason` | The typed reason the task stopped (`budget_exhausted`, `fault_bounded`, `abandoned`, `parked_needs_info`, …); empty while open. |
+| `fault_class` | The fault class behind the latest concluded attempt; for a blocked task, its block's class. Derived on read. |
+| `fault_origin` | Whose failure stopped it: `environment` (the fleet, an account pool, a forge), `work`, or `undiagnosed` (its node stopped); empty when it did not stop on a failure. Derived on read. |
+| `block_kind` / `blocked_reason` / `block_fault_class` | The park: `needs_info` waits on the owner, `blocked` with a fault class waits on operator repair. |
+
+`result.output` remains the detail behind these. The store keeps the job ids of
+every attempt (`metadata.attempt_history`) but not each attempt's outcome, so
+per-attempt history is read from the jobs themselves.
 
 ## 10. Decompose Complex Tasks
 
@@ -413,7 +426,15 @@ steps are done in on a live node.
 
    The context repositories are cloned **by the worker's container**, beside
    the project (`/workspace/conventions` next to `/workspace/go-truststrap`), not
-   by the daemon. `--autonomous` sets the switch by hand for a project that is
+   by the daemon, with the project's credentials: register each by its
+   `https://` URL (cloned with the forge token) or by an `ssh://` URL on the
+   project's own ssh host (the one host key the binding pins). `bind` refuses
+   an `http://` context repository, which the token is never sent over, and an
+   ssh one on any other host, naming the repository. The same check runs again
+   every time a worker's workspace is opened, so a context repository added
+   with `project update` after the bind, or a host since dropped from
+   `sdlc.repo_hosts`, parks the task for an operator with the repository named
+   rather than failing inside the worker. `--autonomous` sets the switch by hand for a project that is
    not going to be bound; see
    [Autonomous projects](autonomy-and-dispatch.md).
 
@@ -445,8 +466,8 @@ steps are done in on a live node.
    strategy: github-flow               # github-flow | trunk-based | gitflow
    worker:
      backend: claude
-     model: claude-opus-5
-     image: quicbaas-software-factory-worker:0.5.1-alpha
+     model: claude-opus-5-5
+     image: quicbaas-software-factory-worker:0.11.0-alpha
                                 # `make build-worker-image`; the image the
                                 # runner clones, verifies and publishes in
    verification: [make build, make test, make lint]
@@ -612,6 +633,159 @@ steps are done in on a live node.
    it. A requeued task is re-dispatched by the task dispatcher on its next
    sweep, with no operator action.
 
+## Unblocking the factory: the attention inbox
+
+Everything above this line — the readmit table, the outcome table, the
+per-condition "Cleared by" column — is how an operator unblocks ONE task
+they already know about, from the issue or the CLI. The attention inbox is
+the other half: it finds every task the factory has parked and every fault
+in the factory's own operation, in one place, without anyone having to know
+which project or which issue to look at first.
+
+```bash
+# Every parked task and environmental alert the tenant carries, paged and
+# faceted by project and kind.
+curl -s "https://<node>/api/v1/orchestrator/attention?tenant_id=<tenant>" \
+  --cert agent.crt --key agent.key --cacert ca-chain.crt | jq .
+
+# Apply a ruling: the comment is posted to the forge issue first, then the
+# task moves.
+curl -s -X POST \
+  "https://<node>/api/v1/orchestrator/attention/<task-id>/resolve?tenant_id=<tenant>" \
+  -d '{"action": "approve_recommendation"}' \
+  --cert agent.crt --key agent.key --cacert ca-chain.crt
+```
+
+`action` is one of:
+
+| action | what it does |
+|---|---|
+| `approve_recommendation` | posts the worker's own recommendation as the ruling, verbatim, and readmits the task |
+| `answer` | posts the operator's own free text (`"answer": "…"`) as the ruling and readmits the task |
+| `allow_another_round` | grants one more review round beyond the project's `max_review_rounds` for this task only, then readmits it; optional `"answer": "…"` scopes the round and is posted in the same ruling comment |
+| `close_as_done` | takes the park labels off the forge issue, closes it and completes the task **without** readmitting it — no further work is needed. An optional `answer` is posted as the evidence |
+| `readmit` | posts a minimal comment and readmits the task, for a condition already satisfied outside the forge |
+| `note` | posts the operator's free text (`"answer": "…"`) and leaves the task where it is — a partial ruling, context, or a decision recorded on a parked project. It is the one action that also reaches a **live** task (pending, claimed or in progress): a scope change for queued or running work lands on the issue, and the worker re-reads the issue's discussion at its next dispatch |
+
+Every resolution is ordered comment-then-move: the ruling reaches the forge
+issue before the task's state changes, so an issue never reads `blocked`
+after the factory has already acted on it.
+
+Every action that readmits also **hands the issue back to the factory**
+before the task moves: the trigger label goes on and every park label comes
+off — the binding's `needs_info`, `escalated` and `blocked` labels and the
+portfolio hold `task:blocked`. The operator giving the ruling is the person
+those labels were waiting for. The readmitted task's first turn re-reads the
+issue, so the worker sees the ruling.
+
+### Every waiting issue has a parked task
+
+The inbox is built from parked tasks, so every issue that waits on a person
+has one. The issue source offers each open, untriggered issue carrying a park
+label as a task **adopted parked** (`TaskSourceSpec.Park`): kind
+`needs_info`, `escalated` or `blocked` after its label, condition
+`owner_ruling`, and triage's last verdict as the question. The source
+reservation keeps this idempotent — an issue whose task is still live adopts
+nothing, and one whose task ended gets a fresh parked task — so the interval
+sweep covers both a new triage verdict and every issue labelled before this
+existed. A parked adoption spends no adoption slot: it runs nothing until
+someone rules.
+
+`close_as_done` is the one path from `blocked` straight to `completed`
+(`CloseBlockedTask`); a worker's own completion report for a task that has
+since been parked is still refused.
+
+### Answering on the issue: automatic readmission
+
+You do not have to use the inbox or the API to unblock a task parked for you.
+A task parked `needs_info` or `escalated` (or on an `owner_ruling`
+condition) is **readmitted automatically when an authorized ruler comments on
+its issue** after the park:
+
+- **Who rules:** the repository's owner account; the binding's `rulers`
+  (picked in the project's binding editor from the repository's
+  collaborators, each validated at bind time as the owner or a collaborator);
+  and the node's `sdlc.rulers` — `sdlc.rulers.tenants.<tenant>` when the
+  tenant has an entry, else `sdlc.rulers.default`, else `agent-company`
+  (`sdlc.DefaultRulers`). A binding can only add rulers; a tenant entry
+  replaces the node default for that tenant. Project agents, workers, reviewers and the task's
+  own bot do not — nor does any comment carrying the factory's
+  `<!-- quicbaas-sdlc:… -->` marker, whichever account posted it.
+- **When:** at once, when the project's webhook delivers the
+  `issue_comment` event (the `issues` hook family already includes it); the
+  unblock sweep reads the same comments on every pass
+  (`DefaultUnblockSweepInterval`), so a missed delivery costs at most one
+  sweep.
+- **In the UI:** Projects → Edit → *Issue-driven delivery (SDLC)* has a
+  *Rulers* picker listing the repository's collaborators (the owner always
+  rules and is shown fixed). A saved ruler who has since lost access is
+  flagged, because the next save would be refused. The same panel's *File
+  issue* action files a follow-up on the bound repository — title, body,
+  "hand to the factory" (the trigger label) and a parent issue — through the
+  binding's token, audited like the CLI and API verbs.
+- **Audit and idempotency:** each readmission records an `owner_ruling:<comment-id>`
+  URL artifact on the task naming the ruler, the comment and the issue. One
+  comment readmits a task once: repeated comments, a repeated delivery, or the
+  webhook and the sweep racing each other all yield a single readmission, and
+  a task that parks again later waits for a new ruling.
+
+In the inbox a parked task whose issue already carries such a comment is
+flagged **Ruling posted**; every parked task shows its recorded question, a
+link to its issue, and a **Readmit** button.
+
+The inbox always loads the complete set, every page of it; the project and
+kind dropdowns narrow the cards on screen only, so the sidebar badge, the
+dashboard card and the alert banner keep counting everything.
+
+The listing also reports environmental alerts — facts about the factory
+itself, not about any one task's work — as separate item kinds:
+`agent_offline` (a fleet node the engine has not heard from),
+`account_error` (a pooled provider credential whose last refresh failed),
+`barrier_sealed` (your tenant's own storage barrier, initialized and sealed
+— a tenant with no per-tenant barrier runs under the system barrier and is
+never reported; the system barrier itself would take the whole API down
+before this listing could render anyway), and `project_idle` (an autonomous, unparked project with
+parked work and nothing pending or in progress: the factory is idle there
+until someone rules). These have no `resolve`
+action: the fix is outside the factory (repair or remove the agent, rotate
+the credential, unseal the barrier, rule on the project's parked items), so
+the item exists to be seen, not clicked.
+
+The desktop and browser UI surfaces this as **Needs You** in the sidebar,
+with a count badge; an environmental alert also renders as a dismissible
+banner at the top of every page until it clears. See
+[api.md](api.md#attention-inbox) for the full request/response shapes and
+the MCP tool names (`quicbaas_orchestrator_attention_list`,
+`quicbaas_orchestrator_attention_resolve`).
+
+### Adopting an issue no task holds
+
+The inbox and `task readmit` act on a **blocked** task. An issue that no live
+task holds — its task completed while its pull request was still open, or
+triage holds it with no task at all — is handed back with **adopt**:
+
+```bash
+quicbaas sdlc adopt go-luks2 141 --pull-request 194 --ruling "Land #194 as it stands."
+```
+
+Adoption creates the `forge_issue` task for the issue (superseding a finished
+task that held it; refused with 409 while a live one still does — readmit that
+one instead), takes every hold off the issue (needs-info, escalated, blocked,
+the portfolio hold), puts the trigger label on, and posts the ruling. The
+ruling is also appended to the task's contract.
+
+**Name the pull request by number** to resume it: the task records the pull
+request's head branch and base (`pull_request_branch`, `pull_request_target`
+metadata) and its delivery works on that branch, never on one the strategy
+would cut from the issue title — a rival branch the old commits can never be
+pushed over. Without `--pull-request` the strategy plans the branch as usual.
+
+The same verb is `POST /api/v1/sdlc/projects/{projectID}/adopt`
+(`orchestrator:task_create`), `SDLCService/AdoptIssue` on gRPC and Unix, the
+MCP tool `sdlc_adopt_issue`, `sdlc.Client.AdoptIssue` in the Go SDK and
+`sdlc.adoptIssue` in the TypeScript SDK. A forge write that fails after the
+task exists answers 502 naming the task, which runs regardless.
+
 ## Tune the prompts
 
 **Not available from a running node yet.** Every instruction the Software
@@ -634,7 +808,7 @@ spawn against it:
 ```bash
 claude setup-token > ./token.txt
 jq -n --arg t "$(cat ./token.txt)" '{access_token: $t}' \
-  | quicbaas agent account create --provider claude \
+  | quicbaas account create --provider claude \
       --display-name team-seat-1 --refresh-policy none --credential-file -
 
 quicbaas orchestrator spawn --backend claude --account-auto
@@ -652,7 +826,7 @@ Deploy agents on multiple machines:
 
 ```bash
 # Register the agent
-quicbaas agent register --name prod-agent-01 --host 203.0.113.10:9090 --type claude
+quicbaas fleet register --name prod-agent-01 --host 203.0.113.10:9090 --type claude
 
 # Start agent process
 quicbaas orchestrator spawn --backend claude &
@@ -661,7 +835,7 @@ quicbaas orchestrator spawn --backend claude &
 ### On Node 2 (203.0.113.11)
 
 ```bash
-quicbaas agent register --name prod-agent-02 --host 203.0.113.11:9090 --type claude
+quicbaas fleet register --name prod-agent-02 --host 203.0.113.11:9090 --type claude
 
 quicbaas orchestrator spawn --backend claude &
 ```
@@ -675,11 +849,8 @@ All agents automatically register with the central orchestrator. The orchestrato
 Lead agent configuration via environment:
 
 ```bash
-# Backend to use for task decomposition and intelligent orchestration
-QUICBAAS_ORCHESTRATION_LEAD_AGENT_BACKEND=claude
-
-# Model for the lead agent
-QUICBAAS_ORCHESTRATION_LEAD_AGENT_MODEL=claude-3-5-sonnet-20241022
+# The system-tenant Agent (or pool, with _POOL_ID) the lead agent runs as
+QUICBAAS_ORCHESTRATION_LEAD_AGENT_AGENT_ID=claude-lead
 
 # How long to wait before marking an agent as offline (default: 90s)
 QUICBAAS_ORCHESTRATION_HEARTBEAT_TIMEOUT=120s
@@ -771,7 +942,7 @@ navigation, so Back leaves the page rather than walking through forty pages.
 ## Fleet Quick Start: Deploy an Agent and Run Inference
 
 This guide walks through the full end-to-end flow: starting the
-QuicBaaS server, staging an SSH key, deploying a fleet agent that
+QuicBaaS server, staging an SSH key, deploying a fleet node that
 serves a local Ollama instance, and running stateless inference
 across **all five transports** (REST, gRPC, QUIC, MCP, Unix socket).
 Every step is exercised through the SDK's transport abstraction, so
@@ -860,7 +1031,7 @@ What happens:
    `agent.key`), and the server CA bundle are uploaded over SFTP to
    `~/.quicbaas/agent` on the target.
 3. A systemd `--user` unit (or a `nohup` fallback) starts the daemon,
-   which immediately registers via `POST /api/v1/agents/register`. A
+   which immediately registers via `POST /api/v1/fleet/enroll`. A
    `--user` unit also needs **lingering** enabled for the login user, or
    the agent is stopped when the deploy's SSH session closes; the deploy
    enables it over `sudo -n` and fails with the command to run when it
@@ -981,9 +1152,9 @@ operator CLI / GUI
 |---------|------------|
 | Deploy times out at "Wait online" | Verify `--server` is reachable from the target host (LAN IP, not `localhost`). Check `~/.quicbaas/agent/quicbaas-agent.log` on the target. |
 | Agent log shows `tls: no application protocol` | The agent is dialing the REST port for events. Pull the latest CLI; the deploy now embeds the gRPC ingest URL in the register response. |
-| `agent list` is empty after deploy | The agent registered but failed its first heartbeat. Check the agent's clock skew vs. the server (>5 min skew breaks JWT validation). |
+| `fleet list` is empty after deploy | The agent registered but failed its first heartbeat. Check the agent's clock skew vs. the server (>5 min skew breaks JWT validation). |
 | `inference` returns 422 | The chosen backend is session-only. Use `quicbaas orchestrator session spawn` then `prompt` instead. |
-| `inference` returns "no online agents" | No agent serves the chosen backend in the chosen tenant. Run `agent list` and confirm at least one agent has `backend=ollama`. |
+| `inference` returns "no online agents" | No agent serves the chosen backend in the chosen tenant. Run `fleet list` and confirm at least one agent has `backend=ollama`. |
 | Streaming hangs in the browser | Network proxy buffering NDJSON. Set `Cache-Control: no-cache` on the proxy or run the GUI directly against the daemon. |
 
 ### Related docs
@@ -1001,7 +1172,7 @@ operator CLI / GUI
 
 ### Overview
 
-Fleet-routed stateless inference lets any QuicBaaS client (CLI, REST, gRPC, SDK) submit a single-turn prompt to a named backend (e.g., Ollama) running on a fleet-resident agent daemon without first creating a session. The orchestrator resolves the target daemon via the existing `RemoteBackendResolver`, forwards the prompt over the mTLS-authenticated gRPC connection, and streams the response back.
+Fleet-routed stateless inference lets any QuicBaaS client (CLI, REST, gRPC, SDK) submit a single-turn prompt to a named backend (e.g., Ollama) running on a fleet-resident fleet node daemon without first creating a session. The orchestrator resolves the target daemon via the existing `RemoteBackendResolver`, forwards the prompt over the mTLS-authenticated gRPC connection, and streams the response back.
 
 **Architecture boundary (L4 ↔ L2):**
 - **LLM text generation** (chat, completion, code generation) — quicbaas (L4) owns the Ollama client and LLM orchestration.
@@ -1014,8 +1185,8 @@ operator CLI
   → REST POST /api/v1/orchestrator/inference
       → agentServiceImpl.Infer (pkg/orchestration)
           → RemoteBackendResolver → RemoteACPBackend.Infer
-              → proto.AgentRuntime/Infer (gRPC server-streaming, :9091 mTLS)
-                  → Runtime.Infer (pkg/agent)
+              → proto.FleetRuntime/Infer (gRPC server-streaming, :9091 mTLS)
+                  → Runtime.Infer (pkg/fleet)
                       → OllamaBackend.Prompt → local ollama 127.0.0.1:11434
 ```
 
@@ -1023,7 +1194,7 @@ Session-based backends (ACP, PersistentSessions=true) are rejected with HTTP 422
 
 ### gRPC RPC
 
-`proto.AgentRuntime` service, defined in `api/proto/agent_runtime.proto`:
+`proto.FleetRuntime` service, defined in `api/proto/fleet_runtime.proto`:
 
 ```protobuf
 rpc Infer(InferRequest) returns (stream InferResponse);
@@ -1154,8 +1325,8 @@ for chunk := range chunks {
 | `pkg/orchestration`                    | `InferBackendError`    | Wraps a backend Prompt failure                |
 | `pkg/orchestration`                    | `AccumulateChunks`     | Drains `<-chan *InferChunk` to `*InferResponse`|
 | `pkg/orchestration`                    | `AgentService.Infer`   | Service interface method                      |
-| `pkg/agent`                            | `Runtime.Infer`        | Agent-side: delegates to OllamaBackend.Prompt |
-| `pkg/agent`                            | `GRPCSpawnServer.Infer`| gRPC streaming handler on the daemon          |
+| `pkg/fleet`                            | `Runtime.Infer`        | Agent-side: delegates to OllamaBackend.Prompt |
+| `pkg/fleet`                            | `GRPCSpawnServer.Infer`| gRPC streaming handler on the daemon          |
 | `sdk/go/client/orchestrator`           | `InferenceRequest`     | SDK wire type                                 |
 | `sdk/go/client/orchestrator`           | `InferenceChunk`       | SDK streaming chunk                           |
 
@@ -1222,7 +1393,7 @@ Select the backend, host affinity, and model:
 - **Backend** — populated from `GET /api/v1/orchestrator/backends`. Session-only
   backends (`claude`, `codex`, `opencode`) are visible but disabled with a tooltip
   explaining that they require a session. Use the Sessions view for those.
-- **Host affinity** — populated from `GET /api/v1/orchestrator/agents` filtered to
+- **Host affinity** — populated from `GET /api/v1/fleet` filtered to
   agents whose `backend` field or `capabilities` list includes the chosen backend.
   Select "Any" to let the orchestrator pick the best available daemon.
 - **Model** — free-text input. Defaults to `qwen3:1.7b` for the `ollama` backend.
@@ -1260,8 +1431,8 @@ re-mounts (it lives in module-level Svelte 5 `$state`) but is cleared on page re
 
 | Scenario | Behaviour |
 |----------|-----------|
-| No backends registered | Empty-state message with link to Agent Fleet |
-| No agents for chosen backend | Empty-state below host selector with link to Agent Fleet |
+| No backends registered | Empty-state message with link to Fleet |
+| No agents for chosen backend | Empty-state below host selector with link to Fleet |
 | 4xx from server | Field-level error below the prompt + error toast |
 | 5xx from server | Error toast; prompt text preserved |
 | Stream interrupted mid-response | Partial output retained; warning toast |
@@ -1338,9 +1509,9 @@ All agent containers follow the same pattern: Alpine 3.21 base, non-root `agent`
 
 Every entrypoint script performs the same registration lifecycle:
 
-1. **Register**: `POST /api/v1/orchestrator/agents` with hostname, agent type, backend, work directory
-2. **Heartbeat**: Background loop every 30s via `POST /api/v1/orchestrator/agents/{id}/heartbeat`
-3. **Deregister**: `DELETE /api/v1/orchestrator/agents/{id}` on exit (via `trap EXIT`)
+1. **Register**: `POST /api/v1/fleet` with hostname, agent type, backend, work directory
+2. **Heartbeat**: Background loop every 30s via `POST /api/v1/fleet/{id}/heartbeat`
+3. **Deregister**: `DELETE /api/v1/fleet/{id}` on exit (via `trap EXIT`)
 
 Agent ID format: `{hostname}-{unix_timestamp}`
 

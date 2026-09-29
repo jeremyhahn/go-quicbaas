@@ -227,6 +227,19 @@ func DefaultConfig() *Config {
 				ReadAttempts:      3,
 				RetryBackoff:      time.Second,
 			},
+			// The worker image refresh. On by default within the module, so
+			// a bound project's image keeps up with the agent CLIs its models
+			// need; local mode (no registry) until an operator names one. The
+			// intervals match pkg/sdlc/workerimage's defaults and a drift
+			// test pins them.
+			WorkerImage: SDLCWorkerImage{
+				Enabled:         true,
+				Repository:      "quicbaas-software-factory-worker",
+				NPMRegistryURL:  "https://registry.npmjs.org",
+				RefreshInterval: 24 * time.Hour,
+				PassTimeout:     time.Hour,
+				SmokeModel:      "claude-opus-5-5",
+			},
 			// What the canonical workflow runs before publishing. Repo hosts
 			// default EMPTY: naming a forge host is the operator's explicit
 			// act.

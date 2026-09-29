@@ -115,22 +115,22 @@ AGENT_ID="$(hostname)-$(date +%s)"
 TENANT_ID="${QUICBAAS_TENANT_ID:-default}"
 
 if [ -n "${QUICBAAS_ADDRESS}" ]; then
-    echo "Registering agent with fleet: ${AGENT_ID}"
-    curl -sf -X POST "${QUICBAAS_ADDRESS}/api/v1/orchestrator/agents?tenant_id=${TENANT_ID}" \
+    echo "Registering fleet node: ${AGENT_ID}"
+    curl -sf -X POST "${QUICBAAS_ADDRESS}/api/v1/fleet?tenant_id=${TENANT_ID}" \
         -H "Content-Type: application/json" \
-        -d "{\"tenant_id\":\"${TENANT_ID}\",\"name\":\"$(hostname)\",\"host\":\"$(hostname -i 2>/dev/null || echo unknown)\",\"agent_type\":\"claude-code\",\"backend\":\"acp\",\"work_dir\":\"/workspace\",\"id\":\"${AGENT_ID}\"}" \
+        -d "{\"tenant_id\":\"${TENANT_ID}\",\"name\":\"$(hostname)\",\"host\":\"$(hostname -i 2>/dev/null || echo unknown)\",\"node_type\":\"claude-code\",\"backend\":\"acp\",\"work_dir\":\"/workspace\",\"id\":\"${AGENT_ID}\"}" \
         >/dev/null 2>&1 && echo "  Registered as ${AGENT_ID}" || echo "  Registration failed (non-fatal)"
 
     # Background heartbeat (every 30s)
     (while true; do
         sleep 30
-        curl -sf -X POST "${QUICBAAS_ADDRESS}/api/v1/orchestrator/agents/${AGENT_ID}/heartbeat?tenant_id=${TENANT_ID}" \
+        curl -sf -X POST "${QUICBAAS_ADDRESS}/api/v1/fleet/${AGENT_ID}/heartbeat?tenant_id=${TENANT_ID}" \
             >/dev/null 2>&1
     done) &
     HEARTBEAT_PID=$!
 
     # Deregister on exit
-    trap "curl -sf -X DELETE '${QUICBAAS_ADDRESS}/api/v1/orchestrator/agents/${AGENT_ID}?tenant_id=${TENANT_ID}' >/dev/null 2>&1; kill ${HEARTBEAT_PID} 2>/dev/null" EXIT
+    trap "curl -sf -X DELETE '${QUICBAAS_ADDRESS}/api/v1/fleet/${AGENT_ID}?tenant_id=${TENANT_ID}' >/dev/null 2>&1; kill ${HEARTBEAT_PID} 2>/dev/null" EXIT
 fi
 
 # Execute claude with any arguments passed to the container

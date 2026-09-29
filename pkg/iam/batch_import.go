@@ -22,7 +22,7 @@ import (
 )
 
 // ImportAll imports all IAM resources from a BatchImportRequest.
-// It processes users, groups, roles, and policies in order to handle dependencies.
+// It processes users, roles, and policies in order to handle dependencies.
 func (bm *BatchManager) ImportAll(ctx context.Context, req *BatchImportRequest) (*BatchImportResult, error) {
 	if err := req.Validate(); err != nil {
 		return nil, err
@@ -38,7 +38,7 @@ func (bm *BatchManager) ImportAll(ctx context.Context, req *BatchImportRequest) 
 	}
 
 	// Calculate total items
-	totalItems := len(req.Users) + len(req.Groups) + len(req.Roles) + len(req.Policies)
+	totalItems := len(req.Users) + len(req.Roles) + len(req.Policies)
 
 	result := &BatchImportResult{
 		TotalItems:     totalItems,
@@ -46,14 +46,13 @@ func (bm *BatchManager) ImportAll(ctx context.Context, req *BatchImportRequest) 
 		DryRun:         req.Options.DryRun,
 	}
 	result.ProcessedItems["users"] = make([]string, 0)
-	result.ProcessedItems["groups"] = make([]string, 0)
 	result.ProcessedItems["roles"] = make([]string, 0)
 	result.ProcessedItems["policies"] = make([]string, 0)
 
 	// Create progress tracker
 	progressTracker := newProgressTracker(totalItems, req.Options.ProgressFunc)
 
-	// Import in order: roles first (no dependencies), then groups, then users, then policies
+	// Import in order: roles first (no dependencies), then users, then policies
 	// This order helps resolve dependencies correctly
 
 	// 1. Import Roles
@@ -73,24 +72,7 @@ func (bm *BatchManager) ImportAll(ctx context.Context, req *BatchImportRequest) 
 		return result, ErrBatchCanceled
 	}
 
-	// 2. Import Groups
-	if len(req.Groups) > 0 {
-		progressTracker.setCurrentType("group")
-		groupResult, err := bm.ImportGroups(ctx, req.TenantID, req.Groups, req.Options)
-		if err != nil && !req.Options.ContinueOnError {
-			result.Duration = time.Since(startTime)
-			return result, err
-		}
-		bm.mergeResult(result, groupResult, "group")
-	}
-
-	// Check context
-	if err := ctx.Err(); err != nil {
-		result.Duration = time.Since(startTime)
-		return result, ErrBatchCanceled
-	}
-
-	// 3. Import Users
+	// 2. Import Users
 	if len(req.Users) > 0 {
 		progressTracker.setCurrentType("user")
 		userResult, err := bm.ImportUsers(ctx, req.TenantID, req.Users, req.Options)
@@ -296,9 +278,6 @@ func (bm *BatchManager) importUser(ctx context.Context, tenantID string, user *U
 			if user.Roles != nil {
 				updateOpts.Roles = &user.Roles
 			}
-			if user.Groups != nil {
-				updateOpts.Groups = &user.Groups
-			}
 			// Only when the import states it. This used to be
 			// `&user.Enabled` over a plain bool, which is never nil — so an
 			// import record that said nothing about Enabled carried an
@@ -370,200 +349,6 @@ func (bm *BatchManager) importUser(ctx context.Context, tenantID string, user *U
 	for _, roleID := range user.Roles {
 		if err := bm.identityStore.AssignRole(ctx, tenantID, createdUser.ID, roleID); err != nil {
 			// Log but don't fail - role might not exist yet
-			if !dberrors.IsNotFound(err) {
-				return err
-			}
-		}
-	}
-
-	// Add to groups if specified
-	for _, groupID := range user.Groups {
-		if err := bm.identityStore.AddUserToGroup(ctx, tenantID, groupID, createdUser.ID); err != nil {
-			// Log but don't fail - group might not exist yet
-			if !dberrors.IsNotFound(err) {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-// ImportGroups imports groups in bulk.
-func (bm *BatchManager) ImportGroups(ctx context.Context, tenantID string, groups []*GroupImport, opts BatchImportOptions) (*BatchImportResult, error) {
-	if tenantID == "" {
-		return nil, &ValidationError{Field: "tenant_id", Message: "tenant ID is required"}
-	}
-	if len(groups) == 0 {
-		return &BatchImportResult{ProcessedItems: map[string][]string{"groups": {}}}, nil
-	}
-
-	if err := opts.Validate(); err != nil {
-		return nil, err
-	}
-
-	startTime := time.Now()
-	batchSize := bm.getBatchSize(opts)
-	parallelism := bm.getParallelism(opts)
-
-	result := &BatchImportResult{
-		TotalItems:     len(groups),
-		ProcessedItems: map[string][]string{"groups": make([]string, 0, len(groups))},
-		DryRun:         opts.DryRun,
-	}
-
-	// Create worker pool
-	wp := newWorkerPool(ctx, parallelism)
-	wp.start()
-	defer wp.stop()
-
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-
-	// Process groups in batches
-	for i := 0; i < len(groups); i += batchSize {
-		end := i + batchSize
-		if end > len(groups) {
-			end = len(groups)
-		}
-		batch := groups[i:end]
-
-		for j, group := range batch {
-			idx := i + j
-			g := group // Capture for closure
-
-			wg.Add(1)
-			submitted := wp.submit(workerJob{
-				index:    idx,
-				itemType: "group",
-				itemID:   g.ID,
-				fn: func(jobCtx context.Context) error {
-					defer wg.Done()
-					return bm.importGroup(jobCtx, tenantID, g, opts)
-				},
-			})
-
-			if !submitted {
-				wg.Done()
-				mu.Lock()
-				result.Errors = append(result.Errors, BatchError{
-					Index: idx,
-					Type:  "group",
-					ID:    g.ID,
-					Error: ctx.Err(),
-				})
-				result.FailureCount++
-				mu.Unlock()
-			}
-		}
-	}
-
-	// Collect results
-	go func() {
-		wg.Wait()
-	}()
-
-	// Process results from worker pool
-	resultCount := 0
-	for resultCount < len(groups) {
-		select {
-		case <-ctx.Done():
-			mu.Lock()
-			result.Duration = time.Since(startTime)
-			mu.Unlock()
-			return result, ErrBatchCanceled
-		case res, ok := <-wp.resultChan:
-			if !ok {
-				mu.Lock()
-				result.Duration = time.Since(startTime)
-				mu.Unlock()
-				return result, nil
-			}
-			resultCount++
-			mu.Lock()
-			if res.err != nil {
-				result.Errors = append(result.Errors, BatchError{
-					Index: res.index,
-					Type:  res.itemType,
-					ID:    res.itemID,
-					Error: res.err,
-				})
-				if dberrors.Is(res.err, dberrors.ErrAlreadyExists) && !opts.UpdateExisting {
-					result.SkippedCount++
-				} else {
-					result.FailureCount++
-				}
-			} else {
-				result.SuccessCount++
-				result.ProcessedItems["groups"] = append(result.ProcessedItems["groups"], res.itemID)
-			}
-			mu.Unlock()
-		}
-	}
-
-	result.Duration = time.Since(startTime)
-	return result, nil
-}
-
-// importGroup imports a single group.
-func (bm *BatchManager) importGroup(ctx context.Context, tenantID string, group *GroupImport, opts BatchImportOptions) error {
-	if bm.identityStore == nil {
-		return &dberrors.QBError{
-			Code: dberrors.ErrInternal,
-			Op:   "iam.batch.importGroup",
-			Err:  errBatchOperationFailed,
-		}
-	}
-
-	// Validate group
-	if group.Name == "" {
-		return &ValidationError{Field: "name", Message: "group name is required"}
-	}
-
-	// Dry run - just validate
-	if opts.DryRun {
-		return nil
-	}
-
-	// Check if group exists by ID
-	if group.ID != "" {
-		existing, err := bm.identityStore.GetGroup(ctx, tenantID, group.ID)
-		if err == nil && existing != nil {
-			if opts.UpdateExisting {
-				// Update existing group
-				updateOpts := UpdateGroupOptions{}
-				updateOpts.Name = &group.Name
-				if group.Description != "" {
-					updateOpts.Description = &group.Description
-				}
-				if group.Members != nil {
-					updateOpts.Members = &group.Members
-				}
-
-				_, err = bm.identityStore.UpdateGroup(ctx, tenantID, existing.ID, updateOpts)
-				return err
-			}
-			return ErrGroupAlreadyExists
-		}
-	}
-
-	// Create new group
-	createOpts := CreateGroupOptions{
-		ID:          group.ID,
-		Name:        group.Name,
-		Description: group.Description,
-		Attributes:  group.Attributes,
-	}
-
-	createdGroup, err := bm.identityStore.CreateGroup(ctx, tenantID, createOpts)
-	if err != nil {
-		return err
-	}
-
-	// Add members if specified
-	for _, memberID := range group.Members {
-		if err := bm.identityStore.AddUserToGroup(ctx, tenantID, createdGroup.ID, memberID); err != nil {
-			// Log but don't fail - user might not exist yet
 			if !dberrors.IsNotFound(err) {
 				return err
 			}

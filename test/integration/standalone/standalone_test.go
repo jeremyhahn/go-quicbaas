@@ -43,6 +43,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // ---------------------------------------------------------------------------
@@ -56,6 +57,7 @@ func standaloneServer(t *testing.T, dataDir string, extraOpts ...server.ServerOp
 	t.Helper()
 
 	cfg := config.EmbeddedConfig()
+	cfg.IAM.SPIFFETrustDomain = helpers.SPIFFETrustDomain
 	cfg.Storage.Backend = config.StorageBackendPebble
 	cfg.Storage.DataDir = filepath.Join(dataDir, "data")
 	cfg.Storage.WALDir = filepath.Join(dataDir, "wal")
@@ -159,6 +161,7 @@ func TestStandalone_PersistenceAcrossRestart(t *testing.T) {
 
 	// Second boot: read the key back without any Put.
 	cfg := config.EmbeddedConfig()
+	cfg.IAM.SPIFFETrustDomain = helpers.SPIFFETrustDomain
 	cfg.Storage.Backend = config.StorageBackendPebble
 	cfg.Storage.DataDir = filepath.Join(dataDir, "data")
 	cfg.Storage.WALDir = filepath.Join(dataDir, "wal")
@@ -283,6 +286,7 @@ func TestStandalone_AtRest_SentinelAbsentFromDisk(t *testing.T) {
 	passphrase := "integration-test-barrier-passphrase"
 
 	cfg := config.EmbeddedConfig()
+	cfg.IAM.SPIFFETrustDomain = helpers.SPIFFETrustDomain
 	cfg.Storage.Backend = config.StorageBackendPebble
 	cfg.Storage.DataDir = filepath.Join(dataDir, "data")
 	cfg.Storage.WALDir = filepath.Join(dataDir, "wal")
@@ -364,6 +368,7 @@ func TestStandalone_PassphraseBarrier_AutoUnseal(t *testing.T) {
 	passphrase := "auto-unseal-test-pp"
 
 	cfg := config.EmbeddedConfig()
+	cfg.IAM.SPIFFETrustDomain = helpers.SPIFFETrustDomain
 	cfg.Storage.Backend = config.StorageBackendPebble
 	cfg.Storage.DataDir = filepath.Join(dataDir, "data")
 	cfg.Storage.WALDir = filepath.Join(dataDir, "wal")

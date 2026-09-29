@@ -180,9 +180,8 @@ func TestRoleAdapter_SeedBuiltInRoles_NilStore(t *testing.T) {
 func TestRoleAdapter_SeedBuiltInRoles_NamesFailingRole(t *testing.T) {
 	boom := errors.New("role store unavailable")
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  iam.NewMemoryStorage(),
-		GroupStorage: iam.NewMemoryStorage(),
-		RoleStorage:  &failingRoleStorage{err: boom},
+		UserStorage: iam.NewMemoryStorage(),
+		RoleStorage: &failingRoleStorage{err: boom},
 	})
 
 	err := WrapRole(store).SeedBuiltInRoles(context.Background(), "burnin")
@@ -297,9 +296,8 @@ func TestRoleAdapter_SeedBuiltInRoles_AcceptsCanonicalDuplicate(t *testing.T) {
 func TestRoleAdapter_SeedBuiltInRoles_PartialSeedRollsBack(t *testing.T) {
 	mem := iam.NewMemoryStorage()
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  mem,
-		GroupStorage: mem,
-		RoleStorage:  &failAfterNRoleStorage{RoleStorage: mem, allow: 2, err: errors.New("role store went away")},
+		UserStorage: mem,
+		RoleStorage: &failAfterNRoleStorage{RoleStorage: mem, allow: 2, err: errors.New("role store went away")},
 	})
 	ctx := context.Background()
 

@@ -48,7 +48,7 @@ func iamTime() *timestamppb.Timestamp { return timestamppb.New(time.Unix(1700000
 func sampleUser() *iampb.User {
 	return &iampb.User{
 		Id: "u1", TenantId: "t1", Email: "a@b.c", Name: "alice",
-		Roles: []string{"admin"}, Groups: []string{"g1"},
+		Roles:      []string{"admin"},
 		Attributes: map[string]string{"k": "v"},
 		CreatedAt:  iamTime(), UpdatedAt: iamTime(), LastAuth: iamTime(),
 	}
@@ -59,13 +59,6 @@ func sampleTenant() *iampb.Tenant {
 		Id: "t1", Name: "tenant",
 		Settings:  &iampb.TenantSettings{NamedNetworks: map[string]string{"n": "1"}},
 		CreatedAt: iamTime(), UpdatedAt: iamTime(),
-	}
-}
-
-func sampleGroup() *iampb.Group {
-	return &iampb.Group{
-		Id: "g1", TenantId: "t1", Name: "group", Description: "d",
-		Members: []string{"u1", "u2"}, CreatedAt: iamTime(), UpdatedAt: iamTime(),
 	}
 }
 
@@ -136,18 +129,6 @@ func (f *fakeIAMServer) RevokeRole(context.Context, *iampb.RevokeRoleRequest) (*
 	}
 	return &iampb.RevokeRoleResponse{}, nil
 }
-func (f *fakeIAMServer) AddUserToGroup(context.Context, *iampb.AddUserToGroupRequest) (*iampb.AddUserToGroupResponse, error) {
-	if err := f.err(); err != nil {
-		return nil, err
-	}
-	return &iampb.AddUserToGroupResponse{}, nil
-}
-func (f *fakeIAMServer) RemoveUserFromGroup(context.Context, *iampb.RemoveUserFromGroupRequest) (*iampb.RemoveUserFromGroupResponse, error) {
-	if err := f.err(); err != nil {
-		return nil, err
-	}
-	return &iampb.RemoveUserFromGroupResponse{}, nil
-}
 
 // Tenant methods.
 func (f *fakeIAMServer) CreateTenant(context.Context, *iampb.CreateTenantRequest) (*iampb.Tenant, error) {
@@ -179,38 +160,6 @@ func (f *fakeIAMServer) ListTenants(context.Context, *iampb.ListTenantsRequest) 
 		return nil, err
 	}
 	return &iampb.ListTenantsResponse{Tenants: []*iampb.Tenant{sampleTenant()}, Total: 1}, nil
-}
-
-// Group methods.
-func (f *fakeIAMServer) CreateGroup(context.Context, *iampb.CreateGroupRequest) (*iampb.Group, error) {
-	if err := f.err(); err != nil {
-		return nil, err
-	}
-	return sampleGroup(), nil
-}
-func (f *fakeIAMServer) GetGroup(context.Context, *iampb.GetGroupRequest) (*iampb.Group, error) {
-	if err := f.err(); err != nil {
-		return nil, err
-	}
-	return sampleGroup(), nil
-}
-func (f *fakeIAMServer) UpdateGroup(context.Context, *iampb.UpdateGroupRequest) (*iampb.Group, error) {
-	if err := f.err(); err != nil {
-		return nil, err
-	}
-	return sampleGroup(), nil
-}
-func (f *fakeIAMServer) DeleteGroup(context.Context, *iampb.DeleteGroupRequest) (*iampb.DeleteGroupResponse, error) {
-	if err := f.err(); err != nil {
-		return nil, err
-	}
-	return &iampb.DeleteGroupResponse{}, nil
-}
-func (f *fakeIAMServer) ListGroups(context.Context, *iampb.ListGroupsRequest) (*iampb.ListGroupsResponse, error) {
-	if err := f.err(); err != nil {
-		return nil, err
-	}
-	return &iampb.ListGroupsResponse{Groups: []*iampb.Group{sampleGroup()}, Total: 1}, nil
 }
 
 // Role methods.
@@ -338,23 +287,12 @@ var iamServiceCases = []iamCase{
 	{"ListUsers", "quicbaas.IAM.User", "List", map[string]interface{}{"tenant_id": "t1", "request": map[string]interface{}{"page_size": 10}}},
 	{"AssignRole", "quicbaas.IAM.User", "AssignRole", map[string]interface{}{"tenant_id": "t1", "user_id": "u1", "role_id": "r1"}},
 	{"RevokeRole", "quicbaas.IAM.User", "RevokeRole", map[string]interface{}{"tenant_id": "t1", "user_id": "u1", "role_id": "r1"}},
-	{"AddToGroup", "quicbaas.IAM.User", "AddToGroup", map[string]interface{}{"tenant_id": "t1", "user_id": "u1", "group_id": "g1"}},
-	{"RemoveFromGroup", "quicbaas.IAM.User", "RemoveFromGroup", map[string]interface{}{"tenant_id": "t1", "user_id": "u1", "group_id": "g1"}},
 	// Tenant service.
 	{"CreateTenant", "quicbaas.IAM.Tenant", "Create", map[string]interface{}{"id": "t1", "name": "tenant", "settings": map[string]string{"n": "1"}}},
 	{"GetTenant", "quicbaas.IAM.Tenant", "Get", map[string]interface{}{"tenant_id": "t1"}},
 	{"UpdateTenant", "quicbaas.IAM.Tenant", "Update", map[string]interface{}{"tenant_id": "t1", "request": map[string]interface{}{"display_name": "n", "settings": map[string]string{"a": "b"}}}},
 	{"DeleteTenant", "quicbaas.IAM.Tenant", "Delete", map[string]interface{}{"tenant_id": "t1"}},
 	{"ListTenants", "quicbaas.IAM.Tenant", "List", map[string]interface{}{"page_size": 10}},
-	// Group service.
-	{"CreateGroup", "quicbaas.IAM.Group", "Create", map[string]interface{}{"tenant_id": "t1", "request": map[string]interface{}{"name": "group"}}},
-	{"GetGroup", "quicbaas.IAM.Group", "Get", map[string]interface{}{"tenant_id": "t1", "group_id": "g1"}},
-	{"UpdateGroup", "quicbaas.IAM.Group", "Update", map[string]interface{}{"tenant_id": "t1", "group_id": "g1", "request": map[string]interface{}{"display_name": "g"}}},
-	{"DeleteGroup", "quicbaas.IAM.Group", "Delete", map[string]interface{}{"tenant_id": "t1", "group_id": "g1"}},
-	{"ListGroups", "quicbaas.IAM.Group", "List", map[string]interface{}{"tenant_id": "t1", "request": map[string]interface{}{"page_size": 10}}},
-	{"AddGroupMember", "quicbaas.IAM.Group", "AddMember", map[string]interface{}{"tenant_id": "t1", "group_id": "g1", "user_id": "u1"}},
-	{"RemoveGroupMember", "quicbaas.IAM.Group", "RemoveMember", map[string]interface{}{"tenant_id": "t1", "group_id": "g1", "user_id": "u1"}},
-	{"ListGroupMembers", "quicbaas.IAM.Group", "ListMembers", map[string]interface{}{"tenant_id": "t1", "group_id": "g1"}},
 	// Role service.
 	{"CreateRole", "quicbaas.IAM.Role", "Create", map[string]interface{}{"tenant_id": "t1", "request": map[string]interface{}{"name": "role", "permissions": []string{"p1"}}}},
 	{"GetRole", "quicbaas.IAM.Role", "Get", map[string]interface{}{"tenant_id": "t1", "role_id": "r1"}},
@@ -400,16 +338,19 @@ func TestIAMService_AllMethods_ServerError(t *testing.T) {
 
 func TestIAMService_UnsupportedService(t *testing.T) {
 	h := newIAMHandler(nil)
-	_, err := h.handleRequest(context.Background(), "quicbaas.IAM.Bogus", "X", nil)
-	if err == nil {
-		t.Fatal("expected error for unsupported IAM service")
+	// quicbaas.IAM.Group is one: quicbaas keeps no groups, so the transport
+	// refuses the service rather than reaching a server that has none.
+	for _, service := range []string{"quicbaas.IAM.Bogus", "quicbaas.IAM.Group"} {
+		if _, err := h.handleRequest(context.Background(), service, "Create", nil); err == nil {
+			t.Fatalf("expected error for unsupported IAM service %s", service)
+		}
 	}
 }
 
 func TestIAMService_UnsupportedMethods(t *testing.T) {
 	h := newIAMHandler(nil)
 	services := []string{
-		"quicbaas.IAM.User", "quicbaas.IAM.Tenant", "quicbaas.IAM.Group",
+		"quicbaas.IAM.User", "quicbaas.IAM.Tenant",
 		"quicbaas.IAM.Role", "quicbaas.IAM.Policy", "quicbaas.IAM.App",
 		"quicbaas.IAM.Session", "quicbaas.IAM.Audit", "quicbaas.IAM.Admin",
 		"quicbaas.IAM.GDPR", "quicbaas.IAM.PEP", "quicbaas.IAM.MFA",

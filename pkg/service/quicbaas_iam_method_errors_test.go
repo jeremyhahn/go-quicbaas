@@ -55,22 +55,6 @@ func TestIAMServiceWrapper_BackendResolutionErrors(t *testing.T) {
 			withProviderErr: func(p *mockIAMServiceProvider, err error) { p.identityStoreErr = err },
 		},
 		{
-			name: "CreateGroup",
-			invoke: func(ctx context.Context, w *iamServiceWrapper) (any, error) {
-				return w.CreateGroup(ctx, &CreateGroupRequest{TenantID: "t1", Name: "g"})
-			},
-			unavailableMsg:  "identity store not available",
-			withProviderErr: func(p *mockIAMServiceProvider, err error) { p.identityStoreErr = err },
-		},
-		{
-			name: "ListGroups",
-			invoke: func(ctx context.Context, w *iamServiceWrapper) (any, error) {
-				return w.ListGroups(ctx, &ListGroupsRequest{TenantID: "t1"})
-			},
-			unavailableMsg:  "identity store not available",
-			withProviderErr: func(p *mockIAMServiceProvider, err error) { p.identityStoreErr = err },
-		},
-		{
 			name: "CreateRole",
 			invoke: func(ctx context.Context, w *iamServiceWrapper) (any, error) {
 				return w.CreateRole(ctx, &IAMCreateRoleRequest{TenantID: "t1", Name: "r"})

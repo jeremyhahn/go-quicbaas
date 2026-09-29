@@ -17,6 +17,7 @@ import (
 	"embed"
 	"sort"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/prompts"
 )
 
@@ -158,6 +159,18 @@ func sdlcSetSpec() prompts.SetSpec {
 				},
 			},
 			{
+				Name: "issue_contract_cluster",
+				Description: "the task description of a clustered task: the anchor issue's contract, then every " +
+					"member issue's, all delivered by one pull request",
+				Default: sdlcDefaults["issue_contract_cluster"],
+				Variables: []prompts.Variable{
+					{Name: "anchor_contract", Description: "the anchor issue's issue_contract", Required: true},
+					{Name: "members", Description: "the member issues, as \"#12 and #15\"", Required: true},
+					{Name: "shared", Description: "the files and packages the issues share", Required: true},
+					{Name: "member_contracts", Description: "each member issue's issue_contract, in order", Required: true},
+				},
+			},
+			{
 				Name:        "issue_contract_comment",
 				Description: "one comment in the issue's discussion",
 				Default:     sdlcDefaults["issue_contract_comment"],
@@ -200,6 +213,41 @@ func sdlcSetSpec() prompts.SetSpec {
 				Variables: []prompts.Variable{
 					{Name: "base", Description: "the branch the pull request merges into", Required: true},
 					{Name: "head", Description: "the head the review approved", Required: true},
+				},
+			},
+			{
+				Name: "train_ejected",
+				Description: "how a pull request the merge train ejected for a red pipeline is sent back to its " +
+					"worker, with the train's failure",
+				Default: sdlcDefaults["train_ejected"],
+				Variables: []prompts.Variable{
+					{Name: "train", Description: "the train's number", Required: true},
+					{Name: "target", Description: "the branch the train lands on", Required: true},
+					{Name: "findings", Description: "the train's red pipeline, rendered as the gate renders its own", Required: true},
+				},
+			},
+			{
+				Name: "train_review_refused",
+				Description: "how a pull request the merge train carried alone, and whose train its reviewer refused, " +
+					"is sent back to its worker with the review",
+				Default: sdlcDefaults["train_review_refused"],
+				Variables: []prompts.Variable{
+					{Name: "train", Description: "the train's number", Required: true},
+					{Name: "target", Description: "the branch the train lands on", Required: true},
+					{Name: "findings", Description: "what the train's reviewer wrote", Required: true},
+				},
+			},
+			{
+				Name: "train_review",
+				Description: "what a merge train's reviewer is told in place of an issue: the changes the train carries, " +
+					"that each was approved on its own, and that how they combine is what is left to judge",
+				Default: sdlcDefaults["train_review"],
+				Variables: []prompts.Variable{
+					{Name: "train", Description: "the train's number", Required: true},
+					{Name: "target", Description: "the branch the train lands on", Required: true},
+					{Name: "base", Description: "the target commit the train was built on", Required: true},
+					{Name: "members", Description: "one line per change: its pull request, title, branch and approved head", Required: true},
+					{Name: "issues", Description: "the issues the changes close between them, or \"none\"", Required: true},
 				},
 			},
 			{
@@ -321,6 +369,65 @@ func sdlcSetSpec() prompts.SetSpec {
 				},
 			},
 			{
+				Name:        "account_rolled_note",
+				Description: "what is added to the first prompt of a fresh session that replaced one whose pooled account the provider refused for a limit, on a project whose session_rotation is fresh",
+				Default:     sdlcDefaults["account_rolled_note"],
+				Variables: []prompts.Variable{
+					{Name: "round", Description: "the round the old session's account was refused in", Required: true},
+				},
+			},
+			{
+				Name:        "account_resumed_note",
+				Description: "what is added to the first prompt of a session that continues the conversation of one whose pooled account the provider refused for a limit (session_rotation resume, the default)",
+				Default:     sdlcDefaults["account_resumed_note"],
+				Variables: []prompts.Variable{
+					{Name: "round", Description: "the round the old session's account was refused in", Required: true},
+					{Name: "conversation", Description: "the session_resumed_account_transcript prompt, empty when the replaced session was never prompted"},
+				},
+			},
+			{
+				Name:        "worker_released_note",
+				Description: "what is added to the first prompt of a fresh session spawned for a review round, after the previous session's container was closed while the pull request was reviewed, on a project whose session_rotation is fresh",
+				Default:     sdlcDefaults["worker_released_note"],
+				Variables: []prompts.Variable{
+					{Name: "round", Description: "the round whose work was under review when the previous session was closed", Required: true},
+				},
+			},
+			{
+				Name:        "worker_resumed_note",
+				Description: "what is added to the first prompt of a session spawned for a review round that continues the conversation of the one closed while the pull request was reviewed (session_rotation resume, the default)",
+				Default:     sdlcDefaults["worker_resumed_note"],
+				Variables: []prompts.Variable{
+					{Name: "round", Description: "the round whose work was under review when the previous session was closed", Required: true},
+					{Name: "conversation", Description: "the session_resumed_account_transcript prompt, empty when the closed session was never prompted"},
+				},
+			},
+			{
+				Name:        "session_rolled_account_note",
+				Description: "what is added to the first prompt of a fresh session that replaced one whose pooled provider account was rotated under it, on a project whose session_rotation is fresh",
+				Default:     sdlcDefaults["session_rolled_account_note"],
+				Variables: []prompts.Variable{
+					{Name: "round", Description: "the round the replaced session was spawned in", Required: true},
+				},
+			},
+			{
+				Name:        "session_resumed_account_note",
+				Description: "what is added to the first prompt of a session that continues the conversation of one whose pooled provider account was rotated under it (session_rotation resume, the default)",
+				Default:     sdlcDefaults["session_resumed_account_note"],
+				Variables: []prompts.Variable{
+					{Name: "round", Description: "the round the credential was rotated in", Required: true},
+					{Name: "conversation", Description: "the session_resumed_account_transcript prompt, empty when the replaced session was never prompted"},
+				},
+			},
+			{
+				Name:        "session_resumed_account_transcript",
+				Description: "the conversation a resumed session continues, as it is carried into its first prompt; shared by every resumed-session note",
+				Default:     sdlcDefaults["session_resumed_account_transcript"],
+				Variables: []prompts.Variable{
+					{Name: "transcript", Description: "the replaced session's conversation, bounded by the replay budget", Required: true},
+				},
+			},
+			{
 				Name:        "repeated_prompt",
 				Description: "why a task is parked rather than handed a prompt it already answered",
 				Default:     sdlcDefaults["repeated_prompt"],
@@ -407,4 +514,13 @@ func sdlcSetSpec() prompts.SetSpec {
 			},
 		},
 	}
+}
+
+// init registers the charters of the roles the SDLC runs, so an Agent with no
+// prompt of its own that is spawned for one of these roles starts with its
+// role's charter (orchestration.RoleCharter).
+func init() {
+	orchestration.RegisterRoleCharter(orchestration.AgentRoleCoding, WorkerCharter)
+	orchestration.RegisterRoleCharter(orchestration.AgentRoleReview, ReviewerCharter)
+	orchestration.RegisterRoleCharter(orchestration.AgentRoleTriage, TriageCharter)
 }

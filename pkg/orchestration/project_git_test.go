@@ -16,6 +16,7 @@ package orchestration
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -178,7 +179,7 @@ func TestCommitSigning_RoundTripsThroughJSONAndYAML(t *testing.T) {
 	if err := json.Unmarshal(jsonBytes, &fromJSON); err != nil {
 		t.Fatalf("json unmarshal: %v", err)
 	}
-	if fromJSON != in {
+	if !reflect.DeepEqual(fromJSON, in) {
 		t.Errorf("json round trip changed the record:\n got %+v\nwant %+v", fromJSON, in)
 	}
 
@@ -190,7 +191,7 @@ func TestCommitSigning_RoundTripsThroughJSONAndYAML(t *testing.T) {
 	if err := yaml.Unmarshal(yamlBytes, &fromYAML); err != nil {
 		t.Fatalf("yaml unmarshal: %v", err)
 	}
-	if fromYAML != in {
+	if !reflect.DeepEqual(fromYAML, in) {
 		t.Errorf("yaml round trip changed the record:\n got %+v\nwant %+v", fromYAML, in)
 	}
 
@@ -286,7 +287,7 @@ func TestProject_DefaultWorkflowAndGitIdentityRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(data, &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if out.DefaultWorkflow != "sdlc" || out.Git != in.Git {
+	if out.DefaultWorkflow != "sdlc" || !reflect.DeepEqual(out.Git, in.Git) {
 		t.Errorf("round trip changed the project: %+v", out)
 	}
 }

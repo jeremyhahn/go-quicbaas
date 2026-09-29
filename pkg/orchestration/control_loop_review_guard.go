@@ -31,7 +31,7 @@ func (cl *ControlLoop) resolvedReviewBackend() string {
 	// backend here and refused for a reviewer it does have. Reading the spec is
 	// what makes the guard agree with the configuration rather than with how far
 	// the run happens to have got.
-	if spec := cl.resolveAgentSpec("reviewer"); spec != nil && spec.Backend != "" {
+	if spec := cl.resolveNodeSpec("reviewer"); spec != nil && spec.Backend != "" {
 		return spec.Backend
 	}
 	// No reviewer at all: both remaining routes end on the lead's backend — the

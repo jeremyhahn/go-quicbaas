@@ -294,3 +294,30 @@ func rootPermits(root, source string) bool {
 	}
 	return pathWithinRoot(resolvedRoot, source)
 }
+
+// grantReaching names the first grant of this policy that could admit a path
+// at or under root as a bind-mount source, or returns "" when none can. A root
+// that contains a grant's directory is reached too, because the grant admits
+// that part of it. The sockets-root grant admits only live signing sockets and
+// never reaches a directory tree. A nil policy grants nothing.
+func (p *MountPolicy) grantReaching(root string) string {
+	if p == nil {
+		return ""
+	}
+	overlaps := func(grant string) bool {
+		if grant == "" || !filepath.IsAbs(grant) {
+			return false
+		}
+		grant = filepath.Clean(grant)
+		return pathWithinRoot(grant, root) || pathWithinRoot(root, grant)
+	}
+	if overlaps(p.ProjectsRoot) {
+		return "projects root " + strconv.Quote(p.ProjectsRoot)
+	}
+	for _, allowed := range p.AllowedRoots {
+		if overlaps(allowed) {
+			return "allowed mount root " + strconv.Quote(allowed)
+		}
+	}
+	return ""
+}

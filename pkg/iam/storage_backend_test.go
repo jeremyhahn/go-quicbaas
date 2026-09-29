@@ -133,39 +133,6 @@ func TestBackendStorage_TenantCRUD(t *testing.T) {
 // is owned by qrdb (qrdbadapter.QRDBUserStorage), not BackendStorage. The
 // UserStorage seam is exercised against MemoryStorage and the qrdbadapter suite.
 
-func TestBackendStorage_GroupCRUD(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewBackendStorage(kv)
-
-	group := &Group{
-		ID:       "group-1",
-		TenantID: "tenant-1",
-		Name:     "Test Group",
-	}
-
-	// Create
-	err := storage.CreateGroup(ctx, group)
-	require.NoError(t, err)
-
-	// Get
-	retrieved, err := storage.GetGroup(ctx, group.TenantID, group.ID)
-	require.NoError(t, err)
-	assert.Equal(t, group.ID, retrieved.ID)
-
-	// Update
-	group.Name = "Updated Group"
-	err = storage.UpdateGroup(ctx, group)
-	require.NoError(t, err)
-
-	// Delete
-	err = storage.DeleteGroup(ctx, group.TenantID, group.ID)
-	require.NoError(t, err)
-
-	_, err = storage.GetGroup(ctx, group.TenantID, group.ID)
-	assert.Error(t, err)
-}
-
 func TestBackendStorage_RoleCRUD(t *testing.T) {
 	ctx := context.Background()
 	kv := newMockKVStore()
@@ -397,25 +364,25 @@ func TestBackendStorage_QuotaOperations(t *testing.T) {
 	assert.NotNil(t, quota)
 
 	// Update BaaS-layer IAM quotas (users/roles are owned by qrdb TenantServicer)
-	quota.MaxGroups = 50
+	quota.MaxPolicies = 50
 	err = storage.UpdateQuota(ctx, tenantID, quota)
 	require.NoError(t, err)
 
-	// Increment groups usage (BaaS-layer quota)
-	err = storage.IncrementQuotaUsage(ctx, tenantID, QuotaResourceGroups, 5)
+	// Increment policies usage (BaaS-layer quota)
+	err = storage.IncrementQuotaUsage(ctx, tenantID, QuotaResourcePolicies, 5)
 	require.NoError(t, err)
 
 	updated, err := storage.GetQuota(ctx, tenantID)
 	require.NoError(t, err)
-	assert.Equal(t, int64(5), updated.CurrentGroups)
+	assert.Equal(t, int64(5), updated.CurrentPolicies)
 
-	// Decrement groups usage
-	err = storage.DecrementQuotaUsage(ctx, tenantID, QuotaResourceGroups, 2)
+	// Decrement policies usage
+	err = storage.DecrementQuotaUsage(ctx, tenantID, QuotaResourcePolicies, 2)
 	require.NoError(t, err)
 
 	updated, err = storage.GetQuota(ctx, tenantID)
 	require.NoError(t, err)
-	assert.Equal(t, int64(3), updated.CurrentGroups)
+	assert.Equal(t, int64(3), updated.CurrentPolicies)
 }
 
 func TestBackendStorage_NotFoundErrors(t *testing.T) {
@@ -428,8 +395,6 @@ func TestBackendStorage_NotFoundErrors(t *testing.T) {
 	assert.Error(t, err)
 	assert.True(t, dberrors.IsNotFound(err))
 
-	// Get nonexistent group
-	_, err = storage.GetGroup(ctx, "tenant", "nonexistent")
 	assert.Error(t, err)
 
 	// Get nonexistent role
@@ -458,10 +423,6 @@ func TestBackendStorage_KeyPrefixes(t *testing.T) {
 	// Test tenant key
 	key := tenantKey("test-tenant")
 	assert.Equal(t, "__iam:tenant:test-tenant", key)
-
-	// Test group key
-	key = groupKey("tenant-1", "group-1")
-	assert.Equal(t, "__iam:tenant:tenant-1:group:group-1", key)
 
 	// Test role key
 	key = roleKey("tenant-1", "role-1")
@@ -499,14 +460,6 @@ func TestBackendStorage_DeleteTenantCascade(t *testing.T) {
 	}
 	require.NoError(t, storage.CreateTenant(ctx, tenant))
 
-	// Create groups
-	group := &Group{
-		ID:       "group-1",
-		TenantID: tenantID,
-		Name:     "Test Group",
-	}
-	require.NoError(t, storage.CreateGroup(ctx, group))
-
 	// Create roles
 	role := &Role{
 		ID:          "role-1",
@@ -540,9 +493,6 @@ func TestBackendStorage_DeleteTenantCascade(t *testing.T) {
 	_, err := storage.GetTenant(ctx, tenantID)
 	require.NoError(t, err, "tenant should exist")
 
-	_, err = storage.GetGroup(ctx, tenantID, group.ID)
-	require.NoError(t, err, "group should exist")
-
 	_, err = storage.GetRole(ctx, tenantID, role.ID)
 	require.NoError(t, err, "role should exist")
 
@@ -559,9 +509,6 @@ func TestBackendStorage_DeleteTenantCascade(t *testing.T) {
 	// Verify all entities are deleted
 	_, err = storage.GetTenant(ctx, tenantID)
 	assert.Error(t, err, "tenant should be deleted")
-
-	_, err = storage.GetGroup(ctx, tenantID, group.ID)
-	assert.Error(t, err, "group should be deleted")
 
 	_, err = storage.GetRole(ctx, tenantID, role.ID)
 	assert.Error(t, err, "role should be deleted")
@@ -918,13 +865,11 @@ func TestFederationManager_UpdateProvider_ChangeClientSecretBoost(t *testing.T) 
 	stateStorage := NewMemoryStateStorage()
 
 	userStorage := newMockUserStorage()
-	groupStorage := newMockGroupStorage()
 	roleStorage := newMockRoleStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  userStorage,
-		GroupStorage: groupStorage,
-		RoleStorage:  roleStorage,
+		UserStorage: userStorage,
+		RoleStorage: roleStorage,
 	})
 
 	manager, err := NewFederationManager(
@@ -988,13 +933,11 @@ func TestFederationManager_GetProviderByName_SuccessBoost(t *testing.T) {
 	stateStorage := NewMemoryStateStorage()
 
 	userStorage := newMockUserStorage()
-	groupStorage := newMockGroupStorage()
 	roleStorage := newMockRoleStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  userStorage,
-		GroupStorage: groupStorage,
-		RoleStorage:  roleStorage,
+		UserStorage: userStorage,
+		RoleStorage: roleStorage,
 	})
 
 	manager, err := NewFederationManager(
@@ -1045,13 +988,11 @@ func TestFederationManager_GetProviderByName_NotFoundBoost(t *testing.T) {
 	stateStorage := NewMemoryStateStorage()
 
 	userStorage := newMockUserStorage()
-	groupStorage := newMockGroupStorage()
 	roleStorage := newMockRoleStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  userStorage,
-		GroupStorage: groupStorage,
-		RoleStorage:  roleStorage,
+		UserStorage: userStorage,
+		RoleStorage: roleStorage,
 	})
 
 	manager, err := NewFederationManager(
@@ -1079,13 +1020,11 @@ func TestFederationManager_DeleteProvider_CascadeLinks(t *testing.T) {
 	stateStorage := NewMemoryStateStorage()
 
 	userStorage := newMockUserStorage()
-	groupStorage := newMockGroupStorage()
 	roleStorage := newMockRoleStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  userStorage,
-		GroupStorage: groupStorage,
-		RoleStorage:  roleStorage,
+		UserStorage: userStorage,
+		RoleStorage: roleStorage,
 	})
 
 	manager, err := NewFederationManager(
@@ -1144,13 +1083,11 @@ func TestFederationManager_WithNilAudit(t *testing.T) {
 	stateStorage := NewMemoryStateStorage()
 
 	userStorage := newMockUserStorage()
-	groupStorage := newMockGroupStorage()
 	roleStorage := newMockRoleStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  userStorage,
-		GroupStorage: groupStorage,
-		RoleStorage:  roleStorage,
+		UserStorage: userStorage,
+		RoleStorage: roleStorage,
 	})
 
 	// Create manager without audit logger - should work fine
@@ -1205,13 +1142,11 @@ func TestFederationManager_BeginLogin_GeneratesUniqueNonces(t *testing.T) {
 	stateStorage := NewMemoryStateStorage()
 
 	userStorage := newMockUserStorage()
-	groupStorage := newMockGroupStorage()
 	roleStorage := newMockRoleStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  userStorage,
-		GroupStorage: groupStorage,
-		RoleStorage:  roleStorage,
+		UserStorage: userStorage,
+		RoleStorage: roleStorage,
 	})
 
 	manager, err := NewFederationManager(
@@ -1436,10 +1371,8 @@ func TestBackendStorage_IncrementQuotaUsage_AllResources(t *testing.T) {
 
 	// Create initial BaaS-layer IAM quota (users/roles are owned by qrdb TenantServicer)
 	initialQuota := &TenantQuota{
-		MaxGroups:       50,
 		MaxPolicies:     100,
 		MaxApps:         10,
-		CurrentGroups:   0,
 		CurrentPolicies: 0,
 		CurrentApps:     0,
 	}
@@ -1450,11 +1383,6 @@ func TestBackendStorage_IncrementQuotaUsage_AllResources(t *testing.T) {
 	// users/roles are engine-level quotas; IncrementQuotaUsage is a no-op for them
 	if err := storage.IncrementQuotaUsage(ctx, tenantID, QuotaResourceUsers, 5); err != nil {
 		t.Fatalf("IncrementQuotaUsage (users, no-op) should not error: %v", err)
-	}
-
-	// Test incrementing groups quota (BaaS-layer)
-	if err := storage.IncrementQuotaUsage(ctx, tenantID, QuotaResourceGroups, 3); err != nil {
-		t.Fatalf("IncrementQuotaUsage (groups) failed: %v", err)
 	}
 
 	// roles are engine-level; no-op
@@ -1479,9 +1407,6 @@ func TestBackendStorage_IncrementQuotaUsage_AllResources(t *testing.T) {
 	}
 
 	// Users are not tracked here (qrdb owns them); expect 0
-	if quota.CurrentGroups != 3 {
-		t.Errorf("expected CurrentGroups=3, got %d", quota.CurrentGroups)
-	}
 	if quota.CurrentPolicies != 10 {
 		t.Errorf("expected CurrentPolicies=10, got %d", quota.CurrentPolicies)
 	}
@@ -1489,14 +1414,14 @@ func TestBackendStorage_IncrementQuotaUsage_AllResources(t *testing.T) {
 		t.Errorf("expected CurrentApps=1, got %d", quota.CurrentApps)
 	}
 
-	// Test decrementing groups
-	if err := storage.DecrementQuotaUsage(ctx, tenantID, QuotaResourceGroups, 2); err != nil {
+	// Test decrementing policies
+	if err := storage.DecrementQuotaUsage(ctx, tenantID, QuotaResourcePolicies, 2); err != nil {
 		t.Fatalf("DecrementQuotaUsage failed: %v", err)
 	}
 
 	quota, _ = storage.GetQuota(ctx, tenantID)
-	if quota.CurrentGroups != 1 {
-		t.Errorf("expected CurrentGroups=1 after decrement, got %d", quota.CurrentGroups)
+	if quota.CurrentPolicies != 8 {
+		t.Errorf("expected CurrentPolicies=8 after decrement, got %d", quota.CurrentPolicies)
 	}
 }
 
@@ -1701,9 +1626,8 @@ func TestOIDCProvider_ValidateAccessToken_Success(t *testing.T) {
 	memStorage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
+		UserStorage: memStorage,
+		RoleStorage: memStorage,
 	})
 
 	deps := OIDCDependencies{
@@ -1777,9 +1701,8 @@ func TestOIDCProvider_ValidateAccessToken_Invalid(t *testing.T) {
 	memStorage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
+		UserStorage: memStorage,
+		RoleStorage: memStorage,
 	})
 
 	deps := OIDCDependencies{
@@ -1826,9 +1749,8 @@ func TestOIDCProviderAdapter_ValidateAccessToken_Success(t *testing.T) {
 	memStorage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
+		UserStorage: memStorage,
+		RoleStorage: memStorage,
 	})
 
 	deps := OIDCDependencies{
@@ -1899,9 +1821,8 @@ func TestOIDCProviderAdapter_ValidateAccessToken_Error(t *testing.T) {
 	memStorage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
+		UserStorage: memStorage,
+		RoleStorage: memStorage,
 	})
 
 	deps := OIDCDependencies{
@@ -1944,9 +1865,8 @@ func TestOIDCProviderAdapter_GetOAuthASMetadata_NilCheck(t *testing.T) {
 	memStorage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
+		UserStorage: memStorage,
+		RoleStorage: memStorage,
 	})
 
 	deps := OIDCDependencies{
@@ -2025,38 +1945,6 @@ func TestBackendStorage_SettingsOperations(t *testing.T) {
 
 // TestBackendStorage_ListUsersWithPagination was removed in phase C1-F:
 // BackendStorage no longer persists or lists users (qrdb owns the user record).
-
-func TestBackendStorage_ListGroupsWithPagination(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "list-groups-tenant"
-
-	// Create multiple groups
-	for i := 0; i < 5; i++ {
-		group := &Group{
-			ID:       "group-" + string(rune('a'+i)),
-			TenantID: tenantID,
-			Name:     "Group " + string(rune('A'+i)),
-			Created:  time.Now(),
-			Updated:  time.Now(),
-		}
-		if err := storage.CreateGroup(ctx, group); err != nil {
-			t.Fatalf("CreateGroup failed: %v", err)
-		}
-	}
-
-	// List all groups
-	groups, err := storage.ListGroups(ctx, tenantID, ListOptions{})
-	if err != nil {
-		t.Fatalf("ListGroups failed: %v", err)
-	}
-
-	if len(groups) != 5 {
-		t.Errorf("expected 5 groups, got %d", len(groups))
-	}
-}
 
 func TestBackendStorage_ListRolesWithPagination(t *testing.T) {
 	ctx := context.Background()
@@ -2823,67 +2711,6 @@ func TestBackendStorage_DeletePolicy(t *testing.T) {
 }
 
 // =============================================================================
-// Storage Backend - UpdateGroup and DeleteGroup
-// =============================================================================
-
-func TestBackendStorage_UpdateGroup(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "update-group-tenant"
-
-	group := &Group{
-		ID:       "update-group",
-		TenantID: tenantID,
-		Name:     "Original Group",
-		Created:  time.Now(),
-		Updated:  time.Now(),
-	}
-	if err := storage.CreateGroup(ctx, group); err != nil {
-		t.Fatalf("CreateGroup failed: %v", err)
-	}
-
-	group.Name = "Updated Group"
-	if err := storage.UpdateGroup(ctx, group); err != nil {
-		t.Fatalf("UpdateGroup failed: %v", err)
-	}
-
-	updated, _ := storage.GetGroup(ctx, tenantID, "update-group")
-	if updated.Name != "Updated Group" {
-		t.Errorf("expected 'Updated Group', got %s", updated.Name)
-	}
-}
-
-func TestBackendStorage_DeleteGroup(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "delete-group-tenant"
-
-	group := &Group{
-		ID:       "delete-group",
-		TenantID: tenantID,
-		Name:     "Delete Group",
-		Created:  time.Now(),
-		Updated:  time.Now(),
-	}
-	if err := storage.CreateGroup(ctx, group); err != nil {
-		t.Fatalf("CreateGroup failed: %v", err)
-	}
-
-	if err := storage.DeleteGroup(ctx, tenantID, "delete-group"); err != nil {
-		t.Fatalf("DeleteGroup failed: %v", err)
-	}
-
-	_, err := storage.GetGroup(ctx, tenantID, "delete-group")
-	if err == nil {
-		t.Error("expected error for deleted group")
-	}
-}
-
-// =============================================================================
 // Storage Backend - UpdateRole and DeleteRole
 // =============================================================================
 
@@ -3100,7 +2927,6 @@ func TestBackendStorage_QuotaOperations_AllResources(t *testing.T) {
 
 	// BaaS-layer IAM quotas only (users/roles are owned by qrdb TenantServicer)
 	initialQuota := &TenantQuota{
-		MaxGroups:   50,
 		MaxPolicies: 10,
 		MaxApps:     5,
 	}
@@ -3112,7 +2938,6 @@ func TestBackendStorage_QuotaOperations_AllResources(t *testing.T) {
 	// Users and roles are engine-level (qrdb-owned); Increment/Decrement are no-ops for them
 	resources := []string{
 		QuotaResourceUsers,    // no-op (engine-level)
-		QuotaResourceGroups,   // BaaS-layer
 		QuotaResourceRoles,    // no-op (engine-level)
 		QuotaResourcePolicies, // BaaS-layer
 		QuotaResourceApps,     // BaaS-layer
@@ -3132,7 +2957,7 @@ func TestBackendStorage_QuotaOperations_AllResources(t *testing.T) {
 
 	// Verify BaaS-layer quotas are back to zero
 	quota, _ := storage.GetQuota(ctx, tenantID)
-	if quota.CurrentGroups != 0 || quota.CurrentPolicies != 0 || quota.CurrentApps != 0 {
+	if quota.CurrentPolicies != 0 || quota.CurrentApps != 0 {
 		t.Error("expected all BaaS-layer current values to be 0 after increment/decrement")
 	}
 }
@@ -3152,51 +2977,23 @@ func TestBackendStorage_IncrementQuotaUsage_UnknownResourceIgnored(t *testing.T)
 	}
 
 	// Use a BaaS-layer field for the "unchanged" assertion
-	initialQuota := &TenantQuota{CurrentGroups: 5}
+	initialQuota := &TenantQuota{CurrentPolicies: 5}
 	if err := storage.UpdateQuota(ctx, tenantID, initialQuota); err != nil {
 		t.Fatalf("UpdateQuota failed: %v", err)
 	}
 
-	// Increment unknown resource - implementation silently ignores this
-	err := storage.IncrementQuotaUsage(ctx, tenantID, "unknown", 1)
-	if err != nil {
-		t.Fatalf("IncrementQuotaUsage (unknown) should not error: %v", err)
+	// Increment unknown resources - implementation silently ignores them.
+	// "groups" is one: quicbaas keeps no groups, so it tracks no group quota.
+	for _, resource := range []string{"unknown", "groups"} {
+		if err := storage.IncrementQuotaUsage(ctx, tenantID, resource, 1); err != nil {
+			t.Fatalf("IncrementQuotaUsage (%s) should not error: %v", resource, err)
+		}
 	}
 
 	// Verify BaaS-layer quota unchanged
 	quota, _ := storage.GetQuota(ctx, tenantID)
-	if quota.CurrentGroups != 5 {
-		t.Errorf("expected CurrentGroups=5, got %d", quota.CurrentGroups)
-	}
-}
-
-// Test UpdateGroup not found
-func TestBackendStorage_UpdateGroup_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	group := &Group{
-		ID:       "non-existent-group",
-		TenantID: "tenant",
-		Name:     "Non-existent",
-	}
-
-	err := storage.UpdateGroup(ctx, group)
-	if err == nil {
-		t.Error("expected error for non-existent group")
-	}
-}
-
-// Test DeleteGroup not found
-func TestBackendStorage_DeleteGroup_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	err := storage.DeleteGroup(ctx, "tenant", "non-existent-group")
-	if err == nil {
-		t.Error("expected error for non-existent group")
+	if quota.CurrentPolicies != 5 {
+		t.Errorf("expected CurrentPolicies=5, got %d", quota.CurrentPolicies)
 	}
 }
 
@@ -3281,32 +3078,6 @@ func TestBackendStorage_CreateTenant_AlreadyExists(t *testing.T) {
 	err := storage.CreateTenant(ctx, tenant)
 	if err == nil {
 		t.Error("expected error for duplicate tenant")
-	}
-}
-
-// Test CreateGroup already exists
-func TestBackendStorage_CreateGroup_AlreadyExists(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	group := &Group{
-		ID:       "dup-group",
-		TenantID: "tenant",
-		Name:     "Duplicate Group",
-		Created:  time.Now(),
-		Updated:  time.Now(),
-	}
-
-	// Create first time
-	if err := storage.CreateGroup(ctx, group); err != nil {
-		t.Fatalf("CreateGroup (first) failed: %v", err)
-	}
-
-	// Create second time - should fail
-	err := storage.CreateGroup(ctx, group)
-	if err == nil {
-		t.Error("expected error for duplicate group")
 	}
 }
 
@@ -3410,38 +3181,6 @@ func TestBackendStorage_ValidateClientSecret_NotFound(t *testing.T) {
 // =============================================================================
 // Additional tests to boost coverage past 91%
 // =============================================================================
-
-// Test ListGroups with offset
-func TestBackendStorage_ListGroups_WithOffset(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "list-groups-offset-tenant"
-
-	// Create 5 groups
-	for i := 0; i < 5; i++ {
-		group := &Group{
-			ID:       fmt.Sprintf("group-offset-%d", i),
-			TenantID: tenantID,
-			Name:     fmt.Sprintf("Group Offset %d", i),
-			Created:  time.Now(),
-			Updated:  time.Now(),
-		}
-		if err := storage.CreateGroup(ctx, group); err != nil {
-			t.Fatalf("CreateGroup failed: %v", err)
-		}
-	}
-
-	// List with offset beyond total
-	groups, err := storage.ListGroups(ctx, tenantID, ListOptions{Offset: 100})
-	if err != nil {
-		t.Fatalf("ListGroups (offset beyond) failed: %v", err)
-	}
-	if len(groups) != 0 {
-		t.Errorf("expected 0 groups with offset beyond total, got %d", len(groups))
-	}
-}
 
 // Test ListRoles with offset
 func TestBackendStorage_ListRoles_WithOffset(t *testing.T) {
@@ -3567,18 +3306,6 @@ func TestBackendStorage_GetPolicy_NotFound(t *testing.T) {
 	}
 }
 
-// Test GetGroup not found
-func TestBackendStorage_GetGroup_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.GetGroup(ctx, "tenant", "non-existent-group")
-	if err == nil {
-		t.Error("expected error for non-existent group")
-	}
-}
-
 // Test GetRole not found
 func TestBackendStorage_GetRole_NotFound(t *testing.T) {
 	ctx := context.Background()
@@ -3686,24 +3413,24 @@ func TestBackendStorage_UpdateQuota_Update(t *testing.T) {
 	}
 
 	// Set initial BaaS-layer IAM quota (users are engine-level, owned by qrdb)
-	quota1 := &TenantQuota{MaxGroups: 10, CurrentGroups: 5}
+	quota1 := &TenantQuota{MaxPolicies: 10, CurrentPolicies: 5}
 	if err := storage.UpdateQuota(ctx, tenantID, quota1); err != nil {
 		t.Fatalf("UpdateQuota (initial) failed: %v", err)
 	}
 
 	// Update quota
-	quota2 := &TenantQuota{MaxGroups: 100, CurrentGroups: 10}
+	quota2 := &TenantQuota{MaxPolicies: 100, CurrentPolicies: 10}
 	if err := storage.UpdateQuota(ctx, tenantID, quota2); err != nil {
 		t.Fatalf("UpdateQuota (update) failed: %v", err)
 	}
 
 	// Verify update
 	retrieved, _ := storage.GetQuota(ctx, tenantID)
-	if retrieved.MaxGroups != 100 {
-		t.Errorf("expected MaxGroups=100, got %d", retrieved.MaxGroups)
+	if retrieved.MaxPolicies != 100 {
+		t.Errorf("expected MaxPolicies=100, got %d", retrieved.MaxPolicies)
 	}
-	if retrieved.CurrentGroups != 10 {
-		t.Errorf("expected CurrentGroups=10, got %d", retrieved.CurrentGroups)
+	if retrieved.CurrentPolicies != 10 {
+		t.Errorf("expected CurrentPolicies=10, got %d", retrieved.CurrentPolicies)
 	}
 }
 
@@ -4127,42 +3854,6 @@ func TestBackendStorage_UpdateSettings_ValidTenant91(t *testing.T) {
 	}
 }
 
-// Test ListGroups pagination with offset beyond count
-func TestBackendStorage_ListGroups_OffsetBeyond91(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "groups-offset-91"
-
-	// Create tenant
-	tenant := &Tenant{ID: tenantID, Name: "Test"}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Create groups
-	for i := 0; i < 3; i++ {
-		group := &Group{
-			ID:       fmt.Sprintf("group-91-%d", i),
-			TenantID: tenantID,
-			Name:     fmt.Sprintf("Group %d", i),
-		}
-		if err := storage.CreateGroup(ctx, group); err != nil {
-			t.Fatalf("CreateGroup failed: %v", err)
-		}
-	}
-
-	// List with offset beyond count
-	groups, err := storage.ListGroups(ctx, tenantID, ListOptions{Offset: 100})
-	if err != nil {
-		t.Fatalf("ListGroups failed: %v", err)
-	}
-	if len(groups) != 0 {
-		t.Errorf("expected 0 groups, got %d", len(groups))
-	}
-}
-
 // Test CreateApp index creation
 func TestBackendStorage_CreateApp_IndexCreation91(t *testing.T) {
 	ctx := context.Background()
@@ -4302,18 +3993,6 @@ func TestBackendStorage_GetRole_NotFound91(t *testing.T) {
 	}
 }
 
-// Test GetGroup not found
-func TestBackendStorage_GetGroup_NotFound91(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.GetGroup(ctx, "tenant", "non-existent-group")
-	if err == nil {
-		t.Error("expected error for non-existent group")
-	}
-}
-
 // Test UpdateRole
 func TestBackendStorage_UpdateRole_91(t *testing.T) {
 	ctx := context.Background()
@@ -4354,46 +4033,6 @@ func TestBackendStorage_UpdateRole_91(t *testing.T) {
 	}
 }
 
-// Test UpdateGroup
-func TestBackendStorage_UpdateGroup_91(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "group-update-91"
-
-	// Create tenant
-	tenant := &Tenant{ID: tenantID, Name: "Test"}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Create group
-	group := &Group{
-		ID:       "group-91",
-		TenantID: tenantID,
-		Name:     "Original Group",
-	}
-	if err := storage.CreateGroup(ctx, group); err != nil {
-		t.Fatalf("CreateGroup failed: %v", err)
-	}
-
-	// Update group
-	group.Name = "Updated Group"
-	if err := storage.UpdateGroup(ctx, group); err != nil {
-		t.Fatalf("UpdateGroup failed: %v", err)
-	}
-
-	// Verify
-	retrieved, err := storage.GetGroup(ctx, tenantID, group.ID)
-	if err != nil {
-		t.Fatalf("GetGroup failed: %v", err)
-	}
-	if retrieved.Name != "Updated Group" {
-		t.Errorf("expected 'Updated Group', got '%s'", retrieved.Name)
-	}
-}
-
 // Test DeleteRole
 func TestBackendStorage_DeleteRole_91(t *testing.T) {
 	ctx := context.Background()
@@ -4427,42 +4066,6 @@ func TestBackendStorage_DeleteRole_91(t *testing.T) {
 	_, err := storage.GetRole(ctx, tenantID, role.ID)
 	if err == nil {
 		t.Error("role should be deleted")
-	}
-}
-
-// Test DeleteGroup
-func TestBackendStorage_DeleteGroup_91(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	tenantID := "group-delete-91"
-
-	// Create tenant
-	tenant := &Tenant{ID: tenantID, Name: "Test"}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Create group
-	group := &Group{
-		ID:       "group-delete-91",
-		TenantID: tenantID,
-		Name:     "To Delete",
-	}
-	if err := storage.CreateGroup(ctx, group); err != nil {
-		t.Fatalf("CreateGroup failed: %v", err)
-	}
-
-	// Delete group
-	if err := storage.DeleteGroup(ctx, tenantID, group.ID); err != nil {
-		t.Fatalf("DeleteGroup failed: %v", err)
-	}
-
-	// Verify deleted
-	_, err := storage.GetGroup(ctx, tenantID, group.ID)
-	if err == nil {
-		t.Error("group should be deleted")
 	}
 }
 

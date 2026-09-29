@@ -311,12 +311,12 @@ type Server struct {
 	// hookTaskStore is the task store used by Claude Code hook handlers (optional)
 	hookTaskStore orchestration.TaskStore
 
-	// agentRegistrar is the fleet-registry registrar used by the mTLS
-	// register handler (handlers_agent_register.go) to publish newly
+	// fleetRegistrar is the fleet-registry registrar used by the mTLS
+	// register handler (handlers_fleet_enroll.go) to publish newly
 	// registered daemons. Stored as interface{} to avoid pulling pkg/iam
 	// into the core rest server type — the register handler performs the
 	// type assertion itself.
-	agentRegistrar interface{}
+	fleetRegistrar interface{}
 
 	// eventIngestURL is the gRPC URL the agent register handler hands
 	// back to a daemon on enrollment so the daemon dials the gRPC
@@ -327,7 +327,7 @@ type Server struct {
 	// port. Wired by pkg/server lifecycle via SetEventIngestURL.
 	eventIngestURL string
 
-	// agentHeartbeatRecoverer, when set via SetAgentHeartbeatRecoverer,
+	// fleetHeartbeatRecoverer, when set via SetFleetHeartbeatRecoverer,
 	// performs idempotent registry recovery when a heartbeat arrives for
 	// an agent that is no longer in the in-memory registry (e.g. after
 	// the central daemon restarts). The recoverer uses the request's
@@ -337,7 +337,7 @@ type Server struct {
 	// pkg/iam — the install file performs the type assertion itself.
 	// Nil means recovery is disabled and unknown-agent heartbeats return
 	// 404 (the legacy behaviour).
-	agentHeartbeatRecoverer interface{}
+	fleetHeartbeatRecoverer interface{}
 
 	// xkmsCAHandlers, when set via SetCertificateAuthority, is the go-xkms
 	// REST CAHandlers set (pkg/api/rest.CAHandlers) wired around a
@@ -1005,7 +1005,7 @@ func (s *Server) buildTLSConfig() (*tls.Config, error) {
 	//   TLSClientAuth=false + TLSCAFile → VerifyClientCertIfGiven
 	//     (browsers connect without a cert; agents can optionally
 	//     present one which per-route handlers then validate. This
-	//     is the mode quicbaasd uses so the /api/v1/agents/register
+	//     is the mode quicbaasd uses so the /api/v1/fleet/enroll
 	//     mTLS endpoint coexists with the unauthenticated UI.)
 	//
 	//   TLSClientAuth=false + no TLSCAFile → no client-auth plumbing

@@ -107,6 +107,16 @@ const (
 	// resolve, which on this fleet means the host was provisioned without the
 	// credentials or proxy settings that resolve it.
 	SignatureModuleResolution Signature = "module_resolution"
+
+	// SignatureRunnerTeardown is a job whose every step and post-step
+	// finished green and which the runner then failed while tearing its own
+	// job container down — a daemon that timed out removing it, a volume
+	// still in use (go-quicbaas#1011).
+	SignatureRunnerTeardown Signature = "runner_teardown"
+
+	// SignatureRunnerLost is a runner that announced it was going away, or
+	// lost the server, while it held the job.
+	SignatureRunnerLost Signature = "runner_lost"
 )
 
 // String returns the signature's name.

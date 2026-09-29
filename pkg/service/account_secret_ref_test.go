@@ -16,6 +16,7 @@ package service
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -710,5 +711,53 @@ func TestAccountSecretRef_InlineRotationStillSucceeds(t *testing.T) {
 	}
 	if token, err := f.spawnToken(t); err != nil || token != "sk-fake-rotated" {
 		t.Errorf("spawn after rotation = %q, %v; want the rotated value", token, err)
+	}
+}
+
+// TestAccountSecretResolver_TheSecretVersionIsTheGeneration: every write of a
+// referenced secret is a newer copy of the account's credential, which is how
+// a live session learns that its secret was rewritten under it
+// (go-quicbaas#997). The version is used, not the response's CreatedAt, which
+// the secrets service fills with the time of the READ when the version carries
+// no creation stamp — every read would then look like a rotation.
+func TestAccountSecretResolver_TheSecretVersionIsTheGeneration(t *testing.T) {
+	f := newSecretRefFixture(t)
+	refs := NewAccountSecretResolver(f.secrets)
+
+	f.putTenantSecret(t, nsTenant, refName, "sk-fake-<account>")
+	first, err := refs.ResolveAccountSecret(context.Background(), nsTenant, refName)
+	if err != nil {
+		t.Fatalf("ResolveAccountSecret() error = %v", err)
+	}
+	again, err := refs.ResolveAccountSecret(context.Background(), nsTenant, refName)
+	if err != nil {
+		t.Fatalf("ResolveAccountSecret() error = %v", err)
+	}
+	if first.Generation <= 0 || again.Generation != first.Generation {
+		t.Fatalf("generations = %d then %d, want one positive generation for an unchanged secret", first.Generation, again.Generation)
+	}
+	if string(first.Data) != "sk-fake-<account>" {
+		t.Errorf("Data = %q, want the secret's value", first.Data)
+	}
+
+	f.putTenantSecret(t, nsTenant, refName, "sk-fake-<account>")
+	rewritten, err := refs.ResolveAccountSecret(context.Background(), nsTenant, refName)
+	if err != nil {
+		t.Fatalf("ResolveAccountSecret() error = %v", err)
+	}
+	if rewritten.Generation <= first.Generation {
+		t.Errorf("generation after a rewrite = %d, want past %d", rewritten.Generation, first.Generation)
+	}
+}
+
+// TestSecretVersionGeneration_AnUnorderableVersionIsUnknown: a version that
+// does not fit a generation cannot be ordered against the others and is
+// reported as unknown rather than wrapped into a negative number.
+func TestSecretVersionGeneration_AnUnorderableVersionIsUnknown(t *testing.T) {
+	if got := secretVersionGeneration(7); got != 7 {
+		t.Errorf("secretVersionGeneration(7) = %d, want 7", got)
+	}
+	if got := secretVersionGeneration(math.MaxUint64); got != 0 {
+		t.Errorf("secretVersionGeneration(MaxUint64) = %d, want 0 (unknown)", got)
 	}
 }

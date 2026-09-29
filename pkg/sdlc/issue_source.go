@@ -60,6 +60,7 @@ const (
 type IssueSource struct {
 	bindings  BindingReader
 	forges    ForgeResolver
+	clusters  IssueClusterReader
 	ranker    *Ranker
 	readiness *ReadinessEvaluator
 	live      LiveWorkReader
@@ -71,15 +72,23 @@ type IssueSource struct {
 
 // NewIssueSource builds the source; pageLimit ≤ 0 takes the default.
 //
+// clusters is REQUIRED: a triggered issue triage clustered into another is not
+// work of its own, and an anchor's task must carry its members' contracts. A
+// source that could not tell would adopt each member separately and hand the
+// anchor's worker half its contract.
+//
 // The readiness gate runs with no live-work reader until SetLiveWorkReader
 // supplies one — see that method for why the predicate then answers "not owned"
 // rather than refusing to run.
-func NewIssueSource(bindings BindingReader, forges ForgeResolver, pageLimit int) (*IssueSource, error) {
+func NewIssueSource(bindings BindingReader, forges ForgeResolver, clusters IssueClusterReader, pageLimit int) (*IssueSource, error) {
 	if bindings == nil {
 		return nil, &InvalidInputError{Field: "bindings", Message: "the source reads the trigger label from the binding"}
 	}
 	if forges == nil {
 		return nil, &InvalidInputError{Field: "forges", Message: "the source lists issues through the forge adapter"}
+	}
+	if clusters == nil {
+		return nil, &InvalidInputError{Field: "clusters", Message: "the source reads which issues triage clustered into one task"}
 	}
 	ranker, err := NewRanker(bindings)
 	if err != nil {
@@ -91,6 +100,7 @@ func NewIssueSource(bindings BindingReader, forges ForgeResolver, pageLimit int)
 	return &IssueSource{
 		bindings:  bindings,
 		forges:    forges,
+		clusters:  clusters,
 		ranker:    ranker,
 		readiness: NewReadinessEvaluator(time.Now),
 		pageLimit: pageLimit,
@@ -138,8 +148,10 @@ func (s *IssueSource) SetClock(now func() time.Time) {
 func (s *IssueSource) Name() string { return TaskSourceName }
 
 // Poll implements orchestration.TaskSource: every open, triggered issue of
-// the project's bound repository, as a task spec. A project with no binding
-// has no work here and answers nothing.
+// the project's bound repository, as a task spec, and every open issue that
+// waits on a person under a park label, as a spec adopted parked (see
+// issue_source_parked.go). A project with no binding has no work here and
+// answers nothing.
 func (s *IssueSource) Poll(ctx context.Context, project *orchestration.Project) ([]orchestration.TaskSourceSpec, error) {
 	if project == nil {
 		return nil, &InvalidInputError{Field: "project", Message: "must not be nil"}
@@ -171,7 +183,6 @@ func (s *IssueSource) Poll(ctx context.Context, project *orchestration.Project) 
 	if err != nil {
 		return nil, err
 	}
-	priority := inputs.Computed()
 
 	// The fleet's live work is read ONCE per project sweep, not once per issue.
 	// It is the same answer for every issue in the sweep, and a per-issue read
@@ -206,13 +217,17 @@ func (s *IssueSource) Poll(ctx context.Context, project *orchestration.Project) 
 		if !finding.Verdict.Adoptable() {
 			continue
 		}
-		comments, commentsErr := forge.ListIssueComments(ctx, repo, issue.Number)
-		if commentsErr != nil {
-			return nil, unavailable(commentsErr)
+		cluster, clusterErr := s.clusterOf(ctx, project, issue.Number)
+		if clusterErr != nil {
+			return nil, clusterErr
 		}
-		contract, contractErr := IssueContract(IssueContractSpec{
-			Repo: repo, IssueNumber: issue.Number, Title: issue.Title, Body: issue.Body, Comments: comments,
-		})
+		if cluster != nil && cluster.Anchor != issue.Number {
+			// A MEMBER'S WORK IS ITS ANCHOR'S TASK. Triage never triggers a
+			// member, so this is a person having triggered it by hand; adopting
+			// it would deliver the same change twice.
+			continue
+		}
+		contract, members, contractErr := s.contract(ctx, forge, repo, issue, cluster)
 		if contractErr != nil {
 			return nil, contractErr
 		}
@@ -228,18 +243,112 @@ func (s *IssueSource) Poll(ctx context.Context, project *orchestration.Project) 
 			},
 			Subject:     strings.TrimSpace(issue.Title),
 			Description: contract,
-			Priority:    priority,
+			Priority:    inputs.ComputedFor(issue.Labels),
 			Runner:      JobRunnerName,
 			Park:        park,
-			Metadata: map[string]string{
-				MetadataIssueNumber: strconv.Itoa(issue.Number),
-				MetadataRepository:  repo.String(),
-				MetadataForge:       string(binding.Forge.Type),
-			},
+			Metadata:    issueSpecMetadata(repo, binding, issue.Number, members),
 		})
 	}
 	s.settleClaims(ctx, project, repo, skipped)
-	return specs, nil
+
+	triggered := make(map[int]bool, len(issues))
+	for i := range issues {
+		triggered[issues[i].Number] = true
+	}
+	parked, err := s.parkedSpecs(ctx, project, binding, forge, inputs, triggered)
+	if err != nil {
+		return nil, err
+	}
+	return append(specs, parked...), nil
+}
+
+// issueSpecMetadata is the metadata a task adopted from issue carries: its
+// provenance, and the member issues it also closes when it is a cluster's.
+func issueSpecMetadata(repo RepoRef, binding *ProjectBinding, issue int, members []int) map[string]string {
+	metadata := map[string]string{
+		MetadataIssueNumber: strconv.Itoa(issue),
+		MetadataRepository:  repo.String(),
+		MetadataForge:       string(binding.Forge.Type),
+	}
+	if len(members) > 0 {
+		metadata[MetadataClusterIssues] = formatClusterIssues(members)
+	}
+	return metadata
+}
+
+// clusterOf returns the cluster an issue belongs to, nil when it belongs to
+// none.
+func (s *IssueSource) clusterOf(ctx context.Context, project *orchestration.Project, issue int) (*IssueCluster, error) {
+	cluster, err := s.clusters.GetIssueCluster(ctx, project.TenantID, project.ID, issue)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, nil
+		}
+		return nil, unavailable(err)
+	}
+	return cluster, nil
+}
+
+// contract renders a task's description: the issue's own contract, or — for
+// a cluster's anchor — the anchor's followed by every OPEN member's. It
+// answers the members the contract covers.
+//
+// A MEMBER CLOSED SINCE TRIAGE IS LEFT OUT. Its reporter or a person closed
+// it; handing its text to a worker as work would reopen a question somebody
+// already answered, and its pull request closing it again would say nothing.
+func (s *IssueSource) contract(
+	ctx context.Context,
+	forge ForgeBackend,
+	repo RepoRef,
+	issue *ForgeIssue,
+	cluster *IssueCluster,
+) (string, []int, error) {
+	anchor, err := s.issueContract(ctx, forge, repo, issue)
+	if err != nil {
+		return "", nil, err
+	}
+	if cluster == nil {
+		return anchor, nil, nil
+	}
+	var members []int
+	var contracts []string
+	for _, number := range cluster.Members {
+		member, getErr := forge.GetIssue(ctx, repo, number)
+		if getErr != nil {
+			if errors.Is(getErr, ErrNotFound) {
+				continue
+			}
+			return "", nil, unavailable(getErr)
+		}
+		if member == nil || issueClosed(member) {
+			continue
+		}
+		contract, contractErr := s.issueContract(ctx, forge, repo, member)
+		if contractErr != nil {
+			return "", nil, contractErr
+		}
+		members = append(members, number)
+		contracts = append(contracts, contract)
+	}
+	if len(members) == 0 {
+		return anchor, nil, nil
+	}
+	combined, err := ClusterContract(anchor, members, cluster.Shared, contracts)
+	if err != nil {
+		return "", nil, err
+	}
+	return combined, members, nil
+}
+
+// issueContract renders one issue's contract from its text and discussion.
+func (s *IssueSource) issueContract(ctx context.Context, forge ForgeBackend, repo RepoRef, issue *ForgeIssue) (string, error) {
+	comments, err := forge.ListIssueComments(ctx, repo, issue.Number)
+	if err != nil {
+		return "", unavailable(err)
+	}
+	return IssueContract(IssueContractSpec{
+		Repo: repo, IssueNumber: issue.Number, Title: issue.Title, Body: issue.Body, Comments: comments,
+	})
 }
 
 // issueSpecPark renders a readiness finding as the park a spec carries, and nil

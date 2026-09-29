@@ -12,6 +12,8 @@ option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
 import "google/protobuf/timestamp.proto";
 import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+import "api/proto/spend.proto";
+import "api/proto/agents.proto";
 
 // =============================================================================
 // Orchestrator Service
@@ -117,20 +119,20 @@ service OrchestratorService {
         option (qrdb.v1.permission) = "orchestrator:health";
     }
 
-    // Agent Fleet Management
-    rpc RegisterAgent(RegisterAgentRequest) returns (RegisterAgentResponse) {
+    // Fleet Management
+    rpc RegisterFleetNode(RegisterFleetNodeRequest) returns (RegisterFleetNodeResponse) {
         option (qrdb.v1.permission) = "orchestrator:agent_register";
     }
-    rpc GetAgent(GetAgentRequest) returns (GetAgentResponse) {
+    rpc GetFleetNode(GetFleetNodeRequest) returns (GetFleetNodeResponse) {
         option (qrdb.v1.permission) = "orchestrator:agent_read";
     }
-    rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse) {
+    rpc ListFleetNodes(ListFleetNodesRequest) returns (ListFleetNodesResponse) {
         option (qrdb.v1.permission) = "orchestrator:agent_list";
     }
-    rpc RemoveAgent(RemoveAgentRequest) returns (RemoveAgentResponse) {
+    rpc RemoveFleetNode(RemoveFleetNodeRequest) returns (RemoveFleetNodeResponse) {
         option (qrdb.v1.permission) = "orchestrator:agent_remove";
     }
-    rpc AgentHeartbeat(AgentHeartbeatRequest) returns (AgentHeartbeatResponse) {
+    rpc FleetNodeHeartbeat(FleetNodeHeartbeatRequest) returns (FleetNodeHeartbeatResponse) {
         option (qrdb.v1.permission) = "orchestrator:agent_heartbeat";
     }
 
@@ -177,13 +179,24 @@ service OrchestratorService {
     // Four RPCs over one scan would be four places for a drill-down's
     // arithmetic to stop agreeing with itself.
     //
-    // WHAT IT DOES NOT CLAIM. cost_micros is accompanied by cost_measured,
-    // and today nothing in the tree prices a turn, so the flag is false and
-    // a renderer must show a dash rather than the zero. Likewise
-    // policy_status distinguishes an account with no cap from one this
-    // deployment could not read. See go-quicbaas#791.
+    // WHAT IT DOES NOT CLAIM. Every money figure is accompanied by how many
+    // entries it covers (priced_entries, billed_entries), and zero is a dash
+    // rather than a zero. Likewise policy_status distinguishes an account
+    // with no cap from one this deployment could not read. go-quicbaas#791.
     rpc GetSpendReport(GetSpendReportRequest) returns (GetSpendReportResponse) {
         option (qrdb.v1.permission) = "orchestrator:status";
+    }
+
+    // GetTenantSpendPolicy returns the tenant's own spend limits and its
+    // live usage against each window, over every turn charged to it.
+    rpc GetTenantSpendPolicy(GetTenantSpendPolicyRequest) returns (TenantSpendPolicyResponse) {
+        option (qrdb.v1.permission) = "orchestrator:status";
+    }
+
+    // SetTenantSpendPolicy replaces the tenant's own spend limits; limits
+    // with no windows make the tenant unmetered. go-quicbaas#1058.
+    rpc SetTenantSpendPolicy(SetTenantSpendPolicyRequest) returns (TenantSpendPolicyResponse) {
+        option (qrdb.v1.permission) = "spend_policy:write";
     }
 
     // Inference runs a stateless prompt against a named backend without
@@ -225,6 +238,20 @@ service OrchestratorService {
     rpc GetTaskArtifact(GetTaskArtifactRequest) returns (GetTaskArtifactResponse) {
         option (qrdb.v1.permission) = "orchestrator:artifact_read";
     }
+
+    // GetCostSettings returns a tenant's runtime cost settings — the
+    // electricity rate and engine draws its local inference is costed from —
+    // and the rates in force once layered over the configuration.
+    // go-quicbaas#1058.
+    rpc GetCostSettings(GetCostSettingsRequest) returns (CostSettingsResponse) {
+        option (qrdb.v1.permission) = "orchestrator:status";
+    }
+
+    // SetCostSettings replaces a tenant's runtime cost settings; settings
+    // that override nothing restore the configuration.
+    rpc SetCostSettings(SetCostSettingsRequest) returns (CostSettingsResponse) {
+        option (qrdb.v1.permission) = "cost_settings:write";
+    }
 }
 
 // =============================================================================
@@ -242,13 +269,13 @@ enum TaskStatus {
     TASK_STATUS_BLOCKED = 7;
 }
 
-enum AgentStatus {
-    AGENT_STATUS_UNSPECIFIED = 0;
-    AGENT_STATUS_ONLINE = 1;
-    AGENT_STATUS_OFFLINE = 2;
-    AGENT_STATUS_BUSY = 3;
-    AGENT_STATUS_ERROR = 4;
-    AGENT_STATUS_DRAINING = 5;
+enum FleetNodeStatus {
+    FLEET_NODE_STATUS_UNSPECIFIED = 0;
+    FLEET_NODE_STATUS_ONLINE = 1;
+    FLEET_NODE_STATUS_OFFLINE = 2;
+    FLEET_NODE_STATUS_BUSY = 3;
+    FLEET_NODE_STATUS_ERROR = 4;
+    FLEET_NODE_STATUS_DRAINING = 5;
 }
 
 enum SessionState {
@@ -319,7 +346,7 @@ message MCPServerConfig {
 // AUTHORIZED TWICE, ON PURPOSE. The control plane authorizes every mount
 // against its own MountPolicy before dispatching, and the daemon that will
 // actually create the container authorizes them again against its own
-// (pkg/agent Runtime.authorizeMounts). The second check is not a duplicate:
+// (pkg/fleet Runtime.authorizeMounts). The second check is not a duplicate:
 // only the daemon knows which host it is, and it is the one binding the path.
 message ContainerMount {
     string source = 1;
@@ -359,6 +386,12 @@ message SessionInfo {
     SessionState state = 5;
     google.protobuf.Timestamp created_at = 6;
     google.protobuf.Timestamp last_activity = 7;
+    // job_id names the orchestration job that spawned the session; empty
+    // when the session belongs to no job.
+    string job_id = 8;
+    // container_id names the container the session's agent runs in; empty
+    // when it runs on the host.
+    string container_id = 9;
 }
 
 // Task represents an orchestration work item.
@@ -402,6 +435,30 @@ message Task {
     // separately: one means the factory is broken, the other means the worker
     // did the right thing and is waiting.
     int64 question_attempts = 35;
+    // block_fault_class names the environment fault class a block came from;
+    // empty for an operator hold, a question, or an unclassified escalation.
+    string block_fault_class = 36;
+    // conclusion_reason is the typed reason the task stopped (completed |
+    // budget_exhausted | abandoned | fault_bounded | fault_held |
+    // parked_needs_info | parked_blocked | parked_escalated | runner_parked |
+    // readmitted | already_satisfied | superseded); empty while open.
+    string conclusion_reason = 37;
+    // The fields below are DERIVED by the server from the record on every
+    // read, never stored (go-quicbaas#947).
+    // charged_attempts is attempts less those refunded as environment faults
+    // or questions; effective_budget is attempt_budget, or the engine default
+    // when the task declares none.
+    int64 charged_attempts = 38;
+    int64 effective_budget = 39;
+    // fault_class names the class of the fault behind the latest concluded
+    // attempt; for a blocked task, the block's own class.
+    string fault_class = 40;
+    // fault_origin says whose failure stopped the task: environment | work |
+    // undiagnosed; empty for a task that did not stop on a failure.
+    string fault_origin = 41;
+    // prompt_append is run-time prompt material every attempt carries to the
+    // sessions it spawns.
+    string prompt_append = 42;
 }
 
 // TaskRouting are the placement hints a dispatch reads when it decides where
@@ -449,17 +506,19 @@ message OrchestratorWorkItem {
     repeated string dependencies = 6;
 }
 
-// AgentRegistration represents a registered agent in the fleet registry.
-message AgentRegistration {
+// FleetNode represents a node registered in the fleet registry.
+message FleetNode {
     string id = 1;
     string tenant_id = 2;
     string name = 3;
     string host = 4;
     string backend = 5;
-    string agent_type = 6;
-    AgentStatus status = 7;
+    string node_type = 6;
+    FleetNodeStatus status = 7;
     repeated string capabilities = 8;
-    string container_id = 9;
+    // 9 was container_id, which no registration path ever wrote (go-quicbaas#862).
+    reserved 9;
+    reserved "container_id";
     string work_dir = 10;
     google.protobuf.Timestamp last_seen = 11;
     google.protobuf.Timestamp registered_at = 12;
@@ -468,11 +527,11 @@ message AgentRegistration {
     string model = 15;
 }
 
-// AgentFilter specifies criteria for listing agents.
-message AgentFilter {
+// FleetNodeFilter specifies criteria for listing fleet nodes.
+message FleetNodeFilter {
     string host = 1;
-    AgentStatus status = 2;
-    string agent_type = 3;
+    FleetNodeStatus status = 2;
+    string node_type = 3;
     string backend = 4;
     int32 limit = 5;
     string model = 6;
@@ -616,6 +675,34 @@ message SpawnSessionRequest {
     // projects root, reporting the directory in SpawnSessionResponse.work_dir.
     // Mutually exclusive with work_dir.
     SessionWorkspace workspace = 29;
+
+    // signing_relay asks the agent to serve the session's signing socket from
+    // a relay over its FleetRuntime link rather than from a mount of the
+    // control plane's socket, which it cannot reach from another host
+    // (go-quicbaas#1013). Set only by the control plane's RemoteACPBackend on
+    // the agent link; the public OrchestratorService never reads it.
+    SigningRelaySpec signing_relay = 30;
+
+    // agent_id / pool_id name the tenant Agent or pool the session runs as;
+    // the Agent supplies backend, model, image and arguments, so a request
+    // naming one names no backend. A pool fails over along its Agents.
+    string agent_id = 31;
+    string pool_id  = 32;
+    // role is the kind of work the session does, for a pooled Agent's
+    // placement policy.
+    string role     = 33;
+    // prompt_append is run-time prompt material appended after the prompt
+    // the spawn resolves (system_prompt, else the Agent's own, else the
+    // role's built-in charter), separated by a horizontal rule. At most
+    // 64 KiB.
+    string prompt_append = 34;
+}
+
+// SigningRelaySpec lists the public keys (ssh wire form) the relayed signing
+// agent advertises. They are the keys of the control plane's session agent;
+// the private halves never leave its host.
+message SigningRelaySpec {
+    repeated bytes public_keys = 1;
 }
 
 // WorkspaceStoragePlan is the RESOLVED storage decision for one spawn: which
@@ -661,7 +748,7 @@ message SpawnSessionResponse {
     // to this daemon (MaterializeAccountCredential). But the release happens
     // inside the daemon's account resolution, so the control plane cannot tell
     // which session the grant it issued belongs to — only the daemon can, and
-    // this is where it says so (pkg/agent/account_grant.go). The control plane
+    // this is where it says so (pkg/fleet/account_grant.go). The control plane
     // records it on the durable session record, and the session's conclusion —
     // an operator's close, the job ending, a restart sweep — withdraws it once
     // no other live session is still being served under it.
@@ -674,6 +761,39 @@ message SpawnSessionResponse {
     // work_dir is the directory the agent provisioned the spawn's named
     // workspace at, on the agent's own host. Empty when the spawn named none.
     string work_dir = 9;
+    // reservation_id is the session-slot reservation the daemon's account
+    // resolution took in the control plane's reservation table. The control
+    // plane records it on the durable session record; the record naming it is
+    // what satisfies the reservation (go-quicbaas#1047).
+    string reservation_id = 10;
+    // WHICH COPY OF THE ACCOUNT'S CREDENTIAL THIS SESSION MATERIALIZED, as the
+    // generation carried by the credential the daemon resolved it from
+    // (orchestration.AccountCredential.Generation; the control plane releases
+    // it as MaterializedAccountCredential.generation).
+    //
+    // Only the daemon can know it, for the same reason it is the only party
+    // that knows account_id: materialization happens there, against an envelope
+    // that never crosses this wire. The control plane records it on the durable
+    // session record and compares it against the account's current generation
+    // before every prompt; when the two disagree the session is holding a
+    // credential the provider has stopped honouring and is replaced BEFORE a
+    // turn is spent on it (go-quicbaas#997).
+    //
+    // With no field here a remote session reports no generation at all, and the
+    // check falls back to comparing timestamps — which cannot see a rotation
+    // that lands while the container is still completing its handshake, because
+    // the session is DATED after the rotation it was MATERIALIZED before. That
+    // is the defect this whole mechanism exists to remove, left in place for
+    // exactly the sessions the control plane can least afford to lose.
+    //
+    // It is an integer naming a copy, not credential material.
+    int64 account_generation = 11;
+
+    // resolved_agent_id is the tenant Agent the session runs as, when the
+    // spawn named an Agent or a pool; failovers are the Agents a pooled
+    // spawn passed over first, in order.
+    string resolved_agent_id = 12;
+    repeated quicbaas.agents.v1.AgentAttempt failovers = 13;
 }
 
 // PromptSession
@@ -708,6 +828,10 @@ message PromptSessionResponse {
     string turn_id = 6;
     string status = 7;
     uint64 sequence = 8;
+    // usage_json is the turn's token accounting as the backend reported it,
+    // carried as JSON for the reason SessionTurn.usage_json is. A remote
+    // daemon's turn reaches the control plane's ledger only through this.
+    bytes usage_json = 9;
 }
 
 // SessionStatus
@@ -777,11 +901,31 @@ message ListSessionsRequest {
     // caller asking for active sessions was silently handed closed ones back
     // once reconciliation started writing terminal records (go-quicbaas#792).
     string status = 3;
+
+    // Paging, sorting and search — the contract every list endpoint speaks
+    // (docs/software-factory/api.md). limit 0 takes the default page (25);
+    // anything above 100 is capped. sort is "<field>" or "<field>:desc",
+    // naming a field from the endpoint's allow-list; an unknown field is
+    // refused with InvalidArgument. q is a case-insensitive substring
+    // matched against the endpoint's documented text fields.
+    int32 limit = 4;
+    int32 offset = 5;
+    string sort = 6;
+    string q = 7;
 }
 
 message ListSessionsResponse {
     repeated SessionInfo sessions = 1;
     google.protobuf.Timestamp timestamp = 2;
+
+    // The paging envelope. total counts the records that matched the filters
+    // and the search BEFORE the page was cut; limit and offset are the values
+    // the server APPLIED. next_offset is the offset of the following page and
+    // is zero on the last page.
+    int32 total = 3;
+    int32 limit = 4;
+    int32 offset = 5;
+    int32 next_offset = 6;
 }
 
 // =============================================================================
@@ -806,6 +950,9 @@ message CreateTaskRequest {
     int64 attempt_budget = 14;
     string runner = 15;         // JobRunner driving attempts; empty = "workflow"
     string host_affinity = 16;  // routing hint: pin the attempt to this agent or host
+    // prompt_append is run-time prompt material every attempt carries to the
+    // sessions it spawns — the worker's, for a module runner. At most 64 KiB.
+    string prompt_append = 17;
 }
 
 message CreateTaskResponse {
@@ -828,12 +975,32 @@ message GetTaskResponse {
 message ListTasksRequest {
     string tenant_id = 1;
     TaskFilter filter = 2;
+
+    // Paging, sorting and search — the contract every list endpoint speaks
+    // (docs/software-factory/api.md). limit 0 takes the default page (25);
+    // anything above 100 is capped. sort is "<field>" or "<field>:desc",
+    // naming a field from the endpoint's allow-list; an unknown field is
+    // refused with InvalidArgument. q is a case-insensitive substring
+    // matched against the endpoint's documented text fields.
+    int32 limit = 3;
+    int32 offset = 4;
+    string sort = 5;
+    string q = 6;
 }
 
 message ListTasksResponse {
     repeated Task tasks = 1;
     int32 total_count = 2;
     google.protobuf.Timestamp timestamp = 3;
+
+    // The paging envelope. total counts the records that matched the filters
+    // and the search BEFORE the page was cut; limit and offset are the values
+    // the server APPLIED. next_offset is the offset of the following page and
+    // is zero on the last page.
+    int32 total = 4;
+    int32 limit = 5;
+    int32 offset = 6;
+    int32 next_offset = 7;
 }
 
 // ClaimTask
@@ -925,8 +1092,10 @@ message DecomposeTaskResponse {
 message OrchestratorStartJobRequest {
     string tenant_id = 1;
     string description = 2;
-    string lead_backend = 3;
-    string lead_model = 4;
+    // lead is the Agent or pool the job's lead runs as; unset takes the
+    // project's default lead.
+    quicbaas.agents.v1.AgentRef lead = 3;
+    reserved 4;
     string project_id = 5;
     int32 max_iterations = 6;
     string poll_interval = 7;
@@ -936,6 +1105,9 @@ message OrchestratorStartJobRequest {
     string task_id = 11;   // task this job is an attempt at
     int64 attempt = 12;    // 1-based attempt ordinal
     string runner = 13;    // JobRunner driving the job's states; empty = "workflow"
+    // prompt_append is run-time prompt material appended to every session
+    // the job spawns, the lead's included. At most 64 KiB.
+    string prompt_append = 14;
 }
 
 // OrchestratorStartJobResponse contains the result of starting an orchestration job.
@@ -989,6 +1161,10 @@ message OrchestratorGetJobStatusResponse {
     // adopted from, in the task's own {kind, ref, url} shape. Absent for a
     // job that is not an attempt at a task, or whose task records no origin.
     TaskSource source = 30;
+
+    // prompt_append is the run-time prompt material the job appends to every
+    // session it spawns: the request's, or its task's.
+    string prompt_append = 31;
 }
 
 // OrchestratorJobVerification is one verification command's outcome.
@@ -1062,11 +1238,31 @@ message OrchestratorListJobsRequest {
     // re-filter the answer cannot tell a task with no attempts from a task
     // whose attempts were not returned.
     string task_id = 2;
+
+    // Paging, sorting and search — the contract every list endpoint speaks
+    // (docs/software-factory/api.md). limit 0 takes the default page (25);
+    // anything above 100 is capped. sort is "<field>" or "<field>:desc",
+    // naming a field from the endpoint's allow-list; an unknown field is
+    // refused with InvalidArgument. q is a case-insensitive substring
+    // matched against the endpoint's documented text fields.
+    int32 limit = 3;
+    int32 offset = 4;
+    string sort = 5;
+    string q = 6;
 }
 
 // OrchestratorListJobsResponse contains the list of jobs for a tenant.
 message OrchestratorListJobsResponse {
     repeated OrchestratorJobSummary jobs = 1;
+
+    // The paging envelope. total counts the records that matched the filters
+    // and the search BEFORE the page was cut; limit and offset are the values
+    // the server APPLIED. next_offset is the offset of the following page and
+    // is zero on the last page.
+    int32 total = 2;
+    int32 limit = 3;
+    int32 offset = 4;
+    int32 next_offset = 5;
 }
 
 // OrchestratorJobSummary provides a summary of an orchestration job.
@@ -1177,70 +1373,90 @@ message OrchestratorHealthResponse {
 }
 
 // =============================================================================
-// Agent Fleet Management Requests and Responses
+// Fleet Management Requests and Responses
 // =============================================================================
 
-// RegisterAgent
-message RegisterAgentRequest {
+// RegisterFleetNode
+message RegisterFleetNodeRequest {
     string tenant_id = 1;
     string name = 2;
     string host = 3;
     string backend = 4;
-    string agent_type = 5;
+    string node_type = 5;
     repeated string capabilities = 6;
     string work_dir = 7;
     map<string, string> metadata = 8;
     string model = 9;
 }
 
-message RegisterAgentResponse {
-    AgentRegistration agent = 1;
+message RegisterFleetNodeResponse {
+    FleetNode node = 1;
     google.protobuf.Timestamp timestamp = 2;
 }
 
-// GetAgent
-message GetAgentRequest {
+// GetFleetNode
+message GetFleetNodeRequest {
     string tenant_id = 1;
-    string agent_id = 2;
+    string node_id = 2;
 }
 
-message GetAgentResponse {
-    AgentRegistration agent = 1;
+message GetFleetNodeResponse {
+    FleetNode node = 1;
     google.protobuf.Timestamp timestamp = 2;
 }
 
-// ListAgents
-message ListAgentsRequest {
+// ListFleetNodes
+message ListFleetNodesRequest {
     string tenant_id = 1;
-    AgentFilter filter = 2;
+    FleetNodeFilter filter = 2;
+
+    // Paging, sorting and search — the contract every list endpoint speaks
+    // (docs/software-factory/api.md). limit 0 takes the default page (25);
+    // anything above 100 is capped. sort is "<field>" or "<field>:desc",
+    // naming a field from the endpoint's allow-list; an unknown field is
+    // refused with InvalidArgument. q is a case-insensitive substring
+    // matched against the endpoint's documented text fields.
+    int32 limit = 3;
+    int32 offset = 4;
+    string sort = 5;
+    string q = 6;
 }
 
-message ListAgentsResponse {
-    repeated AgentRegistration agents = 1;
+message ListFleetNodesResponse {
+    repeated FleetNode nodes = 1;
     int32 count = 2;
     google.protobuf.Timestamp timestamp = 3;
+
+    // The paging envelope. total counts the records that matched the filters
+    // and the search BEFORE the page was cut; limit and offset are the values
+    // the server APPLIED. next_offset is the offset of the following page and
+    // is zero on the last page.
+    int32 total = 4;
+    int32 limit = 5;
+    int32 offset = 6;
+    int32 next_offset = 7;
 }
 
-// RemoveAgent
-message RemoveAgentRequest {
+// RemoveFleetNode
+message RemoveFleetNodeRequest {
     string tenant_id = 1;
-    string agent_id = 2;
+    string node_id = 2;
 }
 
-message RemoveAgentResponse {
-    string agent_id = 1;
+message RemoveFleetNodeResponse {
+    string node_id = 1;
     bool removed = 2;
     google.protobuf.Timestamp timestamp = 3;
 }
 
-// AgentHeartbeat
-message AgentHeartbeatRequest {
+// FleetNodeHeartbeat
+message FleetNodeHeartbeatRequest {
     string tenant_id = 1;
-    string agent_id = 2;
+    string node_id = 2;
 }
 
-message AgentHeartbeatResponse {
-    string agent_id = 1;
+message FleetNodeHeartbeatResponse {
+    string node_id = 1;
     bool acknowledged = 2;
     google.protobuf.Timestamp timestamp = 3;
 }
@@ -1373,6 +1589,17 @@ message GetSpendReportRequest {
     // round".
     int32 round = 6;
     bool round_set = 7;
+    // from and to narrow the report to the turns that occurred in
+    // [from, to). from alone ranges up to now; to alone is refused. Both unset
+    // report the scope's whole history.
+    google.protobuf.Timestamp from = 8;
+    google.protobuf.Timestamp to = 9;
+    // host narrows the report to the turns that ran on one host; empty
+    // reports every host, and "-" the turns that name none.
+    string host = 10;
+    // agent narrows the report to the turns of the sessions one tenant Agent
+    // ran; empty reports every Agent, and "-" the raw-backend sessions.
+    string agent = 11;
 }
 
 // SpendWindowStatus is one sliding quota window and what has been drawn
@@ -1390,6 +1617,12 @@ message SpendWindowStatus {
     // frees_at is when the window's oldest entry ages out. Unset when the
     // window holds nothing, because there is nothing to age out.
     google.protobuf.Timestamp frees_at = 7;
+    // The dollar axis, in millionths of a US dollar at list price over the
+    // window's priced turns. max_equivalent_micros is 0 when the window does
+    // not meter dollars (and max_tokens 0 when it does not meter tokens).
+    int64 max_equivalent_micros = 8;
+    int64 used_equivalent_micros = 9;
+    int64 remaining_equivalent_micros = 10;
 }
 
 // SpendBreakerVerdict is an account's derived circuit-breaker state and the
@@ -1406,13 +1639,64 @@ message SpendBreakerVerdict {
     google.protobuf.Timestamp open_until = 6;
 }
 
+// SpendTotals is what a set of consumption entries sums to. It is the shape of
+// a report's own totals and of every breakdown row under it.
+message SpendTotals {
+    int32 entries = 1;
+    // input_tokens is the FRESH prompt; the two cache dimensions are prompt
+    // tokens served from and written into the provider's cache, reported
+    // apart because they price differently.
+    int64 input_tokens = 2;
+    int64 output_tokens = 3;
+    int64 cache_read_tokens = 4;
+    int64 cache_write_tokens = 5;
+    int64 total_tokens = 6;
+    // equivalent_micros is the list-price equivalent of the PRICED entries,
+    // in millionths of the report's currency. A CLIENT MUST CONSULT
+    // priced_entries BEFORE RENDERING IT: zero priced entries means nothing
+    // was priced and the figure is a dash, never a zero. unpriced_entries > 0
+    // beside priced ones means the figure is a floor.
+    int64 equivalent_micros = 7;
+    int32 priced_entries = 8;
+    int32 unpriced_entries = 9;
+    int64 duration_ms = 10;
+    int32 successes = 11;
+    int32 failures = 12;
+    // billed_micros is what the entries whose bill is known added to it:
+    // zero per turn on a subscription, the list price on a metered key, the
+    // operator's rate for an unpooled turn. Consult billed_entries as for
+    // equivalent_micros.
+    int64 billed_micros = 13;
+    int32 billed_entries = 14;
+    int32 unbilled_entries = 15;
+    // energy_mwh is the energy drawn by the entries costed from electricity,
+    // in milliwatt-hours (a kWh is 1e6); electricity_entries counts them.
+    // Consult electricity_entries before rendering it: none is a dash.
+    int64 energy_mwh = 16;
+    int32 electricity_entries = 17;
+    // measured_energy_entries counts the electricity entries whose energy
+    // came from fleet device telemetry (measured or derived) rather than a
+    // configured draw; the rest of electricity_entries were estimated.
+    int32 measured_energy_entries = 18;
+}
+
 // SpendAccount is one pooled account's contribution to a scope, and the
 // allowance it draws against.
 message SpendAccount {
+    reserved 4;
     string account_id = 1;
     string display_name = 2;
     string provider = 3;
-    int64 total_tokens = 4;
+    SpendTotals totals = 8;
+    // billing_mode is "subscription", "api", or empty when not configured.
+    string billing_mode = 9;
+    // monthly_fee_micros is a subscription's flat monthly fee, 0 when not
+    // configured.
+    int64 monthly_fee_micros = 10;
+    // subscription_fee_micros is the part of that fee falling in the report's
+    // range. Set only on a tenant-level report and only for a subscription
+    // whose fee is configured; unset renders as a dash, never as zero.
+    optional int64 subscription_fee_micros = 11;
     // policy_status is "unknown", "none" or "metered". THE THREE ARE
     // DIFFERENT FACTS: "none" says the account was read and meters nothing,
     // "unknown" says nothing could read it. A client that collapses them
@@ -1424,11 +1708,32 @@ message SpendAccount {
     SpendBreakerVerdict breaker = 7;
 }
 
-// SpendModel is one engine/model pair's share of a scope's tokens.
+// SpendModel is one engine/model pair's share of a scope's spend.
 message SpendModel {
+    reserved 3;
     string engine = 1;
     string model = 2;
-    int64 total_tokens = 3;
+    SpendTotals totals = 4;
+}
+
+// SpendHost is one host's share of a scope's spend.
+message SpendHost {
+    // host is the host the turns ran on, empty when unattributed.
+    string host = 1;
+    // unattributed marks the turns that name no host.
+    bool unattributed = 2;
+    SpendTotals totals = 3;
+}
+
+// SpendAgent is one tenant Agent's share of a scope's spend.
+message SpendAgent {
+    // agent_id is the Agent's catalog ID, empty when unattributed.
+    string agent_id = 1;
+    // name is the Agent's name when it still exists.
+    string name = 2;
+    // unattributed marks the turns of raw-backend sessions.
+    bool unattributed = 3;
+    SpendTotals totals = 4;
 }
 
 // SpendChild is one drill-down row: the next chain level below the scope.
@@ -1442,10 +1747,11 @@ message SpendChild {
     // sentinel — a job with no task. Real spend with no parent at this
     // level, to be labelled rather than shown as an entity named "-".
     bool unattributed = 3;
-    int64 total_tokens = 4;
+    reserved 4;
     // name is the child's human name where the level has one (a project),
     // empty when unattributed or when the entity no longer exists.
     string name = 5;
+    SpendTotals totals = 6;
 }
 
 // GetSpendReportResponse is one scope's consumption and its drill-down.
@@ -1459,21 +1765,8 @@ message GetSpendReportResponse {
     string session_id = 6;
     int32 round = 7;
 
-    int32 entries = 8;
-    int64 input_tokens = 9;
-    int64 output_tokens = 10;
-    int64 total_tokens = 11;
-
-    // cost_micros is the summed charge in millionths of a currency unit, and
-    // cost_measured says whether ANY of it was priced. A CLIENT MUST CONSULT
-    // cost_measured BEFORE RENDERING cost_micros: nothing in this tree prices
-    // a turn, so today the flag is false and the figure is UNMEASURED, not
-    // free. See go-quicbaas#791.
-    int64 cost_micros = 12;
-    bool cost_measured = 13;
-
-    int32 successes = 14;
-    int32 failures = 15;
+    // 8-15 and 23-24 were the flat token counts, now carried in totals.
+    reserved 8 to 15, 23, 24;
 
     google.protobuf.Timestamp first_at = 16;
     google.protobuf.Timestamp last_at = 17;
@@ -1489,11 +1782,60 @@ message GetSpendReportResponse {
     // project_name is the name of the project the scope addresses, when it
     // still exists.
     string project_name = 22;
-    // input_tokens is the fresh prompt; these are the prompt tokens served
-    // from and written into the provider's cache, reported apart because
-    // they price differently.
-    int64 cache_read_tokens = 23;
-    int64 cache_write_tokens = 24;
+    SpendTotals totals = 25;
+    // currency is what every money figure on the report is denominated in.
+    string currency = 26;
+    // from and to echo the range the report was narrowed to; unset for a
+    // report over the scope's whole history.
+    google.protobuf.Timestamp from = 27;
+    google.protobuf.Timestamp to = 28;
+    // subscription_fee_micros sums the accounts' fee shares: what the
+    // tenant's subscriptions cost over the range, beside the per-turn billed
+    // figure. Unset below the tenant level or when no subscription carries a
+    // fee.
+    optional int64 subscription_fee_micros = 29;
+    // scope_policy_status and scope_windows are the scope's OWN spend limits
+    // — a project's at project level, the tenant's at tenant level — with
+    // live usage against each window. The status is "none", "metered" or
+    // "unknown" as for an account; both are unset at the deeper levels,
+    // which carry no limits of their own.
+    string scope_policy_status = 30;
+    repeated SpendWindowStatus scope_windows = 31;
+    // host echoes the host the report was narrowed to, empty for every
+    // host; hosts breaks the totals down by the host each turn ran on.
+    string host = 32;
+    repeated SpendHost hosts = 33;
+    // agent echoes the Agent the report was narrowed to; agents breaks the
+    // totals down by the Agent each turn's session ran as.
+    string agent = 34;
+    repeated SpendAgent agents = 35;
+    // agent_policy_status and agent_windows are the narrowed-to Agent's own
+    // spend limits with live usage — what a spawn of it is checked against.
+    // "unknown" when no catalog is wired or the Agent is gone; unset when
+    // the report is not narrowed to one Agent.
+    string agent_policy_status = 36;
+    repeated SpendWindowStatus agent_windows = 37;
+}
+
+// GetTenantSpendPolicyRequest names the tenant whose limits to read.
+message GetTenantSpendPolicyRequest {
+    string tenant_id = 1;
+}
+
+// SetTenantSpendPolicyRequest replaces a tenant's limits.
+message SetTenantSpendPolicyRequest {
+    string tenant_id = 1;
+    quicbaas.spend.v1.SpendLimits limits = 2;
+}
+
+// TenantSpendPolicyResponse is a tenant's limits and its live usage against
+// each window. A tenant that never set limits is unmetered: limits unset,
+// updated_at unset.
+message TenantSpendPolicyResponse {
+    string tenant_id = 1;
+    quicbaas.spend.v1.SpendLimits limits = 2;
+    google.protobuf.Timestamp updated_at = 3;
+    repeated SpendWindowStatus windows = 4;
 }
 
 // =============================================================================
@@ -1703,6 +2045,31 @@ message TurnFailureEvidence {
     int64 output_tokens = 5;
     int64 cache_creation_input_tokens = 6;
     int64 cache_read_input_tokens = 7;
+
+    // provider_limit_source is set when the daemon's backend concluded the
+    // provider refused the account for a rate or usage limit, and names the
+    // signal that established it (a closed set, re-checked on arrival).
+    // Empty means no limit was reported.
+    string provider_limit_source = 8;
+
+    // provider_limit_resets_at_unix is when the provider said the limit
+    // lifts, in Unix seconds, or 0 when it did not say.
+    int64 provider_limit_resets_at_unix = 9;
+
+    // provider_limit_signal is the provider's own refusal text, redacted and
+    // truncated before it is sent. It is the one piece of result text that
+    // travels, because it is what an operator reads on the held account.
+    string provider_limit_signal = 10;
+
+    // provider_auth_rejected is set when the daemon's backend concluded the
+    // provider refused the account's LOGIN itself (401, an expired or
+    // already-used refresh token): the account needs a person to log it in
+    // again, and the control plane takes it out of selection.
+    bool provider_auth_rejected = 11;
+
+    // provider_auth_signal is the provider's own refusal text, redacted and
+    // truncated before it is sent, for the account's last_error.
+    string provider_auth_signal = 12;
 }
 
 // SpawnFaultEvidence names a spawn failure that is a CONFIGURATION fault rather
@@ -1760,4 +2127,40 @@ message SessionWorkspace {
     // the workspace and mounted at /run/quicbaas/workspace. Only the fixed
     // spec file names are accepted.
     map<string, bytes> spec_files = 5;
+}
+
+// =============================================================================
+// Cost settings (go-quicbaas#1058)
+// =============================================================================
+
+// GetCostSettingsRequest names the tenant whose cost settings to read.
+message GetCostSettingsRequest {
+    string tenant_id = 1;
+}
+
+// SetCostSettingsRequest replaces a tenant's runtime cost settings. An unset
+// rate and an engine not named inherit the configuration; an engine named
+// with zero watts is not costed from electricity for the tenant.
+message SetCostSettingsRequest {
+    string tenant_id = 1;
+    optional double electricity_price_per_kwh = 2;
+    map<string, double> engine_power_watts = 3;
+}
+
+// CostSettingsResponse is a tenant's runtime cost settings and the rates in
+// force once they are layered over the configuration.
+message CostSettingsResponse {
+    string tenant_id = 1;
+    // electricity_price_per_kwh and engine_power_watts are what the tenant
+    // set at runtime; unset and empty inherit the configuration.
+    optional double electricity_price_per_kwh = 2;
+    map<string, double> engine_power_watts = 3;
+    google.protobuf.Timestamp updated_at = 4;
+    // effective_electricity_price_per_kwh is the rate in force, and
+    // electricity_price_source where it came from: "tenant_settings",
+    // "tenant_config", "deployment_config" or "default".
+    double effective_electricity_price_per_kwh = 5;
+    string electricity_price_source = 6;
+    // effective_engine_power_watts is every per-engine draw in force.
+    map<string, double> effective_engine_power_watts = 7;
 }

@@ -113,7 +113,7 @@ func TestSSHServer_KnownHostsAndAuthorized(t *testing.T) {
 
 	_, err := srv.AddSSHKnownHost(ctx, &pb.SSHAddKnownHostRequest{
 		Scope: "user", Owner: "alice", Host: "git.example.com",
-		Fingerprint: host.Fingerprint,
+		PublicKey: host.AuthorizedLine,
 	})
 	require.NoError(t, err)
 
@@ -201,8 +201,8 @@ func TestSSHServer_MissingRequiredFields(t *testing.T) {
 	_, err = srv.SignSSHDigest(ctx, &pb.SSHSignDigestRequest{Name: "k"})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err), "digest is required")
 
-	_, err = srv.AddSSHKnownHost(ctx, &pb.SSHAddKnownHostRequest{Host: "h"})
-	assert.Equal(t, codes.InvalidArgument, status.Code(err), "fingerprint is required")
+	_, err = srv.AddSSHKnownHost(ctx, &pb.SSHAddKnownHostRequest{Host: "h", Fingerprint: "SHA256:x"})
+	assert.Equal(t, codes.InvalidArgument, status.Code(err), "public_key is required; a fingerprint alone does not pin a host")
 
 	_, err = srv.AddSSHAuthorizedKey(ctx, &pb.SSHAddAuthorizedKeyRequest{Name: "n"})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err), "line is required")

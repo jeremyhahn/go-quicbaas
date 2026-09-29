@@ -37,6 +37,7 @@ import (
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
 	pkgiam "github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	acmeclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/acme"
 	certclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/certificate"
 	sshclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/ssh"
@@ -320,6 +321,26 @@ type (
 // transport package so every concrete transport can construct it; see
 // transport.FinishLoginResponse for the rationale.
 type FinishLoginResponse = transport.FinishLoginResponse
+
+// WithVerifiedPeerCert returns a child context carrying the verified peer
+// certificate for an mtls FinishLogin. It re-exports
+// service.WithVerifiedPeerCert so an in-process (embedded) caller that already
+// holds the client's verified leaf certificate — e.g. an HTTP server's
+// r.TLS.VerifiedChains[0][0] — can hand it to the login facade instead of
+// computing a lookup key itself.
+//
+// With a certificate in the context the facade derives the lookup key from it
+// (the renewal-stable SPKI key first, the legacy cert-DER key as the fallback)
+// and ignores any request-supplied LookupKey, so the derivation stays in the
+// single place the enrollment side shares. A nil certificate returns ctx
+// unchanged.
+//
+// Only the embedded transport sees this context value: a context does not
+// cross the network, so REST / gRPC / QUIC / MCP / Unix servers derive the key
+// from their own verified TLS handshake regardless.
+func WithVerifiedPeerCert(ctx context.Context, cert *x509.Certificate) context.Context {
+	return service.WithVerifiedPeerCert(ctx, cert)
+}
 
 // Unified-login factor type constants, re-exported from go-qrdb so consumers
 // select a login method without importing go-qrdb.

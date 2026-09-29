@@ -16,6 +16,8 @@ package orchestration
 import (
 	"context"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/metrics"
 )
 
 // =============================================================================
@@ -50,6 +52,11 @@ type TurnAttribution struct {
 	// separate root in the attribution tree and a task's total spend across
 	// its retries could not be summed.
 	TaskID string
+
+	// Kind is the runner driving the job ("sdlc", "review", "triage",
+	// "workflow"), recorded on the ledger entry so spend can be broken down by
+	// what the work was, not only by who paid for it.
+	Kind string
 
 	// AgentID is the identity of the agent that ran the turn, as minted by the
 	// control loop (see AgentIdentity). Empty for a runner that prompts one
@@ -110,13 +117,12 @@ func TurnAttributionFromContext(ctx context.Context) TurnAttribution {
 // still written to the LEDGER, with no tokens on them, because that is what
 // the circuit breaker reads; see the note at the empty check below.
 //
-// A turn dispatched to a REMOTE daemon is likewise not recorded here: that
-// daemon ran the turn through its own orchestrator and charged it to its own
-// ledger, and its wire response carries no usage back, so there is exactly one
-// record of it and no double counting.
+// A turn dispatched to a REMOTE daemon IS recorded here, and only here. The
+// daemon runs the process and has no ledger; it sends the usage its CLI
+// reported back on the Prompt response (turn_usage_wire.go), so there is
+// exactly one record of the turn, on the control plane that planned it.
 func (s *agentServiceImpl) recordTurnUsage(ctx context.Context, turn completedTurn, usage *TokenUsage) {
 	sessionID := turn.sessionID
-	projectID := turn.projectID
 	if s.costTracker == nil && s.ledger == nil {
 		return
 	}
@@ -144,9 +150,11 @@ func (s *agentServiceImpl) recordTurnUsage(ctx context.Context, turn completedTu
 			sessionID, usage.Total(), !usage.Empty())
 	}
 
+	session := s.sessionOfTurn(turn)
 	report := TurnUsage{
 		TenantID:  StorageTenant(ctx),
-		ProjectID: projectID,
+		ProjectID: session.projectID,
+		AccountID: session.accountID,
 		Tokens:    usage.Total(),
 	}
 	attribution := TurnAttributionFromContext(ctx)
@@ -156,14 +164,6 @@ func (s *agentServiceImpl) recordTurnUsage(ctx context.Context, turn completedTu
 	if attribution.JobID != "" && attribution.AgentID != "" {
 		report.JobID = attribution.JobID
 		report.AgentID = attribution.AgentID
-	}
-	accountID := ""
-	if mem, ok := s.liveSessionRecord(sessionID); ok {
-		accountID = mem.AccountID()
-		report.AccountID = accountID
-		if report.ProjectID == "" {
-			report.ProjectID = mem.ProjectID
-		}
 	}
 
 	// THE EMPTY CHECK BINDS THE COUNTERS AND NOT THE LEDGER, and the
@@ -192,8 +192,14 @@ func (s *agentServiceImpl) recordTurnUsage(ctx context.Context, turn completedTu
 				sessionID, report.Tokens, err.Error())
 		}
 	}
-	s.recordConsumption(ctx, turn, attribution, report.ProjectID, accountID, usage, ConsumptionOutcomeSuccess)
+	s.recordConsumption(ctx, turn, attribution, session, usage, ConsumptionOutcomeSuccess)
 }
+
+// ConsumptionModelUnknown is the model a ledger entry is filed under when
+// neither the backend's answer, the turn's plan nor the backend's
+// configuration names one. It is a marker, not a model: no price entry names
+// it, so its turns are unpriced and a report can show them as such.
+const ConsumptionModelUnknown = "unknown"
 
 // completedTurn is what the turn path knows about one turn beyond its token
 // counts: which session and project it ran under, which engine and model
@@ -216,22 +222,27 @@ type completedTurn struct {
 	// model it resolved to.
 	engine string
 	model  string
+
+	// duration is how long the backend took to answer (or fail) the turn.
+	duration time.Duration
 }
 
 // recordConsumption appends one entry to the consumption ledger — the record
-// the spend authority makes its decisions from.
+// the spend authority makes its decisions from and every spend report reads.
 //
 // SEPARATE FROM THE COUNTERS ABOVE, AND FED BY THE SAME CALL. The counters
 // report; this decides. Writing both from one site is what keeps them from
 // disagreeing about a turn: there is one place a turn becomes cost data, and
 // it either records everywhere or nowhere.
 //
-// AN UNPOOLED TURN IS NOT LEDGERED, and that is not a gap. The ledger's quota
-// plane is keyed by account because an allowance belongs to an account; a turn
-// that drew on no pooled account drew on no allowance, and filing it under a
-// placeholder would make a fictional account look like the tenant's largest
-// spender. Such turns remain visible in the counters, which is what the
-// counters are for.
+// AN UNPOOLED TURN IS LEDGERED TOO (go-quicbaas#1058). The owner's 2026-09-23
+// request is that every model the factory runs is tracked, local inference
+// included. Such a turn carries no account and the ledger keeps it off the
+// account quota plane (see ConsumptionEntry.AccountID); it is attributed,
+// priced and reported like any other.
+//
+// THE PRICE IS STAMPED HERE, once, from the price book in force when the turn
+// ran; see PriceBook.Stamp.
 //
 // BEST-EFFORT, LIKE ITS CALLER. The turn has already happened and its answer
 // is already the caller's; failing it here would discard delivered work over
@@ -241,41 +252,132 @@ func (s *agentServiceImpl) recordConsumption(
 	ctx context.Context,
 	turn completedTurn,
 	attribution TurnAttribution,
-	projectID, accountID string,
+	session turnSession,
 	usage *TokenUsage,
 	outcome ConsumptionOutcome,
 ) {
-	if s.ledger == nil || accountID == "" || turn.turnID == "" {
+	if s.ledger == nil || turn.turnID == "" {
 		return
 	}
-	entry := ConsumptionEntry{
-		EntryID:    turn.turnID,
-		TenantID:   StorageTenant(ctx),
-		ProjectID:  projectID,
-		TaskID:     attribution.TaskID,
-		JobID:      attribution.JobID,
-		SessionID:  turn.sessionID,
-		AccountID:  accountID,
-		Engine:     turn.engine,
-		Model:      turn.model,
-		Outcome:    outcome,
-		OccurredAt: time.Now().UTC(),
+	// A TURN WHOSE MODEL NOTHING NAMES IS STILL A TURN. The ledger refuses an
+	// entry with no model, and refusing this one would drop a real occurrence
+	// — the circuit breaker's evidence and the account's spend — over a label
+	// (go-quicbaas: 450 codex reviewer turns were lost this way). It is filed
+	// under ConsumptionModelUnknown, which no price entry names, so it reads
+	// as unpriced rather than as free, and the gap is logged.
+	if turn.model == "" {
+		s.logger.Warnf(
+			"orchestration: turn named no model and its backend declares none; recorded under model %q: session=%s engine=%s entry=%s",
+			ConsumptionModelUnknown, turn.sessionID, turn.engine, turn.turnID)
+		turn.model = ConsumptionModelUnknown
 	}
-	// Each dimension to its own field: the cache counts price apart from a
-	// fresh prompt, so folding them into InputTokens made a cached turn
-	// unpriceable. A nil usage — a backend that reported nothing — records
-	// the occurrence with no tokens.
+	entry := ConsumptionEntry{
+		EntryID:         turn.turnID,
+		TenantID:        StorageTenant(ctx),
+		ProjectID:       session.projectID,
+		TaskID:          attribution.TaskID,
+		JobID:           attribution.JobID,
+		SessionID:       turn.sessionID,
+		AccountID:       session.accountID,
+		Engine:          turn.engine,
+		Model:           turn.model,
+		Kind:            attribution.Kind,
+		Host:            session.host,
+		AgentID:         attribution.AgentID,
+		ResolvedAgentID: session.agentID,
+		Outcome:         outcome,
+		DurationMillis:  turn.duration.Milliseconds(),
+		OccurredAt:      time.Now().UTC(),
+		// A backend that reported nothing, or accounting that had to be
+		// repaired, is unmeasured. A reported ZERO is a measurement — the
+		// failure-evidence contract reads it as proof no request reached the
+		// model — and must not become missing coverage (go-quicbaas#1058).
+		Unmeasured: usage == nil || usage.Malformed(),
+	}
 	if usage != nil {
 		entry.InputTokens = usage.InputTokens
 		entry.OutputTokens = usage.OutputTokens
 		entry.CacheReadTokens = usage.CacheReadInputTokens
 		entry.CacheWriteTokens = usage.CacheCreationInputTokens
 	}
+	settings := s.tenantCostSettings(ctx, entry.TenantID)
+	s.prices.StampWithEnergy(&entry, settings, s.measureTurnEnergy(ctx, &entry, settings))
+	stampBilling(&entry, s.accountBilling(ctx, entry.TenantID, entry.AccountID))
 	if err := s.ledger.Record(ctx, entry); err != nil {
 		s.logger.Warnf(
-			"orchestration: failed to record consumption; this account's spend cap is now under-counting: session=%s account=%s entry=%s err=%s",
-			turn.sessionID, accountID, turn.turnID, err.Error())
+			"orchestration: failed to record consumption; spend reports and caps are now under-counting: session=%s account=%s entry=%s err=%s",
+			turn.sessionID, session.accountID, turn.turnID, err.Error())
+		return
 	}
+	// Counted only once the ledger holds the entry, so the metrics and the
+	// spend report are sums over the same turns.
+	countFactoryTurn(metrics.GetMetrics(), entry, s.prices.Lists(entry.TenantID, entry.Engine, entry.Model))
+}
+
+// tenantCostSettings reads the tenant's runtime cost settings, or nil when no
+// store is wired. A store that cannot be read yields
+// UnavailableCostSettings: the turn is still recorded, and any electricity
+// cost is recorded as unknown rather than worked from the configuration,
+// which the tenant may have overridden (go-quicbaas#1058 review).
+func (s *agentServiceImpl) tenantCostSettings(ctx context.Context, tenantID string) *CostSettings {
+	if s.costSettings == nil {
+		return nil
+	}
+	settings, err := s.costSettings.Get(ctx, tenantID)
+	if err != nil {
+		s.logger.Warnf("orchestration: cost settings for tenant %s could not be read; the turn's electricity cost is recorded as unknown: %s",
+			tenantID, err.Error())
+		return UnavailableCostSettings(tenantID)
+	}
+	return settings
+}
+
+// accountBilling reads how the paying account is billed. An unpooled turn has
+// no account, and an account that cannot be read bills UNKNOWN — the turn is
+// still recorded, and the gap is logged rather than guessed over.
+func (s *agentServiceImpl) accountBilling(ctx context.Context, tenantID, accountID string) AccountBilling {
+	if accountID == "" || s.accountStore == nil {
+		return AccountBilling{}
+	}
+	account, err := s.accountStore.Get(ctx, tenantID, accountID)
+	if err != nil {
+		s.logger.Warnf("orchestration: account %s could not be read; its turn is recorded with an unknown billed figure: %s",
+			accountID, err.Error())
+		return AccountBilling{}
+	}
+	return account.Billing
+}
+
+// turnSession is what the live session record says about where a turn ran and
+// who paid for it.
+type turnSession struct {
+	projectID string
+	accountID string
+	host      string
+
+	// agentID is the tenant Agent the session runs as, empty for a session
+	// on a raw backend.
+	agentID string
+}
+
+// sessionOfTurn resolves the account, project and host of a turn from its live
+// session record. The project the turn was planned under wins over the
+// session's; a session that ran on this node rather than a named worker host
+// is attributed to this node.
+func (s *agentServiceImpl) sessionOfTurn(turn completedTurn) turnSession {
+	session := turnSession{projectID: turn.projectID}
+	if mem, ok := s.liveSessionRecord(turn.sessionID); ok {
+		session.accountID = mem.AccountID()
+		session.host = mem.HostAffinity
+		session.agentID = mem.ResolvedAgentID
+		if session.projectID == "" {
+			session.projectID = mem.ProjectID
+		}
+	}
+	if session.host == "" {
+		session.host = s.node
+	}
+	return session
 }
 
 // failedTurnUsage is what the CLI said the failed turn cost, or nil when it
@@ -294,6 +396,16 @@ func failedTurnUsage(err error) *TokenUsage {
 	return evidence.Usage
 }
 
+// failedTurnModel is the model the backend says the failed turn ran on, or ""
+// when it said nothing.
+func failedTurnModel(err error) string {
+	evidence, carried := EvidenceOf(err)
+	if !carried {
+		return ""
+	}
+	return evidence.Model
+}
+
 // recordFailedTurn appends a FAILURE entry for a turn that produced no answer.
 //
 // A FAILED TURN IS STILL A TURN, and this is the population the circuit
@@ -306,13 +418,5 @@ func (s *agentServiceImpl) recordFailedTurn(ctx context.Context, turn completedT
 	if s.ledger == nil {
 		return
 	}
-	accountID := ""
-	projectID := turn.projectID
-	if mem, ok := s.liveSessionRecord(turn.sessionID); ok {
-		accountID = mem.AccountID()
-		if projectID == "" {
-			projectID = mem.ProjectID
-		}
-	}
-	s.recordConsumption(ctx, turn, TurnAttributionFromContext(ctx), projectID, accountID, usage, ConsumptionOutcomeFailure)
+	s.recordConsumption(ctx, turn, TurnAttributionFromContext(ctx), s.sessionOfTurn(turn), usage, ConsumptionOutcomeFailure)
 }

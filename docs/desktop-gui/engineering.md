@@ -46,9 +46,9 @@ build, not alongside it.
 | Connection | `NewConnectionBinding(log)` | server address, transport, TLS material |
 | Orchestrator | `NewOrchestratorBinding(log, conn)` | orchestration operations |
 | Sessions | `NewSessionBinding(log, conn)` | session event history and subscriptions |
-| Agents | `NewAgentBinding(log, conn)` | agent registry queries |
+| Agents | `NewFleetBinding(log, conn)` | fleet registry queries |
 | Embedded server | `NewEmbeddedServerBinding(log)` | standalone-mode server control |
-| Agent deploy | `NewAgentDeployBinding(log, conn)` | remote deployment |
+| Agent deploy | `NewFleetDeployBinding(log, conn)` | remote deployment |
 | SSH keys | `NewSSHKeysBinding(log)` | server-held SSH keys |
 
 Six of the seven take `conn`, which is the invariant worth stating: **the GUI

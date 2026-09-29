@@ -2,7 +2,7 @@
  * tenant_selector_layering.spec.ts
  *
  * Bug #60 regression: the top-right tenant chooser must layer ABOVE all
- * page CTAs (e.g. Register Agent on Agent Fleet, Put Key on KV Store).
+ * page CTAs (e.g. Register node on Fleet, Put Key on KV Store).
  *
  * Verifies:
  *   1. The header carries an effective z-index >= 1000 so the tenant
@@ -82,7 +82,7 @@ test.describe('Bug #60 — tenant selector z-index and viewport anchoring', () =
     expect(rightEdge).toBeGreaterThan(viewport.width * 0.75);
   });
 
-  test('tenant selector does not visually clip any visible page CTA on Agent Fleet', async ({ page }) => {
+  test('tenant selector does not visually clip any visible page CTA on Fleet', async ({ page }) => {
     await navigateTo(page, '#/fleet');
 
     const tenantSelector = page.getByTestId('tenant-selector');
@@ -92,8 +92,8 @@ test.describe('Bug #60 — tenant selector z-index and viewport anchoring', () =
     expect(tenantBox).not.toBeNull();
     if (!tenantBox) return;
 
-    // Find the Register Agent CTA — the one this bug specifically called out.
-    const registerCTA = page.getByRole('button', { name: /Register Agent/i }).first();
+    // Find the Register node CTA — the one this bug specifically called out.
+    const registerCTA = page.getByRole('button', { name: /Register a fleet node/i }).first();
     if ((await registerCTA.count()) > 0 && await registerCTA.isVisible()) {
       const ctaBox = await registerCTA.boundingBox();
       // Either bounding boxes don't intersect (clean separation) OR

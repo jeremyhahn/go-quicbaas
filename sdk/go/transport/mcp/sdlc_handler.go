@@ -44,6 +44,16 @@ var sdlcMethodTools = map[string]string{
 	"ListForges":  "sdlc_forges",
 	"Onboard":     "sdlc_onboard",
 	"Conformance": "sdlc_conformance",
+	"OpenWork":    "sdlc_open_work",
+
+	"Reviewer":           "sdlc_reviewer",
+	"SetReviewer":        "sdlc_reviewer_set",
+	"ClearReviewer":      "sdlc_reviewer_clear",
+	"AdoptIssue":         "sdlc_adopt_issue",
+	"WorkerImageStatus":  "quicbaas_sdlc_worker_image",
+	"RefreshWorkerImage": "quicbaas_sdlc_worker_image_refresh",
+	"FileIssue":          "sdlc_issue_create",
+	"Collaborators":      "sdlc_collaborators",
 }
 
 func sdlcToolName(method string) (string, bool) {
@@ -65,6 +75,16 @@ var sdlcMCPTransforms = map[string]sdlcMCPTransform{
 	"ListForges":  decodeMCPSDLCForges,
 	"Onboard":     decodeMCPSDLCOnboarding,
 	"Conformance": decodeMCPSDLCConformance,
+	"OpenWork":    decodeMCPSDLCOpenWork,
+
+	"Reviewer":           decodeMCPSDLCReviewerSelection,
+	"SetReviewer":        decodeMCPSDLCReviewerSelection,
+	"ClearReviewer":      decodeMCPSDLCReviewerSelection,
+	"AdoptIssue":         decodeMCPSDLCAdoption,
+	"WorkerImageStatus":  decodeMCPSDLCWorkerImageStatus,
+	"RefreshWorkerImage": decodeMCPSDLCWorkerImageStatus,
+	"FileIssue":          decodeMCPSDLCIssue,
+	"Collaborators":      decodeMCPSDLCCollaborators,
 }
 
 // transformSDLCResponse decodes a tool result into the SDK's types.
@@ -125,10 +145,58 @@ func decodeMCPSDLCConformance(raw []byte) (interface{}, error) {
 	return &report, nil
 }
 
+func decodeMCPSDLCOpenWork(raw []byte) (interface{}, error) {
+	var work sdlc.OpenWork
+	if err := json.Unmarshal(raw, &work); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.sdlc.OpenWork", "failed to decode open work")
+	}
+	return &work, nil
+}
+
 func decodeMCPSDLCForges(raw []byte) (interface{}, error) {
 	var forges sdlc.ListForgesResponse
 	if err := json.Unmarshal(raw, &forges); err != nil {
 		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.sdlc.ListForges", "failed to decode forges")
 	}
 	return &forges, nil
+}
+
+func decodeMCPSDLCReviewerSelection(raw []byte) (interface{}, error) {
+	var selection sdlc.ReviewerSelection
+	if err := json.Unmarshal(raw, &selection); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.sdlc.Reviewer", "failed to decode reviewer selection")
+	}
+	return &selection, nil
+}
+
+func decodeMCPSDLCWorkerImageStatus(raw []byte) (interface{}, error) {
+	var status sdlc.WorkerImageStatus
+	if err := json.Unmarshal(raw, &status); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.sdlc.WorkerImage", "failed to decode worker image status")
+	}
+	return &status, nil
+}
+
+func decodeMCPSDLCIssue(raw []byte) (interface{}, error) {
+	var issue sdlc.ForgeIssue
+	if err := json.Unmarshal(raw, &issue); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.sdlc.FileIssue", "failed to decode the filed issue")
+	}
+	return &issue, nil
+}
+
+func decodeMCPSDLCCollaborators(raw []byte) (interface{}, error) {
+	var users sdlc.CollaboratorsResponse
+	if err := json.Unmarshal(raw, &users); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.sdlc.Collaborators", "failed to decode collaborators")
+	}
+	return &users, nil
+}
+
+func decodeMCPSDLCAdoption(raw []byte) (interface{}, error) {
+	var adoption sdlc.Adoption
+	if err := json.Unmarshal(raw, &adoption); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.sdlc.AdoptIssue", "failed to decode the adoption")
+	}
+	return &adoption, nil
 }

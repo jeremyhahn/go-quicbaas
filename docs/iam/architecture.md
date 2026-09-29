@@ -57,8 +57,8 @@ to authenticate with while enrolling their first one.
 │  │  │  Manager    │  │   Store     │  │   FIDO2     │  │    OIDC     │   │ │
 │  │  │             │  │             │  │             │  │             │   │ │
 │  │  │ - Isolation │  │ - Users     │  │ - Register  │  │ - Provider  │   │ │
-│  │  │ - Quotas    │  │ - Groups    │  │ - Authn     │  │ - Consumer  │   │ │
-│  │  │ - Settings  │  │ - Roles     │  │ - Creds     │  │ - Tokens    │   │ │
+│  │  │ - Quotas    │  │ - Roles     │  │ - Authn     │  │ - Consumer  │   │ │
+│  │  │ - Settings  │  │             │  │ - Creds     │  │ - Tokens    │   │ │
 │  │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘   │ │
 │  │                                                                         │ │
 │  │  ┌───────────────────────────────────────────────────────────────────┐ │ │
@@ -108,11 +108,14 @@ Manages multi-tenant isolation:
 
 ### Identity Store
 
-User, group, and role management:
+User and role management:
 - User registration and profile management
-- Group membership
 - Role assignments
 - Custom attributes
+
+quicbaas keeps no groups. Identity is qrdb's, and a role binding is the
+grouping it offers: the OIDC `groups` claim carries the names of the roles a
+user is bound to.
 
 ### WebAuthn/FIDO2
 
@@ -155,7 +158,6 @@ __iam:tenant:{tenant_id}:settings            → Tenant settings
 
 Identity:
 __iam:tenant:{tenant_id}:user:{user_id}      → User record
-__iam:tenant:{tenant_id}:group:{group_id}    → Group record
 __iam:tenant:{tenant_id}:role:{role_id}      → Role record
 
 Credentials:
@@ -202,7 +204,7 @@ For each condition string like `"subject.role == admin"`:
 
 1. **Resource Pattern Trie**: O(k) lookup for resource matching
 2. **Deny Rule Bloom Filter**: Quick check for potential denies
-3. **Subject Selector Index**: Fast policy lookup by role/group/user
+3. **Subject Selector Index**: Fast policy lookup by role/user
 
 ### Phase 4: Caching
 
@@ -272,7 +274,6 @@ QuicBaaS provides the following predefined admin roles:
 | `super_admin` | Full administrative permission set. Tenant reach is decided by the assignment's `tenant_ids`, not the role: the assignment acts in the tenants it names, or system-tenant scope alone when `tenant_ids` is empty (go-quicbaas#357) |
 | `tenant_admin` | Full access within assigned tenant(s) |
 | `user_admin` | Can manage users within assigned tenant(s) |
-| `group_admin` | Can manage groups within assigned tenant(s) |
 | `policy_admin` | Can manage policies within assigned tenant(s) |
 | `audit_admin` | Can view audit logs within assigned tenant(s) |
 | `read_only` | Read-only access to assigned resources |
@@ -300,14 +301,6 @@ QuicBaaS provides the following predefined admin roles:
 | `user:reset_mfa` | Reset user MFA |
 | `user:suspend` | Suspend user accounts |
 | `user:unlock` | Unlock user accounts |
-
-##### Group Permissions
-| Permission | Description |
-|------------|-------------|
-| `group:create` | Create groups |
-| `group:read` | View groups |
-| `group:update` | Modify groups |
-| `group:delete` | Delete groups |
 
 ##### Role Permissions
 | Permission | Description |
@@ -391,8 +384,8 @@ Limit admin access to specific resources within tenants:
       "resource_pattern": "user:engineering-*"
     },
     {
-      "resource_type": "group",
-      "resource_pattern": "group:team-*"
+      "resource_type": "role",
+      "resource_pattern": "role:team-*"
     }
   ]
 }
@@ -548,15 +541,14 @@ Impersonation events include:
 
 ### Role Permission Matrix
 
-| Role | Tenant | User | Group | Role | Policy | Audit | Session | GDPR |
-|------|--------|------|-------|------|--------|-------|---------|------|
-| `super_admin` | CRUD | CRUD+I | CRUD | CRUD+A | CRUD+S | R+E | R+V | Full |
-| `tenant_admin` | RU | CRUD | CRUD | CRUD+A | CRUD+S | R | R+V | Full |
-| `user_admin` | - | CRUD | R | R+A | - | - | - | - |
-| `group_admin` | - | R | CRUD | - | - | - | - | - |
-| `policy_admin` | - | - | - | - | CRUD+S | - | - | - |
-| `audit_admin` | - | - | - | - | - | R+E | - | - |
-| `read_only` | R | R | R | R | R | R | R | - |
+| Role | Tenant | User | Role | Policy | Audit | Session | GDPR |
+|------|--------|------|------|--------|-------|---------|------|
+| `super_admin` | CRUD | CRUD+I | CRUD+A | CRUD+S | R+E | R+V | Full |
+| `tenant_admin` | RU | CRUD | CRUD+A | CRUD+S | R | R+V | Full |
+| `user_admin` | - | CRUD | R+A | - | - | - | - |
+| `policy_admin` | - | - | - | CRUD+S | - | - | - |
+| `audit_admin` | - | - | - | - | R+E | - | - |
+| `read_only` | R | R | R | R | R | R | - |
 
 Legend: C=Create, R=Read, U=Update, D=Delete, I=Impersonate, A=Assign, S=Simulate, E=Export, V=Revoke
 

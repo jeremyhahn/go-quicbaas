@@ -24,6 +24,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
@@ -58,30 +59,46 @@ func (s *recordingSpendServer) GetSpendReport(
 		return nil, status.Error(codes.Unavailable, "consumption ledger not available")
 	}
 	return &pb.GetSpendReportResponse{
-		Level:        "project",
-		TenantId:     req.GetTenantId(),
-		ProjectId:    req.GetProjectId(),
-		Entries:      3,
-		InputTokens:  120,
-		OutputTokens: 80,
-		TotalTokens:  200,
-		CostMicros:   0,
-		CostMeasured: false,
-		Successes:    2,
-		Failures:     1,
-		FirstAt:      timestamppb.New(spendFixtureTime),
-		ChildLevel:   "task",
-		Children: []*pb.SpendChild{
-			{Id: "task-1", Level: "task", TotalTokens: 150},
-			{Level: "task", Unattributed: true, TotalTokens: 50},
+		Level:     "project",
+		TenantId:  req.GetTenantId(),
+		ProjectId: req.GetProjectId(),
+		Totals: &pb.SpendTotals{
+			Entries: 3, InputTokens: 120, OutputTokens: 80, TotalTokens: 200,
+			Successes: 2, Failures: 1,
+			EquivalentMicros: 1_250_000, PricedEntries: 3,
+			MeasuredEnergyEntries: 2,
 		},
-		Models: []*pb.SpendModel{{Engine: "acp", Model: "claude-opus-5", TotalTokens: 200}},
+		Host:   req.GetHost(),
+		Hosts:  []*pb.SpendHost{{Host: "gpu-host:9091", Totals: &pb.SpendTotals{TotalTokens: 200}}, {Unattributed: true}},
+		Agent:  req.GetAgent(),
+		Agents: []*pb.SpendAgent{{AgentId: "claude-coder", Name: "Claude coder", Totals: &pb.SpendTotals{TotalTokens: 200}}, {Unattributed: true}},
+
+		AgentPolicyStatus: "metered",
+		AgentWindows:      []*pb.SpendWindowStatus{{Name: "daily", MaxTokens: 100, UsedTokens: 200, Exhausted: true}},
+		Currency:          "USD",
+		FirstAt:           timestamppb.New(spendFixtureTime),
+		From:              req.GetFrom(),
+		To:                req.GetTo(),
+		ChildLevel:        "task",
+
+		SubscriptionFeeMicros: proto.Int64(46_000_000),
+		ScopePolicyStatus:     "metered",
+		ScopeWindows:          []*pb.SpendWindowStatus{{Name: "weekly", SizeNanos: int64(7 * 24 * time.Hour), MaxTokens: 10, UsedTokens: 12, Exhausted: true}},
+		Children: []*pb.SpendChild{
+			{Id: "task-1", Level: "task", Totals: &pb.SpendTotals{TotalTokens: 150}},
+			{Level: "task", Unattributed: true, Totals: &pb.SpendTotals{TotalTokens: 50}},
+		},
+		Models: []*pb.SpendModel{{Engine: "acp", Model: "claude-opus-5", Totals: &pb.SpendTotals{TotalTokens: 200}}},
 		Accounts: []*pb.SpendAccount{{
-			AccountId:    "a1",
-			DisplayName:  "alice-work",
-			Provider:     "claude",
-			TotalTokens:  200,
-			PolicyStatus: "metered",
+			AccountId:        "a1",
+			DisplayName:      "alice-work",
+			Provider:         "claude",
+			Totals:           &pb.SpendTotals{TotalTokens: 200, BilledEntries: 3},
+			BillingMode:      "subscription",
+			MonthlyFeeMicros: 200_000_000,
+			PolicyStatus:     "metered",
+
+			SubscriptionFeeMicros: proto.Int64(46_000_000),
 			Windows: []*pb.SpendWindowStatus{{
 				Name:            "five-hour",
 				SizeNanos:       int64(5 * time.Hour),
@@ -127,13 +144,17 @@ func TestOrchestratorGetSpendReport_MapsEveryField(t *testing.T) {
 	h := newOrchestratorHandler(srv.dial(t))
 
 	ctx := transport.ContextWithTenant(context.Background(), "tenant-a")
+	from := spendFixtureTime.Add(-24 * time.Hour)
 	resp, err := h.handleRequest(ctx, "quicbaas.Orchestrator", "GetSpendReport",
 		&orchestrator.GetSpendReportRequest{
 			ProjectID: "p1", TaskID: "w1", JobID: "j1", SessionID: "s1", Round: 0, RoundSet: true,
+			From: &from, Host: "gpu-host:9091", Agent: "claude-coder",
 		})
 	require.NoError(t, err)
 
 	got := fake.request()
+	assert.Equal(t, "gpu-host:9091", got.GetHost(), "the host drill-down must cross the wire")
+	assert.Equal(t, "claude-coder", got.GetAgent(), "the Agent drill-down must cross the wire")
 	require.NotNil(t, got)
 	assert.Equal(t, "tenant-a", got.GetTenantId(), "the context tenant must cross the wire")
 	assert.Equal(t, "p1", got.GetProjectId())
@@ -141,19 +162,48 @@ func TestOrchestratorGetSpendReport_MapsEveryField(t *testing.T) {
 	assert.Equal(t, "j1", got.GetJobId())
 	assert.Equal(t, "s1", got.GetSessionId())
 	assert.True(t, got.GetRoundSet(), "round 0 is a level; round_set is what says so")
+	assert.True(t, got.GetFrom().AsTime().Equal(from), "the range start must cross the wire")
+	assert.Nil(t, got.GetTo(), "an unset end stays unset")
 
 	report, ok := resp.(*orchestrator.GetSpendReportResponse)
 	require.Truef(t, ok, "response is %T", resp)
 	assert.Equal(t, orchestrator.SpendLevelProject, report.Level)
 	assert.Equal(t, int64(200), report.TotalTokens)
 	assert.Equal(t, 1, report.Failures)
-	assert.False(t, report.CostMeasured, "an unpriced report must not claim a measured cost")
+	// The money crosses in its totals message, and the billing with the
+	// account that pays. go-quicbaas#1058.
+	assert.Equal(t, int64(1_250_000), report.EquivalentMicros)
+	assert.Equal(t, 2, report.MeasuredEnergyEntries)
+	assert.Equal(t, "gpu-host:9091", report.Host)
+	require.Len(t, report.Hosts, 2)
+	assert.Equal(t, int64(200), report.Hosts[0].TotalTokens)
+	assert.True(t, report.Hosts[1].Unattributed)
+	assert.Equal(t, "claude-coder", report.Agent)
+	require.Len(t, report.Agents, 2)
+	assert.Equal(t, "Claude coder", report.Agents[0].Name)
+	assert.True(t, report.Agents[1].Unattributed)
+	assert.Equal(t, orchestrator.SpendPolicyStatus("metered"), report.AgentPolicyStatus)
+	require.Len(t, report.AgentWindows, 1)
+	assert.True(t, report.AgentWindows[0].Exhausted)
+	assert.Equal(t, 3, report.PricedEntries)
+	assert.Equal(t, "USD", report.Currency)
+	assert.Equal(t, int64(150), report.Children[0].TotalTokens)
+	assert.Equal(t, "subscription", report.Accounts[0].Billing.Mode)
+	assert.Equal(t, int64(200_000_000), report.Accounts[0].Billing.MonthlyFeeMicros)
 	require.NotNil(t, report.FirstAt)
 	assert.Equal(t, spendFixtureTime, *report.FirstAt)
 	// NIL, not the zero instant: `omitempty` cannot omit a zero time.Time, so
 	// a non-pointer field would have put "0001-01-01T00:00:00Z" on the wire
 	// the moment this type is re-marshalled (the desktop binding does).
 	assert.Nil(t, report.LastAt, "an absent timestamp must stay absent, not become the year 1")
+	require.NotNil(t, report.From)
+	assert.True(t, report.From.Equal(from))
+	require.NotNil(t, report.SubscriptionFeeMicros)
+	assert.Equal(t, int64(46_000_000), *report.SubscriptionFeeMicros)
+	require.NotNil(t, report.Accounts[0].SubscriptionFeeMicros)
+	assert.Equal(t, orchestrator.SpendPolicyMetered, report.ScopePolicyStatus)
+	require.Len(t, report.ScopeWindows, 1)
+	assert.True(t, report.ScopeWindows[0].Exhausted)
 
 	require.Len(t, report.Children, 2)
 	assert.Equal(t, orchestrator.SpendLevelTask, report.Children[0].Level)

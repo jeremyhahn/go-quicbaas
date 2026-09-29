@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strconv"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -65,6 +66,8 @@ func (h *secretsRESTHandler) handleRequest(ctx context.Context, method string, r
 		return h.handleEnsure(ctx, req)
 	case "Get":
 		return h.handleGet(ctx, req)
+	case "GetData":
+		return h.handleGetData(ctx, req)
 	case "List":
 		return h.handleList(ctx, req)
 	case "Delete":
@@ -170,6 +173,44 @@ func (h *secretsRESTHandler) handleGet(ctx context.Context, req interface{}) (in
 		}
 	}
 	return secret, nil
+}
+
+// handleGetData backs Client.GetWithBytes. It reads the same endpoint as Get,
+// but decodes the body only as far as *service.GetSecretResponse, whose Data
+// is a []byte (base64 on the wire, decoded straight into bytes), so the stored
+// payload never becomes a map of strings. The raw body — which carries that
+// payload in base64 — is wiped before returning; the client takes ownership
+// of Data and wipes it.
+func (h *secretsRESTHandler) handleGetData(ctx context.Context, req interface{}) (interface{}, error) {
+	path, version, ok := secretsGetParams(req)
+	if !ok || path == "" {
+		return nil, errors.NewInvalidInput("rest.secrets.GetData", "path is required")
+	}
+	endpoint := "/api/v1/secrets/" + secretsEscapePath(path)
+	if version > 0 {
+		endpoint += "?version=" + strconv.FormatUint(version, 10)
+	}
+	raw, err := h.transport.doRawRequest(ctx, http.MethodGet, endpoint, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer wipeBytes(raw.Body)
+
+	var resp service.GetSecretResponse
+	if err := json.Unmarshal(raw.Body, &resp); err != nil {
+		// The decoder's message can quote the body; wipe what was decoded and
+		// report without it.
+		wipeBytes(resp.Data)
+		return nil, errors.NewInternal("rest.secrets.GetData", "failed to decode secret response")
+	}
+	return &resp, nil
+}
+
+// wipeBytes zeroes b in place. KeepAlive keeps the stores from being treated
+// as dead writes to memory nothing reads again.
+func wipeBytes(b []byte) {
+	clear(b)
+	runtime.KeepAlive(b)
 }
 
 func (h *secretsRESTHandler) handleList(ctx context.Context, req interface{}) (interface{}, error) {

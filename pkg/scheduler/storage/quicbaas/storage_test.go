@@ -15,13 +15,13 @@ package quicbaas
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 )
 
@@ -62,7 +62,9 @@ func (m *mockKVStore) Get(_ context.Context, key string) ([]byte, error) {
 	if v, ok := m.data[key]; ok {
 		return append([]byte(nil), v...), nil
 	}
-	return nil, errors.New("key not found")
+	// The KVStore contract: an absent key is a QBError{ErrNotFound}, the
+	// same error pkg/kvstore and the qrdb-backed stores return.
+	return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "mock.kv.get"}
 }
 
 func (m *mockKVStore) Delete(_ context.Context, key string) error {
@@ -299,6 +301,37 @@ func TestGetJob_NotFound(t *testing.T) {
 	}
 	if notFoundError.JobID != 999 {
 		t.Errorf("expected job ID 999, got %d", notFoundError.JobID)
+	}
+}
+
+// TestGetJob_StoreErrorIsNotNotFound pins that a KV failure other than an
+// absent key surfaces as a storage error. Reported as not-found, system job
+// install would recreate — and so overwrite — a record that exists.
+func TestGetJob_StoreErrorIsNotNotFound(t *testing.T) {
+	ctx := context.Background()
+	kv := newMockKVStore()
+	storage := NewStorage(kv)
+	job := createTestJob("live", scheduler.OwnerTypeSystem, "")
+	if err := storage.CreateJob(ctx, job); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	cause := errors.New("no leader")
+	kv.getErr = cause
+
+	got, err := storage.GetJob(ctx, job.ID, "")
+	if got != nil {
+		t.Fatalf("expected no job on a store error, got %+v", got)
+	}
+	var notFound *scheduler.JobNotFoundError
+	if errors.As(err, &notFound) {
+		t.Fatalf("a store error must not read as not-found: %v", err)
+	}
+	var storageErr *scheduler.ErrStorageError
+	if !errors.As(err, &storageErr) {
+		t.Fatalf("expected ErrStorageError, got %T: %v", err, err)
+	}
+	if !errors.Is(err, cause) {
+		t.Errorf("the storage error must carry its cause, got %v", err)
 	}
 }
 
@@ -877,82 +910,6 @@ func TestGetExecutions_ForTenant(t *testing.T) {
 	// Should return empty since no executions exist in tenant keyspace
 	if len(executions) != 0 {
 		t.Errorf("expected 0 executions for tenant, got %d", len(executions))
-	}
-}
-
-func TestInitializeJobIDCounter_NoExistingCounter(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	err := storage.InitializeJobIDCounter(ctx)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// nextID should remain at 0
-	if storage.nextID.Load() != 0 {
-		t.Errorf("expected nextID 0, got %d", storage.nextID.Load())
-	}
-}
-
-func TestInitializeJobIDCounter_WithExistingCounter(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	// Pre-set counter in storage
-	counterData, _ := json.Marshal(uint64(500))
-	kv.Put(ctx, JobIDCounterKey, counterData)
-
-	err := storage.InitializeJobIDCounter(ctx)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if storage.nextID.Load() != 500 {
-		t.Errorf("expected nextID 500, got %d", storage.nextID.Load())
-	}
-}
-
-func TestPersistJobIDCounter_Success(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	// Create some jobs to increment counter
-	for i := 0; i < 5; i++ {
-		job := createTestJob("job", scheduler.OwnerTypeSystem, "")
-		storage.CreateJob(ctx, job)
-	}
-
-	err := storage.PersistJobIDCounter(ctx)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Verify counter was persisted
-	data, err := kv.Get(ctx, JobIDCounterKey)
-	if err != nil {
-		t.Fatalf("failed to get counter: %v", err)
-	}
-
-	var counter uint64
-	json.Unmarshal(data, &counter)
-	if counter != 5 {
-		t.Errorf("expected persisted counter 5, got %d", counter)
-	}
-}
-
-func TestPersistJobIDCounter_PutError(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	kv.putErr = errors.New("storage unavailable")
-	storage := NewStorage(kv)
-
-	err := storage.PersistJobIDCounter(ctx)
-	if err == nil {
-		t.Fatal("expected error")
 	}
 }
 

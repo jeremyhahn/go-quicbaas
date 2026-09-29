@@ -11,7 +11,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { RestClient } from '../src/rest';
-import type { JobStatus, ListSessionsResponse, Task, TaskStatus } from '../src/types';
+import type { JobStatus, ListSessionsResponse, Task, TaskFaultOrigin, TaskStatus } from '../src/types';
 
 function makeResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -65,6 +65,14 @@ const wireTask = {
   runner: 'sdlc',
   routing: { backend: 'claude', host_affinity: 'gpu-box', gpu_required: true },
   dispatch_reason: 'no online agents satisfy backend/gpu/host_affinity constraints',
+  // go-quicbaas#947: why the task stopped, and the budget it ran under.
+  question_attempts: 0,
+  block_fault_class: '',
+  conclusion_reason: 'abandoned',
+  charged_attempts: 2,
+  effective_budget: 5,
+  fault_class: '',
+  fault_origin: 'undiagnosed',
 };
 
 describe('RestOrchestratorClient.getTask — generic Task fields', () => {
@@ -93,6 +101,15 @@ describe('RestOrchestratorClient.getTask — generic Task fields', () => {
     expect(task.runner).toBe('sdlc');
     expect(task.routing).toEqual({ backend: 'claude', host_affinity: 'gpu-box', gpu_required: true });
     expect(task.dispatch_reason).toBe('no online agents satisfy backend/gpu/host_affinity constraints');
+
+    expect(task.question_attempts).toBe(0);
+    expect(task.block_fault_class).toBe('');
+    expect(task.conclusion_reason).toBe('abandoned');
+    expect(task.charged_attempts).toBe(2);
+    expect(task.effective_budget).toBe(5);
+    expect(task.fault_class).toBe('');
+    const origin: TaskFaultOrigin | undefined = task.fault_origin;
+    expect(origin).toBe('undiagnosed');
 
     const blocked: TaskStatus = 'blocked';
     expect(task.status).toBe(blocked);

@@ -35,6 +35,7 @@ const mockRevokeAccount = vi.fn();
 const mockDeleteAccount = vi.fn();
 const mockGetAccountUsage = vi.fn();
 const mockListProjects = vi.fn();
+const mockUpdateAccount = vi.fn();
 
 function mockClient(accounts: Account[] = [], projects: Project[] = []): void {
   mockListAccounts.mockResolvedValue({ accounts, total: accounts.length });
@@ -48,6 +49,7 @@ function mockClient(accounts: Account[] = [], projects: Project[] = []): void {
       revokeAccount: mockRevokeAccount,
       deleteAccount: mockDeleteAccount,
       getAccountUsage: mockGetAccountUsage,
+      updateAccount: mockUpdateAccount,
     },
     projects: {
       listProjects: mockListProjects,
@@ -95,7 +97,7 @@ describe('AccountsView', () => {
       const h1 = container.querySelector('h1');
       expect(h1).not.toBeNull();
       expect(h1!.textContent).toContain('Accounts');
-      const tile = container.querySelector('div.bg-primary\\/10');
+      const tile = container.querySelector('header.page-header');
       expect(tile).not.toBeNull();
       expect(tile!.querySelector('svg')).not.toBeNull();
     });
@@ -340,5 +342,42 @@ describe('AccountsView — actions', () => {
     const req = mockRotateAccountCredential.mock.calls[0][0];
     expect(req.account_id).toBe('acct-1');
     expect(req.credential.refresh_token).toBe('new-refresh-token');
+  });
+
+  it('edits billing, the session cap and spend limits, then reloads the list', async () => {
+    mockClient([account({ billing: { mode: 'api' } })]);
+    mockUpdateAccount.mockResolvedValue({ account: account() });
+    render(AccountsView);
+
+    expect((await screen.findByTestId('account-settings-summary')).textContent).toContain('Metered API');
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit alice-claude' }));
+    const dialog = await screen.findByTestId('account-edit-dialog');
+    expect(dialog).toBeTruthy();
+
+    await fireEvent.change(screen.getByLabelText('Billing'), { target: { value: 'subscription' } });
+    await fireEvent.input(screen.getByLabelText('Monthly fee ($)'), { target: { value: '200' } });
+    await fireEvent.input(screen.getByLabelText('Max concurrent sessions'), { target: { value: '2' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(mockUpdateAccount).toHaveBeenCalledTimes(1));
+    expect(mockUpdateAccount.mock.calls[0]![0]).toMatchObject({
+      tenant_id: 'default',
+      account_id: 'acct-1',
+      billing: { mode: 'subscription', monthly_fee_micros: 200_000_000 },
+      max_concurrent_sessions: 2,
+    });
+    await waitFor(() => expect(screen.queryByTestId('account-edit-dialog')).toBeNull());
+    expect(mockListAccounts).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the edit dialog open and says why when the server refuses the update', async () => {
+    mockClient([account()]);
+    mockUpdateAccount.mockRejectedValue(new Error('quota window "daily" duplicates another'));
+    render(AccountsView);
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Edit alice-claude' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
+    expect((await screen.findByTestId('account-edit-error')).textContent).toContain('duplicates another');
+    expect(screen.getByTestId('account-edit-dialog')).toBeTruthy();
   });
 });

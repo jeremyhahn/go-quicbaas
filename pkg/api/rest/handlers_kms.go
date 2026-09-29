@@ -52,7 +52,7 @@ const kmsListServiceFetchLimit = 10000
 // A key is classified as a system key when ANY of the following are true:
 //   - algorithm is empty (all CA/TLS/cert keys use the raw certificate store)
 //   - key_id matches a well-known system name ("QuicBaaS Root CA", "localhost", "127.0.0.1")
-//   - key_id starts with "agent-embedded-" (embedded-agent identity certs)
+//   - key_id starts with "agent-embedded-" (embedded-fleet-node identity certs)
 func isSystemKey(keyID, algorithm string) bool {
 	if algorithm == "" {
 		return true

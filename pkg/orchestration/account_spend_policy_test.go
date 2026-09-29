@@ -71,14 +71,14 @@ func TestAccountSpendPolicyValidateRefusesEachMalformedHalf(t *testing.T) {
 	}{
 		{
 			name: "a window metering neither axis is not a limit",
-			policy: AccountSpendPolicy{Quota: AccountQuotaPolicy{Windows: []QuotaWindow{
+			policy: AccountSpendPolicy{Quota: SpendLimits{Windows: []QuotaWindow{
 				{Name: "five-hour", Size: 5 * time.Hour},
 			}}},
 			sentinel: ErrQuotaInvalid,
 		},
 		{
 			name: "an unnamed window cannot be reported in a refusal",
-			policy: AccountSpendPolicy{Quota: AccountQuotaPolicy{Windows: []QuotaWindow{
+			policy: AccountSpendPolicy{Quota: SpendLimits{Windows: []QuotaWindow{
 				{Size: time.Hour, MaxTokens: 10},
 			}}},
 			sentinel: ErrQuotaInvalid,

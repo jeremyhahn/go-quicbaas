@@ -326,9 +326,6 @@ type AuthProvider struct {
 	// DefaultRoles are roles assigned to new users.
 	DefaultRoles []string
 
-	// DefaultGroups are groups assigned to new users.
-	DefaultGroups []string
-
 	// CreatedAt is when this provider was created.
 	CreatedAt time.Time
 

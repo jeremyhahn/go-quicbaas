@@ -72,6 +72,27 @@ Tenant jobs are scoped to specific tenants:
 - Tenant-specific maintenance
 - Custom scheduled tasks
 
+## Job IDs
+
+A job's ID is part of its storage key, so an ID handed out twice overwrites
+the job that already holds it. Allocation is therefore durable:
+
+- The counter (`__sys:scheduler/meta/job_id_counter`) holds the last ID
+  allocated and is persisted on **every** allocation, before the ID is
+  returned.
+- `SchedulerEngine.Start` loads it through `JobStorage.InitializeJobIDCounter`;
+  a store that cannot produce it fails the start with a typed
+  `ErrStorageError` rather than allocating from zero.
+- A store with jobs but no counter (written before the counter was durable)
+  is seeded once from the highest job ID found in the system namespace and in
+  every tenant's namespace.
+- Single node: a mutex spans the increment and the persist.
+- Cluster: the counter lives on go-qrdb's transaction plane and every
+  allocation is a compare-and-swap through `pkg/cas` — the primitive that
+  decides firing claims — so two nodes never hand out one ID.
+- Allocated IDs stay below `SystemJobIDFloor` (2^52); `ScheduleJob` refuses a
+  caller-supplied ID at or above it.
+
 ## Ownership Model
 
 | Owner | Scope | Examples |
@@ -219,18 +240,27 @@ type JobHandler interface {
 
 ## Retry Policy
 
-Failed jobs can be retried based on configurable policy:
+A job's retry budget is `MaxRetries`, or the engine's `DefaultRetries` (3)
+when unset, and it is **per firing**, not per job lifetime. Each failed run
+increments `FailCount` and, while the budget lasts, is retried after
+`RetryBackoff × FailCount`. When the budget is spent:
 
-```go
-type RetryPolicy struct {
-    MaxAttempts     int
-    InitialInterval time.Duration
-    MaxInterval     time.Duration
-    Multiplier      float64
-}
-```
+| Job type | Outcome |
+|---|---|
+| recurring | this firing is abandoned; the job moves on to its next scheduled firing, `pending` |
+| one-shot / delayed | `failed` |
 
-The scheduler uses exponential backoff with jitter to prevent thundering herd.
+`FailCount` resets to zero whenever a firing ends or a new one starts: a
+successful run, a recurring firing whose budget is spent, a schedule change, a
+resume that skips a missed firing, and a system job re-armed at install. A run
+abandoned by a dead node (`RecoverAbandonedRun`) spends the budget exactly like
+a handler error. `LastError` keeps the last failure after a reset.
+
+A recurring job resumed after its scheduled run passed is rescheduled to the
+schedule's next occurrence strictly after the resume — never from `LastRun`,
+which for a long pause is an instant already in the past and would fire the job
+on the next tick. (`LastRun` wins only when it is ahead of this node's clock,
+so the new firing cannot land on the one another node just ran.)
 
 ## Graceful Shutdown
 
@@ -253,6 +283,27 @@ func (s *Scheduler) Shutdown(ctx context.Context) error {
     }
 }
 ```
+
+### Runs interrupted by shutdown
+
+A run the engine's own shutdown cuts short — the engine context is cancelled
+while the handler runs, whether the handler returns the cancellation or ignores
+it — is **not** a failure, for every job type and owner:
+
+- the job returns to `pending`; `FailCount`, `RunCount`, `LastRun` and
+  `LastError` are untouched and no failure is counted;
+- a firing that had come due is re-armed at the interruption instant, so it
+  runs again on the next tick of whichever node picks it up. Re-arming at the
+  original instant would leave it at its claim mark on a cluster, and it would
+  never be claimed again. A firing still in the future (a manual trigger ran
+  the job early) keeps its time;
+- the execution record is kept with status `canceled` and a
+  `RunInterruptedError`, since a non-idempotent handler may have begun work.
+
+Every run outcome is written under a context detached from the engine's
+cancellation and bounded by `DefaultTimeout`, so an outcome reached as the
+engine stops is still recorded rather than refused, which would leave the job
+`running` forever.
 
 ## Watch Integration for Custom Automation
 
@@ -601,6 +652,30 @@ No two nodes ever race on the same cert renewal.
 
 See `go-trusted-platform/docs/architecture/bmc-tls.md` for the
 end-to-end cert lifecycle that rides on this scheduler pattern.
+
+### System jobs
+
+A system job is a recurring job the platform declares on every node rather
+than one a caller creates: `engine.RegisterSystemJob(job)`. Its ID is fixed and
+reserved (at or above `scheduler.SystemJobIDFloor`, 2^52, which storage-assigned
+IDs never reach), so every node names the same record under one storage key
+and the firing claim arbitrates its firings like any other cluster-wide job.
+
+The engine installs registered system jobs on its next tick and retries each
+tick until the store accepts them, so boot does not depend on storage being
+writable yet. Installing is idempotent across nodes and restarts:
+
+| Stored record | Install does |
+|---|---|
+| missing | creates it; the first firing is one interval out |
+| definition differs (schedule, handler, timeout, retries) | applies the definition and reschedules from `LastRun` |
+| `failed` (an exhausted budget, a missing handler, or an unschedulable definition) | re-arms it to `pending` on its next firing with a fresh retry budget |
+| `paused` / `canceled` | keeps the operator's status |
+| `running` | waits, retrying next tick, so the run's outcome write cannot overwrite the update |
+
+Registered today: `kms.rotation` (`handlers.KMSRotationJob`, ID
+`SystemJobIDFloor+1`), the PCI DSS 3.6 cryptoperiod scan — see
+[KMS architecture](../kms/architecture.md#cryptoperiod-enforcement-pci-dss-36).
 
 ### Construction cheat sheet
 

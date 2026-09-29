@@ -23,7 +23,7 @@ import (
 )
 
 // XKMSSSHSignerResolver adapts an xkmsssh.Client into the narrow
-// SSHSignerResolver contract consumed by AgentDeployService.
+// SSHSignerResolver contract consumed by FleetDeployService.
 //
 // Spec.SSHKeyName is the only caller-supplied identifier; the
 // resolver layers on a (Scope, Owner) pair so multi-tenant deployments
@@ -77,7 +77,7 @@ func (r *XKMSSSHSignerResolver) Signer(ctx context.Context, ref SSHKeyRef) (ssh.
 		scope = strings.TrimSpace(r.Scope)
 	}
 	if scope == "" {
-		scope = "user"
+		scope = defaultSSHKeyScope
 	}
 	owner := strings.TrimSpace(ref.Owner)
 	if owner == "" {

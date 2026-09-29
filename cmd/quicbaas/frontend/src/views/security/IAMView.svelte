@@ -103,7 +103,7 @@
   const USER_COLUMNS: Column<IAMUser>[] = [
     { key: 'username', label: 'Username', sortable: true, searchable: true },
     { key: 'email', label: 'Email', sortable: true, searchable: true },
-    { key: 'enabled', label: 'Status', sortable: true, value: (u) => (u.enabled === false ? 'disabled' : 'active') },
+    { key: 'lifecycle', label: 'Status', sortable: true, value: (u) => u.lifecycle ?? 'unknown' },
     { key: 'roles', label: 'Roles', value: (u) => (u.roles ?? []).join(' ') },
     { key: 'created_at', label: 'Created', sortable: true },
     { key: 'actions', label: 'Actions', srLabel: true },
@@ -164,7 +164,10 @@
 
   let userToEdit: IAMUser | null = $state(null);
   let editEmail = $state('');
-  let editEnabled = $state(true);
+  // The checkbox reads "active"; the lifecycle is only sent when it is toggled,
+  // so saving an email change never moves a pending or suspended account.
+  let editActive = $state(false);
+  let editActiveInitial = false;
   let editUserError: string | null = $state(null);
   let editingUser = $state(false);
 
@@ -429,7 +432,8 @@
   function openEditUser(user: IAMUser): void {
     userToEdit = user;
     editEmail = user.email;
-    editEnabled = user.enabled ?? true;
+    editActive = user.lifecycle === 'active';
+    editActiveInitial = editActive;
     editUserError = null;
   }
 
@@ -441,7 +445,7 @@
       const client = await getSDKClient();
       const req: UpdateUserRequest = {
         email: editEmail.trim() || undefined,
-        enabled: editEnabled,
+        lifecycle: editActive === editActiveInitial ? undefined : editActive ? 'active' : 'disabled',
       };
       await client.iam.updateUser(selectedTenantID, userToEdit.id, req);
       showToast({ message: `User "${userToEdit.username}" updated`, type: 'success' });
@@ -865,7 +869,7 @@
   {/if}
 
   <!-- Tab bar -->
-  <div role="tablist" class="tabs tabs-bordered">
+  <div role="tablist" class="tabs tabs-border">
     {#each (['users', 'tenants', 'roles', 'policies'] as const) as tab}
       <button
         role="tab"
@@ -920,8 +924,13 @@
             <td class="font-mono text-xs">{user.username}</td>
             <td class="text-sm">{user.email}</td>
             <td>
-              <span class="badge badge-xs badge-soft" class:badge-success={user.enabled !== false} class:badge-warning={user.enabled === false}>
-                {user.enabled === false ? 'disabled' : 'active'}
+              <span
+                class="badge badge-xs badge-soft"
+                class:badge-success={user.lifecycle === 'active'}
+                class:badge-info={user.lifecycle === 'pending'}
+                class:badge-warning={user.lifecycle !== 'active' && user.lifecycle !== 'pending'}
+              >
+                {user.lifecycle ?? 'unknown'}
               </span>
             </td>
             <td>
@@ -1217,8 +1226,8 @@
           <input id="edit-email" class="input input-bordered input-sm" type="email" bind:value={editEmail} />
         </div>
         <label class="flex items-center gap-3 cursor-pointer">
-          <input type="checkbox" class="checkbox checkbox-sm" bind:checked={editEnabled} />
-          <span class="label-text">Account enabled</span>
+          <input type="checkbox" class="checkbox checkbox-sm" bind:checked={editActive} />
+          <span class="label-text">Account active</span>
         </label>
       </div>
       <div class="modal-action">

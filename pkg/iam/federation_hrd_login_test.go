@@ -29,9 +29,8 @@ func newHRDFederationManager(t *testing.T) (*DefaultFederationManager, *MemoryPr
 	}
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  newMockUserStorage(),
-		GroupStorage: newMockGroupStorage(),
-		RoleStorage:  newMockRoleStorage(),
+		UserStorage: newMockUserStorage(),
+		RoleStorage: newMockRoleStorage(),
 	})
 
 	manager, err := NewFederationManager(
@@ -244,9 +243,8 @@ func TestBeginLoginHRD_ProviderStoreError(t *testing.T) {
 		WithLinkStorage(NewMemoryFederationStorage()),
 		WithStateStorage(NewMemoryStateStorage()),
 		WithFederationIdentityStore(NewIdentityStore(IdentityStoreOptions{
-			UserStorage:  newMockUserStorage(),
-			GroupStorage: newMockGroupStorage(),
-			RoleStorage:  newMockRoleStorage(),
+			UserStorage: newMockUserStorage(),
+			RoleStorage: newMockRoleStorage(),
 		})),
 		WithProviderResolver(dir),
 	)
@@ -268,9 +266,8 @@ func TestBeginLogin_ExplicitNameStoreError(t *testing.T) {
 		WithLinkStorage(NewMemoryFederationStorage()),
 		WithStateStorage(NewMemoryStateStorage()),
 		WithFederationIdentityStore(NewIdentityStore(IdentityStoreOptions{
-			UserStorage:  newMockUserStorage(),
-			GroupStorage: newMockGroupStorage(),
-			RoleStorage:  newMockRoleStorage(),
+			UserStorage: newMockUserStorage(),
+			RoleStorage: newMockRoleStorage(),
 		})),
 	)
 	if err != nil {

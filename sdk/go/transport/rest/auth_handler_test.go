@@ -199,6 +199,9 @@ func TestAuthRESTHandler_ValidateToken(t *testing.T) {
 	if claims.Username != "testuser" {
 		t.Errorf("expected username 'testuser', got %s", claims.Username)
 	}
+	if claims.TenantID != "tenant-1" {
+		t.Errorf("expected tenant ID 'tenant-1', got %s", claims.TenantID)
+	}
 	if len(claims.Roles) != 2 || claims.Roles[0] != "admin" {
 		t.Errorf("expected roles ['admin', 'user'], got %v", claims.Roles)
 	}

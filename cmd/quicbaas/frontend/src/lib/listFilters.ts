@@ -80,7 +80,7 @@ export const JOB_STATES: readonly string[] = [
 export const SESSION_STATES: readonly string[] = ['active', 'idle', 'closed', 'error'];
 
 /** The fleet's agent states. */
-export const AGENT_STATUSES: readonly string[] = [
+export const FLEET_NODE_STATUSES: readonly string[] = [
   'registered',
   'running',
   'idle',
@@ -159,7 +159,7 @@ export function idField<T>(
  */
 export function taskFilters<T>(
   projects: readonly FilterOption[],
-  agents: readonly FilterOption[],
+  nodes: readonly FilterOption[],
 ): FilterField<T>[] {
   return [
     {
@@ -176,14 +176,14 @@ export function taskFilters<T>(
       options: DISPATCH_OPTIONS,
     },
     idField<T>('project', 'Project', 'project_id', projects),
-    idField<T>('agent', 'Agent', 'agent_id', agents),
+    idField<T>('node', 'Fleet node', 'agent_id', nodes),
   ];
 }
 
 /** jobFilters is what the Jobs list narrows by. */
 export function jobFilters<T>(
   projects: readonly FilterOption[],
-  agents: readonly FilterOption[],
+  nodes: readonly FilterOption[],
 ): FilterField<T>[] {
   return [
     {
@@ -200,7 +200,7 @@ export function jobFilters<T>(
       options: [...RUNNER_OPTIONS],
     },
     idField<T>('project', 'Project', 'project_id', projects),
-    idField<T>('agent', 'Agent', 'agent_id', agents),
+    idField<T>('node', 'Fleet node', 'agent_id', nodes),
   ];
 }
 
@@ -208,7 +208,7 @@ export function jobFilters<T>(
 export function sessionFilters<T>(
   backends: readonly FilterOption[],
   projects: readonly FilterOption[],
-  agents: readonly FilterOption[],
+  nodes: readonly FilterOption[],
 ): FilterField<T>[] {
   return [
     {
@@ -234,7 +234,7 @@ export function sessionFilters<T>(
       options: [...RUNNER_OPTIONS],
     },
     idField<T>('project', 'Project', 'project_id', projects),
-    idField<T>('agent', 'Agent', 'agent_id', agents),
+    idField<T>('node', 'Fleet node', 'agent_id', nodes),
   ];
 }
 
@@ -255,8 +255,8 @@ export function workflowFilters<T>(
   ];
 }
 
-/** agentFilters is what the fleet list narrows by. */
-export function agentFilters<T>(
+/** fleetNodeFilters is what the fleet list narrows by. */
+export function fleetNodeFilters<T>(
   status: (row: T) => string | null | undefined,
   backend: (row: T) => string | null | undefined,
   backends: readonly FilterOption[],
@@ -266,7 +266,7 @@ export function agentFilters<T>(
       key: 'status',
       label: 'Status',
       param: 'status',
-      options: options(AGENT_STATUSES),
+      options: options(FLEET_NODE_STATUSES),
       rowValue: status,
     },
     {

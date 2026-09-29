@@ -35,7 +35,7 @@ function makeMockClient() {
   return {
     orchestrator: {
       listJobs:           vi.fn().mockResolvedValue([]),
-      listAgents:         vi.fn().mockResolvedValue({ agents: [] }),
+      listFleetNodes:         vi.fn().mockResolvedValue({ nodes: [] }),
       listSessions:       vi.fn().mockResolvedValue({ sessions: [] }),
       listTasks:          vi.fn().mockResolvedValue([]),
       healthCheck:        vi.fn().mockResolvedValue({ status: 'ok' }),
@@ -73,10 +73,10 @@ vi.mock('@quicbaas/sdk', async (importOriginal) => {
 
 // Keep the auxiliary agent/session pollers out of the way — their own SDK
 // traffic is irrelevant to the shell-gating assertions in this file.
-vi.mock('../src/stores/agentStore.svelte.ts', () => ({
-  agentStore: { agents: [], agentsLoading: false, onlineAgents: [] },
+vi.mock('../src/stores/fleetStore.svelte.ts', () => ({
+  fleetStore: { nodes: [], nodesLoading: false, onlineNodes: [] },
   startAgentsAutoRefresh: vi.fn().mockReturnValue(() => { /* cleanup noop */ }),
-  refreshAgents: vi.fn().mockResolvedValue(undefined),
+  refreshFleet: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../src/stores/sessionStore.svelte.ts', () => ({

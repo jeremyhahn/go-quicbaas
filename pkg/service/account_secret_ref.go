@@ -16,6 +16,7 @@ package service
 import (
 	"context"
 	stderrors "errors"
+	"math"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
@@ -50,7 +51,13 @@ func NewAccountSecretResolver(secrets SecretsService) orchestration.AccountSecre
 }
 
 // ResolveAccountSecret implements orchestration.AccountSecretResolver.
-func (r *accountSecretResolver) ResolveAccountSecret(ctx context.Context, tenantID, ref string) ([]byte, error) {
+//
+// The value's generation is the secret's VERSION number, which every write
+// advances, so a rewritten secret reads as a newer copy of the account's
+// credential. It is deliberately not the response's CreatedAt: the secrets
+// service reports the time of the READ there when the version carries no
+// creation stamp, which would make every read look like a rotation.
+func (r *accountSecretResolver) ResolveAccountSecret(ctx context.Context, tenantID, ref string) (*orchestration.AccountSecretValue, error) {
 	if r == nil || r.secrets == nil {
 		return nil, &AccountSecretsServiceNotConfiguredError{}
 	}
@@ -61,7 +68,17 @@ func (r *accountSecretResolver) ResolveAccountSecret(ctx context.Context, tenant
 	if resp == nil {
 		return nil, nil
 	}
-	return resp.Data, nil
+	return &orchestration.AccountSecretValue{Data: resp.Data, Generation: secretVersionGeneration(resp.Version)}, nil
+}
+
+// secretVersionGeneration converts a secret version number into a credential
+// generation. A version too large for the generation's type cannot be ordered
+// against the others and is reported as unknown (zero).
+func secretVersionGeneration(version uint64) int64 {
+	if version > math.MaxInt64 {
+		return 0
+	}
+	return int64(version)
 }
 
 // AccountSecretsServiceNotConfiguredError reports an account secret resolver

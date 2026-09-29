@@ -1,0 +1,3 @@
+## Your previous session on this branch was replaced because its provider account was refreshed
+
+It was spawned in round ${round} holding the pooled account's earlier credential, which has since been replaced; nothing it could say would have been answered. This is a fresh session on the same branch, holding the current credential: everything the previous session committed and pushed is checked out here, and nothing it did not commit survived. Read the branch before you write, continue from what it holds, and do not treat the replacement as a comment on the work — the work was never judged.

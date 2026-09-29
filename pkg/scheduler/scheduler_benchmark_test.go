@@ -54,6 +54,9 @@ func (b *benchmarkStorage) ClaimFiring(_ context.Context, claim *FiringClaim) (b
 	return true, nil
 }
 
+// InitializeJobIDCounter is a no-op: the benchmark's counter is in memory.
+func (b *benchmarkStorage) InitializeJobIDCounter(context.Context) error { return nil }
+
 func (b *benchmarkStorage) CreateJob(ctx context.Context, job *Job) error {
 	id := b.nextID.Add(1)
 	job.ID = id

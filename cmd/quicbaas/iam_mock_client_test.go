@@ -231,80 +231,6 @@ func (m *testMockTenantClient) List(ctx context.Context, req *iam.ListTenantsReq
 	}, nil
 }
 
-// testMockGroupClient implements iam.GroupClient for testing.
-type testMockGroupClient struct {
-	CreateFunc       func(ctx context.Context, tenantID string, req *iam.CreateGroupRequest) (*iam.Group, error)
-	GetFunc          func(ctx context.Context, tenantID, groupID string) (*iam.Group, error)
-	UpdateFunc       func(ctx context.Context, tenantID, groupID string, req *iam.UpdateGroupRequest) (*iam.Group, error)
-	DeleteFunc       func(ctx context.Context, tenantID, groupID string) error
-	ListFunc         func(ctx context.Context, tenantID string, req *iam.ListGroupsRequest) (*iam.ListGroupsResponse, error)
-	AddMemberFunc    func(ctx context.Context, tenantID, groupID, userID string) error
-	RemoveMemberFunc func(ctx context.Context, tenantID, groupID, userID string) error
-	ListMembersFunc  func(ctx context.Context, tenantID, groupID string) (*iam.ListMembersResponse, error)
-}
-
-func (m *testMockGroupClient) Create(ctx context.Context, tenantID string, req *iam.CreateGroupRequest) (*iam.Group, error) {
-	if m.CreateFunc != nil {
-		return m.CreateFunc(ctx, tenantID, req)
-	}
-	return &iam.Group{ID: req.Name, Name: req.Name, DisplayName: req.DisplayName, TenantID: tenantID, CreatedAt: time.Now()}, nil
-}
-
-func (m *testMockGroupClient) Get(ctx context.Context, tenantID, groupID string) (*iam.Group, error) {
-	if m.GetFunc != nil {
-		return m.GetFunc(ctx, tenantID, groupID)
-	}
-	return &iam.Group{ID: groupID, Name: groupID, DisplayName: "Test Group", TenantID: tenantID, MemberCount: 5, CreatedAt: time.Now()}, nil
-}
-
-func (m *testMockGroupClient) Update(ctx context.Context, tenantID, groupID string, req *iam.UpdateGroupRequest) (*iam.Group, error) {
-	if m.UpdateFunc != nil {
-		return m.UpdateFunc(ctx, tenantID, groupID, req)
-	}
-	return &iam.Group{ID: groupID, Name: groupID, DisplayName: "Updated Group", TenantID: tenantID, CreatedAt: time.Now()}, nil
-}
-
-func (m *testMockGroupClient) Delete(ctx context.Context, tenantID, groupID string) error {
-	if m.DeleteFunc != nil {
-		return m.DeleteFunc(ctx, tenantID, groupID)
-	}
-	return nil
-}
-
-func (m *testMockGroupClient) List(ctx context.Context, tenantID string, req *iam.ListGroupsRequest) (*iam.ListGroupsResponse, error) {
-	if m.ListFunc != nil {
-		return m.ListFunc(ctx, tenantID, req)
-	}
-	return &iam.ListGroupsResponse{
-		Groups:     []iam.Group{{ID: "grp_001", Name: "engineering", DisplayName: "Engineering", TenantID: tenantID, CreatedAt: time.Now()}},
-		Pagination: iam.PaginationInfo{TotalCount: 1, HasMore: false},
-	}, nil
-}
-
-func (m *testMockGroupClient) AddMember(ctx context.Context, tenantID, groupID, userID string) error {
-	if m.AddMemberFunc != nil {
-		return m.AddMemberFunc(ctx, tenantID, groupID, userID)
-	}
-	return nil
-}
-
-func (m *testMockGroupClient) RemoveMember(ctx context.Context, tenantID, groupID, userID string) error {
-	if m.RemoveMemberFunc != nil {
-		return m.RemoveMemberFunc(ctx, tenantID, groupID, userID)
-	}
-	return nil
-}
-
-func (m *testMockGroupClient) ListMembers(ctx context.Context, tenantID, groupID string) (*iam.ListMembersResponse, error) {
-	if m.ListMembersFunc != nil {
-		return m.ListMembersFunc(ctx, tenantID, groupID)
-	}
-	return &iam.ListMembersResponse{
-		Members:    []iam.GroupMember{{UserID: "user_001", DisplayName: "Test User", JoinedAt: time.Now()}},
-		Pagination: iam.PaginationInfo{TotalCount: 1, HasMore: false},
-	}, nil
-}
-
 // testMockRoleClient implements iam.RoleClient for testing.
 type testMockRoleClient struct {
 	CreateFunc    func(ctx context.Context, tenantID string, req *iam.CreateRoleRequest) (*iam.Role, error)
@@ -368,21 +294,19 @@ func (m *testMockRoleClient) Reconcile(ctx context.Context, tenantID string) (*i
 
 // testMockUserClient implements iam.UserClient for testing.
 type testMockUserClient struct {
-	CreateFunc          func(ctx context.Context, tenantID string, req *iam.CreateUserRequest) (*iam.User, error)
-	GetFunc             func(ctx context.Context, tenantID, userID string) (*iam.User, error)
-	GetByEmailFunc      func(ctx context.Context, tenantID, email string) (*iam.User, error)
-	FindByUsernameFunc  func(ctx context.Context, tenantID, username string) (*iam.User, error)
-	UpdateFunc          func(ctx context.Context, tenantID, userID string, req *iam.UpdateUserRequest) (*iam.User, error)
-	DeleteFunc          func(ctx context.Context, tenantID, userID string) error
-	ListFunc            func(ctx context.Context, tenantID string, req *iam.ListUsersRequest) (*iam.ListUsersResponse, error)
-	AssignRoleFunc      func(ctx context.Context, tenantID, userID, roleID string) error
-	RevokeRoleFunc      func(ctx context.Context, tenantID, userID, roleID string) error
-	AddToGroupFunc      func(ctx context.Context, tenantID, userID, groupID string) error
-	RemoveFromGroupFunc func(ctx context.Context, tenantID, userID, groupID string) error
-	SuspendFunc         func(ctx context.Context, tenantID, userID string) error
-	UnsuspendFunc       func(ctx context.Context, tenantID, userID string) error
-	ApproveFunc         func(ctx context.Context, tenantID, userID string) error
-	RejectFunc          func(ctx context.Context, tenantID, userID, reason string) error
+	CreateFunc         func(ctx context.Context, tenantID string, req *iam.CreateUserRequest) (*iam.User, error)
+	GetFunc            func(ctx context.Context, tenantID, userID string) (*iam.User, error)
+	GetByEmailFunc     func(ctx context.Context, tenantID, email string) (*iam.User, error)
+	FindByUsernameFunc func(ctx context.Context, tenantID, username string) (*iam.User, error)
+	UpdateFunc         func(ctx context.Context, tenantID, userID string, req *iam.UpdateUserRequest) (*iam.User, error)
+	DeleteFunc         func(ctx context.Context, tenantID, userID string) error
+	ListFunc           func(ctx context.Context, tenantID string, req *iam.ListUsersRequest) (*iam.ListUsersResponse, error)
+	AssignRoleFunc     func(ctx context.Context, tenantID, userID, roleID string) error
+	RevokeRoleFunc     func(ctx context.Context, tenantID, userID, roleID string) error
+	SuspendFunc        func(ctx context.Context, tenantID, userID string) error
+	UnsuspendFunc      func(ctx context.Context, tenantID, userID string) error
+	ApproveFunc        func(ctx context.Context, tenantID, userID string) error
+	RejectFunc         func(ctx context.Context, tenantID, userID, reason string) error
 }
 
 func (m *testMockUserClient) Create(ctx context.Context, tenantID string, req *iam.CreateUserRequest) (*iam.User, error) {
@@ -396,7 +320,7 @@ func (m *testMockUserClient) Get(ctx context.Context, tenantID, userID string) (
 	if m.GetFunc != nil {
 		return m.GetFunc(ctx, tenantID, userID)
 	}
-	return &iam.User{ID: userID, Username: "testuser", Email: "test@example.com", DisplayName: "Test User", TenantID: tenantID, Status: iam.UserStatusActive, Roles: []string{"admin"}, Groups: []string{"engineering"}, CreatedAt: time.Now()}, nil
+	return &iam.User{ID: userID, Username: "testuser", Email: "test@example.com", DisplayName: "Test User", TenantID: tenantID, Status: iam.UserStatusActive, Roles: []string{"admin"}, CreatedAt: time.Now()}, nil
 }
 
 func (m *testMockUserClient) GetByEmail(ctx context.Context, tenantID, email string) (*iam.User, error) {
@@ -447,20 +371,6 @@ func (m *testMockUserClient) AssignRole(ctx context.Context, tenantID, userID, r
 func (m *testMockUserClient) RevokeRole(ctx context.Context, tenantID, userID, roleID string) error {
 	if m.RevokeRoleFunc != nil {
 		return m.RevokeRoleFunc(ctx, tenantID, userID, roleID)
-	}
-	return nil
-}
-
-func (m *testMockUserClient) AddToGroup(ctx context.Context, tenantID, userID, groupID string) error {
-	if m.AddToGroupFunc != nil {
-		return m.AddToGroupFunc(ctx, tenantID, userID, groupID)
-	}
-	return nil
-}
-
-func (m *testMockUserClient) RemoveFromGroup(ctx context.Context, tenantID, userID, groupID string) error {
-	if m.RemoveFromGroupFunc != nil {
-		return m.RemoveFromGroupFunc(ctx, tenantID, userID, groupID)
 	}
 	return nil
 }
@@ -929,7 +839,6 @@ type testMockIAMClient struct {
 	adminClient   *testMockAdminClient
 	tenantClient  *testMockTenantClient
 	userClient    *testMockUserClient
-	groupClient   *testMockGroupClient
 	roleClient    *testMockRoleClient
 	sessionClient *testMockSessionClient
 	appClient     *testMockAppClient
@@ -965,7 +874,6 @@ type testMockIAMClient struct {
 
 func (m *testMockIAMClient) Tenant() iam.TenantClient   { return m.tenantClient }
 func (m *testMockIAMClient) User() iam.UserClient       { return m.userClient }
-func (m *testMockIAMClient) Group() iam.GroupClient     { return m.groupClient }
 func (m *testMockIAMClient) Role() iam.RoleClient       { return m.roleClient }
 func (m *testMockIAMClient) Policy() iam.PolicyClient   { return m.policyClient }
 func (m *testMockIAMClient) PEP() iam.PEPClient         { return m.pepClient }
@@ -1102,7 +1010,6 @@ func newTestMockIAMClient() *testMockIAMClient {
 		adminClient:   &testMockAdminClient{},
 		tenantClient:  &testMockTenantClient{},
 		userClient:    &testMockUserClient{},
-		groupClient:   &testMockGroupClient{},
 		roleClient:    &testMockRoleClient{},
 		sessionClient: &testMockSessionClient{},
 		appClient:     &testMockAppClient{},

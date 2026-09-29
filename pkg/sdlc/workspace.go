@@ -49,7 +49,7 @@ import (
 // than merely fixed.
 //
 // THE SEAM NAMES THE WORKSPACE; IT NEVER PICKS A HOST PATH (go-quicbaas#981).
-// A path on this daemon's host means nothing to a fleet agent on another one,
+// A path on this daemon's host means nothing to a fleet node on another one,
 // which refused every mount it was handed. The spawn carries the workspace's
 // name and its spec files, and whichever host executes the session provisions
 // the directory under its own projects root and writes the spec beside it
@@ -74,6 +74,10 @@ type forgeAccess struct {
 	// leave the KMS and the socket lives as long as it is needed.
 	signing SigningAgent
 
+	// guard is the operator's repository allowlist, applied to the project
+	// and its context repositories every time a workspace is opened.
+	guard RepoHostGuard
+
 	// checkoutRoot is where the container clones, as the CONTAINER sees it.
 	checkoutRoot string
 
@@ -82,7 +86,7 @@ type forgeAccess struct {
 
 	// sweep is what preparing socketsRoot removed: the sessions a killed
 	// process left bound.
-	sweep SigningSocketSweep
+	sweep orchestration.SigningSocketSweep
 }
 
 // newForgeAccess builds the seam, refusing every collaborator a container
@@ -92,8 +96,13 @@ type forgeAccess struct {
 // could be bound under refuses the module at startup rather than at the first
 // job, and the session directories a killed process left behind are swept
 // before anything binds a new one.
-func newForgeAccess(tokens ForgeTokenReader, signing SigningAgent, checkoutRoot, socketsRoot string) (forgeAccess, error) {
+func newForgeAccess(tokens ForgeTokenReader, signing SigningAgent, guard RepoHostGuard, checkoutRoot, socketsRoot string) (forgeAccess, error) {
 	switch {
+	case !guard.configured():
+		return forgeAccess{}, &InvalidInputError{
+			Field:   "sdlc.repo_hosts",
+			Message: "every workspace is checked against the operator's repository allowlist; a runner without one would refuse them all",
+		}
 	case tokens == nil:
 		return forgeAccess{}, &InvalidInputError{
 			Field:   "tokens",
@@ -107,6 +116,15 @@ func newForgeAccess(tokens ForgeTokenReader, signing SigningAgent, checkoutRoot,
 		}
 	}
 	sockets := strings.TrimSpace(socketsRoot)
+	// A REQUIRED SETTING, NAMED: the runner is configured with the daemon's
+	// orchestration.sockets_root, and an unset or relative one is a
+	// configuration to fix, not a filesystem fault.
+	if sockets == "" || !filepath.IsAbs(filepath.Clean(sockets)) {
+		return forgeAccess{}, &InvalidInputError{
+			Field:   "orchestration.sockets_root",
+			Message: "the daemon binds its per-session agent sockets under an absolute root",
+		}
+	}
 	sweep, err := EnsureSigningSocketRoot(sockets)
 	if err != nil {
 		return forgeAccess{}, err
@@ -118,6 +136,7 @@ func newForgeAccess(tokens ForgeTokenReader, signing SigningAgent, checkoutRoot,
 	return forgeAccess{
 		tokens:       tokens,
 		signing:      signing,
+		guard:        guard,
 		checkoutRoot: root,
 		socketsRoot:  filepath.Clean(sockets),
 		sweep:        sweep,
@@ -233,6 +252,14 @@ func (a forgeAccess) Open(
 	if strings.TrimSpace(plan.Key) == "" {
 		return nil, &InvalidInputError{Field: "workspace.key", Message: "a spawn names the workspace it works in"}
 	}
+	// The repositories are checked HERE, not only at bind: this is the one
+	// seam every runner opens a workspace through, so a context repository
+	// edited onto the project after it was bound, or a host the operator has
+	// since dropped from the allowlist, is refused before a container exists
+	// rather than failing its clone three attempts later (go-quicbaas#770).
+	if err := a.guard.CheckProject(plan.Project); err != nil {
+		return nil, &WorkspaceRepoRefusedError{ProjectID: plan.Project.ID, Cause: err}
+	}
 	spec, err := orchestration.NewWorkspaceSpec(plan.Project, plan.Branch)
 	if err != nil {
 		return nil, err
@@ -260,6 +287,9 @@ func (a forgeAccess) Open(
 		// make the WORKER'S own commits signed ones and the publisher can
 		// refuse any outgoing commit that is not (go-quicbaas#1048).
 		spec.SigningKey = workspace.Signing.PublicKey
+		// The project's trusted signing history travels with it, so a branch
+		// carrying commits the key signed before its rotation still verifies.
+		spec.RetiredSigningKeys = plan.Project.Git.Signing.Retired
 	}
 	if err := orchestration.RequireCheckoutCredentials(spec, creds); err != nil {
 		workspace.Release(context.WithoutCancel(ctx))
@@ -380,17 +410,17 @@ func (a forgeAccess) startSigning(
 // 0700 itself and refuses one that already exists — and it goes away with the
 // agent.
 func (a forgeAccess) socketDir() (string, error) {
-	name, err := signingSocketDirName()
+	name, err := orchestration.NewSigningSocketDirName()
 	if err != nil {
-		return "", err
+		return "", &SigningSessionError{Message: err.Error()}
 	}
 	dir := filepath.Join(a.socketsRoot, name)
 	// The root was measured at construction and every session directory is
 	// the same width, so this cannot fail here — it is asserted because the
 	// consequence of being wrong is an unbindable socket whose listen error
 	// names nothing.
-	if socket := filepath.Join(dir, SigningSocketFile); len(socket) > MaxSigningSocketPath {
-		return "", &SigningSocketPathError{Path: socket, Limit: MaxSigningSocketPath}
+	if socket := filepath.Join(dir, SigningSocketFile); len(socket) > orchestration.MaxSigningSocketPath {
+		return "", &SigningSocketPathError{Path: socket, Limit: orchestration.MaxSigningSocketPath}
 	}
 	return dir, nil
 }

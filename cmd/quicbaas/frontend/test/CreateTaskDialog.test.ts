@@ -24,7 +24,7 @@ vi.mock('../src/stores/sdkClient.ts', () => ({
   getSDKClient: vi.fn().mockResolvedValue({
     orchestrator: {
       createTask: mockCreateTask,
-      listAgents: mockListAgents,
+      listFleetNodes: mockListAgents,
     },
   }),
 }));
@@ -56,7 +56,7 @@ describe('CreateTaskDialog', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCreateTask.mockResolvedValue({ task: { id: 'task-001' } });
-    mockListAgents.mockResolvedValue({ agents: AGENTS });
+    mockListAgents.mockResolvedValue({ nodes: AGENTS });
   });
 
   it('renders subject, team name, and description fields when open', () => {
@@ -69,25 +69,25 @@ describe('CreateTaskDialog', () => {
   it('renders the host affinity select and GPU required toggle when open', async () => {
     render(CreateTaskDialog, { props: { open: true } });
 
-    // Agents load asynchronously via listAgents — wait for select to populate.
+    // Agents load asynchronously via listFleetNodes — wait for select to populate.
     await waitFor(() => {
-      const hostSelect = screen.getByLabelText(/Host affinity — pin task to a specific agent/i);
+      const hostSelect = screen.getByLabelText(/Host affinity — pin task to a specific fleet node/i);
       expect(hostSelect).toBeInTheDocument();
     });
 
-    const gpuToggle = screen.getByLabelText(/Require a GPU-capable agent/i);
+    const gpuToggle = screen.getByLabelText(/Require a GPU-capable fleet node/i);
     expect(gpuToggle).toBeInTheDocument();
     expect((gpuToggle as HTMLInputElement).type).toBe('checkbox');
   });
 
-  it('populates the host affinity dropdown with agents from listAgents', async () => {
+  it('populates the host affinity dropdown with agents from listFleetNodes', async () => {
     render(CreateTaskDialog, { props: { open: true } });
 
     await waitFor(() => {
       expect(mockListAgents).toHaveBeenCalledOnce();
     });
 
-    const hostSelect = screen.getByLabelText(/Host affinity — pin task to a specific agent/i) as HTMLSelectElement;
+    const hostSelect = screen.getByLabelText(/Host affinity — pin task to a specific fleet node/i) as HTMLSelectElement;
     const options = Array.from(hostSelect.options).map((o) => o.value);
     expect(options).toContain('gpu-host-01');
     expect(options).toContain('cpu-host-02');
@@ -101,7 +101,7 @@ describe('CreateTaskDialog', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: /Create Task/i }));
     expect(screen.getByText(/Subject is required/i)).toBeInTheDocument();
-    // createTask must NOT be called — only listAgents (on mount) is allowed.
+    // createTask must NOT be called — only listFleetNodes (on mount) is allowed.
     expect(mockCreateTask).not.toHaveBeenCalled();
   });
 
@@ -131,7 +131,7 @@ describe('CreateTaskDialog', () => {
       target: { value: 'Run model inference' },
     });
 
-    const hostSelect = screen.getByLabelText(/Host affinity — pin task to a specific agent/i);
+    const hostSelect = screen.getByLabelText(/Host affinity — pin task to a specific fleet node/i);
     await fireEvent.change(hostSelect, { target: { value: 'gpu-host-01' } });
 
     await fireEvent.click(screen.getByRole('button', { name: /Create Task/i }));
@@ -151,7 +151,7 @@ describe('CreateTaskDialog', () => {
       target: { value: 'GPU workload' },
     });
 
-    const gpuToggle = screen.getByLabelText(/Require a GPU-capable agent/i);
+    const gpuToggle = screen.getByLabelText(/Require a GPU-capable fleet node/i);
     await fireEvent.click(gpuToggle);
 
     await fireEvent.click(screen.getByRole('button', { name: /Create Task/i }));
@@ -167,11 +167,11 @@ describe('CreateTaskDialog', () => {
     render(CreateTaskDialog, { props: { open: true } });
     await waitFor(() => screen.getByLabelText(/Host affinity/i));
 
-    const gpuToggle = screen.getByLabelText(/Require a GPU-capable agent/i);
+    const gpuToggle = screen.getByLabelText(/Require a GPU-capable fleet node/i);
     await fireEvent.click(gpuToggle);
 
     expect(
-      screen.getByText(/Task will only be assigned to agents that advertise GPU capability/i),
+      screen.getByText(/Task will only be assigned to fleet nodes that advertise GPU capability/i),
     ).toBeInTheDocument();
   });
 
@@ -226,14 +226,14 @@ describe('CreateTaskDialog', () => {
     });
   });
 
-  it('falls back gracefully when listAgents rejects', async () => {
+  it('falls back gracefully when listFleetNodes rejects', async () => {
     mockListAgents.mockRejectedValueOnce(new Error('network error'));
 
     render(CreateTaskDialog, { props: { open: true } });
 
     // Component should still render with an empty agent list (no crash).
     await waitFor(() => {
-      const hostSelect = screen.getByLabelText(/Host affinity — pin task to a specific agent/i) as HTMLSelectElement;
+      const hostSelect = screen.getByLabelText(/Host affinity — pin task to a specific fleet node/i) as HTMLSelectElement;
       // Only the "Any" option present when agents fail to load.
       expect(hostSelect.options.length).toBe(1);
       expect(hostSelect.options[0].value).toBe('');
@@ -258,7 +258,7 @@ describe('CreateTaskDialog', () => {
     expect(screen.queryByLabelText(/^Backend/i)).toBeNull();
 
     const toggle = screen.getByLabelText(
-      /Spawn a job immediately on the best-matching agent/i,
+      /Spawn a job immediately on the best-matching fleet node/i,
     );
     await fireEvent.click(toggle);
 
@@ -278,7 +278,7 @@ describe('CreateTaskDialog', () => {
     expect(screen.getByRole('button', { name: /^Create Task$/i })).toBeInTheDocument();
 
     const toggle = screen.getByLabelText(
-      /Spawn a job immediately on the best-matching agent/i,
+      /Spawn a job immediately on the best-matching fleet node/i,
     );
     await fireEvent.click(toggle);
 
@@ -298,7 +298,7 @@ describe('CreateTaskDialog', () => {
     });
 
     const toggle = screen.getByLabelText(
-      /Spawn a job immediately on the best-matching agent/i,
+      /Spawn a job immediately on the best-matching fleet node/i,
     );
     await fireEvent.click(toggle);
 
@@ -337,7 +337,7 @@ describe('CreateTaskDialog', () => {
     });
 
     const toggle = screen.getByLabelText(
-      /Spawn a job immediately on the best-matching agent/i,
+      /Spawn a job immediately on the best-matching fleet node/i,
     );
     await fireEvent.click(toggle);
 
@@ -353,5 +353,30 @@ describe('CreateTaskDialog', () => {
         expect.objectContaining({ auto_spawn: true, backend: 'ollama' }),
       );
     });
+  });
+});
+
+describe('CreateTaskDialog — run-time prompt material', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCreateTask.mockResolvedValue({ task: { id: 'task-001' } });
+    mockListAgents.mockResolvedValue({ nodes: AGENTS });
+  });
+
+  it('sends the appended prompt every attempt carries', async () => {
+    render(CreateTaskDialog, { props: { open: true } });
+    await fireEvent.input(screen.getByLabelText(/Subject/i), { target: { value: 'Fix it' } });
+    await fireEvent.input(screen.getByLabelText(/Append to the agent's prompt/i), { target: { value: 'use the staging cluster' } });
+    await fireEvent.click(screen.getByRole('button', { name: /Create Task/i }));
+    await waitFor(() => expect(mockCreateTask).toHaveBeenCalled());
+    expect(mockCreateTask.mock.calls[0][0].prompt_append).toBe('use the staging cluster');
+  });
+
+  it('sends none when the field is left blank', async () => {
+    render(CreateTaskDialog, { props: { open: true } });
+    await fireEvent.input(screen.getByLabelText(/Subject/i), { target: { value: 'Fix it' } });
+    await fireEvent.click(screen.getByRole('button', { name: /Create Task/i }));
+    await waitFor(() => expect(mockCreateTask).toHaveBeenCalled());
+    expect(mockCreateTask.mock.calls[0][0].prompt_append).toBeUndefined();
   });
 });

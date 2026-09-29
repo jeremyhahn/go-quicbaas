@@ -125,28 +125,6 @@ func (m *mockTenantManager) UpdateRole(ctx context.Context, role *Role) error {
 	return nil
 }
 
-func (m *mockTenantManager) CreateGroup(ctx context.Context, group *Group) error {
-	key := group.TenantID + ":" + group.ID
-	if _, exists := m.groups.Load(key); exists {
-		return ErrGroupAlreadyExists
-	}
-	m.groups.Store(key, group)
-	return nil
-}
-
-func (m *mockTenantManager) GetGroup(ctx context.Context, tenantID, groupID string) (*Group, error) {
-	if val, ok := m.groups.Load(tenantID + ":" + groupID); ok {
-		return val.(*Group), nil
-	}
-	return nil, ErrGroupNotFound
-}
-
-func (m *mockTenantManager) UpdateGroup(ctx context.Context, group *Group) error {
-	key := group.TenantID + ":" + group.ID
-	m.groups.Store(key, group)
-	return nil
-}
-
 func (m *mockTenantManager) CreatePolicy(ctx context.Context, policy *Policy) error {
 	key := policy.Metadata.Tenant + ":" + policy.Metadata.Name
 	if _, exists := m.policies.Load(key); exists {
@@ -295,38 +273,6 @@ func TestBatchProcessor_ImportRoles(t *testing.T) {
 
 	if op.Type != BatchOperationTypeRoles {
 		t.Errorf("expected type %s, got %s", BatchOperationTypeRoles, op.Type)
-	}
-
-	time.Sleep(100 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
-	if saved.Status == BatchStatusPending {
-		t.Error("operation still pending")
-	}
-}
-
-func TestBatchProcessor_ImportGroups(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	items := []GroupImportItem{
-		{ID: "group1", Name: "Engineering", Description: "Engineering team"},
-		{ID: "group2", Name: "Sales", Description: "Sales team"},
-	}
-
-	op, err := bp.ImportGroups(ctx, tenantID, items, BatchOptions{
-		DryRun: true,
-	})
-	if err != nil {
-		t.Fatalf("ImportGroups failed: %v", err)
-	}
-
-	if op.Type != BatchOperationTypeGroups {
-		t.Errorf("expected type %s, got %s", BatchOperationTypeGroups, op.Type)
 	}
 
 	time.Sleep(100 * time.Millisecond)
@@ -797,18 +743,6 @@ func TestBatchItemTypes(t *testing.T) {
 			t.Error("expected invalid role to fail validation")
 		}
 	})
-
-	t.Run("GroupImportItem validation", func(t *testing.T) {
-		validGroup := GroupImportItem{Name: "Engineering"}
-		if err := validGroup.Validate(); err != nil {
-			t.Errorf("expected valid group to pass validation: %v", err)
-		}
-
-		invalidGroup := GroupImportItem{Name: ""}
-		if err := invalidGroup.Validate(); err == nil {
-			t.Error("expected invalid group to fail validation")
-		}
-	})
 }
 
 func TestBatchOperation_Validation(t *testing.T) {
@@ -1033,25 +967,6 @@ func TestIAMBatchProcessor_ImportFromJSON_Roles_Coverage(t *testing.T) {
 	}
 }
 
-func TestIAMBatchProcessor_ImportFromJSON_Groups_Coverage(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	groups := []GroupImportItem{
-		{Name: "engineering", Description: "Engineering team"},
-	}
-	data, _ := json.Marshal(groups)
-
-	op, err := bp.ImportFromJSON(t.Context(), "test-tenant", BatchOperationTypeGroups, bytes.NewReader(data), BatchOptions{DryRun: true})
-	if err != nil {
-		t.Fatalf("ImportFromJSON groups failed: %v", err)
-	}
-	if op == nil {
-		t.Fatal("expected non-nil operation")
-	}
-}
-
 func TestIAMBatchProcessor_ImportFromJSON_Policies_Coverage(t *testing.T) {
 	storage := newMockBatchStorage()
 	tenantMgr := newMockTenantManager()
@@ -1117,21 +1032,6 @@ func TestIAMBatchProcessor_ImportFromCSV_Roles_Coverage(t *testing.T) {
 	op, err := bp.ImportFromCSV(t.Context(), "test-tenant", BatchOperationTypeRoles, strings.NewReader(csv), BatchOptions{DryRun: true})
 	if err != nil {
 		t.Fatalf("ImportFromCSV roles failed: %v", err)
-	}
-	if op == nil {
-		t.Fatal("expected non-nil operation")
-	}
-}
-
-func TestIAMBatchProcessor_ImportFromCSV_Groups_Coverage(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	csv := "id,name,description\n,engineering,Eng team"
-	op, err := bp.ImportFromCSV(t.Context(), "test-tenant", BatchOperationTypeGroups, strings.NewReader(csv), BatchOptions{DryRun: true})
-	if err != nil {
-		t.Fatalf("ImportFromCSV groups failed: %v", err)
 	}
 	if op == nil {
 		t.Fatal("expected non-nil operation")
@@ -1272,24 +1172,6 @@ func TestBatchProcessor_ImportRoles_SaveOperationError(t *testing.T) {
 	}
 
 	_, err := bp.ImportRoles(ctx, "test-tenant", items, BatchOptions{})
-	if err == nil {
-		t.Error("expected error when SaveOperation fails")
-	}
-}
-
-func TestBatchProcessor_ImportGroups_SaveOperationError(t *testing.T) {
-	storage := newFailingSaveBatchStorage()
-	storage.failSave = true
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-
-	items := []GroupImportItem{
-		{ID: "group-1", Name: "Test Group"},
-	}
-
-	_, err := bp.ImportGroups(ctx, "test-tenant", items, BatchOptions{})
 	if err == nil {
 		t.Error("expected error when SaveOperation fails")
 	}
@@ -1507,9 +1389,8 @@ func TestBatchManager_ExportAll_ContextCancellation(t *testing.T) {
 	storage := NewMemoryStorage()
 
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
+		UserStorage: storage,
+		RoleStorage: storage,
 	})
 
 	policyEngine := NewPolicyEngine(PolicyEngineOptions{
@@ -1534,7 +1415,6 @@ func TestBatchManager_ExportAll_ContextCancellation(t *testing.T) {
 	_, err := bm.ExportAll(ctx, &BatchExportRequest{
 		TenantID:        "export-tenant",
 		IncludeUsers:    true,
-		IncludeGroups:   true,
 		IncludeRoles:    true,
 		IncludePolicies: true,
 	})
@@ -1677,63 +1557,6 @@ func TestBatchProcessor_ProcessRoles_ValidationError(t *testing.T) {
 }
 
 // =============================================================================
-// Batch Processor - processGroups coverage
-// =============================================================================
-
-func TestBatchProcessor_ProcessGroups_WithActualCreation(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	items := []GroupImportItem{
-		{ID: "group-1", Name: "Engineering", Description: "Engineering team"},
-		{ID: "group-2", Name: "Marketing", Description: "Marketing team"},
-	}
-
-	op, err := bp.ImportGroups(ctx, tenantID, items, BatchOptions{})
-	if err != nil {
-		t.Fatalf("ImportGroups failed: %v", err)
-	}
-
-	time.Sleep(200 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
-	if saved.Status == BatchStatusPending {
-		t.Error("operation still pending after processing")
-	}
-}
-
-func TestBatchProcessor_ProcessGroups_ValidationError(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	items := []GroupImportItem{
-		{ID: "group-1", Name: "", Description: "Invalid group"},
-	}
-
-	op, err := bp.ImportGroups(ctx, tenantID, items, BatchOptions{
-		ContinueOnError: true,
-	})
-	if err != nil {
-		t.Fatalf("ImportGroups failed: %v", err)
-	}
-
-	time.Sleep(150 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
-	if saved.Progress.Failed == 0 {
-		t.Error("expected validation failure")
-	}
-}
-
-// =============================================================================
 // Batch Processor - processPolicies coverage
 // =============================================================================
 
@@ -1850,33 +1673,6 @@ func TestBatchProcessor_ImportFromJSON_Roles(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 }
 
-func TestBatchProcessor_ImportFromJSON_Groups(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	items := []GroupImportItem{
-		{ID: "group-1", Name: "Engineering"},
-	}
-
-	data, _ := json.Marshal(items)
-	reader := bytes.NewReader(data)
-
-	op, err := bp.ImportFromJSON(ctx, tenantID, BatchOperationTypeGroups, reader, BatchOptions{DryRun: true})
-	if err != nil {
-		t.Fatalf("ImportFromJSON failed: %v", err)
-	}
-
-	if op.Type != BatchOperationTypeGroups {
-		t.Errorf("expected type %s, got %s", BatchOperationTypeGroups, op.Type)
-	}
-
-	time.Sleep(100 * time.Millisecond)
-}
-
 func TestBatchProcessor_ImportFromJSON_Policies(t *testing.T) {
 	storage := newMockBatchStorage()
 	tenantMgr := newMockTenantManager()
@@ -1932,22 +1728,6 @@ func TestBatchProcessor_ImportFromJSON_InvalidRoles(t *testing.T) {
 	}
 }
 
-func TestBatchProcessor_ImportFromJSON_InvalidGroups(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	reader := strings.NewReader("invalid json")
-
-	_, err := bp.ImportFromJSON(ctx, tenantID, BatchOperationTypeGroups, reader, BatchOptions{})
-	if err == nil {
-		t.Error("expected error for invalid JSON")
-	}
-}
-
 func TestBatchProcessor_ImportFromJSON_InvalidPolicies(t *testing.T) {
 	storage := newMockBatchStorage()
 	tenantMgr := newMockTenantManager()
@@ -1989,32 +1769,6 @@ role-2,Viewer,Viewer role`
 
 	if op.Type != BatchOperationTypeRoles {
 		t.Errorf("expected type %s, got %s", BatchOperationTypeRoles, op.Type)
-	}
-
-	time.Sleep(100 * time.Millisecond)
-}
-
-func TestBatchProcessor_ImportFromCSV_Groups(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	csvData := `id,name,description
-group-1,Engineering,Engineering team
-group-2,Marketing,Marketing team`
-
-	reader := strings.NewReader(csvData)
-
-	op, err := bp.ImportFromCSV(ctx, tenantID, BatchOperationTypeGroups, reader, BatchOptions{DryRun: true})
-	if err != nil {
-		t.Fatalf("ImportFromCSV failed: %v", err)
-	}
-
-	if op.Type != BatchOperationTypeGroups {
-		t.Errorf("expected type %s, got %s", BatchOperationTypeGroups, op.Type)
 	}
 
 	time.Sleep(100 * time.Millisecond)
@@ -2573,10 +2327,6 @@ func (f *failingTenantManager) CreateRole(ctx context.Context, role *Role) error
 	return ErrRoleAlreadyExists
 }
 
-func (f *failingTenantManager) CreateGroup(ctx context.Context, group *Group) error {
-	return ErrGroupAlreadyExists
-}
-
 func (f *failingTenantManager) CreatePolicy(ctx context.Context, policy *Policy) error {
 	return ErrPolicyNotFound
 }
@@ -2598,33 +2348,6 @@ func TestBatchProcessor_ProcessRoles_CreateError(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("ImportRoles failed: %v", err)
-	}
-
-	time.Sleep(200 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
-	if saved.Progress.Failed == 0 {
-		t.Error("expected failure due to create error")
-	}
-}
-
-func TestBatchProcessor_ProcessGroups_CreateError(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := &failingTenantManager{mockTenantManager: newMockTenantManager()}
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	items := []GroupImportItem{
-		{ID: "group-1", Name: "Engineering"},
-	}
-
-	op, err := bp.ImportGroups(ctx, tenantID, items, BatchOptions{
-		ContinueOnError: true,
-	})
-	if err != nil {
-		t.Fatalf("ImportGroups failed: %v", err)
 	}
 
 	time.Sleep(200 * time.Millisecond)

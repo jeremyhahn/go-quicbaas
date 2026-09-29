@@ -94,8 +94,14 @@ func (r *JobRun) acquireJobLease(ctx context.Context, runner JobRunner) error {
 	// The budget is read the same way, and the lease starts where the FIRST
 	// state stands: a job resumed into a state that holds no worker must not
 	// be refused a slot it is not going to use.
+	//
+	// A job resumed into such a state is also DORMANT (JobLease.Dormant): it
+	// runs no worker there, so the fleet and backend axes do not count it
+	// either. A runner whose every job is off the budget is never dormant —
+	// its jobs run a worker, they just do not spend a project's slot on it.
 	r.budgetStates = runnerBudgetStates(runner)
-	offBudget := runnerOffProjectBudget(runner) || r.budgetStates[r.StartState]
+	dormant := r.budgetStates[r.StartState]
+	offBudget := runnerOffProjectBudget(runner) || dormant
 	r.standing = standingFor(offBudget)
 	lease := &JobLease{
 		TenantID:   r.Config.TenantID,
@@ -108,6 +114,7 @@ func (r *JobRun) acquireJobLease(ctx context.Context, runner JobRunner) error {
 		Node:       r.node,
 		Backend:    strings.TrimSpace(r.Config.LeadBackend),
 		OffBudget:  offBudget,
+		Dormant:    dormant,
 	}
 	if err := r.leases.Acquire(ctx, lease); err != nil {
 		return err
@@ -235,6 +242,11 @@ func (r *JobRun) heartbeat(ctx context.Context) {
 //
 // The lease itself never moves. It is what keeps one job per task and what
 // the reaper and the heartbeat act on; only its budget standing changes.
+//
+// A STATE OFF THE BUDGET IS ALSO A STATE WITH NO WORKER, so the same move
+// marks the lease dormant (JobLease.Dormant) and the fleet and backend axes
+// stop counting it too (go-quicbaas#1036). Waking is admitted on all three
+// axes, and a refusal on any of them makes the job wait the same way.
 
 // budgetStanding is where a run's lease stands against its project's
 // budget, as the run knows it.
@@ -328,15 +340,15 @@ func (r *JobRun) reconcileOnBudget(ctx context.Context) bool {
 }
 
 // enterBudget takes a slot back for a state that runs a worker, through the
-// project's admission. An unknown standing is first settled by the store: a
+// project's, the fleet's and the backend's admission. An unknown standing is first settled by the store: a
 // record still on the budget means the failed release never applied and the
 // slot is still this job's, so there is nothing to admit.
 //
-// A FULL PROJECT MAKES THE JOB WAIT, NOT FAIL. The round it is entering was
-// asked for by a review or a red pipeline on work already published; failing
-// it would charge the task for the project being busy. So the lease is marked
-// AwaitingSlot — queued demand every reader counts, so new work cannot take
-// the slot first — and the move is retried on the heartbeat cadence until a
+// A FULL PROJECT, FLEET OR BACKEND MAKES THE JOB WAIT, NOT FAIL. The round it
+// is entering was asked for by a review or a red pipeline on work already
+// published; failing it would charge the task for the deployment being busy.
+// So the lease is marked AwaitingSlot — queued demand every reader counts, so
+// new work cannot take the slot first — and the move is retried on the heartbeat cadence until a
 // slot frees or the run is ended from outside (cancelled, superseded,
 // stalled). Every other refusal is returned: entering a worker state without
 // a decided admission is the oversubscription the quota exists to prevent.
@@ -347,8 +359,8 @@ func (r *JobRun) enterBudget(ctx context.Context, state JobState) error {
 	awaiting := false
 	for {
 		err := r.rebudget(ctx, false, false)
-		var full *ProjectCapacityExceededError
-		if !errors.As(err, &full) {
+		full, refused := capacityRefusalOf(err)
+		if !refused {
 			if err != nil {
 				r.standing = budgetUnknown
 				return err
@@ -366,7 +378,7 @@ func (r *JobRun) enterBudget(ctx context.Context, state JobState) error {
 			}
 			awaiting = true
 			r.Audit("orchestration:job_slot_awaited", "job_id="+r.JobID+" state="+string(state)+
-				" live="+itoa(full.Live)+" limit="+itoa(full.Limit))
+				" axis="+full.axis+" live="+itoa(full.live)+" limit="+itoa(full.limit))
 			// The status says so while the job waits, rather than at
 			// whatever transition comes after it.
 			if current := r.Status(); current != nil {
@@ -383,14 +395,45 @@ func (r *JobRun) enterBudget(ctx context.Context, state JobState) error {
 	}
 }
 
+// capacityRefusal is what a waking job's wait reports about the axis that
+// refused it.
+type capacityRefusal struct {
+	axis  string
+	live  int
+	limit int
+}
+
+// capacityRefusalOf reports whether err is a capacity refusal on any of the
+// three axes a waking job is admitted on — the only refusals it waits out.
+func capacityRefusalOf(err error) (capacityRefusal, bool) {
+	var project *ProjectCapacityExceededError
+	if errors.As(err, &project) {
+		return capacityRefusal{axis: "project", live: project.Live, limit: project.Limit}, true
+	}
+	var fleet *FleetCapacityExceededError
+	if errors.As(err, &fleet) {
+		return capacityRefusal{axis: "fleet", live: fleet.Live, limit: fleet.Limit}, true
+	}
+	var backend *BackendCapacityExceededError
+	if errors.As(err, &backend) {
+		return capacityRefusal{axis: "backend", live: backend.Live, limit: backend.Limit}, true
+	}
+	return capacityRefusal{}, false
+}
+
 // rebudget writes the budget standing onto the run's lease. A superseded
 // answer aborts the run, exactly as a heartbeat's does.
+//
+// Only a runner with per-state budgets moves its lease (moveBudget), and for
+// such a runner a state off the budget is a state with no worker, so the
+// lease is dormant exactly when it is off the budget.
 func (r *JobRun) rebudget(ctx context.Context, offBudget, awaitingSlot bool) error {
 	writeCtx, cancel := context.WithTimeout(ctx, jobLeaseWriteTimeout)
 	defer cancel()
 	next := *r.lease.Load()
 	next.OffBudget = offBudget
 	next.AwaitingSlot = awaitingSlot
+	next.Dormant = offBudget
 	err := r.leases.Rebudget(writeCtx, &next)
 	var superseded *JobSupersededError
 	if errors.As(err, &superseded) {

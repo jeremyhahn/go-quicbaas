@@ -17,6 +17,9 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
 // A project's id is the UUID minted by pkg/service.CreateProject, and
@@ -174,6 +177,66 @@ func TestAgentService_ReadmitTask_Errors(t *testing.T) {
 	})
 }
 
+func TestAgentService_BumpTaskReviewRoundBudget_CallsStore(t *testing.T) {
+	t.Parallel()
+
+	store := &mockTaskStore{bumpBonus: 2}
+	svc, _ := newTaskServiceWithStore(t, store)
+
+	bonus, err := svc.BumpTaskReviewRoundBudget(context.Background(), "tenant-1", "task-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if bonus != 2 {
+		t.Fatalf("bonus = %d, want 2", bonus)
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.bumpCalls) != 1 {
+		t.Fatalf("expected 1 BumpReviewRoundBudget call, got %d", len(store.bumpCalls))
+	}
+	if call := store.bumpCalls[0]; call.TenantID != "tenant-1" || call.TaskID != "task-1" {
+		t.Fatalf("store received %+v", call)
+	}
+}
+
+func TestAgentService_BumpTaskReviewRoundBudget_Errors(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no task store", func(t *testing.T) {
+		t.Parallel()
+		svc, _ := newTaskServiceWithStore(t, nil)
+		if _, err := svc.BumpTaskReviewRoundBudget(context.Background(), "tenant-1", "task-1"); !errors.Is(err, ErrTaskStoreRequired) {
+			t.Fatalf("expected ErrTaskStoreRequired, got %v", err)
+		}
+	})
+	t.Run("missing tenant", func(t *testing.T) {
+		t.Parallel()
+		svc, _ := newTaskServiceWithStore(t, &mockTaskStore{})
+		if _, err := svc.BumpTaskReviewRoundBudget(context.Background(), "", "task-1"); !errors.Is(err, ErrTenantIDRequired) {
+			t.Fatalf("expected ErrTenantIDRequired, got %v", err)
+		}
+	})
+	t.Run("missing task id", func(t *testing.T) {
+		t.Parallel()
+		svc, _ := newTaskServiceWithStore(t, &mockTaskStore{})
+		if _, err := svc.BumpTaskReviewRoundBudget(context.Background(), "tenant-1", ""); !errors.Is(err, ErrTaskIDRequired) {
+			t.Fatalf("expected ErrTaskIDRequired, got %v", err)
+		}
+	})
+	t.Run("store error propagates", func(t *testing.T) {
+		t.Parallel()
+		store := &mockTaskStore{bumpErr: &ReviewRoundBudgetExhaustedError{TaskID: "task-1", Max: MaxReviewRoundBonus}}
+		svc, _ := newTaskServiceWithStore(t, store)
+		_, err := svc.BumpTaskReviewRoundBudget(context.Background(), "tenant-1", "task-1")
+		var exhausted *ReviewRoundBudgetExhaustedError
+		if !errors.As(err, &exhausted) {
+			t.Fatalf("expected ReviewRoundBudgetExhaustedError, got %v", err)
+		}
+	})
+}
+
 func TestAgentService_BlockThenReadmit_EndToEnd(t *testing.T) {
 	t.Parallel()
 
@@ -246,6 +309,52 @@ func TestCreateTask_CopiesSourcePriorityAndBudget(t *testing.T) {
 	}
 }
 
+// A task's created_by is the principal the transport authenticated, stamped by
+// the server: the request type has no such field, so no caller can name
+// someone else as the author (#862).
+func TestCreateTask_StampsCreatedByFromAuthenticatedPrincipal(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryTaskStore()
+	svc, _ := newTaskServiceWithStore(t, store)
+
+	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{
+		ID: "user-42", Username: "alice", TenantID: "tenant-1", Authenticated: true,
+	})
+	task, err := svc.CreateTask(ctx, &CreateTaskRequest{TenantID: "tenant-1", Subject: "s"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if task.CreatedBy != "user-42" {
+		t.Errorf("returned task created_by = %q, want %q", task.CreatedBy, "user-42")
+	}
+
+	stored, err := store.GetTask(context.Background(), "tenant-1", task.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if stored.CreatedBy != "user-42" {
+		t.Errorf("stored task created_by = %q, want %q", stored.CreatedBy, "user-42")
+	}
+}
+
+// With no authenticated principal (an in-process poller adopting a forge
+// issue) created_by stays empty rather than naming anyone.
+func TestCreateTask_NoPrincipalLeavesCreatedByEmpty(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryTaskStore()
+	svc, _ := newTaskServiceWithStore(t, store)
+
+	task, err := svc.CreateTask(context.Background(), &CreateTaskRequest{TenantID: "tenant-1", Subject: "s"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if task.CreatedBy != "" {
+		t.Errorf("created_by = %q, want empty", task.CreatedBy)
+	}
+}
+
 func TestCreateTask_InvalidSourceRefusedBeforeStore(t *testing.T) {
 	t.Parallel()
 
@@ -271,15 +380,15 @@ func TestCreateTask_AutoSpawn_BindsJobToTaskAndProject(t *testing.T) {
 	t.Parallel()
 
 	taskStore := NewInMemoryTaskStore()
-	registry := NewInMemoryAgentRegistry()
-	if err := registry.RegisterAgent(context.Background(), &AgentRegistration{
-		ID: "agent-idle", TenantID: "tenant-1", Name: "worker", Host: "host", Backend: "ollama", AgentType: "worker", Status: AgentStatusIdle,
+	registry := NewInMemoryFleetRegistry()
+	if err := registry.RegisterFleetNode(context.Background(), &FleetNode{
+		ID: "agent-idle", TenantID: "tenant-1", Name: "worker", Host: "host", Backend: "ollama", NodeType: "worker", Status: FleetNodeStatusIdle,
 	}); err != nil {
 		t.Fatalf("register agent: %v", err)
 	}
 
 	svc, impl := newTaskServiceWithStore(t, taskStore)
-	impl.SetAgentRegistry(registry)
+	impl.SetFleetRegistry(registry)
 	impl.backends.Store("ollama", &testMinimalBackend{})
 
 	task, err := svc.CreateTask(context.Background(), &CreateTaskRequest{
@@ -339,11 +448,11 @@ func TestStartJob_CopiesTaskBindingIntoConfig(t *testing.T) {
 	impl.backends.Store("ollama", &testMinimalBackend{})
 
 	resp, err := svc.StartJob(context.Background(), &StartJobRequest{
-		TenantID:    "tenant-1",
-		Description: "attempt three",
-		LeadBackend: "ollama",
-		TaskID:      "task-77",
-		Attempt:     3,
+		TenantID:      "tenant-1",
+		Description:   "attempt three",
+		routedBackend: "ollama",
+		TaskID:        "task-77",
+		Attempt:       3,
 	})
 	if err != nil {
 		t.Fatalf("start job: %v", err)
@@ -471,14 +580,14 @@ func TestSessionRecord_JobID_RoundTrip(t *testing.T) {
 func autoSpawnFixture(t *testing.T) (AgentService, *agentServiceImpl, ProjectStore) {
 	t.Helper()
 	taskStore := NewInMemoryTaskStore()
-	registry := NewInMemoryAgentRegistry()
-	if err := registry.RegisterAgent(context.Background(), &AgentRegistration{
-		ID: "agent-idle", TenantID: "tenant-1", Name: "worker", Host: "host", Backend: "ollama", AgentType: "worker", Status: AgentStatusIdle,
+	registry := NewInMemoryFleetRegistry()
+	if err := registry.RegisterFleetNode(context.Background(), &FleetNode{
+		ID: "agent-idle", TenantID: "tenant-1", Name: "worker", Host: "host", Backend: "ollama", NodeType: "worker", Status: FleetNodeStatusIdle,
 	}); err != nil {
 		t.Fatalf("register agent: %v", err)
 	}
 	svc, impl := newTaskServiceWithStore(t, taskStore)
-	impl.SetAgentRegistry(registry)
+	impl.SetFleetRegistry(registry)
 	impl.backends.Store("ollama", &testMinimalBackend{})
 	projects := NewInMemoryProjectStore()
 	impl.SetProjectStore(projects)
@@ -488,7 +597,18 @@ func autoSpawnFixture(t *testing.T) (AgentService, *agentServiceImpl, ProjectSto
 func TestCreateTask_AutoSpawn_RunsTheProjectDefaultWorkflow(t *testing.T) {
 	t.Parallel()
 
-	svc, _, projects := autoSpawnFixture(t)
+	svc, impl, projects := autoSpawnFixture(t)
+	// The job names the workflow, so the tenant must have it: a fresh job
+	// naming a workflow nothing registered is refused.
+	workflows := NewWorkflowLoader()
+	if err := workflows.Register("tenant-1", &WorkflowDefinition{
+		Name:   "review-flow",
+		Mode:   WorkflowModeAutonomous,
+		Agents: []AgentRoleSpec{{Role: "worker", Backend: "ollama", Model: "test-model"}},
+	}); err != nil {
+		t.Fatalf("register workflow: %v", err)
+	}
+	impl.SetWorkflowLoader(workflows)
 	if err := projects.Create(context.Background(), &Project{
 		ID: testProjectWithWorkflowID, TenantID: "tenant-1", Name: "with-default", DefaultWorkflow: "review-flow",
 	}); err != nil {

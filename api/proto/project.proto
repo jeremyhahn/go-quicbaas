@@ -11,6 +11,8 @@ package quicbaas.project.v1;
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
 import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+import "api/proto/spend.proto";
+import "api/proto/agents.proto";
 
 // =============================================================================
 // ProjectService — CRUD for Project entities
@@ -36,15 +38,16 @@ service ProjectService {
         option (qrdb.v1.permission) = "project:list";
     }
 
-    // GrantAgentRole sets or updates the role of a single agent. Unlike
-    // UpdateProject.agent_roles — which REPLACES the whole role map — this
-    // mutates exactly one entry and leaves every other agent untouched.
-    rpc GrantAgentRole(GrantAgentRoleRequest) returns (GrantAgentRoleResponse) {
+    // GrantFleetNodeRole sets or updates the role of a single fleet node.
+    // Unlike UpdateProject.agent_roles — which REPLACES the whole role
+    // map — this mutates exactly one entry and leaves every other node
+    // untouched.
+    rpc GrantFleetNodeRole(GrantFleetNodeRoleRequest) returns (GrantFleetNodeRoleResponse) {
         option (qrdb.v1.permission) = "project:grant";
     }
-    // RevokeAgentRole sets a single agent's role to "denied", blocking its
-    // project access without disturbing the other entries.
-    rpc RevokeAgentRole(RevokeAgentRoleRequest) returns (RevokeAgentRoleResponse) {
+    // RevokeFleetNodeRole sets a single fleet node's role to "denied",
+    // blocking its project access without disturbing the other entries.
+    rpc RevokeFleetNodeRole(RevokeFleetNodeRoleRequest) returns (RevokeFleetNodeRoleResponse) {
         option (qrdb.v1.permission) = "project:revoke";
     }
 }
@@ -70,13 +73,13 @@ message Project {
     string workspace_agent_id  = 5;
     string workspace_path      = 6;
     string host_affinity       = 7;
-    string default_lead_agent  = 8;
+    quicbaas.agents.v1.AgentRef default_lead_agent = 8;
     string git_repo_url        = 9;
     string git_default_branch  = 10;
     string git_current_sha     = 11;
-    // agent_roles maps agent_id → role ("lead"|"worker"|"observer"|"denied")
-    map<string, string> agent_roles   = 12;
-    int64 token_budget         = 13;
+    // agent_roles maps a fleet node ID → role ("lead"|"worker"|"observer"|"denied")
+    map<string, string> agent_roles = 12;
+    reserved 13;
     int64 gpu_minutes          = 14;
     int32 max_concurrency      = 15;
     map<string, string> metadata      = 16;
@@ -100,6 +103,42 @@ message Project {
     bool   autonomous            = 30;
     // context_repos are cloned by the worker beside the project checkout.
     repeated ContextRepo context_repos = 31;
+    // spend is the project's own limits: sliding windows in tokens and/or
+    // list-price dollars over every turn charged to the project, pooled or
+    // not. Unset meters nothing.
+    quicbaas.spend.v1.SpendLimits spend = 32;
+    // Storage tier of the project's sandboxed checkout; see
+    // docs/software-factory/storage-tiers.md. workspace_tier is "" (host
+    // bind mount), "persistent" or "ephemeral"; the sizes are MiB and zero
+    // is unsized / the runtime's default.
+    string workspace_tier        = 33;
+    int32  workspace_tmpfs_mb    = 34;
+    int32  container_memory_mb   = 35;
+    // session_rotation is what happens to a persistent worker session when
+    // the pooled provider account under it rotates: "resume" continues the
+    // same session on the account's current credential, "fresh" replaces it
+    // with a new session on the same branch. Empty means "resume".
+    string session_rotation      = 36;
+    // parked closes the project's intake: nothing that has not started is
+    // dispatched, adopted or triaged, and everything in flight finishes.
+    // Independent of autonomous. parked_at_unix and parked_by record when
+    // and by whom; both are empty while the project is not parked.
+    bool   parked                = 37;
+    int64  parked_at_unix        = 38;
+    string parked_by             = 39;
+    // git_signing_retired is the project's trusted signing history: every
+    // key it signed with before the current one, each trusted only for
+    // commits made before its retirement.
+    repeated RetiredSigningKey git_signing_retired = 40;
+}
+
+// RetiredSigningKey is one entry of a project's trusted signing history.
+message RetiredSigningKey {
+    // public_key is the retired key's public half, one OpenSSH line.
+    string public_key       = 1;
+    // name is the KMS name the key was held under, for display.
+    string name             = 2;
+    int64  retired_at_unix  = 3;
 }
 
 message CreateProjectRequest {
@@ -109,11 +148,11 @@ message CreateProjectRequest {
     string workspace_agent_id  = 4;
     string workspace_path      = 5;
     string host_affinity       = 6;
-    string default_lead_agent  = 7;
+    quicbaas.agents.v1.AgentRef default_lead_agent = 7;
     string git_repo_url        = 8;
     string git_default_branch  = 9;
     map<string, string> agent_roles = 10;
-    int64 token_budget         = 11;
+    reserved 11;
     int64 gpu_minutes          = 12;
     int32 max_concurrency      = 13;
     map<string, string> metadata    = 14;
@@ -134,6 +173,19 @@ message CreateProjectRequest {
     bool   autonomous            = 26;
     // context_repos are cloned by the worker beside the project checkout.
     repeated ContextRepo context_repos = 27;
+    quicbaas.spend.v1.SpendLimits spend = 28;
+    // Storage tier of the project's sandboxed checkout; see
+    // docs/software-factory/storage-tiers.md. workspace_tier is "" (host
+    // bind mount), "persistent" or "ephemeral"; the sizes are MiB and zero
+    // is unsized / the runtime's default.
+    string workspace_tier        = 29;
+    int32  workspace_tmpfs_mb    = 30;
+    int32  container_memory_mb   = 31;
+    // session_rotation is what happens to a persistent worker session when
+    // the pooled provider account under it rotates: "resume" continues the
+    // same session on the account's current credential, "fresh" replaces it
+    // with a new session on the same branch. Empty means "resume".
+    string session_rotation      = 32;
 }
 
 message CreateProjectResponse {
@@ -165,15 +217,15 @@ message UpdateProjectRequest {
     string workspace_agent_id  = 6;
     string workspace_path      = 7;
     string host_affinity       = 8;
-    string default_lead_agent  = 9;
+    quicbaas.agents.v1.AgentRef default_lead_agent = 9;
     string git_repo_url        = 10;
     string git_default_branch  = 11;
     string git_current_sha     = 12;
-    map<string, string> agent_roles   = 13;
+    map<string, string> agent_roles = 13;
     // The quotas are optional so zero is expressible: zero means UNLIMITED
     // on the project record, so a plain scalar could not say "lift the cap"
     // — the update applied only non-zero values and the old cap stayed.
-    optional int64 token_budget    = 14;
+    reserved 14;
     optional int64 gpu_minutes     = 15;
     optional int32 max_concurrency = 16;
     map<string, string> metadata      = 17;
@@ -199,6 +251,28 @@ message UpdateProjectRequest {
     // clear_context_repos empties it.
     repeated ContextRepo context_repos = 31;
     bool   clear_context_repos   = 32;
+    // spend, when present, replaces the project's limits; a present empty
+    // message clears them. Absent leaves them unchanged.
+    quicbaas.spend.v1.SpendLimits spend = 33;
+    // Storage tier of the sandboxed checkout. workspace_tier updates when
+    // non-empty. The sizes are optional so zero is expressible: zero means
+    // unsized / the runtime's default, so absent ("leave it alone") and zero
+    // ("lift the limit") are different instructions.
+    string workspace_tier                 = 34;
+    optional int32 workspace_tmpfs_mb     = 35;
+    optional int32 container_memory_mb    = 36;
+    // session_rotation updates the rotation policy when non-empty.
+    string session_rotation               = 37;
+    // parked parks (true) or resumes (false) the project; absent leaves it
+    // unchanged. It is optional so "unchanged" and "resume" are distinct.
+    optional bool parked                  = 38;
+    // git_signing_retire_key_* name a KMS-held key to record in the
+    // project's trusted signing history, retired at git_signing_retired_at
+    // (RFC 3339; empty is now).
+    string git_signing_retire_key_name    = 39;
+    string git_signing_retire_key_scope   = 40;
+    string git_signing_retire_key_owner   = 41;
+    string git_signing_retired_at         = 42;
 }
 
 message UpdateProjectResponse {
@@ -219,37 +293,56 @@ message DeleteProjectResponse {
 
 message ListProjectsRequest {
     string tenant_id = 1;
+
+    // Paging, sorting and search — the contract every list endpoint speaks
+    // (docs/software-factory/api.md). limit 0 takes the default page (25);
+    // anything above 100 is capped. sort is "<field>" or "<field>:desc",
+    // naming a field from the endpoint's allow-list; an unknown field is
+    // refused with InvalidArgument. q is a case-insensitive substring
+    // matched against the endpoint's documented text fields.
+    int32 limit = 2;
+    int32 offset = 3;
+    string sort = 4;
+    string q = 5;
 }
 
 message ListProjectsResponse {
     repeated Project projects = 1;
     int32 total               = 2;
     int64 timestamp           = 3;
+
+    // The paging envelope. total counts the records that matched the filters
+    // and the search BEFORE the page was cut; limit and offset are the values
+    // the server APPLIED. next_offset is the offset of the following page and
+    // is zero on the last page.
+    int32 limit = 4;
+    int32 offset = 5;
+    int32 next_offset = 6;
 }
 
-message GrantAgentRoleRequest {
+message GrantFleetNodeRoleRequest {
     string tenant_id  = 1;
     string project_id = 2;
-    string agent_id   = 3;
+    string node_id   = 3;
     // role is one of "lead"|"worker"|"observer"|"denied".
     string role       = 4;
 }
 
-message GrantAgentRoleResponse {
+message GrantFleetNodeRoleResponse {
     string project_id = 1;
-    string agent_id   = 2;
+    string node_id   = 2;
     string role       = 3;
     int64  timestamp  = 4;
 }
 
-message RevokeAgentRoleRequest {
+message RevokeFleetNodeRoleRequest {
     string tenant_id  = 1;
     string project_id = 2;
-    string agent_id   = 3;
+    string node_id   = 3;
 }
 
-message RevokeAgentRoleResponse {
+message RevokeFleetNodeRoleResponse {
     string project_id = 1;
-    string agent_id   = 2;
+    string node_id   = 2;
     int64  timestamp  = 3;
 }

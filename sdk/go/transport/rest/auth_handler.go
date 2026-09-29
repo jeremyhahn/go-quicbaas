@@ -236,6 +236,7 @@ func (h *authRESTHandler) handleValidateToken(ctx context.Context, req interface
 		Valid:     resp.Valid,
 		UserID:    resp.UserID,
 		Username:  resp.Username,
+		TenantID:  resp.TenantID,
 		Roles:     resp.Roles,
 		ExpiresAt: expiresAt,
 	}, nil

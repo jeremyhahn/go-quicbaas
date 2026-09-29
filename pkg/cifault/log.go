@@ -203,8 +203,16 @@ func (v logView) failureEvidence() (string, bool) {
 }
 
 // failureLine reports whether one line is the change's own failure.
+//
+// The runner's OWN lines are never the change's failure, even written as an
+// error annotation: see runnerInfraSignatures.
 func failureLine(lower string) bool {
+	if _, infra := runnerInfraLine(lower); infra {
+		return false
+	}
 	switch {
+	case processExitedNonZero(lower):
+		return true
 	case strings.HasPrefix(lower, "--- fail:"):
 		return true
 	case lower == "fail" || strings.HasPrefix(lower, "fail\t") ||
@@ -220,6 +228,26 @@ func failureLine(lower string) bool {
 		return true
 	}
 	return false
+}
+
+// processExitNeedle is how a runner reports a step whose process exited:
+// "##[error]Process completed with exit code 2." Non-zero, it is a step that
+// failed, and it is the change's answer however the job ended afterwards.
+const processExitNeedle = "process completed with exit code "
+
+// processExitedNonZero reports whether a line is a step's process exiting
+// with a code other than zero.
+func processExitedNonZero(lower string) bool {
+	at := strings.Index(lower, processExitNeedle)
+	if at < 0 {
+		return false
+	}
+	code := lower[at+len(processExitNeedle):]
+	end := 0
+	for end < len(code) && code[end] >= '0' && code[end] <= '9' {
+		end++
+	}
+	return strings.TrimLeft(code[:end], "0") != ""
 }
 
 // evidenceLimit bounds a quoted log line. A CI log can carry a single line of

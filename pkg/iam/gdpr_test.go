@@ -937,7 +937,7 @@ func TestIsValidConsentStatus(t *testing.T) {
 
 func TestIsValidDataCategory(t *testing.T) {
 	validCategories := []string{
-		"profile", "sessions", "consents", "groups",
+		"profile", "sessions", "consents",
 		"roles", "audit_logs", "credentials", "mfa",
 	}
 
@@ -947,7 +947,8 @@ func TestIsValidDataCategory(t *testing.T) {
 		})
 	}
 
-	invalidCategories := []string{"invalid", "", "unknown"}
+	// "groups" is not a category: quicbaas keeps no groups to export or erase.
+	invalidCategories := []string{"invalid", "", "unknown", "groups"}
 	for _, cat := range invalidCategories {
 		t.Run(cat, func(t *testing.T) {
 			assert.False(t, IsValidDataCategory(cat))

@@ -14,6 +14,7 @@
 package iam
 
 import (
+	"slices"
 	"testing"
 	"time"
 )
@@ -24,10 +25,19 @@ import (
 //
 // Roles and groups come from the IAM user record, not from the identity the
 // ceremony supplied, so the identity here deliberately carries a STALE set the
-// record no longer grants: the record must win.
+// record no longer grants: the record must win. The groups claim is the names
+// of the roles the record binds, since the account holds no group list.
 func TestIssueSessionToken_RoundTrip(t *testing.T) {
 	provider, _, _, _, memStorage := createTestOIDCProvider(t)
 	user := seedCeremonyUser(t, memStorage, "tenant-a", "user-42", []string{"admin", "operator"})
+	for _, r := range []*Role{
+		{ID: "admin", TenantID: "tenant-a", Name: "Administrators"},
+		{ID: "operator", TenantID: "tenant-a", Name: "Operators"},
+	} {
+		if err := memStorage.CreateRole(t.Context(), r); err != nil {
+			t.Fatalf("CreateRole: %v", err)
+		}
+	}
 
 	identity := SessionIdentity{
 		Subject:     user.Name,
@@ -65,8 +75,8 @@ func TestIssueSessionToken_RoundTrip(t *testing.T) {
 	if contains(claims.Roles, "revoked-role") {
 		t.Error("the ceremony's stale role survived into the bearer; the user record is authoritative")
 	}
-	if len(claims.Groups) != len(user.Groups) || claims.Groups[0] != user.Groups[0] {
-		t.Errorf("Groups = %v, want the record's %v", claims.Groups, user.Groups)
+	if want := []string{"Administrators", "Operators"}; !slices.Equal(claims.Groups, want) {
+		t.Errorf("Groups = %v, want the bound role names %v", claims.Groups, want)
 	}
 	if claims.AuthMethod != "piv" {
 		t.Errorf("AuthMethod = %q, want piv", claims.AuthMethod)

@@ -43,7 +43,7 @@ func newSweepRig(t *testing.T) *sweepRig {
 	t.Helper()
 	store := newTestStore(t)
 	binding := testBinding()
-	binding.Reviewer = ReviewerConfig{Backend: "codex", Login: fakeReviewerLogin, TokenSecretRef: "reviewer-tok"}
+	binding.Reviewer = ReviewerConfig{Agent: testReviewerAgent, Login: fakeReviewerLogin, TokenSecretRef: "reviewer-tok"}
 	if err := store.PutBinding(context.Background(), testTenant, binding); err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func newSweepRig(t *testing.T) *sweepRig {
 	forge.checks[sweepHead] = []ForgeCheckRun{greenRun("ci", sweepHead)}
 	trigger := &fakeReviewTrigger{started: true}
 	sweeper, err := NewReviewSweeper(ReviewSweeperConfig{
-		Bindings: store, Forges: &fakeForges{forge: forge}, Reviews: trigger,
+		Bindings: store, Overrides: store, Forges: &fakeForges{forge: forge}, Reviews: trigger,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -376,7 +376,7 @@ func TestReviewSweeper_OneProjectsForgeFailureDoesNotStopTheRest(t *testing.T) {
 	rig := newSweepRig(t)
 	other := testBinding()
 	other.ProjectID = "proj-2"
-	other.Reviewer = ReviewerConfig{Backend: "codex", Login: fakeReviewerLogin, TokenSecretRef: "reviewer-tok"}
+	other.Reviewer = ReviewerConfig{Agent: testReviewerAgent, Login: fakeReviewerLogin, TokenSecretRef: "reviewer-tok"}
 	if err := rig.store.PutBinding(context.Background(), testTenant, other); err != nil {
 		t.Fatal(err)
 	}
@@ -419,7 +419,7 @@ func TestReviewSweeper_SweepStampsTheTenantOnTheContext(t *testing.T) {
 	rig := newSweepRig(t)
 	seen := &tenantRecordingTrigger{}
 	sweeper, err := NewReviewSweeper(ReviewSweeperConfig{
-		Bindings: rig.store, Forges: &fakeForges{forge: rig.forge}, Reviews: seen,
+		Bindings: rig.store, Overrides: rig.store, Forges: &fakeForges{forge: rig.forge}, Reviews: seen,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -449,7 +449,7 @@ func TestReviewSweeper_SweepRefusesWhatItCannotVisit(t *testing.T) {
 	// A tenant whose bindings cannot be listed costs that tenant a pass.
 	failing := &failingBindings{BindingReader: rig.store, err: errors.New("binding store down")}
 	sweeper, err := NewReviewSweeper(ReviewSweeperConfig{
-		Bindings: failing, Forges: &fakeForges{forge: rig.forge}, Reviews: rig.trigger,
+		Bindings: failing, Overrides: rig.store, Forges: &fakeForges{forge: rig.forge}, Reviews: rig.trigger,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -571,9 +571,10 @@ func TestReviewSweeper_ABindingThatCannotBeReadIsAFault(t *testing.T) {
 	rig := newSweepRig(t)
 	down := errors.New("binding store down")
 	sweeper, err := NewReviewSweeper(ReviewSweeperConfig{
-		Bindings: &failingBindings{BindingReader: rig.store, getErr: down},
-		Forges:   &fakeForges{forge: rig.forge},
-		Reviews:  rig.trigger,
+		Bindings:  &failingBindings{BindingReader: rig.store, getErr: down},
+		Overrides: rig.store,
+		Forges:    &fakeForges{forge: rig.forge},
+		Reviews:   rig.trigger,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -608,9 +609,10 @@ func TestNewReviewSweeper_RefusesAnIncompleteWiring(t *testing.T) {
 	trigger := &fakeReviewTrigger{}
 
 	for name, cfg := range map[string]ReviewSweeperConfig{
-		"no bindings": {Forges: forges, Reviews: trigger},
-		"no forges":   {Bindings: store, Reviews: trigger},
-		"no trigger":  {Bindings: store, Forges: forges},
+		"no bindings":  {Forges: forges, Overrides: store, Reviews: trigger},
+		"no forges":    {Bindings: store, Overrides: store, Reviews: trigger},
+		"no overrides": {Bindings: store, Forges: forges, Reviews: trigger},
+		"no trigger":   {Bindings: store, Forges: forges, Overrides: store},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := NewReviewSweeper(cfg); !errors.Is(err, ErrInvalidInput) {
@@ -618,7 +620,7 @@ func TestNewReviewSweeper_RefusesAnIncompleteWiring(t *testing.T) {
 			}
 		})
 	}
-	sweeper, err := NewReviewSweeper(ReviewSweeperConfig{Bindings: store, Forges: forges, Reviews: trigger})
+	sweeper, err := NewReviewSweeper(ReviewSweeperConfig{Bindings: store, Forges: forges, Overrides: store, Reviews: trigger})
 	if err != nil {
 		t.Fatalf("a complete wiring was refused: %v", err)
 	}
@@ -705,7 +707,7 @@ func TestHeadJudged_OnlyABindingVerdictCounts(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			forge := newFakeForge()
 			forge.reviews[200] = tc.reviews
-			got, err := headJudged(context.Background(), forge, repo, 200, head)
+			got, err := headJudged(context.Background(), forge, repo, 200, head, func(string) bool { return true })
 			if err != nil {
 				t.Fatalf("headJudged: %v", err)
 			}
@@ -866,7 +868,7 @@ func TestNeedsReview_TheReviewersOwnStatusDoesNotDecideGreen(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			runs := []ForgeCheckRun{green, reviewerStatus}
-			kept := runsExcludingContext(runs, DefaultReviewStatusContext)
+			kept := runsExcludingContexts(runs, []string{DefaultReviewStatusContext})
 			if len(kept) != 1 || kept[0].Name != "CI / Build" {
 				t.Fatalf("the reviewer's own status must be excluded, kept %+v", kept)
 			}

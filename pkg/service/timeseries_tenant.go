@@ -72,6 +72,30 @@ func tsTenantScopedMetric(tenantID, metric string) string {
 	return tsTenantMetricPrefix + tenantID + tsTenantMetricSeparator + metric
 }
 
+// TenantScopedMetric returns the name metric is filed under for tenantID —
+// the same scoping every tenant-facing time-series write applies — so a
+// platform component writing a tenant's series directly to storage files it
+// where the tenant's own reads look.
+func TenantScopedMetric(tenantID, metric string) string {
+	return tsTenantScopedMetric(tenantID, metric)
+}
+
+// SplitTenantScopedMetric is TenantScopedMetric's inverse: it returns the
+// tenant a stored metric name is filed under and the name the tenant knows it
+// by. A name with no tenant scope belongs to the system tenant and is returned
+// whole with an empty tenant. ok is false for a malformed scoped name.
+func SplitTenantScopedMetric(stored string) (tenantID, metric string, ok bool) {
+	rest, scoped := strings.CutPrefix(stored, tsTenantMetricPrefix)
+	if !scoped {
+		return "", stored, true
+	}
+	tenantID, metric, found := strings.Cut(rest, tsTenantMetricSeparator)
+	if !found || tenantID == "" || metric == "" {
+		return "", "", false
+	}
+	return tenantID, metric, true
+}
+
 // tsTenantStripMetric removes the tenant prefix from a metric name.
 // If the metric doesn't have a tenant prefix, it is returned as-is.
 func tsTenantStripMetric(tenantID, metric string) string {
@@ -112,6 +136,18 @@ func prepareTimeSeriesTenantContext(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return tenantID, nil
+}
+
+// tenantScopedMetric resolves the caller's tenant from ctx and returns the
+// name metric is stored under for that tenant. It is THE scoping rule of the
+// time-series service: every write, read, delete and retention call files and
+// looks up a metric through it, so what a tenant writes is what it reads.
+func tenantScopedMetric(ctx context.Context, op, metric string) (tenantID, scoped string, err error) {
+	tenantID, err = prepareTimeSeriesTenantContext(ctx)
+	if err != nil {
+		return "", "", &errors.QBError{Code: errors.ErrInvalidInput, Op: op, Err: err}
+	}
+	return tenantID, tsTenantScopedMetric(tenantID, metric), nil
 }
 
 // validateTimeSeriesTenantID validates that a tenant ID contains only safe

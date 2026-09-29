@@ -44,7 +44,7 @@ test.describe('Dashboard layout split', () => {
 
     // Stat card labels — scoped to .stat-title to avoid sidebar/breadcrumb matches.
     await expect(page.locator('.stat-title', { hasText: 'Active Jobs' })).toBeVisible();
-    await expect(page.locator('.stat-title', { hasText: 'Agents' })).toBeVisible();
+    await expect(page.locator('.stat-title', { hasText: 'Fleet nodes' })).toBeVisible();
     await expect(page.locator('.stat-title', { hasText: 'Sessions' })).toBeVisible();
     await expect(page.locator('.stat-title', { hasText: 'Pending Tasks' })).toBeVisible();
   });

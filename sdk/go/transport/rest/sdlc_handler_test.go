@@ -122,3 +122,31 @@ func TestSDLCOnboardingHandler_RefusesTheWrongRequestType(t *testing.T) {
 		t.Error("Conformance accepted the wrong request type")
 	}
 }
+
+// TestSDLCOpenWorkHandler_GetsTheServersRoute pins the open-work route as a
+// GET with the tenant in the query, decoded into the SDK's own type.
+func TestSDLCOpenWorkHandler_GetsTheServersRoute(t *testing.T) {
+	var gotMethod, gotPath, gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotQuery = r.Method, r.URL.EscapedPath(), r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"project_id":"p1","agent":"agent-api","pull_requests":[{"number":7,"ci_state":"success"}],"issues":[{"number":3,"labels":["task:blocked"]}]}`))
+	}))
+	defer server.Close()
+	tr := newTestTransport(t, server)
+
+	resp, err := tr.Request(context.Background(), "quicbaas.SDLC", "OpenWork", &sdlc.OpenWorkRequest{TenantID: "t1", ProjectID: "p 1"})
+	if err != nil {
+		t.Fatalf("OpenWork: %v", err)
+	}
+	if gotMethod != http.MethodGet || gotPath != "/api/v1/sdlc/projects/p%201/open-work" || gotQuery != "tenant_id=t1" {
+		t.Fatalf("OpenWork hit %s %s?%s", gotMethod, gotPath, gotQuery)
+	}
+	work := resp.(*sdlc.OpenWork)
+	if work.Agent != "agent-api" || len(work.PullRequests) != 1 || work.PullRequests[0].CIState != "success" || len(work.Issues) != 1 {
+		t.Fatalf("OpenWork response: %+v", work)
+	}
+	if _, err := (&sdlcRESTHandler{}).handleOpenWork(context.Background(), &sdlc.ConformanceRequest{}); err == nil {
+		t.Error("OpenWork accepted the wrong request type")
+	}
+}

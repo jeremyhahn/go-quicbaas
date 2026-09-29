@@ -92,7 +92,7 @@ type turnDrainer interface{ WaitForTurns() }
 // carrying the same turn_id appears.
 func TestMCPPromptAcknowledgesThenTranscriptIsPollable(t *testing.T) {
 	agentSvc := newAsyncTurnOrchestrator(t, true)
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 	ctx := context.Background()
 
 	// The prompt tool returns only the acknowledgement — never the agent's
@@ -155,7 +155,7 @@ func TestMCPPromptAcknowledgesThenTranscriptIsPollable(t *testing.T) {
 // request it cannot scope, rather than returning another tenant's events or an
 // empty page that reads like "the session has nothing to say".
 func TestMCPSessionHistoryRejectsBadInput(t *testing.T) {
-	reg := newAgentRegistry(t, newAsyncTurnOrchestrator(t, true))
+	reg := newFleetRegistry(t, newAsyncTurnOrchestrator(t, true))
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_session_history",
 		map[string]interface{}{"tenant_id": "tenant-1"})
@@ -170,7 +170,7 @@ func TestMCPSessionHistoryRejectsBadInput(t *testing.T) {
 // capability instead of silently returning nothing when the orchestrator was
 // built without a durable log.
 func TestMCPSessionHistoryWithoutEventLog(t *testing.T) {
-	reg := newAgentRegistry(t, newAsyncTurnOrchestrator(t, false))
+	reg := newFleetRegistry(t, newAsyncTurnOrchestrator(t, false))
 
 	_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_session_history",
 		map[string]interface{}{"tenant_id": "tenant-1", "session_id": "sess-1"})

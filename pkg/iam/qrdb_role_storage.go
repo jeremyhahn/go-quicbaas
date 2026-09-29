@@ -47,8 +47,7 @@ type RoleClientResolver interface {
 // churn): IdentityStore continues to call CreateRole/GetRole/UpdateRole/
 // DeleteRole/ListRoles unchanged. The qrdb <-> broker model translation reuses
 // the C1-B converters in pkg/iam/qrdbadapter (ToIAMRole/FromIAMRole) — there is
-// no second conversion path. Group persistence is intentionally NOT routed here
-// (qrdb has no Group type); it stays on the broker's BackendStorage.
+// no second conversion path.
 type QRDBRoleStorage struct {
 	resolver RoleClientResolver
 }

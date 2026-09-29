@@ -20,7 +20,7 @@
 // stopped matching after an upstream signature drifted, making TPM IDevID
 // enrollment impossible on every deployment — while the package's own tests kept
 // passing, because they were written against a mock of the unsatisfiable
-// declaration. go-quicbaas#910 found the same shape: XKMSAgentCertIssuer asked
+// declaration. go-quicbaas#910 found the same shape: XKMSFleetNodeCertIssuer asked
 // TrustedCA.IssueCertificate for an exportable private key, which no go-xkms
 // backend has ever returned, so the issuer failed on every real invocation while
 // its tests passed against a stub that returned one.

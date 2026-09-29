@@ -97,11 +97,12 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Health/Ping":      handlePing,
 
 	// Secrets operations
-	"quicbaas.Secrets/Store":  handleSecretsStore,
-	"quicbaas.Secrets/Get":    handleSecretsGet,
-	"quicbaas.Secrets/List":   handleSecretsList,
-	"quicbaas.Secrets/Delete": handleSecretsDelete,
-	"quicbaas.Secrets/Ensure": handleSecretsEnsure,
+	"quicbaas.Secrets/Store":   handleSecretsStore,
+	"quicbaas.Secrets/Get":     handleSecretsGet,
+	"quicbaas.Secrets/GetData": handleSecretsGetData,
+	"quicbaas.Secrets/List":    handleSecretsList,
+	"quicbaas.Secrets/Delete":  handleSecretsDelete,
+	"quicbaas.Secrets/Ensure":  handleSecretsEnsure,
 
 	// TimeSeries operations
 	"quicbaas.TimeSeries/Aggregate":          handleAggregate,
@@ -292,6 +293,8 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Account/SetDefault":       handleAccountSetDefault,
 	"quicbaas.Account/Usage":            handleAccountUsage,
 	"quicbaas.Account/Materialize":      handleAccountMaterialize,
+	"quicbaas.Account/ReserveSession":   handleAccountReserveSession,
+	"quicbaas.Account/ReleaseSession":   handleAccountReleaseSession,
 
 	// Orchestrator — session operations
 	"quicbaas.Orchestrator/Inference":              handleOrchestratorInference,
@@ -303,6 +306,8 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Orchestrator/ListSessions":           handleOrchestratorListSessions,
 	"quicbaas.Orchestrator/GetSessionConversation": handleOrchestratorGetSessionConversation,
 	"quicbaas.Orchestrator/GetSpendReport":         handleOrchestratorGetSpendReport,
+	"quicbaas.Orchestrator/GetTenantSpendPolicy":   handleOrchestratorGetTenantSpendPolicy,
+	"quicbaas.Orchestrator/SetTenantSpendPolicy":   handleOrchestratorSetTenantSpendPolicy,
 
 	// Orchestrator — task operations
 	"quicbaas.Orchestrator/CreateTask":   handleOrchestratorCreateTask,
@@ -314,21 +319,25 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Orchestrator/ReadmitTask":  handleOrchestratorReadmitTask,
 	"quicbaas.Orchestrator/DeleteTask":   handleOrchestratorDeleteTask,
 
+	// Orchestrator — the attention inbox
+	"quicbaas.Orchestrator/AttentionList":    handleOrchestratorAttentionList,
+	"quicbaas.Orchestrator/AttentionResolve": handleOrchestratorAttentionResolve,
+
 	// Orchestrator — task artifact operations
 	"quicbaas.Orchestrator/SubmitTaskArtifacts": handleOrchestratorSubmitTaskArtifacts,
 	"quicbaas.Orchestrator/GetTaskArtifact":     handleOrchestratorGetTaskArtifact,
 	"quicbaas.Orchestrator/ListTaskArtifacts":   handleOrchestratorListTaskArtifacts,
 
 	// Orchestrator — agent registry operations
-	"quicbaas.Orchestrator/RegisterAgent":  handleOrchestratorRegisterAgent,
-	"quicbaas.Orchestrator/GetAgent":       handleOrchestratorGetAgent,
-	"quicbaas.Orchestrator/ListAgents":     handleOrchestratorListAgents,
-	"quicbaas.Orchestrator/RemoveAgent":    handleOrchestratorRemoveAgent,
-	"quicbaas.Orchestrator/AgentHeartbeat": handleOrchestratorAgentHeartbeat,
+	"quicbaas.Orchestrator/RegisterFleetNode":  handleFleetRegister,
+	"quicbaas.Orchestrator/GetFleetNode":       handleFleetGet,
+	"quicbaas.Orchestrator/ListFleetNodes":     handleFleetList,
+	"quicbaas.Orchestrator/RemoveFleetNode":    handleFleetRemove,
+	"quicbaas.Orchestrator/FleetNodeHeartbeat": handleFleetHeartbeat,
 
 	// Orchestrator — agent admin operations
-	"quicbaas.Orchestrator/DisableAgent": handleOrchestratorDisableAgent,
-	"quicbaas.Orchestrator/EnableAgent":  handleOrchestratorEnableAgent,
+	"quicbaas.Orchestrator/DisableFleetNode": handleFleetDisable,
+	"quicbaas.Orchestrator/EnableFleetNode":  handleFleetEnable,
 
 	// Orchestrator — job operations
 	"quicbaas.Orchestrator/StartJob":      handleOrchestratorStartJob,
@@ -343,16 +352,32 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Orchestrator/ListRunners":       handleOrchestratorListRunners,
 	"quicbaas.Orchestrator/ListBackendModels": handleOrchestratorListBackendModels,
 	"quicbaas.Orchestrator/DecomposeTask":     handleOrchestratorDecomposeTask,
+	"quicbaas.Orchestrator/GetCostSettings":   handleOrchestratorGetCostSettings,
+	"quicbaas.Orchestrator/SetCostSettings":   handleOrchestratorSetCostSettings,
 
 	// Project operations
-	"quicbaas.Project/Create":          handleProjectCreate,
-	"quicbaas.Project/Get":             handleProjectGet,
-	"quicbaas.Project/GetByName":       handleProjectGetByName,
-	"quicbaas.Project/Update":          handleProjectUpdate,
-	"quicbaas.Project/Delete":          handleProjectDelete,
-	"quicbaas.Project/List":            handleProjectList,
-	"quicbaas.Project/GrantAgentRole":  handleProjectGrantAgentRole,
-	"quicbaas.Project/RevokeAgentRole": handleProjectRevokeAgentRole,
+	"quicbaas.Project/Create":              handleProjectCreate,
+	"quicbaas.Project/Get":                 handleProjectGet,
+	"quicbaas.Project/GetByName":           handleProjectGetByName,
+	"quicbaas.Project/Update":              handleProjectUpdate,
+	"quicbaas.Project/Delete":              handleProjectDelete,
+	"quicbaas.Project/List":                handleProjectList,
+	"quicbaas.Project/GrantFleetNodeRole":  handleProjectGrantFleetNodeRole,
+	"quicbaas.Project/RevokeFleetNodeRole": handleProjectRevokeFleetNodeRole,
+
+	// Agents: the tenant AI agent catalog and its failover pools
+	agentsService + "/ListAgents":  handleAgentsList,
+	agentsService + "/GetAgent":    handleAgentsGet,
+	agentsService + "/CreateAgent": handleAgentsCreate,
+	agentsService + "/UpdateAgent": handleAgentsUpdate,
+	agentsService + "/DeleteAgent": handleAgentsDelete,
+	agentsService + "/AgentUsedBy": handleAgentsUsedBy,
+	agentsService + "/ListPools":   handleAgentPoolsList,
+	agentsService + "/GetPool":     handleAgentPoolsGet,
+	agentsService + "/CreatePool":  handleAgentPoolsCreate,
+	agentsService + "/UpdatePool":  handleAgentPoolsUpdate,
+	agentsService + "/DeletePool":  handleAgentPoolsDelete,
+	agentsService + "/PoolUsedBy":  handleAgentPoolsUsedBy,
 
 	// SDLC module: forge bindings and deliveries
 	"quicbaas.SDLC/Bind":        handleSDLCBind,
@@ -362,6 +387,16 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.SDLC/ListForges":  handleSDLCForges,
 	"quicbaas.SDLC/Onboard":     handleSDLCOnboard,
 	"quicbaas.SDLC/Conformance": handleSDLCConformance,
+	"quicbaas.SDLC/OpenWork":    handleSDLCOpenWork,
+
+	"quicbaas.SDLC/Reviewer":           handleSDLCReviewer,
+	"quicbaas.SDLC/SetReviewer":        handleSDLCSetReviewer,
+	"quicbaas.SDLC/AdoptIssue":         handleSDLCAdoptIssue,
+	"quicbaas.SDLC/ClearReviewer":      handleSDLCClearReviewer,
+	"quicbaas.SDLC/WorkerImageStatus":  handleSDLCWorkerImageStatus,
+	"quicbaas.SDLC/RefreshWorkerImage": handleSDLCRefreshWorkerImage,
+	"quicbaas.SDLC/FileIssue":          handleSDLCFileIssue,
+	"quicbaas.SDLC/Collaborators":      handleSDLCCollaborators,
 
 	// ObjectStorage operations
 	"quicbaas.ObjectStorage/PutObject":          handleObjPutObject,

@@ -107,9 +107,18 @@ func (s *agentServiceImpl) abortBlockedTaskJob(ctx context.Context, tenantID, ta
 // A READ THAT FAILS PROVES NOTHING and aborts nothing. The block is durable,
 // so the next heartbeat asks again. Ending a healthy job on a store hiccup
 // would charge the work for the store's fault.
+//
+// THE TASK IS READ UNDER THE JOB'S OWN TENANT. The heartbeat's context
+// carries no principal, and the service resolves tenancy from the context
+// before it looks at its tenant argument, so an unbound read answered every
+// heartbeat with "tenant ID required" and left this observer inert — the
+// same defect go-quicbaas#776 fixed in the stall detector (job_stall.go).
 func (r *JobRun) observeBlock(ctx context.Context) {
 	if r.Config == nil || r.Config.TaskID == "" || r.Agents == nil || ctx.Err() != nil {
 		return
+	}
+	if r.Config.TenantID != "" {
+		ctx = ContextWithTenant(ctx, r.Config.TenantID)
 	}
 	readCtx, cancel := context.WithTimeout(ctx, jobLeaseWriteTimeout)
 	defer cancel()

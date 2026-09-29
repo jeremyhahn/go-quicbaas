@@ -55,17 +55,21 @@ func NewOrchestratorServer(agentSvc orchestration.AgentService, log *logger.Logg
 func (s *OrchestratorServer) SpawnSession(ctx context.Context, req *pb.SpawnSessionRequest) (*pb.SpawnSessionResponse, error) {
 	s.logger.WithField("backend", req.Backend).Debug("Processing SpawnSession request")
 
-	if req.Backend == "" {
-		return nil, status.Error(codes.InvalidArgument, "backend is required")
+	if req.Backend == "" && req.GetAgentId() == "" && req.GetPoolId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "an agent, a pool or a backend is required")
 	}
 
 	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
 
 	svcReq := &orchestration.SpawnSessionRequest{
+		AgentID:            req.GetAgentId(),
+		PoolID:             req.GetPoolId(),
+		Role:               orchestration.AgentRole(req.GetRole()),
 		Backend:            req.Backend,
 		ProjectID:          req.ProjectId,
 		Model:              req.Model,
 		SystemPrompt:       req.SystemPrompt,
+		PromptAppend:       req.GetPromptAppend(),
 		MCPServers:         protoMCPServersToService(req.McpServers),
 		Env:                req.Env,
 		WorkDir:            req.WorkDir,
@@ -80,7 +84,7 @@ func (s *OrchestratorServer) SpawnSession(ctx context.Context, req *pb.SpawnSess
 		// reaches: forwarding it would let a caller add any flag the CLI takes
 		// — including the permission grants the SDLC module exists to decide. It is
 		// carried on the internal control-plane-to-daemon spawn instead
-		// (pkg/agent/spawn_server.go), where the sender is the SDLC module itself.
+		// (pkg/fleet/spawn_server.go), where the sender is the SDLC module itself.
 
 		// Without this the gRPC transport silently spawns a one-shot session:
 		// the backend runs a fresh process per prompt, the agent keeps no
@@ -98,7 +102,7 @@ func (s *OrchestratorServer) SpawnSession(ctx context.Context, req *pb.SpawnSess
 	}
 
 	// Mirror the REST handler: thread strict on context so the
-	// RemoteBackendResolver can stash a typed NoMatchingAgentError when the
+	// RemoteBackendResolver can stash a typed NoMatchingFleetNodeError when the
 	// host is offline.
 	if req.HostAffinityStrict {
 		tenantCtx = orchestration.WithHostAffinityStrict(tenantCtx)
@@ -110,11 +114,13 @@ func (s *OrchestratorServer) SpawnSession(ctx context.Context, req *pb.SpawnSess
 	}
 
 	return &pb.SpawnSessionResponse{
-		SessionId:   resp.SessionID,
-		Backend:     resp.Backend,
-		Model:       resp.Model,
-		ContainerId: resp.ContainerID,
-		Timestamp:   unixNanoTimestamp(resp.Timestamp),
+		SessionId:       resp.SessionID,
+		Backend:         resp.Backend,
+		Model:           resp.Model,
+		ContainerId:     resp.ContainerID,
+		Timestamp:       unixNanoTimestamp(resp.Timestamp),
+		ResolvedAgentId: resp.ResolvedAgentID,
+		Failovers:       agentAttemptsToProto(resp.Failovers),
 	}, nil
 }
 
@@ -305,20 +311,27 @@ func resolveOrchestratorTenant(ctx context.Context, explicit string) string {
 	return qrdbsdk.SystemTenantID
 }
 
-// ListSessions returns all active sessions.
+// ListSessions returns every session, in any state, optionally filtered by
+// backend or status.
 func (s *OrchestratorServer) ListSessions(ctx context.Context, req *pb.ListSessionsRequest) (*pb.ListSessionsResponse, error) {
 	s.logger.Debug("Processing ListSessions request")
 
 	tenantCtx := orchestration.ContextWithTenant(ctx, resolveOrchestratorTenant(ctx, req.GetTenantId()))
 
+	page, err := pageFromRPC(req.GetLimit(), req.GetOffset(), req.GetSort(), req.GetQ())
+	if err != nil {
+		return nil, err
+	}
+
 	svcReq := &orchestration.ListSessionsRequest{
 		Backend: req.Backend,
 		Status:  orchestration.SessionState(req.GetStatus()),
+		Page:    page,
 	}
 
 	resp, err := s.agentSvc.ListSessions(tenantCtx, svcReq)
 	if err != nil {
-		return nil, convertOrchestratorError(err)
+		return nil, convertListError(err, convertOrchestratorError)
 	}
 
 	sessions := make([]*pb.SessionInfo, len(resp.Sessions))
@@ -327,8 +340,12 @@ func (s *OrchestratorServer) ListSessions(ctx context.Context, req *pb.ListSessi
 	}
 
 	return &pb.ListSessionsResponse{
-		Sessions:  sessions,
-		Timestamp: unixNanoTimestamp(resp.Timestamp),
+		Sessions:   sessions,
+		Timestamp:  unixNanoTimestamp(resp.Timestamp),
+		Total:      pageInt32(resp.Total),
+		Limit:      pageInt32(resp.Limit),
+		Offset:     pageInt32(resp.Offset),
+		NextOffset: pageInt32(resp.NextOffset),
 	}, nil
 }
 
@@ -363,6 +380,7 @@ func (s *OrchestratorServer) CreateTask(ctx context.Context, req *pb.CreateTaskR
 		Priority:      int(req.GetPriority()),
 		AttemptBudget: int(req.GetAttemptBudget()),
 		Runner:        req.GetRunner(),
+		PromptAppend:  req.GetPromptAppend(),
 	}
 
 	task, err := s.agentSvc.CreateTask(tenantCtx, svcReq)
@@ -416,20 +434,31 @@ func (s *OrchestratorServer) ListTasks(ctx context.Context, req *pb.ListTasksReq
 		}
 	}
 
-	tasks, err := s.agentSvc.ListTasks(tenantCtx, req.TenantId, filter)
+	page, err := pageFromRPC(req.GetLimit(), req.GetOffset(), req.GetSort(), req.GetQ())
 	if err != nil {
-		return nil, convertOrchestratorError(err)
+		return nil, err
 	}
 
-	pbTasks := make([]*pb.Task, len(tasks))
-	for i, task := range tasks {
+	result, err := s.agentSvc.ListTasksPage(tenantCtx, req.TenantId, filter, page)
+	if err != nil {
+		return nil, convertListError(err, convertOrchestratorError)
+	}
+
+	pbTasks := make([]*pb.Task, len(result.Items))
+	for i, task := range result.Items {
 		pbTasks[i] = serviceTaskToProto(task)
 	}
 
+	// total_count predates paging and has always meant "how many tasks
+	// matched", so it carries total rather than the size of this page.
 	return &pb.ListTasksResponse{
 		Tasks:      pbTasks,
-		TotalCount: int32(len(tasks)), //nolint:gosec // G115: bounded count
+		TotalCount: pageInt32(result.Total),
 		Timestamp:  timestamppb.Now(),
+		Total:      pageInt32(result.Total),
+		Limit:      pageInt32(result.Limit),
+		Offset:     pageInt32(result.Offset),
+		NextOffset: pageInt32(result.NextOffset),
 	}, nil
 }
 
@@ -616,8 +645,7 @@ func (s *OrchestratorServer) StartJob(ctx context.Context, req *pb.OrchestratorS
 	svcReq := &orchestration.StartJobRequest{
 		TenantID:      req.TenantId,
 		Description:   req.Description,
-		LeadBackend:   req.LeadBackend,
-		LeadModel:     req.LeadModel,
+		Lead:          AgentRefFromProto(req.GetLead()),
 		LeadAgentID:   req.GetLeadAgentId(),
 		ProjectID:     req.ProjectId,
 		MaxIterations: int(req.MaxIterations),
@@ -627,6 +655,7 @@ func (s *OrchestratorServer) StartJob(ctx context.Context, req *pb.OrchestratorS
 		Runner:        req.GetRunner(),
 		TaskID:        req.GetTaskId(),
 		Attempt:       int(req.GetAttempt()),
+		PromptAppend:  req.GetPromptAppend(),
 	}
 
 	resp, err := s.agentSvc.StartJob(tenantCtx, svcReq)
@@ -694,6 +723,7 @@ func (s *OrchestratorServer) GetJobStatus(ctx context.Context, req *pb.Orchestra
 		SessionIds:    jobStatus.SessionIDs,
 		Stage:         jobStatus.Stage,
 		Runner:        jobStatus.Runner,
+		PromptAppend:  jobStatus.PromptAppend,
 
 		// Provenance: the same facts the REST job shape carries, so a
 		// consumer on this transport reads the run without a second call.
@@ -808,23 +838,25 @@ func (s *OrchestratorServer) CancelJob(ctx context.Context, req *pb.Orchestrator
 // ListJobs returns the tenant's jobs, narrowed to one task when the request
 // names one.
 //
-// IT READS THE PAGED VERB WITH NO PAGE. ListJobsPage is the verb that fills
-// each row's Source — the forge issue behind the job's task — and this RPC
-// carries no page fields, so it passes a nil page: ApplyPage then cuts
-// nothing and orders by started_at descending, which is the order the unpaged
-// listing already sorted itself into. The answer is the same jobs in the same
-// order, now with the field a gRPC consumer had no other way to obtain
-// (go-quicbaas#976).
+// It reads the paged verb, ListJobsPage, which also fills each row's Source —
+// the forge issue behind the job's task (go-quicbaas#976). The request's
+// limit, offset, sort and q are parsed by the same ParsePage every other
+// transport uses (go-quicbaas#973).
 func (s *OrchestratorServer) ListJobs(ctx context.Context, req *pb.OrchestratorListJobsRequest) (*pb.OrchestratorListJobsResponse, error) {
 	s.logger.Debug("Processing ListJobs request")
 
 	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
 
-	page, err := s.agentSvc.ListJobsPage(tenantCtx, req.GetTenantId(), &orchestration.JobFilter{TaskID: req.GetTaskId()}, nil)
+	page, err := pageFromRPC(req.GetLimit(), req.GetOffset(), req.GetSort(), req.GetQ())
 	if err != nil {
-		return nil, convertOrchestratorError(err)
+		return nil, err
 	}
-	jobs := page.Items
+
+	result, err := s.agentSvc.ListJobsPage(tenantCtx, req.GetTenantId(), &orchestration.JobFilter{TaskID: req.GetTaskId()}, page)
+	if err != nil {
+		return nil, convertListError(err, convertOrchestratorError)
+	}
+	jobs := result.Items
 
 	pbJobs := make([]*pb.OrchestratorJobSummary, len(jobs))
 	for i, j := range jobs {
@@ -845,7 +877,11 @@ func (s *OrchestratorServer) ListJobs(ctx context.Context, req *pb.OrchestratorL
 
 	bindJobSummaries(pbJobs, jobs)
 	return &pb.OrchestratorListJobsResponse{
-		Jobs: pbJobs,
+		Jobs:       pbJobs,
+		Total:      pageInt32(result.Total),
+		Limit:      pageInt32(result.Limit),
+		Offset:     pageInt32(result.Offset),
+		NextOffset: pageInt32(result.NextOffset),
 	}, nil
 }
 
@@ -999,16 +1035,16 @@ func (s *OrchestratorServer) Health(ctx context.Context, req *pb.OrchestratorHea
 // Agent Fleet Management Operations
 // =============================================================================
 
-// RegisterAgent registers a new agent in the fleet registry.
-func (s *OrchestratorServer) RegisterAgent(ctx context.Context, req *pb.RegisterAgentRequest) (*pb.RegisterAgentResponse, error) {
-	s.logger.Debug("Processing RegisterAgent request")
+// RegisterFleetNode registers a new agent in the fleet registry.
+func (s *OrchestratorServer) RegisterFleetNode(ctx context.Context, req *pb.RegisterFleetNodeRequest) (*pb.RegisterFleetNodeResponse, error) {
+	s.logger.Debug("Processing RegisterFleetNode request")
 
-	svcReq := &orchestration.RegisterAgentRequest{
+	svcReq := &orchestration.RegisterFleetNodeRequest{
 		TenantID:     req.TenantId,
 		Name:         req.Name,
 		Host:         req.Host,
 		Backend:      req.Backend,
-		AgentType:    req.AgentType,
+		NodeType:     req.NodeType,
 		Capabilities: req.Capabilities,
 		WorkDir:      req.WorkDir,
 		Metadata:     req.Metadata,
@@ -1016,98 +1052,109 @@ func (s *OrchestratorServer) RegisterAgent(ctx context.Context, req *pb.Register
 
 	tenantCtx := orchestration.ContextWithTenant(ctx, req.TenantId)
 
-	resp, err := s.agentSvc.RegisterAgent(tenantCtx, svcReq)
+	resp, err := s.agentSvc.RegisterFleetNode(tenantCtx, svcReq)
 	if err != nil {
 		return nil, convertOrchestratorError(err)
 	}
 
-	return &pb.RegisterAgentResponse{
-		Agent:     serviceAgentRegistrationToProto(resp.Agent),
+	return &pb.RegisterFleetNodeResponse{
+		Node:      serviceFleetNodeToProto(resp.Node),
 		Timestamp: timestamppb.Now(),
 	}, nil
 }
 
-// GetAgent retrieves a registered agent by ID.
-func (s *OrchestratorServer) GetAgent(ctx context.Context, req *pb.GetAgentRequest) (*pb.GetAgentResponse, error) {
-	s.logger.WithField("agent_id", req.AgentId).Debug("Processing GetAgent request")
+// GetFleetNode retrieves a registered agent by ID.
+func (s *OrchestratorServer) GetFleetNode(ctx context.Context, req *pb.GetFleetNodeRequest) (*pb.GetFleetNodeResponse, error) {
+	s.logger.WithField("agent_id", req.NodeId).Debug("Processing GetFleetNode request")
 
-	if req.AgentId == "" {
+	if req.NodeId == "" {
 		return nil, status.Error(codes.InvalidArgument, "agent_id is required")
 	}
 
 	tenantCtx := orchestration.ContextWithTenant(ctx, req.TenantId)
 
-	agent, err := s.agentSvc.GetAgent(tenantCtx, req.TenantId, req.AgentId)
+	agent, err := s.agentSvc.GetFleetNode(tenantCtx, req.TenantId, req.NodeId)
 	if err != nil {
 		return nil, convertOrchestratorError(err)
 	}
 
-	return &pb.GetAgentResponse{
-		Agent:     serviceAgentRegistrationToProto(agent),
+	return &pb.GetFleetNodeResponse{
+		Node:      serviceFleetNodeToProto(agent),
 		Timestamp: timestamppb.Now(),
 	}, nil
 }
 
-// ListAgents lists agents matching optional filter criteria within a tenant.
-func (s *OrchestratorServer) ListAgents(ctx context.Context, req *pb.ListAgentsRequest) (*pb.ListAgentsResponse, error) {
-	s.logger.Debug("Processing ListAgents request")
+// ListFleetNodes lists agents matching optional filter criteria within a tenant.
+func (s *OrchestratorServer) ListFleetNodes(ctx context.Context, req *pb.ListFleetNodesRequest) (*pb.ListFleetNodesResponse, error) {
+	s.logger.Debug("Processing ListFleetNodes request")
 
-	var filter *orchestration.AgentFilter
+	var filter *orchestration.FleetNodeFilter
 	if req.Filter != nil {
-		filter = &orchestration.AgentFilter{
-			Host:      req.Filter.Host,
-			Status:    protoAgentStatusToService(req.Filter.Status),
-			AgentType: req.Filter.AgentType,
-			Backend:   req.Filter.Backend,
-			Limit:     int(req.Filter.Limit),
+		filter = &orchestration.FleetNodeFilter{
+			Host:     req.Filter.Host,
+			Status:   protoFleetNodeStatusToService(req.Filter.Status),
+			NodeType: req.Filter.NodeType,
+			Backend:  req.Filter.Backend,
+			Limit:    int(req.Filter.Limit),
 		}
 	}
 
 	tenantCtx := orchestration.ContextWithTenant(ctx, req.TenantId)
 
-	agents, err := s.agentSvc.ListAgents(tenantCtx, req.TenantId, filter)
+	page, err := pageFromRPC(req.GetLimit(), req.GetOffset(), req.GetSort(), req.GetQ())
 	if err != nil {
-		return nil, convertOrchestratorError(err)
+		return nil, err
 	}
 
-	pbAgents := make([]*pb.AgentRegistration, len(agents))
-	for i, agent := range agents {
-		pbAgents[i] = serviceAgentRegistrationToProto(agent)
+	result, err := s.agentSvc.ListFleetNodesPage(tenantCtx, req.TenantId, filter, page)
+	if err != nil {
+		return nil, convertListError(err, convertOrchestratorError)
 	}
 
-	return &pb.ListAgentsResponse{
-		Agents:    pbAgents,
-		Count:     int32(len(agents)), //nolint:gosec // G115: bounded count
-		Timestamp: timestamppb.Now(),
+	pbAgents := make([]*pb.FleetNode, len(result.Items))
+	for i, agent := range result.Items {
+		pbAgents[i] = serviceFleetNodeToProto(agent)
+	}
+
+	// count is how many agents are IN THIS RESPONSE, as it is on REST;
+	// total is how many matched.
+	return &pb.ListFleetNodesResponse{
+		Nodes:      pbAgents,
+		Count:      pageInt32(len(result.Items)),
+		Timestamp:  timestamppb.Now(),
+		Total:      pageInt32(result.Total),
+		Limit:      pageInt32(result.Limit),
+		Offset:     pageInt32(result.Offset),
+		NextOffset: pageInt32(result.NextOffset),
 	}, nil
 }
 
-// RemoveAgent removes an agent from the fleet registry.
-func (s *OrchestratorServer) RemoveAgent(ctx context.Context, req *pb.RemoveAgentRequest) (*pb.RemoveAgentResponse, error) {
-	s.logger.WithField("agent_id", req.AgentId).Debug("Processing RemoveAgent request")
+// RemoveFleetNode removes an agent from the fleet registry.
+func (s *OrchestratorServer) RemoveFleetNode(ctx context.Context, req *pb.RemoveFleetNodeRequest) (*pb.RemoveFleetNodeResponse, error) {
+	s.logger.WithField("agent_id", req.NodeId).Debug("Processing RemoveFleetNode request")
 
-	if req.AgentId == "" {
+	if req.NodeId == "" {
 		return nil, status.Error(codes.InvalidArgument, "agent_id is required")
 	}
 
 	tenantCtx := orchestration.ContextWithTenant(ctx, req.TenantId)
 
-	if err := s.agentSvc.RemoveAgent(tenantCtx, req.TenantId, req.AgentId); err != nil {
+	if err := s.agentSvc.RemoveFleetNode(tenantCtx, req.TenantId, req.NodeId); err != nil {
 		return nil, convertOrchestratorError(err)
 	}
 
-	return &pb.RemoveAgentResponse{
-		AgentId:   req.AgentId,
+	return &pb.RemoveFleetNodeResponse{
+		NodeId:    req.NodeId,
 		Removed:   true,
 		Timestamp: timestamppb.Now(),
 	}, nil
 }
 
-// AgentHeartbeat updates an agent's last seen timestamp.
-func (s *OrchestratorServer) AgentHeartbeat(ctx context.Context, req *pb.AgentHeartbeatRequest) (*pb.AgentHeartbeatResponse, error) {
-	s.logger.WithField("agent_id", req.AgentId).Debug("Processing AgentHeartbeat request")
+// FleetNodeHeartbeat updates an agent's last seen timestamp.
+func (s *OrchestratorServer) FleetNodeHeartbeat(ctx context.Context, req *pb.FleetNodeHeartbeatRequest) (*pb.FleetNodeHeartbeatResponse, error) {
+	s.logger.WithField("agent_id", req.NodeId).Debug("Processing FleetNodeHeartbeat request")
 
-	if req.AgentId == "" {
+	if req.NodeId == "" {
 		return nil, status.Error(codes.InvalidArgument, "agent_id is required")
 	}
 
@@ -1116,12 +1163,12 @@ func (s *OrchestratorServer) AgentHeartbeat(ctx context.Context, req *pb.AgentHe
 	// The gRPC heartbeat request carries no served-backend list, so it
 	// observes nothing and reconciles nothing. Only the REST verb the daemon
 	// itself calls reports what its runtime is serving.
-	if err := s.agentSvc.AgentHeartbeat(tenantCtx, req.TenantId, req.AgentId, nil); err != nil {
+	if err := s.agentSvc.FleetNodeHeartbeat(tenantCtx, req.TenantId, req.NodeId, nil); err != nil {
 		return nil, convertOrchestratorError(err)
 	}
 
-	return &pb.AgentHeartbeatResponse{
-		AgentId:      req.AgentId,
+	return &pb.FleetNodeHeartbeatResponse{
+		NodeId:       req.NodeId,
 		Acknowledged: true,
 		Timestamp:    timestamppb.Now(),
 	}, nil
@@ -1232,19 +1279,19 @@ func taskSourceToProto(src *orchestration.TaskSourceRef) *pb.TaskSource {
 	}
 }
 
-// protoAgentStatusToService converts a proto AgentStatus to the domain AgentStatus.
-func protoAgentStatusToService(as pb.AgentStatus) orchestration.AgentStatus {
+// protoFleetNodeStatusToService converts a proto FleetNodeStatus to the domain FleetNodeStatus.
+func protoFleetNodeStatusToService(as pb.FleetNodeStatus) orchestration.FleetNodeStatus {
 	switch as {
-	case pb.AgentStatus_AGENT_STATUS_ONLINE:
-		return orchestration.AgentStatusRunning
-	case pb.AgentStatus_AGENT_STATUS_OFFLINE:
-		return orchestration.AgentStatusOffline
-	case pb.AgentStatus_AGENT_STATUS_BUSY:
-		return orchestration.AgentStatusRunning
-	case pb.AgentStatus_AGENT_STATUS_ERROR:
-		return orchestration.AgentStatusError
-	case pb.AgentStatus_AGENT_STATUS_DRAINING:
-		return orchestration.AgentStatusIdle
+	case pb.FleetNodeStatus_FLEET_NODE_STATUS_ONLINE:
+		return orchestration.FleetNodeStatusRunning
+	case pb.FleetNodeStatus_FLEET_NODE_STATUS_OFFLINE:
+		return orchestration.FleetNodeStatusOffline
+	case pb.FleetNodeStatus_FLEET_NODE_STATUS_BUSY:
+		return orchestration.FleetNodeStatusRunning
+	case pb.FleetNodeStatus_FLEET_NODE_STATUS_ERROR:
+		return orchestration.FleetNodeStatusError
+	case pb.FleetNodeStatus_FLEET_NODE_STATUS_DRAINING:
+		return orchestration.FleetNodeStatusIdle
 	default:
 		return ""
 	}
@@ -1294,21 +1341,21 @@ func serviceTaskStatusToProto(ts orchestration.TaskStatus) pb.TaskStatus {
 	}
 }
 
-// serviceAgentStatusToProto converts a domain AgentStatus to proto AgentStatus.
-func serviceAgentStatusToProto(as orchestration.AgentStatus) pb.AgentStatus {
+// serviceFleetNodeStatusToProto converts a domain FleetNodeStatus to proto FleetNodeStatus.
+func serviceFleetNodeStatusToProto(as orchestration.FleetNodeStatus) pb.FleetNodeStatus {
 	switch as {
-	case orchestration.AgentStatusRegistered:
-		return pb.AgentStatus_AGENT_STATUS_ONLINE
-	case orchestration.AgentStatusRunning:
-		return pb.AgentStatus_AGENT_STATUS_BUSY
-	case orchestration.AgentStatusIdle:
-		return pb.AgentStatus_AGENT_STATUS_ONLINE
-	case orchestration.AgentStatusOffline:
-		return pb.AgentStatus_AGENT_STATUS_OFFLINE
-	case orchestration.AgentStatusError:
-		return pb.AgentStatus_AGENT_STATUS_ERROR
+	case orchestration.FleetNodeStatusRegistered:
+		return pb.FleetNodeStatus_FLEET_NODE_STATUS_ONLINE
+	case orchestration.FleetNodeStatusRunning:
+		return pb.FleetNodeStatus_FLEET_NODE_STATUS_BUSY
+	case orchestration.FleetNodeStatusIdle:
+		return pb.FleetNodeStatus_FLEET_NODE_STATUS_ONLINE
+	case orchestration.FleetNodeStatusOffline:
+		return pb.FleetNodeStatus_FLEET_NODE_STATUS_OFFLINE
+	case orchestration.FleetNodeStatusError:
+		return pb.FleetNodeStatus_FLEET_NODE_STATUS_ERROR
 	default:
-		return pb.AgentStatus_AGENT_STATUS_UNSPECIFIED
+		return pb.FleetNodeStatus_FLEET_NODE_STATUS_UNSPECIFIED
 	}
 }
 
@@ -1340,6 +1387,8 @@ func serviceSessionInfoToProto(info *orchestration.SessionInfo) *pb.SessionInfo 
 		State:        serviceSessionStateToProto(info.State),
 		CreatedAt:    unixNanoTimestamp(info.CreatedAt),
 		LastActivity: unixNanoTimestamp(info.LastActivity),
+		JobId:        info.JobID,
+		ContainerId:  info.ContainerID,
 	}
 }
 
@@ -1421,12 +1470,21 @@ func serviceTaskToProto(task *orchestration.Task) *pb.Task {
 	pbTask.BlockKind = string(task.BlockKind)
 	pbTask.StatusChangedAt = task.StatusChangedAt
 	pbTask.Runner = task.Runner
+	pbTask.PromptAppend = task.PromptAppend
 	pbTask.Routing = &pb.TaskRouting{
 		Backend:      task.Routing.Backend,
 		HostAffinity: task.Routing.HostAffinity,
 		GpuRequired:  task.Routing.GpuRequired,
 	}
 	pbTask.DispatchReason = task.DispatchReason
+	pbTask.BlockFaultClass = task.BlockFaultClass
+	pbTask.ConclusionReason = string(task.ConclusionReason)
+	// Derived on read, exactly as the REST representation derives them, so
+	// the two transports cannot disagree about a task's accounting.
+	pbTask.ChargedAttempts = int64(task.ChargedAttempts())
+	pbTask.EffectiveBudget = int64(task.EffectiveAttemptBudget())
+	pbTask.FaultClass = task.FaultClass()
+	pbTask.FaultOrigin = string(task.FaultOrigin())
 
 	return pbTask
 }
@@ -1480,21 +1538,20 @@ func serviceHealthReportToProto(report *orchestration.HealthCheckReport) *pb.Hea
 	}
 }
 
-// serviceAgentRegistrationToProto converts a domain AgentRegistration to proto AgentRegistration.
-func serviceAgentRegistrationToProto(agent *orchestration.AgentRegistration) *pb.AgentRegistration {
+// serviceFleetNodeToProto converts a domain FleetNode to proto FleetNode.
+func serviceFleetNodeToProto(agent *orchestration.FleetNode) *pb.FleetNode {
 	if agent == nil {
 		return nil
 	}
-	return &pb.AgentRegistration{
+	return &pb.FleetNode{
 		Id:           agent.ID,
 		TenantId:     agent.TenantID,
 		Name:         agent.Name,
 		Host:         agent.Host,
 		Backend:      agent.Backend,
-		AgentType:    agent.AgentType,
-		Status:       serviceAgentStatusToProto(agent.Status),
+		NodeType:     agent.NodeType,
+		Status:       serviceFleetNodeStatusToProto(agent.Status),
 		Capabilities: agent.Capabilities,
-		ContainerId:  agent.ContainerID,
 		WorkDir:      agent.WorkDir,
 		LastSeen:     unixNanoTimestamp(agent.LastSeen),
 		RegisteredAt: unixNanoTimestamp(agent.RegisteredAt),
@@ -1512,6 +1569,9 @@ func convertOrchestratorError(err error) error {
 	if err == nil {
 		return nil
 	}
+	if mapped, ok := referenceStatus(err); ok {
+		return mapped
+	}
 
 	// Check if it's already a gRPC status error
 	if _, ok := status.FromError(err); ok {
@@ -1527,13 +1587,19 @@ func convertOrchestratorError(err error) error {
 		return status.Error(codes.PermissionDenied, err.Error())
 	}
 
+	// A spawn or a job naming an Agent or pool is refused in the catalog's
+	// own vocabulary; a pool every Agent of which refused is exhausted.
+	if isAgentCatalogError(err) {
+		return agentCatalogStatusError(err)
+	}
+
 	// Check orchestration-specific typed errors
-	var agentNotFoundErr *orchestration.AgentNotFoundError
+	var agentNotFoundErr *orchestration.FleetNodeNotFoundError
 	if stderrors.As(err, &agentNotFoundErr) {
 		return status.Error(codes.NotFound, agentNotFoundErr.Error())
 	}
 
-	var agentAlreadyExistsErr *orchestration.AgentAlreadyExistsError
+	var agentAlreadyExistsErr *orchestration.FleetNodeAlreadyExistsError
 	if stderrors.As(err, &agentAlreadyExistsErr) {
 		return status.Error(codes.AlreadyExists, agentAlreadyExistsErr.Error())
 	}
@@ -1618,6 +1684,13 @@ func convertOrchestratorError(err error) error {
 		return status.Error(codes.InvalidArgument, err.Error())
 	}
 
+	// Every refusal of the request's own shape — an InputValidationError, an
+	// oversized prompt append — unwraps to ErrInvalidInput and is the
+	// caller's to correct, never a server fault.
+	if stderrors.Is(err, orchestration.ErrInvalidInput) {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	var agentSvcErr *orchestration.AgentServiceError
 	if stderrors.As(err, &agentSvcErr) {
 		return status.Error(codes.Internal, agentSvcErr.Error())
@@ -1628,7 +1701,7 @@ func convertOrchestratorError(err error) error {
 		return status.Error(codes.Internal, agentStoreErr.Error())
 	}
 
-	var agentRegistryErr *orchestration.AgentRegistryError
+	var agentRegistryErr *orchestration.FleetRegistryError
 	if stderrors.As(err, &agentRegistryErr) {
 		return status.Error(codes.Internal, agentRegistryErr.Error())
 	}
@@ -1651,20 +1724,20 @@ func convertOrchestratorError(err error) error {
 		stderrors.Is(err, orchestration.ErrTaskIDRequired) ||
 		stderrors.Is(err, orchestration.ErrAgentIDRequired) ||
 		stderrors.Is(err, orchestration.ErrAgentStoreInvalidInput) ||
-		stderrors.Is(err, orchestration.ErrAgentRegistryInvalidInput) ||
+		stderrors.Is(err, orchestration.ErrFleetRegistryInvalidInput) ||
 		stderrors.Is(err, orchestration.ErrTaskStoreInvalidInput) {
 		return status.Error(codes.InvalidArgument, err.Error())
 	}
 
 	if stderrors.Is(err, orchestration.ErrAgentStoreNotFound) ||
-		stderrors.Is(err, orchestration.ErrAgentRegistryNotFound) ||
+		stderrors.Is(err, orchestration.ErrFleetNodeNotFound) ||
 		stderrors.Is(err, orchestration.ErrTaskNotFound) ||
 		stderrors.Is(err, orchestration.ErrProjectNotFound) ||
 		stderrors.Is(err, orchestration.ErrJobNotFound) {
 		return status.Error(codes.NotFound, err.Error())
 	}
 
-	if stderrors.Is(err, orchestration.ErrAgentRegistryAlreadyExists) ||
+	if stderrors.Is(err, orchestration.ErrFleetNodeAlreadyExists) ||
 		stderrors.Is(err, orchestration.ErrTaskAlreadyExists) {
 		return status.Error(codes.AlreadyExists, err.Error())
 	}

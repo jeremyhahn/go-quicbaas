@@ -98,6 +98,11 @@ func dispatchReasonAdmission(decision AdmissionDecision) string {
 		strconv.Itoa(decision.Entitlement) + " slot(s) this sweep held"
 }
 
+// dispatchReasonAutonomyOff is the reason on a waiting task whose project is
+// not autonomous: the dispatcher starts nothing for such a project, parked or
+// not, until an operator switches autonomy on.
+const dispatchReasonAutonomyOff = "project autonomy is off: nothing dispatches until it is switched on"
+
 // dispatchReasonDeferred says the task is held until an instant in the future.
 func dispatchReasonDeferred(until int64) string {
 	return "deferred until " + time.Unix(0, until).UTC().Format(time.RFC3339)
@@ -241,7 +246,9 @@ func (d *TaskDispatcher) Run(ctx context.Context, interval time.Duration) error 
 	}
 }
 
-// Sweep visits every tenant's autonomous projects once. It returns an error
+// Sweep visits every tenant's autonomous projects once, and records on each
+// waiting task of a non-autonomous project that autonomy is why it waits
+// (explainAutonomyOff). It returns an error
 // only when tenants cannot be enumerated; a per-project failure is logged and
 // the sweep continues, because one project's outage must not stop every other
 // project's queue from draining.
@@ -265,10 +272,13 @@ func (d *TaskDispatcher) Sweep(ctx context.Context) error {
 			continue
 		}
 		for _, project := range projects {
-			if project == nil || !project.Autonomous {
-				continue
+			switch {
+			case project == nil:
+			case !project.Autonomous:
+				d.explainAutonomyOff(tenantCtx, project)
+			default:
+				d.sweepProject(tenantCtx, project, plan)
 			}
-			d.sweepProject(tenantCtx, project, plan)
 		}
 	}
 	return nil
@@ -276,8 +286,8 @@ func (d *TaskDispatcher) Sweep(ctx context.Context) error {
 
 // SweepProject dispatches for one project now. It is what a push path calls
 // after adopting work, so a nudge does not wait for the next tick. A project
-// that is not autonomous is swept for nothing, exactly as the interval sweep
-// treats it.
+// that is not autonomous dispatches nothing and has its waiting tasks told
+// why, exactly as the interval sweep treats it.
 func (d *TaskDispatcher) SweepProject(ctx context.Context, tenantID, projectID string) error {
 	if tenantID == "" || projectID == "" {
 		return &TaskDispatcherConfigError{Field: "project", Message: "a project sweep names its tenant and project"}
@@ -296,6 +306,7 @@ func (d *TaskDispatcher) SweepProject(ctx context.Context, tenantID, projectID s
 			continue
 		}
 		if !project.Autonomous {
+			d.explainAutonomyOff(tenantCtx, project)
 			return nil
 		}
 		d.sweepProject(tenantCtx, project, plan)
@@ -352,6 +363,8 @@ func (d *TaskDispatcher) sweepProject(ctx context.Context, project *Project, pla
 	// A task naming a job that no longer exists is repaired BEFORE slots are
 	// computed, so a sweep that frees one can dispatch it in the same pass.
 	ready = append(ready, d.repairStrandedBindings(ctx, project, bound)...)
+	ready, parked := holdUnstartedWhileParked(project, ready)
+	held = append(held, parked...)
 	sortDispatchCandidates(ready)
 
 	slots, inflight, refusal, err := d.dispatchSlots(ctx, project, plan)
@@ -384,6 +397,36 @@ func (d *TaskDispatcher) sweepProject(ctx context.Context, project *Project, pla
 	if queued > 0 {
 		d.logger.Infof("task dispatcher: project %s: pending=%d inflight=%d slots=%d dispatched=%d",
 			project.ID, queued, inflight, slots, dispatched)
+	}
+}
+
+// explainAutonomyOff records why a non-autonomous project's queue does not
+// move: every task the dispatcher would otherwise start carries
+// dispatchReasonAutonomyOff, written once through refuse like any other
+// refusal.
+//
+// IT DISPATCHES NOTHING AND DECIDES NOTHING. Autonomy off means the engine
+// starts no work for the project; this only stops that being silent. Without
+// it a task readmitted into such a project (go-objstore 54cf680b, 2026-09-28)
+// sat pending with no reason, and "why is this not running?" had no answer on
+// the record. Only the dispatcher's own queue is explained — a task that is
+// not auto-spawned, is bound to a job, or is not pending waits for something
+// else.
+func (d *TaskDispatcher) explainAutonomyOff(ctx context.Context, project *Project) {
+	tasks, err := d.tasks.ListTasks(ctx, project.TenantID, &TaskFilter{
+		ProjectID: project.ID,
+		Statuses:  []TaskStatus{TaskStatusPending},
+	})
+	if err != nil {
+		d.logger.Warnf("task dispatcher: project %s: autonomy is off, and listing its queue to say so failed: %s",
+			project.ID, err.Error())
+		return
+	}
+	for _, task := range tasks {
+		if task == nil || !task.AutoSpawn || task.SpawnedJobID != "" || task.Status != TaskStatusPending {
+			continue
+		}
+		d.refuse(ctx, project, task, dispatchReasonAutonomyOff)
 	}
 }
 
@@ -475,6 +518,30 @@ func partitionDispatchCandidates(tasks []*Task, now int64) (ready []*Task, held 
 		}
 	}
 	return ready, held, bound
+}
+
+// holdUnstartedWhileParked takes the tasks a parked project will not start out
+// of ready and holds them with the park as their reason. An open project's
+// ready list is returned as it came.
+//
+// IT DECIDES NOTHING THE GATE WOULD NOT. SpawnTask refuses the same tasks
+// through admitIntake; holding them here only spares the sweep a refused
+// spawn per task per tick, and leaves the reason on the task, written once,
+// where "why is this still pending?" is answered.
+func holdUnstartedWhileParked(project *Project, ready []*Task) ([]*Task, []heldTask) {
+	if project == nil || !project.Parked {
+		return ready, nil
+	}
+	admitted := ready[:0]
+	var held []heldTask
+	for _, task := range ready {
+		if project.AdmitsTask(task) {
+			admitted = append(admitted, task)
+			continue
+		}
+		held = append(held, heldTask{task: task, reason: project.RefuseIntake("this task, which has not started").Error()})
+	}
+	return admitted, held
 }
 
 // repairStrandedBindings frees the tasks whose named job no longer exists, and

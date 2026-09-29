@@ -60,7 +60,6 @@ func (m *mockTenantStorage) CreateTenant(ctx context.Context, tenant *Tenant) er
 
 	// BaaS-layer IAM quotas only (users/roles/storage are owned by qrdb TenantServicer)
 	quota := &TenantQuota{
-		MaxGroups:   int64(tenant.Quotas.MaxGroups),
 		MaxPolicies: int64(tenant.Quotas.MaxPolicies),
 		MaxApps:     int64(tenant.Quotas.MaxApps),
 	}
@@ -109,7 +108,6 @@ func (m *mockTenantStorage) UpdateTenant(ctx context.Context, tenant *Tenant) er
 
 	// BaaS-layer IAM quotas only (users/roles/storage are owned by qrdb TenantServicer)
 	quota := &TenantQuota{
-		MaxGroups:   int64(tenant.Quotas.MaxGroups),
 		MaxPolicies: int64(tenant.Quotas.MaxPolicies),
 		MaxApps:     int64(tenant.Quotas.MaxApps),
 	}
@@ -258,8 +256,6 @@ func (m *mockTenantStorage) IncrementQuotaUsage(ctx context.Context, tenantID st
 
 	// BaaS-layer IAM quotas only; users/roles/storage are engine-level (qrdb-owned).
 	switch resource {
-	case QuotaResourceGroups:
-		quota.CurrentGroups += delta
 	case QuotaResourcePolicies:
 		quota.CurrentPolicies += delta
 	case QuotaResourceApps:
@@ -444,7 +440,6 @@ func TestCreateTenant_WithQuotas(t *testing.T) {
 
 	// BaaS-layer IAM quotas only; MaxUsers/MaxRoles are engine-level (qrdb-owned).
 	customQuotas := &TenantQuotas{
-		MaxGroups:   500,
 		MaxPolicies: 500,
 		MaxApps:     50,
 	}
@@ -459,8 +454,8 @@ func TestCreateTenant_WithQuotas(t *testing.T) {
 		t.Fatalf("CreateTenant failed: %v", err)
 	}
 
-	if tenant.Quotas.MaxGroups != 500 {
-		t.Errorf("Expected MaxGroups 500, got %d", tenant.Quotas.MaxGroups)
+	if tenant.Quotas.MaxPolicies != 500 {
+		t.Errorf("Expected MaxPolicies 500, got %d", tenant.Quotas.MaxPolicies)
 	}
 }
 
@@ -478,9 +473,6 @@ func TestCreateTenant_DefaultQuotas(t *testing.T) {
 	}
 
 	// Verify default BaaS-layer IAM quotas (users/roles are engine-level, owned by qrdb)
-	if tenant.Quotas.MaxGroups != 1000 {
-		t.Errorf("Expected default MaxGroups 1000, got %d", tenant.Quotas.MaxGroups)
-	}
 	if tenant.Quotas.MaxPolicies != 1000 {
 		t.Errorf("Expected default MaxPolicies 1000, got %d", tenant.Quotas.MaxPolicies)
 	}
@@ -689,7 +681,6 @@ func TestUpdateTenant_Quotas(t *testing.T) {
 
 	// Update BaaS-layer IAM quotas (MaxUsers/MaxRoles are engine-level, owned by qrdb)
 	newQuotas := &TenantQuotas{
-		MaxGroups:   200,
 		MaxPolicies: 200,
 		MaxApps:     20,
 	}
@@ -701,8 +692,8 @@ func TestUpdateTenant_Quotas(t *testing.T) {
 		t.Fatalf("UpdateTenant failed: %v", err)
 	}
 
-	if updated.Quotas.MaxGroups != 200 {
-		t.Errorf("Expected MaxGroups 200, got %d", updated.Quotas.MaxGroups)
+	if updated.Quotas.MaxPolicies != 200 {
+		t.Errorf("Expected MaxPolicies 200, got %d", updated.Quotas.MaxPolicies)
 	}
 }
 
@@ -888,7 +879,7 @@ func TestCheckQuota_Success(t *testing.T) {
 		ID:   "quota-test",
 		Name: "Quota Test",
 		Quotas: &TenantQuotas{
-			MaxGroups: 100, // users/roles are engine-level, owned by qrdb
+			MaxPolicies: 100, // users/roles are engine-level, owned by qrdb
 		},
 	})
 	if err != nil {
@@ -896,7 +887,7 @@ func TestCheckQuota_Success(t *testing.T) {
 	}
 
 	// Check BaaS-layer quota (should pass since current is 0)
-	err = mgr.CheckQuota(ctx, "quota-test", QuotaResourceGroups)
+	err = mgr.CheckQuota(ctx, "quota-test", QuotaResourcePolicies)
 	if err != nil {
 		t.Errorf("CheckQuota failed: %v", err)
 	}
@@ -914,7 +905,7 @@ func TestCheckQuota_Exceeded(t *testing.T) {
 		ID:   "quota-test",
 		Name: "Quota Test",
 		Quotas: &TenantQuotas{
-			MaxGroups: 100, // users/roles are engine-level, owned by qrdb
+			MaxPolicies: 100, // users/roles are engine-level, owned by qrdb
 		},
 	})
 	if err != nil {
@@ -923,11 +914,11 @@ func TestCheckQuota_Exceeded(t *testing.T) {
 
 	// Manually set current usage to limit
 	quota, _ := storage.GetQuota(ctx, tenant.ID)
-	quota.CurrentGroups = quota.MaxGroups
+	quota.CurrentPolicies = quota.MaxPolicies
 	storage.UpdateQuota(ctx, tenant.ID, quota)
 
 	// Check quota (should fail since at limit)
-	err = mgr.CheckQuota(ctx, tenant.ID, QuotaResourceGroups)
+	err = mgr.CheckQuota(ctx, tenant.ID, QuotaResourcePolicies)
 	if err == nil {
 		t.Fatal("Expected quota exceeded error")
 	}
@@ -956,10 +947,12 @@ func TestCheckQuota_UnknownResource(t *testing.T) {
 
 	// Unknown resource types (including engine-level resources like "users", "roles",
 	// "storage") return nil. Engine-level quota enforcement is owned by qrdb's
-	// TenantServicer; BaaS IAM only enforces groups/policies/apps.
-	err = mgr.CheckQuota(ctx, "quota-test", "unknown_resource")
-	if err != nil {
-		t.Fatalf("expected nil for unknown/engine-level resource, got: %v", err)
+	// TenantServicer; BaaS IAM only enforces policies/apps. "groups" is no
+	// longer a resource at all: quicbaas keeps no groups.
+	for _, resource := range []string{"unknown_resource", "groups"} {
+		if err := mgr.CheckQuota(ctx, "quota-test", resource); err != nil {
+			t.Fatalf("expected nil for unknown/engine-level resource %q, got: %v", resource, err)
+		}
 	}
 }
 
@@ -980,7 +973,6 @@ func TestCheckQuota_TenantNotFound(t *testing.T) {
 func TestCheckQuota_AllResources(t *testing.T) {
 	resources := []string{
 		QuotaResourceUsers,
-		QuotaResourceGroups,
 		QuotaResourceRoles,
 		QuotaResourcePolicies,
 		QuotaResourceStorage,

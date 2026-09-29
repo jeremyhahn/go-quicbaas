@@ -141,6 +141,20 @@ type TaskLister interface {
 	ListTasks(ctx context.Context, tenantID string, filter *orchestration.TaskFilter) ([]*orchestration.Task, error)
 }
 
+// TaskRecordLister lists a project's tasks AND names the records it could not
+// read. orchestration.TaskStore satisfies it.
+//
+// THE LABEL SWEEP NEEDS THE SECOND HALF because it decides from ABSENCE: an
+// issue claiming live work with no task answering for it is an orphan, and a
+// spent task answers for its issue only when no newer one does. A record the
+// store could not decode is missing from a plain listing exactly as a deleted
+// one is, so a sweep reading one would announce an ending over live work
+// (go-quicbaas#848). The re-read before every write refuses on an incomplete
+// listing instead.
+type TaskRecordLister interface {
+	ListTaskRecords(ctx context.Context, tenantID string, filter *orchestration.TaskFilter) (*orchestration.TaskListing, error)
+}
+
 // ForgePacer bounds how often a sweep may touch the forge.
 //
 // An interface rather than a duration so a test drives the pass without
@@ -219,8 +233,9 @@ type LabelReconcilerConfig struct {
 	// Bindings lists a tenant's bound projects and reads one binding.
 	Bindings BindingReader
 
-	// Tasks lists a project's tasks, live and terminal alike.
-	Tasks TaskLister
+	// Tasks lists a project's tasks, live and terminal alike, and names the
+	// records it could not read.
+	Tasks TaskRecordLister
 
 	// Hooks is the module's own lifecycle hook set, and the sweep's ONLY
 	// writer: the outcome comment is posted through its TaskConcluded and the
@@ -237,7 +252,7 @@ type LabelReconcilerConfig struct {
 type LabelReconciler struct {
 	tenants  orchestration.TenantLister
 	bindings BindingReader
-	tasks    TaskLister
+	tasks    TaskRecordLister
 	hooks    *Hooks
 	pacer    ForgePacer
 }
@@ -477,9 +492,18 @@ func (r *LabelReconciler) ReconcileProject(ctx context.Context, tenantID, projec
 	if binding == nil {
 		return LabelReconcileReport{}, &NotFoundError{Entity: bindingEntityName, TenantID: tenantID, ID: projectID}
 	}
-	tasks, err := r.tasks.ListTasks(ctx, tenantID, &orchestration.TaskFilter{ProjectID: projectID})
+	// THE SNAPSHOT MAY BE INCOMPLETE and is still used: nothing is written
+	// from it, and every direction that writes re-reads through
+	// taskSinceSnapshot, which refuses an incomplete listing. Failing the
+	// whole project here would let one unreadable record stop the sweep
+	// from even reporting on the rest.
+	listing, err := r.tasks.ListTaskRecords(ctx, tenantID, &orchestration.TaskFilter{ProjectID: projectID})
 	if err != nil {
 		return LabelReconcileReport{}, err
+	}
+	var tasks []*orchestration.Task
+	if listing != nil {
+		tasks = listing.Tasks
 	}
 	forge, err := r.hooks.forges.ForgeFor(ctx, tenantID, binding.Forge)
 	if err != nil {
@@ -689,8 +713,18 @@ func (p *labelPass) examineClaim(ctx context.Context, issue ForgeIssue) LabelRec
 // A STORE THAT CANNOT ANSWER DEFERS. Fail-closed: an unreadable record is not
 // evidence that no record exists, so nothing is written and the next sweep
 // re-examines the same issue.
+//
+// SO DOES A STORE THAT ANSWERS ONLY IN PART (go-quicbaas#848). A record the
+// store could not decode cannot be filtered, so it may be this issue's — the
+// live task that should answer for it, or the newer one that supersedes a spent
+// one — and the listing cannot say which. Every write this pass makes is
+// decided from what the listing does NOT contain as much as from what it does,
+// so an incomplete listing defers the write exactly as a refused one does.
 func (p *labelPass) taskSinceSnapshot(ctx context.Context, number int) (*orchestration.Task, error) {
-	tasks, err := p.reconciler.tasks.ListTasks(ctx, p.tenantID, &orchestration.TaskFilter{ProjectID: p.projectID})
+	listing, err := p.reconciler.tasks.ListTaskRecords(ctx, p.tenantID, &orchestration.TaskFilter{ProjectID: p.projectID})
+	if err == nil {
+		err = listing.Err(p.tenantID)
+	}
 	if err != nil {
 		return nil, &LabelReconcileRecordError{
 			TenantID: p.tenantID, ProjectID: p.projectID, Issue: number, Cause: err,
@@ -698,7 +732,7 @@ func (p *labelPass) taskSinceSnapshot(ctx context.Context, number int) (*orchest
 	}
 	// Indexed by the same rule the pass indexed its snapshot by, so a fresh
 	// read and a snapshot read of the same state answer identically.
-	return indexTasksByIssue(p.repo, tasks)[number], nil
+	return indexTasksByIssue(p.repo, listing.Tasks)[number], nil
 }
 
 // reportQueued settles a claiming issue whose task is QUEUED rather than
@@ -847,10 +881,10 @@ func (p *labelPass) settleReadmission(ctx context.Context, number int, task *orc
 		return finding
 	}
 
-	// The readmitted row's label key is empty, so settleLabels reads "no label
-	// this module owns" as agreement and clears whatever is there otherwise.
-	// The same helper the claim direction settles through, for the same reason:
-	// one place decides what agreement means.
+	// The readmitted row's label key is the trigger, so settleLabels reads
+	// "the trigger and nothing else this module owns" as agreement and moves
+	// the issue there otherwise. The same helper the claim direction settles
+	// through, for the same reason: one place decides what agreement means.
 	return p.settleLabels(ctx, finding, *issue, outcomeSpecs[OutcomeReadmitted].labelKey,
 		"the task was readmitted and the issue still carried the label its park left")
 }
@@ -1369,7 +1403,7 @@ var (
 )
 
 // LabelReconcileRecordError reports a re-read of the engine's own record that
-// the task store refused.
+// the task store refused, or answered only in part (an incomplete listing).
 //
 // IT IS DISTINCT FROM LabelReconcileForgeError because the two send an operator
 // to opposite halves of the system: one says the forge would not answer, this

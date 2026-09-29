@@ -835,7 +835,7 @@ func TestAuditLogger_LogAdminAction(t *testing.T) {
 		expectedEventType AuditEventType
 	}{
 		{"user management", "user", AuditEventUserManagement},
-		{"group management", "group", AuditEventGroupManagement},
+		{"an unmapped resource type is user management", "group", AuditEventUserManagement},
 		{"role management", "role", AuditEventRoleManagement},
 		{"policy change", "policy", AuditEventPolicyChange},
 		{"tenant event", "tenant", AuditEventTenantEvent},

@@ -38,6 +38,13 @@ type JobStorage interface {
 	GetJobsDueForExecution(ctx context.Context, before time.Time, limit int) ([]*Job, error)
 	SaveExecution(ctx context.Context, exec *JobExecution) error
 	GetExecutions(ctx context.Context, jobID uint64, tenantID string, limit int) ([]*JobExecution, error)
+
+	// InitializeJobIDCounter makes the store's durable job ID counter ready
+	// before the engine allocates from it. The engine calls it at Start and
+	// refuses to start when it fails: a counter that restarts from a guess
+	// reissues the IDs of jobs that already exist, and creating a job under a
+	// reissued ID overwrites the job that holds it.
+	InitializeJobIDCounter(ctx context.Context) error
 }
 
 // FiringClaimer arbitrates which node executes a given firing.
@@ -147,6 +154,12 @@ type SchedulerEngine struct {
 	// execution-completion writes). A fixed stripe array bounds memory;
 	// stripe collisions only cause harmless extra serialization.
 	jobLocks [jobLockStripes]sync.Mutex
+
+	// systemJobs holds the system job definitions registered with
+	// RegisterSystemJob that are not yet installed in storage. The run loop
+	// installs them and removes each one once the store has accepted it.
+	systemJobs   map[uint64]*Job
+	systemJobsMu sync.Mutex
 }
 
 // jobLockStripes is the number of striped per-job mutexes. Power of
@@ -340,6 +353,14 @@ func (s *SchedulerEngine) Start(ctx context.Context) error {
 		}
 	}
 
+	// The job ID counter is loaded before anything can be scheduled. A store
+	// that cannot produce it fails the start: the alternative is allocating
+	// from zero and reissuing the IDs of jobs that already exist.
+	if err := s.initializeJobIDs(ctx); err != nil {
+		s.running.Store(false)
+		return err
+	}
+
 	s.ctx, s.cancelFn = context.WithCancel(ctx) // #nosec G118 -- cancelFn stored in scheduler, called in Stop()
 	s.startedAt = time.Now()
 	s.ticker = time.NewTicker(s.config.TickInterval)
@@ -359,6 +380,17 @@ func (s *SchedulerEngine) Start(ctx context.Context) error {
 	// from a separate goroutine.
 	close(s.startedCh)
 
+	return nil
+}
+
+// initializeJobIDs loads the store's job ID counter, bounded by the
+// configured storage timeout.
+func (s *SchedulerEngine) initializeJobIDs(ctx context.Context) error {
+	storageCtx, cancel := context.WithTimeout(ctx, s.config.DefaultTimeout)
+	defer cancel()
+	if err := s.storage.InitializeJobIDCounter(storageCtx); err != nil {
+		return ErrStorageError{Op: "InitializeJobIDCounter", Cause: err}
+	}
 	return nil
 }
 
@@ -429,6 +461,12 @@ func (s *SchedulerEngine) ScheduleJob(ctx context.Context, job *Job) error {
 
 	if err := s.validateJob(job); err != nil {
 		return err
+	}
+	// The ID range at and above SystemJobIDFloor belongs to system jobs,
+	// which are installed by RegisterSystemJob. Letting a scheduled job take
+	// one would overwrite the system job that owns it.
+	if job.ID >= SystemJobIDFloor {
+		return InvalidJobError{Field: "id", Message: "IDs at or above SystemJobIDFloor are reserved for system jobs"}
 	}
 
 	// Set defaults
@@ -760,7 +798,7 @@ func (s *SchedulerEngine) ResumeJob(ctx context.Context, jobID uint64, tenantID 
 
 	// Recalculate next run if needed
 	if job.NextRun.Before(time.Now()) {
-		if err := s.calculateNextRun(job); err != nil {
+		if err := s.rescheduleResumed(job); err != nil {
 			return err
 		}
 	}
@@ -804,7 +842,7 @@ func (s *SchedulerEngine) ResumeJobWithStatus(ctx context.Context, jobID uint64,
 
 	// Recalculate next run if needed
 	if job.NextRun.Before(time.Now()) {
-		if err := s.calculateNextRun(job); err != nil {
+		if err := s.rescheduleResumed(job); err != nil {
 			return oldStatus, err
 		}
 	}
@@ -871,9 +909,9 @@ func (s *SchedulerEngine) UpdateJob(ctx context.Context, jobID uint64, tenantID 
 			return nil, InvalidScheduleError{Schedule: updates.Schedule, Cause: err}
 		}
 		job.Schedule = updates.Schedule
-		// Recalculate next run for recurring jobs
+		// A recurring job's new schedule starts a new firing
 		if job.Type == JobTypeRecurring {
-			if err := s.calculateNextRun(job); err != nil {
+			if err := s.startNextFiring(job); err != nil {
 				return nil, err
 			}
 		}
@@ -1061,6 +1099,7 @@ func (s *SchedulerEngine) run() {
 
 		case t := <-s.tickCh:
 			s.lastTickTime.Store(&t)
+			s.installSystemJobs(s.ctx)
 			s.processDueJobs(s.ctx)
 
 		case req := <-s.triggerCh:
@@ -1069,10 +1108,21 @@ func (s *SchedulerEngine) run() {
 	}
 }
 
+// sweepLogPrefix begins every record the due-job sweep emits.
+const sweepLogPrefix = "scheduler due-job sweep"
+
+// dueJobIDs returns the IDs of the jobs a sweep found, for its log record.
+func dueJobIDs(jobs []*Job) []uint64 {
+	ids := make([]uint64, len(jobs))
+	for i, j := range jobs {
+		ids[i] = j.ID
+	}
+	return ids
+}
+
 // processDueJobs fetches and executes jobs that are due.
 func (s *SchedulerEngine) processDueJobs(ctx context.Context) {
 	now := time.Now()
-	s.logDebug("[SCHEDULER TICK] Checking for due jobs at %v", now)
 
 	// Create a context with timeout for storage operations
 	// This is required for Raft-based storage which needs a deadline
@@ -1081,17 +1131,16 @@ func (s *SchedulerEngine) processDueJobs(ctx context.Context) {
 
 	jobs, err := s.storage.GetJobsDueForExecution(storageCtx, now, s.config.MaxConcurrentJobs)
 	if err != nil {
-		s.logError("GetJobsDueForExecution failed: %v", err)
+		s.logError(sweepLogPrefix+" failed: component=scheduler error=%q", err.Error())
 		s.storageErrors.Add(1)
 		return
 	}
 
-	s.logDebug("[SCHEDULER TICK] Found %d due jobs", len(jobs))
+	// A sweep that finds nothing carries no information: the tick runs
+	// every TickInterval, so logging it would bury every other record.
 	if len(jobs) > 0 {
-		for _, j := range jobs {
-			s.logDebug("  Job %d: %s, NextRun=%v, Status=%s, Handler=%s",
-				j.ID, j.Name, j.NextRun, j.Status, j.Handler)
-		}
+		s.logDebug(sweepLogPrefix+" found due jobs: component=scheduler due=%d job_ids=%v",
+			len(jobs), dueJobIDs(jobs))
 	}
 
 	for _, job := range jobs {
@@ -1402,6 +1451,10 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 	// Wait for result or timeout
 	select {
 	case <-execCtx.Done():
+		if ctx.Err() != nil {
+			s.handleInterruptedRun(ctx, job, exec)
+			return
+		}
 		if execCtx.Err() == context.DeadlineExceeded {
 			s.handleJobTimeout(ctx, job, exec, timeout)
 			return
@@ -1411,10 +1464,73 @@ func (s *SchedulerEngine) executeJob(ctx context.Context, job *Job, claimedFirin
 
 	case res := <-resultCh:
 		if res.err != nil {
+			// A handler that honours cancellation returns its context's
+			// error the moment the engine stops, and that return races the
+			// Done case above. Either way the run was cut short by the
+			// shutdown, so it is the same outcome whichever case wins.
+			if ctx.Err() != nil {
+				s.handleInterruptedRun(ctx, job, exec)
+				return
+			}
 			s.handleJobError(ctx, job, exec, res.err)
 			return
 		}
 		s.handleJobSuccess(ctx, job, exec, res.result)
+	}
+}
+
+// outcomeContext returns the context a run's outcome is written under.
+//
+// DETACHED FROM THE ENGINE'S CANCELLATION, because the outcome of a run that
+// ends as the engine stops still has to reach the store. Derived from the
+// engine context, the write would be refused by any store that honours
+// cancellation — the job would stay Running, a status no tick ever picks up,
+// and the run would be lost without a trace. Stop waits for these writes (they
+// run inside the engine's wait group), and DefaultTimeout bounds each one.
+func (s *SchedulerEngine) outcomeContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), s.config.DefaultTimeout)
+}
+
+// handleInterruptedRun concludes a run that the engine's shutdown cut short.
+//
+// AN INTERRUPTED RUN IS NOT A FAILED RUN. The handler did not fail; the
+// process stopped under it. Recording it as a failure charged a retry and, for
+// a user recurring job, left it Failed for good — only system jobs are
+// re-armed at boot. So the run is treated as not having happened: the job
+// returns to Pending with its retry budget, RunCount and LastRun untouched, and
+// the interrupted firing runs again on the next tick of whichever node picks it
+// up.
+//
+// The firing is re-armed at now rather than at its original time when that
+// time has passed. On a cluster the original firing has been claimed, and the
+// claim mark only moves forward, so re-arming at the same instant would leave
+// the firing at its mark — unclaimable, and never run again. Now is past the
+// mark and already due. A firing still in the future (a manual trigger ran the
+// job early) keeps its time.
+//
+// The execution record says what happened, with status Canceled, so the
+// history shows the partial run a non-idempotent handler may have begun.
+func (s *SchedulerEngine) handleInterruptedRun(ctx context.Context, job *Job, exec *JobExecution) {
+	now := time.Now()
+	exec.EndedAt = now
+	exec.Duration = exec.EndedAt.Sub(exec.StartedAt)
+	exec.Status = JobStatusCanceled
+	exec.Error = RunInterruptedError{JobID: job.ID}.Error()
+
+	job.Status = JobStatusPending
+	if job.NextRun.Before(now) {
+		job.NextRun = now
+	}
+	job.UpdatedAt = now
+
+	storageCtx, cancel := s.outcomeContext(ctx)
+	defer cancel()
+
+	s.logWarn("Job %d (%s) interrupted by scheduler shutdown; re-armed for %s",
+		job.ID, job.Name, job.NextRun)
+	s.persistJobOutcome(storageCtx, job)
+	if err := s.storage.SaveExecution(storageCtx, exec); err != nil {
+		s.storageErrors.Add(1)
 	}
 }
 
@@ -1430,12 +1546,13 @@ func (s *SchedulerEngine) handleJobSuccess(ctx context.Context, job *Job, exec *
 
 	job.LastRun = now
 	job.RunCount++
+	job.FailCount = 0 // a successful run ends its firing's retry budget
 	job.UpdatedAt = now
 
-	// For recurring jobs, calculate next run
+	// For recurring jobs, move on to the next firing
 	if job.Type == JobTypeRecurring {
 		job.Status = JobStatusPending
-		if err := s.calculateNextRun(job); err != nil {
+		if err := s.startNextFiring(job); err != nil {
 			job.Status = JobStatusFailed
 			job.LastError = err.Error()
 		}
@@ -1443,8 +1560,9 @@ func (s *SchedulerEngine) handleJobSuccess(ctx context.Context, job *Job, exec *
 		job.Status = JobStatusCompleted
 	}
 
-	// Create timeout context for storage operations (required for Raft-based storage)
-	storageCtx, cancel := context.WithTimeout(ctx, s.config.DefaultTimeout)
+	// The outcome is written even when the engine is stopping; see
+	// outcomeContext.
+	storageCtx, cancel := s.outcomeContext(ctx)
 	defer cancel()
 
 	// Persist the outcome under the job's stripe lock so a concurrent
@@ -1488,8 +1606,15 @@ func (s *SchedulerEngine) persistJobOutcome(ctx context.Context, job *Job) {
 	}
 }
 
-// handleJobError processes a job execution error with retry logic.
 // applyRunFailure records one failed run on job and decides whether it retries.
+//
+// The retry budget (MaxRetries, or the configured DefaultRetries) is PER
+// FIRING, not per job lifetime. Within a firing each failure is retried with
+// backoff until the budget is spent. A spent budget fails a one-shot or
+// delayed job; a recurring job instead moves on to its next scheduled firing,
+// and startNextFiring gives that firing a fresh budget. Without that reset a
+// recurring job accumulated failures across its whole life and retired itself
+// after DefaultRetries failures spread over any length of time.
 //
 // It mutates job and writes nothing: the caller owns persistence, because the
 // two callers persist differently — handleJobError goes through
@@ -1524,7 +1649,7 @@ func (s *SchedulerEngine) applyRunFailure(job *Job, reason string, now time.Time
 		maxRetriesU64 = uint64(retries) //nolint:gosec // Safe: retries >= 0 after bounds check above
 	}
 
-	// Check if we should retry
+	// Retry within this firing while its budget lasts.
 	if job.FailCount < maxRetriesU64 {
 		job.Status = JobStatusPending
 		// Calculate next retry time with backoff.
@@ -1537,11 +1662,25 @@ func (s *SchedulerEngine) applyRunFailure(job *Job, reason string, now time.Time
 			backoffMultiplier = math.MaxInt64 / retryBackoffU64
 		}
 		job.NextRun = now.Add(s.config.RetryBackoff * time.Duration(backoffMultiplier)) //nolint:gosec // Safe: backoffMultiplier is bounded above
-	} else {
-		job.Status = JobStatusFailed
+		return
 	}
+
+	// This firing's budget is spent. A recurring job is not retired by one bad
+	// firing: it moves on to its next scheduled firing with a fresh budget.
+	// Every other job type has no next firing, so it fails.
+	if job.Type != JobTypeRecurring {
+		job.Status = JobStatusFailed
+		return
+	}
+	if err := s.startNextFiring(job); err != nil {
+		job.Status = JobStatusFailed
+		job.LastError = err.Error()
+		return
+	}
+	job.Status = JobStatusPending
 }
 
+// handleJobError processes a job execution error with retry logic.
 func (s *SchedulerEngine) handleJobError(ctx context.Context, job *Job, exec *JobExecution, err error) {
 	now := time.Now()
 	exec.EndedAt = now
@@ -1551,8 +1690,9 @@ func (s *SchedulerEngine) handleJobError(ctx context.Context, job *Job, exec *Jo
 
 	s.applyRunFailure(job, err.Error(), now)
 
-	// Create timeout context for storage operations (required for Raft-based storage)
-	storageCtx, cancel := context.WithTimeout(ctx, s.config.DefaultTimeout)
+	// The outcome is written even when the engine is stopping; see
+	// outcomeContext.
+	storageCtx, cancel := s.outcomeContext(ctx)
 	defer cancel()
 
 	// Persist the outcome under the job's stripe lock so a concurrent
@@ -1578,8 +1718,9 @@ func (s *SchedulerEngine) handleJobFailure(ctx context.Context, job *Job, err er
 	job.FailCount++
 	job.UpdatedAt = now
 
-	// Create timeout context for storage operations (required for Raft-based storage)
-	storageCtx, cancel := context.WithTimeout(ctx, s.config.DefaultTimeout)
+	// The outcome is written even when the engine is stopping; see
+	// outcomeContext.
+	storageCtx, cancel := s.outcomeContext(ctx)
 	defer cancel()
 
 	// Persist the outcome under the job's stripe lock so a concurrent
@@ -1630,8 +1771,16 @@ func (s *SchedulerEngine) validateJob(job *Job) error {
 	return nil
 }
 
-// calculateNextRun calculates the next run time for a job.
+// calculateNextRun calculates the next run time for a job. A recurring job's
+// next firing follows its last run, or now when it has never run.
 func (s *SchedulerEngine) calculateNextRun(job *Job) error {
+	return s.calculateNextRunAfter(job, job.LastRun)
+}
+
+// calculateNextRunAfter calculates the next run time for a job, taking a
+// recurring job's next firing as the schedule's first occurrence strictly
+// after the given instant — or after now, when the instant is zero.
+func (s *SchedulerEngine) calculateNextRunAfter(job *Job, after time.Time) error {
 	now := time.Now()
 
 	switch job.Type {
@@ -1644,13 +1793,62 @@ func (s *SchedulerEngine) calculateNextRun(job *Job) error {
 		if err != nil {
 			return InvalidScheduleError{Schedule: job.Schedule, Cause: err}
 		}
-		if job.LastRun.IsZero() {
-			job.NextRun = sched.Next(now)
-		} else {
-			job.NextRun = sched.Next(job.LastRun)
+		if after.IsZero() {
+			after = now
 		}
+		job.NextRun = sched.Next(after)
 	}
 
+	return nil
+}
+
+// rescheduleResumed recalculates the next run of a resumed job whose scheduled
+// run passed while it was paused. For a recurring job that skips to a new
+// firing, which starts with a fresh retry budget.
+//
+// A RESUMED RECURRING JOB COUNTS FROM THE RESUME, NEVER FROM ITS LAST RUN. The
+// last run can be arbitrarily old — the job sat paused — and the schedule's
+// next occurrence after it is then already in the past: for an "@every"
+// schedule the job would fire on the very next tick instead of on its
+// schedule. See resumeBase for the one case the last run still wins.
+func (s *SchedulerEngine) rescheduleResumed(job *Job) error {
+	if job.Type == JobTypeRecurring {
+		return s.startFiringAfter(job, resumeBase(job.LastRun, time.Now()))
+	}
+	return s.calculateNextRun(job)
+}
+
+// resumeBase returns the instant a resumed recurring job's next firing is
+// computed from: now, or the last run when that is later.
+//
+// The last run wins only when it is AHEAD of this node's clock. It was stamped
+// by whichever node ran the job, and if that node's clock leads this one, the
+// schedule's next occurrence after this node's now can be the very firing that
+// just ran — at or below its claim mark, and so unclaimable forever.
+func resumeBase(lastRun, now time.Time) time.Time {
+	if lastRun.After(now) {
+		return lastRun
+	}
+	return now
+}
+
+// startNextFiring schedules job's next firing and gives it a fresh retry
+// budget. The retry budget belongs to a firing, so every path that starts a
+// new one — a successful recurring run, a recurring firing whose budget is
+// spent, a schedule change, a resume past a missed firing, a system job
+// re-armed at install — resets FailCount here rather than inheriting the
+// failures of firings that are over.
+func (s *SchedulerEngine) startNextFiring(job *Job) error {
+	return s.startFiringAfter(job, job.LastRun)
+}
+
+// startFiringAfter is startNextFiring with the instant the firing is computed
+// from made explicit. It is the one place a new firing's retry budget is reset.
+func (s *SchedulerEngine) startFiringAfter(job *Job, after time.Time) error {
+	if err := s.calculateNextRunAfter(job, after); err != nil {
+		return err
+	}
+	job.FailCount = 0
 	return nil
 }
 

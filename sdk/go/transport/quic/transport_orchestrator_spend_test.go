@@ -38,7 +38,7 @@ func TestRequest_GetSpendReportOverHTTP3(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"level":"project","tenant_id":"automatethethings","project_id":"p1",
 			"entries":2,"input_tokens":20,"output_tokens":10,"total_tokens":30,
-			"cost_micros":0,"cost_measured":false,"child_level":"task",
+			"equivalent_micros":0,"priced_entries":0,"child_level":"task",
 			"children":[{"level":"task","unattributed":true,"total_tokens":30}],
 			"accounts":[{"account_id":"a1","total_tokens":30,"policy_status":"unknown"}]}`))
 	}))
@@ -56,7 +56,7 @@ func TestRequest_GetSpendReportOverHTTP3(t *testing.T) {
 	require.True(t, ok, "transport returned %T", resp)
 	assert.Equal(t, orchestratorclient.SpendLevelProject, report.Level)
 	assert.Equal(t, int64(30), report.TotalTokens)
-	assert.False(t, report.CostMeasured, "an unpriced report must not claim a measured cost")
+	assert.Zero(t, report.PricedEntries, "an unpriced report must not claim a measured cost")
 	require.Len(t, report.Children, 1)
 	assert.True(t, report.Children[0].Unattributed)
 	require.Len(t, report.Accounts, 1)

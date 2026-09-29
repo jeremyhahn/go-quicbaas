@@ -14,7 +14,6 @@ import xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/acme/transport"
 // Type aliases
 type (
 	Transport     = xkmstransport.Transport
-	Stream        = xkmstransport.Stream
 	Config        = xkmstransport.Config
 	Factory       = xkmstransport.Factory
 	AddressType   = xkmstransport.AddressType

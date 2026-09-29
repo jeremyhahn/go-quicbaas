@@ -24,13 +24,15 @@
   } = $props();
 </script>
 
-<div class="flex flex-col items-center justify-center gap-4 py-16 px-8 text-center">
+<div class="flex flex-col items-center justify-center gap-4 px-6 py-14 text-center">
   {#if icon}
     {@const Icon = icon}
-    <Icon class="h-10 w-10 text-base-content/30 mb-3" strokeWidth={1} />
+    <div class="flex h-12 w-12 items-center justify-center rounded-full bg-base-200 text-base-content/60">
+      <Icon class="h-6 w-6" strokeWidth={1.5} />
+    </div>
   {/if}
   <div class="space-y-1">
-    <p class="text-sm font-semibold text-base-content">{title}</p>
+    <p class="text-base font-semibold text-base-content">{title}</p>
     {#if description}
       <p class="text-sm text-base-content/60 max-w-md text-center">{description}</p>
     {/if}

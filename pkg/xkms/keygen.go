@@ -24,7 +24,7 @@
 //
 // This file exists for the other case: a credential whose private key belongs
 // to the REQUESTER — the platform administrator's personal certificate, a
-// deployed agent daemon's mTLS identity, a `ca issue` caller's key pair. go-xkms
+// deployed fleet node daemon's mTLS identity, a `ca issue` caller's key pair. go-xkms
 // deliberately cannot produce one. Its keystore backends wrap every generated
 // key in a non-exportable opaque handle (go-xkms pkg/xkms compositeBackend), so
 // TrustedCA.IssueCertificate returns IssuedCertificate.PrivateKeyPEM as nil on

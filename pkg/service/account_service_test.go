@@ -335,3 +335,57 @@ func TestAccountService_GetAccountUsage_WithTracker(t *testing.T) {
 		t.Fatalf("GetAccountUsage().Usage.TotalTokens = %d, want 77", resp.Usage.TotalTokens)
 	}
 }
+
+// TestAccountService_EveryCredentialWriteAdvancesTheGeneration: an import is an
+// account's first generation and a rotation is its next one, and both are
+// mirrored onto the metadata record the moment they are written.
+//
+// The generation is what every live session's materialized copy is compared
+// against: an import that recorded none would leave the pool unable to say
+// which copy it holds, and a rotation that did not advance it would leave every
+// session on the account holding a credential the provider has stopped
+// honouring while the pool still described it as current (go-quicbaas#997).
+func TestAccountService_EveryCredentialWriteAdvancesTheGeneration(t *testing.T) {
+	svc := newTestAccountService(t)
+	ctx := context.Background()
+
+	created, err := svc.CreateAccount(ctx, &CreateAccountRequest{
+		TenantID: "tenant-a", Provider: orchestration.AccountProviderClaude,
+		Credential: &orchestration.AccountCredential{AccessToken: "old-token"},
+	})
+	if err != nil {
+		t.Fatalf("CreateAccount() error = %v", err)
+	}
+	imported := created.Account.CredentialGeneration
+	if imported == 0 {
+		t.Fatal("CreateAccount() recorded no credential generation; the pool cannot say which copy it holds")
+	}
+
+	stored, err := svc.GetAccount(ctx, &GetAccountRequest{TenantID: "tenant-a", AccountID: created.Account.ID})
+	if err != nil {
+		t.Fatalf("GetAccount() error = %v", err)
+	}
+	if stored.Account.CredentialGeneration != imported {
+		t.Fatalf("the persisted generation = %d, want the one the import reported (%d)",
+			stored.Account.CredentialGeneration, imported)
+	}
+
+	if _, err := svc.RotateAccountCredential(ctx, &RotateAccountCredentialRequest{
+		TenantID: "tenant-a", AccountID: created.Account.ID,
+		Credential: &orchestration.AccountCredential{AccessToken: "new-token"},
+	}); err != nil {
+		t.Fatalf("RotateAccountCredential() error = %v", err)
+	}
+
+	rotated, err := svc.GetAccount(ctx, &GetAccountRequest{TenantID: "tenant-a", AccountID: created.Account.ID})
+	if err != nil {
+		t.Fatalf("GetAccount() error = %v", err)
+	}
+	if rotated.Account.CredentialGeneration <= imported {
+		t.Errorf("CredentialGeneration = %d after a rotation, want strictly greater than the imported %d",
+			rotated.Account.CredentialGeneration, imported)
+	}
+	if rotated.Account.CredentialRotatedAt.IsZero() {
+		t.Error("a rotation did not move CredentialRotatedAt")
+	}
+}

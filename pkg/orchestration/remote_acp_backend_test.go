@@ -34,11 +34,11 @@ import (
 
 const remoteBackendBufSize = 1024 * 1024
 
-// fakeDaemonServer is a minimal in-memory AgentRuntimeServer for exercising
+// fakeDaemonServer is a minimal in-memory FleetRuntimeServer for exercising
 // the RemoteACPBackend client path. Each RPC records call counts and returns
 // the configured response / error.
 type fakeDaemonServer struct {
-	proto.UnimplementedAgentRuntimeServer
+	proto.UnimplementedFleetRuntimeServer
 
 	spawnCalls      atomic.Int32
 	promptCalls     atomic.Int32
@@ -231,7 +231,7 @@ func startBufconnDaemon(t *testing.T, svc *fakeDaemonServer) *bufconnDaemon {
 	}
 	lis := bufconn.Listen(remoteBackendBufSize)
 	server := grpc.NewServer()
-	proto.RegisterAgentRuntimeServer(server, svc)
+	proto.RegisterFleetRuntimeServer(server, svc)
 	go func() { _ = server.Serve(lis) }()
 	t.Cleanup(func() {
 		server.Stop()
@@ -251,15 +251,15 @@ func (d *bufconnDaemon) dialer() func(ctx context.Context, target string) (*grpc
 	}
 }
 
-func newDaemonRegistration() *AgentRegistration {
-	return &AgentRegistration{
+func newDaemonRegistration() *FleetNode {
+	return &FleetNode{
 		ID:       "agent-remote",
 		TenantID: "tenant-a",
 		Name:     "remote-daemon",
 		Host:     "daemon.test:9091",
 		Backend:  "acp",
-		Kind:     AgentKindDaemon,
-		Status:   AgentStatusRunning,
+		Kind:     FleetNodeKindDaemon,
+		Status:   FleetNodeStatusRunning,
 	}
 }
 
@@ -300,7 +300,7 @@ func TestNewRemoteACPBackend_RequiresHost(t *testing.T) {
 func TestNewRemoteACPBackend_RejectsNonDaemonKind(t *testing.T) {
 	t.Parallel()
 	reg := newDaemonRegistration()
-	reg.Kind = AgentKindContainerScript
+	reg.Kind = FleetNodeKindContainerScript
 	_, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: reg,
 		Backend:      "acp",
@@ -314,14 +314,14 @@ func TestNewRemoteACPBackend_RejectsNonDaemonKind(t *testing.T) {
 func TestNewRemoteACPBackend_AcceptsEmbeddedKind(t *testing.T) {
 	t.Parallel()
 	reg := newDaemonRegistration()
-	reg.Kind = AgentKindEmbedded
+	reg.Kind = FleetNodeKindEmbedded
 	_, err := NewRemoteACPBackend(RemoteACPBackendDeps{
 		Registration: reg,
 		Backend:      "acp",
 		Logger:       &agentTestLogger{},
 	})
 	if err != nil {
-		t.Fatalf("expected AgentKindEmbedded to be accepted by NewRemoteACPBackend, got: %v", err)
+		t.Fatalf("expected FleetNodeKindEmbedded to be accepted by NewRemoteACPBackend, got: %v", err)
 	}
 }
 
@@ -562,7 +562,7 @@ func TestRemoteACPBackend_PromptEmptyStreamFails(t *testing.T) {
 	daemon.server.Stop()
 	lis := bufconn.Listen(remoteBackendBufSize)
 	server := grpc.NewServer()
-	proto.RegisterAgentRuntimeServer(server, &emptyPromptServer{})
+	proto.RegisterFleetRuntimeServer(server, &emptyPromptServer{})
 	go func() { _ = server.Serve(lis) }()
 	t.Cleanup(func() { server.Stop() })
 
@@ -594,7 +594,7 @@ func TestRemoteACPBackend_PromptEmptyStreamFails(t *testing.T) {
 // emptyPromptServer returns an empty stream for Prompt; other methods are
 // unimplemented.
 type emptyPromptServer struct {
-	proto.UnimplementedAgentRuntimeServer
+	proto.UnimplementedFleetRuntimeServer
 }
 
 func (*emptyPromptServer) Prompt(req *proto.PromptSessionRequest, stream grpc.ServerStreamingServer[proto.PromptSessionResponse]) error {

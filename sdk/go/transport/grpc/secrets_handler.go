@@ -71,6 +71,7 @@ var secretsHandlerMap = map[string]secretsHandlerFunc{
 	"Store":        (*secretsHandler).handleStore,
 	"Ensure":       (*secretsHandler).handleEnsure,
 	"Get":          (*secretsHandler).handleGet,
+	"GetData":      (*secretsHandler).handleGetData,
 	"List":         (*secretsHandler).handleList,
 	"Delete":       (*secretsHandler).handleDelete,
 	"ListVersions": (*secretsHandler).handleListVersions,
@@ -182,6 +183,35 @@ func (h *secretsHandler) handleGet(ctx context.Context, req interface{}) (interf
 		Version:   int(svcResp.Version),
 		CreatedAt: svcResp.CreatedAt,
 	}, nil
+}
+
+// handleGetData backs Client.GetWithBytes. It returns the service response
+// untouched: its Data is the proto's bytes field, so the stored payload
+// reaches the client as a []byte — never decoded into a map of strings — and
+// the client, which takes ownership of it, wipes it.
+func (h *secretsHandler) handleGetData(ctx context.Context, req interface{}) (interface{}, error) {
+	path, ok := stringFieldByName(req, "Path")
+	if !ok {
+		return nil, errors.NewInvalidInput("secretsHandler.handleGetData",
+			"invalid request type, expected struct with Path field")
+	}
+	version, _ := intFieldByName(req, "Version")
+	if version < 0 {
+		version = 0
+	}
+
+	svcResp, err := h.client.GetSecret(ctx, &service.GetSecretRequest{
+		SecretID: path,
+		Version:  uint64(version),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if svcResp == nil {
+		// A typed nil would reach the client as a non-nil interface.
+		return nil, nil
+	}
+	return svcResp, nil
 }
 
 // handleList lists secrets under a prefix. The SDK client sends an unexported

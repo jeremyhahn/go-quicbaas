@@ -31,7 +31,7 @@ import (
 // Every binding method accepts the SDK request struct directly so Wails
 // can marshal the TypeScript object into the Go value without an extra
 // translation layer. This matches how the Svelte frontend calls the
-// bindings (`orchestratorBinding().ListAgents(req)`) and keeps the wire
+// bindings (`orchestratorBinding().ListFleetNodes(req)`) and keeps the wire
 // contract identical to the SDK interface.
 type OrchestratorBinding struct {
 	logger *logger.Logger
@@ -188,23 +188,23 @@ func (b *OrchestratorBinding) ReadmitTask(req *orchestratorSDK.ReadmitTaskReques
 	return nil
 }
 
-// ListAgents returns all registered agents for the given tenant.
-func (b *OrchestratorBinding) ListAgents(req *orchestratorSDK.ListAgentsRequest) ([]map[string]interface{}, error) {
+// ListFleetNodes returns all registered agents for the given tenant.
+func (b *OrchestratorBinding) ListFleetNodes(req *orchestratorSDK.ListFleetNodesRequest) ([]map[string]interface{}, error) {
 	if req == nil {
-		return nil, NewGUIRequestRequiredError("OrchestratorBinding.ListAgents")
+		return nil, NewGUIRequestRequiredError("OrchestratorBinding.ListFleetNodes")
 	}
 	client, err := b.conn.loadClient()
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := client.Orchestrator().ListAgents(b.ctx, req)
+	resp, err := client.Orchestrator().ListFleetNodes(b.ctx, req)
 	if err != nil {
-		return nil, NewGUITransportError("OrchestratorBinding.ListAgents", err)
+		return nil, NewGUITransportError("OrchestratorBinding.ListFleetNodes", err)
 	}
 
-	result := make([]map[string]interface{}, 0, len(resp.Agents))
-	for _, agent := range resp.Agents {
+	result := make([]map[string]interface{}, 0, len(resp.Nodes))
+	for _, agent := range resp.Nodes {
 		result = append(result, map[string]interface{}{
 			"id":            agent.ID,
 			"tenant_id":     agent.TenantID,
@@ -212,7 +212,7 @@ func (b *OrchestratorBinding) ListAgents(req *orchestratorSDK.ListAgentsRequest)
 			"host":          agent.Host,
 			"backend":       agent.Backend,
 			"model":         agent.Model,
-			"agent_type":    agent.AgentType,
+			"node_type":     agent.NodeType,
 			"status":        agent.Status,
 			"work_dir":      agent.WorkDir,
 			"last_seen":     agent.LastSeen,
@@ -225,19 +225,19 @@ func (b *OrchestratorBinding) ListAgents(req *orchestratorSDK.ListAgentsRequest)
 	return result, nil
 }
 
-// GetAgent returns a specific agent by ID.
-func (b *OrchestratorBinding) GetAgent(req *orchestratorSDK.GetAgentRequest) (map[string]interface{}, error) {
+// GetFleetNode returns a specific agent by ID.
+func (b *OrchestratorBinding) GetFleetNode(req *orchestratorSDK.GetFleetNodeRequest) (map[string]interface{}, error) {
 	if req == nil {
-		return nil, NewGUIRequestRequiredError("OrchestratorBinding.GetAgent")
+		return nil, NewGUIRequestRequiredError("OrchestratorBinding.GetFleetNode")
 	}
 	client, err := b.conn.loadClient()
 	if err != nil {
 		return nil, err
 	}
 
-	agent, err := client.Orchestrator().GetAgent(b.ctx, req)
+	agent, err := client.Orchestrator().GetFleetNode(b.ctx, req)
 	if err != nil {
-		return nil, NewGUITransportError("OrchestratorBinding.GetAgent", err)
+		return nil, NewGUITransportError("OrchestratorBinding.GetFleetNode", err)
 	}
 
 	return map[string]interface{}{
@@ -247,7 +247,7 @@ func (b *OrchestratorBinding) GetAgent(req *orchestratorSDK.GetAgentRequest) (ma
 		"host":          agent.Host,
 		"backend":       agent.Backend,
 		"model":         agent.Model,
-		"agent_type":    agent.AgentType,
+		"node_type":     agent.NodeType,
 		"status":        agent.Status,
 		"work_dir":      agent.WorkDir,
 		"last_seen":     agent.LastSeen,
@@ -329,6 +329,55 @@ func (b *OrchestratorBinding) ListTasks(req *orchestratorSDK.ListTasksRequest) (
 	}
 
 	return result, nil
+}
+
+// AttentionList returns one page of the tenant's attention items: every
+// blocked task plus environmental alerts, faceted by project and kind. The
+// map carries the full paged envelope (items/total/limit/offset/facets),
+// not a bare array — unlike ListTasks/ListFleetNodes/ListSessions above, so the
+// frontend's badge count and filter bar read real numbers instead of a
+// client-side approximation over an unpaged list.
+func (b *OrchestratorBinding) AttentionList(req *orchestratorSDK.AttentionListRequest) (map[string]interface{}, error) {
+	if req == nil {
+		return nil, NewGUIRequestRequiredError("OrchestratorBinding.AttentionList")
+	}
+	client, err := b.conn.loadClient()
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := client.Orchestrator().AttentionList(b.ctx, req)
+	if err != nil {
+		return nil, NewGUITransportError("OrchestratorBinding.AttentionList", err)
+	}
+
+	return map[string]interface{}{
+		"items":       resp.Items,
+		"count":       resp.Count,
+		"total":       resp.Total,
+		"limit":       resp.Limit,
+		"offset":      resp.Offset,
+		"next_offset": resp.NextOffset,
+		"facets":      resp.Facets,
+	}, nil
+}
+
+// AttentionResolve applies an operator's decision to one blocked task from
+// the attention inbox.
+func (b *OrchestratorBinding) AttentionResolve(req *orchestratorSDK.AttentionResolveRequest) (*orchestratorSDK.AttentionItem, error) {
+	if req == nil {
+		return nil, NewGUIRequestRequiredError("OrchestratorBinding.AttentionResolve")
+	}
+	client, err := b.conn.loadClient()
+	if err != nil {
+		return nil, err
+	}
+
+	item, err := client.Orchestrator().AttentionResolve(b.ctx, req)
+	if err != nil {
+		return nil, NewGUITransportError("OrchestratorBinding.AttentionResolve", err)
+	}
+	return item, nil
 }
 
 // GetTask returns a specific task by ID.
@@ -579,6 +628,39 @@ func (b *OrchestratorBinding) GetSpendReport(req *orchestratorSDK.GetSpendReport
 	resp, err := client.Orchestrator().GetSpendReport(b.ctx, req)
 	if err != nil {
 		return nil, NewGUITransportError("OrchestratorBinding.GetSpendReport", err)
+	}
+	return resp, nil
+}
+
+// GetTenantSpendPolicy returns the tenant's own spend limits and its usage
+// against each window (go-quicbaas#1058).
+func (b *OrchestratorBinding) GetTenantSpendPolicy(req *orchestratorSDK.GetTenantSpendPolicyRequest) (*orchestratorSDK.TenantSpendPolicy, error) {
+	if req == nil {
+		return nil, NewGUIRequestRequiredError("OrchestratorBinding.GetTenantSpendPolicy")
+	}
+	client, err := b.conn.loadClient()
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Orchestrator().GetTenantSpendPolicy(b.ctx, req)
+	if err != nil {
+		return nil, NewGUITransportError("OrchestratorBinding.GetTenantSpendPolicy", err)
+	}
+	return resp, nil
+}
+
+// SetTenantSpendPolicy replaces the tenant's own spend limits.
+func (b *OrchestratorBinding) SetTenantSpendPolicy(req *orchestratorSDK.SetTenantSpendPolicyRequest) (*orchestratorSDK.TenantSpendPolicy, error) {
+	if req == nil {
+		return nil, NewGUIRequestRequiredError("OrchestratorBinding.SetTenantSpendPolicy")
+	}
+	client, err := b.conn.loadClient()
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Orchestrator().SetTenantSpendPolicy(b.ctx, req)
+	if err != nil {
+		return nil, NewGUITransportError("OrchestratorBinding.SetTenantSpendPolicy", err)
 	}
 	return resp, nil
 }

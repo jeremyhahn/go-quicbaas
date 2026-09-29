@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/project"
 )
@@ -56,11 +57,11 @@ func TestProjectHandlerHappyPaths(t *testing.T) {
 		{"List", "List",
 			&project.ListProjectsRequest{TenantID: "t1"},
 			http.MethodGet, "/api/v1/projects"},
-		{"GrantAgentRole", "GrantAgentRole",
-			&project.GrantAgentRoleRequest{TenantID: "t1", ProjectID: "p1", AgentID: "a1", Role: project.ProjectRole("lead")},
+		{"GrantFleetNodeRole", "GrantFleetNodeRole",
+			&project.GrantFleetNodeRoleRequest{TenantID: "t1", ProjectID: "p1", FleetNodeID: "a1", Role: project.ProjectRole("lead")},
 			http.MethodPut, "/api/v1/projects/p1/permissions/a1"},
-		{"RevokeAgentRole", "RevokeAgentRole",
-			&project.RevokeAgentRoleRequest{TenantID: "t1", ProjectID: "p1", AgentID: "a1"},
+		{"RevokeFleetNodeRole", "RevokeFleetNodeRole",
+			&project.RevokeFleetNodeRoleRequest{TenantID: "t1", ProjectID: "p1", FleetNodeID: "a1"},
 			http.MethodDelete, "/api/v1/projects/p1/permissions/a1"},
 	}
 
@@ -96,7 +97,7 @@ func TestProjectHandlerInvalidRequestType(t *testing.T) {
 	ctx := context.Background()
 
 	methods := []string{"Create", "Get", "GetByName", "Update", "Delete",
-		"List", "GrantAgentRole", "RevokeAgentRole"}
+		"List", "GrantFleetNodeRole", "RevokeFleetNodeRole"}
 	for _, m := range methods {
 		t.Run(m, func(t *testing.T) {
 			_, err := tr.Request(ctx, "Project", m, 42)
@@ -374,5 +375,193 @@ func TestProjectHandler_ServerRefusalSurfaces(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected the server refusal to surface as an error")
+	}
+}
+
+// =============================================================================
+// Storage tier over REST
+// =============================================================================
+
+// TestProjectHandler_StorageIsOnTheFlatJSONWire asserts the three storage keys
+// ride the create and update bodies FLAT — the names
+// pkg/api/rest.CreateProjectRESTRequest / UpdateProjectRESTRequest decode —
+// and that an unset update size is ABSENT while an explicit zero is sent, so
+// the server can tell "leave it alone" from "lift the limit".
+func TestProjectHandler_StorageIsOnTheFlatJSONWire(t *testing.T) {
+	var bodies []map[string]json.RawMessage
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		bodies = append(bodies, body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("{}"))
+	}))
+	defer server.Close()
+
+	tr := newTestTransport(t, server)
+	ctx := context.Background()
+
+	if _, err := tr.Request(ctx, "Project", "Create", &project.CreateProjectRequest{
+		TenantID: "t1", Name: "api",
+		WorkspaceTier:     project.WorkspaceTierEphemeral,
+		WorkspaceTmpfsMB:  4096,
+		ContainerMemoryMB: 8192,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := tr.Request(ctx, "Project", "Update", &project.UpdateProjectRequest{
+		TenantID: "t1", ProjectID: "p1", Description: "renamed",
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	zero := 0
+	if _, err := tr.Request(ctx, "Project", "Update", &project.UpdateProjectRequest{
+		TenantID: "t1", ProjectID: "p1", WorkspaceTmpfsMB: &zero, ContainerMemoryMB: &zero,
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	if len(bodies) != 3 {
+		t.Fatalf("expected 3 requests, got %d", len(bodies))
+	}
+	if _, nested := bodies[0]["storage"]; nested {
+		t.Errorf("create body nested the storage keys: %v", bodies[0])
+	}
+	for key, want := range map[string]string{
+		"workspace_tier":      `"ephemeral"`,
+		"workspace_tmpfs_mb":  "4096",
+		"container_memory_mb": "8192",
+	} {
+		if got := string(bodies[0][key]); got != want {
+			t.Errorf("create body %s = %s, want %s", key, got, want)
+		}
+	}
+	for _, key := range []string{"workspace_tier", "workspace_tmpfs_mb", "container_memory_mb"} {
+		if _, present := bodies[1][key]; present {
+			t.Errorf("an unset %s was sent on the update wire", key)
+		}
+	}
+	for _, key := range []string{"workspace_tmpfs_mb", "container_memory_mb"} {
+		if got := string(bodies[2][key]); got != "0" {
+			t.Errorf("update body %s = %q, want an explicit 0", key, got)
+		}
+	}
+}
+
+// TestProjectHandler_SessionRotationIsOnTheJSONWire asserts the policy rides
+// the create and update bodies under the key pkg/api/rest decodes, that an
+// update not naming it leaves it off the wire, and that the policy the server
+// reports is hydrated back onto the project.
+func TestProjectHandler_SessionRotationIsOnTheJSONWire(t *testing.T) {
+	var bodies []map[string]json.RawMessage
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		bodies = append(bodies, body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"p1","session_rotation":"fresh"}`))
+	}))
+	defer server.Close()
+
+	tr := newTestTransport(t, server)
+	ctx := context.Background()
+
+	resp, err := tr.Request(ctx, "Project", "Create", &project.CreateProjectRequest{
+		TenantID: "t1", Name: "api", SessionRotation: project.SessionRotationFresh,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if info, ok := resp.(*project.ProjectInfo); !ok || info.SessionRotation != project.SessionRotationFresh {
+		t.Errorf("Create returned %#v, want the reported policy hydrated", resp)
+	}
+	if _, err := tr.Request(ctx, "Project", "Update", &project.UpdateProjectRequest{
+		TenantID: "t1", ProjectID: "p1", Description: "renamed",
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	if len(bodies) != 2 {
+		t.Fatalf("expected 2 requests, got %d", len(bodies))
+	}
+	if got := string(bodies[0]["session_rotation"]); got != `"fresh"` {
+		t.Errorf("create body session_rotation = %s, want \"fresh\"", got)
+	}
+	if raw, present := bodies[1]["session_rotation"]; present {
+		t.Errorf("an unset session_rotation was sent on the update wire: %s", raw)
+	}
+}
+
+// TestProjectHandler_ParkAndResumeOverREST asserts the park switch rides the
+// update body only when set, and that the park record decodes off the
+// project that comes back.
+func TestProjectHandler_ParkAndResumeOverREST(t *testing.T) {
+	stored := project.ProjectInfo{ID: "p1", TenantID: "t1", Name: "api"}
+	parkedAt := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	var lastUpdate map[string]json.RawMessage
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read update: %v", err)
+		}
+		lastUpdate = map[string]json.RawMessage{}
+		if err := json.Unmarshal(body, &lastUpdate); err != nil {
+			t.Errorf("decode update envelope: %v", err)
+		}
+		var req project.UpdateProjectRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Errorf("decode update: %v", err)
+		}
+		if req.Parked != nil {
+			stored.Parked, stored.ParkedAt, stored.ParkedBy = false, time.Time{}, ""
+			if *req.Parked {
+				stored.Parked, stored.ParkedAt, stored.ParkedBy = true, parkedAt, "ops"
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(stored); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	tr := newTestTransport(t, server)
+	ctx := context.Background()
+	update := func(req *project.UpdateProjectRequest) *project.ProjectInfo {
+		t.Helper()
+		resp, err := tr.Request(ctx, "Project", "Update", req)
+		if err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		info, ok := resp.(*project.ProjectInfo)
+		if !ok {
+			t.Fatalf("wrong response type: %T", resp)
+		}
+		return info
+	}
+
+	update(&project.UpdateProjectRequest{TenantID: "t1", ProjectID: "p1", Name: "renamed"})
+	if _, present := lastUpdate["parked"]; present {
+		t.Error("an unset parked was sent on the wire")
+	}
+
+	park := true
+	info := update(&project.UpdateProjectRequest{TenantID: "t1", ProjectID: "p1", Parked: &park})
+	if !info.Parked || !info.ParkedAt.Equal(parkedAt) || info.ParkedBy != "ops" {
+		t.Fatalf("parked info = %+v, want the park record", info)
+	}
+
+	resume := false
+	info = update(&project.UpdateProjectRequest{TenantID: "t1", ProjectID: "p1", Parked: &resume})
+	if string(lastUpdate["parked"]) != "false" {
+		t.Errorf("resume sent parked=%s, want false", lastUpdate["parked"])
+	}
+	if info.Parked || !info.ParkedAt.IsZero() {
+		t.Fatalf("resumed info = %+v, want an open project", info)
 	}
 }

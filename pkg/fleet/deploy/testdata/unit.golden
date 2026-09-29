@@ -1,0 +1,19 @@
+[Unit]
+Description=QuicBaaS Agent Runtime
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=%h/.quicbaas/bin/quicbaas fleet serve --config '%h/.quicbaas/bin/agent.yaml'
+Restart=on-failure
+RestartSec=5
+RestartSteps=5
+RestartMaxDelaySec=120
+KillMode=mixed
+WorkingDirectory=%h/.quicbaas/agent
+
+[Install]
+WantedBy=default.target

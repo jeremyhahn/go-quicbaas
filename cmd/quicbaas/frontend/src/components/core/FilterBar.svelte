@@ -21,15 +21,18 @@
   agent id — is a picker, because a chip per project is a thousand chips. The
   decision is `usesChips` in lib/filters.ts and a field may override it.
 
-  One row per field, and a lid on how wide any one of them gets
-  ───────────────────────────────────────────────────────────
+  One row per chip field, and a lid on how wide any one of them gets
+  ────────────────────────────────────────────────────────────────
   A list with a large enumeration — the job lifecycle is thirteen states —
   used to spill thirteen chips into the SAME flex-wrap run as every other
   field, so "State" bled into "Runner" bled into the project picker with
   nothing marking where one question ended and the next began. Two things
   fix that without touching the URL grammar or the loader contract a single
-  field's chips still travel as: each field now gets its OWN bordered row, so
-  wrapping happens within a field, never across two; and a field whose
+  field's chips still travel as: each chip field gets its OWN row inside one
+  shared panel, with a fixed label column so every row's chips start on the
+  same edge, and wrapping happens within a field, never across two. The
+  pickers (project, agent) are one control each, so they share a single
+  final row rather than spending a full-width row apiece; and a field whose
   vocabulary exceeds VISIBLE_LIMIT shows the first few plus a "+N more"
   disclosure rather than every value at once. A value the operator has
   actually selected is never among the hidden ones — collapsing a filter
@@ -102,6 +105,9 @@
    */
   let expanded = $state<Record<string, boolean>>({});
 
+  const chipFields = $derived(fields.filter((field) => usesChips(field, optionsFor(field).length)));
+  const pickerFields = $derived(fields.filter((field) => !usesChips(field, optionsFor(field).length)));
+
   function optionsFor(field: FilterField) {
     return fieldOptions(field, facets);
   }
@@ -137,21 +143,34 @@
   }
 </script>
 
-<div class="space-y-2.5" data-testid="filter-bar">
+{#snippet clearFieldButton(field: FilterField)}
+  <button
+    type="button"
+    class="btn btn-ghost btn-xs btn-circle"
+    aria-label="Clear {field.label} filter"
+    title="Clear {field.label} filter"
+    data-testid="filter-clear-{field.key}"
+    onclick={() => onchange(clearField(values, field.key))}
+  >
+    <X class="h-3.5 w-3.5" />
+  </button>
+{/snippet}
+
+<div class="space-y-2" data-testid="filter-bar">
   {#if anyActive}
     <!-- The selection, repeated where it cannot be missed and can be undone. -->
     <div class="flex flex-wrap items-center gap-1.5" data-testid="active-filters">
-      <span class="text-[11px] font-medium uppercase tracking-wider text-base-content/50">Filtered by</span>
+      <span class="mr-0.5 text-xs font-medium text-base-content/60">Filtered by</span>
       {#each active as chip (`${chip.field}:${chip.value}`)}
         <span
-          class="inline-flex items-center gap-1.5 rounded-full py-1 pl-2.5 pr-1 text-xs font-medium leading-none"
+          class="inline-flex h-6 items-center gap-1 rounded-full pl-2.5 pr-1 text-xs font-medium leading-none"
           style:background-color={tone.bg}
           style:color={tone.fg}
         >
           <span>{chip.fieldLabel}: {chip.valueLabel}</span>
           <button
             type="button"
-            class="btn btn-ghost btn-xs btn-circle h-4 w-4 min-h-0 p-0"
+            class="inline-flex h-4 w-4 items-center justify-center rounded-full hover:bg-black/10"
             style:color={tone.fg}
             aria-label="Remove filter {chip.fieldLabel} {chip.valueLabel}"
             title="Remove this filter"
@@ -164,96 +183,102 @@
       {/each}
       <button
         type="button"
-        class="btn btn-ghost btn-xs"
+        class="btn btn-ghost btn-xs text-base-content/70"
         data-testid="filter-clear-all"
         onclick={() => onchange(clearAll())}
       >Clear all</button>
     </div>
   {/if}
 
-  <div class="flex flex-col gap-1.5">
-    {#each fields as field (field.key)}
+  <div class="divide-y divide-base-300/70 rounded-box border border-base-300/80 bg-base-200/60">
+    {#each chipFields as field (field.key)}
       {@const options = optionsFor(field)}
       {@const chosen = selected(values, field.key)}
       {@const hidden = hiddenBeyondLimit(field, options)}
       <div
-        class="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-base-300/60 bg-base-200/40 px-2.5 py-1.5"
+        class="flex flex-col gap-1.5 px-3 py-2 sm:flex-row sm:items-center sm:gap-3"
         data-testid="filter-field-{field.key}"
       >
-        <span class="shrink-0 text-[11px] font-semibold uppercase tracking-wider text-base-content/50">
-          {field.label}
-        </span>
+        <span class="w-20 shrink-0 text-xs font-medium text-base-content/60">{field.label}</span>
 
-        {#if usesChips(field, options.length)}
-          <div class="flex flex-1 flex-wrap items-center gap-1" role="group" aria-label="Filter by {field.label}">
-            {#each options as option, index (option.value)}
-              {@const on = isSelected(values, field.key, option.value)}
-              <button
-                type="button"
-                class="btn btn-xs gap-1 normal-case"
-                class:hidden={collapsedAway(field, index, option.value)}
-                class:btn-primary={on}
-                class:btn-ghost={!on}
-                class:border-base-300={!on}
-                aria-pressed={on}
-                title="Filter by {field.label}: {option.label}"
-                data-testid="filter-chip-{field.key}-{option.value}"
-                onclick={() => pick(field, option.value)}
-              >
-                <span>{option.label}</span>
-                {#if option.count !== null}
-                  <span class="opacity-70 font-mono" data-testid="filter-count-{field.key}-{option.value}">{option.count}</span>
-                {/if}
-              </button>
-            {/each}
-            {#if options.length === 0}
-              <span class="text-xs text-base-content/50 italic">none</span>
-            {/if}
-            {#if hidden > 0}
-              <button
-                type="button"
-                class="btn btn-ghost btn-xs gap-0.5 normal-case text-base-content/60"
-                data-testid="filter-more-{field.key}"
-                onclick={() => toggleExpanded(field.key)}
-              >
-                {#if expanded[field.key]}
-                  Show less <ChevronUp class="h-3 w-3" />
-                {:else}
-                  +{hidden} more <ChevronDown class="h-3 w-3" />
-                {/if}
-              </button>
-            {/if}
-          </div>
-        {:else}
-          <select
-            class="select select-bordered select-xs max-w-[14rem]"
-            aria-label="Filter by {field.label}"
-            data-testid="filter-select-{field.key}"
-            value={chosen[0] ?? ''}
-            onchange={(e) => choose(field, (e.currentTarget as HTMLSelectElement).value)}
-          >
-            <option value="">All {field.label.toLowerCase()}</option>
-            {#each options as option (option.value)}
-              <option value={option.value}>
-                {option.label}{option.count === null ? '' : ` (${option.count})`}
-              </option>
-            {/each}
-          </select>
-        {/if}
+        <div class="flex flex-1 flex-wrap items-center gap-1.5" role="group" aria-label="Filter by {field.label}">
+          {#each options as option, index (option.value)}
+            {@const on = isSelected(values, field.key, option.value)}
+            <button
+              type="button"
+              class="h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium leading-none transition-colors hover:border-base-content/30 {collapsedAway(field, index, option.value) ? 'hidden' : 'inline-flex'}"
+              class:border-transparent={on}
+              class:border-base-300={!on}
+              class:bg-base-100={!on}
+              class:text-base-content={!on}
+              style:background-color={on ? tone.bg : undefined}
+              style:color={on ? tone.fg : undefined}
+              aria-pressed={on}
+              title="Filter by {field.label}: {option.label}"
+              data-testid="filter-chip-{field.key}-{option.value}"
+              onclick={() => pick(field, option.value)}
+            >
+              <span>{option.label}</span>
+              {#if option.count !== null}
+                <span
+                  class="tabular-nums {on ? 'opacity-80' : 'text-base-content/60'}"
+                  data-testid="filter-count-{field.key}-{option.value}"
+                >{option.count}</span>
+              {/if}
+            </button>
+          {/each}
+          {#if options.length === 0}
+            <span class="text-xs italic text-base-content/50">none</span>
+          {/if}
+          {#if hidden > 0}
+            <button
+              type="button"
+              class="inline-flex h-7 items-center gap-0.5 rounded-full px-2 text-xs font-medium text-primary hover:underline"
+              data-testid="filter-more-{field.key}"
+              onclick={() => toggleExpanded(field.key)}
+            >
+              {#if expanded[field.key]}
+                Show less <ChevronUp class="h-3 w-3" />
+              {:else}
+                {hidden} more <ChevronDown class="h-3 w-3" />
+              {/if}
+            </button>
+          {/if}
+        </div>
 
         {#if chosen.length > 0}
-          <button
-            type="button"
-            class="btn btn-ghost btn-xs btn-circle ml-auto"
-            aria-label="Clear {field.label} filter"
-            title="Clear {field.label} filter"
-            data-testid="filter-clear-{field.key}"
-            onclick={() => onchange(clearField(values, field.key))}
-          >
-            <X class="h-3 w-3" />
-          </button>
+          <div class="hidden sm:block">{@render clearFieldButton(field)}</div>
         {/if}
       </div>
     {/each}
+
+    {#if pickerFields.length > 0}
+      <div class="flex flex-wrap items-center gap-x-6 gap-y-2 px-3 py-2">
+        {#each pickerFields as field (field.key)}
+          {@const options = optionsFor(field)}
+          {@const chosen = selected(values, field.key)}
+          <div class="flex min-w-0 items-center gap-3" data-testid="filter-field-{field.key}">
+            <span class="w-20 shrink-0 text-xs font-medium text-base-content/60 sm:w-auto">{field.label}</span>
+            <select
+              class="select select-sm w-full min-w-[12rem] max-w-[16rem] bg-base-100"
+              aria-label="Filter by {field.label}"
+              data-testid="filter-select-{field.key}"
+              value={chosen[0] ?? ''}
+              onchange={(e) => choose(field, (e.currentTarget as HTMLSelectElement).value)}
+            >
+              <option value="">Any {field.label.toLowerCase()}</option>
+              {#each options as option (option.value)}
+                <option value={option.value}>
+                  {option.label}{option.count === null ? '' : ` (${option.count})`}
+                </option>
+              {/each}
+            </select>
+            {#if chosen.length > 0}
+              {@render clearFieldButton(field)}
+            {/if}
+          </div>
+        {/each}
+      </div>
+    {/if}
   </div>
 </div>

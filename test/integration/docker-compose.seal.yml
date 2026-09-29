@@ -87,6 +87,8 @@ services:
         # The seal factories + the seal tests are both gated on these tags.
         SEAL_TAGS: "awskms vault"
         BUILD_TAGS: "${SEAL_BUILD_TAGS:-local quic raft rest iam mcp hashicorpmetrics codec_json codec_yaml awskms vault}"
+      secrets:
+        - gomodauth
     hostname: seal-test
     user: "0:0"
     mem_limit: 4g
@@ -242,8 +244,10 @@ volumes:
 
 # Gitea module-fetch credentials for the image builds (dependency-resolution.md
 # §6). Dockerfile and Dockerfile.node resolve first-party modules by tag and
-# read this; Dockerfile.seal still builds from the `workspace` named context
-# above and does not, which is why that context is still declared here.
+# read this. Dockerfile.seal still builds the siblings from the `workspace`
+# named context above, and reads this for every module outside that
+# workspace (go-auth among them). Staged and emptied by the Makefile targets
+# that build here (docs/testing/private-modules.md).
 secrets:
   gomodauth:
     file: ${GOMODAUTH_ENV:-/tmp/quicbaas-gomodauth.env}

@@ -17,6 +17,8 @@ package mcp
 
 import (
 	"context"
+	"math"
+	"strings"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
@@ -56,6 +58,15 @@ func (r *ToolRegistry) registerAccountTools() {
 		},
 	}
 
+	billingSchema := map[string]interface{}{
+		"type":        "object",
+		"description": "How the account is billed. mode: subscription (a turn adds nothing to the bill) or api (a turn bills its list price); monthly_fee_micros: a subscription's flat monthly fee in millionths of a US dollar",
+		"properties": map[string]interface{}{
+			"mode":               map[string]interface{}{"type": "string", "enum": []string{"subscription", "api"}},
+			"monthly_fee_micros": map[string]interface{}{"type": "integer", "minimum": 0},
+		},
+	}
+
 	r.addTool(ToolDefinition{
 		Name:        "quicbaas_agent_account_create",
 		Description: "Create a pooled provider account (one Anthropic/Claude, OpenAI/Codex, or OpenCode login) an agent session can be spawned against.",
@@ -68,11 +79,15 @@ func (r *ToolRegistry) registerAccountTools() {
 				"display_name":   map[string]interface{}{"type": "string", "description": "Operator-chosen label"},
 				"default":        map[string]interface{}{"type": "boolean", "description": "Mark this account the tenant+provider default"},
 				"refresh_policy": map[string]interface{}{"type": "string", "description": "Credential refresh policy: none or oauth2"},
+				"billing":        billingSchema,
+				"spend":          accountSpendSchema("What the account may spend (sliding token and/or list-price dollar windows) and how many failures take it out of service"),
 				"credential":     credentialSchema,
 				"credential_secret_ref": map[string]interface{}{"type": "string",
 					"description": "Short name of the tenant secret the credential is read from on every spawn (e.g. agents/claude/claude1/oauth_token); instead of credential"},
 				"credential_secret_file": map[string]interface{}{"type": "string",
 					"description": "With credential_secret_ref: materialize the secret as this file relative to the session home (e.g. .codex/auth.json) instead of as the access token"},
+				"max_concurrent_sessions": map[string]interface{}{"type": "integer", "minimum": 0,
+					"description": "How many live sessions the account may serve at once; 0 (the default) is unmetered"},
 			},
 			"required": []string{"tenant_id", "provider"},
 		},
@@ -93,21 +108,21 @@ func (r *ToolRegistry) registerAccountTools() {
 
 	r.addTool(ToolDefinition{
 		Name:        "quicbaas_agent_account_list",
-		Description: "List pooled provider accounts for a tenant, optionally filtered by provider and/or project.",
+		Description: "List one page of a tenant's pooled provider accounts, newest first, optionally filtered by provider and/or project. Answers with the accounts plus total, limit, offset and, when more remain, next_offset; limit defaults to 25 (capped at 100) and q searches the account ID, display name and provider.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
-			"properties": map[string]interface{}{
+			"properties": withPageProperties(map[string]interface{}{
 				"tenant_id":  map[string]interface{}{"type": "string", "description": "Tenant whose accounts to list"},
 				"provider":   map[string]interface{}{"type": "string", "description": "Optional provider filter"},
 				"project_id": map[string]interface{}{"type": "string", "description": "Optional project filter"},
-			},
+			}, strings.Join(orchestration.AccountPageSpec().SortFields(), ", ")),
 			"required": []string{"tenant_id"},
 		},
 	})
 
 	r.addTool(ToolDefinition{
 		Name:        "quicbaas_agent_account_update",
-		Description: "Update a pooled provider account's non-secret metadata (display name, project scope, refresh policy), or point its credential at a tenant secret.",
+		Description: "Update a pooled provider account's non-secret metadata (display name, project scope, refresh policy, session cap, billing, spend policy), or point its credential at a tenant secret.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -117,10 +132,14 @@ func (r *ToolRegistry) registerAccountTools() {
 				"project_id":       map[string]interface{}{"type": "string", "description": "New project scope"},
 				"clear_project_id": map[string]interface{}{"type": "boolean", "description": "Remove the project scope, making the account tenant-wide"},
 				"refresh_policy":   map[string]interface{}{"type": "string", "description": "New refresh policy: none or oauth2"},
+				"billing":          billingSchema,
+				"spend":            accountSpendSchema("Replaces the account's spend policy; an empty object makes it unmetered"),
 				"credential_secret_ref": map[string]interface{}{"type": "string",
 					"description": "Switch the credential to (or re-point it at) this tenant secret; re-applying the current one returns an account whose secret was missing to service"},
 				"credential_secret_file": map[string]interface{}{"type": "string",
 					"description": "With credential_secret_ref: materialize the secret as this file relative to the session home"},
+				"max_concurrent_sessions": map[string]interface{}{"type": "integer", "minimum": 0,
+					"description": "New cap on live sessions; 0 makes the account unmetered. Omit to leave it unchanged"},
 			},
 			"required": []string{"tenant_id", "account_id"},
 		},
@@ -166,6 +185,34 @@ func (r *ToolRegistry) registerAccountTools() {
 				"lease_id":   map[string]interface{}{"type": "string", "description": "Delivery grant the caller already holds. Empty asks for a first release; set it to refresh a copy already held, and expect a refusal once the grant has been revoked"},
 			},
 			"required": []string{"account_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name: "quicbaas_agent_account_reserve_session",
+		Description: "Reserve one session slot on a pooled provider account for the caller's own tenant. " +
+			"Refused when the account is at its max_concurrent_sessions cap. The session record naming the returned reservation satisfies it.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"account_id": map[string]interface{}{"type": "string", "description": "Account ID to reserve a session slot on"},
+				"expected_live": map[string]interface{}{"type": "integer", "minimum": 0,
+					"description": "Claim only if the account's live-session count is still this; omit for an unconditional claim"},
+			},
+			"required": []string{"account_id"},
+		},
+	})
+
+	r.addTool(ToolDefinition{
+		Name:        "quicbaas_agent_account_release_session",
+		Description: "Give back a session reservation for a spawn that failed.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"account_id":     map[string]interface{}{"type": "string", "description": "Account the reservation is on"},
+				"reservation_id": map[string]interface{}{"type": "string", "description": "Reservation to release"},
+			},
+			"required": []string{"account_id", "reservation_id"},
 		},
 	})
 
@@ -219,6 +266,14 @@ func (r *ToolRegistry) executeAccountCreate(ctx context.Context, args map[string
 	if err != nil {
 		return nil, err
 	}
+	billing, err := accountBillingFromArgs(args["billing"])
+	if err != nil {
+		return nil, err
+	}
+	spend, _, err := getAccountSpendPolicy(args, "spend")
+	if err != nil {
+		return nil, err
+	}
 	return accountSvc.CreateAccount(ctx, &service.CreateAccountRequest{
 		TenantID:      getString(args, "tenant_id"),
 		ProjectID:     getString(args, "project_id"),
@@ -226,10 +281,13 @@ func (r *ToolRegistry) executeAccountCreate(ctx context.Context, args map[string
 		DisplayName:   getString(args, "display_name"),
 		Default:       getBool(args, "default"),
 		RefreshPolicy: orchestration.AccountRefreshPolicy(getString(args, "refresh_policy")),
+		Billing:       billing,
+		Spend:         spend,
 		Credential:    accountCredentialFromArgs(args),
 
-		CredentialSecretRef:  getString(args, "credential_secret_ref"),
-		CredentialSecretFile: getString(args, "credential_secret_file"),
+		CredentialSecretRef:   getString(args, "credential_secret_ref"),
+		CredentialSecretFile:  getString(args, "credential_secret_file"),
+		MaxConcurrentSessions: getInt(args, "max_concurrent_sessions"),
 	})
 }
 
@@ -249,15 +307,31 @@ func (r *ToolRegistry) executeAccountList(ctx context.Context, args map[string]i
 	if err != nil {
 		return nil, err
 	}
-	return accountSvc.ListAccounts(ctx, &service.ListAccountsRequest{
+	resp, err := accountSvc.ListAccounts(ctx, &service.ListAccountsRequest{
 		TenantID:  getString(args, "tenant_id"),
 		Provider:  orchestration.AccountProvider(getString(args, "provider")),
 		ProjectID: getString(args, "project_id"),
+		Page:      pageFromArgs(args),
 	})
+	if err != nil {
+		return nil, err
+	}
+	envelope := servicePageEnvelope("accounts", resp.Accounts,
+		resp.Total, resp.Limit, resp.Offset, resp.NextOffset, resp.Facets)
+	envelope["timestamp"] = resp.Timestamp
+	return marshalResult(envelope)
 }
 
 func (r *ToolRegistry) executeAccountUpdate(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	accountSvc, err := r.getAccountService()
+	if err != nil {
+		return nil, err
+	}
+	billing, err := optionalAccountBillingFromArgs(args)
+	if err != nil {
+		return nil, err
+	}
+	spend, err := optionalAccountSpendPolicy(args, "spend")
 	if err != nil {
 		return nil, err
 	}
@@ -268,10 +342,95 @@ func (r *ToolRegistry) executeAccountUpdate(ctx context.Context, args map[string
 		ProjectID:      getString(args, "project_id"),
 		ClearProjectID: getBool(args, "clear_project_id"),
 		RefreshPolicy:  orchestration.AccountRefreshPolicy(getString(args, "refresh_policy")),
+		Billing:        billing,
+		Spend:          spend,
 
-		CredentialSecretRef:  getString(args, "credential_secret_ref"),
-		CredentialSecretFile: getString(args, "credential_secret_file"),
+		CredentialSecretRef:   getString(args, "credential_secret_ref"),
+		CredentialSecretFile:  getString(args, "credential_secret_file"),
+		MaxConcurrentSessions: getOptionalInt(args, "max_concurrent_sessions"),
 	})
+}
+
+// AccountBillingArgumentError reports a billing tool argument that is not the
+// documented shape. A malformed billing is refused rather than read as "not
+// configured": on an update, a zero billing would replace — and so erase — the
+// account's saved billing (go-quicbaas#1058 review).
+type AccountBillingArgumentError struct {
+	// Field is the offending argument: "billing", "billing.mode" or
+	// "billing.monthly_fee_micros".
+	Field string
+}
+
+// Error implements the error interface.
+func (e *AccountBillingArgumentError) Error() string {
+	switch e.Field {
+	case "billing.mode":
+		return "mcp: billing.mode must be a string"
+	case "billing.monthly_fee_micros":
+		return "mcp: billing.monthly_fee_micros must be a whole number"
+	default:
+		return "mcp: billing must be an object with mode and monthly_fee_micros"
+	}
+}
+
+// accountBillingFromArgs reads a billing object. An absent billing is the
+// zero value; one of the wrong shape is an AccountBillingArgumentError.
+func accountBillingFromArgs(raw interface{}) (orchestration.AccountBilling, error) {
+	if raw == nil {
+		return orchestration.AccountBilling{}, nil
+	}
+	fields, ok := raw.(map[string]interface{})
+	if !ok {
+		return orchestration.AccountBilling{}, &AccountBillingArgumentError{Field: "billing"}
+	}
+	var billing orchestration.AccountBilling
+	if mode, present := fields["mode"]; present && mode != nil {
+		text, ok := mode.(string)
+		if !ok {
+			return orchestration.AccountBilling{}, &AccountBillingArgumentError{Field: "billing.mode"}
+		}
+		billing.Mode = orchestration.BillingMode(text)
+	}
+	if fee, present := fields["monthly_fee_micros"]; present && fee != nil {
+		micros, ok := wholeNumber(fee)
+		if !ok {
+			return orchestration.AccountBilling{}, &AccountBillingArgumentError{Field: "billing.monthly_fee_micros"}
+		}
+		billing.MonthlyFeeMicros = micros
+	}
+	return billing, nil
+}
+
+// wholeNumber reads a JSON number that must be integral. JSON decodes every
+// number to float64, so a fractional or out-of-range value is refused here
+// rather than silently truncated.
+func wholeNumber(v interface{}) (int64, bool) {
+	switch n := v.(type) {
+	case int:
+		return int64(n), true
+	case int64:
+		return n, true
+	case float64:
+		if n != math.Trunc(n) || n < math.MinInt64 || n >= math.MaxInt64 {
+			return 0, false
+		}
+		return int64(n), true
+	}
+	return 0, false
+}
+
+// optionalAccountBillingFromArgs is an update's billing: nil when the caller
+// did not send one, which leaves the account's billing unchanged.
+func optionalAccountBillingFromArgs(args map[string]interface{}) (*orchestration.AccountBilling, error) {
+	raw, present := args["billing"]
+	if !present || raw == nil {
+		return nil, nil
+	}
+	billing, err := accountBillingFromArgs(raw)
+	if err != nil {
+		return nil, err
+	}
+	return &billing, nil
 }
 
 func (r *ToolRegistry) executeAccountDelete(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -320,6 +479,55 @@ func (r *ToolRegistry) executeAccountMaterialize(ctx context.Context, args map[s
 		JobID:     getString(args, "job_id"),
 		LeaseID:   getString(args, "lease_id"),
 		AgentID:   mcpAccountReleaseSubject(ctx),
+	})
+}
+
+// reservationTenant binds a reservation tool to the caller's tenant and
+// REFUSES a tenant_id argument naming another one: a principal of tenant A
+// must not reach tenant B's accounts, and a silently re-pointed request would
+// look to the caller like a claim on the account it named.
+func reservationTenant(ctx context.Context, args map[string]interface{}) (string, error) {
+	tenantID := iam.TenantFromContext(ctx)
+	if tenantID == "" {
+		return "", api.NewValidationError("tenant_id", "the caller carries no tenant binding")
+	}
+	if requested := getString(args, "tenant_id"); requested != "" && requested != tenantID {
+		return "", api.NewValidationError("tenant_id", "must be the caller's own tenant")
+	}
+	return tenantID, nil
+}
+
+// executeAccountReserveSession claims a session slot for the caller's tenant.
+func (r *ToolRegistry) executeAccountReserveSession(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	accountSvc, err := r.getAccountService()
+	if err != nil {
+		return nil, err
+	}
+	tenantID, err := reservationTenant(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	return accountSvc.ReserveAccountSession(ctx, &service.ReserveAccountSessionRequest{
+		TenantID:     tenantID,
+		AccountID:    getString(args, "account_id"),
+		ExpectedLive: getOptionalInt(args, "expected_live"),
+	})
+}
+
+// executeAccountReleaseSession gives a session reservation back.
+func (r *ToolRegistry) executeAccountReleaseSession(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	accountSvc, err := r.getAccountService()
+	if err != nil {
+		return nil, err
+	}
+	tenantID, err := reservationTenant(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	return accountSvc.ReleaseAccountSession(ctx, &service.ReleaseAccountSessionRequest{
+		TenantID:      tenantID,
+		AccountID:     getString(args, "account_id"),
+		ReservationID: getString(args, "reservation_id"),
 	})
 }
 
@@ -404,16 +612,18 @@ func (r *ToolRegistry) getAccountService() (service.AccountService, error) {
 
 // accountToolHandlers is the O(1) dispatch table for the account tools.
 var accountToolHandlers = map[string]func(*ToolRegistry, context.Context, map[string]interface{}) (interface{}, error){
-	"quicbaas_agent_account_create":      (*ToolRegistry).executeAccountCreate,
-	"quicbaas_agent_account_get":         (*ToolRegistry).executeAccountGet,
-	"quicbaas_agent_account_list":        (*ToolRegistry).executeAccountList,
-	"quicbaas_agent_account_update":      (*ToolRegistry).executeAccountUpdate,
-	"quicbaas_agent_account_delete":      (*ToolRegistry).executeAccountDelete,
-	"quicbaas_agent_account_rotate":      (*ToolRegistry).executeAccountRotate,
-	"quicbaas_agent_account_materialize": (*ToolRegistry).executeAccountMaterialize,
-	"quicbaas_agent_account_revoke":      (*ToolRegistry).executeAccountRevoke,
-	"quicbaas_agent_account_set_default": (*ToolRegistry).executeAccountSetDefault,
-	"quicbaas_agent_account_usage":       (*ToolRegistry).executeAccountUsage,
+	"quicbaas_agent_account_create":          (*ToolRegistry).executeAccountCreate,
+	"quicbaas_agent_account_get":             (*ToolRegistry).executeAccountGet,
+	"quicbaas_agent_account_list":            (*ToolRegistry).executeAccountList,
+	"quicbaas_agent_account_update":          (*ToolRegistry).executeAccountUpdate,
+	"quicbaas_agent_account_delete":          (*ToolRegistry).executeAccountDelete,
+	"quicbaas_agent_account_rotate":          (*ToolRegistry).executeAccountRotate,
+	"quicbaas_agent_account_materialize":     (*ToolRegistry).executeAccountMaterialize,
+	"quicbaas_agent_account_reserve_session": (*ToolRegistry).executeAccountReserveSession,
+	"quicbaas_agent_account_release_session": (*ToolRegistry).executeAccountReleaseSession,
+	"quicbaas_agent_account_revoke":          (*ToolRegistry).executeAccountRevoke,
+	"quicbaas_agent_account_set_default":     (*ToolRegistry).executeAccountSetDefault,
+	"quicbaas_agent_account_usage":           (*ToolRegistry).executeAccountUsage,
 }
 
 // isAccountTool reports whether name is a pooled provider account tool.

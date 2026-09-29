@@ -499,8 +499,12 @@ make coverage-embedding        # 95.2% of pkg/embedding
 make bench-embedding           # provider overhead only, excludes the device
 make test-npu-sidecar          # 169 Python tests; no device needed
 make coverage-npu-sidecar       # unit tier alone; combine with the device tier for 91%
-make test-npu-sidecar-device   # 23 tests, real OpenVINO; needs the `device` extra
+make test-npu-sidecar-device   # 23 tests, real OpenVINO; installs the `device` extra
 ```
+
+The sidecar targets bootstrap their own virtualenv at
+`sidecar/npu-embedding/.venv` on first use, so a clean checkout needs no
+Python packages installed by hand.
 
 The device tier is a **separate suite**, not a skipped part of the first, so
 nothing is ever silently not run. It passes on the CPU plugin, which verifies

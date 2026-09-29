@@ -32,7 +32,7 @@ import (
 //
 // THREE KINDS OF FACT, three different sources, and the difference matters:
 //
-//   - RECORDED BY THE RUN — the fleet agent the work was dispatched to and the
+//   - RECORDED BY THE RUN — the fleet node the work was dispatched to and the
 //     lifecycle moments the loop entered. Both are written by JobRun as they
 //     happen and persist with the status, because nothing else observes them
 //     and a finished job must still answer for them.

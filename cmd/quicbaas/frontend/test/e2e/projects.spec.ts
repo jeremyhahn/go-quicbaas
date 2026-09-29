@@ -129,7 +129,7 @@ test.describe('Projects view', () => {
     await dialog.getByText('Advanced', { exact: true }).click();
     await expect(dialog.locator('#proj-default-workflow')).toBeVisible();
     await expect(dialog.locator('#proj-host-affinity')).toBeVisible();
-    await expect(dialog.locator('#proj-token-budget')).toBeVisible();
+    await expect(dialog.getByText('Spend limits')).toBeVisible();
     await expect(dialog.locator('#proj-gpu-minutes')).toBeVisible();
   });
 });

@@ -518,6 +518,7 @@ func (m *Manager) ListVersions(ctx context.Context, path string) ([]*interfaces.
 		result[i] = &interfaces.SecretVersionMetadata{
 			Version:   v.Version,
 			CreatedAt: v.CreatedAt,
+			CreatedBy: v.CreatedBy,
 			Deleted:   v.Deleted,
 			DeletedAt: v.DeletedAt,
 		}

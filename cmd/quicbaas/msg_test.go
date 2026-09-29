@@ -5674,13 +5674,6 @@ func TestNewObjectMigrateCommandCreation(t *testing.T) {
 // Embedded Server Helper
 // =============================================================================
 
-func TestGetFreePortForEmbedded_ReturnsValidPort(t *testing.T) {
-	port, err := getFreePortForEmbedded()
-	require.NoError(t, err)
-	assert.Greater(t, port, 0)
-	assert.Less(t, port, 65536)
-}
-
 func TestShutdownEmbeddedServer_NilHolder(t *testing.T) {
 	embeddedServerHolder.Store(nil)
 	err := shutdownEmbeddedServer()

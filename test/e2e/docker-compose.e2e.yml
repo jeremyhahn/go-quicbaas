@@ -31,9 +31,10 @@ services:
 
 # Gitea module-fetch credentials for the image builds, as a BuildKit secret
 # rather than an env var or build arg (dependency-resolution.md §6). The file
-# is staged by `make integration-test` from the environment the runner injects
-# and is gitignored; when it is absent or empty the builds fall back to the
-# public proxy, which is what happens on GitHub.
+# is staged by `make stage-gomodauth` -- from the runner's environment, or a
+# Gitea read token on any other host -- before the build and emptied after it
+# (docs/testing/private-modules.md). When it is empty the builds fall back to
+# the public proxy, which is what happens on GitHub.
 secrets:
   gomodauth:
     file: ${GOMODAUTH_ENV:-/tmp/quicbaas-gomodauth.env}

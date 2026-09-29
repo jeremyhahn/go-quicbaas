@@ -375,3 +375,96 @@ func TestPKCS11Strategy_RoundTripRequiresKeyAttributes(t *testing.T) {
 		t.Fatal("SealRootKey without KeyAttributes should fail")
 	}
 }
+
+// TestPKCS11BackendConfig_SealsPIN verifies the operator PIN reaches the
+// go-xkms backend config as a SecretValue whose enclave holds exactly the
+// configured PIN, alongside the rest of the operator's token selection.
+func TestPKCS11BackendConfig_SealsPIN(t *testing.T) {
+	p11 := fullPKCS11Config(t).Seal.PKCS11
+	keyStorage := xkmssdk.NewStorageMemory()
+
+	got := pkcs11BackendConfig(p11, keyStorage)
+	t.Cleanup(got.PIN.Clear)
+
+	pin, err := xkmssdk.SecretValueBytes(got.PIN)
+	if err != nil {
+		t.Fatalf("SecretValueBytes(PIN): %v", err)
+	}
+	if string(pin) != p11.PIN {
+		t.Fatalf("PIN enclave = %q, want %q", pin, p11.PIN)
+	}
+	if got.CN != p11.KeyLabel || got.Library != p11.Library || got.TokenLabel != p11.TokenLabel {
+		t.Fatalf("token selection not threaded: %+v", got)
+	}
+	if got.KeyStorage != keyStorage {
+		t.Fatal("KeyStorage is not the caller's key store")
+	}
+	if got.CertStorage == nil {
+		t.Fatal("CertStorage is nil")
+	}
+}
+
+// TestPKCS11BackendConfig_EmptyPIN verifies an unset PIN seals to an empty
+// SecretValue, which the backend reads as "no PIN configured" rather than as
+// an unresolved reference.
+func TestPKCS11BackendConfig_EmptyPIN(t *testing.T) {
+	p11 := fullPKCS11Config(t).Seal.PKCS11
+	p11.PIN = ""
+
+	got := pkcs11BackendConfig(p11, xkmssdk.NewStorageMemory())
+
+	pin, err := xkmssdk.SecretValueBytes(got.PIN)
+	if err != nil {
+		t.Fatalf("SecretValueBytes(empty PIN): %v", err)
+	}
+	if pin != nil {
+		t.Fatalf("empty PIN sealed to %q, want no bytes", pin)
+	}
+}
+
+// TestReleasePKCS11Backend_DestroysPIN verifies that abandoning a constructed
+// backend closes it and destroys the PIN enclave it held, so a failed build
+// leaves no PIN in memory.
+func TestReleasePKCS11Backend_DestroysPIN(t *testing.T) {
+	backendCfg := pkcs11BackendConfig(fullPKCS11Config(t).Seal.PKCS11, xkmssdk.NewStorageMemory())
+	backend, err := xkmssdk.NewPKCS11Backend(backendCfg)
+	if err != nil {
+		t.Fatalf("NewPKCS11Backend: %v", err)
+	}
+
+	if err := releasePKCS11Backend(backend); err != nil {
+		t.Fatalf("releasePKCS11Backend: %v", err)
+	}
+
+	var sawBytes bool
+	if err := backendCfg.PIN.WithBytes(func(b []byte) error {
+		sawBytes = len(b) > 0
+		return nil
+	}); err != nil {
+		t.Fatalf("WithBytes after release: %v", err)
+	}
+	if sawBytes {
+		t.Fatal("PIN enclave still holds plaintext after release")
+	}
+}
+
+// TestBuildPKCS11Strategy_UnloadableLibrary verifies a backend construction
+// failure (the library path does not exist) surfaces as a *StrategyBuildError
+// for the pkcs11 backend rather than as a config or registration error.
+func TestBuildPKCS11Strategy_UnloadableLibrary(t *testing.T) {
+	cfg := fullPKCS11Config(t)
+	cfg.Seal.PKCS11.Library = filepath.Join(t.TempDir(), "absent.so")
+
+	strategy, err := buildPKCS11Strategy(cfg)
+	if err == nil {
+		t.Fatalf("buildPKCS11Strategy() = %v, want error for a missing library", strategy)
+	}
+	var buildErr *StrategyBuildError
+	if !errors.As(err, &buildErr) || buildErr.Backend != "pkcs11" {
+		t.Fatalf("error = %T %v, want *StrategyBuildError for pkcs11", err, err)
+	}
+	var regErr *PKCS11KeyRegistrationError
+	if errors.As(err, &regErr) {
+		t.Fatalf("construction failure reported as registration failure: %v", err)
+	}
+}

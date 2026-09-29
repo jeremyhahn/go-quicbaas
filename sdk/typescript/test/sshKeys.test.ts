@@ -303,7 +303,7 @@ describe('RestKnownHostsClient', () => {
     const client = new RestKnownHostsClient('http://localhost');
     await client.add({
       host: 'server.example.com',
-      fingerprint: 'SHA256:xyz',
+      public_key: 'ssh-ed25519 AAAAxyz',
       scope: 'user',
       owner: 'alice',
     });
@@ -312,13 +312,13 @@ describe('RestKnownHostsClient', () => {
     expect(init.method).toBe('POST');
     const body = JSON.parse(init.body as string) as Record<string, unknown>;
     expect(body.host).toBe('server.example.com');
-    expect(body.fingerprint).toBe('SHA256:xyz');
+    expect(body.public_key).toBe('ssh-ed25519 AAAAxyz');
   });
 
   it('add throws SSHDuplicateError on 409', async () => {
     fetchMock.mockResolvedValue(errResp(409, 'pin already exists'));
     const client = new RestKnownHostsClient('http://localhost');
-    await expect(client.add({ host: 'x', fingerprint: 'SHA256:abc' })).rejects.toBeInstanceOf(SSHDuplicateError);
+    await expect(client.add({ host: 'x', public_key: 'ssh-ed25519 AAAAabc' })).rejects.toBeInstanceOf(SSHDuplicateError);
   });
 
   it('list GETs /api/v1/ssh/known-hosts with optional query params', async () => {

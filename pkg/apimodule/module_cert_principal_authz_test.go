@@ -47,7 +47,7 @@ import (
 // go-quicbaas#663 — which principal a request carrying BOTH credentials is
 // authorized as.
 //
-// An agent daemon presents its mTLS client certificate on every call, because
+// A fleet node daemon presents its mTLS client certificate on every call, because
 // it needs one for /oauth2/token-mtls, and a bearer minted from its OAuth2
 // application. go-qrdb's authenticator chain is first-success-wins with mTLS
 // FIRST, and a capability module's bearer fallback is consulted ONLY when that
@@ -56,7 +56,7 @@ import (
 //
 // That is not a defect in the chain — it is what a client certificate means —
 // so the fix is to enroll the identity the certificate authenticates as
-// (iam.IdentityStore.EnrollAgentCertIdentity). These tests wire go-qrdb's REAL
+// (iam.IdentityStore.EnrollFleetNodeCertIdentity). These tests wire go-qrdb's REAL
 // mTLS authenticator, RBAC authorizer and REST middleware against the record
 // that enrollment produces, and pin both halves: an enrolled certificate is
 // admitted, and a bearer NEVER lends its authority to a certificate principal.
@@ -64,11 +64,11 @@ import (
 
 const (
 	certPrincipalTenant = "automatethethings"
-	certPrincipalCN     = "agent-vm-host-4"
+	certPrincipalCN     = "agent-agent-04"
 	// heartbeatRoute is the control-plane route the whole fleet was refused on.
 	heartbeatRouteMethod  = "POST"
-	heartbeatRoutePattern = "/api/v1/orchestrator/agents/{agentID}/heartbeat"
-	heartbeatRoutePath    = "/api/v1/orchestrator/agents/agent-automatethethings-agent-vm-host-4/heartbeat"
+	heartbeatRoutePattern = "/api/v1/fleet/{nodeID}/heartbeat"
+	heartbeatRoutePath    = "/api/v1/fleet/agent-automatethethings-agent-agent-04/heartbeat"
 )
 
 // agentPeerCert mints an agent client certificate shaped exactly like the one
@@ -119,17 +119,16 @@ func enrolledAgentUser(t *testing.T, cert *x509.Certificate) *user.User {
 
 	records := iam.NewMemoryStorage()
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  records,
-		GroupStorage: records,
-		RoleStorage:  records,
+		UserStorage: records,
+		RoleStorage: records,
 	})
-	enrolled, err := store.EnrollAgentCertIdentity(t.Context(), certPrincipalTenant,
-		iam.AgentCertIdentityOptions{
+	enrolled, err := store.EnrollFleetNodeCertIdentity(t.Context(), certPrincipalTenant,
+		iam.FleetNodeCertIdentityOptions{
 			Certificate: cert,
-			Permissions: iam.AgentRuntimeGrant(),
+			Permissions: iam.FleetRuntimeGrant(),
 		})
 	if err != nil {
-		t.Fatalf("EnrollAgentCertIdentity() error = %v", err)
+		t.Fatalf("EnrollFleetNodeCertIdentity() error = %v", err)
 	}
 	core, err := qrdbadapter.FromIAMUser(enrolled)
 	if err != nil {
@@ -144,12 +143,12 @@ func enrolledAgentUser(t *testing.T, cert *x509.Certificate) *user.User {
 func certPrincipalHandler(t *testing.T, users map[string]*user.User) http.Handler {
 	t.Helper()
 
-	grant := make([]permission.Permission, 0, len(iam.AgentRuntimeGrant()))
-	for _, granted := range iam.AgentRuntimeGrant() {
+	grant := make([]permission.Permission, 0, len(iam.FleetRuntimeGrant()))
+	for _, granted := range iam.FleetRuntimeGrant() {
 		grant = append(grant, permission.Permission(granted))
 	}
 	roles := &fakeRoleServicer{perms: map[string][]permission.Permission{
-		iam.AgentRuntimeRoleID(certPrincipalTenant): grant,
+		iam.FleetRuntimeRoleID(certPrincipalTenant): grant,
 	}}
 
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
@@ -167,7 +166,7 @@ func certPrincipalHandler(t *testing.T, users map[string]*user.User) http.Handle
 		"other-app-token": {
 			subject: "app_automatethethings_other-agent",
 			tenant:  certPrincipalTenant,
-			scopes:  iam.AgentRuntimeGrant(),
+			scopes:  iam.FleetRuntimeGrant(),
 		},
 	}})
 
@@ -186,7 +185,7 @@ func certPrincipalHandler(t *testing.T, users map[string]*user.User) http.Handle
 	)
 	routes := middleware.NewRESTRouteRegistry()
 	routes.Register(heartbeatRouteMethod, heartbeatRoutePattern,
-		permission.Permission(iam.AgentScopeControlHeartbeat))
+		permission.Permission(iam.FleetScopeControlHeartbeat))
 	routes.SetFallback(heartbeatRouteMethod, heartbeatRoutePattern, m)
 
 	return am.RESTMiddleware(routes, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

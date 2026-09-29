@@ -13,8 +13,9 @@
 
 """Prove a worker container's pids limit holds and fails cleanly (#1040).
 
-`make test-worker-image` pipes this into the worker image, run with the
-production capability flags and a small --pids-limit. It forks idle children
+The worker image's probes (probes.go: the list `make test-worker-image` and
+the daemon's refresh gate both run) pipe this into the worker image, run with
+the production capability flags and a small --pids-limit. It forks idle children
 until the kernel refuses one, then kills and REAPS every child it made and
 forks once more.
 

@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -151,7 +152,7 @@ func (s *Server) startOrchestration() error {
 		// --no-session-persistence is NOT listed here: it is a resume-policy
 		// decision the backend applies from NativeSessionResume.
 		Args:                []string{"--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--disable-slash-commands"},
-		DefaultModel:        "", // Let Claude Code use its configured default model.
+		DefaultModel:        orchestration.DefaultClaudeModel, // The coding tier; the CLI's own default is a Sonnet model (go-quicbaas#1012).
 		TeamMode:            s.config.Orchestration.ClaudeTeamMode,
 		CLIMode:             true,
 		NativeSessionResume: s.config.Orchestration.ClaudeNativeSessionResume,
@@ -217,7 +218,7 @@ func (s *Server) startOrchestration() error {
 		SetTaskStore(store orchestration.TaskStore)
 		SetTenantGuard(guard *orchestration.TenantGuard)
 		SetContainerRuntime(runtime orchestration.ContainerRuntime)
-		SetAgentRegistry(registry orchestration.AgentRegistry)
+		SetFleetRegistry(registry orchestration.FleetRegistry)
 		SetLeadAgent(config *orchestration.LeadAgentConfig)
 		SetLeadSessionID(id string)
 		SetKVStore(kv interfaces.KVStore)
@@ -231,14 +232,20 @@ func (s *Server) startOrchestration() error {
 		SetTranscriptReplayBudget(budget int)
 		SetCostTracker(tracker orchestration.CostTracker)
 		SetConsumptionLedger(ledger orchestration.ConsumptionLedger)
+		SetPriceBook(prices *orchestration.PriceBook)
+		SetTenantSpendPolicyStore(store orchestration.TenantSpendPolicyStore)
+		SetCostSettingsStore(store orchestration.CostSettingsStore)
+		SetFleetTelemetryStore(store *orchestration.FleetTelemetryStore)
 		SetAccountStore(store orchestration.AccountStore)
+		SetAccountCredentialGenerations(reader orchestration.AccountCredentialGenerationReader)
 		SetAccountCredentialLeaser(leases orchestration.AccountCredentialLeaser)
 		SetJobLifecyclePolicy(policy orchestration.JobLifecyclePolicy)
 		SetNode(node string)
 		SetJobLeaseStore(store orchestration.JobLeaseStore, ttl time.Duration)
 		SetIdleThresholds(thresholds orchestration.JobIdleThresholds)
-		SetAgentHeartbeatTimeout(timeout time.Duration)
+		SetFleetHeartbeatTimeout(timeout time.Duration)
 		SetTenantLister(tenants orchestration.TenantLister)
+		SetTenantResolver(tenants orchestration.TenantResolver)
 	})
 	if ok {
 		// The operator's part of every job's lifecycle: the command allowlist
@@ -264,7 +271,7 @@ func (s *Server) startOrchestration() error {
 		wirer.SetTenantGuard(orchestration.NewTenantGuard(logAdapter))
 
 		// Wire project-level authorization so ClaimTask enforces the
-		// per-project AgentRoles matrix when a task is scoped to a project.
+		// per-project FleetNodeRoles matrix when a task is scoped to a project.
 		// Uses the in-process project store from the QuicBaaS facade when
 		// available; falls back to a fresh in-memory store (standalone mode).
 		var projectStore orchestration.ProjectStore
@@ -297,11 +304,12 @@ func (s *Server) startOrchestration() error {
 		// socket there because a unix socket address does not fit under a
 		// managed workspace, and the grant is only the socket itself, read
 		// only (see MountPolicy.SocketsRoot).
-		wirer.SetMountPolicy(&orchestration.MountPolicy{
+		mountPolicy := &orchestration.MountPolicy{
 			ProjectsRoot: projectsRoot,
 			AllowedRoots: s.config.Orchestration.Sandbox.AllowedMountRoots,
 			SocketsRoot:  socketsRoot,
-		})
+		}
+		wirer.SetMountPolicy(mountPolicy)
 
 		// Trust axis (orchestration.trust_policy): the integrity floor every
 		// spawn resolves TrustLevelDefault against. An unparsable value is
@@ -341,24 +349,30 @@ func (s *Server) startOrchestration() error {
 		// Reuse the registry created during IAM init so enrollment-time
 		// registrations are immediately visible to dispatch. Builds one over
 		// the same durable store only if IAM init never ran.
-		if s.agentRegistry == nil {
-			s.agentRegistry = orchestration.NewAgentRegistry(orchKV, orchStoreOpts...)
+		if s.fleetRegistry == nil {
+			s.fleetRegistry = orchestration.NewFleetRegistry(orchKV, orchStoreOpts...)
 		}
-		wirer.SetAgentRegistry(s.agentRegistry)
-		s.logger.Info("Agent fleet registry attached to orchestration service")
+		wirer.SetFleetRegistry(s.fleetRegistry)
+		s.logger.Info("Fleet registry attached to orchestration service")
 
-		// Rebind the AgentAdminService onto the SAME shared fleet registry the
-		// orchestrator just received. The facade builds AgentAdmin with a private
+		// Rebind the FleetAdminService onto the SAME shared fleet registry the
+		// orchestrator just received. The facade builds FleetAdmin with a private
 		// default registry at construction time; without this rebind, disable /
 		// enable resolve agents in an empty store and every fleet-registered agent
-		// surfaces as 404. AgentAdmin() returns the interface, so type-assert to
+		// surfaces as 404. FleetAdmin() returns the interface, so type-assert to
 		// the concrete setter (no-op for alternate implementations).
 		if s.quicBaaSService != nil {
-			if rebinder, rebindOK := s.quicBaaSService.AgentAdmin().(interface {
-				SetAgentRegistry(orchestration.AgentRegistry)
+			if rebinder, rebindOK := s.quicBaaSService.FleetAdmin().(interface {
+				SetFleetRegistry(orchestration.FleetRegistry)
 			}); rebindOK {
-				rebinder.SetAgentRegistry(s.agentRegistry)
+				rebinder.SetFleetRegistry(s.fleetRegistry)
 				s.logger.Info("Agent admin service bound to shared fleet registry")
+			}
+			// A project's host affinity is verified against the same fleet.
+			if fleetWirer, fleetOK := s.quicBaaSService.Project().(interface {
+				SetFleetNodes(orchestration.FleetNodeLister)
+			}); fleetOK {
+				fleetWirer.SetFleetNodes(s.fleetRegistry)
 			}
 		}
 
@@ -461,7 +475,7 @@ func (s *Server) startOrchestration() error {
 		// It was configurable and unread until the session sweep needed it:
 		// a session pinned to a daemon nothing has heard from is unreachable,
 		// and the operator's own timeout is what says how long "nothing" is.
-		wirer.SetAgentHeartbeatTimeout(s.config.Orchestration.HeartbeatTimeout)
+		wirer.SetFleetHeartbeatTimeout(s.config.Orchestration.HeartbeatTimeout)
 		s.logger.Infof("Job admission attached to orchestration service (node=%s lease_ttl=%s)", node, leaseTTL)
 
 		// Interrupted jobs are recovered by recoverOrchestrationJobs, once
@@ -478,16 +492,48 @@ func (s *Server) startOrchestration() error {
 		// Wire container runtime if Docker/Podman is available.
 		containerRuntime, rtErr := orchestration.NewExecContainerRuntime(logAdapter)
 		if rtErr == nil {
+			s.orchContainerRuntime = containerRuntime
 			wirer.SetContainerRuntime(containerRuntime)
 			s.logger.Info("Container runtime attached to orchestration service")
 
-			// Give ACP backends access to the container runtime for sandboxed sessions.
+			// The shared per-tenant Go cache is the daemon's own mount, so no
+			// grant of the request mount policy may reach it.
+			goCache := orchestration.GoBuildCache{
+				Root: s.config.Orchestration.Sandbox.EffectiveGoCacheDir(s.config.Storage.DataDir),
+			}
+			if cacheErr := goCache.Validate(mountPolicy); cacheErr != nil {
+				return cacheErr
+			}
+			owner, ownerErr := orchestratorContainerOwner(s.config.Storage.DataDir)
+			if ownerErr != nil {
+				return ownerErr
+			}
+
+			// Give ACP backends access to the container runtime for sandboxed
+			// sessions, stamp their containers with this daemon's owner label
+			// and mount the shared Go cache into them.
 			for _, name := range []string{"claude", "codex", "opencode"} {
 				if b, ok := backends[name]; ok {
 					if acpBackend, ok := b.(*orchestration.ACPBackend); ok {
 						acpBackend.SetContainerRuntime(containerRuntime)
+						acpBackend.SetSandboxOwner(owner)
+						acpBackend.SetGoBuildCache(goCache)
 					}
 				}
+			}
+
+			// Nothing has spawned yet — jobs are recovered once every module
+			// has registered — so every container carrying this owner label
+			// is a previous run's orphan (go-quicbaas#750).
+			sweep, sweepErr := containerRuntime.SweepOwned(context.Background(), owner)
+			if sweepErr != nil {
+				return sweepErr
+			}
+			if len(sweep.Removed) > 0 {
+				s.logger.Infof("Swept %d orphaned worker container(s) left by a previous run", len(sweep.Removed))
+			}
+			if reapErr := s.startContainerReaper(containerRuntime, owner, backends); reapErr != nil {
+				return reapErr
 			}
 		}
 
@@ -506,6 +552,17 @@ func (s *Server) startOrchestration() error {
 		wirer.SetCostTracker(costTracker)
 		s.logger.Info("Token cost counters attached to orchestration service (durable KV-backed, tenant-namespaced)")
 
+		// HOW MANY SESSIONS EACH POOLED ACCOUNT SERVES RIGHT NOW, counted from
+		// the session records every spawn writes, whichever host resolved it.
+		// One lookup, three readers: the balancing strategy ranks on it and
+		// enforces MaxConcurrentSessions with it, admission defers a pool whose
+		// accounts are all at their cap, and the usage verb reports it to
+		// worker daemons so they balance on the same count (go-quicbaas#1046).
+		sessionCounter, sessionErr := orchestration.NewAccountSessionCounter(store)
+		if sessionErr != nil {
+			return sessionErr
+		}
+
 		// The CONSUMPTION LEDGER, on the same store and for a different job.
 		// The counters above report; this one DECIDES — it is the append-only
 		// record the spend authority reads before any pooled credential is
@@ -520,6 +577,81 @@ func (s *Server) startOrchestration() error {
 		// than silently admitting everything at spawn time.
 		consumption := orchestration.NewConsumptionLedger(orchKV)
 		wirer.SetConsumptionLedger(consumption)
+
+		// The PRICE BOOK every entry is stamped from when its turn is
+		// recorded (orchestration.pricing). An absent table prices nothing
+		// and every turn is recorded unpriced; a malformed one fails startup
+		// rather than stamping figures from a table the operator did not
+		// mean.
+		prices, pricesErr := orchestration.NewPriceBook(s.config.Orchestration.Pricing)
+		if pricesErr != nil {
+			return pricesErr
+		}
+		wirer.SetPriceBook(prices)
+
+		// THE LATE PRICING SWEEP: a scheduler system job that prices every
+		// ledger entry recorded without a price once the table names its
+		// model — the turns that ran before their model was priced. Without
+		// a scheduler the entries stay unpriced and read as such.
+		if pricer, pricerOK := agentSvc.(unpricedConsumptionPricer); pricerOK && s.quicBaaSService != nil {
+			if engine := s.quicBaaSService.SchedulerEngine(); engine != nil {
+				if err := registerLedgerPricing(engine, pricer); err != nil {
+					return err
+				}
+				s.logger.Info("Ledger pricing sweep registered as a scheduler system job")
+			} else {
+				s.logger.Warn("Scheduler is not enabled; ledger entries recorded without a price stay unpriced")
+			}
+		}
+		// Each tenant's own spend limits, in the tenant-routed orchestration
+		// KV beside its accounts and projects (go-quicbaas#1058).
+		tenantSpendPolicies := orchestration.NewTenantSpendPolicyStore(orchKV)
+		wirer.SetTenantSpendPolicyStore(tenantSpendPolicies)
+
+		// ADMISSION'S FOURTH INPUT: a project's and its tenant's own spend
+		// limits, judged over the project and tenant quota planes this same
+		// ledger writes (go-quicbaas#1058, ruling F6). A spent project or
+		// tenant is deferred with a typed reason, on the audit trail when the
+		// deferral starts.
+		scopeSpend, scopeSpendErr := orchestration.NewScopeSpendAdmission(
+			orchestration.NewQuotaAuthority(consumption), tenantSpendPolicies,
+			orchestration.WithScopeSpendReporting(storeAuditor, logAdapter))
+		if scopeSpendErr != nil {
+			return scopeSpendErr
+		}
+		s.orchScopeSpend = scopeSpend
+
+		// Each tenant's RUNTIME cost settings — its electricity rate and
+		// engine draws — layered over the price table when a local turn is
+		// costed from electricity. In the tenant-routed KV, beside the ledger.
+		wirer.SetCostSettingsStore(orchestration.NewCostSettingsStore(orchKV))
+
+		// FLEET DEVICE TELEMETRY, filed per node in the qrdb node's
+		// time-series engine and integrated over each local turn's window to
+		// cost it from what its device measurably drew (turn_energy.go). A
+		// node built without time-series storage measures nothing: every
+		// local turn is costed from its configured draw and marked estimated.
+		if s.timeSeriesStorage != nil {
+			series, seriesErr := newFleetTelemetrySeries(s.timeSeriesStorage,
+				s.config.Orchestration.Pricing.EffectiveTelemetryRetention())
+			if seriesErr != nil {
+				return seriesErr
+			}
+			// Raw telemetry is retained for a bounded window. The policy is
+			// set on every series already stored; a failure here is retried
+			// on each tenant's next report, so it does not stop the node.
+			if retentionErr := series.ApplyRetention(); retentionErr != nil {
+				s.logger.Warn("Fleet device telemetry retention could not be applied at startup; it is retried on each tenant's next report: " + retentionErr.Error())
+			}
+			telemetry, telemetryErr := orchestration.NewFleetTelemetryStore(series)
+			if telemetryErr != nil {
+				return telemetryErr
+			}
+			wirer.SetFleetTelemetryStore(telemetry)
+			s.logger.Info("Fleet device telemetry attached; local turns are costed from measured energy where a node reports it")
+		} else {
+			s.logger.Warn("Time-series storage is not configured; fleet device telemetry is dropped and local turn energy is estimated")
+		}
 
 		// The gate itself. It names this node as the holder of a breaker's
 		// single half-open trial, so two daemons over one store cannot both
@@ -540,6 +672,11 @@ func (s *Server) startOrchestration() error {
 			}); usageOK {
 				usageWirer.SetUsageTracker(costTracker)
 				s.logger.Info("Account usage reporting bound to the orchestration cost ledger")
+			}
+			if sessionWirer, sessionOK := s.quicBaaSService.Account().(interface {
+				SetSessionReserver(orchestration.AccountSessionReserver)
+			}); sessionOK {
+				sessionWirer.SetSessionReserver(sessionCounter)
 			}
 			// The REMOTE half of the cap. MaterializeAccountCredential hands
 			// a live paid credential to a host the central does not run, so
@@ -584,6 +721,9 @@ func (s *Server) startOrchestration() error {
 			}
 
 			accountStore := orchestration.NewAccountStore(orchKV, orchStoreOpts...)
+			// Shared with lifecycle_sdlc.go's attention inbox wiring — see
+			// Server.orchAccountStore.
+			s.orchAccountStore = accountStore
 			accountSecrets := orchestration.NewAccountSecretStore(s.secretsManager)
 			accountTokenOpts := []orchestration.AccountTokenManagerOption{
 				orchestration.WithAccountProviders(accountProviders),
@@ -669,7 +809,13 @@ func (s *Server) startOrchestration() error {
 				}
 			}
 
-			accountStrategies := orchestration.NewAccountStrategyRegistry(costTracker)
+			// BALANCED BY DEFAULT. An unpinned spawn takes the least busy,
+			// then least used, account; `default: true` only breaks a tie.
+			// Static selection stays registered for a caller that names it.
+			accountStrategies, strategyErr := orchestration.NewBalancedAccountStrategyRegistry(costTracker, sessionCounter)
+			if strategyErr != nil {
+				return strategyErr
+			}
 			accountResolver := orchestration.NewAccountResolver(
 				accountStore, accountTokens, accountStrategies,
 				append(orchStoreOpts,
@@ -680,6 +826,9 @@ func (s *Server) startOrchestration() error {
 					// The LOCAL half of the delivery grant, for the same
 					// reason: one authority, both paths.
 					orchestration.WithAccountDeliveryGrantor(accountLeases),
+					// The session cap, enforced under the reservation table's
+					// lock so concurrent spawns cannot all take the last slot.
+					orchestration.WithAccountSessionReserver(sessionCounter),
 				)...)
 
 			// Give the orchestrator the SAME metadata store the resolver reads
@@ -691,6 +840,14 @@ func (s *Server) startOrchestration() error {
 			// rediscovers the same limit for itself.
 			wirer.SetAccountStore(accountStore)
 
+			// And the authority a live session's credential is checked against
+			// before every job-runner turn (go-quicbaas#997): the same token
+			// manager that materializes the credential, so a rotation — an
+			// envelope replaced here, or a referenced account's secret
+			// rewritten by its owner — is seen by the next prompt, not by the
+			// provider refusing it.
+			wirer.SetAccountCredentialGenerations(accountTokens)
+
 			// ADMISSION'S THIRD INPUT, from the same two authorities the spawn
 			// path uses: the account store for lifecycle and cooldown state,
 			// and the ledger-backed quota authority for the subscription's
@@ -701,12 +858,25 @@ func (s *Server) startOrchestration() error {
 			// Built from the same handles rather than from a copy of the rules:
 			// see pkg/orchestration/admission_headroom.go.
 			poolHeadroom, headroomErr := orchestration.NewAccountPoolHeadroom(
-				accountStore, orchestration.NewQuotaAuthority(consumption))
+				accountStore, orchestration.NewQuotaAuthority(consumption),
+				orchestration.WithHeadroomSessions(sessionCounter),
+				// A pool that goes to zero at admission is reported on the
+				// same trail a spawn-time exhaustion is, or the common case,
+				// the deferred one, would never be seen.
+				orchestration.WithHeadroomReporting(storeAuditor, logAdapter))
 			if headroomErr != nil {
 				return headroomErr
 			}
 			s.orchPoolHeadroom = poolHeadroom
-			s.logger.Info("Admission bound to pooled provider usage headroom (subscription usage windows and cooldowns, never a price)")
+			// The same pool answers whether an Agent can draw a usable account
+			// at all, which the review dispatcher asks before it starts a job
+			// whose only outcome would be a failed spawn.
+			if reader, isReader := poolHeadroom.(orchestration.AccountAvailabilityReader); isReader {
+				if availability, accepts := agentSvc.(orchestration.AgentAccountAvailabilityReader); accepts {
+					availability.SetAccountAvailability(reader)
+				}
+			}
+			s.logger.Info("Admission bound to pooled provider usage headroom (each account's spend windows, cooldowns and session caps)")
 
 			// THE REAPER BECOMES A SECURITY CONTROL. Session conclusion — an
 			// operator's close, a job's ending, a node restart's sweep, an
@@ -733,9 +903,20 @@ func (s *Server) startOrchestration() error {
 					}
 				}
 			}
-			s.logger.Info("Pooled provider account resolver attached to claude/opencode orchestration backends (strategies: static, least_usage)")
+			s.logger.Info("Pooled provider account resolver attached to claude/opencode orchestration backends (default strategy: least_usage, balanced on live sessions then recorded usage; static available)")
 		} else {
 			s.logger.Warn("No secrets manager attached; pooled provider accounts are disabled (spawns with account_id/account_auto will fail closed)")
+		}
+
+		// The tenant AI agent catalog, and the one-time rewrite of any project
+		// record still carrying a free-string default lead. Before the session
+		// restoration and every sweep below, because a legacy project record
+		// no longer decodes and a spawn naming an Agent resolves here.
+		agentCtx, agentCancel := context.WithTimeout(context.Background(), s.config.Server.ShutdownTimeout)
+		agentErr := s.startAgentCatalog(agentCtx, agentSvc, orchKV, storeAuditor, projectStore, orchStoreOpts)
+		agentCancel()
+		if agentErr != nil {
+			return agentErr
 		}
 
 		// Wire the session event log so attachers can replay + tail session
@@ -785,7 +966,11 @@ func (s *Server) startOrchestration() error {
 		// left neither restored nor reconciled (#792). Wired BEFORE the
 		// restoration, which is the first pass that needs it.
 		if s.iamComponents != nil && s.iamComponents.GetTenantManager() != nil {
-			wirer.SetTenantLister(&iamTenantLister{tenants: s.iamComponents.GetTenantManager()})
+			tenants := &iamTenantLister{tenants: s.iamComponents.GetTenantManager()}
+			wirer.SetTenantLister(tenants)
+			// A fleet registration's tenant_id is verified against the same
+			// tenant directory.
+			wirer.SetTenantResolver(tenants)
 		} else {
 			s.logger.Info("Session recovery limited to the system tenant: no tenant manager to enumerate tenants")
 		}
@@ -806,31 +991,9 @@ func (s *Server) startOrchestration() error {
 		// (shared registry + orchestrator OAuth2 client) are missing.
 		s.installRemoteBackendResolver(agentSvc)
 
-		// Wire lead agent if configured.
-		cfg := s.config.Orchestration.LeadAgent
-		if cfg.Backend != "" {
-			wirer.SetLeadAgent(&orchestration.LeadAgentConfig{
-				Backend:      cfg.Backend,
-				Model:        cfg.Model,
-				SystemPrompt: cfg.SystemPrompt,
-			})
-
-			spawnCtx, spawnCancel := context.WithTimeout(context.Background(), s.config.Server.ShutdownTimeout)
-			defer spawnCancel()
-
-			resp, spawnErr := agentSvc.SpawnSession(spawnCtx, &orchestration.SpawnSessionRequest{
-				Backend:      cfg.Backend,
-				Model:        cfg.Model,
-				SystemPrompt: cfg.SystemPrompt,
-			})
-			if spawnErr != nil {
-				s.logger.Warnf("Failed to spawn lead agent session: %v", spawnErr)
-			} else {
-				wirer.SetLeadSessionID(resp.SessionID)
-				s.logger.Infof("Lead agent session spawned: session=%s backend=%s model=%s",
-					resp.SessionID, cfg.Backend, cfg.Model)
-			}
-		}
+		// Wire the lead agent if configured: the system tenant's Agent or
+		// pool, spawned by reference so it fails over like any other slot.
+		s.startLeadAgent(agentSvc, wirer)
 	}
 
 	// Attach to the QuicBaaS facade.
@@ -845,10 +1008,10 @@ func (s *Server) startOrchestration() error {
 	// a task store to write.
 	if ok {
 		s.startTaskSourcePoller(agentSvc)
+		// The dispatcher itself starts in the startupTaskDispatcher step,
+		// after job recovery (see orchestrationStartup).
 		if spawner, spawnerOK := agentSvc.(orchestration.TaskSpawner); spawnerOK {
-			s.startTaskDispatcher(spawner)
-		} else {
-			s.logger.Info("Task dispatcher not started: the agent service cannot spawn a task")
+			s.taskSpawner = spawner
 		}
 	}
 
@@ -896,6 +1059,10 @@ func (s *Server) socketsRoot() (string, error) {
 // jobRecoverer is the engine's restart path for interrupted jobs.
 type jobRecoverer interface {
 	RecoverJobs(ctx context.Context) error
+
+	// ResumedJobsSettled closes once every resumed job has settled its
+	// lease, with no deadline; the task dispatcher waits on it.
+	ResumedJobsSettled() <-chan struct{}
 }
 
 // recoverOrchestrationJobs resumes the jobs this node owned when it last
@@ -918,6 +1085,11 @@ func (s *Server) recoverOrchestrationJobs() {
 	if err := recoverer.RecoverJobs(recoverCtx); err != nil {
 		s.logger.Warnf("Job recovery from KV store failed: %v", err)
 	}
+	// THE GATE OUTLIVES THE BOOT BUDGET. A resumed job still waiting for its
+	// lease when recovery gave up keeps running, so the dispatcher must keep
+	// waiting for it; starting on the recovery's deadline instead would
+	// release the job's task and dispatch a duplicate (Codex, #1075 round 3).
+	s.dispatchGate = recoverer.ResumedJobsSettled()
 }
 
 // jobLeaseStore selects the lease store for the deployment's consistency
@@ -982,6 +1154,74 @@ func (s *Server) startOrchestrationSweeps(sweeper jobSweeper, interval time.Dura
 		}
 	}()
 	s.logger.Infof("Job reaper and stall detector started (sweep=%s)", interval)
+}
+
+// orchestratorContainerOwner is the owner label the orchestrator's own
+// in-process backends stamp on their sandbox containers. It is distinct from
+// the embedded agent's (its data directory, unprefixed): the two hold
+// different backend sets, and a reaper asking one set about the other's
+// sessions would reap live workers.
+func orchestratorContainerOwner(dataDir string) (string, error) {
+	abs, err := filepath.Abs(dataDir)
+	if err != nil {
+		return "", &ServerCauseError{Message: "orchestration: container owner from data dir", Cause: err}
+	}
+	return "orchestrator:" + abs, nil
+}
+
+// startContainerReaper runs the container reaper over the orchestrator's own
+// sandbox containers until shutdown. A container is reaped once none of
+// backends holds its session and it is past the grace period.
+func (s *Server) startContainerReaper(
+	rt *orchestration.ExecContainerRuntime,
+	owner string,
+	backends map[string]orchestration.AgentBackend,
+) error {
+	reaper, err := orchestration.NewContainerReaper(orchestration.ContainerReaperConfig{
+		Runtime: rt,
+		Owner:   owner,
+		Live: func(sessionID string) bool {
+			for _, b := range backends {
+				if holder, ok := b.(interface{ HoldsSession(string) bool }); ok && holder.HoldsSession(sessionID) {
+					return true
+				}
+			}
+			return false
+		},
+		Logger: &logger.LoggerAdapter{Logger: s.logger},
+	})
+	if err != nil {
+		return err
+	}
+	ctx, stop := context.WithCancel(context.Background())
+	loop := &orchestrationSweeps{stop: stop, done: make(chan struct{})}
+	s.orchContainerReaper = loop
+	go func() {
+		defer close(loop.done)
+		ticker := time.NewTicker(orchestration.DefaultContainerReapInterval)
+		defer ticker.Stop()
+		reaper.Run(ctx, ticker.C, func(sweep orchestration.ContainerSweep, err error) {
+			if err != nil && ctx.Err() == nil {
+				s.logger.WithError(err).Warn("orchestration: container reap failed")
+			}
+			if len(sweep.Removed) > 0 {
+				s.logger.Infof("Reaped %d worker container(s) no live session held", len(sweep.Removed))
+			}
+		})
+	}()
+	s.logger.Infof("Container reaper started (owner=%s interval=%s grace=%s)",
+		owner, orchestration.DefaultContainerReapInterval, orchestration.DefaultContainerReapGrace)
+	return nil
+}
+
+// stopContainerReaper stops the container reaper and waits for it.
+func (s *Server) stopContainerReaper() {
+	if s.orchContainerReaper == nil {
+		return
+	}
+	s.orchContainerReaper.stop()
+	<-s.orchContainerReaper.done
+	s.orchContainerReaper = nil
 }
 
 // stopOrchestrationSweeps stops the sweep and waits for it.

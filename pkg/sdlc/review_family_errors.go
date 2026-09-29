@@ -23,12 +23,16 @@ package sdlc
 // 2026-09-13). A binding that names one is refused before a model is spent.
 type ReviewerFamilyRefusedError struct {
 	ProjectID string
-	Backend   string
+	Agent     string
 	Family    string
 }
 
 func (e *ReviewerFamilyRefusedError) Error() string {
-	return "sdlc: project " + e.ProjectID + " binds a reviewer on backend " + e.Backend +
+	return "sdlc: project " + e.ProjectID + " binds reviewer agent " + e.Agent +
 		" (model family " + e.Family + "), which does not review in this fleet: a review runs " +
-		"on codex or on the local qwen model. Change reviewer.backend."
+		"on codex or on the local qwen model. Change the seat's agent_id."
 }
+
+// Unwrap returns ErrReview, as ReviewerNotIndependentError does: both refuse a
+// review seat whose verdict could never count.
+func (e *ReviewerFamilyRefusedError) Unwrap() error { return ErrReview }

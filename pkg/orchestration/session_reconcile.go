@@ -50,7 +50,7 @@ import (
 //     ConcludeSessionsForJob.
 //   - THE AGENT IS GONE. A session pinned to a daemon that unregistered, or
 //     that has stopped heartbeating, is on a host nothing here can reach. See
-//     ConcludeSessionsForAgent and SweepSessions.
+//     ConcludeSessionsForFleetNode and SweepSessions.
 //
 // ONE TRANSITION SERVES ALL THREE, and it is the one session_conclusion.go
 // already owns. A record this process holds live is concluded through that
@@ -595,7 +595,7 @@ func (s *agentServiceImpl) concludeJobSessions(tenantID, jobID string) {
 // An agent that left the fleet
 // =============================================================================
 
-// ConcludeSessionsForAgent ends every session pinned to a daemon that is no
+// ConcludeSessionsForFleetNode ends every session pinned to a daemon that is no
 // longer serving.
 //
 // THE PIN IS THE BINDING. A session dispatched to another daemon records the
@@ -604,8 +604,8 @@ func (s *agentServiceImpl) concludeJobSessions(tenantID, jobID string) {
 // dangling reference and the session behind it is unreachable by construction.
 // A session with no pin ran here, and this node's own restarts are the startup
 // path's business rather than this one's.
-func (s *agentServiceImpl) ConcludeSessionsForAgent(
-	ctx context.Context, tenantID string, agent *AgentRegistration, evidence string) (SessionReconcileReport, error) {
+func (s *agentServiceImpl) ConcludeSessionsForFleetNode(
+	ctx context.Context, tenantID string, agent *FleetNode, evidence string) (SessionReconcileReport, error) {
 	var report SessionReconcileReport
 	if agent == nil {
 		return report, &AgentServiceError{
@@ -629,7 +629,7 @@ func (s *agentServiceImpl) ConcludeSessionsForAgent(
 		if !sessionRecordOpen(record) || !sessionPinnedToAgent(record, agent) {
 			continue
 		}
-		report.Findings = append(report.Findings, s.conclude(ctx, record, ConcludedByAgentGone, evidence))
+		report.Findings = append(report.Findings, s.conclude(ctx, record, ConcludedByFleetNodeGone, evidence))
 	}
 	return report, nil
 }
@@ -638,7 +638,7 @@ func (s *agentServiceImpl) ConcludeSessionsForAgent(
 // agent. Both identifiers are accepted because both are what a spawn may have
 // resolved the host to: the operator names an agent by Name, the dispatcher
 // resolves it to Host.
-func sessionPinnedToAgent(record *SessionRecord, agent *AgentRegistration) bool {
+func sessionPinnedToAgent(record *SessionRecord, agent *FleetNode) bool {
 	if record.HostAffinity == "" {
 		return false
 	}
@@ -742,7 +742,7 @@ func (s *agentServiceImpl) sweepVerdict(
 		return "", "", false
 	}
 	if agent, gone := s.sessionHostGone(ctx, record); gone {
-		return ConcludedByAgentGone,
+		return ConcludedByFleetNodeGone,
 			quiet + " and the daemon it is pinned to (" + agent + ") is no longer registered", true
 	}
 	return "", "", false
@@ -802,21 +802,21 @@ func (s *agentServiceImpl) sessionHostUnregistered(ctx context.Context, record *
 // reason as jobTerminalState: an unreadable registry is not an empty one.
 func (s *agentServiceImpl) sessionHostAbsent(
 	ctx context.Context, record *SessionRecord, requireRecentHeartbeat bool) (string, bool) {
-	if record.HostAffinity == "" || s.agentRegistry == nil {
+	if record.HostAffinity == "" || s.fleetRegistry == nil {
 		return "", false
 	}
-	agents, err := s.agentRegistry.ListAgents(
-		agentTenantContext(ctx, record.TenantID), record.TenantID, nil)
+	agents, err := s.fleetRegistry.ListFleetNodes(
+		fleetTenantContext(ctx, record.TenantID), record.TenantID, nil)
 	if err != nil {
 		return "", false
 	}
-	timeout := s.effectiveAgentHeartbeatTimeout()
+	timeout := s.effectiveFleetHeartbeatTimeout()
 	now := utcNow()
 	for _, agent := range agents {
 		if !sessionPinnedToAgent(record, agent) {
 			continue
 		}
-		if agent.Status == AgentStatusOffline {
+		if agent.Status == FleetNodeStatusOffline {
 			continue
 		}
 		if requireRecentHeartbeat && agent.LastSeen > 0 && now.Sub(time.Unix(0, agent.LastSeen)) > timeout {
@@ -870,24 +870,24 @@ func (s *agentServiceImpl) remoteSessionGone(ctx context.Context, record *Sessio
 	return s.sessionHostUnregistered(ctx, record)
 }
 
-// DefaultAgentHeartbeatTimeout is how long an agent may go without
+// DefaultFleetHeartbeatTimeout is how long an agent may go without
 // heartbeating before the sweep treats it as gone. It matches the
 // orchestration configuration's own default so an operator who sets neither
 // gets one answer rather than two.
-const DefaultAgentHeartbeatTimeout = 90 * time.Second
+const DefaultFleetHeartbeatTimeout = 90 * time.Second
 
-// SetAgentHeartbeatTimeout configures the age past which a registered agent's
+// SetFleetHeartbeatTimeout configures the age past which a registered agent's
 // silence counts as absence. A non-positive value selects the default.
-func (s *agentServiceImpl) SetAgentHeartbeatTimeout(timeout time.Duration) {
-	s.agentHeartbeatTimeout = timeout
+func (s *agentServiceImpl) SetFleetHeartbeatTimeout(timeout time.Duration) {
+	s.fleetHeartbeatTimeout = timeout
 }
 
-// effectiveAgentHeartbeatTimeout resolves the configured timeout.
-func (s *agentServiceImpl) effectiveAgentHeartbeatTimeout() time.Duration {
-	if s.agentHeartbeatTimeout > 0 {
-		return s.agentHeartbeatTimeout
+// effectiveFleetHeartbeatTimeout resolves the configured timeout.
+func (s *agentServiceImpl) effectiveFleetHeartbeatTimeout() time.Duration {
+	if s.fleetHeartbeatTimeout > 0 {
+		return s.fleetHeartbeatTimeout
 	}
-	return DefaultAgentHeartbeatTimeout
+	return DefaultFleetHeartbeatTimeout
 }
 
 // sessionLastActivity is the instant a session was last known to be doing
@@ -925,15 +925,15 @@ func (s *agentServiceImpl) logSessionSweep(report SessionReconcileReport) {
 	}
 }
 
-// concludeAgentSessions is ConcludeSessionsForAgent for the engine's own
+// concludeAgentSessions is ConcludeSessionsForFleetNode for the engine's own
 // paths, which have nowhere to return a report to and must not fail an
 // operator's request because a session record would not close.
 func (s *agentServiceImpl) concludeAgentSessions(
-	ctx context.Context, tenantID string, agent *AgentRegistration, evidence string) {
+	ctx context.Context, tenantID string, agent *FleetNode, evidence string) {
 	if s.store == nil || agent == nil {
 		return
 	}
-	report, err := s.ConcludeSessionsForAgent(ctx, tenantID, agent, evidence)
+	report, err := s.ConcludeSessionsForFleetNode(ctx, tenantID, agent, evidence)
 	if err != nil {
 		s.logger.Warnf("orchestration: agent %s: its sessions could not be listed for conclusion: %s",
 			agent.ID, err.Error())

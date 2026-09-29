@@ -42,7 +42,7 @@ func TestHeartbeatBody_ObservationDistinguishesAbsentFromEmpty(t *testing.T) {
 
 	tests := map[string]struct {
 		body string
-		want *orchestration.AgentObservation
+		want *orchestration.FleetNodeObservation
 	}{
 		"no backends key": {
 			body: `{"bind_addr":"10.0.0.5:9091"}`,
@@ -50,7 +50,7 @@ func TestHeartbeatBody_ObservationDistinguishesAbsentFromEmpty(t *testing.T) {
 		},
 		"an empty served list": {
 			body: `{"backends":[]}`,
-			want: &orchestration.AgentObservation{Backends: []string{}},
+			want: &orchestration.FleetNodeObservation{Backends: []string{}},
 		},
 		"a null served list": {
 			body: `{"backends":null}`,
@@ -58,7 +58,7 @@ func TestHeartbeatBody_ObservationDistinguishesAbsentFromEmpty(t *testing.T) {
 		},
 		"the served list": {
 			body: `{"backends":["claude","codex","opencode"]}`,
-			want: &orchestration.AgentObservation{Backends: []string{"claude", "codex", "opencode"}},
+			want: &orchestration.FleetNodeObservation{Backends: []string{"claude", "codex", "opencode"}},
 		},
 	}
 
@@ -106,7 +106,7 @@ func TestHeartbeatBody_ObservationOfAnUnreportedCapacity(t *testing.T) {
 // TestHeartbeatBody_ACapacityWithNoServedListReconcilesNothing pins the shape
 // deliberately NOT supported: an observation reporting no backend is refused by
 // the registry as a fault, so decoding one would turn a heartbeat into an error
-// rather than into a capacity. pkg/agent writes both fields in one payload.
+// rather than into a capacity. pkg/fleet writes both fields in one payload.
 func TestHeartbeatBody_ACapacityWithNoServedListReconcilesNothing(t *testing.T) {
 	t.Parallel()
 
@@ -154,13 +154,13 @@ func TestHandleOrchestratorAgentHeartbeat_CarriesTheServedList(t *testing.T) {
 	srv, agentSvc, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	observations := make(chan *orchestration.AgentObservation, 1)
-	agentSvc.agentHeartbeatFunc = func(_ context.Context, _, _ string, observed *orchestration.AgentObservation) error {
+	observations := make(chan *orchestration.FleetNodeObservation, 1)
+	agentSvc.agentHeartbeatFunc = func(_ context.Context, _, _ string, observed *orchestration.FleetNodeObservation) error {
 		observations <- observed
 		return nil
 	}
 
-	w := doOrchReq(t, srv, http.MethodPost, "/api/v1/orchestrator/agents/agent-1/heartbeat",
+	w := doOrchReq(t, srv, http.MethodPost, "/api/v1/fleet/agent-1/heartbeat",
 		`{"bind_addr":"10.0.0.5:9091","backends":["claude","codex","opencode"]}`)
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 
@@ -175,13 +175,13 @@ func TestHandleOrchestratorAgentHeartbeat_NoServedListObservesNothing(t *testing
 	srv, agentSvc, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	observations := make(chan *orchestration.AgentObservation, 1)
-	agentSvc.agentHeartbeatFunc = func(_ context.Context, _, _ string, observed *orchestration.AgentObservation) error {
+	observations := make(chan *orchestration.FleetNodeObservation, 1)
+	agentSvc.agentHeartbeatFunc = func(_ context.Context, _, _ string, observed *orchestration.FleetNodeObservation) error {
 		observations <- observed
 		return nil
 	}
 
-	w := doOrchReq(t, srv, http.MethodPost, "/api/v1/orchestrator/agents/agent-1/heartbeat",
+	w := doOrchReq(t, srv, http.MethodPost, "/api/v1/fleet/agent-1/heartbeat",
 		`{"bind_addr":"10.0.0.5:9091"}`)
 	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 
@@ -195,11 +195,11 @@ func TestHandleOrchestratorAgentHeartbeat_ServingNothingIsABadRequest(t *testing
 	srv, agentSvc, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	agentSvc.agentHeartbeatFunc = func(_ context.Context, _, _ string, observed *orchestration.AgentObservation) error {
+	agentSvc.agentHeartbeatFunc = func(_ context.Context, _, _ string, observed *orchestration.FleetNodeObservation) error {
 		return observed.Validate()
 	}
 
-	w := doOrchReq(t, srv, http.MethodPost, "/api/v1/orchestrator/agents/agent-1/heartbeat",
+	w := doOrchReq(t, srv, http.MethodPost, "/api/v1/fleet/agent-1/heartbeat",
 		`{"bind_addr":"10.0.0.5:9091","backends":[]}`)
 	assert.Equal(t, http.StatusBadRequest, w.Code, "body=%s", w.Body.String())
 }
@@ -231,4 +231,47 @@ func TestHeartbeatBody_ObservationCarriesTheSigningAgents(t *testing.T) {
 			assert.NoError(t, observed.Validate())
 		})
 	}
+}
+
+// TestHeartbeatBody_ObservationCarriesTheSigningRelay: a daemon that reports
+// the signing relay has it reconciled; one whose body says nothing about it —
+// an older build — reconciles nothing on that axis (go-quicbaas#1013).
+func TestHeartbeatBody_ObservationCarriesTheSigningRelay(t *testing.T) {
+	var reported heartbeatBody
+	require.NoError(t, json.Unmarshal([]byte(`{"backends":["claude"],"signing_relay":true}`), &reported))
+	observed := reported.observation()
+	require.NotNil(t, observed)
+	require.NotNil(t, observed.SigningRelay)
+	assert.True(t, *observed.SigningRelay)
+
+	var withdrawn heartbeatBody
+	require.NoError(t, json.Unmarshal([]byte(`{"backends":["claude"],"signing_relay":false}`), &withdrawn))
+	require.NotNil(t, withdrawn.observation().SigningRelay)
+	assert.False(t, *withdrawn.observation().SigningRelay)
+
+	var silent heartbeatBody
+	require.NoError(t, json.Unmarshal([]byte(`{"backends":["claude"]}`), &silent))
+	assert.Nil(t, silent.observation().SigningRelay)
+}
+
+// TestHeartbeatBody_ObservationCarriesDeviceTelemetry pins the device half of
+// the body: a daemon's samples reach the observation with their provenance
+// intact, and an unread signal stays unread rather than decoding as zero.
+func TestHeartbeatBody_ObservationCarriesDeviceTelemetry(t *testing.T) {
+	t.Parallel()
+	var payload heartbeatBody
+	require.NoError(t, json.Unmarshal([]byte(`{"backends":["ollama"],"devices":[`+
+		`{"kind":"gpu","id":"GPU-1","power_watts":{"value":412.5,"provenance":"measured"},"utilization":{"provenance":"unknown"}}]}`), &payload))
+
+	observed := payload.observation()
+	require.NotNil(t, observed)
+	require.Len(t, observed.Devices, 1)
+	watts, ok := observed.Devices[0].PowerWatts.Value()
+	require.True(t, ok)
+	assert.Equal(t, 412.5, watts)
+	assert.False(t, observed.Devices[0].Utilization.Known())
+
+	var bare heartbeatBody
+	require.NoError(t, json.Unmarshal([]byte(`{"backends":["ollama"]}`), &bare))
+	assert.Nil(t, bare.observation().Devices, "a body with no devices reports nothing")
 }

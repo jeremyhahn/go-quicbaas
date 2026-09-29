@@ -65,12 +65,12 @@ import type {
   CeremonySignCSRRequest,
   CeremonySignCSRResponse,
   CeremonyStatusResponse,
-  DeployAgentResult,
-  DeployAgentSpec,
+  DeployFleetNodeResult,
+  DeployFleetNodeSpec,
   InferenceRequest,
   InferenceResponse,
   InferenceChunk,
-  AgentRegistration,
+  FleetNode,
   ClientConfig,
   CloseSessionRequest,
   CloseSessionResponse,
@@ -82,27 +82,34 @@ import type {
   CreateWorkflowResponse,
   DecomposeTaskRequest,
   DecomposeTaskResponse,
-  GetAgentRequest,
+  GetFleetNodeRequest,
   GetSessionHistoryRequest,
   GetSessionConversationRequest,
   GetSessionConversationResponse,
   GetSpendReportRequest,
   GetSpendReportResponse,
+  GetTenantSpendPolicyRequest,
+  SetTenantSpendPolicyRequest,
+  TenantSpendPolicy,
+  GetCostSettingsRequest,
+  SetCostSettingsRequest,
+  CostSettings,
+  WorkerImageStatus,
   GetSessionHistoryResponse,
   HealthCheckReport,
   JobEvent,
   JobStatus,
-  ListAgentsRequest,
-  ListAgentsResponse,
+  ListFleetNodesRequest,
+  ListFleetNodesResponse,
   ListSessionsRequest,
   ListSessionsResponse,
   SessionStatusResponse,
   ListWorkflowsResponse,
   PromptSessionRequest,
   PromptSessionResponse,
-  RegisterAgentRequest,
-  RegisterAgentResponse,
-  RemoveAgentRequest,
+  RegisterFleetNodeRequest,
+  RegisterFleetNodeResponse,
+  RemoveFleetNodeRequest,
   RotateSessionAccountRequest,
   RotateSessionAccountResponse,
   SessionEventEnvelope,
@@ -116,7 +123,7 @@ import type {
 } from './types.js';
 import {
   wholeSetPage,
-  type AgentPageParams,
+  type FleetNodePageParams,
   type JobPageParams,
   type PageParams,
   type PageResult,
@@ -189,18 +196,18 @@ class McpOrchestratorClient implements OrchestratorClient {
     return wholeSetPage(resp.sessions ?? []);
   }
 
-  async listAgentsPage(
+  async listFleetNodesPage(
     tenantID: string,
-    page?: AgentPageParams,
-  ): Promise<PageResult<AgentRegistration>> {
-    const req: ListAgentsRequest = { tenant_id: tenantID };
+    page?: FleetNodePageParams,
+  ): Promise<PageResult<FleetNode>> {
+    const req: ListFleetNodesRequest = { tenant_id: tenantID };
     if (page?.host !== undefined) req.host = page.host;
     if (page?.status !== undefined) req.status = page.status;
-    if (page?.agent_type !== undefined) req.agent_type = page.agent_type;
+    if (page?.node_type !== undefined) req.node_type = page.node_type;
     if (page?.backend !== undefined) req.backend = page.backend;
     if (page?.model !== undefined) req.model = page.model;
-    const resp = await this.listAgents(req);
-    return wholeSetPage(resp.agents ?? []);
+    const resp = await this.listFleetNodes(req);
+    return wholeSetPage(resp.nodes ?? []);
   }
 
   async listWorkflowsPage(
@@ -215,8 +222,8 @@ class McpOrchestratorClient implements OrchestratorClient {
   async getJobStatus(_tenantID: string, _jobID: string): Promise<JobStatus> { return notImpl('getJobStatus'); }
   async startJob(_req: StartJobRequest): Promise<StartJobResponse> { return notImpl('startJob'); }
   async cancelJob(_tenantID: string, _jobID: string): Promise<void> { return notImpl('cancelJob'); }
-  async listAgents(_req: ListAgentsRequest): Promise<ListAgentsResponse> { return notImpl('listAgents'); }
-  async getAgentStatus(_req: GetAgentRequest): Promise<AgentRegistration> { return notImpl('getAgentStatus'); }
+  async listFleetNodes(_req: ListFleetNodesRequest): Promise<ListFleetNodesResponse> { return notImpl('listFleetNodes'); }
+  async getFleetNode(_req: GetFleetNodeRequest): Promise<FleetNode> { return notImpl('getFleetNode'); }
   async listSessions(_req: ListSessionsRequest): Promise<ListSessionsResponse> { return notImpl('listSessions'); }
   async listTasks(_tenantID: string): Promise<Task[]> { return notImpl('listTasks'); }
   async getTask(_tenantID: string, _taskID: string): Promise<Task> { return notImpl('getTask'); }
@@ -233,9 +240,15 @@ class McpOrchestratorClient implements OrchestratorClient {
   async getSessionHistory(_req: GetSessionHistoryRequest): Promise<GetSessionHistoryResponse> { return notImpl('getSessionHistory'); }
   async getSessionConversation(_req: GetSessionConversationRequest): Promise<GetSessionConversationResponse> { return notImpl('getSessionConversation'); }
   async getSpendReport(_req: GetSpendReportRequest): Promise<GetSpendReportResponse> { return notImpl('getSpendReport'); }
+  async getTenantSpendPolicy(_req: GetTenantSpendPolicyRequest): Promise<TenantSpendPolicy> { return notImpl('getTenantSpendPolicy'); }
+  async setTenantSpendPolicy(_req: SetTenantSpendPolicyRequest): Promise<TenantSpendPolicy> { return notImpl('setTenantSpendPolicy'); }
+  async getCostSettings(_req: GetCostSettingsRequest): Promise<CostSettings> { return notImpl('getCostSettings'); }
+  async setCostSettings(_req: SetCostSettingsRequest): Promise<CostSettings> { return notImpl('setCostSettings'); }
+  async getWorkerImageStatus(): Promise<WorkerImageStatus> { return notImpl('getWorkerImageStatus'); }
+  async refreshWorkerImage(): Promise<WorkerImageStatus> { return notImpl('refreshWorkerImage'); }
   // eslint-disable-next-line @typescript-eslint/require-await
   async *subscribeSession(_req: SubscribeSessionEventsRequest): AsyncIterable<SessionEventEnvelope> { return notImpl('subscribeSession'); }
-  async deployAgent(_spec: DeployAgentSpec): Promise<DeployAgentResult> { throw new DeployNotSupportedError('mcp'); }
+  async deployFleetNode(_spec: DeployFleetNodeSpec): Promise<DeployFleetNodeResult> { throw new DeployNotSupportedError('mcp'); }
   async inference(_req: InferenceRequest): Promise<InferenceResponse> { return notImpl('inference'); }
   // eslint-disable-next-line @typescript-eslint/require-await
   async *inferenceStream(_req: InferenceRequest, _signal?: AbortSignal): AsyncIterable<InferenceChunk> { return notImpl('inferenceStream'); }
@@ -249,11 +262,13 @@ class McpOrchestratorClient implements OrchestratorClient {
   async completeTask(_req: CompleteTaskRequest): Promise<void> { return notImpl('completeTask'); }
   async readmitTask(_tenantID: string, _taskID: string): Promise<void> { return notImpl('readmitTask'); }
   async deleteTask(_req: import('./types.js').DeleteTaskRequest): Promise<import('./types.js').DeleteTaskResponse> { return notImpl('deleteTask'); }
+  async listAttention(_tenantID: string, _page?: import('./page.js').AttentionPageParams): Promise<import('./page.js').PageResult<import('./types.js').AttentionItem>> { return notImpl('listAttention'); }
+  async resolveAttention(_req: import('./types.js').AttentionResolveRequest): Promise<import('./types.js').AttentionItem> { return notImpl('resolveAttention'); }
   async decomposeTask(_req: DecomposeTaskRequest): Promise<DecomposeTaskResponse> { return notImpl('decomposeTask'); }
-  async registerAgent(_req: RegisterAgentRequest): Promise<RegisterAgentResponse> { return notImpl('registerAgent'); }
-  async removeAgent(_req: RemoveAgentRequest): Promise<void> { return notImpl('removeAgent'); }
-  async disableAgent(_req: import('./types.js').DisableAgentRequest): Promise<import('./types.js').DisableAgentResponse> { return notImpl('disableAgent'); }
-  async enableAgent(_req: import('./types.js').EnableAgentRequest): Promise<import('./types.js').EnableAgentResponse> { return notImpl('enableAgent'); }
+  async registerFleetNode(_req: RegisterFleetNodeRequest): Promise<RegisterFleetNodeResponse> { return notImpl('registerFleetNode'); }
+  async removeFleetNode(_req: RemoveFleetNodeRequest): Promise<void> { return notImpl('removeFleetNode'); }
+  async disableFleetNode(_req: import('./types.js').DisableFleetNodeRequest): Promise<import('./types.js').DisableFleetNodeResponse> { return notImpl('disableFleetNode'); }
+  async enableFleetNode(_req: import('./types.js').EnableFleetNodeRequest): Promise<import('./types.js').EnableFleetNodeResponse> { return notImpl('enableFleetNode'); }
 }
 
 class McpAuthClient implements AuthClient {
@@ -336,6 +351,8 @@ export class McpClient implements Client {
   readonly sdlc: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly accounts: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly agents: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly iam: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

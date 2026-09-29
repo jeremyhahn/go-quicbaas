@@ -66,9 +66,6 @@ func TestEnrollAgentSessionIdentity_ConfersTheFloorOnTheCertPrincipal(t *testing
 	if principal.Email != "" {
 		t.Fatalf("email = %q, want none: a session holds no mailbox", principal.Email)
 	}
-	if len(principal.Groups) != 0 {
-		t.Fatalf("groups = %v, want none: a session is a machine identity", principal.Groups)
-	}
 
 	// Bound by the stack's one canonical mTLS identifier.
 	if len(principal.CertBindings) != 1 {
@@ -363,9 +360,8 @@ func newScriptedRoleStore(t *testing.T, script *scriptedRoleStorage) *iam.Identi
 	memory := iam.NewMemoryStorage()
 	script.RoleStorage = memory
 	return iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  memory,
-		GroupStorage: memory,
-		RoleStorage:  script,
+		UserStorage: memory,
+		RoleStorage: script,
 	})
 }
 
@@ -409,9 +405,8 @@ func TestEnrollAgentSessionIdentity_PropagatesARoleStoreFailure(t *testing.T) {
 		memory := iam.NewMemoryStorage()
 		script := &scriptedRoleStorage{RoleStorage: memory}
 		store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-			UserStorage:  memory,
-			GroupStorage: memory,
-			RoleStorage:  script,
+			UserStorage: memory,
+			RoleStorage: script,
 		})
 		if _, err := store.CreateRole(context.Background(), "acme", iam.CreateRoleOptions{
 			ID:          iam.AgentSessionRoleID("acme"),
@@ -441,9 +436,8 @@ func TestEnrollAgentSessionIdentity_TreatsALostRoleRaceAsSuccess(t *testing.T) {
 	memory := iam.NewMemoryStorage()
 	script := &scriptedRoleStorage{RoleStorage: memory}
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  memory,
-		GroupStorage: memory,
-		RoleStorage:  script,
+		UserStorage: memory,
+		RoleStorage: script,
 	})
 
 	// The role the winner committed, holding exactly this build's grant, so the
@@ -539,36 +533,36 @@ func TestRevokeAgentSessionIdentity_IsIdempotent(t *testing.T) {
 // TestRevokeAgentSessionIdentity_RefusesWhatIsNotASessionIdentity is the guard
 // that makes the username safe to take from a certificate CommonName. A
 // CommonName is not a capability: without this, a session whose CN collided with
-// a human account or an agent daemon would DELETE that account on close.
+// a human account or a fleet node daemon would DELETE that account on close.
 func TestRevokeAgentSessionIdentity_RefusesWhatIsNotASessionIdentity(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 
-	t.Run("an agent daemon", func(t *testing.T) {
+	t.Run("a fleet node daemon", func(t *testing.T) {
 		t.Parallel()
 
 		store, memory := newAgentEnrollmentStore(t)
-		cert := newTestCert(t, "agent-vm-host-4", nil)
-		if _, err := store.EnrollAgentCertIdentity(ctx, "automatethethings", iam.AgentCertIdentityOptions{
+		cert := newTestCert(t, "agent-agent-04", nil)
+		if _, err := store.EnrollFleetNodeCertIdentity(ctx, "automatethethings", iam.FleetNodeCertIdentityOptions{
 			Certificate: cert,
-			Permissions: iam.AgentRuntimeGrant(),
+			Permissions: iam.FleetRuntimeGrant(),
 		}); err != nil {
-			t.Fatalf("EnrollAgentCertIdentity() error = %v", err)
+			t.Fatalf("EnrollFleetNodeCertIdentity() error = %v", err)
 		}
 
-		err := store.RevokeAgentSessionIdentity(ctx, "automatethethings", "agent-vm-host-4")
+		err := store.RevokeAgentSessionIdentity(ctx, "automatethethings", "agent-agent-04")
 		if err == nil {
-			t.Fatal("a session close deleted the agent daemon's identity")
+			t.Fatal("a session close deleted the fleet node daemon's identity")
 		}
 		var notSession *iam.NotAnAgentSessionIdentityError
 		if !errors.As(err, &notSession) {
 			t.Fatalf("error type = %T (%v), want *iam.NotAnAgentSessionIdentityError", err, err)
 		}
-		if notSession.Username != "agent-vm-host-4" {
-			t.Errorf("reported username = %q, want agent-vm-host-4", notSession.Username)
+		if notSession.Username != "agent-agent-04" {
+			t.Errorf("reported username = %q, want agent-agent-04", notSession.Username)
 		}
-		if _, err := memory.GetUserByUsername(ctx, "automatethethings", "agent-vm-host-4"); err != nil {
+		if _, err := memory.GetUserByUsername(ctx, "automatethethings", "agent-agent-04"); err != nil {
 			t.Fatalf("the daemon identity was deleted anyway: %v", err)
 		}
 	})
@@ -687,9 +681,8 @@ func newScriptedRevocationStore(t *testing.T, wrap func(iam.UserStorage) iam.Use
 	t.Helper()
 	memory := iam.NewMemoryStorage()
 	return iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  wrap(memory),
-		GroupStorage: memory,
-		RoleStorage:  memory,
+		UserStorage: wrap(memory),
+		RoleStorage: memory,
 	}), memory
 }
 
@@ -823,8 +816,8 @@ func TestAgentRoleID_IsDeterministicAndTenantScoped(t *testing.T) {
 	if got, want := iam.AgentSessionRoleID("acme"), iam.AgentRoleID(iam.AgentSessionRoleName, "acme"); got != want {
 		t.Fatalf("AgentSessionRoleID = %q, want %q", got, want)
 	}
-	if got, want := iam.AgentRuntimeRoleID("acme"), iam.AgentRoleID(iam.AgentRuntimeRoleName, "acme"); got != want {
-		t.Fatalf("AgentRuntimeRoleID = %q, want %q", got, want)
+	if got, want := iam.FleetRuntimeRoleID("acme"), iam.AgentRoleID(iam.FleetRuntimeRoleName, "acme"); got != want {
+		t.Fatalf("FleetRuntimeRoleID = %q, want %q", got, want)
 	}
 }
 
@@ -835,12 +828,12 @@ func TestNotAnAgentSessionIdentityError_Message(t *testing.T) {
 	t.Parallel()
 
 	err := &iam.NotAnAgentSessionIdentityError{
-		Username: "agent-vm-host-4",
+		Username: "agent-agent-04",
 		TenantID: "automatethethings",
 		Roles:    []string{"role-agent-runtime-automatethethings"},
 	}
 	message := err.Error()
-	for _, want := range []string{"agent-vm-host-4", "automatethethings", "role-agent-runtime-automatethethings"} {
+	for _, want := range []string{"agent-agent-04", "automatethethings", "role-agent-runtime-automatethethings"} {
 		if !strings.Contains(message, want) {
 			t.Errorf("error message %q does not name %q", message, want)
 		}

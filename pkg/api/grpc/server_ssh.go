@@ -207,8 +207,8 @@ func (s *SSHServer) AddSSHKnownHost(ctx context.Context, req *pb.SSHAddKnownHost
 	if req.Host == "" {
 		return nil, status.Error(codes.InvalidArgument, "host is required")
 	}
-	if req.Fingerprint == "" {
-		return nil, status.Error(codes.InvalidArgument, "fingerprint is required")
+	if req.PublicKey == "" {
+		return nil, status.Error(codes.InvalidArgument, "public_key is required")
 	}
 	if err := s.sshSvc.AddKnownHost(ctx, xkmsssh.AddKnownHostRequest{
 		Scope:       req.Scope,
@@ -217,6 +217,7 @@ func (s *SSHServer) AddSSHKnownHost(ctx context.Context, req *pb.SSHAddKnownHost
 		Fingerprint: req.Fingerprint,
 		Algorithm:   req.Algorithm,
 		Source:      req.Source,
+		PublicKey:   req.PublicKey,
 	}); err != nil {
 		return nil, convertSSHError(err)
 	}
@@ -374,6 +375,7 @@ func sshPinToProto(p *xkmsssh.Pin) *pb.SSHHostPin {
 		Algorithm:   p.Algorithm,
 		AddedAtUnix: p.AddedAt.Unix(),
 		Source:      p.Source,
+		PublicKey:   p.PublicKey,
 	}
 }
 

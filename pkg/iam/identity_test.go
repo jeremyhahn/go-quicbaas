@@ -165,120 +165,6 @@ func (m *mockUserStorage) ListUsers(ctx context.Context, tenantID string, opts L
 	return users, nil
 }
 
-type mockGroupStorage struct {
-	mu     sync.RWMutex
-	groups map[string]*Group // key: tenantID:groupID
-}
-
-func newMockGroupStorage() *mockGroupStorage {
-	return &mockGroupStorage{
-		groups: make(map[string]*Group),
-	}
-}
-
-func (m *mockGroupStorage) CreateGroup(ctx context.Context, group *Group) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	key := group.TenantID + ":" + group.ID
-	if _, exists := m.groups[key]; exists {
-		return ErrGroupAlreadyExists
-	}
-
-	m.groups[key] = group
-	return nil
-}
-
-func (m *mockGroupStorage) GetGroup(ctx context.Context, tenantID, groupID string) (*Group, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	key := tenantID + ":" + groupID
-	group, exists := m.groups[key]
-	if !exists {
-		return nil, ErrGroupNotFound
-	}
-	return group, nil
-}
-
-// AddGroupMember and RemoveGroupMember mirror MemoryStorage: the edit happens
-// under the fake's own lock, so it composes with a concurrent one instead of
-// overwriting it. A fake that read-modify-wrote here would let the lost-update
-// defect pass its own regression test.
-func (m *mockGroupStorage) AddGroupMember(ctx context.Context, tenantID, groupID, userID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	group, exists := m.groups[tenantID+":"+groupID]
-	if !exists {
-		return ErrGroupNotFound
-	}
-	for _, memberID := range group.Members {
-		if memberID == userID {
-			return nil
-		}
-	}
-	group.Members = append(group.Members, userID)
-	return nil
-}
-
-func (m *mockGroupStorage) RemoveGroupMember(ctx context.Context, tenantID, groupID, userID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	group, exists := m.groups[tenantID+":"+groupID]
-	if !exists {
-		return ErrGroupNotFound
-	}
-	members := make([]string, 0, len(group.Members))
-	for _, memberID := range group.Members {
-		if memberID != userID {
-			members = append(members, memberID)
-		}
-	}
-	group.Members = members
-	return nil
-}
-
-func (m *mockGroupStorage) UpdateGroup(ctx context.Context, group *Group) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	key := group.TenantID + ":" + group.ID
-	if _, exists := m.groups[key]; !exists {
-		return ErrGroupNotFound
-	}
-
-	m.groups[key] = group
-	return nil
-}
-
-func (m *mockGroupStorage) DeleteGroup(ctx context.Context, tenantID, groupID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	key := tenantID + ":" + groupID
-	if _, exists := m.groups[key]; !exists {
-		return ErrGroupNotFound
-	}
-
-	delete(m.groups, key)
-	return nil
-}
-
-func (m *mockGroupStorage) ListGroups(ctx context.Context, tenantID string, opts ListOptions) ([]*Group, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	var groups []*Group
-	for _, group := range m.groups {
-		if group.TenantID == tenantID {
-			groups = append(groups, group)
-		}
-	}
-	return groups, nil
-}
-
 type mockRoleStorage struct {
 	mu    sync.RWMutex
 	roles map[string]*Role // key: tenantID:roleID
@@ -407,10 +293,9 @@ func (m *mockIdentityTenantManager) UpdateEngineEntitlements(_ context.Context, 
 
 func newTestIdentityStore() *IdentityStore {
 	return NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  newMockUserStorage(),
-		GroupStorage: newMockGroupStorage(),
-		RoleStorage:  newMockRoleStorage(),
-		Tenants:      &mockIdentityTenantManager{},
+		UserStorage: newMockUserStorage(),
+		RoleStorage: newMockRoleStorage(),
+		Tenants:     &mockIdentityTenantManager{},
 	})
 }
 
@@ -511,10 +396,9 @@ func TestCreateUser_DuplicateEmail(t *testing.T) {
 func TestCreateUser_QuotaExceeded(t *testing.T) {
 	tenantMgr := &mockIdentityTenantManager{quotaExceeded: true}
 	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  newMockUserStorage(),
-		GroupStorage: newMockGroupStorage(),
-		RoleStorage:  newMockRoleStorage(),
-		Tenants:      tenantMgr,
+		UserStorage: newMockUserStorage(),
+		RoleStorage: newMockRoleStorage(),
+		Tenants:     tenantMgr,
 	})
 	ctx := context.Background()
 
@@ -705,219 +589,7 @@ func TestListUsers_Success(t *testing.T) {
 
 // Test Group CRUD Operations
 
-func TestCreateGroup_Success(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	opts := CreateGroupOptions{
-		Name:        "Test Group",
-		Description: "A test group",
-	}
-
-	group, err := store.CreateGroup(ctx, "tenant1", opts)
-	if err != nil {
-		t.Fatalf("CreateGroup failed: %v", err)
-	}
-
-	if group.ID == "" {
-		t.Error("Expected group ID to be generated")
-	}
-	if group.Name != "Test Group" {
-		t.Errorf("Expected name 'Test Group', got %s", group.Name)
-	}
-}
-
-func TestCreateGroup_EmptyName(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	opts := CreateGroupOptions{
-		Name: "",
-	}
-
-	_, err := store.CreateGroup(ctx, "tenant1", opts)
-	if err == nil {
-		t.Error("Expected error for empty group name")
-	}
-}
-
-func TestGetGroup_Success(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	created, err := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Test Group",
-	})
-	if err != nil {
-		t.Fatalf("CreateGroup failed: %v", err)
-	}
-
-	group, err := store.GetGroup(ctx, "tenant1", created.ID)
-	if err != nil {
-		t.Fatalf("GetGroup failed: %v", err)
-	}
-
-	if group.ID != created.ID {
-		t.Errorf("Expected ID %s, got %s", created.ID, group.ID)
-	}
-}
-
-func TestUpdateGroup_Success(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	created, err := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Old Name",
-	})
-	if err != nil {
-		t.Fatalf("CreateGroup failed: %v", err)
-	}
-
-	newName := "New Name"
-	newDesc := "New Description"
-
-	updated, err := store.UpdateGroup(ctx, "tenant1", created.ID, UpdateGroupOptions{
-		Name:        &newName,
-		Description: &newDesc,
-	})
-	if err != nil {
-		t.Fatalf("UpdateGroup failed: %v", err)
-	}
-
-	if updated.Name != newName {
-		t.Errorf("Expected name %s, got %s", newName, updated.Name)
-	}
-	if updated.Description != newDesc {
-		t.Errorf("Expected description %s, got %s", newDesc, updated.Description)
-	}
-}
-
-func TestDeleteGroup_Success(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	created, err := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Test Group",
-	})
-	if err != nil {
-		t.Fatalf("CreateGroup failed: %v", err)
-	}
-
-	err = store.DeleteGroup(ctx, "tenant1", created.ID)
-	if err != nil {
-		t.Fatalf("DeleteGroup failed: %v", err)
-	}
-
-	_, err = store.GetGroup(ctx, "tenant1", created.ID)
-	if !errors.Is(err, ErrGroupNotFound) {
-		t.Error("Expected group to be deleted")
-	}
-}
-
 // Test Group Membership Operations
-
-func TestAddUserToGroup_Success(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	user, err := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "test@example.com",
-		Username: "testuser",
-	})
-	if err != nil {
-		t.Fatalf("CreateUser failed: %v", err)
-	}
-
-	group, err := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Test Group",
-	})
-	if err != nil {
-		t.Fatalf("CreateGroup failed: %v", err)
-	}
-
-	err = store.AddUserToGroup(ctx, "tenant1", group.ID, user.ID)
-	if err != nil {
-		t.Fatalf("AddUserToGroup failed: %v", err)
-	}
-
-	// Verify membership
-	members, err := store.GetGroupMembers(ctx, "tenant1", group.ID)
-	if err != nil {
-		t.Fatalf("GetGroupMembers failed: %v", err)
-	}
-
-	if len(members) != 1 {
-		t.Errorf("Expected 1 member, got %d", len(members))
-	}
-	if members[0].ID != user.ID {
-		t.Error("User not added to group")
-	}
-}
-
-func TestAddUserToGroup_AlreadyInGroup(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	user, _ := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "test@example.com",
-		Username: "testuser",
-	})
-	group, _ := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Test Group",
-	})
-
-	// Add user first time
-	_ = store.AddUserToGroup(ctx, "tenant1", group.ID, user.ID)
-
-	// Try to add again
-	err := store.AddUserToGroup(ctx, "tenant1", group.ID, user.ID)
-	if !errors.Is(err, ErrUserAlreadyInGroup) {
-		t.Errorf("Expected ErrUserAlreadyInGroup, got %v", err)
-	}
-}
-
-func TestRemoveUserFromGroup_Success(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	user, _ := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "test@example.com",
-		Username: "testuser",
-	})
-	group, _ := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Test Group",
-	})
-
-	_ = store.AddUserToGroup(ctx, "tenant1", group.ID, user.ID)
-
-	err := store.RemoveUserFromGroup(ctx, "tenant1", group.ID, user.ID)
-	if err != nil {
-		t.Fatalf("RemoveUserFromGroup failed: %v", err)
-	}
-
-	members, _ := store.GetGroupMembers(ctx, "tenant1", group.ID)
-	if len(members) != 0 {
-		t.Error("User still in group after removal")
-	}
-}
-
-func TestRemoveUserFromGroup_NotInGroup(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	user, _ := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "test@example.com",
-		Username: "testuser",
-	})
-	group, _ := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Test Group",
-	})
-
-	err := store.RemoveUserFromGroup(ctx, "tenant1", group.ID, user.ID)
-	if !errors.Is(err, ErrUserNotInGroup) {
-		t.Errorf("Expected ErrUserNotInGroup, got %v", err)
-	}
-}
 
 // Test Role CRUD Operations
 
@@ -1139,64 +811,6 @@ func TestValidationError(t *testing.T) {
 	}
 }
 
-// Test DeleteUser_RemovesFromGroups
-
-func TestDeleteUser_RemovesFromGroups(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	user, _ := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "test@example.com",
-		Username: "testuser",
-	})
-	group, _ := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Test Group",
-	})
-
-	_ = store.AddUserToGroup(ctx, "tenant1", group.ID, user.ID)
-
-	// Delete user
-	err := store.DeleteUser(ctx, "tenant1", user.ID)
-	if err != nil {
-		t.Fatalf("DeleteUser failed: %v", err)
-	}
-
-	// Verify user is removed from group
-	members, _ := store.GetGroupMembers(ctx, "tenant1", group.ID)
-	if len(members) != 0 {
-		t.Error("User still in group after deletion")
-	}
-}
-
-// Test DeleteGroup_RemovesFromUsers
-
-func TestDeleteGroup_RemovesFromUsers(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	user, _ := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "test@example.com",
-		Username: "testuser",
-	})
-	group, _ := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Test Group",
-	})
-
-	_ = store.AddUserToGroup(ctx, "tenant1", group.ID, user.ID)
-
-	// Delete group
-	err := store.DeleteGroup(ctx, "tenant1", group.ID)
-	if err != nil {
-		t.Fatalf("DeleteGroup failed: %v", err)
-	}
-
-	// Verify group is removed from user
-	retrievedUser, _ := store.GetUser(ctx, "tenant1", user.ID)
-	if len(retrievedUser.Groups) != 0 {
-		t.Error("Group still associated with user after deletion")
-	}
-}
-
 // Test DeleteRole_RemovesFromUsers
 
 func TestDeleteRole_RemovesFromUsers(t *testing.T) {
@@ -1227,90 +841,6 @@ func TestDeleteRole_RemovesFromUsers(t *testing.T) {
 }
 
 // ========== NEW TESTS FOR 0% AND LOW COVERAGE FUNCTIONS ==========
-
-// Test ListGroups - 0% coverage
-func TestListGroups_Success(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	// Create multiple groups
-	for i := 0; i < 3; i++ {
-		_, err := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-			Name:        fmt.Sprintf("Group %d", i),
-			Description: fmt.Sprintf("Description %d", i),
-		})
-		if err != nil {
-			t.Fatalf("CreateGroup %d failed: %v", i, err)
-		}
-	}
-
-	groups, err := store.ListGroups(ctx, "tenant1", ListOptions{})
-	if err != nil {
-		t.Fatalf("ListGroups failed: %v", err)
-	}
-
-	if len(groups) != 3 {
-		t.Errorf("Expected 3 groups, got %d", len(groups))
-	}
-}
-
-func TestListGroups_EmptyList(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	groups, err := store.ListGroups(ctx, "tenant1", ListOptions{})
-	if err != nil {
-		t.Fatalf("ListGroups failed: %v", err)
-	}
-
-	if len(groups) != 0 {
-		t.Errorf("Expected 0 groups, got %d", len(groups))
-	}
-}
-
-func TestListGroups_InvalidTenantID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	_, err := store.ListGroups(ctx, "", ListOptions{})
-	if err == nil {
-		t.Error("Expected error for empty tenant ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-	if valErr.Field != "tenant_id" {
-		t.Errorf("Expected field 'tenant_id', got %s", valErr.Field)
-	}
-}
-
-func TestListGroups_TenantIsolation(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	// Create groups in different tenants
-	_, _ = store.CreateGroup(ctx, "tenant1", CreateGroupOptions{Name: "Group T1"})
-	_, _ = store.CreateGroup(ctx, "tenant2", CreateGroupOptions{Name: "Group T2"})
-
-	groups1, err := store.ListGroups(ctx, "tenant1", ListOptions{})
-	if err != nil {
-		t.Fatalf("ListGroups tenant1 failed: %v", err)
-	}
-
-	groups2, err := store.ListGroups(ctx, "tenant2", ListOptions{})
-	if err != nil {
-		t.Fatalf("ListGroups tenant2 failed: %v", err)
-	}
-
-	if len(groups1) != 1 {
-		t.Errorf("Expected 1 group in tenant1, got %d", len(groups1))
-	}
-	if len(groups2) != 1 {
-		t.Errorf("Expected 1 group in tenant2, got %d", len(groups2))
-	}
-}
 
 // Test GetRole - 0% coverage
 func TestGetRole_Success(t *testing.T) {
@@ -1572,28 +1102,6 @@ func TestValidateUserID_Invalid(t *testing.T) {
 	}
 }
 
-func TestValidateGroupID_Valid(t *testing.T) {
-	err := validateGroupID("group123")
-	if err != nil {
-		t.Errorf("Expected valid group ID, got error: %v", err)
-	}
-}
-
-func TestValidateGroupID_Invalid(t *testing.T) {
-	err := validateGroupID("")
-	if err == nil {
-		t.Error("Expected error for empty group ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-	if valErr.Field != "group_id" {
-		t.Errorf("Expected field 'group_id', got %s", valErr.Field)
-	}
-}
-
 func TestValidateRoleID_Valid(t *testing.T) {
 	err := validateRoleID("role123")
 	if err != nil {
@@ -1613,130 +1121,6 @@ func TestValidateRoleID_Invalid(t *testing.T) {
 	}
 	if valErr.Field != "role_id" {
 		t.Errorf("Expected field 'role_id', got %s", valErr.Field)
-	}
-}
-
-// Test GetGroupMembers - low coverage
-
-func TestGetGroupMembers_EmptyGroup(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	group, _ := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Empty Group",
-	})
-
-	members, err := store.GetGroupMembers(ctx, "tenant1", group.ID)
-	if err != nil {
-		t.Fatalf("GetGroupMembers failed: %v", err)
-	}
-
-	if len(members) != 0 {
-		t.Errorf("Expected 0 members, got %d", len(members))
-	}
-}
-
-func TestGetGroupMembers_MultipleMembers(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	group, _ := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Test Group",
-	})
-
-	// Add multiple users
-	for i := 0; i < 3; i++ {
-		user, _ := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-			Email:    fmt.Sprintf("user%d@example.com", i),
-			Username: fmt.Sprintf("user%d", i),
-		})
-		_ = store.AddUserToGroup(ctx, "tenant1", group.ID, user.ID)
-	}
-
-	members, err := store.GetGroupMembers(ctx, "tenant1", group.ID)
-	if err != nil {
-		t.Fatalf("GetGroupMembers failed: %v", err)
-	}
-
-	if len(members) != 3 {
-		t.Errorf("Expected 3 members, got %d", len(members))
-	}
-}
-
-func TestGetGroupMembers_InvalidTenantID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	_, err := store.GetGroupMembers(ctx, "", "group-id")
-	if err == nil {
-		t.Error("Expected error for empty tenant ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestGetGroupMembers_InvalidGroupID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	_, err := store.GetGroupMembers(ctx, "tenant1", "")
-	if err == nil {
-		t.Error("Expected error for empty group ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestGetGroupMembers_GroupNotFound(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	_, err := store.GetGroupMembers(ctx, "tenant1", "nonexistent")
-	if !errors.Is(err, ErrGroupNotFound) {
-		t.Errorf("Expected ErrGroupNotFound, got %v", err)
-	}
-}
-
-func TestGetGroupMembers_SkipsDeletedUsers(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	group, _ := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Test Group",
-	})
-
-	user1, _ := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "user1@example.com",
-		Username: "user1",
-	})
-	user2, _ := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "user2@example.com",
-		Username: "user2",
-	})
-
-	_ = store.AddUserToGroup(ctx, "tenant1", group.ID, user1.ID)
-	_ = store.AddUserToGroup(ctx, "tenant1", group.ID, user2.ID)
-
-	// Manually mark user as deleted in group but not actually delete from storage
-	// This simulates a deleted user scenario
-	grp, _ := store.GetGroup(ctx, "tenant1", group.ID)
-	grp.Members = append(grp.Members, "deleted-user-id")
-	store.groupStorage.UpdateGroup(ctx, grp)
-
-	members, err := store.GetGroupMembers(ctx, "tenant1", group.ID)
-	if err != nil {
-		t.Fatalf("GetGroupMembers failed: %v", err)
-	}
-
-	// Should only get the 2 valid users, skipping the deleted one
-	if len(members) != 2 {
-		t.Errorf("Expected 2 members (skipping deleted), got %d", len(members))
 	}
 }
 
@@ -2040,10 +1424,9 @@ func TestIdentityStore_GetTenant_WithTenantManager(t *testing.T) {
 	}
 
 	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
-		Tenants:      tenantMgr,
+		UserStorage: storage,
+		RoleStorage: storage,
+		Tenants:     tenantMgr,
 	})
 
 	result, err := store.GetTenant(ctx, tenant.ID)
@@ -2061,10 +1444,9 @@ func TestIdentityStore_GetTenant_NotFound(t *testing.T) {
 	tenantMgr := NewDefaultTenantManager(storage)
 
 	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  storage,
-		Tenants:      tenantMgr,
+		UserStorage: storage,
+		RoleStorage: storage,
+		Tenants:     tenantMgr,
 	})
 
 	_, err := store.GetTenant(ctx, "nonexistent-tenant")
@@ -2317,67 +1699,6 @@ func TestDeleteUser_NotFound(t *testing.T) {
 	}
 }
 
-func TestDeleteUser_GroupUpdateError(t *testing.T) {
-	// Create a mock storage that fails on group update
-	failingGroupStorage := &mockGroupStorageWithFailure{
-		mockGroupStorage: newMockGroupStorage(),
-		failOnUpdate:     false,
-	}
-
-	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  newMockUserStorage(),
-		GroupStorage: failingGroupStorage,
-		RoleStorage:  newMockRoleStorage(),
-		Tenants:      &mockCoverageTenantManager{},
-	})
-
-	ctx := context.Background()
-
-	user, _ := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "test@example.com",
-		Username: "testuser",
-	})
-
-	group, _ := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Test Group",
-	})
-
-	_ = store.AddUserToGroup(ctx, "tenant1", group.ID, user.ID)
-
-	// Now enable failure
-	failingGroupStorage.failOnUpdate = true
-
-	err := store.DeleteUser(ctx, "tenant1", user.ID)
-	if err == nil {
-		t.Error("Expected error when group update fails during user deletion")
-	}
-}
-
-func TestDeleteUser_SkipsDeletedGroups(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	user, _ := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "test@example.com",
-		Username: "testuser",
-	})
-
-	group, _ := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Test Group",
-	})
-
-	_ = store.AddUserToGroup(ctx, "tenant1", group.ID, user.ID)
-
-	// Manually delete the group from storage
-	_ = store.groupStorage.DeleteGroup(ctx, "tenant1", group.ID)
-
-	// Now delete the user - should succeed even though group doesn't exist
-	err := store.DeleteUser(ctx, "tenant1", user.ID)
-	if err != nil {
-		t.Fatalf("DeleteUser failed: %v", err)
-	}
-}
-
 // ============================================================================
 // ListUsers Tests - Currently 83.3%
 // ============================================================================
@@ -2390,10 +1711,9 @@ func TestListUsers_StorageError(t *testing.T) {
 	}
 
 	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  failingUserStorage,
-		GroupStorage: newMockGroupStorage(),
-		RoleStorage:  newMockRoleStorage(),
-		Tenants:      &mockCoverageTenantManager{},
+		UserStorage: failingUserStorage,
+		RoleStorage: newMockRoleStorage(),
+		Tenants:     &mockCoverageTenantManager{},
 	})
 
 	ctx := context.Background()
@@ -2401,596 +1721,6 @@ func TestListUsers_StorageError(t *testing.T) {
 	_, err := store.ListUsers(ctx, "tenant1", ListOptions{})
 	if err == nil {
 		t.Error("Expected error when storage list fails")
-	}
-}
-
-// ============================================================================
-// CreateGroup Tests - Currently 75.0%
-// ============================================================================
-
-func TestCreateGroup_InvalidTenantID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	_, err := store.CreateGroup(ctx, "", CreateGroupOptions{
-		Name: "Test Group",
-	})
-	if err == nil {
-		t.Error("Expected error for empty tenant ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestCreateGroup_QuotaExceeded(t *testing.T) {
-	tenantMgr := &mockCoverageTenantManager{quotaExceeded: true}
-	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  newMockUserStorage(),
-		GroupStorage: newMockGroupStorage(),
-		RoleStorage:  newMockRoleStorage(),
-		Tenants:      tenantMgr,
-	})
-	ctx := context.Background()
-
-	_, err := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Test Group",
-	})
-	if !errors.Is(err, ErrQuotaExceeded) {
-		t.Errorf("Expected ErrQuotaExceeded, got %v", err)
-	}
-}
-
-func TestCreateGroup_StorageError(t *testing.T) {
-	failingGroupStorage := &mockGroupStorageWithFailure{
-		mockGroupStorage: newMockGroupStorage(),
-		failOnCreate:     true,
-	}
-
-	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  newMockUserStorage(),
-		GroupStorage: failingGroupStorage,
-		RoleStorage:  newMockRoleStorage(),
-	})
-
-	ctx := context.Background()
-
-	_, err := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Test Group",
-	})
-	if err == nil {
-		t.Error("Expected error when storage create fails")
-	}
-}
-
-// ============================================================================
-// GetGroup Tests - Currently 75.0%
-// ============================================================================
-
-func TestGetGroup_InvalidTenantID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	_, err := store.GetGroup(ctx, "", "group-id")
-	if err == nil {
-		t.Error("Expected error for empty tenant ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestGetGroup_InvalidGroupID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	_, err := store.GetGroup(ctx, "tenant1", "")
-	if err == nil {
-		t.Error("Expected error for empty group ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestGetGroup_NotFound(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	_, err := store.GetGroup(ctx, "tenant1", "nonexistent")
-	if !errors.Is(err, ErrGroupNotFound) {
-		t.Errorf("Expected ErrGroupNotFound, got %v", err)
-	}
-}
-
-// ============================================================================
-// UpdateGroup Tests - Currently 72.2%
-// ============================================================================
-
-func TestUpdateGroup_InvalidTenantID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	newName := "New Name"
-	_, err := store.UpdateGroup(ctx, "", "group-id", UpdateGroupOptions{
-		Name: &newName,
-	})
-	if err == nil {
-		t.Error("Expected error for empty tenant ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestUpdateGroup_InvalidGroupID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	newName := "New Name"
-	_, err := store.UpdateGroup(ctx, "tenant1", "", UpdateGroupOptions{
-		Name: &newName,
-	})
-	if err == nil {
-		t.Error("Expected error for empty group ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestUpdateGroup_NotFound(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	newName := "New Name"
-	_, err := store.UpdateGroup(ctx, "tenant1", "nonexistent", UpdateGroupOptions{
-		Name: &newName,
-	})
-	if !errors.Is(err, ErrGroupNotFound) {
-		t.Errorf("Expected ErrGroupNotFound, got %v", err)
-	}
-}
-
-func TestUpdateGroup_EmptyName(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	group, _ := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Original Name",
-	})
-
-	emptyName := ""
-	_, err := store.UpdateGroup(ctx, "tenant1", group.ID, UpdateGroupOptions{
-		Name: &emptyName,
-	})
-	if err == nil {
-		t.Error("Expected error for empty group name")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestUpdateGroup_StorageError(t *testing.T) {
-	failingGroupStorage := &mockGroupStorageWithFailure{
-		mockGroupStorage: newMockGroupStorage(),
-		failOnUpdate:     false,
-	}
-
-	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  newMockUserStorage(),
-		GroupStorage: failingGroupStorage,
-		RoleStorage:  newMockRoleStorage(),
-	})
-
-	ctx := context.Background()
-
-	group, _ := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Test Group",
-	})
-
-	failingGroupStorage.failOnUpdate = true
-
-	newName := "New Name"
-	_, err := store.UpdateGroup(ctx, "tenant1", group.ID, UpdateGroupOptions{
-		Name: &newName,
-	})
-	if err == nil {
-		t.Error("Expected error when storage update fails")
-	}
-}
-
-// ============================================================================
-// DeleteGroup Tests - Currently 68.2%
-// ============================================================================
-
-func TestDeleteGroup_InvalidTenantID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	err := store.DeleteGroup(ctx, "", "group-id")
-	if err == nil {
-		t.Error("Expected error for empty tenant ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestDeleteGroup_InvalidGroupID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	err := store.DeleteGroup(ctx, "tenant1", "")
-	if err == nil {
-		t.Error("Expected error for empty group ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestDeleteGroup_NotFound(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	err := store.DeleteGroup(ctx, "tenant1", "nonexistent")
-	if !errors.Is(err, ErrGroupNotFound) {
-		t.Errorf("Expected ErrGroupNotFound, got %v", err)
-	}
-}
-
-func TestDeleteGroup_UserUpdateError(t *testing.T) {
-	failingUserStorage := &mockUserStorageWithFailure{
-		mockUserStorage: newMockUserStorage(),
-		failOnUpdate:    false,
-	}
-
-	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  failingUserStorage,
-		GroupStorage: newMockGroupStorage(),
-		RoleStorage:  newMockRoleStorage(),
-	})
-
-	ctx := context.Background()
-
-	user, _ := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "test@example.com",
-		Username: "testuser",
-	})
-
-	group, _ := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Test Group",
-	})
-
-	_ = store.AddUserToGroup(ctx, "tenant1", group.ID, user.ID)
-
-	// Enable failure
-	failingUserStorage.failOnUpdate = true
-
-	err := store.DeleteGroup(ctx, "tenant1", group.ID)
-	if err == nil {
-		t.Error("Expected error when user update fails during group deletion")
-	}
-}
-
-func TestDeleteGroup_SkipsDeletedUsers(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	user, _ := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "test@example.com",
-		Username: "testuser",
-	})
-
-	group, _ := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Test Group",
-	})
-
-	_ = store.AddUserToGroup(ctx, "tenant1", group.ID, user.ID)
-
-	// Manually delete the user from storage
-	_ = store.userStorage.DeleteUser(ctx, "tenant1", user.ID)
-
-	// Now delete the group - should succeed even though user doesn't exist
-	err := store.DeleteGroup(ctx, "tenant1", group.ID)
-	if err != nil {
-		t.Fatalf("DeleteGroup failed: %v", err)
-	}
-}
-
-func TestDeleteGroup_StorageError(t *testing.T) {
-	failingGroupStorage := &mockGroupStorageWithFailure{
-		mockGroupStorage: newMockGroupStorage(),
-		failOnDelete:     false,
-	}
-
-	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  newMockUserStorage(),
-		GroupStorage: failingGroupStorage,
-		RoleStorage:  newMockRoleStorage(),
-	})
-
-	ctx := context.Background()
-
-	group, _ := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Test Group",
-	})
-
-	failingGroupStorage.failOnDelete = true
-
-	err := store.DeleteGroup(ctx, "tenant1", group.ID)
-	if err == nil {
-		t.Error("Expected error when storage delete fails")
-	}
-}
-
-// ============================================================================
-// ListGroups Tests - Currently 83.3%
-// ============================================================================
-
-func TestListGroups_StorageError(t *testing.T) {
-	failingGroupStorage := &mockGroupStorageWithFailure{
-		mockGroupStorage: newMockGroupStorage(),
-		failOnList:       true,
-	}
-
-	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  newMockUserStorage(),
-		GroupStorage: failingGroupStorage,
-		RoleStorage:  newMockRoleStorage(),
-	})
-
-	ctx := context.Background()
-
-	_, err := store.ListGroups(ctx, "tenant1", ListOptions{})
-	if err == nil {
-		t.Error("Expected error when storage list fails")
-	}
-}
-
-// ============================================================================
-// AddUserToGroup Tests - Currently 65.4%
-// ============================================================================
-
-func TestAddUserToGroup_InvalidTenantID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	err := store.AddUserToGroup(ctx, "", "group-id", "user-id")
-	if err == nil {
-		t.Error("Expected error for empty tenant ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestAddUserToGroup_InvalidGroupID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	err := store.AddUserToGroup(ctx, "tenant1", "", "user-id")
-	if err == nil {
-		t.Error("Expected error for empty group ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestAddUserToGroup_InvalidUserID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	err := store.AddUserToGroup(ctx, "tenant1", "group-id", "")
-	if err == nil {
-		t.Error("Expected error for empty user ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestAddUserToGroup_UserNotFound(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	group, _ := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Test Group",
-	})
-
-	err := store.AddUserToGroup(ctx, "tenant1", group.ID, "nonexistent")
-	if !errors.Is(err, ErrUserNotFound) {
-		t.Errorf("Expected ErrUserNotFound, got %v", err)
-	}
-}
-
-func TestAddUserToGroup_GroupNotFound(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	user, _ := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "test@example.com",
-		Username: "testuser",
-	})
-
-	err := store.AddUserToGroup(ctx, "tenant1", "nonexistent", user.ID)
-	if !errors.Is(err, ErrGroupNotFound) {
-		t.Errorf("Expected ErrGroupNotFound, got %v", err)
-	}
-}
-
-func TestAddUserToGroup_RollbackOnGroupUpdateFailure(t *testing.T) {
-	failingGroupStorage := &mockGroupStorageWithFailure{
-		mockGroupStorage: newMockGroupStorage(),
-		failOnUpdate:     false,
-	}
-
-	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  newMockUserStorage(),
-		GroupStorage: failingGroupStorage,
-		RoleStorage:  newMockRoleStorage(),
-	})
-
-	ctx := context.Background()
-
-	user, _ := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "test@example.com",
-		Username: "testuser",
-	})
-
-	group, _ := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Test Group",
-	})
-
-	// Enable failure for group update
-	failingGroupStorage.failOnUpdate = true
-
-	err := store.AddUserToGroup(ctx, "tenant1", group.ID, user.ID)
-	if err == nil {
-		t.Error("Expected error when group update fails")
-	}
-
-	// Verify user was rolled back (group should not be in user's groups)
-	retrievedUser, _ := store.GetUser(ctx, "tenant1", user.ID)
-	if len(retrievedUser.Groups) != 0 {
-		t.Error("Expected user groups to be rolled back after failure")
-	}
-}
-
-// ============================================================================
-// RemoveUserFromGroup Tests - Currently 72.7%
-// ============================================================================
-
-func TestRemoveUserFromGroup_InvalidTenantID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	err := store.RemoveUserFromGroup(ctx, "", "group-id", "user-id")
-	if err == nil {
-		t.Error("Expected error for empty tenant ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestRemoveUserFromGroup_InvalidGroupID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	err := store.RemoveUserFromGroup(ctx, "tenant1", "", "user-id")
-	if err == nil {
-		t.Error("Expected error for empty group ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestRemoveUserFromGroup_InvalidUserID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	err := store.RemoveUserFromGroup(ctx, "tenant1", "group-id", "")
-	if err == nil {
-		t.Error("Expected error for empty user ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestRemoveUserFromGroup_UserNotFound(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	group, _ := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Test Group",
-	})
-
-	err := store.RemoveUserFromGroup(ctx, "tenant1", group.ID, "nonexistent")
-	if !errors.Is(err, ErrUserNotFound) {
-		t.Errorf("Expected ErrUserNotFound, got %v", err)
-	}
-}
-
-func TestRemoveUserFromGroup_GroupNotFound(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	user, _ := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "test@example.com",
-		Username: "testuser",
-	})
-
-	err := store.RemoveUserFromGroup(ctx, "tenant1", "nonexistent", user.ID)
-	if !errors.Is(err, ErrGroupNotFound) {
-		t.Errorf("Expected ErrGroupNotFound, got %v", err)
-	}
-}
-
-func TestRemoveUserFromGroup_GroupUpdateError(t *testing.T) {
-	failingGroupStorage := &mockGroupStorageWithFailure{
-		mockGroupStorage: newMockGroupStorage(),
-		failOnUpdate:     false,
-	}
-
-	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  newMockUserStorage(),
-		GroupStorage: failingGroupStorage,
-		RoleStorage:  newMockRoleStorage(),
-	})
-
-	ctx := context.Background()
-
-	user, _ := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "test@example.com",
-		Username: "testuser",
-	})
-
-	group, _ := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{
-		Name: "Test Group",
-	})
-
-	_ = store.AddUserToGroup(ctx, "tenant1", group.ID, user.ID)
-
-	// Enable failure for group update
-	failingGroupStorage.failOnUpdate = true
-
-	err := store.RemoveUserFromGroup(ctx, "tenant1", group.ID, user.ID)
-	if err == nil {
-		t.Error("Expected error when group update fails")
 	}
 }
 
@@ -3035,10 +1765,9 @@ func TestCreateRole_EmptyName(t *testing.T) {
 func TestCreateRole_QuotaExceeded(t *testing.T) {
 	tenantMgr := &mockCoverageTenantManager{quotaExceeded: true}
 	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  newMockUserStorage(),
-		GroupStorage: newMockGroupStorage(),
-		RoleStorage:  newMockRoleStorage(),
-		Tenants:      tenantMgr,
+		UserStorage: newMockUserStorage(),
+		RoleStorage: newMockRoleStorage(),
+		Tenants:     tenantMgr,
 	})
 	ctx := context.Background()
 
@@ -3057,9 +1786,8 @@ func TestCreateRole_StorageError(t *testing.T) {
 	}
 
 	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  newMockUserStorage(),
-		GroupStorage: newMockGroupStorage(),
-		RoleStorage:  failingRoleStorage,
+		UserStorage: newMockUserStorage(),
+		RoleStorage: failingRoleStorage,
 	})
 
 	ctx := context.Background()
@@ -3174,9 +1902,8 @@ func TestUpdateRole_StorageError(t *testing.T) {
 	}
 
 	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  newMockUserStorage(),
-		GroupStorage: newMockGroupStorage(),
-		RoleStorage:  failingRoleStorage,
+		UserStorage: newMockUserStorage(),
+		RoleStorage: failingRoleStorage,
 	})
 
 	ctx := context.Background()
@@ -3237,9 +1964,8 @@ func TestDeleteRole_ListUsersError(t *testing.T) {
 	}
 
 	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  failingUserStorage,
-		GroupStorage: newMockGroupStorage(),
-		RoleStorage:  newMockRoleStorage(),
+		UserStorage: failingUserStorage,
+		RoleStorage: newMockRoleStorage(),
 	})
 
 	ctx := context.Background()
@@ -3261,9 +1987,8 @@ func TestDeleteRole_UserUpdateError(t *testing.T) {
 	}
 
 	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  failingUserStorage,
-		GroupStorage: newMockGroupStorage(),
-		RoleStorage:  newMockRoleStorage(),
+		UserStorage: failingUserStorage,
+		RoleStorage: newMockRoleStorage(),
 	})
 
 	ctx := context.Background()
@@ -3295,9 +2020,8 @@ func TestDeleteRole_StorageError(t *testing.T) {
 	}
 
 	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  newMockUserStorage(),
-		GroupStorage: newMockGroupStorage(),
-		RoleStorage:  failingRoleStorage,
+		UserStorage: newMockUserStorage(),
+		RoleStorage: failingRoleStorage,
 	})
 
 	ctx := context.Background()
@@ -3325,9 +2049,8 @@ func TestListRoles_StorageError(t *testing.T) {
 	}
 
 	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  newMockUserStorage(),
-		GroupStorage: newMockGroupStorage(),
-		RoleStorage:  failingRoleStorage,
+		UserStorage: newMockUserStorage(),
+		RoleStorage: failingRoleStorage,
 	})
 
 	ctx := context.Background()
@@ -3423,9 +2146,8 @@ func TestAssignRole_UpdateError(t *testing.T) {
 	}
 
 	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  failingUserStorage,
-		GroupStorage: newMockGroupStorage(),
-		RoleStorage:  newMockRoleStorage(),
+		UserStorage: failingUserStorage,
+		RoleStorage: newMockRoleStorage(),
 	})
 
 	ctx := context.Background()
@@ -3514,9 +2236,8 @@ func TestRevokeRole_UpdateError(t *testing.T) {
 	}
 
 	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  failingUserStorage,
-		GroupStorage: newMockGroupStorage(),
-		RoleStorage:  newMockRoleStorage(),
+		UserStorage: failingUserStorage,
+		RoleStorage: newMockRoleStorage(),
 	})
 
 	ctx := context.Background()
@@ -3579,60 +2300,6 @@ func (m *mockUserStorageWithFailure) ListUsers(ctx context.Context, tenantID str
 		return nil, &dberrors.MessageError{Message: "simulated list failure"}
 	}
 	return m.mockUserStorage.ListUsers(ctx, tenantID, opts)
-}
-
-type mockGroupStorageWithFailure struct {
-	*mockGroupStorage
-	failOnCreate bool
-	failOnUpdate bool
-	failOnDelete bool
-	failOnList   bool
-}
-
-func (m *mockGroupStorageWithFailure) CreateGroup(ctx context.Context, group *Group) error {
-	if m.failOnCreate {
-		return &dberrors.MessageError{Message: "simulated create failure"}
-	}
-	return m.mockGroupStorage.CreateGroup(ctx, group)
-}
-
-func (m *mockGroupStorageWithFailure) UpdateGroup(ctx context.Context, group *Group) error {
-	if m.failOnUpdate {
-		return &dberrors.MessageError{Message: "simulated update failure"}
-	}
-	return m.mockGroupStorage.UpdateGroup(ctx, group)
-}
-
-// The membership edits are writes to the group record too, so failOnUpdate
-// covers them. It has to: they are where a member list is changed now, and an
-// injector that only failed the whole-record write would report "no error" for
-// the operation the tests above are about.
-func (m *mockGroupStorageWithFailure) AddGroupMember(ctx context.Context, tenantID, groupID, userID string) error {
-	if m.failOnUpdate {
-		return &dberrors.MessageError{Message: "simulated update failure"}
-	}
-	return m.mockGroupStorage.AddGroupMember(ctx, tenantID, groupID, userID)
-}
-
-func (m *mockGroupStorageWithFailure) RemoveGroupMember(ctx context.Context, tenantID, groupID, userID string) error {
-	if m.failOnUpdate {
-		return &dberrors.MessageError{Message: "simulated update failure"}
-	}
-	return m.mockGroupStorage.RemoveGroupMember(ctx, tenantID, groupID, userID)
-}
-
-func (m *mockGroupStorageWithFailure) DeleteGroup(ctx context.Context, tenantID, groupID string) error {
-	if m.failOnDelete {
-		return &dberrors.MessageError{Message: "simulated delete failure"}
-	}
-	return m.mockGroupStorage.DeleteGroup(ctx, tenantID, groupID)
-}
-
-func (m *mockGroupStorageWithFailure) ListGroups(ctx context.Context, tenantID string, opts ListOptions) ([]*Group, error) {
-	if m.failOnList {
-		return nil, &dberrors.MessageError{Message: "simulated list failure"}
-	}
-	return m.mockGroupStorage.ListGroups(ctx, tenantID, opts)
 }
 
 type mockRoleStorageWithFailure struct {
@@ -3808,10 +2475,9 @@ func TestCreateUser_WithRoles_UnknownRoleFailsWithoutCreate(t *testing.T) {
 // (roles first, then quota) so all transports fail identically.
 func TestCreateUser_WithRoles_ValidatedBeforeQuota(t *testing.T) {
 	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  newMockUserStorage(),
-		GroupStorage: newMockGroupStorage(),
-		RoleStorage:  newMockRoleStorage(),
-		Tenants:      &mockIdentityTenantManager{quotaExceeded: true},
+		UserStorage: newMockUserStorage(),
+		RoleStorage: newMockRoleStorage(),
+		Tenants:     &mockIdentityTenantManager{quotaExceeded: true},
 	})
 	ctx := context.Background()
 
@@ -3822,232 +2488,5 @@ func TestCreateUser_WithRoles_ValidatedBeforeQuota(t *testing.T) {
 	})
 	if !dberrors.IsNotFound(err) {
 		t.Errorf("Expected role not-found before quota error, got %v", err)
-	}
-}
-
-// =============================================================================
-// CreateUser group validation (validate-before-create shared seam)
-// =============================================================================
-
-// TestCreateUser_WithGroups_ValidReferences verifies that group IDs supplied
-// in CreateUserOptions are validated against the tenant group store, persisted
-// on the created user, AND registered back on each group's member list
-// (group membership is bidirectional).
-func TestCreateUser_WithGroups_ValidReferences(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	group, err := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{Name: "ops-team"})
-	if err != nil {
-		t.Fatalf("CreateGroup failed: %v", err)
-	}
-
-	user, err := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "groups@example.com",
-		Username: "groupuser",
-		Groups:   []string{group.ID},
-	})
-	if err != nil {
-		t.Fatalf("CreateUser with valid groups failed: %v", err)
-	}
-
-	if len(user.Groups) != 1 || user.Groups[0] != group.ID {
-		t.Errorf("Expected user.Groups [%s], got %v", group.ID, user.Groups)
-	}
-
-	// The persisted record must carry the groups too.
-	stored, err := store.GetUser(ctx, "tenant1", user.ID)
-	if err != nil {
-		t.Fatalf("GetUser failed: %v", err)
-	}
-	if len(stored.Groups) != 1 || stored.Groups[0] != group.ID {
-		t.Errorf("Expected persisted groups [%s], got %v", group.ID, stored.Groups)
-	}
-
-	// The group's member list must reference the user back.
-	storedGroup, err := store.GetGroup(ctx, "tenant1", group.ID)
-	if err != nil {
-		t.Fatalf("GetGroup failed: %v", err)
-	}
-	if len(storedGroup.Members) != 1 || storedGroup.Members[0] != user.ID {
-		t.Errorf("Expected group members [%s], got %v", user.ID, storedGroup.Members)
-	}
-}
-
-// TestCreateUser_WithGroups_UnknownGroupFailsWithoutCreate verifies the
-// validate-before-create contract shared by ALL transports: an unknown group
-// reference fails fast with a typed not-found error and NO user record is
-// written (a retry must not fail with already-exists).
-func TestCreateUser_WithGroups_UnknownGroupFailsWithoutCreate(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	_, err := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "phantomgroup@example.com",
-		Username: "phantomgroupuser",
-		Groups:   []string{"no-such-group"},
-	})
-	if err == nil {
-		t.Fatal("Expected error for unknown group reference")
-	}
-	if !dberrors.IsNotFound(err) {
-		t.Errorf("Expected typed not-found error, got %T: %v", err, err)
-	}
-
-	// Zero side effects: the user must NOT exist.
-	if _, err := store.GetUserByEmail(ctx, "tenant1", "phantomgroup@example.com"); err == nil {
-		t.Error("Expected no user to be created after failed group validation")
-	}
-}
-
-// TestCreateUser_WithNoGroups ensures a user created without Groups in opts
-// receives an empty (non-nil) Groups slice rather than nil, keeping JSON
-// serialisation consistent across callers.
-func TestCreateUser_WithNoGroups(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	user, err := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "nogroups@example.com",
-		Username: "nogroups",
-	})
-	if err != nil {
-		t.Fatalf("CreateUser failed: %v", err)
-	}
-	if user.Groups == nil {
-		t.Error("expected non-nil empty Groups slice, got nil")
-	}
-	if len(user.Groups) != 0 {
-		t.Errorf("expected empty Groups, got %v", user.Groups)
-	}
-}
-
-// TestCreateUser_WithGroups_DuplicateIDsDeduplicated verifies a repeated group
-// ID in the request cannot double-register the user in the group's member
-// list or duplicate the ID on the user record.
-func TestCreateUser_WithGroups_DuplicateIDsDeduplicated(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	group, err := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{Name: "dup-team"})
-	if err != nil {
-		t.Fatalf("CreateGroup failed: %v", err)
-	}
-
-	user, err := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "dupgroups@example.com",
-		Username: "dupgroups",
-		Groups:   []string{group.ID, group.ID},
-	})
-	if err != nil {
-		t.Fatalf("CreateUser with duplicate groups failed: %v", err)
-	}
-
-	if len(user.Groups) != 1 || user.Groups[0] != group.ID {
-		t.Errorf("Expected deduplicated user.Groups [%s], got %v", group.ID, user.Groups)
-	}
-	storedGroup, err := store.GetGroup(ctx, "tenant1", group.ID)
-	if err != nil {
-		t.Fatalf("GetGroup failed: %v", err)
-	}
-	if len(storedGroup.Members) != 1 || storedGroup.Members[0] != user.ID {
-		t.Errorf("Expected single group membership [%s], got %v", user.ID, storedGroup.Members)
-	}
-}
-
-// TestCreateUser_WithGroups_ValidatedBeforeQuota verifies group references are
-// checked before the tenant quota, mirroring the role ordering so all
-// transports fail identically.
-func TestCreateUser_WithGroups_ValidatedBeforeQuota(t *testing.T) {
-	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  newMockUserStorage(),
-		GroupStorage: newMockGroupStorage(),
-		RoleStorage:  newMockRoleStorage(),
-		Tenants:      &mockIdentityTenantManager{quotaExceeded: true},
-	})
-	ctx := context.Background()
-
-	_, err := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "grouporder@example.com",
-		Username: "grouporderuser",
-		Groups:   []string{"no-such-group"},
-	})
-	if !dberrors.IsNotFound(err) {
-		t.Errorf("Expected group not-found before quota error, got %v", err)
-	}
-}
-
-// failOnUpdateGroupStorage wraps a GroupStorage and fails UpdateGroup for one
-// specific group ID, simulating a storage fault after the user record was
-// already written.
-type failOnUpdateGroupStorage struct {
-	GroupStorage
-	failGroupID string
-}
-
-type simulatedGroupUpdateError struct{}
-
-func (simulatedGroupUpdateError) Error() string { return "iam: simulated group update failure" }
-
-func (s *failOnUpdateGroupStorage) UpdateGroup(ctx context.Context, group *Group) error {
-	if group.ID == s.failGroupID {
-		return simulatedGroupUpdateError{}
-	}
-	return s.GroupStorage.UpdateGroup(ctx, group)
-}
-
-// AddGroupMember is where the membership write now happens, so that is where
-// the simulated failure has to be for the rollback test to exercise anything.
-func (s *failOnUpdateGroupStorage) AddGroupMember(ctx context.Context, tenantID, groupID, userID string) error {
-	if groupID == s.failGroupID {
-		return simulatedGroupUpdateError{}
-	}
-	return s.GroupStorage.AddGroupMember(ctx, tenantID, groupID, userID)
-}
-
-// TestCreateUser_WithGroups_MemberUpdateFailureRollsBack verifies the create
-// stays atomic when registering group membership fails after the user record
-// was written: the user is deleted and already-updated groups are reverted.
-func TestCreateUser_WithGroups_MemberUpdateFailureRollsBack(t *testing.T) {
-	mem := NewMemoryStorage()
-	groupStorage := &failOnUpdateGroupStorage{GroupStorage: mem}
-	store := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  mem,
-		GroupStorage: groupStorage,
-		RoleStorage:  mem,
-	})
-	ctx := context.Background()
-
-	okGroup, err := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{Name: "ok-team"})
-	if err != nil {
-		t.Fatalf("CreateGroup ok-team failed: %v", err)
-	}
-	badGroup, err := store.CreateGroup(ctx, "tenant1", CreateGroupOptions{Name: "bad-team"})
-	if err != nil {
-		t.Fatalf("CreateGroup bad-team failed: %v", err)
-	}
-	groupStorage.failGroupID = badGroup.ID
-
-	_, err = store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "rollback@example.com",
-		Username: "rollbackuser",
-		Groups:   []string{okGroup.ID, badGroup.ID},
-	})
-	if err == nil {
-		t.Fatal("Expected error when group member update fails")
-	}
-
-	// The user must have been rolled back.
-	if _, err := store.GetUserByEmail(ctx, "tenant1", "rollback@example.com"); err == nil {
-		t.Error("Expected user to be deleted after failed group registration")
-	}
-
-	// The successfully-updated group must have been reverted.
-	reverted, err := store.GetGroup(ctx, "tenant1", okGroup.ID)
-	if err != nil {
-		t.Fatalf("GetGroup failed: %v", err)
-	}
-	if len(reverted.Members) != 0 {
-		t.Errorf("Expected ok-team members reverted to empty, got %v", reverted.Members)
 	}
 }

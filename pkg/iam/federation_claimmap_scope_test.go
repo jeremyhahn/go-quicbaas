@@ -249,9 +249,8 @@ func TestGenerateTokenResult_OIDCScopesOnToken(t *testing.T) {
 		WithLinkStorage(NewMemoryFederationStorage()),
 		WithStateStorage(NewMemoryStateStorage()),
 		WithFederationIdentityStore(NewIdentityStore(IdentityStoreOptions{
-			UserStorage:  newMockUserStorage(),
-			GroupStorage: newMockGroupStorage(),
-			RoleStorage:  newMockRoleStorage(),
+			UserStorage: newMockUserStorage(),
+			RoleStorage: newMockRoleStorage(),
 		})),
 		WithFederationOIDCProvider(oidcProvider),
 	)

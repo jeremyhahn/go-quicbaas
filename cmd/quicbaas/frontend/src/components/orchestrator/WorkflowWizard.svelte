@@ -17,7 +17,7 @@
   import type {
     WorkflowDefinition, WorkflowMode, AgentRoleSpec,
     CommunicationTopology, WorkspaceIsolation, AgentBackendInfo,
-    AgentRegistration,
+    FleetNode,
   } from '@quicbaas/sdk';
 
   // ---------------------------------------------------------------------------
@@ -35,7 +35,7 @@
   }: {
     existingNames?: string[];
     backends?: AgentBackendInfo[];
-    agents?: AgentRegistration[];
+    agents?: FleetNode[];
     // When set, pre-populates the wizard for edit or duplicate mode.
     initialDef?: WorkflowDefinition | null;
     onComplete: (def: WorkflowDefinition) => Promise<void>;
@@ -483,7 +483,7 @@
     scopeInputs = [...scopeInputs, ''];
   }
 
-  function removeAgent(idx: number): void {
+  function removeFleetNode(idx: number): void {
     agentForms  = agentForms.filter((_, i) => i !== idx);
     capInputs   = capInputs.filter((_, i) => i !== idx);
     scopeInputs = scopeInputs.filter((_, i) => i !== idx);
@@ -852,7 +852,7 @@
                     <button
                       type="button"
                       class="btn btn-xs btn-ghost text-error"
-                      onclick={() => removeAgent(idx)}
+                      onclick={() => removeFleetNode(idx)}
                       aria-label="Remove agent {idx + 1}"
                     >
                       <Trash2 class="h-3.5 w-3.5" />
@@ -1694,7 +1694,7 @@
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <!-- Human-readable summary -->
           <div class="space-y-3">
-            <h3 class="text-sm font-semibold text-base-content/70 uppercase tracking-wide">Summary</h3>
+            <h3 class="section-title">Summary</h3>
 
             <div class="card bg-base-200 border border-base-300/50 rounded-box">
               <div class="card-body p-4 space-y-2">

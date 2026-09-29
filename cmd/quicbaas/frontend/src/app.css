@@ -3,7 +3,52 @@
   themes: quicbaas-dark --default, quicbaas-light;
 }
 
+/*
+ * Typeface: IBM Plex, self-hosted so the embedded UI renders the same on an
+ * air-gapped node as on a laptop. One variable Sans file carries both the
+ * weight and the width axis, so the condensed display cut used for titles and
+ * big numbers costs no extra download. Only the latin and latin-ext subsets
+ * are declared (Plex Mono: latin, 400 and 500), woff2 only; nothing else is
+ * fetched or bundled.
+ */
+@font-face {
+  font-family: "IBM Plex Sans Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 700;
+  font-stretch: 75% 100%;
+  src: url("../node_modules/@fontsource-variable/ibm-plex-sans/files/ibm-plex-sans-latin-wdth-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: "IBM Plex Sans Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 700;
+  font-stretch: 75% 100%;
+  src: url("../node_modules/@fontsource-variable/ibm-plex-sans/files/ibm-plex-sans-latin-ext-wdth-normal.woff2") format("woff2-variations");
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url("../node_modules/@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url("../node_modules/@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-500-normal.woff2") format("woff2");
+}
+
 @theme {
+  --font-sans: "IBM Plex Sans Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
   /* QuicBaaS brand tokens */
   --color-brand-orange: oklch(0.65 0.19 30);
   --color-brand-red: oklch(0.58 0.22 25);
@@ -36,17 +81,34 @@
  *                       which render a soft tinted pill from the SEPARATE
  *                       STATUS_TONES table in tokens.ts instead of stamping
  *                       white text over a saturated background.
- *   --color-base-*    → a warm, restrained neutral (not stark black/white) —
+ *   --color-base-*    → a cool steel-grey neutral (not stark black/white) —
  *                       shared in spirit across both themes so switching
  *                       theme changes brightness, not identity.
+ *
+ * Shape tokens (--radius-*, --size-*, --border, --depth, --noise) are
+ * daisyUI v5's own theme variables. A custom theme that omits them leaves
+ * every button, badge, card and input with NO radius and an undefined depth,
+ * which is what made the whole UI read as unstyled boxes. They are declared
+ * once in `:root` below and shared by both themes.
  */
+
+:root {
+  --radius-selector: 1rem;   /* chips, badges, toggles: fully round */
+  --radius-field: 0.375rem;  /* buttons, inputs, selects */
+  --radius-box: 0.625rem;    /* cards, panels, modals, tables */
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;                /* flat controls: no gradient, no drop shadow */
+  --noise: 0;
+}
 
 /* QuicBaaS Dark Theme */
 [data-theme="quicbaas-dark"] {
-  --color-base-100: oklch(0.16 0.01 80);
-  --color-base-200: oklch(0.19 0.012 80);
-  --color-base-300: oklch(0.24 0.014 80);
-  --color-base-content: oklch(0.92 0.01 80);
+  --color-base-100: oklch(0.172 0.007 258);
+  --color-base-200: oklch(0.208 0.009 256);
+  --color-base-300: oklch(0.259 0.013 258);
+  --color-base-content: oklch(0.927 0.006 255);
 
   --color-primary: oklch(0.75 0.13 258);
   --color-primary-content: oklch(0.18 0.04 258);
@@ -54,8 +116,8 @@
   --color-secondary-content: oklch(0.18 0.05 40);
   --color-accent: oklch(0.72 0.17 25);
   --color-accent-content: oklch(0.16 0.05 25);
-  --color-neutral: oklch(0.30 0.012 80);
-  --color-neutral-content: oklch(0.92 0.01 80);
+  --color-neutral: oklch(0.303 0.014 257);
+  --color-neutral-content: oklch(0.927 0.006 255);
 
   --color-success: oklch(0.75 0.15 152);
   --color-success-content: oklch(0.15 0.05 152);
@@ -69,10 +131,10 @@
 
 /* QuicBaaS Light Theme */
 [data-theme="quicbaas-light"] {
-  --color-base-100: oklch(0.97 0.006 80);
-  --color-base-200: oklch(0.94 0.008 80);
-  --color-base-300: oklch(0.88 0.012 80);
-  --color-base-content: oklch(0.22 0.01 80);
+  --color-base-100: oklch(0.973 0.003 265);
+  --color-base-200: oklch(0.948 0.005 258);
+  --color-base-300: oklch(0.899 0.008 254);
+  --color-base-content: oklch(0.208 0.009 256);
 
   --color-primary: oklch(0.42 0.15 258);
   --color-primary-content: oklch(1 0 0);
@@ -80,8 +142,8 @@
   --color-secondary-content: oklch(1 0 0);
   --color-accent: oklch(0.50 0.20 25);
   --color-accent-content: oklch(1 0 0);
-  --color-neutral: oklch(0.30 0.01 80);
-  --color-neutral-content: oklch(0.97 0.006 80);
+  --color-neutral: oklch(0.307 0.013 253);
+  --color-neutral-content: oklch(0.973 0.003 265);
 
   --color-success: oklch(0.48 0.13 152);
   --color-success-content: oklch(1 0 0);
@@ -113,16 +175,16 @@
  *                        labels, placeholders, disabled hints, icon tints)
  */
 [data-theme="quicbaas-dark"] :is(.text-base-content\/25, .text-base-content\/30, .text-base-content\/40) {
-  color: #908b84; /* dark/content-tertiary — tokens.ts */
+  color: #8e949d; /* dark/content-tertiary — tokens.ts */
 }
 [data-theme="quicbaas-dark"] :is(.text-base-content\/50, .text-base-content\/60) {
-  color: #a8a49e; /* dark/content-secondary — tokens.ts */
+  color: #a6acb4; /* dark/content-secondary — tokens.ts */
 }
 [data-theme="quicbaas-light"] :is(.text-base-content\/25, .text-base-content\/30, .text-base-content\/40) {
-  color: #615d56; /* light/content-tertiary — tokens.ts */
+  color: #565c66; /* light/content-tertiary — tokens.ts */
 }
 [data-theme="quicbaas-light"] :is(.text-base-content\/50, .text-base-content\/60) {
-  color: #4b4742; /* light/content-secondary — tokens.ts */
+  color: #474d56; /* light/content-secondary — tokens.ts */
 }
 
 /* Gradient brand text */
@@ -186,19 +248,162 @@
 }
 
 /*
- * Light-theme polish.
+ * Surfaces.
  *
- * The warm neutral base in `quicbaas-light` still benefits from an explicit
- * boundary color for surfaces that don't set their own border, and from a
- * visibly distinct active/hover state in the sidebar.
+ * Panels sit one step darker than the page and carry a hairline edge, so a
+ * page of stacked sections reads as distinct areas without drop shadows.
  */
 [data-theme="quicbaas-light"] {
-  --color-card-border: oklch(0.82 0.012 80);
+  --color-card-border: oklch(0.87 0.009 254);
+}
+:where(.card, .stat, .collapse).bg-base-200 {
+  border: 1px solid color-mix(in oklch, var(--color-base-300) 85%, transparent);
+}
+.card :where(.card-title) {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+/*
+ * Page frame.
+ *
+ * Every view's root is `.page`: the same gutters, the same maximum measure,
+ * the same vertical rhythm between sections — so moving between Tasks, Jobs
+ * and Cost never shifts the content edge.
+ */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  width: 100%;
+  max-width: 100rem;
+  margin-inline: auto;
+  padding: 1.5rem 2rem 3rem;
+}
+/* Detail and form pages read at a narrower measure than list pages. */
+.page.page-narrow {
+  max-width: 72rem;
+}
+/* The page's own gap spaces the header; the header's standalone margin is for
+   views that have not adopted `.page`. */
+.page > .page-header {
+  margin-bottom: 0;
+}
+@media (max-width: 640px) {
+  .page {
+    gap: 1.25rem;
+    padding: 1rem 1rem 2.5rem;
+  }
+}
+
+/*
+ * Display type: the condensed cut of Plex Sans for page titles and the big
+ * numbers on stat tiles. Narrow, dense, engineered — the one typographic
+ * voice in the app; everything else is the regular width.
+ */
+.display {
+  font-stretch: 85%;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+}
+
+/*
+ * Status tones as CSS custom properties.
+ *
+ * The same pairs as STATUS_TONES in tokens.ts (the table of record, graded by
+ * test/themeContrast.test.ts); test/appcss.test.ts fails if the two drift.
+ * They let a plain daisyUI `badge badge-success` render as the same soft,
+ * AA-legible pill StatusBadge draws, instead of white text stamped on a
+ * saturated block.
+ */
+[data-theme="quicbaas-light"] {
+  --tone-success-bg: #e0f5e5;
+  --tone-success-fg: #005a20;
+  --tone-warning-bg: #fdecd5;
+  --tone-warning-fg: #7a3a00;
+  --tone-error-bg: #ffe7e4;
+  --tone-error-fg: #9b0007;
+  --tone-info-bg: #e1f1ff;
+  --tone-info-fg: #004a88;
+  --tone-primary-bg: #e4efff;
+  --tone-primary-fg: #013e8b;
+  --tone-neutral-bg: #e2e5e9;
+  --tone-neutral-fg: #3a4048;
+}
+[data-theme="quicbaas-dark"] {
+  --tone-success-bg: #022710;
+  --tone-success-fg: #58c97d;
+  --tone-warning-bg: #2e1b00;
+  --tone-warning-fg: #e9ab2b;
+  --tone-error-bg: #371112;
+  --tone-error-fg: #f66c6d;
+  --tone-info-bg: #01213a;
+  --tone-info-fg: #69b5f5;
+  --tone-primary-bg: #0b1f3b;
+  --tone-primary-fg: #79afff;
+  --tone-neutral-bg: #272c32;
+  --tone-neutral-fg: #b5bbc3;
+}
+
+.badge {
+  font-weight: 500;
+  border-radius: var(--radius-selector);
+}
+.badge.badge-xs {
+  font-size: 0.6875rem;
+  height: 1.125rem;
+  padding-inline: 0.4rem;
+}
+.badge.badge-sm {
+  font-size: 0.75rem;
+  padding-inline: 0.5rem;
+}
+.badge:where(.badge-primary, .badge-info, .badge-success, .badge-warning, .badge-error, .badge-secondary, .badge-accent, .badge-neutral, .badge-ghost):not(.badge-outline) {
+  border-color: transparent;
+}
+.badge.badge-primary:not(.badge-outline) { background-color: var(--tone-primary-bg); color: var(--tone-primary-fg); }
+.badge.badge-info:not(.badge-outline) { background-color: var(--tone-info-bg); color: var(--tone-info-fg); }
+.badge.badge-success:not(.badge-outline) { background-color: var(--tone-success-bg); color: var(--tone-success-fg); }
+.badge.badge-warning:not(.badge-outline),
+.badge.badge-secondary:not(.badge-outline) { background-color: var(--tone-warning-bg); color: var(--tone-warning-fg); }
+.badge.badge-error:not(.badge-outline),
+.badge.badge-accent:not(.badge-outline) { background-color: var(--tone-error-bg); color: var(--tone-error-fg); }
+.badge:is(.badge-neutral, .badge-ghost):not(.badge-outline) { background-color: var(--tone-neutral-bg); color: var(--tone-neutral-fg); }
+.badge.badge-outline {
+  background-color: transparent;
+  border-color: var(--color-base-300);
+  color: var(--color-base-content);
+}
+
+/*
+ * ref-chip: a short identifier that names something elsewhere — an issue
+ * (`#1075`), a pull request, a commit. Monospace, quiet, and a link colour
+ * only on hover, so a column of them reads as data rather than as buttons.
+ */
+.ref-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  border: 1px solid var(--color-base-300);
+  border-radius: 0.3rem;
+  background-color: var(--color-base-200);
+  padding: 0.0625rem 0.375rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--color-base-content);
+  white-space: nowrap;
+}
+a.ref-chip:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 /* Subtle hover state for sidebar nav items in light theme. */
 [data-theme="quicbaas-light"] aside button:hover {
-  background-color: oklch(0.91 0.012 80);
+  background-color: oklch(0.93 0.006 256);
 }
 
 /*
@@ -212,23 +417,121 @@ aside button.bg-base-300 {
   color: var(--color-primary);
 }
 
-/* Table zebra striping in light theme — a hair darker than base-200 so it reads at a glance. */
+/* Table zebra striping in light theme — a hair darker than base-100 so it reads at a glance. */
 [data-theme="quicbaas-light"] .table-zebra tbody tr:nth-child(even) {
-  background-color: oklch(0.955 0.007 80);
+  background-color: oklch(0.962 0.004 258);
 }
 
 /*
  * Table row rhythm and readability.
  *
- * `table-sm` on its own produces a cramped row that reads as data-dense
- * without being easy to scan. A touch more vertical breathing room and a
- * softer row-hover state keep tables the primary reading surface they are
- * everywhere in this app.
+ * Tables are the primary reading surface in this app. Rows get enough
+ * vertical room to scan, numbers line up in columns (tabular figures), and
+ * a cell asking for `text-xs` still gets 13px — 12px in a data grid is the
+ * size operators were squinting at.
  */
+.table {
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
 .table :where(th, td) {
-  padding-top: 0.55rem;
-  padding-bottom: 0.55rem;
+  padding: 0.625rem 0.875rem;
+  vertical-align: middle;
+}
+.table :where(td).text-xs,
+.table :where(td) .text-xs {
+  font-size: 0.8125rem;
+}
+.table thead th {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--color-base-content);
+  border-bottom: 1px solid var(--color-base-300);
 }
 .table tbody tr:hover {
   background-color: color-mix(in oklch, var(--color-primary) 6%, var(--color-base-100));
+}
+.table :where(.font-mono) {
+  font-size: 0.78rem;
+}
+
+/*
+ * Form layout. daisyUI v5 dropped `form-control` and `label-text`, which ~200
+ * fields in this app still use, so every label ran inline into its input and
+ * helper text sat at body size. These rules restore the stacked layout the
+ * markup was written for: label above the field, the optional hint on the
+ * right of the label, the field full width.
+ */
+.form-control {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  min-width: 0;
+}
+.form-control > .label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0;
+  white-space: normal;
+  color: inherit;
+}
+.form-control > :is(.input, .select, .textarea, .file-input, input:not([type="checkbox"], [type="radio"]), select, textarea) {
+  width: 100%;
+}
+/* Small fields still get 13px text: 12px inputs were hard to read. */
+:is(.input-sm, .select-sm, .textarea-sm),
+.input-sm input {
+  font-size: 0.8125rem;
+}
+
+.label-text {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-base-content);
+}
+.label-text-alt {
+  font-size: 0.75rem;
+  color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+}
+
+/*
+ * section-title: the heading of a panel or a block of fields — the same size
+ * and weight as a card title, in sentence case. Replaces the faint, tracked
+ * capitals that made every section label look like a disabled control.
+ */
+.section-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--color-base-content);
+}
+
+/*
+ * Alerts are soft, like the badges: a tinted panel with a hairline in the
+ * tone's colour and text in its deep shade, rather than a saturated block
+ * that shouts louder than the content around it.
+ */
+.alert:is(.alert-info, .alert-success, .alert-warning, .alert-error):not(.alert-soft, .alert-outline, .alert-dash) {
+  border-width: 1px;
+  box-shadow: none;
+}
+.alert.alert-info:not(.alert-soft, .alert-outline, .alert-dash) { background-color: var(--tone-info-bg); color: var(--tone-info-fg); border-color: color-mix(in oklch, var(--tone-info-fg) 30%, transparent); }
+.alert.alert-success:not(.alert-soft, .alert-outline, .alert-dash) { background-color: var(--tone-success-bg); color: var(--tone-success-fg); border-color: color-mix(in oklch, var(--tone-success-fg) 30%, transparent); }
+.alert.alert-warning:not(.alert-soft, .alert-outline, .alert-dash) { background-color: var(--tone-warning-bg); color: var(--tone-warning-fg); border-color: color-mix(in oklch, var(--tone-warning-fg) 30%, transparent); }
+.alert.alert-error:not(.alert-soft, .alert-outline, .alert-dash) { background-color: var(--tone-error-bg); color: var(--tone-error-fg); border-color: color-mix(in oklch, var(--tone-error-fg) 30%, transparent); }
+
+/* Numbers anywhere in a stat tile line up with their neighbours. */
+.stat,
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Visible keyboard focus on every interactive control, both themes. */
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
 }

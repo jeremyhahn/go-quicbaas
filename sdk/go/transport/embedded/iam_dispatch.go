@@ -49,13 +49,6 @@ var iamUnaryHandlers = map[string]handlerFunc{
 	"quicbaas.IAM.User/Delete": handleIAMUserDelete,
 	"quicbaas.IAM.User/List":   handleIAMUserList,
 
-	// Group
-	"quicbaas.IAM.Group/Create": handleIAMGroupCreate,
-	"quicbaas.IAM.Group/Get":    handleIAMGroupGet,
-	"quicbaas.IAM.Group/Update": handleIAMGroupUpdate,
-	"quicbaas.IAM.Group/Delete": handleIAMGroupDelete,
-	"quicbaas.IAM.Group/List":   handleIAMGroupList,
-
 	// Role
 	"quicbaas.IAM.Role/Create": handleIAMRoleCreate,
 	"quicbaas.IAM.Role/Get":    handleIAMRoleGet,

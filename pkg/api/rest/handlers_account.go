@@ -96,6 +96,65 @@ type CreateAccountRESTRequest struct {
 	// CredentialSecretFile materializes the referenced secret as this file
 	// (relative to the session home) instead of as the access token.
 	CredentialSecretFile string `json:"credential_secret_file,omitempty"`
+	// MaxConcurrentSessions caps the account's live sessions. Zero is
+	// unmetered.
+	MaxConcurrentSessions int `json:"max_concurrent_sessions,omitempty"`
+
+	// Billing is how the account is billed; absent leaves it not configured.
+	Billing *AccountBillingREST `json:"billing,omitempty"`
+
+	// Spend is what the account may spend and how many failures take it out
+	// of service (go-quicbaas#781); absent is unmetered.
+	Spend *orchestration.AccountSpendPolicy `json:"spend,omitempty"`
+}
+
+// AccountBillingREST is how a pooled account is billed: mode "subscription"
+// or "api", and a subscription's monthly fee in millionths of a US dollar.
+type AccountBillingREST struct {
+	Mode             string `json:"mode,omitempty"`
+	MonthlyFeeMicros int64  `json:"monthly_fee_micros,omitempty"`
+}
+
+// toOrchestration converts the body's billing; nil is "not configured".
+func (b *AccountBillingREST) toOrchestration() orchestration.AccountBilling {
+	if b == nil {
+		return orchestration.AccountBilling{}
+	}
+	return orchestration.AccountBilling{Mode: orchestration.BillingMode(b.Mode), MonthlyFeeMicros: b.MonthlyFeeMicros}
+}
+
+// optional converts an update body's billing to the service's "nil means
+// unchanged" pointer.
+func (b *AccountBillingREST) optional() *orchestration.AccountBilling {
+	if b == nil {
+		return nil
+	}
+	billing := b.toOrchestration()
+	return &billing
+}
+
+// derefSpendPolicy is a create body's spend policy; absent is unmetered.
+func derefSpendPolicy(policy *orchestration.AccountSpendPolicy) orchestration.AccountSpendPolicy {
+	if policy == nil {
+		return orchestration.AccountSpendPolicy{}
+	}
+	return *policy
+}
+
+// accountSpendToREST renders an account's spend policy, nil when unmetered.
+func accountSpendToREST(policy orchestration.AccountSpendPolicy) *orchestration.AccountSpendPolicy {
+	if !policy.Metered() {
+		return nil
+	}
+	return &policy
+}
+
+// accountBillingToREST renders an account's billing, nil when not configured.
+func accountBillingToREST(b orchestration.AccountBilling) *AccountBillingREST {
+	if b == (orchestration.AccountBilling{}) {
+		return nil
+	}
+	return &AccountBillingREST{Mode: string(b.Mode), MonthlyFeeMicros: b.MonthlyFeeMicros}
 }
 
 // UpdateAccountRESTRequest is the JSON body for PUT /api/v1/agent-accounts/{id}.
@@ -104,11 +163,20 @@ type UpdateAccountRESTRequest struct {
 	ProjectID      string `json:"project_id,omitempty"`
 	ClearProjectID bool   `json:"clear_project_id,omitempty"`
 	RefreshPolicy  string `json:"refresh_policy,omitempty"`
+	// Billing, when present, replaces how the account is billed; an empty
+	// object clears it. Absent leaves it unchanged.
+	Billing *AccountBillingREST `json:"billing,omitempty"`
+	// Spend, when present, replaces the account's spend policy; an empty
+	// object makes it unmetered. Absent leaves it unchanged.
+	Spend *orchestration.AccountSpendPolicy `json:"spend,omitempty"`
 
 	// CredentialSecretRef switches the account to (or re-points it at) a
 	// tenant secret; see service.UpdateAccountRequest.
 	CredentialSecretRef  string `json:"credential_secret_ref,omitempty"`
 	CredentialSecretFile string `json:"credential_secret_file,omitempty"`
+	// MaxConcurrentSessions, when present, replaces the session cap; zero
+	// makes the account unmetered. Absent leaves it unchanged.
+	MaxConcurrentSessions *int `json:"max_concurrent_sessions,omitempty"`
 }
 
 // RotateAccountCredentialRESTRequest is the JSON body for
@@ -135,11 +203,16 @@ type AccountRESTResponse struct {
 	Status        string `json:"status"`
 	RefreshPolicy string `json:"refresh_policy"`
 
+	// Billing is how the account is billed; absent when not configured.
+	Billing *AccountBillingREST `json:"billing,omitempty"`
 	// CredentialSecretRef / CredentialSecretFile name the tenant secret the
 	// credential is read from, when the account is reference-sourced. A name,
 	// never the value.
 	CredentialSecretRef  string `json:"credential_secret_ref,omitempty"`
 	CredentialSecretFile string `json:"credential_secret_file,omitempty"`
+
+	// Spend is the account's spend policy; absent when unmetered.
+	Spend *orchestration.AccountSpendPolicy `json:"spend,omitempty"`
 
 	// AvailableAt is when a "limited" account rejoins the selectable pool.
 	// Zero on every other status.
@@ -162,6 +235,10 @@ type AccountRESTResponse struct {
 	LastUsedAt      time.Time `json:"last_used_at,omitempty"`
 	LastRefreshedAt time.Time `json:"last_refreshed_at,omitempty"`
 	LastError       string    `json:"last_error,omitempty"`
+
+	// MaxConcurrentSessions caps the account's live sessions. Zero is
+	// unmetered.
+	MaxConcurrentSessions int `json:"max_concurrent_sessions,omitempty"`
 }
 
 // AccountUsageRESTResponse mirrors orchestration.UsageReport.
@@ -220,8 +297,16 @@ type DeleteAccountRESTResponse struct {
 
 // GetAccountUsageRESTResponse is returned on GET /api/v1/agent-accounts/{id}/usage.
 type GetAccountUsageRESTResponse struct {
-	Usage     *AccountUsageRESTResponse `json:"usage"`
-	Timestamp time.Time                 `json:"timestamp"`
+	Usage *AccountUsageRESTResponse `json:"usage"`
+
+	// LiveSessions is how many sessions the account is serving now.
+	LiveSessions int `json:"live_sessions"`
+
+	// Spend is the spend gate's verdict on the account; absent when the
+	// deployment wires no gate. A worker daemon fails over on it.
+	Spend *orchestration.SpendHeadroom `json:"spend,omitempty"`
+
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // =============================================================================
@@ -259,15 +344,18 @@ func (s *Server) HandleCreateAccount(w http.ResponseWriter, r *http.Request) {
 	// neither — is the service's rule to enforce, so every transport answers
 	// it identically.
 	resp, err := accountSvc.CreateAccount(ctx, &service.CreateAccountRequest{
-		TenantID:             tenantID,
-		ProjectID:            req.ProjectID,
-		Provider:             orchestration.AccountProvider(req.Provider),
-		DisplayName:          req.DisplayName,
-		Default:              req.Default,
-		RefreshPolicy:        orchestration.AccountRefreshPolicy(req.RefreshPolicy),
-		Credential:           req.Credential.toOrchestration(),
-		CredentialSecretRef:  req.CredentialSecretRef,
-		CredentialSecretFile: req.CredentialSecretFile,
+		TenantID:              tenantID,
+		ProjectID:             req.ProjectID,
+		Provider:              orchestration.AccountProvider(req.Provider),
+		DisplayName:           req.DisplayName,
+		Default:               req.Default,
+		RefreshPolicy:         orchestration.AccountRefreshPolicy(req.RefreshPolicy),
+		Credential:            req.Credential.toOrchestration(),
+		CredentialSecretRef:   req.CredentialSecretRef,
+		CredentialSecretFile:  req.CredentialSecretFile,
+		MaxConcurrentSessions: req.MaxConcurrentSessions,
+		Billing:               req.Billing.toOrchestration(),
+		Spend:                 derefSpendPolicy(req.Spend),
 	})
 	if err != nil {
 		handleAccountError(w, r, err)
@@ -382,9 +470,12 @@ func (s *Server) HandleUpdateAccount(w http.ResponseWriter, r *http.Request) {
 		ProjectID:      req.ProjectID,
 		ClearProjectID: req.ClearProjectID,
 		RefreshPolicy:  orchestration.AccountRefreshPolicy(req.RefreshPolicy),
+		Billing:        req.Billing.optional(),
+		Spend:          req.Spend,
 
-		CredentialSecretRef:  req.CredentialSecretRef,
-		CredentialSecretFile: req.CredentialSecretFile,
+		CredentialSecretRef:   req.CredentialSecretRef,
+		CredentialSecretFile:  req.CredentialSecretFile,
+		MaxConcurrentSessions: req.MaxConcurrentSessions,
 	})
 	if err != nil {
 		handleAccountError(w, r, err)
@@ -552,8 +643,10 @@ func (s *Server) HandleGetAccountUsage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RespondJSON(w, r, http.StatusOK, &GetAccountUsageRESTResponse{
-		Usage:     accountUsageToREST(resp.Usage),
-		Timestamp: resp.Timestamp,
+		Usage:        accountUsageToREST(resp.Usage),
+		LiveSessions: resp.LiveSessions,
+		Spend:        resp.Spend,
+		Timestamp:    resp.Timestamp,
 	})
 }
 
@@ -617,25 +710,28 @@ func accountToREST(a *orchestration.Account) *AccountRESTResponse {
 		return nil
 	}
 	return &AccountRESTResponse{
-		ID:                   a.ID,
-		TenantID:             a.TenantID,
-		ProjectID:            a.ProjectID,
-		Provider:             string(a.Provider),
-		DisplayName:          a.DisplayName,
-		Default:              a.Default,
-		Status:               string(a.Status),
-		RefreshPolicy:        string(a.RefreshPolicy),
-		CredentialSecretRef:  a.CredentialSecretRef,
-		CredentialSecretFile: a.CredentialSecretFile,
-		AvailableAt:          a.AvailableAt,
-		CredentialExpiresAt:  a.CredentialExpiresAt,
-		LastValidatedAt:      a.LastValidatedAt,
-		CredentialHealth:     string(a.CredentialHealth()),
-		CreatedAt:            a.CreatedAt,
-		UpdatedAt:            a.UpdatedAt,
-		LastUsedAt:           a.LastUsedAt,
-		LastRefreshedAt:      a.LastRefreshedAt,
-		LastError:            a.LastError,
+		ID:                    a.ID,
+		TenantID:              a.TenantID,
+		ProjectID:             a.ProjectID,
+		Provider:              string(a.Provider),
+		DisplayName:           a.DisplayName,
+		Default:               a.Default,
+		Status:                string(a.Status),
+		RefreshPolicy:         string(a.RefreshPolicy),
+		CredentialSecretRef:   a.CredentialSecretRef,
+		CredentialSecretFile:  a.CredentialSecretFile,
+		AvailableAt:           a.AvailableAt,
+		CredentialExpiresAt:   a.CredentialExpiresAt,
+		LastValidatedAt:       a.LastValidatedAt,
+		CredentialHealth:      string(a.CredentialHealth()),
+		CreatedAt:             a.CreatedAt,
+		UpdatedAt:             a.UpdatedAt,
+		LastUsedAt:            a.LastUsedAt,
+		LastRefreshedAt:       a.LastRefreshedAt,
+		LastError:             a.LastError,
+		MaxConcurrentSessions: a.MaxConcurrentSessions,
+		Billing:               accountBillingToREST(a.Billing),
+		Spend:                 accountSpendToREST(a.Spend),
 	}
 }
 
@@ -657,8 +753,8 @@ func accountUsageToREST(u *orchestration.UsageReport) *AccountUsageRESTResponse 
 // configuration-fault class (orchestration.SpawnFaultClass) in the error
 // envelope's fault_class when it has one.
 //
-// The class is what an agent daemon maps back onto the orchestration sentinel
-// (pkg/agent AccountAPIError), so a release refused because the account's
+// The class is what a fleet node daemon maps back onto the orchestration sentinel
+// (pkg/fleet AccountAPIError), so a release refused because the account's
 // credential is missing is PARKED uncharged on a remote spawn exactly as it is
 // on an in-process one. A status code alone cannot say that: 409 also means a
 // revoked delivery grant, which is not a configuration fault.
@@ -682,6 +778,7 @@ func accountErrorStatus(err error) int {
 	var notReleasable *service.AccountNotReleasableError
 	var projectScope *service.AccountProjectScopeError
 	var noTokens *service.AccountTokenManagerNotConfiguredError
+	var noReserver *service.AccountSessionReserverNotConfiguredError
 	var leaseRevoked *lease.LeaseRevokedError
 	var secretUnresolved *orchestration.AccountSecretRefUnresolvedError
 	var noSecretResolver *orchestration.AccountSecretResolverNotConfiguredError
@@ -702,10 +799,19 @@ func accountErrorStatus(err error) int {
 		// the daemon kept presenting that id, and an opaque server error gave it
 		// nothing to act on. Every spawn then failed until the process was
 		// restarted. A distinguishable status is what lets the daemon drop the
-		// stale grant and ask for a fresh one (pkg/agent account_secrets.go).
+		// stale grant and ask for a fresh one (pkg/fleet account_secrets.go).
 		return http.StatusConflict
 	case errors.As(err, &invalid):
 		return http.StatusBadRequest
+	case errors.Is(err, orchestration.ErrAccountSessionCountChanged):
+		// 412: a conditional reservation lost its race; the count it was
+		// conditioned on no longer holds, and the caller re-selects.
+		return http.StatusPreconditionFailed
+	case errors.Is(err, orchestration.ErrAccountsSaturated):
+		// 409: the account is at its session cap. Busy, not broken — the
+		// slot frees when a session ends — and distinguishable, so a daemon
+		// rebuilds the typed refusal instead of charging a failed spawn.
+		return http.StatusConflict
 	case errors.As(err, &notReleasable):
 		// 409, not 403: the caller is entitled to this account, and the
 		// account exists — it is the account's STATE that refuses, and that
@@ -726,7 +832,7 @@ func accountErrorStatus(err error) int {
 		// 403: the account is fenced to another project and no retry, wait, or
 		// differently-shaped request by this caller will release it.
 		return http.StatusForbidden
-	case errors.As(err, &noTracker), errors.As(err, &noTokens):
+	case errors.As(err, &noTracker), errors.As(err, &noTokens), errors.As(err, &noReserver):
 		return http.StatusServiceUnavailable
 	case errors.Is(err, orchestration.ErrAccountVersionConflict):
 		// 409: a concurrent write changed the account under this one — a
@@ -785,6 +891,14 @@ type AccountCredentialRESTEnvelope struct {
 	ExpiresAt         time.Time         `json:"expires_at,omitempty"`
 	Scopes            []string          `json:"scopes,omitempty"`
 	AccessTokenEnvKey string            `json:"access_token_env_key,omitempty"`
+
+	// Generation identifies which copy of the account's credential this
+	// envelope is (AccountCredential.Generation). A worker host records it on
+	// the session it spawns, so the control plane can tell before a turn that
+	// the pool has rotated the credential under that session
+	// (go-quicbaas#997). An integer naming a copy, not credential material.
+	// Zero means unknown.
+	Generation int64 `json:"generation,omitempty"`
 }
 
 // MaterializeAccountCredentialRESTResponse carries one released envelope plus
@@ -916,5 +1030,6 @@ func accountCredentialToREST(c *orchestration.AccountCredential) *AccountCredent
 		ExpiresAt:         c.ExpiresAt,
 		Scopes:            c.Scopes,
 		AccessTokenEnvKey: c.AccessTokenEnvKey,
+		Generation:        c.Generation,
 	}
 }

@@ -82,6 +82,7 @@ func TestAccountHandlersAreRegistered(t *testing.T) {
 	for _, method := range []string{
 		"Create", "Get", "List", "Update", "Delete",
 		"RotateCredential", "Revoke", "SetDefault", "Usage", "Materialize",
+		"ReserveSession", "ReleaseSession",
 	} {
 		if _, ok := unaryHandlers[accountServiceName+"/"+method]; !ok {
 			t.Errorf("quicbaas.Account/%s is not registered in the embedded transport", method)
@@ -413,9 +414,13 @@ func TestReleasedCredentialFromOrchestration_DropsTheRefreshGrant(t *testing.T) 
 		ClientID:          "MUST-NOT-TRAVEL",
 		AccessTokenEnvKey: "K",
 		Env:               map[string]string{"A": "b"},
+		Generation:        42,
 	})
 	if out == nil {
 		t.Fatal("converter returned nil for a populated envelope")
+	}
+	if out.Generation != 42 {
+		t.Errorf("Generation = %d, want 42", out.Generation)
 	}
 	encoded, err := json.Marshal(out)
 	if err != nil {

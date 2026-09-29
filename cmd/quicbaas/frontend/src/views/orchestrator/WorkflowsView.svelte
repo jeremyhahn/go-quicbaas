@@ -34,7 +34,7 @@
   import { orchestratorStore } from '../../stores/orchestrator.svelte.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
-  import type { WorkflowDefinition, CreateWorkflowRequest, AgentBackendInfo, AgentRegistration } from '@quicbaas/sdk';
+  import type { WorkflowDefinition, CreateWorkflowRequest, AgentBackendInfo, FleetNode } from '@quicbaas/sdk';
   import { Plus, Play, Upload, Workflow, Edit, Trash2, Copy } from 'lucide-svelte';
   import { routerStore } from '../../stores/router.svelte.ts';
 
@@ -153,17 +153,17 @@
 
   // Backends + agents for wizard suggestions
   let backends = $state<AgentBackendInfo[]>([]);
-  let fleetAgents = $state<AgentRegistration[]>([]);
+  let fleetAgents = $state<FleetNode[]>([]);
 
   async function fetchSupportData(): Promise<void> {
     try {
       const client = await getSDKClient();
       const [backendList, agentResp] = await Promise.all([
         client.orchestrator.listBackends(),
-        client.orchestrator.listAgents({ tenant_id: orchestratorStore.activeTenantID }),
+        client.orchestrator.listFleetNodes({ tenant_id: orchestratorStore.activeTenantID }),
       ]);
       backends = backendList ?? [];
-      fleetAgents = agentResp.agents ?? [];
+      fleetAgents = agentResp.nodes ?? [];
     } catch {
       // Non-fatal — wizard degrades gracefully to free-text inputs.
     }
@@ -371,14 +371,10 @@
   let startJobOpen = $state(false);
   let startJobWorkflow = $state('');
   let startJobDescription = $state('');
-  let startJobLeadBackend = $state('');
-  let startJobLeadModel = $state('');
 
   function openStartJob(wf: WorkflowDefinition): void {
     startJobWorkflow = wf.name;
     startJobDescription = `Run of ${wf.name}`;
-    startJobLeadBackend = wf.agents?.[0]?.backend ?? '';
-    startJobLeadModel = wf.agents?.[0]?.model ?? '';
     startJobOpen = true;
   }
 
@@ -394,8 +390,6 @@
   bind:open={startJobOpen}
   prefillWorkflow={startJobWorkflow}
   defaultDescription={startJobDescription}
-  defaultLeadBackend={startJobLeadBackend}
-  defaultLeadModel={startJobLeadModel}
 />
 
 <!-- ============================================================
@@ -555,7 +549,7 @@
 <!-- ============================================================
      Main view
      ============================================================ -->
-<div class="p-6 space-y-6">
+<div class="page">
   <PageHeader title="Workflows" subtitle="Named orchestration workflow definitions" icon={Workflow}>
     {#snippet children()}
       <div class="flex items-center gap-2">
@@ -608,17 +602,15 @@
         <EmptyState
           icon={Workflow}
           title="No workflow definitions registered."
-          description="Workflows define how your agent fleet collaborates on a job."
-          actionLabel="+ New Workflow"
+          description="Workflows define how your agents collaborate on a job across the fleet."
+          actionLabel="New Workflow"
           onaction={openCreateWizard}
         />
       {/snippet}
 
       {#snippet row(wf: WorkflowDefinition)}
         <tr
-          class="hover:bg-base-300/40 transition-colors duration-300"
-          class:bg-primary={highlightedName === wf.name}
-          class:bg-opacity-10={highlightedName === wf.name}
+          class="transition-colors duration-300 {highlightedName === wf.name ? 'bg-primary/10' : ''}"
         >
           <td class="font-mono text-xs font-semibold">{wf.name}</td>
           <td class="max-w-xs truncate text-sm">{wf.description || '—'}</td>
@@ -630,7 +622,7 @@
           <td>
             <div class="flex items-center gap-1">
               <button
-                class="btn btn-xs btn-primary gap-1"
+                class="btn btn-xs btn-ghost gap-1 text-primary"
                 onclick={() => openStartJob(wf)}
                 aria-label="Run workflow {wf.name}"
                 title="Run"

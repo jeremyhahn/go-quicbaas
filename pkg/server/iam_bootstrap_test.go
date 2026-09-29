@@ -44,11 +44,6 @@ import (
 // synthesizes for the platform admin in the system tenant.
 const bootstrapAdminEmail = "admin@" + qrdbsdk.SystemTenantID + ".qrdb.local"
 
-// testTrustDomain is the SPIFFE trust domain these tests configure. First-boot
-// fails closed without one (see ErrNoSPIFFETrustDomain), because the admin
-// certificate would carry no tenant SAN and could not authenticate.
-const testTrustDomain = "quicbaas.example.test"
-
 // ---------------------------------------------------------------------------
 // writeFirstBootBanner
 // ---------------------------------------------------------------------------
@@ -467,19 +462,37 @@ func TestFirstBootBootstrap_FreshStorage_CreatesAdminAssignment(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// firstBootBootstrap: second boot skips
+// firstBootBootstrap: second boot skips — for a REAL administrator only
 // ---------------------------------------------------------------------------
 
+// TestFirstBootBootstrap_ExistingAdmin_Skipped is the second-boot no-op, and it
+// is the direction that matters most: a bootstrap that re-runs on an
+// administered node would refuse the boot of a healthy deployment.
+//
+// It seeds the shape a completed first-boot leaves behind — a system-scoped
+// super_admin grant naming a user who EXISTS and may authenticate — because that
+// is what the skip predicate reads. It used to seed a grant naming
+// "existing-admin-id", a user that was never created, and require the skip
+// anyway; that is the orphaned grant #57 is about, and the test asserting it is
+// now TestFirstBootBootstrap_OrphanedGrantIsNotAnAdministrator below.
 func TestFirstBootBootstrap_ExistingAdmin_Skipped(t *testing.T) {
 	srv := withTempServer(t)
 	srv.config.Auth.AllowPasswordAuth = false
 	srv.config.Auth.InsecureDevMode = false
 
 	c := buildTestIAMComponents(t)
+	ctx := context.Background()
 
-	// Pre-seed an admin assignment to simulate a prior boot.
-	_, err := c.adminManager.CreateAssignment(context.Background(), iam.CreateAdminAssignmentOptions{
-		UserID:    "existing-admin-id",
+	admin, err := c.identityStore.CreateUser(ctx, qrdbsdk.SystemTenantID, iam.CreateUserOptions{
+		Email:     bootstrapAdminEmail,
+		Username:  "admin",
+		Lifecycle: iam.LifecycleActive,
+	})
+	require.NoError(t, err)
+
+	// Pre-seed the admin assignment a completed prior boot would have written.
+	_, err = c.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
+		UserID:    admin.ID,
 		AdminRole: iam.AdminRoleSuperAdmin,
 		GrantedBy: "system:first-boot",
 	})
@@ -492,18 +505,69 @@ func TestFirstBootBootstrap_ExistingAdmin_Skipped(t *testing.T) {
 	}
 	defer func() { writeFirstBootBannerFn = origPrint }()
 
-	bootstrapErr := srv.firstBootBootstrap(context.Background(), c)
-	require.NoError(t, bootstrapErr)
+	require.NoError(t, srv.firstBootBootstrap(ctx, c),
+		"a node that already has an administrator must boot, not re-bootstrap")
 
 	assert.False(t, bannerCalled, "banner must NOT be printed when an admin already exists")
 
 	// Still only one assignment.
-	assignments, listErr := c.adminManager.ListAssignments(context.Background(), iam.ListAdminAssignmentsOptions{
+	assignments, listErr := c.adminManager.ListAssignments(ctx, iam.ListAdminAssignmentsOptions{
 		ActiveOnly: true,
 		Limit:      10,
 	})
 	require.NoError(t, listErr)
 	assert.Len(t, assignments, 1, "no new assignment must be created on second boot")
+}
+
+// TestFirstBootBootstrap_OrphanedGrantIsNotAnAdministrator is the same setup the
+// old skip test used — a grant naming a user who does not exist — with the
+// opposite expectation.
+//
+// The grant is ACTIVE and counted by len(), so the old rule skipped bootstrap and
+// the node served with nobody able to administer it. First-boot must RE-ENTER
+// instead, which is observable as the banner being printed and the administrator
+// actually existing afterwards.
+func TestFirstBootBootstrap_OrphanedGrantIsNotAnAdministrator(t *testing.T) {
+	srv := withTempServer(t)
+	srv.config.Auth.AllowPasswordAuth = false
+	srv.config.Auth.InsecureDevMode = false
+
+	c := buildTestIAMComponents(t)
+	ctx := context.Background()
+
+	_, err := c.adminManager.CreateAssignment(ctx, iam.CreateAdminAssignmentOptions{
+		UserID:    "existing-admin-id", // never created: the grant outlived its user
+		AdminRole: iam.AdminRoleSuperAdmin,
+		GrantedBy: "system:first-boot",
+	})
+	require.NoError(t, err)
+
+	var bannerCalled bool
+	origPrint := writeFirstBootBannerFn
+	writeFirstBootBannerFn = func(_ interface{ WriteString(string) (int, error) }, _ adminEnrollmentBanner) {
+		bannerCalled = true
+	}
+	defer func() { writeFirstBootBannerFn = origPrint }()
+
+	require.NoError(t, srv.firstBootBootstrap(ctx, c))
+
+	assert.True(t, bannerCalled,
+		"first-boot SKIPPED on a grant that administers nothing. The node then "+
+			"serves with no administrator and nothing says so — the #57 fail-open")
+
+	admin, err := c.identityStore.GetUserByEmail(ctx, qrdbsdk.SystemTenantID, bootstrapAdminEmail)
+	require.NoError(t, err, "the re-entered bootstrap must create the platform admin")
+	require.True(t, admin.CanAuthenticate())
+
+	assignments, listErr := c.adminManager.ListAssignments(ctx, iam.ListAdminAssignmentsOptions{
+		ActiveOnly: true,
+		AdminRole:  iam.AdminRoleSuperAdmin,
+	})
+	require.NoError(t, listErr)
+	administered, adminErr := hasSystemAdministrator(ctx, c, assignments)
+	require.NoError(t, adminErr)
+	assert.True(t, administered,
+		"the re-entry must leave a grant the NEXT boot recognises as an administrator")
 }
 
 // ---------------------------------------------------------------------------
@@ -573,8 +637,23 @@ func buildTestIAMComponents(t *testing.T) *iamComponents {
 // assert the mtls factor the unified login ceremony will resolve.
 func buildTestIAMComponentsWithFactors(t *testing.T) (*iamComponents, *testutil.MemoryUserAuthFactors) {
 	t.Helper()
-
 	memStorage := iam.NewMemoryStorage()
+	return buildTestIAMComponentsOver(t, memStorage, memStorage, memStorage)
+}
+
+// buildTestIAMComponentsOver is buildTestIAMComponentsWithFactors with the user
+// and role persistence supplied by the caller, so a fixture can put a fault
+// injector or a call recorder between qrdb's first-boot and the store while
+// everything else stays the ordinary in-memory wiring. memStorage backs the
+// tenants and groups.
+func buildTestIAMComponentsOver(
+	t *testing.T,
+	memStorage *iam.MemoryStorage,
+	userStorage iam.UserStorage,
+	roleStorage iam.RoleStorage,
+) (*iamComponents, *testutil.MemoryUserAuthFactors) {
+	t.Helper()
+
 	tenantManager := iam.NewDefaultTenantManager(memStorage)
 
 	ctx := context.Background()
@@ -594,10 +673,9 @@ func buildTestIAMComponentsWithFactors(t *testing.T) (*iamComponents, *testutil.
 	}
 
 	identityStore := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
-		Tenants:      tenantManager,
+		UserStorage: userStorage,
+		RoleStorage: roleStorage,
+		Tenants:     tenantManager,
 	})
 
 	auditLogger, err := iam.NewAuditLogger()

@@ -39,7 +39,7 @@ const stamp = "2026-09-12T17:58:40.5536932Z "
 const (
 	// logGenuine is a red the change owns: a failed recipe, then the runner's
 	// own end-of-job marker. From job 77312.
-	logGenuine = stamp + "FAIL\tgithub.com/jeremyhahn/go-quicbaas/pkg/agent\t1.161s\n" +
+	logGenuine = stamp + "FAIL\tgithub.com/jeremyhahn/go-quicbaas/pkg/fleet\t1.161s\n" +
 		stamp + "make: *** [Makefile:516: vet] Error 1\n" +
 		stamp + "Cleaning up container for job Lint\n" +
 		stamp + "Job failed\n"
@@ -65,6 +65,22 @@ const (
 		"at revision v0.2.0-alpha: unknown revision v0.2.0-alpha\n" +
 		stamp + "make: *** [Makefile:516: vet] Error 1\n" +
 		stamp + "Job failed\n"
+
+	// logRunnerTeardown is a job whose every step and post-step passed, which
+	// the runner then failed removing its own container. The teardown lines
+	// are the ones go-luks2 PR #203 recorded on 2026-09-22 (go-quicbaas#1011).
+	logRunnerTeardown = stamp + "Success - Post Checkout code\n" +
+		stamp + "Cleaning up container for job Unit Tests\n" +
+		stamp + "Timed out waiting for the daemon to remove container 895cf614c74b, its volumes and network may be left behind\n" +
+		stamp + "##[error]Error while stop job container: Error response from daemon: remove GITEA-ACTIONS-TASK-73374: volume is in use\n" +
+		stamp + "Job failed\n"
+
+	// logStepFailedThenTeardown is the same teardown after a step that exited
+	// non-zero: the step's answer is the change's, whatever came after.
+	// The leading package line is there because the excerpt's first line is
+	// never read (see checksLogExcerpt), and a real tail has one.
+	logStepFailedThenTeardown = stamp + "ok  \tgithub.com/jeremyhahn/go-luks2/pkg/header\t0.212s\n" +
+		stamp + "##[error]Process completed with exit code 1.\n" + logRunnerTeardown
 
 	// logRegistryUnreachable is a job image that never arrived. From job 77520.
 	logRegistryUnreachable = stamp + "docker pull image=forge.internal:3001/jeremyhahn/ci-runner:latest\n" +

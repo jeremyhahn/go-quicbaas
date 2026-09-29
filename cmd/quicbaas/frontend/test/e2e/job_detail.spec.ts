@@ -131,7 +131,7 @@ test.describe('Software Factory > Jobs list and job detail', () => {
     const table = page.locator('table.table');
     await expect(table).toBeVisible({ timeout: 10_000 });
 
-    // Column headers from JobsView thead (uppercase, small text):
+    // Column headers from JobsView thead (sentence case):
     //   Job ID / Description / State / Iteration / Progress / Started
     await expect(table.locator('th', { hasText: 'Job ID' })).toHaveCount(1);
     await expect(table.locator('th', { hasText: 'Description' })).toHaveCount(1);

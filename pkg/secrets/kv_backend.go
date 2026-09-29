@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
@@ -39,6 +40,8 @@ type kvEntry struct {
 	CreatedAt time.Time         `json:"created_at"`
 	UpdatedAt time.Time         `json:"updated_at"`
 	DeletedAt *time.Time        `json:"deleted_at,omitempty"`
+	// CreatedBy is the authenticated principal that minted this version.
+	CreatedBy string `json:"created_by,omitempty"`
 }
 
 // kvCurrentEntry tracks the current version and soft-delete state of a path.
@@ -202,6 +205,7 @@ func (b *KVBackend) Store(ctx context.Context, path string, data map[string][]by
 	observed := cur.Version
 
 	now := time.Now()
+	createdBy := auth.PrincipalFromContext(ctx)
 	nextVer, err := b.allocateAndReserve(ctx, path, cur.Version, func(version int) *kvEntry {
 		return &kvEntry{
 			Path:      path,
@@ -210,6 +214,7 @@ func (b *KVBackend) Store(ctx context.Context, path string, data map[string][]by
 			Version:   version,
 			CreatedAt: now,
 			UpdatedAt: now,
+			CreatedBy: createdBy,
 		}
 	})
 	if err != nil {
@@ -477,6 +482,7 @@ func (b *KVBackend) ListVersions(ctx context.Context, path string) ([]*VersionMe
 		vm := &VersionMetadata{
 			Version:   entry.Version,
 			CreatedAt: entry.CreatedAt,
+			CreatedBy: entry.CreatedBy,
 			Deleted:   entry.Destroyed,
 		}
 		if entry.DeletedAt != nil {
@@ -536,6 +542,7 @@ func (b *KVBackend) Rollback(ctx context.Context, path string, version int) erro
 	// follows (see nextVersionNumber), reserved against concurrent winners
 	// exactly as Store reserves (review 994).
 	now := time.Now()
+	createdBy := auth.PrincipalFromContext(ctx)
 	nextVer, err := b.allocateAndReserve(ctx, path, cur.Version, func(version int) *kvEntry {
 		return &kvEntry{
 			Path:      path,
@@ -544,6 +551,7 @@ func (b *KVBackend) Rollback(ctx context.Context, path string, version int) erro
 			Version:   version,
 			CreatedAt: now,
 			UpdatedAt: now,
+			CreatedBy: createdBy,
 		}
 	})
 	if err != nil {

@@ -84,6 +84,20 @@ seal:
 iam:
   enabled: true
   mode: primary
+
+  # The SPIFFE trust domain the daemon issues and PINS against.
+  #
+  # REQUIRED on any node that has a CA: first-boot issues the platform admin's
+  # certificate through it, and it fails closed without a trust domain
+  # (ErrNoSPIFFETrustDomain) because the certificate would carry no tenant SAN
+  # for login to resolve. Since go-quicbaas#57 that failure refuses the boot
+  # instead of warning, so this node did not have an administrator before this
+  # line existed — the warning was simply swallowed.
+  #
+  # The value MUST equal IntegrationTrustDomain in test/integration/helpers/fixture_ca.go:
+  # the fixture client certificates carry spiffe://<td>/tenant/... SANs, and
+  # login pins the configured trust domain against the presented one.
+  spiffe_trust_domain: quicbaas.integration
   piv_login:
     enabled: true
     ca_file: /etc/quicbaas/certs/ca.crt

@@ -30,7 +30,6 @@ import (
 // Resource quota names for tenant quota management.
 const (
 	QuotaResourceUsers    = "users"
-	QuotaResourceGroups   = "groups"
 	QuotaResourceRoles    = "roles"
 	QuotaResourcePolicies = "policies"
 	QuotaResourceApps     = "apps"
@@ -207,7 +206,6 @@ func (m *DefaultTenantManager) CreateTenant(ctx context.Context, opts CreateTena
 	// Initialize default BaaS-layer IAM quotas if not provided.
 	// Engine-level quotas (users, roles, storage) are set on qrdb's TenantServicer.
 	quotas := TenantQuotas{
-		MaxGroups:   1000,
 		MaxPolicies: 1000,
 		MaxApps:     100,
 	}
@@ -490,8 +488,6 @@ func (m *DefaultTenantManager) CheckQuota(ctx context.Context, tenantID string, 
 	// qrdb's IncrementQuotaUsage for those resources instead.
 	var limit, current int64
 	switch resource {
-	case QuotaResourceGroups:
-		limit, current = quota.MaxGroups, quota.CurrentGroups
 	case QuotaResourcePolicies:
 		limit, current = quota.MaxPolicies, quota.CurrentPolicies
 	case QuotaResourceApps:

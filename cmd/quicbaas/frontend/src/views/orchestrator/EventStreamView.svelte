@@ -29,16 +29,16 @@
   );
 </script>
 
-<div class="p-6 space-y-6 flex flex-col h-full">
+<div class="page h-full">
   <PageHeader title="Live Events" subtitle="Real-time job event stream" icon={Activity}>
     {#snippet children()}
-      <select class="select select-bordered select-sm" bind:value={typeFilter}>
+      <select class="select select-sm w-auto min-w-40 bg-base-100" aria-label="Event type" bind:value={typeFilter}>
         {#each eventTypes() as type}
           <option value={type}>{type}</option>
         {/each}
       </select>
-      <label class="label cursor-pointer gap-2">
-        <span class="label-text text-sm">Auto-scroll</span>
+      <label class="label cursor-pointer gap-2 px-1">
+        <span class="text-sm text-base-content">Auto-scroll</span>
         <input type="checkbox" class="toggle toggle-sm toggle-primary" bind:checked={autoScroll} />
       </label>
       <button class="btn btn-ghost btn-sm" onclick={clearEvents} title="Clear events">

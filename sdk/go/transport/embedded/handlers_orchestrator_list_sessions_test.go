@@ -47,7 +47,7 @@ func newListSessionsTransport(t *testing.T) (*Transport, *capturingListSessionsA
 		mockQuicBaaS: &mockQuicBaaS{},
 		agent:        agent,
 		proj:         &fakeProjectService{},
-		admin:        &fakeAgentAdminService{},
+		admin:        &fakeFleetAdminService{},
 	})
 	require.NoError(t, err)
 	return tr, agent
@@ -125,7 +125,7 @@ func TestEmbeddedSpawnSession_PersistentMatchesTheWireTransports(t *testing.T) {
 				mockQuicBaaS: &mockQuicBaaS{},
 				agent:        agent,
 				proj:         &fakeProjectService{},
-				admin:        &fakeAgentAdminService{},
+				admin:        &fakeFleetAdminService{},
 			})
 			require.NoError(t, err)
 

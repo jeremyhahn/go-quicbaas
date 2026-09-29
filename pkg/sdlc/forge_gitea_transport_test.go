@@ -597,6 +597,44 @@ func TestGiteaMerge_UnansweredAndUnmergeableIsUnconfirmed(t *testing.T) {
 	}
 }
 
+// TestGiteaMerge_InternalErrorButLandedIsSuccess is go-quicbaas#1071: Gitea
+// answered HTTP 500 for a squash it had landed in the same second, and the
+// job was charged a failure for a change that was on main.
+func TestGiteaMerge_InternalErrorButLandedIsSuccess(t *testing.T) {
+	forge := newMergeForge(t, func(m *mergeForge, w http.ResponseWriter, _ *http.Request, _ int) {
+		m.land()
+		writeJSON(t, w, http.StatusInternalServerError, map[string]any{"message": ""})
+	})
+	backend, _ := forge.backend(t, shortWrites)
+
+	if err := backend.MergePullRequest(context.Background(), testRepo, 41, MergeSpec{Method: "squash"}, approved); err != nil {
+		t.Fatalf("a merge the forge completed was reported as %v", err)
+	}
+	if got := forge.count("POST " + merge41Path); got != 1 {
+		t.Errorf("merge requests = %d, want 1: a 500 is settled by reading, never by re-sending", got)
+	}
+}
+
+// TestGiteaMerge_InternalErrorAndNotLandedIsAnError proves the read-back does
+// not turn a 500 into a success when nothing merged.
+func TestGiteaMerge_InternalErrorAndNotLandedIsAnError(t *testing.T) {
+	forge := newMergeForge(t, func(_ *mergeForge, w http.ResponseWriter, _ *http.Request, _ int) {
+		writeJSON(t, w, http.StatusInternalServerError, map[string]any{"message": "boom"})
+	})
+	forge.mergeable = false
+	backend, _ := forge.backend(t, shortWrites)
+
+	err := backend.MergePullRequest(context.Background(), testRepo, 41, MergeSpec{Method: "squash"}, approved)
+	var unconfirmed *ForgeWriteUnconfirmedError
+	if !errors.As(err, &unconfirmed) {
+		t.Fatalf("error = %v, want ForgeWriteUnconfirmedError", err)
+	}
+	var apiErr *GiteaAPIError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusInternalServerError {
+		t.Errorf("error = %v, want the 500 kept as its cause", err)
+	}
+}
+
 // TestGiteaMerge_AnAlreadyMergedPullRequestIsNotMergedAgain proves the retry
 // converges: once the forge has finished, the next attempt stops at the read.
 func TestGiteaMerge_AnAlreadyMergedPullRequestIsNotMergedAgain(t *testing.T) {

@@ -1,6 +1,6 @@
 # Workspace Storage Tiers
 
-> **Status: NORMATIVE** · Last verified: 2026-09-12
+> **Status: NORMATIVE** · Last verified: 2026-09-24
 > Supplement to the Software Factory feature folder: where a sandboxed agent's
 > checkout physically lives, what bounds it, and what makes its work survive the
 > container. Conflicts with this document are defects.
@@ -54,9 +54,23 @@ container it always launched, down to the mounts and to
 zero value to `ephemeral` would silently move every existing project's work into
 RAM and lose anything a turn had not pushed.
 
+The three keys travel **flat** on `CreateProject` / `UpdateProject` and on the
+project read shape over every transport (REST, gRPC, QUIC, MCP, Unix and the
+embedded transport); gRPC carries them on `api/proto/project.proto`. On an
+update, `workspace_tier` applies when non-empty and the two sizes are
+presence-based: absent leaves the stored size alone, `0` clears it.
+
+```bash
+quicbaas project update <id> --workspace-tier ephemeral \
+  --workspace-tmpfs-mb 4096 --container-memory-mb 8192
+```
+
 An unrecognized tier is **refused**, not rounded down: the zero value is the
 weakest reading of an operator's intent, so a typo in `ephemeral` would quietly
-leave the project writing to the disk it was configured off.
+leave the project writing to the disk it was configured off. The refusal is
+the project service's (`ProjectStorage.Validate` on both the create builder and
+the update applier), so every transport answers with the same
+`InputValidationError` rather than each handler checking separately.
 
 ### Transitional risk
 
@@ -64,16 +78,6 @@ Memory and tmpfs limits preserve today's **unbounded** behaviour until an
 operator sets them. An ephemeral tier with `workspace_tmpfs_mb: 0` and
 `container_memory_mb: 0` is a tmpfs that may grow until the host runs out of
 memory. Configure both together.
-
-### Not yet reachable from a client
-
-`ProjectStorage` is carried on the durable project record and honoured by both
-spawn paths, but `CreateProject` / `UpdateProject` do not yet carry the three
-fields across the SDK and the five transports (REST, gRPC, QUIC, MCP, Unix) —
-gRPC needs a `project.proto` change, and a surface wired on four transports out
-of five is worse than one wired on none. Until that lands, the tier is settable
-only by a writer that holds the `ProjectStore`, which means **PR 1 is inert in
-production**. Tracked as go-quicbaas#913.
 
 ## How the tier reaches a container
 
@@ -105,7 +109,7 @@ disk.
 
 ### A remote spawn
 
-A spawn dispatched to a remote agent daemon is sandboxed by *that* daemon, which
+A spawn dispatched to a remote fleet node daemon is sandboxed by *that* daemon, which
 does not hold the project record — so the resolved plan travels on the wire, for
 the same reason `trust_level` does:
 
@@ -114,7 +118,7 @@ SpawnSessionRequest.storage          api/proto/orchestrator.proto (field 27)
 ContainerMount.tmpfs_size_bytes      api/proto/orchestrator.proto (field 5)
 ```
 
-`pkg/agent/spawn_wire_contract_test.go` walks `SpawnRequest` by reflection and
+`pkg/fleet/spawn_wire_contract_test.go` walks `SpawnRequest` by reflection and
 fails on any field its sentinel leaves at zero, so a storage term that stopped
 travelling is a test failure rather than a remote worker quietly writing to that
 host's disk.

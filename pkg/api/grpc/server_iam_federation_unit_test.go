@@ -140,7 +140,6 @@ func TestConvertProtoToExternalProvider(t *testing.T) {
 			AutoProvision: true,
 			AllowLinking:  true,
 			DefaultRoles:  []string{"viewer"},
-			DefaultGroups: []string{"users"},
 		}
 
 		result := convertProtoToExternalProvider(req)
@@ -161,7 +160,6 @@ func TestConvertProtoToExternalProvider(t *testing.T) {
 		assert.True(t, result.AutoProvision)
 		assert.True(t, result.AllowLinking)
 		assert.Equal(t, []string{"viewer"}, result.DefaultRoles)
-		assert.Equal(t, []string{"users"}, result.DefaultGroups)
 		assert.Nil(t, result.ClaimMappings)
 	})
 
@@ -233,7 +231,6 @@ func TestMergeProtoUpdateToExternalProvider(t *testing.T) {
 			AutoProvision: false,
 			AllowLinking:  false,
 			DefaultRoles:  []string{"admin"},
-			DefaultGroups: []string{"admins"},
 		}
 
 		result := mergeProtoUpdateToExternalProvider(req, baseProvider)
@@ -315,7 +312,6 @@ func TestConvertExternalProviderToProto(t *testing.T) {
 			AutoProvision: true,
 			AllowLinking:  true,
 			DefaultRoles:  []string{"role1"},
-			DefaultGroups: []string{"group1"},
 			Created:       now,
 			Updated:       now,
 		}

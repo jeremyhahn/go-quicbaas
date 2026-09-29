@@ -22,13 +22,105 @@ data directory — it delegates to qrdb's canonical first-boot, which:
    to the user, so the certificate authenticates as that admin.
 
 QuicBaaS then enrolls the certificate as an `mtls` auth factor (so
-`quicbaas auth login --method mtls` resolves it), grants a `super_admin`
-assignment, writes the issued material to `<data-dir>/admin/`, and prints a
-banner to **stderr** — not the structured log stream — so it is visible
-regardless of log level.
+`quicbaas auth login --method mtls` resolves it), writes the issued material to
+`<data-dir>/admin/`, prints a banner to **stderr** — not the structured log
+stream — so it is visible regardless of log level, and **last of all** grants the
+`super_admin` assignment.
 
-On every subsequent boot the admin assignment already exists, the check returns
+The ordering is load-bearing. The grant is what the next boot reads as
+"bootstrap completed", so every step it vouches for runs before it is written: a
+bootstrap that fails anywhere leaves no grant behind, and the next boot re-enters
+the (idempotent) sequence instead of starting a server whose administrator never
+received a credential.
+
+On every subsequent boot that check finds a usable system administrator, returns
 immediately, and no banner is printed.
+
+## The Daemon Refuses to Start Without an Administrator
+
+A failed first-boot is **fatal**, whatever the cause. The daemon returns a
+`*NoAdministratorError` from IAM initialization and startup aborts before any
+listener comes up.
+
+It used to log
+
+```
+First-boot bootstrap failed — no admin credential will be created this boot
+```
+
+at WARN and carry on serving. The result was a live node answering
+`/health/ready` with 200 while no admin user, no admin assignment and no
+certificate existed — readiness knows only about raft, so it had nothing to say
+about administrability — and the warning itself was invisible at `--log-level
+error`. The cause does not grade the severity: a missing config line and corrupt
+storage leave the same hole, and neither is fixable from inside a process that
+has already started serving.
+
+The error names the cause and the remedy, and the cause is reachable with
+`errors.Is` (for example `ErrNoSPIFFETrustDomain`) as well as printed:
+
+```
+server refuses to start: first-boot created no administrator, so nobody can
+administer this server. cause: first-boot bootstrap: issue admin certificate:
+first-boot: iam.spiffe_trust_domain is required to issue the admin certificate
+(example: iam.spiffe_trust_domain: quicbaas.example.test). Fix the cause and
+start again — first-boot has not completed and will resume from where it stopped.
+```
+
+Restarting resumes; it does not corrupt. Because the grant is written last,
+there is nothing half-granted to clean up.
+
+The one cause that is **not** resumable is an undelivered admin bundle, and the
+message withholds the closing reassurance for it alone: that cause carries its
+own terminal remedy (wipe and re-bootstrap — see below), and telling the operator
+in the same sentence that a restart would resume sends them round a loop that
+refuses identically every time.
+
+### A count is not an administrator
+
+"An administrator exists" is not "the assignment listing is non-empty". The
+check requires a grant that is `super_admin`, **system-scoped** (no tenant ids —
+the shape first-boot creates), and held by a user who still exists and may
+authenticate. An orphaned grant whose user was deleted, a tenant-scoped
+administrator, or a suspended account all satisfy a count while leaving nobody
+able to administer the platform, and first-boot re-enters rather than skipping on
+any of them.
+
+A lookup that cannot answer is **not** read as absence: it is reported, and the
+boot fails closed.
+
+### A re-entry that cannot deliver a credential refuses
+
+qrdb's first-boot is idempotent and issues no certificate once the admin user
+exists. So a re-entry on a CA-backed deployment has no bundle to write, and the
+operator would be left without the private key for a certificate already bound to
+them. That case fails with `AdminBundleNotDeliveredError` rather than completing:
+reissue-on-re-entry is not implemented, so the remedy is to wipe and
+re-bootstrap. A CA-less deployment is unaffected — there was never a certificate
+to deliver, and that is its completed state.
+
+### How the refusal is tested
+
+Each guarantee above has a unit test that fails when the guarantee is
+reverted. They run against the fresh-install fixture in
+`pkg/server/first_boot_fresh_install_test.go`, which comes in two shapes:
+
+- **`newFreshInstallNode`** — a real embedded qrdb node on which no first-boot
+  has run, driven through `initializeIAMComponents`, the function production
+  calls.
+- **`newFreshInstall`** — in-memory IAM components whose user and role writes
+  pass through a fault injector and a call recorder. This lets a test stop
+  qrdb's own first-boot part-way through.
+
+| Guarantee | Reverting it fails |
+|---|---|
+| A failed first-boot refuses the boot (`*NoAdministratorError`) | `TestInitializeIAMComponents_RefusesWhenFirstBootFailsOnAFreshInstall` |
+| A failure inside qrdb's first-boot resumes through the role-name resolver (`RoleAdapter.GetRoleByName`) | `TestFirstBootBootstrap_ResumesAfterAFailureInsideQRDBFirstBoot` |
+| A CA-backed re-entry with no reissued certificate refuses (`AdminBundleNotDeliveredError`) | `TestFirstBootBootstrap_ReEntryWithoutAReissuedCertRefuses` |
+
+The `startService` tests stub the IAM seam. They prove the caller refuses a
+`*NoAdministratorError`, not that one is produced; producing one is the first
+row's job.
 
 ## Enrollment Paths
 
@@ -107,11 +199,16 @@ The xkms CA stamps a tenant-scoped SPIFFE URI SAN
 **only when a trust domain is configured**, and REST login resolves — and pins —
 the tenant from exactly that SAN.
 
-With no trust domain the certificate carries no SPIFFE SAN, so login falls back
-to home-realm discovery. A freshly initialized node has no HRD routing entries,
-so `POST /api/v1/auth/login/piv` fails closed with
+Without a trust domain the certificate would carry no SPIFFE SAN, login would
+fall back to home-realm discovery, and a freshly initialized node has no HRD
+routing entries — so `POST /api/v1/auth/login/piv` would fail closed with
 `401 login tenant could not be resolved` even with an explicit `X-Tenant` header.
-The daemon logs a warning at first boot when this is the case.
+
+First-boot therefore **fails closed** (`ErrNoSPIFFETrustDomain`) rather than
+issuing a credential nobody can use, and since that failure is fatal the daemon
+refuses to start: a CA-backed deployment with no `iam.spiffe_trust_domain` does
+not boot. Existing deployments are unaffected — a node that already has an
+administrator never re-enters first-boot.
 
 `quicbaasd init` propagates this setting from the loaded configuration. It does
 **not** synthesize a default: the trust domain is pinned at login, so a

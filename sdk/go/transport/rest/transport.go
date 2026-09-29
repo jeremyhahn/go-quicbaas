@@ -276,6 +276,11 @@ func (t *Transport) Request(ctx context.Context, service, method string, req int
 		return t.projectHandler.handleRequest(ctx, method, req)
 	}
 
+	// Route the tenant AI agent catalog through its handler.
+	if isAgentsService(service) {
+		return t.handleAgentsRequest(ctx, method, req)
+	}
+
 	// Route SDLC project registration through its handler.
 	if isSDLCService(service) {
 		return t.sdlcHandler.handleRequest(ctx, method, req)

@@ -418,7 +418,16 @@ func NewTaskStore(kv interfaces.KVStore, arbiter TaskClaimArbiter, opts ...Store
 // task's history. A queue that cannot drain itself after a fleet disturbance is
 // not a queue.
 //
-// IT IS REACHED ONLY BY ReadmitTask, which is an explicit, audited operator
+// WHY blocked -> completed EXISTS. A parked task is sometimes finished by a
+// person rather than by another attempt: the owner reads the question, decides
+// no further work is needed, and closes it (the attention inbox's
+// close_as_done, go-quicbaas#1020). Without this edge the only ways out of
+// blocked were "run it again" and "call it a failure", and neither is what was
+// decided. IT IS REACHED ONLY BY CloseBlockedTask: CompleteTask still refuses a
+// blocked task, because a worker reporting completion for a task that has
+// since been parked is a stale report, not a ruling.
+//
+// failed -> pending IS REACHED ONLY BY ReadmitTask, which is an explicit, audited operator
 // decision that records TaskConcludedReadmitted and preserves the prior
 // attempts. Nothing readmits a task automatically: a task that failed because
 // the work is impossible stays failed until a person says otherwise. That is
@@ -443,8 +452,9 @@ var taskTransitions = map[TaskStatus]map[TaskStatus]struct{}{
 		TaskStatusBlocked:   {},
 	},
 	TaskStatusBlocked: {
-		TaskStatusPending: {},
-		TaskStatusFailed:  {},
+		TaskStatusPending:   {},
+		TaskStatusCompleted: {},
+		TaskStatusFailed:    {},
 	},
 	TaskStatusFailed: {
 		TaskStatusPending: {},
@@ -548,7 +558,7 @@ func GenerateTaskID() (string, error) {
 //
 // It is the same defect this codebase has now fixed five times, and the same
 // shape of fix: agents in #663, OAuth2 applications in #644, pooled accounts in
-// #535, projects in #634, and see agentTenantContext for the reasoning in full.
+// #535, projects in #634, and see fleetTenantContext for the reasoning in full.
 // Doing it in the store rather than at each caller is what stops there being a
 // sixth: a reader that forgets to stamp is invisible until it destroys something.
 //
@@ -617,10 +627,14 @@ func (s *taskStore) load(ctx context.Context, key, tenantID, taskID string) (*Ta
 // owns; persisting a copy would leave the next attempt's page showing the
 // previous attempt's daemon, with nothing to say which it was. Account.Default
 // is handled the same way and for the same reason (see marshalAccount).
+//
+// AND IT ENCODES THE taskRecord, NOT THE Task: Task.MarshalJSON adds the
+// accounting derived on read (see task_representation.go), which is arithmetic
+// over this record and would only ever be a stale copy of it here.
 func marshalTask(task *Task) ([]byte, error) {
 	stored := *task
 	stored.AgentID = ""
-	data, err := json.Marshal(&stored)
+	data, err := json.Marshal((*taskRecord)(&stored))
 	if err != nil {
 		return nil, &TaskStoreError{
 			Sentinel: ErrTaskStoreMarshal,
@@ -1064,7 +1078,18 @@ func (s *taskStore) GetTask(ctx context.Context, tenantID, taskID string) (*Task
 var errTaskScanStop = errors.New("task store: scan complete")
 
 // ListTasks lists tasks matching the filter within a tenant, in key order.
+// Records that cannot be decoded are left out; ListTaskRecords names them.
 func (s *taskStore) ListTasks(ctx context.Context, tenantID string, filter *TaskFilter) ([]*Task, error) {
+	listing, err := s.ListTaskRecords(ctx, tenantID, filter)
+	if err != nil {
+		return nil, err
+	}
+	return listing.Tasks, nil
+}
+
+// ListTaskRecords lists tasks matching the filter within a tenant, in key
+// order, and names every record under the tenant it could not decode.
+func (s *taskStore) ListTaskRecords(ctx context.Context, tenantID string, filter *TaskFilter) (*TaskListing, error) {
 	ctx = taskTenantContext(ctx, tenantID)
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -1080,12 +1105,16 @@ func (s *taskStore) ListTasks(ctx context.Context, tenantID string, filter *Task
 		return nil, err
 	}
 
-	tasks := make([]*Task, 0)
-	scanErr := s.kv.Scan(ctx, prefix, func(_ string, value []byte) error {
+	listing := &TaskListing{Tasks: make([]*Task, 0)}
+	scanErr := s.kv.Scan(ctx, prefix, func(key string, value []byte) error {
 		var task Task
 		if err := json.Unmarshal(value, &task); err != nil {
 			// One unreadable record must not hide the rest of the tenant's
-			// work queue, so the listing skips it.
+			// work queue, so the listing carries on past it — but it is
+			// NAMED rather than dropped, because a reader deciding from a
+			// task's absence cannot tell a record it could not read from
+			// one that does not exist.
+			listing.Unreadable = append(listing.Unreadable, idFromKey(key, prefix))
 			return nil
 		}
 		if task.TenantID != tenantID {
@@ -1098,9 +1127,9 @@ func (s *taskStore) ListTasks(ctx context.Context, tenantID string, filter *Task
 			return nil
 		}
 
-		tasks = append(tasks, &task)
+		listing.Tasks = append(listing.Tasks, &task)
 
-		if filter != nil && filter.Limit > 0 && len(tasks) >= filter.Limit {
+		if filter != nil && filter.Limit > 0 && len(listing.Tasks) >= filter.Limit {
 			return errTaskScanStop
 		}
 		return nil
@@ -1112,7 +1141,7 @@ func (s *taskStore) ListTasks(ctx context.Context, tenantID string, filter *Task
 		return nil, backendError("failed to list tasks", scanErr)
 	}
 
-	return tasks, nil
+	return listing, nil
 }
 
 // taskMatchesFilter reports whether task satisfies every populated field of
@@ -1357,6 +1386,11 @@ func (s *taskStore) finish(ctx context.Context, tenantID, taskID string, target 
 	}
 
 	return s.mutate(ctx, tenantID, taskID, func(current *Task, now int64) (*Task, error) {
+		// blocked -> completed belongs to CloseBlockedTask alone; see the
+		// transition table.
+		if target == TaskStatusCompleted && current.Status == TaskStatusBlocked {
+			return nil, &TaskInvalidStateError{TaskID: taskID, CurrentState: current.Status, TargetState: target}
+		}
 		if err := transition(current, target, now); err != nil {
 			return nil, err
 		}
@@ -1487,6 +1521,72 @@ func (s *taskStore) readmit(ctx context.Context, tenantID, taskID string) error 
 		}
 		return current, nil
 	})
+}
+
+// CloseBlockedTask completes a blocked task without readmitting it: an
+// operator has ruled that no further work is needed. The block is cleared so
+// the completed record does not still read as parked, and the conclusion is
+// the ordinary `completed`.
+func (s *taskStore) CloseBlockedTask(ctx context.Context, tenantID, taskID string, result *TaskResult) error {
+	ctx = taskTenantContext(ctx, tenantID)
+	err := s.closeBlocked(ctx, tenantID, taskID, result)
+	s.audit(ctx, AuditActionUpdate, tenantID, taskID, err)
+	return err
+}
+
+func (s *taskStore) closeBlocked(ctx context.Context, tenantID, taskID string, result *TaskResult) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.mutate(ctx, tenantID, taskID, func(current *Task, now int64) (*Task, error) {
+		if current.Status != TaskStatusBlocked {
+			return nil, &TaskInvalidStateError{TaskID: taskID, CurrentState: current.Status, TargetState: TaskStatusCompleted}
+		}
+		if err := transition(current, TaskStatusCompleted, now); err != nil {
+			return nil, err
+		}
+		current.Result = result
+		current.CompletedAt = now
+		current.BlockKind = ""
+		current.BlockedReason = ""
+		current.BlockFaultClass = ""
+		current.AssignedTo = ""
+		current.ClaimedAt = 0
+		current.RetryNotBefore = 0
+		current.ConclusionReason = TaskConcludedCompleted
+		return current, nil
+	})
+}
+
+// BumpReviewRoundBudget raises a blocked task's ReviewRoundBonus by one,
+// bounded by MaxReviewRoundBonus.
+func (s *taskStore) BumpReviewRoundBudget(ctx context.Context, tenantID, taskID string) (int, error) {
+	ctx = taskTenantContext(ctx, tenantID)
+	bonus, err := s.bumpReviewRoundBudget(ctx, tenantID, taskID)
+	s.audit(ctx, AuditActionUpdate, tenantID, taskID, err)
+	return bonus, err
+}
+
+func (s *taskStore) bumpReviewRoundBudget(ctx context.Context, tenantID, taskID string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	var bonus int
+	err := s.mutate(ctx, tenantID, taskID, func(current *Task, now int64) (*Task, error) {
+		if current.Status != TaskStatusBlocked {
+			return nil, &TaskInvalidStateError{TaskID: taskID, CurrentState: current.Status, TargetState: TaskStatusBlocked}
+		}
+		if current.ReviewRoundBonus >= MaxReviewRoundBonus {
+			return nil, &ReviewRoundBudgetExhaustedError{TaskID: taskID, Max: MaxReviewRoundBonus}
+		}
+		current.ReviewRoundBonus++
+		bonus = current.ReviewRoundBonus
+		return current, nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return bonus, nil
 }
 
 // checkDependenciesResolved verifies every dependency task is completed. A

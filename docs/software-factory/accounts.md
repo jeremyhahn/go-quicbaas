@@ -86,7 +86,7 @@ the failure class (never the underlying error text), so it drops out of
 selection and appears in the attention inbox. The caller's own context ending
 marks nothing.
 
-The same holds for a spawn on a **remote agent daemon**. The control plane
+The same holds for a spawn on a **remote fleet node daemon**. The control plane
 refuses the daemon's release with `409` and `"fault_class":
 "credential_not_found"` in the error body; the daemon's client rebuilds
 `ErrAccountCredentialNotFound` from that class, so its spawn reports the same
@@ -95,7 +95,7 @@ what carries it: a revoked delivery grant is also a `409` and is not a
 configuration fault.
 
 To return it to service, write the secret, then re-apply the reference:
-`quicbaas agent account update <id> --credential-secret-ref <same name>`. The
+`quicbaas account update <id> --credential-secret-ref <same name>`. The
 update re-checks the secret and clears `error`; it does not touch `revoked` or
 `limited`.
 
@@ -109,7 +109,7 @@ the retry does not depend on still looking like a switch. `rotate` is refused on
 account — its rotation is a secret write. Deleting an account never deletes
 the secret it names; the operator owns it.
 
-**Workers never see a reference.** The agent daemon's account wire shape has
+**Workers never see a reference.** The fleet node daemon's account wire shape has
 no reference field, and its token manager has no resolver: a worker host
 receives the RESOLVED envelope through the release verb, or nothing. That
 release is marked `single_use` (below, under Rotation), so a secret write
@@ -227,14 +227,21 @@ the sanitized message.
 Selection is a pure function over the metadata half:
 
 - **`account_id`** pins one account. No strategy runs; that account or nothing.
-- **`account_auto`** runs a strategy — `static` (the scope default) or
-  `least_usage` (the fewest cumulative tokens on the cost ledger).
+- **`account_auto`** runs a strategy. The default is `least_usage`, which picks
+  the account serving the fewest live sessions, then the one with the least
+  recorded usage (see [Balancing](#balancing-and-session-caps)). `static`
+  (always the scope default) stays available for a caller that names it.
 - **`account_allow` / `account_exclude`** narrow the candidate list for one
   resolution. Rotation uses `account_exclude` to guarantee forward progress.
+- **An Agent's `account` policy** supplies the strategy and the allow-list for
+  every spawn by that Agent, unless the spawn pins `account_id`. The precedence
+  and the checks made on save are in [agents.md](agents.md#accounts).
 
 An account is a candidate only if it is *selectable now*: `active`, or
 `limited` with a hold that has lapsed. `revoked` and `error` need an operator;
-a live limit hold clears itself at `available_at`.
+a live limit hold clears itself at `available_at`. A static-token account whose
+declared expiry is less than two minutes away is not handed to a **new**
+session either (see [the expiry buffer](#the-expiry-buffer)).
 
 All of that is `orchestration.AccountResolver`, and it runs **unchanged** on
 both sides of the seam below.
@@ -249,7 +256,7 @@ into the subprocess: environment variables directly, file-based material into a
 fresh per-session directory that is bind-mounted read-only into the container.
 Nothing crosses a network.
 
-### Remote (an agent daemon runs the agent)
+### Remote (a fleet node daemon runs the agent)
 
 This is the interesting case, and the one go-quicbaas#734 built.
 
@@ -261,8 +268,8 @@ resolves it for itself:
 ```
 daemon spawn
   └─ orchestration.AccountResolver          ← the SAME resolver the central runs
-       ├─ orchestration.AccountStore        ← pkg/agent: GET /api/v1/agent-accounts
-       ├─ orchestration.AccountTokenManager ← pkg/agent: read-through credential store
+       ├─ orchestration.AccountStore        ← pkg/fleet: GET /api/v1/agent-accounts
+       ├─ orchestration.AccountTokenManager ← pkg/fleet: read-through credential store
        │    └─ POST /api/v1/agent-accounts/{id}/materialize
        └─ orchestration.AccountStrategyRegistry
             └─ GET /api/v1/agent-accounts/{id}/usage
@@ -284,8 +291,8 @@ stack whose response body is secret material.** It is correspondingly narrow.
 
 **Authorization.** It requires `agent_accounts:materialize`, which is *not* the
 read verb that lists the pool: an identity that may see the pool's metadata must
-not thereby be able to extract every login in it. An enrolled agent daemon holds
-it through the tenant-scoped `agent-runtime` role (`iam.AgentRuntimeGrant`).
+not thereby be able to extract every login in it. An enrolled fleet node daemon holds
+it through the tenant-scoped `agent-runtime` role (`iam.FleetRuntimeGrant`).
 
 **Tenancy is the caller's own.** The tenant comes from the authenticated
 principal, never from the request. A `tenant_id` naming anything else is refused
@@ -365,7 +372,7 @@ conclusion never ran because its node was destroyed rather than shut down.
 | Path | Where the grant is issued | How the session learns it |
 | --- | --- | --- |
 | In-process spawn (credential into the subprocess env / materialization dir) | `accountResolver.Resolve` | Directly: `ResolvedAccountCredential.LeaseID` |
-| Remote release to an enrolled daemon | `MaterializeAccountCredential` | The daemon reports it back on the spawn response (`pkg/agent/account_grant.go`) |
+| Remote release to an enrolled daemon | `MaterializeAccountCredential` | The daemon reports it back on the spawn response (`pkg/fleet/account_grant.go`) |
 
 A release that cannot obtain a grant **fails**: a credential nothing can revoke
 is the state the mechanism exists to remove. A deployment with no lease manager
@@ -403,7 +410,7 @@ provider login, so it is the only place the control has to hold.
   The caller's belief about its own copy is irrelevant; the lease store decides.
 
 The daemon's read-through cache presents the grant it was released under on every
-refresh (`pkg/agent/account_secrets.go`). That is what makes the distinction
+refresh (`pkg/fleet/account_secrets.go`). That is what makes the distinction
 real: without it every refresh would look like a first delivery and revocation
 would be unenforceable. `lease_id` travels on the REST body the daemon uses;
 `credential_lease_id` comes back on the remote spawn response, and `job_id` goes
@@ -478,7 +485,7 @@ was released under, never the login. `pkg/orchestration`'s
 
 ## The daemon's own store
 
-`pkg/agent` supplies an `interfaces.SecretsManager` whose reads are satisfied
+`pkg/fleet` supplies an `interfaces.SecretsManager` whose reads are satisfied
 from the release endpoint, and plugs it into the ordinary
 `orchestration.AccountSecretStore`. Exactly one method does anything; every
 write-ish method refuses with a typed error, because each one would otherwise
@@ -584,7 +591,7 @@ is handed the same `AccountTokenManager` the in-process resolver uses, so an
 before the envelope is released. Without that wiring the verb fails closed with
 `503`.
 
-**Daemon** (`cmd/quicbaas/agent_serve.go`): `agent.NewAccountPool` composes the
+**Daemon** (`cmd/quicbaas/fleet_serve.go`): `agent.NewAccountPool` composes the
 resolver over the daemon's existing control-plane client and token source, and
 `Runtime.SetAccountResolver` attaches it to every ACP backend the daemon serves.
 A daemon with no resolver refuses every pooled spawn with
@@ -601,7 +608,50 @@ unmetered and behaves exactly as it did before. Both ask BEFORE the envelope is
 resolved, so a refused release never renews an `oauth_refresh` credential on
 behalf of work that is about to be refused.
 
-See [cost-enforcement.md](cost-enforcement.md).
+For an automatic selection the check is first a **candidate filter**, run
+before the strategy ranks (go-quicbaas#1058, ruling F6): a spent account is
+skipped and the pool fails over to a sibling with headroom. A pool whose every
+account is spent is `AccountsSpentError`, a deferral until the first one frees
+up, never a park. A worker daemon reads each account's verdict from the
+`spend` field of the usage call.
+
+The policy — sliding windows in tokens and/or list-price dollars, and the
+failure breaker — is settable on create and update over every transport and
+the CLI (`--spend-window`, `--breaker-failures/--breaker-window/--breaker-cooldown`,
+`--clear-spend`, `--clear-breaker`; go-quicbaas#781). A malformed window or
+breaker is refused at the write as `AccountInvalidError` naming
+`spend.quota.*` or `spend.breaker.*`.
+
+See [cost-enforcement.md](cost-enforcement.md#spend-limits).
+
+## Billing
+
+`Account.Billing` says how the account is billed, which decides the BILLED
+figure every turn on it carries beside its list-price equivalent
+(go-quicbaas#1058; see
+[cost-enforcement.md](cost-enforcement.md#billing)):
+
+| `billing.mode` | A turn bills | Notes |
+|---|---|---|
+| `subscription` | `$0` — a flat fee does not move with use | `billing.monthly_fee_micros` is the fee, recorded and shown on the account; reports do not pro-rate it yet (deferred to ruling F7) |
+| `api` | its list price | a fee is refused: the bill is the usage |
+| (not configured) | unknown | never assumed to be a subscription |
+
+It is settable on create and update over every transport: REST (`billing` on
+`POST /api/v1/agent-accounts` and `PUT /api/v1/agent-accounts/{id}`), gRPC
+(`AccountBilling billing` on `CreateAccountRequest` / `UpdateAccountRequest`),
+QUIC and Unix (the REST and gRPC surfaces), MCP (`billing` on
+`quicbaas_agent_account_create` / `_update`), the embedded and Go SDK
+(`account.Billing`), the TypeScript SDK (`AccountBilling`), and the CLI:
+
+```
+quicbaas account update acct_abc123 --billing subscription --monthly-fee 200
+quicbaas account update acct_abc123 --billing none      # back to not configured
+```
+
+On update an absent `billing` leaves it unchanged; a present empty one clears
+it. A malformed billing is refused at the write with the field named
+(`billing.mode`, `billing.monthly_fee_micros`).
 
 ## Model
 
@@ -630,21 +680,210 @@ into the spawn's environment/files, and never returned by any
 `AccountSelectionRequest{TenantID, ProjectID, Provider, PinnedAccountID}` goes
 through one of:
 
-- **`static`** (default) — uses `PinnedAccountID` when set, otherwise the
-  candidate with `Default == true`, otherwise a lone remaining candidate.
-  Ambiguity (more than one undesignated candidate) is a
-  `NoAccountAvailableError`, never a silent pick.
-- **`least_usage`** — picks the candidate with the fewest cumulative **tokens**
-  recorded via `CostTracker.GetAccountUsage`. Tokens (not spend or request
-  count) because tokens are the only unit `CostTracker` measures today; a
-  request-count metric would treat a one-line prompt and an hour-long
-  agentic session as equal load.
+- **`least_usage`** (the production default, on the control plane and on every
+  worker daemon; `NewBalancedAccountStrategyRegistry`) ranks the candidates
+  by, most significant first:
+  1. **live sessions**: an account serving none beats one serving two;
+  2. **recorded usage**: cumulative **tokens** from
+     `CostTracker.GetAccountUsage`. Tokens, not spend or request count,
+     because tokens are what `CostTracker` measures, and a request count would
+     treat a one-line prompt and an hour-long agentic session as equal load;
+  3. **the default account**, so `default: true` means *preferred among
+     equals*, never *always*;
+  4. **least recently used** (`last_used_at`);
+  5. the account ID, so the answer is deterministic.
+
+  An account at its `max_concurrent_sessions` cap is not a candidate. A pool
+  whose every candidate is capped answers `AccountsSaturatedError`.
+- **`static`** uses `PinnedAccountID` when set, otherwise the candidate with
+  `Default == true`, otherwise a lone remaining candidate. Ambiguity (more
+  than one undesignated candidate) is a `NoAccountAvailableError`, never a
+  silent pick. It is registered but no longer the default: with static as the
+  default, the burn-in pool of three Claude accounts ran every worker on the
+  one marked default until the provider refused it (go-quicbaas#1046).
 
 A project-scoped selection (`ProjectID` set) that finds no active candidates
 falls back to the tenant-wide pool for the same provider before failing.
 
 New strategies register into `AccountStrategyRegistry` by name — no change to
 `AccountResolver` is required.
+
+## Balancing and session caps
+
+Three inputs decide which pooled account a new session gets. The
+live-session count and the session cap are described here. The recorded usage
+is described in [Cost attribution](#cost-attribution).
+
+### Live sessions
+
+The count is read from the durable **session records**
+(`NewAccountSessionCounter` over the agent store). Every record in state
+`active` or `idle` counts against its `account_id`, whichever host resolved
+the account. The delivery leases are the wrong signal: a worker daemon caches
+a released credential per account and serves every session it spawns on that
+account under **one** grant, so a lease count undercounts by exactly the
+concurrency being measured. The session record is already what the session
+conclusion scans to decide whether a shared grant is still in use.
+
+The live count also includes every **reservation** no record has satisfied yet
+(see [Reservations](#reservations-the-count-while-spawns-are-in-flight)), so a slot claimed
+by a spawn in flight is seen by everyone else at once.
+
+One lookup has four readers:
+
+| Reader | Uses it to |
+|---|---|
+| the resolver (`WithAccountSessionReserver`) | drop capped candidates **before** the tenant-wide fallback decision, and reserve a slot on the account it selects |
+| `LeastUsageAccountStrategy` | rank the candidates on the counts the resolver already read |
+| admission (`WithHeadroomSessions`) | treat a capped account as having no headroom |
+| `GetAccountUsage` (`live_sessions`, and `spend`, the spend verdict) | report it, so a worker daemon balances and fails over on the control plane's figures and not only on its own sessions |
+
+The cap is applied before the fallback decision on purpose. A project whose own
+accounts are all at their cap falls back to the tenant-wide pool, just as a
+project whose own accounts are all held does. Only when the fallback pool is
+capped too is the resolution `AccountsSaturatedError`.
+
+A count that cannot be read **fails closed** (`AccountSessionCountError`),
+both at selection and at admission. A count that was never read is not zero.
+
+### `max_concurrent_sessions`
+
+`Account.MaxConcurrentSessions` is the operator's statement of how many
+sessions the subscription serves at once. **0 is unmetered**, which is how
+every account written before the field existed behaves. QuicBaaS cannot
+discover this figure; it is a property of the provider plan. It is set on
+create and update on every transport:
+
+```
+quicbaas account update claude1 --max-concurrent-sessions 2
+quicbaas account update claude1 --max-concurrent-sessions 0   # unmetered
+```
+
+REST/QUIC/MCP/Unix use `max_concurrent_sessions`, gRPC uses
+`max_concurrent_sessions` (an `optional int32` on update, so an absent field
+leaves the cap unchanged), and the SDK uses `MaxConcurrentSessions *int` on
+`UpdateAccountRequest`. A negative cap is rejected at the store.
+
+At **admission**, an account at its cap has no headroom. A project whose
+pool is entirely capped is **deferred** and its share goes to other projects,
+as it would be for a spent usage window. When every ready account is capped,
+the project may run at most the pool's free sessions
+(`PoolHeadroom.SessionBounded` / `SessionSlots`). The accounts may be
+shared by several projects, so two projects can still race for the last slot.
+The reservation settles that race: the loser gets `AccountsSaturatedError`,
+fault class `accounts_saturated`. That class is refunded and requeued, never
+parked.
+
+### Reservations: the count while spawns are in flight
+
+Counting records alone lags the truth. A session record is written only after
+its spawn succeeds, so a burst of resolutions all read the pre-spawn count. With
+a cap of one, every resolution passes it. With no cap, every resolution picks
+the same account, the one that was least busy a moment ago. The control
+plane's session counter is therefore also a **reservation table**
+(`AccountSessionReserver`), and every resolution claims a slot in it:
+
+1. **Occupancy is counted for every account, and the cap is enforced only
+   where one is set.** Every resolution reserves on the account it selects,
+   whether pinned or auto and whether metered or not (`Reserve`). The
+   reservation is counted live for every reader at once. The count and the
+   claim are decided under one per-tenant lock, and the session records are
+   read inside it. An account already at its `max_concurrent_sessions` cap is
+   refused with `AccountsSaturatedError`.
+2. **Selection and claim are one decision.** An automatic selection claims
+   *conditionally* on the live count it selected by (`ExpectLive`). If another
+   claim has moved that count, the claim is refused with
+   `AccountSessionCountChangedError`, and the resolver selects again on the
+   new counts (`maxClaimAttempts`, 8). The final attempt claims
+   unconditionally, with the cap still enforced. A burst of N resolutions
+   therefore converges within N attempts and spreads across the pool. A
+   pinned account has nothing to re-select to and is claimed unconditionally.
+3. **A reservation is satisfied only by the record that names it.** The
+   reservation ID travels from `ResolvedAccountCredential.ReservationID` onto
+   the `Session`, across the daemon's spawn response (`reservation_id`), and
+   onto the durable `SessionRecord.ReservationIDs`. A resume or rotation adds
+   its own reservation. A record naming the reservation, in any state,
+   satisfies it, and the record then counts the session itself. Nothing is
+   matched by account, job or time, so two spawns on one account with no job
+   can never satisfy each other's reservations.
+4. **Give-back and expiry.** If anything later in the resolution fails, the
+   resolver gives the slot back; if the **spawn** fails, the ACP backend
+   does (`AccountReservationReleaser`, implemented by the resolver). A
+   reservation that is neither named nor released expires after
+   `AccountSessionReservationTTL` (15 minutes). That is longer than any spawn
+   takes to produce its record, and short enough that a slot orphaned by a
+   crashed daemon frees within one subscription window.
+
+A **worker daemon** selects its account itself, so it reserves against the
+control plane's table rather than one of its own. A per-host table would let
+every host crowd onto, or fill, the same account. The daemon account client
+uses:
+
+- reserve: `POST /api/v1/agent-accounts/{id}/reservations`
+  `{expected_live?}` → `{reservation_id}`. It answers **409** for an account
+  at its cap and **412** for a conditional claim whose count moved. The
+  daemon rebuilds each as its typed error.
+- release: `DELETE /api/v1/agent-accounts/{id}/reservations/{rid}`.
+
+**The tenant is always the authenticated caller's.** On REST it comes from the
+principal, and a `tenant_id` query naming another tenant is refused. On gRPC
+(`ReserveAccountSession` / `ReleaseAccountSession`) the authenticated subject's
+tenant is used: a request naming another tenant answers PERMISSION_DENIED, and
+an unauthenticated call answers UNAUTHENTICATED. MCP
+(`quicbaas_agent_account_reserve_session` / `_release_session`) refuses a
+`tenant_id` argument naming another tenant. The embedded transport refuses one
+when the context carries a tenant-scoped subject. This is the same binding the
+credential release uses. Both verbs carry `agent_accounts:materialize`, because
+they accompany that release. On gRPC a full account is RESOURCE_EXHAUSTED and a
+moved count is ABORTED. The SDK exposes both verbs as `ReserveSession` /
+`ReleaseSession` over every transport.
+
+The table lives in the control-plane process. Every deployment this ships to
+has one control plane per tenant pool. A second control-plane node would keep
+its own table, and the counts would then hold per node, not across nodes.
+
+### The expiry buffer
+
+A **new** session is not started on a credential that expires within
+`AccountCredentialExpiryBuffer` (2 minutes). This applies only to credentials
+QuicBaaS cannot renew (`static_token` with a declared expiry). An
+`oauth_refresh` account is renewed by the token manager at resolve, and an
+account with no recorded expiry is unaffected.
+
+Naming an account does not bypass the buffer: a pinned **new** session on an
+account inside it is refused with `AccountCredentialExpiringError`. Only a
+resume (a resolution carrying `ReplacesSessionID`, which reconstitutes a
+session already running on that account) is exempt.
+
+### When the whole pool is unavailable
+
+The whole pool can be found unavailable in two places, and both report through
+the same function (`reportAccountPoolExhausted`):
+
+- **At spawn**: a resolution that finds every candidate on a limit hold
+  (`AccountsCoolingDownError`) or at its cap (`AccountsSaturatedError`).
+- **At admission**: a project whose pool has no headroom is **deferred**, and
+  no spawn is attempted. This is the common case, because a pool that stays
+  exhausted never reaches a spawn. Admission asks every sweep, so it reports
+  on the **transition**: once when the pool goes to zero, again only if the
+  reason changes, and again after the pool has recovered and emptied once
+  more. The provider label is `any`, because admission asks about the pool
+  before it knows which provider a task will name.
+
+Each report goes to three channels:
+
+- an audit event, `orchestration_account` / `pool_exhausted`, whose resource ID
+  is `pool/<project|_none>/<provider>`;
+- the counter `quicbaas_orch_account_pool_exhausted_total{tenant,provider,reason}`,
+  where `reason` is `cooling_down` (held or expiring; at admission also a
+  spent window), `saturated`, or `spent` (a resolution whose every candidate
+  was refused by its own spend policy, go-quicbaas#1058);
+- a warning on the daemon log.
+
+An empty pool is a configuration fault and is not reported as exhausted. The
+Needs-you inbox (go-quicbaas#1020) is the intended home for these reports. When
+it lands, it should add an `account_pool_exhausted` reason built from the same
+error. Until then, these three channels are the only place the condition shows.
 
 ### The default account
 
@@ -713,6 +952,13 @@ the safe pair already built into selection: one survivor still resolves through
 the lone-candidate rule, and several fail loudly with `NoAccountAvailableError`
 until the operator runs `set-default` or adds the next account (which claims the
 vacancy, exactly as the first one did).
+
+**A resume re-claims its own slot.** After a restart, a persistent session keeps
+its durable status and has no process. Its resume pins the same account and
+names the session it reconstitutes (`SpawnRequest.ReplacesSessionID`). The tally
+leaves that session's own record out, so a session on a cap-one account does
+not refuse its own resume. Any other session still counts. The field stays on
+the control plane (spawn wire contract deny-list).
 
 ## Materialization (isolation guarantees)
 
@@ -803,6 +1049,68 @@ never declared — QuicBaaS does not contact a provider to discover one.
   `expires_in`, alongside `LastValidatedAt` (a renewal the provider honored is
   provider-confirmed proof of life; merely loading a static envelope is not).
 
+### Credential generations (go-quicbaas#997)
+
+A session materializes its pooled credential **once**, at spawn, and never
+re-reads it. So the question that decides whether its next prompt can succeed
+is: *is the copy this session holds still the copy the account holds?* The
+answer is an identity comparison, not a race between two clocks.
+
+**Every copy of an account's material carries a generation**
+(`AccountCredential.Generation`), taken from where the material lives:
+
+| Credential source | Generation | Moved by |
+| --- | --- | --- |
+| Inline | stamped by `AccountSecretStore.Replace` into the same encrypted body as the material: the write instant in Unix nanoseconds, strictly increasing per process | `CreateAccount`, `RotateAccountCredential`, an `oauth_refresh` renewal |
+| Secret reference | the referenced secret's **version** number, which every write of the secret advances | writing the secret; no account field moves |
+
+The generation cannot be published apart from the material: for an inline
+account it is inside the same `Put`, for a referenced one it is the version
+the value was read from. It is an integer naming a copy, not credential
+material, so it travels freely.
+
+**The session records the copy it took, before its container starts.**
+`SessionRecord.AccountGeneration` (and the matching field on each
+`AccountHistory` segment) is the generation the resolver read with the
+material it handed the spawn, so a rotation landing between the read and the
+container's handshake is visible rather than hidden by a spawn instant later
+than the rotation. A remote worker takes part the same way: the released
+credential carries `generation` to the fleet host (REST, gRPC, MCP and
+embedded release shapes alike), and the host reports it back as
+`SpawnSessionResponse.account_generation`. A resume records the generation it
+re-materialized.
+
+**The account's current generation is read from the authority.**
+`AccountTokenManager.CredentialGeneration` reads the envelope, or the
+referenced secret, and nothing else: no renewal, no bookkeeping. The daemon
+wires it into the agent service (`SetAccountCredentialGenerations`) so that a
+secret rewritten by its owner, which no account field records, is still seen.
+`Account.CredentialGeneration` mirrors inline generations onto the metadata
+record (monotonically; `accountResolver.Resolve` repairs it on every spawn),
+and answers only when no authority is wired.
+
+`Account.CredentialRotatedAt` remains the operator-facing *when* for an inline
+account: it moves only where a new envelope was actually written, never on a
+refresh the provider refused. It is also the **fallback** evidence for a
+session that carries no generation — one spawned before stamping existed.
+
+**What reads it.** `SessionAccountFreshness(ctx, sessionID)` — a narrowed
+capability on the agent service, not a method on `AgentService` — reports
+whether a live session has been left behind. Every case where the answer is
+not knowable — no pooled account on the session, no account store, an account
+or secret that cannot be read, neither a generation nor a datable pair of
+timestamps — reports **not stale**: replacing a healthy session on missing
+evidence is worse than the failure the caller already has. The SDLC runner is
+the consumer, and the project decides whether the replacement resumes the
+conversation or starts fresh: see
+[sdlc.md](sdlc.md#a-rotated-account-resumes-the-session-or-starts-it-fresh).
+
+**Generations are ordered within one source.** A referenced account's versions
+and an inline account's write instants are different numbering schemes; an
+account switched from inline to a reference has sessions whose recorded
+generation is not comparable with the secret's, and they are not reported
+stale by the switch alone.
+
 ## Limit holds and rotation
 
 An account that hit a rate, quota, or usage limit is not broken: the
@@ -822,20 +1130,48 @@ A **pinned** resolve against a held account fails loudly with
 `AccountLimitedError` (carrying `AvailableAt`) rather than being silently
 swapped. Only an explicit rotation may move a session off its account.
 
-### Detecting a limit — heuristic, and honestly so
+### Detecting a limit — structured signals first
 
-QuicBaaS does not sit between the agent CLI and the provider. It sees only
-what the subprocess prints: a stderr tail, a stream-json error record, or a
-failed turn's text. `AccountLimitClassifier` is therefore a **heuristic over
-free text**, not an exact status-code check. The authoritative fix is a
-credential proxy; nothing here pretends to be one.
+When a subscription account is spent, Claude Code (2.1.2xx) ends the turn with
+text like `You've hit your session limit · resets 9pm (America/New_York)` and,
+alongside it, three **structured** signals. The backend that read the stream
+checks them in this order, before it looks at any text:
+
+| Source | Signal |
+|---|---|
+| `rate_limit_event` | a `rate_limit_event` message whose `rate_limit_info.status` is `rejected`; its `resetsAt` (epoch seconds) is the reset |
+| `error_category` | an assistant message whose `error` is `rate_limit` or `billing_error` (`overloaded`, `server_error`, etc. are provider-wide and are not limits) |
+| `http_status` | `api_error_status: 429` on the result |
+| `result_text` | only when none of the above fired: the phrase rules below, over the result text |
+
+The verdict (`TurnFailureEvidence.ProviderLimit`: source, reset, redacted
+refusal text) is decided **where the process ran**. It crosses the daemon wire
+in the `TurnFailureEvidence` status detail
+(`provider_limit_source`, `provider_limit_resets_at_unix`,
+`provider_limit_signal`). The control plane never sees the result text, so it
+could not decide this itself. A source this build does not know is still
+treated as a limit and is renamed `unclassified`, never echoed.
+
+The reset is the `rate_limit_event`'s `resetsAt` when there is one. Otherwise
+it is parsed from the text: a machine-readable hint (below) first, then
+Claude Code's wall-clock form, `resets 9pm (America/New_York)` or
+`resets Sep 23, 10am (UTC)`. A clock time is read as its **next occurrence**
+in the named IANA zone, and the zone is required. A time with no zone could be
+any of 24 instants and is treated as unparseable. The zone database is
+embedded (`time/tzdata`), so a worker container with no zoneinfo still reads
+it.
+
+The text rules that follow are the fallback. QuicBaaS does not sit between the
+agent CLI and the provider, so without the structured fields it sees only what
+the subprocess prints. The classifier is therefore a **heuristic over free
+text**. The authoritative fix is a credential proxy.
 
 The rule set is deliberately narrow and fails in the cheap direction:
 
 | Class | Examples | Effect |
 |---|---|---|
 | strong (shared) | `too many requests`, `rate limit exceeded/reached`, `quota exceeded`, `insufficient_quota`, `usage limit reached/exceeded` | limit |
-| strong (claude) | `claude usage limit reached`, `5-hour limit`, `weekly limit reached` | limit |
+| strong (claude) | `hit your session limit`, `hit your weekly limit`, `you've hit your limit`, `session limit reached`, `claude usage limit reached`, `5-hour limit`, `weekly limit reached` | limit |
 | strong (codex) | `exceeded your current quota`, `check your plan and billing` | limit |
 | guarded 429 | `429` **and** one of `status`/`http`/`code`/`rate`/`limit`/`quota`/`retry` | limit |
 | veto | `overloaded_error`, `service unavailable`, `context_length_exceeded`, `context window`, `prompt is too long`, `rate limit configuration`, `rate limiting disabled` | **not** a limit |
@@ -848,10 +1184,80 @@ context is a number, not a status.
 Retry hints are parsed when present — `retry-after` (seconds, ms, or HTTP
 date) and epoch `resets_at` / `rate_limit_reset` — clamped to
 `(0, MaxAccountLimitBackoff]` (24h). With no hint,
-`DefaultAccountLimitBackoff` (1h) applies. The matched evidence is stored on
-the account and echoed into the transcript **after redaction**: a provider
-that echoes the presented token back in its error body cannot turn a metadata
-record into a copy of the credential.
+`DefaultAccountLimitBackoff` (5h, the subscription session window) applies.
+The matched evidence is stored on the account's `last_error` and echoed into
+the transcript **after redaction**, so a provider that echoes the presented
+token in its error body cannot turn a metadata record into a copy of the
+credential.
+
+### Every turn path holds the account
+
+`agentServiceImpl.runPromptTurn` holds the account itself when a turn fails on
+a provider limit (`holdOnAccountLimit`). The account is set to `limited` until
+the stated reset, `last_error` records the refusal, and the
+`quicbaas_orch_account_limit_holds_total` counter is incremented. The turn's
+error comes back as `TurnAccountLimitedError`, which unwraps to both the
+`AccountLimitedError` (account and return time) and the turn's own evidence.
+The synchronous path (every job runner) and the asynchronous path (operator
+sessions, which additionally rotate; see below) share this. Recovery is
+automatic: once `available_at` passes, the account is selectable again, with
+no sweeper involved.
+
+### A rejected login errors the account
+
+A provider can refuse the account's **login** instead of its allowance: a
+`401`, `token is expired`, `refresh token already used`, `sign in again`, or
+Claude Code's `Please run /login`. No reset time lifts that; a person has to
+log the account in again. The backend that read the CLI's output decides this
+where the process ran (`TurnFailureEvidence.ProviderAuth`), and the verdict
+crosses the daemon wire (`provider_auth_rejected`, `provider_auth_signal`,
+redacted). The rules are narrow, like the limit rules: only phrases that name
+the login itself, and a bare `401` only next to `unauthorized`, `status`,
+`http` or `auth`.
+
+When the control plane sees the verdict (`errorOnAccountAuthRejection`), it:
+
+- puts the account in `error`, which is never selectable, with a `last_error`
+  that begins `re-login needed: `. The inbox's account alert then reads
+  "Pooled account … needs a re-login".
+- returns the turn's error as `TurnAccountAuthRejectedError`
+  (`ErrAccountAuthRejected`).
+
+Everything downstream treats that error as a refused account:
+
+- **SDLC worker**: rolls its session onto another account, once per account,
+  exactly as for a limit, audited `class=account_auth_rejected`.
+- **Failed attempt**: classified `account_auth_rejected`, then refunded and
+  requeued.
+- **Spawn walking an agent reference**: fails over to the next Agent
+  (`account_expired`).
+
+A reviewer dispatch after that selects another account in the pool. If there is
+none, it fails at resolution without starting a container, until someone writes
+the new login: `agent-accounts/{id}/rotate` for an inline account, or a new
+secret version for a referenced one.
+
+### Worker failover (the SDLC runner)
+
+When a worker turn is refused for a limit, the runner rolls the session onto
+another account (`rollOffAccount`). This uses the context rollover's
+mechanics: it pushes what the session committed, closes it, and spawns a fresh
+session on the same branch in the same round. The fresh session's selection
+cannot choose the held account. The attempt is not charged. What the new
+session keeps is the project's `session_rotation`: on `resume` (the default)
+it continues the refused session's conversation (prompt
+`account_resumed_note`, audited as `sdlc:session_resumed class=account_limited
+account=… available_at=… replayed_turns=…`); on `fresh` it is told once why it
+is fresh (prompt `account_rolled_note`, audited as `sdlc:session_rolled
+class=account_limited account=… available_at=…`). See
+[sdlc.md](sdlc.md#a-refused-account-rolls-the-session-onto-another-account).
+
+Each account is rolled off at most once per run. If a replacement lands on an
+account that was already refused, the hold did not take, and the error is
+returned rather than looping. The error is then classified `account_limited`:
+refunded and requeued. When no account is free, the fresh spawn fails with
+`AccountsCoolingDownError`, which requeues the task, uncharged, until the
+first hold lifts.
 
 ### Rotation policy
 
@@ -980,6 +1386,7 @@ ledger untouched.
 | `openvino` | yes | the OpenAI-compatible `usage` of every tool round, summed |
 | `ollama` (direct) | yes | `prompt_eval_count` / `eval_count`; a response with neither is "reported nothing" |
 | API inference (`anthropic`, `openai`, …) | yes | the provider's `usage`; a response with none is "reported nothing" |
+| remote daemons (`RemoteACPBackend`) | yes, on the control plane | the daemon sends the usage its CLI reported back on the Prompt response (`PromptSessionResponse.usage_json`); the control plane's `runPromptTurn` charges it. The daemon has no ledger, so there is exactly one record. Before go-quicbaas#1046 the response carried no usage, and every remote turn, which is every factory worker turn, was recorded as costing nothing. |
 
 The ledger keeps every dimension apart: `input_tokens` is the fresh prompt,
 and `cache_read_tokens` / `cache_write_tokens` are the prompt tokens served
@@ -1215,6 +1622,13 @@ environment would have changed that.
 |---|---|
 | `api_error`, `turn_setup_failed` | `blocking_limit`, `prompt_too_long`, `rapid_refill_breaker` (the session's context is full — the runner rolls the session, see [sdlc.md](sdlc.md#a-full-context-rolls-the-session-not-the-attempt)), `image_error`, `model_error`, `max_turns`, `budget_exhausted`, `stop_hook_prevented`, `hook_stopped`, and every other declared reason |
 
+One cause of `api_error` is now removed before it can be reached rather than
+refunded after it: a session whose pooled account's credential was rotated
+under it is replaced at its next prompt instead of being prompted with a
+credential the provider has stopped honouring — see
+[Credential generations](#credential-generations-go-quicbaas997). The refund
+still exists for everything else `api_error` covers.
+
 `prompt_too_long` also consumes no input tokens, and it is a deterministic
 consequence of the prompt built from the work item — refunding it would let a
 human bypass the attempt budget by re-applying the trigger label. A reason this
@@ -1324,7 +1738,7 @@ caller who may only terminate sessions instead move one onto a different
 account's credential, and the surface-level `orchestrator:status` would gate a
 write behind a read. qrdb registers no `orchestrator:rotate` permission, so the
 nearest registered write verb is used, following the same rule the
-`agent_disable`/`agent_enable` routes already follow.
+`quicbaas_fleet_disable`/`quicbaas_fleet_enable` routes already follow.
 
 ### Credential never leaves the process
 
@@ -1343,29 +1757,30 @@ response) run per transport:
 - `pkg/api/mcp/account_tools_test.go`
 - `sdk/go/transport/embedded/handlers_account_test.go`
 - `sdk/go/client/account/client_test.go`
-- `cmd/quicbaas/agent_account_test.go`
+- `cmd/quicbaas/account_test.go`
 
 ## CLI
 
-`quicbaas agent account` covers the full verb set and routes through the SDK
+`quicbaas account` covers the full verb set and routes through the SDK
 client, so it behaves identically on every transport:
 
 ```
 quicbaas secrets put agents/claude/claude1/oauth_token --from-stdin   # as a tenant principal
-quicbaas agent account create --provider claude --display-name claude1 \
+quicbaas account create --provider claude --display-name claude1 \
   --credential-secret-ref agents/claude/claude1/oauth_token
-quicbaas agent account update acct_abc123 \
+quicbaas account update acct_abc123 \
   --credential-secret-ref agents/claude/claude1/oauth_token          # switch an inline account
-quicbaas agent account create --provider claude --display-name alice-work \
+quicbaas account create --provider claude --display-name alice-work \
   --refresh-policy oauth2 --credential-file -      # inline; '-' reads stdin
-quicbaas agent account list --provider claude --output json
-quicbaas agent account get acct_abc123
-quicbaas agent account update acct_abc123 --display-name alice-personal
-quicbaas agent account set-default acct_abc123
-quicbaas agent account rotate acct_abc123 --credential-file ./new-token.json
-quicbaas agent account usage acct_abc123
-quicbaas agent account revoke acct_abc123 --reason "token leaked"
-quicbaas agent account delete acct_abc123
+quicbaas account list --provider claude --output json
+quicbaas account get acct_abc123
+quicbaas account update acct_abc123 --display-name alice-personal
+quicbaas account update acct_abc123 --max-concurrent-sessions 2
+quicbaas account set-default acct_abc123
+quicbaas account rotate acct_abc123 --credential-file ./new-token.json
+quicbaas account usage acct_abc123
+quicbaas account revoke acct_abc123 --reason "token leaked"
+quicbaas account delete acct_abc123
 ```
 
 `--credential-secret-ref` (and `--credential-secret-file`) name a tenant secret
@@ -1398,7 +1813,7 @@ A complete Anthropic bring-up, from nothing to a spawn that needs no `--account`
 ```
 claude setup-token > /tmp/tok
 jq -n --arg t "$(cat /tmp/tok)" '{access_token: $t}' \
-  | quicbaas agent account create --provider claude \
+  | quicbaas account create --provider claude \
       --display-name team-max-1 --refresh-policy none --credential-file -
 # -> Default: true
 
@@ -1410,7 +1825,7 @@ And OpenAI, which must name its own environment variable:
 ```
 jq -n --arg k "$OPENAI_API_KEY" \
   '{access_token: $k, access_token_env_key: "OPENAI_API_KEY"}' \
-  | quicbaas agent account create --provider codex \
+  | quicbaas account create --provider codex \
       --display-name openai-prod --refresh-policy none --credential-file -
 ```
 
@@ -1459,8 +1874,9 @@ seats to rotate through".
   `SetAccountResolver` are implemented on `ACPBackend` only.
 - **Per-turn usage recording covers the stream-json backends only.** See
   "Cost attribution" above for which backends report token counts.
-- **Limit detection is a heuristic over CLI output.** See
-  [Detecting a limit](#detecting-a-limit--heuristic-and-honestly-so). A
+- **Limit detection falls back to a heuristic over CLI output** when the CLI
+  emits none of its structured limit signals. See
+  [Detecting a limit](#detecting-a-limit--structured-signals-first). A
   credential proxy would make it exact; `AccountLimitClassifier` is an
   interface so such a deployment can substitute one
   (`SetAccountLimitClassifier`) without touching the rotation path.

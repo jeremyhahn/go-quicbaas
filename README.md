@@ -14,7 +14,7 @@
 |------------|----------|-----------------|------------|
 | **Multi-Model** | KV + Vector + Time-series + Objects | Usually single model | Vector only |
 | **AI-Native** | RAG pipelines, multi-provider embeddings, MCP tools | External integration required | Limited to search |
-| **Agentic Ready** | 500 MCP tools registered, 450 reachable by AI agents | No agent support | Minimal |
+| **Agentic Ready** | 520 MCP tools registered, 478 reachable by AI agents | No agent support | Minimal |
 | **Security** | IAM/ABAC/PEP, FIPS 140-3, per-tenant encryption | Varies | Basic |
 | **BaaS Features** | IAM, KMS, Secrets, Scheduler, Service Discovery | Separate services required | None |
 | **Auth** | WebAuthn, OAuth2/OIDC, SSO, MFA | Basic auth | API keys |
@@ -35,7 +35,7 @@
 - **Vector Search** - HNSW/IVF indexing with similarity search, hybrid search, and metadata filtering
 - **RAG Pipelines** - Embed -> search -> rerank -> build context with token-aware limits
 - **Embedding Providers** - Ollama, OpenAI, LMStudio, Voyage AI with caching
-- **MCP Protocol** - 500 registered tools, 450 of them reachable, for AI agent integration (Claude, Codex, Gemini, etc.)
+- **MCP Protocol** - 520 registered tools, 478 of them reachable, for AI agent integration (Claude, Codex, Gemini, etc.)
 
 ### Security & Identity
 - **IAM System** - Multi-tenant identity with users, groups, roles, policies, and sessions
@@ -380,13 +380,13 @@ curl -X POST http://localhost:8080/api/v1/rag/query \
 
 ### MCP Tools (AI Agents)
 
-QuicBaaS registers **500 MCP tools** across 29 categories (counted at the
+QuicBaaS registers **520 MCP tools** (counted at the
 registration site, `pkg/api/mcp/tools.go`'s `registerTools`, on the default
-build; `WITH_RAG=0` drops the five RAG tools, leaving 495). Fifty IAM tools
-(federation, GDPR, groups, policy, identity linking, MFA and login) are declared
+build; `WITH_RAG=0` drops the five RAG tools, leaving 515). Forty-two IAM tools
+(federation, GDPR, policy, identity linking, MFA and login) are declared
 deliberately unmapped in `pkg/api/mcp/authz_qrdb_unmapped.go` and are therefore
 filtered out of `tools/list` under the default-deny authorization gate, leaving
-**450 reachable tools** for AI agent integration:
+**478 reachable tools** for AI agent integration:
 
 | Category | Tools | Description |
 |----------|-------|-------------|
@@ -482,7 +482,7 @@ record.
   projects, pooled provider accounts, fleet, container trust, and the SDLC
   module that turns a labelled forge issue into a merged pull request
 - [Vector](docs/vector/) · [RAG](docs/rag/) · [Embeddings](docs/embeddings/) · [Ollama](docs/ollama/)
-- [MCP server](docs/mcp-server/) — 459 tools, scope-filtered per principal
+- [MCP server](docs/mcp-server/) — 520 tools, scope-filtered per principal
 
 ### Security and identity
 - [IAM](docs/iam/) · [Authorization](docs/authorization/) · [OAuth 2.1 / OIDC](docs/oauth2-oidc/) · [Audit logging](docs/audit-logging/)

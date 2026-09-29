@@ -506,6 +506,12 @@ func TestContainerConfigDigest_MeasuresPrivilege(t *testing.T) {
 		"SysAdminAndNetRaw": {Image: "alpine", ImageDigest: testDigest, CapAdd: []string{"CAP_SYS_ADMIN", "CAP_NET_RAW"}},
 		"DropAll":           {Image: "alpine", ImageDigest: testDigest, CapDrop: []string{"ALL"}},
 		"PrivilegedDropAll": {Image: "alpine", ImageDigest: testDigest, Privileged: true, CapDrop: []string{"ALL"}},
+		"Memlock8MiB": {Image: "alpine", ImageDigest: testDigest,
+			Ulimits: []ContainerUlimit{{Name: UlimitMemlock, Soft: 8 << 20, Hard: 8 << 20}}},
+		"Memlock4GiB": {Image: "alpine", ImageDigest: testDigest,
+			Ulimits: []ContainerUlimit{{Name: UlimitMemlock, Soft: 4 << 30, Hard: 4 << 30}}},
+		"Memlock4GiBHardOnly": {Image: "alpine", ImageDigest: testDigest,
+			Ulimits: []ContainerUlimit{{Name: UlimitMemlock, Soft: 8 << 20, Hard: 4 << 30}}},
 		"TmpfsMount": {
 			Image:       "alpine",
 			ImageDigest: testDigest,
@@ -528,6 +534,30 @@ func TestContainerConfigDigest_MeasuresPrivilege(t *testing.T) {
 			t.Fatalf("%s and %s measure identically (%s)", name, other, digest)
 		}
 		seen[digest] = name
+	}
+}
+
+// TestContainerConfigDigest_UlimitOrderIsNotSignificant: ulimits are keyed by
+// name, so declaring the same limits in another order must measure the same,
+// exactly as the command line renders them the same.
+func TestContainerConfigDigest_UlimitOrderIsNotSignificant(t *testing.T) {
+	memlock := ContainerUlimit{Name: UlimitMemlock, Soft: 4 << 30, Hard: 4 << 30}
+	nofile := ContainerUlimit{Name: "nofile", Soft: 1024, Hard: 4096}
+	forward := &ContainerSpec{Image: "alpine", ImageDigest: testDigest, Ulimits: []ContainerUlimit{memlock, nofile}}
+	reversed := &ContainerSpec{Image: "alpine", ImageDigest: testDigest, Ulimits: []ContainerUlimit{nofile, memlock}}
+	want, err := ContainerConfigDigest(forward)
+	if err != nil {
+		t.Fatalf("ContainerConfigDigest: %v", err)
+	}
+	got, err := ContainerConfigDigest(reversed)
+	if err != nil {
+		t.Fatalf("ContainerConfigDigest: %v", err)
+	}
+	if got != want {
+		t.Fatalf("ulimit order changed the measurement: %q != %q", got, want)
+	}
+	if reversed.Ulimits[0] != nofile {
+		t.Fatal("ContainerConfigDigest reordered the caller's Ulimits")
 	}
 }
 

@@ -53,6 +53,7 @@ func (l *Loader) Load(configFile string) (*Config, error) {
 	BindSDLCEnv(l.v)
 	BindSDLCSurfacingEnv(l.v)
 	BindSDLCLabelReconcileEnv(l.v)
+	BindSDLCWorkerImageEnv(l.v)
 
 	// Handle empty path - return defaults
 	if configFile == "" {
@@ -80,7 +81,7 @@ func (l *Loader) Load(configFile string) (*Config, error) {
 			//
 			// Measured: with QUICBAAS_SDLC_SURFACING_RETRY_INTERVAL=7m,
 			// Load("/missing") returned 2m while Load("") returned 7m.
-			if err := RefuseRemovedSDLCKeys(l.v); err != nil {
+			if err := RefuseRemovedKeys(l.v); err != nil {
 				return nil, err
 			}
 			if err := l.v.Unmarshal(cfg); err != nil {
@@ -101,7 +102,7 @@ func (l *Loader) Load(configFile string) (*Config, error) {
 
 	// An sdlc: key the module no longer reads is refused by name before the
 	// decode, so a setting that silently stopped applying cannot pass.
-	if err := RefuseRemovedSDLCKeys(l.v); err != nil {
+	if err := RefuseRemovedKeys(l.v); err != nil {
 		return nil, err
 	}
 
@@ -255,11 +256,11 @@ func (l *Loader) applyEnvironmentOverrides(cfg *Config) {
 	if val := os.Getenv("QUICBAAS_ORCHESTRATION_ENABLED"); val != "" {
 		cfg.Orchestration.Enabled = parseBool(val)
 	}
-	if val := os.Getenv("QUICBAAS_ORCHESTRATION_LEAD_AGENT_BACKEND"); val != "" {
-		cfg.Orchestration.LeadAgent.Backend = val
+	if val := os.Getenv("QUICBAAS_ORCHESTRATION_LEAD_AGENT_AGENT_ID"); val != "" {
+		cfg.Orchestration.LeadAgent.AgentID = val
 	}
-	if val := os.Getenv("QUICBAAS_ORCHESTRATION_LEAD_AGENT_MODEL"); val != "" {
-		cfg.Orchestration.LeadAgent.Model = val
+	if val := os.Getenv("QUICBAAS_ORCHESTRATION_LEAD_AGENT_POOL_ID"); val != "" {
+		cfg.Orchestration.LeadAgent.PoolID = val
 	}
 	if val := os.Getenv("QUICBAAS_ORCHESTRATION_HEARTBEAT_TIMEOUT"); val != "" {
 		if duration, err := time.ParseDuration(val); err == nil {

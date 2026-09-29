@@ -20,6 +20,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	// The provider names its reset in an IANA zone ("resets 9pm
+	// (America/New_York)"). A worker container is not guaranteed a zoneinfo
+	// database, and a reset that cannot be placed in its zone falls back to
+	// the default hold, so the database is embedded for the lookup.
+	_ "time/tzdata"
 )
 
 // =============================================================================
@@ -57,17 +63,29 @@ import (
 // DefaultAccountLimitBackoff is how long an account is held out of the pool
 // when the provider reported a limit but no machine-readable retry hint.
 //
-// One hour is chosen against the shape of the limits that actually exist: the
-// consumer plans this feature targets meter in multi-hour windows, so a short
-// backoff would simply re-select the account, burn another turn, and re-limit
-// it. An account that recovers earlier loses at most the remainder of the hour,
-// and only when the rest of the pool is also exhausted.
-const DefaultAccountLimitBackoff = time.Hour
+// Five hours is the subscription session window the consumer plans meter in.
+// A limit whose reset could not be read is most likely that window, and a
+// shorter hold would re-select the account, burn another turn, and re-limit
+// it. The reset the provider states is used whenever it can be parsed; this is
+// only the answer when it cannot. An account that recovers earlier loses at
+// most the remainder of the window, and only when the rest of the pool is also
+// exhausted.
+const DefaultAccountLimitBackoff = 5 * time.Hour
 
 // MaxAccountLimitBackoff caps a parsed retry hint. A malformed or hostile
 // Retry-After (a date in 2038, a nine-digit second count) must not be able to
 // park an account permanently, which is what an uncapped hint would do.
 const MaxAccountLimitBackoff = 24 * time.Hour
+
+// MaxProviderLimitReset bounds a reset the provider stated as structured data
+// (a rate_limit_event's resetsAt), which is trusted further than a hint parsed
+// from prose.
+//
+// Eight days: a subscription's WEEKLY limit resets up to seven days out, and
+// holding the account for less than the provider said would re-select it,
+// burn a turn and re-limit it every day until then (go-quicbaas#1046). The
+// bound still exists, because a structured field can be malformed too.
+const MaxProviderLimitReset = 8 * 24 * time.Hour
 
 // maxLimitSignalLength bounds the evidence stored on an account record and
 // echoed into a session transcript.
@@ -83,11 +101,21 @@ type AccountLimitSignal struct {
 	// preserved here so "the provider told us" and "we guessed" stay
 	// distinguishable on the resulting AccountLimitedError.
 	RetryAfter time.Duration
+
+	// ResetsAt is the provider's stated reset as an INSTANT, when it named one
+	// (a rate_limit_event's resetsAt). It is kept beside RetryAfter so the
+	// hold lands on exactly the moment the provider said, rather than on a
+	// duration measured from whenever the classifier happened to run.
+	ResetsAt time.Time
 }
 
-// AvailableAt returns the moment the account should rejoin the pool, applying
-// fallback when the provider gave no hint.
+// AvailableAt returns the moment the account should rejoin the pool: the
+// provider's stated instant when there is one inside MaxProviderLimitReset,
+// otherwise now plus its hint, applying fallback when it gave neither.
 func (s AccountLimitSignal) AvailableAt(now time.Time, fallback time.Duration) time.Time {
+	if !s.ResetsAt.IsZero() && s.ResetsAt.After(now) && !s.ResetsAt.After(now.Add(MaxProviderLimitReset)) {
+		return s.ResetsAt
+	}
 	wait := s.RetryAfter
 	if wait <= 0 {
 		wait = fallback
@@ -171,6 +199,13 @@ var providerLimitRules = map[AccountProvider]limitRules{
 	AccountProviderClaude: {
 		strong: []string{
 			// Claude Code prints these when a plan's rolling window is spent.
+			// The "hit your ... limit" family is the 2.1.2xx wording:
+			// "You've hit your session limit · resets 9pm (America/New_York)".
+			"hit your session limit",
+			"hit your weekly limit",
+			"you've hit your limit",
+			"you’ve hit your limit",
+			"session limit reached",
 			"claude usage limit reached",
 			"5-hour limit",
 			"five-hour limit",
@@ -259,37 +294,78 @@ func (defaultAccountLimitClassifier) Classify(provider AccountProvider, err erro
 		return AccountLimitSignal{
 			Matched:    redactLimitSignal(limited.Signal),
 			RetryAfter: limited.RetryAfter,
+			// The instant the first classification settled on, so a second
+			// reader (rotation, after the turn path held the account) writes
+			// the same hold rather than one re-measured from its own clock.
+			ResetsAt: limited.AvailableAt,
 		}, true
 	}
 
+	now := time.Now().UTC()
+
+	// THE CLI'S STRUCTURED VERDICT COMES NEXT, and it outranks the prose
+	// below for the reason account_limit_evidence.go gives: the backend that
+	// read the stream saw the rate_limit_event and the error category, and
+	// this side, reading an error string, did not.
+	if evidence, carried := EvidenceOf(err); carried && evidence.ProviderLimit != nil {
+		return providerLimitSignal(evidence.ProviderLimit, now), true
+	}
+
 	text := limitFailureText(err)
-	if text == "" {
+	if _, limitedText := classifyLimitText(provider, text); !limitedText {
 		return AccountLimitSignal{}, false
+	}
+	return AccountLimitSignal{
+		Matched:    redactLimitSignal(text),
+		RetryAfter: parseLimitReset(text, now),
+	}, true
+}
+
+// providerLimitSignal converts a backend's structured verdict into the signal
+// the hold is written from.
+func providerLimitSignal(evidence *ProviderLimitEvidence, now time.Time) AccountLimitSignal {
+	canonical := evidence.canonical()
+	signal := AccountLimitSignal{Matched: canonical.Signal}
+	if signal.Matched == "" {
+		signal.Matched = "the provider refused the account for a rate or usage limit (" +
+			string(canonical.Source) + ")"
+	}
+	if !canonical.ResetsAt.IsZero() {
+		if wait := canonical.ResetsAt.Sub(now); wait > 0 && wait <= MaxProviderLimitReset {
+			signal.RetryAfter = wait
+			signal.ResetsAt = canonical.ResetsAt
+		}
+	}
+	return signal
+}
+
+// classifyLimitText applies the phrase rules to text, returning the lowered
+// text and whether it reads as a provider limit. It is the text fallback both
+// the error-chain classifier and the stream reader use.
+func classifyLimitText(provider AccountProvider, text string) (string, bool) {
+	if text == "" {
+		return "", false
 	}
 	lowered := strings.ToLower(text)
 
 	rules := providerLimitRules[provider]
 	for _, veto := range sharedLimitRules.negative {
 		if strings.Contains(lowered, veto) {
-			return AccountLimitSignal{}, false
+			return lowered, false
 		}
 	}
 	for _, veto := range rules.negative {
 		if strings.Contains(lowered, veto) {
-			return AccountLimitSignal{}, false
+			return lowered, false
 		}
 	}
 
 	if !limitPhrasePresent(lowered, sharedLimitRules.strong) &&
 		!limitPhrasePresent(lowered, rules.strong) &&
 		!matchHTTPStatusLimit(lowered) {
-		return AccountLimitSignal{}, false
+		return lowered, false
 	}
-
-	return AccountLimitSignal{
-		Matched:    redactLimitSignal(text),
-		RetryAfter: parseRetryAfter(lowered, time.Now().UTC()),
-	}, true
+	return lowered, true
 }
 
 // limitPhrasePresent reports whether any phrase occurs in lowered.
@@ -410,6 +486,83 @@ func parseRetryAfter(lowered string, now time.Time) time.Duration {
 		}
 	}
 	return 0
+}
+
+// parseLimitReset extracts how long until the provider's stated reset, from
+// either a machine-readable hint or the wall-clock reset Claude Code prints.
+// Zero when neither is present or parseable.
+func parseLimitReset(text string, now time.Time) time.Duration {
+	if text == "" {
+		return 0
+	}
+	if wait := parseRetryAfter(strings.ToLower(text), now); wait > 0 {
+		return wait
+	}
+	return parseResetClock(text, now)
+}
+
+// resetClockPattern matches the wall-clock reset Claude Code prints after a
+// limit: "resets 9pm (America/New_York)", "resets 9:30am (Europe/Berlin)",
+// "resets Sep 23, 10am (UTC)". The zone is REQUIRED: a clock time with no
+// zone could be any of twenty-four instants, and guessing one would hold the
+// account for the wrong length of time with the confidence of a parsed value.
+var resetClockPattern = regexp.MustCompile(
+	`(?i)\bresets?\s+(?:at\s+)?` +
+		`(?:(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(?:at\s+)?)?` +
+		`(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b\s*\(([A-Za-z_]+(?:/[A-Za-z0-9_+-]+)*)\)`)
+
+// resetClockMonths maps a month abbreviation to its time.Month.
+var resetClockMonths = map[string]time.Month{
+	"jan": time.January, "feb": time.February, "mar": time.March, "apr": time.April,
+	"may": time.May, "jun": time.June, "jul": time.July, "aug": time.August,
+	"sep": time.September, "oct": time.October, "nov": time.November, "dec": time.December,
+}
+
+// parseResetClock reads a wall-clock reset and returns how long until it,
+// clamped like every other hint. The reset is the NEXT occurrence of the stated
+// time in the stated zone: "resets 9pm" read at 10pm means tomorrow.
+func parseResetClock(text string, now time.Time) time.Duration {
+	m := resetClockPattern.FindStringSubmatch(text)
+	if m == nil {
+		return 0
+	}
+	loc, err := time.LoadLocation(m[6])
+	if err != nil {
+		return 0
+	}
+	hour, err := strconv.Atoi(m[3])
+	if err != nil || hour < 1 || hour > 12 {
+		return 0
+	}
+	minute := 0
+	if m[4] != "" {
+		if minute, err = strconv.Atoi(m[4]); err != nil || minute > 59 {
+			return 0
+		}
+	}
+	hour %= 12
+	if strings.EqualFold(m[5], "pm") {
+		hour += 12
+	}
+
+	local := now.In(loc)
+	year, month, day := local.Date()
+	explicitDate := m[1] != ""
+	if explicitDate {
+		month = resetClockMonths[strings.ToLower(m[1])]
+		if day, err = strconv.Atoi(m[2]); err != nil || day < 1 || day > 31 {
+			return 0
+		}
+	}
+	reset := time.Date(year, month, day, hour, minute, 0, 0, loc)
+	if !reset.After(now) {
+		if explicitDate {
+			reset = reset.AddDate(1, 0, 0)
+		} else {
+			reset = reset.AddDate(0, 0, 1)
+		}
+	}
+	return clampLimitBackoff(reset.Sub(now))
 }
 
 // clampLimitBackoff maps a parsed duration into the usable range, returning

@@ -15,6 +15,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -85,6 +86,12 @@ type sdlcRuntime struct {
 	// pull requests which are green and unjudged and asks the dispatcher for
 	// each, so a review does not depend on a delivery having arrived.
 	reviewFloor *sdlc.ReviewSweeper
+
+	// train lands approved changes in batches: a fourth JobRunner, one job
+	// per project at a time, and trainJobs is what a queued change nudges to
+	// start one.
+	train     *sdlc.TrainRunner
+	trainJobs *sdlc.TrainScheduler
 }
 
 // sdlcModule is the process-wide registration: registered once, pointed at
@@ -129,6 +136,10 @@ func registerSDLCModule() error {
 		}
 		if err := orchestration.RegisterJobRunner(sdlcTriageForwarder{}); err != nil {
 			sdlcModule.err = &SDLCInitError{Component: "triage runner registration", Cause: err}
+			return
+		}
+		if err := orchestration.RegisterJobRunner(sdlcTrainForwarder{}); err != nil {
+			sdlcModule.err = &SDLCInitError{Component: "merge train runner registration", Cause: err}
 			return
 		}
 		if err := orchestration.RegisterTaskConclusionObserver(sdlc.JobRunnerName, sdlcConclusionForwarder{}); err != nil {
@@ -281,6 +292,66 @@ func (sdlcTriageForwarder) Run(ctx context.Context, job *orchestration.JobRun) e
 	return rt.triage.Run(ctx, job)
 }
 
+// sdlcTrainForwarder is the registered merge-train JobRunner.
+//
+// Like the triage forwarder, its states, refusals, resume table and LEASE
+// POLICY are static: the lease policy is read when a job takes its lease, and
+// a train that took an on-budget lease because the module had not started
+// would hold a worker slot through a pipeline it does not run.
+type sdlcTrainForwarder struct{}
+
+var (
+	_ orchestration.JobRunner         = sdlcTrainForwarder{}
+	_ orchestration.JobResumer        = sdlcTrainForwarder{}
+	_ orchestration.JobLeasePolicy    = sdlcTrainForwarder{}
+	_ orchestration.StartedWorkRunner = sdlcTrainForwarder{}
+)
+
+// Name implements orchestration.JobRunner.
+func (sdlcTrainForwarder) Name() string { return sdlc.TrainRunnerName }
+
+// States implements orchestration.JobRunner.
+func (sdlcTrainForwarder) States() []orchestration.JobStateSpec { return sdlc.TrainRunnerStates() }
+
+// Validate implements orchestration.JobRunner.
+func (sdlcTrainForwarder) Validate(_ context.Context, cfg *orchestration.JobConfig) error {
+	if liveSDLC() == nil {
+		return ErrSDLCUnavailable
+	}
+	return sdlc.ValidateTrainConfig(cfg)
+}
+
+// ResumeState implements orchestration.JobResumer.
+func (sdlcTrainForwarder) ResumeState(interrupted orchestration.JobState) orchestration.JobState {
+	return sdlc.TrainResumeState(interrupted)
+}
+
+// LeaseSubject implements orchestration.JobLeasePolicy: one train per project.
+func (sdlcTrainForwarder) LeaseSubject(cfg *orchestration.JobConfig) string {
+	if cfg == nil || strings.TrimSpace(cfg.ProjectID) == "" {
+		return ""
+	}
+	return sdlc.TrainLeaseSubject(strings.TrimSpace(cfg.ProjectID))
+}
+
+// OffProjectBudget implements orchestration.JobLeasePolicy.
+func (sdlcTrainForwarder) OffProjectBudget() bool { return true }
+
+// FinishesStartedWork implements orchestration.StartedWorkRunner: a train
+// lands pull requests the project's started tasks already opened and had
+// approved, so a parked project still runs it. Declared on the forwarder for
+// the reason the lease policy is: the engine asks the REGISTERED runner.
+func (sdlcTrainForwarder) FinishesStartedWork() bool { return true }
+
+// Run implements orchestration.JobRunner.
+func (sdlcTrainForwarder) Run(ctx context.Context, job *orchestration.JobRun) error {
+	rt := liveSDLC()
+	if rt == nil {
+		return ErrSDLCUnavailable
+	}
+	return rt.train.Run(ctx, job)
+}
+
 // sdlcReviewRunnerForwarder is the registered review JobRunner.
 //
 // Same shape as sdlcRunnerForwarder and for the same reason: the states are
@@ -290,9 +361,10 @@ func (sdlcTriageForwarder) Run(ctx context.Context, job *orchestration.JobRun) e
 type sdlcReviewRunnerForwarder struct{}
 
 var (
-	_ orchestration.JobRunner      = sdlcReviewRunnerForwarder{}
-	_ orchestration.JobResumer     = sdlcReviewRunnerForwarder{}
-	_ orchestration.JobLeasePolicy = sdlcReviewRunnerForwarder{}
+	_ orchestration.JobRunner         = sdlcReviewRunnerForwarder{}
+	_ orchestration.JobResumer        = sdlcReviewRunnerForwarder{}
+	_ orchestration.JobLeasePolicy    = sdlcReviewRunnerForwarder{}
+	_ orchestration.StartedWorkRunner = sdlcReviewRunnerForwarder{}
 )
 
 // Name implements orchestration.JobRunner.
@@ -352,6 +424,12 @@ func (sdlcReviewRunnerForwarder) LeaseSubject(cfg *orchestration.JobConfig) stri
 // is why triage kept running while review could not.
 func (sdlcReviewRunnerForwarder) OffProjectBudget() bool { return true }
 
+// FinishesStartedWork implements orchestration.StartedWorkRunner: a review
+// judges a pull request that is already open, which is work in flight, so a
+// parked project still reviews it. A delivery waiting on its verdict would
+// otherwise never finish.
+func (sdlcReviewRunnerForwarder) FinishesStartedWork() bool { return true }
+
 // Run implements orchestration.JobRunner.
 func (sdlcReviewRunnerForwarder) Run(ctx context.Context, job *orchestration.JobRun) error {
 	rt := liveSDLC()
@@ -405,6 +483,10 @@ func (s *Server) startSDLC() error {
 	if err != nil {
 		return &SDLCInitError{Component: "repository host guard", Cause: err}
 	}
+	verification, err := s.executionGuard()
+	if err != nil {
+		return &SDLCInitError{Component: "verification command allowlist", Cause: err}
+	}
 	if s.quicBaaSService == nil {
 		return &SDLCInitError{Component: "service facade", Cause: ErrSDLCUnavailable}
 	}
@@ -429,10 +511,41 @@ func (s *Server) startSDLC() error {
 	if s.gitProvisioner == nil {
 		return &SDLCInitError{Component: "git provisioner", Cause: ErrSDLCUnavailable}
 	}
+	// Every slot a binding holds names an Agent or pool of this catalog.
+	if s.orchAgentDirectory == nil {
+		return &SDLCInitError{Component: "agent catalog", Cause: ErrSDLCUnavailable}
+	}
+	agentCatalog := s.orchAgentDirectory
+	// Bindings written before Agents existed are migrated once, here, before
+	// anything reads one: a legacy binding decodes with its slots empty.
+	migrateCtx, migrateCancel := context.WithTimeout(context.Background(), s.config.Server.ShutdownTimeout)
+	s.migrateBindingAgents(migrateCtx, store)
+	migrateCancel()
 
+	// The attention inbox's barrier_sealed reader, built from the SAME
+	// broker-side TenantBarrierServicer facade every transport shares (see
+	// pkg/server/tenant_barrier_wiring.go). nil before the embedded qrdb
+	// node's tenant service is reachable — an honest "not yet available",
+	// not a reason to refuse the module (same pattern as Accounts below).
+	var barrierReader sdlc.AttentionBarrierReader
+	if barrierSvc := s.buildTenantBarrierService(); barrierSvc != nil {
+		barrierReader = newTenantBarrierAttentionReader(barrierSvc)
+	}
+
+	rulers := sdlc.RulerPolicy{Default: cfg.Rulers.Default, Tenants: cfg.Rulers.Tenants}
 	sdlcService, err := service.NewSDLCService(service.SDLCServiceConfig{
 		Store: store, Routes: routes, Projects: projectSvc, ProjectWriter: projectStores.Store(),
-		Secrets: secrets, Guard: guard,
+		Secrets: secrets, Guard: guard, Verification: verification, Tasks: agents,
+		// s.orchAccountStore is nil on a node with no secretsManager wired
+		// (no pooled accounts configured at all) — an honest "no accounts",
+		// not a reason to refuse the attention inbox's account_error alert.
+		Accounts: s.orchAccountStore,
+		Barrier:  barrierReader,
+		// The node's ruler policy, refused at startup when malformed, and the
+		// audit sink every operator issue filing is recorded on.
+		Rulers:  rulers,
+		Auditor: newSDLCIssueAuditor(s.auditLoggerForStores),
+		Agents:  agentCatalog,
 		// The node's public origin, which onboarding provisions forge
 		// webhooks to point at. Validated at load; refused here too, because
 		// a module that reached this line without one would bind projects
@@ -450,8 +563,9 @@ func (s *Server) startSDLC() error {
 		return &SDLCInitError{Component: "binding service", Cause: err}
 	}
 	sdlcService.SetProjectNudger(s)
+	agentCatalog.RegisterUsageReporter(sdlcService)
 
-	source, err := sdlc.NewIssueSource(sdlcService, sdlcService, cfg.IssuePageLimit)
+	source, err := sdlc.NewIssueSource(sdlcService, sdlcService, store, cfg.IssuePageLimit)
 	if err != nil {
 		return &SDLCInitError{Component: "issue source", Cause: err}
 	}
@@ -478,7 +592,7 @@ func (s *Server) startSDLC() error {
 	// Issues skipped because a pull request already closes them land on the
 	// platform audit trail with that pull request's number (go-quicbaas#1054).
 	source.SetAdoptionAuditor(newSDLCAdoptionAuditor(s.auditLoggerForStores))
-	review, err := sdlc.NewReviewValidator(store, sdlcService, sdlcService)
+	review, err := sdlc.NewReviewValidator(store, sdlcService, sdlcService, agentCatalog)
 	if err != nil {
 		return &SDLCInitError{Component: "review validator", Cause: err}
 	}
@@ -486,10 +600,18 @@ func (s *Server) startSDLC() error {
 	if err != nil {
 		return &SDLCInitError{Component: "signing agent", Cause: err}
 	}
+	// The merge train's scheduler is built before the hooks, because a change
+	// the review approves is queued by the hooks and the queue wakes a train.
+	trainJobs, err := sdlc.NewTrainScheduler(sdlc.TrainSchedulerConfig{Bindings: sdlcService, Trains: store, Jobs: agents})
+	if err != nil {
+		return &SDLCInitError{Component: "merge train scheduler", Cause: err}
+	}
 	hooks, err := sdlc.NewHooks(sdlc.HooksConfig{
 		Projects: projectStores.Store(), Bindings: sdlcService, Deliveries: store, Tasks: agents,
 		Forges:        sdlcService,
 		MergeAttempts: cfg.MergeAttempts,
+		Trains:        store,
+		TrainNudger:   trainJobs,
 		Surfacing: sdlc.SurfacePolicy{
 			RetryAttempts: cfg.Surfacing.RetryAttempts,
 			RetryInterval: cfg.Surfacing.RetryInterval,
@@ -516,7 +638,7 @@ func (s *Server) startSDLC() error {
 		return &SDLCInitError{Component: "sockets root", Cause: socketsErr}
 	}
 	runner, err := sdlc.NewRunner(sdlc.RunnerConfig{
-		Hooks: hooks, Tokens: sdlcService, Signing: signing, CheckoutRoot: cfg.CheckoutRoot,
+		Hooks: hooks, Tokens: sdlcService, Signing: signing, Guard: guard, CheckoutRoot: cfg.CheckoutRoot,
 		SocketsRoot: socketsRoot,
 	})
 	if err != nil {
@@ -533,29 +655,57 @@ func (s *Server) startSDLC() error {
 	// commit signing key. Handing the delivery runner one and a reader none is
 	// what go-quicbaas#929 was: triage could not authenticate an ssh clone and
 	// spent one job per sweep finding that out inside a container.
+	// The node's default triage agent, taken in each tenant that defines it.
+	triageAgents := sdlc.TriageAgentPolicy{Default: agentRefFromConfig(cfg.TriageAgent), Agents: agentCatalog}
+	if err := triageAgents.Default.Validate("sdlc.triage_agent"); err != nil {
+		return &SDLCInitError{Component: "default triage agent", Cause: err}
+	}
 	triage, err := sdlc.NewTriageRunner(sdlc.TriageRunnerConfig{
-		Bindings: sdlcService, Forges: sdlcService, Tokens: sdlcService, Signing: signing,
+		Bindings: sdlcService, Forges: sdlcService, Tokens: sdlcService, Signing: signing, Guard: guard,
 		CheckoutRoot: cfg.CheckoutRoot, SocketsRoot: socketsRoot, IssueLimit: cfg.IssuePageLimit,
-		DefaultAgent: sdlc.WorkerConfig{Backend: cfg.TriageBackend, Model: cfg.TriageModel},
+		TriageAgents: triageAgents,
+		Clusters:     store,
 	})
 	if err != nil {
 		return &SDLCInitError{Component: "triage runner", Cause: err}
 	}
-	triageJobs, err := sdlc.NewTriageScheduler(sdlc.TriageSchedulerConfig{Bindings: sdlcService, Jobs: agents})
+	triageJobs, err := sdlc.NewTriageScheduler(sdlc.TriageSchedulerConfig{Bindings: sdlcService, Jobs: agents, TriageAgents: triageAgents})
 	if err != nil {
 		return &SDLCInitError{Component: "triage scheduler", Cause: err}
 	}
+	// The train builds in a container through the same forge access seam,
+	// at the delivery scope: its merge commits are signed as a worker's are.
+	// It starts the review job that judges its own pull request, so it holds
+	// the engine as the dispatcher does.
+	train, err := sdlc.NewTrainRunner(sdlc.TrainRunnerConfig{
+		Bindings: sdlcService, Forges: sdlcService, Trains: store, Jobs: agents, Tokens: sdlcService, Signing: signing,
+		Guard: guard, CheckoutRoot: cfg.CheckoutRoot, SocketsRoot: socketsRoot, MergeAttempts: cfg.MergeAttempts,
+	})
+	if err != nil {
+		return &SDLCInitError{Component: "merge train runner", Cause: err}
+	}
+	// The reviewer reads the train ledger: a merge train's pull request is
+	// reviewed only while its train is waiting on the verdict.
 	reviewer, err := sdlc.NewReviewRunner(sdlc.ReviewRunnerConfig{
-		Bindings: sdlcService, Forges: sdlcService, Tokens: sdlcService, Signing: signing,
-		CheckoutRoot: cfg.CheckoutRoot, SocketsRoot: socketsRoot,
+		Agents:   agentCatalog,
+		Bindings: sdlcService, Forges: sdlcService, Trains: store, Tokens: sdlcService, Signing: signing,
+		Guard: guard, CheckoutRoot: cfg.CheckoutRoot, SocketsRoot: socketsRoot,
 	})
 	if err != nil {
 		return &SDLCInitError{Component: "review runner", Cause: err}
 	}
-	dispatcher, err := sdlc.NewReviewDispatcher(sdlcService, agents, sdlcService)
+	dispatcher, err := sdlc.NewReviewDispatcher(sdlcService, sdlcService, agents, sdlcService)
 	if err != nil {
 		return &SDLCInitError{Component: "review dispatcher", Cause: err}
 	}
+	// A review is held, not started, while its seat's Agent has no usable
+	// pooled account (every one errored, revoked or over budget).
+	if availability, ok := agents.(sdlc.ReviewerAccountAvailability); ok {
+		dispatcher.SetAccountAvailability(availability)
+	}
+	// An operator's reviewer override dispatches through the same dispatcher:
+	// it cancels nothing, and the newly selected seat reviews from now on.
+	sdlcService.SetReviewDispatcher(dispatcher)
 	ingestor, err := sdlc.NewWebhookIngestor(routes, sdlcService, sdlcService, sdlcService, sdlcService, dispatcher)
 	if err != nil {
 		return &SDLCInitError{Component: "webhook ingestor", Cause: err}
@@ -565,7 +715,7 @@ func (s *Server) startSDLC() error {
 	// the pass alone, and a backlog that accumulated while it was broken is
 	// recovered without re-running anybody's CI.
 	reviewFloor, err := sdlc.NewReviewSweeper(sdlc.ReviewSweeperConfig{
-		Bindings: sdlcService, Forges: sdlcService, Reviews: dispatcher,
+		Bindings: sdlcService, Forges: sdlcService, Overrides: sdlcService, Reviews: dispatcher,
 	})
 	if err != nil {
 		return &SDLCInitError{Component: "review floor", Cause: err}
@@ -574,6 +724,23 @@ func (s *Server) startSDLC() error {
 	// poller asks whether a TRIGGERED issue appeared, triage asks whether an
 	// untriaged one is now ready, and neither answers the other's question.
 	ingestor.SetTriageNudger(triageJobs)
+	// The floor under BLOCKED work. A task that parked on a checkable
+	// condition — another change landing, a dependency becoming reachable, an
+	// owner's ruling posted on its issue — clears itself here; without it the
+	// only thing that ever returned one to the queue was a person, and a fleet
+	// parks tasks faster than a person clears them. It is wired to the
+	// engine's SERVICE rather than its store because only the service
+	// ANNOUNCES a readmission, which is what takes `factory:blocked` back off
+	// the issue. Built here, before the webhook handler exists, because a
+	// verified issue comment reaches the same ruling path at once; the pass
+	// itself starts last, below.
+	unblock, err := sdlc.NewUnblockSweeper(sdlc.UnblockSweeperConfig{
+		Tasks: agents, Bindings: sdlcService, Forges: sdlcService, Rulers: rulers,
+	})
+	if err != nil {
+		return &SDLCInitError{Component: "unblock sweep", Cause: err}
+	}
+	ingestor.SetRulingReadmitter(unblock)
 	webhook, err := sdlc.NewWebhookHTTPHandler(ingestor, sdlcWebhookPathParams, cfg.Webhook.MaxBody, s.logSDLCWebhookError)
 	if err != nil {
 		return &SDLCInitError{Component: "webhook handler", Cause: err}
@@ -586,6 +753,7 @@ func (s *Server) startSDLC() error {
 		store: store, routes: routes, service: sdlcService, source: source, review: review,
 		hooks: hooks, runner: runner, reviewer: reviewer, ingestor: ingestor, webhook: webhook,
 		triage: triage, triageJobs: triageJobs, reviewFloor: reviewFloor,
+		train: train, trainJobs: trainJobs,
 	}
 	sdlcModule.live.Store(rt)
 	s.sdlc = rt
@@ -595,23 +763,16 @@ func (s *Server) startSDLC() error {
 	// module was mounted would be writing to the forge on behalf of a module
 	// the engine cannot yet reach.
 	s.startSDLCLabelReconcile(hooks, sdlcService)
-	// The floor under BLOCKED work. A task that parked on a checkable
-	// condition — another change landing, a dependency becoming reachable —
-	// clears itself here; without it the only thing that ever returned one to
-	// the queue was a person, and a fleet parks tasks faster than a person
-	// clears them. It is wired to the engine's SERVICE rather than its store
-	// because only the service ANNOUNCES a readmission, which is what takes
-	// `factory:blocked` back off the issue.
-	unblock, err := sdlc.NewUnblockSweeper(sdlc.UnblockSweeperConfig{
-		Tasks: agents, Bindings: sdlcService, Forges: sdlcService,
-	})
-	if err != nil {
-		return &SDLCInitError{Component: "unblock sweep", Cause: err}
-	}
 	// The backstops start last, for the same reason: all three start work
 	// through the engine that runs this module's own runners.
-	s.startSDLCBackstops(triageJobs, reviewFloor, unblock)
-	s.logger.Info("sdlc: module started (source=forge_issue validator=forge_review runner=sdlc runner=triage)")
+	s.startSDLCBackstops(triageJobs, reviewFloor, unblock, trainJobs)
+	// The worker image refresh rebinds projects through the binding service,
+	// and smokes candidates through the engine, so it too starts once both
+	// are live.
+	if err := s.startSDLCWorkerImage(sdlcService, agents, projectStores.Store()); err != nil {
+		return err
+	}
+	s.logger.Info("sdlc: module started (source=forge_issue validator=forge_review runner=sdlc runner=triage runner=merge_train)")
 	return nil
 }
 
@@ -626,6 +787,7 @@ func (s *Server) stopSDLC() {
 	// whose stores are on their way down.
 	s.stopSDLCLabelReconcile()
 	s.stopSDLCBackstops()
+	s.stopSDLCWorkerImage()
 	sdlcModule.live.CompareAndSwap(s.sdlc, nil)
 	s.sdlc = nil
 	if s.quicBaaSService != nil {
@@ -684,7 +846,19 @@ func (s *Server) logSDLCWebhookError(r *http.Request, err error) {
 	if s.logger == nil {
 		return
 	}
-	s.logger.WithError(err).Warnf("sdlc.webhook: delivery refused (%s)", r.URL.Path)
+	s.logger.WithError(err).Warnf("sdlc.webhook: %s (%s)", sdlcWebhookFailure(err), r.URL.Path)
+}
+
+// sdlcWebhookFailure names what an error handed to the webhook's error hook
+// means. A triage wake that failed rode on an ACCEPTED delivery, and logging
+// it as a refusal would send the operator looking at the forge's hook
+// instead of the triage scheduler.
+func sdlcWebhookFailure(err error) string {
+	var wake *sdlc.TriageWakeError
+	if errors.As(err, &wake) {
+		return "delivery accepted but triage was not woken"
+	}
+	return "delivery refused"
 }
 
 // SDLCWebhookHandler returns the module's webhook handler, or nil when the

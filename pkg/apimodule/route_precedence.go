@@ -45,8 +45,10 @@ import (
 // how the composer does that, without reimplementing or forking anything.
 // =============================================================================
 
-// XKMSBarrierRouteExclusions are the HTTP path prefixes the co-hosted go-xkms
-// ServiceModule must NOT claim on a QuicBaaS-composed unified server.
+// XKMSRouteExclusions are the HTTP routes the co-hosted go-xkms
+// ServiceModule must NOT claim on a QuicBaaS-composed unified server. An entry
+// ending in "/" excludes that whole subtree; any other entry excludes exactly
+// that pattern.
 //
 // /api/v1/barrier/ is the canonical QuicBaaS system-barrier surface. The
 // barrier is go-qrdb's (CLAUDE.md: "Identity / barrier / bootstrap are qrdb's,
@@ -55,8 +57,31 @@ import (
 // facade. The xkms module's same-path handlers operate xkms's OWN barrier,
 // which a host composition never wires — so leaving them mounted reports
 // "no barrier" for a barrier that exists.
-var XKMSBarrierRouteExclusions = []string{
+//
+// /api/v1/cluster/status is the composed node's cluster view. QuicBaaS's
+// handler (pkg/api/rest HandleClusterStatus) answers from the service
+// layer's ClusterStatus across every shard the node hosts — node ID, Raft
+// address, leader, members, per-shard state, health — in the flat shape the
+// quicbaas SDK clients and UI decode. go-xkms v0.30's same-path handler
+// reports a single shard wrapped as {"status":{...}}, a different wire shape
+// no quicbaas consumer reads. go-xkms's /api/v1/cluster/members has no
+// quicbaas counterpart and stays mounted.
+//
+// /api/v1/tenants/ is the tenant control plane, which is quicbaas's over the
+// embedded qrdb node (CLAUDE.md: "System admin provisions tenants minimally
+// (control plane)"), per-tenant barrier included. go-xkms registers nine
+// routes under it, every one enable-gated on tenant handlers that its host
+// server never builds (they need a barrier registry, and the barrier surfaces
+// are xkmsd-only), so on a composed node each one can only answer 501. Four
+// of them name the tenant wildcard {tenantID} where quicbaas's name it
+// {tenant_id}; the two spellings are different registrar keys, so neither
+// the registrar's duplicate check nor the overlap test below saw a collision,
+// and the router served xkms's 501 for GET /api/v1/tenants/{id}/barrier/status
+// on a node whose tenant barrier answers normally everywhere else.
+var XKMSRouteExclusions = []string{
 	"/api/v1/barrier/",
+	"/api/v1/cluster/status",
+	"/api/v1/tenants/",
 }
 
 // ModuleExtensionMissingError reports a co-hosted ServiceModule that does not
@@ -94,18 +119,18 @@ type EmptyRouteExclusionsError struct{}
 
 // Error describes the empty exclusion set.
 func (e *EmptyRouteExclusionsError) Error() string {
-	return "apimodule: route-excluding wrapper requires at least one path prefix"
+	return "apimodule: route-excluding wrapper requires at least one route exclusion"
 }
 
 // routeExcludingModule wraps a co-hosted ServiceModule and drops its HTTP
-// registrations under the configured path prefixes. Every other hook —
+// registrations matching the configured exclusions. Every other hook —
 // gRPC, MCP, Start/Stop — and every optional qrdb SDK extension is forwarded
 // verbatim, so the wrapper changes exactly one thing: which module owns the
 // excluded HTTP paths.
 type routeExcludingModule struct {
 	qrdbsdk.ServiceModule
 
-	prefixes []string
+	exclusions []string
 
 	toolPermissions qrdbsdk.ModuleMCPToolPermissioner
 	authFallback    qrdbsdk.ModuleAuthFallback
@@ -123,23 +148,25 @@ var (
 )
 
 // NewRouteExcludingModule wraps mod so its RegisterHTTP registrations whose
-// pattern falls under any of prefixes are dropped, and returns the wrapper as
-// a ServiceModule ready for qrdbsdk.WithModule.
+// pattern matches any of exclusions are dropped, and returns the wrapper as a
+// ServiceModule ready for qrdbsdk.WithModule.
 //
-// A prefix matches a pattern that has it as a literal prefix, and also the
-// exact collection path formed by trimming the prefix's trailing slash (so
-// "/api/v1/barrier/" excludes "/api/v1/barrier" too).
+// An exclusion ending in "/" is a subtree: it matches every pattern it is a
+// literal prefix of, and also the collection path formed by trimming the
+// trailing slash (so "/api/v1/barrier/" excludes "/api/v1/barrier" too). Any
+// other exclusion matches exactly one pattern, so excluding
+// "/api/v1/cluster/status" leaves "/api/v1/cluster/members" mounted.
 //
 // The wrapped module MUST implement all three optional qrdb SDK extensions
 // (MCP tool permissions, authentication fallback, public gRPC methods);
 // construction returns a ModuleExtensionMissingError otherwise, because the
 // wrapper's static method set would otherwise answer for an extension the
 // module never declared.
-func NewRouteExcludingModule(mod qrdbsdk.ServiceModule, prefixes []string) (qrdbsdk.ServiceModule, error) {
+func NewRouteExcludingModule(mod qrdbsdk.ServiceModule, exclusions []string) (qrdbsdk.ServiceModule, error) {
 	if mod == nil {
 		return nil, &NilModuleError{}
 	}
-	if len(prefixes) == 0 {
+	if len(exclusions) == 0 {
 		return nil, &EmptyRouteExclusionsError{}
 	}
 
@@ -158,7 +185,7 @@ func NewRouteExcludingModule(mod qrdbsdk.ServiceModule, prefixes []string) (qrdb
 
 	return &routeExcludingModule{
 		ServiceModule:   mod,
-		prefixes:        append([]string(nil), prefixes...),
+		exclusions:      append([]string(nil), exclusions...),
 		toolPermissions: toolPermissions,
 		authFallback:    authFallback,
 		publicGRPC:      publicGRPC,
@@ -210,13 +237,15 @@ func (m *routeExcludingModule) PublicGRPCMethods() []string {
 	return m.publicGRPC.PublicGRPCMethods()
 }
 
-// excluded reports whether pattern falls under one of the wrapper's prefixes.
+// excluded reports whether pattern matches one of the wrapper's exclusions:
+// a subtree exclusion (trailing "/") by prefix or as its collection path, any
+// other exclusion exactly.
 func (m *routeExcludingModule) excluded(pattern string) bool {
-	for _, prefix := range m.prefixes {
-		if strings.HasPrefix(pattern, prefix) {
+	for _, exclusion := range m.exclusions {
+		if pattern == strings.TrimSuffix(exclusion, "/") {
 			return true
 		}
-		if pattern == strings.TrimSuffix(prefix, "/") {
+		if strings.HasSuffix(exclusion, "/") && strings.HasPrefix(pattern, exclusion) {
 			return true
 		}
 	}

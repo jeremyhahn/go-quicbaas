@@ -149,7 +149,7 @@ func seedRecentSpend(t *testing.T, ledger ConsumptionLedger, tokens int64, id st
 	entry.AccountID = "a1"
 	entry.InputTokens = tokens
 	entry.OutputTokens = 0
-	entry.CostMicros = tokens
+	entry.EquivalentMicros = tokens
 	entry.OccurredAt = time.Now().UTC().Add(-time.Minute)
 	if err := ledger.Record(context.Background(), entry); err != nil {
 		t.Fatalf("seed %s: %v", id, err)

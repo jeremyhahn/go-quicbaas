@@ -85,7 +85,6 @@ func TestUserRoundTrip_FullFidelity(t *testing.T) {
 		Name:        "Alice",
 		TenantID:    "acme",
 		Roles:       []string{"role-admin", "role-auditor"},
-		Groups:      []string{"grp-eng", "grp-oncall"},
 		AuthMethods: []string{"webauthn", "piv"},
 		Lifecycle:   iam.LifecycleActive,
 		LastAuth:    &lastAuth,
@@ -111,9 +110,6 @@ func TestUserRoundTrip_FullFidelity(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Roles, orig.Roles) {
 		t.Fatalf("Roles = %v, want %v", got.Roles, orig.Roles)
-	}
-	if !reflect.DeepEqual(got.Groups, orig.Groups) {
-		t.Fatalf("Groups = %v, want %v", got.Groups, orig.Groups)
 	}
 	if !reflect.DeepEqual(got.AuthMethods, orig.AuthMethods) {
 		t.Fatalf("AuthMethods = %v, want %v", got.AuthMethods, orig.AuthMethods)
@@ -157,12 +153,11 @@ func TestFromIAMUser_RefusesNilAndMalformedIDs(t *testing.T) {
 
 // TestFromIAMUser_NormalizesThroughTheSDK pins that the canonical normalization
 // is qrdb's. A consumer folding these sets its own way would disagree with the
-// store about what the user belongs to and what it may present.
+// store about what the user may present.
 func TestFromIAMUser_NormalizesThroughTheSDK(t *testing.T) {
 	core, err := FromIAMUser(&iam.User{
 		TenantID:    "acme",
 		Email:       "  Alice@ACME.test ",
-		Groups:      []string{"grp-eng", "grp-eng", " grp-oncall "},
 		AuthMethods: []string{"WebAuthn", "webauthn", "PIV"},
 	})
 	if err != nil {
@@ -170,9 +165,6 @@ func TestFromIAMUser_NormalizesThroughTheSDK(t *testing.T) {
 	}
 	if core.Email != "alice@acme.test" {
 		t.Fatalf("Email = %q, want the canonical normalization applied", core.Email)
-	}
-	if len(core.GroupIDs) != 2 {
-		t.Fatalf("GroupIDs = %v, want duplicates collapsed", core.GroupIDs)
 	}
 	if len(core.AuthMethods) != 2 || core.AuthMethods[0] != "webauthn" {
 		t.Fatalf("AuthMethods = %v, want lowercased and de-duplicated", core.AuthMethods)
@@ -258,7 +250,7 @@ func TestUserRoundTrip_EmptyCollectionsStayNil(t *testing.T) {
 		t.Fatalf("FromIAMUser: %v", err)
 	}
 	got := ToIAMUser(core)
-	if got.Roles != nil || got.Groups != nil || got.AuthMethods != nil ||
+	if got.Roles != nil || got.AuthMethods != nil ||
 		got.Attributes != nil || got.CertBindings != nil {
 		t.Fatalf("empty collections must round trip as nil, got %+v", got)
 	}

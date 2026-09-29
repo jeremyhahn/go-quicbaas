@@ -37,7 +37,7 @@
     referenceOptions,
   } from '../../stores/referenceOptions.svelte.ts';
   import type { Column, PageRequest } from '../../lib/dataTable.ts';
-  import { MessageSquare } from 'lucide-svelte';
+  import { MessageSquare, Plus, RefreshCw } from 'lucide-svelte';
 
   // ---------------------------------------------------------------------------
   // The role a row played
@@ -95,7 +95,7 @@
     const backend = selected(chosen, 'backend')[0] ?? '';
     const runner = selected(chosen, 'runner')[0] ?? '';
     const projectID = selected(chosen, 'project')[0] ?? '';
-    const agentID = selected(chosen, 'agent')[0] ?? '';
+    const agentID = selected(chosen, 'node')[0] ?? '';
     return client.orchestrator.listSessionsPage(orchestratorStore.activeTenantID, {
       limit: req.limit,
       offset: req.offset,
@@ -150,7 +150,7 @@
   <SpawnDialogCmp open={spawnOpen} onClose={() => { spawnOpen = false; }} />
 {/await}
 
-<div class="flex flex-col gap-3 p-6 h-full">
+<div class="page">
   <!-- Page header — matches the standard pattern used across every other view. -->
   <PageHeader
     title="Sessions"
@@ -159,23 +159,25 @@
   >
     {#snippet children()}
       <button
-        class="btn btn-ghost btn-sm"
+        class="btn btn-ghost btn-sm btn-square"
         onclick={() => { void handleRefresh(); }}
         disabled={refreshing || sessionStore.sessionsLoading}
         aria-label="Refresh sessions"
+        title="Refresh"
       >
         {#if refreshing || sessionStore.sessionsLoading}
           <span class="loading loading-spinner loading-xs"></span>
         {:else}
-          &#x21BB;
+          <RefreshCw class="h-4 w-4" />
         {/if}
       </button>
       <button
-        class="btn btn-primary btn-sm"
+        class="btn btn-primary btn-sm gap-1"
         onclick={() => { spawnOpen = true; }}
         aria-label="Spawn new session"
       >
-        + Spawn
+        <Plus class="h-4 w-4" />
+        Spawn
       </button>
     {/snippet}
   </PageHeader>
@@ -199,7 +201,7 @@
         icon={MessageSquare}
         title="No sessions yet — sessions are how you converse with persistent backends."
         description="Spawn a session against an ACP backend like Claude or Codex and chat across many turns. Stateless prompts run from Inference instead."
-        actionLabel="+ Spawn"
+        actionLabel="Spawn a session"
         onaction={() => { spawnOpen = true; }}
       />
     {/snippet}
@@ -208,7 +210,7 @@
       {@const role = roleOf(session)}
       {@const model = sessionModel(session)}
       <tr
-        class="hover:bg-primary/10 cursor-pointer transition-colors"
+        class="cursor-pointer transition-colors"
         onclick={() => routeSessionDetail(session.session_id)}
         onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') routeSessionDetail(session.session_id); }}
         tabindex="0"
@@ -236,14 +238,14 @@
               title="The runner of this session's job decides its role"
             >{role}</span>
           {:else}
-            <span class="text-base-content/25">—</span>
+            <span class="text-base-content/40">—</span>
           {/if}
         </td>
         <td>
           <div class="flex items-center gap-1 flex-wrap">
-            <span class="badge badge-sm badge-primary">{session.backend}</span>
+            <span class="badge badge-sm badge-ghost">{session.backend}</span>
             {#if model !== ''}
-              <span class="font-mono text-xs text-base-content/50" data-testid="session-model">{model}</span>
+              <span class="font-mono text-xs text-base-content/60" data-testid="session-model">{model}</span>
             {/if}
           </div>
         </td>

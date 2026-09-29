@@ -42,6 +42,7 @@ import (
 
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	tpmstore "github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	xkmstypes "github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // swtpmHostEnv / swtpmPortEnv name the env vars carrying the swtpm address.
@@ -123,13 +124,13 @@ func provisionSwtpm(t *testing.T, host string, port int) {
 		EK: &pkgtpm2.EKConfig{
 			Handle:        0x81010001,
 			CertHandle:    0x01C00002,
-			HierarchyAuth: tpmstore.DEFAULT_PASSWORD,
+			HierarchyAuth: xkmstypes.NewLiteralSecretValue([]byte(tpmstore.DEFAULT_PASSWORD)),
 			KeyAlgorithm:  x509.RSA.String(),
 			RSAConfig:     &tpmstore.RSAConfig{KeySize: 2048},
 		},
 		SSRK: &pkgtpm2.SRKConfig{
 			Handle:        0x81000001,
-			HierarchyAuth: tpmstore.DEFAULT_PASSWORD,
+			HierarchyAuth: xkmstypes.NewLiteralSecretValue([]byte(tpmstore.DEFAULT_PASSWORD)),
 			KeyAlgorithm:  x509.RSA.String(),
 			RSAConfig:     &tpmstore.RSAConfig{KeySize: 2048},
 		},

@@ -477,9 +477,10 @@ func TestPartitionDispatchCandidates_OnlyTheQueueIsDispatchable(t *testing.T) {
 	}
 }
 
-// TestTaskDispatcher_LeavesNonAutonomousProjectsAlone: a project the operator
-// has not turned autonomous is never read and never dispatched for.
-func TestTaskDispatcher_LeavesNonAutonomousProjectsAlone(t *testing.T) {
+// TestTaskDispatcher_NeverDispatchesForANonAutonomousProject: a project the
+// operator has not turned autonomous is never dispatched for, by the interval
+// sweep or by a nudge.
+func TestTaskDispatcher_NeverDispatchesForANonAutonomousProject(t *testing.T) {
 	t.Parallel()
 	manual := &Task{
 		ID: "t-manual", TenantID: dispatchTenant, ProjectID: dispatchManualProj,
@@ -492,14 +493,90 @@ func TestTaskDispatcher_LeavesNonAutonomousProjectsAlone(t *testing.T) {
 	if got := f.spawner.dispatched(); len(got) != 0 {
 		t.Fatalf("a project that is not autonomous dispatched %v", got)
 	}
-	if reason := f.tasks.reason("t-manual"); reason != "" {
-		t.Fatalf("an untouched project's task carries no reason: %q", reason)
-	}
 	if err := f.dispatcher.SweepProject(context.Background(), dispatchTenant, dispatchManualProj); err != nil {
 		t.Fatalf("SweepProject on a non-autonomous project: %v", err)
 	}
 	if got := f.spawner.dispatched(); len(got) != 0 {
 		t.Fatalf("a nudge dispatched for a non-autonomous project: %v", got)
+	}
+}
+
+// TestTaskDispatcher_ExplainsAutonomyOffOnceOnTheWaitingTask is the silent
+// skip on the burn-in node (go-objstore 54cf680b, 2026-09-28): a task
+// readmitted in a project whose autonomy is off sat pending with no
+// dispatch_reason, so nothing said why it never ran. The sweep now says so on
+// the task, written once and warned once, exactly as a park refusal is.
+func TestTaskDispatcher_ExplainsAutonomyOffOnceOnTheWaitingTask(t *testing.T) {
+	t.Parallel()
+	waiting := &Task{
+		ID: "t-waiting", TenantID: dispatchTenant, ProjectID: dispatchManualProj,
+		Subject: "readmitted", Status: TaskStatusPending, AutoSpawn: true, Attempts: 1, Version: 1,
+	}
+	f := newDispatcherFixture(t, 0, waiting)
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		if err := f.dispatcher.Sweep(ctx); err != nil {
+			t.Fatalf("sweep %d: %v", i, err)
+		}
+	}
+	if err := f.dispatcher.SweepProject(ctx, dispatchTenant, dispatchManualProj); err != nil {
+		t.Fatalf("SweepProject: %v", err)
+	}
+	if reason := f.tasks.reason("t-waiting"); reason != dispatchReasonAutonomyOff {
+		t.Fatalf("reason = %q, want %q", reason, dispatchReasonAutonomyOff)
+	}
+	if f.tasks.updates != 1 {
+		t.Fatalf("an unchanged reason must not be rewritten: %d updates", f.tasks.updates)
+	}
+	if n := countLines(f.logger.warnLines(), "not dispatched"); n != 1 {
+		t.Fatalf("the skip is warned once, got %d: %v", n, f.logger.warnLines())
+	}
+	if got := f.spawner.dispatched(); len(got) != 0 {
+		t.Fatalf("explaining the skip dispatched %v", got)
+	}
+}
+
+// TestTaskDispatcher_AutonomyOffExplainsOnlyTheDispatchersOwnQueue: a task the
+// dispatcher would never start anyway — not auto-spawned, bound to a job, or
+// not pending — is not told autonomy is why it waits.
+func TestTaskDispatcher_AutonomyOffExplainsOnlyTheDispatchersOwnQueue(t *testing.T) {
+	t.Parallel()
+	manual := func(id string) *Task {
+		return &Task{ID: id, TenantID: dispatchTenant, ProjectID: dispatchManualProj, Subject: id,
+			Status: TaskStatusPending, AutoSpawn: true, Version: 1}
+	}
+	handDriven := manual("t-hand")
+	handDriven.AutoSpawn = false
+	bound := manual("t-bound")
+	bound.SpawnedJobID = "job-live"
+	blocked := manual("t-blocked")
+	blocked.Status = TaskStatusBlocked
+	f := newDispatcherFixture(t, 0, handDriven, bound, blocked)
+	if err := f.dispatcher.Sweep(context.Background()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	for _, id := range []string{"t-hand", "t-bound", "t-blocked"} {
+		if reason := f.tasks.reason(id); reason != "" {
+			t.Fatalf("%s is not the dispatcher's to explain, got reason %q", id, reason)
+		}
+	}
+	if f.tasks.updates != 0 {
+		t.Fatalf("updates = %d, want none", f.tasks.updates)
+	}
+}
+
+// TestTaskDispatcher_AutonomyOffListingFailureIsLoggedNotFatal: a store that
+// cannot list a non-autonomous project's queue costs that explanation only;
+// the sweep carries on.
+func TestTaskDispatcher_AutonomyOffListingFailureIsLoggedNotFatal(t *testing.T) {
+	t.Parallel()
+	f := newDispatcherFixture(t, 0)
+	f.tasks.listErr = errors.New("store unavailable")
+	if err := f.dispatcher.Sweep(context.Background()); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if n := countLines(f.logger.warnLines(), "autonomy is off"); n != 1 {
+		t.Fatalf("the failed listing is warned once, got %d: %v", n, f.logger.warnLines())
 	}
 }
 
@@ -550,7 +627,7 @@ func TestTaskDispatcher_WritesTheReasonOnceAndClearsIt(t *testing.T) {
 func TestTaskDispatcher_SpawnRefusalLandsOnTheTask(t *testing.T) {
 	t.Parallel()
 	f := newDispatcherFixture(t, 0, pendingTask("t-1", 0, 100))
-	f.spawner.err = &NoMatchingAgentError{Constraint: "agent_selection", Detail: "no online agents"}
+	f.spawner.err = &NoMatchingFleetNodeError{Constraint: "agent_selection", Detail: "no online agents"}
 	if err := f.dispatcher.Sweep(context.Background()); err != nil {
 		t.Fatalf("Sweep: %v", err)
 	}
@@ -888,10 +965,10 @@ func TestTaskDispatcher_LeaseCountFailureSkipsTheProject(t *testing.T) {
 func newSpawnerService(t *testing.T, tenantID string) (*agentServiceImpl, TaskStore) {
 	t.Helper()
 	taskStore := NewInMemoryTaskStore()
-	registry := NewInMemoryAgentRegistry()
-	if err := registry.RegisterAgent(context.Background(), &AgentRegistration{
+	registry := NewInMemoryFleetRegistry()
+	if err := registry.RegisterFleetNode(context.Background(), &FleetNode{
 		ID: "agent-idle", TenantID: tenantID, Name: "worker", Host: "host-1",
-		Backend: "ollama", AgentType: "worker", Status: AgentStatusIdle,
+		Backend: "ollama", NodeType: "worker", Status: FleetNodeStatusIdle,
 	}); err != nil {
 		t.Fatalf("register agent: %v", err)
 	}
@@ -901,7 +978,7 @@ func newSpawnerService(t *testing.T, tenantID string) (*agentServiceImpl, TaskSt
 	}
 	impl := svc.(*agentServiceImpl)
 	impl.SetTaskStore(taskStore)
-	impl.SetAgentRegistry(registry)
+	impl.SetFleetRegistry(registry)
 	impl.backends.Store("ollama", &testMinimalBackend{})
 	return impl, taskStore
 }
@@ -961,8 +1038,8 @@ func TestAgentService_SpawnTask_Refusals(t *testing.T) {
 	_, err = impl.SpawnTask(context.Background(), &Task{
 		ID: "t-1", TenantID: "tenant-spawn", Subject: "no agent", Status: TaskStatusPending, AutoSpawn: true,
 	})
-	if !errors.Is(err, ErrNoMatchingAgent) {
-		t.Fatalf("got %v, want ErrNoMatchingAgent", err)
+	if !errors.Is(err, ErrNoMatchingFleetNode) {
+		t.Fatalf("got %v, want ErrNoMatchingFleetNode", err)
 	}
 }
 

@@ -307,8 +307,8 @@ func TestIAMAuditQueryInvalidOutcome(t *testing.T) {
 // =============================================================================
 
 // TestIAMAuditQueryAfterOperations tests that IAM operations generate audit
-// events that can be queried. Creates a tenant, performs group create and delete
-// operations, then queries the audit log to verify events were recorded.
+// events that can be queried. Creates a tenant, registers and deletes an app,
+// then queries the audit log to verify events were recorded.
 func TestIAMAuditQueryAfterOperations(t *testing.T) {
 	RunForTransports(t, "AuditQueryAfterOps", iamTransportsToSkip, func(t *testing.T, runner *TestRunner) {
 		if !runner.RequireIAMAvailable() {
@@ -322,12 +322,8 @@ func TestIAMAuditQueryAfterOperations(t *testing.T) {
 		}()
 
 		// Perform IAM operations that should generate audit events
-		groupID := UniqueKey("audit-group")
-		createGroupCmd := IAMGroupCreateCommand(tenantID, groupID, "Audit Test Group")
-		runner.RunAndAssert(createGroupCmd)
-
-		deleteGroupCmd := IAMGroupDeleteCommand(tenantID, groupID)
-		runner.RunAndAssert(deleteGroupCmd)
+		clientID := extractClientID(t, registerAppJSON(t, runner, tenantID, UniqueKey("audit-app")))
+		runner.RunAndAssert(IAMAppDeleteCommand(tenantID, clientID))
 
 		// Query audit events for this tenant to verify operations were recorded
 		queryCmd := CommandDef{

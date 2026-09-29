@@ -97,9 +97,8 @@ func newPagedRoleStoreService(t *testing.T, tenantID string, count int) (QuicBaa
 
 	storage := iam.NewMemoryStorage()
 	is := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  &qrdbPagedRoleStorage{RoleStorage: storage},
+		UserStorage: storage,
+		RoleStorage: &qrdbPagedRoleStorage{RoleStorage: storage},
 	})
 	svc, ctx := newRoleStoreTestServiceWithStore(t, tenantID, is)
 
@@ -229,9 +228,8 @@ func TestRoleStore_CreateRole_RefusesWhenLookupFails(t *testing.T) {
 	outage := stderrors.New("shard offline")
 	storage := iam.NewMemoryStorage()
 	is := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  &lookupOutageRoleStorage{RoleStorage: storage, err: outage},
+		UserStorage: storage,
+		RoleStorage: &lookupOutageRoleStorage{RoleStorage: storage, err: outage},
 	})
 	svc, ctx := newRoleStoreTestServiceWithStore(t, "tenant-outage", is)
 
@@ -260,9 +258,8 @@ func TestRoleStore_AssignRole_LookupOutageIsNotAnAbsentRole(t *testing.T) {
 	outage := stderrors.New("shard offline")
 	storage := iam.NewMemoryStorage()
 	is := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  storage,
-		GroupStorage: storage,
-		RoleStorage:  &lookupOutageRoleStorage{RoleStorage: storage, err: outage},
+		UserStorage: storage,
+		RoleStorage: &lookupOutageRoleStorage{RoleStorage: storage, err: outage},
 	})
 	svc, ctx := newRoleStoreTestServiceWithStore(t, "tenant-outage", is)
 	require.NoError(t, storage.CreateUser(ctx, &iam.User{

@@ -616,6 +616,10 @@ type HardwareTokenOptions struct {
 	ClientID string
 	// Scope is the space-separated list of granted scopes (defaults to "openid profile email").
 	Scope string
+	// groups is the `groups` claim: the names of the roles User is bound to.
+	// OIDCProvider.IssueHardwareTokens resolves it from the identity store;
+	// it is unexported so no caller can assert a group the store does not bind.
+	groups []string
 }
 
 // ACRHardwareAttested is the ACR value for hardware-attested authentication.
@@ -683,7 +687,7 @@ func (s *TokenService) IssueHardwareTokens(ctx context.Context, opts HardwareTok
 		TenantID:  opts.User.TenantID,
 		UserID:    opts.User.ID,
 		Roles:     opts.User.Roles,
-		Groups:    opts.User.Groups,
+		Groups:    opts.groups,
 		Email:     opts.User.Email,
 		Name:      opts.User.Name,
 		Scope:     scope,
@@ -719,7 +723,7 @@ func (s *TokenService) IssueHardwareTokens(ctx context.Context, opts HardwareTok
 		Name:          opts.User.Name,
 		TenantID:      opts.User.TenantID,
 		Roles:         opts.User.Roles,
-		Groups:        opts.User.Groups,
+		Groups:        opts.groups,
 		MFAVerified:   mfaVerified,
 		AMR:           opts.AMR,
 		ACR:           opts.ACR,
@@ -761,7 +765,7 @@ func (s *TokenService) IssueHardwareTokens(ctx context.Context, opts HardwareTok
 			SessionID: accessClaims.SessionID,
 			UserID:    opts.User.ID,
 			Roles:     opts.User.Roles,
-			Groups:    opts.User.Groups,
+			Groups:    opts.groups,
 			Audience:  []string{issuer},
 			Email:     opts.User.Email,
 			Name:      opts.User.Name,

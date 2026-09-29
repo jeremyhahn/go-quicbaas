@@ -26,13 +26,24 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SDLCService_BindProject_FullMethodName    = "/quicbaas.sdlc.v1.SDLCService/BindProject"
-	SDLCService_UnbindProject_FullMethodName  = "/quicbaas.sdlc.v1.SDLCService/UnbindProject"
-	SDLCService_GetBinding_FullMethodName     = "/quicbaas.sdlc.v1.SDLCService/GetBinding"
-	SDLCService_GetDelivery_FullMethodName    = "/quicbaas.sdlc.v1.SDLCService/GetDelivery"
-	SDLCService_ListForges_FullMethodName     = "/quicbaas.sdlc.v1.SDLCService/ListForges"
-	SDLCService_Onboard_FullMethodName        = "/quicbaas.sdlc.v1.SDLCService/Onboard"
-	SDLCService_GetConformance_FullMethodName = "/quicbaas.sdlc.v1.SDLCService/GetConformance"
+	SDLCService_BindProject_FullMethodName           = "/quicbaas.sdlc.v1.SDLCService/BindProject"
+	SDLCService_UnbindProject_FullMethodName         = "/quicbaas.sdlc.v1.SDLCService/UnbindProject"
+	SDLCService_GetBinding_FullMethodName            = "/quicbaas.sdlc.v1.SDLCService/GetBinding"
+	SDLCService_GetDelivery_FullMethodName           = "/quicbaas.sdlc.v1.SDLCService/GetDelivery"
+	SDLCService_ListForges_FullMethodName            = "/quicbaas.sdlc.v1.SDLCService/ListForges"
+	SDLCService_Onboard_FullMethodName               = "/quicbaas.sdlc.v1.SDLCService/Onboard"
+	SDLCService_GetConformance_FullMethodName        = "/quicbaas.sdlc.v1.SDLCService/GetConformance"
+	SDLCService_GetOpenWork_FullMethodName           = "/quicbaas.sdlc.v1.SDLCService/GetOpenWork"
+	SDLCService_GetReviewerSelection_FullMethodName  = "/quicbaas.sdlc.v1.SDLCService/GetReviewerSelection"
+	SDLCService_SetReviewerOverride_FullMethodName   = "/quicbaas.sdlc.v1.SDLCService/SetReviewerOverride"
+	SDLCService_ClearReviewerOverride_FullMethodName = "/quicbaas.sdlc.v1.SDLCService/ClearReviewerOverride"
+	SDLCService_GetWorkerImageStatus_FullMethodName  = "/quicbaas.sdlc.v1.SDLCService/GetWorkerImageStatus"
+	SDLCService_RefreshWorkerImage_FullMethodName    = "/quicbaas.sdlc.v1.SDLCService/RefreshWorkerImage"
+	SDLCService_FileIssue_FullMethodName             = "/quicbaas.sdlc.v1.SDLCService/FileIssue"
+	SDLCService_ListCollaborators_FullMethodName     = "/quicbaas.sdlc.v1.SDLCService/ListCollaborators"
+	SDLCService_AdoptIssue_FullMethodName            = "/quicbaas.sdlc.v1.SDLCService/AdoptIssue"
+	SDLCService_ListAttention_FullMethodName         = "/quicbaas.sdlc.v1.SDLCService/ListAttention"
+	SDLCService_ResolveAttention_FullMethodName      = "/quicbaas.sdlc.v1.SDLCService/ResolveAttention"
 )
 
 // SDLCServiceClient is the client API for SDLCService service.
@@ -63,6 +74,53 @@ type SDLCServiceClient interface {
 	// GetConformance reports whether the project is correctly onboarded and
 	// what is wrong if it is not. Read-only.
 	GetConformance(ctx context.Context, in *GetConformanceRequest, opts ...grpc.CallOption) (*GetConformanceResponse, error)
+	// GetOpenWork reads a bound project's open work from its forge: the open
+	// pull requests the project's agent opened, with their CI and review
+	// state, and the open issues carrying a label the module writes.
+	// Read-only.
+	GetOpenWork(ctx context.Context, in *GetOpenWorkRequest, opts ...grpc.CallOption) (*GetOpenWorkResponse, error)
+	// GetReviewerSelection reports which reviewer profile reviews one pull
+	// request: the operator's override when one is recorded, the binding's
+	// default otherwise. Read-only.
+	GetReviewerSelection(ctx context.Context, in *GetReviewerSelectionRequest, opts ...grpc.CallOption) (*ReviewerSelectionResponse, error)
+	// SetReviewerOverride records that one pull request is reviewed by a named
+	// profile of the binding. An operator verb, gated like the binding it
+	// refines; nothing a forge sends can write one.
+	SetReviewerOverride(ctx context.Context, in *SetReviewerOverrideRequest, opts ...grpc.CallOption) (*ReviewerSelectionResponse, error)
+	// ClearReviewerOverride removes one pull request's override, so the
+	// binding's default reviews it again.
+	ClearReviewerOverride(ctx context.Context, in *ClearReviewerOverrideRequest, opts ...grpc.CallOption) (*ReviewerSelectionResponse, error)
+	// GetWorkerImageStatus reports the worker image refresh loop's state and
+	// its last pass. A HOST verb: the refresh keeps every tenant's bound
+	// worker image current, so it is gated on the cross-tenant
+	// worker_images:read the REST route GET /api/v1/sdlc/worker-image is.
+	GetWorkerImageStatus(ctx context.Context, in *GetWorkerImageStatusRequest, opts ...grpc.CallOption) (*GetWorkerImageStatusResponse, error)
+	// RefreshWorkerImage queues a full refresh pass on the node's refresh
+	// loop and returns at once; the pass builds, gates, publishes and
+	// rebinds in the background. Poll GetWorkerImageStatus for its outcome.
+	RefreshWorkerImage(ctx context.Context, in *RefreshWorkerImageRequest, opts ...grpc.CallOption) (*RefreshWorkerImageResponse, error)
+	// FileIssue files an issue on a bound project's repository through the
+	// binding's own forge token — how the lead splits an issue into
+	// follow-ups. An audited operator verb.
+	FileIssue(ctx context.Context, in *FileIssueRequest, opts ...grpc.CallOption) (*FileIssueResponse, error)
+	// ListCollaborators returns the accounts that may rule on a bound
+	// project's repository: its owner, then every collaborator. Read-only;
+	// the binding editor's ruler picker.
+	ListCollaborators(ctx context.Context, in *ListCollaboratorsRequest, opts ...grpc.CallOption) (*ListCollaboratorsResponse, error)
+	// AdoptIssue hands one forge issue back to the factory: the task is
+	// created for it — on the named pull request's own head branch when one
+	// is named — the issue's holds come off and the ruling is posted. An
+	// operator verb, gated as task creation, which is what it does.
+	AdoptIssue(ctx context.Context, in *AdoptIssueRequest, opts ...grpc.CallOption) (*AdoptIssueResponse, error)
+	// ListAttention pages the tenant's attention inbox: every parked task and
+	// environmental alert, faceted like every other listing. The same verb as
+	// GET /api/v1/orchestrator/attention, under the same permission.
+	ListAttention(ctx context.Context, in *ListAttentionRequest, opts ...grpc.CallOption) (*ListAttentionResponse, error)
+	// ResolveAttention applies an operator's decision to one parked task —
+	// approve_recommendation, answer, allow_another_round, close_as_done,
+	// readmit or note — posting the ruling to the forge issue before the task
+	// moves. The same verb as POST .../attention/{taskID}/resolve.
+	ResolveAttention(ctx context.Context, in *ResolveAttentionRequest, opts ...grpc.CallOption) (*ResolveAttentionResponse, error)
 }
 
 type sDLCServiceClient struct {
@@ -143,6 +201,116 @@ func (c *sDLCServiceClient) GetConformance(ctx context.Context, in *GetConforman
 	return out, nil
 }
 
+func (c *sDLCServiceClient) GetOpenWork(ctx context.Context, in *GetOpenWorkRequest, opts ...grpc.CallOption) (*GetOpenWorkResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetOpenWorkResponse)
+	err := c.cc.Invoke(ctx, SDLCService_GetOpenWork_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sDLCServiceClient) GetReviewerSelection(ctx context.Context, in *GetReviewerSelectionRequest, opts ...grpc.CallOption) (*ReviewerSelectionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReviewerSelectionResponse)
+	err := c.cc.Invoke(ctx, SDLCService_GetReviewerSelection_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sDLCServiceClient) SetReviewerOverride(ctx context.Context, in *SetReviewerOverrideRequest, opts ...grpc.CallOption) (*ReviewerSelectionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReviewerSelectionResponse)
+	err := c.cc.Invoke(ctx, SDLCService_SetReviewerOverride_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sDLCServiceClient) ClearReviewerOverride(ctx context.Context, in *ClearReviewerOverrideRequest, opts ...grpc.CallOption) (*ReviewerSelectionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReviewerSelectionResponse)
+	err := c.cc.Invoke(ctx, SDLCService_ClearReviewerOverride_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sDLCServiceClient) GetWorkerImageStatus(ctx context.Context, in *GetWorkerImageStatusRequest, opts ...grpc.CallOption) (*GetWorkerImageStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetWorkerImageStatusResponse)
+	err := c.cc.Invoke(ctx, SDLCService_GetWorkerImageStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sDLCServiceClient) RefreshWorkerImage(ctx context.Context, in *RefreshWorkerImageRequest, opts ...grpc.CallOption) (*RefreshWorkerImageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RefreshWorkerImageResponse)
+	err := c.cc.Invoke(ctx, SDLCService_RefreshWorkerImage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sDLCServiceClient) FileIssue(ctx context.Context, in *FileIssueRequest, opts ...grpc.CallOption) (*FileIssueResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FileIssueResponse)
+	err := c.cc.Invoke(ctx, SDLCService_FileIssue_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sDLCServiceClient) ListCollaborators(ctx context.Context, in *ListCollaboratorsRequest, opts ...grpc.CallOption) (*ListCollaboratorsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListCollaboratorsResponse)
+	err := c.cc.Invoke(ctx, SDLCService_ListCollaborators_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sDLCServiceClient) AdoptIssue(ctx context.Context, in *AdoptIssueRequest, opts ...grpc.CallOption) (*AdoptIssueResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdoptIssueResponse)
+	err := c.cc.Invoke(ctx, SDLCService_AdoptIssue_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sDLCServiceClient) ListAttention(ctx context.Context, in *ListAttentionRequest, opts ...grpc.CallOption) (*ListAttentionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListAttentionResponse)
+	err := c.cc.Invoke(ctx, SDLCService_ListAttention_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sDLCServiceClient) ResolveAttention(ctx context.Context, in *ResolveAttentionRequest, opts ...grpc.CallOption) (*ResolveAttentionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResolveAttentionResponse)
+	err := c.cc.Invoke(ctx, SDLCService_ResolveAttention_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SDLCServiceServer is the server API for SDLCService service.
 // All implementations should embed UnimplementedSDLCServiceServer
 // for forward compatibility.
@@ -171,6 +339,53 @@ type SDLCServiceServer interface {
 	// GetConformance reports whether the project is correctly onboarded and
 	// what is wrong if it is not. Read-only.
 	GetConformance(context.Context, *GetConformanceRequest) (*GetConformanceResponse, error)
+	// GetOpenWork reads a bound project's open work from its forge: the open
+	// pull requests the project's agent opened, with their CI and review
+	// state, and the open issues carrying a label the module writes.
+	// Read-only.
+	GetOpenWork(context.Context, *GetOpenWorkRequest) (*GetOpenWorkResponse, error)
+	// GetReviewerSelection reports which reviewer profile reviews one pull
+	// request: the operator's override when one is recorded, the binding's
+	// default otherwise. Read-only.
+	GetReviewerSelection(context.Context, *GetReviewerSelectionRequest) (*ReviewerSelectionResponse, error)
+	// SetReviewerOverride records that one pull request is reviewed by a named
+	// profile of the binding. An operator verb, gated like the binding it
+	// refines; nothing a forge sends can write one.
+	SetReviewerOverride(context.Context, *SetReviewerOverrideRequest) (*ReviewerSelectionResponse, error)
+	// ClearReviewerOverride removes one pull request's override, so the
+	// binding's default reviews it again.
+	ClearReviewerOverride(context.Context, *ClearReviewerOverrideRequest) (*ReviewerSelectionResponse, error)
+	// GetWorkerImageStatus reports the worker image refresh loop's state and
+	// its last pass. A HOST verb: the refresh keeps every tenant's bound
+	// worker image current, so it is gated on the cross-tenant
+	// worker_images:read the REST route GET /api/v1/sdlc/worker-image is.
+	GetWorkerImageStatus(context.Context, *GetWorkerImageStatusRequest) (*GetWorkerImageStatusResponse, error)
+	// RefreshWorkerImage queues a full refresh pass on the node's refresh
+	// loop and returns at once; the pass builds, gates, publishes and
+	// rebinds in the background. Poll GetWorkerImageStatus for its outcome.
+	RefreshWorkerImage(context.Context, *RefreshWorkerImageRequest) (*RefreshWorkerImageResponse, error)
+	// FileIssue files an issue on a bound project's repository through the
+	// binding's own forge token — how the lead splits an issue into
+	// follow-ups. An audited operator verb.
+	FileIssue(context.Context, *FileIssueRequest) (*FileIssueResponse, error)
+	// ListCollaborators returns the accounts that may rule on a bound
+	// project's repository: its owner, then every collaborator. Read-only;
+	// the binding editor's ruler picker.
+	ListCollaborators(context.Context, *ListCollaboratorsRequest) (*ListCollaboratorsResponse, error)
+	// AdoptIssue hands one forge issue back to the factory: the task is
+	// created for it — on the named pull request's own head branch when one
+	// is named — the issue's holds come off and the ruling is posted. An
+	// operator verb, gated as task creation, which is what it does.
+	AdoptIssue(context.Context, *AdoptIssueRequest) (*AdoptIssueResponse, error)
+	// ListAttention pages the tenant's attention inbox: every parked task and
+	// environmental alert, faceted like every other listing. The same verb as
+	// GET /api/v1/orchestrator/attention, under the same permission.
+	ListAttention(context.Context, *ListAttentionRequest) (*ListAttentionResponse, error)
+	// ResolveAttention applies an operator's decision to one parked task —
+	// approve_recommendation, answer, allow_another_round, close_as_done,
+	// readmit or note — posting the ruling to the forge issue before the task
+	// moves. The same verb as POST .../attention/{taskID}/resolve.
+	ResolveAttention(context.Context, *ResolveAttentionRequest) (*ResolveAttentionResponse, error)
 }
 
 // UnimplementedSDLCServiceServer should be embedded to have
@@ -200,6 +415,39 @@ func (UnimplementedSDLCServiceServer) Onboard(context.Context, *OnboardRequest) 
 }
 func (UnimplementedSDLCServiceServer) GetConformance(context.Context, *GetConformanceRequest) (*GetConformanceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetConformance not implemented")
+}
+func (UnimplementedSDLCServiceServer) GetOpenWork(context.Context, *GetOpenWorkRequest) (*GetOpenWorkResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetOpenWork not implemented")
+}
+func (UnimplementedSDLCServiceServer) GetReviewerSelection(context.Context, *GetReviewerSelectionRequest) (*ReviewerSelectionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetReviewerSelection not implemented")
+}
+func (UnimplementedSDLCServiceServer) SetReviewerOverride(context.Context, *SetReviewerOverrideRequest) (*ReviewerSelectionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetReviewerOverride not implemented")
+}
+func (UnimplementedSDLCServiceServer) ClearReviewerOverride(context.Context, *ClearReviewerOverrideRequest) (*ReviewerSelectionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ClearReviewerOverride not implemented")
+}
+func (UnimplementedSDLCServiceServer) GetWorkerImageStatus(context.Context, *GetWorkerImageStatusRequest) (*GetWorkerImageStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetWorkerImageStatus not implemented")
+}
+func (UnimplementedSDLCServiceServer) RefreshWorkerImage(context.Context, *RefreshWorkerImageRequest) (*RefreshWorkerImageResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RefreshWorkerImage not implemented")
+}
+func (UnimplementedSDLCServiceServer) FileIssue(context.Context, *FileIssueRequest) (*FileIssueResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FileIssue not implemented")
+}
+func (UnimplementedSDLCServiceServer) ListCollaborators(context.Context, *ListCollaboratorsRequest) (*ListCollaboratorsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListCollaborators not implemented")
+}
+func (UnimplementedSDLCServiceServer) AdoptIssue(context.Context, *AdoptIssueRequest) (*AdoptIssueResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AdoptIssue not implemented")
+}
+func (UnimplementedSDLCServiceServer) ListAttention(context.Context, *ListAttentionRequest) (*ListAttentionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListAttention not implemented")
+}
+func (UnimplementedSDLCServiceServer) ResolveAttention(context.Context, *ResolveAttentionRequest) (*ResolveAttentionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResolveAttention not implemented")
 }
 func (UnimplementedSDLCServiceServer) testEmbeddedByValue() {}
 
@@ -347,6 +595,204 @@ func _SDLCService_GetConformance_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SDLCService_GetOpenWork_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetOpenWorkRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SDLCServiceServer).GetOpenWork(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SDLCService_GetOpenWork_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SDLCServiceServer).GetOpenWork(ctx, req.(*GetOpenWorkRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SDLCService_GetReviewerSelection_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetReviewerSelectionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SDLCServiceServer).GetReviewerSelection(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SDLCService_GetReviewerSelection_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SDLCServiceServer).GetReviewerSelection(ctx, req.(*GetReviewerSelectionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SDLCService_SetReviewerOverride_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetReviewerOverrideRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SDLCServiceServer).SetReviewerOverride(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SDLCService_SetReviewerOverride_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SDLCServiceServer).SetReviewerOverride(ctx, req.(*SetReviewerOverrideRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SDLCService_ClearReviewerOverride_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClearReviewerOverrideRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SDLCServiceServer).ClearReviewerOverride(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SDLCService_ClearReviewerOverride_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SDLCServiceServer).ClearReviewerOverride(ctx, req.(*ClearReviewerOverrideRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SDLCService_GetWorkerImageStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetWorkerImageStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SDLCServiceServer).GetWorkerImageStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SDLCService_GetWorkerImageStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SDLCServiceServer).GetWorkerImageStatus(ctx, req.(*GetWorkerImageStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SDLCService_RefreshWorkerImage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RefreshWorkerImageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SDLCServiceServer).RefreshWorkerImage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SDLCService_RefreshWorkerImage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SDLCServiceServer).RefreshWorkerImage(ctx, req.(*RefreshWorkerImageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SDLCService_FileIssue_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FileIssueRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SDLCServiceServer).FileIssue(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SDLCService_FileIssue_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SDLCServiceServer).FileIssue(ctx, req.(*FileIssueRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SDLCService_ListCollaborators_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListCollaboratorsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SDLCServiceServer).ListCollaborators(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SDLCService_ListCollaborators_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SDLCServiceServer).ListCollaborators(ctx, req.(*ListCollaboratorsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SDLCService_AdoptIssue_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdoptIssueRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SDLCServiceServer).AdoptIssue(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SDLCService_AdoptIssue_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SDLCServiceServer).AdoptIssue(ctx, req.(*AdoptIssueRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SDLCService_ListAttention_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListAttentionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SDLCServiceServer).ListAttention(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SDLCService_ListAttention_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SDLCServiceServer).ListAttention(ctx, req.(*ListAttentionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SDLCService_ResolveAttention_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResolveAttentionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SDLCServiceServer).ResolveAttention(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SDLCService_ResolveAttention_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SDLCServiceServer).ResolveAttention(ctx, req.(*ResolveAttentionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SDLCService_ServiceDesc is the grpc.ServiceDesc for SDLCService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -381,6 +827,50 @@ var SDLCService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetConformance",
 			Handler:    _SDLCService_GetConformance_Handler,
+		},
+		{
+			MethodName: "GetOpenWork",
+			Handler:    _SDLCService_GetOpenWork_Handler,
+		},
+		{
+			MethodName: "GetReviewerSelection",
+			Handler:    _SDLCService_GetReviewerSelection_Handler,
+		},
+		{
+			MethodName: "SetReviewerOverride",
+			Handler:    _SDLCService_SetReviewerOverride_Handler,
+		},
+		{
+			MethodName: "ClearReviewerOverride",
+			Handler:    _SDLCService_ClearReviewerOverride_Handler,
+		},
+		{
+			MethodName: "GetWorkerImageStatus",
+			Handler:    _SDLCService_GetWorkerImageStatus_Handler,
+		},
+		{
+			MethodName: "RefreshWorkerImage",
+			Handler:    _SDLCService_RefreshWorkerImage_Handler,
+		},
+		{
+			MethodName: "FileIssue",
+			Handler:    _SDLCService_FileIssue_Handler,
+		},
+		{
+			MethodName: "ListCollaborators",
+			Handler:    _SDLCService_ListCollaborators_Handler,
+		},
+		{
+			MethodName: "AdoptIssue",
+			Handler:    _SDLCService_AdoptIssue_Handler,
+		},
+		{
+			MethodName: "ListAttention",
+			Handler:    _SDLCService_ListAttention_Handler,
+		},
+		{
+			MethodName: "ResolveAttention",
+			Handler:    _SDLCService_ResolveAttention_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

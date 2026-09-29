@@ -113,13 +113,6 @@ var (
 		Err:  &IAMMessageError{Message: "invalid user"},
 	}
 
-	// ErrGroupInvalid is returned when group validation fails.
-	ErrGroupInvalid = &dberrors.QBError{
-		Code: dberrors.ErrValidation,
-		Op:   "iam.group",
-		Err:  &IAMMessageError{Message: "invalid group"},
-	}
-
 	// ErrRoleInvalid is returned when role validation fails.
 	ErrRoleInvalid = &dberrors.QBError{
 		Code: dberrors.ErrValidation,
@@ -204,42 +197,6 @@ var (
 		Err:  &IAMMessageError{Message: "email already exists"},
 	}
 
-	// ErrAtomicMembershipUnsupported reports a KVStore that cannot perform a
-	// guarded write, so a group's member list cannot be edited without a lost
-	// update. It FAILS CLOSED rather than falling back to read-append-write:
-	// the fallback is the defect, and a membership change that silently erases
-	// a concurrent one is worse than a membership change that refuses.
-	ErrAtomicMembershipUnsupported = &dberrors.QBError{
-		Code: dberrors.ErrUnavailable,
-		Op:   "iam.group.member",
-		Err: &IAMMessageError{Message: "backing store offers no compare-and-swap; " +
-			"group membership cannot be edited atomically"},
-	}
-
-	// ErrGroupMembershipContended reports a membership edit that lost its
-	// compare-and-swap on every attempt. It is retryable by the caller and says
-	// so, which a lost update never could.
-	ErrGroupMembershipContended = &dberrors.QBError{
-		Code: dberrors.ErrConflict,
-		Op:   "iam.group.member",
-		Err: &IAMMessageError{Message: "group membership changed concurrently on every " +
-			"attempt; retry the operation"},
-	}
-
-	// ErrGroupNotFound is returned when a group is not found.
-	ErrGroupNotFound = &dberrors.QBError{
-		Code: dberrors.ErrNotFound,
-		Op:   "iam.group",
-		Err:  &IAMMessageError{Message: "group not found"},
-	}
-
-	// ErrGroupAlreadyExists is returned when attempting to create a group that already exists.
-	ErrGroupAlreadyExists = &dberrors.QBError{
-		Code: dberrors.ErrAlreadyExists,
-		Op:   "iam.group",
-		Err:  &IAMMessageError{Message: "group already exists"},
-	}
-
 	// ErrRoleAlreadyExists is returned when attempting to create a role that already exists.
 	ErrRoleAlreadyExists = &dberrors.QBError{
 		Code: dberrors.ErrAlreadyExists,
@@ -307,20 +264,6 @@ var (
 		Code: dberrors.ErrConfiguration,
 		Op:   "iam.role.reconcile",
 		Err:  &IAMMessageError{Message: "role storage does not support built-in role reconciliation"},
-	}
-
-	// ErrUserAlreadyInGroup is returned when adding a user to a group they're already in.
-	ErrUserAlreadyInGroup = &dberrors.QBError{
-		Code: dberrors.ErrAlreadyExists,
-		Op:   "iam.group.membership",
-		Err:  &IAMMessageError{Message: "user already in group"},
-	}
-
-	// ErrUserNotInGroup is returned when removing a user from a group they're not in.
-	ErrUserNotInGroup = &dberrors.QBError{
-		Code: dberrors.ErrNotFound,
-		Op:   "iam.group.membership",
-		Err:  &IAMMessageError{Message: "user not in group"},
 	}
 
 	// ErrRoleNotFound is returned when a role is not found.

@@ -32,8 +32,7 @@
 #
 # Prerequisites:
 #   Cluster certificates must exist at test/integration/cluster-certs/.
-#   Generate them once with:
-#     cd /home/jhahn/sources/go-quicbaas
+#   Generate them once, from the repository root, with:
 #     go run test/integration/gen-cluster-certs/main.go test/integration/cluster-certs/
 
 services:

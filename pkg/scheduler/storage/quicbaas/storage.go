@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/cas"
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 )
@@ -48,14 +49,14 @@ const (
 	// TenantExecutionsPrefixFmt is the format for tenant execution keys: t:{tenantID}:scheduler/executions/.
 	TenantExecutionsPrefixFmt = "t:%s:scheduler/executions/"
 
-	// JobIDCounterKey stores the atomic job ID counter for persistence.
+	// JobIDCounterKey stores the last job ID allocated. See job_ids.go.
 	JobIDCounterKey = "__sys:scheduler/meta/job_id_counter"
 )
 
 // Storage implements scheduler.JobStorage using QuicBaaS's KVStore interface.
 type Storage struct {
-	kv     interfaces.KVStore
-	nextID atomic.Uint64
+	kv  interfaces.KVStore
+	ids jobIDAllocator
 }
 
 // ClusteredStorage is a job store for a clustered deployment: a Storage that
@@ -103,7 +104,8 @@ var (
 // topology, not a disabled safeguard.
 func NewStorage(kv interfaces.KVStore) *Storage {
 	return &Storage{
-		kv: kv,
+		kv:  kv,
+		ids: &localJobIDs{kv: kv},
 	}
 }
 
@@ -125,7 +127,23 @@ func NewClusteredStorage(kv interfaces.KVStore, claims ClaimTransactor, marks Cl
 	if err != nil {
 		return nil, scheduler.ClaimUnsupportedError{Backend: typeName(kv)}
 	}
-	return &ClusteredStorage{Storage: NewStorage(kv), writer: writer, marks: marks}, nil
+	// Job IDs are allocated through the same transaction plane that decides
+	// firings, so two nodes can never hand out one ID. The writer is separate
+	// only so its failures carry the allocation's own error vocabulary.
+	idWriter, err := cas.NewWriter(claims, marks, func(op string, cause error) error {
+		return &scheduler.ErrStorageError{Op: "AllocateJobID." + op, Cause: cause}
+	})
+	if err != nil {
+		return nil, scheduler.ClaimUnsupportedError{Backend: typeName(kv)}
+	}
+	return &ClusteredStorage{
+		Storage: &Storage{
+			kv:  kv,
+			ids: &clusterJobIDs{kv: kv, reader: marks, writer: idWriter},
+		},
+		writer: writer,
+		marks:  marks,
+	}, nil
 }
 
 // typeName renders a value's dynamic type for error attribution.
@@ -205,9 +223,14 @@ func (s *Storage) CreateJob(ctx context.Context, job *scheduler.Job) error {
 		return &scheduler.ErrStorageError{Op: "CreateJob", Cause: ErrNilJob}
 	}
 
-	// Assign ID if not set
+	// Allocate an ID if the caller did not bring one. System jobs carry a
+	// fixed ID at or above scheduler.SystemJobIDFloor and are never allocated.
 	if job.ID == 0 {
-		job.ID = s.nextID.Add(1)
+		id, err := s.ids.next(ctx)
+		if err != nil {
+			return err
+		}
+		job.ID = id
 	}
 
 	// Set timestamps
@@ -231,13 +254,22 @@ func (s *Storage) CreateJob(ctx context.Context, job *scheduler.Job) error {
 }
 
 // GetJob retrieves a job by ID.
+//
+// Only an absent record is reported as scheduler.JobNotFoundError. Any other
+// KV failure — no leader, a timeout, a sealed barrier — is an
+// ErrStorageError: callers act on "not found" by creating the record (system
+// job install) or by dropping a write (a deleted job is not resurrected), and
+// a transient failure read as absence would overwrite a live record,
+// including one mid-run on another node.
 func (s *Storage) GetJob(ctx context.Context, id uint64, tenantID string) (*scheduler.Job, error) {
 	key := keyForJobByID(id, tenantID)
 
 	data, err := s.kv.Get(ctx, key)
 	if err != nil {
-		// Check if it's a not found error
-		return nil, &scheduler.JobNotFoundError{JobID: id}
+		if dberrors.IsNotFound(err) {
+			return nil, &scheduler.JobNotFoundError{JobID: id}
+		}
+		return nil, &scheduler.ErrStorageError{Op: "GetJob.get", Cause: err}
 	}
 
 	if len(data) == 0 {
@@ -471,44 +503,16 @@ func (s *Storage) GetExecutions(ctx context.Context, jobID uint64, tenantID stri
 	return executions, nil
 }
 
-// InitializeJobIDCounter loads the persisted job ID counter from storage.
-// This should be called during storage initialization to ensure
-// job IDs are monotonically increasing across restarts.
+// InitializeJobIDCounter makes the durable job ID counter ready for
+// allocation, seeding it from the highest job ID already stored when no
+// counter has ever been persisted.
+//
+// The scheduler engine calls it at Start, so a store whose counter cannot be
+// read stops the engine from starting rather than letting it allocate from a
+// guess: an ID reissued after a restart is the key of a live job, and
+// CreateJob would overwrite it.
 func (s *Storage) InitializeJobIDCounter(ctx context.Context) error {
-	data, err := s.kv.Get(ctx, JobIDCounterKey)
-	if err != nil {
-		// Counter doesn't exist yet, start from 0
-		return nil
-	}
-
-	if len(data) == 0 {
-		return nil
-	}
-
-	var counter uint64
-	if err := json.Unmarshal(data, &counter); err != nil {
-		return &scheduler.ErrStorageError{Op: "InitializeJobIDCounter.unmarshal", Cause: err}
-	}
-
-	s.nextID.Store(counter)
-	return nil
-}
-
-// PersistJobIDCounter saves the current job ID counter to storage.
-// This should be called periodically to ensure durability.
-func (s *Storage) PersistJobIDCounter(ctx context.Context) error {
-	counter := s.nextID.Load()
-
-	data, err := json.Marshal(counter)
-	if err != nil {
-		return &scheduler.ErrStorageError{Op: "PersistJobIDCounter.marshal", Cause: err}
-	}
-
-	if err := s.kv.Put(ctx, JobIDCounterKey, data); err != nil {
-		return &scheduler.ErrStorageError{Op: "PersistJobIDCounter.put", Cause: err}
-	}
-
-	return nil
+	return s.ids.initialize(ctx)
 }
 
 // Close performs cleanup operations.

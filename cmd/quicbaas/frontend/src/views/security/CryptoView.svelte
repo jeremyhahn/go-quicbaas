@@ -30,6 +30,7 @@
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import { showToast } from '../../stores/toast.svelte.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
+  import RefPicker from '../../components/core/RefPicker.svelte';
   import type { CryptoHashAlgorithm } from '@quicbaas/sdk';
   import { Binary, Copy } from 'lucide-svelte';
 
@@ -269,7 +270,7 @@
     <div class="card bg-base-200 rounded-box p-4">
       <h3 class="text-sm font-semibold mb-3">Encrypt</h3>
       <div class="space-y-2">
-        <input class="input input-bordered input-sm w-full" type="text" placeholder="Key name" bind:value={encKeyName} aria-label="Encrypt key name" />
+        <RefPicker kind="kmsKey" placeholder="Key name" bind:value={encKeyName} ariaLabel="Encrypt key name" />
         <textarea class="textarea textarea-bordered textarea-sm w-full" rows="3" placeholder="Plaintext (UTF-8 text)" bind:value={encPlaintext} aria-label="Plaintext"></textarea>
       </div>
       {#if encError}<div class="alert alert-error text-xs mt-2" role="alert">{encError}</div>{/if}
@@ -291,7 +292,7 @@
     <div class="card bg-base-200 rounded-box p-4">
       <h3 class="text-sm font-semibold mb-3">Decrypt</h3>
       <div class="space-y-2">
-        <input class="input input-bordered input-sm w-full" type="text" placeholder="Key name" bind:value={decKeyName} aria-label="Decrypt key name" />
+        <RefPicker kind="kmsKey" placeholder="Key name" bind:value={decKeyName} ariaLabel="Decrypt key name" />
         <textarea class="textarea textarea-bordered textarea-sm w-full font-mono" rows="3" placeholder="Ciphertext (base64)" bind:value={decCiphertext} aria-label="Ciphertext"></textarea>
       </div>
       {#if decError}<div class="alert alert-error text-xs mt-2" role="alert">{decError}</div>{/if}
@@ -313,7 +314,7 @@
     <div class="card bg-base-200 rounded-box p-4">
       <h3 class="text-sm font-semibold mb-3">Sign</h3>
       <div class="space-y-2">
-        <input class="input input-bordered input-sm w-full" type="text" placeholder="Key name" bind:value={signKeyName} aria-label="Sign key name" />
+        <RefPicker kind="kmsKey" placeholder="Key name" bind:value={signKeyName} ariaLabel="Sign key name" />
         <textarea class="textarea textarea-bordered textarea-sm w-full" rows="3" placeholder="Message (UTF-8 text)" bind:value={signMessage} aria-label="Message to sign"></textarea>
         <select class="select select-bordered select-sm w-full" bind:value={signHashAlg} aria-label="Sign hash algorithm">
           {#each HASH_ALGORITHMS as alg (alg)}<option value={alg}>{alg}</option>{/each}
@@ -338,7 +339,7 @@
     <div class="card bg-base-200 rounded-box p-4">
       <h3 class="text-sm font-semibold mb-3">Verify</h3>
       <div class="space-y-2">
-        <input class="input input-bordered input-sm w-full" type="text" placeholder="Key name" bind:value={verifyKeyName} aria-label="Verify key name" />
+        <RefPicker kind="kmsKey" placeholder="Key name" bind:value={verifyKeyName} ariaLabel="Verify key name" />
         <textarea class="textarea textarea-bordered textarea-sm w-full" rows="2" placeholder="Message (UTF-8 text)" bind:value={verifyMessage} aria-label="Message to verify"></textarea>
         <textarea class="textarea textarea-bordered textarea-sm w-full font-mono" rows="2" placeholder="Signature (base64)" bind:value={verifySignature} aria-label="Signature"></textarea>
         <select class="select select-bordered select-sm w-full" bind:value={verifyHashAlg} aria-label="Verify hash algorithm">
@@ -408,7 +409,7 @@
         The plaintext data key is minted fresh per call and never re-servable — copy it now.
       </p>
       <div class="grid grid-cols-2 gap-2">
-        <input class="input input-bordered input-sm w-full" type="text" placeholder="KEK name" bind:value={dkKeyName} aria-label="Key encryption key name" />
+        <RefPicker kind="kmsKey" placeholder="KEK name" bind:value={dkKeyName} ariaLabel="Key encryption key name" />
         <input class="input input-bordered input-sm w-full" type="number" min="8" max="2048" placeholder="Key size (bits)" bind:value={dkKeySizeBits} aria-label="Data key size in bits" />
       </div>
       {#if dkError}<div class="alert alert-error text-xs mt-2" role="alert">{dkError}</div>{/if}

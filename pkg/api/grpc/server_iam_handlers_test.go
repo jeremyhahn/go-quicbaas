@@ -109,50 +109,6 @@ func (m *mockIAMService) ListUsers(ctx context.Context, tenantID string, limit, 
 	return args.Get(0).([]*iam.User), args.Int(1), args.Error(2)
 }
 
-func (m *mockIAMService) CreateGroup(ctx context.Context, group *iam.Group) (*iam.Group, error) {
-	args := m.Called(ctx, group)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*iam.Group), args.Error(1)
-}
-
-func (m *mockIAMService) GetGroup(ctx context.Context, tenantID, groupID string) (*iam.Group, error) {
-	args := m.Called(ctx, tenantID, groupID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*iam.Group), args.Error(1)
-}
-
-func (m *mockIAMService) UpdateGroup(ctx context.Context, group *iam.Group) (*iam.Group, error) {
-	args := m.Called(ctx, group)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*iam.Group), args.Error(1)
-}
-
-func (m *mockIAMService) DeleteGroup(ctx context.Context, tenantID, groupID string) error {
-	return m.Called(ctx, tenantID, groupID).Error(0)
-}
-
-func (m *mockIAMService) ListGroups(ctx context.Context, tenantID string, limit, offset int) ([]*iam.Group, int, error) {
-	args := m.Called(ctx, tenantID, limit, offset)
-	if args.Get(0) == nil {
-		return nil, args.Int(1), args.Error(2)
-	}
-	return args.Get(0).([]*iam.Group), args.Int(1), args.Error(2)
-}
-
-func (m *mockIAMService) AddUserToGroup(ctx context.Context, tenantID, groupID, userID string) error {
-	return m.Called(ctx, tenantID, groupID, userID).Error(0)
-}
-
-func (m *mockIAMService) RemoveUserFromGroup(ctx context.Context, tenantID, groupID, userID string) error {
-	return m.Called(ctx, tenantID, groupID, userID).Error(0)
-}
-
 func (m *mockIAMService) CreateRole(ctx context.Context, role *iam.Role) (*iam.Role, error) {
 	args := m.Called(ctx, role)
 	if args.Get(0) == nil {
@@ -629,7 +585,6 @@ func TestIAMServer_CreateUser_Success(t *testing.T) {
 		Email:      "user@test.com",
 		Name:       "Test User",
 		Roles:      []string{"admin"},
-		Groups:     []string{"devs"},
 		Attributes: map[string]string{"dept": "eng"},
 	})
 
@@ -703,7 +658,6 @@ func TestIAMServer_UpdateUser_Success(t *testing.T) {
 		Email:      "updated@test.com",
 		Name:       "Updated",
 		Roles:      []string{"viewer"},
-		Groups:     []string{"ops"},
 		Attributes: map[string]string{"level": "senior"},
 	})
 
@@ -757,14 +711,16 @@ func TestIAMServer_DeleteUser_MissingFields(t *testing.T) {
 func TestIAMServer_ListUsers_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
-	svc.On("ListUsers", mock.Anything, "t1", 100, 0, mock.AnythingOfType("map[string]string")).
+	// The filters are exactly the two the request carries: there is no group
+	// filter, because quicbaas keeps no groups.
+	wantFilters := map[string]string{"email": "a@test.com", "role": "admin"}
+	svc.On("ListUsers", mock.Anything, "t1", 100, 0, wantFilters).
 		Return([]*iam.User{{ID: "u1", TenantID: "t1", Email: "a@test.com"}}, 1, nil)
 
 	resp, err := srv.ListUsers(context.Background(), &iampb.ListUsersRequest{
 		TenantId: "t1",
 		Email:    "a@test.com",
 		Role:     "admin",
-		Group:    "devs",
 	})
 
 	require.NoError(t, err)
@@ -781,189 +737,6 @@ func TestIAMServer_ListUsers_MissingTenantID(t *testing.T) {
 	st, ok := status.FromError(err)
 	require.True(t, ok)
 	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-// =============================================================================
-// Group Operations
-// =============================================================================
-
-func TestIAMServer_CreateGroup_Success(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-
-	svc.On("CreateGroup", mock.Anything, mock.AnythingOfType("*iam.Group")).
-		Return(&iam.Group{ID: "g1", TenantID: "t1", Name: "Devs"}, nil)
-
-	resp, err := srv.CreateGroup(context.Background(), &iampb.CreateGroupRequest{
-		TenantId:    "t1",
-		Id:          "g1",
-		Name:        "Devs",
-		Description: "Development team",
-	})
-
-	require.NoError(t, err)
-	assert.Equal(t, "g1", resp.Id)
-	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_CreateGroup_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-	ctx := context.Background()
-
-	_, err := srv.CreateGroup(ctx, &iampb.CreateGroupRequest{Id: "g1", Name: "Test"})
-	require.Error(t, err)
-
-	_, err = srv.CreateGroup(ctx, &iampb.CreateGroupRequest{TenantId: "t1", Name: "Test"})
-	require.Error(t, err)
-
-	_, err = srv.CreateGroup(ctx, &iampb.CreateGroupRequest{TenantId: "t1", Id: "g1"})
-	require.Error(t, err)
-}
-
-func TestIAMServer_GetGroup_Success(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-
-	svc.On("GetGroup", mock.Anything, "t1", "g1").
-		Return(&iam.Group{ID: "g1", TenantID: "t1", Name: "Devs"}, nil)
-
-	resp, err := srv.GetGroup(context.Background(), &iampb.GetGroupRequest{TenantId: "t1", GroupId: "g1"})
-
-	require.NoError(t, err)
-	assert.Equal(t, "g1", resp.Id)
-	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_GetGroup_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.GetGroup(context.Background(), &iampb.GetGroupRequest{GroupId: "g1"})
-	require.Error(t, err)
-
-	_, err = srv.GetGroup(context.Background(), &iampb.GetGroupRequest{TenantId: "t1"})
-	require.Error(t, err)
-}
-
-func TestIAMServer_UpdateGroup_Success(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-
-	svc.On("UpdateGroup", mock.Anything, mock.AnythingOfType("*iam.Group")).
-		Return(&iam.Group{ID: "g1", TenantID: "t1", Name: "Updated"}, nil)
-
-	resp, err := srv.UpdateGroup(context.Background(), &iampb.UpdateGroupRequest{
-		TenantId: "t1", GroupId: "g1", Name: "Updated", Description: "Updated desc",
-	})
-
-	require.NoError(t, err)
-	assert.Equal(t, "g1", resp.Id)
-	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_UpdateGroup_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.UpdateGroup(context.Background(), &iampb.UpdateGroupRequest{GroupId: "g1"})
-	require.Error(t, err)
-
-	_, err = srv.UpdateGroup(context.Background(), &iampb.UpdateGroupRequest{TenantId: "t1"})
-	require.Error(t, err)
-}
-
-func TestIAMServer_DeleteGroup_Success(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-
-	svc.On("DeleteGroup", mock.Anything, "t1", "g1").Return(nil)
-
-	resp, err := srv.DeleteGroup(context.Background(), &iampb.DeleteGroupRequest{TenantId: "t1", GroupId: "g1"})
-
-	require.NoError(t, err)
-	assert.True(t, resp.Success)
-	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_DeleteGroup_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.DeleteGroup(context.Background(), &iampb.DeleteGroupRequest{GroupId: "g1"})
-	require.Error(t, err)
-
-	_, err = srv.DeleteGroup(context.Background(), &iampb.DeleteGroupRequest{TenantId: "t1"})
-	require.Error(t, err)
-}
-
-func TestIAMServer_ListGroups_Success(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-
-	svc.On("ListGroups", mock.Anything, "t1", 100, 0).
-		Return([]*iam.Group{{ID: "g1", TenantID: "t1", Name: "Devs"}}, 1, nil)
-
-	resp, err := srv.ListGroups(context.Background(), &iampb.ListGroupsRequest{TenantId: "t1"})
-
-	require.NoError(t, err)
-	assert.Len(t, resp.Groups, 1)
-	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_ListGroups_MissingTenantID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.ListGroups(context.Background(), &iampb.ListGroupsRequest{})
-
-	require.Error(t, err)
-}
-
-func TestIAMServer_AddUserToGroup_Success(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-
-	svc.On("AddUserToGroup", mock.Anything, "t1", "g1", "u1").Return(nil)
-
-	resp, err := srv.AddUserToGroup(context.Background(), &iampb.AddUserToGroupRequest{
-		TenantId: "t1", GroupId: "g1", UserId: "u1",
-	})
-
-	require.NoError(t, err)
-	assert.True(t, resp.Success)
-	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_AddUserToGroup_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-	ctx := context.Background()
-
-	_, err := srv.AddUserToGroup(ctx, &iampb.AddUserToGroupRequest{GroupId: "g1", UserId: "u1"})
-	require.Error(t, err)
-
-	_, err = srv.AddUserToGroup(ctx, &iampb.AddUserToGroupRequest{TenantId: "t1", UserId: "u1"})
-	require.Error(t, err)
-
-	_, err = srv.AddUserToGroup(ctx, &iampb.AddUserToGroupRequest{TenantId: "t1", GroupId: "g1"})
-	require.Error(t, err)
-}
-
-func TestIAMServer_RemoveUserFromGroup_Success(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-
-	svc.On("RemoveUserFromGroup", mock.Anything, "t1", "g1", "u1").Return(nil)
-
-	resp, err := srv.RemoveUserFromGroup(context.Background(), &iampb.RemoveUserFromGroupRequest{
-		TenantId: "t1", GroupId: "g1", UserId: "u1",
-	})
-
-	require.NoError(t, err)
-	assert.True(t, resp.Success)
-	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_RemoveUserFromGroup_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-	ctx := context.Background()
-
-	_, err := srv.RemoveUserFromGroup(ctx, &iampb.RemoveUserFromGroupRequest{GroupId: "g1", UserId: "u1"})
-	require.Error(t, err)
-
-	_, err = srv.RemoveUserFromGroup(ctx, &iampb.RemoveUserFromGroupRequest{TenantId: "t1", UserId: "u1"})
-	require.Error(t, err)
-
-	_, err = srv.RemoveUserFromGroup(ctx, &iampb.RemoveUserFromGroupRequest{TenantId: "t1", GroupId: "g1"})
-	require.Error(t, err)
 }
 
 // =============================================================================

@@ -71,7 +71,7 @@ func newConversationTransport(t *testing.T, tenantID, sessionID string) *Transpo
 		mockQuicBaaS: &mockQuicBaaS{},
 		agent:        &loggingFakeAgentService{fakeAgentService: &fakeAgentService{}, log: log},
 		proj:         &fakeProjectService{},
-		admin:        &fakeAgentAdminService{},
+		admin:        &fakeFleetAdminService{},
 	})
 	require.NoError(t, err)
 	return tr
@@ -126,7 +126,7 @@ func TestEmbeddedGetSessionConversation_RejectsBadInput(t *testing.T) {
 			mockQuicBaaS: &mockQuicBaaS{},
 			agent:        &fakeAgentService{},
 			proj:         &fakeProjectService{},
-			admin:        &fakeAgentAdminService{},
+			admin:        &fakeFleetAdminService{},
 		})
 		require.NoError(t, err)
 		_, reqErr := tr.Request(context.Background(), "quicbaas.Orchestrator", "GetSessionConversation",

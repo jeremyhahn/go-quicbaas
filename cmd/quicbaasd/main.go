@@ -54,17 +54,17 @@ var (
 	nodeID      uint64
 	unixSocket  string
 
-	// Embedded agent flags.
-	embeddedAgentEnabled       bool
-	embeddedAgentBackends      []string
-	embeddedAgentOllamaURL     string
-	embeddedAgentHostAffinity  string
-	embeddedAgentGPU           bool
-	embeddedAgentDataDir       string
-	embeddedAgentSandboxImage  string
-	embeddedAgentSandboxPolicy string
-	embeddedAgentSandboxNet    string
-	embeddedAgentAutoPull      bool
+	// Embedded fleet node flags.
+	embeddedFleetNodeEnabled       bool
+	embeddedFleetNodeBackends      []string
+	embeddedFleetNodeOllamaURL     string
+	embeddedFleetNodeHostAffinity  string
+	embeddedFleetNodeGPU           bool
+	embeddedFleetNodeDataDir       string
+	embeddedFleetNodeSandboxImage  string
+	embeddedFleetNodeSandboxPolicy string
+	embeddedFleetNodeSandboxNet    string
+	embeddedFleetNodeAutoPull      bool
 
 	// Discovery flags for node command.
 	discoveryType string
@@ -234,17 +234,17 @@ func addServerFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&httpAddress, "http-address", "", "Bind address for the HTTP REST API (default: config or 127.0.0.1). Use 0.0.0.0 to listen on all interfaces.")
 	cmd.Flags().IntVar(&grpcPort, "grpc-port", 0, "gRPC TCP port (0 = Unix socket only)")
 
-	// Embedded agent flags.
-	cmd.Flags().BoolVar(&embeddedAgentEnabled, "embedded-agent", false, "Start an in-process agent runtime alongside the orchestrator (default: false)")
-	cmd.Flags().StringArrayVar(&embeddedAgentBackends, "embedded-agent-backend", []string{"ollama"}, "Backend(s) the embedded agent exposes (repeatable)")
-	cmd.Flags().StringVar(&embeddedAgentOllamaURL, "embedded-agent-ollama-url", "http://127.0.0.1:11434", "Ollama API endpoint for the embedded agent")
-	cmd.Flags().StringVar(&embeddedAgentHostAffinity, "embedded-agent-host-affinity", "", "Host-affinity tag for the embedded agent (default: hostname)")
-	cmd.Flags().BoolVar(&embeddedAgentGPU, "embedded-agent-gpu", false, "Advertise GPU capability for the embedded agent")
-	cmd.Flags().StringVar(&embeddedAgentDataDir, "embedded-agent-data-dir", "", "Working directory for embedded agent session state (default: <data-dir>/embedded-agent)")
-	cmd.Flags().StringVar(&embeddedAgentSandboxImage, "embedded-agent-sandbox-image", "", "OCI image the embedded agent spawns for sandboxed sessions (must have the backend agent on PATH)")
-	cmd.Flags().StringVar(&embeddedAgentSandboxPolicy, "embedded-agent-sandbox-policy", "", "Embedded agent sandbox policy: opt-in (default), preferred, or required")
-	cmd.Flags().StringVar(&embeddedAgentSandboxNet, "embedded-agent-sandbox-network", "", "Container network for embedded-agent sandboxed sessions: bridge (default), none, host, or a network name. \"host\" removes network isolation from the agent container.")
-	cmd.Flags().BoolVar(&embeddedAgentAutoPull, "embedded-agent-auto-pull", false, "Pre-pull the embedded agent sandbox image(s) at startup (leave off for locally-built images)")
+	// Embedded fleet node flags.
+	cmd.Flags().BoolVar(&embeddedFleetNodeEnabled, "embedded-fleet-node", false, "Start an in-process fleet node alongside the orchestrator (default: false)")
+	cmd.Flags().StringArrayVar(&embeddedFleetNodeBackends, "embedded-fleet-node-backend", []string{"ollama"}, "Backend(s) the embedded fleet node exposes (repeatable)")
+	cmd.Flags().StringVar(&embeddedFleetNodeOllamaURL, "embedded-fleet-node-ollama-url", "http://127.0.0.1:11434", "Ollama API endpoint for the embedded fleet node")
+	cmd.Flags().StringVar(&embeddedFleetNodeHostAffinity, "embedded-fleet-node-host-affinity", "", "Host-affinity tag for the embedded fleet node (default: hostname)")
+	cmd.Flags().BoolVar(&embeddedFleetNodeGPU, "embedded-fleet-node-gpu", false, "Advertise GPU capability for the embedded fleet node")
+	cmd.Flags().StringVar(&embeddedFleetNodeDataDir, "embedded-fleet-node-data-dir", "", "Working directory for embedded fleet node session state (default: <data-dir>/embedded-agent)")
+	cmd.Flags().StringVar(&embeddedFleetNodeSandboxImage, "embedded-fleet-node-sandbox-image", "", "OCI image the embedded fleet node spawns for sandboxed sessions (must have the backend agent on PATH)")
+	cmd.Flags().StringVar(&embeddedFleetNodeSandboxPolicy, "embedded-fleet-node-sandbox-policy", "", "Embedded fleet node sandbox policy: opt-in (default), preferred, or required")
+	cmd.Flags().StringVar(&embeddedFleetNodeSandboxNet, "embedded-fleet-node-sandbox-network", "", "Container network for the embedded fleet node's sandboxed sessions: bridge (default), none, host, or a network name. \"host\" removes network isolation from the agent container.")
+	cmd.Flags().BoolVar(&embeddedFleetNodeAutoPull, "embedded-fleet-node-auto-pull", false, "Pre-pull the embedded fleet node sandbox image(s) at startup (leave off for locally-built images)")
 }
 
 // addRaftFlags adds Raft-specific flags to a command.
@@ -322,7 +322,7 @@ func initConfig() {
 	// setting while believing it was enforced, which is worse than a refusal:
 	// the whole point of the removed-key list is that it is pre-v1 and the key
 	// is renamed BY HAND.
-	if err := config.RefuseRemovedSDLCKeys(viper.GetViper()); err != nil {
+	if err := config.RefuseRemovedKeys(viper.GetViper()); err != nil {
 		fmt.Fprintf(os.Stderr, "Invalid configuration: %v\n", err)
 		os.Exit(1)
 	}
@@ -375,6 +375,7 @@ func bindEnvVars() {
 	config.BindSDLCEnv(viper.GetViper())
 	config.BindSDLCSurfacingEnv(viper.GetViper())
 	config.BindSDLCLabelReconcileEnv(viper.GetViper())
+	config.BindSDLCWorkerImageEnv(viper.GetViper())
 
 	// Server configuration - nested protocol configs.
 	_ = viper.BindEnv("server.host")
@@ -488,16 +489,16 @@ func bindEnvVars() {
 	_ = viper.BindEnv("ollama.default_embedding_model")
 
 	// Embedded agent configuration.
-	_ = viper.BindEnv("server.embedded_agent.enabled")
-	_ = viper.BindEnv("server.embedded_agent.backends")
-	_ = viper.BindEnv("server.embedded_agent.ollama_url")
-	_ = viper.BindEnv("server.embedded_agent.host_affinity")
-	_ = viper.BindEnv("server.embedded_agent.gpu_available")
-	_ = viper.BindEnv("server.embedded_agent.data_dir")
-	_ = viper.BindEnv("server.embedded_agent.sandbox_image")
-	_ = viper.BindEnv("server.embedded_agent.sandbox_policy")
-	_ = viper.BindEnv("server.embedded_agent.image_registry")
-	_ = viper.BindEnv("server.embedded_agent.auto_pull")
+	_ = viper.BindEnv("server.embedded_fleet_node.enabled")
+	_ = viper.BindEnv("server.embedded_fleet_node.backends")
+	_ = viper.BindEnv("server.embedded_fleet_node.ollama_url")
+	_ = viper.BindEnv("server.embedded_fleet_node.host_affinity")
+	_ = viper.BindEnv("server.embedded_fleet_node.gpu_available")
+	_ = viper.BindEnv("server.embedded_fleet_node.data_dir")
+	_ = viper.BindEnv("server.embedded_fleet_node.sandbox_image")
+	_ = viper.BindEnv("server.embedded_fleet_node.sandbox_policy")
+	_ = viper.BindEnv("server.embedded_fleet_node.image_registry")
+	_ = viper.BindEnv("server.embedded_fleet_node.auto_pull")
 }
 
 // parseSpecialEnvVars parses environment variables that viper doesn't handle automatically.
@@ -705,38 +706,38 @@ func applyServerFlags(cmd *cobra.Command) {
 	}
 
 	// Apply embedded agent flags.
-	if cmd.Flags().Changed("embedded-agent") {
-		cfg.Server.EmbeddedAgent.Enabled = embeddedAgentEnabled
+	if cmd.Flags().Changed("embedded-fleet-node") {
+		cfg.Server.EmbeddedFleetNode.Enabled = embeddedFleetNodeEnabled
 	}
-	if cmd.Flags().Changed("embedded-agent-backend") {
-		cfg.Server.EmbeddedAgent.Backends = embeddedAgentBackends
+	if cmd.Flags().Changed("embedded-fleet-node-backend") {
+		cfg.Server.EmbeddedFleetNode.Backends = embeddedFleetNodeBackends
 	}
-	if cmd.Flags().Changed("embedded-agent-ollama-url") {
-		cfg.Server.EmbeddedAgent.OllamaURL = embeddedAgentOllamaURL
+	if cmd.Flags().Changed("embedded-fleet-node-ollama-url") {
+		cfg.Server.EmbeddedFleetNode.OllamaURL = embeddedFleetNodeOllamaURL
 	}
-	if cmd.Flags().Changed("embedded-agent-host-affinity") {
-		cfg.Server.EmbeddedAgent.HostAffinity = embeddedAgentHostAffinity
+	if cmd.Flags().Changed("embedded-fleet-node-host-affinity") {
+		cfg.Server.EmbeddedFleetNode.HostAffinity = embeddedFleetNodeHostAffinity
 	}
-	if cmd.Flags().Changed("embedded-agent-gpu") {
-		cfg.Server.EmbeddedAgent.GPUAvailable = embeddedAgentGPU
+	if cmd.Flags().Changed("embedded-fleet-node-gpu") {
+		cfg.Server.EmbeddedFleetNode.GPUAvailable = embeddedFleetNodeGPU
 	}
-	if cmd.Flags().Changed("embedded-agent-sandbox-image") {
-		cfg.Server.EmbeddedAgent.SandboxImage = embeddedAgentSandboxImage
+	if cmd.Flags().Changed("embedded-fleet-node-sandbox-image") {
+		cfg.Server.EmbeddedFleetNode.SandboxImage = embeddedFleetNodeSandboxImage
 	}
-	if cmd.Flags().Changed("embedded-agent-sandbox-policy") {
-		cfg.Server.EmbeddedAgent.SandboxPolicy = embeddedAgentSandboxPolicy
+	if cmd.Flags().Changed("embedded-fleet-node-sandbox-policy") {
+		cfg.Server.EmbeddedFleetNode.SandboxPolicy = embeddedFleetNodeSandboxPolicy
 	}
-	if cmd.Flags().Changed("embedded-agent-sandbox-network") {
-		cfg.Server.EmbeddedAgent.SandboxNetwork = embeddedAgentSandboxNet
+	if cmd.Flags().Changed("embedded-fleet-node-sandbox-network") {
+		cfg.Server.EmbeddedFleetNode.SandboxNetwork = embeddedFleetNodeSandboxNet
 	}
-	if cmd.Flags().Changed("embedded-agent-auto-pull") {
-		cfg.Server.EmbeddedAgent.AutoPull = embeddedAgentAutoPull
+	if cmd.Flags().Changed("embedded-fleet-node-auto-pull") {
+		cfg.Server.EmbeddedFleetNode.AutoPull = embeddedFleetNodeAutoPull
 	}
-	if cmd.Flags().Changed("embedded-agent-data-dir") {
-		cfg.Server.EmbeddedAgent.DataDir = embeddedAgentDataDir
-	} else if cfg.Server.EmbeddedAgent.DataDir == "" {
+	if cmd.Flags().Changed("embedded-fleet-node-data-dir") {
+		cfg.Server.EmbeddedFleetNode.DataDir = embeddedFleetNodeDataDir
+	} else if cfg.Server.EmbeddedFleetNode.DataDir == "" {
 		// Default data dir for embedded agent: <storage.data_dir>/embedded-agent
-		cfg.Server.EmbeddedAgent.DataDir = cfg.Storage.DataDir + "/embedded-agent"
+		cfg.Server.EmbeddedFleetNode.DataDir = cfg.Storage.DataDir + "/embedded-agent"
 	}
 }
 

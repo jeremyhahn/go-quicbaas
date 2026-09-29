@@ -46,8 +46,7 @@ func livenessProvider(t *testing.T, storeErr error) *OIDCProvider {
 				UserStorage: NewMemoryStorage(),
 				err:         storeErr,
 			},
-			GroupStorage: NewMemoryStorage(),
-			RoleStorage:  NewMemoryStorage(),
+			RoleStorage: NewMemoryStorage(),
 		}),
 	}
 }

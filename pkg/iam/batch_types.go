@@ -74,9 +74,6 @@ const (
 	// BatchOperationTypeRoles indicates a role batch operation.
 	BatchOperationTypeRoles BatchOperationType = "roles"
 
-	// BatchOperationTypeGroups indicates a group batch operation.
-	BatchOperationTypeGroups BatchOperationType = "groups"
-
 	// BatchOperationTypePolicies indicates a policy batch operation.
 	BatchOperationTypePolicies BatchOperationType = "policies"
 )
@@ -269,9 +266,6 @@ type UserImportItem struct {
 	// Roles is the list of roles to assign to the user.
 	Roles []string `json:"roles,omitempty" yaml:"roles,omitempty"`
 
-	// Groups is the list of groups to add the user to.
-	Groups []string `json:"groups,omitempty" yaml:"groups,omitempty"`
-
 	// Enabled indicates whether the user is enabled.
 	Enabled bool `json:"enabled" yaml:"enabled"`
 }
@@ -305,32 +299,6 @@ type RoleImportItem struct {
 // Validate validates the role import item.
 func (r *RoleImportItem) Validate() error {
 	if r.Name == "" {
-		return &ValidationError{Field: "name", Message: "name is required"}
-	}
-	return nil
-}
-
-// GroupImportItem represents a group item for batch import.
-type GroupImportItem struct {
-	// ID is the group ID.
-	ID string `json:"id,omitempty" yaml:"id,omitempty"`
-
-	// Name is the group name.
-	Name string `json:"name" yaml:"name"`
-
-	// Description is the group description.
-	Description string `json:"description,omitempty" yaml:"description,omitempty"`
-
-	// Members is the list of member IDs to add to the group.
-	Members []string `json:"members,omitempty" yaml:"members,omitempty"`
-
-	// Attributes contains additional group attributes.
-	Attributes map[string]interface{} `json:"attributes,omitempty" yaml:"attributes,omitempty"`
-}
-
-// Validate validates the group import item.
-func (g *GroupImportItem) Validate() error {
-	if g.Name == "" {
 		return &ValidationError{Field: "name", Message: "name is required"}
 	}
 	return nil

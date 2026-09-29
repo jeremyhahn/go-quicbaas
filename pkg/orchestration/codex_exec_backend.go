@@ -18,10 +18,14 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 // CodexExecBackend is an AgentBackend that wraps the OpenAI codex CLI in its
@@ -183,14 +187,19 @@ func (b *CodexExecBackend) Prompt(ctx context.Context, req *PromptRequest) (*Pro
 		full = "[SYSTEM]\n" + req.SystemPrompt + "\n\n[USER]\n" + req.Prompt
 	}
 
-	// Build argv: <command> [global-args...] exec [-c model=...] --skip-git-repo-check [extra-args...] -
+	// Build argv: <command> [global-args...] exec --json [-c model=...] --skip-git-repo-check [extra-args...] -
 	// The trailing "-" makes codex read the prompt from stdin, which avoids
 	// argv length limits and shell escaping pitfalls.
 	// --skip-git-repo-check is required when the workspace is not inside a
 	// git repository codex recognizes (e.g. mounted dev directories); without
 	// it codex aborts with "Not inside a trusted directory".
+	//
+	// --json IS WHAT MAKES THE TURN MEASURABLE. The text mode prints its
+	// token count as prose; the JSONL stream carries turn.completed.usage, the
+	// same accounting the worker daemons read (parseExecEvents), so a turn on
+	// this backend reaches the ledger with its tokens (go-quicbaas#1058).
 	argv := append([]string{}, b.args...)
-	argv = append(argv, "exec")
+	argv = append(argv, "exec", "--json")
 	if model != "" {
 		argv = append(argv, "-c", "model=\""+model+"\"")
 	}
@@ -210,6 +219,21 @@ func (b *CodexExecBackend) Prompt(ctx context.Context, req *PromptRequest) (*Pro
 	cmd.Env = agentProcessEnv(sess.env)
 	cmd.Stdin = strings.NewReader(full)
 
+	// THE MODEL THE TURN IS RECORDED UNDER. With no model named, codex runs
+	// the one its config.toml pins — the same file, found through the same
+	// environment, the process above reads — so that is the model the turn
+	// ran. A config that pins none leaves codex on its built-in default,
+	// which the CLI does not report; the turn is then recorded under
+	// CodexCLIDefaultModel rather than refused by the ledger for having no
+	// model at all.
+	served := model
+	if served == "" {
+		served = codexConfiguredModel(cmd.Env)
+	}
+	if served == "" {
+		served = CodexCLIDefaultModel
+	}
+
 	if req.EventCallback != nil {
 		req.EventCallback(&SessionEvent{
 			SessionID: req.SessionID,
@@ -225,36 +249,101 @@ func (b *CodexExecBackend) Prompt(ctx context.Context, req *PromptRequest) (*Pro
 	output, runErr := cmd.CombinedOutput()
 	stdout := string(output)
 
-	if req.EventCallback != nil && stdout != "" {
-		req.EventCallback(&SessionEvent{
-			SessionID: req.SessionID,
-			Kind:      KindAssistantChunk,
-			AssistantChunk: &AssistantChunkPayload{
-				Text:  stdout,
-				Model: model,
-			},
-		})
+	turn, parseErr := parseExecEvents(stdout)
+	if parseErr != nil {
+		return nil, &PromptError{SessionID: req.SessionID, Cause: parseErr}
 	}
-
-	if runErr != nil {
+	// THE STREAM IS THE VERDICT, NOT THE EXIT STATUS. A turn is a success
+	// only when codex reported it COMPLETED and it produced an answer: an
+	// assistant message followed by turn.failed is a failed turn, however
+	// much text came before the failure (go-quicbaas#1058 review), and a
+	// completed turn with no answer is a failure too.
+	//
+	// A failure still carries what codex measured and the model the turn
+	// ran on, so the ledger records its tokens and names its model rather
+	// than recording it unmeasured or refusing it for having no model.
+	if turn.stopReason != StopReasonEndTurn || turn.text == "" {
 		return nil, &PromptError{
 			SessionID: req.SessionID,
 			Cause: &OneShotExecutionError{
 				Command: b.command + " " + strings.Join(argv, " "),
 				Stderr:  stdout,
 				Cause:   runErr,
+				TurnFailureEvidence: TurnFailureEvidence{
+					Usage: turn.usage,
+					Model: served,
+				},
 			},
 		}
 	}
 
+	if req.EventCallback != nil && turn.text != "" {
+		req.EventCallback(&SessionEvent{
+			SessionID: req.SessionID,
+			Kind:      KindAssistantChunk,
+			AssistantChunk: &AssistantChunkPayload{
+				Text:  turn.text,
+				Model: served,
+			},
+		})
+	}
+
 	return &PromptResponse{
 		SessionID:  req.SessionID,
-		Model:      model,
+		Model:      served,
 		StopReason: StopReasonEndTurn,
+		Usage:      turn.usage,
 		Content: []ContentBlock{
-			{Type: "text", Text: extractCodexAssistantText(stdout)},
+			{Type: "text", Text: turn.text},
 		},
 	}, nil
+}
+
+// CodexCLIDefaultModel is the model name a codex exec turn is recorded under
+// when neither the request, the session nor codex's config.toml names one:
+// the CLI's own built-in default, which it does not report. The name is a
+// label, never sent to codex; the price table may list it like any model.
+const CodexCLIDefaultModel = "codex-cli-default"
+
+// codexConfig is the part of codex's config.toml this backend reads.
+type codexConfig struct {
+	Model string `toml:"model"`
+}
+
+// codexConfiguredModel returns the model codex's config.toml pins for a
+// process run with env, or "" when there is no readable config or it pins
+// none. The file is found the way codex finds it: $CODEX_HOME/config.toml,
+// else $HOME/.codex/config.toml.
+func codexConfiguredModel(env []string) string {
+	dir := envValue(env, "CODEX_HOME")
+	if dir == "" {
+		home := envValue(env, "HOME")
+		if home == "" {
+			return ""
+		}
+		dir = filepath.Join(home, ".codex")
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "config.toml"))
+	if err != nil {
+		return ""
+	}
+	var cfg codexConfig
+	if err := toml.Unmarshal(data, &cfg); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.Model)
+}
+
+// envValue returns key's value in env as a process would see it: the last
+// assignment wins.
+func envValue(env []string, key string) string {
+	prefix := key + "="
+	for i := len(env) - 1; i >= 0; i-- {
+		if strings.HasPrefix(env[i], prefix) {
+			return env[i][len(prefix):]
+		}
+	}
+	return ""
 }
 
 // Status returns the registered session's state. Always SessionStateIdle
@@ -289,71 +378,6 @@ func newCodexExecSessionID() (string, error) {
 		return "", errors.New("codex exec backend: random source failed")
 	}
 	return "codex-" + hex.EncodeToString(buf[:]), nil
-}
-
-// extractCodexAssistantText reduces codex exec output to just the assistant
-// turn. The codex CLI emits a structured stream where each top-level block
-// starts with a marker on its own line: header (until "--------"), then
-// alternating "user" / "exec ..." / "codex" / "tokens used" sections. The
-// final assistant answer lives in the last "codex" block; everything inside
-// it (until the next marker or EOF) is what we want to return to the caller.
-//
-// The function uses the LAST occurrence of "codex" so prompt echoes that
-// happen earlier (which can include the system prompt's JSON example) are
-// not mistaken for the assistant's response. Falls back to the raw output
-// when the markers cannot be found so the parser at least has data to scan.
-func extractCodexAssistantText(raw string) string {
-	if raw == "" {
-		return ""
-	}
-	lines := strings.Split(raw, "\n")
-
-	// markerLine returns the section name when the trimmed line is exactly a
-	// known top-level marker, or "" otherwise. We deliberately match exact
-	// strings rather than prefixes so prose lines that happen to start with
-	// "user" or "codex" inside a section are not mistaken for markers.
-	markerLine := func(line string) string {
-		switch strings.TrimSpace(line) {
-		case "codex":
-			return "codex"
-		case "user":
-			return "user"
-		case "tokens used":
-			return "tokens used"
-		case "thinking":
-			return "thinking"
-		}
-		// "exec ..." sections start with "exec " then a shell command.
-		t := strings.TrimSpace(line)
-		if strings.HasPrefix(t, "exec ") {
-			return "exec"
-		}
-		return ""
-	}
-
-	// Find the last index where the line is the bare marker "codex".
-	lastCodex := -1
-	for i, line := range lines {
-		if markerLine(line) == "codex" {
-			lastCodex = i
-		}
-	}
-	if lastCodex < 0 {
-		return strings.TrimSpace(raw)
-	}
-
-	// Collect lines after the marker until the next marker or EOF.
-	var collected []string
-	for i := lastCodex + 1; i < len(lines); i++ {
-		if markerLine(lines[i]) != "" {
-			break
-		}
-		collected = append(collected, lines[i])
-	}
-	if len(collected) == 0 {
-		return strings.TrimSpace(raw)
-	}
-	return strings.TrimSpace(strings.Join(collected, "\n"))
 }
 
 // CodexExecError wraps a codex exec backend operation failure with a

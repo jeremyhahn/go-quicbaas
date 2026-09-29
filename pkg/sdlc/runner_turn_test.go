@@ -315,6 +315,25 @@ func TestRunner_ANextAttemptSeesWhatWasSaidSinceAdoption(t *testing.T) {
 	}
 }
 
+// TestRunner_AFirstAttemptAfterAParkSeesTheRuling is the parked-adoption
+// case: a task adopted parked runs its FIRST attempt only after a person
+// answered on the issue, so the first attempt must read the answer too.
+func TestRunner_AFirstAttemptAfterAParkSeesTheRuling(t *testing.T) {
+	rig := newRunnerRig(t)
+	if _, err := rig.forge.CommentOnIssue(context.Background(), RepoRef{Owner: "acme", Repo: "api"}, 25,
+		"Owner ruling: default the signer to 4096-bit keys."); err != nil {
+		t.Fatal(err)
+	}
+	rig.agents.answers("Implemented it all.")
+	if err := rig.runner.Run(context.Background(), rig.job(t)); err == nil {
+		t.Fatal("the attempt reported success")
+	}
+	prompts := rig.agents.promptTexts()
+	if len(prompts) != 1 || !strings.Contains(prompts[0], "default the signer to 4096-bit keys") {
+		t.Fatalf("the first attempt must be handed the ruling posted since adoption, got %v", prompts)
+	}
+}
+
 // TestRunner_AContractTheForgeWillNotRefreshIsTheAdoptedOne proves the
 // fallback: when the forge cannot be read the worker still gets the contract
 // the task was adopted with, and the audit trail says so.

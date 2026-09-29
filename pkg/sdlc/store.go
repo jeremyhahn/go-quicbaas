@@ -141,6 +141,52 @@ func (s *Store) PutBinding(ctx context.Context, tenantID string, binding *Projec
 	return nil
 }
 
+// UpdateBinding writes binding only if the stored record is still the one
+// the caller read: its UpdatedAt must match the modification stamp stored
+// for the project. A binding replaced or deleted in between is refused with
+// VersionConflictError and nothing is written, so a read-modify-write can
+// neither undo a concurrent Bind nor resurrect an Unbind. On success the
+// binding's UpdatedAt is advanced in place.
+//
+// The guard is the stored modification stamp rather than a version counter
+// because every binding already carries one (PutBinding stamps it on every
+// write), so records written before this guard existed are guarded too.
+func (s *Store) UpdateBinding(ctx context.Context, tenantID string, binding *ProjectBinding) error {
+	if err := binding.Validate(); err != nil {
+		return err
+	}
+	if binding.UpdatedAt.IsZero() {
+		// A zero stamp compares equal to an absent record, which is exactly
+		// the resurrection this write exists to refuse.
+		return &InvalidInputError{Field: "updated_at", Message: "a guarded update needs the stamp of the record it read"}
+	}
+	dao, err := s.bindingDAO(ctx, "UpdateBinding", tenantID)
+	if err != nil {
+		return err
+	}
+	expected := binding.UpdatedAt.UnixNano()
+	next := *binding
+	next.ID = entityIDFor(binding.ProjectID)
+	next.UpdatedAt = s.now()
+	if !next.UpdatedAt.After(binding.UpdatedAt) {
+		// Keep the stamp strictly advancing so the next guarded write can
+		// tell this one from the record it replaced.
+		next.UpdatedAt = binding.UpdatedAt.Add(time.Nanosecond)
+	}
+	cond := qrdbsdk.Condition{Target: qrdbsdk.ConditionMod, Operator: qrdbsdk.OpEqual, Value: expected}
+	if err := dao.SaveWithCondition(ctx, &next, cond); err != nil {
+		var failed qrdbsdk.DAOConditionFailedError
+		if errors.As(err, &failed) {
+			return &VersionConflictError{
+				Entity: bindingEntityName, TenantID: tenantID, ID: binding.ProjectID, Expected: expected,
+			}
+		}
+		return backendError("UpdateBinding", err)
+	}
+	*binding = next
+	return nil
+}
+
 // DeleteBinding removes the binding for projectID. Deleting an absent
 // binding is not an error.
 func (s *Store) DeleteBinding(ctx context.Context, tenantID, projectID string) error {

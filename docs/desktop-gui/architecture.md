@@ -57,7 +57,7 @@ Comprehensive step-by-step walkthroughs for all 22+ views are available in GUI W
 - **Dashboard** — system health, uptime, service status, and resource counts (sessions, agents, jobs, workflows)
 - **Sessions list** — live view of running/paused/closed sessions, filterable by tenant, backend, and status
 - **Session attach** — history replay + live SSE tail. Renders each event kind with its own component (prompts, tool calls, file diffs, etc.). Scrollback virtualizes with IntersectionObserver sentinels.
-- **Agent Fleet** — enrolled agent daemons, their heartbeat status, and the jobs they own
+- **Fleet** — enrolled fleet node daemons, their heartbeat status, and the jobs they own
 - **Software Factory → Inference** — stateless prompt submission to a fleet-resident backend with optional streaming, host affinity, and a per-session history of the last 10 calls. See [agents/inference.md](../software-factory/user.md#using-the-gui) and Inference walkthrough for the full layout and error matrix.
 
 ## Loading the UI
@@ -198,7 +198,7 @@ cmd/quicbaas/
   bindings_seal.go             # NEW: seal/unseal/bootstrap
   bindings_kv.go               # NEW: KV CRUD
   bindings_cluster.go          # NEW: cluster status/nodes
-  bindings_iam.go              # NEW: users/roles/groups/policies/tenants
+  bindings_iam.go              # NEW: users/roles/policies/tenants
   bindings_kms.go              # NEW: key management
   bindings_secrets.go          # NEW: secrets
   bindings_vector.go           # NEW: vector search
@@ -346,7 +346,7 @@ pkg/api/rest/
 **Goal**: IAM, KMS, secrets, cluster, backup, cache.
 
 #### 4.1 Go Bindings
-- `bindings_iam.go` - Users, Roles, Groups, Policies, Tenants CRUD
+- `bindings_iam.go` - Users, Roles, Policies, Tenants CRUD
 - `bindings_kms.go` - Key lifecycle management
 - `bindings_secrets.go` - Store, Fetch, Delete, List, Rotate
 - `bindings_cluster.go` (expanded) - ListNodes, RemoveNode, Rebalance
@@ -355,7 +355,7 @@ pkg/api/rest/
 - `bindings_crypto.go` - Sign, Verify, Encrypt, Decrypt
 
 #### 4.2 Frontend Views
-- `IAMManager.svelte` - tabbed CRUD for users/roles/groups/policies/tenants
+- `IAMManager.svelte` - tabbed CRUD for users/roles/policies/tenants
 - `KMSManager.svelte` - key list, creation wizard, rotation
 - `SecretsManager.svelte` - hierarchical path browser, masked values
 - `ClusterManager.svelte` - node topology, health, rebalance
@@ -369,14 +369,14 @@ pkg/api/rest/
 #### 5.1 Go Bindings
 - `bindings_messaging.go` - CreateChannel, Publish, Subscribe (uses Wails events for real-time)
 - `bindings_scheduler.go` - Job CRUD, Pause/Resume, Trigger
-- `bindings_orchestrator.go` - Agent registry, task submission/tracking
+- `bindings_orchestrator.go` - Fleet registry, task submission/tracking
 - `bindings_rag.go` - Ingest, Query, collection management
 - `bindings_embedding.go` - Generate, BatchGenerate, ListModels
 
 #### 5.2 Frontend Views
 - `MessagingView.svelte` - channel management, real-time message stream
 - `SchedulerView.svelte` - job list, cron builder, execution history
-- `OrchestratorView.svelte` - agent fleet, task tracking
+- `OrchestratorView.svelte` - fleet, task tracking
 - `RAGView.svelte` - document ingestion, query with source attribution
 - `EmbeddingView.svelte` - text input, model selector, batch
 
@@ -890,7 +890,7 @@ The app is primarily designed for desktop-scale screens (1280px+) but must remai
 - Batch encode job submission
 
 **Orchestrator** (`/ai/orchestrator`)
-- Agent fleet: list of registered agents with health status
+- Fleet: list of registered fleet nodes with health status
 - Task queue: pending/running/completed tasks
 - Task detail: input, output, trace log, timing
 - Workflow builder: DAG visualization of multi-step workflows
@@ -914,7 +914,6 @@ The app is primarily designed for desktop-scale screens (1280px+) but must remai
 
 **IAM** (`/security/iam`)
 - Users: list, detail, create, edit, delete
-- Groups: list, detail, member management
 - Roles: list, detail, policy attachment
 - Policies: list, policy editor (JSON)
 - Tenants: list, detail, resource quotas
@@ -1146,11 +1145,11 @@ Avatar uses colored initials (deterministic color from username hash for consist
 
 Full page (not slide-over, because there's enough detail to warrant it).
 
-Tabs: "Profile", "Roles & Groups", "Activity Log", "Sessions".
+Tabs: "Profile", "Roles", "Activity Log", "Sessions".
 
 Profile tab: name, email, created date, last login, MFA status.
 
-Roles & Groups tab: two columns side by side. Left: assigned roles (each with a remove button). Right: assigned groups (each with a remove button). Below each: "Add Role" / "Add Group" button that opens a search modal.
+Roles tab: the assigned roles, each with a remove button. Below them: an "Add Role" button that opens a search modal.
 
 **Policy Editor:**
 
@@ -1333,7 +1332,7 @@ Message stream uses a virtualized list (only render visible rows) to handle high
 
 #### Orchestrator Workflow
 
-**Agent Fleet Overview:**
+**Fleet Overview:**
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  AI Orchestrator                                             │
@@ -1844,7 +1843,6 @@ flowchart TD
 
     IAM --> USERS["Users"]
     IAM --> ROLES["Roles"]
-    IAM --> GROUPS["Groups"]
     IAM --> POLICIES["Policies"]
 
     CLUSTER --> CDASH["Dashboard"]

@@ -41,6 +41,17 @@
 //	secret, err := client.Get(ctx, "database/production",
 //	    secrets.WithVersion(2))
 //
+// # Borrowing Secret Material
+//
+// Get returns fields as ordinary Go strings, which cannot be wiped. Read a
+// key or password with GetWithBytes instead: the plaintext is held in
+// protected storage, lent to the callback, and destroyed on return.
+//
+//	err := client.GetWithBytes(ctx, "database/production", "password",
+//	    func(password []byte) error {
+//	        return connect(password) // must not retain password
+//	    })
+//
 // # Secret Versioning
 //
 // Secrets are versioned automatically. Each Store operation creates a new

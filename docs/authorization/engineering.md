@@ -29,7 +29,7 @@ spec:
 subjects:
   # Match specific entities
   users: [alice, bob, charlie]      # Specific user IDs
-  groups: [engineering, devops]     # Group memberships
+  groups: [engineering, devops]     # The `groups` claim: names of the bound roles
   roles: [admin, developer]         # Role assignments
   services: [api-gateway, worker]   # Service accounts
 

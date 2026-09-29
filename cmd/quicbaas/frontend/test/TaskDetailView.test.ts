@@ -52,6 +52,9 @@ vi.mock('../src/stores/orchestrator.svelte.ts', () => ({
   loadTasks: mockLoadTasks,
   loadTaskJobs: mockLoadTaskJobs,
   refresh: mockRefresh,
+  // A validated session; the scope-change re-read has its own test in
+  // routeDeepLink.test.ts.
+  readyScope: () => 'scope',
 }));
 
 vi.mock('../src/stores/router.svelte.ts', () => ({
@@ -163,6 +166,45 @@ describe('TaskDetailView — header and budget', () => {
     expect(screen.getByTestId('refunded')).toHaveTextContent('1');
     expect(screen.getByText('1 in a row')).toBeInTheDocument();
     expect(screen.getByText(/1 of 3 dispatched attempts were refunded/)).toBeInTheDocument();
+  });
+
+  // go-quicbaas#947: the page names why the task stopped from typed fields.
+  it('names a task blocked for an owner ruling, with its conclusion', () => {
+    storeMock.tasks = [makeTask({
+      status: 'blocked', block_kind: 'needs_info', blocked_reason: 'which schema?',
+      conclusion_reason: 'parked_needs_info', fault_origin: '',
+    })];
+    render(TaskDetailView);
+    expect(screen.getByTestId('task-stop')).toHaveTextContent('Awaiting owner ruling');
+    expect(screen.getByTestId('conclusion-reason')).toHaveTextContent('parked_needs_info');
+  });
+
+  it('names an environment fault apart from a failure of the work', () => {
+    storeMock.tasks = [makeTask({
+      status: 'failed', fault_origin: 'work', fault_class: 'stalled', conclusion_reason: 'budget_exhausted',
+    })];
+    const work = render(TaskDetailView);
+    expect(screen.getByTestId('task-stop')).toHaveTextContent('Failed on the work');
+    work.unmount();
+
+    storeMock.tasks = [makeTask({
+      status: 'blocked', block_kind: 'blocked', fault_origin: 'environment',
+      fault_class: 'ci_host_defect', conclusion_reason: 'runner_parked',
+    })];
+    render(TaskDetailView);
+    expect(screen.getByTestId('task-stop')).toHaveTextContent('Environment fault: ci_host_defect');
+    expect(screen.getByTestId('task-stop-detail')).toHaveTextContent(/awaiting operator repair/);
+  });
+
+  it('says which refunds were questions rather than environment faults', () => {
+    storeMock.tasks = [makeTask({
+      attempts: 4, environment_faults: 1, question_attempts: 2, charged_attempts: 1, effective_budget: 3,
+    })];
+    render(TaskDetailView);
+    expect(screen.getByTestId('budget-label')).toHaveTextContent('1 / 3 (4 dispatched)');
+    expect(screen.getByText(/3 of 4 dispatched attempts were refunded/)).toHaveTextContent(
+      /1 because the environment failed, not the work, and 2 because the worker stopped to ask a person/,
+    );
   });
 
   it('renders em-dashes when the task carries no attempt accounting', () => {
@@ -360,7 +402,7 @@ describe('TaskDetailView — the agent working the task', () => {
   // `assigned_to` is never written on the dispatcher's path, so for every
   // auto-spawned task it is empty for the task's whole life. The agent is on
   // the job record the page already loads.
-  it('names the fleet agent the latest attempt ran on when the task has no claimant', () => {
+  it('names the fleet node the latest attempt ran on when the task has no claimant', () => {
     storeMock.tasks = [makeTask({
       status: 'completed',
       auto_spawn: true,
@@ -369,10 +411,10 @@ describe('TaskDetailView — the agent working the task', () => {
       attempts: 1,
       metadata: { attempt_history: 'job-abc' },
     })];
-    storeMock.taskJobs = [makeJob({ job_id: 'job-abc', agent_id: 'agent-automatethethings-agent-vm-host-4' })];
+    storeMock.taskJobs = [makeJob({ job_id: 'job-abc', agent_id: 'agent-automatethethings-agent-04' })];
     render(TaskDetailView);
     expect(screen.getByTestId('task-assigned'))
-      .toHaveTextContent('agent-automatethethings-agent-vm-host-4');
+      .toHaveTextContent('agent-automatethethings-agent-04');
   });
 
   it('renders an em-dash when neither the task nor its jobs name an agent', () => {

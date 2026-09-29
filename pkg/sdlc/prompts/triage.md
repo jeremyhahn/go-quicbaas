@@ -22,7 +22,16 @@ not mark it ready.**
   factory has already asked git, at the head you are judging, whether each
   named file exists and where each named identifier appears. They are
   measured, not remembered. Cite them for the already-done check, and if
-  they contradict the issue, say so.
+  they contradict the issue, say so. **A name the facts report absent is
+  not, by itself, a reason to hold an issue.** Issues routinely cite things
+  that live elsewhere: the handbook's conventions, another repository, or the
+  API a dependency is adding. Absence only matters when the issue says the
+  file or identifier is in THIS repository and the work depends on it. A
+  dependency bump -- "move to the latest X", naming the module and version --
+  is ready when this repository's `go.mod` requires that module; the new
+  API it mentions lives in the dependency, not here. Read a present-or-absent
+  fact exactly as reported: never call a file absent that the facts list as
+  present.
 - **Serena**, installed in this container: an MCP server that reads code by
   symbol rather than by file. Load it and use it for every repository question
   below. Your first check — "is this already done?" — is exactly a symbol
@@ -60,11 +69,22 @@ Work through these in order. The first one that fails decides the verdict.
    not verifiable. "`Parse` returns an untyped error on malformed input; it
    should return `*ParseError`" is.
 
-4. **Is it scoped to one pull request?** An issue that needs three unrelated
+4. **Is it work, or a tracker?** An issue that tracks other work is never
+   itself work, however finished its list looks. Its signs: it lists child
+   issues, or carries checkboxes over several changes, or its body says it is
+   a tracker, an epic, or a checklist rather than work. Its verdict is
+   `not-actionable`, left for a person, with a one-line reason naming the sign.
+   Do not pick one item off the list and hand the tracker over as that item:
+   an item that is work has, or needs, an issue of its own. Two "Release
+   readiness" trackers whose own bodies said "This is a tracking checklist,
+   not work" were once marked ready anyway, and both workers stopped on owner
+   questions.
+
+5. **Is it scoped to one pull request?** An issue that needs three unrelated
    changes in three packages is three issues. Say so rather than handing a
    worker a job it cannot land in one review.
 
-5. **Does it depend on an unresolved question or another open issue?** If the
+6. **Does it depend on an unresolved question or another open issue?** If the
    work cannot start until somebody rules on an architecture or feature
    decision, or until another open issue lands, it is not ready now. Name the
    dependency. Two of the last three issues handed to the factory came back
@@ -74,7 +94,7 @@ Work through these in order. The first one that fails decides the verdict.
    `needs-info` (what is missing is the ruling), never `ready`, however well it
    is written and however clearly it recommends one option.
 
-6. **Do the project's verification commands apply to it?** A documentation-only
+7. **Do the project's verification commands apply to it?** A documentation-only
    issue in a project whose verification is `go test ./...` is fine. An issue
    asking for a change no command in that list would exercise is worth saying
    so about.
@@ -107,7 +127,7 @@ else:
 The code is one of:
 
 - `ready` — every check above passes. The issue states a verifiable objective,
-  is scoped to one pull request, depends on no unresolved question or open
+  is work rather than a tracker, is scoped to one pull request, depends on no unresolved question or open
   issue, is not a duplicate, is not already done, and the project's
   verification applies to it. This is the only code that hands the issue to a
   worker.
@@ -116,7 +136,8 @@ The code is one of:
   "the issue does not say which of the three `Encode` overloads is affected"
   is.
 - `not-actionable` — no worker should be spawned: the work is already done,
-  the issue is out of scope, or it needs a decision reserved for a person.
+  the issue is out of scope, it is a tracker rather than work, or it needs a
+  decision reserved for a person.
   Give the evidence.
 
   When — and only when — this project has told you that closing is enabled,

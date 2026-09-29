@@ -70,10 +70,7 @@ func scriptedExec(tree map[string]string, fail error) func(*orchestration.ExecSp
 		last := spec.Cmd[len(spec.Cmd)-1]
 		switch sub {
 		case "ls-files":
-			if _, ok := tree[last]; ok {
-				return &orchestration.ExecResult{Stdout: last + "\n"}, nil
-			}
-			return &orchestration.ExecResult{}, nil
+			return &orchestration.ExecResult{Stdout: lsFiles(tree, spec.Cmd[2:])}, nil
 		case "grep":
 			var out strings.Builder
 			for file, content := range tree {
@@ -138,5 +135,47 @@ func TestMeasureTriageFacts_RefusesAHalfMeasurement(t *testing.T) {
 	}
 	if got := (TriageFacts{Head: "h"}).Render(); got != "" {
 		t.Fatalf("nothing probed renders nothing, got %q", got)
+	}
+}
+
+// TestMeasureTriageFacts_AFileNamedByItsBaseNameIsFoundWhereItLives is X8
+// (go-luks2#209): the issue names canonicalconformance_integration_test.go,
+// which lives in pkg/luks2, and triage was told it was ABSENT because the
+// pathspec was read from the root. It is present, and the facts say where.
+func TestMeasureTriageFacts_AFileNamedByItsBaseNameIsFoundWhereItLives(t *testing.T) {
+	tree := map[string]string{
+		"pkg/luks2/canonicalconformance_integration_test.go": "package luks2",
+		"go.mod": "module x",
+	}
+	facts, err := MeasureTriageFacts(scriptedExec(tree, nil), "/workspace/p", "abc123", TriageProbes{
+		Paths: []string{"canonicalconformance_integration_test.go", "go.mod", "gone_test.go"},
+	})
+	if err != nil {
+		t.Fatalf("MeasureTriageFacts: %v", err)
+	}
+	if !facts.Paths[0].Present || facts.Paths[0].Matches[0] != "pkg/luks2/canonicalconformance_integration_test.go" {
+		t.Fatalf("base-name probe = %+v, want it found in pkg/luks2", facts.Paths[0])
+	}
+	if !facts.Paths[1].Present || facts.Paths[2].Present {
+		t.Fatalf("paths = %+v, want the root file present and the missing one absent", facts.Paths)
+	}
+	rendered := facts.Render()
+	for _, want := range []string{
+		"`canonicalconformance_integration_test.go` — present at `pkg/luks2/canonicalconformance_integration_test.go`",
+		"`go.mod` — present\n",
+		"`gone_test.go` — ABSENT",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered facts must carry %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestTriageAnyDepth(t *testing.T) {
+	if got := triageAnyDepth("/pkg/a.go"); got != ":(glob)**/pkg/a.go" {
+		t.Fatalf("triageAnyDepth = %q", got)
+	}
+	if got := triageAnyDepth("a.go"); got != ":(glob)**/a.go" {
+		t.Fatalf("triageAnyDepth = %q", got)
 	}
 }

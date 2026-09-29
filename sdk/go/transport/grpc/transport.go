@@ -334,6 +334,12 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 		return handler.handleRequest(ctx, service, method, req)
 	}
 
+	// The tenant AI agent catalog. Served here and, verbatim, on the Unix
+	// transport.
+	if isAgentsService(service) {
+		return handleAgentsRequest(ctx, conn, method, req)
+	}
+
 	// The SDLC module's service: bindings and deliveries. Served here and,
 	// verbatim, on the Unix transport.
 	if isSDLCService(service) {

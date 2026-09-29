@@ -17,7 +17,6 @@
 // - Connecting to QuicBaaS using the SDK with multiprotocol support
 // - Creating and managing tenants (multi-tenant architecture)
 // - Creating users with roles and permissions
-// - Managing groups for user organization
 // - Creating roles with fine-grained permissions
 // - User lifecycle management (suspend/unsuspend)
 // - Role assignment and revocation
@@ -118,7 +117,6 @@ func main() {
 			"quicbaas:*:*", // Full access to all QuicBaaS resources
 			"iam:users:*",  // User management
 			"iam:roles:*",  // Role management
-			"iam:groups:*", // Group management
 			"secrets:*:*",  // Secrets management
 			"kms:*:*",      // KMS management
 		},
@@ -162,33 +160,8 @@ func main() {
 	}
 	fmt.Printf("  Created role: %s (ID: %s)\n", viewerRole.Name, viewerRole.ID)
 
-	// Step 3: Create groups
-	fmt.Println("\nStep 3: Creating groups...")
-
-	engineeringGroup, err := client.Identity().IAM().Group().Create(ctx, tenantID, &iam.CreateGroupRequest{
-		Name:        "engineering",
-		DisplayName: "Engineering Team",
-		Description: "Software engineering department",
-		Roles:       []string{devRole.ID},
-	})
-	if err != nil {
-		log.Fatalf("Failed to create engineering group: %v", err)
-	}
-	fmt.Printf("  Created group: %s (ID: %s)\n", engineeringGroup.Name, engineeringGroup.ID)
-
-	opsGroup, err := client.Identity().IAM().Group().Create(ctx, tenantID, &iam.CreateGroupRequest{
-		Name:        "operations",
-		DisplayName: "Operations Team",
-		Description: "DevOps and SRE department",
-		Roles:       []string{adminRole.ID},
-	})
-	if err != nil {
-		log.Fatalf("Failed to create operations group: %v", err)
-	}
-	fmt.Printf("  Created group: %s (ID: %s)\n", opsGroup.Name, opsGroup.ID)
-
-	// Step 4: Create users
-	fmt.Println("\nStep 4: Creating users...")
+	// Step 3: Create users
+	fmt.Println("\nStep 3: Creating users...")
 
 	// Admin user
 	adminUser, err := client.Identity().IAM().User().Create(ctx, tenantID, &iam.CreateUserRequest{
@@ -206,12 +179,12 @@ func main() {
 	}
 	fmt.Printf("  Created user: %s (ID: %s)\n", adminUser.Username, adminUser.ID)
 
-	// Developer user (added to engineering group)
+	// Developer user
 	devUser, err := client.Identity().IAM().User().Create(ctx, tenantID, &iam.CreateUserRequest{
 		Username:    "dev.user",
 		Email:       "developer@acme-corp.com",
 		DisplayName: "Developer User",
-		Groups:      []string{engineeringGroup.ID},
+		Roles:       []string{devRole.ID},
 		Metadata: map[string]string{
 			"department": "Engineering",
 			"title":      "Senior Developer",
@@ -238,8 +211,8 @@ func main() {
 	}
 	fmt.Printf("  Created user: %s (ID: %s)\n", viewerUser.Username, viewerUser.ID)
 
-	// Step 5: List all users in tenant
-	fmt.Println("\nStep 5: Listing all users...")
+	// Step 4: List all users in tenant
+	fmt.Println("\nStep 4: Listing all users...")
 	usersResp, err := client.Identity().IAM().User().List(ctx, tenantID, nil)
 	if err != nil {
 		log.Fatalf("Failed to list users: %v", err)
@@ -249,8 +222,8 @@ func main() {
 		fmt.Printf("    - %s <%s> (Status: %s)\n", u.Username, u.Email, u.Status)
 	}
 
-	// Step 6: Get user details
-	fmt.Println("\nStep 6: Getting user details...")
+	// Step 5: Get user details
+	fmt.Println("\nStep 5: Getting user details...")
 	userDetails, err := client.Identity().IAM().User().Get(ctx, tenantID, devUser.ID)
 	if err != nil {
 		log.Fatalf("Failed to get user: %v", err)
@@ -259,12 +232,11 @@ func main() {
 	fmt.Printf("  Email:       %s\n", userDetails.Email)
 	fmt.Printf("  DisplayName: %s\n", userDetails.DisplayName)
 	fmt.Printf("  Status:      %s\n", userDetails.Status)
-	fmt.Printf("  Groups:      %v\n", userDetails.Groups)
 	fmt.Printf("  Roles:       %v\n", userDetails.Roles)
 	fmt.Printf("  Created:     %s\n", userDetails.CreatedAt.Format(time.RFC3339))
 
-	// Step 7: Assign additional role to user
-	fmt.Println("\nStep 7: Assigning viewer role to developer user...")
+	// Step 6: Assign additional role to user
+	fmt.Println("\nStep 6: Assigning viewer role to developer user...")
 	if err := client.Identity().IAM().User().AssignRole(ctx, tenantID, devUser.ID, viewerRole.ID); err != nil {
 		log.Fatalf("Failed to assign role: %v", err)
 	}
@@ -274,15 +246,8 @@ func main() {
 	userDetails, _ = client.Identity().IAM().User().Get(ctx, tenantID, devUser.ID)
 	fmt.Printf("  User now has roles: %v\n", userDetails.Roles)
 
-	// Step 8: Add user to group
-	fmt.Println("\nStep 8: Adding viewer user to engineering group...")
-	if err := client.Identity().IAM().User().AddToGroup(ctx, tenantID, viewerUser.ID, engineeringGroup.ID); err != nil {
-		log.Fatalf("Failed to add user to group: %v", err)
-	}
-	fmt.Printf("  Added user '%s' to group '%s'\n", viewerUser.Username, engineeringGroup.Name)
-
-	// Step 9: Suspend a user
-	fmt.Println("\nStep 9: Suspending viewer user...")
+	// Step 7: Suspend a user
+	fmt.Println("\nStep 7: Suspending viewer user...")
 	if err := client.Identity().IAM().User().Suspend(ctx, tenantID, viewerUser.ID); err != nil {
 		log.Fatalf("Failed to suspend user: %v", err)
 	}
@@ -292,8 +257,8 @@ func main() {
 	userDetails, _ = client.Identity().IAM().User().Get(ctx, tenantID, viewerUser.ID)
 	fmt.Printf("  User status: %s\n", userDetails.Status)
 
-	// Step 10: Unsuspend the user
-	fmt.Println("\nStep 10: Unsuspending viewer user...")
+	// Step 8: Unsuspend the user
+	fmt.Println("\nStep 8: Unsuspending viewer user...")
 	if err := client.Identity().IAM().User().Unsuspend(ctx, tenantID, viewerUser.ID); err != nil {
 		log.Fatalf("Failed to unsuspend user: %v", err)
 	}
@@ -303,8 +268,8 @@ func main() {
 	userDetails, _ = client.Identity().IAM().User().Get(ctx, tenantID, viewerUser.ID)
 	fmt.Printf("  User status: %s\n", userDetails.Status)
 
-	// Step 11: List all roles
-	fmt.Println("\nStep 11: Listing all roles...")
+	// Step 9: List all roles
+	fmt.Println("\nStep 9: Listing all roles...")
 	rolesResp, err := client.Identity().IAM().Role().List(ctx, tenantID, nil)
 	if err != nil {
 		log.Fatalf("Failed to list roles: %v", err)
@@ -314,8 +279,8 @@ func main() {
 		fmt.Printf("    - %s: %d permissions\n", r.Name, len(r.Permissions))
 	}
 
-	// Step 12: Update tenant settings
-	fmt.Println("\nStep 12: Updating tenant settings...")
+	// Step 10: Update tenant settings
+	fmt.Println("\nStep 10: Updating tenant settings...")
 	updatedTenant, err := client.Identity().IAM().Tenant().Update(ctx, tenantID, &iam.UpdateTenantRequest{
 		Description: "ACME Corporation - Updated description",
 		Settings: map[string]string{
@@ -330,8 +295,8 @@ func main() {
 	fmt.Printf("  Updated tenant: %s\n", updatedTenant.Name)
 	fmt.Printf("  New description: %s\n", updatedTenant.Description)
 
-	// Step 13: Cleanup - Delete all resources
-	fmt.Println("\nStep 13: Cleaning up resources...")
+	// Step 11: Cleanup - Delete all resources
+	fmt.Println("\nStep 11: Cleaning up resources...")
 
 	// Delete users
 	for _, u := range []struct {
@@ -346,21 +311,6 @@ func main() {
 			log.Printf("  Warning: Failed to delete user %s: %v", u.name, err)
 		} else {
 			fmt.Printf("  Deleted user: %s\n", u.name)
-		}
-	}
-
-	// Delete groups
-	for _, g := range []struct {
-		id   string
-		name string
-	}{
-		{engineeringGroup.ID, engineeringGroup.Name},
-		{opsGroup.ID, opsGroup.Name},
-	} {
-		if err := client.Identity().IAM().Group().Delete(ctx, tenantID, g.id); err != nil {
-			log.Printf("  Warning: Failed to delete group %s: %v", g.name, err)
-		} else {
-			fmt.Printf("  Deleted group: %s\n", g.name)
 		}
 	}
 
@@ -391,8 +341,7 @@ func main() {
 	fmt.Println("\nKey Takeaways:")
 	fmt.Println("  1. Multi-tenant architecture isolates resources per organization")
 	fmt.Println("  2. Roles define bundles of permissions (RBAC)")
-	fmt.Println("  3. Groups simplify permission management for teams")
-	fmt.Println("  4. Users can have direct roles and inherit from groups")
-	fmt.Println("  5. User lifecycle management (suspend/unsuspend) for security")
-	fmt.Println("  6. The SDK supports multiple transports (gRPC, REST, QUIC)")
+	fmt.Println("  3. Permissions come from the roles a user holds")
+	fmt.Println("  4. User lifecycle management (suspend/unsuspend) for security")
+	fmt.Println("  5. The SDK supports multiple transports (gRPC, REST, QUIC)")
 }

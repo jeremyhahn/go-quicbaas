@@ -91,16 +91,16 @@ func TestCompletedTurn_ServedModelWinsOverThePlanned(t *testing.T) {
 		model:       "claude-opus-5",
 		request:     &PromptRequest{ProjectID: "proj-1"},
 	}
-	if got := plan.completedTurn("sess-1", "claude-opus-5-20260801").model; got != "claude-opus-5-20260801" {
+	if got := plan.completedTurn("sess-1", "claude-opus-5-20260801", 0).model; got != "claude-opus-5-20260801" {
 		t.Errorf("model = %q, want the served model", got)
 	}
 	// A failed turn has no response to ask, and a backend that reports nothing
 	// has contradicted nothing: the plan's model stands.
-	if got := plan.completedTurn("sess-1", "").model; got != "claude-opus-5" {
+	if got := plan.completedTurn("sess-1", "", 0).model; got != "claude-opus-5" {
 		t.Errorf("model = %q, want the planned model to stand when none was served", got)
 	}
 	// The rest of the turn's identity travels unchanged.
-	turn := plan.completedTurn("sess-1", "served")
+	turn := plan.completedTurn("sess-1", "served", 0)
 	if turn.turnID != "turn-1" || turn.sessionID != "sess-1" || turn.engine != "mock" || turn.projectID != "proj-1" {
 		t.Errorf("turn = %+v; only the model is decided here", turn)
 	}

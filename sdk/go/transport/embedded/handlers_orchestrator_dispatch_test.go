@@ -54,11 +54,11 @@ func orchCases() []orchCase {
 		{o, "SubmitTaskArtifacts", &orchestratorSDK.SubmitTaskArtifactsRequest{Artifacts: []*orchestratorSDK.TaskArtifact{{Name: "a"}}}},
 		{o, "GetTaskArtifact", &orchestratorSDK.GetTaskArtifactRequest{}},
 		{o, "ListTaskArtifacts", &orchestratorSDK.ListTaskArtifactsRequest{}},
-		{o, "RegisterAgent", &orchestratorSDK.RegisterAgentRequest{}},
-		{o, "GetAgent", &orchestratorSDK.GetAgentRequest{}},
-		{o, "ListAgents", &orchestratorSDK.ListAgentsRequest{}},
-		{o, "RemoveAgent", &orchestratorSDK.RemoveAgentRequest{}},
-		{o, "AgentHeartbeat", &orchestratorSDK.AgentHeartbeatRequest{}},
+		{o, "RegisterFleetNode", &orchestratorSDK.RegisterFleetNodeRequest{}},
+		{o, "GetFleetNode", &orchestratorSDK.GetFleetNodeRequest{}},
+		{o, "ListFleetNodes", &orchestratorSDK.ListFleetNodesRequest{}},
+		{o, "RemoveFleetNode", &orchestratorSDK.RemoveFleetNodeRequest{}},
+		{o, "FleetNodeHeartbeat", &orchestratorSDK.FleetNodeHeartbeatRequest{}},
 		{o, "StartJob", &orchestratorSDK.StartJobRequest{}},
 		{o, "GetJobStatus", &orchestratorSDK.GetJobStatusRequest{}},
 		{o, "ListJobs", &orchestratorSDK.ListJobsRequest{}},
@@ -72,8 +72,8 @@ func orchCases() []orchCase {
 		{p, "Update", &projectSDK.UpdateProjectRequest{}},
 		{p, "Delete", &projectSDK.DeleteProjectRequest{}},
 		{p, "List", &projectSDK.ListProjectsRequest{}},
-		{p, "GrantAgentRole", &projectSDK.GrantAgentRoleRequest{}},
-		{p, "RevokeAgentRole", &projectSDK.RevokeAgentRoleRequest{}},
+		{p, "GrantFleetNodeRole", &projectSDK.GrantFleetNodeRoleRequest{}},
+		{p, "RevokeFleetNodeRole", &projectSDK.RevokeFleetNodeRoleRequest{}},
 	}
 }
 
@@ -83,7 +83,7 @@ func newOrchTransport(t *testing.T, fail bool) *Transport {
 		mockQuicBaaS: &mockQuicBaaS{},
 		agent:        &fakeAgentService{fail: fail},
 		proj:         &fakeProjectService{fail: fail},
-		admin:        &fakeAgentAdminService{fail: fail},
+		admin:        &fakeFleetAdminService{fail: fail},
 	})
 	require.NoError(t, err)
 	return tr
@@ -129,7 +129,7 @@ func TestOrchestratorDispatch_WrongType(t *testing.T) {
 }
 
 func TestOrchestratorDispatch_ServiceNotConfigured(t *testing.T) {
-	// Base mock returns nil for Agent(), Project() and AgentAdmin().
+	// Base mock returns nil for Agent(), Project() and FleetAdmin().
 	tr, err := New(&mockQuicBaaS{})
 	require.NoError(t, err)
 	ctx := context.Background()
@@ -215,7 +215,7 @@ func TestOrchestratorListRunners_AnswersFromTheRegistry(t *testing.T) {
 // conversion helpers, which the dispatch path only reaches with non-nil values.
 func TestOrchestratorConvertHelpers_NilInput(t *testing.T) {
 	assert.Nil(t, convertTask(nil))
-	assert.Nil(t, convertAgentRegistration(nil))
+	assert.Nil(t, convertFleetNode(nil))
 	assert.Nil(t, convertJobStatus(nil))
 	assert.Nil(t, convertProjectToSDK(nil))
 }

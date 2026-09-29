@@ -35,13 +35,13 @@ import (
 //     the "fresh clone somewhere else" a pin exists to forbid.
 //  3. provisionDaemonWorkspace — a spawn that resolved to this daemon's own
 //     backend is provisioned here, under this daemon's projects root. A spawn
-//     that resolved to a fleet agent is provisioned THERE, and the agent
+//     that resolved to a fleet node is provisioned THERE, and the agent
 //     reports the directory back (requireAgentWorkspace).
 
 // SetWorkspaceProvisioner configures the provisioner a spawn that names its
 // workspace uses when it runs on this daemon's own in-process backend. Nil
 // leaves such spawns refused with SessionWorkspaceUnsupportedError; a spawn
-// dispatched to a fleet agent is provisioned by that agent and never needs it.
+// dispatched to a fleet node is provisioned by that agent and never needs it.
 func (s *agentServiceImpl) SetWorkspaceProvisioner(p WorkspaceProvisioner) {
 	s.workspaces = p
 }
@@ -90,7 +90,7 @@ func requireWorkspacePlacement(req *SpawnSessionRequest, backend AgentBackend, f
 	if !ws.Pinned() {
 		return resolveErr
 	}
-	refusal := &WorkspaceAgentUnavailableError{
+	refusal := &WorkspaceFleetNodeUnavailableError{
 		AgentHost: ws.Pin.AgentHost,
 		Key:       ws.Key,
 		Backend:   req.Backend,
@@ -110,22 +110,22 @@ func requireWorkspacePlacement(req *SpawnSessionRequest, backend AgentBackend, f
 	return refusal
 }
 
-// pinnedAgentUnreachable reports a pinned spawn whose agent resolved — its
+// pinnedFleetNodeUnreachable reports a pinned spawn whose agent resolved — its
 // heartbeat still fresh — and then did not answer the spawn, as the workspace
 // refusal it is.
 //
 // RESOLUTION IS NOT REACHABILITY. An agent that died inside its heartbeat
-// window resolves like a live one, and the RPC then fails ErrAgentUnreachable.
+// window resolves like a live one, and the RPC then fails ErrFleetNodeUnreachable.
 // Left as that, the job takes the ordinary environmental requeue — and the
 // next job inherits no pin and may clone afresh elsewhere, exactly what the pin
 // forbids. For a pinned spawn it is the pinned host being gone, so it is
-// reported as WorkspaceAgentUnavailableError and the job parks. Every other
+// reported as WorkspaceFleetNodeUnavailableError and the job parks. Every other
 // failure, and every unpinned spawn, is returned unchanged.
-func pinnedAgentUnreachable(req *SpawnSessionRequest, resolvedHost string, err error) error {
-	if !req.Workspace.Pinned() || !errors.Is(err, ErrAgentUnreachable) {
+func pinnedFleetNodeUnreachable(req *SpawnSessionRequest, resolvedHost string, err error) error {
+	if !req.Workspace.Pinned() || !errors.Is(err, ErrFleetNodeUnreachable) {
 		return err
 	}
-	return &WorkspaceAgentUnavailableError{
+	return &WorkspaceFleetNodeUnavailableError{
 		AgentHost:    req.Workspace.Pin.AgentHost,
 		Key:          req.Workspace.Key,
 		Backend:      req.Backend,

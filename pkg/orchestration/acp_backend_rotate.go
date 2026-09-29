@@ -70,6 +70,13 @@ type RotateAccountResult struct {
 	// Strategy names the policy that selected it.
 	Strategy string
 
+	// AccountGeneration is which copy of the replacement account's credential
+	// the rotation materialized (AccountCredential.Generation). The
+	// orchestrator records it on the session's new account segment, so a
+	// session that has rotated is judged fresh against the account it is NOW
+	// on rather than the one it left.
+	AccountGeneration int64
+
 	// CredentialLeaseID is the DELIVERY GRANT the replacement resolution took
 	// out. Empty when the deployment wired no leaser.
 	//
@@ -77,6 +84,10 @@ type RotateAccountResult struct {
 	// the session and withdraws the grant it supersedes, so every revocation
 	// decision stays in the one place that can also see the durable record.
 	CredentialLeaseID string
+
+	// ReservationID is the session-slot reservation the replacement
+	// resolution took; the rotated record names it.
+	ReservationID string
 }
 
 // SessionRotateUnsupportedError reports that a backend cannot move a session
@@ -185,6 +196,8 @@ func (b *ACPBackend) RotateAccount(ctx context.Context, req *RotateAccountReques
 	return &RotateAccountResult{
 		AccountID:         account.AccountID,
 		Strategy:          account.Strategy,
+		AccountGeneration: account.Generation,
 		CredentialLeaseID: account.LeaseID,
+		ReservationID:     account.ReservationID,
 	}, nil
 }

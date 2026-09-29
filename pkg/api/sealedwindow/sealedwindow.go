@@ -731,7 +731,7 @@ func RESTAllowlistScoped(s Scope) []string {
 //   - quicbaas.tenant.v1.TenantBarrier — the per-tenant barrier surface is a
 //     documented sealed-window exclusion, and it declares a method named
 //     "Status" whose tail collides with the canonical admin status verb;
-//   - quicbaas.agent.runtime.v1.AgentRuntime ("Status"),
+//   - quicbaas.fleet.runtime.v1.FleetRuntime ("Status"),
 //     quicbaas.orchestrator.v1.OrchestratorService, quicbaas.ollama.v1 and
 //     quicbaas.vector.v1 ("Health") — post-unseal data-plane services whose
 //     liveness verbs collide by tail only.

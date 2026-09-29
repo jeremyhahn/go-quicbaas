@@ -38,7 +38,7 @@ func TestBlockTask_EndsTheRunningJobAndReleasesItsSlot(t *testing.T) {
 
 	seeded := seedSpawnedTask(t, store, &Task{Status: TaskStatusClaimed, Attempts: 1, AttemptBudget: 3})
 	resp := startBoundJob(ctx, t, svc, store, seeded.ID, &StartJobRequest{
-		TenantID: "acme", Description: "bound", LeadBackend: "mock",
+		TenantID: "acme", Description: "bound", routedBackend: "mock",
 		Attempt: 1, MaxIterations: 1,
 	})
 	defer cancelAllJobs(svc)
@@ -99,7 +99,7 @@ func TestBlockTask_ARefusedBlockAbortsNothing(t *testing.T) {
 
 	seeded := seedSpawnedTask(t, store, &Task{Status: TaskStatusClaimed})
 	resp := startBoundJob(ctx, t, svc, store, seeded.ID, &StartJobRequest{
-		TenantID: "acme", Description: "bound", LeadBackend: "mock",
+		TenantID: "acme", Description: "bound", routedBackend: "mock",
 		Attempt: 1, MaxIterations: 1,
 	})
 	defer cancelAllJobs(svc)
@@ -145,7 +145,7 @@ func TestJobRun_AJobWhoseTaskWasBlockedElsewhereEndsItselfOnItsHeartbeat(t *test
 
 	seeded := seedSpawnedTask(t, store, &Task{Status: TaskStatusClaimed})
 	resp := startBoundJob(ctx, t, svc, store, seeded.ID, &StartJobRequest{
-		TenantID: "acme", Description: "bound", LeadBackend: "mock",
+		TenantID: "acme", Description: "bound", routedBackend: "mock",
 		Attempt: 1, MaxIterations: 1,
 	})
 	defer cancelAllJobs(svc)
@@ -185,7 +185,7 @@ func TestJobRun_AHeartbeatLeavesAJobWhoseTaskIsNotBlockedRunning(t *testing.T) {
 
 	seeded := seedSpawnedTask(t, store, &Task{Status: TaskStatusClaimed})
 	resp := startBoundJob(ctx, t, svc, store, seeded.ID, &StartJobRequest{
-		TenantID: "acme", Description: "bound", LeadBackend: "mock",
+		TenantID: "acme", Description: "bound", routedBackend: "mock",
 		Attempt: 1, MaxIterations: 1,
 	})
 	defer cancelAllJobs(svc)
@@ -234,7 +234,7 @@ func TestJobRun_ABlockAndReadmitBetweenHeartbeatsStillEndsTheJob(t *testing.T) {
 
 	seeded := seedSpawnedTask(t, store, &Task{Status: TaskStatusClaimed, Attempts: 1, AttemptBudget: 3})
 	resp := startBoundJob(ctx, t, svc, store, seeded.ID, &StartJobRequest{
-		TenantID: "acme", Description: "bound", LeadBackend: "mock",
+		TenantID: "acme", Description: "bound", routedBackend: "mock",
 		Attempt: 1, MaxIterations: 1,
 	})
 	defer cancelAllJobs(svc)
@@ -361,5 +361,60 @@ func awaitSessionConcluded(ctx context.Context, t *testing.T, svc *agentServiceI
 			t.Fatalf("session %s was never concluded", sessionID)
 		case <-ticker.C:
 		}
+	}
+}
+
+// TestJobRun_ObserveBlockReadsTheTaskUnderTheJobsTenant is the production
+// shape of the heartbeat (the watchdog's X1): the lease ticker hands down a
+// context that carries NO principal, and under a tenant guard the service
+// refuses an untenanted read. The observer must bind the job's own tenant, or
+// every read fails and a blocked task's job is never ended.
+func TestJobRun_ObserveBlockReadsTheTaskUnderTheJobsTenant(t *testing.T) {
+	svc := newHoldingService(t, newHoldingBackend())
+	svc.SetTenantGuard(NewTenantGuard(&agentTestLogger{}))
+	store := NewInMemoryTaskStore()
+	svc.SetTaskStore(store)
+	seeded := seedSpawnedTask(t, store, &Task{Status: TaskStatusClaimed, SpawnedJobID: "job-x1"})
+	if err := store.BlockTask(context.Background(), "acme", seeded.ID, TaskBlockKindNeedsInfo, "which tenant?"); err != nil {
+		t.Fatalf("BlockTask: %v", err)
+	}
+
+	run := &JobRun{
+		JobID:  "job-x1",
+		Config: &JobConfig{TenantID: "acme", TaskID: seeded.ID},
+		Agents: svc,
+		Logger: &agentTestLogger{},
+	}
+	run.observeBlock(context.Background())
+
+	var blocked *JobTaskBlockedError
+	if !errors.As(run.abortReason(), &blocked) || blocked.TaskID != seeded.ID || blocked.Kind != TaskBlockKindNeedsInfo {
+		t.Fatalf("a blocked task must end its job even from an untenanted heartbeat, got %v", run.abortReason())
+	}
+}
+
+// TestJobRun_ObserveBlockWithNoTenantAbortsNothing is the bad-input side: a
+// job whose config names no tenant cannot be read, and a read that fails
+// proves nothing, so the run keeps going.
+func TestJobRun_ObserveBlockWithNoTenantAbortsNothing(t *testing.T) {
+	svc := newHoldingService(t, newHoldingBackend())
+	svc.SetTenantGuard(NewTenantGuard(&agentTestLogger{}))
+	store := NewInMemoryTaskStore()
+	svc.SetTaskStore(store)
+	seeded := seedSpawnedTask(t, store, &Task{Status: TaskStatusClaimed, SpawnedJobID: "job-x1"})
+	if err := store.BlockTask(context.Background(), "acme", seeded.ID, TaskBlockKindBlocked, "blocked"); err != nil {
+		t.Fatalf("BlockTask: %v", err)
+	}
+
+	run := &JobRun{
+		JobID:  "job-x1",
+		Config: &JobConfig{TaskID: seeded.ID},
+		Agents: svc,
+		Logger: &agentTestLogger{},
+	}
+	run.observeBlock(context.Background())
+
+	if reason := run.abortReason(); reason != nil {
+		t.Fatalf("an unreadable task must abort nothing, got %v", reason)
 	}
 }

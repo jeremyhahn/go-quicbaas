@@ -39,9 +39,8 @@ func adminRoleStore(t *testing.T, getErr error) *iam.IdentityStore {
 	t.Helper()
 	mem := iam.NewMemoryStorage()
 	return iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  mem,
-		GroupStorage: mem,
-		RoleStorage:  &roleLookupFailingStorage{RoleStorage: mem, err: getErr},
+		UserStorage: mem,
+		RoleStorage: &roleLookupFailingStorage{RoleStorage: mem, err: getErr},
 	})
 }
 

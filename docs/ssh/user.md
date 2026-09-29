@@ -27,7 +27,7 @@ quicbaas ssh keys export-public --name fleet-deploy --scope user --owner $USER
 # 3. Install that public key in ~/.ssh/authorized_keys on the target host.
 
 # 4. Use it, by name, without ever handling it.
-quicbaas agent deploy \
+quicbaas fleet deploy \
   --ssh user@target-host.example.com \
   --ssh-key-name fleet-deploy \
   --server https://quicbaas.example.com:18080 \

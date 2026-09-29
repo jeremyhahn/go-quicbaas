@@ -537,7 +537,7 @@ Security().SealStore() (QRDBSealStoreClient, error)
 
 The platform-local sealed credential store. Used for credentials that
 must survive a seal/unseal cycle without operator intervention
-(e.g. agent registration tokens, scheduler bootstrap credentials).
+(e.g. fleet node registration tokens, scheduler bootstrap credentials).
 
 ## Lazy initialisation
 

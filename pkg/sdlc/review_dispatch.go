@@ -17,6 +17,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
@@ -137,18 +138,53 @@ type JobStarter interface {
 // ReviewDispatcher turns "something happened to this pull request" into a
 // review job.
 type ReviewDispatcher struct {
-	bindings BindingReader
-	jobs     JobStarter
-	forges   ForgeResolver
+	bindings  BindingReader
+	overrides ReviewerOverrideReader
+	jobs      JobStarter
+	forges    ForgeResolver
+
+	// accounts answers whether the selected seat's Agent can draw a usable
+	// pooled account. Optional; see SetAccountAvailability.
+	accounts ReviewerAccountAvailability
+
+	// heldReasons remembers the reason last posted on each held head, keyed
+	// by heldKey, so the status is written only when the reason changes. It is
+	// process memory, not storage: after a restart the reason is posted once
+	// more, which is harmless.
+	heldReasons sync.Map
+}
+
+// ReviewerAccountAvailability answers whether an Agent can draw a usable
+// pooled account; orchestration.AgentService satisfies it.
+type ReviewerAccountAvailability interface {
+	AgentAccountAvailability(ctx context.Context, tenantID, projectID string, ref orchestration.AgentRef, role orchestration.AgentRole) (orchestration.AccountAvailability, error)
+}
+
+// SetAccountAvailability installs the account check a review is held on.
+//
+// A REVIEW WITH NO USABLE ACCOUNT IS NOT STARTED. When every account the
+// seat's Agent could draw on is errored, revoked or over budget, the job's
+// only possible outcome is a failed spawn, and the sweep would start one every
+// pass for as long as nobody fixes the account (go-codec watcher, 2026-09-28).
+// The dispatch is held instead; the account's own inbox item says what to fix,
+// and the next sweep dispatches by itself once an account is usable again.
+// Without a checker every review is dispatched, as it always was.
+func (d *ReviewDispatcher) SetAccountAvailability(accounts ReviewerAccountAvailability) {
+	d.accounts = accounts
 }
 
 var _ ReviewTrigger = (*ReviewDispatcher)(nil)
 
 // NewReviewDispatcher wires the dispatcher; every collaborator is required.
-func NewReviewDispatcher(bindings BindingReader, jobs JobStarter, forges ForgeResolver) (*ReviewDispatcher, error) {
+func NewReviewDispatcher(bindings BindingReader, overrides ReviewerOverrideReader, jobs JobStarter, forges ForgeResolver) (*ReviewDispatcher, error) {
 	switch {
 	case bindings == nil:
 		return nil, &InvalidInputError{Field: "bindings", Message: "whether a project is self-reviewed is on its binding"}
+	case overrides == nil:
+		return nil, &InvalidInputError{
+			Field:   "overrides",
+			Message: "which reviewer profile reviews a pull request is the operator's override, read on every dispatch",
+		}
 	case jobs == nil:
 		return nil, &InvalidInputError{Field: "jobs", Message: "a review runs as a job on the engine"}
 	case forges == nil:
@@ -157,7 +193,30 @@ func NewReviewDispatcher(bindings BindingReader, jobs JobStarter, forges ForgeRe
 			Message: "whether the head is green, and which pull request a commit heads, are read from the forge",
 		}
 	}
-	return &ReviewDispatcher{bindings: bindings, jobs: jobs, forges: forges}, nil
+	return &ReviewDispatcher{bindings: bindings, overrides: overrides, jobs: jobs, forges: forges}, nil
+}
+
+// RedispatchReview asks for a review of one pull request by whichever seat is
+// selected for it now, and reports whether one started.
+//
+// IT IS WHAT AN OPERATOR'S OVERRIDE MEANS, AND IT NEVER CANCELS. Owner ruling
+// 2026-09-25: switching reviewer lets every review already running finish
+// normally; the switch decides who reviews from here on. So this is an
+// ordinary dispatch, read against the override just recorded.
+//
+// A REVIEW STILL RUNNING HOLDS THE PULL REQUEST'S LEASE (ReviewLeaseSubject),
+// so the engine refuses the new job as a duplicate and this answers false:
+// the running review finishes and publishes, and every later dispatch — the
+// next push, delivery or sweep — is by the newly selected seat. The lease is
+// deliberately not widened to let both run at once: every counting seat
+// publishes under the one required status context, and two concurrent
+// reviewers there would let whichever finished last decide the gate.
+func (d *ReviewDispatcher) RedispatchReview(ctx context.Context, tenantID, projectID string, pullRequest int) (bool, error) {
+	started, err := d.TriggerReview(ctx, ReviewRequest{TenantID: tenantID, ProjectID: projectID, PullRequest: pullRequest})
+	if err != nil && !jobAlreadyRunning(err) {
+		return false, err
+	}
+	return started, nil
 }
 
 // TriggerReview implements ReviewTrigger.
@@ -314,43 +373,152 @@ func (d *ReviewDispatcher) pipelineGreen(
 	if err != nil {
 		return false, err
 	}
-	// The reviewer's own status is excluded: it is the result of a review, not
-	// a precondition for one. See runsExcludingContext.
+	// Every reviewer's own status is excluded: it is the result of a review,
+	// not a precondition for one. See runsExcludingContexts.
 	reason, _ := ChecksGreenForReview(
 		binding.Review, head,
-		runsExcludingContext(runs, binding.Reviewer.Context()),
+		runsExcludingContexts(runs, binding.ReviewerStatusContexts()),
 		time.Now().UTC(),
 	)
 	return reason.Clear(), nil
 }
 
 // start starts one review job and reports whether it did.
+//
+// THE PROFILE IS CHOSEN HERE, FROM THE OPERATOR'S RECORD. The override for
+// this pull request, when there is one, names the profile; otherwise the
+// binding's default reviews it. The choice travels on the job as a parameter
+// and the backend and model it runs on are declared on the start, so the
+// lease that bounds a shared model server bounds the reviewer that actually
+// runs.
 func (d *ReviewDispatcher) start(ctx context.Context, tenantID string, binding *ProjectBinding, pullRequest int) (bool, error) {
-	subject := ReviewJobSubject{PullRequest: pullRequest}
-	if err := subject.Validate(); err != nil {
+	if pullRequest <= 0 {
+		return false, ReviewJobSubject{PullRequest: pullRequest}.Validate()
+	}
+	profile, _, err := SelectReviewer(ctx, d.overrides, tenantID, binding, pullRequest)
+	if err != nil {
 		return false, err
 	}
-	resp, err := d.jobs.StartJob(ctx, &orchestration.StartJobRequest{
+	reason, err := reviewerAccountHold(ctx, d.accounts, tenantID, binding, profile)
+	if err != nil {
+		return false, err
+	}
+	if reason != "" {
+		return false, d.postHold(ctx, tenantID, binding, profile, pullRequest, reason)
+	}
+	jobID, err := startReviewJob(ctx, d.jobs, tenantID, binding, pullRequest, profile)
+	return jobID != "", err
+}
+
+// reviewerAccountHold answers why profile's reviewer cannot run now for lack of
+// a usable pooled account, or "" when it can (or when no checker is wired). It
+// is the one check both a dispatched review and a merge train's review ask.
+func reviewerAccountHold(ctx context.Context, accounts ReviewerAccountAvailability, tenantID string, binding *ProjectBinding, profile ReviewerProfile) (string, error) {
+	if accounts == nil {
+		return "", nil
+	}
+	availability, err := accounts.AgentAccountAvailability(ctx, tenantID, binding.ProjectID,
+		orchestration.AgentRefTo(profile.Agent), orchestration.AgentRoleReview)
+	if err != nil || availability.Usable {
+		return "", err
+	}
+	if strings.TrimSpace(availability.Reason) == "" {
+		return "no usable reviewer account", nil
+	}
+	return availability.Reason, nil
+}
+
+// postHold says on the pull request's head why its review is held: a pending
+// status under the seat's review context, whose description is the reason.
+// It is written only when the reason for that head changes.
+func (d *ReviewDispatcher) postHold(ctx context.Context, tenantID string, binding *ProjectBinding, profile ReviewerProfile, pullRequest int, reason string) error {
+	forge, err := d.forges.ForgeFor(ctx, tenantID, binding.Forge)
+	if err != nil {
+		return err
+	}
+	if forge == nil {
+		return NewForgeNotRegisteredError(binding.Forge.Type)
+	}
+	pull, err := forge.GetPullRequest(ctx, binding.Repo(), pullRequest)
+	if err != nil {
+		return err
+	}
+	if pull == nil || strings.TrimSpace(pull.HeadSHA) == "" {
+		return nil
+	}
+	key := heldKey(tenantID, binding.ProjectID, pullRequest, pull.HeadSHA, profile.Context())
+	if last, seen := d.heldReasons.Load(key); seen && last == reason {
+		return nil
+	}
+	if err := postReviewHold(ctx, forge, binding.Repo(), pull.HeadSHA, profile.Context(), reason); err != nil {
+		return err
+	}
+	d.heldReasons.Store(key, reason)
+	return nil
+}
+
+// postReviewHold writes a held review's reason on head as a pending status
+// under context — unless a verdict already stands there.
+//
+// A VERDICT ALREADY ON THE HEAD STANDS. The hold says a review cannot run
+// yet; it must never turn an approval or a rejection back into pending.
+func postReviewHold(ctx context.Context, forge ForgeBackend, repo RepoRef, head, context, reason string) error {
+	runs, err := forge.ListCheckRuns(ctx, repo, head)
+	if err != nil {
+		return err
+	}
+	for _, run := range latestCheckPerContext(runs) {
+		if run.Name == context && checkStatusFor(run).Finished() {
+			return nil
+		}
+	}
+	return forge.SetCommitStatus(ctx, repo, head, CommitStatus{Context: context, Status: CheckPending, Description: reason})
+}
+
+// heldKey names one held review: a head of a pull request under one context.
+func heldKey(tenantID, projectID string, pullRequest int, head, context string) string {
+	return tenantID + "|" + projectID + "|" + strconv.Itoa(pullRequest) + "|" + head + "|" + context
+}
+
+// startReviewJob starts one review job of pullRequest by profile and answers
+// the job's id, empty when the engine took none. It is the one way a review job is started — the
+// dispatcher's, for a pull request somebody opened, and the merge train's, for
+// its own — so the two cannot describe a review differently.
+func startReviewJob(
+	ctx context.Context,
+	jobs JobStarter,
+	tenantID string,
+	binding *ProjectBinding,
+	pullRequest int,
+	profile ReviewerProfile,
+) (string, error) {
+	subject := ReviewJobSubject{PullRequest: pullRequest, Profile: profile.Name}
+	if err := subject.Validate(); err != nil {
+		return "", err
+	}
+	resp, err := jobs.StartJob(ctx, &orchestration.StartJobRequest{
 		TenantID:  tenantID,
 		ProjectID: binding.ProjectID,
 		Runner:    ReviewJobRunnerName,
-		// THE REVIEWER'S BACKEND IS DECLARED SO IT CAN BE BOUNDED. It reaches
-		// the job lease (JobLease.Backend) and lets a deployment cap how many
-		// reviews a shared model server runs at once. Without it, a project's
-		// every green pull request is reviewed in the same pass — reviews are
-		// off the project budget by construction — and a locally hosted model
-		// serves them all at once, which serves none of them.
-		LeadBackend: binding.Reviewer.Backend,
-		LeadModel:   binding.Reviewer.Model,
+		// THE REVIEWER'S AGENT IS DECLARED SO IT CAN BE BOUNDED. Its backend
+		// reaches the job lease (JobLease.Backend) and lets a deployment cap
+		// how many reviews a shared model server runs at once. Without it, a
+		// project's every green pull request is reviewed in the same pass —
+		// reviews are off the project budget by construction — and a locally
+		// hosted model serves them all at once, which serves none of them.
+		Lead: orchestration.AgentRefTo(profile.Agent),
 		// The description is for a person reading the job list. Nothing
 		// parses it: the subject travels in Params, typed.
-		Description: "Review " + binding.Repo().String() + "#" + strconv.Itoa(pullRequest),
+		Description: "Review " + binding.Repo().String() + "#" + strconv.Itoa(pullRequest) + " as " + profile.Name,
 		Params:      subject.Params(),
 	})
 	if err != nil {
-		return false, backendError("StartJob", err)
+		return "", backendError("StartJob", err)
 	}
-	return resp != nil && strings.TrimSpace(resp.JobID) != "", nil
+	if resp == nil {
+		return "", nil
+	}
+	return strings.TrimSpace(resp.JobID), nil
 }
 
 // DispatchReview asks the trigger for a review when the event warrants one.

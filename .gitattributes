@@ -1,0 +1,10 @@
+# The published tree: every archive git builds from this repository (git
+# archive, and a forge's source tarball for a tag) leaves these out. They are
+# the private development workflow -- agent instructions, agent definitions and
+# working notes -- which name the private forge and internal identities. They
+# stay in the private repository. pkg/labstrings enforces this list and scans
+# only what it leaves in (docs/release/public-releasability.md).
+CLAUDE.md export-ignore
+AGENTS.md export-ignore
+**/.claude/** export-ignore
+**/.serena/** export-ignore

@@ -1,0 +1,285 @@
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+// Package softwarefactoryworker is the Software Factory worker image as the
+// binary knows it: the Dockerfile beside this file, the toolchain pins it is
+// built with, the labels it carries, the tag it is published under and the
+// probes it must pass.
+//
+// It exists so the daemon can rebuild the image by itself (pkg/sdlc/workerimage)
+// from exactly what `make build-worker-image` builds, without a checkout of
+// this repository on the node: the Dockerfile is embedded, and the toolchain
+// pins are the repository's own (pkg/version/toolchain.mk, which the Makefile
+// includes and the binary embeds). There is no second copy of a pin anywhere.
+//
+// The package holds DATA and pure functions only. Driving an engine is
+// pkg/orchestration's; deciding when to rebuild is pkg/sdlc/workerimage's.
+package softwarefactoryworker
+
+import (
+	_ "embed"
+	"regexp"
+	"strconv"
+	"strings"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/version"
+)
+
+// Dockerfile is the worker image's build definition, embedded from the file
+// beside this one. It builds from an EMPTY context: it COPYs nothing from its
+// build directory, which is what lets a daemon build it from these bytes alone.
+//
+//go:embed Dockerfile
+var Dockerfile []byte
+
+// Pins are the toolchain versions the image is built with — every build
+// argument except the two agent CLIs, whose versions are what a refresh moves.
+type Pins struct {
+	Go          string
+	Golangci    string
+	Gosec       string
+	Govulncheck string
+	Gopls       string
+	Serena      string
+
+	// ToolDependencyFloors are the space-separated module@version pairs gopls
+	// and gosec are built with in place of the vulnerable versions their own
+	// releases require (toolchain.mk's GO_TOOL_DEPENDENCY_FLOORS). A build
+	// INPUT rather than a tool version, so it carries no label.
+	ToolDependencyFloors string
+
+	// Actionlint and Shellcheck lint GitHub Actions workflows, which the
+	// fleet's `make lint` does (go-quicbaas#1039). shellcheck is installed from
+	// its release tarball, whose SHA-256 per architecture is pinned beside the
+	// version because upstream publishes no checksum file.
+	Actionlint              string
+	Shellcheck              string
+	ShellcheckSHA256X86_64  string
+	ShellcheckSHA256Aarch64 string
+
+	// Opencode is the third agent CLI: the one a fleet node drives against a
+	// local model server. Unlike claude-code and codex it is not refreshed from
+	// npm but installed from its release tarball, so it is a toolchain pin,
+	// with the release's published SHA-256 per architecture beside it.
+	Opencode              string
+	OpencodeSHA256X86_64  string
+	OpencodeSHA256Aarch64 string
+}
+
+// ToolchainPins returns the repository's toolchain pins, as this binary
+// embedded them from pkg/version/toolchain.mk.
+func ToolchainPins() (Pins, error) {
+	toolchain, err := version.Toolchain()
+	if err != nil {
+		return Pins{}, err
+	}
+	pins := Pins{
+		Go:          toolchain["GO_VERSION"],
+		Golangci:    toolchain["GOLANGCI_VERSION"],
+		Gosec:       toolchain["GOSEC_VERSION"],
+		Govulncheck: toolchain["GOVULNCHECK_VERSION"],
+		Gopls:       toolchain["GOPLS_VERSION"],
+		Serena:      toolchain["SERENA_VERSION"],
+
+		ToolDependencyFloors: toolchain["GO_TOOL_DEPENDENCY_FLOORS"],
+
+		Actionlint:              toolchain["ACTIONLINT_VERSION"],
+		Shellcheck:              toolchain["SHELLCHECK_VERSION"],
+		ShellcheckSHA256X86_64:  toolchain["SHELLCHECK_SHA256_X86_64"],
+		ShellcheckSHA256Aarch64: toolchain["SHELLCHECK_SHA256_AARCH64"],
+
+		Opencode:              toolchain["OPENCODE_VERSION"],
+		OpencodeSHA256X86_64:  toolchain["OPENCODE_SHA256_X86_64"],
+		OpencodeSHA256Aarch64: toolchain["OPENCODE_SHA256_AARCH64"],
+	}
+	return pins, pins.Validate()
+}
+
+// Validate reports the pins that are empty.
+func (p Pins) Validate() error {
+	var missing []string
+	for _, pin := range p.named() {
+		if strings.TrimSpace(pin.value) == "" {
+			missing = append(missing, pin.buildArg)
+		}
+	}
+	if len(missing) > 0 {
+		return &PinsMissingError{Missing: missing}
+	}
+	return nil
+}
+
+// namedPin pairs a pin with the build argument that carries it and the label
+// that records it. A pin with no label is a build INPUT rather than a tool
+// version — a tarball digest — and is not part of the bill of materials.
+type namedPin struct {
+	buildArg string
+	label    string
+	value    string
+}
+
+// named lists the pins in build-argument order.
+func (p Pins) named() []namedPin {
+	return []namedPin{
+		{buildArg: "GO_VERSION", label: LabelGoVersion, value: p.Go},
+		{buildArg: "GOLANGCI_VERSION", label: LabelGolangciVersion, value: p.Golangci},
+		{buildArg: "GOSEC_VERSION", label: LabelGosecVersion, value: p.Gosec},
+		{buildArg: "GOVULNCHECK_VERSION", label: LabelGovulncheckVersion, value: p.Govulncheck},
+		{buildArg: "GOPLS_VERSION", label: LabelGoplsVersion, value: p.Gopls},
+		{buildArg: "SERENA_VERSION", label: LabelSerenaVersion, value: p.Serena},
+		{buildArg: "GO_TOOL_DEPENDENCY_FLOORS", value: p.ToolDependencyFloors},
+		{buildArg: "ACTIONLINT_VERSION", label: LabelActionlintVersion, value: p.Actionlint},
+		{buildArg: "SHELLCHECK_VERSION", label: LabelShellcheckVersion, value: p.Shellcheck},
+		{buildArg: "SHELLCHECK_SHA256_X86_64", value: p.ShellcheckSHA256X86_64},
+		{buildArg: "SHELLCHECK_SHA256_AARCH64", value: p.ShellcheckSHA256Aarch64},
+		{buildArg: "OPENCODE_VERSION", label: LabelOpencodeVersion, value: p.Opencode},
+		{buildArg: "OPENCODE_SHA256_X86_64", value: p.OpencodeSHA256X86_64},
+		{buildArg: "OPENCODE_SHA256_AARCH64", value: p.OpencodeSHA256Aarch64},
+	}
+}
+
+// The image's labels. The Dockerfile writes every one of them from its build
+// arguments, so an image built by `make build-worker-image` and one built by
+// the daemon's refresh are labelled identically.
+//
+// The two agent-CLI labels are the ones a refresh READS: they are how the
+// daemon knows what a bound image carries without running it.
+const (
+	LabelClaudeCodeVersion  = "io.quicbaas.worker.claude-code.version"
+	LabelCodexVersion       = "io.quicbaas.worker.codex.version"
+	LabelBaseVersion        = "io.quicbaas.worker.base.version"
+	LabelGoVersion          = "io.quicbaas.worker.go.version"
+	LabelGolangciVersion    = "io.quicbaas.worker.golangci-lint.version"
+	LabelGosecVersion       = "io.quicbaas.worker.gosec.version"
+	LabelGovulncheckVersion = "io.quicbaas.worker.govulncheck.version"
+	LabelGoplsVersion       = "io.quicbaas.worker.gopls.version"
+	LabelSerenaVersion      = "io.quicbaas.worker.serena.version"
+	LabelActionlintVersion  = "io.quicbaas.worker.actionlint.version"
+	LabelShellcheckVersion  = "io.quicbaas.worker.shellcheck.version"
+	LabelOpencodeVersion    = "io.quicbaas.worker.opencode.version"
+)
+
+// The npm packages the image installs the agents from.
+const (
+	ClaudeCodePackage = "@anthropic-ai/claude-code"
+	CodexPackage      = "@openai/codex"
+)
+
+// Agents are the two agent-CLI versions an image carries.
+type Agents struct {
+	ClaudeCode string `json:"claude_code"`
+	Codex      string `json:"codex"`
+}
+
+// AgentsFromLabels reads the agent versions an image's labels declare. An
+// image built before the labels existed declares neither, and reports both
+// empty: its versions are unknown, which is not the same as current.
+func AgentsFromLabels(labels map[string]string) Agents {
+	return Agents{ClaudeCode: labels[LabelClaudeCodeVersion], Codex: labels[LabelCodexVersion]}
+}
+
+// Build is everything one build of the image is a function of.
+type Build struct {
+	// Base is the QuicBaaS release the Dockerfile came from.
+	Base string
+
+	// Agents are the agent-CLI versions installed.
+	Agents Agents
+
+	// Pins are the toolchain versions.
+	Pins Pins
+
+	// UID and GID are the ids the image's agent user is created with: the ids
+	// the sandboxed spawn runs as (see the Dockerfile's AGENT_UID).
+	UID int
+	GID int
+}
+
+// Validate checks the build can be named and run.
+func (b Build) Validate() error {
+	if err := ValidateVersion("base", b.Base); err != nil {
+		return err
+	}
+	if err := ValidateVersion(ClaudeCodePackage, b.Agents.ClaudeCode); err != nil {
+		return err
+	}
+	if err := ValidateVersion(CodexPackage, b.Agents.Codex); err != nil {
+		return err
+	}
+	if b.UID < 0 || b.GID < 0 {
+		return &InvalidBuildError{Field: "uid/gid", Message: "must not be negative"}
+	}
+	if len(b.Tag()) > maxTagLength {
+		return &InvalidBuildError{Field: "tag", Message: "longer than the " + strconv.Itoa(maxTagLength) + " characters a registry accepts"}
+	}
+	return b.Pins.Validate()
+}
+
+// maxTagLength is the OCI distribution limit on a tag.
+const maxTagLength = 128
+
+// Tag is the image's CONTENT TAG: "<base>-cc<claude-code>-cx<codex>", e.g.
+// "0.11.0-alpha-cc2.1.280-cx0.156.0".
+//
+// It names what is inside rather than when it was built, so the same inputs
+// always produce the same name, a newer agent CLI always produces a new one,
+// and a previous tag is never overwritten — which is what keeps it available
+// for a rollback.
+func (b Build) Tag() string {
+	return b.Base + "-cc" + b.Agents.ClaudeCode + "-cx" + b.Agents.Codex
+}
+
+// BuildArgs are the build's --build-arg values.
+func (b Build) BuildArgs() map[string]string {
+	args := map[string]string{
+		"CLAUDE_CODE_VERSION": b.Agents.ClaudeCode,
+		"CODEX_VERSION":       b.Agents.Codex,
+		"QUICBAAS_VERSION":    b.Base,
+		"AGENT_UID":           strconv.Itoa(b.UID),
+		"AGENT_GID":           strconv.Itoa(b.GID),
+	}
+	for _, pin := range b.Pins.named() {
+		args[pin.buildArg] = pin.value
+	}
+	return args
+}
+
+// Labels are the labels the build's image carries.
+func (b Build) Labels() map[string]string {
+	labels := map[string]string{
+		LabelClaudeCodeVersion: b.Agents.ClaudeCode,
+		LabelCodexVersion:      b.Agents.Codex,
+		LabelBaseVersion:       b.Base,
+	}
+	for _, pin := range b.Pins.named() {
+		if pin.label != "" {
+			labels[pin.label] = pin.value
+		}
+	}
+	return labels
+}
+
+// versionPattern is what a version may look like to be part of a tag and a
+// build argument: semver's characters without build metadata ("+" is not a
+// tag character), starting alphanumeric.
+var versionPattern = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z.\-]*$`)
+
+// ValidateVersion refuses a version that cannot be part of a tag. It is also
+// the guard between a registry's answer and a build argument: a version is
+// only ever these characters.
+func ValidateVersion(what, version string) error {
+	if !versionPattern.MatchString(version) {
+		return &InvalidVersionError{What: what, Version: version}
+	}
+	return nil
+}

@@ -99,7 +99,7 @@ vi.mock('../src/stores/sdkClient.ts', () => ({
       completeTask: mockCompleteTask,
       // The agent picker and the backend list behind the shared reference
       // options; neither narrows this fixture, both must answer.
-      listAgentsPage: async () => ({ items: [], total: 0, limit: 25, offset: 0 }),
+      listFleetNodesPage: async () => ({ items: [], total: 0, limit: 25, offset: 0 }),
       listBackends: async () => [],
     },
     projects: {
@@ -364,7 +364,11 @@ describe('TasksView — the agent working the task', () => {
     expect(await waitFor(() => screen.getByTestId('task-assigned'))).toHaveTextContent('alice');
   });
 
-  it('names the fleet agent the latest attempt ran on when the task has no claimant', async () => {
+  // The SERVER resolves the latest attempt's agent onto every listed task as
+  // `agent_id`, so the page names it straight off the row and asks for no job
+  // listing of its own. The follow-up job request this replaced cost the page
+  // a second whole-tenant job scan on the server.
+  it('names the fleet node the server resolved onto the row, without a job request', async () => {
     storeTasks = [makeTask({
       status: 'completed',
       auto_spawn: true,
@@ -372,20 +376,19 @@ describe('TasksView — the agent working the task', () => {
       spawned_job_id: '',
       attempts: 1,
       metadata: { attempt_history: 'job-abc' },
+      agent_id: 'agent-automatethethings-agent-04',
     })];
-    storeJobs = [{ job_id: 'job-abc', agent_id: 'agent-automatethethings-agent-vm-host-4' }];
     await renderTasks();
     await waitFor(() => {
       expect(screen.getByTestId('task-assigned'))
-        .toHaveTextContent('agent-automatethethings-agent-vm-host-4');
+        .toHaveTextContent('agent-automatethethings-agent-04');
     });
-    // ONE request for the whole page, narrowed to the jobs its rows name.
-    expect(jobsPageCalls).toHaveLength(1);
-    expect(jobsPageCalls[0]?.['job_ids']).toEqual(['job-abc']);
+    expect(jobsPageCalls).toHaveLength(0);
   });
 
   // The LATEST attempt's agent, not an earlier one's: a task retried onto a
-  // second host must not still read as running on the first.
+  // second host must not still read as running on the first, even when the
+  // store happens to hold the first attempt's job.
   it('names the latest attempt\'s agent, not an earlier attempt\'s', async () => {
     storeTasks = [makeTask({
       status: 'failed',
@@ -394,11 +397,9 @@ describe('TasksView — the agent working the task', () => {
       spawned_job_id: '',
       attempts: 2,
       metadata: { attempt_history: 'job-one,job-two' },
+      agent_id: 'agent-host-b',
     })];
-    storeJobs = [
-      { job_id: 'job-one', agent_id: 'agent-host-a' },
-      { job_id: 'job-two', agent_id: 'agent-host-b' },
-    ];
+    storeJobs = [{ job_id: 'job-one', agent_id: 'agent-host-a' }];
     await renderTasks();
     const cell = await waitFor(() => {
       const el = screen.getByTestId('task-assigned');
@@ -458,6 +459,53 @@ describe('TasksView — status and attempts', () => {
     await renderTasks();
     expect(await waitFor(() => screen.getByText('2 / 5 (3 dispatched)'))).toBeInTheDocument();
     expect(screen.getByText(/1 refunded/)).toBeInTheDocument();
+  });
+
+  // go-quicbaas#947: the page must say WHOSE failure stopped a task from the
+  // server's typed fields, never by reading result.output.
+  it('renders a failure on an environment fault differently from a failure of the work', async () => {
+    storeTasks = [
+      makeTask({
+        id: 'task-env', subject: 'Env task', status: 'blocked', block_kind: 'blocked',
+        fault_class: 'forge_unreachable', fault_origin: 'environment', conclusion_reason: 'fault_bounded',
+        result: { output: 'the same prose' },
+      }),
+      makeTask({
+        id: 'task-work', subject: 'Work task', status: 'failed',
+        fault_class: 'stalled', fault_origin: 'work', conclusion_reason: 'budget_exhausted',
+        result: { output: 'the same prose' },
+      }),
+    ];
+    await renderTasks();
+    const envRow = await waitFor(() => screen.getByRole('button', { name: 'Open task Env task' }));
+    const workRow = screen.getByRole('button', { name: 'Open task Work task' });
+    const envStop = envRow.querySelector('[data-testid="task-stop"]');
+    const workStop = workRow.querySelector('[data-testid="task-stop"]');
+    expect(envStop).toHaveTextContent('Environment fault: forge_unreachable');
+    expect(workStop).toHaveTextContent('Failed on the work');
+    expect(envStop?.textContent).not.toEqual(workStop?.textContent);
+  });
+
+  it('names a task blocked for an owner ruling apart from one awaiting operator repair', async () => {
+    storeTasks = [
+      makeTask({ id: 'task-owner', subject: 'Owner task', status: 'blocked', block_kind: 'needs_info', conclusion_reason: 'parked_needs_info' }),
+      makeTask({
+        id: 'task-op', subject: 'Operator task', status: 'blocked', block_kind: 'blocked',
+        block_fault_class: 'workspace_unfit', fault_class: 'workspace_unfit', fault_origin: 'environment',
+      }),
+    ];
+    await renderTasks();
+    const ownerRow = await waitFor(() => screen.getByRole('button', { name: 'Open task Owner task' }));
+    const opRow = screen.getByRole('button', { name: 'Open task Operator task' });
+    expect(ownerRow.querySelector('[data-testid="task-stop"]')).toHaveTextContent('Awaiting owner ruling');
+    expect(opRow.querySelector('[data-testid="task-stop"]')).toHaveTextContent('Environment fault: workspace_unfit');
+  });
+
+  it('renders no stop badge for a task that is not stopped', async () => {
+    storeTasks = [makeTask({ status: 'completed', fault_origin: '', conclusion_reason: 'completed' })];
+    await renderTasks();
+    await waitFor(() => screen.getByRole('button', { name: 'Open task Test task' }));
+    expect(screen.queryByTestId('task-stop')).toBeNull();
   });
 
   it('renders an em-dash for a task with no attempt accounting', async () => {
@@ -545,7 +593,7 @@ describe('TasksView — faceted filters', () => {
     expect(screen.getByTestId('filter-field-status')).toBeInTheDocument();
     expect(screen.getByTestId('filter-field-dispatch')).toBeInTheDocument();
     expect(screen.getByTestId('filter-field-project')).toBeInTheDocument();
-    expect(screen.getByTestId('filter-field-agent')).toBeInTheDocument();
+    expect(screen.getByTestId('filter-field-node')).toBeInTheDocument();
   });
 
   // The dispatch mode is a SERVER parameter: a page of twenty-five narrowed in

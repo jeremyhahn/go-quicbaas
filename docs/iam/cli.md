@@ -92,7 +92,6 @@ quicbaas iam user create <email>
 - `--tenant string`: Tenant ID (required)
 - `--name string`: User display name (required)
 - `--roles stringSlice`: Roles to assign (comma-separated)
-- `--groups stringSlice`: Groups to add user to (comma-separated)
 
 #### Examples
 
@@ -141,7 +140,6 @@ quicbaas iam user list --tenant <tenant-id>
 
 #### Flags
 - `--role string`: Filter by role
-- `--group string`: Filter by group
 
 ### user role assign
 
@@ -157,82 +155,6 @@ Revoke a role from a user.
 
 ```bash
 quicbaas iam user role revoke --tenant <tenant-id> --user <user-id> --role <role-id>
-```
-
-## Group Management
-
-### group create
-
-Create a new group.
-
-```bash
-quicbaas iam group create <id> --tenant <tenant-id>
-```
-
-#### Flags
-- `--name string`: Group display name (required)
-- `--description string`: Group description
-
-### group get
-
-Get group details.
-
-```bash
-quicbaas iam group get <id> --tenant <tenant-id>
-```
-
-### group update
-
-Update group information.
-
-```bash
-quicbaas iam group update <id> --tenant <tenant-id>
-```
-
-#### Flags
-- `--name string`: New group name
-- `--description string`: New group description
-
-### group delete
-
-Delete a group.
-
-```bash
-quicbaas iam group delete <id> --tenant <tenant-id>
-```
-
-### group list
-
-List groups in a tenant.
-
-```bash
-quicbaas iam group list --tenant <tenant-id>
-```
-
-### group add-member
-
-Add a user to a group.
-
-```bash
-quicbaas iam group add-member <group-id> <user-id> --tenant <tenant-id>
-# or using flags
-quicbaas iam group add-member --tenant <tenant-id> --group <group-id> --user <user-id>
-```
-
-### group remove-member
-
-Remove a user from a group.
-
-```bash
-quicbaas iam group remove-member <group-id> <user-id> --tenant <tenant-id>
-```
-
-### group members
-
-List group members.
-
-```bash
-quicbaas iam group members <group-id> --tenant <tenant-id>
 ```
 
 ## Role Management
@@ -729,7 +651,7 @@ ceremony — `Security().Auth().BeginLogin` / `FinishLogin` — and the
 model verb-for-verb (add / list / remove / rotate / relabel).
 
 All verbs route through the SDK `Security().Auth()` accessor (see
-[`docs/sdk/security.md`](../ssh/engineering.md#auth--authservice`)).
+[`docs/ssh/engineering.md`](../ssh/engineering.md#auth--authservice)).
 Transport selection is automatic per the global `--transport` flag.
 
 Source:
@@ -994,6 +916,6 @@ location.
   surface including FIDO2 / PIV / Devices / Factors sub-services.
 - `docs/security/authentication.md` —
   server-side authentication architecture.
-- `docs/cli/iam.md` — user, role, and group management.
+- `docs/cli/iam.md` — user and role management.
 - [`docs/auth/passwordless.md`](architecture.md) — passwordless
   authentication background.

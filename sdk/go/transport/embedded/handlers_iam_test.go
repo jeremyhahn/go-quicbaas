@@ -44,28 +44,22 @@ type embeddedCreateUserEnvelope struct {
 func newIAMTestService() (*mockQuicBaaSForIAM, *iam.IdentityStore) {
 	mem := iam.NewMemoryStorage()
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  mem,
-		GroupStorage: mem,
-		RoleStorage:  mem,
+		UserStorage: mem,
+		RoleStorage: mem,
 	})
 	return &mockQuicBaaSForIAM{store: store}, store
 }
 
-// TestHandleIAMUserCreate_ForwardsRolesGroupsAndMetadata proves the embedded
-// transport no longer drops Groups and Metadata from the SDK
-// CreateUserRequest: roles and groups are persisted (with the group member
-// list referencing the user back) and metadata lands as user attributes.
-func TestHandleIAMUserCreate_ForwardsRolesGroupsAndMetadata(t *testing.T) {
+// TestHandleIAMUserCreate_ForwardsRolesAndMetadata proves the embedded
+// transport does not drop Metadata from the SDK CreateUserRequest: roles are
+// persisted and metadata lands as user attributes.
+func TestHandleIAMUserCreate_ForwardsRolesAndMetadata(t *testing.T) {
 	svc, store := newIAMTestService()
 	ctx := context.Background()
 
 	role, err := store.CreateRole(ctx, "t-1", iam.CreateRoleOptions{Name: "auditor"})
 	if err != nil {
 		t.Fatalf("CreateRole failed: %v", err)
-	}
-	group, err := store.CreateGroup(ctx, "t-1", iam.CreateGroupOptions{Name: "ops-team"})
-	if err != nil {
-		t.Fatalf("CreateGroup failed: %v", err)
 	}
 
 	out, err := handleIAMUserCreate(ctx, svc, &embeddedCreateUserEnvelope{
@@ -75,7 +69,6 @@ func TestHandleIAMUserCreate_ForwardsRolesGroupsAndMetadata(t *testing.T) {
 			Email:       "embedded@example.com",
 			DisplayName: "Embedded User",
 			Roles:       []string{role.ID},
-			Groups:      []string{group.ID},
 			Metadata:    map[string]string{"department": "engineering"},
 		},
 	})
@@ -93,44 +86,8 @@ func TestHandleIAMUserCreate_ForwardsRolesGroupsAndMetadata(t *testing.T) {
 	if len(stored.Roles) != 1 || stored.Roles[0] != role.ID {
 		t.Errorf("Expected persisted roles [%s], got %v", role.ID, stored.Roles)
 	}
-	if len(stored.Groups) != 1 || stored.Groups[0] != group.ID {
-		t.Errorf("Expected persisted groups [%s], got %v", group.ID, stored.Groups)
-	}
 	if stored.Attributes == nil || stored.Attributes["department"] != "engineering" {
 		t.Errorf("Expected metadata forwarded as attributes, got %v", stored.Attributes)
-	}
-
-	// Bidirectional membership: the group's member list references the user.
-	storedGroup, err := store.GetGroup(ctx, "t-1", group.ID)
-	if err != nil {
-		t.Fatalf("GetGroup failed: %v", err)
-	}
-	if len(storedGroup.Members) != 1 || storedGroup.Members[0] != stored.ID {
-		t.Errorf("Expected group members [%s], got %v", stored.ID, storedGroup.Members)
-	}
-}
-
-// TestHandleIAMUserCreate_UnknownGroup_NoUserCreated proves the embedded
-// transport inherits the validate-before-create contract: an unknown group
-// reference fails and no user record is written.
-func TestHandleIAMUserCreate_UnknownGroup_NoUserCreated(t *testing.T) {
-	svc, store := newIAMTestService()
-	ctx := context.Background()
-
-	_, err := handleIAMUserCreate(ctx, svc, &embeddedCreateUserEnvelope{
-		TenantID: "t-1",
-		Request: &iamsdk.CreateUserRequest{
-			Username: "phantomuser",
-			Email:    "phantom@example.com",
-			Groups:   []string{"no-such-group"},
-		},
-	})
-	if err == nil {
-		t.Fatal("Expected error for unknown group reference")
-	}
-
-	if _, err := store.GetUserByEmail(ctx, "t-1", "phantom@example.com"); err == nil {
-		t.Error("Expected no user to be created after failed group validation")
 	}
 }
 

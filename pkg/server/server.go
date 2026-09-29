@@ -267,13 +267,13 @@ type Server struct {
 	// in-memory or freshly-created file-backed store.
 	xkmsKeyStorage xkmssdk.StorageBackend
 
-	// Agent fleet registry - shared between IAM enrollment (publisher on
+	// Fleet registry - shared between IAM enrollment (publisher on
 	// redeem) and orchestration (publisher on heartbeat + consumer for
 	// dispatch). Constructed during IAM init so the enrollment service can
 	// publish on redemption; the orchestration layer receives the same
-	// instance via SetAgentRegistry so dispatch sees enrollment-time
+	// instance via SetFleetRegistry so dispatch sees enrollment-time
 	// registrations immediately.
-	agentRegistry orchestration.AgentRegistry
+	fleetRegistry orchestration.FleetRegistry
 
 	// orchTaskStore is the orchestration task store startOrchestration built
 	// and handed to the agent service.
@@ -284,6 +284,23 @@ type Server struct {
 	// task dispatcher read them to count how many jobs a project is running.
 	orchJobLeaseStore orchestration.JobLeaseStore
 	orchLeaseTTL      time.Duration
+
+	// orchAccountStore is the pooled-account store startOrchestration built.
+	// The SDLC module's attention inbox reads it directly (not through
+	// service.AccountService, whose request/response shape does not match
+	// the inbox's ListByTenant) for the account_error alert — a pooled
+	// credential whose last refresh failed.
+	orchAccountStore orchestration.AccountStore
+
+	// orchAgentDirectory is the tenant AI agent catalog startOrchestration
+	// built: every slot's Agent or pool resolves against it. Nil when
+	// orchestration is off.
+	orchAgentDirectory *orchestration.AgentDirectory
+
+	// tenantUnsealHooks is told by every per-tenant barrier facade after a
+	// tenant's barrier is unsealed; the boot migrations register here to
+	// reach the tenants that were sealed at boot.
+	tenantUnsealHooks service.TenantUnsealHooks
 
 	// orchFleetCapacity answers admission's fleet axis: how many worker slots
 	// the deployment has. Built once in startOrchestration and shared by BOTH
@@ -299,6 +316,11 @@ type Server struct {
 	// leaves that axis out (see orchestration.AdmissionControllerConfig).
 	orchPoolHeadroom orchestration.PoolHeadroomReader
 
+	// orchScopeSpend answers admission's spend axis: whether a project's and
+	// its tenant's own spend limits admit more work. Built beside the
+	// consumption ledger in startOrchestration; nil leaves the axis out.
+	orchScopeSpend orchestration.ScopeSpendReader
+
 	// taskSourcePollerStop ends the task-source poller startOrchestration
 	// started; taskSourcePollerDone closes when it has returned. Both are
 	// nil when no poller runs (orchestration disabled, or no facade to
@@ -310,13 +332,28 @@ type Server struct {
 	// taskDispatcher starts jobs for the pending tasks of every autonomous
 	// project. It runs beside the poller, at the same cadence, and stops
 	// with it.
-	taskDispatcher     *orchestration.TaskDispatcher
+	taskDispatcher *orchestration.TaskDispatcher
+
+	// taskSpawner is what the dispatcher will start tasks through. It is
+	// captured when the engine starts and handed to the dispatcher only by the
+	// startupTaskDispatcher step, AFTER interrupted jobs are recovered.
+	taskSpawner orchestration.TaskSpawner
+
+	// dispatchGate closes once every job recovery resumed holds its lease
+	// (or ended); the dispatcher's first sweep waits on it. Nil when no
+	// recovery ran, which gates nothing.
+	dispatchGate <-chan struct{}
+
 	taskDispatcherStop context.CancelFunc
 	taskDispatcherDone chan struct{}
 
 	// orchSweeps is the job reaper and stall detector's sweep goroutine,
 	// started by startOrchestration and stopped at shutdown.
 	orchSweeps *orchestrationSweeps
+
+	// orchContainerReaper is the orchestrator's sandbox-container reaper
+	// goroutine, started with the container runtime and stopped at shutdown.
+	orchContainerReaper *orchestrationSweeps
 
 	// sdlcLabelSweeps is the SDLC module's forge-label reconciliation
 	// goroutine, started by startSDLC and stopped before the module detaches.
@@ -326,6 +363,16 @@ type Server struct {
 	// missed-delivery backstops — the triage pass and the review floor; see
 	// lifecycle_sdlc_backstop.go.
 	sdlcBackstops *sdlcBackstops
+
+	// sdlcWorkerImage is the worker image refresh loop, started by startSDLC
+	// when the node has a container engine; see lifecycle_sdlc_worker_image.go.
+	sdlcWorkerImage *sdlcWorkerImageLoop
+
+	// orchContainerRuntime is the container engine the orchestration service
+	// spawns sandboxed sessions on, nil on a node without docker or podman.
+	// The worker image refresh builds on the same engine, so the image it
+	// builds is the image this node's workers run.
+	orchContainerRuntime *orchestration.ExecContainerRuntime
 
 	// gitProvisioner is the managed-workspace git path wireProjectWorkspaces
 	// composed (secrets-store tokens, xkms-held SSH keys and host-key pins).
@@ -369,7 +416,7 @@ type Server struct {
 	webauthnFactory atomic.Pointer[iam.WebAuthnServiceFactory]
 
 	// orchestratorDaemonClient holds the OAuth2 credentials the central uses
-	// to authenticate its outbound calls to remote agent daemons. Populated
+	// to authenticate its outbound calls to remote fleet node daemons. Populated
 	// by ensureOrchestratorDaemonClient during IAM init; consumed by the
 	// orchestration layer's RemoteBackendResolver to mint JWTs for daemon
 	// RPCs. See pkg/server/iam_init.go for bootstrap details.
@@ -593,11 +640,11 @@ type Server struct {
 	qrdbClient *ShardedClient
 
 	// Embedded agent state — non-nil when the in-process agent runtime is
-	// running. Initialized by startEmbeddedAgent; cleaned up by
-	// stopEmbeddedAgent during graceful shutdown.
-	embeddedAgentState *embeddedAgent
+	// running. Initialized by startEmbeddedFleetNode; cleaned up by
+	// stopEmbeddedFleetNode during graceful shutdown.
+	embeddedFleetNodeState *embeddedFleetNode
 
-	// embeddedDialerRegistry maps AgentRegistration.Host → bufconn dialer
+	// embeddedDialerRegistry maps FleetNode.Host → bufconn dialer
 	// for embedded agents. The remote backend pool consults this registry
 	// before attempting a real TCP dial.
 	embeddedDialerRegistry *EmbeddedDialerRegistry
@@ -1156,6 +1203,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		// Stop the job sweep before the stores it reads leases and tasks
 		// from go away.
 		s.stopOrchestrationSweeps()
+		s.stopContainerReaper()
 
 		// Nothing starts new jobs from here on, so the running ones can be
 		// drained: they get a bounded window to conclude while the stores
@@ -1254,9 +1302,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		// The embedded agent must drain in-flight sessions before the
 		// transport servers shut down so the orchestrator's session state
 		// remains intact during teardown.
-		if s.embeddedAgentState != nil {
+		if s.embeddedFleetNodeState != nil {
 			s.logger.Info("Shutting down embedded agent...")
-			s.stopEmbeddedAgent(ctx)
+			s.stopEmbeddedFleetNode(ctx)
 			s.logger.Info("Embedded agent shutdown complete")
 		}
 
@@ -1960,11 +2008,12 @@ type startupStep struct {
 
 // Names of the orchestration startup steps, in the order they must run.
 const (
-	startupRegisterSDLC  = "register_sdlc"
-	startupOrchestration = "orchestration"
-	startupEmbeddedAgent = "embedded_agent"
-	startupSDLC          = "sdlc"
-	startupRecoverJobs   = "recover_jobs"
+	startupRegisterSDLC      = "register_sdlc"
+	startupOrchestration     = "orchestration"
+	startupEmbeddedFleetNode = "embedded_fleet_node"
+	startupSDLC              = "sdlc"
+	startupRecoverJobs       = "recover_jobs"
+	startupTaskDispatcher    = "task_dispatcher"
 )
 
 // orchestrationStartup is the orchestration plane's startup, in order.
@@ -1983,8 +2032,15 @@ const (
 //   - The SDLC module's RUNTIME follows the engine, because its hooks and
 //     runner are built over the engine's services, and its backstop sweepers
 //     dispatch jobs — so it follows the embedded agent too.
-//   - Interrupted jobs are recovered last, once every module's hooks and every
+//   - Interrupted jobs are recovered once every module's hooks and every
 //     executing host are in place.
+//   - The task dispatcher starts LAST, after recovery has re-acquired the
+//     leases of the jobs it resumed. Started with the engine, its first sweep
+//     raced recovery: it saw a task naming a job that "holds no live lease"
+//     (recovery had not re-acquired it yet), released the task back to the
+//     queue, and later dispatched a SECOND job for it, which superseded the
+//     resumed one and threw its in-flight review or turn away. It happened on
+//     every restart (deploys of 2026-09-23, go-quicbaas#1064).
 func (s *Server) orchestrationStartup() []startupStep {
 	var steps []startupStep
 	add := func(enabled bool, name string, run func() error) {
@@ -1994,10 +2050,18 @@ func (s *Server) orchestrationStartup() []startupStep {
 	}
 	add(s.config.SDLC.Enabled, startupRegisterSDLC, registerSDLCModule)
 	add(s.config.Orchestration.Enabled, startupOrchestration, s.startOrchestration)
-	add(s.config.Server.EmbeddedAgent.Enabled, startupEmbeddedAgent, s.startEmbeddedAgent)
+	add(s.config.Server.EmbeddedFleetNode.Enabled, startupEmbeddedFleetNode, s.startEmbeddedFleetNode)
 	add(s.config.SDLC.Enabled, startupSDLC, s.startSDLC)
 	add(s.config.Orchestration.Enabled, startupRecoverJobs, func() error {
 		s.recoverOrchestrationJobs()
+		return nil
+	})
+	add(s.config.Orchestration.Enabled, startupTaskDispatcher, func() error {
+		if s.taskSpawner == nil {
+			s.logger.Info("Task dispatcher not started: the agent service cannot spawn a task")
+			return nil
+		}
+		s.startTaskDispatcher(s.taskSpawner)
 		return nil
 	})
 	return steps

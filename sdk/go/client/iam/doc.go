@@ -30,7 +30,6 @@
 // The client provides access to all IAM sub-clients:
 //   - client.Tenant() - Multi-tenant management
 //   - client.User() - User management
-//   - client.Group() - Group management
 //   - client.Role() - Role management
 //   - client.Policy() - ABAC policy management
 //   - client.PEP() - Policy Enforcement Point (authorization checks)
@@ -43,7 +42,7 @@
 // # Multi-Tenant Architecture
 //
 // QuicBaaS IAM supports multi-tenant deployments where each tenant has
-// isolated users, groups, roles, policies, and applications:
+// isolated users, roles, policies, and applications:
 //
 //	// Create a new tenant
 //	tenant, err := client.Tenant().Create(ctx, &iam.CreateTenantRequest{
@@ -182,7 +181,7 @@
 //	    ScopeID:  tenantID,
 //	    Permissions: []string{
 //	        "users:read", "users:write",
-//	        "groups:read", "groups:write",
+//	        "roles:read", "roles:write",
 //	    },
 //	})
 //

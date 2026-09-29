@@ -93,16 +93,59 @@ func TestWorkerSpawnEnv_NamesTheEnginesConfigDir(t *testing.T) {
 func TestWorkerSpawnAccountAuto_PooledBackendsOnly(t *testing.T) {
 	t.Parallel()
 	for _, backend := range []string{"claude", "claude-code", "codex", "opencode"} {
-		if !WorkerSpawnAccountAuto(backend) {
+		if !WorkerSpawnAccountAuto(backend, "") {
 			t.Errorf("WorkerSpawnAccountAuto(%q) = false, want a pooled account", backend)
 		}
 	}
 	// ollama is local inference with no provider account to pool, and the
 	// empty backend names nothing at all.
 	for _, backend := range []string{"ollama", ""} {
-		if WorkerSpawnAccountAuto(backend) {
+		if WorkerSpawnAccountAuto(backend, "") {
 			t.Errorf("WorkerSpawnAccountAuto(%q) = true, want the backend's own authentication", backend)
 		}
+	}
+}
+
+// TestWorkerSpawnAccountAuto_LocalProviderNeedsNoAccount: an opencode spawn on
+// a model its node's ollama serves presents no credential, so it must not be
+// sent to the account pool — an empty pool would refuse a spawn that needs
+// nothing from it. A hosted opencode model still pools, and a provider prefix
+// means nothing to a backend that does not route by it.
+func TestWorkerSpawnAccountAuto_LocalProviderNeedsNoAccount(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		backend, model string
+		want           bool
+	}{
+		{"opencode", "ollama/review-q8:latest", false},
+		{"opencode", "OLLAMA/review-q8:latest", false},
+		{"opencode", "anthropic/claude-opus-5-5", true},
+		{"opencode", "review-q8:latest", true},
+		{"opencode", "", true},
+		{"claude", "ollama/review-q8:latest", true},
+		{"ollama", "ollama/review-q8:latest", false},
+	}
+	for _, tc := range cases {
+		if got := WorkerSpawnAccountAuto(tc.backend, tc.model); got != tc.want {
+			t.Errorf("WorkerSpawnAccountAuto(%q, %q) = %v, want %v", tc.backend, tc.model, got, tc.want)
+		}
+	}
+}
+
+// TestApplyWorkerSpawnEnvironment_LocalOpencodeSkipsThePool is the seam the
+// review runner's local reviewer passes through: it must leave AccountAuto
+// unset, so resolveAccount never consults a pool the reviewer has no use for.
+func TestApplyWorkerSpawnEnvironment_LocalOpencodeSkipsThePool(t *testing.T) {
+	t.Parallel()
+	local := &SpawnSessionRequest{Backend: "opencode", Model: "ollama/review-q8:latest"}
+	ApplyWorkerSpawnEnvironment(local, "")
+	if local.AccountAuto {
+		t.Fatal("a local-provider opencode spawn asked the account pool for a credential it cannot use")
+	}
+	hosted := &SpawnSessionRequest{Backend: "opencode", Model: "openai/gpt-5.5"}
+	ApplyWorkerSpawnEnvironment(hosted, "")
+	if !hosted.AccountAuto {
+		t.Fatal("a hosted-provider opencode spawn must still resolve a pooled account")
 	}
 }
 

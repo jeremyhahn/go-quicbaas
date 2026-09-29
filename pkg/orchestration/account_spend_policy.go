@@ -43,7 +43,7 @@ package orchestration
 type AccountSpendPolicy struct {
 	// Quota is the set of sliding windows this account is metered by. A
 	// policy with no windows meters nothing.
-	Quota AccountQuotaPolicy `json:"quota,omitempty"`
+	Quota SpendLimits `json:"quota,omitzero"`
 
 	// Breaker is the tripping rule derived from the account's failure
 	// entries. Nil means the account is never taken out of service for

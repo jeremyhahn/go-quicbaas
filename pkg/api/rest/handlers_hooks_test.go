@@ -132,6 +132,14 @@ func (m *mockTaskStore) ListTasks(ctx context.Context, tenantID string, filter *
 	return []*orchestration.Task{}, nil
 }
 
+func (m *mockTaskStore) ListTaskRecords(ctx context.Context, tenantID string, filter *orchestration.TaskFilter) (*orchestration.TaskListing, error) {
+	tasks, err := m.ListTasks(ctx, tenantID, filter)
+	if err != nil {
+		return nil, err
+	}
+	return &orchestration.TaskListing{Tasks: tasks}, nil
+}
+
 func (m *mockTaskStore) ClaimTask(ctx context.Context, tenantID, taskID, agentID string) error {
 	if m.claimTaskFunc != nil {
 		return m.claimTaskFunc(ctx, tenantID, taskID, agentID)
@@ -170,6 +178,14 @@ func (m *mockTaskStore) BlockTask(ctx context.Context, tenantID, taskID string, 
 
 func (m *mockTaskStore) ReadmitTask(ctx context.Context, tenantID, taskID string) error {
 	return nil
+}
+
+func (*mockTaskStore) CloseBlockedTask(_ context.Context, _, _ string, _ *orchestration.TaskResult) error {
+	return nil
+}
+
+func (m *mockTaskStore) BumpReviewRoundBudget(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
 }
 
 func (m *mockTaskStore) DeleteTenantTasks(ctx context.Context, tenantID string) error {

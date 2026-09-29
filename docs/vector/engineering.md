@@ -90,6 +90,14 @@ expecting the other to change.
   mislead.** Benchmark against a scan, because that is what runs.
 - Integration coverage belongs with the multiprotocol parity suite; every verb
   in `cli.md` needs a `CommandDefinition`.
+- Tenant isolation and per-verb grant enforcement over gRPC are covered by
+  `test/integration/vector/grpcauthz` (`make integration-test-vector`). It
+  boots `pkg/server` in-process with `RequireAuthz=true` and mints bearers from
+  the server's own `iam.OIDCProvider` (client_credentials against real tenant
+  applications). It drives the Unix-socket gRPC listener, because that is the
+  listener that serves `quicbaas.vector.v1.VectorDB` behind `pkg/api/grpc`'s
+  authorization interceptor. Network gRPC serves qrdb's own vector plane
+  behind qrdb's reflection interceptor.
 
 ## Observability
 

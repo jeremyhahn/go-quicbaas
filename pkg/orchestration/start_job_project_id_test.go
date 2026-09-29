@@ -45,7 +45,7 @@ func TestStartJob_RefusesAProjectIDThatIsNotAnID(t *testing.T) {
 			_, err := svc.StartJob(context.Background(), &StartJobRequest{
 				TenantID:      "tenant-1",
 				Description:   "work",
-				LeadBackend:   "mock",
+				routedBackend: "mock",
 				ProjectID:     tc.projectID,
 				MaxIterations: 1,
 			})
@@ -76,7 +76,7 @@ func TestStartJob_RefusesAProjectIDThatIsNotAnID(t *testing.T) {
 			resp, err := svc.StartJob(context.Background(), &StartJobRequest{
 				TenantID:      "tenant-1",
 				Description:   "work",
-				LeadBackend:   "mock",
+				routedBackend: "mock",
 				ProjectID:     tc.projectID,
 				MaxIterations: 1,
 			})

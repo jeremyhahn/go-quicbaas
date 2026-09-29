@@ -45,9 +45,8 @@ func newManagerBackedProvider(t *testing.T) (*OIDCProvider, *SigningKeyManager) 
 
 	memStorage := NewMemoryStorage()
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
+		UserStorage: memStorage,
+		RoleStorage: memStorage,
 	})
 
 	deps := OIDCDependencies{

@@ -319,9 +319,9 @@ describe('RestOrchestratorClient paged listings', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('pages agents, workflows, projects and accounts through the same envelope', async () => {
-    fetchMock.mockResolvedValueOnce(mockOK({ agents: [{ id: 'a-1' }], total: 3, limit: 1, offset: 0, next_offset: 1 }));
-    const agents = await client.orchestrator.listAgentsPage('acme', { limit: 1, backend: 'codex' });
+  it('pages fleet nodes, workflows, projects and accounts through the same envelope', async () => {
+    fetchMock.mockResolvedValueOnce(mockOK({ nodes: [{ id: 'a-1' }], total: 3, limit: 1, offset: 0, next_offset: 1 }));
+    const agents = await client.orchestrator.listFleetNodesPage('acme', { limit: 1, backend: 'codex' });
     expect(agents.total).toBe(3);
     expect(new URL(fetchMock.mock.calls[0][0] as string).searchParams.get('backend')).toBe('codex');
 
@@ -379,7 +379,7 @@ describe('WailsOrchestratorClient paged listings', () => {
       ListSessions: vi.fn().mockResolvedValue([
         { session_id: 's-1', backend: 'claude', status: 'active', runner: 'sdlc' },
       ]),
-      ListAgents: vi.fn().mockResolvedValue({ agents: [{ id: 'a-1' }], count: 1 }),
+      ListFleetNodes: vi.fn().mockResolvedValue({ nodes: [{ id: 'a-1' }], count: 1 }),
       ListWorkflows: vi.fn().mockResolvedValue({ workflows: [{ name: 'w' }], count: 1 }),
     };
     Object.defineProperty(globalThis, 'window', {
@@ -440,12 +440,12 @@ describe('WailsOrchestratorClient paged listings', () => {
     expect(page.next_offset).toBe(25);
   });
 
-  it('pages sessions, agents and workflows through the same envelope', async () => {
+  it('pages sessions, fleet nodes and workflows through the same envelope', async () => {
     const sessions = await client.orchestrator.listSessionsPage('acme', { status: 'active' });
     expect(sessions.items[0]?.runner).toBe('sdlc');
     expect(bindings.ListSessions).toHaveBeenCalledWith({ tenantID: 'acme', status: 'active' });
 
-    expect((await client.orchestrator.listAgentsPage('acme')).total).toBe(1);
+    expect((await client.orchestrator.listFleetNodesPage('acme')).total).toBe(1);
     expect((await client.orchestrator.listWorkflowsPage('acme')).total).toBe(1);
   });
 

@@ -36,13 +36,13 @@ import (
 )
 
 // =============================================================================
-// Remote ACP Backend — talks to a pkg/agent daemon over AgentRuntime gRPC
+// Remote ACP Backend — talks to a pkg/fleet daemon over FleetRuntime gRPC
 // =============================================================================
 
 // Remote backend sentinel errors.
 var (
 	// ErrRemoteBackendNoRegistration is returned when construction is attempted
-	// without a non-nil AgentRegistration.
+	// without a non-nil FleetNode.
 	ErrRemoteBackendNoRegistration = errors.New("remote_acp_backend: registration is required")
 
 	// ErrRemoteBackendNoLogger is returned when construction is attempted
@@ -54,7 +54,7 @@ var (
 	ErrRemoteBackendNoHost = errors.New("remote_acp_backend: registration host is required")
 
 	// ErrRemoteBackendNotDaemon is returned when the registration does not
-	// resolve to AgentKindDaemon. Only daemon-kind registrations are eligible
+	// resolve to FleetNodeKindDaemon. Only daemon-kind registrations are eligible
 	// for remote routing.
 	ErrRemoteBackendNotDaemon = errors.New("remote_acp_backend: registration is not a daemon")
 
@@ -129,17 +129,17 @@ func (e *RemoteBackendMismatchError) Error() string {
 }
 
 // newUnservedBackendError reports that a registration was asked for a backend
-// it does not serve. It reuses the fleet's own NoMatchingAgentError vocabulary
+// it does not serve. It reuses the fleet's own NoMatchingFleetNodeError vocabulary
 // — the same type pkg/server's resolver raises when no daemon satisfies the
 // backend constraint — so the refusal reaches the public API as the
 // no_matching_agent it is, rather than as a new parallel class.
-func newUnservedBackendError(reg *AgentRegistration, requested string) *NoMatchingAgentError {
+func newUnservedBackendError(reg *FleetNode, requested string) *NoMatchingFleetNodeError {
 	detail := "agent " + reg.ID + " (" + reg.Host + ") does not serve backend=" + requested +
 		"; it serves primary=" + reg.Backend
 	if len(reg.Capabilities) > 0 {
 		detail += " capabilities=[" + strings.Join(reg.Capabilities, ",") + "]"
 	}
-	return &NoMatchingAgentError{Constraint: "backend", Detail: detail}
+	return &NoMatchingFleetNodeError{Constraint: "backend", Detail: detail}
 }
 
 // RemoteACPBackendDeps injects production dependencies into
@@ -151,11 +151,11 @@ type RemoteACPBackendDeps struct {
 	//
 	// Registration.Backend is the daemon's PRIMARY backend and is NOT what
 	// travels on the wire — see Backend below.
-	Registration *AgentRegistration
+	Registration *FleetNode
 
 	// Backend is the backend name this instance serves: the name stamped on
 	// every RPC it makes. Required, and it must be one the registration
-	// actually serves (AgentServesBackend), which is the daemon's primary or
+	// actually serves (FleetNodeServesBackend), which is the daemon's primary or
 	// any backend in its capability set.
 	//
 	// THE FIELD EXISTS BECAUSE THE PRIMARY IS THE WRONG ANSWER. A daemon
@@ -183,14 +183,29 @@ type RemoteACPBackendDeps struct {
 
 	// Logger is used for lifecycle and per-call diagnostics. Required.
 	Logger interfaces.Logger
+
+	// Auditor records a remote spawn the daemon refused because the whole
+	// account pool was unavailable (see auditAccountPoolExhausted). Nil
+	// records nothing.
+	Auditor StoreAuditor
+	// SigningTrait returns this daemon's signing-agent trait
+	// (SigningAgentTrait of its sockets root's identifier), or "" when it has
+	// none yet. An agent advertising it mounts a signing socket directly; one
+	// that does not, but advertises FleetNodeTraitSigningRelay, is served over a
+	// relay (go-quicbaas#1013). Nil answers "".
+	SigningTrait func() string
+
+	// SigningAudit records every signature relayed to the agent. Nil records
+	// nothing, which only a test may do.
+	SigningAudit SigningRelayAuditor
 }
 
 // RemoteACPBackend implements AgentBackend by forwarding calls to a remote
-// pkg/agent daemon over the AgentRuntime gRPC service. One backend instance
-// is scoped to a single AgentRegistration; callers route to the right
+// pkg/fleet daemon over the FleetRuntime gRPC service. One backend instance
+// is scoped to a single FleetNode; callers route to the right
 // registration via the BackendDispatcher's remote resolver.
 type RemoteACPBackend struct {
-	registration *AgentRegistration
+	registration *FleetNode
 
 	// backend is the backend name this instance serves. It is the SINGLE
 	// source of the name on every RPC and on the Session that Spawn returns,
@@ -201,6 +216,14 @@ type RemoteACPBackend struct {
 	pool        *grpcConnPool
 	tokenSource oauth2.TokenSource
 	logger      interfaces.Logger
+	auditor     StoreAuditor
+
+	signingTrait func() string
+	signingAudit SigningRelayAuditor
+
+	// relays maps session ID -> the cancel of that session's signing relay.
+	// Close cancels it; a relay the agent ends removes itself.
+	relays sync.Map
 }
 
 // Compile-time interface checks.
@@ -219,7 +242,7 @@ func NewRemoteACPBackend(deps RemoteACPBackendDeps) (*RemoteACPBackend, error) {
 		return nil, ErrRemoteBackendNoHost
 	}
 	kind := deps.Registration.EffectiveKind()
-	if kind != AgentKindDaemon && kind != AgentKindEmbedded {
+	if kind != FleetNodeKindDaemon && kind != FleetNodeKindEmbedded {
 		return nil, ErrRemoteBackendNotDaemon
 	}
 	served := strings.TrimSpace(deps.Backend)
@@ -231,7 +254,7 @@ func NewRemoteACPBackend(deps RemoteACPBackendDeps) (*RemoteACPBackend, error) {
 	// selected daemon does not serve produced a working session on some other
 	// backend. Comparing them at the one point that builds the routing object
 	// means no instance can exist that names a backend its daemon cannot run.
-	if !AgentServesBackend(deps.Registration, served) {
+	if !FleetNodeServesBackend(deps.Registration, served) {
 		return nil, newUnservedBackendError(deps.Registration, served)
 	}
 
@@ -247,12 +270,15 @@ func NewRemoteACPBackend(deps RemoteACPBackendDeps) (*RemoteACPBackend, error) {
 		pool:         pool,
 		tokenSource:  deps.TokenSource,
 		logger:       deps.Logger,
+		auditor:      deps.Auditor,
+		signingTrait: deps.SigningTrait,
+		signingAudit: deps.SigningAudit,
 	}, nil
 }
 
-// Registration returns the backend's bound AgentRegistration. Exposed for
+// Registration returns the backend's bound FleetNode. Exposed for
 // diagnostics and for the BackendDispatcher's routing decisions.
-func (b *RemoteACPBackend) Registration() *AgentRegistration {
+func (b *RemoteACPBackend) Registration() *FleetNode {
 	return b.registration
 }
 
@@ -273,7 +299,7 @@ func (b *RemoteACPBackend) ResolvedHost() string {
 	return b.registration.Host
 }
 
-// ResolvedAgentID returns the fleet agent this backend is bound to. The
+// ResolvedAgentID returns the fleet node this backend is bound to. The
 // orchestrator captures it at Spawn time so the session's job can name the
 // agent that ran the work. Implements resolvedAgentBackend.
 func (b *RemoteACPBackend) ResolvedAgentID() string {
@@ -284,9 +310,11 @@ func (b *RemoteACPBackend) ResolvedAgentID() string {
 }
 
 // Close terminates a remote session by delegating to the daemon's
-// AgentRuntime.Close. Pool-level teardown is a separate operation — see
+// FleetRuntime.Close. Pool-level teardown is a separate operation — see
 // CloseAll.
 func (b *RemoteACPBackend) Close(ctx context.Context, sessionID string) error {
+	// The session's signing window closes with it, whatever the daemon says.
+	b.stopSigningRelay(sessionID)
 	client, err := b.client(ctx)
 	if err != nil {
 		return err
@@ -307,7 +335,7 @@ func (b *RemoteACPBackend) CloseAll() error {
 	return b.pool.Close()
 }
 
-// Spawn dispatches to the daemon's AgentRuntime.Spawn.
+// Spawn dispatches to the daemon's FleetRuntime.Spawn.
 func (b *RemoteACPBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Session, error) {
 	if req == nil {
 		return nil, &InputValidationError{Field: "request", Message: "cannot be nil"}
@@ -318,6 +346,23 @@ func (b *RemoteACPBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Sessi
 	}
 	b.logger.Debugf("remote_acp_backend: Spawn backend=%s tenant=%s project=%s",
 		b.backend, b.registration.TenantID, req.ProjectID)
+
+	// THE SIGNING SOCKET IS RELAYED, NOT MOUNTED, on an agent that cannot
+	// reach this daemon's sockets root (go-quicbaas#1013). The mount is
+	// dropped — the agent binds its own socket at the same target — and the
+	// keys it will advertise are read off the session's own agent here.
+	extraMounts := req.ExtraMounts
+	var relaySpec *proto.SigningRelaySpec
+	relaySocket := ""
+	if mount, signs := signingRelayMount(req); signs && relaySigningFor(b.registration, b.localSigningTrait()) {
+		keys, keysErr := listSigningAgentKeys(ctx, mount.Source)
+		if keysErr != nil {
+			return nil, keysErr
+		}
+		relaySocket = mount.Source
+		extraMounts = WithoutSigningMount(req.ExtraMounts)
+		relaySpec = &proto.SigningRelaySpec{PublicKeys: keys}
+	}
 	pbReq := &proto.SpawnSessionRequest{
 		// THE BACKEND THIS INSTANCE SERVES, which is the backend the resolver
 		// was asked for — not the daemon's primary (go-quicbaas#937).
@@ -379,7 +424,7 @@ func (b *RemoteACPBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Sessi
 		// at whatever tier the daemon defaulted to, silently, because each of
 		// these is inert at its zero value and nothing fails when a request
 		// asks for nothing.
-		ExtraMounts:  runtimeMountsToProto(req.ExtraMounts),
+		ExtraMounts:  runtimeMountsToProto(extraMounts),
 		ImageDigest:  req.ImageDigest,
 		TrustLevel:   proto.TrustLevel(req.TrustLevel),
 		TrustLabel:   req.TrustLabel,
@@ -398,13 +443,31 @@ func (b *RemoteACPBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Sessi
 		// host; the daemon provisions the named workspace under its own
 		// projects root and answers with where, below.
 		Workspace: sessionWorkspaceToProto(req.Workspace),
+
+		// The relay the agent serves the signing socket from, when it serves
+		// one; nil otherwise.
+		SigningRelay: relaySpec,
 	}
 	resp, rpcErr := client.Spawn(b.authCtx(ctx), pbReq)
 	if rpcErr != nil {
 		// The daemon's configuration-fault class, when it attached one, so a
 		// dispatch that started no process is classified the same whether the
 		// resolver ran here or on another host (#235).
-		return nil, &RemoteBackendRPCError{Op: "Spawn", Err: wrapRemoteSpawnFault("Spawn", rpcErr)}
+		spawnErr := wrapRemoteSpawnFault("Spawn", rpcErr)
+		b.auditPoolExhaustion(ctx, req, spawnErr)
+		return nil, &RemoteBackendRPCError{Op: "Spawn", Err: spawnErr}
+	}
+	// THE RELAY IS ATTACHED BEFORE SPAWN RETURNS, so nothing the caller does
+	// with the session — the checkout exec above all — can ask for a signature
+	// the relay is not yet there to carry. A relay that cannot be attached
+	// fails the spawn, and the session it was for is closed.
+	if relaySpec != nil {
+		if relayErr := b.openSigningRelay(ctx, client, resp.GetSessionId(), relaySocket, relaySpec.GetPublicKeys()); relayErr != nil {
+			if closeErr := b.Close(context.WithoutCancel(ctx), resp.GetSessionId()); closeErr != nil {
+				b.logger.Warnf("remote_acp_backend: close session %s after its relay failed: %v", resp.GetSessionId(), closeErr)
+			}
+			return nil, relayErr
+		}
 	}
 	createdAt := time.Now().UnixNano()
 	if resp.GetTimestamp() != nil {
@@ -443,6 +506,16 @@ func (b *RemoteACPBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Sessi
 		AccountID:       resp.GetAccountId(),
 		AccountStrategy: resp.GetAccountStrategy(),
 
+		// AND WHICH COPY OF ITS CREDENTIAL THE DAEMON MATERIALIZED, for the
+		// same reason and with one more consequence. This side records the
+		// generation on the durable session record and asks, before every
+		// prompt, whether the account has moved past it. Dropping it would put
+		// remote sessions back on the timestamp comparison, which reports a
+		// rotation that landed while the container was still starting as fresh
+		// — the defect go-quicbaas#997 exists to remove, left in place for the
+		// sessions this control plane can least afford to lose.
+		AccountGeneration: resp.GetAccountGeneration(),
+
 		// THE DELIVERY GRANT THE RELEASE WAS SERVED UNDER, for exactly the
 		// reason the account is carried and one step more urgent: this side
 		// RECORDS it on the durable session record, and the session's conclusion
@@ -452,10 +525,15 @@ func (b *RemoteACPBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Sessi
 		// when it released the credential to the daemon — but it could not tell
 		// which session the grant belonged to, because the release happens
 		// inside the daemon's resolution. The daemon reports it back here
-		// (pkg/agent/account_grant.go). A grant that did not come back would be
+		// (pkg/fleet/account_grant.go). A grant that did not come back would be
 		// a credential on a remote host that this control plane leased and could
 		// never revoke.
 		CredentialLeaseID: resp.GetCredentialLeaseId(),
+
+		// THE RESERVATION THE DAEMON'S RESOLUTION TOOK, against this control
+		// plane's table. This side records it on the durable session record,
+		// and the record naming it is what satisfies it.
+		ReservationID: resp.GetReservationId(),
 
 		// THE CONTAINER THE DAEMON PUT THE AGENT IN (#740), for the same reason
 		// the account is carried: the daemon created it and nothing on this side
@@ -478,7 +556,7 @@ func (b *RemoteACPBackend) Spawn(ctx context.Context, req *SpawnRequest) (*Sessi
 	}, nil
 }
 
-// Prompt dispatches to the daemon's AgentRuntime.Prompt and accumulates the
+// Prompt dispatches to the daemon's FleetRuntime.Prompt and accumulates the
 // single-frame server stream into a non-streaming PromptResponse. Streaming
 // through to callers is Phase 7 scope.
 func (b *RemoteACPBackend) Prompt(ctx context.Context, req *PromptRequest) (*PromptResponse, error) {
@@ -502,12 +580,9 @@ func (b *RemoteACPBackend) Prompt(ctx context.Context, req *PromptRequest) (*Pro
 		TenantId:     b.registration.TenantID,
 	})
 	if rpcErr != nil {
-		// The daemon's structured account of a failed turn, when it attached
-		// one, so classification downstream is the same whether the process
-		// ran here or on another host (#235). No detail means an older daemon
-		// or a failure with no structured account, and the error is wrapped
-		// exactly as it was before.
-		return nil, &RemoteBackendRPCError{Op: "Prompt", Err: wrapRemoteTurnFailure("Prompt", rpcErr)}
+		// See promptError: the daemon's turn-failure evidence and whether the
+		// agent itself cut the turn off are both read here.
+		return nil, b.promptError(ctx, rpcErr)
 	}
 
 	out := &PromptResponse{}
@@ -522,7 +597,7 @@ func (b *RemoteACPBackend) Prompt(ctx context.Context, req *PromptRequest) (*Pro
 			// failure here rather than at the call, so the evidence has to be
 			// read off both or the fix works only for the half that fails
 			// early.
-			return nil, &RemoteBackendRPCError{Op: "Prompt", Err: wrapRemoteTurnFailure("Prompt", recvErr)}
+			return nil, b.promptError(ctx, recvErr)
 		}
 		gotFrame = true
 		if frame.GetSessionId() != "" {
@@ -533,6 +608,19 @@ func (b *RemoteACPBackend) Prompt(ctx context.Context, req *PromptRequest) (*Pro
 		}
 		if frame.GetStopReason() != "" {
 			out.StopReason = frame.GetStopReason()
+		}
+		// THE TURN'S COST COMES BACK WITH ITS ANSWER. The daemon has no
+		// ledger; this frame is the only way a remote turn is ever charged.
+		// A figure that cannot be decoded is reported and dropped rather than
+		// failing a turn whose answer is already here: the answer is the
+		// work, the figure is bookkeeping about it.
+		usage, usageErr := promptUsageFromWire(frame.GetUsageJson())
+		if usageErr != nil {
+			b.logger.Warnf("remote_acp_backend: turn usage from backend=%s session=%s could not be decoded; the turn is not charged: %s",
+				b.backend, req.SessionID, usageErr.Error())
+		}
+		if usage != nil {
+			out.Usage = usage
 		}
 		out.Content = append(out.Content, protoContentBlocksToRuntime(frame.GetContent())...)
 		if req.EventCallback != nil {
@@ -556,6 +644,20 @@ func (b *RemoteACPBackend) Prompt(ctx context.Context, req *PromptRequest) (*Pro
 		return nil, ErrRemoteBackendEmptyStream
 	}
 	return out, nil
+}
+
+// promptError wraps a failed Prompt RPC for the caller.
+//
+// Two readings are layered on the transport error. The daemon's structured
+// account of a failed turn, when it attached one, so classification downstream
+// is the same whether the process ran here or on another host (#235). And
+// whether the AGENT cut the turn off — it drained, restarted or went away —
+// which is the fleet's fault rather than the work's (#1064); see
+// agent_interruption.go. An error that is neither is wrapped exactly as before.
+func (b *RemoteACPBackend) promptError(ctx context.Context, rpcErr error) error {
+	wrapped := wrapRemoteTurnFailure("Prompt", rpcErr)
+	wrapped = wrapAgentInterruption(ctx, "Prompt", b.ResolvedHost(), b.ResolvedAgentID(), rpcErr, wrapped)
+	return &RemoteBackendRPCError{Op: "Prompt", Err: wrapped}
 }
 
 // Infer runs a stateless prompt against a remote daemon's backend. Unlike
@@ -650,11 +752,11 @@ func (b *RemoteACPBackend) Infer(ctx context.Context, req *InferRequest) (<-chan
 	return ch, nil
 }
 
-// Status dispatches to the daemon's AgentRuntime.Status.
+// Status dispatches to the daemon's FleetRuntime.Status.
 //
 // A DAEMON THAT NO LONGER HOLDS THE SESSION IS AN ANSWER, NOT A FAULT. The
 // daemon maps its own SessionNotFoundError onto codes.NotFound
-// (pkg/agent.mapRuntimeError), and wrapping that indiscriminately in
+// (pkg/fleet.mapRuntimeError), and wrapping that indiscriminately in
 // RemoteBackendRPCError erased the one distinction every liveness check needs:
 // the stall detector type-asserts for *SessionNotFoundError to tell "this
 // session is gone" from "this session could not be reached", and treated a
@@ -776,12 +878,12 @@ func (b *RemoteACPBackend) ListModels(ctx context.Context) ([]string, error) {
 }
 
 // client opens (or reuses) a gRPC connection to the registration's host.
-func (b *RemoteACPBackend) client(ctx context.Context) (proto.AgentRuntimeClient, error) {
+func (b *RemoteACPBackend) client(ctx context.Context) (proto.FleetRuntimeClient, error) {
 	conn, err := b.pool.Get(ctx, b.registration.Host)
 	if err != nil {
 		return nil, err
 	}
-	return proto.NewAgentRuntimeClient(conn), nil
+	return proto.NewFleetRuntimeClient(conn), nil
 }
 
 // authCtx decorates the RPC context with tenant metadata and (when
@@ -906,7 +1008,7 @@ func (p *grpcConnPool) dial(ctx context.Context, target string) (*grpc.ClientCon
 }
 
 // RemoteACPMaxMessageBytes bounds one gRPC message between the daemon and an
-// agent daemon, in both directions. 64 MiB: a turn's reply is text the model
+// fleet node daemon, in both directions. 64 MiB: a turn's reply is text the model
 // wrote plus the tool output it quoted, and the largest measured (16.9 MB)
 // sits well inside it; a message beyond this is a runaway, not a turn.
 const RemoteACPMaxMessageBytes = 64 << 20
@@ -1062,4 +1164,22 @@ func sessionWorkspaceToProto(ws *SessionWorkspace) *proto.SessionWorkspace {
 		}
 	}
 	return out
+}
+
+// auditPoolExhaustion records a spawn the daemon refused because every pooled
+// account of the provider was saturated or cooling down. Admission does not
+// cover this: it asks about the whole pool, so another provider's free account
+// admits a project whose requested pool is exhausted.
+func (b *RemoteACPBackend) auditPoolExhaustion(ctx context.Context, req *SpawnRequest, spawnErr error) {
+	if b.auditor == nil {
+		return
+	}
+	exhaustion, ok := exhaustionFromResolveError(AccountResolveRequest{
+		TenantID:  b.registration.TenantID,
+		ProjectID: req.ProjectID,
+		Provider:  AccountProvider(b.backend),
+	}, spawnErr)
+	if ok {
+		auditAccountPoolExhausted(ctx, b.auditor, exhaustion)
+	}
 }

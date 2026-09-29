@@ -1554,7 +1554,7 @@ func TestStartJobSurvivesContextCancellation(t *testing.T) {
 	resp, err := svc.StartJob(tenantCtx, &StartJobRequest{
 		TenantID:      "tenant-test",
 		Description:   "test job survives context cancellation",
-		LeadBackend:   "mock",
+		routedBackend: "mock",
 		MaxIterations: 1,
 	})
 	if err != nil {
@@ -1637,7 +1637,7 @@ func TestStartJobCancelJobExplicitly(t *testing.T) {
 	resp, err := svc.StartJob(tenantCtx, &StartJobRequest{
 		TenantID:      "tenant-cancel",
 		Description:   "test explicit job cancellation",
-		LeadBackend:   "mock",
+		routedBackend: "mock",
 		MaxIterations: 1,
 	})
 	if err != nil {
@@ -2230,17 +2230,17 @@ func TestBackendDispatcher_SpawnSessionRoutesThroughResolver(t *testing.T) {
 
 	// Register a daemon-kind registration and point the resolver at the
 	// remote backend when the names match. This mirrors the production
-	// wiring: the orchestrator inspects the AgentRegistry and routes
+	// wiring: the orchestrator inspects the FleetRegistry and routes
 	// daemon-kind entries through RemoteACPBackend.
-	reg := &AgentRegistration{
+	reg := &FleetNode{
 		ID:       "agent-1",
 		TenantID: "tenant-a",
 		Backend:  "acp",
-		Kind:     AgentKindDaemon,
+		Kind:     FleetNodeKindDaemon,
 		Host:     "daemon:9091",
 	}
 	svcImpl.SetRemoteBackendResolver(func(ctx context.Context, name, projectID string) (AgentBackend, bool) {
-		if reg.Backend == name && reg.EffectiveKind() == AgentKindDaemon {
+		if reg.Backend == name && reg.EffectiveKind() == FleetNodeKindDaemon {
 			return remote, true
 		}
 		return nil, false

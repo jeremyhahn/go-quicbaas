@@ -38,7 +38,7 @@ import (
 // POST /api/v1/agent-accounts/{id}/materialize (go-quicbaas#734)
 //
 // The route's whole security property is that TENANCY COMES FROM THE
-// PRINCIPAL: an enrolled agent daemon gets its own tenant's pool and nothing
+// PRINCIPAL: an enrolled fleet node daemon gets its own tenant's pool and nothing
 // else, whatever the request says. These tests drive the real handler through
 // the real chi mount with a principal injected exactly the way the authz
 // middleware injects one.
@@ -78,11 +78,11 @@ func newMaterializeTestServer(accountSvc service.AccountService, subject interfa
 	return srv
 }
 
-// daemonSubject is the principal an enrolled agent daemon presents.
+// daemonSubject is the principal an enrolled fleet node daemon presents.
 func daemonSubject(tenantID string) interfaces.Subject {
 	return interfaces.Subject{
-		ID:            "agent-vm-host-4",
-		Username:      "agent-vm-host-4",
+		ID:            "agent-agent-04",
+		Username:      "agent-agent-04",
 		TenantID:      tenantID,
 		Roles:         []string{"role-agent-runtime-" + tenantID},
 		Authenticated: true,
@@ -167,7 +167,7 @@ func TestMaterializeREST_ReleasesToTheCallersOwnTenant(t *testing.T) {
 	if captured.TenantID != "tenant-1" {
 		t.Errorf("service asked for tenant %q, want the principal's tenant-1", captured.TenantID)
 	}
-	if captured.AgentID != "agent-vm-host-4" {
+	if captured.AgentID != "agent-agent-04" {
 		t.Errorf("service attributed the release to %q, want the principal", captured.AgentID)
 	}
 	if captured.ProjectID != "project-x" {
@@ -342,9 +342,13 @@ func TestAccountCredentialToREST_DropsTheRefreshGrant(t *testing.T) {
 		ClientID:          "client",
 		AccessTokenEnvKey: "K",
 		Env:               map[string]string{"A": "b"},
+		Generation:        42,
 	})
 	if out == nil {
 		t.Fatal("converter returned nil for a populated envelope")
+	}
+	if out.Generation != 42 {
+		t.Errorf("Generation = %d, want 42: a worker host could not tell the control plane which copy its session took", out.Generation)
 	}
 	encoded, err := json.Marshal(out)
 	if err != nil {

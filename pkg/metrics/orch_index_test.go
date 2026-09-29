@@ -220,44 +220,6 @@ func TestRecordOrchFileLockWaitDuration_Accumulates(t *testing.T) {
 	assert.InDelta(t, 0.5, sum, 1e-9, "sum should accumulate observed durations")
 }
 
-func TestRecordOrchAgentTokens(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	tests := []struct {
-		name    string
-		agentID string
-		jobID   string
-		tenant  string
-		tokens  float64
-	}{
-		{name: "prompt tokens", agentID: "agent-1", jobID: "job-1", tenant: "tenant-1", tokens: 1500},
-		{name: "completion tokens", agentID: "agent-2", jobID: "job-2", tenant: "tenant-2", tokens: 320},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m.RecordOrchAgentTokens(tt.agentID, tt.jobID, tt.tenant, tt.tokens)
-
-			labels := prometheus.Labels{"agent_id": tt.agentID, "job_id": tt.jobID, "tenant": tt.tenant}
-			value := testutil.ToFloat64(m.OrchAgentTokensTotal.With(labels))
-			assert.Equal(t, tt.tokens, value, "OrchAgentTokensTotal should match added tokens")
-		})
-	}
-}
-
-func TestRecordOrchAgentTokens_Accumulates(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	labels := prometheus.Labels{"agent_id": "agent-1", "job_id": "job-1", "tenant": "tenant-1"}
-	m.RecordOrchAgentTokens("agent-1", "job-1", "tenant-1", 100)
-	m.RecordOrchAgentTokens("agent-1", "job-1", "tenant-1", 250)
-
-	value := testutil.ToFloat64(m.OrchAgentTokensTotal.With(labels))
-	assert.Equal(t, 350.0, value, "token counter must accumulate across calls")
-}
-
 func TestSetOrchJobBudgetUtilization(t *testing.T) {
 	Reset()
 	m := InitMetrics()

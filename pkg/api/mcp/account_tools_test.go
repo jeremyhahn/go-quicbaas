@@ -226,8 +226,10 @@ func TestAccountToolsHaveQRDBPermissionMapping(t *testing.T) {
 		"quicbaas_agent_account_usage":       {"agent_accounts", "read"},
 		// The release verb is deliberately NOT a credentials:* grant: that
 		// family is registered ScopeCross (system tenant only) and would deny
-		// the tenant-scoped agent daemon the tool exists for.
-		"quicbaas_agent_account_materialize": {"agent_accounts", "materialize"},
+		// the tenant-scoped fleet node daemon the tool exists for.
+		"quicbaas_agent_account_materialize":     {"agent_accounts", "materialize"},
+		"quicbaas_agent_account_reserve_session": {"agent_accounts", "materialize"},
+		"quicbaas_agent_account_release_session": {"agent_accounts", "materialize"},
 	}
 	for name := range accountToolHandlers {
 		expected, declared := want[name]
@@ -314,7 +316,7 @@ func TestMCPSpawn_PinsAccountID(t *testing.T) {
 			return &orchestration.SpawnSessionResponse{SessionID: "s1", Backend: req.Backend}, nil
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	if _, err := reg.ExecuteTool(context.Background(), "quicbaas_orchestrator_spawn", map[string]interface{}{
 		"tenant_id":  "tenant-1",
@@ -343,7 +345,7 @@ func TestMCPSpawn_CarriesAccountAuto(t *testing.T) {
 			return &orchestration.SpawnSessionResponse{SessionID: "s1", Backend: req.Backend}, nil
 		},
 	}
-	reg := newAgentRegistry(t, agentSvc)
+	reg := newFleetRegistry(t, agentSvc)
 
 	if _, err := reg.ExecuteTool(context.Background(), "quicbaas_orchestrator_spawn", map[string]interface{}{
 		"tenant_id":        "tenant-1",

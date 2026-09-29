@@ -194,6 +194,10 @@ type SecretVersionMetadata struct {
 	// CreatedAt is when this version was created.
 	CreatedAt time.Time
 
+	// CreatedBy is the authenticated principal that minted this version,
+	// empty when it was written with no principal in context (#862).
+	CreatedBy string
+
 	// Deleted indicates if this version has been destroyed.
 	Deleted bool
 

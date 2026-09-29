@@ -22,7 +22,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -68,15 +67,18 @@ func (s *AccountServer) CreateAccount(ctx context.Context, req *pb.CreateAccount
 	// Inline credential vs credential_secret_ref (exactly one) is the
 	// service's rule, so every transport answers it identically.
 	resp, err := s.accountSvc.CreateAccount(ctx, &service.CreateAccountRequest{
-		TenantID:             req.TenantId,
-		ProjectID:            req.ProjectId,
-		Provider:             orchestration.AccountProvider(req.Provider),
-		DisplayName:          req.DisplayName,
-		Default:              req.IsDefault,
-		RefreshPolicy:        orchestration.AccountRefreshPolicy(req.RefreshPolicy),
-		Credential:           accountCredentialFromProto(req.Credential),
-		CredentialSecretRef:  req.CredentialSecretRef,
-		CredentialSecretFile: req.CredentialSecretFile,
+		TenantID:              req.TenantId,
+		ProjectID:             req.ProjectId,
+		Provider:              orchestration.AccountProvider(req.Provider),
+		DisplayName:           req.DisplayName,
+		Default:               req.IsDefault,
+		RefreshPolicy:         orchestration.AccountRefreshPolicy(req.RefreshPolicy),
+		Credential:            accountCredentialFromProto(req.Credential),
+		CredentialSecretRef:   req.CredentialSecretRef,
+		CredentialSecretFile:  req.CredentialSecretFile,
+		MaxConcurrentSessions: int(req.MaxConcurrentSessions),
+		Billing:               accountBillingFromProto(req.GetBilling()),
+		Spend:                 accountSpendPolicyFromProto(req.GetSpend()),
 	})
 	if err != nil {
 		return nil, convertAccountError(err)
@@ -127,13 +129,19 @@ func (s *AccountServer) ListAccounts(ctx context.Context, req *pb.ListAccountsRe
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
 
+	page, err := pageFromRPC(req.GetLimit(), req.GetOffset(), req.GetSort(), req.GetQ())
+	if err != nil {
+		return nil, err
+	}
+
 	resp, err := s.accountSvc.ListAccounts(ctx, &service.ListAccountsRequest{
 		TenantID:  req.TenantId,
 		Provider:  orchestration.AccountProvider(req.Provider),
 		ProjectID: req.ProjectId,
+		Page:      page,
 	})
 	if err != nil {
-		return nil, convertAccountError(err)
+		return nil, convertListError(err, convertAccountError)
 	}
 
 	accounts := make([]*pb.Account, 0, len(resp.Accounts))
@@ -142,9 +150,12 @@ func (s *AccountServer) ListAccounts(ctx context.Context, req *pb.ListAccountsRe
 	}
 
 	return &pb.ListAccountsResponse{
-		Accounts:  accounts,
-		Total:     int32(resp.Total),
-		Timestamp: resp.Timestamp.Unix(),
+		Accounts:   accounts,
+		Total:      pageInt32(resp.Total),
+		Timestamp:  resp.Timestamp.Unix(),
+		Limit:      pageInt32(resp.Limit),
+		Offset:     pageInt32(resp.Offset),
+		NextOffset: pageInt32(resp.NextOffset),
 	}, nil
 }
 
@@ -169,9 +180,12 @@ func (s *AccountServer) UpdateAccount(ctx context.Context, req *pb.UpdateAccount
 		ProjectID:      req.ProjectId,
 		ClearProjectID: req.ClearProjectId,
 		RefreshPolicy:  orchestration.AccountRefreshPolicy(req.RefreshPolicy),
+		Billing:        optionalAccountBilling(req.GetBilling()),
+		Spend:          optionalAccountSpendPolicy(req.GetSpend()),
 
-		CredentialSecretRef:  req.CredentialSecretRef,
-		CredentialSecretFile: req.CredentialSecretFile,
+		CredentialSecretRef:   req.CredentialSecretRef,
+		CredentialSecretFile:  req.CredentialSecretFile,
+		MaxConcurrentSessions: optionalInt(req.MaxConcurrentSessions),
 	})
 	if err != nil {
 		return nil, convertAccountError(err)
@@ -324,9 +338,39 @@ func (s *AccountServer) GetAccountUsage(ctx context.Context, req *pb.GetAccountU
 	}
 
 	return &pb.GetAccountUsageResponse{
-		Usage:     accountUsageToProto(resp.Usage),
-		Timestamp: resp.Timestamp.Unix(),
+		Usage:        accountUsageToProto(resp.Usage),
+		Timestamp:    resp.Timestamp.Unix(),
+		LiveSessions: int32(resp.LiveSessions),
+		Spend:        spendHeadroomToProto(resp.Spend),
 	}, nil
+}
+
+// spendHeadroomToProto renders the spend-gate verdict, leaving an absent one
+// — no gate wired — unset.
+func spendHeadroomToProto(h *orchestration.SpendHeadroom) *pb.SpendHeadroom {
+	if h == nil {
+		return nil
+	}
+	return &pb.SpendHeadroom{
+		Admits:   h.Admits,
+		Refusal:  h.Refusal,
+		Window:   h.Window,
+		Axis:     h.Axis,
+		Used:     h.Used,
+		Limit:    h.Limit,
+		Failures: int32(h.Failures),
+		FreesAt:  spendTimestamp(h.FreesAt),
+	}
+}
+
+// optionalInt converts a proto3 optional int32 to the service's "nil means
+// unchanged" pointer.
+func optionalInt(v *int32) *int {
+	if v == nil {
+		return nil
+	}
+	out := int(*v)
+	return &out
 }
 
 // =============================================================================
@@ -351,8 +395,9 @@ func accountToProto(a *orchestration.Account) *pb.Account {
 		RefreshPolicy: string(a.RefreshPolicy),
 		LastError:     a.LastError,
 
-		CredentialSecretRef:  a.CredentialSecretRef,
-		CredentialSecretFile: a.CredentialSecretFile,
+		CredentialSecretRef:   a.CredentialSecretRef,
+		CredentialSecretFile:  a.CredentialSecretFile,
+		MaxConcurrentSessions: int32(a.MaxConcurrentSessions),
 	}
 	out.CreatedAtUnix = unixOrZero(a.CreatedAt)
 	out.UpdatedAtUnix = unixOrZero(a.UpdatedAt)
@@ -362,7 +407,30 @@ func accountToProto(a *orchestration.Account) *pb.Account {
 	out.CredentialExpiresAtUnix = unixOrZero(a.CredentialExpiresAt)
 	out.LastValidatedAtUnix = unixOrZero(a.LastValidatedAt)
 	out.CredentialHealth = string(a.CredentialHealth())
+	out.Spend = accountSpendPolicyToProto(a.Spend)
+	if a.Billing != (orchestration.AccountBilling{}) {
+		out.Billing = &pb.AccountBilling{Mode: string(a.Billing.Mode), MonthlyFeeMicros: a.Billing.MonthlyFeeMicros}
+	}
 	return out
+}
+
+// accountBillingFromProto converts a billing message; an absent one is "not
+// configured".
+func accountBillingFromProto(b *pb.AccountBilling) orchestration.AccountBilling {
+	return orchestration.AccountBilling{
+		Mode:             orchestration.BillingMode(b.GetMode()),
+		MonthlyFeeMicros: b.GetMonthlyFeeMicros(),
+	}
+}
+
+// optionalAccountBilling converts an update's billing to the service's "nil
+// means unchanged" pointer.
+func optionalAccountBilling(b *pb.AccountBilling) *orchestration.AccountBilling {
+	if b == nil {
+		return nil
+	}
+	billing := accountBillingFromProto(b)
+	return &billing
 }
 
 // unixOrZero renders a time as Unix seconds, mapping the zero time to 0 so a
@@ -437,10 +505,18 @@ func convertAccountError(err error) error {
 	var noTokens *service.AccountTokenManagerNotConfiguredError
 	var secretUnresolved *orchestration.AccountSecretRefUnresolvedError
 	var noSecretResolver *orchestration.AccountSecretResolverNotConfiguredError
+	var noReserver *service.AccountSessionReserverNotConfiguredError
 
 	switch {
 	case stderrors.As(err, &notFound):
 		return status.Error(codes.NotFound, err.Error())
+	case stderrors.Is(err, orchestration.ErrAccountSessionCountChanged):
+		// Aborted: an optimistic claim lost its race; the caller re-selects.
+		return status.Error(codes.Aborted, err.Error())
+	case stderrors.Is(err, orchestration.ErrAccountsSaturated):
+		// ResourceExhausted: the account is at its session cap. It frees
+		// when a session ends; the caller is not wrong, the account is busy.
+		return status.Error(codes.ResourceExhausted, err.Error())
 	case stderrors.As(err, &invalid):
 		return status.Error(codes.InvalidArgument, err.Error())
 	case stderrors.As(err, &notReleasable):
@@ -454,7 +530,7 @@ func convertAccountError(err error) error {
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case stderrors.As(err, &projectScope):
 		return status.Error(codes.PermissionDenied, err.Error())
-	case stderrors.As(err, &noTracker), stderrors.As(err, &noTokens), stderrors.As(err, &noSecretResolver):
+	case stderrors.As(err, &noTracker), stderrors.As(err, &noTokens), stderrors.As(err, &noReserver), stderrors.As(err, &noSecretResolver):
 		return status.Error(codes.Unavailable, err.Error())
 	case stderrors.Is(err, orchestration.ErrAccountVersionConflict):
 		// Aborted: a concurrent write changed the account under this one — a
@@ -497,15 +573,9 @@ func (s *AccountServer) MaterializeAccountCredential(
 	}
 	s.logger.WithField("account_id", req.AccountId).Debug("Processing MaterializeAccountCredential request")
 
-	subject, ok := auth.SubjectFromContext(ctx)
-	if !ok || !subject.Authenticated || subject.ID == "" {
-		return nil, status.Error(codes.Unauthenticated, "caller is not authenticated")
-	}
-	if subject.TenantID == "" {
-		return nil, status.Error(codes.InvalidArgument, "tenant_id is required: the caller carries no tenant binding")
-	}
-	if req.TenantId != "" && req.TenantId != subject.TenantID {
-		return nil, status.Error(codes.PermissionDenied, "tenant_id must be the caller's own tenant")
+	subject, err := callerTenant(ctx, req.TenantId)
+	if err != nil {
+		return nil, err
 	}
 
 	resp, err := s.accountSvc.MaterializeAccountCredential(ctx, &service.MaterializeAccountCredentialRequest{
@@ -552,6 +622,7 @@ func materializedCredentialToProto(c *orchestration.AccountCredential) *pb.Mater
 		ExpiresAtUnix:     unixOrZero(c.ExpiresAt),
 		Scopes:            c.Scopes,
 		AccessTokenEnvKey: c.AccessTokenEnvKey,
+		Generation:        c.Generation,
 	}
 	if len(c.Env) > 0 {
 		out.Env = make(map[string]string, len(c.Env))

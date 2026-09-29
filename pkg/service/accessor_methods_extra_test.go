@@ -51,8 +51,8 @@ func TestQuicBaaS_ProjectAccessor_AutoInitialized(t *testing.T) {
 func TestQuicBaaS_AgentAdminAccessor_AutoInitialized(t *testing.T) {
 	svc := createTestService(t)
 	defer svc.Close()
-	// AgentAdmin is auto-wired with an in-memory registry during construction.
-	assert.NotNil(t, svc.AgentAdmin())
+	// FleetAdmin is auto-wired with an in-memory registry during construction.
+	assert.NotNil(t, svc.FleetAdmin())
 }
 
 func TestQuicBaaS_AgentAccessor_ReturnsNilWhenNotConfigured(t *testing.T) {

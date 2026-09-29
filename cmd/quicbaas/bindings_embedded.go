@@ -138,14 +138,14 @@ func (b *EmbeddedServerBinding) Start(opts EmbeddedStartOptions) error {
 	b.started.Store(true)
 
 	// Publish the server's CA into the process-wide seam so
-	// `quicbaas agent deploy` (from the same desktop process) can
+	// `quicbaas fleet deploy` (from the same desktop process) can
 	// mint mTLS client identities for the daemons it provisions.
 	if ca := srv.CA(); ca != nil {
-		installEmbeddedAgentCA(ca)
+		installEmbeddedFleetCA(ca)
 	}
 
 	// Publish the reachable MCP endpoint so the same desktop process's
-	// `quicbaas agent deploy` can start deployed daemons with --mcp-endpoint.
+	// `quicbaas fleet deploy` can start deployed daemons with --mcp-endpoint.
 	installEmbeddedMCPEndpoint(embeddedMCPEndpoint(cfg))
 
 	b.logger.Infof("embedded quicbaasd started at %s", b.bindAddr)
@@ -177,7 +177,7 @@ func (b *EmbeddedServerBinding) Stop() error {
 		}
 	}
 
-	uninstallEmbeddedAgentCA()
+	uninstallEmbeddedFleetCA()
 	uninstallEmbeddedMCPEndpoint()
 	b.server = nil
 	b.tempDir = ""
@@ -332,7 +332,7 @@ func reserveLoopbackPort() (int, error) {
 // embeddedMCPEndpoint derives the reachable MCP endpoint
 // (https://host:port/mcp) from the embedded server config, or returns empty
 // when MCP is disabled or no concrete host can be derived. A wildcard or empty
-// bind host cannot be advertised to a remote agent, so it yields no endpoint
+// bind host cannot be advertised to a remote fleet node, so it yields no endpoint
 // rather than an unreachable loopback URL.
 func embeddedMCPEndpoint(cfg *config.Config) string {
 	if cfg == nil || !cfg.Server.MCP.Enabled {

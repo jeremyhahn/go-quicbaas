@@ -52,6 +52,18 @@ defer netport.Release(ports...)
 Inside `pkg/server`, `getFreePort` / `getFreePorts` already delegate here; keep
 using them.
 
+## In the integration tree
+
+`test/integration` reserves through `netport` too: the matrix's
+`allocPortBundle` and every suite that hands a Raft port to an embedded server.
+The container boundary does not make the reservation moot. The integration
+suite execs its daemons, and boots its embedded servers, inside the same
+container as the test binary, so they share its `os.TempDir()` and with it the
+lock directory; parallel test packages in that container coordinate through it
+the same way unit packages on a host do. Helpers that run from `TestMain`, with
+no `*testing.T`, call `netport.Reserve(1)` and hold the reservation for the life
+of the process.
+
 ## When you do not need it
 
 A server that binds `127.0.0.1:0` **itself** and reports its address afterwards

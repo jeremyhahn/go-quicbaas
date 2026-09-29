@@ -80,7 +80,19 @@ func TestSpawnSession_Validation(t *testing.T) {
 	require.Error(t, err)
 	_, err = c.SpawnSession(context.Background(), &SpawnSessionRequest{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "backend is required")
+	assert.Contains(t, err.Error(), "an agent, a pool or a backend is required")
+	_, err = c.SpawnSession(context.Background(), &SpawnSessionRequest{AgentID: "a", Backend: "claude"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "name one of")
+}
+
+func TestSpawnSession_ByAgentOrPoolNeedsNoBackend(t *testing.T) {
+	for _, req := range []*SpawnSessionRequest{{AgentID: "claude-coder"}, {PoolID: "coders"}} {
+		c := NewClient(okTransport(t, "SpawnSession", &SpawnSessionResponse{SessionID: "s", ResolvedAgentID: "claude-coder"}))
+		resp, err := c.SpawnSession(context.Background(), req)
+		require.NoError(t, err)
+		assert.Equal(t, "claude-coder", resp.ResolvedAgentID)
+	}
 }
 
 func TestSpawnSession_NilContext(t *testing.T) {
@@ -612,244 +624,244 @@ func TestHealth_TypeMismatch(t *testing.T) {
 }
 
 // =============================================================================
-// RegisterAgent
+// RegisterFleetNode
 // =============================================================================
 
-func validRegisterAgentRequest() *RegisterAgentRequest {
-	return &RegisterAgentRequest{TenantID: "t1", Name: "n1", Host: "h1", AgentType: "worker"}
+func validRegisterFleetNodeRequest() *RegisterFleetNodeRequest {
+	return &RegisterFleetNodeRequest{TenantID: "t1", Name: "n1", Host: "h1", NodeType: "worker"}
 }
 
 func TestRegisterAgent_HappyPath(t *testing.T) {
-	c := NewClient(okTransport(t, "RegisterAgent", &RegisterAgentResponse{}))
-	resp, err := c.RegisterAgent(context.Background(), validRegisterAgentRequest())
+	c := NewClient(okTransport(t, "RegisterFleetNode", &RegisterFleetNodeResponse{}))
+	resp, err := c.RegisterFleetNode(context.Background(), validRegisterFleetNodeRequest())
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
 
 func TestRegisterAgent_Validation(t *testing.T) {
 	c := NewClient(failTransport())
-	_, err := c.RegisterAgent(context.Background(), nil)
+	_, err := c.RegisterFleetNode(context.Background(), nil)
 	require.Error(t, err)
-	_, err = c.RegisterAgent(context.Background(), &RegisterAgentRequest{Name: "n", Host: "h", AgentType: "w"})
+	_, err = c.RegisterFleetNode(context.Background(), &RegisterFleetNodeRequest{Name: "n", Host: "h", NodeType: "w"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tenant ID is required")
-	_, err = c.RegisterAgent(context.Background(), &RegisterAgentRequest{TenantID: "t", Host: "h", AgentType: "w"})
+	_, err = c.RegisterFleetNode(context.Background(), &RegisterFleetNodeRequest{TenantID: "t", Host: "h", NodeType: "w"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "name is required")
-	_, err = c.RegisterAgent(context.Background(), &RegisterAgentRequest{TenantID: "t", Name: "n", AgentType: "w"})
+	_, err = c.RegisterFleetNode(context.Background(), &RegisterFleetNodeRequest{TenantID: "t", Name: "n", NodeType: "w"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "host is required")
-	_, err = c.RegisterAgent(context.Background(), &RegisterAgentRequest{TenantID: "t", Name: "n", Host: "h"})
+	_, err = c.RegisterFleetNode(context.Background(), &RegisterFleetNodeRequest{TenantID: "t", Name: "n", Host: "h"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "agent type is required")
 }
 
 func TestRegisterAgent_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "RegisterAgent", &RegisterAgentResponse{}))
+	c := NewClient(okTransport(t, "RegisterFleetNode", &RegisterFleetNodeResponse{}))
 	//nolint:staticcheck // intentionally nil
-	_, err := c.RegisterAgent(nil, validRegisterAgentRequest())
+	_, err := c.RegisterFleetNode(nil, validRegisterFleetNodeRequest())
 	require.Error(t, err)
 }
 
 func TestRegisterAgent_TransportError(t *testing.T) {
 	c := NewClient(failTransport())
-	_, err := c.RegisterAgent(context.Background(), validRegisterAgentRequest())
+	_, err := c.RegisterFleetNode(context.Background(), validRegisterFleetNodeRequest())
 	require.Error(t, err)
 }
 
 func TestRegisterAgent_NilResponse(t *testing.T) {
 	c := NewClient(nilTransport())
-	_, err := c.RegisterAgent(context.Background(), validRegisterAgentRequest())
+	_, err := c.RegisterFleetNode(context.Background(), validRegisterFleetNodeRequest())
 	require.Error(t, err)
 }
 
 func TestRegisterAgent_TypeMismatch(t *testing.T) {
 	c := NewClient(mismatchTransport())
-	_, err := c.RegisterAgent(context.Background(), validRegisterAgentRequest())
+	_, err := c.RegisterFleetNode(context.Background(), validRegisterFleetNodeRequest())
 	require.Error(t, err)
 }
 
 // =============================================================================
-// GetAgent
+// GetFleetNode
 // =============================================================================
 
 func TestGetAgent_HappyPath(t *testing.T) {
-	c := NewClient(okTransport(t, "GetAgent", &AgentRegistration{}))
-	resp, err := c.GetAgent(context.Background(), &GetAgentRequest{TenantID: "t1", AgentID: "a1"})
+	c := NewClient(okTransport(t, "GetFleetNode", &FleetNode{}))
+	resp, err := c.GetFleetNode(context.Background(), &GetFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
 
 func TestGetAgent_Validation(t *testing.T) {
 	c := NewClient(failTransport())
-	_, err := c.GetAgent(context.Background(), nil)
+	_, err := c.GetFleetNode(context.Background(), nil)
 	require.Error(t, err)
-	_, err = c.GetAgent(context.Background(), &GetAgentRequest{AgentID: "a1"})
+	_, err = c.GetFleetNode(context.Background(), &GetFleetNodeRequest{NodeID: "a1"})
 	require.Error(t, err)
-	_, err = c.GetAgent(context.Background(), &GetAgentRequest{TenantID: "t1"})
+	_, err = c.GetFleetNode(context.Background(), &GetFleetNodeRequest{TenantID: "t1"})
 	require.Error(t, err)
 }
 
 func TestGetAgent_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "GetAgent", &AgentRegistration{}))
+	c := NewClient(okTransport(t, "GetFleetNode", &FleetNode{}))
 	//nolint:staticcheck // intentionally nil
-	_, err := c.GetAgent(nil, &GetAgentRequest{TenantID: "t1", AgentID: "a1"})
+	_, err := c.GetFleetNode(nil, &GetFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
 func TestGetAgent_TransportError(t *testing.T) {
 	c := NewClient(failTransport())
-	_, err := c.GetAgent(context.Background(), &GetAgentRequest{TenantID: "t1", AgentID: "a1"})
+	_, err := c.GetFleetNode(context.Background(), &GetFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
 func TestGetAgent_NilResponse(t *testing.T) {
 	c := NewClient(nilTransport())
-	_, err := c.GetAgent(context.Background(), &GetAgentRequest{TenantID: "t1", AgentID: "a1"})
+	_, err := c.GetFleetNode(context.Background(), &GetFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
 func TestGetAgent_TypeMismatch(t *testing.T) {
 	c := NewClient(mismatchTransport())
-	_, err := c.GetAgent(context.Background(), &GetAgentRequest{TenantID: "t1", AgentID: "a1"})
+	_, err := c.GetFleetNode(context.Background(), &GetFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
 // =============================================================================
-// ListAgents
+// ListFleetNodes
 // =============================================================================
 
 func TestListAgents_HappyPath(t *testing.T) {
-	c := NewClient(okTransport(t, "ListAgents", &ListAgentsResponse{Count: 4}))
-	resp, err := c.ListAgents(context.Background(), &ListAgentsRequest{TenantID: "t1"})
+	c := NewClient(okTransport(t, "ListFleetNodes", &ListFleetNodesResponse{Count: 4}))
+	resp, err := c.ListFleetNodes(context.Background(), &ListFleetNodesRequest{TenantID: "t1"})
 	require.NoError(t, err)
 	assert.Equal(t, 4, resp.Count)
 }
 
 func TestListAgents_Validation(t *testing.T) {
 	c := NewClient(failTransport())
-	_, err := c.ListAgents(context.Background(), nil)
+	_, err := c.ListFleetNodes(context.Background(), nil)
 	require.Error(t, err)
-	_, err = c.ListAgents(context.Background(), &ListAgentsRequest{})
+	_, err = c.ListFleetNodes(context.Background(), &ListFleetNodesRequest{})
 	require.Error(t, err)
 }
 
 func TestListAgents_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "ListAgents", &ListAgentsResponse{}))
+	c := NewClient(okTransport(t, "ListFleetNodes", &ListFleetNodesResponse{}))
 	//nolint:staticcheck // intentionally nil
-	_, err := c.ListAgents(nil, &ListAgentsRequest{TenantID: "t1"})
+	_, err := c.ListFleetNodes(nil, &ListFleetNodesRequest{TenantID: "t1"})
 	require.Error(t, err)
 }
 
 func TestListAgents_TransportError(t *testing.T) {
 	c := NewClient(failTransport())
-	_, err := c.ListAgents(context.Background(), &ListAgentsRequest{TenantID: "t1"})
+	_, err := c.ListFleetNodes(context.Background(), &ListFleetNodesRequest{TenantID: "t1"})
 	require.Error(t, err)
 }
 
 func TestListAgents_NilResponseReturnsEmpty(t *testing.T) {
 	c := NewClient(nilTransport())
-	resp, err := c.ListAgents(context.Background(), &ListAgentsRequest{TenantID: "t1"})
+	resp, err := c.ListFleetNodes(context.Background(), &ListFleetNodesRequest{TenantID: "t1"})
 	require.NoError(t, err)
 	assert.Equal(t, 0, resp.Count)
-	assert.NotNil(t, resp.Agents)
+	assert.NotNil(t, resp.Nodes)
 }
 
 func TestListAgents_TypeMismatch(t *testing.T) {
 	c := NewClient(mismatchTransport())
-	_, err := c.ListAgents(context.Background(), &ListAgentsRequest{TenantID: "t1"})
+	_, err := c.ListFleetNodes(context.Background(), &ListFleetNodesRequest{TenantID: "t1"})
 	require.Error(t, err)
 }
 
 // =============================================================================
-// RemoveAgent
+// RemoveFleetNode
 // =============================================================================
 
 func TestRemoveAgent_HappyPath(t *testing.T) {
-	c := NewClient(okTransport(t, "RemoveAgent", &RemoveAgentResponse{}))
-	resp, err := c.RemoveAgent(context.Background(), &RemoveAgentRequest{TenantID: "t1", AgentID: "a1"})
+	c := NewClient(okTransport(t, "RemoveFleetNode", &RemoveFleetNodeResponse{}))
+	resp, err := c.RemoveFleetNode(context.Background(), &RemoveFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
 
 func TestRemoveAgent_Validation(t *testing.T) {
 	c := NewClient(failTransport())
-	_, err := c.RemoveAgent(context.Background(), nil)
+	_, err := c.RemoveFleetNode(context.Background(), nil)
 	require.Error(t, err)
-	_, err = c.RemoveAgent(context.Background(), &RemoveAgentRequest{AgentID: "a1"})
+	_, err = c.RemoveFleetNode(context.Background(), &RemoveFleetNodeRequest{NodeID: "a1"})
 	require.Error(t, err)
-	_, err = c.RemoveAgent(context.Background(), &RemoveAgentRequest{TenantID: "t1"})
+	_, err = c.RemoveFleetNode(context.Background(), &RemoveFleetNodeRequest{TenantID: "t1"})
 	require.Error(t, err)
 }
 
 func TestRemoveAgent_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "RemoveAgent", &RemoveAgentResponse{}))
+	c := NewClient(okTransport(t, "RemoveFleetNode", &RemoveFleetNodeResponse{}))
 	//nolint:staticcheck // intentionally nil
-	_, err := c.RemoveAgent(nil, &RemoveAgentRequest{TenantID: "t1", AgentID: "a1"})
+	_, err := c.RemoveFleetNode(nil, &RemoveFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
 func TestRemoveAgent_TransportError(t *testing.T) {
 	c := NewClient(failTransport())
-	_, err := c.RemoveAgent(context.Background(), &RemoveAgentRequest{TenantID: "t1", AgentID: "a1"})
+	_, err := c.RemoveFleetNode(context.Background(), &RemoveFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
 func TestRemoveAgent_NilResponse(t *testing.T) {
 	c := NewClient(nilTransport())
-	_, err := c.RemoveAgent(context.Background(), &RemoveAgentRequest{TenantID: "t1", AgentID: "a1"})
+	_, err := c.RemoveFleetNode(context.Background(), &RemoveFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
 func TestRemoveAgent_TypeMismatch(t *testing.T) {
 	c := NewClient(mismatchTransport())
-	_, err := c.RemoveAgent(context.Background(), &RemoveAgentRequest{TenantID: "t1", AgentID: "a1"})
+	_, err := c.RemoveFleetNode(context.Background(), &RemoveFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
 // =============================================================================
-// AgentHeartbeat
+// FleetNodeHeartbeat
 // =============================================================================
 
 func TestAgentHeartbeat_HappyPath(t *testing.T) {
-	c := NewClient(okTransport(t, "AgentHeartbeat", &AgentHeartbeatResponse{}))
-	resp, err := c.AgentHeartbeat(context.Background(), &AgentHeartbeatRequest{TenantID: "t1", AgentID: "a1"})
+	c := NewClient(okTransport(t, "FleetNodeHeartbeat", &FleetNodeHeartbeatResponse{}))
+	resp, err := c.FleetNodeHeartbeat(context.Background(), &FleetNodeHeartbeatRequest{TenantID: "t1", NodeID: "a1"})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
 
 func TestAgentHeartbeat_Validation(t *testing.T) {
 	c := NewClient(failTransport())
-	_, err := c.AgentHeartbeat(context.Background(), nil)
+	_, err := c.FleetNodeHeartbeat(context.Background(), nil)
 	require.Error(t, err)
-	_, err = c.AgentHeartbeat(context.Background(), &AgentHeartbeatRequest{AgentID: "a1"})
+	_, err = c.FleetNodeHeartbeat(context.Background(), &FleetNodeHeartbeatRequest{NodeID: "a1"})
 	require.Error(t, err)
-	_, err = c.AgentHeartbeat(context.Background(), &AgentHeartbeatRequest{TenantID: "t1"})
+	_, err = c.FleetNodeHeartbeat(context.Background(), &FleetNodeHeartbeatRequest{TenantID: "t1"})
 	require.Error(t, err)
 }
 
 func TestAgentHeartbeat_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "AgentHeartbeat", &AgentHeartbeatResponse{}))
+	c := NewClient(okTransport(t, "FleetNodeHeartbeat", &FleetNodeHeartbeatResponse{}))
 	//nolint:staticcheck // intentionally nil
-	_, err := c.AgentHeartbeat(nil, &AgentHeartbeatRequest{TenantID: "t1", AgentID: "a1"})
+	_, err := c.FleetNodeHeartbeat(nil, &FleetNodeHeartbeatRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
 func TestAgentHeartbeat_TransportError(t *testing.T) {
 	c := NewClient(failTransport())
-	_, err := c.AgentHeartbeat(context.Background(), &AgentHeartbeatRequest{TenantID: "t1", AgentID: "a1"})
+	_, err := c.FleetNodeHeartbeat(context.Background(), &FleetNodeHeartbeatRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
 func TestAgentHeartbeat_NilResponse(t *testing.T) {
 	c := NewClient(nilTransport())
-	_, err := c.AgentHeartbeat(context.Background(), &AgentHeartbeatRequest{TenantID: "t1", AgentID: "a1"})
+	_, err := c.FleetNodeHeartbeat(context.Background(), &FleetNodeHeartbeatRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
 func TestAgentHeartbeat_TypeMismatch(t *testing.T) {
 	c := NewClient(mismatchTransport())
-	_, err := c.AgentHeartbeat(context.Background(), &AgentHeartbeatRequest{TenantID: "t1", AgentID: "a1"})
+	_, err := c.FleetNodeHeartbeat(context.Background(), &FleetNodeHeartbeatRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 

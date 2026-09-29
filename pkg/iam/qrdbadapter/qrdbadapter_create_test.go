@@ -32,9 +32,8 @@ import (
 func newStore() *iam.IdentityStore {
 	mem := iam.NewMemoryStorage()
 	return iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  mem,
-		GroupStorage: mem,
-		RoleStorage:  mem,
+		UserStorage: mem,
+		RoleStorage: mem,
 	})
 }
 
@@ -121,8 +120,8 @@ func TestUserAdapter_CreateUser_HappyPath(t *testing.T) {
 	if got.Username != "admin" || got.TenantID != "system" {
 		t.Fatalf("returned User = %+v, want admin/system", got)
 	}
-	if !got.Enabled {
-		t.Fatal("bootstrap user must be Enabled=true")
+	if got.Lifecycle != qrdbsdk.LifecycleActive {
+		t.Fatalf("bootstrap user Lifecycle = %q, want active", got.Lifecycle)
 	}
 	if len(got.RoleIDs) != 1 || got.RoleIDs[0] != "role-admin" {
 		t.Fatalf("RoleIDs = %v, want [role-admin]", got.RoleIDs)

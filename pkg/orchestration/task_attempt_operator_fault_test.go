@@ -250,9 +250,12 @@ func TestApplyConclusion_AnOperatorFaultParkConsumesNoReviewRound(t *testing.T) 
 func TestOperatorFaultClass_KnowsExactlyTheClassesThatRefund(t *testing.T) {
 	t.Parallel()
 
-	for _, class := range []string{FaultWorkspaceUnfit, FaultWorkerEnvironment} {
+	for _, class := range []string{FaultWorkspaceUnfit, FaultWorkerEnvironment, FaultConfigError} {
 		if !OperatorFaultClass(class) {
 			t.Fatalf("%q is not recognised as an operator fault", class)
+		}
+		if meaning, known := FaultClassMeaning(class); !known || meaning == "" {
+			t.Fatalf("%q has no meaning; it would render as a bare identifier on a forge issue", class)
 		}
 	}
 	for class := range resolverFaultClasses {

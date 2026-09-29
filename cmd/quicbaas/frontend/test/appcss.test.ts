@@ -20,6 +20,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { STATUS_TONES, type ThemeName, type Tone } from '../src/lib/theme/tokens.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -134,7 +135,7 @@ describe('app.css design tokens', () => {
 
   // ---------------------------------------------------------------------------
   // Bug #38: light theme polish — table zebra striping and sidebar hover
-  // must be explicitly addressed for the cream palette.
+  // must be explicitly addressed for the light palette.
   // ---------------------------------------------------------------------------
 
   describe('light theme polish (#38)', () => {
@@ -145,5 +146,30 @@ describe('app.css design tokens', () => {
     it('declares a darker zebra striping for the light theme', () => {
       expect(css).toMatch(/\[data-theme="quicbaas-light"\]\s+\.table-zebra tbody tr:nth-child\(even\)\s*{/);
     });
+  });
+
+  // ---------------------------------------------------------------------------
+  // The soft badge tones are a CSS restatement of STATUS_TONES. A drift would
+  // put a pair on screen that themeContrast.test.ts never graded.
+  // ---------------------------------------------------------------------------
+
+  describe('status tone custom properties', () => {
+    const selectors: Record<ThemeName, string> = {
+      light: '[data-theme="quicbaas-light"] {\n  --tone-',
+      dark: '[data-theme="quicbaas-dark"] {\n  --tone-',
+    };
+
+    for (const theme of Object.keys(selectors) as ThemeName[]) {
+      it(`mirrors every ${theme} STATUS_TONES pair exactly`, () => {
+        const start = css.indexOf(selectors[theme]);
+        expect(start, `no ${theme} tone block in app.css`).toBeGreaterThan(-1);
+        const block = css.slice(start, css.indexOf('}', start));
+        for (const tone of Object.keys(STATUS_TONES[theme]) as Tone[]) {
+          const pair = STATUS_TONES[theme][tone];
+          expect(block).toContain(`--tone-${tone}-bg: ${pair.bg};`);
+          expect(block).toContain(`--tone-${tone}-fg: ${pair.fg};`);
+        }
+      });
+    }
   });
 });

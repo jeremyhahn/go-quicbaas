@@ -178,16 +178,18 @@ Every sandboxed container now runs under one privilege policy,
 --cap-drop ALL
 --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --cap-add SETGID --cap-add SETUID
 --pids-limit 4096
+--ulimit memlock=4294967296:4294967296
 ```
 
 It is applied in the places every sandboxed spawn builds its spec:
 `ACPBackend.sandboxSpec`, shared by the CLI, JSON-RPC and exec transports;
 the orchestrator's detached sandbox (`spawnSandboxedSession`); and the
-OpenVINO/ollama-agent/vLLM tool container. So the embedded agent and a remote
-`quicbaas agent serve` get it through the same code. The policy **overrides**
+OpenVINO/ollama-agent/vLLM tool container. So the embedded fleet node and a remote
+`quicbaas fleet serve` get it through the same code. The policy **overrides**
 the spec. A caller's `ContainerConfig` cannot ask for `--privileged`, a wider
-capability set or a different process bound. `ContainerSpec.PidsLimit` is
-measured by `ContainerConfigDigest`, like the capability lists.
+capability set, a different process bound or its own ulimits.
+`ContainerSpec.PidsLimit` and `ContainerSpec.Ulimits` are measured by
+`ContainerConfigDigest`, like the capability lists.
 
 **Each add-back is there because a command fails without it.** Measured
 with the worker's `sudo -n apk add` under a bounding set missing one
@@ -220,26 +222,43 @@ of the cgroup it ran in, so it is an upper bound. Go's thread count grows with
 6.7 times that peak. A fork past the limit fails with `EAGAIN` inside the
 container. It does not use up the host's pid space.
 
+**Locked memory gets the CI runners' limit** (go-quicbaas#1038). Docker's
+default `RLIMIT_MEMLOCK` is 8 MiB. A suite that holds its secrets in `mlock`ed
+memory runs out after a few hundred keys, so it failed in the worker and passed
+in CI. Root in the worker cannot raise the hard limit, because that takes
+`CAP_SYS_RESOURCE`, which the policy drops. So every sandboxed container gets
+`memlock=4294967296` soft and hard (4 GiB), what the CI runners pass. Locked
+pages still count against the container's memory cgroup, so the limit grants
+no memory the container did not already have.
+
 **Configuration** (operator only; a spawn request cannot change it):
 
-| Where                          | Capabilities                              | Pids limit                           |
-|--------------------------------|-------------------------------------------|--------------------------------------|
-| Embedded agent (`server.embedded_agent`) | `sandbox_cap_add: [...]`         | `sandbox_pids_limit: N`              |
-| Remote agent config            | `sandbox_cap_add`                         | `sandbox_pids_limit`                 |
-| `quicbaas agent serve`         | `--sandbox-cap-add CHOWN,...` (repeatable) | `--sandbox-pids-limit N`             |
-| Agent daemon unit / image env  | `QUICBAAS_SANDBOX_CAP_ADD`                | `QUICBAAS_SANDBOX_PIDS_LIMIT`        |
+| Where                          | Capabilities                              | Pids limit                           | Ulimits                                  |
+|--------------------------------|-------------------------------------------|--------------------------------------|------------------------------------------|
+| Embedded fleet node (`server.embedded_fleet_node`) | `sandbox_cap_add: [...]`         | `sandbox_pids_limit: N`              | `sandbox_ulimits: ["memlock=N"]`         |
+| Remote fleet node config            | `sandbox_cap_add`                         | `sandbox_pids_limit`                 | `sandbox_ulimits`                        |
+| `quicbaas fleet serve`         | `--sandbox-cap-add CHOWN,...` (repeatable) | `--sandbox-pids-limit N`             | `--sandbox-ulimit name=soft[:hard]` (repeatable) |
+| Fleet node daemon unit / image env  | `QUICBAAS_SANDBOX_CAP_ADD`                | `QUICBAAS_SANDBOX_PIDS_LIMIT`        | `QUICBAAS_SANDBOX_ULIMITS`               |
 
 An empty capability list keeps the default set. A non-empty one **replaces**
-it. `ALL`, a malformed name and a negative limit are refused at startup, not
-at the first spawn. There is no "unlimited".
+it. Ulimits use the runtime's own `name=soft[:hard]` syntax and apply **by
+name** over the default: an entry naming `memlock` replaces the 4 GiB default,
+any other name is added. `ALL`, a malformed capability, a negative limit, an
+unknown ulimit, a soft limit above its hard limit and a ulimit named twice are
+refused at startup, not at the first spawn. There is no "unlimited".
 
-`make test-worker-image` proves the policy against the built image. It takes
-the flags from `scripts/sandboxargs`, which renders them with the same two calls
-the spawn makes, so the gate cannot check a policy production does not use. It
-asserts that `sudo apk add` works, that root's `CapEff` is exactly `0xcb` (no
+`make test-worker-image` — and the daemon's worker image refresh gate, which
+runs the same probes (`deployments/agents/software-factory-worker/probes.go`) —
+proves the policy against the built image. The probe runner renders the flags
+with the same two calls the spawn makes (`SandboxSecurity.Apply`,
+`ContainerSpec.PrivilegeRunArgs`), so the gate cannot check a policy production
+does not use. It asserts that `sudo apk add` works, that root's `CapEff` is exactly `0xcb` (no
 `NET_RAW`, no `MKNOD`), that `mknod` is refused, and, using
 `pids-limit-probe.py` under a lowered bound, that a fork past the limit gets
-`EAGAIN` and the container recovers after its processes are reaped.
+`EAGAIN` and the container recovers after its processes are reaped. It also
+checks that `ulimit -l` reports the policy's memlock, soft and hard, and that
+64 MiB can really be locked. The runner takes the expected value from the
+policy it launches the probe under, so the number is not written down twice.
 
 ### The worker image
 
@@ -293,7 +312,8 @@ missing. The image therefore declares `GOPATH` rather than inheriting it from a
 
 **The versions are the repository's, passed in at build time.** `make
 build-worker-image` supplies `GOLANGCI_VERSION`, `GOSEC_VERSION` and
-`GOVULNCHECK_VERSION` from the Makefile — the same variables CI reads
+`GOVULNCHECK_VERSION` from `pkg/version/toolchain.mk`, which the Makefile
+includes and the daemon's worker image refresh embeds — the same variables CI reads
 (`make print-GOLANGCI_VERSION`) and `make install-tools` installs. There is one
 copy of each pin in the repository, because a worker that lints with a
 different version than CI produces a review verdict the merge then contradicts.
@@ -310,8 +330,10 @@ rather than for the diff. A binding that needs it must name an image carrying it
 ### No supervisor, by design
 
 A containerized session has no `*exec.Cmd`: the `docker run` process belongs to
-the container runtime, which returns pipes and a container id. So there is
-nothing for `procReaper` to `Wait` on, and a containerized agent's death is
+the container runtime, which returns pipes, a container id and a `Wait` that
+reaps the client. The session calls that `Wait` once, when it is torn down, so
+an exited client never stays a zombie of the daemon. There is still no
+`procReaper` watching the process, and a containerized agent's death is
 observed as EOF on its stdio rather than as an exit code. It is reported as
 `ContainerStreamClosedError`, which names the container and the image and
 deliberately carries **no** exit code — a fabricated `0` would read as success.
@@ -331,7 +353,7 @@ defect, not a cosmetic one.
 
 A spawn **names** the directory its session works in; it never gives a host
 path. The host that executes the session — this daemon's in-process backend or
-a fleet agent (`quicbaas agent serve`) — provisions it under **its own**
+a fleet node (`quicbaas fleet serve`) — provisions it under **its own**
 projects root and reports where:
 
 ```
@@ -369,7 +391,7 @@ else. What cannot be honoured is refused, typed, before any container starts:
 
 | Refusal | When |
 |---|---|
-| `WorkspaceAgentUnavailableError` | the pinned agent is deregistered, offline, or no longer serves the backend — or it resolved (heartbeat still fresh) and then never answered the spawn |
+| `WorkspaceFleetNodeUnavailableError` | the pinned agent is deregistered, offline, or no longer serves the backend — or it resolved (heartbeat still fresh) and then never answered the spawn |
 | `WorkspaceStaleError` | the pinned agent is there but the checkout is not where the pin says (removed, or its projects root moved) |
 | `SessionWorkspaceUnsupportedError` | the executing host has no projects root, or is an agent build that predates named workspaces (the daemon closes that session again) |
 | `SessionWorkspaceTenantError` | the workspace names a tenant other than the one the spawn runs under |
@@ -398,7 +420,7 @@ plaintext, so:
   after writing it;
 - **at startup**, before it accepts a spawn, every host removes every spec
   directory under its projects root (`WorkspaceManager.SweepSessionSpecs`,
-  run by `agent serve`, the embedded agent and the daemon). No session
+  run by `fleet serve`, the embedded fleet node and the daemon). No session
   survives a restart — the agent's container sweep ends them — so each one is
   an orphan no `Close` will ever release;
 - the in-memory copy is wiped (bytes zeroed) the moment it is written on the
@@ -414,10 +436,14 @@ its mount policy, exactly as the control plane admits its own, so it needs no
 `--projects-root` to put checkouts on a larger or faster disk. It must persist
 across restarts — a root on tmpfs makes every restart a `WorkspaceStaleError`.
 
-**The signing agent is placed, not assumed.** A container that signs commits —
-the delivery worker — or clones an **ssh** remote is handed the KMS-backed ssh
-agent's socket, which is bound on the **daemon** host; an agent anywhere else
-cannot mount it. So such a spawn is placed only where that socket is local:
+**The signing agent is mounted where it is local, relayed where it is not.** A
+container that signs commits — the delivery worker — or clones an **ssh**
+remote is handed the KMS-backed ssh agent's socket, which is bound on the
+**daemon** host. An agent that can reach it mounts it; one that cannot is
+served the same agent **over its FleetRuntime link** (go-quicbaas#1013). The key
+never leaves the daemon host either way.
+
+*Local.* An agent proves it can reach the daemon's sockets root:
 
 - The daemon writes a random identifier into its sockets root
   (`<sockets_root>/.quicbaas-signing-root`, `orchestration.EnsureSigningRootID`).
@@ -425,24 +451,57 @@ cannot mount it. So such a spawn is placed only where that socket is local:
   `--allowed-mount-root` directories (`DiscoverSigningRootIDs`) and advertises
   `signing-agent:<id>` for each one it finds — at registration and on every
   heartbeat (`signing_agents`), so the trait follows a daemon that re-created
-  its root. An agent on another host finds none.
-- A spawn that mounts the signing socket (`WorkspaceSigningAgentSocket`) is
-  resolved with the requirement on its context; the fleet resolver takes only
-  an agent advertising **this** daemon's identifier (an embedded agent is
-  co-located by construction), then this daemon's own backend, and otherwise
-  refuses with `SigningAgentUnavailableError` — parked `workspace_unfit`,
-  uncharged. A path would not do as the identifier: two daemons with the same
-  data directory on two hosts derive the same sockets root.
+  its root. An agent on another host finds none. A path would not do as the
+  identifier: two daemons with the same data directory on two hosts derive the
+  same sockets root.
 
-Reviews and triage of **https** remotes run on any agent; delivery and ssh
-checkouts run on an agent co-located with the daemon until the signing-agent
-relay lands (go-quicbaas#1013).
+*Relayed.* Every `quicbaas fleet serve` advertises `signing-relay` — at
+registration and on every heartbeat (`signing_relay`). For a spawn placed on
+such an agent that holds no `signing-agent:<id>` for this daemon, the control
+plane's `RemoteACPBackend`:
+
+1. drops the signing-socket mount (`SSH_AUTH_SOCK` stays), reads the public
+   keys off the session's own daemon-local agent, and sends them on the spawn
+   (`SpawnSessionRequest.signing_relay`);
+2. the agent binds a socket of its own — `xkmsssh.StartNode` under its
+   **sockets root** (`--sockets-root`, derived like the server's:
+   `$XDG_RUNTIME_DIR/quicbaas/<instance>` or `<--work-dir>/s`) — whose signers
+   hold only those public keys, and mounts it read-only at the same target;
+3. after the spawn returns, the control plane opens
+   `FleetRuntime.SigningRelay` and waits for `attached` **before** Spawn
+   returns, so no checkout can ask for a signature the relay is not yet there
+   to carry;
+4. every signature the container asks for travels as a `sign` frame; the
+   control plane answers it by dialing the session's daemon-local socket with
+   a fresh connection, so a reader's `StopSigning` still closes the window;
+5. every relayed signature is audited on the control plane — session, tenant,
+   agent, key fingerprint and the SHA-256 of the data, never the data
+   (`orchestration_signing_relay:sign`).
+
+The refusals are typed and final. The control plane refuses a `sign` for
+another tenant, session or key (`SigningRelayMismatchError`). The agent
+authorizes the stream for the session's tenant under the spawn scope and
+refuses an unknown session, another tenant's, one spawned with no relay, and a
+second attach (`SigningRelayAttachError`). A sign before the attach, or after
+the stream dropped, fails (`SigningRelayLinkError`): a dropped link is never
+re-established and nothing falls back to another key. Closing the session
+releases the relay socket; the agent sweeps the relay directories a killed
+predecessor left at startup (`orchestration.EnsureSigningSocketRoot`, the same
+rules as the daemon's own root) and refuses to start on a root it cannot vouch
+for.
+
+*Placement.* A spawn that mounts the signing socket
+(`WorkspaceSigningAgentSocket`) is resolved with the requirement on its
+context; the fleet resolver takes an embedded fleet node, one advertising **this**
+daemon's `signing-agent:<id>`, or one advertising `signing-relay`, and
+otherwise this daemon's own backend. With none of those it refuses with
+`SigningAgentUnavailableError` — parked `workspace_unfit`, uncharged.
 
 **Commands run where the container is.** The checkout, the verification and
 the publish are commands the engine runs in a session's container
-(`JobRun.Exec`). For a session on a fleet agent the daemon's container runtime
+(`JobRun.Exec`). For a session on a fleet node the daemon's container runtime
 does not know that container, so `ExecSession` routes the command to the agent
-that holds it over the `AgentRuntime.ExecSession` RPC — authenticated as the
+that holds it over the `FleetRuntime.ExecSession` RPC — authenticated as the
 agent's tenant under the spawn scope, resolved from the SESSION (the caller
 never names a container), refused for a session the agent did not spawn, of
 another tenant (answered as not found), or with no container. The command is
@@ -457,7 +516,7 @@ returns it — output that is not UTF-8 is neither rejected nor rewritten. An ag
 **A silent agent is not placed on.** A crashed daemon cannot mark itself
 offline, so its record keeps its last status; when **placing a new session**
 the resolver skips any daemon-kind registration whose last heartbeat is older
-than `orchestration.heartbeat_timeout` (default 90s, `orchestration.AgentAlive`,
+than `orchestration.heartbeat_timeout` (default 90s, `orchestration.FleetNodeAlive`,
 the predicate the fleet capacity sum already used). **Routing an existing
 session is different:** its prompt, status, exec and close go to the host it
 was spawned on or fail with `SessionHostUnavailableError` — never to the local
@@ -466,15 +525,74 @@ agent. A missed heartbeat is not evidence the session is gone. Before this, a de
 agent's reviews were routed to a refused connection until someone
 deregistered it.
 
-## The orphan sweep
+**Work spreads across the fleet.** Placement no longer takes the first eligible
+agent the registry lists — which put every spawn on one host while the rest of
+the fleet sat registered, online and idle. Among **every** agent that serves the
+backend and meets the spawn's constraints, the resolver takes the least loaded
+(`remoteBackendPool.leastLoaded`):
 
-A session that ends releases its container: `Close` fires the process cancel
-that ends `docker run --rm`, and it is issued on every exit the sdlc runner
-takes — including a refusal after the spawn, a checkout that would not run, a
-cancellation and a panic (go-quicbaas#750). What no teardown survives is the
-process not running any more, so a daemon **killed** between a spawn and its
-close leaves its worker container running with nothing left that knows the
-session it belonged to.
+1. the jobs live on the agent — counted from the control plane's own live
+   session records by the host each was placed on
+   (`orchestration.FleetLoadReporter`; a job's several sessions are one slot) —
+   relative to its advertised `max_concurrent_jobs`;
+2. then fewest placements in the last ten minutes, so a burst placed before any
+   session exists goes round the fleet;
+3. then name.
+
+An agent already at its `max_concurrent_jobs` is skipped; a fleet full
+everywhere is refused with the `capacity` constraint. An agent advertising no
+capacity is ranked as one slot and never skipped. **Host affinity stays
+strict:** a pinned workspace goes to its host whatever the load. The embedded
+agent is ranked like any other.
+
+## Container lifecycle and labels
+
+**A session that ends removes its container.** `Close` removes the container by
+name (`docker rm -f`), then cancels and reaps the `docker run -i --rm` client.
+The sdlc runner issues it on every exit it takes: success, failure, a refusal
+after the spawn, a checkout that would not run, a cancellation, a panic, a
+rolled or superseded session, and the park (go-quicbaas#750). A spawn whose
+handshake fails tears its container down the same way.
+
+Killing the client alone is not enough, and that is how the burn-in node's disk
+filled on 2026-09-24. A killed client closes the container's stdin, and `--rm`
+fires only when the container's process exits. An agent that does not exit on
+EOF keeps the container running, for example one mid-turn or one waiting on its
+MCP servers. After that, nothing knows the container exists.
+
+**Every sandbox container is labelled with who it runs for**, before it is
+launched:
+
+| Label              | Value                                                     |
+|--------------------|-----------------------------------------------------------|
+| `quicbaas.agent`   | the backend type (`claude`, `opencode`, ...)              |
+| `quicbaas.session` | the session ID the session is registered under            |
+| `quicbaas.job`     | the job that spawned it (absent when no job did)          |
+| `quicbaas.tenant`  | the tenant it belongs to                                  |
+| `quicbaas.owner`   | the daemon that launched it (see below)                   |
+
+The session ID is decided before the launch, because a container cannot be
+relabelled once it exists. The label used to be the placeholder `pending`, so
+nothing could map a container back to its session. The agent CLI reports its own
+session ID in its handshake. For an ACP agent that ID is kept as the session's
+wire ID, as on a resume. For this reason a sandboxed session always resumes by
+transcript replay, never with the CLI's `--resume`: the CLI's session store died
+with the previous container anyway.
+
+To map a container to its session and job:
+
+```bash
+docker ps --filter label=quicbaas.agent \
+  --format '{{.Names}}\t{{.Label "quicbaas.session"}}\t{{.Label "quicbaas.job"}}\t{{.RunningFor}}'
+```
+
+## The orphan sweep and the reaper
+
+What no teardown survives is the process not running any more. A daemon
+**killed** between a spawn and its close leaves its worker container running,
+with nothing left that knows which session it belonged to. A running daemon can
+also lose track of a container, for example when a removal failed during
+`Close`. Two passes cover these cases: the startup sweep and the running reaper.
 
 **Startup sweeps.** It is the one moment a daemon knows which containers could
 be its own and is holding none of them, so it removes the containers a previous
@@ -506,6 +624,76 @@ serves stamps no owner label at all, so no sweep can ever claim its containers
 — an unswept container is an operator's problem, a container the wrong process
 sweeps is a running worker killed under someone else.
 
+Three kinds of daemon launch sandbox containers, and each claims its own:
+
+| Launcher                                  | Owner label                     |
+|-------------------------------------------|---------------------------------|
+| `quicbaas fleet serve`                    | its `--work-dir`                |
+| the embedded fleet node inside `quicbaasd`     | its data directory              |
+| `quicbaasd`'s own orchestration backends  | `orchestrator:<data_dir>`       |
+
+The orchestration backends in `quicbaasd` had no owner label until 2026-09-24,
+so their containers were never swept. Their owner differs from the embedded
+agent's because the two hold different sessions. A reaper that asked one of them
+about the other's sessions would reap live workers.
+
+**The running reaper** runs every 5 minutes (`DefaultContainerReapInterval`) in
+all three daemons. It lists the containers carrying the daemon's owner label and
+removes a container only when both of these are true:
+
+- none of the daemon's backends holds a live session with the container's
+  `quicbaas.session` ID, and
+- the container is older than the 15-minute grace period
+  (`DefaultContainerReapGrace`).
+
+A container whose session is held is never touched. The grace period protects an
+in-flight spawn: its container exists before the handshake that registers the
+session. A container whose creation time cannot be read is kept. So is a
+container that carries no session ID and is younger than the grace period; one
+that is older is reaped. One removal that fails does not stop the pass.
+
+Every removal is audited as a `WARN` log line that names the container, its
+session, job and tenant, its age and the reason. The pass returns the same
+record as `ContainerSweep.Removals`.
+
+## The shared Go cache
+
+A worker that runs `go build` or `go test` used to fill `GOMODCACHE` and
+`GOCACHE` inside its own writable layer. On the burn-in node on 2026-09-24 that
+was 9-12 GB of every 10-15 GB container: about 2 GB of modules and 7-10 GB of
+build cache, rebuilt from nothing in every container. Go's module and build
+caches are safe for concurrent use, so every container a daemon launches now
+mounts one host-side copy:
+
+```
+<go_cache_dir>/<tenant>/mod    ->  /var/cache/quicbaas/go/mod    (GOMODCACHE)
+<go_cache_dir>/<tenant>/build  ->  /var/cache/quicbaas/go/build  (GOCACHE)
+```
+
+| Daemon                 | Setting                              | Default                |
+|------------------------|--------------------------------------|------------------------|
+| `quicbaas fleet serve` | `--go-cache-dir` / `go_cache_dir`    | `<work_dir>/cache/go`  |
+| `quicbaasd`            | `orchestration.sandbox.go_cache_dir` | `<data_dir>/cache/go`  |
+
+**The cache is keyed by tenant.** A worker has full control of its container,
+and the toolchain trusts both caches once they are written. An extracted module
+is not re-checked against `go.sum` on each build, and a build-cache entry is
+reused by its action ID alone. A cache shared across tenants would let one
+tenant's worker plant code that another tenant's build then compiles and runs.
+Workers within one tenant already share that tenant's forge identity and
+credentials, so sharing a cache between them gives a worker nothing it could not
+already do.
+
+**The mount policy admits no request mount of the cache.** The daemon mounts the
+cache itself after the request's mounts were authorized, as it does with the
+credential directory. The daemon refuses to start if the cache root is inside,
+or contains, the projects root or any allowed mount root. So no spawn can name a
+cache directory, its own tenant's or another's, as an extra mount.
+
+The build cache trims entries unused for five days on its own. The module cache
+grows only with the distinct module versions a tenant's builds fetch. To reset
+a tenant's cache, stop the daemon and remove its `<go_cache_dir>/<tenant>`.
+
 ## Verifying a deployment
 
 ```bash
@@ -513,11 +701,17 @@ sweeps is a running worker killed under someone else.
 quicbaas agent sessions list
 
 # The host's view: a required-mode daemon must have NO agent processes as children.
-ps --ppid "$(pgrep -f 'quicbaas agent serve')" -o pid,comm --no-headers
+ps --ppid "$(pgrep -f 'quicbaas fleet serve')" -o pid,comm --no-headers
 
 # And a container per live session.
 docker ps --filter label=quicbaas.agent
 
 # Nothing this daemon owns should outlive a finished or refused attempt.
 docker ps -a --filter "label=quicbaas.owner=$WORK_DIR"
+
+# Every container names a real session, never "pending".
+docker ps --filter label=quicbaas.session=pending
+
+# The writable layer holds no Go cache: a few hundred MB, not 10 GB.
+docker ps --size --filter label=quicbaas.agent
 ```

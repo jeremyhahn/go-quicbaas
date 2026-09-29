@@ -24,22 +24,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestLoad_RefusesRemovedSDLCKeysByName pins the config split (go-quicbaas#569):
-// every sdlc: key the module no longer reads is refused at load, naming the
-// key and where its setting went, from the file and from the environment.
-func TestLoad_RefusesRemovedSDLCKeysByName(t *testing.T) {
-	for key, replacement := range RemovedSDLCKeys {
+// TestLoad_RefusesRemovedKeysByName pins the config split (go-quicbaas#569):
+// every key nothing reads any more is refused at load, naming the key and
+// where its setting went, from the file and from the environment.
+func TestLoad_RefusesRemovedKeysByName(t *testing.T) {
+	for key, replacement := range RemovedKeys {
 		t.Run(key, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "quicbaas.yaml")
-			section := strings.TrimPrefix(key, "sdlc.")
-			require.NoError(t, os.WriteFile(path, []byte("sdlc:\n  enabled: true\n  "+section+": 1\n"), 0o600))
+			require.NoError(t, os.WriteFile(path, []byte(nestedYAML(key, "1")), 0o600))
 			_, err := NewLoader().Load(path)
 			require.Error(t, err)
-			var removed *RemovedSDLCKeyError
+			var removed *RemovedKeyError
 			require.True(t, errors.As(err, &removed), "%v", err)
 			assert.Equal(t, key, removed.Key)
 			assert.Equal(t, replacement, removed.Replacement)
-			assert.True(t, errors.Is(err, ErrRemovedSDLCKey))
+			assert.True(t, errors.Is(err, ErrRemovedKey))
 			assert.Contains(t, err.Error(), key)
 		})
 	}
@@ -48,7 +47,7 @@ func TestLoad_RefusesRemovedSDLCKeysByName(t *testing.T) {
 	// keys loads.
 	t.Setenv("QUICBAAS_SDLC_SWEEP_INTERVAL", "30s")
 	_, err := NewLoader().Load(filepath.Join(t.TempDir(), "absent.yaml"))
-	var removed *RemovedSDLCKeyError
+	var removed *RemovedKeyError
 	require.True(t, errors.As(err, &removed), "%v", err)
 	assert.Equal(t, "sdlc.sweep_interval", removed.Key)
 	t.Setenv("QUICBAAS_SDLC_SWEEP_INTERVAL", "")
@@ -76,12 +75,39 @@ func TestLoad_RefusesTheDaemonSideWorkspaceKeys(t *testing.T) {
 			require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 			_, err := NewLoader().Load(path)
 			require.Error(t, err)
-			var removed *RemovedSDLCKeyError
+			var removed *RemovedKeyError
 			require.True(t, errors.As(err, &removed), "%v", err)
 			assert.Equal(t, key, removed.Key)
 			assert.Equal(t, workerClonesItsOwnWorkspace, removed.Replacement)
-			assert.True(t, errors.Is(err, ErrRemovedSDLCKey))
+			assert.True(t, errors.Is(err, ErrRemovedKey))
 			assert.Contains(t, err.Error(), "context_repos")
 		})
 	}
+}
+
+// nestedYAML renders a dotted key as the nested YAML that sets it.
+func nestedYAML(key, value string) string {
+	var b strings.Builder
+	parts := strings.Split(key, ".")
+	for i, part := range parts {
+		b.WriteString(strings.Repeat("  ", i) + part + ":")
+		if i == len(parts)-1 {
+			b.WriteString(" " + value)
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// TestLoad_AgentReferencesDecode: the lead agent and the default triage agent
+// are references to a tenant Agent or pool.
+func TestLoad_AgentReferencesDecode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "quicbaas.yaml")
+	body := "orchestration:\n  lead_agent:\n    agent_id: claude-lead\nsdlc:\n  triage_agent:\n    pool_id: triagers\n"
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	cfg, err := NewLoader().Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, "claude-lead", cfg.Orchestration.LeadAgent.AgentID)
+	assert.Equal(t, "triagers", cfg.SDLC.TriageAgent.PoolID)
+	assert.Empty(t, cfg.SDLC.TriageAgent.AgentID)
 }

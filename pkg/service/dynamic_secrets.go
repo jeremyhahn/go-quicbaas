@@ -773,6 +773,12 @@ func (s *dynamicSecretsHandler) loadCredential(
 }
 
 // ListLeases returns all active leases.
+//
+// The lease manager's listing is every stored record: a revoked lease stays
+// stored as a tombstone for the retention window, and an expired lease stays
+// stored as it was until the reaper's next pass. Neither is active, so both
+// are filtered out here — callers (the dashboard's "Active Leases" panel, the
+// CLI's "lease list") present this listing as the live grants.
 func (s *dynamicSecretsHandler) ListLeases(ctx context.Context, req *ListLeasesRequest) (*ListLeasesResponse, error) {
 	start := time.Now()
 	defer func() {
@@ -791,9 +797,16 @@ func (s *dynamicSecretsHandler) ListLeases(ctx context.Context, req *ListLeasesR
 		}
 	}
 
-	leases, err := s.leaseManager.ListLeases(ctx, req.Prefix)
+	stored, err := s.leaseManager.ListLeases(ctx, req.Prefix)
 	if err != nil {
 		return nil, err
+	}
+
+	leases := make([]*lease.Lease, 0, len(stored))
+	for _, l := range stored {
+		if l.IsValid() {
+			leases = append(leases, l)
+		}
 	}
 
 	return &ListLeasesResponse{

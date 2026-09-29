@@ -45,7 +45,7 @@ export class APIError extends QuicBaaSError {
         this.status = status;
     }
 }
-// DeployNotSupportedError is thrown when deployAgent is invoked over a
+// DeployNotSupportedError is thrown when deployFleetNode is invoked over a
 // transport other than Wails (desktop). Deploys orchestrate a local SSH
 // session against a remote host — only the desktop/CLI runtimes can do
 // that safely. Other transports must surface this error so callers know

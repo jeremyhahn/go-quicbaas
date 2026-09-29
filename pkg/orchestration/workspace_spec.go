@@ -190,6 +190,13 @@ type WorkspaceSpec struct {
 	// allowed_signers file admits. Empty when the attempt signs nothing.
 	SigningKey string `json:"signing_key,omitempty"`
 
+	// RetiredSigningKeys is the project's trusted signing history
+	// (CommitSigning.Retired). The allowed_signers file admits each one only
+	// for commits made before it was retired, so a branch that already
+	// carries a commit a retired key signed is verified rather than
+	// orphaned by the rotation. PUBLIC data, like SigningKey.
+	RetiredSigningKeys []RetiredSigningKey `json:"retired_signing_keys,omitempty"`
+
 	// AllowedSignersFile names the file holding the allowed_signers written
 	// from SigningKey, relative to the spec file's own directory. Empty when
 	// the attempt signs nothing.
@@ -308,7 +315,7 @@ func NewWorkspaceSpecFiles(spec WorkspaceSpec, forgeToken []byte) (*WorkspaceSpe
 	} else {
 		spec.KnownHostsFile = ""
 	}
-	allowedSigners := AllowedSignersFor(spec.SigningKey)
+	allowedSigners := AllowedSignersFor(spec.SigningKey, spec.RetiredSigningKeys)
 	if allowedSigners != "" {
 		spec.AllowedSignersFile = WorkspaceAllowedSignersFile
 	} else {
@@ -397,19 +404,43 @@ func writeSpecFile(root *os.Root, path string, content []byte) error {
 	return errors.Join(writeErr, file.Close())
 }
 
-// AllowedSignersFor is the allowed_signers content admitting exactly
-// signingKey for git commit signatures, or empty when there is no key.
+// AllowedSignersFor is the allowed_signers content admitting signingKey for
+// git commit signatures, and each retired key only for commits made before
+// its retirement, or empty when there is no current key.
 //
 // THE PRINCIPAL IS "*" because the question the file answers is "was this
 // signed by THE key", not "by whom": the attempt has one key, and the
 // author's address is already stated by the commit itself.
-func AllowedSignersFor(signingKey string) string {
+//
+// A RETIRED KEY CARRIES valid-before, which git checks against the commit's
+// own time (ssh-keygen -Overify-time), so a commit the retired key made after
+// its retirement reports "U" — a signature by a key the file does not admit —
+// and is refused like any other stranger's.
+func AllowedSignersFor(signingKey string, retired []RetiredSigningKey) string {
 	key := strings.TrimSpace(signingKey)
 	if key == "" {
 		return ""
 	}
-	return `* namespaces="git" ` + key + "\n"
+	var b strings.Builder
+	b.WriteString(`* namespaces="git" ` + key + "\n")
+	for _, old := range retired {
+		// A retired key that does not validate is left out: the file then
+		// admits LESS than the history names, never more.
+		if old.Validate() != nil {
+			continue
+		}
+		public, err := old.AllowedSignersKey()
+		if err != nil {
+			continue
+		}
+		b.WriteString(`* namespaces="git",valid-before="` + old.RetiredAt.UTC().Format(allowedSignersTimeLayout) + `" ` + public + "\n")
+	}
+	return b.String()
 }
+
+// allowedSignersTimeLayout is the UTC timestamp form the allowed_signers
+// "valid-before" option takes (ssh-keygen(1), ALLOWED SIGNERS).
+const allowedSignersTimeLayout = "20060102150405Z"
 
 // WorkspaceSpecMounts are the read-only mounts a container needs to act on a
 // written spec: the spec directory, and the signing agent's socket when one

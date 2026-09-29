@@ -56,7 +56,7 @@ type mockAgentService struct {
 	// listAgents, listWorkflows and listSessions back the fleet, workflow
 	// and session listings the same way listJobs backs the job listing, so
 	// a paging test has records to page through.
-	listAgents    []*orchestration.AgentRegistration
+	listAgents    []*orchestration.FleetNode
 	listWorkflows []*orchestration.WorkflowDefinition
 	listSessions  []*orchestration.SessionInfo
 
@@ -67,7 +67,7 @@ type mockAgentService struct {
 	registerProjectFunc  func(ctx context.Context, req *orchestration.RegisterProjectRequest) (*orchestration.RegisterProjectResponse, error)
 	listProjectsFunc     func(ctx context.Context, req *orchestration.ListProjectsRequest) (*orchestration.ListProjectsResponse, error)
 	spawnSessionFunc     func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error)
-	agentHeartbeatFunc   func(ctx context.Context, tenantID, agentID string, observed *orchestration.AgentObservation) error
+	agentHeartbeatFunc   func(ctx context.Context, tenantID, agentID string, observed *orchestration.FleetNodeObservation) error
 	promptSessionFunc    func(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptSessionResponse, error)
 	promptAsyncFunc      func(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptTurnAck, error)
 	sessionStatusFunc    func(ctx context.Context, req *orchestration.SessionStatusRequest) (*orchestration.SessionStatusResponse, error)
@@ -280,6 +280,14 @@ func (m *mockAgentService) ReadmitTask(ctx context.Context, tenantID, taskID str
 	return nil
 }
 
+func (*mockAgentService) CloseBlockedTask(_ context.Context, _, _ string, _ *orchestration.TaskResult) error {
+	return nil
+}
+
+func (m *mockAgentService) BumpTaskReviewRoundBudget(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
+}
+
 func (m *mockAgentService) DeleteTask(ctx context.Context, tenantID, taskID string) error {
 	if m.deleteTaskFunc != nil {
 		return m.deleteTaskFunc(ctx, tenantID, taskID)
@@ -294,26 +302,26 @@ func (m *mockAgentService) CompleteTask(ctx context.Context, tenantID, taskID st
 	return nil
 }
 
-func (m *mockAgentService) AgentHeartbeat(ctx context.Context, tenantID, agentID string, observed *orchestration.AgentObservation) error {
+func (m *mockAgentService) FleetNodeHeartbeat(ctx context.Context, tenantID, agentID string, observed *orchestration.FleetNodeObservation) error {
 	if m.agentHeartbeatFunc != nil {
 		return m.agentHeartbeatFunc(ctx, tenantID, agentID, observed)
 	}
 	return nil
 }
 
-func (m *mockAgentService) RegisterAgent(ctx context.Context, req *orchestration.RegisterAgentRequest) (*orchestration.RegisterAgentResponse, error) {
+func (m *mockAgentService) RegisterFleetNode(ctx context.Context, req *orchestration.RegisterFleetNodeRequest) (*orchestration.RegisterFleetNodeResponse, error) {
 	return nil, nil
 }
 
-func (m *mockAgentService) GetAgent(ctx context.Context, tenantID, agentID string) (*orchestration.AgentRegistration, error) {
+func (m *mockAgentService) GetFleetNode(ctx context.Context, tenantID, agentID string) (*orchestration.FleetNode, error) {
 	return nil, nil
 }
 
-func (m *mockAgentService) ListAgents(_ context.Context, _ string, _ *orchestration.AgentFilter) ([]*orchestration.AgentRegistration, error) {
+func (m *mockAgentService) ListFleetNodes(_ context.Context, _ string, _ *orchestration.FleetNodeFilter) ([]*orchestration.FleetNode, error) {
 	return m.listAgents, nil
 }
 
-func (m *mockAgentService) RemoveAgent(ctx context.Context, tenantID, agentID string) error {
+func (m *mockAgentService) RemoveFleetNode(ctx context.Context, tenantID, agentID string) error {
 	return nil
 }
 
@@ -1571,14 +1579,14 @@ func TestHandleOrchestratorListBackendModels_OllamaSuccess(t *testing.T) {
 	server, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/agents/gpu-host/backends/ollama/models", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/fleet/gpu-host/backends/ollama/models", nil)
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("agentID", "gpu-host")
+	rctx.URLParams.Add("nodeID", "gpu-host")
 	rctx.URLParams.Add("backendName", "ollama")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rec := httptest.NewRecorder()
-	server.HandleOrchestratorListBackendModels(rec, req)
+	server.HandleListFleetNodeBackendModels(rec, req)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 
@@ -1598,14 +1606,14 @@ func TestHandleOrchestratorListBackendModels_MissingBackend(t *testing.T) {
 	server, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/agents/gpu-host/backends//models", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/fleet/gpu-host/backends//models", nil)
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("agentID", "gpu-host")
+	rctx.URLParams.Add("nodeID", "gpu-host")
 	// backendName is intentionally omitted to trigger validation.
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rec := httptest.NewRecorder()
-	server.HandleOrchestratorListBackendModels(rec, req)
+	server.HandleListFleetNodeBackendModels(rec, req)
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
@@ -1617,14 +1625,14 @@ func TestHandleOrchestratorListBackendModels_UnknownReturnsEmpty(t *testing.T) {
 	server, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/agents/any/backends/unknown/models", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/fleet/any/backends/unknown/models", nil)
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("agentID", "any")
+	rctx.URLParams.Add("nodeID", "any")
 	rctx.URLParams.Add("backendName", "unknown")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rec := httptest.NewRecorder()
-	server.HandleOrchestratorListBackendModels(rec, req)
+	server.HandleListFleetNodeBackendModels(rec, req)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 
@@ -1720,13 +1728,13 @@ func (m *mockAgentService) ListTasksPage(ctx context.Context, tenantID string, f
 		orchestration.TaskFacetSpec(), filter.MatchesFacets)
 }
 
-func (m *mockAgentService) ListAgentsPage(ctx context.Context, tenantID string, filter *orchestration.AgentFilter, page *orchestration.Page) (*orchestration.PageResult[*orchestration.AgentRegistration], error) {
-	agents, err := m.ListAgents(ctx, tenantID, filter.FacetBase())
+func (m *mockAgentService) ListFleetNodesPage(ctx context.Context, tenantID string, filter *orchestration.FleetNodeFilter, page *orchestration.Page) (*orchestration.PageResult[*orchestration.FleetNode], error) {
+	agents, err := m.ListFleetNodes(ctx, tenantID, filter.FacetBase())
 	if err != nil {
 		return nil, err
 	}
-	return orchestration.ApplyFacetedPage(agents, page, orchestration.AgentPageSpec(),
-		orchestration.AgentFacetSpec(), filter.MatchesFacets)
+	return orchestration.ApplyFacetedPage(agents, page, orchestration.FleetNodePageSpec(),
+		orchestration.FleetNodeFacetSpec(), filter.MatchesFacets)
 }
 
 func (m *mockAgentService) ListWorkflowsPage(ctx context.Context, filter *orchestration.WorkflowFilter, page *orchestration.Page) (*orchestration.PageResult[*orchestration.WorkflowDefinition], error) {

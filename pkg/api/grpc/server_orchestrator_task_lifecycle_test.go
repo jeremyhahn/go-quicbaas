@@ -124,6 +124,23 @@ func TestOrchestratorGRPC_ReadmitTask_Errors(t *testing.T) {
 		assert.Nil(t, resp)
 		require.Error(t, err)
 	})
+	// A refused transition is the caller's condition, never Internal, and the
+	// message names both states (go-quicbaas#945).
+	t.Run("refused transition is FailedPrecondition naming both states", func(t *testing.T) {
+		agentSvc := &grpcTestAgentService{
+			readmitTaskFunc: func(context.Context, string, string) error {
+				return &orchestration.TaskInvalidStateError{TaskID: "x", CurrentState: orchestration.TaskStatusCompleted, TargetState: orchestration.TaskStatusPending}
+			},
+		}
+		server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
+		resp, err := server.ReadmitTask(context.Background(), &pb.ReadmitTaskRequest{TenantId: "t", TaskId: "x"})
+		assert.Nil(t, resp)
+		st, ok := status.FromError(err)
+		require.True(t, ok)
+		assert.Equal(t, codes.FailedPrecondition, st.Code())
+		assert.Contains(t, st.Message(), "current=completed")
+		assert.Contains(t, st.Message(), "target=pending")
+	})
 }
 
 func TestOrchestratorGRPC_ListTasks_ProjectAndStatusesFilter(t *testing.T) {
@@ -241,4 +258,47 @@ func TestOrchestratorGRPC_StartJob_CarriesTaskBinding(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, "task-1", got.TaskID)
 	assert.Equal(t, 3, got.Attempt)
+}
+
+// TestOrchestratorGRPC_PromptAppendCrossesTheWire: run-time prompt material
+// reaches the service on a spawn, a job and a task, and a task's and a job's
+// come back on their records.
+func TestOrchestratorGRPC_PromptAppendCrossesTheWire(t *testing.T) {
+	var spawn *orchestration.SpawnSessionRequest
+	var start *orchestration.StartJobRequest
+	var create *orchestration.CreateTaskRequest
+	agentSvc := &grpcTestAgentService{
+		spawnSessionFunc: func(_ context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
+			spawn = req
+			return &orchestration.SpawnSessionResponse{SessionID: "s1"}, nil
+		},
+		startJobFunc: func(_ context.Context, req *orchestration.StartJobRequest) (*orchestration.StartJobResponse, error) {
+			start = req
+			return &orchestration.StartJobResponse{JobID: "job-1"}, nil
+		},
+		createTaskFunc: func(_ context.Context, req *orchestration.CreateTaskRequest) (*orchestration.Task, error) {
+			create = req
+			return &orchestration.Task{ID: "t1", TenantID: req.TenantID, Subject: req.Subject, PromptAppend: req.PromptAppend}, nil
+		},
+		getJobStatusFunc: func(_ context.Context, _, jobID string) (*orchestration.JobStatus, error) {
+			return &orchestration.JobStatus{JobID: jobID, State: orchestration.JobStateExecuting, PromptAppend: "job material"}, nil
+		},
+	}
+	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
+	ctx := context.Background()
+
+	_, err := server.SpawnSession(ctx, &pb.SpawnSessionRequest{AgentId: "claude-coder", PromptAppend: "spawn material"})
+	require.NoError(t, err)
+	_, err = server.StartJob(ctx, &pb.OrchestratorStartJobRequest{TenantId: "t", Description: "d", PromptAppend: "job material"})
+	require.NoError(t, err)
+	task, err := server.CreateTask(ctx, &pb.CreateTaskRequest{TenantId: "t", Subject: "s", PromptAppend: "task material"})
+	require.NoError(t, err)
+	status, err := server.GetJobStatus(ctx, &pb.OrchestratorGetJobStatusRequest{TenantId: "t", JobId: "job-1"})
+	require.NoError(t, err)
+
+	assert.Equal(t, "spawn material", spawn.PromptAppend)
+	assert.Equal(t, "job material", start.PromptAppend)
+	assert.Equal(t, "task material", create.PromptAppend)
+	assert.Equal(t, "task material", task.GetTask().GetPromptAppend())
+	assert.Equal(t, "job material", status.GetPromptAppend())
 }

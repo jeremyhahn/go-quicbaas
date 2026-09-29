@@ -35,7 +35,6 @@ func newTestUser() *iam.User {
 		Username:    "alice",
 		Name:        "Alice",
 		Roles:       []string{"role-admin"},
-		Groups:      []string{"grp-eng"},
 		AuthMethods: []string{"webauthn"},
 		Lifecycle:   iam.LifecycleActive,
 		Attributes:  map[string]string{"dept": "eng"},
@@ -162,9 +161,6 @@ func TestGetUser_RoundTripsEveryProjectedField(t *testing.T) {
 	if len(got.Roles) != 1 || got.Roles[0] != "role-admin" {
 		t.Fatalf("Roles = %v", got.Roles)
 	}
-	if len(got.Groups) != 1 || got.Groups[0] != "grp-eng" {
-		t.Fatalf("Groups = %v — group membership must survive as a qrdb field", got.Groups)
-	}
 	if len(got.AuthMethods) != 1 || got.AuthMethods[0] != "webauthn" {
 		t.Fatalf("AuthMethods = %v", got.AuthMethods)
 	}
@@ -282,7 +278,6 @@ func TestUpdateUser_AppliesAFullReplacement(t *testing.T) {
 	}
 	u.Name = "Alice Renamed"
 	u.Roles = []string{"role-auditor"}
-	u.Groups = nil
 	if err := store.UpdateUser(ctx, u); err != nil {
 		t.Fatalf("UpdateUser: %v", err)
 	}
@@ -295,9 +290,6 @@ func TestUpdateUser_AppliesAFullReplacement(t *testing.T) {
 	}
 	if len(got.Roles) != 1 || got.Roles[0] != "role-auditor" {
 		t.Fatalf("Roles = %v", got.Roles)
-	}
-	if len(got.Groups) != 0 {
-		t.Fatalf("Groups = %v, want a cleared set to actually clear", got.Groups)
 	}
 }
 

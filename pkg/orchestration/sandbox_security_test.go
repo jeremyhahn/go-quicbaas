@@ -31,8 +31,8 @@ import (
 // exact `docker run` arguments on every path that builds a sandbox spec.
 
 // defaultSecurityRunArgs is the contiguous run-argument sequence the default
-// policy must produce: the pids bound, the five add-backs in sorted order, and
-// the drop of everything else.
+// policy must produce: the pids bound, the five add-backs in sorted order, the
+// drop of everything else, and the CI runners' memlock limit (#1038).
 func defaultSecurityRunArgs() []string {
 	return []string{
 		"--pids-limit", strconv.FormatInt(DefaultSandboxPidsLimit, 10),
@@ -42,6 +42,7 @@ func defaultSecurityRunArgs() []string {
 		"--cap-add", "SETGID",
 		"--cap-add", "SETUID",
 		"--cap-drop", "ALL",
+		"--ulimit", "memlock=4294967296:4294967296",
 	}
 }
 
@@ -98,13 +99,18 @@ func TestSandboxSecurity_ZeroValueIsTheSecureDefault(t *testing.T) {
 	if spec.PidsLimit != DefaultSandboxPidsLimit {
 		t.Errorf("PidsLimit = %d, want %d", spec.PidsLimit, DefaultSandboxPidsLimit)
 	}
+	wantUlimits := []ContainerUlimit{{Name: UlimitMemlock, Soft: 4 << 30, Hard: 4 << 30}}
+	if !slices.Equal(spec.Ulimits, wantUlimits) {
+		t.Errorf("Ulimits = %v, want %v", spec.Ulimits, wantUlimits)
+	}
 	if err := spec.Validate(); err != nil {
 		t.Fatalf("the secured spec does not validate: %v", err)
 	}
 }
 
 // TestSandboxSecurity_OverridesWhatTheSpecCarried: a caller-built spec cannot
-// keep --privileged, a wider capability grant or its own pids bound.
+// keep --privileged, a wider capability grant, its own pids bound or its own
+// ulimits.
 func TestSandboxSecurity_OverridesWhatTheSpecCarried(t *testing.T) {
 	spec := &ContainerSpec{
 		Image:      "worker:1",
@@ -112,6 +118,7 @@ func TestSandboxSecurity_OverridesWhatTheSpecCarried(t *testing.T) {
 		CapAdd:     []string{"SYS_ADMIN", "NET_RAW"},
 		CapDrop:    []string{"MKNOD"},
 		PidsLimit:  1 << 20,
+		Ulimits:    []ContainerUlimit{{Name: UlimitMemlock, Soft: 1 << 40, Hard: 1 << 40}, {Name: "nofile", Soft: 1, Hard: 1}},
 	}
 	if err := (SandboxSecurity{}).Apply(spec); err != nil {
 		t.Fatalf("Apply: %v", err)
@@ -128,6 +135,9 @@ func TestSandboxSecurity_OverridesWhatTheSpecCarried(t *testing.T) {
 	if spec.PidsLimit != DefaultSandboxPidsLimit {
 		t.Errorf("PidsLimit = %d, want the policy's %d", spec.PidsLimit, DefaultSandboxPidsLimit)
 	}
+	if want := (SandboxSecurity{}).EffectiveUlimits(); !slices.Equal(spec.Ulimits, want) {
+		t.Errorf("Ulimits = %v, want the policy's %v", spec.Ulimits, want)
+	}
 }
 
 // TestSandboxSecurity_ConfiguredValuesReplaceTheDefaults: an operator's list
@@ -137,6 +147,10 @@ func TestSandboxSecurity_ConfiguredValuesReplaceTheDefaults(t *testing.T) {
 	policy := SandboxSecurity{
 		CapAdd:    []string{"cap_setuid", "SETGID", "CAP_SETUID", " kill "},
 		PidsLimit: 512,
+		Ulimits: []ContainerUlimit{
+			{Name: "nofile", Soft: 1024, Hard: 4096},
+			{Name: UlimitMemlock, Soft: 1 << 30, Hard: 2 << 30},
+		},
 	}
 	if err := policy.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
@@ -151,6 +165,14 @@ func TestSandboxSecurity_ConfiguredValuesReplaceTheDefaults(t *testing.T) {
 	if spec.PidsLimit != 512 {
 		t.Errorf("PidsLimit = %d, want 512", spec.PidsLimit)
 	}
+	// A configured memlock replaces the default; any other name is added.
+	wantUlimits := []ContainerUlimit{
+		{Name: UlimitMemlock, Soft: 1 << 30, Hard: 2 << 30},
+		{Name: "nofile", Soft: 1024, Hard: 4096},
+	}
+	if !slices.Equal(spec.Ulimits, wantUlimits) {
+		t.Errorf("Ulimits = %v, want %v", spec.Ulimits, wantUlimits)
+	}
 }
 
 func TestSandboxSecurity_RefusesAPolicyThatCannotBeApplied(t *testing.T) {
@@ -160,6 +182,11 @@ func TestSandboxSecurity_RefusesAPolicyThatCannotBeApplied(t *testing.T) {
 		"AddBackCapAll":     {CapAdd: []string{"CAP_ALL"}},
 		"EmptyName":         {CapAdd: []string{"SETUID", "  "}},
 		"Malformed":         {CapAdd: []string{"NET_RAW;rm"}},
+		"UnknownUlimit":     {Ulimits: []ContainerUlimit{{Name: "memlok", Soft: 1, Hard: 1}}},
+		"SoftAboveHard":     {Ulimits: []ContainerUlimit{{Name: UlimitMemlock, Soft: 2, Hard: 1}}},
+		"UlimitNamedTwice": {Ulimits: []ContainerUlimit{
+			{Name: UlimitMemlock, Soft: 1, Hard: 1}, {Name: UlimitMemlock, Soft: 2, Hard: 2},
+		}},
 	}
 	for name, policy := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -170,7 +197,7 @@ func TestSandboxSecurity_RefusesAPolicyThatCannotBeApplied(t *testing.T) {
 			if err := policy.Apply(spec); !errors.Is(err, ErrInvalidInput) {
 				t.Fatalf("Apply() = %v, want ErrInvalidInput", err)
 			}
-			if !slices.Equal(spec.CapAdd, []string{"UNTOUCHED"}) || spec.CapDrop != nil {
+			if !slices.Equal(spec.CapAdd, []string{"UNTOUCHED"}) || spec.CapDrop != nil || spec.Ulimits != nil {
 				t.Fatalf("a refused Apply modified the spec: %+v", spec)
 			}
 		})
@@ -210,7 +237,7 @@ func TestRunArgs_PidsLimitIsEmittedOnlyWhenSet(t *testing.T) {
 func TestSandboxSpec_EveryTransportGetsThePolicy(t *testing.T) {
 	t.Run("Default", func(t *testing.T) {
 		backend := NewACPBackend(ACPBackendConfig{Command: "claude", CLIMode: true})
-		spec, err := backend.sandboxSpec(&SpawnRequest{WorkDir: "/srv/ws"}, "worker:1", []string{"claude"})
+		spec, err := backend.sandboxSpec(&SpawnRequest{WorkDir: "/srv/ws"}, testContainerIdentity, "worker:1", []string{"claude"})
 		if err != nil {
 			t.Fatalf("sandboxSpec: %v", err)
 		}
@@ -221,7 +248,7 @@ func TestSandboxSpec_EveryTransportGetsThePolicy(t *testing.T) {
 			Command: "claude", CLIMode: true,
 			SandboxSecurity: SandboxSecurity{CapAdd: []string{"SETUID", "SETGID"}, PidsLimit: 1024},
 		})
-		spec, err := backend.sandboxSpec(&SpawnRequest{WorkDir: "/srv/ws"}, "worker:1", []string{"claude"})
+		spec, err := backend.sandboxSpec(&SpawnRequest{WorkDir: "/srv/ws"}, testContainerIdentity, "worker:1", []string{"claude"})
 		if err != nil {
 			t.Fatalf("sandboxSpec: %v", err)
 		}
@@ -237,7 +264,7 @@ func TestSandboxSpec_EveryTransportGetsThePolicy(t *testing.T) {
 			Command: "claude", CLIMode: true,
 			SandboxSecurity: SandboxSecurity{CapAdd: []string{"ALL"}},
 		})
-		if _, err := backend.sandboxSpec(&SpawnRequest{}, "worker:1", []string{"claude"}); !errors.Is(err, ErrInvalidInput) {
+		if _, err := backend.sandboxSpec(&SpawnRequest{}, testContainerIdentity, "worker:1", []string{"claude"}); !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("sandboxSpec() = %v, want ErrInvalidInput", err)
 		}
 	})

@@ -17,6 +17,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
@@ -98,8 +99,18 @@ func ValidateInContainer(ctx context.Context, job *orchestration.JobContext, cri
 			Message: strings.TrimSpace(result.Stdout),
 		}, nil
 	}
-	failed.Message = strings.TrimSpace(result.Stderr)
-	failed.Details = verificationEvidence(result)
+	// REDACTED BEFORE IT IS BOUNDED. The evidence keeps a tail and a
+	// selection of lines, and a cut through a credential — or a tail window
+	// that opens inside a PEM block — leaves a fragment no redaction
+	// recognises afterwards. What reads this result downstream (the round's
+	// prompt, the verification record, the escalation a forge publishes)
+	// only ever sees output that was redacted whole.
+	redacted := *result
+	redacted.Stdout = redactSecrets(result.Stdout)
+	redacted.Stderr = redactSecrets(result.Stderr)
+	failed.Message = strings.TrimSpace(redacted.Stderr)
+	failed.Details = verificationEvidence(&redacted)
+	failed.ExitCode = result.ExitCode
 	return failed, nil
 }
 
@@ -124,7 +135,8 @@ func ValidateInContainer(ctx context.Context, job *orchestration.JobContext, cri
 //
 // 16 KiB is roughly a hundred lint findings or a few failing tests with
 // their assertions, and it is a bound on the PROMPT, not on the evidence: the
-// full output stays on the job's verification record.
+// job's verification record keeps its own tail, bounded by
+// orchestration.MaxValidationTextBytes.
 const VerificationEvidenceBytes = 16 * 1024
 
 func verificationEvidence(result *orchestration.ExecResult) string {
@@ -160,15 +172,21 @@ var salientFailurePrefixes = []string{"--- FAIL", "FAIL", "panic:", "# ", "make:
 
 // salientFailureLines returns, in order, the lines of output that name a
 // failure — a failed test, a failed package, a panic, a compiler's package
-// header, make's own error — up to limit lines. Passing packages (`ok`) are
-// excluded again here: their prefix is listed above only so the check reads
+// header, make's own error, an `error:` or `Error ` anywhere in a line — up
+// to limit lines. Passing packages (`ok`) are excluded again by
+// salientFailureLine: their prefix is listed above only so the check reads
 // as the reporter's vocabulary, and they are what the tail already drowns in.
+//
+// IT MATCHES WHAT THE SUMMARY MATCHES (summaryFailureLine). The summary
+// reads stdout only through this evidence, so a line this dropped before the
+// tail — a C compiler's `file.c:10:3: error:` — was lost to the audit and the
+// escalation too, whatever the summary's own vocabulary said.
 func salientFailureLines(output string, limit int) string {
 	var b strings.Builder
 	kept := 0
 	for _, line := range strings.Split(output, "\n") {
 		trimmed := strings.TrimRight(line, "\r")
-		if !salientFailureLine(trimmed) {
+		if !summaryFailureLine(trimmed) {
 			continue
 		}
 		if kept == limit {
@@ -201,4 +219,183 @@ func salientFailureLine(line string) bool {
 		}
 	}
 	return false
+}
+
+// VerificationSummaryTailLines is how many of a failed command's last
+// non-empty lines, per stream, its one-record summary keeps.
+const VerificationSummaryTailLines = 8
+
+// VerificationSummaryMarkedLines bounds how many failure-naming lines from
+// ahead of the tail a failed command's summary keeps.
+const VerificationSummaryMarkedLines = 12
+
+// VerificationSummaryLineBytes bounds one line of a summary. With the two
+// line counts above it bounds the whole summary: a record an operator reads
+// and an escalation a person reads, not a copy of the output.
+const VerificationSummaryLineBytes = 240
+
+// summaryFailureMarkers are the fragments that mark a line as naming a
+// failure anywhere in it, beyond the line starts salientFailureLine knows:
+// a compiler's or a linter's `error:`, and make's `Error 2`.
+var summaryFailureMarkers = []string{"--- FAIL", "FAIL\t", "panic:", "error:", "Error ", "make: *** "}
+
+// verificationSummary is what the record of one verification command says
+// about its output.
+//
+// A PASSING COMMAND KEEPS THE SHORT FORM: its first line. A FAILING ONE
+// CARRIES THE LINES THAT FAILED. The first line is the wrong line to keep for
+// a failure: on go-luks2 it was GNU make 4.4's harmless `env: can't execute
+// 'GOPATH'` (go-luks2#205), and both escalations of go-luks2#12 named it as
+// the cause while the real errors sat at the end of the output. The summary
+// is the failure-naming lines found ahead of the tail, then each stream's
+// last lines — stderr (the result's Message) first, then the evidence
+// (Details), which carries the exit code and stdout.
+func verificationSummary(result orchestration.ValidationResult) string {
+	if result.Passed {
+		return firstLine(redactSecrets(result.Message))
+	}
+	lines := verificationSummaryLines(result)
+	texts := make([]string, len(lines))
+	for i, line := range lines {
+		texts[i] = line.text
+	}
+	return strings.Join(texts, "\n")
+}
+
+// summaryLine is one line of a failed command's summary, and whether it
+// names the failure.
+type summaryLine struct {
+	text    string
+	failing bool
+}
+
+// verificationSummaryLines selects a failed command's summary lines.
+//
+// REDACTED WHOLE, THEN SELECTED, THEN CUT, and in that order. A credential
+// that crosses a line's cut, or a PEM block whose delimiters a selection
+// dropped, no longer has the shape redaction recognises; cutting first would
+// leave its visible half on the record and in the escalation a forge
+// publishes.
+func verificationSummaryLines(result orchestration.ValidationResult) []summaryLine {
+	var marked, tail []summaryLine
+	seen := map[string]bool{}
+	for _, stream := range []string{result.Message, result.Details} {
+		// Defused here, before anything is measured, so an excerpt cut to
+		// a budget still fits it once it is carried as a park's detail.
+		lines := nonEmptyLines(defuseUnblockMarker(redactSecrets(stream)))
+		start := len(lines) - VerificationSummaryTailLines
+		if start < 0 {
+			start = 0
+		}
+		for _, line := range lines[start:] {
+			seen[line] = true
+			tail = append(tail, summaryLine{text: line, failing: summaryFailureLine(line)})
+		}
+		for _, line := range lines[:start] {
+			if len(marked) < VerificationSummaryMarkedLines && summaryFailureLine(line) && !seen[line] {
+				seen[line] = true
+				marked = append(marked, summaryLine{text: line, failing: true})
+			}
+		}
+	}
+	lines := make([]summaryLine, 0, len(marked)+len(tail))
+	lines = append(lines, marked...)
+	lines = append(lines, tail...)
+	for i := range lines {
+		lines[i].text = boundedLine(lines[i].text, VerificationSummaryLineBytes)
+	}
+	return lines
+}
+
+// verificationExcerpt is a failed command's summary cut to budget bytes, for
+// a reader with less room than the record: the escalation a forge publishes,
+// which keeps only the head of its text (publicOutputLimit).
+//
+// THE LINES THAT NAME THE FAILURE ARE KEPT FIRST, and the rest of the room
+// goes to the output's last lines. Cutting the summary's head instead would
+// let a few long harmless lines push the `make: ***` line and the compiler's
+// diagnostics out of the very comment that exists to name them. The kept
+// lines stay in the summary's order.
+func verificationExcerpt(result orchestration.ValidationResult, budget int) string {
+	lines := verificationSummaryLines(result)
+	keep := make([]bool, len(lines))
+	used := 0
+	fits := func(i int) bool {
+		cost := len(lines[i].text) + 1
+		if used+cost > budget {
+			return false
+		}
+		used += cost
+		keep[i] = true
+		return true
+	}
+	for i := range lines {
+		if lines[i].failing {
+			fits(i)
+		}
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		if !lines[i].failing && !fits(i) {
+			break
+		}
+	}
+	var kept []string
+	for i, line := range lines {
+		if keep[i] {
+			kept = append(kept, line.text)
+		}
+	}
+	if len(kept) == 0 && len(lines) > 0 && budget > 0 {
+		// Not one whole line fits: the last failing line, cut, still says
+		// more than nothing.
+		last := lines[len(lines)-1].text
+		for i := len(lines) - 1; i >= 0; i-- {
+			if lines[i].failing {
+				last = lines[i].text
+				break
+			}
+		}
+		return boundedLine(last, max(0, budget-len(" …")))
+	}
+	return strings.Join(kept, "\n")
+}
+
+// summaryFailureLine reports whether one line names a failure, by the
+// evidence's line starts or by a marker anywhere in it.
+func summaryFailureLine(line string) bool {
+	if salientFailureLine(line) {
+		return true
+	}
+	for _, marker := range summaryFailureMarkers {
+		if strings.Contains(line, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// nonEmptyLines splits output into its lines, dropping the blank ones and
+// any carriage return a line ends on.
+func nonEmptyLines(output string) []string {
+	var lines []string
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimRight(line, "\r")
+		if strings.TrimSpace(trimmed) != "" {
+			lines = append(lines, trimmed)
+		}
+	}
+	return lines
+}
+
+// boundedLine cuts a line to at most limit bytes, on a rune boundary, and
+// says that it did.
+func boundedLine(line string, limit int) string {
+	if len(line) <= limit {
+		return line
+	}
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(line[cut]) {
+		cut--
+	}
+	return line[:cut] + " …"
 }

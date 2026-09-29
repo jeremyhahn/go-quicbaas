@@ -15,6 +15,7 @@ package sdlc
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -110,15 +111,25 @@ func (d GateDecision) Mergeable() bool { return d.Reason.Clear() }
 
 // GateInput is everything the gate reads.
 type GateInput struct {
-	Policy            ReviewPolicy
-	PullRequestState  PullRequestState
-	HeadSHA           string
-	Reviews           []ReviewRecord
-	Checks            []CheckRecord
-	AuthorModelFamily string
+	Policy           ReviewPolicy
+	PullRequestState PullRequestState
+	HeadSHA          string
+	Reviews          []ReviewRecord
+	Checks           []CheckRecord
+
+	// AuthorModelFamilies are the model families of every Agent the
+	// binding's worker slot resolves to — one for an Agent, each member's for
+	// a pool — because any of them may have written the change. An empty
+	// family among them is an author nobody can name.
+	AuthorModelFamilies []string
 
 	// Draft is the author's own statement that the change is unfinished.
 	Draft bool
+
+	// Advisory are the reviewer profiles whose verdicts and statuses the gate
+	// reads past: shown, never counted, never blocking. The zero value makes
+	// nothing advisory.
+	Advisory AdvisoryReviewers
 }
 
 // EvaluateReviewGate decides whether the current head may land.
@@ -153,7 +164,11 @@ func EvaluateReviewGate(in GateInput) GateDecision {
 		return decision
 	}
 
-	verdicts := latestVerdictsForHead(in.Reviews, in.HeadSHA)
+	// AN ADVISORY VERDICT IS READ PAST IN BOTH DIRECTIONS: it cannot approve a
+	// change and it cannot block one, and neither can the status it published.
+	// Everything below therefore judges the binding verdicts and checks alone.
+	verdicts := latestVerdictsForHead(in.Advisory.Binding(in.Reviews), in.HeadSHA)
+	checks := in.Advisory.BindingChecks(in.Checks)
 
 	// Fail-closed first: an errored review on the head blocks even beside an
 	// approval, because the review that produced the approval is the one
@@ -173,7 +188,7 @@ func EvaluateReviewGate(in GateInput) GateDecision {
 		}
 	}
 
-	if in.Policy.RequireIndependentReviewer && in.AuthorModelFamily == "" {
+	if in.Policy.RequireIndependentReviewer && (len(in.AuthorModelFamilies) == 0 || slices.Contains(in.AuthorModelFamilies, "")) {
 		decision.Reason = GateBlockedAuthorUnknown
 		decision.Detail = "independence is required but nothing records what wrote the code"
 		return decision
@@ -190,21 +205,21 @@ func EvaluateReviewGate(in GateInput) GateDecision {
 	// have merely not finished stay behind the approvals, where waiting is
 	// the right answer for both.
 	if in.Policy.RequireGreenChecks {
-		if reason, detail := evaluateChecks(in.Checks, in.HeadSHA); reason == GateBlockedChecksFailed {
+		if reason, detail := evaluateChecks(checks, in.HeadSHA); reason == GateBlockedChecksFailed {
 			decision.Reason = reason
 			decision.Detail = detail
 			return decision
 		}
 	}
 
-	independent, excluded := countIndependentApprovals(verdicts, in.Policy, in.AuthorModelFamily)
+	independent, excluded := countIndependentApprovals(verdicts, in.Policy, in.AuthorModelFamilies)
 	decision.Approvals = independent
 	if independent < in.Policy.RequiredApprovals {
 		if excluded > 0 {
 			decision.Reason = GateBlockedReviewerNotIndependent
 			decision.Detail = strconv.Itoa(excluded) +
 				" approval(s) did not come from a model family independent of the author's (" +
-				in.AuthorModelFamily + ")"
+				strings.Join(in.AuthorModelFamilies, ", ") + ")"
 			return decision
 		}
 		decision.Reason = GateBlockedInsufficientApprovals
@@ -214,7 +229,7 @@ func EvaluateReviewGate(in GateInput) GateDecision {
 	}
 
 	if in.Policy.RequireGreenChecks {
-		if reason, detail := evaluateChecks(in.Checks, in.HeadSHA); !reason.Clear() {
+		if reason, detail := evaluateChecks(checks, in.HeadSHA); !reason.Clear() {
 			decision.Reason = reason
 			decision.Detail = detail
 			return decision
@@ -292,29 +307,38 @@ func ChecksGreenForReview(policy ReviewPolicy, headSHA string, runs []ForgeCheck
 	return evaluateChecks(checkRecordsFor(runs, head, now), head)
 }
 
-// runsExcludingContext drops one check context from a run listing.
+// runsExcludingContexts drops the reviewers' own status contexts from a run
+// listing.
 //
-// THE REVIEWER'S OWN STATUS IS THE OUTPUT OF A REVIEW, NEVER AN INPUT TO
+// A REVIEWER'S OWN STATUS IS THE OUTPUT OF A REVIEW, NEVER AN INPUT TO
 // WHETHER ONE MAY START. Both paths that decide "is this head green enough to
-// review" read every status on the head, and the reviewer publishes a status
-// on that same head — so leaving it in asks the review to be green before the
-// review has run. It is circular in every state the reviewer can publish:
-// pending reads as a pipeline still running, and failure — which is what a
-// comment and an error publish — reads as a pipeline that went red. Either
-// way the head can never be reviewed again.
+// review" read every status on the head, and every reviewer profile publishes
+// a status on that same head — so leaving one in asks the review to be green
+// before the review has run. It is circular in every state a reviewer can
+// publish: pending reads as a pipeline still running, and failure — which is
+// what a comment and an error publish — reads as a pipeline that went red.
+// Either way the head can never be reviewed again. An ADVISORY profile's
+// status is excluded for the same reason and one more: it must not decide
+// anything at all.
 //
-// The MERGE gate is the opposite case and must keep it: there, a review that
-// failed is exactly what should hold the change back. So the exclusion lives
-// at the two dispatch call sites and not inside ChecksGreenForReview, which
-// both gates share.
-func runsExcludingContext(runs []ForgeCheckRun, context string) []ForgeCheckRun {
-	excluded := strings.TrimSpace(context)
-	if excluded == "" {
+// The MERGE gate is the opposite case for the REQUIRED context and must keep
+// it: there, a review that failed is exactly what should hold the change back.
+// So this exclusion lives at the two dispatch call sites and not inside
+// ChecksGreenForReview, which both gates share; the gate drops only the
+// advisory contexts (AdvisoryReviewers.BindingChecks).
+func runsExcludingContexts(runs []ForgeCheckRun, contexts []string) []ForgeCheckRun {
+	excluded := make(map[string]bool, len(contexts))
+	for _, context := range contexts {
+		if name := strings.ToLower(strings.TrimSpace(context)); name != "" {
+			excluded[name] = true
+		}
+	}
+	if len(excluded) == 0 {
 		return runs
 	}
 	kept := make([]ForgeCheckRun, 0, len(runs))
 	for _, run := range runs {
-		if strings.EqualFold(strings.TrimSpace(run.Name), excluded) {
+		if excluded[strings.ToLower(strings.TrimSpace(run.Name))] {
 			continue
 		}
 		kept = append(kept, run)
@@ -324,7 +348,7 @@ func runsExcludingContext(runs []ForgeCheckRun, context string) []ForgeCheckRun 
 
 // countIndependentApprovals counts approvals satisfying the independence
 // policy and how many it excluded, so the caller names the right refusal.
-func countIndependentApprovals(verdicts []ReviewRecord, policy ReviewPolicy, authorFamily string) (independent, excluded int) {
+func countIndependentApprovals(verdicts []ReviewRecord, policy ReviewPolicy, authorFamilies []string) (independent, excluded int) {
 	for _, review := range verdicts {
 		if review.Verdict != VerdictApprove {
 			continue
@@ -333,7 +357,7 @@ func countIndependentApprovals(verdicts []ReviewRecord, policy ReviewPolicy, aut
 			independent++
 			continue
 		}
-		if review.ModelFamily == "" || review.ModelFamily == authorFamily {
+		if review.ModelFamily == "" || slices.Contains(authorFamilies, review.ModelFamily) {
 			excluded++
 			continue
 		}

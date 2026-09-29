@@ -13,7 +13,7 @@ The Software Factory (the orchestration subsystem) manages stateless inference, 
 |------|---------|
 | Dashboard | System health, uptime, service status, and resource counts |
 | Software Factory → Jobs | Queue, monitor, and cancel orchestration jobs |
-| Software Factory → Agent Fleet | Register, view, and decommission agent daemons |
+| Software Factory → Fleet | Register, view, and decommission fleet node daemons |
 | Software Factory → Sessions | Spawn, prompt, attach, and close persistent sessions |
 | Software Factory → Tasks | Create, claim, complete, and decompose work items |
 | Software Factory → Workflows | Define, list, edit, duplicate, and run workflows |
@@ -67,7 +67,7 @@ Identity, access control, cryptography, and key management.
 New to QuicBaaS? Start here:
 
 1. Dashboard — check system health
-2. Agent Fleet — register or view deployed agents
+2. Fleet — register or view deployed agents
 3. Inference — submit your first prompt
 4. KMS — create an encryption key if needed
 
@@ -105,7 +105,7 @@ Each service shows a status badge (green checkmark for "ok", yellow triangle for
 Four stat cards displayed side-by-side (or stacked on small screens):
 
 - **Sessions** — count of active sessions; clickable link to `#/orchestration/sessions`
-- **Agents** — count of registered agent daemons; clickable link to `#/orchestration/agents`
+- **Agents** — count of registered fleet node daemons; clickable link to `#/orchestration/agents`
 - **Jobs** — count of queued/running orchestration jobs; clickable link to `#/orchestration/jobs`
 - **Workflows** — count of defined workflows; clickable link to `#/orchestration/workflows`
 
@@ -120,7 +120,7 @@ The Dashboard is read-only. All actions navigate to the relevant view:
 | Click Daemon uptime | —  | `GET /api/v1/health/live` |
 | Click Software Factory | Software Factory | `GET /api/v1/orchestrator/health` |
 | Click Sessions count | Sessions list | `GET /api/v1/orchestrator/sessions` |
-| Click Agents count | Agent Fleet | `GET /api/v1/orchestrator/agents` |
+| Click Agents count | Fleet | `GET /api/v1/fleet` |
 | Click Jobs count | Jobs list | `GET /api/v1/orchestrator/jobs` |
 | Click Workflows count | Workflows list | `GET /api/v1/orchestrator/workflows` |
 
@@ -159,7 +159,7 @@ The Dashboard is read-only. All actions navigate to the relevant view:
 
 - CLI: quicbaas health — command-line health checks
 - Software Factory → Sessions — detailed sessions walkthrough
-- Software Factory → Agent Fleet — detailed agent registration walkthrough
+- Software Factory → Fleet — detailed fleet node registration walkthrough
 
 
 ---
@@ -3698,8 +3698,15 @@ claim" below.
 **Header** — "Cost Tracking", with a breadcrumb showing where in the
 attribution chain the report is taken: `Tenant › project › task › job`.
 
-**Totals** — five cards for the current scope: Total tokens, Input, Output,
-Turns (`N ok · M failed`) and Cost.
+**Range** — All time, or the last 24 hours, 7 days or 30 days. Changing it
+reloads the report for the same scope.
+
+**Money** — the list-price equivalent, what was billed (zero per turn on a
+subscription) and the energy local inference drew. At the tenant level the
+billed card also shows the subscription fees pro-rated over the range.
+
+**Volume** — Total tokens, Input (with cache reads and writes), Output and
+Turns (`N ok · M failed`).
 
 **By &lt;level&gt;** — the drill-down: one row per identifier at the next chain
 level below the scope, with that subtree's tokens. Clicking a row narrows the
@@ -3707,16 +3714,19 @@ scope; clicking a breadcrumb widens it again. Spend that belongs to no entity
 at a level ("a job with no task") is its own row, labelled `No task`.
 
 **Accounts that paid** — per pooled account: the tokens it was charged, its
-provider, its spend-policy status, each configured quota window with live
-usage against it, and the circuit-breaker verdict when one is configured.
+billing, both money figures, its fee share over the range (tenant level, for a
+subscription with a fee), its spend-policy status, each configured quota
+window with live usage against it, and the circuit-breaker verdict when one is
+configured.
 
-**By model** — tokens per engine/model pair.
+**By model** — tokens and both money figures per engine/model pair.
 
 ### What the page will not claim
 
 | Figure | What you see, and why |
 |---|---|
-| Cost | A dash and "no price sheet — cost unmeasured". Nothing in this build prices a turn, so the ledger's cost field is UNMEASURED, not zero. A rendered `0.00` would claim the work was free (go-quicbaas#791). |
+| Cost of an unpriced model | A dash, and "no price for these models". A turn on a model the price table does not name is UNPRICED, not free; beside priced turns the figure is a floor ("at least — N turns unpriced"). |
+| A subscription fee | A dash unless the account is a subscription with a configured fee, and only at the tenant level. |
 | An account with no cap | "No spend policy" — a fact, not a budget of 0%. |
 | An account the server could not read | "Spend policy unknown" — a different fact, never collapsed into the reassuring one. |
 | Iteration budget | Absent. Only the `workflow` runner iterates, and its budget is on the job page, not here; it was never a cost. |
@@ -3728,6 +3738,7 @@ usage against it, and the circuit-breaker verdict when one is configured.
 |--------|-------------|-----------------|
 | Drill into a row | Narrows the scope to that project / task / job / session | `GET /api/v1/orchestrator/cost?project_id=…` |
 | Click a breadcrumb | Widens the scope back to that level | `GET /api/v1/orchestrator/cost` |
+| Choose a range | Narrows the report to the last day, week or 30 days | `GET /api/v1/orchestrator/cost?from=…` |
 
 ### Walkthrough
 
@@ -3932,17 +3943,17 @@ Agent: agent-01
 
 ---
 
-## Software Factory → Agent Fleet
+## Software Factory → Fleet
 
 ### Purpose
 
-The Agent Fleet view displays registered agent daemons and their status. Use this view to enroll new agents, monitor their heartbeat, and decommission offline agents. Agents appear in this registry after either a manual registration (via REST POST) or automatic enrollment (via `quicbaas agent deploy`).
+The Fleet view displays registered fleet node daemons and their status. Use this view to enroll new agents, monitor their heartbeat, and decommission offline agents. Agents appear in this registry after either a manual registration (via REST POST) or automatic enrollment (via `quicbaas fleet deploy`).
 
 ### Layout
 
 The page displays a searchable, filterable table of agents:
 
-**Header** — "Agent Fleet" title with "Registered agents and their status" subtitle. Primary CTA is **+ Register Agent** button.
+**Header** — "Fleet" title with "Registered agents and their status" subtitle. Primary CTA is **+ Register Agent** button.
 
 **Filters and Search** — Above the table:
 
@@ -3972,21 +3983,21 @@ Deploy your first agent using the CLI or API.
 
 | Action | Icon | What it does | Backend endpoint |
 |--------|------|-------------|-----------------|
-| Register Agent | Plus | Opens a form to manually register an agent via POST | `POST /api/v1/orchestrator/agents` |
-| Remove Agent | Trash | Unregisters an agent from the fleet; shows a confirm modal | `DELETE /api/v1/orchestrator/agents/{agentID}` |
-| View Details | ChevronRight | (Not yet implemented; greyed out) Shows agent capabilities and resource usage | `GET /api/v1/orchestrator/agents/{agentID}` |
+| Register Agent | Plus | Opens a form to manually register an agent via POST | `POST /api/v1/fleet` |
+| Remove Agent | Trash | Unregisters an agent from the fleet; shows a confirm modal | `DELETE /api/v1/fleet/{nodeID}` |
+| View Details | ChevronRight | (Not yet implemented; greyed out) Shows agent capabilities and resource usage | `GET /api/v1/fleet/{nodeID}` |
 
 ### Walkthrough
 
 #### Deploy an agent using the CLI and verify it appears in the fleet
 
-1. Open the Agent Fleet view (`#/orchestration/agents`).
+1. Open the Fleet view (`#/orchestration/agents`).
 2. Note the current agent count (likely 0 initially).
 3. Open a terminal on a remote machine or use localhost:9999 (QuicBaaS development mode).
 4. Deploy an agent using the CLI:
 
 ```bash
-quicbaas agent deploy \
+quicbaas fleet deploy \
   --name my-agent-01 \
   --backend ollama \
   --host localhost \
@@ -4004,7 +4015,7 @@ Type: ollama
 Last seen: 2026-04-25T17:12:59Z
 ```
 
-5. Return to the Agent Fleet view in the GUI.
+5. Return to the Fleet view in the GUI.
 6. Refresh the page (Ctrl+R).
 7. Your new agent should appear in the table with status "online" (green).
 
@@ -4041,16 +4052,16 @@ This agent will be unregistered from the fleet. Running jobs will be affected.
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| Agent shows "offline" (red) immediately after deployment | Agent is not reachable or mTLS cert verification failed | Check agent daemon logs: `tail -f agent-logs.txt`; verify CA cert is trusted |
-| Agent does not appear in the fleet after 30 seconds | Heartbeat not sent or registration API call failed | Manually register via REST: `curl -X POST https://localhost:18080/api/v1/orchestrator/agents -d '{"name":"..."}' --cacert ca.crt` |
+| Agent shows "offline" (red) immediately after deployment | Agent is not reachable or mTLS cert verification failed | Check fleet node daemon logs: `tail -f agent-logs.txt`; verify CA cert is trusted |
+| Agent does not appear in the fleet after 30 seconds | Heartbeat not sent or registration API call failed | Manually register via REST: `curl -X POST https://localhost:18080/api/v1/fleet -d '{"name":"..."}' --cacert ca.crt` |
 | Remove button is greyed out | Agent is currently running a job | Wait for the job to complete or cancel it from the Jobs view |
 | Register Agent form shows validation error | Required fields are missing (name, backend, host) | Ensure all fields are filled before submitting |
 
 ### See also
 
-- [CLI: quicbaas agent deploy](../software-factory/cli.md) — full agent deployment walkthrough
+- [CLI: quicbaas fleet deploy](../software-factory/cli.md) — full agent deployment walkthrough
 - [CLI: quicbaas orchestrator agents](../software-factory/cli.md#quicbaas-orchestrator-agents-list) — list agents via CLI
-- Software Factory → Inference — submit prompts to registered agents
+- Software Factory → Inference — submit prompts to registered fleet nodes
 - [agents/deploy.md](../software-factory/cli.md) — comprehensive agent bootstrapping guide
 
 
@@ -4070,7 +4081,7 @@ The view is structured as four stacked cards:
 
 ```
 Backend:        [Ollama ▼]  (populated from GET /api/v1/orchestrator/backends)
-Host Affinity:  [Any ▼]     (filtered from GET /api/v1/orchestrator/agents)
+Host Affinity:  [Any ▼]     (filtered from GET /api/v1/fleet)
 Model:          [qwen3:1.7b]  (free-text input; defaults to backend default)
 ```
 
@@ -4229,7 +4240,7 @@ QUIC is a modern transport protocol that...
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| Backend dropdown is empty | No backends registered in the fleet | Register an agent via Agent Fleet; see orchestrator-fleet.md |
+| Backend dropdown is empty | No backends registered in the fleet | Register an agent via Fleet; see orchestrator-fleet.md |
 | Host Affinity dropdown shows "No agents" | No agents registered for the chosen backend | Deploy an agent with the Ollama (or other) backend |
 | Prompt sends but response is blank | Backend or agent timed out (>30s) | Check agent logs; consider a simpler prompt; restart the agent |
 | Model field shows "not found" error | Model is not installed on the agent | Install the model: `ollama pull qwen3:1.7b` on the agent host |
@@ -4243,7 +4254,7 @@ QUIC is a modern transport protocol that...
 - [agents/inference.md](../software-factory/user.md) — complete API and architecture reference
 - [CLI: quicbaas orchestrator inference](../software-factory/cli.md#quicbaas-orchestrator-inference) — stateless inference via CLI
 - Software Factory → Sessions — persistent session-based prompts (for Claude, Codex, etc.)
-- Software Factory → Agent Fleet — register and manage agents
+- Software Factory → Fleet — register and manage agents
 
 
 ---
@@ -4340,7 +4351,7 @@ Job a1b2c3d4… will be terminated. This cannot be undone.
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| Cannot start a job; modal shows "No backends available" | No backends registered in this tenant | Go to Agent Fleet and register an agent; see orchestrator-fleet.md |
+| Cannot start a job; modal shows "No backends available" | No backends registered in this tenant | Go to Fleet and register an agent; see orchestrator-fleet.md |
 | Job stays in "executing" state indefinitely | Job is stuck or agent is unreachable | Cancel the job and check daemon logs: `quicbaas logs` |
 | Cancel button is disabled/grayed out | Job is already completed or failed (not cancellable) | Only running or escalating jobs can be cancelled |
 | Job ID is not clickable (no detail view) | The job detail view is not yet implemented | Use the CLI: `quicbaas orchestrator jobs status <job-id>` |
@@ -4500,7 +4511,7 @@ This session will be terminated. You cannot send more prompts to it.
 |-------|-------|-----|
 | Spawn Session form shows "No backends available" | No session-based backends registered (Claude, Codex, OpenCode not deployed) | Deploy an agent with a session backend; see orchestrator-fleet.md |
 | Prompt returns error "Backend requires authentication" | ACP backend (Claude) needs API key or token | Set up ACP credentials in the daemon config |
-| Session stays in "paused" state | Backend is slow or unreachable | Check agent daemon logs; restart the agent |
+| Session stays in "paused" state | Backend is slow or unreachable | Check fleet node daemon logs; restart the agent |
 | Attach view shows no events | No events recorded yet (new session) | Send a prompt first, then attach |
 | Close Session button is disabled | Session is already closed | Refresh the page; the session may have been closed from another client |
 
@@ -4882,7 +4893,7 @@ recipient_email: [user@example.com_________]
 | Wizard form validation fails | Required fields are empty (name, at least one step) | Fill in all required fields before clicking Next |
 | Run Workflow shows "Missing parameters" | Workflow expects input that you didn't provide | Check the workflow definition; provide all required parameters |
 | JSON editor shows parse error | JSON syntax is invalid | Fix syntax errors (missing quotes, commas, braces) |
-| Workflow step uses nonexistent backend | Backend is not registered in the fleet | Register the backend via Agent Fleet; edit the workflow to use an available backend |
+| Workflow step uses nonexistent backend | Backend is not registered in the fleet | Register the backend via Fleet; edit the workflow to use an available backend |
 | Delete Workflow is disabled | Workflow is currently running | Wait for the running job to complete or cancel it from the Jobs view |
 
 ### See also

@@ -46,20 +46,6 @@ func (bm *BatchManager) ExportAll(ctx context.Context, req *BatchExportRequest) 
 		return nil, ErrBatchCanceled
 	}
 
-	// Export groups
-	if req.IncludeGroups {
-		groups, err := bm.ExportGroups(ctx, req.TenantID, req.Filter)
-		if err != nil {
-			return nil, err
-		}
-		result.Groups = groups
-	}
-
-	// Check context
-	if err := ctx.Err(); err != nil {
-		return nil, ErrBatchCanceled
-	}
-
 	// Export roles
 	if req.IncludeRoles {
 		roles, err := bm.ExportRoles(ctx, req.TenantID, req.Filter)
@@ -140,61 +126,6 @@ func (bm *BatchManager) ExportUsers(ctx context.Context, tenantID string, filter
 	}
 
 	return allUsers, nil
-}
-
-// ExportGroups exports groups from a tenant with optional filtering.
-func (bm *BatchManager) ExportGroups(ctx context.Context, tenantID string, filter ExportFilter) ([]*Group, error) {
-	if tenantID == "" {
-		return nil, &ValidationError{Field: "tenant_id", Message: "tenant ID is required"}
-	}
-
-	if bm.identityStore == nil {
-		return nil, &dberrors.QBError{
-			Code: dberrors.ErrInternal,
-			Op:   "iam.batch.exportGroups",
-			Err:  errBatchOperationFailed,
-		}
-	}
-
-	// Build list options
-	listOpts := ListOptions{
-		Limit: 1000, // Export in batches
-	}
-
-	var allGroups []*Group
-	offset := 0
-
-	for {
-		// Check context
-		if err := ctx.Err(); err != nil {
-			return nil, ErrBatchCanceled
-		}
-
-		listOpts.Offset = offset
-		groups, err := bm.identityStore.ListGroups(ctx, tenantID, listOpts)
-		if err != nil {
-			return nil, err
-		}
-
-		if len(groups) == 0 {
-			break
-		}
-
-		// Apply filters
-		for _, group := range groups {
-			if bm.groupMatchesFilter(group, filter) {
-				allGroups = append(allGroups, group)
-			}
-		}
-
-		if len(groups) < listOpts.Limit {
-			break
-		}
-
-		offset += listOpts.Limit
-	}
-
-	return allGroups, nil
 }
 
 // ExportRoles exports roles from a tenant with optional filtering.
@@ -342,41 +273,6 @@ func (bm *BatchManager) userMatchesFilter(user *User, filter ExportFilter) bool 
 	return true
 }
 
-// groupMatchesFilter checks if a group matches the export filter.
-func (bm *BatchManager) groupMatchesFilter(group *Group, filter ExportFilter) bool {
-	// Check ID filter
-	if len(filter.GroupIDs) > 0 {
-		found := false
-		for _, id := range filter.GroupIDs {
-			if group.ID == id {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-
-	// Check created time filters
-	if filter.CreatedAfter != nil && group.Created.Before(*filter.CreatedAfter) {
-		return false
-	}
-	if filter.CreatedBefore != nil && group.Created.After(*filter.CreatedBefore) {
-		return false
-	}
-
-	// Check updated time filters
-	if filter.UpdatedAfter != nil && group.Updated.Before(*filter.UpdatedAfter) {
-		return false
-	}
-	if filter.UpdatedBefore != nil && group.Updated.After(*filter.UpdatedBefore) {
-		return false
-	}
-
-	return true
-}
-
 // roleMatchesFilter checks if a role matches the export filter.
 func (bm *BatchManager) roleMatchesFilter(role *Role, filter ExportFilter) bool {
 	// Check ID filter
@@ -469,23 +365,9 @@ func (result *BatchExportResult) ConvertToImportRequest(targetTenantID string) *
 				Username:   user.Username,
 				Name:       user.Name,
 				Attributes: user.Attributes,
-				Groups:     user.Groups,
 				Roles:      user.Roles,
 				Lifecycle:  user.Lifecycle,
 				Enabled:    &enabled,
-			})
-		}
-	}
-
-	// Convert groups
-	if len(result.Groups) > 0 {
-		req.Groups = make([]*GroupImport, 0, len(result.Groups))
-		for _, group := range result.Groups {
-			req.Groups = append(req.Groups, &GroupImport{
-				ID:          group.ID,
-				Name:        group.Name,
-				Description: group.Description,
-				Members:     group.Members,
 			})
 		}
 	}

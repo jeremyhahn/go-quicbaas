@@ -59,6 +59,7 @@ var brokerServiceDescs = []grpc.ServiceDesc{
 	pb.ObjectTransferService_ServiceDesc,
 	pb.OrchestratorService_ServiceDesc,
 	pb.SDLCService_ServiceDesc,
+	pb.AgentCatalogService_ServiceDesc,
 	pb.MessagingService_ServiceDesc,
 	pb.SchedulerService_ServiceDesc,
 	pb.ParameterStore_ServiceDesc,
@@ -209,10 +210,7 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.v1.QuicBaaS/RestoreBackup": {"backup", "restore"},
 	"/quicbaas.v1.QuicBaaS/VerifyBackup":  {"backup", "verify"},
 
-	// ---- quicbaas.v1.QuicBaaS: user / role management ----
-	"/quicbaas.v1.QuicBaaS/CreateUser": {"users", "create"},
-	"/quicbaas.v1.QuicBaaS/DeleteUser": {"users", "delete"},
-	"/quicbaas.v1.QuicBaaS/ListUsers":  {"users", "list"},
+	// ---- quicbaas.v1.QuicBaaS: role management ----
 	"/quicbaas.v1.QuicBaaS/CreateRole": {"roles", "create"},
 	"/quicbaas.v1.QuicBaaS/DeleteRole": {"roles", "delete"},
 	"/quicbaas.v1.QuicBaaS/ListRoles":  {"roles", "list"},
@@ -595,6 +593,10 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.orchestrator.v1.OrchestratorService/SubscribeSessionEvents": {"orchestrator", "status"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/GetSessionConversation": {"orchestrator", "status"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/GetSpendReport":         {"orchestrator", "status"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/GetTenantSpendPolicy":   {"orchestrator", "status"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/SetTenantSpendPolicy":   {"spend_policy", "write"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/GetCostSettings":        {"orchestrator", "status"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/SetCostSettings":        {"cost_settings", "write"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/CreateTask":             {"orchestrator", "task_create"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/GetTask":                {"orchestrator", "task_read"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/ListTasks":              {"orchestrator", "task_list"},
@@ -617,11 +619,11 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.orchestrator.v1.OrchestratorService/Health":                 {"orchestrator", "health"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/Inference":              {"orchestrator", "inference"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/InferenceStream":        {"orchestrator", "inference"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/RegisterAgent":          {"orchestrator", "agent_register"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/GetAgent":               {"orchestrator", "agent_read"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/ListAgents":             {"orchestrator", "agent_list"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/RemoveAgent":            {"orchestrator", "agent_remove"},
-	"/quicbaas.orchestrator.v1.OrchestratorService/AgentHeartbeat":         {"orchestrator", "agent_heartbeat"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/RegisterFleetNode":      {"orchestrator", "agent_register"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/GetFleetNode":           {"orchestrator", "agent_read"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/ListFleetNodes":         {"orchestrator", "agent_list"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/RemoveFleetNode":        {"orchestrator", "agent_remove"},
+	"/quicbaas.orchestrator.v1.OrchestratorService/FleetNodeHeartbeat":     {"orchestrator", "agent_heartbeat"},
 	"/quicbaas.orchestrator.v1.OrchestratorService/PushEvents":             {"orchestrator", "hook"},
 
 	// ---- quicbaas.messaging.v1.MessagingService ----
@@ -672,6 +674,25 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.dynamicsecrets.v1.DynamicSecretsService/RevokeLease":        {"dynamic_secrets", "lease_revoke"},
 	"/quicbaas.dynamicsecrets.v1.DynamicSecretsService/ListLeases":         {"dynamic_secrets", "lease_list"},
 
+	// ---- quicbaas.agents.v1.AgentCatalogService ----
+	// A tenant's AI agent definitions and pools, mirroring GET/POST/PUT/DELETE
+	// /api/v1/agents and /api/v1/agent-pools and the MCP quicbaas_agents_* /
+	// quicbaas_agent_pools_* tools. Reads are agents:read; every change —
+	// including a delete, which the catalog refuses while anything uses the
+	// Agent — is agents:write.
+	"/quicbaas.agents.v1.AgentCatalogService/ListAgents":      {"agents", "read"},
+	"/quicbaas.agents.v1.AgentCatalogService/GetAgent":        {"agents", "read"},
+	"/quicbaas.agents.v1.AgentCatalogService/AgentUsedBy":     {"agents", "read"},
+	"/quicbaas.agents.v1.AgentCatalogService/CreateAgent":     {"agents", "write"},
+	"/quicbaas.agents.v1.AgentCatalogService/UpdateAgent":     {"agents", "write"},
+	"/quicbaas.agents.v1.AgentCatalogService/DeleteAgent":     {"agents", "write"},
+	"/quicbaas.agents.v1.AgentCatalogService/ListAgentPools":  {"agents", "read"},
+	"/quicbaas.agents.v1.AgentCatalogService/GetAgentPool":    {"agents", "read"},
+	"/quicbaas.agents.v1.AgentCatalogService/AgentPoolUsedBy": {"agents", "read"},
+	"/quicbaas.agents.v1.AgentCatalogService/CreateAgentPool": {"agents", "write"},
+	"/quicbaas.agents.v1.AgentCatalogService/UpdateAgentPool": {"agents", "write"},
+	"/quicbaas.agents.v1.AgentCatalogService/DeleteAgentPool": {"agents", "write"},
+
 	// ---- quicbaas.sdlc.v1.SDLCService ----
 	// The SDLC module's verbs, mirroring the REST rules for the binding,
 	// delivery and forges routes and the MCP sdlc_* tools. ListForges is
@@ -688,6 +709,30 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// change it.
 	"/quicbaas.sdlc.v1.SDLCService/Onboard":        {"sdlc", "bind"},
 	"/quicbaas.sdlc.v1.SDLCService/GetConformance": {"sdlc", "read"},
+	// Open work is read from the forge and changes nothing, like conformance.
+	"/quicbaas.sdlc.v1.SDLCService/GetOpenWork": {"sdlc", "read"},
+	// Choosing which reviewer judges a pull request is a decision about the
+	// project's review, so writing an override carries the bind permission
+	// the binding does; reading one is sdlc:read.
+	"/quicbaas.sdlc.v1.SDLCService/GetReviewerSelection":  {"sdlc", "read"},
+	"/quicbaas.sdlc.v1.SDLCService/SetReviewerOverride":   {"sdlc", "bind"},
+	"/quicbaas.sdlc.v1.SDLCService/ClearReviewerOverride": {"sdlc", "bind"},
+	// Filing an issue is an operator write on the bound forge with its own
+	// action; listing the collaborators a ruler is picked from only reads.
+	"/quicbaas.sdlc.v1.SDLCService/FileIssue":         {"sdlc", "issue_create"},
+	"/quicbaas.sdlc.v1.SDLCService/ListCollaborators": {"sdlc", "read"},
+	// The worker image refresh is a HOST verb over every tenant's bindings,
+	// so it has its own cross-tenant family rather than an sdlc:* action,
+	// mirroring GET /api/v1/sdlc/worker-image and POST .../refresh.
+	"/quicbaas.sdlc.v1.SDLCService/GetWorkerImageStatus": {"worker_images", "read"},
+	"/quicbaas.sdlc.v1.SDLCService/RefreshWorkerImage":   {"worker_images", "refresh"},
+	// Adopting an issue creates its task, and is gated as task creation is,
+	// mirroring POST /api/v1/sdlc/projects/{projectID}/adopt.
+	"/quicbaas.sdlc.v1.SDLCService/AdoptIssue": {"orchestrator", "task_create"},
+	// The attention inbox, mirroring GET /api/v1/orchestrator/attention and
+	// POST .../attention/{taskID}/resolve.
+	"/quicbaas.sdlc.v1.SDLCService/ListAttention":    {"orchestrator", "status"},
+	"/quicbaas.sdlc.v1.SDLCService/ResolveAttention": {"orchestrator", "task_readmit"},
 
 	// ---- quicbaas.project.v1.ProjectService ----
 	"/quicbaas.project.v1.ProjectService/CreateProject":    {"project", "create"},
@@ -697,9 +742,9 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.project.v1.ProjectService/UpdateProject":    {"project", "update"},
 	"/quicbaas.project.v1.ProjectService/DeleteProject":    {"project", "delete"},
 	// Membership verbs mirror the REST PEP rules for
-	// PUT/DELETE /api/v1/projects/{id}/permissions/{agent_id}.
-	"/quicbaas.project.v1.ProjectService/GrantAgentRole":  {"project", "grant"},
-	"/quicbaas.project.v1.ProjectService/RevokeAgentRole": {"project", "revoke"},
+	// PUT/DELETE /api/v1/projects/{id}/permissions/{node_id}.
+	"/quicbaas.project.v1.ProjectService/GrantFleetNodeRole":  {"project", "grant"},
+	"/quicbaas.project.v1.ProjectService/RevokeFleetNodeRole": {"project", "revoke"},
 
 	// ---- quicbaas.account.v1.AccountService ----
 	// Pooled provider accounts custody credential material (an Anthropic /
@@ -715,7 +760,7 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// namespacing, while a pooled account is written into the requesting
 	// tenant's own keyspace. Under credentials:* the RBAC cross-scope rule
 	// denied every tenant identity a surface that is tenant data, including the
-	// enrolled agent daemon that has to select over it (go-quicbaas#734). Same
+	// enrolled fleet node daemon that has to select over it (go-quicbaas#734). Same
 	// correction as go-quicbaas#534 made for /api/v1/secrets.
 	//
 	// The WRITE verbs deliberately still take credentials:*, so minting or
@@ -739,6 +784,10 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// daemon this verb exists for; and an identity that may READ the pool's
 	// metadata must not thereby be able to extract every login in it.
 	"/quicbaas.account.v1.AccountService/MaterializeAccountCredential": {"agent_accounts", "materialize"},
+	// The session reservation is the release's companion: taken immediately
+	// before it, by the same principal, for the session the release serves.
+	"/quicbaas.account.v1.AccountService/ReserveAccountSession": {"agent_accounts", "materialize"},
+	"/quicbaas.account.v1.AccountService/ReleaseAccountSession": {"agent_accounts", "materialize"},
 
 	// ---- quicbaas.ssh.v1.SSHService ----
 	// SSH assets are cryptographic keys, so they authorize with the qrdb

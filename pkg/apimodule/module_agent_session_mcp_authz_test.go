@@ -126,9 +126,8 @@ func enrolledAgentSessionUser(t *testing.T, cert *x509.Certificate) *user.User {
 
 	records := iam.NewMemoryStorage()
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  records,
-		GroupStorage: records,
-		RoleStorage:  records,
+		UserStorage: records,
+		RoleStorage: records,
 	})
 	enrolled, err := store.EnrollAgentSessionIdentity(t.Context(), agentSessionTenant, cert)
 	if err != nil {
@@ -304,9 +303,8 @@ func TestAgentSession_RevokedCertificateCannotAct(t *testing.T) {
 
 	records := iam.NewMemoryStorage()
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  records,
-		GroupStorage: records,
-		RoleStorage:  records,
+		UserStorage: records,
+		RoleStorage: records,
 	})
 	enrolled, err := store.EnrollAgentSessionIdentity(t.Context(), agentSessionTenant, cert)
 	if err != nil {
@@ -359,11 +357,11 @@ func TestAgentSession_IsNotADaemon(t *testing.T) {
 
 	registry := middleware.NewMCPToolRegistry()
 	daemonOnly := map[string]permission.Permission{
-		"daemon_heartbeat":      permission.Permission(iam.AgentScopeControlHeartbeat),
-		"daemon_hook":           permission.Permission(iam.AgentScopeControlHook),
-		"daemon_materialize":    permission.Permission(iam.AgentScopeAccountMaterialize),
-		"daemon_account_read":   permission.Permission(iam.AgentScopeAccountRead),
-		"daemon_account_list":   permission.Permission(iam.AgentScopeAccountList),
+		"daemon_heartbeat":      permission.Permission(iam.FleetScopeControlHeartbeat),
+		"daemon_hook":           permission.Permission(iam.FleetScopeControlHook),
+		"daemon_materialize":    permission.Permission(iam.FleetScopeAccountMaterialize),
+		"daemon_account_read":   permission.Permission(iam.FleetScopeAccountRead),
+		"daemon_account_list":   permission.Permission(iam.FleetScopeAccountList),
 		"daemon_runtime_spawn":  permission.Permission("agent:runtime:spawn"),
 		"daemon_runtime_prompt": permission.Permission("agent:runtime:prompt"),
 	}

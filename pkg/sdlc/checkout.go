@@ -15,6 +15,7 @@ package sdlc
 
 import (
 	"context"
+	"errors"
 	"path"
 	"strings"
 
@@ -74,6 +75,12 @@ type checkoutStep struct {
 
 	// Output is the command's combined output, capped.
 	Output string
+
+	// NotRun, when set, says the command never ran and why: its session's
+	// container was gone. Evidence renders it INSTEAD of the command line,
+	// because printing a git command that never ran is how a dead container
+	// came to read as a failed clone (go-quicbaas#932).
+	NotRun string
 }
 
 // gitSteps runs git inside a worker's container and keeps every command it
@@ -90,6 +97,10 @@ type gitSteps struct {
 
 	// taskID names the attempt in every error.
 	taskID string
+
+	// sessionID names the session whose container the commands run in, for
+	// the error that reports that container gone.
+	sessionID string
 
 	// steps is every command run, in order, with its output.
 	steps []checkoutStep
@@ -146,6 +157,10 @@ func (c *cloner) Checkout() error {
 func (c *gitSteps) Evidence() string {
 	var b strings.Builder
 	for _, step := range c.steps {
+		if step.NotRun != "" {
+			b.WriteString("! " + step.NotRun + "\n")
+			continue
+		}
 		b.WriteString("$ " + step.Command + "\n")
 		if step.Output != "" {
 			b.WriteString(step.Output + "\n")
@@ -327,16 +342,40 @@ func (c *gitSteps) run(workDir string, args ...string) (*orchestration.ExecResul
 // probe executes one git command whose EXIT STATUS is the answer, so a
 // non-zero exit is a "no" rather than a failure. Every command run either way
 // is recorded as evidence.
+//
+// A CONTAINER THAT IS GONE IS NEITHER. The command never ran, so there is no
+// answer to read and no failure of git to report: it is answered as
+// SessionContainerGoneError, naming the session and the container, and the
+// evidence says the container was gone instead of printing the command.
 func (c *gitSteps) probe(workDir string, args ...string) (*orchestration.ExecResult, error) {
 	result, err := c.exec(&orchestration.ExecSpec{
 		Cmd:     append([]string{gitCommand}, args...),
 		WorkDir: workDir,
 	})
 	if err != nil {
+		if gone := c.containerGone(err); gone != nil {
+			c.steps = append(c.steps, checkoutStep{NotRun: gone.Subject()})
+			return nil, gone
+		}
 		return nil, err
 	}
 	c.record(args, result)
 	return result, nil
+}
+
+// containerGone answers the typed error for an exec the runtime refused
+// because the session's container has stopped or no longer exists, and nil
+// for every other exec failure, which is returned as it is.
+func (c *gitSteps) containerGone(err error) *SessionContainerGoneError {
+	var stopped *orchestration.ContainerNotRunningError
+	if errors.As(err, &stopped) {
+		return &SessionContainerGoneError{TaskID: c.taskID, SessionID: c.sessionID, ContainerID: stopped.ContainerID, Cause: err}
+	}
+	var missing *orchestration.ContainerNotFoundError
+	if errors.As(err, &missing) {
+		return &SessionContainerGoneError{TaskID: c.taskID, SessionID: c.sessionID, ContainerID: missing.ContainerID, Cause: err}
+	}
+	return nil
 }
 
 // record keeps one command and what it said.
@@ -401,7 +440,7 @@ type containerCheckout struct {
 // only place a person can see why is the job it died on.
 func (c containerCheckout) Make(ctx context.Context) error {
 	cl := &cloner{
-		gitSteps: gitSteps{exec: sessionExec(ctx, c.job, c.sessionID), taskID: c.taskID},
+		gitSteps: gitSteps{exec: sessionExec(ctx, c.job, c.sessionID), taskID: c.taskID, sessionID: c.sessionID},
 		project:  c.project,
 		spec:     c.spec,
 	}
@@ -420,7 +459,7 @@ func (c containerCheckout) Make(ctx context.Context) error {
 // hand; the point of running them here is that nobody has to.
 func (c containerCheckout) Verify(ctx context.Context) error {
 	p := &preflight{
-		gitSteps: gitSteps{exec: sessionExec(ctx, c.job, c.sessionID), taskID: c.taskID},
+		gitSteps: gitSteps{exec: sessionExec(ctx, c.job, c.sessionID), taskID: c.taskID, sessionID: c.sessionID},
 		spec:     c.spec,
 	}
 	err := p.Verify()

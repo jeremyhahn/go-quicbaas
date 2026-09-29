@@ -1,0 +1,32 @@
+Removing SSH command configuration
+[command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+[command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+Removing HTTP extra header
+[command]/usr/bin/git config --local --name-only --get-regexp http\.http\:\/\/198\.51\.100\.50\:3001\/\.extraheader
+[command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.http\:\/\/198\.51\.100\.50\:3001\/\.extraheader' && git config --local --unset-all 'http.http://198.51.100.50:3001/.extraheader' || :"
+Removing includeIf entries pointing to credentials config files
+[command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+includeif.gitdir:/workspace/jeremyhahn/go-quicbaas/.git.path
+includeif.gitdir:/workspace/jeremyhahn/go-quicbaas/.git/worktrees/*.path
+includeif.gitdir:/github/workspace/.git.path
+includeif.gitdir:/github/workspace/.git/worktrees/*.path
+[command]/usr/bin/git config --local --get-all includeif.gitdir:/workspace/jeremyhahn/go-quicbaas/.git.path
+/tmp/git-credentials-8e21ee35-82c2-4cb7-b60f-01795ec6deef.config
+[command]/usr/bin/git config --local --unset includeif.gitdir:/workspace/jeremyhahn/go-quicbaas/.git.path /tmp/git-credentials-8e21ee35-82c2-4cb7-b60f-01795ec6deef.config
+[command]/usr/bin/git config --local --get-all includeif.gitdir:/workspace/jeremyhahn/go-quicbaas/.git/worktrees/*.path
+/tmp/git-credentials-8e21ee35-82c2-4cb7-b60f-01795ec6deef.config
+[command]/usr/bin/git config --local --unset includeif.gitdir:/workspace/jeremyhahn/go-quicbaas/.git/worktrees/*.path /tmp/git-credentials-8e21ee35-82c2-4cb7-b60f-01795ec6deef.config
+[command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+/github/runner_temp/git-credentials-8e21ee35-82c2-4cb7-b60f-01795ec6deef.config
+[command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-8e21ee35-82c2-4cb7-b60f-01795ec6deef.config
+[command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+/github/runner_temp/git-credentials-8e21ee35-82c2-4cb7-b60f-01795ec6deef.config
+[command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-8e21ee35-82c2-4cb7-b60f-01795ec6deef.config
+[command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+Removing credentials config '/tmp/git-credentials-8e21ee35-82c2-4cb7-b60f-01795ec6deef.config'
+Success - Post Checkout code
+Cleaning up container for job Unit Tests
+Timed out waiting for the daemon to remove container 1c201663a9c2cd60a71bbe5b3ca354bf9474b400bcadca996f864842a87eaaeb, its volumes and network may be left behind
+##[error]Error while stop job container: Error response from daemon: remove GITEA-ACTIONS-TASK-79769-WORKFLOW-CI-JOB-Unit-Tests-09219b22c7a5659ad968238eb865ae908b2291ef754c81ccba2b1a08c604bc03: volume is in use - [1c201663a9c2cd60a71bbe5b3ca354bf9474b400bcadca996f864842a87eaaeb]%0AError response from daemon: remove GITEA-ACTIONS-TASK-79769-WORKFLOW-CI-JOB-Unit-Tests-09219b22c7a5659ad968238eb865ae908b2291ef754c81ccba2b1a08c604bc03-env: volume is in use - [1c201663a9c2cd60a71bbe5b3ca354bf9474b400bcadca996f864842a87eaaeb]
+Job failed
+Error occurred running finally: Error occurred running finally: Error response from daemon: remove GITEA-ACTIONS-TASK-79769-WORKFLOW-CI-JOB-Unit-Tests-09219b22c7a5659ad968238eb865ae908b2291ef754c81ccba2b1a08c604bc03: volume is in use - [1c201663a9c2cd60a71bbe5b3ca354bf9474b400bcadca996f864842a87eaaeb]\nError response from daemon: remove GITEA-ACTIONS-TASK-79769-WORKFLOW-CI-JOB-Unit-Tests-09219b22c7a5659ad968238eb865ae908b2291ef754c81ccba2b1a08c604bc03-env: volume is in use - [1c201663a9c2cd60a71bbe5b3ca354bf9474b400bcadca996f864842a87eaaeb] (original error: <nil>) (original error: <nil>)

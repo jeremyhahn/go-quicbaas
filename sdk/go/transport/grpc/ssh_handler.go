@@ -224,6 +224,7 @@ func handleSSHAddKnownHost(ctx context.Context, conn *grpc.ClientConn, req inter
 		Fingerprint: sdkReq.Fingerprint,
 		Algorithm:   sdkReq.Algorithm,
 		Source:      sdkReq.Source,
+		PublicKey:   sdkReq.PublicKey,
 	})
 	if err != nil {
 		return nil, convertGRPCError(err, op)
@@ -253,6 +254,7 @@ func handleSSHListKnownHosts(ctx context.Context, conn *grpc.ClientConn, req int
 			Algorithm:   p.GetAlgorithm(),
 			AddedAt:     time.Unix(p.GetAddedAtUnix(), 0).UTC(),
 			Source:      p.GetSource(),
+			PublicKey:   p.GetPublicKey(),
 		})
 	}
 	return out, nil

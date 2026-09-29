@@ -492,9 +492,6 @@ type ExternalProvider struct {
 	// DefaultRoles are assigned to auto-provisioned users.
 	DefaultRoles []string `json:"default_roles,omitempty"`
 
-	// DefaultGroups are assigned to auto-provisioned users.
-	DefaultGroups []string `json:"default_groups,omitempty"`
-
 	// DefaultScopes are the platform token scopes (the `scp` catalog, e.g.
 	// "<svc>.<verb>") granted to a federated login when no GroupScopeMappings are
 	// configured (the back-compatible fallback). When GroupScopeMappings ARE

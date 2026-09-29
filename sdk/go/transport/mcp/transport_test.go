@@ -252,11 +252,6 @@ func TestTransport_MapToToolName(t *testing.T) {
 		{"quicbaas.IAM.User", "Delete", "quicbaas_iam_user_delete"},
 		{"quicbaas.IAM.User", "List", "quicbaas_iam_user_list"},
 
-		// IAM Group operations
-		{"quicbaas.IAM.Group", "Create", "quicbaas_iam_group_create"},
-		{"quicbaas.IAM.Group", "Get", "quicbaas_iam_group_get"},
-		{"quicbaas.IAM.Group", "Delete", "quicbaas_iam_group_delete"},
-
 		// IAM Role operations
 		{"quicbaas.IAM.Role", "Create", "quicbaas_iam_role_create"},
 		{"quicbaas.IAM.Role", "Get", "quicbaas_iam_role_get"},

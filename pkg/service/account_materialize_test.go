@@ -118,7 +118,7 @@ func TestMaterialize_ReleasesTheEnvelopeToItsOwnTenant(t *testing.T) {
 	resp, err := f.svc.MaterializeAccountCredential(context.Background(), &MaterializeAccountCredentialRequest{
 		TenantID:  "tenant-a",
 		AccountID: accountID,
-		AgentID:   "agent-vm-host-4",
+		AgentID:   "agent-agent-04",
 	})
 	if err != nil {
 		t.Fatalf("MaterializeAccountCredential() error = %v", err)
@@ -185,7 +185,7 @@ func TestMaterialize_EmitsOneAuditEventNamingAgentAndAccount(t *testing.T) {
 	accountID := f.createAccount(t, "tenant-a", "")
 
 	if _, err := f.svc.MaterializeAccountCredential(context.Background(), &MaterializeAccountCredentialRequest{
-		TenantID: "tenant-a", AccountID: accountID, AgentID: "agent-vm-host-4",
+		TenantID: "tenant-a", AccountID: accountID, AgentID: "agent-agent-04",
 	}); err != nil {
 		t.Fatalf("MaterializeAccountCredential() error = %v", err)
 	}
@@ -205,7 +205,7 @@ func TestMaterialize_EmitsOneAuditEventNamingAgentAndAccount(t *testing.T) {
 		t.Error("successful release audited as a failure")
 	case !strings.Contains(release.ResourceID, accountID):
 		t.Errorf("release audit %q does not name the account", release.ResourceID)
-	case !strings.Contains(release.ResourceID, "agent-vm-host-4"):
+	case !strings.Contains(release.ResourceID, "agent-agent-04"):
 		t.Errorf("release audit %q does not name the agent", release.ResourceID)
 	}
 }

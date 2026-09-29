@@ -130,7 +130,7 @@ func TestProjectService_RoutedStoreFindsProjectUnderRequestTenant(t *testing.T) 
 	created, err := svc.CreateProject(plainCtx, &service.CreateProjectRequest{
 		TenantID: tenantID,
 		Name:     "routed-project",
-		AgentRoles: map[string]orchestration.ProjectRole{
+		FleetNodeRoles: map[string]orchestration.ProjectRole{
 			agentID: orchestration.ProjectRoleWorker,
 		},
 	})
@@ -143,7 +143,7 @@ func TestProjectService_RoutedStoreFindsProjectUnderRequestTenant(t *testing.T) 
 	authz := orchestration.NewProjectAuthz(store)
 	tenantCtx := orchestration.ContextWithTenant(context.Background(), tenantID)
 
-	if authzErr := authz.AuthorizeAgentForTenant(
+	if authzErr := authz.AuthorizeFleetNodeForTenant(
 		tenantCtx, tenantID, projectID, agentID, orchestration.ProjectRoleWorker,
 	); authzErr != nil {
 		t.Fatalf("the worker the project granted must be authorized: %v", authzErr)
@@ -151,16 +151,16 @@ func TestProjectService_RoutedStoreFindsProjectUnderRequestTenant(t *testing.T) 
 
 	// A grant made through the same untenanted caller must reach the same
 	// record, or a revocation would be invisible to the PEP.
-	if _, grantErr := svc.GrantAgentRole(plainCtx, &service.GrantAgentRoleRequest{
-		TenantID:  tenantID,
-		ProjectID: projectID,
-		AgentID:   agentID,
-		Role:      orchestration.ProjectRoleDenied,
+	if _, grantErr := svc.GrantFleetNodeRole(plainCtx, &service.GrantFleetNodeRoleRequest{
+		TenantID:    tenantID,
+		ProjectID:   projectID,
+		FleetNodeID: agentID,
+		Role:        orchestration.ProjectRoleDenied,
 	}); grantErr != nil {
 		t.Fatalf("grant denied role: %v", grantErr)
 	}
 
-	denyErr := authz.AuthorizeAgentForTenant(
+	denyErr := authz.AuthorizeFleetNodeForTenant(
 		tenantCtx, tenantID, projectID, agentID, orchestration.ProjectRoleWorker)
 	if denyErr == nil {
 		t.Fatal("a denied agent must be refused; the PEP read a stale or absent record")

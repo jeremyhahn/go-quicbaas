@@ -135,26 +135,30 @@ var DefaultForbiddenPaths = []string{
 // Applied at creation only, so a repository that recolours them keeps its
 // choice for ever.
 var DefaultLabelColors = map[string]string{
-	LabelInProgress: "fbca04",
-	LabelInReview:   "0e8a16",
-	LabelMerged:     "5319e7",
-	LabelBlocked:    "d93f0b",
-	LabelNeedsInfo:  "d4c5f9",
-	LabelEscalated:  "b60205",
-	TriggerLabelKey: "1d76db",
+	LabelInProgress:   "fbca04",
+	LabelInReview:     "0e8a16",
+	LabelMerged:       "5319e7",
+	LabelBlocked:      "d93f0b",
+	LabelNeedsInfo:    "d4c5f9",
+	LabelEscalated:    "b60205",
+	LabelClustered:    "c5def5",
+	LabelTrainEjected: "e99695",
+	TriggerLabelKey:   "1d76db",
 }
 
 // defaultLabelDescriptions are the hover texts the module's vocabulary is
 // created with, so an operator reading the repository's label list learns what
 // each one means without reading this package.
 var defaultLabelDescriptions = map[string]string{
-	LabelInProgress: "QuicBaaS Software Factory: an attempt is working on this issue",
-	LabelInReview:   "QuicBaaS Software Factory: this issue's pull request is under review",
-	LabelMerged:     "QuicBaaS Software Factory: this issue's pull request has landed",
-	LabelBlocked:    "QuicBaaS Software Factory: parked for a person",
-	LabelNeedsInfo:  "QuicBaaS Software Factory: waiting on an answer",
-	LabelEscalated:  "QuicBaaS Software Factory: the engine gave up; a person is needed",
-	TriggerLabelKey: "QuicBaaS Software Factory: hand this issue to the factory",
+	LabelInProgress:   "QuicBaaS Software Factory: an attempt is working on this issue",
+	LabelInReview:     "QuicBaaS Software Factory: this issue's pull request is under review",
+	LabelMerged:       "QuicBaaS Software Factory: this issue's pull request has landed",
+	LabelBlocked:      "QuicBaaS Software Factory: parked for a person",
+	LabelNeedsInfo:    "QuicBaaS Software Factory: waiting on an answer",
+	LabelEscalated:    "QuicBaaS Software Factory: the engine gave up; a person is needed",
+	LabelClustered:    "QuicBaaS Software Factory: covered by another issue's task and pull request",
+	LabelTrainEjected: "QuicBaaS Software Factory: the merge train ejected this pull request",
+	TriggerLabelKey:   "QuicBaaS Software Factory: hand this issue to the factory",
 }
 
 // Events returns the webhook events to subscribe to.

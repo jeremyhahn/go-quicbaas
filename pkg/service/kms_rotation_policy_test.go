@@ -378,13 +378,13 @@ func TestGenerateKey_WithRotationPolicy(t *testing.T) {
 }
 
 // =============================================================================
-// Scheduler Integration: Set policy via API → scheduler rotates the key
+// Rotation scan: set policy via API → the scan rotates the key
 // =============================================================================
 
 // TestSchedulerIntegration_APISetPolicy proves the full lifecycle:
 // 1. Create a key.
 // 2. Set an auto-rotation policy via SetKeyRotationPolicy (past NextRotation).
-// 3. The scheduler (with a short scan interval) rotates the key automatically.
+// 3. A rotation scan rotates the key and advances its deadline.
 func TestSchedulerIntegration_APISetPolicy(t *testing.T) {
 	mgr := newRotationKMSManager()
 	mgr.addKey(newKMSKeyMeta("sched-api-key", "AES-256-GCM"))
@@ -407,27 +407,16 @@ func TestSchedulerIntegration_APISetPolicy(t *testing.T) {
 		t.Fatalf("SetKeyRotationPolicy: %v", err)
 	}
 
-	// Start the scheduler with a very short scan interval.
-	sched := newKMSRotationScheduler(svc, nil, 10*time.Millisecond)
-	sched.Start(context.Background())
-	defer sched.Stop()
-
-	// The scheduler should rotate the key because NextRotation is in the past.
-	if !waitForCond(2*time.Second, func() bool { return mgr.rotationCount() >= 1 }) {
-		t.Fatal("scheduler did not rotate key within timeout after API-set past NextRotation")
+	// One rotation scan rotates the key because NextRotation is in the past.
+	result, err := svc.RotateDueKeys(ctx)
+	if err != nil {
+		t.Fatalf("RotateDueKeys: %v", err)
+	}
+	if result.Rotated != 1 || mgr.rotationCount() != 1 {
+		t.Fatalf("expected one rotation after an API-set past NextRotation, got result %+v", result)
 	}
 
-	// Verify that NextRotation was advanced to a future date.
-	// Wait specifically for an update where NextRotation is in the future so
-	// we don't race against the SetKeyRotationPolicy call that also calls
-	// UpdateStoredMetadata (embedding the past NextRotation from the test).
-	if !waitForCond(2*time.Second, func() bool {
-		upd := mgr.lastMetadataUpdate()
-		return upd != nil && upd.RotationPolicy != nil && upd.RotationPolicy.NextRotation.After(time.Now())
-	}) {
-		t.Fatal("scheduler did not advance NextRotation to a future date after rotation")
-	}
-
+	// The scan advances NextRotation to a future deadline.
 	upd := mgr.lastMetadataUpdate()
 	if upd == nil || upd.RotationPolicy == nil {
 		t.Fatal("expected metadata update with RotationPolicy")

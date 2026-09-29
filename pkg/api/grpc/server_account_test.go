@@ -484,7 +484,7 @@ func TestAccountGRPCMethodsAreMapped(t *testing.T) {
 	// The READS take QuicBaaS's own tenant-scoped agent_accounts:* family; the
 	// WRITES still take go-qrdb's system-scoped credentials:*. That split is
 	// deliberate and load-bearing — credentials:* is ScopeCross, so a tenant
-	// identity (every agent daemon) can never satisfy it, which is why the
+	// identity (every fleet node daemon) can never satisfy it, which is why the
 	// reads had to move (go-quicbaas#734). See go-quicbaas#737 for the write
 	// half.
 	want := map[string][2]string{
@@ -498,6 +498,8 @@ func TestAccountGRPCMethodsAreMapped(t *testing.T) {
 		"SetDefaultAccount":            {"credentials", "store"},
 		"GetAccountUsage":              {"agent_accounts", "read"},
 		"MaterializeAccountCredential": {"agent_accounts", "materialize"},
+		"ReserveAccountSession":        {"agent_accounts", "materialize"},
+		"ReleaseAccountSession":        {"agent_accounts", "materialize"},
 	}
 	for _, method := range pb.AccountService_ServiceDesc.Methods {
 		full := "/" + pb.AccountService_ServiceDesc.ServiceName + "/" + method.MethodName

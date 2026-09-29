@@ -69,7 +69,7 @@ jobs:
       # `sudo docker system prune -af --volumes` used to run here instead; the
       # runners are shared, and that deletes every unused image and named
       # volume on the host. On 2026-08-17 it repeatedly destroyed the
-      # codex-review job image on gpu-host and omega and failed 16 review runs
+      # codex-review job image on two of the shared runners and failed 16 review runs
       # portfolio-wide (#3). Space beyond this job's own stack is host
       # maintenance, not this workflow's to reclaim.
       - name: Free up disk space

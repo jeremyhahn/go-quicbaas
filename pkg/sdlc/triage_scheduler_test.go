@@ -457,3 +457,124 @@ func TestTriageSweep_DoesNotOverrideATenantAlreadyOnTheContext(t *testing.T) {
 		t.Fatalf("context tenants = %v, want exactly [%s]", carried, testTenant)
 	}
 }
+
+// TestWebhookIngest_ATriageWakeFailureIsCarriedNotFatal proves a triage
+// nudge that fails does not fail the delivery, and that the failure reaches
+// the caller on the result instead of vanishing: a scheduler or job store
+// that is down must be loggable, not silent until someone notices triage is
+// running only on the periodic backstop.
+func TestWebhookIngest_ATriageWakeFailureIsCarriedNotFatal(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	binding := testBinding()
+	if err := store.PutBinding(ctx, testTenant, binding); err != nil {
+		t.Fatalf("put binding: %v", err)
+	}
+	forge := newFakeForge()
+	forge.forgeType = binding.Forge.Type
+	forge.parseEvent = &ForgeEvent{Kind: EventIssueOpened, Repo: binding.Repo()}
+
+	cause := errors.New("the job store is unavailable")
+	ingestor := newTriageWebhookIngestor(t, store, forge)
+	ingestor.SetTriageNudger(&fakeNudger{err: cause})
+
+	result, err := ingestor.Ingest(ctx, WebhookDelivery{
+		ProjectID: testProject, EventType: "issues", DeliveryID: "d1",
+		Signature: "sig", Payload: []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatalf("a failed triage wake does not fail the delivery: %v", err)
+	}
+	if !result.Nudged {
+		t.Fatal("the poller is still nudged")
+	}
+	if result.Triaged {
+		t.Fatal("a failed wake is not a triage pass")
+	}
+	var wake *TriageWakeError
+	if !errors.As(result.TriageErr, &wake) {
+		t.Fatalf("want *TriageWakeError on the result, got %T: %v", result.TriageErr, result.TriageErr)
+	}
+	if wake.TenantID != testTenant || wake.ProjectID != testProject {
+		t.Fatalf("the failure names its project: %+v", wake)
+	}
+	if !errors.Is(result.TriageErr, cause) || !errors.Is(result.TriageErr, ErrBackend) {
+		t.Fatalf("the failure keeps its cause and its class: %v", result.TriageErr)
+	}
+}
+
+// TestWebhookIngest_ASuccessfulTriageWakeCarriesNoError proves the error
+// field is set only by a failure, so a caller that logs it logs nothing on
+// the healthy path.
+func TestWebhookIngest_ASuccessfulTriageWakeCarriesNoError(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	binding := testBinding()
+	if err := store.PutBinding(ctx, testTenant, binding); err != nil {
+		t.Fatalf("put binding: %v", err)
+	}
+	forge := newFakeForge()
+	forge.forgeType = binding.Forge.Type
+	forge.parseEvent = &ForgeEvent{Kind: EventIssueOpened, Repo: binding.Repo()}
+
+	ingestor := newTriageWebhookIngestor(t, store, forge)
+	ingestor.SetTriageNudger(&fakeNudger{})
+	result, err := ingestor.Ingest(ctx, WebhookDelivery{
+		ProjectID: testProject, EventType: "issues", DeliveryID: "d1",
+		Signature: "sig", Payload: []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	if !result.Triaged || result.TriageErr != nil {
+		t.Fatalf("triaged=%v err=%v", result.Triaged, result.TriageErr)
+	}
+}
+
+// TestTriageScheduler_TheJobLeadsWithTheTriageAgent: the job declares the
+// Agent triage runs as, so the queue shows what the sweep will spend and the
+// lease counts it on the right backend.
+func TestTriageScheduler_TheJobLeadsWithTheTriageAgent(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	if err := store.PutBinding(ctx, testTenant, testBinding()); err != nil {
+		t.Fatalf("put binding: %v", err)
+	}
+	starter := &fakeJobStarter{}
+	scheduler, err := NewTriageScheduler(TriageSchedulerConfig{
+		Bindings: store, Jobs: starter,
+		TriageAgents: TriageAgentPolicy{Default: orchestration.AgentRefTo(testTriageAgent), Agents: testAgentCatalog()},
+	})
+	if err != nil {
+		t.Fatalf("NewTriageScheduler: %v", err)
+	}
+	if err := scheduler.TriageProject(ctx, testTenant, testProject); err != nil {
+		t.Fatalf("TriageProject: %v", err)
+	}
+	if reqs := starter.requests(); len(reqs) != 1 || reqs[0].Lead.AgentID != testTriageAgent {
+		t.Fatalf("started %+v, want the node's triage agent as the lead", reqs)
+	}
+}
+
+func TestTriageScheduler_AnUnreadableCatalogStartsNothing(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	if err := store.PutBinding(ctx, testTenant, testBinding()); err != nil {
+		t.Fatalf("put binding: %v", err)
+	}
+	starter := &fakeJobStarter{}
+	boom := errors.New("catalog down")
+	scheduler, err := NewTriageScheduler(TriageSchedulerConfig{
+		Bindings: store, Jobs: starter,
+		TriageAgents: TriageAgentPolicy{Default: orchestration.AgentRefTo(testTriageAgent), Agents: fixedAgents{err: boom}},
+	})
+	if err != nil {
+		t.Fatalf("NewTriageScheduler: %v", err)
+	}
+	if err := scheduler.TriageProject(ctx, testTenant, testProject); !errors.Is(err, boom) {
+		t.Fatalf("TriageProject = %v", err)
+	}
+	if len(starter.requests()) != 0 {
+		t.Fatal("a job was started with no triage agent decided")
+	}
+}

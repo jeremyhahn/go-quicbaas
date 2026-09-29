@@ -134,7 +134,7 @@ type MockQuicBaaS struct {
 	SchedulerServiceFunc          func() service.SchedulerService
 	ProjectServiceFunc            func() service.ProjectService
 	AccountServiceFunc            func() service.AccountService
-	AgentAdminServiceFunc         func() service.AgentAdminService
+	FleetAdminServiceFunc         func() service.FleetAdminService
 	SSHClientFunc                 func() xkmsssh.Client
 	MessagingServiceFunc          func() messaging.Service
 	WatchManagerFunc              func() *watch.Manager
@@ -161,7 +161,7 @@ type MockQuicBaaS struct {
 	MockSchedulerService          *MockSchedulerService
 	MockProjectService            *MockProjectService
 	MockAccountService            *MockAccountService
-	MockAgentAdminService         *MockAgentAdminService
+	MockFleetAdminService         *MockFleetAdminService
 	MockMessagingService          *MockMessagingService
 	// MockSSHClient is a caller-supplied xkmsssh.Client implementation
 	// returned by SSHClient when SSHClientFunc is nil. Tests that don't
@@ -804,13 +804,13 @@ func (m *MockQuicBaaS) Account() service.AccountService {
 	return nil
 }
 
-// AgentAdmin returns the configured agent admin service mock.
-func (m *MockQuicBaaS) AgentAdmin() service.AgentAdminService {
-	if m.AgentAdminServiceFunc != nil {
-		return m.AgentAdminServiceFunc()
+// FleetAdmin returns the configured agent admin service mock.
+func (m *MockQuicBaaS) FleetAdmin() service.FleetAdminService {
+	if m.FleetAdminServiceFunc != nil {
+		return m.FleetAdminServiceFunc()
 	}
-	if m.MockAgentAdminService != nil {
-		return m.MockAgentAdminService
+	if m.MockFleetAdminService != nil {
+		return m.MockFleetAdminService
 	}
 	return nil
 }
@@ -1003,7 +1003,7 @@ func NewMockQuicBaaSWithAllSubservices() *MockQuicBaaS {
 		MockSchedulerService:          &MockSchedulerService{},
 		MockProjectService:            &MockProjectService{},
 		MockAccountService:            &MockAccountService{},
-		MockAgentAdminService:         &MockAgentAdminService{},
+		MockFleetAdminService:         &MockFleetAdminService{},
 		MockMessagingService:          &MockMessagingService{},
 	}
 }

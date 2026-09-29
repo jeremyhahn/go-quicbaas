@@ -2,9 +2,11 @@
  * router.test.ts
  *
  * Regression: the hash router fell back to "Coming Soon" for hashes like
- * `#/agents` and `#/live-events`. These are bookmark-friendly aliases for
- * the canonical `#/fleet` and `#/events` routes — direct navigation via
- * either path must land on the same view.
+ * `#/live-events`, a bookmark-friendly alias for the canonical `#/events`
+ * route — direct navigation via either path must land on the same view.
+ *
+ * `#/agents` is deliberately NOT an alias of `#/fleet`: the fleet was
+ * renamed, and the word is kept free for AI agent definitions.
  *
  * The router lives in src/stores/router.svelte.ts and exposes parseHash
  * indirectly via the routerStore. We exercise it by setting
@@ -42,17 +44,19 @@ describe('router hash aliases', () => {
     expect(routerStore.name).toBe('fleet');
   });
 
-  it('#/agents resolves to the fleet route (alias)', async () => {
+  it('#/agents is not an alias of the fleet', async () => {
     const { routerStore } = await loadRouter();
     setHashAndFire('#/agents');
-    expect(routerStore.name).toBe('fleet');
+    expect(routerStore.name).not.toBe('fleet');
+    setHashAndFire('#/agents/node-xyz-123');
+    expect(routerStore.name).not.toBe('fleet-node');
   });
 
-  it('#/agents/:id still resolves to agent-detail (parameterised path)', async () => {
+  it('#/fleet/:id resolves to the fleet node detail (parameterised path)', async () => {
     const { routerStore } = await loadRouter();
-    setHashAndFire('#/agents/agent-xyz-123');
-    expect(routerStore.name).toBe('agent-detail');
-    expect(routerStore.params['id']).toBe('agent-xyz-123');
+    setHashAndFire('#/fleet/node-xyz-123');
+    expect(routerStore.name).toBe('fleet-node');
+    expect(routerStore.params['id']).toBe('node-xyz-123');
   });
 
   it('#/events resolves to the events route (canonical)', async () => {

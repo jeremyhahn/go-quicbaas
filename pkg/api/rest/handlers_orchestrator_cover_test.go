@@ -300,11 +300,11 @@ func TestHandleOrchestratorGetAgent(t *testing.T) {
 	defer cleanup()
 
 	w := httptest.NewRecorder()
-	server.HandleOrchestratorGetAgent(w, orchReq(http.MethodGet, "/x", nil, nil))
+	server.HandleGetFleetNode(w, orchReq(http.MethodGet, "/x", nil, nil))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	w = httptest.NewRecorder()
-	server.HandleOrchestratorGetAgent(w, orchReq(http.MethodGet, "/x", nil, map[string]string{"agentID": "a1"}))
+	server.HandleGetFleetNode(w, orchReq(http.MethodGet, "/x", nil, map[string]string{"nodeID": "a1"}))
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
@@ -313,11 +313,11 @@ func TestHandleOrchestratorRemoveAgent(t *testing.T) {
 	defer cleanup()
 
 	w := httptest.NewRecorder()
-	server.HandleOrchestratorRemoveAgent(w, orchReq(http.MethodDelete, "/x", nil, nil))
+	server.HandleRemoveFleetNode(w, orchReq(http.MethodDelete, "/x", nil, nil))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	w = httptest.NewRecorder()
-	server.HandleOrchestratorRemoveAgent(w, orchReq(http.MethodDelete, "/x", nil, map[string]string{"agentID": "a1"}))
+	server.HandleRemoveFleetNode(w, orchReq(http.MethodDelete, "/x", nil, map[string]string{"nodeID": "a1"}))
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
@@ -515,14 +515,14 @@ func TestHandleOrchestratorListBackendModels(t *testing.T) {
 
 	// Missing backend name
 	w := httptest.NewRecorder()
-	server.HandleOrchestratorListBackendModels(w, orchReq(http.MethodGet, "/x", nil,
-		map[string]string{"agentID": "a1"}))
+	server.HandleListFleetNodeBackendModels(w, orchReq(http.MethodGet, "/x", nil,
+		map[string]string{"nodeID": "a1"}))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	// Success
 	w = httptest.NewRecorder()
-	server.HandleOrchestratorListBackendModels(w, orchReq(http.MethodGet, "/x", nil,
-		map[string]string{"agentID": "a1", "backendName": "ollama"}))
+	server.HandleListFleetNodeBackendModels(w, orchReq(http.MethodGet, "/x", nil,
+		map[string]string{"nodeID": "a1", "backendName": "ollama"}))
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
@@ -531,7 +531,7 @@ func TestHandleOrchestratorListAgents_Success(t *testing.T) {
 	defer cleanup()
 
 	w := httptest.NewRecorder()
-	server.HandleOrchestratorListAgents(w, orchReq(http.MethodGet, "/api/v1/orchestrator/agents", nil, nil))
+	server.HandleListFleetNodes(w, orchReq(http.MethodGet, "/api/v1/fleet", nil, nil))
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 

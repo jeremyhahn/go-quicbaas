@@ -32,6 +32,10 @@
     type BindingFormState,
   } from '../../lib/sdlcBinding.ts';
   import { Plus, Trash2 } from 'lucide-svelte';
+  import RefPicker from '../core/RefPicker.svelte';
+  import SdlcReviewerProfiles from './SdlcReviewerProfiles.svelte';
+  import SdlcRulerPicker from './SdlcRulerPicker.svelte';
+  import type { ForgeUser } from '@quicbaas/sdk';
 
   // `binding` is $bindable for the same reason ProjectFormFields' form is: the
   // dialog owns the state and this component edits rows within it.
@@ -39,7 +43,19 @@
     idPrefix,
     binding = $bindable(),
     availableForges,
-  }: { idPrefix: string; binding: BindingFormState; availableForges: string[] } = $props();
+    collaborators = [],
+    collaboratorsStatus = 'unbound',
+    collaboratorsError = '',
+    tenantID,
+  }: {
+    idPrefix: string;
+    binding: BindingFormState;
+    availableForges: string[];
+    collaborators?: ForgeUser[];
+    collaboratorsStatus?: 'loading' | 'ready' | 'unbound' | 'error';
+    collaboratorsError?: string;
+    tenantID?: string;
+  } = $props();
 
   /**
    * forgeAvailable reports whether this build carries an adapter. An empty
@@ -187,10 +203,10 @@
       <label class="label py-1" for="{idPrefix}-sdlc-token-secret-ref">
         <span class="label-text text-xs">Token Secret Ref <span class="text-error">*</span></span>
       </label>
-      <input
+      <RefPicker
         id="{idPrefix}-sdlc-token-secret-ref"
-        type="text"
-        class="input input-bordered input-sm w-full font-mono"
+        kind="secret"
+        {tenantID}
         placeholder="forge-token"
         bind:value={binding.tokenSecretRef}
       />
@@ -199,10 +215,10 @@
       <label class="label py-1" for="{idPrefix}-sdlc-webhook-secret-ref">
         <span class="label-text text-xs">Webhook Secret Ref</span>
       </label>
-      <input
+      <RefPicker
         id="{idPrefix}-sdlc-webhook-secret-ref"
-        type="text"
-        class="input input-bordered input-sm w-full font-mono"
+        kind="secret"
+        {tenantID}
         placeholder="Empty = polled only"
         bind:value={binding.webhookSecretRef}
       />
@@ -231,32 +247,49 @@
   </div>
 
   <!-- Worker -->
-  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  <div>
+    <label class="label py-1" for="{idPrefix}-sdlc-worker">
+      <span class="label-text text-xs">Worker Agent or pool <span class="text-error">*</span></span>
+    </label>
+    <input
+      id="{idPrefix}-sdlc-worker"
+      type="text"
+      class="input input-bordered input-sm w-full font-mono"
+      placeholder="agent:claude-coder or pool:coders"
+      bind:value={binding.worker}
+    />
+  </div>
+
+  <!-- Run-time prompt material appended after each slot's charter -->
+  <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
     <div>
-      <label class="label py-1" for="{idPrefix}-sdlc-worker-backend">
-        <span class="label-text text-xs">Worker Backend <span class="text-error">*</span></span>
+      <label class="label py-1" for="{idPrefix}-sdlc-worker-append">
+        <span class="label-text text-xs">Append to the worker's prompt</span>
       </label>
-      <input
-        id="{idPrefix}-sdlc-worker-backend"
-        type="text"
-        class="input input-bordered input-sm w-full font-mono"
-        placeholder="claude"
-        bind:value={binding.workerBackend}
-      />
+      <textarea
+        id="{idPrefix}-sdlc-worker-append"
+        class="textarea textarea-bordered textarea-sm w-full font-mono"
+        rows="3"
+        placeholder="This project's own conventions, read after the worker charter"
+        bind:value={binding.workerPromptAppend}
+      ></textarea>
     </div>
     <div>
-      <label class="label py-1" for="{idPrefix}-sdlc-worker-model">
-        <span class="label-text text-xs">Worker Model</span>
+      <label class="label py-1" for="{idPrefix}-sdlc-triage-append">
+        <span class="label-text text-xs">Append to triage's prompt</span>
       </label>
-      <input
-        id="{idPrefix}-sdlc-worker-model"
-        type="text"
-        class="input input-bordered input-sm w-full font-mono"
-        placeholder="Backend default"
-        bind:value={binding.workerModel}
-      />
+      <textarea
+        id="{idPrefix}-sdlc-triage-append"
+        class="textarea textarea-bordered textarea-sm w-full font-mono"
+        rows="3"
+        placeholder="What triage should also know about this repository"
+        bind:value={binding.triagePromptAppend}
+      ></textarea>
     </div>
   </div>
+  <p class="text-xs text-base-content/40 -mt-1">
+    Added after the role's charter, never instead of it. At most 64 KiB each.
+  </p>
 
   <!-- Verification -->
   <div>
@@ -369,10 +402,13 @@
     <span class="label-text text-xs">Refuse a merge until every check on the head is green</span>
   </label>
 
-  <!-- Reviewers -->
+  <!-- Reviewer profiles: who reviews, and whose verdict counts -->
+  <SdlcReviewerProfiles {idPrefix} {tenantID} bind:profiles={binding.reviewerProfiles} />
+
+  <!-- Reviewer model families -->
   <div>
     <div class="flex items-center justify-between">
-      <span class="label-text text-xs">Reviewers</span>
+      <span class="label-text text-xs">Reviewer model families</span>
       <button
         class="btn btn-xs btn-ghost gap-1"
         type="button"
@@ -384,8 +420,8 @@
       </button>
     </div>
     <p class="text-xs text-base-content/40 mt-1 mb-2">
-      Maps a forge login to the model family behind it, so the independence rule can be decided for
-      an automated reviewer.
+      Maps a forge login to the model family behind it, for the independence rule. A reviewer
+      profile's family is derived from its backend and model; add a row only to state it outright.
     </p>
     {#if binding.reviewers.length === 0}
       <p class="text-xs text-base-content/30">No reviewers mapped.</p>
@@ -422,6 +458,16 @@
       </div>
     {/if}
   </div>
+
+  <!-- Rulers -->
+  <SdlcRulerPicker
+    {idPrefix}
+    bind:rulers={binding.rulers}
+    owner={binding.owner}
+    {collaborators}
+    status={collaboratorsStatus}
+    error={collaboratorsError}
+  />
 
   <!-- Display labels -->
   <div>

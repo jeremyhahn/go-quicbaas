@@ -16,37 +16,42 @@ package orchestration
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 )
 
 // =============================================================================
-// agent_registry_types.go — disabled-agent typed errors
+// fleet_registry_types.go — disabled-agent typed errors
 // =============================================================================
 
 func TestAgentDisabledErrors(t *testing.T) {
-	disabled := &AgentDisabledError{TenantID: "t1", AgentID: "a1"}
+	disabled := &FleetNodeDisabledError{TenantID: "t1", NodeID: "a1"}
 	if !strings.Contains(disabled.Error(), "tenant=t1") || !strings.Contains(disabled.Error(), "agent=a1") {
-		t.Fatalf("AgentDisabledError message missing context: %q", disabled.Error())
+		t.Fatalf("FleetNodeDisabledError message missing context: %q", disabled.Error())
 	}
-	if !errors.Is(disabled, ErrAgentDisabled) {
-		t.Fatal("AgentDisabledError must unwrap to ErrAgentDisabled")
+	if !errors.Is(disabled, ErrFleetNodeDisabled) {
+		t.Fatal("FleetNodeDisabledError must unwrap to ErrFleetNodeDisabled")
 	}
 
-	already := &AgentAlreadyDisabledError{TenantID: "t1", AgentID: "a1"}
-	if !errors.Is(already, ErrAgentAlreadyDisabled) {
-		t.Fatal("AgentAlreadyDisabledError must unwrap to ErrAgentAlreadyDisabled")
+	already := &FleetNodeAlreadyDisabledError{TenantID: "t1", NodeID: "a1"}
+	if !errors.Is(already, ErrFleetNodeAlreadyDisabled) {
+		t.Fatal("FleetNodeAlreadyDisabledError must unwrap to ErrFleetNodeAlreadyDisabled")
 	}
 	if !strings.Contains(already.Error(), "agent=a1") {
-		t.Fatalf("AgentAlreadyDisabledError missing agent: %q", already.Error())
+		t.Fatalf("FleetNodeAlreadyDisabledError missing agent: %q", already.Error())
 	}
 
-	notDisabled := &AgentNotDisabledError{TenantID: "t1", AgentID: "a1"}
-	if !errors.Is(notDisabled, ErrAgentNotDisabled) {
-		t.Fatal("AgentNotDisabledError must unwrap to ErrAgentNotDisabled")
+	notDisabled := &FleetNodeNotDisabledError{TenantID: "t1", NodeID: "a1"}
+	if !errors.Is(notDisabled, ErrFleetNodeNotDisabled) {
+		t.Fatal("FleetNodeNotDisabledError must unwrap to ErrFleetNodeNotDisabled")
 	}
 	if !strings.Contains(notDisabled.Error(), "tenant=t1") {
-		t.Fatalf("AgentNotDisabledError missing tenant: %q", notDisabled.Error())
+		t.Fatalf("FleetNodeNotDisabledError missing tenant: %q", notDisabled.Error())
 	}
 }
 
@@ -89,16 +94,16 @@ func TestArtifactTypedErrors(t *testing.T) {
 }
 
 // =============================================================================
-// errors.go — NoMatchingAgentError, NotLeadOfParentError, ParentJobNotFoundError
+// errors.go — NoMatchingFleetNodeError, NotLeadOfParentError, ParentJobNotFoundError
 // =============================================================================
 
 func TestNoMatchingAgentError(t *testing.T) {
-	e := &NoMatchingAgentError{Constraint: "gpu", Detail: "no gpu daemons online"}
-	if !errors.Is(e, ErrNoMatchingAgent) {
-		t.Fatal("NoMatchingAgentError must unwrap to ErrNoMatchingAgent")
+	e := &NoMatchingFleetNodeError{Constraint: "gpu", Detail: "no gpu daemons online"}
+	if !errors.Is(e, ErrNoMatchingFleetNode) {
+		t.Fatal("NoMatchingFleetNodeError must unwrap to ErrNoMatchingFleetNode")
 	}
 	if !strings.Contains(e.Error(), "no gpu daemons online") {
-		t.Fatalf("NoMatchingAgentError missing detail: %q", e.Error())
+		t.Fatalf("NoMatchingFleetNodeError missing detail: %q", e.Error())
 	}
 }
 
@@ -206,7 +211,7 @@ func TestProjectStoreTypedErrors(t *testing.T) {
 func TestProjectAuthzTypedErrors(t *testing.T) {
 	denied := &ProjectAccessDeniedError{
 		ProjectID:    "p1",
-		AgentID:      "a1",
+		FleetNodeID:  "a1",
 		RequiredRole: ProjectRoleLead,
 		ActualRole:   ProjectRoleWorker,
 	}
@@ -333,10 +338,8 @@ func TestCodexExecBackend_PromptValidation(t *testing.T) {
 
 func TestCodexExecBackend_PromptSuccess(t *testing.T) {
 	ctx := context.Background()
-	// /bin/echo prints its arguments; CombinedOutput returns no error so the
-	// success branch (including the event-callback path) executes. The echoed
-	// stdout flows through extractCodexAssistantText.
-	b := NewCodexExecBackend(CodexExecBackendConfig{Command: "/bin/echo"})
+	codex := fakeCodex(t, codexTurnJSONL)
+	b := NewCodexExecBackend(CodexExecBackendConfig{Command: codex.path})
 
 	sess, err := b.Spawn(ctx, &SpawnRequest{WorkDir: t.TempDir(), Model: "m1"})
 	if err != nil {
@@ -355,17 +358,278 @@ func TestCodexExecBackend_PromptSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
-	if resp.StopReason != "end_turn" {
-		t.Fatalf("expected end_turn, got %q", resp.StopReason)
+	if resp.StopReason != "end_turn" || resp.Model != "m1" {
+		t.Fatalf("stop/model = %q/%q, want end_turn/m1", resp.StopReason, resp.Model)
 	}
-	if len(resp.Content) != 1 || resp.Content[0].Type != "text" {
-		t.Fatalf("unexpected content: %+v", resp.Content)
+	if len(resp.Content) != 1 || resp.Content[0].Text != "OK" {
+		t.Fatalf("content = %+v, want the agent message OK", resp.Content)
 	}
-	// codex exec emits a system_message start marker followed by the stdout
-	// assistant chunk.
+	// codex's input_tokens includes the cached part; the fresh prompt is the
+	// difference (codexExecUsage).
+	if resp.Usage == nil || resp.Usage.InputTokens != 3073 || resp.Usage.CacheReadInputTokens != 12160 || resp.Usage.OutputTokens != 5 {
+		t.Fatalf("usage = %+v, want fresh 3073 / cached 12160 / out 5", resp.Usage)
+	}
+	if args := codex.args(t); !strings.Contains(args, "exec --json -c model=\"m1\"") {
+		t.Fatalf("argv = %q, want exec --json with the session's model", args)
+	}
 	if len(events) != 2 || events[0] != KindSystemMessage || events[1] != KindAssistantChunk {
 		t.Fatalf("unexpected event kinds: %v", events)
 	}
+}
+
+// TestCodexExecBackend_OnlyACompletedAnsweredTurnSucceeds asserts the event
+// stream is the verdict (go-quicbaas#1058 review): an assistant message
+// followed by turn.failed is a failure, as is a completed turn with no answer
+// and a stream that never completes. Each failure carries the usage codex
+// reported and the model the turn ran on.
+func TestCodexExecBackend_OnlyACompletedAnsweredTurnSucceeds(t *testing.T) {
+	answer := `{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"partial"}}`
+	usage := `"usage":{"input_tokens":120,"cached_input_tokens":20,"output_tokens":7}`
+	tests := []struct {
+		name      string
+		stream    string
+		wantUsage bool
+	}{
+		// codex's turn.failed carries an error, not usage (codex-cli 0.154.0).
+		{"failed after an assistant message", answer + "\n" + `{"type":"turn.failed","error":{"message":"stream disconnected"}}`, false},
+		{"completed with no answer", `{"type":"turn.completed",` + usage + `}`, true},
+		{"an answer that never completed", answer, false},
+		{"an error event after the answer", answer + "\n" + `{"type":"error","error":"stream closed"}`, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			codex := fakeCodex(t, tc.stream)
+			b := NewCodexExecBackend(CodexExecBackendConfig{Command: codex.path})
+			sess, err := b.Spawn(context.Background(), &SpawnRequest{
+				WorkDir: t.TempDir(), Env: map[string]string{"HOME": t.TempDir(), "CODEX_HOME": ""},
+			})
+			if err != nil {
+				t.Fatalf("Spawn: %v", err)
+			}
+			resp, err := b.Prompt(context.Background(), &PromptRequest{SessionID: sess.ID, Prompt: "x"})
+			if err == nil {
+				t.Fatalf("Prompt = %+v, want a failure", resp)
+			}
+			evidence, carried := EvidenceOf(err)
+			if !carried {
+				t.Fatalf("err = %v, want failure evidence", err)
+			}
+			if evidence.Model != CodexCLIDefaultModel {
+				t.Errorf("evidence model = %q, want %q", evidence.Model, CodexCLIDefaultModel)
+			}
+			if tc.wantUsage {
+				if evidence.Usage == nil || evidence.Usage.InputTokens != 100 || evidence.Usage.CacheReadInputTokens != 20 || evidence.Usage.OutputTokens != 7 {
+					t.Errorf("evidence usage = %+v, want fresh 100 / cached 20 / out 7", evidence.Usage)
+				}
+			} else if evidence.Usage != nil {
+				t.Errorf("evidence usage = %+v, want nil: the stream reported none", evidence.Usage)
+			}
+		})
+	}
+}
+
+// TestCodexExecBackend_DefaultModelIsResolved covers a session that names no
+// model: codex runs the one its config.toml pins, found through the session's
+// CODEX_HOME or HOME, and with none pinned the turn is labelled
+// CodexCLIDefaultModel. No model is put on argv in any of these cases.
+func TestCodexExecBackend_DefaultModelIsResolved(t *testing.T) {
+	writeConfig := func(t *testing.T, dir, body string) {
+		t.Helper()
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(body), 0o600); err != nil {
+			t.Fatalf("write config: %v", err)
+		}
+	}
+	tests := []struct {
+		name  string
+		setup func(t *testing.T) map[string]string
+		want  string
+	}{
+		{"HOME config pins a model", func(t *testing.T) map[string]string {
+			home := t.TempDir()
+			writeConfig(t, filepath.Join(home, ".codex"), "model = \"gpt-5.5\"\n[profiles.x]\nmodel = \"other\"\n")
+			return map[string]string{"HOME": home, "CODEX_HOME": ""}
+		}, "gpt-5.5"},
+		{"CODEX_HOME wins over HOME", func(t *testing.T) map[string]string {
+			home, codexHome := t.TempDir(), t.TempDir()
+			writeConfig(t, filepath.Join(home, ".codex"), "model = \"from-home\"\n")
+			writeConfig(t, codexHome, "model = \"from-codex-home\"\n")
+			return map[string]string{"HOME": home, "CODEX_HOME": codexHome}
+		}, "from-codex-home"},
+		{"no config is the CLI default", func(t *testing.T) map[string]string {
+			return map[string]string{"HOME": t.TempDir(), "CODEX_HOME": ""}
+		}, CodexCLIDefaultModel},
+		{"a config that pins nothing is the CLI default", func(t *testing.T) map[string]string {
+			home := t.TempDir()
+			writeConfig(t, filepath.Join(home, ".codex"), "approval_policy = \"never\"\n")
+			return map[string]string{"HOME": home, "CODEX_HOME": ""}
+		}, CodexCLIDefaultModel},
+		{"an unreadable config is the CLI default", func(t *testing.T) map[string]string {
+			home := t.TempDir()
+			writeConfig(t, filepath.Join(home, ".codex"), "model = = broken")
+			return map[string]string{"HOME": home, "CODEX_HOME": ""}
+		}, CodexCLIDefaultModel},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			codex := fakeCodex(t, codexTurnJSONL)
+			b := NewCodexExecBackend(CodexExecBackendConfig{Command: codex.path})
+			sess, err := b.Spawn(context.Background(), &SpawnRequest{WorkDir: t.TempDir(), Env: tc.setup(t)})
+			if err != nil {
+				t.Fatalf("Spawn: %v", err)
+			}
+			resp, err := b.Prompt(context.Background(), &PromptRequest{SessionID: sess.ID, Prompt: "x"})
+			if err != nil {
+				t.Fatalf("Prompt: %v", err)
+			}
+			if resp.Model != tc.want {
+				t.Fatalf("model = %q, want %q", resp.Model, tc.want)
+			}
+			if args := codex.args(t); strings.Contains(args, "model=") {
+				t.Fatalf("argv = %q; a resolved default must not be sent to codex", args)
+			}
+		})
+	}
+}
+
+// TestCodexExecTurnReachesTheLedgerOnTheDefaultModel is the go-quicbaas#1058
+// review regression, end to end: a control-plane codex turn on the CLI's
+// default model used to carry no usage and an empty model, which the ledger
+// refused. It must now be ledgered with its tokens under a model name.
+func TestCodexExecTurnReachesTheLedgerOnTheDefaultModel(t *testing.T) {
+	codex := fakeCodex(t, codexTurnJSONL)
+	kv := kvstore.NewMemory()
+	svc, err := NewAgentService(NewAgentStore(kv), map[string]AgentBackend{
+		"codex": NewCodexExecBackend(CodexExecBackendConfig{Command: codex.path}),
+	}, &agentTestLogger{})
+	if err != nil {
+		t.Fatalf("NewAgentService: %v", err)
+	}
+	impl := svc.(*agentServiceImpl) //nolint:errcheck // NewAgentService returns this type
+	ledger := NewConsumptionLedger(NewMemoryTaskKV())
+	impl.SetConsumptionLedger(ledger)
+
+	ctx := ContextWithTenant(context.Background(), "t1")
+	spawn, err := svc.SpawnSession(ctx, &SpawnSessionRequest{
+		Backend: "codex", WorkDir: t.TempDir(), ProjectID: "proj-1", Persistent: true,
+		Env: map[string]string{"HOME": t.TempDir(), "CODEX_HOME": ""},
+	})
+	if err != nil {
+		t.Fatalf("SpawnSession: %v", err)
+	}
+	if _, err := svc.PromptSession(ctx, &PromptSessionRequest{SessionID: spawn.SessionID, ProjectID: "proj-1", Prompt: "hi"}); err != nil {
+		t.Fatalf("PromptSession: %v", err)
+	}
+
+	rollup, err := ledger.Rollup(ctx, ConsumptionScope{TenantID: "t1"})
+	if err != nil {
+		t.Fatalf("Rollup: %v", err)
+	}
+	if rollup.Entries != 1 || rollup.TotalTokens != 15238 {
+		t.Fatalf("ledger = %d entries / %d tokens, want the codex turn with 15238 tokens", rollup.Entries, rollup.TotalTokens)
+	}
+	if len(rollup.ByModel) != 1 {
+		t.Fatalf("by model = %+v, want one model", rollup.ByModel)
+	}
+	for key := range rollup.ByModel {
+		if key != "codex/"+CodexCLIDefaultModel {
+			t.Fatalf("model key = %q, want codex/%s", key, CodexCLIDefaultModel)
+		}
+	}
+}
+
+// TestFailedCodexExecTurnReachesTheLedgerOnTheDefaultModel is the failure half
+// of the ledger regression: a failed turn on codex's default model used to be
+// recorded with an empty model, which the ledger refused, and with no usage.
+// A turn codex completed without an answer is a failure that consumed tokens:
+// it must be one failed entry, under a model name, with the tokens codex
+// reported, priced when the table lists the model.
+func TestFailedCodexExecTurnReachesTheLedgerOnTheDefaultModel(t *testing.T) {
+	codex := fakeCodex(t, `{"type":"turn.started"}
+{"type":"turn.completed","usage":{"input_tokens":1000000,"cached_input_tokens":0,"output_tokens":0}}`)
+	kv := kvstore.NewMemory()
+	svc, err := NewAgentService(NewAgentStore(kv), map[string]AgentBackend{
+		"codex": NewCodexExecBackend(CodexExecBackendConfig{Command: codex.path}),
+	}, &agentTestLogger{})
+	if err != nil {
+		t.Fatalf("NewAgentService: %v", err)
+	}
+	impl := svc.(*agentServiceImpl) //nolint:errcheck // NewAgentService returns this type
+	ledger := NewConsumptionLedger(NewMemoryTaskKV())
+	impl.SetConsumptionLedger(ledger)
+	book, err := NewPriceBook(config.PricingConfig{Version: "v1", Models: []config.ModelPriceConfig{
+		{Model: CodexCLIDefaultModel, Engine: "codex", Provider: "openai", InputPerMTok: 2},
+	}})
+	if err != nil {
+		t.Fatalf("NewPriceBook: %v", err)
+	}
+	impl.SetPriceBook(book)
+
+	ctx := ContextWithTenant(context.Background(), "t1")
+	spawn, err := svc.SpawnSession(ctx, &SpawnSessionRequest{
+		Backend: "codex", WorkDir: t.TempDir(), ProjectID: "proj-1", Persistent: true,
+		Env: map[string]string{"HOME": t.TempDir(), "CODEX_HOME": ""},
+	})
+	if err != nil {
+		t.Fatalf("SpawnSession: %v", err)
+	}
+	if _, err := svc.PromptSession(ctx, &PromptSessionRequest{SessionID: spawn.SessionID, ProjectID: "proj-1", Prompt: "hi"}); err == nil {
+		t.Fatal("PromptSession succeeded; a turn with no answer must fail")
+	}
+
+	rollup, err := ledger.Rollup(ctx, ConsumptionScope{TenantID: "t1"})
+	if err != nil {
+		t.Fatalf("Rollup: %v", err)
+	}
+	if rollup.Entries != 1 || rollup.Failures != 1 || rollup.InputTokens != 1_000_000 {
+		t.Fatalf("ledger = %+v, want one failed entry with 1,000,000 input tokens", rollup.ConsumptionTotals)
+	}
+	if rollup.PricedEntries != 1 || rollup.EquivalentMicros != 2_000_000 {
+		t.Errorf("priced/equivalent = %d/%d, want 1/2000000: the failed turn's tokens cost money", rollup.PricedEntries, rollup.EquivalentMicros)
+	}
+	if _, ok := rollup.ByModel["codex/"+CodexCLIDefaultModel]; !ok || len(rollup.ByModel) != 1 {
+		t.Fatalf("by model = %+v, want codex/%s", rollup.ByModel, CodexCLIDefaultModel)
+	}
+}
+
+// codexTurnJSONL is one turn as `codex exec --json` streams it (codex-cli
+// 0.154.0; see execEvent).
+const codexTurnJSONL = `{"type":"thread.started","thread_id":"th-1"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"OK"}}
+{"type":"turn.completed","usage":{"input_tokens":15233,"cached_input_tokens":12160,"cache_write_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0}}`
+
+// fakeCodexCLI is a stand-in codex executable that prints a fixed event
+// stream and records its argv.
+type fakeCodexCLI struct {
+	path    string
+	argFile string
+}
+
+func fakeCodex(t *testing.T, stream string) fakeCodexCLI {
+	t.Helper()
+	dir := t.TempDir()
+	cli := fakeCodexCLI{path: filepath.Join(dir, "codex"), argFile: filepath.Join(dir, "argv")}
+	events := filepath.Join(dir, "events.jsonl")
+	if err := os.WriteFile(events, []byte(stream+"\n"), 0o600); err != nil {
+		t.Fatalf("write events: %v", err)
+	}
+	script := "#!/bin/sh\ncat >/dev/null\necho \"$*\" > '" + cli.argFile + "'\ncat '" + events + "'\n"
+	if err := os.WriteFile(cli.path, []byte(script), 0o700); err != nil { //nolint:gosec // test executable
+		t.Fatalf("write fake codex: %v", err)
+	}
+	return cli
+}
+
+func (c fakeCodexCLI) args(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile(c.argFile)
+	if err != nil {
+		t.Fatalf("read argv: %v", err)
+	}
+	return strings.TrimSpace(string(data))
 }
 
 func TestCodexExecBackend_PromptCommandFailure(t *testing.T) {
@@ -392,7 +656,7 @@ func TestCodexExecBackend_PromptCommandFailure(t *testing.T) {
 func TestCodexExecBackend_PromptEphemeralSession(t *testing.T) {
 	ctx := context.Background()
 	// No SessionID: the backend creates an ephemeral session inline.
-	b := NewCodexExecBackend(CodexExecBackendConfig{Command: "/bin/echo", DefaultModel: "edm"})
+	b := NewCodexExecBackend(CodexExecBackendConfig{Command: fakeCodex(t, codexTurnJSONL).path, DefaultModel: "edm"})
 
 	resp, err := b.Prompt(ctx, &PromptRequest{Prompt: "ephemeral"})
 	if err != nil {
@@ -400,38 +664,6 @@ func TestCodexExecBackend_PromptEphemeralSession(t *testing.T) {
 	}
 	if resp.Model != "edm" {
 		t.Fatalf("expected ephemeral default model edm, got %q", resp.Model)
-	}
-}
-
-// =============================================================================
-// codex_exec_backend.go — extractCodexAssistantText parsing
-// =============================================================================
-
-func TestExtractCodexAssistantText(t *testing.T) {
-	tests := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"empty", "", ""},
-		{"no markers falls back to raw", "just some text", "just some text"},
-		{
-			name: "last codex block wins",
-			in:   "header\n--------\nuser\nplease review\ncodex\nfirst draft\ntokens used\ncodex\nfinal answer\n",
-			want: "final answer",
-		},
-		{
-			name: "trailing codex marker with no body falls back to raw",
-			in:   "user\nhi\ncodex\ntokens used",
-			want: "user\nhi\ncodex\ntokens used",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := extractCodexAssistantText(tt.in); got != tt.want {
-				t.Fatalf("extractCodexAssistantText() = %q, want %q", got, tt.want)
-			}
-		})
 	}
 }
 

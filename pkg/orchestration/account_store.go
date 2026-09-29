@@ -232,6 +232,12 @@ func (s *accountStore) create(ctx context.Context, account *Account) (err error)
 	if err := account.Spend.Validate(); err != nil {
 		return err
 	}
+	if err := account.validateSessionCap(); err != nil {
+		return err
+	}
+	if err := account.Billing.Validate(); err != nil {
+		return err
+	}
 	if err := scopeCheck(ctx, account.TenantID); err != nil {
 		return err
 	}
@@ -694,6 +700,12 @@ func (s *accountStore) update(ctx context.Context, account *Account, expected *t
 		return &AccountInvalidError{Message: "account must not be nil"}
 	}
 	if err := account.Spend.Validate(); err != nil {
+		return err
+	}
+	if err := account.validateSessionCap(); err != nil {
+		return err
+	}
+	if err := account.Billing.Validate(); err != nil {
 		return err
 	}
 	if err := scopeCheck(ctx, account.TenantID); err != nil {
@@ -1264,6 +1276,14 @@ func applyTouch(account *Account, opts TouchAccountOptions, now time.Time) {
 	}
 	if opts.MarkValidated {
 		account.LastValidatedAt = now
+	}
+	if opts.MarkCredentialRotated {
+		account.CredentialRotatedAt = now
+	}
+	// Monotonic: see TouchAccountOptions.SetCredentialGeneration. A reconciler
+	// holding a superseded envelope must not walk the mirror back.
+	if opts.SetCredentialGeneration > account.CredentialGeneration {
+		account.CredentialGeneration = opts.SetCredentialGeneration
 	}
 	if opts.SetCredentialExpiryValid {
 		account.CredentialExpiresAt = opts.SetCredentialExpiresAt

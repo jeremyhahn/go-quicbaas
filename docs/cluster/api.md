@@ -58,3 +58,13 @@ Dedicated transport handlers: rest=no, grpc=yes, mcp=no; embedded routes registe
 
 
 
+
+## Route ownership on a composed node
+
+go-xkms v0.30's ServiceModule also registers `GET /api/v1/cluster/status` (and
+`GET /api/v1/cluster/members`) on the same unified server. QuicBaaS owns
+`/api/v1/cluster/status`: its handler reports every shard the node hosts in the
+flat `ClusterStatusResponse` shape the quicbaas SDK and UI decode, whereas the
+xkms handler reports a single shard wrapped as `{"status":{...}}`. The composer
+states this in `pkg/apimodule/route_precedence.go` (`XKMSRouteExclusions`);
+`/api/v1/cluster/members` has no quicbaas counterpart and is served by go-xkms.

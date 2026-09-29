@@ -30,10 +30,8 @@ import (
 // =============================================================================
 // Role Tests
 //
-// There are no user tests: the QuicBaaS gRPC service no longer implements
-// CreateUser/DeleteUser/ListUsers (they answer codes.Unimplemented from the
-// embedded pb.UnimplementedQuicBaaSServer). Users are served by
-// quicbaas.iam.v1.IAMService. See issue #905.
+// There are no user tests: the QuicBaaS gRPC service declares no user RPCs
+// (issues #905 and #919). Users are served by quicbaas.iam.v1.IAMService.
 // =============================================================================
 
 func TestServer_CreateRole(t *testing.T) {
@@ -654,86 +652,4 @@ func TestPermissionRoundTrip(t *testing.T) {
 		assert.Equal(t, orig.Resource, roundTripped[i].Resource)
 		assert.Equal(t, orig.Actions, roundTripped[i].Actions)
 	}
-}
-
-// =============================================================================
-// User RPCs answer Unimplemented, and nothing reaches the service layer
-// =============================================================================
-
-// TestServer_UserRPCsAreUnimplemented pins the wire answer for the three user
-// RPCs the QuicBaaS gRPC service still DECLARES in api/proto/quicbaas.proto but
-// no longer implements. They used to route to a service-layer auth manager that
-// production never wired, so a caller got an opaque "authentication manager not
-// configured" failure; now they get codes.Unimplemented, which is the truthful
-// answer for a capability served elsewhere (quicbaas.iam.v1.IAMService).
-//
-// The test also asserts the service layer is NEVER touched: MockQuicBaaS is left
-// with no expectations, so any call into it fails the mock. That is the guard
-// against someone re-adding a handler on top of the deleted user model rather
-// than on the IAM surface (issue #905).
-func TestServer_UserRPCsAreUnimplemented(t *testing.T) {
-	tests := []struct {
-		name string
-		call func(*Server) error
-	}{
-		{
-			name: "CreateUser",
-			call: func(s *Server) error {
-				_, err := s.CreateUser(context.Background(), &pb.CreateUserRequest{Username: "alice"})
-				return err
-			},
-		},
-		{
-			name: "DeleteUser",
-			call: func(s *Server) error {
-				_, err := s.DeleteUser(context.Background(), &pb.DeleteUserRequest{UserId: "user-1"})
-				return err
-			},
-		},
-		{
-			name: "ListUsers",
-			call: func(s *Server) error {
-				_, err := s.ListUsers(context.Background(), &pb.ListUsersRequest{})
-				return err
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			srv, mockSvc := createTestServerWithMockService(t)
-
-			err := tt.call(srv)
-			require.Error(t, err)
-			assert.Equal(t, codes.Unimplemented, status.Code(err),
-				"%s must answer Unimplemented, not a configuration failure", tt.name)
-
-			// No service-layer call was made: an unexpected call on a mock with
-			// no expectations is a failure, and AssertExpectations confirms none
-			// were set up and consumed.
-			mockSvc.AssertExpectations(t)
-		})
-	}
-}
-
-// TestServer_UserRPCsAreUnimplementedOnNilRequest covers the bad-input side of
-// the same three RPCs. A nil request must not change the answer: the capability
-// is absent, so argument validation never gets a chance to run and the caller
-// still learns Unimplemented rather than InvalidArgument.
-func TestServer_UserRPCsAreUnimplementedOnNilRequest(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-
-	_, err := srv.CreateUser(context.Background(), nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-
-	_, err = srv.DeleteUser(context.Background(), nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-
-	_, err = srv.ListUsers(context.Background(), nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-
-	mockSvc.AssertExpectations(t)
 }

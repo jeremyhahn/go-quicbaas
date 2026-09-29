@@ -17,6 +17,12 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/agents"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/spend"
+	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -300,33 +306,79 @@ func (m *mockQuicBaaSForProject) Project() service.ProjectService {
 	return m.projectSvc
 }
 
-// newProjectTestHarness builds a fresh, isolated harness with an in-memory
-// ProjectStore so Create / Get / Update round-trips are deterministic.
-func newProjectTestHarness() *mockQuicBaaSForProject {
-	return &mockQuicBaaSForProject{
-		projectSvc: service.NewProjectService(orchestration.NewInMemoryProjectStore()),
+// projectRefKeys is the KMS SSH key store the project service verifies git
+// key references against: it knows exactly the scope/owner/name addresses it
+// was built with, and answers any other with *xkmsssh.NotFoundError.
+type projectRefKeys map[string]bool
+
+func (k projectRefKeys) GetKey(_ context.Context, req xkmsssh.GetKeyRequest) (*xkmsssh.Key, error) {
+	if !k[req.Scope+"/"+req.Owner+"/"+req.Name] {
+		return nil, &xkmsssh.NotFoundError{Resource: "key", Message: req.Name}
 	}
+	return &xkmsssh.Key{Name: req.Name}, nil
+}
+
+// newProjectTestHarness builds a fresh, isolated harness with an in-memory
+// ProjectStore so Create / Get / Update round-trips are deterministic. The
+// project service verifies references on save, so the harness also attaches
+// the fleet nodes and SSH keys the round-trip tests name, and a tenant agent
+// catalog that defines every Agent.
+func newProjectTestHarness(t *testing.T) *mockQuicBaaSForProject {
+	t.Helper()
+	projectSvc := service.NewProjectService(orchestration.NewInMemoryProjectStore())
+
+	fleet := orchestration.NewInMemoryFleetRegistry()
+	for host, tenantID := range map[string]string{"host-east": "tenant-a", "host-west": "tenant-b"} {
+		require.NoError(t, fleet.RegisterFleetNode(context.Background(), &orchestration.FleetNode{
+			ID: "node-" + host, TenantID: tenantID, Name: host, Host: host, NodeType: "worker",
+		}))
+	}
+	keys := projectRefKeys{
+		"tenant/tenant-a/api-signing": true,
+		"service/deploy/api-access":   true,
+		"service/deploy/rotated":      true,
+	}
+
+	wirer, ok := projectSvc.(interface {
+		SetFleetNodes(orchestration.FleetNodeLister)
+		SetSSHKeys(service.SSHKeyGetter)
+		SetAgentRefChecker(service.AgentRefChecker)
+	})
+	require.True(t, ok, "the project service must accept its reference stores")
+	wirer.SetFleetNodes(fleet)
+	wirer.SetSSHKeys(keys)
+	wirer.SetAgentRefChecker(acceptingAgentRefs{})
+
+	return &mockQuicBaaSForProject{projectSvc: projectSvc}
+}
+
+// acceptingAgentRefs is a tenant agent catalog that defines every Agent: the
+// transport tests are about carrying a reference, not about resolving it.
+type acceptingAgentRefs struct{}
+
+func (acceptingAgentRefs) CheckRef(context.Context, string, orchestration.AgentRef, string, orchestration.AgentRole) error {
+	return nil
 }
 
 // TestHandleProjectCreate_AllFieldsRoundTrip asserts that handleProjectCreate
 // forwards every field on the SDK CreateProjectRequest into the service layer
 // and that convertProjectToSDK projects every persisted field back.
 func TestHandleProjectCreate_AllFieldsRoundTrip(t *testing.T) {
-	svc := newProjectTestHarness()
+	svc := newProjectTestHarness(t)
 	req := &projectSDK.CreateProjectRequest{
-		TenantID:         "tenant-a",
-		Name:             "alpha",
-		Description:      "alpha project",
-		WorkspaceAgentID: "agent-1",
-		WorkspacePath:    "/work/alpha",
-		HostAffinity:     "host-east",
-		DefaultLeadAgent: "agent-lead",
-		GitRepoURL:       "https://example.test/alpha.git",
-		GitDefaultBranch: "main",
-		TokenBudget:      100_000,
-		GPUMinutes:       60,
-		MaxConcurrency:   4,
-		Metadata:         map[string]string{"team": "platform"},
+		TenantID:             "tenant-a",
+		Name:                 "alpha",
+		Description:          "alpha project",
+		WorkspaceFleetNodeID: "agent-1",
+		WorkspacePath:        "/work/alpha",
+		HostAffinity:         "host-east",
+		DefaultLeadAgent:     agents.AgentRef{AgentID: "agent-lead"},
+		GitRepoURL:           "https://example.test/alpha.git",
+		GitDefaultBranch:     "main",
+		Spend:                spend.Limits{Windows: []spend.Window{{Name: "daily", Size: 24 * time.Hour, MaxTokens: 100_000}}},
+		GPUMinutes:           60,
+		MaxConcurrency:       4,
+		Metadata:             map[string]string{"team": "platform"},
 	}
 
 	result, err := handleProjectCreate(context.Background(), svc, req)
@@ -339,13 +391,14 @@ func TestHandleProjectCreate_AllFieldsRoundTrip(t *testing.T) {
 	assert.Equal(t, "tenant-a", info.TenantID)
 	assert.Equal(t, "alpha", info.Name)
 	assert.Equal(t, "alpha project", info.Description)
-	assert.Equal(t, "agent-1", info.Workspace.AgentID)
+	assert.Equal(t, "agent-1", info.Workspace.FleetNodeID)
 	assert.Equal(t, "/work/alpha", info.Workspace.Path)
 	assert.Equal(t, "host-east", info.HostAffinity)
-	assert.Equal(t, "agent-lead", info.DefaultLeadAgent)
+	assert.Equal(t, agents.AgentRef{AgentID: "agent-lead"}, info.DefaultLeadAgent)
 	assert.Equal(t, "https://example.test/alpha.git", info.Git.RepoURL)
 	assert.Equal(t, "main", info.Git.DefaultBranch)
-	assert.Equal(t, int64(100_000), info.Quotas.TokenBudget)
+	require.Len(t, info.Spend.Windows, 1)
+	assert.Equal(t, int64(100_000), info.Spend.Windows[0].MaxTokens)
 	assert.Equal(t, int64(60), info.Quotas.GPUMinutes)
 	assert.Equal(t, 4, info.Quotas.MaxConcurrency)
 	assert.Equal(t, "platform", info.Metadata["team"])
@@ -354,11 +407,11 @@ func TestHandleProjectCreate_AllFieldsRoundTrip(t *testing.T) {
 }
 
 // TestHandleProjectUpdate_AllFieldsRoundTrip asserts that handleProjectUpdate
-// forwards every settable field — Workspace.Path, Git.CurrentSHA, AgentRoles,
+// forwards every settable field — Workspace.Path, Git.CurrentSHA, FleetNodeRoles,
 // quotas, metadata — to the service layer and that the returned project
 // reflects each update.
 func TestHandleProjectUpdate_AllFieldsRoundTrip(t *testing.T) {
-	svc := newProjectTestHarness()
+	svc := newProjectTestHarness(t)
 
 	// Seed a baseline project.
 	created, err := handleProjectCreate(context.Background(), svc, &projectSDK.CreateProjectRequest{
@@ -369,24 +422,24 @@ func TestHandleProjectUpdate_AllFieldsRoundTrip(t *testing.T) {
 	baseline := created.(*projectSDK.ProjectInfo)
 
 	updateReq := &projectSDK.UpdateProjectRequest{
-		TenantID:         "tenant-b",
-		ProjectID:        baseline.ID,
-		Name:             "beta-renamed",
-		Description:      "now described",
-		WorkspaceAgentID: "agent-w1",
-		WorkspacePath:    "/work/beta",
-		HostAffinity:     "host-west",
-		DefaultLeadAgent: "agent-lead-2",
-		GitRepoURL:       "https://example.test/beta.git",
-		GitDefaultBranch: "trunk",
-		GitCurrentSHA:    "deadbeefcafebabe",
-		AgentRoles: map[string]projectSDK.ProjectRole{
+		TenantID:             "tenant-b",
+		ProjectID:            baseline.ID,
+		Name:                 "beta-renamed",
+		Description:          "now described",
+		WorkspaceFleetNodeID: "agent-w1",
+		WorkspacePath:        "/work/beta",
+		HostAffinity:         "host-west",
+		DefaultLeadAgent:     agents.AgentRef{AgentID: "agent-lead-2"},
+		GitRepoURL:           "https://example.test/beta.git",
+		GitDefaultBranch:     "trunk",
+		GitCurrentSHA:        "deadbeefcafebabe",
+		FleetNodeRoles: map[string]projectSDK.ProjectRole{
 			"agent-w1": projectSDK.ProjectRoleLead,
 			"agent-w2": projectSDK.ProjectRoleWorker,
 		},
 		// The quotas are presence-carrying pointers: zero means unlimited,
 		// so absent and zero must stay distinct across the transport.
-		TokenBudget:    ptrTo(int64(200_000)),
+		Spend:          &spend.Limits{Windows: []spend.Window{{Name: "weekly", Size: 168 * time.Hour, MaxEquivalentMicros: 200_000}}},
 		GPUMinutes:     ptrTo(int64(120)),
 		MaxConcurrency: ptrTo(8),
 		Metadata:       map[string]string{"phase": "pilot"},
@@ -399,27 +452,28 @@ func TestHandleProjectUpdate_AllFieldsRoundTrip(t *testing.T) {
 
 	assert.Equal(t, "beta-renamed", info.Name)
 	assert.Equal(t, "now described", info.Description)
-	assert.Equal(t, "agent-w1", info.Workspace.AgentID)
+	assert.Equal(t, "agent-w1", info.Workspace.FleetNodeID)
 	assert.Equal(t, "/work/beta", info.Workspace.Path)
 	assert.Equal(t, "host-west", info.HostAffinity)
-	assert.Equal(t, "agent-lead-2", info.DefaultLeadAgent)
+	assert.Equal(t, agents.AgentRef{AgentID: "agent-lead-2"}, info.DefaultLeadAgent)
 	assert.Equal(t, "https://example.test/beta.git", info.Git.RepoURL)
 	assert.Equal(t, "trunk", info.Git.DefaultBranch)
 	assert.Equal(t, "deadbeefcafebabe", info.Git.CurrentSHA)
-	assert.Equal(t, int64(200_000), info.Quotas.TokenBudget)
+	require.Len(t, info.Spend.Windows, 1)
+	assert.Equal(t, int64(200_000), info.Spend.Windows[0].MaxEquivalentMicros)
 	assert.Equal(t, int64(120), info.Quotas.GPUMinutes)
 	assert.Equal(t, 8, info.Quotas.MaxConcurrency)
 	assert.Equal(t, "pilot", info.Metadata["phase"])
-	require.NotNil(t, info.Permissions.AgentRoles)
-	assert.Equal(t, projectSDK.ProjectRoleLead, info.Permissions.AgentRoles["agent-w1"])
-	assert.Equal(t, projectSDK.ProjectRoleWorker, info.Permissions.AgentRoles["agent-w2"])
+	require.NotNil(t, info.Permissions.FleetNodeRoles)
+	assert.Equal(t, projectSDK.ProjectRoleLead, info.Permissions.FleetNodeRoles["agent-w1"])
+	assert.Equal(t, projectSDK.ProjectRoleWorker, info.Permissions.FleetNodeRoles["agent-w2"])
 }
 
 // TestHandleProjectCreate_WrongRequestType ensures the handler returns the
 // typed *InvalidRequestTypeError rather than panicking when an unrelated
 // request value is passed.
 func TestHandleProjectCreate_WrongRequestType(t *testing.T) {
-	svc := newProjectTestHarness()
+	svc := newProjectTestHarness(t)
 	_, err := handleProjectCreate(context.Background(), svc, "not a request")
 	require.Error(t, err)
 	var typed *InvalidRequestTypeError
@@ -430,7 +484,7 @@ func TestHandleProjectCreate_WrongRequestType(t *testing.T) {
 // TestHandleProjectUpdate_WrongRequestType ensures the handler rejects an
 // invalid request type rather than panicking.
 func TestHandleProjectUpdate_WrongRequestType(t *testing.T) {
-	svc := newProjectTestHarness()
+	svc := newProjectTestHarness(t)
 	_, err := handleProjectUpdate(context.Background(), svc, 42)
 	require.Error(t, err)
 	var typed *InvalidRequestTypeError
@@ -468,7 +522,7 @@ func TestHandleOrchestratorListBackendModels_Success(t *testing.T) {
 	svc := &mockQuicBaaSForInfer{agentSvc: agentSvc}
 
 	req := &orchestratorSDK.ListBackendModelsRequest{
-		AgentID:     "agent-1",
+		NodeID:      "agent-1",
 		BackendName: "ollama",
 		TenantID:    "tenant-a",
 	}
@@ -558,7 +612,7 @@ func TestHandleOrchestratorStartJob_ThreadsLeadAgentID(t *testing.T) {
 // the SDK request is persisted and projected back on the nested SDK shape,
 // and the update's signing switch is tri-state.
 func TestHandleProject_DefaultWorkflowAndGitIdentityRoundTrip(t *testing.T) {
-	svc := newProjectTestHarness()
+	svc := newProjectTestHarness(t)
 	ctx := context.Background()
 
 	created, err := handleProjectCreate(ctx, svc, &projectSDK.CreateProjectRequest{
@@ -625,7 +679,7 @@ func TestHandleProject_DefaultWorkflowAndGitIdentityRoundTrip(t *testing.T) {
 // the SDK → service conversion, the service's own semantics and the service →
 // SDK conversion at once.
 func TestHandleProject_AutonomyAndContextReposRoundTrip(t *testing.T) {
-	svc := newProjectTestHarness()
+	svc := newProjectTestHarness(t)
 	ctx := context.Background()
 
 	created, err := handleProjectCreate(ctx, svc, &projectSDK.CreateProjectRequest{
@@ -695,7 +749,7 @@ func TestHandleProject_AutonomyAndContextReposRoundTrip(t *testing.T) {
 // TestHandleProjectCreate_RefusesInvalidContextRepos: the service's typed
 // refusal reaches the embedded caller instead of a half-written project.
 func TestHandleProjectCreate_RefusesInvalidContextRepos(t *testing.T) {
-	svc := newProjectTestHarness()
+	svc := newProjectTestHarness(t)
 	_, err := handleProjectCreate(context.Background(), svc, &projectSDK.CreateProjectRequest{
 		TenantID: "tenant-d", Name: "delta",
 		ContextRepos: []projectSDK.ContextRepo{
@@ -783,4 +837,109 @@ func TestArtifactToSDK_ZeroRefStaysNil(t *testing.T) {
 	if artifactRefToDomain(nil) != (orchestration.ArtifactRef{}) {
 		t.Fatal("a nil ref must convert to the zero ref rather than panicking")
 	}
+}
+
+// TestHandleProject_ParkAndResumeRoundTrip drives park and resume through
+// the embedded handlers against a real in-memory project service: the park
+// is recorded, an unrelated update leaves it alone, and resume clears it
+// without touching autonomy.
+func TestHandleProject_ParkAndResumeRoundTrip(t *testing.T) {
+	svc := newProjectTestHarness(t)
+	ctx := context.Background()
+
+	created, err := handleProjectCreate(ctx, svc, &projectSDK.CreateProjectRequest{
+		TenantID: "tenant-p", Name: "parkable", Autonomous: true,
+	})
+	require.NoError(t, err)
+	info := created.(*projectSDK.ProjectInfo)
+
+	update := func(req *projectSDK.UpdateProjectRequest) *projectSDK.ProjectInfo {
+		t.Helper()
+		req.TenantID, req.ProjectID = "tenant-p", info.ID
+		result, updateErr := handleProjectUpdate(ctx, svc, req)
+		require.NoError(t, updateErr)
+		got, ok := result.(*projectSDK.ProjectInfo)
+		require.True(t, ok, "expected *projectSDK.ProjectInfo, got %T", result)
+		return got
+	}
+
+	park := true
+	got := update(&projectSDK.UpdateProjectRequest{Parked: &park})
+	assert.True(t, got.Parked)
+	assert.False(t, got.ParkedAt.IsZero(), "a park records when")
+	assert.True(t, got.Autonomous, "parking turned autonomy off")
+
+	got = update(&projectSDK.UpdateProjectRequest{Name: "parkable-renamed"})
+	assert.True(t, got.Parked, "an unrelated update unparked the project")
+
+	resume := false
+	got = update(&projectSDK.UpdateProjectRequest{Parked: &resume})
+	assert.False(t, got.Parked)
+	assert.True(t, got.ParkedAt.IsZero())
+	assert.True(t, got.Autonomous, "resume turned autonomy off")
+}
+
+// TestHandleProjectUpdate_ARetirementReachesTheService: the embedded handler
+// parses the retirement fields and hands them to the service, which on a
+// server with no key resolver refuses them as an invalid request; an
+// unreadable time never reaches the service at all.
+func TestHandleProjectUpdate_ARetirementReachesTheService(t *testing.T) {
+	svc := newProjectTestHarness(t)
+	ctx := context.Background()
+	created, err := handleProjectCreate(ctx, svc, &projectSDK.CreateProjectRequest{TenantID: "tenant-r", Name: "retiring"})
+	require.NoError(t, err)
+	id := created.(*projectSDK.ProjectInfo).ID
+
+	_, err = handleProjectUpdate(ctx, svc, &projectSDK.UpdateProjectRequest{
+		TenantID: "tenant-r", ProjectID: id, GitSigningRetireKeyName: "old",
+	})
+	var retire *service.SigningKeyRetirementError
+	require.ErrorAs(t, err, &retire, "the service was asked to resolve the key")
+
+	_, err = handleProjectUpdate(ctx, svc, &projectSDK.UpdateProjectRequest{
+		TenantID: "tenant-r", ProjectID: id, GitSigningRetireKeyName: "old", GitSigningRetiredAt: "yesterday",
+	})
+	var invalid *service.ProjectInvalidError
+	require.ErrorAs(t, err, &invalid)
+	assert.Equal(t, "git_signing_retired_at", invalid.Field)
+}
+
+func TestRetiredSigningKeysToSDK(t *testing.T) {
+	assert.Nil(t, retiredSigningKeysToSDK(nil))
+	at := time.Date(2026, 9, 24, 22, 15, 0, 0, time.UTC)
+	got := retiredSigningKeysToSDK([]orchestration.RetiredSigningKey{{PublicKey: "ssh-ed25519 AAAA", Name: "old", RetiredAt: at}})
+	require.Len(t, got, 1)
+	assert.Equal(t, projectSDK.RetiredSigningKey{PublicKey: "ssh-ed25519 AAAA", Name: "old", RetiredAt: at}, got[0])
+}
+
+// TestEmbedded_PromptAppendReachesTheDomain: the in-process transport carries
+// run-time prompt material on a spawn, a job and a task, and back on the task.
+func TestEmbedded_PromptAppendReachesTheDomain(t *testing.T) {
+	agent := &mockAgentSvcForFields{}
+	svc := &mockQuicBaaSForInfer{agentSvc: agent}
+	ctx := context.Background()
+
+	task, err := handleOrchestratorCreateTask(ctx, svc, &orchestratorSDK.CreateTaskRequest{
+		TenantID: "tenant-a", Subject: "fix bug", PromptAppend: "task material",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, agent.createTaskReq)
+	assert.Equal(t, "task material", agent.createTaskReq.PromptAppend)
+	require.NotNil(t, task)
+
+	_, err = handleOrchestratorStartJob(ctx, svc, &orchestratorSDK.StartJobRequest{
+		TenantID: "tenant-a", Description: "do the thing", PromptAppend: "job material",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, agent.startJobReq)
+	assert.Equal(t, "job material", agent.startJobReq.PromptAppend)
+
+	spawner := &capturingSpawnAgentService{fakeAgentService: &fakeAgentService{}}
+	tr, err := New(&orchMock{mockQuicBaaS: &mockQuicBaaS{}, agent: spawner, proj: &fakeProjectService{}, admin: &fakeFleetAdminService{}})
+	require.NoError(t, err)
+	_, err = tr.Request(ctx, "quicbaas.Orchestrator", "SpawnSession",
+		&orchestratorSDK.SpawnSessionRequest{AgentID: "claude-coder", PromptAppend: "spawn material"})
+	require.NoError(t, err)
+	require.NotNil(t, spawner.spawned)
+	assert.Equal(t, "spawn material", spawner.spawned.PromptAppend)
 }

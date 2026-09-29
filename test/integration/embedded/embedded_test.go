@@ -18,7 +18,6 @@ package embedded
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -34,7 +33,9 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/netport"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 var (
@@ -76,6 +77,7 @@ func setupEmbeddedServer() error {
 	}
 
 	cfg := config.EmbeddedConfig()
+	cfg.IAM.SPIFFETrustDomain = helpers.SPIFFETrustDomain
 	cfg.Storage.DataDir = filepath.Join(tempDir, "data")
 	cfg.Storage.WALDir = filepath.Join(tempDir, "wal")
 	cfg.Raft.NodeID = 1
@@ -153,13 +155,16 @@ func teardownEmbeddedServer() {
 	}
 }
 
+// getFreePort reserves a loopback port for a server that binds it later. It is
+// reserved through netport rather than drawn from :0 and released, so nothing
+// else can be handed it in between (go-quicbaas#721). The reservation lasts
+// for the life of the test process.
 func getFreePort() (int, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	ports, err := netport.Reserve(1)
 	if err != nil {
 		return 0, err
 	}
-	defer listener.Close()
-	return listener.Addr().(*net.TCPAddr).Port, nil
+	return ports[0], nil
 }
 
 // newEmbeddedClient creates a new SDK client using the embedded transport.

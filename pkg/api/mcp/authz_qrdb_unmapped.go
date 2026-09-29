@@ -111,26 +111,6 @@ var unmappedToolGroups = []unmappedToolGroup{
 		},
 	},
 	{
-		// No sibling rule and no qrdb groups:* family. Group membership
-		// confers role bindings transitively, which puts it closer to
-		// roles:assign than to users:update — but neither sibling transport
-		// has made that call, and making it here would put MCP ahead of REST
-		// and gRPC on a privilege boundary.
-		reason: "no REST/gRPC PEP rule and no qrdb groups:* family; membership confers " +
-			"role bindings transitively so the family choice is a policy decision",
-		resolution: "register groups:* in go-qrdb, then map all five transports together",
-		tools: []string{
-			"quicbaas_iam_group_create",
-			"quicbaas_iam_group_get",
-			"quicbaas_iam_group_list",
-			"quicbaas_iam_group_update",
-			"quicbaas_iam_group_delete",
-			"quicbaas_iam_group_add_member",
-			"quicbaas_iam_group_remove_member",
-			"quicbaas_iam_group_list_members",
-		},
-	},
-	{
 		// No sibling rule. qrdb registers permissions:list and
 		// permissions:resolve, but those READ a subject's effective
 		// permissions; they are not a write capability over the policy

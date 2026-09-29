@@ -14,6 +14,20 @@ import { adoptPage, appendCSVParam, appendListParam, appendPageParams, } from '.
 import { APIError, ConnectionError, NotConnectedError, DeployNotSupportedError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError, } from './errors.js';
 // API base path for all orchestrator endpoints.
 const API_PREFIX = '/api/v1/orchestrator';
+// FLEET_PREFIX is the fleet registry's own REST surface, outside the
+// orchestrator prefix.
+const FLEET_PREFIX = '/api/v1/fleet';
+// WORKER_IMAGE_PATH is the worker image refresh's route: a host verb of the
+// SDLC module, served beside the orchestrator surface.
+const WORKER_IMAGE_PATH = '/api/v1/sdlc/worker-image';
+// sleep resolves after `ms` milliseconds. Used only by the fetch-based SSE
+// reconnect loops (subscribeJobEvents) to back off between attempts.
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+// SSE_RECONNECT_DELAY_MS mirrors the browser's own default EventSource retry
+// delay, for the fetch-based SSE stream(s) that replace it.
+const SSE_RECONNECT_DELAY_MS = 3000;
 // resolveToken resolves a bearer token from either a static string or an
 // async factory function. Returns an empty string when no token is configured.
 async function resolveToken(token) {
@@ -130,7 +144,13 @@ class RestOrchestratorClient {
     // fetchJSON performs an authenticated fetch and deserialises the response body.
     // Non-2xx responses are converted to APIError.
     async fetchJSON(path, init) {
-        const url = `${this.baseUrl}${API_PREFIX}${path}`;
+        return this.fetchAPI(`${API_PREFIX}${path}`, init);
+    }
+    // fetchAPI is fetchJSON for a path outside the orchestrator prefix — the
+    // worker image refresh lives under /api/v1/sdlc and the fleet registry
+    // under /api/v1/fleet.
+    async fetchAPI(apiPath, init) {
+        const url = `${this.baseUrl}${apiPath}`;
         const auth = await this.authHeaders();
         const resp = await fetch(url, {
             ...init,
@@ -212,18 +232,18 @@ class RestOrchestratorClient {
         const raw = await this.fetchJSON(`/sessions?${params.toString()}`);
         return adoptPage(raw, 'sessions', sessionFromWire);
     }
-    // listAgentsPage maps to GET /api/v1/orchestrator/agents with the shared
+    // listFleetNodesPage maps to GET /api/v1/fleet with the shared
     // paging parameters and the fleet listing's own filters.
-    async listAgentsPage(tenantID, page) {
+    async listFleetNodesPage(tenantID, page) {
         const params = new URLSearchParams({ tenant_id: tenantID });
         appendListParam(params, 'host', page?.host);
         appendListParam(params, 'status', page?.status);
-        appendListParam(params, 'agent_type', page?.agent_type);
+        appendListParam(params, 'node_type', page?.node_type);
         appendListParam(params, 'backend', page?.backend);
         appendListParam(params, 'model', page?.model);
         appendPageParams(params, page);
-        const raw = await this.fetchJSON(`/agents?${params.toString()}`);
-        return adoptPage(raw, 'agents');
+        const raw = await this.fetchAPI(`${FLEET_PREFIX}?${params.toString()}`);
+        return adoptPage(raw, 'nodes');
     }
     // listWorkflowsPage maps to GET /api/v1/orchestrator/workflows with the
     // shared paging parameters and the workflow listing's own filters.
@@ -262,24 +282,24 @@ class RestOrchestratorClient {
     async cancelJob(tenantID, jobID) {
         await this.fetchJSON(`/jobs/${encodeURIComponent(jobID)}?tenant_id=${encodeURIComponent(tenantID)}`, { method: 'DELETE' });
     }
-    // listAgents maps to GET /api/v1/orchestrator/agents with query parameters.
-    async listAgents(req) {
+    // listFleetNodes maps to GET /api/v1/fleet with query parameters.
+    async listFleetNodes(req) {
         const params = new URLSearchParams({ tenant_id: req.tenant_id });
         if (req.host)
             params.set('host', req.host);
         if (req.status)
             params.set('status', req.status);
-        if (req.agent_type)
-            params.set('agent_type', req.agent_type);
+        if (req.node_type)
+            params.set('node_type', req.node_type);
         if (req.backend)
             params.set('backend', req.backend);
         if (req.model)
             params.set('model', req.model);
-        return this.fetchJSON(`/agents?${params.toString()}`);
+        return this.fetchAPI(`${FLEET_PREFIX}?${params.toString()}`);
     }
-    // getAgentStatus maps to GET /api/v1/orchestrator/agents/:agentID?tenant_id=<tenantID>
-    async getAgentStatus(req) {
-        return this.fetchJSON(`/agents/${encodeURIComponent(req.agent_id)}?tenant_id=${encodeURIComponent(req.tenant_id)}`);
+    // getFleetNode maps to GET /api/v1/fleet/:nodeID?tenant_id=<tenantID>
+    async getFleetNode(req) {
+        return this.fetchAPI(`${FLEET_PREFIX}/${encodeURIComponent(req.node_id)}?tenant_id=${encodeURIComponent(req.tenant_id)}`);
     }
     // listSessions maps to GET /api/v1/orchestrator/sessions?tenant_id=<tenantID>
     // Server returns {sessions: [...], timestamp}; normalise missing count field.
@@ -333,13 +353,13 @@ class RestOrchestratorClient {
         return resp.runners ?? [];
     }
     // listBackendModels maps to
-    // GET /api/v1/orchestrator/agents/{agentID}/backends/{backendName}/models
+    // GET /api/v1/fleet/{nodeID}/backends/{backendName}/models
     // Returns the model names available on the named backend as seen from the
-    // specified agent. Pass "any" as agentID to query without host affinity.
-    async listBackendModels(agentID, backendName) {
-        const aid = encodeURIComponent(agentID || 'any');
+    // specified fleet node. Pass "any" as nodeID to query without host affinity.
+    async listBackendModels(nodeID, backendName) {
+        const nid = encodeURIComponent(nodeID || 'any');
         const bn = encodeURIComponent(backendName);
-        const resp = await this.fetchJSON(`/agents/${aid}/backends/${bn}/models`);
+        const resp = await this.fetchAPI(`${FLEET_PREFIX}/${nid}/backends/${bn}/models`);
         return resp.models ?? [];
     }
     // healthCheck maps to GET /api/v1/orchestrator/health
@@ -348,30 +368,108 @@ class RestOrchestratorClient {
     }
     // subscribeJobEvents opens a Server-Sent Events stream for a running job.
     // Maps to GET /api/v1/orchestrator/jobs/:jobID/events?tenant_id=<tenantID>
-    // Returns a cleanup function that closes the EventSource connection.
-    subscribeJobEvents(tenantID, jobID, onEvent) {
+    // Returns a cleanup function that stops the stream and any pending
+    // reconnect.
+    //
+    // Native EventSource is deliberately NOT used here, for the same reason
+    // subscribeSession does its own fetch-based SSE parsing: it cannot carry a
+    // custom Authorization header, so a bearer-token session has no way to
+    // authenticate the connection at all. Every request this stream sends
+    // therefore arrived at the daemon with no Authorization header and was
+    // refused — indistinguishable, from the browser's side, from an expired or
+    // rejected session, which is what made "renewed but rejected" reproduce for
+    // an operator with running jobs open (their dashboard held an open job-
+    // events stream) and NOT for one without any (go-quicbaas UI-login-refused
+    // investigation, 2026-09-25). The bearer is resolved fresh on every
+    // (re)connect attempt, exactly like every other authenticated call on this
+    // client, so a token rotated mid-stream is picked up on the next reconnect
+    // rather than the stream being pinned to whatever was valid when it first
+    // opened.
+    subscribeJobEvents(tenantID, jobID, onEvent, onError) {
         const url = [
             this.baseUrl,
             API_PREFIX,
             `/jobs/${encodeURIComponent(jobID)}/events`,
             `?tenant_id=${encodeURIComponent(tenantID)}`,
         ].join('');
-        const source = new EventSource(url);
-        source.onmessage = (e) => {
-            try {
-                const event = JSON.parse(e.data);
-                onEvent(event);
-            }
-            catch {
-                // Discard unparseable frames; the server may send keep-alive comments.
+        const controller = new AbortController();
+        let closedByCaller = false;
+        const run = async () => {
+            while (!closedByCaller) {
+                let resp;
+                try {
+                    const auth = await this.authHeaders();
+                    resp = await fetch(url, {
+                        headers: { Accept: 'text/event-stream', ...auth },
+                        signal: controller.signal,
+                    });
+                }
+                catch {
+                    // Aborted by the caller, or a network failure. A network failure is
+                    // a transient drop — the same case EventSource reconnects from on
+                    // its own — so back off and retry rather than giving up.
+                    if (closedByCaller)
+                        return;
+                    await sleep(SSE_RECONNECT_DELAY_MS);
+                    continue;
+                }
+                if (!resp.ok || !resp.body) {
+                    // A refusal (403) or a response that is not an event stream at all
+                    // is not transient — reported once, never retried, matching
+                    // EventSource's CLOSED/give-up semantics.
+                    if (!closedByCaller)
+                        onError?.();
+                    return;
+                }
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let currentData = '';
+                try {
+                    while (true) {
+                        const { value, done } = await reader.read();
+                        if (done)
+                            break;
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop() ?? '';
+                        for (const line of lines) {
+                            if (line.startsWith('data: ')) {
+                                currentData = line.slice(6);
+                            }
+                            else if (line === '' && currentData !== '') {
+                                try {
+                                    onEvent(JSON.parse(currentData));
+                                }
+                                catch {
+                                    // Discard unparseable frames; the server may send
+                                    // keep-alive comments.
+                                }
+                                currentData = '';
+                            }
+                        }
+                    }
+                }
+                catch {
+                    // Aborted mid-read, or a stream read error — fall through to the
+                    // reconnect decision below either way.
+                }
+                finally {
+                    reader.cancel().catch(() => { });
+                }
+                if (closedByCaller)
+                    return;
+                // The stream ended — the server closed it, or the connection dropped
+                // mid-read. Reconnect the same way EventSource does for a transient
+                // drop, rather than treating every disconnect as a give-up.
+                await sleep(SSE_RECONNECT_DELAY_MS);
             }
         };
-        source.onerror = () => {
-            if (source.readyState === EventSource.CLOSED) {
-                source.close();
-            }
+        void run();
+        return () => {
+            closedByCaller = true;
+            controller.abort();
         };
-        return () => source.close();
     }
     // spawnSession maps to POST /api/v1/orchestrator/sessions?tenant_id=<t>.
     // tenantID is threaded via query string (server expectation) and not in
@@ -456,34 +554,48 @@ class RestOrchestratorClient {
     async deleteTask(req) {
         return this.fetchJSON(`/tasks/${encodeURIComponent(req.task_id)}?tenant_id=${encodeURIComponent(req.tenant_id)}`, { method: 'DELETE' });
     }
+    // listAttention maps to GET /api/v1/orchestrator/attention with the
+    // shared paging parameters and the inbox's own project/kind narrowings.
+    async listAttention(tenantID, page) {
+        const params = new URLSearchParams({ tenant_id: tenantID });
+        appendListParam(params, 'project_id', page?.project_id);
+        appendListParam(params, 'kind', page?.kind);
+        appendPageParams(params, page);
+        const raw = await this.fetchJSON(`/attention?${params.toString()}`);
+        return adoptPage(raw, 'items');
+    }
+    // resolveAttention maps to POST /api/v1/orchestrator/attention/:taskID/resolve
+    async resolveAttention(req) {
+        return this.fetchJSON(`/attention/${encodeURIComponent(req.task_id)}/resolve?tenant_id=${encodeURIComponent(req.tenant_id)}`, { method: 'POST', body: JSON.stringify({ action: req.action, answer: req.answer }) });
+    }
     // decomposeTask maps to POST /api/v1/orchestrator/tasks/:taskID/decompose
     async decomposeTask(req) {
         return this.fetchJSON(`/tasks/${encodeURIComponent(req.task_id)}/decompose?tenant_id=${encodeURIComponent(req.tenant_id)}`, { method: 'POST', body: JSON.stringify(req) });
     }
-    // registerAgent maps to POST /api/v1/orchestrator/agents
-    async registerAgent(req) {
-        return this.fetchJSON('/agents', {
+    // registerFleetNode maps to POST /api/v1/fleet
+    async registerFleetNode(req) {
+        return this.fetchAPI(FLEET_PREFIX, {
             method: 'POST',
             body: JSON.stringify(req),
         });
     }
-    // removeAgent maps to DELETE /api/v1/orchestrator/agents/:agentID?tenant_id=<tenantID>
-    async removeAgent(req) {
-        await this.fetchJSON(`/agents/${encodeURIComponent(req.agent_id)}?tenant_id=${encodeURIComponent(req.tenant_id)}`, { method: 'DELETE' });
+    // removeFleetNode maps to DELETE /api/v1/fleet/:nodeID?tenant_id=<tenantID>
+    async removeFleetNode(req) {
+        await this.fetchAPI(`${FLEET_PREFIX}/${encodeURIComponent(req.node_id)}?tenant_id=${encodeURIComponent(req.tenant_id)}`, { method: 'DELETE' });
     }
-    // disableAgent maps to POST /api/v1/orchestrator/agents/:agentID/disable?tenant_id=<tenantID>
-    async disableAgent(req) {
+    // disableFleetNode maps to POST /api/v1/fleet/:nodeID/disable?tenant_id=<tenantID>
+    async disableFleetNode(req) {
         const query = new URLSearchParams({ tenant_id: req.tenant_id }).toString();
-        return this.fetchJSON(`/agents/${encodeURIComponent(req.agent_id)}/disable?${query}`, { method: 'POST' });
+        return this.fetchAPI(`${FLEET_PREFIX}/${encodeURIComponent(req.node_id)}/disable?${query}`, { method: 'POST' });
     }
-    // enableAgent maps to POST /api/v1/orchestrator/agents/:agentID/enable?tenant_id=<tenantID>
-    async enableAgent(req) {
+    // enableFleetNode maps to POST /api/v1/fleet/:nodeID/enable?tenant_id=<tenantID>
+    async enableFleetNode(req) {
         const query = new URLSearchParams({ tenant_id: req.tenant_id }).toString();
-        return this.fetchJSON(`/agents/${encodeURIComponent(req.agent_id)}/enable?${query}`, { method: 'POST' });
+        return this.fetchAPI(`${FLEET_PREFIX}/${encodeURIComponent(req.node_id)}/enable?${query}`, { method: 'POST' });
     }
-    // deployAgent is a desktop-only operation. REST callers must use the
-    // CLI (`quicbaas agent deploy`) or the desktop GUI.
-    async deployAgent(_spec) {
+    // deployFleetNode is a desktop-only operation. REST callers must use the
+    // CLI (`quicbaas fleet deploy`) or the desktop GUI.
+    async deployFleetNode(_spec) {
         throw new DeployNotSupportedError('rest');
     }
     // getSessionHistory maps to GET /api/v1/orchestrator/sessions/:sessionID/events
@@ -524,6 +636,16 @@ class RestOrchestratorClient {
     // PATH: a project's spend and a job's spend are the same prefix scan at two
     // depths, and four routes over one scan would be four places for the
     // drill-down's arithmetic to stop agreeing with itself.
+    // getWorkerImageStatus maps to GET /api/v1/sdlc/worker-image.
+    async getWorkerImageStatus() {
+        return this.fetchAPI(WORKER_IMAGE_PATH);
+    }
+    // refreshWorkerImage maps to POST /api/v1/sdlc/worker-image/refresh, which
+    // answers 202 with the status the request left behind, 409 while a pass is
+    // running or queued, 503 on a node without the refresh loop.
+    async refreshWorkerImage() {
+        return this.fetchAPI(`${WORKER_IMAGE_PATH}/refresh`, { method: 'POST' });
+    }
     async getSpendReport(req) {
         const params = new URLSearchParams();
         if (req.tenant_id)
@@ -540,8 +662,46 @@ class RestOrchestratorClient {
         // must leave the parameter off entirely rather than send '0'.
         if (req.round_set)
             params.set('round', String(req.round ?? 0));
+        if (req.from)
+            params.set('from', req.from);
+        if (req.to)
+            params.set('to', req.to);
+        if (req.host)
+            params.set('host', req.host);
+        if (req.agent)
+            params.set('agent', req.agent);
         const query = params.toString();
         return this.fetchJSON(`/cost${query ? `?${query}` : ''}`);
+    }
+    // getTenantSpendPolicy maps to GET /api/v1/orchestrator/spend-policy.
+    async getTenantSpendPolicy(req) {
+        const query = new URLSearchParams({ tenant_id: req.tenant_id }).toString();
+        return this.fetchJSON(`/spend-policy?${query}`);
+    }
+    // setTenantSpendPolicy maps to PUT /api/v1/orchestrator/spend-policy.
+    async setTenantSpendPolicy(req) {
+        const query = new URLSearchParams({ tenant_id: req.tenant_id }).toString();
+        return this.fetchJSON(`/spend-policy?${query}`, {
+            method: 'PUT',
+            body: JSON.stringify({ limits: req.limits }),
+        });
+    }
+    // getCostSettings maps to GET /api/v1/orchestrator/cost-settings.
+    async getCostSettings(req) {
+        return this.fetchJSON(`/cost-settings${costSettingsQuery(req.tenant_id)}`);
+    }
+    // setCostSettings maps to PUT /api/v1/orchestrator/cost-settings. The
+    // settings are replaced: an absent rate or engine inherits the
+    // configuration.
+    async setCostSettings(req) {
+        const body = {
+            electricity_price_per_kwh: req.electricity_price_per_kwh,
+            engine_power_watts: req.engine_power_watts,
+        };
+        return this.fetchJSON(`/cost-settings${costSettingsQuery(req.tenant_id)}`, {
+            method: 'PUT',
+            body: JSON.stringify(body),
+        });
     }
     // subscribeSession opens a Server-Sent Events stream for a session.
     // Maps to GET /api/v1/orchestrator/sessions/:sessionID/events?from=N&follow=1
@@ -1729,15 +1889,15 @@ class RestProjectsClient {
         const raw = await this.fetchJSON(`/api/v1/projects?${params.toString()}`);
         return adoptPage(raw, 'projects');
     }
-    // grantAgentRole maps to PUT /api/v1/projects/:projectId/permissions/:agentId
-    async grantAgentRole(req) {
+    // grantFleetNodeRole maps to PUT /api/v1/projects/:projectId/permissions/:agentId
+    async grantFleetNodeRole(req) {
         const query = new URLSearchParams({ tenant_id: req.tenant_id }).toString();
-        return this.fetchJSON(`/api/v1/projects/${encodeURIComponent(req.project_id)}/permissions/${encodeURIComponent(req.agent_id)}?${query}`, { method: 'PUT', body: JSON.stringify({ role: req.role }) });
+        return this.fetchJSON(`/api/v1/projects/${encodeURIComponent(req.project_id)}/permissions/${encodeURIComponent(req.node_id)}?${query}`, { method: 'PUT', body: JSON.stringify({ role: req.role }) });
     }
-    // revokeAgentRole maps to DELETE /api/v1/projects/:projectId/permissions/:agentId
-    async revokeAgentRole(req) {
+    // revokeFleetNodeRole maps to DELETE /api/v1/projects/:projectId/permissions/:agentId
+    async revokeFleetNodeRole(req) {
         const query = new URLSearchParams({ tenant_id: req.tenant_id }).toString();
-        return this.fetchJSON(`/api/v1/projects/${encodeURIComponent(req.project_id)}/permissions/${encodeURIComponent(req.agent_id)}?${query}`, { method: 'DELETE' });
+        return this.fetchJSON(`/api/v1/projects/${encodeURIComponent(req.project_id)}/permissions/${encodeURIComponent(req.node_id)}?${query}`, { method: 'DELETE' });
     }
 }
 // RestSdlcClient implements SdlcClient over the SDLC module's REST endpoints:
@@ -1812,6 +1972,59 @@ class RestSdlcClient {
     async conformance(tenantId, projectId) {
         const query = new URLSearchParams({ tenant_id: tenantId }).toString();
         return this.fetchJSON(`/api/v1/sdlc/projects/${encodeURIComponent(projectId)}/conformance?${query}`);
+    }
+    // openWork maps to GET /api/v1/sdlc/projects/:projectId/open-work
+    async openWork(tenantId, projectId) {
+        const query = new URLSearchParams({ tenant_id: tenantId }).toString();
+        return this.fetchJSON(`/api/v1/sdlc/projects/${encodeURIComponent(projectId)}/open-work?${query}`);
+    }
+    reviewerPath(tenantId, projectId, pullRequest) {
+        const query = new URLSearchParams({ tenant_id: tenantId }).toString();
+        return `/api/v1/sdlc/projects/${encodeURIComponent(projectId)}/pulls/${encodeURIComponent(String(pullRequest))}/reviewer?${query}`;
+    }
+    // reviewer maps to GET /api/v1/sdlc/projects/:projectId/pulls/:number/reviewer
+    async reviewer(tenantId, projectId, pullRequest) {
+        return this.fetchJSON(this.reviewerPath(tenantId, projectId, pullRequest));
+    }
+    // setReviewer maps to PUT /api/v1/sdlc/projects/:projectId/pulls/:number/reviewer
+    // The body carries the profile alone: the path names the project and the
+    // pull request.
+    async setReviewer(tenantId, projectId, pullRequest, profile) {
+        return this.fetchJSON(this.reviewerPath(tenantId, projectId, pullRequest), {
+            method: 'PUT',
+            body: JSON.stringify({ profile }),
+        });
+    }
+    // clearReviewer maps to DELETE /api/v1/sdlc/projects/:projectId/pulls/:number/reviewer
+    // The server answers the selection that now holds, not 204.
+    async clearReviewer(tenantId, projectId, pullRequest) {
+        return this.fetchJSON(this.reviewerPath(tenantId, projectId, pullRequest), {
+            method: 'DELETE',
+        });
+    }
+    // fileIssue maps to POST /api/v1/sdlc/projects/:projectId/issues
+    // The body carries the filing alone: the path names the project.
+    async fileIssue(tenantId, projectId, req) {
+        const query = new URLSearchParams({ tenant_id: tenantId }).toString();
+        return this.fetchJSON(`/api/v1/sdlc/projects/${encodeURIComponent(projectId)}/issues?${query}`, {
+            method: 'POST',
+            body: JSON.stringify(req),
+        });
+    }
+    // collaborators maps to GET /api/v1/sdlc/projects/:projectId/collaborators
+    async collaborators(tenantId, projectId) {
+        const query = new URLSearchParams({ tenant_id: tenantId }).toString();
+        return this.fetchJSON(`/api/v1/sdlc/projects/${encodeURIComponent(projectId)}/collaborators?${query}`);
+    }
+    // adoptIssue maps to POST /api/v1/sdlc/projects/:projectId/adopt
+    // The path names the project; the body carries the issue, the pull request
+    // and the ruling.
+    async adoptIssue(tenantId, projectId, request) {
+        const query = new URLSearchParams({ tenant_id: tenantId }).toString();
+        return this.fetchJSON(`/api/v1/sdlc/projects/${encodeURIComponent(projectId)}/adopt?${query}`, {
+            method: 'POST',
+            body: JSON.stringify(request),
+        });
     }
 }
 // RestAccountsClient implements AccountsClient over the QuicBaaS REST pooled
@@ -1910,6 +2123,80 @@ class RestAccountsClient {
         return this.fetchJSON(`/api/v1/agent-accounts/${encodeURIComponent(accountId)}/usage?${query}`);
     }
 }
+// RestAgentsClient implements AgentsClient over the tenant AI agent catalog:
+// /api/v1/agents and /api/v1/agent-pools. See handlers_agents.go for the
+// server-side shapes this mirrors. Every route takes ?tenant_id=; without it
+// the server answers for the caller's own tenant.
+class RestAgentsClient {
+    baseUrl;
+    config;
+    constructor(baseUrl, config = {}) {
+        this.baseUrl = baseUrl.replace(/\/$/, '');
+        this.config = config;
+    }
+    async fetchJSON(path, tenantId, init = {}) {
+        const headers = { 'Content-Type': 'application/json' };
+        const tok = await resolveToken(this.config.token);
+        if (tok)
+            headers['Authorization'] = `Bearer ${tok}`;
+        const query = tenantId ? `?${new URLSearchParams({ tenant_id: tenantId }).toString()}` : '';
+        const resp = await fetch(`${this.baseUrl}${path}${query}`, {
+            ...init,
+            headers: { ...headers, ...(init.headers ?? {}) },
+        });
+        if (!resp.ok) {
+            const text = await resp.text().catch(() => resp.statusText);
+            throw new APIError(resp.status, text);
+        }
+        return parseResponseBody(resp);
+    }
+    async listAgents(tenantId) {
+        const body = await this.fetchJSON('/api/v1/agents', tenantId);
+        return body.agents ?? [];
+    }
+    async getAgent(agentId, tenantId) {
+        return this.fetchJSON(`/api/v1/agents/${encodeURIComponent(agentId)}`, tenantId);
+    }
+    async createAgent(agent, tenantId) {
+        return this.fetchJSON('/api/v1/agents', tenantId, { method: 'POST', body: JSON.stringify(agent) });
+    }
+    async updateAgent(agentId, agent, tenantId) {
+        return this.fetchJSON(`/api/v1/agents/${encodeURIComponent(agentId)}`, tenantId, {
+            method: 'PUT',
+            body: JSON.stringify(agent),
+        });
+    }
+    async deleteAgent(agentId, tenantId) {
+        await this.fetchJSON(`/api/v1/agents/${encodeURIComponent(agentId)}`, tenantId, { method: 'DELETE' });
+    }
+    async agentUsedBy(agentId, tenantId) {
+        const body = await this.fetchJSON(`/api/v1/agents/${encodeURIComponent(agentId)}/used-by`, tenantId);
+        return body.used_by ?? [];
+    }
+    async listPools(tenantId) {
+        const body = await this.fetchJSON('/api/v1/agent-pools', tenantId);
+        return body.pools ?? [];
+    }
+    async getPool(poolId, tenantId) {
+        return this.fetchJSON(`/api/v1/agent-pools/${encodeURIComponent(poolId)}`, tenantId);
+    }
+    async createPool(pool, tenantId) {
+        return this.fetchJSON('/api/v1/agent-pools', tenantId, { method: 'POST', body: JSON.stringify(pool) });
+    }
+    async updatePool(poolId, pool, tenantId) {
+        return this.fetchJSON(`/api/v1/agent-pools/${encodeURIComponent(poolId)}`, tenantId, {
+            method: 'PUT',
+            body: JSON.stringify(pool),
+        });
+    }
+    async deletePool(poolId, tenantId) {
+        await this.fetchJSON(`/api/v1/agent-pools/${encodeURIComponent(poolId)}`, tenantId, { method: 'DELETE' });
+    }
+    async poolUsedBy(poolId, tenantId) {
+        const body = await this.fetchJSON(`/api/v1/agent-pools/${encodeURIComponent(poolId)}/used-by`, tenantId);
+        return body.used_by ?? [];
+    }
+}
 // RestIAMClient implements IAMClient over the QuicBaaS REST IAM endpoints.
 // Paths: /api/v1/tenants/{tenantID}/users|roles|policies and /api/v1/tenants
 class RestIAMClient {
@@ -1960,7 +2247,6 @@ class RestIAMClient {
         //   created   → created_at
         //   updated   → updated_at
         //   role      → roles[] (some responses send a single "role" string)
-        //   state     → maps to enabled (any state that is not "disabled" is treated as enabled)
         // Absent fields are normalised to safe defaults so the UI never renders undefined.
         const raw = await this.fetchJSON(`/api/v1/tenants/${encodeURIComponent(tenantID)}/users`);
         const users = (raw.users ?? []).map((u) => ({
@@ -1969,9 +2255,8 @@ class RestIAMClient {
             // Prefer an explicit username field; fall back to the display name field.
             username: u.username ?? u.name ?? u.email ?? '',
             email: u.email ?? '',
-            enabled: u.enabled ?? (u.state !== 'disabled'),
+            lifecycle: u.lifecycle,
             roles: u.roles ?? (u.role ? [u.role] : []),
-            groups: u.groups ?? [],
             created_at: u.created_at ?? u.created ?? '',
             updated_at: u.updated_at ?? u.updated ?? '',
         }));
@@ -3419,6 +3704,7 @@ export class RestClient {
     projects;
     sdlc;
     accounts;
+    agents;
     iam;
     kms;
     secrets;
@@ -3459,6 +3745,7 @@ export class RestClient {
         this.projects = new RestProjectsClient(baseUrl, config);
         this.sdlc = new RestSdlcClient(baseUrl, config);
         this.accounts = new RestAccountsClient(baseUrl, config);
+        this.agents = new RestAgentsClient(baseUrl, config);
         this.iam = new RestIAMClient(baseUrl, config);
         this.kms = new RestKMSClient(baseUrl, config);
         this.secrets = new RestSecretsClient(baseUrl, config);
@@ -3495,4 +3782,9 @@ export class RestClient {
 // Re-export errors used in this module so callers can catch typed errors
 // without importing from the errors module directly.
 export { APIError, ConnectionError, NotConnectedError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError, };
+// costSettingsQuery scopes a cost-settings request to a tenant when one is
+// named; the server otherwise answers for the caller's own tenant.
+function costSettingsQuery(tenantID) {
+    return tenantID ? `?${new URLSearchParams({ tenant_id: tenantID }).toString()}` : '';
+}
 //# sourceMappingURL=rest.js.map

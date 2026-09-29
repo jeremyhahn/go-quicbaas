@@ -16,7 +16,6 @@
 package rest
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -2711,41 +2710,8 @@ func TestIAM91_OAuthError_ErrorString(t *testing.T) {
 }
 
 // =============================================================================
-// Groups/Roles/Users/Tenants: uncovered error paths
+// Roles/Users/Tenants: uncovered error paths
 // =============================================================================
-
-func TestIAM91_UpdateGroup_MissingTenantID(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants//groups/g1", strings.NewReader(`{}`))
-	req = withChiParams(req, map[string]string{"tenant_id": "", "group_id": "g1"})
-	w := httptest.NewRecorder()
-	handler.UpdateGroup(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestIAM91_UpdateGroup_MissingGroupID(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/t1/groups/", strings.NewReader(`{}`))
-	req = withChiParams(req, map[string]string{"tenant_id": "t1", "group_id": ""})
-	w := httptest.NewRecorder()
-	handler.UpdateGroup(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestIAM91_UpdateGroup_InvalidJSON(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/t1/groups/g1", strings.NewReader("{bad"))
-	req = withChiParams(req, map[string]string{"tenant_id": "t1", "group_id": "g1"})
-	w := httptest.NewRecorder()
-	handler.UpdateGroup(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 func TestIAM91_UpdateRole_MissingTenantID(t *testing.T) {
 	_, _, _, handler, cleanup := setupIAMTestServer(t)
@@ -2920,68 +2886,6 @@ func TestIAM91_GetBearerTokenString(t *testing.T) {
 
 	req.Header.Set("Authorization", "Bearer my-token")
 	assert.Equal(t, "my-token", getBearerTokenString(req))
-}
-
-// =============================================================================
-// Groups: CreateGroup missing name + missing tenant
-// =============================================================================
-
-func TestIAM91_CreateGroup_MissingTenantID(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	body := `{"name":"g1"}`
-	req := httptest.NewRequest(http.MethodPost, "/groups", bytes.NewReader([]byte(body)))
-	req = withChiParams(req, map[string]string{"tenant_id": ""})
-	w := httptest.NewRecorder()
-	handler.CreateGroup(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestIAM91_CreateGroup_InvalidJSON(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/groups", strings.NewReader("{bad"))
-	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
-	w := httptest.NewRecorder()
-	handler.CreateGroup(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestIAM91_CreateGroup_MissingName(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/groups", strings.NewReader(`{}`))
-	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
-	w := httptest.NewRecorder()
-	handler.CreateGroup(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "group name is required")
-}
-
-func TestIAM91_AddMember_MissingUserID(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/members", strings.NewReader(`{}`))
-	req = withChiParams(req, map[string]string{"tenant_id": "t1", "group_id": "g1"})
-	w := httptest.NewRecorder()
-	handler.AddMember(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "user_id is required")
-}
-
-func TestIAM91_AddMember_InvalidJSON(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/members", strings.NewReader("{bad"))
-	req = withChiParams(req, map[string]string{"tenant_id": "t1", "group_id": "g1"})
-	w := httptest.NewRecorder()
-	handler.AddMember(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // =============================================================================

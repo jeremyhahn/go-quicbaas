@@ -89,6 +89,13 @@ func TestScan_ReportsEveryClassWithItsLineAndMatch(t *testing.T) {
 			wantLine:  1,
 		},
 		{
+			name:      "owner account name in a comment",
+			content:   "package x\n\n// TODO(jhahn): drop after the migration\n",
+			wantClass: ClassOwnerAccount,
+			wantMatch: "jhahn",
+			wantLine:  3,
+		},
+		{
 			name:      "lab NFS mount in a script default",
 			content:   "QRDB=${QRDB:-/mnt/" + "vstation" + "-01/go-qrdb}\n", // lab-string-ok: fixture for the owner-path rule
 			wantClass: ClassOwnerPath,
@@ -444,8 +451,11 @@ func TestPatterns_EveryNeedleIsImpliedByItsExpr(t *testing.T) {
 		`(?i)\bvstation-\d{2}\b`:       {"agent-vm-host-4", "vm-host-1 rebooted"},
 		`(?i)\bdellemc-\d{2}\b`:        {"runner ci-node-2", "ci-node-1"},
 		`(?i)\bgodlike(\.internal)?\b`: {"on gpu-host", "http://gpu-host.internal:8077"},
-		`/home/jhahn\b`:                {ownerPathFixture + "/sources"},        // lab-string-ok: sample for the owner-path rule
-		`/mnt/vstation`:                {"/mnt/" + "vstation" + "-01/go-qrdb"}, // lab-string-ok: sample for the owner-path rule
+		`(?i)\bomega\b`:                {"ssh user@omega:22", "OMEGA reported Online"},
+		`/home/jhahn\b`:                {ownerPathFixture + "/sources"},                                  // lab-string-ok: sample for the owner-path rule
+		`/mnt/vstation`:                {"/mnt/" + "vstation" + "-01/go-qrdb"},                           // lab-string-ok: sample for the owner-path rule
+		`quicbaas-burnin`:              {"/var/lib/quicbaas-burnin/data", "~/quicbaas-burnin/node.yaml"}, // lab-string-ok: sample for the owner-path rule
+		`(?i)\bjhahn\b`:                {"jhahn@example.com", "signed off by JHAHN"},
 	}
 
 	for _, p := range patterns {
@@ -515,5 +525,23 @@ func TestScan_AFileWhoseEveryClassIsAllowedIsNeverRead(t *testing.T) {
 	}
 	if len(findings) != 0 {
 		t.Fatalf("expected no findings, got %v", findings)
+	}
+}
+
+// TestScan_ReportsAValueOnceByItsMostSpecificRule pins the span dedupe: the
+// account name inside an owner path is one leak, reported as the path.
+func TestScan_ReportsAValueOnceByItsMostSpecificRule(t *testing.T) {
+	root, files := writeTree(t, map[string]string{"docs/a.md": "cd " + ownerPathFixture + "/sources, ask jhahn\n"})
+	findings, err := Scan(root, files, nil)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	var classes []Class
+	for _, f := range findings {
+		classes = append(classes, f.Class)
+	}
+	want := []Class{ClassOwnerPath, ClassOwnerAccount}
+	if len(classes) != len(want) || classes[0] != want[0] || classes[1] != want[1] {
+		t.Fatalf("classes = %v, want %v (the path once, the bare name once)", classes, want)
 	}
 }

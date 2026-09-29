@@ -138,7 +138,6 @@ func TestFederationServer_CreateProvider_Success(t *testing.T) {
 		AutoProvision: true,
 		AllowLinking:  true,
 		DefaultRoles:  []string{"user"},
-		DefaultGroups: []string{"all-users"},
 		ClaimMappings: &iampb.ClaimMappings{
 			Subject: "sub",
 			Email:   "email",

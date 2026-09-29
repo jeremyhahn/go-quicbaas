@@ -8,7 +8,7 @@ where **tenant identity, isolation, barriers, DEKs, and engine-level quotas
 are owned exclusively by qrdb's TenantServicer**. QuicBaaS adds a thin
 BaaS extension layer: `TenantSettings` (MFA policy, session/token TTLs,
 branding, named-networks, sandbox policy), IAM-subsystem quotas
-(`MaxGroups`, `MaxPolicies`, `MaxApps`), and `pkg/orchestration` Projects.
+(`MaxPolicies`, `MaxApps`), and `pkg/orchestration` Projects.
 
 ## Ownership Boundary
 
@@ -20,8 +20,8 @@ branding, named-networks, sandbox policy), IAM-subsystem quotas
 | Quota enforcement + usage tracking | qrdb TenantServicer | moved from BaaS in Phase D |
 | Enable-encryption migrations | qrdb embedded node | via EncryptionMigrator |
 | TenantSettings (MFA/session/branding/sandbox) | QuicBaaS IAM | BaaS product concern |
-| IAM group/policy/app quotas | QuicBaaS IAM | BaaS concept, not an engine primitive |
-| Federation/OIDC/MFA/groups/policies/apps | QuicBaaS IAM | BaaS-only, not in qrdb |
+| IAM policy/app quotas | QuicBaaS IAM | BaaS concept, not an engine primitive |
+| Federation/OIDC/MFA/policies/apps | QuicBaaS IAM | BaaS-only, not in qrdb |
 | Projects (workspace/git/agent) | QuicBaaS orchestration | BaaS-only |
 
 QuicBaaS `CreateTenant` calls qrdb's `TenantServicer.CreateTenant` (which
@@ -76,7 +76,7 @@ all transport entry points (gRPC interceptor, REST middleware).
 Each tenant receives a **system database** named `{tenantID}_system`. This
 database hosts the tenant's internal subsystems:
 
-- IAM (users, roles, groups, policies)
+- IAM (users, roles, policies)
 - KMS (tenant-scoped encryption keys)
 - Secrets engine
 - Database records (`sys:db:{dbName}`)
@@ -295,7 +295,7 @@ embedding providers are consumed.
 ## Agent Session Log and State Encryption
 
 Agent session logs (`pkg/orchestration/KVSessionEventLog`) and persisted agent
-session records (`pkg/agent/Runtime`) are stored as **plaintext JSON inside
+session records (`pkg/fleet/Runtime`) are stored as **plaintext JSON inside
 qrdb**. All at-rest confidentiality is delegated to **qrdb's `StorageBarrier`**,
 which encrypts every byte written to the underlying store before it touches disk.
 

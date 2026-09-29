@@ -20,7 +20,7 @@ import (
 )
 
 // claimAuthzSetup creates a pre-wired AgentService for ClaimTask authz tests.
-// The project store is seeded with a single project whose AgentRoles are
+// The project store is seeded with a single project whose FleetNodeRoles are
 // provided via the roles map (agentID → role). The returned mockTaskStore
 // has getTask pre-set to a project-scoped task.
 func claimAuthzSetup(t *testing.T, roles map[string]ProjectRole) (AgentService, *mockTaskStore, string, string) {
@@ -38,7 +38,7 @@ func claimAuthzSetup(t *testing.T, roles map[string]ProjectRole) (AgentService, 
 		TenantID: tenantID,
 		Name:     "test-project",
 		Permissions: ProjectPermissions{
-			AgentRoles: roles,
+			FleetNodeRoles: roles,
 		},
 	}
 	if err := projectStore.Create(context.Background(), proj); err != nil {

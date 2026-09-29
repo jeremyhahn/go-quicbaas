@@ -64,12 +64,12 @@ type daemonAgents struct {
 	// the window between a live worker and a teardown.
 	onSpawn func()
 
-	// host is the fleet agent the sessions run on: it provisions each
+	// host is the fleet node the sessions run on: it provisions each
 	// spawn's named workspace under its OWN projects root.
 	host executingHost
 }
 
-// newDaemonAgents is a fleet agent whose projects root is its own — never the
+// newDaemonAgents is a fleet node whose projects root is its own — never the
 // control plane's — which is the arrangement go-quicbaas#981 exists for.
 func newDaemonAgents(t *testing.T, container *fakeContainer) *daemonAgents {
 	t.Helper()
@@ -127,7 +127,7 @@ func (d *daemonAgents) ExecSession(_ context.Context, req *orchestration.ExecSes
 }
 
 // CloseSession is the daemon reaping the session and the container with it —
-// what AgentRuntime.Close does at the other end of the wire.
+// what FleetRuntime.Close does at the other end of the wire.
 func (d *daemonAgents) CloseSession(ctx context.Context, req *orchestration.CloseSessionRequest) (*orchestration.CloseSessionResponse, error) {
 	// A close the caller issued on the run's own cancelled context would
 	// never reach a real daemon, so it must not be reported as one here.
@@ -203,7 +203,7 @@ func TestRunner_ACheckoutFailureClosesTheWorkerSession(t *testing.T) {
 // only the daemon can answer, and the close has to have reached it to change
 // the answer. The close crosses the wire today — agentServiceImpl.CloseSession
 // pins the backend holding the live record and RemoteACPBackend.Close issues
-// AgentRuntime.Close against it — so this is the runner's half of that path:
+// FleetRuntime.Close against it — so this is the runner's half of that path:
 // the runner must ask.
 func TestRunner_ARefusalAfterTheSpawnClosesTheSessionOnTheDaemonThatOwnsIt(t *testing.T) {
 	rig := newRunnerRig(t)

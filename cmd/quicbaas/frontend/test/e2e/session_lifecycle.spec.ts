@@ -21,7 +21,7 @@
  * The daemon must be started with an ACP backend registered:
  *   ./bin/quicbaasd start --http-port 18080 --grpc-port 0 \
  *     --data-dir /tmp/quicbaas-chrometest-data --log-level info \
- *     --embedded-agent --embedded-agent-backend claude
+ *     --embedded-fleet-node --embedded-fleet-node-backend claude
  */
 
 import { test, expect } from '@playwright/test';

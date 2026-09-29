@@ -33,7 +33,6 @@ func TestIAMToolsRegistration(t *testing.T) {
 	iamToolPrefixes := []string{
 		"quicbaas_iam_tenant_",
 		"quicbaas_iam_user_",
-		"quicbaas_iam_group_",
 		"quicbaas_iam_role_",
 		"quicbaas_iam_policy_",
 		"quicbaas_iam_app_",
@@ -52,16 +51,22 @@ func TestIAMToolsRegistration(t *testing.T) {
 	}
 
 	// We should have all IAM tools registered
-	expectedCount := 50 // 5 tenant + 7 user + 8 group + 6 role + 6 policy + 6 app + 10 mfa + 2 pep
+	expectedCount := 42 // 5 tenant + 7 user + 6 role + 6 policy + 6 app + 10 mfa + 2 pep
 	if iamToolCount != expectedCount {
 		t.Errorf("Expected %d IAM tools, got %d", expectedCount, iamToolCount)
+	}
+
+	// quicbaas keeps no groups, so no transport offers a group tool.
+	for _, tool := range tools {
+		if strings.HasPrefix(tool.Name, "quicbaas_iam_group_") {
+			t.Errorf("group tool %s is still registered", tool.Name)
+		}
 	}
 
 	// Verify specific tools exist
 	requiredTools := []string{
 		"quicbaas_iam_tenant_create",
 		"quicbaas_iam_user_create",
-		"quicbaas_iam_group_create",
 		"quicbaas_iam_role_create",
 		"quicbaas_iam_policy_create",
 		"quicbaas_iam_app_register",
@@ -131,10 +136,6 @@ func TestIAMToolSchemaValidation(t *testing.T) {
 		{
 			toolName:       "quicbaas_iam_user_create",
 			requiredFields: []string{"tenant_id", "email", "name"},
-		},
-		{
-			toolName:       "quicbaas_iam_group_create",
-			requiredFields: []string{"tenant_id", "name"},
 		},
 		{
 			toolName:       "quicbaas_iam_role_create",
@@ -617,44 +618,37 @@ func TestExecuteObjectTenantUsage_EmptyTenantID(t *testing.T) {
 // =============================================================================
 
 type mockIAMService struct {
-	createTenantFunc  func(ctx context.Context, req *service.CreateTenantRequest) (*service.CreateTenantResponse, error)
-	getTenantFunc     func(ctx context.Context, req *service.GetTenantRequest) (*service.GetTenantResponse, error)
-	updateTenantFunc  func(ctx context.Context, req *service.UpdateTenantRequest) (*service.UpdateTenantResponse, error)
-	deleteTenantFunc  func(ctx context.Context, req *service.DeleteTenantRequest) (*service.DeleteTenantResponse, error)
-	listTenantsFunc   func(ctx context.Context, req *service.ListTenantsRequest) (*service.ListTenantsResponse, error)
-	createUserFunc    func(ctx context.Context, req *service.IAMCreateUserRequest) (*service.IAMCreateUserResponse, error)
-	getUserFunc       func(ctx context.Context, req *service.IAMGetUserRequest) (*service.IAMGetUserResponse, error)
-	updateUserFunc    func(ctx context.Context, req *service.IAMUpdateUserRequest) (*service.IAMUpdateUserResponse, error)
-	deleteUserFunc    func(ctx context.Context, req *service.IAMDeleteUserRequest) (*service.IAMDeleteUserResponse, error)
-	listUsersFunc     func(ctx context.Context, req *service.IAMListUsersRequest) (*service.IAMListUsersResponse, error)
-	assignRoleFunc    func(ctx context.Context, req *service.AssignRoleRequest) (*service.AssignRoleResponse, error)
-	revokeRoleFunc    func(ctx context.Context, req *service.RevokeRoleRequest) (*service.RevokeRoleResponse, error)
-	createGroupFunc   func(ctx context.Context, req *service.CreateGroupRequest) (*service.CreateGroupResponse, error)
-	getGroupFunc      func(ctx context.Context, req *service.GetGroupRequest) (*service.GetGroupResponse, error)
-	updateGroupFunc   func(ctx context.Context, req *service.UpdateGroupRequest) (*service.UpdateGroupResponse, error)
-	deleteGroupFunc   func(ctx context.Context, req *service.DeleteGroupRequest) (*service.DeleteGroupResponse, error)
-	listGroupsFunc    func(ctx context.Context, req *service.ListGroupsRequest) (*service.ListGroupsResponse, error)
-	addToGroupFunc    func(ctx context.Context, req *service.AddUserToGroupRequest) (*service.AddUserToGroupResponse, error)
-	removeFromGrpFunc func(ctx context.Context, req *service.RemoveUserFromGroupRequest) (*service.RemoveUserFromGroupResponse, error)
-	createRoleFunc    func(ctx context.Context, req *service.IAMCreateRoleRequest) (*service.IAMCreateRoleResponse, error)
-	getRoleFunc       func(ctx context.Context, req *service.IAMGetRoleRequest) (*service.IAMGetRoleResponse, error)
-	updateRoleFunc    func(ctx context.Context, req *service.IAMUpdateRoleRequest) (*service.IAMUpdateRoleResponse, error)
-	deleteRoleFunc    func(ctx context.Context, req *service.IAMDeleteRoleRequest) (*service.IAMDeleteRoleResponse, error)
-	listRolesFunc     func(ctx context.Context, req *service.IAMListRolesRequest) (*service.IAMListRolesResponse, error)
-	reconcileRolesFn  func(ctx context.Context, req *service.IAMReconcileRolesRequest) (*service.IAMReconcileRolesResponse, error)
-	createPolicyFunc  func(ctx context.Context, req *service.CreatePolicyRequest) (*service.CreatePolicyResponse, error)
-	getPolicyFunc     func(ctx context.Context, req *service.GetPolicyRequest) (*service.GetPolicyResponse, error)
-	updatePolicyFunc  func(ctx context.Context, req *service.UpdatePolicyRequest) (*service.UpdatePolicyResponse, error)
-	deletePolicyFunc  func(ctx context.Context, req *service.DeletePolicyRequest) (*service.DeletePolicyResponse, error)
-	listPoliciesFunc  func(ctx context.Context, req *service.ListPoliciesRequest) (*service.ListPoliciesResponse, error)
-	validatePolFunc   func(ctx context.Context, req *service.ValidatePolicyRequest) (*service.ValidatePolicyResponse, error)
-	testPolicyFunc    func(ctx context.Context, req *service.TestPolicyRequest) (*service.TestPolicyResponse, error)
-	registerAppFunc   func(ctx context.Context, req *service.RegisterAppRequest) (*service.RegisterAppResponse, error)
-	getAppFunc        func(ctx context.Context, req *service.GetAppRequest) (*service.GetAppResponse, error)
-	updateAppFunc     func(ctx context.Context, req *service.UpdateAppRequest) (*service.UpdateAppResponse, error)
-	deleteAppFunc     func(ctx context.Context, req *service.DeleteAppRequest) (*service.DeleteAppResponse, error)
-	listAppsFunc      func(ctx context.Context, req *service.ListAppsRequest) (*service.ListAppsResponse, error)
-	rotateSecretFunc  func(ctx context.Context, req *service.RotateAppSecretRequest) (*service.RotateAppSecretResponse, error)
+	createTenantFunc func(ctx context.Context, req *service.CreateTenantRequest) (*service.CreateTenantResponse, error)
+	getTenantFunc    func(ctx context.Context, req *service.GetTenantRequest) (*service.GetTenantResponse, error)
+	updateTenantFunc func(ctx context.Context, req *service.UpdateTenantRequest) (*service.UpdateTenantResponse, error)
+	deleteTenantFunc func(ctx context.Context, req *service.DeleteTenantRequest) (*service.DeleteTenantResponse, error)
+	listTenantsFunc  func(ctx context.Context, req *service.ListTenantsRequest) (*service.ListTenantsResponse, error)
+	createUserFunc   func(ctx context.Context, req *service.IAMCreateUserRequest) (*service.IAMCreateUserResponse, error)
+	getUserFunc      func(ctx context.Context, req *service.IAMGetUserRequest) (*service.IAMGetUserResponse, error)
+	updateUserFunc   func(ctx context.Context, req *service.IAMUpdateUserRequest) (*service.IAMUpdateUserResponse, error)
+	deleteUserFunc   func(ctx context.Context, req *service.IAMDeleteUserRequest) (*service.IAMDeleteUserResponse, error)
+	listUsersFunc    func(ctx context.Context, req *service.IAMListUsersRequest) (*service.IAMListUsersResponse, error)
+	assignRoleFunc   func(ctx context.Context, req *service.AssignRoleRequest) (*service.AssignRoleResponse, error)
+	revokeRoleFunc   func(ctx context.Context, req *service.RevokeRoleRequest) (*service.RevokeRoleResponse, error)
+	createRoleFunc   func(ctx context.Context, req *service.IAMCreateRoleRequest) (*service.IAMCreateRoleResponse, error)
+	getRoleFunc      func(ctx context.Context, req *service.IAMGetRoleRequest) (*service.IAMGetRoleResponse, error)
+	updateRoleFunc   func(ctx context.Context, req *service.IAMUpdateRoleRequest) (*service.IAMUpdateRoleResponse, error)
+	deleteRoleFunc   func(ctx context.Context, req *service.IAMDeleteRoleRequest) (*service.IAMDeleteRoleResponse, error)
+	listRolesFunc    func(ctx context.Context, req *service.IAMListRolesRequest) (*service.IAMListRolesResponse, error)
+	reconcileRolesFn func(ctx context.Context, req *service.IAMReconcileRolesRequest) (*service.IAMReconcileRolesResponse, error)
+	createPolicyFunc func(ctx context.Context, req *service.CreatePolicyRequest) (*service.CreatePolicyResponse, error)
+	getPolicyFunc    func(ctx context.Context, req *service.GetPolicyRequest) (*service.GetPolicyResponse, error)
+	updatePolicyFunc func(ctx context.Context, req *service.UpdatePolicyRequest) (*service.UpdatePolicyResponse, error)
+	deletePolicyFunc func(ctx context.Context, req *service.DeletePolicyRequest) (*service.DeletePolicyResponse, error)
+	listPoliciesFunc func(ctx context.Context, req *service.ListPoliciesRequest) (*service.ListPoliciesResponse, error)
+	validatePolFunc  func(ctx context.Context, req *service.ValidatePolicyRequest) (*service.ValidatePolicyResponse, error)
+	testPolicyFunc   func(ctx context.Context, req *service.TestPolicyRequest) (*service.TestPolicyResponse, error)
+	registerAppFunc  func(ctx context.Context, req *service.RegisterAppRequest) (*service.RegisterAppResponse, error)
+	getAppFunc       func(ctx context.Context, req *service.GetAppRequest) (*service.GetAppResponse, error)
+	updateAppFunc    func(ctx context.Context, req *service.UpdateAppRequest) (*service.UpdateAppResponse, error)
+	deleteAppFunc    func(ctx context.Context, req *service.DeleteAppRequest) (*service.DeleteAppResponse, error)
+	listAppsFunc     func(ctx context.Context, req *service.ListAppsRequest) (*service.ListAppsResponse, error)
+	rotateSecretFunc func(ctx context.Context, req *service.RotateAppSecretRequest) (*service.RotateAppSecretResponse, error)
 }
 
 func (m *mockIAMService) CreateTenant(ctx context.Context, req *service.CreateTenantRequest) (*service.CreateTenantResponse, error) {
@@ -739,55 +733,6 @@ func (m *mockIAMService) RevokeRole(ctx context.Context, req *service.RevokeRole
 		return m.revokeRoleFunc(ctx, req)
 	}
 	return &service.RevokeRoleResponse{Success: true}, nil
-}
-
-func (m *mockIAMService) CreateGroup(ctx context.Context, req *service.CreateGroupRequest) (*service.CreateGroupResponse, error) {
-	if m.createGroupFunc != nil {
-		return m.createGroupFunc(ctx, req)
-	}
-	return &service.CreateGroupResponse{Group: &iam.Group{ID: "g1", Name: req.Name}, Timestamp: time.Now()}, nil
-}
-
-func (m *mockIAMService) GetGroup(ctx context.Context, req *service.GetGroupRequest) (*service.GetGroupResponse, error) {
-	if m.getGroupFunc != nil {
-		return m.getGroupFunc(ctx, req)
-	}
-	return &service.GetGroupResponse{Group: &iam.Group{ID: req.GroupID, Name: "test-group"}, Timestamp: time.Now()}, nil
-}
-
-func (m *mockIAMService) UpdateGroup(ctx context.Context, req *service.UpdateGroupRequest) (*service.UpdateGroupResponse, error) {
-	if m.updateGroupFunc != nil {
-		return m.updateGroupFunc(ctx, req)
-	}
-	return &service.UpdateGroupResponse{Group: &iam.Group{ID: req.GroupID, Name: "updated-group"}, Timestamp: time.Now()}, nil
-}
-
-func (m *mockIAMService) DeleteGroup(ctx context.Context, req *service.DeleteGroupRequest) (*service.DeleteGroupResponse, error) {
-	if m.deleteGroupFunc != nil {
-		return m.deleteGroupFunc(ctx, req)
-	}
-	return &service.DeleteGroupResponse{Deleted: true, Timestamp: time.Now()}, nil
-}
-
-func (m *mockIAMService) ListGroups(ctx context.Context, req *service.ListGroupsRequest) (*service.ListGroupsResponse, error) {
-	if m.listGroupsFunc != nil {
-		return m.listGroupsFunc(ctx, req)
-	}
-	return &service.ListGroupsResponse{Groups: []*iam.Group{{ID: "g1"}}, TotalCount: 1, Timestamp: time.Now()}, nil
-}
-
-func (m *mockIAMService) AddUserToGroup(ctx context.Context, req *service.AddUserToGroupRequest) (*service.AddUserToGroupResponse, error) {
-	if m.addToGroupFunc != nil {
-		return m.addToGroupFunc(ctx, req)
-	}
-	return &service.AddUserToGroupResponse{Group: &iam.Group{ID: req.GroupID}, Timestamp: time.Now()}, nil
-}
-
-func (m *mockIAMService) RemoveUserFromGroup(ctx context.Context, req *service.RemoveUserFromGroupRequest) (*service.RemoveUserFromGroupResponse, error) {
-	if m.removeFromGrpFunc != nil {
-		return m.removeFromGrpFunc(ctx, req)
-	}
-	return &service.RemoveUserFromGroupResponse{Group: &iam.Group{ID: req.GroupID}, Timestamp: time.Now()}, nil
 }
 
 func (m *mockIAMService) CreateRole(ctx context.Context, req *service.IAMCreateRoleRequest) (*service.IAMCreateRoleResponse, error) {
@@ -1036,34 +981,6 @@ func TestExecuteIAMTool_RoutesToUserOps(t *testing.T) {
 	}
 }
 
-func TestExecuteIAMTool_RoutesToGroupOps(t *testing.T) {
-	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := context.Background()
-
-	tests := []struct {
-		name     string
-		toolName string
-		args     map[string]interface{}
-	}{
-		{"group_create", "quicbaas_iam_group_create", map[string]interface{}{"tenant_id": "t1", "name": "devs", "description": "Developers", "members": []interface{}{"u1"}}},
-		{"group_get", "quicbaas_iam_group_get", map[string]interface{}{"tenant_id": "t1", "group_id": "g1"}},
-		{"group_update", "quicbaas_iam_group_update", map[string]interface{}{"tenant_id": "t1", "group_id": "g1", "name": "updated", "description": "desc", "members": []interface{}{"u2"}}},
-		{"group_delete", "quicbaas_iam_group_delete", map[string]interface{}{"tenant_id": "t1", "group_id": "g1"}},
-		{"group_list", "quicbaas_iam_group_list", map[string]interface{}{"tenant_id": "t1"}},
-		{"group_add_member", "quicbaas_iam_group_add_member", map[string]interface{}{"tenant_id": "t1", "group_id": "g1", "user_id": "u1"}},
-		{"group_remove_member", "quicbaas_iam_group_remove_member", map[string]interface{}{"tenant_id": "t1", "group_id": "g1", "user_id": "u1"}},
-		{"group_list_members", "quicbaas_iam_group_list_members", map[string]interface{}{"tenant_id": "t1", "group_id": "g1"}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := reg.executeIAMTool(ctx, tt.toolName, tt.args)
-			require.NoError(t, err)
-			require.NotNil(t, result)
-		})
-	}
-}
-
 func TestExecuteIAMTool_RoutesToRoleOps(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{})
 	ctx := context.Background()
@@ -1176,9 +1093,6 @@ func TestExecuteIAMTool_ServiceErrors(t *testing.T) {
 		createUserFunc: func(ctx context.Context, req *service.IAMCreateUserRequest) (*service.IAMCreateUserResponse, error) {
 			return nil, testErr
 		},
-		createGroupFunc: func(ctx context.Context, req *service.CreateGroupRequest) (*service.CreateGroupResponse, error) {
-			return nil, testErr
-		},
 		createRoleFunc: func(ctx context.Context, req *service.IAMCreateRoleRequest) (*service.IAMCreateRoleResponse, error) {
 			return nil, testErr
 		},
@@ -1196,7 +1110,6 @@ func TestExecuteIAMTool_ServiceErrors(t *testing.T) {
 	}{
 		{"tenant_create_error", "quicbaas_iam_tenant_create", map[string]interface{}{"name": "test"}},
 		{"user_create_error", "quicbaas_iam_user_create", map[string]interface{}{"tenant_id": "t1", "email": "u@ex.com", "name": "U"}},
-		{"group_create_error", "quicbaas_iam_group_create", map[string]interface{}{"tenant_id": "t1", "name": "grp"}},
 		{"role_create_error", "quicbaas_iam_role_create", map[string]interface{}{"tenant_id": "t1", "name": "role"}},
 		{"app_register_error", "quicbaas_iam_app_register", map[string]interface{}{"tenant_id": "t1", "name": "app"}},
 	}
@@ -1266,7 +1179,6 @@ func TestExecuteIAMUserCreate_WithAllFields(t *testing.T) {
 		"email":      "user@example.com",
 		"name":       "Test User",
 		"roles":      []interface{}{"admin", "viewer"},
-		"groups":     []interface{}{"dev-team"},
 		"attributes": map[string]interface{}{"department": "engineering"},
 	}
 
@@ -1285,7 +1197,6 @@ func TestExecuteIAMUserUpdate_WithAllOptionalFields(t *testing.T) {
 		"email":      "new@example.com",
 		"name":       "New Name",
 		"roles":      []interface{}{"admin"},
-		"groups":     []interface{}{"ops-team"},
 		"attributes": map[string]interface{}{"level": "senior"},
 		"suspended":  true,
 		"locked":     false,
@@ -2075,27 +1986,6 @@ func newErrorIAMService() *mockIAMService {
 		revokeRoleFunc: func(_ context.Context, _ *service.RevokeRoleRequest) (*service.RevokeRoleResponse, error) {
 			return nil, errIAMTest
 		},
-		createGroupFunc: func(_ context.Context, _ *service.CreateGroupRequest) (*service.CreateGroupResponse, error) {
-			return nil, errIAMTest
-		},
-		getGroupFunc: func(_ context.Context, _ *service.GetGroupRequest) (*service.GetGroupResponse, error) {
-			return nil, errIAMTest
-		},
-		updateGroupFunc: func(_ context.Context, _ *service.UpdateGroupRequest) (*service.UpdateGroupResponse, error) {
-			return nil, errIAMTest
-		},
-		deleteGroupFunc: func(_ context.Context, _ *service.DeleteGroupRequest) (*service.DeleteGroupResponse, error) {
-			return nil, errIAMTest
-		},
-		listGroupsFunc: func(_ context.Context, _ *service.ListGroupsRequest) (*service.ListGroupsResponse, error) {
-			return nil, errIAMTest
-		},
-		addToGroupFunc: func(_ context.Context, _ *service.AddUserToGroupRequest) (*service.AddUserToGroupResponse, error) {
-			return nil, errIAMTest
-		},
-		removeFromGrpFunc: func(_ context.Context, _ *service.RemoveUserFromGroupRequest) (*service.RemoveUserFromGroupResponse, error) {
-			return nil, errIAMTest
-		},
 		createRoleFunc: func(_ context.Context, _ *service.IAMCreateRoleRequest) (*service.IAMCreateRoleResponse, error) {
 			return nil, errIAMTest
 		},
@@ -2178,17 +2068,6 @@ func TestIAMCoverage91_ServiceErrorPaths(t *testing.T) {
 		{"user_assign_role_error", "quicbaas_iam_user_assign_role", map[string]interface{}{"user_id": "u", "role_id": "r"}},
 		{"user_revoke_role_error", "quicbaas_iam_user_revoke_role", map[string]interface{}{"user_id": "u", "role_id": "r"}},
 
-		// Group operations
-		{"group_create_error", "quicbaas_iam_group_create", map[string]interface{}{"tenant_id": "t", "name": "g"}},
-		{"group_get_error", "quicbaas_iam_group_get", map[string]interface{}{"tenant_id": "t", "group_id": "g"}},
-		{"group_update_error", "quicbaas_iam_group_update", map[string]interface{}{"tenant_id": "t", "group_id": "g"}},
-		{"group_delete_error", "quicbaas_iam_group_delete", map[string]interface{}{"tenant_id": "t", "group_id": "g"}},
-		{"group_list_error", "quicbaas_iam_group_list", map[string]interface{}{"tenant_id": "t"}},
-		{"group_add_member_error", "quicbaas_iam_group_add_member", map[string]interface{}{"group_id": "g", "user_id": "u"}},
-		{"group_remove_member_error", "quicbaas_iam_group_remove_member", map[string]interface{}{"group_id": "g", "user_id": "u"}},
-		// group_list_members delegates to GroupGet, so the getGroupFunc error covers it
-		{"group_list_members_error", "quicbaas_iam_group_list_members", map[string]interface{}{"group_id": "g"}},
-
 		// Role operations
 		{"role_create_error", "quicbaas_iam_role_create", map[string]interface{}{"tenant_id": "t", "name": "r"}},
 		{"role_get_error", "quicbaas_iam_role_get", map[string]interface{}{"tenant_id": "t", "role_id": "r"}},
@@ -2254,16 +2133,6 @@ func TestIAMCoverage91_NoIAMService(t *testing.T) {
 		{"userList", reg.executeIAMUserList},
 		{"userAssignRole", reg.executeIAMUserAssignRole},
 		{"userRevokeRole", reg.executeIAMUserRevokeRole},
-
-		// Group operations
-		{"groupCreate", reg.executeIAMGroupCreate},
-		{"groupGet", reg.executeIAMGroupGet},
-		{"groupUpdate", reg.executeIAMGroupUpdate},
-		{"groupDelete", reg.executeIAMGroupDelete},
-		{"groupList", reg.executeIAMGroupList},
-		{"groupAddMember", reg.executeIAMGroupAddMember},
-		{"groupRemoveMember", reg.executeIAMGroupRemoveMember},
-		{"groupListMembers", reg.executeIAMGroupListMembers},
 
 		// Role operations
 		{"roleCreate", reg.executeIAMRoleCreate},
@@ -2505,16 +2374,16 @@ func TestExecuteIAMUserCreate_UnknownRoleError(t *testing.T) {
 	assert.True(t, dberrors.IsNotFound(err), "expected typed not-found, got %T: %v", err, err)
 }
 
-// TestExecuteIAMUserCreate_GroupsAndAttributesForwarded proves the MCP tool
-// arguments "groups" and "attributes" reach the IAM service request untouched
-// (sibling gap of the roles parity fix — the wrapper used to drop them).
-func TestExecuteIAMUserCreate_GroupsAndAttributesForwarded(t *testing.T) {
+// TestExecuteIAMUserCreate_AttributesForwarded proves the MCP tool argument
+// "attributes" reaches the IAM service request untouched (sibling gap of the
+// roles parity fix — the wrapper used to drop it).
+func TestExecuteIAMUserCreate_AttributesForwarded(t *testing.T) {
 	var captured *service.IAMCreateUserRequest
 	mock := &mockIAMService{
 		createUserFunc: func(_ context.Context, req *service.IAMCreateUserRequest) (*service.IAMCreateUserResponse, error) {
 			captured = req
 			return &service.IAMCreateUserResponse{
-				User:      &iam.User{ID: "u1", TenantID: req.TenantID, Email: req.Email, Name: req.Name, Groups: req.Groups},
+				User:      &iam.User{ID: "u1", TenantID: req.TenantID, Email: req.Email, Name: req.Name},
 				Timestamp: time.Now(),
 			}, nil
 		},
@@ -2525,7 +2394,6 @@ func TestExecuteIAMUserCreate_GroupsAndAttributesForwarded(t *testing.T) {
 		"tenant_id":  "t1",
 		"email":      "groups@example.com",
 		"name":       "Group User",
-		"groups":     []interface{}{"group-a", "group-b"},
 		"attributes": map[string]interface{}{"department": "engineering"},
 	}
 
@@ -2533,32 +2401,8 @@ func TestExecuteIAMUserCreate_GroupsAndAttributesForwarded(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, captured)
-	assert.Equal(t, []string{"group-a", "group-b"}, captured.Groups)
 	require.NotNil(t, captured.Attributes)
 	assert.Equal(t, "engineering", captured.Attributes["department"])
-}
-
-// TestExecuteIAMUserCreate_UnknownGroupError proves a typed not-found error
-// from validate-before-create propagates to the MCP caller with no result.
-func TestExecuteIAMUserCreate_UnknownGroupError(t *testing.T) {
-	mock := &mockIAMService{
-		createUserFunc: func(_ context.Context, _ *service.IAMCreateUserRequest) (*service.IAMCreateUserResponse, error) {
-			return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "iam.group.get"}
-		},
-	}
-	reg := newIAMTestRegistry(mock)
-
-	args := map[string]interface{}{
-		"tenant_id": "t1",
-		"email":     "phantom@example.com",
-		"name":      "Phantom",
-		"groups":    []interface{}{"no-such-group"},
-	}
-
-	result, err := reg.executeIAMUserCreate(context.Background(), args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.True(t, dberrors.IsNotFound(err), "expected typed not-found, got %T: %v", err, err)
 }
 
 // TestExecuteIAMUserUpdate_AttributesReachTheServiceInTheStoreShape pins the

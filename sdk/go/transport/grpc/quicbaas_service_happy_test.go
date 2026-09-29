@@ -166,28 +166,10 @@ func (f *fakeQuicBaaSServer) ValidateToken(context.Context, *pb.ValidateTokenReq
 	if err := f.e(); err != nil {
 		return nil, err
 	}
-	return &pb.ValidateTokenResponse{Valid: true, UserId: "u1", Username: "alice", Roles: []string{"admin"}, ExpiresAt: 3000}, nil
+	return &pb.ValidateTokenResponse{Valid: true, UserId: "u1", Username: "alice", TenantId: "acme", Roles: []string{"admin"}, ExpiresAt: 3000}, nil
 }
 
 // RBAC.
-func (f *fakeQuicBaaSServer) CreateUser(context.Context, *pb.CreateUserRequest) (*pb.CreateUserResponse, error) {
-	if err := f.e(); err != nil {
-		return nil, err
-	}
-	return &pb.CreateUserResponse{UserId: "u1", Username: "alice", Created: 100}, nil
-}
-func (f *fakeQuicBaaSServer) DeleteUser(context.Context, *pb.DeleteUserRequest) (*pb.DeleteUserResponse, error) {
-	if err := f.e(); err != nil {
-		return nil, err
-	}
-	return &pb.DeleteUserResponse{Success: true}, nil
-}
-func (f *fakeQuicBaaSServer) ListUsers(context.Context, *pb.ListUsersRequest) (*pb.ListUsersResponse, error) {
-	if err := f.e(); err != nil {
-		return nil, err
-	}
-	return &pb.ListUsersResponse{Users: []*pb.UserInfo{{UserId: "u1", Username: "alice", Roles: []string{"admin"}, Created: 1, LastAuth: 2}}}, nil
-}
 func (f *fakeQuicBaaSServer) CreateRole(context.Context, *pb.CreateRoleRequest) (*pb.CreateRoleResponse, error) {
 	if err := f.e(); err != nil {
 		return nil, err

@@ -31,12 +31,12 @@ import (
 
 // hostAffinityStrictKey is the unexported context key carrying the per-request
 // strict bit. Resolvers OR this with the operator-level default to decide
-// whether to fall back to any agent or surface NoMatchingAgentError.
+// whether to fall back to any agent or surface NoMatchingFleetNodeError.
 type hostAffinityStrictKey struct{}
 
 // WithHostAffinityStrict returns a context that signals the resolver must
 // treat the request's host_affinity hint as a hard requirement — failing
-// with NoMatchingAgentError when the named host is offline. Callers normally
+// with NoMatchingFleetNodeError when the named host is offline. Callers normally
 // set this from the request's HostAffinityStrict field.
 func WithHostAffinityStrict(ctx context.Context) context.Context {
 	return context.WithValue(ctx, hostAffinityStrictKey{}, true)
@@ -61,7 +61,7 @@ func HostAffinityStrictFromContext(ctx context.Context) bool {
 // returns (nil, false) the dispatcher falls through to the local backend
 // table, which usually surfaces BackendNotFoundError. That mapping is wrong
 // for "host offline + strict mode": we want to return the resolver-side
-// NoMatchingAgentError verbatim. Rather than widen RemoteBackendResolver
+// NoMatchingFleetNodeError verbatim. Rather than widen RemoteBackendResolver
 // (which would touch the orchestrator core), we install a thread-safe error
 // holder on the context. The resolver writes to it; the public-API handler
 // reads it after the call completes and substitutes the holder's error when

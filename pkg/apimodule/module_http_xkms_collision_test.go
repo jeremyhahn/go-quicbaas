@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -39,23 +40,11 @@ import (
 
 // declaredModuleRouteOverlaps are the (method, pattern) pairs BOTH the
 // quicbaas and the go-xkms ServiceModule register on a composed unified
-// server, in the order the recorder below observes them. quicbaas registers
-// first (pkg/server/qrdb_node.go unifiedModuleServerOptions appends its
-// module before xkms's), and go-qrdb's registrar gives the path to the first
-// claimant, so quicbaas owns both — which is the intended outcome: the tenant
-// control plane is quicbaas's (CLAUDE.md: "System admin provisions tenants
-// minimally (control plane)").
-//
-// It is owned IMPLICITLY, by registration order, which is a latent hazard
-// rather than a decision: reordering the two WithModule calls would hand the
-// tenant create/list verbs to xkms's own tenant handlers with no error
-// anywhere. Making it explicit — the way /api/v1/barrier/* now is, via
-// NewRouteExcludingModule — is an open decision for the tenant plane's owner
-// (go-quicbaas#405 audit), not something this lane settles.
-var declaredModuleRouteOverlaps = []string{
-	`POST /api/v1/tenants/ registered by BOTH "quicbaas" and "xkms"`,
-	`GET /api/v1/tenants/ registered by BOTH "quicbaas" and "xkms"`,
-}
+// server, in the order the recorder below observes them. There are none: the
+// last two (POST and GET /api/v1/tenants/) were owned implicitly, by
+// registration order, until the composer excluded the xkms tenant subtree
+// explicitly (XKMSRouteExclusions).
+var declaredModuleRouteOverlaps []string
 
 // TestModule_RegisterHTTP_ComposesWithXKMSModuleWithoutRouteCollision is the
 // P3.3/host-wiring acceptance test: it proves quicbaas's own ServiceModule
@@ -163,7 +152,7 @@ func TestModule_RegisterHTTP_ComposesWithXKMSModuleWithoutRouteCollision(t *test
 	// unifiedModuleServerOptions mounts it. Without the wrapper the two
 	// modules collide on /api/v1/barrier/* — see
 	// TestRouteExcludingModule_XKMSBarrierCollisionIsReal.
-	hostedXKMS, err := NewRouteExcludingModule(xkmsModule, XKMSBarrierRouteExclusions)
+	hostedXKMS, err := NewRouteExcludingModule(xkmsModule, XKMSRouteExclusions)
 	require.NoError(t, err)
 
 	registerFor("quicbaas", quicbaasModule.RegisterHTTP)
@@ -215,6 +204,39 @@ func TestModule_RegisterHTTP_ComposesWithXKMSModuleWithoutRouteCollision(t *test
 			"%s must be owned by the quicbaas module (go-qrdb barrier), not %q", key, got.module)
 	}
 
+	// go-xkms v0.30 registers GET /api/v1/cluster/status too. The composed
+	// node's cluster view is quicbaas's: its handler reports every hosted
+	// shard in the shape the quicbaas SDK and UI decode, so the composer
+	// hands it to quicbaas explicitly. /api/v1/cluster/members has no
+	// quicbaas counterpart and must stay with xkms — the exclusion is exact,
+	// not a subtree.
+	clusterStatus, ok := registered["GET /api/v1/cluster/status"]
+	require.True(t, ok, "the composed unified surface must serve GET /api/v1/cluster/status")
+	require.Equal(t, "quicbaas", clusterStatus.module,
+		"GET /api/v1/cluster/status must be owned by the quicbaas module, not %q", clusterStatus.module)
+	clusterMembers, ok := registered["GET /api/v1/cluster/members"]
+	require.True(t, ok, "the xkms cluster members route must stay mounted")
+	require.Equal(t, "xkms", clusterMembers.module)
+
+	// The tenant control plane, per-tenant barrier included, is quicbaas's.
+	// xkms's copies are always 501 on a host and must not be mounted.
+	tenantBarrier, ok := registered["GET /api/v1/tenants/{tenant_id}/barrier/status"]
+	require.True(t, ok, "the composed unified surface must serve the tenant barrier status")
+	require.Equal(t, "quicbaas", tenantBarrier.module)
+
+	// SHAPE, NOT SPELLING. Two patterns that differ only in a wildcard's name
+	// ({tenant_id} against {tenantID}) are different registrar keys and the same
+	// route to the router, which is how the tenant overlap hid from the exact
+	// check above. Every pair of modules claiming one shape is a collision.
+	shapes := map[string]string{}
+	for key, o := range registered {
+		shape := routeShape(key)
+		if prior, seen := shapes[shape]; seen && prior != o.module {
+			t.Errorf("route shape %s is claimed by both %q and %q", shape, prior, o.module)
+		}
+		shapes[shape] = o.module
+	}
+
 	// Non-vacuity for the quicbaas side: a module built without a REST
 	// resolver registers nothing, which would make every assertion above
 	// pass for the wrong reason.
@@ -251,21 +273,56 @@ func TestRouteExcludingModule_XKMSBarrierCollisionIsReal(t *testing.T) {
 	require.Contains(t, raw, "GET /api/v1/barrier/status",
 		"sanity: the unwrapped xkms module must still claim the canonical barrier surface; "+
 			"if go-xkms has since gated these routes on its nil Barrier, the wrapper is redundant and should go")
+	require.Contains(t, raw, "GET /api/v1/cluster/status",
+		"sanity: the unwrapped xkms module must still claim the cluster status route; "+
+			"if go-xkms has since dropped it, its exclusion is redundant and should go")
+	require.Contains(t, raw, "GET /api/v1/tenants/{tenantID}/barrier/status",
+		"sanity: the unwrapped xkms module must still claim the tenant barrier status route; "+
+			"if go-xkms has since dropped its tenant routes, the tenant exclusion is redundant and should go")
 
-	hosted, err := NewRouteExcludingModule(xkmsModule, XKMSBarrierRouteExclusions)
+	hosted, err := NewRouteExcludingModule(xkmsModule, XKMSRouteExclusions)
 	require.NoError(t, err)
 	filtered := collectModuleRoutes(t, hosted.RegisterHTTP)
 
 	for key := range raw {
-		if strings.HasPrefix(strings.SplitN(key, " ", 2)[1], "/api/v1/barrier/") {
+		pattern := strings.SplitN(key, " ", 2)[1]
+		if strings.HasPrefix(pattern, "/api/v1/barrier/") || pattern == "/api/v1/cluster/status" ||
+			strings.HasPrefix(pattern, "/api/v1/tenants/") {
 			require.NotContains(t, filtered, key,
-				"the route-precedence wrapper must drop the xkms module's barrier registrations")
+				"the route-precedence wrapper must drop the xkms module's %s registration", key)
 			continue
 		}
 		require.Contains(t, filtered, key,
 			"the route-precedence wrapper must leave every non-excluded xkms route intact")
 	}
 	require.Less(t, len(filtered), len(raw), "sanity: the wrapper must actually drop routes")
+}
+
+// TestRouteExcludingModule_ExclusionMatching pins the two exclusion forms: a
+// trailing-slash entry drops a whole subtree and its collection path, and any
+// other entry drops exactly one pattern — so excluding one route never takes
+// a sibling that merely shares its prefix.
+func TestRouteExcludingModule_ExclusionMatching(t *testing.T) {
+	inner := &routeTableModule{patterns: []string{
+		"/api/v1/barrier",
+		"/api/v1/barrier/status",
+		"/api/v1/barrier/recovery/generate",
+		"/api/v1/barrierx",
+		"/api/v1/cluster/status",
+		"/api/v1/cluster/status/detail",
+		"/api/v1/cluster/statuses",
+		"/api/v1/cluster/members",
+	}}
+	hosted, err := NewRouteExcludingModule(inner, []string{"/api/v1/barrier/", "/api/v1/cluster/status"})
+	require.NoError(t, err)
+
+	got := collectModuleRoutes(t, hosted.RegisterHTTP)
+	require.Equal(t, map[string]struct{}{
+		"GET /api/v1/barrierx":              {},
+		"GET /api/v1/cluster/status/detail": {},
+		"GET /api/v1/cluster/statuses":      {},
+		"GET /api/v1/cluster/members":       {},
+	}, got)
 }
 
 // TestNewRouteExcludingModule_RejectsBadInput proves the wrapper refuses the
@@ -275,7 +332,7 @@ func TestRouteExcludingModule_XKMSBarrierCollisionIsReal(t *testing.T) {
 // declaration set.
 func TestNewRouteExcludingModule_RejectsBadInput(t *testing.T) {
 	t.Run("nil module", func(t *testing.T) {
-		got, err := NewRouteExcludingModule(nil, XKMSBarrierRouteExclusions)
+		got, err := NewRouteExcludingModule(nil, XKMSRouteExclusions)
 		require.Nil(t, got)
 		var want *NilModuleError
 		require.ErrorAs(t, err, &want)
@@ -291,7 +348,7 @@ func TestNewRouteExcludingModule_RejectsBadInput(t *testing.T) {
 	})
 
 	t.Run("module missing an optional extension", func(t *testing.T) {
-		got, err := NewRouteExcludingModule(&bareModule{}, XKMSBarrierRouteExclusions)
+		got, err := NewRouteExcludingModule(&bareModule{}, XKMSRouteExclusions)
 		require.Nil(t, got)
 		var want *ModuleExtensionMissingError
 		require.ErrorAs(t, err, &want)
@@ -308,7 +365,7 @@ func TestRouteExcludingModule_ForwardsEveryOtherHook(t *testing.T) {
 		permissions: map[string]qrdbsdk.Permission{"tool": qrdbsdk.Permission("keys:read")},
 		publicGRPC:  []string{"/pkg.Service/Method"},
 	}
-	hosted, err := NewRouteExcludingModule(inner, XKMSBarrierRouteExclusions)
+	hosted, err := NewRouteExcludingModule(inner, XKMSRouteExclusions)
 	require.NoError(t, err)
 
 	require.Equal(t, "recording", hosted.Name())
@@ -370,6 +427,26 @@ type bareModule struct{ qrdbsdk.BaseModule }
 // Name identifies the bare module.
 func (bareModule) Name() string { return "bare" }
 
+// routeTableModule is a full co-hosted module whose HTTP surface is a fixed
+// list of GET patterns, half registered as permissioned and half as public so
+// the wrapper's filtering of both registrar paths is exercised.
+type routeTableModule struct {
+	recordingModule
+	patterns []string
+}
+
+// RegisterHTTP registers every pattern, alternating Handle and HandlePublic.
+func (m *routeTableModule) RegisterHTTP(r *qrdbsdk.ModuleHTTPRegistrar) {
+	noop := func(http.ResponseWriter, *http.Request) {}
+	for i, pattern := range m.patterns {
+		if i%2 == 0 {
+			r.Handle(http.MethodGet, pattern, qrdbsdk.Permission("admin:status"), noop)
+			continue
+		}
+		r.HandlePublic(http.MethodGet, pattern, noop)
+	}
+}
+
 // errRecordingAuth is the sentinel recordingModule's auth fallback returns so
 // the forwarding assertion has something unambiguous to match.
 var errRecordingAuth = errors.New("recording module: no identity")
@@ -418,4 +495,20 @@ func (m *recordingModule) PublicGRPCMethods() []string { return m.publicGRPC }
 // AuthenticateHTTP always fails closed with the sentinel.
 func (m *recordingModule) AuthenticateHTTP(*http.Request) (*qrdbsdk.Identity, error) {
 	return nil, errRecordingAuth
+}
+
+// routeWildcard matches one path wildcard, whatever its name.
+var routeWildcard = regexp.MustCompile(`\{[^}]*\}`)
+
+// routeShape is a "METHOD pattern" key with every wildcard's name erased.
+func routeShape(key string) string {
+	return routeWildcard.ReplaceAllString(key, "{}")
+}
+
+// TestRouteShape pins the normalization the overlap check depends on.
+func TestRouteShape(t *testing.T) {
+	require.Equal(t, routeShape("GET /api/v1/tenants/{tenant_id}/barrier/status"),
+		routeShape("GET /api/v1/tenants/{tenantID}/barrier/status"))
+	require.NotEqual(t, routeShape("GET /api/v1/tenants/{id}"), routeShape("DELETE /api/v1/tenants/{id}"))
+	require.Equal(t, "GET /api/v1/cluster/status", routeShape("GET /api/v1/cluster/status"))
 }

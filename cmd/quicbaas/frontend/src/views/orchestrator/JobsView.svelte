@@ -102,7 +102,7 @@
     const statuses = selected(chosen, 'state') as JobState[];
     const runner = selected(chosen, 'runner')[0] ?? '';
     const projectID = selected(chosen, 'project')[0] ?? '';
-    const agentID = selected(chosen, 'agent')[0] ?? '';
+    const agentID = selected(chosen, 'node')[0] ?? '';
     return client.orchestrator.listJobsPage(orchestratorStore.activeTenantID, {
       limit: req.limit,
       offset: req.offset,
@@ -235,7 +235,7 @@
   </dialog>
 {/if}
 
-<div class="p-6 space-y-6">
+<div class="page">
   <PageHeader title="Jobs" subtitle="Software Factory job queue and history" icon={Briefcase}>
     {#snippet children()}
       <button
@@ -266,8 +266,8 @@
       <EmptyState
         icon={Briefcase}
         title="No jobs yet — Start Job is how you begin."
-        description="Kick off an orchestration job and watch it execute across your agent fleet."
-        actionLabel="+ Start Job"
+        description="Kick off an orchestration job and watch it execute across your fleet."
+        actionLabel="Start a job"
         onaction={() => { startJobOpen = true; }}
       />
     {/snippet}
@@ -275,7 +275,7 @@
     {#snippet row(job: JobStatus)}
       {@const ref = jobIssueRef(job)}
       <tr
-        class="cursor-pointer hover:bg-base-300/40 transition-colors"
+        class="cursor-pointer transition-colors"
         onclick={() => handleRowClick(job)}
       >
         <td class="font-mono text-xs whitespace-nowrap">
@@ -283,12 +283,12 @@
             {truncateID(job.job_id)}
           </span>
         </td>
-        <td class="max-w-xs">
+        <td class="max-w-md">
           <div class="flex items-center gap-2 min-w-0">
             {#if ref !== null}
               {#if ref.href !== ''}
                 <a
-                  class="badge badge-sm badge-outline font-mono shrink-0"
+                  class="ref-chip"
                   href={ref.href}
                   target="_blank"
                   rel="noopener noreferrer"
@@ -296,7 +296,7 @@
                   title="Open issue {ref.label} on the forge"
                 >{ref.label}</a>
               {:else}
-                <span class="badge badge-sm badge-outline font-mono shrink-0" title="Forge issue {ref.label}">{ref.label}</span>
+                <span class="ref-chip" title="Forge issue {ref.label}">{ref.label}</span>
               {/if}
             {/if}
             <span class="truncate">{job.description || '—'}</span>
@@ -309,19 +309,19 @@
         <td>
           <div class="flex items-center gap-2">
             <progress
-              class="progress progress-primary w-20"
+              class="progress progress-primary h-1.5 w-20"
               value={job.completed}
               max={job.task_count || 1}
             ></progress>
-            <span class="text-xs text-base-content/50">
+            <span class="text-xs tabular-nums text-base-content/60">
               {job.completed}/{job.task_count}
             </span>
           </div>
         </td>
-        <td class="text-xs text-base-content/50">{formatTime(job.started_at)}</td>
+        <td class="whitespace-nowrap text-xs text-base-content/60">{formatTime(job.started_at)}</td>
         <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
         <td>
-          <div class="flex gap-1" onclick={(e) => e.stopPropagation()} onkeydown={() => {}}>
+          <div class="flex justify-end gap-1" onclick={(e) => e.stopPropagation()} onkeydown={() => {}}>
             <button
               class="btn btn-ghost btn-xs"
               onclick={(e) => { e.stopPropagation(); handleRowClick(job); }}

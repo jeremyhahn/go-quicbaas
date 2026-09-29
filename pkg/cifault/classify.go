@@ -146,10 +146,16 @@ type failureRule func(Input, logView) (Finding, bool)
 //     ruleRunnerDied, which it is disjoint from anyway — one needs a marker
 //     present, the other needs every marker absent — but stating the order
 //     keeps the two from being read as alternatives.
+//
+//  3. ruleRunnerInfrastructure COMES AFTER the host-defect rules, so a host
+//     that also could not pull or create still parks, and BEFORE
+//     ruleRunnerDied, so a runner that said why it went away is named for
+//     what it said rather than for the silence that followed.
 var failureRules = []failureRule{
 	ruleRegistryUnreachable,
 	ruleContainerCreateFailed,
 	ruleModuleResolution,
+	ruleRunnerInfrastructure,
 	ruleStatusRacedShutdown,
 	ruleHostEviction,
 	ruleRunnerDied,

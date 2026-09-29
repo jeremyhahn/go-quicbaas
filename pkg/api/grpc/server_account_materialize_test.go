@@ -44,8 +44,8 @@ import (
 // daemon presents, injected exactly the way the authz interceptor injects one.
 func grpcDaemonContext(tenantID string) context.Context {
 	return auth.SubjectIntoContext(context.Background(), interfaces.Subject{
-		ID:            "agent-vm-host-4",
-		Username:      "agent-vm-host-4",
+		ID:            "agent-agent-04",
+		Username:      "agent-agent-04",
 		TenantID:      tenantID,
 		Authenticated: true,
 	})
@@ -111,7 +111,7 @@ func TestAccountGRPC_MaterializeReleasesToTheCallersOwnTenant(t *testing.T) {
 	if captured.TenantID != "tenant-1" {
 		t.Errorf("service asked for tenant %q, want the principal's tenant-1", captured.TenantID)
 	}
-	if captured.AgentID != "agent-vm-host-4" {
+	if captured.AgentID != "agent-agent-04" {
 		t.Errorf("release attributed to %q, want the principal", captured.AgentID)
 	}
 	if captured.ProjectID != "project-x" {
@@ -255,9 +255,13 @@ func TestMaterializedCredentialToProto_DropsTheRefreshGrant(t *testing.T) {
 		AccessTokenEnvKey: "K",
 		Env:               map[string]string{"A": "b"},
 		Files:             map[string][]byte{"c": []byte("d")},
+		Generation:        42,
 	})
 	if out == nil {
 		t.Fatal("converter returned nil for a populated envelope")
+	}
+	if out.Generation != 42 {
+		t.Errorf("Generation = %d, want 42", out.Generation)
 	}
 	encoded, err := protojson.Marshal(out)
 	if err != nil {

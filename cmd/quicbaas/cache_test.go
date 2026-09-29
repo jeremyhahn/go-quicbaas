@@ -2634,6 +2634,7 @@ func (m *mockSDKClientForClusterCovPlusTest) Close() error {
 
 func (m *mockSDKClientForClusterCovPlusTest) Project() quicbaas.ProjectClient { return nil }
 func (m *mockSDKClientForClusterCovPlusTest) SDLC() quicbaas.SDLCClient       { return nil }
+func (m *mockSDKClientForClusterCovPlusTest) Agents() quicbaas.AgentsClient   { return nil }
 func (m *mockSDKClientForClusterCovPlusTest) Account() quicbaas.AccountClient { return nil }
 
 func (m *mockSDKClientForClusterCovPlusTest) Orchestrator() quicbaas.OrchestratorClient {
@@ -2664,14 +2665,6 @@ func TestShutdownEmbeddedServer_NoServerCovPlus(t *testing.T) {
 
 	err := shutdownEmbeddedServer()
 	assert.NoError(t, err)
-}
-
-func TestGetFreePortForEmbedded_SuccessCovPlus(t *testing.T) {
-	port, err := getFreePortForEmbedded()
-
-	require.NoError(t, err)
-	assert.Greater(t, port, 0)
-	assert.Less(t, port, 65536)
 }
 
 // =============================================================================

@@ -14,6 +14,8 @@ import {
   bindingFormFrom,
   bindingFrom,
   emptyBindingForm,
+  PROMPT_APPEND_MAX_BYTES,
+  promptAppendTooLarge,
   validateBindingForm,
 } from '../src/lib/sdlcBinding.ts';
 
@@ -33,7 +35,7 @@ function fullBinding(): ProjectBinding {
       labels: { in_progress: 'status/working', merged: 'status/landed' },
     },
     strategy: 'github-flow',
-    worker: { backend: 'claude', model: 'claude-opus-5' },
+    worker: { agent_id: 'claude-coder' },
     verification: ['make build', 'make test'],
     review: {
       required_approvals: 2,
@@ -67,8 +69,7 @@ describe('bindingFormFrom', () => {
       { key: 'merged', label: 'status/landed' },
     ]);
     expect(form.strategy).toBe('github-flow');
-    expect(form.workerBackend).toBe('claude');
-    expect(form.workerModel).toBe('claude-opus-5');
+    expect(form.worker).toBe('agent:claude-coder');
     expect(form.verification).toEqual(['make build', 'make test']);
     expect(form.requiredApprovals).toBe(2);
     expect(form.requireIndependentReviewer).toBe(true);
@@ -97,7 +98,7 @@ describe('bindingFrom', () => {
     form.owner = 'o';
     form.repo = 'r';
     form.tokenSecretRef = 'forge-token';
-    form.workerBackend = 'claude';
+    form.worker = 'pool:coders';
     const wire = bindingFrom('proj-1', form);
     expect(wire.forge.webhook_secret_ref).toBeUndefined();
     expect(wire.forge.ssh_host_key).toBeUndefined();
@@ -161,10 +162,13 @@ describe('validateBindingForm', () => {
     expect(validateBindingForm(form, ['gitea'])).toMatch(/collides with the trigger label/i);
   });
 
-  it('refuses a worker with no backend and a blank verification step', () => {
+  it('refuses a worker with no Agent, an unreadable reference and a blank verification step', () => {
     const noBackend = valid();
-    noBackend.workerBackend = '';
-    expect(validateBindingForm(noBackend, ['gitea'])).toMatch(/worker backend is required/i);
+    noBackend.worker = '';
+    expect(validateBindingForm(noBackend, ['gitea'])).toMatch(/worker Agent or pool is required/i);
+    const badRef = valid();
+    badRef.worker = 'fleet:node-1';
+    expect(validateBindingForm(badRef, ['gitea'])).toMatch(/agent:<id>, pool:<id>/);
 
     const blankStep = valid();
     blankStep.verification = ['make test', '  '];
@@ -208,5 +212,43 @@ describe('bindingAvailabilityFor', () => {
     expect(bindingAvailabilityFor({ status: 500 })).toBe('error');
     expect(bindingAvailabilityFor(new Error('socket closed'))).toBe('error');
     expect(bindingAvailabilityFor(null)).toBe('error');
+  });
+});
+
+describe('slot prompt appends', () => {
+  it('round-trips the worker, triage and seat appends through the form', () => {
+    const binding: ProjectBinding = {
+      ...fullBinding(),
+      worker_prompt_append: 'use tabs',
+      triage_prompt_append: 'infra issues are never ready',
+      reviewer: { agent_id: 'codex-reviewer', login: 'codex', token_secret_ref: 'tok', prompt_append: 'check migrations' },
+    };
+    const form = bindingFormFrom(binding);
+    expect(form.workerPromptAppend).toBe('use tabs');
+    expect(form.triagePromptAppend).toBe('infra issues are never ready');
+    expect(form.reviewerProfiles[0]?.promptAppend).toBe('check migrations');
+
+    const back = bindingFrom('proj-1', form, binding);
+    expect(back.worker_prompt_append).toBe('use tabs');
+    expect(back.triage_prompt_append).toBe('infra issues are never ready');
+    expect(back.reviewer?.prompt_append).toBe('check migrations');
+  });
+
+  it('sends no append for a blank field', () => {
+    const form = bindingFormFrom(fullBinding());
+    form.workerPromptAppend = '   ';
+    const back = bindingFrom('proj-1', form);
+    expect(back.worker_prompt_append).toBeUndefined();
+    expect(back.triage_prompt_append).toBeUndefined();
+  });
+
+  it('refuses an append over the 64 KiB bound, as the server does', () => {
+    const form = bindingFormFrom(fullBinding());
+    expect(promptAppendTooLarge('a'.repeat(PROMPT_APPEND_MAX_BYTES))).toBe(false);
+    form.workerPromptAppend = 'a'.repeat(PROMPT_APPEND_MAX_BYTES + 1);
+    expect(validateBindingForm(form, [])).toMatch(/64 KiB/);
+    form.workerPromptAppend = '';
+    form.triagePromptAppend = 'é'.repeat(PROMPT_APPEND_MAX_BYTES / 2 + 1);
+    expect(validateBindingForm(form, [])).toMatch(/Triage/);
   });
 });

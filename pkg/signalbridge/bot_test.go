@@ -47,7 +47,7 @@ type mockOrchestrator struct {
 	prompts   []*orchestratorSDK.PromptSessionRequest
 	closes    []*orchestratorSDK.CloseSessionRequest
 	sessions  []*orchestratorSDK.SessionStatusResponse
-	agents    []*orchestratorSDK.AgentRegistration
+	agents    []*orchestratorSDK.FleetNode
 	jobs      int
 	eventChan chan *orchestratorSDK.SessionEventEnvelope
 }
@@ -80,8 +80,8 @@ func (m *mockOrchestrator) CloseSession(ctx context.Context, req *orchestratorSD
 func (m *mockOrchestrator) ListSessions(ctx context.Context, req *orchestratorSDK.ListSessionsRequest) (*orchestratorSDK.ListSessionsResponse, error) {
 	return &orchestratorSDK.ListSessionsResponse{Sessions: m.sessions, Count: len(m.sessions)}, nil
 }
-func (m *mockOrchestrator) ListAgents(ctx context.Context, req *orchestratorSDK.ListAgentsRequest) (*orchestratorSDK.ListAgentsResponse, error) {
-	return &orchestratorSDK.ListAgentsResponse{Agents: m.agents, Count: len(m.agents)}, nil
+func (m *mockOrchestrator) ListFleetNodes(ctx context.Context, req *orchestratorSDK.ListFleetNodesRequest) (*orchestratorSDK.ListFleetNodesResponse, error) {
+	return &orchestratorSDK.ListFleetNodesResponse{Nodes: m.agents, Count: len(m.agents)}, nil
 }
 func (m *mockOrchestrator) SessionStatus(ctx context.Context, req *orchestratorSDK.SessionStatusRequest) (*orchestratorSDK.SessionStatusResponse, error) {
 	return &orchestratorSDK.SessionStatusResponse{SessionID: req.SessionID, Backend: "claude", Status: "running"}, nil

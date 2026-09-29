@@ -1724,15 +1724,15 @@ func (m *MockObjectTransferService) StreamFetchObjects(ctx context.Context, req 
 
 // MockProjectService is a mock implementation of service.ProjectService.
 type MockProjectService struct {
-	CreateProjectFunc    func(ctx context.Context, req *service.CreateProjectRequest) (*service.CreateProjectResponse, error)
-	GetProjectFunc       func(ctx context.Context, req *service.GetProjectRequest) (*service.GetProjectResponse, error)
-	GetProjectByNameFunc func(ctx context.Context, req *service.GetProjectByNameRequest) (*service.GetProjectResponse, error)
-	UpdateProjectFunc    func(ctx context.Context, req *service.UpdateProjectRequest) (*service.UpdateProjectResponse, error)
-	DeleteProjectFunc    func(ctx context.Context, req *service.DeleteProjectRequest) (*service.DeleteProjectResponse, error)
-	ListProjectsFunc     func(ctx context.Context, req *service.ListProjectsRequest) (*service.ListProjectsResponse, error)
-	AuthorizeAgentFunc   func(ctx context.Context, req *service.AuthorizeAgentRequest) error
-	GrantAgentRoleFunc   func(ctx context.Context, req *service.GrantAgentRoleRequest) (*service.GrantAgentRoleResponse, error)
-	RevokeAgentRoleFunc  func(ctx context.Context, req *service.RevokeAgentRoleRequest) (*service.RevokeAgentRoleResponse, error)
+	CreateProjectFunc       func(ctx context.Context, req *service.CreateProjectRequest) (*service.CreateProjectResponse, error)
+	GetProjectFunc          func(ctx context.Context, req *service.GetProjectRequest) (*service.GetProjectResponse, error)
+	GetProjectByNameFunc    func(ctx context.Context, req *service.GetProjectByNameRequest) (*service.GetProjectResponse, error)
+	UpdateProjectFunc       func(ctx context.Context, req *service.UpdateProjectRequest) (*service.UpdateProjectResponse, error)
+	DeleteProjectFunc       func(ctx context.Context, req *service.DeleteProjectRequest) (*service.DeleteProjectResponse, error)
+	ListProjectsFunc        func(ctx context.Context, req *service.ListProjectsRequest) (*service.ListProjectsResponse, error)
+	AuthorizeFleetNodeFunc  func(ctx context.Context, req *service.AuthorizeFleetNodeRequest) error
+	GrantFleetNodeRoleFunc  func(ctx context.Context, req *service.GrantFleetNodeRoleRequest) (*service.GrantFleetNodeRoleResponse, error)
+	RevokeFleetNodeRoleFunc func(ctx context.Context, req *service.RevokeFleetNodeRoleRequest) (*service.RevokeFleetNodeRoleResponse, error)
 }
 
 var _ service.ProjectService = (*MockProjectService)(nil)
@@ -1779,31 +1779,31 @@ func (m *MockProjectService) ListProjects(ctx context.Context, req *service.List
 	return &service.ListProjectsResponse{}, nil
 }
 
-func (m *MockProjectService) AuthorizeAgent(ctx context.Context, req *service.AuthorizeAgentRequest) error {
-	if m.AuthorizeAgentFunc != nil {
-		return m.AuthorizeAgentFunc(ctx, req)
+func (m *MockProjectService) AuthorizeFleetNode(ctx context.Context, req *service.AuthorizeFleetNodeRequest) error {
+	if m.AuthorizeFleetNodeFunc != nil {
+		return m.AuthorizeFleetNodeFunc(ctx, req)
 	}
 	return nil
 }
 
-func (m *MockProjectService) GrantAgentRole(ctx context.Context, req *service.GrantAgentRoleRequest) (*service.GrantAgentRoleResponse, error) {
-	if m.GrantAgentRoleFunc != nil {
-		return m.GrantAgentRoleFunc(ctx, req)
+func (m *MockProjectService) GrantFleetNodeRole(ctx context.Context, req *service.GrantFleetNodeRoleRequest) (*service.GrantFleetNodeRoleResponse, error) {
+	if m.GrantFleetNodeRoleFunc != nil {
+		return m.GrantFleetNodeRoleFunc(ctx, req)
 	}
-	return &service.GrantAgentRoleResponse{
-		ProjectID: req.ProjectID,
-		AgentID:   req.AgentID,
-		Role:      req.Role,
+	return &service.GrantFleetNodeRoleResponse{
+		ProjectID:   req.ProjectID,
+		FleetNodeID: req.FleetNodeID,
+		Role:        req.Role,
 	}, nil
 }
 
-func (m *MockProjectService) RevokeAgentRole(ctx context.Context, req *service.RevokeAgentRoleRequest) (*service.RevokeAgentRoleResponse, error) {
-	if m.RevokeAgentRoleFunc != nil {
-		return m.RevokeAgentRoleFunc(ctx, req)
+func (m *MockProjectService) RevokeFleetNodeRole(ctx context.Context, req *service.RevokeFleetNodeRoleRequest) (*service.RevokeFleetNodeRoleResponse, error) {
+	if m.RevokeFleetNodeRoleFunc != nil {
+		return m.RevokeFleetNodeRoleFunc(ctx, req)
 	}
-	return &service.RevokeAgentRoleResponse{
-		ProjectID: req.ProjectID,
-		AgentID:   req.AgentID,
+	return &service.RevokeFleetNodeRoleResponse{
+		ProjectID:   req.ProjectID,
+		FleetNodeID: req.FleetNodeID,
 	}, nil
 }
 
@@ -1826,6 +1826,8 @@ type MockAccountService struct {
 	GetAccountUsageFunc         func(ctx context.Context, req *service.GetAccountUsageRequest) (*service.GetAccountUsageResponse, error)
 
 	MaterializeAccountCredentialFunc func(ctx context.Context, req *service.MaterializeAccountCredentialRequest) (*service.MaterializeAccountCredentialResponse, error)
+	ReserveAccountSessionFunc        func(ctx context.Context, req *service.ReserveAccountSessionRequest) (*service.ReserveAccountSessionResponse, error)
+	ReleaseAccountSessionFunc        func(ctx context.Context, req *service.ReleaseAccountSessionRequest) (*service.ReleaseAccountSessionResponse, error)
 }
 
 var _ service.AccountService = (*MockAccountService)(nil)
@@ -1918,46 +1920,63 @@ func (m *MockAccountService) MaterializeAccountCredential(ctx context.Context, r
 	}, nil
 }
 
+// ReserveAccountSession delegates to ReserveAccountSessionFunc when set, and
+// otherwise answers an unmetered account's empty reservation.
+func (m *MockAccountService) ReserveAccountSession(ctx context.Context, req *service.ReserveAccountSessionRequest) (*service.ReserveAccountSessionResponse, error) {
+	if m.ReserveAccountSessionFunc != nil {
+		return m.ReserveAccountSessionFunc(ctx, req)
+	}
+	return &service.ReserveAccountSessionResponse{}, nil
+}
+
+// ReleaseAccountSession delegates to ReleaseAccountSessionFunc when set.
+func (m *MockAccountService) ReleaseAccountSession(ctx context.Context, req *service.ReleaseAccountSessionRequest) (*service.ReleaseAccountSessionResponse, error) {
+	if m.ReleaseAccountSessionFunc != nil {
+		return m.ReleaseAccountSessionFunc(ctx, req)
+	}
+	return &service.ReleaseAccountSessionResponse{ReservationID: req.ReservationID}, nil
+}
+
 // =============================================================================
-// MockAgentAdminService
+// MockFleetAdminService
 // =============================================================================
 
-// MockAgentAdminService is a test double for service.AgentAdminService.
-type MockAgentAdminService struct {
-	DisableAgentFunc           func(ctx context.Context, req *service.DisableAgentRequest) (*service.DisableAgentResponse, error)
-	EnableAgentFunc            func(ctx context.Context, req *service.EnableAgentRequest) (*service.EnableAgentResponse, error)
-	GetAgentRegistrationFunc   func(ctx context.Context, req *service.GetAgentRegistrationRequest) (*service.GetAgentRegistrationResponse, error)
-	ListAgentRegistrationsFunc func(ctx context.Context, req *service.ListAgentRegistrationsRequest) (*service.ListAgentRegistrationsResponse, error)
+// MockFleetAdminService is a test double for service.FleetAdminService.
+type MockFleetAdminService struct {
+	DisableFleetNodeFunc           func(ctx context.Context, req *service.DisableFleetNodeRequest) (*service.DisableFleetNodeResponse, error)
+	EnableFleetNodeFunc            func(ctx context.Context, req *service.EnableFleetNodeRequest) (*service.EnableFleetNodeResponse, error)
+	GetFleetNodeRegistrationFunc   func(ctx context.Context, req *service.GetFleetNodeRegistrationRequest) (*service.GetFleetNodeRegistrationResponse, error)
+	ListFleetNodeRegistrationsFunc func(ctx context.Context, req *service.ListFleetNodeRegistrationsRequest) (*service.ListFleetNodeRegistrationsResponse, error)
 }
 
-var _ service.AgentAdminService = (*MockAgentAdminService)(nil)
+var _ service.FleetAdminService = (*MockFleetAdminService)(nil)
 
-func (m *MockAgentAdminService) DisableAgent(ctx context.Context, req *service.DisableAgentRequest) (*service.DisableAgentResponse, error) {
-	if m.DisableAgentFunc != nil {
-		return m.DisableAgentFunc(ctx, req)
+func (m *MockFleetAdminService) DisableFleetNode(ctx context.Context, req *service.DisableFleetNodeRequest) (*service.DisableFleetNodeResponse, error) {
+	if m.DisableFleetNodeFunc != nil {
+		return m.DisableFleetNodeFunc(ctx, req)
 	}
-	return &service.DisableAgentResponse{AgentID: req.AgentID, Disabled: true}, nil
+	return &service.DisableFleetNodeResponse{NodeID: req.NodeID, Disabled: true}, nil
 }
 
-func (m *MockAgentAdminService) EnableAgent(ctx context.Context, req *service.EnableAgentRequest) (*service.EnableAgentResponse, error) {
-	if m.EnableAgentFunc != nil {
-		return m.EnableAgentFunc(ctx, req)
+func (m *MockFleetAdminService) EnableFleetNode(ctx context.Context, req *service.EnableFleetNodeRequest) (*service.EnableFleetNodeResponse, error) {
+	if m.EnableFleetNodeFunc != nil {
+		return m.EnableFleetNodeFunc(ctx, req)
 	}
-	return &service.EnableAgentResponse{AgentID: req.AgentID, Enabled: true}, nil
+	return &service.EnableFleetNodeResponse{NodeID: req.NodeID, Enabled: true}, nil
 }
 
-func (m *MockAgentAdminService) GetAgentRegistration(ctx context.Context, req *service.GetAgentRegistrationRequest) (*service.GetAgentRegistrationResponse, error) {
-	if m.GetAgentRegistrationFunc != nil {
-		return m.GetAgentRegistrationFunc(ctx, req)
+func (m *MockFleetAdminService) GetFleetNodeRegistration(ctx context.Context, req *service.GetFleetNodeRegistrationRequest) (*service.GetFleetNodeRegistrationResponse, error) {
+	if m.GetFleetNodeRegistrationFunc != nil {
+		return m.GetFleetNodeRegistrationFunc(ctx, req)
 	}
-	return &service.GetAgentRegistrationResponse{}, nil
+	return &service.GetFleetNodeRegistrationResponse{}, nil
 }
 
-func (m *MockAgentAdminService) ListAgentRegistrations(ctx context.Context, req *service.ListAgentRegistrationsRequest) (*service.ListAgentRegistrationsResponse, error) {
-	if m.ListAgentRegistrationsFunc != nil {
-		return m.ListAgentRegistrationsFunc(ctx, req)
+func (m *MockFleetAdminService) ListFleetNodeRegistrations(ctx context.Context, req *service.ListFleetNodeRegistrationsRequest) (*service.ListFleetNodeRegistrationsResponse, error) {
+	if m.ListFleetNodeRegistrationsFunc != nil {
+		return m.ListFleetNodeRegistrationsFunc(ctx, req)
 	}
-	return &service.ListAgentRegistrationsResponse{}, nil
+	return &service.ListFleetNodeRegistrationsResponse{}, nil
 }
 
 // =============================================================================

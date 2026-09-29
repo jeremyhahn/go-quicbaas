@@ -235,7 +235,7 @@ func TestGRPCFullMethodAllowlist_NoTailCollisionAdmitted(t *testing.T) {
 	for _, m := range []string{
 		"/quicbaas.tenant.v1.TenantBarrier/Status",
 		"/quicbaas.tenant.v1.TenantBarrier/Unseal",
-		"/quicbaas.agent.runtime.v1.AgentRuntime/Status",
+		"/quicbaas.fleet.runtime.v1.FleetRuntime/Status",
 		"/quicbaas.orchestrator.v1.OrchestratorService/Health",
 		"/quicbaas.ollama.v1.OllamaService/Health",
 		"/quicbaas.vector.v1.VectorDB/Health",

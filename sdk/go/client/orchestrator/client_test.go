@@ -632,7 +632,7 @@ func TestListBackendModelsValidation(t *testing.T) {
 	})
 
 	t.Run("EmptyBackendName", func(t *testing.T) {
-		resp, err := c.ListBackendModels(context.Background(), &ListBackendModelsRequest{AgentID: "a"})
+		resp, err := c.ListBackendModels(context.Background(), &ListBackendModelsRequest{NodeID: "a"})
 		require.Error(t, err)
 		assert.Nil(t, resp)
 		assert.Contains(t, err.Error(), "backend name is required")
@@ -658,7 +658,7 @@ func TestListBackendModelsSuccess(t *testing.T) {
 			assert.Equal(t, "ListBackendModels", method)
 			r, ok := req.(*ListBackendModelsRequest)
 			require.True(t, ok)
-			assert.Equal(t, "agent-1", r.AgentID)
+			assert.Equal(t, "agent-1", r.NodeID)
 			assert.Equal(t, "ollama", r.BackendName)
 			return want, nil
 		},
@@ -666,7 +666,7 @@ func TestListBackendModelsSuccess(t *testing.T) {
 	c := NewClient(mt)
 
 	resp, err := c.ListBackendModels(context.Background(), &ListBackendModelsRequest{
-		AgentID:     "agent-1",
+		NodeID:      "agent-1",
 		BackendName: "ollama",
 	})
 	require.NoError(t, err)
@@ -751,47 +751,47 @@ func TestListBackendModelsInvalidResponseType(t *testing.T) {
 }
 
 // =============================================================================
-// DisableAgent (Gap 4)
+// DisableFleetNode (Gap 4)
 // =============================================================================
 
 func TestDisableAgent_Success(t *testing.T) {
 	mt := &mockTransport{
 		requestFn: func(_ context.Context, _, method string, req interface{}) (interface{}, error) {
-			assert.Equal(t, "DisableAgent", method)
-			r := req.(*DisableAgentRequest)
-			return &DisableAgentResponse{
-				AgentID:  r.AgentID,
+			assert.Equal(t, "DisableFleetNode", method)
+			r := req.(*DisableFleetNodeRequest)
+			return &DisableFleetNodeResponse{
+				NodeID:   r.NodeID,
 				Disabled: true,
 			}, nil
 		},
 	}
 	c := NewClient(mt)
-	resp, err := c.DisableAgent(context.Background(), &DisableAgentRequest{
+	resp, err := c.DisableFleetNode(context.Background(), &DisableFleetNodeRequest{
 		TenantID: "t1",
-		AgentID:  "agent-1",
+		NodeID:   "agent-1",
 	})
 	require.NoError(t, err)
 	assert.True(t, resp.Disabled)
-	assert.Equal(t, "agent-1", resp.AgentID)
+	assert.Equal(t, "agent-1", resp.NodeID)
 }
 
 func TestDisableAgent_MissingTenantID(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	_, err := c.DisableAgent(context.Background(), &DisableAgentRequest{AgentID: "agent-1"})
+	_, err := c.DisableFleetNode(context.Background(), &DisableFleetNodeRequest{NodeID: "agent-1"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tenant ID")
 }
 
 func TestDisableAgent_MissingAgentID(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	_, err := c.DisableAgent(context.Background(), &DisableAgentRequest{TenantID: "t1"})
+	_, err := c.DisableFleetNode(context.Background(), &DisableFleetNodeRequest{TenantID: "t1"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "agent ID")
 }
 
 func TestDisableAgent_NilRequest(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	_, err := c.DisableAgent(context.Background(), nil)
+	_, err := c.DisableFleetNode(context.Background(), nil)
 	require.Error(t, err)
 }
 
@@ -802,29 +802,29 @@ func TestDisableAgent_TransportError(t *testing.T) {
 		},
 	}
 	c := NewClient(mt)
-	_, err := c.DisableAgent(context.Background(), &DisableAgentRequest{TenantID: "t1", AgentID: "a1"})
+	_, err := c.DisableFleetNode(context.Background(), &DisableFleetNodeRequest{TenantID: "t1", NodeID: "a1"})
 	require.Error(t, err)
 }
 
 // =============================================================================
-// EnableAgent (Gap 4)
+// EnableFleetNode (Gap 4)
 // =============================================================================
 
 func TestEnableAgent_Success(t *testing.T) {
 	mt := &mockTransport{
 		requestFn: func(_ context.Context, _, method string, req interface{}) (interface{}, error) {
-			assert.Equal(t, "EnableAgent", method)
-			r := req.(*EnableAgentRequest)
-			return &EnableAgentResponse{
-				AgentID: r.AgentID,
+			assert.Equal(t, "EnableFleetNode", method)
+			r := req.(*EnableFleetNodeRequest)
+			return &EnableFleetNodeResponse{
+				NodeID:  r.NodeID,
 				Enabled: true,
 			}, nil
 		},
 	}
 	c := NewClient(mt)
-	resp, err := c.EnableAgent(context.Background(), &EnableAgentRequest{
+	resp, err := c.EnableFleetNode(context.Background(), &EnableFleetNodeRequest{
 		TenantID: "t1",
-		AgentID:  "agent-1",
+		NodeID:   "agent-1",
 	})
 	require.NoError(t, err)
 	assert.True(t, resp.Enabled)
@@ -832,13 +832,13 @@ func TestEnableAgent_Success(t *testing.T) {
 
 func TestEnableAgent_MissingTenantID(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	_, err := c.EnableAgent(context.Background(), &EnableAgentRequest{AgentID: "agent-1"})
+	_, err := c.EnableFleetNode(context.Background(), &EnableFleetNodeRequest{NodeID: "agent-1"})
 	require.Error(t, err)
 }
 
 func TestEnableAgent_NilRequest(t *testing.T) {
 	c := NewClient(&mockTransport{})
-	_, err := c.EnableAgent(context.Background(), nil)
+	_, err := c.EnableFleetNode(context.Background(), nil)
 	require.Error(t, err)
 }
 

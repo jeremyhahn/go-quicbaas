@@ -1768,177 +1768,6 @@ func TestCLIUserRoleManagement(t *testing.T) {
 // Group CLI Tests
 // =============================================================================
 
-// TestCLIGroupCreate tests the group create command.
-func TestCLIGroupCreate(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
-
-	t.Run("create-group", func(t *testing.T) {
-		groupID := fmt.Sprintf("group-%d", time.Now().UnixNano())
-		output, err := cli.run("iam", "group", "create", groupID,
-			"--tenant", tenantID,
-			"--name", "Test Group",
-			"--description", "Test group description")
-		require.NoError(t, err, "group create should succeed")
-		assert.NotEmpty(t, output)
-		t.Logf("Created group: %s", output)
-	})
-}
-
-// TestCLIGroupGet tests the group get command.
-func TestCLIGroupGet(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
-
-	// Create a group first
-	groupID := fmt.Sprintf("get-group-%d", time.Now().UnixNano())
-	_, createErr := cli.run("iam", "group", "create", groupID,
-		"--tenant", tenantID,
-		"--name", "Get Test Group")
-	require.NoError(t, createErr, "group create should succeed")
-
-	t.Run("get-group", func(t *testing.T) {
-		output, err := cli.run("iam", "group", "get", groupID, "--tenant", tenantID)
-		require.NoError(t, err, "group get should succeed")
-		assert.Contains(t, output, groupID)
-		t.Logf("Got group: %s", output)
-	})
-
-	t.Run("get-nonexistent-group", func(t *testing.T) {
-		_, err := cli.runExpectError("iam", "group", "get", "nonexistent-group-12345", "--tenant", tenantID)
-		assert.Error(t, err, "get should fail for nonexistent group")
-	})
-}
-
-// TestCLIGroupList tests the group list command.
-func TestCLIGroupList(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
-
-	t.Run("list-groups", func(t *testing.T) {
-		output, err := cli.run("iam", "group", "list", "--tenant", tenantID)
-		require.NoError(t, err, "group list should succeed")
-		t.Logf("Listed groups: %s", output)
-	})
-}
-
-// TestCLIGroupUpdate tests the group update command.
-func TestCLIGroupUpdate(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
-
-	// Create a group first
-	groupID := fmt.Sprintf("update-group-%d", time.Now().UnixNano())
-	_, createErr := cli.run("iam", "group", "create", groupID,
-		"--tenant", tenantID,
-		"--name", "Update Test Group")
-	require.NoError(t, createErr, "group create should succeed")
-
-	t.Run("update-group", func(t *testing.T) {
-		output, err := cli.run("iam", "group", "update", groupID,
-			"--tenant", tenantID,
-			"--name", "Updated Group Name",
-			"--description", "Updated description")
-		require.NoError(t, err, "group update should succeed")
-		t.Logf("Updated group: %s", output)
-	})
-}
-
-// TestCLIGroupDelete tests the group delete command.
-func TestCLIGroupDelete(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
-
-	// Create a group to delete
-	groupID := fmt.Sprintf("delete-group-%d", time.Now().UnixNano())
-	_, createErr := cli.run("iam", "group", "create", groupID,
-		"--tenant", tenantID,
-		"--name", "Delete Test Group")
-	require.NoError(t, createErr, "group create should succeed")
-
-	t.Run("delete-group", func(t *testing.T) {
-		output, err := cli.run("iam", "group", "delete", groupID,
-			"--tenant", tenantID,
-			"--yes")
-		require.NoError(t, err, "group delete should succeed")
-		t.Logf("Deleted group: %s", output)
-	})
-}
-
-// TestCLIGroupMembership tests group membership management.
-func TestCLIGroupMembership(t *testing.T) {
-	proto := getGRPCProtocolConfig()
-	tenantID := setupIAMCLITestTenant(t)
-	defer cleanupIAMCLITestTenant(t, tenantID)
-
-	cli := newIAMCLITestContext(t, proto.name, proto.address, tenantID)
-
-	// Create a group
-	groupID := fmt.Sprintf("membership-group-%d", time.Now().UnixNano())
-	_, groupErr := cli.run("iam", "group", "create", groupID,
-		"--tenant", tenantID,
-		"--name", "Membership Test Group")
-	require.NoError(t, groupErr, "group create should succeed")
-
-	// Create a user
-	email := fmt.Sprintf("member-user-%d@test.local", time.Now().UnixNano())
-	createOutput, userErr := cli.run("iam", "user", "create", email,
-		"--tenant", tenantID,
-		"--name", "Member Test User")
-	require.NoError(t, userErr, "user create should succeed")
-
-	var userID string
-	var createResult struct {
-		ID string `json:"id"`
-	}
-	if err := cli.unmarshalJSON(createOutput, &createResult); err == nil {
-		userID = createResult.ID
-	}
-	if userID == "" {
-		userID = email
-	}
-
-	t.Run("add-member", func(t *testing.T) {
-		output, err := cli.run("iam", "group", "add-member",
-			"--tenant", tenantID,
-			"--group", groupID,
-			"--user", userID)
-		require.NoError(t, err, "group add-member should succeed")
-		t.Logf("Added member: %s", output)
-	})
-
-	t.Run("list-members", func(t *testing.T) {
-		output, err := cli.run("iam", "group", "members", groupID,
-			"--tenant", tenantID)
-		require.NoError(t, err, "group members should succeed")
-		t.Logf("Members: %s", output)
-	})
-
-	t.Run("remove-member", func(t *testing.T) {
-		output, err := cli.run("iam", "group", "remove-member",
-			"--tenant", tenantID,
-			"--group", groupID,
-			"--user", userID)
-		require.NoError(t, err, "group remove-member should succeed")
-		t.Logf("Removed member: %s", output)
-	})
-}
-
 // =============================================================================
 // Role CLI Tests
 // =============================================================================
@@ -2713,26 +2542,22 @@ func TestCLIE2ETenantUserWorkflow(t *testing.T) {
 		}
 	})
 
-	// Step 4: Create a group and add users
-	groupID := fmt.Sprintf("e2e-group-%d", time.Now().UnixNano())
-	t.Run("e2e-create-group", func(t *testing.T) {
-		_, err := cli.run("iam", "group", "create", groupID,
+	// Step 4: Create a role and bind both users to it. A role binding is the
+	// grouping identity offers; quicbaas keeps no groups of its own.
+	roleID := fmt.Sprintf("e2e-role-%d", time.Now().UnixNano())
+	t.Run("e2e-create-role", func(t *testing.T) {
+		_, err := cli.run("iam", "role", "create", roleID,
 			"--tenant", tenantID,
-			"--name", "E2E Test Group")
-		require.NoError(t, err, "group create should succeed")
+			"--name", "E2E Test Role")
+		require.NoError(t, err, "role create should succeed")
 
-		// Add users to group
-		_, err = cli.run("iam", "group", "add-member",
-			"--tenant", tenantID,
-			"--group", groupID,
-			"--user", user1ID)
-		require.NoError(t, err, "group add-member should succeed")
-
-		_, err = cli.run("iam", "group", "add-member",
-			"--tenant", tenantID,
-			"--group", groupID,
-			"--user", user2ID)
-		require.NoError(t, err, "group add-member should succeed")
+		for _, userID := range []string{user1ID, user2ID} {
+			_, err = cli.run("iam", "user", "role", "assign",
+				"--tenant", tenantID,
+				"--user", userID,
+				"--role", roleID)
+			require.NoError(t, err, "role assign should succeed")
+		}
 	})
 
 	// Step 5: Apply a policy
@@ -2745,13 +2570,13 @@ metadata:
   tenant: %s
 spec:
   subjects:
-    groups: ["%s"]
+    roles: ["%s"]
   rules:
     - name: allow-read
       effect: allow
       actions: ["read"]
       resources: ["*"]
-`, policyName, tenantID, groupID)
+`, policyName, tenantID, roleID)
 
 		tmpFile, err := os.CreateTemp("", "e2e-policy-*.yaml")
 		require.NoError(t, err)
@@ -2769,7 +2594,7 @@ spec:
 	t.Run("e2e-access-check", func(t *testing.T) {
 		output, err := cli.run("iam", "pep", "check",
 			"--tenant", tenantID,
-			"--subject", fmt.Sprintf(`{"id":"%s","type":"user","groups":["%s"]}`, user1ID, groupID),
+			"--subject", fmt.Sprintf(`{"id":"%s","type":"user","roles":["%s"]}`, user1ID, roleID),
 			"--action", "read",
 			"--resource", "keys/test")
 		require.NoError(t, err, "pep check should succeed")
@@ -2779,7 +2604,7 @@ spec:
 	// Cleanup
 	t.Run("e2e-cleanup", func(t *testing.T) {
 		_, _ = cli.run("iam", "policy", "delete", policyName, "--tenant", tenantID, "--yes")
-		_, _ = cli.run("iam", "group", "delete", groupID, "--tenant", tenantID, "--yes")
+		_, _ = cli.run("iam", "role", "delete", roleID, "--tenant", tenantID, "--yes")
 		_, _ = cli.run("iam", "user", "delete", user1ID, "--tenant", tenantID, "--yes")
 		_, _ = cli.run("iam", "user", "delete", user2ID, "--tenant", tenantID, "--yes")
 		_, _ = cli.run("iam", "tenant", "delete", tenantID, "--yes")

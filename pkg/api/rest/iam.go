@@ -268,17 +268,6 @@ func (h *IAMHandler) RegisterRoutes(router chi.Router) {
 			})
 		})
 
-		r.Route("/{tenant_id}/groups", func(r chi.Router) {
-			r.Get("/", h.ListGroups)
-			r.Post("/", h.CreateGroup)
-			r.Get("/{group_id}", h.GetGroup)
-			r.Put("/{group_id}", h.UpdateGroup)
-			r.Delete("/{group_id}", h.DeleteGroup)
-			r.Get("/{group_id}/members", h.ListMembers)
-			r.Post("/{group_id}/members", h.AddMember)
-			r.Delete("/{group_id}/members/{user_id}", h.RemoveMember)
-		})
-
 		r.Route("/{tenant_id}/roles", func(r chi.Router) {
 			r.Get("/", h.ListRoles)
 			r.Post("/", h.CreateRole)

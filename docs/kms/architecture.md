@@ -449,28 +449,42 @@ Created → Active → Rotated → Deprecated → Destroyed
 ### Cryptoperiod Enforcement (PCI DSS 3.6)
 
 QuicBaaS enforces cryptoperiod expiry automatically through the **KMS rotation
-scheduler**, a background goroutine that scans key metadata at a configurable
-interval and rotates any key whose `RotationPolicy.AutoRotate` is `true` and
-whose `NextRotation` timestamp has passed.
+system job**, a recurring scheduler job that scans key metadata at a
+configurable interval and rotates any key whose `RotationPolicy` is enabled,
+set to `AutoRotate`, and past its `NextRotation` timestamp.
 
 #### How it works
 
-1. On service start (inside the KMS + scheduler block of `newQuicBaaS`), a
-   `KMSRotationScheduler` is constructed and started alongside the grace-period
-   scheduler engine.
-2. Every `KMSRotationScanInterval` (default: 5 minutes) the scheduler calls
-   `kmsManager.ListKeys`, filters for expired `AutoRotate` keys, and calls
-   `kmsServiceImpl.RotateKey` for each one under `auth.NewSystemContext` so
-   that per-key authorization is bypassed for this internal daemon operation.
+1. On service start (inside the KMS + scheduler block of `newQuicBaaS`),
+   `registerKMSRotation` registers the `kms.rotation` handler and declares the
+   system job (`handlers.KMSRotationJob`) under the reserved ID
+   `handlers.KMSRotationJobID`. The scheduler installs it on its next tick
+   and retries every tick until the store accepts it (see
+   [System jobs](../scheduler/architecture.md#system-jobs)).
+2. Every `KMSRotationScanInterval` (default: 5 minutes) the job runs
+   `kmsServiceImpl.RotateDueKeys`: it calls `kmsManager.ListKeys`, filters for
+   due keys, and calls `RotateKey` for each under `auth.NewSystemContext` so
+   that per-key authorization is bypassed for this internal operation.
 3. After a successful rotation, `NextRotation` is advanced by `Interval`
    (clamped to the first future boundary if the daemon was offline for more
    than one interval) and persisted via `kmsManager.UpdateStoredMetadata`.
+   A key whose rotation fails keeps its deadline and is retried by the next
+   scan; one key's failure does not abort the scan.
 4. Each rotation attempt — success or failure — is recorded via the
    `KMSAutoRotationAuditLogger` extension interface (see below). If the
    installed `KMSAuditLogger` does not implement this extension, the event is
    written to the structured logger instead.
-5. The scheduler stops cleanly on `quicBaaS.Close()`, before the scheduler
-   engine, ensuring no rotation scan is in flight during shutdown.
+5. A scan that cannot list keys fails the run with `KMSRotationScanError`; the
+   scheduler records it and retries with backoff within that scan's retry
+   budget; once the budget is spent the job moves on to its next scan. The
+   budget is per firing, so failed scans never retire the job.
+
+**Exactly once on a cluster.** The job is cluster-wide (no node affinity), so
+only the Raft leader dispatches it, and every firing is arbitrated by the
+scheduler's firing claim, so exactly one node runs each scan even during
+leader churn. A standalone node runs every scan itself. The interval must be a
+whole number of seconds (the scheduler's `@every` schedules resolve to
+seconds); anything else fails service construction.
 
 #### Configuration
 
@@ -1216,7 +1230,7 @@ Each DEK is stored as a JSON-encoded `DEKEntry`:
 ### Agent Session Logs and Session State
 
 Agent session logs (stored in `pkg/orchestration/KVSessionEventLog`) and
-persisted agent session state (stored by `pkg/agent/Runtime`) are written as
+persisted agent session state (stored by `pkg/fleet/Runtime`) are written as
 **plaintext JSON into qrdb**. At-rest confidentiality is provided entirely by
 **qrdb's `StorageBarrier`**, which transparently encrypts every value written
 to the underlying PebbleDB store before it reaches disk.

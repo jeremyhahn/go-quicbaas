@@ -79,7 +79,16 @@ func (b *ACPBackend) spawnContainerCLI(ctx context.Context, req *SpawnRequest, p
 	// reason — the command here is ours.
 	command := append([]string{filepath.Base(b.config.Command)}, b.cliArgs(req, plan, model)...)
 
-	spec, specErr := b.sandboxSpec(req, image, command)
+	// The session's ID is decided before its container exists, so the
+	// container is labelled with it; openStreamJSON registers the session
+	// under plan.registerID whatever the CLI's init message reports.
+	identity, idErr := newContainerIdentity(ctx, req, plan.registerID)
+	if idErr != nil {
+		return nil, &SpawnError{Command: image, Cause: idErr}
+	}
+	plan.registerID = identity.SessionID
+
+	spec, specErr := b.sandboxSpec(req, identity, image, command)
 	if specErr != nil {
 		return nil, specErr
 	}
@@ -102,12 +111,14 @@ func (b *ACPBackend) spawnContainerCLI(ctx context.Context, req *SpawnRequest, p
 	}
 
 	// teardown aborts a partially-spawned container: it closes the agent's
-	// stdin, cancels the container process context (killing `docker run` and
-	// triggering --rm), and removes the private env file that process was
+	// stdin, removes the container and reaps its runtime client
+	// (releaseContainer), and removes the private env file that process was
 	// reading its environment from.
 	teardown := func() {
 		_ = proc.Stdin.Close()
-		procCancel()
+		if err := b.releaseContainer(ctx, proc.ContainerID, procCancel, proc.Wait); err != nil && b.logger != nil {
+			b.logger.Warnf("container %s: teardown after a failed spawn: %v", truncateID(proc.ContainerID), err)
+		}
 		if proc.Cleanup != nil {
 			proc.Cleanup()
 		}
@@ -121,6 +132,7 @@ func (b *ACPBackend) spawnContainerCLI(ctx context.Context, req *SpawnRequest, p
 				ContainerID: proc.ContainerID,
 				Image:       image,
 				Operation:   "handshake",
+				Exit:        readContainerExit(proc.Wait),
 			}
 		},
 	}, plan, model, teardown)
@@ -145,6 +157,7 @@ func (b *ACPBackend) spawnContainerCLI(ctx context.Context, req *SpawnRequest, p
 		createdAt:      now,
 		containerID:    proc.ContainerID,
 		containerImage: image,
+		containerExit:  proc.Wait,
 
 		// The container process outlives this call, so the env file it reads
 		// from is released by Close — not here.

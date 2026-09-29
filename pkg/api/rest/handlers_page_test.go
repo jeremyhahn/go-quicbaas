@@ -483,10 +483,10 @@ func TestListSessions_SearchComposesWithTheBackendFilter(t *testing.T) {
 // Agents
 // =============================================================================
 
-func pagedAgents(n int) []*orchestration.AgentRegistration {
-	agents := make([]*orchestration.AgentRegistration, 0, n)
+func pagedAgents(n int) []*orchestration.FleetNode {
+	agents := make([]*orchestration.FleetNode, 0, n)
 	for i := range n {
-		agents = append(agents, &orchestration.AgentRegistration{
+		agents = append(agents, &orchestration.FleetNode{
 			ID:           "agent-" + strconv.Itoa(i),
 			Name:         "burnin-" + strconv.Itoa(i),
 			Backend:      "claude",
@@ -503,13 +503,13 @@ func TestListAgents_PagesAndCounts(t *testing.T) {
 	agentSvc.listAgents = pagedAgents(5)
 
 	w := httptest.NewRecorder()
-	server.HandleOrchestratorListAgents(w,
-		orchReq(http.MethodGet, "/api/v1/orchestrator/agents?tenant_id=acme&limit=2", nil, nil))
+	server.HandleListFleetNodes(w,
+		orchReq(http.MethodGet, "/api/v1/fleet?tenant_id=acme&limit=2", nil, nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	envelope, items := decodePageEnvelope(t, w.Body.Bytes(), "agents")
+	envelope, items := decodePageEnvelope(t, w.Body.Bytes(), "nodes")
 	assertPage(t, envelope, items, 2, 5, offsetPtr(2))
 	if items[0]["id"] != "agent-4" {
 		t.Errorf("first agent = %v, want agent-4 (most recently registered)", items[0]["id"])
@@ -534,20 +534,20 @@ func TestListAgents_SortsOnAllowListedFieldAndRefusesOthers(t *testing.T) {
 	agentSvc.listAgents = pagedAgents(3)
 
 	w := httptest.NewRecorder()
-	server.HandleOrchestratorListAgents(w,
-		orchReq(http.MethodGet, "/api/v1/orchestrator/agents?tenant_id=acme&sort=name", nil, nil))
+	server.HandleListFleetNodes(w,
+		orchReq(http.MethodGet, "/api/v1/fleet?tenant_id=acme&sort=name", nil, nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	_, items := decodePageEnvelope(t, w.Body.Bytes(), "agents")
+	_, items := decodePageEnvelope(t, w.Body.Bytes(), "nodes")
 	if items[0]["name"] != "burnin-0" {
 		t.Errorf("first agent = %v, want burnin-0", items[0]["name"])
 	}
 
 	refused := httptest.NewRecorder()
-	server.HandleOrchestratorListAgents(refused,
-		orchReq(http.MethodGet, "/api/v1/orchestrator/agents?tenant_id=acme&sort=subject", nil, nil))
+	server.HandleListFleetNodes(refused,
+		orchReq(http.MethodGet, "/api/v1/fleet?tenant_id=acme&sort=subject", nil, nil))
 
 	if refused.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", refused.Code, refused.Body.String())
@@ -563,13 +563,13 @@ func TestListAgents_SearchNarrowsTheFleet(t *testing.T) {
 	agentSvc.listAgents = pagedAgents(4)
 
 	w := httptest.NewRecorder()
-	server.HandleOrchestratorListAgents(w,
-		orchReq(http.MethodGet, "/api/v1/orchestrator/agents?tenant_id=acme&q=burnin-2", nil, nil))
+	server.HandleListFleetNodes(w,
+		orchReq(http.MethodGet, "/api/v1/fleet?tenant_id=acme&q=burnin-2", nil, nil))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
-	envelope, items := decodePageEnvelope(t, w.Body.Bytes(), "agents")
+	envelope, items := decodePageEnvelope(t, w.Body.Bytes(), "nodes")
 	if envelope.Total != 1 || items[0]["id"] != "agent-2" {
 		t.Errorf("matched %d agents, want only agent-2", envelope.Total)
 	}
@@ -577,9 +577,9 @@ func TestListAgents_SearchNarrowsTheFleet(t *testing.T) {
 	// A capability the agent serves is searchable too, and every agent here
 	// serves codex.
 	all := httptest.NewRecorder()
-	server.HandleOrchestratorListAgents(all,
-		orchReq(http.MethodGet, "/api/v1/orchestrator/agents?tenant_id=acme&q=codex", nil, nil))
-	allEnvelope, _ := decodePageEnvelope(t, all.Body.Bytes(), "agents")
+	server.HandleListFleetNodes(all,
+		orchReq(http.MethodGet, "/api/v1/fleet?tenant_id=acme&q=codex", nil, nil))
+	allEnvelope, _ := decodePageEnvelope(t, all.Body.Bytes(), "nodes")
 	if allEnvelope.Total != 4 {
 		t.Errorf("q=codex matched %d agents, want all 4 that serve it", allEnvelope.Total)
 	}

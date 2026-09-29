@@ -56,9 +56,8 @@ func newReconcileFixture(t *testing.T) (*Server, *iam.IdentityStore, tenantListe
 
 	mem := iam.NewMemoryStorage()
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  mem,
-		GroupStorage: mem,
-		RoleStorage:  iam.NewQRDBRoleStorage(newPlatformRoleClientResolver(sc)),
+		UserStorage: mem,
+		RoleStorage: iam.NewQRDBRoleStorage(newPlatformRoleClientResolver(sc)),
 	})
 
 	ctx := context.Background()
@@ -204,9 +203,8 @@ func TestReconcileTenantBuiltInRoles_SeedsABuiltInTheTenantIsMissing(t *testing.
 
 	mem := iam.NewMemoryStorage()
 	store := iam.NewIdentityStore(iam.IdentityStoreOptions{
-		UserStorage:  mem,
-		GroupStorage: mem,
-		RoleStorage:  iam.NewQRDBRoleStorage(newPlatformRoleClientResolver(sc)),
+		UserStorage: mem,
+		RoleStorage: iam.NewQRDBRoleStorage(newPlatformRoleClientResolver(sc)),
 	})
 	srv := &Server{logger: newReconcileTestLogger(t)}
 	ctx := context.Background()

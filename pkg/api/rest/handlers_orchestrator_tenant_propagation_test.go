@@ -37,7 +37,7 @@ import (
 // stubSpawnBackend is a minimal AgentBackend that records the tenant present in
 // the spawn context. It lets the spawn handler drive the REAL agentServiceImpl
 // (with a real TenantGuard) all the way past validateTenant into a backend
-// Spawn, exactly like the embedded-agent path does in the daemon — without
+// Spawn, exactly like the embedded-fleet-node path does in the daemon — without
 // requiring a live agent runtime.
 type stubSpawnBackend struct {
 	spawnedTenant string

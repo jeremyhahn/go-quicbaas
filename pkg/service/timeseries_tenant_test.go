@@ -360,3 +360,49 @@ func TestTimeSeriesTenant_OrdinaryTenantStaysIsolated(t *testing.T) {
 	err := enforceTimeSeriesTenantAccess("system-2", "cpu.load", "Write")
 	require.Error(t, err)
 }
+
+// TestTenantScopedMetric_MatchesTheInternalScoping pins the exported form to
+// the scoping every tenant-facing write applies, so a platform component that
+// writes a tenant's series directly files it where the tenant's reads look.
+func TestTenantScopedMetric_MatchesTheInternalScoping(t *testing.T) {
+	for _, tenant := range []string{"", "acme"} {
+		if got, want := TenantScopedMetric(tenant, "fleet.device.power_watts"), tsTenantScopedMetric(tenant, "fleet.device.power_watts"); got != want {
+			t.Fatalf("TenantScopedMetric(%q) = %q, want %q", tenant, got, want)
+		}
+	}
+	if got := TenantScopedMetric("acme", "m"); got != "ts-tenant/acme/m" {
+		t.Fatalf("TenantScopedMetric = %q", got)
+	}
+}
+
+func TestSplitTenantScopedMetric(t *testing.T) {
+	tests := []struct {
+		name       string
+		stored     string
+		wantTenant string
+		wantMetric string
+		wantOK     bool
+	}{
+		{"a tenant-scoped name", "ts-tenant/acme/fleet.device.power_watts", "acme", "fleet.device.power_watts", true},
+		{"a nested metric keeps its slashes", "ts-tenant/acme/app/requests", "acme", "app/requests", true},
+		{"an unscoped name is the system tenant's", "cpu.usage", "", "cpu.usage", true},
+		{"a scope with no metric", "ts-tenant/acme/", "", "", false},
+		{"a scope with no tenant", "ts-tenant//cpu", "", "", false},
+		{"a scope with no separator", "ts-tenant/acme", "", "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tenant, metric, ok := SplitTenantScopedMetric(tc.stored)
+			assert.Equal(t, tc.wantOK, ok)
+			assert.Equal(t, tc.wantTenant, tenant)
+			assert.Equal(t, tc.wantMetric, metric)
+		})
+	}
+}
+
+func TestSplitTenantScopedMetric_InvertsTenantScopedMetric(t *testing.T) {
+	tenant, metric, ok := SplitTenantScopedMetric(TenantScopedMetric("acme", "fleet.device.utilization"))
+	require.True(t, ok)
+	assert.Equal(t, "acme", tenant)
+	assert.Equal(t, "fleet.device.utilization", metric)
+}

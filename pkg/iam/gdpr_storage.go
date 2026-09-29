@@ -741,14 +741,13 @@ func copyDataDeletionRequest(req *DataDeletionRequest) *DataDeletionRequest {
 
 	if req.DeletedDataSummary != nil {
 		result.DeletedDataSummary = &DeletionSummary{
-			ProfileDeleted:          req.DeletedDataSummary.ProfileDeleted,
-			SessionsDeleted:         req.DeletedDataSummary.SessionsDeleted,
-			AuditLogsAnonymized:     req.DeletedDataSummary.AuditLogsAnonymized,
-			ConsentsDeleted:         req.DeletedDataSummary.ConsentsDeleted,
-			CredentialsDeleted:      req.DeletedDataSummary.CredentialsDeleted,
-			GroupMembershipsRemoved: req.DeletedDataSummary.GroupMembershipsRemoved,
-			RoleAssignmentsRemoved:  req.DeletedDataSummary.RoleAssignmentsRemoved,
-			TokensRevoked:           req.DeletedDataSummary.TokensRevoked,
+			ProfileDeleted:         req.DeletedDataSummary.ProfileDeleted,
+			SessionsDeleted:        req.DeletedDataSummary.SessionsDeleted,
+			AuditLogsAnonymized:    req.DeletedDataSummary.AuditLogsAnonymized,
+			ConsentsDeleted:        req.DeletedDataSummary.ConsentsDeleted,
+			CredentialsDeleted:     req.DeletedDataSummary.CredentialsDeleted,
+			RoleAssignmentsRemoved: req.DeletedDataSummary.RoleAssignmentsRemoved,
+			TokensRevoked:          req.DeletedDataSummary.TokensRevoked,
 		}
 
 		if len(req.DeletedDataSummary.AdditionalData) > 0 {

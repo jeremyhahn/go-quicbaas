@@ -53,11 +53,15 @@ import (
 // JobRunnerName is the name a Task and a Job select this runner by.
 const JobRunnerName = "sdlc"
 
-// WorkerSessionCount is how many sessions an sdlc job ever holds: one.
+// WorkerSessionCount is how many sessions an sdlc job holds at once: one.
 //
 // It is a named constant because it is the property the whole runner exists
 // to guarantee — the shape the lead-driven loop got wrong — and a test asserts
-// against it rather than against a literal.
+// against it rather than against a literal. A job may hold that one session
+// in more than one container over its life: a session replaced on a full
+// context or a rotated account, and one closed for the wait in reviewing and
+// spawned again for a review round (releaseWorker), each close the old
+// container before the new one exists.
 const WorkerSessionCount = 1
 
 // stateLabels name the runner's states for a person reading a job.
@@ -89,6 +93,11 @@ type RunnerConfig struct {
 	// CheckoutRoot is the directory under which each attempt's checkout is
 	// mounted, as the CONTAINER sees it. Empty takes the engine's default.
 	CheckoutRoot string
+
+	// Guard is the operator's repository allowlist (sdlc.repo_hosts). Every
+	// workspace is checked against it when it is opened, not only at bind;
+	// it is required. See RepoHostGuard.CheckProject.
+	Guard RepoHostGuard
 
 	// SocketsRoot is the DAEMON's root for per-session agent sockets
 	// (orchestration.sockets_root, resolved by the host). NewRunner prepares
@@ -137,7 +146,7 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 	if cfg.Hooks == nil {
 		return nil, &InvalidInputError{Field: "hooks", Message: "the runner drives the module's own lifecycle moments"}
 	}
-	access, err := newForgeAccess(cfg.Tokens, cfg.Signing, cfg.CheckoutRoot, cfg.SocketsRoot)
+	access, err := newForgeAccess(cfg.Tokens, cfg.Signing, cfg.Guard, cfg.CheckoutRoot, cfg.SocketsRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +163,7 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 // It is read once, by the host that started the module, to say so in the
 // log. Nothing in the delivery path consults it — the sweep is finished
 // before this runner exists.
-func (r *Runner) SocketSweep() SigningSocketSweep { return r.access.sweep }
+func (r *Runner) SocketSweep() orchestration.SigningSocketSweep { return r.access.sweep }
 
 // Name implements orchestration.JobRunner.
 func (*Runner) Name() string { return JobRunnerName }
@@ -171,23 +180,24 @@ func (*Runner) States() []orchestration.JobStateSpec { return RunnerStates() }
 // stall detector's thresholds and the UI's stepper read the registry, and a
 // registration that waited for the module to start would be read too late.
 //
-// EXECUTING AND REVIEWING ARE SESSION-BACKED; THE OTHERS ARE NOT. The
-// declaration says which states the stall detector may CONCLUDE about: a job
-// past its bound in one of them with no addressable session has lost the
-// worker it is waiting on and is ended, and a job in any other state is only
-// reported. The one worker session outlives more states than that — it is
-// spawned in initializing and closed in cleanup or escalating — so "the run
-// happens to hold a session here" is not the test. What is:
+// ONLY EXECUTING IS SESSION-BACKED. The declaration says which states the
+// stall detector may CONCLUDE about: a job past its bound in one of them with
+// no addressable session has lost the worker it is waiting on and is ended,
+// and a job in any other state is only reported. The worker session is
+// spawned in initializing and closed on entry to reviewing, or in cleanup or
+// escalating for a run that never got there, so "the run happens to hold a
+// session here" is not the test. What is:
 //
 //   - executing: the worker is prompted and the run is waiting on its answer.
-//   - reviewing: the CONTAINER commits, signs and pushes (publishForReview →
-//     publishWork execs every git command into it), and the worker then stays
-//     parked for the whole forge poll, ready for the round the gate may ask
-//     for — redelegating sends the run back to executing on the SAME session.
-//     THE POLL IS WHY IT IS DECLARED: a verdict that never arrives keeps the
-//     state waiting indefinitely, and the wait itself never touches the
-//     worker, so a worker that died after the push is noticed by nothing
-//     else. A review that cannot take another round is a job to end.
+//   - reviewing is NOT declared: it holds NO worker. The container commits,
+//     signs and pushes (publishForReview → publishWork execs every git
+//     command into it) and is then CLOSED for the whole forge poll
+//     (releaseWorker, go-quicbaas#938). A round the gate asks for spawns a
+//     fresh container on the same branch and workspace, through the same
+//     initializing path a replaced session takes. A verdict that never
+//     arrives is reported, and there is no worker whose death could strand
+//     it. The stall detector reads this runner's own answer rather than the
+//     workflow runner's, which does hold a session in its reviewing.
 //   - validating is NOT declared, though its commands do run in the
 //     container: the state's own work IS the exec, so a worker that has gone
 //     fails the pipeline rather than leaving the run waiting on it. There is
@@ -215,6 +225,11 @@ func (*Runner) States() []orchestration.JobStateSpec { return RunnerStates() }
 // escalating are the run's teardown and its park, entered from a state that
 // already held a slot and leading only to a terminal one, so they give the
 // slot back rather than hold it through work no worker does.
+//
+// THE SAME THREE STATES HOLD NO WORKER ON ANY AXIS. The engine marks the lease
+// dormant in them (orchestration.JobLease.Dormant), so the fleet and backend
+// checks stop counting the job too (go-quicbaas#1036), and reviewing closes
+// the container so the slot it frees is real.
 func RunnerStates() []orchestration.JobStateSpec {
 	return []orchestration.JobStateSpec{
 		{State: orchestration.JobStateInitializing, Label: labelInitializing},
@@ -228,7 +243,7 @@ func RunnerStates() []orchestration.JobStateSpec {
 		// and the task was re-dispatched to be reviewed again from scratch.
 		{State: orchestration.JobStateExecuting, Label: labelExecuting, SessionBacked: true, IdleThreshold: 2 * time.Hour},
 		{State: orchestration.JobStateValidating, Label: labelValidating, IdleThreshold: 2 * time.Hour},
-		{State: orchestration.JobStateReviewing, Label: labelReviewing, SessionBacked: true, IdleThreshold: 4 * time.Hour, OffProjectBudget: true},
+		{State: orchestration.JobStateReviewing, Label: labelReviewing, IdleThreshold: 4 * time.Hour, OffProjectBudget: true},
 		{State: orchestration.JobStateRedelegating, Label: labelRedelegating},
 		{State: orchestration.JobStateCompleting, Label: labelCompleting},
 		{State: orchestration.JobStateCleanup, Label: labelCleanup, OffProjectBudget: true},
@@ -415,6 +430,20 @@ type runnerRun struct {
 	// prompt is the work's own doing and is charged, not rolled forever.
 	rolled      bool
 	rolledRound int
+
+	// limitedAccounts are the pooled accounts the provider refused during
+	// this run, for a limit or for a login it rejected. A session is rolled off an account at most once: if the
+	// replacement lands on an account already in this set, the hold did not
+	// take and rolling again would loop, so the failure is returned instead.
+	limitedAccounts map[string]struct{}
+
+	// credentialReplaced and credentialReplacedRound record that this run has
+	// already replaced a session whose pooled account's credential was
+	// rotated under it, and in which round. Counted apart from the context
+	// rollover: the two causes are unrelated, and one spending the other's
+	// replacement would leave the run charged for a fault it did not have.
+	credentialReplaced      bool
+	credentialReplacedRound int
 }
 
 // handler drives one state and answers the next.
@@ -485,13 +514,16 @@ func (s *runnerRun) drive(ctx context.Context) error {
 }
 
 // decorate adds the runner's own recoverable state to every snapshot: the
-// worker session, so a person and the reaper can both find it.
+// worker session, so a person and the reaper can both find it. The worker
+// session is the job's only session and so its lead; naming it is what lets
+// the job page badge and link it (go-quicbaas#863).
 func (s *runnerRun) decorate(status *orchestration.JobStatus) {
 	if status == nil {
 		return
 	}
 	if s.sessionID != "" {
 		status.SessionIDs = []string{s.sessionID}
+		status.LeadSessionID = s.sessionID
 	}
 }
 
@@ -565,6 +597,11 @@ func (s *runnerRun) initialize(ctx context.Context) (orchestration.JobState, err
 	// WORKING AGAIN. See resumeReview for what this fixes.
 	if state, err := s.resumeReview(ctx); state != "" || err != nil {
 		return state, err
+	}
+	// A BINDING THIS NODE WILL NOT VERIFY STARTS NO WORKER. See
+	// refusedVerification.
+	if err := s.attempt.binding.CheckVerification(s.job.Guard()); err != nil {
+		return s.refusedVerification(err)
 	}
 	if state, err := s.prepareWorkspace(ctx); state != "" || err != nil {
 		return state, err
@@ -855,7 +892,7 @@ func (s *runnerRun) spawnWorker(ctx context.Context) error {
 	s.job.SetWorkDir(s.workDir)
 	// AND THE JOB'S WORK HAPPENS IN THE CONTAINER, which is what this says.
 	// s.workDir names the host side of the bind mount ON THE HOST THAT RAN THE
-	// SESSION — a fleet agent's, as often as not, where it names nothing on
+	// SESSION — a fleet node's, as often as not, where it names nothing on
 	// this daemon; the container names the same checkout /workspace/<project>,
 	// and that is the only name anything the runner EXECUTES may use.
 	if err := s.job.SetContainer(s.sessionID, s.containerDir); err != nil {
@@ -899,19 +936,22 @@ func (s *runnerRun) requireProject() error {
 }
 
 // spawnRequest builds the worker's spawn: the charter as its system prompt,
-// the binding's backend, model and image, and the workspace spec, forge token
-// and signing socket mounted.
+// the binding's worker Agent or pool, and the workspace spec, forge token and
+// signing socket mounted.
 func (s *runnerRun) spawnRequest(ctx context.Context) (*orchestration.SpawnSessionRequest, error) {
+	// THE WORKER SLOT NAMES AN AGENT OR A POOL, and the spawn resolves it:
+	// the Agent supplies the runtime, the model and the image, and a pool
+	// fails over to its next Agent when one's accounts are exhausted or its
+	// backend is unavailable.
+	worker := s.attempt.binding.Worker
 	req := &orchestration.SpawnSessionRequest{
-		Backend:      s.attempt.binding.Worker.Backend,
-		Model:        s.attempt.binding.Worker.Model,
+		AgentID:      worker.AgentID,
+		PoolID:       worker.PoolID,
+		Role:         orchestration.AgentRoleCoding,
 		ProjectID:    s.job.Project.ID,
 		SystemPrompt: WorkerCharter(),
+		PromptAppend: s.attempt.binding.WorkerPromptAppend,
 		Persistent:   true,
-	}
-	if image := strings.TrimSpace(s.attempt.binding.Worker.Image); image != "" {
-		req.ContainerImage = image
-		req.SandboxMode = orchestration.SandboxModeRequired
 	}
 	// THE WORKER'S GO MUST REACH THE PROJECT'S PRIVATE MODULES, or its
 	// verification fails before its change compiles and the failure is
@@ -970,12 +1010,36 @@ func (s *runnerRun) containerExec(ctx context.Context) func(*orchestration.ExecS
 func (s *runnerRun) publisher(ctx context.Context) *publisher {
 	return &publisher{
 		exec:    s.containerExec(ctx),
+		cleanup: s.containerCleanupExec(ctx),
 		project: s.job.Project,
 		signing: s.workspace.signingSession(),
 		taskID:  s.taskID(),
 		admit: func() error {
 			return s.runner.hooks.admitAttempt(ctx, s.job.TenantID, s.taskID(), s.job.JobID)
 		},
+	}
+}
+
+// containerCleanupExec runs one UNDO command in the worker's container on a
+// context detached from the stage's, bounded by the discard timeout.
+//
+// A CANCELLED STAGE IS WHEN THE UNDO MATTERS MOST. The stage context is
+// already done when a verification times out or the daemon is shutting down,
+// and a cleanup issued through containerExec would then be refused before it
+// reached the container — leaving, in this runner's case, a git worktree
+// inside a checkout the next attempt on that node will use. The bound is the
+// SAME one every other detached cleanup in this runner takes (rollSession,
+// the teardown), because an unbounded undo on a dying daemon is a hang.
+//
+// The context is made PER COMMAND, so nothing holds a timer open for the life
+// of the publisher.
+func (s *runnerRun) containerCleanupExec(ctx context.Context) func(*orchestration.ExecSpec) (*orchestration.ExecResult, error) {
+	sessionID := s.sessionID
+	return func(spec *orchestration.ExecSpec) (*orchestration.ExecResult, error) {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx),
+			s.job.Policy().StageTimeouts.For(orchestration.JobStageDiscard))
+		defer cancel()
+		return s.job.Exec(cleanupCtx, &orchestration.ExecSessionRequest{SessionID: sessionID, Spec: spec})
 	}
 }
 
@@ -1019,11 +1083,12 @@ func (s *runnerRun) publishPlan() publishPlan {
 // round the findings are appended — the contract stays first and whole.
 func (s *runnerRun) execute(ctx context.Context) (orchestration.JobState, error) {
 	if s.sessionID == "" {
-		// THREE RUNS LEGITIMATELY REACH A TURN WITH NO SESSION: one resumed
-		// at reviewing, one whose full session was rolled, and one that never
-		// spawned because its task already had an open pull request
-		// (resumeReview sent it straight to the gate) and the gate has now
-		// asked for a round. The last was refused here as a run that skipped
+		// FOUR RUNS LEGITIMATELY REACH A TURN WITH NO SESSION: one resumed
+		// at reviewing, one whose full session was rolled, one whose worker
+		// was released for the review (releaseWorker) and the gate has now
+		// asked for a round, and one that never spawned because its task
+		// already had an open pull request (resumeReview sent it straight to
+		// the gate) and the gate has now asked for a round. The last was refused here as a run that skipped
 		// initialization — measured on go-quicbaas#53 the moment the gate
 		// began reporting a red pipeline ahead of a missing approval
 		// (2026-09-21): the CI-red round it had waited an hour for died on
@@ -1041,6 +1106,17 @@ func (s *runnerRun) execute(ctx context.Context) (orchestration.JobState, error)
 	if s.attempt == nil {
 		if err := s.resolve(ctx); err != nil {
 			return "", err
+		}
+	}
+	// THE POOL IS ASKED BEFORE THE TURN IS SPENT. A session materialized its
+	// provider credential at spawn and never re-reads it, so an account whose
+	// credential was rotated since leaves this session holding material the
+	// provider has stopped honouring: the prompt below would fail in seconds
+	// as an api_error, refund the attempt and re-dispatch the whole round
+	// (go-quicbaas#997). See replaceStaleCredential.
+	if s.canReplaceStaleCredential() {
+		if rotated := s.job.AccountRotated(ctx, s.sessionID); rotated != nil {
+			return s.replaceStaleCredential(ctx, rotated)
 		}
 	}
 	prompt, err := s.turnPrompt(ctx)
@@ -1062,12 +1138,98 @@ func (s *runnerRun) execute(ctx context.Context) (orchestration.JobState, error)
 	}
 	state, err := s.runTurn(ctx, prompt)
 	if err != nil {
+		// THE ACCOUNT FIRST. A refused account makes every other reading of
+		// the failure beside the point: the turn never reached the model, and
+		// whatever else the evidence says, the fix is another account.
+		if refusal, refused := accountRefusalOf(err); refused && s.canRollOffAccount(refusal.accountID) {
+			return s.rollOffAccount(ctx, refusal)
+		}
 		if class, exhausted := orchestration.ContextExhaustionOf(err); exhausted && s.canRollSession() {
 			return s.rollSession(ctx, class)
 		}
 		return "", err
 	}
 	return state, nil
+}
+
+// canRollOffAccount reports whether a session refused on accountID may be
+// replaced: once per account per run. See runnerRun.limitedAccounts.
+func (s *runnerRun) canRollOffAccount(accountID string) bool {
+	if accountID == "" {
+		return false
+	}
+	_, seen := s.limitedAccounts[accountID]
+	return !seen
+}
+
+// accountRefusal is the provider refusing the worker's pooled account: for a
+// limit (held until its reset) or for a dead login (errored until an operator
+// logs it in again). Either way the fix is another account.
+type accountRefusal struct {
+	accountID   string
+	class       string
+	why         string
+	availableAt time.Time
+}
+
+// accountRefusalOf reads the refusal a failed turn carries, if any.
+func accountRefusalOf(err error) (accountRefusal, bool) {
+	if limit, limited := orchestration.AccountLimitOf(err); limited {
+		return accountRefusal{accountID: limit.AccountID, class: orchestration.FaultAccountLimited,
+			why: "for a limit", availableAt: limit.AvailableAt}, true
+	}
+	if rejected, ok := orchestration.AccountAuthRejectionOf(err); ok {
+		return accountRefusal{accountID: rejected.AccountID, class: orchestration.FaultAccountAuthRejected,
+			why: "because its login was rejected"}, true
+	}
+	return accountRefusal{}, false
+}
+
+// rollOffAccount replaces the worker's session with a fresh one on another
+// pooled account, because the provider refused this one — for a limit, or for
+// a login it rejected.
+//
+// THE OWNER'S RULE: switch accounts when a limit is reached. The orchestration
+// layer already held the refused account until the provider's stated reset
+// (holdOnAccountLimit), so the fresh spawn's selection cannot choose it; this
+// is the other half, and it is the context rollover's mechanics exactly: push
+// what the session committed, close it, spawn a new one on the same branch in
+// the same round. The attempt is not charged, because nothing about the work
+// was judged. When the pool has no other account free, that spawn fails with
+// the pool's own cooldown, which requeues the task, uncharged, until the first
+// hold lifts.
+//
+// WHAT THE NEW SESSION KEEPS IS THE PROJECT'S CHOICE (Project.SessionRotation),
+// exactly as for a rotated credential (replaceStaleCredential): resume carries
+// the refused session's conversation into the new one and is audited as
+// sdlc:session_resumed; fresh tells the new session only why it is new and is
+// audited as sdlc:session_rolled. See conversationToCarry.
+func (s *runnerRun) rollOffAccount(ctx context.Context, refusal accountRefusal) (orchestration.JobState, error) {
+	if s.limitedAccounts == nil {
+		s.limitedAccounts = make(map[string]struct{})
+	}
+	s.limitedAccounts[refusal.accountID] = struct{}{}
+	round := s.job.Iteration()
+	detail := "class=" + refusal.class + " account=" + refusal.accountID +
+		" round=" + strconv.Itoa(round) + " session=" + s.sessionID
+	if !refusal.availableAt.IsZero() {
+		detail += " available_at=" + refusal.availableAt.UTC().Format(time.RFC3339)
+	}
+	carried, err := s.conversationToCarry(ctx)
+	if err != nil {
+		return "", err
+	}
+	detail += carried.auditFields()
+	refused := "the provider refused the worker's pooled account " + refusal.accountID + " " + refusal.why +
+		" in round " + strconv.Itoa(round)
+	if carried.resumed() {
+		s.job.Audit(auditSessionResumed, detail)
+		return s.replaceSession(ctx, accountResumedNote(round, carried.transcript),
+			refused+"; the session's conversation is resumed in a new session on another account on the same branch")
+	}
+	s.job.Audit(auditSessionRolled, detail)
+	return s.replaceSession(ctx, accountRolledNote(round),
+		refused+"; a fresh session is spawned on another account on the same branch")
 }
 
 // canRollSession reports whether a session whose context is full may be
@@ -1107,20 +1269,210 @@ func (s *runnerRun) rollSession(ctx context.Context, class string) (orchestratio
 	s.rolled, s.rolledRound = true, round
 	s.job.Audit(auditSessionRolled, "class="+class+" round="+strconv.Itoa(round)+
 		" session="+s.sessionID+" elapsed="+elapsed.String())
-	if err := s.pushTurnWork(ctx); err != nil {
-		return "", err
-	}
-	endCtx := context.WithoutCancel(ctx)
-	closeCtx, cancel := context.WithTimeout(endCtx, s.job.Policy().StageTimeouts.For(orchestration.JobStageDiscard))
-	s.job.Close(closeCtx, s.sessionID)
-	cancel()
-	s.sessionID = ""
-	s.workspace = nil
-	s.release()
-	s.turnNote = sessionRolledNote(elapsed, round)
-	s.job.Emit(orchestration.JobStateInitializing,
+	return s.replaceSession(ctx, sessionRolledNote(elapsed, round),
 		"the worker's session ran out of context ("+class+") in round "+strconv.Itoa(round)+
 			"; a fresh session is spawned on the same branch")
+}
+
+// canReplaceStaleCredential reports whether a session whose pooled account
+// was rotated under it may be replaced in this round: once per round.
+//
+// The replacement materializes the credential the pool holds NOW, so a second
+// report inside one round is the pool moving twice. Refusing it keeps a
+// flapping pool from spawning containers without end, and costs exactly the
+// failure the run would have had without the check.
+func (s *runnerRun) canReplaceStaleCredential() bool {
+	return !s.credentialReplaced || s.credentialReplacedRound != s.job.Iteration()
+}
+
+// sessionRotation is the policy the job's project runs when a worker's session
+// is replaced for a reason that is not the work's (see conversationToCarry);
+// the default for a project that never chose one.
+func (s *runnerRun) sessionRotation() orchestration.SessionRotationPolicy {
+	var policy orchestration.SessionRotationPolicy
+	if s.job.Project != nil {
+		policy = s.job.Project.SessionRotation
+	}
+	return policy.Effective()
+}
+
+// replaceStaleCredential replaces a session whose pooled provider account's
+// credential was rotated after the session took its copy.
+//
+// A SESSION TAKES ITS CREDENTIAL ONCE, AT SPAWN, into its container's process
+// environment and a per-session directory, and neither is re-read. So the
+// only way onto the current credential is a new container — the same four
+// steps as every other replacement (see replaceSession): push what the session
+// committed, close it, spawn again on the same branch, in the same workspace
+// and the same round. The attempt is not charged and the round does not
+// advance: nothing about the work was judged.
+//
+// WHAT THE NEW SESSION KEEPS IS THE PROJECT'S CHOICE (Project.SessionRotation):
+//
+//   - resume, the default: the old session's conversation is read BEFORE it
+//     is closed and carried into the new session's first prompt, so the
+//     worker continues where it was rather than re-deriving what it had
+//     already worked out. Audited as sdlc:session_resumed.
+//   - fresh: the new session is told only why it is new and reads the branch
+//     (go-quicbaas#997 as first shipped). Audited as sdlc:session_rolled.
+//
+// A resume whose conversation cannot be read — the service keeps no session
+// log, or the log will not answer — is replaced fresh rather than not at all,
+// and the audit record says so (resume_unavailable=). The alternative is
+// prompting a session the provider will refuse, which loses the whole round.
+func (s *runnerRun) replaceStaleCredential(
+	ctx context.Context,
+	rotated *orchestration.SessionAccountFreshness,
+) (orchestration.JobState, error) {
+	round := s.job.Iteration()
+	s.credentialReplaced, s.credentialReplacedRound = true, round
+	detail := "reason=" + auditReasonAccountRotated + " account=" + rotated.AccountID + " " +
+		accountRotationEvidence(rotated) + " round=" + strconv.Itoa(round) + " session=" + s.sessionID
+
+	carried, err := s.conversationToCarry(ctx)
+	if err != nil {
+		return "", err
+	}
+	detail += carried.auditFields()
+	if carried.resumed() {
+		s.job.Audit(auditSessionResumed, detail)
+		return s.replaceSession(ctx, sessionResumedAccountNote(round, carried.transcript),
+			"the worker's pooled provider account was rotated after this session took its credential; "+
+				"the session's conversation is resumed in a new session on the same branch")
+	}
+
+	s.job.Audit(auditSessionRolled, detail)
+	return s.replaceSession(ctx, sessionRolledAccountNote(round),
+		"the worker's pooled provider account was rotated after this session took its credential; "+
+			"a fresh session is spawned on the same branch")
+}
+
+// carriedConversation is what a session replacing the live worker continues,
+// under the project's session_rotation. The zero value starts fresh.
+type carriedConversation struct {
+	// transcript is the replaced session's conversation; nil means the new
+	// session starts a new one.
+	transcript *orchestration.ReplayTranscript
+
+	// unavailable is why a resume the project asked for could not read the
+	// conversation, so the new session starts fresh instead.
+	unavailable string
+}
+
+// resumed reports whether the new session continues the old conversation.
+func (c carriedConversation) resumed() bool {
+	return c.transcript != nil
+}
+
+// auditFields renders, as audit fields with a leading space, what the new
+// session was handed: how much conversation was replayed, or why the resume
+// the project asked for was unavailable. A fresh project records nothing.
+func (c carriedConversation) auditFields() string {
+	switch {
+	case c.transcript != nil:
+		return " replayed_turns=" + strconv.Itoa(len(c.transcript.Turns)) +
+			" omitted_turns=" + strconv.Itoa(c.transcript.Omitted)
+	case c.unavailable != "":
+		return " resume_unavailable=" + strconv.Quote(c.unavailable)
+	}
+	return ""
+}
+
+// conversationToCarry reads the conversation the live worker session's
+// replacement continues, under the project's session_rotation. It must be
+// called BEFORE the session is closed: the conversation is read from the
+// session's own event log, which answers only for a live session.
+//
+// ONE RULE FOR EVERY REPLACEMENT that is not the work's doing: a rotated
+// credential (go-quicbaas#997), a refused account (go-quicbaas#1046) and a
+// worker released for a review (go-quicbaas#938) all carry the conversation on
+// resume, the default, and none of it on fresh.
+//
+// A resume whose conversation cannot be read — the service keeps no session
+// log, or the log will not answer — starts fresh and says so
+// (carriedConversation.unavailable): the session is being replaced whatever
+// this answers. Any other failure is returned, because the session is not what
+// the runner believes it is and a fresh session does not answer that.
+func (s *runnerRun) conversationToCarry(ctx context.Context) (carriedConversation, error) {
+	if s.sessionRotation() != orchestration.SessionRotationResume {
+		return carriedConversation{}, nil
+	}
+	transcript, err := s.job.SessionTranscript(ctx, s.sessionID)
+	if err == nil {
+		return carriedConversation{transcript: transcript}, nil
+	}
+	var unavailable *orchestration.SessionTranscriptUnavailableError
+	if !errors.As(err, &unavailable) {
+		return carriedConversation{}, err
+	}
+	return carriedConversation{unavailable: unavailable.Reason}, nil
+}
+
+// refusedPush answers a publication that failed: a push the publisher refused
+// for an untrusted signature parks the task escalated for a person, and any
+// other failure is returned as it was.
+//
+// PARKED, NOT RETRIED. The factory never rewrites a pushed branch to re-sign
+// a commit, so every later attempt would verify the same commits and refuse
+// identically — go-luks2 task 143c280a spent its attempts exactly that way on
+// PR #194's pre-rotation commits. The park carries FaultUntrustedSigner, an
+// operator fault, so the attempt is refunded; the merge train parks an
+// ejected car the same way (trainEjected).
+func (s *runnerRun) refusedPush(err error) (orchestration.JobState, error) {
+	var unsigned *UnsignedCommitError
+	if !errors.As(err, &unsigned) {
+		return "", err
+	}
+	return s.park(orchestration.TaskBlockKindEscalated, untrustedSignerReason(unsigned), orchestration.FaultUntrustedSigner), nil
+}
+
+// untrustedSignerReason is what a person reads on a park for an untrusted
+// signature: the commit, what git said about it, and the two ways out.
+func untrustedSignerReason(unsigned *UnsignedCommitError) string {
+	detail := "Commit `" + shortSHA(unsigned.Commit) + "` is not signed by a key this project trusts for it (git signature status " +
+		strconv.Quote(unsigned.Status)
+	if unsigned.Signer != "" {
+		detail += ", signer `" + unsigned.Signer + "`"
+	}
+	return detail + "). The factory never rewrites a pushed branch. Record the signing key in the project's trusted " +
+		"signing history if it was the project's, or replace the commit, then readmit the task."
+}
+
+// refusedVerification answers a verification command the operator's allowlist
+// refuses: the task is parked for an operator with FaultConfigError, so the
+// attempt is refunded, and any other error is returned as it was.
+//
+// PARKED, NOT RETRIED, AND BEFORE ANY WORKER IS PAID. The allowlist is daemon
+// configuration and the command is the binding's, so no attempt changes the
+// answer. The guard used to discover it only at validation, after the worker's
+// turn, and the refusal was charged as a failure of the work: go-blockstore
+// tasks 41a680e0 and b9f897ca each spent three attempts that way (X14,
+// 2026-09-25). initialize now refuses before anything is spawned, and validate
+// parks the same way for an allowlist that changed while the job ran.
+func (s *runnerRun) refusedVerification(err error) (orchestration.JobState, error) {
+	if !errors.Is(err, orchestration.ErrCommandRefused) {
+		return "", err
+	}
+	reason, composeErr := ComposeBlockedReason(UnblockCondition{Kind: UnblockOperatorRepair},
+		"This project's verification cannot run on this node: "+err.Error()+". Add the command to "+
+			"orchestration.verification_commands, or rebind the project with a command the allowlist carries, "+
+			"then readmit the task. No worker turn was charged for it.")
+	if composeErr != nil {
+		return "", composeErr
+	}
+	return s.park(orchestration.TaskBlockKindBlocked, reason, orchestration.FaultConfigError), nil
+}
+
+// replaceSession is the mechanics both rollovers share: publish what the
+// session committed, close it, and go back to initializing so a fresh session
+// is spawned on the same branch in the same round, told once why it is fresh.
+func (s *runnerRun) replaceSession(ctx context.Context, note, event string) (orchestration.JobState, error) {
+	if err := s.pushTurnWork(ctx); err != nil {
+		return s.refusedPush(err)
+	}
+	s.closeWorker(ctx)
+	s.turnNote = note
+	s.job.Emit(orchestration.JobStateInitializing, event)
 	return orchestration.JobStateInitializing, nil
 }
 
@@ -1195,15 +1547,14 @@ func (s *runnerRun) turnPrompt(ctx context.Context) (string, error) {
 // is what an operator needs when a worker later claims it was not told.
 func (s *runnerRun) freshContract(ctx context.Context) string {
 	stored := s.attempt.task.Description
-	// THE FIRST ATTEMPT KEEPS THE ADOPTED CONTRACT. It was rendered from the
-	// same forge moments before this job was dispatched, so re-reading it
-	// buys nothing; and a task adopted with no contract at all is refused
-	// below rather than papered over by a fresh read. Every later attempt --
-	// a readmission, a resume -- is the one whose issue has been spoken to
-	// since, and is what this exists for.
-	if s.attemptNumber() <= 1 && s.job.Resumed == nil {
-		return stored
-	}
+	// THE FIRST ATTEMPT IS REFRESHED TOO. It used to keep the adopted
+	// contract on the theory that adoption had rendered it moments before
+	// dispatch — true for a task adopted ready, false for one adopted PARKED:
+	// that task's first attempt runs only after a person has answered the
+	// question on the issue, and the answer is exactly what the adopted
+	// contract predates (issue_source_parked.go). A task adopted with no
+	// contract at all is still refused below rather than papered over by a
+	// fresh read.
 	if strings.TrimSpace(stored) == "" || s.attempt.forge == nil || s.attempt.issue <= 0 {
 		return stored
 	}
@@ -1326,6 +1677,87 @@ func sessionRolledNote(elapsed time.Duration, round int) string {
 	})
 }
 
+// accountRotationEvidence renders, as audit fields, WHY the pool was judged to
+// have moved under the session.
+//
+// It names the two credential generations when the daemon had both — the copy
+// the session materialized against the copy the account holds now — because
+// that pair is the whole decision, and an operator reading the audit trail
+// should see which two copies disagreed rather than only that something did.
+// It falls back to the rotation timestamp for a session that carries no
+// generation, which is the evidence the check used for it.
+func accountRotationEvidence(rotated *orchestration.SessionAccountFreshness) string {
+	if rotated.SessionGeneration > 0 && rotated.AccountGeneration > 0 {
+		return "session_generation=" + strconv.FormatInt(rotated.SessionGeneration, 10) +
+			" account_generation=" + strconv.FormatInt(rotated.AccountGeneration, 10)
+	}
+	return "rotated_at=" + rotated.RotatedAt.UTC().Format(time.RFC3339)
+}
+
+// sessionRolledAccountNote is what the first prompt of a FRESH session says
+// about the one it replaced when the pool, not the work, ended it.
+//
+// It carries no elapsed time because there is no failed turn to measure: the
+// replacement happens BEFORE a turn is spent, which is the whole point of it.
+func sessionRolledAccountNote(round int) string {
+	return sdlcPrompts.MustRender("session_rolled_account_note", prompts.Vars{
+		"round": strconv.Itoa(round),
+	})
+}
+
+// sessionResumedAccountNote is what the first prompt of a RESUMED session says:
+// why it is in a new container, and the conversation it continues. A session
+// replaced before it was ever prompted has no conversation, and is told only
+// the first half.
+func sessionResumedAccountNote(round int, transcript *orchestration.ReplayTranscript) string {
+	return resumedNote("session_resumed_account_note", round, transcript)
+}
+
+// accountResumedNote is what the first prompt of a session that CONTINUES the
+// conversation of one whose pooled account the provider refused is told.
+func accountResumedNote(round int, transcript *orchestration.ReplayTranscript) string {
+	return resumedNote("account_resumed_note", round, transcript)
+}
+
+// workerResumedNote is what the first prompt of a session spawned for a review
+// round is told when it CONTINUES the conversation of the one closed while the
+// review ran.
+func workerResumedNote(round int, transcript *orchestration.ReplayTranscript) string {
+	return resumedNote("worker_resumed_note", round, transcript)
+}
+
+// resumedNote renders a resumed session's note: why it is in a new container,
+// then the conversation it continues. A session that was never prompted has
+// no conversation and is told only the first half.
+func resumedNote(name string, round int, transcript *orchestration.ReplayTranscript) string {
+	conversation := ""
+	if !transcript.Empty() {
+		conversation = sdlcPrompts.MustRender("session_resumed_account_transcript", prompts.Vars{
+			"transcript": transcript.Render(),
+		})
+	}
+	return sdlcPrompts.MustRender(name, prompts.Vars{
+		"round":        strconv.Itoa(round),
+		"conversation": conversation,
+	})
+}
+
+// workerReleasedNote is what the first prompt of a session spawned for a review
+// round is told about the one that was closed while the review ran.
+func workerReleasedNote(round int) string {
+	return sdlcPrompts.MustRender("worker_released_note", prompts.Vars{
+		"round": strconv.Itoa(round),
+	})
+}
+
+// accountRolledNote is what the first prompt of a session that replaced one
+// on a refused account is told.
+func accountRolledNote(round int) string {
+	return sdlcPrompts.MustRender("account_rolled_note", prompts.Vars{
+		"round": strconv.Itoa(round),
+	})
+}
+
 // repeatedPromptReason is why a task parks rather than being handed a prompt
 // a previous attempt already answered without changing a file.
 func repeatedPromptReason() (string, error) {
@@ -1402,7 +1834,7 @@ func (s *runnerRun) runTurn(ctx context.Context, prompt string) (orchestration.J
 	// kept building on work it had already lost would spend a whole budget
 	// producing a head nobody can fetch.
 	if err := s.job.PushTurn(ctx); err != nil {
-		return "", err
+		return s.refusedPush(err)
 	}
 	if err := s.forgetNoChangeTurn(ctx); err != nil {
 		return "", err
@@ -1534,6 +1966,15 @@ func (s *runnerRun) concludeTurn(ctx context.Context, _ TurnVerdict, turn AgentT
 		s.job.Emit(orchestration.JobStateValidating, "the attempt's branch already carries the work; verifying and publishing it")
 		return orchestration.JobStateValidating, nil
 	}
+	// THE PULL REQUEST MAY BE THE WORK. A worker whose checkout is this
+	// task's own branch, with this task's own pull request open on it, finds
+	// the change "already present" because it is on the pull request — and
+	// completing the task then strands that pull request with nobody to
+	// review or merge it (go-luks2 PR #210, 2026-09-22: approved with CI green
+	// an hour later, and left unmerged for three days).
+	if state, err := s.satisfiedOnOwnPullRequest(ctx); state != "" || err != nil {
+		return state, err
+	}
 	s.job.Audit(auditVerificationSkipped, "the worker reported the task's work already present and "+
 		"changed no file, so there was nothing to verify and nothing to review")
 	// The judgement goes on the run, which puts it on the persisted status:
@@ -1541,6 +1982,41 @@ func (s *runnerRun) concludeTurn(ctx context.Context, _ TurnVerdict, turn AgentT
 	// and the conclusion exactly as a park does.
 	s.job.Satisfy()
 	return orchestration.JobStateCompleted, nil
+}
+
+// satisfiedOnOwnPullRequest routes a satisfied turn whose task already has its
+// own pull request to where that pull request's life goes on, answering ""
+// when the task has none.
+//
+// THE FORGE IS ASKED, NOT THE RECORD, as resumeReview asks it: an open pull
+// request goes to review, the gate judging it exactly as a resumed attempt's
+// would; one merged by any path completes the task as landed; one closed
+// without merging supersedes it. Only a task with no pull request of its own
+// is a stale issue the verdict can conclude.
+func (s *runnerRun) satisfiedOnOwnPullRequest(ctx context.Context) (orchestration.JobState, error) {
+	if s.delivery == nil || !s.delivery.RequiresPullRequest || !s.delivery.PullRequest.Opened() || s.attempt == nil {
+		return "", nil
+	}
+	pr, err := s.attempt.forge.GetPullRequest(ctx, s.attempt.repo, s.delivery.PullRequest.Number)
+	if err != nil {
+		return "", err
+	}
+	if pr == nil {
+		return "", nil
+	}
+	number := "#" + strconv.Itoa(pr.Number)
+	switch {
+	case pr.Merged:
+		s.job.Audit(auditSatisfiedOnPullRequest, "the worker found the work present; pull request "+number+" has merged")
+		s.job.Emit(orchestration.JobStateCompleting, "pull request "+number+" carrying this task's work has merged")
+		return orchestration.JobStateCompleting, nil
+	case pr.State == "closed":
+		return s.supersede(pr.Number), nil
+	}
+	s.job.Audit(auditSatisfiedOnPullRequest, "the worker found the work present on this task's own open pull request "+
+		number+"; it goes to review rather than concluding the task")
+	s.job.Emit(orchestration.JobStateReviewing, "the work is on this task's open pull request "+number+"; the gate judges it")
+	return orchestration.JobStateReviewing, nil
 }
 
 // unpublishedBranchAhead reports whether this attempt's branch carries commits
@@ -1810,6 +2286,22 @@ func (s *runnerRun) validate(ctx context.Context) (orchestration.JobState, error
 		s.job.Emit(orchestration.JobStateReviewing, "no verification commands configured; the forge's own checks are the gate")
 		return orchestration.JobStateReviewing, nil
 	}
+	// WHAT THE GATE WILL JUDGE IS WHAT IS JUDGED HERE. A branch behind its
+	// base is verified on the merge result, because that is the tree the
+	// forge's checks run on; see merge_result.go.
+	merged, err := s.mergeResultForVerification(ctx)
+	if err != nil {
+		return "", err
+	}
+	// A MERGE RESULT THAT COULD NOT BE THROWN AWAY IS SAID OUT LOUD. The
+	// worktree lives in a checkout that outlives this job on a persistent
+	// workspace tier, so one left behind is the next attempt's problem, and
+	// an operator who cannot see it here has nowhere else to read it.
+	defer func() {
+		if err := merged.Release(); err != nil {
+			s.job.Audit(auditVerification, "the merge result was not thrown away: "+err.Error())
+		}
+	}()
 	results, passed, err := s.job.Verify(ctx, criteria)
 	// EVERY COMMAND'S ANSWER IS ON THE RECORD, whether the pipeline went on
 	// or not. The one line an operator greps for when an attempt dies at
@@ -1818,22 +2310,39 @@ func (s *runnerRun) validate(ctx context.Context) (orchestration.JobState, error
 	// Measured on go-quicbaas PR #970 (2026-09-21): a failed `make build`
 	// was misread as a vanished container, and nothing on the job said the
 	// build had run at all.
+	//
+	// A FAILED COMMAND'S RECORD CARRIES ITS FAILING LINES, not its first
+	// line: see verificationSummary. The header stays the first line, so a
+	// grep for `passed=false` still finds it.
+	var failed []orchestration.ValidationResult
 	for _, result := range results {
-		s.job.Audit(auditVerification, "command="+result.Name+" passed="+strconv.FormatBool(result.Passed)+
-			" output_bytes="+strconv.Itoa(len(result.Details))+" "+firstLine(result.Message))
+		summary := verificationSummary(result)
+		header := "command=" + result.Name + " passed=" + strconv.FormatBool(result.Passed)
+		if result.ExitCode != 0 {
+			header += " exit_code=" + strconv.Itoa(result.ExitCode)
+		}
+		header += " output_bytes=" + strconv.Itoa(len(result.Details))
+		if result.Passed {
+			s.job.Audit(auditVerification, header+" "+summary)
+			continue
+		}
+		s.job.Audit(auditVerification, header+"\n"+summary)
+		failed = append(failed, result)
 	}
 	if err != nil {
-		return "", err
+		return s.refusedVerification(err)
 	}
 	if passed {
 		s.job.Emit(orchestration.JobStateReviewing, "verification passed: "+strconv.Itoa(len(results))+" command(s)")
 		return orchestration.JobStateReviewing, nil
 	}
 	s.feedback = sdlcPrompts.MustRender("verification_failed", prompts.Vars{
-		"failures": renderFailures(results),
+		"failures": leadWith(merged.Note(), renderFailures(results)),
 	})
 	s.job.Memory().AddFeedback(s.feedback)
-	return s.nextRound(ctx, "verification failed")
+	return s.nextRoundWithEvidence(ctx, "verification failed", func(budget int) string {
+		return verificationFailureEvidence(failed, budget)
+	})
 }
 
 // verificationCriteria turns the binding's commands into criteria the
@@ -1854,6 +2363,94 @@ func verificationCriteria(commands []string) []orchestration.ReviewCriterion {
 		})
 	}
 	return criteria
+}
+
+// mergeResultForVerification prepares the tree the binding's verification
+// commands run on, and points the container at it.
+//
+// THE CONTAINER BINDING IS WHAT DECIDES WHERE A COMMAND RUNS. JobContainer
+// pins the working directory precisely so a validator cannot choose one, so
+// the only honest way to verify a different tree is to say, here, that this
+// is the tree the job's work is being judged in — and to put the binding back
+// the moment verification is done, which Release does.
+//
+// A RUN WITH NOTHING TO PREPARE PREPARES NOTHING. Without a delivery, a live
+// session or a checkout there is no branch to count and no container to count
+// it in; verification then answers for itself, exactly as it did before.
+func (s *runnerRun) mergeResultForVerification(ctx context.Context) (*mergeResult, error) {
+	if s.delivery == nil || s.sessionID == "" || s.containerDir == "" {
+		return &mergeResult{}, nil
+	}
+	merged, err := s.publisher(ctx).MergeResult(s.publishPlan())
+	if err != nil {
+		return nil, err
+	}
+	if merged.Behind == 0 {
+		return merged, nil
+	}
+	// WHAT WAS JUDGED IS ON THE RECORD, whichever tree it was. A verification
+	// that quietly judged something other than the branch as pushed would be
+	// unreadable from the job afterwards, and a merge result that could NOT
+	// be prepared must not look like one that was.
+	s.job.Audit(auditVerification, "behind="+strconv.Itoa(merged.Behind)+" base="+merged.Base+
+		" judged="+mergeResultJudged(merged)+" uncommitted="+strconv.FormatBool(merged.Uncommitted))
+	// MergeResult answers a worktree or an error for every branch that is
+	// behind, so this is the invariant that makes binding the container to
+	// the directory below safe to read here rather than a case to handle.
+	if merged.WorkDir == "" {
+		return merged, nil
+	}
+	if err := s.job.SetContainer(s.sessionID, merged.WorkDir); err != nil {
+		// The worktree was prepared and the job never ran in it, so it goes
+		// away here — and if it will not, that is said alongside the binding
+		// failure rather than instead of it.
+		return nil, withCleanup(err, merged.Release())
+	}
+	removeWorktree := merged.release
+	merged.release = func() error {
+		// The binding goes back FIRST: everything after verification — the
+		// commit, the push, the teardown — belongs to the real checkout, and
+		// a failure to remove a throwaway worktree must not leave the job
+		// pointing at it.
+		rebound := s.job.SetContainer(s.sessionID, s.containerDir)
+		if rebound != nil {
+			s.job.Audit(auditVerification, "the container binding could not be put back: "+rebound.Error())
+		}
+		var removed error
+		if removeWorktree != nil {
+			removed = removeWorktree()
+		}
+		// BOTH FAILURES OR NEITHER. Each one leaves the attempt somewhere it
+		// should not be — bound to a tree that is about to vanish, or with a
+		// worktree the next attempt will find — and dropping either to report
+		// the other is how one of them goes unnoticed.
+		return errors.Join(rebound, removed)
+	}
+	return merged, nil
+}
+
+// mergeResultJudged names the tree verification ran on, for the audit trail.
+// "branch_tree" is what a merge result that was never prepared would read as,
+// which must never be indistinguishable from one that was.
+func mergeResultJudged(merged *mergeResult) string {
+	if merged.WorkDir != "" {
+		return "merge_result"
+	}
+	return "branch_tree"
+}
+
+// leadWith puts a lead line in front of a body, and is the identity on either
+// one being empty. It is what keeps the "behind by N" line ahead of the
+// evidence without an empty paragraph when there is no lead.
+func leadWith(lead, body string) string {
+	lead, body = strings.TrimSpace(lead), strings.TrimSpace(body)
+	switch {
+	case lead == "":
+		return body
+	case body == "":
+		return lead
+	}
+	return lead + "\n\n" + body
 }
 
 // renderFailures names every criterion that failed and what it said.
@@ -1895,6 +2492,10 @@ func (s *runnerRun) review(ctx context.Context) (orchestration.JobState, error) 
 	if diverted != "" {
 		return diverted, nil
 	}
+	// THE WORK IS ON THE FORGE, so the worker goes before the wait does.
+	if err := s.releaseWorker(ctx); err != nil {
+		return "", err
+	}
 	if err := s.job.RunStage(ctx, orchestration.JobStageReviewable, func(hookCtx context.Context) error {
 		return s.runner.hooks.Reviewable(hookCtx, s.job.Context())
 	}); err != nil {
@@ -1912,7 +2513,9 @@ func (s *runnerRun) review(ctx context.Context) (orchestration.JobState, error) 
 	// exactly the evidence a reader needs for a redelegation. Calling the
 	// registry directly ran the gate and threw its answer away, leaving the
 	// job page's verification panel empty on every send-back.
-	results, passed, err := s.job.Verify(ctx, []orchestration.ReviewCriterion{{
+	// The gate re-runs a check the runner broke (go-quicbaas#1011) without
+	// returning, so it is handed this job's audit trail to say so on.
+	results, passed, err := s.job.Verify(withCIRerunAudit(ctx, s.job.Audit), []orchestration.ReviewCriterion{{
 		Name:      ValidatorKindForgeReview,
 		Validator: ValidatorKindForgeReview,
 		Required:  true,
@@ -1957,7 +2560,21 @@ func (s *runnerRun) review(ctx context.Context) (orchestration.JobState, error) 
 		return "", err
 	}
 	if passed {
-		s.job.Emit(orchestration.JobStateCompleting, "review approved")
+		// A TRAINED PROJECT QUEUES THE APPROVED HEAD instead of merging it,
+		// and this job waits here, in reviewing, for the train's answer. See
+		// merge_train_delivery.go.
+		// AN UNTRAINED PROJECT SAYS WHY, so a person reading a change that
+		// merged on its own is not left to guess whether the train was
+		// skipped or broken.
+		if err := s.resolve(ctx); err != nil {
+			return "", err
+		}
+		reason := s.attempt.binding.TrainOffReason()
+		if reason == "" {
+			return s.rideTrain(ctx)
+		}
+		s.job.Audit(auditTrainOff, reason)
+		s.job.Emit(orchestration.JobStateCompleting, "review approved; it merges on its own, not by a merge train: "+reason)
 		return orchestration.JobStateCompleting, nil
 	}
 	s.feedback = sdlcPrompts.MustRender("review_findings", prompts.Vars{
@@ -2004,7 +2621,10 @@ func (s *runnerRun) republishDelivery(ctx context.Context) error {
 // again from initializing.
 func (s *runnerRun) publishForReview(ctx context.Context) (orchestration.JobState, error) {
 	if s.sessionID != "" {
-		return "", s.publishWork(ctx)
+		if err := s.publishWork(ctx); err != nil {
+			return s.refusedPush(err)
+		}
+		return "", nil
 	}
 	if err := s.loadDelivery(ctx); err != nil {
 		return "", err
@@ -2032,16 +2652,32 @@ func (s *runnerRun) redelegate(ctx context.Context) (orchestration.JobState, err
 // nextRound advances the review round and answers where the job goes: back to
 // the worker while rounds remain, to a person when they do not.
 func (s *runnerRun) nextRound(ctx context.Context, reason string) (orchestration.JobState, error) {
+	return s.nextRoundWithEvidence(ctx, reason, nil)
+}
+
+// nextRoundWithEvidence is nextRound for a round whose cause has evidence a
+// person needs if the round budget is spent: a failed verification's failing
+// lines. The evidence is appended to the escalation, never to the round's
+// event, which stays one line.
+//
+// THE EVIDENCE IS RENDERED TO THE ROOM THE PUBLICATION LEAVES IT. The forge
+// comment keeps only the first publicOutputLimit bytes of the reason, so
+// evidence rendered without knowing the sentence before it could be cut
+// before the lines it exists to show.
+func (s *runnerRun) nextRoundWithEvidence(ctx context.Context, reason string, evidence func(budget int) string) (orchestration.JobState, error) {
 	if s.attempt == nil {
 		if err := s.resolve(ctx); err != nil {
 			return "", err
 		}
 	}
 	round := s.job.NextIteration()
-	max := s.attempt.binding.MaxReviewRounds
-	if max <= 0 {
-		max = DefaultMaxReviewRounds
-	}
+	// The project's bound PLUS whatever an operator granted this one task
+	// from the attention inbox after an earlier escalation
+	// (Task.ReviewRoundBonus, raised by BumpTaskReviewRoundBudget). The bonus
+	// is additive and per-task, never per-project: granting one task another
+	// round must not quietly raise the ceiling for every other task the
+	// binding drives.
+	max := s.attempt.binding.ReviewRounds() + s.attempt.task.ReviewRoundBonus
 	if round > max {
 		// THE PARK CARRIES A TYPED CONDITION, and the sentence a person
 		// reads is derived from it. Review that did not converge is a call
@@ -2050,9 +2686,11 @@ func (s *runnerRun) nextRound(ctx context.Context, reason string) (orchestration
 		// on the owner" and "waiting on nothing" looking identical. The
 		// sweep reads the same marker and reports who is being waited on
 		// instead of passing the task over in silence.
-		parked, err := ComposeBlockedReason(
-			UnblockCondition{Kind: UnblockOwnerRuling},
-			reason+" after "+strconv.Itoa(max)+" review round(s); this change needs a person")
+		detail := reason + " after " + strconv.Itoa(max) + " review round(s); this change needs a person"
+		if evidence != nil {
+			detail += escalationEvidence(evidence(publicOutputLimit - len(detail) - len("\n\n")))
+		}
+		parked, err := ComposeBlockedReason(UnblockCondition{Kind: UnblockOwnerRuling}, detail)
 		if err != nil {
 			return "", err
 		}
@@ -2079,6 +2717,58 @@ func (s *runnerRun) nextRound(ctx context.Context, reason string) (orchestration
 	s.roundRequested = true
 	s.job.Emit(orchestration.JobStateExecuting, reason+": round "+strconv.Itoa(round)+" of "+strconv.Itoa(max))
 	return orchestration.JobStateExecuting, nil
+}
+
+// escalationEvidence renders a round's evidence for the escalation that
+// follows the reason, or nothing when there is none.
+//
+// COMMAND OUTPUT IS NOT TRUSTED TO BE PROSE. An `unblock[` in it would be
+// refused by ComposeBlockedReason as an injected condition, and the park
+// would fail on the very output it exists to report; the marker is defused
+// instead, because the output is what a person must read. A verification
+// summary arrives already defused (verificationSummaryLines), so its
+// measured length holds; this is the guard for any other evidence.
+func escalationEvidence(evidence string) string {
+	trimmed := strings.TrimSpace(evidence)
+	if trimmed == "" {
+		return ""
+	}
+	return "\n\n" + defuseUnblockMarker(trimmed)
+}
+
+// verificationVerdict says how a failed command failed: the exit status it
+// ran to, or plainly "failed" for one refused before it ran, which has none.
+func verificationVerdict(result orchestration.ValidationResult) string {
+	if result.ExitCode != 0 {
+		return "exited " + strconv.Itoa(result.ExitCode)
+	}
+	return "failed"
+}
+
+// verificationFailureEvidence renders each failed command's failing lines in
+// at most budget bytes, the room split evenly between the commands so one
+// long failure cannot crowd another out of the escalation.
+func verificationFailureEvidence(failed []orchestration.ValidationResult, budget int) string {
+	if len(failed) == 0 || budget <= 0 {
+		return ""
+	}
+	const separator = "\n\n"
+	share := (budget - len(separator)*(len(failed)-1)) / len(failed)
+	blocks := make([]string, 0, len(failed))
+	for _, result := range failed {
+		head := "`" + result.Name + "` " + verificationVerdict(result) + ":\n```\n"
+		const tail = "\n```"
+		room := share - len(head) - len(tail)
+		if room <= 0 {
+			continue
+		}
+		excerpt := verificationExcerpt(result, room)
+		if excerpt == "" {
+			continue
+		}
+		blocks = append(blocks, head+excerpt+tail)
+	}
+	return strings.Join(blocks, separator)
 }
 
 // =============================================================================
@@ -2284,18 +2974,48 @@ const auditVerificationSkipped = "sdlc:verification_skipped"
 // therefore verified and published instead of concluded.
 const auditSatisfiedOnBranch = "sdlc:satisfied_on_branch"
 
+// auditSatisfiedOnPullRequest records a satisfied verdict answered by the
+// task's own pull request, which was therefore reviewed, completed or
+// superseded instead of concluded.
+const auditSatisfiedOnPullRequest = "sdlc:satisfied_on_pull_request"
+
 // auditSuperseded records an attempt that ended because its pull request was
 // closed without merging (go-quicbaas#1054).
 const auditSuperseded = "sdlc:superseded"
 
 // auditVerification records one verification command's answer: its name,
-// whether it passed, how much output it produced, and its first line of
-// stderr.
+// whether it passed, how much output it produced, and what it said: the first
+// line for a passing command, the failing lines for a failed one (see
+// verificationSummary).
 const auditVerification = "sdlc:verification"
 
-// auditSessionRolled records that a worker session whose context was full
-// was replaced by a fresh one on the same branch, within the same attempt.
+// auditSessionRolled records that a worker session was replaced by a fresh
+// one on the same branch, within the same attempt: because its context was
+// full, because the provider refused its pooled account for a limit
+// (class=account_limited), or because its pooled account's credential was
+// rotated under it (reason=account_rotated), on a project that starts fresh or
+// whose conversation could not be read (resume_unavailable=).
 const auditSessionRolled = "sdlc:session_rolled"
+
+// auditSessionResumed records that a worker session was replaced by one that
+// CONTINUES its conversation, on the same branch, within the same attempt and
+// the same round, because its pooled account's credential was rotated
+// (reason=account_rotated) or the provider refused its account for a limit
+// (class=account_limited), and the project resumes rather than starts fresh
+// (Project.SessionRotation).
+const auditSessionResumed = "sdlc:session_resumed"
+
+// auditWorkerReleased records that a worker's session and container were
+// closed on entry to reviewing, once its work was published (go-quicbaas#938),
+// and what a session respawned for a review round will continue:
+// replayed_turns= on a project that resumes, resume_unavailable= when its
+// conversation could not be read, neither on a project that starts fresh.
+const auditWorkerReleased = "sdlc:worker_released"
+
+// auditReasonAccountRotated is the `reason=` a replacement records when the
+// pool rotated the session's credential under it. One word, stable across
+// releases, because an operator greps the audit trail for it.
+const auditReasonAccountRotated = "account_rotated"
 
 // escalate parks the task for a person: the reason is posted to the issue and
 // the issue is labelled for it, the branch is published and the container is
@@ -2499,7 +3219,7 @@ func (s *runnerRun) attemptNumber() int {
 // runner's exit open forever. It is the close that reaches whichever daemon
 // owns the session: JobRun.Close goes to the agent service, which pins the
 // backend that holds the live record, so a session spawned on a remote daemon
-// is closed by an AgentRuntime.Close RPC to that daemon and not against this
+// is closed by a FleetRuntime.Close RPC to that daemon and not against this
 // host's container runtime.
 func (s *runnerRun) teardownWorker(ctx context.Context, completed bool) error {
 	if s.tornDown {
@@ -2509,17 +3229,73 @@ func (s *runnerRun) teardownWorker(ctx context.Context, completed bool) error {
 	if !completed {
 		s.publishBranch(ctx)
 	}
-	endCtx := context.WithoutCancel(ctx)
+	s.closeWorker(ctx)
+	return s.job.RunStage(context.WithoutCancel(ctx), orchestration.JobStageDiscard, func(hookCtx context.Context) error {
+		return s.runner.hooks.Discard(hookCtx, s.job.Context(), completed)
+	})
+}
+
+// closeWorker closes the worker's session — and its container with it — and
+// releases the signing agent and the workspace spec the spawn acquired. It is
+// the one close every path shares: a replaced session, a worker released for
+// reviewing, and the teardown. Safe when no session is held.
+//
+// THE CLOSE OUTLIVES THE RUN'S CANCELLATION, bounded by the operator's discard
+// bound: see teardownWorker. The workspace itself is not touched: it is keyed
+// per attempt (workspaceKey), so the next spawn continues the same clone.
+func (s *runnerRun) closeWorker(ctx context.Context) {
 	if s.sessionID != "" {
-		closeCtx, cancel := context.WithTimeout(endCtx, s.job.Policy().StageTimeouts.For(orchestration.JobStageDiscard))
+		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx),
+			s.job.Policy().StageTimeouts.For(orchestration.JobStageDiscard))
 		s.job.Close(closeCtx, s.sessionID)
 		cancel()
 		s.sessionID = ""
 	}
+	s.workspace = nil
 	s.release()
-	return s.job.RunStage(endCtx, orchestration.JobStageDiscard, func(hookCtx context.Context) error {
-		return s.runner.hooks.Discard(hookCtx, s.job.Context(), completed)
-	})
+}
+
+// releaseWorker closes the worker for the wait in reviewing, once its work is
+// on the forge (go-quicbaas#938).
+//
+// A JOB WAITING ON A VERDICT RUNS NO WORKER, so it holds no container. Before
+// this, the container sat idle for the whole CI pipeline and review — three
+// hours on go-truststrap, still labelled with a pending session — and the
+// job counted against the fleet and the backend while it did. The engine has
+// already moved the lease off every axis on the transition (the state is off
+// the project budget, so the lease is dormant); this makes the freed worker
+// real.
+//
+// NOTHING IS LOST. publishForReview has pushed the branch and recorded its
+// head, which is everything the container held that matters. If the review
+// asks for another round, executing finds no session and goes back through
+// initializing, which wakes the lease through admission and spawns a fresh
+// container on the same branch and workspace — the path a replaced session
+// takes (replaceSession).
+//
+// WHAT THE RESPAWNED SESSION KEEPS IS THE PROJECT'S CHOICE
+// (Project.SessionRotation), the same as every other replacement that is not
+// the work's doing (see conversationToCarry): resume, the default, reads the
+// conversation here, before the close, and carries it into the respawned
+// session's first prompt; fresh tells it only why it is new. The audit record
+// says which (replayed_turns= or resume_unavailable=).
+func (s *runnerRun) releaseWorker(ctx context.Context) error {
+	if s.sessionID == "" {
+		return nil
+	}
+	round := s.job.Iteration()
+	carried, err := s.conversationToCarry(ctx)
+	if err != nil {
+		return err
+	}
+	s.job.Audit(auditWorkerReleased, "session="+s.sessionID+" round="+strconv.Itoa(round)+carried.auditFields())
+	s.closeWorker(ctx)
+	if carried.resumed() {
+		s.turnNote = workerResumedNote(round, carried.transcript)
+		return nil
+	}
+	s.turnNote = workerReleasedNote(round)
+	return nil
 }
 
 // abandonWorker is the exit path of a run that did not reach a teardown of its

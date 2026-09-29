@@ -223,9 +223,8 @@ func TestProvider_DedicatedAndGlobalTokensValidateViaPlatformToken(t *testing.T)
 
 	memStorage := NewMemoryStorage()
 	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage:  memStorage,
-		GroupStorage: memStorage,
-		RoleStorage:  memStorage,
+		UserStorage: memStorage,
+		RoleStorage: memStorage,
 	})
 	provider, err := NewOIDCProvider(&OIDCConfig{
 		Issuer:            issuer,

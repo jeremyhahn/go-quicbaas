@@ -1,0 +1,15 @@
+## Your session on this branch continues on another account
+
+In round 2 the provider refused the account this session ran on, because that account could not serve it: it had reached its usage limit, or the provider rejected its login. Nothing about the work caused it, and the work was never judged. The session was moved into a new container running on a different account. Everything the previous container committed and pushed is checked out here; nothing it did not commit survived, so check the branch before relying on an edit you remember making.
+
+This is the same conversation, continued. What was said in it so far is reproduced below. Those turns are done: do not act on them again. Answer the prompt above from where the conversation left off.
+
+--- transcript of session session-1 ---
+
+[user]
+implement the router
+
+[assistant]
+the handler table lives in pkg/router/table.go
+
+--- end of transcript ---

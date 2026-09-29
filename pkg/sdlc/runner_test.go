@@ -98,6 +98,11 @@ type fakeAgents struct {
 	closed  []string
 	seq     int
 
+	// closedAtSpawn records how many sessions were closed when each spawn
+	// was asked for, so a test can prove a respawn came AFTER the close of
+	// the session it replaced: one worker at a time.
+	closedAtSpawn []int
+
 	// onPrompt runs for each prompt, so a test can act as the worker does.
 	onPrompt func(req *orchestration.PromptSessionRequest)
 
@@ -109,6 +114,10 @@ type fakeAgents struct {
 	spawnErr  error
 	promptErr error
 
+	// spawnErrFor refuses a spawn naming one Agent, so a test can make one
+	// review seat's Agent unavailable and watch the run fail over.
+	spawnErrFor map[string]error
+
 	// promptErrFn fails a prompt by turn number starting at one, so a test
 	// can make one turn fail the way a CLI reports it and let the next
 	// succeed. Consulted when promptErr is nil.
@@ -119,6 +128,25 @@ type fakeAgents struct {
 	// addressable session that has gone silent, which only a deadline on the
 	// prompt itself can end.
 	hangFn func(turn int) bool
+
+	// freshnessFn answers the question execute asks BEFORE it spends a turn:
+	// has the pooled provider account been refreshed since this session took
+	// its copy of the credential? Keyed by call number starting at one, so a
+	// test can put a refresh between two turns. Nil answers "nothing has
+	// changed" on every call, which is every other test in this file — the
+	// runner prompts exactly as it did before the question existed.
+	freshnessFn   func(call int) *orchestration.SessionAccountFreshness
+	freshnessCall int
+
+	// transcriptFn answers the runner reading a session's conversation
+	// before it replaces the session on a project that resumes. Nil answers
+	// an empty conversation: a session that was never prompted.
+	transcriptFn func(sessionID string) (*orchestration.ReplayTranscript, error)
+	// transcriptReads records which sessions' conversations were read, and
+	// closedAtRead how many sessions were closed at that moment, so a test
+	// can prove the read came BEFORE the close.
+	transcriptReads []string
+	closedAtRead    []int
 
 	// clock is the runner's own clock, which this service ADVANCES while it
 	// answers: a turn takes as long as the fake says it took. A worker turn
@@ -158,6 +186,10 @@ func (f *fakeAgents) SpawnSession(_ context.Context, req *orchestration.SpawnSes
 	if f.spawnErr != nil {
 		return nil, f.spawnErr
 	}
+	if err := f.spawnErrFor[req.AgentID]; err != nil {
+		f.spawns = append(f.spawns, req)
+		return nil, err
+	}
 	sessionID := "session-" + itoa(f.seq+1)
 	placement, err := f.host.provision(sessionID, req)
 	if err != nil {
@@ -165,6 +197,7 @@ func (f *fakeAgents) SpawnSession(_ context.Context, req *orchestration.SpawnSes
 	}
 	f.seq++
 	f.spawns = append(f.spawns, req)
+	f.closedAtSpawn = append(f.closedAtSpawn, len(f.closed))
 	hostRoot := req.WorkDir
 	if placement != nil {
 		hostRoot = placement.Dir
@@ -206,6 +239,43 @@ func (f *fakeAgents) ExecSession(_ context.Context, req *orchestration.ExecSessi
 }
 
 var _ orchestration.SessionExecutor = (*fakeAgents)(nil)
+
+// SessionAccountFreshness makes this agent service the pool's read side, which
+// is how the runner learns that a refresh has left its session holding a
+// credential the provider no longer honours. A service that answers nothing
+// reports the session as current, which is what a deployment running no pooled
+// accounts looks like.
+func (f *fakeAgents) SessionAccountFreshness(_ context.Context, sessionID string) (*orchestration.SessionAccountFreshness, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.freshnessCall++
+	if f.freshnessFn == nil {
+		return &orchestration.SessionAccountFreshness{SessionID: sessionID}, nil
+	}
+	answer := f.freshnessFn(f.freshnessCall)
+	if answer == nil {
+		return &orchestration.SessionAccountFreshness{SessionID: sessionID}, nil
+	}
+	answer.SessionID = sessionID
+	return answer, nil
+}
+
+var _ orchestration.SessionAccountFreshnessReader = (*fakeAgents)(nil)
+
+// SessionTranscript makes this agent service the session log's read side,
+// which is how a resumed session is handed the conversation it continues.
+func (f *fakeAgents) SessionTranscript(_ context.Context, sessionID string) (*orchestration.ReplayTranscript, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.transcriptReads = append(f.transcriptReads, sessionID)
+	f.closedAtRead = append(f.closedAtRead, len(f.closed))
+	if f.transcriptFn == nil {
+		return &orchestration.ReplayTranscript{SessionID: sessionID}, nil
+	}
+	return f.transcriptFn(sessionID)
+}
+
+var _ orchestration.SessionTranscriptReader = (*fakeAgents)(nil)
 
 func (f *fakeAgents) PromptSession(ctx context.Context, req *orchestration.PromptSessionRequest) (*orchestration.PromptSessionResponse, error) {
 	f.mu.Lock()
@@ -381,9 +451,18 @@ type runnerRig struct {
 	// behaviour, the post-turn publication.
 	storage orchestration.ProjectStorage
 
+	// sessionRotation is the session rotation policy put on the job's
+	// project. The zero value is what a project that never chose one runs:
+	// resume.
+	sessionRotation orchestration.SessionRotationPolicy
+
 	// clock is the clock the runner measures its turns against, advanced by
 	// the scripted backend as it answers.
 	clock *testClock
+
+	// workflow is put on the job when set: a test that must see a poll happen
+	// shortens the interval through it.
+	workflow *orchestration.WorkflowDefinition
 
 	// audits is every audit event the run recorded, taken through the
 	// engine's own callback so a run that ended before its next snapshot
@@ -452,6 +531,11 @@ func newRunnerRig(t *testing.T) *runnerRig {
 	task := testTaskRecord(25)
 	task.Description = issueContract
 	hooks.tasks.replace(task)
+	// The forge holds the issue the stored contract was rendered from, so
+	// the contract every turn re-reads (runnerRun.freshContract) is the same
+	// text until a test posts something new.
+	hooks.forge.putIssue(25, "Fix the thing", "task:ready", "bug").Body = "The thing is broken in a specific and load-bearing way."
+	hooks.forge.comments[25] = []ForgeComment{{Author: "jeremyhahn", Body: "Please keep the fix inside pkg/thing."}}
 
 	root := t.TempDir()
 	projects := &fakeProjects{projects: map[string]*orchestration.Project{testProject: testOrchProject()}}
@@ -468,7 +552,7 @@ func newRunnerRig(t *testing.T) *runnerRig {
 	}
 	hooks.hooks = rebuilt
 
-	review, err := NewReviewValidator(hooks.store, hooks.store, forges)
+	review, err := NewReviewValidator(hooks.store, hooks.store, forges, testAgentCatalog())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -481,7 +565,7 @@ func newRunnerRig(t *testing.T) *runnerRig {
 	tokens := &fakeTokens{token: []byte("a-forge-api-token")}
 	signing := &fakeSigningAgent{}
 	runner, err := NewRunner(RunnerConfig{
-		Hooks: rebuilt, Tokens: tokens, Signing: signing, SocketsRoot: testSocketsRoot(t),
+		Hooks: rebuilt, Tokens: tokens, Signing: signing, Guard: testRepoGuard(t), SocketsRoot: testSocketsRoot(t),
 		Now: clock.now,
 	})
 	if err != nil {
@@ -561,7 +645,10 @@ func (r *runnerRig) blockComments(t *testing.T, attempt int, kind orchestration.
 
 func (r *runnerRig) buildJob(t *testing.T, resumed *orchestration.JobStatus, start orchestration.JobState, allowed ...string) *orchestration.JobRun {
 	t.Helper()
-	guard, err := orchestration.NewExecutionGuard(append([]string{"true"}, allowed...))
+	// The default binding's own commands are admitted too: the runner refuses
+	// a binding off the allowlist before it spawns anything, so a test about
+	// what happens after the spawn must not be stopped there.
+	guard, err := orchestration.NewExecutionGuard(append([]string{"true", "make build", "make test"}, allowed...))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -573,6 +660,7 @@ func (r *runnerRig) buildJob(t *testing.T, resumed *orchestration.JobStatus, sta
 	project.Workspace = orchestration.ProjectWorkspace{Path: r.root}
 	project.ContextRepos = r.contextRepos
 	project.Storage = r.storage
+	project.SessionRotation = r.sessionRotation
 	if r.repoURL != "" {
 		project.Git.RepoURL = r.repoURL
 	}
@@ -585,6 +673,7 @@ func (r *runnerRig) buildJob(t *testing.T, resumed *orchestration.JobStatus, sta
 		Runner:     JobRunnerName,
 		Config:     &orchestration.JobConfig{TenantID: testTenant, ProjectID: testProject, TaskID: testTask, Attempt: 1},
 		Project:    project,
+		Workflow:   r.workflow,
 		StartState: start,
 		Resumed:    resumed,
 		Agents:     agents,
@@ -737,40 +826,44 @@ func declaredSessionBackedStates() map[orchestration.JobState]bool {
 	return backed
 }
 
-// TestRunner_TheStatesTheWorkerIsWaitedOnInAreDeclaredSessionBacked is the
-// go-quicbaas#668 guard, from the side that catches an UNDER-declaration.
+// TestRunner_ReviewingHoldsNoWorkerAndIsNotDeclaredSessionBacked is the
+// go-quicbaas#938 ruling, and the go-quicbaas#668 guard read the other way.
 //
-// Reviewing is the state the run parks the worker in: the container has
-// pushed, and the daemon then waits on a forge verdict that never touches the
-// worker, so nothing in the state notices a worker that has died — the next
-// round would, and only after the verdict finally arrives. That wait is
-// exactly what the stall detector is for, and it can only conclude about a
-// state its runner declared session-backed.
+// Reviewing waits on a forge verdict and a CI pipeline, and it runs no worker
+// turn while it does. The worker's container is closed once its work is
+// pushed (releaseWorker), so the job holds no container and no slot for the
+// wait. A state the run holds no session in must not be declared
+// session-backed: the stall detector would end every review that waited past
+// its bound, for lacking a worker it released on purpose.
 //
 // The declaration is read from RunnerStates(), NOT from the engine's registry:
-// the workflow runner declares reviewing session-backed too and
-// mergeJobStateSpec takes the disjunction, so a test that read the merge would
-// have passed throughout the whole period sdlc declared the opposite.
-func TestRunner_TheStatesTheWorkerIsWaitedOnInAreDeclaredSessionBacked(t *testing.T) {
+// the workflow runner declares reviewing session-backed and mergeJobStateSpec
+// takes the disjunction. The stall detector reads each runner's own answer
+// (runnerSessionBackedIn), which is what this pins.
+func TestRunner_ReviewingHoldsNoWorkerAndIsNotDeclaredSessionBacked(t *testing.T) {
 	rig := deliveredRun(t)
 
 	reviewing := rig.snapshotsIn(orchestration.JobStateReviewing)
 	if len(reviewing) == 0 {
 		t.Fatal("the run published no status in reviewing; this test can prove nothing")
 	}
-	for _, status := range reviewing {
-		if len(status.SessionIDs) != WorkerSessionCount {
-			t.Fatalf("a reviewing status carries %d session(s), want the worker's %d: %+v",
-				len(status.SessionIDs), WorkerSessionCount, status.SessionIDs)
-		}
+	last := reviewing[len(reviewing)-1]
+	if len(last.SessionIDs) != 0 {
+		t.Fatalf("the last reviewing status still names the worker %v: its container was not released for the wait",
+			last.SessionIDs)
 	}
-	if !declaredSessionBackedStates()[orchestration.JobStateReviewing] {
-		t.Fatal("the run holds the worker session through reviewing but the runner does not declare " +
-			"the state session-backed: a review parked on a worker that has died would be reported " +
-			"forever instead of ended")
+	if released := rig.auditDetails(auditWorkerReleased); len(released) != 1 ||
+		!strings.Contains(released[0], "session=session-1") {
+		t.Fatalf("worker_released records = %v, want one naming session-1", released)
 	}
-	// The state the worker is prompted in, for the same reason and by the
-	// same evidence.
+	if !slices.Contains(rig.agents.closed, "session-1") {
+		t.Fatalf("the worker's session was not closed: %v", rig.agents.closed)
+	}
+	if declaredSessionBackedStates()[orchestration.JobStateReviewing] {
+		t.Fatal("reviewing is declared session-backed, but the run releases its worker there")
+	}
+	// The state the worker IS prompted in stays declared, by the same
+	// evidence.
 	for _, status := range rig.snapshotsIn(orchestration.JobStateExecuting) {
 		if len(status.SessionIDs) != WorkerSessionCount {
 			t.Fatalf("an executing status carries %d session(s): %+v", len(status.SessionIDs), status.SessionIDs)
@@ -931,15 +1024,15 @@ func TestRunner_ValidateRefusesWhatItCannotDrive(t *testing.T) {
 func TestNewRunner_RefusesASocketsRootNoSocketCouldBindUnder(t *testing.T) {
 	hooks := newHooksRig(t)
 	base := testSocketsRoot(t)
-	long := filepath.Join(base, strings.Repeat("d", MaxSigningSocketRoot+1-len(base)-1))
+	long := filepath.Join(base, strings.Repeat("d", orchestration.MaxSigningSocketRoot+1-len(base)-1))
 	_, err := NewRunner(RunnerConfig{
-		Hooks: hooks.hooks, Tokens: &fakeTokens{}, Signing: &fakeSigningAgent{}, SocketsRoot: long,
+		Hooks: hooks.hooks, Tokens: &fakeTokens{}, Signing: &fakeSigningAgent{}, Guard: testRepoGuard(t), SocketsRoot: long,
 	})
-	var overLong *SigningSocketRootError
+	var overLong *orchestration.SigningSocketRootError
 	if !errors.As(err, &overLong) {
-		t.Fatalf("NewRunner err = %v, want *SigningSocketRootError", err)
+		t.Fatalf("NewRunner err = %v, want *orchestration.SigningSocketRootError", err)
 	}
-	if overLong.Root != long || overLong.Limit != MaxSigningSocketPath {
+	if overLong.Root != long || overLong.Limit != orchestration.MaxSigningSocketPath {
 		t.Errorf("the refusal names root %q limit %d", overLong.Root, overLong.Limit)
 	}
 }
@@ -957,10 +1050,20 @@ func TestNewRunner_RefusesASocketsRootNoSocketCouldBindUnder(t *testing.T) {
 func TestNewRunner_SweepsTheSessionsAKilledPredecessorLeft(t *testing.T) {
 	hooks := newHooksRig(t)
 	root := testSocketsRoot(t)
-	orphan := deadSigningSession(t, root)
+	// A predecessor killed between the agent's mkdir and its bind. The sweep's
+	// full classification is orchestration's (signing_socket_root_test.go);
+	// what this pins is that building the runner runs it and reports it.
+	name, nameErr := orchestration.NewSigningSocketDirName()
+	if nameErr != nil {
+		t.Fatal(nameErr)
+	}
+	orphan := filepath.Join(root, name)
+	if err := os.Mkdir(orphan, 0o700); err != nil {
+		t.Fatal(err)
+	}
 
 	runner, err := NewRunner(RunnerConfig{
-		Hooks: hooks.hooks, Tokens: &fakeTokens{}, Signing: &fakeSigningAgent{}, SocketsRoot: root,
+		Hooks: hooks.hooks, Tokens: &fakeTokens{}, Signing: &fakeSigningAgent{}, Guard: testRepoGuard(t), SocketsRoot: root,
 	})
 	if err != nil {
 		t.Fatalf("NewRunner: %v", err)
@@ -979,7 +1082,7 @@ func TestNewRunner_SweepsTheSessionsAKilledPredecessorLeft(t *testing.T) {
 	// A runner built on a root that has nothing to sweep reports nothing, so
 	// the host never logs a sweep that did not happen.
 	quiet, err := NewRunner(RunnerConfig{
-		Hooks: hooks.hooks, Tokens: &fakeTokens{}, Signing: &fakeSigningAgent{}, SocketsRoot: root,
+		Hooks: hooks.hooks, Tokens: &fakeTokens{}, Signing: &fakeSigningAgent{}, Guard: testRepoGuard(t), SocketsRoot: root,
 	})
 	if err != nil {
 		t.Fatalf("NewRunner: %v", err)
@@ -995,19 +1098,20 @@ func TestNewRunner_RefusesAnIncompleteConfiguration(t *testing.T) {
 	hooks := newHooksRig(t)
 	sockets := testSocketsRoot(t)
 	for name, cfg := range map[string]RunnerConfig{
-		"no hooks":            {Tokens: &fakeTokens{}, Signing: &fakeSigningAgent{}, SocketsRoot: sockets},
-		"no tokens":           {Hooks: hooks.hooks, Signing: &fakeSigningAgent{}, SocketsRoot: sockets},
-		"no signing":          {Hooks: hooks.hooks, Tokens: &fakeTokens{}, SocketsRoot: sockets},
-		"no sockets root":     {Hooks: hooks.hooks, Tokens: &fakeTokens{}, Signing: &fakeSigningAgent{}},
-		"relative sockets":    {Hooks: hooks.hooks, Tokens: &fakeTokens{}, Signing: &fakeSigningAgent{}, SocketsRoot: "sockets"},
-		"sockets root is dot": {Hooks: hooks.hooks, Tokens: &fakeTokens{}, Signing: &fakeSigningAgent{}, SocketsRoot: "."},
+		"no hooks":            {Tokens: &fakeTokens{}, Signing: &fakeSigningAgent{}, Guard: testRepoGuard(t), SocketsRoot: sockets},
+		"no tokens":           {Hooks: hooks.hooks, Signing: &fakeSigningAgent{}, Guard: testRepoGuard(t), SocketsRoot: sockets},
+		"no signing":          {Hooks: hooks.hooks, Tokens: &fakeTokens{}, Guard: testRepoGuard(t), SocketsRoot: sockets},
+		"no sockets root":     {Hooks: hooks.hooks, Tokens: &fakeTokens{}, Signing: &fakeSigningAgent{}, Guard: testRepoGuard(t)},
+		"no repository guard": {Hooks: hooks.hooks, Tokens: &fakeTokens{}, Signing: &fakeSigningAgent{}, SocketsRoot: sockets},
+		"relative sockets":    {Hooks: hooks.hooks, Tokens: &fakeTokens{}, Signing: &fakeSigningAgent{}, Guard: testRepoGuard(t), SocketsRoot: "sockets"},
+		"sockets root is dot": {Hooks: hooks.hooks, Tokens: &fakeTokens{}, Signing: &fakeSigningAgent{}, Guard: testRepoGuard(t), SocketsRoot: "."},
 	} {
 		if _, err := NewRunner(cfg); !errors.Is(err, ErrInvalidInput) {
 			t.Errorf("%s: err = %v, want ErrInvalidInput", name, err)
 		}
 	}
 	runner, err := NewRunner(RunnerConfig{
-		Hooks: hooks.hooks, Tokens: &fakeTokens{}, Signing: &fakeSigningAgent{}, SocketsRoot: sockets,
+		Hooks: hooks.hooks, Tokens: &fakeTokens{}, Signing: &fakeSigningAgent{}, Guard: testRepoGuard(t), SocketsRoot: sockets,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1020,6 +1124,7 @@ func TestNewRunner_RefusesAnIncompleteConfiguration(t *testing.T) {
 	}
 	pinned, err := NewRunner(RunnerConfig{
 		Hooks: hooks.hooks, Tokens: &fakeTokens{}, Signing: &fakeSigningAgent{},
+		Guard:       testRepoGuard(t),
 		SocketsRoot: sockets, CheckoutRoot: "/srv/work",
 	})
 	if err != nil {
@@ -1077,8 +1182,8 @@ func TestRunner_DeliversTheIssueThroughExactlyOneSession(t *testing.T) {
 	if !spawn.Persistent {
 		t.Error("the worker session is not persistent; a review round would lose its context")
 	}
-	if spawn.Backend != "claude" || spawn.Model != "claude-opus-5" {
-		t.Errorf("worker spawned as %q/%q, want the binding's", spawn.Backend, spawn.Model)
+	if spawn.AgentID != testCoderAgent || spawn.Role != orchestration.AgentRoleCoding || spawn.Backend != "" {
+		t.Errorf("worker spawned as %+v, want the binding's agent", spawn.AgentRef())
 	}
 	// THE SPAWN NAMES THE WORKSPACE AND GIVES NO HOST PATH (go-quicbaas#981):
 	// the host that runs the session provisions it under its own root.
@@ -1214,7 +1319,7 @@ func TestRunner_TheBindingsModulePolicyReachesTheWorkersGo(t *testing.T) {
 	}
 }
 
-// contextExhausted is a prompt failure the way the remote agent reports one
+// contextExhausted is a prompt failure the way the remote fleet node reports one
 // whose session has run out of context.
 func contextExhausted(reason string) error {
 	return &orchestration.RemoteTurnFailureError{
@@ -1317,6 +1422,338 @@ func TestRunner_AnOrdinaryPromptFailureDoesNotRoll(t *testing.T) {
 	}
 }
 
+// accountRefreshed is what the pool reports about a session the host's
+// credential refresh has left behind.
+func accountRefreshed(accountID string) *orchestration.SessionAccountFreshness {
+	return &orchestration.SessionAccountFreshness{
+		AccountID:      accountID,
+		Stale:          true,
+		MaterializedAt: goldenTime,
+		RotatedAt:      goldenTime.Add(time.Hour),
+	}
+}
+
+// workerTranscript is the conversation a worker session had before its
+// account rotated: the contract it was handed and what it answered.
+func workerTranscript(sessionID string) *orchestration.ReplayTranscript {
+	return &orchestration.ReplayTranscript{
+		SessionID: sessionID,
+		Turns: []orchestration.ReplayTurn{
+			{Role: orchestration.ReplayRoleUser, Text: "implement the router"},
+			{Role: orchestration.ReplayRoleAssistant, Text: "the handler table lives in pkg/router/table.go"},
+		},
+		Omitted: 1,
+	}
+}
+
+// refreshedOnce reports the session's account rotated at the first ask only:
+// the replacement session materializes the current credential.
+func refreshedOnce(call int) *orchestration.SessionAccountFreshness {
+	if call == 1 {
+		return accountRefreshed("acct-1")
+	}
+	return nil
+}
+
+// TestRunner_AnAccountRotationResumesTheConversationByDefault: on a project
+// that never chose a session rotation policy, a session whose pooled account
+// rotated under it is replaced BEFORE its next prompt, and the replacement
+// CONTINUES its conversation: the transcript is read before the old session is
+// closed and carried into the new session's first prompt. Neither a round nor
+// an attempt is spent (go-quicbaas#997, owner ruling 2026-09-24).
+func TestRunner_AnAccountRotationResumesTheConversationByDefault(t *testing.T) {
+	rig := newRunnerRig(t)
+	rig.rebindVerification(t, "true")
+	rig.workerWrote()
+	rig.verdictOnPublish("APPROVED", "lgtm")
+	rig.agents.freshnessFn = refreshedOnce
+	rig.agents.transcriptFn = func(sessionID string) (*orchestration.ReplayTranscript, error) {
+		return workerTranscript(sessionID), nil
+	}
+	rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) { rig.workerWrote() }
+
+	job := rig.job(t)
+	if err := rig.runner.Run(context.Background(), job); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(rig.agents.spawns) != 2 {
+		t.Fatalf("spawns = %d, want the left-behind session replaced by one resumed one", len(rig.agents.spawns))
+	}
+	if first, second := rig.agents.spawns[0].WorkDir, rig.agents.spawns[1].WorkDir; first != second {
+		t.Errorf("the resumed session was spawned in %q, want the same workspace %q", second, first)
+	}
+	if !slices.Contains(rig.agents.closed, "session-1") {
+		t.Errorf("the session holding the retired credential was not closed: %v", rig.agents.closed)
+	}
+	// THE CONVERSATION IS READ BEFORE THE SESSION IS CLOSED: a backend that
+	// keeps it in the process would otherwise lose it. The resumed session's
+	// own conversation is read again when it is released for the review.
+	if len(rig.agents.transcriptReads) == 0 || rig.agents.transcriptReads[0] != "session-1" ||
+		slices.Index(rig.agents.transcriptReads[1:], "session-1") >= 0 {
+		t.Fatalf("transcript reads = %v, want one of session-1, first", rig.agents.transcriptReads)
+	}
+	if rig.agents.closedAtRead[0] != 0 {
+		t.Errorf("the transcript was read after %d close(s), want before any", rig.agents.closedAtRead[0])
+	}
+	if len(rig.agents.prompts) == 0 {
+		t.Fatal("the resumed session was never prompted")
+	}
+	first := rig.agents.prompts[0]
+	if first.SessionID == "session-1" {
+		t.Errorf("the session holding the retired credential was prompted anyway")
+	}
+	for _, want := range []string{
+		"continues on a refreshed provider credential",
+		"This is the same conversation, continued.",
+		"the handler table lives in pkg/router/table.go",
+		"1 earlier turn(s) omitted",
+	} {
+		if !strings.Contains(first.Prompt, want) {
+			t.Errorf("the resumed session's first prompt does not carry %q:\n%s", want, first.Prompt)
+		}
+	}
+
+	resumed := rig.auditDetails(auditSessionResumed)
+	if len(resumed) != 1 {
+		t.Fatalf("session_resumed audits = %v, want one", resumed)
+	}
+	for _, want := range []string{"reason=account_rotated", "account=acct-1", "round=0", "session=session-1",
+		"rotated_at=", "replayed_turns=2", "omitted_turns=1"} {
+		if !strings.Contains(resumed[0], want) {
+			t.Errorf("session_resumed audit %q does not record %q", resumed[0], want)
+		}
+	}
+	if rolled := rig.auditDetails(auditSessionRolled); len(rolled) != 0 {
+		t.Errorf("session_rolled audits = %v, want none on a resume", rolled)
+	}
+	if job.Iteration() != 0 {
+		t.Errorf("iteration = %d, want the resume to spend no round", job.Iteration())
+	}
+}
+
+// TestRunner_AResumeOfAnUnpromptedSessionCarriesNoConversation: a session
+// whose account rotated before it was ever prompted has no conversation. It is
+// still resumed — told why it is in a new container — but handed no empty
+// transcript to "continue".
+func TestRunner_AResumeOfAnUnpromptedSessionCarriesNoConversation(t *testing.T) {
+	rig := newRunnerRig(t)
+	rig.rebindVerification(t, "true")
+	rig.workerWrote()
+	rig.verdictOnPublish("APPROVED", "lgtm")
+	rig.agents.freshnessFn = refreshedOnce
+	rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) { rig.workerWrote() }
+
+	if err := rig.runner.Run(context.Background(), rig.job(t)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(rig.agents.prompts) == 0 {
+		t.Fatal("the resumed session was never prompted")
+	}
+	prompt := rig.agents.prompts[0].Prompt
+	if !strings.Contains(prompt, "continues on a refreshed provider credential") {
+		t.Errorf("the resumed session was not told why it is in a new container:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "same conversation, continued") {
+		t.Errorf("an empty conversation was handed over as one to continue:\n%s", prompt)
+	}
+	if resumed := rig.auditDetails(auditSessionResumed); len(resumed) != 1 || !strings.Contains(resumed[0], "replayed_turns=0") {
+		t.Errorf("session_resumed audits = %v, want one recording replayed_turns=0", resumed)
+	}
+}
+
+// TestRunner_AnAccountRotationStartsFreshWhenTheProjectSaysSo: a project whose
+// session_rotation is fresh gets go-quicbaas#997's first behaviour: the
+// replacement starts a new conversation, told only why it is new. No
+// conversation is read at all.
+func TestRunner_AnAccountRotationStartsFreshWhenTheProjectSaysSo(t *testing.T) {
+	rig := newRunnerRig(t)
+	rig.sessionRotation = orchestration.SessionRotationFresh
+	rig.rebindVerification(t, "true")
+	rig.workerWrote()
+	rig.verdictOnPublish("APPROVED", "lgtm")
+	rig.agents.freshnessFn = refreshedOnce
+	rig.agents.transcriptFn = func(sessionID string) (*orchestration.ReplayTranscript, error) {
+		return workerTranscript(sessionID), nil
+	}
+	rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) { rig.workerWrote() }
+
+	job := rig.job(t)
+	if err := rig.runner.Run(context.Background(), job); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(rig.agents.spawns) != 2 {
+		t.Fatalf("spawns = %d, want the left-behind session replaced by one fresh one", len(rig.agents.spawns))
+	}
+	if len(rig.agents.transcriptReads) != 0 {
+		t.Errorf("transcript reads = %v, want none on a fresh project", rig.agents.transcriptReads)
+	}
+	if len(rig.agents.prompts) == 0 {
+		t.Fatal("the fresh session was never prompted")
+	}
+	prompt := rig.agents.prompts[0].Prompt
+	if !strings.Contains(prompt, "provider account was refreshed") {
+		t.Errorf("the fresh session was not told why it is fresh:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "pkg/router/table.go") {
+		t.Errorf("a fresh session was handed the old conversation:\n%s", prompt)
+	}
+
+	rolled := rig.auditDetails(auditSessionRolled)
+	if len(rolled) != 1 {
+		t.Fatalf("session_rolled audits = %v, want one", rolled)
+	}
+	for _, want := range []string{"reason=account_rotated", "account=acct-1", "round=0", "rotated_at="} {
+		if !strings.Contains(rolled[0], want) {
+			t.Errorf("session_rolled audit %q does not record %q", rolled[0], want)
+		}
+	}
+	if resumed := rig.auditDetails(auditSessionResumed); len(resumed) != 0 {
+		t.Errorf("session_resumed audits = %v, want none on a fresh project", resumed)
+	}
+	if job.Iteration() != 0 {
+		t.Errorf("iteration = %d, want the roll to spend no round", job.Iteration())
+	}
+}
+
+// TestRunner_AResumeWithNoReadableConversationStartsFresh: a project that
+// resumes, on a service whose session log will not answer, still gets its
+// session off the retired credential — fresh, and the audit record says the
+// resume was unavailable and why. Prompting the old session instead would lose
+// the round to the provider's refusal.
+func TestRunner_AResumeWithNoReadableConversationStartsFresh(t *testing.T) {
+	rig := newRunnerRig(t)
+	rig.rebindVerification(t, "true")
+	rig.workerWrote()
+	rig.verdictOnPublish("APPROVED", "lgtm")
+	rig.agents.freshnessFn = refreshedOnce
+	rig.agents.transcriptFn = func(sessionID string) (*orchestration.ReplayTranscript, error) {
+		return nil, &orchestration.SessionTranscriptUnavailableError{SessionID: sessionID, Reason: "no session event log is configured"}
+	}
+	rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) { rig.workerWrote() }
+
+	if err := rig.runner.Run(context.Background(), rig.job(t)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(rig.agents.spawns) != 2 {
+		t.Fatalf("spawns = %d, want one replacement", len(rig.agents.spawns))
+	}
+	rolled := rig.auditDetails(auditSessionRolled)
+	if len(rolled) != 1 || !strings.Contains(rolled[0], `resume_unavailable="no session event log is configured"`) {
+		t.Fatalf("session_rolled audits = %v, want one naming why the resume was unavailable", rolled)
+	}
+	if resumed := rig.auditDetails(auditSessionResumed); len(resumed) != 0 {
+		t.Errorf("session_resumed audits = %v, want none", resumed)
+	}
+	if prompt := rig.agents.prompts[0].Prompt; !strings.Contains(prompt, "provider account was refreshed") {
+		t.Errorf("the fresh session was not told why it is fresh:\n%s", prompt)
+	}
+}
+
+// TestRunner_AResumeWhoseConversationReadFailsOtherwiseFailsTheRun: only an
+// UNAVAILABLE conversation is replaced fresh. Any other failure to read it —
+// here the session is unknown to the service — is not a condition a fresh
+// session answers, so it is returned and the old session is neither prompted
+// nor replaced.
+func TestRunner_AResumeWhoseConversationReadFailsOtherwiseFailsTheRun(t *testing.T) {
+	rig := newRunnerRig(t)
+	rig.rebindVerification(t, "true")
+	rig.workerWrote()
+	rig.agents.freshnessFn = refreshedOnce
+	rig.agents.transcriptFn = func(sessionID string) (*orchestration.ReplayTranscript, error) {
+		return nil, &orchestration.SessionNotFoundError{SessionID: sessionID}
+	}
+
+	job := rig.job(t)
+	if err := rig.runner.Run(context.Background(), job); err == nil {
+		t.Fatal("Run succeeded, want the failed conversation read returned")
+	}
+	if len(rig.agents.prompts) != 0 {
+		t.Errorf("prompts = %d, want the session holding the retired credential left unprompted", len(rig.agents.prompts))
+	}
+	if len(rig.agents.spawns) != 1 {
+		t.Errorf("spawns = %d, want no replacement", len(rig.agents.spawns))
+	}
+	if resumed := rig.auditDetails(auditSessionResumed); len(resumed) != 0 {
+		t.Errorf("session_resumed audits = %v, want none", resumed)
+	}
+}
+
+// TestRunner_AnUnrotatedSessionIsPromptedNotReplaced: the pool reporting the
+// session's credential as current leaves the turn exactly as it was. Without
+// this the freshness question would be a new way for every run to lose its
+// session.
+func TestRunner_AnUnrotatedSessionIsPromptedNotReplaced(t *testing.T) {
+	rig := newRunnerRig(t)
+	rig.rebindVerification(t, "true")
+	rig.workerWrote()
+	rig.verdictOnPublish("APPROVED", "lgtm")
+	asked := 0
+	rig.agents.freshnessFn = func(int) *orchestration.SessionAccountFreshness {
+		asked++
+		return &orchestration.SessionAccountFreshness{AccountID: "acct-1"}
+	}
+
+	if err := rig.runner.Run(context.Background(), rig.job(t)); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if asked == 0 {
+		t.Error("the runner never asked the pool whether the session's credential was still current")
+	}
+	if len(rig.agents.spawns) != WorkerSessionCount {
+		t.Errorf("spawns = %d, want one", len(rig.agents.spawns))
+	}
+	// The only conversation read is the release's for the review, which a
+	// project that resumes takes whether or not the account rotated.
+	if released := rig.auditDetails(auditWorkerReleased); len(rig.agents.transcriptReads) != len(released) {
+		t.Errorf("transcript reads = %v, want only the %d release(s)' own", rig.agents.transcriptReads, len(released))
+	}
+	if rolled := rig.auditDetails(auditSessionRolled); len(rolled) != 0 {
+		t.Errorf("session_rolled audits = %v, want none", rolled)
+	}
+	if resumed := rig.auditDetails(auditSessionResumed); len(resumed) != 0 {
+		t.Errorf("session_resumed audits = %v, want none", resumed)
+	}
+}
+
+// TestRunner_AnAccountRotationIsAnsweredOncePerRound: a pool that reports the
+// same session stale forever gets ONE replacement, under either policy. The
+// replacement holds the material the pool holds now, so a second report
+// inside one round is the pool flapping — the run prompts rather than
+// spawning containers without end.
+func TestRunner_AnAccountRotationIsAnsweredOncePerRound(t *testing.T) {
+	for _, policy := range []orchestration.SessionRotationPolicy{
+		orchestration.SessionRotationResume, orchestration.SessionRotationFresh,
+	} {
+		t.Run(string(policy), func(t *testing.T) {
+			rig := newRunnerRig(t)
+			rig.sessionRotation = policy
+			rig.rebindVerification(t, "true")
+			rig.workerWrote()
+			rig.verdictOnPublish("APPROVED", "lgtm")
+			rig.agents.freshnessFn = func(int) *orchestration.SessionAccountFreshness {
+				return accountRefreshed("acct-1")
+			}
+			rig.agents.onPrompt = func(*orchestration.PromptSessionRequest) { rig.workerWrote() }
+
+			if err := rig.runner.Run(context.Background(), rig.job(t)); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if len(rig.agents.spawns) != 2 {
+				t.Errorf("spawns = %d, want exactly one replacement", len(rig.agents.spawns))
+			}
+			replaced := len(rig.auditDetails(auditSessionRolled)) + len(rig.auditDetails(auditSessionResumed))
+			if replaced != 1 {
+				t.Errorf("replacement audits = %d, want one", replaced)
+			}
+			if len(rig.agents.prompts) == 0 {
+				t.Fatal("the replacement was never prompted although its round's replacement was spent")
+			}
+		})
+	}
+}
+
 // TestRunner_SatisfiedOnAnUnpublishedBranchIsPublishedNotConcluded: a worker
 // that finds the work already on the attempt's branch — pushed by an earlier
 // attempt, never published — has answered for the branch, not the base. The
@@ -1366,15 +1803,16 @@ func TestRunner_SatisfiedWithNothingAheadConcludes(t *testing.T) {
 	}
 }
 
-// TestRunner_TheBindingsImageSandboxesTheWorker: naming an image requires the
-// sandbox, because the container is where the checkout is made, verified and
-// published.
-func TestRunner_TheBindingsImageSandboxesTheWorker(t *testing.T) {
+// TestRunner_AWorkerPoolIsSpawnedByReference: a binding whose worker slot names
+// a pool hands the pool to the spawn, which fails over along it. The image, and
+// the full-control grant a sandboxed worker gets (go-quicbaas#927), are the
+// resolved Agent's, applied per candidate by the engine.
+func TestRunner_AWorkerPoolIsSpawnedByReference(t *testing.T) {
 	rig := newRunnerRig(t)
 	rig.rebindVerification(t, "true")
 	if err := rig.rebind(context.Background(), func(b *ProjectBinding) {
 		b.Verification = []string{"true"}
-		b.Worker.Image = "registry.test/sdlc-worker:1"
+		b.Worker = orchestration.PoolRefTo("coders")
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1384,23 +1822,11 @@ func TestRunner_TheBindingsImageSandboxesTheWorker(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	spawn := rig.agents.spawns[0]
-	if spawn.ContainerImage != "registry.test/sdlc-worker:1" {
-		t.Errorf("container image = %q", spawn.ContainerImage)
+	if spawn.PoolID != "coders" || spawn.AgentID != "" || spawn.Backend != "" || spawn.Role != orchestration.AgentRoleCoding {
+		t.Errorf("the worker was not spawned from the pool: %+v", spawn.AgentRef())
 	}
-	if spawn.SandboxMode != orchestration.SandboxModeRequired {
-		t.Errorf("sandbox mode = %v, want required", spawn.SandboxMode)
-	}
-	// AND IT GIVES THE WORKER FULL CONTROL OF THAT CONTAINER (go-quicbaas#927).
-	// The container is the isolation boundary; inside it the worker has to build
-	// what it wrote, run the binding's verification commands and install any
-	// toolchain the image does not carry. Handed acceptEdits it could write
-	// files and run nothing, and the measured result was an attempt that spent
-	// 13m46s on six blocks of prose and made zero tool calls.
-	if !slices.Contains(spawn.ExtraArgs, orchestration.WorkerFullControlFlag) {
-		t.Errorf("the worker cannot run a command in its own container: %v", spawn.ExtraArgs)
-	}
-	if slices.Contains(spawn.ExtraArgs, "--permission-mode") {
-		t.Errorf("the worker was rationed inside its container: %v", spawn.ExtraArgs)
+	if spawn.ContainerImage != "" {
+		t.Errorf("the runner named an image %q; the Agent does", spawn.ContainerImage)
 	}
 }
 
@@ -1452,6 +1878,143 @@ func TestRunner_VerificationFailureGoesBackToTheWorkerWithTheOutput(t *testing.T
 	}
 }
 
+// TestRunner_AFailedVerificationRecordsAndEscalatesItsFailingLines is
+// go-quicbaas#1037: the output go-luks2#12 escalated on, whose first line was
+// GNU make's harmless `env: can't execute 'GOPATH'` and whose failure was at
+// the end. The record and the escalation carry the failure, not the noise.
+func TestRunner_AFailedVerificationRecordsAndEscalatesItsFailingLines(t *testing.T) {
+	rig := newRunnerRig(t)
+	rig.rebindVerification(t, "make test")
+	if err := rig.rebind(context.Background(), func(b *ProjectBinding) {
+		b.Verification = []string{"make test"}
+		b.MaxReviewRounds = 1
+		b.Forge.Labels[LabelEscalated] = "factory:escalated"
+	}); err != nil {
+		t.Fatal(err)
+	}
+	noise := "env: can't execute 'GOPATH': No such file or directory"
+	var stderr strings.Builder
+	stderr.WriteString(noise + "\n")
+	for i := 0; i < 20; i++ {
+		stderr.WriteString("go: downloading example.com/mod" + itoa(i) + " v1.0.0\n")
+	}
+	stderr.WriteString("make: *** [Makefile:12: test] Error 1\n")
+	rig.container.scriptVerification("make test", &orchestration.ExecResult{
+		ExitCode: 2,
+		Stdout:   "--- FAIL: TestOpenVolume (0.01s)\n    volume_test.go:40: header checksum mismatch; also unblock[x] here\nFAIL\tgithub.com/jeremyhahn/go-luks2\t0.4s\nFAIL\n",
+		Stderr:   stderr.String(),
+	})
+	rig.workerWrote()
+
+	err := rig.runner.Run(context.Background(), rig.job(t, "make test"))
+	var escalated *EscalatedError
+	if !errors.As(err, &escalated) {
+		t.Fatalf("Run err = %v, want an escalation", err)
+	}
+	audits := rig.auditDetails(auditVerification)
+	if len(audits) == 0 {
+		t.Fatal("no verification was recorded")
+	}
+	for _, audit := range audits {
+		if !strings.HasPrefix(audit, "command=make test passed=false exit_code=2 ") {
+			t.Errorf("the record does not lead with its header and exit code: %q", audit)
+		}
+		for _, want := range []string{"make: *** [Makefile:12: test] Error 1", "--- FAIL: TestOpenVolume", "FAIL\tgithub.com/jeremyhahn/go-luks2"} {
+			if !strings.Contains(audit, want) {
+				t.Errorf("the record lacks the failing line %q:\n%s", want, audit)
+			}
+		}
+		if strings.Contains(audit, noise) {
+			t.Errorf("the record carries the harmless first line:\n%s", audit)
+		}
+	}
+	for _, want := range []string{"verification failed after 1 review round(s)", "`make test` exited 2:", "make: *** [Makefile:12: test] Error 1", "--- FAIL: TestOpenVolume"} {
+		if !strings.Contains(escalated.Reason, want) {
+			t.Errorf("the escalation lacks %q:\n%s", want, escalated.Reason)
+		}
+	}
+	if strings.Contains(escalated.Reason, noise) {
+		t.Errorf("the escalation names the harmless first line:\n%s", escalated.Reason)
+	}
+	// Output that happens to spell a marker must not become a condition.
+	if condition, err := ParseUnblockCondition(escalated.Reason); err != nil || condition.Kind != UnblockOwnerRuling {
+		t.Errorf("the escalation's condition = %+v, %v; want the owner ruling it was composed with", condition, err)
+	}
+}
+
+// TestRunner_ThePostedEscalationKeepsTheFailureWithinThePublicationBudget
+// reads the comment the forge actually carries, not the reason: the comment
+// keeps only the head of the reason (publicOutputLimit), and a failure whose
+// last stderr lines are long and harmless must still show its `make: ***`
+// line and stdout's compiler diagnostic there. A credential that crosses the
+// summary's line cut, and a PEM block whose delimiters a selection could
+// drop, must leave no fragment on the page.
+func TestRunner_ThePostedEscalationKeepsTheFailureWithinThePublicationBudget(t *testing.T) {
+	rig := newRunnerRig(t)
+	rig.rebindVerification(t, "make test")
+	if err := rig.rebind(context.Background(), func(b *ProjectBinding) {
+		b.Verification = []string{"make test"}
+		b.MaxReviewRounds = 1
+		b.Forge.Labels[LabelEscalated] = "factory:escalated"
+	}); err != nil {
+		t.Fatal(err)
+	}
+	const (
+		token      = "ghp_" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"
+		pemBody    = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7"
+		failingOut = "src/luks.c:10:3: error: unknown type name 'foo'"
+		failingErr = "make: *** [Makefile:12: test] Error 1"
+		noise      = "env: can't execute 'GOPATH': No such file or directory"
+	)
+	var stderr strings.Builder
+	stderr.WriteString(noise + "\n")
+	// A credential placed so it straddles the 240-byte line cut.
+	stderr.WriteString(strings.Repeat("w", VerificationSummaryLineBytes-10) + " " + token + "\n")
+	stderr.WriteString("-----BEGIN PRIVATE KEY-----\n" + pemBody + "\n-----END PRIVATE KEY-----\n")
+	for i := 0; i < 7; i++ {
+		stderr.WriteString("warning: harmless " + itoa(i) + " " + strings.Repeat("h", 2*VerificationSummaryLineBytes) + "\n")
+	}
+	stderr.WriteString(failingErr + "\n")
+	rig.container.scriptVerification("make test", &orchestration.ExecResult{
+		ExitCode: 2,
+		Stdout:   failingOut + "\n" + strings.Repeat("cc -c src/other.c\n", 20),
+		Stderr:   stderr.String(),
+	})
+	rig.workerWrote()
+
+	err := rig.runner.Run(context.Background(), rig.job(t, "make test"))
+	var escalated *EscalatedError
+	if !errors.As(err, &escalated) {
+		t.Fatalf("Run err = %v, want an escalation", err)
+	}
+	parks := rig.parkComments(t, 1)
+	if len(parks) != 1 {
+		t.Fatalf("park comments = %d, want exactly one", len(parks))
+	}
+	body := parks[0].Body
+	for _, want := range []string{"verification failed after 1 review round(s)", failingErr, failingOut} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the posted escalation lacks %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "more bytes withheld") {
+		t.Errorf("the evidence overran the publication budget and was cut:\n%s", body)
+	}
+	for _, leaked := range []string{"ghp_", token[len(token)-12:], pemBody[:16], pemBody[len(pemBody)-12:]} {
+		if strings.Contains(body, leaked) {
+			t.Errorf("the posted escalation carries a credential fragment %q:\n%s", leaked, body)
+		}
+		for _, audit := range rig.auditDetails(auditVerification) {
+			if strings.Contains(audit, leaked) {
+				t.Errorf("the verification record carries a credential fragment %q", leaked)
+			}
+		}
+	}
+	if strings.Contains(body, noise) {
+		t.Errorf("the posted escalation names the harmless first line:\n%s", body)
+	}
+}
+
 // TestRunner_TheParkCarriesATypedUnblockCondition is the producer half of
 // #759: the escalation states what would clear it in a form the sweep can
 // read, and the comment a person reads is derived from that.
@@ -1500,8 +2063,11 @@ func TestRunner_TheParkCarriesATypedUnblockCondition(t *testing.T) {
 	}
 }
 
-// TestRunner_ChangesRequestedRunsAnotherRound: the findings reach the worker,
-// the round is counted, and the same session carries the conversation.
+// TestRunner_ChangesRequestedRunsAnotherRound: the findings reach the worker
+// and the round is counted. The worker released for the review is replaced by
+// a new container on the same branch, spawned only after the old one was
+// closed, and told once why it is new (go-quicbaas#938); on the default
+// session_rotation it continues the released session's conversation.
 func TestRunner_ChangesRequestedRunsAnotherRound(t *testing.T) {
 	rig := newRunnerRig(t)
 	rig.rebindVerification(t, "true")
@@ -1525,8 +2091,21 @@ func TestRunner_ChangesRequestedRunsAnotherRound(t *testing.T) {
 	if !strings.Contains(prompts[1], "Round 1 findings") {
 		t.Errorf("the round is not announced to the worker:\n%s", prompts[1])
 	}
-	if rig.agents.sessionCount() != WorkerSessionCount {
-		t.Fatalf("a review round spawned a second session: %d", rig.agents.sessionCount())
+	if !strings.Contains(prompts[1], "continues in a new container after the review") {
+		t.Errorf("the respawned worker is not told why its session is new:\n%s", prompts[1])
+	}
+	if got := rig.agents.sessionCount(); got != 2 {
+		t.Fatalf("spawns = %d, want the first worker and the one respawned for the round", got)
+	}
+	rig.agents.mu.Lock()
+	closedAtSpawn := slices.Clone(rig.agents.closedAtSpawn)
+	first, second := rig.agents.spawns[0].Workspace, rig.agents.spawns[1].Workspace
+	rig.agents.mu.Unlock()
+	if closedAtSpawn[1] < 1 {
+		t.Fatalf("the round's worker was spawned before the released one was closed: %v", closedAtSpawn)
+	}
+	if first == nil || second == nil || first.Key == "" || first.Key != second.Key {
+		t.Errorf("the respawn used workspace %+v, want the attempt's own %+v", second, first)
 	}
 }
 
@@ -1750,10 +2329,10 @@ func TestRunner_AWorkspaceHostThatCannotTakeTheSpawnIsParkedNotRehomed(t *testin
 		names   string
 	}{
 		"the pinned agent is gone": {
-			refusal: &orchestration.WorkspaceAgentUnavailableError{
-				AgentHost: "omega:9091", Key: testTask + "-a1", Backend: "claude",
+			refusal: &orchestration.WorkspaceFleetNodeUnavailableError{
+				AgentHost: "agent-09:9091", Key: testTask + "-a1", Backend: "claude",
 			},
-			names: "omega:9091",
+			names: "agent-09:9091",
 		},
 		"the agent no longer holds the checkout": {
 			refusal: &orchestration.RemoteSpawnFaultError{
@@ -2150,11 +2729,12 @@ func TestRunner_AResumedEscalationRefusesToGuessWhetherItPosted(t *testing.T) {
 	if _, err := rig.hooks.Prepare(ctx, testJob(1)); err != nil {
 		t.Fatal(err)
 	}
+	before := len(rig.forge.commentsOn(25))
 	rig.forge.listCommentsErr = errors.New("the forge is unreachable")
 	if err := rig.runner.Run(ctx, rig.resumedJob(t, rig.interruptedStatus(orchestration.JobStateEscalating))); err == nil {
 		t.Fatal("the resumed escalation concluded without reading the issue")
 	}
-	if comments := rig.forge.commentsOn(25); len(comments) != 0 {
+	if comments := rig.forge.commentsOn(25); len(comments) != before {
 		t.Errorf("posted without knowing whether a park was already there: %v", comments)
 	}
 }
@@ -2370,7 +2950,8 @@ func TestRunner_ATeardownPushFailureDoesNotHideTheOutcome(t *testing.T) {
 // TestRunner_AnUnsignedCommitRefusedAtPublishIsNotPushedAtTeardown is the P1
 // review finding on go-quicbaas#1049: the teardown publish of a failed attempt
 // goes straight to Push, and must not carry the commit the end-of-turn publish
-// just refused.
+// just refused. The refusal parks the task escalated for a person, as an
+// operator fault, rather than spending attempts that would refuse identically.
 func TestRunner_AnUnsignedCommitRefusedAtPublishIsNotPushedAtTeardown(t *testing.T) {
 	rig := newRunnerRig(t)
 	if err := rig.rebind(context.Background(), func(b *ProjectBinding) {
@@ -2382,9 +2963,16 @@ func TestRunner_AnUnsignedCommitRefusedAtPublishIsNotPushedAtTeardown(t *testing
 	rig.container.ahead = true
 	rig.container.outgoing = []outgoingCommit{{SHA: "unsigned-1", Status: "N"}}
 
-	err := rig.runner.Run(context.Background(), rig.job(t, "true"))
-	if !errors.Is(err, ErrUnsignedCommit) {
-		t.Fatalf("err = %v, want the unsigned-commit refusal", err)
+	job := rig.job(t, "true")
+	err := rig.runner.Run(context.Background(), job)
+	var escalated *EscalatedError
+	if !errors.As(err, &escalated) {
+		t.Fatalf("err = %v, want the attempt parked", err)
+	}
+	parked := job.Parked()
+	if parked == nil || parked.Kind != orchestration.TaskBlockKindEscalated ||
+		parked.FaultClass != orchestration.FaultUntrustedSigner || !strings.Contains(parked.Message, "unsigned-1") {
+		t.Fatalf("parked = %+v, want escalated as an untrusted signer naming the commit", parked)
 	}
 	if len(rig.container.pushes) != 0 {
 		t.Fatalf("pushes = %+v, want none: teardown published the refused commit", rig.container.pushes)
@@ -2400,13 +2988,19 @@ func TestRunnerRun_DecorateAndTaskIDTolerateAnEmptyRun(t *testing.T) {
 	run.decorate(nil)
 	status := &orchestration.JobStatus{}
 	run.decorate(status)
-	if len(status.SessionIDs) != 0 {
-		t.Fatalf("a run with no session decorated one: %v", status.SessionIDs)
+	if len(status.SessionIDs) != 0 || status.LeadSessionID != "" {
+		t.Fatalf("a run with no session decorated one: %v lead=%q", status.SessionIDs, status.LeadSessionID)
 	}
 	run.sessionID = "session-1"
 	run.decorate(status)
 	if len(status.SessionIDs) != 1 || status.SessionIDs[0] != "session-1" {
 		t.Fatalf("session ids = %v", status.SessionIDs)
+	}
+	// The worker session IS the job's lead: the job page badges and links
+	// the lead, and an sdlc job that never named one rendered no badge
+	// (go-quicbaas#863).
+	if status.LeadSessionID != "session-1" {
+		t.Fatalf("lead session = %q, want the worker session", status.LeadSessionID)
 	}
 	run.job.Config = nil
 	if run.taskID() != "" {
@@ -2642,12 +3236,12 @@ func TestRunner_TheSigningSocketIsMountedAndGoesWithTheJob(t *testing.T) {
 	if strings.HasPrefix(dirs[0], rig.root) {
 		t.Errorf("the socket was bound under the project workspace %q, which does not fit sun_path", rig.root)
 	}
-	if name := filepath.Base(dirs[0]); len(name) != SigningSocketDirNameLen {
-		t.Errorf("session directory %q is %d characters, want %d", name, len(name), SigningSocketDirNameLen)
+	if name := filepath.Base(dirs[0]); len(name) != orchestration.SigningSocketDirNameLen {
+		t.Errorf("session directory %q is %d characters, want %d", name, len(name), orchestration.SigningSocketDirNameLen)
 	}
 	socket := filepath.Join(dirs[0], SigningSocketFile)
-	if len(socket) > MaxSigningSocketPath {
-		t.Errorf("socket path is %d bytes, over the %d-byte limit", len(socket), MaxSigningSocketPath)
+	if len(socket) > orchestration.MaxSigningSocketPath {
+		t.Errorf("socket path is %d bytes, over the %d-byte limit", len(socket), orchestration.MaxSigningSocketPath)
 	}
 
 	spawn := rig.agents.spawns[0]
@@ -2697,9 +3291,9 @@ func TestRunner_AWorkerWithNoContainerIsRefusedBeforeItIsPrompted(t *testing.T) 
 // TestRunner_AWorkerWhoseContainerCameFromTheDaemonIsAccepted is the twin of
 // the refusal above, and the case go-quicbaas#740 turned into the refusal.
 //
-// A REMOTE worker's container is created by the agent daemon, and its id
+// A REMOTE worker's container is created by the fleet node daemon, and its id
 // reaches the runner only by being reported on the spawn response and read off
-// it (pkg/agent GRPCSpawnServer.Spawn -> RemoteACPBackend.Spawn). While either
+// it (pkg/fleet GRPCSpawnServer.Spawn -> RemoteACPBackend.Spawn). While either
 // end dropped it, a perfectly healthy containerized worker was indistinguishable
 // from a host process and was refused before its first turn. The id here is
 // deliberately one the runner could not have derived: it comes from the
@@ -2835,8 +3429,11 @@ func TestRunner_VerificationRunsInsideTheWorkersContainer(t *testing.T) {
 			t.Errorf("a command named the daemon directory %q", daemonDir)
 		}
 	}
-	if job.Container() == nil || job.Container().WorkDir != containerDir {
-		t.Errorf("job container = %+v, want the container's checkout", job.Container())
+	// The container the verification ran in was closed for the review, and
+	// the job forgot it with the session: nothing after this run could exec
+	// into a container that is gone.
+	if job.Container() != nil {
+		t.Errorf("job container = %+v after the worker was closed, want none", job.Container())
 	}
 }
 
@@ -3266,5 +3863,74 @@ func TestRoundFindings_AnApprovedHeadAddsNothing(t *testing.T) {
 	}
 	if findings := run.roundFindings(); findings != "" {
 		t.Fatalf("an approved head produced round findings:\n%s", findings)
+	}
+}
+
+// TestAccountRotationEvidence_NamesTheTwoCopiesThatDisagreed: the audit line an
+// operator reads after a roll has to say WHICH two copies of the credential
+// disagreed, because "the pool moved" on its own is not something anybody can
+// check. It falls back to the rotation timestamp only for the sessions that
+// carry no generation at all, which now means only one spawned before
+// generations existed: a remote daemon reports its own on the spawn response.
+func TestAccountRotationEvidence_NamesTheTwoCopiesThatDisagreed(t *testing.T) {
+	withGenerations := &orchestration.SessionAccountFreshness{
+		AccountID:         "acct-1",
+		Stale:             true,
+		SessionGeneration: 1758501780000000000,
+		AccountGeneration: 1758530340000000000,
+		RotatedAt:         goldenTime.Add(time.Hour),
+	}
+	got := accountRotationEvidence(withGenerations)
+	for _, want := range []string{"session_generation=1758501780000000000", "account_generation=1758530340000000000"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("accountRotationEvidence = %q, want it to record %q", got, want)
+		}
+	}
+	if strings.Contains(got, "rotated_at=") {
+		t.Errorf("accountRotationEvidence = %q, want the timestamp left out when the generations decided it", got)
+	}
+
+	// No generation on either side: the timestamp is the evidence the check
+	// actually used, so it is the evidence the audit records.
+	if got := accountRotationEvidence(accountRefreshed("acct-1")); !strings.Contains(got, "rotated_at=") {
+		t.Errorf("accountRotationEvidence = %q, want the rotation timestamp for a session with no generation", got)
+	}
+	// One side unknown is still the fallback: a comparison needs both.
+	halfKnown := &orchestration.SessionAccountFreshness{
+		AccountID: "acct-1", Stale: true, SessionGeneration: 5, RotatedAt: goldenTime,
+	}
+	if got := accountRotationEvidence(halfKnown); !strings.Contains(got, "rotated_at=") {
+		t.Errorf("accountRotationEvidence = %q, want the fallback when only one generation is known", got)
+	}
+}
+
+// TestRunner_AContextRepositoryEditedOnAfterBindIsParked: the delivery
+// runner's answer to a repository the allowlist refuses at workspace time is
+// the one it gives every unfit workspace -- park the task for an operator,
+// attributed to the factory, and spawn nothing -- because re-running it would
+// refuse identically (go-quicbaas#770).
+func TestRunner_AContextRepositoryEditedOnAfterBindIsParked(t *testing.T) {
+	rig := newRunnerRig(t)
+	rig.rebindVerification(t, "true")
+	job := rig.job(t)
+	job.Project.ContextRepos = []orchestration.ContextRepo{{Name: "handbook", RepoURL: "http://forge.test/acme/handbook.git", Ref: "main"}}
+
+	err := rig.runner.Run(context.Background(), job)
+
+	if !errors.Is(err, ErrRunner) {
+		t.Fatalf("err = %v, want the run to end on the workspace fault", err)
+	}
+	if rig.agents.sessionCount() != 0 {
+		t.Fatal("a worker was spawned over a refused context repository")
+	}
+	parked := job.Parked()
+	if parked == nil {
+		t.Fatal("a refused context repository was not parked for anybody")
+	}
+	if parked.FaultClass != orchestration.FaultWorkspaceUnfit {
+		t.Fatalf("park fault class = %q, want %q", parked.FaultClass, orchestration.FaultWorkspaceUnfit)
+	}
+	if !strings.Contains(parked.Message, "handbook") {
+		t.Fatalf("park message %q does not name the refused repository", parked.Message)
 	}
 }

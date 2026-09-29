@@ -82,9 +82,8 @@ func TestIAMComponents_GetFederationManager_NonNilOrNilByField(t *testing.T) {
 		// network or persistent storage backends.
 		mem := iam.NewMemoryStorage()
 		ids := iam.NewIdentityStore(iam.IdentityStoreOptions{
-			UserStorage:  mem,
-			GroupStorage: mem,
-			RoleStorage:  mem,
+			UserStorage: mem,
+			RoleStorage: mem,
 		})
 		fedMgr, err := iam.NewFederationManager(
 			iam.WithProviderStorage(iam.NewMemoryProviderStorage()),

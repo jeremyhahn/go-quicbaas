@@ -568,6 +568,98 @@ func TestTaskStore_ListTasksSkipsCorruptRecord(t *testing.T) {
 	}
 }
 
+// TestTaskStore_ListTaskRecordsReportsCorruptRecord proves an unreadable
+// record is REPORTED rather than silently dropped, while the readable records
+// beside it — before and after it in key order — are still returned
+// (go-quicbaas#848).
+func TestTaskStore_ListTaskRecordsReportsCorruptRecord(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	kv := NewMemoryTaskKV()
+	store := NewTaskStore(kv, NewProcessClaimArbiter())
+
+	seedTask(t, store, "ten", "alpha")
+	seedTask(t, store, "ten", "zulu")
+	if err := kv.Put(ctx, "orch/task/ten/corrupt", []byte("{not json")); err != nil {
+		t.Fatalf("plant corrupt record: %v", err)
+	}
+
+	listing, err := store.ListTaskRecords(ctx, "ten", nil)
+	if err != nil {
+		t.Fatalf("ListTaskRecords: %v", err)
+	}
+	if len(listing.Tasks) != 2 || listing.Tasks[0].ID != "alpha" || listing.Tasks[1].ID != "zulu" {
+		t.Fatalf("expected both readable tasks, got %+v", listing.Tasks)
+	}
+	if len(listing.Unreadable) != 1 || listing.Unreadable[0] != "corrupt" {
+		t.Fatalf("expected the corrupt record to be named, got %v", listing.Unreadable)
+	}
+	if listing.Complete() {
+		t.Fatal("a listing with an unreadable record reported itself complete")
+	}
+
+	incomplete := listing.Err("ten")
+	if !errors.Is(incomplete, ErrTaskListingIncomplete) {
+		t.Fatalf("expected ErrTaskListingIncomplete, got %v", incomplete)
+	}
+	var typed *TaskListingIncompleteError
+	if !errors.As(incomplete, &typed) || typed.TenantID != "ten" || len(typed.TaskIDs) != 1 || typed.TaskIDs[0] != "corrupt" {
+		t.Fatalf("expected a typed error naming the record, got %#v", incomplete)
+	}
+	if !strings.Contains(incomplete.Error(), "corrupt") {
+		t.Fatalf("the error does not name the record: %v", incomplete)
+	}
+}
+
+// TestTaskStore_ListTaskRecordsReportsCorruptRecordWhateverTheFilter proves a
+// filtered listing still reports an unreadable record: its fields cannot be
+// read, so nothing can prove it falls outside the filter.
+func TestTaskStore_ListTaskRecordsReportsCorruptRecordWhateverTheFilter(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	kv := NewMemoryTaskKV()
+	store := NewTaskStore(kv, NewProcessClaimArbiter())
+
+	seedTask(t, store, "ten", "good")
+	if err := kv.Put(ctx, "orch/task/ten/corrupt", []byte("{not json")); err != nil {
+		t.Fatalf("plant corrupt record: %v", err)
+	}
+
+	listing, err := store.ListTaskRecords(ctx, "ten", &TaskFilter{ProjectID: "no-such-project"})
+	if err != nil {
+		t.Fatalf("ListTaskRecords: %v", err)
+	}
+	if len(listing.Tasks) != 0 {
+		t.Fatalf("expected no matching task, got %+v", listing.Tasks)
+	}
+	if len(listing.Unreadable) != 1 || listing.Unreadable[0] != "corrupt" {
+		t.Fatalf("expected the corrupt record to be named, got %v", listing.Unreadable)
+	}
+}
+
+// TestTaskStore_ListTaskRecordsCompleteListing proves a listing with nothing
+// unreadable says so, and carries no error.
+func TestTaskStore_ListTaskRecordsCompleteListing(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := NewTaskStore(NewMemoryTaskKV(), NewProcessClaimArbiter())
+	seedTask(t, store, "ten", "good")
+
+	listing, err := store.ListTaskRecords(ctx, "ten", nil)
+	if err != nil {
+		t.Fatalf("ListTaskRecords: %v", err)
+	}
+	if !listing.Complete() || listing.Err("ten") != nil {
+		t.Fatalf("expected a complete listing, got unreadable=%v", listing.Unreadable)
+	}
+	if len(listing.Tasks) != 1 {
+		t.Fatalf("expected the one task, got %+v", listing.Tasks)
+	}
+}
+
 // =============================================================================
 // Key-segment rejection
 // =============================================================================
@@ -2906,7 +2998,9 @@ func TestTaskTransitionAllowed_Table(t *testing.T) {
 		TaskStatusPending:    {TaskStatusClaimed, TaskStatusInProgress, TaskStatusBlocked},
 		TaskStatusClaimed:    {TaskStatusInProgress, TaskStatusCompleted, TaskStatusFailed, TaskStatusBlocked},
 		TaskStatusInProgress: {TaskStatusCompleted, TaskStatusFailed, TaskStatusBlocked},
-		TaskStatusBlocked:    {TaskStatusPending, TaskStatusFailed},
+		// blocked -> completed is the operator's close-as-done ruling
+		// (go-quicbaas#1020), reached only through CloseBlockedTask.
+		TaskStatusBlocked: {TaskStatusPending, TaskStatusCompleted, TaskStatusFailed},
 		// failed -> pending is the readmission edge (go-quicbaas#945). It was
 		// absent, which made `failed` a sink no recovery verb could move and
 		// killed nine tasks permanently on a deploy-window fault.

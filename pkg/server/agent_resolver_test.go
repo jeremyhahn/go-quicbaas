@@ -32,15 +32,15 @@ func newPool() *remoteBackendPool {
 	}
 }
 
-// daemonReg constructs a minimal daemon-kind AgentRegistration for tests.
-func daemonReg(name, host, backend string, caps ...string) *orchestration.AgentRegistration {
-	return &orchestration.AgentRegistration{
+// daemonReg constructs a minimal daemon-kind FleetNode for tests.
+func daemonReg(name, host, backend string, caps ...string) *orchestration.FleetNode {
+	return &orchestration.FleetNode{
 		ID:           name + "-id",
 		Name:         name,
 		Host:         host,
 		Backend:      backend,
-		Kind:         orchestration.AgentKindDaemon,
-		Status:       orchestration.AgentStatusIdle,
+		Kind:         orchestration.FleetNodeKindDaemon,
+		Status:       orchestration.FleetNodeStatusIdle,
 		Capabilities: caps,
 	}
 }
@@ -59,7 +59,7 @@ func TestPickAgent_GpuRequired_FiltersOutCpuOnlyAgents(t *testing.T) {
 	cpuAgent := daemonReg("cpu-host", "192.168.1.10:9090", "ollama", "ollama")
 	gpuAgent := daemonReg("gpu-host", "192.168.1.20:9090", "ollama", "ollama", "gpu")
 
-	regs := []*orchestration.AgentRegistration{cpuAgent, gpuAgent}
+	regs := []*orchestration.FleetNode{cpuAgent, gpuAgent}
 
 	got, constraint := pool.pickDaemon(regs, "ollama", "", true, "")
 	if got == nil {
@@ -80,7 +80,7 @@ func TestPickAgent_GpuRequired_NoCpuAgentsReturnsGpuConstraint(t *testing.T) {
 	pool := newPool()
 
 	cpuAgent := daemonReg("cpu-host", "192.168.1.10:9090", "ollama", "ollama")
-	regs := []*orchestration.AgentRegistration{cpuAgent}
+	regs := []*orchestration.FleetNode{cpuAgent}
 
 	got, constraint := pool.pickDaemon(regs, "ollama", "", true, "")
 	if got != nil {
@@ -99,7 +99,7 @@ func TestPickAgent_HostAffinity_PrefersExactMatch(t *testing.T) {
 
 	agentA := daemonReg("gpu-host", "192.168.1.10:9090", "ollama", "ollama")
 	agentB := daemonReg("other", "192.168.1.20:9090", "ollama", "ollama")
-	regs := []*orchestration.AgentRegistration{agentB, agentA} // B first to ensure affinity wins
+	regs := []*orchestration.FleetNode{agentB, agentA} // B first to ensure affinity wins
 
 	// Match by Name.
 	got, constraint := pool.pickDaemon(regs, "ollama", "gpu-host", false, "")
@@ -118,7 +118,7 @@ func TestPickAgent_HostAffinity_PrefixMatch(t *testing.T) {
 	pool := newPool()
 
 	agent := daemonReg("node1", "192.168.1.50:9090", "ollama", "ollama")
-	regs := []*orchestration.AgentRegistration{agent}
+	regs := []*orchestration.FleetNode{agent}
 
 	got, constraint := pool.pickDaemon(regs, "ollama", "192.168.1.50", false, "")
 	if got == nil {
@@ -131,14 +131,14 @@ func TestPickAgent_HostAffinity_PrefixMatch(t *testing.T) {
 
 // TestPickAgent_NoMatchingAgent_ReturnsTypedError verifies that when no agent
 // satisfies the host affinity filter, the failed constraint reports
-// "host_affinity" and buildNoMatchError produces a NoMatchingAgentError that
-// wraps ErrNoMatchingAgent.
+// "host_affinity" and buildNoMatchError produces a NoMatchingFleetNodeError that
+// wraps ErrNoMatchingFleetNode.
 func TestPickAgent_NoMatchingAgent_ReturnsTypedError(t *testing.T) {
 	t.Parallel()
 	pool := newPool()
 
 	agent := daemonReg("existing", "10.0.0.1:9090", "ollama", "ollama")
-	regs := []*orchestration.AgentRegistration{agent}
+	regs := []*orchestration.FleetNode{agent}
 
 	got, constraint := pool.pickDaemon(regs, "ollama", "nonexistent-host", false, "")
 	if got != nil {
@@ -150,8 +150,8 @@ func TestPickAgent_NoMatchingAgent_ReturnsTypedError(t *testing.T) {
 
 	// Verify buildNoMatchError produces a correctly wrapped error.
 	err := buildNoMatchError("ollama", "nonexistent-host", false, constraint)
-	if !errors.Is(err, orchestration.ErrNoMatchingAgent) {
-		t.Errorf("expected errors.Is to find ErrNoMatchingAgent, got %v", err)
+	if !errors.Is(err, orchestration.ErrNoMatchingFleetNode) {
+		t.Errorf("expected errors.Is to find ErrNoMatchingFleetNode, got %v", err)
 	}
 	if err.Constraint != "host_affinity" {
 		t.Errorf("expected Constraint=%q, got %q", "host_affinity", err.Constraint)
@@ -171,7 +171,7 @@ func TestPickAgent_GpuRequiredAndHostAffinity_CombineCorrectly(t *testing.T) {
 	// Different host, has GPU — should not be selected.
 	wrongHostGPU := daemonReg("other-gpu", "10.0.0.2:9090", "ollama", "ollama", "gpu")
 
-	regs := []*orchestration.AgentRegistration{rightHostNoCPU, wrongHostGPU, rightHostGPU}
+	regs := []*orchestration.FleetNode{rightHostNoCPU, wrongHostGPU, rightHostGPU}
 
 	got, constraint := pool.pickDaemon(regs, "ollama", "target-gpu", true, "")
 	if got == nil {
@@ -191,16 +191,16 @@ func TestPickAgent_BackendFilter_SkipsNonDaemonKind(t *testing.T) {
 	t.Parallel()
 	pool := newPool()
 
-	external := &orchestration.AgentRegistration{
+	external := &orchestration.FleetNode{
 		ID:           "ext-1",
 		Name:         "external-agent",
 		Host:         "10.0.0.5:9090",
 		Backend:      "ollama",
-		Kind:         orchestration.AgentKindExternal,
-		Status:       orchestration.AgentStatusIdle,
+		Kind:         orchestration.FleetNodeKindExternal,
+		Status:       orchestration.FleetNodeStatusIdle,
 		Capabilities: []string{"ollama", "gpu"},
 	}
-	regs := []*orchestration.AgentRegistration{external}
+	regs := []*orchestration.FleetNode{external}
 
 	got, constraint := pool.pickDaemon(regs, "ollama", "", false, "")
 	if got != nil {

@@ -18,7 +18,7 @@ import "testing"
 // TestAgentRuntimeScopes_AreValidFormat protects against drift between the
 // scope constants and the scopeFormatRegex used in Validate().
 func TestAgentRuntimeScopes_AreValidFormat(t *testing.T) {
-	for _, s := range AgentRuntimeScopes() {
+	for _, s := range FleetRuntimeScopes() {
 		if !IsValidScopeFormat(s) {
 			t.Errorf("scope %q does not match scopeFormatRegex", s)
 		}
@@ -34,7 +34,7 @@ func TestAgentRuntimeScopes_HasScope_Exact(t *testing.T) {
 		ServiceAccountID: "sa",
 		TenantID:         "t",
 		Role:             "agent-runtime",
-		Scopes:           AgentRuntimeScopes(),
+		Scopes:           FleetRuntimeScopes(),
 		ClientID:         "c",
 	}
 
@@ -58,7 +58,7 @@ func TestAgentRuntimeScopes_Validate(t *testing.T) {
 		ServiceAccountID: "sa-xyz",
 		TenantID:         "tenant-1",
 		Role:             "agent-runtime",
-		Scopes:           AgentRuntimeScopes(),
+		Scopes:           FleetRuntimeScopes(),
 		ClientID:         "client-xyz",
 	}
 	if err := ai.Validate(); err != nil {
@@ -78,7 +78,7 @@ func TestAgentRuntimeScopes_WildcardMatch(t *testing.T) {
 		Scopes:           []string{"agent:*"},
 		ClientID:         "c",
 	}
-	for _, s := range AgentRuntimeScopes() {
+	for _, s := range FleetRuntimeScopes() {
 		if !ai.HasScope(s) {
 			t.Errorf("wildcard agent:* should cover %q", s)
 		}

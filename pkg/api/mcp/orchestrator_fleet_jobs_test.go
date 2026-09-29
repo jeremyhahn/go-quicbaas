@@ -31,7 +31,7 @@ type fleetMockAgentService struct {
 	mockAgentService
 	getArtifactFn  func(ctx context.Context, tenantID, taskID, name string) (*orchestration.Artifact, error)
 	listArtifactFn func(ctx context.Context, tenantID, taskID string) ([]orchestration.Artifact, error)
-	registerFn     func(ctx context.Context, req *orchestration.RegisterAgentRequest) (*orchestration.RegisterAgentResponse, error)
+	registerFn     func(ctx context.Context, req *orchestration.RegisterFleetNodeRequest) (*orchestration.RegisterFleetNodeResponse, error)
 	removeFn       func(ctx context.Context, tenantID, agentID string) error
 	heartbeatFn    func(ctx context.Context, tenantID, agentID string) error
 	startJobFn     func(ctx context.Context, req *orchestration.StartJobRequest) (*orchestration.StartJobResponse, error)
@@ -52,21 +52,21 @@ func (m *fleetMockAgentService) ListTaskArtifacts(ctx context.Context, tenantID,
 	return []orchestration.Artifact{{Name: "a1"}}, nil
 }
 
-func (m *fleetMockAgentService) RegisterAgent(ctx context.Context, req *orchestration.RegisterAgentRequest) (*orchestration.RegisterAgentResponse, error) {
+func (m *fleetMockAgentService) RegisterFleetNode(ctx context.Context, req *orchestration.RegisterFleetNodeRequest) (*orchestration.RegisterFleetNodeResponse, error) {
 	if m.registerFn != nil {
 		return m.registerFn(ctx, req)
 	}
-	return &orchestration.RegisterAgentResponse{Agent: &orchestration.AgentRegistration{ID: "a1"}}, nil
+	return &orchestration.RegisterFleetNodeResponse{Node: &orchestration.FleetNode{ID: "a1"}}, nil
 }
 
-func (m *fleetMockAgentService) RemoveAgent(ctx context.Context, tenantID, agentID string) error {
+func (m *fleetMockAgentService) RemoveFleetNode(ctx context.Context, tenantID, agentID string) error {
 	if m.removeFn != nil {
 		return m.removeFn(ctx, tenantID, agentID)
 	}
 	return nil
 }
 
-func (m *fleetMockAgentService) AgentHeartbeat(ctx context.Context, tenantID, agentID string, _ *orchestration.AgentObservation) error {
+func (m *fleetMockAgentService) FleetNodeHeartbeat(ctx context.Context, tenantID, agentID string, _ *orchestration.FleetNodeObservation) error {
 	if m.heartbeatFn != nil {
 		return m.heartbeatFn(ctx, tenantID, agentID)
 	}
@@ -92,22 +92,22 @@ func (m *fleetMockAgentService) CancelJob(ctx context.Context, tenantID, jobID s
 // =============================================================================
 
 func TestExecuteAgentTool_FleetAndJobs_HappyPaths(t *testing.T) {
-	reg := newAgentRegistry(t, &fleetMockAgentService{})
+	reg := newFleetRegistry(t, &fleetMockAgentService{})
 	ctx := orchestration.ContextWithTenant(context.Background(), "t1")
 
 	cases := []struct {
 		name string
 		args map[string]interface{}
 	}{
-		{"quicbaas_agent_fleet_register", map[string]interface{}{
-			"tenant_id": "t1", "name": "agent-a", "host": "h1", "agent_type": "claude",
+		{"quicbaas_fleet_register", map[string]interface{}{
+			"tenant_id": "t1", "name": "agent-a", "host": "h1", "node_type": "claude",
 		}},
-		{"quicbaas_agent_fleet_list", map[string]interface{}{
-			"tenant_id": "t1", "status": "online", "host": "h1", "agent_type": "claude",
+		{"quicbaas_fleet_list", map[string]interface{}{
+			"tenant_id": "t1", "status": "online", "host": "h1", "node_type": "claude",
 		}},
-		{"quicbaas_agent_fleet_status", map[string]interface{}{"tenant_id": "t1", "agent_id": "a1"}},
-		{"quicbaas_agent_fleet_remove", map[string]interface{}{"tenant_id": "t1", "agent_id": "a1"}},
-		{"quicbaas_agent_fleet_heartbeat", map[string]interface{}{"tenant_id": "t1", "agent_id": "a1"}},
+		{"quicbaas_fleet_status", map[string]interface{}{"tenant_id": "t1", "node_id": "a1"}},
+		{"quicbaas_fleet_remove", map[string]interface{}{"tenant_id": "t1", "node_id": "a1"}},
+		{"quicbaas_fleet_heartbeat", map[string]interface{}{"tenant_id": "t1", "node_id": "a1"}},
 		{"quicbaas_orchestrator_start_job", map[string]interface{}{"description": "do work", "max_iterations": 5}},
 		{"quicbaas_orchestrator_get_job_status", map[string]interface{}{"job_id": "job-1"}},
 		{"quicbaas_orchestrator_cancel_job", map[string]interface{}{"job_id": "job-1"}},
@@ -131,7 +131,7 @@ func TestExecuteAgentTool_FleetAndJobs_HappyPaths(t *testing.T) {
 func TestExecuteOrchestratorListJobs_NarrowsToTask(t *testing.T) {
 	svc := &fleetMockAgentService{}
 	svc.listJobs = []*orchestration.JobStatus{{JobID: "job-1", TaskID: "task-a", Attempt: 2}}
-	reg := newAgentRegistry(t, svc)
+	reg := newFleetRegistry(t, svc)
 	ctx := orchestration.ContextWithTenant(context.Background(), "t1")
 
 	result, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_list_jobs",
@@ -146,7 +146,7 @@ func TestExecuteOrchestratorListJobs_NarrowsToTask(t *testing.T) {
 // half: an omitted task_id lists the tenant rather than nothing.
 func TestExecuteOrchestratorListJobs_WithoutTaskNarrowsNothing(t *testing.T) {
 	svc := &fleetMockAgentService{}
-	reg := newAgentRegistry(t, svc)
+	reg := newFleetRegistry(t, svc)
 	ctx := orchestration.ContextWithTenant(context.Background(), "t1")
 
 	_, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_list_jobs", map[string]interface{}{})
@@ -160,28 +160,28 @@ func TestExecuteOrchestratorListJobs_WithoutTaskNarrowsNothing(t *testing.T) {
 // =============================================================================
 
 func TestExecuteAgentTool_FleetAndJobs_MissingRequired(t *testing.T) {
-	reg := newAgentRegistry(t, &fleetMockAgentService{})
+	reg := newFleetRegistry(t, &fleetMockAgentService{})
 	ctx := context.Background()
 
 	cases := []struct {
 		name string
 		args map[string]interface{}
 	}{
-		{"quicbaas_agent_fleet_register", map[string]interface{}{}},                                            // tenant_id
-		{"quicbaas_agent_fleet_register", map[string]interface{}{"tenant_id": "t1"}},                           // name
-		{"quicbaas_agent_fleet_register", map[string]interface{}{"tenant_id": "t1", "name": "n"}},              // host
-		{"quicbaas_agent_fleet_register", map[string]interface{}{"tenant_id": "t1", "name": "n", "host": "h"}}, // agent_type
-		{"quicbaas_agent_fleet_list", map[string]interface{}{}},                                                // tenant_id
-		{"quicbaas_agent_fleet_status", map[string]interface{}{"tenant_id": "t1"}},                             // agent_id
-		{"quicbaas_agent_fleet_remove", map[string]interface{}{"tenant_id": "t1"}},                             // agent_id
-		{"quicbaas_agent_fleet_heartbeat", map[string]interface{}{"tenant_id": "t1"}},                          // agent_id
-		{"quicbaas_orchestrator_start_job", map[string]interface{}{}},                                          // description
-		{"quicbaas_orchestrator_get_job_status", map[string]interface{}{}},                                     // job_id
-		{"quicbaas_orchestrator_cancel_job", map[string]interface{}{}},                                         // job_id
-		{"quicbaas_orchestrator_task_create", map[string]interface{}{}},                                        // subject
-		{"quicbaas_task_get_artifact", map[string]interface{}{}},                                               // task_id
-		{"quicbaas_task_get_artifact", map[string]interface{}{"task_id": "tk1"}},                               // name
-		{"quicbaas_task_list_artifacts", map[string]interface{}{}},                                             // task_id
+		{"quicbaas_fleet_register", map[string]interface{}{}},                                            // tenant_id
+		{"quicbaas_fleet_register", map[string]interface{}{"tenant_id": "t1"}},                           // name
+		{"quicbaas_fleet_register", map[string]interface{}{"tenant_id": "t1", "name": "n"}},              // host
+		{"quicbaas_fleet_register", map[string]interface{}{"tenant_id": "t1", "name": "n", "host": "h"}}, // node_type
+		{"quicbaas_fleet_list", map[string]interface{}{}},                                                // tenant_id
+		{"quicbaas_fleet_status", map[string]interface{}{"tenant_id": "t1"}},                             // node_id
+		{"quicbaas_fleet_remove", map[string]interface{}{"tenant_id": "t1"}},                             // node_id
+		{"quicbaas_fleet_heartbeat", map[string]interface{}{"tenant_id": "t1"}},                          // node_id
+		{"quicbaas_orchestrator_start_job", map[string]interface{}{}},                                    // description
+		{"quicbaas_orchestrator_get_job_status", map[string]interface{}{}},                               // job_id
+		{"quicbaas_orchestrator_cancel_job", map[string]interface{}{}},                                   // job_id
+		{"quicbaas_orchestrator_task_create", map[string]interface{}{}},                                  // subject
+		{"quicbaas_task_get_artifact", map[string]interface{}{}},                                         // task_id
+		{"quicbaas_task_get_artifact", map[string]interface{}{"task_id": "tk1"}},                         // name
+		{"quicbaas_task_list_artifacts", map[string]interface{}{}},                                       // task_id
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -196,15 +196,15 @@ func TestExecuteAgentTool_FleetAndJobs_MissingRequired(t *testing.T) {
 // =============================================================================
 
 func TestExecuteAgentTool_FleetAndJobs_ServiceUnavailable(t *testing.T) {
-	reg := newAgentRegistry(t, nil) // Agent() returns nil
+	reg := newFleetRegistry(t, nil) // Agent() returns nil
 	ctx := context.Background()
 
 	names := []string{
-		"quicbaas_agent_fleet_register",
-		"quicbaas_agent_fleet_list",
-		"quicbaas_agent_fleet_status",
-		"quicbaas_agent_fleet_remove",
-		"quicbaas_agent_fleet_heartbeat",
+		"quicbaas_fleet_register",
+		"quicbaas_fleet_list",
+		"quicbaas_fleet_status",
+		"quicbaas_fleet_remove",
+		"quicbaas_fleet_heartbeat",
 		"quicbaas_orchestrator_start_job",
 		"quicbaas_orchestrator_get_job_status",
 		"quicbaas_orchestrator_cancel_job",
@@ -228,7 +228,7 @@ func TestExecuteAgentTool_FleetAndJobs_ServiceUnavailable(t *testing.T) {
 func TestExecuteAgentTool_FleetAndJobs_ServiceError(t *testing.T) {
 	sentinel := errors.New("orch boom")
 	svc := &fleetMockAgentService{
-		registerFn: func(context.Context, *orchestration.RegisterAgentRequest) (*orchestration.RegisterAgentResponse, error) {
+		registerFn: func(context.Context, *orchestration.RegisterFleetNodeRequest) (*orchestration.RegisterFleetNodeResponse, error) {
 			return nil, sentinel
 		},
 		removeFn:    func(context.Context, string, string) error { return sentinel },
@@ -244,16 +244,16 @@ func TestExecuteAgentTool_FleetAndJobs_ServiceError(t *testing.T) {
 			return nil, sentinel
 		},
 	}
-	reg := newAgentRegistry(t, svc)
+	reg := newFleetRegistry(t, svc)
 	ctx := orchestration.ContextWithTenant(context.Background(), "t1")
 
 	cases := []struct {
 		name string
 		args map[string]interface{}
 	}{
-		{"quicbaas_agent_fleet_register", map[string]interface{}{"tenant_id": "t1", "name": "n", "host": "h", "agent_type": "claude"}},
-		{"quicbaas_agent_fleet_remove", map[string]interface{}{"tenant_id": "t1", "agent_id": "a1"}},
-		{"quicbaas_agent_fleet_heartbeat", map[string]interface{}{"tenant_id": "t1", "agent_id": "a1"}},
+		{"quicbaas_fleet_register", map[string]interface{}{"tenant_id": "t1", "name": "n", "host": "h", "node_type": "claude"}},
+		{"quicbaas_fleet_remove", map[string]interface{}{"tenant_id": "t1", "node_id": "a1"}},
+		{"quicbaas_fleet_heartbeat", map[string]interface{}{"tenant_id": "t1", "node_id": "a1"}},
 		{"quicbaas_orchestrator_start_job", map[string]interface{}{"description": "x"}},
 		{"quicbaas_orchestrator_cancel_job", map[string]interface{}{"job_id": "j1"}},
 		{"quicbaas_task_get_artifact", map[string]interface{}{"task_id": "tk1", "name": "n"}},

@@ -97,12 +97,12 @@ func TestSSHMCPHandler_GenericRequestUsesJSONTags(t *testing.T) {
 	h := newSSHMCPHandler()
 	args, err := h.transformRequest(sshclient.MethodAddKnownHost, &sshclient.AddKnownHostRequest{
 		Scope: "user", Owner: "alice", Host: "git.example.com",
-		Fingerprint: sshfixture.HostFingerprint,
+		PublicKey: sshfixture.Host(t).AuthorizedLine,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "git.example.com", args["host"])
-	assert.Equal(t, sshfixture.HostFingerprint, args["fingerprint"],
-		"the pinned fingerprint must reach the tool arguments unaltered")
+	assert.Equal(t, sshfixture.Host(t).AuthorizedLine, args["public_key"],
+		"the pinned host key must reach the tool arguments unaltered")
 }
 
 func TestSSHMCPHandler_NilRequestYieldsEmptyArguments(t *testing.T) {
