@@ -53,6 +53,7 @@ type MockQuicBaaS struct {
 	CertificateSvc   service.CertificateService
 	TrustSvc         service.TrustService
 	AttestationSvc   service.AttestationService
+	RegistrySvc      service.RegistryService
 	PIVSvc           service.PIVService
 	FIDO2Svc         service.FIDO2Service
 	ACMESvc          service.ACMEServicer
@@ -540,6 +541,11 @@ func (m *MockQuicBaaS) Trust() service.TrustService {
 // Attestation returns AttestationSvc when set, otherwise nil.
 func (m *MockQuicBaaS) Attestation() service.AttestationService {
 	return m.AttestationSvc
+}
+
+// Registry returns RegistrySvc when set, otherwise nil.
+func (m *MockQuicBaaS) Registry() service.RegistryService {
+	return m.RegistrySvc
 }
 
 // PIV returns PIVSvc when set, otherwise nil.

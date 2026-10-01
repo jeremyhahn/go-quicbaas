@@ -225,6 +225,27 @@ const (
 	AgentAccountList qrdbsdk.Permission = "agent_accounts:list"
 )
 
+// Service registry permissions.
+//
+// The registry is its own resource family. It is not qrdb's kv:*, lease:* or
+// watch:*: a caller that may register an endpoint must not thereby gain the
+// raw store verbs the registry is built on (and through them every other
+// record of its tenant), and qrdb owns those families outright
+// (TestAll_DoesNotShadowAQRDBPermission). The read/write split is the one all
+// transports encode (pkg/api/grpc/authz_mapping.go, the REST frozen route
+// table, pkg/api/mcp/authz_qrdb.go).
+const (
+	// ServiceRegistryRegister ("service_registry:register") authorizes
+	// listing an instance under a lease and renewing or revoking the leases
+	// of the caller tenant's own registrations. It is the write verb of the
+	// family.
+	ServiceRegistryRegister qrdbsdk.Permission = "service_registry:register"
+
+	// ServiceRegistryRead ("service_registry:read") authorizes resolving a
+	// service's instances and watching its changes. It mutates nothing.
+	ServiceRegistryRead qrdbsdk.Permission = "service_registry:read"
+)
+
 // duty states which of FIPS 140-3 AS10.03's separated duties a contributed
 // permission belongs to. It is a distinct type from qrdbsdk.PermissionDuty for
 // one reason: qrdb's zero value, PermissionDutyUndeclared, is a legitimate
@@ -532,6 +553,34 @@ var contributions = []contribution{
 		scope: scopeSelf,
 		roles: []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator},
 		duty:  dutyOutsideSecurityOfficer,
+	},
+	{
+		// service_registry:register is a data-plane write confined to the
+		// caller tenant's own registrations (the registry proves lease
+		// ownership per tenant), the same tier as the KV and lease writes
+		// qrdb grants Operator. Admin holds it too because qrdb's roles are
+		// flat. User is withheld for the same reason qrdb withholds kv:put
+		// and lease:grant from it: a workload that publishes endpoints is an
+		// operational identity, not an end user.
+		permission: ServiceRegistryRegister,
+		scope:      scopeSelf,
+		roles:      []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator},
+		duty:       dutyOutsideSecurityOfficer,
+	},
+	{
+		// service_registry:read only reveals which endpoints the caller
+		// tenant has published. Auditor holds it as read-only state
+		// visibility (FIPS 140-3 AS10.10), beside Admin and Operator. It is
+		// no part of the Security Officer's governance duties and touches no
+		// key, so nothing is declared to qrdb.
+		permission: ServiceRegistryRead,
+		scope:      scopeSelf,
+		roles: []string{
+			qrdbsdk.PermissionRoleAdmin,
+			qrdbsdk.PermissionRoleOperator,
+			qrdbsdk.PermissionRoleAuditor,
+		},
+		duty: dutyOutsideSecurityOfficer,
 	},
 	{
 		permission: AgentAccountList,

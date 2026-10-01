@@ -2518,6 +2518,7 @@ func (s *Server) startGRPCServer() error {
 	// Unix transports.
 	s.registerTrustService(grpcServer, quicbaasService)
 	s.registerAttestationService(grpcServer, quicbaasService)
+	s.registerRegistryService(grpcServer)
 
 	// Register the FIDO2 (WebAuthn ceremony) and PIV gRPC services. The
 	// handlers delegate to the tenant-scoped FIDO2() and backend-scoped

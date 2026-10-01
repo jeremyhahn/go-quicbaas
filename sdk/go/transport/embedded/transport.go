@@ -398,6 +398,12 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.SDLC/FileIssue":          handleSDLCFileIssue,
 	"quicbaas.SDLC/Collaborators":      handleSDLCCollaborators,
 
+	// Service registry
+	registryService + "/Register":   handleRegistryRegister,
+	registryService + "/Renew":      handleRegistryRenew,
+	registryService + "/Deregister": handleRegistryDeregister,
+	registryService + "/Resolve":    handleRegistryResolve,
+
 	// ObjectStorage operations
 	"quicbaas.ObjectStorage/PutObject":          handleObjPutObject,
 	"quicbaas.ObjectStorage/GetObject":          handleObjGetObject,
@@ -433,6 +439,7 @@ var streamHandlers = map[string]streamHandlerFunc{
 	"quicbaas.TimeSeries/Query":                handleTimeSeriesQueryStream,
 	"quicbaas.Orchestrator/SubscribeJobEvents": handleSubscribeJobEventsStream,
 	"quicbaas.Orchestrator/InferenceStream":    handleOrchestratorInferenceStream,
+	registryService + "/Watch":                 handleRegistryWatchStream,
 }
 
 // New creates a new embedded transport with the given service.

@@ -12,16 +12,31 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package registry implements service discovery on go-qrdb primitives. A
-// service instance registers under a lease; resolution is a prefix range
-// scan; change notification is a prefix watch. When a node dies, its lease
-// expires, qrdb deletes the attached entry, and watchers observe the removal —
-// the etcd/Consul service-registry pattern, built entirely on qrdb's
-// Lease + Watch + KV SDK surface.
+// service instance registers under a lease; resolution is a prefix range read
+// at a known revision; change notification is a prefix watch that can start at
+// that revision. When a node dies, its lease expires, qrdb deletes the attached
+// entry, and watchers observe the removal — the etcd/Consul service-registry
+// pattern, built entirely on qrdb's Lease + Watch + MVCC SDK surface.
+//
+// The registry is served to remote callers by the service layer
+// (pkg/service.RegistryService) on every transport. The tenant every
+// operation is scoped to is the AUTHENTICATED tenant the transport's authz
+// interceptor places in the request context, never a value the caller
+// supplies in a request body.
+//
+// Storage classification (handbook conventions/data-access.md §3): every key
+// here is raw KV under case 5 (internal cluster metadata keyed by name — the
+// service and instance names, not a generated ID) and case 7 (the records are
+// consumed as a watch stream). Each record is bound to a qrdb lease, which is
+// the expiry mechanism; there is no hand-rolled TTL sweep.
 package registry
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,9 +57,26 @@ const (
 	// "__sys:svc-t/{tenant}/...".
 	tenantKeyPrefix = "__sys:svc-t/"
 
+	// leasePrefix namespaces the single-tenant lease ownership marks.
+	leasePrefix = "__sys:svc-lease/"
+
+	// tenantLeasePrefix namespaces the tenant-scoped lease ownership marks.
+	// A mark "__sys:svc-lease-t/{tenant}/{leaseID}" is written under the same
+	// lease as the instance it backs, so it expires with the registration and
+	// proves, on Renew and Deregister, that the lease is the caller tenant's.
+	tenantLeasePrefix = "__sys:svc-lease-t/"
+
 	// maxTenantLen bounds tenant IDs, matching the platform convention.
 	maxTenantLen = 128
+
+	// maxNameLen bounds service and instance names so a key stays well inside
+	// the store's key-size limit.
+	maxNameLen = 253
 )
+
+// MinTTL is the shortest lease a registration may hold. A shorter TTL is
+// raised to it: a sub-second lease would expire between a client's renewals.
+const MinTTL = time.Second
 
 // cleanupTimeout bounds best-effort lease revokes that run on a fresh context.
 const cleanupTimeout = 5 * time.Second
@@ -53,15 +85,18 @@ const cleanupTimeout = 5 * time.Second
 // consumer does not backpressure the underlying watch stream.
 const watchEventBuffer = 64
 
-// validateName rejects empty names and names containing the key separator '/',
-// which would let a service or instance name cross into another service's
-// namespace during prefix scans and watches.
-func validateName(s string) error {
+// validateName rejects empty names, names containing the key separator '/'
+// (which would let a service or instance name cross into another service's
+// namespace during prefix reads and watches), and over-long names.
+func validateName(field, s string) error {
 	if s == "" {
-		return &InvalidInstanceError{Reason: "service and id are required"}
+		return &InvalidInstanceError{Reason: field + " is required"}
+	}
+	if len(s) > maxNameLen {
+		return &InvalidInstanceError{Reason: field + " exceeds " + strconv.Itoa(maxNameLen) + " bytes"}
 	}
 	if strings.ContainsRune(s, '/') {
-		return &InvalidInstanceError{Reason: "service and id must not contain '/'"}
+		return &InvalidInstanceError{Reason: field + " must not contain '/'"}
 	}
 	return nil
 }
@@ -112,6 +147,20 @@ const (
 	Delete
 )
 
+// String returns the wire name of the event type.
+func (t EventType) String() string {
+	if name, ok := eventTypeNames[t]; ok {
+		return name
+	}
+	return "UNKNOWN"
+}
+
+// eventTypeNames maps event types to their wire names.
+var eventTypeNames = map[EventType]string{
+	Put:    "PUT",
+	Delete: "DELETE",
+}
+
 // Event is a service-registry change delivered by Watch.
 type Event struct {
 	// Type is the kind of change.
@@ -121,6 +170,15 @@ type Event struct {
 	// the watch's previous value when available, or carries just the parsed
 	// ID and Service derived from the key.
 	Instance ServiceInstance
+
+	// Revision is the store revision of the change. Watching again from
+	// Revision+1 resumes the stream with nothing lost and nothing repeated.
+	Revision int64
+
+	// Err is set only on the final event of a watch the store ended:
+	// *WatchCompactedError or *WatchEndedError. The channel closes after it.
+	// A watch ended by its context closes the channel with no such event.
+	Err error
 }
 
 // Backend is the qrdb-primitive seam the registry builds on. The production
@@ -130,8 +188,8 @@ type Backend interface {
 	// Grant creates a lease with the given TTL in seconds and returns its ID.
 	Grant(ctx context.Context, ttlSeconds int64) (int64, error)
 
-	// KeepAlive refreshes a lease's TTL.
-	KeepAlive(ctx context.Context, leaseID int64) error
+	// KeepAlive refreshes a lease's TTL and returns the TTL it was reset to.
+	KeepAlive(ctx context.Context, leaseID int64) (int64, error)
 
 	// Revoke expires a lease, deleting its attached keys.
 	Revoke(ctx context.Context, leaseID int64) error
@@ -140,11 +198,16 @@ type Backend interface {
 	// automatically when the lease expires.
 	PutWithLease(ctx context.Context, key string, value []byte, leaseID int64) error
 
-	// Scan returns all key-value pairs under the given prefix.
-	Scan(ctx context.Context, prefix string) (map[string][]byte, error)
+	// Exists reports whether a key is present.
+	Exists(ctx context.Context, key string) (bool, error)
 
-	// WatchPrefix streams change events for all keys under the prefix.
-	WatchPrefix(ctx context.Context, prefix string) (<-chan qrdbtransport.WatchResponse, error)
+	// Range returns every key-value pair under the prefix together with the
+	// store revision the read was served at.
+	Range(ctx context.Context, prefix string) (map[string][]byte, int64, error)
+
+	// WatchPrefix streams change events for all keys under the prefix,
+	// starting at startRevision (0 = from now).
+	WatchPrefix(ctx context.Context, prefix string, startRevision int64) (<-chan qrdbtransport.WatchResponse, error)
 }
 
 // Registry is a service-discovery registry backed by qrdb primitives. It is
@@ -160,24 +223,45 @@ func New(backend Backend) *Registry {
 	return &Registry{backend: backend}
 }
 
+// leaseOwner is the value of a lease ownership mark. It records what the
+// lease backs, which is what an operator inspecting the store needs; the
+// ownership proof itself is the mark's presence under the tenant's prefix.
+type leaseOwner struct {
+	Service string `json:"service"`
+	ID      string `json:"id"`
+}
+
 // Register registers an instance under a lease with the given TTL and returns
 // the lease ID. The caller refreshes the lease via Renew; stopping renewals
-// (or calling Deregister) removes the instance.
+// (or calling Deregister) removes the instance. A TTL below MinTTL is raised
+// to MinTTL.
 func (r *Registry) Register(ctx context.Context, inst ServiceInstance, ttl time.Duration) (int64, error) {
 	tenant, err := tenantFromContext(ctx)
 	if err != nil {
 		return 0, err
 	}
-	if err := validateName(inst.Service); err != nil {
+	if err := validateName("service", inst.Service); err != nil {
 		return 0, err
 	}
-	if err := validateName(inst.ID); err != nil {
+	if err := validateName("id", inst.ID); err != nil {
 		return 0, err
+	}
+	if inst.Address == "" {
+		return 0, &InvalidInstanceError{Reason: "address is required"}
 	}
 
-	ttlSeconds := int64(ttl.Seconds())
-	if ttlSeconds < 1 {
-		ttlSeconds = 1
+	if ttl < MinTTL {
+		ttl = MinTTL
+	}
+	ttlSeconds := int64(ttl / time.Second)
+
+	data, err := json.Marshal(inst)
+	if err != nil {
+		return 0, &RegistryError{Op: "marshal", Err: err}
+	}
+	owner, err := json.Marshal(leaseOwner{Service: inst.Service, ID: inst.ID})
+	if err != nil {
+		return 0, &RegistryError{Op: "marshal", Err: err}
 	}
 
 	leaseID, err := r.backend.Grant(ctx, ttlSeconds)
@@ -185,51 +269,90 @@ func (r *Registry) Register(ctx context.Context, inst ServiceInstance, ttl time.
 		return 0, &RegistryError{Op: "grant", Err: err}
 	}
 
-	data, err := json.Marshal(inst)
-	if err != nil {
-		return 0, &RegistryError{Op: "marshal", Err: err}
+	// The ownership mark is written first: an instance must never be visible
+	// under a lease its tenant cannot later renew or revoke.
+	if err := r.backend.PutWithLease(ctx, leaseKey(tenant, leaseID), owner, leaseID); err != nil {
+		return 0, &RegistryError{Op: "put", Err: errors.Join(err, r.revokeOrphan(leaseID))}
 	}
-
 	if err := r.backend.PutWithLease(ctx, instanceKey(tenant, inst.Service, inst.ID), data, leaseID); err != nil {
-		// Best-effort cleanup of the orphaned lease on a fresh context so it
-		// runs even when the caller's context is already cancelled.
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
-		_ = r.backend.Revoke(cleanupCtx, leaseID)
-		cancel()
-		return 0, &RegistryError{Op: "put", Err: err}
+		return 0, &RegistryError{Op: "put", Err: errors.Join(err, r.revokeOrphan(leaseID))}
 	}
 	return leaseID, nil
 }
 
-// Renew refreshes the lease backing a registration (heartbeat).
-func (r *Registry) Renew(ctx context.Context, leaseID int64) error {
-	if err := r.backend.KeepAlive(ctx, leaseID); err != nil {
-		return &RegistryError{Op: "keepalive", Err: err}
+// revokeOrphan revokes a lease a failed Register left behind, on a fresh
+// context so it runs even when the caller's context is already cancelled.
+// A revoke failure is reported alongside the write failure; the lease's own
+// TTL still removes the orphan.
+func (r *Registry) revokeOrphan(leaseID int64) error {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
+	if err := r.backend.Revoke(cleanupCtx, leaseID); err != nil {
+		return &RegistryError{Op: "revoke orphaned lease", Err: err}
 	}
 	return nil
 }
 
-// Deregister removes a registration by revoking its lease, which deletes the
-// attached entry and notifies watchers.
+// Renew refreshes the lease backing one of the caller tenant's registrations
+// (a heartbeat) and returns the TTL, in seconds, it was reset to.
+func (r *Registry) Renew(ctx context.Context, leaseID int64) (int64, error) {
+	if err := r.authorizeLease(ctx, leaseID); err != nil {
+		return 0, err
+	}
+	ttl, err := r.backend.KeepAlive(ctx, leaseID)
+	if err != nil {
+		return 0, &RegistryError{Op: "keepalive", Err: err}
+	}
+	return ttl, nil
+}
+
+// Deregister removes one of the caller tenant's registrations by revoking its
+// lease, which deletes the attached entry and notifies watchers.
 func (r *Registry) Deregister(ctx context.Context, leaseID int64) error {
+	if err := r.authorizeLease(ctx, leaseID); err != nil {
+		return err
+	}
 	if err := r.backend.Revoke(ctx, leaseID); err != nil {
 		return &RegistryError{Op: "revoke", Err: err}
 	}
 	return nil
 }
 
-// Resolve returns all currently registered instances of a service.
-func (r *Registry) Resolve(ctx context.Context, service string) ([]ServiceInstance, error) {
+// authorizeLease proves the lease backs a registration of the caller's
+// tenant by the presence of its ownership mark. Without this, any caller able
+// to reach the registry could renew or revoke another tenant's lease by ID.
+func (r *Registry) authorizeLease(ctx context.Context, leaseID int64) error {
 	tenant, err := tenantFromContext(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if err := validateName(service); err != nil {
-		return nil, err
+	if leaseID <= 0 {
+		return &InvalidInstanceError{Reason: "lease ID must be positive"}
 	}
-	pairs, err := r.backend.Scan(ctx, servicePrefix(tenant, service))
+	owned, err := r.backend.Exists(ctx, leaseKey(tenant, leaseID))
 	if err != nil {
-		return nil, &RegistryError{Op: "scan", Err: err}
+		return &RegistryError{Op: "exists", Err: err}
+	}
+	if !owned {
+		return &LeaseNotFoundError{LeaseID: leaseID}
+	}
+	return nil
+}
+
+// Resolve returns every currently registered instance of a service, ordered
+// by instance ID, and the store revision they were read at. Watching from
+// that revision plus one observes every later change with nothing missed.
+func (r *Registry) Resolve(ctx context.Context, service string) ([]ServiceInstance, int64, error) {
+	tenant, err := tenantFromContext(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := validateName("service", service); err != nil {
+		return nil, 0, err
+	}
+	pairs, revision, err := r.backend.Range(ctx, servicePrefix(tenant, service))
+	if err != nil {
+		return nil, 0, &RegistryError{Op: "range", Err: err}
 	}
 	instances := make([]ServiceInstance, 0, len(pairs))
 	for _, data := range pairs {
@@ -240,22 +363,30 @@ func (r *Registry) Resolve(ctx context.Context, service string) ([]ServiceInstan
 		}
 		instances = append(instances, inst)
 	}
-	return instances, nil
+	sort.Slice(instances, func(i, j int) bool { return instances[i].ID < instances[j].ID })
+	return instances, revision, nil
 }
 
-// Watch streams registration changes for a service. The channel is closed
-// when ctx is cancelled.
-func (r *Registry) Watch(ctx context.Context, service string) (<-chan Event, error) {
+// Watch streams registration changes for a service, starting at fromRevision
+// (0 = from now). The channel is closed when ctx is cancelled, or after a
+// final event carrying Err when the store ends the watch.
+func (r *Registry) Watch(ctx context.Context, service string, fromRevision int64) (<-chan Event, error) {
 	tenant, err := tenantFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateName(service); err != nil {
+	if err := validateName("service", service); err != nil {
 		return nil, err
 	}
+	if fromRevision < 0 {
+		return nil, &InvalidInstanceError{Reason: "from revision must not be negative"}
+	}
 	prefix := servicePrefix(tenant, service)
-	src, err := r.backend.WatchPrefix(ctx, prefix)
+	src, err := r.backend.WatchPrefix(ctx, prefix, fromRevision)
 	if err != nil {
+		if compacted := asCompacted(service, fromRevision, err); compacted != nil {
+			return nil, compacted
+		}
 		return nil, &RegistryError{Op: "watch", Err: err}
 	}
 
@@ -265,8 +396,16 @@ func (r *Registry) Watch(ctx context.Context, service string) (<-chan Event, err
 	go func() {
 		defer close(out)
 		for resp := range src {
+			if resp.Canceled {
+				final := Event{Err: watchCancelError(service, fromRevision, resp.Err())}
+				select {
+				case <-ctx.Done():
+				case out <- final:
+				}
+				return
+			}
 			for _, ev := range resp.Events {
-				event, ok := translateEvent(tenant, service, ev)
+				event, ok := translateEvent(tenant, service, ev, resp.Revision)
 				if !ok {
 					continue
 				}
@@ -281,8 +420,42 @@ func (r *Registry) Watch(ctx context.Context, service string) (<-chan Event, err
 	return out, nil
 }
 
+// asCompacted reports a store watch failure caused by a compacted start
+// revision as the registry's typed WatchCompactedError, and returns nil for
+// any other failure. Every transport classifies compaction through here, so
+// a caller's resync logic matches one error type wherever it is connected.
+func asCompacted(service string, fromRevision int64, err error) *WatchCompactedError {
+	classified := qrdbtransport.ClassifyWatchError(err)
+	var compacted *qrdbtransport.WatchCompactedError
+	if errors.As(classified, &compacted) {
+		return &WatchCompactedError{Service: service, FromRevision: fromRevision, Err: classified}
+	}
+	return nil
+}
+
+// watchCancelError maps the store's cancellation of a running watch onto the
+// registry's typed watch errors.
+func watchCancelError(service string, fromRevision int64, err error) error {
+	if err == nil {
+		err = &qrdbtransport.WatchCanceledError{}
+	}
+	if compacted := asCompacted(service, fromRevision, err); compacted != nil {
+		return compacted
+	}
+	return &WatchEndedError{Service: service, Err: err}
+}
+
 // translateEvent converts a qrdb watch event into a registry Event.
-func translateEvent(tenant, service string, ev *qrdbtransport.WatchEvent) (Event, bool) {
+// headerRevision is the revision of the watch response carrying the event,
+// used when the event's own key-value carries no modification revision.
+func translateEvent(tenant, service string, ev *qrdbtransport.WatchEvent, headerRevision int64) (Event, bool) {
+	if ev == nil {
+		return Event{}, false
+	}
+	revision := headerRevision
+	if ev.Kv != nil && ev.Kv.ModRevision > 0 {
+		revision = ev.Kv.ModRevision
+	}
 	switch ev.Type {
 	case qrdbtransport.EventPut:
 		if ev.Kv == nil {
@@ -292,14 +465,14 @@ func translateEvent(tenant, service string, ev *qrdbtransport.WatchEvent) (Event
 		if err := json.Unmarshal(ev.Kv.Value, &inst); err != nil {
 			return Event{}, false
 		}
-		return Event{Type: Put, Instance: inst}, true
+		return Event{Type: Put, Instance: inst, Revision: revision}, true
 	case qrdbtransport.EventDelete:
 		// On delete the current value is gone; recover the instance from the
 		// previous value when the watch carried it, else derive ID from key.
 		if ev.PrevKv != nil {
 			var inst ServiceInstance
 			if err := json.Unmarshal(ev.PrevKv.Value, &inst); err == nil {
-				return Event{Type: Delete, Instance: inst}, true
+				return Event{Type: Delete, Instance: inst, Revision: revision}, true
 			}
 		}
 		key := ""
@@ -308,7 +481,7 @@ func translateEvent(tenant, service string, ev *qrdbtransport.WatchEvent) (Event
 		} else if ev.PrevKv != nil {
 			key = string(ev.PrevKv.Key)
 		}
-		return Event{Type: Delete, Instance: ServiceInstance{
+		return Event{Type: Delete, Revision: revision, Instance: ServiceInstance{
 			Service: service,
 			ID:      instanceIDFromKey(tenant, service, key),
 		}}, true
@@ -330,6 +503,15 @@ func servicePrefix(tenant, service string) string {
 		return keyPrefix + service + "/"
 	}
 	return tenantKeyPrefix + tenant + "/" + service + "/"
+}
+
+// leaseKey builds the qrdb key of a lease's ownership mark for a tenant.
+func leaseKey(tenant string, leaseID int64) string {
+	id := strconv.FormatInt(leaseID, 10)
+	if tenant == "" {
+		return leasePrefix + id
+	}
+	return tenantLeasePrefix + tenant + "/" + id
 }
 
 // instanceIDFromKey extracts the instance ID from a full instance key.

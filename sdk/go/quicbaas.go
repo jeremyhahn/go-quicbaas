@@ -20,7 +20,6 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/spend"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/registry"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/account"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/agents"
@@ -50,6 +49,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/query"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/rag"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/rbac"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/registry"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/scheduler"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/seal"
@@ -66,11 +66,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/rest"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/unix"
 )
-
-// DiscoveryRegistry is the service-discovery registry returned by
-// Client.Discovery. Re-exported (Layer-5 SDK-only boundary) so consumers can
-// reference the return type without importing go-quicbaas/pkg/registry directly.
-type DiscoveryRegistry = registry.Registry
 
 // Client is the unified QuicBaaS client interface providing access to all services.
 // It composes service sub-interfaces for organized access while maintaining
@@ -158,11 +153,11 @@ type Client interface {
 	CustodianGroup() (QRDBCustodianGroupClient, error)
 	Share() (QRDBShareClient, error)
 
-	// Discovery returns the service-discovery registry, built on the QRDB
-	// lease + watch + KV primitives (register/renew/deregister/resolve/watch).
-	// The return type is aliased as DiscoveryRegistry so SDK consumers can
-	// reference it without importing go-quicbaas/pkg/registry directly.
-	Discovery() (*DiscoveryRegistry, error)
+	// Registry returns the service registry client: lease-based
+	// service-instance endpoints (register, renew, deregister, resolve,
+	// watch), served by the server on every transport and scoped to the
+	// caller's authenticated tenant.
+	Registry() RegistryClient
 
 	// DataStore returns a KVStore suitable for constructing DAOs.
 	// Uses the QRDB transport layer.
@@ -1184,6 +1179,62 @@ type (
 )
 
 // =============================================================================
+// Service Registry Client Type Aliases
+// =============================================================================
+
+// RegistryClient is the service registry client (client/registry.Client).
+type RegistryClient = registry.Client
+
+// Service registry request, response and event aliases, so consumers never
+// import the leaf client package.
+type (
+	// RegistryServiceInstance is a registered instance of a named service.
+	RegistryServiceInstance = registry.ServiceInstance
+
+	// RegistryRegisterRequest registers an instance under a new lease.
+	RegistryRegisterRequest = registry.RegisterRequest
+
+	// RegistryRegisterResponse carries the lease backing a registration.
+	RegistryRegisterResponse = registry.RegisterResponse
+
+	// RegistryRenewResponse reports a renewed lease.
+	RegistryRenewResponse = registry.RenewResponse
+
+	// RegistryResolveResponse lists a service's instances and the revision
+	// they were read at.
+	RegistryResolveResponse = registry.ResolveResponse
+
+	// RegistryWatchRequest opens a watch from a revision.
+	RegistryWatchRequest = registry.WatchRequest
+
+	// RegistryEvent is one registration change.
+	RegistryEvent = registry.Event
+
+	// RegistryEventType distinguishes a registration from a deregistration.
+	RegistryEventType = registry.EventType
+
+	// RegistryWatchCompactedError ends a watch whose start revision is older
+	// than the retained history.
+	RegistryWatchCompactedError = registry.WatchCompactedError
+
+	// RegistryWatchEndedError ends a watch the server's store cancelled.
+	RegistryWatchEndedError = registry.WatchEndedError
+
+	// RegistryWatchDisconnectedError ends a watch whose connection could not
+	// be re-established.
+	RegistryWatchDisconnectedError = registry.WatchDisconnectedError
+)
+
+// Service registry event types.
+const (
+	// RegistryEventPut reports an instance registered or updated.
+	RegistryEventPut = registry.EventPut
+
+	// RegistryEventDelete reports an instance deregistered or expired.
+	RegistryEventDelete = registry.EventDelete
+)
+
+// =============================================================================
 // Scheduler Client Type Aliases
 // =============================================================================
 
@@ -1658,6 +1709,7 @@ type client struct {
 	objectTransferClient     ObjectTransferClient
 	parameterStoreClient     ParameterStoreClient
 	schedulerClient          SchedulerClient
+	registryClient           RegistryClient
 	messagingClient          MessagingClient
 	embeddingClient          EmbeddingClient
 	ollamaClient             OllamaClient
@@ -2441,6 +2493,24 @@ func (c *client) Scheduler() SchedulerClient {
 	return c.schedulerClient
 }
 
+// Registry returns the service registry client.
+func (c *client) Registry() RegistryClient {
+	c.mu.RLock()
+	if c.registryClient != nil {
+		c.mu.RUnlock()
+		return c.registryClient
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.registryClient == nil {
+		c.registryClient = newRegistryClient(c.transport)
+	}
+	return c.registryClient
+}
+
 // Messaging returns the Messaging client for pub/sub and push notifications.
 func (c *client) Messaging() MessagingClient {
 	c.mu.RLock()
@@ -2633,6 +2703,7 @@ func newObjectStorageAdminClient(t Transport) ObjectStorageAdminClient {
 func newObjectTransferClient(t Transport) ObjectTransferClient { return objecttransfer.NewClient(t) }
 func newParameterStoreClient(t Transport) ParameterStoreClient { return parameterstore.NewClient(t) }
 func newSchedulerClient(t Transport) SchedulerClient           { return scheduler.NewClient(t) }
+func newRegistryClient(t Transport) RegistryClient             { return registry.NewClient(t) }
 func newMessagingClient(t Transport) MessagingClient           { return messaging.NewClient(t) }
 func newEmbeddingClient(t Transport) EmbeddingClient           { return embedding.NewClient(t) }
 func newOllamaClient(t Transport) OllamaClient                 { return ollama.NewClient(t) }

@@ -171,7 +171,7 @@ client, _ := quicbaas.NewClient("", quicbaas.WithEmbedded(svc))
 | `Transaction()` | Compare-and-swap transactions |
 | `Query()` | Secondary index queries |
 | `Cluster()` | Cluster status and management |
-| `Discovery()` | Service discovery registry (Register/Renew/Deregister/Resolve/Watch) on qrdb lease+watch+KV |
+| `Registry()` | Service registry client (Register/Renew/Deregister/Resolve/Watch), served on every transport — see [docs/service-registry](../service-registry/user.md) |
 | `Health()` | Health checks and probes |
 | `Seal()` | Seal/unseal operations |
 | `KMS()` | Key management service |

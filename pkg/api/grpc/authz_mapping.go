@@ -50,6 +50,7 @@ var brokerServiceDescs = []grpc.ServiceDesc{
 	pb.CertificateService_ServiceDesc,
 	pb.TrustService_ServiceDesc,
 	pb.AttestationService_ServiceDesc,
+	pb.RegistryService_ServiceDesc,
 	pb.FIDO2Service_ServiceDesc,
 	pb.PIVService_ServiceDesc,
 	pb.VectorDB_ServiceDesc,
@@ -426,6 +427,18 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.attestation.v1.AttestationService/Verify":          {"attestation", "verify"},
 	"/quicbaas.attestation.v1.AttestationService/VerifyChain":     {"attestation", "verify"},
 	"/quicbaas.attestation.v1.AttestationService/AttestContainer": {"attestation", "attest"},
+
+	// ---- quicbaas.registry.v1.RegistryService ----
+	//
+	// The service registry has its own resource family (pkg/permission):
+	// register/renew/deregister mutate only the caller tenant's own
+	// registrations and carry the write verb; resolve and the watch stream
+	// only read and carry the read verb.
+	"/quicbaas.registry.v1.RegistryService/Register":   {"service_registry", "register"},
+	"/quicbaas.registry.v1.RegistryService/Renew":      {"service_registry", "register"},
+	"/quicbaas.registry.v1.RegistryService/Deregister": {"service_registry", "register"},
+	"/quicbaas.registry.v1.RegistryService/Resolve":    {"service_registry", "read"},
+	"/quicbaas.registry.v1.RegistryService/Watch":      {"service_registry", "read"},
 
 	// ---- quicbaas.certificate.v1.TrustService ----
 	"/quicbaas.certificate.v1.TrustService/CrossSignedRootPool": {"certs", "read"},

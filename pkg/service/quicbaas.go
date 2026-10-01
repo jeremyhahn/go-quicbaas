@@ -46,6 +46,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/registry"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	schedulerhandlers "github.com/jeremyhahn/go-quicbaas/pkg/scheduler/handlers"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
@@ -168,6 +169,7 @@ type quicBaaS struct {
 	certificateService        CertificateService
 	trustService              TrustService
 	attestationService        AttestationService
+	registryService           RegistryService
 	pivService                PIVService
 	fido2Service              FIDO2Service
 	webauthnCredentialService WebAuthnCredentialService
@@ -595,6 +597,17 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	// unconditionally means Security().Attestation() never returns nil and
 	// every transport can route to it.
 	svc.attestationService = NewAttestationService(b.attestationTrustAnchors, b.containerAttestor)
+
+	// The service registry is always wired. It resolves the platform shard's
+	// qrdb client per call, so a server whose store is not up yet answers
+	// with a typed unavailable error instead of a nil service.
+	svc.registryService = newRegistryService(func() (*registry.Registry, error) {
+		client, err := svc.qrdbForShard(registryShardID)
+		if err != nil {
+			return nil, err
+		}
+		return registry.NewFromClient(client), nil
+	})
 
 	// The PIV and FIDO2 services are always wired. PIV is a stateless
 	// delegate to the composed go-xkms service singleton (typed
@@ -4699,6 +4712,11 @@ func (s *quicBaaS) Trust() TrustService {
 // orchestration half reports its own not-configured error.
 func (s *quicBaaS) Attestation() AttestationService {
 	return s.attestationService
+}
+
+// Registry returns the service registry. It is always non-nil.
+func (s *quicBaaS) Registry() RegistryService {
+	return s.registryService
 }
 
 // PIV returns the backend-scoped PIV composition service surfaced under

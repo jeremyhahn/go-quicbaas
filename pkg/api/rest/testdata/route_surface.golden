@@ -32,6 +32,7 @@ DELETE /api/v1/orchestrator/workflows/{name}
 DELETE /api/v1/parameters/*
 DELETE /api/v1/projects/{id}
 DELETE /api/v1/projects/{id}/permissions/{node_id}
+DELETE /api/v1/registry/leases/{lease_id}
 DELETE /api/v1/scheduler/jobs/{id}
 DELETE /api/v1/sdlc/projects/{projectID}/binding
 DELETE /api/v1/sdlc/projects/{projectID}/pulls/{number}/reviewer
@@ -191,6 +192,8 @@ GET /api/v1/parameters/*
 GET /api/v1/projects/
 GET /api/v1/projects/{id}
 GET /api/v1/query/{type}/{index}
+GET /api/v1/registry/services/{service}
+GET /api/v1/registry/services/{service}/watch
 GET /api/v1/scheduler/jobs
 GET /api/v1/scheduler/jobs/{id}
 GET /api/v1/scheduler/jobs/{id}/history
@@ -469,6 +472,8 @@ POST /api/v1/parameters/batch/set
 POST /api/v1/parameters/search
 POST /api/v1/projects/
 POST /api/v1/query/range
+POST /api/v1/registry/instances
+POST /api/v1/registry/leases/{lease_id}/renew
 POST /api/v1/scheduler/jobs
 POST /api/v1/scheduler/jobs/{id}/cancel
 POST /api/v1/scheduler/jobs/{id}/pause

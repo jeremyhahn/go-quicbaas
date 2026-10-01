@@ -64,3 +64,18 @@ func (s *Server) registerAttestationService(grpcServer *ggrpc.Server, quicbaasSe
 	grpcapi.RegisterAttestationServiceServer(grpcServer, quicbaasService)
 	s.logger.Info("Registered AttestationService gRPC service")
 }
+
+// registerRegistryService registers the service registry on the gRPC
+// listener (and so on the Unix-domain socket, which shares it). Like
+// attestation it is always present: the service layer resolves the platform
+// shard per call and reports an unreachable store as a typed error, so
+// registering unconditionally keeps the gRPC surface symmetric with REST
+// /api/v1/registry and the QUIC/MCP/embedded transports.
+func (s *Server) registerRegistryService(grpcServer *ggrpc.Server) {
+	if s.quicBaaSService == nil {
+		s.logger.Info("QuicBaaS service not available, skipping RegistryService gRPC registration")
+		return
+	}
+	grpcapi.RegisterRegistryServiceServer(grpcServer, grpcapi.NewRegistryServer(s.quicBaaSService.Registry()))
+	s.logger.Info("Registered RegistryService gRPC service")
+}

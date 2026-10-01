@@ -25,7 +25,7 @@ import (
 // fakeTransport is the minimal qrdb transport the clientBackend exercises.
 // The qrdb *Client type-asserts its transport to the typed sub-clients
 // (LeaseClient, MVCCClient, KVClient, WatchClient), so the fake embeds
-// those interfaces to satisfy the assertions and overrides only the six
+// those interfaces to satisfy the assertions and overrides only the seven
 // methods backend.go calls. Embedding leaves the unused methods nil, but
 // they are never invoked by the clientBackend, so this stays a faithful
 // adapter test rather than a partial reimplementation.
@@ -35,21 +35,24 @@ type fakeTransport struct {
 	qrdbtransport.KVClient
 	qrdbtransport.WatchClient
 
-	grantedTTL    int64
-	keepAliveID   int64
-	revokedID     int64
-	putKey        string
-	putValue      []byte
-	putLease      int64
-	scannedPrefix string
-	watchPrefix   string
-	watchOpts     qrdbtransport.WatchOptions
+	grantedTTL  int64
+	keepAliveID int64
+	revokedID   int64
+	putKey      string
+	putValue    []byte
+	putLease    int64
+	existsKey   string
+	rangeStart  []byte
+	rangeEnd    []byte
+	watchPrefix string
+	watchOpts   qrdbtransport.WatchOptions
 
 	grantErr     error
 	keepAliveErr error
 	revokeErr    error
 	putErr       error
-	scanErr      error
+	existsErr    error
+	rangeErr     error
 	watchErr     error
 }
 
@@ -76,7 +79,7 @@ func (f *fakeTransport) LeaseKeepAlive(_ context.Context, leaseID int64) (*qrdbt
 		return nil, f.keepAliveErr
 	}
 	f.keepAliveID = leaseID
-	return &qrdbtransport.LeaseInfo{ID: leaseID}, nil
+	return &qrdbtransport.LeaseInfo{ID: leaseID, TTL: 15}, nil
 }
 
 func (f *fakeTransport) LeaseRevoke(_ context.Context, leaseID int64) error {
@@ -98,13 +101,27 @@ func (f *fakeTransport) PutWithLease(_ context.Context, key string, value []byte
 	return &qrdbtransport.MVCCKeyValue{Key: []byte(key), Value: value}, nil
 }
 
-// KVClient override.
-func (f *fakeTransport) Scan(_ context.Context, prefix string, _ ...qrdbtransport.ReadOption) (map[string][]byte, error) {
-	if f.scanErr != nil {
-		return nil, f.scanErr
+// MVCCClient override: the range read Resolve is served from.
+func (f *fakeTransport) Range(_ context.Context, start, end []byte, _ qrdbtransport.RangeOptions, _ ...qrdbtransport.ReadOption) (*qrdbtransport.RangeResponse, error) {
+	if f.rangeErr != nil {
+		return nil, f.rangeErr
 	}
-	f.scannedPrefix = prefix
-	return map[string][]byte{prefix + "a": []byte("v")}, nil
+	f.rangeStart = start
+	f.rangeEnd = end
+	return &qrdbtransport.RangeResponse{
+		Kvs:      []*qrdbtransport.MVCCKeyValue{{Key: append(append([]byte(nil), start...), 'a'), Value: []byte("v")}, nil},
+		Count:    1,
+		Revision: 77,
+	}, nil
+}
+
+// KVClient override: the lease-ownership check.
+func (f *fakeTransport) Exists(_ context.Context, key string, _ ...qrdbtransport.ReadOption) (bool, error) {
+	if f.existsErr != nil {
+		return false, f.existsErr
+	}
+	f.existsKey = key
+	return key == "owned", nil
 }
 
 // WatchClient override.
@@ -166,19 +183,50 @@ func TestClientBackend_GrantError(t *testing.T) {
 func TestClientBackend_KeepAlive(t *testing.T) {
 	ft := &fakeTransport{}
 	b := NewClientBackend(newClientWith(t, ft))
-	if err := b.KeepAlive(context.Background(), 7); err != nil {
+	ttl, err := b.KeepAlive(context.Background(), 7)
+	if err != nil {
 		t.Fatalf("KeepAlive: %v", err)
 	}
 	if ft.keepAliveID != 7 {
 		t.Fatalf("forwarded leaseID = %d, want 7", ft.keepAliveID)
+	}
+	if ttl != 15 {
+		t.Fatalf("KeepAlive ttl = %d, want the LeaseInfo TTL 15", ttl)
 	}
 }
 
 func TestClientBackend_KeepAliveError(t *testing.T) {
 	boom := errors.New("keepalive boom")
 	b := NewClientBackend(newClientWith(t, &fakeTransport{keepAliveErr: boom}))
-	if err := b.KeepAlive(context.Background(), 7); !errors.Is(err, boom) {
+	if _, err := b.KeepAlive(context.Background(), 7); !errors.Is(err, boom) {
 		t.Fatalf("KeepAlive err = %v, want %v", err, boom)
+	}
+}
+
+func TestClientBackend_Exists(t *testing.T) {
+	ft := &fakeTransport{}
+	b := NewClientBackend(newClientWith(t, ft))
+	owned, err := b.Exists(context.Background(), "owned")
+	if err != nil {
+		t.Fatalf("Exists: %v", err)
+	}
+	if !owned || ft.existsKey != "owned" {
+		t.Fatalf("Exists = %v (key %q), want true for the forwarded key", owned, ft.existsKey)
+	}
+	missing, err := b.Exists(context.Background(), "missing")
+	if err != nil {
+		t.Fatalf("Exists: %v", err)
+	}
+	if missing {
+		t.Fatal("Exists reported a missing key as present")
+	}
+}
+
+func TestClientBackend_ExistsError(t *testing.T) {
+	boom := errors.New("exists boom")
+	b := NewClientBackend(newClientWith(t, &fakeTransport{existsErr: boom}))
+	if _, err := b.Exists(context.Background(), "k"); !errors.Is(err, boom) {
+		t.Fatalf("Exists err = %v, want %v", err, boom)
 	}
 }
 
@@ -220,35 +268,57 @@ func TestClientBackend_PutWithLeaseError(t *testing.T) {
 	}
 }
 
-func TestClientBackend_Scan(t *testing.T) {
+// TestClientBackend_Range proves the prefix is read as the half-open range
+// [prefix, prefixEnd) and that the read's revision reaches the registry, which
+// is what makes a Resolve-then-Watch handoff gap-free.
+func TestClientBackend_Range(t *testing.T) {
 	ft := &fakeTransport{}
 	b := NewClientBackend(newClientWith(t, ft))
-	out, err := b.Scan(context.Background(), "svc/")
+	out, revision, err := b.Range(context.Background(), "svc/")
 	if err != nil {
-		t.Fatalf("Scan: %v", err)
+		t.Fatalf("Range: %v", err)
 	}
-	if ft.scannedPrefix != "svc/" {
-		t.Fatalf("forwarded prefix = %q, want svc/", ft.scannedPrefix)
+	if string(ft.rangeStart) != "svc/" || string(ft.rangeEnd) != "svc0" {
+		t.Fatalf("forwarded range = [%q, %q), want [svc/, svc0)", ft.rangeStart, ft.rangeEnd)
 	}
-	if string(out["svc/a"]) != "v" {
-		t.Fatalf("Scan result = %v, want svc/a=v", out)
+	if string(out["svc/a"]) != "v" || len(out) != 1 {
+		t.Fatalf("Range result = %v, want only svc/a=v (nil entries skipped)", out)
+	}
+	if revision != 77 {
+		t.Fatalf("Range revision = %d, want 77", revision)
 	}
 }
 
-func TestClientBackend_ScanError(t *testing.T) {
-	boom := errors.New("scan boom")
-	b := NewClientBackend(newClientWith(t, &fakeTransport{scanErr: boom}))
-	if _, err := b.Scan(context.Background(), "svc/"); !errors.Is(err, boom) {
-		t.Fatalf("Scan err = %v, want %v", err, boom)
+func TestClientBackend_RangeError(t *testing.T) {
+	boom := errors.New("range boom")
+	b := NewClientBackend(newClientWith(t, &fakeTransport{rangeErr: boom}))
+	if _, _, err := b.Range(context.Background(), "svc/"); !errors.Is(err, boom) {
+		t.Fatalf("Range err = %v, want %v", err, boom)
+	}
+}
+
+func TestPrefixEnd(t *testing.T) {
+	cases := map[string]string{
+		"svc/":           "svc0",
+		"a":              "b",
+		"a\xff":          "b",
+		"\xff\xff":       "",
+		"__sys:svc-t/x/": "__sys:svc-t/x0",
+	}
+	for prefix, want := range cases {
+		if got := string(prefixEnd(prefix)); got != want {
+			t.Errorf("prefixEnd(%q) = %q, want %q", prefix, got, want)
+		}
 	}
 }
 
 // TestClientBackend_WatchPrefix proves the backend requests PrevKV so the
-// registry can recover the instance payload on lease-expiry deletes.
+// registry can recover the instance payload on lease-expiry deletes, and
+// forwards the start revision a resumed watch asks for.
 func TestClientBackend_WatchPrefix(t *testing.T) {
 	ft := &fakeTransport{}
 	b := NewClientBackend(newClientWith(t, ft))
-	ch, err := b.WatchPrefix(context.Background(), "svc/")
+	ch, err := b.WatchPrefix(context.Background(), "svc/", 41)
 	if err != nil {
 		t.Fatalf("WatchPrefix: %v", err)
 	}
@@ -261,12 +331,15 @@ func TestClientBackend_WatchPrefix(t *testing.T) {
 	if !ft.watchOpts.PrevKV {
 		t.Fatal("WatchPrefix must request PrevKV=true for lease-expiry recovery")
 	}
+	if ft.watchOpts.StartRevision != 41 {
+		t.Fatalf("forwarded start revision = %d, want 41", ft.watchOpts.StartRevision)
+	}
 }
 
 func TestClientBackend_WatchPrefixError(t *testing.T) {
 	boom := errors.New("watch boom")
 	b := NewClientBackend(newClientWith(t, &fakeTransport{watchErr: boom}))
-	if _, err := b.WatchPrefix(context.Background(), "svc/"); !errors.Is(err, boom) {
+	if _, err := b.WatchPrefix(context.Background(), "svc/", 0); !errors.Is(err, boom) {
 		t.Fatalf("WatchPrefix err = %v, want %v", err, boom)
 	}
 }

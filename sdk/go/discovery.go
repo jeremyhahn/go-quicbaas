@@ -20,8 +20,8 @@
 // manager). They are distinct from:
 //   - the quicbaas server-config aliases in server.go (DiscoveryConfig,
 //     MulticastDiscoveryConfig — the YAML config layer), and
-//   - the *service* registry exposed by Client.Discovery() in quicbaas.go,
-//     which is unrelated and intentionally left untouched.
+//   - the *service* registry exposed by Client.Registry() (client/registry),
+//     which is unrelated: it lists application service endpoints, not peers.
 //
 // To avoid clashing with the server-config layer, the runtime discovery
 // config types carry a Discovery prefix.

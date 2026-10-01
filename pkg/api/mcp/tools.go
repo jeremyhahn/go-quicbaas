@@ -212,6 +212,7 @@ func (r *ToolRegistry) registerTools() {
 	r.registerCertificateTools()
 	r.registerTrustTools()
 	r.registerAttestationTools()
+	r.registerRegistryTools()
 
 	// Register Dynamic Secrets tools
 	r.registerDynamicSecretsTools()
@@ -1312,6 +1313,11 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		// verification + the container attestation seam)
 		if isAttestationTool(name) {
 			return r.executeAttestationTool(ctx, name, args)
+		}
+
+		// Check if it's a service registry tool
+		if isRegistryTool(name) {
+			return r.executeRegistryTool(ctx, name, args)
 		}
 
 		// Check if it's a Dynamic Secrets tool

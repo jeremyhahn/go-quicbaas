@@ -18,8 +18,6 @@ import (
 
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
-
-	"github.com/jeremyhahn/go-quicbaas/pkg/registry"
 )
 
 // =============================================================================
@@ -42,6 +40,7 @@ type ClusterManagementService interface {
 	Health() HealthClient
 	Operations() OperationsClient
 	Cache() CacheClient
+	Registry() RegistryClient
 }
 
 // SecurityService provides security and encryption operations including
@@ -209,6 +208,7 @@ func (s *clusterManagementService) Cluster() ClusterClient       { return s.c.Cl
 func (s *clusterManagementService) Health() HealthClient         { return s.c.Health() }
 func (s *clusterManagementService) Operations() OperationsClient { return s.c.Operations() }
 func (s *clusterManagementService) Cache() CacheClient           { return s.c.Cache() }
+func (s *clusterManagementService) Registry() RegistryClient     { return s.c.Registry() }
 
 // securityService delegates SecurityService methods to the underlying client.
 // The new Auth() returns an AuthService that composes the existing AuthClient
@@ -507,17 +507,6 @@ func (c *client) TenantMgmt() (QRDBTenantClient, error) {
 		return nil, err
 	}
 	return qrdbClient.Tenants(), nil
-}
-
-// Discovery returns the service-discovery registry, built on the QRDB
-// lease + watch + KV primitives. The QRDB client is lazily initialized on
-// first call.
-func (c *client) Discovery() (*registry.Registry, error) {
-	qrdbClient, err := c.qrdbClient()
-	if err != nil {
-		return nil, err
-	}
-	return registry.NewFromClient(qrdbClient), nil
 }
 
 // CustodianGroup returns the QRDB CustodianGroupClient for managing

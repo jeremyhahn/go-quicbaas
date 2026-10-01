@@ -384,6 +384,13 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 		return handler.handleRequest(ctx, service, method, req)
 	}
 
+	// The service registry. Its SDK types are plain Go structs, converted to
+	// the generated RegistryService proto types. This branch also serves the
+	// Unix transport, which delegates to gRPC verbatim.
+	if isRegistryService(service) {
+		return handleRegistryRequest(ctx, conn, method, req)
+	}
+
 	// Check if this is a FIDO2 ceremony request and route through the FIDO2
 	// handler. The SDK FIDO2 surface exchanges the go-xkms transport wire
 	// structs, which don't implement proto.Message, so they must be
@@ -489,6 +496,17 @@ func (t *Transport) RequestStream(ctx context.Context, service, method string, r
 	if isOrchestratorService(service) {
 		handler := newOrchestratorHandler(conn)
 		s, streamErr := handler.handleStream(ctx, method, req, t, conn)
+		if streamErr != nil {
+			t.returnConn(conn)
+			return nil, streamErr
+		}
+		return s, nil
+	}
+
+	// The service registry's watch is a server stream of RegistryEvent
+	// protos, converted to the SDK event on Recv.
+	if isRegistryService(service) {
+		s, streamErr := openRegistryWatch(ctx, t, conn, method, req)
 		if streamErr != nil {
 			t.returnConn(conn)
 			return nil, streamErr

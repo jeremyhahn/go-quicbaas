@@ -25,7 +25,7 @@ import (
 
 // TestRegistry_OversizeTenantRejected proves a tenant ID longer than the
 // platform bound is rejected before any backend call, across the three
-// tenant-scoped verbs (Register/Resolve/Watch) that resolve the tenant
+// tenant-scoped verbs (Register/Resolve/Watch/Deregister) that resolve the tenant
 // from context. This guards the maxTenantLen length check in
 // tenantFromContext.
 func TestRegistry_OversizeTenantRejected(t *testing.T) {
@@ -43,9 +43,11 @@ func TestRegistry_OversizeTenantRejected(t *testing.T) {
 
 	_, err := r.Register(ctx, sampleInstance(), time.Second)
 	asInvalid(t, err)
-	_, err = r.Resolve(ctx, "payments")
+	_, _, err = r.Resolve(ctx, "payments")
 	asInvalid(t, err)
-	_, err = r.Watch(ctx, "payments")
+	_, err = r.Watch(ctx, "payments", 0)
+	asInvalid(t, err)
+	err = r.Deregister(ctx, 1)
 	asInvalid(t, err)
 }
 
@@ -56,7 +58,7 @@ func TestRegistry_OversizeTenantRejected(t *testing.T) {
 func TestRegistry_WatchPropagatesUpstreamClose(t *testing.T) {
 	b := newFakeBackend()
 	r := New(b)
-	ch, err := r.Watch(context.Background(), "payments")
+	ch, err := r.Watch(context.Background(), "payments", 0)
 	if err != nil {
 		t.Fatalf("Watch: %v", err)
 	}

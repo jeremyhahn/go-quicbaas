@@ -78,4 +78,8 @@ var (
 	// ErrAttestationServiceUnavailable indicates the attestation service
 	// is not available on this server build.
 	ErrAttestationServiceUnavailable = errors.New("attestation service not available")
+
+	// ErrRegistryServiceUnavailable indicates the service registry is not
+	// configured on this server.
+	ErrRegistryServiceUnavailable = errors.New("service registry not available")
 )

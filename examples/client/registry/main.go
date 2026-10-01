@@ -11,10 +11,10 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Command registry demonstrates QuicBaaS service discovery: registering a
-// service instance under a lease, resolving instances by service name,
-// watching for membership changes, and deregistering. The registry is built
-// entirely on the QRDB lease + watch + KV primitives.
+// Command registry demonstrates the QuicBaaS service registry: registering a
+// service instance under a lease, resolving the service, watching it from the
+// resolved revision, renewing the lease and deregistering. The registry is
+// served on every transport and scoped to the caller's tenant.
 package main
 
 import (
@@ -24,7 +24,6 @@ import (
 	"log"
 	"time"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/registry"
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 )
 
@@ -34,7 +33,7 @@ func main() {
 	service := flag.String("service", "payments", "Service name to register under")
 	flag.Parse()
 
-	fmt.Println("=== QuicBaaS Service Discovery Example ===")
+	fmt.Println("=== QuicBaaS Service Registry Example ===")
 	fmt.Printf("Transport: %s\nAddress:   %s\nService:   %s\n\n", *transportType, *address, *service)
 
 	opts := []quicbaas.Option{quicbaas.WithTimeout(30 * time.Second)}
@@ -49,68 +48,62 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
-
-	reg, err := client.Discovery()
-	if err != nil {
-		log.Fatalf("Failed to obtain discovery registry: %v", err)
-	}
-
-	ctx := context.Background()
-
-	// Watch for membership changes before registering.
-	events, err := reg.Watch(ctx, *service)
-	if err != nil {
-		log.Fatalf("Watch failed: %v", err)
-	}
-	go func() {
-		for ev := range events {
-			switch ev.Type {
-			case registry.Put:
-				fmt.Printf("  [watch] instance up:   %s @ %s\n", ev.Instance.ID, ev.Instance.Address)
-			case registry.Delete:
-				fmt.Printf("  [watch] instance down: %s\n", ev.Instance.ID)
-			}
+	defer func() {
+		if err := client.Close(); err != nil {
+			log.Printf("close: %v", err)
 		}
 	}()
 
-	// Register this instance under a 10s lease.
-	inst := registry.ServiceInstance{
-		ID:       "instance-1",
-		Service:  *service,
-		Address:  "10.0.0.5:8080",
-		Metadata: map[string]string{"zone": "a"},
-	}
-	fmt.Println("Step 1: Registering instance...")
-	leaseID, err := reg.Register(ctx, inst, 10*time.Second)
-	if err != nil {
-		log.Fatalf("Register failed: %v", err)
-	}
-	fmt.Printf("  registered %s under lease %d\n\n", inst.ID, leaseID)
+	reg := client.Registry()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// Resolve the service.
-	fmt.Println("Step 2: Resolving service...")
-	instances, err := reg.Resolve(ctx, *service)
+	fmt.Println("Step 1: Resolving the service and watching it from that revision...")
+	snapshot, err := reg.Resolve(ctx, *service)
 	if err != nil {
 		log.Fatalf("Resolve failed: %v", err)
 	}
-	for _, i := range instances {
-		fmt.Printf("  resolved %s @ %s %v\n", i.ID, i.Address, i.Metadata)
+	fmt.Printf("  %d instance(s) at revision %d\n\n", len(snapshot.Instances), snapshot.Revision)
+	events, err := reg.Watch(ctx, &quicbaas.RegistryWatchRequest{Service: *service, FromRevision: snapshot.Revision + 1})
+	if err != nil {
+		log.Fatalf("Watch failed: %v", err)
 	}
-	fmt.Println()
 
-	// Heartbeat once, then deregister.
-	fmt.Println("Step 3: Renewing lease (heartbeat)...")
-	if err := reg.Renew(ctx, leaseID); err != nil {
+	fmt.Println("Step 2: Registering an instance under a 10s lease...")
+	lease, err := reg.Register(ctx, &quicbaas.RegistryRegisterRequest{
+		Instance: quicbaas.RegistryServiceInstance{
+			ID:       "instance-1",
+			Service:  *service,
+			Address:  "10.0.0.5:8080",
+			Metadata: map[string]string{"zone": "a"},
+		},
+		TTLSeconds: 10,
+	})
+	if err != nil {
+		log.Fatalf("Register failed: %v", err)
+	}
+	fmt.Printf("  registered under lease %d\n", lease.LeaseID)
+	printEvent(<-events)
+
+	fmt.Println("Step 3: Renewing the lease (heartbeat)...")
+	renewed, err := reg.Renew(ctx, lease.LeaseID)
+	if err != nil {
 		log.Fatalf("Renew failed: %v", err)
 	}
+	fmt.Printf("  lease reset to %ds\n\n", renewed.TTLSeconds)
 
-	fmt.Println("Step 4: Deregistering instance...")
-	if err := reg.Deregister(ctx, leaseID); err != nil {
+	fmt.Println("Step 4: Deregistering...")
+	if err := reg.Deregister(ctx, lease.LeaseID); err != nil {
 		log.Fatalf("Deregister failed: %v", err)
 	}
-
-	// Give the watch goroutine a moment to observe the delete.
-	time.Sleep(500 * time.Millisecond)
+	printEvent(<-events)
 	fmt.Println("\nDone.")
+}
+
+// printEvent reports one watch event.
+func printEvent(ev quicbaas.RegistryEvent) {
+	if ev.Err != nil {
+		log.Fatalf("watch ended: %v", ev.Err)
+	}
+	fmt.Printf("  [watch] %s %s @ %s (revision %d)\n\n", ev.Type, ev.Instance.ID, ev.Instance.Address, ev.Revision)
 }

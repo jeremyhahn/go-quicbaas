@@ -124,6 +124,11 @@ type QuicBaaS interface {
 	// until an application registers a ContainerAttestor.
 	Attestation() AttestationService
 
+	// Registry returns the service registry: lease-based service-instance
+	// endpoints (register, renew, deregister, resolve, watch). It is always
+	// configured; a store that cannot be reached is reported per call.
+	Registry() RegistryService
+
 	// PIV returns the backend-scoped PIV composition service surfaced
 	// under Security().Auth().PIV(). Always configured: every verb
 	// delegates to the composed go-xkms service, whose typed errors

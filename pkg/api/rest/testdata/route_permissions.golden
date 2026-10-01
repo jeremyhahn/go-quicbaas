@@ -29,6 +29,7 @@ DELETE /api/v1/orchestrator/workflows/{name} permission orchestrator:workflow_wr
 DELETE /api/v1/parameters/* permission parameters:delete
 DELETE /api/v1/projects/{id} permission project:delete
 DELETE /api/v1/projects/{id}/permissions/{node_id} permission project:revoke
+DELETE /api/v1/registry/leases/{lease_id} permission service_registry:register
 DELETE /api/v1/scheduler/jobs/{id} permission scheduler:delete
 DELETE /api/v1/sdlc/projects/{projectID}/binding permission sdlc:unbind
 DELETE /api/v1/sdlc/projects/{projectID}/pulls/{number}/reviewer permission sdlc:bind
@@ -188,6 +189,8 @@ GET /api/v1/parameters/* permission parameters:read
 GET /api/v1/projects/ permission project:list
 GET /api/v1/projects/{id} permission project:read
 GET /api/v1/query/{type}/{index} permission kv:range
+GET /api/v1/registry/services/{service} permission service_registry:read
+GET /api/v1/registry/services/{service}/watch permission service_registry:read
 GET /api/v1/scheduler/jobs permission scheduler:list
 GET /api/v1/scheduler/jobs/{id} permission scheduler:read
 GET /api/v1/scheduler/jobs/{id}/history permission scheduler:history
@@ -461,6 +464,8 @@ POST /api/v1/parameters/batch/set permission parameters:write
 POST /api/v1/parameters/search permission parameters:search
 POST /api/v1/projects/ permission project:create
 POST /api/v1/query/range permission index:scan
+POST /api/v1/registry/instances permission service_registry:register
+POST /api/v1/registry/leases/{lease_id}/renew permission service_registry:register
 POST /api/v1/scheduler/jobs permission scheduler:create
 POST /api/v1/scheduler/jobs/{id}/cancel permission scheduler:cancel
 POST /api/v1/scheduler/jobs/{id}/pause permission scheduler:pause

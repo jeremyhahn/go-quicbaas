@@ -46,9 +46,12 @@ func (b *clientBackend) Grant(ctx context.Context, ttlSeconds int64) (int64, err
 	return info.ID, nil
 }
 
-func (b *clientBackend) KeepAlive(ctx context.Context, leaseID int64) error {
-	_, err := b.client.Lease().LeaseKeepAlive(ctx, leaseID)
-	return err
+func (b *clientBackend) KeepAlive(ctx context.Context, leaseID int64) (int64, error) {
+	info, err := b.client.Lease().LeaseKeepAlive(ctx, leaseID)
+	if err != nil {
+		return 0, err
+	}
+	return info.TTL, nil
 }
 
 func (b *clientBackend) Revoke(ctx context.Context, leaseID int64) error {
@@ -60,11 +63,44 @@ func (b *clientBackend) PutWithLease(ctx context.Context, key string, value []by
 	return err
 }
 
-func (b *clientBackend) Scan(ctx context.Context, prefix string) (map[string][]byte, error) {
-	return b.client.KV().Scan(ctx, prefix)
+func (b *clientBackend) Exists(ctx context.Context, key string) (bool, error) {
+	return b.client.KV().Exists(ctx, key)
 }
 
-func (b *clientBackend) WatchPrefix(ctx context.Context, prefix string) (<-chan qrdbtransport.WatchResponse, error) {
+func (b *clientBackend) Range(ctx context.Context, prefix string) (map[string][]byte, int64, error) {
+	resp, err := b.client.MVCC().Range(ctx, []byte(prefix), prefixEnd(prefix), qrdbtransport.RangeOptions{})
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make(map[string][]byte, len(resp.Kvs))
+	for _, kv := range resp.Kvs {
+		if kv == nil {
+			continue
+		}
+		out[string(kv.Key)] = kv.Value
+	}
+	return out, resp.Revision, nil
+}
+
+func (b *clientBackend) WatchPrefix(ctx context.Context, prefix string, startRevision int64) (<-chan qrdbtransport.WatchResponse, error) {
 	// PrevKV lets the registry recover the instance on lease-expiry deletes.
-	return b.client.Watch().WatchPrefix(ctx, prefix, qrdbtransport.WatchOptions{PrevKV: true})
+	return b.client.Watch().WatchPrefix(ctx, prefix, qrdbtransport.WatchOptions{
+		StartRevision: startRevision,
+		PrevKV:        true,
+	})
+}
+
+// prefixEnd returns the exclusive upper bound of the key range sharing
+// prefix: the prefix with its last byte below 0xff incremented and everything
+// after it dropped. The registry's prefixes are ASCII and end in '/', so the
+// all-0xff case never arises; it returns nil (an open range) for completeness.
+func prefixEnd(prefix string) []byte {
+	end := []byte(prefix)
+	for i := len(end) - 1; i >= 0; i-- {
+		if end[i] < 0xff {
+			end[i]++
+			return end[:i+1]
+		}
+	}
+	return nil
 }

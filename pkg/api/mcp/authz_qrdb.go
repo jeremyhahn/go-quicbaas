@@ -62,6 +62,16 @@ type qrdbToolResource struct {
 // qrdbToolExactMapping maps exact MCP tool names to the qrdb permission they
 // require. Every value is a registered qrdb permission.
 var qrdbToolExactMapping = map[string]qrdbToolResource{
+	// Service registry. Its own resource family (pkg/permission): register,
+	// renew and deregister carry the write verb, resolve and the watch long
+	// poll the read verb. Values MUST match pkg/api/grpc/authz_mapping.go and
+	// the REST frozen route table.
+	"quicbaas_registry_register":   {"service_registry", "register"},
+	"quicbaas_registry_renew":      {"service_registry", "register"},
+	"quicbaas_registry_deregister": {"service_registry", "register"},
+	"quicbaas_registry_resolve":    {"service_registry", "read"},
+	"quicbaas_registry_watch":      {"service_registry", "read"},
+
 	// KV. The quicbaas_ names here are the ones the registry actually
 	// registers; the quicbaas_get / quicbaas_put / quicbaas_set /
 	// quicbaas_scan / quicbaas_list / quicbaas_delete aliases that used to sit

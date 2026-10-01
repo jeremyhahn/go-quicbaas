@@ -4394,11 +4394,32 @@ bench-account: ## Run pooled provider account benchmarks
 	@echo "$(BLUE)Running pooled provider account benchmarks...$(NC)"
 	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -bench=. -benchmem -run=^$$ ./client/account/...
 
+.PHONY: test-registry
+test-registry: ## Run service registry unit tests (storage, service, every transport, SDK client, CLI)
+	@echo "$(BLUE)Running service registry unit tests...$(NC)"
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -race -tags '$(TEST_TAGS)' ./pkg/registry/...
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -race -tags '$(TEST_TAGS)' -run 'Registry' ./pkg/service/ ./pkg/api/grpc/ ./pkg/api/rest/ ./pkg/api/mcp/ ./cmd/quicbaas/
+	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -race ./client/registry/... && \
+		GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -count=1 -race -run 'Registry' ./transport/...
+
+.PHONY: coverage-registry
+coverage-registry: ## Generate coverage report for the service registry packages
+	@mkdir -p $(COVERAGE_DIR)
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -tags '$(TEST_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-registry.out -covermode=atomic ./pkg/registry/...
+	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-registry.out | grep total
+	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -cover ./client/registry/...
+
+.PHONY: bench-registry
+bench-registry: ## Run service registry benchmarks
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -bench=. -benchmem -run=^$$ ./pkg/registry/...
+
+.PHONY: integration-test-registry
+integration-test-registry: ## Run service registry CLI integration tests (all transports, in the devcontainer)
+	@$(MAKE) integration-test WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 QUICBAAS_TEST_FILTER="-run TestServiceRegistry ./test/integration/cli/..."
+
 .PHONY: integration-test-account
-integration-test-account: ## Run pooled provider account CLI integration tests (all transports)
-	@echo "$(BLUE)Running pooled provider account CLI integration tests...$(NC)"
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -v -count=1 -tags 'integration $(INTEGRATION_BUILD_TAGS)' \
-		-run 'TestAgentAccount' ./test/integration/cli/...
+integration-test-account: ## Run pooled provider account CLI integration tests (all transports, in the devcontainer)
+	@$(MAKE) integration-test WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 QUICBAAS_TEST_FILTER="-run TestAgentAccount ./test/integration/cli/..."
 
 # =============================================================================
 # KV Store Adapter Tests

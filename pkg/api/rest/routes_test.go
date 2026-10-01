@@ -126,7 +126,10 @@ import (
 // holds back to the factory, under orchestrator:task_create.
 // PLUS 12 for the tenant AI agent catalog (/api/v1/agents and
 // /api/v1/agent-pools: list, create, get, update, delete and used-by of each).
-const baseRouteTableSize = 643
+// PLUS 5 for the service registry (/api/v1/registry: register, renew,
+// deregister, resolve and the SSE watch, handlers_registry.go, 13 G9), under
+// the service_registry family's register and read verbs.
+const baseRouteTableSize = 648
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder

@@ -1,0 +1,145 @@
+// QuicBaaS Service Registry Protocol Buffer Definitions v1
+//
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
+//
+// This file is part of go-quicbaas.
+//
+// go-quicbaas is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+syntax = "proto3";
+
+package quicbaas.registry.v1;
+
+option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
+
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+
+// RegistryService is the lease-based service registry: service-instance
+// endpoints that stay listed while their lease is renewed and disappear when
+// it lapses. Every call is scoped to the authenticated caller's tenant.
+service RegistryService {
+  // Register lists an instance under a new lease.
+  rpc Register(RegisterServiceInstanceRequest) returns (RegisterServiceInstanceResponse) {
+      option (qrdb.v1.permission) = "service_registry:register";
+  }
+
+  // Renew refreshes the lease backing one of the caller's registrations.
+  rpc Renew(RenewServiceLeaseRequest) returns (RenewServiceLeaseResponse) {
+      option (qrdb.v1.permission) = "service_registry:register";
+  }
+
+  // Deregister revokes the lease backing one of the caller's registrations.
+  rpc Deregister(DeregisterServiceInstanceRequest) returns (DeregisterServiceInstanceResponse) {
+      option (qrdb.v1.permission) = "service_registry:register";
+  }
+
+  // Resolve lists a service's instances and the revision they were read at.
+  rpc Resolve(ResolveServiceRequest) returns (ResolveServiceResponse) {
+      option (qrdb.v1.permission) = "service_registry:read";
+  }
+
+  // Watch streams a service's registration changes from a revision. A
+  // compacted start revision ends the stream with OUT_OF_RANGE; the caller
+  // resolves again and watches from the revision Resolve returns.
+  rpc Watch(WatchServiceRequest) returns (stream RegistryEvent) {
+      option (qrdb.v1.permission) = "service_registry:read";
+  }
+}
+
+// ServiceInstance is a registered instance of a named service.
+message ServiceInstance {
+  // ID uniquely identifies the instance within its service.
+  string id = 1;
+
+  // Service is the logical service name.
+  string service = 2;
+
+  // Address is the instance's network address (host:port).
+  string address = 3;
+
+  // Metadata carries optional descriptive key-value pairs.
+  map<string, string> metadata = 4;
+}
+
+message RegisterServiceInstanceRequest {
+  // Instance is the instance to list.
+  ServiceInstance instance = 1;
+
+  // TtlSeconds is the lease TTL.
+  int64 ttl_seconds = 2;
+}
+
+message RegisterServiceInstanceResponse {
+  // LeaseId identifies the lease backing the registration.
+  int64 lease_id = 1;
+
+  // TtlSeconds is the granted lease TTL.
+  int64 ttl_seconds = 2;
+}
+
+message RenewServiceLeaseRequest {
+  // LeaseId is the lease Register returned.
+  int64 lease_id = 1;
+}
+
+message RenewServiceLeaseResponse {
+  // LeaseId echoes the renewed lease.
+  int64 lease_id = 1;
+
+  // TtlSeconds is the TTL the lease was reset to.
+  int64 ttl_seconds = 2;
+}
+
+message DeregisterServiceInstanceRequest {
+  // LeaseId is the lease Register returned.
+  int64 lease_id = 1;
+}
+
+message DeregisterServiceInstanceResponse {}
+
+message ResolveServiceRequest {
+  // Service is the service name.
+  string service = 1;
+}
+
+message ResolveServiceResponse {
+  // Instances are the registered instances, ordered by ID.
+  repeated ServiceInstance instances = 1;
+
+  // Revision is the store revision the instances were read at.
+  int64 revision = 2;
+}
+
+message WatchServiceRequest {
+  // Service is the service name.
+  string service = 1;
+
+  // FromRevision is the first revision to deliver; 0 starts from now.
+  int64 from_revision = 2;
+}
+
+// RegistryEvent is one registration change.
+message RegistryEvent {
+  // EventType distinguishes a registration from a deregistration.
+  enum EventType {
+    EVENT_TYPE_UNSPECIFIED = 0;
+    EVENT_TYPE_PUT = 1;
+    EVENT_TYPE_DELETE = 2;
+  }
+
+  // Type is the kind of change.
+  EventType type = 1;
+
+  // Instance is the affected instance.
+  ServiceInstance instance = 2;
+
+  // Revision is the store revision of the change.
+  int64 revision = 3;
+}

@@ -61,7 +61,7 @@ There are two distinct concerns, with distinct homes:
   `docs/discovery.md` and `docs/12-configuration.md` for configuration.
 - **Service discovery** — registering service instances and resolving them by
   name at runtime. QuicBaaS provides this via the registry, built on qrdb's
-  lease + watch + KV primitives. See [Service Discovery](architecture.md).
+  lease + watch + KV primitives. See [the service registry](../service-registry/user.md).
 
 ## Cluster Membership
 
@@ -72,7 +72,7 @@ forming one. For peer discovery, bootstrap, and the opt-in dynamic membership
 manager, see go-qrdb's `docs/discovery.md`.
 
 For application-level **service** membership (instances of a named service
-joining and leaving at runtime), use QuicBaaS [Service Discovery](architecture.md),
+joining and leaving at runtime), use the QuicBaaS [service registry](../service-registry/user.md),
 which is lease-based: each instance holds a lease and is removed automatically
 when its lease expires.
 

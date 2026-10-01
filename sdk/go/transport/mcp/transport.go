@@ -290,6 +290,19 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		return t.requestAgents(ctx, method, reqBody)
 	}
 
+	// The service registry: string-encoded lease IDs and typed results.
+	if isMCPRegistryService(service) {
+		arguments, err := registryArguments(method, reqBody)
+		if err != nil {
+			return nil, err
+		}
+		result, err := t.callTool(ctx, toolName, arguments)
+		if err != nil {
+			return nil, err
+		}
+		return registryResult(method, result)
+	}
+
 	// Check if this is a service that needs special handling
 	isVector := isMCPVectorService(service)
 	isScheduler := isMCPSchedulerService(service)
@@ -1346,6 +1359,10 @@ func (t *Transport) convertHTTPError(err error, op string) error {
 // RequestStream initiates a streaming request.
 // MCP does not support bidirectional streaming via HTTP transport.
 func (t *Transport) RequestStream(ctx context.Context, service, method string, req interface{}) (transport.Stream, error) {
+	// The registry watch is served as a long poll (registry_handler.go).
+	if isMCPRegistryService(service) {
+		return t.openRegistryWatch(ctx, method, req)
+	}
 	return nil, errors.New(errors.CodeUnimplemented, "mcp.RequestStream",
 		"MCP transport does not support bidirectional streaming")
 }

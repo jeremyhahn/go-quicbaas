@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Service registry on every transport (go-quicbaas#1143, handbook 13 G9).**
+  `client.Registry()` (also `ClusterMgmt().Registry()`) registers, renews,
+  deregisters, resolves and watches lease-based service-instance endpoints over
+  gRPC, Unix, REST, QUIC, MCP and the embedded transport, served by the new
+  `RegistryService` (`quicbaas.registry.v1`, `/api/v1/registry/*`,
+  `quicbaas_registry_*` tools) and the `quicbaas registry` CLI. `Resolve`
+  returns the revision it read at and `Watch` starts from a revision, so a
+  watcher sees every change exactly once; the SDK resumes a dropped watch from
+  the next undelivered revision. New permissions `service_registry:register`
+  and `service_registry:read`. Docs: `docs/service-registry/`.
+
+### Changed
+
+- **Breaking (SDK):** `Client.Discovery()` and `DiscoveryRegistry` are removed.
+  The registry used to be composed client-side over raw qrdb lease, KV and watch
+  calls with an unauthenticated context tenant; it is now a server-side service
+  scoped to the authenticated tenant. Use `Client.Registry()`.
+
+### Security
+
+- A tenant can no longer renew or revoke another tenant's registration lease:
+  every registration writes a lease-bound ownership mark under its tenant, and
+  `Renew`/`Deregister` refuse a lease without one (indistinguishable from a
+  missing lease, so IDs cannot be probed).
+
 ## [0.13.1-alpha] - 2026-09-29
 
 ### Fixed

@@ -342,6 +342,12 @@ func (t *Transport) Request(ctx context.Context, service, method string, req int
 		return t.timeseriesHandler.handleRequest(ctx, method, req)
 	}
 
+	// Route the service registry through its handler: its routes carry path
+	// parameters the generic service/method mapping cannot express.
+	if isRegistryService(service) {
+		return t.handleRegistryRequest(ctx, method, req)
+	}
+
 	// Route Security services (WebAuthn/FIDO2/PIV/ACME/Trust) through the
 	// security handler so tenant-scoped WebAuthn verbs reach the real
 	// IAM-mounted server routes and so verbs without a server surface
@@ -1401,6 +1407,9 @@ func (t *Transport) convertHTTPError(err error, op string) error {
 func (t *Transport) RequestStream(ctx context.Context, service, method string, req interface{}) (transport.Stream, error) {
 	if isOrchestratorService(service) && method == "SubscribeSessionEvents" {
 		return t.orchestratorHandler.subscribeSessionEvents(ctx, req)
+	}
+	if isRegistryService(service) {
+		return t.openRegistryWatch(ctx, method, req)
 	}
 	return nil, ErrStreamNotSupported
 }

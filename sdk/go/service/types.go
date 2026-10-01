@@ -1090,6 +1090,50 @@ type (
 )
 
 // =============================================================================
+// Service Registry
+// =============================================================================
+
+type (
+	// RegistryService is the lease-based service registry served on every
+	// transport (pkg/service.RegistryService).
+	RegistryService = pkgservice.RegistryService
+
+	// RegistryServiceInstance is a registered instance of a named service.
+	RegistryServiceInstance = pkgservice.RegistryServiceInstance
+
+	// RegistryEvent is one registration change delivered by Watch.
+	RegistryEvent = pkgservice.RegistryEvent
+
+	// RegisterServiceInstanceRequest registers an instance under a lease.
+	RegisterServiceInstanceRequest = pkgservice.RegisterServiceInstanceRequest
+
+	// RegisterServiceInstanceResponse carries the lease backing a registration.
+	RegisterServiceInstanceResponse = pkgservice.RegisterServiceInstanceResponse
+
+	// RenewServiceLeaseRequest renews a registration's lease.
+	RenewServiceLeaseRequest = pkgservice.RenewServiceLeaseRequest
+
+	// RenewServiceLeaseResponse reports a renewed lease.
+	RenewServiceLeaseResponse = pkgservice.RenewServiceLeaseResponse
+
+	// DeregisterServiceInstanceRequest removes a registration.
+	DeregisterServiceInstanceRequest = pkgservice.DeregisterServiceInstanceRequest
+
+	// ResolveServiceRequest looks up a service.
+	ResolveServiceRequest = pkgservice.ResolveServiceRequest
+
+	// ResolveServiceResponse lists a service's instances and their revision.
+	ResolveServiceResponse = pkgservice.ResolveServiceResponse
+
+	// WatchServiceRequest opens a watch from a revision.
+	WatchServiceRequest = pkgservice.WatchServiceRequest
+)
+
+// NewRegistryServiceFromBackend runs the registry service over a storage
+// backend of the embedder's choosing.
+var NewRegistryServiceFromBackend = pkgservice.NewRegistryServiceFromBackend
+
+// =============================================================================
 // Attestation Service
 // =============================================================================
 

@@ -46,6 +46,7 @@ type mockService struct {
 	// Trust composition (cross-sign / AIA)
 	trustSvc       service.TrustService
 	attestationSvc service.AttestationService
+	registrySvc    service.RegistryService
 	pivSvc         service.PIVService
 	fido2Svc       service.FIDO2Service
 
@@ -482,6 +483,10 @@ func (m *mockService) Trust() service.TrustService {
 
 func (m *mockService) Attestation() service.AttestationService {
 	return m.attestationSvc
+}
+
+func (m *mockService) Registry() service.RegistryService {
+	return m.registrySvc
 }
 
 func (m *mockService) PIV() service.PIVService {
