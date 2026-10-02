@@ -19,9 +19,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service/mocks"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 func TestAccountTools_ReservationsTakeTenancyFromTheCaller(t *testing.T) {
@@ -37,7 +37,7 @@ func TestAccountTools_ReservationsTakeTenancyFromTheCaller(t *testing.T) {
 			return &service.ReleaseAccountSessionResponse{ReservationID: req.ReservationID}, nil
 		},
 	})
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-1")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 
 	if _, err := reg.executeAccountTool(ctx, "quicbaas_agent_account_reserve_session", map[string]interface{}{
 		"account_id": "acct-1", "expected_live": float64(1),
@@ -71,7 +71,7 @@ func TestAccountTools_ReservationsRefuseAnotherTenant(t *testing.T) {
 			return &service.ReleaseAccountSessionResponse{}, nil
 		},
 	})
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-1")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	for _, tool := range []string{"quicbaas_agent_account_reserve_session", "quicbaas_agent_account_release_session"} {
 		if _, err := reg.executeAccountTool(ctx, tool, map[string]interface{}{
 			"tenant_id": "tenant-2", "account_id": "b-acct", "reservation_id": "r",

@@ -18,6 +18,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 func testProvider(tenantID, id, name string) *ExternalProvider {
@@ -99,7 +101,7 @@ func TestBackendFederationStorage_LinkRouting(t *testing.T) {
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendFederationStorage(kv)
-	ctx := ContextWithTenant(context.Background(), "acme")
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
 
 	link := testLink("acme", "u1", "l1", "p1", "ext-123")
 	if err := store.CreateLink(ctx, link); err != nil {

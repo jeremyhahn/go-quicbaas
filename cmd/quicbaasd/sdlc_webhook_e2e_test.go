@@ -30,11 +30,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/giteafake"
 )
 
@@ -61,7 +61,7 @@ func bindGiteaProject(t *testing.T, srv *server.Server, repo string) string {
 	gitea := giteafake.New(t, e2eOwner, e2eRepo)
 	backend := newE2EBackend()
 	projectID := registerFactoryProject(t, srv, backend, repo)
-	ctx := iam.ContextWithTenant(context.Background(), loopE2ETenant)
+	ctx := tenantctx.WithTenant(context.Background(), loopE2ETenant)
 	_, err := srv.SDLCService().Bind(ctx, loopE2ETenant, &sdlc.ProjectBinding{
 		ProjectID: projectID,
 		Forge: sdlc.ForgeConfig{
@@ -179,7 +179,7 @@ func TestSDLCSecrets_StoredSecretSurvivesRestartAndReachesTheModule(t *testing.T
 
 	srv2 := startFactoryNode(t, dataDir, false, time.Hour, 1)
 	t.Cleanup(func() { _ = srv2.Shutdown(context.Background()) })
-	ctx := iam.ContextWithTenant(context.Background(), loopE2ETenant)
+	ctx := tenantctx.WithTenant(context.Background(), loopE2ETenant)
 	resp, err := srv2.Service().Secrets().GetSecret(ctx, &service.GetSecretRequest{SecretID: e2eWebhookRef})
 	require.NoError(t, err, "a stored secret must survive a restart; not_found here means the client surface is serving an in-memory manager")
 	require.NotNil(t, resp)

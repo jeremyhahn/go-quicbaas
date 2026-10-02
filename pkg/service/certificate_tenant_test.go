@@ -23,7 +23,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -142,23 +142,16 @@ func TestCertEnforceTenantAccess_UnscopedSerialDenied(t *testing.T) {
 // certPrepareTenantContext tests
 // =============================================================================
 
-func TestCertPrepareTenantContext_NoTenant(t *testing.T) {
-	ctx := context.Background()
-	tenantID, err := certPrepareTenantContext(ctx)
-	assert.NoError(t, err)
-	assert.Equal(t, "", tenantID)
-}
-
 func TestCertPrepareTenantContext_ValidTenant(t *testing.T) {
-	ctx := iam.ContextWithTenant(context.Background(), "acme-corp")
-	tenantID, err := certPrepareTenantContext(ctx)
+	ctx := tenantctx.WithTenant(context.Background(), "acme-corp")
+	tenantID, err := prepareTenantContext(ctx)
 	assert.NoError(t, err)
 	assert.Equal(t, "acme-corp", tenantID)
 }
 
 func TestCertPrepareTenantContext_InvalidTenant(t *testing.T) {
-	ctx := iam.ContextWithTenant(context.Background(), "invalid/tenant")
-	_, err := certPrepareTenantContext(ctx)
+	ctx := tenantctx.WithTenant(context.Background(), "invalid/tenant")
+	_, err := prepareTenantContext(ctx)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid character")
 }

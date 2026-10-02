@@ -30,6 +30,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -508,7 +509,7 @@ func TestPutObject_Success(t *testing.T) {
 		Tags:        map[string]string{"env": "test"},
 	}
 
-	resp, err := server.PutObject(context.Background(), req)
+	resp, err := server.PutObject(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	assert.Equal(t, req.Key, resp.Key)
 	assert.NotZero(t, resp.ObjectId)
@@ -519,7 +520,7 @@ func TestPutObject_NilRequest(t *testing.T) {
 	mockSvc := &mockObjectStorageService{}
 	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
 
-	resp, err := server.PutObject(context.Background(), nil)
+	resp, err := server.PutObject(tenantctx.WithSystem(context.Background()), nil)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -533,7 +534,7 @@ func TestPutObject_EmptyKey(t *testing.T) {
 		Value: []byte("test data"),
 	}
 
-	resp, err := server.PutObject(context.Background(), req)
+	resp, err := server.PutObject(tenantctx.WithSystem(context.Background()), req)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -547,7 +548,7 @@ func TestPutObject_NilService(t *testing.T) {
 		Value: []byte("test data"),
 	}
 
-	resp, err := server.PutObject(context.Background(), req)
+	resp, err := server.PutObject(tenantctx.WithSystem(context.Background()), req)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 	assert.Equal(t, codes.Unavailable, status.Code(err))
@@ -566,7 +567,7 @@ func TestPutObject_ServiceError(t *testing.T) {
 		Value: []byte("test data"),
 	}
 
-	resp, err := server.PutObject(context.Background(), req)
+	resp, err := server.PutObject(tenantctx.WithSystem(context.Background()), req)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 }
@@ -584,7 +585,7 @@ func TestGetObject_Success(t *testing.T) {
 		TenantId: "tenant1",
 	}
 
-	resp, err := server.GetObject(context.Background(), req)
+	resp, err := server.GetObject(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	assert.Equal(t, req.Key, resp.Key)
 	assert.NotEmpty(t, resp.Value)
@@ -594,7 +595,7 @@ func TestGetObject_NilRequest(t *testing.T) {
 	mockSvc := &mockObjectStorageService{}
 	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
 
-	resp, err := server.GetObject(context.Background(), nil)
+	resp, err := server.GetObject(tenantctx.WithSystem(context.Background()), nil)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -606,7 +607,7 @@ func TestGetObject_EmptyKey(t *testing.T) {
 
 	req := &pb.GetObjectRequest{}
 
-	resp, err := server.GetObject(context.Background(), req)
+	resp, err := server.GetObject(tenantctx.WithSystem(context.Background()), req)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -619,7 +620,7 @@ func TestGetObject_NilService(t *testing.T) {
 		Key: "test/object1",
 	}
 
-	resp, err := server.GetObject(context.Background(), req)
+	resp, err := server.GetObject(tenantctx.WithSystem(context.Background()), req)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 	assert.Equal(t, codes.Unavailable, status.Code(err))
@@ -638,7 +639,7 @@ func TestDeleteObject_Success(t *testing.T) {
 		TenantId: "tenant1",
 	}
 
-	resp, err := server.DeleteObject(context.Background(), req)
+	resp, err := server.DeleteObject(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	assert.Equal(t, req.Key, resp.Key)
 	assert.True(t, resp.Deleted)
@@ -648,7 +649,7 @@ func TestDeleteObject_NilRequest(t *testing.T) {
 	mockSvc := &mockObjectStorageService{}
 	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
 
-	resp, err := server.DeleteObject(context.Background(), nil)
+	resp, err := server.DeleteObject(tenantctx.WithSystem(context.Background()), nil)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -660,7 +661,7 @@ func TestDeleteObject_EmptyKey(t *testing.T) {
 
 	req := &pb.DeleteObjectRequest{}
 
-	resp, err := server.DeleteObject(context.Background(), req)
+	resp, err := server.DeleteObject(tenantctx.WithSystem(context.Background()), req)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -673,7 +674,7 @@ func TestDeleteObject_NilService(t *testing.T) {
 		Key: "test/object1",
 	}
 
-	resp, err := server.DeleteObject(context.Background(), req)
+	resp, err := server.DeleteObject(tenantctx.WithSystem(context.Background()), req)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 	assert.Equal(t, codes.Unavailable, status.Code(err))
@@ -692,7 +693,7 @@ func TestHeadObject_Success(t *testing.T) {
 		TenantId: "tenant1",
 	}
 
-	resp, err := server.HeadObject(context.Background(), req)
+	resp, err := server.HeadObject(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	assert.Equal(t, req.Key, resp.Key)
 	assert.True(t, resp.Exists)
@@ -702,7 +703,7 @@ func TestHeadObject_NilRequest(t *testing.T) {
 	mockSvc := &mockObjectStorageService{}
 	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
 
-	resp, err := server.HeadObject(context.Background(), nil)
+	resp, err := server.HeadObject(tenantctx.WithSystem(context.Background()), nil)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -714,7 +715,7 @@ func TestHeadObject_EmptyKey(t *testing.T) {
 
 	req := &pb.HeadObjectRequest{}
 
-	resp, err := server.HeadObject(context.Background(), req)
+	resp, err := server.HeadObject(tenantctx.WithSystem(context.Background()), req)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -727,7 +728,7 @@ func TestHeadObject_NilService(t *testing.T) {
 		Key: "test/object1",
 	}
 
-	resp, err := server.HeadObject(context.Background(), req)
+	resp, err := server.HeadObject(tenantctx.WithSystem(context.Background()), req)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 	assert.Equal(t, codes.Unavailable, status.Code(err))
@@ -746,7 +747,7 @@ func TestListObjects_Success(t *testing.T) {
 		Limit:  10,
 	}
 
-	resp, err := server.ListObjects(context.Background(), req)
+	resp, err := server.ListObjects(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	assert.NotNil(t, resp.Objects)
 }
@@ -755,7 +756,7 @@ func TestListObjects_NilRequest(t *testing.T) {
 	mockSvc := &mockObjectStorageService{}
 	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
 
-	resp, err := server.ListObjects(context.Background(), nil)
+	resp, err := server.ListObjects(tenantctx.WithSystem(context.Background()), nil)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -768,7 +769,7 @@ func TestListObjects_NilService(t *testing.T) {
 		Prefix: "test/",
 	}
 
-	resp, err := server.ListObjects(context.Background(), req)
+	resp, err := server.ListObjects(tenantctx.WithSystem(context.Background()), req)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 	assert.Equal(t, codes.Unavailable, status.Code(err))
@@ -789,7 +790,7 @@ func TestBatchPutObjects_Success(t *testing.T) {
 		},
 	}
 
-	resp, err := server.BatchPutObjects(context.Background(), req)
+	resp, err := server.BatchPutObjects(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
 }
@@ -798,7 +799,7 @@ func TestBatchPutObjects_NilRequest(t *testing.T) {
 	mockSvc := &mockObjectStorageService{}
 	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
 
-	resp, err := server.BatchPutObjects(context.Background(), nil)
+	resp, err := server.BatchPutObjects(tenantctx.WithSystem(context.Background()), nil)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -810,7 +811,7 @@ func TestBatchPutObjects_Empty(t *testing.T) {
 
 	req := &pb.BatchPutObjectsRequest{Objects: []*pb.PutObjectRequest{}}
 
-	resp, err := server.BatchPutObjects(context.Background(), req)
+	resp, err := server.BatchPutObjects(tenantctx.WithSystem(context.Background()), req)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -823,7 +824,7 @@ func TestBatchPutObjects_NilService(t *testing.T) {
 		Objects: []*pb.PutObjectRequest{{Key: "test/obj1", Value: []byte("data")}},
 	}
 
-	resp, err := server.BatchPutObjects(context.Background(), req)
+	resp, err := server.BatchPutObjects(tenantctx.WithSystem(context.Background()), req)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 	assert.Equal(t, codes.Unavailable, status.Code(err))
@@ -839,7 +840,7 @@ func TestBatchGetObjects_Success(t *testing.T) {
 
 	req := &pb.BatchGetObjectsRequest{Keys: []string{"key1", "key2"}}
 
-	resp, err := server.BatchGetObjects(context.Background(), req)
+	resp, err := server.BatchGetObjects(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
 }
@@ -848,7 +849,7 @@ func TestBatchGetObjects_NilRequest(t *testing.T) {
 	mockSvc := &mockObjectStorageService{}
 	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
 
-	resp, err := server.BatchGetObjects(context.Background(), nil)
+	resp, err := server.BatchGetObjects(tenantctx.WithSystem(context.Background()), nil)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -860,7 +861,7 @@ func TestBatchGetObjects_Empty(t *testing.T) {
 
 	req := &pb.BatchGetObjectsRequest{Keys: []string{}}
 
-	resp, err := server.BatchGetObjects(context.Background(), req)
+	resp, err := server.BatchGetObjects(tenantctx.WithSystem(context.Background()), req)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -873,7 +874,7 @@ func TestBatchGetObjects_NilService(t *testing.T) {
 		Keys: []string{"key1"},
 	}
 
-	resp, err := server.BatchGetObjects(context.Background(), req)
+	resp, err := server.BatchGetObjects(tenantctx.WithSystem(context.Background()), req)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 	assert.Equal(t, codes.Unavailable, status.Code(err))
@@ -889,7 +890,7 @@ func TestBatchDeleteObjects_Success(t *testing.T) {
 
 	req := &pb.BatchDeleteObjectsRequest{Keys: []string{"key1", "key2"}}
 
-	resp, err := server.BatchDeleteObjects(context.Background(), req)
+	resp, err := server.BatchDeleteObjects(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
 }
@@ -898,7 +899,7 @@ func TestBatchDeleteObjects_NilRequest(t *testing.T) {
 	mockSvc := &mockObjectStorageService{}
 	server := NewObjectStorageServer(mockSvc).(*objectStorageServer)
 
-	resp, err := server.BatchDeleteObjects(context.Background(), nil)
+	resp, err := server.BatchDeleteObjects(tenantctx.WithSystem(context.Background()), nil)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -910,7 +911,7 @@ func TestBatchDeleteObjects_Empty(t *testing.T) {
 
 	req := &pb.BatchDeleteObjectsRequest{Keys: []string{}}
 
-	resp, err := server.BatchDeleteObjects(context.Background(), req)
+	resp, err := server.BatchDeleteObjects(tenantctx.WithSystem(context.Background()), req)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -923,7 +924,7 @@ func TestBatchDeleteObjects_NilService(t *testing.T) {
 		Keys: []string{"key1"},
 	}
 
-	resp, err := server.BatchDeleteObjects(context.Background(), req)
+	resp, err := server.BatchDeleteObjects(tenantctx.WithSystem(context.Background()), req)
 	assert.Nil(t, resp)
 	assert.Error(t, err)
 	assert.Equal(t, codes.Unavailable, status.Code(err))
@@ -943,7 +944,7 @@ var (
 
 func TestGRPCRemaining91_ObjectStorageServer_NilRequest(t *testing.T) {
 	srv := &objectStorageServer{service: &mockObjectStorageService{}}
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	tests := []struct {
 		name string
@@ -985,7 +986,7 @@ func TestGRPCRemaining91_ObjectStorageServer_NilRequest(t *testing.T) {
 
 func TestGRPCRemaining91_ObjectStorageServer_NilService(t *testing.T) {
 	srv := &objectStorageServer{service: nil}
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	tests := []struct {
 		name string
@@ -1059,7 +1060,7 @@ func TestGRPCRemaining91_ObjectStorageServer_NilService(t *testing.T) {
 
 func TestGRPCRemaining91_ObjectStorageServer_ValidationErrors(t *testing.T) {
 	srv := &objectStorageServer{service: &mockObjectStorageService{}}
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	tests := []struct {
 		name string
@@ -1212,7 +1213,7 @@ func TestGRPCRemaining91_ObjectStorageServer_ServiceErrors(t *testing.T) {
 	}
 
 	srv := &objectStorageServer{service: mockSvc}
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	tests := []struct {
 		name string
@@ -1286,7 +1287,7 @@ func TestGRPCRemaining91_ObjectStorageServer_ArchiveObject_Success(t *testing.T)
 	}
 	srv := &objectStorageServer{service: mockSvc}
 
-	resp, err := srv.ArchiveObject(context.Background(), &pb.ArchiveObjectRequest{
+	resp, err := srv.ArchiveObject(tenantctx.WithSystem(context.Background()), &pb.ArchiveObjectRequest{
 		Key:               "test-key",
 		TargetStore:       "cold-store",
 		DeleteFromPrimary: true,
@@ -1310,7 +1311,7 @@ func TestGRPCRemaining91_ObjectStorageServer_RestoreObject_Success(t *testing.T)
 	}
 	srv := &objectStorageServer{service: mockSvc}
 
-	resp, err := srv.RestoreObject(context.Background(), &pb.RestoreObjectRequest{
+	resp, err := srv.RestoreObject(tenantctx.WithSystem(context.Background()), &pb.RestoreObjectRequest{
 		Key:           "test-key",
 		TargetBackend: "hot-store",
 	})
@@ -1336,7 +1337,7 @@ func TestGRPCRemaining91_ObjectStorageServer_VerifyObject_Success(t *testing.T) 
 	}
 	srv := &objectStorageServer{service: mockSvc}
 
-	resp, err := srv.VerifyObject(context.Background(), &pb.VerifyObjectRequest{
+	resp, err := srv.VerifyObject(tenantctx.WithSystem(context.Background()), &pb.VerifyObjectRequest{
 		Key:    "test-key",
 		Repair: false,
 	})
@@ -1359,7 +1360,7 @@ func TestGRPCRemaining91_ObjectStorageServer_SetObjectPolicy_Success(t *testing.
 	}
 	srv := &objectStorageServer{service: mockSvc}
 
-	resp, err := srv.SetObjectPolicy(context.Background(), &pb.SetObjectPolicyRequest{
+	resp, err := srv.SetObjectPolicy(tenantctx.WithSystem(context.Background()), &pb.SetObjectPolicyRequest{
 		Key: "test-key",
 		ReplicationPolicy: &pb.ReplicationPolicy{
 			Enabled:     true,
@@ -1383,7 +1384,7 @@ func TestGRPCRemaining91_ObjectStorageServer_GetObjectPolicy_Success(t *testing.
 	}
 	srv := &objectStorageServer{service: mockSvc}
 
-	resp, err := srv.GetObjectPolicy(context.Background(), &pb.GetObjectPolicyRequest{Key: "test-key"})
+	resp, err := srv.GetObjectPolicy(tenantctx.WithSystem(context.Background()), &pb.GetObjectPolicyRequest{Key: "test-key"})
 
 	require.NoError(t, err)
 	assert.Equal(t, "test-key", resp.Key)
@@ -1402,7 +1403,7 @@ func TestGRPCRemaining91_ObjectStorageServer_ListBackends_Success(t *testing.T) 
 	}
 	srv := &objectStorageServer{service: mockSvc}
 
-	resp, err := srv.ListBackends(context.Background(), &pb.ListBackendsRequest{IncludeHealth: true})
+	resp, err := srv.ListBackends(tenantctx.WithSystem(context.Background()), &pb.ListBackendsRequest{IncludeHealth: true})
 
 	require.NoError(t, err)
 	assert.Len(t, resp.Backends, 2)
@@ -1422,7 +1423,7 @@ func TestGRPCRemaining91_ObjectStorageServer_GetBackendHealth_Success(t *testing
 	}
 	srv := &objectStorageServer{service: mockSvc}
 
-	resp, err := srv.GetBackendHealth(context.Background(), &pb.GetBackendHealthRequest{Name: "local"})
+	resp, err := srv.GetBackendHealth(tenantctx.WithSystem(context.Background()), &pb.GetBackendHealthRequest{Name: "local"})
 
 	require.NoError(t, err)
 	assert.Equal(t, "local", resp.Name)
@@ -1442,7 +1443,7 @@ func TestGRPCRemaining91_ObjectStorageServer_GetTenantUsage_Success(t *testing.T
 	}
 	srv := &objectStorageServer{service: mockSvc}
 
-	resp, err := srv.GetObjectStorageTenantUsage(context.Background(), &pb.GetObjectStorageTenantUsageRequest{TenantId: "t1"})
+	resp, err := srv.GetObjectStorageTenantUsage(tenantctx.WithSystem(context.Background()), &pb.GetObjectStorageTenantUsageRequest{TenantId: "t1"})
 
 	require.NoError(t, err)
 	assert.Equal(t, "t1", resp.Usage.TenantId)
@@ -1464,7 +1465,7 @@ func TestGRPCRemaining91_ObjectStorageServer_GetTenantQuotas_Success(t *testing.
 	}
 	srv := &objectStorageServer{service: mockSvc}
 
-	resp, err := srv.GetObjectStorageTenantQuotas(context.Background(), &pb.GetObjectStorageTenantQuotasRequest{TenantId: "t1"})
+	resp, err := srv.GetObjectStorageTenantQuotas(tenantctx.WithSystem(context.Background()), &pb.GetObjectStorageTenantQuotasRequest{TenantId: "t1"})
 
 	require.NoError(t, err)
 	assert.Equal(t, "t1", resp.Quotas.TenantId)
@@ -1474,7 +1475,7 @@ func TestGRPCRemaining91_ObjectStorageServer_GetTenantQuotas_Success(t *testing.
 func TestGRPCRemaining91_ObjectStorageServer_SetTenantQuotas_Success(t *testing.T) {
 	srv := &objectStorageServer{service: &mockObjectStorageService{}}
 
-	resp, err := srv.SetObjectStorageTenantQuotas(context.Background(), &pb.SetObjectStorageTenantQuotasRequest{
+	resp, err := srv.SetObjectStorageTenantQuotas(tenantctx.WithSystem(context.Background()), &pb.SetObjectStorageTenantQuotasRequest{
 		Quotas: &pb.ObjectStorageTenantQuotas{TenantId: "t1", MaxStorageBytes: 1024},
 	})
 
@@ -1502,7 +1503,7 @@ func TestGRPCRemaining91_ObjectStorageServer_BatchPutObjects_Success(t *testing.
 	}
 	srv := &objectStorageServer{service: mockSvc}
 
-	resp, err := srv.BatchPutObjects(context.Background(), &pb.BatchPutObjectsRequest{
+	resp, err := srv.BatchPutObjects(tenantctx.WithSystem(context.Background()), &pb.BatchPutObjectsRequest{
 		Objects: []*pb.PutObjectRequest{
 			{Key: "key1", Value: []byte("data1")},
 			{Key: "key2", Value: []byte("data2")},
@@ -1528,7 +1529,7 @@ func TestGRPCRemaining91_ObjectStorageServer_BatchPutObjects_PartialFailure(t *t
 	}
 	srv := &objectStorageServer{service: mockSvc}
 
-	resp, err := srv.BatchPutObjects(context.Background(), &pb.BatchPutObjectsRequest{
+	resp, err := srv.BatchPutObjects(tenantctx.WithSystem(context.Background()), &pb.BatchPutObjectsRequest{
 		Objects: []*pb.PutObjectRequest{
 			{Key: "", Value: []byte("data1")},
 			{Key: "key2", Value: []byte("data2")},
@@ -1559,7 +1560,7 @@ func TestGRPCRemaining91_ObjectStorageServer_BatchDeleteObjects_Success(t *testi
 	}
 	srv := &objectStorageServer{service: mockSvc}
 
-	resp, err := srv.BatchDeleteObjects(context.Background(), &pb.BatchDeleteObjectsRequest{
+	resp, err := srv.BatchDeleteObjects(tenantctx.WithSystem(context.Background()), &pb.BatchDeleteObjectsRequest{
 		Keys:     []string{"key1", "key2"},
 		TenantId: "t1",
 	})
@@ -1590,7 +1591,7 @@ func TestGRPCRemaining91_ObjectStorageServer_BatchGetObjects_Success(t *testing.
 	}
 	srv := &objectStorageServer{service: mockSvc}
 
-	resp, err := srv.BatchGetObjects(context.Background(), &pb.BatchGetObjectsRequest{
+	resp, err := srv.BatchGetObjects(tenantctx.WithSystem(context.Background()), &pb.BatchGetObjectsRequest{
 		Keys:     []string{"key1", "key2"},
 		TenantId: "t1",
 	})
@@ -1618,7 +1619,7 @@ func TestGRPCRemaining91_ObjectStorageServer_BatchGetObjects_NotFound(t *testing
 	}
 	srv := &objectStorageServer{service: mockSvc}
 
-	resp, err := srv.BatchGetObjects(context.Background(), &pb.BatchGetObjectsRequest{
+	resp, err := srv.BatchGetObjects(tenantctx.WithSystem(context.Background()), &pb.BatchGetObjectsRequest{
 		Keys: []string{"missing1", "missing2"},
 	})
 
@@ -1647,7 +1648,7 @@ func TestGRPCRemaining91_ObjectStorageServer_BatchDeleteObjects_ServiceError(t *
 	}
 	srv := &objectStorageServer{service: mockSvc}
 
-	resp, err := srv.BatchDeleteObjects(context.Background(), &pb.BatchDeleteObjectsRequest{
+	resp, err := srv.BatchDeleteObjects(tenantctx.WithSystem(context.Background()), &pb.BatchDeleteObjectsRequest{
 		Keys: []string{"key1"},
 	})
 
@@ -1667,7 +1668,7 @@ func TestGRPCRemaining91_ObjectStorageServer_BatchPutObjects_ServiceError(t *tes
 	}
 	srv := &objectStorageServer{service: mockSvc}
 
-	resp, err := srv.BatchPutObjects(context.Background(), &pb.BatchPutObjectsRequest{
+	resp, err := srv.BatchPutObjects(tenantctx.WithSystem(context.Background()), &pb.BatchPutObjectsRequest{
 		Objects: []*pb.PutObjectRequest{{Key: "key1", Value: []byte("data")}},
 	})
 
@@ -1698,7 +1699,7 @@ func TestGRPCRemaining91_ObjectStorageServer_ReplicateObject_MixedResults(t *tes
 	}
 	srv := &objectStorageServer{service: mockSvc}
 
-	resp, err := srv.ReplicateObject(context.Background(), &pb.ReplicateObjectRequest{
+	resp, err := srv.ReplicateObject(tenantctx.WithSystem(context.Background()), &pb.ReplicateObjectRequest{
 		Key:          "test-key",
 		TargetStores: []string{"s3", "gcs"},
 	})
@@ -1726,7 +1727,7 @@ func TestGRPCRemaining91_ObjectStorageServer_MigrateObject_Success(t *testing.T)
 	}
 	srv := &objectStorageServer{service: mockSvc}
 
-	resp, err := srv.MigrateObject(context.Background(), &pb.MigrateObjectRequest{
+	resp, err := srv.MigrateObject(tenantctx.WithSystem(context.Background()), &pb.MigrateObjectRequest{
 		Key:           "test-key",
 		TargetBackend: "s3",
 		DeleteSource:  true,
@@ -1871,7 +1872,7 @@ func TestGRPCRemaining91_Client_ObjectStorage_Closed(t *testing.T) {
 		connected: false,
 		closed:    true,
 	}
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	tests := []struct {
 		name string
@@ -1935,7 +1936,7 @@ func TestGRPCRemaining91_Client_KMS_ListKeys_Closed(t *testing.T) {
 		connected: false,
 		closed:    true,
 	}
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	_, err := client.KMSListKeys(ctx, &service.ListKeysRequest{})
 	require.Error(t, err)
@@ -1952,7 +1953,7 @@ func TestGRPCRemaining91_Client_Vector_Closed(t *testing.T) {
 		connected: false,
 		closed:    true,
 	}
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	tests := []struct {
 		name string
@@ -2005,7 +2006,7 @@ func TestGRPCRemaining91_Client_Ollama_Closed(t *testing.T) {
 		connected: false,
 		closed:    true,
 	}
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	tests := []struct {
 		name string
@@ -2042,7 +2043,7 @@ func TestGRPCRemaining91_Client_UpgradeNode_Closed(t *testing.T) {
 		closed:    true,
 	}
 
-	resp, err := client.UpgradeNode(context.Background(), &pb.UpgradeNodeRequest{})
+	resp, err := client.UpgradeNode(tenantctx.WithSystem(context.Background()), &pb.UpgradeNodeRequest{})
 	assert.Error(t, err)
 	assert.Nil(t, resp)
 	assert.Contains(t, err.Error(), "closed")
@@ -2055,7 +2056,7 @@ func TestGRPCRemaining91_Client_GetUpgradeStatus_Closed(t *testing.T) {
 		closed:    true,
 	}
 
-	resp, err := client.GetUpgradeStatus(context.Background(), &pb.GetUpgradeStatusRequest{})
+	resp, err := client.GetUpgradeStatus(tenantctx.WithSystem(context.Background()), &pb.GetUpgradeStatusRequest{})
 	assert.Error(t, err)
 	assert.Nil(t, resp)
 	assert.Contains(t, err.Error(), "closed")
@@ -2072,7 +2073,7 @@ func TestGRPCRemaining91_Client_RebalanceCluster_Closed(t *testing.T) {
 		closed:    true,
 	}
 
-	resp, err := client.RebalanceCluster(context.Background(), &pb.RebalanceClusterRequest{})
+	resp, err := client.RebalanceCluster(tenantctx.WithSystem(context.Background()), &pb.RebalanceClusterRequest{})
 	assert.Error(t, err)
 	assert.Nil(t, resp)
 	assert.Contains(t, err.Error(), "closed")
@@ -2085,7 +2086,7 @@ func TestGRPCRemaining91_Client_GetRebalanceProgress_Closed(t *testing.T) {
 		closed:    true,
 	}
 
-	resp, err := client.GetRebalanceProgress(context.Background(), &pb.GetRebalanceProgressRequest{})
+	resp, err := client.GetRebalanceProgress(tenantctx.WithSystem(context.Background()), &pb.GetRebalanceProgressRequest{})
 	assert.Error(t, err)
 	assert.Nil(t, resp)
 	assert.Contains(t, err.Error(), "closed")

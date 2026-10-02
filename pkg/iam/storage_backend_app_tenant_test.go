@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -75,7 +76,7 @@ func TestCreateApp_LandsInTheAppsOwnTenantNamespace(t *testing.T) {
 			barrier:  true,
 			clientID: "app_automatethethings_QQnqeujdEo",
 			createCtx: func() context.Context {
-				return ContextWithTenant(context.Background(), "system")
+				return tenantctx.WithTenant(context.Background(), "system")
 			},
 			readTenant: "automatethethings",
 		},
@@ -108,7 +109,7 @@ func TestCreateApp_LandsInTheAppsOwnTenantNamespace(t *testing.T) {
 			}
 
 			// The token endpoint's context: scoped to the app's tenant.
-			readCtx := ContextWithTenant(context.Background(), tc.readTenant)
+			readCtx := tenantctx.WithTenant(context.Background(), tc.readTenant)
 			app, err := storage.GetApp(readCtx, tc.clientID)
 			if err != nil {
 				t.Fatalf("GetApp under tenant %q: %v (this is the #644 invalid_client)", tc.readTenant, err)
@@ -160,7 +161,7 @@ func TestValidateClientSecret_AcrossTheRegisterTokenBoundary(t *testing.T) {
 		t.Fatalf("CreateApp: %v", err)
 	}
 
-	tokenCtx := ContextWithTenant(context.Background(), "automatethethings")
+	tokenCtx := tenantctx.WithTenant(context.Background(), "automatethethings")
 	ok, err := storage.ValidateClientSecret(tokenCtx, clientID, issued.Plaintext)
 	if err != nil {
 		t.Fatalf("ValidateClientSecret: %v (this is the #644 invalid_client)", err)
@@ -208,7 +209,7 @@ func TestUpdateDeleteListApp_UseTheAppsOwnNamespace(t *testing.T) {
 	if err := storage.DeleteApp(context.Background(), clientID); err != nil {
 		t.Fatalf("DeleteApp: %v", err)
 	}
-	if _, err := storage.GetApp(ContextWithTenant(context.Background(), "automatethethings"), clientID); err == nil {
+	if _, err := storage.GetApp(tenantctx.WithTenant(context.Background(), "automatethethings"), clientID); err == nil {
 		t.Fatal("GetApp resolved a deleted app")
 	}
 }
@@ -226,7 +227,7 @@ func TestGetApp_DoesNotCrossTenants(t *testing.T) {
 		t.Fatalf("CreateApp: %v", err)
 	}
 
-	_, err := storage.GetAppByTenant(ContextWithTenant(context.Background(), "tenant-b"), "tenant-b", "agent-tenant-a-node-mtls")
+	_, err := storage.GetAppByTenant(tenantctx.WithTenant(context.Background(), "tenant-b"), "tenant-b", "agent-tenant-a-node-mtls")
 	if err == nil {
 		t.Fatal("tenant-b resolved tenant-a's application")
 	}

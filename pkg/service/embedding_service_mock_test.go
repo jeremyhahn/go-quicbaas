@@ -33,8 +33,8 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/embedding"
 	quicbaasErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // stubEmbeddingProvider is a minimal interfaces.EmbeddingProvider used to
@@ -465,7 +465,7 @@ func TestEmbeddingManagerAdapter_Embed_RejectsInvalidTenant(t *testing.T) {
 	adapter := &EmbeddingManagerAdapter{}
 	// A tenant ID longer than 128 characters fails validateEmbeddingTenantID
 	// before the manager is dereferenced.
-	ctx := iam.ContextWithTenant(context.Background(), strings.Repeat("a", 129))
+	ctx := tenantctx.WithTenant(context.Background(), strings.Repeat("a", 129))
 
 	vec, err := adapter.Embed(ctx, "text")
 	require.Error(t, err)
@@ -474,7 +474,7 @@ func TestEmbeddingManagerAdapter_Embed_RejectsInvalidTenant(t *testing.T) {
 
 func TestEmbeddingManagerAdapter_EmbedBatch_RejectsInvalidTenant(t *testing.T) {
 	adapter := &EmbeddingManagerAdapter{}
-	ctx := iam.ContextWithTenant(context.Background(), strings.Repeat("a", 129))
+	ctx := tenantctx.WithTenant(context.Background(), strings.Repeat("a", 129))
 
 	vecs, err := adapter.EmbedBatch(ctx, []string{"a", "b"})
 	require.Error(t, err)

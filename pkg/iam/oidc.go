@@ -23,6 +23,7 @@ import (
 	"github.com/go-jose/go-jose/v4"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/dpop"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
@@ -626,7 +627,7 @@ func (p *OIDCProvider) Introspect(ctx context.Context, req *IntrospectRequest) (
 // the account made the subject miss again and restored the bypass.
 func (p *OIDCProvider) TokenLiveness(ctx context.Context, tenantID, subject, userID, principalType, jti string) (bool, error) {
 	if tenantID != "" {
-		ctx = ContextWithTenant(ctx, tenantID)
+		ctx = tenantctx.WithTenant(ctx, tenantID)
 	}
 
 	revoked, err := p.tokenService.storage.IsTokenRevoked(ctx, jti)
@@ -859,7 +860,7 @@ func (p *OIDCProvider) ValidateAccessToken(ctx context.Context, tokenString stri
 	// Scope the revocation lookup to the tenant carried by the verified claim
 	// so the per-tenant token store resolves; there is no global token table.
 	if claims.TenantID != "" {
-		ctx = ContextWithTenant(ctx, claims.TenantID)
+		ctx = tenantctx.WithTenant(ctx, claims.TenantID)
 	}
 
 	// Check if token is revoked

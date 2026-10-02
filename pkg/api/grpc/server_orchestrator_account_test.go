@@ -22,6 +22,7 @@ import (
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // spawnCapture wires a fake agent service that records the SpawnSessionRequest
@@ -44,7 +45,7 @@ func TestOrchestratorGRPC_Spawn_PinsAccountID(t *testing.T) {
 	agentSvc, captured := spawnCapture()
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	_, err := server.SpawnSession(context.Background(), &pb.SpawnSessionRequest{
+	_, err := server.SpawnSession(tenantctx.WithSystem(context.Background()), &pb.SpawnSessionRequest{
 		Backend:   "claude",
 		AccountId: "acct-pinned",
 	})
@@ -63,7 +64,7 @@ func TestOrchestratorGRPC_Spawn_CarriesAccountAuto(t *testing.T) {
 	agentSvc, captured := spawnCapture()
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	_, err := server.SpawnSession(context.Background(), &pb.SpawnSessionRequest{
+	_, err := server.SpawnSession(tenantctx.WithSystem(context.Background()), &pb.SpawnSessionRequest{
 		Backend:         "claude",
 		AccountAuto:     true,
 		AccountStrategy: "least_usage",
@@ -85,7 +86,7 @@ func TestOrchestratorGRPC_Spawn_NoAccountFieldsStaysUnset(t *testing.T) {
 	agentSvc, captured := spawnCapture()
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	_, err := server.SpawnSession(context.Background(), &pb.SpawnSessionRequest{Backend: "claude"})
+	_, err := server.SpawnSession(tenantctx.WithSystem(context.Background()), &pb.SpawnSessionRequest{Backend: "claude"})
 	require.NoError(t, err)
 
 	seen := captured()
@@ -112,7 +113,7 @@ func TestOrchestratorGRPC_Spawn_RefusesToForwardExtraArgs(t *testing.T) {
 	agentSvc, captured := spawnCapture()
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	_, err := server.SpawnSession(context.Background(), &pb.SpawnSessionRequest{
+	_, err := server.SpawnSession(tenantctx.WithSystem(context.Background()), &pb.SpawnSessionRequest{
 		Backend: "claude",
 		ExtraArgs: []string{
 			"--dangerously-skip-permissions",

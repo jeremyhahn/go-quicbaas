@@ -15,6 +15,7 @@ import (
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // mockKVStore implements interfaces.KVStore for testing.
@@ -167,7 +168,7 @@ func TestBackendStorage_RoleCRUD(t *testing.T) {
 }
 
 func TestBackendStorage_AppCRUD(t *testing.T) {
-	ctx := ContextWithTenant(context.Background(), "tenant-1")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	kv := newMockKVStore()
 	storage := NewBackendStorage(kv)
 
@@ -208,7 +209,7 @@ func TestBackendStorage_AppCRUD(t *testing.T) {
 }
 
 func TestBackendStorage_TokenOperations(t *testing.T) {
-	ctx := ContextWithTenant(context.Background(), "tenant-1")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	kv := newMockKVStore()
 	storage := NewBackendStorage(kv)
 
@@ -449,7 +450,7 @@ func TestBackendStorage_KeyPrefixes(t *testing.T) {
 
 func TestBackendStorage_DeleteTenantCascade(t *testing.T) {
 	tenantID := "cascade-tenant"
-	ctx := ContextWithTenant(context.Background(), tenantID)
+	ctx := tenantctx.WithTenant(context.Background(), tenantID)
 	kv := newMockKVStore()
 	storage := NewBackendStorage(kv)
 

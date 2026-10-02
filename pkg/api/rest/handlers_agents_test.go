@@ -85,7 +85,7 @@ func agentsCall(t *testing.T, server *Server, method, path, body string) *httpte
 	r.Delete("/api/v1/agent-pools/{poolID}", server.HandleDeleteAgentPool)
 	r.Get("/api/v1/agent-pools/{poolID}/used-by", server.HandleAgentPoolUsedBy)
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(method, path, bytes.NewBufferString(body)))
+	r.ServeHTTP(w, systemRequest(method, path, bytes.NewBufferString(body)))
 	return w
 }
 
@@ -180,7 +180,7 @@ func TestAgentsOverREST_NoCatalogIsUnavailable(t *testing.T) {
 
 func TestRespondAgentCatalogError_UnknownErrorsAreInternal(t *testing.T) {
 	w := httptest.NewRecorder()
-	respondAgentCatalogError(w, httptest.NewRequest(http.MethodGet, "/", nil), errors.New("boom"))
+	respondAgentCatalogError(w, systemRequest(http.MethodGet, "/", nil), errors.New("boom"))
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
@@ -191,7 +191,7 @@ func TestHandleOrchestratorError_MapsCatalogRefusals(t *testing.T) {
 		&orchestration.AgentRoleMismatchError{AgentID: "a", Role: orchestration.AgentRoleLead}: http.StatusBadRequest,
 	} {
 		w := httptest.NewRecorder()
-		handleOrchestratorError(w, httptest.NewRequest(http.MethodGet, "/", nil), err)
+		handleOrchestratorError(w, systemRequest(http.MethodGet, "/", nil), err)
 		assert.Equal(t, want, w.Code, "%T", err)
 	}
 }

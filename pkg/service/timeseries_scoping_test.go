@@ -25,8 +25,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // memoryTSStorage is an in-memory interfaces.TimeSeriesStorage that files
@@ -128,7 +128,7 @@ func queryWindow(metric string, at time.Time) *TSQueryRequest {
 func TestTimeSeriesScoping_ATenantReadsWhatItWrote(t *testing.T) {
 	storage := newMemoryTSStorage()
 	tsSvc := newScopingTestService(t, storage)
-	acme := iam.ContextWithTenant(context.Background(), "acme")
+	acme := tenantctx.WithTenant(context.Background(), "acme")
 	at := time.Now().UTC()
 
 	_, err := tsSvc.WritePoint(acme, &WritePointRequest{Metric: "cpu.usage", Value: 42, Timestamp: at})
@@ -156,11 +156,11 @@ func TestTimeSeriesScoping_ATenantDoesNotReadAnothersSeries(t *testing.T) {
 	tsSvc := newScopingTestService(t, storage)
 	at := time.Now().UTC()
 
-	_, err := tsSvc.WritePoint(iam.ContextWithTenant(context.Background(), "acme"),
+	_, err := tsSvc.WritePoint(tenantctx.WithTenant(context.Background(), "acme"),
 		&WritePointRequest{Metric: "cpu.usage", Value: 42, Timestamp: at})
 	require.NoError(t, err)
 
-	globex := iam.ContextWithTenant(context.Background(), "globex")
+	globex := tenantctx.WithTenant(context.Background(), "globex")
 	resp, err := tsSvc.TSQuery(globex, queryWindow("cpu.usage", at))
 	require.NoError(t, err)
 	assert.Empty(t, resp.Points)
@@ -173,7 +173,7 @@ func TestTimeSeriesScoping_ATenantDoesNotReadAnothersSeries(t *testing.T) {
 func TestTimeSeriesScoping_RetentionAndDeleteActOnTheTenantsSeries(t *testing.T) {
 	storage := newMemoryTSStorage()
 	tsSvc := newScopingTestService(t, storage)
-	acme := iam.ContextWithTenant(context.Background(), "acme")
+	acme := tenantctx.WithTenant(context.Background(), "acme")
 	at := time.Now().UTC()
 
 	_, err := tsSvc.SetRetentionPolicy(acme, &TSSetRetentionPolicyRequest{
@@ -201,18 +201,18 @@ func TestTimeSeriesScoping_TheSystemTenantUsesTheBareName(t *testing.T) {
 	tsSvc := newScopingTestService(t, storage)
 	at := time.Now().UTC()
 
-	_, err := tsSvc.WritePoint(context.Background(), &WritePointRequest{Metric: "cpu.usage", Value: 7, Timestamp: at})
+	_, err := tsSvc.WritePoint(tenantctx.WithSystem(context.Background()), &WritePointRequest{Metric: "cpu.usage", Value: 7, Timestamp: at})
 	require.NoError(t, err)
 	assert.Contains(t, storage.points, "cpu.usage")
 
-	resp, err := tsSvc.TSQuery(context.Background(), queryWindow("cpu.usage", at))
+	resp, err := tsSvc.TSQuery(tenantctx.WithSystem(context.Background()), queryWindow("cpu.usage", at))
 	require.NoError(t, err)
 	require.Len(t, resp.Points, 1)
 }
 
 func TestTimeSeriesScoping_AnInvalidTenantIsRefusedOnEveryPath(t *testing.T) {
 	tsSvc := newScopingTestService(t, newMemoryTSStorage())
-	bad := iam.ContextWithTenant(context.Background(), "not a tenant!")
+	bad := tenantctx.WithTenant(context.Background(), "not a tenant!")
 	at := time.Now().UTC()
 
 	calls := map[string]func() error{

@@ -24,11 +24,11 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 type nilSDLCProvider struct{}
@@ -50,7 +50,7 @@ func TestSDLCServer_AnswersUnavailableWithoutTheModule(t *testing.T) {
 		"disabled module": NewSDLCServer(nilSDLCProvider{}, sdlcTestLogger(t)),
 	} {
 		t.Run(name, func(t *testing.T) {
-			ctx := context.Background()
+			ctx := tenantctx.WithSystem(context.Background())
 			if _, err := srv.BindProject(ctx, &pb.BindProjectRequest{Binding: &pb.ProjectBinding{ProjectId: "p"}}); status.Code(err) != codes.Unavailable {
 				t.Fatalf("BindProject: %v", err)
 			}
@@ -68,13 +68,15 @@ func TestSDLCServer_AnswersUnavailableWithoutTheModule(t *testing.T) {
 }
 
 func TestSDLCServer_TenantResolution(t *testing.T) {
-	if _, err := sdlcTenant(context.Background(), ""); status.Code(err) != codes.InvalidArgument {
+	// An unbound call is refused, whether or not it names a tenant: the
+	// request is not trusted to name its own (go-quicbaas#1150).
+	if _, err := sdlcTenant(context.Background(), ""); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("no tenant anywhere: %v", err)
 	}
-	if got, err := sdlcTenant(context.Background(), "t1"); err != nil || got != "t1" {
-		t.Fatalf("requested only: %q %v", got, err)
+	if _, err := sdlcTenant(context.Background(), "t1"); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("requested only: %v", err)
 	}
-	bound := iam.ContextWithTenant(context.Background(), "t1")
+	bound := tenantctx.WithTenant(context.Background(), "t1")
 	if got, err := sdlcTenant(bound, ""); err != nil || got != "t1" {
 		t.Fatalf("bound only: %q %v", got, err)
 	}
@@ -190,7 +192,7 @@ func TestSDLCServer_OnboardingVerbsAnswerUnavailableWithoutTheModule(t *testing.
 		"disabled module": NewSDLCServer(nilSDLCProvider{}, sdlcTestLogger(t)),
 	} {
 		t.Run(name, func(t *testing.T) {
-			ctx := context.Background()
+			ctx := tenantctx.WithSystem(context.Background())
 			if _, err := srv.Onboard(ctx, &pb.OnboardRequest{ProjectId: "p"}); status.Code(err) != codes.Unavailable {
 				t.Errorf("Onboard: %v", err)
 			}
@@ -392,7 +394,7 @@ func TestSDLCConverters_ReviewerProfilesSurviveARebind(t *testing.T) {
 }
 
 func TestSDLCServer_ReviewerVerbsRefuseWithoutTheModuleOrAProject(t *testing.T) {
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	unavailable := NewSDLCServer(nilSDLCProvider{}, sdlcTestLogger(t))
 	if _, err := unavailable.GetReviewerSelection(ctx, &pb.GetReviewerSelectionRequest{ProjectId: "p", PullRequest: 1}); status.Code(err) != codes.Unavailable {
 		t.Fatalf("GetReviewerSelection: %v", err)
@@ -407,8 +409,8 @@ func TestSDLCServer_ReviewerVerbsRefuseWithoutTheModuleOrAProject(t *testing.T) 
 	if _, _, err := (&SDLCServer{provider: fixedSDLCProvider{svc: &service.SDLCService{}}}).reviewerRequest(ctx, "t", ""); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("no project: %v", err)
 	}
-	if _, _, err := (&SDLCServer{provider: fixedSDLCProvider{svc: &service.SDLCService{}}}).reviewerRequest(ctx, "", "p"); status.Code(err) != codes.InvalidArgument {
-		t.Fatalf("no tenant: %v", err)
+	if _, _, err := (&SDLCServer{provider: fixedSDLCProvider{svc: &service.SDLCService{}}}).reviewerRequest(context.Background(), "", "p"); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("no tenant bound: %v", err)
 	}
 }
 
@@ -435,7 +437,7 @@ func TestSDLCConverters_ReviewerSelection(t *testing.T) {
 // TestSDLCServer_AdoptIssueRefusesWithoutTheModuleOrAProject: the verb needs
 // the module and a project, exactly as the other operator verbs do.
 func TestSDLCServer_AdoptIssueRefusesWithoutTheModuleOrAProject(t *testing.T) {
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	unavailable := NewSDLCServer(nilSDLCProvider{}, sdlcTestLogger(t))
 	if _, err := unavailable.AdoptIssue(ctx, &pb.AdoptIssueRequest{ProjectId: "p", Issue: 1}); status.Code(err) != codes.Unavailable {
 		t.Fatalf("AdoptIssue without the module: %v", err)
@@ -449,7 +451,7 @@ func TestSDLCServer_AdoptIssueRefusesWithoutTheModuleOrAProject(t *testing.T) {
 // TestSDLCServer_AttentionRefusesWithoutTheModule: both inbox verbs answer
 // Unavailable on a node without the module.
 func TestSDLCServer_AttentionRefusesWithoutTheModule(t *testing.T) {
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	unavailable := NewSDLCServer(nilSDLCProvider{}, sdlcTestLogger(t))
 	if _, err := unavailable.ListAttention(ctx, &pb.ListAttentionRequest{TenantId: "t"}); status.Code(err) != codes.Unavailable {
 		t.Fatalf("ListAttention: %v", err)
@@ -478,7 +480,7 @@ func TestAttentionConverters(t *testing.T) {
 // without the module from answering an empty project, and a request naming no
 // project from reaching it.
 func TestSDLCServer_GetOpenWorkRefusesWithoutTheModuleOrAProject(t *testing.T) {
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	for name, srv := range map[string]*SDLCServer{
 		"nil provider":    NewSDLCServer(nil, sdlcTestLogger(t)),
 		"disabled module": NewSDLCServer(nilSDLCProvider{}, sdlcTestLogger(t)),

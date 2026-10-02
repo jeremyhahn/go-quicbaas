@@ -16,10 +16,8 @@ package service
 import (
 	"context"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // TenantTargetDeniedError is a caller authenticated to one tenant naming
@@ -45,16 +43,19 @@ func (e *TenantTargetDeniedError) Unwrap() error { return orchestration.ErrAccou
 // THE AUTHORIZATION COMES FIRST, AGAINST THE ORIGINAL IDENTITY. Once both keys
 // name the target, every store's scope check passes by construction, so a
 // check made after the switch checks nothing (go-quicbaas#1058 review). The
-// caller's tenant is the IAM tenant the authenticated request carries:
+// caller's tenant is the one bound to the request (tenantctx.FromContext):
 //
 //   - a caller of the target tenant acts on its own records;
 //   - a caller of the system tenant administers every tenant;
-//   - a context with no IAM tenant is an in-process caller (the embedded
-//     transport), which has no identity to confine;
+//   - a context with no tenant bound is refused: an unknown caller is not the
+//     system (go-quicbaas#1150);
 //   - anyone else is refused with TenantTargetDeniedError.
 func targetTenantContext(ctx context.Context, target string) (context.Context, error) {
-	caller := iam.TenantFromContext(ctx)
-	if caller != "" && caller != target && !qrdbsdk.IsSystemTenant(caller) {
+	caller, err := tenantctx.FromContext(ctx, "service.targetTenant")
+	if err != nil {
+		return ctx, err
+	}
+	if caller != target && !tenantctx.IsSystem(caller) {
 		return ctx, &TenantTargetDeniedError{CallerTenant: caller, TargetTenant: target}
 	}
 	return accountTenantContext(ctx, target), nil

@@ -24,6 +24,7 @@ import (
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 func TestOrchestratorGRPC_BlockTask_Success(t *testing.T) {
@@ -39,7 +40,7 @@ func TestOrchestratorGRPC_BlockTask_Success(t *testing.T) {
 	}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.BlockTask(context.Background(), &pb.BlockTaskRequest{
+	resp, err := server.BlockTask(tenantctx.WithTenant(context.Background(), "tenant-1"), &pb.BlockTaskRequest{
 		TenantId: "tenant-1", TaskId: "task-1", Kind: "needs_info", Reason: "which branch?",
 	})
 	require.NoError(t, err)
@@ -64,7 +65,7 @@ func TestOrchestratorGRPC_BlockTask_MissingFields(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resp, err := server.BlockTask(context.Background(), tc.req)
+			resp, err := server.BlockTask(tenantctx.WithSystem(context.Background()), tc.req)
 			assert.Nil(t, resp)
 			st, ok := status.FromError(err)
 			require.True(t, ok)
@@ -80,7 +81,7 @@ func TestOrchestratorGRPC_BlockTask_ServiceError(t *testing.T) {
 		},
 	}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
-	resp, err := server.BlockTask(context.Background(), &pb.BlockTaskRequest{TaskId: "t", Kind: "blocked", Reason: "r"})
+	resp, err := server.BlockTask(tenantctx.WithSystem(context.Background()), &pb.BlockTaskRequest{TaskId: "t", Kind: "blocked", Reason: "r"})
 	assert.Nil(t, resp)
 	require.Error(t, err)
 	_, ok := status.FromError(err)
@@ -96,7 +97,7 @@ func TestOrchestratorGRPC_ReadmitTask_Success(t *testing.T) {
 		},
 	}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
-	resp, err := server.ReadmitTask(context.Background(), &pb.ReadmitTaskRequest{TenantId: "tenant-1", TaskId: "task-1"})
+	resp, err := server.ReadmitTask(tenantctx.WithTenant(context.Background(), "tenant-1"), &pb.ReadmitTaskRequest{TenantId: "tenant-1", TaskId: "task-1"})
 	require.NoError(t, err)
 	assert.True(t, resp.Readmitted)
 	assert.Equal(t, "task-1", resp.TaskId)
@@ -107,7 +108,7 @@ func TestOrchestratorGRPC_ReadmitTask_Success(t *testing.T) {
 func TestOrchestratorGRPC_ReadmitTask_Errors(t *testing.T) {
 	t.Run("missing task id", func(t *testing.T) {
 		server := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
-		resp, err := server.ReadmitTask(context.Background(), &pb.ReadmitTaskRequest{TenantId: "t"})
+		resp, err := server.ReadmitTask(tenantctx.WithTenant(context.Background(), "t"), &pb.ReadmitTaskRequest{TenantId: "t"})
 		assert.Nil(t, resp)
 		st, ok := status.FromError(err)
 		require.True(t, ok)
@@ -120,7 +121,7 @@ func TestOrchestratorGRPC_ReadmitTask_Errors(t *testing.T) {
 			},
 		}
 		server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
-		resp, err := server.ReadmitTask(context.Background(), &pb.ReadmitTaskRequest{TenantId: "t", TaskId: "x"})
+		resp, err := server.ReadmitTask(tenantctx.WithTenant(context.Background(), "t"), &pb.ReadmitTaskRequest{TenantId: "t", TaskId: "x"})
 		assert.Nil(t, resp)
 		require.Error(t, err)
 	})
@@ -133,7 +134,7 @@ func TestOrchestratorGRPC_ReadmitTask_Errors(t *testing.T) {
 			},
 		}
 		server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
-		resp, err := server.ReadmitTask(context.Background(), &pb.ReadmitTaskRequest{TenantId: "t", TaskId: "x"})
+		resp, err := server.ReadmitTask(tenantctx.WithTenant(context.Background(), "t"), &pb.ReadmitTaskRequest{TenantId: "t", TaskId: "x"})
 		assert.Nil(t, resp)
 		st, ok := status.FromError(err)
 		require.True(t, ok)
@@ -161,7 +162,7 @@ func TestOrchestratorGRPC_ListTasks_ProjectAndStatusesFilter(t *testing.T) {
 	}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.ListTasks(context.Background(), &pb.ListTasksRequest{
+	resp, err := server.ListTasks(tenantctx.WithTenant(context.Background(), "tenant-1"), &pb.ListTasksRequest{
 		TenantId: "tenant-1",
 		Filter: &pb.TaskFilter{
 			ProjectId: "proj-1",
@@ -205,7 +206,7 @@ func TestOrchestratorGRPC_CreateTask_CarriesSourcePriorityBudget(t *testing.T) {
 		},
 	}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
-	resp, err := server.CreateTask(context.Background(), &pb.CreateTaskRequest{
+	resp, err := server.CreateTask(tenantctx.WithTenant(context.Background(), "tenant-1"), &pb.CreateTaskRequest{
 		TenantId: "tenant-1", Subject: "s",
 		Source:        &pb.TaskSource{Kind: "operator", Ref: "alice", Url: "u"},
 		Priority:      9,
@@ -234,7 +235,7 @@ func TestOrchestratorGRPC_JobStatus_CarriesTaskBindingAndSessions(t *testing.T) 
 		},
 	}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
-	resp, err := server.GetJobStatus(context.Background(), &pb.OrchestratorGetJobStatusRequest{TenantId: "t", JobId: "job-1"})
+	resp, err := server.GetJobStatus(tenantctx.WithTenant(context.Background(), "t"), &pb.OrchestratorGetJobStatusRequest{TenantId: "t", JobId: "job-1"})
 	require.NoError(t, err)
 	assert.Equal(t, "task-1", resp.TaskId)
 	assert.Equal(t, int64(2), resp.Attempt)
@@ -253,7 +254,7 @@ func TestOrchestratorGRPC_StartJob_CarriesTaskBinding(t *testing.T) {
 		},
 	}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
-	_, err := server.StartJob(context.Background(), &pb.OrchestratorStartJobRequest{TenantId: "t", Description: "d", TaskId: "task-1", Attempt: 3})
+	_, err := server.StartJob(tenantctx.WithTenant(context.Background(), "t"), &pb.OrchestratorStartJobRequest{TenantId: "t", Description: "d", TaskId: "task-1", Attempt: 3})
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, "task-1", got.TaskID)
@@ -285,7 +286,7 @@ func TestOrchestratorGRPC_PromptAppendCrossesTheWire(t *testing.T) {
 		},
 	}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t")
 
 	_, err := server.SpawnSession(ctx, &pb.SpawnSessionRequest{AgentId: "claude-coder", PromptAppend: "spawn material"})
 	require.NoError(t, err)

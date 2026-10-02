@@ -20,6 +20,7 @@ import (
 	"time"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // MFA Save* reject invalid records; Get* report not-found.
@@ -115,7 +116,7 @@ func TestBackendSessionExtStorage_ValidationAndNotFound(t *testing.T) {
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendSessionExtStorage(kv, nil)
-	ctx := ContextWithTenant(context.Background(), "acme")
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
 
 	if err := store.Create(ctx, &SessionExt{}); err == nil {
 		t.Fatal("Create(invalid) want error")
@@ -180,7 +181,7 @@ func TestBackendFederationStorage_CreateValidationAndDuplicate(t *testing.T) {
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendFederationStorage(kv)
-	ctx := ContextWithTenant(context.Background(), "acme")
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
 
 	if err := store.CreateLink(ctx, &FederatedIdentity{}); err == nil {
 		t.Fatal("CreateLink(invalid) want error")

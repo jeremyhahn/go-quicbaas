@@ -21,7 +21,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // Keyspace prefixes for multi-tenant isolation.
@@ -98,9 +98,12 @@ func (r *defaultKeyspaceResolver) BuildKey(ctx context.Context, entityType strin
 		return nil, err
 	}
 
-	tenantID := iam.TenantFromContext(ctx)
-	if tenantID == "" {
-		// Legacy single-tenant mode: {entityType}:{id}
+	tenantID, err := tenantctx.FromContext(ctx, "keyspace.BuildKey")
+	if err != nil {
+		return nil, err
+	}
+	if tenantctx.IsSystem(tenantID) {
+		// The system tenant keeps the unprefixed layout: {entityType}:{id}
 		var buf bytes.Buffer
 		buf.WriteString(entityType)
 		buf.WriteByte(':')
@@ -125,9 +128,12 @@ func (r *defaultKeyspaceResolver) BuildPrefix(ctx context.Context, entityType st
 		return nil, err
 	}
 
-	tenantID := iam.TenantFromContext(ctx)
-	if tenantID == "" {
-		// Legacy single-tenant mode: {entityType}:
+	tenantID, err := tenantctx.FromContext(ctx, "keyspace.BuildPrefix")
+	if err != nil {
+		return nil, err
+	}
+	if tenantctx.IsSystem(tenantID) {
+		// The system tenant keeps the unprefixed layout: {entityType}:
 		return []byte(entityType + KeySeparator), nil
 	}
 
@@ -143,9 +149,12 @@ func (r *defaultKeyspaceResolver) BuildPrefix(ctx context.Context, entityType st
 
 // BuildTenantPrefix constructs the tenant's root prefix for listing all entity types.
 func (r *defaultKeyspaceResolver) BuildTenantPrefix(ctx context.Context) ([]byte, error) {
-	tenantID := iam.TenantFromContext(ctx)
-	if tenantID == "" {
-		// Legacy single-tenant mode: return empty to scan all non-system keys
+	tenantID, err := tenantctx.FromContext(ctx, "keyspace.BuildTenantPrefix")
+	if err != nil {
+		return nil, err
+	}
+	if tenantctx.IsSystem(tenantID) {
+		// The system tenant: return empty to scan all non-system keys
 		return nil, nil
 	}
 
@@ -223,13 +232,16 @@ func (r *defaultKeyspaceResolver) ValidateAccess(ctx context.Context, key []byte
 		return errors.NewSystemKeyspaceViolationError("keyspace.ValidateAccess", keyStr)
 	}
 
-	requestingTenant := iam.TenantFromContext(ctx)
+	requestingTenant, err := tenantctx.FromContext(ctx, "keyspace.ValidateAccess")
+	if err != nil {
+		return err
+	}
 
-	// If no tenant in context (single-tenant mode)
-	if requestingTenant == "" {
+	// The system tenant owns the unprefixed layout.
+	if tenantctx.IsSystem(requestingTenant) {
 		// Allow access to legacy keys only
 		if r.IsTenantKey(key) {
-			// Single-tenant mode cannot access tenant-prefixed keys
+			// The system tenant's layout cannot reach tenant-prefixed keys
 			return errors.NewCrossTenantAccessError("keyspace.ValidateAccess", "", "tenant-prefixed")
 		}
 		return nil

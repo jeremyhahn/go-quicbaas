@@ -24,6 +24,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service/mocks"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 func TestGetSpendLimits(t *testing.T) {
@@ -141,7 +142,7 @@ func TestARejectedSpendUpdateLeavesTheSavedPolicyIntact(t *testing.T) {
 		ledger:           orchestration.NewInMemoryConsumptionLedger(),
 		tenant:           orchestration.NewInMemoryTenantSpendPolicyStore(),
 	})
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	set := func(micros interface{}) error {
 		_, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_spend_policy_set", map[string]interface{}{
 			"tenant_id": "t1",
@@ -187,7 +188,7 @@ func TestAMalformedAccountCapNeverReachesTheService(t *testing.T) {
 			return &service.UpdateAccountResponse{Account: mcpSampleAccount()}, nil
 		},
 	})
-	_, err := reg.ExecuteTool(context.Background(), "quicbaas_agent_account_update", map[string]interface{}{
+	_, err := reg.ExecuteTool(tenantctx.WithSystem(context.Background()), "quicbaas_agent_account_update", map[string]interface{}{
 		"tenant_id": "t1", "account_id": "acct-1",
 		"spend": map[string]interface{}{"quota": map[string]interface{}{"windows": []interface{}{
 			map[string]interface{}{"name": "daily", "size": "24h", "max_equivalent_micros": "bad"},
@@ -240,7 +241,7 @@ func TestTenantSpendPolicyTools(t *testing.T) {
 		ledger:           orchestration.NewInMemoryConsumptionLedger(),
 		tenant:           orchestration.NewInMemoryTenantSpendPolicyStore(),
 	})
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	_, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_spend_policy_set", map[string]interface{}{
 		"tenant_id": "t1",
 		"limits": map[string]interface{}{"windows": []interface{}{

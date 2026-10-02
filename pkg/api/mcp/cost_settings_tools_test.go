@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // costSettingsAgentService exposes a cost settings store.
@@ -54,7 +55,7 @@ func TestCostSettingsTools(t *testing.T) {
 	reg := newFleetRegistry(t, &costSettingsAgentService{
 		mockAgentService: &mockAgentService{}, store: orchestration.NewInMemoryCostSettingsStore(),
 	})
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	raw, err := reg.ExecuteTool(ctx, "quicbaas_orchestrator_cost_settings_get", map[string]interface{}{"tenant_id": "t1"})
 	if err != nil {
@@ -83,7 +84,7 @@ func TestCostSettingsTools(t *testing.T) {
 func TestCostSettingsToolsRefuseMalformedArguments(t *testing.T) {
 	store := orchestration.NewInMemoryCostSettingsStore()
 	reg := newFleetRegistry(t, &costSettingsAgentService{mockAgentService: &mockAgentService{}, store: store})
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	if _, err := reg.ExecuteTool(ctx, "quicbaas_orchestrator_cost_settings_set", map[string]interface{}{
 		"tenant_id": "t1", "electricity_price_per_kwh": 0.3,
 	}); err != nil {

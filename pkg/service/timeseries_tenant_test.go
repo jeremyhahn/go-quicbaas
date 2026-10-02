@@ -24,7 +24,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -125,17 +125,17 @@ func TestTsTenantListPrefix_WithTenant(t *testing.T) {
 // prepareTimeSeriesTenantContext tests
 // =============================================================================
 
-func TestPrepareTimeSeriesTenantContext_EmptyContext(t *testing.T) {
-	// No tenant in context returns empty string (single-tenant mode)
-	ctx := context.Background()
-	tenantID, err := prepareTimeSeriesTenantContext(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, "", tenantID)
+func TestPrepareTimeSeriesTenantContext_RefusesUnboundContext(t *testing.T) {
+	// An unbound context is refused, not read as single-tenant / system
+	// reach (go-quicbaas#1150).
+	_, err := prepareTimeSeriesTenantContext(context.Background())
+	var missing *tenantctx.MissingTenantError
+	require.ErrorAs(t, err, &missing)
 }
 
 func TestPrepareTimeSeriesTenantContext_ValidTenant(t *testing.T) {
 	// Valid tenant ID is returned
-	ctx := iam.ContextWithTenant(context.Background(), "acme-corp")
+	ctx := tenantctx.WithTenant(context.Background(), "acme-corp")
 	tenantID, err := prepareTimeSeriesTenantContext(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, "acme-corp", tenantID)
@@ -143,7 +143,7 @@ func TestPrepareTimeSeriesTenantContext_ValidTenant(t *testing.T) {
 
 func TestPrepareTimeSeriesTenantContext_InvalidTenant(t *testing.T) {
 	// Invalid tenant ID returns an error
-	ctx := iam.ContextWithTenant(context.Background(), "invalid tenant!@#")
+	ctx := tenantctx.WithTenant(context.Background(), "invalid tenant!@#")
 	_, err := prepareTimeSeriesTenantContext(ctx)
 	require.Error(t, err)
 	var qbErr *errors.QBError
@@ -154,7 +154,7 @@ func TestPrepareTimeSeriesTenantContext_InvalidTenant(t *testing.T) {
 func TestPrepareTimeSeriesTenantContext_TooLongTenant(t *testing.T) {
 	// Tenant ID exceeding 128 characters returns an error
 	longTenant := strings.Repeat("a", 129)
-	ctx := iam.ContextWithTenant(context.Background(), longTenant)
+	ctx := tenantctx.WithTenant(context.Background(), longTenant)
 	_, err := prepareTimeSeriesTenantContext(ctx)
 	require.Error(t, err)
 	var qbErr *errors.QBError

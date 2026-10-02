@@ -19,6 +19,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -27,7 +29,7 @@ import (
 
 func TestBatchPutObjects_Success(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &BatchPutObjectsRequest{
 		Objects: []*PutObjectRequest{
@@ -52,7 +54,7 @@ func TestBatchPutObjects_Success(t *testing.T) {
 
 func TestBatchPutObjects_WithTenantOverride(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-abc")
 
 	req := &BatchPutObjectsRequest{
 		TenantID: "tenant-abc",
@@ -71,7 +73,7 @@ func TestBatchPutObjects_WithTenantOverride(t *testing.T) {
 
 func TestBatchPutObjects_EmptyObjects(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &BatchPutObjectsRequest{
 		Objects: []*PutObjectRequest{},
@@ -84,7 +86,7 @@ func TestBatchPutObjects_EmptyObjects(t *testing.T) {
 
 func TestBatchPutObjects_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.BatchPutObjects(ctx, nil)
 	assert.Nil(t, resp)
@@ -93,7 +95,7 @@ func TestBatchPutObjects_NilRequest(t *testing.T) {
 
 func TestBatchPutObjects_WithFailure_ContinueOnError(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &BatchPutObjectsRequest{
 		Objects: []*PutObjectRequest{
@@ -113,7 +115,7 @@ func TestBatchPutObjects_WithFailure_ContinueOnError(t *testing.T) {
 
 func TestBatchPutObjects_WithFailure_StopOnError(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &BatchPutObjectsRequest{
 		Objects: []*PutObjectRequest{
@@ -136,7 +138,7 @@ func TestBatchPutObjects_WithFailure_StopOnError(t *testing.T) {
 
 func TestBatchGetObjects_Success(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// First, put some objects
 	for _, key := range []string{"bget:obj1", "bget:obj2"} {
@@ -162,7 +164,7 @@ func TestBatchGetObjects_Success(t *testing.T) {
 
 func TestBatchGetObjects_MixedFoundAndNotFound(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Put one object
 	_, err := svc.PutObject(ctx, &PutObjectRequest{
@@ -185,7 +187,7 @@ func TestBatchGetObjects_MixedFoundAndNotFound(t *testing.T) {
 
 func TestBatchGetObjects_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.BatchGetObjects(ctx, nil)
 	assert.Nil(t, resp)
@@ -194,7 +196,7 @@ func TestBatchGetObjects_NilRequest(t *testing.T) {
 
 func TestBatchGetObjects_EmptyKeys(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &BatchGetObjectsRequest{
 		Keys: []string{},
@@ -207,7 +209,7 @@ func TestBatchGetObjects_EmptyKeys(t *testing.T) {
 
 func TestBatchGetObjects_WithTenantID(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-xyz")
 
 	req := &BatchGetObjectsRequest{
 		Keys:     []string{"bget:tenant-obj1"},
@@ -223,7 +225,7 @@ func TestBatchGetObjects_WithTenantID(t *testing.T) {
 
 func TestBatchGetObjects_WithIncludeMetadata(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Put an object
 	_, err := svc.PutObject(ctx, &PutObjectRequest{
@@ -250,7 +252,7 @@ func TestBatchGetObjects_WithIncludeMetadata(t *testing.T) {
 
 func TestBatchDeleteObjects_Success(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Put some objects
 	for _, key := range []string{"bdel:obj1", "bdel:obj2", "bdel:obj3"} {
@@ -275,7 +277,7 @@ func TestBatchDeleteObjects_Success(t *testing.T) {
 
 func TestBatchDeleteObjects_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.BatchDeleteObjects(ctx, nil)
 	assert.Nil(t, resp)
@@ -284,7 +286,7 @@ func TestBatchDeleteObjects_NilRequest(t *testing.T) {
 
 func TestBatchDeleteObjects_EmptyKeys(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &BatchDeleteObjectsRequest{
 		Keys: []string{},
@@ -297,7 +299,7 @@ func TestBatchDeleteObjects_EmptyKeys(t *testing.T) {
 
 func TestBatchDeleteObjects_MixedSuccessAndFailure(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Put one object
 	_, err := svc.PutObject(ctx, &PutObjectRequest{
@@ -320,7 +322,7 @@ func TestBatchDeleteObjects_MixedSuccessAndFailure(t *testing.T) {
 
 func TestBatchDeleteObjects_WithTenantID(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-del")
 
 	req := &BatchDeleteObjectsRequest{
 		Keys:     []string{"bdel:tenant-obj"},

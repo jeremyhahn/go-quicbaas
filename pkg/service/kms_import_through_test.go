@@ -14,7 +14,6 @@
 package service
 
 import (
-	"context"
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -101,7 +100,7 @@ func TestImportKey_ThroughServiceToRealKMS_SignsWithTheImportedKey(t *testing.T)
 	defer cleanup()
 
 	svc := newKMSService(manager, newMockLogger())
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
@@ -148,7 +147,7 @@ func TestImportKey_ThroughServiceToRealKMS_RefusesContradictoryAttributes(t *tes
 	defer cleanup()
 
 	svc := newKMSService(manager, newMockLogger())
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	_, private, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)

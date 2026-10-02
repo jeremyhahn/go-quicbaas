@@ -30,6 +30,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -297,7 +298,7 @@ func (m *MockImportVectorsStream) GetResponse() *pb.ImportVectorsResponse {
 func TestCreateNamespace_NilRequest(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.CreateNamespace(context.Background(), nil)
+	resp, err := srv.CreateNamespace(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -310,7 +311,7 @@ func TestCreateNamespace_NilRequest(t *testing.T) {
 func TestCreateNamespace_NilConfig(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.CreateNamespace(context.Background(), &pb.CreateNamespaceRequest{})
+	resp, err := srv.CreateNamespace(tenantctx.WithSystem(context.Background()), &pb.CreateNamespaceRequest{})
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -323,7 +324,7 @@ func TestCreateNamespace_NilConfig(t *testing.T) {
 func TestCreateNamespace_EmptyNamespace(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.CreateNamespace(context.Background(), &pb.CreateNamespaceRequest{
+	resp, err := srv.CreateNamespace(tenantctx.WithSystem(context.Background()), &pb.CreateNamespaceRequest{
 		Config: &pb.NamespaceConfig{
 			Namespace:  "",
 			Dimensions: 128,
@@ -341,7 +342,7 @@ func TestCreateNamespace_EmptyNamespace(t *testing.T) {
 func TestCreateNamespace_InvalidDimensions(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.CreateNamespace(context.Background(), &pb.CreateNamespaceRequest{
+	resp, err := srv.CreateNamespace(tenantctx.WithSystem(context.Background()), &pb.CreateNamespaceRequest{
 		Config: &pb.NamespaceConfig{
 			Namespace:  "test-ns",
 			Dimensions: 0,
@@ -365,7 +366,7 @@ func TestCreateNamespace_Success(t *testing.T) {
 			Timestamp: 1234567890,
 		}, nil)
 
-	resp, err := srv.CreateNamespace(context.Background(), &pb.CreateNamespaceRequest{
+	resp, err := srv.CreateNamespace(tenantctx.WithSystem(context.Background()), &pb.CreateNamespaceRequest{
 		Config: &pb.NamespaceConfig{
 			Namespace:      "test-ns",
 			Dimensions:     128,
@@ -388,7 +389,7 @@ func TestCreateNamespace_ServiceError(t *testing.T) {
 	mockSvc.On("CreateNamespace", mock.Anything, mock.Anything).
 		Return(nil, &errors.QBError{Code: errors.ErrAlreadyExists, Op: "CreateNamespace"})
 
-	resp, err := srv.CreateNamespace(context.Background(), &pb.CreateNamespaceRequest{
+	resp, err := srv.CreateNamespace(tenantctx.WithSystem(context.Background()), &pb.CreateNamespaceRequest{
 		Config: &pb.NamespaceConfig{
 			Namespace:  "test-ns",
 			Dimensions: 128,
@@ -407,7 +408,7 @@ func TestCreateNamespace_ServiceError(t *testing.T) {
 func TestUpdateNamespace_NilRequest(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.UpdateNamespace(context.Background(), nil)
+	resp, err := srv.UpdateNamespace(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -419,7 +420,7 @@ func TestUpdateNamespace_NilRequest(t *testing.T) {
 func TestUpdateNamespace_EmptyNamespace(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.UpdateNamespace(context.Background(), &pb.UpdateNamespaceRequest{
+	resp, err := srv.UpdateNamespace(tenantctx.WithSystem(context.Background()), &pb.UpdateNamespaceRequest{
 		Namespace: "",
 	})
 
@@ -456,7 +457,7 @@ func TestUpdateNamespace_Success(t *testing.T) {
 			Timestamp: 1234567891,
 		}, nil)
 
-	resp, err := srv.UpdateNamespace(context.Background(), &pb.UpdateNamespaceRequest{
+	resp, err := srv.UpdateNamespace(tenantctx.WithSystem(context.Background()), &pb.UpdateNamespaceRequest{
 		Namespace:   "test-ns",
 		IndexParams: map[string]string{"M": "32"},
 		Metadata:    map[string]string{"env": "prod"},
@@ -475,7 +476,7 @@ func TestUpdateNamespace_GetNamespaceInfoError(t *testing.T) {
 	mockSvc.On("GetNamespaceInfo", mock.Anything, mock.Anything).
 		Return(nil, &errors.QBError{Code: errors.ErrNotFound, Op: "GetNamespaceInfo"})
 
-	resp, err := srv.UpdateNamespace(context.Background(), &pb.UpdateNamespaceRequest{
+	resp, err := srv.UpdateNamespace(tenantctx.WithSystem(context.Background()), &pb.UpdateNamespaceRequest{
 		Namespace: "nonexistent-ns",
 	})
 
@@ -496,7 +497,7 @@ func TestUpdateNamespace_DeleteNamespaceError(t *testing.T) {
 	mockSvc.On("DeleteNamespace", mock.Anything, mock.Anything).
 		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "DeleteNamespace"})
 
-	resp, err := srv.UpdateNamespace(context.Background(), &pb.UpdateNamespaceRequest{
+	resp, err := srv.UpdateNamespace(tenantctx.WithSystem(context.Background()), &pb.UpdateNamespaceRequest{
 		Namespace: "test-ns",
 	})
 
@@ -520,7 +521,7 @@ func TestUpdateNamespace_CreateNamespaceError(t *testing.T) {
 	mockSvc.On("CreateNamespace", mock.Anything, mock.Anything).
 		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "CreateNamespace"})
 
-	resp, err := srv.UpdateNamespace(context.Background(), &pb.UpdateNamespaceRequest{
+	resp, err := srv.UpdateNamespace(tenantctx.WithSystem(context.Background()), &pb.UpdateNamespaceRequest{
 		Namespace: "test-ns",
 	})
 
@@ -536,7 +537,7 @@ func TestUpdateNamespace_CreateNamespaceError(t *testing.T) {
 func TestDeleteNamespace_NilRequest(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.DeleteNamespace(context.Background(), nil)
+	resp, err := srv.DeleteNamespace(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -548,7 +549,7 @@ func TestDeleteNamespace_NilRequest(t *testing.T) {
 func TestDeleteNamespace_EmptyNamespace(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.DeleteNamespace(context.Background(), &pb.DeleteNamespaceRequest{
+	resp, err := srv.DeleteNamespace(tenantctx.WithSystem(context.Background()), &pb.DeleteNamespaceRequest{
 		Namespace: "",
 	})
 
@@ -569,7 +570,7 @@ func TestDeleteNamespace_Success(t *testing.T) {
 			Timestamp:      1234567890,
 		}, nil)
 
-	resp, err := srv.DeleteNamespace(context.Background(), &pb.DeleteNamespaceRequest{
+	resp, err := srv.DeleteNamespace(tenantctx.WithSystem(context.Background()), &pb.DeleteNamespaceRequest{
 		Namespace: "test-ns",
 	})
 
@@ -587,7 +588,7 @@ func TestDeleteNamespace_Success(t *testing.T) {
 func TestListNamespaces_NilRequest(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.ListNamespaces(context.Background(), nil)
+	resp, err := srv.ListNamespaces(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -617,7 +618,7 @@ func TestListNamespaces_Success(t *testing.T) {
 			TotalCount: 1,
 		}, nil)
 
-	resp, err := srv.ListNamespaces(context.Background(), &pb.ListNamespacesRequest{
+	resp, err := srv.ListNamespaces(tenantctx.WithSystem(context.Background()), &pb.ListNamespacesRequest{
 		Prefix:   "ns",
 		PageSize: 10,
 	})
@@ -636,7 +637,7 @@ func TestListNamespaces_Success(t *testing.T) {
 func TestGetNamespaceInfo_NilRequest(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.GetNamespaceInfo(context.Background(), nil)
+	resp, err := srv.GetNamespaceInfo(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -648,7 +649,7 @@ func TestGetNamespaceInfo_NilRequest(t *testing.T) {
 func TestGetNamespaceInfo_EmptyNamespace(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.GetNamespaceInfo(context.Background(), &pb.GetNamespaceInfoRequest{
+	resp, err := srv.GetNamespaceInfo(tenantctx.WithSystem(context.Background()), &pb.GetNamespaceInfoRequest{
 		Namespace: "",
 	})
 
@@ -675,7 +676,7 @@ func TestGetNamespaceInfo_Success(t *testing.T) {
 			UpdatedAt:      1234567890,
 		}, nil)
 
-	resp, err := srv.GetNamespaceInfo(context.Background(), &pb.GetNamespaceInfoRequest{
+	resp, err := srv.GetNamespaceInfo(tenantctx.WithSystem(context.Background()), &pb.GetNamespaceInfoRequest{
 		Namespace: "test-ns",
 	})
 
@@ -693,7 +694,7 @@ func TestGetNamespaceInfo_Success(t *testing.T) {
 func TestUpsertVector_NilRequest(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.UpsertVector(context.Background(), nil)
+	resp, err := srv.UpsertVector(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -705,7 +706,7 @@ func TestUpsertVector_NilRequest(t *testing.T) {
 func TestUpsertVector_NilVector(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.UpsertVector(context.Background(), &pb.UpsertVectorRequest{})
+	resp, err := srv.UpsertVector(tenantctx.WithSystem(context.Background()), &pb.UpsertVectorRequest{})
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -718,7 +719,7 @@ func TestUpsertVector_NilVector(t *testing.T) {
 func TestUpsertVector_EmptyNamespace(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.UpsertVector(context.Background(), &pb.UpsertVectorRequest{
+	resp, err := srv.UpsertVector(tenantctx.WithSystem(context.Background()), &pb.UpsertVectorRequest{
 		Vector: &pb.VectorEntity{
 			Namespace: "",
 			Id:        "vec1",
@@ -737,7 +738,7 @@ func TestUpsertVector_EmptyNamespace(t *testing.T) {
 func TestUpsertVector_EmptyID(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.UpsertVector(context.Background(), &pb.UpsertVectorRequest{
+	resp, err := srv.UpsertVector(tenantctx.WithSystem(context.Background()), &pb.UpsertVectorRequest{
 		Vector: &pb.VectorEntity{
 			Namespace: "test-ns",
 			Id:        "",
@@ -756,7 +757,7 @@ func TestUpsertVector_EmptyID(t *testing.T) {
 func TestUpsertVector_EmptyVectorData(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.UpsertVector(context.Background(), &pb.UpsertVectorRequest{
+	resp, err := srv.UpsertVector(tenantctx.WithSystem(context.Background()), &pb.UpsertVectorRequest{
 		Vector: &pb.VectorEntity{
 			Namespace: "test-ns",
 			Id:        "vec1",
@@ -775,7 +776,7 @@ func TestUpsertVector_EmptyVectorData(t *testing.T) {
 func TestUpsertVector_NaNValue(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.UpsertVector(context.Background(), &pb.UpsertVectorRequest{
+	resp, err := srv.UpsertVector(tenantctx.WithSystem(context.Background()), &pb.UpsertVectorRequest{
 		Vector: &pb.VectorEntity{
 			Namespace: "test-ns",
 			Id:        "vec1",
@@ -794,7 +795,7 @@ func TestUpsertVector_NaNValue(t *testing.T) {
 func TestUpsertVector_InfValue(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.UpsertVector(context.Background(), &pb.UpsertVectorRequest{
+	resp, err := srv.UpsertVector(tenantctx.WithSystem(context.Background()), &pb.UpsertVectorRequest{
 		Vector: &pb.VectorEntity{
 			Namespace: "test-ns",
 			Id:        "vec1",
@@ -820,7 +821,7 @@ func TestUpsertVector_Success(t *testing.T) {
 			Timestamp: 1234567890,
 		}, nil)
 
-	resp, err := srv.UpsertVector(context.Background(), &pb.UpsertVectorRequest{
+	resp, err := srv.UpsertVector(tenantctx.WithSystem(context.Background()), &pb.UpsertVectorRequest{
 		Vector: &pb.VectorEntity{
 			Namespace: "test-ns",
 			Id:        "vec1",
@@ -843,7 +844,7 @@ func TestUpsertVector_Success(t *testing.T) {
 func TestGetVector_NilRequest(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.GetVector(context.Background(), nil)
+	resp, err := srv.GetVector(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -855,7 +856,7 @@ func TestGetVector_NilRequest(t *testing.T) {
 func TestGetVector_EmptyNamespace(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.GetVector(context.Background(), &pb.GetVectorRequest{
+	resp, err := srv.GetVector(tenantctx.WithSystem(context.Background()), &pb.GetVectorRequest{
 		Namespace: "",
 		Id:        "vec1",
 	})
@@ -870,7 +871,7 @@ func TestGetVector_EmptyNamespace(t *testing.T) {
 func TestGetVector_EmptyID(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.GetVector(context.Background(), &pb.GetVectorRequest{
+	resp, err := srv.GetVector(tenantctx.WithSystem(context.Background()), &pb.GetVectorRequest{
 		Namespace: "test-ns",
 		Id:        "",
 	})
@@ -890,7 +891,7 @@ func TestGetVector_NotFound(t *testing.T) {
 			Found: false,
 		}, nil)
 
-	resp, err := srv.GetVector(context.Background(), &pb.GetVectorRequest{
+	resp, err := srv.GetVector(tenantctx.WithSystem(context.Background()), &pb.GetVectorRequest{
 		Namespace: "test-ns",
 		Id:        "vec1",
 	})
@@ -915,7 +916,7 @@ func TestGetVector_Success(t *testing.T) {
 			UpdatedAt: 1234567890,
 		}, nil)
 
-	resp, err := srv.GetVector(context.Background(), &pb.GetVectorRequest{
+	resp, err := srv.GetVector(tenantctx.WithSystem(context.Background()), &pb.GetVectorRequest{
 		Namespace:       "test-ns",
 		Id:              "123",
 		IncludeVector:   true,
@@ -936,7 +937,7 @@ func TestGetVector_Success(t *testing.T) {
 func TestDeleteVector_NilRequest(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.DeleteVector(context.Background(), nil)
+	resp, err := srv.DeleteVector(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -948,7 +949,7 @@ func TestDeleteVector_NilRequest(t *testing.T) {
 func TestDeleteVector_EmptyNamespace(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.DeleteVector(context.Background(), &pb.DeleteVectorRequest{
+	resp, err := srv.DeleteVector(tenantctx.WithSystem(context.Background()), &pb.DeleteVectorRequest{
 		Namespace: "",
 		Id:        "vec1",
 	})
@@ -960,7 +961,7 @@ func TestDeleteVector_EmptyNamespace(t *testing.T) {
 func TestDeleteVector_EmptyID(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.DeleteVector(context.Background(), &pb.DeleteVectorRequest{
+	resp, err := srv.DeleteVector(tenantctx.WithSystem(context.Background()), &pb.DeleteVectorRequest{
 		Namespace: "test-ns",
 		Id:        "",
 	})
@@ -978,7 +979,7 @@ func TestDeleteVector_Success(t *testing.T) {
 			Timestamp: 1234567890,
 		}, nil)
 
-	resp, err := srv.DeleteVector(context.Background(), &pb.DeleteVectorRequest{
+	resp, err := srv.DeleteVector(tenantctx.WithSystem(context.Background()), &pb.DeleteVectorRequest{
 		Namespace: "test-ns",
 		Id:        "vec1",
 	})
@@ -996,7 +997,7 @@ func TestDeleteVector_Success(t *testing.T) {
 func TestBatchDeleteVectors_NilRequest(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.BatchDeleteVectors(context.Background(), nil)
+	resp, err := srv.BatchDeleteVectors(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1008,7 +1009,7 @@ func TestBatchDeleteVectors_NilRequest(t *testing.T) {
 func TestBatchDeleteVectors_EmptyNamespace(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.BatchDeleteVectors(context.Background(), &pb.BatchDeleteVectorsRequest{
+	resp, err := srv.BatchDeleteVectors(tenantctx.WithSystem(context.Background()), &pb.BatchDeleteVectorsRequest{
 		Namespace: "",
 		Ids:       []string{"vec1"},
 	})
@@ -1020,7 +1021,7 @@ func TestBatchDeleteVectors_EmptyNamespace(t *testing.T) {
 func TestBatchDeleteVectors_EmptyIDs(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.BatchDeleteVectors(context.Background(), &pb.BatchDeleteVectorsRequest{
+	resp, err := srv.BatchDeleteVectors(tenantctx.WithSystem(context.Background()), &pb.BatchDeleteVectorsRequest{
 		Namespace: "test-ns",
 		Ids:       []string{},
 	})
@@ -1038,7 +1039,7 @@ func TestBatchDeleteVectors_Success(t *testing.T) {
 			Timestamp: 1234567890,
 		}, nil)
 
-	resp, err := srv.BatchDeleteVectors(context.Background(), &pb.BatchDeleteVectorsRequest{
+	resp, err := srv.BatchDeleteVectors(tenantctx.WithSystem(context.Background()), &pb.BatchDeleteVectorsRequest{
 		Namespace: "test-ns",
 		Ids:       []string{"vec1", "vec2"},
 	})
@@ -1056,7 +1057,7 @@ func TestBatchDeleteVectors_Success(t *testing.T) {
 func TestBatchUpsertVectors_NilRequest(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockBatchUpsertVectorsStream(context.Background())
+	stream := NewMockBatchUpsertVectorsStream(tenantctx.WithSystem(context.Background()))
 	err := srv.BatchUpsertVectors(nil, stream)
 
 	require.Error(t, err)
@@ -1068,7 +1069,7 @@ func TestBatchUpsertVectors_NilRequest(t *testing.T) {
 func TestBatchUpsertVectors_EmptyVectors(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockBatchUpsertVectorsStream(context.Background())
+	stream := NewMockBatchUpsertVectorsStream(tenantctx.WithSystem(context.Background()))
 	err := srv.BatchUpsertVectors(&pb.BatchUpsertVectorsRequest{
 		Vectors: []*pb.VectorEntity{},
 	}, stream)
@@ -1092,7 +1093,7 @@ func TestBatchUpsertVectors_ExceedsMaxBatchSize(t *testing.T) {
 		}
 	}
 
-	stream := NewMockBatchUpsertVectorsStream(context.Background())
+	stream := NewMockBatchUpsertVectorsStream(tenantctx.WithSystem(context.Background()))
 	err := srv.BatchUpsertVectors(&pb.BatchUpsertVectorsRequest{
 		Vectors: vectors,
 	}, stream)
@@ -1107,7 +1108,7 @@ func TestBatchUpsertVectors_ExceedsMaxBatchSize(t *testing.T) {
 func TestBatchUpsertVectors_MissingNamespace(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockBatchUpsertVectorsStream(context.Background())
+	stream := NewMockBatchUpsertVectorsStream(tenantctx.WithSystem(context.Background()))
 	err := srv.BatchUpsertVectors(&pb.BatchUpsertVectorsRequest{
 		Vectors: []*pb.VectorEntity{
 			{Namespace: "", Id: "vec1", Vector: []float32{1.0}},
@@ -1124,7 +1125,7 @@ func TestBatchUpsertVectors_MissingNamespace(t *testing.T) {
 func TestBatchUpsertVectors_MixedNamespaces(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockBatchUpsertVectorsStream(context.Background())
+	stream := NewMockBatchUpsertVectorsStream(tenantctx.WithSystem(context.Background()))
 	err := srv.BatchUpsertVectors(&pb.BatchUpsertVectorsRequest{
 		Vectors: []*pb.VectorEntity{
 			{Namespace: "ns1", Id: "vec1", Vector: []float32{1.0}},
@@ -1142,7 +1143,7 @@ func TestBatchUpsertVectors_MixedNamespaces(t *testing.T) {
 func TestBatchUpsertVectors_MissingID(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockBatchUpsertVectorsStream(context.Background())
+	stream := NewMockBatchUpsertVectorsStream(tenantctx.WithSystem(context.Background()))
 	err := srv.BatchUpsertVectors(&pb.BatchUpsertVectorsRequest{
 		Vectors: []*pb.VectorEntity{
 			{Namespace: "test-ns", Id: "", Vector: []float32{1.0}},
@@ -1159,7 +1160,7 @@ func TestBatchUpsertVectors_MissingID(t *testing.T) {
 func TestBatchUpsertVectors_EmptyVectorData(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockBatchUpsertVectorsStream(context.Background())
+	stream := NewMockBatchUpsertVectorsStream(tenantctx.WithSystem(context.Background()))
 	err := srv.BatchUpsertVectors(&pb.BatchUpsertVectorsRequest{
 		Vectors: []*pb.VectorEntity{
 			{Namespace: "test-ns", Id: "vec1", Vector: []float32{}},
@@ -1176,7 +1177,7 @@ func TestBatchUpsertVectors_EmptyVectorData(t *testing.T) {
 func TestBatchUpsertVectors_NaNValue(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockBatchUpsertVectorsStream(context.Background())
+	stream := NewMockBatchUpsertVectorsStream(tenantctx.WithSystem(context.Background()))
 	err := srv.BatchUpsertVectors(&pb.BatchUpsertVectorsRequest{
 		Vectors: []*pb.VectorEntity{
 			{Namespace: "test-ns", Id: "vec1", Vector: []float32{float32(math.NaN())}},
@@ -1199,7 +1200,7 @@ func TestBatchUpsertVectors_Success(t *testing.T) {
 			Timestamp:     1234567890,
 		}, nil)
 
-	stream := NewMockBatchUpsertVectorsStream(context.Background())
+	stream := NewMockBatchUpsertVectorsStream(tenantctx.WithSystem(context.Background()))
 	err := srv.BatchUpsertVectors(&pb.BatchUpsertVectorsRequest{
 		Vectors: []*pb.VectorEntity{
 			{Namespace: "test-ns", Id: "vec1", Vector: []float32{1.0, 2.0}},
@@ -1221,7 +1222,7 @@ func TestBatchUpsertVectors_Success(t *testing.T) {
 func TestSearchSimilar_NilRequest(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockSearchSimilarStream(context.Background())
+	stream := NewMockSearchSimilarStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchSimilar(nil, stream)
 
 	require.Error(t, err)
@@ -1233,7 +1234,7 @@ func TestSearchSimilar_NilRequest(t *testing.T) {
 func TestSearchSimilar_EmptyNamespace(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockSearchSimilarStream(context.Background())
+	stream := NewMockSearchSimilarStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchSimilar(&pb.SearchSimilarRequest{
 		Namespace:   "",
 		QueryVector: []float32{1.0},
@@ -1249,7 +1250,7 @@ func TestSearchSimilar_EmptyNamespace(t *testing.T) {
 func TestSearchSimilar_EmptyQueryVector(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockSearchSimilarStream(context.Background())
+	stream := NewMockSearchSimilarStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchSimilar(&pb.SearchSimilarRequest{
 		Namespace:   "test-ns",
 		QueryVector: []float32{},
@@ -1266,7 +1267,7 @@ func TestSearchSimilar_EmptyQueryVector(t *testing.T) {
 func TestSearchSimilar_InvalidK(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockSearchSimilarStream(context.Background())
+	stream := NewMockSearchSimilarStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchSimilar(&pb.SearchSimilarRequest{
 		Namespace:   "test-ns",
 		QueryVector: []float32{1.0},
@@ -1283,7 +1284,7 @@ func TestSearchSimilar_InvalidK(t *testing.T) {
 func TestSearchSimilar_KExceedsMax(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockSearchSimilarStream(context.Background())
+	stream := NewMockSearchSimilarStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchSimilar(&pb.SearchSimilarRequest{
 		Namespace:   "test-ns",
 		QueryVector: []float32{1.0},
@@ -1300,7 +1301,7 @@ func TestSearchSimilar_KExceedsMax(t *testing.T) {
 func TestSearchSimilar_NaNInQueryVector(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockSearchSimilarStream(context.Background())
+	stream := NewMockSearchSimilarStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchSimilar(&pb.SearchSimilarRequest{
 		Namespace:   "test-ns",
 		QueryVector: []float32{float32(math.NaN())},
@@ -1325,7 +1326,7 @@ func TestSearchSimilar_Success(t *testing.T) {
 			},
 		}, nil)
 
-	stream := NewMockSearchSimilarStream(context.Background())
+	stream := NewMockSearchSimilarStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchSimilar(&pb.SearchSimilarRequest{
 		Namespace:       "test-ns",
 		QueryVector:     []float32{1.0},
@@ -1348,7 +1349,7 @@ func TestSearchSimilar_Success(t *testing.T) {
 func TestSearchByID_NilRequest(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockSearchByIDStream(context.Background())
+	stream := NewMockSearchByIDStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchByID(nil, stream)
 
 	require.Error(t, err)
@@ -1360,7 +1361,7 @@ func TestSearchByID_NilRequest(t *testing.T) {
 func TestSearchByID_EmptyNamespace(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockSearchByIDStream(context.Background())
+	stream := NewMockSearchByIDStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchByID(&pb.SearchByIDRequest{
 		Namespace: "",
 		Id:        "vec1",
@@ -1376,7 +1377,7 @@ func TestSearchByID_EmptyNamespace(t *testing.T) {
 func TestSearchByID_EmptyID(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockSearchByIDStream(context.Background())
+	stream := NewMockSearchByIDStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchByID(&pb.SearchByIDRequest{
 		Namespace: "test-ns",
 		Id:        "",
@@ -1392,7 +1393,7 @@ func TestSearchByID_EmptyID(t *testing.T) {
 func TestSearchByID_InvalidK(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockSearchByIDStream(context.Background())
+	stream := NewMockSearchByIDStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchByID(&pb.SearchByIDRequest{
 		Namespace: "test-ns",
 		Id:        "vec1",
@@ -1409,7 +1410,7 @@ func TestSearchByID_InvalidK(t *testing.T) {
 func TestSearchByID_KExceedsMax(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockSearchByIDStream(context.Background())
+	stream := NewMockSearchByIDStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchByID(&pb.SearchByIDRequest{
 		Namespace: "test-ns",
 		Id:        "vec1",
@@ -1431,7 +1432,7 @@ func TestSearchByID_VectorNotFound(t *testing.T) {
 			Found: false,
 		}, nil)
 
-	stream := NewMockSearchByIDStream(context.Background())
+	stream := NewMockSearchByIDStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchByID(&pb.SearchByIDRequest{
 		Namespace: "test-ns",
 		Id:        "vec1",
@@ -1465,7 +1466,7 @@ func TestSearchByID_Success(t *testing.T) {
 			},
 		}, nil)
 
-	stream := NewMockSearchByIDStream(context.Background())
+	stream := NewMockSearchByIDStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchByID(&pb.SearchByIDRequest{
 		Namespace:       "test-ns",
 		Id:              "123",
@@ -1503,7 +1504,7 @@ func TestSearchByID_IncludeSelf(t *testing.T) {
 			},
 		}, nil)
 
-	stream := NewMockSearchByIDStream(context.Background())
+	stream := NewMockSearchByIDStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchByID(&pb.SearchByIDRequest{
 		Namespace:   "test-ns",
 		Id:          "123",
@@ -1526,7 +1527,7 @@ func TestSearchByID_IncludeSelf(t *testing.T) {
 func TestHybridSearch_NilRequest(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockHybridSearchStream(context.Background())
+	stream := NewMockHybridSearchStream(tenantctx.WithSystem(context.Background()))
 	err := srv.HybridSearch(nil, stream)
 
 	require.Error(t, err)
@@ -1538,7 +1539,7 @@ func TestHybridSearch_NilRequest(t *testing.T) {
 func TestHybridSearch_EmptyNamespace(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockHybridSearchStream(context.Background())
+	stream := NewMockHybridSearchStream(tenantctx.WithSystem(context.Background()))
 	err := srv.HybridSearch(&pb.HybridSearchRequest{
 		Namespace:   "",
 		QueryVector: []float32{1.0},
@@ -1554,7 +1555,7 @@ func TestHybridSearch_EmptyNamespace(t *testing.T) {
 func TestHybridSearch_EmptyQueryVector(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockHybridSearchStream(context.Background())
+	stream := NewMockHybridSearchStream(tenantctx.WithSystem(context.Background()))
 	err := srv.HybridSearch(&pb.HybridSearchRequest{
 		Namespace:   "test-ns",
 		QueryVector: []float32{},
@@ -1571,7 +1572,7 @@ func TestHybridSearch_EmptyQueryVector(t *testing.T) {
 func TestHybridSearch_InvalidK(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockHybridSearchStream(context.Background())
+	stream := NewMockHybridSearchStream(tenantctx.WithSystem(context.Background()))
 	err := srv.HybridSearch(&pb.HybridSearchRequest{
 		Namespace:   "test-ns",
 		QueryVector: []float32{1.0},
@@ -1588,7 +1589,7 @@ func TestHybridSearch_InvalidK(t *testing.T) {
 func TestHybridSearch_KExceedsMax(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockHybridSearchStream(context.Background())
+	stream := NewMockHybridSearchStream(tenantctx.WithSystem(context.Background()))
 	err := srv.HybridSearch(&pb.HybridSearchRequest{
 		Namespace:   "test-ns",
 		QueryVector: []float32{1.0},
@@ -1605,7 +1606,7 @@ func TestHybridSearch_KExceedsMax(t *testing.T) {
 func TestHybridSearch_NaNInQueryVector(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockHybridSearchStream(context.Background())
+	stream := NewMockHybridSearchStream(tenantctx.WithSystem(context.Background()))
 	err := srv.HybridSearch(&pb.HybridSearchRequest{
 		Namespace:   "test-ns",
 		QueryVector: []float32{float32(math.NaN())},
@@ -1632,7 +1633,7 @@ func TestHybridSearch_Success(t *testing.T) {
 			TotalFiltered:   50,
 		}, nil)
 
-	stream := NewMockHybridSearchStream(context.Background())
+	stream := NewMockHybridSearchStream(tenantctx.WithSystem(context.Background()))
 	err := srv.HybridSearch(&pb.HybridSearchRequest{
 		Namespace:   "test-ns",
 		QueryVector: []float32{1.0},
@@ -1667,7 +1668,7 @@ func TestHybridSearch_WithReranking(t *testing.T) {
 			TotalFiltered:   25,
 		}, nil)
 
-	stream := NewMockHybridSearchStream(context.Background())
+	stream := NewMockHybridSearchStream(tenantctx.WithSystem(context.Background()))
 	err := srv.HybridSearch(&pb.HybridSearchRequest{
 		Namespace:          "test-ns",
 		QueryVector:        []float32{1.0},
@@ -1688,7 +1689,7 @@ func TestHybridSearch_ServiceError(t *testing.T) {
 	mockSvc.On("HybridSearch", mock.Anything, mock.Anything).
 		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "HybridSearch"})
 
-	stream := NewMockHybridSearchStream(context.Background())
+	stream := NewMockHybridSearchStream(tenantctx.WithSystem(context.Background()))
 	err := srv.HybridSearch(&pb.HybridSearchRequest{
 		Namespace:   "test-ns",
 		QueryVector: []float32{1.0},
@@ -1706,7 +1707,7 @@ func TestHybridSearch_ServiceError(t *testing.T) {
 func TestSearchByMetadata_NilRequest(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockSearchByMetadataStream(context.Background())
+	stream := NewMockSearchByMetadataStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchByMetadata(nil, stream)
 
 	require.Error(t, err)
@@ -1718,7 +1719,7 @@ func TestSearchByMetadata_NilRequest(t *testing.T) {
 func TestSearchByMetadata_EmptyNamespace(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockSearchByMetadataStream(context.Background())
+	stream := NewMockSearchByMetadataStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchByMetadata(&pb.SearchByMetadataRequest{
 		Namespace: "",
 		MetadataFilters: []*pb.MetadataFilter{
@@ -1735,7 +1736,7 @@ func TestSearchByMetadata_EmptyNamespace(t *testing.T) {
 func TestSearchByMetadata_EmptyFilters(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockSearchByMetadataStream(context.Background())
+	stream := NewMockSearchByMetadataStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchByMetadata(&pb.SearchByMetadataRequest{
 		Namespace:       "test-ns",
 		MetadataFilters: []*pb.MetadataFilter{},
@@ -1751,7 +1752,7 @@ func TestSearchByMetadata_EmptyFilters(t *testing.T) {
 func TestSearchByMetadata_LimitExceedsMax(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockSearchByMetadataStream(context.Background())
+	stream := NewMockSearchByMetadataStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchByMetadata(&pb.SearchByMetadataRequest{
 		Namespace: "test-ns",
 		MetadataFilters: []*pb.MetadataFilter{
@@ -1770,7 +1771,7 @@ func TestSearchByMetadata_LimitExceedsMax(t *testing.T) {
 func TestSearchByMetadata_NegativeOffset(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockSearchByMetadataStream(context.Background())
+	stream := NewMockSearchByMetadataStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchByMetadata(&pb.SearchByMetadataRequest{
 		Namespace: "test-ns",
 		MetadataFilters: []*pb.MetadataFilter{
@@ -1799,7 +1800,7 @@ func TestSearchByMetadata_Success(t *testing.T) {
 			NextCursor: "cursor123",
 		}, nil)
 
-	stream := NewMockSearchByMetadataStream(context.Background())
+	stream := NewMockSearchByMetadataStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchByMetadata(&pb.SearchByMetadataRequest{
 		Namespace: "test-ns",
 		MetadataFilters: []*pb.MetadataFilter{
@@ -1827,7 +1828,7 @@ func TestSearchByMetadata_ServiceError(t *testing.T) {
 	mockSvc.On("SearchByMetadata", mock.Anything, mock.Anything).
 		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "SearchByMetadata"})
 
-	stream := NewMockSearchByMetadataStream(context.Background())
+	stream := NewMockSearchByMetadataStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchByMetadata(&pb.SearchByMetadataRequest{
 		Namespace: "test-ns",
 		MetadataFilters: []*pb.MetadataFilter{
@@ -1846,7 +1847,7 @@ func TestSearchByMetadata_ServiceError(t *testing.T) {
 func TestListVectors_NilRequest(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockListVectorsStream(context.Background())
+	stream := NewMockListVectorsStream(tenantctx.WithSystem(context.Background()))
 	err := srv.ListVectors(nil, stream)
 
 	require.Error(t, err)
@@ -1858,7 +1859,7 @@ func TestListVectors_NilRequest(t *testing.T) {
 func TestListVectors_EmptyNamespace(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockListVectorsStream(context.Background())
+	stream := NewMockListVectorsStream(tenantctx.WithSystem(context.Background()))
 	err := srv.ListVectors(&pb.ListVectorsRequest{
 		Namespace: "",
 	}, stream)
@@ -1872,7 +1873,7 @@ func TestListVectors_EmptyNamespace(t *testing.T) {
 func TestListVectors_NegativePageSize(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockListVectorsStream(context.Background())
+	stream := NewMockListVectorsStream(tenantctx.WithSystem(context.Background()))
 	err := srv.ListVectors(&pb.ListVectorsRequest{
 		Namespace: "test-ns",
 		PageSize:  -1,
@@ -1888,7 +1889,7 @@ func TestListVectors_NegativePageSize(t *testing.T) {
 func TestListVectors_PageSizeExceedsMax(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockListVectorsStream(context.Background())
+	stream := NewMockListVectorsStream(tenantctx.WithSystem(context.Background()))
 	err := srv.ListVectors(&pb.ListVectorsRequest{
 		Namespace: "test-ns",
 		PageSize:  1001,
@@ -1907,7 +1908,7 @@ func TestListVectors_NamespaceNotFound(t *testing.T) {
 	mockSvc.On("GetNamespaceInfo", mock.Anything, mock.Anything).
 		Return(nil, &errors.QBError{Code: errors.ErrNotFound, Op: "GetNamespaceInfo"})
 
-	stream := NewMockListVectorsStream(context.Background())
+	stream := NewMockListVectorsStream(tenantctx.WithSystem(context.Background()))
 	err := srv.ListVectors(&pb.ListVectorsRequest{
 		Namespace: "nonexistent-ns",
 	}, stream)
@@ -1935,7 +1936,7 @@ func TestListVectors_Success(t *testing.T) {
 			NextCursor: "next_page",
 		}, nil)
 
-	stream := NewMockListVectorsStream(context.Background())
+	stream := NewMockListVectorsStream(tenantctx.WithSystem(context.Background()))
 	err := srv.ListVectors(&pb.ListVectorsRequest{
 		Namespace:       "test-ns",
 		PageSize:        100,
@@ -1959,7 +1960,7 @@ func TestListVectors_Success(t *testing.T) {
 func TestGetVectorStats_NilRequest(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.GetVectorStats(context.Background(), nil)
+	resp, err := srv.GetVectorStats(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1983,7 +1984,7 @@ func TestGetVectorStats_WithNamespace(t *testing.T) {
 			},
 		}, nil)
 
-	resp, err := srv.GetVectorStats(context.Background(), &pb.GetVectorStatsRequest{
+	resp, err := srv.GetVectorStats(tenantctx.WithSystem(context.Background()), &pb.GetVectorStatsRequest{
 		Namespace: "test-ns",
 	})
 
@@ -2031,7 +2032,7 @@ func TestGetVectorStats_ClusterWide(t *testing.T) {
 		},
 	}, nil)
 
-	resp, err := srv.GetVectorStats(context.Background(), &pb.GetVectorStatsRequest{
+	resp, err := srv.GetVectorStats(tenantctx.WithSystem(context.Background()), &pb.GetVectorStatsRequest{
 		Namespace:      "",
 		IncludeDetails: false,
 	})
@@ -2066,7 +2067,7 @@ func TestGetVectorStats_ClusterWideWithDetails(t *testing.T) {
 			},
 		}, nil)
 
-	resp, err := srv.GetVectorStats(context.Background(), &pb.GetVectorStatsRequest{
+	resp, err := srv.GetVectorStats(tenantctx.WithSystem(context.Background()), &pb.GetVectorStatsRequest{
 		Namespace:      "",
 		IncludeDetails: true,
 	})
@@ -2084,7 +2085,7 @@ func TestGetVectorStats_ClusterWideWithDetails(t *testing.T) {
 func TestRebuildIndex_NilRequest(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.RebuildIndex(context.Background(), nil)
+	resp, err := srv.RebuildIndex(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -2096,7 +2097,7 @@ func TestRebuildIndex_NilRequest(t *testing.T) {
 func TestRebuildIndex_EmptyNamespace(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.RebuildIndex(context.Background(), &pb.RebuildIndexRequest{
+	resp, err := srv.RebuildIndex(tenantctx.WithSystem(context.Background()), &pb.RebuildIndexRequest{
 		Namespace: "",
 	})
 
@@ -2117,7 +2118,7 @@ func TestRebuildIndex_Success(t *testing.T) {
 			EstimatedTimeRemaining: 60,
 		}, nil)
 
-	resp, err := srv.RebuildIndex(context.Background(), &pb.RebuildIndexRequest{
+	resp, err := srv.RebuildIndex(tenantctx.WithSystem(context.Background()), &pb.RebuildIndexRequest{
 		Namespace:   "test-ns",
 		IndexParams: map[string]string{"M": "32"},
 		Async:       true,
@@ -2136,7 +2137,7 @@ func TestRebuildIndex_Success(t *testing.T) {
 func TestGetIndexProgress_NilRequest(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.GetIndexProgress(context.Background(), nil)
+	resp, err := srv.GetIndexProgress(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -2148,7 +2149,7 @@ func TestGetIndexProgress_NilRequest(t *testing.T) {
 func TestGetIndexProgress_NoOperationOrNamespace(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.GetIndexProgress(context.Background(), &pb.GetIndexProgressRequest{
+	resp, err := srv.GetIndexProgress(tenantctx.WithSystem(context.Background()), &pb.GetIndexProgressRequest{
 		OperationId: "",
 		Namespace:   "",
 	})
@@ -2175,7 +2176,7 @@ func TestGetIndexProgress_Success(t *testing.T) {
 			Status:                   "in_progress",
 		}, nil)
 
-	resp, err := srv.GetIndexProgress(context.Background(), &pb.GetIndexProgressRequest{
+	resp, err := srv.GetIndexProgress(tenantctx.WithSystem(context.Background()), &pb.GetIndexProgressRequest{
 		OperationId: "job-123",
 	})
 
@@ -2208,7 +2209,7 @@ func TestGetClusterStats_NilRequest(t *testing.T) {
 		}, nil)
 
 	// With nil request, the handler creates an empty request
-	resp, err := srv.GetClusterStats(context.Background(), nil)
+	resp, err := srv.GetClusterStats(tenantctx.WithSystem(context.Background()), nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -2262,7 +2263,7 @@ func TestGetClusterStats_WithNamespaces(t *testing.T) {
 		},
 	}, nil)
 
-	resp, err := srv.GetClusterStats(context.Background(), &pb.GetClusterStatsRequest{
+	resp, err := srv.GetClusterStats(tenantctx.WithSystem(context.Background()), &pb.GetClusterStatsRequest{
 		IncludeNamespaces: true,
 		IncludeNodes:      true,
 	})
@@ -2291,7 +2292,7 @@ func TestGetClusterStats_ClusterStatusError(t *testing.T) {
 			TotalCount: 0,
 		}, nil)
 
-	resp, err := srv.GetClusterStats(context.Background(), &pb.GetClusterStatsRequest{})
+	resp, err := srv.GetClusterStats(tenantctx.WithSystem(context.Background()), &pb.GetClusterStatsRequest{})
 
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -2306,7 +2307,7 @@ func TestGetClusterStats_ClusterStatusError(t *testing.T) {
 func TestCompactNamespace_NilRequest(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.CompactNamespace(context.Background(), nil)
+	resp, err := srv.CompactNamespace(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -2318,7 +2319,7 @@ func TestCompactNamespace_NilRequest(t *testing.T) {
 func TestCompactNamespace_EmptyNamespace(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.CompactNamespace(context.Background(), &pb.CompactNamespaceRequest{
+	resp, err := srv.CompactNamespace(tenantctx.WithSystem(context.Background()), &pb.CompactNamespaceRequest{
 		Namespace: "",
 	})
 
@@ -2338,7 +2339,7 @@ func TestCompactNamespace_Success(t *testing.T) {
 			StartedAt:   1234567890,
 		}, nil)
 
-	resp, err := srv.CompactNamespace(context.Background(), &pb.CompactNamespaceRequest{
+	resp, err := srv.CompactNamespace(tenantctx.WithSystem(context.Background()), &pb.CompactNamespaceRequest{
 		Namespace: "test-ns",
 		Async:     true,
 		TimeoutMs: 60000,
@@ -2356,7 +2357,7 @@ func TestCompactNamespace_ServiceError(t *testing.T) {
 	mockSvc.On("CompactNamespace", mock.Anything, mock.Anything).
 		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "CompactNamespace"})
 
-	resp, err := srv.CompactNamespace(context.Background(), &pb.CompactNamespaceRequest{
+	resp, err := srv.CompactNamespace(tenantctx.WithSystem(context.Background()), &pb.CompactNamespaceRequest{
 		Namespace: "test-ns",
 	})
 
@@ -2372,7 +2373,7 @@ func TestCompactNamespace_ServiceError(t *testing.T) {
 func TestGetCompactionProgress_NilRequest(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.GetCompactionProgress(context.Background(), nil)
+	resp, err := srv.GetCompactionProgress(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -2384,7 +2385,7 @@ func TestGetCompactionProgress_NilRequest(t *testing.T) {
 func TestGetCompactionProgress_EmptyNamespace(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.GetCompactionProgress(context.Background(), &pb.GetCompactionProgressRequest{
+	resp, err := srv.GetCompactionProgress(tenantctx.WithSystem(context.Background()), &pb.GetCompactionProgressRequest{
 		Namespace: "",
 	})
 
@@ -2409,7 +2410,7 @@ func TestGetCompactionProgress_InProgress(t *testing.T) {
 			StartedAt:       1234567890,
 		}, nil)
 
-	resp, err := srv.GetCompactionProgress(context.Background(), &pb.GetCompactionProgressRequest{
+	resp, err := srv.GetCompactionProgress(tenantctx.WithSystem(context.Background()), &pb.GetCompactionProgressRequest{
 		Namespace:   "test-ns",
 		OperationId: "compact-123",
 	})
@@ -2436,7 +2437,7 @@ func TestGetCompactionProgress_Completed(t *testing.T) {
 			StartedAt:       1234567890,
 		}, nil)
 
-	resp, err := srv.GetCompactionProgress(context.Background(), &pb.GetCompactionProgressRequest{
+	resp, err := srv.GetCompactionProgress(tenantctx.WithSystem(context.Background()), &pb.GetCompactionProgressRequest{
 		Namespace: "test-ns",
 	})
 
@@ -2457,7 +2458,7 @@ func TestGetCompactionProgress_Failed(t *testing.T) {
 			Error:       "disk space exhausted",
 		}, nil)
 
-	resp, err := srv.GetCompactionProgress(context.Background(), &pb.GetCompactionProgressRequest{
+	resp, err := srv.GetCompactionProgress(tenantctx.WithSystem(context.Background()), &pb.GetCompactionProgressRequest{
 		Namespace: "test-ns",
 	})
 
@@ -2474,7 +2475,7 @@ func TestGetCompactionProgress_Failed(t *testing.T) {
 func TestExportVectors_NilRequest(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockExportVectorsStream(context.Background())
+	stream := NewMockExportVectorsStream(tenantctx.WithSystem(context.Background()))
 	err := srv.ExportVectors(nil, stream)
 
 	require.Error(t, err)
@@ -2486,7 +2487,7 @@ func TestExportVectors_NilRequest(t *testing.T) {
 func TestExportVectors_EmptyNamespace(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockExportVectorsStream(context.Background())
+	stream := NewMockExportVectorsStream(tenantctx.WithSystem(context.Background()))
 	err := srv.ExportVectors(&pb.ExportVectorsRequest{
 		Namespace: "",
 	}, stream)
@@ -2507,7 +2508,7 @@ func TestExportVectors_EmptyNamespace_EmptyBatch(t *testing.T) {
 			TotalCount: 0,
 		}, nil)
 
-	stream := NewMockExportVectorsStream(context.Background())
+	stream := NewMockExportVectorsStream(tenantctx.WithSystem(context.Background()))
 	err := srv.ExportVectors(&pb.ExportVectorsRequest{
 		Namespace: "empty-ns",
 	}, stream)
@@ -2533,7 +2534,7 @@ func TestExportVectors_SingleBatch(t *testing.T) {
 			TotalCount: 2,
 		}, nil).Once()
 
-	stream := NewMockExportVectorsStream(context.Background())
+	stream := NewMockExportVectorsStream(tenantctx.WithSystem(context.Background()))
 	err := srv.ExportVectors(&pb.ExportVectorsRequest{
 		Namespace:   "test-ns",
 		BatchSize:   1000,
@@ -2573,7 +2574,7 @@ func TestExportVectors_MultipleBatches(t *testing.T) {
 		TotalCount: 3,
 	}, nil).Once()
 
-	stream := NewMockExportVectorsStream(context.Background())
+	stream := NewMockExportVectorsStream(tenantctx.WithSystem(context.Background()))
 	err := srv.ExportVectors(&pb.ExportVectorsRequest{
 		Namespace: "test-ns",
 		BatchSize: 2,
@@ -2594,7 +2595,7 @@ func TestExportVectors_MultipleBatches(t *testing.T) {
 func TestImportVectors_EmptyStream(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockImportVectorsStream(context.Background())
+	stream := NewMockImportVectorsStream(tenantctx.WithSystem(context.Background()))
 	// Stream ends immediately with EOF
 	stream.SetRecvError(io.EOF)
 
@@ -2609,7 +2610,7 @@ func TestImportVectors_EmptyStream(t *testing.T) {
 func TestImportVectors_MissingNamespaceInFirstMessage(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockImportVectorsStream(context.Background())
+	stream := NewMockImportVectorsStream(tenantctx.WithSystem(context.Background()))
 	stream.AddRecvMessage(&pb.ImportVectorsRequest{
 		Namespace: "",
 		BatchData: []byte("{}"),
@@ -2634,7 +2635,7 @@ func TestImportVectors_Success(t *testing.T) {
 			Timestamp:     1234567890,
 		}, nil)
 
-	stream := NewMockImportVectorsStream(context.Background())
+	stream := NewMockImportVectorsStream(tenantctx.WithSystem(context.Background()))
 
 	// Create proper JSON batch data
 	batchData := `{"vectors":[{"id":"1","vector":[1.0,2.0]},{"id":"2","vector":[3.0,4.0]}],"namespace":"test-ns","batch_num":1,"total":2}`
@@ -2665,7 +2666,7 @@ func TestImportVectors_SkipExisting(t *testing.T) {
 			ID:    1,
 		}, nil)
 
-	stream := NewMockImportVectorsStream(context.Background())
+	stream := NewMockImportVectorsStream(tenantctx.WithSystem(context.Background()))
 
 	// Create proper JSON batch data with one vector
 	batchData := `{"vectors":[{"id":"1","vector":[1.0,2.0]}],"namespace":"test-ns","batch_num":1,"total":1}`
@@ -2693,7 +2694,7 @@ func TestImportVectors_SkipExisting(t *testing.T) {
 func TestUpdateMetadata_NilRequest(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.UpdateMetadata(context.Background(), nil)
+	resp, err := srv.UpdateMetadata(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -2705,7 +2706,7 @@ func TestUpdateMetadata_NilRequest(t *testing.T) {
 func TestUpdateMetadata_EmptyNamespace(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.UpdateMetadata(context.Background(), &pb.UpdateMetadataRequest{
+	resp, err := srv.UpdateMetadata(tenantctx.WithSystem(context.Background()), &pb.UpdateMetadataRequest{
 		Namespace: "",
 		Id:        "vec1",
 		Metadata:  map[string]string{"key": "value"},
@@ -2721,7 +2722,7 @@ func TestUpdateMetadata_EmptyNamespace(t *testing.T) {
 func TestUpdateMetadata_EmptyID(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.UpdateMetadata(context.Background(), &pb.UpdateMetadataRequest{
+	resp, err := srv.UpdateMetadata(tenantctx.WithSystem(context.Background()), &pb.UpdateMetadataRequest{
 		Namespace: "test-ns",
 		Id:        "",
 		Metadata:  map[string]string{"key": "value"},
@@ -2737,7 +2738,7 @@ func TestUpdateMetadata_EmptyID(t *testing.T) {
 func TestUpdateMetadata_EmptyMetadata(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	resp, err := srv.UpdateMetadata(context.Background(), &pb.UpdateMetadataRequest{
+	resp, err := srv.UpdateMetadata(tenantctx.WithSystem(context.Background()), &pb.UpdateMetadataRequest{
 		Namespace: "test-ns",
 		Id:        "vec1",
 		Metadata:  map[string]string{},
@@ -2759,7 +2760,7 @@ func TestUpdateMetadata_VectorNotFound(t *testing.T) {
 			Found: false,
 		}, nil)
 
-	resp, err := srv.UpdateMetadata(context.Background(), &pb.UpdateMetadataRequest{
+	resp, err := srv.UpdateMetadata(tenantctx.WithSystem(context.Background()), &pb.UpdateMetadataRequest{
 		Namespace: "test-ns",
 		Id:        "vec1",
 		Metadata:  map[string]string{"key": "value"},
@@ -2791,7 +2792,7 @@ func TestUpdateMetadata_Success_Merge(t *testing.T) {
 			Timestamp: 1234567890,
 		}, nil)
 
-	resp, err := srv.UpdateMetadata(context.Background(), &pb.UpdateMetadataRequest{
+	resp, err := srv.UpdateMetadata(tenantctx.WithSystem(context.Background()), &pb.UpdateMetadataRequest{
 		Namespace: "test-ns",
 		Id:        "vec1",
 		Metadata:  map[string]string{"new": "data"},
@@ -2822,7 +2823,7 @@ func TestUpdateMetadata_Success_Replace(t *testing.T) {
 			Timestamp: 1234567890,
 		}, nil)
 
-	resp, err := srv.UpdateMetadata(context.Background(), &pb.UpdateMetadataRequest{
+	resp, err := srv.UpdateMetadata(tenantctx.WithSystem(context.Background()), &pb.UpdateMetadataRequest{
 		Namespace: "test-ns",
 		Id:        "vec1",
 		Metadata:  map[string]string{"new": "data"},
@@ -2840,7 +2841,7 @@ func TestUpdateMetadata_Success_Replace(t *testing.T) {
 // =============================================================================
 
 func TestMockServerStreamBase_ConcurrentAccess(t *testing.T) {
-	base := &MockServerStreamBase{ctx: context.Background()}
+	base := &MockServerStreamBase{ctx: tenantctx.WithSystem(context.Background())}
 
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
@@ -2869,7 +2870,7 @@ func TestSearchByID_GetVectorError(t *testing.T) {
 	mockSvc.On("GetVector", mock.Anything, mock.Anything).
 		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "GetVector"})
 
-	stream := NewMockSearchByIDStream(context.Background())
+	stream := NewMockSearchByIDStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchByID(&pb.SearchByIDRequest{
 		Namespace: "test-ns",
 		Id:        "vec1",
@@ -2895,7 +2896,7 @@ func TestSearchByID_SearchSimilarError(t *testing.T) {
 	mockSvc.On("SearchSimilar", mock.Anything, mock.Anything).
 		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "SearchSimilar"})
 
-	stream := NewMockSearchByIDStream(context.Background())
+	stream := NewMockSearchByIDStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchByID(&pb.SearchByIDRequest{
 		Namespace: "test-ns",
 		Id:        "123",
@@ -2938,7 +2939,7 @@ func TestSearchByID_WithOriginalIDMetadata(t *testing.T) {
 			},
 		}, nil)
 
-	stream := NewMockSearchByIDStream(context.Background())
+	stream := NewMockSearchByIDStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchByID(&pb.SearchByIDRequest{
 		Namespace:       "test-ns",
 		Id:              "123",
@@ -2974,7 +2975,7 @@ func TestSearchByID_VectorEmptyAfterGet(t *testing.T) {
 			Vector: []float32{}, // Empty vector
 		}, nil)
 
-	stream := NewMockSearchByIDStream(context.Background())
+	stream := NewMockSearchByIDStream(tenantctx.WithSystem(context.Background()))
 	err := srv.SearchByID(&pb.SearchByIDRequest{
 		Namespace: "test-ns",
 		Id:        "vec1",
@@ -2999,7 +3000,7 @@ func TestImportVectors_BatchUpsertError(t *testing.T) {
 	mockSvc.On("BatchUpsert", mock.Anything, mock.Anything).
 		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "BatchUpsert"})
 
-	stream := NewMockImportVectorsStream(context.Background())
+	stream := NewMockImportVectorsStream(tenantctx.WithSystem(context.Background()))
 
 	// Create proper JSON batch data
 	batchData := `{"vectors":[{"id":"1","vector":[1.0,2.0]}],"namespace":"test-ns","batch_num":1,"total":1}`
@@ -3023,7 +3024,7 @@ func TestImportVectors_BatchUpsertError(t *testing.T) {
 func TestImportVectors_DeserializeError(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockImportVectorsStream(context.Background())
+	stream := NewMockImportVectorsStream(tenantctx.WithSystem(context.Background()))
 
 	// Create invalid JSON batch data
 	stream.AddRecvMessage(&pb.ImportVectorsRequest{
@@ -3044,7 +3045,7 @@ func TestImportVectors_DeserializeError(t *testing.T) {
 func TestImportVectors_EmptyBatchData(t *testing.T) {
 	srv, _ := newMockTestServer(t)
 
-	stream := NewMockImportVectorsStream(context.Background())
+	stream := NewMockImportVectorsStream(tenantctx.WithSystem(context.Background()))
 
 	// First message with namespace but empty batch data
 	stream.AddRecvMessage(&pb.ImportVectorsRequest{
@@ -3073,7 +3074,7 @@ func TestImportVectors_DefaultFormat(t *testing.T) {
 			Timestamp:     1234567890,
 		}, nil)
 
-	stream := NewMockImportVectorsStream(context.Background())
+	stream := NewMockImportVectorsStream(tenantctx.WithSystem(context.Background()))
 
 	// Create proper JSON batch data but with empty format (should default to json)
 	batchData := `{"vectors":[{"id":"1","vector":[1.0,2.0]}],"namespace":"test-ns","batch_num":1,"total":1}`
@@ -3104,7 +3105,7 @@ func TestImportVectors_MultipleBatches(t *testing.T) {
 			Timestamp:     1234567890,
 		}, nil).Times(2)
 
-	stream := NewMockImportVectorsStream(context.Background())
+	stream := NewMockImportVectorsStream(tenantctx.WithSystem(context.Background()))
 
 	// First batch
 	batchData1 := `{"vectors":[{"id":"1","vector":[1.0,2.0]},{"id":"2","vector":[3.0,4.0]}],"namespace":"test-ns","batch_num":1,"total":2}`
@@ -3147,7 +3148,7 @@ func TestImportVectors_SkipExistingVectorNotFound(t *testing.T) {
 			Timestamp:     1234567890,
 		}, nil)
 
-	stream := NewMockImportVectorsStream(context.Background())
+	stream := NewMockImportVectorsStream(tenantctx.WithSystem(context.Background()))
 
 	batchData := `{"vectors":[{"id":"1","vector":[1.0,2.0]}],"namespace":"test-ns","batch_num":1,"total":1}`
 
@@ -3175,7 +3176,7 @@ func TestImportVectors_AllVectorsSkipped(t *testing.T) {
 	mockSvc.On("GetVector", mock.Anything, mock.Anything).
 		Return(&service.GetVectorResponse{Found: true}, nil).Times(2)
 
-	stream := NewMockImportVectorsStream(context.Background())
+	stream := NewMockImportVectorsStream(tenantctx.WithSystem(context.Background()))
 
 	// Batch with 2 vectors that will all be skipped
 	batchData := `{"vectors":[{"id":"1","vector":[1.0,2.0]},{"id":"2","vector":[3.0,4.0]}],"namespace":"test-ns","batch_num":1,"total":1}`
@@ -3207,7 +3208,7 @@ func TestDeleteNamespace_ServiceError(t *testing.T) {
 	mockSvc.On("DeleteNamespace", mock.Anything, mock.Anything).
 		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "DeleteNamespace"})
 
-	resp, err := srv.DeleteNamespace(context.Background(), &pb.DeleteNamespaceRequest{
+	resp, err := srv.DeleteNamespace(tenantctx.WithSystem(context.Background()), &pb.DeleteNamespaceRequest{
 		Namespace: "test-ns",
 	})
 
@@ -3222,7 +3223,7 @@ func TestListNamespaces_ServiceError(t *testing.T) {
 	mockSvc.On("ListNamespaces", mock.Anything, mock.Anything).
 		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "ListNamespaces"})
 
-	resp, err := srv.ListNamespaces(context.Background(), &pb.ListNamespacesRequest{})
+	resp, err := srv.ListNamespaces(tenantctx.WithSystem(context.Background()), &pb.ListNamespacesRequest{})
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -3235,7 +3236,7 @@ func TestGetVector_ServiceError(t *testing.T) {
 	mockSvc.On("GetVector", mock.Anything, mock.Anything).
 		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "GetVector"})
 
-	resp, err := srv.GetVector(context.Background(), &pb.GetVectorRequest{
+	resp, err := srv.GetVector(tenantctx.WithSystem(context.Background()), &pb.GetVectorRequest{
 		Namespace: "test-ns",
 		Id:        "vec1",
 	})
@@ -3251,7 +3252,7 @@ func TestDeleteVector_ServiceError(t *testing.T) {
 	mockSvc.On("DeleteVector", mock.Anything, mock.Anything).
 		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "DeleteVector"})
 
-	resp, err := srv.DeleteVector(context.Background(), &pb.DeleteVectorRequest{
+	resp, err := srv.DeleteVector(tenantctx.WithSystem(context.Background()), &pb.DeleteVectorRequest{
 		Namespace: "test-ns",
 		Id:        "vec1",
 	})
@@ -3267,7 +3268,7 @@ func TestGetVectorStats_ServiceError(t *testing.T) {
 	mockSvc.On("GetIndexStats", mock.Anything, mock.Anything).
 		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "GetStats"})
 
-	resp, err := srv.GetVectorStats(context.Background(), &pb.GetVectorStatsRequest{
+	resp, err := srv.GetVectorStats(tenantctx.WithSystem(context.Background()), &pb.GetVectorStatsRequest{
 		Namespace: "test-ns",
 	})
 
@@ -3282,7 +3283,7 @@ func TestRebuildIndex_ServiceError(t *testing.T) {
 	mockSvc.On("RebuildIndex", mock.Anything, mock.Anything).
 		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "RebuildIndex"})
 
-	resp, err := srv.RebuildIndex(context.Background(), &pb.RebuildIndexRequest{
+	resp, err := srv.RebuildIndex(tenantctx.WithSystem(context.Background()), &pb.RebuildIndexRequest{
 		Namespace: "test-ns",
 	})
 
@@ -3297,7 +3298,7 @@ func TestGetIndexProgress_ServiceError(t *testing.T) {
 	mockSvc.On("GetRebuildProgress", mock.Anything, mock.Anything).
 		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "GetIndexProgress"})
 
-	resp, err := srv.GetIndexProgress(context.Background(), &pb.GetIndexProgressRequest{
+	resp, err := srv.GetIndexProgress(tenantctx.WithSystem(context.Background()), &pb.GetIndexProgressRequest{
 		Namespace:   "test-ns",
 		OperationId: "op-123",
 	})
@@ -3313,7 +3314,7 @@ func TestExportVectors_ServiceError(t *testing.T) {
 	mockSvc.On("SearchByMetadata", mock.Anything, mock.Anything).
 		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "SearchByMetadata"})
 
-	stream := NewMockExportVectorsStream(context.Background())
+	stream := NewMockExportVectorsStream(tenantctx.WithSystem(context.Background()))
 	err := srv.ExportVectors(&pb.ExportVectorsRequest{
 		Namespace: "test-ns",
 		BatchSize: 100,
@@ -3338,7 +3339,7 @@ func TestUpdateMetadata_ServiceError(t *testing.T) {
 	mockSvc.On("UpsertVector", mock.Anything, mock.Anything).
 		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "UpsertVector"})
 
-	resp, err := srv.UpdateMetadata(context.Background(), &pb.UpdateMetadataRequest{
+	resp, err := srv.UpdateMetadata(tenantctx.WithSystem(context.Background()), &pb.UpdateMetadataRequest{
 		Namespace: "test-ns",
 		Id:        "vec1",
 		Metadata:  map[string]string{"new": "value"},
@@ -3363,7 +3364,7 @@ func TestGetVector_WithOriginalIDMetadata(t *testing.T) {
 			UpdatedAt: 2000000000,
 		}, nil)
 
-	resp, err := srv.GetVector(context.Background(), &pb.GetVectorRequest{
+	resp, err := srv.GetVector(tenantctx.WithSystem(context.Background()), &pb.GetVectorRequest{
 		Namespace:       "test-ns",
 		Id:              "my-string-id",
 		IncludeVector:   true,

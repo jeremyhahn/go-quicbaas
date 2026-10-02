@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // catalogAgentService is an agent service holding a real agent directory.
@@ -52,7 +53,7 @@ func newCatalogRegistry(t *testing.T) *ToolRegistry {
 // callCatalog runs one catalog tool and decodes its JSON answer into out.
 func callCatalog(t *testing.T, reg *ToolRegistry, tool string, args map[string]interface{}, out interface{}) error {
 	t.Helper()
-	result, err := reg.executeAgentCatalogTool(context.Background(), tool, args)
+	result, err := reg.executeAgentCatalogTool(tenantctx.WithSystem(context.Background()), tool, args)
 	if err != nil {
 		return err
 	}
@@ -117,7 +118,7 @@ func TestAgentCatalogTools_Lifecycle(t *testing.T) {
 
 func TestAgentCatalogTools_Refusals(t *testing.T) {
 	reg := newCatalogRegistry(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	if _, err := reg.executeAgentCatalogTool(ctx, "quicbaas_agents_list", map[string]interface{}{}); !isRequiredFieldError(err, "tenant_id") {
 		t.Fatalf("no tenant = %v", err)
 	}

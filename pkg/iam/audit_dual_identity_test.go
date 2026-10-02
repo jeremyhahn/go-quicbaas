@@ -16,6 +16,8 @@ package iam
 import (
 	"context"
 	"testing"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // TestLogDualIdentity_CarriesBothIdentities verifies the audit entry stamps
@@ -98,7 +100,7 @@ func TestLogDualIdentity_TenantFromContext(t *testing.T) {
 	}
 	defer logger.Close()
 
-	ctx := ContextWithTenant(context.Background(), "ctx-tenant")
+	ctx := tenantctx.WithTenant(context.Background(), "ctx-tenant")
 	id := DualIdentity{
 		ServiceIdentity: "CN=rs.example.com",
 		Subject:         "user-ctx",

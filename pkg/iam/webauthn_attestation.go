@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -466,7 +467,7 @@ func (r *adminRoleResolver) IsAdministrativeAccount(ctx context.Context, tenantI
 	// the lookup can fall back to a global index and resolve a different
 	// account of the same email in another tenant — answering the "is this an
 	// administrator" question about the wrong person.
-	user, err := r.users.GetUserByEmail(ContextWithTenant(ctx, tenantID), tenantID, email)
+	user, err := r.users.GetUserByEmail(tenantctx.WithTenant(ctx, tenantID), tenantID, email)
 	if err != nil {
 		return false, err
 	}

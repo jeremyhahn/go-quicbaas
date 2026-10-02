@@ -18,6 +18,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 func basicSession(tenantID, userID, id string) *Session {
@@ -121,7 +123,7 @@ func TestBackendSessionExtStorage_TokenLookup(t *testing.T) {
 	kv := newRoutingTestKV()
 	tenantStore := kv.barrierTenant("acme")
 	store := NewBackendSessionExtStorage(kv, nil)
-	ctx := ContextWithTenant(context.Background(), "acme")
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
 
 	sess := extSession("acme", "u1", "s1", "tokenhash-abc")
 	if err := store.Create(ctx, sess); err != nil {
@@ -159,7 +161,7 @@ func TestBackendSessionExtStorage_SealedFailsClosed(t *testing.T) {
 	kv.barrierTenant("acme")
 	kv.sealTenant("acme")
 	store := NewBackendSessionExtStorage(kv, nil)
-	ctx := ContextWithTenant(context.Background(), "acme")
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
 
 	if err := store.Create(ctx, extSession("acme", "u1", "s1", "th")); !errors.Is(err, errTenantSealedTest) {
 		t.Fatalf("Create(sealed) err = %v, want sealed", err)
@@ -174,7 +176,7 @@ func TestBackendSessionExtStorage_ListAndDeleteAllExcept(t *testing.T) {
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendSessionExtStorage(kv, nil)
-	ctx := ContextWithTenant(context.Background(), "acme")
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
 
 	keep := extSession("acme", "u1", "keep", "th-keep")
 	drop := extSession("acme", "u1", "drop", "th-drop")

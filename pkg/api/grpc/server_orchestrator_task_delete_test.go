@@ -24,6 +24,7 @@ import (
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 func TestOrchestratorGRPC_DeleteTask_Success(t *testing.T) {
@@ -36,7 +37,7 @@ func TestOrchestratorGRPC_DeleteTask_Success(t *testing.T) {
 	}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.DeleteTask(context.Background(), &pb.DeleteTaskRequest{TenantId: "tenant-1", TaskId: "task-1"})
+	resp, err := server.DeleteTask(tenantctx.WithTenant(context.Background(), "tenant-1"), &pb.DeleteTaskRequest{TenantId: "tenant-1", TaskId: "task-1"})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.True(t, resp.Deleted)
@@ -48,7 +49,7 @@ func TestOrchestratorGRPC_DeleteTask_Success(t *testing.T) {
 func TestOrchestratorGRPC_DeleteTask_Errors(t *testing.T) {
 	t.Run("missing task id", func(t *testing.T) {
 		server := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
-		resp, err := server.DeleteTask(context.Background(), &pb.DeleteTaskRequest{TenantId: "t"})
+		resp, err := server.DeleteTask(tenantctx.WithTenant(context.Background(), "t"), &pb.DeleteTaskRequest{TenantId: "t"})
 		assert.Nil(t, resp)
 		st, ok := status.FromError(err)
 		require.True(t, ok)
@@ -61,7 +62,7 @@ func TestOrchestratorGRPC_DeleteTask_Errors(t *testing.T) {
 			},
 		}
 		server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
-		resp, err := server.DeleteTask(context.Background(), &pb.DeleteTaskRequest{TenantId: "t", TaskId: "x"})
+		resp, err := server.DeleteTask(tenantctx.WithTenant(context.Background(), "t"), &pb.DeleteTaskRequest{TenantId: "t", TaskId: "x"})
 		assert.Nil(t, resp)
 		st, ok := status.FromError(err)
 		require.True(t, ok)
@@ -76,7 +77,7 @@ func TestOrchestratorGRPC_DeleteTask_Errors(t *testing.T) {
 			},
 		}
 		server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
-		resp, err := server.DeleteTask(context.Background(), &pb.DeleteTaskRequest{TenantId: "t", TaskId: "x"})
+		resp, err := server.DeleteTask(tenantctx.WithTenant(context.Background(), "t"), &pb.DeleteTaskRequest{TenantId: "t", TaskId: "x"})
 		assert.Nil(t, resp)
 		st, ok := status.FromError(err)
 		require.True(t, ok)

@@ -342,7 +342,7 @@ func TestKMSService_GenerateKey_Success(t *testing.T) {
 		Tags:  map[string]string{"env": "test"},
 	}
 
-	resp, err := svc.GenerateKey(context.Background(), req)
+	resp, err := svc.GenerateKey(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -360,7 +360,7 @@ func TestKMSService_GenerateKey_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
 
-	resp, err := svc.GenerateKey(context.Background(), nil)
+	resp, err := svc.GenerateKey(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -378,7 +378,7 @@ func TestKMSService_GenerateKey_MissingAlgorithm(t *testing.T) {
 		Usage:         []KeyUsage{KeyUsageEncrypt},
 	}
 
-	resp, err := svc.GenerateKey(context.Background(), req)
+	resp, err := svc.GenerateKey(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -398,7 +398,7 @@ func TestKMSService_GenerateKey_MissingUsage(t *testing.T) {
 		Usage: []KeyUsage{},
 	}
 
-	resp, err := svc.GenerateKey(context.Background(), req)
+	resp, err := svc.GenerateKey(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -421,7 +421,7 @@ func TestKMSService_GenerateKey_ManagerError(t *testing.T) {
 		Usage: []KeyUsage{KeyUsageEncrypt},
 	}
 
-	resp, err := svc.GenerateKey(context.Background(), req)
+	resp, err := svc.GenerateKey(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -459,7 +459,7 @@ func TestKMSService_ImportKey_Success(t *testing.T) {
 		Usage: []KeyUsage{KeyUsageEncrypt, KeyUsageDecrypt},
 	}
 
-	resp, err := svc.ImportKey(context.Background(), req)
+	resp, err := svc.ImportKey(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -474,7 +474,7 @@ func TestKMSService_ImportKey_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
 
-	resp, err := svc.ImportKey(context.Background(), nil)
+	resp, err := svc.ImportKey(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -495,7 +495,7 @@ func TestKMSService_ImportKey_MissingKeyMaterial(t *testing.T) {
 		Usage: []KeyUsage{KeyUsageEncrypt},
 	}
 
-	resp, err := svc.ImportKey(context.Background(), req)
+	resp, err := svc.ImportKey(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -518,7 +518,7 @@ func TestKMSService_ImportKey_WithoutWrappingKey(t *testing.T) {
 		Usage: []KeyUsage{KeyUsageEncrypt},
 	}
 
-	resp, err := svc.ImportKey(context.Background(), req)
+	resp, err := svc.ImportKey(systemTenantCtx(), req)
 
 	// Import without wrapping key should succeed (key material is raw)
 	require.NoError(t, err)
@@ -545,7 +545,7 @@ func TestKMSService_ImportKey_ManagerError(t *testing.T) {
 		Usage: []KeyUsage{KeyUsageEncrypt},
 	}
 
-	resp, err := svc.ImportKey(context.Background(), req)
+	resp, err := svc.ImportKey(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -573,7 +573,7 @@ func TestKMSService_GetKey_Success(t *testing.T) {
 		Version: 1,
 	}
 
-	resp, err := svc.GetKey(context.Background(), req)
+	resp, err := svc.GetKey(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -585,7 +585,7 @@ func TestKMSService_GetKey_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
 
-	resp, err := svc.GetKey(context.Background(), nil)
+	resp, err := svc.GetKey(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -601,7 +601,7 @@ func TestKMSService_GetKey_MissingKeyID(t *testing.T) {
 		KeyID: "",
 	}
 
-	resp, err := svc.GetKey(context.Background(), req)
+	resp, err := svc.GetKey(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -617,7 +617,7 @@ func TestKMSService_GetKey_NotFound(t *testing.T) {
 		KeyID: "nonexistent-key",
 	}
 
-	resp, err := svc.GetKey(context.Background(), req)
+	resp, err := svc.GetKey(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -651,7 +651,7 @@ func TestKMSService_ListKeys_Success(t *testing.T) {
 		Limit: 10,
 	}
 
-	resp, err := svc.ListKeys(context.Background(), req)
+	resp, err := svc.ListKeys(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -667,7 +667,7 @@ func TestKMSService_ListKeys_Empty(t *testing.T) {
 
 	req := &ListKeysRequest{}
 
-	resp, err := svc.ListKeys(context.Background(), req)
+	resp, err := svc.ListKeys(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -685,7 +685,7 @@ func TestKMSService_ListKeys_ManagerError(t *testing.T) {
 
 	req := &ListKeysRequest{}
 
-	resp, err := svc.ListKeys(context.Background(), req)
+	resp, err := svc.ListKeys(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -711,7 +711,7 @@ func TestKMSService_RotateKey_Success(t *testing.T) {
 		KeyID: "test-key-123",
 	}
 
-	resp, err := svc.RotateKey(context.Background(), req)
+	resp, err := svc.RotateKey(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -725,7 +725,7 @@ func TestKMSService_RotateKey_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
 
-	resp, err := svc.RotateKey(context.Background(), nil)
+	resp, err := svc.RotateKey(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -741,7 +741,7 @@ func TestKMSService_RotateKey_MissingKeyID(t *testing.T) {
 		KeyID: "",
 	}
 
-	resp, err := svc.RotateKey(context.Background(), req)
+	resp, err := svc.RotateKey(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -760,7 +760,7 @@ func TestKMSService_RotateKey_NotFound(t *testing.T) {
 		KeyID: "nonexistent-key",
 	}
 
-	resp, err := svc.RotateKey(context.Background(), req)
+	resp, err := svc.RotateKey(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -787,7 +787,7 @@ func TestKMSService_RevokeKey_Success(t *testing.T) {
 		Reason: "key compromised in breach",
 	}
 
-	resp, err := svc.RevokeKey(context.Background(), req)
+	resp, err := svc.RevokeKey(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -800,7 +800,7 @@ func TestKMSService_RevokeKey_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
 
-	resp, err := svc.RevokeKey(context.Background(), nil)
+	resp, err := svc.RevokeKey(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -816,7 +816,7 @@ func TestKMSService_RevokeKey_MissingKeyID(t *testing.T) {
 		KeyID: "",
 	}
 
-	resp, err := svc.RevokeKey(context.Background(), req)
+	resp, err := svc.RevokeKey(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -844,7 +844,7 @@ func TestKMSService_DeleteKey_Success(t *testing.T) {
 		PendingWindowDays: 14,
 	}
 
-	resp, err := svc.DeleteKey(context.Background(), req)
+	resp, err := svc.DeleteKey(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -872,7 +872,7 @@ func TestKMSService_DeleteKey_DefaultPendingWindow(t *testing.T) {
 		PendingWindowDays: 0, // Should default to 7 days
 	}
 
-	resp, err := svc.DeleteKey(context.Background(), req)
+	resp, err := svc.DeleteKey(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -898,7 +898,7 @@ func TestKMSService_DeleteKey_MinimumPendingWindow(t *testing.T) {
 		PendingWindowDays: 3, // Should be clamped to minimum of 7 days
 	}
 
-	resp, err := svc.DeleteKey(context.Background(), req)
+	resp, err := svc.DeleteKey(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -912,7 +912,7 @@ func TestKMSService_DeleteKey_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
 
-	resp, err := svc.DeleteKey(context.Background(), nil)
+	resp, err := svc.DeleteKey(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -928,7 +928,7 @@ func TestKMSService_DeleteKey_MissingKeyID(t *testing.T) {
 		KeyID: "",
 	}
 
-	resp, err := svc.DeleteKey(context.Background(), req)
+	resp, err := svc.DeleteKey(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -945,7 +945,7 @@ func TestKMSService_DeleteKey_InvalidPendingWindow(t *testing.T) {
 		PendingWindowDays: 45, // Invalid: > 30
 	}
 
-	resp, err := svc.DeleteKey(context.Background(), req)
+	resp, err := svc.DeleteKey(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -972,7 +972,7 @@ func TestKMSService_GetKeyMetadata_Success(t *testing.T) {
 		KeyID: "test-key-123",
 	}
 
-	resp, err := svc.GetKeyMetadata(context.Background(), req)
+	resp, err := svc.GetKeyMetadata(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -985,7 +985,7 @@ func TestKMSService_GetKeyMetadata_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
 
-	resp, err := svc.GetKeyMetadata(context.Background(), nil)
+	resp, err := svc.GetKeyMetadata(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1001,7 +1001,7 @@ func TestKMSService_GetKeyMetadata_NotFound(t *testing.T) {
 		KeyID: "nonexistent-key",
 	}
 
-	resp, err := svc.GetKeyMetadata(context.Background(), req)
+	resp, err := svc.GetKeyMetadata(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1032,7 +1032,7 @@ func TestKMSService_UpdateKeyMetadata_Success(t *testing.T) {
 		Tags:        map[string]string{"env": "production"},
 	}
 
-	resp, err := svc.UpdateKeyMetadata(context.Background(), req)
+	resp, err := svc.UpdateKeyMetadata(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1047,7 +1047,7 @@ func TestKMSService_UpdateKeyMetadata_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
 
-	resp, err := svc.UpdateKeyMetadata(context.Background(), nil)
+	resp, err := svc.UpdateKeyMetadata(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1064,7 +1064,7 @@ func TestKMSService_UpdateKeyMetadata_NoFieldsToUpdate(t *testing.T) {
 		// No fields to update
 	}
 
-	resp, err := svc.UpdateKeyMetadata(context.Background(), req)
+	resp, err := svc.UpdateKeyMetadata(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1097,7 +1097,7 @@ func TestKMSService_SetKeyPolicy_Success(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.SetKeyPolicy(context.Background(), req)
+	resp, err := svc.SetKeyPolicy(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1110,7 +1110,7 @@ func TestKMSService_SetKeyPolicy_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
 
-	resp, err := svc.SetKeyPolicy(context.Background(), nil)
+	resp, err := svc.SetKeyPolicy(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1127,7 +1127,7 @@ func TestKMSService_SetKeyPolicy_NilPolicy(t *testing.T) {
 		Policy: nil,
 	}
 
-	resp, err := svc.SetKeyPolicy(context.Background(), req)
+	resp, err := svc.SetKeyPolicy(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1150,7 +1150,7 @@ func TestKMSService_SetKeyPolicy_NoAllowedOperations(t *testing.T) {
 		},
 	}
 
-	_, err := svc.SetKeyPolicy(context.Background(), req)
+	_, err := svc.SetKeyPolicy(systemTenantCtx(), req)
 	// The validator now accepts empty AllowedOperations; the error comes from
 	// the key lookup failing (key does not exist in the mock manager).
 	require.Error(t, err)
@@ -1177,7 +1177,7 @@ func TestKMSService_GetKeyPolicy_Success(t *testing.T) {
 		KeyID: "test-key-123",
 	}
 
-	resp, err := svc.GetKeyPolicy(context.Background(), req)
+	resp, err := svc.GetKeyPolicy(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1192,7 +1192,7 @@ func TestKMSService_GetKeyPolicy_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
 
-	resp, err := svc.GetKeyPolicy(context.Background(), nil)
+	resp, err := svc.GetKeyPolicy(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1208,7 +1208,7 @@ func TestKMSService_GetKeyPolicy_NotFound(t *testing.T) {
 		KeyID: "nonexistent-key",
 	}
 
-	resp, err := svc.GetKeyPolicy(context.Background(), req)
+	resp, err := svc.GetKeyPolicy(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1231,7 +1231,7 @@ func TestNewKMSServiceImpl_NilLogger(t *testing.T) {
 		Usage: []KeyUsage{KeyUsageEncrypt},
 	}
 
-	resp, err := svc.GenerateKey(context.Background(), req)
+	resp, err := svc.GenerateKey(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1265,7 +1265,7 @@ func TestKMSService_GenerateKey_ContextCanceled(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(systemTenantCtx())
 	cancel() // Cancel immediately
 
 	req := &GenerateKeyRequest{
@@ -1361,7 +1361,7 @@ func TestKMSService_BackendStatus_Success(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 	require.NotNil(t, svc)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	resp, err := svc.BackendStatus(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -1383,7 +1383,7 @@ func TestKMSService_BackendTest_Success(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 	require.NotNil(t, svc)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	resp, err := svc.BackendTest(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -1404,7 +1404,7 @@ func TestKMSService_BackendTest_KeyGenerationFailure(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 	require.NotNil(t, svc)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	resp, err := svc.BackendTest(ctx)
 	require.NoError(t, err) // Should return response, not error
 	require.NotNil(t, resp)
@@ -1423,7 +1423,7 @@ func TestKMSService_BackendTest_EncryptionFailure(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 	require.NotNil(t, svc)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	resp, err := svc.BackendTest(ctx)
 	require.NoError(t, err) // Should return response, not error
 	require.NotNil(t, resp)
@@ -1442,7 +1442,7 @@ func TestKMSService_BackendTest_DecryptionFailure(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 	require.NotNil(t, svc)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	resp, err := svc.BackendTest(ctx)
 	require.NoError(t, err) // Should return response, not error
 	require.NotNil(t, resp)
@@ -1504,7 +1504,7 @@ func TestWithKMSAuditLogger(t *testing.T) {
 }
 
 func TestWithAuditContext(t *testing.T) {
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	ctx = WithAuditContext(ctx, "testuser", "user-123", "192.168.1.1")
 
@@ -1516,7 +1516,7 @@ func TestWithAuditContext(t *testing.T) {
 }
 
 func TestExtractAuditContext_Empty(t *testing.T) {
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	username, userID, ipAddr := extractAuditContext(ctx)
 	assert.Empty(t, username)
@@ -1611,7 +1611,7 @@ func TestKMSService_CreateDEK_Success(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 	require.NotNil(t, svc)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &CreateDEKRequest{
 		Path:           "/data/encryption",
 		Algorithm:      KeyAlgAES256GCM,
@@ -1639,7 +1639,7 @@ func TestKMSService_CreateDEK_EmptyPath(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &CreateDEKRequest{
 		Path:      "",
 		Algorithm: KeyAlgAES256GCM,
@@ -1657,7 +1657,7 @@ func TestKMSService_CreateDEK_InvalidAlgorithm(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &CreateDEKRequest{
 		Path:      "/data/test",
 		Algorithm: "INVALID-ALG",
@@ -1675,7 +1675,7 @@ func TestKMSService_GetDEK_Success(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	// First create the DEK
 	createReq := &CreateDEKRequest{
@@ -1705,7 +1705,7 @@ func TestKMSService_GetDEK_EmptyPath(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &GetDEKRequest{
 		Path: "",
 	}
@@ -1721,7 +1721,7 @@ func TestKMSService_ListDEKs_Success(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &ListDEKsRequest{
 		Prefix:    "/data/",
 		Recursive: true,
@@ -1742,7 +1742,7 @@ func TestKMSService_ListDEKs_EmptyPrefix(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &ListDEKsRequest{
 		Prefix: "",
 		Limit:  50,
@@ -1759,7 +1759,7 @@ func TestKMSService_RotateDEK_Success(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	// First create the DEK
 	createReq := &CreateDEKRequest{
@@ -1791,7 +1791,7 @@ func TestKMSService_RotateDEK_EmptyPath(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &RotateDEKRequest{
 		Path: "",
 	}
@@ -1807,7 +1807,7 @@ func TestKMSService_DeleteDEK_Success(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	// First create the DEK
 	createReq := &CreateDEKRequest{
@@ -1838,7 +1838,7 @@ func TestKMSService_DeleteDEK_EmptyPath(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &DeleteDEKRequest{
 		Path: "",
 	}
@@ -1854,7 +1854,7 @@ func TestKMSService_GetDEKStatus_Success(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	// First create the DEK
 	createReq := &CreateDEKRequest{
@@ -1885,7 +1885,7 @@ func TestKMSService_GetDEKStatus_EmptyPath(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &GetDEKStatusRequest{
 		Path: "",
 	}
@@ -1901,7 +1901,7 @@ func TestKMSService_SetDefaultDEK_Success(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	// First create the DEK
 	createReq := &CreateDEKRequest{
@@ -1930,7 +1930,7 @@ func TestKMSService_SetDefaultDEK_EmptyPath(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &SetDefaultDEKRequest{
 		Path: "",
 	}
@@ -1950,7 +1950,7 @@ func TestKMSService_SafetyCheck_Success(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &SafetyCheckRequest{
 		ThresholdPercent: 80.0,
 	}
@@ -1969,7 +1969,7 @@ func TestKMSService_SafetyReport_Success(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &SafetyReportRequest{}
 
 	resp, err := svc.SafetyReport(ctx, req)
@@ -1997,7 +1997,7 @@ func TestKMSService_SetDEKSafety_Success(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	// First create the DEK
 	createReq := &CreateDEKRequest{
@@ -2029,7 +2029,7 @@ func TestKMSService_SetDEKSafety_EmptyPath(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &SetDEKSafetyRequest{
 		Path: "",
 	}
@@ -2045,7 +2045,7 @@ func TestKMSService_ClearDEKSafety_Success(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	// First create the DEK
 	createReq := &CreateDEKRequest{
@@ -2074,7 +2074,7 @@ func TestKMSService_ClearDEKSafety_EmptyPath(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &ClearDEKSafetyRequest{
 		Path: "",
 	}
@@ -2094,7 +2094,7 @@ func TestKMSService_GetSupportedAlgorithms(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	algorithms, err := svc.GetSupportedAlgorithms(ctx)
 	require.NoError(t, err)
@@ -2110,7 +2110,7 @@ func TestKMSService_ListKeyVersions_KeyNotFound(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &ListKeyVersionsRequest{
 		KeyID: "non-existent-key",
 		Limit: 10,
@@ -2127,7 +2127,7 @@ func TestKMSService_UpdateKeyStatus_KeyNotFound(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &UpdateKeyStatusRequest{
 		KeyID:  "non-existent-key",
 		Status: KeyStatusEnabled,
@@ -2157,7 +2157,7 @@ func TestKMSService_SetKeySafety_Success(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &SetKeySafetyRequest{
 		KeyID:          "test-key-123",
 		MaxOperations:  1000000,
@@ -2179,7 +2179,7 @@ func TestKMSService_SetKeySafety_KeyNotFound(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &SetKeySafetyRequest{
 		KeyID:         "non-existent-key",
 		MaxOperations: 1000000,
@@ -2201,7 +2201,7 @@ func TestKMSService_SetKeySafety_EmptyKeyID(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &SetKeySafetyRequest{
 		KeyID: "",
 	}
@@ -2226,7 +2226,7 @@ func TestKMSService_ClearKeySafety_Success(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &ClearKeySafetyRequest{
 		KeyID: "test-key-123",
 	}
@@ -2245,7 +2245,7 @@ func TestKMSService_ClearKeySafety_KeyNotFound(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &ClearKeySafetyRequest{
 		KeyID: "non-existent-key",
 	}
@@ -2266,7 +2266,7 @@ func TestKMSService_ClearKeySafety_EmptyKeyID(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &ClearKeySafetyRequest{
 		KeyID: "",
 	}
@@ -2286,7 +2286,7 @@ func TestKMSService_StartReencryption_Success(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &StartReencryptionRequest{
 		FromVersion: 1,
 		ToVersion:   2,
@@ -2308,7 +2308,7 @@ func TestKMSService_GetReencryptionProgress_Success(t *testing.T) {
 
 	svc := newKMSService(mockMgr, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &GetReencryptionProgressRequest{
 		Verbose: true,
 	}
@@ -2387,7 +2387,7 @@ func TestKMSService_ExportKey_EmptyKeyID(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 	require.NotNil(t, svc)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	resp, err := svc.ExportKey(ctx, &ExportKeyRequest{
 		KeyID:             "",
 		WrappingKeyID:     "wrapper-key",
@@ -2405,7 +2405,7 @@ func TestKMSService_ExportKey_EmptyWrappingKeyID(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 	require.NotNil(t, svc)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	resp, err := svc.ExportKey(ctx, &ExportKeyRequest{
 		KeyID:             "test-key",
 		WrappingKeyID:     "",
@@ -2423,7 +2423,7 @@ func TestKMSService_ExportKey_EmptyWrappingAlgorithm(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 	require.NotNil(t, svc)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	resp, err := svc.ExportKey(ctx, &ExportKeyRequest{
 		KeyID:             "test-key",
 		WrappingKeyID:     "wrapper-key",
@@ -2441,7 +2441,7 @@ func TestKMSService_ExportKey_InvalidWrappingAlgorithm(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 	require.NotNil(t, svc)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	resp, err := svc.ExportKey(ctx, &ExportKeyRequest{
 		KeyID:             "test-key",
 		WrappingKeyID:     "wrapper-key",
@@ -2466,7 +2466,7 @@ func TestKMSService_UnwrapKey_EmptyKeyID(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 	require.NotNil(t, svc)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	resp, err := svc.UnwrapKey(ctx, &UnwrapKeyRequest{
 		KeyID:             "",
 		WrappedKey:        []byte("wrapped-data"),
@@ -2486,7 +2486,7 @@ func TestKMSService_UnwrapKey_EmptyWrappedKey(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 	require.NotNil(t, svc)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	resp, err := svc.UnwrapKey(ctx, &UnwrapKeyRequest{
 		KeyID:             "test-key",
 		WrappedKey:        []byte{},
@@ -2506,7 +2506,7 @@ func TestKMSService_UnwrapKey_EmptyWrappingKeyID(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 	require.NotNil(t, svc)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	resp, err := svc.UnwrapKey(ctx, &UnwrapKeyRequest{
 		KeyID:             "test-key",
 		WrappedKey:        []byte("wrapped-data"),
@@ -2526,7 +2526,7 @@ func TestKMSService_UnwrapKey_EmptyWrappingAlgorithm(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 	require.NotNil(t, svc)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	resp, err := svc.UnwrapKey(ctx, &UnwrapKeyRequest{
 		KeyID:             "test-key",
 		WrappedKey:        []byte("wrapped-data"),
@@ -2546,7 +2546,7 @@ func TestKMSService_UnwrapKey_EmptyAlgorithm(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 	require.NotNil(t, svc)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	resp, err := svc.UnwrapKey(ctx, &UnwrapKeyRequest{
 		KeyID:             "test-key",
 		WrappedKey:        []byte("wrapped-data"),
@@ -2566,7 +2566,7 @@ func TestKMSService_UnwrapKey_InvalidWrappingAlgorithm(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 	require.NotNil(t, svc)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	resp, err := svc.UnwrapKey(ctx, &UnwrapKeyRequest{
 		KeyID:             "test-key",
 		WrappedKey:        []byte("wrapped-data"),
@@ -2633,7 +2633,7 @@ func TestKMSService_ValidateGenerateKeyRequest_MissingUsage(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 	require.NotNil(t, svc)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	resp, err := svc.GenerateKey(ctx, &GenerateKeyRequest{
 		Name: "test-key",
 		KeyAttributes: &xkmssdk.KeyAttributes{
@@ -2652,7 +2652,7 @@ func TestKMSService_ValidateListDEKsRequest_EmptyLimit(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 	require.NotNil(t, svc)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	resp, err := svc.ListDEKs(ctx, &ListDEKsRequest{
 		Prefix: "/data/",
 		Limit:  0, // Zero limit should use default
@@ -2670,7 +2670,7 @@ func TestKMSService_ValidateDeleteDEKRequest_Force(t *testing.T) {
 	require.NotNil(t, svc)
 
 	// First create a DEK
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	_, err := svc.CreateDEK(ctx, &CreateDEKRequest{
 		Path:      "/data/test",
 		Algorithm: "AES-256-GCM",
@@ -2693,7 +2693,7 @@ func TestKMSService_SafetyCheck_ThresholdValidation(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 	require.NotNil(t, svc)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	resp, err := svc.SafetyCheck(ctx, &SafetyCheckRequest{
 		ThresholdPercent: 150, // Invalid threshold over 100%
 	})
@@ -2737,7 +2737,7 @@ func TestKMSService_GetSupportedAlgorithms_AllTypes(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 	require.NotNil(t, svc)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	algorithms, err := svc.GetSupportedAlgorithms(ctx)
 	require.NoError(t, err)
 	assert.NotEmpty(t, algorithms)
@@ -2777,7 +2777,7 @@ func TestKMSService_ListKeys_WithPagination(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 	require.NotNil(t, svc)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	resp, err := svc.ListKeys(ctx, &ListKeysRequest{
 		Limit:  2,
 		Cursor: "",
@@ -2794,7 +2794,7 @@ func TestKMSService_UpdateKeyMetadata_KeyNotFound(t *testing.T) {
 	svc := newKMSService(mockMgr, logger)
 
 	newName := "updated-name"
-	resp, err := svc.UpdateKeyMetadata(context.Background(), &UpdateKeyMetadataRequest{
+	resp, err := svc.UpdateKeyMetadata(systemTenantCtx(), &UpdateKeyMetadataRequest{
 		KeyID: "nonexistent-key",
 		Name:  &newName,
 	})
@@ -2808,7 +2808,7 @@ func TestKMSService_SetKeyPolicy_KeyNotFound(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	resp, err := svc.SetKeyPolicy(context.Background(), &SetKeyPolicyRequest{
+	resp, err := svc.SetKeyPolicy(systemTenantCtx(), &SetKeyPolicyRequest{
 		KeyID: "nonexistent-key",
 		Policy: &KeyPolicy{
 			Version:           1,
@@ -2832,7 +2832,7 @@ func TestKMSService_ListKeyVersions_WithMultipleVersionsPaginated(t *testing.T) 
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	resp, err := svc.ListKeyVersions(context.Background(), &ListKeyVersionsRequest{
+	resp, err := svc.ListKeyVersions(systemTenantCtx(), &ListKeyVersionsRequest{
 		KeyID: "versioned-key",
 		Limit: 2,
 	})
@@ -2848,13 +2848,13 @@ func TestKMSService_CreateDEK_AlreadyExists(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	_, err := svc.CreateDEK(context.Background(), &CreateDEKRequest{
+	_, err := svc.CreateDEK(systemTenantCtx(), &CreateDEKRequest{
 		Path:      "transit/dek/test",
 		Algorithm: KeyAlgAES256GCM,
 	})
 	require.NoError(t, err)
 
-	resp, err := svc.CreateDEK(context.Background(), &CreateDEKRequest{
+	resp, err := svc.CreateDEK(systemTenantCtx(), &CreateDEKRequest{
 		Path:      "transit/dek/test",
 		Algorithm: KeyAlgAES256GCM,
 	})
@@ -2868,7 +2868,7 @@ func TestKMSService_CreateDEK_DefaultAlgorithm(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	resp, err := svc.CreateDEK(context.Background(), &CreateDEKRequest{
+	resp, err := svc.CreateDEK(systemTenantCtx(), &CreateDEKRequest{
 		Path: "transit/dek/default-algo",
 	})
 	require.NoError(t, err)
@@ -2881,7 +2881,7 @@ func TestKMSService_RotateDEK_DEKNotFound(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	resp, err := svc.RotateDEK(context.Background(), &RotateDEKRequest{
+	resp, err := svc.RotateDEK(systemTenantCtx(), &RotateDEKRequest{
 		Path: "transit/dek/nonexistent",
 	})
 	require.Error(t, err)
@@ -2894,7 +2894,7 @@ func TestKMSService_DeleteDEK_DEKNotFound(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	resp, err := svc.DeleteDEK(context.Background(), &DeleteDEKRequest{
+	resp, err := svc.DeleteDEK(systemTenantCtx(), &DeleteDEKRequest{
 		Path: "transit/dek/nonexistent",
 	})
 	require.Error(t, err)
@@ -2907,18 +2907,18 @@ func TestKMSService_DeleteDEK_DefaultWithoutForce(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	_, err := svc.CreateDEK(context.Background(), &CreateDEKRequest{
+	_, err := svc.CreateDEK(systemTenantCtx(), &CreateDEKRequest{
 		Path:      "transit/dek/default-key",
 		Algorithm: KeyAlgAES256GCM,
 	})
 	require.NoError(t, err)
 
-	_, err = svc.SetDefaultDEK(context.Background(), &SetDefaultDEKRequest{
+	_, err = svc.SetDefaultDEK(systemTenantCtx(), &SetDefaultDEKRequest{
 		Path: "transit/dek/default-key",
 	})
 	require.NoError(t, err)
 
-	resp, err := svc.DeleteDEK(context.Background(), &DeleteDEKRequest{
+	resp, err := svc.DeleteDEK(systemTenantCtx(), &DeleteDEKRequest{
 		Path:  "transit/dek/default-key",
 		Force: false,
 	})
@@ -2934,7 +2934,7 @@ func TestKMSService_BackendTest_NilManagerPath(t *testing.T) {
 		safetyTracker:     NewAEADSafetyTracker(),
 	}
 
-	resp, err := svc.BackendTest(context.Background())
+	resp, err := svc.BackendTest(systemTenantCtx())
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.False(t, resp.Success)
@@ -2946,7 +2946,7 @@ func TestKMSService_BackendTest_UnavailableBackend(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	resp, err := svc.BackendTest(context.Background())
+	resp, err := svc.BackendTest(systemTenantCtx())
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.False(t, resp.Success)
@@ -2970,7 +2970,7 @@ func TestKMSService_GetPublicKey_GetKeyMetadataError(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	resp, err := svc.GetPublicKey(context.Background(), &GetPublicKeyRequest{
+	resp, err := svc.GetPublicKey(systemTenantCtx(), &GetPublicKeyRequest{
 		KeyID: "asymmetric-key",
 	})
 	require.Error(t, err)
@@ -3001,7 +3001,7 @@ func TestKMSService_GetPublicKey_ServiceKeyMetadataType(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	resp, err := svc.GetPublicKey(context.Background(), &GetPublicKeyRequest{
+	resp, err := svc.GetPublicKey(systemTenantCtx(), &GetPublicKeyRequest{
 		KeyID: "svc-meta-key",
 	})
 	require.NoError(t, err)
@@ -3015,7 +3015,7 @@ func TestKMSService_BackendStatus_UnavailableBackendPath(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	resp, err := svc.BackendStatus(context.Background())
+	resp, err := svc.BackendStatus(systemTenantCtx())
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, "unavailable", resp.Status)
@@ -3026,7 +3026,7 @@ func TestKMSService_SafetyCheck_WithDEKResults(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	_, err := svc.CreateDEK(context.Background(), &CreateDEKRequest{
+	_, err := svc.CreateDEK(systemTenantCtx(), &CreateDEKRequest{
 		Path:      "transit/dek/heavy-use",
 		Algorithm: KeyAlgAES256GCM,
 	})
@@ -3039,10 +3039,10 @@ func TestKMSService_SafetyCheck_WithDEKResults(t *testing.T) {
 	})
 
 	for i := 0; i < 90; i++ {
-		_ = svc.safetyTracker.RecordDEKEncrypt(context.Background(), "transit/dek/heavy-use", 100)
+		_ = svc.safetyTracker.RecordDEKEncrypt(systemTenantCtx(), "transit/dek/heavy-use", 100)
 	}
 
-	resp, err := svc.SafetyCheck(context.Background(), &SafetyCheckRequest{
+	resp, err := svc.SafetyCheck(systemTenantCtx(), &SafetyCheckRequest{
 		ThresholdPercent: 50,
 	})
 	require.NoError(t, err)
@@ -3068,7 +3068,7 @@ func TestKMSService_GetDEKStatus_NilKMSManager(t *testing.T) {
 		wrappedKey: []byte("test-key-material"),
 	})
 
-	resp, err := svc.GetDEKStatus(context.Background(), &GetDEKStatusRequest{
+	resp, err := svc.GetDEKStatus(systemTenantCtx(), &GetDEKStatusRequest{
 		Path: "transit/dek/no-kms",
 	})
 	require.NoError(t, err)
@@ -3090,7 +3090,7 @@ func TestKMSService_ListKeyVersions_ServiceKeyMetadataType(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	resp, err := svc.ListKeyVersions(context.Background(), &ListKeyVersionsRequest{
+	resp, err := svc.ListKeyVersions(systemTenantCtx(), &ListKeyVersionsRequest{
 		KeyID: "svc-versioned-key",
 	})
 	require.NoError(t, err)
@@ -3104,13 +3104,13 @@ func TestKMSService_RotateDEK_SuccessfulRotation(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	_, err := svc.CreateDEK(context.Background(), &CreateDEKRequest{
+	_, err := svc.CreateDEK(systemTenantCtx(), &CreateDEKRequest{
 		Path:      "transit/dek/rotate-path",
 		Algorithm: KeyAlgAES256GCM,
 	})
 	require.NoError(t, err)
 
-	resp, err := svc.RotateDEK(context.Background(), &RotateDEKRequest{
+	resp, err := svc.RotateDEK(systemTenantCtx(), &RotateDEKRequest{
 		Path: "transit/dek/rotate-path",
 	})
 	require.NoError(t, err)
@@ -3124,18 +3124,18 @@ func TestKMSService_DeleteDEK_DefaultWithForce(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	_, err := svc.CreateDEK(context.Background(), &CreateDEKRequest{
+	_, err := svc.CreateDEK(systemTenantCtx(), &CreateDEKRequest{
 		Path:      "transit/dek/force-delete",
 		Algorithm: KeyAlgAES256GCM,
 	})
 	require.NoError(t, err)
 
-	_, err = svc.SetDefaultDEK(context.Background(), &SetDefaultDEKRequest{
+	_, err = svc.SetDefaultDEK(systemTenantCtx(), &SetDefaultDEKRequest{
 		Path: "transit/dek/force-delete",
 	})
 	require.NoError(t, err)
 
-	resp, err := svc.DeleteDEK(context.Background(), &DeleteDEKRequest{
+	resp, err := svc.DeleteDEK(systemTenantCtx(), &DeleteDEKRequest{
 		Path:  "transit/dek/force-delete",
 		Force: true,
 	})
@@ -3148,7 +3148,7 @@ func TestKMSService_ClearKeySafety_NilRequest(t *testing.T) {
 	mockMgr := newMockKMSManager()
 	svc := newKMSService(mockMgr, createTestLogger(t))
 
-	resp, err := svc.ClearKeySafety(context.Background(), nil)
+	resp, err := svc.ClearKeySafety(systemTenantCtx(), nil)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 	var qbErr *quicbaasErrors.QBError
@@ -3176,7 +3176,7 @@ func TestGetCompletedGracePeriodVersions_Success(t *testing.T) {
 	}
 
 	adapter := &SchedulerAdapter{scheduler: mockEngine}
-	result, err := adapter.GetCompletedGracePeriodVersions(context.Background(), "test-key")
+	result, err := adapter.GetCompletedGracePeriodVersions(systemTenantCtx(), "test-key")
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 	assert.Equal(t, now, result[1])
@@ -3190,7 +3190,7 @@ func TestGetCompletedGracePeriodVersions_ListError(t *testing.T) {
 	}
 
 	adapter := &SchedulerAdapter{scheduler: mockEngine}
-	result, err := adapter.GetCompletedGracePeriodVersions(context.Background(), "test-key")
+	result, err := adapter.GetCompletedGracePeriodVersions(systemTenantCtx(), "test-key")
 	require.Error(t, err)
 	assert.Nil(t, result)
 }
@@ -3209,7 +3209,7 @@ func TestGetCompletedGracePeriodVersions_SkipsInvalidPayload(t *testing.T) {
 	}
 
 	adapter := &SchedulerAdapter{scheduler: mockEngine}
-	result, err := adapter.GetCompletedGracePeriodVersions(context.Background(), "test-key")
+	result, err := adapter.GetCompletedGracePeriodVersions(systemTenantCtx(), "test-key")
 	require.NoError(t, err)
 	assert.Empty(t, result)
 }
@@ -3229,7 +3229,7 @@ func TestGetCompletedGracePeriodVersions_FiltersByKeyID(t *testing.T) {
 	}
 
 	adapter := &SchedulerAdapter{scheduler: mockEngine}
-	result, err := adapter.GetCompletedGracePeriodVersions(context.Background(), "key-a")
+	result, err := adapter.GetCompletedGracePeriodVersions(systemTenantCtx(), "key-a")
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 	_, found := result[1]
@@ -3343,14 +3343,14 @@ func TestKMSService_SetVersionStatus(t *testing.T) {
 		svc.setVersionStatus(keyID, version, KeyStatusDisabled, &disabledAt)
 
 		// Get version status
-		status, disabledTime := svc.getVersionStatus(context.Background(), keyID, version)
+		status, disabledTime := svc.getVersionStatus(systemTenantCtx(), keyID, version)
 		assert.Equal(t, KeyStatusDisabled, status)
 		require.NotNil(t, disabledTime)
 		assert.WithinDuration(t, disabledAt, *disabledTime, time.Second)
 	})
 
 	t.Run("get version status for nonexistent key returns empty", func(t *testing.T) {
-		status, disabledTime := svc.getVersionStatus(context.Background(), "nonexistent-key", 1)
+		status, disabledTime := svc.getVersionStatus(systemTenantCtx(), "nonexistent-key", 1)
 		assert.Equal(t, KeyStatus(""), status)
 		assert.Nil(t, disabledTime)
 	})
@@ -3361,7 +3361,7 @@ func TestKMSService_SetVersionStatus(t *testing.T) {
 
 		svc.setVersionStatus(keyID, version, KeyStatusEnabled, nil)
 
-		status, disabledTime := svc.getVersionStatus(context.Background(), keyID, version)
+		status, disabledTime := svc.getVersionStatus(systemTenantCtx(), keyID, version)
 		assert.Equal(t, KeyStatusEnabled, status)
 		assert.Nil(t, disabledTime)
 	})
@@ -3372,7 +3372,7 @@ func TestKMSService_GetPublicKey(t *testing.T) {
 		mockManager := newMockKMSManager()
 		svc := newKMSService(mockManager, nil)
 
-		resp, err := svc.GetPublicKey(context.Background(), nil)
+		resp, err := svc.GetPublicKey(systemTenantCtx(), nil)
 		require.Error(t, err)
 		assert.Nil(t, resp)
 		assert.Contains(t, err.Error(), "request is required")
@@ -3382,7 +3382,7 @@ func TestKMSService_GetPublicKey(t *testing.T) {
 		mockManager := newMockKMSManager()
 		svc := newKMSService(mockManager, nil)
 
-		resp, err := svc.GetPublicKey(context.Background(), &GetPublicKeyRequest{})
+		resp, err := svc.GetPublicKey(systemTenantCtx(), &GetPublicKeyRequest{})
 		require.Error(t, err)
 		assert.Nil(t, resp)
 		assert.Contains(t, err.Error(), "key ID is required")
@@ -3400,7 +3400,7 @@ func TestKMSService_GetPublicKey(t *testing.T) {
 		}
 		svc := newKMSService(mockManager, nil)
 
-		resp, err := svc.GetPublicKey(context.Background(), &GetPublicKeyRequest{
+		resp, err := svc.GetPublicKey(systemTenantCtx(), &GetPublicKeyRequest{
 			KeyID: "test-key",
 		})
 		require.NoError(t, err)
@@ -3413,7 +3413,7 @@ func TestKMSService_GetPublicKey(t *testing.T) {
 		mockManager := newMockKMSManager()
 		svc := newKMSService(mockManager, nil)
 
-		resp, err := svc.GetPublicKey(context.Background(), &GetPublicKeyRequest{
+		resp, err := svc.GetPublicKey(systemTenantCtx(), &GetPublicKeyRequest{
 			KeyID: "nonexistent-key",
 		})
 		require.Error(t, err)
@@ -3426,7 +3426,7 @@ func TestKMSService_CancelReencryption(t *testing.T) {
 		mockManager := newMockKMSManager()
 		svc := newKMSService(mockManager, nil)
 
-		err := svc.CancelReencryption(context.Background())
+		err := svc.CancelReencryption(systemTenantCtx())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "no re-encryption operation in progress")
 	})
@@ -3452,7 +3452,7 @@ func TestKMSService_RotateKey_WithGracePeriod_Success(t *testing.T) {
 		GracePeriodSeconds: 3600,
 	}
 
-	resp, err := svc.RotateKey(context.Background(), req)
+	resp, err := svc.RotateKey(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 
@@ -3490,7 +3490,7 @@ func TestKMSService_RotateKey_WithGracePeriod_SchedulerError(t *testing.T) {
 		GracePeriodSeconds: 1800,
 	}
 
-	resp, err := svc.RotateKey(context.Background(), req)
+	resp, err := svc.RotateKey(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 
@@ -3523,7 +3523,7 @@ func TestKMSService_RotateKey_WithGracePeriod_SchedulerError_NilLogger(t *testin
 		GracePeriodSeconds: 600,
 	}
 
-	resp, err := svc.RotateKey(context.Background(), req)
+	resp, err := svc.RotateKey(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, "no-log-key", resp.KeyID)
@@ -3549,7 +3549,7 @@ func TestKMSService_RotateKey_NoGracePeriod(t *testing.T) {
 		GracePeriodSeconds: 0,
 	}
 
-	resp, err := svc.RotateKey(context.Background(), req)
+	resp, err := svc.RotateKey(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 
@@ -3574,7 +3574,7 @@ func TestKMSService_RotateKey_GracePeriod_NilScheduler(t *testing.T) {
 		GracePeriodSeconds: 3600,
 	}
 
-	resp, err := svc.RotateKey(context.Background(), req)
+	resp, err := svc.RotateKey(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 
@@ -3615,7 +3615,7 @@ func TestKMSService_ListKeyVersions_Success(t *testing.T) {
 		Limit: 10,
 	}
 
-	resp, err := svc.ListKeyVersions(context.Background(), req)
+	resp, err := svc.ListKeyVersions(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -3627,7 +3627,7 @@ func TestKMSService_ListKeyVersions_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
 
-	resp, err := svc.ListKeyVersions(context.Background(), nil)
+	resp, err := svc.ListKeyVersions(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -3644,7 +3644,7 @@ func TestKMSService_ListKeyVersions_EmptyKeyID(t *testing.T) {
 		Limit: 10,
 	}
 
-	resp, err := svc.ListKeyVersions(context.Background(), req)
+	resp, err := svc.ListKeyVersions(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -3670,7 +3670,7 @@ func TestKMSService_ListKeyVersions_SingleVersion(t *testing.T) {
 		KeyID: "single-version-key",
 	}
 
-	resp, err := svc.ListKeyVersions(context.Background(), req)
+	resp, err := svc.ListKeyVersions(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -3694,7 +3694,7 @@ func TestKMSService_ListKeyVersions_ZeroVersion(t *testing.T) {
 		KeyID: "zero-version-key",
 	}
 
-	resp, err := svc.ListKeyVersions(context.Background(), req)
+	resp, err := svc.ListKeyVersions(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -3725,7 +3725,7 @@ func TestKMSService_UpdateKeyStatus_EnableKey(t *testing.T) {
 		Status: KeyStatusEnabled,
 	}
 
-	resp, err := svc.UpdateKeyStatus(context.Background(), req)
+	resp, err := svc.UpdateKeyStatus(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -3759,7 +3759,7 @@ func TestKMSService_UpdateKeyStatus_DisableKey(t *testing.T) {
 		Status: KeyStatusDisabled,
 	}
 
-	resp, err := svc.UpdateKeyStatus(context.Background(), req)
+	resp, err := svc.UpdateKeyStatus(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -3772,7 +3772,7 @@ func TestKMSService_UpdateKeyStatus_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
 
-	resp, err := svc.UpdateKeyStatus(context.Background(), nil)
+	resp, err := svc.UpdateKeyStatus(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -3789,7 +3789,7 @@ func TestKMSService_UpdateKeyStatus_EmptyKeyID(t *testing.T) {
 		Status: KeyStatusEnabled,
 	}
 
-	resp, err := svc.UpdateKeyStatus(context.Background(), req)
+	resp, err := svc.UpdateKeyStatus(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -3819,7 +3819,7 @@ func TestKMSService_UpdateKeyStatus_WithNonMetadataResponse(t *testing.T) {
 		Status: KeyStatusDisabled,
 	}
 
-	resp, err := svc.UpdateKeyStatus(context.Background(), req)
+	resp, err := svc.UpdateKeyStatus(systemTenantCtx(), req)
 
 	// Should still work with default values
 	require.NoError(t, err)
@@ -3850,7 +3850,7 @@ func TestKMSService_GetKey_WithKeyMetadata(t *testing.T) {
 		KeyID: "test-key-123",
 	}
 
-	resp, err := svc.GetKey(context.Background(), req)
+	resp, err := svc.GetKey(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -3876,7 +3876,7 @@ func TestKMSService_GetKey_SpecificVersion(t *testing.T) {
 		Version: 3, // Request specific version
 	}
 
-	resp, err := svc.GetKey(context.Background(), req)
+	resp, err := svc.GetKey(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -3902,7 +3902,7 @@ func TestKMSService_GetKey_NonKeyMetadataResponse(t *testing.T) {
 		KeyID: "test-key",
 	}
 
-	resp, err := svc.GetKey(context.Background(), req)
+	resp, err := svc.GetKey(systemTenantCtx(), req)
 
 	// Should work with default values
 	require.NoError(t, err)
@@ -3932,7 +3932,7 @@ func TestKMSService_GetKeyMetadata_WithFullMetadata(t *testing.T) {
 		KeyID: "test-key-123",
 	}
 
-	resp, err := svc.GetKeyMetadata(context.Background(), req)
+	resp, err := svc.GetKeyMetadata(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -3957,7 +3957,7 @@ func TestKMSService_GetKeyMetadata_NonKeyMetadataResponse(t *testing.T) {
 		KeyID: "test-key",
 	}
 
-	resp, err := svc.GetKeyMetadata(context.Background(), req)
+	resp, err := svc.GetKeyMetadata(systemTenantCtx(), req)
 
 	// Should work with default values
 	require.NoError(t, err)
@@ -3974,7 +3974,7 @@ func TestKMSService_CreateDEK_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
 
-	resp, err := svc.CreateDEK(context.Background(), nil)
+	resp, err := svc.CreateDEK(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -3986,7 +3986,7 @@ func TestKMSService_GetDEK_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
 
-	resp, err := svc.GetDEK(context.Background(), nil)
+	resp, err := svc.GetDEK(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -3998,7 +3998,7 @@ func TestKMSService_RotateDEK_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
 
-	resp, err := svc.RotateDEK(context.Background(), nil)
+	resp, err := svc.RotateDEK(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -4010,7 +4010,7 @@ func TestKMSService_DeleteDEK_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
 
-	resp, err := svc.DeleteDEK(context.Background(), nil)
+	resp, err := svc.DeleteDEK(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -4022,7 +4022,7 @@ func TestKMSService_GetDEKStatus_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
 
-	resp, err := svc.GetDEKStatus(context.Background(), nil)
+	resp, err := svc.GetDEKStatus(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -4034,7 +4034,7 @@ func TestKMSService_SetDefaultDEK_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
 
-	resp, err := svc.SetDefaultDEK(context.Background(), nil)
+	resp, err := svc.SetDefaultDEK(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -4046,7 +4046,7 @@ func TestKMSService_SetDEKSafety_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
 
-	resp, err := svc.SetDEKSafety(context.Background(), nil)
+	resp, err := svc.SetDEKSafety(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -4058,7 +4058,7 @@ func TestKMSService_ClearDEKSafety_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
 
-	resp, err := svc.ClearDEKSafety(context.Background(), nil)
+	resp, err := svc.ClearDEKSafety(systemTenantCtx(), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -4082,7 +4082,7 @@ func TestKMSService_ListKeys_WithPrefixFilter(t *testing.T) {
 		Limit:  10,
 	}
 
-	resp, err := svc.ListKeys(context.Background(), req)
+	resp, err := svc.ListKeys(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -4097,7 +4097,7 @@ func TestKMSService_ListKeys_DefaultLimit(t *testing.T) {
 		Limit: 0, // Should use default limit
 	}
 
-	resp, err := svc.ListKeys(context.Background(), req)
+	resp, err := svc.ListKeys(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -4108,7 +4108,7 @@ func TestKMSService_SafetyCheck_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
 
-	resp, err := svc.SafetyCheck(context.Background(), nil)
+	resp, err := svc.SafetyCheck(systemTenantCtx(), nil)
 
 	// SafetyCheck handles nil by using defaults
 	require.NoError(t, err)
@@ -4124,7 +4124,7 @@ func TestKMSService_SafetyCheck_ZeroThreshold(t *testing.T) {
 		ThresholdPercent: 0, // Zero threshold
 	}
 
-	resp, err := svc.SafetyCheck(context.Background(), req)
+	resp, err := svc.SafetyCheck(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -4135,7 +4135,7 @@ func TestKMSService_SafetyReport_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockManager, logger)
 
-	resp, err := svc.SafetyReport(context.Background(), nil)
+	resp, err := svc.SafetyReport(systemTenantCtx(), nil)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -4154,7 +4154,7 @@ func TestKMSService_GenerateKey_MissingUsage_Coverage(t *testing.T) {
 		Usage: []KeyUsage{}, // Missing usage
 	}
 
-	resp, err := svc.GenerateKey(context.Background(), req)
+	resp, err := svc.GenerateKey(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -4181,7 +4181,7 @@ func TestKMSService_RotateKey_ManagerError(t *testing.T) {
 		KeyID: "test-key",
 	}
 
-	resp, err := svc.RotateKey(context.Background(), req)
+	resp, err := svc.RotateKey(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -4201,7 +4201,7 @@ func TestKMSService_DeleteKey_ManagerError(t *testing.T) {
 		PendingWindowDays: 7,
 	}
 
-	resp, err := svc.DeleteKey(context.Background(), req)
+	resp, err := svc.DeleteKey(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -4222,7 +4222,7 @@ func TestKMSService_DeleteKey_NotFoundPreservesCode(t *testing.T) {
 		}
 		svc := newKMSService(mockManager, logger)
 
-		resp, err := svc.DeleteKey(context.Background(), &DeleteKeyRequest{
+		resp, err := svc.DeleteKey(systemTenantCtx(), &DeleteKeyRequest{
 			KeyID:             "already-deleted",
 			PendingWindowDays: 7,
 		})
@@ -4241,7 +4241,7 @@ func TestKMSService_DeleteKey_NotFoundPreservesCode(t *testing.T) {
 		}
 		svc := newKMSService(mockManager, logger)
 
-		resp, err := svc.DeleteKey(context.Background(), &DeleteKeyRequest{
+		resp, err := svc.DeleteKey(systemTenantCtx(), &DeleteKeyRequest{
 			KeyID:             "boom",
 			PendingWindowDays: 7,
 		})
@@ -4267,7 +4267,7 @@ func TestKMSService_RevokeKey_ManagerError(t *testing.T) {
 		Reason: "compromised",
 	}
 
-	resp, err := svc.RevokeKey(context.Background(), req)
+	resp, err := svc.RevokeKey(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)

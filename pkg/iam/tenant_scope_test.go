@@ -19,6 +19,8 @@ import (
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // TestResolveRequestTenant pins the single tenant-scoping rule the audit
@@ -32,17 +34,12 @@ import (
 func TestResolveRequestTenant(t *testing.T) {
 	tests := []struct {
 		name string
-		// callerTenant is bound into the context unless unbound is set; on
-		// a denial it is also the caller tenant the error must report.
+		// callerTenant is bound into the context; on a denial it is also
+		// the caller tenant the error must report.
 		callerTenant string
-		// unbound leaves the context without any tenant binding — the
-		// system principal's shape (IsSystemTenant("") is true), which
-		// ResolveRequestTenant canonicalizes to the system tenant so an
-		// empty tenant never reaches storage as an unscoped filter.
-		unbound   bool
-		requested string
-		want      string
-		wantErr   bool
+		requested    string
+		want         string
+		wantErr      bool
 	}{
 		{
 			name:         "empty requested tenant defaults to the caller's own tenant",
@@ -80,35 +77,11 @@ func TestResolveRequestTenant(t *testing.T) {
 			requested:    "",
 			want:         qrdbsdk.SystemTenantID,
 		},
-		{
-			name:         "unbound caller tenant canonicalizes to the system tenant, never an unscoped empty filter",
-			callerTenant: qrdbsdk.SystemTenantID,
-			unbound:      true,
-			requested:    "",
-			want:         qrdbsdk.SystemTenantID,
-		},
-		{
-			name:         "unbound caller tenant is denied another tenant's chain",
-			callerTenant: qrdbsdk.SystemTenantID,
-			unbound:      true,
-			requested:    "tenant-b",
-			wantErr:      true,
-		},
-		{
-			name:         "unbound caller tenant naming the system tenant explicitly is honored",
-			callerTenant: qrdbsdk.SystemTenantID,
-			unbound:      true,
-			requested:    qrdbsdk.SystemTenantID,
-			want:         qrdbsdk.SystemTenantID,
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			if !tt.unbound {
-				ctx = ContextWithTenant(ctx, tt.callerTenant)
-			}
+			ctx := tenantctx.WithTenant(context.Background(), tt.callerTenant)
 			got, err := ResolveRequestTenant(ctx, tt.requested)
 
 			if tt.wantErr {
@@ -146,5 +119,23 @@ func TestTenantScopeMismatchError_Message(t *testing.T) {
 	want := "tenant scope: caller tenant tenant-a may not access tenant tenant-b"
 	if err.Error() != want {
 		t.Fatalf("Error() = %q, want %q", err.Error(), want)
+	}
+}
+
+// TestResolveRequestTenant_UnboundCallerIsRefused pins go-quicbaas#1150: a
+// caller with no tenant bound is refused with *tenantctx.MissingTenantError
+// whatever it requests. It used to be canonicalized to the system tenant,
+// which read an unknown caller as the platform principal; an empty tenant
+// still never reaches storage as an unscoped filter, because nothing does.
+func TestResolveRequestTenant_UnboundCallerIsRefused(t *testing.T) {
+	for _, requested := range []string{"", "tenant-b", qrdbsdk.SystemTenantID} {
+		got, err := ResolveRequestTenant(context.Background(), requested)
+		var missing *tenantctx.MissingTenantError
+		if !errors.As(err, &missing) {
+			t.Fatalf("ResolveRequestTenant(%q) unbound = (%q, %v), want *tenantctx.MissingTenantError", requested, got, err)
+		}
+		if got != "" {
+			t.Fatalf("ResolveRequestTenant(%q) unbound returned tenant %q alongside the refusal", requested, got)
+		}
 	}
 }

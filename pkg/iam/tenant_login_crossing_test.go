@@ -243,43 +243,34 @@ func TestTenantUserLogin_RefusesWhenTheRoleIsAbsentFromItsOwnTenant(t *testing.T
 	}
 }
 
-// TestWithQRDBTenant_BindsQRDBsOwnKey pins the distinction the fix turns on:
-// quicbaas's tenant binding and go-qrdb's are separate context keys, and only
-// go-qrdb's is read by a go-qrdb store resolver. A call that crosses the SDK
-// boundary carrying only withTokenTenant runs in the system tenant while
-// looking correctly scoped — which is precisely how #529 stayed invisible.
-func TestWithQRDBTenant_BindsQRDBsOwnKey(t *testing.T) {
-	ctx := withQRDBTenant(context.Background(), crossingTenant)
+// TestWithTokenTenant_BindsQRDBsOwnKey pins the #529 regression structurally:
+// the tenant binding quicbaas's token storage reads is go-qrdb's own key, so a
+// call that crosses into the qrdb SDK can no longer run in the system tenant
+// while looking correctly scoped. There is one key (go-quicbaas#1150).
+func TestWithTokenTenant_BindsQRDBsOwnKey(t *testing.T) {
+	ctx := withTokenTenant(context.Background(), crossingTenant)
 
 	got, ok := qrdbsdk.TenantFromContext(ctx)
 	if !ok || got != crossingTenant {
 		t.Fatalf("qrdbsdk.TenantFromContext = (%q, %v), want (%q, true)", got, ok, crossingTenant)
 	}
-
-	// The quicbaas binding is NOT a substitute: it sets a key go-qrdb never
-	// reads. Asserting the negative is what keeps someone from "simplifying"
-	// the two helpers into one.
-	quicbaasOnly := withTokenTenant(context.Background(), crossingTenant)
-	if _, ok := qrdbsdk.TenantFromContext(quicbaasOnly); ok {
-		t.Fatal("withTokenTenant bound go-qrdb's tenant key; the two helpers have collapsed and the scoping bug can return silently")
-	}
-	if TenantFromContext(quicbaasOnly) != crossingTenant {
-		t.Fatalf("withTokenTenant did not bind quicbaas's own tenant key")
+	if contextTenant(ctx) != crossingTenant {
+		t.Fatalf("contextTenant = %q, want %q: quicbaas and go-qrdb must read one binding", contextTenant(ctx), crossingTenant)
 	}
 }
 
-// TestWithQRDBTenant_EmptyTenantLeavesTheContextAlone is the error-input half:
+// TestWithTokenTenant_EmptyTenantLeavesTheContextAlone is the error-input half:
 // an empty tenant must not bind an empty value, because go-qrdb reads an
 // explicit empty binding and an absent one the same way but callers cannot
 // distinguish them afterwards.
-func TestWithQRDBTenant_EmptyTenantLeavesTheContextAlone(t *testing.T) {
+func TestWithTokenTenant_EmptyTenantLeavesTheContextAlone(t *testing.T) {
 	base := qrdbsdk.ContextWithTenant(context.Background(), crossingTenant)
 
-	got := withQRDBTenant(base, "")
+	got := withTokenTenant(base, "")
 	if tenantID, ok := qrdbsdk.TenantFromContext(got); !ok || tenantID != crossingTenant {
 		t.Fatalf("an empty tenant overwrote an existing binding: got (%q, %v)", tenantID, ok)
 	}
-	if _, ok := qrdbsdk.TenantFromContext(withQRDBTenant(context.Background(), "")); ok {
+	if _, ok := qrdbsdk.TenantFromContext(withTokenTenant(context.Background(), "")); ok {
 		t.Fatal("an empty tenant bound a tenant onto an unbound context")
 	}
 }

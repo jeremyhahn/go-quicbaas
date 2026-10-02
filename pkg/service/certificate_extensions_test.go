@@ -85,7 +85,7 @@ func TestCertificateService_CrossSign(t *testing.T) {
 	stub := &extCAStub{crossSignPEM: []byte("-----BEGIN CERTIFICATE-----\ncross\n-----END CERTIFICATE-----\n")}
 	svc := newExtService(t, stub)
 
-	resp, err := svc.CrossSign(context.Background(), &CrossSignRequest{
+	resp, err := svc.CrossSign(systemTenantCtx(), &CrossSignRequest{
 		ForeignRootPEM: []byte("foreign-root"),
 	})
 	require.NoError(t, err)
@@ -96,7 +96,7 @@ func TestCertificateService_CrossSign(t *testing.T) {
 }
 
 func TestCertificateService_CrossSign_Errors(t *testing.T) {
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	t.Run("nil request", func(t *testing.T) {
 		svc := newExtService(t, &extCAStub{})
@@ -133,7 +133,7 @@ func TestCertificateService_Chain(t *testing.T) {
 	stub := &extCAStub{chainPEM: [][]byte{[]byte("intermediate"), []byte("root")}}
 	svc := newExtService(t, stub)
 
-	resp, err := svc.Chain(context.Background(), &CertificateChainRequest{
+	resp, err := svc.Chain(systemTenantCtx(), &CertificateChainRequest{
 		CertificatePEM: []byte("leaf"),
 	})
 	require.NoError(t, err)
@@ -144,7 +144,7 @@ func TestCertificateService_Chain(t *testing.T) {
 }
 
 func TestCertificateService_Chain_Errors(t *testing.T) {
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	t.Run("nil request", func(t *testing.T) {
 		svc := newExtService(t, &extCAStub{})
@@ -216,7 +216,7 @@ func TestCertificateService_IssueDeviceIdentity(t *testing.T) {
 			}}
 			svc := newExtService(t, stub)
 
-			resp, err := svc.IssueDeviceIdentity(context.Background(), tc.req)
+			resp, err := svc.IssueDeviceIdentity(systemTenantCtx(), tc.req)
 			require.NoError(t, err)
 			require.NotNil(t, resp)
 
@@ -240,7 +240,7 @@ func TestCertificateService_IssueDeviceIdentity_PropagatesRequestTenant(t *testi
 	stub := &extCAStub{issued: &IssuedDeviceIdentity{CertificatePEM: []byte("cert")}}
 	svc := newExtService(t, stub)
 
-	_, err := svc.IssueDeviceIdentity(context.Background(), &IssueDeviceIdentityRequest{
+	_, err := svc.IssueDeviceIdentity(systemTenantCtx(), &IssueDeviceIdentityRequest{
 		Type:     DeviceIdentityTypeEK,
 		DeviceID: "dev-tenant",
 		EKPub:    []byte("ek"),
@@ -253,7 +253,7 @@ func TestCertificateService_IssueDeviceIdentity_PropagatesRequestTenant(t *testi
 }
 
 func TestCertificateService_IssueDeviceIdentity_Errors(t *testing.T) {
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	t.Run("nil request", func(t *testing.T) {
 		svc := newExtService(t, &extCAStub{})

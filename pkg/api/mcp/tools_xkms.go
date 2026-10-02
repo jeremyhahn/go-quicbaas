@@ -27,8 +27,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // xkmsToolPrefix is the prefix used for all xkms-compatible MCP tool names.
@@ -826,7 +826,7 @@ func xkmsKeyAttrsFromArgs(ctx context.Context, args map[string]interface{}) *xkm
 	}
 
 	// Inject tenant ID from auth context for multi-tenant isolation
-	if tenantID := iam.TenantFromContext(ctx); tenantID != "" {
+	if tenantID, ok := tenantctx.Lookup(ctx); ok {
 		attrs.TenantID = tenantID
 	}
 
@@ -1850,7 +1850,8 @@ func fido2TenantFromArgs(ctx context.Context, args map[string]interface{}) strin
 	if tenantID := getString(args, "tenant_id"); tenantID != "" {
 		return tenantID
 	}
-	return iam.TenantFromContext(ctx)
+	tenantID, _ := tenantctx.Lookup(ctx) // comma-ok: an unbound login ceremony names its tenant in the argument
+	return tenantID
 }
 
 // handleXKMSFIDO2BeginRegistration starts a WebAuthn registration ceremony

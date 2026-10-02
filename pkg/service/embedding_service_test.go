@@ -215,7 +215,7 @@ func TestEmbeddingService_GenerateEmbedding_Success(t *testing.T) {
 		Metadata:  map[string]string{"purpose": "testing"},
 	}
 
-	resp, err := svc.GenerateEmbedding(context.Background(), req)
+	resp, err := svc.GenerateEmbedding(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -235,7 +235,7 @@ func TestEmbeddingService_GenerateEmbedding_WithDefaultProvider(t *testing.T) {
 		Text: "Test text",
 	}
 
-	resp, err := svc.GenerateEmbedding(context.Background(), req)
+	resp, err := svc.GenerateEmbedding(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -247,7 +247,7 @@ func TestEmbeddingService_GenerateEmbedding_NilRequest(t *testing.T) {
 	logger := newMockEmbeddingLogger()
 	svc := NewEmbeddingService(mgr, logger)
 
-	resp, err := svc.GenerateEmbedding(context.Background(), nil)
+	resp, err := svc.GenerateEmbedding(systemTenantCtx(), nil)
 	assert.Error(t, err, "nil request must return a validation error, not panic")
 	assert.Nil(t, resp)
 }
@@ -261,7 +261,7 @@ func TestEmbeddingService_GenerateEmbedding_EmptyText(t *testing.T) {
 		Text: "",
 	}
 
-	resp, err := svc.GenerateEmbedding(context.Background(), req)
+	resp, err := svc.GenerateEmbedding(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -285,7 +285,7 @@ func TestEmbeddingService_GenerateEmbedding_ProviderError(t *testing.T) {
 		Text: "Test text",
 	}
 
-	resp, err := svc.GenerateEmbedding(context.Background(), req)
+	resp, err := svc.GenerateEmbedding(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -308,7 +308,7 @@ func TestEmbeddingService_GenerateEmbedding_RateLimitError(t *testing.T) {
 		Text: "Test text",
 	}
 
-	resp, err := svc.GenerateEmbedding(context.Background(), req)
+	resp, err := svc.GenerateEmbedding(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -331,7 +331,7 @@ func TestEmbeddingService_GenerateEmbedding_TokenLimitError(t *testing.T) {
 		Text: "Test text",
 	}
 
-	resp, err := svc.GenerateEmbedding(context.Background(), req)
+	resp, err := svc.GenerateEmbedding(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -354,7 +354,7 @@ func TestEmbeddingService_GenerateEmbedding_InvalidInputError(t *testing.T) {
 		Text: "Test text",
 	}
 
-	resp, err := svc.GenerateEmbedding(context.Background(), req)
+	resp, err := svc.GenerateEmbedding(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -376,7 +376,7 @@ func TestEmbeddingService_GenerateEmbedding_ProviderNotFound(t *testing.T) {
 		Provider: "nonexistent-provider",
 	}
 
-	resp, err := svc.GenerateEmbedding(context.Background(), req)
+	resp, err := svc.GenerateEmbedding(systemTenantCtx(), req)
 
 	// Either an error is returned or it falls back to default provider
 	if err != nil {
@@ -421,7 +421,7 @@ func TestEmbeddingService_BatchGenerateEmbeddings_Success(t *testing.T) {
 		Items: items,
 	}
 
-	resp, err := svc.BatchGenerateEmbeddings(context.Background(), req)
+	resp, err := svc.BatchGenerateEmbeddings(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -445,7 +445,7 @@ func TestEmbeddingService_BatchGenerateEmbeddings_NilRequest(t *testing.T) {
 	logger := newMockEmbeddingLogger()
 	svc := NewEmbeddingService(mgr, logger)
 
-	resp, err := svc.BatchGenerateEmbeddings(context.Background(), nil)
+	resp, err := svc.BatchGenerateEmbeddings(systemTenantCtx(), nil)
 	assert.Error(t, err, "nil request must return a validation error, not panic")
 	assert.Nil(t, resp)
 }
@@ -459,7 +459,7 @@ func TestEmbeddingService_BatchGenerateEmbeddings_EmptyItems(t *testing.T) {
 		Items: []*BatchEmbeddingItem{},
 	}
 
-	resp, err := svc.BatchGenerateEmbeddings(context.Background(), req)
+	resp, err := svc.BatchGenerateEmbeddings(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -482,7 +482,7 @@ func TestEmbeddingService_BatchGenerateEmbeddings_ItemMissingID(t *testing.T) {
 		Items: items,
 	}
 
-	resp, err := svc.BatchGenerateEmbeddings(context.Background(), req)
+	resp, err := svc.BatchGenerateEmbeddings(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -505,7 +505,7 @@ func TestEmbeddingService_BatchGenerateEmbeddings_ItemMissingText(t *testing.T) 
 		Items: items,
 	}
 
-	resp, err := svc.BatchGenerateEmbeddings(context.Background(), req)
+	resp, err := svc.BatchGenerateEmbeddings(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -528,7 +528,7 @@ func TestEmbeddingService_BatchGenerateEmbeddings_ProviderError(t *testing.T) {
 		Items: items,
 	}
 
-	resp, err := svc.BatchGenerateEmbeddings(context.Background(), req)
+	resp, err := svc.BatchGenerateEmbeddings(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -555,7 +555,7 @@ func TestEmbeddingService_BatchGenerateEmbeddings_PartialFailure(t *testing.T) {
 		Items: items,
 	}
 
-	resp, err := svc.BatchGenerateEmbeddings(context.Background(), req)
+	resp, err := svc.BatchGenerateEmbeddings(systemTenantCtx(), req)
 
 	// The implementation should either return an error or handle partial results
 	if err != nil {
@@ -590,7 +590,7 @@ func TestEmbeddingService_ListProviders_Success(t *testing.T) {
 
 	req := &ListProvidersRequest{}
 
-	resp, err := svc.ListProviders(context.Background(), req)
+	resp, err := svc.ListProviders(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -604,7 +604,7 @@ func TestEmbeddingService_ListProviders_NilRequest(t *testing.T) {
 	logger := newMockEmbeddingLogger()
 	svc := NewEmbeddingService(mgr, logger)
 
-	resp, err := svc.ListProviders(context.Background(), nil)
+	resp, err := svc.ListProviders(systemTenantCtx(), nil)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -634,7 +634,7 @@ func TestEmbeddingService_ListProviders_Empty(t *testing.T) {
 
 	req := &ListProvidersRequest{}
 
-	resp, err := svc.ListProviders(context.Background(), req)
+	resp, err := svc.ListProviders(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -654,7 +654,7 @@ func TestEmbeddingService_GetProviderInfo_Success(t *testing.T) {
 		Provider: "openai",
 	}
 
-	resp, err := svc.GetProviderInfo(context.Background(), req)
+	resp, err := svc.GetProviderInfo(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -671,7 +671,7 @@ func TestEmbeddingService_GetProviderInfo_NilRequest(t *testing.T) {
 	logger := newMockEmbeddingLogger()
 	svc := NewEmbeddingService(mgr, logger)
 
-	resp, err := svc.GetProviderInfo(context.Background(), nil)
+	resp, err := svc.GetProviderInfo(systemTenantCtx(), nil)
 	assert.Error(t, err, "nil request must return a validation error, not panic")
 	assert.Nil(t, resp)
 }
@@ -685,7 +685,7 @@ func TestEmbeddingService_GetProviderInfo_EmptyProvider(t *testing.T) {
 		Provider: "",
 	}
 
-	resp, err := svc.GetProviderInfo(context.Background(), req)
+	resp, err := svc.GetProviderInfo(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -701,7 +701,7 @@ func TestEmbeddingService_GetProviderInfo_NotFound(t *testing.T) {
 		Provider: "nonexistent",
 	}
 
-	resp, err := svc.GetProviderInfo(context.Background(), req)
+	resp, err := svc.GetProviderInfo(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -733,7 +733,7 @@ func TestEmbeddingService_SetDefaultProvider_Success(t *testing.T) {
 		Provider: "voyage",
 	}
 
-	resp, err := svc.SetDefaultProvider(context.Background(), req)
+	resp, err := svc.SetDefaultProvider(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -747,7 +747,7 @@ func TestEmbeddingService_SetDefaultProvider_NilRequest(t *testing.T) {
 	logger := newMockEmbeddingLogger()
 	svc := NewEmbeddingService(mgr, logger)
 
-	resp, err := svc.SetDefaultProvider(context.Background(), nil)
+	resp, err := svc.SetDefaultProvider(systemTenantCtx(), nil)
 	assert.Error(t, err, "nil request must return a validation error, not panic")
 	assert.Nil(t, resp)
 }
@@ -761,7 +761,7 @@ func TestEmbeddingService_SetDefaultProvider_EmptyProvider(t *testing.T) {
 		Provider: "",
 	}
 
-	resp, err := svc.SetDefaultProvider(context.Background(), req)
+	resp, err := svc.SetDefaultProvider(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -777,7 +777,7 @@ func TestEmbeddingService_SetDefaultProvider_NotFound(t *testing.T) {
 		Provider: "nonexistent",
 	}
 
-	resp, err := svc.SetDefaultProvider(context.Background(), req)
+	resp, err := svc.SetDefaultProvider(systemTenantCtx(), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -798,7 +798,7 @@ func TestEmbeddingService_GetCacheStats_Success(t *testing.T) {
 	svc := NewEmbeddingService(mgr, logger)
 
 	// Generate some embeddings to populate cache
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req1 := &GenerateEmbeddingRequest{Text: "test1"}
 	req2 := &GenerateEmbeddingRequest{Text: "test2"}
 	req3 := &GenerateEmbeddingRequest{Text: "test1"} // Cache hit
@@ -809,7 +809,7 @@ func TestEmbeddingService_GetCacheStats_Success(t *testing.T) {
 
 	req := &GetEmbeddingCacheStatsRequest{}
 
-	resp, err := svc.GetCacheStats(context.Background(), req)
+	resp, err := svc.GetCacheStats(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -824,7 +824,7 @@ func TestEmbeddingService_GetCacheStats_NilRequest(t *testing.T) {
 	logger := newMockEmbeddingLogger()
 	svc := NewEmbeddingService(mgr, logger)
 
-	resp, err := svc.GetCacheStats(context.Background(), nil)
+	resp, err := svc.GetCacheStats(systemTenantCtx(), nil)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -837,7 +837,7 @@ func TestEmbeddingService_GetCacheStats_NoCache(t *testing.T) {
 
 	req := &GetEmbeddingCacheStatsRequest{}
 
-	resp, err := svc.GetCacheStats(context.Background(), req)
+	resp, err := svc.GetCacheStats(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -855,7 +855,7 @@ func TestEmbeddingService_ClearCache_Success(t *testing.T) {
 	svc := NewEmbeddingService(mgr, logger)
 
 	// Generate some embeddings to populate cache
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req1 := &GenerateEmbeddingRequest{Text: "test1"}
 	req2 := &GenerateEmbeddingRequest{Text: "test2"}
 	_, _ = svc.GenerateEmbedding(ctx, req1)
@@ -865,7 +865,7 @@ func TestEmbeddingService_ClearCache_Success(t *testing.T) {
 		All: true,
 	}
 
-	resp, err := svc.ClearCache(context.Background(), req)
+	resp, err := svc.ClearCache(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -878,7 +878,7 @@ func TestEmbeddingService_ClearCache_NilRequest(t *testing.T) {
 	logger := newMockEmbeddingLogger()
 	svc := NewEmbeddingService(mgr, logger)
 
-	resp, err := svc.ClearCache(context.Background(), nil)
+	resp, err := svc.ClearCache(systemTenantCtx(), nil)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -893,7 +893,7 @@ func TestEmbeddingService_ClearCache_ByProvider(t *testing.T) {
 		Provider: EmbeddingProviderOpenAI,
 	}
 
-	resp, err := svc.ClearCache(context.Background(), req)
+	resp, err := svc.ClearCache(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -916,7 +916,7 @@ func TestNewEmbeddingService_Success(t *testing.T) {
 	req := &GenerateEmbeddingRequest{
 		Text: "test",
 	}
-	resp, err := svc.GenerateEmbedding(context.Background(), req)
+	resp, err := svc.GenerateEmbedding(systemTenantCtx(), req)
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
 }
@@ -932,7 +932,7 @@ func TestNewEmbeddingService_NilLogger(t *testing.T) {
 	req := &GenerateEmbeddingRequest{
 		Text: "test",
 	}
-	resp, err := svc.GenerateEmbedding(context.Background(), req)
+	resp, err := svc.GenerateEmbedding(systemTenantCtx(), req)
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
 }
@@ -992,7 +992,7 @@ func TestEmbeddingService_ErrorMapping(t *testing.T) {
 				Text: "test",
 			}
 
-			_, err := svc.GenerateEmbedding(context.Background(), req)
+			_, err := svc.GenerateEmbedding(systemTenantCtx(), req)
 
 			require.Error(t, err)
 			var dErr *quicbaasErrors.QBError
@@ -1015,7 +1015,7 @@ func TestEmbeddingService_GenerateEmbedding_ContextCanceled(t *testing.T) {
 	logger := newMockEmbeddingLogger()
 	svc := NewEmbeddingService(mgr, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(systemTenantCtx())
 	cancel() // Cancel immediately
 
 	req := &GenerateEmbeddingRequest{
@@ -1061,7 +1061,7 @@ func TestEmbeddingService_TokenEstimation(t *testing.T) {
 				Text: tt.text,
 			}
 
-			resp, err := svc.GenerateEmbedding(context.Background(), req)
+			resp, err := svc.GenerateEmbedding(systemTenantCtx(), req)
 
 			require.NoError(t, err)
 			assert.NotNil(t, resp)
@@ -1092,7 +1092,7 @@ func TestEmbeddingService_MetadataPropagation(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.GenerateEmbedding(context.Background(), req)
+	resp, err := svc.GenerateEmbedding(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1128,7 +1128,7 @@ func TestEmbeddingService_ConcurrentGenerateEmbedding(t *testing.T) {
 				req := &GenerateEmbeddingRequest{
 					Text: "Test text",
 				}
-				_, err := svc.GenerateEmbedding(context.Background(), req)
+				_, err := svc.GenerateEmbedding(systemTenantCtx(), req)
 				if err != nil {
 					errChan <- err
 				}
@@ -1163,7 +1163,7 @@ func TestEmbeddingService_ProcessingTimeRecorded(t *testing.T) {
 		Text: "Test text",
 	}
 
-	resp, err := svc.GenerateEmbedding(context.Background(), req)
+	resp, err := svc.GenerateEmbedding(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1191,7 +1191,7 @@ func TestEmbeddingService_BatchGenerateEmbeddings_TokenCounting(t *testing.T) {
 		Items: items,
 	}
 
-	resp, err := svc.BatchGenerateEmbeddings(context.Background(), req)
+	resp, err := svc.BatchGenerateEmbeddings(systemTenantCtx(), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1207,7 +1207,7 @@ func TestEmbeddingManagerAdapter_Embed(t *testing.T) {
 	mgr := &embedding.Manager{}
 	adapter := NewEmbeddingManagerAdapter(mgr)
 
-	result, err := adapter.Embed(context.Background(), "test text")
+	result, err := adapter.Embed(systemTenantCtx(), "test text")
 	require.Error(t, err)
 	assert.Nil(t, result)
 	// When built with vector tag, returns ErrProviderNotFound
@@ -1221,7 +1221,7 @@ func TestEmbeddingManagerAdapter_EmbedBatch(t *testing.T) {
 	mgr := &embedding.Manager{}
 	adapter := NewEmbeddingManagerAdapter(mgr)
 
-	results, err := adapter.EmbedBatch(context.Background(), []string{"text1", "text2"})
+	results, err := adapter.EmbedBatch(systemTenantCtx(), []string{"text1", "text2"})
 	require.Error(t, err)
 	assert.Nil(t, results)
 	// When built with vector tag, returns ErrProviderNotFound
@@ -1291,7 +1291,7 @@ func TestEmbeddingSvc_GenerateEmbedding_Success(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	expectedEmbedding := []float32{0.1, 0.2, 0.3}
 
 	// Setup mock expectations
@@ -1320,7 +1320,7 @@ func TestEmbeddingSvc_GenerateEmbedding_EmptyText(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &GenerateEmbeddingRequest{
 		Text: "",
 	}
@@ -1339,7 +1339,7 @@ func TestEmbeddingSvc_GenerateEmbedding_ProviderError(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	// Setup mock expectations
 	mockManager.On("GetStats").Return(interfaces.EmbeddingStats{
@@ -1363,7 +1363,7 @@ func TestEmbeddingSvc_BatchGenerateEmbeddings_Success(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	expectedEmbeddings := [][]float32{
 		{0.1, 0.2, 0.3},
 		{0.4, 0.5, 0.6},
@@ -1394,7 +1394,7 @@ func TestEmbeddingSvc_BatchGenerateEmbeddings_EmptyItems(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &BatchGenerateEmbeddingsRequest{
 		Items: []*BatchEmbeddingItem{},
 	}
@@ -1410,7 +1410,7 @@ func TestEmbeddingSvc_BatchGenerateEmbeddings_ItemMissingText(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &BatchGenerateEmbeddingsRequest{
 		Items: []*BatchEmbeddingItem{
 			{ID: "1", Text: ""},
@@ -1428,7 +1428,7 @@ func TestEmbeddingSvc_BatchGenerateEmbeddings_ItemMissingID(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &BatchGenerateEmbeddingsRequest{
 		Items: []*BatchEmbeddingItem{
 			{ID: "", Text: "text1"},
@@ -1446,7 +1446,7 @@ func TestEmbeddingSvc_BatchGenerateEmbeddings_ProviderError(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	mockManager.On("EmbedBatch", ctx, []string{"text1"}).Return(nil, embedding.ErrProviderUnavailable)
 
@@ -1468,7 +1468,7 @@ func TestEmbeddingSvc_ListProviders_Success(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	// Setup mock expectations
 	mockManager.On("GetStats").Return(interfaces.EmbeddingStats{
@@ -1494,7 +1494,7 @@ func TestEmbeddingSvc_ListProviders_NilRequest(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	// Setup mock expectations
 	mockManager.On("GetStats").Return(interfaces.EmbeddingStats{
@@ -1515,7 +1515,7 @@ func TestEmbeddingSvc_ListProviders_IncludesUnavailable(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	// Setup mock expectations
 	mockManager.On("GetStats").Return(interfaces.EmbeddingStats{
@@ -1544,7 +1544,7 @@ func TestEmbeddingSvc_GetProviderInfo_Success(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	// Setup mock expectations
 	mockManager.On("GetProvider", "openai").Return(mockProvider, nil)
@@ -1569,7 +1569,7 @@ func TestEmbeddingSvc_GetProviderInfo_EmptyProvider(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &GetProviderInfoRequest{
 		Provider: "",
 	}
@@ -1585,7 +1585,7 @@ func TestEmbeddingSvc_GetProviderInfo_ProviderNotFound(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	mockManager.On("GetProvider", "nonexistent").Return(nil, embedding.ErrProviderNotFound)
 
@@ -1605,7 +1605,7 @@ func TestEmbeddingSvc_SetDefaultProvider_Success(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	// Setup mock expectations
 	mockManager.On("GetProvider", "openai").Return(mockProvider, nil)
@@ -1626,7 +1626,7 @@ func TestEmbeddingSvc_SetDefaultProvider_EmptyProvider(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &SetDefaultProviderRequest{
 		Provider: "",
 	}
@@ -1642,7 +1642,7 @@ func TestEmbeddingSvc_SetDefaultProvider_ProviderNotFound(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	mockManager.On("GetProvider", "nonexistent").Return(nil, embedding.ErrProviderNotFound)
 
@@ -1661,7 +1661,7 @@ func TestEmbeddingSvc_GetCacheStats_Success(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	// Setup mock expectations
 	mockManager.On("GetStats").Return(interfaces.EmbeddingStats{
@@ -1689,7 +1689,7 @@ func TestEmbeddingSvc_GetCacheStats_ZeroHitsMisses(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	// Setup mock expectations
 	mockManager.On("GetStats").Return(interfaces.EmbeddingStats{
@@ -1713,7 +1713,7 @@ func TestEmbeddingSvc_ClearCache_Success(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	// Setup mock expectations
 	mockManager.On("GetStats").Return(interfaces.EmbeddingStats{
@@ -1736,7 +1736,7 @@ func TestEmbeddingSvc_ClearCache_NilRequest(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	// Setup mock expectations
 	mockManager.On("GetStats").Return(interfaces.EmbeddingStats{
@@ -1754,7 +1754,7 @@ func TestEmbeddingSvc_ClearCache_SpecificProvider(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	// Setup mock expectations
 	mockManager.On("GetStats").Return(interfaces.EmbeddingStats{
@@ -1894,7 +1894,7 @@ func TestEmbeddingSvc_GenerateEmbedding_CacheHit(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	expectedEmbedding := []float32{0.1, 0.2, 0.3}
 
 	// First call setup - simulate cache miss
@@ -1930,7 +1930,7 @@ func TestEmbeddingSvc_BatchGenerateEmbeddings_FewerEmbeddingsThanItems(t *testin
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	// Only return 1 embedding for 2 items
 	expectedEmbeddings := [][]float32{
 		{0.1, 0.2, 0.3},
@@ -1964,7 +1964,7 @@ func TestEmbeddingSvc_GenerateEmbedding_DefaultProvider(t *testing.T) {
 	logger := newCoverageEmbeddingLogger()
 	svc := NewEmbeddingService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	expectedEmbedding := []float32{0.1, 0.2, 0.3}
 
 	// Setup mock expectations

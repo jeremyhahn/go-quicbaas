@@ -17,6 +17,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // UpdateSession/DeleteSession round-trip plus not-found and invalid-input paths.
@@ -75,7 +77,7 @@ func TestBackendSessionExtStorage_UpdateDelete(t *testing.T) {
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendSessionExtStorage(kv, nil)
-	ctx := ContextWithTenant(context.Background(), "acme")
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
 
 	sess := extSession("acme", "u1", "s1", "th-old")
 	sess.RefreshHash = "rh-old"
@@ -131,7 +133,7 @@ func TestBackendSessionExtStorage_ActiveDeleteByUserCleanup(t *testing.T) {
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendSessionExtStorage(kv, staticTenantLister{ids: []string{"acme"}})
-	ctx := ContextWithTenant(context.Background(), "acme")
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
 
 	active := extSession("acme", "u1", "active", "th-active")
 	expired := extSession("acme", "u1", "expired", "th-expired")

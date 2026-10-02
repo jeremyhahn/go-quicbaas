@@ -19,6 +19,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // auditLoggerResolver resolves the per-tenant IAM audit sink. It is satisfied
@@ -120,7 +121,9 @@ func (a *loginCeremonyAuditor) record(ctx context.Context, rejection service.Log
 	}
 	tenantID := rejection.TenantID
 	if tenantID == "" {
-		tenantID = iam.TenantFromContext(ctx)
+		if bound, ok := tenantctx.Lookup(ctx); ok {
+			tenantID = bound
+		}
 	}
 	if tenantID == "" {
 		// No honest tenant to file the event under; the WARN line above is

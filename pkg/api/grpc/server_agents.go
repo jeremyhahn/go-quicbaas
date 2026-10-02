@@ -20,10 +20,10 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -50,12 +50,11 @@ func (s *AgentCatalogServer) catalog(ctx context.Context, requested string) (*se
 	if err != nil {
 		return nil, "", agentCatalogStatusError(err)
 	}
-	tenantID := requested
-	if tenantID == "" {
-		tenantID = iam.TenantFromContext(ctx)
-	}
-	if tenantID == "" {
-		return nil, "", status.Error(codes.InvalidArgument, "tenant_id is required")
+	// The caller's own tenant; naming another is refused for every caller
+	// before the service is reached.
+	tenantID, err := tenantctx.Target(ctx, "grpc.AgentCatalog", requested)
+	if err != nil {
+		return nil, "", toProtoError(err)
 	}
 	return svc, tenantID, nil
 }

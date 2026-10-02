@@ -40,7 +40,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -51,7 +51,7 @@ import (
 // It is extracted here so both tests and the production code share one
 // canonical implementation.
 func tenantIDAdapter(ctx context.Context) (string, bool) {
-	tid := iam.TenantFromContext(ctx)
+	tid := boundTenant(ctx)
 	return tid, tid != ""
 }
 
@@ -64,7 +64,7 @@ func TestTenantIDAdapter_NoTenant_ReturnsFalse(t *testing.T) {
 
 func TestTenantIDAdapter_WithTenant_ReturnsTrue(t *testing.T) {
 	t.Parallel()
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-a")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-a")
 	tid, ok := tenantIDAdapter(ctx)
 	assert.True(t, ok, "tenant context must return ok=true")
 	assert.Equal(t, "tenant-a", tid)
@@ -149,7 +149,7 @@ func TestTenantCredentialRouting_UnknownTenant_ConsultsRegistry(t *testing.T) {
 		reg, sysSvc, tenantIDAdapter, slog.Default(),
 	)
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-a")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-a")
 	_, err := retrieve(ctx, "my-cred")
 	require.Error(t, err,
 		"unknown tenant must return an error — GetTenant was consulted")
@@ -189,7 +189,7 @@ func TestTenantCredentialRouting_TenantIsolation(t *testing.T) {
 	)
 
 	// tenant-a context → resolved from tenant-a's barrier.
-	ctxA := iam.ContextWithTenant(ctx, "tenant-a")
+	ctxA := tenantctx.WithTenant(ctx, "tenant-a")
 	val, err := retrieve(ctxA, "db-password")
 	require.NoError(t, err)
 	assert.Equal(t, "tenant-a-secret", string(val),
@@ -199,7 +199,7 @@ func TestTenantCredentialRouting_TenantIsolation(t *testing.T) {
 
 	// tenant-b context → fails because tenant-b is not registered (GetTenant
 	// consulted, not the system service).
-	ctxB := iam.ContextWithTenant(ctx, "tenant-b")
+	ctxB := tenantctx.WithTenant(ctx, "tenant-b")
 	_, err = retrieve(ctxB, "db-password")
 	require.Error(t, err,
 		"tenant-b context must fail — tenant-b has no registered barrier")

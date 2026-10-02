@@ -18,6 +18,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // SaveState rejects an empty nonce; GetState reports not-found and expired.
@@ -53,7 +55,7 @@ func TestBackendFederationStorage_LinksByUserAndDeleteAll(t *testing.T) {
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendFederationStorage(kv)
-	ctx := ContextWithTenant(context.Background(), "acme")
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
 
 	l1 := testLink("acme", "u1", "l1", "p1", "ext-1")
 	l2 := testLink("acme", "u1", "l2", "p2", "ext-2")

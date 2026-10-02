@@ -24,7 +24,7 @@ import (
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // fakeBackend is an in-memory Backend for tests. It models the two store
@@ -162,7 +162,7 @@ func TestRegistry_RegisterAndResolve(t *testing.T) {
 	r := New(b)
 	inst := sampleInstance()
 
-	leaseID, err := r.Register(context.Background(), inst, 10*time.Second)
+	leaseID, err := r.Register(sysCtx(), inst, 10*time.Second)
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestRegistry_RegisterAndResolve(t *testing.T) {
 		t.Fatal("expected non-zero lease ID")
 	}
 
-	instances, revision, err := r.Resolve(context.Background(), "payments")
+	instances, revision, err := r.Resolve(sysCtx(), "payments")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestRegistry_RegisterAndResolve(t *testing.T) {
 // an instance is never visible under a lease its tenant cannot renew.
 func TestRegistry_RegisterWritesOwnershipMarkFirst(t *testing.T) {
 	b := newFakeBackend()
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-a")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-a")
 	leaseID, err := New(b).Register(ctx, sampleInstance(), 10*time.Second)
 	if err != nil {
 		t.Fatalf("Register: %v", err)
@@ -205,11 +205,11 @@ func TestRegistry_RegisterWritesOwnershipMarkFirst(t *testing.T) {
 func TestRegistry_ResolveOrdersByInstanceID(t *testing.T) {
 	r := New(newFakeBackend())
 	for _, id := range []string{"c", "a", "b"} {
-		if _, err := r.Register(context.Background(), ServiceInstance{ID: id, Service: "s", Address: "x:1"}, time.Second); err != nil {
+		if _, err := r.Register(sysCtx(), ServiceInstance{ID: id, Service: "s", Address: "x:1"}, time.Second); err != nil {
 			t.Fatalf("Register %s: %v", id, err)
 		}
 	}
-	instances, _, err := r.Resolve(context.Background(), "s")
+	instances, _, err := r.Resolve(sysCtx(), "s")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestRegistry_RegisterInvalid(t *testing.T) {
 		"oversize id":      {Service: "s", ID: strings.Repeat("i", maxNameLen+1), Address: "a:1"},
 	}
 	for name, inst := range cases {
-		_, err := r.Register(context.Background(), inst, time.Second)
+		_, err := r.Register(sysCtx(), inst, time.Second)
 		var ie *InvalidInstanceError
 		if !errors.As(err, &ie) {
 			t.Fatalf("%s: error = %T (%v), want *InvalidInstanceError", name, err, err)
@@ -237,8 +237,8 @@ func TestRegistry_RegisterInvalid(t *testing.T) {
 
 func TestRegistry_TenantIsolation(t *testing.T) {
 	r := New(newFakeBackend())
-	ctxA := iam.ContextWithTenant(context.Background(), "tenant-a")
-	ctxB := iam.ContextWithTenant(context.Background(), "tenant-b")
+	ctxA := tenantctx.WithTenant(context.Background(), "tenant-a")
+	ctxB := tenantctx.WithTenant(context.Background(), "tenant-b")
 
 	// Same service+instance ID under two tenants must not collide; the tenant
 	// comes from the request context (platform-standard pattern).
@@ -265,7 +265,7 @@ func TestRegistry_TenantIsolation(t *testing.T) {
 	}
 
 	// A single-tenant (no tenant in context) caller sees neither tenant's data.
-	none, _, err := r.Resolve(context.Background(), "payments")
+	none, _, err := r.Resolve(sysCtx(), "payments")
 	if err != nil {
 		t.Fatalf("single-tenant Resolve: %v", err)
 	}
@@ -280,8 +280,8 @@ func TestRegistry_TenantIsolation(t *testing.T) {
 func TestRegistry_LeaseOwnershipIsTenantScoped(t *testing.T) {
 	b := newFakeBackend()
 	r := New(b)
-	ctxA := iam.ContextWithTenant(context.Background(), "tenant-a")
-	ctxB := iam.ContextWithTenant(context.Background(), "tenant-b")
+	ctxA := tenantctx.WithTenant(context.Background(), "tenant-a")
+	ctxB := tenantctx.WithTenant(context.Background(), "tenant-b")
 
 	leaseID, err := r.Register(ctxA, sampleInstance(), 10*time.Second)
 	if err != nil {
@@ -295,7 +295,7 @@ func TestRegistry_LeaseOwnershipIsTenantScoped(t *testing.T) {
 	if err := r.Deregister(ctxB, leaseID); !errors.As(err, &notFound) {
 		t.Fatalf("tenant-b Deregister = %v, want *LeaseNotFoundError", err)
 	}
-	if err := r.Deregister(context.Background(), leaseID); !errors.As(err, &notFound) {
+	if err := r.Deregister(sysCtx(), leaseID); !errors.As(err, &notFound) {
 		t.Fatalf("single-tenant Deregister = %v, want *LeaseNotFoundError", err)
 	}
 	if len(b.keepAlive) != 0 || len(b.revoked) != 0 {
@@ -313,7 +313,7 @@ func TestRegistry_LeaseOwnershipIsTenantScoped(t *testing.T) {
 
 func TestRegistry_InvalidTenantRejected(t *testing.T) {
 	r := New(newFakeBackend())
-	ctx := iam.ContextWithTenant(context.Background(), "bad/tenant")
+	ctx := tenantctx.WithTenant(context.Background(), "bad/tenant")
 	_, err := r.Register(ctx, sampleInstance(), time.Second)
 	var ie *InvalidInstanceError
 	if !errors.As(err, &ie) {
@@ -333,7 +333,7 @@ func TestRegistry_RegisterRejectsReservedNames(t *testing.T) {
 		{Service: "svc", ID: "", Address: "a:1"},      // empty id
 	}
 	for _, inst := range cases {
-		_, err := r.Register(context.Background(), inst, time.Second)
+		_, err := r.Register(sysCtx(), inst, time.Second)
 		var ie *InvalidInstanceError
 		if !errors.As(err, &ie) {
 			t.Fatalf("Register(%+v) error = %T (%v), want *InvalidInstanceError", inst, err, err)
@@ -343,14 +343,14 @@ func TestRegistry_RegisterRejectsReservedNames(t *testing.T) {
 
 func TestRegistry_ResolveAndWatchRejectReservedNames(t *testing.T) {
 	r := New(newFakeBackend())
-	if _, _, err := r.Resolve(context.Background(), "foo/bar"); err == nil {
+	if _, _, err := r.Resolve(sysCtx(), "foo/bar"); err == nil {
 		t.Fatal("Resolve should reject a service name containing '/'")
 	}
-	if _, err := r.Watch(context.Background(), "foo/bar", 0); err == nil {
+	if _, err := r.Watch(sysCtx(), "foo/bar", 0); err == nil {
 		t.Fatal("Watch should reject a service name containing '/'")
 	}
 	var ie *InvalidInstanceError
-	if _, err := r.Watch(context.Background(), "svc", -1); !errors.As(err, &ie) {
+	if _, err := r.Watch(sysCtx(), "svc", -1); !errors.As(err, &ie) {
 		t.Fatalf("Watch(-1) = %v, want *InvalidInstanceError for a negative revision", err)
 	}
 }
@@ -364,7 +364,7 @@ func TestRegistry_RegisterPutFailureRevokesLease(t *testing.T) {
 			b := newFakeBackend()
 			b.putErr = errors.New("put boom")
 			b.putErrOnKey = failingKey
-			_, err := New(b).Register(context.Background(), sampleInstance(), time.Second)
+			_, err := New(b).Register(sysCtx(), sampleInstance(), time.Second)
 			var re *RegistryError
 			if !errors.As(err, &re) || re.Op != "put" || !errors.Is(err, b.putErr) {
 				t.Fatalf("error = %v, want RegistryError{Op:put} wrapping the put failure", err)
@@ -382,7 +382,7 @@ func TestRegistry_RegisterReportsAFailedOrphanRevoke(t *testing.T) {
 	b := newFakeBackend()
 	b.putErr = errors.New("put boom")
 	b.revokeErr = errors.New("revoke boom")
-	_, err := New(b).Register(context.Background(), sampleInstance(), time.Second)
+	_, err := New(b).Register(sysCtx(), sampleInstance(), time.Second)
 	if !errors.Is(err, b.putErr) || !errors.Is(err, b.revokeErr) {
 		t.Fatalf("error = %v, want both the put and the revoke failure", err)
 	}
@@ -391,12 +391,12 @@ func TestRegistry_RegisterReportsAFailedOrphanRevoke(t *testing.T) {
 func TestRegistry_RenewAndDeregister(t *testing.T) {
 	b := newFakeBackend()
 	r := New(b)
-	leaseID, err := r.Register(context.Background(), sampleInstance(), 10*time.Second)
+	leaseID, err := r.Register(sysCtx(), sampleInstance(), 10*time.Second)
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 
-	ttl, err := r.Renew(context.Background(), leaseID)
+	ttl, err := r.Renew(sysCtx(), leaseID)
 	if err != nil {
 		t.Fatalf("Renew: %v", err)
 	}
@@ -407,10 +407,10 @@ func TestRegistry_RenewAndDeregister(t *testing.T) {
 		t.Fatalf("keepAlive = %v, want [%d]", b.keepAlive, leaseID)
 	}
 
-	if err := r.Deregister(context.Background(), leaseID); err != nil {
+	if err := r.Deregister(sysCtx(), leaseID); err != nil {
 		t.Fatalf("Deregister: %v", err)
 	}
-	instances, _, err := r.Resolve(context.Background(), "payments")
+	instances, _, err := r.Resolve(sysCtx(), "payments")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -421,7 +421,7 @@ func TestRegistry_RenewAndDeregister(t *testing.T) {
 	// The ownership mark went with the lease, so the lease is no longer
 	// renewable.
 	var notFound *LeaseNotFoundError
-	if _, err := r.Renew(context.Background(), leaseID); !errors.As(err, &notFound) {
+	if _, err := r.Renew(sysCtx(), leaseID); !errors.As(err, &notFound) {
 		t.Fatalf("Renew after Deregister = %v, want *LeaseNotFoundError", err)
 	}
 }
@@ -430,7 +430,7 @@ func TestRegistry_RenewRejectsNonPositiveLease(t *testing.T) {
 	r := New(newFakeBackend())
 	var ie *InvalidInstanceError
 	for _, id := range []int64{0, -3} {
-		if _, err := r.Renew(context.Background(), id); !errors.As(err, &ie) {
+		if _, err := r.Renew(sysCtx(), id); !errors.As(err, &ie) {
 			t.Fatalf("Renew(%d) = %v, want *InvalidInstanceError", id, err)
 		}
 	}
@@ -442,7 +442,7 @@ func TestRegistry_ResolveSkipsMalformed(t *testing.T) {
 	b.store[servicePrefix("", "payments")+"bad"] = []byte("{not json")
 	r := New(b)
 
-	instances, _, err := r.Resolve(context.Background(), "payments")
+	instances, _, err := r.Resolve(sysCtx(), "payments")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -454,7 +454,7 @@ func TestRegistry_ResolveSkipsMalformed(t *testing.T) {
 func TestRegistry_ResolveError(t *testing.T) {
 	b := newFakeBackend()
 	b.rangeErr = errors.New("range boom")
-	_, _, err := New(b).Resolve(context.Background(), "payments")
+	_, _, err := New(b).Resolve(sysCtx(), "payments")
 	var re *RegistryError
 	if !errors.As(err, &re) || re.Op != "range" {
 		t.Fatalf("error = %v, want RegistryError{Op:range}", err)
@@ -465,7 +465,7 @@ func TestRegistry_WatchPutAndDelete(t *testing.T) {
 	b := newFakeBackend()
 	r := New(b)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(sysCtx())
 	defer cancel()
 	ch, err := r.Watch(ctx, "payments", 12)
 	if err != nil {
@@ -504,7 +504,7 @@ func TestRegistry_WatchPutAndDelete(t *testing.T) {
 func TestRegistry_WatchDeleteWithoutPrevKV(t *testing.T) {
 	b := newFakeBackend()
 	r := New(b)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(sysCtx())
 	defer cancel()
 	ch, err := r.Watch(ctx, "payments", 0)
 	if err != nil {
@@ -547,7 +547,7 @@ func TestRegistry_WatchEndsWithTypedError(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			b := newFakeBackend()
-			ch, err := New(b).Watch(context.Background(), "payments", 5)
+			ch, err := New(b).Watch(sysCtx(), "payments", 5)
 			if err != nil {
 				t.Fatalf("Watch: %v", err)
 			}
@@ -571,14 +571,14 @@ func TestRegistry_WatchEndsWithTypedError(t *testing.T) {
 func TestRegistry_WatchOpenErrors(t *testing.T) {
 	b := newFakeBackend()
 	b.watchErr = errors.New("watch boom")
-	_, err := New(b).Watch(context.Background(), "payments", 0)
+	_, err := New(b).Watch(sysCtx(), "payments", 0)
 	var re *RegistryError
 	if !errors.As(err, &re) || re.Op != "watch" {
 		t.Fatalf("error = %v, want RegistryError{Op:watch}", err)
 	}
 
 	b.watchErr = errors.New("rpc error: required start revision has been compacted")
-	_, err = New(b).Watch(context.Background(), "payments", 3)
+	_, err = New(b).Watch(sysCtx(), "payments", 3)
 	var compacted *WatchCompactedError
 	if !errors.As(err, &compacted) || compacted.FromRevision != 3 {
 		t.Fatalf("error = %v, want *WatchCompactedError from revision 3", err)
@@ -588,7 +588,7 @@ func TestRegistry_WatchOpenErrors(t *testing.T) {
 func TestRegistry_RegisterGrantError(t *testing.T) {
 	b := newFakeBackend()
 	b.grantErr = errors.New("grant boom")
-	_, err := New(b).Register(context.Background(), sampleInstance(), time.Second)
+	_, err := New(b).Register(sysCtx(), sampleInstance(), time.Second)
 	var re *RegistryError
 	if !errors.As(err, &re) || re.Op != "grant" {
 		t.Fatalf("error = %v, want RegistryError{Op:grant}", err)
@@ -598,12 +598,12 @@ func TestRegistry_RegisterGrantError(t *testing.T) {
 func TestRegistry_RenewError(t *testing.T) {
 	b := newFakeBackend()
 	r := New(b)
-	leaseID, err := r.Register(context.Background(), sampleInstance(), time.Second)
+	leaseID, err := r.Register(sysCtx(), sampleInstance(), time.Second)
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 	b.keepAliveErr = errors.New("keepalive boom")
-	_, err = r.Renew(context.Background(), leaseID)
+	_, err = r.Renew(sysCtx(), leaseID)
 	var re *RegistryError
 	if !errors.As(err, &re) || re.Op != "keepalive" {
 		t.Fatalf("error = %v, want RegistryError{Op:keepalive}", err)
@@ -613,7 +613,7 @@ func TestRegistry_RenewError(t *testing.T) {
 func TestRegistry_OwnershipCheckError(t *testing.T) {
 	b := newFakeBackend()
 	b.existsErr = errors.New("exists boom")
-	_, err := New(b).Renew(context.Background(), 1)
+	_, err := New(b).Renew(sysCtx(), 1)
 	var re *RegistryError
 	if !errors.As(err, &re) || re.Op != "exists" {
 		t.Fatalf("error = %v, want RegistryError{Op:exists}", err)
@@ -623,12 +623,12 @@ func TestRegistry_OwnershipCheckError(t *testing.T) {
 func TestRegistry_DeregisterError(t *testing.T) {
 	b := newFakeBackend()
 	r := New(b)
-	leaseID, err := r.Register(context.Background(), sampleInstance(), time.Second)
+	leaseID, err := r.Register(sysCtx(), sampleInstance(), time.Second)
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 	b.revokeErr = errors.New("revoke boom")
-	err = r.Deregister(context.Background(), leaseID)
+	err = r.Deregister(sysCtx(), leaseID)
 	var re *RegistryError
 	if !errors.As(err, &re) || re.Op != "revoke" {
 		t.Fatalf("error = %v, want RegistryError{Op:revoke}", err)
@@ -638,7 +638,7 @@ func TestRegistry_DeregisterError(t *testing.T) {
 func TestRegistry_RegisterSubSecondTTL(t *testing.T) {
 	// A sub-second TTL is raised to MinTTL, not truncated to 0.
 	b := &ttlRecordingBackend{fakeBackend: newFakeBackend()}
-	if _, err := New(b).Register(context.Background(), sampleInstance(), 100*time.Millisecond); err != nil {
+	if _, err := New(b).Register(sysCtx(), sampleInstance(), 100*time.Millisecond); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 	if b.granted != int64(MinTTL/time.Second) {

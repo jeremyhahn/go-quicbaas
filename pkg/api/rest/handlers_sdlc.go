@@ -25,10 +25,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -60,19 +60,12 @@ var ErrSDLCServiceUnavailable = errors.New("the sdlc module is not running on th
 // ErrSDLCTenantMismatch reports a tenant_id that is not the caller's own.
 var ErrSDLCTenantMismatch = errors.New("tenant_id must be the caller's own tenant")
 
-// sdlcTenant decides the tenant an SDLC request operates in.
+// sdlcTenant decides the tenant an SDLC request operates in: the caller's
+// own; naming another is refused for every caller. A request with no
+// tenant bound is refused rather than trusted to name its own.
 func sdlcTenant(r *http.Request, requested string) (string, bool) {
-	bound := iam.TenantFromContext(r.Context())
-	switch {
-	case bound == "" && requested == "":
-		return "", false
-	case bound == "":
-		return requested, true
-	case requested != "" && requested != bound:
-		return "", false
-	default:
-		return bound, true
-	}
+	tenantID, err := tenantctx.Target(r.Context(), "rest.SDLC", requested)
+	return tenantID, err == nil
 }
 
 // sdlcService returns the binding service or answers 503.

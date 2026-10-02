@@ -24,10 +24,10 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // registerAgentTools registers all agent orchestration tools with the registry.
@@ -2495,18 +2495,16 @@ func sessionTenantContext(ctx context.Context, args map[string]interface{}) (con
 // the orchestrator's tenant guard reads neither the argument nor that key —
 // reading the orchestration key alone left these tools answering "tenant ID
 // required" for every caller, even one that passed tenant_id.
+//
+// The tenant_id argument is honoured only as tenantctx.Target allows: a
+// caller may name only its own tenant, the system tenant included
+// (go-quicbaas#1150). A call with no tenant bound is refused.
 func orchestratorTenantContext(ctx context.Context, args map[string]interface{}) (context.Context, string, error) {
-	tenantID := getString(args, "tenant_id")
-	if tenantID == "" {
-		tenantID = iam.TenantFromContext(ctx)
+	tenantID, err := tenantctx.Target(ctx, "mcp.orchestrator", getString(args, "tenant_id"))
+	if err != nil {
+		return ctx, "", err
 	}
-	if tenantID == "" {
-		tenantID = orchestration.TenantFromContext(ctx)
-	}
-	if tenantID == "" {
-		return ctx, "", api.NewRequiredFieldError("tenant_id")
-	}
-	return orchestration.ContextWithTenant(ctx, tenantID), tenantID, nil
+	return orchestration.ContextWithTenant(tenantctx.WithTenant(ctx, tenantID), tenantID), tenantID, nil
 }
 
 // optionalBool returns the bool argument when the caller supplied the key and

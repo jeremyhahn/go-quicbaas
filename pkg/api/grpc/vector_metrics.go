@@ -19,8 +19,8 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/metrics"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // VectorMetricsRecorder provides methods for recording vector operation metrics
@@ -42,11 +42,12 @@ const defaultTenantID = qrdbsdk.SystemTenantID
 
 // getTenantID extracts the tenant ID from context or returns the fallback.
 func getTenantID(ctx context.Context) string {
-	tenantID := iam.TenantFromContext(ctx)
-	if tenantID == "" {
-		return defaultTenantID
+	// A metrics label, not a scope: an unbound context is labelled with the
+	// system tenant rather than refused.
+	if tenantID, ok := tenantctx.Lookup(ctx); ok {
+		return tenantID
 	}
-	return tenantID
+	return defaultTenantID
 }
 
 // RecordUpsert records an upsert operation with timing.

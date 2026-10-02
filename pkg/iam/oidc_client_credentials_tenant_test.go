@@ -20,6 +20,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // tenantRoutedSigningKey derives ONE RSA key for the whole file. Key generation
@@ -90,7 +92,7 @@ func TestClientCredentialsGrant_AcceptsTheCredentialRegistrationIssued(t *testin
 	}
 
 	// Token: the endpoint scopes the context to the client id's tenant.
-	tokenCtx := ContextWithTenant(context.Background(), TenantFromClientID(app.ClientID))
+	tokenCtx := tenantctx.WithTenant(context.Background(), TenantFromClientID(app.ClientID))
 	resp, err := provider.Token(tokenCtx, &TokenRequest{
 		GrantType:    GrantTypeClientCredentials,
 		ClientID:     app.ClientID,
@@ -116,7 +118,7 @@ func TestClientCredentialsGrant_RefusesAWrongSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RegisterAgentApp: %v", err)
 	}
-	tokenCtx := ContextWithTenant(context.Background(), tenantID)
+	tokenCtx := tenantctx.WithTenant(context.Background(), tenantID)
 
 	wrongSecret, err := provider.Token(tokenCtx, &TokenRequest{
 		GrantType:    GrantTypeClientCredentials,

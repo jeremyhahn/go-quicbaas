@@ -20,6 +20,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // User email/PIV-thumbprint index scoping tests were removed in phase C1-F:
@@ -60,8 +62,8 @@ func TestTokenKey_TenantScoped_DerivedFromClaim(t *testing.T) {
 	kv := newMockKVStore()
 	storage := NewBackendStorage(kv)
 
-	ctxA := ContextWithTenant(context.Background(), "tenant-a")
-	ctxB := ContextWithTenant(context.Background(), "tenant-b")
+	ctxA := tenantctx.WithTenant(context.Background(), "tenant-a")
+	ctxB := tenantctx.WithTenant(context.Background(), "tenant-b")
 
 	require.NoError(t, storage.StoreToken(ctxA, &Token{JTI: "shared-jti", Subject: "u", TenantID: "tenant-a", TokenType: TokenTypeAccess, Expires: time.Now().Add(time.Hour)}))
 	require.NoError(t, storage.StoreToken(ctxB, &Token{JTI: "shared-jti", Subject: "u", TenantID: "tenant-b", TokenType: TokenTypeAccess, Expires: time.Now().Add(time.Hour)}))

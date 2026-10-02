@@ -19,7 +19,6 @@
 package service
 
 import (
-	"context"
 	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -85,14 +84,4 @@ func certEnforceTenantAccess(tenantID, serial, operation string) error {
 			"certificate does not belong to the requesting tenant")
 	}
 	return nil
-}
-
-// certPrepareTenantContext extracts and validates the tenant ID from context.
-// Returns the validated tenant ID or an error if the tenant ID is invalid.
-func certPrepareTenantContext(ctx context.Context) (string, error) {
-	tenantID := extractTenantID(ctx)
-	if err := validateTenantID(tenantID); err != nil {
-		return "", err
-	}
-	return tenantID, nil
 }

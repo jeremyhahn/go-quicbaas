@@ -20,6 +20,7 @@ import (
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // tenantLister enumerates the tenants known to the system so cross-tenant
@@ -38,7 +39,7 @@ type tenantLister interface {
 // store isolated; a nil lister limits the sweep to the current context tenant.
 func sweepTenantIDs(ctx context.Context, tenants tenantLister) ([]string, error) {
 	if tenants == nil {
-		return []string{TenantFromContext(ctx)}, nil
+		return []string{contextTenant(ctx)}, nil
 	}
 	all, err := tenants.ListTenants(ctx, ListOptions{})
 	if err != nil {
@@ -123,7 +124,7 @@ func withTenant(ctx context.Context, tenantID string) context.Context {
 	if tenantID == "" {
 		return ctx
 	}
-	return ContextWithTenant(ctx, tenantID)
+	return tenantctx.WithTenant(ctx, tenantID)
 }
 
 // GetSecret routes by the explicit tenantID and reads the per-user secret.

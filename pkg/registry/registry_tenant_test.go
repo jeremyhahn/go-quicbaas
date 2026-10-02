@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // TestRegistry_OversizeTenantRejected proves a tenant ID longer than the
@@ -31,7 +31,7 @@ import (
 func TestRegistry_OversizeTenantRejected(t *testing.T) {
 	r := New(newFakeBackend())
 	oversize := strings.Repeat("a", maxTenantLen+1)
-	ctx := iam.ContextWithTenant(context.Background(), oversize)
+	ctx := tenantctx.WithTenant(context.Background(), oversize)
 
 	asInvalid := func(t *testing.T, err error) {
 		t.Helper()
@@ -58,7 +58,7 @@ func TestRegistry_OversizeTenantRejected(t *testing.T) {
 func TestRegistry_WatchPropagatesUpstreamClose(t *testing.T) {
 	b := newFakeBackend()
 	r := New(b)
-	ch, err := r.Watch(context.Background(), "payments", 0)
+	ch, err := r.Watch(sysCtx(), "payments", 0)
 	if err != nil {
 		t.Fatalf("Watch: %v", err)
 	}
@@ -73,4 +73,35 @@ func TestRegistry_WatchPropagatesUpstreamClose(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("downstream channel was not closed after upstream close")
 	}
+}
+
+// sysCtx is the context of an in-process caller acting for the platform: the
+// system tenant bound explicitly, which the registry files under its
+// unprefixed namespace.
+func sysCtx() context.Context {
+	return tenantctx.WithSystem(context.Background())
+}
+
+// TestRegistry_UnboundTenantIsRefused pins go-quicbaas#1150: a context with no
+// tenant bound is refused on every verb rather than read as the system
+// namespace.
+func TestRegistry_UnboundTenantIsRefused(t *testing.T) {
+	r := New(newFakeBackend())
+	ctx := context.Background()
+	asMissing := func(t *testing.T, err error) {
+		t.Helper()
+		var missing *tenantctx.MissingTenantError
+		if !errors.As(err, &missing) {
+			t.Fatalf("error = %T (%v), want *tenantctx.MissingTenantError", err, err)
+		}
+	}
+	_, err := r.Register(ctx, sampleInstance(), time.Second)
+	asMissing(t, err)
+	_, _, err = r.Resolve(ctx, "payments")
+	asMissing(t, err)
+	_, err = r.Watch(ctx, "payments", 0)
+	asMissing(t, err)
+	_, err = r.Renew(ctx, 1)
+	asMissing(t, err)
+	asMissing(t, r.Deregister(ctx, 1))
 }

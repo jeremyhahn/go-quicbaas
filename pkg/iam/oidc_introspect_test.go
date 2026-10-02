@@ -21,6 +21,8 @@ import (
 	"net/url"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // mintAccessToken issues a signed access token through the provider's token
@@ -185,7 +187,7 @@ func TestOIDCIntrospect_TenantFromClaim(t *testing.T) {
 	token, _ := mintIntrospectToken(t, provider, "tenant-b", "user-2", "", time.Hour)
 
 	// Context tenant deliberately differs from the token's tenant claim.
-	ctx := ContextWithTenant(context.Background(), "tenant-wrong")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-wrong")
 
 	resp, err := provider.Introspect(ctx, &IntrospectRequest{Token: token})
 	if err != nil {

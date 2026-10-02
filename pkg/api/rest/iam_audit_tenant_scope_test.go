@@ -28,6 +28,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
 
@@ -38,7 +39,7 @@ import (
 // tenant-scoping guard) need both: ctxWithTestSubject for requireSubject
 // and this for the tenant check.
 func ctxWithCallerTenant(parent context.Context, tenantID string) context.Context {
-	return iam.ContextWithTenant(parent, tenantID)
+	return tenantctx.WithTenant(parent, tenantID)
 }
 
 // TestListAuditEvents_TenantScoping is the P5.2 closing-gap guard: an

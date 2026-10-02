@@ -209,7 +209,7 @@ type tenantCapturingRegistrar struct {
 func (r *tenantCapturingRegistrar) RegisterFleetNode(ctx context.Context, req *iam.FleetRegistrarRequest) error {
 	r.contextTenant = orchestration.TenantFromContext(ctx)
 	if r.contextTenant == "" {
-		r.contextTenant = iam.TenantFromContext(ctx)
+		r.contextTenant = boundTenant(ctx)
 	}
 	r.recordTenant = req.TenantID
 	return nil

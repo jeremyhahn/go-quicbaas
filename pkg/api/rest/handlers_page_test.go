@@ -711,7 +711,7 @@ func listProjects(t *testing.T, svc service.ProjectService, query string) *httpt
 	t.Helper()
 
 	server := newProjectTestServer(svc)
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/projects"+query, nil)
+	r := systemRequest(http.MethodGet, "/api/v1/projects"+query, nil)
 	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, chi.NewRouteContext()))
 	w := httptest.NewRecorder()
 	server.HandleListProjects(w, r)

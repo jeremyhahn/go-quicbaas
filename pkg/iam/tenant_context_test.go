@@ -16,50 +16,9 @@ package iam
 import (
 	"context"
 	"testing"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
-
-func TestTenantFromContext(t *testing.T) {
-	tests := []struct {
-		name     string
-		ctx      context.Context
-		expected string
-	}{
-		{
-			name:     "empty context returns empty string",
-			ctx:      context.Background(),
-			expected: "",
-		},
-		{
-			name:     "context with tenant returns tenant ID",
-			ctx:      ContextWithTenant(context.Background(), "tenant-123"),
-			expected: "tenant-123",
-		},
-		{
-			name:     "context with empty tenant returns empty string",
-			ctx:      ContextWithTenant(context.Background(), ""),
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := TenantFromContext(tt.ctx)
-			if result != tt.expected {
-				t.Errorf("TenantFromContext() = %q, want %q", result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestContextWithTenant(t *testing.T) {
-	tenantID := "test-tenant-456"
-	ctx := ContextWithTenant(context.Background(), tenantID)
-
-	result := TenantFromContext(ctx)
-	if result != tenantID {
-		t.Errorf("ContextWithTenant() tenant = %q, want %q", result, tenantID)
-	}
-}
 
 func TestUserFromContext(t *testing.T) {
 	tests := []struct {
@@ -149,56 +108,6 @@ func TestVectorContextFromContext(t *testing.T) {
 				if result.BatchSize != tt.expected.BatchSize {
 					t.Errorf("BatchSize = %d, want %d", result.BatchSize, tt.expected.BatchSize)
 				}
-			}
-		})
-	}
-}
-
-func TestTenantInfoFromContext(t *testing.T) {
-	tests := []struct {
-		name          string
-		ctx           context.Context
-		expectedNil   bool
-		expectedID    string
-		expectedValid bool
-	}{
-		{
-			name:        "empty context returns nil",
-			ctx:         context.Background(),
-			expectedNil: true,
-		},
-		{
-			name:          "context with tenant returns TenantInfo",
-			ctx:           ContextWithTenant(context.Background(), "tenant-abc"),
-			expectedNil:   false,
-			expectedID:    "tenant-abc",
-			expectedValid: true,
-		},
-		{
-			name:        "context with empty tenant returns nil",
-			ctx:         ContextWithTenant(context.Background(), ""),
-			expectedNil: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := TenantInfoFromContext(tt.ctx)
-			if tt.expectedNil {
-				if result != nil {
-					t.Errorf("TenantInfoFromContext() = %v, want nil", result)
-				}
-				return
-			}
-			if result == nil {
-				t.Error("TenantInfoFromContext() = nil, want non-nil")
-				return
-			}
-			if result.ID != tt.expectedID {
-				t.Errorf("TenantInfo.ID = %q, want %q", result.ID, tt.expectedID)
-			}
-			if result.Validated != tt.expectedValid {
-				t.Errorf("TenantInfo.Validated = %v, want %v", result.Validated, tt.expectedValid)
 			}
 		})
 	}
@@ -294,15 +203,15 @@ func TestRequiresTenantIsolation(t *testing.T) {
 func TestCombinedContext(t *testing.T) {
 	// Test that multiple context values can coexist
 	ctx := context.Background()
-	ctx = ContextWithTenant(ctx, "tenant-multi")
+	ctx = tenantctx.WithTenant(ctx, "tenant-multi")
 	ctx = ContextWithUser(ctx, "user-multi")
 	ctx = ContextWithVectorContext(ctx, &VectorContext{
 		Namespace: "ns-multi",
 		Operation: "upsert",
 	})
 
-	if got := TenantFromContext(ctx); got != "tenant-multi" {
-		t.Errorf("TenantFromContext() = %q, want %q", got, "tenant-multi")
+	if got := contextTenant(ctx); got != "tenant-multi" {
+		t.Errorf("contextTenant() = %q, want %q", got, "tenant-multi")
 	}
 	if got := UserFromContext(ctx); got != "user-multi" {
 		t.Errorf("UserFromContext() = %q, want %q", got, "user-multi")
@@ -315,14 +224,24 @@ func TestCombinedContext(t *testing.T) {
 	}
 }
 
+// TestContextTenant pins the login plane's read of go-qrdb's central tenant
+// binding: the bound tenant when there is one, and "" — "not yet known", never
+// the system tenant — when there is none.
+func TestContextTenant(t *testing.T) {
+	if got := contextTenant(context.Background()); got != "" {
+		t.Errorf("contextTenant() unbound = %q, want empty string", got)
+	}
+	if got := contextTenant(tenantctx.WithTenant(context.Background(), "")); got != "" {
+		t.Errorf("contextTenant() bound to empty = %q, want empty string", got)
+	}
+	if got := contextTenant(tenantctx.WithTenant(context.Background(), "acme")); got != "acme" {
+		t.Errorf("contextTenant() = %q, want acme", got)
+	}
+}
+
 func TestContextWithWrongType(t *testing.T) {
 	// Test that wrong type in context returns empty/nil
-	ctx := context.WithValue(context.Background(), tenantContextKey{}, 12345) // wrong type
-	if got := TenantFromContext(ctx); got != "" {
-		t.Errorf("TenantFromContext() with wrong type = %q, want empty string", got)
-	}
-
-	ctx = context.WithValue(context.Background(), userContextKey{}, 12345) // wrong type
+	ctx := context.WithValue(context.Background(), userContextKey{}, 12345) // wrong type
 	if got := UserFromContext(ctx); got != "" {
 		t.Errorf("UserFromContext() with wrong type = %q, want empty string", got)
 	}
@@ -469,127 +388,6 @@ func TestSuperAdminContextFromContext_WrongType(t *testing.T) {
 	}
 }
 
-func TestSwitchTenantContext_Success(t *testing.T) {
-	// Create a context with user and tenant
-	ctx := context.Background()
-	ctx = ContextWithUser(ctx, "admin-user-123")
-	ctx = ContextWithTenant(ctx, "original-tenant")
-
-	// Switch to target tenant
-	newCtx, err := SwitchTenantContext(ctx, "target-tenant", "investigating support issue #789")
-	if err != nil {
-		t.Fatalf("SwitchTenantContext() error = %v, want nil", err)
-	}
-
-	// Verify the context was switched
-	if got := TenantFromContext(newCtx); got != "target-tenant" {
-		t.Errorf("TenantFromContext() = %q, want %q", got, "target-tenant")
-	}
-
-	// Verify the SuperAdmin context was set
-	sac := SuperAdminContextFromContext(newCtx)
-	if sac == nil {
-		t.Fatal("SuperAdminContextFromContext() = nil, want non-nil")
-	}
-
-	if sac.OriginalTenantID != "original-tenant" {
-		t.Errorf("OriginalTenantID = %q, want %q", sac.OriginalTenantID, "original-tenant")
-	}
-	if sac.TargetTenantID != "target-tenant" {
-		t.Errorf("TargetTenantID = %q, want %q", sac.TargetTenantID, "target-tenant")
-	}
-	if sac.Justification != "investigating support issue #789" {
-		t.Errorf("Justification = %q, want %q", sac.Justification, "investigating support issue #789")
-	}
-	if sac.UserID != "admin-user-123" {
-		t.Errorf("UserID = %q, want %q", sac.UserID, "admin-user-123")
-	}
-	if sac.JustificationID == "" {
-		t.Error("JustificationID should not be empty")
-	}
-	if sac.SwitchedAt.IsZero() {
-		t.Error("SwitchedAt should not be zero")
-	}
-}
-
-func TestSwitchTenantContext_MissingTargetTenant(t *testing.T) {
-	ctx := ContextWithUser(context.Background(), "admin-user")
-
-	_, err := SwitchTenantContext(ctx, "", "some justification")
-	if err == nil {
-		t.Error("SwitchTenantContext() with empty target tenant should return error")
-	}
-}
-
-func TestSwitchTenantContext_MissingJustification(t *testing.T) {
-	ctx := ContextWithUser(context.Background(), "admin-user")
-
-	_, err := SwitchTenantContext(ctx, "target-tenant", "")
-	if err == nil {
-		t.Error("SwitchTenantContext() with empty justification should return error")
-	}
-}
-
-func TestSwitchTenantContext_MissingUser(t *testing.T) {
-	ctx := context.Background() // No user
-
-	_, err := SwitchTenantContext(ctx, "target-tenant", "some justification")
-	if err == nil {
-		t.Error("SwitchTenantContext() without user should return error")
-	}
-}
-
-func TestSwitchTenantContext_NoOriginalTenant(t *testing.T) {
-	// SuperAdmin might not have an original tenant (e.g., platform admin)
-	ctx := ContextWithUser(context.Background(), "platform-admin")
-
-	newCtx, err := SwitchTenantContext(ctx, "target-tenant", "customer support")
-	if err != nil {
-		t.Fatalf("SwitchTenantContext() error = %v, want nil", err)
-	}
-
-	sac := SuperAdminContextFromContext(newCtx)
-	if sac == nil {
-		t.Fatal("SuperAdminContextFromContext() = nil, want non-nil")
-	}
-
-	if sac.OriginalTenantID != "" {
-		t.Errorf("OriginalTenantID = %q, want empty string", sac.OriginalTenantID)
-	}
-	if !sac.IsCrossTenantOperation() {
-		t.Error("IsCrossTenantOperation() should be true for platform admin accessing tenant")
-	}
-}
-
-func TestSwitchTenantContextWithAssignment_Success(t *testing.T) {
-	ctx := ContextWithUser(context.Background(), "support-agent")
-	ctx = ContextWithTenant(ctx, "support-tenant")
-
-	newCtx, err := SwitchTenantContextWithAssignment(ctx, "customer-tenant", "emergency escalation", "TICKET-2024-001")
-	if err != nil {
-		t.Fatalf("SwitchTenantContextWithAssignment() error = %v, want nil", err)
-	}
-
-	sac := SuperAdminContextFromContext(newCtx)
-	if sac == nil {
-		t.Fatal("SuperAdminContextFromContext() = nil, want non-nil")
-	}
-
-	if sac.AssignmentID != "TICKET-2024-001" {
-		t.Errorf("AssignmentID = %q, want %q", sac.AssignmentID, "TICKET-2024-001")
-	}
-}
-
-func TestSwitchTenantContextWithAssignment_ErrorPropagation(t *testing.T) {
-	// Missing user should still return error
-	ctx := context.Background()
-
-	_, err := SwitchTenantContextWithAssignment(ctx, "target", "justification", "assignment")
-	if err == nil {
-		t.Error("SwitchTenantContextWithAssignment() without user should return error")
-	}
-}
-
 func TestIsSuperAdminOperation(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -626,60 +424,5 @@ func TestIsSuperAdminOperation(t *testing.T) {
 				t.Errorf("IsSuperAdminOperation() = %v, want %v", result, tt.expected)
 			}
 		})
-	}
-}
-
-func TestGenerateJustificationID(t *testing.T) {
-	// Just verify it produces non-empty IDs
-	id1 := generateJustificationID()
-	if id1 == "" {
-		t.Error("generateJustificationID() should not return empty string")
-	}
-
-	// Wait a tiny bit and generate another to ensure uniqueness
-	id2 := generateJustificationID()
-	if id2 == "" {
-		t.Error("generateJustificationID() should not return empty string")
-	}
-
-	// Note: IDs might be same if called very quickly, which is acceptable
-	// The format should be a timestamp "20060102150405.000000" = 21 chars
-	if len(id1) != 21 {
-		t.Errorf("generateJustificationID() length = %d, want 21", len(id1))
-	}
-}
-
-func TestSuperAdminContextPreservesPreviousContextValues(t *testing.T) {
-	// Create context with multiple values
-	ctx := context.Background()
-	ctx = ContextWithTenant(ctx, "original-tenant")
-	ctx = ContextWithUser(ctx, "admin-user")
-	ctx = ContextWithVectorContext(ctx, &VectorContext{
-		Namespace: "vectors-ns",
-		Operation: "search",
-	})
-
-	// Switch tenant context
-	newCtx, err := SwitchTenantContext(ctx, "target-tenant", "testing")
-	if err != nil {
-		t.Fatalf("SwitchTenantContext() error = %v", err)
-	}
-
-	// User context should be preserved
-	if got := UserFromContext(newCtx); got != "admin-user" {
-		t.Errorf("UserFromContext() = %q, want %q", got, "admin-user")
-	}
-
-	// Vector context should be preserved
-	vc := VectorContextFromContext(newCtx)
-	if vc == nil {
-		t.Error("VectorContextFromContext() = nil, want non-nil")
-	} else if vc.Namespace != "vectors-ns" {
-		t.Errorf("VectorContext.Namespace = %q, want %q", vc.Namespace, "vectors-ns")
-	}
-
-	// Tenant should be switched to target
-	if got := TenantFromContext(newCtx); got != "target-tenant" {
-		t.Errorf("TenantFromContext() = %q, want %q (should be switched)", got, "target-tenant")
 	}
 }

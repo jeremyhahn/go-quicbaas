@@ -42,7 +42,7 @@ func TestRegisterAuditRoutes_RoutesRegistered(t *testing.T) {
 	// they can handle requests (even if they return errors due to missing auth/params)
 
 	t.Run("ListAuditEvents route registered", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/audit", nil)
+		req := systemRequest(http.MethodGet, "/api/v1/iam/audit", nil)
 		w := httptest.NewRecorder()
 
 		router.ServeHTTP(w, req)
@@ -54,7 +54,7 @@ func TestRegisterAuditRoutes_RoutesRegistered(t *testing.T) {
 	})
 
 	t.Run("GetAuditEvent route registered", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/audit/test-id", nil)
+		req := systemRequest(http.MethodGet, "/api/v1/iam/audit/test-id", nil)
 		w := httptest.NewRecorder()
 
 		router.ServeHTTP(w, req)
@@ -64,7 +64,7 @@ func TestRegisterAuditRoutes_RoutesRegistered(t *testing.T) {
 	})
 
 	t.Run("DeleteOldAuditEvents route registered", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/audit", nil)
+		req := systemRequest(http.MethodDelete, "/api/v1/iam/audit", nil)
 		w := httptest.NewRecorder()
 
 		router.ServeHTTP(w, req)
@@ -85,7 +85,7 @@ func TestRegisterAuditRoutes_WrongMethodReturns405(t *testing.T) {
 	// POST is now RecordAuditEvent (the remote audit-emission endpoint,
 	// P5.3), so PATCH — genuinely unregistered on /api/v1/iam/audit —
 	// proves 405 handling still works for a real wrong-method request.
-	req := httptest.NewRequest(http.MethodPatch, "/api/v1/iam/audit", nil)
+	req := systemRequest(http.MethodPatch, "/api/v1/iam/audit", nil)
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)
@@ -100,7 +100,7 @@ func TestRegisterAuditRoutes_RecordAuditEventRouteRegistered(t *testing.T) {
 	router := chi.NewRouter()
 	RegisterAuditRoutes(router, handler)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/audit", nil)
+	req := systemRequest(http.MethodPost, "/api/v1/iam/audit", nil)
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)
@@ -122,7 +122,7 @@ func TestRegisterAuditRoutes_HandlersInvoked(t *testing.T) {
 		// this unauthenticated test context — and the request proceeds
 		// past tenant resolution to the next real dependency (the unwired
 		// audit logger).
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/audit", nil)
+		req := systemRequest(http.MethodGet, "/api/v1/iam/audit", nil)
 		w := httptest.NewRecorder()
 
 		router.ServeHTTP(w, req)
@@ -132,7 +132,7 @@ func TestRegisterAuditRoutes_HandlersInvoked(t *testing.T) {
 	})
 
 	t.Run("DeleteOldAuditEvents handler invoked with missing tenant_id", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/audit", nil)
+		req := systemRequest(http.MethodDelete, "/api/v1/iam/audit", nil)
 		w := httptest.NewRecorder()
 
 		router.ServeHTTP(w, req)
@@ -151,7 +151,7 @@ func TestRegisterAuditRoutes_WithQueryParameters(t *testing.T) {
 	RegisterAuditRoutes(router, handler)
 
 	t.Run("ListAuditEvents with tenant_id parameter", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/audit?tenant_id=test-tenant", nil)
+		req := systemRequest(http.MethodGet, "/api/v1/iam/audit?tenant_id=test-tenant", nil)
 		w := httptest.NewRecorder()
 
 		router.ServeHTTP(w, req)
@@ -162,7 +162,7 @@ func TestRegisterAuditRoutes_WithQueryParameters(t *testing.T) {
 	})
 
 	t.Run("DeleteOldAuditEvents with required parameters", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/audit?tenant_id=test-tenant&before=2025-01-01T00:00:00Z", nil)
+		req := systemRequest(http.MethodDelete, "/api/v1/iam/audit?tenant_id=test-tenant&before=2025-01-01T00:00:00Z", nil)
 		w := httptest.NewRecorder()
 
 		router.ServeHTTP(w, req)
@@ -181,7 +181,7 @@ func TestRegisterAuditRoutes_UnregisteredPath(t *testing.T) {
 	RegisterAuditRoutes(router, handler)
 
 	// Test that an unregistered path returns 404
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/nonexistent", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/iam/nonexistent", nil)
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)

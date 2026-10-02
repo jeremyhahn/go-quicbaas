@@ -31,6 +31,7 @@ import (
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -257,9 +258,9 @@ func TestAuditServer_QueryAuditEvents(t *testing.T) {
 			// before the stage each case means to exercise. The
 			// empty-tenant_id case keeps an unbound context to prove the
 			// default-to-caller-tenant path.
-			ctx := context.Background()
+			ctx := tenantctx.WithSystem(context.Background())
 			if tt.request.TenantId != "" {
-				ctx = iam.ContextWithTenant(ctx, tt.request.TenantId)
+				ctx = tenantctx.WithTenant(ctx, tt.request.TenantId)
 			}
 			resp, err := srv.QueryAuditEvents(ctx, tt.request)
 			if tt.expectError {
@@ -398,9 +399,9 @@ func TestAuditServer_GetAuditEvent(t *testing.T) {
 
 			// Same caller-tenant binding as the QueryAuditEvents runner
 			// above (#356: no operator lift).
-			ctx := context.Background()
+			ctx := tenantctx.WithSystem(context.Background())
 			if tt.request.TenantId != "" {
-				ctx = iam.ContextWithTenant(ctx, tt.request.TenantId)
+				ctx = tenantctx.WithTenant(ctx, tt.request.TenantId)
 			}
 			resp, err := srv.GetAuditEvent(ctx, tt.request)
 			if tt.expectError {
@@ -546,7 +547,7 @@ func TestNewAuditServiceAdapter(t *testing.T) {
 
 func TestAuditServiceAdapter_QueryAuditEvents(t *testing.T) {
 	adapter := NewAuditServiceAdapter(nil)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	filter := &iam.AuditFilter{}
 
 	events, total, err := adapter.QueryAuditEvents(ctx, "tenant-1", filter)
@@ -558,7 +559,7 @@ func TestAuditServiceAdapter_QueryAuditEvents(t *testing.T) {
 
 func TestAuditServiceAdapter_GetAuditEvent(t *testing.T) {
 	adapter := NewAuditServiceAdapter(nil)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	event, err := adapter.GetAuditEvent(ctx, "tenant-1", "event-1")
 
@@ -605,7 +606,7 @@ func TestAuditServiceAdapter_QueryAuditEvents_DelegatesAndStampsTenant(t *testin
 	fake := &fakeAuditLogger{queryEvents: want, queryTotal: 1}
 	adapter := NewAuditServiceAdapter(fake)
 
-	events, total, err := adapter.QueryAuditEvents(context.Background(), "tenant-1", &iam.AuditFilter{Limit: 10})
+	events, total, err := adapter.QueryAuditEvents(tenantctx.WithSystem(context.Background()), "tenant-1", &iam.AuditFilter{Limit: 10})
 
 	require.NoError(t, err)
 	assert.Equal(t, want, events)
@@ -624,12 +625,12 @@ func TestAuditServiceAdapter_GetAuditEvent_Delegates(t *testing.T) {
 	fake := &fakeAuditLogger{getEvent: want}
 	adapter := NewAuditServiceAdapter(fake)
 
-	event, err := adapter.GetAuditEvent(context.Background(), "tenant-1", "e1")
+	event, err := adapter.GetAuditEvent(tenantctx.WithSystem(context.Background()), "tenant-1", "e1")
 	require.NoError(t, err)
 	assert.Equal(t, want, event)
 
 	fake.getEvent, fake.getErr = nil, errors.New("not found")
-	_, err = adapter.GetAuditEvent(context.Background(), "tenant-1", "missing")
+	_, err = adapter.GetAuditEvent(tenantctx.WithSystem(context.Background()), "tenant-1", "missing")
 	require.Error(t, err)
 	assert.Equal(t, codes.NotFound, status.Code(err))
 }
@@ -655,7 +656,7 @@ func TestMemoryAuditService_AddEvent(t *testing.T) {
 
 	svc.AddEvent(event)
 
-	retrieved, err := svc.GetAuditEvent(context.Background(), "tenant-1", "event-1")
+	retrieved, err := svc.GetAuditEvent(tenantctx.WithSystem(context.Background()), "tenant-1", "event-1")
 	require.NoError(t, err)
 	assert.Equal(t, event.ID, retrieved.ID)
 }
@@ -673,14 +674,14 @@ func TestMemoryAuditService_CreateTestEvent(t *testing.T) {
 	assert.Equal(t, "user-1", event.Actor.UserID)
 
 	// Verify it's stored
-	retrieved, err := svc.GetAuditEvent(context.Background(), "tenant-1", "event-tenant-1-login")
+	retrieved, err := svc.GetAuditEvent(tenantctx.WithSystem(context.Background()), "tenant-1", "event-tenant-1-login")
 	require.NoError(t, err)
 	assert.Equal(t, event.ID, retrieved.ID)
 }
 
 func TestMemoryAuditService_GetAuditEvent(t *testing.T) {
 	svc := NewMemoryAuditService()
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Add test events
 	svc.CreateTestEvent("tenant-1", "login")
@@ -728,7 +729,7 @@ func TestMemoryAuditService_GetAuditEvent(t *testing.T) {
 
 func TestMemoryAuditService_QueryAuditEvents(t *testing.T) {
 	svc := NewMemoryAuditService()
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	now := time.Now()
 
 	// Add test events

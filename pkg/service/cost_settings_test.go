@@ -21,8 +21,8 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // routedCostSettings is a cost settings store over the context-routed KV a
@@ -38,7 +38,7 @@ func (s routedCostSettings) PriceBook() *orchestration.PriceBook { return nil }
 // callerContext is an authenticated request of tenant: both tenant keys name
 // the caller's own tenant, as the transports' auth layer sets them.
 func callerContext(tenant string) context.Context {
-	return orchestration.ContextWithTenant(iam.ContextWithTenant(context.Background(), tenant), tenant)
+	return orchestration.ContextWithTenant(tenantctx.WithTenant(context.Background(), tenant), tenant)
 }
 
 // adminContext is a system admin's authenticated request.
@@ -78,7 +78,7 @@ func TestCostSettingsAreStoredInTheTargetTenantsNamespace(t *testing.T) {
 // is costed at the default electricity rate.
 func TestCostSettingsDefaultRateWithNothingSet(t *testing.T) {
 	source := routedCostSettings{store: orchestration.NewInMemoryCostSettingsStore()}
-	ctx := orchestration.ContextWithTenant(context.Background(), "t1")
+	ctx := orchestration.ContextWithTenant(tenantctx.WithSystem(context.Background()), "t1")
 	report, err := GetCostSettings(ctx, source, "t1")
 	if err != nil {
 		t.Fatalf("GetCostSettings: %v", err)
@@ -90,10 +90,10 @@ func TestCostSettingsDefaultRateWithNothingSet(t *testing.T) {
 
 func TestCostSettingsRequireATenantAndAStore(t *testing.T) {
 	source := routedCostSettings{store: orchestration.NewInMemoryCostSettingsStore()}
-	if _, err := GetCostSettings(context.Background(), source, ""); !errors.Is(err, orchestration.ErrCostSettingsInvalid) {
+	if _, err := GetCostSettings(tenantctx.WithSystem(context.Background()), source, ""); !errors.Is(err, orchestration.ErrCostSettingsInvalid) {
 		t.Fatalf("get with no tenant = %v, want ErrCostSettingsInvalid", err)
 	}
-	if _, err := SetCostSettings(context.Background(), source, "", orchestration.CostSettings{}); !errors.Is(err, orchestration.ErrCostSettingsInvalid) {
+	if _, err := SetCostSettings(tenantctx.WithSystem(context.Background()), source, "", orchestration.CostSettings{}); !errors.Is(err, orchestration.ErrCostSettingsInvalid) {
 		t.Fatalf("set with no tenant = %v, want ErrCostSettingsInvalid", err)
 	}
 	if _, err := GetCostSettings(adminContext(), routedCostSettings{}, "t1"); !errors.Is(err, orchestration.ErrCostSettingsStore) {
@@ -122,7 +122,7 @@ func TestCostSettingsRefuseAnotherTenantsCaller(t *testing.T) {
 	if _, err := GetCostSettings(callerContext("tenant-a"), source, "tenant-b"); !errors.As(err, &denied) {
 		t.Fatalf("cross-tenant get = %v, want a TenantTargetDeniedError", err)
 	}
-	saved, err := store.Get(orchestration.ContextWithTenant(context.Background(), "tenant-b"), "tenant-b")
+	saved, err := store.Get(orchestration.ContextWithTenant(tenantctx.WithSystem(context.Background()), "tenant-b"), "tenant-b")
 	if err != nil || !saved.Empty() {
 		t.Fatalf("tenant-b settings = %+v, %v; the refused write must not land", saved, err)
 	}
@@ -131,7 +131,7 @@ func TestCostSettingsRefuseAnotherTenantsCaller(t *testing.T) {
 	if _, err := SetCostSettings(callerContext("tenant-b"), source, "tenant-b", orchestration.CostSettings{ElectricityPricePerKWh: &rate}); err != nil {
 		t.Fatalf("own-tenant set: %v", err)
 	}
-	if _, err := GetCostSettings(orchestration.ContextWithTenant(context.Background(), "tenant-b"), source, "tenant-b"); err != nil {
+	if _, err := GetCostSettings(orchestration.ContextWithTenant(tenantctx.WithSystem(context.Background()), "tenant-b"), source, "tenant-b"); err != nil {
 		t.Fatalf("in-process get: %v", err)
 	}
 	if !strings.Contains(denied.Error(), "tenant-a") {

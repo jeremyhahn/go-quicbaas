@@ -21,10 +21,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // The tests in this file cross the boundary go-quicbaas#535 was lost on: an
@@ -92,7 +92,7 @@ func newTenantNamespacedKV() *tenantNamespacedKV {
 // does. An untenanted context lands in the system namespace, as an untenanted
 // request does in production.
 func tenantOf(ctx context.Context) string {
-	if tenantID := iam.TenantFromContext(ctx); tenantID != "" {
+	if tenantID := boundTenant(ctx); tenantID != "" {
 		return tenantID
 	}
 	if tenantID := orchestration.TenantFromContext(ctx); tenantID != "" {
@@ -219,7 +219,7 @@ const (
 // systemAdminContext is the shape the REST admin path hands the service: the
 // caller's tenant on pkg/iam's key, nothing on orchestration's.
 func systemAdminContext() context.Context {
-	return iam.ContextWithTenant(context.Background(), orchestration.SystemTenantID)
+	return tenantctx.WithTenant(context.Background(), orchestration.SystemTenantID)
 }
 
 // spawnContext is the shape sdlc.runtimeContext hands the resolver: the
@@ -414,7 +414,7 @@ func TestAccountService_TenantNamespace_RevokeAndSetDefaultUpdateTenantRecord(t 
 func TestAccountService_TenantNamespace_RequestTenantOverridesCarriedTenant(t *testing.T) {
 	f := newTenantNamespaceFixture(t)
 
-	carried := orchestration.ContextWithTenant(iam.ContextWithTenant(context.Background(), "burnin"), "burnin")
+	carried := orchestration.ContextWithTenant(tenantctx.WithTenant(context.Background(), "burnin"), "burnin")
 	account := f.createForTenant(t, carried, "sk-ant-oat01-test")
 
 	if keys := f.kv.keysIn(t, "burnin", account.ID); len(keys) != 0 {

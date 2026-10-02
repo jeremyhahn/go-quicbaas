@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -47,7 +48,7 @@ func jobStatusResult(t *testing.T, svc orchestration.AgentService) map[string]in
 	t.Helper()
 
 	reg := newFleetRegistry(t, svc)
-	ctx := orchestration.ContextWithTenant(context.Background(), "t1")
+	ctx := orchestration.ContextWithTenant(tenantctx.WithSystem(context.Background()), "t1")
 	result, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_get_job_status",
 		map[string]interface{}{"job_id": "job-1"})
 	require.NoError(t, err)

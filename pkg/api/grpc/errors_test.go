@@ -866,9 +866,9 @@ func TestErrorCodeToGRPCCode_AllErrorCodes(t *testing.T) {
 			expectedCode: codes.Internal,
 		},
 		{
-			name:         "ErrCrossTenantAccess maps to codes.Internal (default)",
+			name:         "ErrCrossTenantAccess maps to codes.PermissionDenied",
 			errorCode:    dberrors.ErrCrossTenantAccess,
-			expectedCode: codes.Internal,
+			expectedCode: codes.PermissionDenied,
 		},
 		{
 			name:         "ErrMissingTenantContext maps to codes.Internal (default)",

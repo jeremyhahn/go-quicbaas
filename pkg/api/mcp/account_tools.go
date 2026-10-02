@@ -22,9 +22,9 @@ import (
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -468,9 +468,9 @@ func (r *ToolRegistry) executeAccountMaterialize(ctx context.Context, args map[s
 	if err != nil {
 		return nil, err
 	}
-	tenantID := iam.TenantFromContext(ctx)
-	if tenantID == "" {
-		return nil, api.NewValidationError("tenant_id", "the caller carries no tenant binding")
+	tenantID, err := tenantctx.FromContext(ctx, "mcp.account.materialize")
+	if err != nil {
+		return nil, err
 	}
 	return accountSvc.MaterializeAccountCredential(ctx, &service.MaterializeAccountCredentialRequest{
 		TenantID:  tenantID,
@@ -487,9 +487,9 @@ func (r *ToolRegistry) executeAccountMaterialize(ctx context.Context, args map[s
 // must not reach tenant B's accounts, and a silently re-pointed request would
 // look to the caller like a claim on the account it named.
 func reservationTenant(ctx context.Context, args map[string]interface{}) (string, error) {
-	tenantID := iam.TenantFromContext(ctx)
-	if tenantID == "" {
-		return "", api.NewValidationError("tenant_id", "the caller carries no tenant binding")
+	tenantID, err := tenantctx.FromContext(ctx, "mcp.account.reservation")
+	if err != nil {
+		return "", err
 	}
 	if requested := getString(args, "tenant_id"); requested != "" && requested != tenantID {
 		return "", api.NewValidationError("tenant_id", "must be the caller's own tenant")

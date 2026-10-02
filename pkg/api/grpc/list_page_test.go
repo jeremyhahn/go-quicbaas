@@ -27,6 +27,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service/mocks"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -73,7 +74,7 @@ func pagedRPCs() map[string]pagedRPC {
 					JobID: r.id, Description: r.name, StartedAt: base.Add(time.Duration(i) * time.Minute).UnixNano(),
 				})
 			}
-			resp, err := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger()).ListJobs(context.Background(),
+			resp, err := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger()).ListJobs(tenantctx.WithTenant(context.Background(), "t1"),
 				&pb.OrchestratorListJobsRequest{TenantId: "t1", Limit: q.limit, Offset: q.offset, Sort: q.sort, Q: q.q})
 			if err != nil {
 				return pageAnswer{}, err
@@ -96,7 +97,7 @@ func pagedRPCs() map[string]pagedRPC {
 					return tasks, nil
 				},
 			}
-			resp, err := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger()).ListTasks(context.Background(),
+			resp, err := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger()).ListTasks(tenantctx.WithTenant(context.Background(), "t1"),
 				&pb.ListTasksRequest{TenantId: "t1", Limit: q.limit, Offset: q.offset, Sort: q.sort, Q: q.q})
 			if err != nil {
 				return pageAnswer{}, err
@@ -115,7 +116,7 @@ func pagedRPCs() map[string]pagedRPC {
 					ID: r.id, Name: r.name, RegisteredAt: base.Add(time.Duration(i) * time.Minute).UnixNano(),
 				})
 			}
-			resp, err := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger()).ListFleetNodes(context.Background(),
+			resp, err := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger()).ListFleetNodes(tenantctx.WithTenant(context.Background(), "t1"),
 				&pb.ListFleetNodesRequest{TenantId: "t1", Limit: q.limit, Offset: q.offset, Sort: q.sort, Q: q.q})
 			if err != nil {
 				return pageAnswer{}, err
@@ -147,7 +148,7 @@ func pagedRPCs() map[string]pagedRPC {
 					}, nil
 				},
 			}
-			resp, err := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger()).ListSessions(context.Background(),
+			resp, err := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger()).ListSessions(tenantctx.WithTenant(context.Background(), "t1"),
 				&pb.ListSessionsRequest{TenantId: "t1", Limit: q.limit, Offset: q.offset, Sort: q.sort, Q: q.q})
 			if err != nil {
 				return pageAnswer{}, err
@@ -178,7 +179,7 @@ func pagedRPCs() map[string]pagedRPC {
 					}, nil
 				},
 			}
-			resp, err := newProjectServer(t, svc).ListProjects(context.Background(),
+			resp, err := newProjectServer(t, svc).ListProjects(tenantctx.WithTenant(context.Background(), "t1"),
 				&pb.ListProjectsRequest{TenantId: "t1", Limit: q.limit, Offset: q.offset, Sort: q.sort, Q: q.q})
 			if err != nil {
 				return pageAnswer{}, err
@@ -209,7 +210,7 @@ func pagedRPCs() map[string]pagedRPC {
 					}, nil
 				},
 			}
-			resp, err := newAccountServer(svc).ListAccounts(context.Background(),
+			resp, err := newAccountServer(svc).ListAccounts(tenantctx.WithTenant(context.Background(), "t1"),
 				&pb.ListAccountsRequest{TenantId: "t1", Limit: q.limit, Offset: q.offset, Sort: q.sort, Q: q.q})
 			if err != nil {
 				return pageAnswer{}, err

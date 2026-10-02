@@ -38,7 +38,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // buildSealDisabledNodeServer creates a server backed by an in-memory qrdb
@@ -164,7 +164,7 @@ func TestBuildSecretRegistry_WithNode_SealEnabled_TenantAdapterClosureInvoked(t 
 	// Tenant context: closure returns (tid="test-tenant", true) → tenant path.
 	// The tenant is not registered in the barrier registry so the resolution
 	// must also fail — but again without panicking, proving the closure ran.
-	ctxWithTenant := iam.ContextWithTenant(context.Background(), "test-tenant")
+	ctxWithTenant := tenantctx.WithTenant(context.Background(), "test-tenant")
 	_, err = reg.Resolve(ctxWithTenant, "credential://nonexistent-cred")
 	assert.Error(t, err,
 		"resolution with an unregistered tenant must fail; closure must not panic")

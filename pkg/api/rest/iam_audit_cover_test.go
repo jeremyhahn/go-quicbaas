@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
 
@@ -57,7 +58,7 @@ func setupAuditDeleteHandler(t *testing.T) (*IAMHandler, *iam.AdminManager, func
 }
 
 func auditDeleteReq(userSub string) *http.Request {
-	r := httptest.NewRequest(http.MethodDelete,
+	r := systemRequest(http.MethodDelete,
 		"/api/v1/iam/audit?tenant_id=tenant1&before=2024-01-01T00:00:00Z", nil)
 	// Bind the caller's authenticated tenant to match the requested
 	// tenant_id — with the #356 operator lift removed, ResolveRequestTenant
@@ -81,20 +82,20 @@ func TestDeleteOldAuditEvents_Validation(t *testing.T) {
 	// real check, requireSubject, which 401s with no authenticated
 	// caller on the request.
 	w := httptest.NewRecorder()
-	handler.DeleteOldAuditEvents(w, httptest.NewRequest(http.MethodDelete, "/api/v1/iam/audit?before=2024-01-01T00:00:00Z", nil))
+	handler.DeleteOldAuditEvents(w, systemRequest(http.MethodDelete, "/api/v1/iam/audit?before=2024-01-01T00:00:00Z", nil))
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 
 	// Missing before -> 400. The caller tenant is bound to match the
 	// requested tenant_id so the request clears tenant scoping (#356).
 	w = httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/audit?tenant_id=t", nil)
+	req := systemRequest(http.MethodDelete, "/api/v1/iam/audit?tenant_id=t", nil)
 	req = req.WithContext(ctxWithCallerTenant(req.Context(), "t"))
 	handler.DeleteOldAuditEvents(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	// Invalid before format -> 400
 	w = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodDelete, "/api/v1/iam/audit?tenant_id=t&before=not-a-date", nil)
+	req = systemRequest(http.MethodDelete, "/api/v1/iam/audit?tenant_id=t&before=not-a-date", nil)
 	req = req.WithContext(ctxWithCallerTenant(req.Context(), "t"))
 	handler.DeleteOldAuditEvents(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -124,7 +125,7 @@ func TestDeleteOldAuditEvents_Success(t *testing.T) {
 	defer cleanup()
 
 	// Grant the user the audit:delete permission for tenant1.
-	_, err := admin.CreateAssignment(context.Background(), iam.CreateAdminAssignmentOptions{
+	_, err := admin.CreateAssignment(tenantctx.WithSystem(context.Background()), iam.CreateAdminAssignmentOptions{
 		UserID:      "audit-admin",
 		AdminRole:   iam.AdminRoleTenantAdmin,
 		TenantIDs:   []string{"tenant1"},

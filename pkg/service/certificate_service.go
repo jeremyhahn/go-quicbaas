@@ -237,7 +237,7 @@ func (s *certificateService) IssueCertificate(ctx context.Context, req *IssueCer
 		return nil, ErrCertMissingCommonName
 	}
 
-	tenantID, err := certPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -284,7 +284,7 @@ func (s *certificateService) SignCSR(ctx context.Context, req *SignCSRRequest) (
 	// transport request to every server-side CA adapter (embedded, REST, gRPC,
 	// QUIC, MCP, Unix); the trust domain and SPIFFE kind are resolved by the
 	// adapter from its operator config and the requested profile.
-	tenantID, err := certPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -319,7 +319,7 @@ func (s *certificateService) RevokeCertificate(ctx context.Context, req *RevokeC
 		return nil, ErrCertMissingSerial
 	}
 
-	if _, err := certPrepareTenantContext(ctx); err != nil {
+	if _, err := prepareTenantContext(ctx); err != nil {
 		return nil, err
 	}
 
@@ -347,7 +347,7 @@ func (s *certificateService) VerifyCertificate(ctx context.Context, req *VerifyC
 		return nil, ErrCertMissingPEM
 	}
 
-	if _, err := certPrepareTenantContext(ctx); err != nil {
+	if _, err := prepareTenantContext(ctx); err != nil {
 		return nil, err
 	}
 
@@ -417,7 +417,7 @@ func (s *certificateService) VerifyCertificate(ctx context.Context, req *VerifyC
 }
 
 func (s *certificateService) GetCACertificate(ctx context.Context, req *GetCACertificateRequest) (*GetCACertificateResponse, error) {
-	if _, err := certPrepareTenantContext(ctx); err != nil {
+	if _, err := prepareTenantContext(ctx); err != nil {
 		return nil, err
 	}
 
@@ -451,7 +451,7 @@ func (s *certificateService) GetTLSConfig(ctx context.Context, req *GetTLSConfig
 		req = &GetTLSConfigRequest{}
 	}
 
-	if _, err := certPrepareTenantContext(ctx); err != nil {
+	if _, err := prepareTenantContext(ctx); err != nil {
 		return nil, err
 	}
 
@@ -506,7 +506,7 @@ func (s *certificateService) CAService() xkmstransport.Client {
 }
 
 func (s *certificateService) GetCABundle(ctx context.Context, req *GetCABundleRequest) (*GetCABundleResponse, error) {
-	if _, err := certPrepareTenantContext(ctx); err != nil {
+	if _, err := prepareTenantContext(ctx); err != nil {
 		return nil, err
 	}
 
@@ -531,7 +531,7 @@ func (s *certificateService) GetCABundle(ctx context.Context, req *GetCABundleRe
 }
 
 func (s *certificateService) GenerateCRL(ctx context.Context, req *GenerateCRLRequest) (*GenerateCRLResponse, error) {
-	if _, err := certPrepareTenantContext(ctx); err != nil {
+	if _, err := prepareTenantContext(ctx); err != nil {
 		return nil, err
 	}
 
@@ -554,7 +554,7 @@ func (s *certificateService) IsRevoked(ctx context.Context, req *IsRevokedReques
 		return nil, ErrCertMissingSerial
 	}
 
-	if _, err := certPrepareTenantContext(ctx); err != nil {
+	if _, err := prepareTenantContext(ctx); err != nil {
 		return nil, err
 	}
 
@@ -711,7 +711,7 @@ var errCertListNotSupported = stderrors.New("CA service does not expose certific
 // the same shape without each having to teach its handlers to parse
 // X.509.
 func (s *certificateService) CAInfo(ctx context.Context, req *CAInfoRequest) (*CAInfoResponse, error) {
-	if _, err := certPrepareTenantContext(ctx); err != nil {
+	if _, err := prepareTenantContext(ctx); err != nil {
 		return nil, err
 	}
 
@@ -769,7 +769,7 @@ func (s *certificateService) ListCertificates(ctx context.Context, req *ListCert
 			Err:  errCertNegativeLimit,
 		}
 	}
-	if _, err := certPrepareTenantContext(ctx); err != nil {
+	if _, err := prepareTenantContext(ctx); err != nil {
 		return nil, err
 	}
 

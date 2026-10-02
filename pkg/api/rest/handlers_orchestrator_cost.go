@@ -56,7 +56,10 @@ import (
 // read carries. A spend report names no secret material: it reports token
 // counts and an account's id and label, never a credential.
 func (s *Server) HandleOrchestratorCost(w http.ResponseWriter, r *http.Request) {
-	ctx, tenantID := resolveOrchestratorTenant(r)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 
 	req := &orchestration.SpendReportRequest{
 		TenantID:  tenantID,

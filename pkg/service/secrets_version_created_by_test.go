@@ -22,6 +22,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // A secret version's created_by is the principal that wrote it, through the
@@ -35,7 +36,7 @@ func TestSecretsService_VersionCreatedByIsTheWritingPrincipal(t *testing.T) {
 	svc := newSecretsService(mgr, newMockLogger())
 
 	as := func(id string) context.Context {
-		return auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: id, Authenticated: true})
+		return auth.SubjectIntoContext(tenantctx.WithSystem(context.Background()), interfaces.Subject{ID: id, Authenticated: true})
 	}
 
 	_, err = svc.StoreSecret(as("alice"), &StoreSecretRequest{SecretID: "db-password", Name: "db-password", Data: []byte("one")})
@@ -45,7 +46,7 @@ func TestSecretsService_VersionCreatedByIsTheWritingPrincipal(t *testing.T) {
 	_, err = svc.RollbackSecret(as("carol"), &RollbackSecretRequest{SecretID: "db-password", TargetVersion: 1})
 	require.NoError(t, err)
 
-	list, err := svc.ListSecretVersions(context.Background(), &ListSecretVersionsRequest{SecretID: "db-password"})
+	list, err := svc.ListSecretVersions(tenantctx.WithSystem(context.Background()), &ListSecretVersionsRequest{SecretID: "db-password"})
 	require.NoError(t, err)
 	got := make(map[uint64]string, len(list.Versions))
 	for _, v := range list.Versions {
@@ -53,7 +54,7 @@ func TestSecretsService_VersionCreatedByIsTheWritingPrincipal(t *testing.T) {
 	}
 	require.Equal(t, map[uint64]string{1: "alice", 2: "bob", 3: "carol"}, got)
 
-	one, err := svc.GetSecretVersion(context.Background(), &GetSecretVersionRequest{SecretID: "db-password", Version: 2})
+	one, err := svc.GetSecretVersion(tenantctx.WithSystem(context.Background()), &GetSecretVersionRequest{SecretID: "db-password", Version: 2})
 	require.NoError(t, err)
 	require.Equal(t, "bob", one.Version.CreatedBy)
 }

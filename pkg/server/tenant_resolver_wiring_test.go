@@ -28,7 +28,6 @@ import (
 	qrdbspiffe "github.com/jeremyhahn/go-qrdb/pkg/auth/spiffe"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
 // buildSPIFFELeaf builds a self-signed leaf certificate carrying a tenant-scoped
@@ -83,7 +82,7 @@ func TestTenantContextFunc(t *testing.T) {
 		fn := newServer().tenantContextFunc()
 		ctx := context.Background()
 		got := fn(ctx, nil)
-		if iam.TenantFromContext(got) != "" {
+		if boundTenant(got) != "" {
 			t.Fatal("nil cert must not stamp a tenant")
 		}
 	})
@@ -92,7 +91,7 @@ func TestTenantContextFunc(t *testing.T) {
 		fn := newServer().tenantContextFunc()
 		cert := buildSPIFFELeaf(t, trustDomain, "acme")
 		got := fn(context.Background(), cert)
-		if tenant := iam.TenantFromContext(got); tenant != "acme" {
+		if tenant := boundTenant(got); tenant != "acme" {
 			t.Fatalf("tenant = %q, want acme", tenant)
 		}
 	})
@@ -104,7 +103,7 @@ func TestTenantContextFunc(t *testing.T) {
 		cert := buildSPIFFELeaf(t, "other.example", "acme")
 		ctx := context.Background()
 		got := fn(ctx, cert)
-		if iam.TenantFromContext(got) != "" {
+		if boundTenant(got) != "" {
 			t.Fatal("foreign cert must not stamp a tenant")
 		}
 	})
@@ -113,7 +112,7 @@ func TestTenantContextFunc(t *testing.T) {
 		fn := newServer().tenantContextFunc()
 		cert := buildSelfSignedRoot(t, "no-spiffe")
 		got := fn(context.Background(), cert)
-		if iam.TenantFromContext(got) != "" {
+		if boundTenant(got) != "" {
 			t.Fatal("non-SPIFFE cert must not stamp a tenant")
 		}
 	})

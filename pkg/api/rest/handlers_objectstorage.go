@@ -1373,7 +1373,7 @@ func (s *Server) handleObjectStorageError(w http.ResponseWriter, r *http.Request
 		RespondConflict(w, r, qbErr.Error())
 	case errors.ErrInvalidInput:
 		RespondBadRequest(w, r, qbErr.Error())
-	case errors.ErrForbidden:
+	case errors.ErrForbidden, errors.ErrCrossTenantAccess:
 		RespondError(w, r, http.StatusForbidden, qbErr)
 	case errors.ErrResourceExhausted:
 		RespondError(w, r, http.StatusTooManyRequests, qbErr)

@@ -24,6 +24,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/messaging"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -228,10 +229,12 @@ func (s *Server) HandleHookTaskCreated(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract tenant from auth context header or use team name as tenant namespace.
-	tenantID := r.Header.Get("X-Tenant-ID")
-	if tenantID == "" {
-		tenantID = payload.TeamName
+	// The hook acts for the caller's own tenant. X-Tenant-ID is a request,
+	// honoured only as hookTenant allows; the team name is a filter within
+	// the tenant, never a tenant of its own.
+	tenantID, ok := hookTenant(w, r)
+	if !ok {
+		return
 	}
 
 	now := time.Now().Unix()
@@ -328,10 +331,12 @@ func (s *Server) HandleHookTaskCompleted(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Extract tenant from auth context header or use team name as tenant namespace.
-	tenantID := r.Header.Get("X-Tenant-ID")
-	if tenantID == "" {
-		tenantID = payload.TeamName
+	// The hook acts for the caller's own tenant. X-Tenant-ID is a request,
+	// honoured only as hookTenant allows; the team name is a filter within
+	// the tenant, never a tenant of its own.
+	tenantID, ok := hookTenant(w, r)
+	if !ok {
+		return
 	}
 
 	// Complete the task in the store.
@@ -408,10 +413,12 @@ func (s *Server) HandleHookTeammateIdle(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Extract tenant from auth context header or use team name as tenant namespace.
-	tenantID := r.Header.Get("X-Tenant-ID")
-	if tenantID == "" {
-		tenantID = payload.TeamName
+	// The hook acts for the caller's own tenant. X-Tenant-ID is a request,
+	// honoured only as hookTenant allows; the team name is a filter within
+	// the tenant, never a tenant of its own.
+	tenantID, ok := hookTenant(w, r)
+	if !ok {
+		return
 	}
 
 	// Check for unclaimed (pending) tasks for this team.
@@ -443,4 +450,18 @@ func (s *Server) HandleHookTeammateIdle(w http.ResponseWriter, r *http.Request) 
 
 	// No pending tasks - allow idle.
 	RespondJSON(w, r, http.StatusOK, &HookResponse{})
+}
+
+// hookTenant resolves the tenant a hook request acts for. The X-Tenant-ID
+// header is honoured only as tenantctx.Target allows — a caller names its own
+// tenant, the system tenant included — and a request with no tenant
+// bound is refused (go-quicbaas#1150). On refusal it answers 403 and returns
+// ok=false.
+func hookTenant(w http.ResponseWriter, r *http.Request) (string, bool) {
+	tenantID, err := tenantctx.Target(r.Context(), "rest.Hooks", r.Header.Get("X-Tenant-ID"))
+	if err != nil {
+		RespondError(w, r, http.StatusForbidden, err)
+		return "", false
+	}
+	return tenantID, true
 }

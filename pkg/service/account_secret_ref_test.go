@@ -22,9 +22,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // These tests run the credential_secret_ref path end to end below the
@@ -98,7 +98,7 @@ func newSecretRefFixtureWrapping(t *testing.T, wrap func(orchestration.AccountSt
 // putTenantSecret writes a raw secret value as tenantID's own principal would.
 func (f *secretRefFixture) putTenantSecret(t *testing.T, tenantID, name, value string) {
 	t.Helper()
-	if _, err := f.secrets.StoreSecret(iam.ContextWithTenant(context.Background(), tenantID), &StoreSecretRequest{
+	if _, err := f.secrets.StoreSecret(tenantctx.WithTenant(context.Background(), tenantID), &StoreSecretRequest{
 		SecretID: name, Name: name, Data: []byte(value),
 	}); err != nil {
 		t.Fatalf("StoreSecret(%s in %s) error = %v", name, tenantID, err)
@@ -217,7 +217,7 @@ func TestAccountSecretRef_MaterializeReleasesResolvedValue(t *testing.T) {
 	f.putTenantSecret(t, nsTenant, refName, refValue)
 	account := f.createRefAccount(t, systemAdminContext())
 
-	resp, err := f.service.MaterializeAccountCredential(iam.ContextWithTenant(context.Background(), nsTenant),
+	resp, err := f.service.MaterializeAccountCredential(tenantctx.WithTenant(context.Background(), nsTenant),
 		&MaterializeAccountCredentialRequest{TenantID: nsTenant, AccountID: account.ID})
 	if err != nil {
 		t.Fatalf("MaterializeAccountCredential() error = %v", err)
@@ -234,7 +234,7 @@ func TestAccountSecretRef_MaterializeIsSingleUse(t *testing.T) {
 	f := newSecretRefFixture(t)
 	f.putTenantSecret(t, nsTenant, refName, refValue)
 	account := f.createRefAccount(t, systemAdminContext())
-	ctx := iam.ContextWithTenant(context.Background(), nsTenant)
+	ctx := tenantctx.WithTenant(context.Background(), nsTenant)
 
 	first, err := f.service.MaterializeAccountCredential(ctx,
 		&MaterializeAccountCredentialRequest{TenantID: nsTenant, AccountID: account.ID})
@@ -270,7 +270,7 @@ func TestAccountSecretRef_InlineMaterializeIsReusable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateAccount(inline) error = %v", err)
 	}
-	resp, err := f.service.MaterializeAccountCredential(iam.ContextWithTenant(context.Background(), nsTenant),
+	resp, err := f.service.MaterializeAccountCredential(tenantctx.WithTenant(context.Background(), nsTenant),
 		&MaterializeAccountCredentialRequest{TenantID: nsTenant, AccountID: created.Account.ID})
 	if err != nil {
 		t.Fatalf("MaterializeAccountCredential() error = %v", err)
@@ -289,7 +289,7 @@ func TestAccountSecretRef_MissingSecretErrorsAccountAndReapplyRecovers(t *testin
 	f.putTenantSecret(t, nsTenant, refName, refValue)
 	account := f.createRefAccount(t, systemAdminContext())
 
-	if _, err := f.secrets.DeleteSecret(iam.ContextWithTenant(context.Background(), nsTenant),
+	if _, err := f.secrets.DeleteSecret(tenantctx.WithTenant(context.Background(), nsTenant),
 		&DeleteSecretRequest{SecretID: refName, PermanentlyDelete: true, AllVersions: true}); err != nil {
 		t.Fatalf("DeleteSecret() error = %v", err)
 	}
@@ -469,7 +469,7 @@ func TestAccountStore_UpdateIfUnchangedRefusesAStaleSnapshot(t *testing.T) {
 	stale := account.UpdatedAt.Add(-time.Second)
 
 	store := orchestration.NewAccountStore(f.kv)
-	ctx := iam.ContextWithTenant(systemAdminContext(), nsTenant)
+	ctx := tenantctx.WithTenant(systemAdminContext(), nsTenant)
 	current, err := store.Get(ctx, nsTenant, account.ID)
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)

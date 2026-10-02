@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -43,7 +44,7 @@ func TestSecretsService_WatchSecretsByPrefix_ContextCanceled(t *testing.T) {
 			nil
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 
 	req := &WatchSecretsRequest{
 		Prefix:       "app/config/",
@@ -78,7 +79,7 @@ func TestSecretsService_WatchSecretsByPrefix_ListError(t *testing.T) {
 		return nil, stderrors.New("storage unavailable")
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 	defer cancel()
 
 	req := &WatchSecretsRequest{
@@ -109,7 +110,7 @@ func TestSecretsService_WatchSecretsByPrefix_NilLoggerWithListError(t *testing.T
 		return nil, stderrors.New("unavailable")
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 	defer cancel()
 
 	req := &WatchSecretsRequest{
@@ -142,7 +143,7 @@ func TestSecretsService_WatchSecretsByPrefix_InitialGetError(t *testing.T) {
 		return nil, nil, stderrors.New("get failed")
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 
 	req := &WatchSecretsRequest{
 		Prefix: "app/",
@@ -171,7 +172,7 @@ func TestSecretsService_WatchSecretsByPrefix_ValidPrefixNilLogger(t *testing.T) 
 		return []string{}, nil
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 
 	req := &WatchSecretsRequest{
 		Prefix: "app/",
@@ -194,7 +195,7 @@ func TestSecretsService_WatchSecretsByPrefix_NilRequest_NilLogger(t *testing.T) 
 	mockMgr := newMockSecretsManager()
 	svc := newSecretsService(mockMgr, nil)
 
-	ch, err := svc.WatchSecretsByPrefix(context.Background(), nil)
+	ch, err := svc.WatchSecretsByPrefix(tenantctx.WithSystem(context.Background()), nil)
 	assert.Nil(t, ch)
 	require.Error(t, err)
 

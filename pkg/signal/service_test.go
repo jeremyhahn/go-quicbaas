@@ -15,8 +15,8 @@ import (
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // serviceTestKVClient wraps a simple in-memory map to implement
@@ -119,7 +119,7 @@ func provisionTestTenant(t *testing.T, svc SignalService, tenantID string) {
 }
 
 func tenantCtx(tenantID string) context.Context {
-	return iam.ContextWithTenant(context.Background(), tenantID)
+	return tenantctx.WithTenant(context.Background(), tenantID)
 }
 
 func TestNewSignalService(t *testing.T) {

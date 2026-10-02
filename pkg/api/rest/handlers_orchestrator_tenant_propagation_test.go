@@ -30,8 +30,8 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
-	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
 )
 
 // stubSpawnBackend is a minimal AgentBackend that records the tenant present in
@@ -112,154 +112,135 @@ func newRealAgentSpawnServer(t *testing.T) (*Server, *stubSpawnBackend, func()) 
 	return server, backend, cleanup
 }
 
-// TestOrchestratorSpawn_TenantPropagatesToRealGuard is the regression test for
-// the confirmed spawn tenant-propagation bug: a spawn request whose tenant is
-// derived only by the handler (no tenant_id query param, no authenticated
-// tenant) must still pass the orchestrator's real TenantGuard. Before the fix
-// the handler left the context tenant-less for the SystemTenantID fallback path
-// in a way that surfaced "tenant ID required: orchestration".
-func TestOrchestratorSpawn_TenantPropagatesToRealGuard(t *testing.T) {
+// spawnRequest builds a spawn request bound to callerTenant the way the
+// authentication layer binds it (tenantctx), or unbound when callerTenant is "".
+func spawnRequest(t *testing.T, query, callerTenant string) *http.Request {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{"backend": "claude", "initial_prompt": "hi"})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/sessions"+query, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if callerTenant != "" {
+		req = req.WithContext(tenantctx.WithTenant(req.Context(), callerTenant))
+	}
+	return req
+}
+
+// TestOrchestratorSpawn_CallerTenantPropagatesToRealGuard asserts the tenant
+// the authentication layer bound crosses the real TenantGuard into the backend
+// spawn context.
+func TestOrchestratorSpawn_CallerTenantPropagatesToRealGuard(t *testing.T) {
 	server, backend, cleanup := newRealAgentSpawnServer(t)
 	defer cleanup()
 
-	body, err := json.Marshal(map[string]string{
-		"backend":        "claude",
-		"initial_prompt": "hi",
-	})
-	require.NoError(t, err)
-
-	// No tenant_id query param and no authenticated tenant: the handler must
-	// fall back to SystemTenantID and the guard must accept it.
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
 	rec := httptest.NewRecorder()
-	server.HandleOrchestratorSpawn(rec, req)
+	server.HandleOrchestratorSpawn(rec, spawnRequest(t, "", "tenant-from-token"))
 
-	require.Equal(t, http.StatusCreated, rec.Code,
-		"spawn must not be rejected by the tenant guard; body=%s", rec.Body.String())
-
-	// The tenant must have crossed into the backend Spawn context.
-	assert.Equal(t, qrdbsdk.SystemTenantID, backend.spawnedTenant,
-		"tenant must propagate into the backend spawn context")
+	require.Equal(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	assert.Equal(t, "tenant-from-token", backend.spawnedTenant)
 
 	var resp orchestration.SpawnSessionResponse
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
 	assert.Equal(t, "stub-session-1", resp.SessionID)
 }
 
-// TestOrchestratorSpawn_ExplicitTenantPropagatesToRealGuard asserts an explicit
-// tenant_id query param propagates all the way to the backend spawn context.
-func TestOrchestratorSpawn_ExplicitTenantPropagatesToRealGuard(t *testing.T) {
+// TestOrchestratorSpawn_SystemCallerNamingATenantIsRefused asserts the system
+// tenant gets no cross-tenant lift through ?tenant_id= (go-quicbaas#1150).
+func TestOrchestratorSpawn_SystemCallerNamingATenantIsRefused(t *testing.T) {
 	server, backend, cleanup := newRealAgentSpawnServer(t)
 	defer cleanup()
 
-	body, err := json.Marshal(map[string]string{"backend": "claude"})
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/orchestrator/sessions?tenant_id=acme", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
 	rec := httptest.NewRecorder()
-	server.HandleOrchestratorSpawn(rec, req)
+	server.HandleOrchestratorSpawn(rec, spawnRequest(t, "?tenant_id=acme", qrdbsdk.SystemTenantID))
 
-	require.Equal(t, http.StatusCreated, rec.Code,
-		"spawn must not be rejected by the tenant guard; body=%s", rec.Body.String())
-	assert.Equal(t, "acme", backend.spawnedTenant,
-		"explicit tenant must propagate into the backend spawn context")
+	require.Equal(t, http.StatusForbidden, rec.Code, "body=%s", rec.Body.String())
+	assert.Empty(t, backend.spawnedTenant, "nothing may be spawned")
 }
 
-// TestOrchestratorSpawn_TokenTenantPropagatesToRealGuard asserts that when no
-// tenant_id query param is supplied, the tenant is derived from the
-// authenticated token's verified AuthorizedContext (the tenant_id claim) and
-// propagates into the backend spawn context.
-func TestOrchestratorSpawn_TokenTenantPropagatesToRealGuard(t *testing.T) {
+// TestOrchestratorSpawn_TenantCallerNamingAnotherTenantIsRefused is the
+// go-quicbaas#1150 regression: ?tenant_id= used to override the caller's own
+// tenant unchecked. A tenant caller naming another tenant is now refused 403
+// and nothing is spawned.
+func TestOrchestratorSpawn_TenantCallerNamingAnotherTenantIsRefused(t *testing.T) {
 	server, backend, cleanup := newRealAgentSpawnServer(t)
 	defer cleanup()
 
-	body, err := json.Marshal(map[string]string{"backend": "claude"})
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/orchestrator/sessions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	// Attach a verified AuthorizedContext as the authz middleware would, with a
-	// tenant_id claim that is neither empty nor SystemTenantID. The handler must
-	// prefer it over the SystemTenantID fallback.
-	ctx := authorizedContextIntoContext(req.Context(),
-		&platformtoken.AuthorizedContext{TenantID: "tenant-from-token"})
-	req = req.WithContext(ctx)
-
 	rec := httptest.NewRecorder()
-	server.HandleOrchestratorSpawn(rec, req)
+	server.HandleOrchestratorSpawn(rec, spawnRequest(t, "?tenant_id=override", "tenant-from-token"))
 
-	require.Equal(t, http.StatusCreated, rec.Code,
-		"spawn must not be rejected by the tenant guard; body=%s", rec.Body.String())
-	assert.Equal(t, "tenant-from-token", backend.spawnedTenant,
-		"token tenant_id claim must propagate into the backend spawn context")
+	assert.Equal(t, http.StatusForbidden, rec.Code, "body=%s", rec.Body.String())
+	assert.Empty(t, backend.spawnedTenant, "a refused request must not spawn")
 }
 
-// TestOrchestratorSpawn_QueryParamOverridesTokenTenant asserts the explicit
-// tenant_id query parameter takes precedence over the token tenant claim.
-func TestOrchestratorSpawn_QueryParamOverridesTokenTenant(t *testing.T) {
+// TestOrchestratorSpawn_UnboundCallerIsRefused asserts a request with no tenant
+// bound is refused rather than falling back to the system tenant.
+func TestOrchestratorSpawn_UnboundCallerIsRefused(t *testing.T) {
 	server, backend, cleanup := newRealAgentSpawnServer(t)
 	defer cleanup()
 
-	body, err := json.Marshal(map[string]string{"backend": "claude"})
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/orchestrator/sessions?tenant_id=override", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req = req.WithContext(authorizedContextIntoContext(req.Context(),
-		&platformtoken.AuthorizedContext{TenantID: "tenant-from-token"}))
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorSpawn(rec, req)
-
-	require.Equal(t, http.StatusCreated, rec.Code,
-		"spawn must not be rejected by the tenant guard; body=%s", rec.Body.String())
-	assert.Equal(t, "override", backend.spawnedTenant,
-		"query param must take precedence over the token tenant claim")
+	for _, query := range []string{"", "?tenant_id=acme"} {
+		rec := httptest.NewRecorder()
+		server.HandleOrchestratorSpawn(rec, spawnRequest(t, query, ""))
+		assert.Equal(t, http.StatusForbidden, rec.Code, "query %q body=%s", query, rec.Body.String())
+	}
+	assert.Empty(t, backend.spawnedTenant)
 }
 
-// TestResolveOrchestratorTenant_Precedence unit-tests the centralized tenant
-// derivation helper directly: query param > token claim > SystemTenantID.
-func TestResolveOrchestratorTenant_Precedence(t *testing.T) {
-	t.Run("query param wins", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/x?tenant_id=q", nil)
-		req = req.WithContext(authorizedContextIntoContext(req.Context(),
-			&platformtoken.AuthorizedContext{TenantID: "tok"}))
-		ctx, tenant := resolveOrchestratorTenant(req)
-		assert.Equal(t, "q", tenant)
-		assert.Equal(t, "q", orchestration.TenantFromContext(ctx))
-	})
+// TestResolveOrchestratorTenant_Rule unit-tests the centralized tenant
+// derivation helper against the tenantctx.Target rule.
+func TestResolveOrchestratorTenant_Rule(t *testing.T) {
+	resolve := func(query, callerTenant string) (int, context.Context, string, bool) {
+		req := httptest.NewRequest(http.MethodGet, "/x"+query, nil)
+		if callerTenant != "" {
+			req = req.WithContext(tenantctx.WithTenant(req.Context(), callerTenant))
+		}
+		rec := httptest.NewRecorder()
+		ctx, tenant, ok := resolveOrchestratorTenant(rec, req)
+		return rec.Code, ctx, tenant, ok
+	}
 
-	t.Run("token claim used when no query param", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/x", nil)
-		req = req.WithContext(authorizedContextIntoContext(req.Context(),
-			&platformtoken.AuthorizedContext{TenantID: "tok"}))
-		ctx, tenant := resolveOrchestratorTenant(req)
+	t.Run("caller's own tenant when none is named", func(t *testing.T) {
+		_, ctx, tenant, ok := resolve("", "tok")
+		require.True(t, ok)
 		assert.Equal(t, "tok", tenant)
 		assert.Equal(t, "tok", orchestration.TenantFromContext(ctx))
 	})
 
-	t.Run("system tenant fallback", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/x", nil)
-		ctx, tenant := resolveOrchestratorTenant(req)
+	t.Run("caller may name its own tenant", func(t *testing.T) {
+		_, _, tenant, ok := resolve("?tenant_id=tok", "tok")
+		require.True(t, ok)
+		assert.Equal(t, "tok", tenant)
+	})
+
+	t.Run("tenant caller naming another tenant is refused", func(t *testing.T) {
+		code, _, _, ok := resolve("?tenant_id=q", "tok")
+		assert.False(t, ok)
+		assert.Equal(t, http.StatusForbidden, code)
+	})
+
+	t.Run("tenant caller naming the system tenant is refused", func(t *testing.T) {
+		code, _, _, ok := resolve("?tenant_id="+qrdbsdk.SystemTenantID, "tok")
+		assert.False(t, ok)
+		assert.Equal(t, http.StatusForbidden, code)
+	})
+
+	t.Run("system caller naming another tenant is refused", func(t *testing.T) {
+		code, _, _, ok := resolve("?tenant_id=q", qrdbsdk.SystemTenantID)
+		assert.False(t, ok)
+		assert.Equal(t, http.StatusForbidden, code)
+	})
+
+	t.Run("system caller acts for itself", func(t *testing.T) {
+		_, ctx, tenant, ok := resolve("", qrdbsdk.SystemTenantID)
+		require.True(t, ok)
 		assert.Equal(t, qrdbsdk.SystemTenantID, tenant)
 		assert.Equal(t, qrdbsdk.SystemTenantID, orchestration.TenantFromContext(ctx))
 	})
 
-	t.Run("empty token tenant falls back to system", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/x", nil)
-		req = req.WithContext(authorizedContextIntoContext(req.Context(),
-			&platformtoken.AuthorizedContext{TenantID: ""}))
-		ctx, tenant := resolveOrchestratorTenant(req)
-		assert.Equal(t, qrdbsdk.SystemTenantID, tenant)
-		assert.Equal(t, qrdbsdk.SystemTenantID, orchestration.TenantFromContext(ctx))
+	t.Run("unbound caller is refused, not defaulted to system", func(t *testing.T) {
+		code, _, _, ok := resolve("", "")
+		assert.False(t, ok)
+		assert.Equal(t, http.StatusForbidden, code)
 	})
 }
 
@@ -300,6 +281,7 @@ func TestOrchestratorSessionHandlers_TenantPropagatesToRealGuard(t *testing.T) {
 			}
 			req := httptest.NewRequest(tc.method, tc.path, reader)
 			req.Header.Set("Content-Type", "application/json")
+			req = req.WithContext(tenantctx.WithTenant(req.Context(), "acme"))
 
 			rec := httptest.NewRecorder()
 			tc.invoke(server, rec, req)
@@ -316,9 +298,9 @@ func TestOrchestratorSessionHandlers_TenantPropagatesToRealGuard(t *testing.T) {
 // `GET /orchestrator/jobs` and `GET /orchestrator/jobs/{id}` were the only
 // orchestrator routes that did not go through resolveOrchestratorTenant: they
 // took `?tenant_id=` verbatim, so a caller that omitted it was refused with
-// "tenant ID required" rather than being served its OWN tenant, and the
-// system-tenant fallback every sibling applies did not apply to them. Raised
-// in review on go-quicbaas#822.
+// "tenant ID required" rather than being served its OWN tenant. Raised in
+// review on go-quicbaas#822. Since go-quicbaas#1150 an unbound caller is
+// refused 403 instead of falling back to the system tenant.
 func TestOrchestratorJobHandlers_DeriveTheTenantLikeEveryOtherHandler(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -347,8 +329,7 @@ func TestOrchestratorJobHandlers_DeriveTheTenantLikeEveryOtherHandler(t *testing
 			defer cleanup()
 
 			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
-			req = req.WithContext(authorizedContextIntoContext(req.Context(),
-				&platformtoken.AuthorizedContext{TenantID: "tenant-from-token"}))
+			req = req.WithContext(tenantctx.WithTenant(req.Context(), "tenant-from-token"))
 			req = withJobIDParam(req, "job-1")
 
 			rec := httptest.NewRecorder()
@@ -358,7 +339,7 @@ func TestOrchestratorJobHandlers_DeriveTheTenantLikeEveryOtherHandler(t *testing
 				"handler %s must derive the tenant from the token; body=%s", tc.name, rec.Body.String())
 		})
 
-		t.Run(tc.name+" — no tenant anywhere falls back to system", func(t *testing.T) {
+		t.Run(tc.name+" — no tenant bound is refused", func(t *testing.T) {
 			server, _, cleanup := newRealAgentSpawnServer(t)
 			defer cleanup()
 
@@ -368,8 +349,8 @@ func TestOrchestratorJobHandlers_DeriveTheTenantLikeEveryOtherHandler(t *testing
 			rec := httptest.NewRecorder()
 			tc.invoke(server, rec, req)
 
-			assert.NotContains(t, rec.Body.String(), "tenant ID required",
-				"handler %s must fall back to the system tenant; body=%s", tc.name, rec.Body.String())
+			assert.Equal(t, http.StatusForbidden, rec.Code,
+				"handler %s must refuse an unbound caller; body=%s", tc.name, rec.Body.String())
 		})
 	}
 }

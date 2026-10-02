@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // mockSecretsManagerWithOptions extends mockSecretsManager to support StoreWithOptions.
@@ -99,7 +100,7 @@ func TestStoreSecretWithKeyID(t *testing.T) {
 		KeyID: "custom-key-456",
 	}
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	resp, err := svc.StoreSecret(ctx, req)
 
 	require.NoError(t, err)
@@ -129,7 +130,7 @@ func TestStoreSecretWithAlgorithm(t *testing.T) {
 		Algorithm: "CHACHA20-POLY1305",
 	}
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	resp, err := svc.StoreSecret(ctx, req)
 
 	require.NoError(t, err)
@@ -195,7 +196,7 @@ func TestStoreSecretWithoutOptions(t *testing.T) {
 		// No TenantID, KeyID, or Algorithm
 	}
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	resp, err := svc.StoreSecret(ctx, req)
 
 	require.NoError(t, err)
@@ -235,7 +236,7 @@ func TestGetSecretReturnsAlgorithm(t *testing.T) {
 		SecretID: "test-secret",
 	}
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	resp, err := svc.GetSecret(ctx, req)
 
 	require.NoError(t, err)
@@ -270,7 +271,7 @@ func TestGetSecretReturnsKeyIdentifierFromTenantID(t *testing.T) {
 		SecretID: "test-secret",
 	}
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	resp, err := svc.GetSecret(ctx, req)
 
 	require.NoError(t, err)
@@ -303,7 +304,7 @@ func TestGetSecretWithoutEncryptionInfo(t *testing.T) {
 		SecretID: "test-secret",
 	}
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	resp, err := svc.GetSecret(ctx, req)
 
 	require.NoError(t, err)
@@ -362,7 +363,7 @@ func TestStoreSecretRequestValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Bind the caller to the tenant the request names so the case
 			// exercises validation rather than the cross-tenant refusal.
-			ctx := context.Background()
+			ctx := tenantctx.WithSystem(context.Background())
 			if tt.req != nil && tt.req.TenantID != "" {
 				ctx = secretsScopeCtx(tt.req.TenantID)
 			}

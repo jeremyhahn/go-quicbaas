@@ -16,7 +16,7 @@ package iam
 import (
 	"context"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // TenantScopeMismatchError is returned when a caller requests access to a
@@ -56,14 +56,12 @@ func (e *TenantScopeMismatchError) Error() string {
 // this same rule to the session surface: a system-tenant principal never
 // gains implicit reach into a tenant's namespace.
 //
-// An UNBOUND caller tenant is canonicalized to the system tenant before
-// any comparison: qrdb's IsSystemTenant treats an empty TenantID as the
-// system principal's shape, and an empty tenant must never reach storage
-// as the resolved target — the node-backed audit logger applies no tenant
-// equality of its own to an empty filter, so passing "" through would
-// turn "default to the caller's tenant" into an unscoped read of every
-// chain. Canonicalizing confines that caller to the concrete system
-// chain instead.
+// An UNBOUND caller tenant is refused (tenantctx.FromContext): an empty
+// tenant must never reach storage as the resolved target — the node-backed
+// audit logger applies no tenant equality of its own to an empty filter, so
+// passing "" through would turn "default to the caller's tenant" into an
+// unscoped read of every chain — and an unknown caller is not the system
+// principal either (go-quicbaas#1150).
 //
 // This is the ONE place the rule is stated; pkg/api/grpc and pkg/api/rest
 // both call it rather than carrying their own copies, so the read path
@@ -72,9 +70,9 @@ func (e *TenantScopeMismatchError) Error() string {
 // ScopeCross permission and resolve its target tenant deliberately under
 // that gate — never by re-adding a caller-identity lift here.
 func ResolveRequestTenant(ctx context.Context, requestedTenant string) (string, error) {
-	callerTenant := TenantFromContext(ctx)
-	if callerTenant == "" {
-		callerTenant = qrdbsdk.SystemTenantID
+	callerTenant, err := tenantctx.FromContext(ctx, "iam.ResolveRequestTenant")
+	if err != nil {
+		return "", err
 	}
 	if requestedTenant == "" {
 		return callerTenant, nil

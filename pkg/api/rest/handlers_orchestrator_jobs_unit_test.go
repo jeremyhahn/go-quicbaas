@@ -31,9 +31,9 @@ func doOrchReq(t *testing.T, s *Server, method, path, body string) *httptest.Res
 	t.Helper()
 	var r *http.Request
 	if body == "" {
-		r = httptest.NewRequest(method, path, nil)
+		r = systemRequest(method, path, nil)
 	} else {
-		r = httptest.NewRequest(method, path, strings.NewReader(body))
+		r = systemRequest(method, path, strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
 	}
 	w := httptest.NewRecorder()
@@ -188,7 +188,7 @@ func TestHandleOrchestratorSubscribeJobEvents_ClosedStream(t *testing.T) {
 	// context so chi.URLParam resolves jobID.
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("jobID", "job-1")
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/jobs/job-1/events", nil)
+	r := systemRequest(http.MethodGet, "/api/v1/orchestrator/jobs/job-1/events", nil)
 	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 	w := &flushRecorder{httptest.NewRecorder()}
 	s.HandleOrchestratorSubscribeJobEvents(w, r)

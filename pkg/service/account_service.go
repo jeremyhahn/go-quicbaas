@@ -20,9 +20,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -436,7 +436,7 @@ func (e *AccountRotationIncompleteError) Unwrap() error { return e.Cause }
 // authority, and a caller allowed to name another tenant was admitted by RBAC
 // before reaching this service.
 func accountTenantContext(ctx context.Context, tenantID string) context.Context {
-	return orchestration.ContextWithTenant(iam.ContextWithTenant(ctx, tenantID), tenantID)
+	return orchestration.ContextWithTenant(tenantctx.WithTenant(ctx, tenantID), tenantID)
 }
 
 // =============================================================================

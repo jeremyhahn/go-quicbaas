@@ -122,7 +122,7 @@ PUT /objects/{namespace}/{path...}
 | `Authorization` | Yes | Bearer token |
 | `Content-Type` | No | MIME type (default: `application/octet-stream`) |
 | `X-QuicBaaS-Backend` | No | Target backend name |
-| `X-QuicBaaS-Tenant` | No | Tenant ID |
+| `X-QuicBaaS-Tenant` | No | Tenant ID. Must be the caller's own tenant (or omitted); any other value is refused with 403 |
 | `X-QuicBaaS-Encryption-Key` | No | Override encryption key ID |
 | `X-QuicBaaS-Tags` | No | Comma-separated key=value tags |
 

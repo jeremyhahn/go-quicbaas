@@ -23,8 +23,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 func TestNewManager(t *testing.T) {
@@ -836,7 +836,7 @@ func TestManager_EnrichOptionsFromContext(t *testing.T) {
 	})
 
 	t.Run("NilOptions_WithTenantContext", func(t *testing.T) {
-		ctx := iam.ContextWithTenant(context.Background(), "tenant-abc")
+		ctx := tenantctx.WithTenant(context.Background(), "tenant-abc")
 		opts := manager.enrichOptionsFromContext(ctx, nil)
 
 		require.NotNil(t, opts)
@@ -844,7 +844,7 @@ func TestManager_EnrichOptionsFromContext(t *testing.T) {
 	})
 
 	t.Run("EmptyTenantID_PopulatedFromContext", func(t *testing.T) {
-		ctx := iam.ContextWithTenant(context.Background(), "tenant-xyz")
+		ctx := tenantctx.WithTenant(context.Background(), "tenant-xyz")
 		inputOpts := &interfaces.StoreOptions{
 			Algorithm: "AES-256-GCM", // other fields set
 		}
@@ -855,7 +855,7 @@ func TestManager_EnrichOptionsFromContext(t *testing.T) {
 	})
 
 	t.Run("ExplicitTenantID_NotOverwritten", func(t *testing.T) {
-		ctx := iam.ContextWithTenant(context.Background(), "context-tenant")
+		ctx := tenantctx.WithTenant(context.Background(), "context-tenant")
 		inputOpts := &interfaces.StoreOptions{
 			TenantID: "explicit-tenant",
 		}
@@ -889,7 +889,7 @@ func TestManager_TenantIDFromContext(t *testing.T) {
 	})
 
 	t.Run("TenantInContext", func(t *testing.T) {
-		ctx := iam.ContextWithTenant(context.Background(), "my-tenant-id")
+		ctx := tenantctx.WithTenant(context.Background(), "my-tenant-id")
 		tenantID := manager.TenantIDFromContext(ctx)
 		assert.Equal(t, "my-tenant-id", tenantID)
 	})
@@ -912,7 +912,7 @@ func TestManager_StoreWithOptions_AutoPopulateTenantID(t *testing.T) {
 		require.NoError(t, err)
 		defer manager.Close()
 
-		ctx := iam.ContextWithTenant(context.Background(), "auto-tenant")
+		ctx := tenantctx.WithTenant(context.Background(), "auto-tenant")
 		err = manager.StoreWithOptions(ctx, "test/path", map[string][]byte{"key": []byte("value")}, nil, nil)
 		require.NoError(t, err)
 

@@ -23,7 +23,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -101,25 +101,6 @@ func TestSchedulerTenantJobBelongsTo_EmptyTargetTenant(t *testing.T) {
 }
 
 // =============================================================================
-// schedulerTenantExtractID tests
-// =============================================================================
-
-func TestSchedulerTenantExtractID_NoTenant(t *testing.T) {
-	ctx := context.Background()
-	assert.Equal(t, "", schedulerTenantExtractID(ctx))
-}
-
-func TestSchedulerTenantExtractID_WithTenant(t *testing.T) {
-	ctx := iam.ContextWithTenant(context.Background(), "my-tenant")
-	assert.Equal(t, "my-tenant", schedulerTenantExtractID(ctx))
-}
-
-func TestSchedulerTenantExtractID_EmptyTenantValue(t *testing.T) {
-	ctx := iam.ContextWithTenant(context.Background(), "")
-	assert.Equal(t, "", schedulerTenantExtractID(ctx))
-}
-
-// =============================================================================
 // schedulerTenantValidateID tests
 // =============================================================================
 
@@ -188,103 +169,59 @@ func TestSchedulerTenantEnforceAccess_EmptyTargetTenantDenied(t *testing.T) {
 }
 
 // =============================================================================
-// schedulerTenantPrepareContext tests
+// schedulerTenantResolveID tests (go-quicbaas#1150)
 // =============================================================================
 
-func TestSchedulerTenantPrepareContext_NoTenant(t *testing.T) {
-	ctx := context.Background()
-	tenantID, err := schedulerTenantPrepareContext(ctx)
-	assert.NoError(t, err)
-	assert.Equal(t, "", tenantID)
-}
-
-func TestSchedulerTenantPrepareContext_ValidTenant(t *testing.T) {
-	ctx := iam.ContextWithTenant(context.Background(), "acme-corp")
-	tenantID, err := schedulerTenantPrepareContext(ctx)
-	assert.NoError(t, err)
-	assert.Equal(t, "acme-corp", tenantID)
-}
-
-func TestSchedulerTenantPrepareContext_InvalidTenant(t *testing.T) {
-	ctx := iam.ContextWithTenant(context.Background(), "invalid/tenant")
-	_, err := schedulerTenantPrepareContext(ctx)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid character")
-}
-
-// =============================================================================
-// schedulerTenantResolveID tests
-// =============================================================================
-
-func TestSchedulerTenantResolveID_ContextTenantPreferred(t *testing.T) {
-	// When IAM context has a tenant, it takes precedence over the request tenant
-	ctx := iam.ContextWithTenant(context.Background(), "context-tenant")
-	tenantID, err := schedulerTenantResolveID(ctx, "request-tenant")
-	assert.NoError(t, err)
-	assert.Equal(t, "context-tenant", tenantID)
-}
-
-func TestSchedulerTenantResolveID_FallbackToRequest(t *testing.T) {
-	// When IAM context has no tenant, the request tenant is used as fallback
-	ctx := context.Background()
-	tenantID, err := schedulerTenantResolveID(ctx, "request-tenant")
-	assert.NoError(t, err)
-	assert.Equal(t, "request-tenant", tenantID)
-}
-
-func TestSchedulerTenantResolveID_BothEmpty(t *testing.T) {
-	// When neither context nor request has a tenant, empty is returned (single-tenant mode)
-	ctx := context.Background()
-	tenantID, err := schedulerTenantResolveID(ctx, "")
-	assert.NoError(t, err)
-	assert.Equal(t, "", tenantID)
-}
-
-func TestSchedulerTenantResolveID_EmptyContextWithEmptyString(t *testing.T) {
-	// An empty string in context is treated as no tenant
-	ctx := iam.ContextWithTenant(context.Background(), "")
-	tenantID, err := schedulerTenantResolveID(ctx, "fallback")
-	assert.NoError(t, err)
-	assert.Equal(t, "fallback", tenantID)
-}
-
-func TestSchedulerTenantResolveID_InvalidContextTenant(t *testing.T) {
-	// Invalid tenant in context should fail validation
-	ctx := iam.ContextWithTenant(context.Background(), "bad/tenant")
-	_, err := schedulerTenantResolveID(ctx, "valid-tenant")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid character")
-}
-
-func TestSchedulerTenantResolveID_InvalidRequestTenant(t *testing.T) {
-	// Invalid tenant in request (used as fallback) should fail validation
-	ctx := context.Background()
-	_, err := schedulerTenantResolveID(ctx, "bad@tenant")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid character")
-}
-
-func TestSchedulerTenantResolveID_ValidRequestTenantFormats(t *testing.T) {
-	// Various valid tenant ID formats should be accepted when falling back to request
-	ctx := context.Background()
-
-	tests := []struct {
-		name     string
-		tenantID string
-	}{
-		{"alphanumeric", "default"},
-		{"with-hyphens", "acme-corp"},
-		{"with-underscores", "my_tenant"},
-		{"mixed", "Tenant-123_abc"},
+// TestSchedulerTenantResolveID_RefusesUnboundContext pins the fail-closed half
+// of #1150: a context with no tenant bound is not the system tenant, and the
+// tenant the request names is not trusted in its place.
+func TestSchedulerTenantResolveID_RefusesUnboundContext(t *testing.T) {
+	for _, requested := range []string{"", "request-tenant"} {
+		_, err := schedulerTenantResolveID(context.Background(), "GetJob", requested)
+		var missing *tenantctx.MissingTenantError
+		require.ErrorAs(t, err, &missing, "requested %q", requested)
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tenantID, err := schedulerTenantResolveID(ctx, tt.tenantID)
-			assert.NoError(t, err)
-			assert.Equal(t, tt.tenantID, tenantID)
-		})
+// TestSchedulerTenantResolveID_TenantCallerNamesOnlyItself proves a tenant
+// caller resolves to its own tenant and is refused for any other, the system
+// tenant included.
+func TestSchedulerTenantResolveID_TenantCallerNamesOnlyItself(t *testing.T) {
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
+
+	for _, requested := range []string{"", "acme"} {
+		tenantID, err := schedulerTenantResolveID(ctx, "GetJob", requested)
+		require.NoError(t, err)
+		assert.Equal(t, "acme", tenantID)
 	}
+	for _, requested := range []string{"globex", tenantctx.SystemTenantID} {
+		_, err := schedulerTenantResolveID(ctx, "GetJob", requested)
+		var cross *tenantctx.CrossTenantError
+		require.ErrorAs(t, err, &cross, "requested %q", requested)
+	}
+}
+
+// TestSchedulerTenantResolveID_SystemCallerNamesOnlyItself proves the
+// system tenant resolves to the store's system namespace ("") and is refused,
+// like any caller, when it names another tenant (no cross-tenant lift).
+func TestSchedulerTenantResolveID_SystemCallerNamesOnlyItself(t *testing.T) {
+	ctx := tenantctx.WithSystem(context.Background())
+
+	tenantID, err := schedulerTenantResolveID(ctx, "GetJob", "")
+	require.NoError(t, err)
+	assert.Equal(t, "", tenantID, "the system tenant is the store's unprefixed namespace")
+
+	_, err = schedulerTenantResolveID(ctx, "GetJob", "globex")
+	var cross *tenantctx.CrossTenantError
+	require.ErrorAs(t, err, &cross)
+}
+
+// TestSchedulerTenantResolveID_ValidatesTheResolvedTenant proves a malformed
+// tenant is refused whichever side supplied it.
+func TestSchedulerTenantResolveID_ValidatesTheResolvedTenant(t *testing.T) {
+	_, err := schedulerTenantResolveID(tenantctx.WithTenant(context.Background(), "bad/tenant"), "GetJob", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid character")
 }
 
 // =============================================================================

@@ -18,8 +18,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 func newCatalogService(t *testing.T) *AgentCatalogService {
@@ -38,7 +38,7 @@ func newCatalogService(t *testing.T) *AgentCatalogService {
 }
 
 func catalogTenantCtx(tenant string) context.Context {
-	return orchestration.ContextWithTenant(iam.ContextWithTenant(context.Background(), tenant), tenant)
+	return orchestration.ContextWithTenant(tenantctx.WithTenant(context.Background(), tenant), tenant)
 }
 
 func catalogAgent(id string, roles ...orchestration.AgentRole) *orchestration.Agent {

@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // clientAuthTestSecret derives ONE client secret and its digest for the whole
@@ -139,7 +141,7 @@ func TestValidateClientSecret_LogsWhichCheckRefused(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			storage, log, issued := newClientAuthLogFixture(t)
-			ctx := ContextWithTenant(context.Background(), "automatethethings")
+			ctx := tenantctx.WithTenant(context.Background(), "automatethethings")
 
 			ok, _ := storage.ValidateClientSecret(ctx, tc.clientID, tc.secret(issued))
 			if ok {
@@ -160,7 +162,7 @@ func TestValidateClientSecret_LogsTheTenantMismatch(t *testing.T) {
 
 	// The record resolves through the legacy global key under a foreign
 	// tenant's context, exactly as a pre-scoping deployment's would.
-	ctx := ContextWithTenant(context.Background(), "acme")
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
 	if _, err := storage.ValidateClientSecret(ctx, "app_automatethethings_QQnqeujdEo", secret); err != nil {
 		t.Logf("ValidateClientSecret returned %v", err)
 	}
@@ -173,7 +175,7 @@ func TestValidateClientSecret_LogsTheTenantMismatch(t *testing.T) {
 // the diagnostic must not become the credential leak it was added to avoid.
 func TestValidateClientSecret_NeverLogsSecretMaterial(t *testing.T) {
 	storage, log, secret := newClientAuthLogFixture(t)
-	ctx := ContextWithTenant(context.Background(), "automatethethings")
+	ctx := tenantctx.WithTenant(context.Background(), "automatethethings")
 
 	for _, presented := range []string{secret, "sk_wrong-secret", ""} {
 		if _, err := storage.ValidateClientSecret(ctx, "app_automatethethings_QQnqeujdEo", presented); err != nil {

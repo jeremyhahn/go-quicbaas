@@ -467,7 +467,7 @@ func (v *vectorService) CreateNamespace(ctx context.Context, req *CreateNamespac
 	}
 
 	// Prepare tenant context and scope namespace
-	tenantID, err := vectorPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -559,7 +559,7 @@ func (v *vectorService) DeleteNamespace(ctx context.Context, req *DeleteNamespac
 	}
 
 	// Prepare tenant context and scope namespace
-	tenantID, err := vectorPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -649,7 +649,7 @@ func (v *vectorService) ListNamespaces(ctx context.Context, req *ListNamespacesR
 	}
 
 	// Prepare tenant context for namespace filtering
-	tenantID, err := vectorPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -730,7 +730,7 @@ func (v *vectorService) GetNamespaceInfo(ctx context.Context, req *GetNamespaceI
 	}
 
 	// Prepare tenant context and scope namespace
-	tenantID, err := vectorPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -821,7 +821,7 @@ func (v *vectorService) UpsertVector(ctx context.Context, req *UpsertVectorReque
 	}
 
 	// Prepare tenant context and scope namespace
-	tenantID, err := vectorPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -936,7 +936,7 @@ func (v *vectorService) GetVector(ctx context.Context, req *GetVectorRequest) (*
 	}
 
 	// Prepare tenant context and scope namespace
-	tenantID, err := vectorPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1003,7 +1003,7 @@ func (v *vectorService) DeleteVector(ctx context.Context, req *DeleteVectorReque
 	}
 
 	// Prepare tenant context and scope namespace
-	tenantID, err := vectorPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1085,7 +1085,7 @@ func (v *vectorService) BatchUpsert(ctx context.Context, req *BatchUpsertRequest
 	}
 
 	// Prepare tenant context and scope namespace
-	tenantID, err := vectorPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1189,7 +1189,7 @@ func (v *vectorService) SearchSimilar(ctx context.Context, req *SearchSimilarReq
 	}
 
 	// Prepare tenant context and scope namespace
-	tenantID, err := vectorPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1306,7 +1306,7 @@ func (v *vectorService) SearchByMetadata(ctx context.Context, req *SearchByMetad
 	}
 
 	// Prepare tenant context and scope namespace
-	tenantID, err := vectorPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1455,7 +1455,7 @@ func (v *vectorService) RebuildIndex(ctx context.Context, req *RebuildIndexReque
 	}
 
 	// Prepare tenant context and scope namespace
-	tenantID, err := vectorPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1800,7 +1800,7 @@ func (v *vectorService) GetIndexStats(ctx context.Context, req *GetIndexStatsReq
 	}
 
 	// Prepare tenant context and scope namespace
-	tenantID, err := vectorPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -2243,7 +2243,7 @@ func (v *vectorService) CompactNamespace(ctx context.Context, req *CompactNamesp
 	}
 
 	// Prepare tenant context and scope namespace
-	tenantID, err := vectorPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -2607,7 +2607,7 @@ func (v *vectorService) BatchDeleteVectors(ctx context.Context, req *BatchDelete
 	}
 
 	// Prepare tenant context and scope namespace
-	tenantID, err := vectorPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -2680,7 +2680,7 @@ func (v *vectorService) ListVectors(ctx context.Context, req *ListVectorsRequest
 	}
 
 	// Prepare tenant context and scope namespace
-	tenantID, err := vectorPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -2800,7 +2800,7 @@ func (v *vectorService) UpdateMetadata(ctx context.Context, req *UpdateVectorMet
 	}
 
 	// Prepare tenant context and scope namespace
-	tenantID, err := vectorPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -2903,7 +2903,7 @@ func (v *vectorService) SearchByID(ctx context.Context, req *SearchByIDRequest) 
 	}
 
 	// Prepare tenant context and scope namespace
-	tenantID, err := vectorPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}

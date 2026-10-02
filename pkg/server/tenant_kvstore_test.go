@@ -25,10 +25,10 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // fakeStoreResolver is a per-tenant routing resolver test double. Each tenant
@@ -89,7 +89,7 @@ func (nilGetStore) Get(context.Context, string) ([]byte, error) { return nil, ni
 func TestTenantRoutingKVStore_NilGetTranslatedToNotFound(t *testing.T) {
 	resolver := newFakeStoreResolver(nilGetStore{})
 	kv := newTenantRoutingKVStore(resolver)
-	ctx := iam.ContextWithTenant(context.Background(), qrdbtenant.SystemTenantID)
+	ctx := tenantctx.WithTenant(context.Background(), qrdbtenant.SystemTenantID)
 
 	_, err := kv.Get(ctx, "__iam:any")
 	if !dberrors.IsNotFound(err) {
@@ -105,7 +105,7 @@ func TestTenantRoutingKVStore_BarrierTenantIsolated(t *testing.T) {
 	tenantStore := resolver.barrierTenant("acme")
 
 	kv := newTenantRoutingKVStore(resolver)
-	ctx := iam.ContextWithTenant(context.Background(), "acme")
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
 
 	if err := kv.Put(ctx, "__iam:tenant:acme:policy:p1", []byte("policy-data")); err != nil {
 		t.Fatalf("Put(acme): %v", err)
@@ -142,7 +142,7 @@ func TestTenantRoutingKVStore_PrefixTenantSharedStore(t *testing.T) {
 	resolver.barrierTenant("acme") // a separate barrier tenant must stay empty
 
 	kv := newTenantRoutingKVStore(resolver)
-	ctx := iam.ContextWithTenant(context.Background(), "prefixco")
+	ctx := tenantctx.WithTenant(context.Background(), "prefixco")
 
 	if err := kv.Put(ctx, "__iam:tenant:prefixco:app:c1", []byte("app-data")); err != nil {
 		t.Fatalf("Put(prefixco): %v", err)
@@ -172,7 +172,7 @@ func TestTenantRoutingKVStore_SealedTenantFailsClosed(t *testing.T) {
 	resolver.sealTenant("acme")
 
 	kv := newTenantRoutingKVStore(resolver)
-	ctx := iam.ContextWithTenant(context.Background(), "acme")
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
 
 	// Put must fail closed.
 	if err := kv.Put(ctx, "__iam:tenant:acme:user:u1", []byte("x")); !errors.Is(err, qrdbtenant.ErrTenantSealed) {
@@ -210,7 +210,7 @@ func TestTenantRoutingKVStore_MissingKeyNotFound(t *testing.T) {
 	shared := kvstore.NewMemory()
 	resolver := newFakeStoreResolver(shared)
 	kv := newTenantRoutingKVStore(resolver)
-	ctx := iam.ContextWithTenant(context.Background(), qrdbtenant.SystemTenantID)
+	ctx := tenantctx.WithTenant(context.Background(), qrdbtenant.SystemTenantID)
 
 	_, err := kv.Get(ctx, "__iam:missing")
 	if err == nil {
@@ -226,7 +226,7 @@ func TestTenantRoutingKVStore_SuccessPaths(t *testing.T) {
 	shared := kvstore.NewMemory()
 	resolver := newFakeStoreResolver(shared)
 	kv := newTenantRoutingKVStore(resolver)
-	ctx := iam.ContextWithTenant(context.Background(), qrdbtenant.SystemTenantID)
+	ctx := tenantctx.WithTenant(context.Background(), qrdbtenant.SystemTenantID)
 
 	if err := kv.Put(ctx, "__iam:k1", []byte("v1")); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -459,7 +459,7 @@ func TestTenantRoutingKVStore_RoutesOrchestrationContexts(t *testing.T) {
 		name    string
 		withCtx func(context.Context, string) context.Context
 	}{
-		{name: "iam context key", withCtx: iam.ContextWithTenant},
+		{name: "central tenant key", withCtx: tenantctx.WithTenant},
 		{name: "orchestration context key", withCtx: orchestration.ContextWithTenant},
 	}
 
@@ -521,7 +521,7 @@ func TestTenantFromAnyContext(t *testing.T) {
 		{name: "no tenant", ctx: context.Background(), want: ""},
 		{
 			name: "iam only",
-			ctx:  iam.ContextWithTenant(context.Background(), "from-iam"),
+			ctx:  tenantctx.WithTenant(context.Background(), "from-iam"),
 			want: "from-iam",
 		},
 		{
@@ -532,7 +532,7 @@ func TestTenantFromAnyContext(t *testing.T) {
 		{
 			name: "iam wins when both are set",
 			ctx: orchestration.ContextWithTenant(
-				iam.ContextWithTenant(context.Background(), "from-iam"), "from-orch"),
+				tenantctx.WithTenant(context.Background(), "from-iam"), "from-orch"),
 			want: "from-iam",
 		},
 	}
@@ -675,8 +675,8 @@ func TestTenantRoutingKVStore_ClearedIAMTenantRoutesToSharedStore(t *testing.T) 
 	const key = "__iam:tokenval:deadbeef"
 
 	// Written from inside a tenant's login context, with the tenant cleared.
-	issueCtx := iam.ContextWithTenant(context.Background(), "burnin")
-	if err := kv.Put(iam.ContextWithTenant(issueCtx, ""), key, []byte("burnin:jti-1")); err != nil {
+	issueCtx := tenantctx.WithTenant(context.Background(), "burnin")
+	if err := kv.Put(tenantctx.WithTenant(issueCtx, ""), key, []byte("burnin:jti-1")); err != nil {
 		t.Fatalf("Put with cleared tenant: %v", err)
 	}
 
@@ -707,7 +707,7 @@ func TestTenantRoutingKVStore_OrchestrationTenantOverridesClearedIAMTenant(t *te
 	const key = "__iam:tokenval:deadbeef"
 
 	ctx := orchestration.ContextWithTenant(context.Background(), "burnin")
-	if err := kv.Put(iam.ContextWithTenant(ctx, ""), key, []byte("burnin:jti-1")); err != nil {
+	if err := kv.Put(tenantctx.WithTenant(ctx, ""), key, []byte("burnin:jti-1")); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 

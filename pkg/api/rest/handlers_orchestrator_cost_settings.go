@@ -41,7 +41,10 @@ type SetCostSettingsRESTRequest struct {
 // [?tenant_id=]: the tenant's runtime cost settings and the rates in force.
 // Gated on orchestrator:status, like the spend report.
 func (s *Server) HandleGetCostSettings(w http.ResponseWriter, r *http.Request) {
-	ctx, tenantID := resolveOrchestratorTenant(r)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 	accessor := s.costSettingsAccessor(w, r)
 	if accessor == nil {
 		return
@@ -58,7 +61,10 @@ func (s *Server) HandleGetCostSettings(w http.ResponseWriter, r *http.Request) {
 // [?tenant_id=]: it replaces the tenant's settings and answers with the rates
 // they leave in force. Gated on cost_settings:write.
 func (s *Server) HandleSetCostSettings(w http.ResponseWriter, r *http.Request) {
-	ctx, tenantID := resolveOrchestratorTenant(r)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 	var body SetCostSettingsRESTRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		RespondBadRequest(w, r, "invalid request body: "+err.Error())

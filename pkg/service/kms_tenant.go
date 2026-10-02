@@ -25,7 +25,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // kmsTenantKeyPrefix is the storage prefix for tenant-scoped KMS keys.
@@ -78,12 +78,6 @@ func tenantListPrefix(tenantID string) string {
 	return kmsTenantKeyPrefix + tenantID + kmsTenantKeySuffix
 }
 
-// extractTenantID extracts the tenant ID from the context.
-// Returns empty string for single-tenant mode.
-func extractTenantID(ctx context.Context) string {
-	return iam.TenantFromContext(ctx)
-}
-
 // validateTenantID validates that a tenant ID contains only safe characters.
 // Empty tenant ID is valid (single-tenant mode).
 func validateTenantID(tenantID string) error {
@@ -124,10 +118,24 @@ func enforceTenantAccess(tenantID, keyID, operation string) error {
 	return nil
 }
 
-// prepareTenantContext extracts and validates the tenant ID from context.
-// Returns the validated tenant ID or an error if the tenant ID is invalid.
+// prepareTenantContext reads the request's tenant (tenantctx.FromContext,
+// which refuses a context with no tenant bound) and validates it.
+//
+// It returns the tenant in the services' own convention, where "" is the
+// platform scope: an explicit system binding maps to "", which is what the
+// tenant-scoping helpers and the downstream stores (an xkms SignCSR with no
+// tenant SAN, an unprefixed key or secret) have always taken for the system.
+// What changed in go-quicbaas#1150 is only that the empty result now has to
+// be asked for by binding the system tenant, never produced by the absence
+// of a binding.
 func prepareTenantContext(ctx context.Context) (string, error) {
-	tenantID := extractTenantID(ctx)
+	tenantID, err := tenantctx.FromContext(ctx, "service.tenant")
+	if err != nil {
+		return "", err
+	}
+	if tenantctx.IsSystem(tenantID) {
+		return "", nil
+	}
 	if err := validateTenantID(tenantID); err != nil {
 		return "", err
 	}

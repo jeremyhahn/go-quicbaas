@@ -26,6 +26,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -324,8 +325,8 @@ func (s *IdentityStore) enrollFleetNodeCertIdentity(
 	// register endpoint that calls this is a public route carrying none. Bind
 	// it here, filling in only what is absent so this can never redirect an
 	// admitted caller's write into another tenant (the rule #634 established).
-	if TenantFromContext(ctx) == "" {
-		ctx = ContextWithTenant(ctx, tenantID)
+	if contextTenant(ctx) == "" {
+		ctx = tenantctx.WithTenant(ctx, tenantID)
 	}
 
 	roleID, err := s.ensureAgentRole(ctx, tenantID, role, permissions)
@@ -370,8 +371,8 @@ func (s *IdentityStore) RevokeAgentSessionIdentity(ctx context.Context, tenantID
 	if err := validateFleetNodeCertUsername(subject); err != nil {
 		return err
 	}
-	if TenantFromContext(ctx) == "" {
-		ctx = ContextWithTenant(ctx, tenantID)
+	if contextTenant(ctx) == "" {
+		ctx = tenantctx.WithTenant(ctx, tenantID)
 	}
 
 	existing, err := s.userStorage.GetUserByUsername(ctx, tenantID, subject)

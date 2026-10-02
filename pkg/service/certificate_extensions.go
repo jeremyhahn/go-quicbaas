@@ -312,7 +312,7 @@ func (s *certificateService) CrossSign(ctx context.Context, req *CrossSignReques
 	if len(req.ForeignRootPEM) == 0 {
 		return nil, ErrCertExtMissingForeignRoot
 	}
-	if _, err := certPrepareTenantContext(ctx); err != nil {
+	if _, err := prepareTenantContext(ctx); err != nil {
 		return nil, err
 	}
 
@@ -342,7 +342,7 @@ func (s *certificateService) Chain(ctx context.Context, req *CertificateChainReq
 	if len(req.CertificatePEM) == 0 {
 		return nil, ErrCertExtMissingCertificate
 	}
-	if _, err := certPrepareTenantContext(ctx); err != nil {
+	if _, err := prepareTenantContext(ctx); err != nil {
 		return nil, err
 	}
 
@@ -379,7 +379,7 @@ func (s *certificateService) IssueDeviceIdentity(ctx context.Context, req *Issue
 		return nil, err
 	}
 
-	tenantID, err := certPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}

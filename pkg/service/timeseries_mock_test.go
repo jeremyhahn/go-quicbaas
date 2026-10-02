@@ -25,6 +25,7 @@ import (
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -105,7 +106,7 @@ func TestTimeSeriesService_WritePoint_Success_WithStorage(t *testing.T) {
 		Value:  75.5,
 	}
 
-	resp, err := tsSvc.WritePoint(context.Background(), req)
+	resp, err := tsSvc.WritePoint(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -132,7 +133,7 @@ func TestTimeSeriesService_WritePoint_Success_WithTimestamp(t *testing.T) {
 		Timestamp: specificTime,
 	}
 
-	resp, err := tsSvc.WritePoint(context.Background(), req)
+	resp, err := tsSvc.WritePoint(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -155,7 +156,7 @@ func TestTimeSeriesService_WritePoint_StorageError(t *testing.T) {
 		Value:  100.0,
 	}
 
-	resp, err := tsSvc.WritePoint(context.Background(), req)
+	resp, err := tsSvc.WritePoint(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -177,7 +178,7 @@ func TestTimeSeriesService_WritePoint_EmptyMetric_WithStorage(t *testing.T) {
 		Value:  50.0,
 	}
 
-	resp, err := tsSvc.WritePoint(context.Background(), req)
+	resp, err := tsSvc.WritePoint(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -195,7 +196,7 @@ func TestTimeSeriesService_WritePoint_NilRequest_WithStorage(t *testing.T) {
 	mockStorage := newTestMockTimeSeriesStorage()
 	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockStorage}
 
-	resp, err := tsSvc.WritePoint(context.Background(), nil)
+	resp, err := tsSvc.WritePoint(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -227,7 +228,7 @@ func TestTimeSeriesService_WriteBatch_Success_WithStorage(t *testing.T) {
 		},
 	}
 
-	resp, err := tsSvc.WriteBatch(context.Background(), req)
+	resp, err := tsSvc.WriteBatch(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -247,7 +248,7 @@ func TestTimeSeriesService_WriteBatch_EmptyPoints(t *testing.T) {
 		Points: []*WritePointRequest{},
 	}
 
-	resp, err := tsSvc.WriteBatch(context.Background(), req)
+	resp, err := tsSvc.WriteBatch(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -273,7 +274,7 @@ func TestTimeSeriesService_WriteBatch_StorageError(t *testing.T) {
 		},
 	}
 
-	resp, err := tsSvc.WriteBatch(context.Background(), req)
+	resp, err := tsSvc.WriteBatch(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -298,7 +299,7 @@ func TestTimeSeriesService_WriteBatch_NilPointInBatch(t *testing.T) {
 		},
 	}
 
-	resp, err := tsSvc.WriteBatch(context.Background(), req)
+	resp, err := tsSvc.WriteBatch(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -323,7 +324,7 @@ func TestTimeSeriesService_WriteBatch_EmptyMetricInBatch(t *testing.T) {
 		},
 	}
 
-	resp, err := tsSvc.WriteBatch(context.Background(), req)
+	resp, err := tsSvc.WriteBatch(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -341,7 +342,7 @@ func TestTimeSeriesService_WriteBatch_NilRequest_WithStorage(t *testing.T) {
 	mockStorage := newTestMockTimeSeriesStorage()
 	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockStorage}
 
-	resp, err := tsSvc.WriteBatch(context.Background(), nil)
+	resp, err := tsSvc.WriteBatch(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -379,7 +380,7 @@ func TestTimeSeriesService_TSQuery_Success_WithStorage(t *testing.T) {
 		EndTime:   now,
 	}
 
-	resp, err := tsSvc.TSQuery(context.Background(), req)
+	resp, err := tsSvc.TSQuery(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -404,7 +405,7 @@ func TestTimeSeriesService_TSQuery_StorageError(t *testing.T) {
 		EndTime:   now,
 	}
 
-	resp, err := tsSvc.TSQuery(context.Background(), req)
+	resp, err := tsSvc.TSQuery(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -421,7 +422,7 @@ func TestTimeSeriesService_TSQuery_NilRequest_WithStorage(t *testing.T) {
 	mockStorage := newTestMockTimeSeriesStorage()
 	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockStorage}
 
-	resp, err := tsSvc.TSQuery(context.Background(), nil)
+	resp, err := tsSvc.TSQuery(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -445,7 +446,7 @@ func TestTimeSeriesService_TSQuery_EmptyMetric_WithStorage(t *testing.T) {
 		EndTime:   now,
 	}
 
-	resp, err := tsSvc.TSQuery(context.Background(), req)
+	resp, err := tsSvc.TSQuery(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -473,7 +474,7 @@ func TestTimeSeriesService_DeleteSeries_Success_WithStorage(t *testing.T) {
 		Metric: "cpu.usage",
 	}
 
-	resp, err := tsSvc.DeleteSeries(context.Background(), req)
+	resp, err := tsSvc.DeleteSeries(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -495,7 +496,7 @@ func TestTimeSeriesService_DeleteSeries_StorageError(t *testing.T) {
 		Metric: "cpu.usage",
 	}
 
-	resp, err := tsSvc.DeleteSeries(context.Background(), req)
+	resp, err := tsSvc.DeleteSeries(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -526,7 +527,7 @@ func TestTimeSeriesService_GetRetentionPolicy_Success_WithStorage(t *testing.T) 
 		Metric: "cpu.usage",
 	}
 
-	resp, err := tsSvc.GetRetentionPolicy(context.Background(), req)
+	resp, err := tsSvc.GetRetentionPolicy(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -549,7 +550,7 @@ func TestTimeSeriesService_GetRetentionPolicy_StorageError(t *testing.T) {
 		Metric: "unknown.metric",
 	}
 
-	resp, err := tsSvc.GetRetentionPolicy(context.Background(), req)
+	resp, err := tsSvc.GetRetentionPolicy(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -576,7 +577,7 @@ func TestTimeSeriesService_SetRetentionPolicy_Success_WithStorage(t *testing.T) 
 		},
 	}
 
-	resp, err := tsSvc.SetRetentionPolicy(context.Background(), req)
+	resp, err := tsSvc.SetRetentionPolicy(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -601,7 +602,7 @@ func TestTimeSeriesService_SetRetentionPolicy_StorageError(t *testing.T) {
 		},
 	}
 
-	resp, err := tsSvc.SetRetentionPolicy(context.Background(), req)
+	resp, err := tsSvc.SetRetentionPolicy(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -627,7 +628,7 @@ func TestTimeSeriesService_ListMetrics_Success_WithStorage(t *testing.T) {
 		Limit:  100,
 	}
 
-	resp, err := tsSvc.ListMetrics(context.Background(), req)
+	resp, err := tsSvc.ListMetrics(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -651,7 +652,7 @@ func TestTimeSeriesService_ListMetrics_StorageError(t *testing.T) {
 		Limit:  100,
 	}
 
-	resp, err := tsSvc.ListMetrics(context.Background(), req)
+	resp, err := tsSvc.ListMetrics(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)

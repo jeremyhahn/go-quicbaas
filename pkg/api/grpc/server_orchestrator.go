@@ -23,13 +23,11 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
-	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // OrchestratorServer wraps the Agent orchestration service for gRPC endpoints.
@@ -59,7 +57,10 @@ func (s *OrchestratorServer) SpawnSession(ctx context.Context, req *pb.SpawnSess
 		return nil, status.Error(codes.InvalidArgument, "an agent, a pool or a backend is required")
 	}
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+	tenantCtx, _, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
 	svcReq := &orchestration.SpawnSessionRequest{
 		AgentID:            req.GetAgentId(),
@@ -143,7 +144,10 @@ func (s *OrchestratorServer) PromptSession(ctx context.Context, req *pb.PromptSe
 		return nil, status.Error(codes.InvalidArgument, "prompt is required")
 	}
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+	tenantCtx, _, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
 	svcReq := &orchestration.PromptSessionRequest{
 		Backend:      req.Backend,
@@ -192,7 +196,10 @@ func (s *OrchestratorServer) SessionStatus(ctx context.Context, req *pb.SessionS
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+	tenantCtx, _, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
 	svcReq := &orchestration.SessionStatusRequest{
 		SessionID: req.SessionId,
@@ -220,7 +227,10 @@ func (s *OrchestratorServer) CloseSession(ctx context.Context, req *pb.CloseSess
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+	tenantCtx, _, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
 	svcReq := &orchestration.CloseSessionRequest{
 		SessionID: req.SessionId,
@@ -258,7 +268,10 @@ func (s *OrchestratorServer) RotateSessionAccount(ctx context.Context, req *pb.R
 		return nil, convertOrchestratorError(err)
 	}
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+	tenantCtx, _, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
 	result, err := rotator.RotateSessionAccount(tenantCtx, &orchestration.RotateSessionAccountRequest{
 		SessionID:    req.GetSessionId(),
@@ -290,25 +303,25 @@ func timeFromUnixSeconds(sec int64) time.Time {
 	return time.Unix(sec, 0).UTC()
 }
 
-// resolveOrchestratorTenant derives the tenant a listing is scoped to, in the
-// same order REST's resolveOrchestratorTenant uses: the explicit field, then
-// the authenticated caller's own tenant, then the canonical system tenant.
+// orchestratorTenant resolves the tenant an orchestrator RPC acts for and
+// binds it under both keys the request reaches: go-qrdb's central key
+// (tenantctx) and the orchestrator's own (orchestration.ContextWithTenant),
+// which its tenant guard reads.
 //
-// AN EMPTY TENANT IS NOT A NEUTRAL VALUE HERE. AgentService.ListSessions reads
-// it as the embedded single-tenant case and answers with ListAllSessions --
-// EVERY tenant's sessions. Passing the proto field straight through therefore
-// turned an omitted tenant_id on a REMOTE gRPC call into a cross-tenant
-// enumeration, while the identical omission over REST resolved to the caller's
-// own tenant. The embedded transport still reaches the service directly and
-// keeps that mode; what must not have it is a caller on a wire.
-func resolveOrchestratorTenant(ctx context.Context, explicit string) string {
-	if explicit != "" {
-		return explicit
+// THE TENANT_ID FIELD IS NOT TRUSTED. It is honoured only as tenantctx.Target
+// allows: a caller may name only its own tenant (the system tenant gets no
+// cross-tenant lift through it), and every other naming is refused with PermissionDenied before the
+// orchestrator is reached (go-quicbaas#1150). An omitted field means the
+// caller's own tenant — never "every tenant": AgentService.ListSessions reads
+// an empty tenant as the embedded single-tenant case and answers with every
+// tenant's sessions. A call with no tenant bound is refused rather than
+// trusted to name one.
+func orchestratorTenant(ctx context.Context, requested string) (context.Context, string, error) {
+	tenantCtx, tenantID, err := tenantctx.ContextForTarget(ctx, "grpc.Orchestrator", requested)
+	if err != nil {
+		return ctx, "", toProtoError(err)
 	}
-	if subject, ok := auth.SubjectFromContext(ctx); ok && subject.TenantID != "" {
-		return subject.TenantID
-	}
-	return qrdbsdk.SystemTenantID
+	return orchestration.ContextWithTenant(tenantCtx, tenantID), tenantID, nil
 }
 
 // ListSessions returns every session, in any state, optionally filtered by
@@ -316,7 +329,10 @@ func resolveOrchestratorTenant(ctx context.Context, explicit string) string {
 func (s *OrchestratorServer) ListSessions(ctx context.Context, req *pb.ListSessionsRequest) (*pb.ListSessionsResponse, error) {
 	s.logger.Debug("Processing ListSessions request")
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, resolveOrchestratorTenant(ctx, req.GetTenantId()))
+	tenantCtx, _, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
 	page, err := pageFromRPC(req.GetLimit(), req.GetOffset(), req.GetSort(), req.GetQ())
 	if err != nil {
@@ -361,10 +377,13 @@ func (s *OrchestratorServer) CreateTask(ctx context.Context, req *pb.CreateTaskR
 		return nil, status.Error(codes.InvalidArgument, "task subject is required")
 	}
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+	tenantCtx, tenantID, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
 	svcReq := &orchestration.CreateTaskRequest{
-		TenantID:      req.TenantId,
+		TenantID:      tenantID,
 		TeamName:      req.TeamName,
 		Subject:       req.Subject,
 		Description:   req.Description,
@@ -402,9 +421,12 @@ func (s *OrchestratorServer) GetTask(ctx context.Context, req *pb.GetTaskRequest
 		return nil, status.Error(codes.InvalidArgument, "task_id is required")
 	}
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+	tenantCtx, tenantID, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
-	task, err := s.agentSvc.GetTask(tenantCtx, req.TenantId, req.TaskId)
+	task, err := s.agentSvc.GetTask(tenantCtx, tenantID, req.TaskId)
 	if err != nil {
 		return nil, convertOrchestratorError(err)
 	}
@@ -419,7 +441,10 @@ func (s *OrchestratorServer) GetTask(ctx context.Context, req *pb.GetTaskRequest
 func (s *OrchestratorServer) ListTasks(ctx context.Context, req *pb.ListTasksRequest) (*pb.ListTasksResponse, error) {
 	s.logger.Debug("Processing ListTasks request")
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+	tenantCtx, tenantID, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
 	var filter *orchestration.TaskFilter
 	if req.Filter != nil {
@@ -439,7 +464,7 @@ func (s *OrchestratorServer) ListTasks(ctx context.Context, req *pb.ListTasksReq
 		return nil, err
 	}
 
-	result, err := s.agentSvc.ListTasksPage(tenantCtx, req.TenantId, filter, page)
+	result, err := s.agentSvc.ListTasksPage(tenantCtx, tenantID, filter, page)
 	if err != nil {
 		return nil, convertListError(err, convertOrchestratorError)
 	}
@@ -474,9 +499,12 @@ func (s *OrchestratorServer) ClaimTask(ctx context.Context, req *pb.ClaimTaskReq
 		return nil, status.Error(codes.InvalidArgument, "agent_id is required")
 	}
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+	tenantCtx, tenantID, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
-	if err := s.agentSvc.ClaimTask(tenantCtx, req.TenantId, req.TaskId, req.AgentId); err != nil {
+	if err := s.agentSvc.ClaimTask(tenantCtx, tenantID, req.TaskId, req.AgentId); err != nil {
 		return nil, convertOrchestratorError(err)
 	}
 
@@ -502,9 +530,12 @@ func (s *OrchestratorServer) BlockTask(ctx context.Context, req *pb.BlockTaskReq
 		return nil, status.Error(codes.InvalidArgument, "reason is required")
 	}
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+	tenantCtx, tenantID, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
-	if err := s.agentSvc.BlockTask(tenantCtx, req.GetTenantId(), req.GetTaskId(), orchestration.TaskBlockKind(req.GetKind()), req.GetReason()); err != nil {
+	if err := s.agentSvc.BlockTask(tenantCtx, tenantID, req.GetTaskId(), orchestration.TaskBlockKind(req.GetKind()), req.GetReason()); err != nil {
 		return nil, convertOrchestratorError(err)
 	}
 
@@ -523,9 +554,12 @@ func (s *OrchestratorServer) ReadmitTask(ctx context.Context, req *pb.ReadmitTas
 		return nil, status.Error(codes.InvalidArgument, "task_id is required")
 	}
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+	tenantCtx, tenantID, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
-	if err := s.agentSvc.ReadmitTask(tenantCtx, req.GetTenantId(), req.GetTaskId()); err != nil {
+	if err := s.agentSvc.ReadmitTask(tenantCtx, tenantID, req.GetTaskId()); err != nil {
 		return nil, convertOrchestratorError(err)
 	}
 
@@ -544,9 +578,12 @@ func (s *OrchestratorServer) DeleteTask(ctx context.Context, req *pb.DeleteTaskR
 		return nil, status.Error(codes.InvalidArgument, "task_id is required")
 	}
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+	tenantCtx, tenantID, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
-	if err := s.agentSvc.DeleteTask(tenantCtx, req.GetTenantId(), req.GetTaskId()); err != nil {
+	if err := s.agentSvc.DeleteTask(tenantCtx, tenantID, req.GetTaskId()); err != nil {
 		return nil, convertOrchestratorError(err)
 	}
 
@@ -565,7 +602,10 @@ func (s *OrchestratorServer) CompleteTask(ctx context.Context, req *pb.CompleteT
 		return nil, status.Error(codes.InvalidArgument, "task_id is required")
 	}
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+	tenantCtx, tenantID, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
 	var result *orchestration.TaskResult
 	if req.Result != nil {
@@ -576,7 +616,7 @@ func (s *OrchestratorServer) CompleteTask(ctx context.Context, req *pb.CompleteT
 		}
 	}
 
-	if err := s.agentSvc.CompleteTask(tenantCtx, req.TenantId, req.TaskId, result); err != nil {
+	if err := s.agentSvc.CompleteTask(tenantCtx, tenantID, req.TaskId, result); err != nil {
 		return nil, convertOrchestratorError(err)
 	}
 
@@ -595,7 +635,10 @@ func (s *OrchestratorServer) DecomposeTask(ctx context.Context, req *pb.Decompos
 		return nil, status.Error(codes.InvalidArgument, "task description is required")
 	}
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+	tenantCtx, _, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
 	svcReq := &orchestration.DecomposeTaskRequest{
 		Backend:    req.Backend,
@@ -640,10 +683,13 @@ func (s *OrchestratorServer) StartJob(ctx context.Context, req *pb.OrchestratorS
 		return nil, status.Error(codes.InvalidArgument, "description is required")
 	}
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+	tenantCtx, tenantID, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
 	svcReq := &orchestration.StartJobRequest{
-		TenantID:      req.TenantId,
+		TenantID:      tenantID,
 		Description:   req.Description,
 		Lead:          AgentRefFromProto(req.GetLead()),
 		LeadAgentID:   req.GetLeadAgentId(),
@@ -677,9 +723,12 @@ func (s *OrchestratorServer) GetJobStatus(ctx context.Context, req *pb.Orchestra
 		return nil, status.Error(codes.InvalidArgument, "job_id is required")
 	}
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+	tenantCtx, tenantID, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
-	jobStatus, err := s.agentSvc.GetJobStatus(tenantCtx, req.TenantId, req.JobId)
+	jobStatus, err := s.agentSvc.GetJobStatus(tenantCtx, tenantID, req.JobId)
 	if err != nil {
 		return nil, convertOrchestratorError(err)
 	}
@@ -822,9 +871,12 @@ func (s *OrchestratorServer) CancelJob(ctx context.Context, req *pb.Orchestrator
 		return nil, status.Error(codes.InvalidArgument, "job_id is required")
 	}
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+	tenantCtx, tenantID, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
-	if err := s.agentSvc.CancelJob(tenantCtx, req.TenantId, req.JobId); err != nil {
+	if err := s.agentSvc.CancelJob(tenantCtx, tenantID, req.JobId); err != nil {
 		return nil, convertOrchestratorError(err)
 	}
 
@@ -845,14 +897,17 @@ func (s *OrchestratorServer) CancelJob(ctx context.Context, req *pb.Orchestrator
 func (s *OrchestratorServer) ListJobs(ctx context.Context, req *pb.OrchestratorListJobsRequest) (*pb.OrchestratorListJobsResponse, error) {
 	s.logger.Debug("Processing ListJobs request")
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+	tenantCtx, tenantID, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
 	page, err := pageFromRPC(req.GetLimit(), req.GetOffset(), req.GetSort(), req.GetQ())
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := s.agentSvc.ListJobsPage(tenantCtx, req.GetTenantId(), &orchestration.JobFilter{TaskID: req.GetTaskId()}, page)
+	result, err := s.agentSvc.ListJobsPage(tenantCtx, tenantID, &orchestration.JobFilter{TaskID: req.GetTaskId()}, page)
 	if err != nil {
 		return nil, convertListError(err, convertOrchestratorError)
 	}
@@ -912,9 +967,12 @@ func (s *OrchestratorServer) SubscribeJobEvents(req *pb.SubscribeJobEventsReques
 		return status.Error(codes.InvalidArgument, "job_id is required")
 	}
 
-	tenantCtx := orchestration.ContextWithTenant(stream.Context(), req.GetTenantId())
+	tenantCtx, tenantID, err := orchestratorTenant(stream.Context(), req.GetTenantId())
+	if err != nil {
+		return err
+	}
 
-	eventCh, err := s.agentSvc.SubscribeJobEvents(tenantCtx, req.TenantId, req.JobId)
+	eventCh, err := s.agentSvc.SubscribeJobEvents(tenantCtx, tenantID, req.JobId)
 	if err != nil {
 		return convertOrchestratorError(err)
 	}
@@ -951,7 +1009,10 @@ func (s *OrchestratorServer) SubscribeJobEvents(req *pb.SubscribeJobEventsReques
 func (s *OrchestratorServer) ListBackends(ctx context.Context, req *pb.OrchestratorListBackendsRequest) (*pb.OrchestratorListBackendsResponse, error) {
 	s.logger.Debug("Processing ListBackends request")
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+	tenantCtx, _, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
 	backends, err := s.agentSvc.ListBackends(tenantCtx)
 	if err != nil {
@@ -1018,7 +1079,10 @@ func (s *OrchestratorServer) ListRunners(_ context.Context, _ *pb.OrchestratorLi
 func (s *OrchestratorServer) Health(ctx context.Context, req *pb.OrchestratorHealthRequest) (*pb.OrchestratorHealthResponse, error) {
 	s.logger.Debug("Processing Health request")
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+	tenantCtx, _, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
 	report, err := s.agentSvc.HealthCheck(tenantCtx)
 	if err != nil {
@@ -1039,8 +1103,13 @@ func (s *OrchestratorServer) Health(ctx context.Context, req *pb.OrchestratorHea
 func (s *OrchestratorServer) RegisterFleetNode(ctx context.Context, req *pb.RegisterFleetNodeRequest) (*pb.RegisterFleetNodeResponse, error) {
 	s.logger.Debug("Processing RegisterFleetNode request")
 
+	tenantCtx, tenantID, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
+
 	svcReq := &orchestration.RegisterFleetNodeRequest{
-		TenantID:     req.TenantId,
+		TenantID:     tenantID,
 		Name:         req.Name,
 		Host:         req.Host,
 		Backend:      req.Backend,
@@ -1049,8 +1118,6 @@ func (s *OrchestratorServer) RegisterFleetNode(ctx context.Context, req *pb.Regi
 		WorkDir:      req.WorkDir,
 		Metadata:     req.Metadata,
 	}
-
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.TenantId)
 
 	resp, err := s.agentSvc.RegisterFleetNode(tenantCtx, svcReq)
 	if err != nil {
@@ -1071,9 +1138,12 @@ func (s *OrchestratorServer) GetFleetNode(ctx context.Context, req *pb.GetFleetN
 		return nil, status.Error(codes.InvalidArgument, "agent_id is required")
 	}
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.TenantId)
+	tenantCtx, tenantID, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
-	agent, err := s.agentSvc.GetFleetNode(tenantCtx, req.TenantId, req.NodeId)
+	agent, err := s.agentSvc.GetFleetNode(tenantCtx, tenantID, req.NodeId)
 	if err != nil {
 		return nil, convertOrchestratorError(err)
 	}
@@ -1099,14 +1169,17 @@ func (s *OrchestratorServer) ListFleetNodes(ctx context.Context, req *pb.ListFle
 		}
 	}
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.TenantId)
+	tenantCtx, tenantID, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
 	page, err := pageFromRPC(req.GetLimit(), req.GetOffset(), req.GetSort(), req.GetQ())
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := s.agentSvc.ListFleetNodesPage(tenantCtx, req.TenantId, filter, page)
+	result, err := s.agentSvc.ListFleetNodesPage(tenantCtx, tenantID, filter, page)
 	if err != nil {
 		return nil, convertListError(err, convertOrchestratorError)
 	}
@@ -1137,9 +1210,12 @@ func (s *OrchestratorServer) RemoveFleetNode(ctx context.Context, req *pb.Remove
 		return nil, status.Error(codes.InvalidArgument, "agent_id is required")
 	}
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.TenantId)
+	tenantCtx, tenantID, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
-	if err := s.agentSvc.RemoveFleetNode(tenantCtx, req.TenantId, req.NodeId); err != nil {
+	if err := s.agentSvc.RemoveFleetNode(tenantCtx, tenantID, req.NodeId); err != nil {
 		return nil, convertOrchestratorError(err)
 	}
 
@@ -1158,12 +1234,15 @@ func (s *OrchestratorServer) FleetNodeHeartbeat(ctx context.Context, req *pb.Fle
 		return nil, status.Error(codes.InvalidArgument, "agent_id is required")
 	}
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.TenantId)
+	tenantCtx, tenantID, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
 	// The gRPC heartbeat request carries no served-backend list, so it
 	// observes nothing and reconciles nothing. Only the REST verb the daemon
 	// itself calls reports what its runtime is serving.
-	if err := s.agentSvc.FleetNodeHeartbeat(tenantCtx, req.TenantId, req.NodeId, nil); err != nil {
+	if err := s.agentSvc.FleetNodeHeartbeat(tenantCtx, tenantID, req.NodeId, nil); err != nil {
 		return nil, convertOrchestratorError(err)
 	}
 
@@ -1804,7 +1883,10 @@ func (s *OrchestratorServer) SpawnChildJob(ctx context.Context, req *pb.SpawnChi
 		return nil, status.Error(codes.InvalidArgument, "parent_job_id is required")
 	}
 
-	tenantCtx := orchestration.ContextWithTenant(ctx, req.GetTenantId())
+	tenantCtx, _, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
 	svcReq := &orchestration.SpawnChildJobRequest{
 		ParentJobID:        req.GetParentJobId(),
@@ -1851,8 +1933,10 @@ func (s *OrchestratorServer) SubmitTaskArtifacts(ctx context.Context, req *pb.Su
 		return nil, status.Error(codes.InvalidArgument, "task_id is required")
 	}
 
-	tenantID := req.GetTenantId()
-	tenantCtx := orchestration.ContextWithTenant(ctx, tenantID)
+	tenantCtx, tenantID, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
 	artifacts := protoArtifactsToService(req.GetArtifacts())
 
@@ -1875,8 +1959,10 @@ func (s *OrchestratorServer) ListTaskArtifacts(ctx context.Context, req *pb.List
 		return nil, status.Error(codes.InvalidArgument, "task_id is required")
 	}
 
-	tenantID := req.GetTenantId()
-	tenantCtx := orchestration.ContextWithTenant(ctx, tenantID)
+	tenantCtx, tenantID, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
 	artifacts, err := s.agentSvc.ListTaskArtifacts(tenantCtx, tenantID, req.GetTaskId())
 	if err != nil {
@@ -1900,8 +1986,10 @@ func (s *OrchestratorServer) GetTaskArtifact(ctx context.Context, req *pb.GetTas
 		return nil, status.Error(codes.InvalidArgument, "name is required")
 	}
 
-	tenantID := req.GetTenantId()
-	tenantCtx := orchestration.ContextWithTenant(ctx, tenantID)
+	tenantCtx, tenantID, err := orchestratorTenant(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 
 	artifact, err := s.agentSvc.GetTaskArtifact(tenantCtx, tenantID, req.GetTaskId(), req.GetName())
 	if err != nil {

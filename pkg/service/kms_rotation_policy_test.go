@@ -16,7 +16,6 @@
 package service
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -36,7 +35,7 @@ func TestSetKeyRotationPolicy_Success(t *testing.T) {
 	mgr.addKey(newKMSKeyMeta("rp-key-1", "AES-256-GCM"))
 	svc := buildRotationSchedulerKMS(mgr)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	resp, err := svc.SetKeyRotationPolicy(ctx, &SetKeyRotationPolicyRequest{
 		KeyID: "rp-key-1",
 		Policy: &RotationPolicy{
@@ -73,7 +72,7 @@ func TestSetKeyRotationPolicy_NilRequest(t *testing.T) {
 	mgr := newRotationKMSManager()
 	svc := buildRotationSchedulerKMS(mgr)
 
-	_, err := svc.SetKeyRotationPolicy(context.Background(), nil)
+	_, err := svc.SetKeyRotationPolicy(systemTenantCtx(), nil)
 	if err == nil {
 		t.Fatal("expected error for nil request, got nil")
 	}
@@ -84,7 +83,7 @@ func TestSetKeyRotationPolicy_EmptyKeyID(t *testing.T) {
 	mgr := newRotationKMSManager()
 	svc := buildRotationSchedulerKMS(mgr)
 
-	_, err := svc.SetKeyRotationPolicy(context.Background(), &SetKeyRotationPolicyRequest{
+	_, err := svc.SetKeyRotationPolicy(systemTenantCtx(), &SetKeyRotationPolicyRequest{
 		KeyID:  "",
 		Policy: &RotationPolicy{AutoRotate: false},
 	})
@@ -99,7 +98,7 @@ func TestSetKeyRotationPolicy_NilPolicy(t *testing.T) {
 	mgr.addKey(newKMSKeyMeta("rp-nil-policy", "AES-256-GCM"))
 	svc := buildRotationSchedulerKMS(mgr)
 
-	_, err := svc.SetKeyRotationPolicy(context.Background(), &SetKeyRotationPolicyRequest{
+	_, err := svc.SetKeyRotationPolicy(systemTenantCtx(), &SetKeyRotationPolicyRequest{
 		KeyID:  "rp-nil-policy",
 		Policy: nil,
 	})
@@ -115,7 +114,7 @@ func TestSetKeyRotationPolicy_AutoRotateWithZeroInterval(t *testing.T) {
 	mgr.addKey(newKMSKeyMeta("rp-zero-interval", "AES-256-GCM"))
 	svc := buildRotationSchedulerKMS(mgr)
 
-	_, err := svc.SetKeyRotationPolicy(context.Background(), &SetKeyRotationPolicyRequest{
+	_, err := svc.SetKeyRotationPolicy(systemTenantCtx(), &SetKeyRotationPolicyRequest{
 		KeyID: "rp-zero-interval",
 		Policy: &RotationPolicy{
 			AutoRotate: true,
@@ -132,7 +131,7 @@ func TestSetKeyRotationPolicy_KeyNotFound(t *testing.T) {
 	mgr := newRotationKMSManager()
 	svc := buildRotationSchedulerKMS(mgr)
 
-	_, err := svc.SetKeyRotationPolicy(context.Background(), &SetKeyRotationPolicyRequest{
+	_, err := svc.SetKeyRotationPolicy(systemTenantCtx(), &SetKeyRotationPolicyRequest{
 		KeyID: "no-such-key",
 		Policy: &RotationPolicy{
 			AutoRotate: true,
@@ -151,7 +150,7 @@ func TestSetKeyRotationPolicy_DisableAutoRotate(t *testing.T) {
 	mgr.addKey(newKMSKeyMeta("rp-disable", "AES-256-GCM"))
 	svc := buildRotationSchedulerKMS(mgr)
 
-	resp, err := svc.SetKeyRotationPolicy(context.Background(), &SetKeyRotationPolicyRequest{
+	resp, err := svc.SetKeyRotationPolicy(systemTenantCtx(), &SetKeyRotationPolicyRequest{
 		KeyID: "rp-disable",
 		Policy: &RotationPolicy{
 			AutoRotate: false,
@@ -177,7 +176,7 @@ func TestGetKeyRotationPolicy_RoundTrip(t *testing.T) {
 	mgr.addKey(newKMSKeyMeta("rp-roundtrip", "AES-256-GCM"))
 	svc := buildRotationSchedulerKMS(mgr)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	interval := 7 * 24 * time.Hour
 	_, err := svc.SetKeyRotationPolicy(ctx, &SetKeyRotationPolicyRequest{
@@ -214,7 +213,7 @@ func TestGetKeyRotationPolicy_NilRequest(t *testing.T) {
 	mgr := newRotationKMSManager()
 	svc := buildRotationSchedulerKMS(mgr)
 
-	_, err := svc.GetKeyRotationPolicy(context.Background(), nil)
+	_, err := svc.GetKeyRotationPolicy(systemTenantCtx(), nil)
 	if err == nil {
 		t.Fatal("expected error for nil request, got nil")
 	}
@@ -225,7 +224,7 @@ func TestGetKeyRotationPolicy_EmptyKeyID(t *testing.T) {
 	mgr := newRotationKMSManager()
 	svc := buildRotationSchedulerKMS(mgr)
 
-	_, err := svc.GetKeyRotationPolicy(context.Background(), &GetKeyRotationPolicyRequest{KeyID: ""})
+	_, err := svc.GetKeyRotationPolicy(systemTenantCtx(), &GetKeyRotationPolicyRequest{KeyID: ""})
 	if err == nil {
 		t.Fatal("expected error for empty key_id, got nil")
 	}
@@ -236,7 +235,7 @@ func TestGetKeyRotationPolicy_KeyNotFound(t *testing.T) {
 	mgr := newRotationKMSManager()
 	svc := buildRotationSchedulerKMS(mgr)
 
-	_, err := svc.GetKeyRotationPolicy(context.Background(), &GetKeyRotationPolicyRequest{
+	_, err := svc.GetKeyRotationPolicy(systemTenantCtx(), &GetKeyRotationPolicyRequest{
 		KeyID: "no-such-key",
 	})
 	if err == nil {
@@ -251,7 +250,7 @@ func TestGetKeyRotationPolicy_NoPolicy(t *testing.T) {
 	mgr.addKey(newKMSKeyMeta("rp-no-policy", "AES-256-GCM"))
 	svc := buildRotationSchedulerKMS(mgr)
 
-	resp, err := svc.GetKeyRotationPolicy(context.Background(), &GetKeyRotationPolicyRequest{
+	resp, err := svc.GetKeyRotationPolicy(systemTenantCtx(), &GetKeyRotationPolicyRequest{
 		KeyID: "rp-no-policy",
 	})
 	if err != nil {
@@ -273,7 +272,7 @@ func TestDeleteKeyRotationPolicy_Success(t *testing.T) {
 	mgr.addKey(newKMSKeyMeta("rp-delete", "AES-256-GCM"))
 	svc := buildRotationSchedulerKMS(mgr)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	// Set a policy first.
 	_, err := svc.SetKeyRotationPolicy(ctx, &SetKeyRotationPolicyRequest{
@@ -305,7 +304,7 @@ func TestDeleteKeyRotationPolicy_NilRequest(t *testing.T) {
 	mgr := newRotationKMSManager()
 	svc := buildRotationSchedulerKMS(mgr)
 
-	_, err := svc.DeleteKeyRotationPolicy(context.Background(), nil)
+	_, err := svc.DeleteKeyRotationPolicy(systemTenantCtx(), nil)
 	if err == nil {
 		t.Fatal("expected error for nil request, got nil")
 	}
@@ -316,7 +315,7 @@ func TestDeleteKeyRotationPolicy_EmptyKeyID(t *testing.T) {
 	mgr := newRotationKMSManager()
 	svc := buildRotationSchedulerKMS(mgr)
 
-	_, err := svc.DeleteKeyRotationPolicy(context.Background(), &DeleteKeyRotationPolicyRequest{KeyID: ""})
+	_, err := svc.DeleteKeyRotationPolicy(systemTenantCtx(), &DeleteKeyRotationPolicyRequest{KeyID: ""})
 	if err == nil {
 		t.Fatal("expected error for empty key_id, got nil")
 	}
@@ -327,7 +326,7 @@ func TestDeleteKeyRotationPolicy_KeyNotFound(t *testing.T) {
 	mgr := newRotationKMSManager()
 	svc := buildRotationSchedulerKMS(mgr)
 
-	_, err := svc.DeleteKeyRotationPolicy(context.Background(), &DeleteKeyRotationPolicyRequest{
+	_, err := svc.DeleteKeyRotationPolicy(systemTenantCtx(), &DeleteKeyRotationPolicyRequest{
 		KeyID: "no-such-key",
 	})
 	if err == nil {
@@ -346,7 +345,7 @@ func TestGenerateKey_WithRotationPolicy(t *testing.T) {
 	mgr := newRotationKMSManager()
 	svc := buildRotationSchedulerKMS(mgr)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	interval := 30 * 24 * time.Hour
 
 	resp, err := svc.GenerateKey(ctx, &GenerateKeyRequest{
@@ -390,7 +389,7 @@ func TestSchedulerIntegration_APISetPolicy(t *testing.T) {
 	mgr.addKey(newKMSKeyMeta("sched-api-key", "AES-256-GCM"))
 	svc := buildRotationSchedulerKMS(mgr)
 
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	// Set a policy with NextRotation in the PAST so the scheduler acts immediately.
 	pastTime := time.Now().Add(-5 * time.Minute)
@@ -439,7 +438,7 @@ func TestSchedulerIntegration_AuthzGate(t *testing.T) {
 	// We still test the path where no authenticated subject is in context.
 
 	// Context without a subject — should be denied (fail-closed).
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	_, err := svc.SetKeyRotationPolicy(ctx, &SetKeyRotationPolicyRequest{
 		KeyID: "authz-rp-key",
 		Policy: &RotationPolicy{

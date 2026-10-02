@@ -22,6 +22,7 @@ import (
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // UserServicerResolver returns the in-process qrdb UserServicer that owns the
@@ -251,11 +252,11 @@ func (s *QRDBUserStorage) GetUserByPIVThumbprint(ctx context.Context, thumbprint
 	if err != nil {
 		return nil, err
 	}
-	tenantID := iam.TenantFromContext(ctx)
-	tctx := qrdbsdk.ContextWithTenant(ctx, tenantID)
+	// The tenant (if any) is already bound under go-qrdb's key, which the
+	// servicer reads directly.
 
 	// SPKI first.
-	if core, err := svc.UserByCertThumbprint(tctx, thumbprint); err == nil {
+	if core, err := svc.UserByCertThumbprint(ctx, thumbprint); err == nil {
 		return ToIAMUser(*core), nil
 	} else if !isQRDBUserNotFound(err) {
 		return nil, mapQRDBUserError("piv.spki", err)
@@ -458,7 +459,7 @@ func (s *QRDBUserStorage) writeLegacyPIVIndex(ctx context.Context, u *iam.User) 
 	if len(thumbprints) == 0 {
 		return nil
 	}
-	tctx := iam.ContextWithTenant(ctx, u.TenantID)
+	tctx := tenantctx.WithTenant(ctx, u.TenantID)
 	val := indexValue(u.TenantID, u.ID)
 	for _, tp := range thumbprints {
 		if err := s.kv.Put(tctx, userLegacyPIVIndexKey(u.TenantID, tp), val); err != nil {
@@ -479,7 +480,7 @@ func (s *QRDBUserStorage) deleteStaleLegacyPIVIndex(ctx context.Context, prior *
 	if prior == nil {
 		return nil
 	}
-	tctx := iam.ContextWithTenant(ctx, u.TenantID)
+	tctx := tenantctx.WithTenant(ctx, u.TenantID)
 	current := make(map[string]struct{})
 	for _, tp := range u.LegacyPIVThumbprints() {
 		current[tp] = struct{}{}
@@ -503,7 +504,7 @@ func (s *QRDBUserStorage) deleteLegacyPIVIndex(ctx context.Context, tenantID str
 	if prior == nil {
 		return nil
 	}
-	tctx := iam.ContextWithTenant(ctx, tenantID)
+	tctx := tenantctx.WithTenant(ctx, tenantID)
 	for _, tp := range legacyPIVThumbprintsFromBindings(prior.CertBindings) {
 		if err := s.kv.Delete(tctx, userLegacyPIVIndexKey(tenantID, tp)); err != nil {
 			return err
@@ -519,7 +520,7 @@ func (s *QRDBUserStorage) deleteLegacyPIVIndex(ctx context.Context, tenantID str
 // user id. It tries the tenant-scoped key first when a tenant is in context,
 // then falls back to the global key. A not-found maps to iam.ErrUserNotFound.
 func (s *QRDBUserStorage) resolveLegacyPIV(ctx context.Context, thumbprint string) (string, string, error) {
-	if tenantID := iam.TenantFromContext(ctx); tenantID != "" {
+	if tenantID, ok := tenantctx.Lookup(ctx); ok {
 		owning, userID, ok, err := s.indexLookup(ctx, userLegacyPIVIndexKey(tenantID, thumbprint))
 		if err != nil {
 			return "", "", err

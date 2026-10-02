@@ -25,6 +25,7 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
@@ -251,7 +252,7 @@ func (s *TokenService) GenerateAccessToken(ctx context.Context, claims *Claims) 
 
 	// Store under the TOKEN's tenant, not whatever tenant happens to be on the
 	// caller's context. The revocation reader is tenant-scoped — GetToken
-	// resolves tokenKey(TenantFromContext(ctx), jti) — and a missing record
+	// resolves tokenKey(contextTenant(ctx), jti) — and a missing record
 	// reads as "not revoked", so a write that lands in a different store than
 	// the read makes logout silently ineffective until the token expires. The
 	// ceremony is exactly that case: it issues from the login request's
@@ -307,7 +308,7 @@ func (s *TokenService) resolveEffectivePermissions(ctx context.Context, claims *
 		TenantID: claims.TenantID,
 		Roles:    claims.Roles,
 	}
-	infos, err := rbac.ListPermissions(withQRDBTenant(ctx, claims.TenantID), identity)
+	infos, err := rbac.ListPermissions(withTokenTenant(ctx, claims.TenantID), identity)
 	if err != nil {
 		return nil, dberrors.Wrapf(err, dberrors.ErrInternal, "iam.TokenService.resolveEffectivePermissions", "failed to resolve effective permissions")
 	}
@@ -459,7 +460,7 @@ func (s *TokenService) RevokeToken(ctx context.Context, tokenValue string) error
 		// it into the context so the tenant-scoped token index is resolved
 		// (revocation already parses the JWT, so this is free).
 		if tid, ok := claims["tenant_id"].(string); ok && tid != "" {
-			ctx = ContextWithTenant(ctx, tid)
+			ctx = tenantctx.WithTenant(ctx, tid)
 		}
 		// Extract JTI from JWT
 		if jti, ok := claims["jti"].(string); ok {

@@ -14,11 +14,13 @@ physical storage directory), or raft (dedicated consensus group). Single-tenant 
 Client Request
     │
     ▼
-API Layer (REST/gRPC/MCP)
-    │  sets tenant in context via IAM middleware
+API Layer (REST/gRPC/MCP/Unix)
+    │  go-qrdb's AuthMiddleware (or the legacy listener's interceptor)
+    │  binds the caller's tenant under go-qrdb's central key
     ▼
 Service Layer (pkg/service/)
-    │  prepareTenantContext(ctx) → validates tenant ID
+    │  tenantctx.FromContext / prepareTenantContext(ctx) → refuses an
+    │  unbound context, validates the tenant ID
     │  tenantScopedKey(tenantID, id) → prefixes storage key
     ▼
 Storage Layer (KVStore / QRDB SDK)
@@ -29,7 +31,9 @@ Physical Storage (PebbleDB via Raft)
 
 Every service follows the same pattern:
 
-1. Extract tenant ID from context: `iam.TenantFromContext(ctx)`
+1. Read the tenant from go-qrdb's central context key through
+   `pkg/tenantctx` (see "Request Tenant Resolution" below) — the one helper
+   every service uses; there is no go-quicbaas-private tenant key
 2. Validate tenant ID (alphanumeric, hyphens, underscores; max 128 chars)
 3. Scope storage key: `prefix/{tenantID}/{originalKey}`
 4. Perform storage operation with scoped key
@@ -41,10 +45,36 @@ Every service follows the same pattern:
 |------|-------|
 | Max length | 128 characters |
 | Allowed chars | `[a-zA-Z0-9_-]` |
-| Empty value | Valid — resolves to the system tenant (see below) |
+| Empty value | Refused — an absent tenant is never the system tenant (see below) |
 | Path separators | Rejected |
 
 Validation is shared across all services via `validateTenantID()` and `isValidTenantChar()` in `pkg/service/kms_tenant.go`.
+
+## Request Tenant Resolution
+
+`pkg/tenantctx` (go-quicbaas#1150) is the single read and bind point for the
+tenant a request acts for. It owns no context key: the tenant lives under
+go-qrdb's central key (`qrdbsdk.ContextWithTenant` / `TenantFromContext`),
+which go-qrdb's `AuthMiddleware` binds from the authenticated identity on
+every transport the unified server runs, and which go-quicbaas's own
+authenticating paths (`injectPrincipal`, the legacy gRPC/Unix authorization
+interceptor, the MCP upstream projection) bind through `tenantctx.WithTenant`.
+
+| Function | Use |
+|----------|-----|
+| `FromContext(ctx, op)` | The bound tenant, or a `*MissingTenantError` (coded `ErrForbidden`, so 403 / `PermissionDenied` on every transport). Every service that scopes records reads this. |
+| `Target(ctx, op, requested)` | Resolve a caller-supplied tenant (a `tenant_id` field, an `X-Tenant-ID` header). Empty means the caller's own tenant; the caller's own tenant is accepted; anything else is a `*CrossTenantError` (coded `ErrForbidden`) for **every** caller, the system tenant included — a request field is not an authorization. |
+| `WithTenant` / `WithSystem` | Bind a tenant. In-process callers that act for the platform bind the system tenant explicitly: the embedded transport does so at `Request`/`RequestStream` when the caller bound none, and `auth.NewSystemContext` does so for daemon-internal jobs. |
+| `Lookup(ctx)` | The login and token plane only, which runs before a tenant is known; never for scoping records. |
+
+**Fail closed.** A context with no tenant bound is refused. Before #1150 the
+services read a go-quicbaas-private key that nothing on the unified gRPC path
+set, treated the empty result as "single-tenant / system", and then honoured
+whatever tenant the request named — so a tenant-A caller authorized by
+go-qrdb reached tenant B and system data. Inside the services the explicit
+system binding still maps to the empty, unprefixed platform scope
+(`prepareTenantContext` returns `""` for it), so storage layouts are unchanged;
+what changed is that `""` can only be reached by binding the system tenant.
 
 ## The System Tenant
 
@@ -96,7 +126,7 @@ type; collapsing the two would be a silent widening.
 | Certificate | `certificate_tenant.go` | N/A (external CA) | Context validation only |
 | Embedding | `embedding_tenant.go` | N/A (external provider) | Context validation only |
 | Object Storage Admin | `objectstorage_admin_tenant.go` | N/A (infra-level) | Context validation only |
-| Object Storage | `objectstorage_tenant.go` | Deferred | Interface-only, not yet implemented |
+| Object Storage | `objectstorage_tenant.go` | Catalog entry tenant | Every operation resolves its tenant with `objectStorageTenant` (tenantctx.Target): the request's `X-Tenant-ID` / `tenant_id` may only repeat the caller's own tenant |
 | Dynamic Secrets | `dynamic_secrets_tenant.go` | Deferred | Interface-only, not yet implemented |
 | IAM | N/A | N/A | Platform-scoped, not tenant-scoped |
 
@@ -145,11 +175,12 @@ Barrier encryption is handled transparently by `qrdb.BarrierBackend`. When `Barr
 
 ## Backward Compatibility
 
-Single-tenant deployments (empty tenant ID) require zero changes:
-- Storage keys are unmodified
-- All data is visible in list operations
-- No access control is applied
-- All helper functions pass through without modification
+Storage layouts are unchanged: the system tenant keeps the unprefixed
+layout. What changed in go-quicbaas#1150 is how the system scope is reached.
+A single-tenant or embedded deployment reaches it because its caller is bound
+to the system tenant — the embedded transport and `auth.NewSystemContext`
+bind it — never because no tenant was bound. A request with no tenant bound is
+refused, and a request naming a tenant other than its caller's is refused.
 
 ## Testing
 

@@ -24,6 +24,7 @@ import (
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // newRoleStoreTestService wires a real MemoryStorage-backed IdentityStore onto
@@ -50,7 +51,7 @@ func newRoleStoreTestServiceWithStore(t *testing.T, tenantID string, is *iam.Ide
 	db := svc.(*quicBaaS)
 	db.iamProvider = &mockIAMServiceProvider{identityStore: is}
 
-	ctx := iam.ContextWithTenant(context.Background(), tenantID)
+	ctx := tenantctx.WithTenant(context.Background(), tenantID)
 	return svc, ctx
 }
 
@@ -171,7 +172,7 @@ func TestRoleStore_IdentityStoreUnconfigured(t *testing.T) {
 	db := svc.(*quicBaaS)
 	db.iamProvider = &mockIAMServiceProvider{identityStore: nil}
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-x")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-x")
 
 	resp, err := svc.ListAuthRoles(ctx, &AuthListRolesRequest{})
 	assert.Nil(t, resp)
@@ -193,7 +194,7 @@ func TestRoleStore_IdentityStoreError(t *testing.T) {
 	db := svc.(*quicBaaS)
 	db.iamProvider = &mockIAMServiceProvider{identityStoreErr: stderrors.New("provider down")}
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-x")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-x")
 
 	resp, err := svc.ListAuthRoles(ctx, &AuthListRolesRequest{})
 	assert.Nil(t, resp)
@@ -401,7 +402,7 @@ func TestRoleStore_AssignRole_MissingTenantContext(t *testing.T) {
 	assert.Nil(t, resp)
 	require.Error(t, err)
 
-	assert.Contains(t, err.Error(), "missing_tenant_context")
+	assertMissingTenant(t, err)
 	assert.Contains(t, err.Error(), "service.AssignRole")
 }
 
@@ -415,7 +416,7 @@ func TestRoleStore_RevokeRole_MissingTenantContext(t *testing.T) {
 	assert.Nil(t, resp)
 	require.Error(t, err)
 
-	assert.Contains(t, err.Error(), "missing_tenant_context")
+	assertMissingTenant(t, err)
 	assert.Contains(t, err.Error(), "service.RevokeRole")
 }
 
@@ -523,6 +524,9 @@ func assertInternalError(t *testing.T, err error) {
 func assertMissingTenant(t *testing.T, err error) {
 	t.Helper()
 	require.Error(t, err)
-	expected := dberrors.NewMissingTenantContextError("probe")
-	assert.Equal(t, expected.Code, dberrors.Code(err))
+	// An absent tenant is refused as tenantctx's typed MissingTenantError,
+	// coded ErrForbidden so every transport answers 403 (go-quicbaas#1150).
+	var missing *tenantctx.MissingTenantError
+	require.ErrorAs(t, err, &missing)
+	assert.Equal(t, dberrors.ErrForbidden, dberrors.Code(err))
 }

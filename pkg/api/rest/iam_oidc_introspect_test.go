@@ -34,6 +34,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
@@ -218,7 +219,7 @@ func setupIntrospectHandler(t *testing.T) (*IAMHandler, *iam.OIDCProvider, iam.A
 // mintToken issues an access token through the public client_credentials grant.
 func mintToken(t *testing.T, provider *iam.OIDCProvider) string {
 	t.Helper()
-	ctx := iam.ContextWithTenant(context.Background(), introspectTenant)
+	ctx := tenantctx.WithTenant(context.Background(), introspectTenant)
 	resp, err := provider.Token(ctx, &iam.TokenRequest{
 		GrantType:    iam.GrantTypeClientCredentials,
 		ClientID:     introspectClientID,
@@ -296,7 +297,7 @@ func TestIntrospect_InactiveForRevoked(t *testing.T) {
 	token := mintToken(t, provider)
 
 	// Revoke via the public RFC 7009 endpoint using client credentials.
-	require.NoError(t, provider.Revoke(iam.ContextWithTenant(context.Background(), introspectTenant),
+	require.NoError(t, provider.Revoke(tenantctx.WithTenant(context.Background(), introspectTenant),
 		&iam.RevokeRequest{
 			Token:        token,
 			ClientID:     introspectClientID,

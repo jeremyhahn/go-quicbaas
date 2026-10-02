@@ -22,9 +22,9 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/registry"
 	"github.com/jeremyhahn/go-quicbaas/pkg/registry/registrytest"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // memRegistryBackend wraps the shared in-memory backend with the two hooks
@@ -68,7 +68,7 @@ func codeOf(t *testing.T, err error) errors.ErrorCode {
 func TestRegistryService_RegisterResolveRenewDeregister(t *testing.T) {
 	backend := newMemRegistryBackend()
 	svc := NewRegistryServiceFromBackend(backend)
-	ctx := iam.ContextWithTenant(context.Background(), "acme")
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
 
 	reg, err := svc.Register(ctx, &RegisterServiceInstanceRequest{Instance: registryInstance(), TTLSeconds: 15})
 	if err != nil {
@@ -108,7 +108,7 @@ func TestRegistryService_RegisterResolveRenewDeregister(t *testing.T) {
 
 func TestRegistryService_NilRequests(t *testing.T) {
 	svc := NewRegistryServiceFromBackend(newMemRegistryBackend())
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	if _, err := svc.Register(ctx, nil); err != ErrRegistryNilRequest {
 		t.Fatalf("Register(nil) = %v", err)
 	}
@@ -129,13 +129,13 @@ func TestRegistryService_NilRequests(t *testing.T) {
 func TestRegistryService_RegisterTTLBounds(t *testing.T) {
 	svc := NewRegistryServiceFromBackend(newMemRegistryBackend())
 	for _, ttl := range []int64{0, RegistryMinTTLSeconds - 1, RegistryMaxTTLSeconds + 1} {
-		_, err := svc.Register(context.Background(), &RegisterServiceInstanceRequest{Instance: registryInstance(), TTLSeconds: ttl})
+		_, err := svc.Register(tenantctx.WithSystem(context.Background()), &RegisterServiceInstanceRequest{Instance: registryInstance(), TTLSeconds: ttl})
 		if err != ErrRegistryTTLRange {
 			t.Fatalf("Register(ttl=%d) = %v, want ErrRegistryTTLRange", ttl, err)
 		}
 	}
 	for _, ttl := range []int64{RegistryMinTTLSeconds, RegistryMaxTTLSeconds} {
-		if _, err := svc.Register(context.Background(), &RegisterServiceInstanceRequest{Instance: registryInstance(), TTLSeconds: ttl}); err != nil {
+		if _, err := svc.Register(tenantctx.WithSystem(context.Background()), &RegisterServiceInstanceRequest{Instance: registryInstance(), TTLSeconds: ttl}); err != nil {
 			t.Fatalf("Register(ttl=%d): %v", ttl, err)
 		}
 	}
@@ -147,7 +147,7 @@ func TestRegistryService_RegisterTTLBounds(t *testing.T) {
 func TestRegistryService_ErrorCodes(t *testing.T) {
 	backend := newMemRegistryBackend()
 	svc := NewRegistryServiceFromBackend(backend)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	_, err := svc.Register(ctx, &RegisterServiceInstanceRequest{Instance: RegistryServiceInstance{Service: "api"}, TTLSeconds: 5})
 	if got := codeOf(t, err); got != errors.ErrInvalidInput {
@@ -180,7 +180,7 @@ func TestRegistryService_ErrorCodes(t *testing.T) {
 func TestRegistryService_UnavailableStore(t *testing.T) {
 	down := stderrors.New("no qrdb client")
 	svc := newRegistryService(func() (*registry.Registry, error) { return nil, down })
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	checks := map[string]error{}
 	_, checks["register"] = svc.Register(ctx, &RegisterServiceInstanceRequest{Instance: registryInstance(), TTLSeconds: 5})
@@ -198,7 +198,7 @@ func TestRegistryService_UnavailableStore(t *testing.T) {
 func TestRegistryService_Watch(t *testing.T) {
 	backend := newMemRegistryBackend()
 	svc := NewRegistryServiceFromBackend(backend)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 	defer cancel()
 
 	reg, err := svc.Register(ctx, &RegisterServiceInstanceRequest{Instance: registryInstance(), TTLSeconds: 5})

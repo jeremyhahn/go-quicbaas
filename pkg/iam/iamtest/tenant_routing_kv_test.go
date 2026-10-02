@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // TestTenantRoutingKV_IsolatesBarrierTenants pins the property the double
@@ -29,7 +29,7 @@ func TestTenantRoutingKV_IsolatesBarrierTenants(t *testing.T) {
 	kv := NewTenantRoutingKV()
 	kv.BarrierTenant("burnin")
 
-	burnin := iam.ContextWithTenant(context.Background(), "burnin")
+	burnin := tenantctx.WithTenant(context.Background(), "burnin")
 	if err := kv.Put(burnin, "k", []byte("v")); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestTenantRoutingKV_IsolatesBarrierTenants(t *testing.T) {
 	for _, name := range []string{"", "acme"} {
 		ctx := context.Background()
 		if name != "" {
-			ctx = iam.ContextWithTenant(ctx, name)
+			ctx = tenantctx.WithTenant(ctx, name)
 		}
 		if _, err := kv.Get(ctx, "k"); err == nil {
 			t.Fatalf("tenant %q read the burn-in tenant's key", name)
@@ -69,7 +69,7 @@ func TestTenantRoutingKV_SealedTenantFailsClosed(t *testing.T) {
 	kv := NewTenantRoutingKV()
 	kv.BarrierTenant("burnin")
 	kv.SealTenant("burnin")
-	ctx := iam.ContextWithTenant(context.Background(), "burnin")
+	ctx := tenantctx.WithTenant(context.Background(), "burnin")
 
 	sealed := &TenantSealedError{}
 	assertSealed := func(name string, err error) {
@@ -103,7 +103,7 @@ func TestTenantRoutingKV_ScanAndListSeeOnlyTheContextTenant(t *testing.T) {
 	kv := NewTenantRoutingKV()
 	kv.BarrierTenant("burnin")
 
-	burnin := iam.ContextWithTenant(context.Background(), "burnin")
+	burnin := tenantctx.WithTenant(context.Background(), "burnin")
 	shared := context.Background()
 	if err := kv.Put(burnin, "p:1", []byte("a")); err != nil {
 		t.Fatalf("Put: %v", err)

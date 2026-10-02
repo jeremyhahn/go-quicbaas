@@ -22,11 +22,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service/mocks"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -390,7 +390,7 @@ func TestAccountMCP_MaterializeBindsTenancyToTheCaller(t *testing.T) {
 		},
 	})
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-1")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	// A tenant_id argument is deliberately supplied AND deliberately ignored:
 	// the tool must take tenancy from the caller, not the arguments.
 	result, err := reg.executeAccountTool(ctx, "quicbaas_agent_account_materialize", map[string]interface{}{

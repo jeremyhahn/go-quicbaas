@@ -20,6 +20,7 @@ import (
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // buildHomeRealmDirectory constructs the home-realm directory over the shared
@@ -81,6 +82,6 @@ func (s *Server) tenantContextFunc() grpcapi.TenantContextFunc {
 			// Best-effort: proceed without a tenant. Never reject.
 			return ctx
 		}
-		return iam.ContextWithTenant(ctx, tenantID)
+		return tenantctx.WithTenant(ctx, tenantID)
 	}
 }

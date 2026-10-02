@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -234,23 +234,16 @@ func TestOsEnforceBucketTenantAccess_UnscopedBucketDenied(t *testing.T) {
 // osPrepareTenantContext tests
 // =============================================================================
 
-func TestOsPrepareTenantContext_NoTenant(t *testing.T) {
-	ctx := context.Background()
-	tenantID, err := osPrepareTenantContext(ctx)
-	assert.NoError(t, err)
-	assert.Equal(t, "", tenantID)
-}
-
 func TestOsPrepareTenantContext_ValidTenant(t *testing.T) {
-	ctx := iam.ContextWithTenant(context.Background(), "acme-corp")
-	tenantID, err := osPrepareTenantContext(ctx)
+	ctx := tenantctx.WithTenant(context.Background(), "acme-corp")
+	tenantID, err := prepareTenantContext(ctx)
 	assert.NoError(t, err)
 	assert.Equal(t, "acme-corp", tenantID)
 }
 
 func TestOsPrepareTenantContext_InvalidTenant(t *testing.T) {
-	ctx := iam.ContextWithTenant(context.Background(), "invalid/tenant")
-	_, err := osPrepareTenantContext(ctx)
+	ctx := tenantctx.WithTenant(context.Background(), "invalid/tenant")
+	_, err := prepareTenantContext(ctx)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid character")
 }

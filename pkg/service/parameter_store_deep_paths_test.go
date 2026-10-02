@@ -25,6 +25,7 @@ import (
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -37,7 +38,7 @@ func TestSetParameters_NilRequest(t *testing.T) {
 	svc, err := NewParameterStoreService(pm, logger)
 	require.NoError(t, err)
 
-	resp, err := svc.SetParameters(context.Background(), nil)
+	resp, err := svc.SetParameters(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -52,7 +53,7 @@ func TestSetParameters_EmptyParameters(t *testing.T) {
 	svc, err := NewParameterStoreService(pm, logger)
 	require.NoError(t, err)
 
-	resp, err := svc.SetParameters(context.Background(), &interfaces.SetParametersRequest{
+	resp, err := svc.SetParameters(tenantctx.WithSystem(context.Background()), &interfaces.SetParametersRequest{
 		Parameters: []*interfaces.SetParameterRequest{},
 	})
 	require.NoError(t, err)
@@ -69,7 +70,7 @@ func TestSetParameters_Success(t *testing.T) {
 	pm.On("StoreBatch", mock.Anything, mock.AnythingOfType("[]*interfaces.ParameterEntry"), true, (*interfaces.StoreOptions)(nil)).
 		Return(nil).Once()
 
-	resp, err := svc.SetParameters(context.Background(), &interfaces.SetParametersRequest{
+	resp, err := svc.SetParameters(tenantctx.WithSystem(context.Background()), &interfaces.SetParametersRequest{
 		Parameters: []*interfaces.SetParameterRequest{
 			{Path: "/app/config/key1", Value: []byte("value1"), Type: "string"},
 			{Path: "/app/config/key2", Value: []byte("value2"), Type: "string"},
@@ -93,7 +94,7 @@ func TestSetParameters_StoreBatchError(t *testing.T) {
 	pm.On("StoreBatch", mock.Anything, mock.AnythingOfType("[]*interfaces.ParameterEntry"), true, (*interfaces.StoreOptions)(nil)).
 		Return(stderrors.New("storage error")).Once()
 
-	resp, err := svc.SetParameters(context.Background(), &interfaces.SetParametersRequest{
+	resp, err := svc.SetParameters(tenantctx.WithSystem(context.Background()), &interfaces.SetParametersRequest{
 		Parameters: []*interfaces.SetParameterRequest{
 			{Path: "/app/config/key1", Value: []byte("value1"), Type: "string"},
 		},
@@ -116,7 +117,7 @@ func TestSetParameters_WithEncryption(t *testing.T) {
 	pm.On("StoreBatch", mock.Anything, mock.AnythingOfType("[]*interfaces.ParameterEntry"), true, mock.AnythingOfType("*interfaces.StoreOptions")).
 		Return(nil).Once()
 
-	resp, err := svc.SetParameters(context.Background(), &interfaces.SetParametersRequest{
+	resp, err := svc.SetParameters(tenantctx.WithSystem(context.Background()), &interfaces.SetParametersRequest{
 		Parameters: []*interfaces.SetParameterRequest{
 			{Path: "/app/secret/key1", Value: []byte("secret"), Type: "securestring", KMSKeyID: "kms-key-123"},
 		},
@@ -134,7 +135,7 @@ func TestSetParameters_InvalidParameter(t *testing.T) {
 	svc, err := NewParameterStoreService(pm, logger)
 	require.NoError(t, err)
 
-	resp, err := svc.SetParameters(context.Background(), &interfaces.SetParametersRequest{
+	resp, err := svc.SetParameters(tenantctx.WithSystem(context.Background()), &interfaces.SetParametersRequest{
 		Parameters: []*interfaces.SetParameterRequest{
 			{Path: "", Value: []byte("value1"), Type: "string"}, // empty path
 		},
@@ -153,7 +154,7 @@ func TestSetParameters_ClosedService(t *testing.T) {
 	err = svc.(*parameterStoreService).Close()
 	require.NoError(t, err)
 
-	resp, err := svc.SetParameters(context.Background(), &interfaces.SetParametersRequest{
+	resp, err := svc.SetParameters(tenantctx.WithSystem(context.Background()), &interfaces.SetParametersRequest{
 		Parameters: []*interfaces.SetParameterRequest{
 			{Path: "/app/config/key1", Value: []byte("value1"), Type: "string"},
 		},
@@ -172,7 +173,7 @@ func TestListParameters_NilRequest(t *testing.T) {
 	svc, err := NewParameterStoreService(pm, logger)
 	require.NoError(t, err)
 
-	resp, err := svc.ListParameters(context.Background(), nil)
+	resp, err := svc.ListParameters(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -190,7 +191,7 @@ func TestListParameters_Success_PathsOnly(t *testing.T) {
 	pm.On("List", mock.Anything, "/app/", true, 100, "").
 		Return([]string{"/app/key1", "/app/key2"}, "", nil).Once()
 
-	resp, err := svc.ListParameters(context.Background(), &interfaces.ListParametersRequest{
+	resp, err := svc.ListParameters(tenantctx.WithSystem(context.Background()), &interfaces.ListParametersRequest{
 		Prefix:    "/app/",
 		Recursive: true,
 	})
@@ -224,7 +225,7 @@ func TestListParameters_Success_WithValues(t *testing.T) {
 			},
 		}, (map[string]error)(nil), nil).Once()
 
-	resp, err := svc.ListParameters(context.Background(), &interfaces.ListParametersRequest{
+	resp, err := svc.ListParameters(tenantctx.WithSystem(context.Background()), &interfaces.ListParametersRequest{
 		Prefix:     "/app/",
 		WithValues: true,
 	})
@@ -243,7 +244,7 @@ func TestListParameters_WithPagination(t *testing.T) {
 	pm.On("List", mock.Anything, "/app/", false, 10, "").
 		Return([]string{"/app/key1"}, "next-cursor-123", nil).Once()
 
-	resp, err := svc.ListParameters(context.Background(), &interfaces.ListParametersRequest{
+	resp, err := svc.ListParameters(tenantctx.WithSystem(context.Background()), &interfaces.ListParametersRequest{
 		Prefix: "/app/",
 		Limit:  10,
 	})
@@ -263,7 +264,7 @@ func TestListParameters_StorageError(t *testing.T) {
 	pm.On("List", mock.Anything, "/app/", false, 100, "").
 		Return(nil, "", stderrors.New("storage read error")).Once()
 
-	resp, err := svc.ListParameters(context.Background(), &interfaces.ListParametersRequest{
+	resp, err := svc.ListParameters(tenantctx.WithSystem(context.Background()), &interfaces.ListParametersRequest{
 		Prefix: "/app/",
 	})
 	require.Error(t, err)
@@ -283,7 +284,7 @@ func TestListParameters_GetBatchError(t *testing.T) {
 	pm.On("GetBatch", mock.Anything, []string{"/app/key1"}, false).
 		Return(nil, nil, stderrors.New("batch get error")).Once()
 
-	resp, err := svc.ListParameters(context.Background(), &interfaces.ListParametersRequest{
+	resp, err := svc.ListParameters(tenantctx.WithSystem(context.Background()), &interfaces.ListParametersRequest{
 		Prefix:     "/app/",
 		WithValues: true,
 	})
@@ -302,7 +303,7 @@ func TestListParameters_ClosedService(t *testing.T) {
 	err = svc.(*parameterStoreService).Close()
 	require.NoError(t, err)
 
-	resp, err := svc.ListParameters(context.Background(), &interfaces.ListParametersRequest{
+	resp, err := svc.ListParameters(tenantctx.WithSystem(context.Background()), &interfaces.ListParametersRequest{
 		Prefix: "/app/",
 	})
 	require.Error(t, err)
@@ -319,7 +320,7 @@ func TestSearchByTags_NilRequest(t *testing.T) {
 	svc, err := NewParameterStoreService(pm, logger)
 	require.NoError(t, err)
 
-	resp, err := svc.SearchByTags(context.Background(), nil)
+	resp, err := svc.SearchByTags(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -334,7 +335,7 @@ func TestSearchByTags_EmptyTags(t *testing.T) {
 	svc, err := NewParameterStoreService(pm, logger)
 	require.NoError(t, err)
 
-	resp, err := svc.SearchByTags(context.Background(), &interfaces.SearchByTagsRequest{
+	resp, err := svc.SearchByTags(tenantctx.WithSystem(context.Background()), &interfaces.SearchByTagsRequest{
 		Tags: map[string]string{},
 	})
 	require.Error(t, err)
@@ -354,7 +355,7 @@ func TestSearchByTags_Success_PathsOnly(t *testing.T) {
 	pm.On("SearchByTags", mock.Anything, map[string]string{"env": "prod"}, "", 100, "").
 		Return([]string{"/app/key1", "/app/key2"}, "", nil).Once()
 
-	resp, err := svc.SearchByTags(context.Background(), &interfaces.SearchByTagsRequest{
+	resp, err := svc.SearchByTags(tenantctx.WithSystem(context.Background()), &interfaces.SearchByTagsRequest{
 		Tags: map[string]string{"env": "prod"},
 	})
 	require.NoError(t, err)
@@ -385,7 +386,7 @@ func TestSearchByTags_Success_WithValues(t *testing.T) {
 			},
 		}, (map[string]error)(nil), nil).Once()
 
-	resp, err := svc.SearchByTags(context.Background(), &interfaces.SearchByTagsRequest{
+	resp, err := svc.SearchByTags(tenantctx.WithSystem(context.Background()), &interfaces.SearchByTagsRequest{
 		Tags:           map[string]string{"env": "prod"},
 		Prefix:         "/app/",
 		WithValues:     true,
@@ -407,7 +408,7 @@ func TestSearchByTags_StorageError(t *testing.T) {
 	pm.On("SearchByTags", mock.Anything, map[string]string{"env": "prod"}, "", 100, "").
 		Return(nil, "", stderrors.New("search error")).Once()
 
-	resp, err := svc.SearchByTags(context.Background(), &interfaces.SearchByTagsRequest{
+	resp, err := svc.SearchByTags(tenantctx.WithSystem(context.Background()), &interfaces.SearchByTagsRequest{
 		Tags: map[string]string{"env": "prod"},
 	})
 	require.Error(t, err)
@@ -427,7 +428,7 @@ func TestSearchByTags_GetBatchError(t *testing.T) {
 	pm.On("GetBatch", mock.Anything, []string{"/app/key1"}, false).
 		Return(nil, nil, stderrors.New("batch get error")).Once()
 
-	resp, err := svc.SearchByTags(context.Background(), &interfaces.SearchByTagsRequest{
+	resp, err := svc.SearchByTags(tenantctx.WithSystem(context.Background()), &interfaces.SearchByTagsRequest{
 		Tags:       map[string]string{"env": "prod"},
 		WithValues: true,
 	})
@@ -445,7 +446,7 @@ func TestSearchByTags_WithPagination(t *testing.T) {
 	pm.On("SearchByTags", mock.Anything, map[string]string{"env": "prod"}, "", 10, "cursor-abc").
 		Return([]string{"/app/key3"}, "next-cursor-def", nil).Once()
 
-	resp, err := svc.SearchByTags(context.Background(), &interfaces.SearchByTagsRequest{
+	resp, err := svc.SearchByTags(tenantctx.WithSystem(context.Background()), &interfaces.SearchByTagsRequest{
 		Tags:   map[string]string{"env": "prod"},
 		Limit:  10,
 		Cursor: "cursor-abc",
@@ -467,7 +468,7 @@ func TestSearchByTags_ClosedService(t *testing.T) {
 	err = svc.(*parameterStoreService).Close()
 	require.NoError(t, err)
 
-	resp, err := svc.SearchByTags(context.Background(), &interfaces.SearchByTagsRequest{
+	resp, err := svc.SearchByTags(tenantctx.WithSystem(context.Background()), &interfaces.SearchByTagsRequest{
 		Tags: map[string]string{"env": "prod"},
 	})
 	require.Error(t, err)

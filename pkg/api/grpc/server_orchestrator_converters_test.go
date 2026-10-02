@@ -26,6 +26,7 @@ import (
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -265,7 +266,7 @@ func TestOrchestratorServer_SessionResponseTimestampsAreNanoseconds(t *testing.T
 		},
 	}
 	server := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger())
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	spawn, err := server.SpawnSession(ctx, &pb.SpawnSessionRequest{Backend: "claude", TenantId: "t1"})
 	require.NoError(t, err)
@@ -305,7 +306,7 @@ func TestOrchestratorServer_SessionResponseTimestampsUnsetStayUnset(t *testing.T
 		},
 	}
 	server := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger())
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	spawn, err := server.SpawnSession(ctx, &pb.SpawnSessionRequest{Backend: "claude", TenantId: "t1"})
 	require.NoError(t, err)
@@ -331,7 +332,7 @@ func TestOrchestratorServer_ListSessionsForwardsTheStatusFilter(t *testing.T) {
 	}
 	server := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger())
 
-	_, err := server.ListSessions(context.Background(), &pb.ListSessionsRequest{
+	_, err := server.ListSessions(tenantctx.WithTenant(context.Background(), "t1"), &pb.ListSessionsRequest{
 		TenantId: "t1", Backend: "claude", Status: "active",
 	})
 	require.NoError(t, err)
@@ -340,7 +341,7 @@ func TestOrchestratorServer_ListSessionsForwardsTheStatusFilter(t *testing.T) {
 	assert.Equal(t, "claude", captured.Backend)
 
 	// Omitted means every state, exactly as over REST.
-	_, err = server.ListSessions(context.Background(), &pb.ListSessionsRequest{TenantId: "t1"})
+	_, err = server.ListSessions(tenantctx.WithTenant(context.Background(), "t1"), &pb.ListSessionsRequest{TenantId: "t1"})
 	require.NoError(t, err)
 	assert.Equal(t, orchestration.SessionState(""), captured.Status)
 }
@@ -365,7 +366,7 @@ func TestOrchestratorServer_UnknownListStatusIsABadRequest(t *testing.T) {
 	}
 	server := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger())
 
-	_, err := server.ListSessions(context.Background(), &pb.ListSessionsRequest{
+	_, err := server.ListSessions(tenantctx.WithTenant(context.Background(), "t1"), &pb.ListSessionsRequest{
 		TenantId: "t1", Status: "actve",
 	})
 	require.Error(t, err)
@@ -389,7 +390,7 @@ func TestOrchestratorServer_AgentServiceFailureIsStillInternal(t *testing.T) {
 	}
 	server := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger())
 
-	_, err := server.ListSessions(context.Background(), &pb.ListSessionsRequest{TenantId: "t1"})
+	_, err := server.ListSessions(tenantctx.WithTenant(context.Background(), "t1"), &pb.ListSessionsRequest{TenantId: "t1"})
 	require.Error(t, err)
 	assert.Equal(t, codes.Internal, status.Code(err))
 }
@@ -413,7 +414,7 @@ func TestOrchestratorServer_ListSessionsWithNoTenantDoesNotSpanTenants(t *testin
 	}
 	server := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger())
 
-	_, err := server.ListSessions(context.Background(), &pb.ListSessionsRequest{})
+	_, err := server.ListSessions(tenantctx.WithSystem(context.Background()), &pb.ListSessionsRequest{})
 	require.NoError(t, err)
 	assert.NotEmpty(t, captured,
 		"an omitted tenant_id reached the service as the cross-tenant mode, which lists every tenant")
@@ -433,7 +434,7 @@ func TestOrchestratorServer_ListSessionsHonoursTheExplicitTenant(t *testing.T) {
 	}
 	server := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger())
 
-	_, err := server.ListSessions(context.Background(), &pb.ListSessionsRequest{TenantId: "tenant-a"})
+	_, err := server.ListSessions(tenantctx.WithTenant(context.Background(), "tenant-a"), &pb.ListSessionsRequest{TenantId: "tenant-a"})
 	require.NoError(t, err)
 	assert.Equal(t, "tenant-a", captured)
 }

@@ -28,6 +28,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -37,7 +38,7 @@ import (
 // seedConversation writes one exchange to a session's transcript.
 func seedConversation(t *testing.T, log orchestration.SessionEventLog, tenantID, sessionID string) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	require.NoError(t, log.PutMeta(ctx, &orchestration.SessionMeta{
 		SessionID: sessionID, TenantID: tenantID,
 	}))

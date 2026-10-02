@@ -42,7 +42,7 @@ import (
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 const (
@@ -101,13 +101,17 @@ func validateName(field, s string) error {
 	return nil
 }
 
-// tenantFromContext resolves and validates the tenant for the request, using
-// the platform-standard context tenant (empty = single-tenant mode). It mirrors
-// the validation rules used elsewhere in the stack: alphanumeric, hyphen, and
-// underscore only, bounded length.
+// tenantFromContext resolves and validates the tenant for the request
+// (tenantctx.FromContext, which refuses a context with no tenant bound). The
+// system tenant maps to "", the registry's unprefixed system namespace. It
+// mirrors the validation rules used elsewhere in the stack: alphanumeric,
+// hyphen, and underscore only, bounded length.
 func tenantFromContext(ctx context.Context) (string, error) {
-	tenant := iam.TenantFromContext(ctx)
-	if tenant == "" {
+	tenant, err := tenantctx.FromContext(ctx, "registry")
+	if err != nil {
+		return "", err
+	}
+	if tenantctx.IsSystem(tenant) {
 		return "", nil
 	}
 	if len(tenant) > maxTenantLen {

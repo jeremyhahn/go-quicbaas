@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -50,7 +51,7 @@ func TestRunGCOperation_CompletesSuccessfully(t *testing.T) {
 	}
 
 	// Run synchronously
-	svc.runGCOperation(context.Background(), op)
+	svc.runGCOperation(tenantctx.WithSystem(context.Background()), op)
 
 	assert.Equal(t, GCStatusCompleted, op.Status)
 	assert.NotZero(t, op.CompletedAt)
@@ -64,7 +65,7 @@ func TestRunGCOperation_ContextCancelled(t *testing.T) {
 	backendMgr.AddBackend("backend-1", nil, &catalog.BackendConfig{Type: "memory"})
 
 	// Cancel context before running
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 	cancel()
 
 	op := &GCOperation{
@@ -102,7 +103,7 @@ func TestRunGCOperation_StoreUsageError(t *testing.T) {
 		StartedAt: 1000000,
 	}
 
-	svc.runGCOperation(context.Background(), op)
+	svc.runGCOperation(tenantctx.WithSystem(context.Background()), op)
 
 	// Should complete despite one backend failing
 	assert.Equal(t, GCStatusCompleted, op.Status)
@@ -119,7 +120,7 @@ func TestRunGCOperation_EmptyBackendList(t *testing.T) {
 		StartedAt: 1000000,
 	}
 
-	svc.runGCOperation(context.Background(), op)
+	svc.runGCOperation(tenantctx.WithSystem(context.Background()), op)
 
 	assert.Equal(t, GCStatusCompleted, op.Status)
 	assert.Equal(t, int64(0), op.ObjectsScanned)
@@ -139,7 +140,7 @@ func TestRunCompaction_CompletesSuccessfully(t *testing.T) {
 		StartedAt: 1000000,
 	}
 
-	svc.runCompaction(context.Background(), op)
+	svc.runCompaction(tenantctx.WithSystem(context.Background()), op)
 
 	assert.Equal(t, "completed", op.Status)
 	assert.NotZero(t, op.CompletedAt)
@@ -157,7 +158,7 @@ func TestRunCompaction_AggressiveMode(t *testing.T) {
 		StartedAt:  1000000,
 	}
 
-	svc.runCompaction(context.Background(), op)
+	svc.runCompaction(tenantctx.WithSystem(context.Background()), op)
 
 	assert.Equal(t, "completed", op.Status)
 	assert.NotZero(t, op.CompletedAt)
@@ -184,7 +185,7 @@ func TestGetGarbageCollectionProgress_FoundCompletedOperation(t *testing.T) {
 	}
 	svc.mu.Unlock()
 
-	resp, err := svc.GetGarbageCollectionProgress(context.Background(), &GetGarbageCollectionProgressRequest{
+	resp, err := svc.GetGarbageCollectionProgress(tenantctx.WithSystem(context.Background()), &GetGarbageCollectionProgressRequest{
 		OperationID: "gc-completed",
 	})
 	require.NoError(t, err)
@@ -199,7 +200,7 @@ func TestGetGarbageCollectionProgress_FoundCompletedOperation(t *testing.T) {
 func TestGetGarbageCollectionProgress_NotFoundOperation(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
 
-	resp, err := svc.GetGarbageCollectionProgress(context.Background(), &GetGarbageCollectionProgressRequest{
+	resp, err := svc.GetGarbageCollectionProgress(tenantctx.WithSystem(context.Background()), &GetGarbageCollectionProgressRequest{
 		OperationID: "nonexistent",
 	})
 	require.Error(t, err)
@@ -220,7 +221,7 @@ func TestGetGarbageCollectionProgress_RunningOperation(t *testing.T) {
 	}
 	svc.mu.Unlock()
 
-	resp, err := svc.GetGarbageCollectionProgress(context.Background(), &GetGarbageCollectionProgressRequest{
+	resp, err := svc.GetGarbageCollectionProgress(tenantctx.WithSystem(context.Background()), &GetGarbageCollectionProgressRequest{
 		OperationID: "gc-running",
 	})
 	require.NoError(t, err)
@@ -232,7 +233,7 @@ func TestGetGarbageCollectionProgress_RunningOperation(t *testing.T) {
 func TestGetGarbageCollectionProgress_NilRequest(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
 
-	resp, err := svc.GetGarbageCollectionProgress(context.Background(), nil)
+	resp, err := svc.GetGarbageCollectionProgress(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 }

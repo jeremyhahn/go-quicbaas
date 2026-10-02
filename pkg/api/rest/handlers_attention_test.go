@@ -29,9 +29,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // registerForgeIssueSourceKind registers sdlc.TaskSourceKindForgeIssue with
@@ -75,7 +75,7 @@ func attentionCall(t *testing.T, server *Server, tenant, method, path string, bo
 	}
 	req := httptest.NewRequest(method, path, &buf)
 	if tenant != "" {
-		req = req.WithContext(iam.ContextWithTenant(req.Context(), tenant))
+		req = req.WithContext(tenantctx.WithTenant(req.Context(), tenant))
 	}
 	r := chi.NewRouter()
 	r.Get("/api/v1/orchestrator/attention", server.HandleListAttention)

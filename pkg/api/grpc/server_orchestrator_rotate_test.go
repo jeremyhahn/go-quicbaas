@@ -25,6 +25,7 @@ import (
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -72,7 +73,7 @@ func TestOrchestratorServer_RotateSessionAccount_MovesTheSession(t *testing.T) {
 	server, svc := newRotatingOrchestratorServer()
 
 	availableAt := time.Now().UTC().Add(30 * time.Minute).Truncate(time.Second)
-	resp, err := server.RotateSessionAccount(context.Background(), &pb.RotateSessionAccountRequest{
+	resp, err := server.RotateSessionAccount(tenantctx.WithTenant(context.Background(), "tenant-a"), &pb.RotateSessionAccountRequest{
 		SessionId:       "session-abc",
 		TenantId:        "tenant-a",
 		Reason:          "seat retired",
@@ -102,7 +103,7 @@ func TestOrchestratorServer_RotateSessionAccount_MovesTheSession(t *testing.T) {
 func TestOrchestratorServer_RotateSessionAccount_UnsetAvailableAtStaysZero(t *testing.T) {
 	server, svc := newRotatingOrchestratorServer()
 
-	_, err := server.RotateSessionAccount(context.Background(), &pb.RotateSessionAccountRequest{
+	_, err := server.RotateSessionAccount(tenantctx.WithTenant(context.Background(), "tenant-a"), &pb.RotateSessionAccountRequest{
 		SessionId:    "session-abc",
 		TenantId:     "tenant-a",
 		HoldOutgoing: true,
@@ -116,7 +117,7 @@ func TestOrchestratorServer_RotateSessionAccount_UnsetAvailableAtStaysZero(t *te
 func TestOrchestratorServer_RotateSessionAccount_RequiresSessionID(t *testing.T) {
 	server, svc := newRotatingOrchestratorServer()
 
-	_, err := server.RotateSessionAccount(context.Background(), &pb.RotateSessionAccountRequest{
+	_, err := server.RotateSessionAccount(tenantctx.WithSystem(context.Background()), &pb.RotateSessionAccountRequest{
 		TenantId: "tenant-a",
 	})
 	require.Error(t, err)
@@ -133,7 +134,7 @@ func TestOrchestratorServer_RotateSessionAccount_PinnedSessionIsAConflict(t *tes
 		}
 	}
 
-	_, err := server.RotateSessionAccount(context.Background(), &pb.RotateSessionAccountRequest{
+	_, err := server.RotateSessionAccount(tenantctx.WithTenant(context.Background(), "tenant-a"), &pb.RotateSessionAccountRequest{
 		SessionId: "session-abc",
 		TenantId:  "tenant-a",
 	})
@@ -148,7 +149,7 @@ func TestOrchestratorServer_RotateSessionAccount_UnknownSessionIsNotFound(t *tes
 		return nil, &orchestration.SessionNotFoundError{SessionID: "missing"}
 	}
 
-	_, err := server.RotateSessionAccount(context.Background(), &pb.RotateSessionAccountRequest{
+	_, err := server.RotateSessionAccount(tenantctx.WithTenant(context.Background(), "tenant-a"), &pb.RotateSessionAccountRequest{
 		SessionId: "missing",
 		TenantId:  "tenant-a",
 	})
@@ -162,7 +163,7 @@ func TestOrchestratorServer_RotateSessionAccount_UnknownSessionIsNotFound(t *tes
 func TestOrchestratorServer_RotateSessionAccount_UnsupportedDeployment(t *testing.T) {
 	server := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
 
-	_, err := server.RotateSessionAccount(context.Background(), &pb.RotateSessionAccountRequest{
+	_, err := server.RotateSessionAccount(tenantctx.WithSystem(context.Background()), &pb.RotateSessionAccountRequest{
 		SessionId: "session-abc",
 		TenantId:  "tenant-a",
 	})
@@ -187,7 +188,7 @@ func TestOrchestratorServer_SpawnSession_CarriesAccountAllow(t *testing.T) {
 	}
 	server := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger())
 
-	_, err := server.SpawnSession(context.Background(), &pb.SpawnSessionRequest{
+	_, err := server.SpawnSession(tenantctx.WithTenant(context.Background(), "tenant-a"), &pb.SpawnSessionRequest{
 		Backend:      "claude",
 		TenantId:     "tenant-a",
 		AccountId:    "acct-a",

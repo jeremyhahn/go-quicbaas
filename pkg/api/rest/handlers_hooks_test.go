@@ -372,7 +372,7 @@ func TestHandleHookTaskCreated_Success(t *testing.T) {
 		"cwd": "/current/working/directory"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -402,7 +402,7 @@ func TestHandleHookTaskCreated_InvalidPayload(t *testing.T) {
 	server, _, _, cleanup := setupHookTestServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader("{invalid json"))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader("{invalid json"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -422,7 +422,7 @@ func TestHandleHookTaskCreated_MissingTaskID(t *testing.T) {
 		"team_name": "my-project"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -442,7 +442,7 @@ func TestHandleHookTaskCreated_MissingTeamName(t *testing.T) {
 		"teammate_name": "implementer"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -462,7 +462,7 @@ func TestHandleHookTaskCreated_MissingTeammateName(t *testing.T) {
 		"team_name": "my-project"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -490,7 +490,7 @@ func TestHandleHookTaskCreated_DuplicateTask(t *testing.T) {
 		"team_name": "my-project"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -518,7 +518,7 @@ func TestHandleHookTaskCreated_WithTenantHeader(t *testing.T) {
 		"session_id": "sess-001"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
+	req := tenantRequest("custom-tenant", http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Tenant-ID", "custom-tenant")
 	w := httptest.NewRecorder()
@@ -527,7 +527,7 @@ func TestHandleHookTaskCreated_WithTenantHeader(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	// Verify task was stored under the custom tenant ID.
+	// The header repeats the caller's own tenant, so the task is stored there.
 	storedTask, ok := taskStore.tasks["custom-tenant/task-002"]
 	require.True(t, ok)
 	assert.Equal(t, "custom-tenant", storedTask.TenantID)
@@ -543,7 +543,7 @@ func TestHandleHookTaskCreated_MissingHookEventName(t *testing.T) {
 		"team_name": "my-project"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -557,7 +557,7 @@ func TestHandleHookTaskCreated_EmptyBody(t *testing.T) {
 	server, _, _, cleanup := setupHookTestServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(""))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(""))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -581,7 +581,7 @@ func TestHandleHookTaskCreated_PublishFailureDoesNotBlockResponse(t *testing.T) 
 		"team_name": "my-project"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -616,7 +616,7 @@ func TestHandleHookTaskCompleted_Success(t *testing.T) {
 		"session_id": "abc123"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/task-completed", strings.NewReader(payload))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-completed", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -648,7 +648,7 @@ func TestHandleHookTaskCompleted_TaskNotFound(t *testing.T) {
 		"team_name": "my-project"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/task-completed", strings.NewReader(payload))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-completed", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -662,7 +662,7 @@ func TestHandleHookTaskCompleted_InvalidPayload(t *testing.T) {
 	server, _, _, cleanup := setupHookTestServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/task-completed", strings.NewReader("{not valid"))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-completed", strings.NewReader("{not valid"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -680,7 +680,7 @@ func TestHandleHookTaskCompleted_MissingTaskID(t *testing.T) {
 		"team_name": "my-project"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/task-completed", strings.NewReader(payload))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-completed", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -699,7 +699,7 @@ func TestHandleHookTaskCompleted_MissingHookEventName(t *testing.T) {
 		"team_name": "my-project"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/task-completed", strings.NewReader(payload))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-completed", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -726,7 +726,7 @@ func TestHandleHookTaskCompleted_PublishFailureDoesNotBlockResponse(t *testing.T
 		"team_name": "my-project"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/task-completed", strings.NewReader(payload))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-completed", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -750,7 +750,7 @@ func TestHandleHookTeammateIdle_NoAvailableTasks(t *testing.T) {
 		"session_id": "abc123"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/teammate-idle", strings.NewReader(payload))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/teammate-idle", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -785,7 +785,7 @@ func TestHandleHookTeammateIdle_TaskAvailable_BlocksIdle(t *testing.T) {
 		"team_name": "my-project"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/teammate-idle", strings.NewReader(payload))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/teammate-idle", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -819,7 +819,7 @@ func TestHandleHookTeammateIdle_TaskAvailableWithNoSubject(t *testing.T) {
 		"team_name": "my-project"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/teammate-idle", strings.NewReader(payload))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/teammate-idle", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -838,7 +838,7 @@ func TestHandleHookTeammateIdle_InvalidPayload(t *testing.T) {
 	server, _, _, cleanup := setupHookTestServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/teammate-idle", strings.NewReader("{broken"))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/teammate-idle", strings.NewReader("{broken"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -856,7 +856,7 @@ func TestHandleHookTeammateIdle_MissingTeammateName(t *testing.T) {
 		"team_name": "my-project"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/teammate-idle", strings.NewReader(payload))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/teammate-idle", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -875,7 +875,7 @@ func TestHandleHookTeammateIdle_MissingTeamName(t *testing.T) {
 		"teammate_name": "researcher"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/teammate-idle", strings.NewReader(payload))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/teammate-idle", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -897,7 +897,7 @@ func TestHandleHookTeammateIdle_ListTasksError(t *testing.T) {
 		"team_name": "my-project"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/teammate-idle", strings.NewReader(payload))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/teammate-idle", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -1070,7 +1070,7 @@ func TestHandleHookTaskCreated_TaskStoreNotConfigured(t *testing.T) {
 		"team_name": "my-project"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -1099,7 +1099,7 @@ func TestHandleHookTaskCompleted_MessagingNotConfigured(t *testing.T) {
 		"team_name": "my-project"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/task-completed", strings.NewReader(payload))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-completed", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -1126,7 +1126,7 @@ func TestHookRoutes_Integration(t *testing.T) {
 		"team_name": "test-team"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
+	req := tenantRequest("my-project", http.MethodPost, "/api/v1/hooks/task-created", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 

@@ -24,7 +24,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -175,23 +175,16 @@ func TestParamEnforceTenantAccess_OperationInErrorMessage(t *testing.T) {
 // paramPrepareTenantContext tests
 // =============================================================================
 
-func TestParamPrepareTenantContext_NoTenant(t *testing.T) {
-	ctx := context.Background()
-	tenantID, err := paramPrepareTenantContext(ctx)
-	assert.NoError(t, err)
-	assert.Equal(t, "", tenantID)
-}
-
 func TestParamPrepareTenantContext_ValidTenant(t *testing.T) {
-	ctx := iam.ContextWithTenant(context.Background(), "acme-corp")
-	tenantID, err := paramPrepareTenantContext(ctx)
+	ctx := tenantctx.WithTenant(context.Background(), "acme-corp")
+	tenantID, err := prepareTenantContext(ctx)
 	assert.NoError(t, err)
 	assert.Equal(t, "acme-corp", tenantID)
 }
 
 func TestParamPrepareTenantContext_InvalidTenant(t *testing.T) {
-	ctx := iam.ContextWithTenant(context.Background(), "invalid tenant!@#")
-	_, err := paramPrepareTenantContext(ctx)
+	ctx := tenantctx.WithTenant(context.Background(), "invalid tenant!@#")
+	_, err := prepareTenantContext(ctx)
 	require.Error(t, err)
 	var qbErr *errors.QBError
 	require.ErrorAs(t, err, &qbErr)
@@ -200,8 +193,8 @@ func TestParamPrepareTenantContext_InvalidTenant(t *testing.T) {
 
 func TestParamPrepareTenantContext_TooLongTenant(t *testing.T) {
 	longID := strings.Repeat("a", 129)
-	ctx := iam.ContextWithTenant(context.Background(), longID)
-	_, err := paramPrepareTenantContext(ctx)
+	ctx := tenantctx.WithTenant(context.Background(), longID)
+	_, err := prepareTenantContext(ctx)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "maximum length")
 }

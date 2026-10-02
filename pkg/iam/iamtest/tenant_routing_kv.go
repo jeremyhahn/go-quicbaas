@@ -19,8 +19,8 @@ import (
 	"sync"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // TenantSealedError reports a store that could not be resolved because the
@@ -194,7 +194,7 @@ func (r *TenantRoutingKV) AlsoReadTenantFrom(read func(context.Context) string) 
 // Callers hold r.mu, so the readers slice is read under the same lock that
 // AlsoReadTenantFrom writes it under.
 func (r *TenantRoutingKV) tenantFrom(ctx context.Context) string {
-	if tenantID := iam.TenantFromContext(ctx); tenantID != "" {
+	if tenantID, ok := tenantctx.Lookup(ctx); ok {
 		return tenantID
 	}
 	for _, read := range r.readers {

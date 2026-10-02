@@ -28,6 +28,7 @@ import (
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // defaultPollInterval is the interval for polling policy changes.
@@ -415,7 +416,10 @@ func (a *PEPServiceAdapter) Subscribe(ctx context.Context, serviceID string, res
 		return ctx.Err()
 	}
 
-	tenantID := iam.TenantFromContext(ctx)
+	tenantID, err := tenantctx.FromContext(ctx, "pep.Subscribe")
+	if err != nil {
+		return err
+	}
 
 	// Send initial snapshot of all matching policies
 	knownPolicies, err := a.sendSnapshot(ctx, tenantID, resourcePatterns, updates)

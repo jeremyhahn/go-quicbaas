@@ -26,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/metrics"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 var (
@@ -204,7 +205,7 @@ func (s *parameterStoreService) GetParameter(ctx context.Context, req *interface
 	}
 
 	// Prepare tenant context for storage scoping
-	tenantID, err := paramPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +267,7 @@ func (s *parameterStoreService) SetParameter(ctx context.Context, req *interface
 	}
 
 	// Prepare tenant context for storage scoping
-	tenantID, err := paramPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -360,7 +361,7 @@ func (s *parameterStoreService) DeleteParameter(ctx context.Context, req *interf
 	}
 
 	// Prepare tenant context for storage scoping
-	tenantID, err := paramPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -425,7 +426,7 @@ func (s *parameterStoreService) GetParameters(ctx context.Context, req *interfac
 	}
 
 	// Prepare tenant context for storage scoping
-	tenantID, err := paramPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -521,7 +522,7 @@ func (s *parameterStoreService) SetParameters(ctx context.Context, req *interfac
 	}
 
 	// Prepare tenant context for storage scoping
-	tenantID, err := paramPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -648,7 +649,7 @@ func (s *parameterStoreService) DeleteParameters(ctx context.Context, req *inter
 	}
 
 	// Prepare tenant context for storage scoping
-	tenantID, err := paramPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -740,7 +741,7 @@ func (s *parameterStoreService) ListParameters(ctx context.Context, req *interfa
 	}
 
 	// Prepare tenant context for storage scoping
-	tenantID, err := paramPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -841,7 +842,7 @@ func (s *parameterStoreService) SearchByTags(ctx context.Context, req *interface
 	}
 
 	// Prepare tenant context for storage scoping
-	tenantID, err := paramPrepareTenantContext(ctx)
+	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1009,7 +1010,7 @@ func (s *parameterStoreService) setParameterContext(ctx context.Context, path, p
 	}
 
 	// Extract tenant from context
-	if tenantID := iam.TenantFromContext(ctx); tenantID != "" {
+	if tenantID, ok := tenantctx.Lookup(ctx); ok {
 		paramCtx.TenantID = tenantID
 	}
 

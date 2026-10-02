@@ -26,6 +26,7 @@ import (
 	"context"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // subjectCtxKey is the unexported context key type for Subject.
@@ -58,8 +59,18 @@ func SubjectFromContext(ctx context.Context) (interfaces.Subject, bool) {
 // SECURITY: system contexts must NEVER be constructed from values that arrive
 // over the network. Only intra-process code (schedulers, daemon startup,
 // re-encryption jobs) should call this function.
+//
+// A parent with no tenant bound gets the system tenant (tenantctx.WithSystem):
+// a system operation with no tenant of its own acts for the platform, and the
+// services no longer read an unbound tenant as the system
+// (go-quicbaas#1150). A tenant the parent already carries is kept, so a
+// system operation run for one tenant stays scoped to it.
 func NewSystemContext(parent context.Context) context.Context {
-	return context.WithValue(parent, systemCtxKey{}, true)
+	ctx := context.WithValue(parent, systemCtxKey{}, true)
+	if _, bound := tenantctx.Lookup(ctx); bound {
+		return ctx
+	}
+	return tenantctx.WithSystem(ctx)
 }
 
 // IsSystemContext reports whether ctx was created by NewSystemContext.

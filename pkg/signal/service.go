@@ -35,8 +35,8 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/profiles"
 	signalstore "github.com/jeremyhahn/go-signal/pkg/store"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 const (
@@ -180,7 +180,7 @@ func (s *signalService) RegisterAccount(ctx context.Context, req *RegisterReques
 		return nil, countErr
 	}
 	if accountCount >= tenantCfg.MaxAccounts {
-		tenantID := iam.TenantFromContext(ctx)
+		tenantID, _ := tenantctx.Lookup(ctx) // comma-ok: countAccounts above already required the binding
 		return nil, &AccountQuotaExceededError{
 			TenantID:    tenantID,
 			MaxAccounts: tenantCfg.MaxAccounts,
@@ -413,8 +413,8 @@ func (s *signalService) getTenantStores(ctx context.Context) (*signalStores, *Si
 		return nil, nil, &SignalNotEnabledError{TenantID: ""}
 	}
 
-	tenantID := iam.TenantFromContext(ctx)
-	if tenantID == "" {
+	tenantID, ok := tenantctx.Lookup(ctx)
+	if !ok {
 		return nil, nil, &TenantNotFoundError{TenantID: ""}
 	}
 
@@ -477,8 +477,8 @@ func (s *signalService) loadTenantConfigs(ctx context.Context) error {
 
 // countAccounts returns the number of accounts in the current tenant namespace.
 func (s *signalService) countAccounts(ctx context.Context) (int, error) {
-	tenantID := iam.TenantFromContext(ctx)
-	if tenantID == "" {
+	tenantID, ok := tenantctx.Lookup(ctx)
+	if !ok {
 		return 0, &TenantNotFoundError{TenantID: ""}
 	}
 

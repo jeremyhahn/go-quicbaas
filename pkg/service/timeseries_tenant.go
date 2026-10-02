@@ -26,7 +26,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // tsTenantMetricPrefix is the storage prefix for tenant-scoped time series metrics.
@@ -131,7 +131,13 @@ func tsTenantListPrefix(tenantID string) string {
 // request context for time series operations. Returns the validated tenant ID
 // or an error if the tenant ID is invalid.
 func prepareTimeSeriesTenantContext(ctx context.Context) (string, error) {
-	tenantID := iam.TenantFromContext(ctx)
+	tenantID, err := tenantctx.FromContext(ctx, "timeseries")
+	if err != nil {
+		return "", err
+	}
+	if tenantctx.IsSystem(tenantID) {
+		return "", nil // the platform scope; see prepareTenantContext
+	}
 	if err := validateTimeSeriesTenantID(tenantID); err != nil {
 		return "", err
 	}
@@ -145,7 +151,9 @@ func prepareTimeSeriesTenantContext(ctx context.Context) (string, error) {
 func tenantScopedMetric(ctx context.Context, op, metric string) (tenantID, scoped string, err error) {
 	tenantID, err = prepareTimeSeriesTenantContext(ctx)
 	if err != nil {
-		return "", "", &errors.QBError{Code: errors.ErrInvalidInput, Op: op, Err: err}
+		// Already coded: ErrForbidden for a missing tenant, ErrInvalidInput
+		// for a malformed one.
+		return "", "", err
 	}
 	return tenantID, tsTenantScopedMetric(tenantID, metric), nil
 }

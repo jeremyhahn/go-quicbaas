@@ -24,8 +24,8 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
 )
 
@@ -169,7 +169,7 @@ func contextWithAuthorizedSubject(ctx context.Context, authzCtx *platformtoken.A
 	// Only set the tenant key when the token carries a tenant; an empty
 	// TenantID leaves single-tenant behavior unchanged.
 	if authzCtx.TenantID != "" {
-		ctx = iam.ContextWithTenant(ctx, authzCtx.TenantID)
+		ctx = tenantctx.WithTenant(ctx, authzCtx.TenantID)
 	}
 	return ctx
 }

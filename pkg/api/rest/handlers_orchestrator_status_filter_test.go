@@ -43,7 +43,7 @@ func TestOrchestratorListSessions_ForwardsTheStatusFilter(t *testing.T) {
 		return &orchestration.ListSessionsResponse{}, nil
 	}
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := systemRequest(http.MethodGet,
 		"/api/v1/orchestrator/sessions?backend=claude&status=active", nil)
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorListSessions(rec, req)
@@ -68,7 +68,7 @@ func TestOrchestratorListSessions_NoStatusMeansEveryState(t *testing.T) {
 		return &orchestration.ListSessionsResponse{}, nil
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/sessions", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/orchestrator/sessions", nil)
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorListSessions(rec, req)
 
@@ -97,7 +97,7 @@ func TestOrchestratorListSessions_UnknownStatusIsABadRequest(t *testing.T) {
 		}
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/sessions?status=actve", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/orchestrator/sessions?status=actve", nil)
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorListSessions(rec, req)
 
@@ -121,7 +121,7 @@ func TestOrchestratorListSessions_ServiceFailureIsStillAServerError(t *testing.T
 		}
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/sessions", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/orchestrator/sessions", nil)
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorListSessions(rec, req)
 

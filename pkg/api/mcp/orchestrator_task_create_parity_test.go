@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // capturingTaskCreator records the CreateTaskRequest the tool built.
@@ -42,7 +43,7 @@ func (c *capturingTaskCreator) CreateTask(_ context.Context, req *orchestration.
 // body does — the adoption workaround used to be REST-only.
 func TestExecuteOrchestratorTaskCreate_CarriesWhatRESTCarries(t *testing.T) {
 	svc := &capturingTaskCreator{mockAgentService: &mockAgentService{}}
-	_, err := newFleetRegistry(t, svc).executeAgentTool(context.Background(), "quicbaas_orchestrator_task_create", map[string]interface{}{
+	_, err := newFleetRegistry(t, svc).executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_task_create", map[string]interface{}{
 		"tenant_id": "t1", "subject": "Fix it", "runner": "sdlc", "auto_spawn": true,
 		"project_id":     "proj-1",
 		"source":         map[string]interface{}{"kind": "forge_issue", "ref": "acme/api#141", "url": "http://forge/141"},
@@ -72,7 +73,7 @@ func TestExecuteOrchestratorTaskCreate_CarriesWhatRESTCarries(t *testing.T) {
 func TestExecuteOrchestratorTaskCreate_RefusesAMalformedObject(t *testing.T) {
 	for _, field := range []string{"source", "park"} {
 		svc := &capturingTaskCreator{mockAgentService: &mockAgentService{}}
-		_, err := newFleetRegistry(t, svc).executeAgentTool(context.Background(), "quicbaas_orchestrator_task_create", map[string]interface{}{
+		_, err := newFleetRegistry(t, svc).executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_task_create", map[string]interface{}{
 			"tenant_id": "t1", "subject": "Fix it", field: "acme/api#141",
 		})
 		require.Error(t, err, field)

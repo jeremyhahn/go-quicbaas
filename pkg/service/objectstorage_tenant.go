@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // osTenantPrefix is the storage prefix for tenant-scoped object keys.
@@ -130,12 +131,24 @@ func osEnforceBucketTenantAccess(tenantID, bucket, operation string) error {
 	return nil
 }
 
-// osPrepareTenantContext extracts and validates the tenant ID from context.
-// Returns the validated tenant ID or an error if the tenant ID is invalid.
-func osPrepareTenantContext(ctx context.Context) (string, error) {
-	tenantID := extractTenantID(ctx)
-	if err := validateTenantID(tenantID); err != nil {
+// objectStorageTenant resolves the tenant an object-storage request acts for
+// and returns it in the service's own convention, where "" is the platform
+// scope that every tenant check below exempts.
+//
+// The tenant a request names (an X-Tenant-ID header, a tenant_id field) is
+// honoured only as tenantctx.Target allows: a caller may name only its own
+// tenant, the system tenant included, and every other naming is refused
+// (go-quicbaas#1150). A tenant caller that names nothing is scoped to its own
+// tenant rather than to the platform scope, and a request with no tenant
+// bound is refused. The service methods overwrite req.TenantID with the
+// result, so every check after it reads the authorized tenant.
+func objectStorageTenant(ctx context.Context, op, requested string) (string, error) {
+	tenantID, err := tenantctx.Target(ctx, op, requested)
+	if err != nil {
 		return "", err
+	}
+	if tenantctx.IsSystem(tenantID) {
+		return "", nil
 	}
 	return tenantID, nil
 }

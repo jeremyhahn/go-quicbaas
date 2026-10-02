@@ -156,7 +156,7 @@ func errorCodeToGRPCCode(code errors.ErrorCode) codes.Code {
 		return codes.InvalidArgument
 	case errors.ErrUnauthorized:
 		return codes.Unauthenticated
-	case errors.ErrForbidden:
+	case errors.ErrForbidden, errors.ErrCrossTenantAccess:
 		return codes.PermissionDenied
 	case errors.ErrUnavailable:
 		return codes.Unavailable

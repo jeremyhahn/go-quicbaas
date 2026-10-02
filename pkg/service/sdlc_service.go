@@ -26,9 +26,9 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	quicbaaserrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -899,7 +899,7 @@ func (s *SDLCService) WebhookSecret(ctx context.Context, tenantID, secretRef str
 	if secretRef == "" {
 		return nil, nil
 	}
-	resp, err := s.secrets.GetSecret(iam.ContextWithTenant(ctx, tenantID), &GetSecretRequest{SecretID: secretRef})
+	resp, err := s.secrets.GetSecret(tenantctx.WithTenant(ctx, tenantID), &GetSecretRequest{SecretID: secretRef})
 	if err != nil {
 		return nil, err
 	}

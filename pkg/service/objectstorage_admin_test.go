@@ -28,6 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -399,7 +400,7 @@ func TestNewObjectStorageAdminService_NilLogger(t *testing.T) {
 
 func TestCreateBackend_Success(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &CreateBackendRequest{
 		Name:    "test-backend",
@@ -418,7 +419,7 @@ func TestCreateBackend_Success(t *testing.T) {
 
 func TestCreateBackend_ValidationError_NilRequest(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.CreateBackend(ctx, nil)
 	assert.Error(t, err)
@@ -431,7 +432,7 @@ func TestCreateBackend_ValidationError_NilRequest(t *testing.T) {
 
 func TestCreateBackend_ValidationError_EmptyName(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &CreateBackendRequest{
 		Type: BackendTypeLocal,
@@ -449,7 +450,7 @@ func TestCreateBackend_ValidationError_EmptyName(t *testing.T) {
 
 func TestCreateBackend_ValidationError_MissingType(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &CreateBackendRequest{
 		Name: "test-backend",
@@ -463,7 +464,7 @@ func TestCreateBackend_ValidationError_MissingType(t *testing.T) {
 
 func TestCreateBackend_ValidationError_MissingTier(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &CreateBackendRequest{
 		Name: "test-backend",
@@ -477,7 +478,7 @@ func TestCreateBackend_ValidationError_MissingTier(t *testing.T) {
 
 func TestCreateBackend_AlreadyExists(t *testing.T) {
 	svc, _, backendMgr := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Pre-add the backend
 	backendMgr.AddBackend("test-backend", nil, &catalog.BackendConfig{Type: "local"})
@@ -500,7 +501,7 @@ func TestCreateBackend_AlreadyExists(t *testing.T) {
 
 func TestCreateBackend_ServiceClosed(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Close the service
 	svc.closed.Store(true)
@@ -523,7 +524,7 @@ func TestCreateBackend_ServiceClosed(t *testing.T) {
 
 func TestUpdateBackend_Success(t *testing.T) {
 	svc, _, backendMgr := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Pre-add the backend
 	backendMgr.AddBackend("test-backend", nil, &catalog.BackendConfig{
@@ -547,7 +548,7 @@ func TestUpdateBackend_Success(t *testing.T) {
 
 func TestUpdateBackend_ValidationError_NilRequest(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.UpdateBackend(ctx, nil)
 	assert.Error(t, err)
@@ -556,7 +557,7 @@ func TestUpdateBackend_ValidationError_NilRequest(t *testing.T) {
 
 func TestUpdateBackend_ValidationError_EmptyName(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &UpdateBackendRequest{
 		Config: map[string]string{"key": "value"},
@@ -569,7 +570,7 @@ func TestUpdateBackend_ValidationError_EmptyName(t *testing.T) {
 
 func TestUpdateBackend_NotFound(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &UpdateBackendRequest{
 		Name:   "nonexistent",
@@ -587,7 +588,7 @@ func TestUpdateBackend_NotFound(t *testing.T) {
 
 func TestUpdateBackend_ServiceClosed(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	svc.closed.Store(true)
 
@@ -607,7 +608,7 @@ func TestUpdateBackend_ServiceClosed(t *testing.T) {
 
 func TestDeleteBackend_Success(t *testing.T) {
 	svc, _, backendMgr := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Pre-add the backend
 	backendMgr.AddBackend("test-backend", nil, &catalog.BackendConfig{Type: "local"})
@@ -626,7 +627,7 @@ func TestDeleteBackend_Success(t *testing.T) {
 
 func TestDeleteBackend_ValidationError_NilRequest(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.DeleteBackend(ctx, nil)
 	assert.Error(t, err)
@@ -635,7 +636,7 @@ func TestDeleteBackend_ValidationError_NilRequest(t *testing.T) {
 
 func TestDeleteBackend_ValidationError_EmptyName(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &DeleteBackendRequest{
 		Force: true,
@@ -648,7 +649,7 @@ func TestDeleteBackend_ValidationError_EmptyName(t *testing.T) {
 
 func TestDeleteBackend_NotFound(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &DeleteBackendRequest{
 		Name:  "nonexistent",
@@ -666,7 +667,7 @@ func TestDeleteBackend_NotFound(t *testing.T) {
 
 func TestDeleteBackend_ObjectsExistNoForce(t *testing.T) {
 	svc, catalogMgr, backendMgr := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Pre-add the backend
 	backendMgr.AddBackend("test-backend", nil, &catalog.BackendConfig{Type: "local"})
@@ -692,7 +693,7 @@ func TestDeleteBackend_ObjectsExistNoForce(t *testing.T) {
 
 func TestDeleteBackend_WithMigration(t *testing.T) {
 	svc, catalogMgr, backendMgr := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Pre-add both backends
 	backendMgr.AddBackend("source-backend", nil, &catalog.BackendConfig{Type: "local"})
@@ -721,7 +722,7 @@ func TestDeleteBackend_WithMigration(t *testing.T) {
 
 func TestDeleteBackend_MigrationTargetNotFound(t *testing.T) {
 	svc, catalogMgr, backendMgr := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Pre-add source backend only
 	backendMgr.AddBackend("source-backend", nil, &catalog.BackendConfig{Type: "local"})
@@ -747,7 +748,7 @@ func TestDeleteBackend_MigrationTargetNotFound(t *testing.T) {
 
 func TestDeleteBackend_ServiceClosed(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	svc.closed.Store(true)
 
@@ -767,7 +768,7 @@ func TestDeleteBackend_ServiceClosed(t *testing.T) {
 
 func TestSetBackendStatus_Success(t *testing.T) {
 	svc, _, backendMgr := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Pre-add the backend
 	backendMgr.AddBackend("test-backend", nil, &catalog.BackendConfig{
@@ -790,7 +791,7 @@ func TestSetBackendStatus_Success(t *testing.T) {
 
 func TestSetBackendStatus_ValidationError_NilRequest(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.SetBackendStatus(ctx, nil)
 	assert.Error(t, err)
@@ -799,7 +800,7 @@ func TestSetBackendStatus_ValidationError_NilRequest(t *testing.T) {
 
 func TestSetBackendStatus_ValidationError_EmptyName(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &SetBackendStatusRequest{
 		Enabled: true,
@@ -812,7 +813,7 @@ func TestSetBackendStatus_ValidationError_EmptyName(t *testing.T) {
 
 func TestSetBackendStatus_NotFound(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &SetBackendStatusRequest{
 		Name:    "nonexistent",
@@ -830,7 +831,7 @@ func TestSetBackendStatus_NotFound(t *testing.T) {
 
 func TestSetBackendStatus_ServiceClosed(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	svc.closed.Store(true)
 
@@ -850,7 +851,7 @@ func TestSetBackendStatus_ServiceClosed(t *testing.T) {
 
 func TestGetStorageStats_Success(t *testing.T) {
 	svc, _, backendMgr := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Add some backends
 	backendMgr.AddBackend("backend1", nil, &catalog.BackendConfig{
@@ -878,7 +879,7 @@ func TestGetStorageStats_Success(t *testing.T) {
 
 func TestGetStorageStats_ValidationError_NilRequest(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.GetStorageStats(ctx, nil)
 	assert.Error(t, err)
@@ -887,7 +888,7 @@ func TestGetStorageStats_ValidationError_NilRequest(t *testing.T) {
 
 func TestGetStorageStats_WithBackendDetails(t *testing.T) {
 	svc, _, backendMgr := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	backendMgr.AddBackend("test-backend", nil, &catalog.BackendConfig{
 		Type:    "local",
@@ -910,7 +911,7 @@ func TestGetStorageStats_WithBackendDetails(t *testing.T) {
 
 func TestGetStorageStats_ServiceClosed(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	svc.closed.Store(true)
 
@@ -927,7 +928,7 @@ func TestGetStorageStats_ServiceClosed(t *testing.T) {
 
 func TestRunGarbageCollection_Success(t *testing.T) {
 	svc, _, backendMgr := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Add a backend
 	backendMgr.AddBackend("test-backend", nil, &catalog.BackendConfig{Type: "local"})
@@ -947,7 +948,7 @@ func TestRunGarbageCollection_Success(t *testing.T) {
 
 func TestRunGarbageCollection_AllBackends(t *testing.T) {
 	svc, _, backendMgr := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Add backends
 	backendMgr.AddBackend("backend1", nil, &catalog.BackendConfig{Type: "local"})
@@ -967,7 +968,7 @@ func TestRunGarbageCollection_AllBackends(t *testing.T) {
 
 func TestRunGarbageCollection_ValidationError_NilRequest(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.RunGarbageCollection(ctx, nil)
 	assert.Error(t, err)
@@ -976,7 +977,7 @@ func TestRunGarbageCollection_ValidationError_NilRequest(t *testing.T) {
 
 func TestRunGarbageCollection_ServiceClosed(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	svc.closed.Store(true)
 
@@ -993,7 +994,7 @@ func TestRunGarbageCollection_ServiceClosed(t *testing.T) {
 
 func TestGetGarbageCollectionProgress_Success(t *testing.T) {
 	svc, _, backendMgr := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Add a backend
 	backendMgr.AddBackend("test-backend", nil, &catalog.BackendConfig{Type: "local"})
@@ -1022,7 +1023,7 @@ func TestGetGarbageCollectionProgress_Success(t *testing.T) {
 
 func TestGetGarbageCollectionProgress_ValidationError_NilRequest(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.GetGarbageCollectionProgress(ctx, nil)
 	assert.Error(t, err)
@@ -1031,7 +1032,7 @@ func TestGetGarbageCollectionProgress_ValidationError_NilRequest(t *testing.T) {
 
 func TestGetGarbageCollectionProgress_ValidationError_EmptyOperationID(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &GetGarbageCollectionProgressRequest{
 		OperationID: "",
@@ -1044,7 +1045,7 @@ func TestGetGarbageCollectionProgress_ValidationError_EmptyOperationID(t *testin
 
 func TestGetGarbageCollectionProgress_NotFound(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &GetGarbageCollectionProgressRequest{
 		OperationID: "nonexistent-operation-id",
@@ -1061,7 +1062,7 @@ func TestGetGarbageCollectionProgress_NotFound(t *testing.T) {
 
 func TestGetGarbageCollectionProgress_ServiceClosed(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	svc.closed.Store(true)
 
@@ -1080,7 +1081,7 @@ func TestGetGarbageCollectionProgress_ServiceClosed(t *testing.T) {
 
 func TestRepairObject_Success(t *testing.T) {
 	svc, catalogMgr, backendMgr := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Setup mock storage using objstoreMockStorage (reuse from objectstorage_test.go)
 	storage1 := newObjstoreMockStorage()
@@ -1117,7 +1118,7 @@ func TestRepairObject_Success(t *testing.T) {
 
 func TestRepairObject_SingleLocation_NoRepairNeeded(t *testing.T) {
 	svc, catalogMgr, backendMgr := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Setup mock storage
 	storage := newObjstoreMockStorage()
@@ -1147,7 +1148,7 @@ func TestRepairObject_SingleLocation_NoRepairNeeded(t *testing.T) {
 
 func TestRepairObject_ValidationError_NilRequest(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.RepairObject(ctx, nil)
 	assert.Error(t, err)
@@ -1156,7 +1157,7 @@ func TestRepairObject_ValidationError_NilRequest(t *testing.T) {
 
 func TestRepairObject_ValidationError_EmptyKey(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &RepairObjectRequest{
 		Key: "",
@@ -1169,7 +1170,7 @@ func TestRepairObject_ValidationError_EmptyKey(t *testing.T) {
 
 func TestRepairObject_ObjectNotFound(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &RepairObjectRequest{
 		Key: "nonexistent-key",
@@ -1186,7 +1187,7 @@ func TestRepairObject_ObjectNotFound(t *testing.T) {
 
 func TestRepairObject_SourceLocationNotFound(t *testing.T) {
 	svc, catalogMgr, backendMgr := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	storage := newObjstoreMockStorage()
 	backendMgr.AddBackend("primary", storage, &catalog.BackendConfig{Type: "local", Enabled: true})
@@ -1214,7 +1215,7 @@ func TestRepairObject_SourceLocationNotFound(t *testing.T) {
 
 func TestRepairObject_ServiceClosed(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	svc.closed.Store(true)
 
@@ -1233,7 +1234,7 @@ func TestRepairObject_ServiceClosed(t *testing.T) {
 
 func TestCompactBackend_Success(t *testing.T) {
 	svc, _, backendMgr := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Add the backend
 	backendMgr.AddBackend("test-backend", nil, &catalog.BackendConfig{Type: "local", Enabled: true})
@@ -1253,7 +1254,7 @@ func TestCompactBackend_Success(t *testing.T) {
 
 func TestCompactBackend_Aggressive(t *testing.T) {
 	svc, _, backendMgr := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	backendMgr.AddBackend("test-backend", nil, &catalog.BackendConfig{Type: "local", Enabled: true})
 
@@ -1270,7 +1271,7 @@ func TestCompactBackend_Aggressive(t *testing.T) {
 
 func TestCompactBackend_ValidationError_NilRequest(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.CompactBackend(ctx, nil)
 	assert.Error(t, err)
@@ -1279,7 +1280,7 @@ func TestCompactBackend_ValidationError_NilRequest(t *testing.T) {
 
 func TestCompactBackend_ValidationError_EmptyName(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &CompactBackendRequest{
 		Name: "",
@@ -1292,7 +1293,7 @@ func TestCompactBackend_ValidationError_EmptyName(t *testing.T) {
 
 func TestCompactBackend_NotFound(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &CompactBackendRequest{
 		Name: "nonexistent-backend",
@@ -1309,7 +1310,7 @@ func TestCompactBackend_NotFound(t *testing.T) {
 
 func TestCompactBackend_ServiceClosed(t *testing.T) {
 	svc, _, _ := createTestAdminService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	svc.closed.Store(true)
 

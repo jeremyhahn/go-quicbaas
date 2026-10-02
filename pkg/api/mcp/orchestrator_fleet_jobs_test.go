@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // fleetMockAgentService overrides the artifact accessors so handlers that
@@ -93,7 +94,7 @@ func (m *fleetMockAgentService) CancelJob(ctx context.Context, tenantID, jobID s
 
 func TestExecuteAgentTool_FleetAndJobs_HappyPaths(t *testing.T) {
 	reg := newFleetRegistry(t, &fleetMockAgentService{})
-	ctx := orchestration.ContextWithTenant(context.Background(), "t1")
+	ctx := orchestration.ContextWithTenant(tenantctx.WithSystem(context.Background()), "t1")
 
 	cases := []struct {
 		name string
@@ -132,7 +133,7 @@ func TestExecuteOrchestratorListJobs_NarrowsToTask(t *testing.T) {
 	svc := &fleetMockAgentService{}
 	svc.listJobs = []*orchestration.JobStatus{{JobID: "job-1", TaskID: "task-a", Attempt: 2}}
 	reg := newFleetRegistry(t, svc)
-	ctx := orchestration.ContextWithTenant(context.Background(), "t1")
+	ctx := orchestration.ContextWithTenant(tenantctx.WithSystem(context.Background()), "t1")
 
 	result, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_list_jobs",
 		map[string]interface{}{"task_id": "task-a"})
@@ -147,7 +148,7 @@ func TestExecuteOrchestratorListJobs_NarrowsToTask(t *testing.T) {
 func TestExecuteOrchestratorListJobs_WithoutTaskNarrowsNothing(t *testing.T) {
 	svc := &fleetMockAgentService{}
 	reg := newFleetRegistry(t, svc)
-	ctx := orchestration.ContextWithTenant(context.Background(), "t1")
+	ctx := orchestration.ContextWithTenant(tenantctx.WithSystem(context.Background()), "t1")
 
 	_, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_list_jobs", map[string]interface{}{})
 	require.NoError(t, err)
@@ -161,7 +162,7 @@ func TestExecuteOrchestratorListJobs_WithoutTaskNarrowsNothing(t *testing.T) {
 
 func TestExecuteAgentTool_FleetAndJobs_MissingRequired(t *testing.T) {
 	reg := newFleetRegistry(t, &fleetMockAgentService{})
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	cases := []struct {
 		name string
@@ -197,7 +198,7 @@ func TestExecuteAgentTool_FleetAndJobs_MissingRequired(t *testing.T) {
 
 func TestExecuteAgentTool_FleetAndJobs_ServiceUnavailable(t *testing.T) {
 	reg := newFleetRegistry(t, nil) // Agent() returns nil
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	names := []string{
 		"quicbaas_fleet_register",
@@ -245,7 +246,7 @@ func TestExecuteAgentTool_FleetAndJobs_ServiceError(t *testing.T) {
 		},
 	}
 	reg := newFleetRegistry(t, svc)
-	ctx := orchestration.ContextWithTenant(context.Background(), "t1")
+	ctx := orchestration.ContextWithTenant(tenantctx.WithSystem(context.Background()), "t1")
 
 	cases := []struct {
 		name string

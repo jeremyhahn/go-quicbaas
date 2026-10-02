@@ -19,8 +19,8 @@ import (
 	"math"
 	"time"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -61,7 +61,7 @@ func (r *accountSecretResolver) ResolveAccountSecret(ctx context.Context, tenant
 	if r == nil || r.secrets == nil {
 		return nil, &AccountSecretsServiceNotConfiguredError{}
 	}
-	resp, err := r.secrets.GetSecret(iam.ContextWithTenant(ctx, tenantID), &GetSecretRequest{SecretID: ref})
+	resp, err := r.secrets.GetSecret(tenantctx.WithTenant(ctx, tenantID), &GetSecretRequest{SecretID: ref})
 	if err != nil {
 		return nil, err
 	}

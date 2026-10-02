@@ -23,8 +23,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/metrics"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 func TestNewVectorMetricsRecorder(t *testing.T) {
@@ -56,7 +56,7 @@ func TestGetTenantID(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 			if tt.tenantID != "" {
-				ctx = iam.ContextWithTenant(ctx, tt.tenantID)
+				ctx = tenantctx.WithTenant(ctx, tt.tenantID)
 			}
 			result := getTenantID(ctx)
 			assert.Equal(t, tt.wantResult, result)
@@ -69,7 +69,7 @@ func TestRecordUpsert(t *testing.T) {
 	recorder := NewVectorMetricsRecorder()
 	m := metrics.GetMetrics()
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-1")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	startTime := time.Now().Add(-10 * time.Millisecond) // Simulate operation took 10ms
 
 	recorder.RecordUpsert(ctx, "embeddings", startTime, true)
@@ -89,7 +89,7 @@ func TestRecordUpsert_Failure(t *testing.T) {
 	recorder := NewVectorMetricsRecorder()
 	m := metrics.GetMetrics()
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-1")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	startTime := time.Now()
 
 	recorder.RecordUpsert(ctx, "embeddings", startTime, false)
@@ -109,7 +109,7 @@ func TestRecordBatchUpsert(t *testing.T) {
 	recorder := NewVectorMetricsRecorder()
 	m := metrics.GetMetrics()
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-2")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-2")
 	startTime := time.Now().Add(-50 * time.Millisecond)
 
 	recorder.RecordBatchUpsert(ctx, "documents", 100, startTime, true)
@@ -133,7 +133,7 @@ func TestRecordGet(t *testing.T) {
 	recorder := NewVectorMetricsRecorder()
 	m := metrics.GetMetrics()
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-1")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	startTime := time.Now().Add(-5 * time.Millisecond)
 
 	recorder.RecordGet(ctx, "embeddings", startTime, true)
@@ -153,7 +153,7 @@ func TestRecordDelete(t *testing.T) {
 	recorder := NewVectorMetricsRecorder()
 	m := metrics.GetMetrics()
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-3")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-3")
 	startTime := time.Now().Add(-3 * time.Millisecond)
 
 	recorder.RecordDelete(ctx, "vectors", startTime, true)
@@ -173,7 +173,7 @@ func TestRecordBatchDelete(t *testing.T) {
 	recorder := NewVectorMetricsRecorder()
 	m := metrics.GetMetrics()
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-1")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	startTime := time.Now().Add(-20 * time.Millisecond)
 
 	recorder.RecordBatchDelete(ctx, "embeddings", 50, startTime, true)
@@ -193,7 +193,7 @@ func TestRecordSearch_Similarity(t *testing.T) {
 	recorder := NewVectorMetricsRecorder()
 	m := metrics.GetMetrics()
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-1")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	startTime := time.Now().Add(-15 * time.Millisecond)
 
 	recorder.RecordSearch(ctx, "embeddings", "similarity", startTime, true)
@@ -217,7 +217,7 @@ func TestRecordSearch_Hybrid(t *testing.T) {
 	recorder := NewVectorMetricsRecorder()
 	m := metrics.GetMetrics()
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-2")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-2")
 	startTime := time.Now().Add(-25 * time.Millisecond)
 
 	recorder.RecordSearch(ctx, "documents", "hybrid", startTime, true)
@@ -237,7 +237,7 @@ func TestRecordNamespaceCreate(t *testing.T) {
 	recorder := NewVectorMetricsRecorder()
 	m := metrics.GetMetrics()
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-1")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	startTime := time.Now().Add(-100 * time.Millisecond)
 
 	recorder.RecordNamespaceCreate(ctx, "new-namespace", startTime, true)
@@ -257,7 +257,7 @@ func TestRecordNamespaceDelete(t *testing.T) {
 	recorder := NewVectorMetricsRecorder()
 	m := metrics.GetMetrics()
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-1")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	startTime := time.Now().Add(-50 * time.Millisecond)
 
 	recorder.RecordNamespaceDelete(ctx, "old-namespace", startTime, true)
@@ -277,7 +277,7 @@ func TestUpdateNamespaceStats(t *testing.T) {
 	recorder := NewVectorMetricsRecorder()
 	m := metrics.GetMetrics()
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-1")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 
 	recorder.UpdateNamespaceStats(ctx, "embeddings", 10000, 1073741824) // 1GB
 
@@ -299,7 +299,7 @@ func TestUpdateQuotaUsage(t *testing.T) {
 	recorder := NewVectorMetricsRecorder()
 	m := metrics.GetMetrics()
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-1")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 
 	// Update vector quota usage
 	recorder.UpdateQuotaUsage(ctx, "embeddings", "vectors", 0.75)
@@ -329,7 +329,7 @@ func TestUpdateTenantNamespaceCount(t *testing.T) {
 	recorder := NewVectorMetricsRecorder()
 	m := metrics.GetMetrics()
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-1")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 
 	recorder.UpdateTenantNamespaceCount(ctx, 5)
 
@@ -343,7 +343,7 @@ func TestRecordExport(t *testing.T) {
 	recorder := NewVectorMetricsRecorder()
 	m := metrics.GetMetrics()
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-1")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	startTime := time.Now().Add(-500 * time.Millisecond)
 
 	recorder.RecordExport(ctx, "embeddings", 5000, startTime, true)
@@ -363,7 +363,7 @@ func TestRecordImport(t *testing.T) {
 	recorder := NewVectorMetricsRecorder()
 	m := metrics.GetMetrics()
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-2")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-2")
 	startTime := time.Now().Add(-1 * time.Second)
 
 	recorder.RecordImport(ctx, "documents", 10000, startTime, true)
@@ -383,7 +383,7 @@ func TestRecordIndexRebuild(t *testing.T) {
 	recorder := NewVectorMetricsRecorder()
 	m := metrics.GetMetrics()
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-1")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	startTime := time.Now().Add(-2 * time.Second)
 
 	recorder.RecordIndexRebuild(ctx, "embeddings", startTime, true)
@@ -430,7 +430,7 @@ func TestVectorMetrics_MultipleTenantsIsolation(t *testing.T) {
 
 	// Record operations for each tenant
 	for _, tenantID := range tenants {
-		ctx := iam.ContextWithTenant(context.Background(), tenantID)
+		ctx := tenantctx.WithTenant(context.Background(), tenantID)
 		startTime := time.Now()
 		recorder.RecordUpsert(ctx, namespace, startTime, true)
 	}
@@ -452,7 +452,7 @@ func TestVectorMetrics_MetricsRegistration(t *testing.T) {
 	metrics.Reset()
 	recorder := NewVectorMetricsRecorder()
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-1")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	startTime := time.Now()
 
 	// Record various metrics
@@ -492,7 +492,7 @@ func TestVectorMetrics_MetricsRegistration(t *testing.T) {
 func BenchmarkVectorMetricsRecorder_RecordUpsert(b *testing.B) {
 	metrics.Reset()
 	recorder := NewVectorMetricsRecorder()
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-1")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -504,7 +504,7 @@ func BenchmarkVectorMetricsRecorder_RecordUpsert(b *testing.B) {
 func BenchmarkVectorMetricsRecorder_RecordSearch(b *testing.B) {
 	metrics.Reset()
 	recorder := NewVectorMetricsRecorder()
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-1")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

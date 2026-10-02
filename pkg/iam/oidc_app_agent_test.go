@@ -17,6 +17,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // agentAppOptions are the registration options POST /api/v1/fleet/enroll
@@ -117,7 +119,7 @@ func TestRegisterAgentApp_IsIdempotent(t *testing.T) {
 	}
 
 	// The token endpoint's context resolves the LATEST credential.
-	tokenCtx := ContextWithTenant(context.Background(), tenantID)
+	tokenCtx := tenantctx.WithTenant(context.Background(), tenantID)
 	ok, err := storage.ValidateClientSecret(tokenCtx, second.ClientID, second.ClientSecret)
 	if err != nil {
 		t.Fatalf("ValidateClientSecret: %v", err)

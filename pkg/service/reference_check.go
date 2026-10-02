@@ -22,8 +22,8 @@ import (
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 
 	quicbaaserrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -53,7 +53,7 @@ func requireSecretRef(ctx context.Context, secrets SecretsService, tenantID, fie
 	if secrets == nil {
 		return nil, &quicbaaserrors.ReferenceUnavailableError{Field: field, Kind: quicbaaserrors.ReferenceKindSecret, Ref: ref}
 	}
-	resp, err := secrets.GetSecret(iam.ContextWithTenant(ctx, tenantID), &GetSecretRequest{SecretID: ref})
+	resp, err := secrets.GetSecret(tenantctx.WithTenant(ctx, tenantID), &GetSecretRequest{SecretID: ref})
 	if err != nil {
 		if quicbaaserrors.IsNotFound(err) {
 			return nil, &quicbaaserrors.ReferenceNotFoundError{Field: field, Kind: quicbaaserrors.ReferenceKindSecret, Ref: ref}

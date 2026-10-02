@@ -56,7 +56,7 @@ func TestCostSettingsOverREST(t *testing.T) {
 	server := costSettingsServer(t, true)
 	get := func() orchestration.CostSettingsReport {
 		w := httptest.NewRecorder()
-		server.HandleGetCostSettings(w, httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/cost-settings", nil))
+		server.HandleGetCostSettings(w, systemRequest(http.MethodGet, "/api/v1/orchestrator/cost-settings", nil))
 		require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 		var report orchestration.CostSettingsReport
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &report))
@@ -68,7 +68,7 @@ func TestCostSettingsOverREST(t *testing.T) {
 	assert.Equal(t, orchestration.ElectricityFromDefault, before.Electricity.Source)
 
 	w := httptest.NewRecorder()
-	server.HandleSetCostSettings(w, httptest.NewRequest(http.MethodPut, "/api/v1/orchestrator/cost-settings",
+	server.HandleSetCostSettings(w, systemRequest(http.MethodPut, "/api/v1/orchestrator/cost-settings",
 		bytes.NewBufferString(`{"electricity_price_per_kwh":0.2,"engine_power_watts":{"openvino":12}}`)))
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
@@ -94,11 +94,11 @@ func TestCostSettingsOverRESTRefuses(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			server := costSettingsServer(t, tc.wired)
 			w := httptest.NewRecorder()
-			server.HandleSetCostSettings(w, httptest.NewRequest(http.MethodPut, "/api/v1/orchestrator/cost-settings", bytes.NewBufferString(tc.body)))
+			server.HandleSetCostSettings(w, systemRequest(http.MethodPut, "/api/v1/orchestrator/cost-settings", bytes.NewBufferString(tc.body)))
 			assert.Equal(t, tc.want, w.Code, "body: %s", w.Body.String())
 		})
 	}
 	w := httptest.NewRecorder()
-	costSettingsServer(t, false).HandleGetCostSettings(w, httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/cost-settings", nil))
+	costSettingsServer(t, false).HandleGetCostSettings(w, systemRequest(http.MethodGet, "/api/v1/orchestrator/cost-settings", nil))
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }

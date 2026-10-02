@@ -39,7 +39,10 @@ type SetTenantSpendPolicyRESTRequest struct {
 // [?tenant_id=]: the tenant's own limits and its usage against each window.
 // Gated on orchestrator:status, like the spend report.
 func (s *Server) HandleGetTenantSpendPolicy(w http.ResponseWriter, r *http.Request) {
-	ctx, tenantID := resolveOrchestratorTenant(r)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 	accessor := s.tenantSpendAccessor(w, r)
 	if accessor == nil {
 		return
@@ -56,7 +59,10 @@ func (s *Server) HandleGetTenantSpendPolicy(w http.ResponseWriter, r *http.Reque
 // [?tenant_id=]: it replaces the tenant's limits and answers with the stored
 // policy and its usage. Gated on orchestrator:spend_policy.
 func (s *Server) HandleSetTenantSpendPolicy(w http.ResponseWriter, r *http.Request) {
-	ctx, tenantID := resolveOrchestratorTenant(r)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 	var body SetTenantSpendPolicyRESTRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		RespondBadRequest(w, r, "invalid request body: "+err.Error())

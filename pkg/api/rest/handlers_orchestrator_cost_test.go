@@ -29,6 +29,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
 
@@ -82,7 +83,7 @@ func setupCostServer(t *testing.T, withLedger bool) (*Server, orchestration.Cons
 // seedCostFixture records two turns under one job of one task of one project.
 func seedCostFixture(t *testing.T, ledger orchestration.ConsumptionLedger, tenantID string) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	for i, id := range []string{"e1", "e2"} {
 		require.NoError(t, ledger.Record(ctx, orchestration.ConsumptionEntry{
 			EntryID: id, TenantID: tenantID,
@@ -105,7 +106,7 @@ func TestHandleOrchestratorCost_ReportsTenantSpend(t *testing.T) {
 	seedCostFixture(t, ledger, qrdbsdk.SystemTenantID)
 
 	w := httptest.NewRecorder()
-	server.HandleOrchestratorCost(w, httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/cost", nil))
+	server.HandleOrchestratorCost(w, systemRequest(http.MethodGet, "/api/v1/orchestrator/cost", nil))
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
 	var report orchestration.SpendReport
@@ -128,7 +129,7 @@ func TestHandleOrchestratorCost_ReportsTenantSpend(t *testing.T) {
 func TestHandleOrchestratorCost_NamesProjects(t *testing.T) {
 	server, _, cleanup := setupMockServer(t)
 	defer cleanup()
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	ledger := orchestration.NewInMemoryConsumptionLedger()
 	seedCostFixture(t, ledger, qrdbsdk.SystemTenantID)
 	projects := orchestration.NewInMemoryProjectStore()
@@ -141,7 +142,7 @@ func TestHandleOrchestratorCost_NamesProjects(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	server.HandleOrchestratorCost(w, httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/cost", nil))
+	server.HandleOrchestratorCost(w, systemRequest(http.MethodGet, "/api/v1/orchestrator/cost", nil))
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
 	var report orchestration.SpendReport
@@ -179,7 +180,7 @@ func TestHandleOrchestratorCost_DrillsDown(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			server.HandleOrchestratorCost(w, httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/cost"+tc.query, nil))
+			server.HandleOrchestratorCost(w, systemRequest(http.MethodGet, "/api/v1/orchestrator/cost"+tc.query, nil))
 			require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
 			var report orchestration.SpendReport
@@ -198,7 +199,7 @@ func TestHandleOrchestratorCost_ReportsTheSpendPolicy(t *testing.T) {
 	server, ledger, accounts, cleanup := setupCostServer(t, true)
 	defer cleanup()
 	seedCostFixture(t, ledger, qrdbsdk.SystemTenantID)
-	require.NoError(t, accounts.Create(context.Background(), &orchestration.Account{
+	require.NoError(t, accounts.Create(tenantctx.WithSystem(context.Background()), &orchestration.Account{
 		ID: "acct-1", TenantID: qrdbsdk.SystemTenantID, Provider: orchestration.AccountProviderClaude,
 		DisplayName: "alice-work",
 		Spend: orchestration.AccountSpendPolicy{Quota: orchestration.SpendLimits{
@@ -207,7 +208,7 @@ func TestHandleOrchestratorCost_ReportsTheSpendPolicy(t *testing.T) {
 	}))
 
 	w := httptest.NewRecorder()
-	server.HandleOrchestratorCost(w, httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/cost", nil))
+	server.HandleOrchestratorCost(w, systemRequest(http.MethodGet, "/api/v1/orchestrator/cost", nil))
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
 	var report orchestration.SpendReport
@@ -231,7 +232,7 @@ func TestHandleOrchestratorCost_TenantIsolation(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	server.HandleOrchestratorCost(w,
-		httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/cost?tenant_id=someone-else", nil))
+		systemRequest(http.MethodGet, "/api/v1/orchestrator/cost?tenant_id=someone-else", nil))
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
 	var report orchestration.SpendReport
@@ -253,7 +254,7 @@ func TestHandleOrchestratorCost_NarrowsToARange(t *testing.T) {
 	from := costBase.Add(30 * time.Second).Format(time.RFC3339)
 	to := costBase.Add(time.Hour).Format(time.RFC3339)
 	w := httptest.NewRecorder()
-	server.HandleOrchestratorCost(w, httptest.NewRequest(http.MethodGet,
+	server.HandleOrchestratorCost(w, systemRequest(http.MethodGet,
 		"/api/v1/orchestrator/cost?from="+from+"&to="+to, nil))
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
@@ -272,7 +273,7 @@ func TestHandleOrchestratorCost_RefusalPaths(t *testing.T) {
 
 		w := httptest.NewRecorder()
 		server.HandleOrchestratorCost(w,
-			httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/cost?from=yesterday", nil))
+			systemRequest(http.MethodGet, "/api/v1/orchestrator/cost?from=yesterday", nil))
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 
@@ -281,7 +282,7 @@ func TestHandleOrchestratorCost_RefusalPaths(t *testing.T) {
 		defer cleanup()
 
 		w := httptest.NewRecorder()
-		server.HandleOrchestratorCost(w, httptest.NewRequest(http.MethodGet,
+		server.HandleOrchestratorCost(w, systemRequest(http.MethodGet,
 			"/api/v1/orchestrator/cost?to="+costBase.Format(time.RFC3339), nil))
 		assert.Equal(t, http.StatusBadRequest, w.Code, "an open start is the whole history, not a range")
 	})
@@ -292,7 +293,7 @@ func TestHandleOrchestratorCost_RefusalPaths(t *testing.T) {
 
 		w := httptest.NewRecorder()
 		server.HandleOrchestratorCost(w,
-			httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/cost?round=later", nil))
+			systemRequest(http.MethodGet, "/api/v1/orchestrator/cost?round=later", nil))
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 
@@ -302,7 +303,7 @@ func TestHandleOrchestratorCost_RefusalPaths(t *testing.T) {
 
 		w := httptest.NewRecorder()
 		server.HandleOrchestratorCost(w,
-			httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/cost?task_id=task-1", nil))
+			systemRequest(http.MethodGet, "/api/v1/orchestrator/cost?task_id=task-1", nil))
 		assert.Equal(t, http.StatusBadRequest, w.Code,
 			"the chain is a path: a task without a project is not a prefix of anything")
 	})
@@ -312,7 +313,7 @@ func TestHandleOrchestratorCost_RefusalPaths(t *testing.T) {
 		defer cleanup()
 
 		w := httptest.NewRecorder()
-		server.HandleOrchestratorCost(w, httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/cost", nil))
+		server.HandleOrchestratorCost(w, systemRequest(http.MethodGet, "/api/v1/orchestrator/cost", nil))
 		assert.Equal(t, http.StatusServiceUnavailable, w.Code,
 			"a deployment that records no spend must say so, not report zero")
 	})
@@ -330,7 +331,7 @@ func TestHandleOrchestratorCost_LedgerAccessorWithNoLedger(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	server.HandleOrchestratorCost(w, httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/cost", nil))
+	server.HandleOrchestratorCost(w, systemRequest(http.MethodGet, "/api/v1/orchestrator/cost", nil))
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
@@ -353,7 +354,7 @@ func TestHandleOrchestratorCost_NarrowsToAHost(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			server.HandleOrchestratorCost(w, httptest.NewRequest(http.MethodGet,
+			server.HandleOrchestratorCost(w, systemRequest(http.MethodGet,
 				"/api/v1/orchestrator/cost?host="+tc.host, nil))
 			require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 			var report orchestration.SpendReport
@@ -364,7 +365,7 @@ func TestHandleOrchestratorCost_NarrowsToAHost(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	server.HandleOrchestratorCost(w, httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/cost", nil))
+	server.HandleOrchestratorCost(w, systemRequest(http.MethodGet, "/api/v1/orchestrator/cost", nil))
 	require.Equal(t, http.StatusOK, w.Code)
 	var report orchestration.SpendReport
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &report))
@@ -382,7 +383,7 @@ func TestHandleOrchestratorCost_NarrowsToAnAgent(t *testing.T) {
 
 	for agent, entries := range map[string]int{"-": 2, "claude-coder": 0} {
 		w := httptest.NewRecorder()
-		server.HandleOrchestratorCost(w, httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/cost?agent="+agent, nil))
+		server.HandleOrchestratorCost(w, systemRequest(http.MethodGet, "/api/v1/orchestrator/cost?agent="+agent, nil))
 		require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 		var report orchestration.SpendReport
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &report))
@@ -391,6 +392,6 @@ func TestHandleOrchestratorCost_NarrowsToAnAgent(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	server.HandleOrchestratorCost(w, httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/cost?agent=Bad%20ID", nil))
+	server.HandleOrchestratorCost(w, systemRequest(http.MethodGet, "/api/v1/orchestrator/cost?agent=Bad%20ID", nil))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }

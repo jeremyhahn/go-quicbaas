@@ -21,14 +21,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 func TestKeyspaceResolver_BuildKey_MultiTenant(t *testing.T) {
 	resolver := NewKeyspaceResolver()
 
 	// Set tenant context
-	ctx := iam.ContextWithTenant(context.Background(), "acme-corp")
+	ctx := tenantctx.WithTenant(context.Background(), "acme-corp")
 
 	key, err := resolver.BuildKey(ctx, "User", 12345)
 	require.NoError(t, err)
@@ -39,7 +39,7 @@ func TestKeyspaceResolver_BuildKey_SingleTenant(t *testing.T) {
 	resolver := NewKeyspaceResolver()
 
 	// No tenant context (single-tenant mode)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	key, err := resolver.BuildKey(ctx, "User", 12345)
 	require.NoError(t, err)
@@ -48,7 +48,7 @@ func TestKeyspaceResolver_BuildKey_SingleTenant(t *testing.T) {
 
 func TestKeyspaceResolver_BuildKey_InvalidEntityType(t *testing.T) {
 	resolver := NewKeyspaceResolver()
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	tests := []struct {
 		name       string
@@ -76,7 +76,7 @@ func TestKeyspaceResolver_BuildKey_InvalidEntityType(t *testing.T) {
 
 func TestKeyspaceResolver_BuildPrefix_MultiTenant(t *testing.T) {
 	resolver := NewKeyspaceResolver()
-	ctx := iam.ContextWithTenant(context.Background(), "beta-inc")
+	ctx := tenantctx.WithTenant(context.Background(), "beta-inc")
 
 	prefix, err := resolver.BuildPrefix(ctx, "Organization")
 	require.NoError(t, err)
@@ -85,7 +85,7 @@ func TestKeyspaceResolver_BuildPrefix_MultiTenant(t *testing.T) {
 
 func TestKeyspaceResolver_BuildPrefix_SingleTenant(t *testing.T) {
 	resolver := NewKeyspaceResolver()
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	prefix, err := resolver.BuildPrefix(ctx, "Organization")
 	require.NoError(t, err)
@@ -94,7 +94,7 @@ func TestKeyspaceResolver_BuildPrefix_SingleTenant(t *testing.T) {
 
 func TestKeyspaceResolver_BuildPrefix_InvalidEntityType(t *testing.T) {
 	resolver := NewKeyspaceResolver()
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	_, err := resolver.BuildPrefix(ctx, "")
 	require.Error(t, err)
@@ -107,14 +107,14 @@ func TestKeyspaceResolver_BuildTenantPrefix(t *testing.T) {
 	resolver := NewKeyspaceResolver()
 
 	t.Run("multi-tenant", func(t *testing.T) {
-		ctx := iam.ContextWithTenant(context.Background(), "tenant-xyz")
+		ctx := tenantctx.WithTenant(context.Background(), "tenant-xyz")
 		prefix, err := resolver.BuildTenantPrefix(ctx)
 		require.NoError(t, err)
 		assert.Equal(t, "__t:tenant-xyz:", string(prefix))
 	})
 
 	t.Run("single-tenant", func(t *testing.T) {
-		ctx := context.Background()
+		ctx := tenantctx.WithSystem(context.Background())
 		prefix, err := resolver.BuildTenantPrefix(ctx)
 		require.NoError(t, err)
 		assert.Nil(t, prefix) // Empty for single-tenant mode
@@ -190,7 +190,7 @@ func TestKeyspaceResolver_ParseKey_CompositeKeys(t *testing.T) {
 
 func TestKeyspaceResolver_ValidateAccess_SystemKeyspace(t *testing.T) {
 	resolver := NewKeyspaceResolver()
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-a")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-a")
 
 	err := resolver.ValidateAccess(ctx, []byte("__sys:cluster/config"))
 	require.Error(t, err)
@@ -199,7 +199,7 @@ func TestKeyspaceResolver_ValidateAccess_SystemKeyspace(t *testing.T) {
 
 func TestKeyspaceResolver_ValidateAccess_CrossTenant(t *testing.T) {
 	resolver := NewKeyspaceResolver()
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-a")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-a")
 
 	// Trying to access tenant-b's data
 	err := resolver.ValidateAccess(ctx, []byte("__t:tenant-b:User:123"))
@@ -209,7 +209,7 @@ func TestKeyspaceResolver_ValidateAccess_CrossTenant(t *testing.T) {
 
 func TestKeyspaceResolver_ValidateAccess_SameTenant(t *testing.T) {
 	resolver := NewKeyspaceResolver()
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-a")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-a")
 
 	// Accessing own data
 	err := resolver.ValidateAccess(ctx, []byte("__t:tenant-a:User:123"))
@@ -218,7 +218,7 @@ func TestKeyspaceResolver_ValidateAccess_SameTenant(t *testing.T) {
 
 func TestKeyspaceResolver_ValidateAccess_LegacyKeySingleTenant(t *testing.T) {
 	resolver := NewKeyspaceResolver()
-	ctx := context.Background() // No tenant
+	ctx := tenantctx.WithSystem(context.Background()) // No tenant
 
 	// Single-tenant mode can access legacy keys
 	err := resolver.ValidateAccess(ctx, []byte("User:123"))
@@ -227,7 +227,7 @@ func TestKeyspaceResolver_ValidateAccess_LegacyKeySingleTenant(t *testing.T) {
 
 func TestKeyspaceResolver_ValidateAccess_TenantKeyFromSingleTenant(t *testing.T) {
 	resolver := NewKeyspaceResolver()
-	ctx := context.Background() // No tenant
+	ctx := tenantctx.WithSystem(context.Background()) // No tenant
 
 	// Single-tenant mode cannot access tenant-prefixed keys
 	err := resolver.ValidateAccess(ctx, []byte("__t:some-tenant:User:123"))
@@ -237,7 +237,7 @@ func TestKeyspaceResolver_ValidateAccess_TenantKeyFromSingleTenant(t *testing.T)
 
 func TestKeyspaceResolver_ValidateAccess_LegacyKeyMultiTenant(t *testing.T) {
 	resolver := NewKeyspaceResolver()
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-a")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-a")
 
 	// Multi-tenant mode can still access legacy keys for backward compatibility
 	err := resolver.ValidateAccess(ctx, []byte("User:123"))
@@ -246,7 +246,7 @@ func TestKeyspaceResolver_ValidateAccess_LegacyKeyMultiTenant(t *testing.T) {
 
 func TestKeyspaceResolver_ValidateAccess_SystemKeyspaceNoTenant(t *testing.T) {
 	resolver := NewKeyspaceResolver()
-	ctx := context.Background() // No tenant
+	ctx := tenantctx.WithSystem(context.Background()) // No tenant
 
 	// Even without tenant context, system keyspace should be blocked
 	err := resolver.ValidateAccess(ctx, []byte("__sys:cluster/config"))
@@ -256,7 +256,7 @@ func TestKeyspaceResolver_ValidateAccess_SystemKeyspaceNoTenant(t *testing.T) {
 
 func TestKeyspaceResolver_ValidateAccess_InvalidTenantKey(t *testing.T) {
 	resolver := NewKeyspaceResolver()
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-a")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-a")
 
 	// Invalid tenant key format should return error
 	err := resolver.ValidateAccess(ctx, []byte("__t:invalid"))
@@ -360,8 +360,8 @@ func TestKeyspaceResolver_MultiTenantIsolation(t *testing.T) {
 	resolver := NewKeyspaceResolver()
 
 	// Create keys for different tenants
-	ctxA := iam.ContextWithTenant(context.Background(), "tenant-a")
-	ctxB := iam.ContextWithTenant(context.Background(), "tenant-b")
+	ctxA := tenantctx.WithTenant(context.Background(), "tenant-a")
+	ctxB := tenantctx.WithTenant(context.Background(), "tenant-b")
 
 	keyA, err := resolver.BuildKey(ctxA, "User", 1)
 	require.NoError(t, err)

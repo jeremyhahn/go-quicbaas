@@ -48,7 +48,7 @@ func TestKMSService_GenerateKey_AsymmetricSigningDefault(t *testing.T) {
 		Usage: []KeyUsage{KeyUsageSign, KeyUsageVerify},
 	}
 
-	resp, err := svc.GenerateKey(context.Background(), req)
+	resp, err := svc.GenerateKey(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, "sign-key", resp.Metadata.Name)
@@ -77,7 +77,7 @@ func TestKMSService_GenerateKey_WithRotationPolicyPersists(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.GenerateKey(context.Background(), req)
+	resp, err := svc.GenerateKey(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp.Metadata.RotationPolicy)
 	// NextRotation is auto-computed from Interval.
@@ -94,7 +94,7 @@ func TestKMSService_ImportKey_TypedMetadataPersists(t *testing.T) {
 	}
 	svc := newKMSService(mockManager, newMockLogger())
 
-	resp, err := svc.ImportKey(context.Background(), &ImportKeyRequest{
+	resp, err := svc.ImportKey(systemTenantCtx(), &ImportKeyRequest{
 		Name:        "imported",
 		Description: "imported key",
 		KeyMaterial: make([]byte, 32),

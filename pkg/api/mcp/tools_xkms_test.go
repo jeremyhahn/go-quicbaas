@@ -16,8 +16,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // newMinimalMockService creates a mockService suitable for xkms tool tests.
@@ -3238,7 +3238,7 @@ func TestXKMSGetCertChain_WithBackend(t *testing.T) {
 // =============================================================================
 
 func TestXKMSKeyAttrsFromArgs_WithTenant(t *testing.T) {
-	ctx := iam.ContextWithTenant(context.Background(), "my-tenant")
+	ctx := tenantctx.WithTenant(context.Background(), "my-tenant")
 
 	args := map[string]interface{}{
 		"key_id":     "tenant-key",

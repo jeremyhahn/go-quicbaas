@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -152,23 +152,16 @@ func TestDsEnforceTenantAccess_UnscopedRoleDenied(t *testing.T) {
 // dsPrepareTenantContext tests
 // =============================================================================
 
-func TestDsPrepareTenantContext_NoTenant(t *testing.T) {
-	ctx := context.Background()
-	tenantID, err := dsPrepareTenantContext(ctx)
-	assert.NoError(t, err)
-	assert.Equal(t, "", tenantID)
-}
-
 func TestDsPrepareTenantContext_ValidTenant(t *testing.T) {
-	ctx := iam.ContextWithTenant(context.Background(), "acme-corp")
-	tenantID, err := dsPrepareTenantContext(ctx)
+	ctx := tenantctx.WithTenant(context.Background(), "acme-corp")
+	tenantID, err := prepareTenantContext(ctx)
 	assert.NoError(t, err)
 	assert.Equal(t, "acme-corp", tenantID)
 }
 
 func TestDsPrepareTenantContext_InvalidTenant(t *testing.T) {
-	ctx := iam.ContextWithTenant(context.Background(), "invalid/tenant")
-	_, err := dsPrepareTenantContext(ctx)
+	ctx := tenantctx.WithTenant(context.Background(), "invalid/tenant")
+	_, err := prepareTenantContext(ctx)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid character")
 }

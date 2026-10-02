@@ -14,7 +14,6 @@
 package service
 
 import (
-	"context"
 	"errors"
 	"strings"
 	"sync"
@@ -52,7 +51,7 @@ func newServiceForEnsureTest(t *testing.T) *secretsService {
 // value, second call returns the same bytes with Generated=false.
 func TestServiceEnsureSecret_GenerateThenRead(t *testing.T) {
 	svc := newServiceForEnsureTest(t)
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	req := &EnsureSecretRequest{
 		SecretID: "tenants/test/nodes/n1/secrets/platform/so-pin",
@@ -94,7 +93,7 @@ func TestServiceEnsureSecret_GenerateThenRead(t *testing.T) {
 // rotation.
 func TestServiceEnsureSecret_SpecMismatch(t *testing.T) {
 	svc := newServiceForEnsureTest(t)
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	path := "p/spec-mismatch"
 
 	_, err := svc.EnsureSecret(ctx, &EnsureSecretRequest{
@@ -125,7 +124,7 @@ func TestServiceEnsureSecret_SpecMismatch(t *testing.T) {
 // the service layer before reaching the Manager.
 func TestServiceEnsureSecret_InvalidRequest(t *testing.T) {
 	svc := newServiceForEnsureTest(t)
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	cases := []struct {
 		name string
@@ -152,7 +151,7 @@ func TestServiceEnsureSecret_InvalidRequest(t *testing.T) {
 // this test.
 func TestServiceEnsureSecret_ConcurrentSamePath(t *testing.T) {
 	svc := newServiceForEnsureTest(t)
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	req := &EnsureSecretRequest{
 		SecretID: "p/concurrent",
 		Length:   32,
@@ -211,7 +210,7 @@ func TestServiceEnsureSecret_ConcurrentSamePath(t *testing.T) {
 // instead of swallowing.
 func TestServiceEnsureSecret_OperatorSecretRefusal(t *testing.T) {
 	svc := newServiceForEnsureTest(t)
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 	path := "p/operator-owned"
 
 	// Manually write a secret via the underlying Manager — bypasses

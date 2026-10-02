@@ -22,6 +22,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -33,7 +35,7 @@ func TestSecretsService_GetSecretsByPrefix_Success(t *testing.T) {
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Store some secrets with a prefix
 	for i := 1; i <= 3; i++ {
@@ -71,7 +73,7 @@ func TestSecretsService_GetSecretsByPrefix_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	resp, err := svc.GetSecretsByPrefix(context.Background(), nil)
+	resp, err := svc.GetSecretsByPrefix(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -87,7 +89,7 @@ func TestSecretsService_GetSecretsByPrefix_EmptyPrefix(t *testing.T) {
 		Prefix: "",
 	}
 
-	resp, err := svc.GetSecretsByPrefix(context.Background(), req)
+	resp, err := svc.GetSecretsByPrefix(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -108,7 +110,7 @@ func TestSecretsService_GetSecretsByPrefix_ListError(t *testing.T) {
 		IncludeData: true,
 	}
 
-	resp, err := svc.GetSecretsByPrefix(context.Background(), req)
+	resp, err := svc.GetSecretsByPrefix(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -120,7 +122,7 @@ func TestSecretsService_GetSecretsByPrefix_WithLimit(t *testing.T) {
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Store secrets
 	paths := []string{
@@ -161,7 +163,7 @@ func TestSecretsService_GetSecretsByPrefix_DisabledSecretsFiltered(t *testing.T)
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Store an enabled secret
 	err := mockManager.Store(ctx, "/apps/myapp/enabled",
@@ -198,7 +200,7 @@ func TestSecretsService_GetSecretsByPrefix_MetadataOnly(t *testing.T) {
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	err := mockManager.Store(ctx, "/apps/myapp/secret",
 		map[string][]byte{"value": []byte("secret-data")},
@@ -241,7 +243,7 @@ func TestSecretsService_GetSecretsByPrefix_GetError(t *testing.T) {
 		IncludeData: true,
 	}
 
-	resp, err := svc.GetSecretsByPrefix(context.Background(), req)
+	resp, err := svc.GetSecretsByPrefix(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err) // Errors are logged but operation succeeds
 	assert.NotNil(t, resp)
@@ -257,7 +259,7 @@ func TestSecretsService_WatchSecretsByPrefix_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	ch, err := svc.WatchSecretsByPrefix(context.Background(), nil)
+	ch, err := svc.WatchSecretsByPrefix(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, ch)
@@ -273,7 +275,7 @@ func TestSecretsService_WatchSecretsByPrefix_EmptyPrefix(t *testing.T) {
 		Prefix: "",
 	}
 
-	ch, err := svc.WatchSecretsByPrefix(context.Background(), req)
+	ch, err := svc.WatchSecretsByPrefix(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, ch)
@@ -285,7 +287,7 @@ func TestSecretsService_WatchSecretsByPrefix_Success(t *testing.T) {
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 
 	// Setup initial secrets
 	mockManager.listFn = func(ctx context.Context, prefix string) ([]string, error) {
@@ -326,7 +328,7 @@ func TestSecretsService_WatchSecretsByPrefix_InitialListError(t *testing.T) {
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 	defer cancel()
 
 	// Make initial list fail
@@ -359,7 +361,7 @@ func TestSecretsService_WatchSecretsByPrefix_ContextCancellation(t *testing.T) {
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 
 	mockManager.listFn = func(ctx context.Context, prefix string) ([]string, error) {
 		return []string{}, nil

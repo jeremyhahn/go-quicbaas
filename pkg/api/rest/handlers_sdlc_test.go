@@ -31,11 +31,11 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/giteafake"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/qrdbnode"
 )
@@ -185,9 +185,10 @@ func sdlcCall(t *testing.T, server *Server, tenant, method, path string, body an
 	if body != nil {
 		require.NoError(t, json.NewEncoder(&buf).Encode(body))
 	}
+	// An empty tenant is a caller bound to none — not the system tenant.
 	req := httptest.NewRequest(method, path, &buf)
 	if tenant != "" {
-		req = req.WithContext(iam.ContextWithTenant(req.Context(), tenant))
+		req = req.WithContext(tenantctx.WithTenant(req.Context(), tenant))
 	}
 	r := chi.NewRouter()
 	r.Get("/api/v1/sdlc/projects/{projectID}/binding", server.HandleGetSDLCBinding)
@@ -223,7 +224,7 @@ func restBinding(id string) sdlc.ProjectBinding {
 
 func TestSDLCBinding_ReadUnbindAndDelivery(t *testing.T) {
 	server, svc := setupSDLCServer(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	require.NoError(t, svc.Store().PutBinding(ctx, "tenant-a", ptr(restBinding("p1"))))
 	require.NoError(t, svc.Store().PutDelivery(ctx, "tenant-a", &sdlc.Delivery{TaskID: "task-1", ProjectID: "p1", Attempt: 1, Branch: "b",
 		PullRequest: sdlc.DeliveryPullRequest{Number: 9, State: sdlc.PullRequestOpen}}))
@@ -271,8 +272,8 @@ func TestSDLCBinding_BindRefusalsAreTyped(t *testing.T) {
 	rec = sdlcCall(t, server, "tenant-a", http.MethodPut, "/api/v1/sdlc/projects/p1/binding", restBinding("other"))
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	// Malformed JSON: 400.
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/sdlc/projects/p1/binding", bytes.NewBufferString("{nope"))
-	req = req.WithContext(iam.ContextWithTenant(req.Context(), "tenant-a"))
+	req := systemRequest(http.MethodPut, "/api/v1/sdlc/projects/p1/binding", bytes.NewBufferString("{nope"))
+	req = req.WithContext(tenantctx.WithTenant(req.Context(), "tenant-a"))
 	r := chi.NewRouter()
 	r.Put("/api/v1/sdlc/projects/{projectID}/binding", server.HandleBindSDLCProject)
 	rec = httptest.NewRecorder()
@@ -287,15 +288,19 @@ func TestSDLCBinding_BindRefusalsAreTyped(t *testing.T) {
 
 func TestSDLCBinding_TenancyIsTheCallersOwn(t *testing.T) {
 	server, svc := setupSDLCServer(t)
-	require.NoError(t, svc.Store().PutBinding(context.Background(), "tenant-a", ptr(restBinding("p1"))))
+	require.NoError(t, svc.Store().PutBinding(tenantctx.WithSystem(context.Background()), "tenant-a", ptr(restBinding("p1"))))
 	// Bound to tenant-a but asking for tenant-b: refused.
 	rec := sdlcCall(t, server, "tenant-a", http.MethodGet, "/api/v1/sdlc/projects/p1/binding?tenant_id=tenant-b", nil)
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 	// No tenant anywhere: refused.
 	rec = sdlcCall(t, server, "", http.MethodGet, "/api/v1/sdlc/projects/p1/binding", nil)
 	assert.Equal(t, http.StatusForbidden, rec.Code)
-	// A query tenant with no bound tenant is honoured (an admin caller).
+	// A query tenant with no bound tenant is refused: the request is not
+	// trusted to name its own tenant (go-quicbaas#1150).
 	rec = sdlcCall(t, server, "", http.MethodGet, "/api/v1/sdlc/projects/p1/binding?tenant_id=tenant-a", nil)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	// The owning tenant reads its binding.
+	rec = sdlcCall(t, server, "tenant-a", http.MethodGet, "/api/v1/sdlc/projects/p1/binding", nil)
 	assert.Equal(t, http.StatusOK, rec.Code)
 	// Another tenant sees nothing.
 	rec = sdlcCall(t, server, "tenant-b", http.MethodGet, "/api/v1/sdlc/projects/p1/binding", nil)
@@ -321,8 +326,8 @@ func TestSDLCBinding_UnavailableModuleAnswers503(t *testing.T) {
 func TestSDLCBinding_PathParametersAreRequired(t *testing.T) {
 	server, _ := setupSDLCServer(t)
 	for _, h := range []http.HandlerFunc{server.HandleGetSDLCBinding, server.HandleBindSDLCProject, server.HandleUnbindSDLCProject, server.HandleGetSDLCDelivery} {
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		req = req.WithContext(iam.ContextWithTenant(req.Context(), "tenant-a"))
+		req := systemRequest(http.MethodGet, "/", nil)
+		req = req.WithContext(tenantctx.WithTenant(req.Context(), "tenant-a"))
 		rec := httptest.NewRecorder()
 		h(rec, req)
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
@@ -379,7 +384,7 @@ func ptr[T any](v T) *T { return &v }
 // would make the conformance surface unusable as a fleet dashboard.
 func TestSDLCOnboarding_ProvisionsAndReportsSeparately(t *testing.T) {
 	server, svc := setupSDLCServer(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	sdlcRESTProjectRecords["p1"] = &orchestration.Project{ID: "p1", TenantID: "tenant-a"}
 	require.NoError(t, svc.Store().PutBinding(ctx, "tenant-a", ptr(restBinding("p1"))))
 
@@ -463,7 +468,7 @@ func TestSDLCOnboarding_AnsweredUnavailableWithoutTheModule(t *testing.T) {
 // stateful Gitea.
 func TestSDLCOpenWork_ListsTheAgentsPullRequestsAndLabelledIssues(t *testing.T) {
 	server, svc := setupSDLCServer(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	sdlcRESTProjectRecords["p1"] = &orchestration.Project{ID: "p1", TenantID: "tenant-a"}
 	require.NoError(t, svc.Store().PutBinding(ctx, "tenant-a", ptr(restBinding("p1"))))
 	sdlcRESTForge.PutPullRequestRaw(giteafake.PullRequest{Number: 4, Title: "fix", State: "open",

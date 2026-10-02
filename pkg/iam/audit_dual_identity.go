@@ -104,7 +104,7 @@ func LogDualIdentity(
 
 	tenantID := id.TenantID
 	if tenantID == "" {
-		tenantID = TenantFromContext(ctx)
+		tenantID = contextTenant(ctx)
 	}
 	if tenantID == "" {
 		return NewIAMError(ErrAuditInvalid, "iam.audit.dual_identity", "tenant id is required for dual-identity audit", nil)

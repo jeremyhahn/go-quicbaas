@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // pagedJobFixtures builds n jobs, oldest first, alternating runners.
@@ -50,7 +51,7 @@ func listJobsResult(t *testing.T, svc orchestration.AgentService, args map[strin
 	t.Helper()
 
 	reg := newFleetRegistry(t, svc)
-	ctx := orchestration.ContextWithTenant(context.Background(), "t1")
+	ctx := orchestration.ContextWithTenant(tenantctx.WithSystem(context.Background()), "t1")
 	result, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_list_jobs", args)
 	require.NoError(t, err)
 
@@ -86,7 +87,7 @@ func TestMCPListJobs_RefusesAnUnknownSortField(t *testing.T) {
 	svc := &fleetMockAgentService{}
 	svc.listJobs = pagedJobFixtures(3)
 	reg := newFleetRegistry(t, svc)
-	ctx := orchestration.ContextWithTenant(context.Background(), "t1")
+	ctx := orchestration.ContextWithTenant(tenantctx.WithSystem(context.Background()), "t1")
 
 	_, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_list_jobs",
 		map[string]interface{}{"sort": "subject"})

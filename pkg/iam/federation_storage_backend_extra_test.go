@@ -17,6 +17,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // UpdateProvider reconciles the name index; DeleteProvider clears record + index.
@@ -89,7 +91,7 @@ func TestBackendFederationStorage_UpdateDeleteLink(t *testing.T) {
 	kv := newRoutingTestKV()
 	kv.barrierTenant("acme")
 	store := NewBackendFederationStorage(kv)
-	ctx := ContextWithTenant(context.Background(), "acme")
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
 
 	link := testLink("acme", "u1", "l1", "p1", "ext-123")
 	if err := store.CreateLink(ctx, link); err != nil {

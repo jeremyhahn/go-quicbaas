@@ -32,6 +32,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -65,38 +66,29 @@ func (s *Server) getAgentService(w http.ResponseWriter, r *http.Request) orchest
 }
 
 // resolveOrchestratorTenant derives the tenant an orchestrator request operates
-// within and stamps it onto the returned context via
-// orchestration.ContextWithTenant. It is the single tenant-derivation point for
-// every orchestrator REST handler so the orchestrator's tenant guard
-// (orchestration.agentServiceImpl.validateTenant) observes a non-empty tenant on
-// every code path — the in-process service call and, transitively, the
-// embedded-fleet-node gRPC backend call.
+// within and stamps it onto the returned context under both keys the request
+// reaches: go-qrdb's central key (tenantctx) and the orchestrator's own
+// (orchestration.ContextWithTenant), which its tenant guard
+// (orchestration.agentServiceImpl.validateTenant) reads. It is the single
+// tenant-derivation point for every orchestrator REST handler.
 //
-// Precedence:
-//  1. explicit ?tenant_id= query parameter (operator override / cross-tenant
-//     control-plane calls),
-//  2. the authenticated token's tenant_id claim (the verified
-//     platformtoken.AuthorizedContext attached by the authz middleware),
-//  3. qrdbsdk.SystemTenantID as the canonical fallback when the request carries
-//     neither — preserving the historical single-tenant default.
+// THE ?tenant_id= PARAMETER IS NOT TRUSTED. It is honoured only as
+// tenantctx.Target allows: a caller may name only its own tenant — the system
+// tenant gets no cross-tenant lift through it — and every other naming is
+// refused (go-quicbaas#1150).
+// Omitting it means the caller's own tenant, read from the tenant the
+// authentication layer bound — go-qrdb's AuthMiddleware on the unified
+// server, injectPrincipal on the platform-token path — not from a fallback to
+// the system tenant. A request with no tenant bound is refused.
 //
-// It returns the derived tenant alongside the enriched context so callers that
-// also pass the tenant as an explicit argument (task / job / agent methods)
-// stay consistent with the context tenant.
-func resolveOrchestratorTenant(r *http.Request) (context.Context, string) {
-	ctx := r.Context()
-
-	tenantID := r.URL.Query().Get("tenant_id")
-	if tenantID == "" {
-		if ac := AuthorizedContextFromRequest(ctx); ac != nil && ac.TenantID != "" {
-			tenantID = ac.TenantID
-		}
+// On refusal it answers 403 and returns ok=false; the caller returns.
+func resolveOrchestratorTenant(w http.ResponseWriter, r *http.Request) (context.Context, string, bool) {
+	ctx, tenantID, err := tenantctx.ContextForTarget(r.Context(), "rest.Orchestrator", r.URL.Query().Get("tenant_id"))
+	if err != nil {
+		RespondError(w, r, http.StatusForbidden, err)
+		return r.Context(), "", false
 	}
-	if tenantID == "" {
-		tenantID = qrdbsdk.SystemTenantID
-	}
-
-	return orchestration.ContextWithTenant(ctx, tenantID), tenantID
+	return orchestration.ContextWithTenant(ctx, tenantID), tenantID, true
 }
 
 // =============================================================================
@@ -148,7 +140,10 @@ func (s *Server) HandleOrchestratorSpawn(w http.ResponseWriter, r *http.Request)
 	// rejects the request otherwise. Derivation precedence (query param ->
 	// authenticated token tenant -> SystemTenantID) is centralized in
 	// resolveOrchestratorTenant so the whole orchestrator surface is consistent.
-	ctx, _ := resolveOrchestratorTenant(r)
+	ctx, _, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 
 	// Per-request strict bit overrides the operator-level
 	// orchestration.host_affinity.mode default: when set to true, an offline
@@ -202,7 +197,10 @@ func spawnRequestHasExplicitPersistent(body []byte) bool {
 // ends when a turn_completed or turn_failed event carrying the same turn ID
 // appears there. A client that disconnects mid-turn does not cancel it.
 func (s *Server) HandleOrchestratorPrompt(w http.ResponseWriter, r *http.Request) {
-	ctx, _ := resolveOrchestratorTenant(r)
+	ctx, _, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 
 	agentSvc := s.getAgentService(w, r)
 	if agentSvc == nil {
@@ -246,7 +244,10 @@ func (s *Server) HandleOrchestratorPrompt(w http.ResponseWriter, r *http.Request
 
 // HandleOrchestratorSessionStatus handles GET /api/v1/orchestrator/sessions/{sessionID} - Get session status.
 func (s *Server) HandleOrchestratorSessionStatus(w http.ResponseWriter, r *http.Request) {
-	ctx, _ := resolveOrchestratorTenant(r)
+	ctx, _, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 
 	agentSvc := s.getAgentService(w, r)
 	if agentSvc == nil {
@@ -272,7 +273,10 @@ func (s *Server) HandleOrchestratorSessionStatus(w http.ResponseWriter, r *http.
 
 // HandleOrchestratorCloseSession handles DELETE /api/v1/orchestrator/sessions/{sessionID} - Close a session.
 func (s *Server) HandleOrchestratorCloseSession(w http.ResponseWriter, r *http.Request) {
-	ctx, _ := resolveOrchestratorTenant(r)
+	ctx, _, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 
 	agentSvc := s.getAgentService(w, r)
 	if agentSvc == nil {
@@ -308,7 +312,10 @@ func (s *Server) HandleOrchestratorCloseSession(w http.ResponseWriter, r *http.R
 //
 // The body is optional — an empty POST rotates with no reason and no hold.
 func (s *Server) HandleOrchestratorRotateSessionAccount(w http.ResponseWriter, r *http.Request) {
-	ctx, _ := resolveOrchestratorTenant(r)
+	ctx, _, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 
 	agentSvc := s.getAgentService(w, r)
 	if agentSvc == nil {
@@ -357,7 +364,10 @@ func (s *Server) HandleOrchestratorRotateSessionAccount(w http.ResponseWriter, r
 
 // HandleOrchestratorListSessions handles GET /api/v1/orchestrator/sessions - List active sessions.
 func (s *Server) HandleOrchestratorListSessions(w http.ResponseWriter, r *http.Request) {
-	ctx, _ := resolveOrchestratorTenant(r)
+	ctx, _, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 
 	agentSvc := s.getAgentService(w, r)
 	if agentSvc == nil {
@@ -781,7 +791,10 @@ func (s *Server) HandleOrchestratorCompleteTask(w http.ResponseWriter, r *http.R
 
 // HandleOrchestratorDecomposeTask handles POST /api/v1/orchestrator/tasks/decompose - Decompose a task into work items.
 func (s *Server) HandleOrchestratorDecomposeTask(w http.ResponseWriter, r *http.Request) {
-	ctx, _ := resolveOrchestratorTenant(r)
+	ctx, _, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 
 	agentSvc := s.getAgentService(w, r)
 	if agentSvc == nil {
@@ -877,7 +890,10 @@ func (s *Server) HandleOrchestratorGetJobStatus(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	ctx, tenantID := resolveOrchestratorTenant(r)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 
 	jobStatus, err := agentSvc.GetJobStatus(ctx, tenantID, jobID)
 	if err != nil {
@@ -896,7 +912,10 @@ func (s *Server) HandleOrchestratorListJobs(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	ctx, tenantID := resolveOrchestratorTenant(r)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 
 	// task_id is HONOURED, not decorative. It was accepted and ignored until
 	// go-quicbaas#822, so a task page asking for its own attempts was handed
@@ -1190,7 +1209,10 @@ func (s *Server) HandleOrchestratorListRunners(w http.ResponseWriter, r *http.Re
 
 // HandleOrchestratorDiscover handles POST /api/v1/orchestrator/discover - Discover projects.
 func (s *Server) HandleOrchestratorDiscover(w http.ResponseWriter, r *http.Request) {
-	ctx, _ := resolveOrchestratorTenant(r)
+	ctx, _, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 
 	agentSvc := s.getAgentService(w, r)
 	if agentSvc == nil {
@@ -1992,7 +2014,10 @@ func (s *Server) HandleOrchestratorListWorkflows(w http.ResponseWriter, r *http.
 		return
 	}
 
-	ctx, _ := resolveOrchestratorTenant(r)
+	ctx, _, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 
 	page, err := pageFromRequest(r)
 	if err != nil {
@@ -2028,7 +2053,10 @@ func (s *Server) HandleOrchestratorGetWorkflow(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	ctx, _ := resolveOrchestratorTenant(r)
+	ctx, _, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 
 	wf, err := agentSvc.GetWorkflow(ctx, name)
 	if err != nil {
@@ -2071,7 +2099,10 @@ func (s *Server) HandleOrchestratorUpdateWorkflow(w http.ResponseWriter, r *http
 	// URL path name takes precedence over embedded name.
 	def.Name = name
 
-	ctx, _ := resolveOrchestratorTenant(r)
+	ctx, _, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 
 	if err := agentSvc.UpdateWorkflow(ctx, &def); err != nil {
 		handleOrchestratorError(w, r, err)
@@ -2097,7 +2128,10 @@ func (s *Server) HandleOrchestratorDeleteWorkflow(w http.ResponseWriter, r *http
 		return
 	}
 
-	ctx, _ := resolveOrchestratorTenant(r)
+	ctx, _, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 
 	if err := agentSvc.DeleteWorkflow(ctx, name); err != nil {
 		handleOrchestratorError(w, r, err)
@@ -2148,7 +2182,10 @@ func (s *Server) HandleOrchestratorCreateWorkflow(w http.ResponseWriter, r *http
 
 	// The body's tenant_id wins; otherwise derive the tenant exactly as every
 	// other orchestrator handler does (query, then token claim, then system).
-	ctx, _ := resolveOrchestratorTenant(r)
+	ctx, _, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 	if req.TenantID != "" {
 		ctx = orchestration.ContextWithTenant(r.Context(), req.TenantID)
 	}

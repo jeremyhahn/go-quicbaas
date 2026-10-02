@@ -20,8 +20,8 @@ import (
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config/secrets"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // ErrKMSUnavailableError is returned by the lazy kms:// resolver when the
@@ -129,16 +129,12 @@ func (s *Server) buildSecretRegistry() *qrdbsecret.ResolverRegistry {
 				// Tenant-scoped: routes to the per-tenant barrier-backed
 				// CredentialService when the request context carries a tenant ID,
 				// falls back to the system-scoped Credential service otherwise.
-				// iam.TenantFromContext returns a string; the (string,bool) adapter
-				// treats a non-empty string as "tenant present".
+				// The tenant is go-qrdb's central binding (tenantctx.Lookup).
 				reg.Register(qrdbsecret.NewCredentialResolver(
 					qrdbsecret.NewTenantScopedCredentialRetrieve(
 						br,
 						svcs.Credential,
-						func(ctx context.Context) (string, bool) {
-							tid := iam.TenantFromContext(ctx)
-							return tid, tid != ""
-						},
+						tenantctx.Lookup,
 						slog.Default(),
 					),
 				))

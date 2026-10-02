@@ -38,8 +38,8 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
 )
 
@@ -86,7 +86,7 @@ func injectPrincipal(ctx context.Context, subject interfaces.Subject, authzCtx *
 	// Only set the tenant key when the token/identity carries one; an empty
 	// TenantID leaves single-tenant behavior unchanged.
 	if subject.TenantID != "" {
-		ctx = iam.ContextWithTenant(ctx, subject.TenantID)
+		ctx = tenantctx.WithTenant(ctx, subject.TenantID)
 	}
 	return ctx
 }

@@ -23,6 +23,7 @@ import (
 
 	quicbaasErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 func TestSecretLookupCode(t *testing.T) {
@@ -54,7 +55,7 @@ func TestSecretsService_GetSecret_StoreFailureIsNotNotFound(t *testing.T) {
 	}
 	svc := newSecretsService(mockManager, newMockLogger())
 
-	_, err := svc.GetSecret(context.Background(), &GetSecretRequest{SecretID: "forge-token"})
+	_, err := svc.GetSecret(tenantctx.WithSystem(context.Background()), &GetSecretRequest{SecretID: "forge-token"})
 
 	require.Error(t, err)
 	assert.False(t, quicbaasErrors.IsNotFound(err))

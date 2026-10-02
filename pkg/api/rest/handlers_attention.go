@@ -51,7 +51,10 @@ func (s *Server) HandleListAttention(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, tenantID := resolveOrchestratorTenant(r)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 
 	page, err := pageFromRequest(r)
 	if err != nil {
@@ -120,7 +123,10 @@ func (s *Server) HandleResolveAttention(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ctx, tenantID := resolveOrchestratorTenant(r)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 
 	actor := ""
 	if ac := AuthorizedContextFromRequest(ctx); ac != nil {

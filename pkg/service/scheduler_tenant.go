@@ -25,7 +25,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // schedulerTenantJobPrefix is the storage prefix for tenant-scoped scheduler job IDs.
@@ -64,12 +64,6 @@ func schedulerTenantJobBelongsTo(tenantID, jobTargetTenantID string) bool {
 	return jobTargetTenantID == tenantID
 }
 
-// schedulerTenantExtractID extracts the tenant ID from the context.
-// Returns empty string for single-tenant mode.
-func schedulerTenantExtractID(ctx context.Context) string {
-	return iam.TenantFromContext(ctx)
-}
-
 // schedulerTenantValidateID validates that a tenant ID contains only safe characters.
 // Empty tenant ID is valid (single-tenant mode).
 func schedulerTenantValidateID(tenantID string) error {
@@ -102,28 +96,32 @@ func schedulerTenantEnforceAccess(tenantID, jobTargetTenantID, operation string)
 	return nil
 }
 
-// schedulerTenantPrepareContext extracts and validates the tenant ID from context.
-// Returns the validated tenant ID or an error if the tenant ID is invalid.
-func schedulerTenantPrepareContext(ctx context.Context) (string, error) {
-	tenantID := schedulerTenantExtractID(ctx)
-	if err := schedulerTenantValidateID(tenantID); err != nil {
-		return "", err
+// schedulerEngineTenant maps a resolved tenant onto the scheduler store's
+// namespace argument, where the system namespace is the empty string
+// (pkg/scheduler/storage/quicbaas recordNamespace). Every other tenant is its
+// own namespace.
+func schedulerEngineTenant(tenantID string) string {
+	if tenantctx.IsSystem(tenantID) {
+		return ""
 	}
-	return tenantID, nil
+	return tenantID
 }
 
-// schedulerTenantResolveID resolves the effective tenant ID by preferring the
-// IAM context tenant and falling back to the request-provided tenant ID.
-// This ensures that storage key construction uses the same tenant namespace
-// regardless of whether the tenant was injected into the Go context by a
-// transport-level interceptor or passed explicitly in the request payload.
-func schedulerTenantResolveID(ctx context.Context, requestTenantID string) (string, error) {
-	tenantID := schedulerTenantExtractID(ctx)
-	if tenantID == "" {
-		tenantID = requestTenantID
+// schedulerTenantResolveID resolves the tenant a scheduler request acts for
+// and returns it as the store's namespace argument (schedulerEngineTenant).
+//
+// The caller's tenant comes from the request context and is required: a
+// context with no tenant bound is refused rather than read as system reach.
+// A tenant named in the request (requested) is honoured only as
+// tenantctx.Target allows — the caller's own tenant, and nothing else, for
+// every caller including the system tenant.
+func schedulerTenantResolveID(ctx context.Context, op, requested string) (string, error) {
+	tenantID, err := tenantctx.Target(ctx, "scheduler."+op, requested)
+	if err != nil {
+		return "", err
 	}
 	if err := schedulerTenantValidateID(tenantID); err != nil {
 		return "", err
 	}
-	return tenantID, nil
+	return schedulerEngineTenant(tenantID), nil
 }

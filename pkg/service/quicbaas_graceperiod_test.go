@@ -20,6 +20,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -45,7 +47,7 @@ func TestGracePeriodAdapter_UpdateKeyStatusForGracePeriod_Success(t *testing.T) 
 		jobID: "grace-job-001",
 	}
 
-	result, err := adapter.UpdateKeyStatusForGracePeriod(context.Background(), "grace-key", 3)
+	result, err := adapter.UpdateKeyStatusForGracePeriod(tenantctx.WithSystem(context.Background()), "grace-key", 3)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, "grace-key", result.KeyID)
@@ -74,7 +76,7 @@ func TestGracePeriodAdapter_UpdateKeyStatusForGracePeriod_WithAuditLogger(t *tes
 		jobID: "audit-job-123",
 	}
 
-	result, err := adapter.UpdateKeyStatusForGracePeriod(context.Background(), "audit-key", 1)
+	result, err := adapter.UpdateKeyStatusForGracePeriod(tenantctx.WithSystem(context.Background()), "audit-key", 1)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -105,7 +107,7 @@ func TestGracePeriodAdapter_UpdateKeyStatusForGracePeriod_NonexistentKey_WithAud
 		jobID: "job-456",
 	}
 
-	result, err := adapter.UpdateKeyStatusForGracePeriod(context.Background(), "nonexistent-key", 1)
+	result, err := adapter.UpdateKeyStatusForGracePeriod(tenantctx.WithSystem(context.Background()), "nonexistent-key", 1)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, "nonexistent-key", result.KeyID)
@@ -132,7 +134,7 @@ func TestGracePeriodAdapter_UpdateKeyStatusForGracePeriod_Error_EmptyKeyID(t *te
 		jobID: "fail-job-789",
 	}
 
-	result, err := adapter.UpdateKeyStatusForGracePeriod(context.Background(), "", 1)
+	result, err := adapter.UpdateKeyStatusForGracePeriod(tenantctx.WithSystem(context.Background()), "", 1)
 	require.Error(t, err)
 	assert.Nil(t, result)
 
@@ -164,7 +166,7 @@ func TestGracePeriodAdapter_UpdateKeyStatusForGracePeriod_NoAuditLogger(t *testi
 		jobID: "noaudit-job",
 	}
 
-	result, err := adapter.UpdateKeyStatusForGracePeriod(context.Background(), "noaudit-key", 1)
+	result, err := adapter.UpdateKeyStatusForGracePeriod(tenantctx.WithSystem(context.Background()), "noaudit-key", 1)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, "noaudit-key", result.KeyID)
@@ -179,7 +181,7 @@ func TestDisableKeyVersion_Success(t *testing.T) {
 	logger := newMockLogger()
 	kmsImpl := newKMSService(mockMgr, logger)
 
-	resp, err := kmsImpl.disableKeyVersion(context.Background(), "test-key", 1)
+	resp, err := kmsImpl.disableKeyVersion(tenantctx.WithSystem(context.Background()), "test-key", 1)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, "test-key", resp.KeyID)
@@ -194,11 +196,11 @@ func TestDisableKeyVersion_AlreadyDisabled(t *testing.T) {
 	kmsImpl := newKMSService(mockMgr, logger)
 
 	// Disable once
-	_, err := kmsImpl.disableKeyVersion(context.Background(), "test-key", 1)
+	_, err := kmsImpl.disableKeyVersion(tenantctx.WithSystem(context.Background()), "test-key", 1)
 	require.NoError(t, err)
 
 	// Disable again - should be idempotent
-	resp, err := kmsImpl.disableKeyVersion(context.Background(), "test-key", 1)
+	resp, err := kmsImpl.disableKeyVersion(tenantctx.WithSystem(context.Background()), "test-key", 1)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, KeyStatusDisabled, resp.OldStatus)
@@ -210,7 +212,7 @@ func TestDisableKeyVersion_EmptyKeyID(t *testing.T) {
 	logger := newMockLogger()
 	kmsImpl := newKMSService(mockMgr, logger)
 
-	resp, err := kmsImpl.disableKeyVersion(context.Background(), "", 1)
+	resp, err := kmsImpl.disableKeyVersion(tenantctx.WithSystem(context.Background()), "", 1)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 }
@@ -220,7 +222,7 @@ func TestDisableKeyVersion_ZeroVersion(t *testing.T) {
 	logger := newMockLogger()
 	kmsImpl := newKMSService(mockMgr, logger)
 
-	resp, err := kmsImpl.disableKeyVersion(context.Background(), "test-key", 0)
+	resp, err := kmsImpl.disableKeyVersion(tenantctx.WithSystem(context.Background()), "test-key", 0)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 }
@@ -242,7 +244,7 @@ func TestQuicBaaS_GenerateKey_WithKMSService(t *testing.T) {
 	db := &quicBaaS{kmsService: kmsImpl}
 
 	// Nil request fails validation in the KMS service
-	resp, err := db.GenerateKey(context.Background(), nil)
+	resp, err := db.GenerateKey(tenantctx.WithSystem(context.Background()), nil)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 }
@@ -254,7 +256,7 @@ func TestQuicBaaS_ImportKey_WithKMSService(t *testing.T) {
 
 	db := &quicBaaS{kmsService: kmsImpl}
 
-	resp, err := db.ImportKey(context.Background(), nil)
+	resp, err := db.ImportKey(tenantctx.WithSystem(context.Background()), nil)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 }
@@ -266,7 +268,7 @@ func TestQuicBaaS_GetKey_WithKMSService(t *testing.T) {
 
 	db := &quicBaaS{kmsService: kmsImpl}
 
-	resp, err := db.GetKey(context.Background(), nil)
+	resp, err := db.GetKey(tenantctx.WithSystem(context.Background()), nil)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 }
@@ -280,7 +282,7 @@ func TestQuicBaaS_ListKeys_WithKMSService(t *testing.T) {
 
 	// ListKeys does not validate nil request early, so use empty request
 	// which exercises the delegation path and returns an empty result
-	resp, err := db.ListKeys(context.Background(), &ListKeysRequest{})
+	resp, err := db.ListKeys(tenantctx.WithSystem(context.Background()), &ListKeysRequest{})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, 0, resp.TotalCount)
@@ -293,7 +295,7 @@ func TestQuicBaaS_RotateKey_WithKMSService(t *testing.T) {
 
 	db := &quicBaaS{kmsService: kmsImpl}
 
-	resp, err := db.RotateKey(context.Background(), nil)
+	resp, err := db.RotateKey(tenantctx.WithSystem(context.Background()), nil)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 }
@@ -305,7 +307,7 @@ func TestQuicBaaS_RevokeKey_WithKMSService(t *testing.T) {
 
 	db := &quicBaaS{kmsService: kmsImpl}
 
-	resp, err := db.RevokeKey(context.Background(), nil)
+	resp, err := db.RevokeKey(tenantctx.WithSystem(context.Background()), nil)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 }
@@ -317,7 +319,7 @@ func TestQuicBaaS_DeleteKey_WithKMSService(t *testing.T) {
 
 	db := &quicBaaS{kmsService: kmsImpl}
 
-	resp, err := db.DeleteKey(context.Background(), nil)
+	resp, err := db.DeleteKey(tenantctx.WithSystem(context.Background()), nil)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 }
@@ -329,7 +331,7 @@ func TestQuicBaaS_GetKeyMetadata_WithKMSService(t *testing.T) {
 
 	db := &quicBaaS{kmsService: kmsImpl}
 
-	resp, err := db.GetKeyMetadata(context.Background(), nil)
+	resp, err := db.GetKeyMetadata(tenantctx.WithSystem(context.Background()), nil)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 }
@@ -343,7 +345,7 @@ func TestQuicBaaS_Encrypt_WithCryptoService(t *testing.T) {
 	db := &quicBaaS{cryptoService: cryptoSvc}
 
 	// Nil request fails validation
-	resp, err := db.Encrypt(context.Background(), nil)
+	resp, err := db.Encrypt(tenantctx.WithSystem(context.Background()), nil)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 }
@@ -357,7 +359,7 @@ func TestQuicBaaS_Decrypt_WithCryptoService(t *testing.T) {
 	db := &quicBaaS{cryptoService: cryptoSvc}
 
 	// Nil request fails validation
-	resp, err := db.Decrypt(context.Background(), nil)
+	resp, err := db.Decrypt(tenantctx.WithSystem(context.Background()), nil)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 }

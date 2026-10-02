@@ -21,8 +21,8 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // newServiceForScopeTest builds a real secretsService over a real
@@ -43,7 +43,7 @@ func newServiceForScopeTest(t *testing.T) *secretsService {
 // secretsScopeCtx returns a context bound to tenantID the way every authenticated
 // transport binds it (iam.ContextWithTenant).
 func secretsScopeCtx(tenantID string) context.Context {
-	return iam.ContextWithTenant(context.Background(), tenantID)
+	return tenantctx.WithTenant(context.Background(), tenantID)
 }
 
 // requireCrossTenantRefusal asserts err is the service's cross-tenant
@@ -232,7 +232,9 @@ func TestStoreSecret_SystemIdentityBehaviourPinned(t *testing.T) {
 	svc := newServiceForScopeTest(t)
 	const target = "automatethethings"
 
-	for _, systemID := range []string{"", qrdbsdk.SystemTenantID} {
+	// Only an explicit system binding is the system tenant; an unbound
+	// caller is refused (go-quicbaas#1150).
+	for _, systemID := range []string{qrdbsdk.SystemTenantID} {
 		sysCtx := secretsScopeCtx(systemID)
 
 		if _, err := svc.StoreSecret(sysCtx, &StoreSecretRequest{
@@ -309,10 +311,10 @@ func TestSecretsScopedTenant_Table(t *testing.T) {
 		{name: "tenant names itself", ctxTenant: "acme", requested: "acme", want: "acme"},
 		{name: "tenant names another", ctxTenant: "acme", requested: "burnin", wantErr: true},
 		{name: "tenant names system", ctxTenant: "acme", requested: qrdbsdk.SystemTenantID, wantErr: true},
-		{name: "system, no request", ctxTenant: qrdbsdk.SystemTenantID, requested: "", want: qrdbsdk.SystemTenantID},
-		{name: "unbound, no request", ctxTenant: "", requested: "", want: ""},
-		{name: "unbound names system", ctxTenant: "", requested: qrdbsdk.SystemTenantID, want: ""},
-		{name: "system names unbound spelling", ctxTenant: qrdbsdk.SystemTenantID, requested: "", want: qrdbsdk.SystemTenantID},
+		{name: "system, no request", ctxTenant: qrdbsdk.SystemTenantID, requested: "", want: ""},
+		{name: "unbound, no request", ctxTenant: "", requested: "", wantErr: true},
+		{name: "unbound names system", ctxTenant: "", requested: qrdbsdk.SystemTenantID, wantErr: true},
+		{name: "system names its own spelling", ctxTenant: qrdbsdk.SystemTenantID, requested: qrdbsdk.SystemTenantID, want: ""},
 		{name: "system names a tenant", ctxTenant: qrdbsdk.SystemTenantID, requested: "acme", wantErr: true},
 		{name: "unbound names a tenant", ctxTenant: "", requested: "acme", wantErr: true},
 		{name: "malformed request", ctxTenant: "acme", requested: "acme/../burnin", wantErr: true},

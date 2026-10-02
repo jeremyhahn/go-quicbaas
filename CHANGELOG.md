@@ -29,6 +29,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Tenant isolation fails closed on every transport (go-quicbaas#1150).**
+  The services read a go-quicbaas-private tenant key that nothing on the
+  unified gRPC server set, treated the empty result as "single-tenant /
+  system", and then honoured the tenant a request named, so a tenant caller
+  authenticated by go-qrdb reached other tenants' and system data. Services now
+  read the tenant go-qrdb's AuthMiddleware binds, through the one helper
+  `pkg/tenantctx`; a request with no tenant bound is refused (403 /
+  `PermissionDenied`) instead of being read as the system tenant. The legacy
+  gRPC/Unix listener's interceptor, the platform-token REST path and the MCP
+  upstream projection bind the same central key. `iam.TenantFromContext` and
+  `iam.ContextWithTenant` are removed.
+- **A caller-supplied tenant is checked (go-quicbaas#1150).** The orchestrator's
+  REST `?tenant_id=`, gRPC `tenant_id` and MCP `tenant_id` argument, the
+  object-storage `X-Tenant-ID` / `tenant_id` (now enforced in the service, so
+  every transport), the hooks' `X-Tenant-ID` (and their team-name-as-tenant
+  fallback, removed), the SDLC and agent-catalog `tenant_id` and the scheduler's
+  `tenant_id` / `owner_id` / `target_tenant_id` may only name the caller's own
+  tenant. Anything else is refused with a typed `tenantctx.CrossTenantError`
+  for every caller, the system tenant included. `ErrCrossTenantAccess` now maps
+  to `PermissionDenied` on gRPC (it fell through to `Internal`).
+- **Scheduler: a cross-tenant create is refused, never answered with nothing
+  (go-quicbaas#1150).** `CreateJob` / `ScheduleJob` by a system caller naming
+  another tenant returned a nil error and a nil job, which crashed the gRPC
+  handler; a tenant caller can no longer file a job in another tenant's
+  namespace by `owner_id` or in the system namespace by owner type.
 - A tenant can no longer renew or revoke another tenant's registration lease:
   every registration writes a lease-bound ownership mark under its tenant, and
   `Renew`/`Deregister` refuse a lease without one (indistinguishable from a

@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // decodeTaskToolResult re-decodes a marshalResult value into a map so a test can
@@ -63,7 +64,7 @@ func TestExecuteAgentTool_TaskBlock_HappyPath(t *testing.T) {
 		},
 	}
 	reg := newFleetRegistry(t, svc)
-	ctx := orchestration.ContextWithTenant(context.Background(), "t1")
+	ctx := orchestration.ContextWithTenant(tenantctx.WithTenant(context.Background(), "t1"), "t1")
 
 	result, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_task_block", map[string]interface{}{
 		"task_id": "task-1", "kind": "escalated", "reason": "budget exhausted",
@@ -92,7 +93,7 @@ func TestExecuteAgentTool_TaskBlock_MissingAndErrors(t *testing.T) {
 	reg := newFleetRegistry(t, &mockAgentService{})
 	for _, tc := range cases {
 		t.Run("missing "+tc.name, func(t *testing.T) {
-			_, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_task_block", tc.args)
+			_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_task_block", tc.args)
 			require.Error(t, err)
 		})
 	}
@@ -101,12 +102,12 @@ func TestExecuteAgentTool_TaskBlock_MissingAndErrors(t *testing.T) {
 		svc := &mockAgentService{blockTaskFn: func(context.Context, string, string, orchestration.TaskBlockKind, string) error {
 			return &orchestration.InvalidTaskBlockKindError{Kind: "nope"}
 		}}
-		_, err := newFleetRegistry(t, svc).executeAgentTool(context.Background(), "quicbaas_orchestrator_task_block",
+		_, err := newFleetRegistry(t, svc).executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_task_block",
 			map[string]interface{}{"tenant_id": "t1", "task_id": "t", "kind": "nope", "reason": "r"})
 		require.ErrorIs(t, err, orchestration.ErrTaskStoreInvalidInput)
 	})
 	t.Run("service unavailable", func(t *testing.T) {
-		_, err := newFleetRegistry(t, nil).executeAgentTool(context.Background(), "quicbaas_orchestrator_task_block",
+		_, err := newFleetRegistry(t, nil).executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_task_block",
 			map[string]interface{}{"task_id": "t", "kind": "blocked", "reason": "r"})
 		require.Error(t, err)
 	})
@@ -120,7 +121,7 @@ func TestExecuteAgentTool_TaskReadmit(t *testing.T) {
 			gotTenant, gotTask = tenantID, taskID
 			return nil
 		}}
-		ctx := orchestration.ContextWithTenant(context.Background(), "t1")
+		ctx := tenantctx.WithTenant(context.Background(), "t1")
 		result, err := newFleetRegistry(t, svc).executeAgentTool(ctx, "quicbaas_orchestrator_task_readmit", map[string]interface{}{"task_id": "task-1"})
 		require.NoError(t, err)
 		out := decodeTaskToolResult(t, result)
@@ -130,14 +131,14 @@ func TestExecuteAgentTool_TaskReadmit(t *testing.T) {
 		assert.Equal(t, "task-1", gotTask)
 	})
 	t.Run("missing task_id", func(t *testing.T) {
-		_, err := newFleetRegistry(t, &mockAgentService{}).executeAgentTool(context.Background(), "quicbaas_orchestrator_task_readmit", map[string]interface{}{})
+		_, err := newFleetRegistry(t, &mockAgentService{}).executeAgentTool(tenantctx.WithTenant(context.Background(), "t"), "quicbaas_orchestrator_task_readmit", map[string]interface{}{})
 		require.Error(t, err)
 	})
 	t.Run("service error propagates", func(t *testing.T) {
 		svc := &mockAgentService{readmitTaskFn: func(context.Context, string, string) error {
 			return &orchestration.TaskNotFoundError{TenantID: "t", TaskID: "x"}
 		}}
-		_, err := newFleetRegistry(t, svc).executeAgentTool(context.Background(), "quicbaas_orchestrator_task_readmit", map[string]interface{}{"tenant_id": "t1", "task_id": "x"})
+		_, err := newFleetRegistry(t, svc).executeAgentTool(tenantctx.WithTenant(context.Background(), "t"), "quicbaas_orchestrator_task_readmit", map[string]interface{}{"tenant_id": "t", "task_id": "x"})
 		require.ErrorIs(t, err, orchestration.ErrTaskNotFound)
 	})
 	// The tool result carries the typed error's text, so a refused transition
@@ -146,14 +147,14 @@ func TestExecuteAgentTool_TaskReadmit(t *testing.T) {
 		svc := &mockAgentService{readmitTaskFn: func(context.Context, string, string) error {
 			return &orchestration.TaskInvalidStateError{TaskID: "x", CurrentState: orchestration.TaskStatusCompleted, TargetState: orchestration.TaskStatusPending}
 		}}
-		_, err := newFleetRegistry(t, svc).executeAgentTool(context.Background(), "quicbaas_orchestrator_task_readmit", map[string]interface{}{"tenant_id": "t1", "task_id": "x"})
+		_, err := newFleetRegistry(t, svc).executeAgentTool(tenantctx.WithTenant(context.Background(), "t"), "quicbaas_orchestrator_task_readmit", map[string]interface{}{"tenant_id": "t", "task_id": "x"})
 		var invalid *orchestration.TaskInvalidStateError
 		require.ErrorAs(t, err, &invalid)
 		assert.Contains(t, err.Error(), "current=completed")
 		assert.Contains(t, err.Error(), "target=pending")
 	})
 	t.Run("service unavailable", func(t *testing.T) {
-		_, err := newFleetRegistry(t, nil).executeAgentTool(context.Background(), "quicbaas_orchestrator_task_readmit", map[string]interface{}{"task_id": "x"})
+		_, err := newFleetRegistry(t, nil).executeAgentTool(tenantctx.WithTenant(context.Background(), "t"), "quicbaas_orchestrator_task_readmit", map[string]interface{}{"task_id": "x"})
 		require.Error(t, err)
 	})
 }
@@ -167,7 +168,7 @@ func TestExecuteAgentTool_GetJobStatus_CarriesTaskBindingAndSessions(t *testing.
 			TaskID: "task-1", Attempt: 2, LeadSessionID: "lead", SessionIDs: []string{"lead", "w1"},
 		}, nil
 	}
-	ctx := orchestration.ContextWithTenant(context.Background(), "t1")
+	ctx := orchestration.ContextWithTenant(tenantctx.WithTenant(context.Background(), "t1"), "t1")
 	result, err := newFleetRegistry(t, svc).executeAgentTool(ctx, "quicbaas_orchestrator_get_job_status", map[string]interface{}{"job_id": "job-1"})
 	require.NoError(t, err)
 	out := decodeTaskToolResult(t, result)

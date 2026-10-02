@@ -28,6 +28,7 @@ import (
 	quicbaasErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -249,7 +250,7 @@ func TestSecretsService_StoreSecret_Success(t *testing.T) {
 		Tags:        map[string]string{"team": "platform"},
 	}
 
-	resp, err := svc.StoreSecret(context.Background(), req)
+	resp, err := svc.StoreSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -270,7 +271,7 @@ func TestSecretsService_StoreSecret_WithSecretID(t *testing.T) {
 		Data:        []byte("secret-data"),
 	}
 
-	resp, err := svc.StoreSecret(context.Background(), req)
+	resp, err := svc.StoreSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -292,7 +293,7 @@ func TestSecretsService_StoreSecret_VersionIncrements(t *testing.T) {
 		Data:        []byte("version-1-data"),
 	}
 
-	resp1, err := svc.StoreSecret(context.Background(), req1)
+	resp1, err := svc.StoreSecret(tenantctx.WithSystem(context.Background()), req1)
 	require.NoError(t, err)
 	assert.NotNil(t, resp1)
 	assert.Equal(t, uint64(1), resp1.Version, "First store should be version 1")
@@ -305,7 +306,7 @@ func TestSecretsService_StoreSecret_VersionIncrements(t *testing.T) {
 		Data:        []byte("version-2-data"),
 	}
 
-	resp2, err := svc.StoreSecret(context.Background(), req2)
+	resp2, err := svc.StoreSecret(tenantctx.WithSystem(context.Background()), req2)
 	require.NoError(t, err)
 	assert.NotNil(t, resp2)
 	assert.Equal(t, uint64(2), resp2.Version, "Second store should be version 2")
@@ -319,7 +320,7 @@ func TestSecretsService_StoreSecret_VersionIncrements(t *testing.T) {
 		Data:        []byte("version-3-data"),
 	}
 
-	resp3, err := svc.StoreSecret(context.Background(), req3)
+	resp3, err := svc.StoreSecret(tenantctx.WithSystem(context.Background()), req3)
 	require.NoError(t, err)
 	assert.NotNil(t, resp3)
 	assert.Equal(t, uint64(3), resp3.Version, "Third store should be version 3")
@@ -331,7 +332,7 @@ func TestSecretsService_StoreSecret_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	resp, err := svc.StoreSecret(context.Background(), nil)
+	resp, err := svc.StoreSecret(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -347,7 +348,7 @@ func TestSecretsService_StoreSecret_MissingNameAndID(t *testing.T) {
 		Data: []byte("secret-data"),
 	}
 
-	resp, err := svc.StoreSecret(context.Background(), req)
+	resp, err := svc.StoreSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -364,7 +365,7 @@ func TestSecretsService_StoreSecret_MissingData(t *testing.T) {
 		Data: []byte{},
 	}
 
-	resp, err := svc.StoreSecret(context.Background(), req)
+	resp, err := svc.StoreSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -384,7 +385,7 @@ func TestSecretsService_StoreSecret_ManagerError(t *testing.T) {
 		Data: []byte("secret-data"),
 	}
 
-	resp, err := svc.StoreSecret(context.Background(), req)
+	resp, err := svc.StoreSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -416,7 +417,7 @@ func TestSecretsService_GetSecret_Success(t *testing.T) {
 		SecretID: "test-secret-123",
 	}
 
-	resp, err := svc.GetSecret(context.Background(), req)
+	resp, err := svc.GetSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -443,7 +444,7 @@ func TestSecretsService_GetSecret_SpecificVersion(t *testing.T) {
 		Version:  2,
 	}
 
-	resp, err := svc.GetSecret(context.Background(), req)
+	resp, err := svc.GetSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -456,7 +457,7 @@ func TestSecretsService_GetSecret_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	resp, err := svc.GetSecret(context.Background(), nil)
+	resp, err := svc.GetSecret(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -472,7 +473,7 @@ func TestSecretsService_GetSecret_MissingSecretID(t *testing.T) {
 		SecretID: "",
 	}
 
-	resp, err := svc.GetSecret(context.Background(), req)
+	resp, err := svc.GetSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -488,7 +489,7 @@ func TestSecretsService_GetSecret_NotFound(t *testing.T) {
 		SecretID: "nonexistent-secret",
 	}
 
-	resp, err := svc.GetSecret(context.Background(), req)
+	resp, err := svc.GetSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -512,7 +513,7 @@ func TestSecretsService_GetSecret_MissingDataField(t *testing.T) {
 		SecretID: "test-secret-123",
 	}
 
-	resp, err := svc.GetSecret(context.Background(), req)
+	resp, err := svc.GetSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -537,7 +538,7 @@ func TestSecretsService_GetSecret_DisabledSecret(t *testing.T) {
 		SecretID: "test-secret-disabled",
 	}
 
-	resp, err := svc.GetSecret(context.Background(), req)
+	resp, err := svc.GetSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -566,7 +567,7 @@ func TestSecretsService_GetSecret_EnabledSecret(t *testing.T) {
 		SecretID: "test-secret-enabled",
 	}
 
-	resp, err := svc.GetSecret(context.Background(), req)
+	resp, err := svc.GetSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -598,7 +599,7 @@ func TestSecretsService_ListSecrets_Success(t *testing.T) {
 		Limit: 10,
 	}
 
-	resp, err := svc.ListSecrets(context.Background(), req)
+	resp, err := svc.ListSecrets(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -612,7 +613,7 @@ func TestSecretsService_ListSecrets_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	resp, err := svc.ListSecrets(context.Background(), nil)
+	resp, err := svc.ListSecrets(tenantctx.WithSystem(context.Background()), nil)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -625,7 +626,7 @@ func TestSecretsService_ListSecrets_Empty(t *testing.T) {
 
 	req := &ListSecretsRequest{}
 
-	resp, err := svc.ListSecrets(context.Background(), req)
+	resp, err := svc.ListSecrets(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -651,7 +652,7 @@ func TestSecretsService_ListSecrets_WithPagination(t *testing.T) {
 		Limit: 5,
 	}
 
-	resp, err := svc.ListSecrets(context.Background(), req)
+	resp, err := svc.ListSecrets(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -670,7 +671,7 @@ func TestSecretsService_ListSecrets_ManagerError(t *testing.T) {
 
 	req := &ListSecretsRequest{}
 
-	resp, err := svc.ListSecrets(context.Background(), req)
+	resp, err := svc.ListSecrets(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -694,7 +695,7 @@ func TestSecretsService_DeleteSecret_Success(t *testing.T) {
 		PermanentlyDelete: false,
 	}
 
-	resp, err := svc.DeleteSecret(context.Background(), req)
+	resp, err := svc.DeleteSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -716,7 +717,7 @@ func TestSecretsService_DeleteSecret_Permanent(t *testing.T) {
 		PermanentlyDelete: true,
 	}
 
-	resp, err := svc.DeleteSecret(context.Background(), req)
+	resp, err := svc.DeleteSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -730,7 +731,7 @@ func TestSecretsService_DeleteSecret_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	resp, err := svc.DeleteSecret(context.Background(), nil)
+	resp, err := svc.DeleteSecret(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -746,7 +747,7 @@ func TestSecretsService_DeleteSecret_MissingSecretID(t *testing.T) {
 		SecretID: "",
 	}
 
-	resp, err := svc.DeleteSecret(context.Background(), req)
+	resp, err := svc.DeleteSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -765,7 +766,7 @@ func TestSecretsService_DeleteSecret_ManagerError(t *testing.T) {
 		SecretID: "test-secret-123",
 	}
 
-	resp, err := svc.DeleteSecret(context.Background(), req)
+	resp, err := svc.DeleteSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -792,7 +793,7 @@ func TestSecretsService_GetSecretVersion_Success(t *testing.T) {
 		Version:  1,
 	}
 
-	resp, err := svc.GetSecretVersion(context.Background(), req)
+	resp, err := svc.GetSecretVersion(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -807,7 +808,7 @@ func TestSecretsService_GetSecretVersion_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	resp, err := svc.GetSecretVersion(context.Background(), nil)
+	resp, err := svc.GetSecretVersion(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -824,7 +825,7 @@ func TestSecretsService_GetSecretVersion_MissingSecretID(t *testing.T) {
 		Version:  1,
 	}
 
-	resp, err := svc.GetSecretVersion(context.Background(), req)
+	resp, err := svc.GetSecretVersion(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -841,7 +842,7 @@ func TestSecretsService_GetSecretVersion_ZeroVersion(t *testing.T) {
 		Version:  0,
 	}
 
-	resp, err := svc.GetSecretVersion(context.Background(), req)
+	resp, err := svc.GetSecretVersion(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -858,7 +859,7 @@ func TestSecretsService_GetSecretVersion_NotFound(t *testing.T) {
 		Version:  1,
 	}
 
-	resp, err := svc.GetSecretVersion(context.Background(), req)
+	resp, err := svc.GetSecretVersion(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -884,7 +885,7 @@ func TestSecretsService_GetSecretVersion_MissingDataField(t *testing.T) {
 		Version:  1,
 	}
 
-	resp, err := svc.GetSecretVersion(context.Background(), req)
+	resp, err := svc.GetSecretVersion(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -912,7 +913,7 @@ func TestSecretsService_ListSecretVersions_Success(t *testing.T) {
 		SecretID: "test-secret-123",
 	}
 
-	resp, err := svc.ListSecretVersions(context.Background(), req)
+	resp, err := svc.ListSecretVersions(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -925,7 +926,7 @@ func TestSecretsService_ListSecretVersions_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	resp, err := svc.ListSecretVersions(context.Background(), nil)
+	resp, err := svc.ListSecretVersions(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -941,7 +942,7 @@ func TestSecretsService_ListSecretVersions_MissingSecretID(t *testing.T) {
 		SecretID: "",
 	}
 
-	resp, err := svc.ListSecretVersions(context.Background(), req)
+	resp, err := svc.ListSecretVersions(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -957,7 +958,7 @@ func TestSecretsService_ListSecretVersions_NotFound(t *testing.T) {
 		SecretID: "nonexistent-secret",
 	}
 
-	resp, err := svc.ListSecretVersions(context.Background(), req)
+	resp, err := svc.ListSecretVersions(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -984,7 +985,7 @@ func TestSecretsService_RollbackSecret_Success(t *testing.T) {
 		TargetVersion: 1,
 	}
 
-	resp, err := svc.RollbackSecret(context.Background(), req)
+	resp, err := svc.RollbackSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -997,7 +998,7 @@ func TestSecretsService_RollbackSecret_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	resp, err := svc.RollbackSecret(context.Background(), nil)
+	resp, err := svc.RollbackSecret(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1014,7 +1015,7 @@ func TestSecretsService_RollbackSecret_MissingSecretID(t *testing.T) {
 		TargetVersion: 1,
 	}
 
-	resp, err := svc.RollbackSecret(context.Background(), req)
+	resp, err := svc.RollbackSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1031,7 +1032,7 @@ func TestSecretsService_RollbackSecret_ZeroVersion(t *testing.T) {
 		TargetVersion: 0,
 	}
 
-	resp, err := svc.RollbackSecret(context.Background(), req)
+	resp, err := svc.RollbackSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1051,7 +1052,7 @@ func TestSecretsService_RollbackSecret_ManagerError(t *testing.T) {
 		TargetVersion: 1,
 	}
 
-	resp, err := svc.RollbackSecret(context.Background(), req)
+	resp, err := svc.RollbackSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1079,7 +1080,7 @@ func TestSecretsService_RotateSecret_Success(t *testing.T) {
 		Metadata: map[string]string{"rotated": "true"},
 	}
 
-	resp, err := svc.RotateSecret(context.Background(), req)
+	resp, err := svc.RotateSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1093,7 +1094,7 @@ func TestSecretsService_RotateSecret_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	resp, err := svc.RotateSecret(context.Background(), nil)
+	resp, err := svc.RotateSecret(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1110,7 +1111,7 @@ func TestSecretsService_RotateSecret_MissingSecretID(t *testing.T) {
 		NewData:  []byte("new-data"),
 	}
 
-	resp, err := svc.RotateSecret(context.Background(), req)
+	resp, err := svc.RotateSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1127,7 +1128,7 @@ func TestSecretsService_RotateSecret_MissingNewData(t *testing.T) {
 		NewData:  []byte{},
 	}
 
-	resp, err := svc.RotateSecret(context.Background(), req)
+	resp, err := svc.RotateSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1144,7 +1145,7 @@ func TestSecretsService_RotateSecret_NotFound(t *testing.T) {
 		NewData:  []byte("new-data"),
 	}
 
-	resp, err := svc.RotateSecret(context.Background(), req)
+	resp, err := svc.RotateSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1175,7 +1176,7 @@ func TestSecretsService_RotateSecret_StoreError(t *testing.T) {
 		NewData:  []byte("new-data"),
 	}
 
-	resp, err := svc.RotateSecret(context.Background(), req)
+	resp, err := svc.RotateSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1206,7 +1207,7 @@ func TestSecretsService_SetRotationPolicy_Success(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.SetRotationPolicy(context.Background(), req)
+	resp, err := svc.SetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1221,7 +1222,7 @@ func TestSecretsService_SetRotationPolicy_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	resp, err := svc.SetRotationPolicy(context.Background(), nil)
+	resp, err := svc.SetRotationPolicy(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1240,7 +1241,7 @@ func TestSecretsService_SetRotationPolicy_MissingSecretID(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.SetRotationPolicy(context.Background(), req)
+	resp, err := svc.SetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1257,7 +1258,7 @@ func TestSecretsService_SetRotationPolicy_NilPolicy(t *testing.T) {
 		Policy:   nil,
 	}
 
-	resp, err := svc.SetRotationPolicy(context.Background(), req)
+	resp, err := svc.SetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1277,7 +1278,7 @@ func TestSecretsService_SetRotationPolicy_InvalidInterval(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.SetRotationPolicy(context.Background(), req)
+	resp, err := svc.SetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1297,7 +1298,7 @@ func TestSecretsService_SetRotationPolicy_NotFound(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.SetRotationPolicy(context.Background(), req)
+	resp, err := svc.SetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1328,7 +1329,7 @@ func TestSecretsService_GetRotationPolicy_Success(t *testing.T) {
 		SecretID: "test-secret-123",
 	}
 
-	resp, err := svc.GetRotationPolicy(context.Background(), req)
+	resp, err := svc.GetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1352,7 +1353,7 @@ func TestSecretsService_GetRotationPolicy_Disabled(t *testing.T) {
 		SecretID: "test-secret-123",
 	}
 
-	resp, err := svc.GetRotationPolicy(context.Background(), req)
+	resp, err := svc.GetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1365,7 +1366,7 @@ func TestSecretsService_GetRotationPolicy_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	resp, err := svc.GetRotationPolicy(context.Background(), nil)
+	resp, err := svc.GetRotationPolicy(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1381,7 +1382,7 @@ func TestSecretsService_GetRotationPolicy_MissingSecretID(t *testing.T) {
 		SecretID: "",
 	}
 
-	resp, err := svc.GetRotationPolicy(context.Background(), req)
+	resp, err := svc.GetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1397,7 +1398,7 @@ func TestSecretsService_GetRotationPolicy_NotFound(t *testing.T) {
 		SecretID: "nonexistent-secret",
 	}
 
-	resp, err := svc.GetRotationPolicy(context.Background(), req)
+	resp, err := svc.GetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1421,7 +1422,7 @@ func TestNewSecretsServiceImpl_NilLogger(t *testing.T) {
 		Data: []byte("secret-data"),
 	}
 
-	resp, err := svc.StoreSecret(context.Background(), req)
+	resp, err := svc.StoreSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1454,7 +1455,7 @@ func TestSecretsService_StoreSecret_ContextCanceled(t *testing.T) {
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 	cancel() // Cancel immediately
 
 	req := &StoreSecretRequest{
@@ -1484,7 +1485,7 @@ func TestSecretsService_StoreSecret_WithExpiresAt(t *testing.T) {
 		ExpiresAt: &expiresAt,
 	}
 
-	resp, err := svc.StoreSecret(context.Background(), req)
+	resp, err := svc.StoreSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1514,7 +1515,7 @@ func TestSecretsService_GetSecret_WithMetadataParsing(t *testing.T) {
 		SecretID: "test-secret-123",
 	}
 
-	resp, err := svc.GetSecret(context.Background(), req)
+	resp, err := svc.GetSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1547,7 +1548,7 @@ func TestSecretsService_ListSecrets_SkipsUnreadableSecrets(t *testing.T) {
 
 	req := &ListSecretsRequest{}
 
-	resp, err := svc.ListSecrets(context.Background(), req)
+	resp, err := svc.ListSecrets(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1573,7 +1574,7 @@ func TestSecretsService_SetRotationPolicy_DisabledPolicy(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.SetRotationPolicy(context.Background(), req)
+	resp, err := svc.SetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1595,7 +1596,7 @@ func TestSecretsService_UpdateSecretStatus_EnableSecret(t *testing.T) {
 		Status:   SecretStatusEnabled,
 	}
 
-	resp, err := svc.UpdateSecretStatus(context.Background(), req)
+	resp, err := svc.UpdateSecretStatus(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -1624,7 +1625,7 @@ func TestSecretsService_UpdateSecretStatus_DisableSecret(t *testing.T) {
 		Status:   SecretStatusDisabled,
 	}
 
-	resp, err := svc.UpdateSecretStatus(context.Background(), req)
+	resp, err := svc.UpdateSecretStatus(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -1642,7 +1643,7 @@ func TestSecretsService_UpdateSecretStatus_NilRequest(t *testing.T) {
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	resp, err := svc.UpdateSecretStatus(context.Background(), nil)
+	resp, err := svc.UpdateSecretStatus(tenantctx.WithSystem(context.Background()), nil)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1659,7 +1660,7 @@ func TestSecretsService_UpdateSecretStatus_MissingSecretID(t *testing.T) {
 		Status:   SecretStatusEnabled,
 	}
 
-	resp, err := svc.UpdateSecretStatus(context.Background(), req)
+	resp, err := svc.UpdateSecretStatus(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1676,7 +1677,7 @@ func TestSecretsService_UpdateSecretStatus_InvalidStatus(t *testing.T) {
 		Status:   SecretStatus("invalid"),
 	}
 
-	resp, err := svc.UpdateSecretStatus(context.Background(), req)
+	resp, err := svc.UpdateSecretStatus(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1693,7 +1694,7 @@ func TestSecretsService_UpdateSecretStatus_NotFound(t *testing.T) {
 		Status:   SecretStatusEnabled,
 	}
 
-	resp, err := svc.UpdateSecretStatus(context.Background(), req)
+	resp, err := svc.UpdateSecretStatus(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1716,7 +1717,7 @@ func TestSecretsService_UpdateSecretStatus_StoreError(t *testing.T) {
 		Status:   SecretStatusDisabled,
 	}
 
-	resp, err := svc.UpdateSecretStatus(context.Background(), req)
+	resp, err := svc.UpdateSecretStatus(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -1739,7 +1740,7 @@ func TestSecretsService_UpdateSecretStatus_DefaultEnabledStatus(t *testing.T) {
 		Status:   SecretStatusDisabled,
 	}
 
-	resp, err := svc.UpdateSecretStatus(context.Background(), req)
+	resp, err := svc.UpdateSecretStatus(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -1757,7 +1758,7 @@ func TestSecretsService_UpdateSecretStatus_ContextCanceled(t *testing.T) {
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 	cancel() // Cancel the context immediately
 
 	req := &UpdateSecretStatusRequest{
@@ -1798,7 +1799,7 @@ func TestSecretsService_StoreSecret_WithAllMetadataFields(t *testing.T) {
 		ExpiresAt: &expiresAt,
 	}
 
-	resp, err := svc.StoreSecret(context.Background(), req)
+	resp, err := svc.StoreSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1826,7 +1827,7 @@ func TestSecretsService_StoreSecret_EmptyMetadata(t *testing.T) {
 		Tags:     map[string]string{},
 	}
 
-	resp, err := svc.StoreSecret(context.Background(), req)
+	resp, err := svc.StoreSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1844,7 +1845,7 @@ func TestSecretsService_StoreSecret_NilMetadata(t *testing.T) {
 		Tags:     nil,
 	}
 
-	resp, err := svc.StoreSecret(context.Background(), req)
+	resp, err := svc.StoreSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1866,7 +1867,7 @@ func TestSecretsService_StoreSecret_LargeData(t *testing.T) {
 		Data: largeData,
 	}
 
-	resp, err := svc.StoreSecret(context.Background(), req)
+	resp, err := svc.StoreSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1913,7 +1914,7 @@ func TestSecretsService_StoreSecret_SpecialCharactersInName(t *testing.T) {
 				Data:     []byte("secret-data"),
 			}
 
-			resp, err := svc.StoreSecret(context.Background(), req)
+			resp, err := svc.StoreSecret(tenantctx.WithSystem(context.Background()), req)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -1936,7 +1937,7 @@ func TestSecretsService_StoreSecret_WithNilLogger(t *testing.T) {
 		Data: []byte("secret-data"),
 	}
 
-	resp, err := svc.StoreSecret(context.Background(), req)
+	resp, err := svc.StoreSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1953,7 +1954,7 @@ func TestSecretsService_StoreSecret_WithNilMetrics(t *testing.T) {
 		Data: []byte("secret-data"),
 	}
 
-	resp, err := svc.StoreSecret(context.Background(), req)
+	resp, err := svc.StoreSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -1975,7 +1976,7 @@ func TestSecretsService_GetSecret_WithInvalidCreatedAt(t *testing.T) {
 		SecretID: "test-secret",
 	}
 
-	resp, err := svc.GetSecret(context.Background(), req)
+	resp, err := svc.GetSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -2003,7 +2004,7 @@ func TestSecretsService_GetSecret_MetadataFiltering(t *testing.T) {
 		SecretID: "test-secret",
 	}
 
-	resp, err := svc.GetSecret(context.Background(), req)
+	resp, err := svc.GetSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -2029,7 +2030,7 @@ func TestSecretsService_GetSecret_WithVersionNotFound(t *testing.T) {
 		Version:  99, // Non-existent version
 	}
 
-	resp, err := svc.GetSecret(context.Background(), req)
+	resp, err := svc.GetSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -2053,7 +2054,7 @@ func TestSecretsService_GetSecret_EmptySecretData(t *testing.T) {
 		SecretID: "test-secret",
 	}
 
-	resp, err := svc.GetSecret(context.Background(), req)
+	resp, err := svc.GetSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -2082,7 +2083,7 @@ func TestSecretsService_ListSecrets_WithTags(t *testing.T) {
 
 	req := &ListSecretsRequest{}
 
-	resp, err := svc.ListSecrets(context.Background(), req)
+	resp, err := svc.ListSecrets(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -2116,7 +2117,7 @@ func TestSecretsService_ListSecrets_ZeroLimit(t *testing.T) {
 		Limit: 0, // Zero means no limit
 	}
 
-	resp, err := svc.ListSecrets(context.Background(), req)
+	resp, err := svc.ListSecrets(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -2138,7 +2139,7 @@ func TestSecretsService_ListSecrets_LimitExceedingTotal(t *testing.T) {
 		Limit: 100, // Exceeds total
 	}
 
-	resp, err := svc.ListSecrets(context.Background(), req)
+	resp, err := svc.ListSecrets(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -2159,7 +2160,7 @@ func TestSecretsService_ListSecrets_AllSecretsUnreadable(t *testing.T) {
 
 	req := &ListSecretsRequest{}
 
-	resp, err := svc.ListSecrets(context.Background(), req)
+	resp, err := svc.ListSecrets(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -2181,7 +2182,7 @@ func TestSecretsService_DeleteSecret_SoftDelete(t *testing.T) {
 		PermanentlyDelete: false,
 	}
 
-	resp, err := svc.DeleteSecret(context.Background(), req)
+	resp, err := svc.DeleteSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -2200,7 +2201,7 @@ func TestSecretsService_DeleteSecret_NotFound(t *testing.T) {
 		PermanentlyDelete: false,
 	}
 
-	resp, err := svc.DeleteSecret(context.Background(), req)
+	resp, err := svc.DeleteSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -2216,7 +2217,7 @@ func TestSecretsService_DeleteSecret_DestroyNotFound(t *testing.T) {
 		PermanentlyDelete: true,
 	}
 
-	resp, err := svc.DeleteSecret(context.Background(), req)
+	resp, err := svc.DeleteSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -2245,7 +2246,7 @@ func TestSecretsService_GetSecretVersion_WithMetadata(t *testing.T) {
 		Version:  1,
 	}
 
-	resp, err := svc.GetSecretVersion(context.Background(), req)
+	resp, err := svc.GetSecretVersion(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -2276,7 +2277,7 @@ func TestSecretsService_GetSecretVersion_HighVersion(t *testing.T) {
 		Version:  100,
 	}
 
-	resp, err := svc.GetSecretVersion(context.Background(), req)
+	resp, err := svc.GetSecretVersion(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -2296,7 +2297,7 @@ func TestSecretsService_ListSecretVersions_NoVersions(t *testing.T) {
 		SecretID: "test-secret",
 	}
 
-	resp, err := svc.ListSecretVersions(context.Background(), req)
+	resp, err := svc.ListSecretVersions(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -2324,7 +2325,7 @@ func TestSecretsService_ListSecretVersions_ManyVersions(t *testing.T) {
 		SecretID: "test-secret",
 	}
 
-	resp, err := svc.ListSecretVersions(context.Background(), req)
+	resp, err := svc.ListSecretVersions(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -2349,7 +2350,7 @@ func TestSecretsService_RollbackSecret_ToFirstVersion(t *testing.T) {
 		TargetVersion: 1,
 	}
 
-	resp, err := svc.RollbackSecret(context.Background(), req)
+	resp, err := svc.RollbackSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -2369,7 +2370,7 @@ func TestSecretsService_RollbackSecret_NonexistentVersion(t *testing.T) {
 		TargetVersion: 99,
 	}
 
-	resp, err := svc.RollbackSecret(context.Background(), req)
+	resp, err := svc.RollbackSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -2396,7 +2397,7 @@ func TestSecretsService_RotateSecret_PreservesMetadata(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.RotateSecret(context.Background(), req)
+	resp, err := svc.RotateSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -2423,7 +2424,7 @@ func TestSecretsService_RotateSecret_WithEmptyMetadata(t *testing.T) {
 		Metadata: nil,
 	}
 
-	resp, err := svc.RotateSecret(context.Background(), req)
+	resp, err := svc.RotateSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -2442,7 +2443,7 @@ func TestSecretsService_RotateSecret_ManagerGetFails(t *testing.T) {
 		NewData:  []byte("new-data"),
 	}
 
-	resp, err := svc.RotateSecret(context.Background(), req)
+	resp, err := svc.RotateSecret(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -2477,7 +2478,7 @@ func TestSecretsService_SetRotationPolicy_UpdateExisting(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.SetRotationPolicy(context.Background(), req)
+	resp, err := svc.SetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -2508,7 +2509,7 @@ func TestSecretsService_SetRotationPolicy_StoreUpdateFails(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.SetRotationPolicy(context.Background(), req)
+	resp, err := svc.SetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -2534,7 +2535,7 @@ func TestSecretsService_SetRotationPolicy_ZeroRetainVersions(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.SetRotationPolicy(context.Background(), req)
+	resp, err := svc.SetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -2560,7 +2561,7 @@ func TestSecretsService_GetRotationPolicy_CompletePolicy(t *testing.T) {
 		SecretID: "test-secret",
 	}
 
-	resp, err := svc.GetRotationPolicy(context.Background(), req)
+	resp, err := svc.GetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -2587,7 +2588,7 @@ func TestSecretsService_GetRotationPolicy_InvalidInterval(t *testing.T) {
 		SecretID: "test-secret",
 	}
 
-	resp, err := svc.GetRotationPolicy(context.Background(), req)
+	resp, err := svc.GetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -2612,7 +2613,7 @@ func TestSecretsService_GetRotationPolicy_InvalidNextRotation(t *testing.T) {
 		SecretID: "test-secret",
 	}
 
-	resp, err := svc.GetRotationPolicy(context.Background(), req)
+	resp, err := svc.GetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -2636,7 +2637,7 @@ func TestSecretsService_GetRotationPolicy_FalseEnabled(t *testing.T) {
 		SecretID: "test-secret",
 	}
 
-	resp, err := svc.GetRotationPolicy(context.Background(), req)
+	resp, err := svc.GetRotationPolicy(tenantctx.WithSystem(context.Background()), req)
 
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
@@ -2656,7 +2657,7 @@ func TestSecretsService_GetSecret_ContextTimeout(t *testing.T) {
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(tenantctx.WithSystem(context.Background()), 10*time.Millisecond)
 	defer cancel()
 
 	req := &GetSecretRequest{
@@ -2677,7 +2678,7 @@ func TestSecretsService_ListSecrets_ContextCanceled(t *testing.T) {
 	logger := newMockLogger()
 	svc := newSecretsService(mockManager, logger)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 	cancel()
 
 	req := &ListSecretsRequest{}
@@ -2702,7 +2703,7 @@ func TestSecretsService_ConcurrentStoreSecret(t *testing.T) {
 				Name: "secret-" + string(rune('a'+n)),
 				Data: []byte("data"),
 			}
-			_, err := svc.StoreSecret(context.Background(), req)
+			_, err := svc.StoreSecret(tenantctx.WithSystem(context.Background()), req)
 			assert.NoError(t, err)
 			done <- true
 		}(i)
@@ -2735,7 +2736,7 @@ func TestSecretsService_ConcurrentGetSecret(t *testing.T) {
 			req := &GetSecretRequest{
 				SecretID: "test-secret",
 			}
-			resp, err := svc.GetSecret(context.Background(), req)
+			resp, err := svc.GetSecret(tenantctx.WithSystem(context.Background()), req)
 			assert.NoError(t, err)
 			assert.NotNil(t, resp)
 			done <- true
@@ -2757,7 +2758,7 @@ func TestSecretsService_MetricsIncrement(t *testing.T) {
 		Name: "test-secret",
 		Data: []byte("data"),
 	}
-	_, err := svc.StoreSecret(context.Background(), storeReq)
+	_, err := svc.StoreSecret(tenantctx.WithSystem(context.Background()), storeReq)
 	require.NoError(t, err)
 
 	// Verify metrics exist and would be incremented
@@ -2775,7 +2776,7 @@ func TestSecretsService_ErrorMetricsIncrement(t *testing.T) {
 		Name: "",
 		Data: []byte{},
 	}
-	_, err := svc.StoreSecret(context.Background(), req)
+	_, err := svc.StoreSecret(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 
 	// Verify error metrics exist
@@ -2905,7 +2906,7 @@ func TestSecretsService_CompleteLifecycle(t *testing.T) {
 			"env": "test",
 		},
 	}
-	storeResp, err := svc.StoreSecret(context.Background(), storeReq)
+	storeResp, err := svc.StoreSecret(tenantctx.WithSystem(context.Background()), storeReq)
 	require.NoError(t, err)
 	assert.NotNil(t, storeResp)
 
@@ -2913,7 +2914,7 @@ func TestSecretsService_CompleteLifecycle(t *testing.T) {
 	getReq := &GetSecretRequest{
 		SecretID: storeResp.SecretID,
 	}
-	getResp, err := svc.GetSecret(context.Background(), getReq)
+	getResp, err := svc.GetSecret(tenantctx.WithSystem(context.Background()), getReq)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("original-data"), getResp.Data)
 
@@ -2922,13 +2923,13 @@ func TestSecretsService_CompleteLifecycle(t *testing.T) {
 		SecretID: storeResp.SecretID,
 		NewData:  []byte("rotated-data"),
 	}
-	rotateResp, err := svc.RotateSecret(context.Background(), rotateReq)
+	rotateResp, err := svc.RotateSecret(tenantctx.WithSystem(context.Background()), rotateReq)
 	require.NoError(t, err)
 	assert.NotNil(t, rotateResp)
 
 	// 4. List secrets
 	listReq := &ListSecretsRequest{}
-	listResp, err := svc.ListSecrets(context.Background(), listReq)
+	listResp, err := svc.ListSecrets(tenantctx.WithSystem(context.Background()), listReq)
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(listResp.Secrets), 1)
 
@@ -2937,7 +2938,7 @@ func TestSecretsService_CompleteLifecycle(t *testing.T) {
 		SecretID:          storeResp.SecretID,
 		PermanentlyDelete: true,
 	}
-	deleteResp, err := svc.DeleteSecret(context.Background(), deleteReq)
+	deleteResp, err := svc.DeleteSecret(tenantctx.WithSystem(context.Background()), deleteReq)
 	require.NoError(t, err)
 	assert.True(t, deleteResp.Deleted)
 }
@@ -2952,7 +2953,7 @@ func TestSecretsService_RotationPolicyLifecycle(t *testing.T) {
 		Name: "policy-secret",
 		Data: []byte("data"),
 	}
-	storeResp, err := svc.StoreSecret(context.Background(), storeReq)
+	storeResp, err := svc.StoreSecret(tenantctx.WithSystem(context.Background()), storeReq)
 	require.NoError(t, err)
 
 	// Set rotation policy
@@ -2965,7 +2966,7 @@ func TestSecretsService_RotationPolicyLifecycle(t *testing.T) {
 			RetainVersions: 5,
 		},
 	}
-	setPolicyResp, err := svc.SetRotationPolicy(context.Background(), setPolicyReq)
+	setPolicyResp, err := svc.SetRotationPolicy(tenantctx.WithSystem(context.Background()), setPolicyReq)
 	require.NoError(t, err)
 	assert.True(t, setPolicyResp.Policy.Enabled)
 
@@ -2973,7 +2974,7 @@ func TestSecretsService_RotationPolicyLifecycle(t *testing.T) {
 	getPolicyReq := &GetRotationPolicyRequest{
 		SecretID: storeResp.SecretID,
 	}
-	getPolicyResp, err := svc.GetRotationPolicy(context.Background(), getPolicyReq)
+	getPolicyResp, err := svc.GetRotationPolicy(tenantctx.WithSystem(context.Background()), getPolicyReq)
 	require.NoError(t, err)
 	assert.True(t, getPolicyResp.Policy.Enabled)
 	assert.Equal(t, 24*time.Hour, getPolicyResp.Policy.Interval)

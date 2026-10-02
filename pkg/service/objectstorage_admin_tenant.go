@@ -19,7 +19,6 @@
 package service
 
 import (
-	"context"
 	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -76,13 +75,4 @@ func osAdminEnforceTenantAccess(tenantID, backend, operation string) error {
 			"backend does not belong to the requesting tenant")
 	}
 	return nil
-}
-
-// osAdminPrepareTenantContext extracts and validates the tenant ID from context.
-func osAdminPrepareTenantContext(ctx context.Context) (string, error) {
-	tenantID := extractTenantID(ctx)
-	if err := validateTenantID(tenantID); err != nil {
-		return "", err
-	}
-	return tenantID, nil
 }

@@ -21,6 +21,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -60,7 +62,7 @@ func TestClientCredentialsGrant_IssuesTheApplicationGrant(t *testing.T) {
 		t.Fatalf("RegisterApp: %v", err)
 	}
 
-	stored, err := storage.GetApp(ContextWithTenant(context.Background(), tenantID), app.ClientID)
+	stored, err := storage.GetApp(tenantctx.WithTenant(context.Background(), tenantID), app.ClientID)
 	if err != nil {
 		t.Fatalf("GetApp: %v", err)
 	}
@@ -68,7 +70,7 @@ func TestClientCredentialsGrant_IssuesTheApplicationGrant(t *testing.T) {
 		t.Fatalf("stored grant = %v, want %v", stored.Scopes, granted)
 	}
 
-	tokenCtx := ContextWithTenant(context.Background(), tenantID)
+	tokenCtx := tenantctx.WithTenant(context.Background(), tenantID)
 	resp, err := provider.Token(tokenCtx, &TokenRequest{
 		GrantType:    GrantTypeClientCredentials,
 		ClientID:     app.ClientID,
@@ -110,7 +112,7 @@ func TestClientCredentialsGrant_RefusesAnUngrantedPrincipal(t *testing.T) {
 		t.Fatalf("RegisterApp: %v", err)
 	}
 
-	tokenCtx := ContextWithTenant(context.Background(), tenantID)
+	tokenCtx := tenantctx.WithTenant(context.Background(), tenantID)
 	resp, err := provider.Token(tokenCtx, &TokenRequest{
 		GrantType:    GrantTypeClientCredentials,
 		ClientID:     app.ClientID,
@@ -152,7 +154,7 @@ func TestClientCredentialsGrant_RefusesScopeOutsideTheGrant(t *testing.T) {
 		t.Fatalf("RegisterApp: %v", err)
 	}
 
-	tokenCtx := ContextWithTenant(context.Background(), tenantID)
+	tokenCtx := tenantctx.WithTenant(context.Background(), tenantID)
 	resp, err := provider.Token(tokenCtx, &TokenRequest{
 		GrantType:    GrantTypeClientCredentials,
 		ClientID:     app.ClientID,
@@ -326,7 +328,7 @@ func TestPermissionScopes(t *testing.T) {
 func TestAppManager_GrantScopes(t *testing.T) {
 	const tenantID = "automatethethings"
 	_, mgr, storage := newTenantRoutedOIDCProvider(t, tenantID)
-	ctx := ContextWithTenant(context.Background(), tenantID)
+	ctx := tenantctx.WithTenant(context.Background(), tenantID)
 
 	app, err := mgr.RegisterApp(context.Background(), tenantID, grantedAppOptions("converge-me", nil))
 	if err != nil {
@@ -414,7 +416,7 @@ func TestTokenMTLS_IssuesTheApplicationGrant(t *testing.T) {
 		t.Fatalf("RegisterApp: %v", err)
 	}
 
-	tokenCtx := ContextWithTenant(context.Background(), tenantID)
+	tokenCtx := tenantctx.WithTenant(context.Background(), tenantID)
 	resp, err := provider.TokenMTLS(tokenCtx, &MTLSTokenRequest{
 		GrantType:          GrantTypeClientCredentials,
 		ClientID:           app.ClientID,
@@ -457,7 +459,7 @@ func TestTokenMTLS_RefusesAnUngrantedPrincipal(t *testing.T) {
 		t.Fatalf("RegisterApp: %v", err)
 	}
 
-	tokenCtx := ContextWithTenant(context.Background(), tenantID)
+	tokenCtx := tenantctx.WithTenant(context.Background(), tenantID)
 	resp, err := provider.TokenMTLS(tokenCtx, &MTLSTokenRequest{
 		GrantType:          GrantTypeClientCredentials,
 		ClientID:           app.ClientID,

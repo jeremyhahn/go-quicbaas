@@ -44,6 +44,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
 
@@ -83,7 +84,9 @@ var _ interfaces.KVStore = (*tenantRoutingStore)(nil)
 func (s *tenantRoutingStore) namespaceFor(ctx context.Context) map[string][]byte {
 	tenantID := orchestration.TenantFromContext(ctx)
 	if tenantID == "" {
-		tenantID = iam.TenantFromContext(ctx)
+		if bound, ok := tenantctx.Lookup(ctx); ok {
+			tenantID = bound
+		}
 	}
 	if tenantID == "" {
 		tenantID = "system"

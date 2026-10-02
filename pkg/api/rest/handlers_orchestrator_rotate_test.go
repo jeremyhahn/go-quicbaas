@@ -89,7 +89,7 @@ func rotateRequest(t *testing.T, server *Server, sessionID, rawBody string) *htt
 	t.Helper()
 
 	url := "/api/v1/orchestrator/sessions/" + sessionID + "/rotate-account"
-	req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader([]byte(rawBody)))
+	req := systemRequest(http.MethodPost, url, bytes.NewReader([]byte(rawBody)))
 	req.Header.Set("Content-Type", "application/json")
 
 	routeCtx := chi.NewRouteContext()

@@ -33,6 +33,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -532,7 +533,7 @@ func (m *objstoreMockStorage) Configure(settings map[string]string) error {
 
 // Put implements common.Storage
 func (m *objstoreMockStorage) Put(key string, reader io.Reader) error {
-	return m.PutWithContext(context.Background(), key, reader)
+	return m.PutWithContext(tenantctx.WithSystem(context.Background()), key, reader)
 }
 
 // PutWithContext implements common.Storage
@@ -557,7 +558,7 @@ func (m *objstoreMockStorage) PutWithMetadata(ctx context.Context, key string, d
 
 // Get implements common.Storage
 func (m *objstoreMockStorage) Get(key string) (io.ReadCloser, error) {
-	return m.GetWithContext(context.Background(), key)
+	return m.GetWithContext(tenantctx.WithSystem(context.Background()), key)
 }
 
 // GetWithContext implements common.Storage
@@ -592,7 +593,7 @@ func (m *objstoreMockStorage) UpdateMetadata(ctx context.Context, key string, me
 
 // Delete implements common.Storage
 func (m *objstoreMockStorage) Delete(key string) error {
-	return m.DeleteWithContext(context.Background(), key)
+	return m.DeleteWithContext(tenantctx.WithSystem(context.Background()), key)
 }
 
 // DeleteWithContext implements common.Storage
@@ -616,7 +617,7 @@ func (m *objstoreMockStorage) Exists(ctx context.Context, key string) (bool, err
 
 // List implements common.Storage
 func (m *objstoreMockStorage) List(prefix string) ([]string, error) {
-	return m.ListWithContext(context.Background(), prefix)
+	return m.ListWithContext(tenantctx.WithSystem(context.Background()), prefix)
 }
 
 // ListWithContext implements common.Storage
@@ -882,7 +883,7 @@ func TestNewObjectStorageService_NilLogger(t *testing.T) {
 
 func TestPutObject_Success(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant1")
 
 	req := &PutObjectRequest{
 		Key:         "test:object1",
@@ -904,7 +905,7 @@ func TestPutObject_Success(t *testing.T) {
 
 func TestPutObject_WithTags(t *testing.T) {
 	svc, catalogMgr, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &PutObjectRequest{
 		Key:         "test:tagged",
@@ -929,7 +930,7 @@ func TestPutObject_WithTags(t *testing.T) {
 
 func TestPutObject_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.PutObject(ctx, nil)
 	require.Error(t, err)
@@ -942,7 +943,7 @@ func TestPutObject_NilRequest(t *testing.T) {
 
 func TestPutObject_EmptyKey(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &PutObjectRequest{
 		Key:   "",
@@ -960,7 +961,7 @@ func TestPutObject_EmptyKey(t *testing.T) {
 
 func TestPutObject_EmptyValue(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &PutObjectRequest{
 		Key:   "test:empty",
@@ -978,7 +979,7 @@ func TestPutObject_EmptyValue(t *testing.T) {
 
 func TestPutObject_ChecksumMismatch(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &PutObjectRequest{
 		Key:      "test:checksum",
@@ -1021,7 +1022,7 @@ func TestPutObject_QuotaExceeded(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant1")
 	req := &PutObjectRequest{
 		Key:      "test:quota",
 		Value:    []byte("large data"),
@@ -1051,7 +1052,7 @@ func TestPutObject_BackendUnavailable(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	req := &PutObjectRequest{
 		Key:   "test:unavailable",
 		Value: []byte("test data"),
@@ -1068,7 +1069,7 @@ func TestPutObject_BackendUnavailable(t *testing.T) {
 
 func TestPutObject_WithValidChecksum(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testData := []byte("test data with valid checksum")
 	checksum := sha256.Sum256(testData)
@@ -1105,7 +1106,7 @@ func TestPutObject_StorageWriteError(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	req := &PutObjectRequest{
 		Key:   "test:write-error",
 		Value: []byte("test data"),
@@ -1122,7 +1123,7 @@ func TestPutObject_StorageWriteError(t *testing.T) {
 
 func TestGetObject_Success(t *testing.T) {
 	svc, catalogMgr, _, storage := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Store object first
 	testData := []byte("test object data")
@@ -1155,7 +1156,7 @@ func TestGetObject_Success(t *testing.T) {
 
 func TestGetObject_NotFound(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &GetObjectRequest{Key: "test:nonexistent"}
 	resp, err := svc.GetObject(ctx, req)
@@ -1169,7 +1170,7 @@ func TestGetObject_NotFound(t *testing.T) {
 
 func TestGetObject_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.GetObject(ctx, nil)
 	require.Error(t, err)
@@ -1182,7 +1183,7 @@ func TestGetObject_NilRequest(t *testing.T) {
 
 func TestGetObject_EmptyKey(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &GetObjectRequest{Key: ""}
 	resp, err := svc.GetObject(ctx, req)
@@ -1196,7 +1197,7 @@ func TestGetObject_EmptyKey(t *testing.T) {
 
 func TestGetObject_CrossTenantDenied(t *testing.T) {
 	svc, catalogMgr, _, storage := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Store object for tenant1
 	testData := []byte("tenant1 data")
@@ -1249,7 +1250,7 @@ func TestGetObject_BackendReadError(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Create catalog entry
 	entry := catalog.NewCatalogEntry("test:read-error", 100, nil)
@@ -1273,7 +1274,7 @@ func TestGetObject_BackendReadError(t *testing.T) {
 
 func TestDeleteObject_Success(t *testing.T) {
 	svc, catalogMgr, _, storage := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Store object first
 	testData := []byte("data to delete")
@@ -1302,7 +1303,7 @@ func TestDeleteObject_Success(t *testing.T) {
 
 func TestDeleteObject_NotFound(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &DeleteObjectRequest{Key: "test:nonexistent"}
 	resp, err := svc.DeleteObject(ctx, req)
@@ -1316,7 +1317,7 @@ func TestDeleteObject_NotFound(t *testing.T) {
 
 func TestDeleteObject_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.DeleteObject(ctx, nil)
 	require.Error(t, err)
@@ -1325,7 +1326,7 @@ func TestDeleteObject_NilRequest(t *testing.T) {
 
 func TestDeleteObject_CrossTenantDenied(t *testing.T) {
 	svc, catalogMgr, _, storage := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testData := []byte("tenant data")
 	objectRef := "tenant-ref"
@@ -1362,7 +1363,7 @@ func TestDeleteObject_CrossTenantDenied(t *testing.T) {
 
 func TestHeadObject_Exists(t *testing.T) {
 	svc, catalogMgr, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	entry := catalog.NewCatalogEntry("test:head", 1024, []byte("checksum"))
 	entry.ContentType = "application/json"
@@ -1384,7 +1385,7 @@ func TestHeadObject_Exists(t *testing.T) {
 
 func TestHeadObject_NotExists(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &HeadObjectRequest{Key: "test:nonexistent"}
 	resp, err := svc.HeadObject(ctx, req)
@@ -1397,7 +1398,7 @@ func TestHeadObject_NotExists(t *testing.T) {
 
 func TestHeadObject_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.HeadObject(ctx, nil)
 	require.Error(t, err)
@@ -1406,7 +1407,7 @@ func TestHeadObject_NilRequest(t *testing.T) {
 
 func TestHeadObject_EmptyKey(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &HeadObjectRequest{Key: ""}
 	resp, err := svc.HeadObject(ctx, req)
@@ -1420,7 +1421,7 @@ func TestHeadObject_EmptyKey(t *testing.T) {
 
 func TestListObjects_Success(t *testing.T) {
 	svc, catalogMgr, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Create multiple objects
 	for i := 0; i < 5; i++ {
@@ -1440,7 +1441,7 @@ func TestListObjects_Success(t *testing.T) {
 
 func TestListObjects_WithLimit(t *testing.T) {
 	svc, catalogMgr, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Create multiple objects
 	for i := 0; i < 10; i++ {
@@ -1463,7 +1464,7 @@ func TestListObjects_WithLimit(t *testing.T) {
 
 func TestListObjects_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.ListObjects(ctx, nil)
 	require.Error(t, err)
@@ -1472,7 +1473,7 @@ func TestListObjects_NilRequest(t *testing.T) {
 
 func TestListObjects_EmptyResult(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &ListObjectsRequest{Prefix: "nonexistent:prefix:"}
 	resp, err := svc.ListObjects(ctx, req)
@@ -1487,7 +1488,7 @@ func TestListObjects_EmptyResult(t *testing.T) {
 
 func TestListByTag_Success(t *testing.T) {
 	svc, catalogMgr, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Create objects with tags
 	entry1 := catalog.NewCatalogEntry("test:tag1", 100, nil)
@@ -1515,7 +1516,7 @@ func TestListByTag_Success(t *testing.T) {
 
 func TestListByTag_EmptyTagName(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &ListByTagRequest{
 		TagName:  "",
@@ -1528,7 +1529,7 @@ func TestListByTag_EmptyTagName(t *testing.T) {
 
 func TestListByTag_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.ListByTag(ctx, nil)
 	require.Error(t, err)
@@ -1541,7 +1542,7 @@ func TestListByTag_NilRequest(t *testing.T) {
 
 func TestListByTenant_Success(t *testing.T) {
 	svc, catalogMgr, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-abc")
 
 	// Create objects for different tenants
 	entry1 := catalog.NewCatalogEntry("test:tenant:1", 100, nil)
@@ -1566,7 +1567,7 @@ func TestListByTenant_Success(t *testing.T) {
 
 func TestListByTenant_EmptyTenantID(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &ListByTenantRequest{TenantID: ""}
 	resp, err := svc.ListByTenant(ctx, req)
@@ -1576,7 +1577,7 @@ func TestListByTenant_EmptyTenantID(t *testing.T) {
 
 func TestListByTenant_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.ListByTenant(ctx, nil)
 	require.Error(t, err)
@@ -1589,7 +1590,7 @@ func TestListByTenant_NilRequest(t *testing.T) {
 
 func TestCopyObject_Success(t *testing.T) {
 	svc, catalogMgr, _, storage := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Create source object
 	testData := []byte("source data")
@@ -1621,7 +1622,7 @@ func TestCopyObject_Success(t *testing.T) {
 
 func TestCopyObject_SourceNotFound(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &CopyObjectRequest{
 		SourceKey:      "test:nonexistent",
@@ -1634,7 +1635,7 @@ func TestCopyObject_SourceNotFound(t *testing.T) {
 
 func TestCopyObject_DestinationExists(t *testing.T) {
 	svc, catalogMgr, _, storage := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Create source object
 	testData := []byte("source data")
@@ -1681,7 +1682,7 @@ func TestCopyObject_DestinationExists(t *testing.T) {
 
 func TestCopyObject_InvalidRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Empty source key
 	req := &CopyObjectRequest{
@@ -1704,7 +1705,7 @@ func TestCopyObject_InvalidRequest(t *testing.T) {
 
 func TestCopyObject_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.CopyObject(ctx, nil)
 	require.Error(t, err)
@@ -1735,7 +1736,7 @@ func TestReplicateObject_Success(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Create source object
 	testData := []byte("replicate me")
@@ -1766,7 +1767,7 @@ func TestReplicateObject_Success(t *testing.T) {
 
 func TestReplicateObject_NotFound(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &ReplicateObjectRequest{
 		Key:     "test:nonexistent",
@@ -1779,7 +1780,7 @@ func TestReplicateObject_NotFound(t *testing.T) {
 
 func TestReplicateObject_NoTargets(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &ReplicateObjectRequest{
 		Key:     "test:replicate",
@@ -1792,7 +1793,7 @@ func TestReplicateObject_NoTargets(t *testing.T) {
 
 func TestReplicateObject_CrossTenantDenied(t *testing.T) {
 	svc, catalogMgr, _, storage := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testData := []byte("tenant data")
 	objectRef := "tenant-ref-replicate"
@@ -1825,7 +1826,7 @@ func TestReplicateObject_CrossTenantDenied(t *testing.T) {
 
 func TestReplicateObject_TargetBackendNotFound(t *testing.T) {
 	svc, catalogMgr, _, storage := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testData := []byte("replicate me")
 	objectRef := "source-ref-target-missing"
@@ -1875,7 +1876,7 @@ func TestMigrateObject_Success(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Create source object
 	testData := []byte("migrate me")
@@ -1906,7 +1907,7 @@ func TestMigrateObject_Success(t *testing.T) {
 
 func TestMigrateObject_NotFound(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &MigrateObjectRequest{
 		Key:           "test:nonexistent",
@@ -1919,7 +1920,7 @@ func TestMigrateObject_NotFound(t *testing.T) {
 
 func TestMigrateObject_InvalidRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Empty key
 	req := &MigrateObjectRequest{
@@ -1951,7 +1952,7 @@ func TestMigrateObject_WithDeleteFromSource(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testData := []byte("migrate and delete")
 	sourceRef := "source-ref-migrate-delete"
@@ -2006,7 +2007,7 @@ func TestArchiveObject_Success(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Create object to archive
 	testData := []byte("archive me")
@@ -2037,7 +2038,7 @@ func TestArchiveObject_Success(t *testing.T) {
 
 func TestArchiveObject_NotFound(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &ArchiveObjectRequest{
 		Key:         "test:nonexistent",
@@ -2050,7 +2051,7 @@ func TestArchiveObject_NotFound(t *testing.T) {
 
 func TestArchiveObject_AlreadyArchived(t *testing.T) {
 	svc, catalogMgr, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	entry := catalog.NewCatalogEntry("test:already-archived", 100, nil)
 	entry.Status = catalog.StatusArchived
@@ -2073,7 +2074,7 @@ func TestArchiveObject_AlreadyArchived(t *testing.T) {
 
 func TestArchiveObject_CrossTenantDenied(t *testing.T) {
 	svc, catalogMgr, _, storage := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testData := []byte("tenant data")
 	objectRef := "tenant-archive-ref"
@@ -2122,7 +2123,7 @@ func TestArchiveObject_WithDeleteFromPrimary(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testData := []byte("archive and delete")
 	objectRef := "archive-delete-ref"
@@ -2177,7 +2178,7 @@ func TestRestoreObject_Success(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Create archived object
 	testData := []byte("restore me")
@@ -2209,7 +2210,7 @@ func TestRestoreObject_Success(t *testing.T) {
 
 func TestRestoreObject_NotFound(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &RestoreObjectRequest{
 		Key:           "test:nonexistent",
@@ -2222,7 +2223,7 @@ func TestRestoreObject_NotFound(t *testing.T) {
 
 func TestRestoreObject_NotArchived(t *testing.T) {
 	svc, catalogMgr, _, storage := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testData := []byte("active object")
 	objectRef := "active-ref"
@@ -2272,7 +2273,7 @@ func TestRestoreObject_CrossTenantDenied(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	entry := catalog.NewCatalogEntry("test:tenant-restore", 100, nil)
 	entry.TenantID = "tenant1"
@@ -2297,7 +2298,7 @@ func TestRestoreObject_CrossTenantDenied(t *testing.T) {
 
 func TestVerifyObject_Success(t *testing.T) {
 	svc, catalogMgr, _, storage := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Create object
 	testData := []byte("verify me")
@@ -2327,7 +2328,7 @@ func TestVerifyObject_Success(t *testing.T) {
 
 func TestVerifyObject_NotFound(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &VerifyObjectRequest{Key: "test:nonexistent"}
 	resp, err := svc.VerifyObject(ctx, req)
@@ -2337,7 +2338,7 @@ func TestVerifyObject_NotFound(t *testing.T) {
 
 func TestVerifyObject_CrossTenantDenied(t *testing.T) {
 	svc, catalogMgr, _, storage := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testData := []byte("tenant verify data")
 	objectRef := "tenant-verify-ref"
@@ -2366,7 +2367,7 @@ func TestVerifyObject_CrossTenantDenied(t *testing.T) {
 
 func TestVerifyObject_ChecksumMismatch(t *testing.T) {
 	svc, catalogMgr, _, storage := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testData := []byte("verify me")
 	objectRef := "verify-mismatch-ref"
@@ -2397,7 +2398,7 @@ func TestVerifyObject_ChecksumMismatch(t *testing.T) {
 
 func TestSetObjectPolicy_Success(t *testing.T) {
 	svc, catalogMgr, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Create object
 	entry := catalog.NewCatalogEntry("test:policy", 1024, nil)
@@ -2422,7 +2423,7 @@ func TestSetObjectPolicy_Success(t *testing.T) {
 
 func TestSetObjectPolicy_NotFound(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &SetObjectPolicyRequest{
 		Key: "test:nonexistent",
@@ -2438,7 +2439,7 @@ func TestSetObjectPolicy_NotFound(t *testing.T) {
 
 func TestSetObjectPolicy_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.SetObjectPolicy(ctx, nil)
 	require.Error(t, err)
@@ -2451,7 +2452,7 @@ func TestSetObjectPolicy_NilRequest(t *testing.T) {
 
 func TestGetObjectPolicy_Success(t *testing.T) {
 	svc, catalogMgr, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Create object with policy
 	entry := catalog.NewCatalogEntry("test:get-policy", 1024, nil)
@@ -2474,7 +2475,7 @@ func TestGetObjectPolicy_Success(t *testing.T) {
 
 func TestGetObjectPolicy_NotFound(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &GetObjectPolicyRequest{Key: "test:nonexistent"}
 	resp, err := svc.GetObjectPolicy(ctx, req)
@@ -2484,7 +2485,7 @@ func TestGetObjectPolicy_NotFound(t *testing.T) {
 
 func TestGetObjectPolicy_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.GetObjectPolicy(ctx, nil)
 	require.Error(t, err)
@@ -2493,7 +2494,7 @@ func TestGetObjectPolicy_NilRequest(t *testing.T) {
 
 func TestGetObjectPolicy_CrossTenantDenied(t *testing.T) {
 	svc, catalogMgr, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	entry := catalog.NewCatalogEntry("test:tenant-policy", 1024, nil)
 	entry.TenantID = "tenant1"
@@ -2516,7 +2517,7 @@ func TestGetObjectPolicy_CrossTenantDenied(t *testing.T) {
 
 func TestListBackends_Success(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &ListBackendsRequest{}
 	resp, err := svc.ListBackends(ctx, req)
@@ -2528,7 +2529,7 @@ func TestListBackends_Success(t *testing.T) {
 
 func TestListBackends_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.ListBackends(ctx, nil)
 	require.Error(t, err)
@@ -2549,7 +2550,7 @@ func TestListBackends_MultipleBackends(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	req := &ListBackendsRequest{}
 	resp, err := svc.ListBackends(ctx, req)
 	require.NoError(t, err)
@@ -2563,7 +2564,7 @@ func TestListBackends_MultipleBackends(t *testing.T) {
 
 func TestGetBackendHealth_Success(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &GetBackendHealthRequest{Name: "local"}
 	resp, err := svc.GetBackendHealth(ctx, req)
@@ -2576,7 +2577,7 @@ func TestGetBackendHealth_Success(t *testing.T) {
 
 func TestGetBackendHealth_NotFound(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &GetBackendHealthRequest{Name: "nonexistent"}
 	resp, err := svc.GetBackendHealth(ctx, req)
@@ -2586,7 +2587,7 @@ func TestGetBackendHealth_NotFound(t *testing.T) {
 
 func TestGetBackendHealth_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.GetBackendHealth(ctx, nil)
 	require.Error(t, err)
@@ -2595,7 +2596,7 @@ func TestGetBackendHealth_NilRequest(t *testing.T) {
 
 func TestGetBackendHealth_EmptyName(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &GetBackendHealthRequest{Name: ""}
 	resp, err := svc.GetBackendHealth(ctx, req)
@@ -2609,7 +2610,7 @@ func TestGetBackendHealth_EmptyName(t *testing.T) {
 
 func TestGetTenantUsage_Success(t *testing.T) {
 	svc, catalogMgr, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-usage")
 
 	// Create objects for tenant
 	for i := 0; i < 3; i++ {
@@ -2631,7 +2632,7 @@ func TestGetTenantUsage_Success(t *testing.T) {
 
 func TestGetTenantUsage_EmptyTenantID(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &GetTenantUsageRequest{TenantID: ""}
 	resp, err := svc.GetTenantUsage(ctx, req)
@@ -2641,7 +2642,7 @@ func TestGetTenantUsage_EmptyTenantID(t *testing.T) {
 
 func TestGetTenantUsage_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.GetTenantUsage(ctx, nil)
 	require.Error(t, err)
@@ -2675,7 +2676,7 @@ func TestGetTenantQuotas_Success(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-quotas")
 	req := &GetTenantQuotasRequest{TenantID: "tenant-quotas"}
 	resp, err := svc.GetTenantQuotas(ctx, req)
 	require.NoError(t, err)
@@ -2686,7 +2687,7 @@ func TestGetTenantQuotas_Success(t *testing.T) {
 
 func TestGetTenantQuotas_EmptyTenantID(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &GetTenantQuotasRequest{TenantID: ""}
 	resp, err := svc.GetTenantQuotas(ctx, req)
@@ -2696,7 +2697,7 @@ func TestGetTenantQuotas_EmptyTenantID(t *testing.T) {
 
 func TestGetTenantQuotas_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.GetTenantQuotas(ctx, nil)
 	require.Error(t, err)
@@ -3198,7 +3199,7 @@ func TestVerifyObject_MultipleStores(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Create object with multiple replicas
 	testData := []byte("verify multiple")
@@ -3237,7 +3238,7 @@ func TestVerifyObject_MultipleStores(t *testing.T) {
 
 func TestVerifyObject_SpecificStores(t *testing.T) {
 	svc, catalogMgr, _, storage := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testData := []byte("verify specific")
 	objectRef := "verify-specific-ref"
@@ -3267,7 +3268,7 @@ func TestVerifyObject_SpecificStores(t *testing.T) {
 
 func TestVerifyObject_LocationNotFound(t *testing.T) {
 	svc, catalogMgr, _, storage := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testData := []byte("verify location")
 	objectRef := "verify-loc-ref"
@@ -3297,7 +3298,7 @@ func TestVerifyObject_LocationNotFound(t *testing.T) {
 
 func TestVerifyObject_SizeMismatch(t *testing.T) {
 	svc, catalogMgr, _, storage := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testData := []byte("size mismatch data")
 	objectRef := "verify-size-ref"
@@ -3337,7 +3338,7 @@ func TestVerifyObject_BackendUnavailable(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testData := []byte("verify backend")
 	checksum := sha256.Sum256(testData)
@@ -3380,7 +3381,7 @@ func TestVerifyObject_ReadError(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testData := []byte("verify read error")
 	checksum := sha256.Sum256(testData)
@@ -3402,7 +3403,7 @@ func TestVerifyObject_ReadError(t *testing.T) {
 
 func TestSetObjectPolicy_CrossTenantDenied(t *testing.T) {
 	svc, catalogMgr, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	entry := catalog.NewCatalogEntry("test:policy-tenant", 1024, nil)
 	entry.TenantID = "tenant1"
@@ -3425,7 +3426,7 @@ func TestSetObjectPolicy_CrossTenantDenied(t *testing.T) {
 
 func TestSetObjectPolicy_WithAllPolicies(t *testing.T) {
 	svc, catalogMgr, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	entry := catalog.NewCatalogEntry("test:all-policies", 1024, nil)
 	entry.PrimaryStore = catalog.StoreLocation{Store: "local", Status: catalog.LocationStatusActive}
@@ -3475,7 +3476,7 @@ func TestRestoreObject_WithDeleteFromArchive(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testData := []byte("restore and delete")
 	objectRef := "restore-delete-ref"
@@ -3504,7 +3505,7 @@ func TestRestoreObject_WithDeleteFromArchive(t *testing.T) {
 
 func TestReplicateObject_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.ReplicateObject(ctx, nil)
 	require.Error(t, err)
@@ -3513,7 +3514,7 @@ func TestReplicateObject_NilRequest(t *testing.T) {
 
 func TestMigrateObject_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.MigrateObject(ctx, nil)
 	require.Error(t, err)
@@ -3522,7 +3523,7 @@ func TestMigrateObject_NilRequest(t *testing.T) {
 
 func TestArchiveObject_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.ArchiveObject(ctx, nil)
 	require.Error(t, err)
@@ -3531,7 +3532,7 @@ func TestArchiveObject_NilRequest(t *testing.T) {
 
 func TestRestoreObject_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.RestoreObject(ctx, nil)
 	require.Error(t, err)
@@ -3540,7 +3541,7 @@ func TestRestoreObject_NilRequest(t *testing.T) {
 
 func TestVerifyObject_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.VerifyObject(ctx, nil)
 	require.Error(t, err)
@@ -3567,7 +3568,7 @@ func TestMigrateObject_CrossTenantDenied(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testData := []byte("tenant migrate")
 	objectRef := "tenant-migrate-ref"
@@ -3608,7 +3609,7 @@ func TestListBackends_WithHealthChecks(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	req := &ListBackendsRequest{IncludeHealth: true}
 	resp, err := svc.ListBackends(ctx, req)
 	require.NoError(t, err)
@@ -3618,7 +3619,7 @@ func TestListBackends_WithHealthChecks(t *testing.T) {
 
 func TestCopyObject_WithOverwrite(t *testing.T) {
 	svc, catalogMgr, _, storage := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	// Create source object
 	testData := []byte("source for overwrite")
@@ -3681,7 +3682,7 @@ func TestReplicateObject_AlreadyReplicated(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testData := []byte("already replicated")
 	sourceRef := "source-already-ref"
@@ -3742,7 +3743,7 @@ func TestArchiveObject_TargetBackendUnavailable(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testData := []byte("archive target missing")
 	objectRef := "archive-missing-ref"
@@ -3796,7 +3797,7 @@ func TestRestoreObject_ReadError(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	entry := catalog.NewCatalogEntry("test:restore-read-error", 100, nil)
 	entry.Status = catalog.StatusArchived
@@ -3842,7 +3843,7 @@ func TestGetTenantUsage_CatalogError(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	req := &GetTenantUsageRequest{TenantID: "tenant-error"}
 	resp, err := svc.GetTenantUsage(ctx, req)
 	require.Error(t, err)
@@ -3874,7 +3875,7 @@ func TestMigrateObject_ReplicateFails(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testData := []byte("migrate will fail")
 	objectRef := "migrate-fail-ref"
@@ -3919,7 +3920,7 @@ func TestSetTenantQuotas_Success(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "test-tenant")
 	req := &SetTenantQuotasRequest{
 		TenantID:        "test-tenant",
 		MaxStorageBytes: 10 * 1024 * 1024 * 1024, // 10GB
@@ -3943,7 +3944,7 @@ func TestSetTenantQuotas_Success(t *testing.T) {
 
 func TestSetTenantQuotas_EmptyTenantID(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &SetTenantQuotasRequest{
 		TenantID:        "",
@@ -3960,7 +3961,7 @@ func TestSetTenantQuotas_EmptyTenantID(t *testing.T) {
 
 func TestSetTenantQuotas_NilRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := svc.SetTenantQuotas(ctx, nil)
 	require.Error(t, err)
@@ -3973,7 +3974,7 @@ func TestSetTenantQuotas_NilRequest(t *testing.T) {
 
 func TestSetTenantQuotas_NegativeValues(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testCases := []struct {
 		name string
@@ -4030,7 +4031,7 @@ func TestSetTenantQuotas_ZeroValuesAllowed(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "unlimited-tenant")
 	req := &SetTenantQuotasRequest{
 		TenantID:        "unlimited-tenant",
 		MaxStorageBytes: 0, // 0 = unlimited
@@ -4063,7 +4064,7 @@ func TestSetTenantQuotas_ResolverError(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "test-tenant")
 	req := &SetTenantQuotasRequest{
 		TenantID:        "test-tenant",
 		MaxStorageBytes: 1024,
@@ -4101,7 +4102,7 @@ func TestSetTenantQuotas_UpdateExisting(t *testing.T) {
 	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "existing-tenant")
 	req := &SetTenantQuotasRequest{
 		TenantID:        "existing-tenant",
 		MaxStorageBytes: 2048,
@@ -4203,7 +4204,7 @@ func TestSetTenantQuotasRequest_Validate(t *testing.T) {
 
 func TestGetObject_ServiceClosed(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	concreteSvc := svc.(*objectStorageService)
 	concreteSvc.closed.Store(true)
@@ -4220,7 +4221,7 @@ func TestGetObject_ServiceClosed(t *testing.T) {
 
 func TestListObjects_ServiceClosed(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	concreteSvc := svc.(*objectStorageService)
 	concreteSvc.closed.Store(true)
@@ -4237,7 +4238,7 @@ func TestListObjects_ServiceClosed(t *testing.T) {
 
 func TestListByTag_ServiceClosed(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	concreteSvc := svc.(*objectStorageService)
 	concreteSvc.closed.Store(true)
@@ -4257,7 +4258,7 @@ func TestListByTag_ServiceClosed(t *testing.T) {
 
 func TestRestoreObject_ServiceClosed(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	concreteSvc := svc.(*objectStorageService)
 	concreteSvc.closed.Store(true)
@@ -4274,7 +4275,7 @@ func TestRestoreObject_ServiceClosed(t *testing.T) {
 
 func TestListByTenant_ServiceClosed(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant1")
 
 	concreteSvc := svc.(*objectStorageService)
 	concreteSvc.closed.Store(true)
@@ -4291,7 +4292,7 @@ func TestListByTenant_ServiceClosed(t *testing.T) {
 
 func TestPutObject_ServiceClosed(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	concreteSvc := svc.(*objectStorageService)
 	concreteSvc.closed.Store(true)
@@ -4308,7 +4309,7 @@ func TestPutObject_ServiceClosed(t *testing.T) {
 
 func TestDeleteObject_ServiceClosed(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	concreteSvc := svc.(*objectStorageService)
 	concreteSvc.closed.Store(true)
@@ -4321,7 +4322,7 @@ func TestDeleteObject_ServiceClosed(t *testing.T) {
 
 func TestHeadObject_ServiceClosed(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	concreteSvc := svc.(*objectStorageService)
 	concreteSvc.closed.Store(true)
@@ -4334,7 +4335,7 @@ func TestHeadObject_ServiceClosed(t *testing.T) {
 
 func TestGetObject_DeletedObjectNotAvailable(t *testing.T) {
 	svc, catalogMgr, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	entry := catalog.NewCatalogEntry("test:deleted", 100, nil)
 	entry.Status = catalog.StatusDeleted
@@ -4359,7 +4360,7 @@ func TestGetObject_DeletedObjectNotAvailable(t *testing.T) {
 
 func TestGetObject_PendingObjectNotAvailable(t *testing.T) {
 	svc, catalogMgr, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	entry := catalog.NewCatalogEntry("test:pending", 100, nil)
 	entry.Status = catalog.StatusPending
@@ -4383,7 +4384,7 @@ func TestGetObject_PendingObjectNotAvailable(t *testing.T) {
 
 func TestGetObject_IncludeMetadata(t *testing.T) {
 	svc, catalogMgr, _, storage := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testData := []byte("tagged object data")
 	objectRef := "meta-ref-123"
@@ -4416,7 +4417,7 @@ func TestGetObject_IncludeMetadata(t *testing.T) {
 
 func TestGetObject_WithoutIncludeMetadata(t *testing.T) {
 	svc, catalogMgr, _, storage := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testData := []byte("no-meta data")
 	objectRef := "no-meta-ref"
@@ -4446,7 +4447,7 @@ func TestGetObject_WithoutIncludeMetadata(t *testing.T) {
 
 func TestGetObject_ArchivedObjectAccessible(t *testing.T) {
 	svc, catalogMgr, _, storage := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	testData := []byte("archived data")
 	objectRef := "archived-ref-123"
@@ -4475,7 +4476,7 @@ func TestGetObject_ArchivedObjectAccessible(t *testing.T) {
 
 func TestListObjects_LimitCappedAt1000(t *testing.T) {
 	svc, catalogMgr, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	for i := 0; i < 3; i++ {
 		entry := catalog.NewCatalogEntry("test:cap:"+string(rune('a'+i)), 100, nil)
@@ -4496,7 +4497,7 @@ func TestListObjects_LimitCappedAt1000(t *testing.T) {
 
 func TestListObjects_NegativeLimitDefaultsTo100(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &ListObjectsRequest{
 		Prefix: "test:neg:",
@@ -4509,7 +4510,7 @@ func TestListObjects_NegativeLimitDefaultsTo100(t *testing.T) {
 
 func TestListObjects_ZeroLimitDefaultsTo100(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &ListObjectsRequest{
 		Prefix: "test:zero:",
@@ -4522,7 +4523,7 @@ func TestListObjects_ZeroLimitDefaultsTo100(t *testing.T) {
 
 func TestListObjects_TenantFiltering(t *testing.T) {
 	svc, catalogMgr, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant1")
 
 	entry1 := catalog.NewCatalogEntry("test:tenant:a", 100, nil)
 	entry1.TenantID = "tenant1"
@@ -4551,7 +4552,7 @@ func TestListObjects_TenantFiltering(t *testing.T) {
 
 func TestListObjects_IncludeTags(t *testing.T) {
 	svc, catalogMgr, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	entry := catalog.NewCatalogEntry("test:tags:a", 100, nil)
 	entry.Tags = map[string]string{"env": "test"}
@@ -4577,7 +4578,7 @@ func TestListObjects_IncludeTags(t *testing.T) {
 
 func TestListByTag_LimitCappedAt1000(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &ListByTagRequest{
 		TagName:  "env",
@@ -4591,7 +4592,7 @@ func TestListByTag_LimitCappedAt1000(t *testing.T) {
 
 func TestListByTag_NegativeLimitDefaults(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	req := &ListByTagRequest{
 		TagName:  "env",
@@ -4605,7 +4606,7 @@ func TestListByTag_NegativeLimitDefaults(t *testing.T) {
 
 func TestListByTag_TenantFiltering(t *testing.T) {
 	svc, catalogMgr, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant1")
 
 	entry1 := catalog.NewCatalogEntry("test:bytag:a", 100, nil)
 	entry1.Tags = map[string]string{"env": "prod"}
@@ -4633,7 +4634,7 @@ func TestListByTag_TenantFiltering(t *testing.T) {
 
 func TestListByTenant_LimitCappedAt1000(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant1")
 
 	req := &ListByTenantRequest{
 		TenantID: "tenant1",
@@ -4646,7 +4647,7 @@ func TestListByTenant_LimitCappedAt1000(t *testing.T) {
 
 func TestListByTenant_NegativeLimitDefaults(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant1")
 
 	req := &ListByTenantRequest{
 		TenantID: "tenant1",

@@ -24,6 +24,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // tenantRoutedKVStore returns the interfaces.KVStore that backs quicbaas's
@@ -204,7 +205,7 @@ func (s *tenantRoutingKVStore) resolve(ctx context.Context) (interfaces.KVStore,
 // orchestration request would resolve to the empty tenant and land in the
 // shared store instead of the caller's barrier.
 func tenantFromAnyContext(ctx context.Context) string {
-	if tenantID := iam.TenantFromContext(ctx); tenantID != "" {
+	if tenantID, ok := tenantctx.Lookup(ctx); ok {
 		return tenantID
 	}
 	return orchestration.TenantFromContext(ctx)

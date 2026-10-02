@@ -11,7 +11,7 @@ import (
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // kvBackendError is a sentinel returned by faultyKVClient when a method is
@@ -229,7 +229,7 @@ func TestSignalService_RegisterAccount_CountError(t *testing.T) {
 		t.Fatalf("provision failed: %v", err)
 	}
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-count")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-count")
 	kv.failList = true // countAccounts -> tenantKV.List fails
 
 	_, err := svc.RegisterAccount(ctx, &RegisterRequest{Number: "+15555550100"})

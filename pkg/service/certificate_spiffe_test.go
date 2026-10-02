@@ -17,10 +17,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
-
 	qrdbspiffe "github.com/jeremyhahn/go-qrdb/pkg/auth/spiffe"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // TestSignCSR_PropagatesTenantToTransport proves that a tenant present on the
@@ -41,7 +41,7 @@ func TestSignCSR_PropagatesTenantToTransport(t *testing.T) {
 	}
 	svc := NewCertificateService(mock)
 
-	ctx := iam.ContextWithTenant(context.Background(), "acme-corp")
+	ctx := tenantctx.WithTenant(context.Background(), "acme-corp")
 	_, err := svc.SignCSR(ctx, &SignCSRRequest{
 		CSRPEM: "-----BEGIN CERTIFICATE REQUEST-----\ncsr\n-----END CERTIFICATE REQUEST-----",
 		Usage:  "client",
@@ -73,7 +73,7 @@ func TestSignCSR_NoTenantSingleDomain(t *testing.T) {
 	}
 	svc := NewCertificateService(mock)
 
-	_, err := svc.SignCSR(context.Background(), &SignCSRRequest{
+	_, err := svc.SignCSR(tenantctx.WithSystem(context.Background()), &SignCSRRequest{
 		CSRPEM: "-----BEGIN CERTIFICATE REQUEST-----\ncsr\n-----END CERTIFICATE REQUEST-----",
 		Usage:  "server",
 	})
@@ -92,7 +92,7 @@ func TestSignCSR_InvalidTenantRejected(t *testing.T) {
 	mock := &mockCAService{}
 	svc := NewCertificateService(mock)
 
-	ctx := iam.ContextWithTenant(context.Background(), "bad/tenant")
+	ctx := tenantctx.WithTenant(context.Background(), "bad/tenant")
 	_, err := svc.SignCSR(ctx, &SignCSRRequest{
 		CSRPEM: "-----BEGIN CERTIFICATE REQUEST-----\ncsr\n-----END CERTIFICATE REQUEST-----",
 	})
@@ -113,7 +113,7 @@ func TestIssueCertificate_PropagatesTenant(t *testing.T) {
 	}
 	svc := NewCertificateService(mock)
 
-	ctx := iam.ContextWithTenant(context.Background(), "globex")
+	ctx := tenantctx.WithTenant(context.Background(), "globex")
 	_, err := svc.IssueCertificate(ctx, &IssueCertificateRequest{
 		CommonName: "svc.globex.internal",
 		Usage:      "server",

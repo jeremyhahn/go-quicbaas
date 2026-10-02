@@ -25,6 +25,7 @@ import (
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // costSettingsAgentService exposes a cost settings store.
@@ -43,7 +44,7 @@ func (m *costSettingsAgentService) PriceBook() *orchestration.PriceBook { return
 func TestCostSettingsOverGRPC(t *testing.T) {
 	srv := NewOrchestratorServer(&costSettingsAgentService{store: orchestration.NewInMemoryCostSettingsStore()},
 		createOrchestratorGRPCTestLogger())
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	got, err := srv.GetCostSettings(ctx, &pb.GetCostSettingsRequest{TenantId: "t1"})
 	require.NoError(t, err)
@@ -65,7 +66,7 @@ func TestCostSettingsOverGRPCRefuses(t *testing.T) {
 	wired := NewOrchestratorServer(&costSettingsAgentService{store: orchestration.NewInMemoryCostSettingsStore()},
 		createOrchestratorGRPCTestLogger())
 	bare := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	tests := []struct {
 		name string
 		call func() error

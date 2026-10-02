@@ -21,8 +21,8 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // routedSpendSource is a tenant spend-policy store over the context-routed KV
@@ -69,7 +69,7 @@ func TestTenantSpendPolicyIsStoredInTheTargetTenantsNamespace(t *testing.T) {
 	}
 
 	// t1 reading its own limits, as its admission does, finds them.
-	t1Ctx := orchestration.ContextWithTenant(iam.ContextWithTenant(context.Background(), "t1"), "t1")
+	t1Ctx := orchestration.ContextWithTenant(tenantctx.WithTenant(context.Background(), "t1"), "t1")
 	own, err := GetTenantSpendPolicy(t1Ctx, source, "t1")
 	if err != nil {
 		t.Fatalf("GetTenantSpendPolicy as t1: %v", err)

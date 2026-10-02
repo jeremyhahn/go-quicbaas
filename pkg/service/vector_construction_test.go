@@ -24,6 +24,7 @@ import (
 
 	qbErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -223,7 +224,7 @@ func TestVectorService_CreateNamespace_WithIndexType(t *testing.T) {
 
 	// With FLAT index type, may succeed or fall through to HNSW creation
 	// The test validates the code path reaches past validation
-	resp, err := svc.CreateNamespace(context.Background(), req)
+	resp, err := svc.CreateNamespace(tenantctx.WithSystem(context.Background()), req)
 	if err != nil {
 		// Expected: HNSW stub fails without vector build tag
 		var qbErr *qbErrors.QBError
@@ -246,7 +247,7 @@ func TestVectorService_CreateNamespace_EmptyName(t *testing.T) {
 		Dimension: 128,
 	}
 
-	resp, err := svc.CreateNamespace(context.Background(), req)
+	resp, err := svc.CreateNamespace(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -274,7 +275,7 @@ func TestVectorService_CreateNamespace_AlreadyExists(t *testing.T) {
 		Dimension: 128,
 	}
 
-	resp, err := svc.CreateNamespace(context.Background(), req)
+	resp, err := svc.CreateNamespace(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -295,7 +296,7 @@ func TestVectorService_DeleteNamespace_EmptyNamespace(t *testing.T) {
 		Namespace: "",
 	}
 
-	resp, err := svc.DeleteNamespace(context.Background(), req)
+	resp, err := svc.DeleteNamespace(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -313,7 +314,7 @@ func TestVectorService_ListNamespaces_EmptyRequest(t *testing.T) {
 	svc, err := NewVectorService(storage, logger)
 	require.NoError(t, err)
 
-	resp, err := svc.ListNamespaces(context.Background(), &ListNamespacesRequest{})
+	resp, err := svc.ListNamespaces(tenantctx.WithSystem(context.Background()), &ListNamespacesRequest{})
 
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -335,7 +336,7 @@ func TestVectorService_ListNamespaces_StorageError(t *testing.T) {
 	svc, err := NewVectorService(storage, logger)
 	require.NoError(t, err)
 
-	resp, err := svc.ListNamespaces(context.Background(), &ListNamespacesRequest{})
+	resp, err := svc.ListNamespaces(tenantctx.WithSystem(context.Background()), &ListNamespacesRequest{})
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -348,7 +349,7 @@ func TestVectorService_GetNamespaceInfo_EmptyNamespace(t *testing.T) {
 	svc, err := NewVectorService(storage, logger)
 	require.NoError(t, err)
 
-	resp, err := svc.GetNamespaceInfo(context.Background(), &GetNamespaceInfoRequest{
+	resp, err := svc.GetNamespaceInfo(tenantctx.WithSystem(context.Background()), &GetNamespaceInfoRequest{
 		Namespace: "",
 	})
 
@@ -368,7 +369,7 @@ func TestVectorService_UpsertVector_EmptyNamespace(t *testing.T) {
 		Vector:    []float32{0.1, 0.2, 0.3},
 	}
 
-	resp, err := svc.UpsertVector(context.Background(), req)
+	resp, err := svc.UpsertVector(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -390,7 +391,7 @@ func TestVectorService_GetVector_EmptyNamespace(t *testing.T) {
 		ID:        1,
 	}
 
-	resp, err := svc.GetVector(context.Background(), req)
+	resp, err := svc.GetVector(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -412,7 +413,7 @@ func TestVectorService_DeleteVector_EmptyNamespace(t *testing.T) {
 		ID:        1,
 	}
 
-	resp, err := svc.DeleteVector(context.Background(), req)
+	resp, err := svc.DeleteVector(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -435,7 +436,7 @@ func TestVectorService_SearchSimilar_EmptyNamespace(t *testing.T) {
 		K:           10,
 	}
 
-	resp, err := svc.SearchSimilar(context.Background(), req)
+	resp, err := svc.SearchSimilar(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -454,7 +455,7 @@ func TestVectorService_SearchSimilar_EmptyVector(t *testing.T) {
 		K:           10,
 	}
 
-	resp, err := svc.SearchSimilar(context.Background(), req)
+	resp, err := svc.SearchSimilar(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -473,7 +474,7 @@ func TestVectorService_SearchSimilar_ZeroTopK(t *testing.T) {
 		K:           0,
 	}
 
-	resp, err := svc.SearchSimilar(context.Background(), req)
+	resp, err := svc.SearchSimilar(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -497,7 +498,7 @@ func TestVectorService_BatchUpsert_EmptyNamespace(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.BatchUpsert(context.Background(), req)
+	resp, err := svc.BatchUpsert(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -515,7 +516,7 @@ func TestVectorService_SearchByMetadata_EmptyNamespace(t *testing.T) {
 		Filters:   map[string]interface{}{"key": "value"},
 	}
 
-	resp, err := svc.SearchByMetadata(context.Background(), req)
+	resp, err := svc.SearchByMetadata(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -533,7 +534,7 @@ func TestVectorService_SearchByMetadata_NoFilters(t *testing.T) {
 		Filters:   map[string]interface{}{},
 	}
 
-	resp, err := svc.SearchByMetadata(context.Background(), req)
+	resp, err := svc.SearchByMetadata(tenantctx.WithSystem(context.Background()), req)
 
 	// Empty filters returns empty results, not an error
 	require.NoError(t, err)
@@ -555,7 +556,7 @@ func TestVectorService_RebuildIndex_EmptyNamespace(t *testing.T) {
 		Namespace: "",
 	}
 
-	resp, err := svc.RebuildIndex(context.Background(), req)
+	resp, err := svc.RebuildIndex(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -572,7 +573,7 @@ func TestVectorService_GetRebuildProgress_EmptyJobID(t *testing.T) {
 		JobID: "",
 	}
 
-	resp, err := svc.GetRebuildProgress(context.Background(), req)
+	resp, err := svc.GetRebuildProgress(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -589,7 +590,7 @@ func TestVectorService_GetIndexStats_EmptyNamespace(t *testing.T) {
 		Namespace: "",
 	}
 
-	resp, err := svc.GetIndexStats(context.Background(), req)
+	resp, err := svc.GetIndexStats(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -607,7 +608,7 @@ func TestVectorService_BatchDeleteVectors_EmptyNamespace(t *testing.T) {
 		IDs:       []uint64{1, 2},
 	}
 
-	resp, err := svc.BatchDeleteVectors(context.Background(), req)
+	resp, err := svc.BatchDeleteVectors(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -625,7 +626,7 @@ func TestVectorService_BatchDeleteVectors_EmptyIDs(t *testing.T) {
 		IDs:       []uint64{},
 	}
 
-	resp, err := svc.BatchDeleteVectors(context.Background(), req)
+	resp, err := svc.BatchDeleteVectors(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -642,7 +643,7 @@ func TestVectorService_ListVectors_EmptyNamespace(t *testing.T) {
 		Namespace: "",
 	}
 
-	resp, err := svc.ListVectors(context.Background(), req)
+	resp, err := svc.ListVectors(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -661,7 +662,7 @@ func TestVectorService_UpdateMetadata_EmptyNamespace(t *testing.T) {
 		Metadata:  map[string]interface{}{"key": "value"},
 	}
 
-	resp, err := svc.UpdateMetadata(context.Background(), req)
+	resp, err := svc.UpdateMetadata(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -680,7 +681,7 @@ func TestVectorService_SearchByID_EmptyNamespace(t *testing.T) {
 		K:         10,
 	}
 
-	resp, err := svc.SearchByID(context.Background(), req)
+	resp, err := svc.SearchByID(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -699,7 +700,7 @@ func TestVectorService_HybridSearch_EmptyRequest(t *testing.T) {
 		K:           0,
 	}
 
-	resp, err := svc.HybridSearch(context.Background(), req)
+	resp, err := svc.HybridSearch(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -718,7 +719,7 @@ func TestVectorService_HybridSearch_EmptyNamespace(t *testing.T) {
 		K:           10,
 	}
 
-	resp, err := svc.HybridSearch(context.Background(), req)
+	resp, err := svc.HybridSearch(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -735,7 +736,7 @@ func TestVectorService_GetCompactionProgress_EmptyOperationID(t *testing.T) {
 		OperationID: "",
 	}
 
-	resp, err := svc.GetCompactionProgress(context.Background(), req)
+	resp, err := svc.GetCompactionProgress(tenantctx.WithSystem(context.Background()), req)
 
 	require.Error(t, err)
 	assert.Nil(t, resp)

@@ -26,9 +26,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // adoptCall drives one POST .../adopt against server.
@@ -36,7 +36,7 @@ func adoptCall(t *testing.T, server *Server, tenant, project, body string) *http
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/sdlc/projects/"+project+"/adopt", bytes.NewBufferString(body))
 	if tenant != "" {
-		req = req.WithContext(iam.ContextWithTenant(req.Context(), tenant))
+		req = req.WithContext(tenantctx.WithTenant(req.Context(), tenant))
 	}
 	r := chi.NewRouter()
 	r.Post("/api/v1/sdlc/projects/{projectID}/adopt", server.HandleAdoptSDLCIssue)

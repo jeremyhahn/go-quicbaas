@@ -22,11 +22,11 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // SDLCServiceProvider resolves the module's binding service per call, so a
@@ -63,19 +63,14 @@ func (s *SDLCServer) sdlcService() (*service.SDLCService, error) {
 }
 
 // sdlcTenant decides the tenant a request operates in: the tenant bound to
-// the call wins, and a requested tenant naming another is refused.
+// the call; naming another is refused for every caller. A call with no
+// tenant bound is refused rather than trusted to name its own.
 func sdlcTenant(ctx context.Context, requested string) (string, error) {
-	bound := iam.TenantFromContext(ctx)
-	switch {
-	case bound == "" && requested == "":
-		return "", status.Error(codes.InvalidArgument, "tenant_id is required")
-	case bound == "":
-		return requested, nil
-	case requested != "" && requested != bound:
-		return "", status.Error(codes.PermissionDenied, "tenant_id must be the caller's own tenant")
-	default:
-		return bound, nil
+	tenantID, err := tenantctx.Target(ctx, "grpc.SDLC", requested)
+	if err != nil {
+		return "", toProtoError(err)
 	}
+	return tenantID, nil
 }
 
 // BindProject implements pb.SDLCServiceServer.

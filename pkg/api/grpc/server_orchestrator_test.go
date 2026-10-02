@@ -26,6 +26,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -350,7 +351,7 @@ func TestOrchestratorGRPC_Spawn_Success(t *testing.T) {
 	agentSvc := &grpcTestAgentService{}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.SpawnSession(context.Background(), &pb.SpawnSessionRequest{
+	resp, err := server.SpawnSession(tenantctx.WithSystem(context.Background()), &pb.SpawnSessionRequest{
 		Backend: "claude",
 		Model:   "claude-4",
 	})
@@ -374,7 +375,7 @@ func TestOrchestratorGRPC_Spawn_CarriesPersistentFlag(t *testing.T) {
 	}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	_, err := server.SpawnSession(context.Background(), &pb.SpawnSessionRequest{
+	_, err := server.SpawnSession(tenantctx.WithSystem(context.Background()), &pb.SpawnSessionRequest{
 		Backend:    "claude",
 		Persistent: true,
 	})
@@ -383,7 +384,7 @@ func TestOrchestratorGRPC_Spawn_CarriesPersistentFlag(t *testing.T) {
 	assert.True(t, seen.Persistent, "gRPC spawn dropped the persistent flag")
 
 	seen = nil
-	_, err = server.SpawnSession(context.Background(), &pb.SpawnSessionRequest{Backend: "claude"})
+	_, err = server.SpawnSession(tenantctx.WithSystem(context.Background()), &pb.SpawnSessionRequest{Backend: "claude"})
 	require.NoError(t, err)
 	require.NotNil(t, seen)
 	assert.False(t, seen.Persistent, "gRPC spawn invented a persistent flag the caller did not set")
@@ -410,7 +411,7 @@ func TestOrchestratorGRPC_Spawn_MissingBackend(t *testing.T) {
 	agentSvc := &grpcTestAgentService{}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.SpawnSession(context.Background(), &pb.SpawnSessionRequest{})
+	resp, err := server.SpawnSession(tenantctx.WithSystem(context.Background()), &pb.SpawnSessionRequest{})
 
 	assert.Nil(t, resp)
 	assert.Error(t, err)
@@ -428,7 +429,7 @@ func TestOrchestratorGRPC_Spawn_ServiceError(t *testing.T) {
 	}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.SpawnSession(context.Background(), &pb.SpawnSessionRequest{
+	resp, err := server.SpawnSession(tenantctx.WithSystem(context.Background()), &pb.SpawnSessionRequest{
 		Backend: "claude",
 	})
 
@@ -448,7 +449,7 @@ func TestOrchestratorGRPC_CreateTask_Success(t *testing.T) {
 	agentSvc := &grpcTestAgentService{}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.CreateTask(context.Background(), &pb.CreateTaskRequest{
+	resp, err := server.CreateTask(tenantctx.WithTenant(context.Background(), "tenant-1"), &pb.CreateTaskRequest{
 		Subject:  "implement feature",
 		TenantId: "tenant-1",
 	})
@@ -460,7 +461,7 @@ func TestOrchestratorGRPC_CreateTask_MissingSubject(t *testing.T) {
 	agentSvc := &grpcTestAgentService{}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.CreateTask(context.Background(), &pb.CreateTaskRequest{})
+	resp, err := server.CreateTask(tenantctx.WithSystem(context.Background()), &pb.CreateTaskRequest{})
 
 	assert.Nil(t, resp)
 	assert.Error(t, err)
@@ -478,7 +479,7 @@ func TestOrchestratorGRPC_ListTasks_Success(t *testing.T) {
 	agentSvc := &grpcTestAgentService{}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.ListTasks(context.Background(), &pb.ListTasksRequest{
+	resp, err := server.ListTasks(tenantctx.WithTenant(context.Background(), "tenant-1"), &pb.ListTasksRequest{
 		TenantId: "tenant-1",
 	})
 	require.NoError(t, err)
@@ -489,7 +490,7 @@ func TestOrchestratorGRPC_ListTasks_EmptyTenant(t *testing.T) {
 	agentSvc := &grpcTestAgentService{}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.ListTasks(context.Background(), &pb.ListTasksRequest{})
+	resp, err := server.ListTasks(tenantctx.WithSystem(context.Background()), &pb.ListTasksRequest{})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -502,7 +503,7 @@ func TestOrchestratorGRPC_ClaimTask_Success(t *testing.T) {
 	agentSvc := &grpcTestAgentService{}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.ClaimTask(context.Background(), &pb.ClaimTaskRequest{
+	resp, err := server.ClaimTask(tenantctx.WithTenant(context.Background(), "tenant-1"), &pb.ClaimTaskRequest{
 		TenantId: "tenant-1",
 		TaskId:   "task-1",
 		AgentId:  "agent-1",
@@ -516,7 +517,7 @@ func TestOrchestratorGRPC_ClaimTask_MissingTaskID(t *testing.T) {
 	agentSvc := &grpcTestAgentService{}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.ClaimTask(context.Background(), &pb.ClaimTaskRequest{
+	resp, err := server.ClaimTask(tenantctx.WithSystem(context.Background()), &pb.ClaimTaskRequest{
 		AgentId: "agent-1",
 	})
 
@@ -532,7 +533,7 @@ func TestOrchestratorGRPC_ClaimTask_MissingAgentID(t *testing.T) {
 	agentSvc := &grpcTestAgentService{}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.ClaimTask(context.Background(), &pb.ClaimTaskRequest{
+	resp, err := server.ClaimTask(tenantctx.WithSystem(context.Background()), &pb.ClaimTaskRequest{
 		TaskId: "task-1",
 	})
 
@@ -561,7 +562,7 @@ func TestOrchestratorGRPC_Health_Success(t *testing.T) {
 	}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.Health(context.Background(), &pb.OrchestratorHealthRequest{})
+	resp, err := server.Health(tenantctx.WithSystem(context.Background()), &pb.OrchestratorHealthRequest{})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	require.NotNil(t, resp.Report)
@@ -575,7 +576,7 @@ func TestOrchestratorGRPC_Health_ServiceError(t *testing.T) {
 	}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.Health(context.Background(), &pb.OrchestratorHealthRequest{})
+	resp, err := server.Health(tenantctx.WithSystem(context.Background()), &pb.OrchestratorHealthRequest{})
 
 	assert.Nil(t, resp)
 	assert.Error(t, err)
@@ -600,7 +601,7 @@ func TestOrchestratorGRPC_ListBackends_Success(t *testing.T) {
 	}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.ListBackends(context.Background(), &pb.OrchestratorListBackendsRequest{})
+	resp, err := server.ListBackends(tenantctx.WithSystem(context.Background()), &pb.OrchestratorListBackendsRequest{})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -613,7 +614,7 @@ func TestOrchestratorGRPC_Prompt_Success(t *testing.T) {
 	agentSvc := &grpcTestAgentService{}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.PromptSession(context.Background(), &pb.PromptSessionRequest{
+	resp, err := server.PromptSession(tenantctx.WithSystem(context.Background()), &pb.PromptSessionRequest{
 		SessionId: "sess-1",
 		Prompt:    "hello",
 	})
@@ -625,7 +626,7 @@ func TestOrchestratorGRPC_Prompt_MissingPrompt(t *testing.T) {
 	agentSvc := &grpcTestAgentService{}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.PromptSession(context.Background(), &pb.PromptSessionRequest{
+	resp, err := server.PromptSession(tenantctx.WithSystem(context.Background()), &pb.PromptSessionRequest{
 		SessionId: "sess-1",
 	})
 
@@ -645,7 +646,7 @@ func TestOrchestratorGRPC_SessionStatus_Success(t *testing.T) {
 	agentSvc := &grpcTestAgentService{}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.SessionStatus(context.Background(), &pb.SessionStatusRequest{
+	resp, err := server.SessionStatus(tenantctx.WithSystem(context.Background()), &pb.SessionStatusRequest{
 		SessionId: "sess-1",
 	})
 	require.NoError(t, err)
@@ -656,7 +657,7 @@ func TestOrchestratorGRPC_SessionStatus_MissingSessionID(t *testing.T) {
 	agentSvc := &grpcTestAgentService{}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.SessionStatus(context.Background(), &pb.SessionStatusRequest{})
+	resp, err := server.SessionStatus(tenantctx.WithSystem(context.Background()), &pb.SessionStatusRequest{})
 
 	assert.Nil(t, resp)
 	assert.Error(t, err)
@@ -674,7 +675,7 @@ func TestOrchestratorGRPC_CloseSession_Success(t *testing.T) {
 	agentSvc := &grpcTestAgentService{}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.CloseSession(context.Background(), &pb.CloseSessionRequest{
+	resp, err := server.CloseSession(tenantctx.WithSystem(context.Background()), &pb.CloseSessionRequest{
 		SessionId: "sess-1",
 	})
 	require.NoError(t, err)
@@ -685,7 +686,7 @@ func TestOrchestratorGRPC_CloseSession_MissingSessionID(t *testing.T) {
 	agentSvc := &grpcTestAgentService{}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.CloseSession(context.Background(), &pb.CloseSessionRequest{})
+	resp, err := server.CloseSession(tenantctx.WithSystem(context.Background()), &pb.CloseSessionRequest{})
 
 	assert.Nil(t, resp)
 	assert.Error(t, err)
@@ -703,7 +704,7 @@ func TestOrchestratorGRPC_ListSessions_Success(t *testing.T) {
 	agentSvc := &grpcTestAgentService{}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.ListSessions(context.Background(), &pb.ListSessionsRequest{})
+	resp, err := server.ListSessions(tenantctx.WithSystem(context.Background()), &pb.ListSessionsRequest{})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -716,7 +717,7 @@ func TestOrchestratorGRPC_CompleteTask_Success(t *testing.T) {
 	agentSvc := &grpcTestAgentService{}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.CompleteTask(context.Background(), &pb.CompleteTaskRequest{
+	resp, err := server.CompleteTask(tenantctx.WithTenant(context.Background(), "tenant-1"), &pb.CompleteTaskRequest{
 		TenantId: "tenant-1",
 		TaskId:   "task-1",
 		Result:   &pb.TaskResult{Output: "done"},
@@ -729,7 +730,7 @@ func TestOrchestratorGRPC_CompleteTask_MissingTaskID(t *testing.T) {
 	agentSvc := &grpcTestAgentService{}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.CompleteTask(context.Background(), &pb.CompleteTaskRequest{
+	resp, err := server.CompleteTask(tenantctx.WithSystem(context.Background()), &pb.CompleteTaskRequest{
 		TenantId: "tenant-1",
 	})
 
@@ -745,7 +746,7 @@ func TestOrchestratorGRPC_GetTask_Success(t *testing.T) {
 	agentSvc := &grpcTestAgentService{}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.GetTask(context.Background(), &pb.GetTaskRequest{
+	resp, err := server.GetTask(tenantctx.WithTenant(context.Background(), "tenant-1"), &pb.GetTaskRequest{
 		TenantId: "tenant-1",
 		TaskId:   "task-1",
 	})
@@ -757,7 +758,7 @@ func TestOrchestratorGRPC_GetTask_MissingTaskID(t *testing.T) {
 	agentSvc := &grpcTestAgentService{}
 	server := NewOrchestratorServer(agentSvc, createOrchestratorGRPCTestLogger())
 
-	resp, err := server.GetTask(context.Background(), &pb.GetTaskRequest{
+	resp, err := server.GetTask(tenantctx.WithSystem(context.Background()), &pb.GetTaskRequest{
 		TenantId: "tenant-1",
 	})
 

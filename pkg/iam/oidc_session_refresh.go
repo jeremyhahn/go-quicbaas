@@ -21,9 +21,8 @@ import (
 	"encoding/hex"
 	"time"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/dpop"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
@@ -388,32 +387,18 @@ func (s *TokenService) issueRefreshCredential(ctx context.Context, opts SessionR
 	return value, expires, nil
 }
 
-// withTokenTenant scopes a context to the token's tenant so the tenant-scoped
-// token index is addressed. An empty tenant leaves the context untouched.
+// withTokenTenant scopes a context to the token's tenant under go-qrdb's
+// central tenant key (tenantctx), which both quicbaas's token storage and
+// go-qrdb's store resolvers read. An empty tenant leaves the context
+// untouched.
 //
-// This binds QUICBAAS's tenant key, which quicbaas's own storage reads. It is
-// NOT the binding go-qrdb resolves its stores from — see withQRDBTenant, which
-// is the one to reach for before any call that crosses into the qrdb SDK.
+// There used to be two helpers here binding two separate keys, and a call
+// that crossed into the qrdb SDK carrying only the quicbaas one ran against
+// the SYSTEM tenant's stores while looking correctly scoped — how #529
+// presented. With one key (go-quicbaas#1150) that split cannot recur.
 func withTokenTenant(ctx context.Context, tenantID string) context.Context {
 	if tenantID == "" {
 		return ctx
 	}
-	return ContextWithTenant(ctx, tenantID)
-}
-
-// withQRDBTenant scopes a context to a tenant for a call that crosses into the
-// go-qrdb SDK, whose store resolvers read qrdb's own tenant binding rather than
-// quicbaas's. An empty tenant leaves the context untouched, which qrdb reads as
-// the system tenant.
-//
-// The two bindings are separate context keys and neither reads the other, so a
-// call that crosses the SDK boundary carrying only withTokenTenant runs against
-// the SYSTEM tenant's stores while looking correctly scoped. That is exactly
-// how #529 presented: a verified login for a tenant user failed permission
-// resolution because the role lookup ran in the wrong tenant's store.
-func withQRDBTenant(ctx context.Context, tenantID string) context.Context {
-	if tenantID == "" {
-		return ctx
-	}
-	return qrdbsdk.ContextWithTenant(ctx, tenantID)
+	return tenantctx.WithTenant(ctx, tenantID)
 }

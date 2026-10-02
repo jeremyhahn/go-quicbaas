@@ -26,6 +26,7 @@ import (
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // paramManagerMock is a mock implementation of interfaces.ParameterManager.
@@ -199,7 +200,7 @@ func TestParameterStoreService_GetParameter(t *testing.T) {
 		pm.On("Get", mock.Anything, "/app/config", true).
 			Return([]byte("test-value"), metadata, nil)
 
-		resp, err := svc.GetParameter(context.Background(), &interfaces.GetParameterRequest{
+		resp, err := svc.GetParameter(tenantctx.WithSystem(context.Background()), &interfaces.GetParameterRequest{
 			Path:           "/app/config",
 			WithDecryption: true,
 		})
@@ -228,7 +229,7 @@ func TestParameterStoreService_GetParameter(t *testing.T) {
 		pm.On("Get", mock.Anything, "/app/secret", true).
 			Return([]byte("decrypted-value"), metadata, nil)
 
-		resp, err := svc.GetParameter(context.Background(), &interfaces.GetParameterRequest{
+		resp, err := svc.GetParameter(tenantctx.WithSystem(context.Background()), &interfaces.GetParameterRequest{
 			Path:           "/app/secret",
 			WithDecryption: true,
 		})
@@ -245,7 +246,7 @@ func TestParameterStoreService_GetParameter(t *testing.T) {
 		svc, err := NewParameterStoreService(pm, logger)
 		require.NoError(t, err)
 
-		resp, err := svc.GetParameter(context.Background(), nil)
+		resp, err := svc.GetParameter(tenantctx.WithSystem(context.Background()), nil)
 
 		require.Error(t, err)
 		assert.Nil(t, resp)
@@ -258,7 +259,7 @@ func TestParameterStoreService_GetParameter(t *testing.T) {
 		svc, err := NewParameterStoreService(pm, logger)
 		require.NoError(t, err)
 
-		resp, err := svc.GetParameter(context.Background(), &interfaces.GetParameterRequest{
+		resp, err := svc.GetParameter(tenantctx.WithSystem(context.Background()), &interfaces.GetParameterRequest{
 			Path: "",
 		})
 
@@ -276,7 +277,7 @@ func TestParameterStoreService_GetParameter(t *testing.T) {
 		err = svc.(*parameterStoreService).Close()
 		require.NoError(t, err)
 
-		resp, err := svc.GetParameter(context.Background(), &interfaces.GetParameterRequest{
+		resp, err := svc.GetParameter(tenantctx.WithSystem(context.Background()), &interfaces.GetParameterRequest{
 			Path: "/app/config",
 		})
 
@@ -298,7 +299,7 @@ func TestParameterStoreService_GetParameter(t *testing.T) {
 				Err:  nil,
 			})
 
-		resp, err := svc.GetParameter(context.Background(), &interfaces.GetParameterRequest{
+		resp, err := svc.GetParameter(tenantctx.WithSystem(context.Background()), &interfaces.GetParameterRequest{
 			Path:           "/app/missing",
 			WithDecryption: true,
 		})
@@ -323,7 +324,7 @@ func TestParameterStoreService_SetParameter(t *testing.T) {
 		pm.On("Store", mock.Anything, "/app/config", []byte("test-value"), mock.AnythingOfType("*interfaces.ParameterMetadata"), true).
 			Return(nil)
 
-		resp, err := svc.SetParameter(context.Background(), &interfaces.SetParameterRequest{
+		resp, err := svc.SetParameter(tenantctx.WithSystem(context.Background()), &interfaces.SetParameterRequest{
 			Path:      "/app/config",
 			Value:     []byte("test-value"),
 			Type:      "string",
@@ -351,7 +352,7 @@ func TestParameterStoreService_SetParameter(t *testing.T) {
 			mock.AnythingOfType("*interfaces.StoreOptions")).
 			Return(nil)
 
-		resp, err := svc.SetParameter(context.Background(), &interfaces.SetParameterRequest{
+		resp, err := svc.SetParameter(tenantctx.WithSystem(context.Background()), &interfaces.SetParameterRequest{
 			Path:      "/app/secret",
 			Value:     []byte("secret-value"),
 			Type:      "securestring",
@@ -370,7 +371,7 @@ func TestParameterStoreService_SetParameter(t *testing.T) {
 		svc, err := NewParameterStoreService(pm, logger)
 		require.NoError(t, err)
 
-		resp, err := svc.SetParameter(context.Background(), nil)
+		resp, err := svc.SetParameter(tenantctx.WithSystem(context.Background()), nil)
 
 		require.Error(t, err)
 		assert.Nil(t, resp)
@@ -383,7 +384,7 @@ func TestParameterStoreService_SetParameter(t *testing.T) {
 		svc, err := NewParameterStoreService(pm, logger)
 		require.NoError(t, err)
 
-		resp, err := svc.SetParameter(context.Background(), &interfaces.SetParameterRequest{
+		resp, err := svc.SetParameter(tenantctx.WithSystem(context.Background()), &interfaces.SetParameterRequest{
 			Path:  "",
 			Value: []byte("value"),
 		})
@@ -399,7 +400,7 @@ func TestParameterStoreService_SetParameter(t *testing.T) {
 		svc, err := NewParameterStoreService(pm, logger)
 		require.NoError(t, err)
 
-		resp, err := svc.SetParameter(context.Background(), &interfaces.SetParameterRequest{
+		resp, err := svc.SetParameter(tenantctx.WithSystem(context.Background()), &interfaces.SetParameterRequest{
 			Path:  "/app/config",
 			Value: []byte{},
 		})
@@ -418,7 +419,7 @@ func TestParameterStoreService_SetParameter(t *testing.T) {
 		err = svc.(*parameterStoreService).Close()
 		require.NoError(t, err)
 
-		resp, err := svc.SetParameter(context.Background(), &interfaces.SetParameterRequest{
+		resp, err := svc.SetParameter(tenantctx.WithSystem(context.Background()), &interfaces.SetParameterRequest{
 			Path:  "/app/config",
 			Value: []byte("value"),
 		})
@@ -443,7 +444,7 @@ func TestParameterStoreService_SetParameter(t *testing.T) {
 				Op:   "test",
 			})
 
-		resp, err := svc.SetParameter(context.Background(), &interfaces.SetParameterRequest{
+		resp, err := svc.SetParameter(tenantctx.WithSystem(context.Background()), &interfaces.SetParameterRequest{
 			Path:      "/app/config",
 			Value:     []byte("value"),
 			Overwrite: false,
@@ -465,7 +466,7 @@ func TestParameterStoreService_DeleteParameter(t *testing.T) {
 
 		pm.On("Delete", mock.Anything, "/app/config").Return(nil)
 
-		resp, err := svc.DeleteParameter(context.Background(), &interfaces.DeleteParameterRequest{
+		resp, err := svc.DeleteParameter(tenantctx.WithSystem(context.Background()), &interfaces.DeleteParameterRequest{
 			Path: "/app/config",
 		})
 
@@ -482,7 +483,7 @@ func TestParameterStoreService_DeleteParameter(t *testing.T) {
 		svc, err := NewParameterStoreService(pm, logger)
 		require.NoError(t, err)
 
-		resp, err := svc.DeleteParameter(context.Background(), nil)
+		resp, err := svc.DeleteParameter(tenantctx.WithSystem(context.Background()), nil)
 
 		require.Error(t, err)
 		assert.Nil(t, resp)
@@ -495,7 +496,7 @@ func TestParameterStoreService_DeleteParameter(t *testing.T) {
 		svc, err := NewParameterStoreService(pm, logger)
 		require.NoError(t, err)
 
-		resp, err := svc.DeleteParameter(context.Background(), &interfaces.DeleteParameterRequest{
+		resp, err := svc.DeleteParameter(tenantctx.WithSystem(context.Background()), &interfaces.DeleteParameterRequest{
 			Path: "",
 		})
 
@@ -513,7 +514,7 @@ func TestParameterStoreService_DeleteParameter(t *testing.T) {
 		err = svc.(*parameterStoreService).Close()
 		require.NoError(t, err)
 
-		resp, err := svc.DeleteParameter(context.Background(), &interfaces.DeleteParameterRequest{
+		resp, err := svc.DeleteParameter(tenantctx.WithSystem(context.Background()), &interfaces.DeleteParameterRequest{
 			Path: "/app/config",
 		})
 
@@ -534,7 +535,7 @@ func TestParameterStoreService_DeleteParameter(t *testing.T) {
 				Op:   "test",
 			})
 
-		resp, err := svc.DeleteParameter(context.Background(), &interfaces.DeleteParameterRequest{
+		resp, err := svc.DeleteParameter(tenantctx.WithSystem(context.Background()), &interfaces.DeleteParameterRequest{
 			Path: "/app/missing",
 		})
 
@@ -566,7 +567,7 @@ func TestParameterStoreService_GetParameters(t *testing.T) {
 		pm.On("GetBatch", mock.Anything, []string{"/app/config1", "/app/config2"}, true).
 			Return(results, map[string]error(nil), nil)
 
-		resp, err := svc.GetParameters(context.Background(), &interfaces.GetParametersRequest{
+		resp, err := svc.GetParameters(tenantctx.WithSystem(context.Background()), &interfaces.GetParametersRequest{
 			Paths:          []string{"/app/config1", "/app/config2"},
 			WithDecryption: true,
 		})
@@ -583,7 +584,7 @@ func TestParameterStoreService_GetParameters(t *testing.T) {
 		svc, err := NewParameterStoreService(pm, logger)
 		require.NoError(t, err)
 
-		resp, err := svc.GetParameters(context.Background(), &interfaces.GetParametersRequest{
+		resp, err := svc.GetParameters(tenantctx.WithSystem(context.Background()), &interfaces.GetParametersRequest{
 			Paths: []string{},
 		})
 
@@ -598,7 +599,7 @@ func TestParameterStoreService_GetParameters(t *testing.T) {
 		svc, err := NewParameterStoreService(pm, logger)
 		require.NoError(t, err)
 
-		resp, err := svc.GetParameters(context.Background(), nil)
+		resp, err := svc.GetParameters(tenantctx.WithSystem(context.Background()), nil)
 
 		require.Error(t, err)
 		assert.Nil(t, resp)
@@ -614,7 +615,7 @@ func TestParameterStoreService_GetParameters(t *testing.T) {
 		err = svc.(*parameterStoreService).Close()
 		require.NoError(t, err)
 
-		resp, err := svc.GetParameters(context.Background(), &interfaces.GetParametersRequest{
+		resp, err := svc.GetParameters(tenantctx.WithSystem(context.Background()), &interfaces.GetParametersRequest{
 			Paths: []string{"/app/config"},
 		})
 
@@ -641,7 +642,7 @@ func TestParameterStoreService_GetParameters(t *testing.T) {
 		pm.On("GetBatch", mock.Anything, []string{"/app/config1", "/app/config2"}, true).
 			Return(results, errs, nil)
 
-		resp, err := svc.GetParameters(context.Background(), &interfaces.GetParametersRequest{
+		resp, err := svc.GetParameters(tenantctx.WithSystem(context.Background()), &interfaces.GetParametersRequest{
 			Paths:          []string{"/app/config1", "/app/config2"},
 			WithDecryption: true,
 		})
@@ -665,7 +666,7 @@ func TestParameterStoreService_SetParameters(t *testing.T) {
 		pm.On("StoreBatch", mock.Anything, mock.AnythingOfType("[]*interfaces.ParameterEntry"), true, mock.Anything).
 			Return(nil)
 
-		resp, err := svc.SetParameters(context.Background(), &interfaces.SetParametersRequest{
+		resp, err := svc.SetParameters(tenantctx.WithSystem(context.Background()), &interfaces.SetParametersRequest{
 			Parameters: []*interfaces.SetParameterRequest{
 				{Path: "/app/config1", Value: []byte("value1")},
 				{Path: "/app/config2", Value: []byte("value2")},
@@ -687,7 +688,7 @@ func TestParameterStoreService_SetParameters(t *testing.T) {
 		svc, err := NewParameterStoreService(pm, logger)
 		require.NoError(t, err)
 
-		resp, err := svc.SetParameters(context.Background(), &interfaces.SetParametersRequest{
+		resp, err := svc.SetParameters(tenantctx.WithSystem(context.Background()), &interfaces.SetParametersRequest{
 			Parameters: []*interfaces.SetParameterRequest{},
 		})
 
@@ -702,7 +703,7 @@ func TestParameterStoreService_SetParameters(t *testing.T) {
 		svc, err := NewParameterStoreService(pm, logger)
 		require.NoError(t, err)
 
-		resp, err := svc.SetParameters(context.Background(), nil)
+		resp, err := svc.SetParameters(tenantctx.WithSystem(context.Background()), nil)
 
 		require.Error(t, err)
 		assert.Nil(t, resp)
@@ -718,7 +719,7 @@ func TestParameterStoreService_SetParameters(t *testing.T) {
 		err = svc.(*parameterStoreService).Close()
 		require.NoError(t, err)
 
-		resp, err := svc.SetParameters(context.Background(), &interfaces.SetParametersRequest{
+		resp, err := svc.SetParameters(tenantctx.WithSystem(context.Background()), &interfaces.SetParametersRequest{
 			Parameters: []*interfaces.SetParameterRequest{
 				{Path: "/app/config", Value: []byte("value")},
 			},
@@ -734,7 +735,7 @@ func TestParameterStoreService_SetParameters(t *testing.T) {
 		svc, err := NewParameterStoreService(pm, logger)
 		require.NoError(t, err)
 
-		resp, err := svc.SetParameters(context.Background(), &interfaces.SetParametersRequest{
+		resp, err := svc.SetParameters(tenantctx.WithSystem(context.Background()), &interfaces.SetParametersRequest{
 			Parameters: []*interfaces.SetParameterRequest{
 				{Path: "/app/valid", Value: []byte("value")},
 				{Path: "", Value: []byte("value")}, // Invalid: empty path
@@ -763,7 +764,7 @@ func TestParameterStoreService_DeleteParameters(t *testing.T) {
 		pm.On("DeleteBatch", mock.Anything, []string{"/app/config1", "/app/config2"}).
 			Return(results, map[string]error(nil), nil)
 
-		resp, err := svc.DeleteParameters(context.Background(), &interfaces.DeleteParametersRequest{
+		resp, err := svc.DeleteParameters(tenantctx.WithSystem(context.Background()), &interfaces.DeleteParametersRequest{
 			Paths: []string{"/app/config1", "/app/config2"},
 		})
 
@@ -780,7 +781,7 @@ func TestParameterStoreService_DeleteParameters(t *testing.T) {
 		svc, err := NewParameterStoreService(pm, logger)
 		require.NoError(t, err)
 
-		resp, err := svc.DeleteParameters(context.Background(), &interfaces.DeleteParametersRequest{
+		resp, err := svc.DeleteParameters(tenantctx.WithSystem(context.Background()), &interfaces.DeleteParametersRequest{
 			Paths: []string{},
 		})
 
@@ -796,7 +797,7 @@ func TestParameterStoreService_DeleteParameters(t *testing.T) {
 		svc, err := NewParameterStoreService(pm, logger)
 		require.NoError(t, err)
 
-		resp, err := svc.DeleteParameters(context.Background(), nil)
+		resp, err := svc.DeleteParameters(tenantctx.WithSystem(context.Background()), nil)
 
 		require.Error(t, err)
 		assert.Nil(t, resp)
@@ -812,7 +813,7 @@ func TestParameterStoreService_DeleteParameters(t *testing.T) {
 		err = svc.(*parameterStoreService).Close()
 		require.NoError(t, err)
 
-		resp, err := svc.DeleteParameters(context.Background(), &interfaces.DeleteParametersRequest{
+		resp, err := svc.DeleteParameters(tenantctx.WithSystem(context.Background()), &interfaces.DeleteParametersRequest{
 			Paths: []string{"/app/config"},
 		})
 
@@ -837,7 +838,7 @@ func TestParameterStoreService_DeleteParameters(t *testing.T) {
 		pm.On("DeleteBatch", mock.Anything, []string{"/app/config1", "/app/config2"}).
 			Return(results, errs, nil)
 
-		resp, err := svc.DeleteParameters(context.Background(), &interfaces.DeleteParametersRequest{
+		resp, err := svc.DeleteParameters(tenantctx.WithSystem(context.Background()), &interfaces.DeleteParametersRequest{
 			Paths: []string{"/app/config1", "/app/config2"},
 		})
 
@@ -859,7 +860,7 @@ func TestParameterStoreService_ListParameters(t *testing.T) {
 		pm.On("List", mock.Anything, "/app/", true, 100, "").
 			Return([]string{"/app/config1", "/app/config2"}, "", nil)
 
-		resp, err := svc.ListParameters(context.Background(), &interfaces.ListParametersRequest{
+		resp, err := svc.ListParameters(tenantctx.WithSystem(context.Background()), &interfaces.ListParametersRequest{
 			Prefix:    "/app/",
 			Recursive: true,
 		})
@@ -894,7 +895,7 @@ func TestParameterStoreService_ListParameters(t *testing.T) {
 		pm.On("GetBatch", mock.Anything, []string{"/app/config1", "/app/config2"}, false).
 			Return(results, map[string]error(nil), nil)
 
-		resp, err := svc.ListParameters(context.Background(), &interfaces.ListParametersRequest{
+		resp, err := svc.ListParameters(tenantctx.WithSystem(context.Background()), &interfaces.ListParametersRequest{
 			Prefix:     "/app/",
 			Recursive:  true,
 			WithValues: true,
@@ -915,7 +916,7 @@ func TestParameterStoreService_ListParameters(t *testing.T) {
 		pm.On("List", mock.Anything, "/app/", true, 10, "").
 			Return([]string{"/app/config1"}, "next-cursor", nil)
 
-		resp, err := svc.ListParameters(context.Background(), &interfaces.ListParametersRequest{
+		resp, err := svc.ListParameters(tenantctx.WithSystem(context.Background()), &interfaces.ListParametersRequest{
 			Prefix:    "/app/",
 			Recursive: true,
 			Limit:     10,
@@ -934,7 +935,7 @@ func TestParameterStoreService_ListParameters(t *testing.T) {
 		svc, err := NewParameterStoreService(pm, logger)
 		require.NoError(t, err)
 
-		resp, err := svc.ListParameters(context.Background(), nil)
+		resp, err := svc.ListParameters(tenantctx.WithSystem(context.Background()), nil)
 
 		require.Error(t, err)
 		assert.Nil(t, resp)
@@ -950,7 +951,7 @@ func TestParameterStoreService_ListParameters(t *testing.T) {
 		err = svc.(*parameterStoreService).Close()
 		require.NoError(t, err)
 
-		resp, err := svc.ListParameters(context.Background(), &interfaces.ListParametersRequest{
+		resp, err := svc.ListParameters(tenantctx.WithSystem(context.Background()), &interfaces.ListParametersRequest{
 			Prefix: "/app/",
 		})
 
@@ -967,7 +968,7 @@ func TestParameterStoreService_ListParameters(t *testing.T) {
 		pm.On("List", mock.Anything, "/app/", false, 100, "").
 			Return([]string{}, "", nil)
 
-		resp, err := svc.ListParameters(context.Background(), &interfaces.ListParametersRequest{
+		resp, err := svc.ListParameters(tenantctx.WithSystem(context.Background()), &interfaces.ListParametersRequest{
 			Prefix: "/app/",
 			Limit:  0, // Should default to 100
 		})
@@ -990,7 +991,7 @@ func TestParameterStoreService_SearchByTags(t *testing.T) {
 		pm.On("SearchByTags", mock.Anything, tags, "", 100, "").
 			Return([]string{"/app/config1", "/app/config2"}, "", nil)
 
-		resp, err := svc.SearchByTags(context.Background(), &interfaces.SearchByTagsRequest{
+		resp, err := svc.SearchByTags(tenantctx.WithSystem(context.Background()), &interfaces.SearchByTagsRequest{
 			Tags: tags,
 		})
 
@@ -1010,7 +1011,7 @@ func TestParameterStoreService_SearchByTags(t *testing.T) {
 		pm.On("SearchByTags", mock.Anything, tags, "/app/", 100, "").
 			Return([]string{"/app/config1"}, "", nil)
 
-		resp, err := svc.SearchByTags(context.Background(), &interfaces.SearchByTagsRequest{
+		resp, err := svc.SearchByTags(tenantctx.WithSystem(context.Background()), &interfaces.SearchByTagsRequest{
 			Tags:   tags,
 			Prefix: "/app/",
 		})
@@ -1040,7 +1041,7 @@ func TestParameterStoreService_SearchByTags(t *testing.T) {
 		pm.On("GetBatch", mock.Anything, []string{"/app/config1"}, false).
 			Return(results, map[string]error(nil), nil)
 
-		resp, err := svc.SearchByTags(context.Background(), &interfaces.SearchByTagsRequest{
+		resp, err := svc.SearchByTags(tenantctx.WithSystem(context.Background()), &interfaces.SearchByTagsRequest{
 			Tags:       tags,
 			WithValues: true,
 		})
@@ -1057,7 +1058,7 @@ func TestParameterStoreService_SearchByTags(t *testing.T) {
 		svc, err := NewParameterStoreService(pm, logger)
 		require.NoError(t, err)
 
-		resp, err := svc.SearchByTags(context.Background(), nil)
+		resp, err := svc.SearchByTags(tenantctx.WithSystem(context.Background()), nil)
 
 		require.Error(t, err)
 		assert.Nil(t, resp)
@@ -1070,7 +1071,7 @@ func TestParameterStoreService_SearchByTags(t *testing.T) {
 		svc, err := NewParameterStoreService(pm, logger)
 		require.NoError(t, err)
 
-		resp, err := svc.SearchByTags(context.Background(), &interfaces.SearchByTagsRequest{
+		resp, err := svc.SearchByTags(tenantctx.WithSystem(context.Background()), &interfaces.SearchByTagsRequest{
 			Tags: map[string]string{},
 		})
 
@@ -1088,7 +1089,7 @@ func TestParameterStoreService_SearchByTags(t *testing.T) {
 		err = svc.(*parameterStoreService).Close()
 		require.NoError(t, err)
 
-		resp, err := svc.SearchByTags(context.Background(), &interfaces.SearchByTagsRequest{
+		resp, err := svc.SearchByTags(tenantctx.WithSystem(context.Background()), &interfaces.SearchByTagsRequest{
 			Tags: map[string]string{"env": "prod"},
 		})
 
@@ -1196,7 +1197,7 @@ func TestBuildMetadata(t *testing.T) {
 			AuditEnabled: true,
 		}
 
-		metadata := service.buildMetadata(context.Background(), req)
+		metadata := service.buildMetadata(tenantctx.WithSystem(context.Background()), req)
 
 		assert.Equal(t, "json", metadata.Type)
 		assert.Equal(t, "Test config", metadata.Description)
@@ -1223,7 +1224,7 @@ func TestBuildMetadata(t *testing.T) {
 			Type:  "", // Empty
 		}
 
-		metadata := service.buildMetadata(context.Background(), req)
+		metadata := service.buildMetadata(tenantctx.WithSystem(context.Background()), req)
 
 		assert.Equal(t, "string", metadata.Type)
 	})
@@ -1235,7 +1236,7 @@ func TestBuildMetadata(t *testing.T) {
 		require.NoError(t, err)
 
 		service := svc.(*parameterStoreService)
-		ctx := iam.ContextWithUser(context.Background(), "user-123")
+		ctx := iam.ContextWithUser(tenantctx.WithSystem(context.Background()), "user-123")
 
 		req := &interfaces.SetParameterRequest{
 			Path:  "/app/config",
@@ -1262,7 +1263,7 @@ func TestBuildMetadata(t *testing.T) {
 			TTLSeconds: 0,
 		}
 
-		metadata := service.buildMetadata(context.Background(), req)
+		metadata := service.buildMetadata(tenantctx.WithSystem(context.Background()), req)
 
 		assert.Nil(t, metadata.ExpiresAt)
 	})
@@ -1278,7 +1279,7 @@ func TestSetParameterContext(t *testing.T) {
 
 		service := svc.(*parameterStoreService)
 
-		ctx := iam.ContextWithTenant(context.Background(), "tenant-123")
+		ctx := tenantctx.WithTenant(context.Background(), "tenant-123")
 		ctx = iam.ContextWithUser(ctx, "user-456")
 
 		tags := map[string]string{"env": "prod"}
@@ -1371,7 +1372,7 @@ func TestParameterStoreService_ConcurrentOperations(t *testing.T) {
 		done := make(chan bool)
 		for i := 0; i < 10; i++ {
 			go func(idx int) {
-				ctx := context.Background()
+				ctx := tenantctx.WithSystem(context.Background())
 				_, _ = svc.GetParameter(ctx, &interfaces.GetParameterRequest{
 					Path:           "/app/config",
 					WithDecryption: true,

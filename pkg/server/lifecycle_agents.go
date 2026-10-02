@@ -20,11 +20,11 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -178,7 +178,7 @@ func (s *Server) agentMigrationTenants(ctx context.Context) []string {
 // migrationContext scopes ctx to tenantID under both tenant keys, which is
 // what the tenant-routed stores address.
 func migrationContext(ctx context.Context, tenantID string) context.Context {
-	return orchestration.ContextWithTenant(iam.ContextWithTenant(ctx, tenantID), tenantID)
+	return orchestration.ContextWithTenant(tenantctx.WithTenant(ctx, tenantID), tenantID)
 }
 
 // tenantUnsealFunc adapts a function to service.TenantUnsealObserver.

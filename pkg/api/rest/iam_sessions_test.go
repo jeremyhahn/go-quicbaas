@@ -34,6 +34,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
 
@@ -47,7 +48,7 @@ func TestCreateSession(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "")
 		rctx.URLParams.Add("user_id", "user-123")
 
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//users/user-123/sessions", strings.NewReader(`{}`))
+		req := systemRequest(http.MethodPost, "/api/v1/tenants//users/user-123/sessions", strings.NewReader(`{}`))
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -66,7 +67,7 @@ func TestCreateSession(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 		rctx.URLParams.Add("user_id", "")
 
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users//sessions", strings.NewReader(`{}`))
+		req := systemRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users//sessions", strings.NewReader(`{}`))
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -85,7 +86,7 @@ func TestCreateSession(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 		rctx.URLParams.Add("user_id", "user-123")
 
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader("{invalid"))
+		req := systemRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader("{invalid"))
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -105,7 +106,7 @@ func TestCreateSession(t *testing.T) {
 		rctx.URLParams.Add("user_id", "user-123")
 
 		body := `{"token_hash":""}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader(body))
+		req := systemRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader(body))
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -125,7 +126,7 @@ func TestCreateSession(t *testing.T) {
 		rctx.URLParams.Add("user_id", "user-123")
 
 		body := `{"token_hash":"abc123"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader(body))
+		req := systemRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader(body))
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -147,7 +148,7 @@ func TestListUserSessions(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "")
 		rctx.URLParams.Add("user_id", "user-123")
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//users/user-123/sessions", nil)
+		req := systemRequest(http.MethodGet, "/api/v1/tenants//users/user-123/sessions", nil)
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 		w := httptest.NewRecorder()
 
@@ -165,7 +166,7 @@ func TestListUserSessions(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 		rctx.URLParams.Add("user_id", "")
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users//sessions", nil)
+		req := systemRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users//sessions", nil)
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 		w := httptest.NewRecorder()
 
@@ -183,7 +184,7 @@ func TestListUserSessions(t *testing.T) {
 		rctx.URLParams.Add("tenant_id", "tenant-123")
 		rctx.URLParams.Add("user_id", "user-123")
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/sessions", nil)
+		req := systemRequest(http.MethodGet, "/api/v1/tenants/tenant-123/users/user-123/sessions", nil)
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 		w := httptest.NewRecorder()
 
@@ -201,7 +202,7 @@ func TestRevokeAllUserSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		req := withChiParams(httptest.NewRequest(http.MethodDelete, "/api/v1/tenants//users/user-123/sessions", nil),
+		req := withChiParams(systemRequest(http.MethodDelete, "/api/v1/tenants//users/user-123/sessions", nil),
 			map[string]string{"tenant_id": "", "user_id": "user-123"})
 		w := httptest.NewRecorder()
 
@@ -215,7 +216,7 @@ func TestRevokeAllUserSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		req := withChiParams(httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users//sessions", nil),
+		req := withChiParams(systemRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users//sessions", nil),
 			map[string]string{"tenant_id": "tenant-123", "user_id": ""})
 		w := httptest.NewRecorder()
 
@@ -229,7 +230,7 @@ func TestRevokeAllUserSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		req := withChiParams(httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/sessions", nil),
+		req := withChiParams(systemRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/sessions", nil),
 			map[string]string{"tenant_id": "tenant-123", "user_id": "user-123"})
 		w := httptest.NewRecorder()
 
@@ -244,7 +245,7 @@ func TestRevokeAllUserSessions(t *testing.T) {
 		handler, cleanup := setupHandlerWithService(t, svc)
 		defer cleanup()
 
-		req := withChiParams(httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/sessions", nil),
+		req := withChiParams(systemRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/sessions", nil),
 			map[string]string{"tenant_id": "tenant-123", "user_id": "user-123"})
 		w := httptest.NewRecorder()
 
@@ -260,7 +261,7 @@ func TestRevokeAllUserSessions(t *testing.T) {
 		handler, cleanup := setupHandlerWithService(t, svc)
 		defer cleanup()
 
-		req := withChiParams(httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/sessions", nil),
+		req := withChiParams(systemRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/sessions", nil),
 			map[string]string{"tenant_id": "tenant-123", "user_id": "user-123"})
 		w := httptest.NewRecorder()
 
@@ -277,7 +278,7 @@ func TestRevokeAllUserSessions(t *testing.T) {
 		handler, cleanup := setupHandlerWithService(t, svc)
 		defer cleanup()
 
-		req := withChiParams(httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/sessions", nil),
+		req := withChiParams(systemRequest(http.MethodDelete, "/api/v1/tenants/tenant-123/users/user-123/sessions", nil),
 			map[string]string{"tenant_id": "tenant-123", "user_id": "user-123"})
 		w := httptest.NewRecorder()
 
@@ -299,7 +300,7 @@ func TestListUserSessionsLimit(t *testing.T) {
 	}
 
 	listReq := func(target string) *http.Request {
-		return withChiParams(httptest.NewRequest(http.MethodGet, target, nil),
+		return withChiParams(systemRequest(http.MethodGet, target, nil),
 			map[string]string{"tenant_id": "tenant-123", "user_id": "user-123"})
 	}
 
@@ -379,7 +380,7 @@ func TestListSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
+		req := systemRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
 		w := httptest.NewRecorder()
 
 		handler.ListSessions(w, req)
@@ -392,8 +393,8 @@ func TestListSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "")
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
+		ctx := ctxWithTestSubject(tenantctx.WithSystem(context.Background()), "user-123", "")
+		req := systemRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
 
@@ -407,8 +408,8 @@ func TestListSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
+		ctx := ctxWithTestSubject(tenantctx.WithSystem(context.Background()), "user-123", "tenant-123")
+		req := systemRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
 
@@ -428,10 +429,10 @@ func TestGetSession(t *testing.T) {
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", "")
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
+		ctx := ctxWithTestSubject(tenantctx.WithSystem(context.Background()), "user-123", "tenant-123")
 		ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions/", nil)
+		req := systemRequest(http.MethodGet, "/api/v1/iam/sessions/", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
 
@@ -448,7 +449,7 @@ func TestGetSession(t *testing.T) {
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", "session-123")
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions/session-123", nil)
+		req := systemRequest(http.MethodGet, "/api/v1/iam/sessions/session-123", nil)
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 		w := httptest.NewRecorder()
 
@@ -465,10 +466,10 @@ func TestGetSession(t *testing.T) {
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", "session-123")
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "")
+		ctx := ctxWithTestSubject(tenantctx.WithSystem(context.Background()), "user-123", "")
 		ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions/session-123", nil)
+		req := systemRequest(http.MethodGet, "/api/v1/iam/sessions/session-123", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
 
@@ -485,10 +486,10 @@ func TestGetSession(t *testing.T) {
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", "session-123")
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
+		ctx := ctxWithTestSubject(tenantctx.WithSystem(context.Background()), "user-123", "tenant-123")
 		ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions/session-123", nil)
+		req := systemRequest(http.MethodGet, "/api/v1/iam/sessions/session-123", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
 
@@ -508,10 +509,10 @@ func TestRevokeSession(t *testing.T) {
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", "")
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
+		ctx := ctxWithTestSubject(tenantctx.WithSystem(context.Background()), "user-123", "tenant-123")
 		ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
 
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions/", nil)
+		req := systemRequest(http.MethodDelete, "/api/v1/iam/sessions/", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
 
@@ -528,7 +529,7 @@ func TestRevokeSession(t *testing.T) {
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", "session-123")
 
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions/session-123", nil)
+		req := systemRequest(http.MethodDelete, "/api/v1/iam/sessions/session-123", nil)
 		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 		w := httptest.NewRecorder()
 
@@ -545,10 +546,10 @@ func TestRevokeSession(t *testing.T) {
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", "session-123")
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "")
+		ctx := ctxWithTestSubject(tenantctx.WithSystem(context.Background()), "user-123", "")
 		ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
 
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions/session-123", nil)
+		req := systemRequest(http.MethodDelete, "/api/v1/iam/sessions/session-123", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
 
@@ -565,10 +566,10 @@ func TestRevokeSession(t *testing.T) {
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", "session-123")
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
+		ctx := ctxWithTestSubject(tenantctx.WithSystem(context.Background()), "user-123", "tenant-123")
 		ctx = context.WithValue(ctx, chi.RouteCtxKey, rctx)
 
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions/session-123", nil)
+		req := systemRequest(http.MethodDelete, "/api/v1/iam/sessions/session-123", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
 
@@ -585,7 +586,7 @@ func TestRevokeAllSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions", nil)
+		req := systemRequest(http.MethodDelete, "/api/v1/iam/sessions", nil)
 		w := httptest.NewRecorder()
 
 		handler.RevokeAllSessions(w, req)
@@ -598,8 +599,8 @@ func TestRevokeAllSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "")
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions", nil)
+		ctx := ctxWithTestSubject(tenantctx.WithSystem(context.Background()), "user-123", "")
+		req := systemRequest(http.MethodDelete, "/api/v1/iam/sessions", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
 
@@ -613,8 +614,8 @@ func TestRevokeAllSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions", nil)
+		ctx := ctxWithTestSubject(tenantctx.WithSystem(context.Background()), "user-123", "tenant-123")
+		req := systemRequest(http.MethodDelete, "/api/v1/iam/sessions", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
 
@@ -628,8 +629,8 @@ func TestRevokeAllSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions?except=session-456", nil)
+		ctx := ctxWithTestSubject(tenantctx.WithSystem(context.Background()), "user-123", "tenant-123")
+		req := systemRequest(http.MethodDelete, "/api/v1/iam/sessions?except=session-456", nil)
 		req = req.WithContext(ctx)
 		w := httptest.NewRecorder()
 
@@ -646,7 +647,7 @@ func TestRevokeOtherSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", strings.NewReader(`{}`))
+		req := systemRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", strings.NewReader(`{}`))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -660,8 +661,8 @@ func TestRevokeOtherSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "")
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", strings.NewReader(`{}`))
+		ctx := ctxWithTestSubject(tenantctx.WithSystem(context.Background()), "user-123", "")
+		req := systemRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", strings.NewReader(`{}`))
 		req = req.WithContext(ctx)
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -676,8 +677,8 @@ func TestRevokeOtherSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", strings.NewReader(`{}`))
+		ctx := ctxWithTestSubject(tenantctx.WithSystem(context.Background()), "user-123", "tenant-123")
+		req := systemRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", strings.NewReader(`{}`))
 		req = req.WithContext(ctx)
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -692,8 +693,8 @@ func TestRevokeOtherSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others",
+		ctx := ctxWithTestSubject(tenantctx.WithSystem(context.Background()), "user-123", "tenant-123")
+		req := systemRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others",
 			strings.NewReader(`{"keep_session_id":"session-456"}`))
 		req = req.WithContext(ctx)
 		req.Header.Set("Content-Type", "application/json")
@@ -709,9 +710,9 @@ func TestRevokeOtherSessions(t *testing.T) {
 		handler, _, cleanup := setupIAMHandler(t)
 		defer cleanup()
 
-		ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
+		ctx := ctxWithTestSubject(tenantctx.WithSystem(context.Background()), "user-123", "tenant-123")
 		body := `{"keep_session_id":"session-789"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", strings.NewReader(body))
+		req := systemRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", strings.NewReader(body))
 		req = req.WithContext(ctx)
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -728,7 +729,7 @@ func TestTokenFormParseErrorPath(t *testing.T) {
 	defer cleanup()
 
 	// Create a request with invalid form data that will fail parsing
-	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", nil)
+	req := systemRequest(http.MethodPost, "/oauth2/token", nil)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Body = io.NopCloser(&errorReader{})
 	w := httptest.NewRecorder()
@@ -742,7 +743,7 @@ func TestRevokeFormParseErrorPath(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/oauth2/revoke", nil)
+	req := systemRequest(http.MethodPost, "/oauth2/revoke", nil)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Body = io.NopCloser(&errorReader{})
 	w := httptest.NewRecorder()
@@ -760,7 +761,7 @@ func TestCreateSessionReadBodyErrorPath(t *testing.T) {
 	rctx.URLParams.Add("tenant_id", "tenant-123")
 	rctx.URLParams.Add("user_id", "user-123")
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", nil)
+	req := systemRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", nil)
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 	req.Body = io.NopCloser(&errorReader{})
 	req.Header.Set("Content-Type", "application/json")
@@ -776,9 +777,9 @@ func TestRevokeOtherSessionsReadBodyErrorPath(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	ctx := ctxWithTestSubject(context.Background(), "user-123", "tenant-123")
+	ctx := ctxWithTestSubject(tenantctx.WithSystem(context.Background()), "user-123", "tenant-123")
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", nil)
+	req := systemRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", nil)
 	req = req.WithContext(ctx)
 	req.Body = io.NopCloser(&errorReader{})
 	req.Header.Set("Content-Type", "application/json")
@@ -831,7 +832,7 @@ func TestTokenWithAllGrantTypesPath(t *testing.T) {
 			handler, _, cleanup := setupIAMHandler(t)
 			defer cleanup()
 
-			req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(tt.formData.Encode()))
+			req := systemRequest(http.MethodPost, "/oauth2/token", strings.NewReader(tt.formData.Encode()))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			w := httptest.NewRecorder()
 
@@ -859,7 +860,7 @@ func TestAuthorizeWithPKCEParams(t *testing.T) {
 		"nonce":                 {"nonce-value-456"},
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/oauth2/authorize?"+params.Encode(), nil)
+	req := systemRequest(http.MethodGet, "/oauth2/authorize?"+params.Encode(), nil)
 	w := httptest.NewRecorder()
 
 	handler.Authorize(w, req)
@@ -901,7 +902,7 @@ func TestUserInfoBearerCaseVariationsPath(t *testing.T) {
 			handler, _, cleanup := setupIAMHandler(t)
 			defer cleanup()
 
-			req := httptest.NewRequest(http.MethodGet, "/oauth2/userinfo", nil)
+			req := systemRequest(http.MethodGet, "/oauth2/userinfo", nil)
 			req.Header.Set("Authorization", tt.authHeader)
 			w := httptest.NewRecorder()
 
@@ -936,7 +937,7 @@ func TestCreateSessionWithDeviceInfoPath(t *testing.T) {
 		"expires_at": "2099-12-31T23:59:59Z"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader(body))
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -961,7 +962,7 @@ func TestCreateSessionWithCustomIDPath(t *testing.T) {
 		"token_hash": "abc123"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader(body))
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -984,7 +985,7 @@ func TestCreateSessionWithInvalidExpiryPath(t *testing.T) {
 		"expires_at": "not-a-valid-date"
 	}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/tenants/tenant-123/users/user-123/sessions", strings.NewReader(body))
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -1031,7 +1032,7 @@ func TestRevokeWithTokenTypeHintsPath(t *testing.T) {
 				form.Set("token_type_hint", tt.tokenTypeHint)
 			}
 
-			req := httptest.NewRequest(http.MethodPost, "/oauth2/revoke", strings.NewReader(form.Encode()))
+			req := systemRequest(http.MethodPost, "/oauth2/revoke", strings.NewReader(form.Encode()))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			w := httptest.NewRecorder()
 
@@ -1047,8 +1048,8 @@ func TestListSessionsEmptyUserID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	ctx := ctxWithTestSubject(context.Background(), "", "")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
+	ctx := ctxWithTestSubject(tenantctx.WithSystem(context.Background()), "", "")
+	req := systemRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
 
@@ -1062,8 +1063,8 @@ func TestListSessionsEmptyTenantID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	ctx := ctxWithTestSubject(context.Background(), "user-123", "")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
+	ctx := ctxWithTestSubject(tenantctx.WithSystem(context.Background()), "user-123", "")
+	req := systemRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
 
@@ -1077,7 +1078,7 @@ func TestIAM91_CreateSession_MissingTenantID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//users/u1/sessions", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPost, "/api/v1/tenants//users/u1/sessions", strings.NewReader(`{}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.CreateSession(w, req)
@@ -1089,7 +1090,7 @@ func TestIAM91_CreateSession_MissingUserID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/t1/users//sessions", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPost, "/api/v1/tenants/t1/users//sessions", strings.NewReader(`{}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": ""})
 	w := httptest.NewRecorder()
 	handler.CreateSession(w, req)
@@ -1101,7 +1102,7 @@ func TestIAM91_CreateSession_InvalidJSON(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/t1/users/u1/sessions", strings.NewReader("{bad"))
+	req := systemRequest(http.MethodPost, "/api/v1/tenants/t1/users/u1/sessions", strings.NewReader("{bad"))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.CreateSession(w, req)
@@ -1113,7 +1114,7 @@ func TestIAM91_CreateSession_MissingTokenHash(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/t1/users/u1/sessions", strings.NewReader(`{"token_hash":""}`))
+	req := systemRequest(http.MethodPost, "/api/v1/tenants/t1/users/u1/sessions", strings.NewReader(`{"token_hash":""}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.CreateSession(w, req)
@@ -1126,7 +1127,7 @@ func TestIAM91_CreateSession_ServiceNotAvailable(t *testing.T) {
 	defer cleanup()
 
 	body := `{"token_hash":"abc123"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/t1/users/u1/sessions", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/tenants/t1/users/u1/sessions", strings.NewReader(body))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.CreateSession(w, req)
@@ -1138,7 +1139,7 @@ func TestIAM91_ListUserSessions_MissingTenantID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//users/u1/sessions", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/tenants//users/u1/sessions", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.ListUserSessions(w, req)
@@ -1149,7 +1150,7 @@ func TestIAM91_ListUserSessions_MissingUserID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/t1/users//sessions", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/tenants/t1/users//sessions", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": ""})
 	w := httptest.NewRecorder()
 	handler.ListUserSessions(w, req)
@@ -1160,7 +1161,7 @@ func TestIAM91_ListUserSessions_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/t1/users/u1/sessions", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/tenants/t1/users/u1/sessions", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.ListUserSessions(w, req)
@@ -1172,7 +1173,7 @@ func TestIAM91_ListSessions_MissingUserContext(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
 	w := httptest.NewRecorder()
 	handler.ListSessions(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
@@ -1182,7 +1183,7 @@ func TestIAM91_ListSessions_MissingTenantContext(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
 	ctx := ctxWithTestSubject(req.Context(), "u1", "")
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
@@ -1194,7 +1195,7 @@ func TestIAM91_ListSessions_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
 	ctx := ctxWithTestSubject(req.Context(), "u1", "t1")
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
@@ -1206,7 +1207,7 @@ func TestIAM91_GetSession_MissingSessionID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions/", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/iam/sessions/", nil)
 	req = withChiParams(req, map[string]string{"id": ""})
 	w := httptest.NewRecorder()
 	handler.GetSession(w, req)
@@ -1217,7 +1218,7 @@ func TestIAM91_GetSession_MissingUserContext(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions/s1", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/iam/sessions/s1", nil)
 	req = withChiParams(req, map[string]string{"id": "s1"})
 	w := httptest.NewRecorder()
 	handler.GetSession(w, req)
@@ -1228,7 +1229,7 @@ func TestIAM91_GetSession_MissingTenantContext(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions/s1", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/iam/sessions/s1", nil)
 	req = withChiParams(req, map[string]string{"id": "s1"})
 	ctx := ctxWithTestSubject(req.Context(), "u1", "")
 	req = req.WithContext(ctx)
@@ -1241,7 +1242,7 @@ func TestIAM91_GetSession_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/sessions/s1", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/iam/sessions/s1", nil)
 	req = withChiParams(req, map[string]string{"id": "s1"})
 	ctx := ctxWithTestSubject(req.Context(), "u1", "t1")
 	req = req.WithContext(ctx)
@@ -1254,7 +1255,7 @@ func TestIAM91_RevokeSession_MissingSessionID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions/", nil)
+	req := systemRequest(http.MethodDelete, "/api/v1/iam/sessions/", nil)
 	req = withChiParams(req, map[string]string{"id": ""})
 	w := httptest.NewRecorder()
 	handler.RevokeSession(w, req)
@@ -1265,7 +1266,7 @@ func TestIAM91_RevokeSession_MissingUserContext(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions/s1", nil)
+	req := systemRequest(http.MethodDelete, "/api/v1/iam/sessions/s1", nil)
 	req = withChiParams(req, map[string]string{"id": "s1"})
 	w := httptest.NewRecorder()
 	handler.RevokeSession(w, req)
@@ -1276,7 +1277,7 @@ func TestIAM91_RevokeSession_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions/s1", nil)
+	req := systemRequest(http.MethodDelete, "/api/v1/iam/sessions/s1", nil)
 	req = withChiParams(req, map[string]string{"id": "s1"})
 	ctx := ctxWithTestSubject(req.Context(), "u1", "t1")
 	req = req.WithContext(ctx)
@@ -1289,7 +1290,7 @@ func TestIAM91_RevokeAllSessions_MissingUserContext(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions", nil)
+	req := systemRequest(http.MethodDelete, "/api/v1/iam/sessions", nil)
 	w := httptest.NewRecorder()
 	handler.RevokeAllSessions(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
@@ -1299,7 +1300,7 @@ func TestIAM91_RevokeAllSessions_MissingTenantContext(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions", nil)
+	req := systemRequest(http.MethodDelete, "/api/v1/iam/sessions", nil)
 	ctx := ctxWithTestSubject(req.Context(), "u1", "")
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
@@ -1311,7 +1312,7 @@ func TestIAM91_RevokeAllSessions_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/sessions", nil)
+	req := systemRequest(http.MethodDelete, "/api/v1/iam/sessions", nil)
 	ctx := ctxWithTestSubject(req.Context(), "u1", "t1")
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
@@ -1323,7 +1324,7 @@ func TestIAM91_RevokeOtherSessions_MissingUserContext(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", nil)
+	req := systemRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", nil)
 	w := httptest.NewRecorder()
 	handler.RevokeOtherSessions(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
@@ -1333,7 +1334,7 @@ func TestIAM91_RevokeOtherSessions_MissingTenantContext(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", nil)
+	req := systemRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", nil)
 	ctx := ctxWithTestSubject(req.Context(), "u1", "")
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
@@ -1345,7 +1346,7 @@ func TestIAM91_RevokeOtherSessions_MissingSessionContext(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", nil)
+	req := systemRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others", nil)
 	ctx := ctxWithTestSubject(req.Context(), "u1", "t1")
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
@@ -1358,7 +1359,7 @@ func TestIAM91_RevokeOtherSessions_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others",
+	req := systemRequest(http.MethodPost, "/api/v1/iam/sessions/revoke-others",
 		strings.NewReader(`{"keep_session_id":"s1"}`))
 	ctx := ctxWithTestSubject(req.Context(), "u1", "t1")
 	req = req.WithContext(ctx)
@@ -1375,7 +1376,7 @@ func TestIAM91_ListApps_MissingTenantID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//apps", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/tenants//apps", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": ""})
 	w := httptest.NewRecorder()
 	handler.ListApps(w, req)
@@ -1386,7 +1387,7 @@ func TestIAM91_ListApps_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/t1/apps", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/tenants/t1/apps", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
 	w := httptest.NewRecorder()
 	handler.ListApps(w, req)
@@ -1398,7 +1399,7 @@ func TestIAM91_ListApps_WithPagination(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/t1/apps?limit=50&offset=10", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/tenants/t1/apps?limit=50&offset=10", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
 	w := httptest.NewRecorder()
 	handler.ListApps(w, req)
@@ -1409,7 +1410,7 @@ func TestIAM91_RegisterApp_MissingTenantID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//apps", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPost, "/api/v1/tenants//apps", strings.NewReader(`{}`))
 	req = withChiParams(req, map[string]string{"tenant_id": ""})
 	w := httptest.NewRecorder()
 	handler.RegisterApp(w, req)
@@ -1420,7 +1421,7 @@ func TestIAM91_RegisterApp_InvalidJSON(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/t1/apps", strings.NewReader("{bad"))
+	req := systemRequest(http.MethodPost, "/api/v1/tenants/t1/apps", strings.NewReader("{bad"))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
 	w := httptest.NewRecorder()
 	handler.RegisterApp(w, req)
@@ -1431,7 +1432,7 @@ func TestIAM91_RegisterApp_MissingName(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/t1/apps", strings.NewReader(`{"redirect_uris":["https://x"]}`))
+	req := systemRequest(http.MethodPost, "/api/v1/tenants/t1/apps", strings.NewReader(`{"redirect_uris":["https://x"]}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
 	w := httptest.NewRecorder()
 	handler.RegisterApp(w, req)
@@ -1443,7 +1444,7 @@ func TestIAM91_RegisterApp_MissingRedirectURIs(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/t1/apps", strings.NewReader(`{"name":"myapp"}`))
+	req := systemRequest(http.MethodPost, "/api/v1/tenants/t1/apps", strings.NewReader(`{"name":"myapp"}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
 	w := httptest.NewRecorder()
 	handler.RegisterApp(w, req)
@@ -1456,7 +1457,7 @@ func TestIAM91_RegisterApp_ServiceNotAvailable(t *testing.T) {
 	defer cleanup()
 
 	body := `{"name":"myapp","redirect_uris":["https://example.com"]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/t1/apps", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/tenants/t1/apps", strings.NewReader(body))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
 	w := httptest.NewRecorder()
 	handler.RegisterApp(w, req)
@@ -1467,7 +1468,7 @@ func TestIAM91_GetApp_MissingTenantID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//apps/c1", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/tenants//apps/c1", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "", "client_id": "c1"})
 	w := httptest.NewRecorder()
 	handler.GetApp(w, req)
@@ -1478,7 +1479,7 @@ func TestIAM91_GetApp_MissingClientID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/t1/apps/", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/tenants/t1/apps/", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "client_id": ""})
 	w := httptest.NewRecorder()
 	handler.GetApp(w, req)
@@ -1489,7 +1490,7 @@ func TestIAM91_GetApp_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/t1/apps/c1", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/tenants/t1/apps/c1", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "client_id": "c1"})
 	w := httptest.NewRecorder()
 	handler.GetApp(w, req)
@@ -1500,7 +1501,7 @@ func TestIAM91_UpdateApp_MissingTenantID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants//apps/c1", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPut, "/api/v1/tenants//apps/c1", strings.NewReader(`{}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "", "client_id": "c1"})
 	w := httptest.NewRecorder()
 	handler.UpdateApp(w, req)
@@ -1511,7 +1512,7 @@ func TestIAM91_UpdateApp_MissingClientID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/t1/apps/", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPut, "/api/v1/tenants/t1/apps/", strings.NewReader(`{}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "client_id": ""})
 	w := httptest.NewRecorder()
 	handler.UpdateApp(w, req)
@@ -1522,7 +1523,7 @@ func TestIAM91_UpdateApp_InvalidJSON(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/t1/apps/c1", strings.NewReader("{bad"))
+	req := systemRequest(http.MethodPut, "/api/v1/tenants/t1/apps/c1", strings.NewReader("{bad"))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "client_id": "c1"})
 	w := httptest.NewRecorder()
 	handler.UpdateApp(w, req)
@@ -1533,7 +1534,7 @@ func TestIAM91_UpdateApp_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/t1/apps/c1", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPut, "/api/v1/tenants/t1/apps/c1", strings.NewReader(`{}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "client_id": "c1"})
 	w := httptest.NewRecorder()
 	handler.UpdateApp(w, req)
@@ -1544,7 +1545,7 @@ func TestIAM91_DeleteApp_MissingTenantID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants//apps/c1", nil)
+	req := systemRequest(http.MethodDelete, "/api/v1/tenants//apps/c1", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "", "client_id": "c1"})
 	w := httptest.NewRecorder()
 	handler.DeleteApp(w, req)
@@ -1555,7 +1556,7 @@ func TestIAM91_DeleteApp_MissingClientID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/t1/apps/", nil)
+	req := systemRequest(http.MethodDelete, "/api/v1/tenants/t1/apps/", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "client_id": ""})
 	w := httptest.NewRecorder()
 	handler.DeleteApp(w, req)
@@ -1566,7 +1567,7 @@ func TestIAM91_DeleteApp_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/t1/apps/c1", nil)
+	req := systemRequest(http.MethodDelete, "/api/v1/tenants/t1/apps/c1", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "client_id": "c1"})
 	w := httptest.NewRecorder()
 	handler.DeleteApp(w, req)
@@ -1577,7 +1578,7 @@ func TestIAM91_RotateSecret_MissingTenantID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//apps/c1/rotate-secret", nil)
+	req := systemRequest(http.MethodPost, "/api/v1/tenants//apps/c1/rotate-secret", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "", "client_id": "c1"})
 	w := httptest.NewRecorder()
 	handler.RotateSecret(w, req)
@@ -1588,7 +1589,7 @@ func TestIAM91_RotateSecret_MissingClientID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/t1/apps//rotate-secret", nil)
+	req := systemRequest(http.MethodPost, "/api/v1/tenants/t1/apps//rotate-secret", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "client_id": ""})
 	w := httptest.NewRecorder()
 	handler.RotateSecret(w, req)
@@ -1599,7 +1600,7 @@ func TestIAM91_RotateSecret_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/t1/apps/c1/rotate-secret", nil)
+	req := systemRequest(http.MethodPost, "/api/v1/tenants/t1/apps/c1/rotate-secret", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "client_id": "c1"})
 	w := httptest.NewRecorder()
 	handler.RotateSecret(w, req)
@@ -1610,7 +1611,7 @@ func TestIAM91_ValidateClient_InvalidJSON(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/validate-client", strings.NewReader("{bad"))
+	req := systemRequest(http.MethodPost, "/api/v1/iam/validate-client", strings.NewReader("{bad"))
 	w := httptest.NewRecorder()
 	handler.ValidateClient(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -1620,7 +1621,7 @@ func TestIAM91_ValidateClient_MissingClientID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/validate-client", strings.NewReader(`{"client_secret":"x"}`))
+	req := systemRequest(http.MethodPost, "/api/v1/iam/validate-client", strings.NewReader(`{"client_secret":"x"}`))
 	w := httptest.NewRecorder()
 	handler.ValidateClient(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -1630,7 +1631,7 @@ func TestIAM91_ValidateClient_MissingClientSecret(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/validate-client", strings.NewReader(`{"client_id":"x"}`))
+	req := systemRequest(http.MethodPost, "/api/v1/iam/validate-client", strings.NewReader(`{"client_id":"x"}`))
 	w := httptest.NewRecorder()
 	handler.ValidateClient(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -1641,7 +1642,7 @@ func TestIAM91_ValidateClient_ServiceNotAvailable(t *testing.T) {
 	defer cleanup()
 
 	body := `{"client_id":"x","client_secret":"y"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/iam/validate-client", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/iam/validate-client", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	handler.ValidateClient(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -1655,7 +1656,7 @@ func TestIAM91_GrantConsent_MissingTenantID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/consent", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPost, "/consent", strings.NewReader(`{}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.GrantConsent(w, req)
@@ -1666,7 +1667,7 @@ func TestIAM91_GrantConsent_MissingUserID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/consent", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPost, "/consent", strings.NewReader(`{}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": ""})
 	w := httptest.NewRecorder()
 	handler.GrantConsent(w, req)
@@ -1677,7 +1678,7 @@ func TestIAM91_GrantConsent_InvalidJSON(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/consent", strings.NewReader("{bad"))
+	req := systemRequest(http.MethodPost, "/consent", strings.NewReader("{bad"))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.GrantConsent(w, req)
@@ -1688,7 +1689,7 @@ func TestIAM91_GrantConsent_MissingPurpose(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/consent", strings.NewReader(`{"version":"1"}`))
+	req := systemRequest(http.MethodPost, "/consent", strings.NewReader(`{"version":"1"}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.GrantConsent(w, req)
@@ -1700,7 +1701,7 @@ func TestIAM91_GrantConsent_MissingVersion(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/consent", strings.NewReader(`{"purpose":"marketing"}`))
+	req := systemRequest(http.MethodPost, "/consent", strings.NewReader(`{"purpose":"marketing"}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.GrantConsent(w, req)
@@ -1713,7 +1714,7 @@ func TestIAM91_GrantConsent_ServiceNotAvailable(t *testing.T) {
 	defer cleanup()
 
 	body := `{"purpose":"marketing","version":"1"}`
-	req := httptest.NewRequest(http.MethodPost, "/consent", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/consent", strings.NewReader(body))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.GrantConsent(w, req)
@@ -1725,7 +1726,7 @@ func TestIAM91_ListUserConsents_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/consents", nil)
+	req := systemRequest(http.MethodGet, "/consents", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.ListUserConsents(w, req)
@@ -1736,7 +1737,7 @@ func TestIAM91_GetConsent_MissingPurpose(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/consent/", nil)
+	req := systemRequest(http.MethodGet, "/consent/", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1", "purpose": ""})
 	w := httptest.NewRecorder()
 	handler.GetConsent(w, req)
@@ -1747,7 +1748,7 @@ func TestIAM91_GetConsent_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/consent/marketing", nil)
+	req := systemRequest(http.MethodGet, "/consent/marketing", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1", "purpose": "marketing"})
 	w := httptest.NewRecorder()
 	handler.GetConsent(w, req)
@@ -1758,7 +1759,7 @@ func TestIAM91_WithdrawConsent_MissingPurpose(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPut, "/consent//withdraw", nil)
+	req := systemRequest(http.MethodPut, "/consent//withdraw", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1", "purpose": ""})
 	w := httptest.NewRecorder()
 	handler.WithdrawConsent(w, req)
@@ -1769,7 +1770,7 @@ func TestIAM91_WithdrawConsent_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPut, "/consent/marketing/withdraw", nil)
+	req := systemRequest(http.MethodPut, "/consent/marketing/withdraw", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1", "purpose": "marketing"})
 	w := httptest.NewRecorder()
 	handler.WithdrawConsent(w, req)
@@ -1780,7 +1781,7 @@ func TestIAM91_RequestDataExport_InvalidJSON(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/export", strings.NewReader("{bad"))
+	req := systemRequest(http.MethodPost, "/export", strings.NewReader("{bad"))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.RequestDataExport(w, req)
@@ -1791,7 +1792,7 @@ func TestIAM91_RequestDataExport_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/export", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPost, "/export", strings.NewReader(`{}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.RequestDataExport(w, req)
@@ -1802,7 +1803,7 @@ func TestIAM91_GetExportStatus_MissingExportID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/export/", nil)
+	req := systemRequest(http.MethodGet, "/export/", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1", "export_id": ""})
 	w := httptest.NewRecorder()
 	handler.GetExportStatus(w, req)
@@ -1813,7 +1814,7 @@ func TestIAM91_GetExportStatus_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/export/e1", nil)
+	req := systemRequest(http.MethodGet, "/export/e1", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1", "export_id": "e1"})
 	w := httptest.NewRecorder()
 	handler.GetExportStatus(w, req)
@@ -1824,7 +1825,7 @@ func TestIAM91_DownloadExport_MissingExportID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/export//download", nil)
+	req := systemRequest(http.MethodGet, "/export//download", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1", "export_id": ""})
 	w := httptest.NewRecorder()
 	handler.DownloadExport(w, req)
@@ -1835,7 +1836,7 @@ func TestIAM91_DownloadExport_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/export/e1/download", nil)
+	req := systemRequest(http.MethodGet, "/export/e1/download", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1", "export_id": "e1"})
 	w := httptest.NewRecorder()
 	handler.DownloadExport(w, req)
@@ -1846,7 +1847,7 @@ func TestIAM91_RequestDeletion_InvalidJSON(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/deletion", strings.NewReader("{bad"))
+	req := systemRequest(http.MethodPost, "/deletion", strings.NewReader("{bad"))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.RequestDeletion(w, req)
@@ -1857,7 +1858,7 @@ func TestIAM91_RequestDeletion_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/deletion", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPost, "/deletion", strings.NewReader(`{}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.RequestDeletion(w, req)
@@ -1868,7 +1869,7 @@ func TestIAM91_GetDeletionStatus_MissingDeletionID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/deletion/", nil)
+	req := systemRequest(http.MethodGet, "/deletion/", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1", "deletion_id": ""})
 	w := httptest.NewRecorder()
 	handler.GetDeletionStatus(w, req)
@@ -1879,7 +1880,7 @@ func TestIAM91_GetDeletionStatus_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/deletion/d1", nil)
+	req := systemRequest(http.MethodGet, "/deletion/d1", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1", "deletion_id": "d1"})
 	w := httptest.NewRecorder()
 	handler.GetDeletionStatus(w, req)
@@ -1890,7 +1891,7 @@ func TestIAM91_CancelDeletion_MissingDeletionID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/deletion/", nil)
+	req := systemRequest(http.MethodDelete, "/deletion/", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1", "deletion_id": ""})
 	w := httptest.NewRecorder()
 	handler.CancelDeletion(w, req)
@@ -1901,7 +1902,7 @@ func TestIAM91_CancelDeletion_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/deletion/d1", nil)
+	req := systemRequest(http.MethodDelete, "/deletion/d1", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1", "deletion_id": "d1"})
 	w := httptest.NewRecorder()
 	handler.CancelDeletion(w, req)
@@ -1916,7 +1917,7 @@ func TestIAM91_getMFAManager_NotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	mgr, err := handler.getMFAManager(context.Background())
+	mgr, err := handler.getMFAManager(tenantctx.WithSystem(context.Background()))
 	assert.Nil(t, mgr)
 	assert.ErrorIs(t, err, ErrMFANotAvailable)
 }
@@ -1925,7 +1926,7 @@ func TestIAM91_BeginMFAEnrollment_MissingTenantID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/mfa/enroll", nil)
+	req := systemRequest(http.MethodPost, "/mfa/enroll", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.BeginMFAEnrollment(w, req)
@@ -1936,7 +1937,7 @@ func TestIAM91_BeginMFAEnrollment_MissingUserID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/mfa/enroll", nil)
+	req := systemRequest(http.MethodPost, "/mfa/enroll", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": ""})
 	w := httptest.NewRecorder()
 	handler.BeginMFAEnrollment(w, req)
@@ -1947,7 +1948,7 @@ func TestIAM91_BeginMFAEnrollment_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/mfa/enroll", nil)
+	req := systemRequest(http.MethodPost, "/mfa/enroll", nil)
 	req.ContentLength = 0
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
@@ -1959,7 +1960,7 @@ func TestIAM91_CompleteMFAEnrollment_MissingIDs(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/mfa/verify", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPost, "/mfa/verify", strings.NewReader(`{}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "", "user_id": ""})
 	w := httptest.NewRecorder()
 	handler.CompleteMFAEnrollment(w, req)
@@ -1970,7 +1971,7 @@ func TestIAM91_CompleteMFAEnrollment_InvalidJSON(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/mfa/verify", strings.NewReader("{bad"))
+	req := systemRequest(http.MethodPost, "/mfa/verify", strings.NewReader("{bad"))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.CompleteMFAEnrollment(w, req)
@@ -1981,7 +1982,7 @@ func TestIAM91_CompleteMFAEnrollment_MissingFields(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/mfa/verify", strings.NewReader(`{"enrollment_id":""}`))
+	req := systemRequest(http.MethodPost, "/mfa/verify", strings.NewReader(`{"enrollment_id":""}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.CompleteMFAEnrollment(w, req)
@@ -1994,7 +1995,7 @@ func TestIAM91_CompleteMFAEnrollment_ServiceNotAvailable(t *testing.T) {
 	defer cleanup()
 
 	body := `{"enrollment_id":"e1","code":"123456"}`
-	req := httptest.NewRequest(http.MethodPost, "/mfa/verify", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/mfa/verify", strings.NewReader(body))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.CompleteMFAEnrollment(w, req)
@@ -2005,7 +2006,7 @@ func TestIAM91_CancelMFAEnrollment_MissingIDs(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/mfa/enroll/e1", nil)
+	req := systemRequest(http.MethodDelete, "/mfa/enroll/e1", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "", "user_id": "", "enrollment_id": ""})
 	w := httptest.NewRecorder()
 	handler.CancelMFAEnrollment(w, req)
@@ -2016,7 +2017,7 @@ func TestIAM91_CancelMFAEnrollment_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/mfa/enroll/e1", nil)
+	req := systemRequest(http.MethodDelete, "/mfa/enroll/e1", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1", "enrollment_id": "e1"})
 	w := httptest.NewRecorder()
 	handler.CancelMFAEnrollment(w, req)
@@ -2027,7 +2028,7 @@ func TestIAM91_GetMFAStatus_MissingIDs(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/mfa", nil)
+	req := systemRequest(http.MethodGet, "/mfa", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "", "user_id": ""})
 	w := httptest.NewRecorder()
 	handler.GetMFAStatus(w, req)
@@ -2038,7 +2039,7 @@ func TestIAM91_GetMFAStatus_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/mfa", nil)
+	req := systemRequest(http.MethodGet, "/mfa", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.GetMFAStatus(w, req)
@@ -2049,7 +2050,7 @@ func TestIAM91_DisableMFA_MissingIDs(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/mfa", nil)
+	req := systemRequest(http.MethodDelete, "/mfa", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "", "user_id": ""})
 	w := httptest.NewRecorder()
 	handler.DisableMFA(w, req)
@@ -2060,7 +2061,7 @@ func TestIAM91_DisableMFA_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/mfa", nil)
+	req := systemRequest(http.MethodDelete, "/mfa", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.DisableMFA(w, req)
@@ -2071,7 +2072,7 @@ func TestIAM91_BeginMFAChallenge_MissingIDs(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/mfa/challenge", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPost, "/mfa/challenge", strings.NewReader(`{}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "", "user_id": ""})
 	w := httptest.NewRecorder()
 	handler.BeginMFAChallenge(w, req)
@@ -2082,7 +2083,7 @@ func TestIAM91_BeginMFAChallenge_InvalidJSON(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/mfa/challenge", strings.NewReader("{bad"))
+	req := systemRequest(http.MethodPost, "/mfa/challenge", strings.NewReader("{bad"))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.BeginMFAChallenge(w, req)
@@ -2093,7 +2094,7 @@ func TestIAM91_BeginMFAChallenge_MissingSessionToken(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/mfa/challenge", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPost, "/mfa/challenge", strings.NewReader(`{}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.BeginMFAChallenge(w, req)
@@ -2105,7 +2106,7 @@ func TestIAM91_BeginMFAChallenge_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/mfa/challenge", strings.NewReader(`{"session_token":"tok"}`))
+	req := systemRequest(http.MethodPost, "/mfa/challenge", strings.NewReader(`{"session_token":"tok"}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.BeginMFAChallenge(w, req)
@@ -2116,7 +2117,7 @@ func TestIAM91_VerifyMFAChallenge_MissingIDs(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/mfa/verify-challenge", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPost, "/mfa/verify-challenge", strings.NewReader(`{}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "", "user_id": ""})
 	w := httptest.NewRecorder()
 	handler.VerifyMFAChallenge(w, req)
@@ -2127,7 +2128,7 @@ func TestIAM91_VerifyMFAChallenge_MissingFields(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/mfa/verify-challenge", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPost, "/mfa/verify-challenge", strings.NewReader(`{}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.VerifyMFAChallenge(w, req)
@@ -2140,7 +2141,7 @@ func TestIAM91_VerifyMFAChallenge_ServiceNotAvailable(t *testing.T) {
 	defer cleanup()
 
 	body := `{"challenge_id":"c1","code":"123456"}`
-	req := httptest.NewRequest(http.MethodPost, "/mfa/verify-challenge", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/mfa/verify-challenge", strings.NewReader(body))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.VerifyMFAChallenge(w, req)
@@ -2151,7 +2152,7 @@ func TestIAM91_GenerateBackupCodes_MissingIDs(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/mfa/backup-codes", nil)
+	req := systemRequest(http.MethodPost, "/mfa/backup-codes", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "", "user_id": ""})
 	w := httptest.NewRecorder()
 	handler.GenerateBackupCodes(w, req)
@@ -2162,7 +2163,7 @@ func TestIAM91_GenerateBackupCodes_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/mfa/backup-codes", nil)
+	req := systemRequest(http.MethodPost, "/mfa/backup-codes", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.GenerateBackupCodes(w, req)
@@ -2173,7 +2174,7 @@ func TestIAM91_GetBackupCodeStatus_MissingIDs(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/mfa/backup-codes", nil)
+	req := systemRequest(http.MethodGet, "/mfa/backup-codes", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "", "user_id": ""})
 	w := httptest.NewRecorder()
 	handler.GetBackupCodeStatus(w, req)
@@ -2184,7 +2185,7 @@ func TestIAM91_GetBackupCodeStatus_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/mfa/backup-codes", nil)
+	req := systemRequest(http.MethodGet, "/mfa/backup-codes", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.GetBackupCodeStatus(w, req)
@@ -2206,7 +2207,7 @@ func TestIAM91_ListAuditEvents_MissingTenantID_DefaultsToCallerTenant(t *testing
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/audit", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/iam/audit", nil)
 	w := httptest.NewRecorder()
 	handler.ListAuditEvents(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -2217,8 +2218,8 @@ func TestIAM91_ListAuditEvents_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/audit?tenant_id=t1", nil)
-	req = req.WithContext(iam.ContextWithTenant(req.Context(), "t1"))
+	req := systemRequest(http.MethodGet, "/api/v1/iam/audit?tenant_id=t1", nil)
+	req = req.WithContext(tenantctx.WithTenant(req.Context(), "t1"))
 	w := httptest.NewRecorder()
 	handler.ListAuditEvents(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -2229,8 +2230,8 @@ func TestIAM91_ListAuditEvents_WithFilters(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/audit?tenant_id=t1&event_type=login&category=auth&outcome=success&actor_id=a1&resource_id=r1&start_time=2025-01-01T00:00:00Z&end_time=2025-12-31T23:59:59Z&limit=50&offset=10", nil)
-	req = req.WithContext(iam.ContextWithTenant(req.Context(), "t1"))
+	req := systemRequest(http.MethodGet, "/api/v1/iam/audit?tenant_id=t1&event_type=login&category=auth&outcome=success&actor_id=a1&resource_id=r1&start_time=2025-01-01T00:00:00Z&end_time=2025-12-31T23:59:59Z&limit=50&offset=10", nil)
+	req = req.WithContext(tenantctx.WithTenant(req.Context(), "t1"))
 	w := httptest.NewRecorder()
 	handler.ListAuditEvents(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -2240,7 +2241,7 @@ func TestIAM91_GetAuditEvent_MissingEventID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/audit/", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/iam/audit/", nil)
 	req = withChiParams(req, map[string]string{"id": ""})
 	w := httptest.NewRecorder()
 	handler.GetAuditEvent(w, req)
@@ -2256,7 +2257,7 @@ func TestIAM91_GetAuditEvent_MissingTenantID_DefaultsToCallerTenant(t *testing.T
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/audit/ev1", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/iam/audit/ev1", nil)
 	req = withChiParams(req, map[string]string{"id": "ev1"})
 	w := httptest.NewRecorder()
 	handler.GetAuditEvent(w, req)
@@ -2268,9 +2269,9 @@ func TestIAM91_GetAuditEvent_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/iam/audit/ev1?tenant_id=t1", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/iam/audit/ev1?tenant_id=t1", nil)
 	req = withChiParams(req, map[string]string{"id": "ev1"})
-	req = req.WithContext(iam.ContextWithTenant(req.Context(), "t1"))
+	req = req.WithContext(tenantctx.WithTenant(req.Context(), "t1"))
 	w := httptest.NewRecorder()
 	handler.GetAuditEvent(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -2280,7 +2281,7 @@ func TestIAM91_DeleteOldAuditEvents_MissingTenantID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/audit", nil)
+	req := systemRequest(http.MethodDelete, "/api/v1/iam/audit", nil)
 	w := httptest.NewRecorder()
 	handler.DeleteOldAuditEvents(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -2290,8 +2291,8 @@ func TestIAM91_DeleteOldAuditEvents_MissingBefore(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/audit?tenant_id=t1", nil)
-	req = req.WithContext(iam.ContextWithTenant(req.Context(), "t1"))
+	req := systemRequest(http.MethodDelete, "/api/v1/iam/audit?tenant_id=t1", nil)
+	req = req.WithContext(tenantctx.WithTenant(req.Context(), "t1"))
 	w := httptest.NewRecorder()
 	handler.DeleteOldAuditEvents(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -2302,8 +2303,8 @@ func TestIAM91_DeleteOldAuditEvents_InvalidTimestamp(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/audit?tenant_id=t1&before=not-a-date", nil)
-	req = req.WithContext(iam.ContextWithTenant(req.Context(), "t1"))
+	req := systemRequest(http.MethodDelete, "/api/v1/iam/audit?tenant_id=t1&before=not-a-date", nil)
+	req = req.WithContext(tenantctx.WithTenant(req.Context(), "t1"))
 	w := httptest.NewRecorder()
 	handler.DeleteOldAuditEvents(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -2314,8 +2315,8 @@ func TestIAM91_DeleteOldAuditEvents_MissingUser(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/iam/audit?tenant_id=t1&before=2025-01-01T00:00:00Z", nil)
-	req = req.WithContext(iam.ContextWithTenant(req.Context(), "t1"))
+	req := systemRequest(http.MethodDelete, "/api/v1/iam/audit?tenant_id=t1&before=2025-01-01T00:00:00Z", nil)
+	req = req.WithContext(tenantctx.WithTenant(req.Context(), "t1"))
 	w := httptest.NewRecorder()
 	handler.DeleteOldAuditEvents(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
@@ -2338,7 +2339,7 @@ func TestIAM91_RegisterDynamicClient_InvalidJSON(t *testing.T) {
 	handler, cleanup := setupOpenDCRHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader("{bad"))
+	req := systemRequest(http.MethodPost, "/oauth2/register", strings.NewReader("{bad"))
 	w := httptest.NewRecorder()
 	handler.RegisterDynamicClient(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -2348,7 +2349,7 @@ func TestIAM91_RegisterDynamicClient_MissingRedirectURIs(t *testing.T) {
 	handler, cleanup := setupOpenDCRHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPost, "/oauth2/register", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	handler.RegisterDynamicClient(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -2360,7 +2361,7 @@ func TestIAM91_RegisterDynamicClient_ServiceNotAvailable(t *testing.T) {
 	defer cleanup()
 
 	body := `{"redirect_uris":["https://example.com/cb"]}`
-	req := httptest.NewRequest(http.MethodPost, "/oauth2/register", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/oauth2/register", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	handler.RegisterDynamicClient(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -2446,7 +2447,7 @@ func TestIAM91_GetDynamicClient_MissingClientID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/oauth2/register/", nil)
+	req := systemRequest(http.MethodGet, "/oauth2/register/", nil)
 	req = withChiParams(req, map[string]string{"client_id": ""})
 	w := httptest.NewRecorder()
 	handler.GetDynamicClient(w, req)
@@ -2457,7 +2458,7 @@ func TestIAM91_GetDynamicClient_MissingAuth(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/oauth2/register/c1", nil)
+	req := systemRequest(http.MethodGet, "/oauth2/register/c1", nil)
 	req = withChiParams(req, map[string]string{"client_id": "c1"})
 	w := httptest.NewRecorder()
 	handler.GetDynamicClient(w, req)
@@ -2468,7 +2469,7 @@ func TestIAM91_GetDynamicClient_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/oauth2/register/c1", nil)
+	req := systemRequest(http.MethodGet, "/oauth2/register/c1", nil)
 	req.Header.Set("Authorization", "Bearer tok")
 	req = withChiParams(req, map[string]string{"client_id": "c1"})
 	w := httptest.NewRecorder()
@@ -2480,7 +2481,7 @@ func TestIAM91_UpdateDynamicClient_MissingClientID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPut, "/oauth2/register/", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPut, "/oauth2/register/", strings.NewReader(`{}`))
 	req = withChiParams(req, map[string]string{"client_id": ""})
 	w := httptest.NewRecorder()
 	handler.UpdateDynamicClient(w, req)
@@ -2495,7 +2496,7 @@ func TestIAM91_UpdateDynamicClient_InvalidJSONUnauthorized(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPut, "/oauth2/register/c1", strings.NewReader("{bad"))
+	req := systemRequest(http.MethodPut, "/oauth2/register/c1", strings.NewReader("{bad"))
 	req = withChiParams(req, map[string]string{"client_id": "c1"})
 	w := httptest.NewRecorder()
 	handler.UpdateDynamicClient(w, req)
@@ -2507,7 +2508,7 @@ func TestIAM91_UpdateDynamicClient_ServiceNotAvailable(t *testing.T) {
 	defer cleanup()
 
 	body := `{"grant_types":["client_credentials"]}`
-	req := httptest.NewRequest(http.MethodPut, "/oauth2/register/c1", strings.NewReader(body))
+	req := systemRequest(http.MethodPut, "/oauth2/register/c1", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer tok")
 	req = withChiParams(req, map[string]string{"client_id": "c1"})
 	w := httptest.NewRecorder()
@@ -2519,7 +2520,7 @@ func TestIAM91_DeleteDynamicClient_MissingClientID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/oauth2/register/", nil)
+	req := systemRequest(http.MethodDelete, "/oauth2/register/", nil)
 	req = withChiParams(req, map[string]string{"client_id": ""})
 	w := httptest.NewRecorder()
 	handler.DeleteDynamicClient(w, req)
@@ -2530,7 +2531,7 @@ func TestIAM91_DeleteDynamicClient_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/oauth2/register/c1", nil)
+	req := systemRequest(http.MethodDelete, "/oauth2/register/c1", nil)
 	req.Header.Set("Authorization", "Bearer tok")
 	req = withChiParams(req, map[string]string{"client_id": "c1"})
 	w := httptest.NewRecorder()
@@ -2571,7 +2572,7 @@ func TestIAM91_JWTMiddleware_MissingHeader(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req := systemRequest(http.MethodGet, "/protected", nil)
 	w := httptest.NewRecorder()
 	handler.JWTMiddleware(next).ServeHTTP(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
@@ -2585,7 +2586,7 @@ func TestIAM91_JWTMiddleware_InvalidFormat(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req := systemRequest(http.MethodGet, "/protected", nil)
 	req.Header.Set("Authorization", "Basic abc")
 	w := httptest.NewRecorder()
 	handler.JWTMiddleware(next).ServeHTTP(w, req)
@@ -2600,7 +2601,7 @@ func TestIAM91_JWTMiddleware_ServiceNotAvailable(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req := systemRequest(http.MethodGet, "/protected", nil)
 	req.Header.Set("Authorization", "Bearer some-token")
 	w := httptest.NewRecorder()
 	// basic mock does not implement GetOIDCProvider
@@ -2616,7 +2617,7 @@ func TestIAM91_ABACMiddleware_MissingUser(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req := systemRequest(http.MethodGet, "/protected", nil)
 	w := httptest.NewRecorder()
 	handler.ABACMiddleware("resource", "read")(next).ServeHTTP(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
@@ -2630,7 +2631,7 @@ func TestIAM91_ABACMiddleware_ServiceNotAvailable(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req := systemRequest(http.MethodGet, "/protected", nil)
 	ctx := context.WithValue(req.Context(), ContextKeyUser, &iam.UserInfoResponse{Sub: "u1"})
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
@@ -2648,7 +2649,7 @@ func TestIAM91_ImpersonationMiddleware_NoHeader(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := systemRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	handler.ImpersonationMiddleware(next).ServeHTTP(w, req)
 	assert.True(t, called)
@@ -2663,7 +2664,7 @@ func TestIAM91_ImpersonationMiddleware_ServiceNotAvailable(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := systemRequest(http.MethodGet, "/", nil)
 	req.Header.Set("X-Impersonation-Session-ID", "session-123")
 	w := httptest.NewRecorder()
 	handler.ImpersonationMiddleware(next).ServeHTTP(w, req)
@@ -2680,7 +2681,7 @@ func TestIAM91_ImpersonationAuditMiddleware_NoImpersonation(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := systemRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	handler.ImpersonationAuditMiddleware(next).ServeHTTP(w, req)
 	assert.True(t, called)
@@ -2717,7 +2718,7 @@ func TestIAM91_UpdateRole_MissingTenantID(t *testing.T) {
 	_, _, _, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants//roles/r1", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPut, "/api/v1/tenants//roles/r1", strings.NewReader(`{}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "", "role_id": "r1"})
 	w := httptest.NewRecorder()
 	handler.UpdateRole(w, req)
@@ -2728,7 +2729,7 @@ func TestIAM91_UpdateRole_MissingRoleID(t *testing.T) {
 	_, _, _, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/t1/roles/", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPut, "/api/v1/tenants/t1/roles/", strings.NewReader(`{}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "role_id": ""})
 	w := httptest.NewRecorder()
 	handler.UpdateRole(w, req)
@@ -2739,7 +2740,7 @@ func TestIAM91_UpdateRole_InvalidJSON(t *testing.T) {
 	_, _, _, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/t1/roles/r1", strings.NewReader("{bad"))
+	req := systemRequest(http.MethodPut, "/api/v1/tenants/t1/roles/r1", strings.NewReader("{bad"))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "role_id": "r1"})
 	w := httptest.NewRecorder()
 	handler.UpdateRole(w, req)
@@ -2750,7 +2751,7 @@ func TestIAM91_UpdateUser_MissingTenantID(t *testing.T) {
 	_, _, _, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants//users/u1", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPut, "/api/v1/tenants//users/u1", strings.NewReader(`{}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.UpdateUser(w, req)
@@ -2761,7 +2762,7 @@ func TestIAM91_UpdateUser_MissingUserID(t *testing.T) {
 	_, _, _, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/t1/users/", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPut, "/api/v1/tenants/t1/users/", strings.NewReader(`{}`))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": ""})
 	w := httptest.NewRecorder()
 	handler.UpdateUser(w, req)
@@ -2772,7 +2773,7 @@ func TestIAM91_UpdateUser_InvalidJSON(t *testing.T) {
 	_, _, _, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/t1/users/u1", strings.NewReader("{bad"))
+	req := systemRequest(http.MethodPut, "/api/v1/tenants/t1/users/u1", strings.NewReader("{bad"))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.UpdateUser(w, req)
@@ -2783,7 +2784,7 @@ func TestIAM91_UpdateTenant_MissingTenantID(t *testing.T) {
 	_, _, _, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPut, "/api/v1/tenants/", strings.NewReader(`{}`))
 	req = withChiParams(req, map[string]string{"tenant_id": ""})
 	w := httptest.NewRecorder()
 	handler.UpdateTenant(w, req)
@@ -2794,7 +2795,7 @@ func TestIAM91_UpdateTenant_InvalidJSON(t *testing.T) {
 	_, _, _, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/t1", strings.NewReader("{bad"))
+	req := systemRequest(http.MethodPut, "/api/v1/tenants/t1", strings.NewReader("{bad"))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
 	w := httptest.NewRecorder()
 	handler.UpdateTenant(w, req)
@@ -2805,7 +2806,7 @@ func TestIAM91_DeleteTenant_MissingTenantID(t *testing.T) {
 	_, _, _, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/", nil)
+	req := systemRequest(http.MethodDelete, "/api/v1/tenants/", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": ""})
 	w := httptest.NewRecorder()
 	handler.DeleteTenant(w, req)
@@ -2826,7 +2827,7 @@ func TestOIDCAuthorize_RejectsPasswordGrant(t *testing.T) {
 
 	// handler.Login no longer exists; the route is 404. Document this via PIVLogin
 	// returning 401 piv_login_disabled when PIV is not enabled (the default).
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/piv", nil)
+	req := systemRequest(http.MethodPost, "/api/v1/auth/login/piv", nil)
 	w := httptest.NewRecorder()
 	handler.PIVLogin(w, req)
 	// PIV disabled by default → 401 Unauthorized with piv_login_disabled error code.
@@ -2838,7 +2839,7 @@ func TestIAM91_RefreshToken_InvalidJSON(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", strings.NewReader("{bad"))
+	req := systemRequest(http.MethodPost, "/api/v1/auth/refresh", strings.NewReader("{bad"))
 	w := httptest.NewRecorder()
 	handler.RefreshToken(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -2848,7 +2849,7 @@ func TestIAM91_RefreshToken_MissingToken(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPost, "/api/v1/auth/refresh", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	handler.RefreshToken(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -2859,7 +2860,7 @@ func TestIAM91_Logout_MissingToken(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", strings.NewReader(`{}`))
+	req := systemRequest(http.MethodPost, "/api/v1/auth/logout", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	handler.Logout(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -2870,7 +2871,7 @@ func TestIAM91_ValidateToken_MissingToken(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/validate", nil)
+	req := systemRequest(http.MethodPost, "/api/v1/auth/validate", nil)
 	w := httptest.NewRecorder()
 	handler.ValidateToken(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -2878,7 +2879,7 @@ func TestIAM91_ValidateToken_MissingToken(t *testing.T) {
 }
 
 func TestIAM91_GetBearerTokenString(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := systemRequest(http.MethodGet, "/", nil)
 	assert.Equal(t, "", getBearerTokenString(req))
 
 	req.Header.Set("Authorization", "Basic abc")
@@ -2909,7 +2910,7 @@ func TestIAM91_GetOIDCConfig_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/.well-known/openid-configuration", nil)
+	req := systemRequest(http.MethodGet, "/.well-known/openid-configuration", nil)
 	w := httptest.NewRecorder()
 	handler.GetOIDCConfig(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -2920,7 +2921,7 @@ func TestIAM91_GetJWKS_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/.well-known/jwks.json", nil)
+	req := systemRequest(http.MethodGet, "/.well-known/jwks.json", nil)
 	w := httptest.NewRecorder()
 	handler.GetJWKS(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -2931,7 +2932,7 @@ func TestIAM91_Authorize_MissingClientID(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/oauth2/authorize", nil)
+	req := systemRequest(http.MethodGet, "/oauth2/authorize", nil)
 	w := httptest.NewRecorder()
 	handler.Authorize(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -2942,7 +2943,7 @@ func TestIAM91_Authorize_MissingRedirectURI(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/oauth2/authorize?client_id=c1", nil)
+	req := systemRequest(http.MethodGet, "/oauth2/authorize?client_id=c1", nil)
 	w := httptest.NewRecorder()
 	handler.Authorize(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -2953,7 +2954,7 @@ func TestIAM91_Authorize_MissingResponseType(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/oauth2/authorize?client_id=c1&redirect_uri=https://x.com/cb", nil)
+	req := systemRequest(http.MethodGet, "/oauth2/authorize?client_id=c1&redirect_uri=https://x.com/cb", nil)
 	w := httptest.NewRecorder()
 	handler.Authorize(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -2964,7 +2965,7 @@ func TestIAM91_Authorize_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/oauth2/authorize?client_id=c1&redirect_uri=https://x.com/cb&response_type=code", nil)
+	req := systemRequest(http.MethodGet, "/oauth2/authorize?client_id=c1&redirect_uri=https://x.com/cb&response_type=code", nil)
 	w := httptest.NewRecorder()
 	handler.Authorize(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -2974,7 +2975,7 @@ func TestIAM91_Token_MissingGrantType(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(""))
+	req := systemRequest(http.MethodPost, "/oauth2/token", strings.NewReader(""))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	handler.Token(w, req)
@@ -2986,7 +2987,7 @@ func TestIAM91_Token_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader("grant_type=authorization_code"))
+	req := systemRequest(http.MethodPost, "/oauth2/token", strings.NewReader("grant_type=authorization_code"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	handler.Token(w, req)
@@ -2997,7 +2998,7 @@ func TestIAM91_UserInfo_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/oauth2/userinfo", nil)
+	req := systemRequest(http.MethodGet, "/oauth2/userinfo", nil)
 	w := httptest.NewRecorder()
 	handler.UserInfo(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
@@ -3007,7 +3008,7 @@ func TestIAM91_Revoke_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/oauth2/revoke", strings.NewReader("token=abc123"))
+	req := systemRequest(http.MethodPost, "/oauth2/revoke", strings.NewReader("token=abc123"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	handler.Revoke(w, req)
@@ -3235,7 +3236,7 @@ func TestIAM91_CreateSession_ManagerError(t *testing.T) {
 	defer cleanup()
 
 	body := `{"token_hash":"abc"}`
-	req := httptest.NewRequest(http.MethodPost, "/sessions", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/sessions", strings.NewReader(body))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.CreateSession(w, req)
@@ -3248,7 +3249,7 @@ func TestIAM91_CreateSession_NilManager(t *testing.T) {
 	defer cleanup()
 
 	body := `{"token_hash":"abc"}`
-	req := httptest.NewRequest(http.MethodPost, "/sessions", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/sessions", strings.NewReader(body))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.CreateSession(w, req)
@@ -3263,7 +3264,7 @@ func TestIAM91_CreateSession_Success(t *testing.T) {
 	defer cleanup()
 
 	body := `{"token_hash":"abc","mfa_verified":true,"ip_address":"1.2.3.4","user_agent":"test","device_info":{"id":"d1","name":"phone","type":"mobile","fingerprint":"fp","trusted":true},"expires_at":"2030-01-01T00:00:00Z"}`
-	req := httptest.NewRequest(http.MethodPost, "/sessions", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/sessions", strings.NewReader(body))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.CreateSession(w, req)
@@ -3277,7 +3278,7 @@ func TestIAM91_CreateSession_ManagerCreateError(t *testing.T) {
 	defer cleanup()
 
 	body := `{"token_hash":"abc"}`
-	req := httptest.NewRequest(http.MethodPost, "/sessions", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/sessions", strings.NewReader(body))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.CreateSession(w, req)
@@ -3289,7 +3290,7 @@ func TestIAM91_ListUserSessions_NilManager(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/sessions", nil)
+	req := systemRequest(http.MethodGet, "/sessions", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.ListUserSessions(w, req)
@@ -3306,7 +3307,7 @@ func TestIAM91_ListUserSessions_Success(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/sessions", nil)
+	req := systemRequest(http.MethodGet, "/sessions", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.ListUserSessions(w, req)
@@ -3322,7 +3323,7 @@ func TestIAM91_ListSessions_Success(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/sessions", nil)
+	req := systemRequest(http.MethodGet, "/sessions", nil)
 	ctx := ctxWithTestSubject(req.Context(), "u1", "t1")
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
@@ -3339,7 +3340,7 @@ func TestIAM91_GetSession_Success(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/sessions/s1", nil)
+	req := systemRequest(http.MethodGet, "/sessions/s1", nil)
 	req = withChiParams(req, map[string]string{"id": "s1"})
 	ctx := ctxWithTestSubject(req.Context(), "u1", "t1")
 	req = req.WithContext(ctx)
@@ -3357,7 +3358,7 @@ func TestIAM91_RevokeSession_Success(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/sessions/s1", nil)
+	req := systemRequest(http.MethodDelete, "/sessions/s1", nil)
 	req = withChiParams(req, map[string]string{"id": "s1"})
 	ctx := ctxWithTestSubject(req.Context(), "u1", "t1")
 	req = req.WithContext(ctx)
@@ -3372,7 +3373,7 @@ func TestIAM91_RevokeAllSessions_Success(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/sessions", nil)
+	req := systemRequest(http.MethodDelete, "/sessions", nil)
 	ctx := ctxWithTestSubject(req.Context(), "u1", "t1")
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
@@ -3389,7 +3390,7 @@ func TestIAM91_RevokeOtherSessions_Success(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/sessions/revoke-others",
+	req := systemRequest(http.MethodPost, "/sessions/revoke-others",
 		strings.NewReader(`{"keep_session_id":"s1"}`))
 	ctx := ctxWithTestSubject(req.Context(), "u1", "t1")
 	req = req.WithContext(ctx)
@@ -3407,7 +3408,7 @@ func TestIAM91_ListPolicies_EngineError(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/policies", nil)
+	req := systemRequest(http.MethodGet, "/policies", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
 	w := httptest.NewRecorder()
 	handler.ListPolicies(w, req)
@@ -3419,7 +3420,7 @@ func TestIAM91_ListPolicies_NilEngine(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/policies", nil)
+	req := systemRequest(http.MethodGet, "/policies", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
 	w := httptest.NewRecorder()
 	handler.ListPolicies(w, req)
@@ -3432,7 +3433,7 @@ func TestIAM91_CreatePolicy_InvalidJSON(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/policies", strings.NewReader("{bad"))
+	req := systemRequest(http.MethodPost, "/policies", strings.NewReader("{bad"))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
 	w := httptest.NewRecorder()
 	handler.CreatePolicy(w, req)
@@ -3445,7 +3446,7 @@ func TestIAM91_CreatePolicy_NilEngine(t *testing.T) {
 	defer cleanup()
 
 	body := `{"apiVersion":"iam.quicbaas.io/v1","kind":"Policy","metadata":{"name":"test-policy","version":"1"},"spec":{"rules":[{"name":"r1","effect":"allow","actions":["read"],"resources":["*"]}]}}`
-	req := httptest.NewRequest(http.MethodPost, "/policies", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/policies", strings.NewReader(body))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
 	w := httptest.NewRecorder()
 	handler.CreatePolicy(w, req)
@@ -3457,7 +3458,7 @@ func TestIAM91_GetPolicy_NilEngine(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/policies/p1", nil)
+	req := systemRequest(http.MethodGet, "/policies/p1", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "policy_name": "p1"})
 	w := httptest.NewRecorder()
 	handler.GetPolicy(w, req)
@@ -3470,7 +3471,7 @@ func TestIAM91_UpdatePolicy_NilEngine(t *testing.T) {
 	defer cleanup()
 
 	body := `{"apiVersion":"iam.quicbaas.io/v1","kind":"Policy","metadata":{"name":"test-policy","version":"1"},"spec":{"rules":[{"name":"r1","effect":"allow","actions":["read"],"resources":["*"]}]}}`
-	req := httptest.NewRequest(http.MethodPut, "/policies/p1", strings.NewReader(body))
+	req := systemRequest(http.MethodPut, "/policies/p1", strings.NewReader(body))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "policy_name": "p1"})
 	w := httptest.NewRecorder()
 	handler.UpdatePolicy(w, req)
@@ -3482,7 +3483,7 @@ func TestIAM91_DeletePolicy_NilEngine(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/policies/p1", nil)
+	req := systemRequest(http.MethodDelete, "/policies/p1", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "policy_name": "p1"})
 	w := httptest.NewRecorder()
 	handler.DeletePolicy(w, req)
@@ -3495,7 +3496,7 @@ func TestIAM91_CheckAccess_NilEngine(t *testing.T) {
 	defer cleanup()
 
 	body := `{"subject":{"id":"u1"},"action":"read","resource":"doc"}`
-	req := httptest.NewRequest(http.MethodPost, "/pep/check", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/pep/check", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	handler.CheckAccess(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -3507,7 +3508,7 @@ func TestIAM91_BatchCheckAccess_NilEngine(t *testing.T) {
 	defer cleanup()
 
 	body := `{"checks":[{"subject":{"id":"u1"},"action":"read","resource":"doc"}]}`
-	req := httptest.NewRequest(http.MethodPost, "/pep/batch-check", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/pep/batch-check", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	handler.BatchCheckAccess(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -3519,7 +3520,7 @@ func TestIAM91_ValidatePolicy_NilEngine(t *testing.T) {
 	defer cleanup()
 
 	body := `{"metadata":{"name":"test","version":"1"},"rules":[{"effect":"allow","actions":["read"],"resources":["*"]}]}`
-	req := httptest.NewRequest(http.MethodPost, "/policies/validate", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/policies/validate", strings.NewReader(body))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
 	w := httptest.NewRecorder()
 	handler.ValidatePolicy(w, req)
@@ -3532,7 +3533,7 @@ func TestIAM91_TestPolicy_NilEngine(t *testing.T) {
 	defer cleanup()
 
 	body := `{"policy":{"metadata":{"name":"test","version":"1"},"rules":[{"effect":"allow","actions":["read"],"resources":["*"]}]},"request":{"subject":{"id":"u1"},"action":"read","resource":"doc"}}`
-	req := httptest.NewRequest(http.MethodPost, "/policies/test", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/policies/test", strings.NewReader(body))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
 	w := httptest.NewRecorder()
 	handler.TestPolicy(w, req)
@@ -3545,7 +3546,7 @@ func TestIAM91_SimulatePolicy_NilEngine(t *testing.T) {
 	defer cleanup()
 
 	body := `{"policy":{"apiVersion":"iam.quicbaas.io/v1","kind":"Policy","metadata":{"name":"test"},"spec":{"rules":[{"name":"r1","effect":"allow","actions":["read"],"resources":["*"]}]}},"check_request":{"subject":{"id":"u1"},"action":"read","resource":"doc"}}`
-	req := httptest.NewRequest(http.MethodPost, "/policies/simulate", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/policies/simulate", strings.NewReader(body))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
 	w := httptest.NewRecorder()
 	handler.SimulatePolicy(w, req)
@@ -3558,7 +3559,7 @@ func TestIAM91_GetEffectivePermissions_NilEngine(t *testing.T) {
 	defer cleanup()
 
 	body := `{"subject":{"id":"u1","name":"user1"},"resource_patterns":["orders://*"]}`
-	req := httptest.NewRequest(http.MethodPost, "/policies/effective", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/policies/effective", strings.NewReader(body))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
 	w := httptest.NewRecorder()
 	handler.GetEffectivePermissions(w, req)
@@ -3574,7 +3575,7 @@ func TestIAM91_GetOIDCConfig_ProviderError(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/.well-known/openid-configuration", nil)
+	req := systemRequest(http.MethodGet, "/.well-known/openid-configuration", nil)
 	w := httptest.NewRecorder()
 	handler.GetOIDCConfig(w, req)
 	assert.NotEqual(t, http.StatusOK, w.Code)
@@ -3585,7 +3586,7 @@ func TestIAM91_GetOIDCConfig_NilProvider(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/.well-known/openid-configuration", nil)
+	req := systemRequest(http.MethodGet, "/.well-known/openid-configuration", nil)
 	w := httptest.NewRecorder()
 	handler.GetOIDCConfig(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -3597,7 +3598,7 @@ func TestIAM91_GetJWKS_NilProvider(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/.well-known/jwks.json", nil)
+	req := systemRequest(http.MethodGet, "/.well-known/jwks.json", nil)
 	w := httptest.NewRecorder()
 	handler.GetJWKS(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -3609,7 +3610,7 @@ func TestIAM91_Authorize_NilProvider(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/oauth2/authorize?client_id=c1&redirect_uri=https://x.com/cb&response_type=code", nil)
+	req := systemRequest(http.MethodGet, "/oauth2/authorize?client_id=c1&redirect_uri=https://x.com/cb&response_type=code", nil)
 	w := httptest.NewRecorder()
 	handler.Authorize(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -3620,7 +3621,7 @@ func TestIAM91_Token_NilProvider(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader("grant_type=authorization_code"))
+	req := systemRequest(http.MethodPost, "/oauth2/token", strings.NewReader("grant_type=authorization_code"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	handler.Token(w, req)
@@ -3632,7 +3633,7 @@ func TestIAM91_UserInfo_NilProvider(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/oauth2/userinfo", nil)
+	req := systemRequest(http.MethodGet, "/oauth2/userinfo", nil)
 	req.Header.Set("Authorization", "Bearer token123")
 	w := httptest.NewRecorder()
 	handler.UserInfo(w, req)
@@ -3644,7 +3645,7 @@ func TestIAM91_Revoke_NilProvider(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/oauth2/revoke", strings.NewReader("token=abc123"))
+	req := systemRequest(http.MethodPost, "/oauth2/revoke", strings.NewReader("token=abc123"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	handler.Revoke(w, req)
@@ -3656,7 +3657,7 @@ func TestIAM91_UserInfo_InvalidAuthFormat(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/oauth2/userinfo", nil)
+	req := systemRequest(http.MethodGet, "/oauth2/userinfo", nil)
 	req.Header.Set("Authorization", "Basic abc")
 	w := httptest.NewRecorder()
 	handler.UserInfo(w, req)
@@ -3668,7 +3669,7 @@ func TestIAM91_Revoke_MissingToken(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/oauth2/revoke", strings.NewReader(""))
+	req := systemRequest(http.MethodPost, "/oauth2/revoke", strings.NewReader(""))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	handler.Revoke(w, req)
@@ -3684,8 +3685,8 @@ func TestIAM91_ListAuditEvents_NilLogger(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/audit?tenant_id=t1", nil)
-	req = req.WithContext(iam.ContextWithTenant(req.Context(), "t1"))
+	req := systemRequest(http.MethodGet, "/audit?tenant_id=t1", nil)
+	req = req.WithContext(tenantctx.WithTenant(req.Context(), "t1"))
 	w := httptest.NewRecorder()
 	handler.ListAuditEvents(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -3698,8 +3699,8 @@ func TestIAM91_ListAuditEvents_Success(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/audit?tenant_id=t1", nil)
-	req = req.WithContext(iam.ContextWithTenant(req.Context(), "t1"))
+	req := systemRequest(http.MethodGet, "/audit?tenant_id=t1", nil)
+	req = req.WithContext(tenantctx.WithTenant(req.Context(), "t1"))
 	w := httptest.NewRecorder()
 	handler.ListAuditEvents(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -3711,9 +3712,9 @@ func TestIAM91_GetAuditEvent_Success(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/audit/e1?tenant_id=t1", nil)
+	req := systemRequest(http.MethodGet, "/audit/e1?tenant_id=t1", nil)
 	req = withChiParams(req, map[string]string{"id": "e1"})
-	req = req.WithContext(iam.ContextWithTenant(req.Context(), "t1"))
+	req = req.WithContext(tenantctx.WithTenant(req.Context(), "t1"))
 	w := httptest.NewRecorder()
 	handler.GetAuditEvent(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -3725,9 +3726,9 @@ func TestIAM91_GetAuditEvent_NotFound(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/audit/missing?tenant_id=t1", nil)
+	req := systemRequest(http.MethodGet, "/audit/missing?tenant_id=t1", nil)
 	req = withChiParams(req, map[string]string{"id": "missing"})
-	req = req.WithContext(iam.ContextWithTenant(req.Context(), "t1"))
+	req = req.WithContext(tenantctx.WithTenant(req.Context(), "t1"))
 	w := httptest.NewRecorder()
 	handler.GetAuditEvent(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -3742,7 +3743,7 @@ func TestIAM91_getMFAManager_Error(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	mgr, err := handler.getMFAManager(context.Background())
+	mgr, err := handler.getMFAManager(tenantctx.WithSystem(context.Background()))
 	assert.Nil(t, mgr)
 	assert.Error(t, err)
 }
@@ -3752,7 +3753,7 @@ func TestIAM91_getMFAManager_NilManager(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	mgr, err := handler.getMFAManager(context.Background())
+	mgr, err := handler.getMFAManager(tenantctx.WithSystem(context.Background()))
 	assert.Nil(t, mgr)
 	assert.ErrorIs(t, err, ErrMFANotAvailable)
 }
@@ -3767,7 +3768,7 @@ func TestIAM91_GrantConsent_NilManager(t *testing.T) {
 	defer cleanup()
 
 	body := `{"purpose":"marketing","version":"1"}`
-	req := httptest.NewRequest(http.MethodPost, "/consent", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/consent", strings.NewReader(body))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.GrantConsent(w, req)
@@ -3780,7 +3781,7 @@ func TestIAM91_GrantConsent_ManagerError(t *testing.T) {
 	defer cleanup()
 
 	body := `{"purpose":"marketing","version":"1"}`
-	req := httptest.NewRequest(http.MethodPost, "/consent", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/consent", strings.NewReader(body))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1", "user_id": "u1"})
 	w := httptest.NewRecorder()
 	handler.GrantConsent(w, req)
@@ -3796,7 +3797,7 @@ func TestIAM91_ListApps_NilManager(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/apps", nil)
+	req := systemRequest(http.MethodGet, "/apps", nil)
 	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
 	w := httptest.NewRecorder()
 	handler.ListApps(w, req)
@@ -3809,7 +3810,7 @@ func TestIAM91_RegisterApp_NilManager(t *testing.T) {
 	defer cleanup()
 
 	body := `{"name":"myapp","redirect_uris":["https://x.com"]}`
-	req := httptest.NewRequest(http.MethodPost, "/apps", strings.NewReader(body))
+	req := systemRequest(http.MethodPost, "/apps", strings.NewReader(body))
 	req = withChiParams(req, map[string]string{"tenant_id": "t1"})
 	w := httptest.NewRecorder()
 	handler.RegisterApp(w, req)
@@ -3829,7 +3830,7 @@ func TestIAM91_ImpersonationMiddleware_ManagerError(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := systemRequest(http.MethodGet, "/", nil)
 	req.Header.Set("X-Impersonation-Session-ID", "session-123")
 	w := httptest.NewRecorder()
 	handler.ImpersonationMiddleware(next).ServeHTTP(w, req)
@@ -3846,7 +3847,7 @@ func TestIAM91_ImpersonationMiddleware_NoHeader_WithAdmin(t *testing.T) {
 	})
 
 	// Without the impersonation header, middleware passes through to next handler
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := systemRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	handler.ImpersonationMiddleware(next).ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -3865,7 +3866,7 @@ func TestIAM91_JWTMiddleware_ProviderError(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req := systemRequest(http.MethodGet, "/protected", nil)
 	req.Header.Set("Authorization", "Bearer some-token")
 	w := httptest.NewRecorder()
 	handler.JWTMiddleware(next).ServeHTTP(w, req)
@@ -3885,7 +3886,7 @@ func TestIAM91_ABACMiddleware_EngineError(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req := systemRequest(http.MethodGet, "/protected", nil)
 	ctx := context.WithValue(req.Context(), ContextKeyUser, &iam.UserInfoResponse{Sub: "u1"})
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
@@ -3901,7 +3902,7 @@ func TestIAM91_GetOAuthASMetadata_ServiceNotAvailable(t *testing.T) {
 	handler, _, cleanup := setupIAMHandler(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil)
+	req := systemRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil)
 	w := httptest.NewRecorder()
 	handler.GetOAuthASMetadata(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -3912,7 +3913,7 @@ func TestIAM91_GetOAuthASMetadata_NilProvider(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil)
+	req := systemRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil)
 	w := httptest.NewRecorder()
 	handler.GetOAuthASMetadata(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -3929,7 +3930,7 @@ func TestIAM91_GetOAuthASMetadata_ProviderLookupError(t *testing.T) {
 	handler, cleanup := setupHandlerWithService(t, svc)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil)
+	req := systemRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil)
 	w := httptest.NewRecorder()
 	handler.GetOAuthASMetadata(w, req)
 	assert.GreaterOrEqual(t, w.Code, http.StatusInternalServerError)

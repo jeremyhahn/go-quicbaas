@@ -268,7 +268,7 @@ POST /jobs
 | `description` | string | No | Job description |
 | `owner_type` | string | No | `system`, `tenant`, or `delegated` |
 | `owner_id` | string | No | Owner identifier |
-| `target_tenant_id` | string | No | Target tenant for tenant-scoped jobs |
+| `target_tenant_id` | string | No | Target tenant for tenant-scoped jobs. Must be the caller's own tenant (or omitted); naming another is refused for every caller, the system tenant included |
 | `type` | string | Yes | `one-shot`, `recurring`, or `delayed` |
 | `schedule` | string | No | Cron expression (for `recurring`) |
 | `execute_at` | string | No | RFC3339 timestamp (for `one-shot`) |
@@ -376,7 +376,7 @@ GET /jobs/{id}
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `tenant_id` | string | Tenant ID for access control |
+| `tenant_id` | string | Optional. The caller's own tenant; any other value is refused with 403 / `PermissionDenied` |
 
 **Response (200 OK):**
 
@@ -412,7 +412,7 @@ PUT /jobs/{id}
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `tenant_id` | string | Tenant ID for access control |
+| `tenant_id` | string | Optional. The caller's own tenant; any other value is refused with 403 / `PermissionDenied` |
 
 **Request Body:**
 
@@ -464,7 +464,7 @@ DELETE /jobs/{id}
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `tenant_id` | string | Tenant ID for access control |
+| `tenant_id` | string | Optional. The caller's own tenant; any other value is refused with 403 / `PermissionDenied` |
 | `force` | bool | Force delete running jobs |
 
 **Response (200 OK):**
@@ -497,7 +497,7 @@ POST /jobs/{id}/trigger
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `tenant_id` | string | Tenant ID for access control |
+| `tenant_id` | string | Optional. The caller's own tenant; any other value is refused with 403 / `PermissionDenied` |
 
 **Response (200 OK):**
 
@@ -529,7 +529,7 @@ POST /jobs/{id}/pause
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `tenant_id` | string | Tenant ID for access control |
+| `tenant_id` | string | Optional. The caller's own tenant; any other value is refused with 403 / `PermissionDenied` |
 
 **Response (200 OK):**
 
@@ -562,7 +562,7 @@ POST /jobs/{id}/resume
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `tenant_id` | string | Tenant ID for access control |
+| `tenant_id` | string | Optional. The caller's own tenant; any other value is refused with 403 / `PermissionDenied` |
 
 **Response (200 OK):**
 
@@ -595,7 +595,7 @@ POST /jobs/{id}/cancel
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `tenant_id` | string | Tenant ID for access control |
+| `tenant_id` | string | Optional. The caller's own tenant; any other value is refused with 403 / `PermissionDenied` |
 
 **Request Body (optional):**
 
@@ -636,7 +636,7 @@ GET /jobs/{id}/history
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `tenant_id` | string | Tenant ID for access control |
+| `tenant_id` | string | Optional. The caller's own tenant; any other value is refused with 403 / `PermissionDenied` |
 | `limit` | int | Max results (1-1000, default: 100) |
 | `cursor` | string | Pagination cursor |
 

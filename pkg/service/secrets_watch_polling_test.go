@@ -20,6 +20,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -50,7 +52,7 @@ func TestSecretsService_WatchSecretsByPrefix_DetectsNewSecret(t *testing.T) {
 			nil
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 	defer cancel()
 
 	req := &WatchSecretsRequest{
@@ -110,7 +112,7 @@ func TestSecretsService_WatchSecretsByPrefix_DetectsUpdatedSecret(t *testing.T) 
 			nil
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 	defer cancel()
 
 	req := &WatchSecretsRequest{
@@ -162,7 +164,7 @@ func TestSecretsService_WatchSecretsByPrefix_DetectsDeletedSecret(t *testing.T) 
 			nil
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 	defer cancel()
 
 	req := &WatchSecretsRequest{
@@ -219,7 +221,7 @@ func TestSecretsService_WatchSecretsByPrefix_PollListErrorContinues(t *testing.T
 			nil
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 	defer cancel()
 
 	req := &WatchSecretsRequest{
@@ -273,7 +275,7 @@ func TestSecretsService_WatchSecretsByPrefix_PollGetErrorContinues(t *testing.T)
 			nil
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 	defer cancel()
 
 	req := &WatchSecretsRequest{

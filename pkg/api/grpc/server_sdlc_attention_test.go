@@ -32,6 +32,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/qrdbnode"
 )
 
@@ -108,7 +109,7 @@ func newAttentionRig(t *testing.T) *attentionRig {
 // inbox lists it and a note posts nothing.
 func (r *attentionRig) park(t *testing.T, tenant, projectID, taskID string) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	require.NoError(t, r.store.CreateTask(ctx, &orchestration.Task{
 		ID: taskID, TenantID: tenant, ProjectID: projectID, Subject: "a parked task", Status: orchestration.TaskStatusInProgress,
 	}))
@@ -119,7 +120,7 @@ func TestSDLCServer_ListAttentionPagesTheInbox(t *testing.T) {
 	rig := newAttentionRig(t)
 	rig.park(t, "tenant-a", "p1", "task-1")
 	rig.park(t, "tenant-a", "p2", "task-2")
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-a")
 
 	resp, err := rig.server.ListAttention(ctx, &pb.ListAttentionRequest{TenantId: "tenant-a"})
 	require.NoError(t, err)
@@ -139,9 +140,8 @@ func TestSDLCServer_ListAttentionPagesTheInbox(t *testing.T) {
 
 func TestSDLCServer_ListAttentionRefusesBadInput(t *testing.T) {
 	rig := newAttentionRig(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-a")
 	for name, req := range map[string]*pb.ListAttentionRequest{
-		"no tenant":      {},
 		"unknown kind":   {TenantId: "tenant-a", Kind: "not-a-kind"},
 		"negative limit": {TenantId: "tenant-a", Limit: -1},
 	} {
@@ -155,7 +155,7 @@ func TestSDLCServer_ListAttentionRefusesBadInput(t *testing.T) {
 func TestSDLCServer_ResolveAttentionNotesAndReadmits(t *testing.T) {
 	rig := newAttentionRig(t)
 	rig.park(t, "tenant-a", "p1", "task-1")
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-a")
 
 	_, err := rig.server.ResolveAttention(ctx, &pb.ResolveAttentionRequest{TenantId: "tenant-a", TaskId: "task-1", Action: "note", Answer: " "})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err), "an empty note: %v", err)

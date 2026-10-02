@@ -20,6 +20,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -88,7 +90,7 @@ func TestKVService_Put_WithCachePopulation(t *testing.T) {
 		Data:       []byte(`{"name":"cached-user"}`),
 	}
 
-	resp, err := svc.Put(context.Background(), req)
+	resp, err := svc.Put(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, uint64(100), resp.ID)
@@ -120,7 +122,7 @@ func TestKVService_Put_MetricsSuccessPath(t *testing.T) {
 		Data:       []byte(`{"name":"metrics-user"}`),
 	}
 
-	resp, err := svc.Put(context.Background(), req)
+	resp, err := svc.Put(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, uint64(200), resp.ID)
@@ -143,7 +145,7 @@ func TestKVService_Put_RaftError_WithMetrics(t *testing.T) {
 		Data:       []byte(`{"name":"fail-user"}`),
 	}
 
-	resp, err := svc.Put(context.Background(), req)
+	resp, err := svc.Put(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 }
@@ -165,7 +167,7 @@ func TestKVService_Get_CacheHit_EventualConsistency(t *testing.T) {
 	db.cacheManager = cacheMock
 
 	// Build the key the same way the Get method would
-	key, err := db.keyspaceResolver.BuildKey(context.Background(), "user", 1)
+	key, err := db.keyspaceResolver.BuildKey(tenantctx.WithSystem(context.Background()), "user", 1)
 	require.NoError(t, err)
 
 	// Pre-populate the cache
@@ -177,7 +179,7 @@ func TestKVService_Get_CacheHit_EventualConsistency(t *testing.T) {
 		Consistency: ConsistencyLevelEventual,
 	}
 
-	resp, err := db.kvService.Get(context.Background(), req)
+	resp, err := db.kvService.Get(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.True(t, resp.Found)
@@ -204,7 +206,7 @@ func TestKVService_Get_RaftError_WithMetrics(t *testing.T) {
 		ID:         500,
 	}
 
-	resp, err := svc.Get(context.Background(), req)
+	resp, err := svc.Get(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 }
@@ -227,7 +229,7 @@ func TestKVService_Get_PopulatesCacheOnRead(t *testing.T) {
 		ID:         600,
 	}
 
-	resp, err := svc.Get(context.Background(), req)
+	resp, err := svc.Get(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.True(t, resp.Found)
@@ -262,7 +264,7 @@ func TestKVService_Delete_InvalidatesCache(t *testing.T) {
 		ID:         700,
 	}
 
-	resp, err := svc.Delete(context.Background(), req)
+	resp, err := svc.Delete(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.True(t, resp.Deleted)
@@ -291,7 +293,7 @@ func TestKVService_Put_SpecificShardID(t *testing.T) {
 		ShardID:    5,
 	}
 
-	resp, err := svc.Put(context.Background(), req)
+	resp, err := svc.Put(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, uint64(5), qrdbProvider.lastShardID.Load())
@@ -321,7 +323,7 @@ func TestKVService_Put_ConsistencyTracking_WithMetrics(t *testing.T) {
 		Consistency: ConsistencyLevelStrong,
 	}
 
-	resp, err := svc.Put(context.Background(), req)
+	resp, err := svc.Put(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -345,7 +347,7 @@ func TestKVService_Get_NotFound_WithMetrics(t *testing.T) {
 		ID:         999,
 	}
 
-	resp, err := svc.Get(context.Background(), req)
+	resp, err := svc.Get(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 }

@@ -20,6 +20,7 @@ import (
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -37,9 +38,9 @@ import (
 // roleStore resolves the IdentityStore and the request tenant, failing closed
 // with typed errors when either is unavailable.
 func (r *rbacService) roleStore(ctx context.Context, op string) (*iam.IdentityStore, string, error) {
-	tenantID := iam.TenantFromContext(ctx)
-	if tenantID == "" {
-		return nil, "", errors.NewMissingTenantContextError(op)
+	tenantID, err := tenantctx.FromContext(ctx, op)
+	if err != nil {
+		return nil, "", err
 	}
 
 	is, err := r.svc.GetIdentityStore(ctx)

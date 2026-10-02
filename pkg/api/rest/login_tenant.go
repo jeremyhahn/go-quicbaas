@@ -25,6 +25,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // ErrLoginTenantUnresolved is returned when a login presents neither a valid
@@ -137,5 +138,5 @@ func requestSNIHost(r *http.Request) string {
 // loginContextWithTenant returns a context carrying the derived tenant so the
 // IAM index lookups that follow are scoped to it.
 func loginContextWithTenant(ctx context.Context, tenantID string) context.Context {
-	return iam.ContextWithTenant(ctx, tenantID)
+	return tenantctx.WithTenant(ctx, tenantID)
 }

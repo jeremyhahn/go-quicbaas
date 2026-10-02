@@ -25,8 +25,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // catalogAgentService is an agent service holding a real agent directory.
@@ -53,7 +53,7 @@ func newAgentCatalogServer(t *testing.T) *AgentCatalogServer {
 
 func TestAgentCatalogOverGRPC_Lifecycle(t *testing.T) {
 	srv := newAgentCatalogServer(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
 	agent := &pb.Agent{
 		Id: "codex-reviewer", Name: "Codex reviewer", Roles: []string{"review"}, Backend: "codex", Model: "gpt-5.5",
 		ReasoningEffort: "medium", Image: "worker:1", MaxConcurrent: 2, ContextTokens: 32000,
@@ -117,15 +117,15 @@ func TestAgentCatalogOverGRPC_Lifecycle(t *testing.T) {
 
 func TestAgentCatalogOverGRPC_RefusalsMapToCodes(t *testing.T) {
 	srv := newAgentCatalogServer(t)
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
 	_, err := srv.GetAgent(ctx, &pb.GetCatalogAgentRequest{TenantId: "acme", AgentId: "ghost"})
 	assert.Equal(t, codes.NotFound, status.Code(err))
 	_, err = srv.CreateAgent(ctx, &pb.CreateAgentRequest{TenantId: "acme", Agent: &pb.Agent{Id: "x", Name: "X", Roles: []string{"coding"}, Backend: "claude"}})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err), "an agent with no model")
-	_, err = srv.ListAgents(ctx, &pb.ListCatalogAgentsRequest{})
-	assert.Equal(t, codes.InvalidArgument, status.Code(err), "no tenant on the request or the call")
+	_, err = srv.ListAgents(context.Background(), &pb.ListCatalogAgentsRequest{})
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "no tenant bound to the call")
 	// A caller's own tenant comes from the call when the request names none.
-	_, err = srv.ListAgents(iam.ContextWithTenant(ctx, "acme"), &pb.ListCatalogAgentsRequest{})
+	_, err = srv.ListAgents(tenantctx.WithTenant(ctx, "acme"), &pb.ListCatalogAgentsRequest{})
 	assert.NoError(t, err)
 
 	bare := NewAgentCatalogServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())

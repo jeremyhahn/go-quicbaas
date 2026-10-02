@@ -24,6 +24,7 @@ import (
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // ErrAlreadyExists is a generic error for duplicate resources.
@@ -180,7 +181,7 @@ func appTenantContext(ctx context.Context, tenantID string) context.Context {
 	if tenantID == "" {
 		return ctx
 	}
-	return ContextWithTenant(ctx, tenantID)
+	return tenantctx.WithTenant(ctx, tenantID)
 }
 
 // appTenantKey returns the key for app lookup by tenant.
@@ -240,7 +241,7 @@ func tokenValueKey(tokenValue string) string {
 // the orchestration key is stamped only by the orchestrator handlers, so the
 // two never meet — a future path that stamps both would have to re-check this.
 func tokenValueIndexContext(ctx context.Context) context.Context {
-	return ContextWithTenant(ctx, "")
+	return tenantctx.WithTenant(ctx, "")
 }
 
 // authCodeKey returns the key for an authorization code.
@@ -927,7 +928,7 @@ func (s *BackendStorage) GetApp(ctx context.Context, clientID string) (*Applicat
 		data, err = s.get(appTenantContext(ctx, tid), appKey(tid, clientID))
 	}
 	if err != nil {
-		if tid := TenantFromContext(ctx); tid != "" {
+		if tid := contextTenant(ctx); tid != "" {
 			data, err = s.get(ctx, appKey(tid, clientID))
 		}
 	}
@@ -1060,7 +1061,7 @@ func (s *BackendStorage) ValidateClientSecret(ctx context.Context, clientID, cli
 
 	if clientSecret == "" {
 		// Independent of stored state, so it probes nothing and costs nothing.
-		s.warnClientAuthFailed(clientID, TenantFromContext(ctx), clientAuthReasonEmptySecret)
+		s.warnClientAuthFailed(clientID, contextTenant(ctx), clientAuthReasonEmptySecret)
 		return false, ErrSecretEmpty
 	}
 
@@ -1080,7 +1081,7 @@ func (s *BackendStorage) ValidateClientSecret(ctx context.Context, clientID, cli
 		// client IDs exist (Codex review of #118).
 		if dberrors.IsNotFound(err) {
 			_ = verifySecret(timingEqualizerDigest, clientSecret)
-			s.warnClientAuthFailed(clientID, TenantFromContext(ctx), clientAuthReasonUnknownClient)
+			s.warnClientAuthFailed(clientID, contextTenant(ctx), clientAuthReasonUnknownClient)
 		}
 		return false, err
 	}
@@ -1093,7 +1094,7 @@ func (s *BackendStorage) ValidateClientSecret(ctx context.Context, clientID, cli
 	// tenant field disagree. That is the state go-quicbaas#644 created, and an
 	// operator who sees this line knows to re-enroll rather than to hunt for a
 	// broken token endpoint.
-	if ctxTenant := TenantFromContext(ctx); ctxTenant != "" && app.TenantID != "" && app.TenantID != ctxTenant {
+	if ctxTenant := contextTenant(ctx); ctxTenant != "" && app.TenantID != "" && app.TenantID != ctxTenant {
 		s.warnClientAuthTenantMismatch(clientID, ctxTenant, app.TenantID)
 	}
 
@@ -1240,7 +1241,7 @@ func (s *BackendStorage) StoreToken(ctx context.Context, token *Token) error {
 func (s *BackendStorage) GetToken(ctx context.Context, jti string) (*Token, error) {
 	// Resolve via the tenant-scoped key (tenant from context, set by the
 	// handler from the JWT tenant_id claim) with a legacy global fallback.
-	tenantID := TenantFromContext(ctx)
+	tenantID := contextTenant(ctx)
 	// Always attempt the tenant-scoped key first (an empty tenant still has a
 	// distinct scoped key, e.g. "__iam:token::<jti>"), then fall back to the
 	// legacy un-scoped global key (dual-read shim).
@@ -1283,7 +1284,7 @@ func (s *BackendStorage) GetTokenByValue(ctx context.Context, tokenValue string)
 		// the client id) is the only one that can still reach them. Without
 		// this, upgrading would strand every non-system-tenant OAuth refresh
 		// token that worked before it.
-		if TenantFromContext(ctx) == "" {
+		if contextTenant(ctx) == "" {
 			return nil, err
 		}
 		jtiData, err = s.get(ctx, tokenValueKey(wantHash))
@@ -1297,7 +1298,7 @@ func (s *BackendStorage) GetTokenByValue(ctx context.Context, tokenValue string)
 	raw := string(jtiData)
 	jti := raw
 	if idx := strings.Index(raw, ":"); idx >= 0 {
-		ctx = ContextWithTenant(ctx, raw[:idx])
+		ctx = tenantctx.WithTenant(ctx, raw[:idx])
 		jti = raw[idx+1:]
 	}
 	token, err := s.GetToken(ctx, jti)
@@ -1424,7 +1425,7 @@ func (s *BackendStorage) RevokeUserTokens(ctx context.Context, userID string) er
 	for _, token := range tokens {
 		// Revoke under the token's own tenant so GetToken inside RevokeToken
 		// resolves the tenant-scoped key.
-		tokenCtx := ContextWithTenant(ctx, token.TenantID)
+		tokenCtx := tenantctx.WithTenant(ctx, token.TenantID)
 		if err := s.RevokeToken(tokenCtx, token.JTI); err != nil {
 			continue // Best effort
 		}

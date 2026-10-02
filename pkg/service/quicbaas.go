@@ -3663,13 +3663,11 @@ func (t *timeSeriesService) WriteBatch(ctx context.Context, req *WriteBatchReque
 		}, nil
 	}
 
+	// The error already carries its code: a missing tenant is ErrForbidden,
+	// a malformed one ErrInvalidInput. Re-wrapping it would hide the first.
 	tenantID, err := prepareTimeSeriesTenantContext(ctx)
 	if err != nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrInvalidInput,
-			Op:   "timeSeriesService.WriteBatch",
-			Err:  err,
-		}
+		return nil, err
 	}
 
 	// Convert to storage data points for routing and local fallback

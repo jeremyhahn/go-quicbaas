@@ -24,8 +24,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/connectivity"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 func TestNewConnectionPool_Success(t *testing.T) {
@@ -1407,7 +1407,7 @@ func TestPoolStats_Method(t *testing.T) {
 func TestGetTenantID_WithContext(t *testing.T) {
 	t.Parallel()
 
-	ctx := iam.ContextWithTenant(context.Background(), "test-tenant")
+	ctx := tenantctx.WithTenant(context.Background(), "test-tenant")
 	tenantID := getTenantID(ctx)
 	assert.Equal(t, "test-tenant", tenantID)
 }
@@ -1423,7 +1423,7 @@ func TestGetTenantID_Default(t *testing.T) {
 func TestGetTenantID_EmptyTenant(t *testing.T) {
 	t.Parallel()
 
-	ctx := iam.ContextWithTenant(context.Background(), "")
+	ctx := tenantctx.WithTenant(context.Background(), "")
 	tenantID := getTenantID(ctx)
 	assert.Equal(t, defaultTenantID, tenantID)
 }
@@ -1603,7 +1603,7 @@ func TestVectorMetricsRecorder_WithTenant(t *testing.T) {
 	t.Parallel()
 
 	recorder := NewVectorMetricsRecorder()
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-abc")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-abc")
 	startTime := time.Now()
 
 	// All operations should use the tenant from context

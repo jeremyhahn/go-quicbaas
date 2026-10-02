@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // errMCPFIDO2 drives error propagation through the FIDO2 tool handlers.
@@ -113,7 +113,7 @@ func TestXKMSFIDO2BeginRegistration_TenantFromContext(t *testing.T) {
 	fake := &fido2FakeService{}
 	registry := newFIDO2Registry(t, fake)
 
-	ctx := iam.ContextWithTenant(context.Background(), "ctx-tenant")
+	ctx := tenantctx.WithTenant(context.Background(), "ctx-tenant")
 	_, err := registry.handleXKMSFIDO2BeginRegistration(ctx, map[string]interface{}{
 		"email": "alice@example.com",
 	})
@@ -303,7 +303,7 @@ func TestXKMSFIDO2ToolsRegisteredAndMapped(t *testing.T) {
 func TestXKMSFIDO2Handlers_AcceptSDKSerializedRequests(t *testing.T) {
 	fake := &fido2FakeService{}
 	registry := newFIDO2Registry(t, fake)
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-sdk")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-sdk")
 
 	_, err := registry.handleXKMSFIDO2BeginRegistration(ctx, sdkArgs(t, &transport.BeginRegistrationRequest{
 		Email: "carol@example.com", DisplayName: "Carol",

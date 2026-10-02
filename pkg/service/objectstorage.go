@@ -208,6 +208,12 @@ func (s *objectStorageService) PutObject(ctx context.Context, req *PutObjectRequ
 		return nil, err
 	}
 
+	tenantID, err := objectStorageTenant(ctx, "objectStorage.PutObject", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	req.TenantID = tenantID
+
 	if err := s.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -396,6 +402,12 @@ func (s *objectStorageService) GetObject(ctx context.Context, req *GetObjectRequ
 		return nil, err
 	}
 
+	tenantID, err := objectStorageTenant(ctx, "objectStorage.GetObject", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	req.TenantID = tenantID
+
 	if err := s.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -521,6 +533,12 @@ func (s *objectStorageService) DeleteObject(ctx context.Context, req *DeleteObje
 		return nil, err
 	}
 
+	tenantID, err := objectStorageTenant(ctx, "objectStorage.DeleteObject", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	req.TenantID = tenantID
+
 	if err := s.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -612,6 +630,12 @@ func (s *objectStorageService) HeadObject(ctx context.Context, req *HeadObjectRe
 		return nil, err
 	}
 
+	tenantID, err := objectStorageTenant(ctx, "objectStorage.HeadObject", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	req.TenantID = tenantID
+
 	if err := s.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -675,6 +699,12 @@ func (s *objectStorageService) ListObjects(ctx context.Context, req *ListObjects
 		}
 		return nil, err
 	}
+
+	tenantID, err := objectStorageTenant(ctx, "objectStorage.ListObjects", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	req.TenantID = tenantID
 
 	if err := s.checkClosed(); err != nil {
 		return nil, err
@@ -760,6 +790,12 @@ func (s *objectStorageService) ListByTag(ctx context.Context, req *ListByTagRequ
 		return nil, err
 	}
 
+	tenantID, err := objectStorageTenant(ctx, "objectStorage.ListByTag", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	req.TenantID = tenantID
+
 	if err := s.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -837,6 +873,12 @@ func (s *objectStorageService) ListByTenant(ctx context.Context, req *ListByTena
 		}
 		return nil, err
 	}
+
+	tenantID, err := objectStorageTenant(ctx, "objectStorage.ListByTenant", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	req.TenantID = tenantID
 
 	if err := s.checkClosed(); err != nil {
 		return nil, err
@@ -921,6 +963,12 @@ func (s *objectStorageService) CopyObject(ctx context.Context, req *CopyObjectRe
 		return nil, err
 	}
 
+	tenantID, err := objectStorageTenant(ctx, "objectStorage.CopyObject", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	req.TenantID = tenantID
+
 	if err := s.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -994,6 +1042,12 @@ func (s *objectStorageService) ReplicateObject(ctx context.Context, req *Replica
 		}
 		return nil, err
 	}
+
+	tenantID, err := objectStorageTenant(ctx, "objectStorage.ReplicateObject", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	req.TenantID = tenantID
 
 	if err := s.checkClosed(); err != nil {
 		return nil, err
@@ -1139,6 +1193,12 @@ func (s *objectStorageService) MigrateObject(ctx context.Context, req *MigrateOb
 		return nil, err
 	}
 
+	tenantID, err := objectStorageTenant(ctx, "objectStorage.MigrateObject", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	req.TenantID = tenantID
+
 	if err := s.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -1232,6 +1292,12 @@ func (s *objectStorageService) ArchiveObject(ctx context.Context, req *ArchiveOb
 		}
 		return nil, err
 	}
+
+	tenantID, err := objectStorageTenant(ctx, "objectStorage.ArchiveObject", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	req.TenantID = tenantID
 
 	if err := s.checkClosed(); err != nil {
 		return nil, err
@@ -1365,6 +1431,12 @@ func (s *objectStorageService) RestoreObject(ctx context.Context, req *RestoreOb
 		return nil, err
 	}
 
+	tenantID, err := objectStorageTenant(ctx, "objectStorage.RestoreObject", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	req.TenantID = tenantID
+
 	if err := s.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -1475,6 +1547,12 @@ func (s *objectStorageService) VerifyObject(ctx context.Context, req *VerifyObje
 		}
 		return nil, err
 	}
+
+	tenantID, err := objectStorageTenant(ctx, "objectStorage.VerifyObject", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	req.TenantID = tenantID
 
 	if err := s.checkClosed(); err != nil {
 		return nil, err
@@ -1614,13 +1692,19 @@ func (s *objectStorageService) SetObjectPolicy(ctx context.Context, req *SetObje
 		return nil, err
 	}
 
+	tenantID, err := objectStorageTenant(ctx, "objectStorage.SetObjectPolicy", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	req.TenantID = tenantID
+
 	if err := s.checkClosed(); err != nil {
 		return nil, err
 	}
 
 	var newVersion uint64
 
-	err := s.catalogMgr.Update(ctx, req.Key, func(entry *catalog.CatalogEntry) error {
+	err = s.catalogMgr.Update(ctx, req.Key, func(entry *catalog.CatalogEntry) error {
 		// Validate tenant access
 		if req.TenantID != "" && entry.TenantID != "" && entry.TenantID != req.TenantID {
 			return api.NewCrossTenantAccessError("objectstorage.SetObjectPolicy")
@@ -1671,6 +1755,12 @@ func (s *objectStorageService) GetObjectPolicy(ctx context.Context, req *GetObje
 		}
 		return nil, err
 	}
+
+	tenantID, err := objectStorageTenant(ctx, "objectStorage.GetObjectPolicy", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	req.TenantID = tenantID
 
 	if err := s.checkClosed(); err != nil {
 		return nil, err
@@ -1834,6 +1924,12 @@ func (s *objectStorageService) GetTenantUsage(ctx context.Context, req *GetTenan
 		return nil, err
 	}
 
+	tenantID, err := objectStorageTenant(ctx, "objectStorage.GetTenantUsage", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	req.TenantID = tenantID
+
 	if err := s.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -1872,6 +1968,12 @@ func (s *objectStorageService) GetTenantQuotas(ctx context.Context, req *GetTena
 		}
 		return nil, err
 	}
+
+	tenantID, err := objectStorageTenant(ctx, "objectStorage.GetTenantQuotas", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	req.TenantID = tenantID
 
 	if err := s.checkClosed(); err != nil {
 		return nil, err
@@ -1923,6 +2025,12 @@ func (s *objectStorageService) SetTenantQuotas(ctx context.Context, req *SetTena
 		return nil, err
 	}
 
+	tenantID, err := objectStorageTenant(ctx, "objectStorage.SetTenantQuotas", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	req.TenantID = tenantID
+
 	if err := s.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -1956,6 +2064,12 @@ func (s *objectStorageService) BatchPutObjects(ctx context.Context, req *BatchPu
 	if err := req.Validate(); err != nil {
 		return nil, err
 	}
+
+	tenantID, err := objectStorageTenant(ctx, "objectStorage.BatchPutObjects", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	req.TenantID = tenantID
 
 	results := make([]*BatchPutResult, 0, len(req.Objects))
 	successCount := 0
@@ -2005,6 +2119,12 @@ func (s *objectStorageService) BatchGetObjects(ctx context.Context, req *BatchGe
 		return nil, err
 	}
 
+	tenantID, err := objectStorageTenant(ctx, "objectStorage.BatchGetObjects", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	req.TenantID = tenantID
+
 	results := make([]*BatchGetResult, 0, len(req.Keys))
 	foundCount := 0
 	notFoundCount := 0
@@ -2053,6 +2173,12 @@ func (s *objectStorageService) BatchDeleteObjects(ctx context.Context, req *Batc
 	if err := req.Validate(); err != nil {
 		return nil, err
 	}
+
+	tenantID, err := objectStorageTenant(ctx, "objectStorage.BatchDeleteObjects", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	req.TenantID = tenantID
 
 	results := make([]*BatchDeleteResult, 0, len(req.Keys))
 	deletedCount := 0

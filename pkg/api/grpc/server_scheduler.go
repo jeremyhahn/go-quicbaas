@@ -610,7 +610,7 @@ func convertSchedulerError(err error) error {
 		return status.Error(codes.InvalidArgument, dErr.Error())
 	case errors.ErrUnauthorized:
 		return status.Error(codes.Unauthenticated, dErr.Error())
-	case errors.ErrForbidden:
+	case errors.ErrForbidden, errors.ErrCrossTenantAccess:
 		return status.Error(codes.PermissionDenied, dErr.Error())
 	case errors.ErrTimeout:
 		return status.Error(codes.DeadlineExceeded, dErr.Error())

@@ -21,8 +21,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
 // HRD resolves the tenant from the SNI host when no SPIFFE SAN is present.
@@ -106,7 +104,7 @@ func TestTenantFromOAuthClientID(t *testing.T) {
 
 func TestLoginContextWithTenant(t *testing.T) {
 	ctx := loginContextWithTenant(context.Background(), "tenant-z")
-	if got := iam.TenantFromContext(ctx); got != "tenant-z" {
+	if got := boundTenant(ctx); got != "tenant-z" {
 		t.Fatalf("TenantFromContext = %q, want tenant-z", got)
 	}
 }

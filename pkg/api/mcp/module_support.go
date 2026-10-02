@@ -23,8 +23,8 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // ToolSpec describes one tool of the quicbaas MCP surface for the
@@ -267,7 +267,7 @@ func upstreamToolContext(ctx context.Context) context.Context {
 		Authenticated: true,
 	})
 	if identity.TenantID != "" {
-		ctx = iam.ContextWithTenant(ctx, identity.TenantID)
+		ctx = tenantctx.WithTenant(ctx, identity.TenantID)
 	}
 	return ctx
 }

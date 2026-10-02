@@ -21,10 +21,10 @@ import (
 	"testing"
 
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service/mocks"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // TestAccountMCP_SecretRefReachesService proves the create and update tools
@@ -99,7 +99,7 @@ func TestAccountMCP_UnresolvedSecretRefDoesNotLeakBackendDiagnostics(t *testing.
 		},
 	})
 
-	_, err := reg.executeAccountTool(iam.ContextWithTenant(context.Background(), "t1"),
+	_, err := reg.executeAccountTool(tenantctx.WithTenant(context.Background(), "t1"),
 		"quicbaas_agent_account_materialize", map[string]interface{}{"account_id": "a1"})
 	if err == nil {
 		t.Fatal("materialize succeeded against a refusing service")

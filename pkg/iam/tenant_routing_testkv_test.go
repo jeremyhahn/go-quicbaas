@@ -122,7 +122,7 @@ func (r *routingTestKV) barrierTenant(tenantID string) *memStore {
 func (r *routingTestKV) sealTenant(tenantID string) { r.sealed[tenantID] = true }
 
 func (r *routingTestKV) resolve(ctx context.Context) (*memStore, error) {
-	tenantID := TenantFromContext(ctx)
+	tenantID := contextTenant(ctx)
 	if r.sealed[tenantID] {
 		return nil, errTenantSealedTest
 	}

@@ -21,9 +21,9 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -140,7 +140,7 @@ func TestSchedulerAdapter_ScheduleJob_Success(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	job := &SchedulerJob{
 		Name:    "test-job",
 		Handler: "test-handler",
@@ -170,7 +170,7 @@ func TestSchedulerAdapter_ScheduleJob_Error(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	job := &SchedulerJob{
 		Name:    "test-job",
 		Handler: "test-handler",
@@ -192,12 +192,12 @@ func TestSchedulerAdapter_CreateJob_Success(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-1")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	req := &CreateSchedulerJobRequest{
 		Name:           "new-job",
 		Description:    "A new scheduled job",
 		OwnerType:      SchedulerOwnerTypeTenant,
-		OwnerID:        "user-1",
+		OwnerID:        "tenant-1",
 		TargetTenantID: "tenant-1",
 		Type:           SchedulerJobTypeRecurring,
 		Schedule:       "0 * * * *",
@@ -243,7 +243,7 @@ func TestSchedulerAdapter_CreateJob_Error(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	req := &CreateSchedulerJobRequest{
 		Name:    "new-job",
 		Handler: "test-handler",
@@ -268,7 +268,7 @@ func TestSchedulerAdapter_GetJob_Success(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	req := &GetSchedulerJobRequest{
 		JobID:    789,
 		TenantID: "tenant-1",
@@ -313,7 +313,7 @@ func TestSchedulerAdapter_GetJob_NotFound(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	req := &GetSchedulerJobRequest{
 		JobID:    999,
 		TenantID: "tenant-1",
@@ -338,7 +338,7 @@ func TestSchedulerAdapter_UpdateJob_Success(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	executeAt := time.Now().Add(2 * time.Hour)
 	req := &UpdateSchedulerJobRequest{
 		JobID:       100,
@@ -389,7 +389,7 @@ func TestSchedulerAdapter_UpdateJob_Error(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	req := &UpdateSchedulerJobRequest{
 		JobID:    100,
 		TenantID: "tenant-1",
@@ -415,7 +415,7 @@ func TestSchedulerAdapter_DeleteJob_Success(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	req := &DeleteSchedulerJobRequest{
 		JobID:    200,
 		TenantID: "tenant-1",
@@ -449,7 +449,7 @@ func TestSchedulerAdapter_DeleteJob_Error(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	req := &DeleteSchedulerJobRequest{
 		JobID:    200,
 		TenantID: "tenant-1",
@@ -475,10 +475,10 @@ func TestSchedulerAdapter_ListJobs_Success(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := iam.ContextWithTenant(context.Background(), "tenant-1")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	req := &ListSchedulerJobsRequest{
 		OwnerType:      SchedulerOwnerTypeTenant,
-		OwnerID:        "user-1",
+		OwnerID:        "tenant-1",
 		TargetTenantID: "tenant-1",
 		Status:         SchedulerJobStatusPending,
 		Handler:        "test-handler",
@@ -523,7 +523,7 @@ func TestSchedulerAdapter_ListJobs_EmptyResult(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "user-1")
 	req := &ListSchedulerJobsRequest{
 		OwnerType: SchedulerOwnerTypeTenant,
 		OwnerID:   "user-1",
@@ -551,7 +551,7 @@ func TestSchedulerAdapter_ListJobs_Error(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "user-1")
 	req := &ListSchedulerJobsRequest{
 		OwnerType: SchedulerOwnerTypeTenant,
 		OwnerID:   "user-1",
@@ -576,7 +576,7 @@ func TestSchedulerAdapter_TriggerJob_Success(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	req := &TriggerSchedulerJobRequest{
 		JobID:    300,
 		TenantID: "tenant-1",
@@ -615,7 +615,7 @@ func TestSchedulerAdapter_TriggerJob_GetError(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	req := &TriggerSchedulerJobRequest{
 		JobID:    300,
 		TenantID: "tenant-1",
@@ -640,7 +640,7 @@ func TestSchedulerAdapter_TriggerJob_TriggerError(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	req := &TriggerSchedulerJobRequest{
 		JobID:    300,
 		TenantID: "tenant-1",
@@ -675,7 +675,7 @@ func TestSchedulerAdapter_PauseJob_Success(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	req := &PauseSchedulerJobRequest{
 		JobID:    400,
 		TenantID: "tenant-1",
@@ -708,7 +708,7 @@ func TestSchedulerAdapter_PauseJob_Error(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	req := &PauseSchedulerJobRequest{
 		JobID:    400,
 		TenantID: "tenant-1",
@@ -733,7 +733,7 @@ func TestSchedulerAdapter_ResumeJob_Success(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	req := &ResumeSchedulerJobRequest{
 		JobID:    500,
 		TenantID: "tenant-1",
@@ -766,7 +766,7 @@ func TestSchedulerAdapter_ResumeJob_Error(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	req := &ResumeSchedulerJobRequest{
 		JobID:    500,
 		TenantID: "tenant-1",
@@ -791,7 +791,7 @@ func TestSchedulerAdapter_CancelJob_Success(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	req := &CancelSchedulerJobRequest{
 		JobID:    600,
 		TenantID: "tenant-1",
@@ -825,7 +825,7 @@ func TestSchedulerAdapter_CancelJob_Error(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	req := &CancelSchedulerJobRequest{
 		JobID:    600,
 		TenantID: "tenant-1",
@@ -851,7 +851,7 @@ func TestSchedulerAdapter_GetJobHistory_Success(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	req := &GetSchedulerJobHistoryRequest{
 		JobID:    700,
 		TenantID: "tenant-1",
@@ -907,7 +907,7 @@ func TestSchedulerAdapter_GetJobHistory_DefaultLimit(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	req := &GetSchedulerJobHistoryRequest{
 		JobID:    700,
 		TenantID: "tenant-1",
@@ -935,7 +935,7 @@ func TestSchedulerAdapter_GetJobHistory_HasMore(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	req := &GetSchedulerJobHistoryRequest{
 		JobID:    700,
 		TenantID: "tenant-1",
@@ -969,7 +969,7 @@ func TestSchedulerAdapter_GetJobHistory_Error(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	req := &GetSchedulerJobHistoryRequest{
 		JobID:    700,
 		TenantID: "tenant-1",
@@ -995,7 +995,7 @@ func TestSchedulerAdapter_GetStatus_Success(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	now := time.Now()
 	startedAt := now.Add(-time.Hour)
 
@@ -1044,7 +1044,7 @@ func TestSchedulerAdapter_GetStatus_NotRunning(t *testing.T) {
 	mockEngine := newTestMockSchedulerEngine()
 	adapter := NewSchedulerAdapter(mockEngine)
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	stats := &scheduler.SchedulerStats{
 		JobCount:     0,
 		RunningJobs:  0,

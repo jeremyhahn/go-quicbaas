@@ -23,8 +23,8 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // Manager provides a unified interface for secrets management operations.
@@ -612,8 +612,7 @@ func (m *Manager) enrichOptionsFromContext(ctx context.Context, opts *interfaces
 
 	// Auto-populate TenantID from context if not explicitly set
 	if opts.TenantID == "" {
-		tenantID := iam.TenantFromContext(ctx)
-		if tenantID != "" {
+		if tenantID, ok := tenantctx.Lookup(ctx); ok {
 			opts.TenantID = tenantID
 			if m.logger != nil {
 				m.logger.WithField("tenant_id", tenantID).Debug("Auto-populated TenantID from context")
@@ -627,7 +626,8 @@ func (m *Manager) enrichOptionsFromContext(ctx context.Context, opts *interfaces
 // TenantIDFromContext extracts the tenant ID from the context.
 // This is a convenience method for callers who need the tenant ID.
 func (m *Manager) TenantIDFromContext(ctx context.Context) string {
-	return iam.TenantFromContext(ctx)
+	tenantID, _ := tenantctx.Lookup(ctx) // comma-ok: "" reports that no tenant is bound
+	return tenantID
 }
 
 // EnsureSecret returns the bytes stored at path, generating and

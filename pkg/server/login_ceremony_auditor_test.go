@@ -22,6 +22,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // capturingAuditLogger records the events written to the audit plane.
@@ -199,7 +200,7 @@ func TestLoginCeremonyAuditor_TenantFromContextIsUsed(t *testing.T) {
 
 	rejection := sampleRejection()
 	rejection.TenantID = ""
-	ctx := iam.ContextWithTenant(context.Background(), "acme")
+	ctx := tenantctx.WithTenant(context.Background(), "acme")
 	auditor.RecordLoginRejection(ctx, rejection)
 
 	if len(sink.events) != 1 {

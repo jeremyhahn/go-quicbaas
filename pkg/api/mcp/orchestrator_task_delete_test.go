@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 func TestRegisterAgentTools_TaskDeleteToolRegistered(t *testing.T) {
@@ -44,7 +45,7 @@ func TestExecuteAgentTool_TaskDelete(t *testing.T) {
 			gotTenant, gotTask = tenantID, taskID
 			return nil
 		}}
-		ctx := orchestration.ContextWithTenant(context.Background(), "t1")
+		ctx := tenantctx.WithTenant(context.Background(), "t1")
 		result, err := newFleetRegistry(t, svc).executeAgentTool(ctx, "quicbaas_orchestrator_task_delete",
 			map[string]interface{}{"task_id": "task-1"})
 		require.NoError(t, err)
@@ -55,7 +56,7 @@ func TestExecuteAgentTool_TaskDelete(t *testing.T) {
 		assert.Equal(t, "task-1", gotTask)
 	})
 	t.Run("missing task_id", func(t *testing.T) {
-		_, err := newFleetRegistry(t, &mockAgentService{}).executeAgentTool(context.Background(),
+		_, err := newFleetRegistry(t, &mockAgentService{}).executeAgentTool(tenantctx.WithTenant(context.Background(), "t"),
 			"quicbaas_orchestrator_task_delete", map[string]interface{}{})
 		require.Error(t, err)
 	})
@@ -63,12 +64,12 @@ func TestExecuteAgentTool_TaskDelete(t *testing.T) {
 		svc := &mockAgentService{deleteTaskFn: func(context.Context, string, string) error {
 			return &orchestration.TaskLeasedError{TenantID: "t", TaskID: "x", JobID: "job-9"}
 		}}
-		_, err := newFleetRegistry(t, svc).executeAgentTool(context.Background(),
-			"quicbaas_orchestrator_task_delete", map[string]interface{}{"tenant_id": "t1", "task_id": "x"})
+		_, err := newFleetRegistry(t, svc).executeAgentTool(tenantctx.WithTenant(context.Background(), "t"),
+			"quicbaas_orchestrator_task_delete", map[string]interface{}{"tenant_id": "t", "task_id": "x"})
 		require.ErrorIs(t, err, orchestration.ErrTaskLeased)
 	})
 	t.Run("service unavailable", func(t *testing.T) {
-		_, err := newFleetRegistry(t, nil).executeAgentTool(context.Background(),
+		_, err := newFleetRegistry(t, nil).executeAgentTool(tenantctx.WithTenant(context.Background(), "t"),
 			"quicbaas_orchestrator_task_delete", map[string]interface{}{"task_id": "x"})
 		require.Error(t, err)
 	})

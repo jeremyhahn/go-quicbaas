@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -100,7 +101,7 @@ func TestMCPListJobs_RefusesAStateOutsideTheEnum(t *testing.T) {
 	svc := &fleetMockAgentService{}
 	svc.listJobs = filterJobFixtures()
 	reg := newFleetRegistry(t, svc)
-	ctx := orchestration.ContextWithTenant(context.Background(), "t1")
+	ctx := orchestration.ContextWithTenant(tenantctx.WithSystem(context.Background()), "t1")
 
 	_, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_list_jobs",
 		map[string]interface{}{"statuses": []interface{}{"failed", "fialed"}})
@@ -134,7 +135,7 @@ func TestMCPFleetList_NarrowsOnServedBackend(t *testing.T) {
 	}
 	reg := newFleetRegistry(t, svc)
 
-	result, err := reg.executeAgentTool(context.Background(), "quicbaas_fleet_list",
+	result, err := reg.executeAgentTool(tenantctx.WithSystem(context.Background()), "quicbaas_fleet_list",
 		map[string]interface{}{"tenant_id": "t1", "backend": "claude"})
 	require.NoError(t, err)
 
@@ -159,7 +160,7 @@ func TestMCPListSessions_CarriesTheNewNarrowings(t *testing.T) {
 	}
 	reg := newFleetRegistry(t, svc)
 
-	result, err := reg.executeAgentTool(context.Background(), "quicbaas_orchestrator_list_sessions", map[string]interface{}{
+	result, err := reg.executeAgentTool(tenantctx.WithSystem(context.Background()), "quicbaas_orchestrator_list_sessions", map[string]interface{}{
 		"tenant_id":  "t1",
 		"project_id": "proj-a",
 		"job_id":     "job-1",

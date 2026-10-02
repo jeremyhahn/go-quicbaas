@@ -21,7 +21,6 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
@@ -107,7 +106,7 @@ func (r *routingTestKV) barrierTenant(tenantID string) *memStore {
 func (r *routingTestKV) sealTenant(tenantID string) { r.sealed[tenantID] = true }
 
 func (r *routingTestKV) resolve(ctx context.Context) (*memStore, error) {
-	tenantID := iam.TenantFromContext(ctx)
+	tenantID := boundTenant(ctx)
 	if r.sealed[tenantID] {
 		return nil, errTenantSealedTest
 	}

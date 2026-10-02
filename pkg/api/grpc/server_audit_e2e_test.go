@@ -32,6 +32,7 @@ import (
 
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 const auditE2EBufSize = 1 << 20 // 1 MiB
@@ -46,7 +47,7 @@ const auditE2EBufSize = 1 << 20 // 1 MiB
 // auth stack.
 func tenantInjectingInterceptor(callerTenant string) realgrpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, _ *realgrpc.UnaryServerInfo, handler realgrpc.UnaryHandler) (interface{}, error) {
-		return handler(iam.ContextWithTenant(ctx, callerTenant), req)
+		return handler(tenantctx.WithTenant(ctx, callerTenant), req)
 	}
 }
 

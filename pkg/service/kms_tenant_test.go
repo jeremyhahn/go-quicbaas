@@ -23,7 +23,8 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -113,22 +114,33 @@ func TestTenantListPrefix_WithTenant(t *testing.T) {
 }
 
 // =============================================================================
-// extractTenantID tests
+// prepareTenantContext tests (go-quicbaas#1150)
 // =============================================================================
 
-func TestExtractTenantID_NoTenant(t *testing.T) {
-	ctx := context.Background()
-	assert.Equal(t, "", extractTenantID(ctx))
+// TestPrepareTenantContext_RefusesUnboundContext pins that an absent tenant is
+// refused with the typed error, coded ErrForbidden, rather than read as
+// system reach.
+func TestPrepareTenantContext_RefusesUnboundContext(t *testing.T) {
+	for _, ctx := range []context.Context{context.Background(), tenantctx.WithTenant(context.Background(), "")} {
+		_, err := prepareTenantContext(ctx)
+		var missing *tenantctx.MissingTenantError
+		require.ErrorAs(t, err, &missing)
+		var qb *errors.QBError
+		require.ErrorAs(t, err, &qb)
+		assert.Equal(t, errors.ErrForbidden, qb.Code)
+	}
 }
 
-func TestExtractTenantID_WithTenant(t *testing.T) {
-	ctx := iam.ContextWithTenant(context.Background(), "my-tenant")
-	assert.Equal(t, "my-tenant", extractTenantID(ctx))
-}
+// TestPrepareTenantContext_ReturnsBoundTenant proves the bound tenant, the
+// system tenant as the platform scope "", is returned.
+func TestPrepareTenantContext_ReturnsBoundTenant(t *testing.T) {
+	tenantID, err := prepareTenantContext(tenantctx.WithTenant(context.Background(), "my-tenant"))
+	require.NoError(t, err)
+	assert.Equal(t, "my-tenant", tenantID)
 
-func TestExtractTenantID_EmptyTenantValue(t *testing.T) {
-	ctx := iam.ContextWithTenant(context.Background(), "")
-	assert.Equal(t, "", extractTenantID(ctx))
+	tenantID, err = prepareTenantContext(tenantctx.WithSystem(context.Background()))
+	require.NoError(t, err)
+	assert.Equal(t, "", tenantID, "the system binding is the services' platform scope")
 }
 
 // =============================================================================
@@ -242,22 +254,15 @@ func TestEnforceTenantAccess_UnscopedKeyDenied(t *testing.T) {
 // prepareTenantContext tests
 // =============================================================================
 
-func TestPrepareTenantContext_NoTenant(t *testing.T) {
-	ctx := context.Background()
-	tenantID, err := prepareTenantContext(ctx)
-	assert.NoError(t, err)
-	assert.Equal(t, "", tenantID)
-}
-
 func TestPrepareTenantContext_ValidTenant(t *testing.T) {
-	ctx := iam.ContextWithTenant(context.Background(), "acme-corp")
+	ctx := tenantctx.WithTenant(context.Background(), "acme-corp")
 	tenantID, err := prepareTenantContext(ctx)
 	assert.NoError(t, err)
 	assert.Equal(t, "acme-corp", tenantID)
 }
 
 func TestPrepareTenantContext_InvalidTenant(t *testing.T) {
-	ctx := iam.ContextWithTenant(context.Background(), "invalid/tenant")
+	ctx := tenantctx.WithTenant(context.Background(), "invalid/tenant")
 	_, err := prepareTenantContext(ctx)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid character")

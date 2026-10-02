@@ -31,9 +31,9 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/watch"
 )
 
@@ -415,7 +415,7 @@ func TestKVService_Put_Success(t *testing.T) {
 		Data:       []byte(`{"name":"test"}`),
 	}
 
-	resp, err := svc.Put(context.Background(), req)
+	resp, err := svc.Put(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, uint64(1), resp.ID)
@@ -436,7 +436,7 @@ func TestKVService_Delete_Success(t *testing.T) {
 		ID:         1,
 	}
 
-	resp, err := svc.Delete(context.Background(), req)
+	resp, err := svc.Delete(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.True(t, resp.Deleted)
@@ -448,7 +448,7 @@ func TestKVService_Delete_NilRequest(t *testing.T) {
 	svc := createTestService(t, withMockRaftNode(mockRaft))
 	defer svc.Close()
 
-	resp, err := svc.Delete(context.Background(), nil)
+	resp, err := svc.Delete(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "request cannot be nil")
@@ -464,7 +464,7 @@ func TestKVService_Delete_EmptyEntityType(t *testing.T) {
 		ID:         1,
 	}
 
-	resp, err := svc.Delete(context.Background(), req)
+	resp, err := svc.Delete(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "entity type is required")
@@ -481,7 +481,7 @@ func TestKVService_Delete_RaftError(t *testing.T) {
 		ID:         1,
 	}
 
-	resp, err := svc.Delete(context.Background(), req)
+	resp, err := svc.Delete(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -502,7 +502,7 @@ func TestKVService_Delete_WithCustomShardID(t *testing.T) {
 		ShardID:    5,
 	}
 
-	resp, err := svc.Delete(context.Background(), req)
+	resp, err := svc.Delete(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -521,7 +521,7 @@ func TestKVService_Delete_WithMetrics(t *testing.T) {
 		ID:         1,
 	}
 
-	resp, err := svc.Delete(context.Background(), req)
+	resp, err := svc.Delete(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -552,7 +552,7 @@ func TestBatchService_BatchGet_Success(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.BatchGet(context.Background(), req)
+	resp, err := svc.BatchGet(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -566,7 +566,7 @@ func TestBatchService_BatchGet_EmptyRequest(t *testing.T) {
 		Requests: []*GetRequest{},
 	}
 
-	resp, err := svc.BatchGet(context.Background(), req)
+	resp, err := svc.BatchGet(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "batch cannot be empty")
@@ -577,7 +577,7 @@ func TestBatchService_BatchGet_NilRequest(t *testing.T) {
 	svc := createTestService(t, withMockRaftNode(mockRaft))
 	defer svc.Close()
 
-	resp, err := svc.BatchGet(context.Background(), nil)
+	resp, err := svc.BatchGet(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "request cannot be nil")
@@ -606,7 +606,7 @@ func TestBatchService_BatchGet_PartialFailure(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.BatchGet(context.Background(), req)
+	resp, err := svc.BatchGet(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Len(t, resp.Responses, 2)
@@ -629,7 +629,7 @@ func TestBatchService_BatchGet_WithMetrics(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.BatchGet(context.Background(), req)
+	resp, err := svc.BatchGet(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -670,7 +670,7 @@ func TestTransactionService_Transaction_Success(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.Transaction(context.Background(), req)
+	resp, err := svc.Transaction(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -694,7 +694,7 @@ func TestTransactionService_Transaction_GetOperation(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.Transaction(context.Background(), req)
+	resp, err := svc.Transaction(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.True(t, resp.Succeeded)
@@ -719,7 +719,7 @@ func TestTransactionService_Transaction_DeleteOperation(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.Transaction(context.Background(), req)
+	resp, err := svc.Transaction(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -756,7 +756,7 @@ func TestTransactionService_Transaction_CompareValue(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.Transaction(context.Background(), req)
+	resp, err := svc.Transaction(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -786,7 +786,7 @@ func TestTransactionService_Transaction_CompareExists(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.Transaction(context.Background(), req)
+	resp, err := svc.Transaction(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.True(t, resp.Succeeded)
@@ -831,7 +831,7 @@ func TestTransactionService_Transaction_FailedComparison(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.Transaction(context.Background(), req)
+	resp, err := svc.Transaction(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.False(t, resp.Succeeded)
@@ -842,7 +842,7 @@ func TestTransactionService_Transaction_NilRequest(t *testing.T) {
 	svc := createTestService(t, withMockRaftNode(mockRaft))
 	defer svc.Close()
 
-	resp, err := svc.Transaction(context.Background(), nil)
+	resp, err := svc.Transaction(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "request cannot be nil")
@@ -868,7 +868,7 @@ func TestTransactionService_Transaction_EmptyCompare(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.Transaction(context.Background(), req)
+	resp, err := svc.Transaction(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -890,7 +890,7 @@ func TestTransactionService_Transaction_RaftError(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.Transaction(context.Background(), req)
+	resp, err := svc.Transaction(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -915,7 +915,7 @@ func TestTransactionService_Transaction_WithMetrics(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.Transaction(context.Background(), req)
+	resp, err := svc.Transaction(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -941,7 +941,7 @@ func TestClusterService_ClusterStatus_Success(t *testing.T) {
 
 	req := &ClusterStatusRequest{}
 
-	resp, err := svc.ClusterStatus(context.Background(), req)
+	resp, err := svc.ClusterStatus(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -962,7 +962,7 @@ func TestClusterService_GetLeader_Success(t *testing.T) {
 		ShardID: 1,
 	}
 
-	resp, err := svc.GetLeader(context.Background(), req)
+	resp, err := svc.GetLeader(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, uint64(1), resp.LeaderID)
@@ -980,7 +980,7 @@ func TestClusterService_GetLeader_Error(t *testing.T) {
 		ShardID: 1,
 	}
 
-	resp, err := svc.GetLeader(context.Background(), req)
+	resp, err := svc.GetLeader(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -997,7 +997,7 @@ func TestClusterService_AddNode_Success(t *testing.T) {
 		Address: "localhost:5002",
 	}
 
-	resp, err := svc.AddNode(context.Background(), req)
+	resp, err := svc.AddNode(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.True(t, resp.Success)
@@ -1017,7 +1017,7 @@ func TestClusterService_AddNode_Error(t *testing.T) {
 		Address: "localhost:5002",
 	}
 
-	resp, err := svc.AddNode(context.Background(), req)
+	resp, err := svc.AddNode(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -1033,7 +1033,7 @@ func TestClusterService_RemoveNode_Success(t *testing.T) {
 		NodeID:  2,
 	}
 
-	resp, err := svc.RemoveNode(context.Background(), req)
+	resp, err := svc.RemoveNode(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.True(t, resp.Success)
@@ -1044,7 +1044,7 @@ func TestClusterService_RemoveNode_NilRequest(t *testing.T) {
 	svc := createTestService(t, withMockRaftNode(mockRaft))
 	defer svc.Close()
 
-	resp, err := svc.RemoveNode(context.Background(), nil)
+	resp, err := svc.RemoveNode(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "request cannot be nil")
@@ -1060,7 +1060,7 @@ func TestClusterService_RemoveNode_InvalidShardID(t *testing.T) {
 		NodeID:  2,
 	}
 
-	resp, err := svc.RemoveNode(context.Background(), req)
+	resp, err := svc.RemoveNode(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "shard_id must be greater than 0")
@@ -1076,7 +1076,7 @@ func TestClusterService_RemoveNode_InvalidNodeID(t *testing.T) {
 		NodeID:  0,
 	}
 
-	resp, err := svc.RemoveNode(context.Background(), req)
+	resp, err := svc.RemoveNode(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "node_id must be greater than 0")
@@ -1095,7 +1095,7 @@ func TestClusterService_RemoveNode_RaftError(t *testing.T) {
 		NodeID:  2,
 	}
 
-	resp, err := svc.RemoveNode(context.Background(), req)
+	resp, err := svc.RemoveNode(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -1110,7 +1110,7 @@ func TestClusterService_CreateShard_NotImplemented(t *testing.T) {
 		InitialMembers: map[uint64]string{1: "localhost:5001"},
 	}
 
-	resp, err := svc.CreateShard(context.Background(), req)
+	resp, err := svc.CreateShard(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "not yet implemented")
@@ -1121,7 +1121,7 @@ func TestClusterService_CreateShard_NilRequest(t *testing.T) {
 	svc := createTestService(t, withMockRaftNode(mockRaft))
 	defer svc.Close()
 
-	resp, err := svc.CreateShard(context.Background(), nil)
+	resp, err := svc.CreateShard(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "request cannot be nil")
@@ -1137,7 +1137,7 @@ func TestClusterService_CreateShard_InvalidShardID(t *testing.T) {
 		InitialMembers: map[uint64]string{1: "localhost:5001"},
 	}
 
-	resp, err := svc.CreateShard(context.Background(), req)
+	resp, err := svc.CreateShard(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "shard_id must be greater than 0")
@@ -1153,7 +1153,7 @@ func TestClusterService_CreateShard_EmptyMembers(t *testing.T) {
 		InitialMembers: map[uint64]string{},
 	}
 
-	resp, err := svc.CreateShard(context.Background(), req)
+	resp, err := svc.CreateShard(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "initial_members cannot be empty")
@@ -1169,7 +1169,7 @@ func TestClusterService_RebalanceCluster_Success(t *testing.T) {
 		Strategy:         "even",
 	}
 
-	resp, err := svc.RebalanceCluster(context.Background(), req)
+	resp, err := svc.RebalanceCluster(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.NotEmpty(t, resp.JobID)
@@ -1181,7 +1181,7 @@ func TestClusterService_RebalanceCluster_NilRequest(t *testing.T) {
 	svc := createTestService(t, withMockRaftNode(mockRaft))
 	defer svc.Close()
 
-	resp, err := svc.RebalanceCluster(context.Background(), nil)
+	resp, err := svc.RebalanceCluster(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "request cannot be nil")
@@ -1209,7 +1209,7 @@ func TestBackupService_CreateBackup_Success(t *testing.T) {
 		Description: "Test backup",
 	}
 
-	resp, err := svc.CreateBackup(context.Background(), req)
+	resp, err := svc.CreateBackup(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, "backup-123", resp.BackupID)
@@ -1237,7 +1237,7 @@ func TestBackupService_ListBackups_Success(t *testing.T) {
 		Limit: 10,
 	}
 
-	resp, err := svc.ListBackups(context.Background(), req)
+	resp, err := svc.ListBackups(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Len(t, resp.Backups, 1)
@@ -1256,7 +1256,7 @@ func TestBackupService_RestoreBackup_Success(t *testing.T) {
 		BackupID: "backup-123",
 	}
 
-	resp, err := svc.RestoreBackup(context.Background(), req)
+	resp, err := svc.RestoreBackup(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -1274,7 +1274,7 @@ func TestBackupService_DeleteBackup_Success(t *testing.T) {
 		BackupID: "backup-123",
 	}
 
-	resp, err := svc.DeleteBackup(context.Background(), req)
+	resp, err := svc.DeleteBackup(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.True(t, resp.Success)
@@ -1297,7 +1297,7 @@ func TestBackupService_VerifyBackup_Success(t *testing.T) {
 		BackupID: "backup-123",
 	}
 
-	resp, err := svc.VerifyBackup(context.Background(), req)
+	resp, err := svc.VerifyBackup(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.True(t, resp.Valid)
@@ -1312,7 +1312,7 @@ func TestBackupService_VerifyBackup_NotAvailable(t *testing.T) {
 		BackupID: "backup-123",
 	}
 
-	resp, err := svc.VerifyBackup(context.Background(), req)
+	resp, err := svc.VerifyBackup(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "backup manager service not configured")
@@ -1331,7 +1331,7 @@ func TestBackupService_VerifyBackup_Error(t *testing.T) {
 		BackupID: "backup-123",
 	}
 
-	resp, err := svc.VerifyBackup(context.Background(), req)
+	resp, err := svc.VerifyBackup(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -1349,7 +1349,7 @@ func TestBackupService_VerifyBackup_InvalidResult(t *testing.T) {
 		BackupID: "backup-123",
 	}
 
-	resp, err := svc.VerifyBackup(context.Background(), req)
+	resp, err := svc.VerifyBackup(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "verification result must be *backup.VerificationResult")
@@ -1366,7 +1366,7 @@ func TestAuthService_Login_ReturnsNotImplemented(t *testing.T) {
 	defer svc.Close()
 
 	req := &LoginRequest{Username: "testuser"}
-	_, err := svc.Login(context.Background(), req)
+	_, err := svc.Login(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 }
 
@@ -1395,7 +1395,7 @@ func TestKVService_Get_SuccessWithData(t *testing.T) {
 		Consistency: ConsistencyLevelLinearizable,
 	}
 
-	resp, err := svc.Get(context.Background(), req)
+	resp, err := svc.Get(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.True(t, resp.Found)
@@ -1415,7 +1415,7 @@ func TestKVService_Get_NotFound(t *testing.T) {
 		ID:         999,
 	}
 
-	resp, err := svc.Get(context.Background(), req)
+	resp, err := svc.Get(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "not found")
@@ -1426,7 +1426,7 @@ func TestKVService_Get_NilRequest(t *testing.T) {
 	svc := createTestService(t, withMockRaftNode(mockRaft))
 	defer svc.Close()
 
-	resp, err := svc.Get(context.Background(), nil)
+	resp, err := svc.Get(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "request cannot be nil")
@@ -1442,7 +1442,7 @@ func TestKVService_Get_EmptyEntityType(t *testing.T) {
 		ID:         1,
 	}
 
-	resp, err := svc.Get(context.Background(), req)
+	resp, err := svc.Get(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "entity type is required")
@@ -1469,7 +1469,7 @@ func TestKVService_ListEntityTypes_Success(t *testing.T) {
 		PageSize: 10,
 	}
 
-	resp, err := svc.ListEntityTypes(context.Background(), req)
+	resp, err := svc.ListEntityTypes(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 
@@ -1498,7 +1498,7 @@ func TestKVService_ListEntityTypes_Pagination(t *testing.T) {
 	req := &ListEntityTypesRequest{
 		PageSize: 2,
 	}
-	resp, err := svc.ListEntityTypes(context.Background(), req)
+	resp, err := svc.ListEntityTypes(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, 4, resp.TotalCount)
@@ -1512,7 +1512,7 @@ func TestKVService_ListEntityTypes_Pagination(t *testing.T) {
 		PageSize:  2,
 		PageToken: resp.NextPageToken,
 	}
-	resp, err = svc.ListEntityTypes(context.Background(), req)
+	resp, err = svc.ListEntityTypes(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, 4, resp.TotalCount)
@@ -1533,7 +1533,7 @@ func TestKVService_ListEntityTypes_EmptyResult(t *testing.T) {
 	defer svc.Close()
 
 	req := &ListEntityTypesRequest{}
-	resp, err := svc.ListEntityTypes(context.Background(), req)
+	resp, err := svc.ListEntityTypes(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, 0, resp.TotalCount)
@@ -1551,7 +1551,7 @@ func TestKVService_ListEntityTypes_NilRequest(t *testing.T) {
 	defer svc.Close()
 
 	// Nil request should be handled gracefully with defaults
-	resp, err := svc.ListEntityTypes(context.Background(), nil)
+	resp, err := svc.ListEntityTypes(tenantctx.WithSystem(context.Background()), nil)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -1564,7 +1564,7 @@ func TestKVService_ListEntityTypes_RaftError(t *testing.T) {
 	defer svc.Close()
 
 	req := &ListEntityTypesRequest{}
-	resp, err := svc.ListEntityTypes(context.Background(), req)
+	resp, err := svc.ListEntityTypes(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "raft")
@@ -1583,7 +1583,7 @@ func TestKVService_ListEntityTypes_SkipsSystemKeys(t *testing.T) {
 	defer svc.Close()
 
 	req := &ListEntityTypesRequest{}
-	resp, err := svc.ListEntityTypes(context.Background(), req)
+	resp, err := svc.ListEntityTypes(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 
@@ -1606,7 +1606,7 @@ func TestKVService_ListEntityTypes_WithCustomShardID(t *testing.T) {
 	req := &ListEntityTypesRequest{
 		ShardID: 5,
 	}
-	_, err := svc.ListEntityTypes(context.Background(), req)
+	_, err := svc.ListEntityTypes(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	assert.Equal(t, uint64(5), qrdbProvider.lastShardID.Load())
 }
@@ -1620,7 +1620,7 @@ func TestKVService_ListEntityTypes_DefaultsShardID(t *testing.T) {
 	req := &ListEntityTypesRequest{
 		ShardID: 0, // Should default to 1
 	}
-	_, err := svc.ListEntityTypes(context.Background(), req)
+	_, err := svc.ListEntityTypes(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	assert.Equal(t, uint64(1), qrdbProvider.lastShardID.Load())
 }
@@ -1639,7 +1639,7 @@ func TestKVService_ListEntityTypes_MultiTenant(t *testing.T) {
 	defer svc.Close()
 
 	// Create context with tenant
-	ctx := iam.ContextWithTenant(context.Background(), "acme-corp")
+	ctx := tenantctx.WithTenant(context.Background(), "acme-corp")
 
 	req := &ListEntityTypesRequest{
 		PageSize: 10,
@@ -1670,7 +1670,7 @@ func TestKVService_ListEntityTypes_MixedKeyFormats(t *testing.T) {
 	defer svc.Close()
 
 	req := &ListEntityTypesRequest{}
-	resp, err := svc.ListEntityTypes(context.Background(), req)
+	resp, err := svc.ListEntityTypes(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 
@@ -1693,7 +1693,7 @@ func TestKVService_Put_MultiTenantKey(t *testing.T) {
 	defer svc.Close()
 
 	// Test with tenant context
-	ctx := iam.ContextWithTenant(context.Background(), "acme-corp")
+	ctx := tenantctx.WithTenant(context.Background(), "acme-corp")
 	req := &PutRequest{
 		EntityType: "User",
 		ID:         42,
@@ -1716,7 +1716,7 @@ func TestKVService_Put_LegacyKey(t *testing.T) {
 	defer svc.Close()
 
 	// Test without tenant context (legacy mode)
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	req := &PutRequest{
 		EntityType: "User",
 		ID:         42,
@@ -1738,7 +1738,7 @@ func TestKVService_Get_MultiTenantKey(t *testing.T) {
 	defer svc.Close()
 
 	// Test with tenant context
-	ctx := iam.ContextWithTenant(context.Background(), "beta-inc")
+	ctx := tenantctx.WithTenant(context.Background(), "beta-inc")
 	req := &GetRequest{
 		EntityType: "Order",
 		ID:         123,
@@ -1760,7 +1760,7 @@ func TestKVService_Delete_MultiTenantKey(t *testing.T) {
 	defer svc.Close()
 
 	// Test with tenant context
-	ctx := iam.ContextWithTenant(context.Background(), "test-tenant")
+	ctx := tenantctx.WithTenant(context.Background(), "test-tenant")
 	req := &DeleteRequest{
 		EntityType: "Product",
 		ID:         999,
@@ -1786,7 +1786,7 @@ func TestKVService_List_MultiTenantPrefix(t *testing.T) {
 	defer svc.Close()
 
 	// Test with tenant context
-	ctx := iam.ContextWithTenant(context.Background(), "my-tenant")
+	ctx := tenantctx.WithTenant(context.Background(), "my-tenant")
 	req := &ListRequest{
 		EntityType: "Order",
 		PageSize:   10,
@@ -1974,7 +1974,7 @@ func TestUpdateCacheConfig_WithCleanupInterval(t *testing.T) {
 	cacheSvc := &cacheService{svc: svc}
 
 	newInterval := 30 * time.Second
-	resp, err := cacheSvc.UpdateCacheConfig(context.Background(), &UpdateCacheConfigRequest{
+	resp, err := cacheSvc.UpdateCacheConfig(tenantctx.WithSystem(context.Background()), &UpdateCacheConfigRequest{
 		CleanupInterval: &newInterval,
 	})
 	require.NoError(t, err)
@@ -1990,7 +1990,7 @@ func TestWatch_SuccessPath_CreatedResponse(t *testing.T) {
 	impl := svc.(*quicBaaS)
 
 	stream := make(chan *WatchResponse, 10)
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(tenantctx.WithSystem(context.Background()), 500*time.Millisecond)
 	defer cancel()
 
 	// This exercises the watch creation success path (lines 1110-1140)
@@ -2039,7 +2039,7 @@ func TestPut_BuildKeyError_WithMetrics(t *testing.T) {
 	svc.initMetrics()
 	svc.kvService = &kvService{svc: svc}
 
-	resp, err := svc.kvService.Put(context.Background(), &PutRequest{
+	resp, err := svc.kvService.Put(tenantctx.WithSystem(context.Background()), &PutRequest{
 		EntityType: "user",
 		ID:         1,
 		Data:       []byte(`{}`),
@@ -2060,7 +2060,7 @@ func TestGet_BuildKeyError_WithMetrics(t *testing.T) {
 	svc.initMetrics()
 	svc.kvService = &kvService{svc: svc}
 
-	resp, err := svc.kvService.Get(context.Background(), &GetRequest{
+	resp, err := svc.kvService.Get(tenantctx.WithSystem(context.Background()), &GetRequest{
 		EntityType: "user",
 		ID:         1,
 	})
@@ -2080,7 +2080,7 @@ func TestDelete_BuildKeyError_WithMetrics(t *testing.T) {
 	svc.initMetrics()
 	svc.kvService = &kvService{svc: svc}
 
-	resp, err := svc.kvService.Delete(context.Background(), &DeleteRequest{
+	resp, err := svc.kvService.Delete(tenantctx.WithSystem(context.Background()), &DeleteRequest{
 		EntityType: "user",
 		ID:         1,
 	})
@@ -2101,7 +2101,7 @@ func TestList_BuildPrefixError_WithMetrics(t *testing.T) {
 	svc.kvService = &kvService{svc: svc}
 
 	stream := make(chan *ListResponse, 1)
-	err := svc.kvService.List(context.Background(), &ListRequest{EntityType: "user"}, stream)
+	err := svc.kvService.List(tenantctx.WithSystem(context.Background()), &ListRequest{EntityType: "user"}, stream)
 	require.Error(t, err)
 }
 
@@ -2122,7 +2122,7 @@ func TestList_RaftError_WithMetrics(t *testing.T) {
 	svc.kvService = &kvService{svc: svc}
 
 	stream := make(chan *ListResponse, 1)
-	err := svc.kvService.List(context.Background(), &ListRequest{EntityType: "user"}, stream)
+	err := svc.kvService.List(tenantctx.WithSystem(context.Background()), &ListRequest{EntityType: "user"}, stream)
 	require.Error(t, err)
 	var qbErr *errors.QBError
 	require.ErrorAs(t, err, &qbErr)
@@ -2145,7 +2145,7 @@ func TestDelete_RaftError_WithMetrics(t *testing.T) {
 	svc.initMetrics()
 	svc.kvService = &kvService{svc: svc}
 
-	resp, err := svc.kvService.Delete(context.Background(), &DeleteRequest{
+	resp, err := svc.kvService.Delete(tenantctx.WithSystem(context.Background()), &DeleteRequest{
 		EntityType: "user",
 		ID:         1,
 	})
@@ -2168,7 +2168,7 @@ func TestListEntityTypes_BuildTenantPrefixError(t *testing.T) {
 	svc.initMetrics()
 	svc.kvService = &kvService{svc: svc}
 
-	resp, err := svc.kvService.ListEntityTypes(context.Background(), &ListEntityTypesRequest{})
+	resp, err := svc.kvService.ListEntityTypes(tenantctx.WithSystem(context.Background()), &ListEntityTypesRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 }
@@ -2189,7 +2189,7 @@ func TestListEntityTypes_RaftError_WithMetrics(t *testing.T) {
 	svc.initMetrics()
 	svc.kvService = &kvService{svc: svc}
 
-	resp, err := svc.kvService.ListEntityTypes(context.Background(), &ListEntityTypesRequest{})
+	resp, err := svc.kvService.ListEntityTypes(tenantctx.WithSystem(context.Background()), &ListEntityTypesRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 	var qbErr *errors.QBError
@@ -2209,7 +2209,7 @@ func TestBatchPut_BuildKeyError_WithMetrics(t *testing.T) {
 	svc.initMetrics()
 	svc.batchService = &batchService{svc: svc}
 
-	resp, err := svc.batchService.BatchPut(context.Background(), &BatchPutRequest{
+	resp, err := svc.batchService.BatchPut(tenantctx.WithSystem(context.Background()), &BatchPutRequest{
 		Requests: []*PutRequest{{EntityType: "user", ID: 1, Data: []byte(`{}`)}},
 	})
 	require.Error(t, err)
@@ -2228,7 +2228,7 @@ func TestBatchDelete_BuildKeyError_WithMetrics(t *testing.T) {
 	svc.initMetrics()
 	svc.batchService = &batchService{svc: svc}
 
-	resp, err := svc.batchService.BatchDelete(context.Background(), &BatchDeleteRequest{
+	resp, err := svc.batchService.BatchDelete(tenantctx.WithSystem(context.Background()), &BatchDeleteRequest{
 		Requests: []*DeleteRequest{{EntityType: "user", ID: 1}},
 	})
 	require.Error(t, err)
@@ -2246,7 +2246,7 @@ func TestAggregate_WithMetrics_RaftError(t *testing.T) {
 	svc.initMetrics()
 	tsSvc := &timeSeriesService{svc: svc}
 
-	resp, err := tsSvc.Aggregate(context.Background(), &AggregateRequest{
+	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), &AggregateRequest{
 		EntityType: "metrics",
 		StartTime:  1,
 		EndTime:    100,
@@ -2269,7 +2269,7 @@ func TestAggregate_WithMetrics_InvalidInput(t *testing.T) {
 	svc.initMetrics()
 	tsSvc := &timeSeriesService{svc: svc}
 
-	resp, err := tsSvc.Aggregate(context.Background(), nil)
+	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 }
@@ -2290,7 +2290,7 @@ func TestAggregate_WithMetrics_Success(t *testing.T) {
 	svc.initMetrics()
 	tsSvc := &timeSeriesService{svc: svc}
 
-	resp, err := tsSvc.Aggregate(context.Background(), &AggregateRequest{
+	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), &AggregateRequest{
 		EntityType: "metrics",
 		StartTime:  1,
 		EndTime:    100,
@@ -2313,7 +2313,7 @@ func TestTimeSeriesQuery_WithMetrics_RaftError(t *testing.T) {
 	tsSvc := &timeSeriesService{svc: svc}
 
 	stream := make(chan *TimeSeriesQueryResponse, 1)
-	err := tsSvc.TimeSeriesQuery(context.Background(), &TimeSeriesQueryRequest{
+	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), &TimeSeriesQueryRequest{
 		EntityType: "metrics",
 		StartTime:  1,
 		EndTime:    100,
@@ -2336,7 +2336,7 @@ func TestTimeSeriesQuery_WithMetrics_InvalidInput(t *testing.T) {
 	tsSvc := &timeSeriesService{svc: svc}
 
 	stream := make(chan *TimeSeriesQueryResponse, 1)
-	err := tsSvc.TimeSeriesQuery(context.Background(), nil, stream)
+	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), nil, stream)
 	require.Error(t, err)
 }
 
@@ -2355,7 +2355,7 @@ func TestTimeSeriesQuery_WithMetrics_Success(t *testing.T) {
 	tsSvc := &timeSeriesService{svc: svc}
 
 	stream := make(chan *TimeSeriesQueryResponse, 10)
-	err := tsSvc.TimeSeriesQuery(context.Background(), &TimeSeriesQueryRequest{
+	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), &TimeSeriesQueryRequest{
 		EntityType: "metrics",
 		StartTime:  1,
 		EndTime:    100,
@@ -2373,7 +2373,7 @@ func TestUpdateCacheConfig_NonCacheManagerType(t *testing.T) {
 	cacheSvc := &cacheService{svc: svc}
 
 	l1Size := 1024
-	resp, err := cacheSvc.UpdateCacheConfig(context.Background(), &UpdateCacheConfigRequest{
+	resp, err := cacheSvc.UpdateCacheConfig(tenantctx.WithSystem(context.Background()), &UpdateCacheConfigRequest{
 		L1Size: &l1Size,
 	})
 	require.Error(t, err)
@@ -2412,7 +2412,7 @@ func TestWatch_NilRequest_WithMetrics(t *testing.T) {
 	svc.kvService = &kvService{svc: svc}
 
 	stream := make(chan *WatchResponse, 1)
-	_, err := svc.kvService.Watch(context.Background(), nil, stream)
+	_, err := svc.kvService.Watch(tenantctx.WithSystem(context.Background()), nil, stream)
 	require.Error(t, err)
 	var qbErr *errors.QBError
 	require.ErrorAs(t, err, &qbErr)
@@ -2431,7 +2431,7 @@ func TestWatch_EmptyKey_WithMetrics(t *testing.T) {
 	svc.kvService = &kvService{svc: svc}
 
 	stream := make(chan *WatchResponse, 1)
-	_, err := svc.kvService.Watch(context.Background(), &WatchRequest{Key: nil}, stream)
+	_, err := svc.kvService.Watch(tenantctx.WithSystem(context.Background()), &WatchRequest{Key: nil}, stream)
 	require.Error(t, err)
 	var qbErr *errors.QBError
 	require.ErrorAs(t, err, &qbErr)
@@ -2449,7 +2449,7 @@ func TestWatch_NilStream_WithMetrics(t *testing.T) {
 	svc.initMetrics()
 	svc.kvService = &kvService{svc: svc}
 
-	_, err := svc.kvService.Watch(context.Background(), &WatchRequest{Key: []byte("test")}, nil)
+	_, err := svc.kvService.Watch(tenantctx.WithSystem(context.Background()), &WatchRequest{Key: []byte("test")}, nil)
 	require.Error(t, err)
 	var qbErr *errors.QBError
 	require.ErrorAs(t, err, &qbErr)
@@ -2574,7 +2574,7 @@ func TestOIDCAuthorize_RejectsPasswordGrant(t *testing.T) {
 	svc := &quicBaaS{logger: log}
 	authSvc := &authService{svc: svc}
 
-	_, err := authSvc.Login(context.Background(), &LoginRequest{Username: "user"})
+	_, err := authSvc.Login(tenantctx.WithSystem(context.Background()), &LoginRequest{Username: "user"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "password-based login")
 }
@@ -2584,7 +2584,7 @@ func Test81_ClusterService_RebalanceCluster_NilRequestPath(t *testing.T) {
 	svc := &quicBaaS{logger: log, raftNode: &boost81RaftNode{}}
 	clusterSvc := &clusterService{svc: svc}
 
-	resp, err := clusterSvc.RebalanceCluster(context.Background(), nil)
+	resp, err := clusterSvc.RebalanceCluster(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -2604,7 +2604,7 @@ func Test81_BatchService_BatchPut_NilRequestPath(t *testing.T) {
 	}
 	batchSvc := &batchService{svc: svc}
 
-	resp, err := batchSvc.BatchPut(context.Background(), nil)
+	resp, err := batchSvc.BatchPut(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -2624,7 +2624,7 @@ func Test81_BatchService_BatchPut_EmptyRequests(t *testing.T) {
 	}
 	batchSvc := &batchService{svc: svc}
 
-	resp, err := batchSvc.BatchPut(context.Background(), &BatchPutRequest{
+	resp, err := batchSvc.BatchPut(tenantctx.WithSystem(context.Background()), &BatchPutRequest{
 		Requests: []*PutRequest{},
 	})
 	require.Error(t, err)
@@ -2646,7 +2646,7 @@ func Test81_BatchService_BatchGet_NilRequestPath(t *testing.T) {
 	}
 	batchSvc := &batchService{svc: svc}
 
-	resp, err := batchSvc.BatchGet(context.Background(), nil)
+	resp, err := batchSvc.BatchGet(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -2666,7 +2666,7 @@ func Test81_BatchService_BatchGet_EmptyRequests(t *testing.T) {
 	}
 	batchSvc := &batchService{svc: svc}
 
-	resp, err := batchSvc.BatchGet(context.Background(), &BatchGetRequest{
+	resp, err := batchSvc.BatchGet(tenantctx.WithSystem(context.Background()), &BatchGetRequest{
 		Requests: []*GetRequest{},
 	})
 	require.Error(t, err)
@@ -2688,7 +2688,7 @@ func Test81_BatchService_BatchDelete_NilRequestPath(t *testing.T) {
 	}
 	batchSvc := &batchService{svc: svc}
 
-	resp, err := batchSvc.BatchDelete(context.Background(), nil)
+	resp, err := batchSvc.BatchDelete(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -2708,7 +2708,7 @@ func Test81_BatchService_BatchDelete_EmptyRequests(t *testing.T) {
 	}
 	batchSvc := &batchService{svc: svc}
 
-	resp, err := batchSvc.BatchDelete(context.Background(), &BatchDeleteRequest{
+	resp, err := batchSvc.BatchDelete(tenantctx.WithSystem(context.Background()), &BatchDeleteRequest{
 		Requests: []*DeleteRequest{},
 	})
 	require.Error(t, err)
@@ -2726,7 +2726,7 @@ func Test81_KVService_Watch_NilRequestPath(t *testing.T) {
 	kvSvc := &kvService{svc: svc}
 
 	stream := make(chan *WatchResponse, 10)
-	watchID, err := kvSvc.Watch(context.Background(), nil, stream)
+	watchID, err := kvSvc.Watch(tenantctx.WithSystem(context.Background()), nil, stream)
 	require.Error(t, err)
 	assert.Equal(t, int64(0), watchID)
 
@@ -2742,7 +2742,7 @@ func Test81_KVService_Watch_EmptyKeyPath(t *testing.T) {
 	kvSvc := &kvService{svc: svc}
 
 	stream := make(chan *WatchResponse, 10)
-	watchID, err := kvSvc.Watch(context.Background(), &WatchRequest{Key: []byte{}}, stream)
+	watchID, err := kvSvc.Watch(tenantctx.WithSystem(context.Background()), &WatchRequest{Key: []byte{}}, stream)
 	require.Error(t, err)
 	assert.Equal(t, int64(0), watchID)
 
@@ -2757,7 +2757,7 @@ func Test81_KVService_Watch_NilStreamPath(t *testing.T) {
 	svc := &quicBaaS{logger: log}
 	kvSvc := &kvService{svc: svc}
 
-	watchID, err := kvSvc.Watch(context.Background(), &WatchRequest{Key: []byte("test")}, nil)
+	watchID, err := kvSvc.Watch(tenantctx.WithSystem(context.Background()), &WatchRequest{Key: []byte("test")}, nil)
 	require.Error(t, err)
 	assert.Equal(t, int64(0), watchID)
 
@@ -2858,7 +2858,7 @@ func TestKVService_Watch_WatchManagerError(t *testing.T) {
 	kvSvc := &kvService{svc: svc}
 
 	// Test with nil context that gets canceled immediately
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 	cancel() // Cancel immediately
 
 	stream := make(chan *WatchResponse, 10)
@@ -2882,7 +2882,7 @@ func TestKVService_Watch_EventTypeDelete(t *testing.T) {
 	}
 	kvSvc := &kvService{svc: svc}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 	defer cancel()
 
 	stream := make(chan *WatchResponse, 10)
@@ -2923,7 +2923,7 @@ func TestKVService_Watch_EventFilterSkip(t *testing.T) {
 	}
 	kvSvc := &kvService{svc: svc}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 	defer cancel()
 
 	stream := make(chan *WatchResponse, 10)
@@ -2967,7 +2967,7 @@ func TestKVService_Watch_WithPrefixOption(t *testing.T) {
 	}
 	kvSvc := &kvService{svc: svc}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 	defer cancel()
 
 	stream := make(chan *WatchResponse, 10)
@@ -2996,7 +2996,7 @@ func TestBackupService_CreateBackup_ManagerReturnsInvalidType(t *testing.T) {
 	svc := createTestService(t, withBackupManager(mockBackup))
 	defer svc.Close()
 
-	resp, err := svc.CreateBackup(context.Background(), &CreateBackupRequest{
+	resp, err := svc.CreateBackup(tenantctx.WithSystem(context.Background()), &CreateBackupRequest{
 		Name: "test-backup",
 	})
 	require.Error(t, err)
@@ -3019,7 +3019,7 @@ func TestBackupService_CreateBackup_IncrementalType(t *testing.T) {
 	svc := createTestService(t, withBackupManager(mockBackup))
 	defer svc.Close()
 
-	resp, err := svc.CreateBackup(context.Background(), &CreateBackupRequest{
+	resp, err := svc.CreateBackup(tenantctx.WithSystem(context.Background()), &CreateBackupRequest{
 		Name: "incremental",
 	})
 	require.NoError(t, err)
@@ -3036,7 +3036,7 @@ func TestBackupService_CreateBackup_ManagerError(t *testing.T) {
 	svc := createTestService(t, withBackupManager(mockBackup))
 	defer svc.Close()
 
-	resp, err := svc.CreateBackup(context.Background(), &CreateBackupRequest{
+	resp, err := svc.CreateBackup(tenantctx.WithSystem(context.Background()), &CreateBackupRequest{
 		Name: "test-backup",
 	})
 	require.Error(t, err)
@@ -3053,7 +3053,7 @@ func TestBackupService_ListBackups_ManagerReturnsInvalidType(t *testing.T) {
 	svc := createTestService(t, withBackupManager(mockBackup))
 	defer svc.Close()
 
-	resp, err := svc.ListBackups(context.Background(), &ListBackupsRequest{})
+	resp, err := svc.ListBackups(tenantctx.WithSystem(context.Background()), &ListBackupsRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 	assert.Contains(t, err.Error(), "backup list must be *backup.BackupList")
@@ -3068,7 +3068,7 @@ func TestBackupService_ListBackups_ManagerError(t *testing.T) {
 	svc := createTestService(t, withBackupManager(mockBackup))
 	defer svc.Close()
 
-	resp, err := svc.ListBackups(context.Background(), &ListBackupsRequest{})
+	resp, err := svc.ListBackups(tenantctx.WithSystem(context.Background()), &ListBackupsRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 	assert.Contains(t, err.Error(), "list backups failed")
@@ -3097,7 +3097,7 @@ func TestBackupService_ListBackups_WithShards(t *testing.T) {
 	svc := createTestService(t, withBackupManager(mockBackup))
 	defer svc.Close()
 
-	resp, err := svc.ListBackups(context.Background(), &ListBackupsRequest{})
+	resp, err := svc.ListBackups(tenantctx.WithSystem(context.Background()), &ListBackupsRequest{})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	require.Len(t, resp.Backups, 1)
@@ -3113,7 +3113,7 @@ func TestBackupService_RestoreBackup_ManagerError(t *testing.T) {
 	svc := createTestService(t, withBackupManager(mockBackup))
 	defer svc.Close()
 
-	resp, err := svc.RestoreBackup(context.Background(), &RestoreBackupRequest{
+	resp, err := svc.RestoreBackup(tenantctx.WithSystem(context.Background()), &RestoreBackupRequest{
 		BackupID: "backup-123",
 	})
 	require.Error(t, err)
@@ -3130,7 +3130,7 @@ func TestBackupService_DeleteBackup_ManagerError(t *testing.T) {
 	svc := createTestService(t, withBackupManager(mockBackup))
 	defer svc.Close()
 
-	resp, err := svc.DeleteBackup(context.Background(), &DeleteBackupRequest{
+	resp, err := svc.DeleteBackup(tenantctx.WithSystem(context.Background()), &DeleteBackupRequest{
 		BackupID: "backup-123",
 	})
 	require.Error(t, err)
@@ -3148,7 +3148,7 @@ func TestWatch_NilRequest(t *testing.T) {
 	svc.kvService = &kvService{svc: svc}
 
 	stream := make(chan *WatchResponse, 1)
-	_, err := svc.kvService.Watch(context.Background(), nil, stream)
+	_, err := svc.kvService.Watch(tenantctx.WithSystem(context.Background()), nil, stream)
 	require.Error(t, err)
 	var qbErr *errors.QBError
 	require.ErrorAs(t, err, &qbErr)
@@ -3165,7 +3165,7 @@ func TestWatch_EmptyKey(t *testing.T) {
 	svc.kvService = &kvService{svc: svc}
 
 	stream := make(chan *WatchResponse, 1)
-	_, err := svc.kvService.Watch(context.Background(), &WatchRequest{Key: nil}, stream)
+	_, err := svc.kvService.Watch(tenantctx.WithSystem(context.Background()), &WatchRequest{Key: nil}, stream)
 	require.Error(t, err)
 	var qbErr *errors.QBError
 	require.ErrorAs(t, err, &qbErr)
@@ -3181,7 +3181,7 @@ func TestWatch_NilStream(t *testing.T) {
 	}
 	svc.kvService = &kvService{svc: svc}
 
-	_, err := svc.kvService.Watch(context.Background(), &WatchRequest{Key: []byte("test-key")}, nil)
+	_, err := svc.kvService.Watch(tenantctx.WithSystem(context.Background()), &WatchRequest{Key: []byte("test-key")}, nil)
 	require.Error(t, err)
 	var qbErr *errors.QBError
 	require.ErrorAs(t, err, &qbErr)
@@ -3199,7 +3199,7 @@ func TestWatch_SuccessWithEventForwarding(t *testing.T) {
 	svc.kvService = &kvService{svc: svc}
 
 	stream := make(chan *WatchResponse, 10)
-	watchID, err := svc.kvService.Watch(context.Background(), &WatchRequest{Key: []byte("events/key1")}, stream)
+	watchID, err := svc.kvService.Watch(tenantctx.WithSystem(context.Background()), &WatchRequest{Key: []byte("events/key1")}, stream)
 	require.NoError(t, err)
 	assert.NotZero(t, watchID)
 
@@ -3235,7 +3235,7 @@ func TestWatch_PrefixWatch(t *testing.T) {
 	svc.kvService = &kvService{svc: svc}
 
 	stream := make(chan *WatchResponse, 10)
-	watchID, err := svc.kvService.Watch(context.Background(), &WatchRequest{
+	watchID, err := svc.kvService.Watch(tenantctx.WithSystem(context.Background()), &WatchRequest{
 		Key:      []byte("prefix/"),
 		IsPrefix: true,
 	}, stream)
@@ -3269,7 +3269,7 @@ func TestWatch_ContextCancellationDuringSetup(t *testing.T) {
 	svc.kvService = &kvService{svc: svc}
 
 	// Use an already-cancelled context so the initial send to the stream fails
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 	cancel()
 
 	// Stream with no buffer to block the initial created message
@@ -3290,7 +3290,7 @@ func TestWatch_DeleteEvent(t *testing.T) {
 	svc.kvService = &kvService{svc: svc}
 
 	stream := make(chan *WatchResponse, 10)
-	watchID, err := svc.kvService.Watch(context.Background(), &WatchRequest{Key: []byte("del/key")}, stream)
+	watchID, err := svc.kvService.Watch(tenantctx.WithSystem(context.Background()), &WatchRequest{Key: []byte("del/key")}, stream)
 	require.NoError(t, err)
 	assert.NotZero(t, watchID)
 
@@ -3321,7 +3321,7 @@ func TestWatch_EventFilterSkipsPut(t *testing.T) {
 	svc.kvService = &kvService{svc: svc}
 
 	stream := make(chan *WatchResponse, 10)
-	watchID, err := svc.kvService.Watch(context.Background(), &WatchRequest{
+	watchID, err := svc.kvService.Watch(tenantctx.WithSystem(context.Background()), &WatchRequest{
 		Key:     []byte("filter/key"),
 		Filters: []WatchEventType{WatchEventTypePut}, // filter out PUT events
 	}, stream)
@@ -3366,7 +3366,7 @@ func TestList_ContextCancelDuringStream(t *testing.T) {
 	}
 	svc.kvService = &kvService{svc: svc}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 
 	// Use unbuffered channel so List blocks when trying to send the second batch
 	stream := make(chan *ListResponse)
@@ -3409,7 +3409,7 @@ func TestDelete_WithCacheInvalidation(t *testing.T) {
 	}
 	svc.kvService = &kvService{svc: svc}
 
-	resp, err := svc.kvService.Delete(context.Background(), &DeleteRequest{
+	resp, err := svc.kvService.Delete(tenantctx.WithSystem(context.Background()), &DeleteRequest{
 		EntityType: "users",
 		ID:         42,
 	})
@@ -3439,7 +3439,7 @@ func TestPut_WithCacheUpdate(t *testing.T) {
 	}
 	svc.kvService = &kvService{svc: svc}
 
-	resp, err := svc.kvService.Put(context.Background(), &PutRequest{
+	resp, err := svc.kvService.Put(tenantctx.WithSystem(context.Background()), &PutRequest{
 		EntityType: "products",
 		ID:         7,
 		Data:       []byte(`{"name":"widget"}`),
@@ -3568,7 +3568,7 @@ func TestRebalanceCluster_NilQRDBClient(t *testing.T) {
 	}
 	svc.clusterService = &clusterService{svc: svc}
 
-	resp, err := svc.clusterService.RebalanceCluster(context.Background(), &RebalanceClusterRequest{})
+	resp, err := svc.clusterService.RebalanceCluster(tenantctx.WithSystem(context.Background()), &RebalanceClusterRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 	var qbErr *errors.QBError
@@ -3585,7 +3585,7 @@ func TestRebalanceCluster_WithLogger(t *testing.T) {
 	}
 	svc.clusterService = &clusterService{svc: svc}
 
-	resp, err := svc.clusterService.RebalanceCluster(context.Background(), &RebalanceClusterRequest{
+	resp, err := svc.clusterService.RebalanceCluster(tenantctx.WithSystem(context.Background()), &RebalanceClusterRequest{
 		TargetShardCount: 4,
 		Strategy:         "round-robin",
 	})
@@ -3611,7 +3611,7 @@ func TestList_MalformedKeySkipped(t *testing.T) {
 	svc.kvService = &kvService{svc: svc}
 
 	stream := make(chan *ListResponse, 10)
-	err := svc.kvService.List(context.Background(), &ListRequest{
+	err := svc.kvService.List(tenantctx.WithSystem(context.Background()), &ListRequest{
 		EntityType: "users",
 		PageSize:   100,
 	}, stream)
@@ -3645,7 +3645,7 @@ func TestList_EmptyValueIncluded(t *testing.T) {
 	svc.kvService = &kvService{svc: svc}
 
 	stream := make(chan *ListResponse, 10)
-	err := svc.kvService.List(context.Background(), &ListRequest{
+	err := svc.kvService.List(tenantctx.WithSystem(context.Background()), &ListRequest{
 		EntityType: "users",
 		PageSize:   100,
 	}, stream)
@@ -3669,7 +3669,7 @@ func TestAggregate_NilRequest(t *testing.T) {
 	svc := &quicBaaS{logger: log}
 	tsSvc := &timeSeriesService{svc: svc}
 
-	_, err := tsSvc.Aggregate(context.Background(), nil)
+	_, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 
 	qbErr, ok := err.(*errors.QBError)
@@ -3687,7 +3687,7 @@ func TestAggregate_EmptyEntityType(t *testing.T) {
 		StartTime:  1,
 		EndTime:    2,
 	}
-	_, err := tsSvc.Aggregate(context.Background(), req)
+	_, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 
 	qbErr, ok := err.(*errors.QBError)
@@ -3705,7 +3705,7 @@ func TestAggregate_InvalidStartTime(t *testing.T) {
 		StartTime:  0,
 		EndTime:    100,
 	}
-	_, err := tsSvc.Aggregate(context.Background(), req)
+	_, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 
 	qbErr, ok := err.(*errors.QBError)
@@ -3723,7 +3723,7 @@ func TestAggregate_InvalidEndTime(t *testing.T) {
 		StartTime:  100,
 		EndTime:    0,
 	}
-	_, err := tsSvc.Aggregate(context.Background(), req)
+	_, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 
 	qbErr, ok := err.(*errors.QBError)
@@ -3741,7 +3741,7 @@ func TestAggregate_EndTimeBeforeStartTime(t *testing.T) {
 		StartTime:  100,
 		EndTime:    50,
 	}
-	_, err := tsSvc.Aggregate(context.Background(), req)
+	_, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 
 	qbErr, ok := err.(*errors.QBError)
@@ -3759,7 +3759,7 @@ func TestAggregate_NilRaftNode(t *testing.T) {
 		StartTime:  1,
 		EndTime:    100,
 	}
-	_, err := tsSvc.Aggregate(context.Background(), req)
+	_, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 
 	qbErr, ok := err.(*errors.QBError)
@@ -3778,7 +3778,7 @@ func TestAggregate_RaftReadError(t *testing.T) {
 		StartTime:  1,
 		EndTime:    100,
 	}
-	_, err := tsSvc.Aggregate(context.Background(), req)
+	_, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 
 	qbErr, ok := err.(*errors.QBError)
@@ -3805,7 +3805,7 @@ func TestAggregate_SuccessSum(t *testing.T) {
 		EndTime:    100,
 		Function:   AggregateFunctionSum,
 	}
-	resp, err := tsSvc.Aggregate(context.Background(), req)
+	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	assert.Equal(t, float64(300), resp.Result)
 	assert.Equal(t, uint64(2), resp.Count)
@@ -3829,7 +3829,7 @@ func TestAggregate_SuccessAvg(t *testing.T) {
 		EndTime:    100,
 		Function:   AggregateFunctionAvg,
 	}
-	resp, err := tsSvc.Aggregate(context.Background(), req)
+	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	assert.Equal(t, float64(150), resp.Result)
 	assert.Equal(t, uint64(2), resp.Count)
@@ -3853,7 +3853,7 @@ func TestAggregate_SuccessMin(t *testing.T) {
 		EndTime:    100,
 		Function:   AggregateFunctionMin,
 	}
-	resp, err := tsSvc.Aggregate(context.Background(), req)
+	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	assert.Equal(t, float64(50), resp.Result)
 	assert.Equal(t, uint64(2), resp.Count)
@@ -3877,7 +3877,7 @@ func TestAggregate_SuccessMax(t *testing.T) {
 		EndTime:    100,
 		Function:   AggregateFunctionMax,
 	}
-	resp, err := tsSvc.Aggregate(context.Background(), req)
+	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	assert.Equal(t, float64(200), resp.Result)
 	assert.Equal(t, uint64(2), resp.Count)
@@ -3901,7 +3901,7 @@ func TestAggregate_SuccessCount(t *testing.T) {
 		EndTime:    100,
 		Function:   AggregateFunctionCount,
 	}
-	resp, err := tsSvc.Aggregate(context.Background(), req)
+	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	assert.Equal(t, float64(2), resp.Result)
 	assert.Equal(t, uint64(2), resp.Count)
@@ -3931,7 +3931,7 @@ func TestAggregate_TimeRangeFiltering(t *testing.T) {
 		EndTime:    100,
 		Function:   AggregateFunctionSum,
 	}
-	resp, err := tsSvc.Aggregate(context.Background(), req)
+	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	assert.Equal(t, float64(200), resp.Result)
 	assert.Equal(t, uint64(1), resp.Count)
@@ -3958,7 +3958,7 @@ func TestAggregate_AlternativeTimestampFields(t *testing.T) {
 		EndTime:    100,
 		Function:   AggregateFunctionSum,
 	}
-	resp, err := tsSvc.Aggregate(context.Background(), req)
+	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	assert.Equal(t, float64(300), resp.Result)
 	assert.Equal(t, uint64(2), resp.Count)
@@ -3984,7 +3984,7 @@ func TestAggregate_CustomFieldName(t *testing.T) {
 		EndTime:    100,
 		Function:   AggregateFunctionAvg,
 	}
-	resp, err := tsSvc.Aggregate(context.Background(), req)
+	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	assert.Equal(t, float64(73), resp.Result)
 	assert.Equal(t, uint64(2), resp.Count)
@@ -4007,7 +4007,7 @@ func TestAggregate_SkipInvalidJSON(t *testing.T) {
 		EndTime:    100,
 		Function:   AggregateFunctionSum,
 	}
-	resp, err := tsSvc.Aggregate(context.Background(), req)
+	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	assert.Equal(t, float64(100), resp.Result)
 	assert.Equal(t, uint64(1), resp.Count)
@@ -4026,7 +4026,7 @@ func TestAggregate_EmptyResult(t *testing.T) {
 		EndTime:    100,
 		Function:   AggregateFunctionSum,
 	}
-	resp, err := tsSvc.Aggregate(context.Background(), req)
+	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	assert.Equal(t, float64(0), resp.Result)
 	assert.Equal(t, uint64(0), resp.Count)
@@ -4038,7 +4038,7 @@ func TestTimeSeriesQuery_NilRequest(t *testing.T) {
 	tsSvc := &timeSeriesService{svc: svc}
 
 	stream := make(chan *TimeSeriesQueryResponse, 1)
-	err := tsSvc.TimeSeriesQuery(context.Background(), nil, stream)
+	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), nil, stream)
 	require.Error(t, err)
 
 	qbErr, ok := err.(*errors.QBError)
@@ -4057,7 +4057,7 @@ func TestTimeSeriesQuery_EmptyEntityType(t *testing.T) {
 		EndTime:    2,
 	}
 	stream := make(chan *TimeSeriesQueryResponse, 1)
-	err := tsSvc.TimeSeriesQuery(context.Background(), req, stream)
+	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), req, stream)
 	require.Error(t, err)
 
 	qbErr, ok := err.(*errors.QBError)
@@ -4076,7 +4076,7 @@ func TestTimeSeriesQuery_InvalidStartTime(t *testing.T) {
 		EndTime:    100,
 	}
 	stream := make(chan *TimeSeriesQueryResponse, 1)
-	err := tsSvc.TimeSeriesQuery(context.Background(), req, stream)
+	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), req, stream)
 	require.Error(t, err)
 
 	qbErr, ok := err.(*errors.QBError)
@@ -4095,7 +4095,7 @@ func TestTimeSeriesQuery_InvalidEndTime(t *testing.T) {
 		EndTime:    0,
 	}
 	stream := make(chan *TimeSeriesQueryResponse, 1)
-	err := tsSvc.TimeSeriesQuery(context.Background(), req, stream)
+	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), req, stream)
 	require.Error(t, err)
 
 	qbErr, ok := err.(*errors.QBError)
@@ -4114,7 +4114,7 @@ func TestTimeSeriesQuery_EndTimeBeforeStartTime(t *testing.T) {
 		EndTime:    50,
 	}
 	stream := make(chan *TimeSeriesQueryResponse, 1)
-	err := tsSvc.TimeSeriesQuery(context.Background(), req, stream)
+	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), req, stream)
 	require.Error(t, err)
 
 	qbErr, ok := err.(*errors.QBError)
@@ -4133,7 +4133,7 @@ func TestTimeSeriesQuery_NilRaftNode(t *testing.T) {
 		EndTime:    100,
 	}
 	stream := make(chan *TimeSeriesQueryResponse, 1)
-	err := tsSvc.TimeSeriesQuery(context.Background(), req, stream)
+	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), req, stream)
 	require.Error(t, err)
 
 	qbErr, ok := err.(*errors.QBError)
@@ -4153,7 +4153,7 @@ func TestTimeSeriesQuery_RaftReadError(t *testing.T) {
 		EndTime:    100,
 	}
 	stream := make(chan *TimeSeriesQueryResponse, 1)
-	err := tsSvc.TimeSeriesQuery(context.Background(), req, stream)
+	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), req, stream)
 	require.Error(t, err)
 
 	qbErr, ok := err.(*errors.QBError)
@@ -4188,7 +4188,7 @@ func TestTimeSeriesQuery_Success(t *testing.T) {
 		EndTime:    100,
 	}
 	stream := make(chan *TimeSeriesQueryResponse, 10)
-	err := tsSvc.TimeSeriesQuery(context.Background(), req, stream)
+	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), req, stream)
 	require.NoError(t, err)
 
 	// Read from stream
@@ -4226,7 +4226,7 @@ func TestTimeSeriesQuery_TimeRangeFiltering(t *testing.T) {
 		EndTime:    100,
 	}
 	stream := make(chan *TimeSeriesQueryResponse, 10)
-	err := tsSvc.TimeSeriesQuery(context.Background(), req, stream)
+	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), req, stream)
 	require.NoError(t, err)
 
 	var responses []*TimeSeriesQueryResponse
@@ -4261,7 +4261,7 @@ func TestTimeSeriesQuery_AlternativeTimestampFields(t *testing.T) {
 		EndTime:    100,
 	}
 	stream := make(chan *TimeSeriesQueryResponse, 10)
-	err := tsSvc.TimeSeriesQuery(context.Background(), req, stream)
+	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), req, stream)
 	require.NoError(t, err)
 
 	var responses []*TimeSeriesQueryResponse
@@ -4299,7 +4299,7 @@ func TestTimeSeriesQuery_SkipInvalidEntries(t *testing.T) {
 		EndTime:    100,
 	}
 	stream := make(chan *TimeSeriesQueryResponse, 10)
-	err := tsSvc.TimeSeriesQuery(context.Background(), req, stream)
+	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), req, stream)
 	require.NoError(t, err)
 
 	var responses []*TimeSeriesQueryResponse
@@ -4325,7 +4325,7 @@ func TestTimeSeriesQuery_EmptyResult(t *testing.T) {
 		EndTime:    100,
 	}
 	stream := make(chan *TimeSeriesQueryResponse, 10)
-	err := tsSvc.TimeSeriesQuery(context.Background(), req, stream)
+	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), req, stream)
 	require.NoError(t, err)
 
 	// Stream should be closed
@@ -4356,7 +4356,7 @@ func TestTimeSeriesQuery_MetadataExtraction(t *testing.T) {
 		EndTime:    100,
 	}
 	stream := make(chan *TimeSeriesQueryResponse, 10)
-	err := tsSvc.TimeSeriesQuery(context.Background(), req, stream)
+	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), req, stream)
 	require.NoError(t, err)
 
 	var responses []*TimeSeriesQueryResponse
@@ -4380,7 +4380,7 @@ func TestTimeSeriesQuery_MetadataExtraction(t *testing.T) {
 
 func TestQuicBaaS_GenerateKey_NilService(t *testing.T) {
 	db := &quicBaaS{kmsService: nil}
-	resp, err := db.GenerateKey(context.Background(), &GenerateKeyRequest{})
+	resp, err := db.GenerateKey(tenantctx.WithSystem(context.Background()), &GenerateKeyRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 	var qbErr *errors.QBError
@@ -4391,7 +4391,7 @@ func TestQuicBaaS_GenerateKey_NilService(t *testing.T) {
 
 func TestQuicBaaS_ImportKey_NilService(t *testing.T) {
 	db := &quicBaaS{kmsService: nil}
-	resp, err := db.ImportKey(context.Background(), &ImportKeyRequest{})
+	resp, err := db.ImportKey(tenantctx.WithSystem(context.Background()), &ImportKeyRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 	var qbErr *errors.QBError
@@ -4402,7 +4402,7 @@ func TestQuicBaaS_ImportKey_NilService(t *testing.T) {
 
 func TestQuicBaaS_GetKey_NilService(t *testing.T) {
 	db := &quicBaaS{kmsService: nil}
-	resp, err := db.GetKey(context.Background(), &GetKeyRequest{})
+	resp, err := db.GetKey(tenantctx.WithSystem(context.Background()), &GetKeyRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 	var qbErr *errors.QBError
@@ -4413,7 +4413,7 @@ func TestQuicBaaS_GetKey_NilService(t *testing.T) {
 
 func TestQuicBaaS_ListKeys_NilService(t *testing.T) {
 	db := &quicBaaS{kmsService: nil}
-	resp, err := db.ListKeys(context.Background(), &ListKeysRequest{})
+	resp, err := db.ListKeys(tenantctx.WithSystem(context.Background()), &ListKeysRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 	var qbErr *errors.QBError
@@ -4424,7 +4424,7 @@ func TestQuicBaaS_ListKeys_NilService(t *testing.T) {
 
 func TestQuicBaaS_RotateKey_NilService(t *testing.T) {
 	db := &quicBaaS{kmsService: nil}
-	resp, err := db.RotateKey(context.Background(), &RotateKeyRequest{})
+	resp, err := db.RotateKey(tenantctx.WithSystem(context.Background()), &RotateKeyRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 	var qbErr *errors.QBError
@@ -4435,7 +4435,7 @@ func TestQuicBaaS_RotateKey_NilService(t *testing.T) {
 
 func TestQuicBaaS_RevokeKey_NilService(t *testing.T) {
 	db := &quicBaaS{kmsService: nil}
-	resp, err := db.RevokeKey(context.Background(), &RevokeKeyRequest{})
+	resp, err := db.RevokeKey(tenantctx.WithSystem(context.Background()), &RevokeKeyRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 	var qbErr *errors.QBError
@@ -4446,7 +4446,7 @@ func TestQuicBaaS_RevokeKey_NilService(t *testing.T) {
 
 func TestQuicBaaS_DeleteKey_NilService(t *testing.T) {
 	db := &quicBaaS{kmsService: nil}
-	resp, err := db.DeleteKey(context.Background(), &DeleteKeyRequest{})
+	resp, err := db.DeleteKey(tenantctx.WithSystem(context.Background()), &DeleteKeyRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 	var qbErr *errors.QBError
@@ -4457,7 +4457,7 @@ func TestQuicBaaS_DeleteKey_NilService(t *testing.T) {
 
 func TestQuicBaaS_GetKeyMetadata_NilService(t *testing.T) {
 	db := &quicBaaS{kmsService: nil}
-	resp, err := db.GetKeyMetadata(context.Background(), &GetKeyMetadataRequest{})
+	resp, err := db.GetKeyMetadata(tenantctx.WithSystem(context.Background()), &GetKeyMetadataRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 	var qbErr *errors.QBError
@@ -4468,7 +4468,7 @@ func TestQuicBaaS_GetKeyMetadata_NilService(t *testing.T) {
 
 func TestQuicBaaS_Encrypt_NilService(t *testing.T) {
 	db := &quicBaaS{cryptoService: nil}
-	resp, err := db.Encrypt(context.Background(), &EncryptRequest{})
+	resp, err := db.Encrypt(tenantctx.WithSystem(context.Background()), &EncryptRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 	var qbErr *errors.QBError
@@ -4479,7 +4479,7 @@ func TestQuicBaaS_Encrypt_NilService(t *testing.T) {
 
 func TestQuicBaaS_Decrypt_NilService(t *testing.T) {
 	db := &quicBaaS{cryptoService: nil}
-	resp, err := db.Decrypt(context.Background(), &DecryptRequest{})
+	resp, err := db.Decrypt(tenantctx.WithSystem(context.Background()), &DecryptRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 	var qbErr *errors.QBError
@@ -4512,7 +4512,7 @@ func TestBackupServiceImpl_VerifyBackup_NilManager(t *testing.T) {
 	svc := &quicBaaS{backupMgr: nil}
 	backupSvc := &backupService{svc: svc}
 
-	_, err := backupSvc.VerifyBackup(context.Background(), &VerifyBackupRequest{
+	_, err := backupSvc.VerifyBackup(tenantctx.WithSystem(context.Background()), &VerifyBackupRequest{
 		BackupID: "backup_123",
 	})
 
@@ -4524,7 +4524,7 @@ func TestBatchServiceImpl_BatchGet_EmptyKeys(t *testing.T) {
 	svc := &quicBaaS{}
 	batchSvc := &batchService{svc: svc}
 
-	_, err := batchSvc.BatchGet(context.Background(), &BatchGetRequest{})
+	_, err := batchSvc.BatchGet(tenantctx.WithSystem(context.Background()), &BatchGetRequest{})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "batch")
@@ -4543,7 +4543,7 @@ func TestKVService_Watch_ContextCanceledDuringSend(t *testing.T) {
 	// Create a buffered channel that we'll fill up
 	stream := make(chan *WatchResponse, 1)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 
 	// Start the watch
 	watchID, err := svc.Watch(ctx, req, stream)
@@ -4577,7 +4577,7 @@ func TestKVService_Watch_NilRequestWithMetrics(t *testing.T) {
 	defer svc.Close()
 
 	stream := make(chan *WatchResponse, 10)
-	_, err := svc.Watch(context.Background(), nil, stream)
+	_, err := svc.Watch(tenantctx.WithSystem(context.Background()), nil, stream)
 	require.Error(t, err)
 
 	qbErr, ok := err.(*errors.QBError)
@@ -4596,7 +4596,7 @@ func TestKVService_Watch_EmptyKeyWithMetrics(t *testing.T) {
 	}
 
 	stream := make(chan *WatchResponse, 10)
-	_, err := svc.Watch(context.Background(), req, stream)
+	_, err := svc.Watch(tenantctx.WithSystem(context.Background()), req, stream)
 	require.Error(t, err)
 
 	qbErr, ok := err.(*errors.QBError)
@@ -4614,7 +4614,7 @@ func TestKVService_Watch_NilStreamWithMetrics(t *testing.T) {
 		Key: []byte("test-key"),
 	}
 
-	_, err := svc.Watch(context.Background(), req, nil)
+	_, err := svc.Watch(tenantctx.WithSystem(context.Background()), req, nil)
 	require.Error(t, err)
 
 	qbErr, ok := err.(*errors.QBError)
@@ -4633,7 +4633,7 @@ func TestKVService_Watch_WithMetricsSuccess(t *testing.T) {
 		IsPrefix: false,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(tenantctx.WithSystem(context.Background()), 100*time.Millisecond)
 	defer cancel()
 
 	stream := make(chan *WatchResponse, 10)
@@ -4657,7 +4657,7 @@ func TestBatchService_BatchPut_NilRequestMetrics(t *testing.T) {
 	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB), withEnableMetrics())
 	defer svc.Close()
 
-	resp, err := svc.BatchPut(context.Background(), nil)
+	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -4672,7 +4672,7 @@ func TestBatchService_BatchPut_EmptyRequestWithMetrics(t *testing.T) {
 		Requests: []*PutRequest{},
 	}
 
-	resp, err := svc.BatchPut(context.Background(), req)
+	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "batch cannot be empty")
@@ -4684,7 +4684,7 @@ func TestBatchService_BatchDelete_NilRequestMetrics(t *testing.T) {
 	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB), withEnableMetrics())
 	defer svc.Close()
 
-	resp, err := svc.BatchDelete(context.Background(), nil)
+	resp, err := svc.BatchDelete(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -4699,7 +4699,7 @@ func TestBatchService_BatchDelete_EmptyRequestWithMetrics(t *testing.T) {
 		Requests: []*DeleteRequest{},
 	}
 
-	resp, err := svc.BatchDelete(context.Background(), req)
+	resp, err := svc.BatchDelete(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -4710,7 +4710,7 @@ func TestBatchService_BatchGet_NilRequestMetrics(t *testing.T) {
 	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB), withEnableMetrics())
 	defer svc.Close()
 
-	resp, err := svc.BatchGet(context.Background(), nil)
+	resp, err := svc.BatchGet(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -4725,7 +4725,7 @@ func TestBatchService_BatchGet_EmptyRequestWithMetrics(t *testing.T) {
 		Requests: []*GetRequest{},
 	}
 
-	resp, err := svc.BatchGet(context.Background(), req)
+	resp, err := svc.BatchGet(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -4751,7 +4751,7 @@ func TestBatchService_BatchPut_WithDefaultShardID(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.BatchPut(context.Background(), req)
+	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Len(t, resp.Responses, 1)
@@ -4778,7 +4778,7 @@ func TestBatchService_BatchDelete_WithDefaultShardID(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.BatchDelete(context.Background(), req)
+	resp, err := svc.BatchDelete(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Len(t, resp.Responses, 1)
@@ -4805,7 +4805,7 @@ func TestBatchService_BatchDelete_WithExplicitShardID(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.BatchDelete(context.Background(), req)
+	resp, err := svc.BatchDelete(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -4831,7 +4831,7 @@ func TestBatchService_BatchPut_WithExplicitShardID(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.BatchPut(context.Background(), req)
+	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -4848,7 +4848,7 @@ func TestBatchService_BatchDelete_RaftErrorPath(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.BatchDelete(context.Background(), req)
+	resp, err := svc.BatchDelete(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -4865,7 +4865,7 @@ func TestBatchService_BatchDelete_RaftErrorWithMetrics(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.BatchDelete(context.Background(), req)
+	resp, err := svc.BatchDelete(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -4882,7 +4882,7 @@ func TestBatchService_BatchPut_RaftErrorWithMetrics(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.BatchPut(context.Background(), req)
+	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -4905,7 +4905,7 @@ func TestBatchService_BatchGet_SuccessPath(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.BatchGet(context.Background(), req)
+	resp, err := svc.BatchGet(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Len(t, resp.Responses, 2)
@@ -4927,7 +4927,7 @@ func TestBatchService_BatchGet_SuccessWithMetrics(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.BatchGet(context.Background(), req)
+	resp, err := svc.BatchGet(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -4948,7 +4948,7 @@ func TestBatchService_BatchPut_SuccessWithMetrics(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.BatchPut(context.Background(), req)
+	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -4969,7 +4969,7 @@ func TestBatchService_BatchDelete_SuccessWithMetrics(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.BatchDelete(context.Background(), req)
+	resp, err := svc.BatchDelete(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -4988,7 +4988,7 @@ func TestKVService_ListEntityTypes_ZeroPageSize(t *testing.T) {
 		PageSize: 0, // Should default to 100
 	}
 
-	resp, err := svc.ListEntityTypes(context.Background(), req)
+	resp, err := svc.ListEntityTypes(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -5007,7 +5007,7 @@ func TestKVService_ListEntityTypes_NegativePageSize(t *testing.T) {
 		PageSize: -1, // Should default to 100
 	}
 
-	resp, err := svc.ListEntityTypes(context.Background(), req)
+	resp, err := svc.ListEntityTypes(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -5022,7 +5022,7 @@ func TestKVService_ListEntityTypes_WithMetrics(t *testing.T) {
 	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB), withEnableMetrics())
 	defer svc.Close()
 
-	resp, err := svc.ListEntityTypes(context.Background(), nil)
+	resp, err := svc.ListEntityTypes(tenantctx.WithSystem(context.Background()), nil)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -5033,7 +5033,7 @@ func TestTransactionService_Transaction_NilRequestMetrics(t *testing.T) {
 	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB), withEnableMetrics())
 	defer svc.Close()
 
-	resp, err := svc.Transaction(context.Background(), nil)
+	resp, err := svc.Transaction(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -5050,7 +5050,7 @@ func TestTransactionService_Transaction_EmptyOperationsReturnsEmpty(t *testing.T
 	}
 
 	// Empty operations returns success with empty result (not an error)
-	resp, err := svc.Transaction(context.Background(), req)
+	resp, err := svc.Transaction(tenantctx.WithSystem(context.Background()), req)
 	// Check that it either returns an error OR returns success with empty responses
 	if err != nil {
 		// Error case is valid
@@ -5087,7 +5087,7 @@ func TestTransactionService_Transaction_WithDefaultShardID(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.Transaction(context.Background(), req)
+	resp, err := svc.Transaction(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -5099,7 +5099,7 @@ func TestKVService_List_NilRequestPath(t *testing.T) {
 	defer svc.Close()
 
 	stream := make(chan *ListResponse, 10)
-	err := svc.List(context.Background(), nil, stream)
+	err := svc.List(tenantctx.WithSystem(context.Background()), nil, stream)
 	require.Error(t, err)
 
 	qbErr, ok := err.(*errors.QBError)
@@ -5114,7 +5114,7 @@ func TestKVService_List_NilRequestWithMetrics(t *testing.T) {
 	defer svc.Close()
 
 	stream := make(chan *ListResponse, 10)
-	err := svc.List(context.Background(), nil, stream)
+	err := svc.List(tenantctx.WithSystem(context.Background()), nil, stream)
 	require.Error(t, err)
 }
 
@@ -5129,7 +5129,7 @@ func TestKVService_List_EmptyEntityTypePath(t *testing.T) {
 	}
 
 	stream := make(chan *ListResponse, 10)
-	err := svc.List(context.Background(), req, stream)
+	err := svc.List(tenantctx.WithSystem(context.Background()), req, stream)
 	require.Error(t, err)
 }
 
@@ -5144,7 +5144,7 @@ func TestKVService_List_EmptyEntityTypeWithMetrics(t *testing.T) {
 	}
 
 	stream := make(chan *ListResponse, 10)
-	err := svc.List(context.Background(), req, stream)
+	err := svc.List(tenantctx.WithSystem(context.Background()), req, stream)
 	require.Error(t, err)
 }
 
@@ -5154,7 +5154,7 @@ func TestKVService_Delete_NilRequestPath(t *testing.T) {
 	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
 	defer svc.Close()
 
-	resp, err := svc.Delete(context.Background(), nil)
+	resp, err := svc.Delete(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
 
@@ -5169,7 +5169,7 @@ func TestKVService_Delete_NilRequestWithMetrics(t *testing.T) {
 	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB), withEnableMetrics())
 	defer svc.Close()
 
-	resp, err := svc.Delete(context.Background(), nil)
+	resp, err := svc.Delete(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -5185,7 +5185,7 @@ func TestKVService_Delete_EmptyEntityTypePath(t *testing.T) {
 		ID:         1,
 	}
 
-	resp, err := svc.Delete(context.Background(), req)
+	resp, err := svc.Delete(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -5196,7 +5196,7 @@ func TestKVService_Put_NilRequestPath(t *testing.T) {
 	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
 	defer svc.Close()
 
-	resp, err := svc.Put(context.Background(), nil)
+	resp, err := svc.Put(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
 
@@ -5211,7 +5211,7 @@ func TestKVService_Put_NilRequestWithMetrics(t *testing.T) {
 	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB), withEnableMetrics())
 	defer svc.Close()
 
-	resp, err := svc.Put(context.Background(), nil)
+	resp, err := svc.Put(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -5228,7 +5228,7 @@ func TestKVService_Put_EmptyEntityTypePath(t *testing.T) {
 		Data:       []byte(`{}`),
 	}
 
-	resp, err := svc.Put(context.Background(), req)
+	resp, err := svc.Put(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -5250,7 +5250,7 @@ func TestKVService_Put_NilDataAllowed(t *testing.T) {
 	}
 
 	// If the implementation allows nil data, this should succeed
-	resp, err := svc.Put(context.Background(), req)
+	resp, err := svc.Put(tenantctx.WithSystem(context.Background()), req)
 	// Either success OR error is acceptable based on implementation
 	if err != nil {
 		require.Nil(t, resp)
@@ -5265,7 +5265,7 @@ func TestKVService_Get_NilRequestPath(t *testing.T) {
 	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
 	defer svc.Close()
 
-	resp, err := svc.Get(context.Background(), nil)
+	resp, err := svc.Get(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
 
@@ -5280,7 +5280,7 @@ func TestKVService_Get_NilRequestWithMetrics(t *testing.T) {
 	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB), withEnableMetrics())
 	defer svc.Close()
 
-	resp, err := svc.Get(context.Background(), nil)
+	resp, err := svc.Get(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -5296,7 +5296,7 @@ func TestKVService_Get_EmptyEntityTypePath(t *testing.T) {
 		ID:         1,
 	}
 
-	resp, err := svc.Get(context.Background(), req)
+	resp, err := svc.Get(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -5306,7 +5306,7 @@ func TestKVService_Put_NilRequest(t *testing.T) {
 	svc := createTestService(t, withMockRaftNode(mockRaft))
 	defer svc.Close()
 
-	resp, err := svc.Put(context.Background(), nil)
+	resp, err := svc.Put(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "request cannot be nil")
@@ -5323,7 +5323,7 @@ func TestKVService_Put_EmptyEntityType(t *testing.T) {
 		Data:       []byte(`{"name":"test"}`),
 	}
 
-	resp, err := svc.Put(context.Background(), req)
+	resp, err := svc.Put(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "entity type is required")
@@ -5341,7 +5341,7 @@ func TestKVService_Put_RaftError(t *testing.T) {
 		Data:       []byte(`{"name":"test"}`),
 	}
 
-	resp, err := svc.Put(context.Background(), req)
+	resp, err := svc.Put(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -5364,7 +5364,7 @@ func TestKVService_Put_WithCustomShardID(t *testing.T) {
 		ShardID:    5,
 	}
 
-	resp, err := svc.Put(context.Background(), req)
+	resp, err := svc.Put(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -5385,7 +5385,7 @@ func TestKVService_Put_WithMetrics(t *testing.T) {
 		Data:       []byte(`{"name":"test"}`),
 	}
 
-	resp, err := svc.Put(context.Background(), req)
+	resp, err := svc.Put(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -5413,7 +5413,7 @@ func TestKVService_Put_WithCacheUpdate(t *testing.T) {
 		Data:       []byte(`{"name":"test"}`),
 	}
 
-	resp, err := svc.Put(context.Background(), req)
+	resp, err := svc.Put(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -5432,7 +5432,7 @@ func TestKVService_Get_RaftError(t *testing.T) {
 		ID:         1,
 	}
 
-	resp, err := svc.Get(context.Background(), req)
+	resp, err := svc.Get(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -5447,7 +5447,7 @@ func TestKVService_Get_WithCacheHit(t *testing.T) {
 
 	// Pre-populate cache
 	testData := []byte(`{"name":"cached"}`)
-	err = cacheMgr.Set(context.Background(), "user:1", testData)
+	err = cacheMgr.Set(tenantctx.WithSystem(context.Background()), "user:1", testData)
 	require.NoError(t, err)
 
 	mockRaft := &mockRaftNode{} // Should not be called if cache hits
@@ -5460,7 +5460,7 @@ func TestKVService_Get_WithCacheHit(t *testing.T) {
 		Consistency: ConsistencyLevelEventual, // Required for cache lookup
 	}
 
-	resp, err := svc.Get(context.Background(), req)
+	resp, err := svc.Get(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, testData, resp.Data)
@@ -5484,7 +5484,7 @@ func TestKVService_Get_WithMetrics(t *testing.T) {
 		ID:         1,
 	}
 
-	resp, err := svc.Get(context.Background(), req)
+	resp, err := svc.Get(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -5495,7 +5495,7 @@ func TestKVService_List_NilRequest(t *testing.T) {
 	defer svc.Close()
 
 	stream := make(chan *ListResponse, 1)
-	err := svc.List(context.Background(), nil, stream)
+	err := svc.List(tenantctx.WithSystem(context.Background()), nil, stream)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "request cannot be nil")
 }
@@ -5510,7 +5510,7 @@ func TestKVService_List_EmptyEntityType(t *testing.T) {
 	}
 
 	stream := make(chan *ListResponse, 1)
-	err := svc.List(context.Background(), req, stream)
+	err := svc.List(tenantctx.WithSystem(context.Background()), req, stream)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "entity type is required")
 }
@@ -5526,7 +5526,7 @@ func TestKVService_List_RaftError(t *testing.T) {
 	}
 
 	stream := make(chan *ListResponse, 1)
-	err := svc.List(context.Background(), req, stream)
+	err := svc.List(tenantctx.WithSystem(context.Background()), req, stream)
 	require.Error(t, err)
 }
 
@@ -5542,7 +5542,7 @@ func TestKVService_List_ContextCanceled(t *testing.T) {
 		PageSize:   10,
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 	cancel() // Cancel immediately
 
 	stream := make(chan *ListResponse, 1)
@@ -5557,7 +5557,7 @@ func TestKVService_Watch_NilRequest(t *testing.T) {
 	defer svc.Close()
 
 	stream := make(chan *WatchResponse, 10)
-	_, err := svc.Watch(context.Background(), nil, stream)
+	_, err := svc.Watch(tenantctx.WithSystem(context.Background()), nil, stream)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "request cannot be nil")
 }
@@ -5572,7 +5572,7 @@ func TestKVService_Watch_EmptyKey(t *testing.T) {
 	}
 
 	stream := make(chan *WatchResponse, 10)
-	_, err := svc.Watch(context.Background(), req, stream)
+	_, err := svc.Watch(tenantctx.WithSystem(context.Background()), req, stream)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "key is required")
 }
@@ -5586,7 +5586,7 @@ func TestKVService_Watch_NilStream(t *testing.T) {
 		Key: []byte("test-key"),
 	}
 
-	_, err := svc.Watch(context.Background(), req, nil)
+	_, err := svc.Watch(tenantctx.WithSystem(context.Background()), req, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "stream channel is required")
 }
@@ -5601,7 +5601,7 @@ func TestKVService_Watch_Success(t *testing.T) {
 		IsPrefix: false,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(tenantctx.WithSystem(context.Background()), 100*time.Millisecond)
 	defer cancel()
 
 	stream := make(chan *WatchResponse, 10)
@@ -5629,7 +5629,7 @@ func TestKVService_Watch_WithPrefix(t *testing.T) {
 		IsPrefix: true,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(tenantctx.WithSystem(context.Background()), 100*time.Millisecond)
 	defer cancel()
 
 	stream := make(chan *WatchResponse, 10)
@@ -5655,7 +5655,7 @@ func TestKVService_Watch_ContextCanceled(t *testing.T) {
 		Key: []byte("test-key"),
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 
 	stream := make(chan *WatchResponse, 10)
 	watchID, err := svc.Watch(ctx, req, stream)
@@ -5687,7 +5687,7 @@ func TestKVService_Watch_WithFilters(t *testing.T) {
 		Filters: []WatchEventType{WatchEventTypeDelete}, // Filter out DELETE events
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(tenantctx.WithSystem(context.Background()), 100*time.Millisecond)
 	defer cancel()
 
 	stream := make(chan *WatchResponse, 10)
@@ -5713,7 +5713,7 @@ func TestBatchService_BatchPut_EmptyRequest(t *testing.T) {
 		Requests: []*PutRequest{},
 	}
 
-	resp, err := svc.BatchPut(context.Background(), req)
+	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "batch cannot be empty")
@@ -5732,7 +5732,7 @@ func TestBatchService_BatchPut_RaftError(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.BatchPut(context.Background(), req)
+	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -5753,7 +5753,7 @@ func TestBatchService_BatchPut_WithMetrics(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.BatchPut(context.Background(), req)
+	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -5767,7 +5767,7 @@ func TestBatchService_BatchDelete_EmptyRequest(t *testing.T) {
 		Requests: []*DeleteRequest{},
 	}
 
-	resp, err := svc.BatchDelete(context.Background(), req)
+	resp, err := svc.BatchDelete(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	assert.Contains(t, err.Error(), "batch cannot be empty")
@@ -5786,7 +5786,7 @@ func TestBatchService_BatchDelete_RaftError(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.BatchDelete(context.Background(), req)
+	resp, err := svc.BatchDelete(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -5807,7 +5807,7 @@ func TestBatchService_BatchDelete_WithMetrics(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.BatchDelete(context.Background(), req)
+	resp, err := svc.BatchDelete(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -5900,7 +5900,7 @@ func TestTransactionService_Transaction_CompareNotExists(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.Transaction(context.Background(), req)
+	resp, err := svc.Transaction(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.False(t, resp.Succeeded)
@@ -5930,7 +5930,7 @@ func TestTransactionService_Transaction_UnsupportedCompareTarget(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.Transaction(context.Background(), req)
+	resp, err := svc.Transaction(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -5951,7 +5951,7 @@ func TestTransactionService_Transaction_GetOperationError(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.Transaction(context.Background(), req)
+	resp, err := svc.Transaction(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err) // Transaction succeeds but operation has error
 	require.NotNil(t, resp)
 	assert.Len(t, resp.Responses, 1)
@@ -5971,7 +5971,7 @@ func TestBackupService_CreateBackup_Error(t *testing.T) {
 		Name: "test",
 	}
 
-	resp, err := svc.CreateBackup(context.Background(), req)
+	resp, err := svc.CreateBackup(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 }
@@ -5983,7 +5983,7 @@ func TestTimeSeriesQuery_Coverage(t *testing.T) {
 	tsSvc := &timeSeriesService{svc: svc}
 
 	stream := make(chan *TimeSeriesQueryResponse, 1)
-	err := tsSvc.TimeSeriesQuery(context.Background(), &TimeSeriesQueryRequest{
+	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), &TimeSeriesQueryRequest{
 		EntityType: "metrics",
 		StartTime:  time.Now().Add(-1 * time.Hour).UnixNano(),
 		EndTime:    time.Now().UnixNano(),
@@ -6012,7 +6012,7 @@ func TestBatchService_BatchPut_SingleConsensusProposal(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.BatchPut(context.Background(), req)
+	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	require.Len(t, resp.Responses, 3)
@@ -6054,7 +6054,7 @@ func TestBatchService_BatchPut_ChunksLargeBatchUnderEntryLimit(t *testing.T) {
 		}
 	}
 
-	resp, err := svc.BatchPut(context.Background(), &BatchPutRequest{Requests: reqs})
+	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), &BatchPutRequest{Requests: reqs})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	require.Len(t, resp.Responses, totalOps)
@@ -6092,7 +6092,7 @@ func TestBatchService_BatchPut_OversizedSingleOpOwnChunk(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.BatchPut(context.Background(), req)
+	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 
@@ -6117,7 +6117,7 @@ func TestBatchService_BatchPut_MultiShardGrouping(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.BatchPut(context.Background(), req)
+	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	require.Len(t, resp.Responses, 3)
@@ -6141,7 +6141,7 @@ func TestBatchService_BatchPut_ExecuteBatchErrorTyped(t *testing.T) {
 	svc := createTestService(t, withQRDBClientProvider(mockQRDB))
 	defer svc.Close()
 
-	resp, err := svc.BatchPut(context.Background(), &BatchPutRequest{
+	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), &BatchPutRequest{
 		Requests: []*PutRequest{
 			{EntityType: "user", ID: 1, Data: []byte(`{"n":1}`)},
 		},
@@ -6169,7 +6169,7 @@ func TestBatchService_BatchDelete_SingleConsensusProposal(t *testing.T) {
 		},
 	}
 
-	resp, err := svc.BatchDelete(context.Background(), req)
+	resp, err := svc.BatchDelete(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	require.Len(t, resp.Responses, 2)
@@ -6191,7 +6191,7 @@ func TestBatchService_BatchDelete_ExecuteBatchErrorTyped(t *testing.T) {
 	svc := createTestService(t, withQRDBClientProvider(mockQRDB))
 	defer svc.Close()
 
-	resp, err := svc.BatchDelete(context.Background(), &BatchDeleteRequest{
+	resp, err := svc.BatchDelete(tenantctx.WithSystem(context.Background()), &BatchDeleteRequest{
 		Requests: []*DeleteRequest{
 			{EntityType: "user", ID: 1},
 		},

@@ -193,7 +193,7 @@ func TestNewCertificateService(t *testing.T) {
 func TestCertificateService_IssueCertificate(t *testing.T) {
 	mock := &mockCAService{}
 	svc := NewCertificateService(mock)
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	t.Run("success with client usage", func(t *testing.T) {
 		resp, err := svc.IssueCertificate(ctx, &IssueCertificateRequest{
@@ -282,7 +282,7 @@ func TestCertificateService_IssueCertificate(t *testing.T) {
 func TestCertificateService_SignCSR(t *testing.T) {
 	mock := &mockCAService{}
 	svc := NewCertificateService(mock)
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	t.Run("success", func(t *testing.T) {
 		resp, err := svc.SignCSR(ctx, &SignCSRRequest{
@@ -338,7 +338,7 @@ func TestCertificateService_SignCSR(t *testing.T) {
 func TestCertificateService_RevokeCertificate(t *testing.T) {
 	mock := &mockCAService{}
 	svc := NewCertificateService(mock)
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	t.Run("success", func(t *testing.T) {
 		resp, err := svc.RevokeCertificate(ctx, &RevokeCertificateRequest{
@@ -389,7 +389,7 @@ func TestCertificateService_RevokeCertificate(t *testing.T) {
 func TestCertificateService_VerifyCertificate(t *testing.T) {
 	caServiceMock, caKey, caCert := newTestMockCAService(t)
 	svc := NewCertificateService(caServiceMock)
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	// Generate a test certificate signed by the mock CA
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -489,7 +489,7 @@ func TestCertificateService_VerifyCertificate(t *testing.T) {
 func TestCertificateService_GetCACertificate(t *testing.T) {
 	caServiceMock, _, _ := newTestMockCAService(t)
 	svc := NewCertificateService(caServiceMock)
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	t.Run("success", func(t *testing.T) {
 		resp, err := svc.GetCACertificate(ctx, &GetCACertificateRequest{})
@@ -543,7 +543,7 @@ func TestCertificateService_GetCACertificate(t *testing.T) {
 func TestCertificateService_GetTLSConfig(t *testing.T) {
 	caServiceMock, _, _ := newTestMockCAService(t)
 	svc := NewCertificateService(caServiceMock)
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	t.Run("success with nil request", func(t *testing.T) {
 		resp, err := svc.GetTLSConfig(ctx, nil)
@@ -648,7 +648,7 @@ func TestCertificateService_IsInitialized(t *testing.T) {
 func TestCertificateService_GetCABundle(t *testing.T) {
 	mock := &mockCAService{}
 	svc := NewCertificateService(mock)
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	t.Run("success with nil request", func(t *testing.T) {
 		resp, err := svc.GetCABundle(ctx, nil)
@@ -692,7 +692,7 @@ func TestCertificateService_GetCABundle(t *testing.T) {
 func TestCertificateService_GenerateCRL(t *testing.T) {
 	mock := &mockCAService{}
 	svc := NewCertificateService(mock)
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	t.Run("success", func(t *testing.T) {
 		resp, err := svc.GenerateCRL(ctx, &GenerateCRLRequest{})
@@ -723,7 +723,7 @@ func TestCertificateService_GenerateCRL(t *testing.T) {
 func TestCertificateService_IsRevoked(t *testing.T) {
 	mock := &mockCAService{}
 	svc := NewCertificateService(mock)
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	t.Run("success not revoked", func(t *testing.T) {
 		resp, err := svc.IsRevoked(ctx, &IsRevokedRequest{
@@ -773,7 +773,7 @@ func TestCertificateService_IsRevoked(t *testing.T) {
 func TestCertificateService_SignCSR_ServerUsage(t *testing.T) {
 	caService := &mockCAService{}
 	svc := NewCertificateService(caService)
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -805,7 +805,7 @@ func TestCertificateService_SignCSR_ServerUsage(t *testing.T) {
 func TestCertificateService_SignCSR_BothUsage(t *testing.T) {
 	caService := &mockCAService{}
 	svc := NewCertificateService(caService)
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -837,7 +837,7 @@ func TestCertificateService_SignCSR_BothUsage(t *testing.T) {
 func TestCertificateService_SignCSR_NoUsage(t *testing.T) {
 	caService := &mockCAService{}
 	svc := NewCertificateService(caService)
-	ctx := context.Background()
+	ctx := systemTenantCtx()
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -876,7 +876,7 @@ func TestCertificateService_VerifyCertificate_InvalidDERInValidPEM(t *testing.T)
 		Bytes: []byte("this is not valid DER data"),
 	}))
 
-	resp, err := svc.VerifyCertificate(context.Background(), &VerifyCertificateRequest{
+	resp, err := svc.VerifyCertificate(systemTenantCtx(), &VerifyCertificateRequest{
 		CertificatePEM: invalidPEM,
 	})
 	require.NoError(t, err) // Returns nil error, error is in response
@@ -890,7 +890,7 @@ func TestCertificateService_IssueCertificate_RSAKeyAlgorithm(t *testing.T) {
 	svc := NewCertificateService(caService)
 	require.NotNil(t, svc)
 
-	resp, err := svc.IssueCertificate(context.Background(), &IssueCertificateRequest{
+	resp, err := svc.IssueCertificate(systemTenantCtx(), &IssueCertificateRequest{
 		CommonName:   "test.example.com",
 		KeyAlgorithm: "rsa",
 		ValidityDays: 365,
@@ -957,7 +957,7 @@ func TestCertificateService_CAInfo_Success(t *testing.T) {
 		},
 	}
 	svc := NewCertificateService(mock)
-	resp, err := svc.CAInfo(context.Background(), &CAInfoRequest{})
+	resp, err := svc.CAInfo(systemTenantCtx(), &CAInfoRequest{})
 	require.NoError(t, err)
 	assert.Equal(t, "Test Root CA", resp.CommonName)
 	assert.Equal(t, "ECDSA", resp.KeyType)
@@ -975,7 +975,7 @@ func TestCertificateService_CAInfo_GetCACertificateError(t *testing.T) {
 		},
 	}
 	svc := NewCertificateService(mock)
-	_, err := svc.CAInfo(context.Background(), &CAInfoRequest{})
+	_, err := svc.CAInfo(systemTenantCtx(), &CAInfoRequest{})
 	require.Error(t, err)
 }
 
@@ -989,7 +989,7 @@ func TestCertificateService_CAInfo_EmptyCertPEM(t *testing.T) {
 		},
 	}
 	svc := NewCertificateService(mock)
-	_, err := svc.CAInfo(context.Background(), &CAInfoRequest{})
+	_, err := svc.CAInfo(systemTenantCtx(), &CAInfoRequest{})
 	require.Error(t, err)
 }
 
@@ -1003,7 +1003,7 @@ func TestCertificateService_CAInfo_MalformedPEM(t *testing.T) {
 		},
 	}
 	svc := NewCertificateService(mock)
-	_, err := svc.CAInfo(context.Background(), &CAInfoRequest{})
+	_, err := svc.CAInfo(systemTenantCtx(), &CAInfoRequest{})
 	require.Error(t, err)
 }
 
@@ -1011,7 +1011,7 @@ func TestCertificateService_ListCertificates_NotSupportedByAdapter(t *testing.T)
 	// Plain mockCAService does NOT implement CertStoreLister.
 	mock := &mockCAService{}
 	svc := NewCertificateService(mock)
-	_, err := svc.ListCertificates(context.Background(), &ListCertificatesRequest{})
+	_, err := svc.ListCertificates(systemTenantCtx(), &ListCertificatesRequest{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrCertListNotSupported)
 }
@@ -1019,7 +1019,7 @@ func TestCertificateService_ListCertificates_NotSupportedByAdapter(t *testing.T)
 func TestCertificateService_ListCertificates_NegativeLimit(t *testing.T) {
 	mock := &mockCAService{}
 	svc := NewCertificateService(mock)
-	_, err := svc.ListCertificates(context.Background(), &ListCertificatesRequest{Limit: -1})
+	_, err := svc.ListCertificates(systemTenantCtx(), &ListCertificatesRequest{Limit: -1})
 	require.Error(t, err)
 }
 
@@ -1037,7 +1037,7 @@ func TestCertificateService_ListCertificates_Success(t *testing.T) {
 		},
 	}
 	svc := NewCertificateService(mock)
-	resp, err := svc.ListCertificates(context.Background(), &ListCertificatesRequest{
+	resp, err := svc.ListCertificates(systemTenantCtx(), &ListCertificatesRequest{
 		CommonNameFilter: "api",
 	})
 	require.NoError(t, err)
@@ -1062,7 +1062,7 @@ func TestCertificateService_ListCertificates_RespectsLimit(t *testing.T) {
 		},
 	}
 	svc := NewCertificateService(mock)
-	resp, err := svc.ListCertificates(context.Background(), &ListCertificatesRequest{Limit: 2})
+	resp, err := svc.ListCertificates(systemTenantCtx(), &ListCertificatesRequest{Limit: 2})
 	require.NoError(t, err)
 	assert.Len(t, resp.Certificates, 2)
 	assert.Equal(t, 3, resp.TotalCount)
@@ -1082,7 +1082,7 @@ func TestCertificateService_ListCertificates_ExcludesExpired(t *testing.T) {
 		},
 	}
 	svc := NewCertificateService(mock)
-	resp, err := svc.ListCertificates(context.Background(), &ListCertificatesRequest{})
+	resp, err := svc.ListCertificates(systemTenantCtx(), &ListCertificatesRequest{})
 	require.NoError(t, err)
 	require.Len(t, resp.Certificates, 1)
 	assert.Equal(t, "valid.example.com", resp.Certificates[0].CommonName)
@@ -1102,7 +1102,7 @@ func TestCertificateService_ListCertificates_IncludesExpiredWhenAsked(t *testing
 		},
 	}
 	svc := NewCertificateService(mock)
-	resp, err := svc.ListCertificates(context.Background(), &ListCertificatesRequest{IncludeExpired: true})
+	resp, err := svc.ListCertificates(systemTenantCtx(), &ListCertificatesRequest{IncludeExpired: true})
 	require.NoError(t, err)
 	assert.Len(t, resp.Certificates, 2)
 }
@@ -1115,6 +1115,6 @@ func TestCertificateService_ListCertificates_BackendError(t *testing.T) {
 		},
 	}
 	svc := NewCertificateService(mock)
-	_, err := svc.ListCertificates(context.Background(), &ListCertificatesRequest{})
+	_, err := svc.ListCertificates(systemTenantCtx(), &ListCertificatesRequest{})
 	require.Error(t, err)
 }

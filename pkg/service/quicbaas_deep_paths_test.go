@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 func TestWriteBatch_NilPointInBatch_Validation(t *testing.T) {
@@ -40,7 +41,7 @@ func TestWriteBatch_NilPointInBatch_Validation(t *testing.T) {
 		},
 	}
 
-	resp, err := tsSvc.WriteBatch(context.Background(), req)
+	resp, err := tsSvc.WriteBatch(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -61,7 +62,7 @@ func TestWriteBatch_EmptyMetricInBatch_Validation(t *testing.T) {
 		},
 	}
 
-	resp, err := tsSvc.WriteBatch(context.Background(), req)
+	resp, err := tsSvc.WriteBatch(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -91,7 +92,7 @@ func TestAggregate_UnsupportedFunction(t *testing.T) {
 		Function:   AggregateFunction(999), // invalid function
 	}
 
-	resp, err := tsSvc.Aggregate(context.Background(), req)
+	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -119,7 +120,7 @@ func TestAggregate_DefaultValueField(t *testing.T) {
 		Function:   AggregateFunctionSum,
 	}
 
-	resp, err := tsSvc.Aggregate(context.Background(), req)
+	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, 42.0, resp.Result)
@@ -145,7 +146,7 @@ func TestAggregate_NonNumericFieldSkip(t *testing.T) {
 		Function:   AggregateFunctionSum,
 	}
 
-	resp, err := tsSvc.Aggregate(context.Background(), req)
+	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, float64(0), resp.Result)
@@ -171,7 +172,7 @@ func TestAggregate_MissingDefaultValueField(t *testing.T) {
 		Function:   AggregateFunctionCount,
 	}
 
-	resp, err := tsSvc.Aggregate(context.Background(), req)
+	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, float64(0), resp.Result) // count of 0 entities with "value" field
@@ -192,7 +193,7 @@ func TestAggregate_MinWithEmptyValues(t *testing.T) {
 		Function:   AggregateFunctionMin,
 	}
 
-	resp, err := tsSvc.Aggregate(context.Background(), req)
+	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, float64(0), resp.Result) // Min with no values = 0
@@ -213,7 +214,7 @@ func TestAggregate_MaxWithEmptyValues(t *testing.T) {
 		Function:   AggregateFunctionMax,
 	}
 
-	resp, err := tsSvc.Aggregate(context.Background(), req)
+	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, float64(0), resp.Result) // Max with no values = 0
@@ -258,7 +259,7 @@ func TestTimeSeriesQuery_EntityIDExtraction(t *testing.T) {
 		EndTime:    100,
 	}
 	stream := make(chan *TimeSeriesQueryResponse, 10)
-	err := tsSvc.TimeSeriesQuery(context.Background(), req, stream)
+	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), req, stream)
 	require.NoError(t, err)
 
 	var responses []*TimeSeriesQueryResponse
@@ -305,7 +306,7 @@ func TestTimeSeriesQuery_LimitApplication(t *testing.T) {
 		Limit:      3, // Only want 3 of the 5 data points
 	}
 	stream := make(chan *TimeSeriesQueryResponse, 10)
-	err := tsSvc.TimeSeriesQuery(context.Background(), req, stream)
+	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), req, stream)
 	require.NoError(t, err)
 
 	var totalPoints int
@@ -335,7 +336,7 @@ func TestTimeSeriesQuery_ContextCancellation(t *testing.T) {
 	tsSvc := &timeSeriesService{svc: svc}
 
 	// Cancel context before draining the stream
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
 	// Use unbuffered channel so stream <- blocks on second batch
 	stream := make(chan *TimeSeriesQueryResponse)
 
@@ -376,7 +377,7 @@ func TestGetMigrationProgress_NilRequest(t *testing.T) {
 	svc := &quicBaaS{logger: log}
 	opsSvc := newOperationsService(svc)
 
-	resp, err := opsSvc.GetMigrationProgress(context.Background(), nil)
+	resp, err := opsSvc.GetMigrationProgress(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -390,7 +391,7 @@ func TestGetMigrationProgress_EmptyMigrationID(t *testing.T) {
 	svc := &quicBaaS{logger: log}
 	opsSvc := newOperationsService(svc)
 
-	resp, err := opsSvc.GetMigrationProgress(context.Background(), &GetMigrationProgressRequest{
+	resp, err := opsSvc.GetMigrationProgress(tenantctx.WithSystem(context.Background()), &GetMigrationProgressRequest{
 		MigrationID: "",
 	})
 	require.Error(t, err)
@@ -406,7 +407,7 @@ func TestGetMigrationProgress_NotFound(t *testing.T) {
 	svc := &quicBaaS{logger: log}
 	opsSvc := newOperationsService(svc)
 
-	resp, err := opsSvc.GetMigrationProgress(context.Background(), &GetMigrationProgressRequest{
+	resp, err := opsSvc.GetMigrationProgress(tenantctx.WithSystem(context.Background()), &GetMigrationProgressRequest{
 		MigrationID: "nonexistent-id",
 	})
 	require.Error(t, err)
@@ -431,7 +432,7 @@ func TestGetMigrationProgress_NonMigrationType(t *testing.T) {
 	}
 	opsSvc.jobsMu.Unlock()
 
-	resp, err := opsSvc.GetMigrationProgress(context.Background(), &GetMigrationProgressRequest{
+	resp, err := opsSvc.GetMigrationProgress(tenantctx.WithSystem(context.Background()), &GetMigrationProgressRequest{
 		MigrationID: "upgrade-job-1",
 	})
 	require.Error(t, err)
@@ -460,7 +461,7 @@ func TestGetMigrationProgress_ETACalculation(t *testing.T) {
 	}
 	opsSvc.jobsMu.Unlock()
 
-	resp, err := opsSvc.GetMigrationProgress(context.Background(), &GetMigrationProgressRequest{
+	resp, err := opsSvc.GetMigrationProgress(tenantctx.WithSystem(context.Background()), &GetMigrationProgressRequest{
 		MigrationID: "mig-eta",
 	})
 	require.NoError(t, err)
@@ -485,7 +486,7 @@ func TestGetMigrationProgress_ZeroProgress_NoETA(t *testing.T) {
 	}
 	opsSvc.jobsMu.Unlock()
 
-	resp, err := opsSvc.GetMigrationProgress(context.Background(), &GetMigrationProgressRequest{
+	resp, err := opsSvc.GetMigrationProgress(tenantctx.WithSystem(context.Background()), &GetMigrationProgressRequest{
 		MigrationID: "mig-zero",
 	})
 	require.NoError(t, err)
@@ -502,7 +503,7 @@ func TestDelete_RaftError(t *testing.T) {
 	qrdbProvider := newSvcBoostMockQRDBProviderWithErrors(nil, deleteErr, nil)
 
 	svc := createTestService(t, withQRDBClientProvider(qrdbProvider))
-	resp, err := svc.Delete(context.Background(), &DeleteRequest{
+	resp, err := svc.Delete(tenantctx.WithSystem(context.Background()), &DeleteRequest{
 		EntityType: "users",
 		ID:         1,
 	})
@@ -518,7 +519,7 @@ func TestDelete_CustomShardID(t *testing.T) {
 	qrdbProvider := newSvcBoostMockQRDBProvider(nil, nil)
 
 	svc := createTestService(t, withQRDBClientProvider(qrdbProvider))
-	resp, err := svc.Delete(context.Background(), &DeleteRequest{
+	resp, err := svc.Delete(tenantctx.WithSystem(context.Background()), &DeleteRequest{
 		EntityType: "users",
 		ID:         1,
 		ShardID:    5,
@@ -539,7 +540,7 @@ func TestList_RaftError(t *testing.T) {
 
 	svc := createTestService(t, withQRDBClientProvider(qrdbProvider))
 	stream := make(chan *ListResponse, 10)
-	err := svc.List(context.Background(), &ListRequest{
+	err := svc.List(tenantctx.WithSystem(context.Background()), &ListRequest{
 		EntityType: "users",
 	}, stream)
 	require.Error(t, err)
@@ -558,7 +559,7 @@ func TestList_NilResult(t *testing.T) {
 
 	svc := createTestService(t, withMockRaftNode(raftNode))
 	stream := make(chan *ListResponse, 10)
-	err := svc.List(context.Background(), &ListRequest{
+	err := svc.List(tenantctx.WithSystem(context.Background()), &ListRequest{
 		EntityType: "users",
 	}, stream)
 	require.NoError(t, err)
@@ -573,7 +574,7 @@ func TestList_CustomShardID(t *testing.T) {
 
 	svc := createTestService(t, withQRDBClientProvider(qrdbProvider))
 	stream := make(chan *ListResponse, 10)
-	err := svc.List(context.Background(), &ListRequest{
+	err := svc.List(tenantctx.WithSystem(context.Background()), &ListRequest{
 		EntityType: "users",
 		ShardID:    7,
 	}, stream)
@@ -598,7 +599,7 @@ func TestList_WithPagination(t *testing.T) {
 
 	svc := createTestService(t, withQRDBClientProvider(qrdbProvider))
 	stream := make(chan *ListResponse, 10)
-	err := svc.List(context.Background(), &ListRequest{
+	err := svc.List(tenantctx.WithSystem(context.Background()), &ListRequest{
 		EntityType: "users",
 		PageSize:   2, // 2 entities per page
 	}, stream)
@@ -629,7 +630,7 @@ func TestListMetrics_StorageError(t *testing.T) {
 	mockTS.On("ListMetrics", "", 1000).
 		Return(nil, stderrors.New("storage read error")).Once()
 
-	resp, err := tsSvc.ListMetrics(context.Background(), &TSListMetricsRequest{})
+	resp, err := tsSvc.ListMetrics(tenantctx.WithSystem(context.Background()), &TSListMetricsRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -648,7 +649,7 @@ func TestListMetrics_NilRequest(t *testing.T) {
 	mockTS.On("ListMetrics", "", 1000).
 		Return([]string{"cpu.usage", "memory.used"}, nil).Once()
 
-	resp, err := tsSvc.ListMetrics(context.Background(), nil)
+	resp, err := tsSvc.ListMetrics(tenantctx.WithSystem(context.Background()), nil)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Len(t, resp.Metrics, 2)
@@ -664,7 +665,7 @@ func TestListMetrics_WithPrefixAndLimit(t *testing.T) {
 	mockTS.On("ListMetrics", "cpu.", 50).
 		Return([]string{"cpu.usage", "cpu.idle"}, nil).Once()
 
-	resp, err := tsSvc.ListMetrics(context.Background(), &TSListMetricsRequest{
+	resp, err := tsSvc.ListMetrics(tenantctx.WithSystem(context.Background()), &TSListMetricsRequest{
 		Prefix: "cpu.",
 		Limit:  50,
 	})
@@ -679,7 +680,7 @@ func TestListMetrics_StorageNotConfigured(t *testing.T) {
 	svc := &quicBaaS{logger: log}
 	tsSvc := &timeSeriesService{svc: svc, tsStorage: nil}
 
-	resp, err := tsSvc.ListMetrics(context.Background(), &TSListMetricsRequest{})
+	resp, err := tsSvc.ListMetrics(tenantctx.WithSystem(context.Background()), &TSListMetricsRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -697,7 +698,7 @@ func TestCreateBackup_NilBackupManager(t *testing.T) {
 	svc := &quicBaaS{logger: log, backupMgr: nil}
 	backupSvc := &backupService{svc: svc}
 
-	resp, err := backupSvc.CreateBackup(context.Background(), &CreateBackupRequest{Name: "full"})
+	resp, err := backupSvc.CreateBackup(tenantctx.WithSystem(context.Background()), &CreateBackupRequest{Name: "full"})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -715,7 +716,7 @@ func TestCreateBackup_ManagerError(t *testing.T) {
 	}}
 	backupSvc := &backupService{svc: svc}
 
-	resp, err := backupSvc.CreateBackup(context.Background(), &CreateBackupRequest{Name: "full"})
+	resp, err := backupSvc.CreateBackup(tenantctx.WithSystem(context.Background()), &CreateBackupRequest{Name: "full"})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -733,7 +734,7 @@ func TestCreateBackup_TypeAssertionFailure(t *testing.T) {
 	}}
 	backupSvc := &backupService{svc: svc}
 
-	resp, err := backupSvc.CreateBackup(context.Background(), &CreateBackupRequest{Name: "incremental"})
+	resp, err := backupSvc.CreateBackup(tenantctx.WithSystem(context.Background()), &CreateBackupRequest{Name: "incremental"})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -747,7 +748,7 @@ func TestRestoreBackup_NilBackupManager(t *testing.T) {
 	svc := &quicBaaS{logger: log, backupMgr: nil}
 	backupSvc := &backupService{svc: svc}
 
-	resp, err := backupSvc.RestoreBackup(context.Background(), &RestoreBackupRequest{
+	resp, err := backupSvc.RestoreBackup(tenantctx.WithSystem(context.Background()), &RestoreBackupRequest{
 		BackupID: "backup-123",
 	})
 	require.Error(t, err)
@@ -767,7 +768,7 @@ func TestRestoreBackup_ManagerError(t *testing.T) {
 	}}
 	backupSvc := &backupService{svc: svc}
 
-	resp, err := backupSvc.RestoreBackup(context.Background(), &RestoreBackupRequest{
+	resp, err := backupSvc.RestoreBackup(tenantctx.WithSystem(context.Background()), &RestoreBackupRequest{
 		BackupID: "backup-123",
 	})
 	require.Error(t, err)
@@ -783,7 +784,7 @@ func TestDeleteBackup_NilBackupManager(t *testing.T) {
 	svc := &quicBaaS{logger: log, backupMgr: nil}
 	backupSvc := &backupService{svc: svc}
 
-	resp, err := backupSvc.DeleteBackup(context.Background(), &DeleteBackupRequest{
+	resp, err := backupSvc.DeleteBackup(tenantctx.WithSystem(context.Background()), &DeleteBackupRequest{
 		BackupID: "backup-123",
 	})
 	require.Error(t, err)
@@ -803,7 +804,7 @@ func TestDeleteBackup_ManagerError(t *testing.T) {
 	}}
 	backupSvc := &backupService{svc: svc}
 
-	resp, err := backupSvc.DeleteBackup(context.Background(), &DeleteBackupRequest{
+	resp, err := backupSvc.DeleteBackup(tenantctx.WithSystem(context.Background()), &DeleteBackupRequest{
 		BackupID: "backup-123",
 	})
 	require.Error(t, err)
@@ -834,7 +835,7 @@ func TestGetCacheStats_NilCacheManager(t *testing.T) {
 	svc := &quicBaaS{logger: log, cacheManager: nil}
 	cacheSvc := &cacheService{svc: svc}
 
-	resp, err := cacheSvc.GetCacheStats(context.Background(), &GetCacheStatsRequest{})
+	resp, err := cacheSvc.GetCacheStats(tenantctx.WithSystem(context.Background()), &GetCacheStatsRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -848,7 +849,7 @@ func TestGetCacheStats_TypeAssertionFailure(t *testing.T) {
 	svc := &quicBaaS{logger: log, cacheManager: &mockCacheInterface{}}
 	cacheSvc := &cacheService{svc: svc}
 
-	resp, err := cacheSvc.GetCacheStats(context.Background(), &GetCacheStatsRequest{})
+	resp, err := cacheSvc.GetCacheStats(tenantctx.WithSystem(context.Background()), &GetCacheStatsRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -862,7 +863,7 @@ func TestClearCache_NilCacheManager(t *testing.T) {
 	svc := &quicBaaS{logger: log, cacheManager: nil}
 	cacheSvc := &cacheService{svc: svc}
 
-	resp, err := cacheSvc.ClearCache(context.Background(), &ClearCacheRequest{})
+	resp, err := cacheSvc.ClearCache(tenantctx.WithSystem(context.Background()), &ClearCacheRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -876,7 +877,7 @@ func TestClearCache_TypeAssertionFailure(t *testing.T) {
 	svc := &quicBaaS{logger: log, cacheManager: &mockCacheInterface{}}
 	cacheSvc := &cacheService{svc: svc}
 
-	resp, err := cacheSvc.ClearCache(context.Background(), &ClearCacheRequest{})
+	resp, err := cacheSvc.ClearCache(tenantctx.WithSystem(context.Background()), &ClearCacheRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -890,7 +891,7 @@ func TestGetCacheConfig_NilCacheManager(t *testing.T) {
 	svc := &quicBaaS{logger: log, cacheManager: nil}
 	cacheSvc := &cacheService{svc: svc}
 
-	resp, err := cacheSvc.GetCacheConfig(context.Background(), &GetCacheConfigRequest{})
+	resp, err := cacheSvc.GetCacheConfig(tenantctx.WithSystem(context.Background()), &GetCacheConfigRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -904,7 +905,7 @@ func TestGetCacheConfig_TypeAssertionFailure(t *testing.T) {
 	svc := &quicBaaS{logger: log, cacheManager: &mockCacheInterface{}}
 	cacheSvc := &cacheService{svc: svc}
 
-	resp, err := cacheSvc.GetCacheConfig(context.Background(), &GetCacheConfigRequest{})
+	resp, err := cacheSvc.GetCacheConfig(tenantctx.WithSystem(context.Background()), &GetCacheConfigRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -918,7 +919,7 @@ func TestUpdateCacheConfig_NilCacheManager(t *testing.T) {
 	svc := &quicBaaS{logger: log, cacheManager: nil}
 	cacheSvc := &cacheService{svc: svc}
 
-	resp, err := cacheSvc.UpdateCacheConfig(context.Background(), &UpdateCacheConfigRequest{})
+	resp, err := cacheSvc.UpdateCacheConfig(tenantctx.WithSystem(context.Background()), &UpdateCacheConfigRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 
@@ -932,7 +933,7 @@ func TestUpdateCacheConfig_TypeAssertionFailure(t *testing.T) {
 	svc := &quicBaaS{logger: log, cacheManager: &mockCacheInterface{}}
 	cacheSvc := &cacheService{svc: svc}
 
-	resp, err := cacheSvc.UpdateCacheConfig(context.Background(), &UpdateCacheConfigRequest{})
+	resp, err := cacheSvc.UpdateCacheConfig(tenantctx.WithSystem(context.Background()), &UpdateCacheConfigRequest{})
 	require.Error(t, err)
 	assert.Nil(t, resp)
 

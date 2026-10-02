@@ -26,7 +26,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // embeddingTenantKeyPrefix is the storage prefix for tenant-scoped embedding cache keys.
@@ -96,7 +96,13 @@ func embeddingCacheKeyBelongsToTenant(tenantID, key string) bool {
 // request context for embedding operations. Returns the validated tenant ID
 // or an error if the tenant ID is invalid.
 func prepareEmbeddingTenantContext(ctx context.Context) (string, error) {
-	tenantID := iam.TenantFromContext(ctx)
+	tenantID, err := tenantctx.FromContext(ctx, "embedding")
+	if err != nil {
+		return "", err
+	}
+	if tenantctx.IsSystem(tenantID) {
+		return "", nil // the platform scope; see prepareTenantContext
+	}
 	if err := validateEmbeddingTenantID(tenantID); err != nil {
 		return "", err
 	}

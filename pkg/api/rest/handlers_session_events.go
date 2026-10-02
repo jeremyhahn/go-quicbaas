@@ -80,7 +80,10 @@ func (s *Server) HandleOrchestratorSessionEvents(w http.ResponseWriter, r *http.
 	// tenant-routed (see pkg/server durableKVStore): the context handed to
 	// the log MUST carry the resolved tenant, or a barrier-isolated tenant's
 	// transcript reads would resolve against the wrong (or no) tenant store.
-	ctx, tenantID := resolveOrchestratorTenant(r)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 	fromSeq := uint64(0)
 	if raw := r.URL.Query().Get("from"); raw != "" {
 		n, parseErr := strconv.ParseUint(raw, 10, 64)
@@ -163,7 +166,10 @@ func (s *Server) HandleOrchestratorSessionHistory(w http.ResponseWriter, r *http
 		RespondBadRequest(w, r, "session ID is required")
 		return
 	}
-	ctx, tenantID := resolveOrchestratorTenant(r)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 
 	limit := 0
 	if raw := r.URL.Query().Get("limit"); raw != "" {

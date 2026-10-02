@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
@@ -464,7 +465,26 @@ func (t *Transport) Request(ctx context.Context, svcName, method string, req int
 		return nil, NewUnknownMethodError(svcName, method)
 	}
 
-	return handler(ctx, t.service, req)
+	return handler(inProcessTenant(ctx), t.service, req)
+}
+
+// inProcessTenant binds the tenant an embedded call acts for, under go-qrdb's
+// central key (pkg/tenantctx), which every service reads.
+//
+// The embedded transport is the in-process path: there is no wire and no
+// authenticator, and the caller is the program that composed the service
+// facade. It acts for the tenant it named with transport.ContextWithTenant,
+// for a tenant it already bound, and otherwise for the platform itself — the
+// reach it has always had, now stated as an explicit system binding because
+// the services no longer read an absent tenant as system (go-quicbaas#1150).
+func inProcessTenant(ctx context.Context) context.Context {
+	if _, ok := tenantctx.Lookup(ctx); ok {
+		return ctx
+	}
+	if tenantID := transport.TenantFromContext(ctx); tenantID != "" {
+		return tenantctx.WithTenant(ctx, tenantID)
+	}
+	return tenantctx.WithSystem(ctx)
 }
 
 // RequestStream initiates a streaming request.
@@ -479,6 +499,7 @@ func (t *Transport) RequestStream(ctx context.Context, svcName, method string, r
 		return nil, NewStreamNotSupportedError(svcName, method)
 	}
 
+	ctx = inProcessTenant(ctx)
 	s := newStream(ctx, 100)
 
 	// Start the stream handler in a goroutine

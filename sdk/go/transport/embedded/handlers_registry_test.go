@@ -22,9 +22,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/registry/registrytest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	registryclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/registry"
 )
 
@@ -61,7 +61,7 @@ func nextEvent(t *testing.T, ch <-chan registryclient.Event) registryclient.Even
 
 func TestEmbeddedRegistry_EndToEnd(t *testing.T) {
 	client, backend := newRegistryHarness(t)
-	ctx, cancel := context.WithCancel(iam.ContextWithTenant(context.Background(), "acme"))
+	ctx, cancel := context.WithCancel(tenantctx.WithTenant(context.Background(), "acme"))
 	defer cancel()
 
 	events, err := client.Watch(ctx, &registryclient.WatchRequest{Service: "api"})
@@ -100,8 +100,8 @@ func TestEmbeddedRegistry_EndToEnd(t *testing.T) {
 // in the context scopes every verb.
 func TestEmbeddedRegistry_TenantsAreIsolated(t *testing.T) {
 	client, _ := newRegistryHarness(t)
-	acme := iam.ContextWithTenant(context.Background(), "acme")
-	globex := iam.ContextWithTenant(context.Background(), "globex")
+	acme := tenantctx.WithTenant(context.Background(), "acme")
+	globex := tenantctx.WithTenant(context.Background(), "globex")
 
 	lease, err := client.Register(acme, &registryclient.RegisterRequest{
 		Instance: registryclient.ServiceInstance{ID: "a", Service: "api", Address: "x:1"}, TTLSeconds: 5,

@@ -195,7 +195,7 @@ func (s *objectStorageAdminService) CreateBackend(ctx context.Context, req *Crea
 		return nil, err
 	}
 
-	if _, err := osAdminPrepareTenantContext(ctx); err != nil {
+	if _, err := prepareTenantContext(ctx); err != nil {
 		return nil, err
 	}
 
@@ -274,7 +274,7 @@ func (s *objectStorageAdminService) UpdateBackend(ctx context.Context, req *Upda
 		return nil, err
 	}
 
-	if _, err := osAdminPrepareTenantContext(ctx); err != nil {
+	if _, err := prepareTenantContext(ctx); err != nil {
 		return nil, err
 	}
 
@@ -356,7 +356,7 @@ func (s *objectStorageAdminService) DeleteBackend(ctx context.Context, req *Dele
 		return nil, err
 	}
 
-	if _, err := osAdminPrepareTenantContext(ctx); err != nil {
+	if _, err := prepareTenantContext(ctx); err != nil {
 		return nil, err
 	}
 
@@ -458,7 +458,7 @@ func (s *objectStorageAdminService) SetBackendStatus(ctx context.Context, req *S
 		return nil, err
 	}
 
-	if _, err := osAdminPrepareTenantContext(ctx); err != nil {
+	if _, err := prepareTenantContext(ctx); err != nil {
 		return nil, err
 	}
 
@@ -537,7 +537,7 @@ func (s *objectStorageAdminService) GetStorageStats(ctx context.Context, req *Ge
 		return nil, err
 	}
 
-	if _, err := osAdminPrepareTenantContext(ctx); err != nil {
+	if _, err := prepareTenantContext(ctx); err != nil {
 		return nil, err
 	}
 
@@ -639,7 +639,7 @@ func (s *objectStorageAdminService) RunGarbageCollection(ctx context.Context, re
 		return nil, err
 	}
 
-	if _, err := osAdminPrepareTenantContext(ctx); err != nil {
+	if _, err := prepareTenantContext(ctx); err != nil {
 		return nil, err
 	}
 
@@ -769,7 +769,7 @@ func (s *objectStorageAdminService) GetGarbageCollectionProgress(ctx context.Con
 		return nil, err
 	}
 
-	if _, err := osAdminPrepareTenantContext(ctx); err != nil {
+	if _, err := prepareTenantContext(ctx); err != nil {
 		return nil, err
 	}
 
@@ -831,7 +831,7 @@ func (s *objectStorageAdminService) RepairObject(ctx context.Context, req *Repai
 		return nil, err
 	}
 
-	if _, err := osAdminPrepareTenantContext(ctx); err != nil {
+	if _, err := prepareTenantContext(ctx); err != nil {
 		return nil, err
 	}
 
@@ -1015,7 +1015,7 @@ func (s *objectStorageAdminService) CompactBackend(ctx context.Context, req *Com
 		return nil, err
 	}
 
-	if _, err := osAdminPrepareTenantContext(ctx); err != nil {
+	if _, err := prepareTenantContext(ctx); err != nil {
 		return nil, err
 	}
 

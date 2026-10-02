@@ -24,12 +24,13 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 func abacUserCtx(sub, tenant string) context.Context {
 	ctx := context.WithValue(context.Background(), ContextKeyUser, &iam.UserInfoResponse{Sub: sub})
 	ctx = context.WithValue(ctx, ContextKeyTenant, tenant)
-	return iam.ContextWithTenant(ctx, tenant)
+	return tenantctx.WithTenant(ctx, tenant)
 }
 
 // Unauthenticated requests are rejected by ABACMiddleware with 401.

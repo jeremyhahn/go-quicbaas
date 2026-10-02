@@ -44,7 +44,7 @@ func spawnWithBody(t *testing.T, rawBody string) *orchestration.SpawnSessionRequ
 		return &orchestration.SpawnSessionResponse{SessionID: "s1", Backend: req.Backend}, nil
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader([]byte(rawBody)))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader([]byte(rawBody)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorSpawn(rec, req)

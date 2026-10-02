@@ -34,9 +34,9 @@ import (
 func orchReq(method, target string, body []byte, params map[string]string) *http.Request {
 	var r *http.Request
 	if body != nil {
-		r = httptest.NewRequest(method, target, bytes.NewReader(body))
+		r = systemRequest(method, target, bytes.NewReader(body))
 	} else {
-		r = httptest.NewRequest(method, target, nil)
+		r = systemRequest(method, target, nil)
 	}
 	rctx := chi.NewRouteContext()
 	for k, v := range params {

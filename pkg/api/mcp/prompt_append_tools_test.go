@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 func TestOrchestratorTools_CarryPromptAppend(t *testing.T) {
@@ -42,7 +43,7 @@ func TestOrchestratorTools_CarryPromptAppend(t *testing.T) {
 		},
 	}
 	reg := newFleetRegistry(t, svc)
-	ctx := orchestration.ContextWithTenant(context.Background(), "t1")
+	ctx := orchestration.ContextWithTenant(tenantctx.WithTenant(context.Background(), "t1"), "t1")
 
 	_, err := reg.executeAgentTool(ctx, "quicbaas_orchestrator_spawn", map[string]interface{}{
 		"tenant_id": "t1", "agent_id": "claude-coder", "project_id": "proj-1", "prompt_append": "spawn material",
@@ -69,7 +70,7 @@ func TestOrchestratorTools_CarryPromptAppend(t *testing.T) {
 
 func TestOrchestratorTools_WithoutPromptAppendCarryNone(t *testing.T) {
 	creator := &capturingTaskCreator{mockAgentService: &mockAgentService{}}
-	_, err := newFleetRegistry(t, creator).executeAgentTool(context.Background(), "quicbaas_orchestrator_task_create", map[string]interface{}{
+	_, err := newFleetRegistry(t, creator).executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_task_create", map[string]interface{}{
 		"tenant_id": "t1", "subject": "Fix it",
 	})
 	require.NoError(t, err)

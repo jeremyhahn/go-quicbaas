@@ -49,7 +49,7 @@ func TestKMSService_ListKeys_WithServiceKeyMetadata(t *testing.T) {
 
 	req := &ListKeysRequest{Limit: 10}
 
-	resp, err := svc.ListKeys(context.Background(), req)
+	resp, err := svc.ListKeys(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, 1, resp.TotalCount)
@@ -85,7 +85,7 @@ func TestKMSService_ListKeys_WithReflectionFallback(t *testing.T) {
 
 	req := &ListKeysRequest{Limit: 10}
 
-	resp, err := svc.ListKeys(context.Background(), req)
+	resp, err := svc.ListKeys(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, 1, resp.TotalCount)
@@ -112,7 +112,7 @@ func TestKMSService_ListKeys_WithReflectionUintVersion(t *testing.T) {
 
 	req := &ListKeysRequest{Limit: 10}
 
-	resp, err := svc.ListKeys(context.Background(), req)
+	resp, err := svc.ListKeys(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, uint64(10), resp.Keys[0].Version)
@@ -139,7 +139,7 @@ func TestKMSService_ListKeys_LimitTruncation(t *testing.T) {
 
 	req := &ListKeysRequest{Limit: 3}
 
-	resp, err := svc.ListKeys(context.Background(), req)
+	resp, err := svc.ListKeys(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Len(t, resp.Keys, 3)
@@ -167,7 +167,7 @@ func TestKMSService_ListKeys_NilKeyInResults(t *testing.T) {
 
 	req := &ListKeysRequest{Limit: 10}
 
-	resp, err := svc.ListKeys(context.Background(), req)
+	resp, err := svc.ListKeys(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, 1, len(resp.Keys))
@@ -186,7 +186,7 @@ func TestKMSService_ListKeys_NilFilter(t *testing.T) {
 
 	req := &ListKeysRequest{Filter: nil, Limit: 10}
 
-	resp, err := svc.ListKeys(context.Background(), req)
+	resp, err := svc.ListKeys(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Empty(t, capturedPrefix)
@@ -203,7 +203,7 @@ func TestKMSService_ListKeys_ManagerListError(t *testing.T) {
 
 	req := &ListKeysRequest{Limit: 10}
 
-	resp, err := svc.ListKeys(context.Background(), req)
+	resp, err := svc.ListKeys(systemTenantCtx(), req)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to list keys")
@@ -233,7 +233,7 @@ func TestKMSService_UpdateKeyStatus_VersionSpecificDisable(t *testing.T) {
 		Reason:  "disabling old version",
 	}
 
-	resp, err := svc.UpdateKeyStatus(context.Background(), req)
+	resp, err := svc.UpdateKeyStatus(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, uint64(2), resp.Version)
@@ -258,7 +258,7 @@ func TestKMSService_UpdateKeyStatus_SameStatusNoOp(t *testing.T) {
 		Status: KeyStatusEnabled,
 	}
 
-	resp, err := svc.UpdateKeyStatus(context.Background(), req)
+	resp, err := svc.UpdateKeyStatus(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, KeyStatusEnabled, resp.OldStatus)
@@ -292,7 +292,7 @@ func TestKMSService_UpdateKeyStatus_WithKMSMetadata(t *testing.T) {
 		Status: KeyStatusDisabled,
 	}
 
-	resp, err := svc.UpdateKeyStatus(context.Background(), req)
+	resp, err := svc.UpdateKeyStatus(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, KeyStatusEnabled, resp.OldStatus)
@@ -326,7 +326,7 @@ func TestKMSService_UpdateKeyStatus_WithServiceKeyMetadata(t *testing.T) {
 		Status: KeyStatusEnabled,
 	}
 
-	resp, err := svc.UpdateKeyStatus(context.Background(), req)
+	resp, err := svc.UpdateKeyStatus(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, KeyStatusDisabled, resp.OldStatus)
@@ -350,7 +350,7 @@ func TestKMSService_UpdateKeyStatus_EnableKeyFailure(t *testing.T) {
 		Status: KeyStatusEnabled,
 	}
 
-	resp, err := svc.UpdateKeyStatus(context.Background(), req)
+	resp, err := svc.UpdateKeyStatus(systemTenantCtx(), req)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to enable key")
@@ -373,7 +373,7 @@ func TestKMSService_UpdateKeyStatus_DisableKeyFailure(t *testing.T) {
 		Status: KeyStatusDisabled,
 	}
 
-	resp, err := svc.UpdateKeyStatus(context.Background(), req)
+	resp, err := svc.UpdateKeyStatus(systemTenantCtx(), req)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to disable key")
@@ -398,7 +398,7 @@ func TestKMSService_UpdateKeyStatus_VersionSpecificEnable(t *testing.T) {
 		Version: 2,
 		Status:  KeyStatusDisabled,
 	}
-	resp, err := svc.UpdateKeyStatus(context.Background(), req)
+	resp, err := svc.UpdateKeyStatus(systemTenantCtx(), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 
@@ -408,7 +408,7 @@ func TestKMSService_UpdateKeyStatus_VersionSpecificEnable(t *testing.T) {
 		Version: 2,
 		Status:  KeyStatusEnabled,
 	}
-	resp2, err := svc.UpdateKeyStatus(context.Background(), req2)
+	resp2, err := svc.UpdateKeyStatus(systemTenantCtx(), req2)
 	require.NoError(t, err)
 	require.NotNil(t, resp2)
 	assert.Equal(t, KeyStatusDisabled, resp2.OldStatus)
@@ -424,7 +424,7 @@ func TestKMSService_CancelReencryption_NoActiveReencryption(t *testing.T) {
 	logger := newMockLogger()
 	svc := newKMSService(mockMgr, logger)
 
-	err := svc.CancelReencryption(context.Background())
+	err := svc.CancelReencryption(systemTenantCtx())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no re-encryption operation in progress")
 }

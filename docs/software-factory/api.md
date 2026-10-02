@@ -410,7 +410,7 @@ paid.
 
 ```
 GET /api/v1/orchestrator/cost
-  ?tenant_id=   override the authenticated principal's tenant
+  ?tenant_id=   optional; must be the authenticated principal's own tenant (403 otherwise)
   &project_id=  narrow to one project
   &task_id=     narrow to one task      (requires project_id)
   &job_id=      narrow to one job       (requires task_id)

@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // GetSettings returns empty settings for an unset tenant and surfaces a decode
@@ -76,7 +77,7 @@ func TestBackendStorage_QuotaEdgeCases(t *testing.T) {
 // StoreToken writes the refresh-token value index and RevokeUserTokens revokes
 // every token a user owns.
 func TestBackendStorage_RefreshTokenIndexAndRevokeUser(t *testing.T) {
-	ctx := ContextWithTenant(context.Background(), "tenant-1")
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-1")
 	kv := newMockKVStore()
 	storage := NewBackendStorage(kv)
 

@@ -24,6 +24,7 @@ import (
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -32,7 +33,7 @@ import (
 
 func TestOrchestratorGRPC_StartJob(t *testing.T) {
 	srv := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	resp, err := srv.StartJob(ctx, &pb.OrchestratorStartJobRequest{
 		TenantId: "t1", Description: "build the thing", MaxIterations: 3,
@@ -47,7 +48,7 @@ func TestOrchestratorGRPC_StartJob(t *testing.T) {
 
 func TestOrchestratorGRPC_GetJobStatus(t *testing.T) {
 	srv := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	resp, err := srv.GetJobStatus(ctx, &pb.OrchestratorGetJobStatusRequest{TenantId: "t1", JobId: "j1"})
 	require.NoError(t, err)
@@ -61,7 +62,7 @@ func TestOrchestratorGRPC_GetJobStatus(t *testing.T) {
 
 func TestOrchestratorGRPC_CancelJob(t *testing.T) {
 	srv := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	resp, err := srv.CancelJob(ctx, &pb.OrchestratorCancelJobRequest{TenantId: "t1", JobId: "j1"})
 	require.NoError(t, err)
@@ -74,7 +75,7 @@ func TestOrchestratorGRPC_CancelJob(t *testing.T) {
 
 func TestOrchestratorGRPC_ListJobs(t *testing.T) {
 	srv := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
-	resp, err := srv.ListJobs(context.Background(), &pb.OrchestratorListJobsRequest{TenantId: "t1"})
+	resp, err := srv.ListJobs(tenantctx.WithTenant(context.Background(), "t1"), &pb.OrchestratorListJobsRequest{TenantId: "t1"})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 }
@@ -88,7 +89,7 @@ func TestOrchestratorGRPC_ListJobs_NarrowsToTask(t *testing.T) {
 	}}
 	srv := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger())
 
-	resp, err := srv.ListJobs(context.Background(), &pb.OrchestratorListJobsRequest{
+	resp, err := srv.ListJobs(tenantctx.WithTenant(context.Background(), "t1"), &pb.OrchestratorListJobsRequest{
 		TenantId: "t1", TaskId: "task-a",
 	})
 	require.NoError(t, err)
@@ -105,7 +106,7 @@ func TestOrchestratorGRPC_ListJobs_WithoutTaskNarrowsNothing(t *testing.T) {
 	svc := &grpcTestAgentService{}
 	srv := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger())
 
-	_, err := srv.ListJobs(context.Background(), &pb.OrchestratorListJobsRequest{TenantId: "t1"})
+	_, err := srv.ListJobs(tenantctx.WithTenant(context.Background(), "t1"), &pb.OrchestratorListJobsRequest{TenantId: "t1"})
 	require.NoError(t, err)
 	require.NotNil(t, svc.listJobsFilter)
 	assert.True(t, svc.listJobsFilter.Empty(), "an absent task_id must narrow nothing")
@@ -128,7 +129,7 @@ func TestOrchestratorGRPC_ListJobs_CarriesTaskSource(t *testing.T) {
 	}}}
 	srv := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger())
 
-	resp, err := srv.ListJobs(context.Background(), &pb.OrchestratorListJobsRequest{TenantId: "t1"})
+	resp, err := srv.ListJobs(tenantctx.WithTenant(context.Background(), "t1"), &pb.OrchestratorListJobsRequest{TenantId: "t1"})
 	require.NoError(t, err)
 	require.True(t, svc.listJobsPaged,
 		"the listing must read the verb that fills the source, or the rows arrive without one")
@@ -150,7 +151,7 @@ func TestOrchestratorGRPC_ListJobs_WithoutTaskSourceCarriesNone(t *testing.T) {
 	}}
 	srv := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger())
 
-	resp, err := srv.ListJobs(context.Background(), &pb.OrchestratorListJobsRequest{TenantId: "t1"})
+	resp, err := srv.ListJobs(tenantctx.WithTenant(context.Background(), "t1"), &pb.OrchestratorListJobsRequest{TenantId: "t1"})
 	require.NoError(t, err)
 	require.Len(t, resp.GetJobs(), 1)
 	assert.Nil(t, resp.GetJobs()[0].GetSource())
@@ -167,7 +168,7 @@ func TestOrchestratorGRPC_ListJobs_AnswersEveryJobNewestFirst(t *testing.T) {
 	}}
 	srv := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger())
 
-	resp, err := srv.ListJobs(context.Background(), &pb.OrchestratorListJobsRequest{TenantId: "t1"})
+	resp, err := srv.ListJobs(tenantctx.WithTenant(context.Background(), "t1"), &pb.OrchestratorListJobsRequest{TenantId: "t1"})
 	require.NoError(t, err)
 	require.Len(t, resp.GetJobs(), 3, "a nil page must cut nothing")
 	assert.Equal(t, []string{"newest", "middle", "older"},
@@ -191,7 +192,7 @@ func TestOrchestratorGRPC_GetJobStatus_CarriesTaskSource(t *testing.T) {
 	}}
 	srv := NewOrchestratorServer(svc, createOrchestratorGRPCTestLogger())
 
-	resp, err := srv.GetJobStatus(context.Background(), &pb.OrchestratorGetJobStatusRequest{TenantId: "t1", JobId: "j1"})
+	resp, err := srv.GetJobStatus(tenantctx.WithTenant(context.Background(), "t1"), &pb.OrchestratorGetJobStatusRequest{TenantId: "t1", JobId: "j1"})
 	require.NoError(t, err)
 	source := resp.GetSource()
 	require.NotNil(t, source, "the detail read dropped the forge issue behind the job's task")
@@ -205,14 +206,14 @@ func TestOrchestratorGRPC_GetJobStatus_CarriesTaskSource(t *testing.T) {
 func TestOrchestratorGRPC_GetJobStatus_WithoutTaskSourceCarriesNone(t *testing.T) {
 	srv := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
 
-	resp, err := srv.GetJobStatus(context.Background(), &pb.OrchestratorGetJobStatusRequest{TenantId: "t1", JobId: "j1"})
+	resp, err := srv.GetJobStatus(tenantctx.WithTenant(context.Background(), "t1"), &pb.OrchestratorGetJobStatusRequest{TenantId: "t1", JobId: "j1"})
 	require.NoError(t, err)
 	assert.Nil(t, resp.GetSource())
 }
 
 func TestOrchestratorGRPC_DecomposeTask(t *testing.T) {
 	srv := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	resp, err := srv.DecomposeTask(ctx, &pb.DecomposeTaskRequest{
 		TenantId: "t1", Backend: "claude", Task: "refactor",
@@ -231,7 +232,7 @@ func TestOrchestratorGRPC_DecomposeTask(t *testing.T) {
 
 func TestOrchestratorGRPC_RegisterAgent(t *testing.T) {
 	srv := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
-	resp, err := srv.RegisterFleetNode(context.Background(), &pb.RegisterFleetNodeRequest{
+	resp, err := srv.RegisterFleetNode(tenantctx.WithTenant(context.Background(), "t1"), &pb.RegisterFleetNodeRequest{
 		TenantId: "t1", Name: "agent-a", Host: "h1", NodeType: "claude",
 	})
 	require.NoError(t, err)
@@ -241,7 +242,7 @@ func TestOrchestratorGRPC_RegisterAgent(t *testing.T) {
 
 func TestOrchestratorGRPC_GetAgent(t *testing.T) {
 	srv := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	resp, err := srv.GetFleetNode(ctx, &pb.GetFleetNodeRequest{TenantId: "t1", NodeId: "a1"})
 	require.NoError(t, err)
@@ -254,7 +255,7 @@ func TestOrchestratorGRPC_GetAgent(t *testing.T) {
 
 func TestOrchestratorGRPC_ListAgents(t *testing.T) {
 	srv := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	// With filter to exercise the filter conversion branch.
 	resp, err := srv.ListFleetNodes(ctx, &pb.ListFleetNodesRequest{
@@ -272,7 +273,7 @@ func TestOrchestratorGRPC_ListAgents(t *testing.T) {
 
 func TestOrchestratorGRPC_RemoveAgent(t *testing.T) {
 	srv := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	resp, err := srv.RemoveFleetNode(ctx, &pb.RemoveFleetNodeRequest{TenantId: "t1", NodeId: "a1"})
 	require.NoError(t, err)
@@ -285,7 +286,7 @@ func TestOrchestratorGRPC_RemoveAgent(t *testing.T) {
 
 func TestOrchestratorGRPC_AgentHeartbeat(t *testing.T) {
 	srv := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	resp, err := srv.FleetNodeHeartbeat(ctx, &pb.FleetNodeHeartbeatRequest{TenantId: "t1", NodeId: "a1"})
 	require.NoError(t, err)
@@ -302,7 +303,7 @@ func TestOrchestratorGRPC_AgentHeartbeat(t *testing.T) {
 
 func TestOrchestratorGRPC_SpawnChildJob(t *testing.T) {
 	srv := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	resp, err := srv.SpawnChildJob(ctx, &pb.SpawnChildJobRequest{
 		TenantId: "t1", ParentJobId: "parent-1",
@@ -318,7 +319,7 @@ func TestOrchestratorGRPC_SpawnChildJob(t *testing.T) {
 
 func TestOrchestratorGRPC_SubmitTaskArtifacts(t *testing.T) {
 	srv := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	resp, err := srv.SubmitTaskArtifacts(ctx, &pb.SubmitTaskArtifactsRequest{
 		TenantId: "t1", TaskId: "tk1",
@@ -337,7 +338,7 @@ func TestOrchestratorGRPC_SubmitTaskArtifacts(t *testing.T) {
 
 func TestOrchestratorGRPC_ListTaskArtifacts(t *testing.T) {
 	srv := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	resp, err := srv.ListTaskArtifacts(ctx, &pb.ListTaskArtifactsRequest{TenantId: "t1", TaskId: "tk1"})
 	require.NoError(t, err)
@@ -350,7 +351,7 @@ func TestOrchestratorGRPC_ListTaskArtifacts(t *testing.T) {
 
 func TestOrchestratorGRPC_GetTaskArtifact(t *testing.T) {
 	srv := NewOrchestratorServer(&grpcTestAgentService{}, createOrchestratorGRPCTestLogger())
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	resp, err := srv.GetTaskArtifact(ctx, &pb.GetTaskArtifactRequest{TenantId: "t1", TaskId: "tk1", Name: "out.txt"})
 	require.NoError(t, err)

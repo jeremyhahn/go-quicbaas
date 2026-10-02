@@ -58,11 +58,11 @@ func TestTenantSpendPolicyOverREST(t *testing.T) {
 		jsonNumber(720*time.Hour) + `,"max_equivalent_micros":2000000000}]}}`
 
 	w := httptest.NewRecorder()
-	server.HandleSetTenantSpendPolicy(w, httptest.NewRequest(http.MethodPut, "/api/v1/orchestrator/spend-policy", bytes.NewBufferString(body)))
+	server.HandleSetTenantSpendPolicy(w, systemRequest(http.MethodPut, "/api/v1/orchestrator/spend-policy", bytes.NewBufferString(body)))
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
 	w = httptest.NewRecorder()
-	server.HandleGetTenantSpendPolicy(w, httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/spend-policy", nil))
+	server.HandleGetTenantSpendPolicy(w, systemRequest(http.MethodGet, "/api/v1/orchestrator/spend-policy", nil))
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 	var report orchestration.TenantSpendPolicyReport
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &report))
@@ -88,13 +88,13 @@ func TestTenantSpendPolicyOverRESTRefuses(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			server := tenantSpendServer(t, tc.wired)
 			w := httptest.NewRecorder()
-			server.HandleSetTenantSpendPolicy(w, httptest.NewRequest(http.MethodPut, "/api/v1/orchestrator/spend-policy", bytes.NewBufferString(tc.body)))
+			server.HandleSetTenantSpendPolicy(w, systemRequest(http.MethodPut, "/api/v1/orchestrator/spend-policy", bytes.NewBufferString(tc.body)))
 			assert.Equal(t, tc.code, w.Code, "body: %s", w.Body.String())
 		})
 	}
 	server := tenantSpendServer(t, false)
 	w := httptest.NewRecorder()
-	server.HandleGetTenantSpendPolicy(w, httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/spend-policy", nil))
+	server.HandleGetTenantSpendPolicy(w, systemRequest(http.MethodGet, "/api/v1/orchestrator/spend-policy", nil))
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 

@@ -480,7 +480,7 @@ func TestOrchestratorSpawn_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
@@ -513,7 +513,7 @@ func TestOrchestratorSpawn_DefaultsPersistentTrue(t *testing.T) {
 
 	// Raw body deliberately omits "persistent" entirely.
 	body := []byte(`{"backend":"claude"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorSpawn(rec, req)
@@ -537,7 +537,7 @@ func TestOrchestratorSpawn_HonorsExplicitPersistentFalse(t *testing.T) {
 	}
 
 	body := []byte(`{"backend":"claude","persistent":false}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorSpawn(rec, req)
@@ -560,7 +560,7 @@ func TestOrchestratorSpawn_HonorsExplicitPersistentTrue(t *testing.T) {
 	}
 
 	body := []byte(`{"backend":"claude","persistent":true}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorSpawn(rec, req)
@@ -574,7 +574,7 @@ func TestOrchestratorSpawn_InvalidPayload(t *testing.T) {
 	server, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader([]byte("invalid-json")))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader([]byte("invalid-json")))
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
@@ -590,7 +590,7 @@ func TestOrchestratorSpawn_MissingBackend(t *testing.T) {
 	body, err := json.Marshal(orchestration.SpawnSessionRequest{})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
@@ -607,7 +607,7 @@ func TestOrchestratorSpawn_ServiceUnavailable(t *testing.T) {
 	body, err := json.Marshal(orchestration.SpawnSessionRequest{Backend: "claude"})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
@@ -630,7 +630,7 @@ func TestOrchestratorSpawn_ServiceError(t *testing.T) {
 	body, err := json.Marshal(orchestration.SpawnSessionRequest{Backend: "invalid"})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
@@ -654,7 +654,7 @@ func TestOrchestratorSpawn_UnsupportedOperation(t *testing.T) {
 	body, err := json.Marshal(orchestration.SpawnSessionRequest{Backend: "ollama"})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/sessions?tenant_id=default", bytes.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions?tenant_id=default", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
@@ -688,7 +688,7 @@ func TestOrchestratorSpawn_BackendNotFound(t *testing.T) {
 	body, err := json.Marshal(orchestration.SpawnSessionRequest{Backend: "ollama"})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
@@ -729,7 +729,7 @@ func TestOrchestratorCreateTask_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/tasks", bytes.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
@@ -748,7 +748,7 @@ func TestOrchestratorCreateTask_InvalidPayload(t *testing.T) {
 	server, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/tasks", bytes.NewReader([]byte("not-json")))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks", bytes.NewReader([]byte("not-json")))
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
@@ -764,7 +764,7 @@ func TestOrchestratorCreateTask_MissingSubject(t *testing.T) {
 	body, err := json.Marshal(orchestration.CreateTaskRequest{Description: "no subject"})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/tasks", bytes.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
@@ -780,7 +780,7 @@ func TestOrchestratorCreateTask_ServiceUnavailable(t *testing.T) {
 	body, err := json.Marshal(orchestration.CreateTaskRequest{Subject: "test"})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/tasks", bytes.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
@@ -802,7 +802,7 @@ func TestOrchestratorCreateTask_ServiceError(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/tasks", bytes.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
@@ -826,7 +826,7 @@ func TestOrchestratorListTasks_Success(t *testing.T) {
 		}, nil
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/tasks?tenant_id=t1", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/orchestrator/tasks?tenant_id=t1", nil)
 
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorListTasks(rec, req)
@@ -849,7 +849,7 @@ func TestOrchestratorListTasks_WithFilter(t *testing.T) {
 		return []*orchestration.Task{}, nil
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/tasks?tenant_id=t1&status=pending&team_name=alpha", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/orchestrator/tasks?tenant_id=t1&status=pending&team_name=alpha", nil)
 
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorListTasks(rec, req)
@@ -871,7 +871,7 @@ func TestOrchestratorClaimTask_Success(t *testing.T) {
 	body, err := json.Marshal(OrchestratorClaimTaskRequest{AgentID: "agent-1"})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/tasks/task-1/claim?tenant_id=t1", bytes.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks/task-1/claim?tenant_id=t1", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	rctx := chi.NewRouteContext()
@@ -897,7 +897,7 @@ func TestOrchestratorClaimTask_MissingAgentID(t *testing.T) {
 	body, err := json.Marshal(OrchestratorClaimTaskRequest{})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/tasks/task-1/claim", bytes.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks/task-1/claim", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	rctx := chi.NewRouteContext()
@@ -925,7 +925,7 @@ func TestOrchestratorClaimTask_AlreadyClaimed(t *testing.T) {
 	body, err := json.Marshal(OrchestratorClaimTaskRequest{AgentID: "agent-1"})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/tasks/task-1/claim?tenant_id=t1", bytes.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks/task-1/claim?tenant_id=t1", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	rctx := chi.NewRouteContext()
@@ -946,7 +946,7 @@ func TestOrchestratorHealth_Success(t *testing.T) {
 	server, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/health", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/orchestrator/health", nil)
 
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorHealth(rec, req)
@@ -963,7 +963,7 @@ func TestOrchestratorHealth_ServiceUnavailable(t *testing.T) {
 	server, _, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/health", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/orchestrator/health", nil)
 
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorHealth(rec, req)
@@ -998,7 +998,7 @@ func TestOrchestratorPrompt_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/sessions/sess-1/prompt", bytes.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions/sess-1/prompt", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	rctx := chi.NewRouteContext()
@@ -1025,7 +1025,7 @@ func TestOrchestratorPrompt_MissingPrompt(t *testing.T) {
 	body, err := json.Marshal(orchestration.PromptSessionRequest{})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/sessions/sess-1/prompt", bytes.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions/sess-1/prompt", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	rctx := chi.NewRouteContext()
@@ -1053,7 +1053,7 @@ func TestOrchestratorListBackends_Success(t *testing.T) {
 		}, nil
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/backends", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/orchestrator/backends", nil)
 
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorListBackends(rec, req)
@@ -1074,7 +1074,7 @@ func TestOrchestratorListRunners_ReportsRegisteredRunners(t *testing.T) {
 	server, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/runners", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/orchestrator/runners", nil)
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorListRunners(rec, req)
 
@@ -1116,7 +1116,7 @@ func TestOrchestratorListRunners_SessionBackedIsAlwaysSerialized(t *testing.T) {
 	server, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/runners", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/orchestrator/runners", nil)
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorListRunners(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -1146,7 +1146,7 @@ func TestOrchestratorListRunners_WithoutOrchestratorAnswers503(t *testing.T) {
 	server, _, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/runners", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/orchestrator/runners", nil)
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorListRunners(rec, req)
 
@@ -1173,7 +1173,7 @@ func TestOrchestratorDiscover_Success(t *testing.T) {
 	body, err := json.Marshal(orchestration.DiscoverProjectsRequest{RootPath: "/tmp"})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/discover", bytes.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/discover", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
@@ -1189,7 +1189,7 @@ func TestOrchestratorDiscover_MissingRootPath(t *testing.T) {
 	body, err := json.Marshal(orchestration.DiscoverProjectsRequest{})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/discover", bytes.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/discover", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
@@ -1206,7 +1206,7 @@ func TestOrchestratorSessionStatus_Success(t *testing.T) {
 	server, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/sessions/sess-1", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/orchestrator/sessions/sess-1", nil)
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("sessionID", "sess-1")
@@ -1222,7 +1222,7 @@ func TestOrchestratorCloseSession_Success(t *testing.T) {
 	server, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/orchestrator/sessions/sess-1", nil)
+	req := systemRequest(http.MethodDelete, "/api/v1/orchestrator/sessions/sess-1", nil)
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("sessionID", "sess-1")
@@ -1238,7 +1238,7 @@ func TestOrchestratorListSessions_Success(t *testing.T) {
 	server, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/sessions", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/orchestrator/sessions", nil)
 
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorListSessions(rec, req)
@@ -1261,7 +1261,7 @@ func TestOrchestratorCompleteTask_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/tasks/task-1/complete?tenant_id=t1", bytes.NewReader(body))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks/task-1/complete?tenant_id=t1", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	rctx := chi.NewRouteContext()
@@ -1278,7 +1278,7 @@ func TestOrchestratorGetTask_Success(t *testing.T) {
 	server, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/tasks/task-1?tenant_id=t1", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/orchestrator/tasks/task-1?tenant_id=t1", nil)
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("taskID", "task-1")
@@ -1302,7 +1302,7 @@ func TestOrchestratorErrorMapping_NotFound(t *testing.T) {
 		return nil, &orchestration.TaskNotFoundError{TenantID: tenantID, TaskID: taskID}
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/tasks/missing?tenant_id=t1", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/orchestrator/tasks/missing?tenant_id=t1", nil)
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("taskID", "missing")
@@ -1322,7 +1322,7 @@ func TestHandleOrchestratorListWorkflows_Empty(t *testing.T) {
 	server, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/workflows", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/orchestrator/workflows", nil)
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorListWorkflows(rec, req)
 
@@ -1344,7 +1344,7 @@ func TestHandleOrchestratorListWorkflows_NoAgent(t *testing.T) {
 	// Remove agent service.
 	server.service = testutil.NewMockQuicBaaS()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/workflows", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/orchestrator/workflows", nil)
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorListWorkflows(rec, req)
 
@@ -1355,7 +1355,7 @@ func TestHandleOrchestratorGetWorkflow_NotFound(t *testing.T) {
 	server, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/workflows/does-not-exist", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/orchestrator/workflows/does-not-exist", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("name", "does-not-exist")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -1370,7 +1370,7 @@ func TestHandleOrchestratorGetWorkflow_MissingName(t *testing.T) {
 	server, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orchestrator/workflows/", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/orchestrator/workflows/", nil)
 	rctx := chi.NewRouteContext()
 	// Do not set "name" URL param — simulates a missing name.
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -1400,7 +1400,7 @@ func TestHandleOrchestratorCreateWorkflow_Success(t *testing.T) {
 	bodyBytes, err := json.Marshal(body)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/workflows", bytes.NewReader(bodyBytes))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/workflows", bytes.NewReader(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorCreateWorkflow(rec, req)
@@ -1420,7 +1420,7 @@ func TestHandleOrchestratorCreateWorkflow_MissingName(t *testing.T) {
 	bodyBytes, err := json.Marshal(body)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/workflows", bytes.NewReader(bodyBytes))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/workflows", bytes.NewReader(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorCreateWorkflow(rec, req)
@@ -1438,7 +1438,7 @@ func TestHandleOrchestratorCreateWorkflow_MissingDefinition(t *testing.T) {
 	bodyBytes, err := json.Marshal(body)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/workflows", bytes.NewReader(bodyBytes))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/workflows", bytes.NewReader(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorCreateWorkflow(rec, req)
@@ -1450,7 +1450,7 @@ func TestHandleOrchestratorCreateWorkflow_InvalidJSON(t *testing.T) {
 	server, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/workflows", bytes.NewReader([]byte(`{invalid`)))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/workflows", bytes.NewReader([]byte(`{invalid`)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	server.HandleOrchestratorCreateWorkflow(rec, req)
@@ -1480,7 +1480,7 @@ func TestHandleUpdateWorkflow_Success(t *testing.T) {
 	body, err := json.Marshal(updated)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/orchestrator/workflows/my-workflow", bytes.NewReader(body))
+	req := systemRequest(http.MethodPut, "/api/v1/orchestrator/workflows/my-workflow", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("name", "my-workflow")
@@ -1512,7 +1512,7 @@ func TestHandleUpdateWorkflow_NotFound(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/orchestrator/workflows/ghost", bytes.NewReader(body))
+	req := systemRequest(http.MethodPut, "/api/v1/orchestrator/workflows/ghost", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("name", "ghost")
@@ -1533,7 +1533,7 @@ func TestHandleDeleteWorkflow_Success(t *testing.T) {
 	server, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/orchestrator/workflows/my-workflow", nil)
+	req := systemRequest(http.MethodDelete, "/api/v1/orchestrator/workflows/my-workflow", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("name", "my-workflow")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -1558,7 +1558,7 @@ func TestHandleDeleteWorkflow_NotFound(t *testing.T) {
 		return &orchestration.WorkflowNotFoundError{Name: name}
 	}
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/orchestrator/workflows/ghost", nil)
+	req := systemRequest(http.MethodDelete, "/api/v1/orchestrator/workflows/ghost", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("name", "ghost")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -1579,7 +1579,7 @@ func TestHandleOrchestratorListBackendModels_OllamaSuccess(t *testing.T) {
 	server, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/fleet/gpu-host/backends/ollama/models", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/fleet/gpu-host/backends/ollama/models", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("nodeID", "gpu-host")
 	rctx.URLParams.Add("backendName", "ollama")
@@ -1606,7 +1606,7 @@ func TestHandleOrchestratorListBackendModels_MissingBackend(t *testing.T) {
 	server, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/fleet/gpu-host/backends//models", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/fleet/gpu-host/backends//models", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("nodeID", "gpu-host")
 	// backendName is intentionally omitted to trigger validation.
@@ -1625,7 +1625,7 @@ func TestHandleOrchestratorListBackendModels_UnknownReturnsEmpty(t *testing.T) {
 	server, _, cleanup := setupOrchestratorMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/fleet/any/backends/unknown/models", nil)
+	req := systemRequest(http.MethodGet, "/api/v1/fleet/any/backends/unknown/models", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("nodeID", "any")
 	rctx.URLParams.Add("backendName", "unknown")
@@ -1671,7 +1671,7 @@ func TestOrchestratorCreateTask_WithHostAffinityAndGPU(t *testing.T) {
 		"host_affinity": "gpu-node-01",
 		"gpu_required": true
 	}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orchestrator/tasks", bytes.NewBufferString(body))
+	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()

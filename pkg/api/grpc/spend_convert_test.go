@@ -23,6 +23,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // TestSpendLimitsProtoRoundTrip is the one limits shape on the wire
@@ -76,7 +77,7 @@ func TestProjectServer_SpendCrossesTheWire(t *testing.T) {
 			return &service.UpdateProjectResponse{Project: project, Timestamp: time.Now()}, nil
 		},
 	})
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	resp, err := srv.CreateProject(ctx, &pb.CreateProjectRequest{TenantId: "tenant-1", Name: "demo", Spend: spendLimitsToProto(limits)})
 	if err != nil {
@@ -112,7 +113,7 @@ func TestTenantSpendPolicyOverGRPC(t *testing.T) {
 	srv := NewOrchestratorServer(&spendLedgerAgentService{
 		ledger: ledger, tenant: orchestration.NewInMemoryTenantSpendPolicyStore(),
 	}, createOrchestratorGRPCTestLogger())
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	limits := orchestration.SpendLimits{Windows: []orchestration.QuotaWindow{
 		{Name: "monthly", Size: 720 * time.Hour, MaxEquivalentMicros: 2_000_000_000},
 	}}
@@ -135,7 +136,7 @@ func TestTenantSpendPolicyOverGRPC(t *testing.T) {
 }
 
 func TestTenantSpendPolicyOverGRPCRefuses(t *testing.T) {
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	wired := NewOrchestratorServer(&spendLedgerAgentService{
 		ledger: orchestration.NewInMemoryConsumptionLedger(), tenant: orchestration.NewInMemoryTenantSpendPolicyStore(),
 	}, createOrchestratorGRPCTestLogger())

@@ -21,8 +21,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -37,11 +37,11 @@ import (
 // invalidTenantCtx yields a context whose IAM tenant fails validation, so the
 // schedulerTenantResolveID guard at the top of every adapter method fires.
 func invalidTenantCtx() context.Context {
-	return iam.ContextWithTenant(context.Background(), "bad/tenant")
+	return tenantctx.WithTenant(context.Background(), "bad/tenant")
 }
 
 func crossTenantCtx() context.Context {
-	return iam.ContextWithTenant(context.Background(), "tenant-a")
+	return tenantctx.WithTenant(context.Background(), "tenant-a")
 }
 
 func TestSchedulerAdapter_InvalidTenant_AllMethods(t *testing.T) {

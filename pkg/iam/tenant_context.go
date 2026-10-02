@@ -19,30 +19,13 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // Context key types for type safety.
-type tenantContextKey struct{}
 type userContextKey struct{}
 type vectorContextKey struct{}
 type superAdminContextKey struct{}
-
-// TenantFromContext extracts the tenant ID from the context.
-// Returns empty string if not set.
-func TenantFromContext(ctx context.Context) string {
-	if v := ctx.Value(tenantContextKey{}); v != nil {
-		if tenantID, ok := v.(string); ok {
-			return tenantID
-		}
-	}
-	return ""
-}
-
-// ContextWithTenant returns a new context with the tenant ID set.
-func ContextWithTenant(ctx context.Context, tenantID string) context.Context {
-	return context.WithValue(ctx, tenantContextKey{}, tenantID)
-}
 
 // UserFromContext extracts the user ID from the context.
 // Returns empty string if not set.
@@ -104,19 +87,6 @@ type TenantInfo struct {
 
 	// Validated indicates whether the tenant has been validated.
 	Validated bool
-}
-
-// TenantInfoFromContext extracts tenant info from the context.
-// This provides more details than TenantFromContext.
-func TenantInfoFromContext(ctx context.Context) *TenantInfo {
-	tenantID := TenantFromContext(ctx)
-	if tenantID == "" {
-		return nil
-	}
-	return &TenantInfo{
-		ID:        tenantID,
-		Validated: true,
-	}
 }
 
 // IsSameTenant checks if two tenant IDs match.
@@ -187,66 +157,6 @@ func ContextWithSuperAdmin(ctx context.Context, sac *SuperAdminContext) context.
 	return context.WithValue(ctx, superAdminContextKey{}, sac)
 }
 
-// SwitchTenantContext switches the tenant context for a SuperAdmin operation.
-// This creates a new context with:
-// 1. The target tenant ID set as the current tenant
-// 2. A SuperAdminContext recording the switch for audit purposes
-//
-// Returns an error if:
-// - targetTenantID is empty
-// - justification is empty (required for audit)
-// - the current context has no user (SuperAdmin must be identified).
-func SwitchTenantContext(ctx context.Context, targetTenantID, justification string) (context.Context, error) {
-	if targetTenantID == "" {
-		return nil, errors.NewMissingTenantContextError("SwitchTenantContext")
-	}
-	if justification == "" {
-		return nil, errors.NewMissingJustificationError("SwitchTenantContext")
-	}
-
-	// Get the current user (SuperAdmin must be identified)
-	userID := UserFromContext(ctx)
-	if userID == "" {
-		return nil, errors.NewMissingUserContextError("SwitchTenantContext")
-	}
-
-	// Get the original tenant context
-	originalTenantID := TenantFromContext(ctx)
-
-	// Create the SuperAdmin context for audit
-	sac := &SuperAdminContext{
-		OriginalTenantID: originalTenantID,
-		TargetTenantID:   targetTenantID,
-		Justification:    justification,
-		JustificationID:  generateJustificationID(),
-		SwitchedAt:       time.Now(),
-		UserID:           userID,
-	}
-
-	// Create new context with target tenant and SuperAdmin context
-	newCtx := ContextWithTenant(ctx, targetTenantID)
-	newCtx = ContextWithSuperAdmin(newCtx, sac)
-
-	return newCtx, nil
-}
-
-// SwitchTenantContextWithAssignment is like SwitchTenantContext but includes
-// an assignment ID (e.g., a support ticket number or work order).
-func SwitchTenantContextWithAssignment(ctx context.Context, targetTenantID, justification, assignmentID string) (context.Context, error) {
-	newCtx, err := SwitchTenantContext(ctx, targetTenantID, justification)
-	if err != nil {
-		return nil, err
-	}
-
-	// Update the SuperAdmin context with the assignment ID
-	sac := SuperAdminContextFromContext(newCtx)
-	if sac != nil {
-		sac.AssignmentID = assignmentID
-	}
-
-	return newCtx, nil
-}
-
 // IsSuperAdminOperation returns true if the current context is a SuperAdmin
 // cross-tenant operation.
 func IsSuperAdminOperation(ctx context.Context) bool {
@@ -254,8 +164,14 @@ func IsSuperAdminOperation(ctx context.Context) bool {
 	return sac != nil && sac.IsCrossTenantOperation()
 }
 
-// generateJustificationID creates a unique ID for the justification.
-// This is used for audit trail correlation.
-func generateJustificationID() string {
-	return time.Now().UTC().Format("20060102150405.000000")
+// contextTenant returns the tenant bound to ctx (tenantctx.Lookup), or "" when
+// none is. It serves the login and token plane, which runs before a caller's
+// tenant is known, so "" here means "not yet known" and must never be read as
+// the system tenant. Code that scopes records reads tenantctx.FromContext,
+// which refuses an unbound context instead.
+func contextTenant(ctx context.Context) string {
+	if tenantID, ok := tenantctx.Lookup(ctx); ok {
+		return tenantID
+	}
+	return ""
 }

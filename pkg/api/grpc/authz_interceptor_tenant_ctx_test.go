@@ -21,16 +21,15 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
 )
 
 // TestUnaryAuthorizationInterceptor_InjectsTenantContext asserts that a
-// successful validator-allow injects the tenant context key (iam.ContextWithTenant)
-// in addition to the authenticated Subject, so the service / storage layer resolves
-// row-level isolation from iam.TenantFromContext — the canonical RLS source — and
-// not just from auth.SubjectFromContext().TenantID. This matches the REST and MCP
-// validator-allow paths.
+// successful validator-allow binds the tenant under go-qrdb's central key
+// (tenantctx.WithTenant) in addition to the authenticated Subject, so the
+// service / storage layer resolves row-level isolation from tenantctx — the one
+// tenant source — and not just from auth.SubjectFromContext().TenantID. This
+// matches the REST and MCP validator-allow paths.
 func TestUnaryAuthorizationInterceptor_InjectsTenantContext(t *testing.T) {
 	authorizer := &fakeValidatorAuthorizer{
 		token:       "good",
@@ -47,7 +46,7 @@ func TestUnaryAuthorizationInterceptor_InjectsTenantContext(t *testing.T) {
 
 	var sawTenant string
 	handler := func(ctx context.Context, _ interface{}) (interface{}, error) {
-		sawTenant = iam.TenantFromContext(ctx)
+		sawTenant = boundTenant(ctx)
 		return "ok", nil
 	}
 
@@ -56,13 +55,14 @@ func TestUnaryAuthorizationInterceptor_InjectsTenantContext(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ok", resp)
 	assert.Equal(t, "tenant-a", sawTenant,
-		"tenant must be resolvable from iam.TenantFromContext after a successful authorize")
+		"tenant must be bound under the central key after a successful authorize")
 }
 
 // TestUnaryAuthorizationInterceptor_EmptyTenantNoContextKey asserts the negative
-// case: when the verified AuthorizedContext carries no tenant, the tenant context
-// key is NOT set, preserving single-tenant (legacy) behavior. The authenticated
-// Subject is still injected.
+// case: when the verified AuthorizedContext carries no tenant, no tenant is
+// bound — and the services then refuse the request instead of reading the
+// absence as system reach (TestLegacyListener_TokenWithoutTenantFailsClosed).
+// The authenticated Subject is still injected.
 func TestUnaryAuthorizationInterceptor_EmptyTenantNoContextKey(t *testing.T) {
 	authorizer := &fakeValidatorAuthorizer{
 		token:       "good",
@@ -79,7 +79,7 @@ func TestUnaryAuthorizationInterceptor_EmptyTenantNoContextKey(t *testing.T) {
 
 	var sawTenant string
 	handler := func(ctx context.Context, _ interface{}) (interface{}, error) {
-		sawTenant = iam.TenantFromContext(ctx)
+		sawTenant = boundTenant(ctx)
 		return "ok", nil
 	}
 

@@ -20,6 +20,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // SchedulerAdapter wraps an interfaces.SchedulerEngine to implement both the
@@ -37,19 +38,18 @@ func NewSchedulerAdapter(s interfaces.SchedulerEngine) *SchedulerAdapter {
 
 // ScheduleJob converts the service-level job to a scheduler job and schedules it.
 // This implements the KMSScheduler interface.
+//
+// The job is scheduled for the tenant schedulerTenantResolveID resolves from
+// the caller and job.TargetTenantID: a tenant caller schedules for itself, and
+// naming another tenant is refused for every caller, the system tenant
+// included (tenantctx.Target). Every other outcome is an error;
+// a request is never answered with success without scheduling.
 func (a *SchedulerAdapter) ScheduleJob(ctx context.Context, job *SchedulerJob) error {
-	tenantID, err := schedulerTenantPrepareContext(ctx)
+	tenantID, err := schedulerTenantResolveID(ctx, "ScheduleJob", job.TargetTenantID)
 	if err != nil {
 		return err
 	}
-
-	// Set tenant on job if in multi-tenant mode
-	if tenantID != "" {
-		if job.TargetTenantID != "" && job.TargetTenantID != tenantID {
-			return schedulerTenantEnforceAccess(tenantID, job.TargetTenantID, "ScheduleJob")
-		}
-		job.TargetTenantID = tenantID
-	}
+	job.TargetTenantID = tenantID
 
 	// Convert service.SchedulerJob to scheduler.Job
 	schedulerJob := a.convertToSchedulerJob(job)
@@ -65,9 +65,23 @@ func (a *SchedulerAdapter) ScheduleJob(ctx context.Context, job *SchedulerJob) e
 
 // CreateJob creates a new scheduled job.
 func (a *SchedulerAdapter) CreateJob(ctx context.Context, req *CreateSchedulerJobRequest) (*CreateSchedulerJobResponse, error) {
-	// Resolve tenant: prefer IAM context, fall back to request OwnerID for tenant jobs
-	tenantID, err := schedulerTenantResolveID(ctx, req.OwnerID)
+	// The job's target tenant: the caller's own; naming another is refused.
+	tenantID, err := schedulerTenantResolveID(ctx, "CreateJob", req.TargetTenantID)
 	if err != nil {
+		return nil, err
+	}
+	// A tenant-owned job is filed in its owner's namespace, so naming an
+	// owner is naming a tenant and is held to the same rule.
+	ownerID := req.OwnerID
+	if req.OwnerType == SchedulerOwnerTypeTenant {
+		if ownerID, err = schedulerTenantResolveID(ctx, "CreateJob", req.OwnerID); err != nil {
+			return nil, err
+		}
+	} else if tenantID != "" {
+		// A system or delegated job lives in the system namespace, so a
+		// tenant caller creating one names the system tenant: refused by the
+		// same rule.
+		_, err := tenantctx.Target(ctx, "scheduler.CreateJob", tenantctx.SystemTenantID)
 		return nil, err
 	}
 
@@ -76,8 +90,8 @@ func (a *SchedulerAdapter) CreateJob(ctx context.Context, req *CreateSchedulerJo
 		Name:           req.Name,
 		Description:    req.Description,
 		OwnerType:      scheduler.OwnerType(req.OwnerType),
-		OwnerID:        req.OwnerID,
-		TargetTenantID: req.TargetTenantID,
+		OwnerID:        ownerID,
+		TargetTenantID: tenantID,
 		Type:           scheduler.JobType(req.Type),
 		Schedule:       req.Schedule,
 		ExecuteAt:      req.ExecuteAt,
@@ -89,14 +103,6 @@ func (a *SchedulerAdapter) CreateJob(ctx context.Context, req *CreateSchedulerJo
 		MaxRetries:     req.MaxRetries,
 		NodeAffinity:   req.NodeAffinity,
 		Labels:         req.Labels,
-	}
-
-	// Enforce tenant isolation in multi-tenant mode
-	if tenantID != "" {
-		if req.TargetTenantID != "" && req.TargetTenantID != tenantID {
-			return nil, schedulerTenantEnforceAccess(tenantID, req.TargetTenantID, "CreateJob")
-		}
-		job.TargetTenantID = tenantID
 	}
 
 	if err := a.scheduler.ScheduleJob(ctx, job); err != nil {
@@ -111,8 +117,7 @@ func (a *SchedulerAdapter) CreateJob(ctx context.Context, req *CreateSchedulerJo
 
 // GetJob retrieves a job by ID.
 func (a *SchedulerAdapter) GetJob(ctx context.Context, req *GetSchedulerJobRequest) (*GetSchedulerJobResponse, error) {
-	// Resolve tenant: prefer IAM context, fall back to request TenantID
-	tenantID, err := schedulerTenantResolveID(ctx, req.TenantID)
+	tenantID, err := schedulerTenantResolveID(ctx, "GetJob", req.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -136,8 +141,7 @@ func (a *SchedulerAdapter) GetJob(ctx context.Context, req *GetSchedulerJobReque
 
 // UpdateJob updates an existing job.
 func (a *SchedulerAdapter) UpdateJob(ctx context.Context, req *UpdateSchedulerJobRequest) (*UpdateSchedulerJobResponse, error) {
-	// Resolve tenant: prefer IAM context, fall back to request TenantID
-	tenantID, err := schedulerTenantResolveID(ctx, req.TenantID)
+	tenantID, err := schedulerTenantResolveID(ctx, "UpdateJob", req.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -174,8 +178,7 @@ func (a *SchedulerAdapter) UpdateJob(ctx context.Context, req *UpdateSchedulerJo
 
 // DeleteJob removes a scheduled job.
 func (a *SchedulerAdapter) DeleteJob(ctx context.Context, req *DeleteSchedulerJobRequest) (*DeleteSchedulerJobResponse, error) {
-	// Resolve tenant: prefer IAM context, fall back to request TenantID
-	tenantID, err := schedulerTenantResolveID(ctx, req.TenantID)
+	tenantID, err := schedulerTenantResolveID(ctx, "DeleteJob", req.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -193,8 +196,14 @@ func (a *SchedulerAdapter) DeleteJob(ctx context.Context, req *DeleteSchedulerJo
 
 // ListJobs returns jobs matching the query criteria.
 func (a *SchedulerAdapter) ListJobs(ctx context.Context, req *ListSchedulerJobsRequest) (*ListSchedulerJobsResponse, error) {
-	// Resolve tenant: prefer IAM context, fall back to request OwnerID
-	tenantID, err := schedulerTenantResolveID(ctx, req.OwnerID)
+	// The listing's tenant: the caller's own; naming another as owner is
+	// refused.
+	tenantID, err := schedulerTenantResolveID(ctx, "ListJobs", req.OwnerID)
+	if err != nil {
+		return nil, err
+	}
+	// A named target tenant is held to the same rule.
+	targetTenantID, err := schedulerTenantResolveID(ctx, "ListJobs", req.TargetTenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +212,7 @@ func (a *SchedulerAdapter) ListJobs(ctx context.Context, req *ListSchedulerJobsR
 	query := &scheduler.JobQuery{
 		OwnerType:      scheduler.OwnerType(req.OwnerType),
 		OwnerID:        req.OwnerID,
-		TargetTenantID: req.TargetTenantID,
+		TargetTenantID: targetTenantID,
 		Status:         scheduler.JobStatus(req.Status),
 		Handler:        req.Handler,
 		Labels:         req.Labels,
@@ -240,8 +249,7 @@ func (a *SchedulerAdapter) ListJobs(ctx context.Context, req *ListSchedulerJobsR
 
 // TriggerJob immediately executes a job.
 func (a *SchedulerAdapter) TriggerJob(ctx context.Context, req *TriggerSchedulerJobRequest) (*TriggerSchedulerJobResponse, error) {
-	// Resolve tenant: prefer IAM context, fall back to request TenantID
-	tenantID, err := schedulerTenantResolveID(ctx, req.TenantID)
+	tenantID, err := schedulerTenantResolveID(ctx, "TriggerJob", req.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -271,8 +279,7 @@ func (a *SchedulerAdapter) TriggerJob(ctx context.Context, req *TriggerScheduler
 
 // PauseJob pauses a scheduled job.
 func (a *SchedulerAdapter) PauseJob(ctx context.Context, req *PauseSchedulerJobRequest) (*PauseSchedulerJobResponse, error) {
-	// Resolve tenant: prefer IAM context, fall back to request TenantID
-	tenantID, err := schedulerTenantResolveID(ctx, req.TenantID)
+	tenantID, err := schedulerTenantResolveID(ctx, "PauseJob", req.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -292,8 +299,7 @@ func (a *SchedulerAdapter) PauseJob(ctx context.Context, req *PauseSchedulerJobR
 
 // ResumeJob resumes a paused job.
 func (a *SchedulerAdapter) ResumeJob(ctx context.Context, req *ResumeSchedulerJobRequest) (*ResumeSchedulerJobResponse, error) {
-	// Resolve tenant: prefer IAM context, fall back to request TenantID
-	tenantID, err := schedulerTenantResolveID(ctx, req.TenantID)
+	tenantID, err := schedulerTenantResolveID(ctx, "ResumeJob", req.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -313,8 +319,7 @@ func (a *SchedulerAdapter) ResumeJob(ctx context.Context, req *ResumeSchedulerJo
 
 // CancelJob cancels a scheduled job.
 func (a *SchedulerAdapter) CancelJob(ctx context.Context, req *CancelSchedulerJobRequest) (*CancelSchedulerJobResponse, error) {
-	// Resolve tenant: prefer IAM context, fall back to request TenantID
-	tenantID, err := schedulerTenantResolveID(ctx, req.TenantID)
+	tenantID, err := schedulerTenantResolveID(ctx, "CancelJob", req.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -334,8 +339,7 @@ func (a *SchedulerAdapter) CancelJob(ctx context.Context, req *CancelSchedulerJo
 
 // GetJobHistory returns execution history for a job.
 func (a *SchedulerAdapter) GetJobHistory(ctx context.Context, req *GetSchedulerJobHistoryRequest) (*GetSchedulerJobHistoryResponse, error) {
-	// Resolve tenant: prefer IAM context, fall back to request TenantID
-	tenantID, err := schedulerTenantResolveID(ctx, req.TenantID)
+	tenantID, err := schedulerTenantResolveID(ctx, "GetJobHistory", req.TenantID)
 	if err != nil {
 		return nil, err
 	}

@@ -81,7 +81,10 @@ func (s *Server) agentCatalog(w http.ResponseWriter, r *http.Request) *service.A
 
 // HandleListAgents serves GET /api/v1/agents.
 func (s *Server) HandleListAgents(w http.ResponseWriter, r *http.Request) {
-	ctx, tenantID := resolveOrchestratorTenant(r)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 	catalog := s.agentCatalog(w, r)
 	if catalog == nil {
 		return
@@ -96,7 +99,10 @@ func (s *Server) HandleListAgents(w http.ResponseWriter, r *http.Request) {
 
 // HandleCreateAgent serves POST /api/v1/agents.
 func (s *Server) HandleCreateAgent(w http.ResponseWriter, r *http.Request) {
-	ctx, tenantID := resolveOrchestratorTenant(r)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 	var agent orchestration.Agent
 	if err := json.NewDecoder(r.Body).Decode(&agent); err != nil {
 		RespondBadRequest(w, r, "invalid request body: "+err.Error())
@@ -116,7 +122,10 @@ func (s *Server) HandleCreateAgent(w http.ResponseWriter, r *http.Request) {
 
 // HandleGetAgent serves GET /api/v1/agents/{agentID}.
 func (s *Server) HandleGetAgent(w http.ResponseWriter, r *http.Request) {
-	ctx, tenantID := resolveOrchestratorTenant(r)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 	catalog := s.agentCatalog(w, r)
 	if catalog == nil {
 		return
@@ -131,7 +140,10 @@ func (s *Server) HandleGetAgent(w http.ResponseWriter, r *http.Request) {
 
 // HandleUpdateAgent serves PUT /api/v1/agents/{agentID}.
 func (s *Server) HandleUpdateAgent(w http.ResponseWriter, r *http.Request) {
-	ctx, tenantID := resolveOrchestratorTenant(r)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 	var agent orchestration.Agent
 	if err := json.NewDecoder(r.Body).Decode(&agent); err != nil {
 		RespondBadRequest(w, r, "invalid request body: "+err.Error())
@@ -152,7 +164,10 @@ func (s *Server) HandleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 // HandleDeleteAgent serves DELETE /api/v1/agents/{agentID}. An Agent anything
 // still references is refused with 409, naming every user.
 func (s *Server) HandleDeleteAgent(w http.ResponseWriter, r *http.Request) {
-	ctx, tenantID := resolveOrchestratorTenant(r)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 	catalog := s.agentCatalog(w, r)
 	if catalog == nil {
 		return
@@ -166,7 +181,10 @@ func (s *Server) HandleDeleteAgent(w http.ResponseWriter, r *http.Request) {
 
 // HandleAgentUsedBy serves GET /api/v1/agents/{agentID}/used-by.
 func (s *Server) HandleAgentUsedBy(w http.ResponseWriter, r *http.Request) {
-	ctx, tenantID := resolveOrchestratorTenant(r)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 	catalog := s.agentCatalog(w, r)
 	if catalog == nil {
 		return
@@ -181,7 +199,10 @@ func (s *Server) HandleAgentUsedBy(w http.ResponseWriter, r *http.Request) {
 
 // HandleListAgentPools serves GET /api/v1/agent-pools.
 func (s *Server) HandleListAgentPools(w http.ResponseWriter, r *http.Request) {
-	ctx, tenantID := resolveOrchestratorTenant(r)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 	catalog := s.agentCatalog(w, r)
 	if catalog == nil {
 		return
@@ -196,7 +217,10 @@ func (s *Server) HandleListAgentPools(w http.ResponseWriter, r *http.Request) {
 
 // HandleCreateAgentPool serves POST /api/v1/agent-pools.
 func (s *Server) HandleCreateAgentPool(w http.ResponseWriter, r *http.Request) {
-	ctx, tenantID := resolveOrchestratorTenant(r)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 	var pool orchestration.AgentPool
 	if err := json.NewDecoder(r.Body).Decode(&pool); err != nil {
 		RespondBadRequest(w, r, "invalid request body: "+err.Error())
@@ -216,7 +240,10 @@ func (s *Server) HandleCreateAgentPool(w http.ResponseWriter, r *http.Request) {
 
 // HandleGetAgentPool serves GET /api/v1/agent-pools/{poolID}.
 func (s *Server) HandleGetAgentPool(w http.ResponseWriter, r *http.Request) {
-	ctx, tenantID := resolveOrchestratorTenant(r)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 	catalog := s.agentCatalog(w, r)
 	if catalog == nil {
 		return
@@ -231,7 +258,10 @@ func (s *Server) HandleGetAgentPool(w http.ResponseWriter, r *http.Request) {
 
 // HandleUpdateAgentPool serves PUT /api/v1/agent-pools/{poolID}.
 func (s *Server) HandleUpdateAgentPool(w http.ResponseWriter, r *http.Request) {
-	ctx, tenantID := resolveOrchestratorTenant(r)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 	var pool orchestration.AgentPool
 	if err := json.NewDecoder(r.Body).Decode(&pool); err != nil {
 		RespondBadRequest(w, r, "invalid request body: "+err.Error())
@@ -251,7 +281,10 @@ func (s *Server) HandleUpdateAgentPool(w http.ResponseWriter, r *http.Request) {
 
 // HandleDeleteAgentPool serves DELETE /api/v1/agent-pools/{poolID}.
 func (s *Server) HandleDeleteAgentPool(w http.ResponseWriter, r *http.Request) {
-	ctx, tenantID := resolveOrchestratorTenant(r)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 	catalog := s.agentCatalog(w, r)
 	if catalog == nil {
 		return
@@ -265,7 +298,10 @@ func (s *Server) HandleDeleteAgentPool(w http.ResponseWriter, r *http.Request) {
 
 // HandleAgentPoolUsedBy serves GET /api/v1/agent-pools/{poolID}/used-by.
 func (s *Server) HandleAgentPoolUsedBy(w http.ResponseWriter, r *http.Request) {
-	ctx, tenantID := resolveOrchestratorTenant(r)
+	ctx, tenantID, tenantOK := resolveOrchestratorTenant(w, r)
+	if !tenantOK {
+		return
+	}
 	catalog := s.agentCatalog(w, r)
 	if catalog == nil {
 		return

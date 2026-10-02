@@ -31,6 +31,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
 
@@ -63,7 +64,7 @@ func setupSessionEventsServer(t *testing.T, withLog bool) (*Server, orchestratio
 }
 
 func sessionEventsReq(method, target, sessionID string) *http.Request {
-	r := httptest.NewRequest(method, target, nil)
+	r := systemRequest(method, target, nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("sessionID", sessionID)
 	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
@@ -103,7 +104,7 @@ func TestHandleOrchestratorSessionEvents_JSONHistory(t *testing.T) {
 
 	// Seed a couple of events.
 	for i := uint64(1); i <= 2; i++ {
-		require.NoError(t, log.Append(context.Background(), &orchestration.SessionEvent{
+		require.NoError(t, log.Append(tenantctx.WithSystem(context.Background()), &orchestration.SessionEvent{
 			Sequence: i, TenantID: qrdbsdk.SystemTenantID, SessionID: "s1",
 			Timestamp: time.Now().UTC(), Kind: orchestration.KindPromptSubmitted, Source: "test",
 			Prompt: &orchestration.PromptSubmittedPayload{Prompt: "hi"},
@@ -129,13 +130,13 @@ func TestHandleOrchestratorSessionEvents_EnvelopeShape(t *testing.T) {
 	server, log, cleanup := setupSessionEventsServer(t, true)
 	defer cleanup()
 
-	require.NoError(t, log.Append(context.Background(), &orchestration.SessionEvent{
+	require.NoError(t, log.Append(tenantctx.WithSystem(context.Background()), &orchestration.SessionEvent{
 		Sequence: 1, TenantID: qrdbsdk.SystemTenantID, SessionID: "s1",
 		Timestamp: time.Now().UTC(), Kind: orchestration.KindPromptSubmitted,
 		Source: "operator:alice",
 		Prompt: &orchestration.PromptSubmittedPayload{Prompt: "hello there"},
 	}))
-	require.NoError(t, log.Append(context.Background(), &orchestration.SessionEvent{
+	require.NoError(t, log.Append(tenantctx.WithSystem(context.Background()), &orchestration.SessionEvent{
 		Sequence: 2, TenantID: qrdbsdk.SystemTenantID, SessionID: "s1",
 		Timestamp: time.Now().UTC(), Kind: orchestration.KindAssistantChunk,
 		Source:         "agent:claude",
@@ -189,7 +190,7 @@ func TestHandleOrchestratorSessionEvents_LastEventIDResume(t *testing.T) {
 	server, log, cleanup := setupSessionEventsServer(t, true)
 	defer cleanup()
 
-	require.NoError(t, log.Append(context.Background(), &orchestration.SessionEvent{
+	require.NoError(t, log.Append(tenantctx.WithSystem(context.Background()), &orchestration.SessionEvent{
 		Sequence: 1, TenantID: qrdbsdk.SystemTenantID, SessionID: "s1",
 		Timestamp: time.Now().UTC(), Kind: orchestration.KindPromptSubmitted, Source: "test",
 		Prompt: &orchestration.PromptSubmittedPayload{Prompt: "hi"},
@@ -214,12 +215,12 @@ func TestHandleOrchestratorSessionEvents_NoTenantDefaultsToSystem(t *testing.T) 
 
 	// Seed one event under the system tenant and one under the retired
 	// "default" tenant, both for the same session.
-	require.NoError(t, log.Append(context.Background(), &orchestration.SessionEvent{
+	require.NoError(t, log.Append(tenantctx.WithSystem(context.Background()), &orchestration.SessionEvent{
 		Sequence: 1, TenantID: qrdbsdk.SystemTenantID, SessionID: "s1",
 		Timestamp: time.Now().UTC(), Kind: orchestration.KindPromptSubmitted, Source: "test",
 		Prompt: &orchestration.PromptSubmittedPayload{Prompt: "system-event"},
 	}))
-	require.NoError(t, log.Append(context.Background(), &orchestration.SessionEvent{
+	require.NoError(t, log.Append(tenantctx.WithSystem(context.Background()), &orchestration.SessionEvent{
 		Sequence: 1, TenantID: "default", SessionID: "s1",
 		Timestamp: time.Now().UTC(), Kind: orchestration.KindPromptSubmitted, Source: "test",
 		Prompt: &orchestration.PromptSubmittedPayload{Prompt: "legacy-event"},
@@ -243,7 +244,7 @@ func TestHandleOrchestratorSessionEvents_SSEReplay(t *testing.T) {
 	server, log, cleanup := setupSessionEventsServer(t, true)
 	defer cleanup()
 
-	require.NoError(t, log.Append(context.Background(), &orchestration.SessionEvent{
+	require.NoError(t, log.Append(tenantctx.WithSystem(context.Background()), &orchestration.SessionEvent{
 		Sequence: 1, TenantID: qrdbsdk.SystemTenantID, SessionID: "s1",
 		Timestamp: time.Now().UTC(), Kind: orchestration.KindPromptSubmitted, Source: "test",
 		Prompt: &orchestration.PromptSubmittedPayload{Prompt: "hi"},
@@ -268,7 +269,7 @@ func TestHandleOrchestratorSessionEvents_SSEEnvelopeShape(t *testing.T) {
 	server, log, cleanup := setupSessionEventsServer(t, true)
 	defer cleanup()
 
-	require.NoError(t, log.Append(context.Background(), &orchestration.SessionEvent{
+	require.NoError(t, log.Append(tenantctx.WithSystem(context.Background()), &orchestration.SessionEvent{
 		Sequence: 1, TenantID: qrdbsdk.SystemTenantID, SessionID: "s1",
 		Timestamp: time.Now().UTC(), Kind: orchestration.KindPromptSubmitted,
 		Source: "operator:bob",
@@ -353,7 +354,7 @@ func TestHandleOrchestratorSessionEvents_SSENonFlushableWriter(t *testing.T) {
 	server, log, cleanup := setupSessionEventsServer(t, true)
 	defer cleanup()
 
-	require.NoError(t, log.Append(context.Background(), &orchestration.SessionEvent{
+	require.NoError(t, log.Append(tenantctx.WithSystem(context.Background()), &orchestration.SessionEvent{
 		Sequence: 1, TenantID: qrdbsdk.SystemTenantID, SessionID: "s1",
 		Timestamp: time.Now().UTC(), Kind: orchestration.KindPromptSubmitted, Source: "test",
 		Prompt: &orchestration.PromptSubmittedPayload{Prompt: "hi"},
@@ -379,7 +380,7 @@ func TestHandleOrchestratorSessionEvents_SSEThroughLoggingWrapper(t *testing.T) 
 	server, log, cleanup := setupSessionEventsServer(t, true)
 	defer cleanup()
 
-	require.NoError(t, log.Append(context.Background(), &orchestration.SessionEvent{
+	require.NoError(t, log.Append(tenantctx.WithSystem(context.Background()), &orchestration.SessionEvent{
 		Sequence: 1, TenantID: qrdbsdk.SystemTenantID, SessionID: "s1",
 		Timestamp: time.Now().UTC(), Kind: orchestration.KindPromptSubmitted, Source: "test",
 		Prompt: &orchestration.PromptSubmittedPayload{Prompt: "hi"},
@@ -402,7 +403,7 @@ func TestHandleOrchestratorSessionEvents_SSEFollow(t *testing.T) {
 	server, log, cleanup := setupSessionEventsServer(t, true)
 	defer cleanup()
 
-	require.NoError(t, log.Append(context.Background(), &orchestration.SessionEvent{
+	require.NoError(t, log.Append(tenantctx.WithSystem(context.Background()), &orchestration.SessionEvent{
 		Sequence: 1, TenantID: qrdbsdk.SystemTenantID, SessionID: "s1",
 		Timestamp: time.Now().UTC(), Kind: orchestration.KindPromptSubmitted, Source: "test",
 		Prompt: &orchestration.PromptSubmittedPayload{Prompt: "hi"},

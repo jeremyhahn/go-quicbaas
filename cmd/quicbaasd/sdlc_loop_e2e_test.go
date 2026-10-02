@@ -43,6 +43,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -1193,7 +1194,7 @@ func defineFactoryWorker(t *testing.T, ctx context.Context, agents orchestration
 
 func registerFactoryProject(t *testing.T, srv *server.Server, backend *e2eAgentBackend, repo string) string {
 	t.Helper()
-	ctx := iam.ContextWithTenant(context.Background(), loopE2ETenant)
+	ctx := tenantctx.WithTenant(context.Background(), loopE2ETenant)
 	orchCtx := orchestration.ContextWithTenant(ctx, loopE2ETenant)
 	ensureFactoryTenant(t, srv)
 	secrets := srv.Service().Secrets()
@@ -1305,7 +1306,7 @@ func startFactory(t *testing.T, issue int, labels ...string) *factoryRig {
 
 // orchCtx is the tenant-scoped context the engine's services are called with.
 func factoryCtx() context.Context {
-	return orchestration.ContextWithTenant(iam.ContextWithTenant(context.Background(), loopE2ETenant), loopE2ETenant)
+	return orchestration.ContextWithTenant(tenantctx.WithTenant(context.Background(), loopE2ETenant), loopE2ETenant)
 }
 
 // awaitJob waits for one job to reach a terminal state and returns it.
@@ -1408,7 +1409,7 @@ func TestSDLCRunner_ChangesRequestedRunsAnotherRoundOnTheSameSession(t *testing.
 // its own signed branch; what the carve-out removes is the review round.
 func TestSDLCRunner_TrunkBasedCarveOutLandsWithoutAPullRequest(t *testing.T) {
 	rig := startFactory(t, 73, "task:ready", "docs")
-	ctx := iam.ContextWithTenant(context.Background(), loopE2ETenant)
+	ctx := tenantctx.WithTenant(context.Background(), loopE2ETenant)
 	binding, err := rig.srv.SDLCService().Binding(ctx, loopE2ETenant, rig.projectID)
 	require.NoError(t, err)
 	binding.Strategy = sdlc.TrunkBasedName
@@ -1452,7 +1453,7 @@ func branchHeadOrEmpty(t *testing.T, repoDir, branch string) string {
 func TestSDLCRunner_GitflowFeatureAndHotfixTakeDifferentRefs(t *testing.T) {
 	rig := startFactory(t, 74, "task:ready", "hotfix")
 	seedBranch(t, rig.repo, "develop")
-	ctx := iam.ContextWithTenant(context.Background(), loopE2ETenant)
+	ctx := tenantctx.WithTenant(context.Background(), loopE2ETenant)
 	binding, err := rig.srv.SDLCService().Binding(ctx, loopE2ETenant, rig.projectID)
 	require.NoError(t, err)
 	binding.Strategy = sdlc.GitFlowName
@@ -1727,7 +1728,7 @@ func TestSDLCRunner_TheContainerRunsTheVerificationCommands(t *testing.T) {
 // with, from the node's own KMS-backed SSH store.
 func tenantSigningPublicKey(t *testing.T, srv *server.Server) string {
 	t.Helper()
-	ctx := iam.ContextWithTenant(context.Background(), loopE2ETenant)
+	ctx := tenantctx.WithTenant(context.Background(), loopE2ETenant)
 	sshClient := srv.Service().SSHClient()
 	require.NotNil(t, sshClient)
 	pub, err := sshClient.Keys().ExportPublic(ctx, xkmsssh.ExportRequest{

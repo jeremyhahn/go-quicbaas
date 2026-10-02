@@ -22,8 +22,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/agents"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/spend"
 )
@@ -72,7 +72,7 @@ func newAgentsTransport(t *testing.T) *Transport {
 }
 
 func agentsTenantCtx(tenant string) context.Context {
-	return orchestration.ContextWithTenant(iam.ContextWithTenant(context.Background(), tenant), tenant)
+	return orchestration.ContextWithTenant(tenantctx.WithTenant(context.Background(), tenant), tenant)
 }
 
 // TestAgentsEmbedded_TheCatalogRoundTrips drives every verb in-process and
