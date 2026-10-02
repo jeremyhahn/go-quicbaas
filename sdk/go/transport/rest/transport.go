@@ -68,6 +68,7 @@ type Transport struct {
 	messagingHandler    *messagingRESTHandler
 	timeseriesHandler   *timeseriesRESTHandler
 	securityHandler     *securityRESTHandler
+	schedulerHandler    *schedulerRESTHandler
 
 	// defaultTenant scopes tenant-bound Security() verbs (e.g. WebAuthn)
 	// whose SDK request structs do not themselves carry a tenant. It
@@ -160,6 +161,7 @@ func New(cfg *transport.Config, opts ...Option) (*Transport, error) {
 	t.messagingHandler = newMessagingRESTHandler(t)
 	t.timeseriesHandler = newTimeseriesRESTHandler(t)
 	t.securityHandler = newSecurityRESTHandler(t)
+	t.schedulerHandler = newSchedulerRESTHandler(t)
 
 	// Mark as healthy initially
 	t.lastHealth.Store(time.Now().UnixNano())
@@ -346,6 +348,13 @@ func (t *Transport) Request(ctx context.Context, service, method string, req int
 	// parameters the generic service/method mapping cannot express.
 	if isRegistryService(service) {
 		return t.handleRegistryRequest(ctx, method, req)
+	}
+
+	// Route Async().Scheduler() — jobs and workload placement — through the
+	// scheduler adapter, which reaches the /api/v1/scheduler routes in
+	// service-layer shape for scheduler.Dispatch to map.
+	if isSchedulerService(service) {
+		return t.schedulerHandler.handleRequest(ctx, method, req)
 	}
 
 	// Route Security services (WebAuthn/FIDO2/PIV/ACME/Trust) through the
@@ -1300,6 +1309,32 @@ func (t *Transport) mapSchedulerMethod(method string) (string, string) {
 		return "/api/v1/scheduler/jobs/{id}/history", http.MethodGet
 	case "GetStatus":
 		return "/api/v1/scheduler/status", http.MethodGet
+
+	// Workload placement: nodes and placements
+	case "RegisterNode":
+		return "/api/v1/scheduler/nodes", http.MethodPost
+	case "ListNodes":
+		return "/api/v1/scheduler/nodes", http.MethodGet
+	case "GetNode":
+		return "/api/v1/scheduler/nodes/{id}", http.MethodGet
+	case "DeregisterNode":
+		return "/api/v1/scheduler/nodes/{id}", http.MethodDelete
+	case "RenewNode":
+		return "/api/v1/scheduler/nodes/{id}/renew", http.MethodPost
+	case "CordonNode":
+		return "/api/v1/scheduler/nodes/{id}/cordon", http.MethodPost
+	case "UncordonNode":
+		return "/api/v1/scheduler/nodes/{id}/uncordon", http.MethodPost
+	case "DrainNode":
+		return "/api/v1/scheduler/nodes/{id}/drain", http.MethodPost
+	case "Place":
+		return "/api/v1/scheduler/placements", http.MethodPost
+	case "ListPlacements":
+		return "/api/v1/scheduler/placements", http.MethodGet
+	case "GetPlacement":
+		return "/api/v1/scheduler/placements/{id}", http.MethodGet
+	case "Release":
+		return "/api/v1/scheduler/placements/{id}", http.MethodDelete
 
 	default:
 		return "/api/v1/scheduler/" + strings.ToLower(method), http.MethodPost

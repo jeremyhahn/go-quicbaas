@@ -703,3 +703,87 @@ type LeaderChecker interface {
 Wire in by satisfying this against the platform's existing raft
 accessor (e.g., `server.IsLeader(shards.PlatformShardID)` for
 qrdb-backed deployments).
+
+## Workload Placement
+
+The scheduler decides **where** a workload runs as well as **when** a job
+fires (handbook doc 00 §R, L1 amendment 2026-10-01). The engine is
+`pkg/scheduler/placement`; the service is `service.PlacementService`; SDK
+callers reach it as the placement methods of `Async().Scheduler()`.
+
+It is deliberately generic. A node is an ID, a map of abstract capacities
+(`cpu_millis`, `memory_bytes`, `gpu`, …) and a map of opaque labels; a
+workload is an ID, a group and a map of requested resources. Domain facts — a
+CPU architecture, an attestation verdict, an isolation tier, a routing domain
+— are labels the caller chooses and constraints the caller writes. The engine
+decides and records; **executing** a placement (starting the workload) is the
+caller's job.
+
+### Data model
+
+| Record | Key (under `__sys:placement-t/{tenant}/`, or `__sys:placement/` for the system tenant) | Lifetime |
+|---|---|---|
+| Node facts | `nodes/{node}` | attached to the node's qrdb **lease** |
+| Cordon / drain status | `status/{node}` | survives re-registration; cleared by uncordon or deregister |
+| Allocated totals of the node's current incarnation | `alloc/{node}` | until its last placement is released |
+| Per-node, per-incarnation counts of a group | `groups/{group}` | until the group's last placement is released |
+| Placement, with the node incarnation it was placed against | `workloads/{workload}` | until released |
+
+Liveness rides the lease: a node heartbeats with `RenewNode`; when it stops,
+the lease expires, qrdb deletes the facts and the node drops out of every
+filter. Placements are not leased: a placement whose node has gone is read
+back with `orphaned: true` so the caller moves it rather than losing it.
+
+**Incarnations.** A node that registers while it has no live record — first
+time, after its lease expired, or after it deregistered — starts a new
+**incarnation**. A live node's re-registration refreshes its facts and
+continues the current one. It must carry the TTL the node registered with: a
+different TTL is refused (400) while the node is live, because go-qrdb cannot
+move a record to a new lease without the old lease's expiry deleting it. To
+change a TTL, deregister the node (which ends its incarnation) and register
+again. A refresh whose keep-alive the store cannot answer fails and leaves the
+incarnation alone. Only a lease that go-qrdb reports gone starts a new one, so
+a transient store error never orphans running workloads. A placement belongs to the incarnation it
+was placed against, so a node that comes back under the same ID does not
+revive its old placements. They stay `orphaned: true`, and `Place` of such a
+workload is refused until the caller releases it. Their resources and group
+counts do not burden the new incarnation, and releasing them leaves its
+allocation untouched.
+
+**Tenancy.** Every node and placement belongs to the tenant of the request
+that wrote it. The service reads that tenant only from the authenticated
+context (`pkg/tenantctx`, the same resolution the job surface uses). No
+request field, header or CLI flag names it. A request with no tenant bound is
+refused with `ErrForbidden` (403 / `PermissionDenied`) rather than served as
+the system tenant. The system tenant is a tenant like any other: it is reached
+only by binding it explicitly (`tenantctx.WithSystem`, which the embedded
+transport does for an in-process caller that names no tenant), and it sees no
+other tenant's nodes.
+
+### Decision
+
+```mermaid
+flowchart LR
+  R[PlacementRequest] --> V[validate]
+  V --> S[snapshot: live nodes, status, allocations, referenced groups]
+  S --> F[filter: schedulable, constraints, capacity, required affinity / anti-affinity]
+  F --> P[required spread: skew after placing ≤ max_skew]
+  P --> SC[score: binpack or spread + preferred terms; tie-break by node ID]
+  SC --> T[qrdb transaction]
+  T -- compares held --> OK[placement recorded]
+  T -- compare lost --> S
+```
+
+The commit is **one go-qrdb transaction** whose compares cover the chosen
+node's facts, status and allocation, every group the request refers to, and
+the workload slot being empty. Any concurrent change to those — another
+placement on the node or in a referenced group, a cordon, a drain, an expired
+lease, re-registered facts — fails the compare and the decision re-runs on
+fresh state, at most 16 times. Arbitration is the store's, so it holds across
+every node of a cluster; nothing in the engine is a process-local lock.
+
+`Place` is idempotent per workload: a workload already on a live,
+non-draining node gets its placement back with `existing: true`. A workload on
+a dead or draining node is refused (`PlacementConflictError`); the caller
+releases it and places it again. `DrainNode` cordons and marks a node draining
+and returns its placements; it releases nothing.

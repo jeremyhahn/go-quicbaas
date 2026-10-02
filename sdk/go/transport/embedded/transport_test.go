@@ -2441,3 +2441,6 @@ func TestTransport_Request_UnknownProjectMethod(t *testing.T) {
 	var unknownErr *UnknownMethodError
 	assert.True(t, errors.As(err, &unknownErr), "expected *UnknownMethodError, got %T", err)
 }
+
+// Placement returns nil: this double has no placement engine.
+func (m *mockQuicBaaS) Placement() service.PlacementService { return nil }

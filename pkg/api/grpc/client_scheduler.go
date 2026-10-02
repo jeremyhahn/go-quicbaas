@@ -50,6 +50,7 @@ func (c *Client) SchedulerCreateJob(ctx context.Context, req *service.CreateSche
 		TimeoutSeconds: int64(req.Timeout.Seconds()),
 		MaxRetries:     req.MaxRetries,
 		Labels:         req.Labels,
+		NodeAffinity:   req.NodeAffinity,
 	}
 
 	pbResp, err := schedulerClient.CreateJob(ctx, pbReq)

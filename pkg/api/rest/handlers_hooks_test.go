@@ -1134,3 +1134,6 @@ func TestHookRoutes_Integration(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
+
+// Placement returns nil: this double has no placement engine.
+func (m *MockQuicBaaSWithNilMessaging) Placement() service.PlacementService { return nil }

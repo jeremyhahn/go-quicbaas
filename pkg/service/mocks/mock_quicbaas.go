@@ -133,6 +133,7 @@ type MockQuicBaaS struct {
 	ParameterStoreServiceFunc     func() service.ParameterStoreService
 	ObjectTransferServiceFunc     func() service.ObjectTransferService
 	SchedulerServiceFunc          func() service.SchedulerService
+	PlacementServiceFunc          func() service.PlacementService
 	ProjectServiceFunc            func() service.ProjectService
 	AccountServiceFunc            func() service.AccountService
 	FleetAdminServiceFunc         func() service.FleetAdminService
@@ -773,6 +774,14 @@ func (m *MockQuicBaaS) ObjectTransferService() service.ObjectTransferService {
 	}
 	if m.MockObjectTransferService != nil {
 		return m.MockObjectTransferService
+	}
+	return nil
+}
+
+// Placement returns the configured PlacementService stub, or nil.
+func (m *MockQuicBaaS) Placement() service.PlacementService {
+	if m.PlacementServiceFunc != nil {
+		return m.PlacementServiceFunc()
 	}
 	return nil
 }

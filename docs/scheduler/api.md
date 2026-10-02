@@ -34,23 +34,44 @@ Every row below is derived from source, not from prose. The columns mean:
 
 ### `quicbaas.Scheduler` — SDK package `sdk/go/client/scheduler`
 
-Dedicated transport handlers: rest=no, grpc=no, mcp=yes; embedded routes registered: 0; MCP tools registered server-side: 11.
+Dedicated transport handlers: rest=yes, grpc=yes, mcp=yes; embedded routes registered: 23; MCP tools registered server-side: 23.
 
-MCP tools: `quicbaas_scheduler_cancel_job`, `quicbaas_scheduler_create_job`, `quicbaas_scheduler_delete_job`, `quicbaas_scheduler_get_job`, `quicbaas_scheduler_job_history`, `quicbaas_scheduler_list_jobs`, `quicbaas_scheduler_pause_job`, `quicbaas_scheduler_resume_job`, `quicbaas_scheduler_status`, `quicbaas_scheduler_trigger_job`, `quicbaas_scheduler_update_job`
+Every transport except MCP reaches the server through one mapping,
+`scheduler.Dispatch` (`sdk/go/client/scheduler/dispatch.go`): the embedded
+transport hands it the server's own `SchedulerService` and `PlacementService`,
+the gRPC (and Unix) transport hands it `pkg/api/grpc`'s `Jobs()` and
+`Placement()` clients, and the REST (and QUIC) transport hands it an adapter over
+the routes below. Until go-quicbaas#1143 the job methods were served over MCP
+only; gRPC, Unix and embedded fell through to an untyped call and REST never
+substituted `{id}`.
+
+MCP tools: `quicbaas_scheduler_cancel_job`, `quicbaas_scheduler_cordon_node`, `quicbaas_scheduler_create_job`, `quicbaas_scheduler_delete_job`, `quicbaas_scheduler_deregister_node`, `quicbaas_scheduler_drain_node`, `quicbaas_scheduler_get_job`, `quicbaas_scheduler_get_node`, `quicbaas_scheduler_get_placement`, `quicbaas_scheduler_job_history`, `quicbaas_scheduler_list_jobs`, `quicbaas_scheduler_list_nodes`, `quicbaas_scheduler_list_placements`, `quicbaas_scheduler_pause_job`, `quicbaas_scheduler_place`, `quicbaas_scheduler_register_node`, `quicbaas_scheduler_release`, `quicbaas_scheduler_renew_node`, `quicbaas_scheduler_resume_job`, `quicbaas_scheduler_status`, `quicbaas_scheduler_trigger_job`, `quicbaas_scheduler_uncordon_node`, `quicbaas_scheduler_update_job`
 
 | SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
 |---|---|---|---|---|---|---|
-| `CancelJob` | `POST /api/v1/scheduler/jobs/{id}/cancel` | yes | MISSING | yes | MISSING | `scheduler:cancel` |
-| `CreateJob` | `POST /api/v1/scheduler/jobs` | yes | MISSING | yes | MISSING | `scheduler:create` |
-| `DeleteJob` | `DELETE /api/v1/scheduler/jobs/{id}` | yes | MISSING | yes | MISSING | `scheduler:delete` |
-| `GetJob` | `GET /api/v1/scheduler/jobs/{id}` | yes | MISSING | yes | MISSING | `scheduler:read` |
-| `GetJobHistory` | `GET /api/v1/scheduler/jobs/{id}/history` | yes | MISSING | yes | MISSING | `scheduler:history` |
-| `GetStatus` | `GET /api/v1/scheduler/status` | yes | MISSING | yes | MISSING | `scheduler:status` |
-| `ListJobs` | `GET /api/v1/scheduler/jobs` | yes | MISSING | yes | MISSING | `scheduler:list` |
-| `PauseJob` | `POST /api/v1/scheduler/jobs/{id}/pause` | yes | MISSING | yes | MISSING | `scheduler:pause` |
-| `ResumeJob` | `POST /api/v1/scheduler/jobs/{id}/resume` | yes | MISSING | yes | MISSING | `scheduler:resume` |
-| `TriggerJob` | `POST /api/v1/scheduler/jobs/{id}/trigger` | yes | MISSING | yes | MISSING | `scheduler:trigger` |
-| `UpdateJob` | `PUT /api/v1/scheduler/jobs/{id}` | yes | MISSING | yes | MISSING | `scheduler:update` |
+| `CancelJob` | `POST /api/v1/scheduler/jobs/{id}/cancel` | yes | yes | yes | yes | `scheduler:cancel` |
+| `CreateJob` | `POST /api/v1/scheduler/jobs` | yes | yes | yes | yes | `scheduler:create` |
+| `DeleteJob` | `DELETE /api/v1/scheduler/jobs/{id}` | yes | yes | yes | yes | `scheduler:delete` |
+| `GetJob` | `GET /api/v1/scheduler/jobs/{id}` | yes | yes | yes | yes | `scheduler:read` |
+| `GetJobHistory` | `GET /api/v1/scheduler/jobs/{id}/history` | yes | yes | yes | yes | `scheduler:history` |
+| `GetStatus` | `GET /api/v1/scheduler/status` | yes | yes | yes | yes | `scheduler:status` |
+| `ListJobs` | `GET /api/v1/scheduler/jobs` | yes | yes | yes | yes | `scheduler:list` |
+| `PauseJob` | `POST /api/v1/scheduler/jobs/{id}/pause` | yes | yes | yes | yes | `scheduler:pause` |
+| `ResumeJob` | `POST /api/v1/scheduler/jobs/{id}/resume` | yes | yes | yes | yes | `scheduler:resume` |
+| `TriggerJob` | `POST /api/v1/scheduler/jobs/{id}/trigger` | yes | yes | yes | yes | `scheduler:trigger` |
+| `UpdateJob` | `PUT /api/v1/scheduler/jobs/{id}` | yes | yes | yes | yes | `scheduler:update` |
+| `CordonNode` | `POST /api/v1/scheduler/nodes/{id}/cordon` | yes | yes | yes | yes | `placement:manage` |
+| `DeregisterNode` | `DELETE /api/v1/scheduler/nodes/{id}` | yes | yes | yes | yes | `placement:manage` |
+| `DrainNode` | `POST /api/v1/scheduler/nodes/{id}/drain` | yes | yes | yes | yes | `placement:manage` |
+| `GetNode` | `GET /api/v1/scheduler/nodes/{id}` | yes | yes | yes | yes | `placement:read` |
+| `GetPlacement` | `GET /api/v1/scheduler/placements/{id}` | yes | yes | yes | yes | `placement:read` |
+| `ListNodes` | `GET /api/v1/scheduler/nodes` | yes | yes | yes | yes | `placement:read` |
+| `ListPlacements` | `GET /api/v1/scheduler/placements` | yes | yes | yes | yes | `placement:read` |
+| `Place` | `POST /api/v1/scheduler/placements` | yes | yes | yes | yes | `placement:place` |
+| `RegisterNode` | `POST /api/v1/scheduler/nodes` | yes | yes | yes | yes | `placement:manage` |
+| `Release` | `DELETE /api/v1/scheduler/placements/{id}` | yes | yes | yes | yes | `placement:place` |
+| `RenewNode` | `POST /api/v1/scheduler/nodes/{id}/renew` | yes | yes | yes | yes | `placement:manage` |
+| `UncordonNode` | `POST /api/v1/scheduler/nodes/{id}/uncordon` | yes | yes | yes | yes | `placement:manage` |
 
 
 ## Protocol Overview
@@ -2829,3 +2850,105 @@ if status != StatusOK {
     }
 }
 ```
+
+## Workload placement API
+
+Placement shares the `quicbaas.Scheduler` service and the `SchedulerService`
+gRPC service with the job API, and carries its own permission family because
+go-qrdb owns `scheduler:*` (see `pkg/permission`):
+
+| Permission | Verbs | Built-in roles |
+|---|---|---|
+| `placement:read` | `GetNode`, `ListNodes`, `GetPlacement`, `ListPlacements` | Admin, Operator |
+| `placement:place` | `Place`, `Release` | Admin, Operator |
+| `placement:manage` | `RegisterNode`, `RenewNode`, `DeregisterNode`, `CordonNode`, `UncordonNode`, `DrainNode` | Admin (node agents hold a custom role naming it) |
+
+Every call is scoped to the authenticated request's tenant.
+
+### Types
+
+The JSON shapes are the `pkg/scheduler/placement` types; the SDK aliases them
+(`scheduler.NodeFacts`, `NodeInfo`, `PlacementRequest`, `Placement`,
+`PlaceResult`, `PlacementFilter`, `Constraint`, `AffinityTerm`,
+`SpreadConstraint`) and re-exports them at the SDK root as `PlacementNodeFacts`,
+`PlacementNodeInfo`, `PlacementRequest`, `Placement`, `PlaceResult`, ….
+
+```json
+// RegisterNode request (REST body; SDK scheduler.RegisterNodeRequest)
+{"facts": {"node_id": "n1", "capacity": {"cpu_millis": 8000}, "labels": {"arch": "arm64", "zone": "a"}},
+ "ttl_seconds": 30}
+
+// NodeInfo
+{"facts": {...}, "status": {"unschedulable": false, "draining": false},
+ "lease_id": 7587, "ttl_seconds": 30, "allocated": {"cpu_millis": 2000},
+ "placements": 1, "registered_at": "2026-10-01T12:00:00Z"}
+
+// PlacementRequest
+{"workload_id": "web-1", "group": "web", "resources": {"cpu_millis": 500},
+ "constraints": [{"key": "arch", "operator": "In", "values": ["arm64"]}],
+ "affinity": [{"group": "cache", "weight": 50}],
+ "anti_affinity": [{"group": "web", "required": true}],
+ "spread": {"topology_key": "zone", "max_skew": 1, "required": true},
+ "strategy": "binpack"}
+
+// PlaceResult
+{"placement": {"workload_id": "web-1", "group": "web", "node_id": "n1",
+  "resources": {"cpu_millis": 500}, "score": 31.25,
+  "created_at": "2026-10-01T12:00:01Z", "orphaned": false},
+ "existing": false}
+```
+
+Operators are `In`, `NotIn`, `Exists`, `DoesNotExist`; strategies are
+`binpack` (default) and `spread`; a preferred term's `weight` is 1–100.
+
+### REST
+
+| Method | Route | Body / query | Response |
+|---|---|---|---|
+| POST | `/api/v1/scheduler/nodes` | RegisterNode request | `NodeInfo` |
+| GET | `/api/v1/scheduler/nodes` | — | `{"nodes": [NodeInfo]}` |
+| GET | `/api/v1/scheduler/nodes/{id}` | — | `NodeInfo` |
+| DELETE | `/api/v1/scheduler/nodes/{id}` | — | `{"node_id", "deregistered": true}` |
+| POST | `/api/v1/scheduler/nodes/{id}/renew` | — | `{"node_id", "renewed": true}` |
+| POST | `/api/v1/scheduler/nodes/{id}/cordon` | — | `NodeInfo` |
+| POST | `/api/v1/scheduler/nodes/{id}/uncordon` | — | `NodeInfo` |
+| POST | `/api/v1/scheduler/nodes/{id}/drain` | — | `{"node_id", "placements": [Placement]}` |
+| POST | `/api/v1/scheduler/placements` | `PlacementRequest` | `PlaceResult` |
+| GET | `/api/v1/scheduler/placements` | `?node_id=&group=` | `{"placements": [Placement]}` |
+| GET | `/api/v1/scheduler/placements/{id}` | — | `Placement` |
+| DELETE | `/api/v1/scheduler/placements/{id}` | — | `{"workload_id", "released": true}` |
+
+### gRPC
+
+`quicbaas.scheduler.v1.SchedulerService` (`api/proto/scheduler.proto`):
+`RegisterNode`, `RenewNode`, `DeregisterNode`, `GetNode`, `ListNodes`,
+`CordonNode`, `UncordonNode`, `DrainNode`, `Place`, `Release`, `GetPlacement`,
+`ListPlacements`. Messages are prefixed `Placement*` (all protos share one Go
+package); times travel as `*_unix_nanos`. The service is registered whenever
+either the job engine or the placement engine runs; a call to an absent half
+answers `Unavailable`. Unix serves the same service over `AF_UNIX`.
+
+### MCP
+
+`quicbaas_scheduler_register_node` takes the facts flat (`node_id`,
+`capacity`, `labels`, `ttl_seconds`); `quicbaas_scheduler_place` takes the
+`PlacementRequest` fields; the node-keyed tools take `node_id`, the
+workload-keyed ones `workload_id`. Results are the JSON above.
+
+### Errors
+
+| Condition | Engine type | Code | gRPC | HTTP |
+|---|---|---|---|---|
+| Malformed request | `InvalidRequestError` | `ErrInvalidInput` | InvalidArgument | 400 |
+| Node not live | `NodeNotFoundError` | `ErrNotFound` | NotFound | 404 |
+| Workload has no placement | `PlacementNotFoundError` | `ErrNotFound` | NotFound | 404 |
+| No node passes the filters (reasons per node in the message) | `NoFeasibleNodeError` | `ErrPreconditionFailed` | FailedPrecondition | 412 |
+| Workload already placed on a dead or draining node | `PlacementConflictError` | `ErrPreconditionFailed` | FailedPrecondition | 412 |
+| Guarded write lost 16 times | `ContendedError` | `ErrAborted` (retryable) | Aborted | 409 |
+| Stored record does not decode | `CorruptRecordError` | `ErrDataLoss` | DataLoss | 500 |
+
+No-feasible-node is deliberately not `ResourceExhausted`: the SDK retries that
+code, and re-asking an unchanged pool returns the same answer. REST echoes the
+412 and 409 messages rather than sanitising them, because they describe the
+request against the pool, not a server fault.
+

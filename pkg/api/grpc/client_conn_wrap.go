@@ -26,14 +26,16 @@ import (
 // It exists so callers that already hold a live connection — most notably the
 // SDK gRPC/Unix transports, which dial once and multiplex every service over
 // the single conn — can reuse this package's fully-tested struct<->protobuf
-// conversion logic (KMS, Crypto, SecretsManagement, DEK) instead of forking it.
+// conversion logic (KMS, Crypto, SecretsManagement, DEK, Scheduler) instead
+// of forking it.
 //
 // The returned Client is marked connected so the conversion methods skip their
 // lazy-dial path. The caller retains ownership of the connection's lifecycle;
 // the returned Client is intended to be used ephemerally per request and its
 // Close must not be called, since that would tear down the borrowed
 // connection. opts and logger are intentionally nil because the conversion
-// methods this constructor enables (KMS/Crypto/Secrets/DEK) never touch them.
+// methods this constructor enables (KMS/Crypto/Secrets/DEK/Scheduler) never
+// touch them.
 func NewClientWithConn(conn *grpc.ClientConn) (*Client, error) {
 	if conn == nil {
 		return nil, errors.Newf(

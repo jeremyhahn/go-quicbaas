@@ -4105,6 +4105,29 @@ integration-test-iam: ## Run IAM integration tests
 	@echo "$(BLUE)Running IAM integration tests...$(NC)"
 	@QUICBAAS_TEST_FILTER="./test/integration/iam/..." WITH_RAFT=1 WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 $(MAKE) integration-test
 
+.PHONY: integration-test-placement
+integration-test-placement: ## Run scheduler placement + job integration tests over REST, gRPC, QUIC, Unix and MCP
+	@echo "$(BLUE)Running scheduler placement integration tests...$(NC)"
+	@QUICBAAS_TEST_FILTER="./test/integration/placement/..." WITH_RAFT=1 WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 $(MAKE) integration-test
+
+.PHONY: test-placement
+test-placement: ## Run scheduler placement unit tests (engine, store, service, every transport, SDK, CLI)
+	@echo "$(BLUE)Running scheduler placement unit tests...$(NC)"
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 -tags '$(BUILD_TAGS)' ./pkg/scheduler/placement/... ./pkg/service/ ./pkg/api/grpc/ ./pkg/api/rest/ ./pkg/api/mcp/ ./cmd/quicbaas/ -run 'Placement|Scheduler|RealNode|Evaluate|Validate|Register|Node|Release|Corrupt|Conversions|SDKREST'
+	cd sdk/go && GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -race -count=1 ./client/scheduler/... ./transport/embedded/ ./transport/grpc/ ./transport/unix/ ./transport/mcp/ -run 'Placement|Scheduler|Dispatch|Conversions'
+
+.PHONY: coverage-placement
+coverage-placement: ## Generate the scheduler placement engine coverage report
+	@mkdir -p $(COVERAGE_DIR)
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -count=1 -tags '$(BUILD_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-placement.out -covermode=atomic ./pkg/scheduler/placement/
+	$(GOCMD) tool cover -html=$(COVERAGE_DIR)/coverage-placement.out -o $(COVERAGE_DIR)/coverage-placement.html
+	$(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage-placement.out | grep total
+
+.PHONY: bench-placement
+bench-placement: ## Run scheduler placement engine benchmarks
+	@echo "$(BLUE)Running scheduler placement benchmarks...$(NC)"
+	GOTOOLCHAIN=go$(GO_VERSION) $(GOTEST) -bench=. -benchmem -run=^$$ ./pkg/scheduler/placement/
+
 .PHONY: integration-test-durability
 integration-test-durability: ## Run restart-durability integration tests (entities must survive a daemon restart)
 	@echo "$(BLUE)Running restart-durability integration tests...$(NC)"

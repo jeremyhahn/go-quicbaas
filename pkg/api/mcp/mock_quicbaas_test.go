@@ -137,3 +137,6 @@ func newTestServer(t *testing.T) (*Server, *MockQuicBaaS) {
 	server := NewServer(mockSvc, nil, log)
 	return server, mockSvc
 }
+
+// Placement returns nil: this double has no placement engine.
+func (m *MockQuicBaaS) Placement() service.PlacementService { return nil }

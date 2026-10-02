@@ -232,6 +232,7 @@ func (r *ToolRegistry) registerTools() {
 
 	// Register Scheduler tools
 	r.registerSchedulerTools()
+	r.registerPlacementTools()
 
 	// Register Messaging tools
 	r.registerMsgTools()
@@ -1272,6 +1273,11 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 		}
 		if isAgentCatalogTool(name) {
 			return r.executeAgentCatalogTool(ctx, name, args)
+		}
+
+		// Check if it's a scheduler placement tool
+		if isPlacementTool(name) {
+			return r.executePlacementTool(ctx, name, args)
 		}
 
 		// Check if it's a Scheduler tool

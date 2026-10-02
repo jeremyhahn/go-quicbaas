@@ -1995,3 +1995,9 @@ func TestHandleGetSchedulerJob_Forbidden(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 	mockSvc.schedulerService.AssertExpectations(t)
 }
+
+// Placement returns nil: this double has no placement engine.
+func (m *MockQuicBaaSWithScheduler) Placement() service.PlacementService { return nil }
+
+// Placement returns nil: this double has no placement engine.
+func (m *MockQuicBaaSWithNilScheduler) Placement() service.PlacementService { return nil }

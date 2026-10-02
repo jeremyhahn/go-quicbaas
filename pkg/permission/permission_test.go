@@ -536,3 +536,22 @@ func TestRegisterLeavesNoContributedPermissionUndeclared(t *testing.T) {
 		assert.NoErrorf(t, err, "%s is in All() but has no declared scope", p)
 	}
 }
+
+func TestPlacement_PermissionsAreRegisteredWithTheRightRolePlacement(t *testing.T) {
+	contributed := make(map[qrdbsdk.Permission]contribution)
+	for _, c := range contributions {
+		contributed[c.permission] = c
+	}
+	for _, perm := range []qrdbsdk.Permission{PlacementRead, PlacementPlace, PlacementManage} {
+		c, ok := contributed[perm]
+		require.Truef(t, ok, "%s is not contributed", perm)
+		assert.Equalf(t, dutyOutsideSecurityOfficer, c.duty, "%s carries a governance or crypto duty", perm)
+		assert.Equalf(t, scopeSelf, c.scope, "%s is not self-scoped", perm)
+		assert.NotContainsf(t, c.roles, qrdbsdk.PermissionRoleSO, "%s granted to the Security Officer", perm)
+		assert.Contains(t, c.roles, qrdbsdk.PermissionRoleAdmin, perm)
+	}
+	assert.Contains(t, contributed[PlacementRead].roles, qrdbsdk.PermissionRoleOperator)
+	assert.Contains(t, contributed[PlacementPlace].roles, qrdbsdk.PermissionRoleOperator)
+	assert.NotContainsf(t, contributed[PlacementManage].roles, qrdbsdk.PermissionRoleOperator,
+		"placement:manage reshapes the node pool and must not be Operator's")
+}

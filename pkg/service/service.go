@@ -170,6 +170,11 @@ type QuicBaaS interface {
 	// Scheduler provides job scheduling and execution with multi-tenant support.
 	Scheduler() SchedulerService
 
+	// Placement returns the scheduler's workload placement service (nil
+	// when no qrdb client is configured). It is surfaced to SDK callers as
+	// the placement operations of Async().Scheduler().
+	Placement() PlacementService
+
 	// SchedulerEngine returns the raw scheduler engine for in-process handler
 	// registration (returns nil if not configured). External (over-the-wire)
 	// callers should use Scheduler() instead; this accessor is intended for

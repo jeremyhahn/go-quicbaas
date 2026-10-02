@@ -639,3 +639,6 @@ func (m *extendedMockService) UpdateCacheConfig(ctx context.Context, req *servic
 		},
 	}, nil
 }
+
+// Placement returns nil: this double has no placement engine.
+func (m *extendedMockService) Placement() service.PlacementService { return nil }

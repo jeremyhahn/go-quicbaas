@@ -129,7 +129,13 @@ import (
 // PLUS 5 for the service registry (/api/v1/registry: register, renew,
 // deregister, resolve and the SSE watch, handlers_registry.go, 13 G9), under
 // the service_registry family's register and read verbs.
-const baseRouteTableSize = 648
+// PLUS 12 for the scheduler's workload placement surface
+// (handlers_scheduler_placement.go, go-quicbaas#1143): eight node routes
+// under /api/v1/scheduler/nodes (register, list, get, deregister, renew,
+// cordon, uncordon, drain) and four placement routes under
+// /api/v1/scheduler/placements (place, list, get, release), in the
+// "placement" permission family.
+const baseRouteTableSize = 660
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder

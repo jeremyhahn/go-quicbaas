@@ -891,3 +891,52 @@ job := &scheduler.Job{
 6. **Monitor failure rates** - Alert on elevated failures
 7. **Test handlers independently** - Unit test before integration
 8. **Use dry-run modes** - Validate destructive operations first
+
+## Workload Placement Internals
+
+### Layout
+
+| Path | Role |
+|---|---|
+| `pkg/scheduler/placement/engine.go` | Pure filter/score (`evaluate`), no store or clock — table and property tests run it in memory |
+| `pkg/scheduler/placement/store.go` | `Placer`: lease-backed nodes, guarded `Place`/`Release`, reads; `Backend` seam over the qrdb SDK client |
+| `pkg/scheduler/placement/placementtest` | In-memory `Backend` with qrdb compare semantics, for callers' unit tests |
+| `pkg/service/placement_service.go` | Tenant resolution through `schedulerTenantResolveID` (the authenticated tenant from `pkg/tenantctx`; none bound is refused; the request never names one) and error classification |
+| `pkg/api/{grpc,rest,mcp}` | Server transports; `pkg/api/grpc` also has `Jobs()` / `Placement()` clients in service shape |
+| `sdk/go/client/scheduler/dispatch.go` | `Dispatch`: the one SDK⇄service mapping, used by the embedded, gRPC/Unix and REST/QUIC transports |
+| `sdk/go/client/scheduler/schedulertest` | Recording job service and the job/placement conformance routines every transport test runs |
+
+Filters run in a fixed order and report the first failure per node:
+schedulable → label constraints (map-dispatched operators) → capacity (every
+requested resource must be offered and free) → required affinity → required
+anti-affinity → required spread. Scores: bin-pack is the node's mean
+utilisation after placement across the requested resources (all offered
+resources when none are requested), spread is 100 minus that; preferred terms
+add or subtract their weight; a preferred spread subtracts 10 per unit of skew.
+
+### Raw KV justification
+
+data-access.md §3 case 5 (placement records and cluster metadata keyed by
+name) and case 6 (caller-supplied identities). The decision compares records
+of five kinds in one transaction, which a per-entity DAO conditional save
+cannot express.
+
+### Tests
+
+- `engine_test.go` — every filter and score rule, plus 2,000 randomized
+  clusters checking no overcommit, anti-affinity and the skew bound.
+- `store_test.go` — every operation's success and failure paths over the
+  in-memory backend, including a lost guarded write that must re-run onto
+  another node, and corrupt records failing closed.
+- `arbitration_test.go` — against a real in-process go-qrdb node
+  (consensus-arbitration carve-out): 12 concurrent placements at a node with
+  room for 5 admit exactly 5; concurrent self-anti-affine replicas land on
+  distinct nodes; revoking a lease orphans its placement.
+- Transport tests drive `schedulertest.RunJobConformance` and
+  `RunPlacementConformance` through the embedded transport, the gRPC transport
+  against the real `SchedulerServer`, and the REST transport against the real
+  router, asserting what the server received.
+- `test/integration/placement` runs both conformances on REST, gRPC, QUIC,
+  Unix and MCP against the integration cluster (`make integration-test-placement`).
+
+Targets: `make test-placement`, `coverage-placement`, `bench-placement`.

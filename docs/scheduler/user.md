@@ -137,3 +137,30 @@ part of the job's identity, not a label you adjust afterwards.
 - **It is not a workflow engine.** There is no dependency graph between jobs, no
   fan-out/fan-in, and no retry policy expressed at the schedule level. Chaining
   belongs in the handler or in an orchestration workflow.
+
+## Placing workloads
+
+The scheduler can also decide which node a workload runs on. You run the
+workload; the scheduler picks the node and keeps the books.
+
+1. **Register your nodes** with what they offer and anything you will want
+   to select on: `scheduler node register n1 --capacity cpu_millis=8000
+   --label zone=a --ttl 30`. Keep each node alive with `node renew` (or by
+   registering again) inside the TTL; a node that stops renewing drops out.
+2. **Place a workload**: `scheduler placement place web-1 --group web
+   --resource cpu_millis=500`. Add constraints, affinity and spread with
+   `--spec`. Asking again for the same workload returns the same answer.
+3. **Run it** on the node the answer names.
+4. **Release it** when it stops: `scheduler placement release web-1`.
+
+To take a node out of service, `node cordon` it (no new workloads), or
+`node drain` it and move each workload it lists: stop it, release it, place
+it again. `node uncordon` puts it back.
+
+| Symptom | Cause |
+|---|---|
+| "no feasible node" | Every node failed a filter; the message lists each node's reason. |
+| "already placed on node … release it" | The workload's node is draining or its lease expired. Release, then place again. |
+| A placement shows `orphaned: true` | Its node stopped renewing, or re-registered after its lease lapsed (a new incarnation, which is not running the workload). Release it and place it again. |
+| Re-registering a node fails with `invalid request: node … is live with ttl_seconds N` | A live node keeps the TTL it registered with. Re-register with that TTL, or deregister (its placements become orphaned) and register with the new one. |
+| Placement calls are denied | They need `placement:read`, `placement:place` or `placement:manage`, not the `scheduler:*` job permissions. |

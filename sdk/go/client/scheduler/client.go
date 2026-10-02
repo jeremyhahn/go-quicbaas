@@ -59,6 +59,50 @@ type Client interface {
 
 	// GetStatus returns scheduler status and statistics.
 	GetStatus(ctx context.Context) (*SchedulerStatus, error)
+
+	// Workload placement (pkg/scheduler/placement on the server). Node
+	// facts are caller-supplied and live on a qrdb lease; a placement is a
+	// recorded decision the caller executes. Requires the placement:read,
+	// placement:place or placement:manage permission per method.
+
+	// RegisterNode registers or refreshes a node's facts under a lease.
+	RegisterNode(ctx context.Context, req *RegisterNodeRequest) (*NodeInfo, error)
+
+	// RenewNode heartbeats a node's lease.
+	RenewNode(ctx context.Context, nodeID string) error
+
+	// DeregisterNode revokes a node's lease and clears its status.
+	// Placements on it remain, reported orphaned, until released.
+	DeregisterNode(ctx context.Context, nodeID string) error
+
+	// GetNode returns a live node.
+	GetNode(ctx context.Context, nodeID string) (*NodeInfo, error)
+
+	// ListNodes returns every live node.
+	ListNodes(ctx context.Context) ([]*NodeInfo, error)
+
+	// CordonNode excludes a node from new placements.
+	CordonNode(ctx context.Context, nodeID string) (*NodeInfo, error)
+
+	// UncordonNode returns a node to service, clearing cordon and drain.
+	UncordonNode(ctx context.Context, nodeID string) (*NodeInfo, error)
+
+	// DrainNode cordons a node, marks it draining and returns the
+	// placements on it for the caller to move.
+	DrainNode(ctx context.Context, nodeID string) ([]*Placement, error)
+
+	// Place decides and records the node a workload runs on. It is
+	// idempotent per workload ID.
+	Place(ctx context.Context, req *PlacementRequest) (*PlaceResult, error)
+
+	// Release removes a workload's placement.
+	Release(ctx context.Context, workloadID string) error
+
+	// GetPlacement returns a workload's placement.
+	GetPlacement(ctx context.Context, workloadID string) (*Placement, error)
+
+	// ListPlacements returns the placements matching filter (nil for all).
+	ListPlacements(ctx context.Context, filter *PlacementFilter) ([]*Placement, error)
 }
 
 // JobType represents the type of scheduled job.
@@ -316,48 +360,61 @@ type SchedulerStatus struct {
 	UptimeDuration  time.Duration
 }
 
-// Internal request/response types
+// Wire request types. The client builds these and hands them to the
+// transport; they are exported so every transport implementation (REST,
+// QUIC, gRPC, Unix, MCP, embedded) can read the job ID and tenant they carry.
+// The field names are unchanged from when they were unexported, so the MCP
+// transport's JSON argument mapping is unaffected.
 
-type getJobRequest struct {
+// GetJobRequest is the transport request of GetJob.
+type GetJobRequest struct {
 	JobID    uint64
 	TenantID string `json:"tenant_id,omitempty"`
 }
 
-type deleteJobRequest struct {
+// DeleteJobRequest is the transport request of DeleteJob.
+type DeleteJobRequest struct {
 	JobID    uint64
 	TenantID string `json:"tenant_id,omitempty"`
 }
 
-type deleteJobResponse struct{}
+// DeleteJobResponse is the transport response of DeleteJob.
+type DeleteJobResponse struct{}
 
-type triggerJobRequest struct {
+// TriggerJobRequest is the transport request of TriggerJob.
+type TriggerJobRequest struct {
 	JobID    uint64
 	TenantID string `json:"tenant_id,omitempty"`
 }
 
-type pauseJobRequest struct {
+// PauseJobRequest is the transport request of PauseJob.
+type PauseJobRequest struct {
 	JobID    uint64
 	TenantID string `json:"tenant_id,omitempty"`
 }
 
-type resumeJobRequest struct {
+// ResumeJobRequest is the transport request of ResumeJob.
+type ResumeJobRequest struct {
 	JobID    uint64
 	TenantID string `json:"tenant_id,omitempty"`
 }
 
-type cancelJobRequest struct {
+// CancelJobRequest is the transport request of CancelJob.
+type CancelJobRequest struct {
 	JobID    uint64
 	TenantID string `json:"tenant_id,omitempty"`
 	Reason   string
 }
 
-type getJobHistoryRequest struct {
+// GetJobHistoryRequest is the transport request of GetJobHistory.
+type GetJobHistoryRequest struct {
 	JobID    uint64
 	TenantID string `json:"tenant_id,omitempty"`
 	Options  *HistoryOptions
 }
 
-type getStatusRequest struct{}
+// GetStatusRequest is the transport request of GetStatus.
+type GetStatusRequest struct{}
 
 // client implements the Client interface.
 type client struct {
@@ -411,7 +468,7 @@ func (c *client) GetJob(ctx context.Context, jobID uint64) (*JobInfo, error) {
 		return nil, errors.NewInvalidInput("scheduler.GetJob", "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "GetJob", &getJobRequest{JobID: jobID})
+	resp, err := c.transport.Request(ctx, serviceName, "GetJob", &GetJobRequest{JobID: jobID})
 	if err != nil {
 		return nil, err
 	}
@@ -465,7 +522,7 @@ func (c *client) DeleteJob(ctx context.Context, jobID uint64) error {
 		return errors.NewInvalidInput("scheduler.DeleteJob", "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "DeleteJob", &deleteJobRequest{JobID: jobID})
+	resp, err := c.transport.Request(ctx, serviceName, "DeleteJob", &DeleteJobRequest{JobID: jobID})
 	if err != nil {
 		return err
 	}
@@ -475,7 +532,7 @@ func (c *client) DeleteJob(ctx context.Context, jobID uint64) error {
 		return nil
 	}
 
-	if _, ok := resp.(*deleteJobResponse); !ok {
+	if _, ok := resp.(*DeleteJobResponse); !ok {
 		return errors.NewInternal("scheduler.DeleteJob", "invalid response type")
 	}
 
@@ -524,7 +581,7 @@ func (c *client) TriggerJob(ctx context.Context, jobID uint64) (*TriggerJobRespo
 		return nil, errors.NewInvalidInput("scheduler.TriggerJob", "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "TriggerJob", &triggerJobRequest{JobID: jobID})
+	resp, err := c.transport.Request(ctx, serviceName, "TriggerJob", &TriggerJobRequest{JobID: jobID})
 	if err != nil {
 		return nil, err
 	}
@@ -551,7 +608,7 @@ func (c *client) PauseJob(ctx context.Context, jobID uint64) (*PauseJobResponse,
 		return nil, errors.NewInvalidInput("scheduler.PauseJob", "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "PauseJob", &pauseJobRequest{JobID: jobID})
+	resp, err := c.transport.Request(ctx, serviceName, "PauseJob", &PauseJobRequest{JobID: jobID})
 	if err != nil {
 		return nil, err
 	}
@@ -578,7 +635,7 @@ func (c *client) ResumeJob(ctx context.Context, jobID uint64) (*ResumeJobRespons
 		return nil, errors.NewInvalidInput("scheduler.ResumeJob", "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "ResumeJob", &resumeJobRequest{JobID: jobID})
+	resp, err := c.transport.Request(ctx, serviceName, "ResumeJob", &ResumeJobRequest{JobID: jobID})
 	if err != nil {
 		return nil, err
 	}
@@ -605,7 +662,7 @@ func (c *client) CancelJob(ctx context.Context, jobID uint64, reason string) (*C
 		return nil, errors.NewInvalidInput("scheduler.CancelJob", "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "CancelJob", &cancelJobRequest{JobID: jobID, Reason: reason})
+	resp, err := c.transport.Request(ctx, serviceName, "CancelJob", &CancelJobRequest{JobID: jobID, Reason: reason})
 	if err != nil {
 		return nil, err
 	}
@@ -636,7 +693,7 @@ func (c *client) GetJobHistory(ctx context.Context, jobID uint64, opts *HistoryO
 		return nil, err
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "GetJobHistory", &getJobHistoryRequest{JobID: jobID, Options: opts})
+	resp, err := c.transport.Request(ctx, serviceName, "GetJobHistory", &GetJobHistoryRequest{JobID: jobID, Options: opts})
 	if err != nil {
 		return nil, err
 	}
@@ -659,7 +716,7 @@ func (c *client) GetStatus(ctx context.Context) (*SchedulerStatus, error) {
 		return nil, errors.NewInvalidInput("scheduler.GetStatus", "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "GetStatus", &getStatusRequest{})
+	resp, err := c.transport.Request(ctx, serviceName, "GetStatus", &GetStatusRequest{})
 	if err != nil {
 		return nil, err
 	}

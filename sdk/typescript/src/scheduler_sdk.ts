@@ -103,6 +103,98 @@ export interface SchedulerStatus {
 }
 
 // ---------------------------------------------------------------------------
+// Workload placement types (mirror pkg/scheduler/placement JSON)
+// ---------------------------------------------------------------------------
+
+// PlacementNodeFacts are a node's caller-supplied facts.
+export interface PlacementNodeFacts {
+  node_id: string;
+  capacity?: Record<string, number>;
+  labels?: Record<string, string>;
+}
+
+// PlacementNodeStatus is a node's cordon and drain state.
+export interface PlacementNodeStatus {
+  unschedulable: boolean;
+  draining: boolean;
+}
+
+// PlacementNodeInfo is a live node with its lease and allocation.
+export interface PlacementNodeInfo {
+  facts: PlacementNodeFacts;
+  status: PlacementNodeStatus;
+  lease_id: number;
+  ttl_seconds: number;
+  allocated?: Record<string, number>;
+  placements: number;
+  registered_at: string;
+}
+
+// RegisterNodeRequest registers a node's facts under a lease.
+export interface RegisterNodeRequest {
+  facts: PlacementNodeFacts;
+  ttl_seconds: number;
+}
+
+// PlacementConstraint is a hard requirement on a node label.
+export interface PlacementConstraint {
+  key: string;
+  operator: 'In' | 'NotIn' | 'Exists' | 'DoesNotExist';
+  values?: string[];
+}
+
+// PlacementAffinityTerm relates a workload to nodes hosting another group.
+export interface PlacementAffinityTerm {
+  group: string;
+  required?: boolean;
+  weight?: number;
+}
+
+// PlacementSpreadConstraint spreads a group across a topology label.
+export interface PlacementSpreadConstraint {
+  topology_key: string;
+  max_skew: number;
+  required?: boolean;
+}
+
+// PlacementRequest asks for one workload to be placed.
+export interface PlacementRequest {
+  workload_id: string;
+  group?: string;
+  labels?: Record<string, string>;
+  resources?: Record<string, number>;
+  constraints?: PlacementConstraint[];
+  affinity?: PlacementAffinityTerm[];
+  anti_affinity?: PlacementAffinityTerm[];
+  spread?: PlacementSpreadConstraint;
+  strategy?: 'binpack' | 'spread';
+}
+
+// Placement is a recorded placement decision.
+export interface Placement {
+  workload_id: string;
+  group?: string;
+  node_id: string;
+  resources?: Record<string, number>;
+  labels?: Record<string, string>;
+  score: number;
+  created_at: string;
+  orphaned?: boolean;
+}
+
+// PlaceResult is the outcome of place.
+export interface PlaceResult {
+  placement: Placement;
+  existing: boolean;
+}
+
+// PlacementFilter narrows listPlacements.
+export interface PlacementFilter {
+  node_id?: string;
+  group?: string;
+}
+
+// ---------------------------------------------------------------------------
 // SchedulerClient interface
 // ---------------------------------------------------------------------------
 
@@ -140,4 +232,52 @@ export interface SchedulerClient {
   // getStatus returns the scheduler engine status.
   // GET /api/v1/scheduler/status
   getStatus(): Promise<SchedulerStatus>;
+
+  // registerNode registers or refreshes a node's facts under a lease.
+  // POST /api/v1/scheduler/nodes
+  registerNode(req: RegisterNodeRequest): Promise<PlacementNodeInfo>;
+
+  // renewNode heartbeats a node's lease.
+  // POST /api/v1/scheduler/nodes/:id/renew
+  renewNode(nodeId: string): Promise<void>;
+
+  // deregisterNode revokes a node's lease and clears its status.
+  // DELETE /api/v1/scheduler/nodes/:id
+  deregisterNode(nodeId: string): Promise<void>;
+
+  // getNode returns a live node.
+  // GET /api/v1/scheduler/nodes/:id
+  getNode(nodeId: string): Promise<PlacementNodeInfo>;
+
+  // listNodes returns every live node.
+  // GET /api/v1/scheduler/nodes
+  listNodes(): Promise<PlacementNodeInfo[]>;
+
+  // cordonNode excludes a node from new placements.
+  // POST /api/v1/scheduler/nodes/:id/cordon
+  cordonNode(nodeId: string): Promise<PlacementNodeInfo>;
+
+  // uncordonNode returns a node to service.
+  // POST /api/v1/scheduler/nodes/:id/uncordon
+  uncordonNode(nodeId: string): Promise<PlacementNodeInfo>;
+
+  // drainNode drains a node and returns the placements to move.
+  // POST /api/v1/scheduler/nodes/:id/drain
+  drainNode(nodeId: string): Promise<Placement[]>;
+
+  // place decides and records the node a workload runs on.
+  // POST /api/v1/scheduler/placements
+  place(req: PlacementRequest): Promise<PlaceResult>;
+
+  // release removes a workload's placement.
+  // DELETE /api/v1/scheduler/placements/:id
+  release(workloadId: string): Promise<void>;
+
+  // getPlacement returns a workload's placement.
+  // GET /api/v1/scheduler/placements/:id
+  getPlacement(workloadId: string): Promise<Placement>;
+
+  // listPlacements returns placements, optionally filtered by node or group.
+  // GET /api/v1/scheduler/placements
+  listPlacements(filter?: PlacementFilter): Promise<Placement[]>;
 }

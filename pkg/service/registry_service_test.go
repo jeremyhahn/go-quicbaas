@@ -56,15 +56,6 @@ func registryInstance() RegistryServiceInstance {
 	return RegistryServiceInstance{ID: "i-1", Service: "api", Address: "10.1.0.4:443", Metadata: map[string]string{"zone": "z1"}}
 }
 
-func codeOf(t *testing.T, err error) errors.ErrorCode {
-	t.Helper()
-	var qb *errors.QBError
-	if !stderrors.As(err, &qb) {
-		t.Fatalf("error %T (%v) is not a *QBError", err, err)
-	}
-	return qb.Code
-}
-
 func TestRegistryService_RegisterResolveRenewDeregister(t *testing.T) {
 	backend := newMemRegistryBackend()
 	svc := NewRegistryServiceFromBackend(backend)

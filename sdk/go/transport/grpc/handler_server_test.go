@@ -38,10 +38,10 @@ type handlerTestServer struct {
 // newHandlerServer starts an in-memory gRPC server. The register callback is
 // invoked with the *grpc.Server before Serve so proto service implementations
 // can be registered.
-func newHandlerServer(t *testing.T, register func(s *grpc.Server)) *handlerTestServer {
+func newHandlerServer(t *testing.T, register func(s *grpc.Server), opts ...grpc.ServerOption) *handlerTestServer {
 	t.Helper()
 	lis := bufconn.Listen(bufSize)
-	s := grpc.NewServer()
+	s := grpc.NewServer(opts...)
 	register(s)
 	hs := &handlerTestServer{lis: lis, server: s}
 	go func() {

@@ -659,3 +659,15 @@ PUT /oauth2/register/{client_id}
 PUT /ui/*
 TRACE /api/v1/metrics/
 TRACE /ui/*
+POST /api/v1/scheduler/nodes
+GET /api/v1/scheduler/nodes
+GET /api/v1/scheduler/nodes/{id}
+DELETE /api/v1/scheduler/nodes/{id}
+POST /api/v1/scheduler/nodes/{id}/renew
+POST /api/v1/scheduler/nodes/{id}/cordon
+POST /api/v1/scheduler/nodes/{id}/uncordon
+POST /api/v1/scheduler/nodes/{id}/drain
+POST /api/v1/scheduler/placements
+GET /api/v1/scheduler/placements
+GET /api/v1/scheduler/placements/{id}
+DELETE /api/v1/scheduler/placements/{id}

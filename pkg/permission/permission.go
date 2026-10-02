@@ -223,6 +223,24 @@ const (
 	// than smuggled in behind a read fix.
 	AgentAccountRead qrdbsdk.Permission = "agent_accounts:read"
 	AgentAccountList qrdbsdk.Permission = "agent_accounts:list"
+
+	// The scheduler's workload placement verbs (pkg/scheduler/placement).
+	// go-qrdb owns the "scheduler" resource family outright — every job verb
+	// is its permission, not ours — and TestAll_DoesNotShadowAQRDBPermission
+	// forbids extending a family qrdb owns, so placement contributes its own
+	// "placement" family beside it.
+	//
+	// PlacementRead ("placement:read") reads nodes and placements.
+	PlacementRead qrdbsdk.Permission = "placement:read"
+
+	// PlacementPlace ("placement:place") places and releases workloads: it
+	// consumes node capacity but changes no node.
+	PlacementPlace qrdbsdk.Permission = "placement:place"
+
+	// PlacementManage ("placement:manage") registers, renews and
+	// deregisters node facts and cordons, uncordons and drains nodes: it
+	// changes the pool every placement decides over.
+	PlacementManage qrdbsdk.Permission = "placement:manage"
 )
 
 // Service registry permissions.
@@ -592,6 +610,20 @@ var contributions = []contribution{
 		roles: []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator},
 		duty:  dutyOutsideSecurityOfficer,
 	},
+	// Workload placement follows the read/write split every family here
+	// takes. Reading the pool and placing or releasing a workload are the
+	// day-to-day operational verbs, held by Admin and Operator. Changing the
+	// pool itself — registering node facts, cordoning, draining — reshapes
+	// every later decision, so it is administrative and Admin's alone among
+	// the built-ins; the node agents that register and heartbeat their own
+	// facts in production hold a tenant-scoped custom role naming
+	// placement:manage. Self-scope: every record is tenant-scoped, and the
+	// system-tenant rule lifts it for a system identity. None of the three
+	// touches key material or module governance, so all fall outside the
+	// Security Officer's duties.
+	{permission: PlacementRead, roles: []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
+	{permission: PlacementPlace, roles: []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
+	{permission: PlacementManage, roles: []string{qrdbsdk.PermissionRoleAdmin}, duty: dutyOutsideSecurityOfficer, scope: scopeSelf},
 }
 
 // All returns every permission QuicBaaS contributes to qrdb's registry, in a

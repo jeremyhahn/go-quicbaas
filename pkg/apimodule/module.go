@@ -493,8 +493,8 @@ func (m *Module) bind() (*grpcServers, error) {
 		login:    grpcapi.NewLoginServer(svc.LoginCeremony(), m.log),
 		ssh:      grpcapi.NewSSHServer(service.NewSSHService(svc.SSHClient()), m.log),
 	}
-	if schedulerSvc := svc.Scheduler(); schedulerSvc != nil {
-		built.scheduler = grpcapi.NewSchedulerServer(schedulerSvc, m.log)
+	if schedulerSvc, placementSvc := svc.Scheduler(), svc.Placement(); schedulerSvc != nil || placementSvc != nil {
+		built.scheduler = grpcapi.NewSchedulerServer(schedulerSvc, placementSvc, m.log)
 	}
 	if agentSvc := svc.Agent(); agentSvc != nil {
 		built.orchestrator = grpcapi.NewOrchestratorServer(agentSvc, m.log)

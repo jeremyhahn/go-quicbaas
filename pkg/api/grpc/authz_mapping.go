@@ -667,6 +667,23 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.scheduler.v1.SchedulerService/GetJobHistory":      {"scheduler", "history"},
 	"/quicbaas.scheduler.v1.SchedulerService/GetSchedulerStatus": {"scheduler", "status"},
 
+	// Workload placement rides the SchedulerService but carries its own
+	// "placement" family: qrdb owns "scheduler" (see pkg/permission).
+	// Reads read; Place/Release consume capacity; node registration,
+	// cordon and drain reshape the pool.
+	"/quicbaas.scheduler.v1.SchedulerService/GetNode":        {"placement", "read"},
+	"/quicbaas.scheduler.v1.SchedulerService/ListNodes":      {"placement", "read"},
+	"/quicbaas.scheduler.v1.SchedulerService/GetPlacement":   {"placement", "read"},
+	"/quicbaas.scheduler.v1.SchedulerService/ListPlacements": {"placement", "read"},
+	"/quicbaas.scheduler.v1.SchedulerService/Place":          {"placement", "place"},
+	"/quicbaas.scheduler.v1.SchedulerService/Release":        {"placement", "place"},
+	"/quicbaas.scheduler.v1.SchedulerService/RegisterNode":   {"placement", "manage"},
+	"/quicbaas.scheduler.v1.SchedulerService/RenewNode":      {"placement", "manage"},
+	"/quicbaas.scheduler.v1.SchedulerService/DeregisterNode": {"placement", "manage"},
+	"/quicbaas.scheduler.v1.SchedulerService/CordonNode":     {"placement", "manage"},
+	"/quicbaas.scheduler.v1.SchedulerService/UncordonNode":   {"placement", "manage"},
+	"/quicbaas.scheduler.v1.SchedulerService/DrainNode":      {"placement", "manage"},
+
 	// ---- quicbaas.parameterstore.v1.ParameterStore ----
 	"/quicbaas.parameterstore.v1.ParameterStore/GetParameter":     {"parameters", "read"},
 	"/quicbaas.parameterstore.v1.ParameterStore/GetParameters":    {"parameters", "read"},

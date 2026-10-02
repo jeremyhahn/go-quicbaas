@@ -2432,9 +2432,10 @@ func (s *Server) startGRPCServer() error {
 		s.logger.Info("Registered ObjectStorageAdmin gRPC service")
 	}
 
-	// Register Scheduler service (if enabled)
-	if schedulerSvc := s.quicBaaSService.Scheduler(); schedulerSvc != nil {
-		schedulerServer := grpcapi.NewSchedulerServer(schedulerSvc, s.logger)
+	// Register Scheduler service (if either its job or its placement half
+	// is enabled)
+	if schedulerSvc, placementSvc := s.quicBaaSService.Scheduler(), s.quicBaaSService.Placement(); schedulerSvc != nil || placementSvc != nil {
+		schedulerServer := grpcapi.NewSchedulerServer(schedulerSvc, placementSvc, s.logger)
 		pb.RegisterSchedulerServiceServer(grpcServer, schedulerServer)
 		s.logger.Info("Registered Scheduler gRPC service")
 	}

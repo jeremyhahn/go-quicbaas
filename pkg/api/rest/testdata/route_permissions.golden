@@ -646,3 +646,15 @@ PUT /api/v1/vector/namespaces/{namespace}/vectors/{id} permission vector:upsert
 PUT /api/v1/vector/namespaces/{namespace}/vectors/{id}/metadata permission vector:upsert
 PUT /api/v1/xkms/piv/slots/{slot}/cert permission piv:write
 PUT /oauth2/register/{client_id} public -:-
+POST /api/v1/scheduler/nodes permission placement:manage
+GET /api/v1/scheduler/nodes permission placement:read
+GET /api/v1/scheduler/nodes/{id} permission placement:read
+DELETE /api/v1/scheduler/nodes/{id} permission placement:manage
+POST /api/v1/scheduler/nodes/{id}/renew permission placement:manage
+POST /api/v1/scheduler/nodes/{id}/cordon permission placement:manage
+POST /api/v1/scheduler/nodes/{id}/uncordon permission placement:manage
+POST /api/v1/scheduler/nodes/{id}/drain permission placement:manage
+POST /api/v1/scheduler/placements permission placement:place
+GET /api/v1/scheduler/placements permission placement:read
+GET /api/v1/scheduler/placements/{id} permission placement:read
+DELETE /api/v1/scheduler/placements/{id} permission placement:place

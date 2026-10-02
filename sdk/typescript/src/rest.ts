@@ -72,6 +72,12 @@ import type {
 } from './messaging_sdk.js';
 import type {
   SchedulerClient,
+  RegisterNodeRequest,
+  PlacementNodeInfo,
+  PlacementRequest,
+  PlaceResult,
+  Placement,
+  PlacementFilter,
   SchedulerJob,
   ListJobsRequest,
   ListJobsResponse,
@@ -2508,6 +2514,88 @@ class RestSchedulerClient implements SchedulerClient {
   // getStatus maps to GET /api/v1/scheduler/status
   async getStatus(): Promise<SchedulerStatus> {
     return this.fetchJSON<SchedulerStatus>('/api/v1/scheduler/status');
+  }
+
+  // registerNode maps to POST /api/v1/scheduler/nodes
+  async registerNode(req: RegisterNodeRequest): Promise<PlacementNodeInfo> {
+    return this.fetchJSON<PlacementNodeInfo>('/api/v1/scheduler/nodes', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // renewNode maps to POST /api/v1/scheduler/nodes/:id/renew
+  async renewNode(nodeId: string): Promise<void> {
+    await this.fetchJSON<unknown>(`/api/v1/scheduler/nodes/${encodeURIComponent(nodeId)}/renew`, { method: 'POST' });
+  }
+
+  // deregisterNode maps to DELETE /api/v1/scheduler/nodes/:id
+  async deregisterNode(nodeId: string): Promise<void> {
+    await this.fetchJSON<unknown>(`/api/v1/scheduler/nodes/${encodeURIComponent(nodeId)}`, { method: 'DELETE' });
+  }
+
+  // getNode maps to GET /api/v1/scheduler/nodes/:id
+  async getNode(nodeId: string): Promise<PlacementNodeInfo> {
+    return this.fetchJSON<PlacementNodeInfo>(`/api/v1/scheduler/nodes/${encodeURIComponent(nodeId)}`);
+  }
+
+  // listNodes maps to GET /api/v1/scheduler/nodes
+  async listNodes(): Promise<PlacementNodeInfo[]> {
+    const body = await this.fetchJSON<{ nodes: PlacementNodeInfo[] | null }>('/api/v1/scheduler/nodes');
+    return body.nodes ?? [];
+  }
+
+  // cordonNode maps to POST /api/v1/scheduler/nodes/:id/cordon
+  async cordonNode(nodeId: string): Promise<PlacementNodeInfo> {
+    return this.fetchJSON<PlacementNodeInfo>(`/api/v1/scheduler/nodes/${encodeURIComponent(nodeId)}/cordon`, {
+      method: 'POST',
+    });
+  }
+
+  // uncordonNode maps to POST /api/v1/scheduler/nodes/:id/uncordon
+  async uncordonNode(nodeId: string): Promise<PlacementNodeInfo> {
+    return this.fetchJSON<PlacementNodeInfo>(`/api/v1/scheduler/nodes/${encodeURIComponent(nodeId)}/uncordon`, {
+      method: 'POST',
+    });
+  }
+
+  // drainNode maps to POST /api/v1/scheduler/nodes/:id/drain
+  async drainNode(nodeId: string): Promise<Placement[]> {
+    const body = await this.fetchJSON<{ placements: Placement[] | null }>(
+      `/api/v1/scheduler/nodes/${encodeURIComponent(nodeId)}/drain`,
+      { method: 'POST' },
+    );
+    return body.placements ?? [];
+  }
+
+  // place maps to POST /api/v1/scheduler/placements
+  async place(req: PlacementRequest): Promise<PlaceResult> {
+    return this.fetchJSON<PlaceResult>('/api/v1/scheduler/placements', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  // release maps to DELETE /api/v1/scheduler/placements/:id
+  async release(workloadId: string): Promise<void> {
+    await this.fetchJSON<unknown>(`/api/v1/scheduler/placements/${encodeURIComponent(workloadId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // getPlacement maps to GET /api/v1/scheduler/placements/:id
+  async getPlacement(workloadId: string): Promise<Placement> {
+    return this.fetchJSON<Placement>(`/api/v1/scheduler/placements/${encodeURIComponent(workloadId)}`);
+  }
+
+  // listPlacements maps to GET /api/v1/scheduler/placements
+  async listPlacements(filter: PlacementFilter = {}): Promise<Placement[]> {
+    const params = new URLSearchParams();
+    if (filter.node_id) params.set('node_id', filter.node_id);
+    if (filter.group) params.set('group', filter.group);
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const body = await this.fetchJSON<{ placements: Placement[] | null }>(`/api/v1/scheduler/placements${query}`);
+    return body.placements ?? [];
   }
 }
 

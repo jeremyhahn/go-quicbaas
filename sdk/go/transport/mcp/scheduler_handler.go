@@ -33,6 +33,9 @@ func newSchedulerHandler() *schedulerHandler {
 
 // transformRequest transforms SDK scheduler request to MCP tool arguments.
 func (h *schedulerHandler) transformRequest(method string, req interface{}) (map[string]interface{}, error) {
+	if _, ok := placementResults[method]; ok {
+		return transformPlacementRequest(method, req)
+	}
 	switch method {
 	case "CreateJob":
 		return h.transformCreateJobRequest(req)
@@ -187,6 +190,9 @@ func ownerTypeToString(ot scheduler.OwnerType) string {
 
 // transformResponse transforms MCP tool response to SDK scheduler types.
 func (h *schedulerHandler) transformResponse(method string, resp interface{}) (interface{}, error) {
+	if newResult, ok := placementResults[method]; ok {
+		return decodePlacementResult(newResult(), resp)
+	}
 	switch method {
 	case "CreateJob":
 		return h.transformCreateJobResponse(resp)

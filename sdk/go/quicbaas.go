@@ -1273,6 +1273,32 @@ type (
 	SchedulerStatus = scheduler.SchedulerStatus
 )
 
+// Workload placement type aliases (Async().Scheduler() placement methods).
+type (
+	// PlacementNodeFacts is an alias for scheduler.NodeFacts.
+	PlacementNodeFacts = scheduler.NodeFacts
+	// PlacementNodeStatus is an alias for scheduler.NodeStatus.
+	PlacementNodeStatus = scheduler.NodeStatus
+	// PlacementNodeInfo is an alias for scheduler.NodeInfo.
+	PlacementNodeInfo = scheduler.NodeInfo
+	// PlacementRegisterNodeRequest is an alias for scheduler.RegisterNodeRequest.
+	PlacementRegisterNodeRequest = scheduler.RegisterNodeRequest
+	// PlacementConstraint is an alias for scheduler.Constraint.
+	PlacementConstraint = scheduler.Constraint
+	// PlacementAffinityTerm is an alias for scheduler.AffinityTerm.
+	PlacementAffinityTerm = scheduler.AffinityTerm
+	// PlacementSpreadConstraint is an alias for scheduler.SpreadConstraint.
+	PlacementSpreadConstraint = scheduler.SpreadConstraint
+	// PlacementRequest is an alias for scheduler.PlacementRequest.
+	PlacementRequest = scheduler.PlacementRequest
+	// Placement is an alias for scheduler.Placement.
+	Placement = scheduler.Placement
+	// PlaceResult is an alias for scheduler.PlaceResult.
+	PlaceResult = scheduler.PlaceResult
+	// PlacementFilter is an alias for scheduler.PlacementFilter.
+	PlacementFilter = scheduler.PlacementFilter
+)
+
 // SchedulerJobType is an alias for scheduler.JobType.
 type SchedulerJobType = scheduler.JobType
 

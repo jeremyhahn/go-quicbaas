@@ -180,6 +180,7 @@ type quicBaaS struct {
 	parameterStoreService     ParameterStoreService
 	objectTransferService     ObjectTransferService
 	schedulerService          SchedulerService
+	placementService          PlacementService
 	projectService            ProjectService
 	accountService            AccountService
 	fleetAdminService         FleetAdminService
@@ -687,6 +688,14 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 				logger.Info("Parameter store service initialized with KV backend")
 			}
 		}
+	}
+
+	// The scheduler's placement engine runs on the qrdb SDK client: the
+	// lease, KV and transaction planes of shard 1, with the rest of the
+	// scheduler's records. The shard client is resolved on first use, so a
+	// node that never places holds none.
+	if svc.qrdbClient != nil {
+		svc.placementService = newLazyPlacementService(svc.qrdbClient, 1)
 	}
 
 	// Initialize Vector service if provided.
@@ -4785,6 +4794,12 @@ func (s *quicBaaS) ObjectTransferService() ObjectTransferService {
 // Scheduler provides job scheduling and execution with multi-tenant support.
 func (s *quicBaaS) Scheduler() SchedulerService {
 	return s.schedulerService
+}
+
+// Placement returns the scheduler's placement service (nil when no qrdb
+// client is configured).
+func (s *quicBaaS) Placement() PlacementService {
+	return s.placementService
 }
 
 // SchedulerEngine returns the raw *scheduler.SchedulerEngine for

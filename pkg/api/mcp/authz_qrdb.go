@@ -316,6 +316,22 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_scheduler_job_history": {"scheduler", "history"},
 	"quicbaas_scheduler_status":      {"scheduler", "status"},
 
+	// Workload placement carries its own "placement" family (qrdb owns
+	// "scheduler"), with the same read / place / manage split as the gRPC
+	// and REST tables.
+	"quicbaas_scheduler_get_node":        {"placement", "read"},
+	"quicbaas_scheduler_list_nodes":      {"placement", "read"},
+	"quicbaas_scheduler_get_placement":   {"placement", "read"},
+	"quicbaas_scheduler_list_placements": {"placement", "read"},
+	"quicbaas_scheduler_place":           {"placement", "place"},
+	"quicbaas_scheduler_release":         {"placement", "place"},
+	"quicbaas_scheduler_register_node":   {"placement", "manage"},
+	"quicbaas_scheduler_renew_node":      {"placement", "manage"},
+	"quicbaas_scheduler_deregister_node": {"placement", "manage"},
+	"quicbaas_scheduler_cordon_node":     {"placement", "manage"},
+	"quicbaas_scheduler_uncordon_node":   {"placement", "manage"},
+	"quicbaas_scheduler_drain_node":      {"placement", "manage"},
+
 	// Parameter store -> parameters
 	"quicbaas_parameter_get":          {"parameters", "read"},
 	"quicbaas_parameter_set":          {"parameters", "write"},

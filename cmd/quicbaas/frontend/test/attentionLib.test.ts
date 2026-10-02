@@ -38,8 +38,12 @@ import {
 
 describe('itemAgeInstant / itemAgeLabel', () => {
   it('prefers status_changed_at over created_at', () => {
+    // Five minutes, not one: a fixture pinned to exactly 60s sits on
+    // formatRelative's second/minute boundary, and nanosecond timestamps
+    // beyond 2^53 lose enough precision converting back to milliseconds to
+    // land on "59s ago" when the clock has not ticked.
     const nowNs = Date.now() * 1_000_000;
-    const item = { status_changed_at: nowNs - 60_000 * 1_000_000, created_at: nowNs - 3_600_000 * 1_000_000 };
+    const item = { status_changed_at: nowNs - 300_000 * 1_000_000, created_at: nowNs - 3_600_000 * 1_000_000 };
     expect(itemAgeInstant(item)).toBe(item.status_changed_at);
     expect(itemAgeLabel(item)).toMatch(/m ago$/);
   });

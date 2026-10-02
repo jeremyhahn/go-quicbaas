@@ -551,6 +551,18 @@ func rawRouteSpecs() []RouteSpec {
 		{Method: "POST", Pattern: "/api/v1/scheduler/jobs/{id}/resume", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleResumeSchedulerJob }},
 		{Method: "POST", Pattern: "/api/v1/scheduler/jobs/{id}/trigger", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleTriggerSchedulerJob }},
 		{Method: "GET", Pattern: "/api/v1/scheduler/status", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGetSchedulerStatus }},
+		{Method: "POST", Pattern: "/api/v1/scheduler/nodes", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleRegisterPlacementNode }},
+		{Method: "GET", Pattern: "/api/v1/scheduler/nodes", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleListPlacementNodes }},
+		{Method: "GET", Pattern: "/api/v1/scheduler/nodes/{id}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGetPlacementNode }},
+		{Method: "DELETE", Pattern: "/api/v1/scheduler/nodes/{id}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleDeregisterPlacementNode }},
+		{Method: "POST", Pattern: "/api/v1/scheduler/nodes/{id}/renew", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleRenewPlacementNode }},
+		{Method: "POST", Pattern: "/api/v1/scheduler/nodes/{id}/cordon", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleCordonPlacementNode }},
+		{Method: "POST", Pattern: "/api/v1/scheduler/nodes/{id}/uncordon", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleUncordonPlacementNode }},
+		{Method: "POST", Pattern: "/api/v1/scheduler/nodes/{id}/drain", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleDrainPlacementNode }},
+		{Method: "POST", Pattern: "/api/v1/scheduler/placements", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandlePlaceWorkload }},
+		{Method: "GET", Pattern: "/api/v1/scheduler/placements", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleListPlacements }},
+		{Method: "GET", Pattern: "/api/v1/scheduler/placements/{id}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGetPlacement }},
+		{Method: "DELETE", Pattern: "/api/v1/scheduler/placements/{id}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleReleasePlacement }},
 		// The forge webhook ingress. PUBLIC at the PEP layer by necessity and
 		// by design: a forge holds no platform identity and can present none,
 		// so demanding one would make the endpoint unreachable rather than

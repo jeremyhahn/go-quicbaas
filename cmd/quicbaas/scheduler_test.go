@@ -140,7 +140,7 @@ func TestSchedulerCommandStructure(t *testing.T) {
 
 	assert.NotNil(t, cmd)
 	assert.Equal(t, "scheduler", cmd.Use)
-	assert.Equal(t, "Job scheduler commands", cmd.Short)
+	assert.Equal(t, "Job scheduler and workload placement commands", cmd.Short)
 	assert.Contains(t, cmd.Long, "Scheduler commands")
 	assert.Greater(t, len(cmd.Commands()), 0, "Scheduler command should have subcommands")
 
@@ -149,8 +149,8 @@ func TestSchedulerCommandStructure(t *testing.T) {
 	assert.NotNil(t, outputFlag)
 	assert.Equal(t, "table", outputFlag.DefValue)
 
-	// Check that scheduler has 'job' and 'status' subcommands
-	expectedCommands := []string{"job", "status"}
+	// Check that scheduler has its job, status, node and placement subcommands
+	expectedCommands := []string{"job", "status", "node", "placement"}
 	for _, expectedCmd := range expectedCommands {
 		found := false
 		for _, subCmd := range cmd.Commands() {

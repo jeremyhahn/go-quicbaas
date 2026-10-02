@@ -19,6 +19,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   watcher sees every change exactly once; the SDK resumes a dropped watch from
   the next undelivered revision. New permissions `service_registry:register`
   and `service_registry:read`. Docs: `docs/service-registry/`.
+- Workload placement in the scheduler (go-quicbaas#1143; handbook doc 00 §R,
+  L1 amendment 2026-10-01): `pkg/scheduler/placement` filters and scores
+  caller-supplied node facts (abstract capacities and opaque labels) by label
+  constraints, capacity, affinity, anti-affinity and topology spread, with
+  bin-pack and spread strategies, and records the decision in one guarded
+  go-qrdb transaction, so concurrent placements never overcommit a node.
+  Node facts live on qrdb leases; cordon and drain are supported. Reached as
+  `Async().Scheduler()` `RegisterNode`, `RenewNode`, `DeregisterNode`,
+  `GetNode`, `ListNodes`, `CordonNode`, `UncordonNode`, `DrainNode`, `Place`,
+  `Release`, `GetPlacement`, `ListPlacements` on REST, QUIC, gRPC, Unix, MCP
+  and embedded; CLI `quicbaas scheduler node …` / `placement …`; TypeScript
+  `scheduler.registerNode` … `listPlacements`. New permission family
+  `placement:read|place|manage`.
 
 ### Changed
 
@@ -58,6 +71,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every registration writes a lease-bound ownership mark under its tenant, and
   `Renew`/`Deregister` refuse a lease without one (indistinguishable from a
   missing lease, so IDs cannot be probed).
+
+### Fixed
+
+- `Async().Scheduler()` job methods worked over MCP only: gRPC, Unix and
+  embedded had no scheduler handler, and REST/QUIC never substituted `{id}`
+  and returned untyped maps. Every transport now maps through
+  `scheduler.Dispatch`.
+- The gRPC scheduler client dropped `node_affinity` on `CreateJob`.
 
 ## [0.13.1-alpha] - 2026-09-29
 

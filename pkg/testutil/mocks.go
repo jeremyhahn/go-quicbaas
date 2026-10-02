@@ -597,6 +597,12 @@ func (m *MockQuicBaaS) Scheduler() service.SchedulerService {
 	return m
 }
 
+// Placement returns nil: the mock has no placement engine. Tests that need
+// one build a placement.Placer over an in-memory or real qrdb backend.
+func (m *MockQuicBaaS) Placement() service.PlacementService {
+	return nil
+}
+
 // SchedulerEngine returns nil for the mock — tests that need a
 // real engine construct one via scheduler.New or
 // scheduler.NewWithClustering directly.

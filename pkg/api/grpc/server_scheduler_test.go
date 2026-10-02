@@ -125,7 +125,7 @@ func (m *mockSchedulerService) GetStatus(ctx context.Context) (*service.GetSched
 // newTestSchedulerServer creates a SchedulerServer for testing.
 func newTestSchedulerServer(mockSvc *mockSchedulerService) *SchedulerServer {
 	log, _ := logger.New(logger.LogConfig{Level: "debug", Format: "json", Output: "stdout"})
-	return NewSchedulerServer(mockSvc, log)
+	return NewSchedulerServer(mockSvc, nil, log)
 }
 
 // =============================================================================
@@ -2078,7 +2078,7 @@ func TestNewSchedulerServer(t *testing.T) {
 		log, err := logger.New(logger.LogConfig{Level: "debug", Format: "json", Output: "stdout"})
 		require.NoError(t, err)
 
-		server := NewSchedulerServer(mockSvc, log)
+		server := NewSchedulerServer(mockSvc, nil, log)
 
 		require.NotNil(t, server)
 		assert.NotNil(t, server.schedulerSvc)

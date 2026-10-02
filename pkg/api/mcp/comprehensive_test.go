@@ -850,3 +850,6 @@ func TestComprehensive_marshalResult(t *testing.T) {
 		})
 	}
 }
+
+// Placement returns nil: this double has no placement engine.
+func (m *mockService) Placement() service.PlacementService { return nil }

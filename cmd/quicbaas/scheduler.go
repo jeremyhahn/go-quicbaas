@@ -149,11 +149,13 @@ func constructSchedulerRESTBaseURL(addr string) string {
 func newSchedulerCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "scheduler",
-		Short: "Job scheduler commands",
-		Long: `Scheduler commands for managing scheduled jobs.
+		Short: "Job scheduler and workload placement commands",
+		Long: `Scheduler commands for managing scheduled jobs and placing workloads.
 
-These commands allow you to create, manage, and monitor scheduled jobs
-for system maintenance, tenant operations, and background processing.`,
+The job commands create, manage, and monitor scheduled jobs for system
+maintenance, tenant operations, and background processing. The node and
+placement commands register node facts and decide which node a workload
+runs on.`,
 	}
 
 	cmd.PersistentFlags().StringVar(&schedulerOutputFmt, "output", "table", "Output format (json, yaml, table)")
@@ -162,6 +164,9 @@ for system maintenance, tenant operations, and background processing.`,
 	cmd.AddCommand(newSchedulerJobCommand())
 	// Add status as direct subcommand of scheduler
 	cmd.AddCommand(newSchedulerStatusCommand())
+	// Workload placement: node facts and placement decisions
+	cmd.AddCommand(newSchedulerNodeCommand())
+	cmd.AddCommand(newSchedulerPlacementCommand())
 
 	return cmd
 }

@@ -471,6 +471,11 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 		return handler.handleRequest(ctx, service, method, req)
 	}
 
+	// Async().Scheduler(): jobs and workload placement.
+	if isSchedulerService(service) {
+		return handleSchedulerRequest(ctx, conn, method, req)
+	}
+
 	// Build full method path for other services.
 	fullMethod := "/" + service + "/" + method
 

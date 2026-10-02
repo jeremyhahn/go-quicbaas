@@ -55,6 +55,72 @@ service SchedulerService {
     rpc GetSchedulerStatus(GetSchedulerStatusRequest) returns (GetSchedulerStatusResponse) {
         option (qrdb.v1.permission) = "scheduler:status";
     }
+
+    // ---- Workload placement (pkg/scheduler/placement) ----
+    //
+    // Placement filters and scores caller-supplied node facts and records
+    // the decision on go-qrdb. go-qrdb owns the "scheduler" permission
+    // family, so placement carries its own "placement" family.
+
+    // RegisterNode registers or refreshes a node's facts under a lease.
+    rpc RegisterNode(RegisterPlacementNodeRequest) returns (PlacementNodeResponse) {
+        option (qrdb.v1.permission) = "placement:manage";
+    }
+
+    // RenewNode heartbeats a node's lease.
+    rpc RenewNode(PlacementNodeRequest) returns (RenewPlacementNodeResponse) {
+        option (qrdb.v1.permission) = "placement:manage";
+    }
+
+    // DeregisterNode revokes a node's lease and clears its status.
+    rpc DeregisterNode(PlacementNodeRequest) returns (DeregisterPlacementNodeResponse) {
+        option (qrdb.v1.permission) = "placement:manage";
+    }
+
+    // GetNode returns a live node.
+    rpc GetNode(PlacementNodeRequest) returns (PlacementNodeResponse) {
+        option (qrdb.v1.permission) = "placement:read";
+    }
+
+    // ListNodes returns every live node.
+    rpc ListNodes(ListPlacementNodesRequest) returns (ListPlacementNodesResponse) {
+        option (qrdb.v1.permission) = "placement:read";
+    }
+
+    // CordonNode excludes a node from new placements.
+    rpc CordonNode(PlacementNodeRequest) returns (PlacementNodeResponse) {
+        option (qrdb.v1.permission) = "placement:manage";
+    }
+
+    // UncordonNode returns a node to service, clearing cordon and drain.
+    rpc UncordonNode(PlacementNodeRequest) returns (PlacementNodeResponse) {
+        option (qrdb.v1.permission) = "placement:manage";
+    }
+
+    // DrainNode marks a node draining and returns the placements to move.
+    rpc DrainNode(PlacementNodeRequest) returns (DrainPlacementNodeResponse) {
+        option (qrdb.v1.permission) = "placement:manage";
+    }
+
+    // Place decides and records the node a workload runs on.
+    rpc Place(PlaceWorkloadRequest) returns (PlaceWorkloadResponse) {
+        option (qrdb.v1.permission) = "placement:place";
+    }
+
+    // Release removes a workload's placement.
+    rpc Release(ReleaseWorkloadRequest) returns (ReleaseWorkloadResponse) {
+        option (qrdb.v1.permission) = "placement:place";
+    }
+
+    // GetPlacement returns a workload's placement.
+    rpc GetPlacement(GetPlacementRequest) returns (GetPlacementResponse) {
+        option (qrdb.v1.permission) = "placement:read";
+    }
+
+    // ListPlacements returns placements, optionally filtered by node or group.
+    rpc ListPlacements(ListPlacementsRequest) returns (ListPlacementsResponse) {
+        option (qrdb.v1.permission) = "placement:read";
+    }
 }
 
 // =============================================================================
@@ -321,4 +387,144 @@ message GetSchedulerStatusResponse {
     bool running = 1;
     SchedulerStats stats = 2;
     int64 timestamp = 3;
+}
+
+// =============================================================================
+// Workload placement messages
+// =============================================================================
+
+// PlacementNodeFacts are the caller-supplied facts a node registers.
+message PlacementNodeFacts {
+    string node_id = 1;
+    map<string, int64> capacity = 2;
+    map<string, string> labels = 3;
+}
+
+// PlacementNodeStatus is the operator-controlled scheduling state.
+message PlacementNodeStatus {
+    bool unschedulable = 1;
+    bool draining = 2;
+}
+
+// PlacementNodeInfo is a live node with its status, lease and allocation.
+message PlacementNodeInfo {
+    PlacementNodeFacts facts = 1;
+    PlacementNodeStatus status = 2;
+    int64 lease_id = 3;
+    int64 ttl_seconds = 4;
+    map<string, int64> allocated = 5;
+    int64 placements = 6;
+    int64 registered_at_unix_nanos = 7;
+}
+
+message RegisterPlacementNodeRequest {
+    PlacementNodeFacts facts = 1;
+    int64 ttl_seconds = 2;
+}
+
+message PlacementNodeRequest {
+    string node_id = 1;
+}
+
+message PlacementNodeResponse {
+    PlacementNodeInfo node = 1;
+}
+
+message RenewPlacementNodeResponse {
+    string node_id = 1;
+    bool renewed = 2;
+}
+
+message DeregisterPlacementNodeResponse {
+    string node_id = 1;
+    bool deregistered = 2;
+}
+
+message ListPlacementNodesRequest {}
+
+message ListPlacementNodesResponse {
+    repeated PlacementNodeInfo nodes = 1;
+}
+
+message DrainPlacementNodeResponse {
+    string node_id = 1;
+    repeated PlacementRecord placements = 2;
+}
+
+// PlacementConstraint is a hard requirement on a node label. operator is
+// one of In, NotIn, Exists, DoesNotExist.
+message PlacementConstraint {
+    string key = 1;
+    string operator = 2;
+    repeated string values = 3;
+}
+
+message PlacementAffinityTerm {
+    string group = 1;
+    bool required = 2;
+    int32 weight = 3;
+}
+
+message PlacementSpreadConstraint {
+    string topology_key = 1;
+    int32 max_skew = 2;
+    bool required = 3;
+}
+
+// PlaceWorkloadRequest asks for one workload to be placed. strategy is
+// "binpack" (default) or "spread".
+message PlaceWorkloadRequest {
+    string workload_id = 1;
+    string group = 2;
+    map<string, string> labels = 3;
+    map<string, int64> resources = 4;
+    repeated PlacementConstraint constraints = 5;
+    repeated PlacementAffinityTerm affinity = 6;
+    repeated PlacementAffinityTerm anti_affinity = 7;
+    PlacementSpreadConstraint spread = 8;
+    string strategy = 9;
+}
+
+// PlacementRecord is a recorded placement decision. orphaned is computed on
+// read: the node's lease has expired.
+message PlacementRecord {
+    string workload_id = 1;
+    string group = 2;
+    string node_id = 3;
+    map<string, int64> resources = 4;
+    map<string, string> labels = 5;
+    double score = 6;
+    int64 created_at_unix_nanos = 7;
+    bool orphaned = 8;
+}
+
+message PlaceWorkloadResponse {
+    PlacementRecord placement = 1;
+    bool existing = 2;
+}
+
+message ReleaseWorkloadRequest {
+    string workload_id = 1;
+}
+
+message ReleaseWorkloadResponse {
+    string workload_id = 1;
+    bool released = 2;
+}
+
+message GetPlacementRequest {
+    string workload_id = 1;
+}
+
+message GetPlacementResponse {
+    PlacementRecord placement = 1;
+}
+
+message ListPlacementsRequest {
+    string node_id = 1;
+    string group = 2;
+}
+
+message ListPlacementsResponse {
+    repeated PlacementRecord placements = 1;
 }

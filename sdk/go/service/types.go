@@ -1134,6 +1134,23 @@ type (
 var NewRegistryServiceFromBackend = pkgservice.NewRegistryServiceFromBackend
 
 // =============================================================================
+// Scheduler Placement Service
+// =============================================================================
+
+type (
+	// PlacementService is the scheduler's workload placement service: node
+	// facts on qrdb leases, cordon and drain, and race-free placement
+	// decisions (pkg/scheduler/placement).
+	PlacementService = pkgservice.PlacementService
+
+	// RegisterPlacementNodeRequest registers a node's facts under a lease.
+	RegisterPlacementNodeRequest = pkgservice.RegisterPlacementNodeRequest
+)
+
+// NewPlacementService creates the placement service over a placement engine.
+var NewPlacementService = pkgservice.NewPlacementService
+
+// =============================================================================
 // Attestation Service
 // =============================================================================
 

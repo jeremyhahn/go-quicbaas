@@ -28,19 +28,35 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
-// SchedulerServer wraps the scheduler service for gRPC endpoints.
+// SchedulerServer wraps the scheduler's job and placement services for gRPC
+// endpoints. Either half may be absent: a node with no scheduler engine can
+// still place workloads, and one with no qrdb client cannot. A call to an
+// absent half answers Unavailable, naming it.
 type SchedulerServer struct {
 	pb.UnimplementedSchedulerServiceServer
 	schedulerSvc service.SchedulerService
+	placementSvc service.PlacementService
 	logger       *logger.Logger
 }
 
 // NewSchedulerServer creates a new gRPC server for scheduler operations.
-func NewSchedulerServer(schedulerSvc service.SchedulerService, log *logger.Logger) *SchedulerServer {
+// schedulerSvc serves the job RPCs and placementSvc the placement RPCs;
+// either may be nil.
+func NewSchedulerServer(schedulerSvc service.SchedulerService, placementSvc service.PlacementService, log *logger.Logger) *SchedulerServer {
 	return &SchedulerServer{
 		schedulerSvc: schedulerSvc,
+		placementSvc: placementSvc,
 		logger:       log.WithField("component", "scheduler-grpc-server"),
 	}
+}
+
+// jobService returns the job half, or Unavailable when the scheduler engine
+// is not configured on this node.
+func (s *SchedulerServer) jobService() (service.SchedulerService, error) {
+	if s.schedulerSvc == nil {
+		return nil, status.Error(codes.Unavailable, "scheduler job service not available")
+	}
+	return s.schedulerSvc, nil
 }
 
 // CreateJob creates a new scheduled job.
@@ -74,7 +90,11 @@ func (s *SchedulerServer) CreateJob(ctx context.Context, req *pb.CreateJobReques
 		Labels:         req.Labels,
 	}
 
-	resp, err := s.schedulerSvc.CreateJob(ctx, svcReq)
+	jobSvc, err := s.jobService()
+	if err != nil {
+		return nil, err
+	}
+	resp, err := jobSvc.CreateJob(ctx, svcReq)
 	if err != nil {
 		return nil, convertSchedulerError(err)
 	}
@@ -98,7 +118,11 @@ func (s *SchedulerServer) GetJob(ctx context.Context, req *pb.GetJobRequest) (*p
 		TenantID: req.TenantId,
 	}
 
-	resp, err := s.schedulerSvc.GetJob(ctx, svcReq)
+	jobSvc, err := s.jobService()
+	if err != nil {
+		return nil, err
+	}
+	resp, err := jobSvc.GetJob(ctx, svcReq)
 	if err != nil {
 		return nil, convertSchedulerError(err)
 	}
@@ -132,7 +156,11 @@ func (s *SchedulerServer) UpdateJob(ctx context.Context, req *pb.UpdateJobReques
 		Labels:      req.Labels,
 	}
 
-	resp, err := s.schedulerSvc.UpdateJob(ctx, svcReq)
+	jobSvc, err := s.jobService()
+	if err != nil {
+		return nil, err
+	}
+	resp, err := jobSvc.UpdateJob(ctx, svcReq)
 	if err != nil {
 		return nil, convertSchedulerError(err)
 	}
@@ -157,7 +185,11 @@ func (s *SchedulerServer) DeleteJob(ctx context.Context, req *pb.DeleteJobReques
 		Force:    req.Force,
 	}
 
-	resp, err := s.schedulerSvc.DeleteJob(ctx, svcReq)
+	jobSvc, err := s.jobService()
+	if err != nil {
+		return nil, err
+	}
+	resp, err := jobSvc.DeleteJob(ctx, svcReq)
 	if err != nil {
 		return nil, convertSchedulerError(err)
 	}
@@ -184,7 +216,11 @@ func (s *SchedulerServer) ListJobs(ctx context.Context, req *pb.ListJobsRequest)
 		Cursor:         req.Cursor,
 	}
 
-	resp, err := s.schedulerSvc.ListJobs(ctx, svcReq)
+	jobSvc, err := s.jobService()
+	if err != nil {
+		return nil, err
+	}
+	resp, err := jobSvc.ListJobs(ctx, svcReq)
 	if err != nil {
 		return nil, convertSchedulerError(err)
 	}
@@ -216,7 +252,11 @@ func (s *SchedulerServer) TriggerJob(ctx context.Context, req *pb.TriggerJobRequ
 		TenantID: req.TenantId,
 	}
 
-	resp, err := s.schedulerSvc.TriggerJob(ctx, svcReq)
+	jobSvc, err := s.jobService()
+	if err != nil {
+		return nil, err
+	}
+	resp, err := jobSvc.TriggerJob(ctx, svcReq)
 	if err != nil {
 		return nil, convertSchedulerError(err)
 	}
@@ -241,7 +281,11 @@ func (s *SchedulerServer) PauseJob(ctx context.Context, req *pb.PauseJobRequest)
 		TenantID: req.TenantId,
 	}
 
-	resp, err := s.schedulerSvc.PauseJob(ctx, svcReq)
+	jobSvc, err := s.jobService()
+	if err != nil {
+		return nil, err
+	}
+	resp, err := jobSvc.PauseJob(ctx, svcReq)
 	if err != nil {
 		return nil, convertSchedulerError(err)
 	}
@@ -267,7 +311,11 @@ func (s *SchedulerServer) ResumeJob(ctx context.Context, req *pb.ResumeJobReques
 		TenantID: req.TenantId,
 	}
 
-	resp, err := s.schedulerSvc.ResumeJob(ctx, svcReq)
+	jobSvc, err := s.jobService()
+	if err != nil {
+		return nil, err
+	}
+	resp, err := jobSvc.ResumeJob(ctx, svcReq)
 	if err != nil {
 		return nil, convertSchedulerError(err)
 	}
@@ -294,7 +342,11 @@ func (s *SchedulerServer) CancelJob(ctx context.Context, req *pb.CancelJobReques
 		Reason:   req.Reason,
 	}
 
-	resp, err := s.schedulerSvc.CancelJob(ctx, svcReq)
+	jobSvc, err := s.jobService()
+	if err != nil {
+		return nil, err
+	}
+	resp, err := jobSvc.CancelJob(ctx, svcReq)
 	if err != nil {
 		return nil, convertSchedulerError(err)
 	}
@@ -322,7 +374,11 @@ func (s *SchedulerServer) GetJobHistory(ctx context.Context, req *pb.GetJobHisto
 		Cursor:   req.Cursor,
 	}
 
-	resp, err := s.schedulerSvc.GetJobHistory(ctx, svcReq)
+	jobSvc, err := s.jobService()
+	if err != nil {
+		return nil, err
+	}
+	resp, err := jobSvc.GetJobHistory(ctx, svcReq)
 	if err != nil {
 		return nil, convertSchedulerError(err)
 	}
@@ -344,7 +400,11 @@ func (s *SchedulerServer) GetJobHistory(ctx context.Context, req *pb.GetJobHisto
 func (s *SchedulerServer) GetSchedulerStatus(ctx context.Context, _ *pb.GetSchedulerStatusRequest) (*pb.GetSchedulerStatusResponse, error) {
 	s.logger.Debug("Processing GetSchedulerStatus request")
 
-	resp, err := s.schedulerSvc.GetStatus(ctx)
+	jobSvc, err := s.jobService()
+	if err != nil {
+		return nil, err
+	}
+	resp, err := jobSvc.GetStatus(ctx)
 	if err != nil {
 		return nil, convertSchedulerError(err)
 	}

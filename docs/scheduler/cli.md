@@ -287,3 +287,56 @@ Registered Handlers
 | 3 | Invalid arguments |
 | 4 | Permission denied |
 | 5 | Connection error |
+
+## Workload placement commands
+
+All go through the SDK's `Async().Scheduler()` on the `--transport` selected.
+`--output` is `table` (default), `json` or `yaml`.
+
+**Tenant.** These verbs act in the tenant you authenticated to — the server
+reads it from your credentials. The global `--tenant` flag has **no effect**
+on them: placement takes no tenant from the request, and a request with no
+authenticated tenant is refused (403 / `PermissionDenied`), never served as the
+system tenant.
+
+### scheduler node register
+
+```bash
+quicbaas scheduler node register n1 --capacity cpu_millis=8000 --capacity memory_bytes=34359738368 \
+  --label arch=arm64 --label zone=a --ttl 30
+```
+
+Registers or refreshes a node's facts under a lease of `--ttl` seconds. Repeat
+it, or run `node renew`, inside the TTL.
+
+### scheduler node renew | deregister | get | cordon | uncordon | drain
+
+```bash
+quicbaas scheduler node renew n1
+quicbaas scheduler node cordon n1
+quicbaas scheduler node drain n1      # lists the placements to move
+quicbaas scheduler node uncordon n1
+quicbaas scheduler node deregister n1
+quicbaas scheduler node list
+```
+
+### scheduler placement place
+
+```bash
+quicbaas scheduler placement place web-1 --group web --resource cpu_millis=500 \
+  --spec '{"constraints":[{"key":"arch","operator":"In","values":["arm64"]}],
+           "anti_affinity":[{"group":"web","required":true}],
+           "spread":{"topology_key":"zone","max_skew":1,"required":true}}'
+```
+
+`--spec` is a JSON placement request; `--group`, `--resource`, `--label` and
+`--strategy` (`binpack`, `spread`) override its fields.
+
+### scheduler placement get | list | release
+
+```bash
+quicbaas scheduler placement list --node n1
+quicbaas scheduler placement list --group web
+quicbaas scheduler placement get web-1
+quicbaas scheduler placement release web-1
+```

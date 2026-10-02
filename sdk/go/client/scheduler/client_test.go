@@ -520,7 +520,7 @@ func TestClient_DeleteJob(t *testing.T) {
 					if method != "DeleteJob" {
 						t.Errorf("expected method %q, got %q", "DeleteJob", method)
 					}
-					return &deleteJobResponse{}, nil
+					return &DeleteJobResponse{}, nil
 				},
 			},
 			wantErr: false,
@@ -1037,7 +1037,7 @@ func TestClient_CancelJob(t *testing.T) {
 					if method != "CancelJob" {
 						t.Errorf("expected method %q, got %q", "CancelJob", method)
 					}
-					cancelReq := req.(*cancelJobRequest)
+					cancelReq := req.(*CancelJobRequest)
 					if cancelReq.Reason != "no longer needed" {
 						t.Errorf("expected reason 'no longer needed', got %q", cancelReq.Reason)
 					}

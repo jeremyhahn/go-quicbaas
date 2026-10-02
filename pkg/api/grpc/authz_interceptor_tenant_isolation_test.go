@@ -84,7 +84,7 @@ func startLegacySchedulerListener(t *testing.T, callerTenant string) (pb.Schedul
 	}))
 	require.NoError(t, engine.Start(context.Background()))
 	t.Cleanup(func() { _ = engine.Stop(context.Background()) })
-	pb.RegisterSchedulerServiceServer(server, NewSchedulerServer(service.NewSchedulerAdapter(engine), log))
+	pb.RegisterSchedulerServiceServer(server, NewSchedulerServer(service.NewSchedulerAdapter(engine), nil, log))
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(server.Stop)
 

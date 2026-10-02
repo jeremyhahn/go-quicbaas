@@ -108,6 +108,17 @@ export type {
 } from './messaging_sdk.js';
 export type {
   SchedulerClient,
+  PlacementNodeFacts,
+  PlacementNodeStatus,
+  PlacementNodeInfo,
+  RegisterNodeRequest,
+  PlacementConstraint,
+  PlacementAffinityTerm,
+  PlacementSpreadConstraint,
+  PlacementRequest,
+  Placement,
+  PlaceResult,
+  PlacementFilter,
   SchedulerJob,
   SchedulerStatus,
   ListJobsRequest,
